@@ -410,6 +410,7 @@ def _parse_inline_steps(value, field):
         "assertions",
         "extractions",
         "required_variables",
+        "polling",
     }
     for index, item in enumerate(value):
         item = _require_mapping(item, f"{field}[{index}]")
@@ -447,17 +448,45 @@ def _parse_inline_steps(value, field):
                 )
             seen_variables.add(parsed_variable)
             parsed_variables.append(parsed_variable)
-        steps.append(
-            {
-                "name": name,
-                "enabled": enabled,
-                "request": _parse_request(item.get("request")),
-                "assertions": _parse_assertions(item.get("assertions", [])),
-                "extractions": _parse_extractions(item.get("extractions", [])),
-                "required_variables": parsed_variables,
-            }
-        )
+        request = _parse_request(item.get("request"))
+        parsed_step = {
+            "name": name,
+            "enabled": enabled,
+            "request": request,
+            "assertions": _parse_assertions(item.get("assertions", [])),
+            "extractions": _parse_extractions(item.get("extractions", [])),
+            "required_variables": parsed_variables,
+        }
+        if "polling" in item:
+            parsed_step["polling"] = _parse_step_polling(
+                item["polling"], f"{field}[{index}].polling", request["method"]
+            )
+        steps.append(parsed_step)
     return steps
+
+
+def _parse_step_polling(value, field, method):
+    value = _require_mapping(value, field)
+    _reject_unknown(value, {"max_attempts", "interval_ms"}, field)
+    if method not in {"GET", "HEAD"}:
+        raise CasePayloadError(f"{field} is only supported for GET or HEAD requests")
+    max_attempts = value.get("max_attempts")
+    if (
+        not isinstance(max_attempts, int)
+        or isinstance(max_attempts, bool)
+        or not 2 <= max_attempts <= 30
+    ):
+        raise CasePayloadError(f"{field}.max_attempts must be between 2 and 30")
+    interval_ms = value.get("interval_ms")
+    if (
+        not isinstance(interval_ms, int)
+        or isinstance(interval_ms, bool)
+        or not 100 <= interval_ms <= 30_000
+    ):
+        raise CasePayloadError(f"{field}.interval_ms must be between 100 and 30000")
+    if (max_attempts - 1) * interval_ms > 300_000:
+        raise CasePayloadError(f"{field} total wait must not exceed 300000 ms")
+    return {"max_attempts": max_attempts, "interval_ms": interval_ms}
 
 
 def parse_case_payload(payload):

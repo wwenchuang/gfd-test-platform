@@ -19,6 +19,7 @@ class _TargetHandler(BaseHTTPRequestHandler):
     captured_authorization = None
     captured_cookie = None
     workflow_calls = []
+    workflow_poll_attempts = 0
 
     def log_message(self, *_args):
         return
@@ -45,6 +46,15 @@ class _TargetHandler(BaseHTTPRequestHandler):
                     "data": {"resourceSn": "wrong-resource"},
                 },
             )
+        elif self.path.startswith("/workflow/poll"):
+            type(self).workflow_poll_attempts += 1
+            if type(self).workflow_poll_attempts < 3:
+                self._send(200, {"code": 60102005, "data": None})
+            else:
+                self._send(
+                    200,
+                    {"code": 0, "data": {"resourceSn": "resource-polled"}},
+                )
         elif self.path.startswith("/workflow/setup"):
             self._send(200, {"code": 0, "data": {"resourceSn": "resource-1"}})
         elif self.path.startswith("/workflow/static-cleanup"):
@@ -291,8 +301,9 @@ def _workflow_step(
     assertions=None,
     extractions=None,
     required_variables=None,
+    polling=None,
 ):
-    return {
+    step = {
         "name": name,
         "enabled": True,
         "request": {
@@ -309,6 +320,9 @@ def _workflow_step(
         "extractions": extractions or [],
         "required_variables": required_variables or [],
     }
+    if polling is not None:
+        step["polling"] = polling
+    return step
 
 
 def _workflow_processing(*, setup_steps=None, cleanup_steps=None):
@@ -396,6 +410,86 @@ def test_inline_setup_feeds_print_request_and_print_result_feeds_cancel_cleanup(
         ("main", "PASSED"),
         ("cleanup", "PASSED"),
     ]
+
+
+def test_setup_polling_retries_until_assertions_and_extractions_pass(target_server):
+    _, handler = target_server
+    handler.workflow_calls = []
+    handler.workflow_poll_attempts = 0
+    case = _case(
+        "/workflow/print",
+        method="POST",
+        body={"resourceSn": "{{resourceSn}}"},
+        assertions=[_code_assertion()],
+        processing=_workflow_processing(
+            setup_steps=[
+                _workflow_step(
+                    "等待资源就绪",
+                    "GET",
+                    "/workflow/poll",
+                    assertions=[_code_assertion()],
+                    extractions=[
+                        _json_extraction("resourceSn", "$.data.resourceSn")
+                    ],
+                    polling={"max_attempts": 3, "interval_ms": 1},
+                )
+            ]
+        ),
+    )
+
+    result = _executor(target_server, case).execute_case(
+        "case-version-1", "environment-revision-1", {}
+    )
+
+    assert result.status == "PASSED"
+    assert handler.workflow_poll_attempts == 3
+    assert handler.workflow_calls[-1] == (
+        "POST",
+        "/workflow/print",
+        {"resourceSn": "resource-polled"},
+    )
+    attempts = [
+        event
+        for event in result.trace
+        if event.get("phase") == "workflow_step"
+        and event.get("name") == "等待资源就绪"
+    ]
+    assert [(item["attempt"], item["max_attempts"]) for item in attempts] == [
+        (1, 3),
+        (2, 3),
+        (3, 3),
+    ]
+
+
+def test_setup_polling_stops_at_limit_and_does_not_run_main(target_server):
+    _, handler = target_server
+    handler.workflow_calls = []
+    handler.workflow_poll_attempts = 0
+    case = _case(
+        "/workflow/print",
+        method="POST",
+        assertions=[_code_assertion()],
+        processing=_workflow_processing(
+            setup_steps=[
+                _workflow_step(
+                    "等待资源就绪",
+                    "GET",
+                    "/workflow/poll",
+                    assertions=[_code_assertion()],
+                    polling={"max_attempts": 2, "interval_ms": 1},
+                )
+            ]
+        ),
+    )
+
+    result = _executor(target_server, case).execute_case(
+        "case-version-1", "environment-revision-1", {}
+    )
+
+    assert result.status == "FAILED"
+    assert result.failure_category == "setup"
+    assert handler.workflow_poll_attempts == 2
+    assert [call[0] for call in handler.workflow_calls] == ["GET", "GET"]
 
 
 def test_main_assertion_failure_still_cancels_print(target_server):

@@ -95,6 +95,23 @@ describe('CaseEditor', () => {
     ])
   })
 
+  it('configures bounded polling for an asynchronous query step', async () => {
+    const wrapper = mount(CaseEditor, {
+      props: { modelValue: DRAFT, endpointOptions: WORKFLOW_ENDPOINTS },
+    })
+
+    await wrapper.get('[data-testid="add-setup-step"]').trigger('click')
+    await wrapper.get('[data-testid="setup-polling-0"]').setValue(true)
+    await wrapper.get('[data-testid="setup-poll-attempts-0"]').setValue(12)
+    await wrapper.get('[data-testid="setup-poll-interval-0"]').setValue(1500)
+
+    const emitted = wrapper.emitted('update:modelValue')?.at(-1)?.[0] as CaseDraft
+    expect(emitted.processing.setup_steps![0].polling).toEqual({
+      max_attempts: 12,
+      interval_ms: 1500,
+    })
+  })
+
   it('selects a dependency from grouped case options instead of requiring a version id', async () => {
     const wrapper = mount(CaseEditor, {
       props: {

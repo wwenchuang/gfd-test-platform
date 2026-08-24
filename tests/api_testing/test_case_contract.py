@@ -16,8 +16,8 @@ def _request(path):
     }
 
 
-def _step(name, path, *, required_variables=None):
-    return {
+def _step(name, path, *, required_variables=None, polling=None):
+    step = {
         "name": name,
         "enabled": True,
         "request": _request(path),
@@ -40,6 +40,9 @@ def _step(name, path, *, required_variables=None):
         ],
         "required_variables": required_variables or [],
     }
+    if polling is not None:
+        step["polling"] = polling
+    return step
 
 
 def _payload(processing):
@@ -145,6 +148,74 @@ def test_case_contract_rejects_unknown_inline_step_fields():
     step = _step("查询资源", "/resources")
     step["dependencies"] = []
     with pytest.raises(CasePayloadError, match="contains unknown field"):
+        parse_case_payload(
+            _payload(
+                {
+                    "pre": [],
+                    "post": [],
+                    "setup_steps": [step],
+                    "cleanup_steps": [],
+                }
+            )
+        )
+
+
+def test_case_contract_accepts_bounded_polling_for_query_steps():
+    parsed = parse_case_payload(
+        _payload(
+            {
+                "pre": [],
+                "post": [],
+                "setup_steps": [
+                    _step(
+                        "等待图片生成",
+                        "/text-model/query",
+                        polling={"max_attempts": 10, "interval_ms": 2000},
+                    )
+                ],
+                "cleanup_steps": [],
+            }
+        )
+    )
+
+    assert parsed["processing"]["setup_steps"][0]["polling"] == {
+        "max_attempts": 10,
+        "interval_ms": 2000,
+    }
+
+
+@pytest.mark.parametrize(
+    ("polling", "message"),
+    [
+        ({"max_attempts": 1, "interval_ms": 2000}, "max_attempts"),
+        ({"max_attempts": 10, "interval_ms": 50}, "interval_ms"),
+        ({"max_attempts": 30, "interval_ms": 30_000}, "total wait"),
+    ],
+)
+def test_case_contract_rejects_unbounded_polling(polling, message):
+    with pytest.raises(CasePayloadError, match=message):
+        parse_case_payload(
+            _payload(
+                {
+                    "pre": [],
+                    "post": [],
+                    "setup_steps": [
+                        _step("等待图片生成", "/text-model/query", polling=polling)
+                    ],
+                    "cleanup_steps": [],
+                }
+            )
+        )
+
+
+def test_case_contract_rejects_polling_for_mutating_steps():
+    step = _step(
+        "错误重复创建",
+        "/text-model/create",
+        polling={"max_attempts": 3, "interval_ms": 1000},
+    )
+    step["request"]["method"] = "POST"
+    with pytest.raises(CasePayloadError, match="GET or HEAD"):
         parse_case_payload(
             _payload(
                 {

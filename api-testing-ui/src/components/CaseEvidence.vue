@@ -46,7 +46,7 @@ function stageLabel(stage: unknown): string {
     <section v-if="workflowSteps.length" data-testid="workflow-evidence" class="workflow-evidence">
       <header><strong>分阶段执行证据</strong><span>{{ workflowSteps.length }} 个步骤</span></header>
       <article v-for="(step, index) in workflowSteps" :key="index" :class="`workflow-evidence-${String(step.status || '').toLowerCase()}`">
-        <div class="workflow-evidence-head"><span>{{ stageLabel(step.stage) }}</span><strong>{{ step.name || `步骤 ${index + 1}` }}</strong><b>{{ step.status }}</b></div>
+        <div class="workflow-evidence-head"><span>{{ stageLabel(step.stage) }}</span><strong>{{ step.name || `步骤 ${index + 1}` }}</strong><small v-if="Number(step.max_attempts || 1) > 1">第 {{ step.attempt }}/{{ step.max_attempts }} 次</small><b>{{ step.status }}</b></div>
         <code>{{ (step.request as Record<string, unknown>)?.method || '' }} {{ (step.request as Record<string, unknown>)?.url || '' }}</code>
         <p v-if="step.error_message">{{ step.error_message }}</p>
         <details><summary>请求、响应与断言</summary><pre>{{ JSON.stringify({ request: step.request, response: step.response, assertions: step.assertions, extracted_variables: step.extracted_variables, missing_variables: step.missing_variables }, null, 2) }}</pre></details>

@@ -215,6 +215,10 @@ export interface InlineWorkflowStep {
   assertions: Array<Record<string, unknown>>
   extractions: Array<Record<string, unknown>>
   required_variables: string[]
+  polling?: {
+    max_attempts: number
+    interval_ms: number
+  }
 }
 
 export interface CaseDraft {

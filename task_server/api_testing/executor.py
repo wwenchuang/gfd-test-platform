@@ -27,6 +27,9 @@ _SENSITIVE_NAME = re.compile(r"(?:authorization|cookie|token|password|passwd|sec
 _BEARER = re.compile(r"(?i)(bearer\s+)[^\s,;]+")
 _PATH_PARAMETER = re.compile(r"{([A-Za-z_][A-Za-z0-9_.-]*)}")
 _REDacted = "***"
+_POLL_RETRYABLE_CATEGORIES = frozenset(
+    {"product_assertion", "product_response", "parser", "timeout", "transport"}
+)
 
 
 class HostPolicyError(ValueError):
@@ -300,21 +303,17 @@ class HttpExecutor:
                         (),
                     )
                     break
-                outcome = self._execute_http_step(
-                    step["request"],
-                    step.get("assertions", []),
-                    step.get("extractions", []),
+                outcome, step_secrets = self._execute_inline_step(
+                    "setup",
+                    index,
+                    step,
                     environment_revision_id,
                     variables,
                     cancel,
                     callback,
                     trace,
-                    record_main_phases=False,
                 )
-                all_secrets.extend(outcome.secrets)
-                self._emit_workflow_step(
-                    callback, trace, "setup", index, step, outcome
-                )
+                all_secrets.extend(step_secrets)
                 if outcome.status != "PASSED":
                     setup_failure = outcome
                     break
@@ -372,21 +371,17 @@ class HttpExecutor:
                             (),
                         )
                     continue
-                outcome = self._execute_http_step(
-                    step["request"],
-                    step.get("assertions", []),
-                    step.get("extractions", []),
+                outcome, step_secrets = self._execute_inline_step(
+                    "cleanup",
+                    index,
+                    step,
                     environment_revision_id,
                     variables,
                     lambda _phase: False,
                     callback,
                     trace,
-                    record_main_phases=False,
                 )
-                all_secrets.extend(outcome.secrets)
-                self._emit_workflow_step(
-                    callback, trace, "cleanup", index, step, outcome
-                )
+                all_secrets.extend(step_secrets)
                 if outcome.status == "PASSED":
                     variables.update(copy.deepcopy(outcome.extracted))
                 if outcome.status != "PASSED" and cleanup_problem is None:
@@ -425,6 +420,68 @@ class HttpExecutor:
             )
         except Exception as exc:
             return self._failure_result(callback, started, "BROKEN", "environment", request_view, response_view, (), {}, str(exc), trace, secrets)
+
+    def _execute_inline_step(
+        self,
+        stage,
+        index,
+        step,
+        environment_revision_id,
+        variables,
+        cancel,
+        callback,
+        trace,
+    ):
+        polling = step.get("polling") or {}
+        max_attempts = int(polling.get("max_attempts", 1))
+        interval_ms = int(polling.get("interval_ms", 0))
+        all_secrets = []
+        outcome = None
+        for attempt in range(1, max_attempts + 1):
+            outcome = self._execute_http_step(
+                step["request"],
+                step.get("assertions", []),
+                step.get("extractions", []),
+                environment_revision_id,
+                variables,
+                cancel,
+                callback,
+                trace,
+                record_main_phases=False,
+            )
+            all_secrets.extend(outcome.secrets)
+            self._emit_workflow_step(
+                callback,
+                trace,
+                stage,
+                index,
+                step,
+                outcome,
+                attempt=attempt,
+                max_attempts=max_attempts,
+            )
+            if (
+                outcome.status == "PASSED"
+                or outcome.status == "CANCELLED"
+                or outcome.failure_category not in _POLL_RETRYABLE_CATEGORIES
+                or attempt == max_attempts
+            ):
+                break
+            try:
+                self._wait_for_poll(interval_ms, cancel)
+            except CancelledExecution:
+                outcome = _HttpStepOutcome(
+                    "CANCELLED",
+                    "cancelled",
+                    outcome.request,
+                    outcome.response,
+                    outcome.assertions,
+                    {},
+                    "cancelled",
+                    tuple(dict.fromkeys(all_secrets)),
+                )
+                break
+        return outcome, tuple(dict.fromkeys(all_secrets))
 
     def _execute_http_step(
         self,
@@ -623,7 +680,23 @@ class HttpExecutor:
         )
 
     @classmethod
-    def _emit_workflow_step(cls, callback, trace, stage, index, step, outcome):
+    def _emit_workflow_step(
+        cls,
+        callback,
+        trace,
+        stage,
+        index,
+        step,
+        outcome,
+        *,
+        attempt=1,
+        max_attempts=1,
+    ):
+        attempt_details = (
+            {"attempt": attempt, "max_attempts": max_attempts}
+            if max_attempts > 1
+            else {}
+        )
         cls._emit_phase(
             callback,
             trace,
@@ -641,6 +714,7 @@ class HttpExecutor:
                     outcome.extracted, outcome.secrets
                 ),
                 "error_message": redact(outcome.error, outcome.secrets),
+                **attempt_details,
             },
         )
 
@@ -820,6 +894,16 @@ class HttpExecutor:
     def _check_cancel(phase, callback):
         if callback(phase):
             raise CancelledExecution()
+
+    @classmethod
+    def _wait_for_poll(cls, interval_ms, callback):
+        deadline = time.monotonic() + (interval_ms / 1000)
+        while True:
+            cls._check_cancel("poll_wait", callback)
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return
+            time.sleep(min(remaining, 0.1))
 
     @staticmethod
     def _emit_phase(callback, trace, phase, payload):

@@ -60,6 +60,24 @@ describe('CaseEvidence', () => {
     expect(wrapper.text()).toContain('已隐藏')
   })
 
+  it('shows the attempt number for polled workflow steps', () => {
+    const workflowResult: ExecutionCaseResult = {
+      ...result,
+      sanitized_result: {
+        ...result.sanitized_result,
+        trace: [
+          { phase: 'workflow_step', stage: 'setup', name: '等待图片生成', status: 'FAILED', attempt: 1, max_attempts: 3, request: {}, response: {} },
+          { phase: 'workflow_step', stage: 'setup', name: '等待图片生成', status: 'PASSED', attempt: 2, max_attempts: 3, request: {}, response: {} },
+        ],
+      },
+    }
+
+    const wrapper = mount(CaseEvidence, { props: { result: workflowResult } })
+
+    expect(wrapper.get('[data-testid="workflow-evidence"]').text()).toContain('第 1/3 次')
+    expect(wrapper.get('[data-testid="workflow-evidence"]').text()).toContain('第 2/3 次')
+  })
+
   it('emits edit and rerun commands with the selected result', async () => {
     const wrapper = mount(CaseEvidence, { props: { result } })
 

@@ -52,7 +52,21 @@ function patchStep(index: number, patch: Partial<InlineWorkflowStep>): void {
 }
 
 function patchRequest(index: number, patch: Partial<InlineWorkflowStep['request']>): void {
-  update(steps => { steps[index].request = { ...steps[index].request, ...patch } })
+  update(steps => {
+    steps[index].request = { ...steps[index].request, ...patch }
+    if (!['GET', 'HEAD'].includes(steps[index].request.method)) delete steps[index].polling
+  })
+}
+
+function updatePolling(index: number, enabled: boolean): void {
+  patchStep(index, {
+    polling: enabled ? { max_attempts: 10, interval_ms: 2000 } : undefined,
+  })
+}
+
+function patchPolling(index: number, patch: Partial<NonNullable<InlineWorkflowStep['polling']>>): void {
+  const current = props.modelValue[index].polling || { max_attempts: 10, interval_ms: 2000 }
+  patchStep(index, { polling: { ...current, ...patch } })
 }
 
 function selectEndpoint(index: number, endpointId: string): void {
@@ -72,6 +86,7 @@ function selectEndpoint(index: number, endpointId: string): void {
       cookies: {},
       body: null,
     }
+    if (!['GET', 'HEAD'].includes(endpoint.method)) delete step.polling
   })
 }
 
@@ -179,6 +194,22 @@ function validationMessages(index: number): string[] {
           <label class="workflow-path">路径<input :value="step.request.path" @input="patchRequest(index, { path: ($event.target as HTMLInputElement).value })" /></label>
           <label>服务<input :value="step.request.service" @input="patchRequest(index, { service: ($event.target as HTMLInputElement).value })" /></label>
           <label>必需变量<input :data-testid="`${stage}-required-${index}`" :value="step.required_variables.join(', ')" placeholder="例如 printTaskSn, deviceSn" @input="updateRequired(index, ($event.target as HTMLInputElement).value)" /></label>
+        </div>
+        <div class="workflow-polling">
+          <label class="toggle-line">
+            <input
+              :data-testid="`${stage}-polling-${index}`"
+              type="checkbox"
+              :checked="Boolean(step.polling)"
+              :disabled="!['GET', 'HEAD'].includes(step.request.method)"
+              @change="updatePolling(index, ($event.target as HTMLInputElement).checked)"
+            />轮询直到断言通过
+          </label>
+          <template v-if="step.polling">
+            <label>最多尝试<input :data-testid="`${stage}-poll-attempts-${index}`" type="number" min="2" max="30" :value="step.polling.max_attempts" @input="patchPolling(index, { max_attempts: Number(($event.target as HTMLInputElement).value) })" /></label>
+            <label>间隔毫秒<input :data-testid="`${stage}-poll-interval-${index}`" type="number" min="100" max="30000" step="100" :value="step.polling.interval_ms" @input="patchPolling(index, { interval_ms: Number(($event.target as HTMLInputElement).value) })" /></label>
+          </template>
+          <small v-else-if="!['GET', 'HEAD'].includes(step.request.method)">轮询仅支持 GET、HEAD 查询，避免重复创建或修改数据。</small>
         </div>
         <div class="workflow-json-grid">
           <label>参数与请求体<textarea :value="requestConfig(step)" rows="8" @change="updateJson(index, 'request', ($event.target as HTMLTextAreaElement).value)" /><small v-if="jsonErrors[`request-${index}`]" class="field-error">{{ jsonErrors[`request-${index}`] }}</small></label>
