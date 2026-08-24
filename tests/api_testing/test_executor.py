@@ -36,6 +36,15 @@ class _TargetHandler(BaseHTTPRequestHandler):
         type(self).workflow_calls.append(("GET", self.path, None))
         if self.path.startswith("/workflow/setup-fail"):
             self._send(200, {"code": 5001, "message": "no resource"})
+        elif self.path.startswith("/workflow/cleanup-source-fail"):
+            self._send(
+                200,
+                {
+                    "code": 5001,
+                    "message": "unexpected resource",
+                    "data": {"resourceSn": "wrong-resource"},
+                },
+            )
         elif self.path.startswith("/workflow/setup"):
             self._send(200, {"code": 0, "data": {"resourceSn": "resource-1"}})
         elif self.path.startswith("/workflow/static-cleanup"):
@@ -243,6 +252,10 @@ def _executor(target_server, case, *, values=None, limits=None, cancel=None):
         limits=limits or ExecutorLimits(timeout_seconds=1, max_response_bytes=2048),
         cancellation_check=cancel,
     )
+
+
+def test_default_executor_timeout_covers_slow_ai_endpoints():
+    assert ExecutorLimits().timeout_seconds == 30
 
 
 def _assertion(assertion_type, operator, expected=None, path=None, name=None):
@@ -469,6 +482,54 @@ def test_setup_failure_blocks_main_but_runs_static_cleanup(target_server):
     ]
 
 
+def test_failed_setup_step_does_not_feed_extractions_to_cleanup(target_server):
+    _, handler = target_server
+    handler.workflow_calls = []
+    case = _case(
+        processing=_workflow_processing(
+            setup_steps=[
+                _workflow_step(
+                    "定位主体资源",
+                    "GET",
+                    "/workflow/cleanup-source-fail",
+                    assertions=[_code_assertion()],
+                    extractions=[
+                        _json_extraction("resourceSn", "$.data.resourceSn")
+                    ],
+                )
+            ],
+            cleanup_steps=[
+                _workflow_step(
+                    "删除前置定位资源",
+                    "POST",
+                    "/workflow/cancel",
+                    body={"resourceSn": "{{resourceSn}}"},
+                    assertions=[_code_assertion()],
+                    required_variables=["resourceSn"],
+                )
+            ],
+        )
+    )
+
+    result = _executor(target_server, case).execute_case(
+        "case-version-1", "environment-revision-1", {}
+    )
+
+    assert result.status == "FAILED"
+    assert result.failure_category == "setup"
+    assert [call[1] for call in handler.workflow_calls] == [
+        "/workflow/cleanup-source-fail"
+    ]
+    cleanup = [
+        event
+        for event in result.trace
+        if event.get("phase") == "workflow_step"
+        and event.get("stage") == "cleanup"
+    ]
+    assert cleanup[0]["status"] == "SKIPPED"
+    assert cleanup[0]["missing_variables"] == ["resourceSn"]
+
+
 def test_cleanup_failure_prevents_otherwise_passing_case(target_server):
     _, handler = target_server
     handler.workflow_calls = []
@@ -500,6 +561,57 @@ def test_cleanup_failure_prevents_otherwise_passing_case(target_server):
     assert result.status == "FAILED"
     assert result.failure_category == "cleanup"
     assert handler.workflow_calls[-1][1] == "/workflow/cancel-fail"
+
+
+def test_failed_cleanup_step_does_not_feed_extractions_to_later_cleanup(
+    target_server,
+):
+    _, handler = target_server
+    handler.workflow_calls = []
+    case = _case(
+        processing=_workflow_processing(
+            cleanup_steps=[
+                _workflow_step(
+                    "定位待清理资源",
+                    "GET",
+                    "/workflow/cleanup-source-fail",
+                    assertions=[_code_assertion()],
+                    extractions=[
+                        _json_extraction("resourceSn", "$.data.resourceSn")
+                    ],
+                ),
+                _workflow_step(
+                    "删除定位到的资源",
+                    "POST",
+                    "/workflow/cancel",
+                    body={"resourceSn": "{{resourceSn}}"},
+                    assertions=[_code_assertion()],
+                    required_variables=["resourceSn"],
+                ),
+            ]
+        )
+    )
+
+    result = _executor(target_server, case).execute_case(
+        "case-version-1", "environment-revision-1", {}
+    )
+
+    assert result.status == "FAILED"
+    assert result.failure_category == "cleanup"
+    assert [call[1] for call in handler.workflow_calls] == [
+        "/ok",
+        "/workflow/cleanup-source-fail",
+    ]
+    cleanup = [
+        event
+        for event in result.trace
+        if event.get("phase") == "workflow_step"
+        and event.get("stage") == "cleanup"
+    ]
+    assert [(event["status"], event.get("missing_variables")) for event in cleanup] == [
+        ("FAILED", None),
+        ("SKIPPED", ["resourceSn"]),
+    ]
 
 
 def test_missing_cleanup_variable_skips_request_and_blocks_a_passing_case(

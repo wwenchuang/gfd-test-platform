@@ -94,7 +94,7 @@ class HostPolicy:
 
 @dataclass(frozen=True)
 class ExecutorLimits:
-    timeout_seconds: float = 10.0
+    timeout_seconds: float = 30.0
     max_response_bytes: int = 5 * 1024 * 1024
     max_redirects: int = 5
     read_chunk_bytes: int = 64 * 1024
@@ -312,13 +312,13 @@ class HttpExecutor:
                     record_main_phases=False,
                 )
                 all_secrets.extend(outcome.secrets)
-                variables.update(copy.deepcopy(outcome.extracted))
                 self._emit_workflow_step(
                     callback, trace, "setup", index, step, outcome
                 )
                 if outcome.status != "PASSED":
                     setup_failure = outcome
                     break
+                variables.update(copy.deepcopy(outcome.extracted))
 
             main_outcome = None
             if setup_failure is None:
@@ -384,10 +384,11 @@ class HttpExecutor:
                     record_main_phases=False,
                 )
                 all_secrets.extend(outcome.secrets)
-                variables.update(copy.deepcopy(outcome.extracted))
                 self._emit_workflow_step(
                     callback, trace, "cleanup", index, step, outcome
                 )
+                if outcome.status == "PASSED":
+                    variables.update(copy.deepcopy(outcome.extracted))
                 if outcome.status != "PASSED" and cleanup_problem is None:
                     cleanup_problem = outcome
 
