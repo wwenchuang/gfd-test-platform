@@ -34,6 +34,35 @@
 
 ## 最近完成的关键修复
 
+### 2026-08-24 API 基线：真实响应联动补跑、平台同步和非共享全量回归
+
+用户要求继续使用已通过接口的真实响应数据补跑其他接口，执行通过后同步到平台；共享业务继续排除，不使用用户此前提供的业务 token。
+
+本轮线上处理：
+
+- 工作区保持为 `3D家用`：
+  - source revision：`ef46b8fd-2868-459d-8695-fc5daba853ed`
+  - environment revision：`a00e9030-8749-47f3-9764-bedf251b85a1`
+- 从上一轮 209 条通过响应中提取设备、用户、作品、模型和下载记录的关联数据，筛出 56 条可补数据候选；`4009 访问路径不允许`、`404/null` 和明显设备控制/打印/短信动作不作为稳定基线候选。
+- 第一批 debug execution `8f339a47-54e9-43d1-b625-7de768388658`：4 条中 2 passed、2 failed：
+  - `/print3d/api/v1/qidi/collection/page` 使用已通过的启迪设备绑定响应中的同一组 `deviceId/userSn`，业务返回 `code=0`。
+  - `/print3d/api/v1/message/list` 使用真实 `userSn` 和消息分类，业务返回 `code=0`。
+  - 两条通过版本已同步为 active baseline。
+- 第二批 debug execution `4c2e2483-f653-4f10-ba37-b021c4a3f1cf`：11 条中 4 passed、7 failed：
+  - `/print3d/api/v1/devices/advancedSliceParamConfig` 使用成长报告同一作品中的 `modelSn/deviceSn`，修正 `modelScale` 类型后业务返回 `code=0`。
+  - `/print3d/api/v1/model/lightweight/status` 使用创建模型、文本模型和图片模型返回的任务 SN 均可业务通过；收藏/下载模型 SN 会被正确拒绝。仅采纳当前 active 的图片模型任务版本，避免同接口重复基线。
+  - 导入状态、切片查询和打印查询仍缺专属导入/切片任务数据，未采纳。
+- 新增 4 条 active baseline：
+  - `61fbb02b-3486-49a0-9b19-3d9181bb7d4a`：启迪收藏列表。
+  - `4fd133af-0038-4cae-a23d-ccf52d68ce5f`：消息列表。
+  - `7bf3dd3a-93d5-4981-947e-5af8b3afcf05`：设备高级切片参数。
+  - `19948432-e685-442e-aad9-cdad51b2eac4`：模型轻量化状态。
+- 新增基线 selected regression `82539ea3-a7d4-469b-94e2-061b1c32b959`：4 total，4 passed。
+- 首次全量非共享 active regression `73c7c2a5-eb57-42ba-9e16-2451c69db92d`：248 total，247 passed，1 failed；唯一失败为 `/print3d/api/v1/learningAdventure/report/history`，业务返回 `code=1001 / 历史报告不存在`。
+- 历史报告基线使用 `historyWeeks` 返回的两个真实周记录分别验证，并补充同记录 `adventureCode`，三次均返回“历史报告不存在”；确认是列表与详情当前业务数据不一致，不是参数占位问题。旧 active baseline `49d55ef2-8263-4c7c-beb7-d71eea666790` 已归档，用例和执行证据保留。
+- 最终全量非共享 active regression `840dad5b-c276-41a5-818b-1f01b5eef74d`：247 total，247 passed，0 failed，0 broken。
+- 平台最终 active baseline：260 条；非共享 252 条、覆盖 246 个不同接口；共享业务历史基线 8 条，本轮未执行、未新增。
+
 ### 2026-08-21 API 基线：非共享接口数据驱动补跑、采纳和回归验证
 
 用户补充约束：共享业务本轮先不考虑，不能继续使用用户临时提供的业务 token。后续执行均走平台当前环境配置，未在脚本、代码或日志中写入明文业务 token。
