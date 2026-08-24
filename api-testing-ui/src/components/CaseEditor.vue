@@ -2,14 +2,14 @@
 import { computed, ref, watch } from 'vue'
 import { Code2, List, Plus, Trash2 } from 'lucide-vue-next'
 
-import type { CaseDraft } from '../api/contracts'
+import type { CaseDependencyOption, CaseDraft } from '../api/contracts'
 import { validateCaseDraftLocally } from '../utils/caseDraftValidation'
 
 type RequestMapField = 'headers' | 'query' | 'path_params' | 'cookies'
 type ProcessingPhase = 'pre' | 'post'
 
-const props = withDefaults(defineProps<{ modelValue: CaseDraft; validationErrors?: Record<string, string>; validationWarnings?: Record<string, string>; saving?: boolean; savedMessage?: string }>(), {
-  validationErrors: () => ({}), validationWarnings: () => ({}), saving: false, savedMessage: '',
+const props = withDefaults(defineProps<{ modelValue: CaseDraft; validationErrors?: Record<string, string>; validationWarnings?: Record<string, string>; saving?: boolean; savedMessage?: string; dependencyOptions?: CaseDependencyOption[] }>(), {
+  validationErrors: () => ({}), validationWarnings: () => ({}), saving: false, savedMessage: '', dependencyOptions: () => [],
 })
 const emit = defineEmits<{ 'update:modelValue': [draft: CaseDraft]; save: [] }>()
 const mode = ref<'structured' | 'raw'>('structured')
@@ -44,6 +44,15 @@ const hasBlockingError = computed(() => Boolean(
   || Object.keys(advancedErrors.value).length
   || Object.keys(localValidationErrors.value).length,
 ))
+const dependencyGroups = computed(() => {
+  const groups = new Map<string, CaseDependencyOption[]>()
+  for (const option of props.dependencyOptions) {
+    const options = groups.get(option.group) || []
+    options.push(option)
+    groups.set(option.group, options)
+  }
+  return [...groups.entries()].map(([name, options]) => ({ name, options }))
+})
 
 function validationMessages(prefix: string, source: Record<string, string>): Array<[string, string]> {
   return Object.entries(source).filter(([field]) => field === prefix || field.startsWith(`${prefix}.`) || field.startsWith(`${prefix}[`))
@@ -190,9 +199,31 @@ function addDependency(): void {
   publish()
 }
 
-function updateExports(dependency: Record<string, unknown>, value: string): void {
-  dependency.exports = value.split(',').map(item => item.trim()).filter(Boolean)
+function selectedDependency(dependency: Record<string, unknown>): CaseDependencyOption | undefined {
+  return props.dependencyOptions.find(option => option.id === dependency.case_version_id)
+}
+
+function selectDependency(dependency: Record<string, unknown>, versionId: string): void {
+  dependency.case_version_id = versionId
+  dependency.exports = [...(props.dependencyOptions.find(option => option.id === versionId)?.exports || [])]
   publish()
+}
+
+function toggleDependencyExport(dependency: Record<string, unknown>, name: string, enabled: boolean): void {
+  const selected = Array.isArray(dependency.exports)
+    ? dependency.exports.filter((item): item is string => typeof item === 'string')
+    : []
+  const exports = new Set<string>(selected)
+  if (enabled) exports.add(name)
+  else exports.delete(name)
+  dependency.exports = [...exports]
+  publish()
+}
+
+function dependencyOptionDisabled(versionId: string, rowIndex: number): boolean {
+  return local.value.dependencies.some((dependency, index) => (
+    index !== rowIndex && dependency.case_version_id === versionId
+  ))
 }
 
 function addProcessing(phase: ProcessingPhase): void {
@@ -305,7 +336,33 @@ function clone(value: CaseDraft): CaseDraft {
       </section>
 
       <details class="advanced-editor"><summary>依赖与前后置处理</summary>
-        <section class="editor-section"><div class="section-heading"><strong>用例依赖</strong><button class="mini-icon" type="button" title="添加依赖" @click="addDependency"><Plus :size="14" /></button></div><div v-for="(dependency, index) in local.dependencies" :key="index" class="dependency-row"><label>依赖用例版本<input v-model="dependency.case_version_id" @input="publish" /></label><label>导出变量<input :value="(dependency.exports as string[] || []).join(', ')" @input="updateExports(dependency, ($event.target as HTMLInputElement).value)" /></label><label class="toggle-line"><input v-model="dependency.required" type="checkbox" @change="publish" />必需</label><button class="mini-icon danger" type="button" title="删除依赖" @click="local.dependencies.splice(index, 1); publish()"><Trash2 :size="14" /></button><small v-for="([field, message]) in validationMessages(`dependencies[${index}]`, validationErrors)" :key="field" :data-error-for="field" class="field-error row-feedback">{{ message }}</small><small v-for="([field, message]) in validationMessages(`dependencies[${index}]`, validationWarnings)" :key="field" :data-warning-for="field" class="field-warning row-feedback">{{ message }}</small></div></section>
+        <section class="editor-section">
+          <div class="section-heading"><strong>用例依赖</strong><button data-testid="add-dependency" class="mini-icon" type="button" title="添加依赖" @click="addDependency"><Plus :size="14" /></button></div>
+          <p v-if="!local.dependencies.length" class="compact-empty">添加前置用例后，可将其响应变量用于当前请求。</p>
+          <div v-for="(dependency, index) in local.dependencies" :key="index" class="dependency-row">
+            <label>前置用例
+              <select :data-testid="`dependency-case-${index}`" :value="dependency.case_version_id" @change="selectDependency(dependency, ($event.target as HTMLSelectElement).value)">
+                <option value="">选择已保存用例</option>
+                <option v-if="dependency.case_version_id && !selectedDependency(dependency)" :value="dependency.case_version_id">已保存的历史依赖</option>
+                <optgroup v-for="group in dependencyGroups" :key="group.name" :label="group.name">
+                  <option v-for="option in group.options" :key="option.id" :value="option.id" :disabled="dependencyOptionDisabled(option.id, index)">{{ option.name }} · {{ option.method }} {{ option.path }} · v{{ option.version }}</option>
+                </optgroup>
+              </select>
+              <small v-if="selectedDependency(dependency)" class="dependency-meta">{{ selectedDependency(dependency)?.group }} · {{ selectedDependency(dependency)?.exports.length || 0 }} 个可导出变量</small>
+            </label>
+            <div class="dependency-exports">
+              <span>传递变量</span>
+              <div v-if="selectedDependency(dependency)?.exports.length" class="dependency-export-options">
+                <label v-for="name in selectedDependency(dependency)?.exports" :key="name" class="toggle-line"><input :data-testid="`dependency-export-${index}-${name}`" type="checkbox" :checked="(dependency.exports as string[] || []).includes(name)" @change="toggleDependencyExport(dependency, name, ($event.target as HTMLInputElement).checked)" />{{ name }}</label>
+              </div>
+              <small v-else>该用例还没有配置响应提取变量</small>
+            </div>
+            <label class="toggle-line"><input v-model="dependency.required" type="checkbox" @change="publish" />必需</label>
+            <button class="mini-icon danger" type="button" title="删除依赖" @click="local.dependencies.splice(index, 1); publish()"><Trash2 :size="14" /></button>
+            <small v-for="([field, message]) in validationMessages(`dependencies[${index}]`, validationErrors)" :key="field" :data-error-for="field" class="field-error row-feedback">{{ message }}</small>
+            <small v-for="([field, message]) in validationMessages(`dependencies[${index}]`, validationWarnings)" :key="field" :data-warning-for="field" class="field-warning row-feedback">{{ message }}</small>
+          </div>
+        </section>
         <section v-for="phase in (['pre','post'] as ProcessingPhase[])" :key="phase" class="editor-section"><div class="section-heading"><strong>{{ phase === 'pre' ? '前置处理' : '后置处理' }}</strong><button class="mini-icon" type="button" title="添加处理" @click="addProcessing(phase)"><Plus :size="14" /></button></div><div v-for="(action, index) in local.processing[phase]" :key="index" class="processing-row"><select v-model="action.action" aria-label="处理动作" @change="changeProcessing(action)"><option value="set_variable">设置变量</option><option value="copy_variable">复制变量</option><option value="remove_variable">删除变量</option><option value="json_encode">JSON 编码</option><option value="json_decode">JSON 解码</option></select><input v-if="'name' in action" v-model="action.name" placeholder="变量名" @input="publish" /><input v-if="'source' in action" v-model="action.source" placeholder="来源变量" @input="publish" /><input v-if="'target' in action" v-model="action.target" placeholder="目标变量" @input="publish" /><input v-if="'value' in action" :value="renderValue(action.value)" placeholder="值" @input="action.value = parseScalar(($event.target as HTMLInputElement).value); publish()" /><button class="mini-icon danger" type="button" title="删除处理" @click="local.processing[phase].splice(index, 1); publish()"><Trash2 :size="14" /></button><small v-for="([field, message]) in validationMessages(`processing.${phase}[${index}]`, validationErrors)" :key="field" :data-error-for="field" class="field-error row-feedback">{{ message }}</small><small v-for="([field, message]) in validationMessages(`processing.${phase}[${index}]`, validationWarnings)" :key="field" :data-warning-for="field" class="field-warning row-feedback">{{ message }}</small></div></section>
       </details>
     </div>

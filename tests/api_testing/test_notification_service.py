@@ -83,6 +83,29 @@ def test_feishu_report_card_marks_scheduled_job_type():
     assert "定时任务" in text
 
 
+def test_feishu_report_card_labels_dependency_skip_for_readers():
+    child = SimpleNamespace(
+        status="SKIPPED",
+        case_version_id="version-1",
+        endpoint_id="endpoint-1",
+        failure_category="dependency",
+    )
+    card = NotificationService._card(
+        _execution(summary={
+            "total": 1, "passed": 0, "failed": 0, "broken": 0,
+            "skipped": 1, "cancelled": 0,
+        }),
+        [child],
+        {
+            "versions": {"version-1": SimpleNamespace(case_id="case-1")},
+            "cases": {"case-1": SimpleNamespace(name="取消收藏")},
+            "endpoints": {"endpoint-1": SimpleNamespace(summary="取消收藏", path="/collection/remove")},
+        },
+    )
+
+    assert "跳过 · 取消收藏 · 前置依赖" in json.dumps(card, ensure_ascii=False)
+
+
 def test_display_metadata_includes_project_name_for_feishu_card():
     repository = ExecutionRepository.__new__(ExecutionRepository)
     repository.get_project = lambda project_id: SimpleNamespace(name="智小白3D")

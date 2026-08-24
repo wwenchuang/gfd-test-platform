@@ -15,6 +15,7 @@ import { useAssetsStore } from '../stores/assets'
 import { useCasesStore } from '../stores/cases'
 import { useContextStore } from '../stores/context'
 import { useTasksStore } from '../stores/tasks'
+import { buildCaseDependencyOptions } from '../utils/caseDependencyOptions'
 
 const context = useContextStore()
 const assets = useAssetsStore()
@@ -29,6 +30,11 @@ const localError = ref('')
 const taskNameDraft = ref('')
 const activeDraft = computed(() => activeEndpoint.value ? cases.draftFor(activeEndpoint.value) : null)
 const activeVersionId = computed(() => activeEndpoint.value ? cases.activeVersionByEndpoint[activeEndpoint.value.id] || '' : '')
+const dependencyOptions = computed(() => buildCaseDependencyOptions(
+  Object.values(cases.versions),
+  assets.endpoints,
+  activeVersionId.value,
+))
 const debugRunning = computed(() => cases.debugPolling)
 const selectedEnvironment = computed(() => context.environmentRevisions.find(
   item => item.id === context.environmentRevisionId,
@@ -417,7 +423,7 @@ function defaultTaskName(): string {
         <EndpointTree :endpoints="assets.endpoints" :selected-ids="selectedIds" :state="context.sourceRevisionId ? assets.state : 'empty'" :error="assets.error" @selection-change="selectedIds = $event" @activate="activate" />
         <main class="design-center">
           <EndpointDetail :endpoint="activeEndpoint" />
-          <CaseEditor v-if="activeDraft" :model-value="activeDraft" :saving="cases.saving" :saved-message="cases.savedMessage" :validation-errors="cases.validationErrors" :validation-warnings="cases.validationWarnings" @update:model-value="updateDraft" @save="saveDraft" />
+          <CaseEditor v-if="activeDraft" :model-value="activeDraft" :dependency-options="dependencyOptions" :saving="cases.saving" :saved-message="cases.savedMessage" :validation-errors="cases.validationErrors" :validation-warnings="cases.validationWarnings" @update:model-value="updateDraft" @save="saveDraft" />
           <div v-else class="state-message center-empty">选择接口后，可手工编辑或让 AI 生成测试用例。</div>
           <button v-if="activeDraft" class="debug-command" type="button" :disabled="cases.saving || debugRunning" @click="submitDebug"><Bug :size="16" />{{ cases.saving ? '正在保存…' : debugRunning ? '调试中…' : '保存并调试' }}</button>
         </main>

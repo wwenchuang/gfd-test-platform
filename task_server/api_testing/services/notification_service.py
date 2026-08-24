@@ -296,6 +296,7 @@ class NotificationService:
             "network": "网络异常",
             "script_error": "脚本异常",
             "system": "系统异常",
+            "dependency": "前置依赖",
             "cancelled": "已取消",
         }.get(value, value)
 

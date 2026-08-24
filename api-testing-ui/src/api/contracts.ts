@@ -231,6 +231,16 @@ export interface CaseVersion extends CaseDraft {
   validation_summary: Record<string, unknown>
 }
 
+export interface CaseDependencyOption {
+  id: string
+  name: string
+  group: string
+  method: string
+  path: string
+  version: number
+  exports: string[]
+}
+
 export interface GeneratedCasePreview {
   id: string
   endpoint_id: string
@@ -321,6 +331,7 @@ export interface ExecutionCaseResult {
   execution_case_id: string
   case_version_id: string
   endpoint_id: string
+  execution_role?: 'requested' | 'dependency'
   case_name: string
   endpoint_summary: string
   method: string

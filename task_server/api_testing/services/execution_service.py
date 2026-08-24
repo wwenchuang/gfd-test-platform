@@ -18,6 +18,7 @@ from .environment_service import EnvironmentService
 
 MAX_FAILURE_ANALYSIS_EVIDENCE_BYTES = 128 * 1024
 MAX_FAILURE_ANALYSIS_DISPATCH_CASES = 50
+MAX_EXECUTION_CASES = 500
 
 
 class ExecutionConflictError(ValueError):
@@ -176,6 +177,12 @@ class ExecutionService:
                         "case_id": version.case_id,
                         "endpoint_id": version.endpoint_id,
                         "version": version.version_number,
+                        "role": (
+                            "requested"
+                            if version.id in context["requested_version_ids"]
+                            else "dependency"
+                        ),
+                        "dependencies": self._case_dependencies(version),
                     }
                     for version in context["versions"]
                 ],
@@ -187,7 +194,11 @@ class ExecutionService:
             try:
                 with session.begin_nested():
                     execution = repository.create_execution(
-                        parsed, snapshot, actor_id, idempotency_key
+                        parsed,
+                        snapshot,
+                        actor_id,
+                        idempotency_key,
+                        expanded_case_count=len(context["versions"]),
                     )
                     children = tuple(
                         repository.create_execution_case(
@@ -345,6 +356,12 @@ class ExecutionService:
             snapshot = copy.deepcopy(execution.request_snapshot)
             children = repository.get_execution_cases(execution_id)
         worker_error = None
+        outcomes = {}
+        version_snapshots = {
+            item.get("id"): item
+            for item in snapshot.get("case_versions", ())
+            if isinstance(item, dict) and isinstance(item.get("id"), str)
+        }
         try:
             self.event_stream.append(execution_id, "execution_started", {})
             allow_failure_analysis = self._should_dispatch_failure_analysis(children)
@@ -366,10 +383,25 @@ class ExecutionService:
                     },
                 )
                 try:
-                    result = self._execute_child(execution_id, child, snapshot)
+                    child_snapshot = version_snapshots.get(child.case_version_id, {})
+                    dependency_overrides, blocked_reason = self._dependency_overrides(
+                        child_snapshot,
+                        outcomes,
+                    )
+                    result = (
+                        self._skipped_result(blocked_reason)
+                        if blocked_reason
+                        else self._execute_child(
+                            execution_id,
+                            child,
+                            snapshot["request"]["overrides"],
+                            dependency_overrides,
+                        )
+                    )
                 except Exception as exc:
                     worker_error = exc
                     result = self._broken_result(exc)
+                outcomes[child.case_version_id] = result
                 attempt_id = self._persist_child_result(execution_id, child.id, result)
                 self._dispatch_failure_analysis(
                     execution_id,
@@ -410,7 +442,13 @@ class ExecutionService:
         )
         return True
 
-    def _execute_child(self, execution_id, child, snapshot):
+    def _execute_child(
+        self,
+        execution_id,
+        child,
+        overrides,
+        dependency_overrides,
+    ):
         def phase_callback(phase, payload):
             self.event_stream.append(
                 execution_id,
@@ -418,12 +456,19 @@ class ExecutionService:
                 {"execution_case_id": child.id, **copy.deepcopy(payload)},
             )
 
+        keyword_arguments = {
+            "cancellation_check": lambda _phase: self._is_cancelled(execution_id),
+            "phase_callback": phase_callback,
+        }
+        if dependency_overrides:
+            keyword_arguments["dependency_overrides"] = copy.deepcopy(
+                dependency_overrides
+            )
         return self.executor.execute_case(
             child.case_version_id,
             child.environment_revision_id,
-            copy.deepcopy(snapshot["request"]["overrides"]),
-            cancellation_check=lambda _phase: self._is_cancelled(execution_id),
-            phase_callback=phase_callback,
+            copy.deepcopy(overrides),
+            **keyword_arguments,
         )
 
     def _persist_child_result(self, execution_id, child_id, result):
@@ -590,12 +635,76 @@ class ExecutionService:
             ),
         )
 
+    @staticmethod
+    def _skipped_result(reason):
+        message = str(reason or "required dependency was not satisfied")
+        return CaseExecutionResult(
+            status="SKIPPED",
+            failure_category="dependency",
+            duration_ms=0,
+            sanitized_request={},
+            sanitized_response={},
+            assertion_results=(),
+            extracted_variables={},
+            error_message=message,
+            trace=(
+                {
+                    "phase": "skip",
+                    "status": "SKIPPED",
+                    "failure_category": "dependency",
+                    "skip_reason": message,
+                },
+            ),
+        )
+
+    @classmethod
+    def _dependency_overrides(cls, version_snapshot, outcomes):
+        overrides = {}
+        dependencies = version_snapshot.get("dependencies", ())
+        if not isinstance(dependencies, (list, tuple)):
+            dependencies = ()
+        for dependency in dependencies:
+            if not isinstance(dependency, dict):
+                continue
+            dependency_id = dependency.get("case_version_id")
+            if not isinstance(dependency_id, str) or not dependency_id:
+                continue
+            required = dependency.get("required", True) is not False
+            result = outcomes.get(dependency_id)
+            if result is None or result.status != "PASSED":
+                if required:
+                    status = result.status if result is not None else "MISSING"
+                    return (
+                        overrides,
+                        f"required dependency {dependency_id} finished with {status}",
+                    )
+                continue
+            exported = result.extracted_variables or {}
+            export_names = dependency.get("exports", ())
+            if not isinstance(export_names, (list, tuple)):
+                export_names = ()
+            missing = []
+            for name in export_names:
+                if not isinstance(name, str) or not name:
+                    continue
+                if name not in exported:
+                    missing.append(name)
+                    continue
+                overrides[name] = copy.deepcopy(exported[name])
+            if required and missing:
+                return (
+                    overrides,
+                    "required dependency "
+                    f"{dependency_id} did not export {', '.join(missing)}",
+                )
+        return overrides, ""
+
     def _is_cancelled(self, execution_id):
         with self.session_factory() as session:
             return ExecutionRepository(session).cancellation_requested(execution_id)
 
-    @staticmethod
-    def _validate_snapshot(repository, request):
+    @classmethod
+    def _validate_snapshot(cls, repository, request):
         project = repository.get_project(request["project_id"])
         if project is None:
             raise ValueError("project was not found")
@@ -613,10 +722,11 @@ class ExecutionService:
         )
         if environment is None or environment.project_id != project.id:
             raise ValueError("environment revision does not belong to project")
-        versions_by_id = repository.get_case_versions(request["case_version_ids"])
-        if len(versions_by_id) != len(request["case_version_ids"]):
-            raise ValueError("case version was not found")
-        versions = [versions_by_id[item] for item in request["case_version_ids"]]
+        versions = cls._expand_dependency_versions(
+            repository,
+            request["case_version_ids"],
+        )
+        requested_version_ids = frozenset(request["case_version_ids"])
         cases = repository.get_cases(item.case_id for item in versions)
         endpoints = repository.get_endpoints(item.endpoint_id for item in versions)
         for version in versions:
@@ -627,12 +737,87 @@ class ExecutionService:
                 or case.project_id != project.id
                 or endpoint is None
                 or (
-                    request["execution_type"] != "baseline_regression"
+                    not (
+                        request["execution_type"] == "baseline_regression"
+                        and version.id in requested_version_ids
+                    )
                     and endpoint.revision_id != source_revision.id
                 )
             ):
                 raise ValueError("case version does not match source revision and project")
-        return {"versions": versions, "endpoints": endpoints}
+        return {
+            "versions": versions,
+            "endpoints": endpoints,
+            "requested_version_ids": requested_version_ids,
+        }
+
+    @classmethod
+    def _expand_dependency_versions(cls, repository, requested_ids):
+        cache = repository.get_case_versions(requested_ids)
+        if len(cache) != len(requested_ids):
+            raise ValueError("case version was not found")
+        ordered = []
+        visited = set()
+        visiting = []
+
+        def load(version_id):
+            if version_id not in cache:
+                cache.update(repository.get_case_versions([version_id]))
+            version = cache.get(version_id)
+            if version is None:
+                raise ValueError(f"dependency case version was not found: {version_id}")
+            return version
+
+        def visit(version_id):
+            if version_id in visited:
+                return
+            if version_id in visiting:
+                cycle = visiting[visiting.index(version_id):] + [version_id]
+                raise ValueError(
+                    "cyclic case dependency: " + " -> ".join(cycle)
+                )
+            visiting.append(version_id)
+            version = load(version_id)
+            for dependency in cls._case_dependencies(version):
+                visit(dependency["case_version_id"])
+            visiting.pop()
+            visited.add(version_id)
+            ordered.append(version)
+            if len(ordered) > MAX_EXECUTION_CASES:
+                raise ValueError(
+                    f"expanded case dependencies cannot exceed {MAX_EXECUTION_CASES}"
+                )
+
+        for requested_id in requested_ids:
+            visit(requested_id)
+        return ordered
+
+    @staticmethod
+    def _case_dependencies(version):
+        spec = getattr(version, "dependency_spec", {}) or {}
+        dependencies = spec.get("dependencies", ()) if isinstance(spec, dict) else ()
+        if not isinstance(dependencies, (list, tuple)):
+            raise ValueError("case dependencies must be an array")
+        output = []
+        for dependency in dependencies:
+            if not isinstance(dependency, dict):
+                raise ValueError("case dependency must be an object")
+            identifier = dependency.get("case_version_id")
+            if not isinstance(identifier, str) or not identifier:
+                raise ValueError("case dependency version is required")
+            exports = dependency.get("exports", ())
+            if not isinstance(exports, (list, tuple)):
+                raise ValueError("case dependency exports must be an array")
+            output.append(
+                {
+                    "case_version_id": identifier,
+                    "required": dependency.get("required", True) is not False,
+                    "exports": [
+                        name for name in exports if isinstance(name, str) and name
+                    ],
+                }
+            )
+        return output
 
     @classmethod
     def _repository_view(cls, repository, execution, children):
@@ -684,6 +869,14 @@ class ExecutionService:
         endpoints = display.get("endpoints", {})
         failure_analyses = display.get("failure_analyses", {})
         events = display.get("events", ())
+        snapshot_versions = snapshot.get("case_versions", ()) if isinstance(snapshot, dict) else ()
+        execution_roles = {
+            item.get("id"): item.get("role")
+            for item in snapshot_versions
+            if isinstance(item, dict)
+            and isinstance(item.get("id"), str)
+            and item.get("role") in {"requested", "dependency"}
+        }
         return ExecutionView(
             id=execution.id,
             project_id=execution.project_id,
@@ -709,6 +902,10 @@ class ExecutionService:
                 MappingProxyType({
                     "execution_case_id": item.id,
                     "case_version_id": item.case_version_id,
+                    "execution_role": execution_roles.get(
+                        item.case_version_id,
+                        "requested",
+                    ),
                     "endpoint_id": item.endpoint_id,
                     "case_name": (
                         cases.get(versions[item.case_version_id].case_id).name

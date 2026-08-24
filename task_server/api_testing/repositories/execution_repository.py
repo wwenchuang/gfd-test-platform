@@ -115,7 +115,20 @@ class ExecutionRepository:
             )
         )
 
-    def create_execution(self, request, snapshot, actor_id, idempotency_key):
+    def create_execution(
+        self,
+        request,
+        snapshot,
+        actor_id,
+        idempotency_key,
+        *,
+        expanded_case_count=None,
+    ):
+        case_count = (
+            int(expanded_case_count)
+            if expanded_case_count is not None
+            else len(request["case_version_ids"])
+        )
         record = ApiExecution(
             project_id=request["project_id"],
             source_revision_id=request["source_revision_id"],
@@ -126,10 +139,11 @@ class ExecutionRepository:
             requested_case_ids=copy.deepcopy(request["case_version_ids"]),
             request_snapshot=copy.deepcopy(snapshot),
             summary={
-                "total": len(request["case_version_ids"]),
+                "total": case_count,
                 "passed": 0,
                 "failed": 0,
                 "broken": 0,
+                "skipped": 0,
                 "cancelled": 0,
             },
             **audit_fields(actor_id),
@@ -335,7 +349,13 @@ class ExecutionRepository:
     def finalize_execution(self, execution_id, actor_id):
         execution = self.get_execution(execution_id, for_update=True)
         children = self.get_execution_cases(execution_id, for_update=True)
-        counts = {"passed": 0, "failed": 0, "broken": 0, "cancelled": 0}
+        counts = {
+            "passed": 0,
+            "failed": 0,
+            "broken": 0,
+            "skipped": 0,
+            "cancelled": 0,
+        }
         for child in children:
             key = child.status.lower()
             if key in counts:

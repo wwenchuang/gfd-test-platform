@@ -386,6 +386,29 @@ describe('cases store', () => {
     expect(store.debugResult?.logs.join('\n')).toContain('连接目标服务')
   })
 
+  it('shows the requested debug case instead of an expanded dependency result', async () => {
+    vi.spyOn(apiClient, 'get').mockResolvedValue({ data: { execution: {
+      id: 'execution-1', state: 'DONE', case_statuses: ['PASSED', 'FAILED'], summary: {},
+      case_results: [
+        {
+          execution_case_id: 'dependency-case', case_version_id: 'setup-version', endpoint_id: 'setup-endpoint',
+          execution_role: 'dependency', status: 'PASSED', failure_category: '', duration_ms: 12, sanitized_result: {},
+        },
+        {
+          execution_case_id: 'requested-case', case_version_id: 'target-version', endpoint_id: 'target-endpoint',
+          execution_role: 'requested', status: 'FAILED', failure_category: 'product_assertion', duration_ms: 18,
+          sanitized_result: { error_message: '主体断言失败' },
+        },
+      ],
+    } } })
+    const store = useCasesStore()
+
+    await store.pollExecution('execution-1', { maxAttempts: 1, delayMs: 0 })
+
+    expect(store.debugResult?.executionCaseId).toBe('requested-case')
+    expect(store.debugResult?.logs.join('\n')).toContain('主体断言失败')
+  })
+
   it('keeps a timed-out debug execution resumable instead of starting a duplicate', async () => {
     vi.spyOn(apiClient, 'get').mockResolvedValue({ data: { execution: {
       id: 'execution-1', state: 'RUNNING', case_statuses: ['RUNNING'], case_results: [], summary: {},

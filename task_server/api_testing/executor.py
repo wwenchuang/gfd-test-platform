@@ -238,6 +238,7 @@ class HttpExecutor:
         environment_revision_id,
         overrides,
         *,
+        dependency_overrides=None,
         cancellation_check=None,
         phase_callback=None,
     ):
@@ -259,6 +260,7 @@ class HttpExecutor:
                     break
             variables = copy.deepcopy(dict(overrides or {}))
             variables.update(row_values)
+            variables.update(copy.deepcopy(dict(dependency_overrides or {})))
             self._apply_processing(case.processing.get("pre", []), variables)
             runtime = self.environment_service.resolve_runtime(
                 environment_revision_id, variables, service_name=case.request.get("service", "default")

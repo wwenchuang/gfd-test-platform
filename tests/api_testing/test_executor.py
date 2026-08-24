@@ -117,7 +117,7 @@ def target_server():
         server.server_close()
 
 
-def _case(path="/ok", assertions=None, extractions=None, headers=None):
+def _case(path="/ok", assertions=None, extractions=None, headers=None, data_rows=None):
     return SimpleNamespace(
         id="case-version-1",
         endpoint_id="endpoint-1",
@@ -132,7 +132,7 @@ def _case(path="/ok", assertions=None, extractions=None, headers=None):
             "cookies": {},
             "body": None,
         },
-        data_rows=(),
+        data_rows=tuple(data_rows or ()),
         assertions=tuple(assertions or []),
         extractions=tuple(extractions or []),
         processing={"pre": [], "post": []},
@@ -245,6 +245,23 @@ def test_success_and_truthful_product_statuses(target_server):
     assert assertion_failed.failure_category == "product_assertion"
     assert server_failed.status == "FAILED"
     assert server_failed.failure_category == "product_response"
+
+
+def test_dependency_overrides_take_precedence_over_static_data_rows(target_server):
+    case = _case(
+        "/{{resourceSn}}",
+        data_rows=[SimpleNamespace(enabled=True, values={"resourceSn": "placeholder"})],
+    )
+
+    result = _executor(target_server, case).execute_case(
+        "case-version-1",
+        "environment-revision-1",
+        {},
+        dependency_overrides={"resourceSn": "ok"},
+    )
+
+    assert result.status == "PASSED"
+    assert result.sanitized_request["url"].endswith("/ok")
 
 
 def test_missing_variable_is_broken_before_network(target_server):

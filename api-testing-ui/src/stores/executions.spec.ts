@@ -333,7 +333,7 @@ describe('executions store', () => {
     expect(store.active?.id).toBe('execution-3')
   })
 
-  it('reruns every case from the selected execution record', async () => {
+  it('reruns requested cases without promoting expanded dependencies', async () => {
     const created = {
       id: 'execution-rerun', project_id: 'project-1', state: 'QUEUED', execution_type: 'regression',
       source_revision_id: 'source-1', environment_revision_id: 'environment-1',
@@ -356,8 +356,8 @@ describe('executions store', () => {
       task_name: '收藏接口发版回归',
       case_statuses: ['PASSED', 'FAILED'],
       case_results: [
-        { execution_case_id: 'case-1', case_version_id: 'case-version-1', status: 'PASSED' },
-        { execution_case_id: 'case-2', case_version_id: 'case-version-2', status: 'FAILED' },
+        { execution_case_id: 'case-1', case_version_id: 'case-version-1', execution_role: 'dependency', status: 'PASSED' },
+        { execution_case_id: 'case-2', case_version_id: 'case-version-2', execution_role: 'requested', status: 'FAILED' },
       ],
       summary: {},
       cancellation_requested: false,
@@ -370,7 +370,7 @@ describe('executions store', () => {
       project_id: 'project-1',
       source_revision_id: 'source-1',
       environment_revision_id: 'environment-1',
-      case_version_ids: ['case-version-1', 'case-version-2'],
+      case_version_ids: ['case-version-2'],
       execution_type: 'regression',
       overrides: {},
       idempotency_key: expect.any(String),

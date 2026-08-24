@@ -20,6 +20,66 @@ const DRAFT: CaseDraft = {
 }
 
 describe('CaseEditor', () => {
+  it('selects a dependency from grouped case options instead of requiring a version id', async () => {
+    const wrapper = mount(CaseEditor, {
+      props: {
+        modelValue: DRAFT,
+        dependencyOptions: [{
+          id: 'setup-version-1',
+          name: '添加收藏',
+          group: '我的收藏',
+          method: 'POST',
+          path: '/collection/add',
+          version: 1,
+          exports: ['favoriteSn', 'modelSn'],
+        }],
+      },
+    })
+
+    await wrapper.get('[data-testid="add-dependency"]').trigger('click')
+    await wrapper.get('[data-testid="dependency-case-0"]').setValue('setup-version-1')
+
+    const emitted = wrapper.emitted('update:modelValue')?.at(-1)?.[0] as CaseDraft
+    expect(emitted.dependencies).toEqual([{
+      case_version_id: 'setup-version-1',
+      required: true,
+      exports: ['favoriteSn', 'modelSn'],
+    }])
+    expect(wrapper.text()).toContain('我的收藏')
+    expect(wrapper.text()).toContain('添加收藏')
+  })
+
+  it('allows dependency exports to be selected explicitly', async () => {
+    const draft = {
+      ...DRAFT,
+      dependencies: [{
+        case_version_id: 'setup-version-1',
+        required: true,
+        exports: ['favoriteSn', 'modelSn'],
+      }],
+    }
+    const wrapper = mount(CaseEditor, {
+      props: {
+        modelValue: draft,
+        dependencyOptions: [{
+          id: 'setup-version-1',
+          name: '添加收藏',
+          group: '我的收藏',
+          method: 'POST',
+          path: '/collection/add',
+          version: 1,
+          exports: ['favoriteSn', 'modelSn'],
+        }],
+      },
+    })
+
+    const modelExport = wrapper.get('[data-testid="dependency-export-0-modelSn"]')
+    await modelExport.setValue(false)
+
+    const emitted = wrapper.emitted('update:modelValue')?.at(-1)?.[0] as CaseDraft
+    expect(emitted.dependencies[0].exports).toEqual(['favoriteSn'])
+  })
+
   it('does not publish an empty placeholder when only adding a request header row', async () => {
     const wrapper = mount(CaseEditor, { props: { modelValue: DRAFT } })
 

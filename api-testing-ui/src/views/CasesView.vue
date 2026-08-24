@@ -13,6 +13,7 @@ import { useAssetsStore } from '../stores/assets'
 import { useCasesStore } from '../stores/cases'
 import { useContextStore } from '../stores/context'
 import { useTasksStore } from '../stores/tasks'
+import { buildCaseDependencyOptions } from '../utils/caseDependencyOptions'
 
 const context = useContextStore()
 const assets = useAssetsStore()
@@ -28,6 +29,11 @@ const localError = ref('')
 const activeDraft = computed(() => activeEndpoint.value ? cases.draftFor(activeEndpoint.value) : null)
 const activeVersionId = computed(() => activeEndpoint.value ? cases.activeVersionByEndpoint[activeEndpoint.value.id] || '' : '')
 const allCaseVersions = computed(() => Object.values(cases.versions))
+const dependencyOptions = computed(() => buildCaseDependencyOptions(
+  allCaseVersions.value,
+  assets.endpoints,
+  activeVersionId.value,
+))
 const debugRunning = computed(() => cases.debugPolling)
 const selectedEnvironment = computed(() => context.environmentRevisions.find(item => item.id === context.environmentRevisionId))
 const environmentLabel = computed(() => selectedEnvironment.value
@@ -387,6 +393,7 @@ function defaultTaskName(): string {
           <CaseEditor
             v-if="activeDraft"
             :model-value="activeDraft"
+            :dependency-options="dependencyOptions"
             :saving="cases.saving"
             :saved-message="cases.savedMessage"
             :validation-errors="cases.validationErrors"

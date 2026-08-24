@@ -377,7 +377,9 @@ export const useCasesStore = defineStore('api-cases', {
           if (generation !== this.debugGeneration) return
           this.debugExecution = response.data.execution
           if (TERMINAL_EXECUTION.has(this.debugExecution.state)) {
-            const result = this.debugExecution.case_results[0]
+            const result = this.debugExecution.case_results.find(
+              item => item.execution_role === 'requested',
+            ) || this.debugExecution.case_results[0]
             if (result) this.debugResult = toDebugResult(result)
             this.debugCanResume = false
             return

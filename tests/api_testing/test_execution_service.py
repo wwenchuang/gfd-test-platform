@@ -23,6 +23,7 @@ from task_server.api_testing.models.execution import (
     ApiFailureAnalysis,
 )
 from task_server.api_testing.models.project import ApiProject
+from task_server.api_testing.models.source import ApiSourceEndpoint
 from task_server.api_testing.repositories.execution_repository import ExecutionRepository
 from task_server.api_testing.services.case_service import CaseService
 from task_server.api_testing.services import execution_service as execution_service_module
@@ -210,9 +211,23 @@ class _FakeExecutor:
     def __init__(self, results):
         self.results = list(results)
         self.calls = 0
+        self.case_version_ids = []
+        self.overrides = []
+        self.dependency_overrides = []
 
-    def execute_case(self, *_args, **_kwargs):
+    def execute_case(
+        self,
+        case_version_id,
+        _environment_revision_id,
+        overrides,
+        **kwargs,
+    ):
         self.calls += 1
+        self.case_version_ids.append(case_version_id)
+        self.overrides.append(copy.deepcopy(overrides))
+        self.dependency_overrides.append(
+            copy.deepcopy(kwargs.get("dependency_overrides") or {})
+        )
         return self.results.pop(0)
 
 
@@ -267,7 +282,7 @@ class _PhaseExecutor:
 
 
 class _Result:
-    def __init__(self, status, category=""):
+    def __init__(self, status, category="", extracted_variables=None):
         self.status = status
         self.failure_category = category
         self.duration_ms = 5
@@ -275,7 +290,7 @@ class _Result:
         self.sanitized_response = {"status_code": 200}
         self.assertion_results = ()
         self.error_message = ""
-        self.extracted_variables = {}
+        self.extracted_variables = copy.deepcopy(extracted_variables or {})
         self.trace = ()
 
     def to_dict(self):
@@ -283,7 +298,345 @@ class _Result:
             "status": self.status,
             "failure_category": self.failure_category,
             "duration_ms": self.duration_ms,
+            "extracted_variables": copy.deepcopy(self.extracted_variables),
         }
+
+
+def _create_case_version(session_factory, base_version_id, dependencies=()):
+    with session_factory.begin() as session:
+        original = session.get(ApiCaseVersion, base_version_id)
+        parent = session.get(ApiCase, original.case_id)
+        latest_number = session.scalar(
+            select(func.max(ApiCaseVersion.version_number)).where(
+                ApiCaseVersion.case_id == parent.id
+            )
+        )
+        version = ApiCaseVersion(
+            case_id=parent.id,
+            endpoint_id=original.endpoint_id,
+            version_number=int(latest_number or 0) + 1,
+            status="draft",
+            purpose=original.purpose,
+            priority=original.priority,
+            request_template=copy.deepcopy(original.request_template),
+            dependency_spec={"dependencies": copy.deepcopy(list(dependencies))},
+            processing_spec={"pre": [], "post": []},
+            **_audit(),
+        )
+        session.add(version)
+        session.flush()
+        return version.id
+
+
+def _dependency(case_version_id, *, required=True, exports=()):
+    return {
+        "case_version_id": case_version_id,
+        "required": required,
+        "exports": list(exports),
+    }
+
+
+def test_submit_expands_transitive_dependencies_once_and_marks_execution_roles(
+    session_factory, redis_client, execution_context
+):
+    setup_id = execution_context["case"].id
+    middle_id = _create_case_version(
+        session_factory,
+        setup_id,
+        [_dependency(setup_id, exports=["resourceSn"])],
+    )
+    target_id = _create_case_version(
+        session_factory,
+        setup_id,
+        [
+            _dependency(middle_id, exports=["resourceSn"]),
+            _dependency(setup_id, exports=["resourceSn"]),
+        ],
+    )
+    service = ExecutionService(
+        session_factory,
+        event_stream=EventStream(session_factory, redis_client),
+    )
+
+    execution = service.submit(
+        _request(execution_context, case_version_ids=[target_id]),
+        "admin",
+        "dependency-expansion",
+    )
+
+    assert [item["case_version_id"] for item in execution.case_results] == [
+        setup_id,
+        middle_id,
+        target_id,
+    ]
+    assert [item["execution_role"] for item in execution.case_results] == [
+        "dependency",
+        "dependency",
+        "requested",
+    ]
+    assert execution.summary["total"] == 3
+
+
+def test_submit_rejects_cyclic_case_dependencies(
+    session_factory, redis_client, execution_context
+):
+    first_id = _create_case_version(session_factory, execution_context["case"].id)
+    second_id = _create_case_version(
+        session_factory,
+        execution_context["case"].id,
+        [_dependency(first_id)],
+    )
+    with session_factory.begin() as session:
+        first = session.get(ApiCaseVersion, first_id)
+        first.dependency_spec = {"dependencies": [_dependency(second_id)]}
+    service = ExecutionService(
+        session_factory,
+        event_stream=EventStream(session_factory, redis_client),
+    )
+
+    with pytest.raises(ValueError, match="cyclic"):
+        service.submit(
+            _request(execution_context, case_version_ids=[second_id]),
+            "admin",
+            "dependency-cycle",
+        )
+
+
+class _DependencyGraphRepository:
+    def __init__(self, versions):
+        self.versions = {version.id: version for version in versions}
+
+    def get_case_versions(self, version_ids):
+        return {
+            version_id: self.versions[version_id]
+            for version_id in version_ids
+            if version_id in self.versions
+        }
+
+
+def _graph_version(version_id, dependencies=()):
+    return SimpleNamespace(
+        id=version_id,
+        dependency_spec={"dependencies": list(dependencies)},
+    )
+
+
+def test_dependency_expansion_rejects_missing_version():
+    repository = _DependencyGraphRepository([
+        _graph_version("target", [_dependency("missing")]),
+    ])
+
+    with pytest.raises(ValueError, match="dependency case version was not found: missing"):
+        ExecutionService._expand_dependency_versions(repository, ["target"])
+
+
+def test_dependency_expansion_rejects_more_than_500_cases():
+    dependencies = [_dependency(f"setup-{index}") for index in range(500)]
+    repository = _DependencyGraphRepository([
+        _graph_version("target", dependencies),
+        *(_graph_version(f"setup-{index}") for index in range(500)),
+    ])
+
+    with pytest.raises(ValueError, match="cannot exceed 500"):
+        ExecutionService._expand_dependency_versions(repository, ["target"])
+
+
+def test_baseline_regression_does_not_allow_dependency_from_another_revision(
+    session_factory, redis_client, execution_context
+):
+    source_service = SourceService(session_factory)
+    preview = source_service.preview_refresh(
+        execution_context["project"].id,
+        execution_context["source_revision"].source_id,
+        copy.deepcopy(FAVORITES_OPENAPI),
+        "admin",
+    )
+    new_revision = source_service.activate_preview(preview.id, "admin")
+    with session_factory() as session:
+        new_endpoint = session.scalar(
+            select(ApiSourceEndpoint).where(
+                ApiSourceEndpoint.revision_id == new_revision.id
+            )
+        )
+        new_endpoint_id = new_endpoint.id
+        new_case_payload = valid_list_case(new_endpoint)
+    dependency = CaseService(session_factory).create_draft(
+        new_endpoint_id,
+        new_case_payload,
+        "manual",
+        "admin",
+    )
+    with session_factory.begin() as session:
+        requested = session.get(ApiCaseVersion, execution_context["case"].id)
+        requested.dependency_spec = {
+            "dependencies": [_dependency(dependency.id)],
+        }
+    service = ExecutionService(
+        session_factory,
+        event_stream=EventStream(session_factory, redis_client),
+    )
+
+    with pytest.raises(ValueError, match="does not match source revision"):
+        service.submit(
+            _request(execution_context, execution_type="baseline_regression"),
+            "admin",
+            "cross-revision-baseline-dependency",
+        )
+
+
+def test_dependency_exports_are_allowlisted_and_override_static_values(
+    session_factory, redis_client, execution_context
+):
+    setup_id = execution_context["case"].id
+    target_id = _create_case_version(
+        session_factory,
+        setup_id,
+        [_dependency(setup_id, exports=["resourceSn"])],
+    )
+    executor = _FakeExecutor(
+        [
+            _Result(
+                "PASSED",
+                extracted_variables={
+                    "resourceSn": "real-resource-sn",
+                    "undeclaredSecret": "must-not-propagate",
+                },
+            ),
+            _Result("PASSED"),
+        ]
+    )
+    service = ExecutionService(
+        session_factory,
+        executor=executor,
+        event_stream=EventStream(session_factory, redis_client),
+    )
+    execution = service.submit(
+        _request(
+            execution_context,
+            case_version_ids=[target_id],
+            overrides={"Biz": "ZXB", "resourceSn": "placeholder"},
+        ),
+        "admin",
+        "dependency-exports",
+    )
+
+    assert service.run(execution.id) is True
+    assert executor.case_version_ids == [setup_id, target_id]
+    assert executor.overrides == [
+        {"Biz": "ZXB", "resourceSn": "placeholder"},
+        {"Biz": "ZXB", "resourceSn": "placeholder"},
+    ]
+    assert executor.dependency_overrides == [
+        {},
+        {"resourceSn": "real-resource-sn"},
+    ]
+    assert "undeclaredSecret" not in executor.dependency_overrides[1]
+
+
+def test_required_dependency_failure_skips_dependent_without_request(
+    session_factory, redis_client, execution_context
+):
+    setup_id = execution_context["case"].id
+    target_id = _create_case_version(
+        session_factory,
+        setup_id,
+        [_dependency(setup_id, exports=["resourceSn"])],
+    )
+    executor = _FakeExecutor([_Result("FAILED", "product_assertion")])
+    service = ExecutionService(
+        session_factory,
+        executor=executor,
+        event_stream=EventStream(session_factory, redis_client),
+    )
+    execution = service.submit(
+        _request(execution_context, case_version_ids=[target_id]),
+        "admin",
+        "required-dependency-failure",
+    )
+
+    assert service.run(execution.id) is True
+    terminal = service.get(execution.id)
+    assert executor.case_version_ids == [setup_id]
+    assert terminal.case_statuses == ("FAILED", "SKIPPED")
+    assert terminal.case_results[1]["failure_category"] == "dependency"
+    assert terminal.case_results[1]["sanitized_result"]["error_message"].startswith(
+        "required dependency"
+    )
+    assert terminal.summary == {
+        "total": 2,
+        "passed": 0,
+        "failed": 1,
+        "broken": 0,
+        "skipped": 1,
+        "cancelled": 0,
+    }
+
+
+def test_required_dependency_missing_export_skips_dependent_without_request(
+    session_factory, redis_client, execution_context
+):
+    setup_id = execution_context["case"].id
+    target_id = _create_case_version(
+        session_factory,
+        setup_id,
+        [_dependency(setup_id, exports=["resourceSn"])],
+    )
+    executor = _FakeExecutor([_Result("PASSED")])
+    service = ExecutionService(
+        session_factory,
+        executor=executor,
+        event_stream=EventStream(session_factory, redis_client),
+    )
+    execution = service.submit(
+        _request(execution_context, case_version_ids=[target_id]),
+        "admin",
+        "required-dependency-missing-export",
+    )
+
+    assert service.run(execution.id) is True
+    terminal = service.get(execution.id)
+    assert executor.case_version_ids == [setup_id]
+    assert terminal.case_statuses == ("PASSED", "SKIPPED")
+    assert "did not export resourceSn" in terminal.case_results[1]["sanitized_result"]["error_message"]
+
+
+def test_optional_dependency_failure_does_not_block_dependent(
+    session_factory, redis_client, execution_context
+):
+    setup_id = execution_context["case"].id
+    target_id = _create_case_version(
+        session_factory,
+        setup_id,
+        [_dependency(setup_id, required=False, exports=["resourceSn"])],
+    )
+    executor = _FakeExecutor(
+        [
+            _Result(
+                "FAILED",
+                "product_assertion",
+                extracted_variables={"resourceSn": "must-not-propagate"},
+            ),
+            _Result("PASSED"),
+        ]
+    )
+    service = ExecutionService(
+        session_factory,
+        executor=executor,
+        event_stream=EventStream(session_factory, redis_client),
+    )
+    execution = service.submit(
+        _request(execution_context, case_version_ids=[target_id]),
+        "admin",
+        "optional-dependency-failure",
+    )
+
+    assert service.run(execution.id) is True
+    terminal = service.get(execution.id)
+    assert executor.case_version_ids == [setup_id, target_id]
+    assert executor.overrides[1] == {"Biz": "ZXB"}
+    assert executor.dependency_overrides[1] == {}
+    assert terminal.case_statuses == ("FAILED", "PASSED")
+    assert terminal.summary["skipped"] == 0
 
 
 def test_submit_idempotency_snapshots_and_payload_conflict(
@@ -588,6 +941,7 @@ def test_duplicate_worker_is_compare_and_set_and_summary_keeps_child_truth(
         "passed": 1,
         "failed": 1,
         "broken": 0,
+        "skipped": 0,
         "cancelled": 0,
     }
     assert view.case_statuses == ("PASSED", "FAILED")
@@ -850,6 +1204,7 @@ def test_cancel_intent_is_persistent_and_prevents_request(
         "passed": 0,
         "failed": 0,
         "broken": 0,
+        "skipped": 0,
         "cancelled": 2,
     }
     assert service.run(execution.id) is False

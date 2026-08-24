@@ -34,6 +34,47 @@
 
 ## 最近完成的关键修复
 
+### 2026-08-24 API 用例：依赖编排、真实变量传递与前置失败跳过
+
+本轮针对已保存用例中的 `dependencies` / `extractions` 只落库、不参与执行的问题，补齐从用例设计到执行报告的完整依赖链路。
+
+本轮实现：
+
+- 提交执行时递归展开用例依赖，按稳定拓扑顺序创建执行项；同一前置用例只执行一次。
+- 循环依赖、依赖版本不存在、跨项目/跨源版本和展开后超过 500 条会在创建执行前拒绝，不产生半成品记录。
+- 前置用例仅在 `PASSED` 时导出数据，且只传递当前依赖配置 `exports` 白名单中的提取变量；依赖值在静态数据行之后合并，确保运行时真实值覆盖占位值，未声明变量不会传播。
+- 必需前置失败或缺少必需导出值时，主体用例不发送 HTTP 请求，结果记录为 `SKIPPED / dependency`；可选前置失败不阻断主体。
+- 执行摘要新增 `skipped`，执行结果新增 `execution_role=requested|dependency`；旧执行快照没有角色字段时兼容为 `requested`。
+- 调试结果优先选择主体用例，不再误把第一个前置结果当成调试结论；整单重跑和失败重跑只重新提交主体用例，由后端重新展开依赖，避免前置被重复提交。
+- 用例编辑器将手填依赖版本 ID 改为按自定义用例分组或 Apifox 接口目录组织的已保存用例选择器；选择后默认勾选该用例的提取变量，也可逐项取消。
+- 执行详情用“前置”标记依赖项，并补齐 `SKIPPED` 状态样式。
+- 飞书失败摘要将依赖跳过分类展示为“前置依赖”，不暴露英文内部字段。
+- 基线回归只允许用户明确选择的固定基线跨历史 revision 运行；自动展开的依赖仍必须属于当前 source revision，不能借基线兼容逻辑绕过版本边界。
+- 修正既有分组 HTTP 契约测试：查询 active 用例列表前显式激活目标版本；生产查询仍严格排除未激活草稿。
+
+验证：
+
+```bash
+TEST_DATABASE_URL='postgresql+psycopg://midscene:midscene@127.0.0.1:5432/midscene_api_testing' TEST_REDIS_URL='redis://127.0.0.1:6379/15' .venv/bin/python -m pytest tests/api_testing -q
+# 402 passed
+
+npm --prefix api-testing-ui test -- --run --reporter=basic
+# 39 files / 205 tests passed
+
+npm --prefix api-testing-ui run build
+# vue-tsc + Vite production build passed
+
+.venv/bin/python -m py_compile task_server/api_testing/executor.py task_server/api_testing/repositories/execution_repository.py task_server/api_testing/services/execution_service.py task_server/api_testing/services/notification_service.py
+.venv/bin/python tests/backend_static_checks.py
+# 63 checks passed
+.venv/bin/python tests/frontend_static_checks.py
+# 84 checks passed
+git diff --check
+# passed
+```
+
+边界：本轮没有自动猜测接口业务依赖、没有批量改写历史用例，也没有新增“主体失败后仍必须执行”的清理阶段。清理语义需要独立模型，不能冒充普通前置依赖。
+
 ### 2026-08-24 API 用例生成：基础正向与 AI 共享响应断言策略
 
 用户要求平台后续自行生成用例时，“生成基础正向用例”和“AI 生成测试用例”使用一致的业务响应断言兜底，不能继续依赖模型自觉补充 `$.code` / `$.data`。

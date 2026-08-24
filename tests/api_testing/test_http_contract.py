@@ -294,10 +294,11 @@ def test_execution_collection_is_owner_scoped_and_uses_display_metadata(
         "endpoint_summary": "查询我的收藏",
         "method": "GET",
         "path": "/favorites",
+        "execution_role": "requested",
         "status": "FAILED",
-            "failure_category": "product_assertion",
-            "failure_analysis": None,
-            "duration_ms": 86,
+        "failure_category": "product_assertion",
+        "failure_analysis": None,
+        "duration_ms": 86,
         "sanitized_result": {
             "sanitized_request": {"method": "GET", "url": "https://example.test/favorites"},
             "sanitized_response": {"status_code": 200},
@@ -390,6 +391,8 @@ def test_active_case_versions_are_restored_for_owned_source_revision(
 
 def test_case_version_group_update_is_owner_scoped(http_client, api_context, owned_records):
     version_id = owned_records["version"].id
+    with api_context["factory"].begin() as session:
+        session.get(ApiCase, owned_records["case"].id).active_version_id = version_id
 
     response = http_client.put(
         f"/api/api-testing/v1/case-versions/{version_id}/group",

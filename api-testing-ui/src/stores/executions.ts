@@ -270,13 +270,16 @@ export const useExecutionsStore = defineStore('api-executions', {
     },
     async rerunFailed(execution: ExecutionView): Promise<ExecutionView | null> {
       const caseIds = execution.case_results
-        .filter(item => !['PASSED', 'SKIPPED', 'CANCELLED'].includes(item.status))
+        .filter(item => item.execution_role !== 'dependency' && !['PASSED', 'CANCELLED'].includes(item.status))
         .map(item => item.case_version_id)
       if (!caseIds.length) return null
       return await this.createRerun(execution, caseIds)
     },
     async rerunExecution(execution: ExecutionView): Promise<ExecutionView | null> {
-      const caseIds = execution.case_results.map(item => item.case_version_id).filter(Boolean)
+      const caseIds = execution.case_results
+        .filter(item => item.execution_role !== 'dependency')
+        .map(item => item.case_version_id)
+        .filter(Boolean)
       if (!caseIds.length) return null
       return await this.createRerun(execution, caseIds)
     },
