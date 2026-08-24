@@ -2,18 +2,19 @@
 import { computed, ref, watch } from 'vue'
 import { Code2, List, Plus, Trash2 } from 'lucide-vue-next'
 
-import type { CaseDependencyOption, CaseDraft } from '../api/contracts'
+import type { ApiEndpoint, CaseDependencyOption, CaseDraft, InlineWorkflowStep } from '../api/contracts'
 import { validateCaseDraftLocally } from '../utils/caseDraftValidation'
+import InlineWorkflowStepEditor from './InlineWorkflowStepEditor.vue'
 
 type RequestMapField = 'headers' | 'query' | 'path_params' | 'cookies'
 type ProcessingPhase = 'pre' | 'post'
 
-const props = withDefaults(defineProps<{ modelValue: CaseDraft; validationErrors?: Record<string, string>; validationWarnings?: Record<string, string>; saving?: boolean; savedMessage?: string; dependencyOptions?: CaseDependencyOption[] }>(), {
-  validationErrors: () => ({}), validationWarnings: () => ({}), saving: false, savedMessage: '', dependencyOptions: () => [],
+const props = withDefaults(defineProps<{ modelValue: CaseDraft; validationErrors?: Record<string, string>; validationWarnings?: Record<string, string>; saving?: boolean; savedMessage?: string; dependencyOptions?: CaseDependencyOption[]; endpointOptions?: ApiEndpoint[] }>(), {
+  validationErrors: () => ({}), validationWarnings: () => ({}), saving: false, savedMessage: '', dependencyOptions: () => [], endpointOptions: () => [],
 })
 const emit = defineEmits<{ 'update:modelValue': [draft: CaseDraft]; save: [] }>()
 const mode = ref<'structured' | 'raw'>('structured')
-const local = ref<CaseDraft>(clone(props.modelValue))
+const local = ref<CaseDraft>(normalizeDraft(props.modelValue))
 const raw = ref(JSON.stringify(local.value, null, 2))
 const rawError = ref('')
 const bodyText = ref(JSON.stringify(local.value.request.body, null, 2))
@@ -68,7 +69,7 @@ function missingRequestMessages(field: RequestMapField): Array<[string, string]>
 
 watch(() => props.modelValue, value => {
   if (JSON.stringify(value) !== JSON.stringify(local.value)) {
-    local.value = clone(value)
+    local.value = normalizeDraft(value)
     raw.value = JSON.stringify(value, null, 2)
     bodyText.value = JSON.stringify(value.request.body, null, 2)
     bodyError.value = ''
@@ -231,6 +232,11 @@ function addProcessing(phase: ProcessingPhase): void {
   publish()
 }
 
+function updateWorkflowSteps(phase: 'setup_steps' | 'cleanup_steps', steps: InlineWorkflowStep[]): void {
+  local.value.processing[phase] = steps
+  publish()
+}
+
 function changeProcessing(action: Record<string, unknown>): void {
   const type = String(action.action)
   for (const key of ['name', 'value', 'source', 'target']) delete action[key]
@@ -244,7 +250,7 @@ function applyRaw(): void {
   try {
     const parsed = JSON.parse(raw.value) as CaseDraft
     if (!parsed.request || typeof parsed.request !== 'object') throw new Error('missing request')
-    local.value = parsed
+    local.value = normalizeDraft(parsed)
     bodyText.value = JSON.stringify(parsed.request.body, null, 2)
     rawError.value = ''
     publish()
@@ -271,6 +277,17 @@ function renderValue(value: unknown): string {
 function clone(value: CaseDraft): CaseDraft {
   return JSON.parse(JSON.stringify(value)) as CaseDraft
 }
+
+function normalizeDraft(value: CaseDraft): CaseDraft {
+  const draft = clone(value)
+  draft.processing = {
+    pre: draft.processing?.pre || [],
+    post: draft.processing?.post || [],
+    setup_steps: draft.processing?.setup_steps || [],
+    cleanup_steps: draft.processing?.cleanup_steps || [],
+  }
+  return draft
+}
 </script>
 
 <template>
@@ -287,7 +304,11 @@ function clone(value: CaseDraft): CaseDraft {
       <div class="form-grid"><label>用例名称<input v-model="local.name" data-testid="case-name" @input="publish" /></label><label>优先级<select v-model="local.priority" @change="publish"><option v-for="priority in ['P0','P1','P2','P3']" :key="priority">{{ priority }}</option></select></label></div>
       <label>测试目的<textarea v-model="local.purpose" rows="2" @input="publish" /></label>
 
-      <fieldset><legend>请求</legend><div class="form-grid request-line"><label>方法<select v-model="local.request.method" @change="publish"><option v-for="method in ['GET','POST','PUT','PATCH','DELETE','HEAD','OPTIONS']" :key="method">{{ method }}</option></select></label><label class="grow">路径<input v-model="local.request.path" @input="publish" /><small v-if="validationErrors['request.path']" data-error-for="request.path" class="field-error">{{ validationErrors['request.path'] }}</small></label><label>服务<input v-model="local.request.service" @input="publish" /></label></div></fieldset>
+      <InlineWorkflowStepEditor :model-value="local.processing.setup_steps || []" stage="setup" :endpoint-options="endpointOptions" :validation-errors="validationErrors" @update:model-value="updateWorkflowSteps('setup_steps', $event)" />
+
+      <div class="workflow-main-heading"><span>主体请求</span><small>验证目标接口的真实业务结果，并将响应变量传给清理步骤。</small></div>
+
+      <fieldset><legend>主体请求配置</legend><div class="form-grid request-line"><label>方法<select v-model="local.request.method" @change="publish"><option v-for="method in ['GET','POST','PUT','PATCH','DELETE','HEAD','OPTIONS']" :key="method">{{ method }}</option></select></label><label class="grow">路径<input v-model="local.request.path" @input="publish" /><small v-if="validationErrors['request.path']" data-error-for="request.path" class="field-error">{{ validationErrors['request.path'] }}</small></label><label>服务<input v-model="local.request.service" @input="publish" /></label></div></fieldset>
 
       <div class="structured-grid">
         <fieldset v-for="section in requestSections" :key="section.field" class="row-editor"><legend>{{ section.label }}</legend>
@@ -335,7 +356,9 @@ function clone(value: CaseDraft): CaseDraft {
         <div v-for="(extraction, index) in local.extractions" :key="index" class="extraction-row"><label>变量名<input v-model="extraction.target" @input="publish" /></label><label>来源<select v-model="extraction.type" @change="publish"><option value="json_path">JSON Path</option><option value="header">响应头</option><option value="cookie">Cookie</option><option value="status_code">状态码</option></select></label><label v-if="extraction.type === 'json_path'">路径<input v-model="extraction.path" @input="publish" /></label><label v-else-if="['header','cookie'].includes(String(extraction.type))">名称<input v-model="extraction.name" @input="publish" /></label><label class="toggle-line"><input v-model="extraction.required" type="checkbox" @change="publish" />必需</label><button class="mini-icon danger" type="button" title="删除提取" @click="local.extractions.splice(index, 1); publish()"><Trash2 :size="14" /></button><small v-for="([field, message]) in validationMessages(`extractions[${index}]`, validationErrors)" :key="field" :data-error-for="field" class="field-error row-feedback">{{ message }}</small><small v-for="([field, message]) in validationMessages(`extractions[${index}]`, validationWarnings)" :key="field" :data-warning-for="field" class="field-warning row-feedback">{{ message }}</small></div>
       </section>
 
-      <details class="advanced-editor"><summary>依赖与前后置处理</summary>
+      <InlineWorkflowStepEditor :model-value="local.processing.cleanup_steps || []" stage="cleanup" :endpoint-options="endpointOptions" :validation-errors="validationErrors" @update:model-value="updateWorkflowSteps('cleanup_steps', $event)" />
+
+      <details class="advanced-editor"><summary>共享用例依赖与变量处理</summary>
         <section class="editor-section">
           <div class="section-heading"><strong>用例依赖</strong><button data-testid="add-dependency" class="mini-icon" type="button" title="添加依赖" @click="addDependency"><Plus :size="14" /></button></div>
           <p v-if="!local.dependencies.length" class="compact-empty">添加前置用例后，可将其响应变量用于当前请求。</p>

@@ -10,7 +10,7 @@ import re
 import socket
 import ssl
 import time
-from types import MappingProxyType
+from types import MappingProxyType, SimpleNamespace
 from urllib.parse import urlencode, urljoin, urlsplit, urlunsplit
 
 from .assertions import (
@@ -117,6 +117,18 @@ class HttpResponseData:
     json_body: object
     duration_ms: int
     url: str
+
+
+@dataclass(frozen=True, repr=False)
+class _HttpStepOutcome:
+    status: str
+    failure_category: str
+    request: dict
+    response: dict
+    assertions: tuple
+    extracted: dict
+    error: str
+    secrets: tuple
 
 
 @dataclass(frozen=True, repr=False)
@@ -262,20 +274,203 @@ class HttpExecutor:
             variables.update(row_values)
             variables.update(copy.deepcopy(dict(dependency_overrides or {})))
             self._apply_processing(case.processing.get("pre", []), variables)
+            setup_steps = tuple(case.processing.get("setup_steps", []))
+            cleanup_steps = tuple(case.processing.get("cleanup_steps", []))
+            has_workflow = bool(setup_steps or cleanup_steps)
+            setup_failure = None
+            all_secrets = []
+
+            for index, step in enumerate(setup_steps):
+                if not step.get("enabled", True):
+                    continue
+                missing = self._missing_step_variables(step, variables)
+                if missing:
+                    self._emit_skipped_step(
+                        callback, trace, "setup", index, step, missing
+                    )
+                    setup_failure = _HttpStepOutcome(
+                        "BROKEN",
+                        "environment",
+                        {},
+                        {},
+                        (),
+                        {},
+                        "required workflow variables are missing: "
+                        + ", ".join(missing),
+                        (),
+                    )
+                    break
+                outcome = self._execute_http_step(
+                    step["request"],
+                    step.get("assertions", []),
+                    step.get("extractions", []),
+                    environment_revision_id,
+                    variables,
+                    cancel,
+                    callback,
+                    trace,
+                    record_main_phases=False,
+                )
+                all_secrets.extend(outcome.secrets)
+                variables.update(copy.deepcopy(outcome.extracted))
+                self._emit_workflow_step(
+                    callback, trace, "setup", index, step, outcome
+                )
+                if outcome.status != "PASSED":
+                    setup_failure = outcome
+                    break
+
+            main_outcome = None
+            if setup_failure is None:
+                main_outcome = self._execute_http_step(
+                    case.request,
+                    case.assertions,
+                    case.extractions,
+                    environment_revision_id,
+                    variables,
+                    cancel,
+                    callback,
+                    trace,
+                    record_main_phases=True,
+                )
+                all_secrets.extend(main_outcome.secrets)
+                variables.update(copy.deepcopy(main_outcome.extracted))
+                extracted = copy.deepcopy(main_outcome.extracted)
+                self._apply_processing(case.processing.get("post", []), extracted)
+                request_view = main_outcome.request
+                response_view = main_outcome.response
+                assertion_results = main_outcome.assertions
+                if has_workflow:
+                    self._emit_workflow_step(
+                        callback,
+                        trace,
+                        "main",
+                        0,
+                        {"name": "主体请求"},
+                        main_outcome,
+                    )
+
+            cleanup_problem = None
+            for index, step in enumerate(cleanup_steps):
+                if not step.get("enabled", True):
+                    continue
+                missing = self._missing_step_variables(step, variables)
+                if missing:
+                    self._emit_skipped_step(
+                        callback, trace, "cleanup", index, step, missing
+                    )
+                    if cleanup_problem is None:
+                        cleanup_problem = _HttpStepOutcome(
+                            "FAILED",
+                            "cleanup",
+                            {},
+                            {},
+                            (),
+                            {},
+                            "required cleanup variables are missing: "
+                            + ", ".join(missing),
+                            (),
+                        )
+                    continue
+                outcome = self._execute_http_step(
+                    step["request"],
+                    step.get("assertions", []),
+                    step.get("extractions", []),
+                    environment_revision_id,
+                    variables,
+                    lambda _phase: False,
+                    callback,
+                    trace,
+                    record_main_phases=False,
+                )
+                all_secrets.extend(outcome.secrets)
+                variables.update(copy.deepcopy(outcome.extracted))
+                self._emit_workflow_step(
+                    callback, trace, "cleanup", index, step, outcome
+                )
+                if outcome.status != "PASSED" and cleanup_problem is None:
+                    cleanup_problem = outcome
+
+            secrets = tuple(dict.fromkeys(all_secrets))
+            if setup_failure is not None:
+                if setup_failure.status == "CANCELLED":
+                    status, category = "CANCELLED", "cancelled"
+                else:
+                    status = "FAILED" if setup_failure.status == "FAILED" else "BROKEN"
+                    category = "setup"
+                error = setup_failure.error
+                if not request_view:
+                    request_view = setup_failure.request
+                    response_view = setup_failure.response
+            elif main_outcome is not None:
+                status = main_outcome.status
+                category = main_outcome.failure_category
+                error = main_outcome.error
+            else:
+                status, category, error = "BROKEN", "setup", "main request was not executed"
+            if cleanup_problem is not None and status == "PASSED":
+                status, category, error = "FAILED", "cleanup", cleanup_problem.error
+            return self._result(
+                started,
+                status,
+                category,
+                request_view,
+                response_view,
+                assertion_results,
+                extracted,
+                error,
+                trace,
+                secrets,
+            )
+        except Exception as exc:
+            return self._failure_result(callback, started, "BROKEN", "environment", request_view, response_view, (), {}, str(exc), trace, secrets)
+
+    def _execute_http_step(
+        self,
+        request,
+        assertions,
+        extractions,
+        environment_revision_id,
+        variables,
+        cancel,
+        callback,
+        trace,
+        *,
+        record_main_phases,
+    ):
+        request_view = {}
+        response_view = {}
+        assertion_results = ()
+        extracted = {}
+        secrets = ()
+        try:
+            request = dict(request)
+            assertion_views = self._object_views(assertions)
+            extraction_views = self._object_views(extractions)
             runtime = self.environment_service.resolve_runtime(
-                environment_revision_id, variables, service_name=case.request.get("service", "default")
+                environment_revision_id,
+                variables,
+                service_name=request.get("service", "default"),
             )
             secrets = tuple(runtime.secrets.values())
-            rendered = {
-                key: runtime.render(value) for key, value in dict(case.request).items()
-            }
-            path = self._render_path(rendered["path"], rendered.get("path_params", {}))
+            rendered = {key: runtime.render(value) for key, value in request.items()}
+            path = self._render_path(
+                rendered["path"], rendered.get("path_params", {})
+            )
             base_url = runtime.base_url_for(rendered.get("service", "default"))
             url = urljoin(base_url.rstrip("/") + "/", path.lstrip("/"))
             query = rendered.get("query") or {}
             if query:
                 parsed = urlsplit(url)
-                url = urlunsplit((parsed.scheme, parsed.netloc, parsed.path, urlencode(query, doseq=True), ""))
+                url = urlunsplit(
+                    (
+                        parsed.scheme,
+                        parsed.netloc,
+                        parsed.path,
+                        urlencode(query, doseq=True),
+                        "",
+                    )
+                )
             headers = dict(runtime.headers)
             headers.update(
                 {
@@ -287,18 +482,30 @@ class HttpExecutor:
             )
             cookies = rendered.get("cookies") or {}
             if cookies:
-                headers["Cookie"] = "; ".join(f"{key}={value}" for key, value in cookies.items())
+                headers["Cookie"] = "; ".join(
+                    f"{key}={value}" for key, value in cookies.items()
+                )
             body = rendered.get("body")
             body_bytes = None
             if body is not None:
-                body_bytes = json.dumps(body, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+                body_bytes = json.dumps(
+                    body, ensure_ascii=False, separators=(",", ":")
+                ).encode("utf-8")
                 headers.setdefault("Content-Type", "application/json")
             request_view = redact(
-                {"method": rendered["method"], "url": url, "headers": headers, "body": body},
+                {
+                    "method": rendered["method"],
+                    "url": url,
+                    "headers": headers,
+                    "body": body,
+                },
                 secrets,
             )
             self._check_cancel("before_request", cancel)
-            self._emit_phase(callback, trace, "request", {"request": request_view})
+            if record_main_phases:
+                self._emit_phase(
+                    callback, trace, "request", {"request": request_view}
+                )
             response = self._request(rendered["method"], url, headers, body_bytes)
             response_secrets = tuple(
                 dict.fromkeys(
@@ -308,6 +515,7 @@ class HttpExecutor:
                     + discover_sensitive_values(response.cookies, "cookie")
                 )
             )
+            secrets = response_secrets
             sanitized_body = (
                 json.dumps(
                     redact(response.json_body, response_secrets),
@@ -327,43 +535,45 @@ class HttpExecutor:
                 },
                 response_secrets,
             )
-            self._emit_phase(
-                callback, trace, "response", {"response": response_view}
-            )
-            self._check_cancel("after_response", cancel)
-            if case.extractions:
-                extracted = redact(
-                    extract_values(case.extractions, response), response_secrets
-                )
+            if record_main_phases:
                 self._emit_phase(
-                    callback,
-                    trace,
-                    "extraction",
-                    {"variables": extracted},
+                    callback, trace, "response", {"response": response_view}
                 )
+            self._check_cancel("after_response", cancel)
+            if extraction_views:
+                extracted = extract_values(extraction_views, response)
+                if record_main_phases:
+                    self._emit_phase(
+                        callback,
+                        trace,
+                        "extraction",
+                        {"variables": redact(extracted, response_secrets)},
+                    )
             self._check_cancel("before_assertion", cancel)
-            if case.assertions:
-                raw_assertion_results = evaluate_assertions(case.assertions, response)
+            if assertion_views:
+                raw_assertion_results = evaluate_assertions(
+                    assertion_views, response
+                )
                 assertion_results = tuple(
                     redact(asdict(item), response_secrets)
                     for item in raw_assertion_results
                 )
-                self._emit_phase(
-                    callback,
-                    trace,
-                    "assertion",
-                    {
-                        "count": len(assertion_results),
-                        "results": assertion_results,
-                    },
-                )
-            self._apply_processing(case.processing.get("post", []), extracted)
+                if record_main_phases:
+                    self._emit_phase(
+                        callback,
+                        trace,
+                        "assertion",
+                        {
+                            "count": len(assertion_results),
+                            "results": assertion_results,
+                        },
+                    )
             assertion_failed = any(
                 not item["passed"] for item in assertion_results
             )
             has_status_assertion = any(
                 item.enabled and item.type == "status_code"
-                for item in case.assertions
+                for item in assertion_views
             )
             if assertion_failed:
                 status, category = "FAILED", "product_assertion"
@@ -371,25 +581,108 @@ class HttpExecutor:
                 status, category = "FAILED", "product_response"
             else:
                 status, category = "PASSED", ""
-            return self._result(started, status, category, request_view, response_view, assertion_results, extracted, "", trace, response_secrets)
-        except CancelledExecution:
-            return self._failure_result(callback, started, "CANCELLED", "cancelled", request_view, response_view, assertion_results, extracted, "cancelled", trace, secrets)
-        except HostPolicyError as exc:
-            return self._failure_result(callback, started, "BROKEN", "host_policy", request_view, response_view, (), {}, str(exc), trace, secrets)
-        except RedirectLimitError as exc:
-            return self._failure_result(callback, started, "BROKEN", "redirect_limit", request_view, response_view, (), {}, str(exc), trace, secrets)
-        except ResponseLimitError as exc:
-            return self._failure_result(callback, started, "BROKEN", "response_limit", request_view, response_view, (), {}, str(exc), trace, secrets)
-        except (socket.timeout, RequestTimeoutError) as exc:
-            return self._failure_result(callback, started, "BROKEN", "timeout", request_view, response_view, (), {}, str(exc) or "request deadline exceeded", trace, secrets)
-        except (ConnectionError, http.client.HTTPException, OSError) as exc:
-            return self._failure_result(callback, started, "BROKEN", "transport", request_view, response_view, (), {}, str(exc), trace, secrets)
-        except (JsonPathError, json.JSONDecodeError) as exc:
-            return self._failure_result(callback, started, "BROKEN", "parser", request_view, response_view, (), {}, str(exc), trace, secrets)
-        except AssertionDefinitionError as exc:
-            return self._failure_result(callback, started, "BROKEN", "assertion_definition", request_view, response_view, (), {}, str(exc), trace, secrets)
+            return _HttpStepOutcome(
+                status,
+                category,
+                request_view,
+                response_view,
+                assertion_results,
+                extracted,
+                "",
+                response_secrets,
+            )
         except Exception as exc:
-            return self._failure_result(callback, started, "BROKEN", "environment", request_view, response_view, (), {}, str(exc), trace, secrets)
+            status, category, error = self._exception_details(exc)
+            return _HttpStepOutcome(
+                status,
+                category,
+                request_view,
+                response_view,
+                assertion_results,
+                extracted,
+                error,
+                secrets,
+            )
+
+    @staticmethod
+    def _object_views(items):
+        return tuple(
+            item
+            if hasattr(item, "type")
+            else SimpleNamespace(**copy.deepcopy(dict(item)))
+            for item in items
+        )
+
+    @staticmethod
+    def _missing_step_variables(step, variables):
+        return sorted(
+            name
+            for name in step.get("required_variables", [])
+            if name not in variables
+        )
+
+    @classmethod
+    def _emit_workflow_step(cls, callback, trace, stage, index, step, outcome):
+        cls._emit_phase(
+            callback,
+            trace,
+            "workflow_step",
+            {
+                "stage": stage,
+                "index": index,
+                "name": step.get("name", "主体请求"),
+                "status": outcome.status,
+                "failure_category": outcome.failure_category,
+                "request": copy.deepcopy(outcome.request),
+                "response": copy.deepcopy(outcome.response),
+                "assertions": copy.deepcopy(list(outcome.assertions)),
+                "extracted_variables": redact(
+                    outcome.extracted, outcome.secrets
+                ),
+                "error_message": redact(outcome.error, outcome.secrets),
+            },
+        )
+
+    @classmethod
+    def _emit_skipped_step(cls, callback, trace, stage, index, step, missing):
+        cls._emit_phase(
+            callback,
+            trace,
+            "workflow_step",
+            {
+                "stage": stage,
+                "index": index,
+                "name": step.get("name", "未命名步骤"),
+                "status": "SKIPPED",
+                "failure_category": "missing_variables",
+                "missing_variables": list(missing),
+                "request": {},
+                "response": {},
+                "assertions": [],
+                "extracted_variables": {},
+                "error_message": "required workflow variables are missing",
+            },
+        )
+
+    @staticmethod
+    def _exception_details(exc):
+        if isinstance(exc, CancelledExecution):
+            return "CANCELLED", "cancelled", "cancelled"
+        if isinstance(exc, HostPolicyError):
+            return "BROKEN", "host_policy", str(exc)
+        if isinstance(exc, RedirectLimitError):
+            return "BROKEN", "redirect_limit", str(exc)
+        if isinstance(exc, ResponseLimitError):
+            return "BROKEN", "response_limit", str(exc)
+        if isinstance(exc, (socket.timeout, RequestTimeoutError)):
+            return "BROKEN", "timeout", str(exc) or "request deadline exceeded"
+        if isinstance(exc, (ConnectionError, http.client.HTTPException, OSError)):
+            return "BROKEN", "transport", str(exc)
+        if isinstance(exc, (JsonPathError, json.JSONDecodeError)):
+            return "BROKEN", "parser", str(exc)
+        if isinstance(exc, AssertionDefinitionError):
+            return "BROKEN", "assertion_definition", str(exc)
+        return "BROKEN", "environment", str(exc)
 
     def _request(self, method, initial_url, headers, body):
         network_started = time.monotonic()

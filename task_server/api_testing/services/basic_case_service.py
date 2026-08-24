@@ -9,6 +9,13 @@ from ..repositories.ai_job_repository import AiJobRepository
 from .ai_service import AiCaseService, SENSITIVE_KEY
 from .case_service import CaseService
 from .response_assertion_policy import ResponseAssertionPolicy
+from .workflow_policy import (
+    PRINT_TASK_VARIABLE_NAMES,
+    classify_endpoint_workflow,
+    is_print_cancel_step,
+    is_print_cancel_endpoint,
+    is_print_dispatch_endpoint,
+)
 
 
 _MISSING = object()
@@ -22,19 +29,25 @@ class BasicCaseService:
         self.session_factory = session_factory
 
     def preview(self, endpoint_ids, environment_revision_id, actor_id):
-        ordered_endpoints, environment_revision, variables = self._generation_context(
+        ordered_endpoints, environment_revision, variables, endpoint_catalog = self._generation_context(
             endpoint_ids,
             environment_revision_id,
         )
         previews = []
         for endpoint in ordered_endpoints:
-            payload = self.build_case_payload(endpoint, environment_revision, variables)
+            payload = self.build_case_payload(
+                endpoint,
+                environment_revision,
+                variables,
+                endpoint_catalog=endpoint_catalog,
+            )
             AiCaseService._assert_no_literal_secrets(payload)
             previews.append(
                 {
                     "id": f"basic-positive-{endpoint.id}",
                     "endpoint_id": endpoint.id,
                     "origin": "imported",
+                    "workflow": classify_endpoint_workflow(endpoint),
                     "case": payload,
                 }
             )
@@ -83,25 +96,25 @@ class BasicCaseService:
             if environment is None or environment.project_id != source.project_id:
                 raise ValueError("environment and endpoints must belong to the same project")
             variables = repository.get_environment_variables(environment_revision.id)
-        return ordered_endpoints, environment_revision, variables
+            endpoint_catalog = repository.get_revision_endpoints(source_revision.id)
+        return ordered_endpoints, environment_revision, variables, endpoint_catalog
 
     @classmethod
-    def build_case_payload(cls, endpoint, environment_revision, environment_variables):
+    def build_case_payload(
+        cls,
+        endpoint,
+        environment_revision,
+        environment_variables,
+        *,
+        endpoint_catalog=(),
+    ):
         operation = endpoint.operation if isinstance(endpoint.operation, Mapping) else {}
-        request = {
-            "method": str(endpoint.method).upper(),
-            "path": str(endpoint.path),
-            "service": "default",
-            "path_params": {},
-            "query": {},
-            "headers": cls._runtime_headers(operation, environment_revision, environment_variables),
-            "cookies": {},
-            "body": cls._request_body(operation, environment_variables),
-        }
-        cls._complete_parameters(request, operation)
+        request = cls._request_for_endpoint(
+            endpoint, environment_revision, environment_variables
+        )
         assertions = cls._assertions(operation)
         title = str(getattr(endpoint, "summary", "") or "").strip() or f"{request['method']} {request['path']}"
-        return {
+        payload = {
             "name": f"{title[:260]} - 基础正向流程",
             "purpose": f"验证{title}接口在平台环境鉴权与基础参数下可以成功返回",
             "priority": "P1",
@@ -110,8 +123,237 @@ class BasicCaseService:
             "assertions": assertions,
             "extractions": [],
             "dependencies": [],
-            "processing": {"pre": [], "post": []},
+            "processing": {
+                "pre": [],
+                "post": [],
+                "setup_steps": [],
+                "cleanup_steps": [],
+            },
         }
+        cls._apply_print_cleanup_policy(
+            payload,
+            endpoint,
+            endpoint_catalog,
+            environment_revision,
+            environment_variables,
+        )
+        return payload
+
+    @classmethod
+    def _request_for_endpoint(
+        cls, endpoint, environment_revision, environment_variables
+    ):
+        operation = endpoint.operation if isinstance(endpoint.operation, Mapping) else {}
+        request = {
+            "method": str(endpoint.method).upper(),
+            "path": str(endpoint.path),
+            "service": "default",
+            "path_params": {},
+            "query": {},
+            "headers": cls._runtime_headers(
+                operation, environment_revision, environment_variables
+            ),
+            "cookies": {},
+            "body": cls._request_body(operation, environment_variables),
+        }
+        cls._complete_parameters(request, operation)
+        return request
+
+    @classmethod
+    def _apply_print_cleanup_policy(
+        cls,
+        payload,
+        endpoint,
+        endpoint_catalog,
+        environment_revision,
+        environment_variables,
+    ):
+        if not is_print_dispatch_endpoint(endpoint):
+            return
+        processing = payload.setdefault("processing", {})
+        processing.setdefault("pre", [])
+        processing.setdefault("post", [])
+        processing.setdefault("setup_steps", [])
+        cleanup_steps = processing.setdefault("cleanup_steps", [])
+        existing_targets = [
+            item
+            for item in payload.setdefault("extractions", [])
+            if isinstance(item, Mapping)
+            and item.get("target") in PRINT_TASK_VARIABLE_NAMES
+            and isinstance(item.get("path"), str)
+            and item["path"].startswith("$")
+        ]
+        if existing_targets and any(
+            is_print_cancel_step(step, {item["target"] for item in existing_targets})
+            for step in cleanup_steps
+        ):
+            return
+        cancel_endpoint = cls._select_print_cancel_endpoint(
+            endpoint, endpoint_catalog
+        )
+        task_binding = (
+            (existing_targets[0]["target"], existing_targets[0]["path"])
+            if existing_targets
+            else cls._print_task_binding(
+                endpoint.operation if isinstance(endpoint.operation, Mapping) else {}
+            )
+        )
+        if cancel_endpoint is None or task_binding is None:
+            return
+        target, path = task_binding
+        cancel_request = cls._request_for_endpoint(
+            cancel_endpoint, environment_revision, environment_variables
+        )
+        if not cls._bind_print_task(cancel_request, target):
+            return
+        cancel_operation = (
+            cancel_endpoint.operation
+            if isinstance(cancel_endpoint.operation, Mapping)
+            else {}
+        )
+        if not existing_targets:
+            payload["extractions"].append(
+                {
+                    "target": target,
+                    "type": "json_path",
+                    "path": path,
+                    "required": True,
+                }
+            )
+        cleanup_steps.append(
+            {
+                "name": "取消本次打印",
+                "enabled": True,
+                "request": cancel_request,
+                "assertions": cls._assertions(cancel_operation),
+                "extractions": [],
+                "required_variables": [target],
+            }
+        )
+        payload["purpose"] += "；下发成功后使用本次响应任务标识取消打印并校验取消结果"
+
+    @staticmethod
+    def _select_print_cancel_endpoint(endpoint, endpoint_catalog):
+        candidates = [
+            item
+            for item in endpoint_catalog or ()
+            if getattr(item, "id", None) != getattr(endpoint, "id", None)
+            and is_print_cancel_endpoint(item)
+        ]
+        if not candidates:
+            return None
+        parent = str(getattr(endpoint, "path", "") or "").rstrip("/").rsplit("/", 1)[0]
+        exact = [
+            item
+            for item in candidates
+            if str(getattr(item, "path", "") or "").rstrip("/").rsplit("/", 1)[0]
+            == parent
+            and str(getattr(item, "path", "") or "").rstrip("/").rsplit("/", 1)[-1].lower()
+            in {"cancel", "stop", "terminate"}
+        ]
+        if len(exact) == 1:
+            return exact[0]
+        return candidates[0] if len(candidates) == 1 else None
+
+    @classmethod
+    def _print_task_binding(cls, operation):
+        media = cls._success_response_media(operation)
+        if not isinstance(media, Mapping):
+            return None
+        examples = []
+        if "example" in media:
+            examples.append(media["example"])
+        media_examples = media.get("examples")
+        if isinstance(media_examples, Mapping):
+            for item in media_examples.values():
+                if isinstance(item, Mapping) and "value" in item:
+                    examples.append(item["value"])
+        for example in examples:
+            found = cls._find_named_path(example, PRINT_TASK_VARIABLE_NAMES)
+            if found is not None:
+                return found
+        schema = cls._resolve_schema(media.get("schema"), operation)
+        return cls._find_schema_path(schema, PRINT_TASK_VARIABLE_NAMES, operation)
+
+    @classmethod
+    def _success_response_media(cls, operation):
+        responses = operation.get("responses")
+        if not isinstance(responses, Mapping):
+            return None
+        ordered = sorted(
+            (
+                (str(status), response)
+                for status, response in responses.items()
+                if str(status).isdigit() and 200 <= int(status) < 300
+            ),
+            key=lambda item: int(item[0]),
+        )
+        for _status, response in ordered:
+            response = cls._resolve_reference(response, operation)
+            content = response.get("content") if isinstance(response, Mapping) else None
+            if not isinstance(content, Mapping):
+                continue
+            media = cls._preferred_media(content)
+            if isinstance(media, Mapping):
+                return media
+        return None
+
+    @classmethod
+    def _find_named_path(cls, value, names, path="$"):
+        if isinstance(value, Mapping):
+            for key, item in value.items():
+                child_path = f"{path}.{key}"
+                if str(key) in names:
+                    return str(key), child_path
+                found = cls._find_named_path(item, names, child_path)
+                if found is not None:
+                    return found
+        elif isinstance(value, list) and value:
+            return cls._find_named_path(value[0], names, f"{path}[0]")
+        return None
+
+    @classmethod
+    def _find_schema_path(cls, schema, names, operation, path="$"):
+        schema = cls._resolve_schema(schema, operation)
+        if not isinstance(schema, Mapping):
+            return None
+        properties = schema.get("properties")
+        if isinstance(properties, Mapping):
+            for key, child in properties.items():
+                child_path = f"{path}.{key}"
+                if str(key) in names:
+                    return str(key), child_path
+                found = cls._find_schema_path(child, names, operation, child_path)
+                if found is not None:
+                    return found
+        items = schema.get("items")
+        if isinstance(items, Mapping):
+            return cls._find_schema_path(items, names, operation, f"{path}[0]")
+        return None
+
+    @classmethod
+    def _bind_print_task(cls, request, target):
+        inserted = False
+        accepted_names = {name.lower() for name in PRINT_TASK_VARIABLE_NAMES}
+
+        def replace(value):
+            nonlocal inserted
+            if isinstance(value, Mapping):
+                output = {}
+                for key, item in value.items():
+                    if str(key).lower() in accepted_names:
+                        output[key] = "{{%s}}" % target
+                        inserted = True
+                    else:
+                        output[key] = replace(item)
+                return output
+            if isinstance(value, list):
+                return [replace(item) for item in value]
+            return copy.deepcopy(value)
+
+        for field in ("path_params", "query", "headers", "cookies", "body"):
+            request[field] = replace(request.get(field))
+        return inserted
 
     @classmethod
     def _complete_parameters(cls, request, operation):

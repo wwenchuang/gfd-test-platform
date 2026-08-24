@@ -208,6 +208,15 @@ export interface CaseRequest {
   body: unknown
 }
 
+export interface InlineWorkflowStep {
+  name: string
+  enabled: boolean
+  request: CaseRequest
+  assertions: Array<Record<string, unknown>>
+  extractions: Array<Record<string, unknown>>
+  required_variables: string[]
+}
+
 export interface CaseDraft {
   name: string
   purpose: string
@@ -217,7 +226,12 @@ export interface CaseDraft {
   assertions: Array<Record<string, unknown>>
   extractions: Array<Record<string, unknown>>
   dependencies: Array<Record<string, unknown>>
-  processing: { pre: Array<Record<string, unknown>>; post: Array<Record<string, unknown>> }
+  processing: {
+    pre: Array<Record<string, unknown>>
+    post: Array<Record<string, unknown>>
+    setup_steps?: InlineWorkflowStep[]
+    cleanup_steps?: InlineWorkflowStep[]
+  }
 }
 
 export interface CaseVersion extends CaseDraft {
@@ -245,6 +259,15 @@ export interface GeneratedCasePreview {
   id: string
   endpoint_id: string
   origin: string
+  workflow?: {
+    kind: string
+    label: string
+    risk: 'low' | 'medium' | 'high' | 'critical'
+    requires_setup: boolean
+    requires_cleanup: boolean
+    baseline_policy: 'direct' | 'guarded' | 'manual' | 'excluded'
+    reason: string
+  }
   case: CaseDraft
 }
 

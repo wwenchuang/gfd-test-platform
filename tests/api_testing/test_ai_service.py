@@ -896,6 +896,124 @@ def test_ai_response_assertion_policy_adds_contract_business_defaults(
     } in assertions
 
 
+def test_ai_print_generation_adds_dynamic_cancel_cleanup(
+    session_factory, ai_context
+):
+    with session_factory.begin() as session:
+        print_endpoint = ApiSourceEndpoint(
+            revision_id=ai_context["source_revision"].id,
+            stable_key="ai-print-" + os.urandom(8).hex(),
+            operation_id="printStart",
+            method="POST",
+            path="/print3d/api/v1/printJob/print",
+            normalized_path="/print3d/api/v1/printJob/print",
+            summary="下发打印",
+            tags=["打印任务"],
+            operation={
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "example": {
+                                    "code": 0,
+                                    "data": {"printTaskSn": "example-task"},
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            **_audit(),
+        )
+        cancel_endpoint = ApiSourceEndpoint(
+            revision_id=ai_context["source_revision"].id,
+            stable_key="ai-cancel-" + os.urandom(8).hex(),
+            operation_id="printCancel",
+            method="POST",
+            path="/print3d/api/v1/printJob/cancel",
+            normalized_path="/print3d/api/v1/printJob/cancel",
+            summary="取消打印",
+            tags=["打印任务"],
+            operation={
+                "requestBody": {
+                    "required": True,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "type": "object",
+                                "required": ["printTaskSn"],
+                                "properties": {"printTaskSn": {"type": "string"}},
+                            }
+                        }
+                    },
+                },
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {"example": {"code": 0}}
+                        }
+                    }
+                },
+            },
+            **_audit(),
+        )
+        session.add_all([print_endpoint, cancel_endpoint])
+        session.flush()
+        print_endpoint_id = print_endpoint.id
+
+    candidate = _candidate(print_endpoint)
+    service = _service(
+        session_factory,
+        FakeGateway(_gateway_response([candidate])),
+    )
+    job = service.submit(
+        [print_endpoint_id], ai_context["environment"].revision_id, "admin"
+    )
+
+    completed = service.process(job.id)
+    draft = service.list_generated_drafts(job.id)[0]
+
+    assert completed.state == "completed"
+    assert [(item.target, item.path) for item in draft.extractions] == [
+        ("printTaskSn", "$.data.printTaskSn")
+    ]
+    assert draft.processing["cleanup_steps"] == [
+        {
+            "name": "取消本次打印",
+            "enabled": True,
+            "request": {
+                "method": "POST",
+                "path": "/print3d/api/v1/printJob/cancel",
+                "service": "default",
+                "path_params": {},
+                "query": {},
+                "headers": {"Biz": "{{Biz}}"},
+                "cookies": {},
+                "body": {"printTaskSn": "{{printTaskSn}}"},
+            },
+            "assertions": [
+                {
+                    "type": "status_code",
+                    "operator": "equals",
+                    "expected": 200,
+                    "timeout_ms": 0,
+                    "enabled": True,
+                },
+                {
+                    "type": "json_path",
+                    "path": "$.code",
+                    "operator": "equals",
+                    "expected": 0,
+                    "timeout_ms": 0,
+                    "enabled": True,
+                },
+            ],
+            "extractions": [],
+            "required_variables": ["printTaskSn"],
+        }
+    ]
+
+
 def test_ai_response_assertion_policy_preserves_explicit_negative_business_code(
     session_factory, ai_context
 ):

@@ -22,6 +22,30 @@ const result: ExecutionCaseResult = {
 }
 
 describe('CaseEvidence', () => {
+  it('shows setup, main and cleanup workflow evidence as separate stages', () => {
+    const workflowResult: ExecutionCaseResult = {
+      ...result,
+      status: 'FAILED',
+      failure_category: 'cleanup',
+      sanitized_result: {
+        ...result.sanitized_result,
+        trace: [
+          { phase: 'workflow_step', stage: 'setup', name: '查询在线设备', status: 'PASSED', request: { url: '/devices' }, response: { status_code: 200 } },
+          { phase: 'workflow_step', stage: 'main', name: '主体请求', status: 'PASSED', request: { url: '/print' }, response: { status_code: 200 } },
+          { phase: 'workflow_step', stage: 'cleanup', name: '取消本次打印', status: 'FAILED', failure_category: 'product_assertion', error_message: '业务码不匹配', request: { url: '/cancel' }, response: { status_code: 200 } },
+        ],
+      },
+    }
+
+    const wrapper = mount(CaseEvidence, { props: { result: workflowResult } })
+
+    expect(wrapper.get('[data-testid="workflow-evidence"]').text()).toContain('前置步骤')
+    expect(wrapper.get('[data-testid="workflow-evidence"]').text()).toContain('主体请求')
+    expect(wrapper.get('[data-testid="workflow-evidence"]').text()).toContain('清理步骤')
+    expect(wrapper.get('[data-testid="workflow-evidence"]').text()).toContain('取消本次打印')
+    expect(wrapper.get('[data-testid="workflow-evidence"]').text()).toContain('业务码不匹配')
+  })
+
   it('shows readable request, response, assertion and trace evidence without secrets', () => {
     const wrapper = mount(CaseEvidence, { props: { result } })
 

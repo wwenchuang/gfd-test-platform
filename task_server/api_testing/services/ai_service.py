@@ -23,6 +23,7 @@ from ..executor import redact
 from ..repositories.ai_job_repository import AiJobRepository
 from .case_service import CaseService
 from .response_assertion_policy import ResponseAssertionPolicy
+from .workflow_policy import is_print_dispatch_endpoint
 
 
 MAX_ENDPOINTS = 60
@@ -685,6 +686,22 @@ class AiCaseService:
                     normalized_payload.get("assertions", []),
                     endpoint.operation,
                 )
+            )
+            processing = normalized_payload.setdefault("processing", {})
+            processing.setdefault("pre", [])
+            processing.setdefault("post", [])
+            processing.setdefault("setup_steps", [])
+            processing.setdefault("cleanup_steps", [])
+            from .basic_case_service import BasicCaseService
+
+            BasicCaseService._apply_print_cleanup_policy(
+                normalized_payload,
+                endpoint,
+                repository.get_revision_endpoints(endpoint.revision_id)
+                if is_print_dispatch_endpoint(endpoint)
+                else (),
+                repository.get_environment_revision(job.environment_revision_id),
+                repository.get_environment_variables(job.environment_revision_id),
             )
             self._assert_no_literal_secrets(normalized_payload)
             normalized_payload["request"]["headers"] = self._runtime_managed_headers(

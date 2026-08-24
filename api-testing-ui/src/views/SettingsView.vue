@@ -144,6 +144,7 @@ function startEdit(): void {
 }
 
 async function startCreate(): Promise<void> {
+  if (loadingAssets.value || loadingDetail.value) return
   clearEditor()
   selectedEnvironmentId.value = ''
   sourceRevisionId.value = sourceOptions.value.at(-1)?.id || ''
@@ -183,7 +184,11 @@ async function save(): Promise<void> {
     description: description.value.trim(),
     services: Object.fromEntries(usableServices.map((item, index) => [
       item.key || item.name.trim() || `service-${index + 1}`,
-      { name: item.name.trim() || item.key || `service-${index + 1}`, module_name: item.module.trim(), base_url: item.base_url.trim() || null },
+      {
+        name: item.key || item.name.trim() || `service-${index + 1}`,
+        module_name: item.module.trim() || item.name.trim() || `服务 ${index + 1}`,
+        base_url: item.base_url.trim() || null,
+      },
     ])),
     variables: objectFromPairs(variables.value),
     default_headers: objectFromPairs(headers.value) as Record<string, string>,
@@ -433,7 +438,7 @@ function formatDate(value: string): string { return value ? new Date(value).toLo
       </div>
       <div class="toolbar-actions">
         <button class="secondary-command" type="button" :disabled="!projectId" data-action="sync" @click="openSync">前往同步</button>
-        <button class="primary-command" type="button" :disabled="!projectId" data-action="create" @click="startCreate"><Plus :size="15" />新建环境</button>
+        <button class="primary-command" type="button" :disabled="!projectId || loadingAssets || loadingDetail" data-action="create" @click="startCreate"><Plus :size="15" />新建环境</button>
       </div>
     </header>
 

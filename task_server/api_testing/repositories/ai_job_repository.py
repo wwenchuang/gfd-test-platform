@@ -30,6 +30,15 @@ class AiJobRepository:
             )
         }
 
+    def get_revision_endpoints(self, revision_id):
+        return tuple(
+            self.session.scalars(
+                select(ApiSourceEndpoint)
+                .where(ApiSourceEndpoint.revision_id == revision_id)
+                .order_by(ApiSourceEndpoint.normalized_path, ApiSourceEndpoint.method)
+            )
+        )
+
     def get_source_revision(self, revision_id):
         return self.session.get(ApiSourceRevision, revision_id)
 

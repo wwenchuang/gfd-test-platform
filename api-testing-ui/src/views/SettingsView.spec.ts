@@ -6,6 +6,7 @@ import { createMemoryHistory, createRouter } from 'vue-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { EnvironmentAsset, EnvironmentView } from '../api/contracts'
+import { apiClient } from '../api/client'
 import { useContextStore } from '../stores/context'
 import { useNotificationsStore } from '../stores/notifications'
 import { useSetupStore } from '../stores/setup'
@@ -217,6 +218,30 @@ describe('SettingsView environment asset center', () => {
       Biz: 'ZXB',
       ZXBToken: '{{ZXBToken}}',
     })
+  })
+
+  it('preserves the internal default service key when creating an environment', async () => {
+    vi.spyOn(apiClient, 'get').mockRejectedValue(new Error('source has no servers'))
+    const { wrapper } = await mountView()
+    const setup = useSetupStore()
+    const saveEnvironment = vi.spyOn(setup, 'saveEnvironment').mockResolvedValue(environmentView)
+
+    await wrapper.get('[data-action="create"]').trigger('click')
+    await flushPromises()
+    await wrapper.get('input[placeholder="例如：生产环境（新）- 腾讯云"]').setValue('本地验收环境')
+    await wrapper.get('input[aria-label="服务地址"]').setValue('https://api.example.test')
+    await wrapper.get('[data-action="save"]').trigger('click')
+    await flushPromises()
+
+    expect(saveEnvironment).toHaveBeenCalledWith(null, expect.objectContaining({
+      services: {
+        default: {
+          name: 'default',
+          module_name: '默认服务',
+          base_url: 'https://api.example.test',
+        },
+      },
+    }))
   })
 })
 

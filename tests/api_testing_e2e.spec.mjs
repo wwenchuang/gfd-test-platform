@@ -50,15 +50,19 @@ test('我的收藏三接口完成导入、AI 设计、调试、基线回归和�
   await page.getByRole('button', { name: '保存测试范围' }).click()
   await expect(page.getByText('范围已保存')).toBeVisible()
   for (const summary of ['查询我的收藏', '添加收藏', '取消收藏']) {
+    await page.getByTestId('endpoint-search').fill(summary)
     await page.getByRole('button', { name: new RegExp(summary) }).locator('..').getByRole('checkbox').check()
   }
+  await page.getByTestId('endpoint-search').fill('')
   await page.getByTestId('save-task').click()
   await expect(page.getByText('已保存 3 个接口')).toBeVisible()
   await page.reload()
   await expect(page.getByText('已保存 3 个接口')).toBeVisible()
   for (const summary of ['查询我的收藏', '添加收藏', '取消收藏']) {
+    await page.getByTestId('endpoint-search').fill(summary)
     await expect(page.getByRole('button', { name: new RegExp(summary) }).locator('..').getByRole('checkbox')).toBeChecked()
   }
+  await page.getByTestId('endpoint-search').fill('')
   await page.getByRole('button', { name: '生成测试用例' }).click()
   await expect(page.getByText('已完成', { exact: true })).toBeVisible()
   await expect(page.locator('.design-workspace')).toBeVisible()
@@ -73,6 +77,7 @@ test('我的收藏三接口完成导入、AI 设计、调试、基线回归和�
   await page.screenshot({ path: testInfo.outputPath('workbench-mobile.png'), fullPage: true })
   await page.setViewportSize({ width: 1440, height: 900 })
 
+  await page.getByTestId('endpoint-search').fill('查询我的收藏')
   await page.getByRole('button', { name: /查询我的收藏/ }).click()
   await page.getByTestId('assertion-expected-0').fill('200')
   await page.getByRole('button', { name: '保存并调试' }).click()
@@ -81,6 +86,7 @@ test('我的收藏三接口完成导入、AI 设计、调试、基线回归和�
   await page.getByTitle('关闭调试').click()
 
   for (const summary of ['添加收藏', '取消收藏']) {
+    await page.getByTestId('endpoint-search').fill(summary)
     await page.getByRole('button', { name: new RegExp(summary) }).click()
     await page.getByRole('button', { name: '保存并调试' }).click()
     await expect(page.getByText('PASSED', { exact: true })).toBeVisible()

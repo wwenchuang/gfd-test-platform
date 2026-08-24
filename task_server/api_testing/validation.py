@@ -5,6 +5,12 @@ import re
 from typing import Any, Mapping, Tuple
 from urllib.parse import urlsplit
 
+from .services.workflow_policy import (
+    is_print_cancel_step,
+    is_print_dispatch_endpoint,
+    print_task_extraction_targets,
+)
+
 
 VARIABLE_PATTERN = re.compile(r"\{\{\s*([A-Za-z_][A-Za-z0-9_.-]*)\s*\}\}")
 VARIABLE_NAME_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_.-]*$")
@@ -88,6 +94,107 @@ def _available_environment_headers(metadata):
                 continue
             available.add(str(name).lower())
     return available
+
+
+def _item_value(item, name, default=None):
+    if isinstance(item, Mapping):
+        return item.get(name, default)
+    return getattr(item, name, default)
+
+
+def _validate_response_rules(assertions, extractions, field, errors):
+    prefix = f"{field}." if field else ""
+    for index, assertion in enumerate(assertions):
+        assertion_type = _item_value(assertion, "type")
+        path = _item_value(assertion, "path")
+        name = _item_value(assertion, "name")
+        if assertion_type == "json_path" and (
+            not path or not path.startswith("$")
+        ):
+            _issue(
+                errors,
+                "assertion_path_invalid",
+                f"{prefix}assertions[{index}].path",
+                "JSONPath assertions must start with $",
+            )
+        if assertion_type == "header" and not name:
+            _issue(
+                errors,
+                "assertion_header_invalid",
+                f"{prefix}assertions[{index}].name",
+                "header assertions require a header name",
+            )
+
+    for index, extraction in enumerate(extractions):
+        target = _item_value(extraction, "target", "")
+        extraction_type = _item_value(extraction, "type")
+        path = _item_value(extraction, "path")
+        name = _item_value(extraction, "name")
+        if not VARIABLE_NAME_PATTERN.fullmatch(target):
+            _issue(
+                errors,
+                "extraction_target_invalid",
+                f"{prefix}extractions[{index}].target",
+                "extraction target is not a valid variable name",
+            )
+        if extraction_type == "json_path" and (
+            not path or not path.startswith("$")
+        ):
+            _issue(
+                errors,
+                "extraction_path_invalid",
+                f"{prefix}extractions[{index}].path",
+                "JSONPath extraction must start with $",
+            )
+        if extraction_type in {"header", "cookie"} and not name:
+            _issue(
+                errors,
+                "extraction_name_invalid",
+                f"{prefix}extractions[{index}].name",
+                "header and cookie extraction require a name",
+            )
+
+
+def _validate_inline_step(step, field, available, errors):
+    request = step.get("request", {})
+    if _unsafe_absolute_path(request.get("path")):
+        _issue(
+            errors,
+            "unsafe_absolute_url",
+            f"{field}.request.path",
+            "case paths must be relative to the selected environment",
+        )
+    for invalid_field in _malformed_placeholder_fields(
+        request, f"{field}.request"
+    ):
+        _issue(
+            errors,
+            "placeholder_invalid",
+            invalid_field,
+            "placeholder syntax must be {{variableName}}",
+        )
+    required = set(step.get("required_variables", []))
+    missing = sorted((_variables_in(request) | required) - available)
+    for name in missing:
+        _issue(
+            errors,
+            "undefined_variable",
+            f"{field}.request",
+            f"variable is undefined: {name}",
+        )
+    _validate_response_rules(
+        step.get("assertions", []),
+        step.get("extractions", []),
+        field,
+        errors,
+    )
+    return {
+        _item_value(extraction, "target")
+        for extraction in step.get("extractions", [])
+        if VARIABLE_NAME_PATTERN.fullmatch(
+            str(_item_value(extraction, "target", ""))
+        )
+    }
 
 
 def _json_type_matches(value, schema_type):
@@ -251,6 +358,19 @@ def validate_case(
     for action in case_version.processing.get("pre", []):
         if action.get("action") == "set_variable" and isinstance(action.get("name"), str):
             available.add(action["name"])
+    setup_steps = case_version.processing.get("setup_steps", [])
+    for index, step in enumerate(setup_steps):
+        if not step.get("enabled", True):
+            continue
+        available.update(
+            _validate_inline_step(
+                step,
+                f"processing.setup_steps[{index}]",
+                available,
+                errors,
+            )
+        )
+
     request_variables = _variables_in(request)
     enabled_rows = [row for row in case_version.data_rows if row.enabled]
     validation_rows = enabled_rows or [None]
@@ -263,19 +383,49 @@ def validate_case(
             field = "request" if row is None else f"data_rows[{row.name}].request"
             _issue(errors, "undefined_variable", field, f"variable is undefined: {name}")
 
-    for index, assertion in enumerate(case_version.assertions):
-        if assertion.type == "json_path" and (not assertion.path or not assertion.path.startswith("$")):
-            _issue(errors, "assertion_path_invalid", f"assertions[{index}].path", "JSONPath assertions must start with $")
-        if assertion.type == "header" and not assertion.name:
-            _issue(errors, "assertion_header_invalid", f"assertions[{index}].name", "header assertions require a header name")
+    _validate_response_rules(
+        case_version.assertions, case_version.extractions, "", errors
+    )
 
-    for index, extraction in enumerate(case_version.extractions):
-        if not VARIABLE_NAME_PATTERN.fullmatch(extraction.target):
-            _issue(errors, "extraction_target_invalid", f"extractions[{index}].target", "extraction target is not a valid variable name")
-        if extraction.type == "json_path" and (not extraction.path or not extraction.path.startswith("$")):
-            _issue(errors, "extraction_path_invalid", f"extractions[{index}].path", "JSONPath extraction must start with $")
-        if extraction.type in {"header", "cookie"} and not extraction.name:
-            _issue(errors, "extraction_name_invalid", f"extractions[{index}].name", "header and cookie extraction require a name")
+    cleanup_available = set(available)
+    cleanup_available.update(
+        _item_value(extraction, "target")
+        for extraction in case_version.extractions
+        if VARIABLE_NAME_PATTERN.fullmatch(
+            str(_item_value(extraction, "target", ""))
+        )
+    )
+    cleanup_steps = case_version.processing.get("cleanup_steps", [])
+    for index, step in enumerate(cleanup_steps):
+        if not step.get("enabled", True):
+            continue
+        cleanup_available.update(
+            _validate_inline_step(
+                step,
+                f"processing.cleanup_steps[{index}]",
+                cleanup_available,
+                errors,
+            )
+        )
+
+    if is_print_dispatch_endpoint(endpoint):
+        task_targets = print_task_extraction_targets(case_version.extractions)
+        if not task_targets:
+            _issue(
+                errors,
+                "print_task_extraction_required",
+                "extractions",
+                "print dispatch must extract the task identifier returned by this execution",
+            )
+        if not task_targets or not any(
+            is_print_cancel_step(step, task_targets) for step in cleanup_steps
+        ):
+            _issue(
+                errors,
+                "print_cleanup_required",
+                "processing.cleanup_steps",
+                "print dispatch must cancel the task created by this execution",
+            )
 
     for index, dependency in enumerate(case_version.dependencies):
         identifier = dependency.get("case_version_id", "")

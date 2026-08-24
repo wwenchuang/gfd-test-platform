@@ -394,6 +394,7 @@ function defaultTaskName(): string {
             v-if="activeDraft"
             :model-value="activeDraft"
             :dependency-options="dependencyOptions"
+            :endpoint-options="assets.endpoints"
             :saving="cases.saving"
             :saved-message="cases.savedMessage"
             :validation-errors="cases.validationErrors"

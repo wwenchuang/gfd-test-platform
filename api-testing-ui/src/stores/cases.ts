@@ -440,7 +440,7 @@ function blankDraft(endpoint: ApiEndpoint): CaseDraft {
     priority: 'P1',
     request: { method: endpoint.method, path: endpoint.path, service: 'default', ...requestParameterExamples(endpoint.operation), headers: {}, body: requestBodyExample(endpoint.operation) },
     data_rows: [], assertions: [{ type: 'status_code', operator: 'equals', expected: 200, timeout_ms: 0, enabled: true }],
-    extractions: [], dependencies: [], processing: { pre: [], post: [] },
+    extractions: [], dependencies: [], processing: { pre: [], post: [], setup_steps: [], cleanup_steps: [] },
   }
 }
 
@@ -570,7 +570,12 @@ function fromVersion(version: CaseVersion): CaseDraft {
     assertions: version.assertions.map(publicAssertion),
     extractions: version.extractions.map(publicExtraction),
     dependencies: version.dependencies,
-    processing: version.processing,
+    processing: {
+      pre: version.processing?.pre || [],
+      post: version.processing?.post || [],
+      setup_steps: version.processing?.setup_steps || [],
+      cleanup_steps: version.processing?.cleanup_steps || [],
+    },
   })
 }
 

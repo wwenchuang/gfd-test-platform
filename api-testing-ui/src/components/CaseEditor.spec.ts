@@ -4,7 +4,7 @@ import { mount } from '@vue/test-utils'
 import { describe, expect, it } from 'vitest'
 
 import CaseEditor from './CaseEditor.vue'
-import type { CaseDraft } from '../api/contracts'
+import type { ApiEndpoint, CaseDraft } from '../api/contracts'
 
 const DRAFT: CaseDraft = {
   name: '查询我的收藏',
@@ -19,7 +19,82 @@ const DRAFT: CaseDraft = {
   extractions: [], dependencies: [], processing: { pre: [], post: [] },
 }
 
+const WORKFLOW_ENDPOINTS: ApiEndpoint[] = [
+  {
+    id: 'resource-page',
+    method: 'GET',
+    path: '/resource/page',
+    summary: '查询资源列表',
+    tags: ['家用业务', '模型', '查询'],
+  },
+  {
+    id: 'print-cancel',
+    method: 'POST',
+    path: '/printJob/cancel',
+    summary: '取消打印',
+    tags: ['打印任务'],
+  },
+]
+
 describe('CaseEditor', () => {
+  it('adds a setup step by selecting an endpoint from the current source revision', async () => {
+    const wrapper = mount(CaseEditor, {
+      props: { modelValue: DRAFT, endpointOptions: WORKFLOW_ENDPOINTS },
+    })
+
+    await wrapper.get('[data-testid="add-setup-step"]').trigger('click')
+    await wrapper.get('[data-testid="setup-endpoint-0"]').setValue('resource-page')
+
+    const emitted = wrapper.emitted('update:modelValue')?.at(-1)?.[0] as CaseDraft
+    expect(emitted.processing.setup_steps![0]).toMatchObject({
+      name: '查询资源列表',
+      request: { method: 'GET', path: '/resource/page' },
+    })
+    expect(wrapper.text()).toContain('前置步骤')
+    expect(wrapper.text()).toContain('主体请求')
+    expect(wrapper.text()).toContain('清理步骤')
+    expect(wrapper.findAll('optgroup').map(item => item.attributes('label'))).toContain('家用业务 / 模型 / 查询')
+  })
+
+  it('moves workflow steps without losing their request definitions', async () => {
+    const draft = JSON.parse(JSON.stringify(DRAFT)) as CaseDraft
+    draft.processing.setup_steps = [
+      {
+        name: '第一步', enabled: true,
+        request: { method: 'GET', path: '/first', service: 'default', path_params: {}, query: {}, headers: {}, cookies: {}, body: null },
+        assertions: [], extractions: [], required_variables: [],
+      },
+      {
+        name: '第二步', enabled: true,
+        request: { method: 'GET', path: '/second', service: 'default', path_params: {}, query: {}, headers: {}, cookies: {}, body: null },
+        assertions: [], extractions: [], required_variables: [],
+      },
+    ]
+    const wrapper = mount(CaseEditor, { props: { modelValue: draft } })
+
+    await wrapper.get('[data-testid="setup-step-up-1"]').trigger('click')
+
+    const emitted = wrapper.emitted('update:modelValue')?.at(-1)?.[0] as CaseDraft
+    expect(emitted.processing.setup_steps!.map(item => item.name)).toEqual(['第二步', '第一步'])
+    expect(emitted.processing.setup_steps![0].request.path).toBe('/second')
+  })
+
+  it('configures cleanup variables used to prevent incomplete cleanup requests', async () => {
+    const wrapper = mount(CaseEditor, {
+      props: { modelValue: DRAFT, endpointOptions: WORKFLOW_ENDPOINTS },
+    })
+
+    await wrapper.get('[data-testid="add-cleanup-step"]').trigger('click')
+    await wrapper.get('[data-testid="cleanup-endpoint-0"]').setValue('print-cancel')
+    await wrapper.get('[data-testid="cleanup-required-0"]').setValue('printTaskSn, deviceSn')
+
+    const emitted = wrapper.emitted('update:modelValue')?.at(-1)?.[0] as CaseDraft
+    expect(emitted.processing.cleanup_steps![0].required_variables).toEqual([
+      'printTaskSn',
+      'deviceSn',
+    ])
+  })
+
   it('selects a dependency from grouped case options instead of requiring a version id', async () => {
     const wrapper = mount(CaseEditor, {
       props: {

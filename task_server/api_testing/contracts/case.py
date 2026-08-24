@@ -78,6 +78,7 @@ EXTRACTION_TYPES = frozenset({"json_path", "header", "cookie", "status_code"})
 PROCESSING_ACTIONS = frozenset(
     {"set_variable", "copy_variable", "remove_variable", "json_encode", "json_decode"}
 )
+VARIABLE_NAME_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_.-]*$")
 
 
 class CasePayloadError(ValueError):
@@ -350,7 +351,11 @@ def _parse_dependencies(value):
 
 def _parse_processing(value):
     value = _require_mapping(value, "processing")
-    _reject_unknown(value, {"pre", "post"}, "processing")
+    _reject_unknown(
+        value,
+        {"pre", "post", "setup_steps", "cleanup_steps"},
+        "processing",
+    )
     result = {}
     allowed = {"action", "name", "value", "source", "target"}
     for phase in ("pre", "post"):
@@ -384,7 +389,75 @@ def _parse_processing(value):
                 parsed["value"] = _json_value(item["value"], "processing value")
             parsed_actions.append(parsed)
         result[phase] = parsed_actions
+    result["setup_steps"] = _parse_inline_steps(
+        value.get("setup_steps", []), "processing.setup_steps"
+    )
+    result["cleanup_steps"] = _parse_inline_steps(
+        value.get("cleanup_steps", []), "processing.cleanup_steps"
+    )
     return result
+
+
+def _parse_inline_steps(value, field):
+    if not isinstance(value, list) or len(value) > 20:
+        raise CasePayloadError(f"{field} must be an array with at most 20 entries")
+    steps = []
+    names = set()
+    allowed = {
+        "name",
+        "enabled",
+        "request",
+        "assertions",
+        "extractions",
+        "required_variables",
+    }
+    for index, item in enumerate(value):
+        item = _require_mapping(item, f"{field}[{index}]")
+        _reject_unknown(item, allowed, f"{field}[{index}]")
+        name = _text(item.get("name"), f"{field}[{index}].name", maximum=200)
+        if name in names:
+            raise CasePayloadError(f"{field} names must be unique")
+        names.add(name)
+        enabled = item.get("enabled", True)
+        if not isinstance(enabled, bool):
+            raise CasePayloadError(f"{field}[{index}].enabled must be a boolean")
+        required_variables = item.get("required_variables", [])
+        if (
+            not isinstance(required_variables, list)
+            or len(required_variables) > 100
+        ):
+            raise CasePayloadError(
+                f"{field}[{index}].required_variables must be a string array"
+            )
+        parsed_variables = []
+        seen_variables = set()
+        for variable_index, variable in enumerate(required_variables):
+            parsed_variable = _text(
+                variable,
+                f"{field}[{index}].required_variables[{variable_index}]",
+                maximum=200,
+            )
+            if not VARIABLE_NAME_PATTERN.fullmatch(parsed_variable):
+                raise CasePayloadError(
+                    f"{field}[{index}].required_variables must contain a valid variable name"
+                )
+            if parsed_variable in seen_variables:
+                raise CasePayloadError(
+                    f"{field}[{index}].required_variables must be unique"
+                )
+            seen_variables.add(parsed_variable)
+            parsed_variables.append(parsed_variable)
+        steps.append(
+            {
+                "name": name,
+                "enabled": enabled,
+                "request": _parse_request(item.get("request")),
+                "assertions": _parse_assertions(item.get("assertions", [])),
+                "extractions": _parse_extractions(item.get("extractions", [])),
+                "required_variables": parsed_variables,
+            }
+        )
+    return steps
 
 
 def parse_case_payload(payload):

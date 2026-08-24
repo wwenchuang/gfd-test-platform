@@ -131,6 +131,13 @@ function originLabel(origin: string): string {
   return '手工'
 }
 
+function baselinePolicyLabel(policy?: string): string {
+  if (policy === 'direct') return '可直接进入基线校验'
+  if (policy === 'guarded') return '需完成前置和清理'
+  if (policy === 'excluded') return '默认排除定时基线'
+  return '需人工补全编排'
+}
+
 function isActive(item: CaseListItem): boolean {
   return item.kind === 'preview'
     ? item.id === props.activePreviewId
@@ -242,6 +249,14 @@ function changeCaseGroup(item: CaseListItem, value: string, event: Event): void 
                 <span class="case-list-copy">
                   <strong :title="item.name">{{ item.name }}</strong>
                   <small :title="item.endpoint.path">{{ item.endpoint.path }}</small>
+                  <span
+                    v-if="item.kind === 'preview' && item.preview.workflow"
+                    class="workflow-preview-line"
+                    :title="item.preview.workflow.reason"
+                  >
+                    <b>{{ item.preview.workflow.label }}</b>
+                    <i>{{ baselinePolicyLabel(item.preview.workflow.baseline_policy) }}</i>
+                  </span>
                 </span>
               </button>
               <em>{{ item.meta }}</em>

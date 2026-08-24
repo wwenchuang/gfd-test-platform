@@ -1,0 +1,157 @@
+import pytest
+
+from task_server.api_testing.contracts.case import CasePayloadError, parse_case_payload
+
+
+def _request(path):
+    return {
+        "method": "GET",
+        "path": path,
+        "service": "default",
+        "path_params": {},
+        "query": {},
+        "headers": {},
+        "cookies": {},
+        "body": None,
+    }
+
+
+def _step(name, path, *, required_variables=None):
+    return {
+        "name": name,
+        "enabled": True,
+        "request": _request(path),
+        "assertions": [
+            {
+                "type": "status_code",
+                "operator": "equals",
+                "expected": 200,
+                "timeout_ms": 0,
+                "enabled": True,
+            }
+        ],
+        "extractions": [
+            {
+                "target": "resourceSn",
+                "type": "json_path",
+                "path": "$.data.sn",
+                "required": True,
+            }
+        ],
+        "required_variables": required_variables or [],
+    }
+
+
+def _payload(processing):
+    return {
+        "name": "用例内编排",
+        "purpose": "验证前置、主体和清理步骤的数据传递",
+        "priority": "P1",
+        "request": _request("/resource/{{resourceSn}}"),
+        "data_rows": [],
+        "assertions": [],
+        "extractions": [],
+        "dependencies": [],
+        "processing": processing,
+    }
+
+
+def test_case_contract_accepts_strict_setup_and_cleanup_steps():
+    parsed = parse_case_payload(
+        _payload(
+            {
+                "pre": [],
+                "post": [],
+                "setup_steps": [_step("查询可用资源", "/resources")],
+                "cleanup_steps": [
+                    _step(
+                        "删除本次资源",
+                        "/resource/{{resourceSn}}/delete",
+                        required_variables=["resourceSn"],
+                    )
+                ],
+            }
+        )
+    )
+
+    assert parsed["processing"]["setup_steps"][0]["name"] == "查询可用资源"
+    assert parsed["processing"]["cleanup_steps"][0]["required_variables"] == [
+        "resourceSn"
+    ]
+
+
+def test_case_contract_keeps_old_processing_shape_compatible():
+    parsed = parse_case_payload(_payload({"pre": [], "post": []}))
+
+    assert parsed["processing"]["setup_steps"] == []
+    assert parsed["processing"]["cleanup_steps"] == []
+
+
+def test_case_contract_rejects_duplicate_step_names_within_a_phase():
+    with pytest.raises(CasePayloadError, match="names must be unique"):
+        parse_case_payload(
+            _payload(
+                {
+                    "pre": [],
+                    "post": [],
+                    "setup_steps": [
+                        _step("查询资源", "/resources"),
+                        _step("查询资源", "/resources/next"),
+                    ],
+                    "cleanup_steps": [],
+                }
+            )
+        )
+
+
+def test_case_contract_limits_each_inline_phase_to_twenty_steps():
+    with pytest.raises(CasePayloadError, match="at most 20 entries"):
+        parse_case_payload(
+            _payload(
+                {
+                    "pre": [],
+                    "post": [],
+                    "setup_steps": [
+                        _step(f"步骤 {index}", f"/resources/{index}")
+                        for index in range(21)
+                    ],
+                    "cleanup_steps": [],
+                }
+            )
+        )
+
+
+def test_case_contract_rejects_invalid_required_variable_names():
+    with pytest.raises(CasePayloadError, match="valid variable name"):
+        parse_case_payload(
+            _payload(
+                {
+                    "pre": [],
+                    "post": [],
+                    "setup_steps": [],
+                    "cleanup_steps": [
+                        _step(
+                            "清理资源",
+                            "/resource/delete",
+                            required_variables=["resource sn"],
+                        )
+                    ],
+                }
+            )
+        )
+
+
+def test_case_contract_rejects_unknown_inline_step_fields():
+    step = _step("查询资源", "/resources")
+    step["dependencies"] = []
+    with pytest.raises(CasePayloadError, match="contains unknown field"):
+        parse_case_payload(
+            _payload(
+                {
+                    "pre": [],
+                    "post": [],
+                    "setup_steps": [step],
+                    "cleanup_steps": [],
+                }
+            )
+        )

@@ -59,6 +59,41 @@ def test_basic_positive_payload_uses_environment_header_placeholders_and_success
     assert "ZXBToken" not in repr(payload)
 
 
+def test_basic_positive_preview_exposes_endpoint_workflow_assessment(monkeypatch):
+    endpoint = SimpleNamespace(
+        id="endpoint-delete",
+        revision_id="revision-1",
+        method="DELETE",
+        path="/models/{modelSn}",
+        summary="删除模型",
+        tags=["模型管理"],
+        operation={"responses": {"200": {"description": "OK"}}},
+    )
+    service = BasicCaseService(lambda: None)
+    monkeypatch.setattr(
+        service,
+        "_generation_context",
+        lambda endpoint_ids, environment_revision_id: (
+            [endpoint],
+            _environment_revision(),
+            _variables("ZXBToken"),
+            [endpoint],
+        ),
+    )
+
+    preview = service.preview([endpoint.id], "environment-1", "owner-1")[0]
+
+    assert preview["workflow"] == {
+        "kind": "delete_resource",
+        "label": "删除资源",
+        "risk": "high",
+        "requires_setup": True,
+        "requires_cleanup": False,
+        "baseline_policy": "guarded",
+        "reason": "前置创建本次专用临时资源，禁止删除列表中已有的历史数据",
+    }
+
+
 def test_basic_positive_payload_uses_documented_business_success_code():
     endpoint = SimpleNamespace(
         method="GET",
@@ -526,6 +561,142 @@ def test_basic_positive_payload_conforms_null_schema_values():
     )
 
     assert payload["request"]["body"] == {"printParam": {"ms": [{"slot": None, "srgb": None}]}}
+
+
+def test_basic_positive_payload_pairs_print_dispatch_with_dynamic_cancel_cleanup():
+    print_endpoint = SimpleNamespace(
+        id="print-endpoint",
+        method="POST",
+        path="/print3d/api/v1/printJob/print",
+        summary="确认打印接口",
+        operation={
+            "requestBody": {
+                "required": True,
+                "content": {
+                    "application/json": {
+                        "schema": {
+                            "type": "object",
+                            "required": ["sliceSn", "deviceSn"],
+                            "properties": {
+                                "sliceSn": {"type": "string"},
+                                "deviceSn": {"type": "string"},
+                            },
+                        }
+                    }
+                },
+            },
+            "responses": {
+                "200": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "type": "object",
+                                "properties": {
+                                    "code": {"type": "integer"},
+                                    "data": {
+                                        "type": "object",
+                                        "properties": {
+                                            "printTaskSn": {"type": "string"}
+                                        },
+                                    },
+                                },
+                            },
+                            "example": {
+                                "code": 0,
+                                "data": {"printTaskSn": "example-task"},
+                            },
+                        }
+                    }
+                }
+            },
+        },
+    )
+    cancel_endpoint = SimpleNamespace(
+        id="cancel-endpoint",
+        method="POST",
+        path="/print3d/api/v1/printJob/cancel",
+        summary="取消打印",
+        operation={
+            "requestBody": {
+                "required": True,
+                "content": {
+                    "application/json": {
+                        "schema": {
+                            "type": "object",
+                            "required": ["printTaskSn"],
+                            "properties": {
+                                "printTaskSn": {"type": "string"}
+                            },
+                        }
+                    }
+                },
+            },
+            "responses": {
+                "200": {
+                    "content": {
+                        "application/json": {
+                            "example": {"code": 0, "data": {"cancelled": True}}
+                        }
+                    }
+                }
+            },
+        },
+    )
+
+    payload = BasicCaseService.build_case_payload(
+        print_endpoint,
+        _environment_revision(),
+        _variables("ZXBToken", "sliceSn", "deviceSn"),
+        endpoint_catalog=[print_endpoint, cancel_endpoint],
+    )
+
+    assert payload["extractions"] == [
+        {
+            "target": "printTaskSn",
+            "type": "json_path",
+            "path": "$.data.printTaskSn",
+            "required": True,
+        }
+    ]
+    cleanup = payload["processing"]["cleanup_steps"]
+    assert len(cleanup) == 1
+    assert cleanup[0]["name"] == "取消本次打印"
+    assert cleanup[0]["request"]["path"] == cancel_endpoint.path
+    assert cleanup[0]["request"]["body"] == {
+        "printTaskSn": "{{printTaskSn}}"
+    }
+    assert cleanup[0]["required_variables"] == ["printTaskSn"]
+    assert {"type": "json_path", "path": "$.code", "operator": "equals", "expected": 0, "timeout_ms": 0, "enabled": True} in cleanup[0]["assertions"]
+
+
+def test_basic_positive_payload_does_not_invent_print_cleanup_when_pair_is_ambiguous():
+    print_endpoint = SimpleNamespace(
+        id="print-endpoint",
+        method="POST",
+        path="/print3d/api/v1/printJob/print",
+        summary="确认打印接口",
+        operation={"responses": {"200": {"description": "OK"}}},
+    )
+    cancel_endpoints = [
+        SimpleNamespace(
+            id=f"cancel-{index}",
+            method="POST",
+            path=f"/print3d/api/v1/printJob/cancel-{index}",
+            summary="取消打印",
+            operation={"responses": {"200": {"description": "OK"}}},
+        )
+        for index in range(2)
+    ]
+
+    payload = BasicCaseService.build_case_payload(
+        print_endpoint,
+        _environment_revision(),
+        _variables("ZXBToken"),
+        endpoint_catalog=[print_endpoint, *cancel_endpoints],
+    )
+
+    assert payload["extractions"] == []
+    assert payload["processing"]["cleanup_steps"] == []
 
 
 def test_basic_positive_payload_fills_required_field_without_property_schema():

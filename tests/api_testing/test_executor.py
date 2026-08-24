@@ -18,6 +18,7 @@ class _TargetHandler(BaseHTTPRequestHandler):
     port = 0
     captured_authorization = None
     captured_cookie = None
+    workflow_calls = []
 
     def log_message(self, *_args):
         return
@@ -32,7 +33,14 @@ class _TargetHandler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         type(self).request_count += 1
-        if self.path.startswith("/ok"):
+        type(self).workflow_calls.append(("GET", self.path, None))
+        if self.path.startswith("/workflow/setup-fail"):
+            self._send(200, {"code": 5001, "message": "no resource"})
+        elif self.path.startswith("/workflow/setup"):
+            self._send(200, {"code": 0, "data": {"resourceSn": "resource-1"}})
+        elif self.path.startswith("/workflow/static-cleanup"):
+            self._send(200, {"code": 0})
+        elif self.path.startswith("/ok"):
             self._send(200, {"code": 0, "data": [{"id": "favorite-1"}]})
         elif self.path.startswith("/business-fail"):
             self._send(200, {"code": 4009, "message": "not logged in"})
@@ -101,6 +109,33 @@ class _TargetHandler(BaseHTTPRequestHandler):
         else:
             self._send(404, {"message": "missing"})
 
+    def do_POST(self):
+        type(self).request_count += 1
+        length = int(self.headers.get("Content-Length") or 0)
+        raw_body = self.rfile.read(length) if length else b""
+        body = json.loads(raw_body) if raw_body else None
+        type(self).workflow_calls.append(("POST", self.path, body))
+        if self.path.startswith("/workflow/print-fail"):
+            self._send(
+                200,
+                {
+                    "code": 5002,
+                    "message": "print rejected",
+                    "data": {"printTaskSn": "print-task-failed"},
+                },
+            )
+        elif self.path.startswith("/workflow/print"):
+            self._send(
+                200,
+                {"code": 0, "data": {"printTaskSn": "print-task-1"}},
+            )
+        elif self.path.startswith("/workflow/cancel-fail"):
+            self._send(200, {"code": 5003, "message": "cancel rejected"})
+        elif self.path.startswith("/workflow/cancel"):
+            self._send(200, {"code": 0, "data": {"cancelled": True}})
+        else:
+            self._send(404, {"message": "missing"})
+
 
 @pytest.fixture(scope="module")
 def target_server():
@@ -117,25 +152,35 @@ def target_server():
         server.server_close()
 
 
-def _case(path="/ok", assertions=None, extractions=None, headers=None, data_rows=None):
+def _case(
+    path="/ok",
+    assertions=None,
+    extractions=None,
+    headers=None,
+    data_rows=None,
+    *,
+    method="GET",
+    body=None,
+    processing=None,
+):
     return SimpleNamespace(
         id="case-version-1",
         endpoint_id="endpoint-1",
         project_id="project-1",
         request={
-            "method": "GET",
+            "method": method,
             "path": path,
             "service": "default",
             "path_params": {},
             "query": {},
             "headers": headers or {},
             "cookies": {},
-            "body": None,
+            "body": body,
         },
         data_rows=tuple(data_rows or ()),
         assertions=tuple(assertions or []),
         extractions=tuple(extractions or []),
-        processing={"pre": [], "post": []},
+        processing=processing or {"pre": [], "post": []},
     )
 
 
@@ -222,6 +267,276 @@ def _extraction(target, extraction_type, path=None, name=None, required=True):
         required=required,
         default=None,
     )
+
+
+def _workflow_step(
+    name,
+    method,
+    path,
+    *,
+    body=None,
+    assertions=None,
+    extractions=None,
+    required_variables=None,
+):
+    return {
+        "name": name,
+        "enabled": True,
+        "request": {
+            "method": method,
+            "path": path,
+            "service": "default",
+            "path_params": {},
+            "query": {},
+            "headers": {},
+            "cookies": {},
+            "body": body,
+        },
+        "assertions": assertions or [],
+        "extractions": extractions or [],
+        "required_variables": required_variables or [],
+    }
+
+
+def _workflow_processing(*, setup_steps=None, cleanup_steps=None):
+    return {
+        "pre": [],
+        "post": [],
+        "setup_steps": setup_steps or [],
+        "cleanup_steps": cleanup_steps or [],
+    }
+
+
+def _code_assertion(expected=0):
+    return {
+        "type": "json_path",
+        "operator": "equals",
+        "path": "$.code",
+        "expected": expected,
+        "timeout_ms": 0,
+        "enabled": True,
+    }
+
+
+def _json_extraction(target, path):
+    return {
+        "target": target,
+        "type": "json_path",
+        "path": path,
+        "required": True,
+    }
+
+
+def test_inline_setup_feeds_print_request_and_print_result_feeds_cancel_cleanup(
+    target_server,
+):
+    _, handler = target_server
+    handler.workflow_calls = []
+    case = _case(
+        "/workflow/print",
+        method="POST",
+        body={"resourceSn": "{{resourceSn}}"},
+        assertions=[_assertion("json_path", "equals", 0, "$.code")],
+        extractions=[
+            _extraction("printTaskSn", "json_path", "$.data.printTaskSn")
+        ],
+        processing=_workflow_processing(
+            setup_steps=[
+                _workflow_step(
+                    "查询可打印资源",
+                    "GET",
+                    "/workflow/setup",
+                    assertions=[_code_assertion()],
+                    extractions=[
+                        _json_extraction("resourceSn", "$.data.resourceSn")
+                    ],
+                )
+            ],
+            cleanup_steps=[
+                _workflow_step(
+                    "取消本次打印",
+                    "POST",
+                    "/workflow/cancel",
+                    body={"printTaskSn": "{{printTaskSn}}"},
+                    assertions=[_code_assertion()],
+                    required_variables=["printTaskSn"],
+                )
+            ],
+        ),
+    )
+
+    result = _executor(target_server, case).execute_case(
+        "case-version-1", "environment-revision-1", {}
+    )
+
+    assert result.status == "PASSED"
+    assert [call[1] for call in handler.workflow_calls] == [
+        "/workflow/setup",
+        "/workflow/print",
+        "/workflow/cancel",
+    ]
+    assert handler.workflow_calls[1][2] == {"resourceSn": "resource-1"}
+    assert handler.workflow_calls[2][2] == {"printTaskSn": "print-task-1"}
+    workflow = [event for event in result.trace if event["phase"] == "workflow_step"]
+    assert [(item["stage"], item["status"]) for item in workflow] == [
+        ("setup", "PASSED"),
+        ("main", "PASSED"),
+        ("cleanup", "PASSED"),
+    ]
+
+
+def test_main_assertion_failure_still_cancels_print(target_server):
+    _, handler = target_server
+    handler.workflow_calls = []
+    case = _case(
+        "/workflow/print-fail",
+        method="POST",
+        body={"resourceSn": "{{resourceSn}}"},
+        assertions=[_assertion("json_path", "equals", 0, "$.code")],
+        extractions=[
+            _extraction("printTaskSn", "json_path", "$.data.printTaskSn")
+        ],
+        processing=_workflow_processing(
+            setup_steps=[
+                _workflow_step(
+                    "查询可打印资源",
+                    "GET",
+                    "/workflow/setup",
+                    assertions=[_code_assertion()],
+                    extractions=[
+                        _json_extraction("resourceSn", "$.data.resourceSn")
+                    ],
+                )
+            ],
+            cleanup_steps=[
+                _workflow_step(
+                    "取消本次打印",
+                    "POST",
+                    "/workflow/cancel",
+                    body={"printTaskSn": "{{printTaskSn}}"},
+                    assertions=[_code_assertion()],
+                    required_variables=["printTaskSn"],
+                )
+            ],
+        ),
+    )
+
+    result = _executor(target_server, case).execute_case(
+        "case-version-1", "environment-revision-1", {}
+    )
+
+    assert result.status == "FAILED"
+    assert result.failure_category == "product_assertion"
+    assert handler.workflow_calls[-1][1] == "/workflow/cancel"
+    assert handler.workflow_calls[-1][2] == {"printTaskSn": "print-task-failed"}
+
+
+def test_setup_failure_blocks_main_but_runs_static_cleanup(target_server):
+    _, handler = target_server
+    handler.workflow_calls = []
+    case = _case(
+        "/workflow/print",
+        method="POST",
+        processing=_workflow_processing(
+            setup_steps=[
+                _workflow_step(
+                    "查询可打印资源",
+                    "GET",
+                    "/workflow/setup-fail",
+                    assertions=[_code_assertion()],
+                )
+            ],
+            cleanup_steps=[
+                _workflow_step(
+                    "静态清理",
+                    "GET",
+                    "/workflow/static-cleanup",
+                    assertions=[_code_assertion()],
+                )
+            ],
+        ),
+    )
+
+    result = _executor(target_server, case).execute_case(
+        "case-version-1", "environment-revision-1", {}
+    )
+
+    assert result.status == "FAILED"
+    assert result.failure_category == "setup"
+    assert [call[1] for call in handler.workflow_calls] == [
+        "/workflow/setup-fail",
+        "/workflow/static-cleanup",
+    ]
+
+
+def test_cleanup_failure_prevents_otherwise_passing_case(target_server):
+    _, handler = target_server
+    handler.workflow_calls = []
+    case = _case(
+        "/workflow/print",
+        method="POST",
+        assertions=[_assertion("json_path", "equals", 0, "$.code")],
+        extractions=[
+            _extraction("printTaskSn", "json_path", "$.data.printTaskSn")
+        ],
+        processing=_workflow_processing(
+            cleanup_steps=[
+                _workflow_step(
+                    "取消本次打印",
+                    "POST",
+                    "/workflow/cancel-fail",
+                    body={"printTaskSn": "{{printTaskSn}}"},
+                    assertions=[_code_assertion()],
+                    required_variables=["printTaskSn"],
+                )
+            ]
+        ),
+    )
+
+    result = _executor(target_server, case).execute_case(
+        "case-version-1", "environment-revision-1", {}
+    )
+
+    assert result.status == "FAILED"
+    assert result.failure_category == "cleanup"
+    assert handler.workflow_calls[-1][1] == "/workflow/cancel-fail"
+
+
+def test_missing_cleanup_variable_skips_request_and_blocks_a_passing_case(
+    target_server,
+):
+    _, handler = target_server
+    handler.workflow_calls = []
+    case = _case(
+        processing=_workflow_processing(
+            cleanup_steps=[
+                _workflow_step(
+                    "取消本次打印",
+                    "POST",
+                    "/workflow/cancel",
+                    body={"printTaskSn": "{{printTaskSn}}"},
+                    assertions=[_code_assertion()],
+                    required_variables=["printTaskSn"],
+                )
+            ]
+        )
+    )
+
+    result = _executor(target_server, case).execute_case(
+        "case-version-1", "environment-revision-1", {}
+    )
+
+    assert result.status == "FAILED"
+    assert result.failure_category == "cleanup"
+    assert all(call[1] != "/workflow/cancel" for call in handler.workflow_calls)
+    cleanup = [
+        event
+        for event in result.trace
+        if event.get("phase") == "workflow_step"
+        and event.get("stage") == "cleanup"
+    ][0]
+    assert cleanup["status"] == "SKIPPED"
+    assert cleanup["missing_variables"] == ["printTaskSn"]
 
 
 def test_success_and_truthful_product_statuses(target_server):
@@ -512,6 +827,48 @@ def test_server_generated_sensitive_values_are_masked_everywhere(target_server):
         "extraction",
         "assertion",
     }
+
+
+def test_workflow_error_masks_values_extracted_before_assertion_failure(target_server):
+    case = _case(
+        processing=_workflow_processing(
+            setup_steps=[
+                _workflow_step(
+                    "获取临时登录态",
+                    "GET",
+                    "/token",
+                    assertions=[
+                        {
+                            "type": "unsupported",
+                            "operator": "equals",
+                            "expected": True,
+                            "timeout_ms": 0,
+                            "enabled": True,
+                        }
+                    ],
+                    extractions=[
+                        _json_extraction(
+                            "issuedToken", "$.data.access_token"
+                        )
+                    ],
+                )
+            ]
+        )
+    )
+
+    result = _executor(target_server, case).execute_case(
+        "case-version-1", "environment-revision-1", {}
+    )
+    persisted = json.dumps(result.to_dict(), ensure_ascii=False)
+
+    assert result.status == "BROKEN"
+    assert result.failure_category == "setup"
+    for secret in (
+        "server-issued-review-secret",
+        "server-password-secret",
+        "server-api-key-secret",
+    ):
+        assert secret not in persisted
 
 
 def test_explicit_cancellation_wins_before_and_after_request(target_server):

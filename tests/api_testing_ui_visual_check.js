@@ -139,6 +139,7 @@ async function assertNoHorizontalOverflow(page, label) {
   try {
     await page.goto(url, { waitUntil: 'networkidle' });
     await page.getByRole('heading', { name: '接口测试工作台' }).waitFor();
+    await page.getByTestId('endpoint-search').fill('我的收藏列表');
     await page.getByRole('button', { name: '我的收藏列表' }).click();
     const desktopBoxes = await Promise.all(['.endpoint-tree', '.design-center', '.ai-assistant'].map(selector => page.locator(selector).boundingBox()));
     if (desktopBoxes.some(box => !box) || !(desktopBoxes[0].x < desktopBoxes[1].x && desktopBoxes[1].x < desktopBoxes[2].x)) {
@@ -155,6 +156,7 @@ async function assertNoHorizontalOverflow(page, label) {
 
     await page.setViewportSize({ width: 390, height: 844 });
     await page.reload({ waitUntil: 'networkidle' });
+    await page.getByTestId('endpoint-search').fill('我的收藏列表');
     await page.getByRole('button', { name: '我的收藏列表' }).click();
     const mobileBoxes = await Promise.all(['.endpoint-tree', '.design-center', '.ai-assistant'].map(selector => page.locator(selector).boundingBox()));
     if (mobileBoxes.some(box => !box) || !(mobileBoxes[0].y < mobileBoxes[1].y && mobileBoxes[1].y < mobileBoxes[2].y)) {

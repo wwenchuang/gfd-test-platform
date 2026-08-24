@@ -50,6 +50,15 @@ const PREVIEW = {
   id: 'basic-positive-endpoint-list',
   endpoint_id: 'endpoint-list',
   origin: 'imported',
+  workflow: {
+    kind: 'read_only',
+    label: '只读查询',
+    risk: 'low',
+    requires_setup: false,
+    requires_cleanup: false,
+    baseline_policy: 'direct',
+    reason: '无业务状态变更，可直接校验业务码、结构和关键数据字段',
+  },
   case: {
     name: '我的收藏列表 - 基础正向流程',
     purpose: '验证我的收藏列表',
@@ -112,6 +121,8 @@ describe('CaseListPanel', () => {
     expect(wrapper.get('[data-testid="case-version-version-add"]').text()).toContain('v1 · 平台')
     expect(wrapper.get('[data-testid="case-preview-basic-positive-endpoint-list"]').text()).toContain('我的收藏列表 - 基础正向流程')
     expect(wrapper.get('[data-testid="case-preview-basic-positive-endpoint-list"]').text()).toContain('候选 · 平台')
+    expect(wrapper.get('[data-testid="case-preview-basic-positive-endpoint-list"]').text()).toContain('只读查询')
+    expect(wrapper.get('[data-testid="case-preview-basic-positive-endpoint-list"]').text()).toContain('可直接进入基线校验')
   })
 
   it('emits edit, save, discard, run, delete, and task-scope operations', async () => {
