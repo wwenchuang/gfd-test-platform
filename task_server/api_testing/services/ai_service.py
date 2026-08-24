@@ -22,6 +22,7 @@ from ..contracts.case import CasePayloadError, CaseVersionView, parse_case_paylo
 from ..executor import redact
 from ..repositories.ai_job_repository import AiJobRepository
 from .case_service import CaseService
+from .response_assertion_policy import ResponseAssertionPolicy
 
 
 MAX_ENDPOINTS = 60
@@ -679,6 +680,12 @@ class AiCaseService:
                 )
             self._bind_request_identity(normalized_payload, endpoint)
             self._complete_openapi_parameters(normalized_payload, endpoint)
+            normalized_payload["assertions"] = (
+                ResponseAssertionPolicy.complete_candidate_assertions(
+                    normalized_payload.get("assertions", []),
+                    endpoint.operation,
+                )
+            )
             self._assert_no_literal_secrets(normalized_payload)
             normalized_payload["request"]["headers"] = self._runtime_managed_headers(
                 repository,

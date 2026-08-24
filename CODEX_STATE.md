@@ -34,6 +34,51 @@
 
 ## 最近完成的关键修复
 
+### 2026-08-24 API 用例生成：基础正向与 AI 共享响应断言策略
+
+用户要求平台后续自行生成用例时，“生成基础正向用例”和“AI 生成测试用例”使用一致的业务响应断言兜底，不能继续依赖模型自觉补充 `$.code` / `$.data`。
+
+本轮实现：
+
+- 新增纯后端 `ResponseAssertionPolicy`，集中从 OpenAPI 成功响应契约推导：
+  - 文档成功 HTTP 状态码。
+  - 示例或 schema 明确的 `$.code == 0` / `$.code == 200`。
+  - 明确的 `$.success == true`。
+  - 契约存在 `data` 时的 `$.data exists`。
+- `BasicCaseService` 删除原有重复响应断言实现，改为直接调用共享策略。
+- `AiCaseService` 在绑定接口真实方法/路径并补齐必填参数后、严格解析和草稿落库前调用同一策略：
+  - AI 只有成功 HTTP 状态断言时自动补业务断言。
+  - AI 已有相同 `code` 断言或 `$.data` 下更具体断言时不重复添加。
+  - 宽松的 `$.code in [0, 1001]` 不能代替精确成功码，仍补 `$.code == 0`。
+  - AI 明确预期 4xx、非成功业务码、`$.code > 0`、`$.success == false` 或 `$.data not_exists` 时视为负向场景，不追加成功断言。
+  - AI 精确选择契约中的另一个 2xx（例如 201）时，使用该状态对应的响应契约推导业务断言。
+  - `status_code in [200, 400]` 等宽松集合会补精确成功状态，避免错误响应也通过。
+  - array（包括只有数组 example、没有 schema 的响应）、空结构 JSON 契约、binary、NDJSON / JSON Sequence / stream+json 流式和非 JSON 响应不强加 JSONPath 断言。
+  - `$.data.id not_exists` 不能代替父级 `$.data exists`；只有能证明 data 路径实际存在的具体断言才去重。
+- 策略返回深拷贝，不原地修改模型候选或调用方数据。
+
+验证：
+
+```bash
+.venv/bin/python -m pytest tests/api_testing/test_response_assertion_policy.py tests/api_testing/test_basic_case_service.py -q
+# 36 passed
+
+TEST_DATABASE_URL='postgresql+psycopg://midscene:midscene@127.0.0.1:5432/midscene_api_testing' TEST_REDIS_URL='redis://127.0.0.1:6379/15' .venv/bin/python -m pytest tests/api_testing/test_ai_service.py -q
+# 48 passed
+
+TEST_DATABASE_URL='postgresql+psycopg://midscene:midscene@127.0.0.1:5432/midscene_api_testing' TEST_REDIS_URL='redis://127.0.0.1:6379/15' .venv/bin/python -m pytest tests/api_testing -q --deselect=tests/api_testing/test_http_contract.py::test_case_version_group_update_is_owner_scoped
+# 390 passed, 1 deselected
+
+python3 -m py_compile task_server/api_testing/services/response_assertion_policy.py task_server/api_testing/services/basic_case_service.py task_server/api_testing/services/ai_service.py
+python3 tests/backend_static_checks.py
+# 63 checks passed
+
+git diff --check
+# passed
+```
+
+完整 API 套件仍有一个既有失败：`test_case_version_group_update_is_owner_scoped` 查询分组后列表为空，已单独稳定复现，本轮没有修改该模块或测试。生成断言一致只表示新草稿具备更可靠的静态断言，不代表历史用例已重写，也不代表新用例已经对真实业务环境执行通过；基线采纳仍必须使用真实执行证据。
+
 ### 2026-08-24 API 基线：真实响应联动补跑、平台同步和非共享全量回归
 
 用户要求继续使用已通过接口的真实响应数据补跑其他接口，执行通过后同步到平台；共享业务继续排除，不使用用户此前提供的业务 token。

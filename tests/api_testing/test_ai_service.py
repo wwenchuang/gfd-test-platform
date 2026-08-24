@@ -852,6 +852,85 @@ def test_ai_relative_method_and_path_are_bound_to_the_selected_endpoint(
     assert drafts[0].request["path"] == endpoint.path
 
 
+def test_ai_response_assertion_policy_adds_contract_business_defaults(
+    session_factory, ai_context
+):
+    endpoint = ai_context["endpoints"]["favoriteList"]
+    candidate = _candidate(endpoint, "仅生成状态码断言")
+    service = _service(
+        session_factory,
+        FakeGateway(_gateway_response([candidate])),
+    )
+    job = service.submit(
+        [endpoint.id], ai_context["environment"].revision_id, "admin"
+    )
+
+    completed = service.process(job.id)
+    drafts = service.list_generated_drafts(job.id)
+
+    assert completed.state == "completed"
+    assert len(drafts) == 1
+    assertions = [
+        {
+            "type": item.type,
+            "operator": item.operator,
+            "expected": item.expected,
+            "path": item.path,
+            "enabled": item.enabled,
+        }
+        for item in drafts[0].assertions
+    ]
+    assert {
+        "type": "json_path",
+        "operator": "equals",
+        "expected": 0,
+        "path": "$.code",
+        "enabled": True,
+    } in assertions
+    assert {
+        "type": "json_path",
+        "operator": "exists",
+        "expected": None,
+        "path": "$.data",
+        "enabled": True,
+    } in assertions
+
+
+def test_ai_response_assertion_policy_preserves_explicit_negative_business_code(
+    session_factory, ai_context
+):
+    endpoint = ai_context["endpoints"]["favoriteList"]
+    candidate = _candidate(endpoint, "业务失败响应")
+    candidate["case"]["assertions"].append(
+        {
+            "type": "json_path",
+            "path": "$.code",
+            "operator": "equals",
+            "expected": 1001,
+            "enabled": True,
+        }
+    )
+    service = _service(
+        session_factory,
+        FakeGateway(_gateway_response([candidate])),
+    )
+    job = service.submit(
+        [endpoint.id], ai_context["environment"].revision_id, "admin"
+    )
+
+    completed = service.process(job.id)
+    drafts = service.list_generated_drafts(job.id)
+
+    assert completed.state == "completed"
+    assert len(drafts) == 1
+    business_assertions = [
+        (item.path, item.operator, item.expected)
+        for item in drafts[0].assertions
+        if item.type == "json_path"
+    ]
+    assert business_assertions == [("$.code", "equals", 1001)]
+
+
 def test_schema_exists_output_is_normalized_to_json_root_exists(
     session_factory, ai_context
 ):

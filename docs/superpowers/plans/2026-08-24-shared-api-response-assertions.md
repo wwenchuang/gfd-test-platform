@@ -27,21 +27,21 @@
 - Produces: `ResponseAssertionPolicy.default_positive_assertions(operation) -> list[dict]`
 - Produces: `ResponseAssertionPolicy.complete_candidate_assertions(assertions, operation) -> list[dict]`
 
-- [ ] **Step 1: Write failing policy tests**
+- [x] **Step 1: Write failing policy tests**
 
 Cover contract-derived `code == 0`, documented `code == 200`, `data exists`, specific AI data assertions, explicit negative status/business assertions, duplicate suppression, and non-JSON responses.
 
-- [ ] **Step 2: Run the policy tests and verify RED**
+- [x] **Step 2: Run the policy tests and verify RED**
 
 Run: `.venv/bin/python -m pytest tests/api_testing/test_response_assertion_policy.py -q`
 
 Expected: collection fails because `response_assertion_policy` does not exist.
 
-- [ ] **Step 3: Implement the pure policy**
+- [x] **Step 3: Implement the pure policy**
 
 Move response-status and response-envelope inference out of `BasicCaseService`. Merge defaults only when the candidate represents a compatible success scenario, and return deep copies so caller payloads are not mutated unexpectedly.
 
-- [ ] **Step 4: Run the policy tests and verify GREEN**
+- [x] **Step 4: Run the policy tests and verify GREEN**
 
 Run: `.venv/bin/python -m pytest tests/api_testing/test_response_assertion_policy.py -q`
 
@@ -59,21 +59,21 @@ Expected: all policy tests pass.
 - Consumes: `ResponseAssertionPolicy.default_positive_assertions(operation)`
 - Consumes: `ResponseAssertionPolicy.complete_candidate_assertions(assertions, operation)`
 
-- [ ] **Step 1: Write failing AI integration assertions**
+- [x] **Step 1: Write failing AI integration assertions**
 
 Add an AI generation test whose model candidate contains only `status_code == 200`; require the persisted draft to contain the contract-derived `$.code == 0` and `$.data exists` assertions. Add a second test proving an explicit negative business-code candidate remains negative.
 
-- [ ] **Step 2: Run focused tests and verify RED**
+- [x] **Step 2: Run focused tests and verify RED**
 
 Run: `TEST_DATABASE_URL='postgresql+psycopg://midscene:midscene@127.0.0.1:5432/midscene_api_testing' TEST_REDIS_URL='redis://127.0.0.1:6379/15' .venv/bin/python -m pytest tests/api_testing/test_ai_service.py -k 'response_assertion_policy' -q`
 
 Expected: the positive draft lacks the derived business assertions before integration.
 
-- [ ] **Step 3: Delegate deterministic generation and normalize AI drafts**
+- [x] **Step 3: Delegate deterministic generation and normalize AI drafts**
 
 Make `BasicCaseService._assertions()` delegate to the shared policy. In `AiCaseService._create_validated_draft()`, merge the candidate assertions after request binding and OpenAPI parameter completion, before secret checking and `parse_case_payload()`.
 
-- [ ] **Step 4: Run focused and regression tests**
+- [x] **Step 4: Run focused and regression tests**
 
 Run the shared-policy tests, `tests/api_testing/test_basic_case_service.py`, and the focused AI integration tests. Then run the full API AI-service test module against local PostgreSQL/Redis.
 
@@ -87,14 +87,14 @@ Expected: all selected tests pass, including existing safety and validation case
 **Interfaces:**
 - Consumes: completed shared assertion behavior and verification evidence.
 
-- [ ] **Step 1: Run required checks**
+- [x] **Step 1: Run required checks**
 
 Run Python compilation, `tests/backend_static_checks.py`, and `git diff --check`.
 
-- [ ] **Step 2: Record exact behavior and test evidence**
+- [x] **Step 2: Record exact behavior and test evidence**
 
 Append a dated `CODEX_STATE.md` section that distinguishes generated assertion consistency from real endpoint execution success.
 
-- [ ] **Step 3: Commit the implementation**
+- [x] **Step 3: Commit the implementation**
 
 Commit only the shared policy, generation-path integrations, tests, design/plan, and state update with a focused message.
