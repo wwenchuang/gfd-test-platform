@@ -4712,7 +4712,7 @@ def check_agent_ai_owned_plan_and_evidence_loop():
         and target_shortfall_audit.get("targetMet") is False
         and target_shortfall_audit.get("targetShortfall") == 4
         and target_shortfall_audit.get("advisories"),
-        "A complete executable portfolio must report a 5/8/12 target shortfall without manufacturing low-value cases or failing the gate",
+        "A complete executable portfolio must report a planned target shortfall without manufacturing low-value cases or failing the gate",
     )
 
     classified_payload = {
@@ -12876,17 +12876,17 @@ def check_ai_skills_receive_yaml_reference_context():
     for skill_payload in (scenario_payload, automation_payload, smoke_payload):
         targets = skill_payload.get("generation_targets") or {}
         require(
-            targets.get("target_automation_cases") == 5
-            and targets.get("min_automation_cases") == 5
+            targets.get("target_automation_cases") == 1
+            and targets.get("min_automation_cases") == 1
             and targets.get("size") == "small",
-            "Scenario, automation and smoke skills must share the same platform-clamped scope plan",
+            "Scenario, automation and smoke skills must share the same document-derived scope plan",
         )
     require(
         len(automation_payload.get("yaml_reference_context", "")) <= 6000,
         "Automation filter must receive a bounded Top3 YAML reference instead of the full generation context",
     )
     require(
-        payload.get("review", {}).get("generation_targets", {}).get("target_automation_cases") == 5,
+        payload.get("review", {}).get("generation_targets", {}).get("target_automation_cases") == 1,
         "Generated payload review must preserve the authoritative scope target",
     )
     require(payload["review"]["smoke_selection"]["selector_source"] == "smoke_selector.v1", "Smoke selection should use AI recommendation before platform validation")
@@ -14221,7 +14221,7 @@ def check_agent_report_summary_uses_real_runner_totals_when_plan_buckets_are_sta
     )
 
 
-def check_generation_volume_uses_acceptance_dimensions_for_large_entry_requirements():
+def check_generation_volume_merges_same_branch_acceptance_dimensions():
     from task_server.services.case_service import generation_volume_targets
 
     analysis = {
@@ -14240,10 +14240,10 @@ def check_generation_volume_uses_acceptance_dimensions_for_large_entry_requireme
     }
     targets = generation_volume_targets(analysis, mode="full")
     require(
-        targets.get("size") == "large"
-        and targets.get("target_plan_cases") >= 20
-        and targets.get("target_automation_cases") == 12,
-        "Multi-branch entry requirements must use acceptance dimensions to create a large full test plan and 12-case automation target",
+        targets.get("target_plan_cases") == 3
+        and targets.get("requirement_unit_count") == 3
+        and targets.get("target_automation_cases") == 3,
+        "Acceptance checks on the same three business branches must merge into three document-derived core cases",
     )
 
 
@@ -14477,6 +14477,120 @@ def check_mindmap_compact_mode():
     full = yaml_service.build_generation_mindmap({**summary, "mindmap_mode": "full", "review": {}})
     require("完整需求覆盖追踪矩阵" in full, "Full mindmap mode must remain available for compatibility")
 
+    cases_only = yaml_service.build_generation_mindmap({
+        **summary,
+        "module": "AI测试",
+        "mindmap_mode": "cases",
+        "cases": [{
+            "case_id": "TC-001",
+            "title": "图片建模入口展示",
+            "scenario": "图片建模入口展示",
+            "feature": "AI测试",
+            "priority": "P1",
+            "steps": ["进入 AI 建模页", "查看图片建模入口"],
+            "expected_result": "图片建模入口正常展示",
+        }],
+    })
+    require(
+        "图片建模入口展示" in cases_only
+        and "测试步骤" in cases_only
+        and "预期结果" in cases_only,
+        "Cases mindmap must preserve real cases, steps and expected results",
+    )
+    for unwanted in (
+        "测试报告检查点",
+        "需求目标",
+        "需求点",
+        "风险与待确认",
+        "完整需求覆盖追踪矩阵",
+        "覆盖场景：",
+        "自动化用例分级",
+        "自评审",
+    ):
+        require(unwanted not in cases_only, f"Cases mindmap must omit analysis-only section: {unwanted}")
+    require('TEXT="AI测试"' not in cases_only, "Generic AI测试 fallback must not appear as a case group")
+    require("其他用例" not in cases_only, "Generic case feature must inherit the matching real scenario feature")
+
+    title_fallback = yaml_service.build_generation_mindmap({
+        "title": "收藏测试",
+        "module": "收藏测试",
+        "mindmap_mode": "cases",
+        "cases": [{"title": "收藏成功", "steps": ["点击收藏"], "expected_result": "收藏状态已更新"}],
+    })
+    require(
+        title_fallback.count('TEXT="收藏测试"') == 0,
+        "A title used as the module fallback must not create a duplicate feature group",
+    )
+
+    duplicate_scenario_names = yaml_service.build_generation_mindmap({
+        "title": "跨功能同名场景",
+        "mindmap_mode": "cases",
+        "scenarios": [
+            {"scenario": "保存成功", "feature": "收藏"},
+            {"scenario": "保存成功", "feature": "草稿"},
+        ],
+        "cases": [
+            {"title": "收藏保存成功", "scenario": "保存成功", "feature": "收藏"},
+            {"title": "草稿保存成功", "scenario": "保存成功", "feature": "草稿"},
+        ],
+    })
+    require(
+        duplicate_scenario_names.count("收藏保存成功") == 1
+        and duplicate_scenario_names.count("草稿保存成功") == 1,
+        "Cases mindmap must not duplicate cases when different features share a scenario name",
+    )
+
+    duplicate_scenarios_in_one_feature = yaml_service.build_generation_mindmap({
+        "title": "同功能重复场景",
+        "mindmap_mode": "cases",
+        "scenarios": [
+            {"scenario": "保存成功", "feature": "收藏"},
+            {"scenario": "保存成功", "feature": "收藏"},
+        ],
+        "cases": [{"title": "收藏保存成功", "scenario": "保存成功", "feature": "收藏"}],
+    })
+    require(
+        duplicate_scenarios_in_one_feature.count("收藏保存成功") == 1,
+        "Cases mindmap must render a same-feature duplicate scenario only once",
+    )
+
+    ambiguous_case_feature = yaml_service.build_generation_mindmap({
+        "title": "缺失功能归属",
+        "mindmap_mode": "cases",
+        "scenarios": [
+            {"scenario": "保存成功", "feature": "收藏"},
+            {"scenario": "保存成功", "feature": "草稿"},
+        ],
+        "cases": [{"title": "保存结果正确", "scenario": "保存成功"}],
+    })
+    require(
+        ambiguous_case_feature.count("保存结果正确") == 1
+        and "场景检查：保存成功" not in ambiguous_case_feature,
+        "Cases mindmap must keep an ambiguous real case once without inventing feature-specific placeholder cases",
+    )
+
+    retried = yaml_service.generate_retry_request_from_job({
+        "type": "mindmap_only",
+        "job_id": "legacy-full-mindmap",
+        "request_data": {"title": "旧脑图", "mindmapMode": "full"},
+    })
+    require(
+        retried.get("mindmapMode") == "cases" and retried.get("mindmap_mode") == "cases",
+        "Retrying a historical mindmap-only job must not restore the legacy full analysis tree",
+    )
+
+    app_source = (ROOT / "js" / "app.js").read_text(encoding="utf-8")
+    require(
+        app_source.count("mindmapMode: 'cases'") >= 2,
+        "Mindmap creation and rebuild actions must request the cases-only presentation",
+    )
+    task_manager_source = (ROOT / "task-manager.html").read_text(encoding="utf-8")
+    require(
+        "生成用例脑图" in task_manager_source
+        and "js/app.js?v=20260824-case-only-mindmap" in task_manager_source,
+        "Mindmap modal and cache key must expose the cases-only presentation after deployment",
+    )
+
 
 def check_generation_volume_targets_modes():
     from task_server.services import case_service
@@ -14489,26 +14603,182 @@ def check_generation_volume_targets_modes():
     full = case_service.generation_volume_targets(analysis, mode="full")
     mindmap = case_service.generation_volume_targets(analysis, mode="mindmap")
     require(
-        full["target_plan_cases"] >= 20
-        and full["max_plan_cases"] == 50
-        and full["target_automation_cases"] == 12
-        and full["max_automation_cases"] == 12,
-        "Large generation must separate 20-50 test plan cases from the 12-case automation YAML pool",
+        full["target_plan_cases"] == 6
+        and full["target_automation_cases"] == 5
+        and full["target_scenarios"] == 6
+        and full["max_scenarios"] > full["target_scenarios"],
+        "Generation must derive six core scenarios from six independent requirement points instead of using a fixed size bucket",
     )
     require(mindmap["mode"] == "mindmap", "Generation targets must record the selected mode")
     small = case_service.generation_volume_targets({"requirement_points": ["入口"]}, mode="full")
     medium = case_service.generation_volume_targets({"requirement_points": ["入口", "列表", "详情"]}, mode="full")
     large = case_service.generation_volume_targets({"requirement_points": [str(i) for i in range(6)]}, mode="full")
     require(
-        (small["target_plan_cases"], medium["target_plan_cases"], large["target_plan_cases"]) == (5, 10, 20),
-        "Full test plan quantity must scale separately from Runner automation",
+        (small["target_plan_cases"], medium["target_plan_cases"], large["target_plan_cases"]) == (1, 3, 6),
+        "Full test plan quantity must follow independent requirement units rather than a fixed 3/5/8 bucket",
     )
     require(
-        (small["target_automation_cases"], medium["target_automation_cases"], large["target_automation_cases"]) == (5, 8, 12),
-        "Generated automation YAML quantity must converge to 5/8/12 by requirement size",
+        (small["target_automation_cases"], medium["target_automation_cases"], large["target_automation_cases"]) == (1, 3, 5),
+        "Runner automation selection may use 3/5/8 ceilings but must not force extra cases beyond the document-derived plan",
     )
-    require(small["smoke_cases"] == medium["smoke_cases"] == large["smoke_cases"] == 3, "Generated first smoke batch must stay fixed at 3")
+    require(
+        (small["smoke_cases"], medium["smoke_cases"], large["smoke_cases"]) == (1, 3, 3),
+        "Generated first smoke batch must use the available core cases and stay capped at three",
+    )
     require(large["continue_threshold"] == 0.5 and large["smoke_max_cases"] == 3, "Generated execution gate must keep fixed 50% threshold and smoke cap 3")
+
+    large_document = case_service.generation_volume_targets(
+        {"requirement_points": [f"独立验收单元 {index}" for index in range(75)]},
+        mode="full",
+    )
+    require(
+        large_document["target_plan_cases"] == 75
+        and large_document["target_scenarios"] == 75
+        and large_document["max_plan_cases"] > 75
+        and large_document["target_automation_cases"] == 8,
+        "A large requirement document must keep all 75 independent plan units while limiting only the Runner candidate subset",
+    )
+
+    from task_server.services import ai_skill_service
+
+    compact_large_analysis = ai_skill_service._compact_analysis_for_automation_filter(
+        {"requirement_points": [f"独立验收单元 {index}" for index in range(75)]},
+        requirement_limit=large_document["target_plan_cases"],
+    )
+    require(
+        len(compact_large_analysis.get("requirement_points") or []) == 75,
+        "Automation filtering must receive every document-derived requirement point instead of silently keeping only the first sixteen",
+    )
+
+    scenarios = [
+        {"feature": "收藏", "requirement_point": "收藏", "scenario": "收藏成功"},
+        {"feature": "收藏", "requirement_point": "收藏", "scenario": "收藏成功"},
+        {"feature": "取消收藏", "requirement_point": "取消收藏", "scenario": "取消收藏成功"},
+    ] + [
+        {"feature": f"扩展{index}", "requirement_point": f"扩展{index}", "scenario": f"低价值扩展{index}"}
+        for index in range(20)
+    ]
+    essential, scenario_review = ai_skill_service.deduplicate_generated_scenarios(scenarios)
+    require(
+        len(essential) == len(scenarios) - 1
+        and sum(1 for item in essential if item.get("scenario") == "收藏成功") == 1
+        and any(item.get("scenario") == "取消收藏成功" for item in essential)
+        and scenario_review.get("duplicate_count") == 1
+        and scenario_review.get("trimmed_count") == 0,
+        "Platform must remove duplicate scenarios without deleting distinct scenarios merely because of a fixed count",
+    )
+
+    generated_cases = [
+        {"title": "收藏成功", "scenario": "收藏成功", "expected_result": "收藏状态已更新"},
+        {"title": "收藏成功", "scenario": "收藏成功", "expected_result": "收藏状态已更新"},
+    ] + [
+        {"title": f"自动化候选{index}", "scenario": f"场景{index}", "expected_result": f"结果{index}"}
+        for index in range(10)
+    ]
+    limited_cases, portfolio_review = ai_skill_service.deduplicate_generated_cases(generated_cases)
+    require(
+        len(limited_cases) == len(generated_cases) - 1
+        and portfolio_review.get("duplicate_case_count") == 1
+        and portfolio_review.get("trimmed_case_count") == 0,
+        "Platform must deduplicate generated cases without a rigid portfolio cap",
+    )
+
+    merged_cases, merged_review = ai_skill_service.deduplicate_generated_cases([
+        {
+            "title": "收藏入口展示",
+            "merge_key": "收藏-默认态-结果页",
+            "requirement_point": "REQ-001 入口可见",
+            "steps": ["进入收藏页", "检查收藏入口"],
+            "assertions": ["收藏入口可见"],
+        },
+        {
+            "title": "收藏入口文案",
+            "merge_key": "收藏-默认态-结果页",
+            "requirement_point": "REQ-002 文案正确",
+            "steps": ["进入收藏页", "检查入口文案"],
+            "assertions": ["入口文案为收藏"],
+        },
+        {
+            "title": "收藏入口空态",
+            "merge_key": "收藏-默认态-结果页",
+            "state": "空态",
+            "requirement_point": "REQ-003 空态提示",
+            "assertions": ["展示空态提示"],
+        },
+    ])
+    require(
+        len(merged_cases) == 2
+        and merged_review.get("duplicate_case_count") == 1
+        and len(merged_cases[0].get("assertions") or []) == 2
+        and set(merged_cases[0].get("requirementRefs") or []) == {"REQ-001 入口可见", "REQ-002 文案正确"}
+        and merged_cases[1].get("state") == "空态",
+        "Same-path UI checks must merge without losing assertions or requirement references, while a distinct state remains separate",
+    )
+
+    scoped_targets = ai_skill_service.generation_targets_for_scope(
+        {"requirement_points": [f"需求 {index}" for index in range(60)]},
+        scope_plan={"targetPlanCaseCount": 90, "targetCaseCount": 8, "smokeCount": 3},
+    )
+    require(
+        scoped_targets["target_plan_cases"] == 90
+        and scoped_targets["max_plan_cases"] > 90
+        and scoped_targets["target_automation_cases"] == 8,
+        "AI document scope may expand the complete plan beyond the local estimate without expanding the Runner pool past eight",
+    )
+
+    six_state_analysis = {
+        "requirement_points": ["收藏页状态展示"],
+        "requirement_acceptance_checks": [
+            {"branch": branch, "state": state, "kind": "display"}
+            for branch in ("收藏", "下载", "历史")
+            for state in ("有数据", "空态")
+        ],
+    }
+    six_state_targets = ai_skill_service.generation_targets_for_scope(
+        six_state_analysis,
+        scope_plan={"targetPlanCaseCount": 3, "targetCaseCount": 3, "smokeCount": 3},
+    )
+    require(
+        six_state_targets["target_plan_cases"] == 6
+        and six_state_targets["min_plan_cases"] == 6,
+        "AI scope advice must not reduce six explicitly identified branch-state units to three cases",
+    )
+
+    fallback_scenarios = ai_skill_service._fallback_scenarios_from_analysis(
+        "六项需求",
+        "功能模块",
+        {"requirement_points": [f"独立需求{index}" for index in range(6)]},
+        targets=large,
+        error="scenario model unavailable",
+    )
+    fallback_filtered = ai_skill_service._fallback_automation_filter_from_scenarios(
+        "六项需求",
+        "功能模块",
+        {"requirement_points": [f"独立需求{index}" for index in range(6)]},
+        fallback_scenarios,
+        targets=large,
+        error="",
+    )
+    require(
+        len(fallback_scenarios) == 6
+        and len(fallback_filtered.get("cases") or []) == 6
+        and sum(1 for item in fallback_filtered["cases"] if item.get("executionLevel") == "executable") == 5
+        and fallback_filtered["cases"][-1].get("executionLevel") == "needs_review",
+        "Runner capacity must not delete a necessary document-derived case from fallback test design",
+    )
+
+    scenario_prompt = (ROOT / "ai_skills" / "prompts" / "scenario_designer.v1.md").read_text(encoding="utf-8")
+    automation_prompt = (ROOT / "ai_skills" / "prompts" / "automation_filter.v1.md").read_text(encoding="utf-8")
+    scope_prompt = (ROOT / "ai_skills" / "prompts" / "execution_scope_planner.v1.md").read_text(encoding="utf-8")
+    prompt_text = "\n".join((scenario_prompt, automation_prompt, scope_prompt))
+    require(
+        "merge_key" in scenario_prompt
+        and "独立验收单元" in prompt_text
+        and "完整测试计划不设固定条数上限" in prompt_text
+        and "完整测试计划 5-8" not in prompt_text
+        and "大需求 20-50" not in prompt_text,
+        "Generation skills must use document-derived necessity and merge rules instead of fixed quantity buckets",
+    )
 
 
 def check_agent_summary_splits_repair_and_coverage_status():
@@ -14707,7 +14977,7 @@ def check_ai_gateway_fallback_and_skill_static():
         "Text and image AI skills must use Gateway, with an explicit audited vision fallback and no silent direct-model switch",
     )
     require('"fallbackProviderIds"' in router_config and "highway_gpt5_mini" in router_config, "Model router config must include fallback providers")
-    require("mindmapMode: 'full'" in app_js_source, "Mindmap-only frontend requests must default to full test-case mindmap mode")
+    require("mindmapMode: 'cases'" in app_js_source, "Mindmap-only frontend requests must default to case-content-only mode")
 
 
 def check_ai_yaml_generation_decision_chain_static():
@@ -14755,7 +15025,7 @@ def check_ai_yaml_generation_decision_chain_static():
     require("def call_skill_executable_yaml_planner" in ai_skill_source, "AI skill service must expose executable YAML planner")
     require("def apply_executable_yaml_plan_to_payload" in ai_skill_source, "Executable YAML planner output must be applied to generated payload")
     require("path_mapping_guard_count" in ai_skill_source and "pathMappingGuarded" in ai_skill_source and "def executable_yaml_portfolio_audit" in ai_skill_source, "Executable planning must reject cross-requirement path swaps and audit the final portfolio")
-    require('"targetShortfall"' in ai_skill_source and "数量目标不作为硬门禁" in ai_skill_source, "Executable coverage must report 5/8/12 target shortfalls without forcing low-value Runner cases")
+    require('"targetShortfall"' in ai_skill_source and "数量目标不作为硬门禁" in ai_skill_source, "Executable coverage must report dynamic target shortfalls without forcing low-value Runner cases")
     require("def compact_visual_grounder_base_payload" in ai_skill_source and "def merge_visual_grounder_payload" in ai_skill_source and "visual_input_compaction" in ai_skill_source, "Visual grounding must compact repeated history while preserving and merging design evidence")
     require("MIDSCENE_AI_SKILLS_STRICT_MODEL" in ai_skill_source and "AI_SKILLS_STRICT_MODEL" in ai_skill_source, "AI skills must support strict selected-model mode")
     require("model_trace" in ai_skill_source and "providerId" in ai_skill_source, "AI skill reviews must record provider/model trace")
@@ -14765,7 +15035,7 @@ def check_ai_yaml_generation_decision_chain_static():
         and "targets=current_targets" in ai_skill_source,
         "Coverage auditor must receive model config and the authoritative scope targets during the repair loop",
     )
-    require("当前平台采用完整计划与自动化分层策略" in ai_skill_source, "Legacy quantity-driven prompt must be replaced with layered 5/8/12 automation guidance")
+    require("按需求文档中的独立业务分支" in ai_skill_source, "Legacy quantity buckets must be replaced with document-derived planning guidance")
     require("每个需求功能点通常至少生成 2-4 条自动化用例" not in ai_skill_source, "Legacy 2-4 cases per requirement prompt must not reappear")
     require("display_only" in ai_skill_source and "点击后进入百度网盘相关流程" in ai_skill_source, "Baidu Netdisk display-only requirements must be separated from click/auth flows")
 
@@ -16623,7 +16893,7 @@ def main():
         and "allow_entry_visibility_fast_path=deterministic_entry_visibility_source" in yaml_service_source
         and 'title = d.get("title") or d.get("target") or d.get("goal") or "UI自动化用例"' in yaml_service_source
         and "入口可见性快路径使用本地短链路生成，跳过 AI 基线重排" in yaml_service_source
-        and "入口可见性快路径固定生成 3 条首批短链路冒烟" in yaml_service_source
+        and "Runner 首批只选择最多 3 条稳定短链路冒烟" in yaml_service_source
         and "入口可见性快路径：跳过重型 AI 需求解析" in yaml_service_source,
         "Entry visibility generation must support smoke fast path and explicit complete-scope bypass into the full AI pipeline",
     )
@@ -16747,7 +17017,7 @@ def main():
         "generation_targets_for_scope" in ai_skill_service_source
         and "generation_scope_plan=execution_scope_plan" in yaml_service_source
         and "targets=planned_generation_targets" in yaml_service_source,
-        "The platform-clamped complete-plan and 5/8/12 automation scope must govern generation, coverage audit and final smoke selection",
+        "The document-derived plan and bounded Runner scope must govern generation, coverage audit and final smoke selection",
     )
     require(
         "base_payload = normalize_cases_payload(base_payload)" in ai_skill_service_source
@@ -16871,7 +17141,7 @@ def main():
     check_runner_wait_reads_fresh_job_state_during_agent_rerun()
     check_agent_historical_seed_survives_incremental_generation_failure()
     check_agent_generation_job_failure_keeps_historical_seed_execution_floor()
-    check_generation_volume_uses_acceptance_dimensions_for_large_entry_requirements()
+    check_generation_volume_merges_same_branch_acceptance_dimensions()
     check_agent_cancel_cascades_runner_jobs()
     check_agent_history_compacts_uploaded_blobs_after_prepare()
     check_agent_worker_start_is_idempotent()
@@ -17146,11 +17416,13 @@ def main():
         "manual_cases": [{"title": "人工确认", "reason": "需要真实设备", "suggested_setup": "准备测试设备"}],
         "report_checkpoints": ["检查点一", "检查点二"]
     }
-    mindmap = backend.build_generation_mindmap(sample)
-    require("测试步骤" in mindmap and "预期结果" in mindmap, "Default mindmap must expand complete case steps and expected results")
+    mindmap = backend.build_generation_mindmap({**sample, "mindmap_mode": "cases"})
+    require("测试步骤" in mindmap and "预期结果" in mindmap, "Cases mindmap must expand complete case steps and expected results")
+    require("自动化用例分级" not in mindmap and "测试报告检查点" not in mindmap, "Cases mindmap must keep analysis-only sections out of the case tree")
     compact_mindmap = backend.build_generation_mindmap({**sample, "mindmap_mode": "compact"})
     require("测试步骤" not in compact_mindmap, "Explicit compact mindmap must remain summary-only")
-    require("自动化用例分级" in mindmap, "Full mindmap must keep priority grouping")
+    full_mindmap = backend.build_generation_mindmap(sample)
+    require("自动化用例分级" in full_mindmap, "Default full mindmap must remain compatible with UI automation generation summaries")
     root = {
         "id": "1:1",
         "type": "SECTION",

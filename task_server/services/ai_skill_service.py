@@ -1894,50 +1894,162 @@ def generation_volume_targets(analysis, mode="full"):
     return _gvt(analysis, mode=mode)
 
 
+def _generated_item_signature(item, *, kind):
+    item = item if isinstance(item, dict) else {}
+    explicit_merge_key = first_non_empty(item.get("merge_key"), item.get("mergeKey"))
+    if explicit_merge_key:
+        # A model-provided merge key groups checks on one path, but it must not
+        # collapse distinct states, rules or data preparations by accident.
+        values = [
+            explicit_merge_key,
+            item.get("type"),
+            item.get("condition"),
+            item.get("state"),
+            item.get("business_rule"),
+            item.get("businessRule"),
+            item.get("threshold"),
+            item.get("preconditions"),
+            item.get("data_requirements"),
+            item.get("dataRequirements"),
+        ]
+    elif kind == "scenario":
+        values = [
+            item.get("feature"), item.get("requirement_point"), item.get("requirementPoint"),
+            item.get("scenario"), item.get("name"), item.get("business_path"), item.get("businessPath"),
+            item.get("expected"), item.get("expected_result"), item.get("expectedResult"),
+        ]
+    else:
+        values = [
+            item.get("title"), item.get("name"), item.get("scenario"),
+            item.get("business_path"), item.get("businessPath"),
+            item.get("expected_result"), item.get("expectedResult"), item.get("expected"),
+            item.get("assertions"),
+        ]
+    text = json.dumps(values, ensure_ascii=False, sort_keys=True)
+    return re.sub(r"[^0-9a-z\u4e00-\u9fff]+", "", text.lower())
+
+
+def _merge_generated_items(current, incoming):
+    """Merge duplicate-path evidence without losing requirement coverage."""
+    merged = copy.deepcopy(current if isinstance(current, dict) else {})
+    incoming = incoming if isinstance(incoming, dict) else {}
+    list_fields = (
+        "requirementRefs", "requirement_refs", "assertions", "steps",
+        "preconditions", "data_requirements", "dataRequirements", "tags",
+        "repair_hints", "design_method",
+    )
+    for field in list_fields:
+        combined = []
+        for value in (merged.get(field), incoming.get(field)):
+            for row in normalize_text_list(value):
+                if row not in combined:
+                    combined.append(row)
+        if combined:
+            merged[field] = combined
+
+    evidence_fields = {
+        "merged_requirement_points": ("requirement_point", "requirementPoint", "coverage"),
+        "merged_expected_results": ("expected", "expected_result", "expectedResult"),
+        "merged_necessities": ("necessity",),
+    }
+    for output_field, source_fields in evidence_fields.items():
+        combined = normalize_text_list(merged.get(output_field))
+        for source in (merged, incoming):
+            for field in source_fields:
+                for row in normalize_text_list(source.get(field)):
+                    if row not in combined:
+                        combined.append(row)
+        if combined:
+            merged[output_field] = combined
+
+    requirement_refs = normalize_text_list(merged.get("requirementRefs"))
+    for row in normalize_text_list(merged.get("requirement_refs")):
+        if row not in requirement_refs:
+            requirement_refs.append(row)
+    for row in merged.get("merged_requirement_points") or []:
+        if row not in requirement_refs:
+            requirement_refs.append(row)
+    if requirement_refs:
+        merged["requirementRefs"] = requirement_refs
+    merged["merged_duplicate_count"] = safe_int(merged.get("merged_duplicate_count"), 0) + 1
+    return merged
+
+
+def deduplicate_generated_scenarios(scenarios):
+    """Remove semantic duplicates without applying a rigid scenario-count cap."""
+    rows = [item for item in (scenarios or []) if isinstance(item, dict)]
+    result = []
+    seen = {}
+    for item in rows:
+        key = _generated_item_signature(item, kind="scenario")
+        if key and key in seen:
+            index = seen[key]
+            result[index] = _merge_generated_items(result[index], item)
+            continue
+        if key:
+            seen[key] = len(result)
+        result.append(copy.deepcopy(item))
+    duplicate_count = len(rows) - len(result)
+    return result, {
+        "input_count": len(rows),
+        "output_count": len(result),
+        "duplicate_count": duplicate_count,
+        "trimmed_count": 0,
+        "rule": "同一路径场景合并并保留全部需求证据；不同状态、规则或数据准备不会因固定数量被裁剪。",
+    }
+
+
+def deduplicate_generated_cases(cases):
+    """Remove semantic duplicate generated cases without enforcing a fixed portfolio size."""
+    rows = [item for item in (cases or []) if isinstance(item, dict)]
+    result = []
+    seen = {}
+    for item in rows:
+        key = _generated_item_signature(item, kind="case")
+        if key and key in seen:
+            index = seen[key]
+            result[index] = _merge_generated_items(result[index], item)
+            continue
+        if key:
+            seen[key] = len(result)
+        result.append(copy.deepcopy(item))
+    duplicate_count = len(rows) - len(result)
+    return result, {
+        "input_case_count": len(rows),
+        "output_case_count": len(result),
+        "duplicate_case_count": duplicate_count,
+        "trimmed_case_count": 0,
+        "rule": "同一路径用例合并并保留全部步骤、断言和需求引用；数量由需求文档中的独立验收单元决定。",
+    }
+
+
+def _plan_size_and_automation_ceiling(plan_count):
+    plan_count = max(1, safe_int(plan_count, 1))
+    if plan_count <= 3:
+        return "small", 3
+    if plan_count <= 8:
+        return "medium", 5
+    return "large", 8
+
+
 def generation_targets_for_scope(analysis, mode="full", scope_plan=None):
-    """Use separated plan and automation targets across the generation pipeline."""
+    """Apply AI scope advice within document-derived, non-bucketed plan bounds."""
     targets = dict(generation_volume_targets(analysis, mode=mode))
     scope_plan = scope_plan if isinstance(scope_plan, dict) else {}
-    if not scope_plan or not scope_plan.get("targetCaseCount"):
+    if not scope_plan:
         return targets
-    target_count, _ = _clamp_scope_size(
-        scope_plan.get("targetCaseCount"),
-        targets.get("target_automation_cases") or 5,
-    )
-    analysis = analysis if isinstance(analysis, dict) else {}
-    point_count = len(normalize_text_list(analysis.get("requirement_points")))
-    acceptance_checks = [
-        item for item in (analysis.get("requirement_acceptance_checks") or analysis.get("requirementAcceptanceChecks") or [])
-        if isinstance(item, dict) or str(item or "").strip()
-    ]
-    branch_values = []
-    for item in acceptance_checks:
-        if isinstance(item, dict):
-            branch = str(item.get("branch") or "").strip()
-            if branch:
-                branch_values.append(branch)
-    branch_count = len(set(branch_values))
-    acceptance_count = len(acceptance_checks)
-    effective_point_count = max(point_count, acceptance_count)
-    multi_branch_acceptance = branch_count >= 3 and acceptance_count >= 8
-    requirement_floor = 12 if multi_branch_acceptance or effective_point_count > 5 else (8 if effective_point_count > 2 else 5)
-    target_count, size = _clamp_scope_size(max(target_count, requirement_floor), target_count)
-    smoke_count = max(1, min(3, safe_int(scope_plan.get("smokeCount"), 3)))
-    default_plan_counts = {
-        "small": (5, 5, 8),
-        "medium": (10, 10, 20),
-        "large": (20, 20, 50),
-    }
-    min_plan_cases, target_plan_cases, max_plan_cases = default_plan_counts.get(size, default_plan_counts["small"])
+    min_plan_cases = max(1, safe_int(targets.get("min_plan_cases"), 1))
+    target_plan_cases = max(min_plan_cases, safe_int(targets.get("target_plan_cases"), min_plan_cases))
+    max_plan_cases = max(target_plan_cases, safe_int(targets.get("max_plan_cases"), target_plan_cases))
     if scope_plan.get("targetPlanCaseCount") not in (None, ""):
         requested_plan = safe_int(scope_plan.get("targetPlanCaseCount"), target_plan_cases)
-        target_plan_cases = max(min_plan_cases, min(max_plan_cases, requested_plan))
-    scenario_counts = {
-        5: (5, 8),
-        8: (10, 20),
-        12: (20, 50),
-    }
-    min_scenarios, target_scenarios = scenario_counts[target_count]
+        target_plan_cases = max(min_plan_cases, requested_plan)
+        max_plan_cases = max(max_plan_cases, target_plan_cases + max(2, (target_plan_cases + 1) // 2))
+    size, automation_ceiling = _plan_size_and_automation_ceiling(target_plan_cases)
+    default_automation_target = min(target_plan_cases, automation_ceiling)
+    requested_automation = safe_int(scope_plan.get("targetCaseCount"), default_automation_target)
+    target_count = max(1, min(target_plan_cases, automation_ceiling, requested_automation))
+    smoke_count = max(1, min(3, target_count, safe_int(scope_plan.get("smokeCount"), min(3, target_count))))
     targets.update({
         "size": size,
         "min_plan_cases": min_plan_cases,
@@ -1945,15 +2057,16 @@ def generation_targets_for_scope(analysis, mode="full", scope_plan=None):
         "max_plan_cases": max_plan_cases,
         "min_automation_cases": target_count,
         "target_automation_cases": target_count,
-        "max_automation_cases": target_count,
-        "max_cases": target_count,
+        "max_automation_cases": automation_ceiling,
+        "max_cases": automation_ceiling,
         "smoke_cases": smoke_count,
         "smoke_max_cases": 3,
-        "min_scenarios": min_scenarios,
-        "target_scenarios": target_scenarios,
+        "min_scenarios": min_plan_cases,
+        "target_scenarios": target_plan_cases,
+        "max_scenarios": max_plan_cases,
         "scope_plan_applied": True,
-        "scope_requirement_floor": requirement_floor,
-        "scope_plan_reason": str(scope_plan.get("reason") or "AI 范围规划经平台计划池/自动化池分层规则收敛"),
+        "scope_requirement_floor": min_plan_cases,
+        "scope_plan_reason": str(scope_plan.get("reason") or "AI 范围规划已按需求文档的独立验收单元收敛"),
     })
     return targets
 
@@ -2560,7 +2673,7 @@ def _fallback_scenarios_from_analysis(title, module, analysis, targets=None, err
 
     max_scenarios = max(1, min(
         safe_int(targets.get("target_scenarios"), len(explicit_points) or 1),
-        safe_int(targets.get("max_cases"), len(explicit_points) or 1),
+        safe_int(targets.get("max_scenarios"), len(explicit_points) or 1),
         len(explicit_points) or 1,
     ))
     scenarios = []
@@ -2826,16 +2939,17 @@ def _fallback_automation_filter_from_scenarios(
         _classify_automation_filter_failure(error) if error else "timeout"
     )
     fallback_source, fallback_reason = _automation_filter_fallback_copy(failure_type)
-    max_cases = max(1, min(
+    runner_candidate_limit = max(1, min(
         safe_int(targets.get("target_automation_cases"), len(scenarios) or 1),
         safe_int(targets.get("max_cases"), len(scenarios) or 1),
         len(scenarios) or 1,
     ))
     smoke_limit = _smoke_first_batch_limit(targets)
     cases = []
-    for index, scenario in enumerate(scenarios[:max_cases], start=1):
+    for index, scenario in enumerate(scenarios, start=1):
         steps, assertions = _fallback_steps_for_scenario(scenario, app_context=app_context)
         feature = first_non_empty(scenario.get("feature"), f"需求{index}")
+        within_runner_pool = index <= runner_candidate_limit
         cases.append({
             "case_id": f"TC-{index:03d}",
             "title": first_non_empty(scenario.get("scenario"), f"{feature}主流程验证"),
@@ -2850,8 +2964,12 @@ def _fallback_automation_filter_from_scenarios(
             "steps": steps,
             "assertions": assertions,
             "expected_result": assertions[0] if assertions else "",
-            "automation_reason": fallback_reason,
-            "executionLevel": "needs_review" if error else "executable",
+            "automation_reason": (
+                fallback_reason
+                if within_runner_pool
+                else "该场景来自独立需求单元，已保留在测试计划中；超出本轮 Runner 候选容量，需后续评估自动化批次。"
+            ),
+            "executionLevel": "needs_review" if error or not within_runner_pool else "executable",
             "source": fallback_source,
         })
 
@@ -2881,7 +2999,7 @@ def _fallback_automation_filter_from_scenarios(
     }
 
 
-def _compact_analysis_for_automation_filter(analysis):
+def _compact_analysis_for_automation_filter(analysis, requirement_limit=None):
     """Keep only fields needed to decide UI automation suitability."""
     analysis = analysis if isinstance(analysis, dict) else {}
     result = {}
@@ -2892,7 +3010,7 @@ def _compact_analysis_for_automation_filter(analysis):
         "data_assumptions": 8,
         "visible_outcomes": 12,
         "risks": 10,
-        "requirement_points": 16,
+        "requirement_points": max(16, safe_int(requirement_limit, 16)),
         "missing_inputs": 10,
         "blockers": 8,
         "assumptions": 10,
@@ -2914,6 +3032,8 @@ def _compact_scenario_for_automation_filter(scenario):
         "feature", "requirement_point", "requirementPoint", "scenario", "type",
         "business_path", "businessPath", "expected", "expected_result",
         "automation_suitable", "automationSuitable", "reason", "priority", "risk",
+        "necessity", "merge_key", "mergeKey", "condition", "state",
+        "business_rule", "businessRule", "threshold",
     ):
         value = scenario.get(key)
         if value not in (None, "", []):
@@ -2959,6 +3079,11 @@ def call_skill_scenario_designer(
         return _fallback_scenarios_from_analysis(title, module, analysis, targets=targets, error=str(exc))
     if not isinstance(scenarios, list) or not scenarios:
         return _fallback_scenarios_from_analysis(title, module, analysis, targets=targets, error="scenario_designer 未产出场景")
+    scenarios, dedup_review = deduplicate_generated_scenarios(scenarios)
+    if isinstance(runtime_trace, dict):
+        runtime_trace["scenario_dedup"] = dedup_review
+    if not scenarios:
+        return _fallback_scenarios_from_analysis(title, module, analysis, targets=targets, error="scenario_designer 仅产出无效或重复场景")
     return scenarios
 
 
@@ -2977,7 +3102,10 @@ def call_skill_automation_filter(
 ):
     """调用 AI skill: automation_filter。"""
     targets = dict(targets) if isinstance(targets, dict) else generation_volume_targets(analysis, mode=mode)
-    compact_analysis = _compact_analysis_for_automation_filter(analysis)
+    compact_analysis = _compact_analysis_for_automation_filter(
+        analysis,
+        requirement_limit=targets.get("target_plan_cases"),
+    )
     compact_scenarios = [
         _compact_scenario_for_automation_filter(item)
         for item in (scenarios or [])
@@ -3007,7 +3135,7 @@ def call_skill_automation_filter(
             "assertion_required": True,
             "assertion_density": "每条自动化用例只写 1 条最终业务结果断言；过程校验写入 steps 的等待/检查动作，不要把每个验收点都塞进 assertions",
             "scope_guard": "每条 cases 必须映射当前 analysis.requirement_points/business_goals；需求未提到的历史记录、缓存、慢加载、超时、干扰、重复点击、防抖、旧入口不存在等扩展场景只能进入 manual_cases/needs_review，不得作为自动执行 YAML。",
-            "smoke_selection": "smoke=true 必须基于当前需求主链显式筛选；不要把 P1、入口、展示、基础等规则候选自动当成冒烟。自动化 YAML 池按需求收敛到 5/8/12 条，Runner 首批自动下发最多 3 条。"
+            "smoke_selection": "smoke=true 必须基于当前需求主链显式筛选；不要把 P1、入口、展示、基础等规则候选自动当成冒烟。Runner 自动化候选容量按需求规模最多 3/5/8 条，但测试设计数量仍由需求文档决定；首批自动下发最多 3 条。"
         }
     }
     def fallback(error):
@@ -3043,14 +3171,28 @@ def call_skill_automation_filter(
         return fallback(exc)
     if not isinstance(cases, list) or not cases:
         return fallback("automation_filter 未产出自动化用例")
+    raw_case_count = len(cases)
+    cases, case_dedup_review = deduplicate_generated_cases(cases)
+    if not cases:
+        return fallback("automation_filter 仅产出无效或重复用例")
+    raw_manual_cases = result.get("manual_cases") or []
+    manual_cases, manual_dedup_review = deduplicate_generated_cases(raw_manual_cases)
     review = result.get("review") or {}
     review["automation_filter_skill"] = "automation_filter.v1"
     review["automation_filter_input"] = input_review
     review["generation_targets"] = targets
     review["actual_case_count"] = len(cases)
+    review["raw_case_count"] = raw_case_count
+    review["case_dedup"] = case_dedup_review
+    review["manual_case_dedup"] = {
+        "input_count": manual_dedup_review.get("input_case_count", 0),
+        "output_count": manual_dedup_review.get("output_case_count", 0),
+        "duplicate_count": manual_dedup_review.get("duplicate_case_count", 0),
+        "rule": "人工用例也只删除语义重复项，不按固定数量裁剪。",
+    }
     return {
         "cases": cases,
-        "manual_cases": result.get("manual_cases") or [],
+        "manual_cases": manual_cases,
         "review": review
     }
 
@@ -3680,6 +3822,8 @@ def _model_config_trace(model_config, runtime_trace=None):
         trace["jsonRepairSucceeded"] = bool(runtime_trace.get("jsonRepairSucceeded"))
     if isinstance(runtime_trace.get("jsonRepair"), dict):
         trace["jsonRepair"] = copy.deepcopy(runtime_trace.get("jsonRepair"))
+    if isinstance(runtime_trace.get("scenario_dedup"), dict):
+        trace["scenarioDedup"] = copy.deepcopy(runtime_trace.get("scenario_dedup"))
     return trace
 
 
@@ -4061,21 +4205,18 @@ def call_skill_baseline_reranker(
         return {"selected": selected_rows, "trace": trace, "review": {"selection_reason": reason}}
 
 
-def _clamp_scope_size(value, fallback=3):
-    raw = safe_int(value, fallback)
-    if raw <= 5:
-        return 5, "small"
-    if raw <= 8:
-        return 8, "medium"
-    return 12, "large"
+def _clamp_scope_size(value, fallback=1, plan_count=None):
+    raw = max(1, safe_int(value, fallback))
+    size, ceiling = _plan_size_and_automation_ceiling(plan_count or raw)
+    return min(raw, ceiling, max(1, safe_int(plan_count, raw))), size
 
 
 def call_skill_execution_scope_planner(title, module, text_assets, selected_baselines, model_config=None):
-    """Let AI suggest generation scope, while platform separates plan pool and Runner automation."""
+    """Let AI estimate document-derived plan units and the smaller Runner subset."""
     local_targets = generation_volume_targets({"requirement_points": normalize_text_list(text_assets)}, mode="full")
-    fallback_count = safe_int(local_targets.get("target_automation_cases"), 5)
-    target_count, size = _clamp_scope_size(fallback_count, 5)
-    target_plan_count = safe_int(local_targets.get("target_plan_cases"), 5)
+    target_plan_count = max(1, safe_int(local_targets.get("target_plan_cases"), 1))
+    fallback_count = max(1, safe_int(local_targets.get("target_automation_cases"), 1))
+    target_count, size = _clamp_scope_size(fallback_count, fallback_count, plan_count=target_plan_count)
     model_runtime_trace = {}
     trace = {
         "enabled": True,
@@ -4088,8 +4229,10 @@ def call_skill_execution_scope_planner(title, module, text_assets, selected_base
         "requirementText": "\n\n".join(normalize_text_list(text_assets))[:8000],
         "selectedBaselines": [_compact_baseline_candidate(item, idx) for idx, item in enumerate(selected_baselines or [])],
         "platformLimits": {
-            "automationCaseCounts": [5, 8, 12],
-            "planCaseRanges": {"small": [5, 8], "medium": [10, 20], "large": [20, 50]},
+            "planRule": "按需求文档中独立业务分支、前置状态、业务规则和可观察结果计算，不套固定档位",
+            "recommendedPlanCaseCount": target_plan_count,
+            "planUpperLimit": None,
+            "automationCeilings": {"small": 3, "medium": 5, "large": 8},
             "maxSmokeCount": 3,
             "continueThreshold": 0.5,
         },
@@ -4106,14 +4249,13 @@ def call_skill_execution_scope_planner(title, module, text_assets, selected_base
             runtime_trace=model_runtime_trace,
         )
         trace.update(_model_config_trace(model_config, model_runtime_trace))
-        target_count, size = _clamp_scope_size(result.get("targetCaseCount"), target_count)
-        plan_bounds = {
-            "small": (5, 8),
-            "medium": (10, 20),
-            "large": (20, 50),
-        }.get(size, (5, 8))
         requested_plan_count = safe_int(result.get("targetPlanCaseCount"), target_plan_count)
-        target_plan_count = max(plan_bounds[0], min(plan_bounds[1], requested_plan_count))
+        target_plan_count = max(1, requested_plan_count)
+        target_count, size = _clamp_scope_size(
+            result.get("targetCaseCount"),
+            min(target_plan_count, 8),
+            plan_count=target_plan_count,
+        )
         smoke_count = max(1, min(3, safe_int(result.get("smokeCount"), min(3, target_count))))
         plan = {
             "size": size,
@@ -10240,7 +10382,7 @@ def build_case_generation_prompt(title, module, text_assets):
 10. assertions 必须表达"业务意图 + UI 可见信号"，避免抽象断言，也避免过严断言。除非需求明确要求完全一致，否则不要断言动态列表第几条、动态推荐内容、数量、时间、百分比、随机资源名，也不要写"与设计稿一致/模块排列顺序一致"这类 Runner 无法独立判断的断言。
 10.1 每条自动化 case 的 steps 建议 3-6 条，assertions 建议 1-3 条；不要把多个业务分支塞进同一条 YAML。
 10.2 智小白 3D AI建模当前入口以真机为准：底部中间 Tab/首页卡片进入 AI建模；不要在首页三维创作区查找旧的"文字输入"入口；标牌/趣味印章等横向入口必须包含横向滑动步骤；"大家都在做"、骨架屏、缩放控件、固定推荐内容等动态或历史稿信号不得作为自动化必过断言。
-11. 当前平台采用完整计划与自动化分层策略：完整测试计划按小需求 5-8 条、中需求 10-20 条、大需求 20-50 条展开；自动化 YAML 池按小需求 5 条、中需求 8 条、大需求最多 12 条收敛；Runner 首批最多下发 3 条。不要为了数量重复路径或扩展无关页面，其他覆盖点进入 manual_cases 或 draft，不要强行自动化。
+11. 当前平台按需求文档中的独立业务分支、前置状态、业务规则和可观察结果动态生成测试计划；同一路径上的 UI 检查点应合并。3/5/8 只作为 Runner 自动化候选容量，首批最多下发 3 条；不要为了数量重复路径或扩展无关页面。
 12. 不要输出 YAML。
 
 输出格式：

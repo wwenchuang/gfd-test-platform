@@ -7835,14 +7835,13 @@ def generate_ui_yaml_from_request(d, job_id=None):
                 "selected_count": len(yaml_reference_examples),
             }
     if deterministic_entry_visibility_source:
-        local_targets = generation_volume_targets({"requirement_points": stage1_text_assets}, mode="full")
         target_count = 3
         execution_scope_plan = {
             "size": "small",
             "targetCaseCount": target_count,
             "smokeCount": 3,
             "continueThreshold": 0.5,
-            "reason": "入口可见性快路径固定生成 3 条首批短链路冒烟",
+            "reason": "入口可见性快路径保留需求分支，Runner 首批只选择最多 3 条稳定短链路冒烟",
             "businessFlow": ["进入首页", "进入文档打印", "校验百度网盘入口可见"],
             "trace": {"enabled": False, "skipped": True, "reason": "deterministic_entry_visibility_source"},
         }
@@ -7857,11 +7856,10 @@ def generate_ui_yaml_from_request(d, job_id=None):
             )
         except Exception as scope_error:
             local_targets = generation_volume_targets({"requirement_points": stage1_text_assets}, mode="full")
-            target_count = safe_int(local_targets.get("target_automation_cases"), 5)
-            target_count = 5 if target_count <= 5 else (8 if target_count <= 8 else 12)
+            target_count = max(1, safe_int(local_targets.get("target_automation_cases"), 1))
             execution_scope_plan = {
-                "size": "small" if target_count <= 5 else ("medium" if target_count <= 8 else "large"),
-                "targetPlanCaseCount": safe_int(local_targets.get("target_plan_cases"), 5),
+                "size": str(local_targets.get("size") or "small"),
+                "targetPlanCaseCount": safe_int(local_targets.get("target_plan_cases"), target_count),
                 "targetCaseCount": target_count,
                 "smokeCount": min(3, target_count),
                 "continueThreshold": 0.5,
@@ -8477,7 +8475,7 @@ def generate_ui_yaml_from_request(d, job_id=None):
             "rule": (
                 "AI 负责选择和补齐可执行组合；平台只在最终转换前检查显式需求映射、"
                 "至少一条 executable 和分类终态；覆盖缺口记录为报告告警，"
-                "只有 0 条可执行 YAML 才阻断进入 Runner；完整计划规模和 5/8/12 自动化目标仅作为规划目标，不为凑数放宽可执行性。"
+                "只有 0 条可执行 YAML 才阻断进入 Runner；测试计划按需求动态生成，3/5/8 仅是 Runner 候选容量，不为凑数放宽可执行性。"
             ),
             "reasons": final_executable_portfolio.get("reasons") or [],
             "advisories": final_executable_portfolio.get("advisories") or [],
@@ -8988,6 +8986,12 @@ def generate_job_id():
 
 
 def generate_retry_request_from_job(job):
+    def normalize_retry_mode(request):
+        if job.get("type") == "mindmap_only":
+            request["mindmap_mode"] = "cases"
+            request["mindmapMode"] = "cases"
+        return request
+
     request = job.get("request_data") or job.get("requestData") or {}
     if isinstance(request, dict) and request:
         next_request = dict(request)
@@ -9002,14 +9006,14 @@ def generate_retry_request_from_job(job):
                 next_request["figma_url"] = figma_url
                 next_request.setdefault("figma_mode", meta.get("figma_mode") or meta.get("figmaMode") or "smart")
                 next_request.setdefault("figma_limit", meta.get("figma_limit") or meta.get("figmaLimit") or FIGMA_PARSE_LIMIT)
-        return next_request
+        return normalize_retry_mode(next_request)
     case_set_id = job.get("case_set_id") or (job.get("result") or {}).get("case_set_id")
     if case_set_id:
         summary = read_json_file(generation_summary_path(case_set_id), default={}) or {}
         meta = read_json_file(asset_meta_path(case_set_id), default={}) or {}
         figma_url = find_figma_url_for_case_set(case_set_id, summary=summary, meta=meta)
         if meta.get("files"):
-            return {
+            return normalize_retry_mode({
                 "case_set_id": case_set_id,
                 "title": summary.get("title") or meta.get("title") or job.get("title") or "UI自动化用例",
                 "module": summary.get("module") or meta.get("module") or job.get("module") or "AI测试",
@@ -9023,7 +9027,7 @@ def generate_retry_request_from_job(job):
                 "regenerate": True,
                 "retry_from_job_id": job.get("job_id", ""),
                 "retry": True,
-            }
+            })
     return {}
 
 
@@ -9666,7 +9670,7 @@ def _mindmap_local_structure_fallback_payload(
     module,
     text_assets,
     *,
-    mindmap_mode="full",
+    mindmap_mode="cases",
     app_package="",
     app_name="",
     error="",
@@ -9715,7 +9719,7 @@ def _mindmap_generate_structure_payload(
     module,
     stage1_text_assets,
     *,
-    mindmap_mode="full",
+    mindmap_mode="cases",
     model_config=None,
     app_package="",
     app_name="",
@@ -9771,13 +9775,13 @@ def _mindmap_generate_structure_payload(
 
 def generate_mindmap_from_request(d, job_id=None):
     title = d.get("title") or "测试用例脑图"
-    module = d.get("module") or "AI测试"
+    module = d.get("module") or title
     case_set_id = d.get("case_set_id") or new_case_set_id()
     files = d.get("files") or []
     prepared_figma_context = _prepared_figma_context_from_request(d)
     has_prepared_figma = bool(prepared_figma_context)
     has_figma = bool((d.get("figma_url") or d.get("figmaUrl") or "").strip() or has_prepared_figma)
-    mindmap_mode = str(d.get("mindmap_mode") or d.get("mindmapMode") or "full").strip().lower() or "full"
+    mindmap_mode = str(d.get("mindmap_mode") or d.get("mindmapMode") or "cases").strip().lower() or "cases"
     require_ai_planning = safe_bool(d.get("requireAiPlanning") or d.get("require_ai_planning"), False)
     use_yaml_baseline_context = safe_bool(
         d.get("useYamlBaselineContext") or d.get("use_yaml_baseline_context"),
@@ -10231,6 +10235,8 @@ def build_generation_mindmap(summary):
     mode = str(summary.get("mindmap_mode") or summary.get("mindmapMode") or "").strip().lower()
     review = summary.get("review") if isinstance(summary.get("review"), dict) else {}
     mode = mode or str(review.get("mindmap_mode") or review.get("mindmapMode") or "full").strip().lower()
+    if mode in {"cases", "case", "case_only", "cases_only"}:
+        return build_generation_mindmap_cases(summary)
     if mode in {"compact", "mindmap", "compact_mindmap"}:
         return build_generation_mindmap_compact(summary)
     return build_generation_mindmap_full(summary)
@@ -10341,6 +10347,145 @@ def build_generation_mindmap_compact(summary):
         mm_node(f"人工：{len(manual_cases) or safe_int(counts.get('manual_case_count'), 0)}", indent=2),
     ]
     root_children.append(mm_node("生成产物", counts_children, indent=1))
+
+    root = mm_node(f"{title}-测试用例", root_children, indent=0)
+    return '<?xml version="1.0" encoding="UTF-8"?>\n<map version="1.0.1">\n' + root + "\n</map>\n"
+
+
+def build_generation_mindmap_cases(summary):
+    summary = summary if isinstance(summary, dict) else {}
+    title = summary.get("title") or "测试用例"
+    module = str(summary.get("module") or "").strip()
+    scenarios = [item for item in (summary.get("scenarios") or []) if isinstance(item, dict)]
+    cases = [item for item in (summary.get("cases") or []) if isinstance(item, dict)]
+    manual_cases = [item for item in (summary.get("manual_cases") or []) if isinstance(item, dict)]
+    generic_groups = {"", "AI测试", "自动化测试", "未分组功能", "未分组", title}
+
+    def scenario_feature(scenario):
+        return first_non_empty(
+            scenario.get("feature"),
+            scenario.get("module"),
+            module,
+            "未分组功能",
+        )
+
+    scenario_feature_candidates = {}
+    for scenario in scenarios:
+        name = first_non_empty(scenario.get("scenario"), scenario.get("name"), scenario.get("title"))
+        feature = scenario_feature(scenario)
+        if name:
+            candidates = scenario_feature_candidates.setdefault(scenario_key(name), [])
+            if feature not in candidates:
+                candidates.append(feature)
+
+    def case_feature(case):
+        explicit_feature = first_non_empty(case.get("feature"), case.get("module"))
+        if explicit_feature and explicit_feature not in generic_groups:
+            return explicit_feature
+        candidates = scenario_feature_candidates.get(scenario_key(case.get("scenario"))) or []
+        if len(candidates) == 1:
+            return candidates[0]
+        return module or "未分组功能"
+
+    feature_names = []
+    for scenario in scenarios:
+        feature = scenario_feature(scenario)
+        if feature not in feature_names:
+            feature_names.append(feature)
+    for case in cases:
+        feature = case_feature(case)
+        if feature not in feature_names:
+            feature_names.append(feature)
+    if not feature_names:
+        feature_names = [module or "未分组功能"]
+
+    root_children = []
+    for feature in feature_names:
+        feature_children = []
+        matched_case_ids = set()
+        feature_scenarios = []
+        seen_feature_scenarios = set()
+        for scenario in scenarios:
+            if scenario_feature(scenario) != feature:
+                continue
+            name = first_non_empty(scenario.get("scenario"), scenario.get("name"), scenario.get("title"))
+            key = scenario_key(name)
+            if key and key in seen_feature_scenarios:
+                continue
+            if key:
+                seen_feature_scenarios.add(key)
+            feature_scenarios.append(scenario)
+        for scenario in feature_scenarios:
+            scenario_name = first_non_empty(
+                scenario.get("scenario"),
+                scenario.get("name"),
+                scenario.get("title"),
+                "未命名场景",
+            )
+            method = scenario_method_text(scenario)
+            scenario_title = f"{scenario_name}（{method}）" if method else scenario_name
+            scenario_cases = [
+                case for case in cases
+                if scenario_key(case.get("scenario")) == scenario_key(scenario_name)
+                and case_feature(case) == feature
+            ]
+            for case in scenario_cases:
+                matched_case_ids.add(id(case))
+            if not scenario_cases:
+                continue
+            feature_children.append(mm_node(
+                scenario_title,
+                [
+                    mm_node(
+                        case_mm_title(case),
+                        case_mindmap_detail_nodes(case, indent=4),
+                        indent=3,
+                    )
+                    for case in scenario_cases
+                ],
+                indent=2,
+            ))
+
+        orphan_cases = []
+        for case in cases:
+            if case_feature(case) == feature and id(case) not in matched_case_ids:
+                orphan_cases.append(case)
+        if orphan_cases:
+            feature_children.append(mm_node(
+                "其他用例",
+                [
+                    mm_node(
+                        case_mm_title(case),
+                        case_mindmap_detail_nodes(case, indent=4),
+                        indent=3,
+                    )
+                    for case in orphan_cases
+                ],
+                indent=2,
+            ))
+
+        if not feature_children:
+            continue
+        if feature in generic_groups:
+            root_children.extend(feature_children)
+        else:
+            root_children.append(mm_node(feature, feature_children, indent=1))
+
+    if manual_cases:
+        root_children.append(mm_node(
+            "人工用例 / 待准备",
+            [
+                mm_node(
+                    case_mm_title(case),
+                    case_mindmap_detail_nodes(case, indent=3),
+                    indent=2,
+                )
+                for case in manual_cases
+            ],
+            indent=1,
+        ))
+    if not root_children:
+        root_children.append(mm_node("暂无可展示用例", indent=1))
 
     root = mm_node(f"{title}-测试用例", root_children, indent=0)
     return '<?xml version="1.0" encoding="UTF-8"?>\n<map version="1.0.1">\n' + root + "\n</map>\n"

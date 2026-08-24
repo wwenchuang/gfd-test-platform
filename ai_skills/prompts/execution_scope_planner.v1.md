@@ -8,23 +8,23 @@
 
 ## 平台约束
 
-1. 小需求：targetPlanCaseCount=5，targetCaseCount=5。
-2. 中需求：targetPlanCaseCount=10，targetCaseCount=8。
-3. 大需求：targetPlanCaseCount=20，targetCaseCount=12。
-4. targetPlanCaseCount 表示完整测试计划规模，平台允许小需求 5-8 条、中需求 10-20 条、大需求 20-50 条。
-5. targetCaseCount 表示进入自动化 YAML 池的稳定子集，只能是 5、8、12。
-6. smokeCount 只能是 1 到 3，Runner 首批自动下发最多 3 条。
-7. continueThreshold 固定 0.5。
-8. 不要为了数量扩展无关页面、历史记录、旧入口、第三方授权和长链路。
-9. 如果需求只是入口展示/位置/同级并列，应该判断为 small 或 medium，不要生成大量外部点击链路。
+1. `targetPlanCaseCount` 按需求文档中的独立验收单元计算，不套固定档位。
+   完整测试计划不设固定条数上限；需求有多少个无法合并的独立验收单元，就规划多少条，并在 `reason` 中说明拆分依据。
+2. 同一业务分支、同一前置状态和同一结果页面上的可见性、文案、位置、图标、同级关系、可达性应合并为一条用例。
+3. 不同业务分支、前置状态、业务规则、状态迁移、异常结果或明确边界阈值分别计为独立验收单元。
+4. `targetCaseCount` 是进入 Runner 自动化候选池的稳定子集，不能超过测试计划数量；小/中/大需求的容量上限分别为 3/5/8，但不是完整测试计划上限，也不是要求凑齐的数量。
+5. `smokeCount` 只能是 1 到 3，且不能超过 `targetCaseCount`；Runner 首批自动下发最多 3 条。
+6. `continueThreshold` 固定 0.5。
+7. 不要为了数量扩展无关页面、历史记录、旧入口、第三方授权和长链路。
+8. 如果需求只是入口展示、位置、同级并列和点击可达，通常可以在每个业务分支的一条主流程用例中合并验证。
 
 ## 输出 JSON
 
 {
   "size": "small",
-  "targetPlanCaseCount": 5,
-  "targetCaseCount": 5,
-  "smokeCount": 3,
+  "targetPlanCaseCount": 2,
+  "targetCaseCount": 2,
+  "smokeCount": 2,
   "continueThreshold": 0.5,
   "reason": "为什么这样规划",
   "businessFlow": ["进入首页", "进入目标页面", "校验目标入口"]

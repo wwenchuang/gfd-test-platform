@@ -416,65 +416,102 @@ def read_file_version(module, file, version_id):
 # ---------------------------------------------------------------------------
 
 def generation_volume_targets(analysis, mode="full"):
-    """根据分析结果计算生成数量目标。"""
+    """Derive a soft case-plan size from independently verifiable requirements."""
     mode = str(mode or "full").strip().lower()
     analysis = analysis if isinstance(analysis, dict) else {}
-    points = normalize_text_list((analysis or {}).get("requirement_points"))
+    points = normalize_text_list(analysis.get("requirement_points"))
     acceptance_checks = [
         item for item in (analysis.get("requirement_acceptance_checks") or analysis.get("requirementAcceptanceChecks") or [])
         if isinstance(item, dict) or str(item or "").strip()
     ]
     contract = analysis.get("requirement_contract") if isinstance(analysis.get("requirement_contract"), dict) else {}
+    def unit_key(value):
+        return "".join(ch.lower() for ch in str(value or "") if ch.isalnum())
+
+    point_keys = {unit_key(item) for item in points if unit_key(item)}
     branch_values = []
+    acceptance_units = set()
+    mergeable_positive_kinds = {
+        "visibility", "visible", "display", "relation", "layout", "position",
+        "order", "copy", "text", "icon", "reachability", "navigation", "click",
+        "可见", "展示", "关系", "布局", "位置", "顺序", "文案", "图标", "可达", "跳转", "点击",
+    }
     for item in acceptance_checks:
         if isinstance(item, dict):
-            branch = str(item.get("branch") or "").strip()
+            branch = first_non_empty(
+                item.get("branch"),
+                item.get("businessBranch"),
+                item.get("business_branch"),
+                item.get("requirementId"),
+                item.get("requirement_id"),
+                item.get("feature"),
+            )
             if branch:
                 branch_values.append(branch)
+            condition = first_non_empty(
+                item.get("condition"),
+                item.get("precondition"),
+                item.get("state"),
+                item.get("dataState"),
+                item.get("data_state"),
+                item.get("role"),
+            )
+            kind = first_non_empty(item.get("kind"), item.get("type"), item.get("category"))
+            kind_key = unit_key(kind)
+            dimension = "core_positive" if not condition and kind_key in mergeable_positive_kinds else first_non_empty(
+                condition,
+                kind,
+                item.get("text"),
+                item.get("title"),
+            )
+            acceptance_units.add((unit_key(branch) or "global", unit_key(dimension) or "core_positive"))
+        else:
+            key = unit_key(item)
+            if key:
+                acceptance_units.add(("global", key))
     for item in (contract.get("businessFlows") or contract.get("business_flows") or []):
         if isinstance(item, dict):
             branch = str(item.get("branch") or item.get("name") or "").strip()
             if branch:
                 branch_values.append(branch)
-    branch_count = len(set(branch_values))
+    branch_count = len({unit_key(item) for item in branch_values if unit_key(item)})
     acceptance_count = len(acceptance_checks)
     risks = normalize_text_list((analysis or {}).get("risks"))
-    visible = normalize_text_list((analysis or {}).get("visible_outcomes"))
     blockers = normalize_text_list((analysis or {}).get("blockers"))
     missing = normalize_text_list((analysis or {}).get("missing_inputs"))
-    point_count = len(points)
-    effective_point_count = max(point_count, acceptance_count)
-    complexity = effective_point_count + min(len(risks), 4) + min(len(visible), 3)
-    multi_branch_acceptance = branch_count >= 3 and acceptance_count >= 8
-    if not multi_branch_acceptance and point_count <= 2 and complexity <= 5:
-        min_cases = target_cases = max_cases = 5
-        min_plan_cases, target_plan_cases, max_plan_cases = 5, 5, 8
-        min_scenarios, target_scenarios = 5, 8
+    point_count = len(point_keys)
+    acceptance_unit_count = len(acceptance_units)
+    requirement_unit_count = max(1, point_count, branch_count, acceptance_unit_count)
+    target_plan_cases = requirement_unit_count
+    plan_review_slack = max(2, (target_plan_cases + 1) // 2)
+    max_plan_cases = target_plan_cases + plan_review_slack
+    min_plan_cases = target_plan_cases
+
+    if target_plan_cases <= 3:
         size = "small"
-    elif not multi_branch_acceptance and effective_point_count <= 5 and complexity <= 9:
-        min_cases = target_cases = max_cases = 8
-        min_plan_cases, target_plan_cases, max_plan_cases = 10, 10, 20
-        min_scenarios, target_scenarios = 10, 20
+        automation_ceiling = 3
+    elif target_plan_cases <= 8:
         size = "medium"
+        automation_ceiling = 5
     else:
-        min_cases = target_cases = max_cases = 12
-        min_plan_cases, target_plan_cases, max_plan_cases = 20, 20, 50
-        min_scenarios, target_scenarios = 20, 50
         size = "large"
-    if blockers:
-        target_cases = max(5, min(target_cases, max_cases))
-    if mode in {"mindmap", "compact_mindmap"}:
-        min_cases = target_cases = max_cases = min(max_cases, target_cases)
-        min_scenarios = max(min_scenarios, min(target_scenarios, point_count * 2 or 3))
-        target_scenarios = max(min_scenarios, target_scenarios)
-    smoke_cases = 3
+        automation_ceiling = 8
+    target_cases = max(1, min(target_plan_cases, automation_ceiling))
+    min_cases = max(1, min(target_cases, min_plan_cases))
+    max_cases = automation_ceiling
+    min_scenarios = min_plan_cases
+    target_scenarios = target_plan_cases
+    max_scenarios = max_plan_cases
+    smoke_cases = min(3, target_cases)
     return {
         "mode": mode,
         "size": size,
         "requirement_point_count": point_count,
         "acceptance_check_count": acceptance_count,
+        "acceptance_unit_count": acceptance_unit_count,
         "business_branch_count": branch_count,
-        "effective_requirement_point_count": effective_point_count,
+        "requirement_unit_count": requirement_unit_count,
+        "effective_requirement_point_count": requirement_unit_count,
         "min_plan_cases": min_plan_cases,
         "target_plan_cases": target_plan_cases,
         "max_plan_cases": max_plan_cases,
@@ -487,10 +524,12 @@ def generation_volume_targets(analysis, mode="full"):
         "continue_threshold": 0.5,
         "min_scenarios": min_scenarios,
         "target_scenarios": target_scenarios,
+        "max_scenarios": max_scenarios,
         "manual_cases_not_counted": True,
         "guidance": (
-            "完整测试计划和 Runner 自动化分层控制：小需求计划 5-8 条、中需求 10-20 条、大需求 20-50 条；"
-            "自动化 YAML 池按小/中/大收敛到 5/8/12 条，不要为了数量重复同一路径。"
+            "测试计划数量按需求文档中的独立业务分支、前置状态、业务规则和可观察结果动态计算；"
+            "同一路径上的可见性、文案、位置和可达性应合并验证，不要机械拆成多条。"
+            "3/5/8 只作为 Runner 自动化候选容量，不是测试设计硬上限，也不能用于补齐不存在的场景。"
             "冒烟候选可多于首批，但 Runner 首批自动下发最多 3 条。"
             "首批冒烟用于证明 YAML 能下发、能执行、能产生日志；真实通过率不低于 50% 时继续扩展，"
             "单条脚本/定位/产品断言失败会记录为测试结果并进入修复，不等同于 YAML 不可执行。"

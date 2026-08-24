@@ -34,6 +34,38 @@
 
 ## 最近完成的关键修复
 
+### 2026-08-24 测试用例脑图：默认只展示可执行用例内容
+
+用户要求生成用例脑图时移除需求分析、覆盖矩阵、自动化分级和自评审等过程性节点，并确认反复出现的“AI测试”是否代表 UI 自动化执行。
+
+本轮实现：
+
+- 新增 `cases` 脑图展示模式并设为独立脑图创建、重建和历史脑图重试的默认值；脑图聚焦真实功能、场景、用例、测试步骤、预期结果、必要前置以及需求明确的人工待准备用例。
+- 默认脑图不再展示“测试报告检查点、需求目标、需求点、风险与待确认、完整需求覆盖追踪矩阵、覆盖场景、自动化用例分级、自评审”等分析节点；分析结果仍保留在生成摘要中，不影响后续查看或兼容处理。
+- “AI测试”仅是历史通用模块默认值，不代表已生成或执行 UI 自动化；在用例脑图中不再作为无意义分组显示。真正的 UI 自动化仍需生成 Midscene YAML 并提交 Runner。
+- 普通 UI 自动化/YAML 生成附带的历史脑图仍默认使用 `full`；显式 `full` 和 `compact` 保持兼容，纯用例脑图使用 `cases`，避免精简展示误伤 Runner 生成链路。
+- 修复同功能重复场景、不同功能同名场景和用例缺失功能归属时的重复挂载；不再为无法匹配真实用例的场景合成虚构占位用例，无法唯一归属的真实用例只在“其他用例”展示一次。
+- 用例数量不再套小/中/大固定测试计划档位：平台按需求文档中的独立业务分支、前置状态、业务规则、状态迁移、异常结果和边界阈值动态计算建议数量。
+- 完整测试计划不再保留 50 条硬上限；AI 从原始需求识别出的独立验收单元可以扩大计划，平台只限制 Runner 自动化候选容量，不截断测试设计。
+- 同一前置、同一路径和同一结果页上的可见性、文案、位置、图标、同级关系和可达性合并为一条；模型输出 `merge_key`，平台对场景、自动化用例和人工用例做语义去重。
+- 同路径合并会保留所有需求引用、检查步骤和断言；不同前置状态、业务规则、阈值或数据准备即使误用了同一个 `merge_key` 也不会被合并。
+- 3/5/8 只作为 Runner 自动化候选容量，不是测试设计硬上限；超出候选容量但来自独立需求单元的用例保留为待评估，不因数量被删除。冒烟仍最多 3 条。
+- 更新创建弹窗文案、按钮和 `app.js` 缓存版本，确保部署后不继续使用旧页面资源。
+
+验证：
+
+```bash
+.venv/bin/python -m py_compile task_server/services/case_service.py task_server/services/ai_skill_service.py task_server/services/yaml_service.py task_server/router.py
+.venv/bin/python tests/backend_static_checks.py
+# 63 checks passed
+.venv/bin/python tests/frontend_static_checks.py
+# 84 checks passed
+.venv/bin/python -m pytest tests/test_mindmap_test_report_service.py -q
+# 10 passed
+node --check js/app.js
+git diff --check
+```
+
 ### 2026-08-24 API 用例：依赖编排、真实变量传递与前置失败跳过
 
 本轮针对已保存用例中的 `dependencies` / `extractions` 只落库、不参与执行的问题，补齐从用例设计到执行报告的完整依赖链路。

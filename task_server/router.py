@@ -3296,7 +3296,7 @@ def _post_cases_mindmap(handler, qs):
         return
     try:
         clear_generation_mindmap_deleted(case_set_id)
-        mindmap_mode = str(d.get("mindmap_mode") or d.get("mindmapMode") or "full").strip().lower() or "full"
+        mindmap_mode = str(d.get("mindmap_mode") or d.get("mindmapMode") or "cases").strip().lower() or "cases"
         writable_summary = dict(summary)
         writable_summary["mindmap_mode"] = mindmap_mode
         review = writable_summary.get("review") if isinstance(writable_summary.get("review"), dict) else {}
@@ -3319,7 +3319,7 @@ def _post_cases_mindmap(handler, qs):
         "mindmap_exists": True, "mindmap_deleted": False,
         "mindmap_size": stat.st_size,
         "mindmap_updated_at": updated_at,
-        "message": "已按现有生成分析刷新完整脑图文件；不会重新调用 AI，不会改 YAML 或用例"
+        "message": "已按现有生成分析刷新用例脑图文件；不会重新调用 AI，不会改 YAML 或用例"
     })
 
 

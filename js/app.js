@@ -3010,11 +3010,11 @@ async function regenerateGenerationMindmap(caseSetId, triggerEl=null) {
   try {
     const data = await apiRequest(mindmapApiPath(caseSetId), {
       method: 'POST',
-      body: JSON.stringify({ case_set_id: caseSetId, mindmapMode: 'full' })
+      body: JSON.stringify({ case_set_id: caseSetId, mindmapMode: 'cases' })
     });
     const sizeText = data.mindmap_size ? `，${formatBytes(data.mindmap_size)}` : '';
     const timeText = data.mindmap_updated_at ? `，更新时间 ${data.mindmap_updated_at}` : '';
-    showToast(data.ok ? `✓ 已重建完整脑图文件${sizeText}${timeText}` : '脑图文件已重建', 'success');
+    showToast(data.ok ? `✓ 已重建用例脑图文件${sizeText}${timeText}` : '脑图文件已重建', 'success');
     if (button) button.textContent = '已重建';
     if (activeWorkspaceMode === 'mindmap' && document.getElementById('mindmap-center-list')) {
       await refreshMindmapFiles(null, {toast: false});
@@ -4792,7 +4792,7 @@ function setMindmapBusy(busy) {
   const button = document.getElementById('btn-create-mindmap');
   if (button) {
     button.disabled = busy;
-    button.textContent = busy ? '生成中...' : '生成完整脑图';
+    button.textContent = busy ? '生成中...' : '生成用例脑图';
   }
   document.querySelectorAll('#modal-mindmap-create input, #modal-mindmap-create select, #modal-mindmap-create textarea, #modal-mindmap-create .asset-remove')
     .forEach(el => el.disabled = busy);
@@ -4824,14 +4824,14 @@ function showCreateMindmapModal() {
   document.getElementById('mindmap-asset-files').value = '';
   mindmapAssetFiles = [];
   renderMindmapAssetList();
-  setMindmapStatus('上传需求、已有用例或截图后，生成包含场景、用例、步骤和预期的完整 FreeMind 脑图；不生成 YAML。');
+  setMindmapStatus('上传需求、已有用例或截图后，生成聚焦场景、用例、步骤、预期和必要前置的 FreeMind 脑图；不生成 YAML。');
   document.getElementById('modal-mindmap-create').classList.add('show');
   loadKnowledgeApps().then(() => syncAppSelect('mindmap'));
 }
 
 async function createMindmapOnly() {
   const title = document.getElementById('mindmap-title').value.trim() || '测试用例脑图';
-  const module = document.getElementById('mindmap-module').value || 'AI测试';
+  const module = document.getElementById('mindmap-module').value || title;
   const supplement = document.getElementById('mindmap-content').value.trim();
   const figmaUrl = document.getElementById('mindmap-figma-url').value.trim();
   if (!mindmapAssetFiles.length && !supplement && !figmaUrl) {
@@ -4843,7 +4843,7 @@ async function createMindmapOnly() {
     files.push({ name: `mindmap-supplement-${Date.now()}.txt`, content: supplement, size: supplement.length, type: 'text/plain' });
   }
   setMindmapBusy(true);
-  setMindmapStatus('正在创建完整测试用例脑图后台任务...', 'busy');
+  setMindmapStatus('正在创建测试用例脑图后台任务...', 'busy');
   let created = null;
   try {
     created = await apiRequest('/cases/mindmap-only-async', {
@@ -4855,7 +4855,7 @@ async function createMindmapOnly() {
         figma_url: figmaUrl,
         figma_mode: document.getElementById('mindmap-figma-mode').value || 'smart',
         figma_limit: Number(document.getElementById('mindmap-figma-limit').value || 80),
-        mindmapMode: 'full',
+        mindmapMode: 'cases',
         files
       })
     });
