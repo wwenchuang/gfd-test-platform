@@ -81,6 +81,14 @@ def test_totp_login_is_reused_for_multiple_metadata_requests(monkeypatch):
     from task_server.services import case_platform_auth
 
     opener = _FakeOpener([
+        {
+            "code": 200,
+            "data": {
+                "mfaRequired": True,
+                "mfaToken": "single-use-mfa-token",
+                "username": "report-reader",
+            },
+        },
         {"code": 200, "data": {"username": "report-reader"}},
         {"code": 200, "data": {"total": 0, "dataSources": []}},
         {"code": 200, "data": {"id": 3088}},
@@ -89,7 +97,6 @@ def test_totp_login_is_reused_for_multiple_metadata_requests(monkeypatch):
     monkeypatch.setenv("CASE_PLATFORM_USERNAME", "report-reader")
     monkeypatch.setenv("CASE_PLATFORM_PASSWORD", "reader-password")
     monkeypatch.setenv("CASE_PLATFORM_TOTP_SECRET", "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ")
-    monkeypatch.setenv("CASE_PLATFORM_TOTP_FIELD", "verifyCode")
     monkeypatch.setattr(case_platform_auth, "generate_totp", lambda *_args, **_kwargs: "123456")
     monkeypatch.setattr(case_platform_auth.urllib.request, "build_opener", lambda *_args: opener)
 
@@ -98,11 +105,16 @@ def test_totp_login_is_reused_for_multiple_metadata_requests(monkeypatch):
     client.request_json("/api/case/detail", {"caseId": 3088})
 
     login_requests = [request for request, _timeout in opener.requests if request.full_url.endswith("/api/user/login")]
+    verify_requests = [request for request, _timeout in opener.requests if request.full_url.endswith("/api/user/mfa/verify")]
     assert len(login_requests) == 1
     assert _request_body(login_requests[0]) == {
         "username": "report-reader",
         "password": "reader-password",
-        "verifyCode": "123456",
+    }
+    assert len(verify_requests) == 1
+    assert _request_body(verify_requests[0]) == {
+        "mfaToken": "single-use-mfa-token",
+        "code": "123456",
     }
 
 
@@ -154,6 +166,47 @@ def test_login_error_does_not_expose_credentials(monkeypatch):
     assert "report-reader" not in message
     assert "reader-password" not in message
     assert "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ" not in message
+    assert "123456" not in message
+
+
+def test_mfa_http_error_does_not_expose_one_time_credentials(monkeypatch):
+    from task_server.services import case_platform_auth
+
+    class MfaHttpErrorOpener:
+        def open(self, request, timeout):
+            if request.full_url.endswith("/api/user/login"):
+                return _FakeResponse({
+                    "code": 200,
+                    "data": {
+                        "mfaRequired": True,
+                        "mfaToken": "single-use-mfa-token",
+                    },
+                })
+            raise urllib.error.HTTPError(
+                request.full_url,
+                400,
+                "Bad Request",
+                {},
+                BytesIO(b'single-use-mfa-token 123456 invalid'),
+            )
+
+    monkeypatch.delenv("CASE_PLATFORM_ACCESS_TOKEN", raising=False)
+    monkeypatch.setenv("CASE_PLATFORM_USERNAME", "report-reader")
+    monkeypatch.setenv("CASE_PLATFORM_PASSWORD", "reader-password")
+    monkeypatch.setenv("CASE_PLATFORM_TOTP_SECRET", "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ")
+    monkeypatch.setattr(case_platform_auth, "generate_totp", lambda *_args, **_kwargs: "123456")
+    monkeypatch.setattr(
+        case_platform_auth.urllib.request,
+        "build_opener",
+        lambda *_args: MfaHttpErrorOpener(),
+    )
+
+    client = case_platform_auth.CasePlatformClient("https://agiletc.test", 5)
+    with pytest.raises(case_platform_auth.CasePlatformRequestError) as exc_info:
+        client.request_json("/api/case/list")
+
+    message = str(exc_info.value)
+    assert "single-use-mfa-token" not in message
     assert "123456" not in message
 
 
@@ -223,14 +276,21 @@ def test_real_cookie_jar_reuses_login_cookie(monkeypatch):
     from task_server.services import case_platform_auth
 
     observed_cookies = []
+    observed_post_bodies = []
 
     class Handler(BaseHTTPRequestHandler):
         def do_POST(self):
+            length = int(self.headers.get("Content-Length") or 0)
+            observed_post_bodies.append((self.path, json.loads(self.rfile.read(length) or b"{}")))
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
-            self.send_header("Set-Cookie", "agiletc_session=ready; Path=/; HttpOnly")
+            if self.path == "/api/user/mfa/verify":
+                self.send_header("Set-Cookie", "agiletc_session=ready; Path=/; HttpOnly")
             self.end_headers()
-            self.wfile.write(b'{"code":200,"data":{}}')
+            if self.path == "/api/user/login":
+                self.wfile.write(b'{"code":200,"data":{"mfaRequired":true,"mfaToken":"mfa-token"}}')
+            else:
+                self.wfile.write(b'{"code":200,"data":{}}')
 
         def do_GET(self):
             observed_cookies.append(self.headers.get("Cookie"))
@@ -262,6 +322,16 @@ def test_real_cookie_jar_reuses_login_cookie(monkeypatch):
         server.server_close()
         thread.join(timeout=2)
 
+    assert observed_post_bodies == [
+        (
+            "/api/user/login",
+            {"username": "report-reader", "password": "reader-password"},
+        ),
+        (
+            "/api/user/mfa/verify",
+            {"mfaToken": "mfa-token", "code": "123456"},
+        ),
+    ]
     assert observed_cookies == ["agiletc_session=ready"]
 
 

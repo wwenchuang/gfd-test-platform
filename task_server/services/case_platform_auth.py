@@ -20,7 +20,8 @@ from typing import Any, Dict, Optional
 
 AUTHORITY_ERROR_CODE = 100011
 DEFAULT_LOGIN_PATH = "/api/user/login"
-DEFAULT_TOTP_FIELD = "totpCode"
+DEFAULT_MFA_VERIFY_PATH = "/api/user/mfa/verify"
+DEFAULT_TOTP_FIELD = "code"
 
 
 class CasePlatformAuthError(RuntimeError):
@@ -87,6 +88,7 @@ class CasePlatformAuthConfig:
     password: str
     totp_secret: str
     login_path: str
+    mfa_verify_path: str
     totp_field: str
 
     @classmethod
@@ -100,6 +102,7 @@ class CasePlatformAuthConfig:
             password=_clean(os.environ.get("CASE_PLATFORM_PASSWORD")),
             totp_secret=_clean(os.environ.get("CASE_PLATFORM_TOTP_SECRET")),
             login_path=_clean(os.environ.get("CASE_PLATFORM_LOGIN_PATH")) or DEFAULT_LOGIN_PATH,
+            mfa_verify_path=_clean(os.environ.get("CASE_PLATFORM_MFA_VERIFY_PATH")) or DEFAULT_MFA_VERIFY_PATH,
             totp_field=_clean(os.environ.get("CASE_PLATFORM_TOTP_FIELD")) or DEFAULT_TOTP_FIELD,
         )
 
@@ -125,6 +128,7 @@ class CasePlatformAuthConfig:
                 self.password,
                 self.totp_secret,
                 self.login_path,
+                self.mfa_verify_path,
                 self.totp_field,
             )
         )
@@ -209,6 +213,7 @@ class CasePlatformClient:
         *,
         params: Optional[Dict[str, Any]] = None,
         payload: Optional[Dict[str, Any]] = None,
+        sensitive_values: tuple[str, ...] = (),
     ) -> Dict[str, Any]:
         query = urllib.parse.urlencode(
             {key: value for key, value in (params or {}).items() if value not in (None, "")},
@@ -234,7 +239,8 @@ class CasePlatformClient:
                 raise CasePlatformAuthError("用例平台登录已失效或账号权限不足") from exc
             detail = exc.read().decode("utf-8", "replace")[:300]
             raise CasePlatformRequestError(
-                f"用例平台接口返回 HTTP {exc.code}: {_sanitize(detail, self.config)}",
+                f"用例平台接口返回 HTTP {exc.code}: "
+                f"{_sanitize(detail, self.config, *sensitive_values)}",
                 status_code=exc.code,
             ) from exc
         except urllib.error.URLError as exc:
@@ -250,17 +256,32 @@ class CasePlatformClient:
         return result
 
     def _login(self) -> None:
-        code = generate_totp(self.config.totp_secret)
-        payload = {
+        result = self._request("POST", self.config.login_path, payload={
             "username": self.config.username,
             "password": self.config.password,
-            self.config.totp_field: code,
-        }
-        result = self._request("POST", self.config.login_path, payload=payload)
+        })
         if int(result.get("code") or 0) != 200:
-            raise CasePlatformAuthError(
-                _sanitize(result.get("msg"), self.config, code)
+            raise CasePlatformAuthError(_sanitize(result.get("msg"), self.config))
+
+        data = result.get("data") if isinstance(result.get("data"), dict) else {}
+        if data.get("mfaRequired"):
+            mfa_token = _clean(data.get("mfaToken"))
+            if not mfa_token:
+                raise CasePlatformAuthError("用例平台未返回动态验证码校验凭证")
+            code = generate_totp(self.config.totp_secret)
+            verify_result = self._request(
+                "POST",
+                self.config.mfa_verify_path,
+                payload={
+                    "mfaToken": mfa_token,
+                    self.config.totp_field: code,
+                },
+                sensitive_values=(mfa_token, code),
             )
+            if int(verify_result.get("code") or 0) != 200:
+                raise CasePlatformAuthError(
+                    _sanitize(verify_result.get("msg"), self.config, mfa_token, code)
+                )
         self._authenticated = True
         self._session_generation += 1
 

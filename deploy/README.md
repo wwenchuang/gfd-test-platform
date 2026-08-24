@@ -138,14 +138,17 @@ export CASE_PLATFORM_USERNAME='<read-only-service-account>'
 export CASE_PLATFORM_PASSWORD='<service-account-password>'
 export CASE_PLATFORM_TOTP_SECRET='<rotated-base32-secret>'
 export CASE_PLATFORM_LOGIN_PATH='/api/user/login'
-export CASE_PLATFORM_TOTP_FIELD='totpCode'
+export CASE_PLATFORM_MFA_VERIFY_PATH='/api/user/mfa/verify'
+export CASE_PLATFORM_TOTP_FIELD='code'
 ```
 
-Set `CASE_PLATFORM_TOTP_FIELD` to the actual field accepted by the customized
-AgileTC login API. The service account needs only `POST /api/user/login`,
-`GET /api/case/list*`, and `GET /api/case/detail*`. Do not grant case mutation,
-record, user, or administration permissions. Rotate any TOTP seed that has been
-shared in screenshots or chat before production use.
+The customized AgileTC login is a two-step flow: `POST /api/user/login` sends
+only the username and password and returns a one-time `mfaToken`; then
+`POST /api/user/mfa/verify` sends that token with the current TOTP `code` and
+establishes the Cookie session. The service account needs only those two login
+routes plus `GET /api/case/list*` and `GET /api/case/detail*`. Do not grant case
+mutation, record, user, or administration permissions. Rotate any TOTP seed
+that has been shared in screenshots or chat before production use.
 
 Authenticated access always rejects plain HTTP. If the current AgileTC is
 reachable only over HTTP, add a trusted HTTPS endpoint at its Nginx, ELB, or

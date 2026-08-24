@@ -10038,6 +10038,7 @@ git diff --check
 
 - 新增独立 AgileTC 认证客户端，支持只读访问 Token、账号密码加 TOTP、非强制认证时匿名访问三种模式。
 - TOTP 按 RFC 6238 SHA-1 在请求登录时临时计算，不保存验证码，不引入第三方依赖。
+- 已按 AgileTC 当前前端契约改为两步 MFA：账号密码登录先获取一次性 `mfaToken`，再向 `/api/user/mfa/verify` 提交 `mfaToken` 和动态 `code`，第二步成功后复用 Cookie 会话。
 - 账号模式复用 Cookie 会话；HTTP 401/403 或 AgileTC `100011` 权限错误时重新登录并最多重试一次。
 - `case_platform_service.py` 保留原有列表、详情回退和字段归一化，只把 JSON 传输委托给认证客户端。
 - 生产环境可通过 `CASE_PLATFORM_AUTH_REQUIRED=true` 禁止认证失败时降级为匿名访问。
@@ -10045,12 +10046,12 @@ git diff --check
 - 并发请求遇到同一过期会话时按会话代次协调，只允许一次重新登录，不会清掉其他线程刚建立的新 Cookie。
 - `/opt/midscene.env` 已允许加载 `CASE_PLATFORM_*` 配置，错误布尔值会阻止认证客户端初始化，不会静默降级。
 - Token、密码、TOTP 密钥和验证码不会进入 API 返回、日志、异常详情或仓库；线上需要在 `/opt/midscene.env` 配置并重启服务。
-- AgileTC 专用账号只需要 `/api/user/login`、`/api/case/list*` 和 `/api/case/detail*` 权限。
+- AgileTC 专用账号只需要 `/api/user/login`、`/api/user/mfa/verify`、`/api/case/list*` 和 `/api/case/detail*` 权限。
 
 线上仍需确认：
 
-- 用户提供的值是长期访问 Token 还是 Authenticator 的 Base32 密钥。
-- 定制 AgileTC 登录接口实际接收的 TOTP 字段名；默认配置为 `totpCode`，可通过 `CASE_PLATFORM_TOTP_FIELD` 覆盖。
+- AgileTC 当前只有 HTTP 入口，认证客户端会拒绝发送账号、密码和 TOTP；必须先增加可信 HTTPS 入口并将其配置为 `CASE_PLATFORM_BASE_URL`。
+- 用户提供的是账号密码和 Authenticator Base32 密钥，不是长期访问 Token；凭证只允许写入服务器 `/opt/midscene.env`，不得进入仓库。
 - 已在截图中暴露的 TOTP 密钥必须轮换后再配置到生产环境。
 
 ### 2026-08-13 API 环境资产中心与工作台上下文收口
