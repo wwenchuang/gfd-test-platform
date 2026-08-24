@@ -1,19 +1,9 @@
-import json
-from urllib.parse import urlparse, parse_qs
+class _FakeClient:
+    def __init__(self, handler):
+        self.handler = handler
 
-
-class _FakeResponse:
-    def __init__(self, payload):
-        self.payload = payload
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *_args):
-        return False
-
-    def read(self):
-        return json.dumps(self.payload, ensure_ascii=False).encode("utf-8")
+    def request_json(self, path, params=None):
+        return self.handler(path, params or {})
 
 
 def test_search_case_platform_cases_normalizes_agiletc_results(monkeypatch):
@@ -21,13 +11,11 @@ def test_search_case_platform_cases_normalizes_agiletc_results(monkeypatch):
 
     requests = []
 
-    def fake_urlopen(req, timeout):
-        requests.append((req.full_url, timeout))
-        path = urlparse(req.full_url).path
-        query = parse_qs(urlparse(req.full_url).query)
+    def fake_request(path, query):
+        requests.append((path, query))
         if path == "/api/case/detail":
-            assert query["caseId"] == ["3088"]
-            return _FakeResponse({
+            assert query["caseId"] == "3088"
+            return {
                 "code": 200,
                 "msg": "服务运行成功",
                 "data": {
@@ -37,12 +25,12 @@ def test_search_case_platform_cases_normalizes_agiletc_results(monkeypatch):
                     "productLineId": 1,
                     "requirementId": "https://project.feishu.cn/y99fwz/story/detail/6876737017",
                 },
-            })
-        assert query["productLineId"] == ["1"]
-        assert query["caseType"] == ["0"]
-        assert query["channel"] == ["1"]
-        assert query["bizId"] == ["root"]
-        return _FakeResponse({
+            }
+        assert query["productLineId"] == "1"
+        assert query["caseType"] == 0
+        assert query["channel"] == 1
+        assert query["bizId"] == "root"
+        return {
             "code": 200,
             "msg": "服务运行成功",
             "data": {
@@ -61,10 +49,14 @@ def test_search_case_platform_cases_normalizes_agiletc_results(monkeypatch):
                     }
                 ],
             },
-        })
+        }
 
     monkeypatch.setenv("CASE_PLATFORM_BASE_URL", "http://qa-agiletc.gongfudou.com")
-    monkeypatch.setattr(case_platform_service.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(
+        case_platform_service,
+        "get_case_platform_client",
+        lambda _base_url, _timeout: _FakeClient(fake_request),
+    )
 
     result = case_platform_service.search_case_platform_cases("3D共享", limit=5)
 
@@ -79,8 +71,8 @@ def test_search_case_platform_cases_normalizes_agiletc_results(monkeypatch):
     assert item["requirement_link"] == "https://project.feishu.cn/y99fwz/story/detail/6876737017"
     assert item["case_link"] == "http://qa-agiletc.gongfudou.com/caseManager/1/3088/undefined/0"
     assert item["label"] == "3D共享打印V1.2.2 · 智小白3D V1.19.0 · #3088"
-    assert any("title=3D" in url for url, _timeout in requests)
-    assert any("/api/case/detail" in url for url, _timeout in requests)
+    assert any(params.get("title") == "3D共享" for _path, params in requests)
+    assert any(path == "/api/case/detail" for path, _params in requests)
 
 
 def test_search_case_platform_cases_uses_full_requirement_link(monkeypatch):
@@ -88,17 +80,64 @@ def test_search_case_platform_cases_uses_full_requirement_link(monkeypatch):
 
     requested_queries = []
 
-    def fake_urlopen(req, timeout):
-        requested_queries.append(parse_qs(urlparse(req.full_url).query))
-        return _FakeResponse({"code": 200, "data": {"total": 0, "dataSources": []}})
+    def fake_request(_path, params):
+        requested_queries.append(params)
+        return {"code": 200, "data": {"total": 0, "dataSources": []}}
 
     monkeypatch.setenv("CASE_PLATFORM_BASE_URL", "http://qa-agiletc.gongfudou.com/")
-    monkeypatch.setattr(case_platform_service.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(
+        case_platform_service,
+        "get_case_platform_client",
+        lambda _base_url, _timeout: _FakeClient(fake_request),
+    )
 
     requirement = "https://project.feishu.cn/xbprint/story/detail/7075534465"
     result = case_platform_service.search_case_platform_cases("", requirement_link=requirement, limit=3)
 
     assert result["ok"] is True
     assert result["items"] == []
-    assert requested_queries[0]["requirementId"] == [requirement]
-    assert requested_queries[0]["pageSize"] == ["3"]
+    assert requested_queries[0]["requirementId"] == requirement
+    assert requested_queries[0]["pageSize"] == 3
+
+
+def test_search_case_platform_cases_uses_authenticated_client(monkeypatch):
+    from task_server.services import case_platform_service
+
+    class _FakeClient:
+        def __init__(self):
+            self.requests = []
+
+        def request_json(self, path, params=None):
+            self.requests.append((path, params or {}))
+            if path == "/api/case/detail":
+                return {
+                    "code": 200,
+                    "data": {
+                        "id": 3088,
+                        "title": "认证后的用例集",
+                        "description": "V2.1.0",
+                        "productLineId": 1,
+                    },
+                }
+            return {
+                "code": 200,
+                "data": {
+                    "total": 1,
+                    "dataSources": [{"id": 3088, "title": "认证后的用例集", "productLineId": 1}],
+                },
+            }
+
+    client = _FakeClient()
+    monkeypatch.setattr(
+        case_platform_service,
+        "get_case_platform_client",
+        lambda base_url, timeout: client,
+    )
+
+    result = case_platform_service.search_case_platform_cases("认证", limit=1)
+
+    assert result["items"][0]["version"] == "V2.1.0"
+    assert [path for path, _params in client.requests] == [
+        "/api/case/list",
+        "/api/case/detail",
+    ]

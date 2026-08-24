@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
-import json
 import os
 import re
-import urllib.error
 import urllib.parse
-import urllib.request
 from typing import Any, Dict, List, Optional
+
+from .case_platform_auth import (
+    CasePlatformAuthError,
+    CasePlatformRequestError,
+    get_case_platform_client,
+)
 
 
 DEFAULT_CASE_PLATFORM_BASE_URL = "http://qa-agiletc.gongfudou.com"
@@ -82,32 +85,11 @@ def _report_version_text(description: Any, title: Any, requirement_link: Any) ->
 
 
 def _json_get(base_url: str, path: str, params: Dict[str, Any], *, timeout: int) -> Dict[str, Any]:
-    query = urllib.parse.urlencode({key: value for key, value in params.items() if value not in (None, "")}, doseq=True)
-    url = f"{base_url}{path}"
-    if query:
-        url = f"{url}?{query}"
-    request = urllib.request.Request(
-        url,
-        headers={
-            "Accept": "application/json",
-            "User-Agent": "Midscene-Task-Platform/1.0",
-        },
-        method="GET",
-    )
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
-            body = response.read()
-    except urllib.error.HTTPError as exc:
-        detail = exc.read().decode("utf-8", "replace")[:300]
-        raise CasePlatformError(f"用例平台接口返回 HTTP {exc.code}: {detail}") from exc
-    except urllib.error.URLError as exc:
-        raise CasePlatformError(f"连接用例平台失败：{exc.reason}") from exc
-    except TimeoutError as exc:
-        raise CasePlatformError("连接用例平台超时") from exc
-    try:
-        return json.loads(body.decode("utf-8"))
-    except Exception as exc:
-        raise CasePlatformError("用例平台返回内容不是合法 JSON") from exc
+        client = get_case_platform_client(base_url, timeout)
+        return client.request_json(path, params)
+    except (CasePlatformAuthError, CasePlatformRequestError) as exc:
+        raise CasePlatformError(str(exc)) from exc
 
 
 def _case_link(base_url: str, product_line_id: Any, case_id: Any) -> str:

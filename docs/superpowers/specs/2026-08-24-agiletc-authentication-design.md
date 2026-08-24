@@ -56,6 +56,8 @@ production environment is configured.
 
 - Token mode adds the configured header without logging its value.
 - TOTP mode generates the current RFC 6238 SHA-1 code and posts the login JSON.
+- Authenticated modes always require HTTPS.
+- Redirects are allowed only within the original scheme, host, and port.
 - A cookie-aware opener is reused across metadata list/detail requests.
 - HTTP 401/403 or AgileTC code `100011` invalidates the cookie session.
 - Credential mode re-authenticates and retries the failed request once.
@@ -85,6 +87,8 @@ Automated tests cover:
 - configured token header attachment;
 - TOTP login payload and cookie reuse;
 - one re-login after an expired session;
+- one coordinated re-login when concurrent requests observe the same expired session;
+- rejection of plaintext authenticated transport and cross-origin redirects;
 - required-auth configuration failures;
 - sanitization of login errors;
 - unchanged AgileTC metadata normalization.

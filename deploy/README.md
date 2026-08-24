@@ -115,6 +115,49 @@ At minimum, configure:
 - Sonic connection variables if Sonic integration is required.
 - `APP_PACKAGE` for the default tested app.
 
+### AgileTC Read-Only Authentication
+
+Test-report case metadata can use a read-only AgileTC access token. Keep the
+value only in `/opt/midscene.env`:
+
+```bash
+export CASE_PLATFORM_AUTH_REQUIRED='true'
+export CASE_PLATFORM_BASE_URL='https://<agiletc-host>'
+export CASE_PLATFORM_ACCESS_TOKEN='<read-only-access-token>'
+export CASE_PLATFORM_TOKEN_HEADER='Authorization'
+export CASE_PLATFORM_TOKEN_PREFIX='Bearer'
+```
+
+If AgileTC requires the Authenticator code during login, configure a dedicated
+read-only service account instead of a short-lived access token:
+
+```bash
+export CASE_PLATFORM_AUTH_REQUIRED='true'
+export CASE_PLATFORM_BASE_URL='https://<agiletc-host>'
+export CASE_PLATFORM_USERNAME='<read-only-service-account>'
+export CASE_PLATFORM_PASSWORD='<service-account-password>'
+export CASE_PLATFORM_TOTP_SECRET='<rotated-base32-secret>'
+export CASE_PLATFORM_LOGIN_PATH='/api/user/login'
+export CASE_PLATFORM_TOTP_FIELD='totpCode'
+```
+
+Set `CASE_PLATFORM_TOTP_FIELD` to the actual field accepted by the customized
+AgileTC login API. The service account needs only `POST /api/user/login`,
+`GET /api/case/list*`, and `GET /api/case/detail*`. Do not grant case mutation,
+record, user, or administration permissions. Rotate any TOTP seed that has been
+shared in screenshots or chat before production use.
+
+Authenticated access always rejects plain HTTP. If the current AgileTC is
+reachable only over HTTP, add a trusted HTTPS endpoint at its Nginx, ELB, or
+same-host reverse proxy before configuring the access token or TOTP account.
+
+After changing authentication settings, restart the Task service so its cached
+AgileTC session is rebuilt:
+
+```bash
+sudo systemctl restart midscene-task
+```
+
 If AI Gateway is deployed separately on the same server, configure:
 
 ```bash

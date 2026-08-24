@@ -11,6 +11,7 @@
 ## Global Constraints
 
 - Never commit or log access tokens, passwords, TOTP seeds, or generated codes.
+- Require HTTPS for authenticated requests and reject cross-origin redirects.
 - Do not read or persist AgileTC `caseContent`.
 - Preserve anonymous mode unless `CASE_PLATFORM_AUTH_REQUIRED=true`.
 - Retry an expired credential session at most once.
@@ -55,8 +56,9 @@ environment parsing, and sanitized configuration validation.
 - [ ] **Step 4: Add failing Token attachment and TOTP login-cookie tests**
 
 Use a fake opener that records `Request` headers/bodies and returns JSON plus a
-fake login cookie state. Assert credentials are present only in the login body
-and never in raised errors.
+fake login cookie state. Add a local HTTP handler test for real `CookieJar`
+reuse. Assert credentials are present only in the login body and never in
+raised errors.
 
 - [ ] **Step 5: Implement Token and service-account request modes**
 
@@ -72,7 +74,9 @@ then a successful metadata response. Assert one login and two metadata calls.
 - [ ] **Step 7: Implement exactly one credential refresh retry**
 
 Invalidate only the authenticated flag and cookie jar, log in again, and retry
-once. Token mode and the second failure must return a sanitized error.
+once. Coordinate refreshes by session generation so concurrent failures do not
+clear a newly authenticated session. Token mode and the second failure must
+return a sanitized error.
 
 - [ ] **Step 8: Run focused auth tests**
 
