@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { mount } from '@vue/test-utils'
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it } from 'vitest'
 
 import type { ApiEndpoint, CaseVersion, GeneratedCasePreview } from '../api/contracts'
 import CaseListPanel from './CaseListPanel.vue'
@@ -167,14 +167,16 @@ describe('CaseListPanel', () => {
     const collectionGroup = '家用业务 / app接口 / 我的收藏'
     const deviceGroup = '本地测试 / 启迪设备 / 设备详情'
 
-    expect(wrapper.get('[data-testid="case-list-group-toggle-家用业务 / app接口 / 我的收藏"]').attributes('aria-expanded')).toBe('true')
-    expect(wrapper.find('[data-testid="case-version-version-add"]').exists()).toBe(true)
+    expect(wrapper.get('[data-testid="case-list-group-toggle-本地测试"]').attributes('aria-expanded')).toBe('true')
+    expect(wrapper.find('[data-testid="case-version-version-add"]').exists()).toBe(false)
     expect(wrapper.find('[data-testid="case-version-version-device"]').exists()).toBe(true)
 
+    await wrapper.get('[data-testid="case-list-group-toggle-家用业务"]').trigger('click')
+    await wrapper.get('[data-testid="case-list-group-toggle-家用业务 / app接口"]').trigger('click')
     await wrapper.get(`[data-testid="case-list-group-toggle-${collectionGroup}"]`).trigger('click')
 
-    expect(wrapper.get(`[data-testid="case-list-group-toggle-${collectionGroup}"]`).attributes('aria-expanded')).toBe('false')
-    expect(wrapper.find('[data-testid="case-version-version-add"]').exists()).toBe(false)
+    expect(wrapper.get(`[data-testid="case-list-group-toggle-${collectionGroup}"]`).attributes('aria-expanded')).toBe('true')
+    expect(wrapper.find('[data-testid="case-version-version-add"]').exists()).toBe(true)
     expect(wrapper.find('[data-testid="case-version-version-device"]').exists()).toBe(true)
 
     await wrapper.get('[data-testid="case-list-collapse-all"]').trigger('click')
@@ -186,16 +188,17 @@ describe('CaseListPanel', () => {
 
     expect(wrapper.get(`[data-testid="case-list-group-toggle-${deviceGroup}"]`).attributes('aria-expanded')).toBe('true')
     expect(wrapper.get('[data-testid="case-version-version-device"]').text()).toContain('查询设备详情')
+    expect(wrapper.get('[data-testid="case-version-version-device"] mark').text()).toBe('设备')
     expect(wrapper.find('[data-testid="case-version-version-add"]').exists()).toBe(false)
 
-    await wrapper.get('[data-testid="case-list-expand-all"]').trigger('click')
     await wrapper.get('[data-testid="case-list-search"]').setValue('')
+    await wrapper.get('[data-testid="case-list-expand-all"]').trigger('click')
 
     expect(wrapper.find('[data-testid="case-version-version-add"]').exists()).toBe(true)
     expect(wrapper.find('[data-testid="case-version-version-device"]').exists()).toBe(true)
   })
 
-  it('uses a clear group toolbar and collapses extra groups by default when many groups exist', async () => {
+  it('uses a compact recursive directory and expands only the first root path by default', async () => {
     const wrapper = mount(CaseListPanel, {
       props: {
         endpoints: [...ENDPOINTS, DEVICE_ENDPOINT, ...EXTRA_ENDPOINTS],
@@ -207,20 +210,20 @@ describe('CaseListPanel', () => {
     const laterGroup = '共享业务 / 订单接口'
 
     expect(wrapper.get('[data-testid="case-list-group-toolbar"]').text()).toContain('分组浏览')
-    expect(wrapper.get('[data-testid="case-list-group-summary"]').text()).toContain('1/4 组展开')
+    expect(wrapper.get('[data-testid="case-list-group-summary"]').text()).toContain('3 个根目录')
     expect(wrapper.find('.case-group-index').exists()).toBe(false)
     expect(wrapper.get(`[data-testid="case-list-group-toggle-${firstGroup}"]`).attributes('aria-expanded')).toBe('true')
-    expect(wrapper.get(`[data-testid="case-list-group-toggle-${laterGroup}"]`).attributes('aria-expanded')).toBe('false')
+    expect(wrapper.find(`[data-testid="case-list-group-toggle-${laterGroup}"]`).exists()).toBe(false)
     expect(wrapper.find('[data-testid="case-version-version-extra-0"]').exists()).toBe(false)
 
+    await wrapper.get('[data-testid="case-list-group-toggle-共享业务"]').trigger('click')
     await wrapper.get(`[data-testid="case-list-group-toggle-${laterGroup}"]`).trigger('click')
 
     expect(wrapper.get(`[data-testid="case-list-group-toggle-${laterGroup}"]`).attributes('aria-expanded')).toBe('true')
-    expect(wrapper.get('[data-testid="case-list-group-summary"]').text()).toContain('2/4 组展开')
     expect(wrapper.get('[data-testid="case-version-version-extra-0"]').text()).toContain('创建订单')
   })
 
-  it('groups saved cases by user-managed group and emits group changes', async () => {
+  it('groups saved cases by user-managed group and uses a searchable movement picker', async () => {
     const groupedCase = {
       ...SAVED,
       id: 'version-release',
@@ -237,14 +240,76 @@ describe('CaseListPanel', () => {
     })
 
     expect(wrapper.get('[data-testid="case-list-group-发版回归"]').text()).toContain('1')
+    await wrapper.get('[data-testid="case-list-group-toggle-发版回归"]').trigger('click')
     expect(wrapper.get('[data-testid="case-version-version-release"]').text()).toContain('添加收藏 - 发版主链')
-    expect(wrapper.get('[data-testid="case-version-group-version-release"]').element).toHaveProperty('value', '发版回归')
+    expect(wrapper.find('[data-testid="case-version-group-version-release"] select').exists()).toBe(false)
 
-    const prompt = vi.spyOn(window, 'prompt').mockReturnValue('收藏链路')
-    await wrapper.get('[data-testid="case-version-group-version-release"]').setValue('__new__')
+    await wrapper.get('[data-testid="case-version-group-version-release"]').trigger('click')
+    await wrapper.get('[data-testid="case-group-picker-search"]').setValue('收藏链路')
+    await wrapper.get('[data-testid="case-group-picker-create"]').trigger('click')
 
-    expect(prompt).toHaveBeenCalledWith('新分组名称', '发版回归')
     expect(wrapper.emitted('update-version-group')?.[0]).toEqual([groupedCase, '收藏链路'])
-    prompt.mockRestore()
+  })
+
+  it('combines work views with search and explains filtered empty states', async () => {
+    const workflowCase = {
+      ...DEVICE_CASE,
+      processing: {
+        pre: [], post: [],
+        setup_steps: [{
+          name: '查询设备', enabled: true,
+          request: DEVICE_CASE.request,
+          assertions: [], extractions: [], required_variables: [],
+        }],
+      },
+    } as CaseVersion
+    const oneTimeCase = { ...EXTRA_CASES[0], group_name: 'API Test / 一次性' } as CaseVersion
+    const wrapper = mount(CaseListPanel, {
+      props: {
+        endpoints: [...ENDPOINTS, DEVICE_ENDPOINT, ...EXTRA_ENDPOINTS],
+        versions: [SAVED, workflowCase, oneTimeCase],
+        generatedPreviews: [PREVIEW],
+        selectedEndpointIds: ['endpoint-add'],
+      },
+    })
+
+    expect(wrapper.get('[data-testid="case-work-view-all"]').text()).toContain('4')
+    expect(wrapper.get('[data-testid="case-work-view-task"]').text()).toContain('1')
+    expect(wrapper.get('[data-testid="case-work-view-orchestrated"]').text()).toContain('1')
+    expect(wrapper.get('[data-testid="case-work-view-one-time"]').text()).toContain('1')
+    expect(wrapper.get('[data-testid="case-work-view-candidate"]').text()).toContain('1')
+
+    await wrapper.get('[data-testid="case-work-view-orchestrated"]').trigger('click')
+    expect(wrapper.find('[data-testid="case-version-version-device"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="case-version-version-add"]').exists()).toBe(false)
+
+    await wrapper.get('[data-testid="case-list-search"]').setValue('不存在')
+    expect(wrapper.get('[data-testid="case-list-empty"]').text()).toContain('当前筛选下没有匹配用例')
+  })
+
+  it('selects saved cases and emits a batch group movement', async () => {
+    const wrapper = mount(CaseListPanel, {
+      props: {
+        endpoints: [...ENDPOINTS, DEVICE_ENDPOINT],
+        versions: [SAVED, DEVICE_CASE],
+        generatedPreviews: [],
+      },
+    })
+    await wrapper.get('[data-testid="case-list-expand-all"]').trigger('click')
+    await wrapper.get('[data-testid="case-version-select-version-add"]').setValue(true)
+    await wrapper.get('[data-testid="case-version-select-version-device"]').setValue(true)
+
+    expect(wrapper.get('[data-testid="case-batch-toolbar"]').text()).toContain('已选 2 条')
+    await wrapper.get('[data-testid="case-batch-move"]').trigger('click')
+    await wrapper.get('[data-testid="case-group-picker-search"]').setValue('冒烟回归')
+    await wrapper.get('[data-testid="case-group-picker-create"]').trigger('click')
+
+    expect(wrapper.emitted('update-version-groups')?.[0]).toEqual([
+      ['version-add', 'version-device'],
+      '冒烟回归',
+    ])
+
+    await wrapper.get('[data-testid="case-batch-clear"]').trigger('click')
+    expect(wrapper.find('[data-testid="case-batch-toolbar"]').exists()).toBe(false)
   })
 })

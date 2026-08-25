@@ -6,6 +6,7 @@ import { createMemoryHistory, createRouter } from 'vue-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { ApiEndpoint, CaseVersion } from '../api/contracts'
+import CaseListPanel from '../components/CaseListPanel.vue'
 import { useAssetsStore } from '../stores/assets'
 import { useCasesStore } from '../stores/cases'
 import { useContextStore } from '../stores/context'
@@ -48,6 +49,7 @@ describe('CasesView', () => {
     const version = savedCase('version-1', '我的收藏列表 - 基础正向流程')
     cases.registerVersion(version, false)
     const loadCases = vi.spyOn(cases, 'loadSavedCases').mockResolvedValue()
+    const moveCases = vi.spyOn(cases, 'updateVersionGroups').mockResolvedValue([])
 
     const tasks = useTasksStore()
     vi.spyOn(tasks, 'list').mockResolvedValue([])
@@ -77,6 +79,10 @@ describe('CasesView', () => {
     await flushPromises()
 
     expect((wrapper.get('[data-testid="case-name"]').element as HTMLInputElement).value).toBe('我的收藏列表 - 基础正向流程')
+
+    wrapper.findComponent(CaseListPanel).vm.$emit('update-version-groups', ['version-1'], '发版回归')
+    await flushPromises()
+    expect(moveCases).toHaveBeenCalledWith(['version-1'], '发版回归')
   })
 
   it('deletes saved cases from the independent page after confirmation', async () => {

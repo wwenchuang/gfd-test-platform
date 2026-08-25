@@ -229,6 +229,32 @@ export const useCasesStore = defineStore('api-cases', {
         this.saving = false
       }
     },
+    async updateVersionGroups(versionIds: string[], groupName: string): Promise<CaseVersion[]> {
+      const uniqueIds = [...new Set(versionIds)]
+      if (!uniqueIds.length) return []
+      this.saving = true
+      this.savedMessage = ''
+      const updated: CaseVersion[] = []
+      try {
+        for (const versionId of uniqueIds) {
+          try {
+            const response = await apiClient.put<{ case_version: CaseVersion }>(
+              `/api/api-testing/v1/case-versions/${versionId}/group`,
+              { group_name: groupName },
+            )
+            updated.push(response.data.case_version)
+            this.registerVersion(response.data.case_version, false)
+          } catch {
+            this.savedMessage = `已移动 ${updated.length}/${uniqueIds.length} 条用例，剩余用例未修改`
+            throw new Error(`批量移动未完成：已完成 ${updated.length}/${uniqueIds.length}，失败用例 ${versionId}`)
+          }
+        }
+        this.savedMessage = `已将 ${updated.length} 条用例移动到分组“${groupName}”`
+        return updated
+      } finally {
+        this.saving = false
+      }
+    },
     discardGeneratedPreview(previewId: string): void {
       const preview = this.generatedPreviews.find(item => item.id === previewId)
       this.generatedPreviews = this.generatedPreviews.filter(item => item.id !== previewId)

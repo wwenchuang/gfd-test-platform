@@ -11,6 +11,42 @@ import TasksView from './views/TasksView.vue'
 import WorkbenchView from './views/WorkbenchView.vue'
 
 describe('App navigation', () => {
+  it('groups management pages by the API testing workflow', async () => {
+    const StubView = { template: '<div />' }
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [
+        { path: '/', component: StubView },
+        { path: '/tasks', component: StubView },
+        { path: '/cases', component: StubView },
+        { path: '/assets', component: StubView },
+        { path: '/baselines', component: StubView },
+        { path: '/scheduled-jobs', component: StubView },
+        { path: '/runs', component: StubView },
+        { path: '/reports', component: StubView },
+        { path: '/settings', component: StubView },
+      ],
+    })
+    await router.push('/')
+    await router.isReady()
+
+    const wrapper = mount(App, { global: { plugins: [router], stubs: { RouterView: true } } })
+    const sections = wrapper.findAll('[data-testid^="nav-section-"]')
+
+    expect(sections.map(section => section.get('.rail-section-label').text())).toEqual([
+      '设计准备',
+      '回归编排',
+      '结果分析',
+      '项目配置',
+    ])
+    expect(wrapper.get('[data-testid="nav-section-design"]').text()).toContain('工作台')
+    expect(wrapper.get('[data-testid="nav-section-design"]').text()).toContain('接口资产')
+    expect(wrapper.get('[data-testid="nav-section-design"]').text()).toContain('用例管理')
+    expect(wrapper.get('[data-testid="nav-section-regression"]').text()).toContain('任务管理')
+    expect(wrapper.get('[data-testid="nav-section-results"]').text()).toContain('测试报告')
+    expect(wrapper.get('[data-testid="nav-section-settings"]').text()).toContain('环境配置')
+  })
+
   it('exposes dedicated task and case management entries', async () => {
     const StubView = { template: '<div />' }
     const router = createRouter({

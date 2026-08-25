@@ -299,6 +299,26 @@ describe('cases store', () => {
     expect(store.savedMessage).toBe('基础正向用例已保存')
   })
 
+  it('moves selected versions sequentially and reports partial progress', async () => {
+    const first = { ...VERSION, group_name: '发版回归' }
+    const put = vi.spyOn(apiClient, 'put')
+      .mockResolvedValueOnce({ data: { case_version: first } })
+      .mockRejectedValueOnce(new Error('network unavailable'))
+    const store = useCasesStore()
+    store.registerVersion(VERSION)
+
+    await expect(store.updateVersionGroups(['version-1', 'version-2', 'version-3'], '发版回归'))
+      .rejects.toThrow('已完成 1/3，失败用例 version-2')
+
+    expect(put.mock.calls).toEqual([
+      ['/api/api-testing/v1/case-versions/version-1/group', { group_name: '发版回归' }],
+      ['/api/api-testing/v1/case-versions/version-2/group', { group_name: '发版回归' }],
+    ])
+    expect(store.versions['version-1'].group_name).toBe('发版回归')
+    expect(store.savedMessage).toContain('已移动 1/3 条')
+    expect(store.saving).toBe(false)
+  })
+
   it('replaces the active version of the same case without inflating the case count', () => {
     const store = useCasesStore()
     store.registerVersion(VERSION)
