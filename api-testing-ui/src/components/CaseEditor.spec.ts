@@ -158,14 +158,17 @@ describe('CaseEditor', () => {
   })
 
   it('configures cleanup variables used to prevent incomplete cleanup requests', async () => {
+    const draft = JSON.parse(JSON.stringify(DRAFT)) as CaseDraft
+    draft.extractions = [{ target: 'printTaskSn', type: 'json_path', path: '$.data.taskSn', required: true }]
     const wrapper = mount(CaseEditor, {
-      props: { modelValue: DRAFT, endpointOptions: WORKFLOW_ENDPOINTS },
+      props: { modelValue: draft, endpointOptions: WORKFLOW_ENDPOINTS, environmentVariableNames: ['deviceSn'] },
     })
 
     await wrapper.get('[data-testid="add-cleanup-step"]').trigger('click')
     await wrapper.get('[data-testid="endpoint-picker-search"]').setValue('取消打印')
     await wrapper.get('[data-testid="endpoint-picker-option-print-cancel"]').trigger('click')
-    await wrapper.get('[data-testid="cleanup-required-0"]').setValue('printTaskSn, deviceSn')
+    await wrapper.get('[data-testid="cleanup-0-variable-option-printTaskSn"]').trigger('click')
+    await wrapper.get('[data-testid="cleanup-0-variable-option-deviceSn"]').trigger('click')
 
     const emitted = wrapper.emitted('update:modelValue')?.at(-1)?.[0] as CaseDraft
     expect(emitted.processing.cleanup_steps![0].required_variables).toEqual([
@@ -209,7 +212,8 @@ describe('CaseEditor', () => {
     })
 
     await wrapper.get('[data-testid="add-dependency"]').trigger('click')
-    await wrapper.get('[data-testid="dependency-case-0"]').setValue('setup-version-1')
+    await wrapper.get('[data-testid="dependency-search"]').setValue('添加收藏')
+    await wrapper.get('[data-testid="dependency-option-setup-version-1"]').trigger('click')
 
     const emitted = wrapper.emitted('update:modelValue')?.at(-1)?.[0] as CaseDraft
     expect(emitted.dependencies).toEqual([{

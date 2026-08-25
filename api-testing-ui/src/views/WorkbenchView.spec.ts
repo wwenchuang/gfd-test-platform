@@ -20,6 +20,7 @@ describe('WorkbenchView debug workflow', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     vi.restoreAllMocks()
+    vi.spyOn(useContextStore(), 'loadEnvironmentVariableNames').mockResolvedValue()
   })
 
   it('saves the current draft and debugs the exact version returned by that save', async () => {

@@ -3,6 +3,7 @@ import { defineStore } from 'pinia'
 import { apiClient } from '../api/client'
 import type {
   ContextOptionsResponse,
+  EnvironmentRevisionSnapshot,
   EnvironmentRevisionOption,
   ProjectOption,
   SourceRevisionOption,
@@ -13,6 +14,10 @@ import type {
 type ContextApi = {
   get(path: string): Promise<{ data: WorkspaceResponse }>
   put(path: string, body: unknown): Promise<{ data: WorkspaceResponse }>
+}
+
+type EnvironmentRevisionApi = {
+  get(path: string): Promise<{ data: { environment_revision: EnvironmentRevisionSnapshot } }>
 }
 
 const WORKSPACE_PATH = '/api/api-testing/v1/workspace'
@@ -29,6 +34,8 @@ export const useContextStore = defineStore('context', {
     projects: [] as ProjectOption[],
     sourceRevisions: [] as SourceRevisionOption[],
     environmentRevisions: [] as EnvironmentRevisionOption[],
+    environmentVariableNames: [] as string[],
+    environmentVariablesLoading: false,
     savedContextSignature: '',
   }),
   getters: {
@@ -44,8 +51,10 @@ export const useContextStore = defineStore('context', {
         this.sourceRevisionId = null
         this.environmentRevisionId = null
         this.savedContextSignature = ''
+        this.environmentVariableNames = []
         return
       }
+      if (workspace.environment_revision_id !== this.environmentRevisionId) this.environmentVariableNames = []
       this.projectId = workspace.project_id
       this.sourceRevisionId = workspace.source_revision_id
       this.environmentRevisionId = workspace.environment_revision_id
@@ -90,20 +99,39 @@ export const useContextStore = defineStore('context', {
         this.optionsLoading = false
       }
     },
+    async loadEnvironmentVariableNames(revisionId: string | null, client: Pick<EnvironmentRevisionApi, 'get'> = apiClient): Promise<void> {
+      this.environmentVariableNames = []
+      if (!revisionId) return
+      this.environmentVariablesLoading = true
+      try {
+        const response = await client.get(`/api/api-testing/v1/environment-revisions/${encodeURIComponent(revisionId)}`)
+        const variables = response.data.environment_revision?.variables
+        if (this.environmentRevisionId === revisionId && variables && typeof variables === 'object') {
+          this.environmentVariableNames = Object.keys(variables).sort((a, b) => a.localeCompare(b, 'zh-CN'))
+        }
+      } catch {
+        if (this.environmentRevisionId === revisionId) this.environmentVariableNames = []
+      } finally {
+        this.environmentVariablesLoading = false
+      }
+    },
     selectProject(projectId: string | null): void {
       if (projectId === this.projectId) return
       this.projectId = projectId
       this.sourceRevisionId = null
       this.environmentRevisionId = null
+      this.environmentVariableNames = []
     },
     selectSourceRevision(revisionId: string | null): void {
       this.sourceRevisionId = revisionId
     },
     selectEnvironmentRevision(revisionId: string | null): void {
+      if (revisionId !== this.environmentRevisionId) this.environmentVariableNames = []
       this.environmentRevisionId = revisionId
     },
     restoreExecutionContext(workspace: WorkspaceContext): void {
       const restored = validateWorkspace(workspace, false)
+      if (restored!.environment_revision_id !== this.environmentRevisionId) this.environmentVariableNames = []
       this.projectId = restored!.project_id
       this.sourceRevisionId = restored!.source_revision_id
       this.environmentRevisionId = restored!.environment_revision_id

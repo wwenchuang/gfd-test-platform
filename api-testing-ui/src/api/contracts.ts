@@ -259,6 +259,13 @@ export interface CaseDependencyOption {
   exports: string[]
 }
 
+export interface WorkflowVariableOption {
+  name: string
+  source: string
+  sourceKind: 'environment' | 'dependency' | 'setup' | 'main' | 'unknown'
+  available: boolean
+}
+
 export interface GeneratedCasePreview {
   id: string
   endpoint_id: string

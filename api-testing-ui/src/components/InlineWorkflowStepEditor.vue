@@ -2,19 +2,22 @@
 import { computed, ref, watch } from 'vue'
 import { Plus } from 'lucide-vue-next'
 
-import type { ApiEndpoint, InlineWorkflowStep } from '../api/contracts'
+import type { ApiEndpoint, InlineWorkflowStep, WorkflowVariableOption } from '../api/contracts'
 import { groupEndpoints } from '../utils/endpointGroups'
+import { withLegacyVariables } from '../utils/workflowVariables'
 import EndpointPicker from './EndpointPicker.vue'
 import AssertionListEditor from './AssertionListEditor.vue'
 import ExtractionListEditor from './ExtractionListEditor.vue'
 import RequestConfigEditor from './RequestConfigEditor.vue'
 import WorkflowStepCard from './WorkflowStepCard.vue'
+import VariablePicker from './VariablePicker.vue'
 
 const props = defineProps<{
   modelValue: InlineWorkflowStep[]
   stage: 'setup' | 'cleanup'
   endpointOptions?: ApiEndpoint[]
   validationErrors?: Record<string, string>
+  variableOptions?: WorkflowVariableOption[][]
 }>()
 const emit = defineEmits<{ 'update:modelValue': [steps: InlineWorkflowStep[]] }>()
 const jsonErrors = ref<Record<string, string>>({})
@@ -160,10 +163,8 @@ function toggleActive(index: number): void {
   activeIndex.value = activeIndex.value === index ? null : index
 }
 
-function updateRequired(index: number, value: string): void {
-  patchStep(index, {
-    required_variables: [...new Set(value.split(',').map(item => item.trim()).filter(Boolean))],
-  })
+function availableVariables(index: number): WorkflowVariableOption[] {
+  return withLegacyVariables(props.variableOptions?.[index] || [], props.modelValue[index].required_variables || [])
 }
 
 function requestConfig(step: InlineWorkflowStep): string {
@@ -270,9 +271,9 @@ watch(() => props.validationErrors, errors => {
               </optgroup>
             </select>
           </label>
-          <label>必需变量<input :data-testid="`${stage}-required-${index}`" :value="step.required_variables.join(', ')" placeholder="例如 printTaskSn, deviceSn" @input="updateRequired(index, ($event.target as HTMLInputElement).value)" /></label>
+          <div class="workflow-required-variables"><span>必需变量</span><VariablePicker :model-value="step.required_variables" :options="availableVariables(index)" :test-id-prefix="`${stage}-${index}`" @update:model-value="patchStep(index, { required_variables: $event })" /></div>
         </div>
-        <RequestConfigEditor :model-value="step.request" :errors="validationErrors" :prefix="`${stepPrefix(index)}.request`" :test-id-prefix="`${stage}-${index}`" @update:model-value="patchStep(index, { request: $event })" />
+        <RequestConfigEditor :model-value="step.request" :errors="validationErrors" :prefix="`${stepPrefix(index)}.request`" :test-id-prefix="`${stage}-${index}`" :variable-options="availableVariables(index)" @update:model-value="patchStep(index, { request: $event })" />
         <AssertionListEditor :model-value="step.assertions" :errors="validationErrors" :prefix="`${stepPrefix(index)}.assertions`" :test-id-prefix="`${stage}-${index}`" @update:model-value="patchStep(index, { assertions: $event })" />
         <ExtractionListEditor :model-value="step.extractions" :errors="validationErrors" :prefix="`${stepPrefix(index)}.extractions`" :test-id-prefix="`${stage}-${index}`" @update:model-value="patchStep(index, { extractions: $event })" />
         <details :data-testid="`${stage}-${index}-raw-config`" class="workflow-advanced">

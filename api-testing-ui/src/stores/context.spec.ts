@@ -116,4 +116,22 @@ describe('context store', () => {
     expect(store.environmentRevisionId).toBe(SERVER_WORKSPACE.environment_revision_id)
     expect(store.isSaved).toBe(false)
   })
+
+  it('loads only environment variable names and clears them when the environment changes', async () => {
+    const store = useContextStore()
+    store.selectEnvironmentRevision('environment-revision-1')
+
+    await store.loadEnvironmentVariableNames('environment-revision-1', {
+      get: async () => ({ data: { environment_revision: {
+        revision_id: 'environment-revision-1',
+        variables: { Biz: 'ZXB', Authorization: 'secret-token' },
+        services: {},
+      } } }),
+    })
+
+    expect(store.environmentVariableNames).toEqual(['Authorization', 'Biz'])
+    expect(JSON.stringify(store.$state)).not.toContain('secret-token')
+    store.selectEnvironmentRevision('environment-revision-2')
+    expect(store.environmentVariableNames).toEqual([])
+  })
 })

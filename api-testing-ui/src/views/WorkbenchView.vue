@@ -50,6 +50,10 @@ const taskMatchesSelection = computed(() => Boolean(
   && [...tasks.task.selected_endpoint_ids].sort().join('|') === [...selectedIds.value].sort().join('|'),
 ))
 
+watch(() => context.environmentRevisionId, revisionId => {
+  void context.loadEnvironmentVariableNames(revisionId)
+})
+
 onMounted(async () => {
   await Promise.all([context.loadSavedContext(), context.loadOptions()])
   const routeContext = restoreExecutionContextFromRoute()
@@ -423,7 +427,7 @@ function defaultTaskName(): string {
         <EndpointTree :endpoints="assets.endpoints" :selected-ids="selectedIds" :state="context.sourceRevisionId ? assets.state : 'empty'" :error="assets.error" @selection-change="selectedIds = $event" @activate="activate" />
         <main class="design-center">
           <EndpointDetail :endpoint="activeEndpoint" />
-          <CaseEditor v-if="activeDraft" :model-value="activeDraft" :dependency-options="dependencyOptions" :endpoint-options="assets.endpoints" :saving="cases.saving" :saved-message="cases.savedMessage" :validation-errors="cases.validationErrors" :validation-warnings="cases.validationWarnings" @update:model-value="updateDraft" @save="saveDraft" />
+          <CaseEditor v-if="activeDraft" :model-value="activeDraft" :dependency-options="dependencyOptions" :endpoint-options="assets.endpoints" :environment-variable-names="context.environmentVariableNames" :saving="cases.saving" :saved-message="cases.savedMessage" :validation-errors="cases.validationErrors" :validation-warnings="cases.validationWarnings" @update:model-value="updateDraft" @save="saveDraft" />
           <div v-else class="state-message center-empty">选择接口后，可手工编辑或让 AI 生成测试用例。</div>
           <button v-if="activeDraft" class="debug-command" type="button" :disabled="cases.saving || debugRunning" @click="submitDebug"><Bug :size="16" />{{ cases.saving ? '正在保存…' : debugRunning ? '调试中…' : '保存并调试' }}</button>
         </main>

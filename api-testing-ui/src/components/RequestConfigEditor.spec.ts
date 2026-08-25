@@ -33,4 +33,16 @@ describe('RequestConfigEditor', () => {
     expect(wrapper.text()).toContain('JSON 格式不正确')
     expect(wrapper.emitted('validity')?.at(-1)).toEqual([false])
   })
+
+  it('inserts a selected workflow variable into a request value', async () => {
+    const wrapper = mount(RequestConfigEditor, {
+      props: {
+        modelValue: { ...REQUEST, query: { modelSn: '' } },
+        variableOptions: [{ name: 'modelSn', source: '前置步骤 1 · 查询模型', sourceKind: 'setup', available: true }],
+      },
+    })
+    await wrapper.get('[data-testid="query-variable-0"]').trigger('click')
+    await wrapper.get('[data-testid="variable-insert-modelSn"]').trigger('click')
+    expect(wrapper.emitted('update:modelValue')?.at(-1)?.[0]).toMatchObject({ query: { modelSn: '{{modelSn}}' } })
+  })
 })

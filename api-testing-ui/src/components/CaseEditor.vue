@@ -2,17 +2,19 @@
 import { computed, ref, watch } from 'vue'
 import { Code2, List, Plus, Trash2 } from 'lucide-vue-next'
 
-import type { ApiEndpoint, CaseDependencyOption, CaseDraft, InlineWorkflowStep } from '../api/contracts'
+import type { ApiEndpoint, CaseDependencyOption, CaseDraft, InlineWorkflowStep, WorkflowVariableOption } from '../api/contracts'
 import { validateCaseDraftLocally } from '../utils/caseDraftValidation'
+import { workflowVariableOptions } from '../utils/workflowVariables'
 import AssertionListEditor from './AssertionListEditor.vue'
 import ExtractionListEditor from './ExtractionListEditor.vue'
 import InlineWorkflowStepEditor from './InlineWorkflowStepEditor.vue'
 import RequestConfigEditor from './RequestConfigEditor.vue'
+import DependencyPicker from './DependencyPicker.vue'
 
 type ProcessingPhase = 'pre' | 'post'
 
-const props = withDefaults(defineProps<{ modelValue: CaseDraft; validationErrors?: Record<string, string>; validationWarnings?: Record<string, string>; saving?: boolean; savedMessage?: string; dependencyOptions?: CaseDependencyOption[]; endpointOptions?: ApiEndpoint[] }>(), {
-  validationErrors: () => ({}), validationWarnings: () => ({}), saving: false, savedMessage: '', dependencyOptions: () => [], endpointOptions: () => [],
+const props = withDefaults(defineProps<{ modelValue: CaseDraft; validationErrors?: Record<string, string>; validationWarnings?: Record<string, string>; saving?: boolean; savedMessage?: string; dependencyOptions?: CaseDependencyOption[]; endpointOptions?: ApiEndpoint[]; environmentVariableNames?: string[] }>(), {
+  validationErrors: () => ({}), validationWarnings: () => ({}), saving: false, savedMessage: '', dependencyOptions: () => [], endpointOptions: () => [], environmentVariableNames: () => [],
 })
 const emit = defineEmits<{ 'update:modelValue': [draft: CaseDraft]; save: [] }>()
 const mode = ref<'structured' | 'raw'>('structured')
@@ -29,15 +31,9 @@ const hasBlockingError = computed(() => Boolean(
   || Object.keys(advancedErrors.value).length
   || Object.keys(localValidationErrors.value).length,
 ))
-const dependencyGroups = computed(() => {
-  const groups = new Map<string, CaseDependencyOption[]>()
-  for (const option of props.dependencyOptions) {
-    const options = groups.get(option.group) || []
-    options.push(option)
-    groups.set(option.group, options)
-  }
-  return [...groups.entries()].map(([name, options]) => ({ name, options }))
-})
+const setupVariableOptions = computed(() => (local.value.processing.setup_steps || []).map((_, index) => variableOptions('setup', index)))
+const cleanupVariableOptions = computed(() => (local.value.processing.cleanup_steps || []).map((_, index) => variableOptions('cleanup', index)))
+const mainVariableOptions = computed(() => variableOptions('main', 0))
 
 function validationMessages(prefix: string, source: Record<string, string>): Array<[string, string]> {
   return Object.entries(source).filter(([field]) => field === prefix || field.startsWith(`${prefix}.`) || field.startsWith(`${prefix}[`))
@@ -102,6 +98,13 @@ function selectedDependency(dependency: Record<string, unknown>): CaseDependency
   return props.dependencyOptions.find(option => option.id === dependency.case_version_id)
 }
 
+function disabledDependencyIds(rowIndex: number): string[] {
+  return local.value.dependencies
+    .filter((_, index) => index !== rowIndex)
+    .map(dependency => String(dependency.case_version_id || ''))
+    .filter(Boolean)
+}
+
 function selectDependency(dependency: Record<string, unknown>, versionId: string): void {
   dependency.case_version_id = versionId
   dependency.exports = [...(props.dependencyOptions.find(option => option.id === versionId)?.exports || [])]
@@ -119,12 +122,6 @@ function toggleDependencyExport(dependency: Record<string, unknown>, name: strin
   publish()
 }
 
-function dependencyOptionDisabled(versionId: string, rowIndex: number): boolean {
-  return local.value.dependencies.some((dependency, index) => (
-    index !== rowIndex && dependency.case_version_id === versionId
-  ))
-}
-
 function addProcessing(phase: ProcessingPhase): void {
   local.value.processing[phase].push({ action: 'set_variable', name: '', value: '' })
   publish()
@@ -133,6 +130,10 @@ function addProcessing(phase: ProcessingPhase): void {
 function updateWorkflowSteps(phase: 'setup_steps' | 'cleanup_steps', steps: InlineWorkflowStep[]): void {
   local.value.processing[phase] = steps
   publish()
+}
+
+function variableOptions(stage: 'setup' | 'main' | 'cleanup', index: number): WorkflowVariableOption[] {
+  return workflowVariableOptions(local.value, stage, index, props.environmentVariableNames, props.dependencyOptions)
 }
 
 function updateRequest(request: CaseDraft['request']): void {
@@ -212,11 +213,11 @@ function normalizeDraft(value: CaseDraft): CaseDraft {
       <div class="form-grid"><label>用例名称<input v-model="local.name" data-testid="case-name" @input="publish" /></label><label>优先级<select v-model="local.priority" @change="publish"><option v-for="priority in ['P0','P1','P2','P3']" :key="priority">{{ priority }}</option></select></label></div>
       <label>测试目的<textarea v-model="local.purpose" rows="2" @input="publish" /></label>
 
-      <InlineWorkflowStepEditor :model-value="local.processing.setup_steps || []" stage="setup" :endpoint-options="endpointOptions" :validation-errors="validationErrors" @update:model-value="updateWorkflowSteps('setup_steps', $event)" />
+      <InlineWorkflowStepEditor :model-value="local.processing.setup_steps || []" stage="setup" :endpoint-options="endpointOptions" :validation-errors="validationErrors" :variable-options="setupVariableOptions" @update:model-value="updateWorkflowSteps('setup_steps', $event)" />
 
       <div class="workflow-main-heading"><span>主体请求</span><small>验证目标接口的真实业务结果，并将响应变量传给清理步骤。</small></div>
 
-      <RequestConfigEditor :model-value="local.request" :errors="displayValidationErrors" :warnings="validationWarnings" @update:model-value="updateRequest" @validity="requestEditorValid = $event" />
+      <RequestConfigEditor :model-value="local.request" :errors="displayValidationErrors" :warnings="validationWarnings" :variable-options="mainVariableOptions" @update:model-value="updateRequest" @validity="requestEditorValid = $event" />
 
       <section class="editor-section"><div class="section-heading"><strong>测试数据</strong><button class="mini-icon" type="button" title="添加数据行" @click="addDataRow"><Plus :size="15" /></button></div>
         <p v-if="!local.data_rows.length" class="compact-empty">当前用例只执行一次，不使用多组数据。</p>
@@ -232,23 +233,14 @@ function normalizeDraft(value: CaseDraft): CaseDraft {
 
       <ExtractionListEditor :model-value="local.extractions" :errors="validationErrors" :warnings="validationWarnings" @update:model-value="updateExtractions" />
 
-      <InlineWorkflowStepEditor :model-value="local.processing.cleanup_steps || []" stage="cleanup" :endpoint-options="endpointOptions" :validation-errors="validationErrors" @update:model-value="updateWorkflowSteps('cleanup_steps', $event)" />
+      <InlineWorkflowStepEditor :model-value="local.processing.cleanup_steps || []" stage="cleanup" :endpoint-options="endpointOptions" :validation-errors="validationErrors" :variable-options="cleanupVariableOptions" @update:model-value="updateWorkflowSteps('cleanup_steps', $event)" />
 
       <details class="advanced-editor"><summary>共享用例依赖与变量处理</summary>
         <section class="editor-section">
           <div class="section-heading"><strong>用例依赖</strong><button data-testid="add-dependency" class="mini-icon" type="button" title="添加依赖" @click="addDependency"><Plus :size="14" /></button></div>
           <p v-if="!local.dependencies.length" class="compact-empty">添加前置用例后，可将其响应变量用于当前请求。</p>
           <div v-for="(dependency, index) in local.dependencies" :key="index" class="dependency-row">
-            <label>前置用例
-              <select :data-testid="`dependency-case-${index}`" :value="dependency.case_version_id" @change="selectDependency(dependency, ($event.target as HTMLSelectElement).value)">
-                <option value="">选择已保存用例</option>
-                <option v-if="dependency.case_version_id && !selectedDependency(dependency)" :value="dependency.case_version_id">已保存的历史依赖</option>
-                <optgroup v-for="group in dependencyGroups" :key="group.name" :label="group.name">
-                  <option v-for="option in group.options" :key="option.id" :value="option.id" :disabled="dependencyOptionDisabled(option.id, index)">{{ option.name }} · {{ option.method }} {{ option.path }} · v{{ option.version }}</option>
-                </optgroup>
-              </select>
-              <small v-if="selectedDependency(dependency)" class="dependency-meta">{{ selectedDependency(dependency)?.group }} · {{ selectedDependency(dependency)?.exports.length || 0 }} 个可导出变量</small>
-            </label>
+            <div class="dependency-case-picker"><span>前置用例</span><DependencyPicker :model-value="String(dependency.case_version_id || '')" :options="dependencyOptions" :disabled-ids="disabledDependencyIds(index)" @update:model-value="selectDependency(dependency, $event)" /><small v-if="dependency.case_version_id && !selectedDependency(dependency)" class="field-warning">历史依赖当前不在可选列表中，保存时仍会保留。</small></div>
             <div class="dependency-exports">
               <span>传递变量</span>
               <div v-if="selectedDependency(dependency)?.exports.length" class="dependency-export-options">

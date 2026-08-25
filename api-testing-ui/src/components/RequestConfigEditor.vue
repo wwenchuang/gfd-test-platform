@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { ref, watch } from 'vue'
-import { Plus, Trash2 } from 'lucide-vue-next'
+import { nextTick, ref, watch } from 'vue'
+import { Braces, Plus, Trash2 } from 'lucide-vue-next'
 
-import type { CaseRequest } from '../api/contracts'
+import type { CaseRequest, WorkflowVariableOption } from '../api/contracts'
 
 type RequestMapField = 'headers' | 'query' | 'path_params' | 'cookies'
 
@@ -12,7 +12,8 @@ const props = withDefaults(defineProps<{
   warnings?: Record<string, string>
   prefix?: string
   testIdPrefix?: string
-}>(), { errors: () => ({}), warnings: () => ({}), prefix: 'request', testIdPrefix: '' })
+  variableOptions?: WorkflowVariableOption[]
+}>(), { errors: () => ({}), warnings: () => ({}), prefix: 'request', testIdPrefix: '', variableOptions: () => [] })
 
 const emit = defineEmits<{
   'update:modelValue': [request: CaseRequest]
@@ -28,6 +29,8 @@ const sections = [
 const local = ref(cloneRequest(props.modelValue))
 const bodyText = ref(JSON.stringify(props.modelValue.body, null, 2))
 const bodyError = ref('')
+const bodyInput = ref<HTMLTextAreaElement | null>(null)
+const variableTarget = ref<{ field: RequestMapField; index: number } | { field: 'body' } | null>(null)
 const pending: Record<RequestMapField, Set<string>> = {
   headers: new Set(), query: new Set(), path_params: new Set(), cookies: new Set(),
 }
@@ -121,6 +124,34 @@ function updateBody(value: string): void {
   }
 }
 
+function toggleVariableTarget(field: RequestMapField, index: number): void {
+  variableTarget.value = variableTarget.value?.field === field && 'index' in variableTarget.value && variableTarget.value.index === index
+    ? null
+    : { field, index }
+}
+
+function insertVariable(name: string): void {
+  const target = variableTarget.value
+  if (!target) return
+  const template = `{{${name}}}`
+  if (target.field === 'body') {
+    const start = bodyInput.value?.selectionStart ?? bodyText.value.length
+    const end = bodyInput.value?.selectionEnd ?? start
+    updateBody(`${bodyText.value.slice(0, start)}${template}${bodyText.value.slice(end)}`)
+    void nextTick(() => {
+      bodyInput.value?.focus()
+      bodyInput.value?.setSelectionRange(start + template.length, start + template.length)
+    })
+  } else {
+    const key = Object.keys(local.value[target.field])[target.index]
+    if (!key) return
+    const current = renderValue(local.value[target.field][key])
+    local.value[target.field][key] = `${current}${template}`
+    publish()
+  }
+  variableTarget.value = null
+}
+
 function renderValue(value: unknown): string {
   return typeof value === 'string' ? value : JSON.stringify(value)
 }
@@ -142,7 +173,12 @@ function renderValue(value: unknown): string {
         <div v-for="([name, value], index) in Object.entries(local[section.field])" :key="`${section.field}-${index}`" class="key-value-row">
           <input :data-testid="testId(`${section.field}-name`)" :value="name" aria-label="参数名" @change="renameEntry(section.field, name, ($event.target as HTMLInputElement).value)" />
           <input :data-testid="testId(`${section.field}-value`)" :value="renderValue(value)" aria-label="参数值" @input="updateValue(section.field, index, ($event.target as HTMLInputElement).value)" />
+          <button v-if="variableOptions.length" :data-testid="testId(`${section.field}-variable-${index}`)" class="mini-icon" type="button" title="插入已有变量" @click="toggleVariableTarget(section.field, index)"><Braces :size="14" /></button>
           <button class="mini-icon danger" type="button" title="删除参数" @click="removeEntry(section.field, name)"><Trash2 :size="14" /></button>
+          <div v-if="variableTarget?.field === section.field && 'index' in variableTarget && variableTarget.index === index" class="variable-insert-menu">
+            <strong>插入已有变量</strong>
+            <button v-for="option in variableOptions" :key="option.name" :data-testid="`variable-insert-${option.name}`" type="button" :disabled="!option.available" @click="insertVariable(option.name)"><span>{{ option.name }}</span><small>{{ option.source }}</small></button>
+          </div>
           <small v-for="([field, message]) in messages(`${section.field}.${name}`, errors)" :key="field" :data-error-for="field" class="field-error row-feedback">{{ message }}</small>
           <small v-for="([field, message]) in messages(`${section.field}.${name}`, warnings)" :key="field" :data-warning-for="field" class="field-warning row-feedback">{{ message }}</small>
         </div>
@@ -151,6 +187,14 @@ function renderValue(value: unknown): string {
         <button :data-testid="testId(`${section.field}-add`)" class="row-add" type="button" @click="addEntry(section.field)"><Plus :size="14" />添加参数</button>
       </fieldset>
     </div>
-    <label>请求体（JSON）<textarea :data-testid="testId('request-body')" :value="bodyText" rows="6" @input="updateBody(($event.target as HTMLTextAreaElement).value)" /><small v-if="bodyError" :data-error-for="path('body')" class="field-error">{{ bodyError }}</small><template v-else><small v-for="([field, message]) in messages('body', errors)" :key="field" :data-error-for="field" class="field-error">{{ message }}</small></template></label>
+    <label class="request-body-field">请求体（JSON）
+      <textarea ref="bodyInput" :data-testid="testId('request-body')" :value="bodyText" rows="6" @input="updateBody(($event.target as HTMLTextAreaElement).value)" />
+      <button v-if="variableOptions.length" :data-testid="testId('body-variable')" class="variable-body-command" type="button" @click="variableTarget = variableTarget?.field === 'body' ? null : { field: 'body' }"><Braces :size="14" />插入变量</button>
+      <div v-if="variableTarget?.field === 'body'" class="variable-insert-menu body-menu">
+        <strong>请先将光标放在合法 JSON 字符串中，再插入变量</strong>
+        <button v-for="option in variableOptions" :key="option.name" :data-testid="`variable-insert-${option.name}`" type="button" :disabled="!option.available" @click="insertVariable(option.name)"><span>{{ option.name }}</span><small>{{ option.source }}</small></button>
+      </div>
+      <small v-if="bodyError" :data-error-for="path('body')" class="field-error">{{ bodyError }}</small><template v-else><small v-for="([field, message]) in messages('body', errors)" :key="field" :data-error-for="field" class="field-error">{{ message }}</small></template>
+    </label>
   </div>
 </template>
