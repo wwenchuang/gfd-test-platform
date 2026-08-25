@@ -5,8 +5,8 @@ import { ChevronDown, ChevronRight, Search, X } from 'lucide-vue-next'
 import type { ApiEndpoint, LoadState } from '../api/contracts'
 import { endpointGroupName, groupEndpoints } from '../utils/endpointGroups'
 
-const props = withDefaults(defineProps<{ endpoints: ApiEndpoint[]; selectedIds?: string[]; state?: LoadState; error?: string }>(), {
-  selectedIds: () => [], state: 'ready', error: '',
+const props = withDefaults(defineProps<{ endpoints: ApiEndpoint[]; selectedIds?: string[]; state?: LoadState; error?: string; initialTab?: 'all' | 'selected' }>(), {
+  selectedIds: () => [], state: 'ready', error: '', initialTab: 'all',
 })
 const emit = defineEmits<{ 'selection-change': [ids: string[]]; activate: [endpoint: ApiEndpoint] }>()
 interface HighlightSegment {
@@ -16,10 +16,19 @@ interface HighlightSegment {
 
 const query = ref('')
 const selected = ref(new Set(props.selectedIds))
-const activeTab = ref<'all' | 'selected'>('all')
+const activeTab = ref<'all' | 'selected'>(props.initialTab)
 const collapsedGroups = ref(new Set<string>())
 
-watch(() => props.selectedIds, ids => { selected.value = new Set(ids) })
+watch(() => props.selectedIds, ids => {
+  selected.value = new Set(ids)
+  if (!ids.length && activeTab.value === 'selected') activeTab.value = 'all'
+})
+
+watch(() => props.initialTab, tab => { activeTab.value = tab })
+
+function selectTab(tab: 'all' | 'selected'): void {
+  activeTab.value = tab
+}
 
 const filtered = computed(() => {
   const needle = query.value.trim().toLocaleLowerCase()
@@ -128,8 +137,8 @@ function clearSelected(): void {
   <section class="endpoint-tree" aria-label="接口范围">
     <header class="panel-header endpoint-tree-header"><h2>接口范围</h2><span>{{ selected.size }} 已选</span></header>
     <div class="endpoint-tabs" aria-label="接口范围视图">
-      <button data-testid="all-tab" type="button" :class="{ active: activeTab === 'all' }" @click="activeTab = 'all'">全部接口</button>
-      <button data-testid="selected-tab" type="button" :class="{ active: activeTab === 'selected' }" @click="activeTab = 'selected'">已选接口 <span>{{ selected.size }}</span></button>
+      <button data-testid="all-tab" type="button" :class="{ active: activeTab === 'all' }" @click="selectTab('all')">全部接口</button>
+      <button data-testid="selected-tab" type="button" :class="{ active: activeTab === 'selected' }" @click="selectTab('selected')">已选接口 <span>{{ selected.size }}</span></button>
     </div>
     <div class="endpoint-search-bar">
       <label class="search-box"><Search :size="15" /><span class="sr-only">搜索接口</span><input v-model="query" data-testid="endpoint-search" placeholder="搜索名称或路径" /></label>

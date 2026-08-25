@@ -27,6 +27,7 @@ const sections = [
   { label: 'Cookie', field: 'cookies' as const },
 ]
 const local = ref(cloneRequest(props.modelValue))
+const valueTypeHints = ref(requestMapTypeHints(props.modelValue))
 const bodyText = ref(JSON.stringify(props.modelValue.body, null, 2))
 const bodyError = ref('')
 const bodyInput = ref<HTMLTextAreaElement | null>(null)
@@ -38,6 +39,7 @@ const pending: Record<RequestMapField, Set<string>> = {
 watch(() => props.modelValue, value => {
   if (JSON.stringify(value) === JSON.stringify(local.value)) return
   local.value = cloneRequest(value)
+  valueTypeHints.value = requestMapTypeHints(value)
   bodyText.value = JSON.stringify(value.body, null, 2)
   bodyError.value = ''
   for (const names of Object.values(pending)) names.clear()
@@ -46,6 +48,19 @@ watch(() => props.modelValue, value => {
 
 function cloneRequest(value: CaseRequest): CaseRequest {
   return JSON.parse(JSON.stringify(value)) as CaseRequest
+}
+
+function requestMapTypeHints(value: CaseRequest): Record<RequestMapField, Record<string, unknown>> {
+  return {
+    headers: cloneRecord(value.headers),
+    query: cloneRecord(value.query),
+    path_params: cloneRecord(value.path_params),
+    cookies: cloneRecord(value.cookies),
+  }
+}
+
+function cloneRecord(value: Record<string, unknown>): Record<string, unknown> {
+  return JSON.parse(JSON.stringify(value)) as Record<string, unknown>
 }
 
 function testId(value: string): string {
@@ -84,6 +99,7 @@ function addEntry(field: RequestMapField): void {
   let index = 2
   while (Object.prototype.hasOwnProperty.call(target, name)) name = `新参数${index++}`
   target[name] = ''
+  valueTypeHints.value[field][name] = ''
   pending[field].add(name)
 }
 
@@ -94,6 +110,10 @@ function renameEntry(field: RequestMapField, previous: string, nextValue: string
   const rebuilt: Record<string, unknown> = {}
   for (const [name, value] of Object.entries(target)) rebuilt[name === previous ? next : name] = value
   local.value[field] = rebuilt
+  if (next !== previous) {
+    valueTypeHints.value[field][next] = valueTypeHints.value[field][previous]
+    delete valueTypeHints.value[field][previous]
+  }
   if (pending[field].delete(previous)) pending[field].delete(next)
   publish()
 }
@@ -101,13 +121,36 @@ function renameEntry(field: RequestMapField, previous: string, nextValue: string
 function updateValue(field: RequestMapField, index: number, value: string): void {
   const name = Object.keys(local.value[field])[index]
   if (!name) return
-  local.value[field][name] = value
+  local.value[field][name] = preserveValueType(valueTypeHints.value[field][name], value)
   publish()
+}
+
+function preserveValueType(current: unknown, value: string): unknown {
+  if (typeof current === 'number') {
+    const parsed = Number(value)
+    return value.trim() && Number.isFinite(parsed) ? parsed : value
+  }
+  if (typeof current === 'boolean') {
+    if (value.trim().toLowerCase() === 'true') return true
+    if (value.trim().toLowerCase() === 'false') return false
+    return value
+  }
+  if (Array.isArray(current) || (current !== null && typeof current === 'object')) {
+    try {
+      const parsed = JSON.parse(value) as unknown
+      if (Array.isArray(current) && Array.isArray(parsed)) return parsed
+      if (!Array.isArray(current) && parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed
+    } catch {
+      // Keep unfinished structured values editable until they become valid JSON.
+    }
+  }
+  return value
 }
 
 function removeEntry(field: RequestMapField, name: string): void {
   pending[field].delete(name)
   delete local.value[field][name]
+  delete valueTypeHints.value[field][name]
   publish()
 }
 

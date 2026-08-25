@@ -10,11 +10,12 @@ interface HighlightSegment {
   match: boolean
 }
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   open: boolean
   endpoints: ApiEndpoint[]
   title: string
-}>()
+  allowManual?: boolean
+}>(), { allowManual: true })
 
 const emit = defineEmits<{
   select: [endpoint: ApiEndpoint]
@@ -165,7 +166,7 @@ function handleKeydown(event: KeyboardEvent): void {
         </section>
         <p v-if="!groups.length" class="state-message">没有匹配的接口。</p>
       </div>
-      <footer><button data-testid="endpoint-picker-manual" class="secondary-command" type="button" @click="emit('manual')">手工配置请求</button></footer>
+      <footer v-if="allowManual"><button data-testid="endpoint-picker-manual" class="secondary-command" type="button" @click="emit('manual')">手工配置请求</button></footer>
     </section>
   </div>
 </template>

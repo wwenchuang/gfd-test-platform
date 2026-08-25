@@ -1,9 +1,8 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { Plus } from 'lucide-vue-next'
+import { Plus, Search } from 'lucide-vue-next'
 
 import type { ApiEndpoint, InlineWorkflowStep, WorkflowVariableOption } from '../api/contracts'
-import { groupEndpoints } from '../utils/endpointGroups'
 import { withLegacyVariables } from '../utils/workflowVariables'
 import EndpointPicker from './EndpointPicker.vue'
 import AssertionListEditor from './AssertionListEditor.vue'
@@ -22,9 +21,8 @@ const props = defineProps<{
 const emit = defineEmits<{ 'update:modelValue': [steps: InlineWorkflowStep[]] }>()
 const jsonErrors = ref<Record<string, string>>({})
 const pickerOpen = ref(false)
+const pickerTargetIndex = ref<number | null>(null)
 const activeIndex = ref<number | null>(props.modelValue.length ? 0 : null)
-const groups = computed(() => groupEndpoints(props.endpointOptions || [])
-  .map(([name, endpoints]) => ({ name, endpoints })))
 const stageLabel = computed(() => props.stage === 'setup' ? '前置步骤' : '清理步骤')
 const stageHint = computed(() => props.stage === 'setup'
   ? '按顺序获取主体请求需要的真实业务数据。'
@@ -41,10 +39,16 @@ function update(mutator: (steps: InlineWorkflowStep[]) => void): void {
 }
 
 function addStep(): void {
+  pickerTargetIndex.value = null
   pickerOpen.value = true
 }
 
 function addManualStep(): void {
+  if (pickerTargetIndex.value !== null) {
+    pickerTargetIndex.value = null
+    pickerOpen.value = false
+    return
+  }
   update(steps => steps.push({
     name: `${stageLabel.value} ${steps.length + 1}`,
     enabled: true,
@@ -64,22 +68,39 @@ function addManualStep(): void {
 }
 
 function addEndpointStep(endpoint: ApiEndpoint): void {
-  update(steps => steps.push({
-    name: endpoint.summary || `${endpoint.method} ${endpoint.path}`,
-    enabled: true,
-    request: {
-      method: endpoint.method, path: endpoint.path, service: 'default',
-      path_params: {}, query: {}, headers: {}, cookies: {}, body: null,
-    },
-    assertions: [
-      { type: 'status_code', operator: 'equals', expected: 200, timeout_ms: 0, enabled: true },
-      { type: 'json_path', operator: 'equals', path: '$.code', expected: 0, timeout_ms: 0, enabled: true },
-    ],
-    extractions: [],
-    required_variables: [],
-  }))
-  activeIndex.value = props.modelValue.length
+  const targetIndex = pickerTargetIndex.value
+  if (targetIndex === null) {
+    update(steps => steps.push({
+      name: endpoint.summary || `${endpoint.method} ${endpoint.path}`,
+      enabled: true,
+      request: endpointRequest(endpoint),
+      assertions: [
+        { type: 'status_code', operator: 'equals', expected: 200, timeout_ms: 0, enabled: true },
+        { type: 'json_path', operator: 'equals', path: '$.code', expected: 0, timeout_ms: 0, enabled: true },
+      ],
+      extractions: [],
+      required_variables: [],
+    }))
+    activeIndex.value = props.modelValue.length
+  } else {
+    update(steps => applyEndpoint(steps[targetIndex], endpoint))
+    activeIndex.value = targetIndex
+  }
+  pickerTargetIndex.value = null
   pickerOpen.value = false
+}
+
+function endpointRequest(endpoint: ApiEndpoint): InlineWorkflowStep['request'] {
+  return {
+    method: endpoint.method, path: endpoint.path, service: 'default',
+    path_params: {}, query: {}, headers: {}, cookies: {}, body: null,
+  }
+}
+
+function applyEndpoint(step: InlineWorkflowStep, endpoint: ApiEndpoint): void {
+  step.name = endpoint.summary || `${endpoint.method} ${endpoint.path}`
+  step.request = endpointRequest(endpoint)
+  if (!['GET', 'HEAD'].includes(endpoint.method)) delete step.polling
 }
 
 function patchStep(index: number, patch: Partial<InlineWorkflowStep>): void {
@@ -104,31 +125,20 @@ function patchPolling(index: number, patch: Partial<NonNullable<InlineWorkflowSt
   patchStep(index, { polling: { ...current, ...patch } })
 }
 
-function selectEndpoint(index: number, endpointId: string): void {
-  const endpoint = (props.endpointOptions || []).find(item => item.id === endpointId)
-  if (!endpoint) return
-  update(steps => {
-    const step = steps[index]
-    step.name = endpoint.summary || `${endpoint.method} ${endpoint.path}`
-    step.request = {
-      ...step.request,
-      method: endpoint.method,
-      path: endpoint.path,
-      service: 'default',
-      path_params: {},
-      query: {},
-      headers: {},
-      cookies: {},
-      body: null,
-    }
-    if (!['GET', 'HEAD'].includes(endpoint.method)) delete step.polling
-  })
-}
-
-function matchedEndpointId(step: InlineWorkflowStep): string {
+function matchedEndpoint(step: InlineWorkflowStep): ApiEndpoint | undefined {
   return (props.endpointOptions || []).find(item => (
     item.method === step.request.method && item.path === step.request.path
-  ))?.id || ''
+  ))
+}
+
+function reselectEndpoint(index: number): void {
+  pickerTargetIndex.value = index
+  pickerOpen.value = true
+}
+
+function closePicker(): void {
+  pickerTargetIndex.value = null
+  pickerOpen.value = false
 }
 
 function move(index: number, offset: number): void {
@@ -241,10 +251,11 @@ watch(() => props.validationErrors, errors => {
     <EndpointPicker
       :open="pickerOpen"
       :endpoints="endpointOptions || []"
-      :title="`添加${stageLabel}`"
+      :title="pickerTargetIndex === null ? `添加${stageLabel}` : `重新选择${stageLabel}接口`"
+      :allow-manual="pickerTargetIndex === null"
       @select="addEndpointStep"
       @manual="addManualStep"
-      @close="pickerOpen = false"
+      @close="closePicker"
     />
     <header class="workflow-stage-heading">
       <div><strong>{{ stageLabel }}</strong><span>{{ stageHint }}</span></div>
@@ -269,14 +280,14 @@ watch(() => props.validationErrors, errors => {
     >
         <div class="workflow-step-identity">
           <label>步骤名称<input :value="step.name" @input="patchStep(index, { name: ($event.target as HTMLInputElement).value })" /></label>
-          <label>选择接口
-            <select :data-testid="`${stage}-endpoint-${index}`" :value="matchedEndpointId(step)" @change="selectEndpoint(index, ($event.target as HTMLSelectElement).value)">
-              <option value="">手工配置请求</option>
-              <optgroup v-for="group in groups" :key="group.name" :label="group.name">
-                <option v-for="endpoint in group.endpoints" :key="endpoint.id" :value="endpoint.id">{{ endpoint.summary || endpoint.path }} · {{ endpoint.method }} {{ endpoint.path }}</option>
-              </optgroup>
-            </select>
-          </label>
+          <div class="workflow-endpoint-field">
+            <span>接口来源</span>
+            <div class="workflow-endpoint-selection">
+              <span :class="['method-badge', `method-${step.request.method.toLowerCase()}`]">{{ step.request.method }}</span>
+              <span class="workflow-endpoint-copy"><strong>{{ matchedEndpoint(step)?.summary || '手工配置请求' }}</strong><code>{{ step.request.path }}</code></span>
+              <button :data-testid="`${stage}-reselect-endpoint-${index}`" class="secondary-command compact-command" type="button" @click="reselectEndpoint(index)"><Search :size="14" />重新选择</button>
+            </div>
+          </div>
           <div class="workflow-required-variables"><span>必需变量</span><VariablePicker :model-value="step.required_variables" :options="availableVariables(index)" :test-id-prefix="`${stage}-${index}`" @update:model-value="patchStep(index, { required_variables: $event })" /></div>
         </div>
         <RequestConfigEditor :model-value="step.request" :errors="validationErrors" :prefix="`${stepPrefix(index)}.request`" :test-id-prefix="`${stage}-${index}`" :variable-options="availableVariables(index)" @update:model-value="patchStep(index, { request: $event })" />

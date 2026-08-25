@@ -152,7 +152,10 @@ async function assertNoHorizontalOverflow(page, label) {
     await page.getByTestId('endpoint-picker-search').fill('添加收藏');
     await page.getByTestId('endpoint-picker-option-endpoint-favorite-add').click();
     await page.getByTestId('setup-step-summary-0').waitFor();
-    await page.getByTestId('setup-step-toggle-0').click();
+    await page.getByTestId('setup-reselect-endpoint-0').click();
+    await page.getByTestId('endpoint-picker-search').fill('取消收藏');
+    await page.getByTestId('endpoint-picker-option-endpoint-favorite-cancel').click();
+    await page.locator('.workflow-endpoint-selection').getByText('/print3d/api/v1/favorite/cancel', { exact: true }).waitFor();
     await assertNoHorizontalOverflow(page, 'desktop');
     await page.screenshot({ path: path.join(ARTIFACTS, 'workbench-desktop.png'), fullPage: true });
 

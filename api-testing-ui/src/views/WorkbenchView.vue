@@ -24,6 +24,7 @@ const tasks = useTasksStore()
 const route = useRoute()
 const router = useRouter()
 const selectedIds = ref<string[]>([])
+const endpointTreeTab = ref<'all' | 'selected'>('all')
 const activeEndpoint = ref<ApiEndpoint | null>(null)
 const debugOpen = ref(false)
 const localError = ref('')
@@ -107,6 +108,11 @@ async function loadSource(sourceRevisionId: string, restoredSelection: string[] 
     activeEndpoint.value = null
     const available = new Set(assets.endpoints.map(item => item.id))
     selectedIds.value = restoredSelection.filter(item => available.has(item))
+    endpointTreeTab.value = selectedIds.value.length ? 'selected' : 'all'
+    if (selectedIds.value.length === 1) {
+      const endpoint = assets.endpoints.find(item => item.id === selectedIds.value[0])
+      if (endpoint) activate(endpoint)
+    }
   } catch (error) {
     localError.value = error instanceof Error ? error.message : '无法读取已保存接口和用例'
   }
@@ -121,6 +127,7 @@ function changeProject(projectId: string | null): void {
   debugOpen.value = false
   activeEndpoint.value = null
   selectedIds.value = []
+  endpointTreeTab.value = 'all'
   if (projectId) void tasks.list(projectId)
 }
 
@@ -177,6 +184,7 @@ function startNewTask(): void {
   debugOpen.value = false
   localError.value = ''
   selectedIds.value = []
+  endpointTreeTab.value = 'all'
   activeEndpoint.value = null
   taskNameDraft.value = defaultTaskName()
 }
@@ -431,7 +439,7 @@ function defaultTaskName(): string {
     <p v-if="context.error || tasks.error || localError" class="inline-error">{{ context.error || tasks.error || localError }}</p>
     <div class="workbench-shell workbench-shell-focused">
       <div class="design-workspace">
-        <EndpointTree :endpoints="assets.endpoints" :selected-ids="selectedIds" :state="context.sourceRevisionId ? assets.state : 'empty'" :error="assets.error" @selection-change="selectedIds = $event" @activate="activate" />
+        <EndpointTree :endpoints="assets.endpoints" :selected-ids="selectedIds" :initial-tab="endpointTreeTab" :state="context.sourceRevisionId ? assets.state : 'empty'" :error="assets.error" @selection-change="selectedIds = $event" @activate="activate" />
         <main class="design-center">
           <EndpointDetail :endpoint="activeEndpoint" />
           <CaseEditor v-if="activeDraft" ref="caseEditor" :model-value="activeDraft" :dependency-options="dependencyOptions" :endpoint-options="assets.endpoints" :environment-variable-names="context.environmentVariableNames" :saving="cases.saving" :debugging="debugRunning" :saved-message="cases.savedMessage" :validation-errors="cases.validationErrors" :validation-warnings="cases.validationWarnings" @update:model-value="updateDraft" @save="saveDraft" @debug="submitDebug" />

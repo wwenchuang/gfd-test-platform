@@ -10175,6 +10175,41 @@ git diff --check
 - M3：Apifox 分组、query/path/body 示例、必填、类型、说明等同步完整性。
 - M4：执行记录/报告删除、报告 UI、飞书卡片链接和项目级机器人配置。
 
+### 2026-08-25 API 工作台新手流程实站走查收口
+
+本轮在已登录的 QA 页面完整点击工作台、用例管理和任务管理流程，并针对实际阻断新手操作的问题做小范围修复，不改变现有任务、基线或执行数据模型。
+
+本轮修复：
+
+- 请求参数编辑保留原有 OpenAPI 数字、布尔、数组和对象类型；即使用户先删空再重新输入，也不会把数字参数静默改成字符串并导致保存校验失败。
+- 普通单接口调试在后端未返回工作流 trace 时，使用已有脱敏请求、响应和断言证据生成一个“主体请求”步骤，不再错误显示“执行步骤 0 步”。
+- 前置/清理步骤不再用包含全部接口的原生下拉框重选接口；步骤内展示当前方法、名称和路径，通过“重新选择”打开可搜索、按 Apifox 目录折叠的接口选择器。
+- 恢复已保存任务时默认打开“已选接口”范围；若任务只有一个接口，直接打开对应接口和用例编辑器。
+- 新建任务连续勾选接口时保持“全部接口”视图，不会在勾选第一个接口后自动跳到已选列表。
+- Chromium 验收脚本同步覆盖恢复任务、单请求调试主体步骤和前置接口重新选择行为。
+
+已验证：
+
+```bash
+npm --prefix api-testing-ui test -- --run
+# 50 files / 250 tests passed
+
+npm --prefix api-testing-ui run build
+# vue-tsc + Vite production build passed
+
+python3 tests/frontend_static_checks.py
+# 84 checks passed
+
+node tests/api_testing_ui_visual_check.js
+# desktop/mobile visual checks passed, no horizontal overflow
+
+npx playwright test tests/api_testing_e2e.spec.mjs --reporter=line
+# Chromium full workflow passed
+
+git diff --check
+# passed
+```
+
 ### 2026-08-13 API 测试：测试报告按项目展示与驾驶舱优化
 
 本轮只收口用户最新反馈的“测试报告按项目展示、报告页样式太弱”问题，不混入基线资产、任务模型、Apifox 同步或飞书机器人配置。

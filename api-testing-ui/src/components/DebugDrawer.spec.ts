@@ -91,6 +91,26 @@ describe('DebugDrawer', () => {
     expect(wrapper.emitted('edit-step')?.[0]?.[0]).toEqual({ stage: 'cleanup', index: 0 })
   })
 
+  it('shows a normal request as the main execution step when no workflow trace exists', () => {
+    const wrapper = mount(DebugDrawer, {
+      props: {
+        caseVersionId: 'draft-1', environmentRevisionId: 'environment-1',
+        result: {
+          status: 'PASSED', executionCaseId: 'execution-case-1', durationMs: 109, errorMessage: '',
+          trace: [], resolvedRequest: { method: 'GET', path: '/devices/list' },
+          sanitizedResponse: { code: 0, data: [] }, assertions: [{ passed: true }],
+          failureCategory: '', logs: [],
+        },
+      },
+    })
+
+    const trace = wrapper.get('[data-testid="debug-trace"]')
+    expect(trace.text()).toContain('1 步')
+    expect(trace.text()).toContain('主体请求')
+    expect(trace.text()).not.toContain('没有分步骤追踪信息')
+    expect(trace.find('[data-testid="edit-debug-step-main-0"]').exists()).toBe(true)
+  })
+
   it('keeps tab focus inside the modal drawer and returns focus on close', async () => {
     const opener = document.createElement('button')
     opener.textContent = '打开'

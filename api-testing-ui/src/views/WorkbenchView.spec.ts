@@ -23,6 +23,68 @@ describe('WorkbenchView debug workflow', () => {
     vi.spyOn(useContextStore(), 'loadEnvironmentVariableNames').mockResolvedValue()
   })
 
+  it('opens the only endpoint in a restored task without another selection click', async () => {
+    const context = useContextStore()
+    Object.assign(context, {
+      projectId: 'project-1', sourceRevisionId: 'source-1', environmentRevisionId: 'environment-1',
+      projects: [{ id: 'project-1', name: '3D 家用' }],
+      sourceRevisions: [{ id: 'source-1', project_id: 'project-1', name: '默认模块', revision: 1 }],
+      environmentRevisions: [{ id: 'environment-1', project_id: 'project-1', name: '生产环境', revision: 7 }],
+    })
+    vi.spyOn(context, 'loadSavedContext').mockResolvedValue()
+    vi.spyOn(context, 'loadOptions').mockResolvedValue()
+
+    const assets = useAssetsStore()
+    vi.spyOn(assets, 'load').mockImplementation(async () => {
+      assets.endpoints = [ENDPOINT]
+      assets.state = 'ready'
+    })
+
+    const cases = useCasesStore()
+    vi.spyOn(cases, 'loadSavedCases').mockResolvedValue()
+    vi.spyOn(cases, 'restoreLatestAiJob').mockResolvedValue()
+
+    const restoredTask = {
+      id: 'task-1', project_id: 'project-1', source_revision_id: 'source-1', environment_revision_id: 'environment-1',
+      name: '单接口任务', state: 'draft', selected_endpoint_ids: [ENDPOINT.id], runnable_baseline_count: 0,
+      latest_ai_job_id: null, latest_execution_id: null, summary: {}, created_at: '', updated_at: '',
+    } as ApiTestTask
+    const tasks = useTasksStore()
+    vi.spyOn(tasks, 'list').mockResolvedValue([restoredTask])
+    vi.spyOn(tasks, 'restore').mockResolvedValue(restoredTask)
+
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [{ path: '/', name: 'workbench', component: WorkbenchView }],
+    })
+    await router.push('/')
+    await router.isReady()
+    const wrapper = mount(WorkbenchView, {
+      global: {
+        plugins: [router],
+        stubs: {
+          ContextBar: true,
+          TaskStatusStrip: true,
+          EndpointTree: {
+            props: ['initialTab'],
+            template: '<div data-testid="endpoint-tree-tab">{{ initialTab }}</div>',
+          },
+          CaseEditor: true,
+          AiAssistant: true,
+          DebugDrawer: true,
+          EndpointDetail: {
+            props: ['endpoint'],
+            template: '<div data-testid="active-endpoint">{{ endpoint?.summary || "未选择" }}</div>',
+          },
+        },
+      },
+    })
+    await flushPromises()
+
+    expect(wrapper.get('[data-testid="active-endpoint"]').text()).toBe('我的收藏列表')
+    expect(wrapper.get('[data-testid="endpoint-tree-tab"]').text()).toBe('selected')
+  })
+
   it('saves the current draft and debugs the exact version returned by that save', async () => {
     const context = useContextStore()
     Object.assign(context, {

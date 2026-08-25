@@ -168,6 +168,30 @@ describe('EndpointTree', () => {
     expect(wrapper.text()).toContain('添加收藏')
   })
 
+  it('opens the selected view by default when restoring a saved selection', () => {
+    const wrapper = mount(EndpointTree, {
+      props: {
+        endpoints: FAVORITES,
+        selectedIds: ['endpoint-1'],
+        initialTab: 'selected',
+      },
+    })
+
+    expect(wrapper.get('[data-testid="selected-tab"]').classes()).toContain('active')
+    expect(wrapper.text()).toContain('收藏列表')
+  })
+
+  it('stays on all endpoints while the user builds a new selection', async () => {
+    const wrapper = mount(EndpointTree, { props: { endpoints: FAVORITES } })
+
+    await wrapper.get('[data-testid="group-toggle-我的收藏"]').trigger('click')
+    await wrapper.get('[data-testid="endpoint-endpoint-1"]').setValue(true)
+    await wrapper.setProps({ selectedIds: ['endpoint-1'] })
+
+    expect(wrapper.get('[data-testid="all-tab"]').classes()).toContain('active')
+    expect(wrapper.find('[data-testid="endpoint-endpoint-2"]').exists()).toBe(true)
+  })
+
   it('filters selected endpoints by path as well as summary', async () => {
     const wrapper = mount(EndpointTree, {
       props: {

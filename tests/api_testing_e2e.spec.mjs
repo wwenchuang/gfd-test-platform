@@ -58,9 +58,10 @@ test('我的收藏三接口完成导入、AI 设计、调试、基线回归和�
   await expect(page.getByText('已保存 3 个接口')).toBeVisible()
   await page.reload()
   await expect(page.getByText('已保存 3 个接口')).toBeVisible()
+  await expect(page.getByTestId('selected-tab')).toHaveClass(/active/)
   for (const summary of ['查询我的收藏', '添加收藏', '取消收藏']) {
     await page.getByTestId('endpoint-search').fill(summary)
-    await expect(page.getByRole('button', { name: new RegExp(summary) }).locator('..').getByRole('checkbox')).toBeChecked()
+    await expect(page.getByRole('button', { name: new RegExp(summary) })).toBeVisible()
   }
   await page.getByTestId('endpoint-search').fill('')
   await page.getByRole('button', { name: '生成测试用例' }).click()
@@ -81,7 +82,7 @@ test('我的收藏三接口完成导入、AI 设计、调试、基线回归和�
   await page.getByRole('button', { name: /查询我的收藏/ }).click()
   await page.getByTestId('assertion-expected-0').fill('200')
   await page.getByRole('button', { name: '保存并调试' }).click()
-  await expect(page.getByText('PASSED', { exact: true })).toBeVisible()
+  await expect(page.locator('.result-status').getByText('PASSED', { exact: true })).toBeVisible()
   await page.getByTestId('adopt-baseline').click()
   await page.getByTitle('关闭调试').click()
 
@@ -89,7 +90,7 @@ test('我的收藏三接口完成导入、AI 设计、调试、基线回归和�
     await page.getByTestId('endpoint-search').fill(summary)
     await page.getByRole('button', { name: new RegExp(summary) }).click()
     await page.getByRole('button', { name: '保存并调试' }).click()
-    await expect(page.getByText('PASSED', { exact: true })).toBeVisible()
+    await expect(page.locator('.result-status').getByText('PASSED', { exact: true })).toBeVisible()
     await page.getByTestId('adopt-baseline').click()
     await page.getByTitle('关闭调试').click()
   }

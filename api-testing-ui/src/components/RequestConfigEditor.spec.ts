@@ -26,6 +26,23 @@ describe('RequestConfigEditor', () => {
     expect(wrapper.emitted('update:modelValue')?.at(-1)?.[0]).toMatchObject({ query: { pageSize: '20' } })
   })
 
+  it('preserves OpenAPI scalar types while editing existing request values', async () => {
+    const wrapper = mount(RequestConfigEditor, {
+      props: {
+        modelValue: { ...REQUEST, query: { pageNum: 1, includeDeleted: false } },
+      },
+    })
+
+    const values = wrapper.findAll('[data-testid="query-value"]')
+    await values[0].setValue('')
+    await values[0].setValue('2')
+    await values[1].setValue('')
+    await values[1].setValue('true')
+
+    const request = wrapper.emitted('update:modelValue')?.at(-1)?.[0] as CaseRequest
+    expect(request.query).toEqual({ pageNum: 2, includeDeleted: true })
+  })
+
   it('keeps invalid request body text visible and reports invalidity', async () => {
     const wrapper = mount(RequestConfigEditor, { props: { modelValue: REQUEST } })
     await wrapper.get('[data-testid="request-body"]').setValue('{broken')

@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { Bug, CheckCircle2, Play, X } from 'lucide-vue-next'
 
-import type { DebugResult } from '../api/contracts'
+import type { DebugResult, DebugTraceStep } from '../api/contracts'
 import DebugTrace from './DebugTrace.vue'
 
 const props = withDefaults(defineProps<{ caseVersionId: string; environmentRevisionId: string; environmentLabel?: string; result?: DebugResult | null; running?: boolean; canResume?: boolean; open?: boolean; error?: string; baselineAdopting?: boolean; baselineMessage?: string; baselineError?: string }>(), {
@@ -16,6 +16,20 @@ const emit = defineEmits<{
   close: []
   'edit-step': [target: { stage: 'setup' | 'main' | 'cleanup'; index: number }]
 }>()
+
+const displayTrace = computed<DebugTraceStep[]>(() => {
+  if (!props.result) return []
+  if (props.result.trace.length) return props.result.trace
+  const method = typeof props.result.resolvedRequest.method === 'string' ? props.result.resolvedRequest.method : ''
+  const path = typeof props.result.resolvedRequest.path === 'string' ? props.result.resolvedRequest.path : ''
+  return [{
+    stage: 'main', index: 0, name: [method, path].filter(Boolean).join(' ') || '当前接口',
+    status: props.result.status, failureCategory: props.result.failureCategory,
+    assertions: props.result.assertions, extractedVariableNames: [], missingVariableNames: [],
+    request: props.result.resolvedRequest, response: props.result.sanitizedResponse,
+    error: props.result.errorMessage, attempt: 1, maxAttempts: 1,
+  }]
+})
 
 function submit(): void {
   emit('submit', { caseVersionIds: [props.caseVersionId], environmentRevisionId: props.environmentRevisionId })
@@ -74,7 +88,7 @@ function handleKeydown(event: KeyboardEvent): void {
     <section v-if="result" class="debug-result">
       <div class="result-status"><strong :class="result.status === 'PASSED' ? 'status-pass' : 'status-fail'">{{ result.status }}</strong><span v-if="result.failureCategory">{{ result.failureCategory }}</span><span>{{ result.durationMs }} ms</span></div>
       <p v-if="result.errorMessage" class="state-message state-error">{{ result.errorMessage }}</p>
-      <DebugTrace :trace="result.trace" @edit-step="emit('edit-step', $event)" />
+      <DebugTrace :trace="displayTrace" @edit-step="emit('edit-step', $event)" />
       <details class="debug-raw-evidence"><summary>原始执行证据</summary>
         <details><summary>已解析请求</summary><pre>{{ JSON.stringify(result.resolvedRequest, null, 2) }}</pre></details>
         <details><summary>脱敏响应</summary><pre>{{ JSON.stringify(result.sanitizedResponse, null, 2) }}</pre></details>
