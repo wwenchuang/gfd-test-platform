@@ -104,7 +104,10 @@ function createServer() {
     if (url.pathname === '/api/api-testing/v1/executions/execution-1') {
       return sendJson(res, { execution: {
         id: 'execution-1', state: 'DONE', case_statuses: ['PASSED'], summary: { passed: 1 },
-        case_results: [{ execution_case_id: 'execution-case-1', case_version_id: caseVersion.id, endpoint_id: endpoint.id, status: 'PASSED', failure_category: '', duration_ms: 48, sanitized_result: { sanitized_request: { method: 'GET', url: 'https://example.test/favorite/list' }, sanitized_response: { status_code: 200, body: '{"code":0}' }, assertions: [{ passed: true }], trace: [{ phase: 'request', message: '请求已发送' }] } }],
+        case_results: [{ execution_case_id: 'execution-case-1', case_version_id: caseVersion.id, endpoint_id: endpoint.id, status: 'PASSED', failure_category: '', duration_ms: 48, sanitized_result: { sanitized_request: { method: 'GET', url: 'https://example.test/favorite/list' }, sanitized_response: { status_code: 200, body: '{"code":0}' }, assertions: [{ passed: true }], trace: [
+          { phase: 'workflow_step', stage: 'setup', index: 0, name: '添加收藏', status: 'PASSED', request: { method: 'POST', path: '/favorite/add' }, response: { status_code: 200 }, assertions: [{ passed: true }], extracted_variables: { favoriteSn: '***' }, error_message: '' },
+          { phase: 'workflow_step', stage: 'main', index: 0, name: '主体请求', status: 'PASSED', request: { method: 'GET', path: '/favorite/list' }, response: { status_code: 200 }, assertions: [{ passed: true }], extracted_variables: {}, error_message: '' },
+        ] } }],
       } });
     }
     res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' });
@@ -145,12 +148,18 @@ async function assertNoHorizontalOverflow(page, label) {
     if (desktopBoxes.some(box => !box) || !(desktopBoxes[0].x < desktopBoxes[1].x && desktopBoxes[1].x < desktopBoxes[2].x)) {
       throw new Error(`desktop columns are not ordered: ${JSON.stringify(desktopBoxes)}`);
     }
+    await page.getByTestId('add-setup-step').click();
+    await page.getByTestId('endpoint-picker-search').fill('添加收藏');
+    await page.getByTestId('endpoint-picker-option-endpoint-favorite-add').click();
+    await page.getByTestId('setup-step-summary-0').waitFor();
+    await page.getByTestId('setup-step-toggle-0').click();
     await assertNoHorizontalOverflow(page, 'desktop');
     await page.screenshot({ path: path.join(ARTIFACTS, 'workbench-desktop.png'), fullPage: true });
 
     await page.getByRole('button', { name: '保存并调试' }).click();
     await page.getByRole('dialog', { name: '在线调试' }).waitFor();
-    await page.getByText('PASSED', { exact: true }).waitFor();
+    await page.locator('.result-status').getByText('PASSED', { exact: true }).waitFor();
+    await page.getByTestId('debug-trace').getByText('添加收藏', { exact: true }).waitFor();
     await page.keyboard.press('Escape');
     if (await page.getByRole('dialog', { name: '在线调试' }).count()) throw new Error('Escape did not close the debug dialog');
 

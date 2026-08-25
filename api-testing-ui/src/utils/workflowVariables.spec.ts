@@ -50,4 +50,19 @@ describe('workflow variables', () => {
 
     expect(option).toMatchObject({ sourceKind: 'setup', source: '前置步骤 1 · 登录' })
   })
+
+  it('includes active test data and pre-processing outputs while respecting removals', () => {
+    const draft = JSON.parse(JSON.stringify(DRAFT)) as CaseDraft
+    draft.data_rows = [{ name: '设备数据', enabled: true, values: { deviceSn: '***', removedId: '***' } }]
+    draft.processing.pre = [
+      { action: 'set_variable', name: 'modelId', value: '***' },
+      { action: 'remove_variable', name: 'removedId' },
+    ]
+
+    const options = workflowVariableOptions(draft, 'setup', 0, [], DEPENDENCIES)
+
+    expect(options.find(item => item.name === 'deviceSn')?.source).toBe('测试数据 · 设备数据')
+    expect(options.find(item => item.name === 'modelId')?.source).toContain('前置处理 1')
+    expect(options.find(item => item.name === 'removedId')).toBeUndefined()
+  })
 })

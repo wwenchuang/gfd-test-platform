@@ -23,9 +23,22 @@ export function workflowVariableOptions(
       result[position] = option
     }
   }
+  const remove = (name: unknown): void => {
+    if (typeof name !== 'string') return
+    const position = positions.get(name)
+    if (position === undefined) return
+    result.splice(position, 1)
+    positions.clear()
+    result.forEach((option, index) => positions.set(option.name, index))
+  }
 
   for (const name of [...new Set(environmentNames)].sort((a, b) => a.localeCompare(b, 'zh-CN'))) {
     add(name, '当前执行环境', 'environment')
+  }
+
+  const dataRow = (draft.data_rows || []).find(row => row.enabled)
+  if (dataRow) {
+    for (const name of Object.keys(dataRow.values || {})) add(name, `测试数据 · ${dataRow.name}`, 'setup')
   }
 
   const dependencyById = new Map(dependencyOptions.map(option => [option.id, option]))
@@ -34,6 +47,13 @@ export function workflowVariableOptions(
     const option = dependencyById.get(id)
     const exports = Array.isArray(dependency.exports) ? dependency.exports : option?.exports || []
     for (const name of exports) add(name, `共享前置用例 · ${option?.name || '历史依赖'}`, 'dependency')
+  }
+
+  for (const [index, action] of (draft.processing?.pre || []).entries()) {
+    const type = String(action.action || '')
+    if (type === 'remove_variable') remove(action.name)
+    else if (type === 'set_variable') add(action.name, `前置处理 ${index + 1} · 设置变量`, 'setup')
+    else if (['copy_variable', 'json_encode', 'json_decode'].includes(type)) add(action.target, `前置处理 ${index + 1} · 变量转换`, 'setup')
   }
 
   const setupSteps = draft.processing?.setup_steps || []
