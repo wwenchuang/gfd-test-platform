@@ -163,6 +163,12 @@ function toggleActive(index: number): void {
   activeIndex.value = activeIndex.value === index ? null : index
 }
 
+function openStep(index: number): void {
+  if (index >= 0 && index < props.modelValue.length) activeIndex.value = index
+}
+
+defineExpose({ openStep })
+
 function availableVariables(index: number): WorkflowVariableOption[] {
   return withLegacyVariables(props.variableOptions?.[index] || [], props.modelValue[index].required_variables || [])
 }

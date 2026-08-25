@@ -67,6 +67,28 @@ describe('CaseEditor', () => {
     expect(wrapper.find('[data-testid="endpoint-picker-search"]').exists()).toBe(true)
   })
 
+  it('offers save and save-and-debug in one sticky action bar', async () => {
+    const wrapper = mount(CaseEditor, { props: { modelValue: DRAFT } })
+    await wrapper.get('[data-testid="save-case-draft"]').trigger('click')
+    await wrapper.get('[data-testid="save-and-debug"]').trigger('click')
+    expect(wrapper.emitted('save')).toHaveLength(1)
+    expect(wrapper.emitted('debug')).toHaveLength(1)
+  })
+
+  it('keeps optional sections collapsed until populated or invalid', () => {
+    const draft = JSON.parse(JSON.stringify(DRAFT)) as CaseDraft
+    draft.data_rows = []
+    draft.extractions = []
+    const empty = mount(CaseEditor, { props: { modelValue: draft } })
+    expect(empty.get('[data-testid="data-rows-section"]').attributes('open')).toBeUndefined()
+    expect(empty.get('[data-testid="extractions-section"]').attributes('open')).toBeUndefined()
+
+    const invalid = mount(CaseEditor, {
+      props: { modelValue: draft, validationErrors: { 'extractions[0].path': 'JSONPath 格式不正确' } },
+    })
+    expect(invalid.get('[data-testid="extractions-section"]').attributes('open')).toBeDefined()
+  })
+
   it('adds a setup step by selecting an endpoint from the current source revision', async () => {
     const wrapper = mount(CaseEditor, {
       props: { modelValue: DRAFT, endpointOptions: WORKFLOW_ENDPOINTS },

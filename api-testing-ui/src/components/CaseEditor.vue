@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
-import { Code2, List, Plus, Trash2 } from 'lucide-vue-next'
+import { computed, nextTick, ref, watch } from 'vue'
+import { Code2, List, Play, Plus, Trash2 } from 'lucide-vue-next'
 
 import type { ApiEndpoint, CaseDependencyOption, CaseDraft, InlineWorkflowStep, WorkflowVariableOption } from '../api/contracts'
 import { validateCaseDraftLocally } from '../utils/caseDraftValidation'
@@ -10,19 +10,26 @@ import ExtractionListEditor from './ExtractionListEditor.vue'
 import InlineWorkflowStepEditor from './InlineWorkflowStepEditor.vue'
 import RequestConfigEditor from './RequestConfigEditor.vue'
 import DependencyPicker from './DependencyPicker.vue'
+import CaseValidationSummary from './CaseValidationSummary.vue'
 
 type ProcessingPhase = 'pre' | 'post'
 
-const props = withDefaults(defineProps<{ modelValue: CaseDraft; validationErrors?: Record<string, string>; validationWarnings?: Record<string, string>; saving?: boolean; savedMessage?: string; dependencyOptions?: CaseDependencyOption[]; endpointOptions?: ApiEndpoint[]; environmentVariableNames?: string[] }>(), {
-  validationErrors: () => ({}), validationWarnings: () => ({}), saving: false, savedMessage: '', dependencyOptions: () => [], endpointOptions: () => [], environmentVariableNames: () => [],
+const props = withDefaults(defineProps<{ modelValue: CaseDraft; validationErrors?: Record<string, string>; validationWarnings?: Record<string, string>; saving?: boolean; debugging?: boolean; savedMessage?: string; dependencyOptions?: CaseDependencyOption[]; endpointOptions?: ApiEndpoint[]; environmentVariableNames?: string[] }>(), {
+  validationErrors: () => ({}), validationWarnings: () => ({}), saving: false, debugging: false, savedMessage: '', dependencyOptions: () => [], endpointOptions: () => [], environmentVariableNames: () => [],
 })
-const emit = defineEmits<{ 'update:modelValue': [draft: CaseDraft]; save: [] }>()
+const emit = defineEmits<{ 'update:modelValue': [draft: CaseDraft]; save: []; debug: [] }>()
 const mode = ref<'structured' | 'raw'>('structured')
 const local = ref<CaseDraft>(normalizeDraft(props.modelValue))
 const raw = ref(JSON.stringify(local.value, null, 2))
 const rawError = ref('')
 const advancedErrors = ref<Record<string, string>>({})
 const requestEditorValid = ref(true)
+const editorRoot = ref<HTMLElement | null>(null)
+const setupEditor = ref<{ openStep(index: number): void } | null>(null)
+const cleanupEditor = ref<{ openStep(index: number): void } | null>(null)
+const dataRowsSection = ref<HTMLDetailsElement | null>(null)
+const extractionsSection = ref<HTMLDetailsElement | null>(null)
+const advancedSection = ref<HTMLDetailsElement | null>(null)
 const localValidationErrors = computed(() => validateCaseDraftLocally(local.value))
 const displayValidationErrors = computed(() => ({ ...props.validationErrors, ...localValidationErrors.value }))
 const hasBlockingError = computed(() => Boolean(
@@ -34,9 +41,40 @@ const hasBlockingError = computed(() => Boolean(
 const setupVariableOptions = computed(() => (local.value.processing.setup_steps || []).map((_, index) => variableOptions('setup', index)))
 const cleanupVariableOptions = computed(() => (local.value.processing.cleanup_steps || []).map((_, index) => variableOptions('cleanup', index)))
 const mainVariableOptions = computed(() => variableOptions('main', 0))
+const dataRowsOpen = computed(() => Boolean(local.value.data_rows.length || hasFeedback('data_rows')))
+const extractionsOpen = computed(() => Boolean(local.value.extractions.length || hasFeedback('extractions')))
+const advancedOpen = computed(() => Boolean(
+  local.value.dependencies.length
+  || local.value.processing.pre.length
+  || local.value.processing.post.length
+  || hasFeedback('dependencies')
+  || hasFeedback('processing.pre')
+  || hasFeedback('processing.post'),
+))
 
 function validationMessages(prefix: string, source: Record<string, string>): Array<[string, string]> {
   return Object.entries(source).filter(([field]) => field === prefix || field.startsWith(`${prefix}.`) || field.startsWith(`${prefix}[`))
+}
+
+function hasFeedback(prefix: string): boolean {
+  return [props.validationErrors, props.validationWarnings].some(source => (
+    Object.keys(source).some(field => field === prefix || field.startsWith(`${prefix}.`) || field.startsWith(`${prefix}[`))
+  ))
+}
+
+async function navigateToField(path: string): Promise<void> {
+  const setup = path.match(/^processing\.setup_steps\[(\d+)]/)
+  const cleanup = path.match(/^processing\.cleanup_steps\[(\d+)]/)
+  if (setup) setupEditor.value?.openStep(Number(setup[1]))
+  if (cleanup) cleanupEditor.value?.openStep(Number(cleanup[1]))
+  if (path.startsWith('data_rows')) dataRowsSection.value!.open = true
+  if (path.startsWith('extractions')) extractionsSection.value!.open = true
+  if (path.startsWith('dependencies') || path.startsWith('processing.pre') || path.startsWith('processing.post')) advancedSection.value!.open = true
+  await nextTick()
+  const feedback = Array.from(editorRoot.value?.querySelectorAll<HTMLElement>('[data-error-for], [data-warning-for]') || [])
+    .find(element => element.dataset.errorFor === path || element.dataset.warningFor === path)
+  feedback?.scrollIntoView?.({ block: 'center', behavior: 'smooth' })
+  feedback?.closest('label, .assertion-card, .extraction-row, .dependency-row')?.querySelector<HTMLElement>('input, select, textarea, button')?.focus()
 }
 
 watch(() => props.modelValue, value => {
@@ -200,7 +238,7 @@ function normalizeDraft(value: CaseDraft): CaseDraft {
 </script>
 
 <template>
-  <section class="case-editor">
+  <section ref="editorRoot" class="case-editor">
     <header class="editor-toolbar">
       <div><h2>测试用例</h2><span>{{ savedMessage || '修改后先保存，再调试' }}</span></div>
       <div class="segmented">
@@ -213,13 +251,15 @@ function normalizeDraft(value: CaseDraft): CaseDraft {
       <div class="form-grid"><label>用例名称<input v-model="local.name" data-testid="case-name" @input="publish" /></label><label>优先级<select v-model="local.priority" @change="publish"><option v-for="priority in ['P0','P1','P2','P3']" :key="priority">{{ priority }}</option></select></label></div>
       <label>测试目的<textarea v-model="local.purpose" rows="2" @input="publish" /></label>
 
-      <InlineWorkflowStepEditor :model-value="local.processing.setup_steps || []" stage="setup" :endpoint-options="endpointOptions" :validation-errors="validationErrors" :variable-options="setupVariableOptions" @update:model-value="updateWorkflowSteps('setup_steps', $event)" />
+      <CaseValidationSummary :setup-count="local.processing.setup_steps?.length || 0" :assertion-count="local.assertions.length" :cleanup-count="local.processing.cleanup_steps?.length || 0" :errors="displayValidationErrors" :warnings="validationWarnings" @navigate="navigateToField" />
+
+      <InlineWorkflowStepEditor ref="setupEditor" :model-value="local.processing.setup_steps || []" stage="setup" :endpoint-options="endpointOptions" :validation-errors="validationErrors" :variable-options="setupVariableOptions" @update:model-value="updateWorkflowSteps('setup_steps', $event)" />
 
       <div class="workflow-main-heading"><span>主体请求</span><small>验证目标接口的真实业务结果，并将响应变量传给清理步骤。</small></div>
 
       <RequestConfigEditor :model-value="local.request" :errors="displayValidationErrors" :warnings="validationWarnings" :variable-options="mainVariableOptions" @update:model-value="updateRequest" @validity="requestEditorValid = $event" />
 
-      <section class="editor-section"><div class="section-heading"><strong>测试数据</strong><button class="mini-icon" type="button" title="添加数据行" @click="addDataRow"><Plus :size="15" /></button></div>
+      <details ref="dataRowsSection" data-testid="data-rows-section" class="optional-editor-section" :open="dataRowsOpen"><summary><span>测试数据</span><small>{{ local.data_rows.length ? `${local.data_rows.length} 组` : '可选' }}</small></summary><section class="editor-section"><div class="section-heading"><strong>数据行</strong><button class="mini-icon" type="button" title="添加数据行" @click="addDataRow"><Plus :size="15" /></button></div>
         <p v-if="!local.data_rows.length" class="compact-empty">当前用例只执行一次，不使用多组数据。</p>
         <article v-for="(row, rowIndex) in local.data_rows" :key="rowIndex" class="data-card"><div class="data-card-head"><input v-model="row.name" aria-label="数据名称" @input="publish" /><label class="toggle-line"><input v-model="row.enabled" type="checkbox" @change="publish" />启用</label><button class="mini-icon danger" type="button" title="删除数据" @click="local.data_rows.splice(rowIndex, 1); publish()"><Trash2 :size="14" /></button></div>
           <div v-for="([name, value], valueIndex) in entries(row.values)" :key="`${name}-${valueIndex}`" class="key-value-row"><input :value="name" aria-label="变量名" @change="renameDataValue(rowIndex, name, ($event.target as HTMLInputElement).value)" /><input :value="renderValue(value)" aria-label="变量值" @input="updateDataValue(rowIndex, name, ($event.target as HTMLInputElement).value)" /><button class="mini-icon danger" type="button" title="删除变量" @click="delete row.values[name]; publish()"><Trash2 :size="14" /></button></div>
@@ -227,15 +267,15 @@ function normalizeDraft(value: CaseDraft): CaseDraft {
           <small v-for="([field, message]) in validationMessages(`data_rows[${rowIndex}]`, validationErrors)" :key="field" :data-error-for="field" class="field-error">{{ message }}</small>
           <small v-for="([field, message]) in validationMessages(`data_rows[${rowIndex}]`, validationWarnings)" :key="field" :data-warning-for="field" class="field-warning">{{ message }}</small>
         </article>
-      </section>
+      </section></details>
 
       <AssertionListEditor :model-value="local.assertions" :errors="displayValidationErrors" :warnings="validationWarnings" @update:model-value="updateAssertions" />
 
-      <ExtractionListEditor :model-value="local.extractions" :errors="validationErrors" :warnings="validationWarnings" @update:model-value="updateExtractions" />
+      <details ref="extractionsSection" data-testid="extractions-section" class="optional-editor-section" :open="extractionsOpen"><summary><span>主体输出变量</span><small>{{ local.extractions.length ? `${local.extractions.length} 个` : '可选' }}</small></summary><ExtractionListEditor :model-value="local.extractions" :errors="validationErrors" :warnings="validationWarnings" @update:model-value="updateExtractions" /></details>
 
-      <InlineWorkflowStepEditor :model-value="local.processing.cleanup_steps || []" stage="cleanup" :endpoint-options="endpointOptions" :validation-errors="validationErrors" :variable-options="cleanupVariableOptions" @update:model-value="updateWorkflowSteps('cleanup_steps', $event)" />
+      <InlineWorkflowStepEditor ref="cleanupEditor" :model-value="local.processing.cleanup_steps || []" stage="cleanup" :endpoint-options="endpointOptions" :validation-errors="validationErrors" :variable-options="cleanupVariableOptions" @update:model-value="updateWorkflowSteps('cleanup_steps', $event)" />
 
-      <details class="advanced-editor"><summary>共享用例依赖与变量处理</summary>
+      <details ref="advancedSection" data-testid="advanced-section" class="advanced-editor" :open="advancedOpen"><summary>共享用例依赖与变量处理</summary>
         <section class="editor-section">
           <div class="section-heading"><strong>用例依赖</strong><button data-testid="add-dependency" class="mini-icon" type="button" title="添加依赖" @click="addDependency"><Plus :size="14" /></button></div>
           <p v-if="!local.dependencies.length" class="compact-empty">添加前置用例后，可将其响应变量用于当前请求。</p>
@@ -259,6 +299,6 @@ function normalizeDraft(value: CaseDraft): CaseDraft {
     </div>
 
     <div v-else class="raw-editor"><textarea v-model="raw" rows="26" spellcheck="false" @blur="applyRaw" /><p v-if="rawError" class="field-error">{{ rawError }}</p></div>
-    <footer class="editor-footer"><span role="status">{{ savedMessage }}</span><button data-testid="save-case-draft" class="primary-command" type="button" :disabled="saving || hasBlockingError" @click="emit('save')">{{ saving ? '保存中...' : '保存草稿' }}</button></footer>
+    <footer class="editor-footer"><span role="status">{{ savedMessage || (hasBlockingError ? '请先处理阻塞错误' : '可保存草稿或直接调试') }}</span><small v-if="Object.keys(displayValidationErrors).length">错误 {{ Object.keys(displayValidationErrors).length }}</small><small v-if="Object.keys(validationWarnings).length">警告 {{ Object.keys(validationWarnings).length }}</small><button data-testid="save-case-draft" class="secondary-command" type="button" :disabled="saving || hasBlockingError" @click="emit('save')">{{ saving ? '保存中...' : '保存草稿' }}</button><button data-testid="save-and-debug" class="primary-command" type="button" :disabled="saving || debugging || hasBlockingError" @click="emit('debug')"><Play :size="15" />{{ debugging ? '调试中...' : '保存并调试' }}</button></footer>
   </section>
 </template>

@@ -65,7 +65,10 @@ describe('WorkbenchView debug workflow', () => {
           ContextBar: true,
           TaskStatusStrip: true,
           EndpointDetail: true,
-          CaseEditor: true,
+          CaseEditor: {
+            emits: ['debug'],
+            template: '<button data-testid="editor-debug" @click="$emit(\'debug\')">保存并调试</button>',
+          },
           AiAssistant: true,
           DebugDrawer: true,
           EndpointTree: {
@@ -79,7 +82,7 @@ describe('WorkbenchView debug workflow', () => {
     await flushPromises()
 
     await wrapper.get('[data-testid="activate-endpoint"]').trigger('click')
-    await wrapper.get('.debug-command').trigger('click')
+    await wrapper.get('[data-testid="editor-debug"]').trigger('click')
     await flushPromises()
 
     expect(prepare).toHaveBeenCalledWith(ENDPOINT.id, 'environment-1')
