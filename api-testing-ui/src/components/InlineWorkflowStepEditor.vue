@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
-import { ArrowDown, ArrowUp, Plus, Trash2 } from 'lucide-vue-next'
+import { computed, ref, watch } from 'vue'
+import { Plus } from 'lucide-vue-next'
 
 import type { ApiEndpoint, InlineWorkflowStep } from '../api/contracts'
 import { groupEndpoints } from '../utils/endpointGroups'
 import EndpointPicker from './EndpointPicker.vue'
+import WorkflowStepCard from './WorkflowStepCard.vue'
 
 const props = defineProps<{
   modelValue: InlineWorkflowStep[]
@@ -15,6 +16,7 @@ const props = defineProps<{
 const emit = defineEmits<{ 'update:modelValue': [steps: InlineWorkflowStep[]] }>()
 const jsonErrors = ref<Record<string, string>>({})
 const pickerOpen = ref(false)
+const activeIndex = ref<number | null>(props.modelValue.length ? 0 : null)
 const groups = computed(() => groupEndpoints(props.endpointOptions || [])
   .map(([name, endpoints]) => ({ name, endpoints })))
 const stageLabel = computed(() => props.stage === 'setup' ? '前置步骤' : '清理步骤')
@@ -51,6 +53,7 @@ function addManualStep(): void {
     extractions: [],
     required_variables: [],
   }))
+  activeIndex.value = props.modelValue.length
   pickerOpen.value = false
 }
 
@@ -69,6 +72,7 @@ function addEndpointStep(endpoint: ApiEndpoint): void {
     extractions: [],
     required_variables: [],
   }))
+  activeIndex.value = props.modelValue.length
   pickerOpen.value = false
 }
 
@@ -122,12 +126,35 @@ function matchedEndpointId(step: InlineWorkflowStep): string {
 }
 
 function move(index: number, offset: number): void {
+  const target = index + offset
+  if (target < 0 || target >= props.modelValue.length) return
   update(steps => {
-    const target = index + offset
-    if (target < 0 || target >= steps.length) return
     const [step] = steps.splice(index, 1)
     steps.splice(target, 0, step)
   })
+  if (activeIndex.value === index) activeIndex.value = target
+  else if (activeIndex.value === target) activeIndex.value = index
+}
+
+function duplicate(index: number): void {
+  update(steps => {
+    const copy = clone(steps[index])
+    copy.name = `${copy.name} 副本`
+    steps.splice(index + 1, 0, copy)
+  })
+  activeIndex.value = index + 1
+}
+
+function remove(index: number): void {
+  const step = props.modelValue[index]
+  if (!globalThis.confirm(`确认删除步骤“${step.name}”？`)) return
+  update(steps => steps.splice(index, 1))
+  if (props.modelValue.length <= 1) activeIndex.value = null
+  else activeIndex.value = Math.min(index, props.modelValue.length - 2)
+}
+
+function toggleActive(index: number): void {
+  activeIndex.value = activeIndex.value === index ? null : index
 }
 
 function updateRequired(index: number, value: string): void {
@@ -182,6 +209,17 @@ function validationMessages(index: number): string[] {
     .filter(([field]) => field === prefix || field.startsWith(`${prefix}.`))
     .map(([, message]) => message)
 }
+
+watch(() => props.modelValue.length, length => {
+  if (!length) activeIndex.value = null
+  else if (activeIndex.value !== null && activeIndex.value >= length) activeIndex.value = length - 1
+})
+
+watch(() => props.validationErrors, errors => {
+  const field = Object.keys(errors || {}).find(path => path.startsWith(`processing.${props.stage === 'setup' ? 'setup_steps' : 'cleanup_steps'}[`))
+  const match = field?.match(/\[(\d+)\]/)
+  if (match) activeIndex.value = Number(match[1])
+}, { deep: true, immediate: true })
 </script>
 
 <template>
@@ -199,20 +237,22 @@ function validationMessages(index: number): string[] {
       <button :data-testid="`add-${stage}-step`" class="secondary-command" type="button" @click="addStep"><Plus :size="14" />添加步骤</button>
     </header>
     <p v-if="!modelValue.length" class="compact-empty">当前没有{{ stageLabel }}。</p>
-    <details v-for="(step, index) in modelValue" :key="`${stage}-${index}-${step.name}`" class="workflow-step-card" :open="index === 0">
-      <summary>
-        <span class="workflow-order">{{ index + 1 }}</span>
-        <b>{{ step.name }}</b>
-        <code>{{ step.request.method }} {{ step.request.path }}</code>
-        <span :class="step.enabled ? 'step-enabled' : 'step-disabled'">{{ step.enabled ? '启用' : '停用' }}</span>
-      </summary>
-      <div class="workflow-step-body">
-        <div class="workflow-step-toolbar">
-          <label class="toggle-line"><input :checked="step.enabled" type="checkbox" @change="patchStep(index, { enabled: ($event.target as HTMLInputElement).checked })" />启用</label>
-          <button :data-testid="`${stage}-step-up-${index}`" class="mini-icon" type="button" title="上移" :disabled="index === 0" @click="move(index, -1)"><ArrowUp :size="14" /></button>
-          <button :data-testid="`${stage}-step-down-${index}`" class="mini-icon" type="button" title="下移" :disabled="index === modelValue.length - 1" @click="move(index, 1)"><ArrowDown :size="14" /></button>
-          <button class="mini-icon danger" type="button" title="删除步骤" @click="update(steps => steps.splice(index, 1))"><Trash2 :size="14" /></button>
-        </div>
+    <WorkflowStepCard
+      v-for="(step, index) in modelValue"
+      :key="`${stage}-${index}`"
+      :step="step"
+      :index="index"
+      :stage="stage"
+      :active="activeIndex === index"
+      :issue-count="validationMessages(index).length"
+      :first="index === 0"
+      :last="index === modelValue.length - 1"
+      @toggle="toggleActive(index)"
+      @enabled="patchStep(index, { enabled: $event })"
+      @move="move(index, $event)"
+      @duplicate="duplicate(index)"
+      @remove="remove(index)"
+    >
         <div class="workflow-step-grid">
           <label>步骤名称<input :value="step.name" @input="patchStep(index, { name: ($event.target as HTMLInputElement).value })" /></label>
           <label>选择接口
@@ -250,7 +290,6 @@ function validationMessages(index: number): string[] {
           <label>响应提取<textarea :value="JSON.stringify(step.extractions, null, 2)" rows="8" @change="updateJson(index, 'extractions', ($event.target as HTMLTextAreaElement).value)" /><small v-if="jsonErrors[`extractions-${index}`]" class="field-error">{{ jsonErrors[`extractions-${index}`] }}</small></label>
         </div>
         <small v-for="message in validationMessages(index)" :key="message" class="field-error">{{ message }}</small>
-      </div>
-    </details>
+    </WorkflowStepCard>
   </section>
 </template>

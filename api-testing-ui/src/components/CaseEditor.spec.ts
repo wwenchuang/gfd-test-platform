@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { mount } from '@vue/test-utils'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import CaseEditor from './CaseEditor.vue'
 import type { ApiEndpoint, CaseDraft } from '../api/contracts'
@@ -36,6 +36,25 @@ const WORKFLOW_ENDPOINTS: ApiEndpoint[] = [
   },
 ]
 
+function workflowDraft(): CaseDraft {
+  const draft = JSON.parse(JSON.stringify(DRAFT)) as CaseDraft
+  draft.processing.setup_steps = [
+    {
+      name: '查询模型', enabled: true,
+      request: { method: 'GET', path: '/resource/page', service: 'default', path_params: {}, query: { page: 1 }, headers: {}, cookies: {}, body: null },
+      assertions: [{ type: 'status_code', operator: 'equals', expected: 200, timeout_ms: 0, enabled: true }],
+      extractions: [{ target: 'modelSn', type: 'json_path', path: '$.data.list[0].modelSn', required: true }],
+      required_variables: [],
+    },
+    {
+      name: '查询切片', enabled: true,
+      request: { method: 'GET', path: '/slice/detail', service: 'default', path_params: {}, query: {}, headers: {}, cookies: {}, body: null },
+      assertions: [], extractions: [], required_variables: ['modelSn'],
+    },
+  ]
+  return draft
+}
+
 describe('CaseEditor', () => {
   it('opens endpoint selection without publishing a blank workflow step', async () => {
     const wrapper = mount(CaseEditor, {
@@ -45,7 +64,7 @@ describe('CaseEditor', () => {
     await wrapper.get('[data-testid="add-setup-step"]').trigger('click')
 
     expect(wrapper.emitted('update:modelValue')).toBeUndefined()
-    expect(wrapper.get('[data-testid="endpoint-picker-search"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="endpoint-picker-search"]').exists()).toBe(true)
   })
 
   it('adds a setup step by selecting an endpoint from the current source revision', async () => {
@@ -89,6 +108,44 @@ describe('CaseEditor', () => {
     const emitted = wrapper.emitted('update:modelValue')?.at(-1)?.[0] as CaseDraft
     expect(emitted.processing.setup_steps!.map(item => item.name)).toEqual(['第二步', '第一步'])
     expect(emitted.processing.setup_steps![0].request.path).toBe('/second')
+  })
+
+  it('keeps only the active workflow step expanded', async () => {
+    const wrapper = mount(CaseEditor, { props: { modelValue: workflowDraft() } })
+
+    expect(wrapper.findAll('[data-testid^="setup-step-body-"]')).toHaveLength(1)
+    await wrapper.get('[data-testid="setup-step-toggle-1"]').trigger('click')
+
+    expect(wrapper.find('[data-testid="setup-step-body-0"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="setup-step-body-1"]').exists()).toBe(true)
+  })
+
+  it('shows configuration counts and errors while a workflow step is collapsed', () => {
+    const wrapper = mount(CaseEditor, {
+      props: {
+        modelValue: workflowDraft(),
+        validationErrors: { 'processing.setup_steps[1].request.path': '请求路径不能为空' },
+      },
+    })
+
+    const summary = wrapper.get('[data-testid="setup-step-summary-1"]')
+    expect(summary.text()).toContain('断言 0')
+    expect(summary.text()).toContain('错误 1')
+  })
+
+  it('duplicates a workflow step and confirms before deleting it', async () => {
+    const wrapper = mount(CaseEditor, { props: { modelValue: workflowDraft() } })
+
+    await wrapper.get('[data-testid="setup-step-duplicate-0"]').trigger('click')
+    let emitted = wrapper.emitted('update:modelValue')?.at(-1)?.[0] as CaseDraft
+    expect(emitted.processing.setup_steps?.map(step => step.name)).toEqual(['查询模型', '查询模型 副本', '查询切片'])
+
+    const confirm = vi.spyOn(globalThis, 'confirm').mockReturnValue(true)
+    await wrapper.get('[data-testid="setup-step-remove-1"]').trigger('click')
+    emitted = wrapper.emitted('update:modelValue')?.at(-1)?.[0] as CaseDraft
+    expect(confirm).toHaveBeenCalledWith('确认删除步骤“查询模型 副本”？')
+    expect(emitted.processing.setup_steps?.map(step => step.name)).toEqual(['查询模型', '查询切片'])
+    confirm.mockRestore()
   })
 
   it('configures cleanup variables used to prevent incomplete cleanup requests', async () => {

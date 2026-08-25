@@ -20,7 +20,7 @@ describe('EndpointPicker', () => {
 
     expect(wrapper.find('[data-testid="endpoint-picker-option-resource-page"]').exists()).toBe(false)
     await wrapper.get('[data-testid="endpoint-picker-group-家用业务 / 模型"]').trigger('click')
-    expect(wrapper.get('[data-testid="endpoint-picker-option-resource-page"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="endpoint-picker-option-resource-page"]').exists()).toBe(true)
   })
 
   it('searches endpoint name path method and group with highlighted matches', async () => {
