@@ -311,11 +311,30 @@ export interface AiJob {
 export interface DebugResult {
   status: string
   executionCaseId: string
+  durationMs: number
+  errorMessage: string
+  trace: DebugTraceStep[]
   resolvedRequest: Record<string, unknown>
   sanitizedResponse: Record<string, unknown>
   assertions: unknown[]
   failureCategory: string
   logs: string[]
+}
+
+export interface DebugTraceStep {
+  stage: 'setup' | 'main' | 'cleanup'
+  index: number
+  name: string
+  status: string
+  failureCategory: string
+  assertions: unknown[]
+  extractedVariableNames: string[]
+  missingVariableNames: string[]
+  request: Record<string, unknown>
+  response: Record<string, unknown>
+  error: string
+  attempt: number
+  maxAttempts: number
 }
 
 export interface ExecutionView {

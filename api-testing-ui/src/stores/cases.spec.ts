@@ -375,7 +375,11 @@ describe('cases store', () => {
       case_results: [{
         execution_case_id: 'execution-case-1', case_version_id: 'version-1', endpoint_id: 'endpoint-1',
         status: 'BROKEN', failure_category: 'network', duration_ms: 33,
-        sanitized_result: { error_message: '连接超时', trace: [{ phase: 'request', message: '连接目标服务' }] },
+        sanitized_result: { error_message: '连接超时', trace: [
+          { phase: 'request', message: '连接目标服务' },
+          { phase: 'workflow_step', stage: 'setup', index: 0, name: '查询模型', status: 'PASSED', request: {}, response: {}, assertions: [], extracted_variables: { modelSn: '***' } },
+          { phase: 'workflow_step', stage: 'cleanup', index: 0, name: '取消打印', status: 'FAILED', failure_category: 'network', request: {}, response: {}, assertions: [], extracted_variables: {}, error_message: '取消请求超时', attempt: 2, max_attempts: 2 },
+        ] },
       }],
     } } })
     const store = useCasesStore()
@@ -384,6 +388,12 @@ describe('cases store', () => {
 
     expect(store.debugResult?.logs.join('\n')).toContain('连接超时')
     expect(store.debugResult?.logs.join('\n')).toContain('连接目标服务')
+    expect(store.debugResult?.durationMs).toBe(33)
+    expect(store.debugResult?.errorMessage).toBe('连接超时')
+    expect(store.debugResult?.trace).toEqual([
+      expect.objectContaining({ stage: 'setup', index: 0, name: '查询模型', status: 'PASSED', extractedVariableNames: ['modelSn'] }),
+      expect.objectContaining({ stage: 'cleanup', index: 0, name: '取消打印', status: 'FAILED', attempt: 2, maxAttempts: 2 }),
+    ])
   })
 
   it('shows the requested debug case instead of an expanded dependency result', async () => {
@@ -426,7 +436,7 @@ describe('cases store', () => {
     const store = useCasesStore()
     store.debugExecution = { id: 'execution-old' } as never
     store.debugResult = {
-      status: 'FAILED', executionCaseId: 'case-old', resolvedRequest: {},
+      status: 'FAILED', executionCaseId: 'case-old', durationMs: 10, errorMessage: '', trace: [], resolvedRequest: {},
       sanitizedResponse: {}, assertions: [], failureCategory: 'product_assertion', logs: [],
     }
     store.debugError = '旧环境错误'

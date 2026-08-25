@@ -32,13 +32,13 @@ describe('DebugDrawer', () => {
     const passed = mount(DebugDrawer, {
       props: {
         caseVersionId: 'draft-1', environmentRevisionId: 'environment-1',
-        result: { status: 'PASSED', executionCaseId: 'execution-case-1', resolvedRequest: {}, sanitizedResponse: {}, assertions: [], failureCategory: '', logs: [] },
+        result: { status: 'PASSED', executionCaseId: 'execution-case-1', durationMs: 10, errorMessage: '', trace: [], resolvedRequest: {}, sanitizedResponse: {}, assertions: [], failureCategory: '', logs: [] },
       },
     })
     const failed = mount(DebugDrawer, {
       props: {
         caseVersionId: 'draft-1', environmentRevisionId: 'environment-1',
-        result: { status: 'FAILED', executionCaseId: 'execution-case-2', resolvedRequest: {}, sanitizedResponse: {}, assertions: [], failureCategory: 'assertion', logs: [] },
+        result: { status: 'FAILED', executionCaseId: 'execution-case-2', durationMs: 10, errorMessage: '', trace: [], resolvedRequest: {}, sanitizedResponse: {}, assertions: [], failureCategory: 'assertion', logs: [] },
       },
     })
 
@@ -50,7 +50,7 @@ describe('DebugDrawer', () => {
     const wrapper = mount(DebugDrawer, {
       props: {
         caseVersionId: 'draft-1', environmentRevisionId: 'environment-1', baselineAdopting: true,
-        result: { status: 'PASSED', executionCaseId: 'execution-case-1', resolvedRequest: {}, sanitizedResponse: {}, assertions: [], failureCategory: '', logs: [] },
+        result: { status: 'PASSED', executionCaseId: 'execution-case-1', durationMs: 10, errorMessage: '', trace: [], resolvedRequest: {}, sanitizedResponse: {}, assertions: [], failureCategory: '', logs: [] },
       },
     })
 
@@ -71,6 +71,24 @@ describe('DebugDrawer', () => {
 
     expect(wrapper.emitted('resume')).toHaveLength(1)
     expect(wrapper.emitted('submit')).toBeUndefined()
+  })
+
+  it('renders the structured workflow trace before raw request evidence', async () => {
+    const wrapper = mount(DebugDrawer, {
+      props: {
+        caseVersionId: 'draft-1', environmentRevisionId: 'environment-1',
+        result: {
+          status: 'FAILED', executionCaseId: 'execution-case-1', durationMs: 321, errorMessage: '清理失败',
+          resolvedRequest: {}, sanitizedResponse: {}, assertions: [], failureCategory: 'cleanup', logs: [],
+          trace: [{ stage: 'cleanup', index: 0, name: '取消打印', status: 'FAILED', failureCategory: 'cleanup', assertions: [], extractedVariableNames: [], missingVariableNames: [], request: {}, response: {}, error: '取消打印失败', attempt: 1, maxAttempts: 1 }],
+        },
+      },
+    })
+
+    expect(wrapper.get('[data-testid="debug-trace"]').text()).toContain('取消打印')
+    expect(wrapper.find('[data-testid="debug-trace"]').element.compareDocumentPosition(wrapper.get('.debug-raw-evidence').element) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    await wrapper.get('[data-testid="edit-debug-step-cleanup-0"]').trigger('click')
+    expect(wrapper.emitted('edit-step')?.[0]?.[0]).toEqual({ stage: 'cleanup', index: 0 })
   })
 
   it('keeps tab focus inside the modal drawer and returns focus on close', async () => {

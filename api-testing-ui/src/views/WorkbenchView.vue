@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { RefreshCw } from 'lucide-vue-next'
 import { useRoute, useRouter } from 'vue-router'
 
@@ -28,6 +28,7 @@ const activeEndpoint = ref<ApiEndpoint | null>(null)
 const debugOpen = ref(false)
 const localError = ref('')
 const taskNameDraft = ref('')
+const caseEditor = ref<{ editStep(target: { stage: 'setup' | 'main' | 'cleanup'; index: number }): Promise<void> } | null>(null)
 const activeDraft = computed(() => activeEndpoint.value ? cases.draftFor(activeEndpoint.value) : null)
 const activeVersionId = computed(() => activeEndpoint.value ? cases.activeVersionByEndpoint[activeEndpoint.value.id] || '' : '')
 const dependencyOptions = computed(() => buildCaseDependencyOptions(
@@ -284,6 +285,12 @@ async function submitDebug(): Promise<void> {
   }
 }
 
+async function editDebugStep(target: { stage: 'setup' | 'main' | 'cleanup'; index: number }): Promise<void> {
+  debugOpen.value = false
+  await nextTick()
+  await caseEditor.value?.editStep(target)
+}
+
 async function saveCurrentTask() {
   if (!context.projectId || !context.sourceRevisionId || !context.environmentRevisionId) {
     localError.value = '请先选择接口项目、接口版本和执行环境'
@@ -427,12 +434,12 @@ function defaultTaskName(): string {
         <EndpointTree :endpoints="assets.endpoints" :selected-ids="selectedIds" :state="context.sourceRevisionId ? assets.state : 'empty'" :error="assets.error" @selection-change="selectedIds = $event" @activate="activate" />
         <main class="design-center">
           <EndpointDetail :endpoint="activeEndpoint" />
-          <CaseEditor v-if="activeDraft" :model-value="activeDraft" :dependency-options="dependencyOptions" :endpoint-options="assets.endpoints" :environment-variable-names="context.environmentVariableNames" :saving="cases.saving" :debugging="debugRunning" :saved-message="cases.savedMessage" :validation-errors="cases.validationErrors" :validation-warnings="cases.validationWarnings" @update:model-value="updateDraft" @save="saveDraft" @debug="submitDebug" />
+          <CaseEditor v-if="activeDraft" ref="caseEditor" :model-value="activeDraft" :dependency-options="dependencyOptions" :endpoint-options="assets.endpoints" :environment-variable-names="context.environmentVariableNames" :saving="cases.saving" :debugging="debugRunning" :saved-message="cases.savedMessage" :validation-errors="cases.validationErrors" :validation-warnings="cases.validationWarnings" @update:model-value="updateDraft" @save="saveDraft" @debug="submitDebug" />
           <div v-else class="state-message center-empty">选择接口后，可手工编辑或让 AI 生成测试用例。</div>
         </main>
         <AiAssistant :selected-count="selectedIds.length" :job="cases.aiJob" :error="cases.aiError" :polling="cases.aiPolling" :can-resume="cases.aiCanResume" :basic-generating="cases.basicGenerating" @generate-basic="generateBasicPositive" @generate="generate" @retry="generate" @resume="cases.resumeAiJob()" />
       </div>
     </div>
-    <DebugDrawer v-if="debugOpen" :open="debugOpen" :case-version-id="activeVersionId" :environment-revision-id="context.environmentRevisionId || ''" :environment-label="environmentLabel" :running="debugRunning" :can-resume="cases.debugCanResume" :result="cases.debugResult" :error="cases.debugError" :baseline-adopting="cases.baselineAdopting" :baseline-message="cases.baselineMessage" :baseline-error="cases.baselineError" @submit="submitDebug" @resume="cases.resumeDebug()" @adopt="adoptBaseline" @close="debugOpen = false" />
+    <DebugDrawer v-if="debugOpen" :open="debugOpen" :case-version-id="activeVersionId" :environment-revision-id="context.environmentRevisionId || ''" :environment-label="environmentLabel" :running="debugRunning" :can-resume="cases.debugCanResume" :result="cases.debugResult" :error="cases.debugError" :baseline-adopting="cases.baselineAdopting" :baseline-message="cases.baselineMessage" :baseline-error="cases.baselineError" @submit="submitDebug" @resume="cases.resumeDebug()" @adopt="adoptBaseline" @edit-step="editDebugStep" @close="debugOpen = false" />
   </section>
 </template>

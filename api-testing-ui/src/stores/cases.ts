@@ -621,6 +621,28 @@ function toDebugResult(value: ExecutionView['case_results'][number]): DebugResul
   return {
     status: value.status,
     executionCaseId: value.execution_case_id,
+    durationMs: value.duration_ms,
+    errorMessage: typeof result.error_message === 'string' ? result.error_message : '',
+    trace: trace.flatMap(item => {
+      const row = asRecord(item)
+      if (!row || row.phase !== 'workflow_step' || !['setup', 'main', 'cleanup'].includes(String(row.stage))) return []
+      const extracted = asRecord(row.extracted_variables)
+      return [{
+        stage: row.stage as 'setup' | 'main' | 'cleanup',
+        index: typeof row.index === 'number' ? row.index : 0,
+        name: typeof row.name === 'string' ? row.name : '未命名步骤',
+        status: typeof row.status === 'string' ? row.status : 'UNKNOWN',
+        failureCategory: typeof row.failure_category === 'string' ? row.failure_category : '',
+        assertions: Array.isArray(row.assertions) ? row.assertions : [],
+        extractedVariableNames: extracted ? Object.keys(extracted) : [],
+        missingVariableNames: Array.isArray(row.missing_variables) ? row.missing_variables.filter((name): name is string => typeof name === 'string') : [],
+        request: asRecord(row.request) || {},
+        response: asRecord(row.response) || {},
+        error: typeof row.error_message === 'string' ? row.error_message : '',
+        attempt: typeof row.attempt === 'number' ? row.attempt : 1,
+        maxAttempts: typeof row.max_attempts === 'number' ? row.max_attempts : 1,
+      }]
+    }),
     resolvedRequest: (result.sanitized_request || result.request || {}) as Record<string, unknown>,
     sanitizedResponse: (result.sanitized_response || result.response || {}) as Record<string, unknown>,
     assertions: (result.assertions || result.assertion_results || []) as unknown[],

@@ -3,6 +3,7 @@ import { nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { Bug, CheckCircle2, Play, X } from 'lucide-vue-next'
 
 import type { DebugResult } from '../api/contracts'
+import DebugTrace from './DebugTrace.vue'
 
 const props = withDefaults(defineProps<{ caseVersionId: string; environmentRevisionId: string; environmentLabel?: string; result?: DebugResult | null; running?: boolean; canResume?: boolean; open?: boolean; error?: string; baselineAdopting?: boolean; baselineMessage?: string; baselineError?: string }>(), {
   environmentLabel: '', result: null, running: false, canResume: false, open: true, error: '',
@@ -13,6 +14,7 @@ const emit = defineEmits<{
   resume: []
   adopt: [input: { caseVersionId: string; executionCaseId: string }]
   close: []
+  'edit-step': [target: { stage: 'setup' | 'main' | 'cleanup'; index: number }]
 }>()
 
 function submit(): void {
@@ -70,11 +72,15 @@ function handleKeydown(event: KeyboardEvent): void {
     <p v-if="running" class="state-message" aria-live="polite">请求已进入执行队列，正在等待真实结果...</p>
     <p v-if="error" class="state-message state-error" role="alert">{{ error }}</p>
     <section v-if="result" class="debug-result">
-      <div class="result-status"><strong :class="result.status === 'PASSED' ? 'status-pass' : 'status-fail'">{{ result.status }}</strong><span v-if="result.failureCategory">{{ result.failureCategory }}</span></div>
-      <details open><summary>已解析请求</summary><pre>{{ JSON.stringify(result.resolvedRequest, null, 2) }}</pre></details>
-      <details open><summary>脱敏响应</summary><pre>{{ JSON.stringify(result.sanitizedResponse, null, 2) }}</pre></details>
-      <details><summary>断言结果</summary><pre>{{ JSON.stringify(result.assertions, null, 2) }}</pre></details>
-      <details><summary>执行日志</summary><pre>{{ result.logs.join('\n') }}</pre></details>
+      <div class="result-status"><strong :class="result.status === 'PASSED' ? 'status-pass' : 'status-fail'">{{ result.status }}</strong><span v-if="result.failureCategory">{{ result.failureCategory }}</span><span>{{ result.durationMs }} ms</span></div>
+      <p v-if="result.errorMessage" class="state-message state-error">{{ result.errorMessage }}</p>
+      <DebugTrace :trace="result.trace" @edit-step="emit('edit-step', $event)" />
+      <details class="debug-raw-evidence"><summary>原始执行证据</summary>
+        <details><summary>已解析请求</summary><pre>{{ JSON.stringify(result.resolvedRequest, null, 2) }}</pre></details>
+        <details><summary>脱敏响应</summary><pre>{{ JSON.stringify(result.sanitizedResponse, null, 2) }}</pre></details>
+        <details><summary>断言结果</summary><pre>{{ JSON.stringify(result.assertions, null, 2) }}</pre></details>
+        <details><summary>执行日志</summary><pre>{{ result.logs.join('\n') }}</pre></details>
+      </details>
       <button v-if="result.status === 'PASSED'" data-testid="adopt-baseline" class="baseline-command" type="button" :disabled="baselineAdopting || Boolean(baselineMessage)" @click="emit('adopt', { caseVersionId, executionCaseId: result.executionCaseId })"><CheckCircle2 :size="16" />{{ baselineAdopting ? '采纳中…' : baselineMessage || '采纳为基线' }}</button>
       <p v-if="baselineMessage" data-testid="baseline-success" class="state-message status-pass" role="status">{{ baselineMessage }}，后续可直接加入回归执行。</p>
       <p v-if="baselineError" data-testid="baseline-error" class="state-message state-error" role="alert">{{ baselineError }}</p>

@@ -77,6 +77,18 @@ async function navigateToField(path: string): Promise<void> {
   feedback?.closest('label, .assertion-card, .extraction-row, .dependency-row')?.querySelector<HTMLElement>('input, select, textarea, button')?.focus()
 }
 
+async function editStep(target: { stage: 'setup' | 'main' | 'cleanup'; index: number }): Promise<void> {
+  if (target.stage === 'setup') setupEditor.value?.openStep(target.index)
+  if (target.stage === 'cleanup') cleanupEditor.value?.openStep(target.index)
+  await nextTick()
+  const selector = target.stage === 'main'
+    ? '.workflow-main-heading'
+    : `[data-testid="${target.stage}-step-body-${target.index}"]`
+  editorRoot.value?.querySelector<HTMLElement>(selector)?.scrollIntoView?.({ block: 'start', behavior: 'smooth' })
+}
+
+defineExpose({ editStep })
+
 watch(() => props.modelValue, value => {
   if (JSON.stringify(value) !== JSON.stringify(local.value)) {
     local.value = normalizeDraft(value)
