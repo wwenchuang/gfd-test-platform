@@ -171,6 +171,44 @@ describe('SettingsView environment asset center', () => {
     expect(wrapper.text()).toContain('v3')
   })
 
+  it('groups duplicate and empty service addresses in read-only views without changing editor rows', async () => {
+    const setup = useSetupStore()
+    const groupedEnvironment = {
+      ...environmentView,
+      services: {
+        default: { name: 'default', module_name: '默认服务', base_url: 'https://api.example.com/', unresolved: false },
+        image: { name: 'image', module_name: '图片建模', base_url: 'https://api.example.com', unresolved: false },
+        file: { name: 'file', module_name: '文件服务', base_url: '', unresolved: true },
+      },
+    } satisfies EnvironmentView
+    vi.mocked(setup.loadEnvironmentRevision).mockImplementation(async () => {
+      setup.environment = groupedEnvironment
+      return setup.environment
+    })
+    const saveEnvironment = vi.spyOn(setup, 'saveEnvironment').mockResolvedValue(groupedEnvironment)
+
+    const { wrapper } = await mountView()
+
+    expect(wrapper.get('[data-testid="environment-effective-address-count"]').text()).toBe('1')
+    expect(wrapper.text()).toContain('3 个服务键映射到 1 个有效地址')
+    expect(wrapper.findAll('[data-testid="environment-service-group"]')).toHaveLength(2)
+    expect(wrapper.text()).toContain('默认服务、图片建模')
+    expect(wrapper.text()).toContain('1 个服务键未配置地址')
+
+    await wrapper.get('[data-action="edit"]').trigger('click')
+    expect(wrapper.findAll('input[aria-label="服务地址"]')).toHaveLength(3)
+
+    await wrapper.get('[data-action="save"]').trigger('click')
+    await flushPromises()
+    expect(saveEnvironment).toHaveBeenCalledWith('environment-1', expect.objectContaining({
+      services: {
+        default: { name: 'default', module_name: '默认服务', base_url: 'https://api.example.com/' },
+        image: { name: 'image', module_name: '图片建模', base_url: 'https://api.example.com' },
+        file: { name: 'file', module_name: '文件服务', base_url: null },
+      },
+    }))
+  })
+
   it('uses readable service names in the edit form instead of internal service ids', async () => {
     const { wrapper } = await mountView()
 

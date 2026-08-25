@@ -211,4 +211,55 @@ describe('ReportsView', () => {
     expect(wrapper.get('.report-detail-hero').text()).toContain('生产环境 V10')
     expect(wrapper.text()).toContain('链接目标报告')
   })
+
+  it('defaults the dashboard to formal regressions and keeps conclusion/search filters list-only', async () => {
+    const executions = useExecutionsStore()
+    const context = useContextStore()
+    vi.spyOn(context, 'loadSavedContext').mockResolvedValue()
+    vi.spyOn(context, 'loadOptions').mockResolvedValue()
+    const debugReport: ExecutionView = {
+      ...report,
+      id: 'debug-report',
+      execution_type: 'debug',
+      environment_name: '在线调试环境',
+      case_results: [{ ...report.case_results[0], case_name: '调试通过用例' }],
+      summary: { total: 1, passed: 1 },
+    }
+    executions.executions = [report, debugReport]
+
+    const wrapper = mount(ReportsView)
+    await nextTick()
+
+    expect(wrapper.get('[data-testid="report-source-formal"]').attributes('aria-pressed')).toBe('true')
+    expect(wrapper.get('[data-testid="report-dashboard-total"]').text()).toBe('1 次执行')
+    expect(wrapper.get('[data-testid="report-dashboard-rate"]').text()).toBe('50%')
+    expect(wrapper.find('[data-testid="report-history-row-debug-report"]').exists()).toBe(false)
+
+    await wrapper.get('[data-testid="report-filter-passed"]').trigger('click')
+    expect(wrapper.get('[data-testid="report-dashboard-total"]').text()).toBe('1 次执行')
+    expect(wrapper.get('[data-testid="report-dashboard-rate"]').text()).toBe('50%')
+    expect(wrapper.text()).toContain('暂无匹配报告')
+
+    await wrapper.get('[data-testid="report-source-debug"]').trigger('click')
+    expect(wrapper.get('[data-testid="report-dashboard-rate"]').text()).toBe('100%')
+    expect(wrapper.find('[data-testid="report-history-row-debug-report"]').exists()).toBe(true)
+
+    await wrapper.get('[data-testid="report-search"]').setValue('不存在的环境')
+    expect(wrapper.find('[data-testid="report-history-row-debug-report"]').exists()).toBe(false)
+    expect(wrapper.get('[data-testid="report-dashboard-rate"]').text()).toBe('100%')
+  })
+
+  it('falls back to all records when the project only has debug reports', async () => {
+    const executions = useExecutionsStore()
+    const context = useContextStore()
+    vi.spyOn(context, 'loadSavedContext').mockResolvedValue()
+    vi.spyOn(context, 'loadOptions').mockResolvedValue()
+    executions.executions = [{ ...report, id: 'debug-only', execution_type: 'debug' }]
+
+    const wrapper = mount(ReportsView)
+    await nextTick()
+
+    expect(wrapper.get('[data-testid="report-source-all"]').attributes('aria-pressed')).toBe('true')
+    expect(wrapper.get('[data-testid="report-dashboard-total"]').text()).toBe('1 次执行')
+  })
 })

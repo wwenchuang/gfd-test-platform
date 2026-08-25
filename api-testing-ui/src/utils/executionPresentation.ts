@@ -1,6 +1,7 @@
 import type { ExecutionCaseResult, ExecutionView } from '../api/contracts'
 
 export type ExecutionTone = 'passed' | 'failed' | 'broken' | 'running' | 'cancelled' | 'neutral'
+export type ExecutionSourceScope = 'formal' | 'debug'
 
 export interface ExecutionMetrics {
   total: number
@@ -39,6 +40,10 @@ export function executionTypeLabel(executionOrType: ExecutionView | string): str
     return executionOrType.task_name || '定时任务'
   }
   return EXECUTION_TYPE_LABELS[value] || 'API 执行'
+}
+
+export function executionSourceScope(execution: ExecutionView): ExecutionSourceScope {
+  return execution.execution_type === 'debug' ? 'debug' : 'formal'
 }
 
 export function formatDuration(durationMs: number): string {

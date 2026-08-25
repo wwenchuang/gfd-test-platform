@@ -279,6 +279,15 @@ describe('CaseListPanel', () => {
     expect(wrapper.get('[data-testid="case-work-view-one-time"]').text()).toContain('1')
     expect(wrapper.get('[data-testid="case-work-view-candidate"]').text()).toContain('1')
 
+    await wrapper.get('[data-testid="case-list-search"]').setValue('设备')
+    expect(wrapper.get('[data-testid="case-work-view-all"]').text()).toContain('1')
+    expect(wrapper.get('[data-testid="case-work-view-task"]').text()).toContain('0')
+    expect(wrapper.get('[data-testid="case-work-view-orchestrated"]').text()).toContain('1')
+    expect(wrapper.get('[data-testid="case-work-view-one-time"]').text()).toContain('0')
+    expect(wrapper.get('[data-testid="case-work-view-candidate"]').text()).toContain('0')
+
+    await wrapper.get('[data-testid="case-list-search"]').setValue('')
+
     await wrapper.get('[data-testid="case-work-view-orchestrated"]').trigger('click')
     expect(wrapper.find('[data-testid="case-version-version-device"]').exists()).toBe(true)
     expect(wrapper.find('[data-testid="case-version-version-add"]').exists()).toBe(false)

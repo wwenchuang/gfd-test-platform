@@ -109,4 +109,54 @@ describe('ExecutionConsole', () => {
     await wrapper.get('[data-testid="rerun-active-execution"]').trigger('click')
     expect(wrapper.emitted('rerun')?.[0]?.[0]).toMatchObject({ id: 'execution-debug' })
   })
+
+  it('filters records by source, conclusion and search while showing business conclusions', async () => {
+    const debugPassed: ExecutionView = {
+      ...execution,
+      id: 'execution-debug-passed',
+      execution_type: 'debug',
+      task_id: null,
+      task_name: null,
+      environment_name: '测试环境',
+      case_results: [execution.case_results[0]],
+      summary: { PASSED: 1 },
+    }
+    const scheduledRunning: ExecutionView = {
+      ...execution,
+      id: 'execution-running',
+      execution_type: 'scheduled',
+      execution_source: 'scheduled_job',
+      task_name: '每日收藏回归',
+      state: 'RUNNING',
+      case_results: [{ ...execution.case_results[0], status: 'RUNNING' }],
+      summary: { RUNNING: 1 },
+      finished_at: null,
+    }
+    const wrapper = mount(ExecutionConsole, {
+      props: {
+        executions: [execution, debugPassed, scheduledRunning],
+        active: execution,
+        events: [],
+        connectionState: 'complete',
+      },
+    })
+
+    expect(wrapper.get('[data-testid="execution-row-execution-1"]').text()).toContain('未通过')
+    expect(wrapper.get('[data-testid="execution-row-execution-1"]').text()).not.toContain('DONE')
+
+    await wrapper.get('[data-testid="execution-filter-source"]').setValue('debug')
+    expect(wrapper.find('[data-testid="execution-row-execution-debug-passed"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="execution-row-execution-1"]').exists()).toBe(false)
+    expect(wrapper.emitted('select')).toBeUndefined()
+
+    await wrapper.get('[data-testid="execution-filter-source"]').setValue('all')
+    await wrapper.get('[data-testid="execution-filter-conclusion"]').setValue('running')
+    expect(wrapper.find('[data-testid="execution-row-execution-running"]').exists()).toBe(true)
+    expect(wrapper.get('[data-testid="execution-row-execution-running"]').text()).toContain('执行中')
+
+    await wrapper.get('[data-testid="execution-filter-conclusion"]').setValue('all')
+    await wrapper.get('[data-testid="execution-filter-search"]').setValue('测试环境')
+    expect(wrapper.find('[data-testid="execution-row-execution-debug-passed"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="execution-row-execution-running"]').exists()).toBe(false)
+  })
 })

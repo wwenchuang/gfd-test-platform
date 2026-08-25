@@ -5,6 +5,7 @@ import {
   executionConclusion,
   executionFailureBuckets,
   executionMetrics,
+  executionSourceScope,
   formatDuration,
   redactSensitiveEvidence,
   statusLabel,
@@ -71,6 +72,13 @@ describe('execution presentation', () => {
     expect(statusLabel('BROKEN')).toBe('运行异常')
     expect(statusLabel('SKIPPED')).toBe('已跳过')
     expect(formatDuration(1280)).toBe('1.28 秒')
+  })
+
+  it('classifies only explicit debug executions as online debugging', () => {
+    expect(executionSourceScope({ ...execution, execution_type: 'debug' })).toBe('debug')
+    expect(executionSourceScope({ ...execution, execution_type: 'regression' })).toBe('formal')
+    expect(executionSourceScope({ ...execution, execution_type: 'baseline_regression' })).toBe('formal')
+    expect(executionSourceScope({ ...execution, execution_type: 'scheduled', execution_source: 'scheduled_job' })).toBe('formal')
   })
 
   it('masks nested authorization, token and cookie evidence before rendering', () => {

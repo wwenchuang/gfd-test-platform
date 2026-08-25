@@ -91,7 +91,10 @@ const allItems = computed<CaseListItem[]>(() => {
 })
 const workViewCounts = computed(() => Object.fromEntries(WORK_VIEWS.map(view => [
   view.id,
-  allItems.value.filter(item => matchesCaseWorkView(item, view.id, selectedEndpointSet.value)).length,
+  allItems.value.filter(item => (
+    (!keyword.value || caseSearchText(item).toLocaleLowerCase().includes(keyword.value))
+    && matchesCaseWorkView(item, view.id, selectedEndpointSet.value)
+  )).length,
 ])))
 const viewItems = computed(() => allItems.value.filter(item => matchesCaseWorkView(item, workView.value, selectedEndpointSet.value)))
 const visibleItems = computed(() => viewItems.value.filter(item => !keyword.value || caseSearchText(item).toLocaleLowerCase().includes(keyword.value)))

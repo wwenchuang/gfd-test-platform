@@ -34,6 +34,40 @@
 
 ## 最近完成的关键修复
 
+### 2026-08-25 API 测试独立管理页与规模化操作体验
+
+本轮在不改变数据库结构、HTTP 接口和执行语义的前提下，完成独立管理页面的信息架构与高频操作优化。设计规范位于 `docs/superpowers/specs/2026-08-25-api-testing-management-ux-design.md`，实施计划位于 `docs/superpowers/plans/2026-08-25-api-testing-management-ux.md`。
+
+- 左侧导航按“设计准备、回归编排、结果分析、项目配置”分区；工作台负责设计与调试，用例、任务、基线、定时任务、执行记录和报告继续由独立页面管理。
+- 用例管理改为递归目录树，保留 Apifox 多级路径和用户自定义分组；默认仅展开首个根目录，搜索时自动展开命中路径并高亮名称、接口或路径。
+- 用例列表增加“全部、当前任务、有编排、一次性、候选”工作视图；分组选择器支持搜索和新建分组，不再渲染超长原生下拉列表。
+- 已保存用例支持单选和批量移动；批量操作复用现有单条分组接口顺序执行，失败时停止后续调用，并明确展示成功数量和失败用例版本，避免伪装成全部成功。
+- 基线页支持基线类型、HTTP 方法、优先级和来源组合筛选；`API Test / 一次性` 用例有明确标识但仍可选择和执行，不会被误禁用。
+- 执行记录支持任务/环境搜索、正式回归/在线调试来源筛选和业务结论筛选；列表展示“通过、未通过、运行异常、已取消、执行中”等业务结论，不再直接展示 `DONE`。
+- 报告页默认只统计正式回归；没有正式记录时自动回退到全部记录，并可切换在线调试或全部。顶部统计只受来源范围影响，不受列表的结论和搜索条件影响，避免管理指标随临时筛选改变。
+- 环境概览按标准化 Base URL 合并只读展示，空地址统一归为未配置，并同时说明服务键数量和有效地址数量；编辑器仍保留全部原始服务键，不改变执行匹配数据。
+- 未新增数据库迁移，未修改 setup/main/always-run-cleanup、基线采纳、任务执行和报告持久化协议。
+
+验证：
+
+```bash
+bash tests/run_api_testing_gate.sh
+# 438 backend tests passed
+# 54 frontend files / 271 tests passed
+# Vue TypeScript + Vite production build passed
+# desktop/mobile visual checks passed
+# Chromium end-to-end workflow passed
+
+python3 tests/frontend_static_checks.py
+# 84 checks passed
+
+python3 tests/backend_static_checks.py
+# 63 checks passed
+
+git diff --check
+# passed
+```
+
 ### 2026-08-25 API 测试平台渐进式操作体验
 
 用户确认采用“默认简洁、按需展开高级配置”的方案。本轮已在不改变现有数据结构和执行流程的前提下，完成接口选择、前置/清理编排、变量传递、调试证据和保存门禁的渐进式改造。

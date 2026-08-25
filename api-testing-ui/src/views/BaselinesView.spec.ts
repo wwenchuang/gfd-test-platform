@@ -265,4 +265,31 @@ describe('BaselinesView fixed project assets', () => {
 
     expect(wrapper.text()).not.toContain('测试任务范围与当前请求不一致')
   })
+
+  it('combines baseline type, method, priority and origin filters without disabling one-time cases', async () => {
+    vi.spyOn(apiClient, 'get').mockResolvedValue({ data: { baselines: [
+      baselineFixture({ id: 'baseline-regular-ai', method: 'POST', priority: 'P0', origin: 'ai', group_name: '收藏链路' }),
+      baselineFixture({ id: 'baseline-one-time', method: 'POST', priority: 'P1', origin: 'manual', group_name: 'API Test / 一次性', case_name: '重新打印 - 一次性验证' }),
+      baselineFixture({ id: 'baseline-get', method: 'GET', priority: 'P1', origin: 'imported', group_name: '查询链路', case_name: '收藏列表' }),
+    ] } })
+    const wrapper = mountWithContext()
+    await flushPromises()
+
+    await wrapper.get('[data-testid="baseline-filter-type"]').setValue('one-time')
+    expect(wrapper.text()).toContain('重新打印 - 一次性验证')
+    expect(wrapper.text()).not.toContain('收藏列表')
+    expect(wrapper.get('[data-testid="baseline-one-time-baseline-one-time"]').text()).toBe('一次性')
+
+    await wrapper.get('[data-testid="baseline-filter-method"]').setValue('POST')
+    await wrapper.get('[data-testid="baseline-filter-priority"]').setValue('P1')
+    await wrapper.get('[data-testid="baseline-filter-origin"]').setValue('manual')
+    await buttonByText(wrapper, '全选当前筛选').trigger('click')
+
+    const oneTimeCheckbox = wrapper.get('[data-testid="baseline-select-baseline-one-time"]')
+    expect((oneTimeCheckbox.element as HTMLInputElement).checked).toBe(true)
+    expect(oneTimeCheckbox.attributes('disabled')).toBeUndefined()
+
+    await wrapper.get('[data-testid="baseline-filter-origin"]').setValue('ai')
+    expect(wrapper.text()).toContain('当前筛选下没有匹配基线')
+  })
 })

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { AlertTriangle, BarChart3, CheckCircle2, Clock3, Eye, ListChecks, RefreshCw, Send, Trash2 } from 'lucide-vue-next'
+import { AlertTriangle, BarChart3, CheckCircle2, Clock3, Eye, ListChecks, RefreshCw, Search, Send, Trash2 } from 'lucide-vue-next'
 
 import DiagnosticReport from '../components/DiagnosticReport.vue'
 import type { ExecutionCaseResult, ExecutionView } from '../api/contracts'
@@ -10,6 +10,7 @@ import {
   executionConclusion,
   executionFailureBuckets,
   executionMetrics,
+  executionSourceScope,
   executionTypeLabel,
   formatDuration,
   statusLabel,
@@ -27,6 +28,8 @@ const selected = ref<ExecutionView | null>(null)
 const selectedReportId = ref('')
 const selectedReportIds = ref<Set<string>>(new Set())
 const filter = ref<'all' | 'failed' | 'passed'>('all')
+const sourceScope = ref<'formal' | 'debug' | 'all'>(defaultSourceScope(executions.executions))
+const reportSearch = ref('')
 const sendingReportId = ref('')
 const reportProjectId = ref('')
 const projectOptions = computed(() => context.projects)
@@ -34,15 +37,23 @@ const selectedProject = computed(() => projectOptions.value.find(item => item.id
 const reports = computed(() => executions.executions
   .filter(item => ['DONE', 'CANCELLED'].includes(item.state))
   .filter(item => !reportProjectId.value || item.project_id === reportProjectId.value))
-const visibleReports = computed(() => reports.value.filter(report => {
+const sourceScopedReports = computed(() => reports.value.filter(report => (
+  sourceScope.value === 'all' || executionSourceScope(report) === sourceScope.value
+)))
+const visibleReports = computed(() => sourceScopedReports.value.filter(report => {
   const conclusion = executionConclusion(report)
-  if (filter.value === 'failed') return ['failed', 'broken', 'cancelled', 'neutral'].includes(conclusion.tone)
-  if (filter.value === 'passed') return conclusion.tone === 'passed'
-  return true
+  if (filter.value === 'failed' && !['failed', 'broken', 'cancelled', 'neutral'].includes(conclusion.tone)) return false
+  if (filter.value === 'passed' && conclusion.tone !== 'passed') return false
+  const keyword = reportSearch.value.trim().toLocaleLowerCase()
+  if (!keyword) return true
+  return [report.task_name, reportName(report), report.environment_name, report.id]
+    .join(' ')
+    .toLocaleLowerCase()
+    .includes(keyword)
 }))
 const dashboard = computed(() => {
   const aggregate = {
-    totalReports: reports.value.length,
+    totalReports: sourceScopedReports.value.length,
     totalCases: 0,
     passed: 0,
     failed: 0,
@@ -52,7 +63,7 @@ const dashboard = computed(() => {
     issueReports: 0,
     durationMs: 0,
   }
-  for (const report of reports.value) {
+  for (const report of sourceScopedReports.value) {
     const metrics = executionMetrics(report)
     const conclusion = executionConclusion(report)
     aggregate.totalCases += metrics.total
@@ -71,9 +82,9 @@ const dashboard = computed(() => {
     passRate: aggregate.totalCases ? Math.round((aggregate.passed / aggregate.totalCases) * 100) : 0,
   }
 })
-const latestReport = computed(() => reports.value[0] || null)
+const latestReport = computed(() => sourceScopedReports.value[0] || null)
 const projectName = computed(() => selectedProject.value?.name || '未选择项目')
-const reportRangeLabel = computed(() => reports.value.length ? `最近 ${reports.value.length} 次执行` : '暂无报告')
+const reportRangeLabel = computed(() => sourceScopedReports.value.length ? `最近 ${sourceScopedReports.value.length} 次执行` : '暂无报告')
 const currentReport = computed(() => visibleReports.value.find(item => item.id === selectedReportId.value) || visibleReports.value[0] || null)
 const currentMetrics = computed(() => currentReport.value ? executionMetrics(currentReport.value) : null)
 const currentBuckets = computed(() => currentReport.value ? executionFailureBuckets(currentReport.value) : null)
@@ -94,7 +105,7 @@ type FeishuReportState = {
 onMounted(async () => {
   await Promise.all([context.loadSavedContext(), context.loadOptions()])
   reportProjectId.value = projectIdFromRoute() || context.projectId || context.projects[0]?.id || ''
-  if (reportProjectId.value) await loadProjectReports(reportProjectId.value)
+  if (reportProjectId.value) await loadProjectReports(reportProjectId.value, true)
 })
 
 watch([visibleReports, () => route.query.execution_id, () => route.query.executionId], ([reports]) => {
@@ -116,7 +127,8 @@ watch([() => route.query.project_id, () => route.query.projectId], async () => {
   selectedReportId.value = ''
   selectedReportIds.value = new Set()
   filter.value = 'all'
-  await loadProjectReports(requestedProjectId)
+  reportSearch.value = ''
+  await loadProjectReports(requestedProjectId, true)
 })
 
 function projectIdFromRoute(): string {
@@ -131,7 +143,7 @@ function reportIdFromRoute(): string {
   return String(value || '')
 }
 
-async function loadProjectReports(projectId = reportProjectId.value): Promise<void> {
+async function loadProjectReports(projectId = reportProjectId.value, resetScope = false): Promise<void> {
   if (!projectId) {
     executions.executions = []
     selectedReportId.value = ''
@@ -139,6 +151,7 @@ async function loadProjectReports(projectId = reportProjectId.value): Promise<vo
     return
   }
   await Promise.all([executions.load(projectId), notifications.loadFeishu(projectId)])
+  if (resetScope) sourceScope.value = defaultSourceScope(reports.value)
 }
 
 async function changeReportProject(event: Event): Promise<void> {
@@ -148,7 +161,14 @@ async function changeReportProject(event: Event): Promise<void> {
   selectedReportId.value = ''
   selectedReportIds.value = new Set()
   filter.value = 'all'
-  await loadProjectReports(value)
+  reportSearch.value = ''
+  await loadProjectReports(value, true)
+}
+
+function defaultSourceScope(items: ExecutionView[]): 'formal' | 'all' {
+  return items.some(item => ['DONE', 'CANCELLED'].includes(item.state) && executionSourceScope(item) === 'formal')
+    ? 'formal'
+    : 'all'
 }
 
 function edit(result: ExecutionCaseResult, execution: ExecutionView): void {
@@ -260,10 +280,10 @@ async function deleteReports(reportIds: string[]): Promise<void> {
             <h2>{{ dashboard.issueCases ? '需要关注' : '全部通过' }}</h2>
             <p>{{ dashboard.totalReports }} 次执行 · {{ dashboard.totalCases }} 条用例 · 最近 {{ latestReport ? new Date(latestReport.created_at).toLocaleString('zh-CN') : '暂无执行' }}</p>
           </div>
-          <strong :class="dashboard.issueCases ? 'tone-failed' : 'tone-passed'">{{ dashboard.passRate }}%</strong>
+          <strong data-testid="report-dashboard-rate" :class="dashboard.issueCases ? 'tone-failed' : 'tone-passed'">{{ dashboard.passRate }}%</strong>
         </div>
         <div class="report-stat-grid">
-          <div><ListChecks :size="16" /><span>执行次数</span><strong>{{ dashboard.totalReports }} 次执行</strong></div>
+          <div><ListChecks :size="16" /><span>执行次数</span><strong data-testid="report-dashboard-total">{{ dashboard.totalReports }} 次执行</strong></div>
           <div><CheckCircle2 :size="16" /><span>通过用例</span><strong>{{ dashboard.passed }}</strong></div>
           <div><AlertTriangle :size="16" /><span>问题用例</span><strong>{{ dashboard.issueCases }} 个问题</strong></div>
           <div><Clock3 :size="16" /><span>累计耗时</span><strong>{{ formatDuration(dashboard.durationMs) }}</strong></div>
@@ -283,19 +303,25 @@ async function deleteReports(reportIds: string[]): Promise<void> {
           <div>
             <BarChart3 :size="17" />
             <strong>执行报告</strong>
-            <span>{{ visibleReports.length }} / {{ reports.length }}</span>
+            <span>{{ visibleReports.length }} / {{ sourceScopedReports.length }}</span>
           </div>
           <div class="report-board-actions">
+            <div class="report-source-tabs" aria-label="报告来源范围">
+              <button data-testid="report-source-formal" type="button" :class="{ active: sourceScope === 'formal' }" :aria-pressed="sourceScope === 'formal'" @click="sourceScope = 'formal'">正式回归</button>
+              <button data-testid="report-source-debug" type="button" :class="{ active: sourceScope === 'debug' }" :aria-pressed="sourceScope === 'debug'" @click="sourceScope = 'debug'">在线调试</button>
+              <button data-testid="report-source-all" type="button" :class="{ active: sourceScope === 'all' }" :aria-pressed="sourceScope === 'all'" @click="sourceScope = 'all'">全部记录</button>
+            </div>
             <div class="report-filter-tabs" aria-label="报告筛选">
               <button type="button" :class="{ active: filter === 'all' }" @click="filter = 'all'">全部</button>
               <button type="button" :class="{ active: filter === 'failed' }" @click="filter = 'failed'">有问题</button>
-              <button type="button" :class="{ active: filter === 'passed' }" @click="filter = 'passed'">已通过</button>
+              <button data-testid="report-filter-passed" type="button" :class="{ active: filter === 'passed' }" @click="filter = 'passed'">已通过</button>
             </div>
             <button type="button" class="danger-command" :disabled="!selectedReportCount" @click="deleteReports([...selectedReportIds])"><Trash2 :size="14" />批量删除 {{ selectedReportCount || '' }}</button>
           </div>
         </header>
         <div class="report-workbench">
           <aside class="report-index">
+            <label class="search-box report-search"><Search :size="14" /><span class="sr-only">搜索报告</span><input v-model="reportSearch" data-testid="report-search" placeholder="搜索任务或环境" /></label>
             <div class="report-index-tools">
               <button type="button" class="text-command" :disabled="!visibleReports.length" @click="toggleAllReports">{{ allVisibleReportsSelected ? '取消全选' : '全选当前筛选' }}</button>
               <span>已选 {{ selectedReportCount }} 条</span>
@@ -310,6 +336,7 @@ async function deleteReports(reportIds: string[]): Promise<void> {
               @click="selectReport(report)"
               @keydown.enter="selectReport(report)"
             >
+              <span class="sr-only" :data-testid="`report-history-row-${report.id}`">{{ report.id }}</span>
               <input type="checkbox" :checked="selectedReportIds.has(report.id)" aria-label="选择报告" @click.stop="toggleReportSelection(report.id)" />
               <div>
                 <span class="report-status-chip">{{ executionConclusion(report).label }}</span>

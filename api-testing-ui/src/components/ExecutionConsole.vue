@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { RotateCw, Square, Trash2 } from 'lucide-vue-next'
+import { RotateCw, Search, Square, Trash2 } from 'lucide-vue-next'
 
 import type { ExecutionCaseResult, ExecutionConnectionState, ExecutionEventView, ExecutionView } from '../api/contracts'
-import { executionFailureBuckets, executionMetrics, executionTypeLabel } from '../utils/executionPresentation'
+import { executionConclusion, executionFailureBuckets, executionMetrics, executionSourceScope, executionTypeLabel } from '../utils/executionPresentation'
 import CaseEvidence from './CaseEvidence.vue'
 import CaseResultList from './CaseResultList.vue'
 import ExecutionLog from './ExecutionLog.vue'
@@ -23,6 +23,9 @@ const emit = defineEmits<{
 const tab = ref<'trace' | 'cases' | 'report'>('trace')
 const selected = ref<ExecutionCaseResult | null>(null)
 const selectedExecutionIds = ref<Set<string>>(new Set())
+const executionSearch = ref('')
+const sourceFilter = ref<'all' | 'formal' | 'debug'>('all')
+const conclusionFilter = ref<'all' | 'passed' | 'problem' | 'running'>('all')
 const terminalStates = new Set(['DONE', 'CANCELLED', 'PASSED', 'FAILED', 'BROKEN'])
 const running = computed(() => props.active && !terminalStates.has(props.active.state))
 const canRerunActive = computed(() => Boolean(props.active && terminalStates.has(props.active.state) && props.active.case_results.length))
@@ -30,7 +33,22 @@ const caseLabels = computed(() => Object.fromEntries((props.active?.case_results
 const metrics = computed(() => props.active ? executionMetrics(props.active) : null)
 const buckets = computed(() => props.active ? executionFailureBuckets(props.active) : null)
 const selectedExecutionCount = computed(() => selectedExecutionIds.value.size)
-const allVisibleSelected = computed(() => props.executions.length > 0 && props.executions.every(item => selectedExecutionIds.value.has(item.id)))
+const visibleExecutions = computed(() => {
+  const keyword = executionSearch.value.trim().toLocaleLowerCase()
+  return props.executions.filter(execution => {
+    if (sourceFilter.value !== 'all' && executionSourceScope(execution) !== sourceFilter.value) return false
+    const conclusion = executionConclusion(execution)
+    if (conclusionFilter.value === 'passed' && conclusion.tone !== 'passed') return false
+    if (conclusionFilter.value === 'running' && conclusion.tone !== 'running') return false
+    if (conclusionFilter.value === 'problem' && ['passed', 'running'].includes(conclusion.tone)) return false
+    if (!keyword) return true
+    return [executionDisplayName(execution), executionTypeLabel(execution), execution.environment_name, execution.id]
+      .join(' ')
+      .toLocaleLowerCase()
+      .includes(keyword)
+  })
+})
+const allVisibleSelected = computed(() => visibleExecutions.value.length > 0 && visibleExecutions.value.every(item => selectedExecutionIds.value.has(item.id)))
 
 watch(() => props.active?.id, () => {
   const active = props.active
@@ -59,9 +77,10 @@ function toggleExecution(id: string): void {
 }
 
 function toggleAllExecutions(): void {
-  selectedExecutionIds.value = allVisibleSelected.value
-    ? new Set()
-    : new Set(props.executions.map(item => item.id))
+  const next = new Set(selectedExecutionIds.value)
+  if (allVisibleSelected.value) visibleExecutions.value.forEach(item => next.delete(item.id))
+  else visibleExecutions.value.forEach(item => next.add(item.id))
+  selectedExecutionIds.value = next
 }
 
 function deleteSelected(): void {
@@ -90,21 +109,35 @@ function executionSubtitle(execution: ExecutionView): string {
   ]
   return parts.join(' · ')
 }
+
+function executionRowConclusion(execution: ExecutionView): { label: string; tone: string } {
+  return executionConclusion(execution)
+}
 </script>
 
 <template>
   <div class="execution-console">
     <aside class="execution-list panel">
       <header class="panel-header">
-        <h2>执行记录</h2><span>{{ executions.length }} 条</span>
+        <h2>执行记录</h2><span>{{ visibleExecutions.length }}/{{ executions.length }} 条</span>
       </header>
+      <div class="execution-filter-tools">
+        <label class="search-box"><Search :size="14" /><span class="sr-only">搜索执行记录</span><input v-model="executionSearch" data-testid="execution-filter-search" placeholder="搜索任务或环境" /></label>
+        <select v-model="sourceFilter" data-testid="execution-filter-source" aria-label="执行来源">
+          <option value="all">全部来源</option><option value="formal">正式回归</option><option value="debug">在线调试</option>
+        </select>
+        <select v-model="conclusionFilter" data-testid="execution-filter-conclusion" aria-label="执行结论">
+          <option value="all">全部结论</option><option value="passed">通过</option><option value="problem">有问题</option><option value="running">执行中</option>
+        </select>
+      </div>
       <div class="execution-list-tools">
-        <button type="button" class="text-command" :disabled="!executions.length" @click="toggleAllExecutions">{{ allVisibleSelected ? '取消全选' : '全选' }}</button>
+        <button type="button" class="text-command" :disabled="!visibleExecutions.length" @click="toggleAllExecutions">{{ allVisibleSelected ? '取消当前筛选' : '全选当前筛选' }}</button>
         <button type="button" class="danger-command" :disabled="!selectedExecutionCount" @click="deleteSelected"><Trash2 :size="13" />删除 {{ selectedExecutionCount || '' }}</button>
       </div>
       <article
-        v-for="execution in executions"
+        v-for="execution in visibleExecutions"
         :key="execution.id"
+        :data-testid="`execution-row-${execution.id}`"
         role="button"
         tabindex="0"
         :class="['execution-row', { active: execution.id === active?.id }]"
@@ -117,10 +150,10 @@ function executionSubtitle(execution: ExecutionView): string {
           <span><em class="execution-type-chip">{{ executionTaskType(execution) }}</em>{{ executionSubtitle(execution) }}</span>
           <small>{{ execution.created_at ? new Date(execution.created_at).toLocaleString('zh-CN') : '' }}</small>
         </span>
-        <b>{{ execution.state }}</b>
+        <b :class="`tone-${executionRowConclusion(execution).tone}`">{{ executionRowConclusion(execution).label }}</b>
         <button type="button" class="icon-danger" aria-label="删除执行记录" @click.stop="emit('delete', execution.id)"><Trash2 :size="13" /></button>
       </article>
-      <p v-if="!loading && !executions.length" class="state-message">还没有执行记录，可从工作台调试已保存草稿。</p>
+      <p v-if="!loading && !visibleExecutions.length" class="state-message">{{ executions.length ? '当前筛选下没有匹配执行记录。' : '还没有执行记录，可从工作台调试已保存草稿。' }}</p>
     </aside>
     <main class="execution-main">
       <template v-if="active">

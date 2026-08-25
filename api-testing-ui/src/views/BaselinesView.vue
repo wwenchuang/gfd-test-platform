@@ -17,6 +17,10 @@ const tasks = useTasksStore()
 const router = useRouter()
 const search = ref('')
 const group = ref('all')
+const baselineType = ref<'all' | 'regular' | 'one-time'>('all')
+const methodFilter = ref('all')
+const priorityFilter = ref('all')
+const originFilter = ref('all')
 const groupName = ref('')
 const moveTargetGroup = ref('')
 const localError = ref('')
@@ -51,13 +55,20 @@ const executionSourceRevisionId = computed(() => {
 })
 const baselineActionReady = computed(() => Boolean(context.projectId && context.environmentRevisionId && baselines.selectedIds.length))
 const selectedSourceById = computed(() => new Map(context.sourceRevisions.map(item => [item.id, item])))
+const methodOptions = computed(() => [...new Set(baselines.items.map(item => item.method.toUpperCase()))].sort())
 const filteredBaselines = computed(() => {
   const needle = search.value.trim().toLowerCase()
   return baselines.items.filter(item => {
     const matchGroup = group.value === 'all' || baselineGroup(item) === group.value
     if (!matchGroup) return false
+    const oneTime = isOneTimeBaseline(item)
+    if (baselineType.value === 'regular' && oneTime) return false
+    if (baselineType.value === 'one-time' && !oneTime) return false
+    if (methodFilter.value !== 'all' && item.method.toUpperCase() !== methodFilter.value) return false
+    if (priorityFilter.value !== 'all' && item.priority !== priorityFilter.value) return false
+    if (originFilter.value !== 'all' && item.origin !== originFilter.value) return false
     if (!needle) return true
-    return [item.case_name, item.endpoint_summary, item.path, item.method, ...item.tags]
+    return [item.case_name, item.endpoint_summary, item.path, item.method, baselineGroup(item), ...item.tags]
       .join(' ')
       .toLowerCase()
       .includes(needle)
@@ -301,6 +312,17 @@ function rowTitle(item: ApiBaselineCase): string {
   return item.endpoint_summary || item.case_name || item.path
 }
 
+function isOneTimeBaseline(item: ApiBaselineCase): boolean {
+  const text = [item.case_name, baselineGroup(item), ...item.tags].join(' ').toLocaleLowerCase()
+  return text.includes('一次性') || text.includes('api test')
+}
+
+function baselineOriginLabel(origin: string): string {
+  if (origin === 'ai') return 'AI'
+  if (origin === 'imported') return '平台导入'
+  return '手工'
+}
+
 function sourceRevisionName(item: ApiBaselineCase): string {
   const source = selectedSourceById.value.get(item.source_revision_id)
   return source ? `${source.name} · v${source.revision_number}` : `来源版本 ${item.source_revision_id.slice(0, 8)}`
@@ -346,6 +368,20 @@ function sourceRevisionName(item: ApiBaselineCase): string {
     <section class="baseline-board">
       <aside class="baseline-filter-panel">
         <div class="search-box baseline-search"><Search :size="15" /><input v-model="search" placeholder="搜索用例、接口或路径" /></div>
+        <div class="baseline-filter-grid" aria-label="基线筛选">
+          <label><span>基线类型</span><select v-model="baselineType" data-testid="baseline-filter-type">
+            <option value="all">全部类型</option><option value="regular">常规基线</option><option value="one-time">一次性</option>
+          </select></label>
+          <label><span>HTTP 方法</span><select v-model="methodFilter" data-testid="baseline-filter-method">
+            <option value="all">全部方法</option><option v-for="item in methodOptions" :key="item" :value="item">{{ item }}</option>
+          </select></label>
+          <label><span>优先级</span><select v-model="priorityFilter" data-testid="baseline-filter-priority">
+            <option value="all">全部优先级</option><option v-for="item in ['P0', 'P1', 'P2', 'P3']" :key="item" :value="item">{{ item }}</option>
+          </select></label>
+          <label><span>来源</span><select v-model="originFilter" data-testid="baseline-filter-origin">
+            <option value="all">全部来源</option><option value="ai">AI</option><option value="imported">平台导入</option><option value="manual">手工</option>
+          </select></label>
+        </div>
         <div class="baseline-group-list" aria-label="基线分组">
           <button type="button" :class="{ active: group === 'all' }" @click="group = 'all'">
             <span>全部基线</span><strong>{{ baselines.items.length }}</strong>
@@ -404,17 +440,17 @@ function sourceRevisionName(item: ApiBaselineCase): string {
 
         <div v-if="baselines.loading" class="section-empty">正在读取基线用例…</div>
         <div v-else-if="!context.projectId" class="section-empty">先选择项目，再查看该项目沉淀的基线。</div>
-        <div v-else-if="!filteredBaselines.length" class="section-empty">该项目暂无基线。基线按项目固定保存，切换接口版本或执行环境不会影响这里；请先在工作台调试通过后采纳为基线。</div>
+        <div v-else-if="!filteredBaselines.length" class="section-empty">{{ baselines.items.length ? '当前筛选下没有匹配基线，请调整类型、方法、优先级、来源或搜索条件。' : '该项目暂无基线。基线按项目固定保存，切换接口版本或执行环境不会影响这里；请先在工作台调试通过后采纳为基线。' }}</div>
         <div v-else class="baseline-table" role="table" aria-label="基线用例列表">
           <div class="baseline-table-head" role="row">
             <span></span><span>用例</span><span>接口</span><span>分组</span><span>版本</span><span>采纳时间</span><span>操作</span>
           </div>
           <div v-for="item in filteredBaselines" :key="item.id" class="baseline-row" role="row">
             <label class="baseline-checkbox">
-              <input type="checkbox" :checked="baselines.selectedIds.includes(item.id)" @change="baselines.toggle(item.id)" />
+              <input type="checkbox" :data-testid="`baseline-select-${item.id}`" :checked="baselines.selectedIds.includes(item.id)" @change="baselines.toggle(item.id)" />
             </label>
             <span class="baseline-case-copy">
-              <strong>{{ item.case_name }}</strong>
+              <strong>{{ item.case_name }} <b v-if="isOneTimeBaseline(item)" :data-testid="`baseline-one-time-${item.id}`" class="baseline-one-time-pill">一次性</b></strong>
               <small>
                 <b v-if="item.status !== 'active'" class="baseline-status-pill">历史版本</b>
                 {{ item.adoption_reason || '已采纳为基线' }}
@@ -425,7 +461,7 @@ function sourceRevisionName(item: ApiBaselineCase): string {
               <code>{{ item.path }}</code>
             </span>
             <span>{{ baselineGroup(item) }}</span>
-            <span>{{ item.priority }} · 用例 v{{ item.case_version }} · {{ item.origin === 'ai' ? 'AI' : '手工' }}<small>来源版本：{{ sourceRevisionName(item) }}</small></span>
+            <span>{{ item.priority }} · 用例 v{{ item.case_version }} · {{ baselineOriginLabel(item.origin) }}<small>来源版本：{{ sourceRevisionName(item) }}</small></span>
             <time>{{ new Date(item.adopted_at).toLocaleString('zh-CN') }}</time>
             <span class="baseline-row-actions">
               <button class="tiny-command" type="button" title="编辑用例" @click="editBaseline(item)"><Edit3 :size="14" />编辑</button>

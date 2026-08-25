@@ -9,6 +9,7 @@ import EnvironmentAssetList from '../components/EnvironmentAssetList.vue'
 import { useContextStore } from '../stores/context'
 import { useNotificationsStore } from '../stores/notifications'
 import { type EnvironmentPayload, useSetupStore } from '../stores/setup'
+import { environmentServicePresentation } from '../utils/environmentPresentation'
 
 type Pair = { key: string; value: string }
 type ServiceRow = { key: string; name: string; module: string; base_url: string }
@@ -58,6 +59,14 @@ const environmentDetail = computed(() => setup.environment?.id === selectedEnvir
 const publicVariables = computed(() => Object.entries(environmentDetail.value?.variables || {}).filter(([, value]) => !isSecretDescriptor(value)))
 const secretVariables = computed(() => Object.entries(environmentDetail.value?.variables || {}).filter(([, value]) => isSecretDescriptor(value)))
 const projectEnvironmentStats = computed(() => setup.environmentProjectStats)
+const servicePresentation = computed(() => environmentServicePresentation(environmentDetail.value?.services || {}))
+const serviceSummary = computed(() => {
+  const presentation = servicePresentation.value
+  const base = `${presentation.serviceKeyCount} 个服务键映射到 ${presentation.effectiveAddressCount} 个有效地址`
+  return presentation.unconfiguredKeyCount
+    ? `${base}；${presentation.unconfiguredKeyCount} 个服务键未配置地址。`
+    : `${base}。`
+})
 
 onMounted(async () => {
   await Promise.all([context.loadSavedContext(), context.loadOptions()])
@@ -519,21 +528,22 @@ function formatDate(value: string): string { return value ? new Date(value).toLo
             <header><div><h3>环境概览</h3><p>环境资产独立于接口版本长期保存；调试或任务执行时再选择当前环境版本。</p></div></header>
             <div class="environment-summary-grid">
               <div><small>状态</small><strong>{{ selectedAsset.status === 'active' ? '使用中' : '已归档' }}</strong></div>
-              <div><small>服务地址</small><strong>{{ selectedAsset.service_count }}</strong></div>
+              <div><small>有效服务地址</small><strong data-testid="environment-effective-address-count">{{ servicePresentation.effectiveAddressCount }}</strong></div>
               <div><small>公共变量</small><strong>{{ selectedAsset.public_variable_count }}</strong></div>
               <div><small>敏感凭证</small><strong>{{ selectedAsset.secret_count }}</strong></div>
             </div>
-            <div v-if="Object.keys(environmentDetail.services).length" class="environment-overview-services">
-              <article v-for="(item, key, index) in environmentDetail.services" :key="key">
-                <span :title="serviceLabel(item, index)">{{ serviceLabel(item, index) }}</span>
-                <code :title="item.base_url || '未配置地址'">{{ item.base_url || '未配置地址' }}</code>
+            <p v-if="servicePresentation.serviceKeyCount" class="environment-service-summary">{{ serviceSummary }}</p>
+            <div v-if="servicePresentation.groups.length" class="environment-overview-services">
+              <article v-for="group in servicePresentation.groups" :key="group.id" data-testid="environment-service-group">
+                <span :title="group.labels.join('、')">{{ group.labels.join('、') }}</span>
+                <code :title="group.baseUrl || '未配置地址'">{{ group.baseUrl || '未配置地址' }}</code>
               </article>
             </div>
           </section>
 
           <section v-else-if="detailTab === 'services'" class="environment-read-section">
-            <header><div><h3>服务地址</h3><p>{{ selectedAsset.service_count }} 个服务可用于在线调试和任务执行。</p></div></header>
-            <div class="environment-service-list"><article v-for="(item, key, index) in environmentDetail.services" :key="key"><div><strong>{{ serviceLabel(item, index) }}</strong><small>{{ key === 'default' ? '默认服务' : '按内部键匹配执行' }}</small></div><code>{{ item.base_url || '未配置地址' }}</code></article></div>
+            <header><div><h3>服务地址</h3><p>{{ serviceSummary }}</p></div></header>
+            <div class="environment-service-list"><article v-for="group in servicePresentation.groups" :key="group.id" data-testid="environment-service-group"><div><strong>{{ group.labels.join('、') }}</strong><small>{{ group.serviceKeys.length }} 个服务键{{ group.configured ? '共享此地址' : '等待配置' }}</small></div><code>{{ group.baseUrl || '未配置地址' }}</code></article></div>
           </section>
 
           <section v-else-if="detailTab === 'variables'" class="environment-read-grid">
