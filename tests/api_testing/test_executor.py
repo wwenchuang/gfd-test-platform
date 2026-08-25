@@ -11,6 +11,7 @@ from task_server.api_testing.executor import (
     HostPolicy,
     HttpExecutor,
 )
+from task_server.api_testing.contracts.case import AssertionView
 
 
 class _TargetHandler(BaseHTTPRequestHandler):
@@ -413,6 +414,60 @@ def test_inline_setup_feeds_print_request_and_print_result_feeds_cancel_cleanup(
         ("main", "PASSED"),
         ("cleanup", "PASSED"),
     ]
+
+
+def test_inline_step_assertion_expected_value_uses_extracted_variable(target_server):
+    case = _case(
+        "/workflow/print",
+        method="POST",
+        body={"resourceSn": "{{resourceSn}}"},
+        assertions=[_code_assertion()],
+        processing=_workflow_processing(
+            setup_steps=[
+                _workflow_step(
+                    "提取资源",
+                    "GET",
+                    "/workflow/setup",
+                    assertions=[_code_assertion()],
+                    extractions=[
+                        _json_extraction("resourceSn", "$.data.resourceSn")
+                    ],
+                ),
+                _workflow_step(
+                    "确认同一资源",
+                    "GET",
+                    "/workflow/setup",
+                    assertions=[
+                        _code_assertion(),
+                        AssertionView(
+                            type="json_path",
+                            operator="equals",
+                            path="$.data.resourceSn",
+                            expected="{{resourceSn}}",
+                            timeout_ms=0,
+                            enabled=True,
+                            name=None,
+                            sequence=1,
+                        ),
+                    ],
+                    required_variables=["resourceSn"],
+                ),
+            ]
+        ),
+    )
+
+    result = _executor(target_server, case).execute_case(
+        "case-version-1", "environment-revision-1", {}
+    )
+
+    assert result.status == "PASSED"
+    confirmation = next(
+        event
+        for event in result.trace
+        if event.get("phase") == "workflow_step"
+        and event.get("name") == "确认同一资源"
+    )
+    assert confirmation["assertions"][1]["expected"] == "resource-1"
 
 
 def test_setup_polling_retries_until_assertions_and_extractions_pass(target_server):

@@ -514,6 +514,10 @@ class HttpExecutor:
                 variables,
                 service_name=request.get("service", "default"),
             )
+            assertion_views = tuple(
+                self._render_assertion_expected(assertion, runtime)
+                for assertion in assertion_views
+            )
             secrets = tuple(runtime.secrets.values())
             rendered = {key: runtime.render(value) for key, value in request.items()}
             path = self._render_path(
@@ -673,6 +677,19 @@ class HttpExecutor:
             if hasattr(item, "type")
             else SimpleNamespace(**copy.deepcopy(dict(item)))
             for item in items
+        )
+
+    @staticmethod
+    def _render_assertion_expected(assertion, runtime):
+        return SimpleNamespace(
+            type=assertion.type,
+            operator=assertion.operator,
+            expected=runtime.render(assertion.expected),
+            path=getattr(assertion, "path", None),
+            name=getattr(assertion, "name", None),
+            timeout_ms=getattr(assertion, "timeout_ms", 0),
+            enabled=getattr(assertion, "enabled", True),
+            sequence=getattr(assertion, "sequence", 0),
         )
 
     @staticmethod
