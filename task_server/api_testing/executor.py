@@ -23,7 +23,11 @@ from .services.case_service import CaseService
 from .services.environment_service import EnvironmentService
 
 
-_SENSITIVE_NAME = re.compile(r"(?:authorization|cookie|token|password|passwd|secret|api[-_]?key)", re.I)
+_SENSITIVE_NAME = re.compile(
+    r"(?:authorization|cookie|token|password|passwd|secret|api[-_]?key|"
+    r"access[-_]?key[-_]?id|access[-_]?id|policy|signature)",
+    re.I,
+)
 _BEARER = re.compile(r"(?i)(bearer\s+)[^\s,;]+")
 _PATH_PARAMETER = re.compile(r"{([A-Za-z_][A-Za-z0-9_.-]*)}")
 _REDacted = "***"

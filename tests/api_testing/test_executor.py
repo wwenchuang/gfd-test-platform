@@ -93,6 +93,9 @@ class _TargetHandler(BaseHTTPRequestHandler):
                         "profile": {
                             "password": "server-password-secret",
                             "apiKey": "server-api-key-secret",
+                            "accessid": "server-upload-access-id",
+                            "policy": "server-upload-policy",
+                            "signature": "server-upload-signature",
                         },
                     }
                 },
@@ -1024,6 +1027,9 @@ def test_server_generated_sensitive_values_are_masked_everywhere(target_server):
         "server-issued-review-secret",
         "server-password-secret",
         "server-api-key-secret",
+        "server-upload-access-id",
+        "server-upload-policy",
+        "server-upload-signature",
     ):
         assert secret not in persisted
     assert result.status == "PASSED"
