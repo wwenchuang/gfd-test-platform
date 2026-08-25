@@ -4,9 +4,11 @@ import { Code2, List, Plus, Trash2 } from 'lucide-vue-next'
 
 import type { ApiEndpoint, CaseDependencyOption, CaseDraft, InlineWorkflowStep } from '../api/contracts'
 import { validateCaseDraftLocally } from '../utils/caseDraftValidation'
+import AssertionListEditor from './AssertionListEditor.vue'
+import ExtractionListEditor from './ExtractionListEditor.vue'
 import InlineWorkflowStepEditor from './InlineWorkflowStepEditor.vue'
+import RequestConfigEditor from './RequestConfigEditor.vue'
 
-type RequestMapField = 'headers' | 'query' | 'path_params' | 'cookies'
 type ProcessingPhase = 'pre' | 'post'
 
 const props = withDefaults(defineProps<{ modelValue: CaseDraft; validationErrors?: Record<string, string>; validationWarnings?: Record<string, string>; saving?: boolean; savedMessage?: string; dependencyOptions?: CaseDependencyOption[]; endpointOptions?: ApiEndpoint[] }>(), {
@@ -17,30 +19,12 @@ const mode = ref<'structured' | 'raw'>('structured')
 const local = ref<CaseDraft>(normalizeDraft(props.modelValue))
 const raw = ref(JSON.stringify(local.value, null, 2))
 const rawError = ref('')
-const bodyText = ref(JSON.stringify(local.value.request.body, null, 2))
-const bodyError = ref('')
 const advancedErrors = ref<Record<string, string>>({})
-const pendingRequestEntries: Record<RequestMapField, Set<string>> = {
-  headers: new Set(), query: new Set(), path_params: new Set(), cookies: new Set(),
-}
-
-const requestSections = [
-  { label: '请求头', field: 'headers' as const },
-  { label: '查询参数', field: 'query' as const },
-  { label: '路径参数', field: 'path_params' as const },
-  { label: 'Cookie', field: 'cookies' as const },
-]
-const assertionOperators: Record<string, string[]> = {
-  status_code: ['equals', 'not_equals', 'in'],
-  json_path: ['equals', 'not_equals', 'contains', 'not_contains', 'exists', 'not_exists', 'greater_than', 'less_than', 'matches', 'in'],
-  header: ['equals', 'not_equals', 'contains', 'not_contains', 'exists', 'not_exists', 'matches', 'in'],
-  response_time: ['greater_than', 'less_than'],
-  schema: ['equals'],
-}
+const requestEditorValid = ref(true)
 const localValidationErrors = computed(() => validateCaseDraftLocally(local.value))
 const displayValidationErrors = computed(() => ({ ...props.validationErrors, ...localValidationErrors.value }))
 const hasBlockingError = computed(() => Boolean(
-  bodyError.value
+  !requestEditorValid.value
   || rawError.value
   || Object.keys(advancedErrors.value).length
   || Object.keys(localValidationErrors.value).length,
@@ -59,31 +43,17 @@ function validationMessages(prefix: string, source: Record<string, string>): Arr
   return Object.entries(source).filter(([field]) => field === prefix || field.startsWith(`${prefix}.`) || field.startsWith(`${prefix}[`))
 }
 
-function missingRequestMessages(field: RequestMapField): Array<[string, string]> {
-  const prefix = `request.${field}.`
-  return Object.entries(props.validationErrors).filter(([path]) => (
-    path.startsWith(prefix)
-    && !Object.prototype.hasOwnProperty.call(local.value.request[field], path.slice(prefix.length))
-  ))
-}
-
 watch(() => props.modelValue, value => {
   if (JSON.stringify(value) !== JSON.stringify(local.value)) {
     local.value = normalizeDraft(value)
     raw.value = JSON.stringify(value, null, 2)
-    bodyText.value = JSON.stringify(value.request.body, null, 2)
-    bodyError.value = ''
-    for (const pending of Object.values(pendingRequestEntries)) pending.clear()
+    requestEditorValid.value = true
   }
 }, { deep: true })
 
 function publish(): void {
   raw.value = JSON.stringify(local.value, null, 2)
-  const published = clone(local.value)
-  for (const field of Object.keys(pendingRequestEntries) as RequestMapField[]) {
-    for (const name of pendingRequestEntries[field]) delete published.request[field][name]
-  }
-  emit('update:modelValue', published)
+  emit('update:modelValue', clone(local.value))
 }
 
 function entries(value: Record<string, unknown>): Array<[string, unknown]> {
@@ -95,51 +65,6 @@ function uniqueName(value: Record<string, unknown>, seed: string): string {
   let index = 2
   while (Object.prototype.hasOwnProperty.call(value, name)) name = `${seed}${index++}`
   return name
-}
-
-function addRequestEntry(field: RequestMapField): void {
-  const target = local.value.request[field]
-  const name = uniqueName(target, '新参数')
-  target[name] = ''
-  pendingRequestEntries[field].add(name)
-}
-
-function renameRequestEntry(field: RequestMapField, previous: string, next: string): void {
-  const name = next.trim()
-  const target = local.value.request[field]
-  if (!name || (name !== previous && Object.prototype.hasOwnProperty.call(target, name))) return
-  pendingRequestEntries[field].delete(previous)
-  const rebuilt: Record<string, unknown> = {}
-  for (const [key, value] of Object.entries(target)) rebuilt[key === previous ? name : key] = value
-  local.value.request[field] = rebuilt
-  publish()
-}
-
-function updateRequestValue(field: RequestMapField, name: string, value: string): void {
-  local.value.request[field][name] = value
-  publish()
-}
-
-function updateRequestValueAt(field: RequestMapField, index: number, value: string): void {
-  const name = Object.keys(local.value.request[field])[index]
-  if (name) updateRequestValue(field, name, value)
-}
-
-function removeRequestEntry(field: RequestMapField, name: string): void {
-  pendingRequestEntries[field].delete(name)
-  delete local.value.request[field][name]
-  publish()
-}
-
-function updateBody(value: string): void {
-  bodyText.value = value
-  try {
-    local.value.request.body = JSON.parse(value)
-    bodyError.value = ''
-    publish()
-  } catch {
-    bodyError.value = '请求体 JSON 格式不正确'
-  }
 }
 
 function addDataRow(): void {
@@ -165,33 +90,6 @@ function renameDataValue(index: number, previous: string, next: string): void {
 
 function updateDataValue(index: number, name: string, value: string): void {
   local.value.data_rows[index].values[name] = parseScalar(value)
-  publish()
-}
-
-function addAssertion(): void {
-  local.value.assertions.push({ type: 'status_code', operator: 'equals', expected: 200, timeout_ms: 0, enabled: true })
-  publish()
-}
-
-function changeAssertionType(assertion: Record<string, unknown>): void {
-  const operators = assertionOperators[String(assertion.type)] || ['equals']
-  if (!operators.includes(String(assertion.operator))) assertion.operator = operators[0]
-  if (assertion.type === 'response_time' && typeof assertion.expected !== 'number') assertion.expected = 1000
-  if (assertion.type === 'status_code' && typeof assertion.expected !== 'number') assertion.expected = 200
-  publish()
-}
-
-function updateExpected(assertion: Record<string, unknown>, value: string): void {
-  assertion.expected = assertion.type === 'status_code' && assertion.operator === 'in'
-    ? parseScalar(value)
-    : ['status_code', 'response_time'].includes(String(assertion.type))
-      ? numericOrText(value)
-      : parseScalar(value)
-  publish()
-}
-
-function addExtraction(): void {
-  local.value.extractions.push({ target: `变量${local.value.extractions.length + 1}`, type: 'json_path', path: '$.data', required: true })
   publish()
 }
 
@@ -237,6 +135,21 @@ function updateWorkflowSteps(phase: 'setup_steps' | 'cleanup_steps', steps: Inli
   publish()
 }
 
+function updateRequest(request: CaseDraft['request']): void {
+  local.value.request = request
+  publish()
+}
+
+function updateAssertions(assertions: Array<Record<string, unknown>>): void {
+  local.value.assertions = assertions
+  publish()
+}
+
+function updateExtractions(extractions: Array<Record<string, unknown>>): void {
+  local.value.extractions = extractions
+  publish()
+}
+
 function changeProcessing(action: Record<string, unknown>): void {
   const type = String(action.action)
   for (const key of ['name', 'value', 'source', 'target']) delete action[key]
@@ -251,7 +164,7 @@ function applyRaw(): void {
     const parsed = JSON.parse(raw.value) as CaseDraft
     if (!parsed.request || typeof parsed.request !== 'object') throw new Error('missing request')
     local.value = normalizeDraft(parsed)
-    bodyText.value = JSON.stringify(parsed.request.body, null, 2)
+    requestEditorValid.value = true
     rawError.value = ''
     publish()
   } catch {
@@ -263,11 +176,6 @@ function parseScalar(value: string): unknown {
   const text = value.trim()
   if (!text) return ''
   try { return JSON.parse(text) } catch { return value }
-}
-
-function numericOrText(value: string): number | string {
-  const numeric = Number(value)
-  return value.trim() !== '' && Number.isFinite(numeric) ? numeric : value
 }
 
 function renderValue(value: unknown): string {
@@ -308,24 +216,7 @@ function normalizeDraft(value: CaseDraft): CaseDraft {
 
       <div class="workflow-main-heading"><span>主体请求</span><small>验证目标接口的真实业务结果，并将响应变量传给清理步骤。</small></div>
 
-      <fieldset><legend>主体请求配置</legend><div class="form-grid request-line"><label>方法<select v-model="local.request.method" @change="publish"><option v-for="method in ['GET','POST','PUT','PATCH','DELETE','HEAD','OPTIONS']" :key="method">{{ method }}</option></select></label><label class="grow">路径<input v-model="local.request.path" @input="publish" /><small v-if="validationErrors['request.path']" data-error-for="request.path" class="field-error">{{ validationErrors['request.path'] }}</small></label><label>服务<input v-model="local.request.service" @input="publish" /></label></div></fieldset>
-
-      <div class="structured-grid">
-        <fieldset v-for="section in requestSections" :key="section.field" class="row-editor"><legend>{{ section.label }}</legend>
-          <div v-for="([name, value], index) in entries(local.request[section.field])" :key="`${section.field}-${index}`" class="key-value-row">
-            <input :data-testid="`${section.field}-name`" :value="name" aria-label="参数名" @change="renameRequestEntry(section.field, name, ($event.target as HTMLInputElement).value)" />
-            <input :data-testid="`${section.field}-value`" :value="renderValue(value)" aria-label="参数值" @input="updateRequestValueAt(section.field, index, ($event.target as HTMLInputElement).value)" />
-            <button class="mini-icon danger" type="button" title="删除参数" @click="removeRequestEntry(section.field, name)"><Trash2 :size="14" /></button>
-            <small v-for="([field, message]) in validationMessages(`request.${section.field}.${name}`, validationErrors)" :key="field" :data-error-for="field" class="field-error row-feedback">{{ message }}</small>
-            <small v-for="([field, message]) in validationMessages(`request.${section.field}.${name}`, validationWarnings)" :key="field" :data-warning-for="field" class="field-warning row-feedback">{{ message }}</small>
-          </div>
-          <small v-for="([field, message]) in validationMessages(`request.${section.field}`, validationErrors).filter(([field]) => !field.split('.').slice(2).length)" :key="field" :data-error-for="field" class="field-error">{{ message }}</small>
-          <small v-for="([field, message]) in missingRequestMessages(section.field)" :key="field" :data-error-for="field" class="field-error">{{ message }}</small>
-          <button :data-testid="`${section.field}-add`" class="row-add" type="button" @click="addRequestEntry(section.field)"><Plus :size="14" />添加参数</button>
-        </fieldset>
-      </div>
-
-      <label>请求体（JSON）<textarea data-testid="request-body" :value="bodyText" rows="6" @input="updateBody(($event.target as HTMLTextAreaElement).value)" /><small v-if="bodyError" data-error-for="request.body" class="field-error">{{ bodyError }}</small><template v-else><small v-for="([field, message]) in validationMessages('request.body', validationErrors)" :key="field" :data-error-for="field" class="field-error">{{ message }}</small></template></label>
+      <RequestConfigEditor :model-value="local.request" :errors="displayValidationErrors" :warnings="validationWarnings" @update:model-value="updateRequest" @validity="requestEditorValid = $event" />
 
       <section class="editor-section"><div class="section-heading"><strong>测试数据</strong><button class="mini-icon" type="button" title="添加数据行" @click="addDataRow"><Plus :size="15" /></button></div>
         <p v-if="!local.data_rows.length" class="compact-empty">当前用例只执行一次，不使用多组数据。</p>
@@ -337,24 +228,9 @@ function normalizeDraft(value: CaseDraft): CaseDraft {
         </article>
       </section>
 
-      <section class="editor-section"><div class="section-heading"><strong>断言</strong><button class="mini-icon" type="button" title="增加断言" @click="addAssertion"><Plus :size="15" /></button></div>
-        <div v-for="(assertion, index) in local.assertions" :key="index" class="assertion-card">
-          <label>类型<select v-model="assertion.type" @change="changeAssertionType(assertion)"><option value="status_code">HTTP 状态码</option><option value="json_path">响应 JSON 字段</option><option value="header">响应头</option><option value="response_time">响应时间</option><option value="schema">响应结构</option></select></label>
-          <label>比较<select v-model="assertion.operator" @change="publish"><option v-for="operator in assertionOperators[String(assertion.type)] || ['equals']" :key="operator" :value="operator">{{ operator }}</option></select></label>
-          <label v-if="['json_path','schema'].includes(String(assertion.type))">路径<input v-model="assertion.path" :placeholder="assertion.type === 'json_path' ? '$.code' : '$.data'" @input="publish" /></label>
-          <label v-if="assertion.type === 'header'">响应头<input v-model="assertion.name" placeholder="Content-Type" @input="publish" /></label>
-          <label v-if="!['exists','not_exists'].includes(String(assertion.operator))">期望值<input :data-testid="`assertion-expected-${index}`" :value="renderValue(assertion.expected)" @input="updateExpected(assertion, ($event.target as HTMLInputElement).value)" /></label>
-          <label>超时(ms)<input v-model.number="assertion.timeout_ms" type="number" min="0" max="60000" @input="publish" /></label>
-          <label class="toggle-line"><input v-model="assertion.enabled" type="checkbox" @change="publish" />启用</label>
-          <button class="mini-icon danger" type="button" title="删除断言" @click="local.assertions.splice(index, 1); publish()"><Trash2 :size="15" /></button>
-          <small v-for="([field, message]) in validationMessages(`assertions[${index}]`, displayValidationErrors)" :key="field" :data-error-for="field" class="field-error row-feedback">{{ message }}</small>
-          <small v-for="([field, message]) in validationMessages(`assertions[${index}]`, validationWarnings)" :key="field" :data-warning-for="field" class="field-warning row-feedback">{{ message }}</small>
-        </div>
-      </section>
+      <AssertionListEditor :model-value="local.assertions" :errors="displayValidationErrors" :warnings="validationWarnings" @update:model-value="updateAssertions" />
 
-      <section class="editor-section"><div class="section-heading"><strong>提取变量</strong><button class="mini-icon" type="button" title="增加提取" @click="addExtraction"><Plus :size="15" /></button></div>
-        <div v-for="(extraction, index) in local.extractions" :key="index" class="extraction-row"><label>变量名<input v-model="extraction.target" @input="publish" /></label><label>来源<select v-model="extraction.type" @change="publish"><option value="json_path">JSON Path</option><option value="header">响应头</option><option value="cookie">Cookie</option><option value="status_code">状态码</option></select></label><label v-if="extraction.type === 'json_path'">路径<input v-model="extraction.path" @input="publish" /></label><label v-else-if="['header','cookie'].includes(String(extraction.type))">名称<input v-model="extraction.name" @input="publish" /></label><label class="toggle-line"><input v-model="extraction.required" type="checkbox" @change="publish" />必需</label><button class="mini-icon danger" type="button" title="删除提取" @click="local.extractions.splice(index, 1); publish()"><Trash2 :size="14" /></button><small v-for="([field, message]) in validationMessages(`extractions[${index}]`, validationErrors)" :key="field" :data-error-for="field" class="field-error row-feedback">{{ message }}</small><small v-for="([field, message]) in validationMessages(`extractions[${index}]`, validationWarnings)" :key="field" :data-warning-for="field" class="field-warning row-feedback">{{ message }}</small></div>
-      </section>
+      <ExtractionListEditor :model-value="local.extractions" :errors="validationErrors" :warnings="validationWarnings" @update:model-value="updateExtractions" />
 
       <InlineWorkflowStepEditor :model-value="local.processing.cleanup_steps || []" stage="cleanup" :endpoint-options="endpointOptions" :validation-errors="validationErrors" @update:model-value="updateWorkflowSteps('cleanup_steps', $event)" />
 

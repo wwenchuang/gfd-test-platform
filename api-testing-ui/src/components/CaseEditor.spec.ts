@@ -148,6 +148,15 @@ describe('CaseEditor', () => {
     confirm.mockRestore()
   })
 
+  it('edits workflow request assertions and extractions without requiring raw JSON', async () => {
+    const wrapper = mount(CaseEditor, { props: { modelValue: workflowDraft() } })
+
+    expect(wrapper.find('[data-testid="setup-0-query-add"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="setup-0-add-assertion"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="setup-0-add-extraction"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="setup-0-raw-config"]').attributes('open')).toBeUndefined()
+  })
+
   it('configures cleanup variables used to prevent incomplete cleanup requests', async () => {
     const wrapper = mount(CaseEditor, {
       props: { modelValue: DRAFT, endpointOptions: WORKFLOW_ENDPOINTS },

@@ -5,6 +5,9 @@ import { Plus } from 'lucide-vue-next'
 import type { ApiEndpoint, InlineWorkflowStep } from '../api/contracts'
 import { groupEndpoints } from '../utils/endpointGroups'
 import EndpointPicker from './EndpointPicker.vue'
+import AssertionListEditor from './AssertionListEditor.vue'
+import ExtractionListEditor from './ExtractionListEditor.vue'
+import RequestConfigEditor from './RequestConfigEditor.vue'
 import WorkflowStepCard from './WorkflowStepCard.vue'
 
 const props = defineProps<{
@@ -204,10 +207,14 @@ function recordValue(value: unknown): Record<string, unknown> {
 }
 
 function validationMessages(index: number): string[] {
-  const prefix = `processing.${props.stage === 'setup' ? 'setup_steps' : 'cleanup_steps'}[${index}]`
+  const prefix = stepPrefix(index)
   return Object.entries(props.validationErrors || {})
     .filter(([field]) => field === prefix || field.startsWith(`${prefix}.`))
     .map(([, message]) => message)
+}
+
+function stepPrefix(index: number): string {
+  return `processing.${props.stage === 'setup' ? 'setup_steps' : 'cleanup_steps'}[${index}]`
 }
 
 watch(() => props.modelValue.length, length => {
@@ -253,7 +260,7 @@ watch(() => props.validationErrors, errors => {
       @duplicate="duplicate(index)"
       @remove="remove(index)"
     >
-        <div class="workflow-step-grid">
+        <div class="workflow-step-identity">
           <label>步骤名称<input :value="step.name" @input="patchStep(index, { name: ($event.target as HTMLInputElement).value })" /></label>
           <label>选择接口
             <select :data-testid="`${stage}-endpoint-${index}`" :value="matchedEndpointId(step)" @change="selectEndpoint(index, ($event.target as HTMLSelectElement).value)">
@@ -263,32 +270,35 @@ watch(() => props.validationErrors, errors => {
               </optgroup>
             </select>
           </label>
-          <label>方法<select :value="step.request.method" @change="patchRequest(index, { method: ($event.target as HTMLSelectElement).value })"><option v-for="method in ['GET','POST','PUT','PATCH','DELETE','HEAD','OPTIONS']" :key="method">{{ method }}</option></select></label>
-          <label class="workflow-path">路径<input :value="step.request.path" @input="patchRequest(index, { path: ($event.target as HTMLInputElement).value })" /></label>
-          <label>服务<input :value="step.request.service" @input="patchRequest(index, { service: ($event.target as HTMLInputElement).value })" /></label>
           <label>必需变量<input :data-testid="`${stage}-required-${index}`" :value="step.required_variables.join(', ')" placeholder="例如 printTaskSn, deviceSn" @input="updateRequired(index, ($event.target as HTMLInputElement).value)" /></label>
         </div>
-        <div class="workflow-polling">
-          <label class="toggle-line">
-            <input
-              :data-testid="`${stage}-polling-${index}`"
-              type="checkbox"
-              :checked="Boolean(step.polling)"
-              :disabled="!['GET', 'HEAD'].includes(step.request.method)"
-              @change="updatePolling(index, ($event.target as HTMLInputElement).checked)"
-            />轮询直到断言通过
-          </label>
-          <template v-if="step.polling">
-            <label>最多尝试<input :data-testid="`${stage}-poll-attempts-${index}`" type="number" min="2" max="30" :value="step.polling.max_attempts" @input="patchPolling(index, { max_attempts: Number(($event.target as HTMLInputElement).value) })" /></label>
-            <label>间隔毫秒<input :data-testid="`${stage}-poll-interval-${index}`" type="number" min="100" max="30000" step="100" :value="step.polling.interval_ms" @input="patchPolling(index, { interval_ms: Number(($event.target as HTMLInputElement).value) })" /></label>
-          </template>
-          <small v-else-if="!['GET', 'HEAD'].includes(step.request.method)">轮询仅支持 GET、HEAD 查询，避免重复创建或修改数据。</small>
-        </div>
-        <div class="workflow-json-grid">
-          <label>参数与请求体<textarea :value="requestConfig(step)" rows="8" @change="updateJson(index, 'request', ($event.target as HTMLTextAreaElement).value)" /><small v-if="jsonErrors[`request-${index}`]" class="field-error">{{ jsonErrors[`request-${index}`] }}</small></label>
-          <label>业务断言<textarea :value="JSON.stringify(step.assertions, null, 2)" rows="8" @change="updateJson(index, 'assertions', ($event.target as HTMLTextAreaElement).value)" /><small v-if="jsonErrors[`assertions-${index}`]" class="field-error">{{ jsonErrors[`assertions-${index}`] }}</small></label>
-          <label>响应提取<textarea :value="JSON.stringify(step.extractions, null, 2)" rows="8" @change="updateJson(index, 'extractions', ($event.target as HTMLTextAreaElement).value)" /><small v-if="jsonErrors[`extractions-${index}`]" class="field-error">{{ jsonErrors[`extractions-${index}`] }}</small></label>
-        </div>
+        <RequestConfigEditor :model-value="step.request" :errors="validationErrors" :prefix="`${stepPrefix(index)}.request`" :test-id-prefix="`${stage}-${index}`" @update:model-value="patchStep(index, { request: $event })" />
+        <AssertionListEditor :model-value="step.assertions" :errors="validationErrors" :prefix="`${stepPrefix(index)}.assertions`" :test-id-prefix="`${stage}-${index}`" @update:model-value="patchStep(index, { assertions: $event })" />
+        <ExtractionListEditor :model-value="step.extractions" :errors="validationErrors" :prefix="`${stepPrefix(index)}.extractions`" :test-id-prefix="`${stage}-${index}`" @update:model-value="patchStep(index, { extractions: $event })" />
+        <details :data-testid="`${stage}-${index}-raw-config`" class="workflow-advanced">
+          <summary>高级配置</summary>
+          <div class="workflow-polling">
+            <label class="toggle-line">
+              <input
+                :data-testid="`${stage}-polling-${index}`"
+                type="checkbox"
+                :checked="Boolean(step.polling)"
+                :disabled="!['GET', 'HEAD'].includes(step.request.method)"
+                @change="updatePolling(index, ($event.target as HTMLInputElement).checked)"
+              />轮询直到断言通过
+            </label>
+            <template v-if="step.polling">
+              <label>最多尝试<input :data-testid="`${stage}-poll-attempts-${index}`" type="number" min="2" max="30" :value="step.polling.max_attempts" @input="patchPolling(index, { max_attempts: Number(($event.target as HTMLInputElement).value) })" /></label>
+              <label>间隔毫秒<input :data-testid="`${stage}-poll-interval-${index}`" type="number" min="100" max="30000" step="100" :value="step.polling.interval_ms" @input="patchPolling(index, { interval_ms: Number(($event.target as HTMLInputElement).value) })" /></label>
+            </template>
+            <small v-else-if="!['GET', 'HEAD'].includes(step.request.method)">轮询仅支持 GET、HEAD 查询，避免重复创建或修改数据。</small>
+          </div>
+          <details class="workflow-raw-config"><summary>原始 JSON</summary><div class="workflow-json-grid">
+            <label>参数与请求体<textarea :value="requestConfig(step)" rows="8" @change="updateJson(index, 'request', ($event.target as HTMLTextAreaElement).value)" /><small v-if="jsonErrors[`request-${index}`]" class="field-error">{{ jsonErrors[`request-${index}`] }}</small></label>
+            <label>业务断言<textarea :value="JSON.stringify(step.assertions, null, 2)" rows="8" @change="updateJson(index, 'assertions', ($event.target as HTMLTextAreaElement).value)" /><small v-if="jsonErrors[`assertions-${index}`]" class="field-error">{{ jsonErrors[`assertions-${index}`] }}</small></label>
+            <label>响应提取<textarea :value="JSON.stringify(step.extractions, null, 2)" rows="8" @change="updateJson(index, 'extractions', ($event.target as HTMLTextAreaElement).value)" /><small v-if="jsonErrors[`extractions-${index}`]" class="field-error">{{ jsonErrors[`extractions-${index}`] }}</small></label>
+          </div></details>
+        </details>
         <small v-for="message in validationMessages(index)" :key="message" class="field-error">{{ message }}</small>
     </WorkflowStepCard>
   </section>
