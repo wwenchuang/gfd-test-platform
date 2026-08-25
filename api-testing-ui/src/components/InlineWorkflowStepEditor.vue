@@ -4,6 +4,7 @@ import { ArrowDown, ArrowUp, Plus, Trash2 } from 'lucide-vue-next'
 
 import type { ApiEndpoint, InlineWorkflowStep } from '../api/contracts'
 import { groupEndpoints } from '../utils/endpointGroups'
+import EndpointPicker from './EndpointPicker.vue'
 
 const props = defineProps<{
   modelValue: InlineWorkflowStep[]
@@ -13,6 +14,7 @@ const props = defineProps<{
 }>()
 const emit = defineEmits<{ 'update:modelValue': [steps: InlineWorkflowStep[]] }>()
 const jsonErrors = ref<Record<string, string>>({})
+const pickerOpen = ref(false)
 const groups = computed(() => groupEndpoints(props.endpointOptions || [])
   .map(([name, endpoints]) => ({ name, endpoints })))
 const stageLabel = computed(() => props.stage === 'setup' ? '前置步骤' : '清理步骤')
@@ -31,6 +33,10 @@ function update(mutator: (steps: InlineWorkflowStep[]) => void): void {
 }
 
 function addStep(): void {
+  pickerOpen.value = true
+}
+
+function addManualStep(): void {
   update(steps => steps.push({
     name: `${stageLabel.value} ${steps.length + 1}`,
     enabled: true,
@@ -45,6 +51,25 @@ function addStep(): void {
     extractions: [],
     required_variables: [],
   }))
+  pickerOpen.value = false
+}
+
+function addEndpointStep(endpoint: ApiEndpoint): void {
+  update(steps => steps.push({
+    name: endpoint.summary || `${endpoint.method} ${endpoint.path}`,
+    enabled: true,
+    request: {
+      method: endpoint.method, path: endpoint.path, service: 'default',
+      path_params: {}, query: {}, headers: {}, cookies: {}, body: null,
+    },
+    assertions: [
+      { type: 'status_code', operator: 'equals', expected: 200, timeout_ms: 0, enabled: true },
+      { type: 'json_path', operator: 'equals', path: '$.code', expected: 0, timeout_ms: 0, enabled: true },
+    ],
+    extractions: [],
+    required_variables: [],
+  }))
+  pickerOpen.value = false
 }
 
 function patchStep(index: number, patch: Partial<InlineWorkflowStep>): void {
@@ -161,6 +186,14 @@ function validationMessages(index: number): string[] {
 
 <template>
   <section class="workflow-stage" :class="`workflow-stage-${stage}`">
+    <EndpointPicker
+      :open="pickerOpen"
+      :endpoints="endpointOptions || []"
+      :title="`添加${stageLabel}`"
+      @select="addEndpointStep"
+      @manual="addManualStep"
+      @close="pickerOpen = false"
+    />
     <header class="workflow-stage-heading">
       <div><strong>{{ stageLabel }}</strong><span>{{ stageHint }}</span></div>
       <button :data-testid="`add-${stage}-step`" class="secondary-command" type="button" @click="addStep"><Plus :size="14" />添加步骤</button>

@@ -37,13 +37,26 @@ const WORKFLOW_ENDPOINTS: ApiEndpoint[] = [
 ]
 
 describe('CaseEditor', () => {
+  it('opens endpoint selection without publishing a blank workflow step', async () => {
+    const wrapper = mount(CaseEditor, {
+      props: { modelValue: DRAFT, endpointOptions: WORKFLOW_ENDPOINTS },
+    })
+
+    await wrapper.get('[data-testid="add-setup-step"]').trigger('click')
+
+    expect(wrapper.emitted('update:modelValue')).toBeUndefined()
+    expect(wrapper.get('[data-testid="endpoint-picker-search"]').exists()).toBe(true)
+  })
+
   it('adds a setup step by selecting an endpoint from the current source revision', async () => {
     const wrapper = mount(CaseEditor, {
       props: { modelValue: DRAFT, endpointOptions: WORKFLOW_ENDPOINTS },
     })
 
     await wrapper.get('[data-testid="add-setup-step"]').trigger('click')
-    await wrapper.get('[data-testid="setup-endpoint-0"]').setValue('resource-page')
+    expect(wrapper.text()).toContain('家用业务 / 模型 / 查询')
+    await wrapper.get('[data-testid="endpoint-picker-search"]').setValue('查询资源')
+    await wrapper.get('[data-testid="endpoint-picker-option-resource-page"]').trigger('click')
 
     const emitted = wrapper.emitted('update:modelValue')?.at(-1)?.[0] as CaseDraft
     expect(emitted.processing.setup_steps![0]).toMatchObject({
@@ -53,7 +66,6 @@ describe('CaseEditor', () => {
     expect(wrapper.text()).toContain('前置步骤')
     expect(wrapper.text()).toContain('主体请求')
     expect(wrapper.text()).toContain('清理步骤')
-    expect(wrapper.findAll('optgroup').map(item => item.attributes('label'))).toContain('家用业务 / 模型 / 查询')
   })
 
   it('moves workflow steps without losing their request definitions', async () => {
@@ -85,7 +97,8 @@ describe('CaseEditor', () => {
     })
 
     await wrapper.get('[data-testid="add-cleanup-step"]').trigger('click')
-    await wrapper.get('[data-testid="cleanup-endpoint-0"]').setValue('print-cancel')
+    await wrapper.get('[data-testid="endpoint-picker-search"]').setValue('取消打印')
+    await wrapper.get('[data-testid="endpoint-picker-option-print-cancel"]').trigger('click')
     await wrapper.get('[data-testid="cleanup-required-0"]').setValue('printTaskSn, deviceSn')
 
     const emitted = wrapper.emitted('update:modelValue')?.at(-1)?.[0] as CaseDraft
@@ -101,6 +114,7 @@ describe('CaseEditor', () => {
     })
 
     await wrapper.get('[data-testid="add-setup-step"]').trigger('click')
+    await wrapper.get('[data-testid="endpoint-picker-manual"]').trigger('click')
     await wrapper.get('[data-testid="setup-polling-0"]').setValue(true)
     await wrapper.get('[data-testid="setup-poll-attempts-0"]').setValue(12)
     await wrapper.get('[data-testid="setup-poll-interval-0"]').setValue(1500)

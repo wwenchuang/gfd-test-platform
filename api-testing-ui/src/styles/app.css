@@ -212,6 +212,19 @@ h1, h2, p { margin-top: 0; } h1 { margin-bottom: 0; font-size: 21px; font-weight
 .row-add { display: inline-flex; align-items: center; justify-content: center; gap: 5px; min-height: 30px; border: 1px dashed #aebdcd; border-radius: 4px; background: #f8fafc; color: #53657b; font-size: 11px; cursor: pointer; }
 .editor-section { display: grid; gap: 7px; padding-top: 10px; border-top: 1px solid var(--line); }
 .workflow-stage { display: grid; gap: 8px; padding: 11px; border: 1px solid var(--line); border-left: 3px solid #6c819a; border-radius: 5px; background: #fbfcfe; }
+.endpoint-picker-backdrop { position: fixed; z-index: 45; inset: 0; display: grid; place-items: center; padding: 20px; background: rgba(18, 27, 43, .42); }
+.endpoint-picker { display: grid; grid-template-rows: auto auto minmax(0, 1fr) auto; width: min(760px, 94vw); max-height: min(720px, 88vh); border: 1px solid var(--line); border-radius: 6px; background: #fff; box-shadow: 0 18px 48px rgba(20, 31, 49, .24); overflow: hidden; }
+.endpoint-picker > header, .endpoint-picker > footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 14px; }
+.endpoint-picker > header { border-bottom: 1px solid var(--line); }.endpoint-picker > header h3 { font-size: 15px; }
+.endpoint-picker > footer { justify-content: flex-end; border-top: 1px solid var(--line); }
+.endpoint-picker-search { margin: 10px 12px; }
+.endpoint-picker-results { min-height: 220px; overflow: auto; border-top: 1px solid var(--line); }
+.endpoint-picker-group { border-bottom: 1px solid #edf0f4; }
+.endpoint-picker-group-toggle { display: grid; grid-template-columns: 18px minmax(0, 1fr) auto; align-items: center; gap: 7px; width: 100%; min-height: 42px; padding: 8px 14px; border: 0; background: #f6f8fb; color: #2e3a50; text-align: left; cursor: pointer; }
+.endpoint-picker-group-toggle:hover, .endpoint-picker-group-toggle:focus-visible { background: #edf4fa; outline: 0; }.endpoint-picker-group-toggle span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 750; }.endpoint-picker-group-toggle b { color: var(--muted); font-size: 10px; }
+.endpoint-picker-option { display: grid; grid-template-columns: 64px minmax(0, 1fr); align-items: center; gap: 10px; width: 100%; min-height: 58px; padding: 9px 14px; border: 0; border-bottom: 1px solid #edf0f4; background: #fff; color: inherit; text-align: left; cursor: pointer; }
+.endpoint-picker-option:hover, .endpoint-picker-option:focus-visible { background: #f1f7fc; outline: 0; }
+.endpoint-picker-option > span:last-child { display: grid; gap: 3px; min-width: 0; }.endpoint-picker-option strong, .endpoint-picker-option code { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.endpoint-picker-option code { color: var(--muted); font-size: 10px; }
 .workflow-stage-cleanup { border-left-color: #16856c; background: #f8fcfb; }
 .workflow-stage-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .workflow-stage-heading > div { display: grid; gap: 2px; }.workflow-stage-heading span { color: var(--muted); font-size: 10px; }
