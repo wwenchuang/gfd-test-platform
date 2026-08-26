@@ -212,7 +212,7 @@ const WORKFLOW_SECTIONS = {
   },
   system_config: {
     index: '5',
-    title: '系统设置',
+    title: '环境体检',
     subtitle: '环境体检、Runner 和系统维护',
     help: '一次检查 Task 服务、Sonic、Runner、模型、桥接脚本和旧/重复步骤清理状态。',
     cards: [

@@ -3394,6 +3394,31 @@ async function loadYamlStatsForModule(mod, {refresh=false}={}) {
   }
 }
 
+async function loadAllYamlStats({refresh=false}={}) {
+  const moduleNames = Object.keys(modules);
+  const needsLoad = refresh || moduleNames.some(mod => {
+    const files = modules[mod] || [];
+    return files.some(file => !yamlStatsCache[yamlStatsKey(mod, file)]);
+  });
+  if (!needsLoad) return;
+  try {
+    const data = await apiRequest('/yaml-stats');
+    const allStats = (data && data.stats) || {};
+    moduleNames.forEach(mod => {
+      const moduleStats = allStats[mod] || {};
+      (modules[mod] || []).forEach(file => {
+        yamlStatsCache[yamlStatsKey(mod, file)] = normalizeYamlStats(moduleStats[file]);
+      });
+    });
+  } catch (e) {
+    moduleNames.forEach(mod => {
+      (modules[mod] || []).forEach(file => {
+        yamlStatsCache[yamlStatsKey(mod, file)] = {...emptyYamlStats(), loaded: true, error: e.message || String(e)};
+      });
+    });
+  }
+}
+
 async function refreshModuleDirectoryStats(mod, {refresh=false}={}) {
   await loadYamlStatsForModule(mod, {refresh});
   if (currentModule !== mod || hasOpenEditor()) return;
@@ -3407,15 +3432,11 @@ async function refreshModuleDirectoryStats(mod, {refresh=false}={}) {
 async function warmupYamlStats() {
   if (yamlStatsWarmupStarted) return;
   yamlStatsWarmupStarted = true;
-  const moduleNames = Object.keys(modules);
-  for (const mod of moduleNames) {
-    await loadYamlStatsForModule(mod).catch(() => {});
-    renderModules();
-    if (currentModule === mod && !hasOpenEditor()) {
-      const area = document.getElementById('editor-area');
-      if (area && area.querySelector('.module-directory')) area.innerHTML = moduleDirectoryHtml(mod);
-    }
-    await sleepMs(120);
+  await loadAllYamlStats().catch(() => {});
+  renderModules();
+  if (currentModule && !hasOpenEditor()) {
+    const area = document.getElementById('editor-area');
+    if (area && area.querySelector('.module-directory')) area.innerHTML = moduleDirectoryHtml(currentModule);
   }
 }
 

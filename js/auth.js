@@ -29,6 +29,14 @@ function showAuthedApp() {
   ensureAgentRunsLoaded({ limit: 10 }).catch(() => {});
 }
 
+function loginReturnToPath() {
+  const params = new URLSearchParams(window.location.search || '');
+  const value = String(params.get('return_to') || '').trim();
+  if (!value || !value.startsWith('/') || value.startsWith('//')) return '';
+  if (/[\r\n]/.test(value)) return '';
+  return value;
+}
+
 async function doLogin() {
   const u = document.getElementById('username').value.trim();
   const p = document.getElementById('password').value;
@@ -43,13 +51,17 @@ async function doLogin() {
     if (!data || !data.ok || !data.token) throw new Error(data?.error || '账号或密码错误');
     sessionStorage.setItem('user', data.user || u);
     sessionStorage.setItem('sessionToken', data.token);
+    const returnTo = loginReturnToPath();
+    if (returnTo) {
+      window.location.assign(returnTo);
+      return;
+    }
     showAuthedApp();
   } catch(e) {
     document.getElementById('login-error').style.display = 'block';
     showToast(e.message || '登录失败', 'error');
   }
 }
-document.getElementById('password').addEventListener('keydown', e => { if(e.key==='Enter') doLogin(); });
 
 async function doLogout() {
   try {

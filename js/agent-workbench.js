@@ -6,6 +6,7 @@ const expandedStepIndexes = new Set();
 let agentCheckpointTraceOpen = false;
 const agentTimelineDetailStates = new Map();
 let agentRestoringTimelineDetails = false;
+let lastAgentPlanPreviewText = '';
 const DEFAULT_AGENT_APP_NAME = '智小白3D APP';
 const DEFAULT_AGENT_APP_PACKAGE = 'com.kfb.model';
 
@@ -167,19 +168,29 @@ async function loadFullAgentModelCatalog(preferredValue='') {
     button.textContent = '加载中...';
   }
   try {
-    if (!agentTaskModelCatalogLoaded) {
-      const data = await apiRequest('/models');
-      agentTaskModelCatalog = Array.isArray(data?.models) ? data.models : [];
-      agentTaskModelCatalogLoaded = true;
-    }
-    const providers = Array.isArray(AppState.modelProviders) ? AppState.modelProviders : [];
-    appendAgentTaskModelOptions(modelSel, agentTaskModelCatalog, providers);
+    const [providersData, routerData, modelData] = await Promise.all([
+      aiGatewayGet('/ai/providers').catch(() => ({ providers: [] })),
+      aiGatewayGet('/ai/model-router').catch(() => ({ router: {} })),
+      agentTaskModelCatalogLoaded ? Promise.resolve({ models: agentTaskModelCatalog }) : apiRequest('/models')
+    ]);
+    const providers = normalizeAgentProviderList(providersData);
+    const router = routerData?.router || {};
+    aiProviders = providers;
+    aiModelRouter = router;
+    AppState.modelProviders = providers;
+    AppState.modelRouter = router;
+    AppState.loaded.modelConfig = true;
+    agentTaskModelCatalog = Array.isArray(modelData?.models) ? modelData.models : [];
+    agentTaskModelCatalogLoaded = true;
+
+    await loadAgentModelOptions(preferredValue || modelSel.value);
+    const currentSelect = document.getElementById('agent-model');
     const wanted = preferredValue || modelSel.value;
-    if (wanted && Array.from(modelSel.options).some(option => option.value === wanted && !option.disabled)) {
-      modelSel.value = wanted;
+    if (wanted && currentSelect && Array.from(currentSelect.options).some(option => option.value === wanted && !option.disabled)) {
+      currentSelect.value = wanted;
     }
     if (button) button.hidden = true;
-    showToast(`已加载 ${agentTaskModelCatalog.length} 个可选模型`, 'success');
+    showToast(`已加载 ${providers.length + agentTaskModelCatalog.length} 个可选模型`, 'success');
   } catch (e) {
     if (button) {
       button.disabled = false;
@@ -211,26 +222,9 @@ async function loadAgentModelOptions(preferredValue='') {
     }
   }
 
-  let gatewayProviders = [];
-  let routerProviderId = '';
-  try {
-    const [providersData, routerData] = await Promise.all([
-      aiGatewayGet('/ai/providers'),
-      aiGatewayGet('/ai/model-router')
-    ]);
-    gatewayProviders = normalizeAgentProviderList(providersData);
-    routerProviderId = normalizeAgentRouterProviderId(routerData);
-    aiProviders = gatewayProviders;
-    aiModelRouter = routerData?.router || {};
-    AppState.modelProviders = gatewayProviders;
-    AppState.modelRouter = aiModelRouter;
-    AppState.loaded.modelConfig = true;
-  } catch (e) {
-    gatewayProviders = [];
-    routerProviderId = '';
-  }
-
-  if (gatewayProviders.length) {
+  const gatewayProviders = cachedProviders;
+  const routerProviderId = cachedRouterProviderId;
+  if (agentTaskModelCatalogLoaded && gatewayProviders.length) {
     const selectedProvider = gatewayProviders.find(provider => provider.id === routerProviderId) || gatewayProviders[0];
     if (selectedProvider) {
       autoOpt.textContent = `自动（按模型策略：${selectedProvider.name || selectedProvider.id}）`;
@@ -254,8 +248,14 @@ async function loadAgentModelOptions(preferredValue='') {
 
   if (agentTaskModelCatalogLoaded) {
     appendAgentTaskModelOptions(modelSel, agentTaskModelCatalog, gatewayProviders);
-  } else if (previous && !previous.startsWith('provider:')) {
-    await loadFullAgentModelCatalog(previous);
+  } else if (previous) {
+    addAgentModelOption(modelSel, {
+      value: previous,
+      label: previous.startsWith('provider:') ? `已选择模型：${previous.replace(/^provider:/, '')}` : `已选择模型：${previous}`,
+      kind: previous.startsWith('provider:') ? 'ai-gateway-provider' : 'task-model',
+      providerId: previous.startsWith('provider:') ? previous.replace(/^provider:/, '') : '',
+      model: previous.startsWith('provider:') ? '' : previous
+    });
   }
 
   if (previous && Array.from(modelSel.options).some(option => option.value === previous && !option.disabled)) {
@@ -4013,11 +4013,37 @@ async function previewAgentPlan() {
         '',
         plan.note || '任务启动后由所选模型补全业务步骤并接受平台门禁。'
       ];
-      alert(lines.join('\n'));
+      showAgentPlanPreview(lines, plan, payload);
     } catch(e) {
       showToast(e.message || '获取执行计划失败', 'error');
     }
   }, { btn: previewBtn, btnLabel: '生成中...', overlay: 'AI 正在规划...' });
+}
+
+function showAgentPlanPreview(lines, plan={}, payload={}) {
+  lastAgentPlanPreviewText = (Array.isArray(lines) ? lines : []).join('\n');
+  const summary = document.getElementById('agent-plan-preview-summary');
+  const body = document.getElementById('agent-plan-preview-body');
+  if (summary) {
+    const modeText = agentModeText(plan.mode || payload.mode || 'AUTO_SAFE');
+    const appText = plan.appName || payload.appName || '未选择应用';
+    const sourceText = payload.sourceType || 'manual';
+    summary.textContent = `${modeText} · ${appText} · 输入来源：${sourceText}`;
+  }
+  if (body) body.textContent = lastAgentPlanPreviewText || '暂无预览内容';
+  if (typeof openModal === 'function') {
+    openModal('modal-agent-plan-preview');
+  } else {
+    showToast(lastAgentPlanPreviewText || '暂无预览内容', 'success');
+  }
+}
+
+async function copyAgentPlanPreview() {
+  if (typeof copyText === 'function') {
+    await copyText(lastAgentPlanPreviewText);
+    return;
+  }
+  showToast('复制能力尚未加载', 'error');
 }
 
 function previewDashboardAgentPlan() {

@@ -715,7 +715,7 @@ function renderExecutionTabRunners() {
             </tr>
           `;
         }).join('')}</tbody>
-      </table>` : `${renderEmptyState('reports', '暂无在线 Runner，请在系统设置页面运行预检脚本。')}`}
+      </table>` : `${renderEmptyState('reports', '暂无在线 Runner，请在环境体检页面运行预检脚本。')}`}
     </div>
   `;
 }

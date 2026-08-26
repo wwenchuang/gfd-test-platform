@@ -108,6 +108,8 @@ def check_original_platform_management_experience():
     state_js = (JS_DIR / "state.js").read_text(encoding="utf-8")
     workbench_js = (JS_DIR / "agent-workbench.js").read_text(encoding="utf-8")
     status_js = (JS_DIR / "agent-status.js").read_text(encoding="utf-8")
+    empty_states_js = (JS_DIR / "empty-states.js").read_text(encoding="utf-8")
+    execution_js = (JS_DIR / "execution.js").read_text(encoding="utf-8")
     reports_js = (JS_DIR / "reports.js").read_text(encoding="utf-8")
     agent_service = (ROOT / "task_server" / "services" / "agent_service.py").read_text(encoding="utf-8")
     router = (ROOT / "task_server" / "router.py").read_text(encoding="utf-8")
@@ -115,7 +117,27 @@ def check_original_platform_management_experience():
     repair_js = (JS_DIR / "ai-repair.js").read_text(encoding="utf-8")
 
     require("fonts.googleapis.com" not in html, "Main platform must not block on external Google Fonts")
+    require('rel="icon"' in html and "assets/brand/kongfudou-icon.png" in html, "Main platform must expose a local favicon to avoid a noisy 404")
+    require('<form class="login-box"' in html and "onsubmit=\"event.preventDefault(); doLogin();\"" in html, "Login controls must be wrapped in a submit form")
+    require('type="submit"' in html, "Login button must submit the login form instead of relying on click-only behavior")
+    require("function loginReturnToPath" in auth_js and "return_to" in auth_js, "Login must parse safe same-origin return_to redirects")
+    require("window.location.assign(returnTo)" in auth_js, "Login must redirect to return_to after successful authentication")
     require("clearTransientAuthFeedback" in auth_js and "showAuthedApp" in auth_js, "Successful login must clear stale error and toast feedback")
+    require("showAgentPlanPreview" in workbench_js and "copyAgentPlanPreview" in workbench_js, "Agent startup preview must render in an in-page modal with copy support")
+    require("alert(lines.join" not in workbench_js, "Agent startup preview must not use a blocking browser alert")
+    require("modal-agent-plan-preview" in html and "agent-plan-preview-body" in html, "Agent startup preview modal is missing")
+    for filename in ("auth.js", "agent-workbench.js", "agent-status.js", "empty-states.js", "execution.js", "utils.js"):
+        require(
+            f'{filename}?v=20260826-redeploy-audit' in html,
+            f"Changed static asset must use the redeploy audit cache key: {filename}",
+        )
+        require(
+            f'{filename}?v=20260826-platform-management-ux' not in html and f'{filename}?v=20260701-install-refresh' not in html,
+            f"Changed static asset must not keep stale cache key: {filename}",
+        )
+    require("title: '系统设置'" not in utils_js, "Configuration workflow title must not use stale 系统设置 copy")
+    require("可在「系统设置」调整风险策略" not in empty_states_js, "Agent confirmation empty-state must not point to a stale 系统设置 page")
+    require("系统设置页面运行预检脚本" not in execution_js, "Runner empty-state must not point to a stale 系统设置 page")
     for marker in ("模块创建失败", "任务创建失败", "文件上传失败"):
         require(marker in utils_js, f"Persistence failure must be visible instead of reporting false success: {marker}")
 
@@ -127,6 +149,25 @@ def check_original_platform_management_experience():
         require(marker in reports_js, f"Report management control is missing: {marker}")
 
     require("loadFullAgentModelCatalog" in workbench_js and "加载更多模型" in workbench_js, "Large model catalog must be opt-in instead of blocking workbench entry")
+    load_agent_model_options = workbench_js[workbench_js.index("async function loadAgentModelOptions"):workbench_js.index("function dashboardStats")]
+    require(
+        "aiGatewayGet('/ai/providers')" not in load_agent_model_options,
+        "Agent workbench model selector must not fetch the full AI Gateway provider catalog on normal render",
+    )
+    load_full_agent_catalog = workbench_js[workbench_js.index("async function loadFullAgentModelCatalog"):workbench_js.index("async function loadAgentModelOptions")]
+    require(
+        "aiGatewayGet('/ai/providers')" in load_full_agent_catalog and "apiRequest('/models')" in load_full_agent_catalog,
+        "Full Agent model catalog must be loaded only from the explicit opt-in action",
+    )
+    require(
+        "async function loadAllYamlStats" in status_js and "apiRequest('/yaml-stats')" in status_js,
+        "YAML stats warmup must use one bounded batch request instead of per-module refresh requests",
+    )
+    warmup_yaml_stats = status_js[status_js.index("async function warmupYamlStats"):status_js.index("function modulePriorityFilterLabel")]
+    require(
+        "loadYamlStatsForModule(mod)" not in warmup_yaml_stats and "/yaml-stats?module=" not in warmup_yaml_stats,
+        "YAML stats warmup must not fan out one /yaml-stats request per module",
+    )
     for marker in ("showAppConfigCenter", "showFeishuConfigCenter", "showSonicConfigCenter", "showBugDraftCenter"):
         require(marker in status_js, f"Standalone management page is missing: {marker}")
     sonic_branch = status_js[status_js.index("activeWorkflow === 'sonic_config'"):status_js.index("activeWorkflow === 'feishu_config'")]
@@ -431,7 +472,12 @@ def main():
     require("deleteGenerationMindmapRecord" in html and "/cases/mindmap-record" in html and "删除记录" in html, "Mindmap center must support deleting generation records")
     require("uploadApkInChunks" in execution_js and "/app-install/upload-chunk" in execution_js and "/app-install/upload-finish" in execution_js, "APK install uploads must use chunk upload endpoints")
     require("readAsDataURL(file)" not in execution_js and "contentBase64: dataUrl.split" not in execution_js, "APK install uploads must not send the whole APK as one Base64 JSON body")
-    require("js/utils.js?v=20260826-platform-management-ux" in html and "js/execution.js?v=20260701-install-refresh" in html and "js/app.js?v=20260826-platform-management-ux" in html and "js/state.js?v=20260826-platform-management-ux" in html and "js/navigation.js?v=20260826-platform-management-ux" in html and "js/agent-workbench.js?v=20260826-platform-management-ux" in html and "css/app.css?v=20260826-platform-management-ux" in html and "css/round5.css?v=20260826-platform-management-ux" in html and "js/agent-status.js?v=20260826-platform-management-ux" in html, "Frontend cache versions must include the active frontend modules")
+    for active_asset in (
+        "js/utils.js", "js/execution.js", "js/app.js", "js/state.js",
+        "js/navigation.js", "js/agent-workbench.js", "js/agent-status.js",
+        "css/app.css", "css/round5.css",
+    ):
+        require(f"{active_asset}?v=20260826-redeploy-audit" in html, f"Frontend cache version is stale for active asset: {active_asset}")
     require("function jobDeviceLabel" in html and "runnerDevices" in html and "runnerDeviceDisplayName(device)" in html, "Job rows must resolve device ids to public runner device names when available")
     require(
         "const job = activeJobs.find(isRunnerExecutionJob);" in html

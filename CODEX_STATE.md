@@ -34,6 +34,36 @@
 
 ## 最近完成的关键修复
 
+### 2026-08-26 重新部署后的管理台全功能复查
+
+用户重新部署后，本轮再次用新 Playwright 浏览器登录 `http://101.34.197.12:8088/task-manager.html`（admin / sonic2026），逐项进入 Agent、运行记录、待确认、用例资产、AI 生成、脚本编辑、调试执行、同步至 Sonic、失败重跑、执行报告、失败分析、缺陷草稿、模型配置、应用配置、执行环境、群通知和环境体检。
+
+现场结论：
+
+- 线上 HTML 仍使用旧静态资源版本 `20260826-platform-management-ux`，浏览器继续拉取旧 `agent-workbench.js` / `agent-status.js`；因此重新部署后仍看到 Agent 首屏请求 `/ai-gateway/ai/providers`、`/ai-gateway/ai/model-router`，以及进入资产/执行页时逐模块请求 `/api/yaml-stats?module=...`。
+- 新开 `/api-test/` 会跳到 `task-manager.html?return_to=%2Fapi-test%2F` 登录，但登录成功后未回跳 API 测试页。
+- Agent “预览计划”使用浏览器原生 `alert()` 展示长文本，不可复制且阻塞页面。
+- 空状态和 Runner 提示仍有“系统设置”旧文案，和当前“环境体检”导航不一致。
+
+本轮本地实现：
+
+- `task-manager.html` 静态资源版本统一提升到 `20260826-redeploy-audit`，并补充本地 favicon，避免浏览器继续命中旧 JS 和 `/favicon.ico` 404。
+- 登录区改成真实 `<form>`，支持回车提交；成功登录后解析安全同源 `return_to` 并跳转，覆盖 `/api-test/` 新开标签页登录回跳。
+- Agent 启动前预览从 `alert()` 改为页面内弹窗，内容可滚动、可复制。
+- 工作流标题和空状态提示统一到“环境体检”。
+- `tests/frontend_static_checks.py` 增加回归保护：缓存 key、登录表单、`return_to`、Agent 预览弹窗、过期“系统设置”文案都会被静态检查拦截。
+
+待重新部署后复查：线上应不再请求普通首屏 `/ai-gateway/ai/providers`，进入用例/执行页应只出现一次 `/api/yaml-stats` 预热； `/api-test/` 登录应回跳到 `/api-test/`。
+
+### 2026-08-26 原测试平台现场复查后的性能收敛
+
+本轮按用户要求用新 Playwright 浏览器登录 `http://101.34.197.12:8088/task-manager.html`（admin / sonic2026）再次逐项点击左侧 Agent、用例、执行、报告、配置入口。复查确认已有管理页大体可用，但线上仍暴露两个会造成首屏/刷新慢的点：
+
+- Agent 工作台普通首屏仍会出现大量 AI Gateway 实时目录模型选项；本地已改为普通渲染不请求 `/ai/providers`，只显示自动策略和已缓存选择，点击“加载更多模型”时才读取 AI Gateway Provider、模型路由和 Task 服务端模型目录。
+- 进入用例/执行相关页面时，网络记录出现大量 `/api/yaml-stats?module=...` 请求；本地已改为 YAML 等级统计预热一次请求 `/yaml-stats` 后填充缓存，保留单模块刷新接口用于打开模块目录后的局部刷新。
+
+回归保护已加入 `tests/frontend_static_checks.py`：禁止普通 Agent 模型渲染路径请求完整 Provider 目录，并禁止 `warmupYamlStats` 对模块逐个请求统计。
+
 ### 2026-08-26 原测试平台管理体验与缺陷草稿闭环
 
 本轮使用新浏览器逐项走查 Agent、用例、执行、报告和配置入口，在不修改 Runner、Sonic、Agent 编排和 YAML 协议的前提下，收敛长列表、隐式重操作和历史处理断点。完整证据与边界记录在 `docs/task-platform-ux-audit-2026-08-26.md`，设计和实施清单位于同日 `docs/superpowers/specs`、`docs/superpowers/plans`。
