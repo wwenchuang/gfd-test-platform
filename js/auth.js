@@ -2,14 +2,29 @@
 // Extracted from task-manager.html (no logic changes).
 
 // ===== LOGIN =====
+function clearTransientAuthFeedback() {
+  const error = document.getElementById('login-error');
+  if (error) error.style.display = 'none';
+  const toast = document.getElementById('toast');
+  if (toast) {
+    if (toast._toastTimer) clearTimeout(toast._toastTimer);
+    toast.className = 'toast';
+    toast.textContent = '';
+  }
+}
+
 function showAuthedApp() {
+  clearTransientAuthFeedback();
+  if (typeof restoreWorkflowPreference === 'function') restoreWorkflowPreference();
   document.getElementById('login-screen').style.display = 'none';
   document.getElementById('app').style.display = 'flex';
   renderWorkflowNav();
+  if (typeof initNavigationGroupPreferences === 'function') initNavigationGroupPreferences();
   toggleLibrary(false); // Hide library by default, Agent workbench first
   updateContextToolbar();
   if (typeof renderActiveWorkflowPage === 'function') renderActiveWorkflowPage();
   else showWorkflowGuide(activeWorkflow);
+  if (typeof applyLazyLoadForSection === 'function') applyLazyLoadForSection(activeWorkflow);
   // round 4: 首屏只加载 Agent 工作台必需的数据，其它模块进入对应页面再懒加载
   ensureAgentRunsLoaded({ limit: 10 }).catch(() => {});
 }

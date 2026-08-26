@@ -14587,7 +14587,7 @@ def check_mindmap_compact_mode():
     task_manager_source = (ROOT / "task-manager.html").read_text(encoding="utf-8")
     require(
         "生成用例脑图" in task_manager_source
-        and "js/app.js?v=20260824-case-only-mindmap" in task_manager_source,
+        and "js/app.js?v=20260826-platform-management-ux" in task_manager_source,
         "Mindmap modal and cache key must expose the cases-only presentation after deployment",
     )
 

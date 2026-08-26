@@ -131,9 +131,29 @@ async function generateBugDraftFromAnalysis() {
         envInfo: '功夫豆测试平台 / Midscene / Sonic',
         failureAnalysis: aiFailureDraft.analysis
       });
+      const bug = data.bug || data;
+      const job = normalizeJob(latestJobs.find(item => (item.job_id || item.jobId) === selectedRepairJobId) || {});
+      const description = typeof bug === 'string'
+        ? bug
+        : (bug.description || bug.summary || stringifyArtifact(bug));
+      const saved = await apiRequest('/feishu-drafts', {
+        method: 'POST',
+        body: JSON.stringify({
+          draftId: `job-${selectedRepairJobId || 'manual'}-${Date.now()}`,
+          title: (typeof bug === 'object' && bug.title) || aiFailureDraft.requirement || '测试执行缺陷',
+          description,
+          severity: typeof bug === 'object' ? bug.severity : '',
+          appName: job.app_name || job.appName || '',
+          appPackage: job.app_package || job.appPackage || job.package || '',
+          sourceJobId: selectedRepairJobId || '',
+          reportUrl: job.report_url || job.reportUrl || job.sonic_report_url || '',
+          failureType: aiFailureDraftNormalized().failureType
+        })
+      });
       aiFailureDraft.title = '飞书缺陷草稿';
-      aiFailureDraft.analysis = stringifyArtifact(data.bug || data);
+      aiFailureDraft.analysis = stringifyArtifact(saved.draft || bug);
       aiFailureDraft.activeTab = 'analysis';
+      AppState.loaded.feishuDrafts = false;
       if (activeWorkflow === 'repair') showAiRepairCenter();
       else renderAiGatewayResult();
       showToast('✓ 飞书缺陷草稿已生成，提交前仍需人工确认', 'success');
@@ -510,14 +530,36 @@ async function rejectRepairDraft(draftId) {
 }
 
 function aiRepairFailedJobs() {
+  const query = String(repairJobFilters.query || '').trim().toLowerCase();
   return latestJobs
     .filter(job => {
       const status = String(job.status || '').toLowerCase();
       if (['success', 'passed', 'pass', 'ok'].includes(status)) return false;
       const errorText = [job.error, job.message, job.stderr_tail, job.stdout_tail, job.error_trace].filter(Boolean).join('\n').trim();
-      return ['failed', 'timeout', 'cancelled'].includes(status) || Boolean(errorText) || hasMeaningfulFailureReview(job.failure_review);
+      const failed = ['failed', 'timeout', 'cancelled'].includes(status) || Boolean(errorText) || hasMeaningfulFailureReview(job.failure_review);
+      if (!failed || !query) return failed;
+      return [job.job_id, job.jobId, job.file, job.target_task_name, job.task_name, job.module, job.app_name, job.appName, errorText]
+        .filter(Boolean).join(' ').toLowerCase().includes(query);
     })
-    .slice(0, 80);
+    .slice(0, 200);
+}
+
+function setRepairJobSearch(value) {
+  repairJobFilters.query = String(value || '');
+  repairJobFilters.page = 1;
+  if (repairJobFilterTimer) clearTimeout(repairJobFilterTimer);
+  repairJobFilterTimer = setTimeout(() => {
+    if (!['repair', 'failure_analysis'].includes(activeWorkflow)) return;
+    showAiRepairCenter();
+    const input = document.getElementById('repair-job-search');
+    input?.focus();
+    input?.setSelectionRange(input.value.length, input.value.length);
+  }, 180);
+}
+
+function setRepairJobPage(page) {
+  repairJobFilters.page = Math.max(1, Number(page) || 1);
+  showAiRepairCenter();
 }
 
 function selectRepairJob(jobId) {
@@ -681,6 +723,9 @@ function showAiRepairCenter() {
   const area = document.getElementById('editor-area');
   if (!area) return;
   const failedJobs = aiRepairFailedJobs();
+  const totalPages = Math.max(1, Math.ceil(failedJobs.length / REPAIR_JOB_PAGE_SIZE));
+  repairJobFilters.page = Math.min(Math.max(1, repairJobFilters.page), totalPages);
+  const visibleFailedJobs = failedJobs.slice((repairJobFilters.page - 1) * REPAIR_JOB_PAGE_SIZE, repairJobFilters.page * REPAIR_JOB_PAGE_SIZE);
   const selectedJob = failedJobs.find(job => job.job_id === selectedRepairJobId) || failedJobs[0] || null;
   if (!selectedRepairJobId && selectedJob?.job_id) selectedRepairJobId = selectedJob.job_id;
   const normalized = aiFailureDraft ? aiFailureDraftNormalized() : normalizeFailureAnalysis('');
@@ -701,8 +746,9 @@ function showAiRepairCenter() {
       </div>
       <div class="review-grid ai-repair-grid">
         <div class="review-panel ai-repair-job-panel">
-          <h3>失败任务列表</h3>
-          ${failedJobs.length ? `<div class="yaml-task-nav-list ai-repair-job-list">${failedJobs.map(job => `
+          <h3>失败任务列表</h3><div class="management-filter-scope">${escapeHtml(jobHistoryScopeText())}</div>
+          <div class="management-filter-bar compact"><input id="repair-job-search" type="search" value="${escapeHtml(repairJobFilters.query)}" placeholder="搜索失败任务、模块或错误" oninput="setRepairJobSearch(this.value)"><span class="management-filter-count">${visibleFailedJobs.length}/${failedJobs.length} 条</span></div>
+          ${visibleFailedJobs.length ? `<div class="yaml-task-nav-list ai-repair-job-list">${visibleFailedJobs.map(job => `
             <div class="yaml-task-nav-item ${job.job_id === selectedRepairJobId ? 'active' : ''}" onclick="selectRepairJob(${jsArg(job.job_id || '')})">
               <div class="yaml-task-nav-name">${escapeHtml(job.file || job.target_task_name || job.task_name || job.job_id || '失败任务')}</div>
               <div class="yaml-task-nav-meta">${escapeHtml([job.module, job.target_task_name, jobStatusText(job.status || 'failed')].filter(Boolean).join(' · '))}</div>
@@ -711,7 +757,7 @@ function showAiRepairCenter() {
                 <button onclick="event.stopPropagation(); focusJob(${jsArg(job.job_id || '')})">去执行页</button>
               </div>
             </div>
-          `).join('')}</div>` : '<div class="job-empty">暂无失败任务。可以先执行 YAML，失败后这里会出现待分析项。</div>'}
+          `).join('')}</div>${failedJobs.length > REPAIR_JOB_PAGE_SIZE ? `<div class="management-pager"><span>第 ${repairJobFilters.page}/${totalPages} 页</span><div><button class="btn-sm" onclick="setRepairJobPage(${repairJobFilters.page - 1})" ${repairJobFilters.page <= 1 ? 'disabled' : ''}>上一页</button><button class="btn-sm" onclick="setRepairJobPage(${repairJobFilters.page + 1})" ${repairJobFilters.page >= totalPages ? 'disabled' : ''}>下一页</button></div></div>` : ''}` : '<div class="job-empty">暂无匹配的失败任务。</div>'}
         </div>
         ${aiRepairSummaryHtml(normalized)}
         ${repairYamlDraftHtml(normalized)}

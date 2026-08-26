@@ -34,6 +34,41 @@
 
 ## 最近完成的关键修复
 
+### 2026-08-26 原测试平台管理体验与缺陷草稿闭环
+
+本轮使用新浏览器逐项走查 Agent、用例、执行、报告和配置入口，在不修改 Runner、Sonic、Agent 编排和 YAML 协议的前提下，收敛长列表、隐式重操作和历史处理断点。完整证据与边界记录在 `docs/task-platform-ux-audit-2026-08-26.md`，设计和实施清单位于同日 `docs/superpowers/specs`、`docs/superpowers/plans`。
+
+- Agent 运行记录增加任务/应用/结果搜索、状态与模式筛选、每页 8 条分页；执行报告增加搜索、状态与失败归因筛选、每页 15 条分页；失败分析任务增加搜索和每页 12 条分页。失败/部分通过的 `DONE` 编排按真实执行结论归类，不会混入通过筛选。
+- 报告和失败分析按需加载最近 500 条 Runner 与 200 条生成任务，并显示当前搜索范围及是否截断；执行页轮询仍使用较小窗口，避免每 2.5 秒传输大历史。
+- Agent 工作台首屏不再拉取完整模型目录；默认只展示自动策略和 Gateway Provider，完整模型由“加载更多模型”显式获取。
+- 应用配置、群通知、执行环境和缺陷草稿改为独立管理状态页；进入执行环境不再自动触发 Sonic 全量扫描，快速/深度体检及旧步骤扫描均改为显式动作。
+- 侧栏展示运行记录、待确认、失败报告和待确认草稿数量，并恢复上次管理页和导航分组状态；没有增加与既有职责重复的新入口。
+- Agent 产品缺陷和失败分析草稿会持久化并关联来源执行、报告、失败任务和模型轨迹；支持搜索、状态筛选、复制、拒绝和二次确认发送。发送时按应用解析 Webhook，提交/拒绝只接受管理员 Bearer 会话，Runner Token 不能触发外部动作。
+- 草稿读改写和发送使用线程锁、进程文件锁和唯一临时文件，同一草稿并发提交只会发送一次；飞书常见成功码统一归一化。
+- 登录成功清理旧错误反馈；新建模块、任务和上传 YAML 遇到服务端失败时停止本地更新并显示错误，避免伪成功。
+- 移除 Google Fonts 外部依赖，静态资源版本统一更新；桌面和手机浏览器已覆盖历史搜索、报告筛选、草稿管理、配置切换和移动端操作区。
+- 当前草稿仍使用现有单机 JSON 持久化；多主机共享部署前需迁移数据库并增加全局幂等提交。历史接口的真正游标分页也需在统一存储协议后实施。
+
+验证：
+
+```bash
+.venv/bin/python -m pytest tests/test_feishu_draft_service.py -q
+# 9 passed
+
+python3 tests/backend_static_checks.py
+# 63 checks passed
+
+python3 tests/frontend_static_checks.py
+# 84 checks passed
+
+node tests/visual_smoke_check.js
+# desktop/mobile management workflow passed
+
+python3 -m py_compile task_server/services/agent_service.py task_server/services/yaml_service.py task_server/services/yaml_executable_scorer.py task_server/router.py task_server/services/feishu_service.py
+git diff --check
+# passed
+```
+
 ### 2026-08-25 API 测试平台多断点适配与长列表收敛
 
 本轮针对浏览器窄窗口、平板和手机端内容被压缩、操作区展示不全的问题做响应式收敛，不改变 API、数据库结构和执行语义。

@@ -22,6 +22,7 @@ const AppState = {
     modules: false,
     jobs: false,
     reports: false,
+    feishuDrafts: false,
     modelConfig: false,
     sonicCases: false,
     runners: false,
@@ -61,6 +62,7 @@ let mindmapReportPreview = null;
 let mindmapReportCasePlatformResults = [];
 let mindmapReportBusy = false;
 let latestJobs = [];
+let jobHistoryScope = {};
 let taskApps = [];
 let taskMeta = {};
 let knowledgeScreenshot = null;
@@ -95,6 +97,9 @@ let moduleDirectoryPage = 1;
 let lastAssetFilterKey = '';
 let agentCurrentRun = null;
 let agentRuns = [];
+const AGENT_HISTORY_PAGE_SIZE = 8;
+let agentHistoryFilters = { query: '', status: 'all', mode: 'all', page: 1 };
+let agentHistoryFilterTimer = null;
 let agentBusy = false;
 let agentActiveTab = 'plan';
 let agentSourceFiles = [];
@@ -102,8 +107,19 @@ let agentRefreshTimer = null;
 let aiFailureDraft = null;
 let selectedRepairJobId = '';
 let repairDrafts = [];
+const REPAIR_JOB_PAGE_SIZE = 12;
+let repairJobFilters = { query: '', page: 1 };
+let repairJobFilterTimer = null;
+let feishuDrafts = [];
+let feishuDraftFilters = { query: '', status: 'DRAFT' };
+let feishuDraftFilterTimer = null;
+const REPORT_PAGE_SIZE = 15;
+let reportFilters = { query: '', status: 'all', failureType: 'all', page: 1 };
+let reportFilterTimer = null;
 let aiProviders = [];
 let aiModelRouter = {};
+let agentTaskModelCatalog = [];
+let agentTaskModelCatalogLoaded = false;
 const layoutPrefs = JSON.parse(localStorage.getItem('midscene_layout_prefs') || '{}');
 
 const AGENT_RISK_KEYWORDS = ['确认打印', '开始打印', '支付', '删除', '覆盖基线', '格式化', '清空', '解绑', '重置'];

@@ -68,7 +68,13 @@ from task_server.services.case_service import (
     set_baseline_ref_page_ids,
     task_case_yaml,
 )
-from task_server.services.feishu_service import task_app_feishu_webhook
+from task_server.services.feishu_service import (
+    create_feishu_draft,
+    list_feishu_drafts,
+    reject_feishu_draft,
+    submit_feishu_draft,
+    task_app_feishu_webhook,
+)
 from task_server.services.job_service import (
     append_job_event,
     app_package_for_module,
@@ -499,6 +505,19 @@ def _require_user_auth(handler):
     if not handler._authorized():
         return _unauthorized(handler)
     return False
+
+
+def _require_admin_session(handler):
+    """Require an interactive administrator session for external side effects."""
+    if not verify_session_token(bearer_token(handler.headers)):
+        return _unauthorized(handler)
+    return False
+
+
+def _authenticated_user(handler):
+    """Return the verified session user without trusting request payloads."""
+    payload = verify_session_token(bearer_token(handler.headers))
+    return str((payload or {}).get("user") or "system")
 
 
 def _require_runner_auth(handler):
@@ -1038,6 +1057,17 @@ def _get_repair_drafts(handler, qs):
     if not include_all:
         drafts = [draft for draft in drafts if draft.get("status") in ("DRAFTED", "WAIT_CONFIRM")]
     handler._json({"ok": True, "drafts": drafts})
+
+
+@route_get("/api/feishu-drafts")
+def _get_feishu_drafts(handler, qs):
+    if _require_user_auth(handler):
+        return
+    try:
+        drafts = list_feishu_drafts(status=qs.get("status"), limit=safe_int(qs.get("limit"), 200))
+        handler._json({"ok": True, "drafts": drafts})
+    except Exception as e:
+        _json_error(handler, e, 400)
 
 
 # ── Sonic 用例列表 ──────────────────────────────────────────────────
@@ -1915,16 +1945,32 @@ def _get_jobs(handler, qs):
     if _require_user_auth(handler):
         return
     recover_timed_out_jobs()
+    history_limit = max(50, min(1000, safe_int(qs.get("history_limit") or qs.get("historyLimit"), 200)))
+    background_limit = max(20, min(500, safe_int(qs.get("background_limit") or qs.get("backgroundLimit"), 100)))
     with JOB_LOCK:
-        jobs = load_jobs()
+        jobs = load_jobs(limit=None)
     with RUNNER_LOCK:
         runners = load_runners()
     active_jobs = [job for job in jobs if job.get("status") in ("pending", "running")]
     active_ids = {job.get("job_id") for job in active_jobs}
-    recent_done = [job for job in jobs if job.get("job_id") not in active_ids][-100:]
+    completed_jobs = [job for job in jobs if job.get("job_id") not in active_ids]
+    recent_done = completed_jobs[:history_limit]
     result_jobs = [normalize_job_record(annotate_job_queue_state(job, runners)) for job in (active_jobs + recent_done)]
-    background_jobs = [normalize_job_record(job) for job in list_generate_jobs(80)]
-    handler._json({"ok": True, "jobs": result_jobs, "background_jobs": background_jobs})
+    background_candidates = list_generate_jobs(background_limit + 1)
+    background_jobs = [normalize_job_record(job) for job in background_candidates[:background_limit]]
+    handler._json({
+        "ok": True,
+        "jobs": result_jobs,
+        "background_jobs": background_jobs,
+        "history_scope": {
+            "runner_limit": history_limit,
+            "runner_returned": len(result_jobs),
+            "runner_truncated": len(completed_jobs) > history_limit,
+            "background_limit": background_limit,
+            "background_returned": len(background_jobs),
+            "background_truncated": len(background_candidates) > background_limit,
+        },
+    })
 
 
 # ── Runners 列表 ────────────────────────────────────────────────────
@@ -2620,6 +2666,46 @@ def _post_repair_drafts(handler, qs):
         handler._json({"ok": True, "draft": draft})
     except Exception as e:
         handler._json({"ok": False, "error": str(e)}, 400)
+
+
+@route_post("/api/feishu-drafts")
+def _post_feishu_drafts(handler, qs):
+    if _require_user_auth(handler):
+        return
+    try:
+        handler._json(create_feishu_draft(handler._body()))
+    except Exception as e:
+        _json_error(handler, e, 400)
+
+
+@route_post("/api/feishu-drafts/submit")
+def _post_feishu_drafts_submit(handler, qs):
+    if _require_admin_session(handler):
+        return
+    try:
+        data = handler._body()
+        result = submit_feishu_draft(
+            data.get("draftId") or data.get("draft_id"),
+            user=_authenticated_user(handler),
+        )
+        handler._json(result, 200 if result.get("ok") else 502)
+    except Exception as e:
+        _json_error(handler, e, 400)
+
+
+@route_post("/api/feishu-drafts/reject")
+def _post_feishu_drafts_reject(handler, qs):
+    if _require_admin_session(handler):
+        return
+    try:
+        data = handler._body()
+        handler._json(reject_feishu_draft(
+            data.get("draftId") or data.get("draft_id"),
+            user=_authenticated_user(handler),
+            reason=data.get("reason") or data.get("rejectReason") or "",
+        ))
+    except Exception as e:
+        _json_error(handler, e, 400)
 
 
 # ── 修复草稿拒绝 ────────────────────────────────────────────────────

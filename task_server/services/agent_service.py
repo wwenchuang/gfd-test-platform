@@ -16517,10 +16517,14 @@ def _tool_generate_bug_draft(run):
             for item in product_failures[:10]
         )
         draft = {
+            "draftId": f"agent-{run.get('runId', '')}",
             "type": "PRODUCT_BUG",
             "title": f"[{run.get('appName', '')}] {run.get('target', '')[:50]}",
             "description": f"失败分析：{product_summary[:1200]}",
             "status": "DRAFT",
+            "appName": run.get("appName", ""),
+            "appPackage": run.get("appPackage") or run.get("package") or "",
+            "sourceRunId": run.get("runId", ""),
             "failedJobs": [item.get("jobId") for item in product_failures if item.get("jobId")],
         }
         if _ai_gateway_available():
@@ -16545,7 +16549,10 @@ def _tool_generate_bug_draft(run):
         else:
             call["status"] = "SKIPPED"
             call["outputSummary"] = "AI Gateway 不可用，使用本地缺陷草稿"
-        run.setdefault("artifacts", {})["bugDraft"] = draft
+        from task_server.services.feishu_service import create_feishu_draft
+
+        persisted = create_feishu_draft(draft)
+        run.setdefault("artifacts", {})["bugDraft"] = persisted.get("draft") or draft
     except Exception as e:
         call["status"] = "FAILED"
         call["error"] = str(e)

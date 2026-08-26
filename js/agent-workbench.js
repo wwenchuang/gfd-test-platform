@@ -129,6 +129,66 @@ function normalizeAgentRouterProviderId(routerData) {
   return '';
 }
 
+function appendAgentTaskModelOptions(modelSel, models, gatewayProviders = []) {
+  const filtered = (Array.isArray(models) ? models : [])
+    .filter(model => !(gatewayProviders.length && model.group === 'AI Gateway'));
+  const groups = {};
+  for (const model of filtered) {
+    const key = model.group || 'Task 服务端';
+    if (!groups[key]) groups[key] = [];
+    groups[key].push(model);
+  }
+  for (const [groupName, items] of Object.entries(groups)) {
+    const optgroup = document.createElement('optgroup');
+    optgroup.label = groupName;
+    const seenInGroup = new Set();
+    for (const item of items) {
+      const id = String(item.id || '').trim();
+      if (!id || seenInGroup.has(id)) continue;
+      seenInGroup.add(id);
+      addAgentModelOption(optgroup, {
+        value: id,
+        label: item.name || id,
+        kind: 'task-model',
+        model: id,
+        providerId: item.providerId || ''
+      });
+    }
+    if (optgroup.children.length) modelSel.appendChild(optgroup);
+  }
+}
+
+async function loadFullAgentModelCatalog(preferredValue='') {
+  const modelSel = document.getElementById('agent-model');
+  if (!modelSel) return;
+  const button = document.getElementById('agent-load-model-catalog');
+  if (button) {
+    button.disabled = true;
+    button.textContent = '加载中...';
+  }
+  try {
+    if (!agentTaskModelCatalogLoaded) {
+      const data = await apiRequest('/models');
+      agentTaskModelCatalog = Array.isArray(data?.models) ? data.models : [];
+      agentTaskModelCatalogLoaded = true;
+    }
+    const providers = Array.isArray(AppState.modelProviders) ? AppState.modelProviders : [];
+    appendAgentTaskModelOptions(modelSel, agentTaskModelCatalog, providers);
+    const wanted = preferredValue || modelSel.value;
+    if (wanted && Array.from(modelSel.options).some(option => option.value === wanted && !option.disabled)) {
+      modelSel.value = wanted;
+    }
+    if (button) button.hidden = true;
+    showToast(`已加载 ${agentTaskModelCatalog.length} 个可选模型`, 'success');
+  } catch (e) {
+    if (button) {
+      button.disabled = false;
+      button.textContent = '加载更多模型';
+    }
+    showToast(`模型目录加载失败：${e.message || e}`, 'error');
+  }
+}
+
 async function loadAgentModelOptions(preferredValue='') {
   const modelSel = document.getElementById('agent-model');
   if (!modelSel) return;
@@ -192,42 +252,11 @@ async function loadAgentModelOptions(preferredValue='') {
     modelSel.appendChild(group);
   }
 
-  try {
-    const mData = await apiRequest('/models');
-    const models = (Array.isArray(mData?.models) ? mData.models : [])
-      .filter(model => !(gatewayProviders.length && model.group === 'AI Gateway'));
-    if (!gatewayProviders.length) {
-      const defaultModel = models.find(m => m.default);
-      if (defaultModel) {
-        autoOpt.textContent = `自动（${defaultModel.name || defaultModel.id}）`;
-        autoOpt.dataset.model = defaultModel.id || '';
-      }
-    }
-    const groups = {};
-    for (const model of models) {
-      const key = model.group || 'Task 服务端';
-      if (!groups[key]) groups[key] = [];
-      groups[key].push(model);
-    }
-    for (const [groupName, items] of Object.entries(groups)) {
-      const optgroup = document.createElement('optgroup');
-      optgroup.label = groupName;
-      const seenInGroup = new Set();
-      for (const item of items) {
-        const id = String(item.id || '').trim();
-        if (!id || seenInGroup.has(id)) continue;
-        seenInGroup.add(id);
-        addAgentModelOption(optgroup, {
-          value: id,
-          label: item.name || id,
-          kind: 'task-model',
-          model: id,
-          providerId: item.providerId || ''
-        });
-      }
-      if (optgroup.children.length) modelSel.appendChild(optgroup);
-    }
-  } catch (e) {}
+  if (agentTaskModelCatalogLoaded) {
+    appendAgentTaskModelOptions(modelSel, agentTaskModelCatalog, gatewayProviders);
+  } else if (previous && !previous.startsWith('provider:')) {
+    await loadFullAgentModelCatalog(previous);
+  }
 
   if (previous && Array.from(modelSel.options).some(option => option.value === previous && !option.disabled)) {
     modelSel.value = previous;
@@ -629,9 +658,13 @@ async function showAgentWorkbench() {
               </div>
               <div class="agent-field agent-wide-field">
                 <label for="agent-model">AI 模型</label>
-                <select id="agent-model">
-                  <option value="">自动（服务端默认）</option>
-                </select>
+                <div class="agent-model-picker-row">
+                  <select id="agent-model">
+                    <option value="">自动（服务端默认）</option>
+                  </select>
+                  <button class="btn-sm" id="agent-load-model-catalog" type="button" onclick="loadFullAgentModelCatalog()" ${agentTaskModelCatalogLoaded ? 'hidden' : ''}>加载更多模型</button>
+                </div>
+                <div class="form-hint">默认使用平台模型策略；仅需指定具体模型时再加载完整目录。</div>
               </div>
               <div class="agent-field agent-wide-field">
                 <label for="agent-runner-device">执行机器 / 设备</label>

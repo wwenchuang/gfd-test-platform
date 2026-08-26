@@ -170,7 +170,11 @@ function renderWorkflowNav() {
   document.querySelectorAll('.workflow-step').forEach(btn => {
     btn.classList.toggle('active', btn.dataset.workflow === activeWorkflow);
   });
+  const activeButton = document.querySelector(`.workflow-step[data-workflow="${activeWorkflow}"]`);
+  const activeGroup = activeButton?.closest('.nav-group');
+  if (activeGroup) activeGroup.open = true;
   updateWorkflowActionGroups();
+  if (typeof updateNavigationBadges === 'function') updateNavigationBadges();
 }
 
 function updateWorkflowActionGroups() {

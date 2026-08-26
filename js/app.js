@@ -1465,14 +1465,20 @@ async function loadJobs(manual=false, forceJobList=false) {
     return;
   }
   try {
+    const managementHistory = ['reports', 'failure_analysis'].includes(activeWorkflow);
+    const jobsEndpoint = managementHistory
+      ? '/jobs?history_limit=500&background_limit=200'
+      : '/jobs?history_limit=100&background_limit=80';
     const [data] = await Promise.all([
-      apiRequest('/jobs'),
+      apiRequest(jobsEndpoint),
       loadRepairDrafts({silent: true})
     ]);
     const runnerJobs = (data.jobs || []).map(job => ({...job, kind: 'runner'}));
     const backgroundJobs = (data.background_jobs || []).map(job => ({...job, kind: 'background'}));
     const previousJobs = latestJobs;
     latestJobs = [...runnerJobs, ...backgroundJobs];
+    jobHistoryScope = data.history_scope || {};
+    if (typeof updateNavigationBadges === 'function') updateNavigationBadges();
     if (typeof handleApkInstallJobsUpdated === 'function') {
       handleApkInstallJobsUpdated(previousJobs, latestJobs);
     }
@@ -1485,6 +1491,16 @@ async function loadJobs(manual=false, forceJobList=false) {
     if (count) count.textContent = e.message || '任务读取失败';
     if (manual) showToast(e.message || '任务读取失败', 'error');
   }
+}
+
+function jobHistoryScopeText() {
+  const runnerCount = Number(jobHistoryScope.runner_returned || 0);
+  const backgroundCount = Number(jobHistoryScope.background_returned || 0);
+  const total = runnerCount + backgroundCount || latestJobs.length;
+  const truncated = Boolean(jobHistoryScope.runner_truncated || jobHistoryScope.background_truncated);
+  return truncated
+    ? `搜索范围：最近 ${total} 条记录（更早记录未加载）`
+    : `搜索范围：已加载 ${total} 条记录`;
 }
 
 // round 4: 仅在执行/报告/失败重跑等需要 jobs 数据的页面调用

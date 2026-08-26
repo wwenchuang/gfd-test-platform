@@ -449,7 +449,10 @@ async function addModule() {
   if (!name) return;
   try {
     await apiRequest('/module', { method:'POST', body: JSON.stringify({name}) });
-  } catch(e) {}
+  } catch(e) {
+    showToast(`模块创建失败：${e.message || e}`, 'error');
+    return;
+  }
   modules[name] = modules[name] || [];
   renderModules();
   closeModal('modal-module');
@@ -470,7 +473,10 @@ async function addTask() {
       method: 'POST',
       body: JSON.stringify({ module: mod, file: filename, content: defaultContent })
     });
-  } catch(e) {}
+  } catch(e) {
+    showToast(`任务创建失败：${e.message || e}`, 'error');
+    return;
+  }
   if (!modules[mod]) modules[mod] = [];
   if (!modules[mod].includes(filename)) modules[mod].push(filename);
   renderModules();
@@ -499,7 +505,10 @@ async function uploadFile() {
       method: 'POST',
       body: JSON.stringify({ module: mod, file: uploadFileName, content: uploadFileContent })
     });
-  } catch(e) {}
+  } catch(e) {
+    showToast(`文件上传失败：${e.message || e}`, 'error');
+    return;
+  }
   if (!modules[mod]) modules[mod] = [];
   if (!modules[mod].includes(uploadFileName)) modules[mod].push(uploadFileName);
   renderModules();

@@ -451,6 +451,7 @@ function agentRunsByCreatedDesc(runs, limit = 0) {
 function setAgentRuns(runs, limit = 0) {
   agentRuns = agentRunsByCreatedDesc(runs, limit);
   AppState.agentRuns = agentRuns;
+  if (typeof updateNavigationBadges === 'function') updateNavigationBadges();
   return agentRuns;
 }
 
@@ -1038,11 +1039,6 @@ async function loadAgentRunsHistory() {
     await loadAgentRuns({ limit: 50, force: true, render: false, timeoutMs: 15000 });
     if (requestSeq !== agentHistoryRequestSeq || activeWorkflow !== 'agent_history') return;
     AppState.loaded.agentRuns = true;
-    if (agentRuns.length) {
-      showToast(`已加载 ${agentRuns.length} 条Agent 运行记录`, 'success');
-    } else {
-      showToast('暂无 Agent 运行记录', 'info');
-    }
     renderAgentHistoryPage();
   } catch (e) {
     if (requestSeq !== agentHistoryRequestSeq || activeWorkflow !== 'agent_history') return;
@@ -1118,19 +1114,82 @@ function agentRunErrorHtml(message = '读取Agent历史失败，请确认后端�
   </div>`;
 }
 
+function agentHistoryStatusKey(run) {
+  const status = String(run?.status || '').toUpperCase();
+  const result = agentRunResultMeta(run || {});
+  if (/^WAIT_CONFIRM/.test(status)) return 'confirm';
+  if (!agentRunIsTerminal(run || {})) return 'running';
+  if (result.outcome === 'failed') return 'failed';
+  if (result.outcome === 'partial') return 'partial';
+  if (result.outcome === 'passed' || ['DONE', 'SUCCESS', 'COMPLETED'].includes(status)) return 'success';
+  return 'failed';
+}
+
+function filterAgentRuns(rows = agentRuns) {
+  const query = String(agentHistoryFilters.query || '').trim().toLowerCase();
+  return (Array.isArray(rows) ? rows : []).filter(run => {
+    const mode = String(run.mode || run.options?.mode || '').toUpperCase();
+    if (agentHistoryFilters.status !== 'all' && agentHistoryStatusKey(run) !== agentHistoryFilters.status) return false;
+    if (agentHistoryFilters.mode !== 'all' && mode !== agentHistoryFilters.mode) return false;
+    if (!query) return true;
+    const text = [run.runId, run.target, run.goal, run.appName, run.appPackage, mode, agentRunCardMessage(run, {}, agentRunResultMeta(run))]
+      .filter(Boolean).join(' ').toLowerCase();
+    return text.includes(query);
+  });
+}
+
+function setAgentHistoryFilter(key, value) {
+  if (!['query', 'status', 'mode'].includes(key)) return;
+  agentHistoryFilters[key] = String(value || '');
+  agentHistoryFilters.page = 1;
+  if (key !== 'query') {
+    renderAgentHistoryPage();
+    return;
+  }
+  if (agentHistoryFilterTimer) clearTimeout(agentHistoryFilterTimer);
+  agentHistoryFilterTimer = setTimeout(() => {
+    if (activeWorkflow !== 'agent_history') return;
+    renderAgentHistoryPage();
+    const input = document.getElementById('agent-history-search');
+    input?.focus();
+    input?.setSelectionRange(input.value.length, input.value.length);
+  }, 180);
+}
+
+function setAgentHistoryPage(page) {
+  agentHistoryFilters.page = Math.max(1, Number(page) || 1);
+  renderAgentHistoryPage();
+}
+
+function agentHistoryPager(total, page, pages) {
+  if (total <= AGENT_HISTORY_PAGE_SIZE) return '';
+  return `<div class="management-pager agent-history-pager">
+    <span>共 ${total} 条 · 第 ${page}/${pages} 页</span>
+    <div>
+      <button class="btn-sm" onclick="setAgentHistoryPage(${page - 1})" ${page <= 1 ? 'disabled' : ''}>上一页</button>
+      <button class="btn-sm" onclick="setAgentHistoryPage(${page + 1})" ${page >= pages ? 'disabled' : ''}>下一页</button>
+    </div>
+  </div>`;
+}
+
 function renderAgentHistoryPage(options = {}) {
   const area = document.getElementById('editor-area');
   if (!area) return;
   const loading = Boolean(options.loading);
   const error = String(options.error || '').trim();
-  const historyHtml = agentRuns.length
-    ? agentRuns.map(run => agentRunCardHtml(run)).join('')
+  const filteredRuns = filterAgentRuns();
+  const totalPages = Math.max(1, Math.ceil(filteredRuns.length / AGENT_HISTORY_PAGE_SIZE));
+  agentHistoryFilters.page = Math.min(Math.max(1, agentHistoryFilters.page), totalPages);
+  const start = (agentHistoryFilters.page - 1) * AGENT_HISTORY_PAGE_SIZE;
+  const visibleRuns = filteredRuns.slice(start, start + AGENT_HISTORY_PAGE_SIZE);
+  const historyHtml = visibleRuns.length
+    ? visibleRuns.map(run => agentRunCardHtml(run)).join('')
     : (error ? agentRunErrorHtml(error) : (loading ? agentRunLoadingHtml() : renderEmptyState('agent_history')));
   activeWorkspaceMode = 'agent-history';
   resetYamlToolbarForManager();
   document.getElementById('toolbar-path').innerHTML = '<span>⌂</span> Agent 运行记录';
   document.getElementById('toolbar-help').textContent = '查看Agent历史运行、状态、进度和最后一步摘要。';
-  document.getElementById('file-info').textContent = error ? 'Agent 运行记录刷新失败' : (loading ? 'Agent 运行记录刷新中' : `Agent 运行记录 ${agentRuns.length} 条`);
+  document.getElementById('file-info').textContent = error ? 'Agent 运行记录刷新失败' : (loading ? 'Agent 运行记录刷新中' : `Agent 运行记录 ${filteredRuns.length}/${agentRuns.length} 条`);
   area.className = 'editor-area';
   area.innerHTML = `
     <div class="workflow-guide">
@@ -1143,9 +1202,28 @@ function renderAgentHistoryPage(options = {}) {
           <button class="btn-sm" onclick="activateWorkflow('dashboard')">回Agent 工作台</button>
         </div>
       </div>
+      <div class="management-filter-bar">
+        <input id="agent-history-search" type="search" value="${escapeHtml(agentHistoryFilters.query)}" placeholder="搜索任务、应用或结果" oninput="setAgentHistoryFilter('query', this.value)">
+        <select onchange="setAgentHistoryFilter('status', this.value)">
+          <option value="all" ${agentHistoryFilters.status === 'all' ? 'selected' : ''}>全部状态</option>
+          <option value="success" ${agentHistoryFilters.status === 'success' ? 'selected' : ''}>通过</option>
+          <option value="partial" ${agentHistoryFilters.status === 'partial' ? 'selected' : ''}>部分通过</option>
+          <option value="failed" ${agentHistoryFilters.status === 'failed' ? 'selected' : ''}>失败</option>
+          <option value="running" ${agentHistoryFilters.status === 'running' ? 'selected' : ''}>运行中</option>
+          <option value="confirm" ${agentHistoryFilters.status === 'confirm' ? 'selected' : ''}>待确认</option>
+        </select>
+        <select onchange="setAgentHistoryFilter('mode', this.value)">
+          <option value="all" ${agentHistoryFilters.mode === 'all' ? 'selected' : ''}>全部模式</option>
+          <option value="AUTO_SAFE" ${agentHistoryFilters.mode === 'AUTO_SAFE' ? 'selected' : ''}>安全自动</option>
+          <option value="FULL_AUTO" ${agentHistoryFilters.mode === 'FULL_AUTO' ? 'selected' : ''}>全自动</option>
+          <option value="ANALYZE_ONLY" ${agentHistoryFilters.mode === 'ANALYZE_ONLY' ? 'selected' : ''}>只分析</option>
+        </select>
+        <span class="management-filter-count">显示 ${visibleRuns.length}/${filteredRuns.length} 条</span>
+      </div>
       <div class="workflow-grid history-grid">
         ${historyHtml}
       </div>
+      ${agentHistoryPager(filteredRuns.length, agentHistoryFilters.page, totalPages)}
     </div>
   `;
 }
@@ -2052,7 +2130,10 @@ async function loadPreflightDashboard(live=false) {
 }
 
 function setActiveWorkflow(sectionKey, options = {}) {
+  clearManagementSearchTimers();
   activeWorkflow = WORKFLOW_SECTIONS[sectionKey] ? sectionKey : 'dashboard';
+  sessionStorage.setItem('midscene_active_workflow', activeWorkflow);
+  resetWorkflowScrollPosition();
   updateWorkbenchPanelMode();
   renderWorkflowNav();
   const section = WORKFLOW_SECTIONS[activeWorkflow];
@@ -2060,6 +2141,69 @@ function setActiveWorkflow(sectionKey, options = {}) {
   if (help) help.textContent = section.help;
   updateContextToolbar();
   if (options.renderGuide && !hasOpenEditor()) showWorkflowGuide(activeWorkflow);
+}
+
+function clearManagementSearchTimers() {
+  if (agentHistoryFilterTimer) clearTimeout(agentHistoryFilterTimer);
+  if (reportFilterTimer) clearTimeout(reportFilterTimer);
+  if (repairJobFilterTimer) clearTimeout(repairJobFilterTimer);
+  if (feishuDraftFilterTimer) clearTimeout(feishuDraftFilterTimer);
+  agentHistoryFilterTimer = null;
+  reportFilterTimer = null;
+  repairJobFilterTimer = null;
+  feishuDraftFilterTimer = null;
+}
+
+function resetWorkflowScrollPosition() {
+  const reset = () => {
+    window.scrollTo(0, 0);
+    const area = document.getElementById('editor-area');
+    if (area) area.scrollTop = 0;
+    area?.querySelectorAll('.review-page, .workflow-guide, .agent-workbench, .module-directory').forEach(node => {
+      node.scrollTop = 0;
+    });
+  };
+  reset();
+  requestAnimationFrame(reset);
+}
+
+function restoreWorkflowPreference() {
+  const saved = sessionStorage.getItem('midscene_active_workflow') || '';
+  activeWorkflow = WORKFLOW_SECTIONS[saved] ? saved : 'dashboard';
+  return activeWorkflow;
+}
+
+function initNavigationGroupPreferences() {
+  document.querySelectorAll('.nav-group[data-nav-group]').forEach(group => {
+    if (group.dataset.preferenceReady === '1') return;
+    const key = `midscene_nav_group_${group.dataset.navGroup}`;
+    const stored = localStorage.getItem(key);
+    if (stored !== null) group.open = stored === 'open';
+    group.addEventListener('toggle', () => localStorage.setItem(key, group.open ? 'open' : 'closed'));
+    group.dataset.preferenceReady = '1';
+  });
+}
+
+function setWorkflowBadge(id, value) {
+  const badge = document.getElementById(id);
+  if (!badge) return;
+  const count = Math.max(0, Number(value) || 0);
+  badge.textContent = count > 99 ? '99+' : String(count);
+  badge.hidden = count === 0;
+}
+
+function updateNavigationBadges() {
+  const runs = Array.isArray(agentRuns) ? agentRuns : [];
+  const pendingConfirmations = runs.filter(run => {
+    const confirmations = run.pendingConfirmations || run.confirmations || [];
+    return confirmations.length || /^WAIT_CONFIRM/.test(String(run.status || ''));
+  }).length;
+  const failedJobs = (Array.isArray(latestJobs) ? latestJobs : []).filter(job => ['failed', 'timeout', 'error'].includes(String(job.status || '').toLowerCase())).length;
+  const pendingDrafts = (Array.isArray(feishuDrafts) ? feishuDrafts : []).filter(draft => String(draft.status || '').toUpperCase() === 'DRAFT').length;
+  setWorkflowBadge('workflow-badge-history', runs.length);
+  setWorkflowBadge('workflow-badge-confirm', pendingConfirmations);
+  setWorkflowBadge('workflow-badge-reports', failedJobs);
+  setWorkflowBadge('workflow-badge-drafts', pendingDrafts);
 }
 
 function renderActiveWorkflowPage(options = {}) {
@@ -2075,6 +2219,13 @@ function renderActiveWorkflowPage(options = {}) {
     renderAgentConfirmPage({ refresh: false, ...(options || {}) });
     return true;
   }
+  if (activeWorkflow === 'reports' && typeof showReportsCenter === 'function') return showReportsCenter() || true;
+  if (activeWorkflow === 'failure_analysis' && typeof showAiRepairCenter === 'function') return showAiRepairCenter() || true;
+  if (activeWorkflow === 'bug_drafts') return showBugDraftCenter({ refresh: false }) || true;
+  if (activeWorkflow === 'app_config') return showAppConfigCenter() || true;
+  if (activeWorkflow === 'feishu_config') return showFeishuConfigCenter() || true;
+  if (activeWorkflow === 'sonic_config') return showSonicConfigCenter() || true;
+  if (activeWorkflow === 'system_config') return showPreflightDashboard() || true;
   showWorkflowGuide(activeWorkflow);
   return false;
 }
@@ -2099,7 +2250,7 @@ const CONTEXT_TOOLBAR_MAP = {
   // Agent模块
   dashboard:        { module: 'agent',    icon: '⌂', title: 'Agent 控制', refreshLabel: '刷新状态', refreshFn: 'loadJobs(true)' },
   agent_history:    { module: 'agent',    icon: '⌂', title: 'Agent 控制', refreshLabel: '刷新状态', refreshFn: 'loadAgentRunsHistory()' },
-  agent_confirm:    { module: 'agent',    icon: '⌂', title: 'Agent 控制', refreshLabel: '刷新状态', refreshFn: 'renderAgentCenter()' },
+  agent_confirm:    { module: 'agent',    icon: '⌂', title: 'Agent 控制', refreshLabel: '刷新状态', refreshFn: 'renderAgentConfirmPage()' },
   // 用例 模块
   assets:           { module: 'cases',    icon: '📁', title: '用例操作', refreshLabel: '刷新用例', refreshFn: 'loadModules()' },
   generate:         { module: 'cases',    icon: '✦', title: '用例操作', refreshLabel: '刷新用例', refreshFn: 'loadModules()', showAddYaml: true },
@@ -2109,14 +2260,14 @@ const CONTEXT_TOOLBAR_MAP = {
   baseline:         { module: 'run',      icon: '⇄', title: '执行操作', refreshLabel: '刷新任务', refreshFn: 'loadJobs(true)' },
   repair:           { module: 'run',      icon: '🔁', title: '执行操作', refreshLabel: '刷新任务', refreshFn: 'loadJobs(true)' },
   // 报告 模块
-  reports:          { module: 'report',   icon: '📊', title: '报告', refreshLabel: '刷新报告', refreshFn: 'loadJobs(true)' },
-  failure_analysis: { module: 'report',   icon: '🔍', title: '报告', refreshLabel: '刷新报告', refreshFn: 'loadJobs(true)' },
-  bug_drafts:       { module: 'report',   icon: '📝', title: '报告', refreshLabel: '刷新报告', refreshFn: 'loadJobs(true)' },
+  reports:          { module: 'report',   icon: '📊', title: '报告', refreshLabel: '刷新报告', refreshFn: 'loadJobs(true).then(()=>showReportsCenter())' },
+  failure_analysis: { module: 'report',   icon: '🔍', title: '报告', refreshLabel: '刷新任务', refreshFn: 'loadJobs(true).then(()=>showAiRepairCenter())' },
+  bug_drafts:       { module: 'report',   icon: '📝', title: '报告', refreshLabel: '刷新草稿', refreshFn: 'showBugDraftCenter({refresh:true})' },
   // 配置 模块
   config:           { module: 'settings', icon: '⚙', title: '配置', refreshLabel: '刷新配置', refreshFn: 'showModelConfigCenter()' },
-  app_config:       { module: 'settings', icon: '⚙', title: '配置', refreshLabel: '刷新配置', refreshFn: 'showTaskApps()' },
-  sonic_config:     { module: 'settings', icon: '⚙', title: '配置', refreshLabel: '刷新维护项', refreshFn: 'scanLegacySonicCases("all")' },
-  feishu_config:    { module: 'settings', icon: '⚙', title: '配置', refreshLabel: '刷新配置', refreshFn: 'showTaskApps()' },
+  app_config:       { module: 'settings', icon: '⚙', title: '配置', refreshLabel: '刷新配置', refreshFn: 'showAppConfigCenter()' },
+  sonic_config:     { module: 'settings', icon: '⚙', title: '配置', refreshLabel: '刷新状态', refreshFn: 'showSonicConfigCenter()' },
+  feishu_config:    { module: 'settings', icon: '⚙', title: '配置', refreshLabel: '刷新配置', refreshFn: 'showFeishuConfigCenter()' },
   system_config:    { module: 'settings', icon: '⚙', title: '配置', refreshLabel: '刷新配置', refreshFn: 'showPreflightDashboard()' }
 };
 
@@ -2176,19 +2327,17 @@ async function activateWorkflow(sectionKey) {
     return;
   }
   if (activeWorkflow === 'app_config') {
-    showWorkflowGuide('app_config');
-    showTaskApps();
+    showAppConfigCenter();
     toggleLibrary(false);
     return;
   }
   if (activeWorkflow === 'sonic_config') {
-    showWorkflowGuide('sonic_config');
-    scanLegacySonicCases('all');
+    showSonicConfigCenter();
     toggleLibrary(false);
     return;
   }
   if (activeWorkflow === 'feishu_config') {
-    showWorkflowGuide('feishu_config');
+    showFeishuConfigCenter();
     toggleLibrary(false);
     return;
   }
@@ -2226,7 +2375,7 @@ async function activateWorkflow(sectionKey) {
     return;
   }
   if (activeWorkflow === 'bug_drafts') {
-    showWorkflowGuide('bug_drafts');
+    await showBugDraftCenter({ refresh: true });
     toggleLibrary(false);
     return;
   }
@@ -2260,13 +2409,16 @@ async function activateWorkflow(sectionKey) {
 // round 4: 集中处理“进入页面才拉数据 + 离开页面停轮询”
 function applyLazyLoadForSection(sectionKey) {
   const NEEDS_MODULES = new Set([
-    'assets', 'generate', 'execute', 'baseline', 'repair', 'yaml_edit', 'app_config'
+    'assets', 'generate', 'execute', 'baseline', 'repair', 'yaml_edit', 'app_config', 'feishu_config', 'sonic_config'
   ]);
   const NEEDS_JOBS_POLLING = new Set([
     'execute', 'baseline', 'repair'
   ]);
+  const NEEDS_JOBS = new Set([
+    'reports', 'failure_analysis', 'execute', 'baseline', 'repair'
+  ]);
   const NEEDS_RUNNERS = new Set([
-    'execute', 'generate', 'baseline', 'repair'
+    'execute', 'generate', 'baseline', 'repair', 'sonic_config'
   ]);
 
   if (NEEDS_MODULES.has(sectionKey) && typeof ensureModulesLoaded === 'function') {
@@ -2277,6 +2429,9 @@ function applyLazyLoadForSection(sectionKey) {
       if (sectionKey === 'assets' && activeWorkflow === 'assets' && !hasOpenEditor() && typeof showAssetsCenter === 'function') {
         showAssetsCenter();
       }
+      if (activeWorkflow === 'app_config') showAppConfigCenter();
+      if (activeWorkflow === 'feishu_config') showFeishuConfigCenter();
+      if (activeWorkflow === 'sonic_config') showSonicConfigCenter();
     }).catch(() => {});
   }
 
@@ -2285,6 +2440,14 @@ function applyLazyLoadForSection(sectionKey) {
       if (sectionKey === 'execute' && activeWorkflow === 'execute' && !hasOpenEditor() && typeof showExecutionCenter === 'function') {
         showExecutionCenter();
       }
+      if (sectionKey === 'sonic_config' && activeWorkflow === 'sonic_config') showSonicConfigCenter();
+    }).catch(() => {});
+  }
+
+  if (NEEDS_JOBS.has(sectionKey) && typeof ensureJobsLoaded === 'function') {
+    ensureJobsLoaded().then(() => {
+      if (sectionKey === 'reports' && activeWorkflow === 'reports' && typeof showReportsCenter === 'function') showReportsCenter();
+      if (sectionKey === 'failure_analysis' && activeWorkflow === 'failure_analysis' && typeof showAiRepairCenter === 'function') showAiRepairCenter();
     }).catch(() => {});
   }
 
@@ -3468,6 +3631,169 @@ function clearSelectedFiles() {
 
 function moduleOptionsHtml(selected='') {
   return Object.keys(modules).sort().map(mod => `<option value="${escapeHtml(mod)}" ${mod === selected ? 'selected' : ''}>${escapeHtml(mod)}</option>`).join('');
+}
+
+function setManagementToolbar(title, help, icon = '⚙') {
+  resetYamlToolbarForManager();
+  const path = document.getElementById('toolbar-path');
+  if (path) path.innerHTML = `<span>${escapeHtml(icon)}</span> ${escapeHtml(title)}`;
+  const helpNode = document.getElementById('toolbar-help');
+  if (helpNode) helpNode.textContent = help;
+  const info = document.getElementById('file-info');
+  if (info) info.textContent = title;
+  if (typeof updateToolbarState === 'function') updateToolbarState(title);
+}
+
+function openTaskAppEditor(packageName = '') {
+  showTaskApps();
+  if (packageName) editTaskApp(packageName);
+}
+
+function showAppConfigCenter() {
+  const area = document.getElementById('editor-area');
+  if (!area) return;
+  activeWorkspaceMode = 'app-config';
+  setManagementToolbar('应用配置', '应用配置统一维护包名、模块归属、Sonic 项目和群通知目标。', '📱');
+  const assignedModules = new Set(taskApps.flatMap(app => app.modules || []));
+  const totalModules = Object.keys(modules || {}).length;
+  area.className = 'editor-area';
+  area.innerHTML = `<div class="review-page config-management-page">
+    <div class="review-head">
+      <div><div class="workflow-kicker">APPLICATIONS · 应用与测试资源归属</div><h2>应用配置</h2><p>先维护应用，再把用例模块、Sonic 项目和通知机器人归到对应应用。</p></div>
+      <div class="review-actions"><button class="btn-sm primary" onclick="openTaskAppEditor()">新增应用</button></div>
+    </div>
+    <div class="review-stats">
+      <div class="review-stat"><strong>${taskApps.length}</strong><span>应用</span></div>
+      <div class="review-stat"><strong>${assignedModules.size}/${totalModules}</strong><span>已归属模块</span></div>
+      <div class="review-stat"><strong>${taskApps.filter(app => app.sonic_project_id || app.sonic_project_name).length}</strong><span>已绑定 Sonic</span></div>
+      <div class="review-stat"><strong>${taskApps.filter(app => taskAppFeishuLabel(app) !== '飞书：未配置').length}</strong><span>可发送通知</span></div>
+    </div>
+    <div class="management-list">
+      ${taskApps.length ? taskApps.map(app => `<div class="management-row">
+        <div class="management-row-main"><strong>${escapeHtml(app.name || app.package)}</strong><span>${escapeHtml(app.package || '-')}</span><small>${escapeHtml((app.modules || []).join('、') || '尚未绑定用例模块')}</small></div>
+        <div class="management-row-meta"><span>${escapeHtml(app.sonic_project_name || app.sonic_project_id || 'Sonic 未绑定')}</span><span>${escapeHtml(taskAppFeishuLabel(app))}</span></div>
+        <button class="btn-sm" onclick="openTaskAppEditor(${jsArg(app.package || '')})">编辑</button>
+      </div>`).join('') : '<div class="job-empty">暂无应用配置。先新增应用，再关联用例模块。</div>'}
+    </div>
+  </div>`;
+}
+
+function showFeishuConfigCenter() {
+  const area = document.getElementById('editor-area');
+  if (!area) return;
+  activeWorkspaceMode = 'feishu-config';
+  setManagementToolbar('群通知', '按应用检查通知目标，缺陷草稿只有人工确认后才会发送。', '💬');
+  const configured = taskApps.filter(app => taskAppFeishuLabel(app) !== '飞书：未配置');
+  area.className = 'editor-area';
+  area.innerHTML = `<div class="review-page config-management-page">
+    <div class="review-head"><div><div class="workflow-kicker">FEISHU · 应用级通知配置</div><h2>群通知</h2><p>每个应用独立选择通知群，避免不同产品的执行结果和缺陷发送到错误群聊。</p></div><div class="review-actions"><button class="btn-sm primary" onclick="openTaskAppEditor()">维护通知配置</button><button class="btn-sm" onclick="activateWorkflow('bug_drafts')">查看缺陷草稿</button></div></div>
+    <div class="review-stats"><div class="review-stat"><strong>${configured.length}/${taskApps.length}</strong><span>通知可用应用</span></div><div class="review-stat"><strong>${feishuDrafts.filter(d => String(d.status || '').toUpperCase() === 'DRAFT').length}</strong><span>待确认草稿</span></div></div>
+    <div class="management-list">
+      ${taskApps.length ? taskApps.map(app => {
+        const ready = taskAppFeishuLabel(app) !== '飞书：未配置';
+        return `<div class="management-row"><div class="management-row-main"><strong>${escapeHtml(app.name || app.package)}</strong><span>${escapeHtml(app.package || '-')}</span><small>${ready ? '执行报告和缺陷草稿可按此应用路由' : '请先配置机器人 Webhook 或默认群'}</small></div><span class="status-pill ${ready ? 'success' : 'warn'}">${escapeHtml(taskAppFeishuLabel(app).replace('飞书：', ''))}</span><button class="btn-sm" onclick="openTaskAppEditor(${jsArg(app.package || '')})">配置</button></div>`;
+      }).join('') : '<div class="job-empty">暂无应用。新增应用后才能配置对应通知群。</div>'}
+    </div>
+  </div>`;
+}
+
+function showSonicConfigCenter() {
+  const area = document.getElementById('editor-area');
+  if (!area) return;
+  activeWorkspaceMode = 'sonic-config';
+  setManagementToolbar('执行环境', '查看 Runner、设备和 Sonic 绑定；深度扫描只在手工点击时执行。', '🔗');
+  const onlineDevices = Array.isArray(runnerDevices) ? runnerDevices.filter(device => device.online !== false) : [];
+  const sonicBound = taskApps.filter(app => app.sonic_project_id || app.sonic_project_name || app.sonic_suite_id || app.sonic_suite_name);
+  area.className = 'editor-area';
+  area.innerHTML = `<div class="review-page config-management-page">
+    <div class="review-head"><div><div class="workflow-kicker">EXECUTION · Runner / Device / Sonic</div><h2>执行环境</h2><p>先确认设备在线和应用绑定，再执行用例。进入本页不会自动扫描或修改 Sonic 数据。</p></div><div class="review-actions"><button class="btn-sm" onclick="showPreflightDashboard()">快速体检</button><button class="btn-sm" onclick="showPreflightDashboard(true)">深度体检</button><button class="btn-sm primary" onclick="scanLegacySonicCases('all')">扫描旧/重复步骤</button></div></div>
+    <div class="review-stats"><div class="review-stat"><strong>${onlineDevices.length}</strong><span>在线设备</span></div><div class="review-stat"><strong>${sonicBound.length}/${taskApps.length}</strong><span>已绑定 Sonic 应用</span></div></div>
+    <div class="management-list">
+      ${taskApps.length ? taskApps.map(app => `<div class="management-row"><div class="management-row-main"><strong>${escapeHtml(app.name || app.package)}</strong><span>${escapeHtml(app.package || '-')}</span><small>${escapeHtml([app.sonic_project_name || app.sonic_project_id || '项目未绑定', app.sonic_suite_name || app.sonic_suite_id || '测试套未绑定'].join(' · '))}</small></div><button class="btn-sm" onclick="openTaskAppEditor(${jsArg(app.package || '')})">编辑绑定</button></div>`).join('') : '<div class="job-empty">暂无应用绑定信息。</div>'}
+    </div>
+  </div>`;
+}
+
+function feishuDraftStatusText(status) {
+  return ({DRAFT: '待确认', SUBMITTED: '已提交', REJECTED: '已拒绝', EXPIRED: '已过期'})[String(status || '').toUpperCase()] || status || '未知';
+}
+
+function setFeishuDraftFilter(key, value) {
+  if (!['query', 'status'].includes(key)) return;
+  feishuDraftFilters[key] = String(value || '');
+  if (key !== 'query') {
+    showBugDraftCenter({ refresh: false });
+    return;
+  }
+  if (feishuDraftFilterTimer) clearTimeout(feishuDraftFilterTimer);
+  feishuDraftFilterTimer = setTimeout(async () => {
+    if (activeWorkflow !== 'bug_drafts') return;
+    await showBugDraftCenter({ refresh: false });
+    const input = document.getElementById('feishu-draft-search');
+    input?.focus();
+    input?.setSelectionRange(input.value.length, input.value.length);
+  }, 180);
+}
+
+async function showBugDraftCenter(options = {}) {
+  const area = document.getElementById('editor-area');
+  if (!area) return;
+  const requestWorkflow = activeWorkflow;
+  if (options.refresh || !AppState.loaded.feishuDrafts) {
+    try {
+      const data = await apiRequest('/feishu-drafts?limit=200');
+      feishuDrafts = Array.isArray(data?.drafts) ? data.drafts : [];
+      AppState.loaded.feishuDrafts = true;
+      updateNavigationBadges();
+    } catch (e) {
+      showToast(`读取缺陷草稿失败：${e.message || e}`, 'error');
+    }
+  }
+  if (activeWorkflow !== 'bug_drafts' || requestWorkflow !== activeWorkflow) return;
+  const query = String(feishuDraftFilters.query || '').trim().toLowerCase();
+  const rows = feishuDrafts.filter(draft => {
+    if (feishuDraftFilters.status !== 'all' && String(draft.status || '').toUpperCase() !== feishuDraftFilters.status) return false;
+    return !query || [draft.title, draft.description, draft.appName, draft.appPackage, draft.sourceRunId, draft.sourceJobId].filter(Boolean).join(' ').toLowerCase().includes(query);
+  });
+  activeWorkspaceMode = 'bug-drafts';
+  setManagementToolbar('缺陷草稿', '复核 Agent 和失败分析生成的缺陷，确认后再发送到对应应用群。', '📝');
+  area.className = 'editor-area';
+  area.innerHTML = `<div class="review-page bug-draft-page">
+    <div class="review-head"><div><div class="workflow-kicker">DEFECT DRAFTS · 生成 / 复核 / 提交</div><h2>缺陷草稿</h2><p>草稿不会自动发飞书。请核对应用、现象和报告地址，再人工提交或拒绝。</p></div><div class="review-actions"><button class="btn-sm primary" onclick="showBugDraftCenter({refresh:true})">刷新草稿</button><button class="btn-sm" onclick="activateWorkflow('failure_analysis')">从失败任务生成</button></div></div>
+    <div class="management-filter-bar"><input id="feishu-draft-search" type="search" value="${escapeHtml(feishuDraftFilters.query)}" placeholder="搜索标题、应用或执行 ID" oninput="setFeishuDraftFilter('query', this.value)"><select onchange="setFeishuDraftFilter('status', this.value)"><option value="all" ${feishuDraftFilters.status === 'all' ? 'selected' : ''}>全部状态</option><option value="DRAFT" ${feishuDraftFilters.status === 'DRAFT' ? 'selected' : ''}>待确认</option><option value="SUBMITTED" ${feishuDraftFilters.status === 'SUBMITTED' ? 'selected' : ''}>已提交</option><option value="REJECTED" ${feishuDraftFilters.status === 'REJECTED' ? 'selected' : ''}>已拒绝</option></select><span class="management-filter-count">${rows.length}/${feishuDrafts.length} 条</span></div>
+    <div class="management-list bug-draft-list">${rows.length ? rows.map(draft => {
+      const id = draft.draftId || draft.draft_id || '';
+      const pending = String(draft.status || '').toUpperCase() === 'DRAFT';
+      const reportUrl = /^https?:\/\//i.test(String(draft.reportUrl || '')) ? draft.reportUrl : '';
+      return `<article class="bug-draft-row"><div class="bug-draft-head"><div><strong>${escapeHtml(draft.title || '未命名缺陷')}</strong><span>${escapeHtml(draft.appName || draft.appPackage || '未关联应用')}</span></div><span class="status-pill ${pending ? 'warn' : (String(draft.status).toUpperCase() === 'SUBMITTED' ? 'success' : '')}">${escapeHtml(feishuDraftStatusText(draft.status))}</span></div><p>${escapeHtml(draft.description || draft.summary || '暂无描述')}</p><div class="bug-draft-evidence"><span>来源：${escapeHtml(draft.sourceRunId || draft.sourceJobId || '-')}</span>${reportUrl ? `<a class="job-link" href="${escapeHtml(reportUrl)}" target="_blank" rel="noopener">查看执行报告</a>` : ''}<span>${escapeHtml(formatDisplayTime(draft.updatedAt || draft.createdAt) || '-')}</span></div><div class="review-actions"><button class="btn-sm" onclick="copyText(${jsArg(`${draft.title || ''}\n\n${draft.description || ''}`)}).then(()=>showToast('已复制缺陷内容','success'))">复制</button>${pending ? `<button class="btn-sm danger" onclick="rejectFeishuDraft(${jsArg(id)})">拒绝</button><button class="btn-sm primary" onclick="submitFeishuDraft(${jsArg(id)})">确认并发送飞书</button>` : ''}</div></article>`;
+    }).join('') : '<div class="job-empty">当前筛选下没有缺陷草稿。</div>'}</div>
+  </div>`;
+}
+
+async function rejectFeishuDraft(draftId) {
+  const reason = prompt('请输入拒绝原因（会保留在审计记录中）', '') || '';
+  if (!reason.trim() || !confirm('确认拒绝这条缺陷草稿？拒绝后不会发送飞书。')) return;
+  try {
+    await apiRequest('/feishu-drafts/reject', {method: 'POST', body: JSON.stringify({draftId, reason})});
+    AppState.loaded.feishuDrafts = false;
+    await showBugDraftCenter({refresh: true});
+    showToast('缺陷草稿已拒绝', 'success');
+  } catch (e) {
+    showToast(`拒绝失败：${e.message || e}`, 'error');
+  }
+}
+
+async function submitFeishuDraft(draftId) {
+  const draft = feishuDrafts.find(item => (item.draftId || item.draft_id) === draftId);
+  if (!draft || !confirm(`确认把“${draft.title || '未命名缺陷'}”发送到 ${draft.appName || draft.appPackage || '默认'} 通知群？`)) return;
+  try {
+    await apiRequest('/feishu-drafts/submit', {method: 'POST', body: JSON.stringify({draftId})});
+    AppState.loaded.feishuDrafts = false;
+    await showBugDraftCenter({refresh: true});
+    showToast('缺陷已发送飞书', 'success');
+  } catch (e) {
+    showToast(`发送失败：${e.message || e}`, 'error');
+  }
 }
 
 function showTaskApps() {

@@ -95,6 +95,13 @@ function serve() {
       json(res, {ok: true, drafts: []});
       return;
     }
+    if (url.pathname === '/api/feishu-drafts') {
+      json(res, {ok: true, drafts: [
+        {draftId: 'draft-001', title: '打印确认按钮无响应', description: '点击确认打印后页面没有进入任务进度页', status: 'DRAFT', appName: '智小白3D APP', appPackage: 'com.kfb.model', sourceRunId: 'agent-001', reportUrl: 'http://127.0.0.1/reports/agent-001.html', updatedAt: '2026-08-26T11:20:00'},
+        {draftId: 'draft-002', title: '历史环境问题', description: 'Runner 暂时离线，已人工确认不是产品缺陷', status: 'REJECTED', appName: '智小白3D APP', appPackage: 'com.kfb.model', sourceJobId: 'job-002', updatedAt: '2026-08-26T10:10:00'},
+      ]});
+      return;
+    }
     if (url.pathname === '/api/baseline/page-refs') {
       json(res, {ok: true, refs: []});
       return;
@@ -171,7 +178,12 @@ function serve() {
           error: 'UNKNOWN',
           created_at: '2026-06-18 08:20:00',
         }
-      ]});
+      ], history_scope: {
+        runner_returned: 2,
+        runner_truncated: true,
+        background_returned: 1,
+        background_truncated: false,
+      }});
       return;
     }
     if (url.pathname === '/api/cases/mindmaps') {
@@ -896,6 +908,47 @@ async function anyVisible(locator) {
     if (!/1 执行中/.test(aggregateChecks.runningRerunText) || !/1 排队中/.test(aggregateChecks.runningRerunText) || !/原脚本证据重试/.test(aggregateChecks.runningRerunText)) throw new Error('A running RERUN step must render causal task progress before toolCalls finish');
     if (!/部分通过/.test(aggregateChecks.summaryText) || !/编排阻断/.test(aggregateChecks.summaryText) || !/Runner 通过\s*2/.test(aggregateChecks.summaryText) || !/脚本 \/ 环境 \/ 待归因\s*1/.test(aggregateChecks.summaryText)) throw new Error('Final summary must preserve successful smoke outcomes and keep unclassified test failures separate from product failures');
     await page.setViewportSize({width: 1440, height: 900});
+    await page.locator('details[data-nav-group="agent"]').evaluate(el => { el.open = true; });
+    await page.click('.workflow-step[data-workflow="agent_history"]');
+    await page.waitForSelector('input[placeholder="搜索任务、应用或结果"]');
+    if (!await page.locator('.agent-history-pager, .management-filter-bar').first().isVisible()) throw new Error('Agent history management controls are not visible');
+    await page.locator('#agent-history-search').fill('连续输入检查');
+    await page.waitForTimeout(240);
+    if (await page.locator('#agent-history-search').inputValue() !== '连续输入检查') throw new Error('Agent history search lost text after filtering');
+    await page.locator('#agent-history-search').fill('');
+    await page.waitForTimeout(240);
+    await page.locator('details[data-nav-group="report"]').evaluate(el => { el.open = true; });
+    await page.locator('#agent-history-search').fill('离页防抖检查');
+    await page.click('.workflow-step[data-workflow="reports"]');
+    await page.waitForSelector('input[placeholder="搜索任务、应用或报告"]');
+    await page.waitForTimeout(240);
+    if (!await page.locator('h2:has-text("执行报告")').isVisible()) throw new Error('A stale history-search timer replaced the report page');
+    if (!/最近 3 条记录/.test(await page.locator('.management-filter-scope').first().innerText())) throw new Error('Report page must disclose the bounded history search scope');
+    await page.locator('#report-center-search').fill('AI建模');
+    await page.waitForTimeout(240);
+    if (await page.locator('#report-center-search').inputValue() !== 'AI建模') throw new Error('Report search lost text after filtering');
+    await page.locator('#report-center-search').fill('');
+    await page.waitForTimeout(240);
+    await page.screenshot({path: path.join(ARTIFACTS, 'reports-management.png'), fullPage: true});
+    await page.click('.workflow-step[data-workflow="bug_drafts"]');
+    await page.waitForSelector('input[placeholder="搜索标题、应用或执行 ID"]');
+    await page.locator('#feishu-draft-search').fill('打印确认');
+    await page.waitForTimeout(240);
+    if (!await page.locator('text=打印确认按钮无响应').isVisible()) throw new Error('Persisted Feishu draft is missing from management page');
+    await page.screenshot({path: path.join(ARTIFACTS, 'bug-drafts-management.png'), fullPage: true});
+    await page.locator('details[data-nav-group="settings"]').evaluate(el => { el.open = true; });
+    await page.click('.workflow-step[data-workflow="app_config"]');
+    await page.waitForSelector('h2:has-text("应用配置")');
+    await page.click('.workflow-step[data-workflow="sonic_config"]');
+    await page.waitForSelector('h2:has-text("执行环境")');
+    if (!await page.locator('.config-management-page button:has-text("扫描旧/重复步骤")').isVisible()) throw new Error('Sonic scan must be an explicit action on execution environment page');
+    await page.setViewportSize({width: 390, height: 844});
+    await page.click('.workflow-step[data-workflow="bug_drafts"]');
+    await page.waitForSelector('.bug-draft-page');
+    const managementOverflow = await page.locator('.bug-draft-page').evaluate(el => el.scrollWidth > el.clientWidth + 1);
+    if (managementOverflow) throw new Error('Bug draft management overflows horizontally on mobile');
+    await page.screenshot({path: path.join(ARTIFACTS, 'bug-drafts-management-mobile.png'), fullPage: true});
+    await page.setViewportSize({width: 1440, height: 900});
     let dialogText = '';
     page.once('dialog', async dialog => {
       dialogText = dialog.message();
@@ -928,6 +981,9 @@ async function anyVisible(locator) {
         path.join(ARTIFACTS, 'agent-failure-mobile.png'),
         path.join(ARTIFACTS, 'agent-rerun.png'),
         path.join(ARTIFACTS, 'agent-rerun-mobile.png'),
+        path.join(ARTIFACTS, 'reports-management.png'),
+        path.join(ARTIFACTS, 'bug-drafts-management.png'),
+        path.join(ARTIFACTS, 'bug-drafts-management-mobile.png'),
       ],
     }, null, 2));
   } finally {

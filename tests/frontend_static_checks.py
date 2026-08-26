@@ -101,12 +101,60 @@ def check_api_testing_frontend_workspace():
         require(marker in acceptance_source, f"API acceptance is missing screenshot evidence: {marker}")
 
 
+def check_original_platform_management_experience():
+    html = HTML.read_text(encoding="utf-8")
+    auth_js = (JS_DIR / "auth.js").read_text(encoding="utf-8")
+    utils_js = (JS_DIR / "utils.js").read_text(encoding="utf-8")
+    state_js = (JS_DIR / "state.js").read_text(encoding="utf-8")
+    workbench_js = (JS_DIR / "agent-workbench.js").read_text(encoding="utf-8")
+    status_js = (JS_DIR / "agent-status.js").read_text(encoding="utf-8")
+    reports_js = (JS_DIR / "reports.js").read_text(encoding="utf-8")
+    agent_service = (ROOT / "task_server" / "services" / "agent_service.py").read_text(encoding="utf-8")
+    router = (ROOT / "task_server" / "router.py").read_text(encoding="utf-8")
+    app_js = (JS_DIR / "app.js").read_text(encoding="utf-8")
+    repair_js = (JS_DIR / "ai-repair.js").read_text(encoding="utf-8")
+
+    require("fonts.googleapis.com" not in html, "Main platform must not block on external Google Fonts")
+    require("clearTransientAuthFeedback" in auth_js and "showAuthedApp" in auth_js, "Successful login must clear stale error and toast feedback")
+    for marker in ("模块创建失败", "任务创建失败", "文件上传失败"):
+        require(marker in utils_js, f"Persistence failure must be visible instead of reporting false success: {marker}")
+
+    require("AGENT_HISTORY_PAGE_SIZE" in state_js and "agentHistoryFilters" in state_js, "Agent history must keep explicit filter and pagination state")
+    for marker in ("filterAgentRuns", "搜索任务、应用或结果", "agent-history-pager"):
+        require(marker in status_js, f"Agent history management control is missing: {marker}")
+    require("REPORT_PAGE_SIZE" in state_js and "reportFilters" in state_js, "Report center must keep explicit filter and pagination state")
+    for marker in ("filterReportsForCenter", "搜索任务、应用或报告", "report-center-pager"):
+        require(marker in reports_js, f"Report management control is missing: {marker}")
+
+    require("loadFullAgentModelCatalog" in workbench_js and "加载更多模型" in workbench_js, "Large model catalog must be opt-in instead of blocking workbench entry")
+    for marker in ("showAppConfigCenter", "showFeishuConfigCenter", "showSonicConfigCenter", "showBugDraftCenter"):
+        require(marker in status_js, f"Standalone management page is missing: {marker}")
+    sonic_branch = status_js[status_js.index("activeWorkflow === 'sonic_config'"):status_js.index("activeWorkflow === 'feishu_config'")]
+    require("scanLegacySonicCases('all')" not in sonic_branch, "Opening execution environment must not start a destructive/slow Sonic scan")
+    require("执行环境" in html and "环境体检" in html, "Configuration navigation labels must describe their actual page")
+    require("workflow-badge" in html and "updateNavigationBadges" in status_js, "Sidebar must expose actionable history and confirmation counts")
+    require("restoreWorkflowPreference" in status_js and "midscene_active_workflow" in status_js, "Reloading must restore the last valid management page")
+
+    for route in ("/api/feishu-drafts", "/api/feishu-drafts/submit", "/api/feishu-drafts/reject"):
+        require(route in router, f"Feishu draft management route is missing: {route}")
+    require("def _require_admin_session" in router and router.count("if _require_admin_session(handler):") >= 2, "External draft actions must require a verified administrator session")
+    require("def _authenticated_user" in router and "user=_authenticated_user(handler)" in router, "Draft audit operators must come from the verified session")
+    require("history_limit" in router and "background_limit" in router and "history_scope" in router, "Job history API must expose a bounded, explicit search scope")
+    require("jobHistoryScope" in app_js and "jobHistoryScopeText" in app_js, "History pages must explain which records are searchable")
+    require("clearManagementSearchTimers" in status_js, "Changing pages must cancel pending management-search renders")
+    require("activeWorkflow !== 'reports'" in reports_js, "Report search must not redraw after leaving the page")
+    require("!['repair', 'failure_analysis'].includes(activeWorkflow)" in repair_js, "Repair search must not redraw after leaving the page")
+    require("result.outcome === 'failed'" in status_js, "Agent history filters must prioritize the execution outcome over DONE orchestration state")
+    require("create_feishu_draft" in agent_service and "sourceRunId" in agent_service, "Agent bug drafts must be persisted with their source run")
+
+
 def main():
     # After the round-3 split, JS/CSS live in separate files. Static substring
     # checks below should still cover the full deployable bundle, so we
     # concatenate task-manager.html + css/app.css + js/*.js as a single blob.
     check_api_automation_frontend_residue_is_removed()
     check_api_testing_frontend_workspace()
+    check_original_platform_management_experience()
     html = _read_bundle()
     execution_js = (JS_DIR / "execution.js").read_text(encoding="utf-8")
     utils_js = (JS_DIR / "utils.js").read_text(encoding="utf-8")
@@ -383,7 +431,7 @@ def main():
     require("deleteGenerationMindmapRecord" in html and "/cases/mindmap-record" in html and "删除记录" in html, "Mindmap center must support deleting generation records")
     require("uploadApkInChunks" in execution_js and "/app-install/upload-chunk" in execution_js and "/app-install/upload-finish" in execution_js, "APK install uploads must use chunk upload endpoints")
     require("readAsDataURL(file)" not in execution_js and "contentBase64: dataUrl.split" not in execution_js, "APK install uploads must not send the whole APK as one Base64 JSON body")
-    require("js/utils.js?v=20260808-runtime-cleanup" in html and "js/execution.js?v=20260701-install-refresh" in html and "js/app.js?v=20260824-case-only-mindmap" in html and "js/state.js?v=20260820-mindmap-report-history" in html and "js/navigation.js?v=20260808-runtime-cleanup" in html and "js/agent-workbench.js?v=20260803-agent-final-report-counts" in html and "css/app.css?v=20260820-mindmap-report-history" in html and "css/round5.css?v=20260808-runtime-cleanup" in html and "js/agent-status.js?v=20260808-runtime-cleanup" in html, "Frontend cache versions must include the active frontend modules")
+    require("js/utils.js?v=20260826-platform-management-ux" in html and "js/execution.js?v=20260701-install-refresh" in html and "js/app.js?v=20260826-platform-management-ux" in html and "js/state.js?v=20260826-platform-management-ux" in html and "js/navigation.js?v=20260826-platform-management-ux" in html and "js/agent-workbench.js?v=20260826-platform-management-ux" in html and "css/app.css?v=20260826-platform-management-ux" in html and "css/round5.css?v=20260826-platform-management-ux" in html and "js/agent-status.js?v=20260826-platform-management-ux" in html, "Frontend cache versions must include the active frontend modules")
     require("function jobDeviceLabel" in html and "runnerDevices" in html and "runnerDeviceDisplayName(device)" in html, "Job rows must resolve device ids to public runner device names when available")
     require(
         "const job = activeJobs.find(isRunnerExecutionJob);" in html

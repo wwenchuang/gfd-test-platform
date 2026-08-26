@@ -32,12 +32,72 @@ function reportsHasRepairDraft(job) {
   return repairDrafts.some(d => (d.jobId || d.job_id) === jobId);
 }
 
+function reportCenterStatusKey(job) {
+  const status = String(job?.status || '').toLowerCase();
+  if (['success', 'succeeded', 'completed'].includes(status)) return 'success';
+  if (['failed', 'timeout', 'cancelled', 'error'].includes(status)) return 'failed';
+  if (['running', 'pending', 'queued', 'assigned'].includes(status)) return 'running';
+  return 'other';
+}
+
+function filterReportsForCenter(rows = latestJobs) {
+  const query = String(reportFilters.query || '').trim().toLowerCase();
+  return (Array.isArray(rows) ? rows : [])
+    .filter(job => {
+      if (reportFilters.status !== 'all' && reportCenterStatusKey(job) !== reportFilters.status) return false;
+      const failureType = reportsFailureType(job) || 'NONE';
+      if (reportFilters.failureType !== 'all' && failureType !== reportFilters.failureType) return false;
+      if (!query) return true;
+      return [job.job_id, job.jobId, job.target_task_name, job.current_task_name, job.task_name, job.file, job.module, job.app_name, job.appName]
+        .filter(Boolean).join(' ').toLowerCase().includes(query);
+    })
+    .sort((a, b) => String(b.finished_at || b.updated_at || b.started_at || b.created_at || '').localeCompare(String(a.finished_at || a.updated_at || a.started_at || a.created_at || '')));
+}
+
+function setReportCenterFilter(key, value) {
+  if (!['query', 'status', 'failureType'].includes(key)) return;
+  reportFilters[key] = String(value || '');
+  reportFilters.page = 1;
+  if (key !== 'query') {
+    showReportsCenter();
+    return;
+  }
+  if (reportFilterTimer) clearTimeout(reportFilterTimer);
+  reportFilterTimer = setTimeout(() => {
+    if (activeWorkflow !== 'reports') return;
+    showReportsCenter();
+    const input = document.getElementById('report-center-search');
+    input?.focus();
+    input?.setSelectionRange(input.value.length, input.value.length);
+  }, 180);
+}
+
+function setReportCenterPage(page) {
+  reportFilters.page = Math.max(1, Number(page) || 1);
+  showReportsCenter();
+}
+
+function reportCenterPager(total, page, pages) {
+  if (total <= REPORT_PAGE_SIZE) return '';
+  return `<div class="management-pager report-center-pager">
+    <span>共 ${total} 条 · 第 ${page}/${pages} 页</span>
+    <div>
+      <button class="btn-sm" onclick="setReportCenterPage(${page - 1})" ${page <= 1 ? 'disabled' : ''}>上一页</button>
+      <button class="btn-sm" onclick="setReportCenterPage(${page + 1})" ${page >= pages ? 'disabled' : ''}>下一页</button>
+    </div>
+  </div>`;
+}
+
 function showReportsCenter() {
   const area = document.getElementById('editor-area');
   if (!area) return;
   activeWorkspaceMode = 'reports';
   const ov = reportsOverview();
-  const jobs = (Array.isArray(latestJobs) ? latestJobs : []).slice(0, 200);
+  const filteredJobs = filterReportsForCenter();
+  const totalPages = Math.max(1, Math.ceil(filteredJobs.length / REPORT_PAGE_SIZE));
+  reportFilters.page = Math.min(Math.max(1, reportFilters.page), totalPages);
+  const start = (reportFilters.page - 1) * REPORT_PAGE_SIZE;
+  const jobs = filteredJobs.slice(start, start + REPORT_PAGE_SIZE);
   area.className = 'editor-area';
   area.innerHTML = `
     <div class="review-page reports-page">
@@ -76,6 +136,25 @@ function showReportsCenter() {
         </div>
       </div>
 
+      <div class="management-filter-bar">
+        <input id="report-center-search" type="search" value="${escapeHtml(reportFilters.query)}" placeholder="搜索任务、应用或报告" oninput="setReportCenterFilter('query', this.value)">
+        <select onchange="setReportCenterFilter('status', this.value)">
+          <option value="all" ${reportFilters.status === 'all' ? 'selected' : ''}>全部状态</option>
+          <option value="success" ${reportFilters.status === 'success' ? 'selected' : ''}>成功</option>
+          <option value="failed" ${reportFilters.status === 'failed' ? 'selected' : ''}>失败</option>
+          <option value="running" ${reportFilters.status === 'running' ? 'selected' : ''}>进行中</option>
+        </select>
+        <select onchange="setReportCenterFilter('failureType', this.value)">
+          <option value="all" ${reportFilters.failureType === 'all' ? 'selected' : ''}>全部归因</option>
+          <option value="PRODUCT_BUG" ${reportFilters.failureType === 'PRODUCT_BUG' ? 'selected' : ''}>产品缺陷</option>
+          <option value="SCRIPT_ISSUE" ${reportFilters.failureType === 'SCRIPT_ISSUE' ? 'selected' : ''}>脚本问题</option>
+          <option value="ENV_ISSUE" ${reportFilters.failureType === 'ENV_ISSUE' ? 'selected' : ''}>环境问题</option>
+          <option value="UNKNOWN" ${reportFilters.failureType === 'UNKNOWN' ? 'selected' : ''}>待确认</option>
+        </select>
+        <span class="management-filter-count">显示 ${jobs.length}/${filteredJobs.length} 条</span>
+        <span class="management-filter-scope">${escapeHtml(jobHistoryScopeText())}</span>
+      </div>
+
       <div class="report-list-wrap">
         <table class="report-table">
           <thead>
@@ -94,6 +173,7 @@ function showReportsCenter() {
           </tbody>
         </table>
       </div>
+      ${reportCenterPager(filteredJobs.length, reportFilters.page, totalPages)}
     </div>
   `;
   const path = document.getElementById('toolbar-path');

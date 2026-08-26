@@ -1,25 +1,21 @@
-"""Feishu (Lark) integration service.
-
-The legacy ``midscene-upload.py`` only ships two pieces of Feishu logic:
-
-* ``validate_feishu_webhook`` — guard against malformed bot URLs.
-* ``post_feishu_card`` — POST a card payload to a configured webhook.
-
-Higher-level features mentioned in the product roadmap (notifications,
-draft creation flows) are not yet implemented in the legacy server.  This
-module therefore migrates the two real helpers and exposes the planned
-public API as skeletons + TODO markers so callers can be wired up
-incrementally.
-"""
+"""Feishu (Lark) notifications and locally managed defect drafts."""
 
 from __future__ import annotations
 
 import json
 import os
+import threading
 import time
 import urllib.parse
 import urllib.request
+import uuid
+from contextlib import contextmanager
 from typing import Any, Dict, List, Optional
+
+try:
+    import fcntl
+except ImportError:  # pragma: no cover - production server is Linux
+    fcntl = None
 
 
 # ---------------------------------------------------------------------------
@@ -134,38 +130,7 @@ def send_feishu_notification(
 
 
 # ---------------------------------------------------------------------------
-# Draft / approval flow (skeleton — not yet implemented in legacy server)
-# ---------------------------------------------------------------------------
-
-def create_feishu_draft(content: Dict[str, Any]) -> Dict[str, Any]:
-    """创建飞书草稿。
-
-    The legacy server only references "提交飞书需要人工确认" notes; an
-    actual Feishu draft / approval submission flow is still on the
-    roadmap.  This skeleton accepts the eventual payload shape and
-    returns a stub response so callers can be wired up early.
-
-    TODO:
-    - call Feishu open-api ``/open-apis/approval/v4/instances`` (or the
-      docs/cards draft API) once credentials & app tokens are configured.
-    - persist draft state alongside repair / bug drafts.
-    """
-    if not isinstance(content, dict):
-        raise ValueError("content 必须是 dict")
-
-    return {
-        "ok": False,
-        "status": "NOT_IMPLEMENTED",
-        "message": "飞书草稿提交流程尚未接入 (TODO)",
-        "echo": {
-            "title": content.get("title", ""),
-            "summary": content.get("summary") or content.get("description", ""),
-        },
-    }
-
-
-# ---------------------------------------------------------------------------
-# 草稿查询 & 提交（本地持久化骨架）
+# Defect draft persistence and manual submission
 # ---------------------------------------------------------------------------
 
 _FEISHU_DRAFTS_FILE = os.path.join(
@@ -174,29 +139,111 @@ _FEISHU_DRAFTS_FILE = os.path.join(
 )
 
 _FEISHU_DRAFT_STATUSES = {"DRAFT", "SUBMITTED", "REJECTED", "EXPIRED"}
+_FEISHU_DRAFT_THREAD_LOCK = threading.RLock()
+
+
+@contextmanager
+def _feishu_draft_store_lock():
+    """Serialize draft mutations across request threads and worker processes."""
+    directory = os.path.dirname(_FEISHU_DRAFTS_FILE)
+    if directory:
+        os.makedirs(directory, exist_ok=True)
+    lock_path = f"{_FEISHU_DRAFTS_FILE}.lock"
+    with _FEISHU_DRAFT_THREAD_LOCK:
+        with open(lock_path, "a+", encoding="utf-8") as lock_file:
+            if fcntl is not None:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                if fcntl is not None:
+                    fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
 
 
 def _load_feishu_drafts() -> List[Dict[str, Any]]:
     """加载飞书草稿列表。"""
     try:
         with open(_FEISHU_DRAFTS_FILE, encoding="utf-8") as f:
-            import json as _json
-            data = _json.load(f)
+            data = json.load(f)
         if isinstance(data, dict):
             return data.get("drafts") or []
         if isinstance(data, list):
             return data
-    except Exception:
-        pass
-    return []
+        raise RuntimeError("飞书缺陷草稿文件格式无效")
+    except FileNotFoundError:
+        return []
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RuntimeError(f"读取飞书缺陷草稿失败：{exc}") from exc
 
 
 def _save_feishu_drafts(drafts: List[Dict[str, Any]]) -> None:
     """保存飞书草稿列表。"""
-    import json as _json
-    os.makedirs(os.path.dirname(_FEISHU_DRAFTS_FILE), exist_ok=True)
-    with open(_FEISHU_DRAFTS_FILE, "w", encoding="utf-8") as f:
-        _json.dump({"drafts": drafts}, f, ensure_ascii=False, indent=2)
+    directory = os.path.dirname(_FEISHU_DRAFTS_FILE)
+    if directory:
+        os.makedirs(directory, exist_ok=True)
+    temp_path = f"{_FEISHU_DRAFTS_FILE}.{os.getpid()}.{threading.get_ident()}.{uuid.uuid4().hex}.tmp"
+    try:
+        with open(temp_path, "w", encoding="utf-8") as f:
+            json.dump({"drafts": drafts}, f, ensure_ascii=False, indent=2)
+        os.replace(temp_path, _FEISHU_DRAFTS_FILE)
+    finally:
+        try:
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
+        except OSError:
+            pass
+
+
+def _now_iso() -> str:
+    return time.strftime("%Y-%m-%dT%H:%M:%S")
+
+
+def create_feishu_draft(content: Dict[str, Any]) -> Dict[str, Any]:
+    """Create or update a local defect draft without sending it to Feishu."""
+    if not isinstance(content, dict):
+        raise ValueError("content 必须是 dict")
+    title = str(content.get("title") or "").strip()
+    description = str(content.get("description") or content.get("summary") or "").strip()
+    if not title:
+        raise ValueError("缺陷草稿标题不能为空")
+    if not description:
+        raise ValueError("缺陷草稿描述不能为空")
+
+    draft_id = str(content.get("draftId") or content.get("draft_id") or uuid.uuid4().hex).strip()
+    with _feishu_draft_store_lock():
+        drafts = _load_feishu_drafts()
+        existing = next(
+            (item for item in drafts if str(item.get("draftId") or item.get("draft_id") or "") == draft_id),
+            None,
+        )
+        now = _now_iso()
+        if existing and str(existing.get("status") or "DRAFT").upper() != "DRAFT":
+            raise ValueError(f"草稿当前状态不可修改：{existing.get('status')}")
+
+        record = dict(existing or {})
+        for key in (
+            "title", "description", "summary", "severity", "priority", "appPackage",
+            "appName", "sourceRunId", "sourceJobId", "reportUrl", "steps", "expected",
+            "actual", "attachments", "failureType", "type", "failedJobs", "modelTrace",
+        ):
+            if key in content:
+                record[key] = content.get(key)
+        record.update({
+            "draftId": draft_id,
+            "title": title,
+            "description": description,
+            "status": "DRAFT",
+            "createdAt": record.get("createdAt") or now,
+            "updatedAt": now,
+            "submitError": "",
+        })
+        if existing:
+            existing.clear()
+            existing.update(record)
+        else:
+            drafts.append(record)
+        _save_feishu_drafts(drafts)
+        return {"ok": True, "status": "DRAFT", "draft": record}
 
 
 def get_feishu_draft(draft_id: str) -> Optional[Dict[str, Any]]:
@@ -228,14 +275,70 @@ def list_feishu_drafts(
         limit: 最大返回条数，默认 20。
 
     Returns:
-        草稿列表，按创建时间倒序。
+        草稿列表，按最近更新时间倒序。
     """
-    drafts = _load_feishu_drafts()
+    drafts = sorted(
+        _load_feishu_drafts(),
+        key=lambda item: str(item.get("updatedAt") or item.get("createdAt") or ""),
+        reverse=True,
+    )
     if status:
         status = str(status).strip().upper()
         drafts = [d for d in drafts if str(d.get("status", "")).upper() == status]
     limit = max(1, min(200, int(limit or 20)))
     return drafts[:limit]
+
+
+def _webhook_for_draft(draft: Dict[str, Any]) -> str:
+    """Resolve a draft's app-specific webhook at send time."""
+    package = str(draft.get("appPackage") or draft.get("package") or "").strip()
+    app = None
+    if package:
+        from task_server.services.job_service import load_task_apps
+
+        app = next(
+            (item for item in load_task_apps() if str(item.get("package") or "").strip() == package),
+            None,
+        )
+    return task_app_feishu_webhook(app or ({"package": package} if package else None))
+
+
+def reject_feishu_draft(
+    draft_id: str,
+    user: Optional[str] = None,
+    reason: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Reject a pending draft while preserving it for audit."""
+    with _feishu_draft_store_lock():
+        drafts = _load_feishu_drafts()
+        draft = next(
+            (item for item in drafts if str(item.get("draftId") or item.get("draft_id") or "") == str(draft_id or "")),
+            None,
+        )
+        if not draft:
+            raise ValueError("飞书缺陷草稿不存在")
+        if str(draft.get("status") or "").upper() != "DRAFT":
+            raise ValueError(f"草稿当前状态不可拒绝：{draft.get('status')}")
+        draft.update({
+            "status": "REJECTED",
+            "rejectedAt": _now_iso(),
+            "rejectedBy": user or "",
+            "rejectReason": str(reason or "").strip(),
+            "updatedAt": _now_iso(),
+        })
+        _save_feishu_drafts(drafts)
+        return {"ok": True, "status": "REJECTED", "draftId": draft_id}
+
+
+def _feishu_response_succeeded(result: Any) -> bool:
+    if not isinstance(result, dict):
+        return False
+    if result.get("ok") is True:
+        return True
+    for key in ("code", "StatusCode", "statusCode"):
+        if key in result and str(result.get(key)).strip() == "0":
+            return True
+    return False
 
 
 def submit_feishu_draft(
@@ -245,8 +348,6 @@ def submit_feishu_draft(
     """提交飞书缺陷草稿为正式缺陷（需人工确认）。
 
     仅状态为 ``DRAFT`` 的草稿可提交；提交后状态变更为 ``SUBMITTED``。
-    实际的飞书 API 调用仍需对接；当前仅做状态流转与持久化。
-
     Args:
         draft_id: 草稿 ID。
         user: 提交操作人。
@@ -257,55 +358,57 @@ def submit_feishu_draft(
     Raises:
         ValueError: 草稿不存在或状态不可提交。
     """
-    draft = get_feishu_draft(draft_id)
-    if not draft:
-        raise ValueError("飞书缺陷草稿不存在")
-    if str(draft.get("status", "")).upper() != "DRAFT":
-        raise ValueError(f"草稿当前状态不可提交：{draft.get('status')}")
+    with _feishu_draft_store_lock():
+        drafts = _load_feishu_drafts()
+        draft = next(
+            (item for item in drafts if str(item.get("draftId") or item.get("draft_id") or "") == str(draft_id or "")),
+            None,
+        )
+        if not draft:
+            raise ValueError("飞书缺陷草稿不存在")
+        if str(draft.get("status", "")).upper() != "DRAFT":
+            raise ValueError(f"草稿当前状态不可提交：{draft.get('status')}")
 
-    # 尝试调用飞书 API 提交
-    submitted = False
-    submit_error = ""
-    try:
-        # 构建飞书卡片/审批 payload
-        card_payload = {
-            "msg_type": "interactive",
-            "card": {
-                "header": {
-                    "title": {"tag": "plain_text", "content": f"缺陷提交：{draft.get('title', '')}"},
+        submitted = False
+        submit_error = ""
+        try:
+            card_payload = {
+                "msg_type": "interactive",
+                "card": {
+                    "header": {
+                        "title": {"tag": "plain_text", "content": f"缺陷提交：{draft.get('title', '')}"},
+                    },
+                    "elements": [
+                        {"tag": "div", "text": {"tag": "plain_text", "content": str(draft.get("description", ""))[:2000]}},
+                        {"tag": "div", "text": {"tag": "plain_text", "content": f"提交人：{user or '系统'}"}},
+                    ],
                 },
-                "elements": [
-                    {"tag": "div", "text": {"tag": "plain_text", "content": str(draft.get("description", ""))[:2000]}},
-                    {"tag": "div", "text": {"tag": "plain_text", "content": f"提交人：{user or '系统'}"}},
-                ],
-            },
+            }
+            result = send_feishu_notification(card_payload, webhook=_webhook_for_draft(draft))
+            submitted = _feishu_response_succeeded(result)
+            if not submitted and isinstance(result, dict):
+                submit_error = str(result.get("msg") or result.get("message") or result.get("error") or "")
+        except Exception as exc:
+            submit_error = str(exc)
+
+        if submitted:
+            draft["status"] = "SUBMITTED"
+            draft["submittedAt"] = _now_iso()
+            draft["submittedBy"] = user or ""
+            draft["submitError"] = ""
+        else:
+            draft["submitError"] = submit_error or "飞书 API 调用失败"
+        draft["updatedAt"] = _now_iso()
+        _save_feishu_drafts(drafts)
+
+        if submitted:
+            return {"ok": True, "status": "SUBMITTED", "draftId": draft_id}
+        return {
+            "ok": False,
+            "status": "SUBMIT_FAILED",
+            "error": draft["submitError"],
+            "draftId": draft_id,
         }
-        result = send_feishu_notification(card_payload)
-        submitted = result.get("ok", False) or result.get("StatusCode", -1) == 0
-    except Exception as exc:
-        submit_error = str(exc)
-
-    # 更新草稿状态
-    drafts = _load_feishu_drafts()
-    for item in drafts:
-        if item.get("draftId") == draft_id or item.get("draft_id") == draft_id:
-            if submitted:
-                item["status"] = "SUBMITTED"
-                item["submittedAt"] = time.strftime("%Y-%m-%dT%H:%M:%S")
-                item["submittedBy"] = user or ""
-            else:
-                item["submitError"] = submit_error
-            break
-    _save_feishu_drafts(drafts)
-
-    if submitted:
-        return {"ok": True, "status": "SUBMITTED", "draftId": draft_id}
-    return {
-        "ok": False,
-        "status": "SUBMIT_FAILED",
-        "error": submit_error or "飞书 API 调用失败",
-        "draftId": draft_id,
-    }
 
 
 # ---------------------------------------------------------------------------
@@ -320,4 +423,3 @@ def post_feishu_card(webhook: str, card: Dict[str, Any]) -> Dict[str, Any]:
     而非 ``_post_to_webhook(webhook, payload)``。
     """
     return _post_to_webhook(webhook, card)
-
