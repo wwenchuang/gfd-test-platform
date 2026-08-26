@@ -265,6 +265,8 @@ describe('ScheduledJobsView', () => {
     expect(wrapper.text()).toContain('基线')
     expect(wrapper.text()).toContain('测试')
     expect(wrapper.text()).toContain('未分组')
+    expect(wrapper.text()).not.toContain('登录成功用例')
+    for (const toggle of wrapper.findAll('[data-testid="scheduled-target-group-toggle"]')) await toggle.trigger('click')
     expect(wrapper.text()).toContain('登录成功用例')
     expect(wrapper.text()).toContain('支付成功用例')
     expect(wrapper.text()).toContain('未分组用例')
@@ -416,6 +418,30 @@ describe('ScheduledJobsView', () => {
     await wrapper.get('[data-testid="scheduled-latest-execution-job-observable"]').trigger('click')
     await flushPromises()
     expect(router.currentRoute.value.query.executionId).toBe('execution-latest')
+  })
+
+  it('shows human-readable baseline versions on scheduled job cards instead of raw IDs', async () => {
+    vi.spyOn(apiClient, 'get').mockImplementation(async url => {
+      const path = String(url)
+      if (path.startsWith('/api/api-testing/v1/scheduled-jobs')) return { data: { scheduled_jobs: [scheduledJobFixture({
+        id: 'job-readable', target_type: 'baselines', target_ids: ['baseline-uuid-1'],
+      })] } }
+      if (path.startsWith('/api/api-testing/v1/baselines')) return { data: { baselines: [baselineFixture({
+        id: 'baseline-uuid-1', case_name: '收藏列表正向用例', case_version: 3, origin: 'ai', group_name: '收藏回归',
+      })] } }
+      if (path.startsWith('/api/api-testing/v1/cases')) return { data: { case_versions: [] } }
+      if (path.startsWith('/api/api-testing/v1/tasks')) return { data: { tasks: [] } }
+      return { data: {} }
+    })
+    const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/', name: 'scheduled-jobs', component: ScheduledJobsView }] })
+
+    const wrapper = mount(ScheduledJobsView, { global: { plugins: [router] } })
+    await flushPromises()
+
+    const row = wrapper.get('[data-testid="scheduled-row-job-readable"]')
+    expect(row.text()).toContain('收藏列表正向用例 · v3')
+    expect(row.text()).toContain('收藏回归')
+    expect(row.text()).not.toContain('baseline-uuid-1')
   })
 })
 

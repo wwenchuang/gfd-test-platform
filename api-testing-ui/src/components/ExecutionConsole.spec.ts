@@ -180,4 +180,22 @@ describe('ExecutionConsole', () => {
     expect(wrapper.findAll('.execution-row')).toHaveLength(1)
     expect(wrapper.text()).toContain('回归任务 21')
   })
+
+  it('filters execution history by endpoint and allows clearing the filter', async () => {
+    const otherExecution = {
+      ...execution,
+      id: 'execution-other',
+      case_results: [{ ...execution.case_results[0], endpoint_id: 'endpoint-other' }],
+    }
+    const wrapper = mount(ExecutionConsole, {
+      props: { executions: [execution, otherExecution], active: null, events: [], connectionState: 'idle', endpointId: 'endpoint-2' },
+    })
+
+    expect(wrapper.text()).toContain('当前仅显示所选接口')
+    expect(wrapper.find('[data-testid="execution-row-execution-1"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="execution-row-execution-other"]').exists()).toBe(false)
+
+    await wrapper.get('[data-testid="execution-clear-endpoint-filter"]').trigger('click')
+    expect(wrapper.emitted('clearEndpointFilter')).toHaveLength(1)
+  })
 })

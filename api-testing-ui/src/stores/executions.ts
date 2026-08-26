@@ -22,6 +22,7 @@ export const useExecutionsStore = defineStore('api-executions', {
     events: [] as ExecutionEventView[],
     connectionState: 'idle' as ExecutionConnectionState,
     loading: false,
+    selectingExecutionId: '',
     baselineStarting: false,
     deleting: false,
     error: '',
@@ -34,6 +35,16 @@ export const useExecutionsStore = defineStore('api-executions', {
     finalSnapshotTimer: null as ReturnType<typeof setTimeout> | null,
   }),
   actions: {
+    prepareSelection(executionId: string): void {
+      if (this.active?.id !== executionId) {
+        this.selectionVersion += 1
+        this.disconnect()
+        this.active = null
+        this.events = []
+      }
+      this.error = ''
+      this.selectingExecutionId = executionId
+    },
     async load(projectId: string): Promise<void> {
       this.loading = true
       this.error = ''
@@ -61,23 +72,25 @@ export const useExecutionsStore = defineStore('api-executions', {
       return this.active
     },
     async select(executionId: string): Promise<void> {
-      const selectionVersion = ++this.selectionVersion
-      const changed = this.active?.id !== executionId
-      if (changed) {
-        this.disconnect()
-        this.events = []
-      }
+      this.prepareSelection(executionId)
+      const selectionVersion = this.selectionVersion
       this.reconnectAttempts = 0
-      const response = await apiClient.get<{ execution: ExecutionView }>(
-        `/api/api-testing/v1/executions/${executionId}`,
-      )
-      if (selectionVersion !== this.selectionVersion) return
-      const execution = response.data.execution
-      this.active = execution
-      const index = this.executions.findIndex(item => item.id === executionId)
-      if (index >= 0) this.executions[index] = execution
-      else this.executions.unshift(execution)
-      await this.connect(executionId)
+      try {
+        const response = await apiClient.get<{ execution: ExecutionView }>(
+          `/api/api-testing/v1/executions/${executionId}`,
+        )
+        if (selectionVersion !== this.selectionVersion) return
+        const execution = response.data.execution
+        this.active = execution
+        const index = this.executions.findIndex(item => item.id === executionId)
+        if (index >= 0) this.executions[index] = execution
+        else this.executions.unshift(execution)
+        await this.connect(executionId)
+      } finally {
+        if (selectionVersion === this.selectionVersion && this.selectingExecutionId === executionId) {
+          this.selectingExecutionId = ''
+        }
+      }
     },
     appendEvent(event: ExecutionEventView): void {
       if (!Number.isInteger(event.id) || event.id <= 0) return

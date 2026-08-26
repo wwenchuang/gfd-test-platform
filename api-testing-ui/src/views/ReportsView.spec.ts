@@ -102,6 +102,20 @@ describe('ReportsView', () => {
     expect(wrapper.text()).toContain('商城项目用例')
   })
 
+  it('writes the current execution into the URL when opening the default report diagnostic', async () => {
+    const executions = useExecutionsStore()
+    const context = useContextStore()
+    vi.spyOn(context, 'loadSavedContext').mockResolvedValue()
+    vi.spyOn(context, 'loadOptions').mockResolvedValue()
+    executions.executions = [report]
+    const wrapper = mount(ReportsView)
+    await nextTick()
+
+    await wrapper.get('[data-testid="report-open-diagnostic"]').trigger('click')
+
+    expect(routerState.replace).toHaveBeenLastCalledWith({ query: { executionId: 'report-1' } })
+  })
+
   it('archives selected reports in bulk from the report dashboard', async () => {
     const executions = useExecutionsStore()
     const context = useContextStore()

@@ -36,12 +36,12 @@ function patch(index: number, field: string, value: unknown): void {
     <div class="section-heading"><strong>输出变量</strong><button :data-testid="testId('add-extraction')" class="mini-icon" type="button" title="增加提取" @click="emit('update:modelValue', [...clone(), { target: `变量${modelValue.length + 1}`, type: 'json_path', path: '$.data', required: true }])"><Plus :size="15" /></button></div>
     <p v-if="!modelValue.length" class="compact-empty">当前步骤不输出变量。</p>
     <div v-for="(extraction, index) in modelValue" :key="index" class="extraction-row">
-      <label>变量名<input :value="String(extraction.target || '')" @input="patch(index, 'target', ($event.target as HTMLInputElement).value)" /></label>
-      <label>来源<select :value="extraction.type" @change="patch(index, 'type', ($event.target as HTMLSelectElement).value)"><option value="json_path">JSON Path</option><option value="header">响应头</option><option value="cookie">Cookie</option><option value="status_code">状态码</option></select></label>
-      <label v-if="extraction.type === 'json_path'">路径<input :value="String(extraction.path || '')" @input="patch(index, 'path', ($event.target as HTMLInputElement).value)" /></label>
-      <label v-else-if="['header','cookie'].includes(String(extraction.type))">名称<input :value="String(extraction.name || '')" @input="patch(index, 'name', ($event.target as HTMLInputElement).value)" /></label>
-      <label class="toggle-line"><input :checked="extraction.required !== false" type="checkbox" @change="patch(index, 'required', ($event.target as HTMLInputElement).checked)" />必需</label>
-      <button class="mini-icon danger" type="button" title="删除提取" @click="emit('update:modelValue', clone().filter((_, row) => row !== index))"><Trash2 :size="14" /></button>
+      <label>变量名<input :data-testid="testId(`extraction-target-${index}`)" :value="String(extraction.target || '')" @input="patch(index, 'target', ($event.target as HTMLInputElement).value)" /></label>
+      <label>来源<select :data-testid="testId(`extraction-type-${index}`)" :value="extraction.type" @change="patch(index, 'type', ($event.target as HTMLSelectElement).value)"><option value="json_path">JSON Path</option><option value="header">响应头</option><option value="cookie">Cookie</option><option value="status_code">状态码</option></select></label>
+      <label v-if="extraction.type === 'json_path'">路径<input :data-testid="testId(`extraction-path-${index}`)" :value="String(extraction.path || '')" @input="patch(index, 'path', ($event.target as HTMLInputElement).value)" /></label>
+      <label v-else-if="['header','cookie'].includes(String(extraction.type))">名称<input :data-testid="testId(`extraction-name-${index}`)" :value="String(extraction.name || '')" @input="patch(index, 'name', ($event.target as HTMLInputElement).value)" /></label>
+      <label class="toggle-line"><input :data-testid="testId(`extraction-required-${index}`)" :checked="extraction.required !== false" type="checkbox" @change="patch(index, 'required', ($event.target as HTMLInputElement).checked)" />必需</label>
+      <button :data-testid="testId(`extraction-remove-${index}`)" class="mini-icon danger" type="button" title="删除提取" @click="emit('update:modelValue', clone().filter((_, row) => row !== index))"><Trash2 :size="14" /></button>
       <small v-for="([field, message]) in messages(index, errors)" :key="field" :data-error-for="field" class="field-error row-feedback">{{ message }}</small>
       <small v-for="([field, message]) in messages(index, warnings)" :key="field" :data-warning-for="field" class="field-warning row-feedback">{{ message }}</small>
     </div>

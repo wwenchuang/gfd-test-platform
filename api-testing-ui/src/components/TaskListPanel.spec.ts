@@ -14,7 +14,8 @@ const TASK: ApiTestTask = {
   name: '收藏链路回归',
   state: 'ready',
   selected_endpoint_ids: ['endpoint-1', 'endpoint-2'],
-  runnable_baseline_count: 1,
+  runnable_baseline_count: 3,
+  runnable_endpoint_count: 1,
   latest_ai_job_id: null,
   latest_execution_id: 'execution-1',
   summary: { ai_state: 'completed', ai: { generated_drafts: 2 } },
@@ -46,6 +47,8 @@ describe('TaskListPanel', () => {
     expect(wrapper.emitted('delete')).toEqual([[TASK]])
     expect(wrapper.get('[data-testid="task-list-run-task-2"]').attributes('disabled')).toBeDefined()
     expect(wrapper.get('[data-testid="task-list-item-task-1"]').text()).toContain('最近结果 通过 1/2 · 50%')
+    expect(wrapper.get('[data-testid="task-list-item-task-1"]').text()).toContain('范围 2 个接口 · 执行 3 条用例')
+    expect(wrapper.get('[data-testid="task-list-item-task-1"]').text()).toContain('覆盖 1 个接口，含多版本基线')
     expect(wrapper.get('[data-testid="task-list-item-task-1"]').text()).toContain('更新')
   })
 

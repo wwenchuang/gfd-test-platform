@@ -15,6 +15,7 @@ class ApiTestTaskView:
     state: str
     selected_endpoint_ids: tuple
     runnable_baseline_count: int
+    runnable_endpoint_count: int
     latest_ai_job_id: Optional[str]
     latest_execution_id: Optional[str]
     latest_execution_state: Optional[str]

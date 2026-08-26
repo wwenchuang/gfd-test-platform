@@ -366,6 +366,9 @@ class TestTaskService:
                 if task.latest_execution_id
                 else None
             )
+        runnable_endpoint_count, runnable_baseline_count = (
+            repository.runnable_baseline_counts(task)
+        )
         return ApiTestTaskView(
             id=task.id,
             project_id=task.project_id,
@@ -374,7 +377,8 @@ class TestTaskService:
             name=task.name,
             state=task.state,
             selected_endpoint_ids=tuple(task.selected_endpoint_ids),
-            runnable_baseline_count=repository.runnable_baseline_count(task),
+            runnable_baseline_count=runnable_baseline_count,
+            runnable_endpoint_count=runnable_endpoint_count,
             latest_ai_job_id=task.latest_ai_job_id,
             latest_execution_id=task.latest_execution_id,
             latest_execution_state=(latest_execution.state if latest_execution else None),

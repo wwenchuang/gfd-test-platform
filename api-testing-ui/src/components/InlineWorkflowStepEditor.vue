@@ -1,14 +1,16 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { Plus, Search } from 'lucide-vue-next'
+import { FlaskConical, Plus, Search } from 'lucide-vue-next'
 
-import type { ApiEndpoint, InlineWorkflowStep, WorkflowVariableOption } from '../api/contracts'
+import { apiClient } from '../api/client'
+import type { ApiEndpoint, InlineWorkflowStep, WorkflowStepPreview, WorkflowVariableOption } from '../api/contracts'
 import { withLegacyVariables } from '../utils/workflowVariables'
 import EndpointPicker from './EndpointPicker.vue'
 import AssertionListEditor from './AssertionListEditor.vue'
 import ExtractionListEditor from './ExtractionListEditor.vue'
 import RequestConfigEditor from './RequestConfigEditor.vue'
 import WorkflowStepCard from './WorkflowStepCard.vue'
+import WorkflowStepPreviewPanel from './WorkflowStepPreviewPanel.vue'
 import VariablePicker from './VariablePicker.vue'
 
 const props = defineProps<{
@@ -17,12 +19,20 @@ const props = defineProps<{
   endpointOptions?: ApiEndpoint[]
   validationErrors?: Record<string, string>
   variableOptions?: WorkflowVariableOption[][]
+  environmentRevisionId?: string
+  initialVariables?: Record<string, unknown>
+  processingPre?: Array<Record<string, unknown>>
 }>()
 const emit = defineEmits<{ 'update:modelValue': [steps: InlineWorkflowStep[]] }>()
 const jsonErrors = ref<Record<string, string>>({})
 const pickerOpen = ref(false)
 const pickerTargetIndex = ref<number | null>(null)
 const activeIndex = ref<number | null>(props.modelValue.length ? 0 : null)
+const preview = ref<WorkflowStepPreview | null>(null)
+const previewIndex = ref<number | null>(null)
+const previewLoadingIndex = ref<number | null>(null)
+const previewError = ref('')
+const previewOverrides = ref<Record<string, unknown>>({})
 const stageLabel = computed(() => props.stage === 'setup' ? '前置步骤' : '清理步骤')
 const stageHint = computed(() => props.stage === 'setup'
   ? '按顺序获取主体请求需要的真实业务数据。'
@@ -234,6 +244,56 @@ function stepPrefix(index: number): string {
   return `processing.${props.stage === 'setup' ? 'setup_steps' : 'cleanup_steps'}[${index}]`
 }
 
+function activePreviewOverrides(index: number): Record<string, unknown> {
+  const targets = new Set(
+    props.modelValue
+      .slice(0, index + 1)
+      .filter(step => step.enabled)
+      .flatMap(step => step.extractions || [])
+      .map(extraction => String(extraction.target || '').trim())
+      .filter(Boolean),
+  )
+  return Object.fromEntries(
+    Object.entries(previewOverrides.value).filter(([target]) => targets.has(target)),
+  )
+}
+
+async function runPreview(index: number): Promise<void> {
+  previewError.value = ''
+  preview.value = null
+  previewIndex.value = index
+  if (!props.environmentRevisionId) {
+    previewError.value = '请先选择执行环境'
+    return
+  }
+  previewLoadingIndex.value = index
+  try {
+    const response = await apiClient.post<{ preview: WorkflowStepPreview }>(
+      '/api/api-testing/v1/workflow-steps/preview',
+      {
+        environment_revision_id: props.environmentRevisionId,
+        setup_steps: clone(props.modelValue),
+        target_index: index,
+        initial_variables: clone(props.initialVariables || {}),
+        processing_pre: clone(props.processingPre || []),
+        extraction_overrides: clone(activePreviewOverrides(index)),
+      },
+    )
+    preview.value = response.data.preview
+  } catch (error) {
+    previewError.value = error instanceof Error ? error.message : '前置步骤试运行失败'
+  } finally {
+    previewLoadingIndex.value = null
+  }
+}
+
+function applyPreview(payload: { extractions: Array<Record<string, unknown>>; overrides: Record<string, unknown> }): void {
+  if (previewIndex.value === null) return
+  patchStep(previewIndex.value, { extractions: payload.extractions })
+  previewOverrides.value = { ...previewOverrides.value, ...payload.overrides }
+  preview.value = null
+}
+
 watch(() => props.modelValue.length, length => {
   if (!length) activeIndex.value = null
   else if (activeIndex.value !== null && activeIndex.value >= length) activeIndex.value = length - 1
@@ -256,6 +316,14 @@ watch(() => props.validationErrors, errors => {
       @select="addEndpointStep"
       @manual="addManualStep"
       @close="closePicker"
+    />
+    <WorkflowStepPreviewPanel
+      v-if="preview && previewIndex !== null"
+      :preview="preview"
+      :extractions="modelValue[previewIndex]?.extractions || []"
+      :step-name="modelValue[previewIndex]?.name || '前置步骤'"
+      @apply="applyPreview"
+      @close="preview = null"
     />
     <header class="workflow-stage-heading">
       <div><strong>{{ stageLabel }}</strong><span>{{ stageHint }}</span></div>
@@ -290,6 +358,15 @@ watch(() => props.validationErrors, errors => {
           </div>
           <div class="workflow-required-variables"><span>必需变量</span><VariablePicker :model-value="step.required_variables" :options="availableVariables(index)" :test-id-prefix="`${stage}-${index}`" @update:model-value="patchStep(index, { required_variables: $event })" /></div>
         </div>
+        <div v-if="stage === 'setup'" class="workflow-step-preview-actions">
+          <div>
+            <strong>响应取值校验</strong>
+            <small>执行前置链路到当前步骤，查看真实响应并选择后续需要的变量。</small>
+            <small v-if="!['GET', 'HEAD'].includes(step.request.method)" class="field-warning">当前步骤会真实创建或修改数据，请配置清理步骤并在完整调试后确认回收。</small>
+          </div>
+          <button :data-testid="`setup-preview-${index}`" class="secondary-command" type="button" :disabled="!step.enabled || previewLoadingIndex !== null" @click="runPreview(index)"><FlaskConical :size="14" />{{ previewLoadingIndex === index ? '试运行中…' : '试运行到此步骤' }}</button>
+        </div>
+        <p v-if="stage === 'setup' && previewIndex === index && previewError" class="inline-error">{{ previewError }}</p>
         <RequestConfigEditor :model-value="step.request" :errors="validationErrors" :prefix="`${stepPrefix(index)}.request`" :test-id-prefix="`${stage}-${index}`" :variable-options="availableVariables(index)" @update:model-value="patchStep(index, { request: $event })" />
         <AssertionListEditor :model-value="step.assertions" :errors="validationErrors" :prefix="`${stepPrefix(index)}.assertions`" :test-id-prefix="`${stage}-${index}`" @update:model-value="patchStep(index, { assertions: $event })" />
         <ExtractionListEditor :model-value="step.extractions" :errors="validationErrors" :prefix="`${stepPrefix(index)}.extractions`" :test-id-prefix="`${stage}-${index}`" @update:model-value="patchStep(index, { extractions: $event })" />

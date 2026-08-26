@@ -23,6 +23,45 @@ describe('WorkbenchView debug workflow', () => {
     vi.spyOn(useContextStore(), 'loadEnvironmentVariableNames').mockResolvedValue()
   })
 
+  it('keeps restored task details hidden until the routed workspace context is ready', async () => {
+    const context = useContextStore()
+    let finishContext!: () => void
+    vi.spyOn(context, 'loadSavedContext').mockImplementation(() => new Promise<void>(resolve => { finishContext = resolve }))
+    vi.spyOn(context, 'loadOptions').mockResolvedValue()
+    const cases = useCasesStore()
+    vi.spyOn(cases, 'restoreLatestAiJob').mockResolvedValue()
+
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [{ path: '/', name: 'workbench', component: WorkbenchView }],
+    })
+    await router.push('/')
+    await router.isReady()
+    const wrapper = mount(WorkbenchView, {
+      global: {
+        plugins: [router],
+        stubs: {
+          ContextBar: true,
+          TaskStatusStrip: true,
+          EndpointDetail: true,
+          CaseEditor: true,
+          AiAssistant: true,
+          DebugDrawer: true,
+          EndpointTree: true,
+        },
+      },
+    })
+
+    expect(wrapper.get('[data-testid="workspace-restoring"]').text()).toContain('正在恢复上次工作区')
+    expect(wrapper.findComponent({ name: 'TaskStatusStrip' }).exists()).toBe(false)
+
+    finishContext()
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="workspace-restoring"]').exists()).toBe(false)
+    expect(wrapper.findComponent({ name: 'TaskStatusStrip' }).exists()).toBe(true)
+  })
+
   it('opens the only endpoint in a restored task without another selection click', async () => {
     const context = useContextStore()
     Object.assign(context, {

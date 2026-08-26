@@ -10,7 +10,7 @@ import DebugDrawer from '../components/DebugDrawer.vue'
 import EndpointDetail from '../components/EndpointDetail.vue'
 import EndpointTree from '../components/EndpointTree.vue'
 import TaskStatusStrip from '../components/TaskStatusStrip.vue'
-import type { ApiEndpoint, ApiTestTask, CaseDraft } from '../api/contracts'
+import type { ApiEndpoint, ApiTestTask, CaseDraft, CaseVersion } from '../api/contracts'
 import { useAssetsStore } from '../stores/assets'
 import { useCasesStore } from '../stores/cases'
 import { useContextStore } from '../stores/context'
@@ -28,6 +28,7 @@ const endpointTreeTab = ref<'all' | 'selected'>('all')
 const activeEndpoint = ref<ApiEndpoint | null>(null)
 const debugOpen = ref(false)
 const localError = ref('')
+const workspaceRestoring = ref(true)
 const taskNameDraft = ref('')
 const mobilePane = ref<'scope' | 'editor' | 'ai'>('scope')
 const caseEditor = ref<{ editStep(target: { stage: 'setup' | 'main' | 'cleanup'; index: number }): Promise<void> } | null>(null)
@@ -52,37 +53,47 @@ const taskMatchesSelection = computed(() => Boolean(
   && tasks.task.source_revision_id === context.sourceRevisionId
   && [...tasks.task.selected_endpoint_ids].sort().join('|') === [...selectedIds.value].sort().join('|'),
 ))
+const aiGeneratedCases = computed(() => {
+  const ids = new Set(cases.aiJob?.batches.flatMap(batch => batch.generated_draft_ids) || [])
+  return [...ids].map(id => cases.versions[id]).filter((item): item is CaseVersion => Boolean(item))
+})
 
 watch(() => context.environmentRevisionId, revisionId => {
   void context.loadEnvironmentVariableNames(revisionId)
 })
 
 onMounted(async () => {
-  await Promise.all([context.loadSavedContext(), context.loadOptions()])
-  const routeContext = restoreExecutionContextFromRoute()
-  if (context.projectId) await tasks.list(context.projectId)
-  const routeTaskId = routeValue(route.query.taskId)
-  let restoredTask = routeTaskId ? tasks.select(routeTaskId) : null
-  if (!restoredTask && context.projectId) restoredTask = await tasks.restore(context.projectId)
-  if (restoredTask && !routeContext) {
-    const runtimeEnvironmentId = restoredTask.project_id === context.projectId
-      ? context.environmentRevisionId || restoredTask.environment_revision_id
-      : restoredTask.environment_revision_id
-    ensureTaskContextOptions(restoredTask, runtimeEnvironmentId)
-    context.restoreExecutionContext({
-      project_id: restoredTask.project_id,
-      source_revision_id: restoredTask.source_revision_id,
-      environment_revision_id: runtimeEnvironmentId,
-    })
+  try {
+    await Promise.all([context.loadSavedContext(), context.loadOptions()])
+    const routeContext = restoreExecutionContextFromRoute()
+    if (context.projectId) await tasks.list(context.projectId)
+    const routeTaskId = routeValue(route.query.taskId)
+    let restoredTask = routeTaskId ? tasks.select(routeTaskId) : null
+    if (!restoredTask && context.projectId) restoredTask = await tasks.restore(context.projectId)
+    if (restoredTask && !routeContext) {
+      const runtimeEnvironmentId = restoredTask.project_id === context.projectId
+        ? context.environmentRevisionId || restoredTask.environment_revision_id
+        : restoredTask.environment_revision_id
+      ensureTaskContextOptions(restoredTask, runtimeEnvironmentId)
+      context.restoreExecutionContext({
+        project_id: restoredTask.project_id,
+        source_revision_id: restoredTask.source_revision_id,
+        environment_revision_id: runtimeEnvironmentId,
+      })
+    }
+    const restoredSelection = restoredTask
+      && restoredTask.project_id === context.projectId
+      && restoredTask.source_revision_id === context.sourceRevisionId
+      ? restoredTask.selected_endpoint_ids
+      : []
+    if (context.sourceRevisionId) await loadSource(context.sourceRevisionId, restoredSelection)
+    await restoreDeepLink()
+    if (context.projectId) await cases.restoreLatestAiJob(context.projectId)
+  } catch (error) {
+    localError.value = error instanceof Error ? error.message : '工作区恢复失败，请刷新后重试'
+  } finally {
+    workspaceRestoring.value = false
   }
-  const restoredSelection = restoredTask
-    && restoredTask.project_id === context.projectId
-    && restoredTask.source_revision_id === context.sourceRevisionId
-    ? restoredTask.selected_endpoint_ids
-    : []
-  if (context.sourceRevisionId) await loadSource(context.sourceRevisionId, restoredSelection)
-  await restoreDeepLink()
-  if (context.projectId) await cases.restoreLatestAiJob(context.projectId)
 })
 
 watch(() => tasks.task?.name, name => {
@@ -179,6 +190,24 @@ function activate(endpoint: ApiEndpoint): void {
   activeEndpoint.value = endpoint
   cases.draftFor(endpoint)
   mobilePane.value = 'editor'
+}
+
+function openAiGenerated(version: CaseVersion): void {
+  const endpoint = assets.endpoints.find(item => item.id === version.endpoint_id)
+  if (!endpoint) {
+    localError.value = '生成用例对应的接口不在当前接口版本中'
+    return
+  }
+  activate(endpoint)
+  cases.setActiveVersion(version.endpoint_id, version.id)
+}
+
+function manageAiGenerated(): void {
+  void router.push({ name: 'cases', query: { projectId: context.projectId || '', sourceRevisionId: context.sourceRevisionId || '' } })
+}
+
+function openEndpointHistory(endpointId: string): void {
+  void router.push({ name: 'runs', query: { endpointId } })
 }
 
 function startNewTask(): void {
@@ -416,6 +445,11 @@ function defaultTaskName(): string {
 <template>
   <section class="workspace workbench-page">
     <header class="page-toolbar"><div><p class="eyebrow">API TEST WORKSPACE</p><h1>接口测试工作台</h1><p class="page-subtitle">选接口，AI 设计，保存草稿后直接调试。</p></div><button class="icon-command" type="button" title="重新读取已保存接口" :disabled="!context.sourceRevisionId || assets.state === 'loading'" @click="context.sourceRevisionId && assets.load(context.sourceRevisionId)"><RefreshCw :size="18" /></button></header>
+    <div v-if="workspaceRestoring" class="state-message workspace-restoring" data-testid="workspace-restoring">
+      <RefreshCw class="spinning" :size="18" />
+      <div><strong>正在恢复上次工作区</strong><small>正在读取任务、接口版本和执行环境…</small></div>
+    </div>
+    <template v-else>
     <ContextBar
       :projects="context.projects"
       :source-revisions="context.sourceRevisions"
@@ -452,13 +486,14 @@ function defaultTaskName(): string {
       <div class="design-workspace">
         <EndpointTree id="mobile-workbench-panel-scope" role="tabpanel" aria-labelledby="mobile-workbench-tab-scope" :class="['mobile-workbench-pane', { 'mobile-pane-active': mobilePane === 'scope' }]" :endpoints="assets.endpoints" :selected-ids="selectedIds" :initial-tab="endpointTreeTab" :state="context.sourceRevisionId ? assets.state : 'empty'" :error="assets.error" @selection-change="selectedIds = $event" @activate="activate" />
         <main id="mobile-workbench-panel-editor" role="tabpanel" aria-labelledby="mobile-workbench-tab-editor" :class="['design-center', 'mobile-workbench-pane', { 'mobile-pane-active': mobilePane === 'editor' }]">
-          <EndpointDetail :endpoint="activeEndpoint" />
-          <CaseEditor v-if="activeDraft" ref="caseEditor" :model-value="activeDraft" :dependency-options="dependencyOptions" :endpoint-options="assets.endpoints" :environment-variable-names="context.environmentVariableNames" :saving="cases.saving" :debugging="debugRunning" :saved-message="cases.savedMessage" :validation-errors="cases.validationErrors" :validation-warnings="cases.validationWarnings" @update:model-value="updateDraft" @save="saveDraft" @debug="submitDebug" />
+          <EndpointDetail :endpoint="activeEndpoint" @open-history="openEndpointHistory" />
+          <CaseEditor v-if="activeDraft" ref="caseEditor" :model-value="activeDraft" :dependency-options="dependencyOptions" :endpoint-options="assets.endpoints" :environment-variable-names="context.environmentVariableNames" :environment-revision-id="context.environmentRevisionId || ''" :saving="cases.saving" :debugging="debugRunning" :saved-message="cases.savedMessage" :validation-errors="cases.validationErrors" :validation-warnings="cases.validationWarnings" @update:model-value="updateDraft" @save="saveDraft" @debug="submitDebug" />
           <div v-else class="state-message center-empty">选择接口后，可手工编辑或让 AI 生成测试用例。</div>
         </main>
-        <AiAssistant id="mobile-workbench-panel-ai" role="tabpanel" aria-labelledby="mobile-workbench-tab-ai" :class="['mobile-workbench-pane', { 'mobile-pane-active': mobilePane === 'ai' }]" :selected-count="selectedIds.length" :job="cases.aiJob" :error="cases.aiError" :polling="cases.aiPolling" :can-resume="cases.aiCanResume" :basic-generating="cases.basicGenerating" @generate-basic="generateBasicPositive" @generate="generate" @retry="generate" @resume="cases.resumeAiJob()" />
+        <AiAssistant id="mobile-workbench-panel-ai" role="tabpanel" aria-labelledby="mobile-workbench-tab-ai" :class="['mobile-workbench-pane', { 'mobile-pane-active': mobilePane === 'ai' }]" :selected-count="selectedIds.length" :job="cases.aiJob" :generated-cases="aiGeneratedCases" :error="cases.aiError" :polling="cases.aiPolling" :can-resume="cases.aiCanResume" :basic-generating="cases.basicGenerating" @generate-basic="generateBasicPositive" @generate="generate" @retry="generate" @resume="cases.resumeAiJob()" @open-generated="openAiGenerated" @manage-generated="manageAiGenerated" />
       </div>
     </div>
+    </template>
     <DebugDrawer v-if="debugOpen" :open="debugOpen" :case-version-id="activeVersionId" :environment-revision-id="context.environmentRevisionId || ''" :environment-label="environmentLabel" :running="debugRunning" :can-resume="cases.debugCanResume" :result="cases.debugResult" :error="cases.debugError" :baseline-adopting="cases.baselineAdopting" :baseline-message="cases.baselineMessage" :baseline-error="cases.baselineError" @submit="submitDebug" @resume="cases.resumeDebug()" @adopt="adoptBaseline" @edit-step="editDebugStep" @close="debugOpen = false" />
   </section>
 </template>

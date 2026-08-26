@@ -375,6 +375,7 @@ function dateText(value?: string | null): string {
         <label>项目名称<input v-model="projectEditName" placeholder="项目名称" /></label>
         <label>项目备注<input v-model="projectEditDescription" placeholder="例如：3D 家用业务接口" /></label>
         <button class="primary-command scope-check" type="button" :disabled="setup.busy" @click="saveProjectEdit"><Save :size="15" />保存项目</button>
+        <button data-testid="project-edit-cancel" class="secondary-command scope-check" type="button" :disabled="setup.busy" @click="showProjectEditor = false">取消</button>
       </div>
     </section>
 

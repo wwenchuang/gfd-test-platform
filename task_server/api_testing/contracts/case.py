@@ -489,6 +489,60 @@ def _parse_step_polling(value, field, method):
     return {"max_attempts": max_attempts, "interval_ms": interval_ms}
 
 
+def parse_workflow_step_preview_payload(payload):
+    payload = _require_mapping(payload, "workflow step preview")
+    allowed = {
+        "setup_steps",
+        "target_index",
+        "initial_variables",
+        "processing_pre",
+        "extraction_overrides",
+    }
+    _reject_unknown(payload, allowed, "workflow step preview")
+    steps = _parse_inline_steps(payload.get("setup_steps", []), "setup_steps")
+    target_index = payload.get("target_index")
+    if not isinstance(target_index, int) or isinstance(target_index, bool):
+        raise CasePayloadError("target_index must be an integer")
+    if target_index < 0 or target_index >= len(steps):
+        raise CasePayloadError("target_index is outside setup_steps")
+    if not steps[target_index]["enabled"]:
+        raise CasePayloadError("target setup step is disabled")
+
+    processing_pre = _parse_processing(
+        {
+            "pre": payload.get("processing_pre", []),
+            "post": [],
+            "setup_steps": [],
+            "cleanup_steps": [],
+        }
+    )["pre"]
+    initial_variables = _named_mapping(
+        payload.get("initial_variables", {}), "initial_variables"
+    )
+    extraction_overrides = _named_mapping(
+        payload.get("extraction_overrides", {}), "extraction_overrides"
+    )
+    prefix_targets = {
+        extraction["target"]
+        for step in steps[: target_index + 1]
+        if step["enabled"]
+        for extraction in step["extractions"]
+    }
+    unknown_overrides = sorted(set(extraction_overrides) - prefix_targets)
+    if unknown_overrides:
+        raise CasePayloadError(
+            "extraction_overrides contains unknown extracted variable: "
+            + unknown_overrides[0]
+        )
+    return {
+        "setup_steps": steps,
+        "target_index": target_index,
+        "initial_variables": initial_variables,
+        "processing_pre": processing_pre,
+        "extraction_overrides": extraction_overrides,
+    }
+
+
 def parse_case_payload(payload):
     payload = _require_mapping(payload, "case")
     allowed = {

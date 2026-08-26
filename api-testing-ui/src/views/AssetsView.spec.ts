@@ -206,6 +206,17 @@ describe('AssetsView Apifox actions', () => {
       },
     })
   })
+
+  it('allows leaving project editing without saving changes', async () => {
+    const wrapper = mount(AssetsView, { global: { stubs: { RouterLink: { template: '<a><slot /></a>' } } } })
+    await flushPromises()
+
+    await wrapper.findAll('button').find(button => button.text().includes('编辑项目'))!.trigger('click')
+    expect(wrapper.text()).toContain('只修改平台侧名称和备注')
+    await wrapper.get('[data-testid="project-edit-cancel"]').trigger('click')
+
+    expect(wrapper.text()).not.toContain('只修改平台侧名称和备注')
+  })
 })
 
 function buttonText(wrapper: ReturnType<typeof mount>): string {

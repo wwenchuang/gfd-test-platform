@@ -1,4 +1,5 @@
 import os
+from types import SimpleNamespace
 
 from alembic import command
 import pytest
@@ -197,6 +198,33 @@ def _payload(records, endpoint_ids=None):
         "name": "我的收藏接口回归",
         "selected_endpoint_ids": endpoint_ids or [records["endpoint"].id],
     }
+
+
+def test_task_view_exposes_covered_endpoints_and_actual_baseline_versions():
+    class Repository:
+        @staticmethod
+        def runnable_baseline_counts(_task):
+            return 1, 2
+
+    task = SimpleNamespace(
+        id="task-1",
+        project_id="project-1",
+        source_revision_id="source-1",
+        environment_revision_id="environment-1",
+        name="同一接口多版本基线",
+        state="ready",
+        selected_endpoint_ids=["endpoint-1"],
+        latest_ai_job_id=None,
+        latest_execution_id=None,
+        summary={},
+        created_at=None,
+        updated_at=None,
+    )
+
+    view = TaskService._view(Repository(), task, latest_execution=None)
+
+    assert view.runnable_endpoint_count == 1
+    assert view.runnable_baseline_count == 2
 
 
 def test_task_restores_selection_and_advances_through_ai_and_execution(

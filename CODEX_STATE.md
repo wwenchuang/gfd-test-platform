@@ -574,6 +574,20 @@ git diff --check
 # passed
 ```
 
+### 2026-08-26 API 测试平台第二轮全流程点检
+
+本轮使用独立 Chrome 页面在 QA 实站完成接口资产、工作台、用例、任务、基线、定时任务、执行记录、测试报告和环境配置九个入口的真实点击，并创建临时任务、生成用例、调试、采纳基线、执行任务、创建定时任务及回看报告。详细步骤和验收边界见 `docs/api-testing-ux-audit-2026-08-26.md` 的“第二轮全流程实站点检”。
+
+本轮实现：
+
+- 区分任务覆盖的唯一接口数与实际执行的有效基线版本数，避免同一接口多版本时少报执行量。
+- 执行记录深链加载前清除旧详情，接口详情可进入按接口筛选的历史执行。
+- 接口请求参数和响应契约改为结构化展示，同时保留折叠原始 JSON。
+- AI 意图模板、生成耗时和本批全部草稿在工作台可见，支持逐条打开和统一管理。
+- 定时任务多基线目标显示版本、来源、方法、路径和采纳时间，分组默认折叠；任务卡不再显示原始 UUID。
+- 完整诊断携带当前执行 ID，项目编辑增加取消，工作台恢复期间显示统一加载态。
+- 新增和更新组件、Store、视图及端到端测试，验收脚本按组件作用域定位接口，避免与 AI 生成结果产生歧义。
+
 线上继续执行前需要先部署最新 main 并清掉旧 Celery 队列；否则 POST/DELETE 提交后仍可能停在 QUEUED。推荐服务端操作：
 
 ```bash
@@ -10388,6 +10402,41 @@ npx playwright test tests/api_testing_e2e.spec.mjs --project=chromium
 # 63 checks passed
 
 .venv/bin/python tests/frontend_static_checks.py
+# 84 checks passed
+
+git diff --check
+# passed
+```
+
+### 2026-08-26 API 前置步骤真实响应取值与临时 Token 替换
+
+本轮补齐新手配置前置步骤时最容易卡住的“先执行、再看响应、再选变量”闭环，并继续收口第二轮全流程点检发现的操作与移动端问题。
+
+本轮实现：
+
+- 前置步骤新增“试运行到此步骤”，按现有执行环境真实运行启用的前置链路，不执行主体请求，也不创建正式执行记录。
+- 试运行严格复用生产 HTTP 执行器、变量解析、前处理、业务断言和脱敏轨迹；前一步失败或变量缺失时停止，不伪造目标步骤响应。
+- 响应选择面板展示状态码、JSON 字段、响应头和 Cookie，支持固定搜索、字段类型、路径、当前值与建议变量名，最多展示 500 个叶子字段。
+- 勾选响应字段后生成现有输出变量规则；变量名不合法或重复时禁止应用，不引入第二套提取模型。
+- Token、Cookie、Authorization、密码和签名等字段默认隐藏，用户可显式查看、编辑并用于后续前置步骤预览；替换值只保存在当前浏览器组件会话，不写入用例、数据库、执行记录、日志或报告。
+- 试运行写接口时明确提示会真实创建或修改数据，并要求配置清理步骤；完整调试仍按现有 `setup -> main -> always-run cleanup` 执行。
+- 预览接口要求登录和项目环境权限，响应统一使用 `Cache-Control: no-store`；服务端原始响应只存在本次请求作用域，持久化轨迹继续使用脱敏数据。
+- 移动端响应字段面板改为单列编辑，长 JSON Path 和请求 URL 可换行；同时修复完整诊断报告的三层 Grid 最小内容宽度导致的横向溢出。
+- Chromium 隔离验收实际从收藏列表响应选择 `$.data[0].id` 生成 `favoriteId`，随后完成保存调试、基线、任务执行、报告、定时任务和删除闭环。
+
+验证基线：
+
+```bash
+bash tests/run_api_testing_gate.sh
+# 459 backend tests passed
+# 56 frontend files / 294 tests passed
+# production build, desktop/mobile visual checks passed
+# 1 Chromium full workflow passed
+
+python3 tests/backend_static_checks.py
+# 63 checks passed
+
+python3 tests/frontend_static_checks.py
 # 84 checks passed
 
 git diff --check

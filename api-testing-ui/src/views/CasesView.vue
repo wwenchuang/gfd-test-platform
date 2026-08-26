@@ -42,6 +42,10 @@ const environmentLabel = computed(() => selectedEnvironment.value
   : context.environmentRevisionId ? '任务保存环境 · 已保存任务引用' : '未选择环境')
 const activeTaskName = computed(() => tasks.task?.name || '未绑定任务')
 
+function openEndpointHistory(endpointId: string): void {
+  void router.push({ name: 'runs', query: { endpointId } })
+}
+
 onMounted(async () => {
   await Promise.all([context.loadSavedContext(), context.loadOptions()])
   if (context.projectId) {
@@ -403,7 +407,7 @@ function defaultTaskName(): string {
           </div>
         </header>
         <div class="management-detail-body">
-          <EndpointDetail :endpoint="activeEndpoint" />
+          <EndpointDetail :endpoint="activeEndpoint" @open-history="openEndpointHistory" />
           <CaseEditor
             v-if="activeDraft"
             :model-value="activeDraft"

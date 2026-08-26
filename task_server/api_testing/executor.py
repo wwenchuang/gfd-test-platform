@@ -11,6 +11,7 @@ import socket
 import ssl
 import time
 from types import MappingProxyType, SimpleNamespace
+from typing import Optional
 from urllib.parse import urlencode, urljoin, urlsplit, urlunsplit
 
 from .assertions import (
@@ -136,6 +137,7 @@ class _HttpStepOutcome:
     extracted: dict
     error: str
     secrets: tuple
+    raw_response: Optional[dict] = None
 
 
 @dataclass(frozen=True, repr=False)
@@ -425,6 +427,88 @@ class HttpExecutor:
         except Exception as exc:
             return self._failure_result(callback, started, "BROKEN", "environment", request_view, response_view, (), {}, str(exc), trace, secrets)
 
+    def preview_setup_steps(
+        self,
+        environment_revision_id,
+        setup_steps,
+        target_index,
+        *,
+        initial_variables=None,
+        processing_pre=None,
+        extraction_overrides=None,
+    ):
+        """Execute an enabled setup prefix without persisting an execution."""
+        steps = tuple(copy.deepcopy(list(setup_steps or [])))
+        if not isinstance(target_index, int) or isinstance(target_index, bool):
+            raise ValueError("target_index must be an integer")
+        if target_index < 0 or target_index >= len(steps):
+            raise ValueError("target_index is outside setup_steps")
+        if not steps[target_index].get("enabled", True):
+            raise ValueError("target setup step is disabled")
+
+        variables = copy.deepcopy(dict(initial_variables or {}))
+        self._apply_processing(processing_pre or [], variables)
+        overrides = copy.deepcopy(dict(extraction_overrides or {}))
+        trace = []
+        target_outcome = None
+        missing_variables = []
+        executed_index = None
+
+        for index, step in enumerate(steps[: target_index + 1]):
+            if not step.get("enabled", True):
+                continue
+            missing = self._missing_step_variables(step, variables)
+            if missing:
+                missing_variables = list(missing)
+                self._emit_skipped_step(
+                    None, trace, "setup", index, step, missing
+                )
+                target_outcome = _HttpStepOutcome(
+                    "BROKEN",
+                    "missing_variables",
+                    {},
+                    {},
+                    (),
+                    {},
+                    "required workflow variables are missing: "
+                    + ", ".join(missing),
+                    (),
+                )
+                break
+            outcome, _step_secrets = self._execute_inline_step(
+                "setup",
+                index,
+                step,
+                environment_revision_id,
+                variables,
+                lambda _phase: False,
+                None,
+                trace,
+            )
+            executed_index = index
+            target_outcome = outcome
+            if outcome.status != "PASSED":
+                break
+            variables.update(copy.deepcopy(outcome.extracted))
+            for name in outcome.extracted:
+                if name in overrides:
+                    variables[name] = copy.deepcopy(overrides[name])
+
+        if target_outcome is None:
+            raise ValueError("no enabled setup step was executed")
+        return {
+            "status": target_outcome.status,
+            "failure_category": target_outcome.failure_category,
+            "error_message": redact(target_outcome.error, target_outcome.secrets),
+            "trace": copy.deepcopy(trace),
+            "response": copy.deepcopy(target_outcome.raw_response or {}),
+            "target_index": target_index,
+            "executed_index": executed_index,
+            "target_reached": executed_index == target_index,
+            "available_variables": sorted(variables),
+            "missing_variables": missing_variables,
+        }
+
     def _execute_inline_step(
         self,
         stage,
@@ -601,6 +685,18 @@ class HttpExecutor:
                 },
                 response_secrets,
             )
+            raw_response = {
+                "status_code": response.status_code,
+                "headers": copy.deepcopy(response.headers),
+                "cookies": copy.deepcopy(response.cookies),
+                "body": copy.deepcopy(
+                    response.json_body
+                    if response.json_body is not None
+                    else response.body_text
+                ),
+                "duration_ms": response.duration_ms,
+                "url": response.url,
+            }
             if record_main_phases:
                 self._emit_phase(
                     callback, trace, "response", {"response": response_view}
@@ -656,6 +752,7 @@ class HttpExecutor:
                 extracted,
                 "",
                 response_secrets,
+                raw_response,
             )
         except Exception as exc:
             status, category, error = self._exception_details(exc)

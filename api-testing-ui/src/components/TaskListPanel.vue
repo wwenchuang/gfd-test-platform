@@ -38,6 +38,14 @@ function canRun(task: ApiTestTask): boolean {
   return task.runnable_baseline_count > 0 && !['designing', 'debugging', 'running'].includes(task.state)
 }
 
+function runnableEndpointCount(task: ApiTestTask): number {
+  return task.runnable_endpoint_count ?? Math.min(task.runnable_baseline_count, task.selected_endpoint_ids.length)
+}
+
+function hasMultipleBaselineVersions(task: ApiTestTask): boolean {
+  return task.runnable_baseline_count > runnableEndpointCount(task)
+}
+
 function environmentName(task: ApiTestTask): string {
   return props.environmentNames[task.environment_revision_id] || '任务保存环境'
 }
@@ -71,7 +79,8 @@ function environmentName(task: ApiTestTask): string {
       >
         <span class="task-list-main">
           <strong :title="task.name">{{ task.name }}</strong>
-          <small>{{ task.selected_endpoint_ids.length }} 个接口 · {{ task.runnable_baseline_count }} 条基线</small>
+          <small>范围 {{ task.selected_endpoint_ids.length }} 个接口 · 执行 {{ task.runnable_baseline_count }} 条用例</small>
+          <small>覆盖 {{ runnableEndpointCount(task) }} 个接口{{ hasMultipleBaselineVersions(task) ? '，含多版本基线' : '' }}</small>
           <small>环境 {{ environmentName(task) }}</small>
           <small>{{ taskLatestResult(task) }}</small>
           <small>更新 {{ compactDateTime(task.updated_at) }}</small>

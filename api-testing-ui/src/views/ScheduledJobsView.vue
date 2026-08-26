@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { CalendarClock, Check, ExternalLink, Pencil, Play, RefreshCw, Save, Trash2 } from 'lucide-vue-next'
+import { CalendarClock, Check, ChevronDown, ChevronRight, ExternalLink, Pencil, Play, RefreshCw, Save, Trash2 } from 'lucide-vue-next'
 
 import type { ApiBaselineCase, ApiTestTask, CaseVersion, ScheduledJob } from '../api/contracts'
 import { baselineGroup, useBaselinesStore } from '../stores/baselines'
@@ -33,6 +33,7 @@ const selectedTargetIds = ref<string[]>([])
 const targetSearch = ref('')
 const targetLoadError = ref('')
 const editingJobId = ref('')
+const expandedTargetGroups = ref<Set<string>>(new Set())
 let suspendTargetReset = false
 
 interface TargetOption {
@@ -137,6 +138,7 @@ watch(() => form.targetType, () => {
   if (suspendTargetReset) return
   selectedTargetIds.value = []
   targetSearch.value = ''
+  expandedTargetGroups.value = new Set()
 })
 
 function targetIds(): string[] {
@@ -246,6 +248,34 @@ function targetTypeLabel(type: ScheduledJob['target_type']): string {
     baselines: '多条基线',
     baseline_group: '基线分组',
   }[type]
+}
+
+function targetGroupExpanded(name: string): boolean {
+  return Boolean(targetSearch.value.trim()) || expandedTargetGroups.value.has(name)
+}
+
+function toggleTargetGroup(name: string): void {
+  const next = new Set(expandedTargetGroups.value)
+  if (next.has(name)) next.delete(name)
+  else next.add(name)
+  expandedTargetGroups.value = next
+}
+
+function jobTargetSummary(job: ScheduledJob): string {
+  if (job.target_type === 'baseline_group') return job.target_ids.join('、') || '暂无目标'
+  const optionMap = new Map(targetOptionsForType(job.target_type).map(option => [option.id, option]))
+  const resolved = job.target_ids.map(id => optionMap.get(id)).filter((item): item is TargetOption => Boolean(item))
+  if (!resolved.length) return `已选 ${job.target_ids.length} 项，目标详情待加载`
+  const labels = resolved.slice(0, 2).map(option => `${option.title}${option.meta ? ` · ${option.meta}` : ''}`)
+  const remaining = job.target_ids.length - labels.length
+  return `${labels.join('；')}${remaining > 0 ? `；另 ${remaining} 项` : ''}`
+}
+
+function targetOptionsForType(type: ScheduledJob['target_type']): TargetOption[] {
+  if (type === 'baselines') return availableBaselines.value.map(baselineOption)
+  if (type === 'cases') return Object.values(cases.versions).map(caseOption)
+  if (type === 'task') return tasks.tasks.map(taskOption)
+  return baselineGroupOptions()
 }
 
 function scheduleLabel(job: ScheduledJob): string {
@@ -384,10 +414,12 @@ function baselineGroupOptions(): TargetOption[] {
 }
 
 function baselineOption(item: ApiBaselineCase): TargetOption {
+  const adoptedAt = item.adopted_at ? new Date(item.adopted_at).toLocaleDateString('zh-CN') : '时间未知'
+  const origin = item.origin === 'ai' ? 'AI 生成' : item.origin === 'manual' ? '手工' : item.origin || '未知来源'
   return {
     id: item.id,
-    title: item.case_name || item.endpoint_summary || item.path,
-    subtitle: `${item.method} ${item.path}`,
+    title: `${item.case_name || item.endpoint_summary || item.path} · v${item.case_version}`,
+    subtitle: `${item.method} ${item.path} · ${origin} · 采纳于 ${adoptedAt}`,
     meta: baselineGroup(item),
   }
 }
@@ -546,7 +578,7 @@ function weekDayName(value: number): string {
               <b v-if="job.latest_run_at">最近{{ triggerLabel(job.latest_run_trigger) }} {{ formatDateTime(job.latest_run_at, job.scheduler_utc_offset) }} · {{ scheduleExecutionSummary(job) }}</b>
               <b v-else>尚无执行记录</b>
             </span>
-            <small>{{ job.target_ids.join('、') || '暂无目标' }}</small>
+            <small>{{ jobTargetSummary(job) }}</small>
           </div>
           <div class="scheduled-row-actions">
             <button :data-testid="`scheduled-list-enabled-${job.id}`" type="button" class="mini-switch" :class="{ active: job.enabled }" title="启用" @click="toggleJobFlag(job, 'enabled')">
@@ -594,20 +626,22 @@ function weekDayName(value: number): string {
             <div v-else class="target-option-list">
               <template v-if="form.targetType === 'baselines'">
                 <div v-for="group in filteredBaselineGroups" :key="group.name" class="target-group">
-                  <div class="target-group-head"><strong>{{ group.name }}</strong><span>{{ group.options.length }}</span></div>
-                  <button
-                    v-for="option in group.options"
-                    :key="`${form.targetType}-${option.id}`"
-                    type="button"
-                    class="target-option"
-                    :class="{ active: isTargetSelected(option.id) }"
-                    data-testid="scheduled-target-option"
-                    @click="toggleTarget(option.id)"
-                  >
-                    <span class="target-check"><Check v-if="isTargetSelected(option.id)" :size="13" /></span>
-                    <span class="target-copy"><strong>{{ option.title }}</strong><small>{{ option.subtitle }}</small></span>
-                    <b>{{ option.meta }}</b>
-                  </button>
+                  <button data-testid="scheduled-target-group-toggle" type="button" class="target-group-head" :aria-expanded="targetGroupExpanded(group.name)" @click="toggleTargetGroup(group.name)"><ChevronDown v-if="targetGroupExpanded(group.name)" :size="14" /><ChevronRight v-else :size="14" /><strong>{{ group.name }}</strong><span>{{ group.options.length }}</span></button>
+                  <template v-if="targetGroupExpanded(group.name)">
+                    <button
+                      v-for="option in group.options"
+                      :key="`${form.targetType}-${option.id}`"
+                      type="button"
+                      class="target-option"
+                      :class="{ active: isTargetSelected(option.id) }"
+                      data-testid="scheduled-target-option"
+                      @click="toggleTarget(option.id)"
+                    >
+                      <span class="target-check"><Check v-if="isTargetSelected(option.id)" :size="13" /></span>
+                      <span class="target-copy"><strong>{{ option.title }}</strong><small>{{ option.subtitle }}</small></span>
+                      <b>{{ option.meta }}</b>
+                    </button>
+                  </template>
                 </div>
               </template>
               <template v-else>

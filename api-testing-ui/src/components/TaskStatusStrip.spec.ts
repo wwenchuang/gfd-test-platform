@@ -14,6 +14,7 @@ describe('TaskStatusStrip', () => {
           environment_revision_id: 'environment-1', name: '我的收藏接口回归',
           state: 'ready', selected_endpoint_ids: ['endpoint-1', 'endpoint-2'],
           runnable_baseline_count: 0,
+          runnable_endpoint_count: 0,
           latest_ai_job_id: 'job-1', latest_execution_id: null, summary: {},
           created_at: '', updated_at: '',
         },
@@ -25,8 +26,8 @@ describe('TaskStatusStrip', () => {
     expect(wrapper.text()).toContain('我的收藏接口回归')
     expect(wrapper.text()).toContain('已保存 2 个接口')
     expect(wrapper.text()).toContain('当前选择 3 个')
-    expect(wrapper.text()).toContain('0 / 2')
-    expect(wrapper.text()).toContain('可加入定时回归')
+    expect(wrapper.text()).toContain('0 条')
+    expect(wrapper.text()).toContain('覆盖 0 个接口')
     expect(wrapper.text()).toContain('待采纳基线')
     expect(wrapper.get('[data-testid="run-task"]').attributes('disabled')).toBeDefined()
     await wrapper.get('[data-testid="new-task"]').trigger('click')
@@ -45,6 +46,7 @@ describe('TaskStatusStrip', () => {
           environment_revision_id: 'environment-1', name: '我的收藏接口回归',
           state: 'ready', selected_endpoint_ids: ['endpoint-1', 'endpoint-2'],
           runnable_baseline_count: 1,
+          runnable_endpoint_count: 1,
           latest_ai_job_id: 'job-1', latest_execution_id: null, summary: {},
           created_at: '', updated_at: '',
         },
@@ -53,8 +55,8 @@ describe('TaskStatusStrip', () => {
       },
     })
 
-    expect(wrapper.text()).toContain('可执行 1 / 2')
-    expect(wrapper.text()).toContain('1 / 2')
+    expect(wrapper.text()).toContain('可执行 1 条用例')
+    expect(wrapper.text()).toContain('覆盖 1 个接口')
     await wrapper.get('[data-testid="run-task"]').trigger('click')
     expect(wrapper.emitted('run')).toHaveLength(1)
   })
@@ -65,6 +67,7 @@ describe('TaskStatusStrip', () => {
       environment_revision_id: 'environment-1', name: '我的收藏接口回归任务名称很长需要被压缩显示',
       state: 'ready' as const, selected_endpoint_ids: ['endpoint-1', 'endpoint-2'],
       runnable_baseline_count: 1,
+      runnable_endpoint_count: 1,
       latest_ai_job_id: 'job-1', latest_execution_id: null, summary: {},
       created_at: '', updated_at: '',
     }
@@ -86,5 +89,26 @@ describe('TaskStatusStrip', () => {
 
     await wrapper.get('[data-testid="rename-task"]').trigger('click')
     expect(wrapper.emitted('rename-task')).toHaveLength(1)
+  })
+
+  it('separates covered endpoints from the number of baseline versions that will execute', () => {
+    const wrapper = mount(TaskStatusStrip, {
+      props: {
+        task: {
+          id: 'task-versions', project_id: 'project-1', source_revision_id: 'source-1',
+          environment_revision_id: 'environment-1', name: '多版本基线任务',
+          state: 'ready', selected_endpoint_ids: ['endpoint-1'],
+          runnable_baseline_count: 2, runnable_endpoint_count: 1,
+          latest_ai_job_id: null, latest_execution_id: null, summary: {},
+          created_at: '', updated_at: '',
+        },
+        selectedCount: 1,
+      },
+    })
+
+    expect(wrapper.text()).toContain('执行用例')
+    expect(wrapper.text()).toContain('2 条')
+    expect(wrapper.text()).toContain('覆盖 1 个接口')
+    expect(wrapper.text()).toContain('同一接口存在多版本基线')
   })
 })

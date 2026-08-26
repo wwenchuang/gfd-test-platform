@@ -228,6 +228,65 @@ def test_api_routes_require_existing_session(http_client):
     assert response.status == 401
     assert response.body["error"] == {"code": "unauthorized", "message": "Authentication is required", "details": {}}
     assert response.body["request_id"] == response.headers["X-Request-Id"]
+    assert response.headers["Cache-Control"] == "no-store"
+
+
+def test_workflow_step_preview_is_owner_scoped_and_returns_selectable_fields(
+    http_client, owned_records, monkeypatch
+):
+    calls = []
+
+    class Service:
+        def __init__(self, _factory):
+            pass
+
+        def preview(self, payload):
+            calls.append(payload)
+            return {
+                "status": "PASSED",
+                "failure_category": "",
+                "error_message": "",
+                "trace": [],
+                "response": {"body": {"data": {"access_token": "visible-token"}}},
+                "fields": [
+                    {
+                        "id": "json_path:$.data.access_token",
+                        "source": "json_path",
+                        "path": "$.data.access_token",
+                        "name": "access_token",
+                        "value": "visible-token",
+                        "value_type": "string",
+                        "sensitive": True,
+                        "suggested_target": "access_token",
+                    }
+                ],
+                "truncated": False,
+                "available_variables": ["access_token"],
+                "missing_variables": [],
+            }
+
+    monkeypatch.setattr(http, "WorkflowStepPreviewService", Service)
+    payload = {
+        "environment_revision_id": owned_records["environment_revision"].id,
+        "setup_steps": [],
+        "target_index": 0,
+        "initial_variables": {},
+        "processing_pre": [],
+        "extraction_overrides": {},
+    }
+
+    response = http_client.post(
+        "/api/api-testing/v1/workflow-steps/preview", payload, _auth()
+    )
+    foreign = http_client.post(
+        "/api/api-testing/v1/workflow-steps/preview", payload, _auth("owner-b")
+    )
+
+    assert response.status == 200
+    assert response.body["data"]["preview"]["fields"][0]["value"] == "visible-token"
+    assert calls == [{**payload, "environment_revision_id": owned_records["environment_revision"].id}]
+    assert foreign.status == 404
+    assert foreign.body["error"]["code"] == "not_found"
 
 
 def test_authenticated_reads_are_owner_scoped(http_client, owned_records):
@@ -1264,6 +1323,21 @@ def test_selected_baseline_regression_does_not_use_task_scope(
         selected_baseline_id = second_baseline.id
         selected_case_version_id = second_version.id
         unselected_case_version_id = owned_records["version"].id
+
+    task = http_client.post(
+        "/api/api-testing/v1/tasks",
+        {
+            "project_id": owned_records["project"].id,
+            "source_revision_id": owned_records["revision"].id,
+            "environment_revision_id": owned_records["environment_revision"].id,
+            "name": "同一接口多版本基线",
+            "selected_endpoint_ids": [owned_records["endpoint"].id],
+        },
+        _auth(),
+    ).body["data"]["task"]
+
+    assert task["runnable_endpoint_count"] == 1
+    assert task["runnable_baseline_count"] == 2
 
     response = http_client.post(
         "/api/api-testing/v1/regressions",

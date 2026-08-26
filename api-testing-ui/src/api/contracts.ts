@@ -221,6 +221,32 @@ export interface InlineWorkflowStep {
   }
 }
 
+export interface WorkflowStepPreviewField {
+  id: string
+  source: 'json_path' | 'header' | 'cookie' | 'status_code'
+  path?: string
+  name: string
+  value: unknown
+  value_type: 'null' | 'boolean' | 'number' | 'string' | 'array' | 'object'
+  sensitive: boolean
+  suggested_target: string
+}
+
+export interface WorkflowStepPreview {
+  status: string
+  failure_category: string
+  error_message: string
+  trace: DebugTraceStep[]
+  response: Record<string, unknown>
+  target_index: number
+  executed_index: number | null
+  target_reached: boolean
+  fields: WorkflowStepPreviewField[]
+  truncated: boolean
+  available_variables: string[]
+  missing_variables: string[]
+}
+
 export interface CaseDraft {
   name: string
   purpose: string
@@ -438,6 +464,7 @@ export interface ApiTestTask {
   state: ApiTestTaskState
   selected_endpoint_ids: string[]
   runnable_baseline_count: number
+  runnable_endpoint_count?: number
   latest_ai_job_id: string | null
   latest_execution_id: string | null
   latest_execution_state?: string | null

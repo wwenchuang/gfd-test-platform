@@ -63,28 +63,32 @@ class TestTaskRepository:
             )
         }
 
-    def runnable_baseline_count(self, task):
+    def runnable_baseline_counts(self, task):
         selected = tuple(dict.fromkeys(task.selected_endpoint_ids or ()))
         if not selected:
-            return 0
-        return int(
-            self.session.scalar(
-                select(func.count(distinct(ApiCaseVersion.endpoint_id)))
-                .select_from(ApiBaseline)
-                .join(ApiCaseVersion, ApiCaseVersion.id == ApiBaseline.case_version_id)
-                .join(
-                    ApiSourceEndpoint,
-                    ApiSourceEndpoint.id == ApiCaseVersion.endpoint_id,
-                )
-                .where(
-                    ApiBaseline.project_id == task.project_id,
-                    ApiBaseline.owner_id == task.owner_id,
-                    ApiBaseline.status != "archived",
-                    ApiSourceEndpoint.id.in_(selected),
-                )
+            return 0, 0
+        endpoint_count, baseline_count = self.session.execute(
+            select(
+                func.count(distinct(ApiCaseVersion.endpoint_id)),
+                func.count(ApiBaseline.id),
             )
-            or 0
-        )
+            .select_from(ApiBaseline)
+            .join(ApiCaseVersion, ApiCaseVersion.id == ApiBaseline.case_version_id)
+            .join(
+                ApiSourceEndpoint,
+                ApiSourceEndpoint.id == ApiCaseVersion.endpoint_id,
+            )
+            .where(
+                ApiBaseline.project_id == task.project_id,
+                ApiBaseline.owner_id == task.owner_id,
+                ApiBaseline.status == "active",
+                ApiSourceEndpoint.id.in_(selected),
+            )
+        ).one()
+        return int(endpoint_count or 0), int(baseline_count or 0)
+
+    def runnable_baseline_count(self, task):
+        return self.runnable_baseline_counts(task)[1]
 
     def get_task(self, record_id, *, for_update=False):
         query = select(ApiTestTask).where(ApiTestTask.id == record_id)

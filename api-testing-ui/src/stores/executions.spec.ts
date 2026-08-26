@@ -13,6 +13,23 @@ describe('executions store', () => {
     vi.restoreAllMocks()
   })
 
+  it('clears stale execution detail before loading a deep-linked execution', () => {
+    const store = useExecutionsStore()
+    store.active = {
+      id: 'execution-old', project_id: 'project-1', state: 'DONE', execution_type: 'debug',
+      source_revision_id: 'source-1', environment_revision_id: 'environment-1', environment_name: '旧环境',
+      case_statuses: ['PASSED'], case_results: [], summary: { total: 1, passed: 1 },
+      cancellation_requested: false, created_at: '', started_at: '', finished_at: '',
+    }
+    store.events = [{ id: 1, type: 'response', level: 'info', caseId: 'case-1', message: '旧响应', payload: {} }]
+
+    store.prepareSelection('execution-new')
+
+    expect(store.active).toBeNull()
+    expect(store.events).toEqual([])
+    expect(store.selectingExecutionId).toBe('execution-new')
+  })
+
   it('deduplicates monotonic SSE events without replacing existing evidence', () => {
     const store = useExecutionsStore()
     store.appendEvent({ id: 2, type: 'case_finished', level: 'error', caseId: 'case-a', message: '原始失败', payload: {} })

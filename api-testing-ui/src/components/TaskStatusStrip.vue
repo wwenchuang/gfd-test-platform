@@ -29,10 +29,14 @@ const runnableLabel = (task: ApiTestTask | null): string => {
   if (!task) return '待创建'
   if (task.state === 'ready') {
     return task.runnable_baseline_count > 0
-      ? `可执行 ${task.runnable_baseline_count} / ${task.selected_endpoint_ids.length}`
+      ? `可执行 ${task.runnable_baseline_count} 条用例`
       : '待采纳基线'
   }
   return stateLabels[task.state] || task.state
+}
+const runnableEndpointCount = (task: ApiTestTask | null): number => {
+  if (!task) return 0
+  return task.runnable_endpoint_count ?? Math.min(task.runnable_baseline_count, task.selected_endpoint_ids.length)
 }
 const taskTypeLabel = (task: ApiTestTask | null, selectedCount = 0): string => {
   if (!task) return selectedCount > 1 ? '多条任务' : selectedCount === 1 ? '单条任务' : '新任务'
@@ -59,7 +63,7 @@ function updateName(event: Event): void {
     </div>
     <div class="task-fact"><span>范围</span><strong>{{ task ? `已保存 ${task.selected_endpoint_ids.length} 个接口` : '未保存' }}</strong><small>当前选择 {{ selectedCount }} 个</small></div>
     <div class="task-fact"><span>环境</span><strong>{{ environmentName }}</strong></div>
-    <div class="task-fact"><span>基线</span><strong>{{ task ? `${task.runnable_baseline_count} / ${task.selected_endpoint_ids.length}` : '0 / 0' }}</strong><small>可加入定时回归</small></div>
+    <div class="task-fact"><span>执行用例</span><strong>{{ task ? `${task.runnable_baseline_count} 条` : '0 条' }}</strong><small>覆盖 {{ runnableEndpointCount(task) }} 个接口</small><small v-if="task && task.runnable_baseline_count > runnableEndpointCount(task)" class="task-count-warning">同一接口存在多版本基线</small></div>
     <div class="task-fact"><span>状态</span><strong :class="task ? `task-state-${task.state}` : ''">{{ runnableLabel(task) }}</strong></div>
     <div class="task-actions">
       <button data-testid="new-task" class="secondary-command" type="button" :disabled="saving || running" @click="$emit('new')"><FilePlus2 :size="15" />新建任务</button>

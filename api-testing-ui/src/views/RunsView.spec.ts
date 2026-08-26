@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { createPinia, setActivePinia } from 'pinia'
-import { mount } from '@vue/test-utils'
+import { flushPromises, mount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { ExecutionView } from '../api/contracts'
@@ -9,9 +9,12 @@ import { useContextStore } from '../stores/context'
 import { useExecutionsStore } from '../stores/executions'
 import RunsView from './RunsView.vue'
 
+const routeState = vi.hoisted(() => ({ query: {} as Record<string, string> }))
+const routerState = vi.hoisted(() => ({ push: vi.fn(), replace: vi.fn() }))
+
 vi.mock('vue-router', () => ({
-  useRoute: () => ({ query: {} }),
-  useRouter: () => ({ push: vi.fn() }),
+  useRoute: () => routeState,
+  useRouter: () => routerState,
 }))
 
 const debugExecution: ExecutionView = {
@@ -35,6 +38,9 @@ describe('RunsView', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     vi.restoreAllMocks()
+    routeState.query = {}
+    routerState.push.mockReset()
+    routerState.replace.mockReset()
   })
 
   it('does not show a global baseline run command for a selected debug execution', async () => {
@@ -59,5 +65,25 @@ describe('RunsView', () => {
 
     expect(wrapper.find('[data-testid="run-baselines"]').exists()).toBe(false)
     expect(wrapper.text()).not.toContain('执行当前基线')
+  })
+
+  it('clears the old detail before selecting the execution requested by the URL', async () => {
+    routeState.query = { executionId: 'execution-new' }
+    const context = useContextStore()
+    const executions = useExecutionsStore()
+    context.projectId = 'project-1'
+    vi.spyOn(context, 'loadSavedContext').mockResolvedValue()
+    vi.spyOn(context, 'loadOptions').mockResolvedValue()
+    vi.spyOn(executions, 'load').mockResolvedValue()
+    const select = vi.spyOn(executions, 'select').mockResolvedValue()
+    executions.active = debugExecution
+    executions.events = [{ id: 1, type: 'response', level: 'info', caseId: '', message: '旧执行', payload: {} }]
+
+    mount(RunsView, { global: { stubs: { ExecutionConsole: true, ExecutionDetailDrawer: true } } })
+
+    expect(executions.active).toBeNull()
+    expect(executions.events).toEqual([])
+    await flushPromises()
+    expect(select).toHaveBeenCalledWith('execution-new')
   })
 })

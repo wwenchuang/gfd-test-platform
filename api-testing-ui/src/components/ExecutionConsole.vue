@@ -9,7 +9,7 @@ import CaseResultList from './CaseResultList.vue'
 import ExecutionLog from './ExecutionLog.vue'
 import ExecutionOverview from './ExecutionOverview.vue'
 
-const props = defineProps<{ executions: ExecutionView[]; active: ExecutionView | null; events: ExecutionEventView[]; connectionState: ExecutionConnectionState; loading?: boolean }>()
+const props = defineProps<{ executions: ExecutionView[]; active: ExecutionView | null; events: ExecutionEventView[]; connectionState: ExecutionConnectionState; loading?: boolean; endpointId?: string }>()
 const emit = defineEmits<{
   select: [id: string]
   cancel: [id: string]
@@ -19,6 +19,7 @@ const emit = defineEmits<{
   edit: [result: ExecutionCaseResult, execution: ExecutionView]
   delete: [id: string]
   deleteMany: [ids: string[]]
+  clearEndpointFilter: []
 }>()
 const tab = ref<'trace' | 'cases' | 'report'>('trace')
 const selected = ref<ExecutionCaseResult | null>(null)
@@ -38,13 +39,17 @@ const selectedExecutionCount = computed(() => selectedExecutionIds.value.size)
 const visibleExecutions = computed(() => {
   const keyword = executionSearch.value.trim().toLocaleLowerCase()
   return props.executions.filter(execution => {
+    if (props.endpointId && !execution.case_results.some(result => result.endpoint_id === props.endpointId)) return false
     if (sourceFilter.value !== 'all' && executionSourceScope(execution) !== sourceFilter.value) return false
     const conclusion = executionConclusion(execution)
     if (conclusionFilter.value === 'passed' && conclusion.tone !== 'passed') return false
     if (conclusionFilter.value === 'running' && conclusion.tone !== 'running') return false
     if (conclusionFilter.value === 'problem' && ['passed', 'running'].includes(conclusion.tone)) return false
     if (!keyword) return true
-    return [executionDisplayName(execution), executionTypeLabel(execution), execution.environment_name, execution.id]
+    return [
+      executionDisplayName(execution), executionTypeLabel(execution), execution.environment_name, execution.id,
+      ...execution.case_results.flatMap(result => [result.case_name, result.endpoint_summary, result.method, result.path]),
+    ]
       .join(' ')
       .toLocaleLowerCase()
       .includes(keyword)
@@ -144,6 +149,7 @@ function executionRowConclusion(execution: ExecutionView): { label: string; tone
           <option value="all">全部结论</option><option value="passed">通过</option><option value="problem">有问题</option><option value="running">执行中</option>
         </select>
       </div>
+      <div v-if="endpointId" class="execution-scope-filter"><span>当前仅显示所选接口参与的执行</span><button data-testid="execution-clear-endpoint-filter" type="button" class="text-command" @click="emit('clearEndpointFilter')">清除接口筛选</button></div>
       <div class="execution-list-tools">
         <button type="button" class="text-command" :disabled="!visibleExecutions.length" @click="toggleAllExecutions">{{ allVisibleSelected ? '取消当前筛选' : '全选当前筛选' }}</button>
         <button type="button" class="danger-command" :disabled="!selectedExecutionCount" @click="deleteSelected"><Trash2 :size="13" />删除 {{ selectedExecutionCount || '' }}</button>
@@ -200,7 +206,7 @@ function executionRowConclusion(execution: ExecutionView): { label: string; tone
           <CaseResultList :results="active.case_results" :active-id="selected?.execution_case_id" @select="selectCase" />
         </section>
       </template>
-      <div v-else class="section-empty">选择一条执行记录查看实时日志和结果。</div>
+      <div v-else class="section-empty">{{ loading ? '正在读取本次执行，请稍候…' : '选择一条执行记录查看实时日志和结果。' }}</div>
     </main>
   </div>
 </template>

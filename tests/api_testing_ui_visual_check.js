@@ -137,6 +137,20 @@ function createServer() {
     if (url.pathname === '/api/api-testing/v1/case-versions/case-version-2/validate' && req.method === 'POST') {
       return sendJson(res, { validation: { valid: true, errors: [], warnings: [] } });
     }
+    if (url.pathname === '/api/api-testing/v1/workflow-steps/preview' && req.method === 'POST') {
+      return sendJson(res, { preview: {
+        status: 'PASSED', failure_category: '', error_message: '', trace: [{ stage: 'setup', index: 0, status: 'PASSED' }],
+        target_index: 0, executed_index: 0, target_reached: true,
+        response: { status_code: 200, body: { code: 0, data: { access_token: 'visual-real-token', modelSn: 'model-001' } } },
+        fields: [
+          { id: 'status_code:status_code', source: 'status_code', name: 'status_code', value: 200, value_type: 'number', sensitive: false, suggested_target: 'status_code' },
+          { id: 'json_path:$.code', source: 'json_path', path: '$.code', name: 'code', value: 0, value_type: 'number', sensitive: false, suggested_target: 'code' },
+          { id: 'json_path:$.data.access_token', source: 'json_path', path: '$.data.access_token', name: 'access_token', value: 'visual-real-token', value_type: 'string', sensitive: true, suggested_target: 'access_token' },
+          { id: 'json_path:$.data.modelSn', source: 'json_path', path: '$.data.modelSn', name: 'modelSn', value: 'model-001', value_type: 'string', sensitive: false, suggested_target: 'modelSn' },
+        ],
+        truncated: false, available_variables: [], missing_variables: [],
+      } });
+    }
     if (url.pathname === '/api/api-testing/v1/ai-jobs/latest') return sendJson(res, { job: null });
     if (url.pathname === '/api/api-testing/v1/executions' && req.method === 'POST') {
       return sendJson(res, { execution: { id: 'execution-1', state: 'QUEUED', case_statuses: [], case_results: [], summary: {} } }, 202);
@@ -234,6 +248,26 @@ async function openCompactPage(page, navigationLabel, heading, label) {
     await page.getByTestId('endpoint-picker-search').fill('添加收藏');
     await page.getByTestId('endpoint-picker-option-endpoint-favorite-add').click();
     await page.getByTestId('setup-step-summary-0').waitFor();
+    await page.getByTestId('setup-preview-0').click();
+    const tokenInput = page.getByTestId('workflow-preview-sensitive-json_path:$.data.access_token');
+    if (await tokenInput.getAttribute('type') !== 'password') throw new Error('sensitive preview value must be masked initially');
+    await assertNoHorizontalOverflow(page, 'workflow preview desktop');
+    await page.screenshot({ path: path.join(ARTIFACTS, 'workflow-preview-desktop.png'), fullPage: true });
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.waitForTimeout(100);
+    if (await page.locator('.side-rail.mobile-open').isVisible()) {
+      await page.getByRole('button', { name: '关闭导航' }).first().click();
+      await page.locator('.side-rail').waitFor({ state: 'hidden' });
+    }
+    await assertNoHorizontalOverflow(page, 'workflow preview mobile');
+    await page.screenshot({ path: path.join(ARTIFACTS, 'workflow-preview-mobile.png'), fullPage: true });
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.getByTestId('workflow-preview-reveal-json_path:$.data.access_token').click();
+    if (await tokenInput.getAttribute('type') !== 'text') throw new Error('sensitive preview value cannot be revealed explicitly');
+    await tokenInput.fill('visual-session-replacement');
+    await page.getByTestId('workflow-preview-select-json_path:$.data.access_token').check();
+    await page.getByTestId('workflow-preview-target-json_path:$.data.access_token').fill('accessToken');
+    await page.getByTestId('workflow-preview-apply').click();
     await page.getByTestId('setup-reselect-endpoint-0').click();
     await page.getByTestId('endpoint-picker-search').fill('取消收藏');
     await page.getByTestId('endpoint-picker-option-endpoint-favorite-cancel').click();
@@ -295,7 +329,7 @@ async function openCompactPage(page, navigationLabel, heading, label) {
     }
     await page.screenshot({ path: path.join(ARTIFACTS, 'settings-mobile.png'), fullPage: true });
     if (errors.length) throw new Error(`browser errors: ${errors.join(' | ')}`);
-    console.log(JSON.stringify({ ok: true, url, screenshots: ['workbench-desktop.png', 'workbench-compact-desktop.png', 'workbench-tablet.png', 'workbench-mobile.png', 'settings-mobile.png'] }));
+    console.log(JSON.stringify({ ok: true, url, screenshots: ['workflow-preview-desktop.png', 'workflow-preview-mobile.png', 'workbench-desktop.png', 'workbench-compact-desktop.png', 'workbench-tablet.png', 'workbench-mobile.png', 'settings-mobile.png'] }));
   } finally {
     await browser.close();
     await new Promise(resolve => server.close(resolve));

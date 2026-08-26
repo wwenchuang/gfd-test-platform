@@ -220,6 +220,11 @@ function selectReport(report: ExecutionView): void {
   replaceReportRoute(report.id)
 }
 
+function openDiagnostic(report: ExecutionView): void {
+  selectReport(report)
+  selected.value = report
+}
+
 function showReportList(): void {
   mobileReportDetailOpen.value = false
   replaceReportRoute('')
@@ -382,7 +387,7 @@ async function deleteReports(reportIds: string[]): Promise<void> {
                 <strong>{{ currentMetrics.passRate }}%</strong>
               </header>
               <div class="report-detail-actions">
-                <button data-testid="report-open-diagnostic" type="button" class="secondary-command" @click="selected = currentReport"><Eye :size="14" />查看完整诊断</button>
+                <button data-testid="report-open-diagnostic" type="button" class="secondary-command" @click="openDiagnostic(currentReport)"><Eye :size="14" />查看完整诊断</button>
                 <button
                   data-testid="report-feishu-status"
                   type="button"

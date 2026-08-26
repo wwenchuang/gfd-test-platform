@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref } from 'vue'
+import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import ExecutionConsole from '../components/ExecutionConsole.vue'
@@ -15,12 +15,35 @@ const router = useRouter()
 const inspected = ref<ExecutionCaseResult | null>(null)
 
 onMounted(async () => {
+  const initialExecutionId = requestedExecutionId()
+  if (initialExecutionId) executions.prepareSelection(initialExecutionId)
   await Promise.all([context.loadSavedContext(), context.loadOptions()])
   if (context.projectId) await executions.load(context.projectId)
-  const executionId = typeof route.query.executionId === 'string' ? route.query.executionId : ''
-  if (executionId) await executions.select(executionId)
+  const executionId = requestedExecutionId()
+  if (
+    executionId
+    && executionId !== executions.active?.id
+    && (executionId === initialExecutionId || executionId !== executions.selectingExecutionId)
+  ) {
+    await executions.select(executionId)
+  }
+})
+watch(() => route.query.executionId, async value => {
+  const executionId = typeof value === 'string' ? value : ''
+  if (!executionId || executionId === executions.active?.id) return
+  await executions.select(executionId)
 })
 onBeforeUnmount(() => executions.disconnect())
+
+function requestedExecutionId(): string {
+  return typeof route.query.executionId === 'string' ? route.query.executionId : ''
+}
+
+function clearEndpointFilter(): void {
+  const query = { ...route.query }
+  delete query.endpointId
+  void router.replace({ query })
+}
 
 function edit(result: ExecutionCaseResult, execution: ExecutionView): void {
   void router.push({ name: 'workbench', query: {
@@ -56,7 +79,8 @@ async function deleteExecutions(executionIds: string[]): Promise<void> {
       :active="executions.active"
       :events="executions.events"
       :connection-state="executions.connectionState"
-      :loading="executions.loading"
+      :loading="executions.loading || Boolean(executions.selectingExecutionId)"
+      :endpoint-id="typeof route.query.endpointId === 'string' ? route.query.endpointId : ''"
       @select="executions.select($event)"
       @cancel="executions.cancel($event)"
       @rerun="rerun"
@@ -65,6 +89,7 @@ async function deleteExecutions(executionIds: string[]): Promise<void> {
       @edit="edit"
       @delete="deleteExecution"
       @delete-many="deleteExecutions"
+      @clear-endpoint-filter="clearEndpointFilter"
     />
     <ExecutionDetailDrawer v-if="executions.active && inspected" :execution="executions.active" :initial-case-id="inspected.execution_case_id" @close="inspected = null" @edit="edit" @rerun="rerun" />
   </section>

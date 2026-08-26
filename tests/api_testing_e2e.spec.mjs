@@ -79,7 +79,16 @@ test('我的收藏三接口完成导入、AI 设计、调试、基线回归和�
   await page.setViewportSize({ width: 1440, height: 900 })
 
   await page.getByTestId('endpoint-search').fill('查询我的收藏')
-  await page.getByRole('button', { name: /查询我的收藏/ }).click()
+  await page.locator('.endpoint-tree').getByRole('button', { name: /查询我的收藏/ }).click()
+  await page.getByTestId('add-setup-step').click()
+  await page.getByTestId('endpoint-picker-search').fill('查询我的收藏')
+  await page.locator('.endpoint-picker-option').filter({ hasText: '查询我的收藏' }).click()
+  await page.getByTestId('setup-preview-0').click()
+  await expect(page.getByText('已到达第 1 步')).toBeVisible()
+  await page.getByTestId('workflow-preview-select-json_path:$.data[0].id').check()
+  await page.getByTestId('workflow-preview-target-json_path:$.data[0].id').fill('favoriteId')
+  await page.getByTestId('workflow-preview-apply').click()
+  await expect(page.getByTestId('setup-0-extraction-target-0')).toHaveValue('favoriteId')
   await page.getByTestId('assertion-expected-0').fill('200')
   await page.getByRole('button', { name: '保存并调试' }).click()
   await expect(page.locator('.result-status').getByText('PASSED', { exact: true })).toBeVisible()
@@ -88,7 +97,7 @@ test('我的收藏三接口完成导入、AI 设计、调试、基线回归和�
 
   for (const summary of ['添加收藏', '取消收藏']) {
     await page.getByTestId('endpoint-search').fill(summary)
-    await page.getByRole('button', { name: new RegExp(summary) }).click()
+    await page.locator('.endpoint-tree').getByRole('button', { name: new RegExp(summary) }).click()
     await page.getByRole('button', { name: '保存并调试' }).click()
     await expect(page.locator('.result-status').getByText('PASSED', { exact: true })).toBeVisible()
     await page.getByTestId('adopt-baseline').click()
@@ -136,9 +145,51 @@ test('我的收藏三接口完成导入、AI 设计、调试、基线回归和�
   const report = await acceptance.readLatestExecution(page)
   expect(JSON.stringify(report)).not.toContain(secret)
   expect(acceptance.output()).not.toContain(secret)
+
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await page.getByRole('link', { name: '定时任务', exact: true }).click()
+  await page.getByTestId('scheduled-name').fill('Codex 隔离验收定时任务')
+  await page.getByTestId('scheduled-target-option').first().click()
+  await page.getByTestId('scheduled-enabled-toggle').click()
+  await page.getByTestId('scheduled-save').click()
+  const scheduledRow = page.locator('.scheduled-row').filter({ hasText: 'Codex 隔离验收定时任务' })
+  await expect(scheduledRow).toContainText('当前已停用')
+  await scheduledRow.getByTitle('编辑').click()
+  await expect(page.getByRole('heading', { name: '编辑定时任务' })).toBeVisible()
+  await page.getByTestId('scheduled-name').fill('Codex 隔离验收定时任务-已编辑')
+  await page.getByTestId('scheduled-save').click()
+  const editedScheduledRow = page.locator('.scheduled-row').filter({ hasText: 'Codex 隔离验收定时任务-已编辑' })
+  await expect(editedScheduledRow).toBeVisible()
+  page.once('dialog', dialog => dialog.accept())
+  await editedScheduledRow.getByTitle('删除').click()
+  await expect(editedScheduledRow).toHaveCount(0)
+
+  await page.getByRole('link', { name: '任务管理', exact: true }).click()
+  await page.locator('.task-list-item').first().click()
+  await expect(page.getByTestId('selected-task-title')).toBeVisible()
+  page.once('dialog', dialog => dialog.accept())
+  await page.getByTestId('task-detail-delete').click()
+  await expect(page.getByTestId('selected-task-title')).toHaveCount(0)
 })
 
 async function assertNoHorizontalOverflow(page) {
-  const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)
-  expect(overflow).toBeLessThanOrEqual(1)
+  const diagnostic = await page.evaluate(() => {
+    const viewportWidth = document.documentElement.clientWidth
+    const overflow = document.documentElement.scrollWidth - viewportWidth
+    const offenders = Array.from(document.querySelectorAll('body *'))
+      .map(element => {
+        const rect = element.getBoundingClientRect()
+        return {
+          tag: element.tagName.toLowerCase(),
+          className: String(element.className || '').slice(0, 140),
+          testId: element.getAttribute('data-testid') || '',
+          left: Math.round(rect.left), right: Math.round(rect.right), width: Math.round(rect.width),
+        }
+      })
+      .filter(item => item.right > viewportWidth + 1 || item.left < -1 || item.width > viewportWidth + 1)
+      .sort((left, right) => right.right - left.right)
+      .slice(0, 12)
+    return { overflow, viewportWidth, offenders }
+  })
+  expect(diagnostic.overflow, `horizontal overflow: ${JSON.stringify(diagnostic)}`).toBeLessThanOrEqual(1)
 }

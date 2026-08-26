@@ -19,6 +19,7 @@ class _TargetHandler(BaseHTTPRequestHandler):
     port = 0
     captured_authorization = None
     captured_cookie = None
+    captured_preview_token = None
     workflow_calls = []
     workflow_poll_attempts = 0
 
@@ -128,6 +129,7 @@ class _TargetHandler(BaseHTTPRequestHandler):
         elif self.path.startswith("/capture"):
             type(self).captured_authorization = self.headers.get("Authorization")
             type(self).captured_cookie = self.headers.get("Cookie")
+            type(self).captured_preview_token = self.headers.get("X-Preview-Token")
             self._send(200, {"code": 0})
         else:
             self._send(404, {"message": "missing"})
@@ -270,6 +272,110 @@ def _executor(target_server, case, *, values=None, limits=None, cancel=None):
 
 def test_default_executor_timeout_covers_slow_ai_endpoints():
     assert ExecutorLimits().timeout_seconds == 30
+
+
+def test_setup_preview_returns_raw_target_response_but_keeps_trace_sanitized(
+    target_server,
+):
+    executor = _executor(target_server, _case())
+
+    result = executor.preview_setup_steps(
+        "environment-revision-1",
+        [
+            _workflow_step(
+                "获取访问令牌",
+                "GET",
+                "/token",
+                extractions=[
+                    _json_extraction("accessToken", "$.data.access_token")
+                ],
+            )
+        ],
+        0,
+        initial_variables={},
+        processing_pre=[],
+        extraction_overrides={},
+    )
+
+    assert result["status"] == "PASSED"
+    assert result["response"]["body"]["data"]["access_token"] == (
+        "server-issued-review-secret"
+    )
+    assert "server-issued-review-secret" not in json.dumps(
+        result["trace"], ensure_ascii=False
+    )
+    assert result["available_variables"] == ["accessToken"]
+
+
+def test_setup_preview_applies_session_override_before_the_next_step(
+    target_server,
+):
+    _, handler = target_server
+    handler.captured_preview_token = None
+    executor = _executor(target_server, _case())
+
+    result = executor.preview_setup_steps(
+        "environment-revision-1",
+        [
+            _workflow_step(
+                "获取访问令牌",
+                "GET",
+                "/token",
+                extractions=[
+                    _json_extraction("accessToken", "$.data.access_token")
+                ],
+            ),
+            {
+                **_workflow_step(
+                    "校验替换令牌",
+                    "GET",
+                    "/capture",
+                    assertions=[_code_assertion()],
+                    required_variables=["accessToken"],
+                ),
+                "request": {
+                    **_workflow_step("unused", "GET", "/capture")["request"],
+                    "headers": {"X-Preview-Token": "{{accessToken}}"},
+                },
+            },
+        ],
+        1,
+        initial_variables={},
+        processing_pre=[],
+        extraction_overrides={"accessToken": "manually-replaced-token"},
+    )
+
+    assert result["status"] == "PASSED"
+    assert handler.captured_preview_token == "manually-replaced-token"
+    assert result["available_variables"] == ["accessToken"]
+
+
+def test_setup_preview_reports_when_a_failed_prefix_prevents_the_target_step(
+    target_server,
+):
+    executor = _executor(target_server, _case())
+
+    result = executor.preview_setup_steps(
+        "environment-revision-1",
+        [
+            _workflow_step(
+                "失败的资源查询",
+                "GET",
+                "/workflow/setup-fail",
+                assertions=[_code_assertion()],
+            ),
+            _workflow_step("不会执行", "GET", "/workflow/setup"),
+        ],
+        1,
+        initial_variables={},
+        processing_pre=[],
+        extraction_overrides={},
+    )
+
+    assert result["status"] == "FAILED"
+    assert result["target_index"] == 1
+    assert result["executed_index"] == 0
+    assert result["target_reached"] is False
 
 
 def _assertion(assertion_type, operator, expected=None, path=None, name=None):

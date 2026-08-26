@@ -67,6 +67,7 @@ from .services.test_task_service import (
     TestTaskScopeError,
     TestTaskService,
 )
+from .services.workflow_step_preview_service import WorkflowStepPreviewService
 
 
 API_PREFIX = "/api/api-testing/v1"
@@ -404,6 +405,16 @@ def _get(segments, qs, actor, settings):
 
 def _post(segments, payload, actor, settings):
     factory = _factory()
+    if segments == ("workflow-steps", "preview"):
+        environment_revision_id = _uuid(payload.get("environment_revision_id"))
+        _scope_environment_revision(factory, environment_revision_id, actor)
+        return {
+            "preview": _view(
+                WorkflowStepPreviewService(factory).preview(
+                    {**payload, "environment_revision_id": environment_revision_id}
+                )
+            )
+        }
     if segments == ("notifications", "feishu", "test"):
         project_id = _uuid(payload.get("project_id"))
         _scope_project(factory, project_id, actor)
@@ -1184,6 +1195,7 @@ def _send_json(handler, status, payload, request_id):
     handler.send_response(status)
     handler._cors()
     handler.send_header("Content-Type", "application/json; charset=utf-8")
+    handler.send_header("Cache-Control", "no-store")
     handler.send_header("X-Request-Id", request_id)
     handler.send_header("Content-Length", str(len(body)))
     handler.end_headers()
