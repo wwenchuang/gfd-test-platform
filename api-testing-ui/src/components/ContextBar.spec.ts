@@ -76,4 +76,22 @@ describe('ContextBar', () => {
     expect(wrapper.text()).toContain('当前任务接口版本')
     expect(wrapper.text()).toContain('当前执行环境')
   })
+
+  it('provides a compact range summary with expandable controls for narrow screens', async () => {
+    const wrapper = mount(ContextBar, {
+      props: {
+        ...OPTIONS,
+        projectId: 'project-uuid', sourceRevisionId: 'source-uuid', environmentRevisionId: 'env-uuid',
+      },
+    })
+
+    expect(wrapper.get('[data-testid="context-summary"]').text()).toContain('3D 项目')
+    expect(wrapper.get('[data-testid="context-summary"]').text()).toContain('生产环境（腾讯云）')
+    expect(wrapper.get('[data-testid="context-toggle"]').attributes('aria-expanded')).toBe('false')
+    expect(wrapper.get('.context-bar').classes()).not.toContain('context-expanded')
+
+    await wrapper.get('[data-testid="context-toggle"]').trigger('click')
+    expect(wrapper.get('[data-testid="context-toggle"]').attributes('aria-expanded')).toBe('true')
+    expect(wrapper.get('.context-bar').classes()).toContain('context-expanded')
+  })
 })

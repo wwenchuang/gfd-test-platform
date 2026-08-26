@@ -171,6 +171,30 @@ def test_scheduled_job_can_be_created_and_manually_run(scheduled_factory, schedu
     assert execution.execution_source == "scheduled_job"
     assert execution.task_name == "每日发版回归"
 
+    listed = service.list(scheduled_records["project"].id, "owner-a")[0]
+    assert listed.effective_cron_expression == "0 2 * * *"
+    assert listed.scheduler_timezone
+    assert listed.scheduler_utc_offset[0] in {"+", "-"}
+    assert len(listed.scheduler_utc_offset) == 6
+    assert listed.next_run_at is not None
+    assert listed.latest_run_at is not None
+    assert listed.latest_run_trigger == "manual"
+    assert listed.latest_execution_state == execution.state
+    assert listed.latest_execution_summary == execution.summary
+
+
+def test_next_cron_match_uses_the_next_minute_and_supports_weekdays():
+    from task_server.api_testing.services.scheduled_job_service import _next_cron_match
+
+    assert _next_cron_match(
+        "0 10 * * *",
+        datetime(2026, 8, 17, 9, 59, 12),
+    ) == datetime(2026, 8, 17, 10, 0)
+    assert _next_cron_match(
+        "0 9 * * 1-5",
+        datetime(2026, 8, 21, 9, 0),
+    ) == datetime(2026, 8, 24, 9, 0)
+
 
 def test_scheduled_job_can_be_updated_and_deleted(scheduled_factory, scheduled_records):
     from task_server.api_testing.services.scheduled_job_service import ScheduledJobService

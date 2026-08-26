@@ -4,7 +4,9 @@ from dataclasses import dataclass
 from datetime import datetime
 import os
 from typing import Optional
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlparse
+
+from sqlalchemy import select
 
 from task_server.services.feishu_service import (
     send_feishu_notification,
@@ -12,11 +14,14 @@ from task_server.services.feishu_service import (
 )
 
 from ..crypto import decrypt_secret, encrypt_secret, secret_fingerprint
+from ..models.project import ApiProject
 from ..repositories.execution_repository import ExecutionRepository
 from ..repositories.notification_repository import NotificationRepository
 
 
 FEISHU_CHANNEL = "feishu"
+_FEISHU_BOT_HOSTS = {"open.feishu.cn", "open.larksuite.com"}
+_FEISHU_BOT_PATH_PREFIX = "/open-apis/bot/v2/hook/"
 
 
 class NotificationInputError(ValueError):
@@ -46,10 +51,53 @@ class NotificationSendView:
     message: str
 
 
+@dataclass(frozen=True)
+class NotificationTestView:
+    project_id: str
+    channel_type: str
+    sent: bool
+    message: str
+
+
 def _text(value, field, maximum):
     if not isinstance(value, str) or len(value.strip()) > maximum:
         raise NotificationInputError(f"{field} is invalid")
     return value.strip()
+
+
+def _pass_rate_text(passed, total, *, has_issues=False):
+    if total <= 0:
+        return "0%"
+    rate = max(0.0, min(100.0, (passed / total) * 100))
+    if has_issues or passed != total:
+        rate = min(rate, 99.9)
+    return f"{rate:.0f}%" if rate.is_integer() else f"{rate:.1f}%"
+
+
+def _validate_api_testing_feishu_webhook(webhook):
+    try:
+        value = validate_feishu_webhook(webhook)
+        parsed = urlparse(value)
+        port = parsed.port
+    except (ValueError, TypeError) as exc:
+        raise NotificationInputError(str(exc)) from exc
+    token = parsed.path.removeprefix(_FEISHU_BOT_PATH_PREFIX)
+    if (
+        parsed.scheme != "https"
+        or (parsed.hostname or "").lower() not in _FEISHU_BOT_HOSTS
+        or port is not None
+        or parsed.username is not None
+        or parsed.password is not None
+        or not parsed.path.startswith(_FEISHU_BOT_PATH_PREFIX)
+        or not token
+        or "/" in token
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise NotificationInputError(
+            "Feishu webhook must be an official HTTPS bot address"
+        )
+    return value
 
 
 class NotificationService:
@@ -81,7 +129,7 @@ class NotificationService:
             record.name = name
             record.enabled = enabled
             if webhook:
-                webhook = validate_feishu_webhook(webhook)
+                webhook = _validate_api_testing_feishu_webhook(webhook)
                 record.ciphertext = encrypt_secret(webhook)
                 record.fingerprint = secret_fingerprint(webhook)
                 record.key_version = 1
@@ -106,7 +154,9 @@ class NotificationService:
                 raise NotificationNotConfiguredError("Feishu notification is not configured")
             children = execution_repository.get_execution_cases(execution.id)
             metadata = execution_repository.display_metadata(execution, children)
-            webhook = decrypt_secret(notification.ciphertext)
+            webhook = _validate_api_testing_feishu_webhook(
+                decrypt_secret(notification.ciphertext)
+            )
             send_feishu_notification(
                 {"card": self._card(execution, children, metadata)},
                 webhook=webhook,
@@ -117,6 +167,59 @@ class NotificationService:
                 sent=True,
                 message="飞书通知已发",
             )
+
+    def test_feishu(self, project_id, actor_id):
+        with self.session_factory() as session:
+            project = session.scalar(
+                select(ApiProject).where(
+                    ApiProject.id == project_id,
+                    ApiProject.owner_id == actor_id,
+                )
+            )
+            notification = NotificationRepository(session).get(
+                actor_id,
+                project_id,
+                FEISHU_CHANNEL,
+            )
+            if project is None or notification is None or not notification.enabled or not notification.ciphertext:
+                raise NotificationNotConfiguredError("Feishu notification is not configured")
+            webhook = _validate_api_testing_feishu_webhook(
+                decrypt_secret(notification.ciphertext)
+            )
+            send_feishu_notification(
+                {"card": self._test_card(project.name, notification.name)},
+                webhook=webhook,
+            )
+            return NotificationTestView(
+                project_id=project_id,
+                channel_type=FEISHU_CHANNEL,
+                sent=True,
+                message="飞书测试通知已发",
+            )
+
+    @staticmethod
+    def _test_card(project_name, channel_name):
+        sent_at = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
+        return {
+            "config": {"wide_screen_mode": True},
+            "header": {
+                "template": "blue",
+                "title": {"tag": "plain_text", "content": "API 通知配置验证"},
+            },
+            "elements": [
+                {"tag": "div", "text": {"tag": "lark_md", "content": f"**项目：** {project_name}"}},
+                {"tag": "div", "text": {"tag": "lark_md", "content": f"**通知配置：** {channel_name}"}},
+                {"tag": "div", "text": {"tag": "lark_md", "content": f"**发送时间：** {sent_at}"}},
+                {"tag": "hr"},
+                {
+                    "tag": "div",
+                    "text": {
+                        "tag": "lark_md",
+                        "content": "机器人连接正常。此消息仅验证项目通知配置，不关联测试执行。",
+                    },
+                },
+            ],
+        }
 
     @staticmethod
     def _view(project_id, record):
@@ -174,7 +277,7 @@ class NotificationService:
         cancelled = int(summary.get("cancelled") or 0)
         issue_count = failed + broken + skipped + cancelled
         conclusion = "通过" if total and issue_count == 0 and passed == total else "未通过"
-        pass_rate = round((passed / total) * 100) if total else 0
+        pass_rate = _pass_rate_text(passed, total, has_issues=issue_count > 0)
         icon = "✅" if conclusion == "通过" else "❌"
         color = "green" if conclusion == "通过" else "red"
         project_name = str(metadata.get("project_name") or "").strip() or "未命名项目"
@@ -200,7 +303,7 @@ class NotificationService:
             {"tag": "div", "text": {"tag": "lark_md", "content": f"**任务：** {task_name}"}},
             {"tag": "div", "text": {"tag": "lark_md", "content": f"**任务类型：** {task_type_label}"}},
             {"tag": "div", "text": {"tag": "lark_md", "content": f"**环境：** {environment_name}"}},
-            {"tag": "div", "text": {"tag": "lark_md", "content": f"**通过率：{pass_rate}%**"}},
+            {"tag": "div", "text": {"tag": "lark_md", "content": f"**通过率：{pass_rate}**"}},
             {
                 "tag": "div",
                 "text": {

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
-import { Edit3, Play, Save, Trash2 } from 'lucide-vue-next'
+import { ArrowLeft, Edit3, Play, Save, Trash2 } from 'lucide-vue-next'
 import { useRouter } from 'vue-router'
 
 import type { ApiEndpoint, ApiTestTask } from '../api/contracts'
@@ -10,6 +10,7 @@ import { useAssetsStore } from '../stores/assets'
 import { useContextStore } from '../stores/context'
 import { useTasksStore } from '../stores/tasks'
 import { compareGroupNames, endpointGroupName } from '../utils/endpointGroups'
+import { compactDateTime, taskLatestResult, taskStateLabel } from '../utils/taskPresentation'
 
 const context = useContextStore()
 const assets = useAssetsStore()
@@ -18,6 +19,7 @@ const router = useRouter()
 
 const localError = ref('')
 const taskNameDraft = ref('')
+const mobileDetailOpen = ref(false)
 
 const activeTask = computed(() => tasks.task)
 const taskEnvironmentNames = computed(() => Object.fromEntries(
@@ -50,7 +52,7 @@ onMounted(async () => {
   if (context.projectId) {
     await tasks.list(context.projectId)
     const restored = await tasks.restore(context.projectId)
-    if (restored) await selectTask(restored.id)
+    if (restored) await selectTask(restored.id, false)
   }
   if (!tasks.task && context.sourceRevisionId) await assets.load(context.sourceRevisionId)
 })
@@ -62,6 +64,7 @@ watch(() => tasks.task?.name, name => {
 function changeProject(projectId: string | null): void {
   context.selectProject(projectId)
   tasks.clear()
+  mobileDetailOpen.value = false
   tasks.tasks = []
   assets.endpoints = []
   localError.value = ''
@@ -88,7 +91,7 @@ async function saveScope(): Promise<void> {
   }
 }
 
-async function selectTask(taskId: string): Promise<void> {
+async function selectTask(taskId: string, revealDetail = true): Promise<void> {
   localError.value = ''
   const task = tasks.select(taskId)
   if (!task) return
@@ -99,6 +102,7 @@ async function selectTask(taskId: string): Promise<void> {
     environment_revision_id: context.environmentRevisionId || task.environment_revision_id,
   })
   await assets.load(task.source_revision_id)
+  mobileDetailOpen.value = revealDetail
 }
 
 async function renameTask(): Promise<void> {
@@ -132,7 +136,9 @@ async function deleteTask(task: ApiTestTask): Promise<void> {
   if (!confirmed) return
   localError.value = ''
   try {
+    const deletingActiveTask = tasks.task?.id === task.id
     await tasks.remove(task.id)
+    if (deletingActiveTask) mobileDetailOpen.value = false
   } catch (error) {
     localError.value = error instanceof Error ? error.message : '任务删除失败'
   }
@@ -154,6 +160,11 @@ async function editTaskInWorkbench(): Promise<void> {
 async function createTaskInWorkbench(): Promise<void> {
   tasks.clear()
   await router.push({ name: 'workbench' })
+}
+
+async function openLatestExecution(): Promise<void> {
+  if (!activeTask.value?.latest_execution_id) return
+  await router.push({ name: 'runs', query: { executionId: activeTask.value.latest_execution_id } })
 }
 
 function ensureTaskContextOptions(task: ApiTestTask, environmentRevisionId: string | null): void {
@@ -213,7 +224,7 @@ function ensureTaskContextOptions(task: ApiTestTask, environmentRevisionId: stri
       @save="saveScope"
     />
     <p v-if="context.error || tasks.error || assets.error || localError" class="inline-error">{{ context.error || tasks.error || assets.error || localError }}</p>
-    <div class="management-shell task-management-shell" data-testid="task-management-shell">
+    <div :class="['management-shell', 'task-management-shell', { 'mobile-detail-open': mobileDetailOpen }]" data-testid="task-management-shell">
       <TaskListPanel
         :tasks="tasks.tasks"
         :active-task-id="tasks.task?.id || ''"
@@ -229,11 +240,12 @@ function ensureTaskContextOptions(task: ApiTestTask, environmentRevisionId: stri
       <main class="management-detail task-detail-panel">
         <template v-if="activeTask">
           <header class="management-detail-head">
+            <button data-testid="management-back-to-list" class="management-back-to-list" type="button" @click="mobileDetailOpen = false"><ArrowLeft :size="16" />返回任务列表</button>
             <div>
               <p>当前选中任务</p>
               <h2 data-testid="selected-task-title">{{ activeTask.name }}</h2>
             </div>
-            <span :class="`task-state-pill task-state-${activeTask.state}`">{{ activeTask.state }}</span>
+            <span data-testid="selected-task-state" :class="`task-state-pill task-state-${activeTask.state}`">{{ taskStateLabel(activeTask.state) }}</span>
           </header>
           <div class="management-detail-body">
             <div class="task-detail-form">
@@ -246,6 +258,9 @@ function ensureTaskContextOptions(task: ApiTestTask, environmentRevisionId: stri
                 <button data-testid="task-detail-run" class="primary-command" type="button" :disabled="tasks.running || activeTask.runnable_baseline_count <= 0" @click="runTask()">
                   <Play :size="15" />执行任务
                 </button>
+                <button v-if="activeTask.latest_execution_id" data-testid="task-latest-execution" class="secondary-command" type="button" @click="openLatestExecution">
+                  最近执行
+                </button>
                 <button data-testid="task-detail-delete" class="secondary-command danger-command" type="button" :disabled="tasks.saving || tasks.running" @click="deleteTask(activeTask)">
                   <Trash2 :size="15" />删除
                 </button>
@@ -256,6 +271,8 @@ function ensureTaskContextOptions(task: ApiTestTask, environmentRevisionId: stri
               <div><span>执行环境</span><strong>{{ environmentLabel }}</strong></div>
               <div><span>接口数量</span><strong>{{ activeTask.selected_endpoint_ids.length }}</strong></div>
               <div><span>可执行基线</span><strong>{{ activeTask.runnable_baseline_count }}</strong></div>
+              <div><span>最近结果</span><strong>{{ taskLatestResult(activeTask) }}</strong></div>
+              <div><span>最近更新</span><strong>{{ compactDateTime(activeTask.updated_at) }}</strong></div>
             </section>
             <section class="task-endpoint-section">
               <header><h3>任务接口范围</h3><span>{{ selectedEndpoints.length }} / {{ activeTask.selected_endpoint_ids.length }}</span></header>

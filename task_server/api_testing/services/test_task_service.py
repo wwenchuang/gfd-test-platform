@@ -19,6 +19,9 @@ class TestTaskNotFoundError(LookupError):
     pass
 
 
+_LATEST_EXECUTION_UNSET = object()
+
+
 def _text(value, label, maximum=200):
     if not isinstance(value, str) or not value.strip() or len(value.strip()) > maximum:
         raise TestTaskInputError("%s is invalid" % label)
@@ -128,7 +131,18 @@ class TestTaskService:
             project = repository.get_project(project_id)
             if project is None or project.owner_id != owner:
                 raise TestTaskNotFoundError("API testing project was not found")
-            return tuple(self._view(repository, task) for task in repository.list_tasks(project_id, owner))
+            tasks = repository.list_tasks(project_id, owner)
+            latest_executions = repository.get_executions(
+                task.latest_execution_id for task in tasks
+            )
+            return tuple(
+                self._view(
+                    repository,
+                    task,
+                    latest_execution=latest_executions.get(task.latest_execution_id),
+                )
+                for task in tasks
+            )
 
     def rename(self, task_id, name, actor_id):
         actor = _text(actor_id, "actor id", 128)
@@ -345,7 +359,13 @@ class TestTaskService:
             )
 
     @staticmethod
-    def _view(repository, task):
+    def _view(repository, task, *, latest_execution=_LATEST_EXECUTION_UNSET):
+        if latest_execution is _LATEST_EXECUTION_UNSET:
+            latest_execution = (
+                repository.get_execution(task.latest_execution_id)
+                if task.latest_execution_id
+                else None
+            )
         return ApiTestTaskView(
             id=task.id,
             project_id=task.project_id,
@@ -357,6 +377,19 @@ class TestTaskService:
             runnable_baseline_count=repository.runnable_baseline_count(task),
             latest_ai_job_id=task.latest_ai_job_id,
             latest_execution_id=task.latest_execution_id,
+            latest_execution_state=(latest_execution.state if latest_execution else None),
+            latest_execution_summary=MappingProxyType(
+                copy.deepcopy(dict(latest_execution.summary or {}))
+                if latest_execution
+                else {}
+            ),
+            latest_execution_at=(
+                latest_execution.finished_at
+                or latest_execution.started_at
+                or latest_execution.created_at
+                if latest_execution
+                else None
+            ),
             summary=MappingProxyType(copy.deepcopy(dict(task.summary))),
             created_at=task.created_at,
             updated_at=task.updated_at,

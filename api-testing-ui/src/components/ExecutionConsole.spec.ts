@@ -159,4 +159,25 @@ describe('ExecutionConsole', () => {
     expect(wrapper.find('[data-testid="execution-row-execution-debug-passed"]').exists()).toBe(true)
     expect(wrapper.find('[data-testid="execution-row-execution-running"]').exists()).toBe(false)
   })
+
+  it('paginates long execution histories while keeping bulk selection scoped to all filtered records', async () => {
+    const executions = Array.from({ length: 21 }, (_, index) => ({
+      ...execution,
+      id: `execution-${index + 1}`,
+      task_name: `回归任务 ${index + 1}`,
+    }))
+    const wrapper = mount(ExecutionConsole, {
+      props: { executions, active: executions[0], events: [], connectionState: 'complete' },
+    })
+
+    expect(wrapper.findAll('.execution-row')).toHaveLength(20)
+    expect(wrapper.text()).toContain('第 1 / 2 页')
+
+    await wrapper.find('.execution-list-tools .text-command').trigger('click')
+    expect(wrapper.text()).toContain('删除 21')
+
+    await wrapper.get('[data-testid="execution-page-next"]').trigger('click')
+    expect(wrapper.findAll('.execution-row')).toHaveLength(1)
+    expect(wrapper.text()).toContain('回归任务 21')
+  })
 })

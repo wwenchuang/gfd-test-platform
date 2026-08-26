@@ -1,7 +1,7 @@
 """Scheduled API regression job management and manual dispatch."""
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional
 
 from sqlalchemy import select
@@ -52,6 +52,14 @@ class ScheduledJobView:
     retry_count: int
     timeout_seconds: int
     latest_execution_id: Optional[str]
+    effective_cron_expression: str
+    scheduler_timezone: str
+    scheduler_utc_offset: str
+    next_run_at: Optional[object]
+    latest_run_at: Optional[object]
+    latest_run_trigger: Optional[str]
+    latest_execution_state: Optional[str]
+    latest_execution_summary: dict
     created_at: object
     updated_at: object
 
@@ -106,6 +114,23 @@ def _cron_matches(expression, when):
         (when.weekday() + 1) % 7,
     )
     return all(value in allowed for value, allowed in zip(values, fields))
+
+
+def _next_cron_match(expression, after, *, max_days=366 * 5):
+    """Return the next minute matching the scheduler's five-field cron rules."""
+    minute_values, hour_values, day_values, month_values, weekday_values = _parse_cron(expression)
+    cursor = after.replace(second=0, microsecond=0) + timedelta(minutes=1)
+    for day_offset in range(max_days + 1):
+        day = cursor + timedelta(days=day_offset)
+        weekday = (day.weekday() + 1) % 7
+        if day.month not in month_values or day.day not in day_values or weekday not in weekday_values:
+            continue
+        for hour in sorted(hour_values):
+            for minute in sorted(minute_values):
+                candidate = day.replace(hour=hour, minute=minute, second=0, microsecond=0)
+                if candidate >= cursor:
+                    return candidate
+    return None
 
 
 def _parse_cron(expression):
@@ -614,6 +639,23 @@ class ScheduledJobService:
             .order_by(ApiScheduledJobRun.created_at.desc(), ApiScheduledJobRun.id.desc())
             .limit(1)
         )
+        latest_execution = (
+            session.get(ApiExecution, latest_run.execution_id)
+            if latest_run and latest_run.execution_id
+            else None
+        )
+        effective_cron = cls._effective_cron_expression(job)
+        current = datetime.now().astimezone()
+        scheduler_timezone = (
+            getattr(current.tzinfo, "key", "")
+            or current.tzname()
+            or str(current.tzinfo or "")
+            or "服务器本地时区"
+        )
+        utc_offset = current.strftime("%z")
+        scheduler_utc_offset = (
+            f"{utc_offset[:3]}:{utc_offset[3:]}" if len(utc_offset) == 5 else "+00:00"
+        )
         return ScheduledJobView(
             id=job.id,
             project_id=job.project_id,
@@ -631,6 +673,14 @@ class ScheduledJobService:
             retry_count=job.retry_count,
             timeout_seconds=job.timeout_seconds,
             latest_execution_id=latest_run.execution_id if latest_run else None,
+            effective_cron_expression=effective_cron,
+            scheduler_timezone=scheduler_timezone,
+            scheduler_utc_offset=scheduler_utc_offset,
+            next_run_at=_next_cron_match(effective_cron, current) if job.enabled else None,
+            latest_run_at=latest_run.created_at if latest_run else None,
+            latest_run_trigger=latest_run.trigger_type if latest_run else None,
+            latest_execution_state=latest_execution.state if latest_execution else None,
+            latest_execution_summary=dict(latest_execution.summary or {}) if latest_execution else {},
             created_at=job.created_at,
             updated_at=job.updated_at,
         )

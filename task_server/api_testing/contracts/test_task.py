@@ -17,6 +17,9 @@ class ApiTestTaskView:
     runnable_baseline_count: int
     latest_ai_job_id: Optional[str]
     latest_execution_id: Optional[str]
+    latest_execution_state: Optional[str]
+    latest_execution_summary: MappingProxyType
+    latest_execution_at: Optional[object]
     summary: MappingProxyType
     created_at: object
     updated_at: object

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
-import { RefreshCw } from 'lucide-vue-next'
+import { ListTree, PencilLine, RefreshCw, Sparkles } from 'lucide-vue-next'
 import { useRoute, useRouter } from 'vue-router'
 
 import AiAssistant from '../components/AiAssistant.vue'
@@ -29,6 +29,7 @@ const activeEndpoint = ref<ApiEndpoint | null>(null)
 const debugOpen = ref(false)
 const localError = ref('')
 const taskNameDraft = ref('')
+const mobilePane = ref<'scope' | 'editor' | 'ai'>('scope')
 const caseEditor = ref<{ editStep(target: { stage: 'setup' | 'main' | 'cleanup'; index: number }): Promise<void> } | null>(null)
 const activeDraft = computed(() => activeEndpoint.value ? cases.draftFor(activeEndpoint.value) : null)
 const activeVersionId = computed(() => activeEndpoint.value ? cases.activeVersionByEndpoint[activeEndpoint.value.id] || '' : '')
@@ -128,6 +129,7 @@ function changeProject(projectId: string | null): void {
   activeEndpoint.value = null
   selectedIds.value = []
   endpointTreeTab.value = 'all'
+  mobilePane.value = 'scope'
   if (projectId) void tasks.list(projectId)
 }
 
@@ -137,6 +139,7 @@ async function changeSource(sourceRevisionId: string | null): Promise<void> {
   cases.clearDebug()
   cases.clearAiJob()
   debugOpen.value = false
+  mobilePane.value = 'scope'
   if (sourceRevisionId) await loadSource(sourceRevisionId)
   else {
     assets.endpoints = []
@@ -175,6 +178,7 @@ async function selectTask(taskId: string): Promise<void> {
 function activate(endpoint: ApiEndpoint): void {
   activeEndpoint.value = endpoint
   cases.draftFor(endpoint)
+  mobilePane.value = 'editor'
 }
 
 function startNewTask(): void {
@@ -186,6 +190,7 @@ function startNewTask(): void {
   selectedIds.value = []
   endpointTreeTab.value = 'all'
   activeEndpoint.value = null
+  mobilePane.value = 'scope'
   taskNameDraft.value = defaultTaskName()
 }
 
@@ -262,6 +267,7 @@ async function generateBasicPositive(): Promise<void> {
     if (endpoint && firstPreview) {
       activeEndpoint.value = endpoint
       cases.setDraftFromGeneratedPreview(firstPreview.id)
+      mobilePane.value = 'editor'
     }
   } catch (error) {
     localError.value = error instanceof Error ? error.message : '基础正向用例生成失败'
@@ -438,14 +444,19 @@ function defaultTaskName(): string {
     />
     <p v-if="context.error || tasks.error || localError" class="inline-error">{{ context.error || tasks.error || localError }}</p>
     <div class="workbench-shell workbench-shell-focused">
+      <nav class="mobile-workbench-tabs" role="tablist" aria-label="移动工作台视图">
+        <button id="mobile-workbench-tab-scope" data-testid="mobile-workbench-scope" type="button" role="tab" aria-controls="mobile-workbench-panel-scope" :tabindex="mobilePane === 'scope' ? 0 : -1" :aria-selected="mobilePane === 'scope'" :class="{ active: mobilePane === 'scope' }" @click="mobilePane = 'scope'"><ListTree :size="15" />接口</button>
+        <button id="mobile-workbench-tab-editor" data-testid="mobile-workbench-editor" type="button" role="tab" aria-controls="mobile-workbench-panel-editor" :tabindex="mobilePane === 'editor' ? 0 : -1" :aria-selected="mobilePane === 'editor'" :class="{ active: mobilePane === 'editor' }" @click="mobilePane = 'editor'"><PencilLine :size="15" />用例编辑</button>
+        <button id="mobile-workbench-tab-ai" data-testid="mobile-workbench-ai" type="button" role="tab" aria-controls="mobile-workbench-panel-ai" :tabindex="mobilePane === 'ai' ? 0 : -1" :aria-selected="mobilePane === 'ai'" :class="{ active: mobilePane === 'ai' }" @click="mobilePane = 'ai'"><Sparkles :size="15" />AI 助手</button>
+      </nav>
       <div class="design-workspace">
-        <EndpointTree :endpoints="assets.endpoints" :selected-ids="selectedIds" :initial-tab="endpointTreeTab" :state="context.sourceRevisionId ? assets.state : 'empty'" :error="assets.error" @selection-change="selectedIds = $event" @activate="activate" />
-        <main class="design-center">
+        <EndpointTree id="mobile-workbench-panel-scope" role="tabpanel" aria-labelledby="mobile-workbench-tab-scope" :class="['mobile-workbench-pane', { 'mobile-pane-active': mobilePane === 'scope' }]" :endpoints="assets.endpoints" :selected-ids="selectedIds" :initial-tab="endpointTreeTab" :state="context.sourceRevisionId ? assets.state : 'empty'" :error="assets.error" @selection-change="selectedIds = $event" @activate="activate" />
+        <main id="mobile-workbench-panel-editor" role="tabpanel" aria-labelledby="mobile-workbench-tab-editor" :class="['design-center', 'mobile-workbench-pane', { 'mobile-pane-active': mobilePane === 'editor' }]">
           <EndpointDetail :endpoint="activeEndpoint" />
           <CaseEditor v-if="activeDraft" ref="caseEditor" :model-value="activeDraft" :dependency-options="dependencyOptions" :endpoint-options="assets.endpoints" :environment-variable-names="context.environmentVariableNames" :saving="cases.saving" :debugging="debugRunning" :saved-message="cases.savedMessage" :validation-errors="cases.validationErrors" :validation-warnings="cases.validationWarnings" @update:model-value="updateDraft" @save="saveDraft" @debug="submitDebug" />
           <div v-else class="state-message center-empty">选择接口后，可手工编辑或让 AI 生成测试用例。</div>
         </main>
-        <AiAssistant :selected-count="selectedIds.length" :job="cases.aiJob" :error="cases.aiError" :polling="cases.aiPolling" :can-resume="cases.aiCanResume" :basic-generating="cases.basicGenerating" @generate-basic="generateBasicPositive" @generate="generate" @retry="generate" @resume="cases.resumeAiJob()" />
+        <AiAssistant id="mobile-workbench-panel-ai" role="tabpanel" aria-labelledby="mobile-workbench-tab-ai" :class="['mobile-workbench-pane', { 'mobile-pane-active': mobilePane === 'ai' }]" :selected-count="selectedIds.length" :job="cases.aiJob" :error="cases.aiError" :polling="cases.aiPolling" :can-resume="cases.aiCanResume" :basic-generating="cases.basicGenerating" @generate-basic="generateBasicPositive" @generate="generate" @retry="generate" @resume="cases.resumeAiJob()" />
       </div>
     </div>
     <DebugDrawer v-if="debugOpen" :open="debugOpen" :case-version-id="activeVersionId" :environment-revision-id="context.environmentRevisionId || ''" :environment-label="environmentLabel" :running="debugRunning" :can-resume="cases.debugCanResume" :result="cases.debugResult" :error="cases.debugError" :baseline-adopting="cases.baselineAdopting" :baseline-message="cases.baselineMessage" :baseline-error="cases.baselineError" @submit="submitDebug" @resume="cases.resumeDebug()" @adopt="adoptBaseline" @edit-step="editDebugStep" @close="debugOpen = false" />

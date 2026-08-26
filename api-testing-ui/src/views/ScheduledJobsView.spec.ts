@@ -374,6 +374,49 @@ describe('ScheduledJobsView', () => {
     expect(remove).toHaveBeenCalledWith('/api/api-testing/v1/scheduled-jobs/job-9')
     expect(get).toHaveBeenCalled()
   })
+
+  it('shows the effective schedule and latest execution evidence with a direct link', async () => {
+    vi.spyOn(apiClient, 'get').mockImplementation(async url => {
+      const path = String(url)
+      if (path.startsWith('/api/api-testing/v1/scheduled-jobs')) return { data: { scheduled_jobs: [scheduledJobFixture({
+        id: 'job-observable',
+        schedule_type: 'cron',
+        cron_expression: '0 10 * * *',
+        effective_cron_expression: '0 10 * * *',
+        next_run_at: '2026-08-27T10:00:00Z',
+        latest_run_at: '2026-08-26T10:00:00Z',
+        latest_run_trigger: 'scheduler',
+        latest_execution_id: 'execution-latest',
+        latest_execution_state: 'DONE',
+        latest_execution_summary: { total: 2, passed: 1, failed: 1, broken: 0, skipped: 0, cancelled: 0 },
+      })] } }
+      if (path.startsWith('/api/api-testing/v1/baselines')) return { data: { baselines: [] } }
+      if (path.startsWith('/api/api-testing/v1/cases')) return { data: { case_versions: [] } }
+      if (path.startsWith('/api/api-testing/v1/tasks')) return { data: { tasks: [] } }
+      return { data: {} }
+    })
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [
+        { path: '/', name: 'scheduled-jobs', component: ScheduledJobsView },
+        { path: '/runs', name: 'runs', component: { template: '<div />' } },
+      ],
+    })
+
+    const wrapper = mount(ScheduledJobsView, { global: { plugins: [router] } })
+    await flushPromises()
+
+    const row = wrapper.get('[data-testid="scheduled-row-job-observable"]')
+    expect(row.text()).toContain('每天 10:00 执行')
+    expect(row.text()).toContain('调度时区 Asia/Shanghai（UTC+08:00）')
+    expect(row.text()).toContain('下次执行 2026/08/27 18:00')
+    expect(row.text()).toContain('最近调度 2026/08/26 18:00')
+    expect(row.text()).toContain('通过 1/2 · 50%')
+
+    await wrapper.get('[data-testid="scheduled-latest-execution-job-observable"]').trigger('click')
+    await flushPromises()
+    expect(router.currentRoute.value.query.executionId).toBe('execution-latest')
+  })
 })
 
 function mockScheduledJobAssets(): void {
@@ -473,6 +516,14 @@ function scheduledJobFixture(overrides: Record<string, unknown>) {
     retry_count: 0,
     timeout_seconds: 1800,
     latest_execution_id: null,
+    effective_cron_expression: '0 2 * * *',
+    next_run_at: '2026-08-27T02:00:00+08:00',
+    latest_run_at: null,
+    latest_run_trigger: null,
+    latest_execution_state: null,
+    latest_execution_summary: {},
+    scheduler_timezone: 'Asia/Shanghai',
+    scheduler_utc_offset: '+08:00',
     created_at: '2026-08-14T10:00:00Z',
     updated_at: '2026-08-14T10:00:00Z',
     ...overrides,

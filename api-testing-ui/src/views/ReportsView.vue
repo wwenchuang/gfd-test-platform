@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { AlertTriangle, BarChart3, CheckCircle2, Clock3, Eye, ListChecks, RefreshCw, Search, Send, Trash2 } from 'lucide-vue-next'
+import { AlertTriangle, ArrowLeft, BarChart3, CheckCircle2, Clock3, Eye, ListChecks, RefreshCw, Search, Send, Trash2 } from 'lucide-vue-next'
 
 import DiagnosticReport from '../components/DiagnosticReport.vue'
 import type { ExecutionCaseResult, ExecutionView } from '../api/contracts'
@@ -13,6 +13,7 @@ import {
   executionSourceScope,
   executionTypeLabel,
   formatDuration,
+  formatPassRate,
   statusLabel,
 } from '../utils/executionPresentation'
 import { useContextStore } from '../stores/context'
@@ -32,6 +33,7 @@ const sourceScope = ref<'formal' | 'debug' | 'all'>(defaultSourceScope(execution
 const reportSearch = ref('')
 const sendingReportId = ref('')
 const reportProjectId = ref('')
+const mobileReportDetailOpen = ref(false)
 const projectOptions = computed(() => context.projects)
 const selectedProject = computed(() => projectOptions.value.find(item => item.id === reportProjectId.value) || null)
 const reports = computed(() => executions.executions
@@ -79,7 +81,7 @@ const dashboard = computed(() => {
   return {
     ...aggregate,
     issueCases,
-    passRate: aggregate.totalCases ? Math.round((aggregate.passed / aggregate.totalCases) * 100) : 0,
+    passRate: formatPassRate(aggregate.passed, aggregate.totalCases),
   }
 })
 const latestReport = computed(() => sourceScopedReports.value[0] || null)
@@ -106,6 +108,7 @@ onMounted(async () => {
   await Promise.all([context.loadSavedContext(), context.loadOptions()])
   reportProjectId.value = projectIdFromRoute() || context.projectId || context.projects[0]?.id || ''
   if (reportProjectId.value) await loadProjectReports(reportProjectId.value, true)
+  if (reportIdFromRoute()) mobileReportDetailOpen.value = true
 })
 
 watch([visibleReports, () => route.query.execution_id, () => route.query.executionId], ([reports]) => {
@@ -114,6 +117,7 @@ watch([visibleReports, () => route.query.execution_id, () => route.query.executi
   const requested = reportIdFromRoute()
   if (requested && reports.some(item => item.id === requested)) {
     selectedReportId.value = requested
+    mobileReportDetailOpen.value = true
   } else if (!reports.some(item => item.id === selectedReportId.value)) {
     selectedReportId.value = reports[0]?.id || ''
   }
@@ -162,6 +166,7 @@ async function changeReportProject(event: Event): Promise<void> {
   selectedReportIds.value = new Set()
   filter.value = 'all'
   reportSearch.value = ''
+  mobileReportDetailOpen.value = false
   await loadProjectReports(value, true)
 }
 
@@ -211,6 +216,21 @@ async function sendFeishu(report: ExecutionView): Promise<void> {
 
 function selectReport(report: ExecutionView): void {
   selectedReportId.value = report.id
+  mobileReportDetailOpen.value = true
+  replaceReportRoute(report.id)
+}
+
+function showReportList(): void {
+  mobileReportDetailOpen.value = false
+  replaceReportRoute('')
+}
+
+function replaceReportRoute(reportId: string): void {
+  const query = { ...route.query }
+  delete query.executionId
+  delete query.execution_id
+  if (reportId) query.executionId = reportId
+  void router.replace({ query })
 }
 
 function toggleReportSelection(reportId: string): void {
@@ -280,7 +300,7 @@ async function deleteReports(reportIds: string[]): Promise<void> {
             <h2>{{ dashboard.issueCases ? '需要关注' : '全部通过' }}</h2>
             <p>{{ dashboard.totalReports }} 次执行 · {{ dashboard.totalCases }} 条用例 · 最近 {{ latestReport ? new Date(latestReport.created_at).toLocaleString('zh-CN') : '暂无执行' }}</p>
           </div>
-          <strong data-testid="report-dashboard-rate" :class="dashboard.issueCases ? 'tone-failed' : 'tone-passed'">{{ dashboard.passRate }}%</strong>
+          <strong data-testid="report-dashboard-rate" :class="dashboard.issueCases ? 'tone-failed' : 'tone-passed'">{{ dashboard.passRate }}</strong>
         </div>
         <div class="report-stat-grid">
           <div><ListChecks :size="16" /><span>执行次数</span><strong data-testid="report-dashboard-total">{{ dashboard.totalReports }} 次执行</strong></div>
@@ -319,7 +339,7 @@ async function deleteReports(reportIds: string[]): Promise<void> {
             <button type="button" class="danger-command" :disabled="!selectedReportCount" @click="deleteReports([...selectedReportIds])"><Trash2 :size="14" />批量删除 {{ selectedReportCount || '' }}</button>
           </div>
         </header>
-        <div class="report-workbench">
+        <div data-testid="report-workbench" :class="['report-workbench', { 'mobile-detail-open': mobileReportDetailOpen }]">
           <aside class="report-index">
             <label class="search-box report-search"><Search :size="14" /><span class="sr-only">搜索报告</span><input v-model="reportSearch" data-testid="report-search" placeholder="搜索任务或环境" /></label>
             <div class="report-index-tools">
@@ -351,6 +371,7 @@ async function deleteReports(reportIds: string[]): Promise<void> {
           </aside>
 
           <main class="report-detail-panel">
+            <button data-testid="report-back-to-list" class="management-back-to-list report-back-to-list" type="button" @click="showReportList"><ArrowLeft :size="16" />返回报告列表</button>
             <template v-if="currentReport && currentMetrics && currentBuckets">
               <header class="report-detail-hero" :class="`tone-${executionConclusion(currentReport).tone}`">
                 <div>

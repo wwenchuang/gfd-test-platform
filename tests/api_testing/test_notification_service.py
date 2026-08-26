@@ -1,8 +1,15 @@
 import json
 from types import SimpleNamespace
 
+import pytest
+
 from task_server.api_testing.repositories.execution_repository import ExecutionRepository
-from task_server.api_testing.services.notification_service import NotificationService
+from task_server.api_testing.repositories.notification_repository import NotificationRepository
+from task_server.api_testing.services.notification_service import (
+    NotificationInputError,
+    NotificationService,
+    _validate_api_testing_feishu_webhook,
+)
 
 
 def _execution(**overrides):
@@ -83,6 +90,36 @@ def test_feishu_report_card_marks_scheduled_job_type():
     assert "定时任务" in text
 
 
+def test_feishu_report_card_never_rounds_an_imperfect_run_to_100_percent():
+    card = NotificationService._card(
+        _execution(summary={
+            "total": 240, "passed": 239, "failed": 1, "broken": 0,
+            "skipped": 0, "cancelled": 0,
+        }),
+        [],
+        {"project_name": "智小白3D", "environment_name": "生产环境"},
+    )
+
+    text = json.dumps(card, ensure_ascii=False)
+    assert "通过率：99.6%" in text
+    assert "通过率：100%" not in text
+
+
+def test_feishu_report_card_rejects_an_inconsistent_perfect_summary():
+    card = NotificationService._card(
+        _execution(summary={
+            "total": 240, "passed": 241, "failed": 0, "broken": 0,
+            "skipped": 0, "cancelled": 0,
+        }),
+        [],
+        {"project_name": "智小白3D", "environment_name": "生产环境"},
+    )
+
+    text = json.dumps(card, ensure_ascii=False)
+    assert "通过率：99.9%" in text
+    assert "通过率：100%" not in text
+
+
 def test_feishu_report_card_labels_dependency_skip_for_readers():
     child = SimpleNamespace(
         status="SKIPPED",
@@ -131,4 +168,71 @@ def test_report_url_uses_first_configured_public_base(monkeypatch):
     assert (
         NotificationService._report_url("execution-2", "project-2")
         == "http://task.example.test/api-test/#/reports?project_id=project-2&execution_id=execution-2"
+    )
+
+
+def test_feishu_configuration_test_sends_a_distinct_project_card(monkeypatch):
+    record = SimpleNamespace(
+        project_id="project-1",
+        channel_type="feishu",
+        name="接口回归通知",
+        enabled=True,
+        ciphertext="encrypted-webhook",
+    )
+
+    class FakeSession:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def scalar(self, _statement):
+            return SimpleNamespace(id="project-1", name="智小白3D", owner_id="owner-a")
+
+    monkeypatch.setattr(NotificationRepository, "get", lambda *_args, **_kwargs: record)
+    monkeypatch.setattr(
+        "task_server.api_testing.services.notification_service.decrypt_secret",
+        lambda ciphertext: "https://open.feishu.cn/open-apis/bot/v2/hook/test",
+    )
+    sent = []
+    monkeypatch.setattr(
+        "task_server.api_testing.services.notification_service.send_feishu_notification",
+        lambda payload, webhook: sent.append((payload, webhook)),
+    )
+
+    result = NotificationService(lambda: FakeSession()).test_feishu("project-1", "owner-a")
+
+    assert result.project_id == "project-1"
+    assert result.channel_type == "feishu"
+    assert result.sent is True
+    assert result.message == "飞书测试通知已发"
+    assert sent[0][1].endswith("/test")
+    card = json.dumps(sent[0][0], ensure_ascii=False)
+    assert "API 通知配置验证" in card
+    assert "智小白3D" in card
+    assert "不关联测试执行" in card
+
+
+@pytest.mark.parametrize(
+    "webhook",
+    [
+        "http://open.feishu.cn/open-apis/bot/v2/hook/test",
+        "https://127.0.0.1/open-apis/bot/v2/hook/test",
+        "https://example.com/open-apis/bot/v2/hook/test",
+        "https://open.feishu.cn.evil.test/open-apis/bot/v2/hook/test",
+        "https://open.feishu.cn/internal/test",
+    ],
+)
+def test_api_testing_feishu_webhook_rejects_unsafe_targets(webhook):
+    with pytest.raises(NotificationInputError):
+        _validate_api_testing_feishu_webhook(webhook)
+
+
+def test_api_testing_feishu_webhook_accepts_official_feishu_and_lark_hosts():
+    assert _validate_api_testing_feishu_webhook(
+        "https://open.feishu.cn/open-apis/bot/v2/hook/test"
+    )
+    assert _validate_api_testing_feishu_webhook(
+        "https://open.larksuite.com/open-apis/bot/v2/hook/test"
     )

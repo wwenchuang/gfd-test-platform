@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 
 import { apiClient } from '../api/client'
-import type { FeishuNotification, NotificationSendResult } from '../api/contracts'
+import type { FeishuNotification, NotificationSendResult, NotificationTestResult } from '../api/contracts'
 
 interface FeishuInput {
   name: string
@@ -70,6 +70,25 @@ export const useNotificationsStore = defineStore('api-notifications', {
         return response.data.notification
       } catch (error) {
         this.error = error instanceof Error ? error.message : '飞书通知发送失败'
+        throw error
+      } finally {
+        this.sending = false
+      }
+    },
+    async testFeishu(projectId: string): Promise<NotificationTestResult> {
+      this.sending = true
+      this.error = ''
+      this.lastSendMessage = ''
+      try {
+        const response = await apiClient.post<{ notification: NotificationTestResult }>(
+          '/api/api-testing/v1/notifications/feishu/test',
+          { project_id: projectId },
+        )
+        this.lastSendMessage = response.data.notification.message
+        this.message = response.data.notification.message
+        return response.data.notification
+      } catch (error) {
+        this.error = error instanceof Error ? error.message : '飞书测试通知发送失败'
         throw error
       } finally {
         this.sending = false

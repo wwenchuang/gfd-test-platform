@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 
-import { mount } from '@vue/test-utils'
+import { flushPromises, mount } from '@vue/test-utils'
 import { createMemoryHistory, createRouter } from 'vue-router'
+import { nextTick } from 'vue'
 import { describe, expect, it } from 'vitest'
 
 import App from './App.vue'
@@ -81,5 +82,52 @@ describe('App navigation', () => {
       expect.objectContaining({ path: '/tasks', name: 'tasks', components: expect.objectContaining({ default: TasksView }) }),
       expect.objectContaining({ path: '/cases', name: 'cases', components: expect.objectContaining({ default: CasesView }) }),
     ]))
+  })
+
+  it('opens a labeled navigation drawer on narrow screens and closes it after navigation', async () => {
+    const StubView = { template: '<div />' }
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [
+        { path: '/', component: StubView },
+        { path: '/cases', component: StubView },
+        { path: '/tasks', component: StubView },
+        { path: '/assets', component: StubView },
+        { path: '/baselines', component: StubView },
+        { path: '/scheduled-jobs', component: StubView },
+        { path: '/runs', component: StubView },
+        { path: '/reports', component: StubView },
+        { path: '/settings', component: StubView },
+      ],
+    })
+    await router.push('/')
+    await router.isReady()
+
+    const wrapper = mount(App, { attachTo: document.body, global: { plugins: [router], stubs: { RouterView: true } } })
+    const toggle = wrapper.get('[data-testid="mobile-nav-toggle"]')
+
+    expect(toggle.attributes('aria-expanded')).toBe('false')
+    expect(wrapper.get('.side-rail').classes()).not.toContain('mobile-open')
+
+    await toggle.trigger('click')
+    await nextTick()
+    expect(toggle.attributes('aria-expanded')).toBe('true')
+    expect(wrapper.get('.side-rail').classes()).toContain('mobile-open')
+    expect(wrapper.get('.side-rail').text()).toContain('用例管理')
+    expect(document.activeElement).toBe(wrapper.get('.mobile-nav-close').element)
+
+    await wrapper.get('.side-rail').trigger('keydown', { key: 'Escape' })
+    await nextTick()
+    expect(wrapper.get('[data-testid="mobile-nav-toggle"]').attributes('aria-expanded')).toBe('false')
+    expect(document.activeElement).toBe(wrapper.get('[data-testid="mobile-nav-toggle"]').element)
+
+    await wrapper.get('[data-testid="mobile-nav-toggle"]').trigger('click')
+
+    await wrapper.get('[data-testid="nav-cases"]').trigger('click')
+    await flushPromises()
+    expect(router.currentRoute.value.path).toBe('/cases')
+    expect(wrapper.get('[data-testid="mobile-nav-toggle"]').attributes('aria-expanded')).toBe('false')
+    expect(wrapper.get('.side-rail').classes()).not.toContain('mobile-open')
+    wrapper.unmount()
   })
 })

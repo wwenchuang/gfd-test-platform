@@ -6,6 +6,7 @@ import { createMemoryHistory, createRouter } from 'vue-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { apiClient } from '../api/client'
+import { useBaselinesStore } from '../stores/baselines'
 import { useContextStore } from '../stores/context'
 import { useExecutionsStore } from '../stores/executions'
 import { useTasksStore } from '../stores/tasks'
@@ -101,6 +102,8 @@ describe('BaselinesView fixed project assets', () => {
     await flushPromises()
 
     expect(wrapper.text()).toContain('添加收藏 - 正常流程')
+    expect(wrapper.text()).toContain('已通过调试并采纳')
+    expect(wrapper.text()).not.toContain('passing debug evidence')
     await wrapper.get('input[type="checkbox"]').setValue(true)
     await wrapper.get('[data-testid="switch-source"]').trigger('click')
     await wrapper.get('[data-testid="switch-environment"]').trigger('click')
@@ -291,5 +294,26 @@ describe('BaselinesView fixed project assets', () => {
 
     await wrapper.get('[data-testid="baseline-filter-origin"]').setValue('ai')
     expect(wrapper.text()).toContain('当前筛选下没有匹配基线')
+  })
+
+  it('paginates large baseline collections without changing filtered selection semantics', async () => {
+    vi.spyOn(apiClient, 'get').mockResolvedValue({ data: { baselines: Array.from({ length: 51 }, (_, index) => baselineFixture({
+      id: `baseline-${index + 1}`,
+      endpoint_id: `endpoint-${index + 1}`,
+      case_name: `基础用例 ${index + 1}`,
+    })) } })
+
+    const wrapper = mountWithContext()
+    await flushPromises()
+
+    expect(wrapper.findAll('.baseline-row')).toHaveLength(50)
+    expect(wrapper.text()).toContain('第 1 / 2 页')
+
+    await buttonByText(wrapper, '全选当前筛选').trigger('click')
+    expect(useBaselinesStore().selectedIds).toHaveLength(51)
+
+    await wrapper.get('[data-testid="baseline-page-next"]').trigger('click')
+    expect(wrapper.findAll('.baseline-row')).toHaveLength(1)
+    expect(wrapper.text()).toContain('基础用例 51')
   })
 })

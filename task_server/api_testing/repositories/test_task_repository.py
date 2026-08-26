@@ -52,6 +52,17 @@ class TestTaskRepository:
     def get_execution(self, record_id):
         return self.session.get(ApiExecution, record_id)
 
+    def get_executions(self, record_ids):
+        identifiers = tuple(dict.fromkeys(item for item in record_ids if item))
+        if not identifiers:
+            return {}
+        return {
+            item.id: item
+            for item in self.session.scalars(
+                select(ApiExecution).where(ApiExecution.id.in_(identifiers))
+            )
+        }
+
     def runnable_baseline_count(self, task):
         selected = tuple(dict.fromkeys(task.selected_endpoint_ids or ()))
         if not selected:

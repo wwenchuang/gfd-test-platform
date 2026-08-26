@@ -34,6 +34,39 @@
 
 ## 最近完成的关键修复
 
+### 2026-08-25 API 测试平台多断点适配与长列表收敛
+
+本轮针对浏览器窄窗口、平板和手机端内容被压缩、操作区展示不全的问题做响应式收敛，不改变 API、数据库结构和执行语义。
+
+- 920px 及以下使用带完整文字的抽屉导航和当前页面标题，不再保留挤占内容宽度且只有图标的侧栏；桌面端继续显示原有九个独立入口。
+- 测试范围在窄屏默认显示项目和环境摘要，按需展开项目、接口版本和执行环境控件，减少每页顶部占用。
+- 工作台在窄屏使用“接口、用例编辑、AI 助手”三视图；选中接口或生成预览后自动进入编辑视图，不再同时纵向渲染三块长面板。
+- 用例、任务和报告管理在窄屏使用“列表 -> 详情 -> 返回列表”流程，桌面双栏行为保持不变。
+- 基线列表每页 50 条、执行记录每页 20 条；筛选变化自动回到第一页，删除导致页数减少时自动修正，批量选择仍覆盖全部筛选结果而非仅当前页。
+- 报告和执行概览的通过率保留一位有效小数；只有全部通过才显示 100%，避免 716/719、239/240 被误显示为 100%。
+- 1024px 下任务摘要与操作区提前换成整行布局，避免按钮文字被压成逐字换行。
+- 已复核左侧信息架构：工作台、接口资产、用例、任务、基线、定时、执行、报告、环境已覆盖独立高频流程。本轮不增加重复报告数据的空“质量总览”入口。
+
+验证：
+
+```bash
+bash tests/run_api_testing_gate.sh
+# 438 backend tests passed
+# 54 frontend files / 276 tests passed
+# Vue TypeScript + Vite production build passed
+# 1440 / 1024 / 768 / 390 visual checks passed
+# Chromium end-to-end workflow passed
+
+python3 tests/frontend_static_checks.py
+# 84 checks passed
+
+python3 tests/backend_static_checks.py
+# 63 checks passed
+
+git diff --check
+# passed
+```
+
 ### 2026-08-25 API 测试独立管理页与规模化操作体验
 
 本轮在不改变数据库结构、HTTP 接口和执行语义的前提下，完成独立管理页面的信息架构与高频操作优化。设计规范位于 `docs/superpowers/specs/2026-08-25-api-testing-management-ux-design.md`，实施计划位于 `docs/superpowers/plans/2026-08-25-api-testing-management-ux.md`。
@@ -10278,6 +10311,53 @@ git diff --check
 - M2：基线固定资产模型、基线分组、编辑/删除、按环境执行。
 - M3：Apifox 分组、query/path/body 示例、必填、类型、说明等同步完整性。
 - M4：执行记录/报告删除、飞书卡片链接和项目级机器人配置。
+
+### 2026-08-26 API 测试平台全流程体验与运行可见性
+
+本轮使用全新浏览器点检 API 测试平台九个独立页面，并按“不破坏现有流程、让新手能判断下一步和执行结果”的原则收口高优先级体验问题。完整问题、取舍和验证记录见 `docs/api-testing-ux-audit-2026-08-26.md`。
+
+本轮实现：
+
+- 增加移动端应用栏、侧栏抽屉和上下文折叠；工作台、用例、任务和报告在窄屏使用明确的列表/详情切换，不再把桌面三栏硬压缩到手机宽度。
+- 基线列表按 50 条分页、执行记录按 20 条分页，保留筛选后的统计和定位能力。
+- 页面和飞书卡片的通过率不再把不完整结果四舍五入为 `100%`。
+- 定时任务返回并展示实际 Cron、服务端时区和 UTC 偏移、下次执行、最近触发、最近结果和对应执行记录入口；前端按调度时区偏移格式化，不再误用浏览器时区。
+- 任务列表和详情展示更新时间、最近执行结果和通过率；执行摘要独立读取且列表批量查询，不会被 AI 生成摘要覆盖，也不会形成逐任务数据库查询。
+- 飞书配置增加不关联真实执行的测试通知，便于保存后立即验证机器人配置；API 测试通知只接受飞书/Lark 官方 HTTPS 机器人地址。
+- 用例编辑器“保存并调试”接通真实调试处理，移除页面外层语义重复的“保存并执行”。
+- 基线采纳原因不再暴露内部英文技术文案。
+- 左侧现有九个入口覆盖设计、资产、用例、任务、基线、调度、执行、报告和配置，实站点检后决定不新增重复入口。
+
+已验证：
+
+```bash
+bash tests/run_api_testing_gate.sh
+# 449 backend tests passed
+# 54 frontend files / 279 tests passed
+# production build and visual checks passed
+# 1 Chromium full workflow passed
+
+npm --prefix api-testing-ui test -- --run
+# 54 files / 279 tests passed
+
+npm --prefix api-testing-ui run build
+# vue-tsc + Vite production build passed
+
+node tests/api_testing_ui_visual_check.js
+# desktop / compact desktop / tablet / mobile / settings mobile passed
+
+npx playwright test tests/api_testing_e2e.spec.mjs --project=chromium
+# 1 Chromium full workflow passed
+
+.venv/bin/python tests/backend_static_checks.py
+# 63 checks passed
+
+.venv/bin/python tests/frontend_static_checks.py
+# 84 checks passed
+
+git diff --check
+# passed
+```
 
 ### 2026-08-24 AgileTC 动态验证码与只读权限适配
 

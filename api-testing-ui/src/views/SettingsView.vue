@@ -369,6 +369,19 @@ async function saveFeishu(): Promise<void> {
   }
 }
 
+async function testFeishu(): Promise<void> {
+  localError.value = ''
+  if (!projectId.value) {
+    localError.value = '请先选择项目'
+    return
+  }
+  try {
+    await notifications.testFeishu(projectId.value)
+  } catch (error) {
+    localError.value = messageOf(error, '飞书测试通知发送失败')
+  }
+}
+
 function sourceLabel(sourceId: string | null): string {
   if (!sourceId) return '未绑定接口版本'
   const source = context.sourceRevisions.find(item => item.id === sourceId)
@@ -565,7 +578,7 @@ function formatDate(value: string): string { return value ? new Date(value).toLo
     <section v-if="projectId" class="setup-section notification-section project-notification-card">
       <header><div><p class="eyebrow">PROJECT NOTIFICATION</p><h2>项目飞书通知</h2><p>机器人绑定到 {{ selectedProject?.name }}；后续定时任务只保存“是否通知”，不重复保存 Webhook。</p></div><span v-if="notifications.feishu?.configured" class="configured-state"><Check :size="14" />已配置 {{ notifications.feishu.fingerprint }}</span></header>
       <div class="setup-grid three"><label>通知名称<input v-model="feishuName" placeholder="例如：API 基线报告" /></label><label class="grow">飞书群机器人 Webhook<input v-model="feishuWebhook" type="password" autocomplete="new-password" placeholder="已配置时留空表示保持不变" /></label><label class="toggle-card"><input v-model="feishuEnabled" type="checkbox" />启用报告发送</label></div>
-      <footer class="notification-actions"><span><Bell :size="14" />任务和基线是独立资产；后续调度器可选择任务或基线分组，并决定是否发送飞书。</span><button class="secondary-command" type="button" :disabled="notifications.loading" @click="loadFeishu">{{ notifications.loading ? '读取中' : '读取配置' }}</button><button class="primary-command" type="button" :disabled="notifications.saving" @click="saveFeishu">{{ notifications.saving ? '保存中' : '保存项目通知' }}</button></footer>
+      <footer class="notification-actions"><span><Bell :size="14" />通知属于当前项目；测试发送只验证机器人，不关联测试执行。</span><button class="secondary-command" type="button" :disabled="notifications.loading" @click="loadFeishu">{{ notifications.loading ? '读取中' : '读取配置' }}</button><button data-testid="feishu-test" class="secondary-command" type="button" :disabled="notifications.sending || !notifications.feishu?.configured || !notifications.feishu?.enabled" @click="testFeishu">{{ notifications.sending ? '发送中' : '发送测试通知' }}</button><button class="primary-command" type="button" :disabled="notifications.saving" @click="saveFeishu">{{ notifications.saving ? '保存中' : '保存项目通知' }}</button></footer>
     </section>
 
     <p v-if="localError || setup.error || context.error || notifications.error" class="inline-error" role="alert">{{ localError || setup.error || context.error || notifications.error }}</p>

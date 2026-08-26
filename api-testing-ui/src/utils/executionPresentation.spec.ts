@@ -7,6 +7,7 @@ import {
   executionMetrics,
   executionSourceScope,
   formatDuration,
+  formatPassRate,
   redactSensitiveEvidence,
   statusLabel,
 } from './executionPresentation'
@@ -72,6 +73,15 @@ describe('execution presentation', () => {
     expect(statusLabel('BROKEN')).toBe('运行异常')
     expect(statusLabel('SKIPPED')).toBe('已跳过')
     expect(formatDuration(1280)).toBe('1.28 秒')
+  })
+
+  it('never rounds an imperfect execution up to a perfect pass rate', () => {
+    expect(formatPassRate(716, 719)).toBe('99.6%')
+    expect(formatPassRate(239, 240)).toBe('99.6%')
+    expect(formatPassRate(9996, 10000)).toBe('99.9%')
+    expect(formatPassRate(240, 240)).toBe('100%')
+    expect(formatPassRate(241, 240)).toBe('99.9%')
+    expect(formatPassRate(0, 0)).toBe('0%')
   })
 
   it('classifies only explicit debug executions as online debugging', () => {

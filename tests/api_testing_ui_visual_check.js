@@ -27,6 +27,14 @@ const caseVersion = {
   data_rows: [], assertions: [{ type: 'status_code', operator: 'equals', expected: 200, timeout_ms: 0, enabled: true }],
   extractions: [], dependencies: [], processing: { pre: [], post: [] },
 };
+const baselines = Array.from({ length: 51 }, (_, index) => ({
+  id: `baseline-${index + 1}`, project_id: 'project-1', case_id: `case-${index + 1}`,
+  case_version_id: `case-version-${index + 1}`, environment_revision_id: 'environment-revision-1',
+  source_revision_id: 'source-revision-1', endpoint_id: endpoint.id, status: 'active',
+  case_name: `收藏基线 ${index + 1}`, case_version: 1, priority: 'P0', origin: 'manual',
+  method: endpoint.method, path: endpoint.path, endpoint_summary: endpoint.summary,
+  tags: ['我的收藏'], group_name: '我的收藏', adoption_reason: '真实调试通过', adopted_at: '2026-08-25T08:00:00Z',
+}));
 
 function sendJson(res, data, status = 200) {
   res.writeHead(status, { 'content-type': 'application/json; charset=utf-8' });
@@ -60,7 +68,17 @@ function createServer() {
       return sendJson(res, { workspace: { project_id: 'project-1', source_revision_id: 'source-revision-1', environment_revision_id: 'environment-revision-1' } });
     }
     if (url.pathname === '/api/api-testing/v1/tasks' && req.method === 'GET') {
-      return sendJson(res, { tasks: [] });
+      return sendJson(res, { tasks: [{
+        id: 'task-1', project_id: 'project-1', source_revision_id: 'source-revision-1',
+        environment_revision_id: 'environment-revision-1', name: '每日收藏链路回归', state: 'completed',
+        selected_endpoint_ids: [endpoint.id], runnable_baseline_count: 1, latest_ai_job_id: null,
+        latest_execution_id: 'execution-1',
+        latest_execution_state: 'DONE',
+        latest_execution_summary: { total: 3, passed: 2, failed: 1, broken: 0, skipped: 0, cancelled: 0 },
+        latest_execution_at: '2026-08-26T10:00:00+08:00',
+        summary: { total: 3, passed: 2, failed: 1, broken: 0, skipped: 0, cancelled: 0 },
+        created_at: '2026-08-25T08:00:00Z', updated_at: '2026-08-26T08:30:00Z',
+      }] });
     }
     if (url.pathname === '/api/api-testing/v1/tasks/active') return sendJson(res, { task: null });
     if (url.pathname === '/api/api-testing/v1/tasks' && req.method === 'POST') {
@@ -85,6 +103,28 @@ function createServer() {
       ] });
     }
     if (url.pathname === '/api/api-testing/v1/cases' && req.method === 'GET') return sendJson(res, { case_versions: [caseVersion] });
+    if (url.pathname === '/api/api-testing/v1/baselines' && req.method === 'GET') return sendJson(res, { baselines });
+    if (url.pathname === '/api/api-testing/v1/scheduled-jobs' && req.method === 'GET') return sendJson(res, { scheduled_jobs: [{
+      id: 'scheduled-job-1', project_id: 'project-1', source_revision_id: 'source-revision-1',
+      environment_revision_id: 'environment-revision-1', environment_id: 'environment-1', name: '每日收藏基线回归',
+      target_type: 'baseline_group', target_ids: ['我的收藏'], schedule_type: 'cron', cron_expression: '0 10 * * *',
+      effective_cron_expression: '0 10 * * *', scheduler_timezone: 'Asia/Shanghai', scheduler_utc_offset: '+08:00', environment_strategy: 'fixed_revision', enabled: true, notify_feishu: true,
+      retry_count: 1, timeout_seconds: 1800, next_run_at: '2026-08-27T10:00:00+08:00',
+      latest_run_at: '2026-08-26T10:00:00+08:00', latest_run_trigger: 'schedule', latest_execution_id: 'execution-1',
+      latest_execution_state: 'DONE', latest_execution_summary: { total: 3, passed: 2, failed: 1, broken: 0, skipped: 0, cancelled: 0 },
+      created_at: '2026-08-25T08:00:00Z', updated_at: '2026-08-26T08:30:00Z',
+    }] });
+    if (url.pathname === '/api/api-testing/v1/executions' && req.method === 'GET') return sendJson(res, { executions: [] });
+    if (url.pathname === '/api/api-testing/v1/providers/apifox/credential' && req.method === 'GET') {
+      return sendJson(res, { credential: { provider: 'apifox', configured: true, fingerprint: 'visual-check', updated_at: null } });
+    }
+    if (url.pathname === '/api/api-testing/v1/environments' && req.method === 'GET') return sendJson(res, { environments: [] });
+    if (url.pathname === '/api/api-testing/v1/notifications/feishu' && req.method === 'GET') {
+      return sendJson(res, { notification: { project_id: 'project-1', channel_type: 'feishu', name: 'API 基线报告', enabled: true, configured: true, fingerprint: 'visual-check', updated_at: '2026-08-26T08:30:00Z' } });
+    }
+    if (url.pathname === '/api/api-testing/v1/notifications/feishu/test' && req.method === 'POST') {
+      return sendJson(res, { notification: { project_id: 'project-1', channel_type: 'feishu', sent: true, message: '飞书测试通知已发' } });
+    }
     if (url.pathname === '/api/api-testing/v1/cases/case-1/versions' && req.method === 'POST') {
       return sendJson(res, { case_version: { ...caseVersion, id: 'case-version-2', version: 2 } });
     }
@@ -100,6 +140,17 @@ function createServer() {
     if (url.pathname === '/api/api-testing/v1/ai-jobs/latest') return sendJson(res, { job: null });
     if (url.pathname === '/api/api-testing/v1/executions' && req.method === 'POST') {
       return sendJson(res, { execution: { id: 'execution-1', state: 'QUEUED', case_statuses: [], case_results: [], summary: {} } }, 202);
+    }
+    if (url.pathname === '/api/api-testing/v1/executions/execution-1/sse-ticket' && req.method === 'POST') {
+      return sendJson(res, { ticket: 'visual-sse-ticket' });
+    }
+    if (url.pathname === '/api/api-testing/v1/executions/execution-1/events' && req.method === 'GET') {
+      res.writeHead(200, {
+        'content-type': 'text/event-stream; charset=utf-8',
+        'cache-control': 'no-cache',
+        connection: 'close',
+      });
+      return res.end('id: 1\nevent: execution_finished\ndata: {"execution_id":"execution-1","state":"DONE"}\n\n');
     }
     if (url.pathname === '/api/api-testing/v1/executions/execution-1') {
       return sendJson(res, { execution: {
@@ -118,6 +169,37 @@ function createServer() {
 async function assertNoHorizontalOverflow(page, label) {
   const metrics = await page.evaluate(() => ({ width: document.documentElement.clientWidth, scrollWidth: document.documentElement.scrollWidth }));
   if (metrics.scrollWidth > metrics.width + 1) throw new Error(`${label} horizontal overflow: ${JSON.stringify(metrics)}`);
+}
+
+async function assertCompactWorkbench(page, label, viewport, screenshotName) {
+  await page.setViewportSize(viewport);
+  await page.reload({ waitUntil: 'networkidle' });
+  if (await page.getByTestId('context-project').isVisible()) throw new Error(`${label} context controls must be collapsed initially`);
+  await page.getByTestId('context-toggle').click();
+  if (!await page.getByTestId('context-project').isVisible()) throw new Error(`${label} context controls did not expand`);
+  await page.getByTestId('context-toggle').click();
+  await page.getByTestId('mobile-nav-toggle').click();
+  const drawer = await page.locator('.side-rail.mobile-open').boundingBox();
+  if (!drawer || drawer.width < 220) throw new Error(`${label} navigation drawer is too narrow: ${JSON.stringify(drawer)}`);
+  if (!await page.getByTestId('nav-cases').getByText('用例管理', { exact: true }).isVisible()) throw new Error(`${label} navigation drawer must show labeled entries`);
+  await page.getByRole('button', { name: '关闭导航' }).first().click();
+  await page.getByTestId('endpoint-search').fill('我的收藏列表');
+  await page.getByRole('button', { name: '我的收藏列表' }).click();
+  const boxes = await Promise.all(['.endpoint-tree', '.design-center', '.ai-assistant'].map(selector => page.locator(selector).boundingBox()));
+  if (boxes[0] || !boxes[1] || boxes[2]) {
+    throw new Error(`${label} workbench must show only the selected editor pane: ${JSON.stringify(boxes)}`);
+  }
+  if (await page.getByTestId('mobile-workbench-editor').getAttribute('aria-selected') !== 'true') throw new Error(`${label} selecting an endpoint must activate the editor pane`);
+  await assertNoHorizontalOverflow(page, label);
+  await page.screenshot({ path: path.join(ARTIFACTS, screenshotName), fullPage: true });
+}
+
+async function openCompactPage(page, navigationLabel, heading, label) {
+  await page.getByTestId('mobile-nav-toggle').click();
+  await page.getByRole('link', { name: navigationLabel, exact: true }).click();
+  await page.getByRole('heading', { name: heading, exact: true, level: 1 }).waitFor();
+  await page.locator('.side-rail').waitFor({ state: 'hidden' });
+  await assertNoHorizontalOverflow(page, label);
 }
 
 (async () => {
@@ -159,6 +241,11 @@ async function assertNoHorizontalOverflow(page, label) {
     await assertNoHorizontalOverflow(page, 'desktop');
     await page.screenshot({ path: path.join(ARTIFACTS, 'workbench-desktop.png'), fullPage: true });
 
+    await page.setViewportSize({ width: 1024, height: 768 });
+    await assertNoHorizontalOverflow(page, 'compact desktop');
+    await page.screenshot({ path: path.join(ARTIFACTS, 'workbench-compact-desktop.png'), fullPage: true });
+    await page.setViewportSize({ width: 1440, height: 900 });
+
     await page.getByRole('button', { name: '保存并调试' }).click();
     await page.getByRole('dialog', { name: '在线调试' }).waitFor();
     await page.locator('.result-status').getByText('PASSED', { exact: true }).waitFor();
@@ -166,18 +253,49 @@ async function assertNoHorizontalOverflow(page, label) {
     await page.keyboard.press('Escape');
     if (await page.getByRole('dialog', { name: '在线调试' }).count()) throw new Error('Escape did not close the debug dialog');
 
-    await page.setViewportSize({ width: 390, height: 844 });
-    await page.reload({ waitUntil: 'networkidle' });
-    await page.getByTestId('endpoint-search').fill('我的收藏列表');
-    await page.getByRole('button', { name: '我的收藏列表' }).click();
-    const mobileBoxes = await Promise.all(['.endpoint-tree', '.design-center', '.ai-assistant'].map(selector => page.locator(selector).boundingBox()));
-    if (mobileBoxes.some(box => !box) || !(mobileBoxes[0].y < mobileBoxes[1].y && mobileBoxes[1].y < mobileBoxes[2].y)) {
-      throw new Error(`mobile panels are not stacked: ${JSON.stringify(mobileBoxes)}`);
+    await assertCompactWorkbench(page, 'tablet', { width: 768, height: 1024 }, 'workbench-tablet.png');
+    await assertCompactWorkbench(page, 'mobile', { width: 390, height: 844 }, 'workbench-mobile.png');
+    const compactPages = [
+      ['接口资产', '接口资产', 'assets mobile'],
+      ['用例管理', '用例管理', 'cases mobile'],
+      ['任务管理', '任务管理', 'tasks mobile'],
+      ['基线用例', '基线用例', 'baselines mobile'],
+      ['定时任务', '定时任务', 'scheduled jobs mobile'],
+      ['执行记录', '执行记录', 'runs mobile'],
+      ['测试报告', '项目测试报告', 'reports mobile'],
+      ['环境配置', '项目环境', 'settings mobile'],
+    ];
+    for (const [navigationLabel, heading, label] of compactPages) {
+      await openCompactPage(page, navigationLabel, heading, label);
+      if (navigationLabel === '基线用例') {
+        const action = page.locator('.baseline-row-actions').first();
+        await action.waitFor();
+        if (!await action.isVisible()) {
+          const diagnostic = await action.count() ? await action.evaluate(element => {
+            const style = getComputedStyle(element);
+            return { display: style.display, visibility: style.visibility, width: element.getBoundingClientRect().width, html: element.outerHTML };
+          }) : { count: 0 };
+          throw new Error(`baseline row actions are hidden on mobile: ${JSON.stringify(diagnostic)}`);
+        }
+        if (!await page.getByTestId('baseline-page-next').isVisible()) throw new Error('baseline pagination is hidden on mobile');
+      }
+      if (navigationLabel === '任务管理') {
+        await page.getByTestId('task-list-item-task-1').click();
+        await page.getByTestId('task-latest-execution').click();
+        await page.getByRole('heading', { name: '执行记录', exact: true, level: 1 }).waitFor();
+      }
+      if (navigationLabel === '定时任务') {
+        await page.getByTestId('scheduled-latest-execution-scheduled-job-1').click();
+        await page.getByRole('heading', { name: '执行记录', exact: true, level: 1 }).waitFor();
+      }
+      if (navigationLabel === '环境配置') {
+        await page.getByTestId('feishu-test').click();
+        await page.getByText('飞书测试通知已发', { exact: true }).waitFor();
+      }
     }
-    await assertNoHorizontalOverflow(page, 'mobile');
-    await page.screenshot({ path: path.join(ARTIFACTS, 'workbench-mobile.png'), fullPage: true });
+    await page.screenshot({ path: path.join(ARTIFACTS, 'settings-mobile.png'), fullPage: true });
     if (errors.length) throw new Error(`browser errors: ${errors.join(' | ')}`);
-    console.log(JSON.stringify({ ok: true, url, screenshots: ['workbench-desktop.png', 'workbench-mobile.png'] }));
+    console.log(JSON.stringify({ ok: true, url, screenshots: ['workbench-desktop.png', 'workbench-compact-desktop.png', 'workbench-tablet.png', 'workbench-mobile.png', 'settings-mobile.png'] }));
   } finally {
     await browser.close();
     await new Promise(resolve => server.close(resolve));

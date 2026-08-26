@@ -319,6 +319,23 @@ def test_worker_refreshes_task_when_ai_job_finishes(task_factory, task_records):
     assert refreshed.latest_ai_job_id == task_records["ai_job"].id
 
 
+def test_ai_summary_does_not_replace_latest_execution_evidence(task_factory, task_records):
+    service = TaskService(task_factory)
+    task = service.save_context("owner-a", _payload(task_records), "owner-a")
+    service.attach_execution(task.id, task_records["execution"].id, "owner-a")
+    service.refresh_for_execution(task_records["execution"].id)
+    service.attach_ai_job(task.id, task_records["ai_job"].id, "owner-a")
+
+    refreshed = service.refresh_for_ai_job(task_records["ai_job"].id)
+
+    assert refreshed.summary["ai_state"] == "completed"
+    assert refreshed.latest_execution_id == task_records["execution"].id
+    assert refreshed.latest_execution_state == "DONE"
+    assert refreshed.latest_execution_summary["total"] == 3
+    assert refreshed.latest_execution_summary["passed"] == 3
+    assert refreshed.latest_execution_at is not None
+
+
 def test_worker_refreshes_task_when_execution_finishes(task_factory, task_records):
     service = TaskService(task_factory)
     task = service.save_context("owner-a", _payload(task_records), "owner-a")

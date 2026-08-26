@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import { formatPassRate } from '../utils/executionPresentation'
 
 type Summary = {
   total?: number
@@ -22,13 +23,13 @@ const items = computed(() => [
   ['SKIPPED', '已跳过', props.summary.skipped || 0],
 ] as const)
 const duration = computed(() => props.durationMs >= 1000 ? `${(props.durationMs / 1000).toFixed(2)} 秒` : `${props.durationMs} ms`)
-const passRate = computed(() => props.summary.total ? Math.round(((props.summary.passed || 0) / props.summary.total) * 100) : 0)
+const passRate = computed(() => formatPassRate(props.summary.passed || 0, props.summary.total || 0))
 </script>
 
 <template>
   <section class="report-summary">
     <div class="report-context"><strong>{{ environmentName || '未命名环境' }}</strong><span>总耗时 {{ duration }}</span><span>共 {{ summary.total || 0 }} 条用例</span></div>
-    <div v-if="compact" class="compact-summary"><b v-if="conclusion">{{ conclusion }}</b><strong>通过率 {{ passRate }}%</strong><span>{{ summary.passed || 0 }} 通过</span><span>{{ summary.failed || 0 }} 失败</span><span>{{ summary.broken || 0 }} 异常</span><span>{{ summary.cancelled || 0 }} 取消</span><span>{{ summary.skipped || 0 }} 跳过</span></div>
+    <div v-if="compact" class="compact-summary"><b v-if="conclusion">{{ conclusion }}</b><strong>通过率 {{ passRate }}</strong><span>{{ summary.passed || 0 }} 通过</span><span>{{ summary.failed || 0 }} 失败</span><span>{{ summary.broken || 0 }} 异常</span><span>{{ summary.cancelled || 0 }} 取消</span><span>{{ summary.skipped || 0 }} 跳过</span></div>
     <div v-else class="summary-grid"><div v-for="([status, label, count]) in items" :key="status" :data-status="status" :class="`summary-${status.toLowerCase()}`"><strong :data-testid="`${status.toLowerCase()}-count`">{{ count }}</strong><span>{{ label }}</span></div></div>
   </section>
 </template>

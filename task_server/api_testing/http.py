@@ -404,6 +404,14 @@ def _get(segments, qs, actor, settings):
 
 def _post(segments, payload, actor, settings):
     factory = _factory()
+    if segments == ("notifications", "feishu", "test"):
+        project_id = _uuid(payload.get("project_id"))
+        _scope_project(factory, project_id, actor)
+        return {
+            "notification": _view(
+                NotificationService(factory).test_feishu(project_id, actor)
+            )
+        }
     if segments == ("tasks",):
         return {"task": _view(TestTaskService(factory).create_context(actor, payload, actor))}
     if segments == ("scheduled-jobs",):

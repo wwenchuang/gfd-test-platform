@@ -1,5 +1,7 @@
 <script setup lang="ts">
-import { Boxes, CalendarClock, ClipboardList, FileCode2, FlaskConical, History, ListChecks, Settings2, ShieldCheck } from 'lucide-vue-next'
+import { computed, nextTick, ref } from 'vue'
+import { useRoute } from 'vue-router'
+import { Boxes, CalendarClock, ClipboardList, FileCode2, FlaskConical, History, ListChecks, Menu, Settings2, ShieldCheck, X } from 'lucide-vue-next'
 
 const navigationSections = [
   {
@@ -36,12 +38,50 @@ const navigationSections = [
     ],
   },
 ]
+
+const route = useRoute()
+const mobileNavigationOpen = ref(false)
+const navigationToggle = ref<HTMLButtonElement | null>(null)
+const navigationClose = ref<HTMLButtonElement | null>(null)
+const currentPageLabel = computed(() => navigationSections
+  .flatMap(section => section.items)
+  .find(item => item.to === route.path)?.label || 'API 测试')
+
+async function openNavigation(): Promise<void> {
+  mobileNavigationOpen.value = true
+  await nextTick()
+  navigationClose.value?.focus()
+}
+
+async function closeNavigation(): Promise<void> {
+  mobileNavigationOpen.value = false
+  await nextTick()
+  navigationToggle.value?.focus()
+}
 </script>
 
 <template>
   <div class="app-shell">
-    <aside class="side-rail" aria-label="API 测试导航">
+    <header class="mobile-app-bar">
+      <button
+        ref="navigationToggle"
+        data-testid="mobile-nav-toggle"
+        class="mobile-nav-toggle"
+        type="button"
+        aria-label="打开导航"
+        :aria-expanded="mobileNavigationOpen"
+        aria-controls="api-testing-navigation"
+        @click="openNavigation"
+      ><Menu :size="20" /></button>
+      <strong>{{ currentPageLabel }}</strong>
+      <a href="/task-manager.html" title="返回任务平台"><FlaskConical :size="18" /></a>
+    </header>
+    <button v-if="mobileNavigationOpen" class="mobile-nav-backdrop" type="button" aria-label="关闭导航" @click="closeNavigation" />
+    <aside id="api-testing-navigation" :class="['side-rail', { 'mobile-open': mobileNavigationOpen }]" aria-label="API 测试导航" @keydown.esc.stop="closeNavigation">
+      <div class="rail-brand-row">
       <a class="brand" href="/task-manager.html" title="返回任务平台"><FlaskConical :size="19" /></a>
+        <button ref="navigationClose" class="mobile-nav-close" type="button" aria-label="关闭导航" @click="closeNavigation"><X :size="19" /></button>
+      </div>
       <nav class="rail-nav">
         <section
           v-for="section in navigationSections"
@@ -50,7 +90,7 @@ const navigationSections = [
           :data-testid="`nav-section-${section.id}`"
         >
           <h2 class="rail-section-label">{{ section.label }}</h2>
-          <RouterLink v-for="item in section.items" :key="item.to" :to="item.to" class="rail-link" :title="item.label" :data-testid="item.testId">
+          <RouterLink v-for="item in section.items" :key="item.to" :to="item.to" class="rail-link" :title="item.label" :data-testid="item.testId" @click="closeNavigation">
             <component :is="item.icon" :size="18" stroke-width="1.8" />
             <span>{{ item.label }}</span>
           </RouterLink>

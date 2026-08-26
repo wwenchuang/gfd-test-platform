@@ -28,7 +28,7 @@ describe('ExecutionOverview', () => {
     expect(wrapper.get('[data-testid="overview-passed"]').text()).toContain('1')
     expect(wrapper.get('[data-testid="overview-failed"]').text()).toContain('1')
     expect(wrapper.get('[data-testid="overview-skipped"]').text()).toContain('1')
-    expect(wrapper.get('[data-testid="overview-rate"]').text()).toContain('33%')
+    expect(wrapper.get('[data-testid="overview-rate"]').text()).toContain('33.3%')
     expect(wrapper.get('[data-testid="overview-duration"]').text()).toContain('1.00 秒')
     expect(wrapper.text()).toContain('execution-123456789')
   })

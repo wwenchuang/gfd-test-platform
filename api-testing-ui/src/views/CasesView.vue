@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { Bug, ListChecks, RefreshCw } from 'lucide-vue-next'
+import { ArrowLeft, ListChecks, RefreshCw } from 'lucide-vue-next'
 import { useRouter } from 'vue-router'
 
 import type { ApiEndpoint, CaseDraft, CaseVersion, GeneratedCasePreview } from '../api/contracts'
@@ -25,6 +25,7 @@ const selectedIds = ref<string[]>([])
 const activeEndpoint = ref<ApiEndpoint | null>(null)
 const debugOpen = ref(false)
 const localError = ref('')
+const mobileDetailOpen = ref(false)
 
 const activeDraft = computed(() => activeEndpoint.value ? cases.draftFor(activeEndpoint.value) : null)
 const activeVersionId = computed(() => activeEndpoint.value ? cases.activeVersionByEndpoint[activeEndpoint.value.id] || '' : '')
@@ -112,6 +113,7 @@ function editCaseVersion(version: CaseVersion): void {
     return
   }
   activeEndpoint.value = endpoint
+  mobileDetailOpen.value = true
   if (version.id !== activeVersionId.value) {
     cases.clearDebug()
     debugOpen.value = false
@@ -126,6 +128,7 @@ function editGeneratedPreview(preview: GeneratedCasePreview): void {
     return
   }
   activeEndpoint.value = endpoint
+  mobileDetailOpen.value = true
   cases.setDraftFromGeneratedPreview(preview.id)
   debugOpen.value = false
 }
@@ -364,7 +367,7 @@ function defaultTaskName(): string {
       @save="saveScope"
     />
     <p v-if="context.error || tasks.error || localError" class="inline-error">{{ context.error || tasks.error || localError }}</p>
-    <div class="management-shell case-management-shell" data-testid="case-management-shell">
+    <div :class="['management-shell', 'case-management-shell', { 'mobile-detail-open': mobileDetailOpen }]" data-testid="case-management-shell">
       <CaseListPanel
         :endpoints="assets.endpoints"
         :versions="allCaseVersions"
@@ -387,6 +390,7 @@ function defaultTaskName(): string {
       />
       <main class="management-detail">
         <header class="management-detail-head">
+          <button data-testid="management-back-to-list" class="management-back-to-list" type="button" @click="mobileDetailOpen = false"><ArrowLeft :size="16" />返回用例列表</button>
           <div>
             <p>当前任务：{{ activeTaskName }}</p>
             <h2>{{ activeDraft?.name || activeEndpoint?.summary || '选择左侧用例' }}</h2>
@@ -406,16 +410,15 @@ function defaultTaskName(): string {
             :dependency-options="dependencyOptions"
             :endpoint-options="assets.endpoints"
             :saving="cases.saving"
+            :debugging="debugRunning"
             :saved-message="cases.savedMessage"
             :validation-errors="cases.validationErrors"
             :validation-warnings="cases.validationWarnings"
             @update:model-value="updateDraft"
             @save="saveDraft"
+            @debug="submitDebug"
           />
           <div v-else class="state-message center-empty">从左侧选择一个用例后，可查看接口信息并编辑测试数据。</div>
-          <button v-if="activeDraft" class="debug-command" type="button" :disabled="cases.saving || debugRunning" @click="submitDebug">
-            <Bug :size="16" />{{ cases.saving ? '正在保存…' : debugRunning ? '执行中…' : '保存并执行' }}
-          </button>
         </div>
       </main>
     </div>

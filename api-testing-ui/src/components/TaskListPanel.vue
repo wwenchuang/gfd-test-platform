@@ -3,6 +3,7 @@ import { computed, ref } from 'vue'
 import { FilePlus2, Pencil, Play, Search, Trash2 } from 'lucide-vue-next'
 
 import type { ApiTestTask } from '../api/contracts'
+import { compactDateTime, taskLatestResult, taskStateLabel } from '../utils/taskPresentation'
 
 const props = withDefaults(defineProps<{
   tasks: ApiTestTask[]
@@ -32,20 +33,6 @@ const filteredTasks = computed(() => {
     `${task.selected_endpoint_ids.length}`,
   ].join(' ').toLocaleLowerCase().includes(keyword))
 })
-
-const stateLabels: Record<string, string> = {
-  draft: '待设计',
-  designing: 'AI生成中',
-  debugging: '调试中',
-  ready: '可执行',
-  running: '执行中',
-  failed: '需处理',
-  completed: '已完成',
-}
-
-function stateLabel(task: ApiTestTask): string {
-  return stateLabels[task.state] || task.state
-}
 
 function canRun(task: ApiTestTask): boolean {
   return task.runnable_baseline_count > 0 && !['designing', 'debugging', 'running'].includes(task.state)
@@ -86,8 +73,10 @@ function environmentName(task: ApiTestTask): string {
           <strong :title="task.name">{{ task.name }}</strong>
           <small>{{ task.selected_endpoint_ids.length }} 个接口 · {{ task.runnable_baseline_count }} 条基线</small>
           <small>环境 {{ environmentName(task) }}</small>
+          <small>{{ taskLatestResult(task) }}</small>
+          <small>更新 {{ compactDateTime(task.updated_at) }}</small>
         </span>
-        <em :class="`task-state-${task.state}`">{{ stateLabel(task) }}</em>
+        <em :class="`task-state-${task.state}`">{{ taskStateLabel(task.state) }}</em>
         <span class="task-list-actions" @click.stop>
           <button :data-testid="`task-list-edit-${task.id}`" class="mini-icon" type="button" title="编辑任务" @click="emit('select', task.id)">
             <Pencil :size="14" />

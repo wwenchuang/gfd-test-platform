@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { CalendarClock, Check, Pencil, Play, RefreshCw, Save, Trash2 } from 'lucide-vue-next'
+import { CalendarClock, Check, ExternalLink, Pencil, Play, RefreshCw, Save, Trash2 } from 'lucide-vue-next'
 
 import type { ApiBaselineCase, ApiTestTask, CaseVersion, ScheduledJob } from '../api/contracts'
 import { baselineGroup, useBaselinesStore } from '../stores/baselines'
@@ -9,6 +9,7 @@ import { useCasesStore } from '../stores/cases'
 import { useContextStore } from '../stores/context'
 import { type ScheduledJobInput, useScheduledJobsStore } from '../stores/scheduledJobs'
 import { useTasksStore } from '../stores/tasks'
+import { formatPassRate, statusLabel } from '../utils/executionPresentation'
 
 const context = useContextStore()
 const baselines = useBaselinesStore()
@@ -248,8 +249,51 @@ function targetTypeLabel(type: ScheduledJob['target_type']): string {
 }
 
 function scheduleLabel(job: ScheduledJob): string {
-  if (job.schedule_type === 'cron') return job.cron_expression || 'Cron'
-  return job.schedule_type === 'weekly' ? '每周一 09:00' : '每天 02:00'
+  const expression = job.effective_cron_expression || job.cron_expression || scheduleDefaultExpressions[job.schedule_type]
+  const description = describeCronExpression(expression)
+  return description.valid ? description.message : expression || '未配置周期'
+}
+
+function scheduleExecutionSummary(job: ScheduledJob): string {
+  const summary = job.latest_execution_summary || {}
+  const total = numberValue(summary.total)
+  const passed = numberValue(summary.passed)
+  if (!job.latest_execution_id) return '尚未触发'
+  if (!total) return statusLabel(job.latest_execution_state || 'QUEUED')
+  return `通过 ${passed}/${total} · ${formatPassRate(passed, total)}`
+}
+
+function triggerLabel(trigger: string | null): string {
+  return trigger === 'schedule' || trigger === 'scheduler' ? '调度' : trigger === 'manual' ? '手动' : '触发'
+}
+
+function formatDateTime(value: string | null, utcOffset: string): string {
+  if (!value) return '暂无'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return '未知时间'
+  const match = /^([+-])(\d{2}):(\d{2})$/.exec(utcOffset)
+  if (!match) return date.toLocaleString('zh-CN', { hour12: false })
+  const direction = match[1] === '-' ? -1 : 1
+  const offsetMinutes = direction * (Number(match[2]) * 60 + Number(match[3]))
+  const shifted = new Date(date.getTime() + offsetMinutes * 60_000)
+  const pad = (number: number) => String(number).padStart(2, '0')
+  return `${shifted.getUTCFullYear()}/${pad(shifted.getUTCMonth() + 1)}/${pad(shifted.getUTCDate())} ${pad(shifted.getUTCHours())}:${pad(shifted.getUTCMinutes())}`
+}
+
+function schedulerTimezoneLabel(job: ScheduledJob): string {
+  const timezone = job.scheduler_timezone || '服务器本地时区'
+  const offset = job.scheduler_utc_offset || '+00:00'
+  return `${timezone}（UTC${offset}）`
+}
+
+function numberValue(value: unknown): number {
+  const number = Number(value)
+  return Number.isFinite(number) ? Math.max(0, number) : 0
+}
+
+async function openLatestExecution(job: ScheduledJob): Promise<void> {
+  if (!job.latest_execution_id) return
+  await router.push({ name: 'runs', query: { executionId: job.latest_execution_id } })
 }
 
 function editJob(job: ScheduledJob): void {
@@ -493,10 +537,15 @@ function weekDayName(value: number): string {
     <div class="scheduled-layout">
       <section class="scheduled-list">
         <header class="panel-header"><h2>任务列表</h2><span>{{ scheduledJobs.items.length }}</span></header>
-        <article v-for="job in scheduledJobs.items" :key="job.id" class="scheduled-row">
-          <div>
+        <article v-for="job in scheduledJobs.items" :key="job.id" :data-testid="`scheduled-row-${job.id}`" class="scheduled-row">
+          <div class="scheduled-row-main">
             <strong>{{ job.name }}</strong>
-            <span>{{ targetTypeLabel(job.target_type) }} · {{ scheduleLabel(job) }} · {{ job.notify_feishu ? '飞书通知' : '不通知' }}</span>
+            <span>{{ targetTypeLabel(job.target_type) }} · {{ scheduleLabel(job) }} · 调度时区 {{ schedulerTimezoneLabel(job) }} · {{ job.notify_feishu ? '飞书通知' : '不通知' }}</span>
+            <span class="scheduled-runtime-line">
+              <b>{{ job.enabled ? `下次执行 ${formatDateTime(job.next_run_at, job.scheduler_utc_offset)}` : '当前已停用' }}</b>
+              <b v-if="job.latest_run_at">最近{{ triggerLabel(job.latest_run_trigger) }} {{ formatDateTime(job.latest_run_at, job.scheduler_utc_offset) }} · {{ scheduleExecutionSummary(job) }}</b>
+              <b v-else>尚无执行记录</b>
+            </span>
             <small>{{ job.target_ids.join('、') || '暂无目标' }}</small>
           </div>
           <div class="scheduled-row-actions">
@@ -508,6 +557,7 @@ function weekDayName(value: number): string {
             </button>
             <button :data-testid="`scheduled-edit-${job.id}`" type="button" class="mini-icon" title="编辑" @click="editJob(job)"><Pencil :size="14" /></button>
             <button :data-testid="`scheduled-delete-${job.id}`" type="button" class="mini-icon danger" title="删除" @click="deleteJob(job)"><Trash2 :size="14" /></button>
+            <button v-if="job.latest_execution_id" :data-testid="`scheduled-latest-execution-${job.id}`" type="button" class="mini-icon" title="查看最近执行" @click="openLatestExecution(job)"><ExternalLink :size="14" /></button>
             <button :data-testid="`scheduled-run-${job.id}`" type="button" class="secondary-command" :disabled="scheduledJobs.runningId === job.id" @click="runJob(job)">
               <Play :size="14" />{{ scheduledJobs.runningId === job.id ? '投递中' : '手动执行一次' }}
             </button>

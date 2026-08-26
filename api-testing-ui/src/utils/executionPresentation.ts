@@ -51,6 +51,11 @@ export function formatDuration(durationMs: number): string {
   return safe >= 1000 ? `${(safe / 1000).toFixed(2)} 秒` : `${safe} ms`
 }
 
+export function formatPassRate(passed: number, total: number): string {
+  const rate = passRateValue(passed, total)
+  return `${Number.isInteger(rate) ? rate.toFixed(0) : rate.toFixed(1)}%`
+}
+
 export function executionMetrics(execution: ExecutionView): ExecutionMetrics {
   const counts = {
     passed: 0, failed: 0, broken: 0, skipped: 0, cancelled: 0, running: 0, queued: 0,
@@ -77,7 +82,7 @@ export function executionMetrics(execution: ExecutionView): ExecutionMetrics {
     total,
     ...counts,
     durationMs,
-    passRate: total ? Math.round((counts.passed / total) * 100) : 0,
+    passRate: passRateValue(counts.passed, total),
   }
 }
 
@@ -144,4 +149,13 @@ export function redactSensitiveEvidence(value: unknown): unknown {
 function numberValue(value: unknown): number {
   const number = Number(value || 0)
   return Number.isFinite(number) ? Math.max(0, number) : 0
+}
+
+function passRateValue(passed: number, total: number): number {
+  const safeTotal = Number.isFinite(total) ? Math.max(0, total) : 0
+  if (!safeTotal) return 0
+  const rawPassed = Number.isFinite(passed) ? Math.max(0, passed) : 0
+  const safePassed = Math.min(safeTotal, rawPassed)
+  if (rawPassed === safeTotal) return 100
+  return Math.min(99.9, Math.round((safePassed / safeTotal) * 1000) / 10)
 }

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { Edit3, ListPlus, Play, RefreshCw, Search, ShieldCheck, Trash2 } from 'lucide-vue-next'
 import { useRouter } from 'vue-router'
 
@@ -25,6 +25,8 @@ const groupName = ref('')
 const moveTargetGroup = ref('')
 const localError = ref('')
 const localMessage = ref('')
+const baselinePage = ref(1)
+const BASELINE_PAGE_SIZE = 50
 
 const projectReady = computed(() => Boolean(context.projectId))
 const projectName = computed(() => context.projects.find(item => item.id === context.projectId)?.name || '未选择项目')
@@ -74,6 +76,11 @@ const filteredBaselines = computed(() => {
       .includes(needle)
   })
 })
+const baselinePageCount = computed(() => Math.max(1, Math.ceil(filteredBaselines.value.length / BASELINE_PAGE_SIZE)))
+const pagedBaselines = computed(() => {
+  const start = (baselinePage.value - 1) * BASELINE_PAGE_SIZE
+  return filteredBaselines.value.slice(start, start + BASELINE_PAGE_SIZE)
+})
 const filteredSelectedCount = computed(() => {
   const visible = new Set(filteredBaselines.value.map(item => item.id))
   return baselines.selectedIds.filter(id => visible.has(id)).length
@@ -89,6 +96,13 @@ const allFilteredSelected = computed(() => Boolean(
 ))
 const selectedGroups = computed(() => [...new Set(baselines.selectedItems.map(item => baselineGroup(item)))])
 const moveTargetName = computed(() => groupName.value.trim() || moveTargetGroup.value.trim())
+
+watch([search, group, baselineType, methodFilter, priorityFilter, originFilter], () => {
+  baselinePage.value = 1
+})
+watch(baselinePageCount, pageCount => {
+  if (baselinePage.value > pageCount) baselinePage.value = pageCount
+})
 
 onMounted(async () => {
   await Promise.all([context.loadSavedContext(), context.loadOptions()])
@@ -327,6 +341,13 @@ function sourceRevisionName(item: ApiBaselineCase): string {
   const source = selectedSourceById.value.get(item.source_revision_id)
   return source ? `${source.name} · v${source.revision_number}` : `来源版本 ${item.source_revision_id.slice(0, 8)}`
 }
+
+function adoptionReasonLabel(reason: string): string {
+  const value = String(reason || '').trim()
+  if (!value) return '已采纳为基线'
+  if (value === 'passing debug evidence') return '已通过调试并采纳'
+  return value
+}
 </script>
 
 <template>
@@ -445,7 +466,7 @@ function sourceRevisionName(item: ApiBaselineCase): string {
           <div class="baseline-table-head" role="row">
             <span></span><span>用例</span><span>接口</span><span>分组</span><span>版本</span><span>采纳时间</span><span>操作</span>
           </div>
-          <div v-for="item in filteredBaselines" :key="item.id" class="baseline-row" role="row">
+          <div v-for="item in pagedBaselines" :key="item.id" class="baseline-row" role="row">
             <label class="baseline-checkbox">
               <input type="checkbox" :data-testid="`baseline-select-${item.id}`" :checked="baselines.selectedIds.includes(item.id)" @change="baselines.toggle(item.id)" />
             </label>
@@ -453,7 +474,7 @@ function sourceRevisionName(item: ApiBaselineCase): string {
               <strong>{{ item.case_name }} <b v-if="isOneTimeBaseline(item)" :data-testid="`baseline-one-time-${item.id}`" class="baseline-one-time-pill">一次性</b></strong>
               <small>
                 <b v-if="item.status !== 'active'" class="baseline-status-pill">历史版本</b>
-                {{ item.adoption_reason || '已采纳为基线' }}
+                {{ adoptionReasonLabel(item.adoption_reason) }}
               </small>
             </span>
             <span class="baseline-endpoint-copy">
@@ -468,6 +489,11 @@ function sourceRevisionName(item: ApiBaselineCase): string {
               <button class="tiny-command danger" type="button" title="移出基线" @click="archiveBaseline(item)"><Trash2 :size="14" />移出</button>
             </span>
           </div>
+          <nav v-if="baselinePageCount > 1" class="list-pagination" aria-label="基线列表分页">
+            <button type="button" :disabled="baselinePage === 1" @click="baselinePage -= 1">上一页</button>
+            <span>第 {{ baselinePage }} / {{ baselinePageCount }} 页</span>
+            <button data-testid="baseline-page-next" type="button" :disabled="baselinePage === baselinePageCount" @click="baselinePage += 1">下一页</button>
+          </nav>
         </div>
       </main>
     </section>

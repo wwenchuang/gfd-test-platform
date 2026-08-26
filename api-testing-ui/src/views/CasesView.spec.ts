@@ -50,10 +50,18 @@ describe('CasesView', () => {
     cases.registerVersion(version, false)
     const loadCases = vi.spyOn(cases, 'loadSavedCases').mockResolvedValue()
     const moveCases = vi.spyOn(cases, 'updateVersionGroups').mockResolvedValue([])
+    const saveForDebug = vi.spyOn(cases, 'saveForDebug').mockResolvedValue(version)
+    const debug = vi.spyOn(cases, 'debug').mockResolvedValue({} as never)
 
     const tasks = useTasksStore()
     vi.spyOn(tasks, 'list').mockResolvedValue([])
     vi.spyOn(tasks, 'restore').mockResolvedValue(null)
+    vi.spyOn(context, 'saveContext').mockResolvedValue()
+    vi.spyOn(tasks, 'saveSelection').mockResolvedValue({
+      id: 'task-1', project_id: 'project-1', source_revision_id: 'source-1', environment_revision_id: 'environment-1',
+      name: '3D 家用接口测试', state: 'ready', selected_endpoint_ids: ['endpoint-1'], runnable_baseline_count: 1,
+      latest_ai_job_id: null, latest_execution_id: null, summary: {}, created_at: '', updated_at: '',
+    })
 
     const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/cases', name: 'cases', component: CasesView }] })
     await router.push('/cases')
@@ -79,6 +87,16 @@ describe('CasesView', () => {
     await flushPromises()
 
     expect((wrapper.get('[data-testid="case-name"]').element as HTMLInputElement).value).toBe('我的收藏列表 - 基础正向流程')
+    expect(wrapper.get('[data-testid="case-management-shell"]').classes()).toContain('mobile-detail-open')
+
+    await wrapper.get('[data-testid="save-and-debug"]').trigger('click')
+    await flushPromises()
+    expect(saveForDebug).toHaveBeenCalledWith('endpoint-1', 'environment-1')
+    expect(debug).toHaveBeenCalledWith(expect.objectContaining({ caseVersionId: 'version-1', taskId: 'task-1' }))
+    expect(wrapper.find('.debug-command').exists()).toBe(false)
+
+    await wrapper.get('[data-testid="management-back-to-list"]').trigger('click')
+    expect(wrapper.get('[data-testid="case-management-shell"]').classes()).not.toContain('mobile-detail-open')
 
     wrapper.findComponent(CaseListPanel).vm.$emit('update-version-groups', ['version-1'], '发版回归')
     await flushPromises()

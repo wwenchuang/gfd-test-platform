@@ -29,10 +29,10 @@ const TASK: ApiTestTask = {
   selected_endpoint_ids: [ENDPOINT.id],
   runnable_baseline_count: 1,
   latest_ai_job_id: null,
-  latest_execution_id: null,
-  summary: {},
-  created_at: '',
-  updated_at: '',
+  latest_execution_id: 'execution-latest',
+  summary: { total: 1, passed: 1, failed: 0, broken: 0, skipped: 0, cancelled: 0 },
+  created_at: '2026-08-25T08:00:00Z',
+  updated_at: '2026-08-25T10:30:00Z',
 }
 
 describe('TasksView', () => {
@@ -67,7 +67,10 @@ describe('TasksView', () => {
       assets.state = 'ready'
     })
 
-    const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/tasks', name: 'tasks', component: TasksView }] })
+    const router = createRouter({ history: createMemoryHistory(), routes: [
+      { path: '/tasks', name: 'tasks', component: TasksView },
+      { path: '/runs', name: 'runs', component: { template: '<div />' } },
+    ] })
     await router.push('/tasks')
     await router.isReady()
     const wrapper = mount(TasksView, { global: { plugins: [router], stubs: { ContextBar: true } } })
@@ -81,7 +84,20 @@ describe('TasksView', () => {
     await flushPromises()
 
     expect(wrapper.get('[data-testid="selected-task-title"]').text()).toContain('3D 家用基线回归')
+    expect(wrapper.get('[data-testid="selected-task-state"]').text()).toBe('可执行')
+    expect(wrapper.text()).toContain('最近执行')
     expect(wrapper.text()).toContain('获取设备状态')
+    expect(wrapper.get('[data-testid="task-management-shell"]').classes()).toContain('mobile-detail-open')
+
+    await wrapper.get('[data-testid="task-latest-execution"]').trigger('click')
+    await flushPromises()
+    expect(router.currentRoute.value.query.executionId).toBe('execution-latest')
+
+    await router.push('/tasks')
+    await flushPromises()
+
+    await wrapper.get('[data-testid="management-back-to-list"]').trigger('click')
+    expect(wrapper.get('[data-testid="task-management-shell"]').classes()).not.toContain('mobile-detail-open')
   })
 
   it('runs and deletes tasks from the independent management page', async () => {
@@ -145,5 +161,7 @@ describe('TasksView', () => {
 
     expect(window.confirm).toHaveBeenCalledWith('删除任务“3D 家用基线回归”？任务关联的用例、基线和历史执行记录会保留。')
     expect(remove).toHaveBeenCalledWith('task-1')
+    expect(wrapper.get('[data-testid="task-management-shell"]').classes()).not.toContain('mobile-detail-open')
+    expect(wrapper.text()).toContain('选择左侧任务')
   })
 })

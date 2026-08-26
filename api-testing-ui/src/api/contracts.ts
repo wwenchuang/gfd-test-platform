@@ -376,6 +376,14 @@ export interface ScheduledJob {
   retry_count: number
   timeout_seconds: number
   latest_execution_id: string | null
+  effective_cron_expression: string
+  scheduler_timezone: string
+  scheduler_utc_offset: string
+  next_run_at: string | null
+  latest_run_at: string | null
+  latest_run_trigger: string | null
+  latest_execution_state: string | null
+  latest_execution_summary: Record<string, number>
   created_at: string
   updated_at: string
 }
@@ -432,6 +440,9 @@ export interface ApiTestTask {
   runnable_baseline_count: number
   latest_ai_job_id: string | null
   latest_execution_id: string | null
+  latest_execution_state?: string | null
+  latest_execution_summary?: Record<string, number>
+  latest_execution_at?: string | null
   summary: Record<string, unknown>
   created_at: string
   updated_at: string
@@ -483,6 +494,13 @@ export interface FeishuNotification {
 
 export interface NotificationSendResult {
   execution_id: string
+  channel_type: 'feishu'
+  sent: boolean
+  message: string
+}
+
+export interface NotificationTestResult {
+  project_id: string
   channel_type: 'feishu'
   sent: boolean
   message: string

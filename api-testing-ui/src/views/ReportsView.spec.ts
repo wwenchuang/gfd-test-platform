@@ -12,9 +12,10 @@ import { useNotificationsStore } from '../stores/notifications'
 import ReportsView from './ReportsView.vue'
 
 const routeState = vi.hoisted(() => ({ query: {} as Record<string, string> }))
+const routerState = vi.hoisted(() => ({ push: vi.fn(), replace: vi.fn() }))
 
 vi.mock('vue-router', () => ({
-  useRouter: () => ({ push: vi.fn() }),
+  useRouter: () => routerState,
   useRoute: () => routeState,
 }))
 
@@ -26,6 +27,8 @@ const report: ExecutionView = {
 describe('ReportsView', () => {
   beforeEach(() => {
     routeState.query = {}
+    routerState.push.mockReset()
+    routerState.replace.mockReset()
     setActivePinia(createPinia())
   })
 
@@ -46,6 +49,12 @@ describe('ReportsView', () => {
     expect(wrapper.text()).toContain('50%')
     expect(wrapper.find('.report-dashboard').exists()).toBe(true)
     expect(wrapper.find('.summary-grid').exists()).toBe(false)
+    await wrapper.get('[data-testid="report-history-row"]').trigger('click')
+    expect(wrapper.get('[data-testid="report-workbench"]').classes()).toContain('mobile-detail-open')
+    expect(routerState.replace).toHaveBeenLastCalledWith({ query: { executionId: 'report-1' } })
+    await wrapper.get('[data-testid="report-back-to-list"]').trigger('click')
+    expect(wrapper.get('[data-testid="report-workbench"]').classes()).not.toContain('mobile-detail-open')
+    expect(routerState.replace).toHaveBeenLastCalledWith({ query: {} })
     await wrapper.get('[data-testid="report-history-row"]').trigger('click')
     await wrapper.get('[data-testid="report-open-diagnostic"]').trigger('click')
     expect(wrapper.text()).toContain('返回报告列表')

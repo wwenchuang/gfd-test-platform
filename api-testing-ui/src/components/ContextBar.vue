@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { computed } from 'vue'
-import { Database, Save } from 'lucide-vue-next'
+import { computed, ref } from 'vue'
+import { ChevronDown, Database, Save } from 'lucide-vue-next'
 
 import type { EnvironmentRevisionOption, ProjectOption, SourceRevisionOption } from '../api/contracts'
 
@@ -26,6 +26,7 @@ const emit = defineEmits<{
   'update:environmentRevisionId': [value: string | null]
   save: []
 }>()
+const expanded = ref(false)
 
 const sources = computed(() => {
   const list = props.sourceRevisions.filter(item => item.project_id === props.projectId)
@@ -60,6 +61,8 @@ const environments = computed(() => {
   }
   return list
 })
+const selectedProjectName = computed(() => props.projects.find(item => item.id === props.projectId)?.name || '未选择项目')
+const selectedEnvironmentName = computed(() => environments.value.find(item => item.id === props.environmentRevisionId)?.name || '未选择环境')
 
 function sourceLabel(source: SourceRevisionOption): string {
   if (!source.revision_number && !source.endpoint_count) return `${source.name} · 已保存任务引用`
@@ -77,8 +80,16 @@ function nullable(value: string): string | null {
 </script>
 
 <template>
-  <section class="context-bar" aria-label="当前测试范围">
+  <section :class="['context-bar', { 'context-expanded': expanded }]" aria-label="当前测试范围">
     <div class="context-heading"><Database :size="17" /><strong>测试范围</strong></div>
+    <p data-testid="context-summary" class="context-summary"><strong>{{ selectedProjectName }}</strong><span>{{ selectedEnvironmentName }}</span></p>
+    <button
+      data-testid="context-toggle"
+      class="context-toggle"
+      type="button"
+      :aria-expanded="expanded"
+      @click="expanded = !expanded"
+    >调整范围<ChevronDown :size="15" :class="{ rotated: expanded }" /></button>
     <div class="context-selectors">
       <label>项目
         <select data-testid="context-project" :value="projectId || ''" :disabled="loading" @change="emit('update:projectId', nullable(($event.target as HTMLSelectElement).value))">

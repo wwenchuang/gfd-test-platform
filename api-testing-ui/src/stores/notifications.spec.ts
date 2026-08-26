@@ -51,4 +51,18 @@ describe('notifications store', () => {
     })
     expect(store.lastSendMessage).toBe('飞书通知已发')
   })
+
+  it('sends a project notification configuration test without an execution', async () => {
+    const post = vi.spyOn(apiClient, 'post').mockResolvedValue({ data: {
+      notification: { project_id: 'project-1', channel_type: 'feishu', sent: true, message: '飞书测试通知已发' },
+    } })
+    const store = useNotificationsStore()
+
+    await store.testFeishu('project-1')
+
+    expect(post).toHaveBeenCalledWith('/api/api-testing/v1/notifications/feishu/test', {
+      project_id: 'project-1',
+    })
+    expect(store.lastSendMessage).toBe('飞书测试通知已发')
+  })
 })

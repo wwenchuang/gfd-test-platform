@@ -281,6 +281,23 @@ describe('SettingsView environment asset center', () => {
       },
     }))
   })
+
+  it('tests the saved project Feishu configuration without running a test task', async () => {
+    const notifications = useNotificationsStore()
+    notifications.feishu = {
+      project_id: 'project-1', channel_type: 'feishu', name: '接口回归通知',
+      enabled: true, configured: true, fingerprint: 'abc123def456', updated_at: '2026-08-13T10:00:00Z',
+    }
+    const testFeishu = vi.spyOn(notifications, 'testFeishu').mockResolvedValue({
+      project_id: 'project-1', channel_type: 'feishu', sent: true, message: '飞书测试通知已发',
+    })
+
+    const { wrapper } = await mountView()
+    await wrapper.get('[data-testid="feishu-test"]').trigger('click')
+    await flushPromises()
+
+    expect(testFeishu).toHaveBeenCalledWith('project-1')
+  })
 })
 
 async function mountView() {

@@ -26,6 +26,8 @@ const selectedExecutionIds = ref<Set<string>>(new Set())
 const executionSearch = ref('')
 const sourceFilter = ref<'all' | 'formal' | 'debug'>('all')
 const conclusionFilter = ref<'all' | 'passed' | 'problem' | 'running'>('all')
+const executionPage = ref(1)
+const EXECUTION_PAGE_SIZE = 20
 const terminalStates = new Set(['DONE', 'CANCELLED', 'PASSED', 'FAILED', 'BROKEN'])
 const running = computed(() => props.active && !terminalStates.has(props.active.state))
 const canRerunActive = computed(() => Boolean(props.active && terminalStates.has(props.active.state) && props.active.case_results.length))
@@ -48,7 +50,19 @@ const visibleExecutions = computed(() => {
       .includes(keyword)
   })
 })
+const executionPageCount = computed(() => Math.max(1, Math.ceil(visibleExecutions.value.length / EXECUTION_PAGE_SIZE)))
+const pagedExecutions = computed(() => {
+  const start = (executionPage.value - 1) * EXECUTION_PAGE_SIZE
+  return visibleExecutions.value.slice(start, start + EXECUTION_PAGE_SIZE)
+})
 const allVisibleSelected = computed(() => visibleExecutions.value.length > 0 && visibleExecutions.value.every(item => selectedExecutionIds.value.has(item.id)))
+
+watch([executionSearch, sourceFilter, conclusionFilter], () => {
+  executionPage.value = 1
+})
+watch(executionPageCount, pageCount => {
+  if (executionPage.value > pageCount) executionPage.value = pageCount
+})
 
 watch(() => props.active?.id, () => {
   const active = props.active
@@ -135,7 +149,7 @@ function executionRowConclusion(execution: ExecutionView): { label: string; tone
         <button type="button" class="danger-command" :disabled="!selectedExecutionCount" @click="deleteSelected"><Trash2 :size="13" />删除 {{ selectedExecutionCount || '' }}</button>
       </div>
       <article
-        v-for="execution in visibleExecutions"
+        v-for="execution in pagedExecutions"
         :key="execution.id"
         :data-testid="`execution-row-${execution.id}`"
         role="button"
@@ -153,6 +167,11 @@ function executionRowConclusion(execution: ExecutionView): { label: string; tone
         <b :class="`tone-${executionRowConclusion(execution).tone}`">{{ executionRowConclusion(execution).label }}</b>
         <button type="button" class="icon-danger" aria-label="删除执行记录" @click.stop="emit('delete', execution.id)"><Trash2 :size="13" /></button>
       </article>
+      <nav v-if="executionPageCount > 1" class="list-pagination" aria-label="执行记录分页">
+        <button type="button" :disabled="executionPage === 1" @click="executionPage -= 1">上一页</button>
+        <span>第 {{ executionPage }} / {{ executionPageCount }} 页</span>
+        <button data-testid="execution-page-next" type="button" :disabled="executionPage === executionPageCount" @click="executionPage += 1">下一页</button>
+      </nav>
       <p v-if="!loading && !visibleExecutions.length" class="state-message">{{ executions.length ? '当前筛选下没有匹配执行记录。' : '还没有执行记录，可从工作台调试已保存草稿。' }}</p>
     </aside>
     <main class="execution-main">

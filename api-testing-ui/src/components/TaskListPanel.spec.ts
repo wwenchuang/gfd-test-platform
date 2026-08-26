@@ -16,10 +16,13 @@ const TASK: ApiTestTask = {
   selected_endpoint_ids: ['endpoint-1', 'endpoint-2'],
   runnable_baseline_count: 1,
   latest_ai_job_id: null,
-  latest_execution_id: null,
-  summary: {},
-  created_at: '',
-  updated_at: '',
+  latest_execution_id: 'execution-1',
+  summary: { ai_state: 'completed', ai: { generated_drafts: 2 } },
+  latest_execution_state: 'DONE',
+  latest_execution_summary: { total: 2, passed: 1, failed: 1, broken: 0, skipped: 0, cancelled: 0 },
+  latest_execution_at: '2026-08-25T09:30:00Z',
+  created_at: '2026-08-25T08:00:00Z',
+  updated_at: '2026-08-25T10:30:00Z',
 }
 
 describe('TaskListPanel', () => {
@@ -42,6 +45,8 @@ describe('TaskListPanel', () => {
     expect(wrapper.emitted('run')).toEqual([['task-1']])
     expect(wrapper.emitted('delete')).toEqual([[TASK]])
     expect(wrapper.get('[data-testid="task-list-run-task-2"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.get('[data-testid="task-list-item-task-1"]').text()).toContain('最近结果 通过 1/2 · 50%')
+    expect(wrapper.get('[data-testid="task-list-item-task-1"]').text()).toContain('更新')
   })
 
   it('filters saved tasks by name', async () => {
