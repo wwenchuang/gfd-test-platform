@@ -91,6 +91,21 @@ def check_api_testing_frontend_workspace():
         require(route in router_source, f"API testing router is missing: {route}")
     require((ROOT / "api-test" / "index.html").exists(), "Built API testing frontend is missing")
 
+    view_source = "\n".join(path.read_text(encoding="utf-8") for path in sorted((source_root / "views").glob("*.vue")))
+    for english_kicker in (
+        "API SOURCE", "PROJECTS", "ASSET DETAIL", "ACTIONS", "API BASELINES",
+        "API CASE MANAGEMENT", "API TASK MANAGEMENT", "API SCHEDULED JOBS",
+        "API TEST RUNS", "API TEST WORKSPACE", "API TEST REPORTS",
+        "API ENVIRONMENT ASSETS", "NEW ENVIRONMENT", "NEW REVISION",
+        "PROJECT NOTIFICATION",
+    ):
+        require(english_kicker not in view_source, f"API testing UI still exposes an English kicker: {english_kicker}")
+    confirmation_source = (source_root / "utils" / "executionConfirmation.ts").read_text(encoding="utf-8")
+    require("请求将真实发送到该环境" in confirmation_source, "API execution confirmation must explain the real request effect")
+    for filename in ("WorkbenchView.vue", "CasesView.vue", "TasksView.vue", "BaselinesView.vue", "ScheduledJobsView.vue", "RunsView.vue"):
+        require("confirmApiExecution" in (source_root / "views" / filename).read_text(encoding="utf-8"), f"API execution entry lacks confirmation: {filename}")
+    require("confirmApiExecution" in (source_root / "components" / "InlineWorkflowStepEditor.vue").read_text(encoding="utf-8"), "Workflow step preview must confirm real execution")
+
     visual_source = (ROOT / "tests" / "api_testing_ui_visual_check.js").read_text(encoding="utf-8")
     require("1440" in visual_source and "900" in visual_source, "API visual gate must cover desktop")
     require("390" in visual_source and "844" in visual_source, "API visual gate must cover mobile")
@@ -128,8 +143,8 @@ def check_original_platform_management_experience():
     require("modal-agent-plan-preview" in html and "agent-plan-preview-body" in html, "Agent startup preview modal is missing")
     for filename in ("auth.js", "agent-workbench.js", "agent-status.js", "empty-states.js", "execution.js", "utils.js"):
         require(
-            f'{filename}?v=20260826-redeploy-audit' in html,
-            f"Changed static asset must use the redeploy audit cache key: {filename}",
+            f'{filename}?v=20260826-full-flow-ux' in html,
+            f"Changed static asset must use the full-flow UX cache key: {filename}",
         )
         require(
             f'{filename}?v=20260826-platform-management-ux' not in html and f'{filename}?v=20260701-install-refresh' not in html,
@@ -138,12 +153,18 @@ def check_original_platform_management_experience():
     require("title: '系统设置'" not in utils_js, "Configuration workflow title must not use stale 系统设置 copy")
     require("可在「系统设置」调整风险策略" not in empty_states_js, "Agent confirmation empty-state must not point to a stale 系统设置 page")
     require("系统设置页面运行预检脚本" not in execution_js, "Runner empty-state must not point to a stale 系统设置 page")
-    for marker in ("模块创建失败", "任务创建失败", "文件上传失败"):
+    for marker in ("模块创建失败", "YAML 用例创建失败", "文件上传失败"):
         require(marker in utils_js, f"Persistence failure must be visible instead of reporting false success: {marker}")
 
     require("AGENT_HISTORY_PAGE_SIZE" in state_js and "agentHistoryFilters" in state_js, "Agent history must keep explicit filter and pagination state")
     for marker in ("filterAgentRuns", "搜索任务、应用或结果", "agent-history-pager"):
         require(marker in status_js, f"Agent history management control is missing: {marker}")
+    require(
+        "resultMeta.smokeAllFailed ? '冒烟全失败'" in status_js
+        and "resultMeta.scriptFailed ? '脚本问题'" in status_js
+        and "resultMeta.productFailed ? '产品缺陷'" in status_js,
+        "Agent history search must include the result labels already visible on each card",
+    )
     require("REPORT_PAGE_SIZE" in state_js and "reportFilters" in state_js, "Report center must keep explicit filter and pagination state")
     for marker in ("filterReportsForCenter", "搜索任务、应用或报告", "report-center-pager"):
         require(marker in reports_js, f"Report management control is missing: {marker}")
@@ -199,6 +220,8 @@ def main():
     html = _read_bundle()
     execution_js = (JS_DIR / "execution.js").read_text(encoding="utf-8")
     utils_js = (JS_DIR / "utils.js").read_text(encoding="utf-8")
+    state_js = (JS_DIR / "state.js").read_text(encoding="utf-8")
+    app_js = (JS_DIR / "app.js").read_text(encoding="utf-8")
     agent_status_js = (JS_DIR / "agent-status.js").read_text(encoding="utf-8")
     navigation_js = (JS_DIR / "navigation.js").read_text(encoding="utf-8")
     require("<title>功夫豆测试平台</title>" in html, "Browser title must use 功夫豆测试平台")
@@ -238,7 +261,7 @@ def main():
     require("HIGHWAY_API_KEY" not in html and "your_highway_api_key" not in html, "Frontend must not contain API key placeholders")
     require("测试当前策略" in html and "/ai/providers/test" in html, "Config page must expose AI model service test action")
     require("模型配置" in html and "/ai/providers" in html and "/ai/model-router" in html, "Config page must expose multi-provider model routing")
-    require("loadAgentModelOptions" in html and "AI Gateway Provider" in html, "Agent model selector must load AI Gateway providers")
+    require("loadAgentModelOptions" in html and "AI 网关模型" in html, "Agent model selector must load AI Gateway providers with localized copy")
     require("modelProviderId" in html and "aiProviderId" in html and "selectedAgentModelInfo" in html, "Agent payload must keep provider id separate from raw model name")
     require("catalogSource" in html and "实时目录" in html and "model.group === 'AI Gateway'" in html, "Agent model selector must label live catalog entries and suppress stale Task API Gateway duplicates")
     require("自动（按模型策略" in html, "Agent model selector must make the router-backed auto model visible")
@@ -295,7 +318,10 @@ def main():
     require("function showAssetsCenter" in html and "assets-table" in html and "选择当前列表" in html, "Assets page must render a full-width asset table")
     require("toggleCurrentAssetRows" in html and "assetFileOp" in html and "deleteAssetFile" in html, "Assets page must support select-all, rename, move, and delete without leaving the directory")
     require("重命名</button>" in html and ">移动</button>" in html and ">删除</button>" in html, "Assets table rows must expose maintenance actions")
-    require("function updateWorkbenchPanelMode" in html and "hide-jobs" in html and "'execute'" in html and "'repair'" in html, "Only Agent and execution workflows should keep the right status panel")
+    require("function updateWorkbenchPanelMode" in html and "hide-jobs" in html and "'execute'" in html, "Only Agent and execution workflows should keep the right status panel")
+    panel_workflows = html[html.index("const rightPanelWorkflows"):html.index("]);", html.index("const rightPanelWorkflows"))]
+    require("'baseline'" not in panel_workflows and "'repair'" not in panel_workflows, "Baseline and repair pages must not keep the duplicate Runner history panel")
+    require("const recentDoneLimit = activeWorkflow === 'execute' ? 6 : 18" in html, "Execution Runner panel must limit completed history while retaining active jobs")
     require("'repair',\n    'reports'" not in html and "'repair', 'reports'" not in html, "Report and asset-style pages should not keep a stale Agent side panel")
     require("你想让 Agent 测什么" in html and "启动全自动 Agent" in html, "Dashboard hero must present the simplified Agent workbench")
     require("showModelConfigCenter" in html and "查看模型策略" in html, "Dashboard must link to model config")
@@ -394,7 +420,7 @@ def main():
     require("agentRiskHits" in html and "classifyRiskLevel" in html, "Agent risk detection functions must exist")
     require("agent-source-type" in html and "AGENT_SOURCE_TYPES" in html, "Agent workbench must expose input source selector")
     require("renderAgentSourcePanel" in html and "collectAgentSourceRefs" in html, "Agent source panel and payload collector are missing")
-    require("本次 Agent输入资料" in html and "agent-source-figma-url" in html and "agent-source-requirement-text" in html, "Agent workbench must expose Figma and requirement inputs")
+    require("本次 Agent 输入资料" in html and "agent-source-figma-url" in html and "agent-source-requirement-text" in html, "Agent workbench must expose Figma and requirement inputs")
     require("agent-source-file-input" in html and "handleAgentSourceFiles" in html and "handleAgentSourcePaste" in html, "Agent workbench must support requirement/screenshot upload and paste")
     require("sourceInputs: sourceMaterials" in html and "files: sourceMaterials.files" in html and "images: sourceMaterials.images" in html, "Agent payload must include uploaded source materials")
     require("renderSourceContextDetail" in html and "输入摘要" in html and "上传资料" in html and "Figma" in html and "agent-readable-panel" in html, "Agent timeline must show prepared source details and Figma extraction result")
@@ -466,6 +492,97 @@ def main():
     require("runnerEvidenceJobs.length" in html and "failedJobsForSummary" in html and "reportLinksForSummary" in html, "Agent final report must override stale summary/failureAnalysis with live Runner evidence")
     require("runSonicSingleCase" not in html and "/sonic/run-case" not in html and "Sonic 临时套执行" not in html, "Frontend must not expose Sonic temporary-suite single-case execution")
     require("Trace 回放" in html and "/debug/traces" in html and "/debug/replay" in html and "/debug/diff" in html, "Execution center must expose Trace replay/diff debugger")
+    require(
+        "AppState.loading.agentRuns" in html
+        and "AppState.loading.jobs" in html
+        and "AppState.loading.modelConfig" in html,
+        "Agent, jobs and model config loads must reuse in-flight requests",
+    )
+    require(
+        "['dashboard', 'agent'].includes(sectionKey)" in html,
+        "Agent history and confirmation pages must not preload the 10-row dashboard list",
+    )
+    require(
+        "retryJobWithConfirmation" in html
+        and "确认重跑" in html
+        and "onclick=\"retryJobWithConfirmation" in html,
+        "Failed-job rerun page must expose a confirmed real rerun action",
+    )
+    require(
+        "agentHistorySelection" in html
+        and "toggleAgentHistoryPageSelection" in html
+        and "deleteSelectedAgentRuns" in html
+        and "批量删除" in html,
+        "Agent history must support current-page selection and batch deletion",
+    )
+    require(
+        "已显示历史摘要，完整轨迹" in html,
+        "Agent detail timeout must keep and explain the already-rendered summary",
+    )
+    require(
+        "filterAgentTaskModelCatalog" in html
+        and 'id="agent-model-search"' in html,
+        "The explicitly loaded full model catalog must be searchable",
+    )
+    require(
+        "filterTaskAppModules" in html
+        and 'id="task-app-module-search"' in html
+        and "未归属模块" in html,
+        "Application module assignment must expose search and unassigned counts",
+    )
+    require(
+        "renderEmptyState('trace')" in html
+        and "renderEmptyState('trace_snapshot')" in html,
+        "Trace and snapshot tabs must use dedicated empty states",
+    )
+    require(
+        "EXECUTION_YAML_PAGE_SIZE" in state_js
+        and "executionYamlPage" in state_js
+        and "setExecutionYamlPage" in execution_js,
+        "Execution YAML chooser must paginate large libraries instead of rendering every row",
+    )
+    require(
+        "EXECUTION_RERUN_PAGE_SIZE" in state_js
+        and "executionRerunFilters" in state_js
+        and "setExecutionRerunPage" in execution_js
+        and "搜索失败任务或模块" in execution_js,
+        "Failed rerun view must support search, filtering and pagination",
+    )
+    require(
+        "function summarizeJobError" in app_js
+        and "summarizeJobError(error)" in app_js,
+        "Runner cards must summarize large raw errors and keep full diagnostics in details",
+    )
+    require(
+        "正在加载 YAML 用例" in agent_status_js
+        and "AppState.loading.modules" in agent_status_js,
+        "Asset center must show loading state instead of misleading zero counts",
+    )
+    require("renderEmptyState('app_install')" in execution_js, "App installation must not reuse the execution report empty state")
+    require(
+        "正在加载缺陷草稿" in agent_status_js
+        and "读取失败，可以重试" in agent_status_js
+        and "AppState.loading.feishuDrafts" in agent_status_js,
+        "Bug draft navigation must render its own loading and retry states instead of leaving stale page content",
+    )
+    require(
+        "UQG0220513008845" not in (JS_DIR / "utils.js").read_text(encoding="utf-8")
+        and "android: {}" in (JS_DIR / "utils.js").read_text(encoding="utf-8")
+        and "YAML 用例" in (JS_DIR / "utils.js").read_text(encoding="utf-8"),
+        "New YAML starter must be device-neutral, valid and use consistent terminology",
+    )
+    for obsolete_kicker in ("REPORTS ·", "DEFECT DRAFTS ·", "APPLICATIONS ·", "EXECUTE ·"):
+        require(obsolete_kicker not in html, f"User-facing decorative English kicker remains: {obsolete_kicker}")
+    require(
+        "failureTypeText(ft)" in html
+        and "failureTypeText(draft.failureType" in html,
+        "Failure codes in management views must render as Chinese labels",
+    )
+    require(
+        "第 1 步" in html and "第 2 步" in html,
+        "Agent setup steps must use readable Chinese ordinal labels",
+    )
+    require("第 ${escapeHtml(section.index)} 步" in html and "STEP ${escapeHtml(section.index)}" not in html, "Workflow guides must use Chinese step labels")
     trace_viewer = (ROOT / "trace-viewer.html").read_text(encoding="utf-8")
     require("Execution Trace Viewer" in trace_viewer and "/debug/traces" in trace_viewer and "sessionToken" in trace_viewer, "Trace viewer must render real trace data with session auth")
     require("一键应用推荐策略" in html and "applyRecommendedStrategy" in html, "Model config must support one-click recommended strategy")
@@ -477,7 +594,7 @@ def main():
         "js/navigation.js", "js/agent-workbench.js", "js/agent-status.js",
         "css/app.css", "css/round5.css",
     ):
-        require(f"{active_asset}?v=20260826-redeploy-audit" in html, f"Frontend cache version is stale for active asset: {active_asset}")
+        require(f"{active_asset}?v=20260826-full-flow-ux" in html, f"Frontend cache version is stale for active asset: {active_asset}")
     require("function jobDeviceLabel" in html and "runnerDevices" in html and "runnerDeviceDisplayName(device)" in html, "Job rows must resolve device ids to public runner device names when available")
     require(
         "const job = activeJobs.find(isRunnerExecutionJob);" in html

@@ -9,6 +9,7 @@ import { baselineGroup, useBaselinesStore } from '../stores/baselines'
 import { useContextStore } from '../stores/context'
 import { useExecutionsStore } from '../stores/executions'
 import { useTasksStore } from '../stores/tasks'
+import { confirmApiExecution } from '../utils/executionConfirmation'
 
 const context = useContextStore()
 const baselines = useBaselinesStore()
@@ -219,6 +220,12 @@ async function runSelectedBaselines(): Promise<void> {
   localMessage.value = ''
   const validation = validateBaselineAction()
   if (!validation.ok) return
+  if (!confirmApiExecution({
+    action: '执行所选基线',
+    environmentName: environmentName.value,
+    targetName: projectName.value,
+    caseCount: baselines.selectedIds.length,
+  })) return
   try {
     const execution = await executions.runBaselines({
       projectId: validation.projectId,
@@ -354,7 +361,7 @@ function adoptionReasonLabel(reason: string): string {
   <section class="workspace baselines-page">
     <header class="page-toolbar">
       <div>
-        <p class="eyebrow">API BASELINES</p>
+        <p class="eyebrow">回归基线</p>
         <h1>基线用例</h1>
         <p class="page-subtitle">已调试通过并采纳的用例在这里统一查看。基线按项目固定保存，执行时再选择目标环境。</p>
       </div>

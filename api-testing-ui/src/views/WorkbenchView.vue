@@ -16,6 +16,7 @@ import { useCasesStore } from '../stores/cases'
 import { useContextStore } from '../stores/context'
 import { useTasksStore } from '../stores/tasks'
 import { buildCaseDependencyOptions } from '../utils/caseDependencyOptions'
+import { confirmApiExecution } from '../utils/executionConfirmation'
 
 const context = useContextStore()
 const assets = useAssetsStore()
@@ -305,6 +306,12 @@ async function generateBasicPositive(): Promise<void> {
 
 async function submitDebug(): Promise<void> {
   if (!context.projectId || !context.sourceRevisionId || !context.environmentRevisionId || !activeEndpoint.value) return
+  if (!confirmApiExecution({
+    action: '调试用例',
+    environmentName: environmentName.value,
+    targetName: activeDraft.value?.name || activeEndpoint.value.summary || activeEndpoint.value.path,
+    caseCount: 1,
+  })) return
   const endpointId = activeEndpoint.value.id
   localError.value = ''
   let version
@@ -377,6 +384,12 @@ async function runCurrentTask(): Promise<void> {
     localError.value = '请选择本次执行环境'
     return
   }
+  if (!confirmApiExecution({
+    action: '执行任务',
+    environmentName: environmentName.value,
+    targetName: tasks.task?.name || taskNameDraft.value.trim() || defaultTaskName(),
+    caseCount: taskMatchesSelection.value ? tasks.task?.runnable_baseline_count : undefined,
+  })) return
   if (!taskMatchesSelection.value && !await saveCurrentTask()) return
   try {
     const execution = await tasks.runCurrent(context.environmentRevisionId)
@@ -444,7 +457,7 @@ function defaultTaskName(): string {
 
 <template>
   <section class="workspace workbench-page">
-    <header class="page-toolbar"><div><p class="eyebrow">API TEST WORKSPACE</p><h1>接口测试工作台</h1><p class="page-subtitle">选接口，AI 设计，保存草稿后直接调试。</p></div><button class="icon-command" type="button" title="重新读取已保存接口" :disabled="!context.sourceRevisionId || assets.state === 'loading'" @click="context.sourceRevisionId && assets.load(context.sourceRevisionId)"><RefreshCw :size="18" /></button></header>
+    <header class="page-toolbar"><div><p class="eyebrow">接口测试</p><h1>接口测试工作台</h1><p class="page-subtitle">选接口，AI 设计，保存草稿后直接调试。</p></div><button class="icon-command" type="button" title="重新读取已保存接口" :disabled="!context.sourceRevisionId || assets.state === 'loading'" @click="context.sourceRevisionId && assets.load(context.sourceRevisionId)"><RefreshCw :size="18" /></button></header>
     <div v-if="workspaceRestoring" class="state-message workspace-restoring" data-testid="workspace-restoring">
       <RefreshCw class="spinning" :size="18" />
       <div><strong>正在恢复上次工作区</strong><small>正在读取任务、接口版本和执行环境…</small></div>
@@ -487,7 +500,7 @@ function defaultTaskName(): string {
         <EndpointTree id="mobile-workbench-panel-scope" role="tabpanel" aria-labelledby="mobile-workbench-tab-scope" :class="['mobile-workbench-pane', { 'mobile-pane-active': mobilePane === 'scope' }]" :endpoints="assets.endpoints" :selected-ids="selectedIds" :initial-tab="endpointTreeTab" :state="context.sourceRevisionId ? assets.state : 'empty'" :error="assets.error" @selection-change="selectedIds = $event" @activate="activate" />
         <main id="mobile-workbench-panel-editor" role="tabpanel" aria-labelledby="mobile-workbench-tab-editor" :class="['design-center', 'mobile-workbench-pane', { 'mobile-pane-active': mobilePane === 'editor' }]">
           <EndpointDetail :endpoint="activeEndpoint" @open-history="openEndpointHistory" />
-          <CaseEditor v-if="activeDraft" ref="caseEditor" :model-value="activeDraft" :dependency-options="dependencyOptions" :endpoint-options="assets.endpoints" :environment-variable-names="context.environmentVariableNames" :environment-revision-id="context.environmentRevisionId || ''" :saving="cases.saving" :debugging="debugRunning" :saved-message="cases.savedMessage" :validation-errors="cases.validationErrors" :validation-warnings="cases.validationWarnings" @update:model-value="updateDraft" @save="saveDraft" @debug="submitDebug" />
+          <CaseEditor v-if="activeDraft" ref="caseEditor" :model-value="activeDraft" :dependency-options="dependencyOptions" :endpoint-options="assets.endpoints" :environment-variable-names="context.environmentVariableNames" :environment-revision-id="context.environmentRevisionId || ''" :environment-name="environmentName" :saving="cases.saving" :debugging="debugRunning" :saved-message="cases.savedMessage" :validation-errors="cases.validationErrors" :validation-warnings="cases.validationWarnings" @update:model-value="updateDraft" @save="saveDraft" @debug="submitDebug" />
           <div v-else class="state-message center-empty">选择接口后，可手工编辑或让 AI 生成测试用例。</div>
         </main>
         <AiAssistant id="mobile-workbench-panel-ai" role="tabpanel" aria-labelledby="mobile-workbench-tab-ai" :class="['mobile-workbench-pane', { 'mobile-pane-active': mobilePane === 'ai' }]" :selected-count="selectedIds.length" :job="cases.aiJob" :generated-cases="aiGeneratedCases" :error="cases.aiError" :polling="cases.aiPolling" :can-resume="cases.aiCanResume" :basic-generating="cases.basicGenerating" @generate-basic="generateBasicPositive" @generate="generate" @retry="generate" @resume="cases.resumeAiJob()" @open-generated="openAiGenerated" @manage-generated="manageAiGenerated" />

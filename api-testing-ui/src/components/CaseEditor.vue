@@ -14,8 +14,8 @@ import CaseValidationSummary from './CaseValidationSummary.vue'
 
 type ProcessingPhase = 'pre' | 'post'
 
-const props = withDefaults(defineProps<{ modelValue: CaseDraft; validationErrors?: Record<string, string>; validationWarnings?: Record<string, string>; saving?: boolean; debugging?: boolean; savedMessage?: string; dependencyOptions?: CaseDependencyOption[]; endpointOptions?: ApiEndpoint[]; environmentVariableNames?: string[]; environmentRevisionId?: string }>(), {
-  validationErrors: () => ({}), validationWarnings: () => ({}), saving: false, debugging: false, savedMessage: '', dependencyOptions: () => [], endpointOptions: () => [], environmentVariableNames: () => [], environmentRevisionId: '',
+const props = withDefaults(defineProps<{ modelValue: CaseDraft; validationErrors?: Record<string, string>; validationWarnings?: Record<string, string>; saving?: boolean; debugging?: boolean; savedMessage?: string; dependencyOptions?: CaseDependencyOption[]; endpointOptions?: ApiEndpoint[]; environmentVariableNames?: string[]; environmentRevisionId?: string; environmentName?: string }>(), {
+  validationErrors: () => ({}), validationWarnings: () => ({}), saving: false, debugging: false, savedMessage: '', dependencyOptions: () => [], endpointOptions: () => [], environmentVariableNames: () => [], environmentRevisionId: '', environmentName: '',
 })
 const emit = defineEmits<{ 'update:modelValue': [draft: CaseDraft]; save: []; debug: [] }>()
 const mode = ref<'structured' | 'raw'>('structured')
@@ -268,7 +268,7 @@ function normalizeDraft(value: CaseDraft): CaseDraft {
 
       <CaseValidationSummary :setup-count="local.processing.setup_steps?.length || 0" :assertion-count="local.assertions.length" :cleanup-count="local.processing.cleanup_steps?.length || 0" :errors="displayValidationErrors" :warnings="validationWarnings" @navigate="navigateToField" />
 
-      <InlineWorkflowStepEditor ref="setupEditor" :model-value="local.processing.setup_steps || []" stage="setup" :endpoint-options="endpointOptions" :validation-errors="validationErrors" :variable-options="setupVariableOptions" :environment-revision-id="environmentRevisionId" :initial-variables="previewInitialVariables" :processing-pre="local.processing.pre" @update:model-value="updateWorkflowSteps('setup_steps', $event)" />
+      <InlineWorkflowStepEditor ref="setupEditor" :model-value="local.processing.setup_steps || []" stage="setup" :endpoint-options="endpointOptions" :validation-errors="validationErrors" :variable-options="setupVariableOptions" :environment-revision-id="environmentRevisionId" :environment-name="environmentName" :initial-variables="previewInitialVariables" :processing-pre="local.processing.pre" @update:model-value="updateWorkflowSteps('setup_steps', $event)" />
 
       <div class="workflow-main-heading"><span>主体请求</span><small>验证目标接口的真实业务结果，并将响应变量传给清理步骤。</small></div>
 

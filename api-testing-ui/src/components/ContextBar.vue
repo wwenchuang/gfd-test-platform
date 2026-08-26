@@ -3,6 +3,7 @@ import { computed, ref } from 'vue'
 import { ChevronDown, Database, Save } from 'lucide-vue-next'
 
 import type { EnvironmentRevisionOption, ProjectOption, SourceRevisionOption } from '../api/contracts'
+import { isProductionLikeEnvironment } from '../utils/executionConfirmation'
 
 const props = withDefaults(defineProps<{
   projects?: ProjectOption[]
@@ -63,6 +64,7 @@ const environments = computed(() => {
 })
 const selectedProjectName = computed(() => props.projects.find(item => item.id === props.projectId)?.name || '未选择项目')
 const selectedEnvironmentName = computed(() => environments.value.find(item => item.id === props.environmentRevisionId)?.name || '未选择环境')
+const productionEnvironment = computed(() => isProductionLikeEnvironment(selectedEnvironmentName.value))
 
 function sourceLabel(source: SourceRevisionOption): string {
   if (!source.revision_number && !source.endpoint_count) return `${source.name} · 已保存任务引用`
@@ -81,7 +83,10 @@ function nullable(value: string): string | null {
 
 <template>
   <section :class="['context-bar', { 'context-expanded': expanded }]" aria-label="当前测试范围">
-    <div class="context-heading"><Database :size="17" /><strong>测试范围</strong></div>
+    <div class="context-heading">
+      <Database :size="17" /><strong>测试范围</strong>
+      <span v-if="productionEnvironment" data-testid="production-environment-warning" class="production-environment-warning">生产环境 · 执行前确认</span>
+    </div>
     <p data-testid="context-summary" class="context-summary"><strong>{{ selectedProjectName }}</strong><span>{{ selectedEnvironmentName }}</span></p>
     <button
       data-testid="context-toggle"

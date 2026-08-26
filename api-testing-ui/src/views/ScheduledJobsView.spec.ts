@@ -118,6 +118,13 @@ describe('ScheduledJobsView', () => {
     })
     expect(wrapper.text()).toContain('每日发版回归')
 
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false)
+    await wrapper.get('[data-testid="scheduled-run-job-1"]').trigger('click')
+    await flushPromises()
+    expect(post).toHaveBeenCalledTimes(1)
+    expect(confirm).toHaveBeenCalledWith(expect.stringMatching(/生产环境.*每日发版回归.*真实发送/))
+
+    confirm.mockReturnValue(true)
     await wrapper.get('[data-testid="scheduled-run-job-1"]').trigger('click')
     await flushPromises()
 

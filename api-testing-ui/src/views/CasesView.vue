@@ -14,6 +14,7 @@ import { useCasesStore } from '../stores/cases'
 import { useContextStore } from '../stores/context'
 import { useTasksStore } from '../stores/tasks'
 import { buildCaseDependencyOptions } from '../utils/caseDependencyOptions'
+import { confirmApiExecution } from '../utils/executionConfirmation'
 
 const context = useContextStore()
 const assets = useAssetsStore()
@@ -37,6 +38,7 @@ const dependencyOptions = computed(() => buildCaseDependencyOptions(
 ))
 const debugRunning = computed(() => cases.debugPolling)
 const selectedEnvironment = computed(() => context.environmentRevisions.find(item => item.id === context.environmentRevisionId))
+const environmentName = computed(() => selectedEnvironment.value?.name || '未选择环境')
 const environmentLabel = computed(() => selectedEnvironment.value
   ? `${selectedEnvironment.value.name} · v${selectedEnvironment.value.revision}`
   : context.environmentRevisionId ? '任务保存环境 · 已保存任务引用' : '未选择环境')
@@ -259,6 +261,7 @@ async function runCaseVersion(version: CaseVersion): Promise<void> {
     localError.value = '请先选择接口项目、接口版本和执行环境'
     return
   }
+  if (!confirmApiExecution({ action: '执行用例', environmentName: environmentName.value, targetName: version.name, caseCount: 1 })) return
   editCaseVersion(version)
   if (!selectedIds.value.includes(version.endpoint_id)) selectedIds.value = [...selectedIds.value, version.endpoint_id]
   const task = await saveCurrentTask()
@@ -282,6 +285,12 @@ async function runCaseVersion(version: CaseVersion): Promise<void> {
 
 async function submitDebug(): Promise<void> {
   if (!context.projectId || !context.sourceRevisionId || !context.environmentRevisionId || !activeEndpoint.value) return
+  if (!confirmApiExecution({
+    action: '调试用例',
+    environmentName: environmentName.value,
+    targetName: activeDraft.value?.name || activeEndpoint.value.summary || activeEndpoint.value.path,
+    caseCount: 1,
+  })) return
   localError.value = ''
   let version
   try {
@@ -346,7 +355,7 @@ function defaultTaskName(): string {
   <section class="workspace management-page cases-page" data-testid="cases-page">
     <header class="page-toolbar">
       <div>
-        <p class="eyebrow">API CASE MANAGEMENT</p>
+        <p class="eyebrow">用例管理</p>
         <h1>用例管理</h1>
         <p class="page-subtitle">集中管理已生成和已保存的 API 用例，支持编辑、删除、执行和加入任务范围。</p>
       </div>
@@ -413,6 +422,9 @@ function defaultTaskName(): string {
             :model-value="activeDraft"
             :dependency-options="dependencyOptions"
             :endpoint-options="assets.endpoints"
+            :environment-variable-names="context.environmentVariableNames"
+            :environment-revision-id="context.environmentRevisionId || ''"
+            :environment-name="environmentName"
             :saving="cases.saving"
             :debugging="debugRunning"
             :saved-message="cases.savedMessage"

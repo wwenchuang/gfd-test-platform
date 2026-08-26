@@ -211,7 +211,7 @@ function workflowGuideHtml(sectionKey = activeWorkflow) {
   return `
     <div class="workflow-guide">
       <div class="workflow-hero">
-        <div class="workflow-kicker">STEP ${escapeHtml(section.index)} · ${escapeHtml(section.title)}</div>
+        <div class="workflow-kicker">第 ${escapeHtml(section.index)} 步 · ${escapeHtml(section.title)}</div>
         <h2>${escapeHtml(section.subtitle)}</h2>
         <p>${escapeHtml(section.help)}</p>
       </div>

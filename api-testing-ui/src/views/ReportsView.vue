@@ -269,7 +269,7 @@ async function deleteReports(reportIds: string[]): Promise<void> {
     <template v-else>
       <header class="page-toolbar">
         <div>
-          <p class="eyebrow">API TEST REPORTS</p>
+          <p class="eyebrow">测试报告</p>
           <h1>项目测试报告</h1>
           <p class="page-subtitle">按项目查看接口自动化结果。先看整体结论，再定位问题报告和用例证据。</p>
         </div>

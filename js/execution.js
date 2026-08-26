@@ -95,7 +95,7 @@ function renderExecutionCenter() {
     <div class="review-page execution-page">
       <div class="review-head">
         <div>
-          <div class="workflow-kicker">EXECUTE · 单条调试 / 整文件回归 / Sonic 套件</div>
+          <div class="workflow-kicker">执行中心 · 单条调试 / 整文件回归 / Sonic 套件</div>
           <h2>调试执行中心</h2>
           <p>单条/整文件由 Windows/Mac Runner 执行；安装包更新也由 Runner 通过 ADB 下发；Sonic 只负责已同步基线的测试套回归。</p>
         </div>
@@ -113,7 +113,7 @@ function renderExecutionCenter() {
 
 function executionYamlRows() {
   const selectedModule = currentModule && modules[currentModule] ? currentModule : '';
-  const search = (document.getElementById('execution-yaml-search')?.value || '').trim().toLowerCase();
+  const search = String(executionYamlSearch || '').trim().toLowerCase();
   let rows = [];
   Object.keys(modules || {}).sort((a, b) => a.localeCompare(b, 'zh-CN')).forEach(mod => {
     if (selectedModule && mod !== selectedModule) return;
@@ -138,11 +138,19 @@ function executionModuleOptionsHtml() {
 function selectExecutionModule(value) {
   currentModule = value || null;
   currentFile = currentModule && modules[currentModule]?.includes(currentFile) ? currentFile : null;
+  executionYamlPage = 1;
   renderModules();
   showExecutionCenter();
 }
 
 function refreshExecutionYamlList() {
+  executionYamlSearch = document.getElementById('execution-yaml-search')?.value || '';
+  executionYamlPage = 1;
+  showExecutionCenter();
+}
+
+function setExecutionYamlPage(page) {
+  executionYamlPage = Math.max(1, Number(page) || 1);
   showExecutionCenter();
 }
 
@@ -197,6 +205,10 @@ function handleApkInstallJobsUpdated(previousJobs = [], currentJobs = []) {
 
 function renderExecutionTabDebug() {
   const rows = executionYamlRows();
+  const totalPages = Math.max(1, Math.ceil(rows.length / EXECUTION_YAML_PAGE_SIZE));
+  executionYamlPage = Math.min(Math.max(1, executionYamlPage), totalPages);
+  const start = (executionYamlPage - 1) * EXECUTION_YAML_PAGE_SIZE;
+  const pageRows = rows.slice(start, start + EXECUTION_YAML_PAGE_SIZE);
   const currentLabel = currentModule && currentFile ? `${currentModule} / ${currentFile}` : '未选择';
   const runnerCount = Array.isArray(runnerDevices) ? runnerDevices.length : 0;
   return `
@@ -215,7 +227,7 @@ function renderExecutionTabDebug() {
         <select id="execution-module-select" onchange="selectExecutionModule(this.value)">
           ${executionModuleOptionsHtml()}
         </select>
-        <input id="execution-yaml-search" value="${escapeHtml(document.getElementById('execution-yaml-search')?.value || '')}" placeholder="搜索 YAML 或模块..." onkeydown="if(event.key==='Enter') refreshExecutionYamlList()">
+        <input id="execution-yaml-search" value="${escapeHtml(executionYamlSearch)}" placeholder="搜索 YAML 或模块..." oninput="executionYamlSearch=this.value" onkeydown="if(event.key==='Enter') refreshExecutionYamlList()">
         <button class="btn-sm" onclick="refreshExecutionYamlList()">筛选</button>
         <button class="btn-sm" onclick="loadModules().then(()=>showExecutionCenter())">刷新 YAML</button>
         <button class="btn-sm" onclick="loadRunnerDevices && loadRunnerDevices({force:true}).then(()=>showExecutionCenter())">刷新 Runner</button>
@@ -226,7 +238,7 @@ function renderExecutionTabDebug() {
           <table class="assets-table execution-yaml-table">
             <thead><tr><th>YAML 文件</th><th>模块</th><th>用例</th><th>Sonic</th><th>操作</th></tr></thead>
             <tbody>
-              ${rows.map(row => {
+              ${pageRows.map(row => {
                 const stats = typeof yamlStatsForFile === 'function' ? yamlStatsForFile(row.mod, row.file) : {};
                 const sonic = typeof sonicFileSummary === 'function' ? sonicFileSummary(row.mod, row.file) : { cls: '', text: '未知', title: '' };
                 const active = currentModule === row.mod && currentFile === row.file;
@@ -249,6 +261,13 @@ function renderExecutionTabDebug() {
               }).join('')}
             </tbody>
           </table>
+        </div>
+        <div class="management-pager execution-yaml-pager">
+          <span>共 ${rows.length} 个 YAML · 第 ${executionYamlPage}/${totalPages} 页</span>
+          <div>
+            <button class="btn-sm" onclick="setExecutionYamlPage(${executionYamlPage - 1})" ${executionYamlPage <= 1 ? 'disabled' : ''}>上一页</button>
+            <button class="btn-sm" onclick="setExecutionYamlPage(${executionYamlPage + 1})" ${executionYamlPage >= totalPages ? 'disabled' : ''}>下一页</button>
+          </div>
         </div>
       ` : `<div class="job-empty">没有可调试的 YAML。请先在“用例资产”或“AI 生成用例”里创建用例。</div>`}
     </div>
@@ -281,17 +300,41 @@ function renderExecutionTabSonic() {
             <td class="report-cell-time">${escapeHtml((j.finished_at || j.updated_at || '').replace('T',' ').slice(0,19))}</td>
           </tr>
         `).join('')}</tbody>
-      </table>` : `${renderEmptyState('reports')}`}
+      </table>` : `${renderEmptyState('sonic_sync')}`}
     </div>
   `;
 }
 
+function setExecutionRerunFilter(key, value) {
+  if (!['query', 'failureType'].includes(key)) return;
+  executionRerunFilters[key] = String(value || '');
+  executionRerunFilters.page = 1;
+  showExecutionCenter();
+}
+
+function setExecutionRerunPage(page) {
+  executionRerunFilters.page = Math.max(1, Number(page) || 1);
+  showExecutionCenter();
+}
+
 function renderExecutionTabRerun() {
-  const failed = (Array.isArray(latestJobs) ? latestJobs : []).filter(j => {
+  const allFailed = (Array.isArray(latestJobs) ? latestJobs : []).filter(j => {
     if (isApkInstallJob(j)) return false;
     const s = String(j.status || '').toLowerCase();
     return ['failed', 'timeout', 'cancelled', 'error'].includes(s);
-  }).slice(0, 80);
+  });
+  const query = String(executionRerunFilters.query || '').trim().toLowerCase();
+  const filtered = allFailed.filter(job => {
+    const ft = (typeof reportsFailureType === 'function') ? reportsFailureType(job) : '';
+    if (executionRerunFilters.failureType !== 'all' && ft !== executionRerunFilters.failureType) return false;
+    if (!query) return true;
+    return [job.target_task_name, job.file, job.module, job.job_id, failureTypeText(ft)]
+      .filter(Boolean).join(' ').toLowerCase().includes(query);
+  });
+  const totalPages = Math.max(1, Math.ceil(filtered.length / EXECUTION_RERUN_PAGE_SIZE));
+  executionRerunFilters.page = Math.min(Math.max(1, executionRerunFilters.page), totalPages);
+  const start = (executionRerunFilters.page - 1) * EXECUTION_RERUN_PAGE_SIZE;
+  const failed = filtered.slice(start, start + EXECUTION_RERUN_PAGE_SIZE);
   return `
     <div class="review-panel">
       <div class="section-head">
@@ -299,6 +342,18 @@ function renderExecutionTabRerun() {
           <h3>失败重跑</h3>
           <p>选择失败任务进行重跑或 AI 分析；高风险用例需人工确认后才能继续。</p>
         </div>
+      </div>
+      <div class="management-filter-bar">
+        <input id="execution-rerun-search" type="search" value="${escapeHtml(executionRerunFilters.query)}" placeholder="搜索失败任务或模块" oninput="executionRerunFilters.query=this.value" onkeydown="if(event.key==='Enter') setExecutionRerunFilter('query', this.value)">
+        <button class="btn-sm" onclick="setExecutionRerunFilter('query', document.getElementById('execution-rerun-search')?.value || '')">搜索</button>
+        <select onchange="setExecutionRerunFilter('failureType', this.value)">
+          <option value="all" ${executionRerunFilters.failureType === 'all' ? 'selected' : ''}>全部归因</option>
+          <option value="PRODUCT_BUG" ${executionRerunFilters.failureType === 'PRODUCT_BUG' ? 'selected' : ''}>产品缺陷</option>
+          <option value="SCRIPT_ISSUE" ${executionRerunFilters.failureType === 'SCRIPT_ISSUE' ? 'selected' : ''}>脚本问题</option>
+          <option value="ENV_ISSUE" ${executionRerunFilters.failureType === 'ENV_ISSUE' ? 'selected' : ''}>环境问题</option>
+          <option value="UNKNOWN" ${executionRerunFilters.failureType === 'UNKNOWN' ? 'selected' : ''}>待确认</option>
+        </select>
+        <span class="management-filter-count">显示 ${failed.length}/${filtered.length} 条</span>
       </div>
       ${failed.length ? `<table class="report-table">
         <thead><tr><th>任务</th><th>模块</th><th>失败类型</th><th>时间</th><th>操作</th></tr></thead>
@@ -309,9 +364,10 @@ function renderExecutionTabRerun() {
             <tr class="report-row failed">
               <td>${escapeHtml(j.target_task_name || j.file || jobId)}</td>
               <td>${escapeHtml(j.module || '-')}</td>
-              <td>${ft ? `<span class="failure-type-chip failure-${ft.toLowerCase()}">${escapeHtml(ft)}</span>` : '<span class="report-muted">—</span>'}</td>
+              <td>${ft ? `<span class="failure-type-chip failure-${ft.toLowerCase()}">${escapeHtml(failureTypeText(ft))}</span>` : '<span class="report-muted">—</span>'}</td>
               <td class="report-cell-time">${escapeHtml((j.finished_at || j.updated_at || '').replace('T',' ').slice(0,19))}</td>
               <td class="report-cell-actions">
+                <button class="btn-sm success" onclick="retryJobWithConfirmation(${jsArg(jobId)})">确认重跑</button>
                 <button class="btn-sm" onclick="analyzeFailureFromJob(${jsArg(jobId)}, {renderPage:true})">AI 分析</button>
                 <button class="btn-sm primary" onclick="openAiRepairForJob(${jsArg(jobId)})">去 AI 修复</button>
                 <button class="btn-sm" onclick="focusJob(${jsArg(jobId)})">定位</button>
@@ -320,6 +376,13 @@ function renderExecutionTabRerun() {
           `;
         }).join('')}</tbody>
       </table>` : `${renderEmptyState('failure_analysis')}`}
+      ${filtered.length > EXECUTION_RERUN_PAGE_SIZE ? `<div class="management-pager execution-rerun-pager">
+        <span>共 ${filtered.length} 条 · 第 ${executionRerunFilters.page}/${totalPages} 页</span>
+        <div>
+          <button class="btn-sm" onclick="setExecutionRerunPage(${executionRerunFilters.page - 1})" ${executionRerunFilters.page <= 1 ? 'disabled' : ''}>上一页</button>
+          <button class="btn-sm" onclick="setExecutionRerunPage(${executionRerunFilters.page + 1})" ${executionRerunFilters.page >= totalPages ? 'disabled' : ''}>下一页</button>
+        </div>
+      </div>` : ''}
     </div>
   `;
 }
@@ -478,7 +541,7 @@ function renderExecutionTabAppInstall() {
             </tr>
           `;
         }).join('')}</tbody>
-      </table>` : `${renderEmptyState('reports', '还没有安装包更新任务。默认可以直接执行 YAML，不需要先安装。')}`}
+      </table>` : `${renderEmptyState('app_install')}`}
     </div>
   `;
 }
@@ -715,7 +778,7 @@ function renderExecutionTabRunners() {
             </tr>
           `;
         }).join('')}</tbody>
-      </table>` : `${renderEmptyState('reports', '暂无在线 Runner，请在环境体检页面运行预检脚本。')}`}
+      </table>` : `${renderEmptyState('runner')}`}
     </div>
   `;
 }
@@ -771,7 +834,7 @@ function renderExecutionTabTrace() {
             </td>
           </tr>
         `).join('')}</tbody>
-      </table>` : `${renderEmptyState('reports', '暂无 Trace 数据。先执行Agent或 Runner 任务后再回来刷新。')}`}
+      </table>` : `${renderEmptyState('trace')}`}
       <h3 style="margin-top:16px;">执行快照</h3>
       ${snapshots.length ? `<table class="report-table" style="margin-top:12px;">
         <thead><tr><th>选择</th><th>快照</th><th>来源</th><th>创建时间</th><th>操作</th></tr></thead>
@@ -795,7 +858,7 @@ function renderExecutionTabTrace() {
       <div class="review-actions" style="margin-top:10px;">
         <button class="btn-sm primary" onclick="diffSelectedTraceSnapshots()" ${selectedTraceSnapshots.length === 2 ? '' : 'disabled'}>对比已选 2 个快照</button>
         <button class="btn-sm" onclick="selectedTraceSnapshots=[]; showExecutionCenter()">清空选择</button>
-      </div>` : `${renderEmptyState('reports', '暂无快照。点击上方 Trace 的“保存快照”后可用于回放和 Diff。')}`}
+      </div>` : `${renderEmptyState('trace_snapshot')}`}
     </div>
   `;
 }
@@ -890,7 +953,7 @@ async function openFile(mod, file) {
     }
     showEditor(content);
   } catch(e) {
-    const demo = `android:\n  deviceId: UQG0220513008845\n\ntasks:\n  - name: ${yamlDisplayName(file)}\n    flow:\n      - sleep: 1000\n      - ai: 首页有弹窗就点击右上角关闭按钮，没有就跳过\n`;
+    const demo = `android: {}\n\ntasks:\n  - name: ${JSON.stringify(yamlDisplayName(file))}\n    flow:\n      - ai: "请描述需要执行的页面操作"\n      - aiAssert: "请描述需要验证的页面结果"\n`;
     showEditor(demo);
     showToast(e.message || '读取 YAML 失败，已加载兜底模板', 'error');
   }

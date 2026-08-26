@@ -5,8 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>功夫豆测试平台</title>
 <link rel="icon" href="assets/brand/kongfudou-icon.png">
-<link rel="stylesheet" href="css/app.css?v=20260826-redeploy-audit">
-  <link rel="stylesheet" href="css/round5.css?v=20260826-redeploy-audit">
+<link rel="stylesheet" href="css/app.css?v=20260826-full-flow-ux">
+  <link rel="stylesheet" href="css/round5.css?v=20260826-full-flow-ux">
 </head>
 <body>
 
@@ -458,6 +458,11 @@
     <!-- Step 4：关联模块 -->
     <div class="form-step-content" style="display:none">
       <label class="modal-label">关联模块</label>
+      <div class="management-filter-bar" style="margin-bottom:8px;">
+        <input id="task-app-module-search" type="search" placeholder="搜索模块名称" oninput="filterTaskAppModules(this.value)">
+        <label class="filter-checkbox"><input id="task-app-module-unassigned" type="checkbox" onchange="filterTaskAppModules(document.getElementById('task-app-module-search')?.value || '', this.checked)"> 只看未归属模块</label>
+      </div>
+      <div class="generate-hint" id="task-app-module-summary" style="margin-bottom:8px;"></div>
       <div class="module-check-list" id="task-app-modules"></div>
     </div>
 
@@ -850,10 +855,10 @@
   </div>
 </div>
 
-<!-- Modal: 新建Task -->
+<!-- Modal: 新建 YAML 用例 -->
 <div class="modal-overlay" id="modal-task">
   <div class="modal">
-    <h3>➕ 新建 Task</h3>
+    <h3>新建 YAML 用例</h3>
     <select id="new-task-module">
       <option value="">选择所属模块</option>
     </select>
@@ -865,10 +870,10 @@
   </div>
 </div>
 
-<!-- Modal: 上传文件 -->
+<!-- Modal: 上传 YAML 文件 -->
 <div class="modal-overlay" id="modal-upload">
   <div class="modal">
-    <h3>↑ 上传 Task 文件</h3>
+    <h3>上传 YAML 文件</h3>
     <select id="upload-module">
       <option value="">选择目标模块</option>
     </select>
@@ -912,23 +917,23 @@
 <div class="toast" id="toast"></div>
 
 
-<script src="js/utils.js?v=20260826-redeploy-audit"></script>
-<script src="js/error-handler.js?v=20260826-redeploy-audit"></script>
-<script src="js/empty-states.js?v=20260826-redeploy-audit"></script>
-<script src="js/loading-manager.js?v=20260826-redeploy-audit"></script>
-<script src="js/form-steps.js?v=20260826-redeploy-audit"></script>
-<script src="js/state.js?v=20260826-redeploy-audit"></script>
-<script src="js/auth.js?v=20260826-redeploy-audit"></script>
-<script src="js/navigation.js?v=20260826-redeploy-audit"></script>
-<script src="js/agent-workbench.js?v=20260826-redeploy-audit"></script>
-<script src="js/agent-status.js?v=20260826-redeploy-audit"></script>
-<script src="js/cases.js?v=20260826-redeploy-audit"></script>
-<script src="js/execution.js?v=20260826-redeploy-audit"></script>
-<script src="js/reports.js?v=20260826-redeploy-audit"></script>
-<script src="js/ai-repair.js?v=20260826-redeploy-audit"></script>
-<script src="js/model-config.js?v=20260826-redeploy-audit"></script>
-<script src="js/yaml-editor.js?v=20260826-redeploy-audit"></script>
-<script src="js/app.js?v=20260826-redeploy-audit"></script>
+<script src="js/utils.js?v=20260826-full-flow-ux"></script>
+<script src="js/error-handler.js?v=20260826-full-flow-ux"></script>
+<script src="js/empty-states.js?v=20260826-full-flow-ux"></script>
+<script src="js/loading-manager.js?v=20260826-full-flow-ux"></script>
+<script src="js/form-steps.js?v=20260826-full-flow-ux"></script>
+<script src="js/state.js?v=20260826-full-flow-ux"></script>
+<script src="js/auth.js?v=20260826-full-flow-ux"></script>
+<script src="js/navigation.js?v=20260826-full-flow-ux"></script>
+<script src="js/agent-workbench.js?v=20260826-full-flow-ux"></script>
+<script src="js/agent-status.js?v=20260826-full-flow-ux"></script>
+<script src="js/cases.js?v=20260826-full-flow-ux"></script>
+<script src="js/execution.js?v=20260826-full-flow-ux"></script>
+<script src="js/reports.js?v=20260826-full-flow-ux"></script>
+<script src="js/ai-repair.js?v=20260826-full-flow-ux"></script>
+<script src="js/model-config.js?v=20260826-full-flow-ux"></script>
+<script src="js/yaml-editor.js?v=20260826-full-flow-ux"></script>
+<script src="js/app.js?v=20260826-full-flow-ux"></script>
 <!-- legacy-static-check: 半自动 Agent 工作台 启动半自动 Agent 半自动 Agent 启动 Agent 进度 Agent 产物 SEMI_AUTO 半自动 AUTO_SAFE 安全自动（后续开放） 自动生成测试用例 自动生成 Midscene YAML 自动校验 YAML 生成后等待确认执行 Sonic 生成飞书缺陷草稿（不自动提交） autoRun: false autoCreateBug: false 执行与 AI 诊断中心 运行轨迹 从失败任务或测试目标出发 模型策略摘要 去模型配置 -->
 </body>
 </html>

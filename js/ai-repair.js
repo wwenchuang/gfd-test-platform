@@ -170,7 +170,7 @@ async function generateRepairYamlFromAnalysis() {
   }
   const normalized = aiFailureDraftNormalized();
   if (!normalized.canAutoRepair) {
-    showToast(`${normalized.failureType} 不允许自动修 YAML，请人工复核或生成缺陷草稿`, 'error');
+    showToast(`${failureTypeText(normalized.failureType)}不允许自动修 YAML，请人工复核或生成缺陷草稿`, 'error');
     if (activeWorkflow === 'repair') showAiRepairCenter();
     return;
   }
@@ -283,7 +283,7 @@ function normalizeFailureAnalysis(raw) {
     else failureType = 'UNKNOWN';
   }
   if (!['SCRIPT_ISSUE', 'ENV_ISSUE', 'PRODUCT_BUG', 'UNKNOWN'].includes(failureType)) failureType = 'UNKNOWN';
-  const conclusion = pick('conclusion', 'summary', 'title') || extractByLabel(text, ['失败结论', '结论', 'Conclusion']) || `${failureType} 待复核`;
+  const conclusion = pick('conclusion', 'summary', 'title') || extractByLabel(text, ['失败结论', '结论', 'Conclusion']) || `${failureTypeText(failureType)}待复核`;
   const reason = pick('reason', 'possibleReason', 'possible_reasons', 'rootCause', 'root_cause') || extractByLabel(text, ['可能原因', '失败原因', '原因', 'Root Cause']) || '暂未识别到明确原因，请查看完整分析。';
   const suggestion = pick('suggestion', 'suggestions', 'nextAction', 'next_action', 'recommendedAction') || extractByLabel(text, ['修复建议', '建议动作', '建议', 'Next Action']) || (failureType === 'SCRIPT_ISSUE' ? '可以生成 YAML 修复草稿，但需要人工确认后再覆盖。' : '不建议自动修改 YAML，请人工复核。');
   const yamlPatch = pick('yamlPatch', 'yaml_patch', 'patch', 'diff', 'diff_summary');

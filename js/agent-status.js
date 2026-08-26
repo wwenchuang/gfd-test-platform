@@ -980,6 +980,12 @@ async function loadAgentRuns(options = {}) {
   // round 4: 默认只拉最近 10 条 Agent Run，避免一次性渲染大量历史拖慢首屏
   const limit = Number(options.limit) > 0 ? Number(options.limit) : 10;
   const timeoutMs = Number(options.timeoutMs) > 0 ? Number(options.timeoutMs) : 15000;
+  const pending = AppState.loading.agentRuns;
+  if (pending?.promise) {
+    if (Number(pending.limit || 0) >= limit) return pending.promise;
+    return pending.promise.catch(() => {}).then(() => loadAgentRuns(options));
+  }
+  const request = (async () => {
   try {
     const url = limit ? `/agent-runs?limit=${encodeURIComponent(limit)}` : '/agent-runs';
     const data = await apiRequest(url, { timeoutMs });
@@ -995,16 +1001,25 @@ async function loadAgentRuns(options = {}) {
     AppState.loaded.agentRuns = false;
     throw e;
   }
+  })();
+  AppState.loading.agentRuns = { promise: request, limit };
+  try {
+    return await request;
+  } finally {
+    if (AppState.loading.agentRuns?.promise === request) AppState.loading.agentRuns = null;
+  }
 }
 
 // round 4: 进入 Agent 类页面时调用，避免重复请求
 function ensureAgentRunsLoaded(options = {}) {
-  if (AppState.loaded.agentRuns) return Promise.resolve();
+  if (AppState.loading.agentRuns?.promise) return AppState.loading.agentRuns.promise;
+  if (AppState.loaded.agentRuns) return Promise.resolve(agentRuns);
   return loadAgentRuns(options);
 }
 
 // round 4: 模型配置按需加载，只在“配置→模型配置”进入时拉一次
 function ensureModelConfigLoaded() {
+  if (AppState.loading.modelConfig) return AppState.loading.modelConfig;
   if (AppState.loaded.modelConfig) return Promise.resolve({ providers: aiProviders, router: aiModelRouter });
   if (typeof loadAiModelConfig !== 'function') return Promise.resolve();
   return loadAiModelConfig();
@@ -1042,8 +1057,8 @@ async function loadAgentRunsHistory() {
     renderAgentHistoryPage();
   } catch (e) {
     if (requestSeq !== agentHistoryRequestSeq || activeWorkflow !== 'agent_history') return;
-    showToast(e.message || '读取Agent历史失败，请确认后端接口已部署', 'error');
-    renderAgentHistoryPage({ error: e.message || '读取Agent历史失败，请确认后端接口已部署' });
+    showToast(e.message || '读取 Agent 历史失败，请确认后端接口已部署', 'error');
+    renderAgentHistoryPage({ error: e.message || '读取 Agent 历史失败，请确认后端接口已部署' });
   }
 }
 
@@ -1064,10 +1079,15 @@ function agentRunCardHtml(run, options = {}) {
   const cardStatus = agentRunCardStatusClass(run);
   const progress = agentRunProgressPct(run);
   const cardMessage = agentRunCardMessage(run, lastStep, resultMeta);
+  const selectable = Boolean(options.selectable && canDelete && run.runId);
+  const checked = selectable && agentHistorySelection.has(run.runId);
   return `
     <div class="workflow-card agent-run-history-card ${escapeHtml(cardStatus)}">
       <div class="agent-run-card-head">
-        <span class="status-pill ${escapeHtml(pill)}">${escapeHtml(status)}</span>
+        <div class="agent-run-card-select">
+          ${selectable ? `<input type="checkbox" aria-label="选择运行记录 ${escapeHtml(run.runId)}" ${checked ? 'checked' : ''} onchange="toggleAgentHistorySelection(${jsArg(run.runId)}, this.checked)">` : ''}
+          <span class="status-pill ${escapeHtml(pill)}">${escapeHtml(status)}</span>
+        </div>
         <span class="agent-run-card-time muted mono" title="${escapeHtml(agentRunDisplayTime(run))}">${escapeHtml(agentRunDisplayTime(run))}</span>
       </div>
       <div class="agent-run-title">${escapeHtml(String(target).slice(0, 80))}</div>
@@ -1099,7 +1119,7 @@ function agentRunLoadingHtml(text = '正在刷新 Agent 运行记录...') {
   </div>`;
 }
 
-function agentRunErrorHtml(message = '读取Agent历史失败，请确认后端接口已部署') {
+function agentRunErrorHtml(message = '读取 Agent 历史失败，请确认后端接口已部署') {
   return `<div class="workflow-card agent-run-history-card failed">
     <div class="agent-run-card-head">
       <span class="status-pill warn">加载失败</span>
@@ -1132,7 +1152,17 @@ function filterAgentRuns(rows = agentRuns) {
     if (agentHistoryFilters.status !== 'all' && agentHistoryStatusKey(run) !== agentHistoryFilters.status) return false;
     if (agentHistoryFilters.mode !== 'all' && mode !== agentHistoryFilters.mode) return false;
     if (!query) return true;
-    const text = [run.runId, run.target, run.goal, run.appName, run.appPackage, mode, agentRunCardMessage(run, {}, agentRunResultMeta(run))]
+    const resultMeta = agentRunResultMeta(run);
+    const text = [
+      run.runId, run.target, run.goal, run.appName, run.appPackage, mode,
+      agentModeText(mode), agentStatusText(run.status), agentRunCardMessage(run, {}, resultMeta),
+      resultMeta.label, resultMeta.score, resultMeta.details, resultMeta.orchestrationLabel,
+      resultMeta.smokeAllFailed ? '冒烟全失败' : '',
+      resultMeta.scriptFailed ? '脚本问题' : '',
+      resultMeta.productFailed ? '产品缺陷' : '',
+      resultMeta.unknownFailed ? '待确认' : '',
+      resultMeta.recovered ? '修复恢复' : ''
+    ]
       .filter(Boolean).join(' ').toLowerCase();
     return text.includes(query);
   });
@@ -1161,6 +1191,56 @@ function setAgentHistoryPage(page) {
   renderAgentHistoryPage();
 }
 
+function toggleAgentHistorySelection(runId, checked) {
+  if (!runId) return;
+  if (checked) agentHistorySelection.add(runId);
+  else agentHistorySelection.delete(runId);
+  renderAgentHistoryPage();
+}
+
+function toggleAgentHistoryPageSelection(runIds = []) {
+  const ids = (Array.isArray(runIds) ? runIds : []).filter(Boolean);
+  const shouldSelect = ids.some(id => !agentHistorySelection.has(id));
+  ids.forEach(id => shouldSelect ? agentHistorySelection.add(id) : agentHistorySelection.delete(id));
+  renderAgentHistoryPage();
+}
+
+function clearAgentHistorySelection() {
+  agentHistorySelection.clear();
+  renderAgentHistoryPage();
+}
+
+async function deleteSelectedAgentRuns() {
+  const selected = Array.from(agentHistorySelection).filter(runId => {
+    const run = agentRuns.find(item => item.runId === runId);
+    return run && agentRunIsTerminal(run);
+  });
+  if (!selected.length) {
+    showToast('请先选择可删除的终态运行记录', 'warn');
+    return;
+  }
+  if (!confirm(`确认批量删除 ${selected.length} 条 Agent 运行记录？\n只会移除运行历史，不会删除已生成的 YAML、报告或脑图文件。`)) return;
+  let deleted = 0;
+  const failed = [];
+  for (const runId of selected) {
+    try {
+      await apiRequest(`/agent-runs/${encodeURIComponent(runId)}`, { method: 'DELETE' });
+      agentRuns = agentRuns.filter(run => run.runId !== runId);
+      agentHistorySelection.delete(runId);
+      deleted += 1;
+    } catch (e) {
+      failed.push(runId);
+    }
+  }
+  if (agentCurrentRun && !agentRuns.some(run => run.runId === agentCurrentRun.runId)) {
+    agentCurrentRun = null;
+    AppState.currentAgentRun = null;
+  }
+  renderAgentHistoryPage();
+  if (failed.length) showToast(`已删除 ${deleted} 条，${failed.length} 条删除失败`, 'warn');
+  else showToast(`已删除 ${deleted} 条运行记录`, 'success');
+}
+
 function agentHistoryPager(total, page, pages) {
   if (total <= AGENT_HISTORY_PAGE_SIZE) return '';
   return `<div class="management-pager agent-history-pager">
@@ -1182,13 +1262,15 @@ function renderAgentHistoryPage(options = {}) {
   agentHistoryFilters.page = Math.min(Math.max(1, agentHistoryFilters.page), totalPages);
   const start = (agentHistoryFilters.page - 1) * AGENT_HISTORY_PAGE_SIZE;
   const visibleRuns = filteredRuns.slice(start, start + AGENT_HISTORY_PAGE_SIZE);
+  const selectableIds = visibleRuns.filter(agentRunIsTerminal).map(run => run.runId).filter(Boolean);
+  const selectedCount = agentHistorySelection.size;
   const historyHtml = visibleRuns.length
-    ? visibleRuns.map(run => agentRunCardHtml(run)).join('')
+    ? visibleRuns.map(run => agentRunCardHtml(run, { selectable: true })).join('')
     : (error ? agentRunErrorHtml(error) : (loading ? agentRunLoadingHtml() : renderEmptyState('agent_history')));
   activeWorkspaceMode = 'agent-history';
   resetYamlToolbarForManager();
   document.getElementById('toolbar-path').innerHTML = '<span>⌂</span> Agent 运行记录';
-  document.getElementById('toolbar-help').textContent = '查看Agent历史运行、状态、进度和最后一步摘要。';
+  document.getElementById('toolbar-help').textContent = '查看 Agent 历史运行、状态、进度和最后一步摘要。';
   document.getElementById('file-info').textContent = error ? 'Agent 运行记录刷新失败' : (loading ? 'Agent 运行记录刷新中' : `Agent 运行记录 ${filteredRuns.length}/${agentRuns.length} 条`);
   area.className = 'editor-area';
   area.innerHTML = `
@@ -1219,6 +1301,9 @@ function renderAgentHistoryPage(options = {}) {
           <option value="ANALYZE_ONLY" ${agentHistoryFilters.mode === 'ANALYZE_ONLY' ? 'selected' : ''}>只分析</option>
         </select>
         <span class="management-filter-count">显示 ${visibleRuns.length}/${filteredRuns.length} 条</span>
+        <button class="btn-sm" onclick='toggleAgentHistoryPageSelection(${JSON.stringify(selectableIds)})' ${selectableIds.length ? '' : 'disabled'}>${selectableIds.length && selectableIds.every(id => agentHistorySelection.has(id)) ? '取消本页选择' : '选择当前页'}</button>
+        <button class="btn-sm" onclick="clearAgentHistorySelection()" ${selectedCount ? '' : 'disabled'}>清空选择</button>
+        <button class="btn-sm danger" onclick="deleteSelectedAgentRuns()" ${selectedCount ? '' : 'disabled'}>批量删除${selectedCount ? `（${selectedCount}）` : ''}</button>
       </div>
       <div class="workflow-grid history-grid">
         ${historyHtml}
@@ -1261,7 +1346,7 @@ async function renderAgentConfirmPage(options = {}) {
       <div class="workflow-hero">
         <div class="workflow-kicker">人工确认中心 · 草稿确认 / 平台级高风险 / 缺陷提交</div>
         <h2>待我确认</h2>
-        <p>Agent只有在这里获得明确确认后，才会继续处理 YAML 草稿、平台级写操作、Sonic 套件或缺陷草稿；测试机业务风险不在这里阻断。</p>
+        <p>Agent 只有在这里获得明确确认后，才会继续处理 YAML 草稿、平台级写操作、Sonic 套件或缺陷草稿；测试机业务风险不在这里阻断。</p>
         <div class="workflow-card-actions">
           <button class="btn-sm primary" onclick="renderAgentConfirmPage()">刷新确认项</button>
           <button class="btn-sm" onclick="activateWorkflow('dashboard')">回Agent 工作台</button>
@@ -1296,7 +1381,7 @@ async function selectAgentRun(runId) {
     renderAgentPageAfterRunUpdate();
   } catch (e) {
     if (selectionSeq !== agentRunSelectionSeq) return;
-    showToast(e.message || '读取Agent轨迹详情失败', 'error');
+    showToast(`已显示历史摘要，完整轨迹${e.message ? `加载失败：${e.message}` : '加载失败，请稍后重试'}`, 'warn');
   }
 }
 
@@ -1452,10 +1537,10 @@ async function refreshAgentRuns(showMessage=false) {
   try {
     const data = await apiRequest('/agent-runs', { timeoutMs: 15000 });
     setAgentRuns(data.runs || [], 50);
-    if (showMessage) showToast('✓ Agent历史已刷新', 'success');
+    if (showMessage) showToast('✓ Agent 历史已刷新', 'success');
     renderAgentPageAfterRunUpdate();
   } catch(e) {
-    if (showMessage) showToast(e.message || '读取Agent历史失败，请确认后端接口已部署', 'error');
+    if (showMessage) showToast(e.message || '读取 Agent 历史失败，请确认后端接口已部署', 'error');
   }
 }
 
@@ -2236,11 +2321,7 @@ function updateWorkbenchPanelMode() {
   const rightPanelWorkflows = new Set([
     'dashboard',
     'agent',
-    'agent_history',
-    'agent_confirm',
-    'execute',
-    'baseline',
-    'repair'
+    'execute'
   ]);
   workbench.classList.toggle('hide-jobs', !rightPanelWorkflows.has(activeWorkflow));
 }
@@ -2253,8 +2334,8 @@ const CONTEXT_TOOLBAR_MAP = {
   agent_confirm:    { module: 'agent',    icon: '⌂', title: 'Agent 控制', refreshLabel: '刷新状态', refreshFn: 'renderAgentConfirmPage()' },
   // 用例 模块
   assets:           { module: 'cases',    icon: '📁', title: '用例操作', refreshLabel: '刷新用例', refreshFn: 'loadModules()' },
-  generate:         { module: 'cases',    icon: '✦', title: '用例操作', refreshLabel: '刷新用例', refreshFn: 'loadModules()', showAddYaml: true },
-  yaml_edit:        { module: 'cases',    icon: '✎', title: '用例操作', refreshLabel: '刷新用例', refreshFn: 'loadModules()', showAddYaml: true },
+  generate:         { module: 'cases',    icon: '✦', title: '用例操作', refreshLabel: '刷新用例', refreshFn: 'loadModules()' },
+  yaml_edit:        { module: 'cases',    icon: '✎', title: '用例操作', refreshLabel: '刷新用例', refreshFn: 'loadModules()' },
   // 执行 模块
   execute:          { module: 'run',      icon: '▶', title: '执行操作', refreshLabel: '刷新任务', refreshFn: 'loadJobs(true)' },
   baseline:         { module: 'run',      icon: '⇄', title: '执行操作', refreshLabel: '刷新任务', refreshFn: 'loadJobs(true)' },
@@ -2464,7 +2545,7 @@ function applyLazyLoadForSection(sectionKey) {
   }
 
   // Agent 类页面进入时只补一次最近 10 条 runs
-  const isAgentSection = ['dashboard', 'agent', 'agent_history', 'agent_confirm'].includes(sectionKey);
+  const isAgentSection = ['dashboard', 'agent'].includes(sectionKey);
   if (isAgentSection && typeof ensureAgentRunsLoaded === 'function') {
     ensureAgentRunsLoaded({ limit: 10 }).then(() => {
       // 加载完成后，如果有活跃 run 且轮询未启动，自动恢复轮询
@@ -3079,6 +3160,21 @@ async function deleteAssetFile(mod, file) {
 function showAssetsCenter() {
   const area = document.getElementById('editor-area');
   if (!area) return;
+  if (!AppState.loaded.modules && AppState.loading.modules) {
+    area.className = 'editor-area assets-center';
+    area.innerHTML = `
+      <div class="assets-page">
+        <div class="assets-hero">
+          <div>
+            <div class="workflow-kicker">用例资产 · YAML 文件 / 状态 / 最近执行</div>
+            <h2>用例资产</h2>
+            <p>正在读取模块、YAML 状态和最近执行结果。</p>
+          </div>
+        </div>
+        <div class="job-empty"><div class="loading-spinner"></div>正在加载 YAML 用例，请稍候...</div>
+      </div>`;
+    return;
+  }
   const appValue = document.getElementById('asset-app-filter')?.value || document.getElementById('app-filter')?.value || '';
   const searchValue = document.getElementById('asset-search')?.value || document.getElementById('task-search')?.value || '';
   const filterKey = `${appValue}::${searchValue}::${currentModule || ''}::${libraryView}`;
@@ -3670,6 +3766,14 @@ function openTaskAppEditor(packageName = '') {
   if (packageName) editTaskApp(packageName);
 }
 
+function openUnassignedTaskAppModules() {
+  openTaskAppEditor();
+  if (typeof FormSteps !== 'undefined') FormSteps.goTo(3);
+  const only = document.getElementById('task-app-module-unassigned');
+  if (only) only.checked = true;
+  filterTaskAppModules(document.getElementById('task-app-module-search')?.value || '', true);
+}
+
 function showAppConfigCenter() {
   const area = document.getElementById('editor-area');
   if (!area) return;
@@ -3677,15 +3781,17 @@ function showAppConfigCenter() {
   setManagementToolbar('应用配置', '应用配置统一维护包名、模块归属、Sonic 项目和群通知目标。', '📱');
   const assignedModules = new Set(taskApps.flatMap(app => app.modules || []));
   const totalModules = Object.keys(modules || {}).length;
+  const unassignedModules = Math.max(0, totalModules - assignedModules.size);
   area.className = 'editor-area';
   area.innerHTML = `<div class="review-page config-management-page">
     <div class="review-head">
-      <div><div class="workflow-kicker">APPLICATIONS · 应用与测试资源归属</div><h2>应用配置</h2><p>先维护应用，再把用例模块、Sonic 项目和通知机器人归到对应应用。</p></div>
-      <div class="review-actions"><button class="btn-sm primary" onclick="openTaskAppEditor()">新增应用</button></div>
+      <div><div class="workflow-kicker">应用与测试资源归属</div><h2>应用配置</h2><p>先维护应用，再把用例模块、Sonic 项目和通知机器人归到对应应用。</p></div>
+      <div class="review-actions"><button class="btn-sm" onclick="openUnassignedTaskAppModules()">查看未归属模块</button><button class="btn-sm primary" onclick="openTaskAppEditor()">新增应用</button></div>
     </div>
     <div class="review-stats">
-      <div class="review-stat"><strong>${taskApps.length}</strong><span>应用</span></div>
-      <div class="review-stat"><strong>${assignedModules.size}/${totalModules}</strong><span>已归属模块</span></div>
+      <div class="review-stat"><strong>${taskApps.length} 个</strong><span>应用</span></div>
+      <div class="review-stat"><strong>${assignedModules.size} / ${totalModules} 个</strong><span>已归属模块</span></div>
+      <div class="review-stat"><strong>${unassignedModules} 个</strong><span>未归属模块</span></div>
       <div class="review-stat"><strong>${taskApps.filter(app => app.sonic_project_id || app.sonic_project_name).length}</strong><span>已绑定 Sonic</span></div>
       <div class="review-stat"><strong>${taskApps.filter(app => taskAppFeishuLabel(app) !== '飞书：未配置').length}</strong><span>可发送通知</span></div>
     </div>
@@ -3707,7 +3813,7 @@ function showFeishuConfigCenter() {
   const configured = taskApps.filter(app => taskAppFeishuLabel(app) !== '飞书：未配置');
   area.className = 'editor-area';
   area.innerHTML = `<div class="review-page config-management-page">
-    <div class="review-head"><div><div class="workflow-kicker">FEISHU · 应用级通知配置</div><h2>群通知</h2><p>每个应用独立选择通知群，避免不同产品的执行结果和缺陷发送到错误群聊。</p></div><div class="review-actions"><button class="btn-sm primary" onclick="openTaskAppEditor()">维护通知配置</button><button class="btn-sm" onclick="activateWorkflow('bug_drafts')">查看缺陷草稿</button></div></div>
+    <div class="review-head"><div><div class="workflow-kicker">群通知 · 应用级通知配置</div><h2>群通知</h2><p>每个应用独立选择通知群，避免不同产品的执行结果和缺陷发送到错误群聊。</p></div><div class="review-actions"><button class="btn-sm primary" onclick="openTaskAppEditor()">维护通知配置</button><button class="btn-sm" onclick="activateWorkflow('bug_drafts')">查看缺陷草稿</button></div></div>
     <div class="review-stats"><div class="review-stat"><strong>${configured.length}/${taskApps.length}</strong><span>通知可用应用</span></div><div class="review-stat"><strong>${feishuDrafts.filter(d => String(d.status || '').toUpperCase() === 'DRAFT').length}</strong><span>待确认草稿</span></div></div>
     <div class="management-list">
       ${taskApps.length ? taskApps.map(app => {
@@ -3760,13 +3866,33 @@ async function showBugDraftCenter(options = {}) {
   const area = document.getElementById('editor-area');
   if (!area) return;
   const requestWorkflow = activeWorkflow;
+  let loadError = '';
   if (options.refresh || !AppState.loaded.feishuDrafts) {
+    activeWorkspaceMode = 'bug-drafts';
+    setManagementToolbar('缺陷草稿', '复核 Agent 和失败分析生成的缺陷，确认后再发送到对应应用群。', '📝');
+    area.className = 'editor-area';
+    area.innerHTML = `<div class="review-page bug-draft-page">
+      <div class="review-head"><div><div class="workflow-kicker">生成 / 复核 / 提交</div><h2>缺陷草稿</h2><p>草稿不会自动发飞书。请核对应用、现象和报告地址，再人工提交或拒绝。</p></div></div>
+      <div class="job-empty"><div class="loading-spinner"></div>正在加载缺陷草稿...</div>
+    </div>`;
     try {
-      const data = await apiRequest('/feishu-drafts?limit=200');
-      feishuDrafts = Array.isArray(data?.drafts) ? data.drafts : [];
-      AppState.loaded.feishuDrafts = true;
-      updateNavigationBadges();
+      if (!AppState.loading.feishuDrafts) {
+        const request = apiRequest('/feishu-drafts?limit=200').then(data => {
+          feishuDrafts = Array.isArray(data?.drafts) ? data.drafts : [];
+          AppState.loaded.feishuDrafts = true;
+          updateNavigationBadges();
+          return feishuDrafts;
+        });
+        AppState.loading.feishuDrafts = request;
+        request.then(() => {
+          if (AppState.loading.feishuDrafts === request) AppState.loading.feishuDrafts = null;
+        }, () => {
+          if (AppState.loading.feishuDrafts === request) AppState.loading.feishuDrafts = null;
+        });
+      }
+      await AppState.loading.feishuDrafts;
     } catch (e) {
+      loadError = e.message || String(e);
       showToast(`读取缺陷草稿失败：${e.message || e}`, 'error');
     }
   }
@@ -3780,7 +3906,8 @@ async function showBugDraftCenter(options = {}) {
   setManagementToolbar('缺陷草稿', '复核 Agent 和失败分析生成的缺陷，确认后再发送到对应应用群。', '📝');
   area.className = 'editor-area';
   area.innerHTML = `<div class="review-page bug-draft-page">
-    <div class="review-head"><div><div class="workflow-kicker">DEFECT DRAFTS · 生成 / 复核 / 提交</div><h2>缺陷草稿</h2><p>草稿不会自动发飞书。请核对应用、现象和报告地址，再人工提交或拒绝。</p></div><div class="review-actions"><button class="btn-sm primary" onclick="showBugDraftCenter({refresh:true})">刷新草稿</button><button class="btn-sm" onclick="activateWorkflow('failure_analysis')">从失败任务生成</button></div></div>
+    <div class="review-head"><div><div class="workflow-kicker">生成 / 复核 / 提交</div><h2>缺陷草稿</h2><p>草稿不会自动发飞书。请核对应用、现象和报告地址，再人工提交或拒绝。</p></div><div class="review-actions"><button class="btn-sm primary" onclick="showBugDraftCenter({refresh:true})">刷新草稿</button><button class="btn-sm" onclick="activateWorkflow('failure_analysis')">从失败任务生成</button></div></div>
+    ${loadError ? `<div class="agent-risk show">读取失败，可以重试：${escapeHtml(loadError)}</div>` : ''}
     <div class="management-filter-bar"><input id="feishu-draft-search" type="search" value="${escapeHtml(feishuDraftFilters.query)}" placeholder="搜索标题、应用或执行 ID" oninput="setFeishuDraftFilter('query', this.value)"><select onchange="setFeishuDraftFilter('status', this.value)"><option value="all" ${feishuDraftFilters.status === 'all' ? 'selected' : ''}>全部状态</option><option value="DRAFT" ${feishuDraftFilters.status === 'DRAFT' ? 'selected' : ''}>待确认</option><option value="SUBMITTED" ${feishuDraftFilters.status === 'SUBMITTED' ? 'selected' : ''}>已提交</option><option value="REJECTED" ${feishuDraftFilters.status === 'REJECTED' ? 'selected' : ''}>已拒绝</option></select><span class="management-filter-count">${rows.length}/${feishuDrafts.length} 条</span></div>
     <div class="management-list bug-draft-list">${rows.length ? rows.map(draft => {
       const id = draft.draftId || draft.draft_id || '';
@@ -3827,13 +3954,37 @@ function showTaskApps() {
 }
 
 function renderTaskAppModal() {
+  const assignedModules = new Set(taskApps.flatMap(app => app.modules || []));
   document.getElementById('task-app-modules').innerHTML = Object.keys(modules).sort().map(mod => `
-    <label title="${escapeHtml(mod)}">
+    <label title="${escapeHtml(mod)}" data-module-search="${escapeHtml(mod.toLowerCase())}" data-unassigned="${assignedModules.has(mod) ? '0' : '1'}">
       <input type="checkbox" class="task-app-module-check" value="${escapeHtml(mod)}">
       <span>${escapeHtml(mod)}</span>
     </label>
   `).join('');
+  const search = document.getElementById('task-app-module-search');
+  if (search) search.value = '';
+  const only = document.getElementById('task-app-module-unassigned');
+  if (only) only.checked = false;
+  filterTaskAppModules('', false);
   renderTaskAppList();
+}
+
+function filterTaskAppModules(query = '', onlyUnassigned = null) {
+  const normalized = String(query || '').trim().toLowerCase();
+  const only = onlyUnassigned === null
+    ? Boolean(document.getElementById('task-app-module-unassigned')?.checked)
+    : Boolean(onlyUnassigned);
+  let visible = 0;
+  let unassigned = 0;
+  document.querySelectorAll('#task-app-modules label').forEach(label => {
+    const isUnassigned = label.dataset.unassigned === '1';
+    if (isUnassigned) unassigned += 1;
+    const matched = (!normalized || String(label.dataset.moduleSearch || '').includes(normalized)) && (!only || isUnassigned);
+    label.hidden = !matched;
+    if (matched) visible += 1;
+  });
+  const summary = document.getElementById('task-app-module-summary');
+  if (summary) summary.textContent = `显示 ${visible} 个模块；其中 ${unassigned} 个尚未归属应用`;
 }
 
 function clearTaskAppForm() {

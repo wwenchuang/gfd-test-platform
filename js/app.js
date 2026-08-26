@@ -875,6 +875,12 @@ function jobErrorText(job) {
   return explainCallbackHttp000(review.reason || evidence || optimize.error || extractJobRawError(job) || '');
 }
 
+function summarizeJobError(error, maxLength = 220) {
+  const text = String(error || '').replace(/\s+/g, ' ').trim();
+  if (!text) return '';
+  return text.length > maxLength ? `${text.slice(0, maxLength)}...` : text;
+}
+
 function extractJobRawError(job) {
   const text = [
     job.stderr_tail || '',
@@ -985,7 +991,7 @@ function jobActions(job) {
     parts.push(`<button class="job-action danger" onclick="cancelJob('${escapeHtml(id)}')">取消</button>`);
   }
   if (!['pending', 'running'].includes(job.status)) {
-    parts.push(`<button class="job-action" onclick="retryJob('${escapeHtml(id)}')">重跑</button>`);
+    parts.push(`<button class="job-action" onclick="retryJobWithConfirmation('${escapeHtml(id)}')">重跑</button>`);
   }
   parts.push(`<button class="job-action" onclick="toggleJobDetail('${escapeHtml(id)}')">详情</button>`);
   if (job.status === 'failed') {
@@ -1180,7 +1186,7 @@ function buildPendingActions(jobs=[], activeJobs=[]) {
         id: `repair:${draftId}`,
         type: (draft.riskHits || []).length ? 'RISK_CONFIRM' : 'REPAIR_DRAFT',
         title: draft.taskName || draft.file || 'YAML 修复草稿',
-        meta: `${repairDraftStatusText(draft.status)} · ${draft.failureType || 'SCRIPT_ISSUE'}${(draft.riskHits || []).length ? ` · 风险 ${draft.riskHits.join('、')}` : ''}`,
+        meta: `${repairDraftStatusText(draft.status)} · ${failureTypeText(draft.failureType || 'SCRIPT_ISSUE')}${(draft.riskHits || []).length ? ` · 风险 ${draft.riskHits.join('、')}` : ''}`,
         actions: `
           <button class="btn-sm" onclick="openRepairDraft(${jsArg(draftId)})">查看草稿</button>
           <button class="btn-sm success" onclick="confirmApplyRepairDraft(${jsArg(draftId)})">人工确认替换</button>
@@ -1198,7 +1204,7 @@ function buildPendingActions(jobs=[], activeJobs=[]) {
     .forEach(job => {
       const normalized = normalizeFailureAnalysis(job.failureReview || job.failure_review || job.error || '');
       let actionsHtml = `<button class="btn-sm" onclick="focusJob(${jsArg(job.job_id || '')})">查看</button>`;
-      actionsHtml += `<button class="btn-sm" onclick="retryJob(${jsArg(job.job_id || '')})">重跑</button>`;
+      actionsHtml += `<button class="btn-sm" onclick="retryJobWithConfirmation(${jsArg(job.job_id || '')})">重跑</button>`;
       if (normalized.failureType === 'SCRIPT_ISSUE' && (job.failureReview || job.failure_review)) {
         actionsHtml += `<button class="btn-sm ai" onclick="openAiRepairForJob(${jsArg(job.job_id || '')})">生成修复草稿</button>`;
       } else if (normalized.failureType === 'PRODUCT_BUG') {
@@ -1211,7 +1217,7 @@ function buildPendingActions(jobs=[], activeJobs=[]) {
         id: `job:${job.job_id}`,
         type: normalized.failureType || 'FAILED_JOB',
         title: job.taskName || job.file || job.job_id || '失败任务',
-        meta: `${jobExecutionLabel(job)} · ${jobStatusText(job.status)} · ${normalized.conclusion || jobErrorText(job) || '等待分析'}`,
+        meta: `${jobExecutionLabel(job)} · ${jobStatusText(job.status)} · ${summarizeJobError(normalized.conclusion || jobErrorText(job) || '等待分析')}`,
         actions: actionsHtml
       });
     });
@@ -1257,7 +1263,7 @@ function currentTaskCardHtml(activeJobs=[]) {
       状态: ${escapeHtml(jobStatusText(job.status))}${job.currentStep ? ` · 步骤: ${escapeHtml(job.currentStep)}` : ''}<br>
       ${job.error ? `最近错误: ${escapeHtml(job.error).slice(0, 160)}<br>` : ''}
       ${review.category ? `AI 复检: ${escapeHtml(review.category)} · ${escapeHtml(review.reason || '')}<br>` : ''}
-      ${draft ? `修复草稿: ${escapeHtml(repairDraftStatusText(draft.status))} · ${escapeHtml(draft.failureType || '')}<br>` : ''}
+      ${draft ? `修复草稿: ${escapeHtml(repairDraftStatusText(draft.status))} · ${escapeHtml(failureTypeText(draft.failureType || 'UNKNOWN'))}<br>` : ''}
       ${job.reportUrl ? `<a class="job-link" href="${escapeHtml(job.reportUrl)}" target="_blank">查看报告</a>` : ''}
       ${['pending', 'running'].includes(job.status) ? `<div class="job-actions current-task-actions"><button class="job-action danger" onclick="cancelJob(${jsArg(job.job_id)})">取消任务</button><button class="job-action" onclick="focusJob(${jsArg(job.job_id)})">查看详情</button></div>` : ''}
     </div>
@@ -1284,11 +1290,12 @@ function renderJobs() {
     .filter(job => ['pending', 'running'].includes(job.status))
     .sort((a, b) => timeValue(b) - timeValue(a));
   const activeIds = new Set(activeJobs.map(job => job.job_id));
+  const recentDoneLimit = activeWorkflow === 'execute' ? 6 : 18;
   const recentDone = normalizedJobs
     .filter(isRunnerExecutionJob)
     .filter(job => !activeIds.has(job.job_id))
     .sort((a, b) => timeValue(b) - timeValue(a))
-    .slice(0, 18);
+    .slice(0, recentDoneLimit);
   const jobs = [...activeJobs, ...recentDone].slice(0, 40);
   const activeCount = activeJobs.length;
   count.textContent = activeCount ? `${activeCount} 个进行中 / 显示 ${jobs.length} 个` : `最近 ${jobs.length} 个`;
@@ -1314,6 +1321,7 @@ function renderJobs() {
     const device = jobDeviceLabel(job);
     const runner = jobRunnerLabel(job);
     const error = jobErrorText(job);
+    const errorSummary = summarizeJobError(error);
     const reportHint = jobReportHint(job);
     const queueMessage = job.queue_message || job.dispatch_message || '';
     const progress = jobProgressInfo(job);
@@ -1321,7 +1329,7 @@ function renderJobs() {
       ? `${jobKindText(job)} / ${escapeHtml(job.module || job.title || job.step || '')}`
       : `${escapeHtml(job.module || '')}/${escapeHtml(job.file || '')}`;
     return `
-      <div class="job-row ${escapeHtml(status)} ${expandedJobs.has(job.job_id || '') ? 'expanded' : ''}" title="${escapeHtml(error)}">
+      <div class="job-row ${escapeHtml(status)} ${expandedJobs.has(job.job_id || '') ? 'expanded' : ''}" title="${escapeHtml(errorSummary)}">
         <div class="job-row-head">
           <span class="job-badge ${escapeHtml(status)}">${jobStatusText(status)}</span>
           <div class="job-meta">${escapeHtml(jobTimeText(job))}</div>
@@ -1339,7 +1347,7 @@ function renderJobs() {
           <div class="job-meta">${job.kind === 'background' ? escapeHtml(job.job_id || '') : `${escapeHtml(progress.detail)} · ${escapeHtml(device)} · ${escapeHtml(runner)}`}</div>
         </div>
         ${queueMessage ? `<div class="job-meta">${escapeHtml(queueMessage)}</div>` : ''}
-        ${error ? `<div class="job-meta">${escapeHtml(error)}</div>` : ''}
+        ${errorSummary ? `<div class="job-meta">${escapeHtml(errorSummary)}</div>` : ''}
         ${reportHint ? `<div class="job-meta job-report-hint">${escapeHtml(reportHint)}</div>` : ''}
         <div class="job-actions">${jobActions(job) || '-'}</div>
         ${jobDetailHtml(job, error, reportHint)}
@@ -1426,6 +1434,12 @@ async function retryJob(jobId) {
   }
 }
 
+function retryJobWithConfirmation(jobId) {
+  if (!jobId) return;
+  if (!confirm(`确认重跑任务 ${jobId}？系统会创建一个新的执行任务，并重新占用 Runner 与设备。`)) return;
+  return retryJob(jobId);
+}
+
 async function reviewJob(jobId, category) {
   const reason = prompt(category === 'product_bug' ? '标记为产品 Bug，备注原因：' : '标记为脚本问题，备注原因：', '');
   if (reason === null) return;
@@ -1464,11 +1478,18 @@ async function loadJobs(manual=false, forceJobList=false) {
     await refreshAgentRuns(manual);
     return;
   }
-  try {
-    const managementHistory = ['reports', 'failure_analysis'].includes(activeWorkflow);
-    const jobsEndpoint = managementHistory
-      ? '/jobs?history_limit=500&background_limit=200'
-      : '/jobs?history_limit=100&background_limit=80';
+  const managementHistory = ['reports', 'failure_analysis'].includes(activeWorkflow);
+  const jobsEndpoint = managementHistory
+    ? '/jobs?history_limit=500&background_limit=200'
+    : '/jobs?history_limit=100&background_limit=80';
+  const pending = AppState.loading.jobs;
+  if (pending?.promise) {
+    if (pending.endpoint === jobsEndpoint) return pending.promise;
+    await pending.promise;
+    return loadJobs(manual, forceJobList);
+  }
+  const request = (async () => {
+    try {
     const [data] = await Promise.all([
       apiRequest(jobsEndpoint),
       loadRepairDrafts({silent: true})
@@ -1490,7 +1511,12 @@ async function loadJobs(manual=false, forceJobList=false) {
     const count = document.getElementById('jobs-count');
     if (count) count.textContent = e.message || '任务读取失败';
     if (manual) showToast(e.message || '任务读取失败', 'error');
-  }
+    } finally {
+      if (AppState.loading.jobs?.promise === request) AppState.loading.jobs = null;
+    }
+  })();
+  AppState.loading.jobs = {endpoint: jobsEndpoint, promise: request};
+  return request;
 }
 
 function jobHistoryScopeText() {
@@ -1506,6 +1532,7 @@ function jobHistoryScopeText() {
 // round 4: 仅在执行/报告/失败重跑等需要 jobs 数据的页面调用
 function ensureJobsLoaded(options = {}) {
   const force = options && options.force;
+  if (AppState.loading.jobs?.promise) return AppState.loading.jobs.promise;
   if (force) return loadJobs(false);
   if (AppState.loaded.jobs) return Promise.resolve();
   return loadJobs(false);
@@ -1514,8 +1541,8 @@ function ensureJobsLoaded(options = {}) {
 function startJobsAutoRefresh() {
   // round 4: 仅在执行/报告等页面开启 jobs 轮询
   if (jobsRefreshTimer) clearInterval(jobsRefreshTimer);
-  loadJobs();
-  jobsRefreshTimer = setInterval(loadJobs, 2500);
+  ensureJobsLoaded({force: true});
+  jobsRefreshTimer = setInterval(() => ensureJobsLoaded({force: true}), 2500);
   AppState.polling.jobs = jobsRefreshTimer;
 }
 

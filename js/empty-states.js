@@ -11,6 +11,36 @@ const EMPTY_STATES = {
     actions: [{ label: '去执行用例', fn: "activateWorkflow('execute')" }],
     tips: ['先在「用例资产」或「AI 生成」准备好测试脚本', '然后在「调试执行」中运行', '完成后自动生成报告']
   },
+  trace: {
+    icon: '🔎', title: '还没有执行轨迹',
+    desc: '完成一次 Agent 或 Runner 调试任务后，可在这里查看步骤、日志和页面状态。',
+    actions: [{ label: '去调试执行', fn: "setExecutionTab('debug')" }],
+    tips: ['执行结束后刷新轨迹列表', '打开轨迹可回看各节点状态', '保存关键节点快照后可进行差异对比']
+  },
+  trace_snapshot: {
+    icon: '📷', title: '还没有轨迹快照',
+    desc: '打开一条执行轨迹并保存关键节点，快照会出现在这里。',
+    actions: [],
+    tips: ['先从上方轨迹列表进入详情', '选择关键节点保存快照', '选中两个快照即可对比差异']
+  },
+  sonic_sync: {
+    icon: '🔄', title: '还没有同步任务',
+    desc: '先从用例资产打开一个 YAML，再检查状态或同步到 Sonic 平台。',
+    actions: [{ label: '去用例资产', fn: "activateWorkflow('assets')" }],
+    tips: ['先确认 YAML 已通过静态校验', '检查是否已存在同名 Sonic 用例', '同步属于外部写操作，提交前需要人工确认']
+  },
+  app_install: {
+    icon: '📦', title: '还没有安装包更新任务',
+    desc: '安装 App 是可选步骤；设备已安装正确版本时可以直接调试 YAML。',
+    actions: [{ label: '返回调试执行', fn: "setExecutionTab('debug')" }],
+    tips: ['测试包可上传 APK 或使用可信下载地址', '创建前必须明确选择 Runner 设备', '安装完成后再回到调试执行选择 YAML']
+  },
+  runner: {
+    icon: '🖥️', title: '暂无在线 Runner',
+    desc: '请先启动 Runner 并确认心跳与设备连接正常。',
+    actions: [{ label: '去环境体检', fn: "activateWorkflow('system_config')" }],
+    tips: ['检查 Runner 服务状态', '确认 ADB 设备为 device 状态', '设备或环境异常不会归因为 YAML 问题']
+  },
   bug_drafts: {
     icon: '🐛', title: '还没有缺陷草稿',
     desc: '测试失败时，AI 会自动生成缺陷报告草稿，你可以编辑后提交。',

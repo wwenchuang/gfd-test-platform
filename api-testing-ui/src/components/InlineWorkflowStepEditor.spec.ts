@@ -65,10 +65,18 @@ describe('InlineWorkflowStepEditor', () => {
       props: {
         modelValue: [STEP], stage: 'setup', endpointOptions: ENDPOINTS,
         environmentRevisionId: 'environment-revision-1',
+        environmentName: '生产环境（新）-腾讯云',
         initialVariables: { seed: 'value' }, processingPre: [],
       },
     })
 
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false)
+    await wrapper.get('[data-testid="setup-preview-0"]').trigger('click')
+
+    expect(post).not.toHaveBeenCalled()
+    expect(confirm).toHaveBeenCalledWith(expect.stringMatching(/生产环境.*查询设备列表.*真实发送/))
+
+    confirm.mockReturnValue(true)
     await wrapper.get('[data-testid="setup-preview-0"]').trigger('click')
 
     expect(post).toHaveBeenCalledWith('/api/api-testing/v1/workflow-steps/preview', {
@@ -89,6 +97,7 @@ describe('InlineWorkflowStepEditor', () => {
   })
 
   it('keeps an edited token as a session-only override for later setup previews', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
     const post = vi.spyOn(apiClient, 'post').mockResolvedValue({
       data: {
         preview: {

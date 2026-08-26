@@ -23,6 +23,8 @@ describe('ContextBar', () => {
     expect(wrapper.text()).toContain('3D 项目')
     expect(wrapper.text()).toContain('3D 接口')
     expect(wrapper.text()).toContain('生产环境（腾讯云）')
+    expect(wrapper.get('[data-testid="production-environment-warning"]').text()).toContain('生产环境')
+    expect(wrapper.get('[data-testid="production-environment-warning"]').text()).toContain('执行前确认')
     expect(wrapper.text()).not.toContain('project-uuid')
 
     await wrapper.get('[data-testid="context-environment"]').setValue('env-uuid')

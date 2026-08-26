@@ -86,4 +86,36 @@ describe('RunsView', () => {
     await flushPromises()
     expect(select).toHaveBeenCalledWith('execution-new')
   })
+
+  it('does not rerun a production execution until the user confirms the environment and scope', async () => {
+    const context = useContextStore()
+    const executions = useExecutionsStore()
+    vi.spyOn(context, 'loadSavedContext').mockResolvedValue()
+    vi.spyOn(context, 'loadOptions').mockResolvedValue()
+    vi.spyOn(executions, 'load').mockResolvedValue()
+    const rerun = vi.spyOn(executions, 'rerunExecution').mockResolvedValue(null)
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false)
+    executions.executions = [debugExecution]
+    executions.active = debugExecution
+
+    const wrapper = mount(RunsView, {
+      global: {
+        stubs: {
+          ExecutionConsole: {
+            props: ['active'],
+            emits: ['rerun'],
+            template: '<button data-testid="rerun" @click="$emit(\'rerun\', active)">重新执行</button>',
+          },
+          ExecutionDetailDrawer: true,
+        },
+      },
+    })
+    await flushPromises()
+
+    await wrapper.get('[data-testid="rerun"]').trigger('click')
+    await flushPromises()
+
+    expect(rerun).not.toHaveBeenCalled()
+    expect(confirm).toHaveBeenCalledWith(expect.stringMatching(/生产环境.*重新执行.*真实发送/))
+  })
 })

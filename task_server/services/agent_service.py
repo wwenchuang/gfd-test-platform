@@ -1195,7 +1195,9 @@ def attach_diagnosis(target, diagnosis):
 
 def get_agent_run(run_id):
     """获取单个 Agent 运行详情。"""
-    runs = recover_stale_agent_runs()
+    # 列表接口负责有限范围的陈旧状态恢复。详情读取只做持久化查询，
+    # 避免每次点开历史都扫描全部 run 并长时间占用 AGENT_RUN_LOCK。
+    runs = load_agent_runs()
     run = next((r for r in runs if r.get("runId") == run_id), None)
     if not run:
         return None

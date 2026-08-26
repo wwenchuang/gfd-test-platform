@@ -4,6 +4,7 @@ import { FlaskConical, Plus, Search } from 'lucide-vue-next'
 
 import { apiClient } from '../api/client'
 import type { ApiEndpoint, InlineWorkflowStep, WorkflowStepPreview, WorkflowVariableOption } from '../api/contracts'
+import { confirmApiExecution } from '../utils/executionConfirmation'
 import { withLegacyVariables } from '../utils/workflowVariables'
 import EndpointPicker from './EndpointPicker.vue'
 import AssertionListEditor from './AssertionListEditor.vue'
@@ -20,6 +21,7 @@ const props = defineProps<{
   validationErrors?: Record<string, string>
   variableOptions?: WorkflowVariableOption[][]
   environmentRevisionId?: string
+  environmentName?: string
   initialVariables?: Record<string, unknown>
   processingPre?: Array<Record<string, unknown>>
 }>()
@@ -266,6 +268,13 @@ async function runPreview(index: number): Promise<void> {
     previewError.value = '请先选择执行环境'
     return
   }
+  const target = props.modelValue[index]
+  if (!confirmApiExecution({
+    action: '试运行前置步骤',
+    environmentName: props.environmentName || '当前执行环境',
+    targetName: target?.name || `第 ${index + 1} 步`,
+    caseCount: index + 1,
+  })) return
   previewLoadingIndex.value = index
   try {
     const response = await apiClient.post<{ preview: WorkflowStepPreview }>(

@@ -185,6 +185,19 @@ async function assertNoHorizontalOverflow(page, label) {
   if (metrics.scrollWidth > metrics.width + 1) throw new Error(`${label} horizontal overflow: ${JSON.stringify(metrics)}`);
 }
 
+async function acceptExecutionConfirmation(page, click, label) {
+  const dialogPromise = page.waitForEvent('dialog');
+  const clickPromise = click();
+  const dialog = await dialogPromise;
+  const message = dialog.message();
+  if (!message.includes('生产环境') || !message.includes('真实发送')) {
+    await dialog.dismiss();
+    throw new Error(`${label} confirmation does not explain the production effect: ${message}`);
+  }
+  await dialog.accept();
+  await clickPromise;
+}
+
 async function assertCompactWorkbench(page, label, viewport, screenshotName) {
   await page.setViewportSize(viewport);
   await page.reload({ waitUntil: 'networkidle' });
@@ -248,7 +261,8 @@ async function openCompactPage(page, navigationLabel, heading, label) {
     await page.getByTestId('endpoint-picker-search').fill('添加收藏');
     await page.getByTestId('endpoint-picker-option-endpoint-favorite-add').click();
     await page.getByTestId('setup-step-summary-0').waitFor();
-    await page.getByTestId('setup-preview-0').click();
+    if (!await page.getByTestId('production-environment-warning').isVisible()) throw new Error('production environment warning is not visible');
+    await acceptExecutionConfirmation(page, () => page.getByTestId('setup-preview-0').click(), 'workflow preview');
     const tokenInput = page.getByTestId('workflow-preview-sensitive-json_path:$.data.access_token');
     if (await tokenInput.getAttribute('type') !== 'password') throw new Error('sensitive preview value must be masked initially');
     await assertNoHorizontalOverflow(page, 'workflow preview desktop');
@@ -280,7 +294,7 @@ async function openCompactPage(page, navigationLabel, heading, label) {
     await page.screenshot({ path: path.join(ARTIFACTS, 'workbench-compact-desktop.png'), fullPage: true });
     await page.setViewportSize({ width: 1440, height: 900 });
 
-    await page.getByRole('button', { name: '保存并调试' }).click();
+    await acceptExecutionConfirmation(page, () => page.getByRole('button', { name: '保存并调试' }).click(), 'case debug');
     await page.getByRole('dialog', { name: '在线调试' }).waitFor();
     await page.locator('.result-status').getByText('PASSED', { exact: true }).waitFor();
     await page.getByTestId('debug-trace').getByText('添加收藏', { exact: true }).waitFor();

@@ -131,8 +131,11 @@ function normalizeAgentRouterProviderId(routerData) {
 }
 
 function appendAgentTaskModelOptions(modelSel, models, gatewayProviders = []) {
+  const query = String(agentModelSearchQuery || '').trim().toLowerCase();
   const filtered = (Array.isArray(models) ? models : [])
-    .filter(model => !(gatewayProviders.length && model.group === 'AI Gateway'));
+    .filter(model => !(gatewayProviders.length && model.group === 'AI Gateway'))
+    .filter(model => !query || [model.id, model.name, model.group, model.providerId]
+      .some(value => String(value || '').toLowerCase().includes(query)));
   const groups = {};
   for (const model of filtered) {
     const key = model.group || 'Task 服务端';
@@ -157,6 +160,12 @@ function appendAgentTaskModelOptions(modelSel, models, gatewayProviders = []) {
     }
     if (optgroup.children.length) modelSel.appendChild(optgroup);
   }
+}
+
+function filterAgentTaskModelCatalog(value = '') {
+  agentModelSearchQuery = String(value || '');
+  const selected = document.getElementById('agent-model')?.value || '';
+  return loadAgentModelOptions(selected);
 }
 
 async function loadFullAgentModelCatalog(preferredValue='') {
@@ -190,6 +199,8 @@ async function loadFullAgentModelCatalog(preferredValue='') {
       currentSelect.value = wanted;
     }
     if (button) button.hidden = true;
+    const search = document.getElementById('agent-model-search');
+    if (search) search.hidden = false;
     showToast(`已加载 ${providers.length + agentTaskModelCatalog.length} 个可选模型`, 'success');
   } catch (e) {
     if (button) {
@@ -231,9 +242,12 @@ async function loadAgentModelOptions(preferredValue='') {
       autoOpt.dataset.providerId = selectedProvider.id;
       autoOpt.dataset.model = selectedProvider.model || '';
     }
+    const query = String(agentModelSearchQuery || '').trim().toLowerCase();
+    const filteredProviders = gatewayProviders.filter(provider => !query || [provider.id, provider.name, provider.model]
+      .some(value => String(value || '').toLowerCase().includes(query)));
     const group = document.createElement('optgroup');
-    group.label = 'AI Gateway Provider';
-    for (const provider of gatewayProviders) {
+    group.label = 'AI 网关模型';
+    for (const provider of filteredProviders) {
       addAgentModelOption(group, {
         value: `provider:${provider.id}`,
         label: agentProviderDisplayText(provider),
@@ -243,7 +257,7 @@ async function loadAgentModelOptions(preferredValue='') {
         disabled: provider.configured === false
       });
     }
-    modelSel.appendChild(group);
+    if (group.children.length) modelSel.appendChild(group);
   }
 
   if (agentTaskModelCatalogLoaded) {
@@ -596,7 +610,7 @@ async function showAgentWorkbench() {
         <div class="agent-form-grid agent-start-layout">
           <section class="agent-form-section agent-goal-section">
             <div class="agent-section-head">
-              <span>01</span>
+              <span>第 1 步</span>
               <div>
                 <strong>测试目标</strong>
                 <em>先写你要验证什么，Agent 再判断范围和执行方式</em>
@@ -618,7 +632,7 @@ async function showAgentWorkbench() {
 
           <section class="agent-form-section agent-config-section">
             <div class="agent-section-head">
-              <span>02</span>
+              <span>第 2 步</span>
               <div>
                 <strong>执行配置</strong>
                 <em>应用、设备、模式和模型集中在这里选择</em>
@@ -664,6 +678,7 @@ async function showAgentWorkbench() {
                   </select>
                   <button class="btn-sm" id="agent-load-model-catalog" type="button" onclick="loadFullAgentModelCatalog()" ${agentTaskModelCatalogLoaded ? 'hidden' : ''}>加载更多模型</button>
                 </div>
+                <input id="agent-model-search" type="search" value="${escapeHtml(agentModelSearchQuery)}" placeholder="搜索模型名称、厂商或标识" oninput="filterAgentTaskModelCatalog(this.value)" ${agentTaskModelCatalogLoaded ? '' : 'hidden'}>
                 <div class="form-hint">默认使用平台模型策略；仅需指定具体模型时再加载完整目录。</div>
               </div>
               <div class="agent-field agent-wide-field">
@@ -686,7 +701,7 @@ async function showAgentWorkbench() {
           <section class="agent-source-materials">
             <div class="agent-source-material-head">
               <div>
-                <h3>本次 Agent输入资料</h3>
+                <h3>本次 Agent 输入资料</h3>
                 <p>Figma、需求说明、需求文档和截图会一起进入Agent 的资料整理步骤。</p>
               </div>
               <span class="agent-source-counter" id="agent-source-counter">${escapeHtml(agentSourceFileSummary())}</span>
@@ -2484,7 +2499,7 @@ function renderAgentSummaryArtifact(run) {
             <div><dt>Agent 步骤</dt><dd>${escapeHtml(`${summary.completed || 0}/${summary.totalSteps || 0}`)}</dd></div>
             <div><dt>执行 YAML</dt><dd>${escapeHtml(yamlRefs.length || 0)} 个</dd></div>
             <div><dt>任务状态</dt><dd>${escapeHtml(jobStatuses.length || 0)} 个</dd></div>
-            <div><dt>失败类型</dt><dd>${escapeHtml(summary.failureType || failure.failureType || 'NONE')}</dd></div>
+            <div><dt>失败类型</dt><dd>${escapeHtml(failureTypeText(summary.failureType || failure.failureType || 'NONE'))}</dd></div>
           </dl>
         </section>
         <section class="final-report-panel">
@@ -2536,7 +2551,7 @@ function renderAgentSummaryArtifact(run) {
           <div class="final-report-failures">
             ${failedJobs.slice(0, 8).map(job => {
               const reason = job.failureReason || job.reason || job.error || job.stderrTail || job.stdoutTail || job.status || '未知失败';
-              const type = job.failureType ? `失败类型：${job.failureType}` : agentCaseSubLabel(job);
+              const type = job.failureType ? `失败类型：${failureTypeText(job.failureType)}` : agentCaseSubLabel(job);
               return `<div><b>${escapeHtml(agentCaseLabel(job))}</b><em>${escapeHtml(type)}</em><span>${escapeHtml(reason)}</span></div>`;
             }).join('')}
           </div>
@@ -3267,7 +3282,7 @@ function renderRerunDetail(step, artifacts) {
     html += agentReadableList('跳过的任务', skipped.slice(0, 15), item => `<b>${escapeHtml(item.taskName || item.jobId || '')}</b><span>${escapeHtml(item.status || '')}${item.reason ? ' · ' + escapeHtml(item.reason) : ''}</span>`);
   }
   if (autonomy.analyzed) {
-    html += `<section class="agent-readable-panel"><strong>重跑后 AI 闭环</strong><p>${escapeHtml(autonomy.reason || '')}</p><p>最新归因：${escapeHtml(autonomy.failureType || 'UNKNOWN')} · 修复草稿：${autonomy.repairGenerated ? '已生成' : '未生成'} · 同设备验证：${autonomy.followupExecuted ? escapeHtml(autonomy.followupStatus || '已执行') : '未执行'}</p></section>`;
+    html += `<section class="agent-readable-panel"><strong>重跑后 AI 闭环</strong><p>${escapeHtml(autonomy.reason || '')}</p><p>最新归因：${escapeHtml(failureTypeText(autonomy.failureType || 'UNKNOWN'))} · 修复草稿：${autonomy.repairGenerated ? '已生成' : '未生成'} · 同设备验证：${autonomy.followupExecuted ? escapeHtml(autonomy.followupStatus || '已执行') : '未执行'}</p></section>`;
   }
   html += '</div>';
   return html;
@@ -3829,7 +3844,7 @@ function renderAgentSourcePanel() {
       <div class="agent-source-grid">
         ${input('agent-source-case-set-id', '关联用例批次 ID', '可选：读取本批次保存的 UI 设计稿')}
       </div>
-      <p class="form-hint">Figma 链接在下方“本次 Agent输入资料”里填写；Agent 会结合设计稿、截图和需求文档做影响分析。</p>`;
+      <p class="form-hint">Figma 链接在下方“本次 Agent 输入资料”里填写；Agent 会结合设计稿、截图和需求文档做影响分析。</p>`;
   } else if (sourceType === 'failed_job') {
     const failedJobValue = existing['agent-source-failed-job-id'] || document.getElementById('agent-failed-job')?.value || '';
     panel.innerHTML = `

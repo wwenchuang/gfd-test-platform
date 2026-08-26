@@ -103,7 +103,7 @@ function showReportsCenter() {
     <div class="review-page reports-page">
       <div class="review-head">
         <div>
-          <div class="workflow-kicker">REPORTS · 历史执行报告</div>
+          <div class="workflow-kicker">报告中心 · 历史执行报告</div>
           <h2>执行报告</h2>
           <p>查看任务执行结果、失败归因和报告链接，失败任务可一键进入 AI 修复或缺陷草稿。</p>
         </div>
@@ -201,7 +201,7 @@ function renderReportRow(job) {
       <td><span class="status-pill ${isSuccess ? 'success' : (isFailed ? 'warn' : '')}">${escapeHtml(jobStatusText(job.status || ''))}</span></td>
       <td>${escapeHtml(job.module || '-')}</td>
       <td class="report-cell-time">${escapeHtml(time || '-')}</td>
-      <td>${ft ? `<span class="failure-type-chip failure-${ft.toLowerCase()}">${escapeHtml(ft)}</span>` : '<span class="report-muted">—</span>'}</td>
+      <td>${ft ? `<span class="failure-type-chip failure-${ft.toLowerCase()}">${escapeHtml(failureTypeText(ft))}</span>` : '<span class="report-muted">—</span>'}</td>
       <td class="report-cell-links">
         ${reportUrl ? `<a class="job-link" href="${escapeHtml(reportUrl)}" target="_blank">报告</a>` : '<span class="report-muted">无报告</span>'}
         ${hasDraft ? '<span class="status-pill success" style="margin-left:6px;">已有修复草稿</span>' : ''}

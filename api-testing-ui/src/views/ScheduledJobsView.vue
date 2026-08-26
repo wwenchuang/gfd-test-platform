@@ -9,6 +9,7 @@ import { useCasesStore } from '../stores/cases'
 import { useContextStore } from '../stores/context'
 import { type ScheduledJobInput, useScheduledJobsStore } from '../stores/scheduledJobs'
 import { useTasksStore } from '../stores/tasks'
+import { confirmApiExecution } from '../utils/executionConfirmation'
 import { formatPassRate, statusLabel } from '../utils/executionPresentation'
 
 const context = useContextStore()
@@ -188,6 +189,16 @@ function buildJobInput(ids: string[]): ScheduledJobInput {
 }
 
 async function runJob(job: ScheduledJob): Promise<void> {
+  const revisionId = job.environment_strategy === 'latest_environment'
+    ? context.environmentRevisions.find(item => item.environment_id === job.environment_id)?.id
+    : job.environment_revision_id
+  const environmentName = context.environmentRevisions.find(item => item.id === revisionId)?.name || '任务配置环境'
+  if (!confirmApiExecution({
+    action: '手动执行定时任务',
+    environmentName,
+    targetName: job.name,
+    caseCount: job.target_ids.length,
+  })) return
   const execution = await scheduledJobs.runOnce(job.id)
   await router.push({ name: 'runs', query: { executionId: execution.id } })
 }
@@ -555,7 +566,7 @@ function weekDayName(value: number): string {
   <section class="workspace scheduled-workspace">
     <header class="page-toolbar">
       <div>
-        <p class="eyebrow">API SCHEDULED JOBS</p>
+        <p class="eyebrow">定时任务</p>
         <h1>定时任务</h1>
         <p class="page-subtitle">定时任务独立保存项目、目标和环境策略；手动执行会生成带“定时任务”来源的执行记录。</p>
       </div>

@@ -10,6 +10,7 @@ import { useAssetsStore } from '../stores/assets'
 import { useContextStore } from '../stores/context'
 import { useTasksStore } from '../stores/tasks'
 import { compareGroupNames, endpointGroupName } from '../utils/endpointGroups'
+import { confirmApiExecution } from '../utils/executionConfirmation'
 import { compactDateTime, taskLatestResult, taskStateLabel } from '../utils/taskPresentation'
 
 const context = useContextStore()
@@ -122,6 +123,13 @@ async function runTask(taskId?: string): Promise<void> {
     return
   }
   const environmentRevisionId = context.environmentRevisionId || tasks.task.environment_revision_id
+  const environmentName = context.environmentRevisions.find(item => item.id === environmentRevisionId)?.name || '任务保存环境'
+  if (!confirmApiExecution({
+    action: '执行任务',
+    environmentName,
+    targetName: tasks.task.name,
+    caseCount: tasks.task.runnable_baseline_count,
+  })) return
   localError.value = ''
   try {
     const execution = await tasks.runCurrent(environmentRevisionId)
@@ -202,7 +210,7 @@ function ensureTaskContextOptions(task: ApiTestTask, environmentRevisionId: stri
   <section class="workspace management-page tasks-page" data-testid="tasks-page">
     <header class="page-toolbar">
       <div>
-        <p class="eyebrow">API TASK MANAGEMENT</p>
+        <p class="eyebrow">任务管理</p>
         <h1>任务管理</h1>
         <p class="page-subtitle">独立维护测试任务，集中处理编辑、执行、删除和范围调整。</p>
       </div>

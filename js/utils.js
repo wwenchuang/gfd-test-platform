@@ -460,21 +460,21 @@ async function addModule() {
   showToast(`✓ 模块「${name}」已创建`, 'success');
 }
 
-// ===== ADD TASK =====
+// ===== ADD YAML CASE =====
 function showAddTask() { document.getElementById('modal-task').classList.add('show'); }
 async function addTask() {
   const mod = document.getElementById('new-task-module').value;
   const name = document.getElementById('new-task-name').value.trim();
   if (!mod || !name) { showToast('请填写完整信息', 'error'); return; }
   const filename = name.endsWith('.yaml') ? name : name + '.yaml';
-  const defaultContent = `android:\n  deviceId: UQG0220513008845\n\ntasks:\n  - name: ${name}\n    flow:\n      - sleep: 1000\n      - ai: \n`;
+  const defaultContent = `android: {}\n\ntasks:\n  - name: ${JSON.stringify(name)}\n    flow:\n      - ai: "请描述需要执行的页面操作"\n      - aiAssert: "请描述需要验证的页面结果"\n`;
   try {
     await apiRequest('/file', {
       method: 'POST',
       body: JSON.stringify({ module: mod, file: filename, content: defaultContent })
     });
   } catch(e) {
-    showToast(`任务创建失败：${e.message || e}`, 'error');
+    showToast(`YAML 用例创建失败：${e.message || e}`, 'error');
     return;
   }
   if (!modules[mod]) modules[mod] = [];
@@ -483,7 +483,7 @@ async function addTask() {
   closeModal('modal-task');
   document.getElementById('new-task-name').value = '';
   openFile(mod, filename);
-  showToast(`✓ Task「${filename}」已创建`, 'success');
+  showToast(`YAML 用例「${filename}」已创建`, 'success');
 }
 
 // ===== UPLOAD =====

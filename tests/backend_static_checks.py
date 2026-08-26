@@ -14587,7 +14587,7 @@ def check_mindmap_compact_mode():
     task_manager_source = (ROOT / "task-manager.html").read_text(encoding="utf-8")
     require(
         "生成用例脑图" in task_manager_source
-        and "js/app.js?v=20260826-redeploy-audit" in task_manager_source,
+        and "js/app.js?v=20260826-full-flow-ux" in task_manager_source,
         "Mindmap modal and cache key must expose the cases-only presentation after deployment",
     )
 
@@ -17768,6 +17768,12 @@ def main():
     require('"job_type": selected.get("job_type")' in router_source and 'selected_is_yaml_dry_run' in router_source, "Runner job dispatch must pass job_type and exclude yaml_dry_run from task meta")
     require('midscene_cli_dispatch_yaml_text(yaml_content, device_id=selected.get("device_id", ""))' in router_source, "Runner job dispatch must convert YAML to official Midscene CLI layout and inject selected device without changing saved scripts")
     agent_source = (ROOT / "task_server" / "services" / "agent_service.py").read_text(encoding="utf-8")
+    get_agent_run_source = agent_source.split("def get_agent_run(run_id):", 1)[1].split("\ndef ", 1)[0]
+    require(
+        "load_agent_runs()" in get_agent_run_source
+        and "recover_stale_agent_runs()" not in get_agent_run_source,
+        "Single Agent run detail lookup must not run global stale-run recovery under the shared lock",
+    )
     require("selected_device_label" in agent_source and '"display_name", "brand", "model"' in agent_source, "Agent precheck must show physical device label/model for selected Runner device")
     require("MIDSCENE_AGENT_RUNNER_PRECHECK_RETRY_SECONDS" in agent_source and "Runner 心跳未恢复，等待重试" in agent_source, "Agent precheck must retry briefly when Runner heartbeat is empty after a server restart")
     require("_runner_supports_yaml_dry_run" in agent_source and '"runner_yaml_dry_run"' in agent_source, "Agent must use real Runner YAML dry-run when runner capability is available")

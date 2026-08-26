@@ -7,6 +7,7 @@ import ExecutionDetailDrawer from '../components/ExecutionDetailDrawer.vue'
 import type { ExecutionCaseResult, ExecutionView } from '../api/contracts'
 import { useContextStore } from '../stores/context'
 import { useExecutionsStore } from '../stores/executions'
+import { confirmApiExecution } from '../utils/executionConfirmation'
 
 const context = useContextStore()
 const executions = useExecutionsStore()
@@ -53,6 +54,12 @@ function edit(result: ExecutionCaseResult, execution: ExecutionView): void {
   } })
 }
 async function rerun(execution: ExecutionView): Promise<void> {
+  if (!confirmApiExecution({
+    action: '重新执行',
+    environmentName: execution.environment_name || '原执行环境',
+    targetName: execution.task_name || execution.id,
+    caseCount: execution.case_results.length || execution.summary.total,
+  })) return
   await executions.rerunExecution(execution)
 }
 
@@ -71,7 +78,7 @@ async function deleteExecutions(executionIds: string[]): Promise<void> {
 <template>
   <section class="workspace">
     <header class="page-toolbar">
-      <div><p class="eyebrow">API TEST RUNS</p><h1>执行记录</h1><p class="page-subtitle">选择任务即可继续查看实时日志，不会重复发起请求。</p></div>
+      <div><p class="eyebrow">执行记录</p><h1>执行记录</h1><p class="page-subtitle">选择任务即可继续查看实时日志，不会重复发起请求。</p></div>
     </header>
     <p v-if="executions.error" class="inline-error">{{ executions.error }}</p>
     <ExecutionConsole

@@ -254,7 +254,7 @@ function dateText(value?: string | null): string {
   <section class="workspace setup-page">
     <header class="page-toolbar">
       <div>
-        <p class="eyebrow">API SOURCE</p>
+        <p class="eyebrow">接口资产</p>
         <h1>接口资产</h1>
         <p class="page-subtitle">按项目管理已保存的接口版本和环境；只有点击同步时才访问 Apifox。</p>
       </div>
@@ -264,7 +264,7 @@ function dateText(value?: string | null): string {
       <aside class="api-asset-projects">
         <header>
           <div>
-            <p class="eyebrow">PROJECTS</p>
+            <p class="eyebrow">项目列表</p>
             <h2>项目资产</h2>
           </div>
           <button
@@ -299,7 +299,7 @@ function dateText(value?: string | null): string {
       <section class="api-asset-detail">
         <header>
           <div>
-            <p class="eyebrow">ASSET DETAIL</p>
+            <p class="eyebrow">资产详情</p>
             <h2>{{ selectedProject?.name || '尚未选择项目' }}</h2>
             <p>{{ selectedProject?.description || '选择项目后查看接口版本、分组、环境和变更摘要。' }}</p>
           </div>
@@ -346,7 +346,7 @@ function dateText(value?: string | null): string {
 
       <aside class="api-asset-actions">
         <header>
-          <p class="eyebrow">ACTIONS</p>
+          <p class="eyebrow">常用操作</p>
           <h2>项目操作</h2>
         </header>
         <button class="primary-command wide" type="button" :disabled="setup.busy || !canCheckUpdate" @click="checkApifoxUpdate">

@@ -25,8 +25,6 @@ function showAuthedApp() {
   if (typeof renderActiveWorkflowPage === 'function') renderActiveWorkflowPage();
   else showWorkflowGuide(activeWorkflow);
   if (typeof applyLazyLoadForSection === 'function') applyLazyLoadForSection(activeWorkflow);
-  // round 4: 首屏只加载 Agent 工作台必需的数据，其它模块进入对应页面再懒加载
-  ensureAgentRunsLoaded({ limit: 10 }).catch(() => {});
 }
 
 function loginReturnToPath() {

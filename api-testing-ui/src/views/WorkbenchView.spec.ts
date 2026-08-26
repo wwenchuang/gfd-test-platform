@@ -190,6 +190,15 @@ describe('WorkbenchView debug workflow', () => {
     await wrapper.get('[data-testid="mobile-workbench-ai"]').trigger('click')
     expect(wrapper.get('[data-testid="mobile-workbench-ai"]').attributes('aria-selected')).toBe('true')
     await wrapper.get('[data-testid="mobile-workbench-editor"]').trigger('click')
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false)
+    await wrapper.get('[data-testid="editor-debug"]').trigger('click')
+    await flushPromises()
+
+    expect(prepare).not.toHaveBeenCalled()
+    expect(debug).not.toHaveBeenCalled()
+    expect(confirm).toHaveBeenCalledWith(expect.stringMatching(/生产环境.*我的收藏列表.*真实发送/))
+
+    confirm.mockReturnValue(true)
     await wrapper.get('[data-testid="editor-debug"]').trigger('click')
     await flushPromises()
 
@@ -584,6 +593,7 @@ describe('WorkbenchView debug workflow', () => {
       return tasks.tasks
     })
     vi.spyOn(tasks, 'restore').mockResolvedValue(null)
+    const saveSelection = vi.spyOn(tasks, 'saveSelection').mockResolvedValue(historicalTask)
     const run = vi.spyOn(tasks, 'runCurrent').mockResolvedValue({ id: 'execution-1' } as never)
 
     const router = createRouter({
@@ -605,7 +615,8 @@ describe('WorkbenchView debug workflow', () => {
           DebugDrawer: true,
           EndpointTree: {
             props: ['selectedIds'],
-            template: '<div data-testid="endpoint-tree">{{ selectedIds.length }}</div>',
+            emits: ['selection-change'],
+            template: '<div><button type="button" data-testid="endpoint-tree" @click="$emit(\'selection-change\', [\'endpoint-1\', \'endpoint-2\'])">{{ selectedIds.length }}</button><button type="button" data-testid="restore-selection" @click="$emit(\'selection-change\', [\'endpoint-1\'])">恢复范围</button></div>',
           },
         },
       },
@@ -624,6 +635,18 @@ describe('WorkbenchView debug workflow', () => {
     expect(context.environmentRevisionId).toBe('environment-current')
     expect(wrapper.get('.task-status-strip').text()).toContain('生产环境（新）')
 
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false)
+    await wrapper.get('[data-testid="endpoint-tree"]').trigger('click')
+    await wrapper.get('[data-testid="run-task"]').trigger('click')
+    await flushPromises()
+
+    expect(saveSelection).not.toHaveBeenCalled()
+    expect(run).not.toHaveBeenCalled()
+    expect(confirm).toHaveBeenCalledWith(expect.stringMatching(/生产环境.*3D 家用基线回归.*真实发送/))
+
+    await wrapper.get('[data-testid="restore-selection"]').trigger('click')
+    await flushPromises()
+    confirm.mockReturnValue(true)
     await wrapper.get('[data-testid="run-task"]').trigger('click')
     await flushPromises()
 

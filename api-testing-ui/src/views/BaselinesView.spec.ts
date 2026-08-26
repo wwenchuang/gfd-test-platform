@@ -220,9 +220,17 @@ describe('BaselinesView fixed project assets', () => {
     const context = useContextStore()
     const executions = useExecutionsStore()
     const runBaselines = vi.spyOn(executions, 'runBaselines').mockResolvedValue({ id: 'execution-1' } as never)
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false)
     await flushPromises()
 
     await wrapper.get('input[type="checkbox"]').setValue(true)
+    await buttonByText(wrapper, '按当前环境执行所选基线').trigger('click')
+    await flushPromises()
+
+    expect(runBaselines).not.toHaveBeenCalled()
+    expect(confirm).toHaveBeenCalledWith(expect.stringMatching(/生产环境.*1 条.*真实发送/))
+
+    confirm.mockReturnValue(true)
     await buttonByText(wrapper, '按当前环境执行所选基线').trigger('click')
     await flushPromises()
 

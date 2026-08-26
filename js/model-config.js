@@ -31,14 +31,23 @@ async function loadAiModelConfig(options = {}) {
   if (!force && AppState.loaded.modelConfig) {
     return { providers: aiProviders, router: aiModelRouter };
   }
-  const [providersData, routerData] = await Promise.all([
-    aiGatewayGet('/ai/providers'),
-    aiGatewayGet('/ai/model-router')
-  ]);
-  aiProviders = providersData.providers || [];
-  aiModelRouter = routerData.router || {};
-  AppState.loaded.modelConfig = true;
-  return {providers: aiProviders, router: aiModelRouter};
+  if (AppState.loading.modelConfig) return AppState.loading.modelConfig;
+  const request = (async () => {
+    try {
+      const [providersData, routerData] = await Promise.all([
+        aiGatewayGet('/ai/providers'),
+        aiGatewayGet('/ai/model-router')
+      ]);
+      aiProviders = providersData.providers || [];
+      aiModelRouter = routerData.router || {};
+      AppState.loaded.modelConfig = true;
+      return {providers: aiProviders, router: aiModelRouter};
+    } finally {
+      if (AppState.loading.modelConfig === request) AppState.loading.modelConfig = null;
+    }
+  })();
+  AppState.loading.modelConfig = request;
+  return request;
 }
 
 function currentStrategyName() {
@@ -167,6 +176,7 @@ function renderModelConfigCenter(loading=false, errorText='') {
 }
 
 function applyRecommendedStrategy() {
+  if (!confirm('确认应用推荐策略？应用后会立即保存，并影响后续 AI 生成、分析和修复任务。')) return;
   const recommended = {
     generate_case: 'qwen_plus',
     generate_yaml: 'qwen_plus',

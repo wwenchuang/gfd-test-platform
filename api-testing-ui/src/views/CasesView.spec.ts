@@ -89,6 +89,13 @@ describe('CasesView', () => {
     expect((wrapper.get('[data-testid="case-name"]').element as HTMLInputElement).value).toBe('我的收藏列表 - 基础正向流程')
     expect(wrapper.get('[data-testid="case-management-shell"]').classes()).toContain('mobile-detail-open')
 
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false)
+    await wrapper.get('[data-testid="save-and-debug"]').trigger('click')
+    await flushPromises()
+    expect(saveForDebug).not.toHaveBeenCalled()
+    expect(debug).not.toHaveBeenCalled()
+
+    confirm.mockReturnValue(true)
     await wrapper.get('[data-testid="save-and-debug"]').trigger('click')
     await flushPromises()
     expect(saveForDebug).toHaveBeenCalledWith('endpoint-1', 'environment-1')

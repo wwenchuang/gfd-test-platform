@@ -125,7 +125,7 @@ describe('TasksView', () => {
       tasks.task = null
       return TASK
     })
-    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false)
 
     const assets = useAssetsStore()
     vi.spyOn(assets, 'load').mockImplementation(async () => {
@@ -149,6 +149,13 @@ describe('TasksView', () => {
     await wrapper.get('[data-testid="task-detail-run"]').trigger('click')
     await flushPromises()
 
+    expect(run).not.toHaveBeenCalled()
+    expect(confirm).toHaveBeenCalledWith(expect.stringMatching(/生产环境.*3D 家用基线回归.*真实发送/))
+
+    confirm.mockReturnValue(true)
+    await wrapper.get('[data-testid="task-detail-run"]').trigger('click')
+    await flushPromises()
+
     expect(run).toHaveBeenCalledWith('environment-1')
     expect(router.currentRoute.value.name).toBe('runs')
     expect(router.currentRoute.value.query.executionId).toBe('execution-1')
@@ -156,10 +163,11 @@ describe('TasksView', () => {
     await router.push('/tasks')
     await flushPromises()
     await wrapper.get('[data-testid="task-list-item-task-1"]').trigger('click')
+    confirm.mockClear()
     await wrapper.get('[data-testid="task-detail-delete"]').trigger('click')
     await flushPromises()
 
-    expect(window.confirm).toHaveBeenCalledWith('删除任务“3D 家用基线回归”？任务关联的用例、基线和历史执行记录会保留。')
+    expect(confirm).toHaveBeenCalledWith('删除任务“3D 家用基线回归”？任务关联的用例、基线和历史执行记录会保留。')
     expect(remove).toHaveBeenCalledWith('task-1')
     expect(wrapper.get('[data-testid="task-management-shell"]').classes()).not.toContain('mobile-detail-open')
     expect(wrapper.text()).toContain('选择左侧任务')

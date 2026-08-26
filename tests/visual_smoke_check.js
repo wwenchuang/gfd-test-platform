@@ -556,6 +556,12 @@ async function anyVisible(locator) {
 
     await page.click('.workflow-step:has-text("Agent 工作台")');
     await page.waitForSelector('#agent-goal');
+    const initialAgentModelOptions = await page.locator('#agent-model').innerText();
+    if (initialAgentModelOptions.includes('Highway GPT-5 Mini') || initialAgentModelOptions.includes('千问 Qwen Plus')) {
+      throw new Error(`Agent workbench loaded the full model catalog before user action: ${initialAgentModelOptions}`);
+    }
+    if (!await page.locator('#agent-load-model-catalog').isVisible()) throw new Error('Agent workbench is missing the explicit full-model loader');
+    await page.click('#agent-load-model-catalog');
     await page.waitForFunction(() => {
       const select = document.querySelector('#agent-model');
       return select && select.innerText.includes('Highway GPT-5 Mini') && select.innerText.includes('千问 Qwen Plus');
@@ -575,14 +581,12 @@ async function anyVisible(locator) {
       return style.overflowWrap === 'anywhere' || style.wordBreak === 'break-all';
     });
     if (!figmaWrapOk) throw new Error('Long Figma URL input must wrap instead of hiding information');
-    let previewDialogText = '';
-    page.once('dialog', async dialog => {
-      previewDialogText = dialog.message();
-      await dialog.accept();
-    });
     await page.click('button:has-text("预览计划")');
-    await page.waitForTimeout(300);
-    if (!/Agent 启动前预览/.test(previewDialogText) || !/执行设备/.test(previewDialogText) || !/需求显式候选（非业务路径）/.test(previewDialogText) || !/AI 业务计划：尚未执行/.test(previewDialogText)) throw new Error(`Agent preview button did not keep candidates separate from the later AI plan: ${previewDialogText}`);
+    await page.waitForSelector('#modal-agent-plan-preview.show');
+    const previewText = await page.locator('#agent-plan-preview-body').innerText();
+    if (!/执行设备/.test(previewText) || !/需求显式候选（非业务路径）/.test(previewText) || !/AI 业务计划：尚未执行/.test(previewText)) throw new Error(`Agent preview modal did not keep candidates separate from the later AI plan: ${previewText}`);
+    if (!await page.locator('#modal-agent-plan-preview button', {hasText: '复制预览'}).isVisible()) throw new Error('Agent preview modal is missing copy action');
+    await page.click('#modal-agent-plan-preview .btn-cancel');
     await page.click('button:has-text("安装/更新 App")');
     await page.waitForSelector('text=安装包更新');
     await page.waitForSelector('#apk-install-device');
@@ -949,23 +953,29 @@ async function anyVisible(locator) {
     if (managementOverflow) throw new Error('Bug draft management overflows horizontally on mobile');
     await page.screenshot({path: path.join(ARTIFACTS, 'bug-drafts-management-mobile.png'), fullPage: true});
     await page.setViewportSize({width: 1440, height: 900});
-    let dialogText = '';
+    let strategyConfirmation = '';
     page.once('dialog', async dialog => {
-      dialogText = dialog.message();
+      strategyConfirmation = dialog.message();
       await dialog.accept();
     });
     await page.locator('details[data-nav-group="settings"]').evaluate(el => { el.open = true; });
     await page.click('.workflow-step[data-workflow="config"]');
     await page.waitForSelector('text=当前模型策略');
     await page.click('button:has-text("一键应用推荐策略")');
+    if (!/影响后续 AI 生成、分析和修复任务/.test(strategyConfirmation)) throw new Error(`Recommended strategy confirmation is unclear: ${strategyConfirmation}`);
     await page.waitForSelector('text=当前模型策略');
     await page.click('summary:has-text("高级设置")');
     await page.waitForSelector('text=自定义路由');
     await page.click('button:has-text("保存模型策略")');
     await page.waitForSelector('text=当前模型策略');
+    let gatewayDialogText = '';
+    page.once('dialog', async dialog => {
+      gatewayDialogText = dialog.message();
+      await dialog.accept();
+    });
     await page.click('button:has-text("测试当前策略")');
     await page.waitForTimeout(300);
-    if (!/gateway ok/.test(dialogText)) throw new Error('AI Gateway test dialog did not include gateway ok');
+    if (!/gateway ok/.test(gatewayDialogText)) throw new Error('AI Gateway test dialog did not include gateway ok');
     if (apiFailures.length) throw new Error(`api failures: ${apiFailures.join(' | ')}`);
     if (errors.length) throw new Error(`page errors: ${errors.join(' | ')}`);
     console.log(JSON.stringify({

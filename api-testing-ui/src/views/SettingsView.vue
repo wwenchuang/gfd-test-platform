@@ -454,7 +454,7 @@ function formatDate(value: string): string { return value ? new Date(value).toLo
   <section class="workspace environment-center-page">
     <header class="page-toolbar environment-page-toolbar">
       <div>
-        <p class="eyebrow">API ENVIRONMENT ASSETS</p>
+        <p class="eyebrow">环境配置</p>
         <h1>项目环境</h1>
         <p class="page-subtitle">环境按项目长期保存；同步、编辑和运行互不混淆，历史版本可追溯。</p>
       </div>
@@ -484,7 +484,7 @@ function formatDate(value: string): string { return value ? new Date(value).toLo
 
         <template v-else-if="editing">
           <header class="environment-detail-header">
-            <div><p class="eyebrow">{{ creating ? 'NEW ENVIRONMENT' : 'NEW REVISION' }}</p><h2>{{ creating ? '新建环境' : `编辑 ${selectedAsset?.name || name}` }}</h2><p>{{ creating ? '新环境保存后归属于当前项目。' : '保存会创建新版本，旧版本保留在历史中。' }}</p></div>
+            <div><p class="eyebrow">{{ creating ? '新建环境' : '新建版本' }}</p><h2>{{ creating ? '新建环境' : `编辑 ${selectedAsset?.name || name}` }}</h2><p>{{ creating ? '新环境保存后归属于当前项目。' : '保存会创建新版本，旧版本保留在历史中。' }}</p></div>
             <div class="toolbar-actions"><button class="secondary-command" type="button" @click="cancelEdit">取消</button><button class="primary-command" type="button" :disabled="setup.busy" data-action="save" @click="save"><Save :size="15" />{{ setup.busy ? '正在保存' : (creating ? '保存环境' : '保存新版本') }}</button></div>
           </header>
 
@@ -515,7 +515,7 @@ function formatDate(value: string): string { return value ? new Date(value).toLo
 
         <template v-else-if="selectedAsset && environmentDetail">
           <header class="environment-detail-header">
-            <div><p class="eyebrow">ENVIRONMENT</p><h2>{{ selectedAsset.name }}</h2><p>{{ selectedAsset.description || '暂无说明' }}</p></div>
+            <div><p class="eyebrow">环境详情</p><h2>{{ selectedAsset.name }}</h2><p>{{ selectedAsset.description || '暂无说明' }}</p></div>
             <div class="toolbar-actions"><button class="secondary-command" type="button" data-action="edit" @click="startEdit"><Pencil :size="15" />编辑</button><button class="primary-command" type="button" data-action="workbench" @click="openWorkbench">进入工作台<ArrowRight :size="15" /></button></div>
           </header>
 
@@ -576,7 +576,7 @@ function formatDate(value: string): string { return value ? new Date(value).toLo
     </section>
 
     <section v-if="projectId" class="setup-section notification-section project-notification-card">
-      <header><div><p class="eyebrow">PROJECT NOTIFICATION</p><h2>项目飞书通知</h2><p>机器人绑定到 {{ selectedProject?.name }}；后续定时任务只保存“是否通知”，不重复保存 Webhook。</p></div><span v-if="notifications.feishu?.configured" class="configured-state"><Check :size="14" />已配置 {{ notifications.feishu.fingerprint }}</span></header>
+      <header><div><p class="eyebrow">项目通知</p><h2>项目飞书通知</h2><p>机器人绑定到 {{ selectedProject?.name }}；后续定时任务只保存“是否通知”，不重复保存 Webhook。</p></div><span v-if="notifications.feishu?.configured" class="configured-state"><Check :size="14" />已配置 {{ notifications.feishu.fingerprint }}</span></header>
       <div class="setup-grid three"><label>通知名称<input v-model="feishuName" placeholder="例如：API 基线报告" /></label><label class="grow">飞书群机器人 Webhook<input v-model="feishuWebhook" type="password" autocomplete="new-password" placeholder="已配置时留空表示保持不变" /></label><label class="toggle-card"><input v-model="feishuEnabled" type="checkbox" />启用报告发送</label></div>
       <footer class="notification-actions"><span><Bell :size="14" />通知属于当前项目；测试发送只验证机器人，不关联测试执行。</span><button class="secondary-command" type="button" :disabled="notifications.loading" @click="loadFeishu">{{ notifications.loading ? '读取中' : '读取配置' }}</button><button data-testid="feishu-test" class="secondary-command" type="button" :disabled="notifications.sending || !notifications.feishu?.configured || !notifications.feishu?.enabled" @click="testFeishu">{{ notifications.sending ? '发送中' : '发送测试通知' }}</button><button class="primary-command" type="button" :disabled="notifications.saving" @click="saveFeishu">{{ notifications.saving ? '保存中' : '保存项目通知' }}</button></footer>
     </section>
