@@ -16,6 +16,7 @@ VENV_DIR="${VENV_DIR:-${APP_DIR}/.venv}"
 WEB_CONTAINER="${WEB_CONTAINER:-sonic-server-272-midscene-reports-1}"
 NGINX_CLIENT_MAX_BODY_SIZE="${NGINX_CLIENT_MAX_BODY_SIZE:-300m}"
 NGINX_UPLOAD_LIMIT_CONF="${NGINX_UPLOAD_LIMIT_CONF:-/etc/nginx/conf.d/midscene-upload-size.conf}"
+RELEASE_REVISION="${RELEASE_REVISION:-}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SRC_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
@@ -415,6 +416,17 @@ ensure_env_default() {
   fi
 }
 
+set_env_value() {
+  local key="$1"
+  local value="$2"
+  if grep -q "^export ${key}=" "${ENV_FILE}"; then
+    sed -i.bak "s|^export ${key}=.*|export ${key}='${value}'|" "${ENV_FILE}"
+    rm -f "${ENV_FILE}.bak"
+  else
+    printf "export %s='%s'\n" "${key}" "${value}" >> "${ENV_FILE}"
+  fi
+}
+
 upgrade_env_default_if_old() {
   local key="$1"
   local value="$2"
@@ -426,6 +438,13 @@ upgrade_env_default_if_old() {
 }
 
 ensure_env_default "AI_SKILLS_DIR" "${APP_DIR}/ai_skills"
+if [ -n "${RELEASE_REVISION}" ]; then
+  if ! [[ "${RELEASE_REVISION}" =~ ^[0-9a-f]{7,40}$ ]]; then
+    echo "RELEASE_REVISION 必须是 7 到 40 位十六进制 Git 提交号" >&2
+    exit 2
+  fi
+  set_env_value "TASK_RELEASE_REVISION" "${RELEASE_REVISION}"
+fi
 ensure_env_default "API_TESTING_ENABLED" "0"
 ensure_env_default "API_TESTING_DATABASE_URL" ""
 ensure_env_default "API_TESTING_REDIS_URL" "redis://127.0.0.1:6379/0"

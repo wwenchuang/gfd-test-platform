@@ -56,8 +56,14 @@ async function doLogin() {
     }
     showAuthedApp();
   } catch(e) {
-    document.getElementById('login-error').style.display = 'block';
-    showToast(e.message || '登录失败', 'error');
+    const rawMessage = String(e?.message || '登录失败');
+    const message = /HTTP\s+404|Not Found/i.test(rawMessage)
+      ? '登录服务版本不匹配，请联系管理员重新部署并重启后端服务'
+      : rawMessage;
+    const error = document.getElementById('login-error');
+    error.textContent = message;
+    error.style.display = 'block';
+    showToast(message, 'error');
   }
 }
 

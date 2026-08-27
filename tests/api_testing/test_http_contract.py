@@ -21,6 +21,7 @@ from task_server.api_testing.models.execution import ApiExecution, ApiExecutionC
 from task_server.api_testing.models.project import ApiProject, ApiWorkspace
 from task_server.api_testing.models.source import ApiSource, ApiSourceEndpoint, ApiSourceRevision
 from task_server.app import TaskHTTPHandler, ThreadingHTTPServer
+from task_server import router as task_router
 from tests.api_testing.test_migrations import (
     _alembic_config,
     _create_test_schema,
@@ -87,6 +88,15 @@ def test_apifox_validation_error_keeps_its_actionable_chinese_message():
     assert openapi_error.status == 422
     assert openapi_error.code == "openapi_validation_failed"
     assert openapi_error.message == "接口定义校验失败：Unresolved local reference: #/missing"
+
+
+def test_health_exposes_the_running_release_revision(http_client, monkeypatch):
+    monkeypatch.setattr(task_router, "TASK_RELEASE_REVISION", "release-test-sha")
+
+    response = http_client.get("/api/health")
+
+    assert response.status == 200
+    assert response.body["release_revision"] == "release-test-sha"
 
 
 def test_case_payload_error_keeps_actionable_assertion_feedback():

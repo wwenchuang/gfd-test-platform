@@ -29,7 +29,7 @@ from task_server.config import (
     APP_ENV, TASK_ENABLE_DEBUG_EXECUTION, ENV_FILE_LOAD_STATUS,
     safe_int, safe_bool, AGENT_RISK_KEYWORDS,
     JOB_LOCK, RUNNER_LOCK, AGENT_RUN_LOCK, SONIC_LOCK,
-    PORT, SONIC_SUITE_COMPLETION_PATHS,
+    PORT, SONIC_SUITE_COMPLETION_PATHS, TASK_RELEASE_REVISION,
 )
 from task_server.storage import (
     safe_join, read_json_file, write_json_file, read_text_file,
@@ -816,6 +816,7 @@ def _get_health(handler, qs):
         "ok": True,
         "time": time.strftime("%Y-%m-%d %H:%M:%S"),
         "port": PORT,
+        "release_revision": TASK_RELEASE_REVISION,
         "paths": {
             "tasks": runtime_path_status(TASK_DIR),
             "reports": runtime_path_status(REPORT_DIR),

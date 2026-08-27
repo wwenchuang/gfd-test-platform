@@ -34,6 +34,18 @@
 
 ## 最近完成的关键修复
 
+### 2026-08-27 部署版本身份与登录就绪门禁
+
+部署 `e741be0` 后线上登录稳定返回“接口返回的不是 JSON：HTTP 404, Not Found”。分层复现确认最新 API 前端资源 `index-CPrcvJls.js` 已生效，但 `/api/auth/login` 在 `8088` 与直连 `8091` 都返回纯文本 404，旧 `/api/jobs` 仍返回数据；因此根因是新前端与旧后端进程混跑，不是账号密码错误或前端路径拼接错误。
+
+- `TASK_RELEASE_REVISION` 由更新脚本使用精确 Git SHA 写入运行环境，`/api/health` 对外报告实际运行提交号。
+- 更新脚本要求直连 `8091` 和正式 `8088` 健康接口都与待部署 SHA 完全一致，旧进程不再能凭通用健康响应伪装成部署成功。
+- 部署结束前使用无效探针账号验证 `/api/auth/login` 必须返回 HTTP 401 JSON；404、HTML、纯文本或错误代理都会阻止部署完成。
+- 登录页遇到 HTTP 404 时显示“登录服务版本不匹配，请联系管理员重新部署并重启后端服务”，不再同时归因为用户名或密码错误。
+- 现场证据、八维体验标准和待续 Chrome 清单位于 `docs/api-testing-full-flow-audit-2026-08-27.md`。
+
+聚焦 HTTP/部署测试 2 项、Python 编译、两个部署脚本 `bash -n`、后端静态 63 项和前端静态 84 项通过。待提交推送并重新部署后，先验证登录，再继续尚未完成的全流程 Chrome 点检。
+
 ### 2026-08-27 API 接口同步、用例生命周期与调试真实性修复候选
 
 本轮从线上截图和实际用户流程出发，打通“同步 -> 当前接口版本 -> 用例创建/延续 -> AI 生成 -> 调试 -> 基线 -> 回归记录”，设计与实施记录位于 `docs/superpowers/specs/2026-08-27-api-case-lifecycle-continuity-design.md` 和 `docs/superpowers/plans/2026-08-27-api-case-lifecycle-continuity.md`。

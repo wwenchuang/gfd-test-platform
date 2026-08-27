@@ -254,6 +254,7 @@ def main():
     require("const AI_GATEWAY_BASE = '/ai-gateway'" in html, "AI Gateway calls must use same-origin reverse proxy")
     require("const USERS" not in html and "test123" not in html, "Frontend must not contain plaintext login credentials")
     require("/auth/login" in html and "/auth/me" in html and "/auth/logout" in html, "Frontend login must use backend auth endpoints")
+    require("登录服务版本不匹配" in html, "Login must explain a stale backend 404 instead of blaming credentials")
     require("sessionToken" in html and "Authorization" in html and "Bearer" in html, "Frontend API calls must carry Bearer session token")
     require("// ===== API CLIENT =====" in html and "async function apiRequest" in html and "async function aiRequest" in html, "Unified API client block is missing")
     require("window.fetch =" not in html, "Frontend must not monkey patch global window.fetch")

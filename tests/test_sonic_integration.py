@@ -2865,6 +2865,11 @@ def test_server_main_update_script_pulls_installs_restarts_and_checks_assets():
     assert '[[ "${asset_body}" == *"${REQUIRE_API_TEST_TEXT}"* ]]' in update_script
     assert 'required_text_found=1' in update_script
     assert 'printf \'%s\' "${bundle_text}" | grep -q' not in update_script
+    assert "RELEASE_REVISION" in update_script
+    assert "verify_health_release" in update_script
+    assert "/api/auth/login" in update_script
+    assert "登录路由合同检查失败" in update_script
+    assert "TASK_RELEASE_REVISION" in install_script
     assert "update-main-server.sh" in install_script
 
 

@@ -157,3 +157,31 @@
 - [x] Perform a post-gate semantic review of source/case/baseline boundaries.
 - [ ] Update `CODEX_STATE.md`, commit only source/docs/tests, and push `main`.
 - [ ] Deploy through `deploy/update-main-server.sh`, verify server SHA and assets, then run the Chrome full-flow acceptance audit.
+
+### Task 8: Deployment identity, login readiness, and eight-dimension Chrome acceptance
+
+**Files:**
+- Modify: `task_server/config.py`
+- Modify: `task_server/router.py`
+- Modify: `js/auth.js`
+- Modify: `deploy/install-server.sh`
+- Modify: `deploy/update-main-server.sh`
+- Test: `tests/api_testing/test_http_contract.py`
+- Test: `tests/test_sonic_integration.py`
+- Test: `tests/frontend_static_checks.py`
+- Modify: `docs/api-testing-full-flow-audit-2026-08-27.md`
+- Modify: `CODEX_STATE.md`
+
+**Interfaces:**
+- Produces: `/api/health.release_revision`, deployment-time login contract verification, and a clear stale-backend login message.
+- Consumes: the exact Git SHA checked out by `update-main-server.sh` and the existing unauthenticated login route contract.
+
+- [x] Reproduce production login failure and prove `/api/auth/login` is 404 on both proxy and direct backend while the latest frontend bundle is active.
+- [x] Add failing tests for release identity, login contract deployment checks, and stale-backend login guidance.
+- [x] Persist the exact deployment revision, expose it through health, and require both `8091` and `8088` to report that revision.
+- [x] Require a dummy login probe to return HTTP 401 JSON before deployment can succeed.
+- [x] Replace the misleading credential error with an actionable backend-version message for HTTP 404.
+- [x] Run focused tests, Python compilation, shell syntax checks, backend static checks, frontend static checks, and `git diff --check`.
+- [ ] Deploy the guarded release and verify login through the formal `8088` entry.
+- [ ] Audit every navigation and meaningful action across functional correctness, upstream/downstream continuity, understandability, novice guidance, history efficiency, performance feedback, error recovery, and responsive presentation.
+- [ ] Implement and regression-test all evidence-backed findings, then run the complete API gate and repaired Chrome loops.

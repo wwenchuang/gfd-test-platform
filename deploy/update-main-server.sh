@@ -18,6 +18,7 @@ Environment:
   WEB_DIR             Static web root passed to install-server.sh. Default: /www/html
   PORT                Task service port. Default: 8091
   HEALTH_URLS         Space-separated health URLs. Default: http://127.0.0.1:8091/api/health http://127.0.0.1:8088/api/health
+  AUTH_LOGIN_URL      Login contract URL. Default: http://127.0.0.1:8091/api/auth/login
   API_TEST_URL        API testing frontend URL to verify. Default: http://127.0.0.1:8088/api-test/
   REQUIRE_API_TEST_TEXT  Text expected in an API testing JS bundle. Default: 用例管理
   ALLOW_DIRTY         Set to 1 to allow deploying from a dirty git checkout. Default: 0
@@ -49,6 +50,7 @@ WEB_DIR="${WEB_DIR:-/www/html}"
 PORT="${PORT:-8091}"
 HEALTH_URLS="${HEALTH_URLS:-http://127.0.0.1:${PORT}/api/health http://127.0.0.1:8088/api/health}"
 API_TEST_URL="${API_TEST_URL:-http://127.0.0.1:8088/api-test/}"
+AUTH_LOGIN_URL="${AUTH_LOGIN_URL:-http://127.0.0.1:${PORT}/api/auth/login}"
 REQUIRE_API_TEST_TEXT="${REQUIRE_API_TEST_TEXT:-用例管理}"
 ALLOW_DIRTY="${ALLOW_DIRTY:-0}"
 BUILD_API_TEST="${BUILD_API_TEST:-0}"
@@ -97,10 +99,48 @@ restart_service_if_present() {
   fi
 }
 
-check_url() {
+verify_health_release() {
+  local url="$1"
+  local expected_revision="$2"
+  echo "检查：${url}"
+  local body
+  body="$(curl -fsS "${url}")"
+  local actual_revision
+  actual_revision="$(printf '%s' "${body}" | python3 -c 'import json, sys; print(str(json.load(sys.stdin).get("release_revision") or ""))')"
+  if [ "${actual_revision}" != "${expected_revision}" ]; then
+    echo "后端运行版本不一致：${url}" >&2
+    echo "期望：${expected_revision}" >&2
+    echo "实际：${actual_revision:-未上报（可能仍是旧进程）}" >&2
+    echo "请检查 midscene-task.service 状态以及 ${PORT} 端口是否被旧进程占用。" >&2
+    return 1
+  fi
+}
+
+verify_login_contract() {
   local url="$1"
   echo "检查：${url}"
-  curl -fsS "${url}" >/dev/null
+  local body_file
+  body_file="$(mktemp)"
+  local status
+  status="$(curl -sS -o "${body_file}" -w '%{http_code}' -X POST \
+    -H 'Content-Type: application/json' \
+    --data '{"username":"__deployment_contract_probe__","password":"__deployment_contract_probe__"}' \
+    "${url}")"
+  if [ "${status}" != "401" ] || ! python3 - "${body_file}" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as source:
+    payload = json.load(source)
+if payload.get("ok") is not False or not isinstance(payload.get("error"), str):
+    raise SystemExit(1)
+PY
+  then
+    echo "登录路由合同检查失败：${url} 返回 HTTP ${status}，期望 HTTP 401 JSON。" >&2
+    rm -f "${body_file}"
+    return 1
+  fi
+  rm -f "${body_file}"
 }
 
 verify_api_test_frontend() {
@@ -162,6 +202,7 @@ else
   git checkout -B "${BRANCH}" "${REMOTE}/${BRANCH}"
 fi
 git pull --ff-only "${REMOTE}" "${BRANCH}"
+DEPLOY_REVISION="$(git rev-parse HEAD)"
 
 if [ "${BUILD_API_TEST}" = "1" ]; then
   if ! command -v npm >/dev/null 2>&1; then
@@ -172,15 +213,16 @@ if [ "${BUILD_API_TEST}" = "1" ]; then
   npm --prefix api-testing-ui run build
 fi
 
-APP_DIR="${APP_DIR}" WEB_DIR="${WEB_DIR}" PORT="${PORT}" run_as_root bash deploy/install-server.sh
+APP_DIR="${APP_DIR}" WEB_DIR="${WEB_DIR}" PORT="${PORT}" RELEASE_REVISION="${DEPLOY_REVISION}" run_as_root bash deploy/install-server.sh
 
 restart_service_if_present midscene-task
 restart_service_if_present midscene-api-worker
 restart_service_if_present midscene-api-scheduler
 
 for url in ${HEALTH_URLS}; do
-  check_url "${url}"
+  verify_health_release "${url}" "${DEPLOY_REVISION}"
 done
+verify_login_contract "${AUTH_LOGIN_URL}"
 verify_api_test_frontend
 
 echo "部署完成：$(git rev-parse --short HEAD)"
