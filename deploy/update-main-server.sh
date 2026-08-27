@@ -99,6 +99,74 @@ restart_service_if_present() {
   fi
 }
 
+listener_pids() {
+  if command -v fuser >/dev/null 2>&1; then
+    run_as_root fuser -n tcp "${PORT}" 2>/dev/null || true
+    return 0
+  fi
+  if command -v ss >/dev/null 2>&1; then
+    run_as_root ss -H -ltnp "sport = :${PORT}" 2>/dev/null \
+      | sed -n 's/.*pid=\([0-9][0-9]*\).*/\1/p' \
+      | sort -u
+    return 0
+  fi
+  echo "无法检查 ${PORT} 端口监听进程：服务器缺少 fuser 和 ss" >&2
+  return 2
+}
+
+stop_stale_task_listeners() {
+  local pids
+  pids="$(listener_pids)" || return $?
+  [ -n "${pids}" ] || return 0
+
+  local pid
+  for pid in ${pids}; do
+    local command_line
+    command_line="$(run_as_root ps -p "${pid}" -o args= 2>/dev/null || true)"
+    case "${command_line}" in
+      *task_server*|*midscene-upload.py*|*midscene-task-platform*)
+        echo "停止遗留后端进程：PID ${pid} ${command_line}"
+        run_as_root kill -TERM "${pid}" 2>/dev/null || true
+        ;;
+      *)
+        echo "${PORT} 端口被未知进程占用，拒绝自动终止：PID ${pid} ${command_line:-命令未知}" >&2
+        return 1
+        ;;
+    esac
+  done
+
+  for _ in $(seq 1 20); do
+    [ -z "$(listener_pids)" ] && return 0
+    sleep 0.25
+  done
+  pids="$(listener_pids)"
+  for pid in ${pids}; do
+    echo "遗留后端进程未在 5 秒内退出，强制停止：PID ${pid}" >&2
+    run_as_root kill -KILL "${pid}" 2>/dev/null || true
+  done
+}
+
+restart_task_service_cleanly() {
+  if ! command -v systemctl >/dev/null 2>&1; then
+    echo "缺少 systemctl，无法确保后端进程已替换" >&2
+    return 2
+  fi
+  run_as_root systemctl stop midscene-task.service >/dev/null 2>&1 || true
+  stop_stale_task_listeners
+  run_as_root systemctl start midscene-task.service
+  for _ in $(seq 1 40); do
+    if run_as_root systemctl is-active --quiet midscene-task.service \
+      && curl -fsS --max-time 1 "http://127.0.0.1:${PORT}/api/health" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 0.5
+  done
+  run_as_root systemctl status midscene-task.service --no-pager >&2 || true
+  run_as_root journalctl -u midscene-task.service -n 80 --no-pager >&2 || true
+  echo "后端服务启动后 20 秒内未就绪" >&2
+  return 1
+}
+
 verify_health_release() {
   local url="$1"
   local expected_revision="$2"
@@ -215,7 +283,7 @@ fi
 
 APP_DIR="${APP_DIR}" WEB_DIR="${WEB_DIR}" PORT="${PORT}" RELEASE_REVISION="${DEPLOY_REVISION}" run_as_root bash deploy/install-server.sh
 
-restart_service_if_present midscene-task
+restart_task_service_cleanly
 restart_service_if_present midscene-api-worker
 restart_service_if_present midscene-api-scheduler
 

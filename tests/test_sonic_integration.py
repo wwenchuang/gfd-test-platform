@@ -2869,6 +2869,12 @@ def test_server_main_update_script_pulls_installs_restarts_and_checks_assets():
     assert "verify_health_release" in update_script
     assert "/api/auth/login" in update_script
     assert "登录路由合同检查失败" in update_script
+    assert "restart_task_service_cleanly" in update_script
+    assert "stop_stale_task_listeners" in update_script
+    assert "拒绝自动终止" in update_script
+    assert "systemctl stop midscene-task.service" in update_script
+    assert "systemctl start midscene-task.service" in update_script
+    assert "journalctl -u midscene-task.service" in update_script
     assert "TASK_RELEASE_REVISION" in install_script
     assert "update-main-server.sh" in install_script
 
