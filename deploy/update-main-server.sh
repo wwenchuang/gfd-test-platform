@@ -116,7 +116,7 @@ verify_api_test_frontend() {
     return 1
   fi
 
-  local bundle_text=""
+  local required_text_found=0
   local ref
   while IFS= read -r ref; do
     [ -n "${ref}" ] || continue
@@ -131,12 +131,15 @@ verify_api_test_frontend() {
     local asset_body
     asset_body="$(curl -fsS "${asset_url}")"
     case "${asset_url}" in
-      *.js*) bundle_text="${bundle_text}
-${asset_body}" ;;
+      *.js*)
+        if [ -z "${REQUIRE_API_TEST_TEXT}" ] || [[ "${asset_body}" == *"${REQUIRE_API_TEST_TEXT}"* ]]; then
+          required_text_found=1
+        fi
+        ;;
     esac
   done <<< "${refs}"
 
-  if [ -n "${REQUIRE_API_TEST_TEXT}" ] && ! grep -Fq -- "${REQUIRE_API_TEST_TEXT}" <<< "${bundle_text}"; then
+  if [ -n "${REQUIRE_API_TEST_TEXT}" ] && [ "${required_text_found}" != "1" ]; then
     echo "API testing JS 未包含预期入口文案：${REQUIRE_API_TEST_TEXT}" >&2
     return 1
   fi

@@ -2862,7 +2862,8 @@ def test_server_main_update_script_pulls_installs_restarts_and_checks_assets():
     assert "127.0.0.1:8088/api/health" in update_script
     assert "/api-test/" in update_script
     assert "用例管理" in update_script
-    assert 'grep -Fq -- "${REQUIRE_API_TEST_TEXT}" <<< "${bundle_text}"' in update_script
+    assert '[[ "${asset_body}" == *"${REQUIRE_API_TEST_TEXT}"* ]]' in update_script
+    assert 'required_text_found=1' in update_script
     assert 'printf \'%s\' "${bundle_text}" | grep -q' not in update_script
     assert "update-main-server.sh" in install_script
 
