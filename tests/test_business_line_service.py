@@ -2,6 +2,7 @@ import json
 
 import pytest
 
+from task_server import router as task_router
 from task_server.services import business_line_service, job_service, sonic_service
 
 
@@ -199,8 +200,41 @@ def test_legacy_english_named_app_stays_resolvable_for_history_and_sonic_only(tm
         "package": "com.example.legacy",
         "name": "未标注应用",
         "enabled": True,
+        "historical_only": True,
         "business_lines": [{"id": "biz_school", "name": "校园业务", "enabled": True}],
     }
     sonic_app = next(item for item in sonic_service.sonic_notify_known_apps() if item["package"] == "com.example.legacy")
     assert sonic_app["name"] == "未标注应用"
     assert sonic_app["sonic_project_id"] == "42"
+
+
+def test_task_apps_endpoint_excludes_historical_only_rows_by_default(tmp_path, monkeypatch):
+    path = tmp_path / "task-apps.json"
+    _write_apps(path, [{
+        "package": "com.example.legacy",
+        "name": "com.example.legacy",
+        "enabled": True,
+        "business_lines": [{"id": "biz_school", "name": "校园业务", "enabled": True}],
+        "sonic_project_id": "42",
+    }])
+    monkeypatch.setattr(business_line_service, "TASK_APPS_FILE", str(path))
+    monkeypatch.setattr(sonic_service.cfg, "TASK_APPS_FILE", str(path))
+    monkeypatch.setattr(task_router, "_require_user_auth", lambda handler: False)
+
+    class Handler:
+        def __init__(self):
+            self.payload = None
+
+        def _json(self, payload, status=200):
+            self.payload = payload
+
+    endpoint = task_router.GET_ROUTES["/api/task-apps"]
+    creation_handler = Handler()
+    endpoint(creation_handler, {})
+    history_handler = Handler()
+    endpoint(history_handler, {"include_disabled": "1"})
+
+    assert creation_handler.payload == {"ok": True, "apps": []}
+    assert history_handler.payload["apps"][0]["package"] == "com.example.legacy"
+    assert history_handler.payload["apps"][0]["historical_only"] is True
+    assert sonic_service.sonic_notify_known_apps()[0]["sonic_project_id"] == "42"

@@ -141,6 +141,7 @@ def _historical_test_application(value) -> dict:
         "package": package,
         "name": "未标注应用",
         "enabled": _enabled(value.get("enabled", True)),
+        "historical_only": True,
     }
     raw_lines = value.get("business_lines", value.get("businessLines"))
     if raw_lines is not None:
@@ -165,7 +166,6 @@ def configured_test_applications(include_disabled=False) -> list:
     apps = []
     seen_packages = set()
     for raw in source:
-        historical = False
         try:
             app = normalize_test_application(
                 raw,
@@ -174,14 +174,13 @@ def configured_test_applications(include_disabled=False) -> list:
             )
         except ValueError:
             app = _historical_test_application(raw)
-            historical = True
         if not app:
             continue
         package = app["package"]
         if package in seen_packages:
             continue
         seen_packages.add(package)
-        if include_disabled or (app["enabled"] and not historical):
+        if include_disabled or (app["enabled"] and not app.get("historical_only")):
             apps.append(app)
     return apps
 
