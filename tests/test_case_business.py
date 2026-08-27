@@ -262,6 +262,130 @@ def test_async_ui_generation_threads_second_application_to_business_resolution(m
     assert saved[0]["request_data"]["business"] == "campus"
 
 
+def test_regenerate_yaml_inherits_saved_application_before_mutating_assets(monkeypatch):
+    saved_jobs = []
+    appended_files = []
+    resolution_calls = []
+
+    class Thread:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+        def start(self):
+            return None
+
+    class Handler:
+        status = None
+        payload = None
+
+        def _body(self):
+            return {
+                "case_set_id": "batch-school",
+                "supplement": "补充校园业务校验",
+            }
+
+        def _json(self, payload, status=200):
+            self.payload = payload
+            self.status = status
+
+    def read_json(path, default=None):
+        if "generation-summary" in str(path):
+            return {
+                "title": "校园助手回归",
+                "module": "校园模块",
+                "app_package": "com.example.school",
+                "business": "campus",
+            }
+        return {
+            "title": "校园助手回归",
+            "module": "校园模块",
+            "files": [{"name": "requirement.md"}],
+            "app_package": "com.example.school",
+            "business": "campus",
+        }
+
+    def resolve_business(request, persisted_meta=None, *, app_package):
+        resolution_calls.append((dict(request), dict(persisted_meta or {}), app_package))
+        if app_package != "com.example.school":
+            raise ValueError("所属业务不属于当前应用")
+        return "campus"
+
+    monkeypatch.setattr(task_router, "read_json_file", read_json)
+    monkeypatch.setattr(task_router, "generation_summary_path", lambda value: f"generation-summary/{value}")
+    monkeypatch.setattr(task_router, "asset_meta_path", lambda value: f"asset-meta/{value}")
+    monkeypatch.setattr(task_router, "find_figma_url_for_case_set", lambda *_args, **_kwargs: "")
+    monkeypatch.setattr(task_router, "resolve_ui_generation_business", resolve_business)
+    monkeypatch.setattr(
+        task_router,
+        "append_asset_files",
+        lambda case_set_id, title, module, files: appended_files.append((case_set_id, title, module, files)) or read_json("asset-meta"),
+    )
+    monkeypatch.setattr(task_router, "update_asset_request_context", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(task_router, "generate_job_id", lambda: "regen-school")
+    monkeypatch.setattr(task_router, "save_generate_job", lambda job: saved_jobs.append(job))
+    monkeypatch.setattr(task_router, "sanitize_generate_job_for_client", lambda job: job)
+    monkeypatch.setattr(task_router.threading, "Thread", Thread)
+
+    handler = Handler()
+    task_router._post_ui_regenerate_yaml_async(handler, {})
+
+    assert handler.status == 200
+    assert resolution_calls[0][2] == "com.example.school"
+    assert saved_jobs[0]["request_data"]["app_package"] == "com.example.school"
+    assert appended_files and appended_files[0][0] == "batch-school"
+
+
+def test_regenerate_yaml_validation_failure_does_not_append_assets(monkeypatch):
+    appended_files = []
+
+    class Handler:
+        status = None
+        payload = None
+
+        def _body(self):
+            return {"case_set_id": "batch-disabled", "supplement": "不应保存"}
+
+        def _json(self, payload, status=200):
+            self.payload = payload
+            self.status = status
+
+    def read_json(path, default=None):
+        if "generation-summary" in str(path):
+            return {
+                "title": "停用应用回归",
+                "module": "历史模块",
+                "app_package": "com.example.disabled",
+                "business": "history",
+            }
+        return {
+            "files": [{"name": "requirement.md"}],
+            "app_package": "com.example.disabled",
+            "business": "history",
+        }
+
+    monkeypatch.setattr(task_router, "read_json_file", read_json)
+    monkeypatch.setattr(task_router, "generation_summary_path", lambda value: f"generation-summary/{value}")
+    monkeypatch.setattr(task_router, "asset_meta_path", lambda value: f"asset-meta/{value}")
+    monkeypatch.setattr(task_router, "find_figma_url_for_case_set", lambda *_args, **_kwargs: "")
+    monkeypatch.setattr(
+        task_router,
+        "resolve_ui_generation_business",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(ValueError("应用已停用")),
+    )
+    monkeypatch.setattr(
+        task_router,
+        "append_asset_files",
+        lambda *args, **kwargs: appended_files.append((args, kwargs)) or read_json("asset-meta"),
+    )
+
+    handler = Handler()
+    task_router._post_ui_regenerate_yaml_async(handler, {})
+
+    assert handler.status == 400
+    assert handler.payload["error"] == "应用已停用"
+    assert appended_files == []
+
+
 def test_resolve_ui_generation_business_inherits_regenerated_batch():
     assert yaml_service.resolve_ui_generation_business(
         {"regenerate": True, "reuse_assets": True},

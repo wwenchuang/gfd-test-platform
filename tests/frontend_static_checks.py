@@ -223,6 +223,7 @@ def main():
     utils_js = (JS_DIR / "utils.js").read_text(encoding="utf-8")
     state_js = (JS_DIR / "state.js").read_text(encoding="utf-8")
     app_js = (JS_DIR / "app.js").read_text(encoding="utf-8")
+    agent_workbench_js = (JS_DIR / "agent-workbench.js").read_text(encoding="utf-8")
     agent_status_js = (JS_DIR / "agent-status.js").read_text(encoding="utf-8")
     navigation_js = (JS_DIR / "navigation.js").read_text(encoding="utf-8")
     app_css = (ROOT / "css" / "app.css").read_text(encoding="utf-8")
@@ -606,6 +607,13 @@ def main():
         "第 1 步" in html and "第 2 步" in html,
         "Agent setup steps must use readable Chinese ordinal labels",
     )
+    require(
+        "apiRequest('/task-apps')" in html
+        and "apiRequest('/apps')" not in agent_workbench_js
+        and "handleAgentApplicationChange" in agent_workbench_js,
+        "Agent creation must use the configurable application catalog and refresh app-scoped business options",
+    )
+    require("[hidden]" in (ROOT / "css" / "app.css").read_text(encoding="utf-8"), "Semantic hidden controls must not be overridden by component display rules")
     require("第 ${escapeHtml(section.index)} 步" in html and "STEP ${escapeHtml(section.index)}" not in html, "Workflow guides must use Chinese step labels")
     trace_viewer = (ROOT / "trace-viewer.html").read_text(encoding="utf-8")
     require("Execution Trace Viewer" in trace_viewer and "/debug/traces" in trace_viewer and "sessionToken" in trace_viewer, "Trace viewer must render real trace data with session auth")

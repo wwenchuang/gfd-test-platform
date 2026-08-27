@@ -3556,6 +3556,32 @@ def _post_ui_regenerate_yaml_async(handler, qs):
     if not meta or not meta.get("files"):
         handler._json({"ok": False, "error": "这个生成批次没有可复用的需求资料，请重新上传需求后生成"}, 400)
         return
+    saved_app_package = str(
+        summary.get("app_package") or summary.get("appPackage")
+        or meta.get("app_package") or meta.get("appPackage")
+        or d.get("app_package") or d.get("appPackage")
+        or os.getenv("APP_PACKAGE", DEFAULT_APP_PACKAGE)
+    ).strip()
+    inherited_business = (
+        d.get("business") or d.get("business_type") or d.get("businessType")
+        or summary.get("business") or meta.get("business") or ""
+    )
+    validation_request = {
+        **d,
+        "app_package": saved_app_package,
+        "business": inherited_business,
+        "reuse_assets": True,
+        "regenerate": True,
+    }
+    try:
+        resolved_business = resolve_ui_generation_business(
+            validation_request,
+            meta,
+            app_package=saved_app_package,
+        )
+    except ValueError as e:
+        handler._json({"ok": False, "error": str(e)}, 400)
+        return
     supplement_files = d.get("files") or []
     supplement_text = (d.get("supplement") or d.get("supplement_text") or d.get("confirmation") or "").strip()
     if supplement_text:
@@ -3585,12 +3611,9 @@ def _post_ui_regenerate_yaml_async(handler, qs):
         "case_set_id": case_set_id,
         "title": d.get("title") or summary.get("title") or meta.get("title") or "UI自动化用例",
         "module": d.get("module") or summary.get("module") or meta.get("module") or "AI测试",
-        "business": (
-            d.get("business") or d.get("business_type") or d.get("businessType")
-            or summary.get("business") or meta.get("business") or ""
-        ),
+        "business": resolved_business,
         "file": d.get("file") or summary.get("yaml_file") or f"task-{slug_for_file(summary.get('title') or meta.get('title') or 'UI自动化用例')}.yaml",
-        "app_package": d.get("app_package") or d.get("appPackage") or os.getenv("APP_PACKAGE", DEFAULT_APP_PACKAGE),
+        "app_package": saved_app_package,
         "knowledge_page_ids": knowledge_page_ids,
         "knowledge_tier": knowledge_tier,
         "figma_url": figma_url,
@@ -3602,15 +3625,6 @@ def _post_ui_regenerate_yaml_async(handler, qs):
         "reuse_assets": True,
         "regenerate": True
     }
-    try:
-        request_data["business"] = resolve_ui_generation_business(
-            request_data,
-            meta,
-            app_package=request_data.get("app_package") or request_data.get("appPackage") or "",
-        )
-    except ValueError as e:
-        handler._json({"ok": False, "error": str(e)}, 400)
-        return
     update_asset_request_context(case_set_id, request_data)
     job_id = generate_job_id()
     job = {

@@ -8,43 +8,59 @@ const agentTimelineDetailStates = new Map();
 let agentRestoringTimelineDetails = false;
 let lastAgentPlanPreviewText = '';
 let agentBusinessDraft = '';
+let agentApplicationCatalog = [];
 const DEFAULT_AGENT_APP_NAME = '智小白3D APP';
 const DEFAULT_AGENT_APP_PACKAGE = 'com.kfb.model';
 
-function rememberAgentBusiness(value) {
-  const activeIds = taskAppBusinessLines(DEFAULT_AGENT_APP_PACKAGE).map(item => item.id);
+function agentApplicationPackage(app = {}) {
+  return String(app.package || app.appPackage || app.app_package || '').trim();
+}
+
+function agentApplicationByPackage(packageName = '') {
+  return agentApplicationCatalog.find(app => agentApplicationPackage(app) === packageName) || null;
+}
+
+function agentBusinessLines(packageName = '') {
+  const app = agentApplicationByPackage(packageName);
+  return (Array.isArray(app?.business_lines) ? app.business_lines : [])
+    .filter(item => item && item.id && item.enabled !== false);
+}
+
+function rememberAgentBusiness(value, appPackage = selectedAgentAppPackage()) {
+  const activeIds = agentBusinessLines(appPackage).map(item => item.id);
   agentBusinessDraft = activeIds.includes(value) ? value : '';
 }
 
-function agentBusinessOptionsHtml() {
-  return '<option value="">请选择所属业务</option>' + taskAppBusinessLines(DEFAULT_AGENT_APP_PACKAGE)
-    .map(item => `<option value="${escapeHtml(item.id)}">${escapeHtml(item.name)}</option>`)
+function agentBusinessOptionsHtml(appPackage = '', selectedValue = '') {
+  return '<option value="">请选择所属业务</option>' + agentBusinessLines(appPackage)
+    .map(item => `<option value="${escapeHtml(item.id)}" ${item.id === selectedValue ? 'selected' : ''}>${escapeHtml(item.name)}</option>`)
     .join('');
 }
 
-function agentDefaultApp() {
-  return {
-    name: DEFAULT_AGENT_APP_NAME,
-    package: DEFAULT_AGENT_APP_PACKAGE,
-    modules: []
-  };
-}
-
 function agentAppsWithDefault(apps) {
-  const list = Array.isArray(apps) ? apps.filter(Boolean) : [];
-  const hasDefault = list.some(app => {
-    const name = String(app.name || '').trim();
-    const packageName = String(app.package || app.appPackage || app.app_package || '').trim();
-    return name === DEFAULT_AGENT_APP_NAME || packageName === DEFAULT_AGENT_APP_PACKAGE;
-  });
-  return hasDefault ? list : [agentDefaultApp(), ...list];
+  return (Array.isArray(apps) ? apps : []).filter(app => (
+    app
+    && agentApplicationPackage(app)
+    && app.enabled !== false
+    && app.historical_only !== true
+  ));
 }
 
 function appendAgentAppOptions(select, apps, preferredValue) {
   if (!select) return;
-  const currentValue = preferredValue || select.value || DEFAULT_AGENT_APP_NAME;
+  const currentValue = preferredValue || select.value || '';
   select.innerHTML = '';
-  agentAppsWithDefault(apps).forEach(app => {
+  const activeApps = agentAppsWithDefault(apps);
+  if (!activeApps.length) {
+    const empty = document.createElement('option');
+    empty.value = '';
+    empty.textContent = '暂无已启用应用';
+    select.appendChild(empty);
+    select.disabled = true;
+    return;
+  }
+  select.disabled = false;
+  activeApps.forEach(app => {
     const opt = document.createElement('option');
     opt.value = app.name || app.package || '';
     opt.textContent = app.name || app.package || '未命名应用';
@@ -56,13 +72,27 @@ function appendAgentAppOptions(select, apps, preferredValue) {
   const selectedOption = options.find(o => (
     o.value === currentValue ||
     o.dataset.package === currentValue
-  )) || options.find(o => (
-    o.value === DEFAULT_AGENT_APP_NAME ||
-    o.dataset.package === DEFAULT_AGENT_APP_PACKAGE
-  ));
+  )) || options[0];
   if (selectedOption) {
     select.value = selectedOption.value;
   }
+}
+
+function renderAgentBusinessOptions(preferredValue = '') {
+  const select = document.getElementById('agent-business');
+  if (!select) return;
+  const appPackage = selectedAgentAppPackage();
+  const lines = agentBusinessLines(appPackage);
+  const selected = lines.some(item => item.id === preferredValue) ? preferredValue : '';
+  select.innerHTML = agentBusinessOptionsHtml(appPackage, selected);
+  select.value = selected;
+  select.disabled = !lines.length;
+  agentBusinessDraft = selected;
+}
+
+function handleAgentApplicationChange() {
+  renderAgentBusinessOptions('');
+  refreshAgentRunnerDeviceByApp();
 }
 
 function normalizeAgentProviderList(data) {
@@ -657,7 +687,7 @@ async function showAgentWorkbench() {
             <div class="agent-compact-grid">
               <div class="agent-field">
                 <label for="agent-app-name">应用</label>
-                <select id="agent-app-name" onchange="refreshAgentRunnerDeviceByApp()">
+                <select id="agent-app-name" onchange="handleAgentApplicationChange()">
                   <option value="智小白3D APP" data-package="com.kfb.model" selected>智小白3D</option>
                 </select>
               </div>
@@ -872,7 +902,7 @@ async function showAgentWorkbench() {
   renderAgentSourceFileList();
   renderAgentCenter();
   updateToolbarState();
-  loadAppList(savedFormState['agent-app-name']?.value);
+  loadAppList(savedFormState['agent-app-name']?.value, savedFormState['agent-business']?.value || agentBusinessDraft);
   renderAgentRunnerDeviceOptions(savedFormState['agent-runner-device']?.value);
   if (!AppState.loaded.runners) {
     loadRunnerDevices({force: true, quiet: true}).then(() => {
@@ -895,16 +925,18 @@ async function showAgentWorkbench() {
   await loadAgentModelOptions(savedFormState['agent-model']?.value);
 }
 
-// Load available apps from /api/apps and populate select elements
-async function loadAppList(preferredValue) {
+// Load the enabled platform application catalog for Agent creation.
+async function loadAppList(preferredValue, preferredBusiness = '') {
   try {
-    const data = await apiRequest('/apps');
-    const apps = data.apps || [];
+    const data = await apiRequest('/task-apps');
+    const apps = agentAppsWithDefault(data.apps || []);
+    agentApplicationCatalog = apps;
 
     // Populate workbench select
     const workbenchSelect = document.getElementById('agent-app-name');
     if (workbenchSelect) {
       appendAgentAppOptions(workbenchSelect, apps, preferredValue);
+      renderAgentBusinessOptions(preferredBusiness);
       if (typeof updateAgentRunnerDeviceHint === 'function') updateAgentRunnerDeviceHint();
     }
 
@@ -4051,7 +4083,7 @@ async function previewAgentPlan() {
         'Agent 启动前预览：',
         `模式：${agentModeText(plan.mode || payload.mode)}`,
         `应用：${plan.appName || payload.appName} / ${plan.platform || payload.platform}`,
-        `所属业务：${businessLineLabel(payload.business, DEFAULT_AGENT_APP_PACKAGE)}`,
+        `所属业务：${businessLineLabel(payload.business, payload.app_package)}`,
         `范围：${plan.scope || payload.scope}`,
         runnerLine,
         `输入来源：${payload.sourceType || 'manual'}`,

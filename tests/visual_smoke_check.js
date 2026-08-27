@@ -20,6 +20,8 @@ function json(res, body) {
 
 function serve() {
   let fileReadCount = 0;
+  let lastAgentPreviewRequest = null;
+  let lastAgentStartRequest = null;
   const server = http.createServer((req, res) => {
     const url = new URL(req.url, 'http://127.0.0.1');
     if (url.pathname === '/' || url.pathname === '/task-manager.html') {
@@ -341,20 +343,26 @@ function serve() {
       return;
     }
     if (url.pathname === '/api/agent-runs/preview' && req.method === 'POST') {
-      json(res, {
-        ok: true,
-        plan: {
-          mode: 'AUTO_SAFE',
-          appName: '智小白3D APP',
-          platform: 'android',
-          scope: 'auto',
-          steps: [
-            '1. 理解目标和输入资料',
-            '2. 整理 Figma、需求文档和截图',
-            '3. 生成并校验 YAML',
-            '4. 交给 Runner 执行并刷新状态'
-          ],
-        },
+      let body = '';
+      req.on('data', chunk => { body += chunk; });
+      req.on('end', () => {
+        lastAgentPreviewRequest = JSON.parse(body || '{}');
+        json(res, {
+          ok: true,
+          plan: {
+            mode: 'AUTO_SAFE',
+            appName: lastAgentPreviewRequest.appName,
+            business: lastAgentPreviewRequest.business,
+            platform: 'android',
+            scope: 'auto',
+            steps: [
+              '1. 理解目标和输入资料',
+              '2. 整理 Figma、需求文档和截图',
+              '3. 生成并校验 YAML',
+              '4. 交给 Runner 执行并刷新状态'
+            ],
+          },
+        });
       });
       return;
     }
@@ -362,6 +370,7 @@ function serve() {
       let body = '';
       req.on('data', chunk => { body += chunk; });
       req.on('end', () => {
+        lastAgentStartRequest = JSON.parse(body || '{}');
         json(res, {
           ok: true,
           run: {
@@ -458,6 +467,8 @@ function serve() {
         server,
         url: `http://127.0.0.1:${address.port}/task-manager.html`,
         getFileReadCount: () => fileReadCount,
+        getLastAgentPreviewRequest: () => lastAgentPreviewRequest,
+        getLastAgentStartRequest: () => lastAgentStartRequest,
       });
     });
   });
@@ -477,7 +488,7 @@ async function anyVisible(locator) {
 
 (async () => {
   fs.mkdirSync(ARTIFACTS, {recursive: true});
-  const {server, url, getFileReadCount} = await serve();
+  const {server, url, getFileReadCount, getLastAgentPreviewRequest, getLastAgentStartRequest} = await serve();
   const browser = await chromium.launch({headless: true});
   try {
     const page = await browser.newPage({viewport: {width: 1440, height: 900}});
@@ -578,6 +589,7 @@ async function anyVisible(locator) {
     if (!await page.locator('.generate-business-field', {hasText: '所属业务'}).isVisible()) throw new Error('UI generation modal is missing the business selector');
     if (await page.locator('input[name="generate-business"]:checked').count()) throw new Error('UI generation business must not have a silent default');
     if (!await page.locator('#generate-business-options', {hasText: '校园业务'}).isVisible()) throw new Error('UI generation modal did not load the selected application business lines');
+    if (await page.locator('#generate-app-config-action').isVisible()) throw new Error('Application configuration action must stay hidden while enabled applications exist');
     await page.screenshot({path: path.join(ARTIFACTS, 'generate-business.png'), fullPage: true});
     await page.setViewportSize({width: 390, height: 844});
     const mobileBusinessBox = await page.locator('.generate-business-field').boundingBox();
@@ -640,6 +652,22 @@ async function anyVisible(locator) {
     if (!await page.locator('.agent-start-layout').isVisible()) throw new Error('Agent grouped start layout is missing');
     if (await page.locator('.agent-form-section').count() < 2) throw new Error('Agent form sections are missing');
     if (!await page.locator('.agent-start-button').isVisible()) throw new Error('Agent start button is missing after layout change');
+    await page.selectOption('#agent-app-name', {label: '校园助手'});
+    if (await page.locator('#agent-business option[value="home"]').count()) throw new Error('Agent must not retain the primary application business options after switching applications');
+    if (await page.locator('#agent-business option[value="campus"]').count() !== 1) throw new Error('Agent must render business options for the selected configured application');
+    if (await page.locator('#agent-business').inputValue()) throw new Error('Agent must clear the previous business after switching applications');
+    await page.selectOption('#agent-business', 'campus');
+    await page.fill('#agent-goal', '校园助手登录流程回归');
+    await page.click('button:has-text("预览计划")');
+    await page.waitForSelector('#modal-agent-plan-preview.show');
+    const campusPreviewRequest = getLastAgentPreviewRequest();
+    if (campusPreviewRequest?.app_package !== 'com.example.school' || campusPreviewRequest?.business !== 'campus') {
+      throw new Error(`Agent preview did not submit the selected configured application identity: ${JSON.stringify(campusPreviewRequest)}`);
+    }
+    if (!/应用：校园助手/.test(await page.locator('#agent-plan-preview-body').innerText())) throw new Error('Agent preview did not display the configured second application');
+    await page.click('#modal-agent-plan-preview .btn-cancel');
+    await page.selectOption('#agent-app-name', {label: '智小白3D'});
+    if (await page.locator('#agent-business').inputValue()) throw new Error('Agent application changes must clear an incompatible business selection');
     await page.waitForFunction(() => {
       const hint = document.querySelector('#agent-runner-device-hint');
       return hint && hint.innerText.includes('win-runner-01') && hint.innerText.includes('com.kfb.model 1.16.0 (38)');
@@ -670,8 +698,14 @@ async function anyVisible(locator) {
     if (!await page.locator('text=还没有选择运行记录').isVisible()) throw new Error('Agent workbench should open in new-run mode');
     if (await page.locator('text=Agent 执行阶段').isVisible()) throw new Error('Agent workbench should not show the previous run phases by default');
     await page.fill('#agent-goal', '关节龙打印流程回归');
+    await page.selectOption('#agent-app-name', {label: '校园助手'});
+    await page.selectOption('#agent-business', 'campus');
     await page.click('#agent-start-btn');
     await page.waitForSelector('text=Agent 执行阶段');
+    const campusStartRequest = getLastAgentStartRequest();
+    if (campusStartRequest?.app_package !== 'com.example.school' || campusStartRequest?.business !== 'campus') {
+      throw new Error(`Agent start did not preserve the selected configured application identity: ${JSON.stringify(campusStartRequest)}`);
+    }
     await page.waitForSelector('.agent-phase-list');
     if (await page.locator('.agent-phase-step').count() !== 5) throw new Error('The normal Agent path should show five phases; failure recovery must remain conditional');
     if (await page.locator('.agent-checkpoint-trace').evaluate(el => el.open)) throw new Error('Internal Agent checkpoints should be collapsed by default');
