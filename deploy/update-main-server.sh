@@ -136,7 +136,7 @@ ${asset_body}" ;;
     esac
   done <<< "${refs}"
 
-  if [ -n "${REQUIRE_API_TEST_TEXT}" ] && ! printf '%s' "${bundle_text}" | grep -q "${REQUIRE_API_TEST_TEXT}"; then
+  if [ -n "${REQUIRE_API_TEST_TEXT}" ] && ! grep -Fq -- "${REQUIRE_API_TEST_TEXT}" <<< "${bundle_text}"; then
     echo "API testing JS 未包含预期入口文案：${REQUIRE_API_TEST_TEXT}" >&2
     return 1
   fi
