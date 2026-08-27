@@ -316,6 +316,47 @@ function renderAppPackageSelects() {
   });
 }
 
+function selectedGenerateApplication() {
+  const packageName = document.getElementById('generate-application')?.value || '';
+  return taskApps.find(app => app.package === packageName && app.enabled !== false) || null;
+}
+
+function renderGenerateApplicationOptions(selectedPackage = '') {
+  const select = document.getElementById('generate-application');
+  const detail = document.getElementById('generate-app-package-detail');
+  const name = document.querySelector('.generate-application-name');
+  const activeApps = taskApps.filter(app => app && app.package && app.enabled !== false);
+  if (!select) return;
+  const current = activeApps.some(app => app.package === selectedPackage) ? selectedPackage : '';
+  select.innerHTML = '<option value="">选择已启用应用</option>' + activeApps.map(app => (
+    `<option value="${escapeHtml(app.package)}">${escapeHtml(app.name || app.package)}</option>`
+  )).join('');
+  select.value = current;
+  select.disabled = !activeApps.length;
+  if (detail) detail.value = current;
+  if (name) name.textContent = current ? (selectedGenerateApplication()?.name || current) : (activeApps.length ? '未选择应用' : '暂无已启用应用');
+  document.getElementById('generate-app-package').value = current;
+}
+
+function handleGenerateApplicationChange() {
+  const app = selectedGenerateApplication();
+  const packageName = app?.package || '';
+  document.getElementById('generate-app-package').value = packageName;
+  const detail = document.getElementById('generate-app-package-detail');
+  const name = document.querySelector('.generate-application-name');
+  if (detail) detail.value = packageName;
+  if (name) name.textContent = app?.name || (taskApps.some(item => item.enabled !== false) ? '未选择应用' : '暂无已启用应用');
+  renderGenerateBusinessOptions("");
+  updateGenerateAppHint();
+  if (packageName) {
+    rememberAppPackage(packageName);
+    loadGenerateKnowledgePages();
+  } else {
+    generateKnowledgePages = [];
+    renderGenerateKnowledgePages();
+  }
+}
+
 function syncAppSelect(scope) {
   const select = document.getElementById(`${scope}-app-select`);
   const input = document.getElementById(`${scope}-app-package`);
@@ -335,9 +376,9 @@ function selectAppPackage(scope, appPackage) {
     renderKnowledgeApps();
     loadKnowledgePages();
   } else if (scope === 'generate') {
-    renderGenerateBusinessOptions();
-    updateGenerateAppHint();
-    loadGenerateKnowledgePages();
+    const application = taskApps.find(app => app.package === appPackage && app.enabled !== false);
+    renderGenerateApplicationOptions(application?.package || '');
+    handleGenerateApplicationChange();
   } else if (scope === 'mindmap') {
     rememberAppPackage(appPackage);
   }
@@ -347,7 +388,7 @@ function updateGenerateAppHint() {
   const hint = document.getElementById('generate-app-hint');
   if (!hint) return;
   const mod = document.getElementById('generate-module')?.value || '';
-  const appPackage = document.getElementById('generate-app-package')?.value.trim() || '';
+  const appPackage = selectedGenerateApplication()?.package || '';
   const mappedApp = moduleApp(mod);
   if (mod && mappedApp) {
     hint.textContent = `当前模块「${mod}」绑定应用：${appDisplayLabel(mappedApp.package)}。生成时只会参考这个 APP 的页面知识。`;
@@ -359,14 +400,9 @@ function updateGenerateAppHint() {
 }
 
 function handleGenerateAppInput(appPackage) {
-  rememberAppPackage(appPackage);
-  syncAppSelect('generate');
-  updateGenerateAppHint();
-  renderGenerateBusinessOptions();
-  if (generateAppInputTimer) clearTimeout(generateAppInputTimer);
-  generateAppInputTimer = setTimeout(() => {
-    loadGenerateKnowledgePages();
-  }, 300);
+  const app = taskApps.find(item => item.package === appPackage && item.enabled !== false);
+  renderGenerateApplicationOptions(app?.package || '');
+  handleGenerateApplicationChange();
 }
 
 function handleMindmapAppInput(appPackage) {
@@ -378,9 +414,8 @@ function syncGenerateAppFromModule() {
   const mod = document.getElementById('generate-module')?.value || '';
   const packageName = moduleAppPackage(mod);
   if (packageName) {
-    document.getElementById('generate-app-package').value = packageName;
-    rememberAppPackage(packageName);
-    syncAppSelect('generate');
+    renderGenerateApplicationOptions(packageName);
+    handleGenerateApplicationChange();
   } else {
     updateGenerateAppHint();
   }
@@ -391,11 +426,11 @@ function syncGenerateAppFromModule() {
 function renderGenerateBusinessOptions(selectedValue = null) {
   const container = document.getElementById('generate-business-options');
   if (!container) return;
-  const packageName = document.getElementById('generate-app-package')?.value.trim() || TEST_APP_PACKAGE;
+  const packageName = selectedGenerateApplication()?.package || '';
   const current = selectedValue === null
     ? (document.querySelector('input[name="generate-business"]:checked')?.value || '')
     : String(selectedValue || '');
-  const lines = taskAppBusinessLines(packageName);
+  const lines = packageName ? taskAppBusinessLines(packageName) : [];
   if (!lines.length) {
     container.innerHTML = '<span class="generate-business-empty">当前应用没有启用的业务线，请先到应用配置中维护。</span>';
     return;
@@ -2957,7 +2992,15 @@ function generationJobBusiness(job) {
   const result = job.result || {};
   const request = job.request_summary || {};
   const business = result.business || result.summary?.business || request.business || '';
-  return businessLineLabel(business);
+  return businessLineLabel(business, generationJobApplication(job).package);
+}
+
+function generationJobApplication(job) {
+  const result = job.result || {};
+  const request = job.request_summary || {};
+  const packageName = result.app_package || result.summary?.app_package || request.app_package || job.app_package || '';
+  const app = taskApps.find(item => item.package === packageName) || {};
+  return {package: packageName, name: result.app_name || result.summary?.app_name || request.app_name || app.name || packageName};
 }
 
 function generationFailureHtml(job={}) {
@@ -3155,6 +3198,7 @@ function generationRecordCard(job) {
   const mod = generationJobModule(job);
   const caseSetId = generationJobCaseSetId(job);
   const counts = generationJobCounts(job);
+  const application = generationJobApplication(job);
   const business = generationJobBusiness(job);
   const error = jobErrorText(job);
   const timingText = jobTimingText(job);
@@ -3168,7 +3212,7 @@ function generationRecordCard(job) {
         <div>
           <div class="generation-record-title">${escapeHtml(title)}</div>
           <div class="generation-record-meta">
-            ${escapeHtml([mod, business, job.step, timingText || jobTimeText(job)].filter(Boolean).join(' · '))}
+            ${escapeHtml([application.name, mod, business, job.step, timingText || jobTimeText(job)].filter(Boolean).join(' · '))}
             ${caseSetId ? `<br>批次：${escapeHtml(caseSetId)}` : ''}
           </div>
         </div>
@@ -4721,9 +4765,7 @@ function removeGenerateAsset(index) {
 
 function resetGenerateModal() {
   stopGenerateProgress();
-  const currentKnowledgeApp = document.getElementById('knowledge-app-package')?.value.trim();
-  document.getElementById('generate-app-package').value = moduleAppPackage(currentModule) || currentKnowledgeApp || 'com.kfb.model';
-  syncAppSelect('generate');
+  renderGenerateApplicationOptions('');
   document.getElementById('generate-title').value = '';
   document.getElementById('generate-file').value = '';
   document.getElementById('generate-content').value = '';
@@ -4790,8 +4832,8 @@ function showGenerateYaml() {
   setGenerateStatus('先上传资料或粘贴说明，平台会先做需求分析、用例分类，再生成可调试的 Midscene 自动化脚本。');
   document.getElementById('modal-generate').classList.add('show');
   loadKnowledgeApps().then(() => {
-    syncAppSelect('generate');
-    loadGenerateKnowledgePages();
+    renderGenerateApplicationOptions(moduleAppPackage(currentModule));
+    handleGenerateApplicationChange();
   });
   loadRunnerDevices();
 }
@@ -5095,7 +5137,7 @@ function isEditablePasteTarget(target) {
 async function generateYaml() {
   const mod = document.getElementById('generate-module').value;
   const title = document.getElementById('generate-title').value.trim() || 'UI自动化用例';
-  const appPackage = document.getElementById('generate-app-package').value.trim() || 'com.kfb.model';
+  const appPackage = selectedGenerateApplication()?.package || '';
   const fileInput = document.getElementById('generate-file').value.trim();
   const content = document.getElementById('generate-content').value.trim();
   const figmaUrl = document.getElementById('generate-figma-url').value.trim();
@@ -5109,6 +5151,11 @@ async function generateYaml() {
   const knowledgeTier = document.getElementById('generate-knowledge-tier').value || 'all';
   const business = document.querySelector('input[name="generate-business"]:checked')?.value || '';
 
+  if (!appPackage) {
+    setGenerateStatus('请选择已启用应用。', 'error');
+    showToast('请选择已启用应用', 'error');
+    return;
+  }
   if (!business) {
     setGenerateStatus('请选择所属业务。', 'error');
     showToast('请选择所属业务', 'error');

@@ -4096,6 +4096,7 @@ function filterTaskAppModules(query = '', onlyUnassigned = null) {
 function clearTaskAppForm() {
   document.getElementById('task-app-name').value = '';
   document.getElementById('task-app-package').value = '';
+  document.getElementById('task-app-enabled').checked = true;
   document.getElementById('task-app-sonic-project-name').value = '';
   document.getElementById('task-app-sonic-project-id').value = '';
   document.getElementById('task-app-sonic-suite-name').value = '';
@@ -4110,6 +4111,7 @@ function editTaskApp(packageName) {
   if (!app) return;
   document.getElementById('task-app-name').value = app.name || '';
   document.getElementById('task-app-package').value = app.package || '';
+  document.getElementById('task-app-enabled').checked = app.enabled !== false;
   document.getElementById('task-app-sonic-project-name').value = app.sonic_project_name || '';
   document.getElementById('task-app-sonic-project-id').value = app.sonic_project_id || '';
   document.getElementById('task-app-sonic-suite-name').value = app.sonic_suite_name || '';
@@ -4181,6 +4183,7 @@ async function saveTaskApp() {
       body: JSON.stringify({
         name,
         package: packageName,
+        enabled: document.getElementById('task-app-enabled').checked,
         business_lines: businessLines,
         modules: selectedModules,
         sonic_project_name: sonicProjectName,

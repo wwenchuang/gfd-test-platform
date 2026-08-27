@@ -44,6 +44,58 @@ def test_update_task_case_business_persists_by_stable_case_id(monkeypatch):
     assert result["business"] == "shared"
 
 
+def test_update_task_case_business_validates_against_case_application(monkeypatch):
+    monkeypatch.setattr(case_service, "find_task_case_asset", lambda _case_id: {
+        "case_id": "case-1",
+        "module": "校园打印",
+        "file": "校园.yaml",
+        "task_name": "校园打印",
+        "app_package": "com.example.school",
+    })
+    monkeypatch.setattr(case_service, "_get_task_key", lambda: (lambda module, file: f"{module}::{file}"))
+    monkeypatch.setattr(case_service, "_get_load_task_meta", lambda: {})
+    monkeypatch.setattr(case_service, "_get_update_task_meta", lambda *_args: {})
+    calls = []
+
+    def resolve_business(value, **kwargs):
+        calls.append((value, kwargs))
+        return "campus"
+
+    monkeypatch.setattr(case_service, "business_line_id", resolve_business)
+
+    result = case_service.update_task_case_business("case-1", "校园版")
+
+    assert result["business"] == "campus"
+    assert calls == [("校园版", {"app_package": "com.example.school", "require_active": True})]
+
+
+def test_task_case_info_resolves_metadata_business_in_its_application(monkeypatch):
+    monkeypatch.setattr(case_service, "resolve_app_package", lambda *_args, **_kwargs: "com.example.school")
+    monkeypatch.setattr(case_service, "extract_baseline_meta_from_block", lambda _block: {"case_id": "case-1"})
+    monkeypatch.setattr(case_service, "_get_task_app_map", lambda: {"com.example.school": {"name": "校园助手"}})
+    monkeypatch.setattr(case_service, "_get_task_key", lambda: (lambda module, file: f"{module}::{file}"))
+    monkeypatch.setattr(case_service, "_get_load_task_meta", lambda: {
+        "校园打印::校园.yaml": {"case_businesses": {"case-1": "campus"}},
+    })
+    calls = []
+    monkeypatch.setattr(
+        case_service,
+        "business_line_id",
+        lambda value, **kwargs: calls.append((value, kwargs)) or "campus",
+    )
+
+    row = case_service.task_case_info(
+        "校园打印",
+        "校园.yaml",
+        "android: {}\ntasks: []",
+        {"name": "校园打印", "start": 0, "block": "# baseline.case_id: case-1"},
+    )
+
+    assert row["app_name"] == "校园助手"
+    assert row["business"] == "campus"
+    assert calls == [("campus", {"app_package": "com.example.school"})]
+
+
 @pytest.mark.parametrize(("value", "expected"), [
     ("home", "home"),
     ("家用", "home"),

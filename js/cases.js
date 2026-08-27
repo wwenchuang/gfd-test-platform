@@ -17,7 +17,7 @@ async function loadModules(options = {}) {
     try {
       const [moduleData, appData, metaData, sonicData] = await Promise.all([
         apiRequest('/modules'),
-        apiRequest('/task-apps').catch(() => null),
+        apiRequest('/task-apps?include_disabled=1').catch(() => null),
         apiRequest('/task-meta').catch(() => null),
         apiRequest('/sonic/cases').catch(() => null)
       ]);

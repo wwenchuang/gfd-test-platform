@@ -15,10 +15,11 @@ function defaultBusinessLines() {
 
 function taskAppBusinessLines(packageName = TEST_APP_PACKAGE, includeDisabled = false) {
   const apps = typeof taskApps === 'undefined' ? [] : taskApps;
-  const app = apps.find(item => String(item?.package || '').trim() === String(packageName || TEST_APP_PACKAGE).trim());
-  const source = Array.isArray(app?.business_lines) && app.business_lines.length
+  const normalizedPackage = String(packageName || '').trim();
+  const app = apps.find(item => String(item?.package || '').trim() === normalizedPackage);
+  const source = Array.isArray(app?.business_lines)
     ? app.business_lines
-    : defaultBusinessLines();
+    : (normalizedPackage === TEST_APP_PACKAGE ? defaultBusinessLines() : []);
   const rows = source
     .filter(item => item && String(item.id || '').trim() && String(item.name || '').trim())
     .map(item => ({id: String(item.id).trim(), name: String(item.name).trim(), enabled: item.enabled !== false}));

@@ -422,6 +422,10 @@
       <input type="text" id="task-app-name" placeholder="如：小白学习 / 3D打印">
       <label class="modal-label" for="task-app-package">包名</label>
       <input type="text" id="task-app-package" placeholder="如：com.kfb.model">
+      <label class="task-app-enabled-toggle" for="task-app-enabled">
+        <input type="checkbox" id="task-app-enabled" checked>
+        <span>启用此应用用于新建自动化测试</span>
+      </label>
       <div class="task-app-business-head">
         <label class="modal-label">业务线</label>
         <button class="btn-sm" type="button" onclick="addTaskAppBusinessLine()">新增业务线</button>
@@ -538,23 +542,23 @@
       <option value="">选择目标模块</option>
     </select>
     <div class="generate-identity-grid">
-      <div class="generate-readonly-field" aria-label="应用">
-        <span>应用</span>
-        <strong>智小白3D</strong>
+      <div class="generate-application-field">
+        <label for="generate-application">应用 <span>必选</span></label>
+        <select id="generate-application" onchange="handleGenerateApplicationChange()">
+          <option value="">选择已启用应用</option>
+        </select>
       </div>
       <fieldset class="generate-business-field">
         <legend>所属业务 <span>必选</span></legend>
         <div class="generate-business-segmented" id="generate-business-options"></div>
       </fieldset>
     </div>
-    <div class="generate-hint">所属业务会由本批次全部用例继承；生成后仍可在单条 YAML 用例中修改。</div>
-    <label class="modal-label" for="generate-app-package">APP 包名</label>
-    <div class="app-picker">
-      <select id="generate-app-select" onchange="selectAppPackage('generate', this.value)">
-        <option value="">选择已维护 APP</option>
-      </select>
-      <input type="text" id="generate-app-package" placeholder="也可手动输入包名，如：com.kfb.model" value="com.kfb.model" oninput="handleGenerateAppInput(this.value)">
+    <div class="generate-application-detail">
+      <span class="generate-application-name">未选择应用</span>
+      <input id="generate-app-package-detail" type="text" readonly aria-label="所选应用包名">
+      <input id="generate-app-package" type="hidden">
     </div>
+    <div class="generate-hint">所属业务会由本批次全部用例继承；生成后仍可在单条 YAML 用例中修改。</div>
     <div class="generate-hint" id="generate-app-hint">页面知识库按 APP 包名隔离；测试生成可参考测试库和基线库，基线修复只参考基线库。</div>
     <label class="modal-label" for="generate-figma-url">Figma 设计稿链接</label>
     <input type="text" id="generate-figma-url" placeholder="可选：优先粘贴具体 Frame 链接；文件链接会按需求筛选相关页面">

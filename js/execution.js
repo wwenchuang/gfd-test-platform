@@ -1160,8 +1160,12 @@ function taskBusinessValue(taskName) {
   return String(taskCaseRow(taskName)?.business || '').trim();
 }
 
-function taskBusinessLabel(business) {
-  return businessLineLabel(business);
+function taskCaseApplicationPackage(taskName) {
+  return String(taskCaseRow(taskName)?.app_package || currentModuleAppPackage()).trim();
+}
+
+function taskBusinessLabel(business, taskName = '') {
+  return businessLineLabel(business, taskCaseApplicationPackage(taskName));
 }
 
 async function changeTaskBusiness(taskName, business) {
@@ -1184,7 +1188,7 @@ async function changeTaskBusiness(taskName, business) {
     else sonicCaseRows.push(updated);
     renderYamlTaskNav();
     renderEditorContextBar();
-    showToast(`已将当前用例标记为${taskBusinessLabel(business)}`, 'success');
+    showToast(`已将当前用例标记为${taskBusinessLabel(business, taskName)}`, 'success');
   } catch (e) {
     showToast(e.message || '保存用例业务失败', 'error');
   }
@@ -1212,7 +1216,7 @@ function renderEditorContextBar() {
   const statusText = status ? jobStatusText(status) : '未执行';
   const smokeHtml = task.smoke ? '<span class="smoke-badge">冒烟</span>' : '';
   const business = taskBusinessValue(task.name);
-  const businessButtons = taskAppBusinessLines().map(item => `
+  const businessButtons = taskAppBusinessLines(taskCaseApplicationPackage(task.name)).map(item => `
     <button type="button" class="${business === item.id ? 'active' : ''}" onclick="changeTaskBusiness(${jsArg(task.name)}, ${jsArg(item.id)})">${escapeHtml(item.name)}</button>
   `).join('');
   const businessControl = `

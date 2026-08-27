@@ -65,15 +65,28 @@ function serve() {
       return;
     }
     if (url.pathname === '/api/task-apps') {
-      json(res, {apps: [{
+      const includeDisabled = url.searchParams.get('include_disabled') === '1';
+      const apps = [{
         name: '智小白3D',
         package: 'com.kfb.model',
+        enabled: true,
         business_lines: [
           {id: 'home', name: '家用', enabled: true},
           {id: 'shared', name: '共享', enabled: true},
           {id: 'biz_school', name: '校园版', enabled: true},
         ],
-      }]});
+      }, {
+        name: '校园助手',
+        package: 'com.example.school',
+        enabled: true,
+        business_lines: [{id: 'campus', name: '校园业务', enabled: true}],
+      }, {
+        name: '已停用应用',
+        package: 'com.example.disabled',
+        enabled: false,
+        business_lines: [{id: 'disabled', name: '停用业务', enabled: true}],
+      }];
+      json(res, {apps: includeDisabled ? apps : apps.filter(app => app.enabled !== false)});
       return;
     }
     if (url.pathname === '/api/apps') {
@@ -549,10 +562,18 @@ async function anyVisible(locator) {
 
     await page.evaluate(() => showGenerateYaml());
     await page.waitForSelector('#modal-generate.show');
-    if (!await page.locator('.generate-readonly-field', {hasText: '智小白3D'}).isVisible()) throw new Error('UI generation modal is missing the fixed application name');
+    if (!await page.locator('#generate-application').isVisible()) throw new Error('UI generation modal is missing the configured application selector');
+    if (await page.locator('#generate-application option[value="com.example.disabled"]').count()) throw new Error('Disabled applications must not be selectable for a new UI generation');
+    await page.locator('#generate-application').selectOption('com.kfb.model');
+    await page.locator('label:has(input[name="generate-business"][value="biz_school"])').click();
+    await page.locator('#generate-application').selectOption('com.example.school');
+    if (await page.locator('input[name="generate-business"]:checked').count()) throw new Error('Switching applications must clear the prior business selection');
+    if (await page.locator('input[name="generate-business"][value="campus"]').count() !== 1) throw new Error('UI generation must filter business lines by selected application');
+    if (await page.locator('#generate-app-package-detail').inputValue() !== 'com.example.school') throw new Error('UI generation must show the selected application package as readonly detail');
+    if (!await page.locator('.generate-application-name', {hasText: '校园助手'}).isVisible()) throw new Error('UI generation must display the configured application name');
     if (!await page.locator('.generate-business-field', {hasText: '所属业务'}).isVisible()) throw new Error('UI generation modal is missing the business selector');
     if (await page.locator('input[name="generate-business"]:checked').count()) throw new Error('UI generation business must not have a silent default');
-    if (!await page.locator('#generate-business-options', {hasText: '校园版'}).isVisible()) throw new Error('UI generation modal did not load configured Chinese business lines');
+    if (!await page.locator('#generate-business-options', {hasText: '校园业务'}).isVisible()) throw new Error('UI generation modal did not load the selected application business lines');
     await page.screenshot({path: path.join(ARTIFACTS, 'generate-business.png'), fullPage: true});
     await page.setViewportSize({width: 390, height: 844});
     const mobileBusinessBox = await page.locator('.generate-business-field').boundingBox();
@@ -980,7 +1001,12 @@ async function anyVisible(locator) {
     await page.waitForSelector('#modal-task-apps.show');
     const hasSchoolBusiness = await page.locator('.task-app-business-name').evaluateAll(inputs => inputs.some(input => input.value === '校园版'));
     if (!hasSchoolBusiness) throw new Error('Application configuration did not expose the configured Chinese business line');
+    if (!await page.locator('#task-app-enabled').isChecked()) throw new Error('Application configuration must show enabled status for the selected application');
     await page.screenshot({path: path.join(ARTIFACTS, 'app-business-lines.png'), fullPage: true});
+    await page.click('#modal-task-apps .modal-close');
+    await page.locator('.management-row', {hasText: '已停用应用'}).locator('button').click();
+    await page.waitForSelector('#modal-task-apps.show');
+    if (await page.locator('#task-app-enabled').isChecked()) throw new Error('Application configuration must preserve disabled application status for re-enablement');
     await page.click('#modal-task-apps .modal-close');
     await page.click('.workflow-step[data-workflow="sonic_config"]');
     await page.waitForSelector('h2:has-text("执行环境")');
