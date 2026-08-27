@@ -34,6 +34,14 @@
 
 ## 最近完成的关键修复
 
+### 2026-08-27 Sonic 容器退出与部署误杀判定
+
+线上部署 `2cbd3cf` 完成后，Sonic 页面持续显示“后台准备中”。现场 `docker ps -a` 证明 `sonic-client-web`、folder、gateway、controller 和 reports 已连续运行 3 小时，只有 `sonic-server-eureka` 在部署前 3 小时已以 255 退出；手工 `docker start` 后 Eureka 恢复，3000 前端返回 HTTP 200。Eureka 启动日志随后确认 Gateway、Folder 和 Controller 均重新注册为 `UP`；启动初期的租约不存在警告是注册中心丢失旧租约后的短暂续约失败，不是新的服务异常。因此当前证据排除本次平台部署直接误杀 Sonic，仍需通过 Eureka 的 `docker inspect` 判断原始退出原因及重启策略。
+
+- 平台更新脚本只停止 `midscene-task.service`、8091 上可确认属于本平台的旧进程，以及明确引用 `midscene-upload.py` 的旧 systemd/PM2 启动器；没有 Docker stop/down 操作。
+- 更新脚本新增 Sonic 容器前后状态保护：部署前记录运行中的 `sonic-server-272-*`，部署后逐个核对；任何原本运行的容器在部署期间停止都会阻止部署报成功并打印恢复命令。
+- 保护逻辑只监控，不自动启动、停止或重建 Sonic，也不会把部署前已经停止的容器归因于本次部署。容器名前缀可通过 `SONIC_CONTAINER_PREFIX` 配置。
+
 ### 2026-08-27 API 基线实际响应与断言复核候选
 
 当前约 240 条活动 API 基线不能因为历史回归显示通过就直接批量补 `code=0`。本轮新增只读断言审计：按项目批量关联活动基线、保存断言、采纳调试用例和最新执行尝试，只有调试用例为通过且响应可解析时才作为证据。

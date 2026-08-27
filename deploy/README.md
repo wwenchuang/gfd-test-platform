@@ -368,6 +368,26 @@ services exist. It verifies the exact release revision, the login contract, both
 health endpoints, and `/api-test/` static assets. This is the only supported path
 for routine deployments from the server Git checkout.
 
+The update script also snapshots running containers whose names start with
+`sonic-server-272-` before installation and verifies the same containers are
+still running afterward. It never stops, starts, or recreates Sonic containers.
+If a previously running Sonic container exits during deployment, the deployment
+fails with the affected names and a recovery command instead of reporting a
+false success. Override the observed prefix with `SONIC_CONTAINER_PREFIX` when
+the Sonic Compose project uses another name.
+
+To inspect and recover existing stopped Sonic containers without changing
+volumes:
+
+```bash
+docker ps -a --format 'table {{.Names}}\t{{.Status}}\t{{.Image}}' | grep -i sonic
+docker ps -a --format '{{.Names}}' | grep '^sonic-server-272-' | xargs -r docker start
+```
+
+If the web page still says the backend is preparing, inspect the stopped or
+unhealthy service with `docker inspect` and `docker logs`; an HTTP 200 from the
+client web container only proves that the static frontend is running.
+
 Do not append a separate `install-server.sh`, `systemctl restart`, or `curl` to
 that command. Direct `install-server.sh` remains only for extracted release
 packages that do not contain a Git checkout.

@@ -2883,6 +2883,14 @@ def test_server_main_update_script_pulls_installs_restarts_and_checks_assets():
     assert "systemctl stop midscene-task.service" in update_script
     assert "systemctl start midscene-task.service" in update_script
     assert "journalctl -u midscene-task.service" in update_script
+    assert 'SONIC_CONTAINER_PREFIX="${SONIC_CONTAINER_PREFIX:-sonic-server-272-}"' in update_script
+    assert "capture_sonic_container_state" in update_script
+    assert "verify_sonic_container_state" in update_script
+    assert "Sonic 容器在部署期间停止" in update_script
+    assert update_script.rindex("capture_sonic_container_state") < update_script.rindex("migrate_legacy_task_launchers")
+    assert update_script.rindex("verify_sonic_container_state") > update_script.rindex("restart_service_if_present midscene-api-scheduler")
+    assert "docker stop" not in update_script
+    assert "docker compose down" not in update_script
     assert "TASK_RELEASE_REVISION" in install_script
     assert "update-main-server.sh" in install_script
 

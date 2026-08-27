@@ -23,6 +23,7 @@ Environment:
   REQUIRE_API_TEST_TEXT  Text expected in an API testing JS bundle. Default: 用例管理
   ALLOW_DIRTY         Set to 1 to allow deploying from a dirty git checkout. Default: 0
   BUILD_API_TEST      Set to 1 to run npm install/build before install. Default: 0
+  SONIC_CONTAINER_PREFIX  Sonic Docker container name prefix observed before/after deploy. Default: sonic-server-272-
 USAGE
 }
 
@@ -54,6 +55,7 @@ AUTH_LOGIN_URL="${AUTH_LOGIN_URL:-http://127.0.0.1:${PORT}/api/auth/login}"
 REQUIRE_API_TEST_TEXT="${REQUIRE_API_TEST_TEXT:-用例管理}"
 ALLOW_DIRTY="${ALLOW_DIRTY:-0}"
 BUILD_API_TEST="${BUILD_API_TEST:-0}"
+SONIC_CONTAINER_PREFIX="${SONIC_CONTAINER_PREFIX:-sonic-server-272-}"
 
 if [ ! -d "${SOURCE_DIR}/.git" ]; then
   cat >&2 <<EOF
@@ -86,6 +88,77 @@ run_as_root() {
     echo "当前用户不是 root，且缺少 sudo：$*" >&2
     exit 2
   fi
+}
+
+SONIC_STATE_CAPTURED=0
+SONIC_RUNNING_BEFORE=""
+
+sonic_container_names() {
+  local include_stopped="${1:-0}"
+  local docker_args=(ps --format '{{.Names}}')
+  if [ "${include_stopped}" = "1" ]; then
+    docker_args=(ps -a --format '{{.Names}}')
+  fi
+  run_as_root docker "${docker_args[@]}" \
+    | awk -v prefix="${SONIC_CONTAINER_PREFIX}" 'index($0, prefix) == 1'
+}
+
+capture_sonic_container_state() {
+  if ! command -v docker >/dev/null 2>&1; then
+    echo "未检测到 Docker，跳过 Sonic 容器状态保护"
+    return 0
+  fi
+
+  local all_containers
+  if ! all_containers="$(sonic_container_names 1)"; then
+    echo "无法读取 Docker 容器状态，跳过 Sonic 容器状态保护" >&2
+    return 0
+  fi
+  if ! SONIC_RUNNING_BEFORE="$(sonic_container_names 0)"; then
+    echo "无法读取运行中的 Docker 容器，跳过 Sonic 容器状态保护" >&2
+    SONIC_RUNNING_BEFORE=""
+    return 0
+  fi
+  SONIC_STATE_CAPTURED=1
+
+  if [ -z "${all_containers}" ]; then
+    echo "部署前未发现 ${SONIC_CONTAINER_PREFIX}* 容器"
+  elif [ -z "${SONIC_RUNNING_BEFORE}" ]; then
+    echo "部署前 Sonic 容器已全部停止；本次部署不会自动启动或修改 Sonic"
+  else
+    echo "部署前运行中的 Sonic 容器："
+    printf '%s\n' "${SONIC_RUNNING_BEFORE}"
+  fi
+}
+
+verify_sonic_container_state() {
+  [ "${SONIC_STATE_CAPTURED}" = "1" ] || return 0
+  [ -n "${SONIC_RUNNING_BEFORE}" ] || return 0
+
+  local running_after
+  if ! running_after="$(sonic_container_names 0)"; then
+    echo "部署后无法读取 Sonic 容器状态" >&2
+    return 1
+  fi
+
+  local stopped=""
+  local container
+  while IFS= read -r container; do
+    [ -n "${container}" ] || continue
+    if ! printf '%s\n' "${running_after}" | grep -Fxq "${container}"; then
+      stopped="${stopped}${container}"$'\n'
+    fi
+  done <<< "${SONIC_RUNNING_BEFORE}"
+
+  if [ -n "${stopped}" ]; then
+    echo "Sonic 容器在部署期间停止，拒绝把本次部署标记为完成：" >&2
+    printf '%s' "${stopped}" >&2
+    run_as_root docker ps -a --format 'table {{.Names}}\t{{.Status}}\t{{.Image}}' \
+      | awk -v prefix="${SONIC_CONTAINER_PREFIX}" 'NR == 1 || index($1, prefix) == 1' >&2 || true
+    echo "恢复现有容器：docker ps -a --format '{{.Names}}' | grep '^${SONIC_CONTAINER_PREFIX}' | xargs -r docker start" >&2
+    return 1
+  fi
+  echo "Sonic 容器状态未被本次部署改变"
 }
 
 disable_legacy_systemd_units() {
@@ -352,6 +425,7 @@ if [ "${BUILD_API_TEST}" = "1" ]; then
   npm --prefix api-testing-ui run build
 fi
 
+capture_sonic_container_state
 migrate_legacy_task_launchers
 
 APP_DIR="${APP_DIR}" WEB_DIR="${WEB_DIR}" PORT="${PORT}" RELEASE_REVISION="${DEPLOY_REVISION}" run_as_root bash deploy/install-server.sh
@@ -359,6 +433,7 @@ APP_DIR="${APP_DIR}" WEB_DIR="${WEB_DIR}" PORT="${PORT}" RELEASE_REVISION="${DEP
 restart_task_service_cleanly
 restart_service_if_present midscene-api-worker
 restart_service_if_present midscene-api-scheduler
+verify_sonic_container_state
 
 for url in ${HEALTH_URLS}; do
   verify_health_release "${url}" "${DEPLOY_REVISION}"
