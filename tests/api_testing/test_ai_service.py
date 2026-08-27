@@ -274,6 +274,39 @@ def test_request_identity_binding_uses_the_selected_source_endpoint():
     assert payload["request"]["service"] == "default"
 
 
+def test_ai_draft_identity_comes_from_the_enabled_application_catalog(tmp_path, monkeypatch):
+    from task_server.api_testing.services.ai_service import AiCaseService
+    from task_server.services import business_line_service
+
+    path = tmp_path / "task-apps.json"
+    path.write_text(json.dumps({"apps": [{
+        "package": "com.kfb.model",
+        "name": "配置中的打印应用",
+        "enabled": True,
+        "business_lines": [{"id": "catalog_home", "name": "家用", "enabled": True}],
+    }]}, ensure_ascii=False), encoding="utf-8")
+    monkeypatch.setattr(business_line_service, "TASK_APPS_FILE", str(path))
+    endpoint = SimpleNamespace(
+        summary="查询收藏",
+        path="/favorite/list",
+        tags=["家用"],
+        operation={},
+    )
+    payload = {
+        "app_package": "com.client.untrusted",
+        "app_name": "客户端伪造名称",
+        "business": "client_business",
+    }
+
+    AiCaseService._apply_configured_application(payload, endpoint)
+
+    assert payload == {
+        "app_package": "com.kfb.model",
+        "app_name": "配置中的打印应用",
+        "business": "catalog_home",
+    }
+
+
 def test_business_contract_marks_bodyless_parameter_endpoints_as_parameter_driven():
     from task_server.api_testing.services.ai_service import AiCaseService
 

@@ -11,6 +11,7 @@ import { useAssetsStore } from '../stores/assets'
 import { useCasesStore } from '../stores/cases'
 import { useContextStore } from '../stores/context'
 import { useTasksStore } from '../stores/tasks'
+import { replaceTestApplications } from '../utils/testApplications'
 import CasesView from './CasesView.vue'
 
 const ENDPOINT: ApiEndpoint = {
@@ -25,6 +26,12 @@ describe('CasesView', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     vi.restoreAllMocks()
+    replaceTestApplications([{
+      package: 'com.kfb.model',
+      name: '智小白3D',
+      enabled: true,
+      business_lines: [{ id: 'home', name: '家用', enabled: true }],
+    }])
   })
 
   it('shows case management as an independent page and edits a saved case', async () => {
@@ -177,6 +184,9 @@ function savedCase(id: string, name: string): CaseVersion {
     validation_summary: {},
     name,
     purpose: name,
+    app_package: 'com.kfb.model',
+    app_name: '智小白3D',
+    business: 'home',
     priority: 'P1',
     request: { method: 'POST', path: '/collection/page', service: 'default', path_params: {}, query: {}, headers: {}, cookies: {}, body: { pageNum: 1 } },
     data_rows: [],

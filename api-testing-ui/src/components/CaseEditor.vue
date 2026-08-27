@@ -130,9 +130,7 @@ function updateApplication(appPackage: string): void {
   const application = testApplicationFor(appPackage)
   local.value.app_package = application?.package || ''
   local.value.app_name = application?.name || ''
-  if (!activeBusinessLinesFor(appPackage).some(item => item.id === local.value.business)) {
-    local.value.business = ''
-  }
+  local.value.business = ''
   publish()
 }
 
@@ -299,8 +297,7 @@ function normalizeDraft(value: CaseDraft): CaseDraft {
     <div v-if="mode === 'structured'" class="editor-form">
       <div class="form-grid case-identity-grid">
         <label>用例名称<input v-model="local.name" data-testid="case-name" @input="publish" /></label>
-        <label>应用<select :value="local.app_package" data-testid="case-application" @change="updateApplication(($event.target as HTMLSelectElement).value)"><option value="">请选择应用</option><option v-for="application in testApplications" :key="application.package" :value="application.package">{{ application.name }}</option></select><small v-if="currentApplicationUnavailable" class="field-warning">历史应用：{{ local.app_name || local.app_package }}（已停用或未配置，请重新选择）</small></label>
-        <div class="readonly-field"><span>应用包名</span><strong data-testid="case-app-package">{{ local.app_package || '未选择' }}</strong></div>
+        <label>应用<select :value="local.app_package" data-testid="case-application" @change="updateApplication(($event.target as HTMLSelectElement).value)"><option value="">请选择应用</option><option v-for="application in testApplications" :key="application.package" :value="application.package">{{ application.name }}</option></select><small v-if="currentApplicationUnavailable" class="field-warning">历史应用：{{ local.app_name || '名称未记录' }}（已停用或未配置，请重新选择）</small></label>
         <label>优先级<select v-model="local.priority" @change="publish"><option v-for="priority in ['P0','P1','P2','P3']" :key="priority">{{ priority }}</option></select></label>
         <div class="business-field">
           <span>所属业务</span>

@@ -249,18 +249,42 @@ def test_draft_persists_application_identity_and_legacy_versions_stay_readable(
     payload = valid_list_case(endpoint)
     payload.update({
         "app_package": "com.kfb.model",
-        "app_name": "智小白3D",
+        "app_name": "客户端伪造名称",
         "business": "home",
     })
 
     draft = case_service.create_draft(endpoint.id, payload, "manual", "admin")
+    next_payload = valid_list_case(endpoint)
+    next_payload.update({
+        "name": "查询我的收藏-第二版",
+        "app_package": "com.kfb.model",
+        "app_name": "另一个客户端名称",
+        "business": "shared",
+    })
+    second = case_service.create_version(draft.case_id, next_payload, "editor")
 
     assert draft.app_package == "com.kfb.model"
     assert draft.app_name == "智小白3D"
+    assert second.version == 2
+    assert second.app_package == "com.kfb.model"
+    assert second.app_name == "智小白3D"
+    assert second.business == "shared"
+    reloaded_first = case_service.get_version(draft.id)
+    reloaded_second = case_service.get_version(second.id)
+    assert (reloaded_first.app_package, reloaded_first.app_name, reloaded_first.business) == (
+        "com.kfb.model", "智小白3D", "home",
+    )
+    assert (reloaded_second.app_package, reloaded_second.app_name, reloaded_second.business) == (
+        "com.kfb.model", "智小白3D", "shared",
+    )
     with session_factory() as session:
         version = session.get(ApiCaseVersion, draft.id)
+        next_version = session.get(ApiCaseVersion, second.id)
         assert version.request_template["app_package"] == "com.kfb.model"
         assert version.request_template["app_name"] == "智小白3D"
+        assert next_version.request_template["app_package"] == "com.kfb.model"
+        assert next_version.request_template["app_name"] == "智小白3D"
+        assert next_version.request_template["business"] == "shared"
         version.request_template = {
             key: value for key, value in version.request_template.items()
             if key not in {"app_package", "app_name"}

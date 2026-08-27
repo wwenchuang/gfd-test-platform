@@ -694,10 +694,7 @@ class AiCaseService:
             processing.setdefault("cleanup_steps", [])
             from .basic_case_service import BasicCaseService
 
-            normalized_payload.setdefault(
-                "business",
-                BasicCaseService._business_for_endpoint(endpoint),
-            )
+            self._apply_configured_application(normalized_payload, endpoint)
 
             BasicCaseService._apply_print_cleanup_policy(
                 normalized_payload,
@@ -741,6 +738,17 @@ class AiCaseService:
                 actor_id=actor_id,
             )
             return draft.id
+
+    @staticmethod
+    def _apply_configured_application(payload, endpoint):
+        from .basic_case_service import BasicCaseService
+
+        app_package, app_name = BasicCaseService._application_identity()
+        payload["app_package"] = app_package
+        payload["app_name"] = app_name
+        payload["business"] = BasicCaseService._business_for_endpoint(
+            endpoint, app_package
+        )
 
     def _finish_failed_batch(
         self, batch_id, state, code, message, actor_id, *, evidence=None

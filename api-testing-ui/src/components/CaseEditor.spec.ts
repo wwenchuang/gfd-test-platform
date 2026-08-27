@@ -68,6 +68,7 @@ describe('CaseEditor', () => {
         { id: 'shared', name: '共享', enabled: true },
       ] },
       { package: 'com.example.school', name: '校园版', enabled: true, business_lines: [
+        { id: 'home', name: '校园通用', enabled: true },
         { id: 'school', name: '校园业务', enabled: true },
       ] },
     ])
@@ -77,20 +78,34 @@ describe('CaseEditor', () => {
     ])
   })
 
-  it('selects configured applications and clears an incompatible business on app switch', async () => {
+  it('always clears business on app switch even when both apps use the same id', async () => {
     const draft = { ...DRAFT, app_package: 'com.kfb.model', app_name: '智小白3D', business: 'home' }
     const wrapper = mount(CaseEditor, { props: { modelValue: draft } })
 
     expect(wrapper.get('[data-testid="case-application"]').element).toHaveProperty('value', 'com.kfb.model')
-    expect(wrapper.get('[data-testid="case-app-package"]').text()).toContain('com.kfb.model')
     await wrapper.get('[data-testid="case-application"]').setValue('com.example.school')
 
     const emitted = wrapper.emitted('update:modelValue')?.at(-1)?.[0] as CaseDraft
     expect(emitted.app_package).toBe('com.example.school')
     expect(emitted.app_name).toBe('校园版')
     expect(emitted.business).toBe('')
-    expect(wrapper.find('[data-testid="case-business-home"]').exists()).toBe(false)
+    expect(wrapper.get('[data-testid="case-business-home"]').text()).toBe('校园通用')
     expect(wrapper.get('[data-testid="case-business-school"]').text()).toBe('校园业务')
+  })
+
+  it('does not expose the application package as visible editor text', () => {
+    const wrapper = mount(CaseEditor, { props: { modelValue: DRAFT } })
+    const legacyWrapper = mount(CaseEditor, { props: { modelValue: {
+      ...DRAFT,
+      app_package: 'com.example.legacy',
+      app_name: '',
+    } } })
+
+    expect(wrapper.find('[data-testid="case-app-package"]').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('com.kfb.model')
+    expect(wrapper.text()).toContain('智小白3D')
+    expect(legacyWrapper.text()).not.toContain('com.example.legacy')
+    expect(legacyWrapper.text()).toContain('名称未记录')
   })
 
   it('keeps an unavailable historical application readable but blocks its reuse', () => {

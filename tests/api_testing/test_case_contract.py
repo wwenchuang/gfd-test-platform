@@ -112,7 +112,7 @@ def test_case_contract_requires_application_identity_and_validates_its_business(
     payload = _payload({"pre": [], "post": []})
     payload.update({
         "app_package": "com.example.school",
-        "app_name": "校园版",
+        "app_name": "客户端伪造名称",
         "business": "校园业务",
     })
 
@@ -121,6 +121,9 @@ def test_case_contract_requires_application_identity_and_validates_its_business(
     assert parsed["app_package"] == "com.example.school"
     assert parsed["app_name"] == "校园版"
     assert parsed["business"] == "school"
+
+    del payload["app_name"]
+    assert parse_case_payload(payload)["app_name"] == "校园版"
 
     payload["business"] = "home"
     with pytest.raises(CasePayloadError, match="business is not supported"):
@@ -131,6 +134,50 @@ def test_case_contract_rejects_missing_application_identity():
     payload = _payload({"pre": [], "post": []})
     del payload["app_package"]
     with pytest.raises(CasePayloadError, match="app_package"):
+        parse_case_payload(payload)
+
+
+@pytest.mark.parametrize(
+    ("apps", "app_package"),
+    [
+        (
+            [{
+                "package": "com.kfb.model",
+                "name": "智小白3D",
+                "enabled": True,
+                "business_lines": [{"id": "home", "name": "家用", "enabled": True}],
+            }],
+            "com.example.unknown",
+        ),
+        (
+            [{
+                "package": "com.example.disabled",
+                "name": "停用应用",
+                "enabled": False,
+                "business_lines": [{"id": "home", "name": "家用", "enabled": True}],
+            }],
+            "com.example.disabled",
+        ),
+        (
+            [{
+                "package": "com.example.historical",
+                "enabled": True,
+                "business_lines": [{"id": "home", "name": "家用", "enabled": True}],
+            }],
+            "com.example.historical",
+        ),
+    ],
+)
+def test_case_contract_rejects_unknown_disabled_and_historical_only_applications(
+    apps, app_package, tmp_path, monkeypatch
+):
+    path = tmp_path / "task-apps.json"
+    path.write_text(json.dumps({"apps": apps}, ensure_ascii=False), encoding="utf-8")
+    monkeypatch.setattr(business_line_service, "TASK_APPS_FILE", str(path))
+    payload = _payload({"pre": [], "post": []})
+    payload["app_package"] = app_package
+
+    with pytest.raises(CasePayloadError, match="application is not supported"):
         parse_case_payload(payload)
 
 

@@ -10,6 +10,7 @@ import { useAssetsStore } from '../stores/assets'
 import { useCasesStore } from '../stores/cases'
 import { useContextStore } from '../stores/context'
 import { useTasksStore } from '../stores/tasks'
+import { replaceTestApplications } from '../utils/testApplications'
 import WorkbenchView from './WorkbenchView.vue'
 
 const ENDPOINT = {
@@ -20,6 +21,12 @@ describe('WorkbenchView debug workflow', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     vi.restoreAllMocks()
+    replaceTestApplications([{
+      package: 'com.kfb.model',
+      name: '智小白3D',
+      enabled: true,
+      business_lines: [{ id: 'home', name: '家用', enabled: true }],
+    }])
     vi.spyOn(useContextStore(), 'loadEnvironmentVariableNames').mockResolvedValue()
   })
 
@@ -694,6 +701,7 @@ function savedCase(id: string, caseId: string, name: string, headers: Record<str
   return {
     id, case_id: caseId, endpoint_id: ENDPOINT.id, status: 'draft', origin: 'ai', version: 1, group_name: '',
     validation_summary: {}, name, purpose: name, priority: 'P1',
+    app_package: 'com.kfb.model', app_name: '智小白3D', business: 'home',
     request: { method: 'POST', path: '/collection/add', service: 'default', path_params: {}, query: {}, headers, cookies: {}, body: { modelSn: 'm001' } },
     data_rows: [], assertions: [], extractions: [], dependencies: [], processing: { pre: [], post: [] },
   }
@@ -707,6 +715,9 @@ function generatedPreview(id: string, endpointId: string, name: string): Generat
     case: {
       name,
       purpose: name,
+      app_package: 'com.kfb.model',
+      app_name: '智小白3D',
+      business: 'home',
       priority: 'P1',
       request: { method: 'POST', path: '/collection/page', service: 'default', path_params: {}, query: {}, headers: {}, cookies: {}, body: { pageNum: 1 } },
       data_rows: [],

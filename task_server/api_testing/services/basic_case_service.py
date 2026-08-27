@@ -147,10 +147,20 @@ class BasicCaseService:
     def _application_identity():
         from task_server.services import business_line_service
 
-        app_package = business_line_service.PRIMARY_APP_PACKAGE
-        name_lookup = getattr(business_line_service, "test_application_name", None)
-        app_name = name_lookup(app_package, "智小白3D") if callable(name_lookup) else "智小白3D"
-        return app_package, app_name
+        applications = [
+            app for app in business_line_service.configured_test_applications()
+            if business_line_service.configured_business_lines(app["package"])
+        ]
+        application = next(
+            (
+                app for app in applications
+                if app["package"] == business_line_service.PRIMARY_APP_PACKAGE
+            ),
+            applications[0] if applications else None,
+        )
+        if application is None:
+            raise ValueError("no enabled test application has an active business line")
+        return application["package"], application["name"]
 
     @staticmethod
     def _business_for_endpoint(endpoint, app_package):

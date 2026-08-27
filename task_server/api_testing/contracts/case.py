@@ -8,7 +8,10 @@ import re
 from types import MappingProxyType
 from typing import Any, Mapping, Optional, Tuple
 
-from task_server.services.business_line_service import business_line_id
+from task_server.services.business_line_service import (
+    business_line_id,
+    configured_test_application,
+)
 
 
 PRIORITIES = frozenset({"P0", "P1", "P2", "P3"})
@@ -562,7 +565,7 @@ def parse_case_payload(payload):
         "processing",
     }
     _reject_unknown(payload, allowed, "case")
-    required = allowed
+    required = allowed - {"app_name"}
     missing = sorted(required - set(payload))
     if missing:
         raise CasePayloadError(f"case is missing field: {missing[0]}")
@@ -570,7 +573,10 @@ def parse_case_payload(payload):
     if priority not in PRIORITIES:
         raise CasePayloadError("priority is not supported")
     app_package = _text(payload["app_package"], "app_package", maximum=300)
-    app_name = _text(payload["app_name"], "app_name", maximum=200)
+    application = configured_test_application(app_package, include_disabled=False)
+    if not application:
+        raise CasePayloadError("application is not supported")
+    app_name = str(application["name"])
     business = _text(payload["business"], "business", maximum=80)
     try:
         business = business_line_id(
