@@ -557,6 +557,7 @@
       <span class="generate-application-name">未选择应用</span>
       <input id="generate-app-package-detail" type="text" readonly aria-label="所选应用包名">
       <input id="generate-app-package" type="hidden">
+      <button type="button" class="btn-sm" id="generate-app-config-action" hidden onclick="openGenerateApplicationConfiguration()">前往应用配置</button>
     </div>
     <div class="generate-hint">所属业务会由本批次全部用例继承；生成后仍可在单条 YAML 用例中修改。</div>
     <div class="generate-hint" id="generate-app-hint">页面知识库按 APP 包名隔离；测试生成可参考测试库和基线库，基线修复只参考基线库。</div>

@@ -318,14 +318,36 @@ function renderAppPackageSelects() {
 
 function selectedGenerateApplication() {
   const packageName = document.getElementById('generate-application')?.value || '';
-  return taskApps.find(app => app.package === packageName && app.enabled !== false) || null;
+  return enabledGenerateApplications().find(app => app.package === packageName) || null;
+}
+
+function enabledGenerateApplications() {
+  return taskApps.filter(app => (
+    app
+    && app.package
+    && app.enabled !== false
+    && app.historical_only !== true
+  ));
+}
+
+function updateGenerateSubmitState() {
+  const hasEnabledApplications = enabledGenerateApplications().length > 0;
+  const select = document.getElementById('generate-application');
+  const button = document.getElementById('btn-generate-yaml');
+  const configAction = document.getElementById('generate-app-config-action');
+  if (select) select.disabled = generateBusy || !hasEnabledApplications;
+  if (button) button.disabled = generateBusy || !hasEnabledApplications;
+  if (configAction) {
+    configAction.hidden = hasEnabledApplications;
+    configAction.disabled = generateBusy;
+  }
 }
 
 function renderGenerateApplicationOptions(selectedPackage = '') {
   const select = document.getElementById('generate-application');
   const detail = document.getElementById('generate-app-package-detail');
   const name = document.querySelector('.generate-application-name');
-  const activeApps = taskApps.filter(app => app && app.package && app.enabled !== false);
+  const activeApps = enabledGenerateApplications();
   if (!select) return;
   const current = activeApps.some(app => app.package === selectedPackage) ? selectedPackage : '';
   select.innerHTML = '<option value="">选择已启用应用</option>' + activeApps.map(app => (
@@ -336,6 +358,7 @@ function renderGenerateApplicationOptions(selectedPackage = '') {
   if (detail) detail.value = current;
   if (name) name.textContent = current ? (selectedGenerateApplication()?.name || current) : (activeApps.length ? '未选择应用' : '暂无已启用应用');
   document.getElementById('generate-app-package').value = current;
+  updateGenerateSubmitState();
 }
 
 function handleGenerateApplicationChange() {
@@ -345,8 +368,9 @@ function handleGenerateApplicationChange() {
   const detail = document.getElementById('generate-app-package-detail');
   const name = document.querySelector('.generate-application-name');
   if (detail) detail.value = packageName;
-  if (name) name.textContent = app?.name || (taskApps.some(item => item.enabled !== false) ? '未选择应用' : '暂无已启用应用');
+  if (name) name.textContent = app?.name || (enabledGenerateApplications().length ? '未选择应用' : '暂无已启用应用');
   renderGenerateBusinessOptions("");
+  updateGenerateSubmitState();
   updateGenerateAppHint();
   if (packageName) {
     rememberAppPackage(packageName);
@@ -376,7 +400,7 @@ function selectAppPackage(scope, appPackage) {
     renderKnowledgeApps();
     loadKnowledgePages();
   } else if (scope === 'generate') {
-    const application = taskApps.find(app => app.package === appPackage && app.enabled !== false);
+    const application = enabledGenerateApplications().find(app => app.package === appPackage);
     renderGenerateApplicationOptions(application?.package || '');
     handleGenerateApplicationChange();
   } else if (scope === 'mindmap') {
@@ -400,7 +424,7 @@ function updateGenerateAppHint() {
 }
 
 function handleGenerateAppInput(appPackage) {
-  const app = taskApps.find(item => item.package === appPackage && item.enabled !== false);
+  const app = enabledGenerateApplications().find(item => item.package === appPackage);
   renderGenerateApplicationOptions(app?.package || '');
   handleGenerateApplicationChange();
 }
@@ -2999,8 +3023,25 @@ function generationJobApplication(job) {
   const result = job.result || {};
   const request = job.request_summary || {};
   const packageName = result.app_package || result.summary?.app_package || request.app_package || job.app_package || '';
-  const app = taskApps.find(item => item.package === packageName) || {};
-  return {package: packageName, name: result.app_name || result.summary?.app_name || request.app_name || app.name || packageName};
+  return {
+    package: packageName,
+    name: historicalApplicationName(
+      packageName,
+      result.app_name,
+      result.summary?.app_name,
+      request.app_name,
+    ),
+  };
+}
+
+function historicalApplicationName(packageName, ...snapshots) {
+  const app = taskApps.find(item => item.package === packageName);
+  const configuredName = String(app?.name || '').trim();
+  if (configuredName && configuredName !== packageName) return configuredName;
+  const snapshot = snapshots
+    .map(value => String(value || '').trim())
+    .find(value => value && value !== packageName && /[\u3400-\u9fff]/.test(value));
+  return snapshot || '未标注应用';
 }
 
 function generationFailureHtml(job={}) {
@@ -4798,11 +4839,11 @@ function setGenerateBusy(busy) {
   generateBusy = busy;
   const button = document.getElementById('btn-generate-yaml');
   const closeButton = document.getElementById('btn-close-generate');
-  button.disabled = busy;
   button.textContent = busy ? '生成中...' : (document.getElementById('generate-create-job')?.checked ? '生成并进入调试' : '生成 YAML');
   if (closeButton) closeButton.disabled = busy;
   document.querySelectorAll('#modal-generate input, #modal-generate select, #modal-generate textarea, #modal-generate .btn-cancel, #modal-generate .asset-remove')
     .forEach(el => el.disabled = busy);
+  updateGenerateSubmitState();
 }
 
 function updateGenerateCreateJobControls() {
@@ -4811,6 +4852,13 @@ function updateGenerateCreateJobControls() {
   if (options) options.hidden = !enabled;
   const button = document.getElementById('btn-generate-yaml');
   if (button && !generateBusy) button.textContent = enabled ? '生成并进入调试' : '生成 YAML';
+  updateGenerateSubmitState();
+}
+
+function openGenerateApplicationConfiguration() {
+  if (generateBusy) return;
+  closeGenerateModal();
+  activateWorkflow('app_config');
 }
 
 function closeGenerateModal() {

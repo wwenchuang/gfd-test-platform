@@ -1118,7 +1118,7 @@ function renderYamlTaskNav() {
       <div class="yaml-task-nav-item ${task.name === selected ? 'active' : ''}" onclick="jumpToTask(${index})">
         <div class="yaml-task-nav-name">${escapeHtml(task.name)}</div>
         <div class="yaml-task-nav-meta">line ${task.line}${escapeHtml(status)}</div>
-        <div class="yaml-task-nav-badges">${priorityHtml}${smokeHtml}<span class="business-badge ${escapeHtml(business || 'unset')}">${escapeHtml(taskBusinessLabel(business))}</span></div>
+        <div class="yaml-task-nav-badges">${priorityHtml}${smokeHtml}<span class="business-badge ${escapeHtml(business || 'unset')}">${escapeHtml(taskBusinessLabel(business, task.name))}</span></div>
         <div class="yaml-task-nav-actions">
           <button onclick="event.stopPropagation();runTaskFromNav(${index})">执行</button>
           <button onclick="event.stopPropagation();repairTaskFromNav(${index})">修复</button>
@@ -1164,12 +1164,26 @@ function taskCaseApplicationPackage(taskName) {
   return String(taskCaseRow(taskName)?.app_package || currentModuleAppPackage()).trim();
 }
 
+function taskCaseApplication(taskName) {
+  const packageName = taskCaseApplicationPackage(taskName);
+  return taskApps.find(app => String(app?.package || '').trim() === packageName) || null;
+}
+
+function taskCaseBusinessEditable(taskName) {
+  const app = taskCaseApplication(taskName);
+  return Boolean(app && app.enabled !== false && app.historical_only !== true);
+}
+
 function taskBusinessLabel(business, taskName = '') {
   return businessLineLabel(business, taskCaseApplicationPackage(taskName));
 }
 
 async function changeTaskBusiness(taskName, business) {
   if (!currentModule || !currentFile || !taskName) return;
+  if (!taskCaseBusinessEditable(taskName)) {
+    showToast('当前应用不可编辑，仅保留历史业务展示', 'error');
+    return;
+  }
   const row = taskCaseRow(taskName) || {};
   try {
     const data = await apiRequest('/cases/business', {
@@ -1216,15 +1230,22 @@ function renderEditorContextBar() {
   const statusText = status ? jobStatusText(status) : '未执行';
   const smokeHtml = task.smoke ? '<span class="smoke-badge">冒烟</span>' : '';
   const business = taskBusinessValue(task.name);
-  const businessButtons = taskAppBusinessLines(taskCaseApplicationPackage(task.name)).map(item => `
-    <button type="button" class="${business === item.id ? 'active' : ''}" onclick="changeTaskBusiness(${jsArg(task.name)}, ${jsArg(item.id)})">${escapeHtml(item.name)}</button>
-  `).join('');
-  const businessControl = `
-    <div class="task-business-control" role="group" aria-label="当前用例所属业务">
-      <span>业务</span>
-      ${businessButtons}
-    </div>
-  `;
+  const businessControl = taskCaseBusinessEditable(task.name)
+    ? `
+      <div class="task-business-control" role="group" aria-label="当前用例所属业务">
+        <span>业务</span>
+        ${taskAppBusinessLines(taskCaseApplicationPackage(task.name)).map(item => `
+          <button type="button" class="${business === item.id ? 'active' : ''}" onclick="changeTaskBusiness(${jsArg(task.name)}, ${jsArg(item.id)})">${escapeHtml(item.name)}</button>
+        `).join('')}
+      </div>
+    `
+    : `
+      <div class="task-business-control locked" aria-label="当前用例所属业务只读">
+        <span>业务</span>
+        <strong>${escapeHtml(taskBusinessLabel(business, task.name))}</strong>
+        <span>当前应用不可编辑，仅保留历史业务展示</span>
+      </div>
+    `;
   bar.innerHTML = `
     <div class="editor-context-main">
       <span class="editor-context-title" title="${escapeHtml(task.name)}">${escapeHtml(task.name)}</span>

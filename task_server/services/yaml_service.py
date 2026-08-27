@@ -149,7 +149,7 @@ from .yaml_template_matcher import (
     evaluate_baseline_template_matching,
     select_best_baseline_template,
 )
-from .business_line_service import business_line_id
+from .business_line_service import business_line_id, configured_test_application
 
 __all__ = [
     "yaml_text",
@@ -7621,24 +7621,48 @@ def build_figma_soft_evidence_context_text(figma_texts, limit=16000):
     return f"{header}\n\n【Figma 解析结果】\n{body}"[:max(2000, safe_int(limit, 16000))]
 
 
-def normalize_ui_case_business(value, require_active=False):
-    return business_line_id(value, require_active=require_active)
+def normalize_ui_case_business(value, require_active=False, app_package=""):
+    package = str(app_package or DEFAULT_APP_PACKAGE).strip() or DEFAULT_APP_PACKAGE
+    if require_active:
+        application = configured_test_application(package, include_disabled=True)
+        if (
+            not application
+            or application.get("enabled") is False
+            or application.get("historical_only") is True
+        ):
+            raise ValueError("当前应用已停用或仅用于历史展示，不能新建自动化测试")
+    return business_line_id(value, app_package=package, require_active=require_active)
 
 
-def resolve_ui_generation_business(request, persisted_meta=None):
+def resolve_ui_generation_business(request, persisted_meta=None, app_package=""):
     request = request if isinstance(request, dict) else {}
     persisted_meta = persisted_meta if isinstance(persisted_meta, dict) else {}
+    package = str(
+        app_package
+        or request.get("app_package")
+        or request.get("appPackage")
+        or persisted_meta.get("app_package")
+        or persisted_meta.get("appPackage")
+        or DEFAULT_APP_PACKAGE
+    ).strip() or DEFAULT_APP_PACKAGE
     explicit = request.get("business") or request.get("business_type") or request.get("businessType")
     if explicit not in (None, ""):
-        return normalize_ui_case_business(explicit, require_active=True)
+        return normalize_ui_case_business(explicit, app_package=package, require_active=True)
     is_regeneration = safe_bool(
         request.get("regenerate") or request.get("reuse_assets") or request.get("reuseAssets")
     )
     if is_regeneration:
-        inherited = normalize_ui_case_business(
+        inherited_value = (
             persisted_meta.get("business")
             or persisted_meta.get("business_type")
             or persisted_meta.get("businessType")
+        )
+        if inherited_value in (None, ""):
+            raise ValueError("历史生成批次未标注业务，请先选择所属业务")
+        inherited = normalize_ui_case_business(
+            inherited_value,
+            app_package=package,
+            require_active=True,
         )
         if inherited:
             return inherited
@@ -7646,10 +7670,10 @@ def resolve_ui_generation_business(request, persisted_meta=None):
     raise ValueError("请选择所属业务")
 
 
-def apply_ui_case_business(payload, business):
+def apply_ui_case_business(payload, business, app_package=""):
     if not isinstance(payload, dict):
         return payload
-    normalized = normalize_ui_case_business(business)
+    normalized = normalize_ui_case_business(business, app_package=app_package)
     if not normalized:
         raise ValueError("请选择所属业务")
     payload["business"] = normalized
@@ -7660,8 +7684,8 @@ def apply_ui_case_business(payload, business):
     return payload
 
 
-def generated_case_business_meta_patch(yaml_item, business):
-    normalized = normalize_ui_case_business(business)
+def generated_case_business_meta_patch(yaml_item, business, app_package=""):
+    normalized = normalize_ui_case_business(business, app_package=app_package)
     case_id = ""
     if isinstance(yaml_item, dict):
         case_id = str(yaml_item.get("case_id") or yaml_item.get("caseId") or "").strip()
@@ -7696,8 +7720,13 @@ def generate_ui_yaml_from_request(d, job_id=None):
         raise ValueError("生成后创建执行任务需要先选择执行设备；如确实需要平台分配，请明确选择“自动选择在线设备”。")
     files = d.get("files") or []
     reuse_assets = safe_bool(d.get("reuse_assets") or d.get("reuseAssets") or d.get("regenerate"))
+    app_package = str(
+        d.get("app_package") or d.get("appPackage") or os.getenv("APP_PACKAGE", DEFAULT_APP_PACKAGE)
+    ).strip() or DEFAULT_APP_PACKAGE
+    d["app_package"] = app_package
     requested_business = normalize_ui_case_business(
         d.get("business") or d.get("business_type") or d.get("businessType"),
+        app_package=app_package,
         require_active=not reuse_assets,
     )
     if requested_business:
@@ -7740,7 +7769,7 @@ def generate_ui_yaml_from_request(d, job_id=None):
         write_json_file(asset_meta_path(case_set_id), meta)
         meta = update_asset_request_context(case_set_id, d)
 
-    business = resolve_ui_generation_business(d, meta)
+    business = resolve_ui_generation_business(d, meta, app_package=app_package)
     d["business"] = business
     meta["business"] = business
     write_json_file(asset_meta_path(case_set_id), meta)
@@ -7762,7 +7791,6 @@ def generate_ui_yaml_from_request(d, job_id=None):
     if job_id:
         update_generate_job(job_id, progress=35, step="读取页面知识", message="正在匹配 APP 页面知识库")
     query_text = "\n".join([title, module] + requirement_text_assets)
-    app_package = d.get("app_package") or d.get("appPackage") or os.getenv("APP_PACKAGE", DEFAULT_APP_PACKAGE)
     selected_page_ids = d.get("knowledge_page_ids") or d.get("knowledgePageIds") or []
     knowledge_tier = d.get("knowledge_tier") or d.get("knowledgeTier") or "all"
     with ThreadPoolExecutor(max_workers=2) as executor:
@@ -8523,7 +8551,7 @@ def generate_ui_yaml_from_request(d, job_id=None):
     # Scope must be settled before portfolio and smoke selection so an AI-only
     # suggestion cannot occupy a Runner slot or satisfy an explicit REQ contract.
     payload = apply_generated_case_scope_gate(payload)
-    payload = apply_ui_case_business(payload, business)
+    payload = apply_ui_case_business(payload, business, app_package=app_package)
     if not deterministic_entry_visibility:
         final_executable_portfolio = executable_yaml_portfolio_audit(
             payload,
@@ -8604,7 +8632,7 @@ def generate_ui_yaml_from_request(d, job_id=None):
     if job_id:
         update_generate_job(job_id, progress=85, step="转换 YAML", message="正在按用例拆分生成 Midscene YAML")
     converted_payload = split_automation_ready_cases(payload)
-    converted_payload = apply_ui_case_business(converted_payload, business)
+    converted_payload = apply_ui_case_business(converted_payload, business, app_package=app_package)
     _, yaml_items = cases_to_separate_midscene_yamls(converted_payload, app_package=app_package, base_file=yaml_file)
     accepted_case_ids = (
         final_executable_portfolio.get("executableCaseIds")
@@ -8915,7 +8943,7 @@ def generate_ui_yaml_from_request(d, job_id=None):
             "yaml_static_errors": list(static_check.get("errors") or [])[:8],
             "yaml_static_warnings": list(static_check.get("warnings") or [])[:8],
         }
-        task_meta_patch.update(generated_case_business_meta_patch(item, business))
+        task_meta_patch.update(generated_case_business_meta_patch(item, business, app_package=app_package))
         update_task_meta(module, item["file"], task_meta_patch)
     jobs = []
     job_skipped_yaml_files = []

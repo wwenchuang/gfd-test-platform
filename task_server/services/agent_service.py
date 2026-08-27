@@ -10856,7 +10856,11 @@ def _agent_generate_yaml_from_ui_pipeline(run, source_context, source_text):
         requirement_contract = {}
     direct_entry_visibility = _agent_use_direct_entry_visibility_smoke(run)
     has_entry_visibility_intent = _agent_needs_entry_visibility_smoke(run)
-    business = resolve_ui_generation_business({"business": run.get("business")})
+    app_package = _agent_app_package(run)
+    business = resolve_ui_generation_business(
+        {"business": run.get("business"), "app_package": app_package},
+        app_package=app_package,
+    )
     request_data = {
         "case_set_id": case_set_id,
         "title": title,
@@ -10871,7 +10875,7 @@ def _agent_generate_yaml_from_ui_pipeline(run, source_context, source_text):
         "figma_url": source_context.get("figmaUrl") or "",
         "figmaUrl": source_context.get("figmaUrl") or "",
         "prepared_figma_context": prepared_figma_context,
-        "app_package": _agent_app_package(run),
+        "app_package": app_package,
         "use_knowledge_context": False,
         "source": "agent",
         "scope": str(run.get("scope") or "smoke").strip(),

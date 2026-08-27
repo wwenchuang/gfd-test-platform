@@ -80,7 +80,7 @@ function appInfoByPackage(packageName) {
     ...knowledgeApp,
     ...taskApp,
     package: packageName,
-    name: taskApp.name || knowledgeApp.name || packageName,
+    name: taskApp.name || knowledgeApp.name || '未标注应用',
     modules: taskApp.modules || knowledgeApp.modules || [],
     page_count: knowledgeApp.page_count ?? taskApp.page_count ?? 0,
     has_knowledge: knowledgeApp.has_knowledge ?? false,
@@ -90,14 +90,16 @@ function appInfoByPackage(packageName) {
 
 function appDisplayName(packageName) {
   const app = appInfoByPackage(packageName);
-  return app?.name || packageName || '未命名应用';
+  const name = String(app?.name || '').trim();
+  return name && name !== packageName ? name : '未标注应用';
 }
 
 function appDisplayLabel(packageName) {
   const app = appInfoByPackage(packageName);
   if (!packageName) return '未选择应用';
-  const name = app?.name || packageName;
-  return name === packageName ? packageName : `${name} / ${packageName}`;
+  if (!app) return '未标注应用';
+  const name = appDisplayName(packageName);
+  return name === '未标注应用' ? name : `${name} / ${packageName}`;
 }
 
 function moduleAppPackage(mod) {

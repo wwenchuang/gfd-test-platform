@@ -44,7 +44,7 @@ from .yaml_service import (
     yaml_with_single_task,
 )
 from .job_service import app_package_for_module
-from .business_line_service import business_line_id
+from .business_line_service import business_line_id, configured_test_application
 
 __all__ = [
     "list_task_case_assets",
@@ -359,9 +359,17 @@ def normalize_task_case_business(value, app_package=""):
 def update_task_case_business(case_id, business):
     """Persist one UI case's business without adding unsupported YAML fields."""
     case = find_task_case_asset(case_id)
+    app_package = str(case.get("app_package") or "").strip()
+    application = configured_test_application(app_package, include_disabled=True)
+    if (
+        not application
+        or application.get("enabled") is False
+        or application.get("historical_only") is True
+    ):
+        raise ValueError("当前应用已停用或仅用于历史展示，不能修改所属业务")
     normalized = business_line_id(
         business,
-        app_package=case.get("app_package") or "",
+        app_package=app_package,
         require_active=True,
     )
     if not normalized:

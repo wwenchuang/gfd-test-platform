@@ -3376,7 +3376,10 @@ def _post_ui_generate_yaml(handler, qs):
 def _post_ui_generate_yaml_async(handler, qs):
     d = handler._body()
     try:
-        d["business"] = resolve_ui_generation_business(d)
+        d["business"] = resolve_ui_generation_business(
+            d,
+            app_package=d.get("app_package") or d.get("appPackage") or "",
+        )
     except ValueError as e:
         handler._json({"ok": False, "error": str(e)}, 400)
         return
@@ -3600,7 +3603,11 @@ def _post_ui_regenerate_yaml_async(handler, qs):
         "regenerate": True
     }
     try:
-        request_data["business"] = resolve_ui_generation_business(request_data, meta)
+        request_data["business"] = resolve_ui_generation_business(
+            request_data,
+            meta,
+            app_package=request_data.get("app_package") or request_data.get("appPackage") or "",
+        )
     except ValueError as e:
         handler._json({"ok": False, "error": str(e)}, 400)
         return
@@ -5021,7 +5028,10 @@ def _post_file_save(handler, qs):
 def _post_agent_runs_start(handler, qs):
     d = handler._body()
     try:
-        d["business"] = resolve_ui_generation_business(d)
+        d["business"] = resolve_ui_generation_business(
+            d,
+            app_package=d.get("app_package") or d.get("appPackage") or "",
+        )
     except ValueError as e:
         handler._json({"ok": False, "error": str(e)}, 400)
         return
@@ -5034,7 +5044,10 @@ def _post_agent_runs_start(handler, qs):
 def _post_agent_runs_preview(handler, qs):
     d = handler._body()
     try:
-        business = resolve_ui_generation_business(d)
+        business = resolve_ui_generation_business(
+            d,
+            app_package=d.get("app_package") or d.get("appPackage") or "",
+        )
     except ValueError as e:
         handler._json({"ok": False, "error": str(e)}, 400)
         return

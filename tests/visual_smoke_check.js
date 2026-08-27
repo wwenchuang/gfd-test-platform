@@ -70,6 +70,7 @@ function serve() {
         name: '智小白3D',
         package: 'com.kfb.model',
         enabled: true,
+        modules: ['3D打印基线'],
         business_lines: [
           {id: 'home', name: '家用', enabled: true},
           {id: 'shared', name: '共享', enabled: true},
@@ -79,6 +80,7 @@ function serve() {
         name: '校园助手',
         package: 'com.example.school',
         enabled: true,
+        modules: ['AI测试'],
         business_lines: [{id: 'campus', name: '校园业务', enabled: true}],
       }, {
         name: '已停用应用',
@@ -564,6 +566,8 @@ async function anyVisible(locator) {
     await page.waitForSelector('#modal-generate.show');
     if (!await page.locator('#generate-application').isVisible()) throw new Error('UI generation modal is missing the configured application selector');
     if (await page.locator('#generate-application option[value="com.example.disabled"]').count()) throw new Error('Disabled applications must not be selectable for a new UI generation');
+    await page.locator('#generate-module').selectOption('AI测试');
+    if (await page.locator('#generate-application').inputValue() !== 'com.example.school') throw new Error('UI generation must auto-select the application bound to the current module');
     await page.locator('#generate-application').selectOption('com.kfb.model');
     await page.locator('label:has(input[name="generate-business"][value="biz_school"])').click();
     await page.locator('#generate-application').selectOption('com.example.school');
@@ -582,6 +586,20 @@ async function anyVisible(locator) {
     }
     await page.screenshot({path: path.join(ARTIFACTS, 'generate-business-mobile.png'), fullPage: true});
     await page.setViewportSize({width: 1440, height: 900});
+    await page.evaluate(() => {
+      window.__visualTaskApps = taskApps;
+      taskApps = taskApps.map(app => ({...app, enabled: false}));
+      renderGenerateApplicationOptions('');
+      handleGenerateApplicationChange();
+    });
+    if (!await page.locator('#generate-application').isDisabled()) throw new Error('Generation application selector must be disabled when no enabled applications exist');
+    if (!await page.locator('#btn-generate-yaml').isDisabled()) throw new Error('Generation submit must be disabled when no enabled applications exist');
+    if (!await page.locator('#generate-app-config-action').isVisible()) throw new Error('No-enabled-application state must expose an application configuration action');
+    await page.evaluate(() => {
+      taskApps = window.__visualTaskApps;
+      renderGenerateApplicationOptions('');
+      handleGenerateApplicationChange();
+    });
     await page.evaluate(() => closeGenerateModal());
 
     await page.click('.workflow-step[data-workflow="execute"]');
@@ -1007,6 +1025,11 @@ async function anyVisible(locator) {
     await page.locator('.management-row', {hasText: '已停用应用'}).locator('button').click();
     await page.waitForSelector('#modal-task-apps.show');
     if (await page.locator('#task-app-enabled').isChecked()) throw new Error('Application configuration must preserve disabled application status for re-enablement');
+    await page.setViewportSize({width: 390, height: 844});
+    const disabledEditorBox = await page.locator('#modal-task-apps .modal').boundingBox();
+    if (!disabledEditorBox || disabledEditorBox.x < 0 || disabledEditorBox.x + disabledEditorBox.width > 390) throw new Error(`Disabled application editor overflows mobile viewport: ${JSON.stringify(disabledEditorBox)}`);
+    await page.screenshot({path: path.join(ARTIFACTS, 'disabled-app-editor-mobile.png'), fullPage: true});
+    await page.setViewportSize({width: 1440, height: 900});
     await page.click('#modal-task-apps .modal-close');
     await page.click('.workflow-step[data-workflow="sonic_config"]');
     await page.waitForSelector('h2:has-text("执行环境")');
