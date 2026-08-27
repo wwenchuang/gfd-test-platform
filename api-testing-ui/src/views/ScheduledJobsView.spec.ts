@@ -359,6 +359,8 @@ describe('ScheduledJobsView', () => {
 
     expect(wrapper.get('[data-testid="scheduled-list-enabled-job-9"]').text()).toContain('启用')
     expect(wrapper.get('[data-testid="scheduled-list-notify-job-9"]').text()).toContain('飞书')
+    expect(wrapper.get('[data-testid="scheduled-list-enabled-job-9"]').attributes('role')).toBe('switch')
+    expect(wrapper.get('[data-testid="scheduled-list-enabled-job-9"]').attributes('aria-checked')).toBe('true')
     await wrapper.get('[data-testid="scheduled-list-enabled-job-9"]').trigger('click')
     await flushPromises()
     await wrapper.get('[data-testid="scheduled-list-notify-job-9"]').trigger('click')

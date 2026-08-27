@@ -410,10 +410,10 @@
 
     <!-- 步骤指示器 -->
     <div class="form-steps-nav">
-      <div class="step-indicator active" onclick="FormSteps.goTo(0)"><span class="step-num">1</span><span class="step-label">基本信息</span></div>
-      <div class="step-indicator" onclick="FormSteps.goTo(1)"><span class="step-num">2</span><span class="step-label">设备连接</span></div>
-      <div class="step-indicator" onclick="FormSteps.goTo(2)"><span class="step-num">3</span><span class="step-label">群通知</span></div>
-      <div class="step-indicator" onclick="FormSteps.goTo(3)"><span class="step-num">4</span><span class="step-label">关联模块</span></div>
+      <div class="step-indicator active" onclick="goToTaskAppStep(0)"><span class="step-num">1</span><span class="step-label">基本信息</span></div>
+      <div class="step-indicator" onclick="goToTaskAppStep(1)"><span class="step-num">2</span><span class="step-label">设备连接</span></div>
+      <div class="step-indicator" onclick="goToTaskAppStep(2)"><span class="step-num">3</span><span class="step-label">群通知</span></div>
+      <div class="step-indicator" onclick="goToTaskAppStep(3)"><span class="step-num">4</span><span class="step-label">关联模块</span></div>
     </div>
 
     <!-- Step 1：基本信息 -->
@@ -422,6 +422,12 @@
       <input type="text" id="task-app-name" placeholder="如：小白学习 / 3D打印">
       <label class="modal-label" for="task-app-package">包名</label>
       <input type="text" id="task-app-package" placeholder="如：com.kfb.model">
+      <div class="task-app-business-head">
+        <label class="modal-label">业务线</label>
+        <button class="btn-sm" type="button" onclick="addTaskAppBusinessLine()">新增业务线</button>
+      </div>
+      <div id="task-app-business-lines" class="task-app-business-lines"></div>
+      <div class="generate-hint">只填写中文业务名称。停用后不再用于新建用例，历史用例和通知仍按原名称展示。</div>
     </div>
 
     <!-- Step 2：设备连接 -->
@@ -469,7 +475,7 @@
     <!-- 分步导航按钮 -->
     <div class="form-steps-footer">
       <button type="button" class="btn-cancel step-prev-btn" onclick="FormSteps.prev()" style="display:none">上一步</button>
-      <button type="button" class="btn-confirm step-next-btn" onclick="FormSteps.next()">下一步</button>
+      <button type="button" class="btn-confirm step-next-btn" onclick="nextTaskAppStep()">下一步</button>
       <button type="button" class="btn-confirm step-submit-btn" onclick="saveTaskApp()" style="display:none">保存分组</button>
     </div>
 
@@ -531,7 +537,18 @@
     <select id="generate-module" onchange="handleGenerateModuleChange()">
       <option value="">选择目标模块</option>
     </select>
-    <label class="modal-label" for="generate-app-package">应用 / APP 包名</label>
+    <div class="generate-identity-grid">
+      <div class="generate-readonly-field" aria-label="应用">
+        <span>应用</span>
+        <strong>智小白3D</strong>
+      </div>
+      <fieldset class="generate-business-field">
+        <legend>所属业务 <span>必选</span></legend>
+        <div class="generate-business-segmented" id="generate-business-options"></div>
+      </fieldset>
+    </div>
+    <div class="generate-hint">所属业务会由本批次全部用例继承；生成后仍可在单条 YAML 用例中修改。</div>
+    <label class="modal-label" for="generate-app-package">APP 包名</label>
     <div class="app-picker">
       <select id="generate-app-select" onchange="selectAppPackage('generate', this.value)">
         <option value="">选择已维护 APP</option>
@@ -607,23 +624,25 @@
     <label class="modal-label" for="generate-content">业务补充说明</label>
     <textarea id="generate-content" placeholder="只写本次业务上下文即可，例如：当前测试账号已登录；本次只覆盖首页入口和我的页面；不要覆盖支付、清缓存、切换账号、后台造数场景。平台会自动把设计稿、页面知识和需求文档组合成生成约束。"></textarea>
     <label style="display:flex;align-items:center;gap:8px;color:var(--text2);font-size:12px;font-family:var(--mono);margin-bottom:12px;">
-      <input type="checkbox" id="generate-create-job" style="width:auto;margin:0;">
+      <input type="checkbox" id="generate-create-job" style="width:auto;margin:0;" onchange="updateGenerateCreateJobControls()">
       生成后立即创建 Midscene 单条/文件调试任务
     </label>
-    <label class="modal-label" for="generate-device">执行设备</label>
-    <select id="generate-device" style="margin-bottom:12px;">
-      <option value="">请选择执行设备（不自动分配）</option>
-    </select>
-    <label class="modal-label" for="generate-run-mode">执行策略</label>
-    <select id="generate-run-mode" style="margin-bottom:12px;" onchange="syncRunModeControls()">
-      <option value="test">测试模式：失败只复检归因，不自动修脚本</option>
-      <option value="baseline">基线回归：失败留证据，不自动修改脚本</option>
-    </select>
-    <input type="checkbox" id="generate-auto-optimize" style="display:none;" disabled>
-    <div class="generate-hint" style="margin-bottom:12px;">基线失败会保留日志、报告和归因；确认是脚本问题后，再从执行中心手动发起 AI 修复。</div>
+    <div id="generate-execution-options" hidden>
+      <label class="modal-label" for="generate-device">执行设备</label>
+      <select id="generate-device" style="margin-bottom:12px;">
+        <option value="">请选择执行设备（不自动分配）</option>
+      </select>
+      <label class="modal-label" for="generate-run-mode">执行策略</label>
+      <select id="generate-run-mode" style="margin-bottom:12px;" onchange="syncRunModeControls()">
+        <option value="test">测试模式：失败只复检归因，不自动修脚本</option>
+        <option value="baseline">基线回归：失败留证据，不自动修改脚本</option>
+      </select>
+      <input type="checkbox" id="generate-auto-optimize" style="display:none;" disabled>
+      <div class="generate-hint" style="margin-bottom:12px;">基线失败会保留日志、报告和归因；确认是脚本问题后，再从执行中心手动发起 AI 修复。</div>
+    </div>
     <div class="modal-btns">
       <button class="btn-cancel" onclick="closeGenerateModal()">取消</button>
-      <button class="btn-confirm" id="btn-generate-yaml" onclick="generateYaml()">生成并进入调试</button>
+      <button class="btn-confirm" id="btn-generate-yaml" onclick="generateYaml()">生成 YAML</button>
     </div>
   </div>
 </div>
@@ -886,6 +905,18 @@
       <button class="btn-cancel" onclick="closeModal('modal-upload')">取消</button>
       <button class="btn-confirm" onclick="uploadFile()">上传</button>
     </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="modal-model-test-result">
+  <div class="modal" style="max-width:560px;">
+    <div class="modal-head">
+      <h3 id="model-test-result-title">模型服务测试结果</h3>
+      <button class="modal-close" type="button" onclick="closeModal('modal-model-test-result')" title="关闭">×</button>
+    </div>
+    <div class="generate-status" id="model-test-result-status"></div>
+    <div class="review-stats" id="model-test-result-details"></div>
+    <div class="modal-btns"><button class="btn-confirm" onclick="closeModal('modal-model-test-result')">知道了</button></div>
   </div>
 </div>
 

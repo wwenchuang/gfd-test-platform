@@ -53,13 +53,17 @@ def test_feishu_report_card_contains_report_link_and_readable_summary(monkeypatc
     )
 
     text = json.dumps(card, ensure_ascii=False)
-    assert "❌ 智小白3D｜API 基线测试｜未通过" in text
-    assert "API 基线测试未通过" in text
+    assert "❌ 智小白3D｜家用｜API 测试｜基线回归未通过" in text
+    assert "基线回归未通过" in text
     assert "应用：** 智小白3D" in text
+    assert "业务：** 家用" in text
+    assert "测试类型：** API 测试" in text
+    assert "执行场景：** 基线回归" in text
+    assert "触发方式：** 手动触发" in text
     assert "收藏链路回归" in text
     assert "生产环境（新）-腾讯云" in text
     assert "通过率：50%" in text
-    assert "用例统计：** 总数 2｜通过 1 / 失败 1 / 异常 0 / 跳过 0 / 取消 0" in text
+    assert "用例统计：** 总数 2｜通过 1｜失败 1｜异常 0｜跳过 0｜取消 0" in text
     assert "失败摘要" in text
     assert "失败 · 添加收藏 - 正常流程 · 断言失败" in text
     assert "查看当前执行报告" in text
@@ -86,8 +90,78 @@ def test_feishu_report_card_marks_scheduled_job_type():
 
     text = json.dumps(card, ensure_ascii=False)
     assert "每日基线回归" in text
-    assert "任务类型" in text
-    assert "定时任务" in text
+    assert "触发方式" in text
+    assert "定时触发" in text
+
+
+def test_feishu_report_card_does_not_invent_a_task_name_for_ad_hoc_runs():
+    card = NotificationService._card(
+        _execution(request_snapshot={}),
+        [],
+        {"project_name": "3D家用", "environment_name": "生产环境"},
+    )
+
+    text = json.dumps(card, ensure_ascii=False)
+    assert "任务名称：** 未保存任务" in text
+    assert "执行场景：** 基线回归" in text
+
+
+@pytest.mark.parametrize(
+    ("project_name", "expected_business"),
+    [
+        ("智小白3D APP", "家用"),
+        ("家用", "家用"),
+        ("共享", "共享"),
+    ],
+)
+def test_feishu_report_card_separates_application_and_business(project_name, expected_business):
+    card = NotificationService._card(
+        _execution(summary={
+            "total": 1, "passed": 1, "failed": 0, "broken": 0,
+            "skipped": 0, "cancelled": 0,
+        }),
+        [],
+        {"project_name": project_name, "environment_name": "生产环境"},
+    )
+
+    text = json.dumps(card, ensure_ascii=False)
+    assert "**应用：** 智小白3D" in text
+    assert f"**业务：** {expected_business}" in text
+    assert f"✅ 智小白3D｜{expected_business}｜API 测试｜基线回归通过" in text
+    assert "UI 自动化" not in text
+
+
+def test_feishu_report_card_prefers_case_snapshot_business_over_project_name():
+    card = NotificationService._card(
+        _execution(request_snapshot={
+            "case_versions": [
+                {"id": "version-1", "business": "shared"},
+            ],
+        }),
+        [],
+        {"project_name": "3D家用", "environment_name": "生产环境"},
+    )
+
+    text = json.dumps(card, ensure_ascii=False)
+    assert "**业务：** 共享" in text
+    assert "智小白3D｜共享｜API 测试" in text
+
+
+def test_feishu_report_card_marks_mixed_business_execution():
+    card = NotificationService._card(
+        _execution(request_snapshot={
+            "case_versions": [
+                {"id": "version-1", "business": "home"},
+                {"id": "version-2", "business": "shared"},
+            ],
+        }),
+        [],
+        {"project_name": "智小白3D", "environment_name": "生产环境"},
+    )
+
+    text = json.dumps(card, ensure_ascii=False)
+    assert "**业务：** 家用、共享" in text
+    assert "智小白3D｜家用、共享｜API 测试" in text
 
 
 def test_feishu_report_card_never_rounds_an_imperfect_run_to_100_percent():

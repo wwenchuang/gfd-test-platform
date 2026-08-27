@@ -736,7 +736,7 @@ function showAiRepairCenter() {
         <div>
           <div class="workflow-kicker">AI 修复 · 选失败任务 / 判断原因 / 生成草稿 / 人工确认</div>
           <h2>AI修复工作台</h2>
-          <p>从左侧选择失败任务，先判断失败原因。只有脚本问题会生成 YAML 草稿；产品缺陷、环境问题和不确定问题只给处理建议，不自动改脚本。</p>
+          <p>从下方失败任务列表选择记录，先判断失败原因。只有脚本问题会生成 YAML 草稿；产品缺陷、环境问题和不确定问题只给处理建议，不自动改脚本。</p>
         </div>
         <div class="review-actions">
           <button class="btn-sm" onclick="loadJobs(true).then(() => showAiRepairCenter())">刷新失败任务</button>

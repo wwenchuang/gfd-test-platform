@@ -10,6 +10,7 @@ import { useContextStore } from '../stores/context'
 import { useExecutionsStore } from '../stores/executions'
 import { useTasksStore } from '../stores/tasks'
 import { confirmApiExecution } from '../utils/executionConfirmation'
+import { businessLineLabel } from '../utils/businessLines'
 
 const context = useContextStore()
 const baselines = useBaselinesStore()
@@ -27,7 +28,7 @@ const moveTargetGroup = ref('')
 const localError = ref('')
 const localMessage = ref('')
 const baselinePage = ref(1)
-const BASELINE_PAGE_SIZE = 50
+const BASELINE_PAGE_SIZE = 25
 
 const projectReady = computed(() => Boolean(context.projectId))
 const projectName = computed(() => context.projects.find(item => item.id === context.projectId)?.name || '未选择项目')
@@ -71,7 +72,7 @@ const filteredBaselines = computed(() => {
     if (priorityFilter.value !== 'all' && item.priority !== priorityFilter.value) return false
     if (originFilter.value !== 'all' && item.origin !== originFilter.value) return false
     if (!needle) return true
-    return [item.case_name, item.endpoint_summary, item.path, item.method, baselineGroup(item), ...item.tags]
+    return [item.case_name, item.endpoint_summary, item.path, item.method, baselineGroup(item), baselineBusinessLabel(item.business), ...item.tags]
       .join(' ')
       .toLowerCase()
       .includes(needle)
@@ -344,6 +345,10 @@ function baselineOriginLabel(origin: string): string {
   return '手工'
 }
 
+function baselineBusinessLabel(business: ApiBaselineCase['business']): string {
+  return businessLineLabel(business)
+}
+
 function sourceRevisionName(item: ApiBaselineCase): string {
   const source = selectedSourceById.value.get(item.source_revision_id)
   return source ? `${source.name} · v${source.revision_number}` : `来源版本 ${item.source_revision_id.slice(0, 8)}`
@@ -478,7 +483,7 @@ function adoptionReasonLabel(reason: string): string {
               <input type="checkbox" :data-testid="`baseline-select-${item.id}`" :checked="baselines.selectedIds.includes(item.id)" @change="baselines.toggle(item.id)" />
             </label>
             <span class="baseline-case-copy">
-              <strong>{{ item.case_name }} <b v-if="isOneTimeBaseline(item)" :data-testid="`baseline-one-time-${item.id}`" class="baseline-one-time-pill">一次性</b></strong>
+              <strong>{{ item.case_name }} <b class="baseline-business-pill" :class="`business-${item.business || 'unset'}`">{{ baselineBusinessLabel(item.business) }}</b> <b v-if="isOneTimeBaseline(item)" :data-testid="`baseline-one-time-${item.id}`" class="baseline-one-time-pill">一次性</b></strong>
               <small>
                 <b v-if="item.status !== 'active'" class="baseline-status-pill">历史版本</b>
                 {{ adoptionReasonLabel(item.adoption_reason) }}

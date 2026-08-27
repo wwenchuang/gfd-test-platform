@@ -3512,7 +3512,7 @@ def update_asset_request_context(case_set_id, context=None):
     for key in ("figma_mode", "figmaMode", "figma_limit", "figmaLimit", "figma_reference_limit", "figmaReferenceLimit"):
         if context.get(key) not in (None, ""):
             meta[key] = context.get(key)
-    for key in ("app_package", "appPackage", "knowledge_tier", "knowledgeTier"):
+    for key in ("app_package", "appPackage", "knowledge_tier", "knowledgeTier", "business"):
         if context.get(key) not in (None, ""):
             meta[key] = context.get(key)
     page_ids = context.get("knowledge_page_ids") or context.get("knowledgePageIds")

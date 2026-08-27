@@ -335,6 +335,7 @@ function selectAppPackage(scope, appPackage) {
     renderKnowledgeApps();
     loadKnowledgePages();
   } else if (scope === 'generate') {
+    renderGenerateBusinessOptions();
     updateGenerateAppHint();
     loadGenerateKnowledgePages();
   } else if (scope === 'mindmap') {
@@ -361,6 +362,7 @@ function handleGenerateAppInput(appPackage) {
   rememberAppPackage(appPackage);
   syncAppSelect('generate');
   updateGenerateAppHint();
+  renderGenerateBusinessOptions();
   if (generateAppInputTimer) clearTimeout(generateAppInputTimer);
   generateAppInputTimer = setTimeout(() => {
     loadGenerateKnowledgePages();
@@ -382,7 +384,28 @@ function syncGenerateAppFromModule() {
   } else {
     updateGenerateAppHint();
   }
+  renderGenerateBusinessOptions();
   loadGenerateKnowledgePages();
+}
+
+function renderGenerateBusinessOptions(selectedValue = null) {
+  const container = document.getElementById('generate-business-options');
+  if (!container) return;
+  const packageName = document.getElementById('generate-app-package')?.value.trim() || TEST_APP_PACKAGE;
+  const current = selectedValue === null
+    ? (document.querySelector('input[name="generate-business"]:checked')?.value || '')
+    : String(selectedValue || '');
+  const lines = taskAppBusinessLines(packageName);
+  if (!lines.length) {
+    container.innerHTML = '<span class="generate-business-empty">当前应用没有启用的业务线，请先到应用配置中维护。</span>';
+    return;
+  }
+  container.innerHTML = lines.map(item => `
+    <label>
+      <input type="radio" name="generate-business" value="${escapeHtml(item.id)}" ${item.id === current ? 'checked' : ''}>
+      <span>${escapeHtml(item.name)}</span>
+    </label>
+  `).join('');
 }
 
 function handleGenerateModuleChange() {
@@ -1651,9 +1674,9 @@ function renderKnowledgePages(pages=filteredKnowledgePages()) {
         <div class="knowledge-sub">${escapeHtml(page.route || page.description || page.page_id)}</div>
       </div>
       <div class="knowledge-row-actions">
-        <button class="knowledge-mini-btn" type="button" onclick="event.stopPropagation(); editKnowledgePage(${jsArg(page.page_id)})" title="编辑">编</button>
-        <button class="knowledge-mini-btn" type="button" onclick="event.stopPropagation(); toggleKnowledgeTier(${jsArg(page.page_id)})" title="${page.tier === 'baseline' ? '移回测试库' : '标记为基线库'}">${page.tier === 'baseline' ? '测' : '基'}</button>
-        <button class="knowledge-mini-btn danger" type="button" onclick="event.stopPropagation(); deleteKnowledgePage(${jsArg(page.app_package)},${jsArg(page.page_id)})" title="删除">删</button>
+        <button class="knowledge-mini-btn" type="button" onclick="event.stopPropagation(); editKnowledgePage(${jsArg(page.page_id)})" title="编辑">编辑</button>
+        <button class="knowledge-mini-btn" type="button" onclick="event.stopPropagation(); toggleKnowledgeTier(${jsArg(page.page_id)})" title="${page.tier === 'baseline' ? '移回测试库' : '标记为基线库'}">${page.tier === 'baseline' ? '移回测试库' : '设为基线'}</button>
+        <button class="knowledge-mini-btn danger" type="button" onclick="event.stopPropagation(); deleteKnowledgePage(${jsArg(page.app_package)},${jsArg(page.page_id)})" title="删除">删除</button>
       </div>
     </div>
   `).join('');
@@ -2930,6 +2953,13 @@ function generationJobCounts(job) {
   return parts.join(' · ');
 }
 
+function generationJobBusiness(job) {
+  const result = job.result || {};
+  const request = job.request_summary || {};
+  const business = result.business || result.summary?.business || request.business || '';
+  return businessLineLabel(business);
+}
+
 function generationFailureHtml(job={}) {
   if (job.status !== 'failed') return '';
   const detail = job.error_detail || job.errorDetail || {};
@@ -3125,6 +3155,7 @@ function generationRecordCard(job) {
   const mod = generationJobModule(job);
   const caseSetId = generationJobCaseSetId(job);
   const counts = generationJobCounts(job);
+  const business = generationJobBusiness(job);
   const error = jobErrorText(job);
   const timingText = jobTimingText(job);
   const cancelAction = ['pending', 'running'].includes(status) && job.job_id
@@ -3137,7 +3168,7 @@ function generationRecordCard(job) {
         <div>
           <div class="generation-record-title">${escapeHtml(title)}</div>
           <div class="generation-record-meta">
-            ${escapeHtml([mod, job.step, timingText || jobTimeText(job)].filter(Boolean).join(' · '))}
+            ${escapeHtml([mod, business, job.step, timingText || jobTimeText(job)].filter(Boolean).join(' · '))}
             ${caseSetId ? `<br>批次：${escapeHtml(caseSetId)}` : ''}
           </div>
         </div>
@@ -3164,7 +3195,7 @@ function generationRecordsHtml(jobs) {
   return `
     <div class="generation-records">
       <div class="generation-record-head">
-        <div class="workflow-kicker">AI GENERATION JOBS · 需求解析 / 用例生成 / YAML</div>
+        <div class="workflow-kicker">AI 生成记录 · 需求解析 / 用例生成 / YAML</div>
         <h2>生成记录</h2>
         <p>这里看 AI 生成进度、耗时、失败原因和生成结果。任务提交后不用守着弹窗，回到这里看状态即可。</p>
         <div class="generation-flow">
@@ -4511,7 +4542,7 @@ async function showMindmapCenter() {
   area.innerHTML = `
     <div class="generation-records">
       <div class="generation-record-head">
-        <div class="workflow-kicker">MINDMAP CENTER · FreeMind .mm 文件</div>
+        <div class="workflow-kicker">脑图中心 · FreeMind .mm 文件</div>
         <h2>脑图中心</h2>
         <p>这里管理脑图文件（FreeMind .mm）。重建脑图只重写文件；重新生成用例才会重新调用 AI、更新用例和 YAML。</p>
         <div class="generate-hint">
@@ -4700,11 +4731,13 @@ function resetGenerateModal() {
   document.getElementById('generate-figma-mode').value = 'smart';
   document.getElementById('generate-figma-limit').value = '80';
   document.getElementById('generate-knowledge-tier').value = 'all';
+  renderGenerateBusinessOptions('');
   document.getElementById('generate-create-job').checked = false;
   document.getElementById('generate-run-mode').value = 'test';
   document.getElementById('generate-device').value = '';
   document.getElementById('generate-auto-optimize').checked = false;
   syncRunModeControls();
+  updateGenerateCreateJobControls();
   document.getElementById('generate-asset-files').value = '';
   generateAssetFiles = [];
   generateKnowledgePages = [];
@@ -4724,10 +4757,18 @@ function setGenerateBusy(busy) {
   const button = document.getElementById('btn-generate-yaml');
   const closeButton = document.getElementById('btn-close-generate');
   button.disabled = busy;
-  button.textContent = busy ? '生成中...' : '生成并进入调试';
+  button.textContent = busy ? '生成中...' : (document.getElementById('generate-create-job')?.checked ? '生成并进入调试' : '生成 YAML');
   if (closeButton) closeButton.disabled = busy;
   document.querySelectorAll('#modal-generate input, #modal-generate select, #modal-generate textarea, #modal-generate .btn-cancel, #modal-generate .asset-remove')
     .forEach(el => el.disabled = busy);
+}
+
+function updateGenerateCreateJobControls() {
+  const enabled = Boolean(document.getElementById('generate-create-job')?.checked);
+  const options = document.getElementById('generate-execution-options');
+  if (options) options.hidden = !enabled;
+  const button = document.getElementById('btn-generate-yaml');
+  if (button && !generateBusy) button.textContent = enabled ? '生成并进入调试' : '生成 YAML';
 }
 
 function closeGenerateModal() {
@@ -4857,7 +4898,8 @@ function showCreateMindmapModal() {
   renderModuleSelects();
   document.getElementById('mindmap-title').value = '';
   document.getElementById('mindmap-module').innerHTML = '<option value="">选择归属模块</option>' + Object.keys(modules).map(m => `<option value="${escapeHtml(m)}">${escapeHtml(m)}</option>`).join('');
-  document.getElementById('mindmap-module').value = currentModule || '';
+  const moduleSelect = document.getElementById('mindmap-module');
+  moduleSelect.value = Object.prototype.hasOwnProperty.call(modules, currentModule) ? currentModule : '';
   const appPackage = currentModuleAppPackage() || document.getElementById('generate-app-package')?.value.trim() || 'com.kfb.model';
   document.getElementById('mindmap-app-package').value = appPackage;
   document.getElementById('mindmap-figma-url').value = '';
@@ -4873,10 +4915,20 @@ function showCreateMindmapModal() {
 }
 
 async function createMindmapOnly() {
-  const title = document.getElementById('mindmap-title').value.trim() || '测试用例脑图';
-  const module = document.getElementById('mindmap-module').value || title;
+  const title = document.getElementById('mindmap-title').value.trim();
+  const module = document.getElementById('mindmap-module').value;
   const supplement = document.getElementById('mindmap-content').value.trim();
   const figmaUrl = document.getElementById('mindmap-figma-url').value.trim();
+  if (!title) {
+    setMindmapStatus('请填写脑图标题。', 'error');
+    document.getElementById('mindmap-title')?.focus();
+    return;
+  }
+  if (!module) {
+    setMindmapStatus('请选择归属模块。', 'error');
+    document.getElementById('mindmap-module')?.focus();
+    return;
+  }
   if (!mindmapAssetFiles.length && !supplement && !figmaUrl) {
     setMindmapStatus('请先上传需求/截图/已有用例，填写补充说明，或粘贴 Figma 链接。', 'error');
     return;
@@ -5055,7 +5107,13 @@ async function generateYaml() {
   const selectedDevice = createJob ? requireRunnerDevice('generate-device', '', '生成后创建调试任务') : selectedRunnerDevice();
   const knowledgePageIds = selectedGenerateKnowledgePageIds();
   const knowledgeTier = document.getElementById('generate-knowledge-tier').value || 'all';
+  const business = document.querySelector('input[name="generate-business"]:checked')?.value || '';
 
+  if (!business) {
+    setGenerateStatus('请选择所属业务。', 'error');
+    showToast('请选择所属业务', 'error');
+    return;
+  }
   if (!mod || (!content && generateAssetFiles.length === 0 && !figmaUrl)) {
     setGenerateStatus('请选择目标模块，并上传文件、填写需求补充说明或粘贴 Figma 链接。', 'error');
     showToast('请选择模块，并上传文件、填写需求说明或粘贴 Figma 链接', 'error');
@@ -5086,6 +5144,7 @@ async function generateYaml() {
       body: JSON.stringify({
         title,
         module: mod,
+        business,
         app_package: appPackage,
         knowledge_page_ids: knowledgePageIds,
         knowledge_tier: knowledgeTier,

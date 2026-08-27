@@ -10827,6 +10827,7 @@ def check_agent_generation_pipeline_preserves_selected_ai_model():
             "runId": "agent-static-selected-model",
             "target": "通用页面回归",
             "module": "AI测试",
+            "business": "home",
             "modelProviderId": "highway_gpt5_mini",
             "aiProviderId": "highway_gpt5_mini",
             "aiModel": "gpt-5-mini",
@@ -10847,6 +10848,7 @@ def check_agent_generation_pipeline_preserves_selected_ai_model():
         require(request.get("aiProviderId") == "highway_gpt5_mini", "Agent YAML generation must preserve the selected AI provider id")
         require(request.get("aiModel") == "gpt-5-mini", "Agent YAML generation must preserve the selected AI model")
         require(request.get("model") == "gpt-5-mini", "Agent YAML generation must not replace the selected model with the provider selector token")
+        require(request.get("business") == "home", "Agent YAML generation must preserve the selected business")
         execution = request.get("executionContext") or {}
         require(
             execution.get("runnerId") == "win-runner-01"
@@ -13161,7 +13163,7 @@ def check_ai_skill_timeout_fallbacks_are_requirement_scoped():
     require(
         "小白学习打印" not in generic_step_blob
         and "小白扫描王" not in generic_step_blob
-        and ("3D 打印首页加载完成" in generic_step_blob or "3D打印首页加载完成" in generic_step_blob),
+        and "智小白3D首页加载完成" in generic_step_blob,
         "Fallback automation steps must use the selected app context for non-Baidu requirements too",
     )
     visibility_payload = {

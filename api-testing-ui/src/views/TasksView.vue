@@ -167,7 +167,7 @@ async function editTaskInWorkbench(): Promise<void> {
 
 async function createTaskInWorkbench(): Promise<void> {
   tasks.clear()
-  await router.push({ name: 'workbench' })
+  await router.push({ name: 'workbench', query: { newTask: '1' } })
 }
 
 async function openLatestExecution(): Promise<void> {

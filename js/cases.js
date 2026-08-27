@@ -24,6 +24,7 @@ async function loadModules(options = {}) {
       modules = moduleData || {};
       if (appData) {
         taskApps = appData.apps || [];
+        refreshBusinessLineControls();
       }
       if (metaData) {
         taskMeta = metaData.meta || {};
@@ -114,4 +115,3 @@ function metaKey(mod, file) {
 function fileMeta(mod, file) {
   return taskMeta[metaKey(mod, file)] || {};
 }
-

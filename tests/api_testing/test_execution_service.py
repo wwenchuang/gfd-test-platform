@@ -99,6 +99,22 @@ def test_task_snapshot_normalizes_empty_task_name():
     assert ExecutionService._task_snapshot({"name": "无 ID 任务"}) is None
 
 
+def test_case_version_snapshot_keeps_explicit_business():
+    snapshot = ExecutionService._case_version_snapshot(
+        SimpleNamespace(
+            id="version-1",
+            case_id="case-1",
+            endpoint_id="endpoint-1",
+            version_number=3,
+            request_template={"business": "shared"},
+            dependency_spec={"dependencies": []},
+        ),
+        requested_version_ids={"version-1"},
+    )
+
+    assert snapshot["business"] == "shared"
+
+
 def test_failure_analysis_dispatch_is_limited_for_bulk_executions(monkeypatch):
     monkeypatch.setattr(
         execution_service_module,

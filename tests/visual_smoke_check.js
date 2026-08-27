@@ -65,11 +65,27 @@ function serve() {
       return;
     }
     if (url.pathname === '/api/task-apps') {
-      json(res, {apps: [{name: '智小白3D', package: 'com.kfb.model'}]});
+      json(res, {apps: [{
+        name: '智小白3D',
+        package: 'com.kfb.model',
+        business_lines: [
+          {id: 'home', name: '家用', enabled: true},
+          {id: 'shared', name: '共享', enabled: true},
+          {id: 'biz_school', name: '校园版', enabled: true},
+        ],
+      }]});
       return;
     }
     if (url.pathname === '/api/apps') {
       json(res, {ok: true, apps: [{name: '智小白3D APP', package: 'com.kfb.model'}]});
+      return;
+    }
+    if (url.pathname === '/api/knowledge/apps') {
+      json(res, {ok: true, apps: ['com.kfb.model'], appDetails: [{name: '智小白3D', package: 'com.kfb.model'}]});
+      return;
+    }
+    if (url.pathname === '/api/knowledge/pages') {
+      json(res, {ok: true, pages: []});
       return;
     }
     if (url.pathname === '/api/models') {
@@ -531,6 +547,22 @@ async function anyVisible(locator) {
     const assetsBox = await page.locator('.assets-browser').boundingBox();
     if (!assetsBox || assetsBox.width < 900) throw new Error(`assets workspace is too narrow: ${assetsBox && assetsBox.width}`);
 
+    await page.evaluate(() => showGenerateYaml());
+    await page.waitForSelector('#modal-generate.show');
+    if (!await page.locator('.generate-readonly-field', {hasText: '智小白3D'}).isVisible()) throw new Error('UI generation modal is missing the fixed application name');
+    if (!await page.locator('.generate-business-field', {hasText: '所属业务'}).isVisible()) throw new Error('UI generation modal is missing the business selector');
+    if (await page.locator('input[name="generate-business"]:checked').count()) throw new Error('UI generation business must not have a silent default');
+    if (!await page.locator('#generate-business-options', {hasText: '校园版'}).isVisible()) throw new Error('UI generation modal did not load configured Chinese business lines');
+    await page.screenshot({path: path.join(ARTIFACTS, 'generate-business.png'), fullPage: true});
+    await page.setViewportSize({width: 390, height: 844});
+    const mobileBusinessBox = await page.locator('.generate-business-field').boundingBox();
+    if (!mobileBusinessBox || mobileBusinessBox.x < 0 || mobileBusinessBox.x + mobileBusinessBox.width > 390) {
+      throw new Error(`UI generation business selector overflows mobile viewport: ${JSON.stringify(mobileBusinessBox)}`);
+    }
+    await page.screenshot({path: path.join(ARTIFACTS, 'generate-business-mobile.png'), fullPage: true});
+    await page.setViewportSize({width: 1440, height: 900});
+    await page.evaluate(() => closeGenerateModal());
+
     await page.click('.workflow-step[data-workflow="execute"]');
     await page.waitForSelector('text=调试执行');
     await page.waitForSelector('text=选择要调试的 YAML');
@@ -574,6 +606,7 @@ async function anyVisible(locator) {
       return hint && hint.innerText.includes('win-runner-01') && hint.innerText.includes('com.kfb.model 1.16.0 (38)');
     });
     await page.selectOption('#agent-source-type', 'figma');
+    await page.selectOption('#agent-business', 'home');
     await page.waitForSelector('text=Figma 链接在下方');
     await page.fill('#agent-source-figma-url', 'https://www.figma.com/design/mx4x043OQjy1IYB1OfUdxw/%E6%99%BA%E5%B0%8F%E7%99%BDAPP?node-id=4458-1905&p=f&t=visual-smoke-0');
     const figmaWrapOk = await page.locator('#agent-source-figma-url').evaluate(el => {
@@ -584,7 +617,7 @@ async function anyVisible(locator) {
     await page.click('button:has-text("预览计划")');
     await page.waitForSelector('#modal-agent-plan-preview.show');
     const previewText = await page.locator('#agent-plan-preview-body').innerText();
-    if (!/执行设备/.test(previewText) || !/需求显式候选（非业务路径）/.test(previewText) || !/AI 业务计划：尚未执行/.test(previewText)) throw new Error(`Agent preview modal did not keep candidates separate from the later AI plan: ${previewText}`);
+    if (!/所属业务：家用/.test(previewText) || !/执行设备/.test(previewText) || !/需求显式候选（非业务路径）/.test(previewText) || !/AI 业务计划：尚未执行/.test(previewText)) throw new Error(`Agent preview modal did not preserve business or keep candidates separate from the later AI plan: ${previewText}`);
     if (!await page.locator('#modal-agent-plan-preview button', {hasText: '复制预览'}).isVisible()) throw new Error('Agent preview modal is missing copy action');
     await page.click('#modal-agent-plan-preview .btn-cancel');
     await page.click('button:has-text("安装/更新 App")');
@@ -943,6 +976,12 @@ async function anyVisible(locator) {
     await page.locator('details[data-nav-group="settings"]').evaluate(el => { el.open = true; });
     await page.click('.workflow-step[data-workflow="app_config"]');
     await page.waitForSelector('h2:has-text("应用配置")');
+    await page.click('.config-management-page button:has-text("编辑")');
+    await page.waitForSelector('#modal-task-apps.show');
+    const hasSchoolBusiness = await page.locator('.task-app-business-name').evaluateAll(inputs => inputs.some(input => input.value === '校园版'));
+    if (!hasSchoolBusiness) throw new Error('Application configuration did not expose the configured Chinese business line');
+    await page.screenshot({path: path.join(ARTIFACTS, 'app-business-lines.png'), fullPage: true});
+    await page.click('#modal-task-apps .modal-close');
     await page.click('.workflow-step[data-workflow="sonic_config"]');
     await page.waitForSelector('h2:has-text("执行环境")');
     if (!await page.locator('.config-management-page button:has-text("扫描旧/重复步骤")').isVisible()) throw new Error('Sonic scan must be an explicit action on execution environment page');
@@ -968,14 +1007,11 @@ async function anyVisible(locator) {
     await page.waitForSelector('text=自定义路由');
     await page.click('button:has-text("保存模型策略")');
     await page.waitForSelector('text=当前模型策略');
-    let gatewayDialogText = '';
-    page.once('dialog', async dialog => {
-      gatewayDialogText = dialog.message();
-      await dialog.accept();
-    });
     await page.click('button:has-text("测试当前策略")');
-    await page.waitForTimeout(300);
-    if (!/gateway ok/.test(gatewayDialogText)) throw new Error('AI Gateway test dialog did not include gateway ok');
+    await page.waitForSelector('#modal-model-test-result.show');
+    const gatewayResultText = await page.locator('#modal-model-test-result').innerText();
+    if (!/模型服务连接正常/.test(gatewayResultText) || !/调用成功/.test(gatewayResultText)) throw new Error('AI Gateway test result did not show the dedicated success state');
+    if (/原始 YAML|修复 YAML|生成修复/.test(gatewayResultText)) throw new Error('Model service test reused the YAML repair dialog');
     if (apiFailures.length) throw new Error(`api failures: ${apiFailures.join(' | ')}`);
     if (errors.length) throw new Error(`page errors: ${errors.join(' | ')}`);
     console.log(JSON.stringify({
@@ -984,6 +1020,9 @@ async function anyVisible(locator) {
       screenshots: [
         path.join(ARTIFACTS, 'login.png'),
         path.join(ARTIFACTS, 'dashboard.png'),
+        path.join(ARTIFACTS, 'generate-business.png'),
+        path.join(ARTIFACTS, 'generate-business-mobile.png'),
+        path.join(ARTIFACTS, 'app-business-lines.png'),
         path.join(ARTIFACTS, 'execution.png'),
         path.join(ARTIFACTS, 'agent.png'),
         path.join(ARTIFACTS, 'agent-mobile.png'),

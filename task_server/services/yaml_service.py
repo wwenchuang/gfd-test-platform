@@ -149,6 +149,7 @@ from .yaml_template_matcher import (
     evaluate_baseline_template_matching,
     select_best_baseline_template,
 )
+from .business_line_service import business_line_id
 
 __all__ = [
     "yaml_text",
@@ -7272,6 +7273,7 @@ def run_generate_job(job_id, request_data):
             return
         summary = {
             "module": result["module"],
+            "business": result.get("business") or "",
             "file": result["file"],
             "files": result.get("files") or result.get("yamlFiles") or [],
             "yamlFiles": result.get("yamlFiles") or result.get("files") or [],
@@ -7619,6 +7621,55 @@ def build_figma_soft_evidence_context_text(figma_texts, limit=16000):
     return f"{header}\n\n【Figma 解析结果】\n{body}"[:max(2000, safe_int(limit, 16000))]
 
 
+def normalize_ui_case_business(value, require_active=False):
+    return business_line_id(value, require_active=require_active)
+
+
+def resolve_ui_generation_business(request, persisted_meta=None):
+    request = request if isinstance(request, dict) else {}
+    persisted_meta = persisted_meta if isinstance(persisted_meta, dict) else {}
+    explicit = request.get("business") or request.get("business_type") or request.get("businessType")
+    if explicit not in (None, ""):
+        return normalize_ui_case_business(explicit, require_active=True)
+    is_regeneration = safe_bool(
+        request.get("regenerate") or request.get("reuse_assets") or request.get("reuseAssets")
+    )
+    if is_regeneration:
+        inherited = normalize_ui_case_business(
+            persisted_meta.get("business")
+            or persisted_meta.get("business_type")
+            or persisted_meta.get("businessType")
+        )
+        if inherited:
+            return inherited
+        raise ValueError("历史生成批次未标注业务，请先选择所属业务")
+    raise ValueError("请选择所属业务")
+
+
+def apply_ui_case_business(payload, business):
+    if not isinstance(payload, dict):
+        return payload
+    normalized = normalize_ui_case_business(business)
+    if not normalized:
+        raise ValueError("请选择所属业务")
+    payload["business"] = normalized
+    for key in ("cases", "manual_cases"):
+        for row in payload.get(key) or []:
+            if isinstance(row, dict):
+                row["business"] = normalized
+    return payload
+
+
+def generated_case_business_meta_patch(yaml_item, business):
+    normalized = normalize_ui_case_business(business)
+    case_id = ""
+    if isinstance(yaml_item, dict):
+        case_id = str(yaml_item.get("case_id") or yaml_item.get("caseId") or "").strip()
+    if not normalized or not case_id:
+        return {}
+    return {"case_businesses": {case_id: normalized}}
+
+
 def generate_ui_yaml_from_request(d, job_id=None):
     title = d.get("title") or d.get("target") or d.get("goal") or "UI自动化用例"
     module = d.get("module") or "AI测试"
@@ -7645,6 +7696,14 @@ def generate_ui_yaml_from_request(d, job_id=None):
         raise ValueError("生成后创建执行任务需要先选择执行设备；如确实需要平台分配，请明确选择“自动选择在线设备”。")
     files = d.get("files") or []
     reuse_assets = safe_bool(d.get("reuse_assets") or d.get("reuseAssets") or d.get("regenerate"))
+    requested_business = normalize_ui_case_business(
+        d.get("business") or d.get("business_type") or d.get("businessType"),
+        require_active=not reuse_assets,
+    )
+    if requested_business:
+        d["business"] = requested_business
+    elif not reuse_assets:
+        raise ValueError("请选择所属业务")
     prepared_figma_context = _prepared_figma_context_from_request(d)
     prepared_cases_payload = d.get("preparedCasesPayload") or d.get("prepared_cases_payload") or {}
     if not isinstance(prepared_cases_payload, dict):
@@ -7680,6 +7739,11 @@ def generate_ui_yaml_from_request(d, job_id=None):
         os.makedirs(safe_join(ASSET_DIR, case_set_id), exist_ok=True)
         write_json_file(asset_meta_path(case_set_id), meta)
         meta = update_asset_request_context(case_set_id, d)
+
+    business = resolve_ui_generation_business(d, meta)
+    d["business"] = business
+    meta["business"] = business
+    write_json_file(asset_meta_path(case_set_id), meta)
 
     has_prepared_figma = bool(prepared_figma_context)
     has_figma = bool((d.get("figma_url") or d.get("figmaUrl") or meta.get("figma_url") or "").strip() or has_prepared_figma)
@@ -8459,6 +8523,7 @@ def generate_ui_yaml_from_request(d, job_id=None):
     # Scope must be settled before portfolio and smoke selection so an AI-only
     # suggestion cannot occupy a Runner slot or satisfy an explicit REQ contract.
     payload = apply_generated_case_scope_gate(payload)
+    payload = apply_ui_case_business(payload, business)
     if not deterministic_entry_visibility:
         final_executable_portfolio = executable_yaml_portfolio_audit(
             payload,
@@ -8539,6 +8604,7 @@ def generate_ui_yaml_from_request(d, job_id=None):
     if job_id:
         update_generate_job(job_id, progress=85, step="转换 YAML", message="正在按用例拆分生成 Midscene YAML")
     converted_payload = split_automation_ready_cases(payload)
+    converted_payload = apply_ui_case_business(converted_payload, business)
     _, yaml_items = cases_to_separate_midscene_yamls(converted_payload, app_package=app_package, base_file=yaml_file)
     accepted_case_ids = (
         final_executable_portfolio.get("executableCaseIds")
@@ -8686,6 +8752,7 @@ def generate_ui_yaml_from_request(d, job_id=None):
     )
     summary["yaml_files"] = yaml_files
     summary["yaml_file_count"] = len(yaml_files)
+    summary["business"] = business
     summary["yaml_smoke_stability"] = yaml_smoke_stability
     summary["yaml_static_validation"] = yaml_static_validation
     summary["yaml_static_repair"] = review.get("yaml_static_repair")
@@ -8760,6 +8827,7 @@ def generate_ui_yaml_from_request(d, job_id=None):
             "module": module,
             "file": item.get("file"),
             "case_id": item.get("case_id"),
+            "business": business,
             "score": score.get("score") or 0,
             "level": level,
             "executionLevel": level,
@@ -8801,6 +8869,7 @@ def generate_ui_yaml_from_request(d, job_id=None):
             "module": module,
             "file": "",
             "case_id": case_id,
+            "business": business,
             "score": 0,
             "level": "needs_review",
             "executionLevel": "needs_review",
@@ -8835,7 +8904,7 @@ def generate_ui_yaml_from_request(d, job_id=None):
     summary_files = write_generation_summary(case_set_id, summary)
     for item in yaml_items:
         static_check = static_by_file.get(item["file"], {})
-        update_task_meta(module, item["file"], {
+        task_meta_patch = {
             "last_case_set_id": case_set_id,
             "last_case_set_title": title,
             "last_generated_at": summary.get("generated_at"),
@@ -8845,7 +8914,9 @@ def generate_ui_yaml_from_request(d, job_id=None):
             "yaml_static_ok": bool(static_check.get("ok")),
             "yaml_static_errors": list(static_check.get("errors") or [])[:8],
             "yaml_static_warnings": list(static_check.get("warnings") or [])[:8],
-        })
+        }
+        task_meta_patch.update(generated_case_business_meta_patch(item, business))
+        update_task_meta(module, item["file"], task_meta_patch)
     jobs = []
     job_skipped_yaml_files = []
     score_by_file = {item.get("file"): item for item in yaml_executable_scores}
@@ -8886,6 +8957,7 @@ def generate_ui_yaml_from_request(d, job_id=None):
         "asset": meta,
         "cases": converted_payload,
         "manual_cases": converted_payload.get("manual_cases", []),
+        "business": business,
         "module": module,
         "file": yaml_file,
         "files": yaml_files,
@@ -9048,6 +9120,7 @@ def build_generation_summary(case_set_id, title, module, yaml_file, converted_pa
         cases.append({
             "case_id": row.get("case_id"),
             "title": row.get("title") or row.get("name") or "未命名用例",
+            "business": row.get("business") or converted_payload.get("business") or "",
             "priority": priority,
             "smoke": smoke,
             "feature": first_non_empty(case_value(row, "feature", "module", "business_feature")),
@@ -9072,6 +9145,7 @@ def build_generation_summary(case_set_id, title, module, yaml_file, converted_pa
         "case_set_id": case_set_id,
         "title": title,
         "module": module,
+        "business": converted_payload.get("business") or "",
         "yaml_file": yaml_file,
         "yaml_files": [yaml_file] if yaml_file else [],
         "yaml_file_count": 1 if yaml_file else 0,
@@ -9567,6 +9641,7 @@ def summarize_generate_request(request):
     summary = {
         "title": request.get("title") or "",
         "module": request.get("module") or "",
+        "business": request.get("business") or "",
         "file": request.get("file") or "",
         "case_set_id": request.get("case_set_id") or request.get("caseSetId") or "",
         "reuse_assets": safe_bool(request.get("reuse_assets") or request.get("reuseAssets") or request.get("regenerate")),

@@ -7,8 +7,20 @@ let agentCheckpointTraceOpen = false;
 const agentTimelineDetailStates = new Map();
 let agentRestoringTimelineDetails = false;
 let lastAgentPlanPreviewText = '';
+let agentBusinessDraft = '';
 const DEFAULT_AGENT_APP_NAME = '智小白3D APP';
 const DEFAULT_AGENT_APP_PACKAGE = 'com.kfb.model';
+
+function rememberAgentBusiness(value) {
+  const activeIds = taskAppBusinessLines(DEFAULT_AGENT_APP_PACKAGE).map(item => item.id);
+  agentBusinessDraft = activeIds.includes(value) ? value : '';
+}
+
+function agentBusinessOptionsHtml() {
+  return '<option value="">请选择所属业务</option>' + taskAppBusinessLines(DEFAULT_AGENT_APP_PACKAGE)
+    .map(item => `<option value="${escapeHtml(item.id)}">${escapeHtml(item.name)}</option>`)
+    .join('');
+}
 
 function agentDefaultApp() {
   return {
@@ -198,7 +210,11 @@ async function loadFullAgentModelCatalog(preferredValue='') {
     if (wanted && currentSelect && Array.from(currentSelect.options).some(option => option.value === wanted && !option.disabled)) {
       currentSelect.value = wanted;
     }
-    if (button) button.hidden = true;
+    if (button) {
+      button.hidden = false;
+      button.disabled = true;
+      button.textContent = `已加载 ${providers.length + agentTaskModelCatalog.length} 个模型`;
+    }
     const search = document.getElementById('agent-model-search');
     if (search) search.hidden = false;
     showToast(`已加载 ${providers.length + agentTaskModelCatalog.length} 个可选模型`, 'success');
@@ -539,7 +555,7 @@ function launchDashboardAgent() {
 
 // Form field IDs used in the Agent workbench for value preservation across re-renders
 const _AGENT_FORM_FIELD_IDS = [
-  'agent-goal', 'agent-app-name', 'agent-platform', 'agent-scope',
+  'agent-goal', 'agent-app-name', 'agent-business', 'agent-platform', 'agent-scope',
   'agent-mode-select', 'agent-runner-device', 'agent-failed-job', 'agent-source-type',
   'agent-source-generate-job-id', 'agent-source-case-set-id',
   'agent-source-figma-url', 'agent-source-requirement-text',
@@ -642,7 +658,13 @@ async function showAgentWorkbench() {
               <div class="agent-field">
                 <label for="agent-app-name">应用</label>
                 <select id="agent-app-name" onchange="refreshAgentRunnerDeviceByApp()">
-                  <option value="智小白3D APP" data-package="com.kfb.model" selected>智小白3D APP</option>
+                  <option value="智小白3D APP" data-package="com.kfb.model" selected>智小白3D</option>
+                </select>
+              </div>
+              <div class="agent-field">
+                <label for="agent-business">所属业务</label>
+                <select id="agent-business" onchange="rememberAgentBusiness(this.value)">
+                  ${agentBusinessOptionsHtml()}
                 </select>
               </div>
               <div class="agent-field">
@@ -676,7 +698,7 @@ async function showAgentWorkbench() {
                   <select id="agent-model">
                     <option value="">自动（服务端默认）</option>
                   </select>
-                  <button class="btn-sm" id="agent-load-model-catalog" type="button" onclick="loadFullAgentModelCatalog()" ${agentTaskModelCatalogLoaded ? 'hidden' : ''}>加载更多模型</button>
+                  <button class="btn-sm" id="agent-load-model-catalog" type="button" onclick="loadFullAgentModelCatalog()" ${agentTaskModelCatalogLoaded ? 'disabled' : ''}>${agentTaskModelCatalogLoaded ? `已加载 ${agentTaskModelCatalog.length} 个模型` : '加载更多模型'}</button>
                 </div>
                 <input id="agent-model-search" type="search" value="${escapeHtml(agentModelSearchQuery)}" placeholder="搜索模型名称、厂商或标识" oninput="filterAgentTaskModelCatalog(this.value)" ${agentTaskModelCatalogLoaded ? '' : 'hidden'}>
                 <div class="form-hint">默认使用平台模型策略；仅需指定具体模型时再加载完整目录。</div>
@@ -831,6 +853,9 @@ async function showAgentWorkbench() {
     }
     // Restore failed-job field visibility
     toggleFailedJobField();
+  } else if (agentBusinessDraft) {
+    const businessSelect = document.getElementById('agent-business');
+    if (businessSelect) businessSelect.value = agentBusinessDraft;
   }
 
   updateAgentRiskHint();
@@ -3919,6 +3944,8 @@ function agentPayloadFromForm(options={}) {
   let goal = document.getElementById('agent-goal')?.value.trim() || '';
   const appName = document.getElementById('agent-app-name')?.value.trim() || DEFAULT_AGENT_APP_NAME;
   const platform = document.getElementById('agent-platform')?.value || 'android';
+  const business = document.getElementById('agent-business')?.value || '';
+  rememberAgentBusiness(business);
   const scope = document.getElementById('agent-scope')?.value || 'auto';
   const modelInfo = selectedAgentModelInfo();
   const model = modelInfo.kind === 'task-model' ? modelInfo.model : '';
@@ -3956,6 +3983,7 @@ function agentPayloadFromForm(options={}) {
     appName,
     appPackage,
     app_package: appPackage,
+    business,
     platform,
     scope,
     executionMode: 'RUNNER_JOB',
@@ -3991,6 +4019,16 @@ function agentPayloadFromForm(options={}) {
 
 async function previewAgentPlan() {
   const payload = agentPayloadFromForm({preview: true});
+  if (!String(payload.goal || '').trim()) {
+    showToast('请先输入测试目标', 'error');
+    document.getElementById('agent-goal')?.focus();
+    return;
+  }
+  if (!payload.business) {
+    showToast('请选择所属业务', 'error');
+    document.getElementById('agent-business')?.focus();
+    return;
+  }
   const previewBtn = document.querySelector('.agent-actions .btn-sm:not(.primary):not([onclick*="agent_history"])');
   await LoadingManager.withLoading(async () => {
     try {
@@ -4013,6 +4051,7 @@ async function previewAgentPlan() {
         'Agent 启动前预览：',
         `模式：${agentModeText(plan.mode || payload.mode)}`,
         `应用：${plan.appName || payload.appName} / ${plan.platform || payload.platform}`,
+        `所属业务：${businessLineLabel(payload.business, DEFAULT_AGENT_APP_PACKAGE)}`,
         `范围：${plan.scope || payload.scope}`,
         runnerLine,
         `输入来源：${payload.sourceType || 'manual'}`,
@@ -4076,6 +4115,11 @@ async function startAgentRun(options={}) {
     showToast('请先输入测试目标', 'error');
     return;
   }
+  if (!payload.business) {
+    showToast('请选择所属业务', 'error');
+    document.getElementById('agent-business')?.focus();
+    return;
+  }
   const riskHits = agentRiskHits(payload.goal);
   if (riskHits.length) {
     showToast(`已识别风险词：${riskHits.join('、')}，Runner 测试机执行只提醒不阻断；平台级写操作仍需确认`, 'warn');
@@ -4095,6 +4139,7 @@ async function startAgentRun(options={}) {
       });
       agentCurrentRun = normalizeAgentRun(data.run || data);
       if (agentCurrentRun && agentCurrentRun.runId) {
+        agentBusinessDraft = '';
         // Sync to AppState
         AppState.currentAgentRun = agentCurrentRun;
 

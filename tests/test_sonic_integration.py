@@ -653,7 +653,7 @@ def test_sonic_final_success_overrides_failed_task_callback_in_summary():
     assert sonic_service.sonic_suite_effective_status(suite) == "success"
     text = str(sonic_service.build_sonic_suite_summary_card(suite))
     assert "基线回归通过" in text
-    assert "通过 11 / 失败 0 / 告警 0" in text
+    assert "通过 11｜失败 0｜告警 0" in text
     assert "Task 桥接回调曾返回1 条失败" in text
     assert "失败明细" not in text
 
@@ -807,6 +807,7 @@ def test_leadership_sonic_suite_card_prioritizes_platform_summary_without_sonic_
         "app_package": "com.kfb.model",
         "app": {"package": "com.kfb.model", "name": "智小白3D"},
         "run_mode": "baseline",
+        "sonic_suite_name": "3D测试自动",
         "suite_report_url": "http://task/reports/current-suite-summary.html",
         "results": [
             {"status": "success", "module": "3D打印基线", "target_task_name": "模型生成记录"},
@@ -827,7 +828,12 @@ def test_leadership_sonic_suite_card_prioritizes_platform_summary_without_sonic_
     text = json.dumps(card, ensure_ascii=False)
     actions = card["card"]["elements"][-1]["actions"]
 
-    assert "智小白3D｜API 基线回归｜通过" in text
+    assert "智小白3D｜家用｜UI 自动化｜基线回归通过" in text
+    assert "业务：** 家用" in text
+    assert "测试类型：** UI 自动化" in text
+    assert "执行场景：** 基线回归" in text
+    assert "测试套：** 3D测试自动" in text
+    assert "API 基线" not in text
     assert "通过率" in text
     assert "100%" in text
     assert "用例统计" in text
@@ -870,11 +876,77 @@ def test_leadership_sonic_suite_card_summarizes_failed_items_without_repeating_h
     card = sonic_service.build_sonic_suite_summary_card(suite)
     text = json.dumps(card, ensure_ascii=False)
 
-    assert "智小白3D｜API 基线回归｜未通过" in text
+    assert "智小白3D｜家用｜UI 自动化｜基线回归未通过" in text
+    assert "业务：** 家用" in text
+    assert "测试类型：** UI 自动化" in text
+    assert "API 基线" not in text
     assert "失败摘要" in text
     assert "OBJ保龄球打印" in text
     assert "结论" in text
     assert text.count("基线回归失败") == 0
+
+
+def test_sonic_suite_card_uses_shared_business_context_without_changing_application():
+    suite = {
+        "app_package": "com.kfb.model",
+        "app": {"package": "com.kfb.model", "name": "智小白3D"},
+        "run_mode": "baseline",
+        "sonic_suite_name": "3D共享自动化",
+        "results": [
+            {"status": "success", "module": "3D共享打印", "target_task_name": "共享模型打印"},
+        ],
+        "sonic_completion": {
+            "finished": True,
+            "status": "success",
+            "passed": 1,
+            "failed": 0,
+            "warning": 0,
+            "total": 1,
+        },
+    }
+
+    text = json.dumps(sonic_service.build_sonic_suite_summary_card(suite), ensure_ascii=False)
+    assert "✅ 智小白3D｜共享｜UI 自动化｜基线回归通过" in text
+    assert "应用：** 智小白3D" in text
+    assert "业务：** 共享" in text
+
+
+def test_sonic_suite_card_prefers_explicit_case_business_over_suite_name():
+    suite = {
+        "app_package": "com.kfb.model",
+        "app": {"package": "com.kfb.model", "name": "智小白3D"},
+        "run_mode": "baseline",
+        "sonic_suite_name": "3D家用自动化",
+        "results": [
+            {"status": "success", "business": "shared", "module": "打印", "target_task_name": "共享模型打印"},
+        ],
+        "sonic_completion": {
+            "finished": True, "status": "success", "passed": 1,
+            "failed": 0, "warning": 0, "total": 1,
+        },
+    }
+
+    text = json.dumps(sonic_service.build_sonic_suite_summary_card(suite), ensure_ascii=False)
+    assert "智小白3D｜共享｜UI 自动化" in text
+
+
+def test_sonic_suite_card_marks_mixed_case_businesses():
+    suite = {
+        "app_package": "com.kfb.model",
+        "app": {"package": "com.kfb.model", "name": "智小白3D"},
+        "run_mode": "baseline",
+        "results": [
+            {"status": "success", "business": "home", "module": "打印", "target_task_name": "家用打印"},
+            {"status": "success", "business": "shared", "module": "打印", "target_task_name": "共享打印"},
+        ],
+        "sonic_completion": {
+            "finished": True, "status": "success", "passed": 2,
+            "failed": 0, "warning": 0, "total": 2,
+        },
+    }
+
+    text = json.dumps(sonic_service.build_sonic_suite_summary_card(suite), ensure_ascii=False)
+    assert "智小白3D｜家用、共享｜UI 自动化" in text
 
 
 def test_sonic_result_meta_rejects_result_ended_before_first_task_callback():

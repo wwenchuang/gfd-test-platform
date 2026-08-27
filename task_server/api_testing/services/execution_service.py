@@ -172,18 +172,10 @@ class ExecutionService:
                 "fingerprint": fingerprint,
                 "request": redact(parsed),
                 "case_versions": [
-                    {
-                        "id": version.id,
-                        "case_id": version.case_id,
-                        "endpoint_id": version.endpoint_id,
-                        "version": version.version_number,
-                        "role": (
-                            "requested"
-                            if version.id in context["requested_version_ids"]
-                            else "dependency"
-                        ),
-                        "dependencies": self._case_dependencies(version),
-                    }
+                    self._case_version_snapshot(
+                        version,
+                        requested_version_ids=context["requested_version_ids"],
+                    )
                     for version in context["versions"]
                 ],
                 "source_revision_id": parsed["source_revision_id"],
@@ -818,6 +810,24 @@ class ExecutionService:
                 }
             )
         return output
+
+    @classmethod
+    def _case_version_snapshot(cls, version, requested_version_ids):
+        request_template = getattr(version, "request_template", {}) or {}
+        business = (
+            str(request_template.get("business") or "").strip()
+            if isinstance(request_template, dict)
+            else ""
+        )
+        return {
+            "id": version.id,
+            "case_id": version.case_id,
+            "endpoint_id": version.endpoint_id,
+            "version": version.version_number,
+            "role": "requested" if version.id in requested_version_ids else "dependency",
+            "business": business,
+            "dependencies": cls._case_dependencies(version),
+        }
 
     @classmethod
     def _repository_view(cls, repository, execution, children):

@@ -44,10 +44,12 @@ from .yaml_service import (
     yaml_with_single_task,
 )
 from .job_service import app_package_for_module
+from .business_line_service import business_line_id
 
 __all__ = [
     "list_task_case_assets",
     "find_task_case_asset",
+    "update_task_case_business",
     "task_case_info",
     "task_case_yaml",
     "ensure_yaml_case_ids",
@@ -198,6 +200,12 @@ def _get_load_task_meta():
     return load_task_meta()
 
 
+def _get_update_task_meta(module, file, patch):
+    """Lazy import update_task_meta from job_service."""
+    from .job_service import update_task_meta
+    return update_task_meta(module, file, patch)
+
+
 def _get_task_key():
     """Import task_key from job_service."""
     from .job_service import task_key
@@ -254,12 +262,21 @@ def task_case_info(module, file, yaml_text, task_info, app_package=None):
         app_name = app_info.get("name") or resolved_app
     except Exception:
         app_name = resolved_app
+    status = "draft"
+    business = ""
     try:
         task_key_fn = _get_task_key()
         task_meta = _get_load_task_meta()
-        status = (task_meta.get(task_key_fn(module, file), {}) or {}).get("status", "draft")
+        file_meta = task_meta.get(task_key_fn(module, file), {}) or {}
+        status = file_meta.get("status", "draft")
+        case_businesses = file_meta.get("case_businesses") or {}
+        if isinstance(case_businesses, dict):
+            business = normalize_task_case_business(case_businesses.get(case_id))
     except Exception:
-        status = "draft"
+        pass
+    business = normalize_task_case_business(
+        meta.get("business") or meta.get("business_type") or business
+    )
     return {
         "case_id": case_id,
         "module": module,
@@ -272,7 +289,8 @@ def task_case_info(module, file, yaml_text, task_info, app_package=None):
         "goal": meta.get("goal") or "",
         "path": meta.get("path") or "",
         "expected": meta.get("expected") or "",
-        "status": status
+        "status": status,
+        "business": business,
     }
 
 
@@ -331,6 +349,26 @@ def find_task_case_asset(case_id):
         if row.get("case_id") == case_id:
             return row
     raise FileNotFoundError(f"未找到 case_id：{case_id}")
+
+
+def normalize_task_case_business(value):
+    return business_line_id(value)
+
+
+def update_task_case_business(case_id, business):
+    """Persist one UI case's business without adding unsupported YAML fields."""
+    normalized = business_line_id(business, require_active=True)
+    if not normalized:
+        raise ValueError("请选择所属业务")
+    case = find_task_case_asset(case_id)
+    module = case.get("module") or ""
+    file = case.get("file") or ""
+    task_key_fn = _get_task_key()
+    file_meta = (_get_load_task_meta().get(task_key_fn(module, file), {}) or {})
+    case_businesses = dict(file_meta.get("case_businesses") or {})
+    case_businesses[case_id] = normalized
+    _get_update_task_meta(module, file, {"case_businesses": case_businesses})
+    return {**case, "business": normalized}
 
 
 def task_case_yaml(case_info):

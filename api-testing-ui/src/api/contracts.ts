@@ -250,6 +250,7 @@ export interface WorkflowStepPreview {
 export interface CaseDraft {
   name: string
   purpose: string
+  business?: string
   priority: 'P0' | 'P1' | 'P2' | 'P3'
   request: CaseRequest
   data_rows: Array<{ name: string; values: Record<string, unknown>; enabled: boolean }>
@@ -499,6 +500,7 @@ export interface ApiBaselineCase {
   case_name: string
   case_version: number
   priority: string
+  business?: string
   origin: string
   method: string
   path: string

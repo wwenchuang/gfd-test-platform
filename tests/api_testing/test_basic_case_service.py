@@ -59,6 +59,24 @@ def test_basic_positive_payload_uses_environment_header_placeholders_and_success
     assert "ZXBToken" not in repr(payload)
 
 
+def test_basic_positive_payload_infers_shared_business_for_new_user():
+    endpoint = SimpleNamespace(
+        method="GET",
+        path="/shared/model/list",
+        summary="共享模型列表",
+        tags=["共享业务"],
+        operation={"responses": {"200": {"description": "OK"}}},
+    )
+
+    payload = BasicCaseService.build_case_payload(
+        endpoint,
+        _environment_revision_without_headers(),
+        (),
+    )
+
+    assert payload["business"] == "shared"
+
+
 def test_basic_positive_preview_exposes_endpoint_workflow_assessment(monkeypatch):
     endpoint = SimpleNamespace(
         id="endpoint-delete",

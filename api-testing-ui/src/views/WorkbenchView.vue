@@ -66,11 +66,16 @@ watch(() => context.environmentRevisionId, revisionId => {
 onMounted(async () => {
   try {
     await Promise.all([context.loadSavedContext(), context.loadOptions()])
+    const directNewTask = routeValue(route.query.newTask) === '1'
     const routeContext = restoreExecutionContextFromRoute()
     if (context.projectId) await tasks.list(context.projectId)
     const routeTaskId = routeValue(route.query.taskId)
-    let restoredTask = routeTaskId ? tasks.select(routeTaskId) : null
-    if (!restoredTask && context.projectId) restoredTask = await tasks.restore(context.projectId)
+    let restoredTask = directNewTask ? null : (routeTaskId ? tasks.select(routeTaskId) : null)
+    if (!directNewTask && !restoredTask && context.projectId) restoredTask = await tasks.restore(context.projectId)
+    if (directNewTask) {
+      tasks.clear()
+      taskNameDraft.value = defaultTaskName(true)
+    }
     if (restoredTask && !routeContext) {
       const runtimeEnvironmentId = restoredTask.project_id === context.projectId
         ? context.environmentRevisionId || restoredTask.environment_revision_id
@@ -87,7 +92,7 @@ onMounted(async () => {
       && restoredTask.source_revision_id === context.sourceRevisionId
       ? restoredTask.selected_endpoint_ids
       : []
-    if (context.sourceRevisionId) await loadSource(context.sourceRevisionId, restoredSelection)
+    if (context.sourceRevisionId) await loadSource(context.sourceRevisionId, directNewTask ? [] : restoredSelection)
     await restoreDeepLink()
     if (context.projectId) await cases.restoreLatestAiJob(context.projectId)
   } catch (error) {
@@ -98,7 +103,7 @@ onMounted(async () => {
 })
 
 watch(() => tasks.task?.name, name => {
-  taskNameDraft.value = name || defaultTaskName()
+  taskNameDraft.value = name || defaultTaskName(routeValue(route.query.newTask) === '1')
 }, { immediate: true })
 
 function restoreExecutionContextFromRoute(): boolean {
@@ -221,7 +226,7 @@ function startNewTask(): void {
   endpointTreeTab.value = 'all'
   activeEndpoint.value = null
   mobilePane.value = 'scope'
-  taskNameDraft.value = defaultTaskName()
+  taskNameDraft.value = defaultTaskName(true)
 }
 
 async function saveScope(): Promise<void> {
@@ -448,9 +453,9 @@ function ensureEnvironmentRevisionOption(task: ApiTestTask, environmentRevisionI
   ]
 }
 
-function defaultTaskName(): string {
+function defaultTaskName(newTask = false): string {
   const projectName = context.projects.find(item => item.id === context.projectId)?.name || 'API'
-  return `${projectName}接口测试`
+  return newTask ? `${projectName}新建任务` : `${projectName}接口测试`
 }
 
 </script>

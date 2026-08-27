@@ -694,6 +694,11 @@ class AiCaseService:
             processing.setdefault("cleanup_steps", [])
             from .basic_case_service import BasicCaseService
 
+            normalized_payload.setdefault(
+                "business",
+                BasicCaseService._business_for_endpoint(endpoint),
+            )
+
             BasicCaseService._apply_print_cleanup_policy(
                 normalized_payload,
                 endpoint,

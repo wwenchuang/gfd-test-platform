@@ -75,6 +75,7 @@ function baselineFixture(overrides: Record<string, unknown> = {}) {
     case_name: '添加收藏 - 正常流程',
     case_version: 2,
     priority: 'P0',
+    business: 'shared',
     origin: 'ai',
     method: 'POST',
     path: '/print3d/api/v1/collection/add',
@@ -102,6 +103,7 @@ describe('BaselinesView fixed project assets', () => {
     await flushPromises()
 
     expect(wrapper.text()).toContain('添加收藏 - 正常流程')
+    expect(wrapper.text()).toContain('共享')
     expect(wrapper.text()).toContain('已通过调试并采纳')
     expect(wrapper.text()).not.toContain('passing debug evidence')
     await wrapper.get('input[type="checkbox"]').setValue(true)
@@ -314,11 +316,15 @@ describe('BaselinesView fixed project assets', () => {
     const wrapper = mountWithContext()
     await flushPromises()
 
-    expect(wrapper.findAll('.baseline-row')).toHaveLength(50)
-    expect(wrapper.text()).toContain('第 1 / 2 页')
+    expect(wrapper.findAll('.baseline-row')).toHaveLength(25)
+    expect(wrapper.text()).toContain('第 1 / 3 页')
 
     await buttonByText(wrapper, '全选当前筛选').trigger('click')
     expect(useBaselinesStore().selectedIds).toHaveLength(51)
+
+    await wrapper.get('[data-testid="baseline-page-next"]').trigger('click')
+    expect(wrapper.findAll('.baseline-row')).toHaveLength(25)
+    expect(wrapper.text()).toContain('基础用例 26')
 
     await wrapper.get('[data-testid="baseline-page-next"]').trigger('click')
     expect(wrapper.findAll('.baseline-row')).toHaveLength(1)

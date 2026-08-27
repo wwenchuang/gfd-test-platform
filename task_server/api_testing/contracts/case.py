@@ -8,6 +8,8 @@ import re
 from types import MappingProxyType
 from typing import Any, Mapping, Optional, Tuple
 
+from task_server.services.business_line_service import business_line_id
+
 
 PRIORITIES = frozenset({"P0", "P1", "P2", "P3"})
 HTTP_METHODS = frozenset({"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"})
@@ -549,6 +551,7 @@ def parse_case_payload(payload):
         "name",
         "purpose",
         "priority",
+        "business",
         "request",
         "data_rows",
         "assertions",
@@ -557,16 +560,25 @@ def parse_case_payload(payload):
         "processing",
     }
     _reject_unknown(payload, allowed, "case")
-    missing = sorted(allowed - set(payload))
+    required = allowed - {"business"}
+    missing = sorted(required - set(payload))
     if missing:
         raise CasePayloadError(f"case is missing field: {missing[0]}")
     priority = _text(payload["priority"], "priority", maximum=16)
     if priority not in PRIORITIES:
         raise CasePayloadError("priority is not supported")
+    business = payload.get("business", "")
+    if business:
+        business = _text(business, "business", maximum=80)
+        try:
+            business = business_line_id(business, require_active=True)
+        except ValueError:
+            raise CasePayloadError("business is not supported")
     return {
         "name": _text(payload["name"], "name", maximum=300),
         "purpose": _text(payload["purpose"], "purpose", maximum=10_000),
         "priority": priority,
+        "business": business,
         "request": _parse_request(payload["request"]),
         "data_rows": _parse_data_rows(payload["data_rows"]),
         "assertions": _parse_assertions(payload["assertions"]),
@@ -621,6 +633,7 @@ class CaseVersionView:
     version: int
     purpose: str
     priority: str
+    business: str
     group_name: str
     request: Mapping[str, Any]
     data_rows: Tuple[DataRowView, ...]
@@ -682,6 +695,7 @@ class BaselineCaseView:
     case_name: str
     case_version: int
     priority: str
+    business: str
     origin: str
     method: str
     path: str

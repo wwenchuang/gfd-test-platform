@@ -1,14 +1,16 @@
 // @vitest-environment jsdom
 
 import { mount } from '@vue/test-utils'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import CaseEditor from './CaseEditor.vue'
 import type { ApiEndpoint, CaseDraft } from '../api/contracts'
+import { replaceBusinessLines } from '../utils/businessLines'
 
 const DRAFT: CaseDraft = {
   name: '查询我的收藏',
   purpose: '确认收藏列表可读取',
+  business: 'home',
   priority: 'P0',
   request: {
     method: 'GET', path: '/favorite/list', service: 'default',
@@ -56,6 +58,41 @@ function workflowDraft(): CaseDraft {
 }
 
 describe('CaseEditor', () => {
+  beforeEach(() => replaceBusinessLines([
+    { id: 'home', name: '家用', enabled: true },
+    { id: 'shared', name: '共享', enabled: true },
+  ]))
+
+  it('shows and publishes the case business independently from the application', async () => {
+    const wrapper = mount(CaseEditor, { props: { modelValue: DRAFT } })
+
+    expect(wrapper.get('[data-testid="case-business-home"]').classes()).toContain('active')
+    await wrapper.get('[data-testid="case-business-shared"]').trigger('click')
+
+    const emitted = wrapper.emitted('update:modelValue')?.at(-1)?.[0] as CaseDraft
+    expect(emitted.business).toBe('shared')
+    expect(wrapper.text()).toContain('所属业务')
+  })
+
+  it('renders newly configured business lines by their Chinese names', async () => {
+    replaceBusinessLines([{ id: 'biz_school', name: '校园版', enabled: true }])
+    const draft = { ...DRAFT, business: 'biz_school' }
+    const wrapper = mount(CaseEditor, { props: { modelValue: draft } })
+
+    expect(wrapper.get('[data-testid="case-business-biz_school"]').text()).toBe('校园版')
+    expect(wrapper.get('[data-testid="case-business-biz_school"]').classes()).toContain('active')
+  })
+
+  it('updates the selector when application configuration loads after the editor', async () => {
+    const wrapper = mount(CaseEditor, { props: { modelValue: DRAFT } })
+
+    replaceBusinessLines([{ id: 'biz_school', name: '校园版', enabled: true }])
+    await wrapper.vm.$nextTick()
+
+    expect(wrapper.get('[data-testid="case-business-biz_school"]').text()).toBe('校园版')
+    expect(wrapper.text()).toContain('已停用或未配置')
+  })
+
   it('opens endpoint selection without publishing a blank workflow step', async () => {
     const wrapper = mount(CaseEditor, {
       props: { modelValue: DRAFT, endpointOptions: WORKFLOW_ENDPOINTS },

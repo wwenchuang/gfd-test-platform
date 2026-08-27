@@ -69,6 +69,7 @@ describe('TasksView', () => {
 
     const router = createRouter({ history: createMemoryHistory(), routes: [
       { path: '/tasks', name: 'tasks', component: TasksView },
+      { path: '/', name: 'workbench', component: { template: '<div />' } },
       { path: '/runs', name: 'runs', component: { template: '<div />' } },
     ] })
     await router.push('/tasks')
@@ -79,6 +80,14 @@ describe('TasksView', () => {
     expect(wrapper.get('[data-testid="tasks-page"]').text()).toContain('任务管理')
     expect(wrapper.text()).not.toContain('接口测试工作台')
     expect(loadAssets).toHaveBeenCalledWith('source-1')
+
+    await wrapper.get('[data-testid="task-list-new"]').trigger('click')
+    await flushPromises()
+    expect(router.currentRoute.value.name).toBe('workbench')
+    expect(router.currentRoute.value.query.newTask).toBe('1')
+
+    await router.push('/tasks')
+    await flushPromises()
 
     await wrapper.get('[data-testid="task-list-item-task-1"]').trigger('click')
     await flushPromises()

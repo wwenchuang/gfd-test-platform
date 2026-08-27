@@ -62,6 +62,39 @@ describe('WorkbenchView debug workflow', () => {
     expect(wrapper.findComponent({ name: 'TaskStatusStrip' }).exists()).toBe(true)
   })
 
+  it('opens a direct new-task route without restoring the previous task', async () => {
+    const context = useContextStore()
+    Object.assign(context, {
+      projectId: 'project-1', sourceRevisionId: 'source-1', environmentRevisionId: 'environment-1',
+      projects: [{ id: 'project-1', name: '3D 家用' }],
+    })
+    vi.spyOn(context, 'loadSavedContext').mockResolvedValue()
+    vi.spyOn(context, 'loadOptions').mockResolvedValue()
+    const tasks = useTasksStore()
+    vi.spyOn(tasks, 'list').mockResolvedValue([])
+    const restore = vi.spyOn(tasks, 'restore').mockResolvedValue(null)
+    const assets = useAssetsStore()
+    vi.spyOn(assets, 'load').mockResolvedValue()
+    const cases = useCasesStore()
+    vi.spyOn(cases, 'loadSavedCases').mockResolvedValue()
+    vi.spyOn(cases, 'restoreLatestAiJob').mockResolvedValue()
+
+    const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/', name: 'workbench', component: WorkbenchView }] })
+    await router.push('/?newTask=1')
+    await router.isReady()
+    const wrapper = mount(WorkbenchView, {
+      global: {
+        plugins: [router],
+        stubs: { ContextBar: true, EndpointDetail: true, CaseEditor: true, AiAssistant: true, DebugDrawer: true, EndpointTree: true },
+      },
+    })
+    await flushPromises()
+
+    expect(restore).not.toHaveBeenCalled()
+    expect(tasks.task).toBeNull()
+    expect(wrapper.get('[data-testid="task-name-input"]').element).toHaveProperty('value', '3D 家用新建任务')
+  })
+
   it('opens the only endpoint in a restored task without another selection click', async () => {
     const context = useContextStore()
     Object.assign(context, {

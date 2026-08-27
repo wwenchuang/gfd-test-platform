@@ -11,6 +11,7 @@ import { type ScheduledJobInput, useScheduledJobsStore } from '../stores/schedul
 import { useTasksStore } from '../stores/tasks'
 import { confirmApiExecution } from '../utils/executionConfirmation'
 import { formatPassRate, statusLabel } from '../utils/executionPresentation'
+import { businessLineLabel as configuredBusinessLineLabel } from '../utils/businessLines'
 
 const context = useContextStore()
 const baselines = useBaselinesStore()
@@ -52,7 +53,7 @@ interface CronValidation {
 const scheduleOptions: Array<{ value: ScheduledJob['schedule_type']; label: string }> = [
   { value: 'daily', label: '每天' },
   { value: 'weekly', label: '每周' },
-  { value: 'cron', label: 'Cron' },
+  { value: 'cron', label: '自定义表达式' },
 ]
 const cronPresets = [
   { id: 'daily', title: '每天 02:00', expression: '0 2 * * *', description: '夜间稳定回归' },
@@ -431,7 +432,7 @@ function baselineOption(item: ApiBaselineCase): TargetOption {
     id: item.id,
     title: `${item.case_name || item.endpoint_summary || item.path} · v${item.case_version}`,
     subtitle: `${item.method} ${item.path} · ${origin} · 采纳于 ${adoptedAt}`,
-    meta: baselineGroup(item),
+    meta: `${businessLabel(item.business)} · ${baselineGroup(item)}`,
   }
 }
 
@@ -441,8 +442,12 @@ function caseOption(item: CaseVersion): TargetOption {
     id: item.id,
     title: item.name || item.purpose || item.id,
     subtitle: `${request.method || 'GET'} ${request.path || '未记录路径'}`,
-    meta: `${item.priority} · v${item.version}`,
+    meta: `${businessLabel(item.business)} · ${item.priority} · v${item.version}`,
   }
+}
+
+function businessLabel(business: CaseVersion['business'] | ApiBaselineCase['business']): string {
+  return configuredBusinessLineLabel(business)
 }
 
 function taskOption(item: ApiTestTask): TargetOption {
@@ -592,10 +597,10 @@ function weekDayName(value: number): string {
             <small>{{ jobTargetSummary(job) }}</small>
           </div>
           <div class="scheduled-row-actions">
-            <button :data-testid="`scheduled-list-enabled-${job.id}`" type="button" class="mini-switch" :class="{ active: job.enabled }" title="启用" @click="toggleJobFlag(job, 'enabled')">
+            <button :data-testid="`scheduled-list-enabled-${job.id}`" type="button" class="mini-switch" :class="{ active: job.enabled }" role="switch" :aria-checked="job.enabled" :aria-label="job.enabled ? '停用定时任务' : '启用定时任务'" :title="job.enabled ? '停用定时任务' : '启用定时任务'" @click="toggleJobFlag(job, 'enabled')">
               <span class="mini-switch-text">启用</span><span class="mini-switch-track"><span class="mini-switch-dot" /></span>
             </button>
-            <button :data-testid="`scheduled-list-notify-${job.id}`" type="button" class="mini-switch" :class="{ active: job.notify_feishu }" title="飞书通知" @click="toggleJobFlag(job, 'notify_feishu')">
+            <button :data-testid="`scheduled-list-notify-${job.id}`" type="button" class="mini-switch" :class="{ active: job.notify_feishu }" role="switch" :aria-checked="job.notify_feishu" :aria-label="job.notify_feishu ? '关闭飞书通知' : '开启飞书通知'" :title="job.notify_feishu ? '关闭飞书通知' : '开启飞书通知'" @click="toggleJobFlag(job, 'notify_feishu')">
               <span class="mini-switch-text">飞书</span><span class="mini-switch-track"><span class="mini-switch-dot" /></span>
             </button>
             <button :data-testid="`scheduled-edit-${job.id}`" type="button" class="mini-icon" title="编辑" @click="editJob(job)"><Pencil :size="14" /></button>
@@ -688,7 +693,7 @@ function weekDayName(value: number): string {
             <p class="schedule-time-note">{{ scheduleDescription }}</p>
           </fieldset>
           <section v-if="form.scheduleType === 'cron'" class="cron-preset-panel wide">
-            <label>Cron 表达式<input v-model="form.cronExpression" data-testid="scheduled-cron" placeholder="0 2 * * *" /></label>
+            <label>自定义表达式（Cron）<input v-model="form.cronExpression" data-testid="scheduled-cron" placeholder="例如：0 2 * * *" /></label>
             <p class="cron-feedback" :class="{ invalid: !cronValidation.valid }">{{ cronValidation.message }}</p>
             <div class="cron-preset-grid">
               <button

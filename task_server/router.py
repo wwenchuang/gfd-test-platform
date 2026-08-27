@@ -62,11 +62,13 @@ from task_server.services.case_service import (
     baseline_ref_key,
     find_task_case_asset,
     get_baseline_ref_page_ids,
+    list_task_case_assets,
     list_file_versions,
     load_baseline_refs,
     read_file_version,
     set_baseline_ref_page_ids,
     task_case_yaml,
+    update_task_case_business,
 )
 from task_server.services.feishu_service import (
     create_feishu_draft,
@@ -236,6 +238,7 @@ from task_server.services.yaml_service import (
     new_case_set_id,
     normalize_cases_payload,
     remove_generation_mindmap_file,
+    resolve_ui_generation_business,
     resolve_app_package,
     restore_excluded_figma_node,
     run_figma_parse_job,
@@ -1076,6 +1079,35 @@ def _get_feishu_drafts(handler, qs):
 def _get_sonic_cases(handler, qs):
     rows = list_task_case_assets(qs.get("module", ""), qs.get("file", ""))
     handler._json({"ok": True, "cases": rows, "sync": load_sonic_sync().get("cases", {})})
+
+
+@route_post("/api/cases/business")
+def _post_case_business(handler, qs):
+    if _require_user_auth(handler):
+        return
+    d = handler._body()
+    case_id = str(d.get("case_id") or d.get("caseId") or "").strip()
+    if not case_id:
+        module = str(d.get("module") or "").strip()
+        file = clean_filename(d.get("file") or "")
+        task_name = str(d.get("task_name") or d.get("taskName") or "").strip()
+        matches = [
+            row for row in list_task_case_assets(module, file)
+            if row.get("task_name") == task_name and row.get("case_id")
+        ]
+        if len(matches) != 1:
+            handler._json({"ok": False, "error": "未找到唯一的 UI 自动化用例，请先保存 YAML 后刷新"}, 404)
+            return
+        case_id = matches[0]["case_id"]
+    try:
+        case = update_task_case_business(case_id, d.get("business"))
+        public_case = dict(case)
+        public_case.pop("_root", None)
+        handler._json({"ok": True, "case": public_case})
+    except FileNotFoundError as e:
+        _json_error(handler, e, 404)
+    except ValueError as e:
+        _json_error(handler, e, 400)
 
 
 # ── Sonic 状态 ──────────────────────────────────────────────────────
@@ -3327,6 +3359,9 @@ def _post_ui_generate_yaml(handler, qs):
     d = handler._body()
     try:
         result = generate_ui_yaml_from_request(d)
+    except ValueError as e:
+        handler._json({"ok": False, "error": str(e)}, 400)
+        return
     except Exception as e:
         handler._json({"ok": False, "error": str(e)}, 500)
         return
@@ -3336,6 +3371,11 @@ def _post_ui_generate_yaml(handler, qs):
 @route_post("/api/ui/generate-yaml-async")
 def _post_ui_generate_yaml_async(handler, qs):
     d = handler._body()
+    try:
+        d["business"] = resolve_ui_generation_business(d)
+    except ValueError as e:
+        handler._json({"ok": False, "error": str(e)}, 400)
+        return
     create_job = safe_bool(d.get("createJob") or d.get("create_job"))
     device_id = d.get("device_id") or d.get("deviceId") or ""
     runner_id = d.get("runner_id") or d.get("runnerId") or ""
@@ -3538,6 +3578,10 @@ def _post_ui_regenerate_yaml_async(handler, qs):
         "case_set_id": case_set_id,
         "title": d.get("title") or summary.get("title") or meta.get("title") or "UI自动化用例",
         "module": d.get("module") or summary.get("module") or meta.get("module") or "AI测试",
+        "business": (
+            d.get("business") or d.get("business_type") or d.get("businessType")
+            or summary.get("business") or meta.get("business") or ""
+        ),
         "file": d.get("file") or summary.get("yaml_file") or f"task-{slug_for_file(summary.get('title') or meta.get('title') or 'UI自动化用例')}.yaml",
         "app_package": d.get("app_package") or d.get("appPackage") or os.getenv("APP_PACKAGE", DEFAULT_APP_PACKAGE),
         "knowledge_page_ids": knowledge_page_ids,
@@ -3551,6 +3595,11 @@ def _post_ui_regenerate_yaml_async(handler, qs):
         "reuse_assets": True,
         "regenerate": True
     }
+    try:
+        request_data["business"] = resolve_ui_generation_business(request_data, meta)
+    except ValueError as e:
+        handler._json({"ok": False, "error": str(e)}, 400)
+        return
     update_asset_request_context(case_set_id, request_data)
     job_id = generate_job_id()
     job = {
@@ -3925,6 +3974,7 @@ def _post_sonic_result(handler, qs):
     upload_warning = sonic_notify_clean_text(d.get("upload_warning") or d.get("uploadWarning") or "", fallback="")
     app_package = (d.get("app_package") or d.get("appPackage") or "").strip()
     app_name = (d.get("app_name") or d.get("appName") or "").strip()
+    business = (d.get("business") or d.get("business_type") or d.get("businessType") or "").strip()
     suite_run_id = (d.get("suite_run_id") or d.get("suiteRunId") or "").strip()
     sonic_suite_id = (d.get("sonic_suite_id") or d.get("sonicSuiteId") or d.get("suite_id") or d.get("suiteId") or "").strip()
     sonic_suite_name = (d.get("sonic_suite_name") or d.get("sonicSuiteName") or d.get("suite_name") or d.get("suiteName") or "").strip()
@@ -3941,6 +3991,12 @@ def _post_sonic_result(handler, qs):
         except Exception:
             app_package = ""
     app_info = sonic_suite_app_info(app_package, mod)
+    case_id = d.get("case_id") or d.get("caseId") or ""
+    if not business and case_id:
+        try:
+            business = find_task_case_asset(case_id).get("business") or ""
+        except Exception:
+            business = ""
     if not app_name:
         app_name = app_info.get("name") or app_package
     if not sonic_suite_id:
@@ -3974,7 +4030,7 @@ def _post_sonic_result(handler, qs):
             })
     now = time.strftime("%Y-%m-%d %H:%M:%S")
     job = {
-        "job_id": job_id, "case_id": d.get("case_id") or d.get("caseId") or "",
+        "job_id": job_id, "case_id": case_id,
         "module": mod, "file": file, "target_task_name": target_task_name,
         "status": status, "run_mode": d.get("run_mode") or d.get("runMode") or "test",
         "auto_optimize": automatic_baseline_repair_enabled(d.get("autoOptimize", d.get("auto_optimize"))),
@@ -3991,6 +4047,7 @@ def _post_sonic_result(handler, qs):
         "report_missing_reason": report_missing_reason,
         "upload_warning": upload_warning,
         "app_package": app_package, "app_name": app_name,
+        "business": business,
         "suite_run_id": suite_run_id, "sonic_suite_id": sonic_suite_id,
         "sonic_suite_name": sonic_suite_name,
         "suite_started_at": suite_started_at,
@@ -4589,8 +4646,10 @@ def _post_module(handler, qs):
 def _post_task_app(handler, qs):
     d = handler._body()
     try:
-        app = resolve_task_app_sonic_binding(normalize_task_app(d))
         data = load_task_apps()
+        package = str(d.get("package") or d.get("app_package") or d.get("appPackage") or "").strip()
+        existing_app = next((item for item in data.get("apps", []) if item.get("package") == package), None)
+        app = resolve_task_app_sonic_binding(normalize_task_app(d, existing_app=existing_app))
         apps = [item for item in data.get("apps", []) if item.get("package") != app["package"]]
         apps.append(app)
         data["apps"] = sorted(apps, key=lambda item: item.get("name") or item.get("package") or "")
@@ -4957,6 +5016,11 @@ def _post_file_save(handler, qs):
 @route_post("/api/agent-runs/start")
 def _post_agent_runs_start(handler, qs):
     d = handler._body()
+    try:
+        d["business"] = resolve_ui_generation_business(d)
+    except ValueError as e:
+        handler._json({"ok": False, "error": str(e)}, 400)
+        return
     run = create_agent_run(d)
     run = advance_agent_run(run["runId"])
     handler._json({"ok": True, "run": run})
@@ -4965,6 +5029,11 @@ def _post_agent_runs_start(handler, qs):
 @route_post("/api/agent-runs/preview")
 def _post_agent_runs_preview(handler, qs):
     d = handler._body()
+    try:
+        business = resolve_ui_generation_business(d)
+    except ValueError as e:
+        handler._json({"ok": False, "error": str(e)}, 400)
+        return
     goal = str(d.get("target") or d.get("goal") or "").strip()
     app_name = str(d.get("appName") or "").strip() or "智小白3D APP"
     platform = str(d.get("platform") or "android").strip()
@@ -4974,7 +5043,7 @@ def _post_agent_runs_preview(handler, qs):
     handler._json({
         "ok": True,
         "plan": {
-            "mode": mode, "appName": app_name, "platform": platform, "scope": scope,
+            "mode": mode, "appName": app_name, "business": business, "platform": platform, "scope": scope,
             "riskHits": risk_hits,
             "steps": [
                 "1. 分析测试目标",

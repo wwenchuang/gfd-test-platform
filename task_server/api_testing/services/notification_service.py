@@ -12,6 +12,11 @@ from task_server.services.feishu_service import (
     send_feishu_notification,
     validate_feishu_webhook,
 )
+from task_server.services.notification_presentation import (
+    canonical_test_application_name,
+    canonical_test_business_name,
+    canonical_test_business_summary,
+)
 
 from ..crypto import decrypt_secret, encrypt_secret, secret_fingerprint
 from ..models.project import ApiProject
@@ -280,38 +285,57 @@ class NotificationService:
         pass_rate = _pass_rate_text(passed, total, has_issues=issue_count > 0)
         icon = "✅" if conclusion == "通过" else "❌"
         color = "green" if conclusion == "通过" else "red"
-        project_name = str(metadata.get("project_name") or "").strip() or "未命名项目"
+        raw_project_name = str(metadata.get("project_name") or "").strip() or "未命名项目"
         environment_name = metadata.get("environment_name") or "未命名环境"
         snapshot = getattr(execution, "request_snapshot", {}) or {}
         task = snapshot.get("task", {}) if isinstance(snapshot, dict) else {}
         task_name = task.get("name") if isinstance(task, dict) else ""
         if not task_name:
-            task_name = "基线回归"
-        task_type_label = NotificationService._task_type_label(execution, task)
-        title = f"{icon} {project_name}｜API 基线测试｜{conclusion}"
+            task_name = "未保存任务"
+        project_name = canonical_test_application_name(raw_project_name)
+        case_versions = snapshot.get("case_versions", []) if isinstance(snapshot, dict) else []
+        explicit_businesses = [
+            item.get("business")
+            for item in case_versions
+            if isinstance(item, dict) and item.get("business")
+        ]
+        business_name = canonical_test_business_summary(
+            explicit_businesses,
+            raw_project_name,
+            task_name,
+        )
+        scene_label = NotificationService._execution_scene_label(execution)
+        trigger_label = NotificationService._trigger_type_label(execution, task)
+        title = f"{icon} {project_name}｜{business_name}｜API 测试｜{scene_label}{conclusion}"
         template = "green" if conclusion == "通过" else "red"
-        range_parts = ["API 基线测试", f"{total} 条用例"]
+        context_lines = [
+            f"**应用：** {project_name}",
+            f"**业务：** {business_name}",
+            "**测试类型：** API 测试",
+            f"**执行场景：** {scene_label}",
+            f"**任务名称：** {task_name}",
+            f"**触发方式：** {trigger_label}",
+            f"**环境：** {environment_name}",
+        ]
         elements = [
             {
                 "tag": "div",
                 "text": {
                     "tag": "lark_md",
-                    "content": f"**结论：** <font color='{color}'>{icon} API 基线测试{conclusion}</font>",
+                    "content": f"**结论：** <font color='{color}'>{icon} {scene_label}{conclusion}</font>",
                 },
             },
-            {"tag": "div", "text": {"tag": "lark_md", "content": f"**应用：** {project_name}"}},
-            {"tag": "div", "text": {"tag": "lark_md", "content": f"**任务：** {task_name}"}},
-            {"tag": "div", "text": {"tag": "lark_md", "content": f"**任务类型：** {task_type_label}"}},
-            {"tag": "div", "text": {"tag": "lark_md", "content": f"**环境：** {environment_name}"}},
+            {"tag": "div", "text": {"tag": "lark_md", "content": "\n".join(context_lines)}},
+            {"tag": "hr"},
             {"tag": "div", "text": {"tag": "lark_md", "content": f"**通过率：{pass_rate}**"}},
             {
                 "tag": "div",
                 "text": {
                     "tag": "lark_md",
-                    "content": f"**用例统计：** 总数 {total}｜通过 {passed} / 失败 {failed} / 异常 {broken} / 跳过 {skipped} / 取消 {cancelled}",
+                    "content": f"**用例统计：** 总数 {total}｜通过 {passed}｜失败 {failed}｜异常 {broken}｜跳过 {skipped}｜取消 {cancelled}",
                 },
             },
-            {"tag": "div", "text": {"tag": "lark_md", "content": "**范围：** " + " · ".join(range_parts)}},
+            {"tag": "div", "text": {"tag": "lark_md", "content": f"**执行范围：** 共 {total} 条用例"}},
         ]
         issues = [item for item in children if item.status != "PASSED"][:5]
         if issues:
@@ -404,27 +428,28 @@ class NotificationService:
         }.get(value, value)
 
     @staticmethod
-    def _task_type_label(execution, task):
+    def _execution_scene_label(execution):
+        execution_type = str(getattr(execution, "execution_type", "") or "").strip()
+        return {
+            "baseline_regression": "基线回归",
+            "regression": "回归测试",
+            "debug": "在线调试",
+            "scheduled": "基线回归",
+        }.get(execution_type, "测试执行")
+
+    @staticmethod
+    def _trigger_type_label(execution, task):
         task_type = ""
         source = ""
         if isinstance(task, dict):
             task_type = str(task.get("type") or "").strip()
             source = str(task.get("source") or "").strip()
         execution_source = str(getattr(execution, "execution_source", "") or "").strip()
-        execution_type = str(getattr(execution, "execution_type", "") or "").strip()
         if task_type == "scheduled_job" or source == "scheduled_job" or execution_source == "scheduled_job":
-            return "定时任务"
+            return "定时触发"
         if task_type == "api_test_task" or source == "task":
-            return "已保存任务"
-        if execution_type == "debug":
-            return "调试执行"
-        if execution_type == "scheduled":
-            return "定时任务"
-        if execution_type == "baseline_regression":
-            return "基线回归"
-        if execution_type == "regression":
-            return "回归任务"
-        return "手动执行"
+            return "任务触发"
+        return "手动触发"
 
     @staticmethod
     def _message(execution, children, metadata):

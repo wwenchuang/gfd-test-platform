@@ -46,6 +46,11 @@ from ..storage import (
     write_json_file,
     write_text_file,
 )
+from .notification_presentation import (
+    canonical_test_application_name,
+    canonical_test_business_name,
+    canonical_test_business_summary,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -1330,7 +1335,11 @@ def builtin_task_apps() -> list:
     return [
         {
             "package": "com.kfb.model",
-            "name": "3D 打印",
+            "name": "智小白3D",
+            "business_lines": [
+                {"id": "home", "name": "家用", "enabled": True},
+                {"id": "shared", "name": "共享", "enabled": True},
+            ],
             "sonic_project_name": "3D 打印",
             "sonic_project_id": os.getenv("SONIC_PROJECT_ID_COM_KFB_MODEL", "3"),
             "sonic_suite_id": os.getenv("SONIC_SUITE_ID_COM_KFB_MODEL", "8"),
@@ -1357,6 +1366,8 @@ def _merge_task_app_defaults(app: dict, defaults: Optional[dict]) -> dict:
             merged[key] = value
     if (app or {}).get("modules") is not None:
         merged["modules"] = app.get("modules") or []
+    if (app or {}).get("business_lines") is not None:
+        merged["business_lines"] = app.get("business_lines") or []
     aliases = []
     for source in ((defaults or {}).get("aliases") or [], (app or {}).get("aliases") or []):
         for item in source:
@@ -1364,6 +1375,8 @@ def _merge_task_app_defaults(app: dict, defaults: Optional[dict]) -> dict:
                 aliases.append(item)
     if aliases:
         merged["aliases"] = aliases
+    if merged.get("package") == "com.kfb.model":
+        merged["name"] = "智小白3D"
     return merged
 
 
@@ -3616,7 +3629,12 @@ def write_sonic_suite_summary_report(suite: dict) -> str:
 def build_sonic_suite_summary_card(suite: dict) -> dict:
     results = list((suite or {}).get("results") or [])
     app = suite.get("app") or sonic_suite_app_info(suite.get("app_package", ""), "")
-    app_name = sonic_notify_pretty_title_text(app.get("name") or suite.get("app_name") or app.get("package") or "Sonic")
+    app_package = app.get("package") or suite.get("app_package") or ""
+    raw_app_name = sonic_notify_pretty_title_text(app.get("name") or suite.get("app_name"))
+    app_name = canonical_test_application_name(
+        raw_app_name,
+        app_package,
+    )
     run_mode = suite.get("run_mode") or "baseline"
     mode_label = "基线回归" if run_mode == "baseline" else "测试执行"
     outcome = sonic_suite_notification_outcome(suite)
@@ -3635,15 +3653,40 @@ def build_sonic_suite_summary_card(suite: dict) -> dict:
     duration = sonic_suite_duration_text(suite)
     devices = sorted({item.get("device_id") for item in results if item.get("device_id")})
     modules = sorted({item.get("module") for item in results if item.get("module")})
-    range_parts = [f"API {mode_label}", f"{total} 条用例"]
+    suite_name = sonic_notify_display_value(
+        suite.get("sonic_suite_name") or app.get("sonic_suite_name")
+    )
+    explicit_businesses = [
+        item.get("business")
+        for item in results
+        if item.get("business")
+    ]
+    if suite.get("business_name") or suite.get("business"):
+        explicit_businesses.insert(0, suite.get("business_name") or suite.get("business"))
+    business_name = canonical_test_business_summary(
+        explicit_businesses,
+        raw_app_name,
+        suite_name,
+        *modules,
+    )
+    context_lines = [
+        f"**应用：** {app_name}",
+        f"**业务：** {business_name}",
+        "**测试类型：** UI 自动化",
+        f"**执行场景：** {mode_label}",
+    ]
+    if suite_name:
+        context_lines.append(f"**测试套：** {suite_name}")
+    range_parts = [f"共 {total} 条用例"]
     if modules:
         range_parts.append("模块：" + "、".join(modules[:4]) + (" 等" if len(modules) > 4 else ""))
     elements = [
-        {"tag": "div", "text": {"tag": "lark_md", "content": f"**结论：** <font color='{color}'>{icon} API {mode_label}{status_label}</font>"}},
-        {"tag": "div", "text": {"tag": "lark_md", "content": f"**应用：** {app_name}"}},
+        {"tag": "div", "text": {"tag": "lark_md", "content": f"**结论：** <font color='{color}'>{icon} {mode_label}{status_label}</font>"}},
+        {"tag": "div", "text": {"tag": "lark_md", "content": "\n".join(context_lines)}},
+        {"tag": "hr"},
         {"tag": "div", "text": {"tag": "lark_md", "content": f"**通过率：{pass_rate}%**"}},
-        {"tag": "div", "text": {"tag": "lark_md", "content": f"**用例统计：** 总数 {total}｜通过 {passed} / {failed_label} {failed} / 告警 {warning}" + (f" / 待回传 {pending}" if pending else "")}},
-        {"tag": "div", "text": {"tag": "lark_md", "content": "**范围：** " + sonic_notify_clean_text(" · ".join(range_parts))}},
+        {"tag": "div", "text": {"tag": "lark_md", "content": f"**用例统计：** 总数 {total}｜通过 {passed}｜{failed_label} {failed}｜告警 {warning}" + (f"｜待回传 {pending}" if pending else "")}},
+        {"tag": "div", "text": {"tag": "lark_md", "content": "**执行范围：** " + sonic_notify_clean_text("｜".join(range_parts))}},
     ]
     if devices:
         elements.append({"tag": "div", "text": {"tag": "lark_md", "content": "**设备：** " + "、".join(devices[:3]) + (" 等" if len(devices) > 3 else "")}})
@@ -3770,7 +3813,7 @@ def build_sonic_suite_summary_card(suite: dict) -> dict:
             "config": {"wide_screen_mode": True},
             "header": {
                 "template": color,
-                "title": {"tag": "plain_text", "content": f"{icon} {app_name}｜API {mode_label}｜{status_label}"},
+                "title": {"tag": "plain_text", "content": f"{icon} {app_name}｜{business_name}｜UI 自动化｜{mode_label}{status_label}"},
             },
             "elements": elements,
         },
@@ -4002,6 +4045,7 @@ def register_sonic_suite_result(job: dict) -> str:
         result = {
             "job_id": job.get("job_id", ""),
             "case_id": job.get("case_id", ""),
+            "business": job.get("business", ""),
             "module": sonic_notify_clean_text(job.get("module", "")),
             "file": sonic_notify_clean_text(job.get("file", "")),
             "target_task_name": sonic_notify_clean_text(job.get("target_task_name", "")),
@@ -6106,6 +6150,7 @@ def task_case_sonic_context(case_info):
     context = {
         "app_package": app.get("package") or case_info.get("app_package") or "",
         "app_name": app.get("name") or case_info.get("app_name") or "",
+        "business": case_info.get("business") or "",
         "sonic_project_id": sonic_project_id_for_app(app),
         "sonic_project_name": sonic_project_name_for_app(app),
         "sonic_suite_id": str(sonic_suite_id_for_app(app) or ""),

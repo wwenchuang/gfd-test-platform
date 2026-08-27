@@ -37,6 +37,7 @@ const SAVED = {
   validation_summary: {},
   name: '添加收藏 - 基础正向流程',
   purpose: '验证添加收藏',
+  business: 'home',
   priority: 'P1',
   request: { method: 'POST', path: '/print3d/api/v1/collection/add', service: 'default', path_params: {}, query: {}, headers: {}, cookies: {}, body: null },
   data_rows: [],
@@ -119,6 +120,7 @@ describe('CaseListPanel', () => {
     expect(wrapper.get('[data-testid="case-list-group-家用业务 / app接口 / 我的收藏"]').text()).toContain('2')
     expect(wrapper.get('[data-testid="case-version-version-add"]').text()).toContain('添加收藏 - 基础正向流程')
     expect(wrapper.get('[data-testid="case-version-version-add"]').text()).toContain('v1 · 平台')
+    expect(wrapper.get('[data-testid="case-version-version-add"]').text()).toContain('家用')
     expect(wrapper.get('[data-testid="case-preview-basic-positive-endpoint-list"]').text()).toContain('我的收藏列表 - 基础正向流程')
     expect(wrapper.get('[data-testid="case-preview-basic-positive-endpoint-list"]').text()).toContain('候选 · 平台')
     expect(wrapper.get('[data-testid="case-preview-basic-positive-endpoint-list"]').text()).toContain('只读查询')

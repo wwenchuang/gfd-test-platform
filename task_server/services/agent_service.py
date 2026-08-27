@@ -1352,6 +1352,7 @@ def create_agent_run(payload):
         "appName": str(payload.get("appName") or "").strip(),
         "appPackage": app_package,
         "app_package": app_package,
+        "business": str(payload.get("business") or "").strip().lower(),
         "platform": str(payload.get("platform") or "android").strip(),
         "scope": str(payload.get("scope") or "smoke").strip(),
         "executionMode": execution_mode,
@@ -1447,6 +1448,7 @@ def _agent_retry_payload_from_run(run):
         "mode": run.get("mode") or "AUTO_SAFE",
         "appName": run.get("appName") or "",
         "appPackage": run.get("appPackage") or run.get("app_package") or "",
+        "business": run.get("business") or "",
         "platform": run.get("platform") or "android",
         "scope": run.get("scope") or "smoke",
         "executionMode": run.get("executionMode") or run.get("execution_mode") or "RUNNER_JOB",
@@ -10827,6 +10829,8 @@ def _agent_generate_yaml_from_ui_pipeline(run, source_context, source_text):
     """Reuse the mature requirement/Figma -> cases/mindmap/YAML pipeline for Agent drafts."""
     from task_server.services.yaml_service import (
         generate_ui_yaml_from_request,
+        resolve_ui_generation_business,
+        stable_case_id,
         update_generate_job,
     )
 
@@ -10852,11 +10856,13 @@ def _agent_generate_yaml_from_ui_pipeline(run, source_context, source_text):
         requirement_contract = {}
     direct_entry_visibility = _agent_use_direct_entry_visibility_smoke(run)
     has_entry_visibility_intent = _agent_needs_entry_visibility_smoke(run)
+    business = resolve_ui_generation_business({"business": run.get("business")})
     request_data = {
         "case_set_id": case_set_id,
         "title": title,
         "target": title,
         "module": module,
+        "business": business,
         "modelProviderId": run.get("modelProviderId") or run.get("aiProviderId") or "",
         "aiProviderId": run.get("aiProviderId") or run.get("modelProviderId") or "",
         "aiModel": run.get("aiModel") or run.get("model") or "",
@@ -10926,23 +10932,27 @@ def _agent_generate_yaml_from_ui_pipeline(run, source_context, source_text):
         entry_label = str((entry_visibility_intent or {}).get("entryLabel") or "目标").strip() or "目标"
         target_page = str((entry_visibility_intent or {}).get("targetPage") or "目标页面").strip() or "目标页面"
         case_title = f"{target_page}{entry_label}入口可见性短链路冒烟"
+        case_id = stable_case_id(_agent_app_package(run), module, file_name, case_title)
         steps = ["启动 App", "等待应用首页加载"]
         if target_page != "首页":
             steps.append(f"进入{target_page}")
         steps.append(f"等待{entry_label}入口可见")
         result = {
             "case_set_id": case_set_id,
+            "business": business,
             "cases": {
                 "title": title,
                 "module": module,
+                "business": business,
                 "analysis": {
                     "business_goals": [title],
                     "requirement_points": [f"{target_page}{entry_label}入口可见"],
                     "visible_outcomes": [f"{entry_label}入口可见"],
                 },
                 "cases": [{
-                    "case_id": "TC-ENTRY-001",
+                    "case_id": case_id,
                     "title": case_title,
+                    "business": business,
                     "smoke": True,
                     "priority": "P0",
                     "steps": steps,
@@ -10965,8 +10975,9 @@ def _agent_generate_yaml_from_ui_pipeline(run, source_context, source_text):
             "generatedCaseGroups": {
                 "executable_cases": [{
                     "file": file_name,
-                    "case_id": "TC-ENTRY-001",
+                    "case_id": case_id,
                     "title": case_title,
+                    "business": business,
                     "executionLevel": executable_score.get("executionLevel") or "executable",
                     "level": executable_score.get("executionLevel") or "executable",
                     "score": executable_score.get("score") or 0,
@@ -10984,11 +10995,14 @@ def _agent_generate_yaml_from_ui_pipeline(run, source_context, source_text):
             },
             "coverageAudit": {"ok": True, "case_count": 1, "requirement_point_count": 1},
             "summary": {
+                "business": business,
                 "counts": {"cases": 1, "manual_cases": 0, "yaml_files": 1},
                 "ui_design_assets": [],
                 "ignored_figma_pages": [],
             },
         }
+        from task_server.services.job_service import update_task_meta
+        update_task_meta(module, file_name, {"case_businesses": {case_id: business}})
         update_generate_job(
             progress_job_id,
             status="success",
@@ -11099,6 +11113,7 @@ def _agent_generate_yaml_from_ui_pipeline(run, source_context, source_text):
         artifacts["generatedCaseGroups"] = result.get("generatedCaseGroups")
     artifacts["generationPipeline"] = {
         "source": "ui_yaml_pipeline",
+        "business": result.get("business") or business,
         "caseSetId": result.get("case_set_id"),
         "caseCount": result.get("caseCount"),
         "manualCaseCount": result.get("manualCaseCount"),

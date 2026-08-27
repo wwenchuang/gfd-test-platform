@@ -288,7 +288,7 @@ function renderExecutionTabSonic() {
           <button class="btn-sm primary" onclick="document.getElementById('btn-publish-sonic')?.click()" ${currentFile ? '' : 'disabled title="请先打开 YAML 文件"'}>同步当前文件</button>
         </div>
       </div>
-      ${currentFile ? `<div class="generate-hint">当前文件：${escapeHtml(currentModule)}/${escapeHtml(currentFile)}</div>` : `<div class="generate-hint">从左侧用例树打开 YAML 后再进行 Sonic 操作。</div>`}
+      ${currentFile ? `<div class="generate-hint">当前文件：${escapeHtml(currentModule)}/${escapeHtml(currentFile)}</div>` : `<div class="generate-hint">请先从“用例资产”打开 YAML，再进行 Sonic 操作。 <button class="btn-sm" onclick="activateWorkflow('assets')">选择 YAML</button></div>`}
       <h3 style="margin-top:12px;">最近任务</h3>
       ${jobs.length ? `<table class="report-table">
         <thead><tr><th>任务</th><th>模块</th><th>状态</th><th>时间</th></tr></thead>
@@ -375,7 +375,7 @@ function renderExecutionTabRerun() {
             </tr>
           `;
         }).join('')}</tbody>
-      </table>` : `${renderEmptyState('failure_analysis')}`}
+      </table>` : `<div class="empty-state"><div class="empty-state-icon">🔍</div><h3 class="empty-state-title">${query || executionRerunFilters.failureType !== 'all' ? '没有匹配的失败任务' : '还没有可重跑的失败任务'}</h3><p class="empty-state-desc">${query || executionRerunFilters.failureType !== 'all' ? '请调整关键词或失败类型筛选。' : '执行失败或超时的任务会出现在这里。'}</p></div>`}
       ${filtered.length > EXECUTION_RERUN_PAGE_SIZE ? `<div class="management-pager execution-rerun-pager">
         <span>共 ${filtered.length} 条 · 第 ${executionRerunFilters.page}/${totalPages} 页</span>
         <div>
@@ -1107,6 +1107,7 @@ function renderYamlTaskNav() {
     const job = latestJobs.find(item => item.module === currentModule && item.file === currentFile && item.target_task_name === task.name) || {};
     const status = job.status ? ` · ${jobStatusText(job.status)}` : '';
     const priority = task.priority || 'P2';
+    const business = taskBusinessValue(task.name);
     const priorityHtml = `
       <select class="priority-select ${escapeHtml(priority.toLowerCase())}" title="修改用例等级" onclick="event.stopPropagation()" onchange="changeTaskPriority(${index}, this.value)">
         ${['P0','P1','P2','P3'].map(p => `<option value="${p}" ${p === priority ? 'selected' : ''}>${p}</option>`).join('')}
@@ -1117,7 +1118,7 @@ function renderYamlTaskNav() {
       <div class="yaml-task-nav-item ${task.name === selected ? 'active' : ''}" onclick="jumpToTask(${index})">
         <div class="yaml-task-nav-name">${escapeHtml(task.name)}</div>
         <div class="yaml-task-nav-meta">line ${task.line}${escapeHtml(status)}</div>
-        <div class="yaml-task-nav-badges">${priorityHtml}${smokeHtml}</div>
+        <div class="yaml-task-nav-badges">${priorityHtml}${smokeHtml}<span class="business-badge ${escapeHtml(business || 'unset')}">${escapeHtml(taskBusinessLabel(business))}</span></div>
         <div class="yaml-task-nav-actions">
           <button onclick="event.stopPropagation();runTaskFromNav(${index})">执行</button>
           <button onclick="event.stopPropagation();repairTaskFromNav(${index})">修复</button>
@@ -1147,6 +1148,48 @@ function jobForTaskName(taskName) {
   return latestJobs.find(item => item.module === currentModule && item.file === currentFile && item.target_task_name === taskName) || null;
 }
 
+function taskCaseRow(taskName) {
+  return (sonicCaseRows || []).find(item => (
+    item.module === currentModule
+    && item.file === currentFile
+    && item.task_name === taskName
+  )) || null;
+}
+
+function taskBusinessValue(taskName) {
+  return String(taskCaseRow(taskName)?.business || '').trim();
+}
+
+function taskBusinessLabel(business) {
+  return businessLineLabel(business);
+}
+
+async function changeTaskBusiness(taskName, business) {
+  if (!currentModule || !currentFile || !taskName) return;
+  const row = taskCaseRow(taskName) || {};
+  try {
+    const data = await apiRequest('/cases/business', {
+      method: 'POST',
+      body: JSON.stringify({
+        case_id: row.case_id || '',
+        module: currentModule,
+        file: currentFile,
+        task_name: taskName,
+        business,
+      })
+    });
+    const updated = data.case || {};
+    const index = sonicCaseRows.findIndex(item => item.case_id === updated.case_id);
+    if (index >= 0) sonicCaseRows[index] = {...sonicCaseRows[index], ...updated};
+    else sonicCaseRows.push(updated);
+    renderYamlTaskNav();
+    renderEditorContextBar();
+    showToast(`已将当前用例标记为${taskBusinessLabel(business)}`, 'success');
+  } catch (e) {
+    showToast(e.message || '保存用例业务失败', 'error');
+  }
+}
+
 function renderEditorContextBar() {
   const bar = document.getElementById('editor-context-bar');
   if (!bar) return;
@@ -1168,6 +1211,16 @@ function renderEditorContextBar() {
   const status = job ? (job.status || '') : '';
   const statusText = status ? jobStatusText(status) : '未执行';
   const smokeHtml = task.smoke ? '<span class="smoke-badge">冒烟</span>' : '';
+  const business = taskBusinessValue(task.name);
+  const businessButtons = taskAppBusinessLines().map(item => `
+    <button type="button" class="${business === item.id ? 'active' : ''}" onclick="changeTaskBusiness(${jsArg(task.name)}, ${jsArg(item.id)})">${escapeHtml(item.name)}</button>
+  `).join('');
+  const businessControl = `
+    <div class="task-business-control" role="group" aria-label="当前用例所属业务">
+      <span>业务</span>
+      ${businessButtons}
+    </div>
+  `;
   bar.innerHTML = `
     <div class="editor-context-main">
       <span class="editor-context-title" title="${escapeHtml(task.name)}">${escapeHtml(task.name)}</span>
@@ -1176,6 +1229,7 @@ function renderEditorContextBar() {
         ${['P0','P1','P2','P3'].map(p => `<option value="${p}" ${p === priority ? 'selected' : ''}>${p}</option>`).join('')}
       </select>
       ${smokeHtml}
+      ${businessControl}
       <span class="context-status-badge ${escapeHtml(status)}">${escapeHtml(statusText)}</span>
     </div>
     <div class="editor-context-actions">
@@ -1446,6 +1500,21 @@ async function submitBatchMove() {
   }
 }
 
+function fileHistoryReasonText(reason = '') {
+  const value = String(reason || '').trim();
+  const labels = {
+    manual: '手动保存',
+    save: '保存前自动留档',
+    restore: '回滚前自动留档',
+    overwrite: '覆盖前自动留档',
+    move: '移动前自动留档',
+    repair: 'AI 修复前自动留档'
+  };
+  if (labels[value.toLowerCase()]) return labels[value.toLowerCase()];
+  if (/fix|repair/i.test(value)) return '修复调整前自动留档';
+  return value || '自动留档';
+}
+
 async function showFileHistory() {
   if (!currentModule || !currentFile) {
     showToast('请先选择一个 YAML 文件', 'error');
@@ -1466,7 +1535,7 @@ async function showFileHistory() {
       <div class="app-row">
         <div class="app-row-main">
           <div class="app-row-name">${escapeHtml(v.created_at || v.id)}</div>
-          <div class="app-row-sub">${escapeHtml(v.reason || '')} · ${formatBytes(v.size || 0)} · ${escapeHtml(v.id || '')}</div>
+          <div class="app-row-sub">${escapeHtml(fileHistoryReasonText(v.reason))} · ${formatBytes(v.size || 0)} · 版本编号 ${escapeHtml(String(v.id || '').slice(-16))}</div>
         </div>
         <button class="btn-sm" onclick="previewFileVersion('${escapeHtml(v.id)}')">预览</button>
         <button class="btn-sm danger" onclick="restoreFileVersion('${escapeHtml(v.id)}')">回滚</button>
@@ -1996,7 +2065,7 @@ async function deleteFile(mod, file) {
     document.getElementById('btn-repair-file').style.display = 'none';
     setFileContextVisible(false);
     document.getElementById('toolbar-path').innerHTML = '<span>📁</span> 选择左侧文件开始编辑';
-    document.getElementById('toolbar-help').textContent = '从左侧模块选择 YAML，或先用需求/设计稿生成可执行用例。';
+    document.getElementById('toolbar-help').textContent = '从用例资产选择 YAML，或先用需求/设计稿生成可执行用例。';
   }
   renderModules();
   showToast('✓ 已删除', 'success');
@@ -2046,7 +2115,7 @@ async function deleteSelectedFiles() {
     document.getElementById('btn-repair-file').style.display = 'none';
     setFileContextVisible(false);
     document.getElementById('toolbar-path').innerHTML = '<span>📁</span> 选择左侧文件开始编辑';
-    document.getElementById('toolbar-help').textContent = '从左侧模块选择 YAML，或先用需求/设计稿生成可执行用例。';
+    document.getElementById('toolbar-help').textContent = '从用例资产选择 YAML，或先用需求/设计稿生成可执行用例。';
   }
   renderModules();
   if (activeWorkflow === 'assets' && typeof showAssetsCenter === 'function') showAssetsCenter();
@@ -2092,7 +2161,7 @@ async function deleteCurrentModule() {
     document.getElementById('btn-repair-file').style.display = 'none';
     setFileContextVisible(false);
     document.getElementById('toolbar-path').innerHTML = '<span>📁</span> 选择左侧文件开始编辑';
-    document.getElementById('toolbar-help').textContent = '从左侧模块选择 YAML，或先用需求/设计稿生成可执行用例。';
+    document.getElementById('toolbar-help').textContent = '从用例资产选择 YAML，或先用需求/设计稿生成可执行用例。';
   }
   renderModules();
   if (activeWorkflow === 'assets' && typeof showAssetsCenter === 'function') showAssetsCenter();

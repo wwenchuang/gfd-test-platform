@@ -99,6 +99,7 @@ class CaseRepository:
     def create_version(self, case, payload, version_number, actor_id, group_name=""):
         request_template = {
             "name": payload["name"],
+            "business": payload.get("business", ""),
             "request": copy.deepcopy(payload["request"]),
         }
         record = ApiCaseVersion(

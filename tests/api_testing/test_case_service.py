@@ -196,11 +196,14 @@ def test_draft_persists_structured_children_before_debug(
     case_service, project_context, session_factory
 ):
     endpoint = project_context["endpoints"]["favoriteList"]
-    draft = case_service.create_draft(endpoint.id, valid_list_case(endpoint), "manual", "admin")
+    payload = valid_list_case(endpoint)
+    payload["business"] = "shared"
+    draft = case_service.create_draft(endpoint.id, payload, "manual", "admin")
 
     assert draft.status == "draft"
     assert draft.version == 1
     assert draft.origin == "manual"
+    assert draft.business == "shared"
     assert draft.request["method"] == "GET"
     assert draft.data_rows[0].values["Biz"] == "ZXB"
     assert draft.assertions[1].path == "$.code"
@@ -211,7 +214,9 @@ def test_draft_persists_structured_children_before_debug(
 
     with session_factory() as session:
         case = session.get(ApiCase, draft.case_id)
+        version = session.get(ApiCaseVersion, draft.id)
         assert case.active_version_id == draft.id
+        assert version.request_template["business"] == "shared"
         assert session.scalar(
             select(func.count(ApiCaseDataRow.id)).where(
                 ApiCaseDataRow.case_version_id == draft.id

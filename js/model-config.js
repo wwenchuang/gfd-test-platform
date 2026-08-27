@@ -240,19 +240,26 @@ async function testAiGateway() {
   try {
     const providerId = document.getElementById('model-test-provider')?.value || aiModelRouter.analyze_failure || 'qwen_plus';
     const data = await aiGatewayPost('/ai/providers/test', {providerId});
-    aiFailureDraft = {
-      title: 'AI 模型服务测试结果',
-      summary: `${data.provider || data.providerId || ''} / ${data.model || ''}`,
-      analysis: stringifyArtifact(data),
-      originalYaml: '',
-      fixedYaml: '',
-      activeTab: 'analysis'
-    };
-    renderAiGatewayResult();
+    showModelServiceTestResult(data, true);
     showToast('✓ AI 模型服务调用成功', 'success');
-    alert(JSON.stringify(data, null, 2));
   } catch(e) {
+    showModelServiceTestResult({ message: e.message || '模型服务调用失败' }, false);
     showToast(e.message || 'AI 模型服务调用失败', 'error');
-    alert(`AI 模型服务调用失败：${e.message || e}`);
   }
+}
+
+function showModelServiceTestResult(data = {}, success = true) {
+  const title = document.getElementById('model-test-result-title');
+  const status = document.getElementById('model-test-result-status');
+  const details = document.getElementById('model-test-result-details');
+  if (!title || !status || !details) return;
+  title.textContent = success ? '模型服务连接正常' : '模型服务连接失败';
+  status.className = `generate-status show ${success ? 'success' : 'error'}`;
+  status.textContent = success ? '测试请求已成功返回，可继续使用当前模型策略。' : (data.message || '请检查模型通道、服务端密钥和网络连接。');
+  details.innerHTML = success ? `
+    <div class="review-stat"><span>服务商</span><strong>${escapeHtml(data.provider || data.providerId || '当前策略')}</strong></div>
+    <div class="review-stat"><span>模型</span><strong>${escapeHtml(data.model || '服务端默认')}</strong></div>
+    <div class="review-stat"><span>结果</span><strong>调用成功</strong></div>
+  ` : '<div class="review-stat"><span>建议</span><strong>检查模型配置后重试</strong></div>';
+  document.getElementById('modal-model-test-result')?.classList.add('show');
 }

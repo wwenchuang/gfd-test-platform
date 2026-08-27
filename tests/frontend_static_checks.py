@@ -130,7 +130,6 @@ def check_original_platform_management_experience():
     router = (ROOT / "task_server" / "router.py").read_text(encoding="utf-8")
     app_js = (JS_DIR / "app.js").read_text(encoding="utf-8")
     repair_js = (JS_DIR / "ai-repair.js").read_text(encoding="utf-8")
-
     require("fonts.googleapis.com" not in html, "Main platform must not block on external Google Fonts")
     require('rel="icon"' in html and "assets/brand/kongfudou-icon.png" in html, "Main platform must expose a local favicon to avoid a noisy 404")
     require('<form class="login-box"' in html and "onsubmit=\"event.preventDefault(); doLogin();\"" in html, "Login controls must be wrapped in a submit form")
@@ -170,6 +169,8 @@ def check_original_platform_management_experience():
         require(marker in reports_js, f"Report management control is missing: {marker}")
 
     require("loadFullAgentModelCatalog" in workbench_js and "加载更多模型" in workbench_js, "Large model catalog must be opt-in instead of blocking workbench entry")
+    preview_plan = workbench_js[workbench_js.index("async function previewAgentPlan"):workbench_js.index("function showAgentPlanPreview")]
+    require("请先输入测试目标" in preview_plan, "Agent plan preview must reject an empty goal before requesting AI planning")
     load_agent_model_options = workbench_js[workbench_js.index("async function loadAgentModelOptions"):workbench_js.index("function dashboardStats")]
     require(
         "aiGatewayGet('/ai/providers')" not in load_agent_model_options,
@@ -224,6 +225,7 @@ def main():
     app_js = (JS_DIR / "app.js").read_text(encoding="utf-8")
     agent_status_js = (JS_DIR / "agent-status.js").read_text(encoding="utf-8")
     navigation_js = (JS_DIR / "navigation.js").read_text(encoding="utf-8")
+    app_css = (ROOT / "css" / "app.css").read_text(encoding="utf-8")
     require("<title>功夫豆测试平台</title>" in html, "Browser title must use 功夫豆测试平台")
     require("Midscene Task 管理平台" not in html and "Midscene Task 管理" not in html, "Old product title must not appear in the UI")
     require('<span class="header-logo">⚡</span>' not in html and '<div class="login-logo">⚡' not in html, "Old lightning emoji brand logo must not be used")
@@ -260,6 +262,7 @@ def main():
     require("api.highwayapi.ai" not in html and "127.0.0.1:8090" not in html, "Frontend must not call HighwayAPI or local gateway directly")
     require("HIGHWAY_API_KEY" not in html and "your_highway_api_key" not in html, "Frontend must not contain API key placeholders")
     require("测试当前策略" in html and "/ai/providers/test" in html, "Config page must expose AI model service test action")
+    require("showModelServiceTestResult" in html and "alert(JSON.stringify(data" not in html, "Model service test must use a dedicated result dialog instead of a raw alert or YAML repair dialog")
     require("模型配置" in html and "/ai/providers" in html and "/ai/model-router" in html, "Config page must expose multi-provider model routing")
     require("loadAgentModelOptions" in html and "AI 网关模型" in html, "Agent model selector must load AI Gateway providers with localized copy")
     require("modelProviderId" in html and "aiProviderId" in html and "selectedAgentModelInfo" in html, "Agent payload must keep provider id separate from raw model name")
@@ -268,6 +271,11 @@ def main():
     for label in ("生成测试用例模型", "生成 YAML 模型", "失败分析模型", "YAML 修复模型", "Agent 判断模型", "飞书缺陷草稿模型"):
         require(label in html, f"Model config label missing: {label}")
     require("测试当前策略" in html and "保存模型策略" in html, "Model config actions are missing")
+    require("nextTaskAppStep" in html and "请先填写应用中文名和包名" in html, "Application wizard must validate basic information before advancing")
+    require("核心链路可用，但有" in html and "项待处理" in html, "Environment health toast must preserve warning state")
+    require("openAgentRunTrace(runId, workflow = 'dashboard')" in html, "Agent history trace must open the visible workbench instead of an instruction-only page")
+    agent_section_head_css = app_css[app_css.index(".agent-section-head > span"):app_css.index(".agent-section-head div")]
+    require("min-width: 64px" in agent_section_head_css and "white-space: nowrap" in agent_section_head_css, "Agent step labels must stay horizontal instead of wrapping one character per line")
     require("HIGHWAY_API_KEY" not in html and "QWEN_API_KEY" not in html, "Frontend must not contain model API key env names")
     require("AI分析失败原因" in html and "/ai/analyze-failure" in html, "Failed jobs must support AI failure analysis")
     require("生成修复 YAML" in html and "/ai/optimize-yaml" in html, "AI failure result must support YAML repair draft generation")
@@ -391,6 +399,11 @@ def main():
     require("failureReason" in html and "failureType" in html and "失败类型：" in html, "Agent final report must show concrete Runner failure reasons")
     require("PRODUCT_BUG 不允许" not in html, "Implementation details must not leak as rough internal copy")
     require("apiRequest('/reports/cleanup'" in html and "apiRequest('/cases/mindmap-only-async'" in html and "apiRequest('/ui/generate-yaml-async'" in html, "Long-running write endpoints must use apiRequest")
+    require('id="generate-business-options"' in html and "function renderGenerateBusinessOptions" in html and 'name="generate-business"' in html, "UI generation must render an explicit configured business selection")
+    require('id="task-app-business-lines"' in html and "function addTaskAppBusinessLine" in html and "business_lines: businessLines" in html, "Application configuration must manage business lines by Chinese display name")
+    require("请选择所属业务" in html and "请选择所属业务（家用或共享）" not in html, "Business validation must not expose fixed legacy enum choices")
+    require("business," in html and "resolve_ui_generation_business" in (ROOT / "task_server/services/yaml_service.py").read_text(encoding="utf-8"), "UI generation request and backend must preserve the selected business")
+    require('id="agent-business"' in html and "agentBusinessOptionsHtml" in html and "const business = document.getElementById('agent-business')" in html, "Agent-created UI cases must use the same configured business contract")
     forbidden_write_patterns = [
         "fetch(`${API_BASE}/sonic/publish-batch`",
         "fetch(`${API_BASE}/file/restore`",

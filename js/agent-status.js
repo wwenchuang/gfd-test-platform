@@ -3,6 +3,7 @@
 
 let agentHistoryRequestSeq = 0;
 let agentRunSelectionSeq = 0;
+let taskAppBusinessLineDraft = [];
 
 function agentStatusText(status) {
   const map = {
@@ -1266,7 +1267,9 @@ function renderAgentHistoryPage(options = {}) {
   const selectedCount = agentHistorySelection.size;
   const historyHtml = visibleRuns.length
     ? visibleRuns.map(run => agentRunCardHtml(run, { selectable: true })).join('')
-    : (error ? agentRunErrorHtml(error) : (loading ? agentRunLoadingHtml() : renderEmptyState('agent_history')));
+    : (error ? agentRunErrorHtml(error) : (loading ? agentRunLoadingHtml() : (agentHistoryFilters.query || agentHistoryFilters.status !== 'all'
+      ? '<div class="empty-state"><div class="empty-state-icon">🔍</div><h3 class="empty-state-title">没有匹配的运行记录</h3><p class="empty-state-desc">请调整关键词或状态筛选后重试。</p></div>'
+      : renderEmptyState('agent_history'))));
   activeWorkspaceMode = 'agent-history';
   resetYamlToolbarForManager();
   document.getElementById('toolbar-path').innerHTML = '<span>⌂</span> Agent 运行记录';
@@ -1278,7 +1281,7 @@ function renderAgentHistoryPage(options = {}) {
       <div class="workflow-hero">
         <div class="workflow-kicker">Agent 运行记录 · 运行轨迹 / 产物 / 失败诊断</div>
         <h2>Agent 运行记录</h2>
-        <p>这里集中查看最近 Agent 任务。点“查看轨迹”会把该任务载入右侧 Agent 状态和工作台时间线。</p>
+        <p>这里集中查看最近 Agent 任务。点“查看轨迹”会打开 Agent 工作台，并显示该任务的状态、时间线和产物。</p>
         <div class="workflow-card-actions">
           <button class="btn-sm primary" onclick="loadAgentRunsHistory()">刷新历史</button>
           <button class="btn-sm" onclick="activateWorkflow('dashboard')">回Agent 工作台</button>
@@ -1385,14 +1388,14 @@ async function selectAgentRun(runId) {
   }
 }
 
-async function openAgentRunTrace(runId, workflow = 'agent') {
+async function openAgentRunTrace(runId, workflow = 'dashboard') {
+  await activateWorkflow(workflow);
   await selectAgentRun(runId);
-  activateWorkflow(workflow);
 }
 
 async function openAgentRunReport(runId) {
   agentActiveTab = 'report';
-  await openAgentRunTrace(runId, 'agent');
+  await openAgentRunTrace(runId, 'dashboard');
 }
 
 async function retryAgentRunById(runId) {
@@ -1414,7 +1417,7 @@ async function retryAgentRunById(runId) {
     mergeAgentRun(retryRun, 50);
     startAgentPolling(retryRun.runId);
     showToast(`✓ 已创建重试任务：${retryRun.runId}`, 'success');
-    await openAgentRunTrace(retryRun.runId, 'agent');
+    await openAgentRunTrace(retryRun.runId, 'dashboard');
   } catch(e) {
     showToast(e.message || '重试 Agent 失败', 'error');
   }
@@ -2206,7 +2209,11 @@ async function loadPreflightDashboard(live=false) {
   try {
     const data = await apiRequest(`/preflight/dashboard${live ? '?live=1' : ''}`);
     renderPreflightDashboard(data);
-    showToast(data.ok ? '✓ 环境体检通过' : '环境体检发现待处理项', data.ok ? 'success' : 'error');
+    const checks = Array.isArray(data.checks) ? data.checks : [];
+    const pendingCount = checks.filter(item => item.status === 'warn' || !item.ok).length;
+    if (!data.ok) showToast('环境体检发现阻断项', 'error');
+    else if (pendingCount) showToast(`核心链路可用，但有 ${pendingCount} 项待处理`, 'warn');
+    else showToast('✓ 环境体检通过', 'success');
   } catch(e) {
     if (next) next.textContent = e.message || '体检失败';
     if (grid) grid.innerHTML = '';
@@ -2887,7 +2894,7 @@ function showIntegrationPlan() {
 
 function requireCurrentYaml(actionName='操作') {
   if (currentModule && currentFile) return true;
-  showToast(`请先从左侧选择一个 YAML 文件，再进行${actionName}`, 'error');
+  showToast(`请先从“用例资产”打开一个 YAML 文件，再进行${actionName}`, 'error');
   return false;
 }
 
@@ -3694,7 +3701,7 @@ function toggleModule(mod, el) {
     resetYamlToolbarForDirectory();
     showWorkflowGuide(activeWorkflow);
     document.getElementById('toolbar-path').innerHTML = '<span>📁</span> 选择左侧文件开始编辑';
-    document.getElementById('toolbar-help').textContent = WORKFLOW_SECTIONS[activeWorkflow]?.help || '从左侧模块选择 YAML，或先用需求/设计稿生成可执行用例。';
+    document.getElementById('toolbar-help').textContent = WORKFLOW_SECTIONS[activeWorkflow]?.help || '从用例资产选择 YAML，或先用需求/设计稿生成可执行用例。';
     document.getElementById('file-info').textContent = '就绪';
     renderModules();
     return;
@@ -3761,9 +3768,39 @@ function setManagementToolbar(title, help, icon = '⚙') {
   if (typeof updateToolbarState === 'function') updateToolbarState(title);
 }
 
-function openTaskAppEditor(packageName = '') {
+function openTaskAppEditor(packageName = '', step = 0) {
   showTaskApps();
   if (packageName) editTaskApp(packageName);
+  if (typeof FormSteps !== 'undefined') FormSteps.goTo(step);
+}
+
+function nextTaskAppStep() {
+  if (typeof FormSteps === 'undefined') return;
+  if (FormSteps.currentStep === 0 && !validateTaskAppBasicInfo()) return;
+  FormSteps.next();
+}
+
+function validateTaskAppBasicInfo() {
+  const name = document.getElementById('task-app-name')?.value.trim() || '';
+  const packageName = document.getElementById('task-app-package')?.value.trim() || '';
+  if (!name || !packageName) {
+    showToast('请先填写应用中文名和包名', 'error');
+    document.getElementById(!name ? 'task-app-name' : 'task-app-package')?.focus();
+    return false;
+  }
+  try {
+    readTaskAppBusinessLines();
+    return true;
+  } catch (error) {
+    showToast(error.message || '请检查业务线配置', 'error');
+    return false;
+  }
+}
+
+function goToTaskAppStep(step) {
+  if (typeof FormSteps === 'undefined') return;
+  if (step > 0 && !validateTaskAppBasicInfo()) return;
+  FormSteps.goTo(step);
 }
 
 function openUnassignedTaskAppModules() {
@@ -3779,8 +3816,10 @@ function showAppConfigCenter() {
   if (!area) return;
   activeWorkspaceMode = 'app-config';
   setManagementToolbar('应用配置', '应用配置统一维护包名、模块归属、Sonic 项目和群通知目标。', '📱');
-  const assignedModules = new Set(taskApps.flatMap(app => app.modules || []));
-  const totalModules = Object.keys(modules || {}).length;
+  const businessModules = taskAppBusinessModuleNames();
+  const businessModuleSet = new Set(businessModules);
+  const assignedModules = new Set(taskApps.flatMap(app => app.modules || []).filter(moduleName => businessModuleSet.has(moduleName)));
+  const totalModules = businessModules.length;
   const unassignedModules = Math.max(0, totalModules - assignedModules.size);
   area.className = 'editor-area';
   area.innerHTML = `<div class="review-page config-management-page">
@@ -3813,12 +3852,12 @@ function showFeishuConfigCenter() {
   const configured = taskApps.filter(app => taskAppFeishuLabel(app) !== '飞书：未配置');
   area.className = 'editor-area';
   area.innerHTML = `<div class="review-page config-management-page">
-    <div class="review-head"><div><div class="workflow-kicker">群通知 · 应用级通知配置</div><h2>群通知</h2><p>每个应用独立选择通知群，避免不同产品的执行结果和缺陷发送到错误群聊。</p></div><div class="review-actions"><button class="btn-sm primary" onclick="openTaskAppEditor()">维护通知配置</button><button class="btn-sm" onclick="activateWorkflow('bug_drafts')">查看缺陷草稿</button></div></div>
+    <div class="review-head"><div><div class="workflow-kicker">群通知 · 应用级通知配置</div><h2>群通知</h2><p>每个应用独立选择通知群，避免不同产品的执行结果和缺陷发送到错误群聊。</p></div><div class="review-actions"><button class="btn-sm primary" onclick="openTaskAppEditor(${jsArg(taskApps[0]?.package || '')}, ${taskApps.length ? 2 : 0})">维护通知配置</button><button class="btn-sm" onclick="activateWorkflow('bug_drafts')">查看缺陷草稿</button></div></div>
     <div class="review-stats"><div class="review-stat"><strong>${configured.length}/${taskApps.length}</strong><span>通知可用应用</span></div><div class="review-stat"><strong>${feishuDrafts.filter(d => String(d.status || '').toUpperCase() === 'DRAFT').length}</strong><span>待确认草稿</span></div></div>
     <div class="management-list">
       ${taskApps.length ? taskApps.map(app => {
         const ready = taskAppFeishuLabel(app) !== '飞书：未配置';
-        return `<div class="management-row"><div class="management-row-main"><strong>${escapeHtml(app.name || app.package)}</strong><span>${escapeHtml(app.package || '-')}</span><small>${ready ? '执行报告和缺陷草稿可按此应用路由' : '请先配置机器人 Webhook 或默认群'}</small></div><span class="status-pill ${ready ? 'success' : 'warn'}">${escapeHtml(taskAppFeishuLabel(app).replace('飞书：', ''))}</span><button class="btn-sm" onclick="openTaskAppEditor(${jsArg(app.package || '')})">配置</button></div>`;
+        return `<div class="management-row"><div class="management-row-main"><strong>${escapeHtml(app.name || app.package)}</strong><span>${escapeHtml(app.package || '-')}</span><small>${ready ? '执行报告和缺陷草稿可按此应用路由' : '请先配置机器人 Webhook 或默认群'}</small></div><span class="status-pill ${ready ? 'success' : 'warn'}">${escapeHtml(taskAppFeishuLabel(app).replace('飞书：', ''))}</span><button class="btn-sm" onclick="openTaskAppEditor(${jsArg(app.package || '')}, 2)">配置</button></div>`;
       }).join('') : '<div class="job-empty">暂无应用。新增应用后才能配置对应通知群。</div>'}
     </div>
   </div>`;
@@ -3833,7 +3872,7 @@ function showSonicConfigCenter() {
   const sonicBound = taskApps.filter(app => app.sonic_project_id || app.sonic_project_name || app.sonic_suite_id || app.sonic_suite_name);
   area.className = 'editor-area';
   area.innerHTML = `<div class="review-page config-management-page">
-    <div class="review-head"><div><div class="workflow-kicker">EXECUTION · Runner / Device / Sonic</div><h2>执行环境</h2><p>先确认设备在线和应用绑定，再执行用例。进入本页不会自动扫描或修改 Sonic 数据。</p></div><div class="review-actions"><button class="btn-sm" onclick="showPreflightDashboard()">快速体检</button><button class="btn-sm" onclick="showPreflightDashboard(true)">深度体检</button><button class="btn-sm primary" onclick="scanLegacySonicCases('all')">扫描旧/重复步骤</button></div></div>
+    <div class="review-head"><div><div class="workflow-kicker">执行环境 · Runner / 设备 / Sonic</div><h2>执行环境</h2><p>先确认设备在线和应用绑定，再执行用例。进入本页不会自动扫描或修改 Sonic 数据。</p></div><div class="review-actions"><button class="btn-sm" onclick="showPreflightDashboard()">快速体检</button><button class="btn-sm" onclick="showPreflightDashboard(true)">深度体检</button><button class="btn-sm primary" onclick="scanLegacySonicCases('all')">扫描旧/重复步骤</button></div></div>
     <div class="review-stats"><div class="review-stat"><strong>${onlineDevices.length}</strong><span>在线设备</span></div><div class="review-stat"><strong>${sonicBound.length}/${taskApps.length}</strong><span>已绑定 Sonic 应用</span></div></div>
     <div class="management-list">
       ${taskApps.length ? taskApps.map(app => `<div class="management-row"><div class="management-row-main"><strong>${escapeHtml(app.name || app.package)}</strong><span>${escapeHtml(app.package || '-')}</span><small>${escapeHtml([app.sonic_project_name || app.sonic_project_id || '项目未绑定', app.sonic_suite_name || app.sonic_suite_id || '测试套未绑定'].join(' · '))}</small></div><button class="btn-sm" onclick="openTaskAppEditor(${jsArg(app.package || '')})">编辑绑定</button></div>`).join('') : '<div class="job-empty">暂无应用绑定信息。</div>'}
@@ -3953,9 +3992,17 @@ function showTaskApps() {
   FormSteps.init('#modal-task-apps');
 }
 
+function isTemporaryAgentModule(moduleName = '') {
+  return /^AI[_ ]Agent[_ ]修复重跑[_ ]agent-/i.test(String(moduleName || ''));
+}
+
+function taskAppBusinessModuleNames() {
+  return Object.keys(modules).filter(moduleName => !isTemporaryAgentModule(moduleName)).sort();
+}
+
 function renderTaskAppModal() {
   const assignedModules = new Set(taskApps.flatMap(app => app.modules || []));
-  document.getElementById('task-app-modules').innerHTML = Object.keys(modules).sort().map(mod => `
+  document.getElementById('task-app-modules').innerHTML = taskAppBusinessModuleNames().map(mod => `
     <label title="${escapeHtml(mod)}" data-module-search="${escapeHtml(mod.toLowerCase())}" data-unassigned="${assignedModules.has(mod) ? '0' : '1'}">
       <input type="checkbox" class="task-app-module-check" value="${escapeHtml(mod)}">
       <span>${escapeHtml(mod)}</span>
@@ -3966,7 +4013,66 @@ function renderTaskAppModal() {
   const only = document.getElementById('task-app-module-unassigned');
   if (only) only.checked = false;
   filterTaskAppModules('', false);
+  const businessContainer = document.getElementById('task-app-business-lines');
+  if (businessContainer && !businessContainer.dataset.ready) {
+    renderTaskAppBusinessLineEditor(defaultBusinessLines());
+  }
   renderTaskAppList();
+}
+
+function renderTaskAppBusinessLineEditor(lines = []) {
+  const container = document.getElementById('task-app-business-lines');
+  if (!container) return;
+  taskAppBusinessLineDraft = (Array.isArray(lines) && lines.length ? lines : defaultBusinessLines()).map(item => ({
+    id: String(item.id || '').trim(),
+    name: String(item.name || '').trim(),
+    enabled: item.enabled !== false
+  }));
+  container.dataset.ready = '1';
+  container.innerHTML = taskAppBusinessLineDraft.map((item, index) => `
+    <div class="task-app-business-line" data-business-line-id="${escapeHtml(item.id)}">
+      <input type="text" class="task-app-business-name" maxlength="20" value="${escapeHtml(item.name)}" placeholder="例如：企业版" aria-label="第 ${index + 1} 个业务线中文名称">
+      <label class="task-app-business-toggle">
+        <input type="checkbox" class="task-app-business-enabled" ${item.enabled ? 'checked' : ''}>
+        <span>${item.enabled ? '启用' : '停用'}</span>
+      </label>
+    </div>
+  `).join('');
+  container.querySelectorAll('.task-app-business-enabled').forEach(input => {
+    input.addEventListener('change', () => {
+      const label = input.closest('label')?.querySelector('span');
+      if (label) label.textContent = input.checked ? '启用' : '停用';
+    });
+  });
+}
+
+function addTaskAppBusinessLine() {
+  let lines = [];
+  try {
+    lines = readTaskAppBusinessLines({allowIncomplete: true});
+  } catch (_error) {
+    lines = taskAppBusinessLineDraft;
+  }
+  lines.push({id: '', name: '', enabled: true});
+  renderTaskAppBusinessLineEditor(lines);
+  const inputs = document.querySelectorAll('.task-app-business-name');
+  inputs[inputs.length - 1]?.focus();
+}
+
+function readTaskAppBusinessLines(options = {}) {
+  const rows = Array.from(document.querySelectorAll('#task-app-business-lines .task-app-business-line')).map(row => ({
+    id: String(row.dataset.businessLineId || '').trim(),
+    name: String(row.querySelector('.task-app-business-name')?.value || '').trim(),
+    enabled: Boolean(row.querySelector('.task-app-business-enabled')?.checked)
+  }));
+  if (options.allowIncomplete) return rows;
+  if (!rows.length) throw new Error('至少配置一个业务线');
+  if (rows.some(item => !item.name)) throw new Error('请填写业务线中文名称');
+  if (rows.some(item => !/[\u3400-\u9fff]/.test(item.name))) throw new Error('业务线名称必须包含中文');
+  const names = rows.map(item => item.name.toLocaleLowerCase('zh-Hans-CN'));
+  if (new Set(names).size !== names.length) throw new Error('业务线中文名称不能重复');
+  if (!rows.some(item => item.enabled)) throw new Error('至少保留一个启用的业务线');
+  return rows;
 }
 
 function filterTaskAppModules(query = '', onlyUnassigned = null) {
@@ -3995,6 +4101,7 @@ function clearTaskAppForm() {
   document.getElementById('task-app-sonic-suite-name').value = '';
   document.getElementById('task-app-sonic-suite-id').value = '';
   document.getElementById('task-app-feishu-webhook').value = '';
+  renderTaskAppBusinessLineEditor(defaultBusinessLines());
   document.querySelectorAll('.task-app-module-check').forEach(input => input.checked = false);
 }
 
@@ -4008,6 +4115,9 @@ function editTaskApp(packageName) {
   document.getElementById('task-app-sonic-suite-name').value = app.sonic_suite_name || '';
   document.getElementById('task-app-sonic-suite-id').value = app.sonic_suite_id || '';
   document.getElementById('task-app-feishu-webhook').value = app.feishu_webhook || '';
+  renderTaskAppBusinessLineEditor(
+    Array.isArray(app.business_lines) && app.business_lines.length ? app.business_lines : defaultBusinessLines()
+  );
   const selected = new Set(app.modules || []);
   document.querySelectorAll('.task-app-module-check').forEach(input => input.checked = selected.has(input.value));
 }
@@ -4025,16 +4135,20 @@ function renderTaskAppList() {
     list.innerHTML = '<div class="job-empty">暂无应用分组</div>';
     return;
   }
-  list.innerHTML = taskApps.map(app => `
+  list.innerHTML = taskApps.map(app => {
+    const businessLines = (Array.isArray(app.business_lines) && app.business_lines.length ? app.business_lines : defaultBusinessLines());
+    const businessText = businessLines.map(item => `${item.name}${item.enabled === false ? '（已停用）' : ''}`).join('、');
+    return `
     <div class="app-row">
       <div class="app-row-main" onclick="editTaskApp('${escapeHtml(app.package)}')">
         <div class="app-row-name">${escapeHtml(app.name || app.package)}</div>
-        <div class="app-row-sub">${escapeHtml(app.package)} · 项目：${escapeHtml(app.sonic_project_name || app.sonic_project_id || '未绑定')} · 测试套：${escapeHtml(app.sonic_suite_name || app.sonic_suite_id || '未绑定')} · ${escapeHtml(taskAppFeishuLabel(app))} · ${(app.modules || []).length} 个模块：${escapeHtml((app.modules || []).join('、'))}</div>
+        <div class="app-row-sub">${escapeHtml(app.package)} · 业务线：${escapeHtml(businessText)} · 项目：${escapeHtml(app.sonic_project_name || app.sonic_project_id || '未绑定')} · 测试套：${escapeHtml(app.sonic_suite_name || app.sonic_suite_id || '未绑定')} · ${escapeHtml(taskAppFeishuLabel(app))} · ${(app.modules || []).length} 个模块：${escapeHtml((app.modules || []).join('、'))}</div>
       </div>
       <button class="btn-sm" onclick="editTaskApp('${escapeHtml(app.package)}')">编辑</button>
       <button class="btn-sm danger" onclick="deleteTaskApp('${escapeHtml(app.package)}')">删除</button>
     </div>
-  `).join('');
+  `;
+  }).join('');
 }
 
 async function saveTaskApp() {
@@ -4045,7 +4159,18 @@ async function saveTaskApp() {
   const sonicSuiteName = document.getElementById('task-app-sonic-suite-name').value.trim();
   const sonicSuiteId = document.getElementById('task-app-sonic-suite-id').value.trim();
   const feishuWebhook = document.getElementById('task-app-feishu-webhook').value.trim();
-  const selectedModules = Array.from(document.querySelectorAll('.task-app-module-check:checked')).map(input => input.value);
+  let businessLines;
+  try {
+    businessLines = readTaskAppBusinessLines();
+  } catch (error) {
+    showToast(error.message || '请检查业务线配置', 'error');
+    return;
+  }
+  const retainedTemporaryModules = (taskApps.find(app => app.package === packageName)?.modules || []).filter(isTemporaryAgentModule);
+  const selectedModules = [...new Set([
+    ...Array.from(document.querySelectorAll('.task-app-module-check:checked')).map(input => input.value),
+    ...retainedTemporaryModules
+  ])];
   if (!name || !packageName) {
     showToast('请填写应用中文名和包名', 'error');
     return;
@@ -4056,6 +4181,7 @@ async function saveTaskApp() {
       body: JSON.stringify({
         name,
         package: packageName,
+        business_lines: businessLines,
         modules: selectedModules,
         sonic_project_name: sonicProjectName,
         sonic_project_id: sonicProjectId,
@@ -4070,6 +4196,7 @@ async function saveTaskApp() {
     clearTaskAppForm();
     renderTaskAppModal();
     renderModules();
+    refreshBusinessLineControls();
     showToast(`应用已保存${data.app.sonic_suite_id ? '，Sonic 测试套已绑定' : ''}`, 'success');
   } catch(e) {
     showToast(e.message || '保存应用分组失败', 'error');

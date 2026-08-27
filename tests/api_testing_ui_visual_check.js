@@ -61,6 +61,17 @@ function createServer() {
       return res.end();
     }
     if (url.pathname.startsWith('/api-test/') && serveStatic(url.pathname, res)) return;
+    if (url.pathname === '/api/task-apps') {
+      return sendJson(res, { apps: [{
+        package: 'com.kfb.model',
+        name: '智小白3D',
+        business_lines: [
+          { id: 'home', name: '家用', enabled: true },
+          { id: 'shared', name: '共享', enabled: true },
+          { id: 'biz_school', name: '校园版', enabled: true },
+        ],
+      }] });
+    }
     if (url.pathname === '/api/api-testing/v1/workspace' && req.method === 'GET') {
       return sendJson(res, { workspace: { project_id: 'project-1', source_revision_id: 'source-revision-1', environment_revision_id: 'environment-revision-1' } });
     }
@@ -249,10 +260,14 @@ async function openCompactPage(page, navigationLabel, heading, label) {
   });
   await page.addInitScript(() => sessionStorage.setItem('sessionToken', 'visual-api-test-token'));
   try {
+    const taskAppsResponsePromise = page.waitForResponse(response => new URL(response.url()).pathname === '/api/task-apps');
     await page.goto(url, { waitUntil: 'networkidle' });
+    const taskAppsPayload = await (await taskAppsResponsePromise).json();
+    if (!JSON.stringify(taskAppsPayload).includes('校园版')) throw new Error(`business-line configuration response is incomplete: ${JSON.stringify(taskAppsPayload)}`);
     await page.getByRole('heading', { name: '接口测试工作台' }).waitFor();
     await page.getByTestId('endpoint-search').fill('我的收藏列表');
     await page.getByRole('button', { name: '我的收藏列表' }).click();
+    await page.getByTestId('case-business-biz_school').waitFor();
     const desktopBoxes = await Promise.all(['.endpoint-tree', '.design-center', '.ai-assistant'].map(selector => page.locator(selector).boundingBox()));
     if (desktopBoxes.some(box => !box) || !(desktopBoxes[0].x < desktopBoxes[1].x && desktopBoxes[1].x < desktopBoxes[2].x)) {
       throw new Error(`desktop columns are not ordered: ${JSON.stringify(desktopBoxes)}`);

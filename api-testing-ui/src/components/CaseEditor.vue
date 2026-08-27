@@ -4,6 +4,7 @@ import { Code2, List, Play, Plus, Trash2 } from 'lucide-vue-next'
 
 import type { ApiEndpoint, CaseDependencyOption, CaseDraft, InlineWorkflowStep, WorkflowVariableOption } from '../api/contracts'
 import { validateCaseDraftLocally } from '../utils/caseDraftValidation'
+import { businessLineLabel, preferredBusinessLineId, useBusinessLines } from '../utils/businessLines'
 import { workflowVariableOptions } from '../utils/workflowVariables'
 import AssertionListEditor from './AssertionListEditor.vue'
 import ExtractionListEditor from './ExtractionListEditor.vue'
@@ -18,6 +19,7 @@ const props = withDefaults(defineProps<{ modelValue: CaseDraft; validationErrors
   validationErrors: () => ({}), validationWarnings: () => ({}), saving: false, debugging: false, savedMessage: '', dependencyOptions: () => [], endpointOptions: () => [], environmentVariableNames: () => [], environmentRevisionId: '', environmentName: '',
 })
 const emit = defineEmits<{ 'update:modelValue': [draft: CaseDraft]; save: []; debug: [] }>()
+const { active: businessLines } = useBusinessLines()
 const mode = ref<'structured' | 'raw'>('structured')
 const local = ref<CaseDraft>(normalizeDraft(props.modelValue))
 const raw = ref(JSON.stringify(local.value, null, 2))
@@ -54,6 +56,9 @@ const advancedOpen = computed(() => Boolean(
 const previewInitialVariables = computed(() => ({
   ...((local.value.data_rows || []).find(row => row.enabled)?.values || {}),
 }))
+const currentBusinessUnavailable = computed(() => Boolean(
+  local.value.business && !businessLines.value.some(item => item.id === local.value.business),
+))
 
 function validationMessages(prefix: string, source: Record<string, string>): Array<[string, string]> {
   return Object.entries(source).filter(([field]) => field === prefix || field.startsWith(`${prefix}.`) || field.startsWith(`${prefix}[`))
@@ -242,6 +247,7 @@ function clone(value: CaseDraft): CaseDraft {
 
 function normalizeDraft(value: CaseDraft): CaseDraft {
   const draft = clone(value)
+  draft.business = String(draft.business || '').trim() || preferredBusinessLineId()
   draft.processing = {
     pre: draft.processing?.pre || [],
     post: draft.processing?.post || [],
@@ -263,7 +269,18 @@ function normalizeDraft(value: CaseDraft): CaseDraft {
     </header>
 
     <div v-if="mode === 'structured'" class="editor-form">
-      <div class="form-grid"><label>用例名称<input v-model="local.name" data-testid="case-name" @input="publish" /></label><label>优先级<select v-model="local.priority" @change="publish"><option v-for="priority in ['P0','P1','P2','P3']" :key="priority">{{ priority }}</option></select></label></div>
+      <div class="form-grid case-identity-grid">
+        <label>用例名称<input v-model="local.name" data-testid="case-name" @input="publish" /></label>
+        <div class="readonly-field"><span>应用</span><strong>智小白3D</strong></div>
+        <label>优先级<select v-model="local.priority" @change="publish"><option v-for="priority in ['P0','P1','P2','P3']" :key="priority">{{ priority }}</option></select></label>
+        <div class="business-field">
+          <span>所属业务</span>
+          <small v-if="currentBusinessUnavailable" class="field-warning">历史业务：{{ businessLineLabel(local.business) }}（已停用或未配置，请重新选择）</small>
+          <div class="segmented business-segmented" role="group" aria-label="所属业务">
+            <button v-for="line in businessLines" :key="line.id" :data-testid="`case-business-${line.id}`" type="button" :class="{ active: local.business === line.id }" @click="local.business = line.id; publish()">{{ line.name }}</button>
+          </div>
+        </div>
+      </div>
       <label>测试目的<textarea v-model="local.purpose" rows="2" @input="publish" /></label>
 
       <CaseValidationSummary :setup-count="local.processing.setup_steps?.length || 0" :assertion-count="local.assertions.length" :cleanup-count="local.processing.cleanup_steps?.length || 0" :errors="displayValidationErrors" :warnings="validationWarnings" @navigate="navigateToField" />

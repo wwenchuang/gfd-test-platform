@@ -4,6 +4,42 @@
 // ===== CONFIG =====
 const API_BASE = '/api';
 const AI_GATEWAY_BASE = '/ai-gateway';
+const TEST_APP_PACKAGE = 'com.kfb.model';
+
+function defaultBusinessLines() {
+  return [
+    {id: 'home', name: '家用', enabled: true},
+    {id: 'shared', name: '共享', enabled: true}
+  ];
+}
+
+function taskAppBusinessLines(packageName = TEST_APP_PACKAGE, includeDisabled = false) {
+  const apps = typeof taskApps === 'undefined' ? [] : taskApps;
+  const app = apps.find(item => String(item?.package || '').trim() === String(packageName || TEST_APP_PACKAGE).trim());
+  const source = Array.isArray(app?.business_lines) && app.business_lines.length
+    ? app.business_lines
+    : defaultBusinessLines();
+  const rows = source
+    .filter(item => item && String(item.id || '').trim() && String(item.name || '').trim())
+    .map(item => ({id: String(item.id).trim(), name: String(item.name).trim(), enabled: item.enabled !== false}));
+  return includeDisabled ? rows : rows.filter(item => item.enabled);
+}
+
+function businessLineLabel(value, packageName = TEST_APP_PACKAGE) {
+  const raw = String(value || '').trim();
+  if (!raw) return '未标注业务';
+  const matched = taskAppBusinessLines(packageName, true).find(item => raw === item.id || raw === item.name);
+  if (matched) return matched.name;
+  if (raw === 'home') return '家用';
+  if (raw === 'shared') return '共享';
+  return raw;
+}
+
+function refreshBusinessLineControls() {
+  if (typeof renderGenerateBusinessOptions === 'function') renderGenerateBusinessOptions();
+  if (typeof renderYamlTaskNav === 'function' && typeof currentFile !== 'undefined' && currentFile) renderYamlTaskNav();
+  if (typeof renderEditorContextBar === 'function' && typeof currentFile !== 'undefined' && currentFile) renderEditorContextBar();
+}
 
 // Moved here from STATE block to keep dependency order (state.js loads before api.js)
 const AGENT_API_BASE = AI_GATEWAY_BASE;
@@ -274,10 +310,14 @@ const WORKFLOW_SECTIONS = {
   yaml_edit: {
     index: '1',
     title: 'YAML 编辑',
-    subtitle: '从左侧选择 YAML 文件进行编辑和调试',
-    help: '从左侧用例树选择 YAML 文件，在编辑器中修改、保存和执行。',
-    cards: [],
-    checklist: []
+    subtitle: '从用例资产选择 YAML 文件进行编辑和调试',
+    help: '先到用例资产打开 YAML 文件，再在编辑器中修改、保存和执行。',
+    cards: [
+      { title: '选择要编辑的 YAML', text: '从用例资产按应用、模块或关键词找到 YAML，打开后即可修改、保存和调试。', actions: [
+        { label: '去用例资产选择', cls: 'primary', fn: 'activateWorkflow("assets")' }
+      ]}
+    ],
+    checklist: ['修改前先确认应用和模块', '保存后先做静态校验，再进入调试执行']
   },
   failure_analysis: {
     index: '6',

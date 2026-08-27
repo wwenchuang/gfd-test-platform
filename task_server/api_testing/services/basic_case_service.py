@@ -118,6 +118,7 @@ class BasicCaseService:
             "name": f"{title[:260]} - 基础正向流程",
             "purpose": f"验证{title}接口在平台环境鉴权与基础参数下可以成功返回",
             "priority": "P1",
+            "business": cls._business_for_endpoint(endpoint),
             "request": request,
             "data_rows": [],
             "assertions": assertions,
@@ -138,6 +139,20 @@ class BasicCaseService:
             environment_variables,
         )
         return payload
+
+    @staticmethod
+    def _business_for_endpoint(endpoint):
+        from task_server.services.business_line_service import preferred_business_line_id
+
+        markers = [
+            getattr(endpoint, "summary", ""),
+            getattr(endpoint, "path", ""),
+            *(getattr(endpoint, "tags", None) or ()),
+        ]
+        operation = getattr(endpoint, "operation", None)
+        if isinstance(operation, Mapping):
+            markers.append(operation.get("x-apifox-folder") or "")
+        return preferred_business_line_id(*markers)
 
     @classmethod
     def _request_for_endpoint(

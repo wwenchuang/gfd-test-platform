@@ -1,6 +1,9 @@
+import json
+
 import pytest
 
 from task_server.api_testing.contracts.case import CasePayloadError, parse_case_payload
+from task_server.services import business_line_service
 
 
 def _request(path):
@@ -57,6 +60,35 @@ def _payload(processing):
         "dependencies": [],
         "processing": processing,
     }
+
+
+@pytest.mark.parametrize("business", ["home", "shared"])
+def test_case_contract_accepts_explicit_business(business):
+    payload = _payload({"pre": [], "post": []})
+    payload["business"] = business
+
+    assert parse_case_payload(payload)["business"] == business
+
+
+def test_case_contract_rejects_unknown_business():
+    payload = _payload({"pre": [], "post": []})
+    payload["business"] = "enterprise"
+
+    with pytest.raises(CasePayloadError, match="business is not supported"):
+        parse_case_payload(payload)
+
+
+def test_case_contract_accepts_configured_business_internal_id(tmp_path, monkeypatch):
+    path = tmp_path / "task-apps.json"
+    path.write_text(json.dumps({"apps": [{
+        "package": "com.kfb.model",
+        "business_lines": [{"id": "biz_school", "name": "校园版", "enabled": True}],
+    }]}, ensure_ascii=False), encoding="utf-8")
+    monkeypatch.setattr(business_line_service, "TASK_APPS_FILE", str(path))
+    payload = _payload({"pre": [], "post": []})
+    payload["business"] = "biz_school"
+
+    assert parse_case_payload(payload)["business"] == "biz_school"
 
 
 def test_case_contract_accepts_strict_setup_and_cleanup_steps():
