@@ -49,7 +49,7 @@ def _enabled(value) -> bool:
     return value is not False
 
 
-def normalize_business_lines(value, existing=None) -> list:
+def normalize_business_lines(value, existing=None, require_enabled=True) -> list:
     if value is None:
         value = existing if existing is not None else default_business_lines()
     if not isinstance(value, list):
@@ -92,12 +92,12 @@ def normalize_business_lines(value, existing=None) -> list:
 
     if not rows:
         raise ValueError("至少配置一个业务线")
-    if not any(item["enabled"] for item in rows):
+    if require_enabled and not any(item["enabled"] for item in rows):
         raise ValueError("至少保留一个启用的业务线")
     return rows
 
 
-def normalize_test_application(value, existing=None, require_business_lines=False, allow_legacy_name=False) -> dict:
+def normalize_test_application(value, existing=None, require_business_lines=False, allow_legacy_name=False, allow_all_disabled_business_lines=False) -> dict:
     if not isinstance(value, dict):
         raise ValueError("应用配置格式不正确")
     existing = existing if isinstance(existing, dict) else {}
@@ -119,11 +119,37 @@ def normalize_test_application(value, existing=None, require_business_lines=Fals
     lines_provided = "business_lines" in value or "businessLines" in value
     raw_lines = value.get("business_lines", value.get("businessLines")) if lines_provided else existing.get("business_lines")
     if raw_lines is not None:
-        app["business_lines"] = normalize_business_lines(raw_lines, existing=existing.get("business_lines"))
+        app["business_lines"] = normalize_business_lines(
+            raw_lines,
+            existing=existing.get("business_lines"),
+            require_enabled=not allow_all_disabled_business_lines,
+        )
     elif package == PRIMARY_APP_PACKAGE:
         app["business_lines"] = default_business_lines()
     elif require_business_lines:
         raise ValueError("至少配置一个启用的业务线")
+    return app
+
+
+def _historical_test_application(value) -> dict:
+    if not isinstance(value, dict):
+        return {}
+    package = str(value.get("package") or value.get("app_package") or value.get("appPackage") or "").strip()
+    if not package:
+        return {}
+    app = {
+        "package": package,
+        "name": "未标注应用",
+        "enabled": _enabled(value.get("enabled", True)),
+    }
+    raw_lines = value.get("business_lines", value.get("businessLines"))
+    if raw_lines is not None:
+        try:
+            app["business_lines"] = normalize_business_lines(raw_lines, require_enabled=False)
+        except ValueError:
+            pass
+    elif package == PRIMARY_APP_PACKAGE:
+        app["business_lines"] = default_business_lines()
     return app
 
 
@@ -139,15 +165,23 @@ def configured_test_applications(include_disabled=False) -> list:
     apps = []
     seen_packages = set()
     for raw in source:
+        historical = False
         try:
-            app = normalize_test_application(raw, allow_legacy_name=True)
+            app = normalize_test_application(
+                raw,
+                allow_legacy_name=True,
+                allow_all_disabled_business_lines=True,
+            )
         except ValueError:
+            app = _historical_test_application(raw)
+            historical = True
+        if not app:
             continue
         package = app["package"]
         if package in seen_packages:
             continue
         seen_packages.add(package)
-        if include_disabled or app["enabled"]:
+        if include_disabled or (app["enabled"] and not historical):
             apps.append(app)
     return apps
 
@@ -166,7 +200,8 @@ def test_application_name(package, snapshot_name="") -> str:
     app = configured_test_application(package, include_disabled=True)
     if app.get("name"):
         return app["name"]
-    return str(snapshot_name or "").strip() or str(package or "").strip() or "未标注应用"
+    snapshot = str(snapshot_name or "").strip()
+    return snapshot if _CHINESE_RE.search(snapshot) else "未标注应用"
 
 
 def _configured_app(package: str) -> dict:
@@ -181,7 +216,7 @@ def configured_business_lines(app_package=PRIMARY_APP_PACKAGE, include_disabled=
         rows = default_business_lines() if package == PRIMARY_APP_PACKAGE else []
     else:
         try:
-            rows = normalize_business_lines(raw)
+            rows = normalize_business_lines(raw, require_enabled=False)
         except ValueError:
             rows = default_business_lines() if package == PRIMARY_APP_PACKAGE else []
     if include_disabled:
@@ -223,7 +258,7 @@ def business_line_name(value, app_package=PRIMARY_APP_PACKAGE, fallback="未标�
         return "家用"
     if app_package == PRIMARY_APP_PACKAGE and raw == "shared":
         return "共享"
-    return raw
+    return raw if _CHINESE_RE.search(raw) else fallback
 
 
 def preferred_business_line_id(*values, app_package=PRIMARY_APP_PACKAGE) -> str:

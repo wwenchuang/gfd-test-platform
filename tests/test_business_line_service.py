@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from task_server.services import business_line_service, job_service
+from task_server.services import business_line_service, job_service, sonic_service
 
 
 def _write_apps(path, apps):
@@ -158,6 +158,49 @@ def test_non_primary_app_without_business_lines_never_falls_back_to_primary_defa
     monkeypatch.setattr(business_line_service, "TASK_APPS_FILE", str(path))
 
     assert business_line_service.configured_business_lines("com.example.school") == []
-    assert business_line_service.business_line_name("home", "com.example.school") == "home"
+    assert business_line_service.business_line_name("home", "com.example.school") == "未标注业务"
     with pytest.raises(ValueError, match="已配置且启用"):
         business_line_service.business_line_id("home", "com.example.school", require_active=True)
+
+
+def test_history_labels_hide_unknown_english_packages_and_internal_business_ids(tmp_path, monkeypatch):
+    path = tmp_path / "task-apps.json"
+    _write_apps(path, [{
+        "package": "com.example.disabled",
+        "name": "停用校园打印",
+        "enabled": False,
+        "business_lines": [{"id": "biz_school", "name": "校园业务", "enabled": False}],
+    }])
+    monkeypatch.setattr(business_line_service, "TASK_APPS_FILE", str(path))
+
+    assert business_line_service.test_application_name("com.unknown.app", "Legacy App") == "未标注应用"
+    assert business_line_service.test_application_name("com.unknown.app", "历史应用") == "历史应用"
+    assert business_line_service.business_line_name("biz_internal", "com.unknown.app") == "未标注业务"
+    assert business_line_service.business_line_name("历史业务", "com.unknown.app") == "历史业务"
+    assert business_line_service.test_application_name("com.example.disabled", "Disabled App") == "停用校园打印"
+    assert business_line_service.business_line_name("biz_school", "com.example.disabled") == "校园业务"
+
+
+def test_legacy_english_named_app_stays_resolvable_for_history_and_sonic_only(tmp_path, monkeypatch):
+    path = tmp_path / "task-apps.json"
+    _write_apps(path, [{
+        "package": "com.example.legacy",
+        "name": "Legacy App",
+        "enabled": True,
+        "business_lines": [{"id": "biz_school", "name": "校园业务", "enabled": True}],
+        "sonic_project_id": "42",
+        "sonic_suite_id": "8",
+    }])
+    monkeypatch.setattr(business_line_service, "TASK_APPS_FILE", str(path))
+    monkeypatch.setattr(sonic_service.cfg, "TASK_APPS_FILE", str(path))
+
+    assert business_line_service.configured_test_applications() == []
+    assert business_line_service.configured_test_application("com.example.legacy") == {
+        "package": "com.example.legacy",
+        "name": "未标注应用",
+        "enabled": True,
+        "business_lines": [{"id": "biz_school", "name": "校园业务", "enabled": True}],
+    }
+    sonic_app = next(item for item in sonic_service.sonic_notify_known_apps() if item["package"] == "com.example.legacy")
+    assert sonic_app["name"] == "未标注应用"
+    assert sonic_app["sonic_project_id"] == "42"
