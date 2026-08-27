@@ -11,6 +11,19 @@ _DEFAULT_BUSINESS_LINES = (
     {"id": "home", "name": "家用", "enabled": True},
     {"id": "shared", "name": "共享", "enabled": True},
 )
+_DEFAULT_TEST_APPLICATIONS = (
+    {
+        "package": PRIMARY_APP_PACKAGE,
+        "name": "智小白3D",
+        "enabled": True,
+        "business_lines": _DEFAULT_BUSINESS_LINES,
+    },
+    {
+        "package": "com.xbxxhz.box",
+        "name": "小白学习打印",
+        "enabled": True,
+    },
+)
 _LEGACY_NAME_TO_ID = {"家用": "home", "共享": "shared"}
 _CHINESE_RE = re.compile(r"[\u3400-\u9fff]")
 _ID_RE = re.compile(r"^[A-Za-z0-9_.:-]{1,80}$")
@@ -18,6 +31,16 @@ _ID_RE = re.compile(r"^[A-Za-z0-9_.:-]{1,80}$")
 
 def default_business_lines() -> list:
     return [dict(item) for item in _DEFAULT_BUSINESS_LINES]
+
+
+def default_test_applications() -> list:
+    result = []
+    for item in _DEFAULT_TEST_APPLICATIONS:
+        app = dict(item)
+        if "business_lines" in app:
+            app["business_lines"] = [dict(line) for line in app["business_lines"]]
+        result.append(app)
+    return result
 
 
 def _enabled(value) -> bool:
@@ -74,23 +97,93 @@ def normalize_business_lines(value, existing=None) -> list:
     return rows
 
 
-def _configured_app(package: str) -> dict:
+def normalize_test_application(value, existing=None, require_business_lines=False, allow_legacy_name=False) -> dict:
+    if not isinstance(value, dict):
+        raise ValueError("应用配置格式不正确")
+    existing = existing if isinstance(existing, dict) else {}
+    package = str(value.get("package") or value.get("app_package") or value.get("appPackage") or "").strip()
+    if not package:
+        raise ValueError("包名不能为空")
+    name = str(value.get("name") or value.get("app_name") or value.get("appName") or existing.get("name") or "").strip()
+    if not name and allow_legacy_name:
+        legacy = next((item for item in _DEFAULT_TEST_APPLICATIONS if item["package"] == package), {})
+        name = str(legacy.get("name") or "").strip()
+    if not name:
+        raise ValueError("应用中文名称不能为空")
+    if len(name) > 40:
+        raise ValueError("应用中文名称最多 40 个字符")
+    if not _CHINESE_RE.search(name):
+        raise ValueError("应用名称必须包含中文")
+
+    app = {"package": package, "name": name, "enabled": _enabled(value.get("enabled", existing.get("enabled", True)))}
+    lines_provided = "business_lines" in value or "businessLines" in value
+    raw_lines = value.get("business_lines", value.get("businessLines")) if lines_provided else existing.get("business_lines")
+    if raw_lines is not None:
+        app["business_lines"] = normalize_business_lines(raw_lines, existing=existing.get("business_lines"))
+    elif package == PRIMARY_APP_PACKAGE:
+        app["business_lines"] = default_business_lines()
+    elif require_business_lines:
+        raise ValueError("至少配置一个启用的业务线")
+    return app
+
+
+def _raw_configured_test_applications() -> list:
     data = read_json_file(TASK_APPS_FILE, default={})
     apps = data if isinstance(data, list) else (data.get("apps") or [] if isinstance(data, dict) else [])
-    for app in apps:
-        if isinstance(app, dict) and str(app.get("package") or "").strip() == package:
-            return app
+    return [item for item in apps if isinstance(item, dict)]
+
+
+def configured_test_applications(include_disabled=False) -> list:
+    raw_apps = _raw_configured_test_applications()
+    source = raw_apps or default_test_applications()
+    apps = []
+    seen_packages = set()
+    for raw in source:
+        try:
+            app = normalize_test_application(raw, allow_legacy_name=True)
+        except ValueError:
+            continue
+        package = app["package"]
+        if package in seen_packages:
+            continue
+        seen_packages.add(package)
+        if include_disabled or app["enabled"]:
+            apps.append(app)
+    return apps
+
+
+def configured_test_application(package, include_disabled=True) -> dict:
+    package = str(package or "").strip()
+    if not package:
+        return {}
+    for app in configured_test_applications(include_disabled=include_disabled):
+        if app["package"] == package:
+            return dict(app)
     return {}
+
+
+def test_application_name(package, snapshot_name="") -> str:
+    app = configured_test_application(package, include_disabled=True)
+    if app.get("name"):
+        return app["name"]
+    return str(snapshot_name or "").strip() or str(package or "").strip() or "未标注应用"
+
+
+def _configured_app(package: str) -> dict:
+    return configured_test_application(package, include_disabled=True)
 
 
 def configured_business_lines(app_package=PRIMARY_APP_PACKAGE, include_disabled=False) -> list:
     package = str(app_package or PRIMARY_APP_PACKAGE).strip() or PRIMARY_APP_PACKAGE
     app = _configured_app(package)
     raw = app.get("business_lines") if isinstance(app, dict) else None
-    try:
-        rows = normalize_business_lines(raw) if raw else default_business_lines()
-    except ValueError:
-        rows = default_business_lines()
+    if raw is None:
+        rows = default_business_lines() if package == PRIMARY_APP_PACKAGE else []
+    else:
+        try:
+            rows = normalize_business_lines(raw)
+        except ValueError:
+            rows = default_business_lines() if package == PRIMARY_APP_PACKAGE else []
     if include_disabled:
         return rows
     return [dict(item) for item in rows if item.get("enabled")]
@@ -108,7 +201,7 @@ def business_line_id(value, app_package=PRIMARY_APP_PACKAGE, require_active=Fals
         if require_active and not matched.get("enabled"):
             raise ValueError(f"所属业务“{matched['name']}”已停用，请重新选择")
         return matched["id"]
-    legacy_id = _LEGACY_NAME_TO_ID.get(raw, raw if raw in _LEGACY_NAME_TO_ID.values() else "")
+    legacy_id = _LEGACY_NAME_TO_ID.get(raw, raw if raw in _LEGACY_NAME_TO_ID.values() else "") if app_package == PRIMARY_APP_PACKAGE else ""
     if legacy_id:
         if require_active:
             raise ValueError("所属业务未配置或已停用，请重新选择")
@@ -126,9 +219,9 @@ def business_line_name(value, app_package=PRIMARY_APP_PACKAGE, fallback="未标�
     matched = next((item for item in rows if raw in {item["id"], item["name"]}), None)
     if matched:
         return matched["name"]
-    if raw == "home":
+    if app_package == PRIMARY_APP_PACKAGE and raw == "home":
         return "家用"
-    if raw == "shared":
+    if app_package == PRIMARY_APP_PACKAGE and raw == "shared":
         return "共享"
     return raw
 

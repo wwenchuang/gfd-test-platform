@@ -49,7 +49,7 @@ from ..storage import (
     write_json_file,
 )
 from .feishu_service import validate_feishu_webhook
-from .business_line_service import default_business_lines, normalize_business_lines
+from .business_line_service import normalize_test_application
 
 # ---------------------------------------------------------------------------
 # 内部工具
@@ -1395,32 +1395,26 @@ def new_job_id():
 
 
 def normalize_task_app(payload, existing_app=None):
-    package = (payload.get("package") or payload.get("app_package") or payload.get("appPackage") or "").strip()
-    name = (payload.get("name") or payload.get("app_name") or payload.get("appName") or package or "未命名应用").strip()
+    catalog_app = normalize_test_application(
+        payload,
+        existing=existing_app,
+        require_business_lines=not bool(existing_app),
+    )
+    package = catalog_app["package"]
+    name = catalog_app["name"]
     modules = payload.get("modules") or []
     if isinstance(modules, str):
         modules = [item.strip() for item in modules.split(",") if item.strip()]
     modules = sorted(set(str(item).strip() for item in modules if str(item).strip()))
-    if not package:
-        raise ValueError("包名不能为空")
-    if package == "com.kfb.model":
-        name = "智小白3D"
     app = {
         "package": package,
         "name": name,
+        "enabled": catalog_app["enabled"],
         "modules": modules,
         "updated_at": time.strftime("%Y-%m-%d %H:%M:%S")
     }
-    existing_business_lines = (existing_app or {}).get("business_lines")
-    if "business_lines" in payload or "businessLines" in payload:
-        app["business_lines"] = normalize_business_lines(
-            payload.get("business_lines", payload.get("businessLines")),
-            existing=existing_business_lines,
-        )
-    elif existing_business_lines:
-        app["business_lines"] = normalize_business_lines(existing_business_lines)
-    elif package == "com.kfb.model":
-        app["business_lines"] = default_business_lines()
+    if "business_lines" in catalog_app:
+        app["business_lines"] = catalog_app["business_lines"]
     for src, dst in (
         ("sonic_project_id", "sonic_project_id"),
         ("sonicProjectId", "sonic_project_id"),

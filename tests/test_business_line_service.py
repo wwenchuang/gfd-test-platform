@@ -92,3 +92,72 @@ def test_task_app_normalization_persists_business_lines_and_preserves_ids_on_ren
     assert line_id.startswith("biz_")
     assert created["name"] == "智小白3D"
     assert renamed["business_lines"] == [{"id": line_id, "name": "校园版", "enabled": True}]
+
+
+def test_configured_test_applications_prefer_saved_name_and_resolve_disabled_history(tmp_path, monkeypatch):
+    path = tmp_path / "task-apps.json"
+    _write_apps(path, [
+        {
+            "package": "com.kfb.model",
+            "name": "创想智造",
+            "enabled": True,
+            "business_lines": [{"id": "maker", "name": "创客业务", "enabled": True}],
+        },
+        {
+            "package": "com.example.school",
+            "name": "校园打印",
+            "enabled": False,
+            "business_lines": [{"id": "school", "name": "校园业务", "enabled": True}],
+        },
+    ])
+    monkeypatch.setattr(business_line_service, "TASK_APPS_FILE", str(path))
+
+    assert business_line_service.configured_test_applications() == [
+        {
+            "package": "com.kfb.model",
+            "name": "创想智造",
+            "enabled": True,
+            "business_lines": [{"id": "maker", "name": "创客业务", "enabled": True}],
+        },
+    ]
+    assert business_line_service.configured_test_application("com.example.school") == {
+        "package": "com.example.school",
+        "name": "校园打印",
+        "enabled": False,
+        "business_lines": [{"id": "school", "name": "校园业务", "enabled": True}],
+    }
+    assert business_line_service.test_application_name("com.kfb.model", "旧智小白") == "创想智造"
+    assert business_line_service.test_application_name("com.unknown", "历史应用") == "历史应用"
+
+
+def test_task_app_normalization_requires_chinese_name_and_persists_enabled_state():
+    with pytest.raises(ValueError, match="中文"):
+        job_service.normalize_task_app({
+            "package": "com.example.school",
+            "name": "School App",
+            "business_lines": [{"name": "校园业务", "enabled": True}],
+        })
+
+    app = job_service.normalize_task_app({
+        "package": "com.example.school",
+        "name": "校园打印",
+        "enabled": False,
+        "business_lines": [{"name": "校园业务", "enabled": True}],
+    })
+
+    assert app["enabled"] is False
+
+
+def test_non_primary_app_without_business_lines_never_falls_back_to_primary_defaults(tmp_path, monkeypatch):
+    path = tmp_path / "task-apps.json"
+    _write_apps(path, [{
+        "package": "com.example.school",
+        "name": "校园打印",
+        "enabled": True,
+    }])
+    monkeypatch.setattr(business_line_service, "TASK_APPS_FILE", str(path))
+
+    assert business_line_service.configured_business_lines("com.example.school") == []
+    assert business_line_service.business_line_name("home", "com.example.school") == "home"
+    with pytest.raises(ValueError, match="已配置且启用"):
+        business_line_service.business_line_id("home", "com.example.school", require_active=True)

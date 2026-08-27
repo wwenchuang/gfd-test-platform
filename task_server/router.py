@@ -981,7 +981,11 @@ def _get_task_meta(handler, qs):
 def _get_task_apps(handler, qs):
     if _require_user_auth(handler):
         return
-    handler._json({"ok": True, "apps": sonic_notify_known_apps()})
+    include_disabled = safe_bool(qs.get("include_disabled") or qs.get("includeDisabled"))
+    apps = sonic_notify_known_apps()
+    if not include_disabled:
+        apps = [app for app in apps if app.get("enabled", True)]
+    handler._json({"ok": True, "apps": apps})
 
 
 # ── Sonic 配置 ──────────────────────────────────────────────────────

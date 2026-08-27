@@ -51,6 +51,7 @@ from .notification_presentation import (
     canonical_test_business_name,
     canonical_test_business_summary,
 )
+from .business_line_service import configured_test_applications
 
 
 # ---------------------------------------------------------------------------
@@ -1375,8 +1376,6 @@ def _merge_task_app_defaults(app: dict, defaults: Optional[dict]) -> dict:
                 aliases.append(item)
     if aliases:
         merged["aliases"] = aliases
-    if merged.get("package") == "com.kfb.model":
-        merged["name"] = "智小白3D"
     return merged
 
 
@@ -1389,17 +1388,18 @@ def sonic_notify_known_apps() -> list:
     }
     loaded = _load_task_apps()
     configured = (loaded.get("apps") or []) if isinstance(loaded, dict) else (loaded if isinstance(loaded, list) else [])
+    configured_by_package = {
+        str(app.get("package") or "").strip(): app
+        for app in configured
+        if isinstance(app, dict) and str(app.get("package") or "").strip()
+    }
     apps = []
     seen = set()
-    for app in configured:
-        package = app.get("package", "")
-        key = package or app.get("name", "")
-        if key in seen:
-            continue
-        seen.add(key)
-        apps.append(_merge_task_app_defaults(app, builtin_by_package.get(package)))
-    for app in builtin_apps:
-        package = app.get("package", "")
+    for catalog_app in configured_test_applications(include_disabled=True):
+        package = catalog_app.get("package", "")
+        raw_app = configured_by_package.get(package, {})
+        app = _merge_task_app_defaults(raw_app, builtin_by_package.get(package))
+        app.update(catalog_app)
         key = package or app.get("name", "")
         if key in seen:
             continue
