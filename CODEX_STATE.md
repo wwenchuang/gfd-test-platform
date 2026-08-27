@@ -42,8 +42,11 @@
 - 只自动终止命令行可确认属于 `task_server`、`midscene-upload.py` 或本项目目录的遗留进程；未知程序占用端口时拒绝误杀并打印 PID 与命令。
 - 服务启动后等待 systemd 活跃和健康接口可达；超时打印 `systemctl status` 与最近 80 行日志。
 - 原有提交 SHA、直连/正式健康接口、登录 401 JSON 与前端资源校验继续作为部署完成门禁。
+- 现场最终定位到 `midscene-upload.service` 持续拉起 `/opt/midscene-upload.py`。停用旧 unit、清理 PM2、备份旧入口后，新后端成功以 `b75b72e6d9dc7ab128bf47ee2b3413e538d443c1` 运行；公网 `8088/api/health` 返回同一提交号，无效账号登录探针返回 HTTP 401 JSON。
+- 更新脚本进一步固化上述迁移：安装前自动停用所有引用 `midscene-upload.py` 的非标准 systemd unit、删除同入口 PM2 进程并备份根目录旧入口；未知 8091 占用者仍拒绝误杀。
+- 堡垒机固定部署命令改为 `cd /opt/midscene-task-platform-src && git checkout main && git pull --ff-only origin main && bash deploy/update-main-server.sh`，不再直接组合安装、重启和 curl 命令。
 
-该部署修复不修改业务数据。后端真正更新后再继续当前 240 条左右有效 API 基线的实际响应与断言复核。
+该部署修复不修改业务数据。后端已恢复，继续当前 240 条左右有效 API 基线的实际响应与断言复核以及 Chrome 全流程点检。
 
 ### 2026-08-27 部署版本身份与登录就绪门禁
 

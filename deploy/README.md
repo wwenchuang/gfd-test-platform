@@ -357,22 +357,20 @@ If the server keeps a git checkout at `/opt/midscene-task-platform-src`, use
 the single update script after each `main` push:
 
 ```bash
-cd /opt/midscene-task-platform-src
-bash deploy/update-main-server.sh
+cd /opt/midscene-task-platform-src && git checkout main && git pull --ff-only origin main && bash deploy/update-main-server.sh
 ```
 
-The script fast-forwards `origin/main`, installs the runtime files, restarts
+The leading pull updates the deployment script itself. The script then confirms
+`origin/main`, removes legacy systemd or PM2 launchers that still reference
+`midscene-upload.py`, installs the runtime files, and restarts
 `midscene-task`, `midscene-api-worker`, and `midscene-api-scheduler` when those
-services exist, then verifies both health endpoints and `/api-test/` static
-assets. This is the preferred path for routine server updates.
+services exist. It verifies the exact release revision, the login contract, both
+health endpoints, and `/api-test/` static assets. This is the only supported path
+for routine deployments from the server Git checkout.
 
-After code, page, or skill changes:
-
-```bash
-sudo bash deploy/install-server.sh
-sudo systemctl restart midscene-task
-curl http://127.0.0.1:8088/api/health
-```
+Do not append a separate `install-server.sh`, `systemctl restart`, or `curl` to
+that command. Direct `install-server.sh` remains only for extracted release
+packages that do not contain a Git checkout.
 
 The installer preserves the existing `/opt/midscene.env` and AI Gateway
 provider configuration. When upgrading the production model to Qwen3.7 Plus,

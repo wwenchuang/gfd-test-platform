@@ -68,13 +68,14 @@ KEEP_PACKAGES=3 bash deploy/package-server.sh
 `main` 有新提交，只需要在服务器执行：
 
 ```bash
-cd /opt/midscene-task-platform-src
-bash deploy/update-main-server.sh
+cd /opt/midscene-task-platform-src && git checkout main && git pull --ff-only origin main && bash deploy/update-main-server.sh
 ```
 
-该脚本会拉取 `origin/main`、执行 `deploy/install-server.sh`、重启
+命令开头先更新部署脚本本身；脚本随后再次确认 `origin/main`、执行
+`deploy/install-server.sh`、迁移旧后端启动器、重启
 `midscene-task` / `midscene-api-worker` / `midscene-api-scheduler`，并检查
-`8091`、`8088` 和 `/api-test/` 静态资源。
+`8091`、`8088`、登录路由和 `/api-test/` 静态资源。日常 Git 部署不要再追加
+`install-server.sh`、手工 `systemctl restart` 或独立健康检查命令。
 
 上传部署包到服务器后：
 

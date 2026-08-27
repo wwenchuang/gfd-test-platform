@@ -2870,6 +2870,14 @@ def test_server_main_update_script_pulls_installs_restarts_and_checks_assets():
     assert "/api/auth/login" in update_script
     assert "登录路由合同检查失败" in update_script
     assert "restart_task_service_cleanly" in update_script
+    assert "migrate_legacy_task_launchers" in update_script
+    assert "disable_legacy_systemd_units" in update_script
+    assert "remove_legacy_pm2_processes" in update_script
+    assert "systemctl disable --now" in update_script
+    assert "ExecStart=.*midscene-upload" in update_script
+    assert "pm2 delete" in update_script
+    assert "/opt/midscene-upload.py.disabled." in update_script
+    assert update_script.rindex("migrate_legacy_task_launchers") < update_script.index('APP_DIR="${APP_DIR}" WEB_DIR="${WEB_DIR}"')
     assert "stop_stale_task_listeners" in update_script
     assert "拒绝自动终止" in update_script
     assert "systemctl stop midscene-task.service" in update_script

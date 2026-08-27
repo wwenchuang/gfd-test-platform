@@ -88,6 +88,77 @@ run_as_root() {
   fi
 }
 
+disable_legacy_systemd_units() {
+  if ! command -v systemctl >/dev/null 2>&1; then
+    return 0
+  fi
+
+  local unit state definition
+  while read -r unit state; do
+    [ -n "${unit}" ] || continue
+    [ "${unit}" != "midscene-task.service" ] || continue
+    definition="$(run_as_root systemctl cat "${unit}" 2>/dev/null || true)"
+    printf '%s\n' "${definition}" | grep -Eq '^[[:space:]]*ExecStart=.*midscene-upload\.py([[:space:]]|$)' || continue
+    echo "停用旧后端 systemd 服务：${unit}（${state:-状态未知}）"
+    run_as_root systemctl disable --now "${unit}"
+  done < <(run_as_root systemctl list-unit-files --type=service --no-legend --no-pager 2>/dev/null || true)
+  run_as_root systemctl daemon-reload
+}
+
+remove_legacy_pm2_processes() {
+  if ! command -v pm2 >/dev/null 2>&1; then
+    return 0
+  fi
+
+  local legacy_ids
+  if ! legacy_ids="$({ run_as_root pm2 jlist 2>/dev/null || true; } | python3 -c '
+import json
+import sys
+
+processes = json.load(sys.stdin)
+for process in processes:
+    env = process.get("pm2_env") or {}
+    values = [
+        env.get("pm_exec_path"),
+        env.get("args"),
+    ]
+    command = " ".join(
+        " ".join(map(str, value)) if isinstance(value, list) else str(value or "")
+        for value in values
+    )
+    if "midscene-upload.py" in command:
+        print(process.get("pm_id"))
+')"; then
+    echo "无法读取 PM2 进程清单，拒绝在未确认旧后端状态时继续部署" >&2
+    return 1
+  fi
+  [ -n "${legacy_ids}" ] || return 0
+
+  local process_id
+  for process_id in ${legacy_ids}; do
+    [ "${process_id}" != "None" ] || continue
+    echo "移除 PM2 旧后端进程：${process_id}"
+    run_as_root pm2 delete "${process_id}"
+  done
+  run_as_root pm2 save
+}
+
+backup_legacy_entrypoint() {
+  local legacy_entrypoint="/opt/midscene-upload.py"
+  [ -e "${legacy_entrypoint}" ] || return 0
+
+  local backup_path="/opt/midscene-upload.py.disabled.$(date +%Y%m%d-%H%M%S)"
+  echo "备份并停用旧后端入口：${backup_path}"
+  run_as_root mv "${legacy_entrypoint}" "${backup_path}"
+}
+
+migrate_legacy_task_launchers() {
+  echo "检查旧后端启动器"
+  disable_legacy_systemd_units
+  remove_legacy_pm2_processes
+  backup_legacy_entrypoint
+}
+
 restart_service_if_present() {
   local service="$1"
   if ! command -v systemctl >/dev/null 2>&1; then
@@ -280,6 +351,8 @@ if [ "${BUILD_API_TEST}" = "1" ]; then
   npm --prefix api-testing-ui install
   npm --prefix api-testing-ui run build
 fi
+
+migrate_legacy_task_launchers
 
 APP_DIR="${APP_DIR}" WEB_DIR="${WEB_DIR}" PORT="${PORT}" RELEASE_REVISION="${DEPLOY_REVISION}" run_as_root bash deploy/install-server.sh
 
