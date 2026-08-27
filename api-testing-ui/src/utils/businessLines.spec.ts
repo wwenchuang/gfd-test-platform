@@ -43,6 +43,7 @@ describe('business line presentation', () => {
     vi.stubGlobal('sessionStorage', { getItem: () => 'token' })
     vi.spyOn(apiClient, 'get').mockResolvedValue({ data: { apps: [{
       package: 'com.kfb.model',
+      name: '智小白3D',
       business_lines: [{ id: 'biz_school', name: '校园版', enabled: true }],
     }] } } as never)
 

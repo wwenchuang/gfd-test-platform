@@ -1,6 +1,7 @@
 import { computed, readonly, ref } from 'vue'
 
 import { apiClient } from '../api/client'
+import { activeBusinessLinesFor, loadTestApplications, testApplicationFor } from './testApplications'
 
 export interface BusinessLine {
   id: string
@@ -37,23 +38,26 @@ export function useBusinessLines() {
   return { all: readonly(lines), active }
 }
 
-export function businessLineLabel(value: unknown): string {
+export function businessLineLabel(value: unknown, appPackage?: unknown): string {
   const raw = String(value || '').trim()
   if (!raw) return '未标注业务'
-  const matched = lines.value.find(item => raw === item.id || raw === item.name)
+  const configured = appPackage ? testApplicationFor(appPackage)?.business_lines || [] : lines.value
+  const matched = configured.find(item => raw === item.id || raw === item.name)
   if (matched) return matched.name
   if (raw === 'home') return '家用'
   if (raw === 'shared') return '共享'
   return raw
 }
 
-export function preferredBusinessLineId(values: unknown[] = []): string {
+export function preferredBusinessLineId(values: unknown[] = [], appPackage?: unknown): string {
   const joined = values.map(value => String(value || '')).join(' ')
+  const appLines = appPackage ? activeBusinessLinesFor(appPackage) : active.value
+  const choices = appLines.length ? appLines : active.value
   if (joined.includes('共享')) {
-    const shared = active.value.find(item => item.name === '共享')
+    const shared = choices.find(item => item.name === '共享')
     if (shared) return shared.id
   }
-  return active.value[0]?.id || ''
+  return choices[0]?.id || ''
 }
 
 export async function loadBusinessLines(force = false): Promise<void> {
@@ -61,13 +65,8 @@ export async function loadBusinessLines(force = false): Promise<void> {
   if (loading && !force) return loading
   loading = (async () => {
     try {
-      const response = await apiClient.get<unknown>('/api/task-apps')
-      const root = response as unknown as { apps?: unknown[]; data?: { apps?: unknown[] } }
-      const apps = root.apps || root.data?.apps || []
-      const app = apps.find(item => (
-        item && typeof item === 'object' && String((item as Record<string, unknown>).package || '') === 'com.kfb.model'
-      )) as Record<string, unknown> | undefined
-      replaceBusinessLines(app?.business_lines)
+      await loadTestApplications(force)
+      replaceBusinessLines(testApplicationFor('com.kfb.model')?.business_lines)
     } catch {
       replaceBusinessLines(DEFAULT_LINES)
     }

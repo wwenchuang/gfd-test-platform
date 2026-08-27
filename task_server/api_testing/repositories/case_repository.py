@@ -99,6 +99,8 @@ class CaseRepository:
     def create_version(self, case, payload, version_number, actor_id, group_name=""):
         request_template = {
             "name": payload["name"],
+            "app_package": payload["app_package"],
+            "app_name": payload["app_name"],
             "business": payload.get("business", ""),
             "request": copy.deepcopy(payload["request"]),
         }

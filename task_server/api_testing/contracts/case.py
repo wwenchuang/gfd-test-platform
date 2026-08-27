@@ -551,6 +551,8 @@ def parse_case_payload(payload):
         "name",
         "purpose",
         "priority",
+        "app_package",
+        "app_name",
         "business",
         "request",
         "data_rows",
@@ -560,24 +562,28 @@ def parse_case_payload(payload):
         "processing",
     }
     _reject_unknown(payload, allowed, "case")
-    required = allowed - {"business"}
+    required = allowed
     missing = sorted(required - set(payload))
     if missing:
         raise CasePayloadError(f"case is missing field: {missing[0]}")
     priority = _text(payload["priority"], "priority", maximum=16)
     if priority not in PRIORITIES:
         raise CasePayloadError("priority is not supported")
-    business = payload.get("business", "")
-    if business:
-        business = _text(business, "business", maximum=80)
-        try:
-            business = business_line_id(business, require_active=True)
-        except ValueError:
-            raise CasePayloadError("business is not supported")
+    app_package = _text(payload["app_package"], "app_package", maximum=300)
+    app_name = _text(payload["app_name"], "app_name", maximum=200)
+    business = _text(payload["business"], "business", maximum=80)
+    try:
+        business = business_line_id(
+            business, app_package=app_package, require_active=True
+        )
+    except ValueError:
+        raise CasePayloadError("business is not supported")
     return {
         "name": _text(payload["name"], "name", maximum=300),
         "purpose": _text(payload["purpose"], "purpose", maximum=10_000),
         "priority": priority,
+        "app_package": app_package,
+        "app_name": app_name,
         "business": business,
         "request": _parse_request(payload["request"]),
         "data_rows": _parse_data_rows(payload["data_rows"]),
@@ -633,6 +639,8 @@ class CaseVersionView:
     version: int
     purpose: str
     priority: str
+    app_package: str
+    app_name: str
     business: str
     group_name: str
     request: Mapping[str, Any]
@@ -695,6 +703,8 @@ class BaselineCaseView:
     case_name: str
     case_version: int
     priority: str
+    app_package: str
+    app_name: str
     business: str
     origin: str
     method: str

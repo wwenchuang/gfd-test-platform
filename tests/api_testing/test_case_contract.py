@@ -53,6 +53,9 @@ def _payload(processing):
         "name": "用例内编排",
         "purpose": "验证前置、主体和清理步骤的数据传递",
         "priority": "P1",
+        "app_package": "com.kfb.model",
+        "app_name": "智小白3D",
+        "business": "home",
         "request": _request("/resource/{{resourceSn}}"),
         "data_rows": [],
         "assertions": [],
@@ -89,6 +92,46 @@ def test_case_contract_accepts_configured_business_internal_id(tmp_path, monkeyp
     payload["business"] = "biz_school"
 
     assert parse_case_payload(payload)["business"] == "biz_school"
+
+
+def test_case_contract_requires_application_identity_and_validates_its_business(tmp_path, monkeypatch):
+    path = tmp_path / "task-apps.json"
+    path.write_text(json.dumps({"apps": [
+        {
+            "package": "com.kfb.model",
+            "name": "智小白3D",
+            "business_lines": [{"id": "home", "name": "家用", "enabled": True}],
+        },
+        {
+            "package": "com.example.school",
+            "name": "校园版",
+            "business_lines": [{"id": "school", "name": "校园业务", "enabled": True}],
+        },
+    ]}, ensure_ascii=False), encoding="utf-8")
+    monkeypatch.setattr(business_line_service, "TASK_APPS_FILE", str(path))
+    payload = _payload({"pre": [], "post": []})
+    payload.update({
+        "app_package": "com.example.school",
+        "app_name": "校园版",
+        "business": "校园业务",
+    })
+
+    parsed = parse_case_payload(payload)
+
+    assert parsed["app_package"] == "com.example.school"
+    assert parsed["app_name"] == "校园版"
+    assert parsed["business"] == "school"
+
+    payload["business"] = "home"
+    with pytest.raises(CasePayloadError, match="business is not supported"):
+        parse_case_payload(payload)
+
+
+def test_case_contract_rejects_missing_application_identity():
+    payload = _payload({"pre": [], "post": []})
+    del payload["app_package"]
+    with pytest.raises(CasePayloadError, match="app_package"):
+        parse_case_payload(payload)
 
 
 def test_case_contract_accepts_strict_setup_and_cleanup_steps():

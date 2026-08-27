@@ -4,7 +4,8 @@ import { Code2, List, Play, Plus, Trash2 } from 'lucide-vue-next'
 
 import type { ApiEndpoint, CaseDependencyOption, CaseDraft, InlineWorkflowStep, WorkflowVariableOption } from '../api/contracts'
 import { validateCaseDraftLocally } from '../utils/caseDraftValidation'
-import { businessLineLabel, preferredBusinessLineId, useBusinessLines } from '../utils/businessLines'
+import { businessLineLabel } from '../utils/businessLines'
+import { activeBusinessLinesFor, testApplicationFor, useTestApplications } from '../utils/testApplications'
 import { workflowVariableOptions } from '../utils/workflowVariables'
 import AssertionListEditor from './AssertionListEditor.vue'
 import ExtractionListEditor from './ExtractionListEditor.vue'
@@ -19,7 +20,7 @@ const props = withDefaults(defineProps<{ modelValue: CaseDraft; validationErrors
   validationErrors: () => ({}), validationWarnings: () => ({}), saving: false, debugging: false, savedMessage: '', dependencyOptions: () => [], endpointOptions: () => [], environmentVariableNames: () => [], environmentRevisionId: '', environmentName: '',
 })
 const emit = defineEmits<{ 'update:modelValue': [draft: CaseDraft]; save: []; debug: [] }>()
-const { active: businessLines } = useBusinessLines()
+const { active: testApplications } = useTestApplications()
 const mode = ref<'structured' | 'raw'>('structured')
 const local = ref<CaseDraft>(normalizeDraft(props.modelValue))
 const raw = ref(JSON.stringify(local.value, null, 2))
@@ -33,12 +34,24 @@ const dataRowsSection = ref<HTMLDetailsElement | null>(null)
 const extractionsSection = ref<HTMLDetailsElement | null>(null)
 const advancedSection = ref<HTMLDetailsElement | null>(null)
 const localValidationErrors = computed(() => validateCaseDraftLocally(local.value))
-const displayValidationErrors = computed(() => ({ ...props.validationErrors, ...localValidationErrors.value }))
+const selectedApplication = computed(() => testApplicationFor(local.value.app_package))
+const businessLines = computed(() => activeBusinessLinesFor(local.value.app_package))
+const identityErrors = computed(() => {
+  const errors: Record<string, string> = {}
+  if (local.value.app_package && (!selectedApplication.value || !selectedApplication.value.enabled)) {
+    errors.app_package = '历史应用已停用或未配置，请重新选择'
+  }
+  if (local.value.business && !businessLines.value.some(item => item.id === local.value.business)) {
+    errors.business = '历史业务已停用或未配置，请重新选择'
+  }
+  return errors
+})
+const displayValidationErrors = computed(() => ({ ...props.validationErrors, ...localValidationErrors.value, ...identityErrors.value }))
 const hasBlockingError = computed(() => Boolean(
   !requestEditorValid.value
   || rawError.value
   || Object.keys(advancedErrors.value).length
-  || Object.keys(localValidationErrors.value).length,
+  || Object.keys(displayValidationErrors.value).length,
 ))
 const setupVariableOptions = computed(() => (local.value.processing.setup_steps || []).map((_, index) => variableOptions('setup', index)))
 const cleanupVariableOptions = computed(() => (local.value.processing.cleanup_steps || []).map((_, index) => variableOptions('cleanup', index)))
@@ -58,6 +71,9 @@ const previewInitialVariables = computed(() => ({
 }))
 const currentBusinessUnavailable = computed(() => Boolean(
   local.value.business && !businessLines.value.some(item => item.id === local.value.business),
+))
+const currentApplicationUnavailable = computed(() => Boolean(
+  local.value.app_package && (!selectedApplication.value || !selectedApplication.value.enabled),
 ))
 
 function validationMessages(prefix: string, source: Record<string, string>): Array<[string, string]> {
@@ -108,6 +124,16 @@ watch(() => props.modelValue, value => {
 function publish(): void {
   raw.value = JSON.stringify(local.value, null, 2)
   emit('update:modelValue', clone(local.value))
+}
+
+function updateApplication(appPackage: string): void {
+  const application = testApplicationFor(appPackage)
+  local.value.app_package = application?.package || ''
+  local.value.app_name = application?.name || ''
+  if (!activeBusinessLinesFor(appPackage).some(item => item.id === local.value.business)) {
+    local.value.business = ''
+  }
+  publish()
 }
 
 function entries(value: Record<string, unknown>): Array<[string, unknown]> {
@@ -247,7 +273,9 @@ function clone(value: CaseDraft): CaseDraft {
 
 function normalizeDraft(value: CaseDraft): CaseDraft {
   const draft = clone(value)
-  draft.business = String(draft.business || '').trim() || preferredBusinessLineId()
+  draft.app_package = String(draft.app_package || '').trim()
+  draft.app_name = String(draft.app_name || '').trim()
+  draft.business = String(draft.business || '').trim()
   draft.processing = {
     pre: draft.processing?.pre || [],
     post: draft.processing?.post || [],
@@ -271,11 +299,12 @@ function normalizeDraft(value: CaseDraft): CaseDraft {
     <div v-if="mode === 'structured'" class="editor-form">
       <div class="form-grid case-identity-grid">
         <label>用例名称<input v-model="local.name" data-testid="case-name" @input="publish" /></label>
-        <div class="readonly-field"><span>应用</span><strong>智小白3D</strong></div>
+        <label>应用<select :value="local.app_package" data-testid="case-application" @change="updateApplication(($event.target as HTMLSelectElement).value)"><option value="">请选择应用</option><option v-for="application in testApplications" :key="application.package" :value="application.package">{{ application.name }}</option></select><small v-if="currentApplicationUnavailable" class="field-warning">历史应用：{{ local.app_name || local.app_package }}（已停用或未配置，请重新选择）</small></label>
+        <div class="readonly-field"><span>应用包名</span><strong data-testid="case-app-package">{{ local.app_package || '未选择' }}</strong></div>
         <label>优先级<select v-model="local.priority" @change="publish"><option v-for="priority in ['P0','P1','P2','P3']" :key="priority">{{ priority }}</option></select></label>
         <div class="business-field">
           <span>所属业务</span>
-          <small v-if="currentBusinessUnavailable" class="field-warning">历史业务：{{ businessLineLabel(local.business) }}（已停用或未配置，请重新选择）</small>
+          <small v-if="currentBusinessUnavailable" class="field-warning">历史业务：{{ businessLineLabel(local.business, local.app_package) }}（已停用或未配置，请重新选择）</small>
           <div class="segmented business-segmented" role="group" aria-label="所属业务">
             <button v-for="line in businessLines" :key="line.id" :data-testid="`case-business-${line.id}`" type="button" :class="{ active: local.business === line.id }" @click="local.business = line.id; publish()">{{ line.name }}</button>
           </div>

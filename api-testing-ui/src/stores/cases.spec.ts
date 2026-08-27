@@ -10,6 +10,7 @@ const VERSION = {
   status: 'draft', origin: 'ai', version: 1, group_name: '', validation_summary: {},
   created_at: '2026-08-09T00:00:00Z', updated_at: '2026-08-09T00:00:00Z',
   name: '收藏列表', purpose: '验证收藏列表', priority: 'P1',
+  app_package: 'com.kfb.model', app_name: '智小白3D',
   business: 'shared',
   request: { method: 'GET', path: '/favorite/list', service: 'default', path_params: {}, query: {}, headers: {}, cookies: {}, body: null },
   data_rows: [], assertions: [], extractions: [], dependencies: [], processing: { pre: [], post: [] },
@@ -131,7 +132,7 @@ describe('cases store', () => {
       case: expect.objectContaining({ name: '收藏列表', request: expect.any(Object) }),
     })
     expect(Object.keys((post.mock.calls[0][1] as { case: object }).case).sort()).toEqual([
-      'assertions', 'business', 'data_rows', 'dependencies', 'extractions', 'name', 'priority', 'processing', 'purpose', 'request',
+      'app_name', 'app_package', 'assertions', 'business', 'data_rows', 'dependencies', 'extractions', 'name', 'priority', 'processing', 'purpose', 'request',
     ])
   })
 

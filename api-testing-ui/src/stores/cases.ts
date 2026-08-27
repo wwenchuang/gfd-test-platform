@@ -3,7 +3,6 @@ import { defineStore } from 'pinia'
 import { apiClient } from '../api/client'
 import type { AiJob, ApiEndpoint, CaseDraft, CaseValidation, CaseVersion, DebugResult, EnvironmentRevisionSnapshot, ExecutionView, GeneratedCasePreview } from '../api/contracts'
 import { validateCaseDraftLocally } from '../utils/caseDraftValidation'
-import { preferredBusinessLineId } from '../utils/businessLines'
 import { createIdempotencyKey } from '../utils/idempotency'
 
 const TERMINAL_AI = new Set(['completed', 'partial', 'failed', 'failed_gateway', 'failed_validation'])
@@ -464,12 +463,9 @@ function blankDraft(endpoint: ApiEndpoint): CaseDraft {
   return {
     name: endpoint.summary || `${endpoint.method} ${endpoint.path}`,
     purpose: `验证${endpoint.summary || endpoint.path}`,
-    business: inferCaseBusiness([
-      endpoint.summary,
-      endpoint.path,
-      ...(endpoint.tags || []),
-      JSON.stringify(endpoint.operation?.['x-apifox-folder'] || ''),
-    ]),
+    app_package: '',
+    app_name: '',
+    business: '',
     priority: 'P1',
     request: { method: endpoint.method, path: endpoint.path, service: 'default', ...requestParameterExamples(endpoint.operation), headers: {}, body: requestBodyExample(endpoint.operation) },
     data_rows: [], assertions: [{ type: 'status_code', operator: 'equals', expected: 200, timeout_ms: 0, enabled: true }],
@@ -597,11 +593,9 @@ function fromVersion(version: CaseVersion): CaseDraft {
   return cloneJson({
     name: version.name,
     purpose: version.purpose,
-    business: version.business || inferCaseBusiness([
-      version.group_name,
-      version.name,
-      version.request.path,
-    ]),
+    app_package: version.app_package || '',
+    app_name: version.app_name || '',
+    business: version.business || '',
     priority: version.priority,
     request: version.request,
     data_rows: version.data_rows.map(row => ({ name: row.name, values: row.values, enabled: row.enabled })),
@@ -615,10 +609,6 @@ function fromVersion(version: CaseVersion): CaseDraft {
       cleanup_steps: version.processing?.cleanup_steps || [],
     },
   })
-}
-
-function inferCaseBusiness(values: unknown[]): string {
-  return preferredBusinessLineId(values)
 }
 
 function cloneJson<T>(value: T): T {

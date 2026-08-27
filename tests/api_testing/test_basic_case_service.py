@@ -51,6 +51,8 @@ def test_basic_positive_payload_uses_environment_header_placeholders_and_success
     )
 
     assert payload["name"] == "查询我的收藏 - 基础正向流程"
+    assert payload["app_package"] == "com.kfb.model"
+    assert payload["app_name"] == "智小白3D"
     assert payload["request"]["headers"] == {"Biz": "{{Biz}}"}
     assert payload["request"]["query"] == {"pageNum": 1, "pageSize": 20}
     assert payload["request"]["body"] is None

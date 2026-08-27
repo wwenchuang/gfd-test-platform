@@ -114,11 +114,14 @@ class BasicCaseService:
         )
         assertions = cls._assertions(operation)
         title = str(getattr(endpoint, "summary", "") or "").strip() or f"{request['method']} {request['path']}"
+        app_package, app_name = cls._application_identity()
         payload = {
             "name": f"{title[:260]} - 基础正向流程",
             "purpose": f"验证{title}接口在平台环境鉴权与基础参数下可以成功返回",
             "priority": "P1",
-            "business": cls._business_for_endpoint(endpoint),
+            "app_package": app_package,
+            "app_name": app_name,
+            "business": cls._business_for_endpoint(endpoint, app_package),
             "request": request,
             "data_rows": [],
             "assertions": assertions,
@@ -141,7 +144,16 @@ class BasicCaseService:
         return payload
 
     @staticmethod
-    def _business_for_endpoint(endpoint):
+    def _application_identity():
+        from task_server.services import business_line_service
+
+        app_package = business_line_service.PRIMARY_APP_PACKAGE
+        name_lookup = getattr(business_line_service, "test_application_name", None)
+        app_name = name_lookup(app_package, "智小白3D") if callable(name_lookup) else "智小白3D"
+        return app_package, app_name
+
+    @staticmethod
+    def _business_for_endpoint(endpoint, app_package):
         from task_server.services.business_line_service import preferred_business_line_id
 
         markers = [
@@ -152,7 +164,7 @@ class BasicCaseService:
         operation = getattr(endpoint, "operation", None)
         if isinstance(operation, Mapping):
             markers.append(operation.get("x-apifox-folder") or "")
-        return preferred_business_line_id(*markers)
+        return preferred_business_line_id(*markers, app_package=app_package)
 
     @classmethod
     def _request_for_endpoint(

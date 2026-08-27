@@ -132,6 +132,9 @@ def valid_list_case(endpoint):
         "name": "查询我的收藏-成功响应",
         "purpose": "验证当前用户能够查询收藏列表",
         "priority": "P0",
+        "app_package": "com.kfb.model",
+        "app_name": "智小白3D",
+        "business": "home",
         "request": {
             "method": "GET",
             "path": endpoint.path,
@@ -237,6 +240,36 @@ def test_draft_persists_structured_children_before_debug(
                 ApiCaseScript.case_version_id == draft.id
             )
         ) == 1
+
+
+def test_draft_persists_application_identity_and_legacy_versions_stay_readable(
+    case_service, project_context, session_factory
+):
+    endpoint = project_context["endpoints"]["favoriteList"]
+    payload = valid_list_case(endpoint)
+    payload.update({
+        "app_package": "com.kfb.model",
+        "app_name": "智小白3D",
+        "business": "home",
+    })
+
+    draft = case_service.create_draft(endpoint.id, payload, "manual", "admin")
+
+    assert draft.app_package == "com.kfb.model"
+    assert draft.app_name == "智小白3D"
+    with session_factory() as session:
+        version = session.get(ApiCaseVersion, draft.id)
+        assert version.request_template["app_package"] == "com.kfb.model"
+        assert version.request_template["app_name"] == "智小白3D"
+        version.request_template = {
+            key: value for key, value in version.request_template.items()
+            if key not in {"app_package", "app_name"}
+        }
+        session.commit()
+
+    legacy = case_service.get_version(draft.id)
+    assert legacy.app_package == ""
+    assert legacy.app_name == ""
 
 
 @pytest.mark.parametrize(

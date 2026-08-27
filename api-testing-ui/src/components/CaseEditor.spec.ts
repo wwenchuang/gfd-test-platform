@@ -6,10 +6,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import CaseEditor from './CaseEditor.vue'
 import type { ApiEndpoint, CaseDraft } from '../api/contracts'
 import { replaceBusinessLines } from '../utils/businessLines'
+import { replaceTestApplications } from '../utils/testApplications'
 
 const DRAFT: CaseDraft = {
   name: '查询我的收藏',
   purpose: '确认收藏列表可读取',
+  app_package: 'com.kfb.model',
+  app_name: '智小白3D',
   business: 'home',
   priority: 'P0',
   request: {
@@ -58,10 +61,45 @@ function workflowDraft(): CaseDraft {
 }
 
 describe('CaseEditor', () => {
-  beforeEach(() => replaceBusinessLines([
-    { id: 'home', name: '家用', enabled: true },
-    { id: 'shared', name: '共享', enabled: true },
-  ]))
+  beforeEach(() => {
+    replaceTestApplications([
+      { package: 'com.kfb.model', name: '智小白3D', enabled: true, business_lines: [
+        { id: 'home', name: '家用', enabled: true },
+        { id: 'shared', name: '共享', enabled: true },
+      ] },
+      { package: 'com.example.school', name: '校园版', enabled: true, business_lines: [
+        { id: 'school', name: '校园业务', enabled: true },
+      ] },
+    ])
+    replaceBusinessLines([
+      { id: 'home', name: '家用', enabled: true },
+      { id: 'shared', name: '共享', enabled: true },
+    ])
+  })
+
+  it('selects configured applications and clears an incompatible business on app switch', async () => {
+    const draft = { ...DRAFT, app_package: 'com.kfb.model', app_name: '智小白3D', business: 'home' }
+    const wrapper = mount(CaseEditor, { props: { modelValue: draft } })
+
+    expect(wrapper.get('[data-testid="case-application"]').element).toHaveProperty('value', 'com.kfb.model')
+    expect(wrapper.get('[data-testid="case-app-package"]').text()).toContain('com.kfb.model')
+    await wrapper.get('[data-testid="case-application"]').setValue('com.example.school')
+
+    const emitted = wrapper.emitted('update:modelValue')?.at(-1)?.[0] as CaseDraft
+    expect(emitted.app_package).toBe('com.example.school')
+    expect(emitted.app_name).toBe('校园版')
+    expect(emitted.business).toBe('')
+    expect(wrapper.find('[data-testid="case-business-home"]').exists()).toBe(false)
+    expect(wrapper.get('[data-testid="case-business-school"]').text()).toBe('校园业务')
+  })
+
+  it('keeps an unavailable historical application readable but blocks its reuse', () => {
+    const draft = { ...DRAFT, app_package: 'com.example.retired', app_name: '旧版应用', business: 'retired' }
+    const wrapper = mount(CaseEditor, { props: { modelValue: draft } })
+
+    expect(wrapper.text()).toContain('历史应用：旧版应用')
+    expect(wrapper.get('[data-testid="save-case-draft"]').attributes('disabled')).toBeDefined()
+  })
 
   it('shows and publishes the case business independently from the application', async () => {
     const wrapper = mount(CaseEditor, { props: { modelValue: DRAFT } })
@@ -75,18 +113,18 @@ describe('CaseEditor', () => {
   })
 
   it('renders newly configured business lines by their Chinese names', async () => {
-    replaceBusinessLines([{ id: 'biz_school', name: '校园版', enabled: true }])
-    const draft = { ...DRAFT, business: 'biz_school' }
+    replaceTestApplications([{ package: 'com.example.school', name: '校园版', enabled: true, business_lines: [{ id: 'biz_school', name: '校园业务', enabled: true }] }])
+    const draft = { ...DRAFT, app_package: 'com.example.school', app_name: '校园版', business: 'biz_school' }
     const wrapper = mount(CaseEditor, { props: { modelValue: draft } })
 
-    expect(wrapper.get('[data-testid="case-business-biz_school"]').text()).toBe('校园版')
+    expect(wrapper.get('[data-testid="case-business-biz_school"]').text()).toBe('校园业务')
     expect(wrapper.get('[data-testid="case-business-biz_school"]').classes()).toContain('active')
   })
 
   it('updates the selector when application configuration loads after the editor', async () => {
     const wrapper = mount(CaseEditor, { props: { modelValue: DRAFT } })
 
-    replaceBusinessLines([{ id: 'biz_school', name: '校园版', enabled: true }])
+    replaceTestApplications([{ package: 'com.kfb.model', name: '智小白3D', enabled: true, business_lines: [{ id: 'biz_school', name: '校园版', enabled: true }] }])
     await wrapper.vm.$nextTick()
 
     expect(wrapper.get('[data-testid="case-business-biz_school"]').text()).toBe('校园版')

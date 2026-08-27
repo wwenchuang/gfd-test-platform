@@ -250,6 +250,8 @@ export interface WorkflowStepPreview {
 export interface CaseDraft {
   name: string
   purpose: string
+  app_package?: string
+  app_name?: string
   business?: string
   priority: 'P0' | 'P1' | 'P2' | 'P3'
   request: CaseRequest
