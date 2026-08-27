@@ -9,6 +9,8 @@ from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import sessionmaker
 import pytest
 
+from task_server.services import business_line_service
+
 from task_server.api_testing.models.case import (
     ApiBaseline,
     ApiCase,
@@ -294,6 +296,29 @@ def test_draft_persists_application_identity_and_legacy_versions_stay_readable(
     legacy = case_service.get_version(draft.id)
     assert legacy.app_package == ""
     assert legacy.app_name == ""
+
+
+def test_disabled_application_case_can_be_edited_but_keeps_historical_scope(
+    case_service, project_context, tmp_path, monkeypatch
+):
+    endpoint = project_context["endpoints"]["favoriteList"]
+    draft = case_service.create_draft(endpoint.id, valid_list_case(endpoint), "manual", "admin")
+    path = tmp_path / "task-apps.json"
+    path.write_text(json.dumps({"apps": [{
+        "package": "com.kfb.model",
+        "name": "智小白3D",
+        "enabled": False,
+        "business_lines": [{"id": "home", "name": "家用", "enabled": False}],
+    }]}), encoding="utf-8")
+    monkeypatch.setattr(business_line_service, "TASK_APPS_FILE", str(path))
+    edited_payload = valid_list_case(endpoint)
+    edited_payload["name"] = "查询我的收藏-历史说明修订"
+
+    edited = case_service.create_version(draft.case_id, edited_payload, "admin")
+
+    assert edited.version == 2
+    assert edited.app_name == "智小白3D"
+    assert edited.business == "home"
 
 
 @pytest.mark.parametrize(

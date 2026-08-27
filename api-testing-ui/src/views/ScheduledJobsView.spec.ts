@@ -461,6 +461,23 @@ describe('ScheduledJobsView', () => {
     expect(row.text()).toContain('收藏回归')
     expect(row.text()).not.toContain('baseline-uuid-1')
   })
+
+  it('shows disabled historical targets but prevents adding them to a new scheduled job', async () => {
+    replaceTestApplications([{
+      package: 'com.example.school', name: '校园应用', enabled: true,
+      business_lines: [{ id: 'shared', name: '校园共享', enabled: false }],
+    }])
+    mockScheduledJobAssets()
+    const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/', name: 'scheduled-jobs', component: ScheduledJobsView }] })
+
+    const wrapper = mount(ScheduledJobsView, { global: { plugins: [router] } })
+    await flushPromises()
+    const option = wrapper.get('[data-testid="scheduled-target-option"]')
+    expect(option.text()).toContain('业务“校园共享”已停用')
+    expect(option.attributes('disabled')).toBeDefined()
+    await option.trigger('click')
+    expect(wrapper.text()).toContain('可多选')
+  })
 })
 
 function mockScheduledJobAssets(): void {

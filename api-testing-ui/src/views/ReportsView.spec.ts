@@ -21,6 +21,7 @@ vi.mock('vue-router', () => ({
 
 const report: ExecutionView = {
   id: 'report-1', project_id: 'project-1', state: 'DONE', execution_type: 'regression', source_revision_id: 'source-1', environment_revision_id: 'environment-1', environment_name: '生产环境 V6', case_statuses: ['PASSED', 'FAILED'], summary: { total: 2, passed: 1, failed: 1 }, cancellation_requested: false, created_at: '2026-08-12T07:00:00Z', started_at: null, finished_at: null,
+  application_name: '校园助手', business_name: '校园业务',
   case_results: [{ execution_case_id: 'case-1', case_version_id: 'version-1', endpoint_id: 'endpoint-1', case_name: '查询收藏', endpoint_summary: '', method: 'POST', path: '/favorites/page', status: 'PASSED', failure_category: '', duration_ms: 100, sanitized_result: {} }, { execution_case_id: 'case-2', case_version_id: 'version-2', endpoint_id: 'endpoint-2', case_name: '取消收藏', endpoint_summary: '', method: 'POST', path: '/favorites/cancel', status: 'FAILED', failure_category: 'product_assertion', duration_ms: 100, sanitized_result: {} }],
 }
 
@@ -45,6 +46,7 @@ describe('ReportsView', () => {
     expect(wrapper.text()).toContain('1 个问题')
     expect(wrapper.text()).toContain('需要关注')
     expect(wrapper.text()).toContain('取消收藏')
+    expect(wrapper.get('[data-testid="report-history-row"]').text()).toContain('校园助手 · 校园业务')
     expect(wrapper.text()).toContain('断言失败')
     expect(wrapper.text()).toContain('50%')
     expect(wrapper.find('.report-dashboard').exists()).toBe(true)
@@ -59,6 +61,8 @@ describe('ReportsView', () => {
     await wrapper.get('[data-testid="report-open-diagnostic"]').trigger('click')
     expect(wrapper.text()).toContain('返回报告列表')
     expect(wrapper.text()).toContain('诊断结论')
+    expect(wrapper.text()).toContain('校园助手')
+    expect(wrapper.text()).toContain('校园业务')
   })
 
   it('loads and filters report results by the selected project', async () => {

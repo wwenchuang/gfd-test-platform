@@ -15,6 +15,11 @@ export interface TestApplication {
   business_lines: TestApplicationBusinessLine[]
 }
 
+export interface TestApplicationSelection {
+  selectable: boolean
+  reason: string
+}
+
 const applications = ref<TestApplication[]>([])
 const active = computed(() => applications.value.filter(item => item.enabled))
 let loading: Promise<void> | null = null
@@ -81,6 +86,17 @@ export function applicationBusinessLabel(appPackage: unknown, appName: unknown, 
 
 export function activeBusinessLinesFor(appPackage: unknown): TestApplicationBusinessLine[] {
   return testApplicationFor(appPackage)?.business_lines.filter(item => item.enabled) || []
+}
+
+export function applicationBusinessSelection(appPackage: unknown, business: unknown): TestApplicationSelection {
+  const application = testApplicationFor(appPackage)
+  if (!application) return { selectable: false, reason: '应用未配置或已移除' }
+  if (!application.enabled) return { selectable: false, reason: `应用“${application.name}”已停用` }
+  const rawBusiness = String(business || '').trim()
+  const line = application.business_lines.find(item => rawBusiness === item.id || rawBusiness === item.name)
+  if (!line) return { selectable: false, reason: '业务未配置或已移除' }
+  if (!line.enabled) return { selectable: false, reason: `业务“${line.name}”已停用` }
+  return { selectable: true, reason: '' }
 }
 
 export async function loadTestApplications(force = false): Promise<void> {

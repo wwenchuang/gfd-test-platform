@@ -81,6 +81,15 @@ def test_case_contract_rejects_unknown_business():
         parse_case_payload(payload)
 
 
+def test_case_contract_rejects_creation_when_application_catalog_is_explicitly_empty(tmp_path, monkeypatch):
+    path = tmp_path / "task-apps.json"
+    path.write_text(json.dumps({"apps": []}), encoding="utf-8")
+    monkeypatch.setattr(business_line_service, "TASK_APPS_FILE", str(path))
+
+    with pytest.raises(CasePayloadError, match="application is not supported"):
+        parse_case_payload(_payload({"pre": [], "post": []}))
+
+
 def test_case_contract_accepts_configured_business_internal_id(tmp_path, monkeypatch):
     path = tmp_path / "task-apps.json"
     path.write_text(json.dumps({"apps": [{

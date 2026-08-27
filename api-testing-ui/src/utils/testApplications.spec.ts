@@ -4,6 +4,7 @@ import { apiClient } from '../api/client'
 import {
   activeBusinessLinesFor,
   applicationBusinessLabel,
+  applicationBusinessSelection,
   loadTestApplications,
   replaceTestApplications,
   testApplicationLabel,
@@ -58,5 +59,38 @@ describe('configured test applications', () => {
     expect(applicationBusinessLabel('com.example.retired', '历史应用旧名称', 'shared')).toBe('历史应用新名称 · 历史共享')
     expect(applicationBusinessLabel('com.example.school', '校园应用', 'shared')).toBe('校园应用 · 校园共享')
     expect(applicationBusinessLabel('com.unknown.app', 'com.unknown.app', 'biz_internal')).toBe('未标注应用 · 未标注业务')
+  })
+
+  it('keeps disabled scopes readable but marks them unavailable for new selections', () => {
+    replaceTestApplications([
+      {
+        package: 'com.example.retired', name: '历史应用', enabled: false,
+        business_lines: [{ id: 'shared', name: '历史共享', enabled: true }],
+      },
+      {
+        package: 'com.example.school', name: '校园应用', enabled: true,
+        business_lines: [
+          { id: 'active', name: '校园业务', enabled: true },
+          { id: 'retired', name: '旧业务', enabled: false },
+        ],
+      },
+    ])
+
+    expect(applicationBusinessSelection('com.example.retired', 'shared')).toEqual({
+      selectable: false,
+      reason: '应用“历史应用”已停用',
+    })
+    expect(applicationBusinessSelection('com.example.school', 'retired')).toEqual({
+      selectable: false,
+      reason: '业务“旧业务”已停用',
+    })
+    expect(applicationBusinessSelection('com.example.school', 'active')).toEqual({
+      selectable: true,
+      reason: '',
+    })
+    expect(applicationBusinessSelection('com.unknown.app', 'unknown')).toEqual({
+      selectable: false,
+      reason: '应用未配置或已移除',
+    })
   })
 })

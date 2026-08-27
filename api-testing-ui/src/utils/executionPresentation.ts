@@ -46,6 +46,12 @@ export function executionSourceScope(execution: ExecutionView): ExecutionSourceS
   return execution.execution_type === 'debug' ? 'debug' : 'formal'
 }
 
+export function executionScopeLabel(execution: ExecutionView): string {
+  const application = String(execution.application_name || '').trim() || '未标注应用'
+  const business = String(execution.business_name || '').trim() || '未标注业务'
+  return `${application} · ${business}`
+}
+
 export function formatDuration(durationMs: number): string {
   const safe = Number.isFinite(durationMs) ? Math.max(0, durationMs) : 0
   return safe >= 1000 ? `${(safe / 1000).toFixed(2)} 秒` : `${safe} ms`

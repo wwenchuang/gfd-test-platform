@@ -399,6 +399,39 @@ def test_resolve_ui_generation_business_inherits_regenerated_batch():
         )
 
 
+def test_sync_reuse_validates_saved_application_before_any_asset_mutation(monkeypatch):
+    mutations = []
+    saved_meta = {
+        "case_set_id": "batch-disabled",
+        "title": "历史回归",
+        "module": "历史模块",
+        "files": [{"name": "requirement.md"}],
+        "app_package": "com.example.disabled",
+        "business": "history",
+    }
+    monkeypatch.setattr(yaml_service, "asset_meta_path", lambda value: f"asset-meta/{value}")
+    monkeypatch.setattr(yaml_service, "read_json_file", lambda *_args, **_kwargs: dict(saved_meta))
+    monkeypatch.setattr(yaml_service, "save_asset_files", lambda *_args, **_kwargs: mutations.append("save") or dict(saved_meta))
+    monkeypatch.setattr(yaml_service, "update_asset_request_context", lambda *_args, **_kwargs: mutations.append("update") or dict(saved_meta))
+    monkeypatch.setattr(yaml_service, "write_json_file", lambda *_args, **_kwargs: mutations.append("write"))
+    monkeypatch.setattr(yaml_service, "configured_test_application", lambda package, include_disabled=True: {
+        "package": package,
+        "name": "历史应用",
+        "enabled": False,
+        "historical_only": False,
+    })
+
+    with pytest.raises(ValueError, match="当前应用已停用"):
+        yaml_service.generate_ui_yaml_from_request({
+            "case_set_id": "batch-disabled",
+            "reuse_assets": True,
+            "regenerate": True,
+            "files": [{"name": "supplement.md", "content": "补充说明"}],
+        })
+
+    assert mutations == []
+
+
 def test_apply_ui_case_business_marks_payload_and_task_metadata():
     payload = {
         "cases": [

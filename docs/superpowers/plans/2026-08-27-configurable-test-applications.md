@@ -31,10 +31,10 @@
 - Produces: `configured_test_applications(include_disabled=False) -> list`, `configured_test_application(package, include_disabled=True) -> dict`, `test_application_name(package, snapshot_name='') -> str`.
 - Produces: `configured_business_lines(app_package, include_disabled=False) -> list` without cross-application fallback.
 
-- [ ] Write tests proving configured names override legacy names, disabled apps remain resolvable but are excluded from creation, and non-primary apps without business configuration receive no `家用/共享` fallback.
-- [ ] Run `.venv/bin/python -m pytest tests/test_business_line_service.py -q` and confirm the new assertions fail for the fixed primary-app behavior.
-- [ ] Implement catalog normalization, Chinese application-name validation, enabled-state persistence, first-run legacy fallback, and explicit per-app business lookup.
-- [ ] Run `.venv/bin/python -m pytest tests/test_business_line_service.py -q` and confirm all tests pass.
+- [x] Write tests proving configured names override legacy names, disabled apps remain resolvable but are excluded from creation, and non-primary apps without business configuration receive no `家用/共享` fallback.
+- [x] Run `.venv/bin/python -m pytest tests/test_business_line_service.py -q` and confirm the new assertions fail for the fixed primary-app behavior.
+- [x] Implement catalog normalization, Chinese application-name validation, enabled-state persistence, first-run legacy fallback, and explicit per-app business lookup.
+- [x] Run `.venv/bin/python -m pytest tests/test_business_line_service.py -q` and confirm all tests pass.
 
 ### Task 2: UI Automation Creation And Case Editing
 
@@ -53,11 +53,11 @@
 - Consumes: application catalog and per-app business lookup from Task 1.
 - Produces: required `app_package` and `business` payloads for UI generation and per-case business updates.
 
-- [ ] Add failing service and browser assertions for selecting a configured application, filtering its business lines, clearing incompatible business on app switch, and preserving application identity in generated/history views.
-- [ ] Run focused Python and Chromium checks and confirm they fail on the fixed `智小白3D` field and primary-app business validation.
-- [ ] Replace the fixed application field with a configured selector plus readonly package detail; add disabled/empty states and application status controls in the configuration editor.
-- [ ] Pass the case application package into every UI business validation and display helper.
-- [ ] Re-run focused checks until the complete UI create/edit loop passes.
+- [x] Add failing service and browser assertions for selecting a configured application, filtering its business lines, clearing incompatible business on app switch, and preserving application identity in generated/history views.
+- [x] Run focused Python and Chromium checks and confirm they fail on the fixed `智小白3D` field and primary-app business validation.
+- [x] Replace the fixed application field with a configured selector plus readonly package detail; add disabled/empty states and application status controls in the configuration editor.
+- [x] Pass the case application package into every UI business validation and display helper.
+- [x] Re-run focused checks until the complete UI create/edit loop passes.
 
 ### Task 3: API Case Application Persistence And Editor
 
@@ -81,11 +81,11 @@
 - Produces: API case fields `app_package`, `app_name`, and `business` in versions and drafts.
 - Consumes: `business_line_id(value, app_package=..., require_active=True)`.
 
-- [ ] Add failing contract/repository/component tests for saving app identity, loading legacy versions, selecting configured apps, and app-specific business choices.
-- [ ] Run focused pytest and Vitest targets and confirm failures are caused by missing application fields and the fixed editor label.
-- [ ] Persist application fields inside `request_template`, expose them through version/baseline views, and validate business against the selected application.
-- [ ] Implement the Vue application catalog, required selector, unavailable-history warning, and app-switch business reset.
-- [ ] Re-run focused tests until API create, new-version, reload, and local validation paths pass.
+- [x] Add failing contract/repository/component tests for saving app identity, loading legacy versions, selecting configured apps, and app-specific business choices.
+- [x] Run focused pytest and Vitest targets and confirm failures are caused by missing application fields and the fixed editor label.
+- [x] Persist application fields inside `request_template`, expose them through version/baseline views, and validate business against the selected application.
+- [x] Implement the Vue application catalog, required selector, unavailable-history warning, and app-switch business reset.
+- [x] Re-run focused tests until API create, new-version, reload, and local validation paths pass.
 
 ### Task 4: Execution Snapshots, History, Baselines, And Notifications
 
@@ -107,11 +107,11 @@
 - Consumes: case version application snapshots and configured catalog.
 - Produces: application-aware execution snapshots and Chinese UI/API notification titles.
 
-- [ ] Add failing tests for one-app, mixed-app, renamed-app, disabled historical app, and same business ID under different apps.
-- [ ] Run focused notification/execution tests and confirm current global `com.kfb.model` lookup fails them.
-- [ ] Carry application fields into execution case snapshots and resolve each business with its own package.
-- [ ] Render application and business in list, baseline, task, schedule, report, and Feishu card contexts without conflating UI and API test types.
-- [ ] Re-run all focused tests and verify no card contains an internal package/ID when a Chinese configured name exists.
+- [x] Add failing tests for one-app, mixed-app, renamed-app, disabled historical app, and same business ID under different apps.
+- [x] Run focused notification/execution tests and confirm current global `com.kfb.model` lookup fails them.
+- [x] Carry application fields into execution case snapshots and resolve each business with its own package.
+- [x] Render application and business in list, baseline, task, schedule, report, and Feishu card contexts without conflating UI and API test types.
+- [x] Re-run all focused tests and verify no card contains an internal package/ID when a Chinese configured name exists.
 
 ### Task 5: Full Gate, Deployment, And Flow Audit
 
@@ -124,7 +124,7 @@
 - Consumes: all previous tasks.
 - Produces: deployable static assets, verification evidence, and a follow-up defect list separated into fixed/deferred/unverified.
 
-- [ ] Run focused pytest/Vitest suites, `tests/run_api_testing_gate.sh`, backend/frontend static checks, required `py_compile`, Vue build, both Chromium smoke checks, and `git diff --check`.
+- [x] Run focused pytest/Vitest suites, `tests/run_api_testing_gate.sh`, backend/frontend static checks, required `py_compile`, Vue build, both Chromium smoke checks, and `git diff --check`.
 - [ ] Update state and audit records with exact checks, residual risks, and side effects not exercised.
 - [ ] Commit all relevant source/docs/generated frontend assets while excluding `output/`, push `main`, and confirm local/remote commit IDs match.
 - [ ] Through the Huawei bastion select `qa.test.sonic-00.txsh`, retry Git fetch/pull on transient failures, run `bash deploy/update-main-server.sh`, and confirm the deployed commit and health URLs.

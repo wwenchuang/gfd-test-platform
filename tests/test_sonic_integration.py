@@ -1371,6 +1371,39 @@ def test_baseline_sonic_case_results_wait_for_authoritative_suite_completion():
     assert len(state["suites"][suite_key]["results"]) == 1
 
 
+def test_sonic_result_registration_prefers_explicit_package_before_module_fallback(monkeypatch):
+    state = {"active": {}, "suites": {}}
+    apps = [
+        {"package": "com.example.family", "name": "家庭应用", "modules": ["共享模块"]},
+        {"package": "com.example.school", "name": "校园应用", "modules": ["共享模块"]},
+    ]
+    scheduled = []
+    monkeypatch.setattr(sonic_service, "sonic_notify_known_apps", lambda: apps)
+    monkeypatch.setattr(sonic_service, "load_sonic_suite_results", lambda: state)
+    monkeypatch.setattr(sonic_service, "save_sonic_suite_results", lambda payload: state.update(payload))
+    monkeypatch.setattr(sonic_service, "schedule_sonic_suite_summary", lambda suite_key, delay=None: scheduled.append((suite_key, delay)))
+    monkeypatch.setattr(sonic_service, "append_sonic_notify_log", lambda *args, **kwargs: None)
+
+    suite_key = sonic_service.register_sonic_suite_result({
+        "source": "sonic",
+        "status": "success",
+        "run_mode": "baseline",
+        "job_id": "sonic-explicit-school",
+        "module": "共享模块",
+        "file": "campus.yaml",
+        "app_package": "com.example.school",
+        "business": "campus",
+        "device_id": "device-1",
+        "runner_id": "sonic",
+    })
+
+    suite = state["suites"][suite_key]
+    assert suite["app_package"] == "com.example.school"
+    assert suite["app_name"] == "校园应用"
+    assert suite["results"][0]["app_package"] == "com.example.school"
+    assert scheduled and scheduled[0][0] == suite_key
+
+
 def test_suite_completion_mode_never_sends_partial_fallback():
     now = int(time.time())
     state = {

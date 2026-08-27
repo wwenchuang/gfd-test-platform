@@ -9,6 +9,7 @@ import ExecutionConsole from './ExecutionConsole.vue'
 const execution: ExecutionView = {
   id: 'execution-1', project_id: 'project-1', state: 'DONE', execution_type: 'regression',
   task_id: 'task-1', task_name: '收藏接口发版回归',
+  application_name: '校园助手', business_name: '校园业务',
   source_revision_id: 'source-1', environment_revision_id: 'environment-1', environment_name: '生产环境 V6',
   case_statuses: ['PASSED', 'FAILED'], summary: { PASSED: 1, FAILED: 1 }, cancellation_requested: false,
   created_at: '2026-08-12T07:00:00Z', started_at: '2026-08-12T07:00:01Z', finished_at: '2026-08-12T07:00:03Z',
@@ -26,6 +27,7 @@ describe('ExecutionConsole', () => {
 
     expect(wrapper.text()).toContain('生产环境 V6')
     expect(wrapper.text()).toContain('收藏接口发版回归')
+    expect(wrapper.get('[data-testid="execution-row-execution-1"]').text()).toContain('校园助手 · 校园业务')
     expect(wrapper.text()).toContain('实时轨迹')
     expect(wrapper.text()).toContain('用例明细')
     expect(wrapper.text()).toContain('测试报告')

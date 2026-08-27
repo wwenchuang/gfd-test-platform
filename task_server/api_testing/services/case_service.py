@@ -55,7 +55,7 @@ class CaseService:
             return self._version_view(repository, version, case)
 
     def create_version(self, case_id, payload, actor_id):
-        parsed = parse_case_payload(payload)
+        parsed = parse_case_payload(payload, allow_disabled_scope=True)
         with self.session_factory.begin() as session:
             repository = CaseRepository(session)
             case = repository.get_case_for_update(case_id)

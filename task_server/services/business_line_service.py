@@ -154,15 +154,20 @@ def _historical_test_application(value) -> dict:
     return app
 
 
-def _raw_configured_test_applications() -> list:
-    data = read_json_file(TASK_APPS_FILE, default={})
-    apps = data if isinstance(data, list) else (data.get("apps") or [] if isinstance(data, dict) else [])
+def _raw_configured_test_applications():
+    data = read_json_file(TASK_APPS_FILE, default=None)
+    if isinstance(data, list):
+        apps = data
+    elif isinstance(data, dict) and "apps" in data:
+        apps = data.get("apps") if isinstance(data.get("apps"), list) else []
+    else:
+        return None
     return [item for item in apps if isinstance(item, dict)]
 
 
 def configured_test_applications(include_disabled=False) -> list:
     raw_apps = _raw_configured_test_applications()
-    source = raw_apps or default_test_applications()
+    source = default_test_applications() if raw_apps is None else raw_apps
     apps = []
     seen_packages = set()
     for raw in source:

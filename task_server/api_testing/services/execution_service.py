@@ -12,8 +12,10 @@ from sqlalchemy.exc import IntegrityError
 from ..events import EventStream
 from ..executor import CaseExecutionResult, HttpExecutor, redact
 from ..repositories.execution_repository import ExecutionRepository
+from ...services.notification_presentation import canonical_test_scope_summary
 from .case_service import CaseService
 from .environment_service import EnvironmentService
+from .test_scope_service import InactiveTestScopeError, ensure_active_case_version_scopes
 
 
 MAX_FAILURE_ANALYSIS_EVIDENCE_BYTES = 128 * 1024
@@ -42,6 +44,8 @@ class ExecutionView:
     source_revision_id: str
     environment_revision_id: str
     environment_name: str
+    application_name: str
+    business_name: str
     case_statuses: tuple
     case_results: tuple
     summary: MappingProxyType
@@ -168,6 +172,10 @@ class ExecutionService:
                 children = repository.get_execution_cases(existing.id)
                 return self._repository_view(repository, existing, children)
             context = self._validate_snapshot(repository, parsed)
+            try:
+                ensure_active_case_version_scopes(context["versions"])
+            except InactiveTestScopeError as exc:
+                raise ExecutionConflictError(str(exc)) from exc
             snapshot = {
                 "fingerprint": fingerprint,
                 "request": redact(parsed),
@@ -878,6 +886,10 @@ class ExecutionService:
         failure_analyses = display.get("failure_analyses", {})
         events = display.get("events", ())
         snapshot_versions = snapshot.get("case_versions", ()) if isinstance(snapshot, dict) else ()
+        application_name, business_name = canonical_test_scope_summary(
+            snapshot_versions,
+            fallback_package="",
+        )
         execution_roles = {
             item.get("id"): item.get("role")
             for item in snapshot_versions
@@ -905,6 +917,8 @@ class ExecutionService:
             source_revision_id=execution.source_revision_id,
             environment_revision_id=execution.environment_revision_id,
             environment_name=str(display.get("environment_name", "")),
+            application_name=application_name,
+            business_name=business_name,
             case_statuses=tuple(item.status for item in children),
             case_results=tuple(
                 MappingProxyType({

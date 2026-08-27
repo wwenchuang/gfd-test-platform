@@ -16,6 +16,8 @@ const conclusion = computed(() => executionConclusion(props.execution))
       <strong>{{ executionTypeLabel(execution) }}</strong>
       <code>{{ execution.id }}</code>
     </div>
+    <div data-testid="overview-application" class="overview-environment"><span>应用</span><strong>{{ execution.application_name || '未标注应用' }}</strong></div>
+    <div data-testid="overview-business" class="overview-environment"><span>所属业务</span><strong>{{ execution.business_name || '未标注业务' }}</strong></div>
     <div class="overview-environment"><span>执行环境</span><strong>{{ execution.environment_name || '未命名环境' }}</strong></div>
     <div class="overview-conclusion"><span>本次结论</span><strong data-testid="execution-conclusion" :class="`tone-${conclusion.tone}`">{{ conclusion.label }}</strong></div>
     <div class="overview-metric"><span>总用例</span><strong>{{ metrics.total }}</strong></div>

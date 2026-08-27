@@ -11,7 +11,7 @@ import { type ScheduledJobInput, useScheduledJobsStore } from '../stores/schedul
 import { useTasksStore } from '../stores/tasks'
 import { confirmApiExecution } from '../utils/executionConfirmation'
 import { formatPassRate, statusLabel } from '../utils/executionPresentation'
-import { applicationBusinessLabel } from '../utils/testApplications'
+import { applicationBusinessLabel, applicationBusinessSelection } from '../utils/testApplications'
 
 const context = useContextStore()
 const baselines = useBaselinesStore()
@@ -43,6 +43,8 @@ interface TargetOption {
   title: string
   subtitle: string
   meta: string
+  selectable: boolean
+  unavailableReason: string
 }
 
 interface CronValidation {
@@ -240,6 +242,8 @@ function scheduleExpression(): string {
 }
 
 function toggleTarget(id: string): void {
+  const option = targetOptions.value.find(item => item.id === id)
+  if (option && !option.selectable && !isTargetSelected(id)) return
   if (form.targetType === 'task') {
     selectedTargetIds.value = selectedTargetIds.value[0] === id ? [] : [id]
     return
@@ -251,6 +255,10 @@ function toggleTarget(id: string): void {
 
 function isTargetSelected(id: string): boolean {
   return selectedTargetIds.value.includes(id)
+}
+
+function canToggleTarget(option: TargetOption): boolean {
+  return option.selectable || isTargetSelected(option.id)
 }
 
 function targetTypeLabel(type: ScheduledJob['target_type']): string {
@@ -415,11 +423,15 @@ function baselineGroupOptions(): TargetOption[] {
     .map(([name, items]) => {
       const sample = items[0]
       const sampleText = sample ? `${sample.case_name || sample.endpoint_summary || sample.path} · ${sample.method} ${sample.path}` : ''
+      const unavailableReason = items.map(item => applicationBusinessSelection(item.app_package, item.business))
+        .find(selection => !selection.selectable)?.reason || ''
       return {
         id: name,
         title: name,
         subtitle: [`${items.length} 条基线`, sampleText].filter(Boolean).join(' · '),
-        meta: `基线分组 · ${scopeSummary(items)}`,
+        meta: `基线分组 · ${scopeSummary(items)}${unavailableReason ? ` · ${unavailableReason}` : ''}`,
+        selectable: !unavailableReason,
+        unavailableReason,
       }
     })
 }
@@ -427,21 +439,27 @@ function baselineGroupOptions(): TargetOption[] {
 function baselineOption(item: ApiBaselineCase): TargetOption {
   const adoptedAt = item.adopted_at ? new Date(item.adopted_at).toLocaleDateString('zh-CN') : '时间未知'
   const origin = item.origin === 'ai' ? 'AI 生成' : item.origin === 'manual' ? '手工' : item.origin || '未知来源'
+  const selection = applicationBusinessSelection(item.app_package, item.business)
   return {
     id: item.id,
     title: `${item.case_name || item.endpoint_summary || item.path} · v${item.case_version}`,
     subtitle: `${item.method} ${item.path} · ${origin} · 采纳于 ${adoptedAt}`,
-    meta: `${caseScopeLabel(item)} · ${baselineGroup(item)}`,
+    meta: `${caseScopeLabel(item)} · ${baselineGroup(item)}${selection.reason ? ` · ${selection.reason}` : ''}`,
+    selectable: selection.selectable,
+    unavailableReason: selection.reason,
   }
 }
 
 function caseOption(item: CaseVersion): TargetOption {
   const request = item.request || { method: '', path: '' }
+  const selection = applicationBusinessSelection(item.app_package, item.business)
   return {
     id: item.id,
     title: item.name || item.purpose || item.id,
     subtitle: `${request.method || 'GET'} ${request.path || '未记录路径'}`,
-    meta: `${caseScopeLabel(item)} · ${item.priority} · v${item.version}`,
+    meta: `${caseScopeLabel(item)} · ${item.priority} · v${item.version}${selection.reason ? ` · ${selection.reason}` : ''}`,
+    selectable: selection.selectable,
+    unavailableReason: selection.reason,
   }
 }
 
@@ -456,11 +474,15 @@ function scopeSummary(items: Array<Pick<CaseVersion, 'app_package' | 'app_name' 
 function taskOption(item: ApiTestTask): TargetOption {
   const selected = new Set(item.selected_endpoint_ids)
   const versions = Object.values(cases.versions).filter(version => selected.has(version.endpoint_id))
+  const unavailableReason = versions.map(version => applicationBusinessSelection(version.app_package, version.business))
+    .find(selection => !selection.selectable)?.reason || ''
   return {
     id: item.id,
     title: item.name,
     subtitle: `${item.selected_endpoint_ids.length} 个接口 · ${item.state}`,
-    meta: `已保存任务 · ${scopeSummary(versions)}`,
+    meta: `已保存任务 · ${scopeSummary(versions)}${unavailableReason ? ` · ${unavailableReason}` : ''}`,
+    selectable: !unavailableReason,
+    unavailableReason,
   }
 }
 
@@ -654,7 +676,9 @@ function weekDayName(value: number): string {
                       :key="`${form.targetType}-${option.id}`"
                       type="button"
                       class="target-option"
-                      :class="{ active: isTargetSelected(option.id) }"
+                      :class="{ active: isTargetSelected(option.id), unavailable: !option.selectable }"
+                      :disabled="!canToggleTarget(option)"
+                      :title="option.unavailableReason"
                       data-testid="scheduled-target-option"
                       @click="toggleTarget(option.id)"
                     >
@@ -671,7 +695,9 @@ function weekDayName(value: number): string {
                   :key="`${form.targetType}-${option.id}`"
                   type="button"
                   class="target-option"
-                  :class="{ active: isTargetSelected(option.id) }"
+                  :class="{ active: isTargetSelected(option.id), unavailable: !option.selectable }"
+                  :disabled="!canToggleTarget(option)"
+                  :title="option.unavailableReason"
                   data-testid="scheduled-target-option"
                   @click="toggleTarget(option.id)"
                 >

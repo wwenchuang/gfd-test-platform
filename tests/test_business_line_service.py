@@ -128,6 +128,25 @@ def test_configured_test_applications_prefer_saved_name_and_resolve_disabled_his
         "business_lines": [{"id": "school", "name": "校园业务", "enabled": True}],
     }
     assert business_line_service.test_application_name("com.kfb.model", "旧智小白") == "创想智造"
+
+
+def test_explicit_empty_application_catalog_does_not_restore_defaults(tmp_path, monkeypatch):
+    path = tmp_path / "task-apps.json"
+    _write_apps(path, [])
+    monkeypatch.setattr(business_line_service, "TASK_APPS_FILE", str(path))
+    monkeypatch.setattr(task_router, "_require_user_auth", lambda handler: False)
+
+    class Handler:
+        payload = None
+
+        def _json(self, payload, status=200):
+            self.payload = payload
+
+    handler = Handler()
+    task_router.GET_ROUTES["/api/task-apps"](handler, {"include_disabled": "1"})
+
+    assert business_line_service.configured_test_applications(include_disabled=True) == []
+    assert handler.payload == {"ok": True, "apps": []}
     assert business_line_service.test_application_name("com.unknown", "历史应用") == "历史应用"
 
 

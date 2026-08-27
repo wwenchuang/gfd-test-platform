@@ -15,6 +15,7 @@ from ..models.source import ApiSource, ApiSourceEndpoint, ApiSourceRevision
 from ..models.test_task import ApiTestTask
 from ..repositories.source_repository import audit_fields
 from .execution_service import ExecutionService
+from .test_scope_service import InactiveTestScopeError, ensure_active_case_version_scopes
 
 
 class ScheduledJobInputError(ValueError):
@@ -208,6 +209,13 @@ class ScheduledJobService:
             self._validate_project(session, parsed["project_id"], actor_id)
             environment_revision_id, environment_id = self._resolve_environment(session, parsed)
             source_revision_id = self._resolve_source_revision(session, parsed, actor_id)
+            self._validate_target_scopes(
+                session,
+                parsed["project_id"],
+                parsed["target_type"],
+                parsed["target_ids"],
+                actor_id,
+            )
             record = ApiScheduledJob(
                 project_id=parsed["project_id"],
                 source_revision_id=source_revision_id,
@@ -235,11 +243,24 @@ class ScheduledJobService:
         parsed = self._parse(payload)
         with self.session_factory.begin() as session:
             record = self._owned_job(session, job_id, actor_id, for_update=True)
+            existing_target_type = record.target_type
+            existing_target_ids = tuple(target.target_id for target in self._targets(session, record.id))
             if record.project_id != parsed["project_id"]:
                 raise ScheduledJobInputError("scheduled job project cannot be changed")
             self._validate_project(session, parsed["project_id"], actor_id)
             environment_revision_id, environment_id = self._resolve_environment(session, parsed)
             source_revision_id = self._resolve_source_revision(session, parsed, actor_id)
+            if (
+                existing_target_type != parsed["target_type"]
+                or existing_target_ids != tuple(parsed["target_ids"])
+            ):
+                self._validate_target_scopes(
+                    session,
+                    parsed["project_id"],
+                    parsed["target_type"],
+                    parsed["target_ids"],
+                    actor_id,
+                )
             record.source_revision_id = source_revision_id
             record.environment_revision_id = environment_revision_id
             record.environment_id = environment_id
@@ -482,7 +503,29 @@ class ScheduledJobService:
             target_ids,
             actor_id,
         )
+        self._validate_resolved_target_scopes(session, case_version_ids, baseline_ids)
         return job.source_revision_id or source_revision_id, case_version_ids, baseline_ids
+
+    def _validate_target_scopes(self, session, project_id, target_type, target_ids, actor_id):
+        _, case_version_ids, baseline_ids = self._target_context(
+            session, project_id, target_type, target_ids, actor_id
+        )
+        self._validate_resolved_target_scopes(session, case_version_ids, baseline_ids)
+
+    @staticmethod
+    def _validate_resolved_target_scopes(session, case_version_ids, baseline_ids):
+        version_ids = tuple(case_version_ids or ())
+        if baseline_ids:
+            version_ids = tuple(session.scalars(
+                select(ApiBaseline.case_version_id).where(ApiBaseline.id.in_(tuple(baseline_ids)))
+            ))
+        versions = tuple(session.scalars(
+            select(ApiCaseVersion).where(ApiCaseVersion.id.in_(version_ids))
+        ))
+        try:
+            ensure_active_case_version_scopes(versions)
+        except InactiveTestScopeError as exc:
+            raise ScheduledJobInputError(str(exc)) from exc
 
     def _target_context(self, session, project_id, target_type, target_ids, actor_id):
         if target_type == "cases":

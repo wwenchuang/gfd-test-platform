@@ -8,6 +8,7 @@ import ExecutionOverview from './ExecutionOverview.vue'
 
 const execution: ExecutionView = {
   id: 'execution-123456789', project_id: 'project-1', state: 'DONE', execution_type: 'regression',
+  application_name: '校园助手', business_name: '校园业务',
   source_revision_id: 'source-1', environment_revision_id: 'environment-1', environment_name: '生产环境（新）- 腾讯云 · v6',
   case_statuses: ['PASSED', 'FAILED', 'SKIPPED'],
   case_results: [
@@ -24,6 +25,8 @@ describe('ExecutionOverview', () => {
     const wrapper = mount(ExecutionOverview, { props: { execution } })
 
     expect(wrapper.text()).toContain('生产环境（新）- 腾讯云 · v6')
+    expect(wrapper.get('[data-testid="overview-application"]').text()).toContain('校园助手')
+    expect(wrapper.get('[data-testid="overview-business"]').text()).toContain('校园业务')
     expect(wrapper.get('[data-testid="execution-conclusion"]').text()).toBe('未通过')
     expect(wrapper.get('[data-testid="overview-passed"]').text()).toContain('1')
     expect(wrapper.get('[data-testid="overview-failed"]').text()).toContain('1')

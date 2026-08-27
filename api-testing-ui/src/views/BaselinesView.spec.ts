@@ -314,6 +314,24 @@ describe('BaselinesView fixed project assets', () => {
     expect(wrapper.text()).toContain('当前筛选下没有匹配基线')
   })
 
+  it('keeps disabled application baselines manageable but blocks new task and execution actions', async () => {
+    replaceTestApplications([{
+      package: 'com.example.school', name: '校园应用', enabled: false,
+      business_lines: [{ id: 'shared', name: '校园共享', enabled: true }],
+    }])
+    vi.spyOn(apiClient, 'get').mockResolvedValue({ data: { baselines: [baselineFixture()] } })
+
+    const wrapper = mountWithContext()
+    await flushPromises()
+    await wrapper.get('[data-testid="baseline-select-baseline-1"]').setValue(true)
+
+    expect(wrapper.text()).toContain('应用“校园应用”已停用')
+    expect(buttonByText(wrapper, '保存为基线回归任务').attributes('disabled')).toBeDefined()
+    expect(buttonByText(wrapper, '按当前环境执行所选基线').attributes('disabled')).toBeDefined()
+    await wrapper.get('input[placeholder^="例如：发版冒烟"]').setValue('历史归档')
+    expect(wrapper.get('[data-testid="baseline-move-selected"]').attributes('disabled')).toBeUndefined()
+  })
+
   it('paginates large baseline collections without changing filtered selection semantics', async () => {
     vi.spyOn(apiClient, 'get').mockResolvedValue({ data: { baselines: Array.from({ length: 51 }, (_, index) => baselineFixture({
       id: `baseline-${index + 1}`,

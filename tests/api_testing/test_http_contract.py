@@ -206,7 +206,20 @@ def owned_records(api_context):
         case = ApiCase(project_id=first.id, endpoint_id=endpoint.id, name="case", origin="manual", **_audit("owner-a"))
         session.add(case)
         session.flush()
-        version = ApiCaseVersion(case_id=case.id, endpoint_id=endpoint.id, version_number=1, purpose="case", request_template={"name": "case", "request": {}}, **_audit("owner-a"))
+        version = ApiCaseVersion(
+            case_id=case.id,
+            endpoint_id=endpoint.id,
+            version_number=1,
+            purpose="case",
+            request_template={
+                "name": "case",
+                "app_package": "com.kfb.model",
+                "app_name": "智小白3D",
+                "business": "home",
+                "request": {},
+            },
+            **_audit("owner-a"),
+        )
         session.add(version)
         session.flush()
         execution = ApiExecution(project_id=first.id, source_revision_id=revision.id, environment_revision_id=environment_revision.id, execution_type="debug", state="DONE", idempotency_key="seed", requested_case_ids=[version.id], request_snapshot={}, **_audit("owner-a"))
@@ -1292,7 +1305,13 @@ def test_selected_baseline_regression_does_not_use_task_scope(
             endpoint_id=owned_records["endpoint"].id,
             version_number=1,
             purpose="case second",
-            request_template={"name": "case second", "request": {}},
+            request_template={
+                "name": "case second",
+                "app_package": "com.kfb.model",
+                "app_name": "智小白3D",
+                "business": "home",
+                "request": {},
+            },
             **_audit("owner-a"),
         )
         session.add(second_version)

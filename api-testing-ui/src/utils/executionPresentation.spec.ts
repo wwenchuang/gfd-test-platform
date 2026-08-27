@@ -5,6 +5,7 @@ import {
   executionConclusion,
   executionFailureBuckets,
   executionMetrics,
+  executionScopeLabel,
   executionSourceScope,
   formatDuration,
   formatPassRate,
@@ -89,6 +90,15 @@ describe('execution presentation', () => {
     expect(executionSourceScope({ ...execution, execution_type: 'regression' })).toBe('formal')
     expect(executionSourceScope({ ...execution, execution_type: 'baseline_regression' })).toBe('formal')
     expect(executionSourceScope({ ...execution, execution_type: 'scheduled', execution_source: 'scheduled_job' })).toBe('formal')
+  })
+
+  it('presents the snapshotted application and business without internal identifiers', () => {
+    expect(executionScopeLabel({
+      ...execution,
+      application_name: '校园应用、家庭应用',
+      business_name: '校园业务、家庭业务',
+    })).toBe('校园应用、家庭应用 · 校园业务、家庭业务')
+    expect(executionScopeLabel(execution)).toBe('未标注应用 · 未标注业务')
   })
 
   it('masks nested authorization, token and cookie evidence before rendering', () => {

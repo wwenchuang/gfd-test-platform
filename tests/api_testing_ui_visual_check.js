@@ -23,6 +23,7 @@ const caseVersion = {
   id: 'case-version-1', case_id: 'case-1', project_id: 'project-1', endpoint_id: endpoint.id,
   status: 'draft', origin: 'ai', version: 1, validation_summary: {},
   name: '查询我的收藏', purpose: '验证登录用户可以查询收藏列表', priority: 'P0',
+  app_package: 'com.example.school', app_name: '校园应用', business: 'campus',
   request: { method: 'GET', path: endpoint.path, service: 'default', path_params: {}, query: {}, headers: { Biz: '{{Biz}}' }, cookies: {}, body: null },
   data_rows: [], assertions: [{ type: 'status_code', operator: 'equals', expected: 200, timeout_ms: 0, enabled: true }],
   extractions: [], dependencies: [], processing: { pre: [], post: [] },
@@ -32,6 +33,7 @@ const baselines = Array.from({ length: 51 }, (_, index) => ({
   case_version_id: `case-version-${index + 1}`, environment_revision_id: 'environment-revision-1',
   source_revision_id: 'source-revision-1', endpoint_id: endpoint.id, status: 'active',
   case_name: `收藏基线 ${index + 1}`, case_version: 1, priority: 'P0', origin: 'manual',
+  app_package: 'com.example.school', app_name: '校园应用', business: 'campus',
   method: endpoint.method, path: endpoint.path, endpoint_summary: endpoint.summary,
   tags: ['我的收藏'], group_name: '我的收藏', adoption_reason: '真实调试通过', adopted_at: '2026-08-25T08:00:00Z',
 }));
@@ -62,15 +64,23 @@ function createServer() {
     }
     if (url.pathname.startsWith('/api-test/') && serveStatic(url.pathname, res)) return;
     if (url.pathname === '/api/task-apps') {
-      return sendJson(res, { apps: [{
-        package: 'com.kfb.model',
-        name: '智小白3D',
-        business_lines: [
-          { id: 'home', name: '家用', enabled: true },
-          { id: 'shared', name: '共享', enabled: true },
-          { id: 'biz_school', name: '校园版', enabled: true },
-        ],
-      }] });
+      return sendJson(res, { apps: [
+        {
+          package: 'com.kfb.model',
+          name: '智小白3D',
+          enabled: true,
+          business_lines: [
+            { id: 'home', name: '家用', enabled: true },
+            { id: 'shared', name: '共享', enabled: true },
+          ],
+        },
+        {
+          package: 'com.example.school',
+          name: '校园应用',
+          enabled: true,
+          business_lines: [{ id: 'campus', name: '校园版', enabled: true }],
+        },
+      ] });
     }
     if (url.pathname === '/api/api-testing/v1/workspace' && req.method === 'GET') {
       return sendJson(res, { workspace: { project_id: 'project-1', source_revision_id: 'source-revision-1', environment_revision_id: 'environment-revision-1' } });
@@ -267,7 +277,7 @@ async function openCompactPage(page, navigationLabel, heading, label) {
     await page.getByRole('heading', { name: '接口测试工作台' }).waitFor();
     await page.getByTestId('endpoint-search').fill('我的收藏列表');
     await page.getByRole('button', { name: '我的收藏列表' }).click();
-    await page.getByTestId('case-business-biz_school').waitFor();
+    await page.getByTestId('case-business-campus').waitFor();
     const desktopBoxes = await Promise.all(['.endpoint-tree', '.design-center', '.ai-assistant'].map(selector => page.locator(selector).boundingBox()));
     if (desktopBoxes.some(box => !box) || !(desktopBoxes[0].x < desktopBoxes[1].x && desktopBoxes[1].x < desktopBoxes[2].x)) {
       throw new Error(`desktop columns are not ordered: ${JSON.stringify(desktopBoxes)}`);

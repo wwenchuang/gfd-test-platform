@@ -360,6 +360,8 @@ h1, h2, p { margin-top: 0; } h1 { margin-bottom: 0; font-size: 21px; font-weight
 .target-option-list { display: grid; max-height: 258px; overflow: auto; }
 .target-option { display: grid; grid-template-columns: 22px minmax(0, 1fr) minmax(78px, auto); align-items: center; gap: 8px; width: 100%; min-height: 52px; padding: 8px 10px; border: 0; border-bottom: 1px solid #edf0f4; border-left: 3px solid transparent; background: #fff; color: inherit; text-align: left; cursor: pointer; }
 .target-option:hover, .target-option.active { background: #f3f8fd; }
+.target-option:disabled { cursor: not-allowed; background: #f7f8fa; color: #7a8494; }
+.target-option:disabled:hover { background: #f7f8fa; }
 .target-option.active { border-left-color: var(--blue); }
 .target-check { display: grid; place-items: center; width: 18px; height: 18px; border: 1px solid #b5c3d2; border-radius: 4px; color: #fff; }
 .target-option.active .target-check { border-color: var(--blue); background: var(--blue); }
@@ -838,4 +840,5 @@ h1, h2, p { margin-top: 0; } h1 { margin-bottom: 0; font-size: 21px; font-weight
 @media (max-width: 1100px) { .baseline-row > span.baseline-row-actions { display: inline-flex; } }
 @media (max-width: 620px) { .baseline-group-controls { grid-template-columns: 1fr; }.baseline-table-head { display: none; }.baseline-row { grid-template-columns: 24px minmax(0, 1fr); }.baseline-endpoint-copy, .baseline-row > span.baseline-row-actions { grid-column: 2; }.baseline-row > span.baseline-row-actions { display: inline-flex; } }
 .baseline-action-hint { flex-basis: 100%; color: var(--muted); font-size: 10px; text-align: right; }
+.baseline-action-hint.warning { color: var(--danger); font-weight: 700; }
 @media (max-width: 620px) { .case-validation-summary > header { align-items: flex-start; flex-direction: column; }.validation-counts { justify-content: flex-start; }.validation-issues button { grid-template-columns: 58px minmax(0, 1fr); }.validation-issues button small { display: none; }.editor-footer { flex-wrap: wrap; }.editor-footer span { flex-basis: 100%; margin-right: 0; }.editor-footer .secondary-command, .editor-footer .primary-command { flex: 1; }.editor-footer > small { display: none; } }

@@ -378,6 +378,8 @@ export interface ExecutionView {
   source_revision_id: string
   environment_revision_id: string
   environment_name: string
+  application_name?: string
+  business_name?: string
   case_statuses: string[]
   case_results: ExecutionCaseResult[]
   summary: Record<string, number>

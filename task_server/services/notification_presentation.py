@@ -43,9 +43,7 @@ def canonical_test_application_name(value: Any, package: str = "") -> str:
     key = re.sub(r"[\s_-]+", "", text).lower()
     if key in _APPLICATION_ALIASES:
         return _APPLICATION_ALIASES[key]
-    if text:
-        return text
-    return _PACKAGE_APPLICATION_NAMES.get(package_name, package_name or "未命名应用")
+    return "未标注应用"
 
 
 def canonical_test_business_name(*values: Any, app_package=PRIMARY_APP_PACKAGE) -> str:
@@ -75,12 +73,8 @@ def canonical_test_business_name(*values: Any, app_package=PRIMARY_APP_PACKAGE) 
         key in _APPLICATION_ALIASES or "智小白3d" in key or key == "3d打印"
         for key in keys
     ):
-        return configured_by_id.get("home") or (configured[0].get("name") if configured else "未标注")
-    for text in texts:
-        resolved = business_line_name(text, app_package=app_package, fallback="")
-        if resolved:
-            return resolved
-    return "未标注"
+        return configured_by_id.get("home") or (configured[0].get("name") if configured else "未标注业务")
+    return "未标注业务"
 
 
 def canonical_test_business_summary(values: Any, *fallback_values: Any, app_package=PRIMARY_APP_PACKAGE) -> str:

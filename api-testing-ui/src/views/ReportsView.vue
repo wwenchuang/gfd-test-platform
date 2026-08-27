@@ -10,6 +10,7 @@ import {
   executionConclusion,
   executionFailureBuckets,
   executionMetrics,
+  executionScopeLabel,
   executionSourceScope,
   executionTypeLabel,
   formatDuration,
@@ -48,7 +49,7 @@ const visibleReports = computed(() => sourceScopedReports.value.filter(report =>
   if (filter.value === 'passed' && conclusion.tone !== 'passed') return false
   const keyword = reportSearch.value.trim().toLocaleLowerCase()
   if (!keyword) return true
-  return [report.task_name, reportName(report), report.environment_name, report.id]
+  return [report.task_name, reportName(report), executionScopeLabel(report), report.environment_name, report.id]
     .join(' ')
     .toLocaleLowerCase()
     .includes(keyword)
@@ -367,7 +368,7 @@ async function deleteReports(reportIds: string[]): Promise<void> {
                 <span class="report-status-chip">{{ executionConclusion(report).label }}</span>
                 <strong>{{ reportName(report) }}</strong>
                 <time>{{ new Date(report.created_at).toLocaleString('zh-CN') }}</time>
-                <small>{{ report.environment_name || '未命名环境' }} · {{ executionMetrics(report).total }} 条用例</small>
+                <small>{{ executionScopeLabel(report) }} · {{ report.environment_name || '未命名环境' }} · {{ executionMetrics(report).total }} 条用例</small>
               </div>
               <b>{{ executionMetrics(report).passRate }}%</b>
               <button type="button" class="icon-danger" aria-label="删除报告" @click.stop="deleteReports([report.id])"><Trash2 :size="13" /></button>
@@ -382,7 +383,7 @@ async function deleteReports(reportIds: string[]): Promise<void> {
                 <div>
                   <span class="report-status-chip">{{ executionConclusion(currentReport).label }}</span>
                   <h2>{{ reportName(currentReport) }}</h2>
-                  <p>{{ currentReport.environment_name || '未命名环境' }} · {{ new Date(currentReport.created_at).toLocaleString('zh-CN') }}</p>
+                  <p>{{ executionScopeLabel(currentReport) }} · {{ currentReport.environment_name || '未命名环境' }} · {{ new Date(currentReport.created_at).toLocaleString('zh-CN') }}</p>
                 </div>
                 <strong>{{ currentMetrics.passRate }}%</strong>
               </header>

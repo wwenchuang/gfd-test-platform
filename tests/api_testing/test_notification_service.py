@@ -107,6 +107,20 @@ def test_feishu_report_card_does_not_invent_a_task_name_for_ad_hoc_runs():
     assert "执行场景：** 基线回归" in text
 
 
+def test_feishu_report_card_does_not_present_api_project_or_task_as_application():
+    card = NotificationService._card(
+        _execution(request_snapshot={"task": {"id": "task-unknown", "name": "每日接口回归"}}),
+        [],
+        {"project_name": "接口项目", "environment_name": "生产环境"},
+    )
+
+    text = json.dumps(card, ensure_ascii=False)
+    assert "**应用：** 未标注应用" in text
+    assert "**业务：** 未标注业务" in text
+    assert "接口项目｜" not in text
+    assert "每日接口回归｜" not in text
+
+
 @pytest.mark.parametrize(
     ("project_name", "expected_business"),
     [

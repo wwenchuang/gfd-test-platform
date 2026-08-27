@@ -10,7 +10,7 @@ import { useContextStore } from '../stores/context'
 import { useExecutionsStore } from '../stores/executions'
 import { useTasksStore } from '../stores/tasks'
 import { confirmApiExecution } from '../utils/executionConfirmation'
-import { applicationBusinessLabel } from '../utils/testApplications'
+import { applicationBusinessLabel, applicationBusinessSelection } from '../utils/testApplications'
 
 const context = useContextStore()
 const baselines = useBaselinesStore()
@@ -57,7 +57,19 @@ const baselineActionSourceRevisionId = computed(() => {
 const executionSourceRevisionId = computed(() => {
   return baselineActionSourceRevisionId.value || context.sourceRevisionId || ''
 })
-const baselineActionReady = computed(() => Boolean(context.projectId && context.environmentRevisionId && baselines.selectedIds.length))
+const selectedBaselineScopeIssue = computed(() => {
+  for (const item of baselines.selectedItems) {
+    const selection = baselineSelection(item)
+    if (!selection.selectable) return selection.reason
+  }
+  return ''
+})
+const baselineActionReady = computed(() => Boolean(
+  context.projectId
+  && context.environmentRevisionId
+  && baselines.selectedIds.length
+  && !selectedBaselineScopeIssue.value,
+))
 const selectedSourceById = computed(() => new Map(context.sourceRevisions.map(item => [item.id, item])))
 const methodOptions = computed(() => [...new Set(baselines.items.map(item => item.method.toUpperCase()))].sort())
 const filteredBaselines = computed(() => {
@@ -178,6 +190,10 @@ function validateBaselineAction(options: { requireEndpointIds?: boolean } = {}):
   }
   if (!baselines.selectedIds.length) {
     localError.value = '请先勾选要处理的基线用例'
+    return { ok: false }
+  }
+  if (selectedBaselineScopeIssue.value) {
+    localError.value = `${selectedBaselineScopeIssue.value}，历史基线仅支持查看、编辑和分组管理，不能创建新任务或执行`
     return { ok: false }
   }
   if (selectedBaselineSourceRevisionIds.value.length > 1) {
@@ -349,6 +365,10 @@ function baselineScopeLabel(item: ApiBaselineCase): string {
   return applicationBusinessLabel(item.app_package, item.app_name, item.business)
 }
 
+function baselineSelection(item: ApiBaselineCase) {
+  return applicationBusinessSelection(item.app_package, item.business)
+}
+
 function sourceRevisionName(item: ApiBaselineCase): string {
   const source = selectedSourceById.value.get(item.source_revision_id)
   return source ? `${source.name} · v${source.revision_number}` : `来源版本 ${item.source_revision_id.slice(0, 8)}`
@@ -437,7 +457,7 @@ function adoptionReasonLabel(reason: string): string {
             <button class="secondary-command" type="button" :disabled="!baselines.selectedIds.length" @click="baselines.clearSelection">清空选择</button>
             <button class="primary-command" type="button" :disabled="tasks.saving || !baselineActionReady" @click="saveSelectedAsRegressionTask"><ListPlus :size="15" />{{ tasks.saving ? '保存中' : '保存为基线回归任务' }}</button>
             <button class="primary-command" type="button" :disabled="executions.baselineStarting || !baselineActionReady" @click="runSelectedBaselines"><Play :size="15" />{{ executions.baselineStarting ? '创建执行中' : '按当前环境执行所选基线' }}</button>
-            <small class="baseline-action-hint">保存会创建独立基线回归任务；立即执行只使用当前执行环境，不修改工作台任务。</small>
+            <small class="baseline-action-hint" :class="{ warning: selectedBaselineScopeIssue }">{{ selectedBaselineScopeIssue ? `${selectedBaselineScopeIssue}，历史基线不能创建新任务或执行` : '保存会创建独立基线回归任务；立即执行只使用当前执行环境，不修改工作台任务。' }}</small>
           </div>
         </header>
         <div class="baseline-group-editor" aria-label="基线分组编辑">
@@ -486,6 +506,7 @@ function adoptionReasonLabel(reason: string): string {
               <strong>{{ item.case_name }} <b class="baseline-business-pill" :class="`business-${item.business || 'unset'}`">{{ baselineScopeLabel(item) }}</b> <b v-if="isOneTimeBaseline(item)" :data-testid="`baseline-one-time-${item.id}`" class="baseline-one-time-pill">一次性</b></strong>
               <small>
                 <b v-if="item.status !== 'active'" class="baseline-status-pill">历史版本</b>
+                <b v-if="!baselineSelection(item).selectable" class="baseline-status-pill">{{ baselineSelection(item).reason }}</b>
                 {{ adoptionReasonLabel(item.adoption_reason) }}
               </small>
             </span>

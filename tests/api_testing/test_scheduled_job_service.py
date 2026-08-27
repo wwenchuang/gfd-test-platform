@@ -1,4 +1,5 @@
 import os
+import json
 from datetime import datetime
 
 from alembic import command
@@ -116,6 +117,9 @@ def scheduled_records(scheduled_factory):
             purpose="定时任务手动执行",
             request_template={
                 "name": "收藏正常查询",
+                "app_package": "com.kfb.model",
+                "app_name": "智小白3D",
+                "business": "home",
                 "request": {
                     "method": "GET",
                     "path": "/favorites",
@@ -181,6 +185,85 @@ def test_scheduled_job_can_be_created_and_manually_run(scheduled_factory, schedu
     assert listed.latest_run_trigger == "manual"
     assert listed.latest_execution_state == execution.state
     assert listed.latest_execution_summary == execution.summary
+
+
+def test_new_scheduled_target_rejects_a_disabled_application(
+    scheduled_factory, scheduled_records, tmp_path, monkeypatch
+):
+    from task_server.api_testing.services.scheduled_job_service import (
+        ScheduledJobInputError,
+        ScheduledJobService,
+    )
+    from task_server.services import business_line_service
+
+    path = tmp_path / "task-apps.json"
+    path.write_text(json.dumps({"apps": [{
+        "package": "com.kfb.model",
+        "name": "智小白3D",
+        "enabled": False,
+        "business_lines": [{"id": "home", "name": "家用", "enabled": True}],
+    }]}), encoding="utf-8")
+    monkeypatch.setattr(business_line_service, "TASK_APPS_FILE", str(path))
+
+    with pytest.raises(ScheduledJobInputError, match="应用.*已停用"):
+        ScheduledJobService(scheduled_factory).create(
+            {
+                "project_id": scheduled_records["project"].id,
+                "name": "停用应用回归",
+                "schedule_type": "daily",
+                "cron_expression": "0 2 * * *",
+                "environment_strategy": "fixed_revision",
+                "environment_revision_id": scheduled_records["environment_revision"].id,
+                "target_type": "cases",
+                "target_ids": [scheduled_records["case_version"].id],
+                "enabled": True,
+                "notify_feishu": False,
+                "retry_count": 0,
+                "timeout_seconds": 900,
+            },
+            "owner-a",
+        )
+
+
+def test_existing_disabled_target_remains_editable_but_cannot_run(
+    scheduled_factory, scheduled_records, tmp_path, monkeypatch
+):
+    from task_server.api_testing.services.scheduled_job_service import (
+        ScheduledJobInputError,
+        ScheduledJobService,
+    )
+    from task_server.services import business_line_service
+
+    service = ScheduledJobService(scheduled_factory)
+    payload = {
+        "project_id": scheduled_records["project"].id,
+        "name": "历史回归",
+        "schedule_type": "daily",
+        "cron_expression": "0 2 * * *",
+        "environment_strategy": "fixed_revision",
+        "environment_revision_id": scheduled_records["environment_revision"].id,
+        "target_type": "cases",
+        "target_ids": [scheduled_records["case_version"].id],
+        "enabled": True,
+        "notify_feishu": False,
+        "retry_count": 0,
+        "timeout_seconds": 900,
+    }
+    job = service.create(payload, "owner-a")
+
+    path = tmp_path / "task-apps.json"
+    path.write_text(json.dumps({"apps": [{
+        "package": "com.kfb.model",
+        "name": "智小白3D",
+        "enabled": False,
+        "business_lines": [{"id": "home", "name": "家用", "enabled": True}],
+    }]}), encoding="utf-8")
+    monkeypatch.setattr(business_line_service, "TASK_APPS_FILE", str(path))
+
+    updated = service.update(job.id, {**payload, "name": "历史回归（改周期）"}, "owner-a")
+    assert updated.name == "历史回归（改周期）"
+    with pytest.raises(ScheduledJobInputError, match="应用.*已停用"):
+        service.run_once(job.id, "owner-a", idempotency_key="disabled-" + job.id)
 
 
 def test_next_cron_match_uses_the_next_minute_and_supports_weekdays():

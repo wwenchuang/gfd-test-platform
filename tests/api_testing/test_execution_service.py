@@ -121,6 +121,53 @@ def test_case_version_snapshot_keeps_explicit_application_and_business():
     assert snapshot["business"] == "shared"
 
 
+def test_execution_view_aggregates_application_scope_from_requested_and_dependency_snapshots(monkeypatch):
+    execution = SimpleNamespace(
+        id="execution-scope",
+        project_id="project-1",
+        state="DONE",
+        execution_type="regression",
+        source_revision_id="source-1",
+        environment_revision_id="environment-1",
+        request_snapshot={
+            "case_versions": [
+                {
+                    "id": "version-requested",
+                    "role": "requested",
+                    "app_package": "com.example.school",
+                    "app_name": "校园应用",
+                    "business": "campus",
+                },
+                {
+                    "id": "version-dependency",
+                    "role": "dependency",
+                    "app_package": "com.example.home",
+                    "app_name": "家庭应用",
+                    "business": "family",
+                },
+            ],
+        },
+        summary={"total": 0},
+        cancellation_requested_at=None,
+        created_at=None,
+        started_at=None,
+        finished_at=None,
+    )
+    calls = []
+    monkeypatch.setattr(
+        execution_service_module,
+        "canonical_test_scope_summary",
+        lambda items, **kwargs: calls.append((tuple(items), kwargs)) or ("校园应用、家庭应用", "校园业务、家庭业务"),
+        raising=False,
+    )
+
+    view = ExecutionService._view(execution, (), {"environment_name": "生产环境"})
+
+    assert view.application_name == "校园应用、家庭应用"
+    assert view.business_name == "校园业务、家庭业务"
+    assert [item["role"] for item in calls[0][0]] == ["requested", "dependency"]
+
+
 def test_failure_analysis_dispatch_is_limited_for_bulk_executions(monkeypatch):
     monkeypatch.setattr(
         execution_service_module,
@@ -722,6 +769,29 @@ def test_submit_active_baselines_creates_one_click_regression(
     assert execution.task_name == "收藏接口基线"
     assert execution.case_statuses == ("QUEUED",)
     assert execution.case_results[0]["case_version_id"] == execution_context["case"].id
+
+
+def test_submit_rejects_a_case_after_its_application_is_disabled(
+    session_factory, redis_client, execution_context, tmp_path, monkeypatch
+):
+    from task_server.services import business_line_service
+
+    path = tmp_path / "task-apps.json"
+    path.write_text(json.dumps({"apps": [{
+        "package": "com.kfb.model",
+        "name": "智小白3D",
+        "enabled": False,
+        "business_lines": [{"id": "home", "name": "家用", "enabled": True}],
+    }]}), encoding="utf-8")
+    monkeypatch.setattr(business_line_service, "TASK_APPS_FILE", str(path))
+    service = ExecutionService(
+        session_factory,
+        executor=_FakeExecutor([_Result("PASSED")]),
+        event_stream=EventStream(session_factory, redis_client),
+    )
+
+    with pytest.raises(ExecutionConflictError, match="应用.*已停用"):
+        service.submit(_request(execution_context), "admin", "disabled-scope")
 
 
 def test_submit_active_baselines_can_run_only_selected_baseline_ids(

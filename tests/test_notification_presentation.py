@@ -48,8 +48,12 @@ def test_canonical_test_application_name_normalizes_known_aliases(raw_name, expe
     assert _canonical_name(raw_name) == expected
 
 
-def test_canonical_test_application_name_preserves_unknown_project_names():
-    assert _canonical_name("  海外业务   回归项目  ") == "海外业务 回归项目"
+def test_canonical_test_application_name_suppresses_unknown_project_names():
+    assert _canonical_name("  海外业务   回归项目  ") == "未标注应用"
+
+
+def test_canonical_test_application_name_suppresses_unknown_internal_snapshot():
+    assert _canonical_name("com.internal.app", "com.internal.app") == "未标注应用"
 
 
 def test_canonical_test_application_name_uses_known_package_as_empty_name_fallback():
@@ -138,3 +142,7 @@ def test_notification_scope_resolves_same_business_id_with_each_application_pack
         {"app_package": "com.example.home", "app_name": "家庭应用", "business": "shared"},
         {"app_package": "com.example.school", "app_name": "校园应用", "business": "shared"},
     ]) == ("家庭应用、校园应用", "家庭共享、校园共享")
+
+
+def test_notification_scope_does_not_treat_api_project_or_task_as_application():
+    assert _scope_summary([], "接口项目", "每日接口回归") == ("未标注应用", "未标注业务")

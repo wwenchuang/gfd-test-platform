@@ -1957,18 +1957,19 @@ def sonic_report_window_after_seconds() -> int:
 def sonic_suite_app_info(package: str = "", module: str = "") -> dict:
     package = (package or "").strip()
     try:
-        for app in sonic_notify_known_apps():
-            app_package = (app.get("package") or "").strip()
-            if package and app_package == package:
-                return app
-            if module and module in (app.get("modules") or []):
-                return app
+        apps = sonic_notify_known_apps()
+        if package:
+            for app in apps:
+                if (app.get("package") or "").strip() == package:
+                    return app
+            return {"package": package, "name": "未标注应用"}
+        if module:
+            for app in apps:
+                if module in (app.get("modules") or []):
+                    return app
     except Exception:
         pass
-    for app in sonic_notify_known_apps():
-        if package and app.get("package") == package:
-            return app
-    return {"package": package, "name": package or "Sonic"}
+    return {"package": package, "name": "未标注应用"}
 
 
 def sonic_suite_app_for_completion(event: dict) -> dict:

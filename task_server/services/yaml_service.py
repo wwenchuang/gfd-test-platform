@@ -7720,19 +7720,25 @@ def generate_ui_yaml_from_request(d, job_id=None):
         raise ValueError("生成后创建执行任务需要先选择执行设备；如确实需要平台分配，请明确选择“自动选择在线设备”。")
     files = d.get("files") or []
     reuse_assets = safe_bool(d.get("reuse_assets") or d.get("reuseAssets") or d.get("regenerate"))
+    persisted_meta = None
+    if reuse_assets:
+        persisted_meta = read_json_file(asset_meta_path(case_set_id), default=None)
+        if not persisted_meta or not persisted_meta.get("files"):
+            raise ValueError("这个生成批次没有可复用的需求资料，请重新上传需求后生成")
     app_package = str(
-        d.get("app_package") or d.get("appPackage") or os.getenv("APP_PACKAGE", DEFAULT_APP_PACKAGE)
+        (persisted_meta or {}).get("app_package")
+        or (persisted_meta or {}).get("appPackage")
+        or d.get("app_package")
+        or d.get("appPackage")
+        or os.getenv("APP_PACKAGE", DEFAULT_APP_PACKAGE)
     ).strip() or DEFAULT_APP_PACKAGE
     d["app_package"] = app_package
-    requested_business = normalize_ui_case_business(
-        d.get("business") or d.get("business_type") or d.get("businessType"),
+    business = resolve_ui_generation_business(
+        d,
+        persisted_meta,
         app_package=app_package,
-        require_active=not reuse_assets,
     )
-    if requested_business:
-        d["business"] = requested_business
-    elif not reuse_assets:
-        raise ValueError("请选择所属业务")
+    d["business"] = business
     prepared_figma_context = _prepared_figma_context_from_request(d)
     prepared_cases_payload = d.get("preparedCasesPayload") or d.get("prepared_cases_payload") or {}
     if not isinstance(prepared_cases_payload, dict):
@@ -7747,9 +7753,7 @@ def generate_ui_yaml_from_request(d, job_id=None):
         meta = save_asset_files(case_set_id, title, module, files)
         meta = update_asset_request_context(case_set_id, d)
     elif reuse_assets:
-        meta = read_json_file(asset_meta_path(case_set_id), default=None)
-        if not meta or not meta.get("files"):
-            raise ValueError("这个生成批次没有可复用的需求资料，请重新上传需求后生成")
+        meta = dict(persisted_meta)
         meta["title"] = title or meta.get("title")
         meta["module"] = module or meta.get("module")
         recovered_figma_url = (d.get("figma_url") or d.get("figmaUrl") or "").strip() or find_figma_url_for_case_set(case_set_id, meta=meta)
@@ -7769,8 +7773,6 @@ def generate_ui_yaml_from_request(d, job_id=None):
         write_json_file(asset_meta_path(case_set_id), meta)
         meta = update_asset_request_context(case_set_id, d)
 
-    business = resolve_ui_generation_business(d, meta, app_package=app_package)
-    d["business"] = business
     meta["business"] = business
     write_json_file(asset_meta_path(case_set_id), meta)
 

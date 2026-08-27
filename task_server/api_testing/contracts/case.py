@@ -10,6 +10,7 @@ from typing import Any, Mapping, Optional, Tuple
 
 from task_server.services.business_line_service import (
     business_line_id,
+    configured_business_lines,
     configured_test_application,
 )
 
@@ -548,7 +549,7 @@ def parse_workflow_step_preview_payload(payload):
     }
 
 
-def parse_case_payload(payload):
+def parse_case_payload(payload, *, allow_disabled_scope=False):
     payload = _require_mapping(payload, "case")
     allowed = {
         "name",
@@ -573,17 +574,29 @@ def parse_case_payload(payload):
     if priority not in PRIORITIES:
         raise CasePayloadError("priority is not supported")
     app_package = _text(payload["app_package"], "app_package", maximum=300)
-    application = configured_test_application(app_package, include_disabled=False)
+    application = configured_test_application(
+        app_package,
+        include_disabled=allow_disabled_scope,
+    )
     if not application:
         raise CasePayloadError("application is not supported")
     app_name = str(application["name"])
     business = _text(payload["business"], "business", maximum=80)
-    try:
-        business = business_line_id(
-            business, app_package=app_package, require_active=True
-        )
-    except ValueError:
-        raise CasePayloadError("business is not supported")
+    if allow_disabled_scope:
+        business_line = next((
+            item for item in configured_business_lines(app_package, include_disabled=True)
+            if business in {item["id"], item["name"]}
+        ), None)
+        if business_line is None:
+            raise CasePayloadError("business is not supported")
+        business = business_line["id"]
+    else:
+        try:
+            business = business_line_id(
+                business, app_package=app_package, require_active=True
+            )
+        except ValueError:
+            raise CasePayloadError("business is not supported")
     return {
         "name": _text(payload["name"], "name", maximum=300),
         "purpose": _text(payload["purpose"], "purpose", maximum=10_000),

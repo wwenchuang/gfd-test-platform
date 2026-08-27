@@ -3,7 +3,7 @@ import { computed, ref, watch } from 'vue'
 import { RotateCw, Search, Square, Trash2 } from 'lucide-vue-next'
 
 import type { ExecutionCaseResult, ExecutionConnectionState, ExecutionEventView, ExecutionView } from '../api/contracts'
-import { executionConclusion, executionFailureBuckets, executionMetrics, executionSourceScope, executionTypeLabel } from '../utils/executionPresentation'
+import { executionConclusion, executionFailureBuckets, executionMetrics, executionScopeLabel, executionSourceScope, executionTypeLabel } from '../utils/executionPresentation'
 import CaseEvidence from './CaseEvidence.vue'
 import CaseResultList from './CaseResultList.vue'
 import ExecutionLog from './ExecutionLog.vue'
@@ -47,7 +47,7 @@ const visibleExecutions = computed(() => {
     if (conclusionFilter.value === 'problem' && ['passed', 'running'].includes(conclusion.tone)) return false
     if (!keyword) return true
     return [
-      executionDisplayName(execution), executionTypeLabel(execution), execution.environment_name, execution.id,
+      executionDisplayName(execution), executionTypeLabel(execution), executionScopeLabel(execution), execution.environment_name, execution.id,
       ...execution.case_results.flatMap(result => [result.case_name, result.endpoint_summary, result.method, result.path]),
     ]
       .join(' ')
@@ -122,6 +122,7 @@ function executionDisplayName(execution: ExecutionView): string {
 
 function executionSubtitle(execution: ExecutionView): string {
   const parts = [
+    executionScopeLabel(execution),
     executionTypeLabel(execution),
     `${executionResultCount(execution)} 条`,
     execution.environment_name || '未命名环境',
