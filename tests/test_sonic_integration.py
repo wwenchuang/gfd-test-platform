@@ -13,7 +13,7 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
-from task_server.services import sonic_service
+from task_server.services import business_line_service, sonic_service
 
 SPEC = importlib.util.spec_from_file_location("midscene_upload", ROOT / "midscene-upload.py")
 midscene = importlib.util.module_from_spec(SPEC)
@@ -947,6 +947,47 @@ def test_sonic_suite_card_marks_mixed_case_businesses():
 
     text = json.dumps(sonic_service.build_sonic_suite_summary_card(suite), ensure_ascii=False)
     assert "智小白3D｜家用、共享｜UI 自动化" in text
+
+
+def test_sonic_suite_card_aggregates_applications_and_uses_package_scoped_businesses(tmp_path, monkeypatch):
+    path = tmp_path / "task-apps.json"
+    path.write_text(json.dumps({"apps": [
+        {
+            "package": "com.example.home",
+            "name": "家庭应用",
+            "enabled": True,
+            "business_lines": [{"id": "shared", "name": "家庭共享", "enabled": True}],
+        },
+        {
+            "package": "com.example.school",
+            "name": "校园应用",
+            "enabled": True,
+            "business_lines": [{"id": "shared", "name": "校园共享", "enabled": True}],
+        },
+    ]}, ensure_ascii=False), encoding="utf-8")
+    monkeypatch.setattr(business_line_service, "TASK_APPS_FILE", str(path))
+    suite = {
+        "run_mode": "baseline",
+        "results": [
+            {
+                "status": "success", "app_package": "com.example.home",
+                "app_name": "家庭应用", "business": "shared", "module": "打印",
+            },
+            {
+                "status": "success", "app_package": "com.example.school",
+                "app_name": "校园应用", "business": "shared", "module": "打印",
+            },
+        ],
+        "sonic_completion": {
+            "finished": True, "status": "success", "passed": 2,
+            "failed": 0, "warning": 0, "total": 2,
+        },
+    }
+
+    text = json.dumps(sonic_service.build_sonic_suite_summary_card(suite), ensure_ascii=False)
+    assert "家庭应用、校园应用｜家庭共享、校园共享｜UI 自动化" in text
+    assert "com.example" not in text
+    assert '"shared"' not in text
 
 
 def test_sonic_result_meta_rejects_result_ended_before_first_task_callback():

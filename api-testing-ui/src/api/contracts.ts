@@ -502,6 +502,8 @@ export interface ApiBaselineCase {
   case_name: string
   case_version: number
   priority: string
+  app_package?: string
+  app_name?: string
   business?: string
   origin: string
   method: string

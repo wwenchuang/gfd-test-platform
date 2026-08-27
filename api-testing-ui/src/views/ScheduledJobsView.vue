@@ -11,7 +11,7 @@ import { type ScheduledJobInput, useScheduledJobsStore } from '../stores/schedul
 import { useTasksStore } from '../stores/tasks'
 import { confirmApiExecution } from '../utils/executionConfirmation'
 import { formatPassRate, statusLabel } from '../utils/executionPresentation'
-import { businessLineLabel as configuredBusinessLineLabel } from '../utils/businessLines'
+import { applicationBusinessLabel } from '../utils/testApplications'
 
 const context = useContextStore()
 const baselines = useBaselinesStore()
@@ -274,7 +274,6 @@ function toggleTargetGroup(name: string): void {
 }
 
 function jobTargetSummary(job: ScheduledJob): string {
-  if (job.target_type === 'baseline_group') return job.target_ids.join('、') || '暂无目标'
   const optionMap = new Map(targetOptionsForType(job.target_type).map(option => [option.id, option]))
   const resolved = job.target_ids.map(id => optionMap.get(id)).filter((item): item is TargetOption => Boolean(item))
   if (!resolved.length) return `已选 ${job.target_ids.length} 项，目标详情待加载`
@@ -420,7 +419,7 @@ function baselineGroupOptions(): TargetOption[] {
         id: name,
         title: name,
         subtitle: [`${items.length} 条基线`, sampleText].filter(Boolean).join(' · '),
-        meta: '基线分组',
+        meta: `基线分组 · ${scopeSummary(items)}`,
       }
     })
 }
@@ -432,7 +431,7 @@ function baselineOption(item: ApiBaselineCase): TargetOption {
     id: item.id,
     title: `${item.case_name || item.endpoint_summary || item.path} · v${item.case_version}`,
     subtitle: `${item.method} ${item.path} · ${origin} · 采纳于 ${adoptedAt}`,
-    meta: `${businessLabel(item.business)} · ${baselineGroup(item)}`,
+    meta: `${caseScopeLabel(item)} · ${baselineGroup(item)}`,
   }
 }
 
@@ -442,20 +441,26 @@ function caseOption(item: CaseVersion): TargetOption {
     id: item.id,
     title: item.name || item.purpose || item.id,
     subtitle: `${request.method || 'GET'} ${request.path || '未记录路径'}`,
-    meta: `${businessLabel(item.business)} · ${item.priority} · v${item.version}`,
+    meta: `${caseScopeLabel(item)} · ${item.priority} · v${item.version}`,
   }
 }
 
-function businessLabel(business: CaseVersion['business'] | ApiBaselineCase['business']): string {
-  return configuredBusinessLineLabel(business)
+function caseScopeLabel(item: Pick<CaseVersion, 'app_package' | 'app_name' | 'business'>): string {
+  return applicationBusinessLabel(item.app_package, item.app_name, item.business)
+}
+
+function scopeSummary(items: Array<Pick<CaseVersion, 'app_package' | 'app_name' | 'business'>>): string {
+  return [...new Set(items.map(caseScopeLabel))].join('；') || '未标注应用 · 未标注业务'
 }
 
 function taskOption(item: ApiTestTask): TargetOption {
+  const selected = new Set(item.selected_endpoint_ids)
+  const versions = Object.values(cases.versions).filter(version => selected.has(version.endpoint_id))
   return {
     id: item.id,
     title: item.name,
     subtitle: `${item.selected_endpoint_ids.length} 个接口 · ${item.state}`,
-    meta: '已保存任务',
+    meta: `已保存任务 · ${scopeSummary(versions)}`,
   }
 }
 

@@ -5,10 +5,12 @@ import { createPinia, setActivePinia } from 'pinia'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type { ApiEndpoint, ApiTestTask } from '../api/contracts'
+import type { ApiEndpoint, ApiTestTask, CaseVersion } from '../api/contracts'
 import { useAssetsStore } from '../stores/assets'
+import { useCasesStore } from '../stores/cases'
 import { useContextStore } from '../stores/context'
 import { useTasksStore } from '../stores/tasks'
+import { replaceTestApplications } from '../utils/testApplications'
 import TasksView from './TasksView.vue'
 
 const ENDPOINT: ApiEndpoint = {
@@ -35,10 +37,23 @@ const TASK: ApiTestTask = {
   updated_at: '2026-08-25T10:30:00Z',
 }
 
+const TASK_CASE = {
+  id: 'version-1', case_id: 'case-1', endpoint_id: ENDPOINT.id,
+  status: 'active', origin: 'manual', version: 1, group_name: '', validation_summary: {},
+  name: '获取设备状态', purpose: '验证设备状态', priority: 'P0',
+  app_package: 'com.example.school', app_name: '校园应用旧名称', business: 'shared',
+  request: { method: 'GET', path: ENDPOINT.path, service: 'default', path_params: {}, query: {}, headers: {}, cookies: {}, body: null },
+  data_rows: [], assertions: [], extractions: [], dependencies: [], processing: { pre: [], post: [] },
+} as CaseVersion
+
 describe('TasksView', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     vi.restoreAllMocks()
+    replaceTestApplications([{
+      package: 'com.example.school', name: '校园应用', enabled: true,
+      business_lines: [{ id: 'shared', name: '校园共享', enabled: true }],
+    }])
   })
 
   it('shows task management as an independent page and renders selected task details', async () => {
@@ -65,6 +80,10 @@ describe('TasksView', () => {
     const loadAssets = vi.spyOn(assets, 'load').mockImplementation(async () => {
       assets.endpoints = [ENDPOINT]
       assets.state = 'ready'
+    })
+    const cases = useCasesStore()
+    vi.spyOn(cases, 'loadSavedCases').mockImplementation(async () => {
+      cases.versions = { [TASK_CASE.id]: TASK_CASE }
     })
 
     const router = createRouter({ history: createMemoryHistory(), routes: [
@@ -96,6 +115,8 @@ describe('TasksView', () => {
     expect(wrapper.get('[data-testid="selected-task-state"]').text()).toBe('可执行')
     expect(wrapper.text()).toContain('最近执行')
     expect(wrapper.text()).toContain('获取设备状态')
+    expect(wrapper.text()).toContain('校园应用 · 校园共享')
+    expect(wrapper.text()).not.toContain('com.example.school')
     expect(wrapper.get('[data-testid="task-management-shell"]').classes()).toContain('mobile-detail-open')
 
     await wrapper.get('[data-testid="task-latest-execution"]').trigger('click')
@@ -141,6 +162,7 @@ describe('TasksView', () => {
       assets.endpoints = [ENDPOINT]
       assets.state = 'ready'
     })
+    vi.spyOn(useCasesStore(), 'loadSavedCases').mockResolvedValue()
 
     const router = createRouter({
       history: createMemoryHistory(),

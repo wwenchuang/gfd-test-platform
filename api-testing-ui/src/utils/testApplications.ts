@@ -18,6 +18,7 @@ export interface TestApplication {
 const applications = ref<TestApplication[]>([])
 const active = computed(() => applications.value.filter(item => item.enabled))
 let loading: Promise<void> | null = null
+const CHINESE_TEXT = /[\u3400-\u9fff]/
 
 function normalizeBusinessLines(value: unknown): TestApplicationBusinessLine[] {
   if (!Array.isArray(value)) return []
@@ -54,6 +55,28 @@ export function useTestApplications() {
 export function testApplicationFor(appPackage: unknown): TestApplication | undefined {
   const packageName = String(appPackage || '').trim()
   return applications.value.find(item => item.package === packageName)
+}
+
+export function testApplicationLabel(appPackage: unknown, snapshotName: unknown = ''): string {
+  const configured = testApplicationFor(appPackage)?.name.trim()
+  if (configured) return configured
+  const snapshot = String(snapshotName || '').trim()
+  return CHINESE_TEXT.test(snapshot) ? snapshot : '未标注应用'
+}
+
+export function applicationBusinessLabel(appPackage: unknown, appName: unknown, business: unknown): string {
+  const rawBusiness = String(business || '').trim()
+  const packageName = String(appPackage || '').trim()
+    || (rawBusiness === 'home' || rawBusiness === 'shared' ? 'com.kfb.model' : '')
+  const configured = testApplicationFor(packageName)?.business_lines
+    .find(item => rawBusiness === item.id || rawBusiness === item.name)?.name
+  let businessName = configured || ''
+  if (!businessName && packageName === 'com.kfb.model') {
+    if (rawBusiness === 'home') businessName = '家用'
+    if (rawBusiness === 'shared') businessName = '共享'
+  }
+  if (!businessName && CHINESE_TEXT.test(rawBusiness)) businessName = rawBusiness
+  return `${testApplicationLabel(packageName, appName)} · ${businessName || '未标注业务'}`
 }
 
 export function activeBusinessLinesFor(appPackage: unknown): TestApplicationBusinessLine[] {

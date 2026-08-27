@@ -25,6 +25,14 @@ def _business_summary(values, *fallback):
     return _presentation_module().canonical_test_business_summary(values, *fallback)
 
 
+def _scope_summary(items, *fallback, fallback_package=""):
+    return _presentation_module().canonical_test_scope_summary(
+        items,
+        *fallback,
+        fallback_package=fallback_package,
+    )
+
+
 @pytest.mark.parametrize(
     ("raw_name", "expected"),
     [
@@ -89,3 +97,44 @@ def test_notification_uses_configured_chinese_business_name_for_internal_id(tmp_
     assert _business_name("biz_school") == "校园版"
     assert _business_name("智小白3D") == "校园版"
     assert _business_summary(["biz_school"], "智小白3D") == "校园版"
+
+
+def test_notification_scope_uses_current_name_for_renamed_disabled_application(tmp_path, monkeypatch):
+    path = tmp_path / "task-apps.json"
+    path.write_text(json.dumps({"apps": [{
+        "package": "com.example.retired",
+        "name": "历史应用新名称",
+        "enabled": False,
+        "business_lines": [{"id": "retired", "name": "历史业务", "enabled": False}],
+    }]}, ensure_ascii=False), encoding="utf-8")
+    monkeypatch.setattr(business_line_service, "TASK_APPS_FILE", str(path))
+
+    assert _scope_summary([{
+        "app_package": "com.example.retired",
+        "app_name": "历史应用旧名称",
+        "business": "retired",
+    }]) == ("历史应用新名称", "历史业务")
+
+
+def test_notification_scope_resolves_same_business_id_with_each_application_package(tmp_path, monkeypatch):
+    path = tmp_path / "task-apps.json"
+    path.write_text(json.dumps({"apps": [
+        {
+            "package": "com.example.home",
+            "name": "家庭应用",
+            "enabled": True,
+            "business_lines": [{"id": "shared", "name": "家庭共享", "enabled": True}],
+        },
+        {
+            "package": "com.example.school",
+            "name": "校园应用",
+            "enabled": True,
+            "business_lines": [{"id": "shared", "name": "校园共享", "enabled": True}],
+        },
+    ]}, ensure_ascii=False), encoding="utf-8")
+    monkeypatch.setattr(business_line_service, "TASK_APPS_FILE", str(path))
+
+    assert _scope_summary([
+        {"app_package": "com.example.home", "app_name": "家庭应用", "business": "shared"},
+        {"app_package": "com.example.school", "app_name": "校园应用", "business": "shared"},
+    ]) == ("家庭应用、校园应用", "家庭共享、校园共享")

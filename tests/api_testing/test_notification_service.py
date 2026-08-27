@@ -3,6 +3,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from task_server.services import business_line_service
 from task_server.api_testing.repositories.execution_repository import ExecutionRepository
 from task_server.api_testing.repositories.notification_repository import NotificationRepository
 from task_server.api_testing.services.notification_service import (
@@ -162,6 +163,52 @@ def test_feishu_report_card_marks_mixed_business_execution():
     text = json.dumps(card, ensure_ascii=False)
     assert "**业务：** 家用、共享" in text
     assert "智小白3D｜家用、共享｜API 测试" in text
+
+
+def test_feishu_report_card_aggregates_applications_and_resolves_each_business(tmp_path, monkeypatch):
+    path = tmp_path / "task-apps.json"
+    path.write_text(json.dumps({"apps": [
+        {
+            "package": "com.example.home",
+            "name": "家庭应用",
+            "enabled": True,
+            "business_lines": [{"id": "shared", "name": "家庭共享", "enabled": True}],
+        },
+        {
+            "package": "com.example.school",
+            "name": "校园应用",
+            "enabled": True,
+            "business_lines": [{"id": "shared", "name": "校园共享", "enabled": True}],
+        },
+    ]}, ensure_ascii=False), encoding="utf-8")
+    monkeypatch.setattr(business_line_service, "TASK_APPS_FILE", str(path))
+    card = NotificationService._card(
+        _execution(request_snapshot={
+            "case_versions": [
+                {
+                    "id": "version-1",
+                    "app_package": "com.example.home",
+                    "app_name": "家庭应用",
+                    "business": "shared",
+                },
+                {
+                    "id": "version-2",
+                    "app_package": "com.example.school",
+                    "app_name": "校园应用",
+                    "business": "shared",
+                },
+            ],
+        }),
+        [],
+        {"project_name": "接口项目", "environment_name": "生产环境"},
+    )
+
+    text = json.dumps(card, ensure_ascii=False)
+    assert "家庭应用、校园应用｜家庭共享、校园共享｜API 测试" in text
+    assert "**应用：** 家庭应用、校园应用" in text
+    assert "**业务：** 家庭共享、校园共享" in text
+    assert "com.example" not in text
+    assert '"shared"' not in text
 
 
 def test_feishu_report_card_never_rounds_an_imperfect_run_to_100_percent():

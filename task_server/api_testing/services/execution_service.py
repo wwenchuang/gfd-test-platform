@@ -814,18 +814,16 @@ class ExecutionService:
     @classmethod
     def _case_version_snapshot(cls, version, requested_version_ids):
         request_template = getattr(version, "request_template", {}) or {}
-        business = (
-            str(request_template.get("business") or "").strip()
-            if isinstance(request_template, dict)
-            else ""
-        )
+        application = request_template if isinstance(request_template, dict) else {}
         return {
             "id": version.id,
             "case_id": version.case_id,
             "endpoint_id": version.endpoint_id,
             "version": version.version_number,
             "role": "requested" if version.id in requested_version_ids else "dependency",
-            "business": business,
+            "app_package": str(application.get("app_package") or "").strip(),
+            "app_name": str(application.get("app_name") or "").strip(),
+            "business": str(application.get("business") or "").strip(),
             "dependencies": cls._case_dependencies(version),
         }
 

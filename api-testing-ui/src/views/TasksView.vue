@@ -7,14 +7,17 @@ import type { ApiEndpoint, ApiTestTask } from '../api/contracts'
 import ContextBar from '../components/ContextBar.vue'
 import TaskListPanel from '../components/TaskListPanel.vue'
 import { useAssetsStore } from '../stores/assets'
+import { useCasesStore } from '../stores/cases'
 import { useContextStore } from '../stores/context'
 import { useTasksStore } from '../stores/tasks'
 import { compareGroupNames, endpointGroupName } from '../utils/endpointGroups'
 import { confirmApiExecution } from '../utils/executionConfirmation'
+import { applicationBusinessLabel } from '../utils/testApplications'
 import { compactDateTime, taskLatestResult, taskStateLabel } from '../utils/taskPresentation'
 
 const context = useContextStore()
 const assets = useAssetsStore()
+const cases = useCasesStore()
 const tasks = useTasksStore()
 const router = useRouter()
 
@@ -37,6 +40,13 @@ const groupedSelectedEndpoints = computed(() => {
     grouped.set(group, [...(grouped.get(group) || []), endpoint])
   }
   return [...grouped.entries()].sort(([left], [right]) => compareGroupNames(left, right))
+})
+const taskApplicationScope = computed(() => {
+  const selected = new Set(activeTask.value?.selected_endpoint_ids || [])
+  const labels = Object.values(cases.versions)
+    .filter(version => selected.has(version.endpoint_id))
+    .map(version => applicationBusinessLabel(version.app_package, version.app_name, version.business))
+  return [...new Set(labels)].join('；') || '未标注应用 · 未标注业务'
 })
 const sourceLabel = computed(() => {
   const source = context.sourceRevisions.find(item => item.id === activeTask.value?.source_revision_id)
@@ -102,7 +112,10 @@ async function selectTask(taskId: string, revealDetail = true): Promise<void> {
     source_revision_id: task.source_revision_id,
     environment_revision_id: context.environmentRevisionId || task.environment_revision_id,
   })
-  await assets.load(task.source_revision_id)
+  await Promise.all([
+    assets.load(task.source_revision_id),
+    cases.loadSavedCases(task.source_revision_id),
+  ])
   mobileDetailOpen.value = revealDetail
 }
 
@@ -277,6 +290,7 @@ function ensureTaskContextOptions(task: ApiTestTask, environmentRevisionId: stri
             <section class="management-summary-grid" aria-label="任务概要">
               <div><span>接口版本</span><strong>{{ sourceLabel }}</strong></div>
               <div><span>执行环境</span><strong>{{ environmentLabel }}</strong></div>
+              <div><span>应用与业务</span><strong>{{ taskApplicationScope }}</strong></div>
               <div><span>接口数量</span><strong>{{ activeTask.selected_endpoint_ids.length }}</strong></div>
               <div><span>可执行基线</span><strong>{{ activeTask.runnable_baseline_count }}</strong></div>
               <div><span>最近结果</span><strong>{{ taskLatestResult(activeTask) }}</strong></div>

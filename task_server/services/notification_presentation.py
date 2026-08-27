@@ -5,7 +5,12 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from .business_line_service import configured_business_lines
+from .business_line_service import (
+    PRIMARY_APP_PACKAGE,
+    business_line_name,
+    configured_business_lines,
+    test_application_name,
+)
 
 
 _APPLICATION_ALIASES = {
@@ -32,16 +37,18 @@ _PACKAGE_APPLICATION_NAMES = {
 def canonical_test_application_name(value: Any, package: str = "") -> str:
     """Return a stable card label without changing persisted application data."""
     text = re.sub(r"\s+", " ", str(value or "")).strip()
+    package_name = str(package or "").strip()
+    if package_name:
+        return test_application_name(package_name, text)
     key = re.sub(r"[\s_-]+", "", text).lower()
     if key in _APPLICATION_ALIASES:
         return _APPLICATION_ALIASES[key]
     if text:
         return text
-    package_name = str(package or "").strip()
     return _PACKAGE_APPLICATION_NAMES.get(package_name, package_name or "未命名应用")
 
 
-def canonical_test_business_name(*values: Any) -> str:
+def canonical_test_business_name(*values: Any, app_package=PRIMARY_APP_PACKAGE) -> str:
     """Resolve configured business lines before legacy name inference."""
     texts = [
         re.sub(r"\s+", " ", str(value or "")).strip()
@@ -49,7 +56,7 @@ def canonical_test_business_name(*values: Any) -> str:
         if value is not None
     ]
     keys = [re.sub(r"[\s_-]+", "", text).lower() for text in texts if text]
-    configured = configured_business_lines(include_disabled=True)
+    configured = configured_business_lines(app_package, include_disabled=True)
     configured_by_id = {str(item.get("id") or ""): item.get("name") for item in configured}
     labels = {
         re.sub(r"[\s_-]+", "", str(item.get(field) or "")).lower(): item.get("name")
@@ -60,21 +67,25 @@ def canonical_test_business_name(*values: Any) -> str:
     for key in keys:
         if key in labels:
             return labels[key]
-    if any("共享" in key for key in keys):
+    if app_package == PRIMARY_APP_PACKAGE and any("共享" in key for key in keys):
         return configured_by_id.get("shared") or "共享"
-    if any("家用" in key for key in keys):
+    if app_package == PRIMARY_APP_PACKAGE and any("家用" in key for key in keys):
         return configured_by_id.get("home") or "家用"
-    if any(
+    if app_package == PRIMARY_APP_PACKAGE and any(
         key in _APPLICATION_ALIASES or "智小白3d" in key or key == "3d打印"
         for key in keys
     ):
         return configured_by_id.get("home") or (configured[0].get("name") if configured else "未标注")
+    for text in texts:
+        resolved = business_line_name(text, app_package=app_package, fallback="")
+        if resolved:
+            return resolved
     return "未标注"
 
 
-def canonical_test_business_summary(values: Any, *fallback_values: Any) -> str:
+def canonical_test_business_summary(values: Any, *fallback_values: Any, app_package=PRIMARY_APP_PACKAGE) -> str:
     """Summarize explicit case businesses before using legacy name inference."""
-    configured = configured_business_lines(include_disabled=True)
+    configured = configured_business_lines(app_package, include_disabled=True)
     labels = {
         re.sub(r"[\s_-]+", "", str(item.get(field) or "")).lower(): item.get("name")
         for item in configured
@@ -89,4 +100,38 @@ def canonical_test_business_summary(values: Any, *fallback_values: Any) -> str:
             explicit.append(label)
     if explicit:
         return "、".join(explicit)
-    return canonical_test_business_name(*fallback_values)
+    return canonical_test_business_name(*fallback_values, app_package=app_package)
+
+
+def canonical_test_scope_summary(items: Any, *fallback_values: Any, fallback_package="") -> tuple[str, str]:
+    """Resolve application and business labels from immutable case/result snapshots."""
+    application_labels = []
+    business_labels = []
+    default_package = str(fallback_package or PRIMARY_APP_PACKAGE).strip() or PRIMARY_APP_PACKAGE
+    for raw in items or ():
+        if not isinstance(raw, dict):
+            continue
+        package = str(raw.get("app_package") or raw.get("package") or fallback_package or "").strip()
+        snapshot_name = raw.get("app_name") or raw.get("name") or ""
+        if package or snapshot_name:
+            application = canonical_test_application_name(snapshot_name, package)
+            if application not in application_labels:
+                application_labels.append(application)
+        business = str(raw.get("business") or raw.get("business_name") or "").strip()
+        if business:
+            label = business_line_name(
+                business,
+                app_package=package or default_package,
+                fallback="未标注业务",
+            )
+            if label not in business_labels:
+                business_labels.append(label)
+
+    fallback_name = next((value for value in fallback_values if str(value or "").strip()), "")
+    if not application_labels:
+        application_labels.append(canonical_test_application_name(fallback_name, fallback_package))
+    if not business_labels:
+        business_labels.append(
+            canonical_test_business_name(*fallback_values, app_package=default_package)
+        )
+    return "、".join(application_labels), "、".join(business_labels)

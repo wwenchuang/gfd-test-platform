@@ -7,12 +7,17 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { apiClient } from '../api/client'
 import { useContextStore } from '../stores/context'
+import { replaceTestApplications } from '../utils/testApplications'
 import ScheduledJobsView from './ScheduledJobsView.vue'
 
 describe('ScheduledJobsView', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     vi.restoreAllMocks()
+    replaceTestApplications([{
+      package: 'com.example.school', name: '校园应用', enabled: true,
+      business_lines: [{ id: 'shared', name: '校园共享', enabled: true }],
+    }])
     const context = useContextStore()
     Object.assign(context, {
       projectId: 'project-1',
@@ -218,7 +223,11 @@ describe('ScheduledJobsView', () => {
 
     await wrapper.get('[data-testid="scheduled-name"]').setValue('登录用例巡检')
     await wrapper.get('[data-testid="scheduled-target-type"]').setValue('cases')
-    await wrapper.findAll('[data-testid="scheduled-target-option"]').find(item => item.text().includes('登录成功用例'))!.trigger('click')
+    const target = wrapper.findAll('[data-testid="scheduled-target-option"]').find(item => item.text().includes('登录成功用例'))!
+    expect(target.text()).toContain('校园应用 · 校园共享')
+    expect(target.text()).not.toContain('com.example.school')
+    expect(target.text()).not.toContain('shared')
+    await target.trigger('click')
     await wrapper.get('[data-testid="scheduled-save"]').trigger('click')
     await flushPromises()
 
@@ -481,6 +490,9 @@ function mockScheduledJobAssets(): void {
               group_name: '',
               name: '登录成功用例',
               purpose: '验证登录主链路',
+              app_package: 'com.example.school',
+              app_name: '校园应用旧名称',
+              business: 'shared',
               priority: 'P0',
               request: {
                 method: 'POST',
@@ -521,6 +533,9 @@ function baselineFixture(overrides: Record<string, unknown>) {
     case_name: '登录成功用例',
     case_version: 1,
     priority: 'P0',
+    app_package: 'com.example.school',
+    app_name: '校园应用旧名称',
+    business: 'shared',
     origin: 'manual',
     method: 'POST',
     path: '/login',

@@ -14,7 +14,8 @@ import {
   type CaseWorkView,
 } from '../utils/caseListPresentation'
 import { compareGroupNames, endpointGroupName } from '../utils/endpointGroups'
-import { businessLineLabel as configuredBusinessLineLabel, preferredBusinessLineId } from '../utils/businessLines'
+import { preferredBusinessLineId } from '../utils/businessLines'
+import { applicationBusinessLabel } from '../utils/testApplications'
 import CaseGroupBranch from './CaseGroupBranch.vue'
 import CaseGroupPicker from './CaseGroupPicker.vue'
 import SearchHighlight from './SearchHighlight.vue'
@@ -76,7 +77,7 @@ const allItems = computed<CaseListItem[]>(() => {
       || fallbackEndpoint(version.endpoint_id, version.request.method, version.request.path, version.name)
     return {
       kind: 'version', id: version.id, endpoint, name: version.name,
-      meta: `v${version.version} · ${originLabel(version.origin)} · ${businessLabel(version.business, endpoint)}`,
+      meta: `v${version.version} · ${originLabel(version.origin)} · ${caseScopeLabel(version, endpoint)}`,
       groupName: version.group_name?.trim() || endpointGroupName(endpoint), version,
     }
   })
@@ -85,7 +86,7 @@ const allItems = computed<CaseListItem[]>(() => {
       || fallbackEndpoint(preview.endpoint_id, preview.case.request.method, preview.case.request.path, preview.case.name)
     return {
       kind: 'preview', id: preview.id, endpoint, name: preview.case.name,
-      meta: `候选 · ${originLabel(preview.origin)} · ${businessLabel(preview.case.business, endpoint)}`, groupName: endpointGroupName(endpoint), preview,
+      meta: `候选 · ${originLabel(preview.origin)} · ${caseScopeLabel(preview.case, endpoint)}`, groupName: endpointGroupName(endpoint), preview,
     }
   })
   return [...previews, ...versions]
@@ -158,10 +159,11 @@ function originLabel(origin: string): string {
   return '手工'
 }
 
-function businessLabel(business: CaseVersion['business'], endpoint: ApiEndpoint): string {
-  return configuredBusinessLineLabel(business || preferredBusinessLineId([
+function caseScopeLabel(item: Pick<CaseVersion, 'app_package' | 'app_name' | 'business'>, endpoint: ApiEndpoint): string {
+  const business = item.business || preferredBusinessLineId([
     endpointGroupName(endpoint), endpoint.summary, endpoint.path,
-  ]))
+  ], item.app_package)
+  return applicationBusinessLabel(item.app_package, item.app_name, business)
 }
 
 function baselinePolicyLabel(policy?: string): string {

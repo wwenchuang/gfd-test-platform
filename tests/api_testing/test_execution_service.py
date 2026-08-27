@@ -99,19 +99,25 @@ def test_task_snapshot_normalizes_empty_task_name():
     assert ExecutionService._task_snapshot({"name": "无 ID 任务"}) is None
 
 
-def test_case_version_snapshot_keeps_explicit_business():
+def test_case_version_snapshot_keeps_explicit_application_and_business():
     snapshot = ExecutionService._case_version_snapshot(
         SimpleNamespace(
             id="version-1",
             case_id="case-1",
             endpoint_id="endpoint-1",
             version_number=3,
-            request_template={"business": "shared"},
+            request_template={
+                "app_package": "com.example.school",
+                "app_name": "校园应用",
+                "business": "shared",
+            },
             dependency_spec={"dependencies": []},
         ),
         requested_version_ids={"version-1"},
     )
 
+    assert snapshot["app_package"] == "com.example.school"
+    assert snapshot["app_name"] == "校园应用"
     assert snapshot["business"] == "shared"
 
 

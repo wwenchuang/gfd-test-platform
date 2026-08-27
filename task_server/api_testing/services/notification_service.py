@@ -13,9 +13,7 @@ from task_server.services.feishu_service import (
     validate_feishu_webhook,
 )
 from task_server.services.notification_presentation import (
-    canonical_test_application_name,
-    canonical_test_business_name,
-    canonical_test_business_summary,
+    canonical_test_scope_summary,
 )
 
 from ..crypto import decrypt_secret, encrypt_secret, secret_fingerprint
@@ -292,15 +290,9 @@ class NotificationService:
         task_name = task.get("name") if isinstance(task, dict) else ""
         if not task_name:
             task_name = "未保存任务"
-        project_name = canonical_test_application_name(raw_project_name)
         case_versions = snapshot.get("case_versions", []) if isinstance(snapshot, dict) else []
-        explicit_businesses = [
-            item.get("business")
-            for item in case_versions
-            if isinstance(item, dict) and item.get("business")
-        ]
-        business_name = canonical_test_business_summary(
-            explicit_businesses,
+        project_name, business_name = canonical_test_scope_summary(
+            case_versions,
             raw_project_name,
             task_name,
         )

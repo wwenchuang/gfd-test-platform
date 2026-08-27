@@ -4,6 +4,7 @@ import { mount } from '@vue/test-utils'
 import { describe, expect, it } from 'vitest'
 
 import type { ApiEndpoint, CaseVersion, GeneratedCasePreview } from '../api/contracts'
+import { replaceTestApplications } from '../utils/testApplications'
 import CaseListPanel from './CaseListPanel.vue'
 
 const ENDPOINTS = [
@@ -107,6 +108,27 @@ const EXTRA_CASES = EXTRA_ENDPOINTS.map((endpoint, index) => ({
 })) as CaseVersion[]
 
 describe('CaseListPanel', () => {
+  it('shows application plus its package-scoped business without package or business IDs', () => {
+    replaceTestApplications([{
+      package: 'com.example.school', name: '校园应用', enabled: true,
+      business_lines: [{ id: 'shared', name: '校园共享', enabled: true }],
+    }])
+    const schoolCase = {
+      ...SAVED,
+      app_package: 'com.example.school',
+      app_name: '校园应用旧名称',
+      business: 'shared',
+    } as CaseVersion
+    const wrapper = mount(CaseListPanel, {
+      props: { endpoints: ENDPOINTS, versions: [schoolCase] },
+    })
+
+    const text = wrapper.get('[data-testid="case-version-version-add"]').text()
+    expect(text).toContain('校园应用 · 校园共享')
+    expect(text).not.toContain('com.example.school')
+    expect(text).not.toContain('shared')
+  })
+
   it('groups generated previews and saved cases by Apifox folder', () => {
     const wrapper = mount(CaseListPanel, {
       props: {

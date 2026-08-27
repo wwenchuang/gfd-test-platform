@@ -10,6 +10,7 @@ import { useBaselinesStore } from '../stores/baselines'
 import { useContextStore } from '../stores/context'
 import { useExecutionsStore } from '../stores/executions'
 import { useTasksStore } from '../stores/tasks'
+import { replaceTestApplications } from '../utils/testApplications'
 import BaselinesView from './BaselinesView.vue'
 
 function mountWithContext(): ReturnType<typeof mount> {
@@ -75,6 +76,8 @@ function baselineFixture(overrides: Record<string, unknown> = {}) {
     case_name: '添加收藏 - 正常流程',
     case_version: 2,
     priority: 'P0',
+    app_package: 'com.example.school',
+    app_name: '校园应用旧名称',
     business: 'shared',
     origin: 'ai',
     method: 'POST',
@@ -92,6 +95,10 @@ describe('BaselinesView fixed project assets', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     vi.restoreAllMocks()
+    replaceTestApplications([{
+      package: 'com.example.school', name: '校园应用', enabled: true,
+      business_lines: [{ id: 'shared', name: '校园共享', enabled: true }],
+    }])
   })
 
   it('keeps project baselines visible and selected when source or environment changes', async () => {
@@ -103,7 +110,8 @@ describe('BaselinesView fixed project assets', () => {
     await flushPromises()
 
     expect(wrapper.text()).toContain('添加收藏 - 正常流程')
-    expect(wrapper.text()).toContain('共享')
+    expect(wrapper.text()).toContain('校园应用 · 校园共享')
+    expect(wrapper.text()).not.toContain('com.example.school')
     expect(wrapper.text()).toContain('已通过调试并采纳')
     expect(wrapper.text()).not.toContain('passing debug evidence')
     await wrapper.get('input[type="checkbox"]').setValue(true)

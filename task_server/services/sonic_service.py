@@ -47,9 +47,7 @@ from ..storage import (
     write_text_file,
 )
 from .notification_presentation import (
-    canonical_test_application_name,
-    canonical_test_business_name,
-    canonical_test_business_summary,
+    canonical_test_scope_summary,
 )
 from .business_line_service import configured_test_applications
 
@@ -3631,10 +3629,6 @@ def build_sonic_suite_summary_card(suite: dict) -> dict:
     app = suite.get("app") or sonic_suite_app_info(suite.get("app_package", ""), "")
     app_package = app.get("package") or suite.get("app_package") or ""
     raw_app_name = sonic_notify_pretty_title_text(app.get("name") or suite.get("app_name"))
-    app_name = canonical_test_application_name(
-        raw_app_name,
-        app_package,
-    )
     run_mode = suite.get("run_mode") or "baseline"
     mode_label = "基线回归" if run_mode == "baseline" else "测试执行"
     outcome = sonic_suite_notification_outcome(suite)
@@ -3656,18 +3650,26 @@ def build_sonic_suite_summary_card(suite: dict) -> dict:
     suite_name = sonic_notify_display_value(
         suite.get("sonic_suite_name") or app.get("sonic_suite_name")
     )
-    explicit_businesses = [
-        item.get("business")
+    scope_items = [
+        {
+            "app_package": item.get("app_package") or app_package,
+            "app_name": item.get("app_name") or raw_app_name,
+            "business": item.get("business"),
+        }
         for item in results
-        if item.get("business")
     ]
-    if suite.get("business_name") or suite.get("business"):
-        explicit_businesses.insert(0, suite.get("business_name") or suite.get("business"))
-    business_name = canonical_test_business_summary(
-        explicit_businesses,
+    if suite.get("business_name") or suite.get("business") or not scope_items:
+        scope_items.insert(0, {
+            "app_package": app_package,
+            "app_name": raw_app_name,
+            "business": suite.get("business_name") or suite.get("business"),
+        })
+    app_name, business_name = canonical_test_scope_summary(
+        scope_items,
         raw_app_name,
         suite_name,
         *modules,
+        fallback_package=app_package,
     )
     context_lines = [
         f"**应用：** {app_name}",
@@ -4045,6 +4047,8 @@ def register_sonic_suite_result(job: dict) -> str:
         result = {
             "job_id": job.get("job_id", ""),
             "case_id": job.get("case_id", ""),
+            "app_package": app.get("package") or job.get("app_package", ""),
+            "app_name": app.get("name") or job.get("app_name", ""),
             "business": job.get("business", ""),
             "module": sonic_notify_clean_text(job.get("module", "")),
             "file": sonic_notify_clean_text(job.get("file", "")),

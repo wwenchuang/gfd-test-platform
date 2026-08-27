@@ -10,7 +10,7 @@ import { useContextStore } from '../stores/context'
 import { useExecutionsStore } from '../stores/executions'
 import { useTasksStore } from '../stores/tasks'
 import { confirmApiExecution } from '../utils/executionConfirmation'
-import { businessLineLabel } from '../utils/businessLines'
+import { applicationBusinessLabel } from '../utils/testApplications'
 
 const context = useContextStore()
 const baselines = useBaselinesStore()
@@ -72,7 +72,7 @@ const filteredBaselines = computed(() => {
     if (priorityFilter.value !== 'all' && item.priority !== priorityFilter.value) return false
     if (originFilter.value !== 'all' && item.origin !== originFilter.value) return false
     if (!needle) return true
-    return [item.case_name, item.endpoint_summary, item.path, item.method, baselineGroup(item), baselineBusinessLabel(item.business), ...item.tags]
+    return [item.case_name, item.endpoint_summary, item.path, item.method, baselineGroup(item), baselineScopeLabel(item), ...item.tags]
       .join(' ')
       .toLowerCase()
       .includes(needle)
@@ -345,8 +345,8 @@ function baselineOriginLabel(origin: string): string {
   return '手工'
 }
 
-function baselineBusinessLabel(business: ApiBaselineCase['business']): string {
-  return businessLineLabel(business)
+function baselineScopeLabel(item: ApiBaselineCase): string {
+  return applicationBusinessLabel(item.app_package, item.app_name, item.business)
 }
 
 function sourceRevisionName(item: ApiBaselineCase): string {
@@ -483,7 +483,7 @@ function adoptionReasonLabel(reason: string): string {
               <input type="checkbox" :data-testid="`baseline-select-${item.id}`" :checked="baselines.selectedIds.includes(item.id)" @change="baselines.toggle(item.id)" />
             </label>
             <span class="baseline-case-copy">
-              <strong>{{ item.case_name }} <b class="baseline-business-pill" :class="`business-${item.business || 'unset'}`">{{ baselineBusinessLabel(item.business) }}</b> <b v-if="isOneTimeBaseline(item)" :data-testid="`baseline-one-time-${item.id}`" class="baseline-one-time-pill">一次性</b></strong>
+              <strong>{{ item.case_name }} <b class="baseline-business-pill" :class="`business-${item.business || 'unset'}`">{{ baselineScopeLabel(item) }}</b> <b v-if="isOneTimeBaseline(item)" :data-testid="`baseline-one-time-${item.id}`" class="baseline-one-time-pill">一次性</b></strong>
               <small>
                 <b v-if="item.status !== 'active'" class="baseline-status-pill">历史版本</b>
                 {{ adoptionReasonLabel(item.adoption_reason) }}
