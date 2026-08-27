@@ -18,6 +18,7 @@ task-data/
 tests/artifacts/
 test-results/
 playwright-report/
+output/
 
 .env
 *.env

@@ -63,4 +63,30 @@ describe('ApiClient', () => {
       message: '工作区字段无效',
     })
   })
+
+  it('aborts an unresponsive request and returns a Chinese recovery message', async () => {
+    vi.useFakeTimers()
+    values.set('sessionToken', 'session-value')
+    vi.mocked(fetch).mockImplementation((_path, options) => new Promise((_resolve, reject) => {
+      options?.signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')))
+    }))
+
+    const result = expect(new ApiClient(1_000).get('/api/api-testing/v1/workspace')).rejects.toMatchObject({
+      status: 408,
+      message: expect.stringContaining('服务响应超时'),
+    })
+    await vi.advanceTimersByTimeAsync(1_000)
+    await result
+    vi.useRealTimers()
+  })
+
+  it('localizes a network connection failure', async () => {
+    values.set('sessionToken', 'session-value')
+    vi.mocked(fetch).mockRejectedValue(new TypeError('Failed to fetch'))
+
+    await expect(new ApiClient().get('/api/api-testing/v1/workspace')).rejects.toMatchObject({
+      status: 0,
+      message: expect.stringContaining('无法连接测试服务'),
+    })
+  })
 })

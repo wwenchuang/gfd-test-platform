@@ -189,6 +189,38 @@ describe('cases store', () => {
     ])
   })
 
+  it('keeps a persisted draft successful when post-save validation is temporarily unavailable', async () => {
+    const saved = { ...VERSION, id: 'version-2', version: 2 }
+    const post = vi.spyOn(apiClient, 'post')
+      .mockResolvedValueOnce({ data: { case_version: saved } })
+      .mockRejectedValueOnce(new Error('服务响应超时（30 秒）'))
+    const store = useCasesStore()
+    store.registerVersion(VERSION)
+
+    await expect(store.save(VERSION.endpoint_id)).resolves.toMatchObject({ id: 'version-2' })
+
+    expect(post).toHaveBeenCalledTimes(2)
+    expect(store.savedMessage).toContain('草稿 v2 已保存')
+    expect(store.savedMessage).toContain('校验暂未完成')
+    expect(store.saving).toBe(false)
+  })
+
+  it('does not start debugging when post-save validation is unavailable', async () => {
+    const saved = { ...VERSION, id: 'version-2', version: 2 }
+    vi.spyOn(apiClient, 'get').mockResolvedValue({ data: {
+      environment_revision: { revision_id: 'environment-1', variables: {}, services: {} },
+    } })
+    vi.spyOn(apiClient, 'post')
+      .mockResolvedValueOnce({ data: { case_version: saved } })
+      .mockRejectedValueOnce(new Error('服务响应超时（30 秒）'))
+    const store = useCasesStore()
+    store.registerVersion(VERSION)
+
+    await expect(store.saveForDebug(VERSION.endpoint_id, 'environment-1')).rejects.toThrow('草稿已保存，但保存后校验未完成')
+    expect(store.activeVersionByEndpoint[VERSION.endpoint_id]).toBe('version-2')
+    expect(store.saving).toBe(false)
+  })
+
   it('prepares the current draft for debug with the newly saved version', async () => {
     const saved = { ...VERSION, id: 'version-2', version: 2 }
     const get = vi.spyOn(apiClient, 'get').mockResolvedValue({ data: {

@@ -100,7 +100,7 @@ export const useCasesStore = defineStore('api-cases', {
       this.activeGeneratedPreviewId = ''
       for (const version of response.data.case_versions) this.registerVersion(version, false)
     },
-    async save(endpointId: string, environmentRevisionId?: string): Promise<CaseVersion> {
+    async save(endpointId: string, environmentRevisionId?: string, options: { requireValidation?: boolean } = {}): Promise<CaseVersion> {
       const draft = this.drafts[endpointId]
       if (!draft) throw new Error('请先编辑测试用例')
       this.saving = true
@@ -118,7 +118,19 @@ export const useCasesStore = defineStore('api-cases', {
         const version = response.data.case_version
         this.registerVersion(version)
         this.savedMessage = `草稿 v${version.version} 已保存`
-        await this.validate(version.id, environmentRevisionId)
+        try {
+          await this.validate(version.id, environmentRevisionId)
+        } catch (error) {
+          const reason = error instanceof Error ? error.message : '校验服务暂时不可用'
+          this.validationErrors = {}
+          this.validationWarnings = {
+            post_save_validation: `草稿已保存，但保存后校验未完成：${reason}`,
+          }
+          this.savedMessage = `草稿 v${version.version} 已保存；校验暂未完成，可稍后重新保存或调试时重试`
+          if (options.requireValidation) {
+            throw new Error(`草稿已保存，但保存后校验未完成：${reason}`)
+          }
+        }
         return version
       } finally {
         this.saving = false
@@ -133,7 +145,7 @@ export const useCasesStore = defineStore('api-cases', {
         this.validationWarnings = {}
         throw new Error(Object.values(localErrors)[0])
       }
-      const version = await this.save(endpointId, environmentRevisionId)
+      const version = await this.save(endpointId, environmentRevisionId, { requireValidation: true })
       const firstError = Object.values(this.validationErrors)[0]
       if (firstError) throw new Error(`请先修正用例校验错误：${firstError}`)
       return version
