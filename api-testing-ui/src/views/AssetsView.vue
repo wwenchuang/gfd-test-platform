@@ -2,7 +2,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import {
-  ArrowRight, Check, CheckCircle2, CloudDownload, Database,
+  ArrowRight, Check, CheckCircle2, ClipboardList, CloudDownload, Database,
   Edit3, FileJson, FolderPlus, KeyRound, Layers, RefreshCw, Save, Trash2,
   Upload,
 } from 'lucide-vue-next'
@@ -48,6 +48,9 @@ const workbenchLink = computed(() => {
     },
   }
 })
+const casesLink = computed(() => workbenchLink.value ? {
+  path: '/cases', query: workbenchLink.value.query,
+} : null)
 const projectCards = computed(() => context.projects.map(project => {
   const sourceOptions = context.sourceRevisions.filter(item => item.project_id === project.id)
   const environmentOptions = context.environmentRevisions.filter(item => item.project_id === project.id)
@@ -233,13 +236,34 @@ async function readSource(): Promise<void> {
 
 async function saveJsonRevision(): Promise<void> {
   localError.value = ''
+  let revision
   try {
-    const revision = await setup.activatePreview()
-    await context.loadOptions()
-    revisionId.value = revision.id
+    revision = await setup.activatePreview()
     selectedFile.value = null
     fileName.value = ''
-  } catch (error) { localError.value = error instanceof Error ? error.message : '接口版本保存失败' }
+  } catch (error) {
+    localError.value = error instanceof Error ? error.message : '接口版本保存失败'
+    return
+  }
+  try {
+    await context.loadOptions()
+    projectId.value = revision.project_id || projectId.value
+    revisionId.value = revision.id
+    const projectEnvironments = context.environmentRevisions.filter(
+      item => item.project_id === projectId.value,
+    )
+    if (!projectEnvironments.some(item => item.id === environmentRevisionId.value)) {
+      environmentRevisionId.value = latestEnvironmentRevision(projectEnvironments)?.id || ''
+    }
+    context.selectProject(projectId.value || null)
+    context.selectSourceRevision(revision.id)
+    context.selectEnvironmentRevision(environmentRevisionId.value || null)
+    await context.saveContext()
+    if (context.error) throw new Error(context.error)
+    setup.message = `接口版本 v${revision.revision_number} 已保存并切换为当前测试范围`
+  } catch (error) {
+    localError.value = `接口版本 v${revision.revision_number} 已保存，但自动切换测试范围失败：${error instanceof Error ? error.message : '请手动选择新版本'}`
+  }
 }
 
 function dateText(value?: string | null): string {
@@ -340,7 +364,7 @@ function dateText(value?: string | null): string {
               <span>{{ item.label }}</span>
             </div>
           </div>
-          <p>{{ setup.preview ? '检查更新只生成预览，不会覆盖当前版本。确认后保存为新接口版本和环境版本。' : '点击右侧“同步最新接口”后，这里会展示新增、变更和删除数量。' }}</p>
+          <p>{{ setup.preview ? '检查更新只生成预览，不会覆盖当前版本。点击“保存并切换到新版本”后，新增接口才会出现在工作台和用例管理。' : '点击右侧“检查接口更新”后，这里会展示新增、变更和删除数量。' }}</p>
         </div>
       </section>
 
@@ -351,12 +375,12 @@ function dateText(value?: string | null): string {
         </header>
         <button class="primary-command wide" type="button" :disabled="setup.busy || !canCheckUpdate" @click="checkApifoxUpdate">
           <RefreshCw :class="{ 'is-spinning': setup.apifoxOperation === 'checking_update' }" :size="16" />
-          {{ setup.apifoxOperation === 'checking_update' ? '正在同步…' : '同步最新接口' }}
+          {{ setup.apifoxOperation === 'checking_update' ? '正在检查更新…' : '检查接口更新' }}
         </button>
         <button v-if="setup.apifoxPreview" class="primary-command wide" type="button" :disabled="setup.busy" @click="saveApifoxUpdate">
           <RefreshCw v-if="setup.apifoxOperation === 'saving_revision'" class="is-spinning" :size="16" />
           <Check v-else :size="16" />
-          {{ setup.apifoxOperation === 'saving_revision' ? '正在保存…' : '保存为新版本' }}
+          {{ setup.apifoxOperation === 'saving_revision' ? '正在保存并切换…' : '保存并切换到新版本' }}
         </button>
         <button class="secondary-command wide" type="button" :disabled="!selectedProject" @click="openProjectEditor"><Edit3 :size="16" />编辑项目</button>
         <button class="secondary-command wide danger" type="button" :disabled="!selectedProject" @click="archiveProject"><Trash2 :size="16" />删除项目</button>
@@ -364,6 +388,9 @@ function dateText(value?: string | null): string {
           <span>进入工作台</span><ArrowRight :size="16" />
         </RouterLink>
         <button v-else class="primary-command wide" type="button" disabled>进入工作台</button>
+        <RouterLink v-if="casesLink" class="secondary-command wide" :to="casesLink">
+          <ClipboardList :size="16" /><span>进入用例管理</span>
+        </RouterLink>
       </aside>
     </section>
 

@@ -929,6 +929,9 @@ class ExecutionService:
                         "requested",
                     ),
                     "endpoint_id": item.endpoint_id,
+                    "endpoint_stable_key": endpoints[item.endpoint_id].stable_key
+                    if item.endpoint_id in endpoints
+                    else "",
                     "case_name": (
                         cases.get(versions[item.case_version_id].case_id).name
                         if item.case_version_id in versions

@@ -8,11 +8,11 @@ import type { ExecutionCaseResult, ExecutionView } from '../api/contracts'
 import {
   caseResultSummary,
   executionConclusion,
+  executionDisplayName,
   executionFailureBuckets,
   executionMetrics,
   executionScopeLabel,
   executionSourceScope,
-  executionTypeLabel,
   formatDuration,
   formatPassRate,
   statusLabel,
@@ -186,7 +186,7 @@ function edit(result: ExecutionCaseResult, execution: ExecutionView): void {
 }
 
 function reportName(report: ExecutionView): string {
-  return executionTypeLabel(report)
+  return executionDisplayName(report)
 }
 
 function feishuReportState(report: ExecutionView): FeishuReportState {

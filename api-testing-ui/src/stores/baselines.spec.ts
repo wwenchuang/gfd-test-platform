@@ -116,6 +116,38 @@ describe('baselines store', () => {
     expect(store.auditError).toBe('基线断言检查失败：请求超时')
   })
 
+  it('creates a review draft from an exact assertion suggestion and tracks it in the audit row', async () => {
+    const post = vi.spyOn(apiClient, 'post').mockResolvedValue({ data: {
+      case_version: { id: 'version-review', case_id: 'case-1', version: 3 },
+      source_baseline_id: 'baseline-1',
+      source_case_version_id: 'version-1',
+      suggestion_count: 1,
+    } })
+    const store = useBaselinesStore()
+    store.audit = {
+      summary: {
+        total: 1, verified: 0, upgrade_available: 1, http_failure: 0, business_failure: 0,
+        domain_assertion_required: 0, evidence_missing: 0, needs_review: 1, safe_review: 1,
+      },
+      items: [{
+        baseline_id: 'baseline-1', case_id: 'case-1', case_version_id: 'version-1', endpoint_id: 'endpoint-1',
+        case_name: '收藏查询', method: 'GET', path: '/collection/page', group_name: '收藏链路',
+        environment_revision_id: 'environment-1', evidence_execution_case_id: 'execution-case-1',
+        evidence_captured_at: '2026-08-27T10:00:00Z', status: 'upgrade_available', status_label: '可补精确断言',
+        reason: '可补充精确业务断言', actual_http_status: 200, business_path: '$.code', business_value: 0,
+        suggested_assertions: [{ type: 'json_path', operator: 'equals', expected: 0, path: '$.code', enabled: true }],
+        upgrade_draft_case_version_id: null,
+        execution: { level: 'direct', label: '可直接复核', selectable: true, reason: '只读接口' },
+      }],
+    }
+
+    const version = await store.createAssertionUpgradeDraft('baseline-1')
+
+    expect(post).toHaveBeenCalledWith('/api/api-testing/v1/baselines/baseline-1/assertion-upgrade-draft', {})
+    expect(version.id).toBe('version-review')
+    expect(store.auditByBaselineId.get('baseline-1')?.upgrade_draft_case_version_id).toBe('version-review')
+  })
+
   it('ignores an audit response invalidated by project navigation', async () => {
     let resolveAudit!: (value: unknown) => void
     vi.spyOn(apiClient, 'get').mockReturnValue(new Promise(resolve => {

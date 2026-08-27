@@ -6,6 +6,7 @@ from http.client import HTTPConnection
 from pathlib import Path
 from threading import Thread
 from types import SimpleNamespace
+from uuid import uuid4
 
 import pytest
 import redis
@@ -294,6 +295,38 @@ def test_baseline_assertion_audit_is_owner_scoped(
     assert forbidden.status == 404
 
 
+def test_baseline_assertion_upgrade_draft_returns_new_case_version(
+    http_client, owned_records, monkeypatch
+):
+    calls = []
+
+    def fake_create(_service, baseline_id, actor_id):
+        calls.append((baseline_id, actor_id))
+        return {
+            "case_version": {"id": "version-review", "version": 2},
+            "source_baseline_id": baseline_id,
+            "source_case_version_id": "version-old",
+            "suggestion_count": 1,
+        }
+
+    monkeypatch.setattr(
+        http.BaselineAssertionAuditService,
+        "create_upgrade_draft",
+        fake_create,
+    )
+    baseline_id = str(uuid4())
+
+    response = http_client.post(
+        f"/api/api-testing/v1/baselines/{baseline_id}/assertion-upgrade-draft",
+        {},
+        headers=_auth(),
+    )
+
+    assert response.status == 200
+    assert response.body["data"]["case_version"]["id"] == "version-review"
+    assert calls == [(baseline_id, "owner-a")]
+
+
 def test_workflow_step_preview_is_owner_scoped_and_returns_selectable_fields(
     http_client, owned_records, monkeypatch
 ):
@@ -410,9 +443,10 @@ def test_execution_collection_is_owner_scoped_and_uses_display_metadata(
     assert record["environment_name"] == "env"
     assert record["case_results"][0] == {
         "execution_case_id": record["case_results"][0]["execution_case_id"],
-        "case_version_id": owned_records["version"].id,
-        "endpoint_id": owned_records["endpoint"].id,
-        "case_name": "case",
+            "case_version_id": owned_records["version"].id,
+            "endpoint_id": owned_records["endpoint"].id,
+            "endpoint_stable_key": "b" * 64,
+            "case_name": "case",
         "endpoint_summary": "查询我的收藏",
         "method": "GET",
         "path": "/favorites",

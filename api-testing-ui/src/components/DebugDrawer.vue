@@ -69,6 +69,11 @@ function submit(): void {
   emit('submit', { caseVersionIds: [props.caseVersionId], environmentRevisionId: props.environmentRevisionId })
 }
 
+function requestClose(): void {
+  if (props.baselineAdopting) return
+  emit('close')
+}
+
 const drawer = ref<HTMLElement | null>(null)
 let returnTarget: HTMLElement | null = null
 onMounted(async () => {
@@ -89,7 +94,7 @@ function focusableElements(): HTMLElement[] {
 
 function handleKeydown(event: KeyboardEvent): void {
   if (event.key === 'Escape') {
-    emit('close')
+    requestClose()
     return
   }
   if (event.key !== 'Tab' || !drawer.value) return
@@ -113,7 +118,7 @@ function handleKeydown(event: KeyboardEvent): void {
 
 <template>
   <aside v-if="open" ref="drawer" class="debug-drawer" role="dialog" aria-modal="true" aria-labelledby="debug-drawer-title" tabindex="-1" @keydown="handleKeydown">
-    <header><div><Bug :size="18" /><h2 id="debug-drawer-title">在线调试</h2></div><button class="mini-icon" type="button" title="关闭调试" @click="emit('close')"><X :size="17" /></button></header>
+    <header><div><Bug :size="18" /><h2 id="debug-drawer-title">在线调试</h2></div><button class="mini-icon" type="button" title="关闭调试" :disabled="baselineAdopting" @click="requestClose"><X :size="17" /></button></header>
     <div class="debug-context"><span>草稿版本</span><code>{{ caseVersionId || '请先保存' }}</code><span>执行环境</span><strong>{{ environmentLabel || '未选择环境' }}</strong></div>
     <button v-if="canResume" data-testid="debug-resume" class="primary-command wide" type="button" :disabled="running" @click="emit('resume')"><Play :size="16" />{{ running ? '正在读取' : '继续查看进度' }}</button>
     <button v-else data-testid="debug-send" class="primary-command wide" type="button" :disabled="!caseVersionId || !environmentRevisionId || running" @click="submit"><Play :size="16" />{{ running ? '正在执行' : '发送调试请求' }}</button>

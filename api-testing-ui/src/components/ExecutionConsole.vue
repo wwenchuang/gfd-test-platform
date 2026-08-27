@@ -3,13 +3,13 @@ import { computed, ref, watch } from 'vue'
 import { RotateCw, Search, Square, Trash2 } from 'lucide-vue-next'
 
 import type { ExecutionCaseResult, ExecutionConnectionState, ExecutionEventView, ExecutionView } from '../api/contracts'
-import { executionConclusion, executionFailureBuckets, executionMetrics, executionScopeLabel, executionSourceScope, executionTypeLabel } from '../utils/executionPresentation'
+import { executionConclusion, executionDisplayName, executionFailureBuckets, executionMetrics, executionScopeLabel, executionSourceScope, executionTypeLabel } from '../utils/executionPresentation'
 import CaseEvidence from './CaseEvidence.vue'
 import CaseResultList from './CaseResultList.vue'
 import ExecutionLog from './ExecutionLog.vue'
 import ExecutionOverview from './ExecutionOverview.vue'
 
-const props = defineProps<{ executions: ExecutionView[]; active: ExecutionView | null; events: ExecutionEventView[]; connectionState: ExecutionConnectionState; loading?: boolean; endpointId?: string }>()
+const props = defineProps<{ executions: ExecutionView[]; active: ExecutionView | null; events: ExecutionEventView[]; connectionState: ExecutionConnectionState; loading?: boolean; endpointId?: string; endpointStableKey?: string }>()
 const emit = defineEmits<{
   select: [id: string]
   cancel: [id: string]
@@ -39,7 +39,10 @@ const selectedExecutionCount = computed(() => selectedExecutionIds.value.size)
 const visibleExecutions = computed(() => {
   const keyword = executionSearch.value.trim().toLocaleLowerCase()
   return props.executions.filter(execution => {
-    if (props.endpointId && !execution.case_results.some(result => result.endpoint_id === props.endpointId)) return false
+    if ((props.endpointId || props.endpointStableKey) && !execution.case_results.some(result => (
+      result.endpoint_id === props.endpointId
+      || Boolean(props.endpointStableKey && result.endpoint_stable_key === props.endpointStableKey)
+    ))) return false
     if (sourceFilter.value !== 'all' && executionSourceScope(execution) !== sourceFilter.value) return false
     const conclusion = executionConclusion(execution)
     if (conclusionFilter.value === 'passed' && conclusion.tone !== 'passed') return false
@@ -114,10 +117,6 @@ function executionResultCount(execution: ExecutionView): number {
 function executionTaskType(execution: ExecutionView): string {
   if (execution.execution_type === 'baseline_regression') return '基线'
   return executionResultCount(execution) > 1 ? '多条' : '单条'
-}
-
-function executionDisplayName(execution: ExecutionView): string {
-  return execution.task_name || executionTypeLabel(execution)
 }
 
 function executionSubtitle(execution: ExecutionView): string {

@@ -84,10 +84,14 @@ describe('DebugDrawer', () => {
 
     expect(wrapper.get('[data-testid="adopt-baseline"]').text()).toContain('采纳中')
     expect(wrapper.get('[data-testid="adopt-baseline"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.get('button[title="关闭调试"]').attributes('disabled')).toBeDefined()
+    await wrapper.get('[role="dialog"]').trigger('keydown', { key: 'Escape' })
+    expect(wrapper.emitted('close')).toBeUndefined()
 
     await wrapper.setProps({ baselineAdopting: false, baselineMessage: '已采纳为基线' })
     expect(wrapper.get('[data-testid="baseline-success"]').text()).toContain('后续可直接加入回归执行')
     expect(wrapper.get('[data-testid="adopt-baseline"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.get('button[title="关闭调试"]').attributes('disabled')).toBeUndefined()
   })
 
   it('offers progress recovery without submitting a duplicate execution', async () => {

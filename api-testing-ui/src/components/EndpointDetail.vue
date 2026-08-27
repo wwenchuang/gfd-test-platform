@@ -8,7 +8,7 @@ type DetailTab = 'definition' | 'request' | 'response' | 'cases' | 'history'
 type OperationRecord = Record<string, unknown>
 
 const props = defineProps<{ endpoint: ApiEndpoint | null }>()
-const emit = defineEmits<{ 'open-history': [endpointId: string] }>()
+const emit = defineEmits<{ 'open-history': [endpointId: string, endpointStableKey?: string] }>()
 const tab = ref<DetailTab>('definition')
 const operation = computed<OperationRecord>(() => props.endpoint?.operation || {})
 const parameters = computed<OperationRecord[]>(() => Array.isArray(operation.value.parameters)
@@ -52,6 +52,10 @@ function contentTypes(body: OperationRecord | null): string[] {
   if (!body?.content || typeof body.content !== 'object' || Array.isArray(body.content)) return []
   return Object.keys(body.content as Record<string, unknown>)
 }
+
+function openHistory(): void {
+  if (props.endpoint) emit('open-history', props.endpoint.id, props.endpoint.stable_key)
+}
 </script>
 
 <template>
@@ -78,7 +82,7 @@ function contentTypes(body: OperationRecord | null): string[] {
           <details class="raw-contract"><summary>查看原始 JSON</summary><pre>{{ JSON.stringify(operation.responses || {}, null, 2) }}</pre></details>
         </section>
         <p v-else-if="tab === 'cases'" class="state-message">下方编辑器展示当前草稿和已保存版本。</p>
-        <section v-else class="history-entry"><p>前往执行记录页查看该接口参与的调试、回归和定时任务结果。</p><button data-testid="endpoint-open-history" type="button" class="secondary-command" @click="emit('open-history', endpoint.id)"><ExternalLink :size="14" />筛选该接口的执行记录</button></section>
+        <section v-else class="history-entry"><p>前往执行记录页查看该接口跨版本参与的调试、回归和定时任务结果。</p><button data-testid="endpoint-open-history" type="button" class="secondary-command" @click="openHistory"><ExternalLink :size="14" />筛选该接口的执行记录</button></section>
       </div>
     </template>
   </section>

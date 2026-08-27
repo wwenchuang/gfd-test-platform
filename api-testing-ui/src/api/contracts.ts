@@ -188,6 +188,7 @@ export type LoadState = 'idle' | 'loading' | 'ready' | 'partial' | 'empty' | 'fa
 
 export interface ApiEndpoint {
   id: string
+  stable_key?: string
   revision_id?: string
   operation_id?: string
   method: string
@@ -436,6 +437,7 @@ export interface ExecutionCaseResult {
   execution_case_id: string
   case_version_id: string
   endpoint_id: string
+  endpoint_stable_key?: string
   execution_role?: 'requested' | 'dependency'
   case_name: string
   endpoint_summary: string
@@ -557,6 +559,7 @@ export interface BaselineAssertionAuditItem {
   environment_revision_id: string
   evidence_execution_case_id: string | null
   evidence_captured_at: string | null
+  upgrade_draft_case_version_id?: string | null
   status: BaselineAssertionAuditStatus
   status_label: string
   reason: string
@@ -582,6 +585,13 @@ export interface BaselineAssertionAuditSummary {
 export interface BaselineAssertionAuditResponse {
   summary: BaselineAssertionAuditSummary
   items: BaselineAssertionAuditItem[]
+}
+
+export interface BaselineAssertionUpgradeResponse {
+  case_version: CaseVersion
+  source_baseline_id: string
+  source_case_version_id: string
+  suggestion_count: number
 }
 
 export interface FeishuNotification {

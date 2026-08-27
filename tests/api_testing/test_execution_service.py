@@ -83,6 +83,46 @@ def test_execution_view_derives_feishu_notification_from_events():
     }
 
 
+def test_execution_view_exposes_stable_endpoint_key_for_cross_revision_history():
+    execution = SimpleNamespace(
+        id="execution-1",
+        project_id="project-1",
+        state="DONE",
+        execution_type="debug",
+        source_revision_id="source-1",
+        environment_revision_id="environment-1",
+        request_snapshot={},
+        summary={"total": 1, "passed": 1},
+        cancellation_requested_at=None,
+        created_at=None,
+        started_at=None,
+        finished_at=None,
+    )
+    child = SimpleNamespace(
+        id="execution-case-1",
+        case_version_id="version-1",
+        endpoint_id="endpoint-old-revision",
+        status="PASSED",
+        failure_category="",
+        duration_ms=10,
+        sanitized_result={},
+    )
+    endpoint = SimpleNamespace(
+        stable_key="stable-favorites-list",
+        summary="查询收藏",
+        method="POST",
+        path="/favorites/page",
+    )
+
+    view = ExecutionService._view(
+        execution,
+        (child,),
+        {"endpoints": {child.endpoint_id: endpoint}},
+    )
+
+    assert view.case_results[0]["endpoint_stable_key"] == "stable-favorites-list"
+
+
 def test_task_snapshot_keeps_task_identity_for_execution_history():
     snapshot = ExecutionService._task_snapshot(
         SimpleNamespace(id="task-1", name="收藏接口回归")
@@ -1038,6 +1078,7 @@ def test_duplicate_worker_is_compare_and_set_and_summary_keeps_child_truth(
     }
     assert view.case_statuses == ("PASSED", "FAILED")
     assert view.case_results[0]["case_version_id"] == first_case.id
+    assert view.case_results[0]["endpoint_stable_key"] == execution_context["endpoint"].stable_key
     assert view.case_results[0]["status"] == "PASSED"
     assert view.case_results[0]["sanitized_result"]["status"] == "PASSED"
     assert executor.calls == 2

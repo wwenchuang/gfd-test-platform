@@ -62,6 +62,14 @@ export function executionTypeLabel(executionOrType: ExecutionView | string): str
   return EXECUTION_TYPE_LABELS[value] || 'API 执行'
 }
 
+export function executionDisplayName(execution: ExecutionView): string {
+  if (execution.execution_type === 'debug' && execution.case_results.length === 1) {
+    const caseName = String(execution.case_results[0]?.case_name || '').trim()
+    if (caseName) return `${caseName} · 在线调试`
+  }
+  return String(execution.task_name || '').trim() || executionTypeLabel(execution)
+}
+
 export function executionSourceScope(execution: ExecutionView): ExecutionSourceScope {
   return execution.execution_type === 'debug' ? 'debug' : 'formal'
 }

@@ -14,6 +14,10 @@ import { replaceTestApplications } from '../utils/testApplications'
 import BaselinesView from './BaselinesView.vue'
 
 function mountWithContext(): ReturnType<typeof mount> {
+  return mountWithContextAndRouter().wrapper
+}
+
+function mountWithContextAndRouter() {
   const context = useContextStore()
   Object.assign(context, {
     projectId: 'project-1',
@@ -41,7 +45,7 @@ function mountWithContext(): ReturnType<typeof mount> {
     ],
   })
 
-  return mount(BaselinesView, {
+  const wrapper = mount(BaselinesView, {
     global: {
       plugins: [router],
       stubs: {
@@ -57,6 +61,7 @@ function mountWithContext(): ReturnType<typeof mount> {
       },
     },
   })
+  return { wrapper, router }
 }
 
 function buttonByText(wrapper: ReturnType<typeof mount>, text: string) {
@@ -125,6 +130,33 @@ describe('BaselinesView fixed project assets', () => {
     expect(wrapper.text()).toContain('来源版本')
     expect((wrapper.get('input[type="checkbox"]').element as HTMLInputElement).checked).toBe(true)
     expect(vi.mocked(apiClient.get).mock.calls.filter(([path]) => path.includes('/baselines'))).toHaveLength(1)
+  })
+
+  it('opens a historical baseline in its own source and environment context', async () => {
+    vi.spyOn(apiClient, 'get').mockResolvedValue({ data: { baselines: [
+      baselineFixture({
+        endpoint_id: 'endpoint-v1',
+        source_revision_id: 'source-v1',
+        environment_revision_id: 'env-v6',
+        case_version_id: 'case-version-v1',
+      }),
+    ] } })
+    const { wrapper, router } = mountWithContextAndRouter()
+    await flushPromises()
+
+    await wrapper.get('button[title="编辑用例"]').trigger('click')
+    await flushPromises()
+
+    expect(router.currentRoute.value).toMatchObject({
+      name: 'workbench',
+      query: {
+        projectId: 'project-1',
+        sourceRevisionId: 'source-v1',
+        environmentRevisionId: 'env-v6',
+        endpointId: 'endpoint-v1',
+        caseVersionId: 'case-version-v1',
+      },
+    })
   })
 
   it('renames and deletes a custom baseline group without hiding its cases', async () => {
@@ -415,6 +447,49 @@ describe('BaselinesView fixed project assets', () => {
     expect(buttonByText(wrapper, '保存为基线回归任务').attributes('disabled')).toBeDefined()
     expect(buttonByText(wrapper, '按当前环境执行所选基线').attributes('disabled')).toBeDefined()
     expect(wrapper.text()).toContain('所选复核基线的审计证据环境与当前执行环境不一致')
+  })
+
+  it('creates an assertion review draft and opens it in the original baseline context', async () => {
+    vi.spyOn(apiClient, 'get').mockImplementation(async path => {
+      if (path.includes('assertion-audit')) return { data: {
+        summary: {
+          total: 1, verified: 0, upgrade_available: 1, http_failure: 0, business_failure: 0,
+          domain_assertion_required: 0, evidence_missing: 0, needs_review: 1, safe_review: 1,
+        },
+        items: [{
+          baseline_id: 'baseline-1', case_id: 'case-1', case_version_id: 'version-1', endpoint_id: 'endpoint-1',
+          case_name: '添加收藏 - 正常流程', method: 'POST', path: '/collection/add', group_name: '我的收藏',
+          environment_revision_id: 'env-v6', evidence_execution_case_id: 'execution-1', evidence_captured_at: '2026-08-27T10:00:00Z',
+          status: 'upgrade_available', status_label: '可补精确断言', reason: '可补充精确业务断言',
+          actual_http_status: 200, business_path: '$.code', business_value: 0,
+          suggested_assertions: [{ type: 'json_path', operator: 'equals', expected: 0, path: '$.code', enabled: true }],
+          upgrade_draft_case_version_id: null,
+          execution: { level: 'manual', label: '需人工复核', selectable: false, reason: '写操作需逐条复核' },
+        }],
+      } } as never
+      return { data: { baselines: [baselineFixture()] } } as never
+    })
+    const post = vi.spyOn(apiClient, 'post').mockResolvedValue({ data: {
+      case_version: { id: 'version-review', case_id: 'case-1', version: 3 },
+      source_baseline_id: 'baseline-1', source_case_version_id: 'version-1', suggestion_count: 1,
+    } })
+    const { wrapper, router } = mountWithContextAndRouter()
+    await router.isReady()
+    await flushPromises()
+
+    await buttonByText(wrapper, '检查断言').trigger('click')
+    await flushPromises()
+    await buttonByText(wrapper, '生成待复核版本').trigger('click')
+    await flushPromises()
+
+    expect(post).toHaveBeenCalledWith('/api/api-testing/v1/baselines/baseline-1/assertion-upgrade-draft', {})
+    expect(router.currentRoute.value).toMatchObject({
+      name: 'workbench',
+      query: {
+        projectId: 'project-1', sourceRevisionId: 'source-v1', environmentRevisionId: 'env-v6',
+        endpointId: 'endpoint-1', caseVersionId: 'version-review',
+      },
+    })
   })
 
   it('clears an audit-only filter when baselines are refreshed', async () => {

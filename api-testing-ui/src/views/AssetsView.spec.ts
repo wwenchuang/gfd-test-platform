@@ -67,7 +67,7 @@ describe('AssetsView Apifox actions', () => {
     }
     await nextTick()
 
-    expect(buttonText(wrapper)).toContain('保存为新版本')
+    expect(buttonText(wrapper)).toContain('保存并切换到新版本')
     expect(wrapper.text()).toContain('检查更新只生成预览，不会覆盖当前版本')
   })
 
@@ -95,6 +95,46 @@ describe('AssetsView Apifox actions', () => {
     await flushPromises()
 
     expect((wrapper.get('[data-testid="platform-project-select"]').element as HTMLSelectElement).value).toBe('project-2')
+  })
+
+  it('switches the saved workspace to a newly activated JSON interface revision', async () => {
+    const wrapper = mount(AssetsView, {
+      global: { stubs: { RouterLink: { template: '<a><slot /></a>' } } },
+    })
+    await flushPromises()
+    const context = useContextStore()
+    const setup = useSetupStore()
+    setup.preview = {
+      id: 'preview-json', project_id: 'project-1', source_id: 'source-a', previous_revision_id: null,
+      candidate_revision_id: 'source-v2', added_count: 2, changed_count: 0, removed_count: 0, changes: [],
+    }
+    vi.spyOn(setup, 'activatePreview').mockResolvedValue({
+      id: 'source-v2', source_id: 'source-a', project_id: 'project-1', name: '本地 OpenAPI',
+      revision_number: 2, endpoint_count: 12, status: 'active',
+    } as never)
+    vi.spyOn(context, 'loadOptions').mockImplementation(async () => {
+      context.projects = [{ id: 'project-1', name: '3D 家用' }]
+      context.sourceRevisions = [{
+        id: 'source-v2', source_id: 'source-a', project_id: 'project-1', name: '本地 OpenAPI',
+        revision_number: 2, endpoint_count: 12,
+      }]
+      context.environmentRevisions = [{
+        id: 'env-v3', environment_id: 'environment-1', project_id: 'project-1', name: '测试环境', revision: 3,
+      }]
+    })
+    const saveContext = vi.spyOn(context, 'saveContext').mockImplementation(async () => {
+      context.savedContextSignature = JSON.stringify(['project-1', 'source-v2', 'env-v3'])
+    })
+    await wrapper.vm.$nextTick()
+
+    await buttonByText(wrapper, '确认保存接口').trigger('click')
+    await flushPromises()
+
+    expect(context.projectId).toBe('project-1')
+    expect(context.sourceRevisionId).toBe('source-v2')
+    expect(context.environmentRevisionId).toBe('env-v3')
+    expect(saveContext).toHaveBeenCalledOnce()
+    expect(wrapper.text()).toContain('接口版本 v2 已保存并切换为当前测试范围')
   })
 
   it('uses the project passed from the environment asset center instead of the saved workspace project', async () => {
@@ -193,7 +233,8 @@ describe('AssetsView Apifox actions', () => {
     expect(wrapper.text()).toContain('打印后台')
     expect(wrapper.text()).toContain('v2 · 999 个接口')
     expect(wrapper.text()).toContain('2 个环境')
-    expect(wrapper.text()).toContain('同步最新接口')
+    expect(wrapper.text()).toContain('检查接口更新')
+    expect(wrapper.text()).toContain('进入用例管理')
     expect(wrapper.text()).toContain('编辑项目')
     expect(wrapper.text()).toContain('删除项目')
     expect(wrapper.text()).toContain('进入工作台')
@@ -221,4 +262,10 @@ describe('AssetsView Apifox actions', () => {
 
 function buttonText(wrapper: ReturnType<typeof mount>): string {
   return wrapper.findAll('button').map(item => item.text()).join('|')
+}
+
+function buttonByText(wrapper: ReturnType<typeof mount>, text: string) {
+  const button = wrapper.findAll('button').find(item => item.text().includes(text))
+  expect(button, `button ${text}`).toBeTruthy()
+  return button!
 }

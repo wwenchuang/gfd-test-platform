@@ -188,6 +188,58 @@ describe('CasesView', () => {
     expect(window.confirm).toHaveBeenCalledWith('删除用例“我的收藏列表 - 基础正向流程”？历史执行记录和已采纳基线证据会保留。')
     expect(archive).toHaveBeenCalledWith(ENDPOINT.id, 'version-1')
   })
+
+  it('opens the exact source and environment passed by an upstream generation flow', async () => {
+    const context = useContextStore()
+    Object.assign(context, {
+      projectId: 'project-1',
+      sourceRevisionId: 'source-old',
+      environmentRevisionId: 'environment-old',
+      projects: [{ id: 'project-1', name: '3D 家用' }],
+      sourceRevisions: [
+        { id: 'source-old', source_id: 'source-a', project_id: 'project-1', name: '默认模块', revision_number: 1, endpoint_count: 1 },
+        { id: 'source-current', source_id: 'source-a', project_id: 'project-1', name: '默认模块', revision_number: 2, endpoint_count: 2 },
+      ],
+      environmentRevisions: [
+        { id: 'environment-old', environment_id: 'environment-a', project_id: 'project-1', name: '测试环境', revision: 1 },
+        { id: 'environment-current', environment_id: 'environment-a', project_id: 'project-1', name: '测试环境', revision: 2 },
+      ],
+    })
+    vi.spyOn(context, 'loadSavedContext').mockResolvedValue()
+    vi.spyOn(context, 'loadOptions').mockResolvedValue()
+
+    const assets = useAssetsStore()
+    const loadAssets = vi.spyOn(assets, 'load').mockResolvedValue()
+    const cases = useCasesStore()
+    const loadCases = vi.spyOn(cases, 'loadSavedCases').mockResolvedValue()
+    vi.spyOn(cases, 'restoreLatestAiJob').mockResolvedValue()
+    const tasks = useTasksStore()
+    vi.spyOn(tasks, 'list').mockResolvedValue([])
+    vi.spyOn(tasks, 'restore').mockResolvedValue(null)
+
+    const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/cases', name: 'cases', component: CasesView }] })
+    await router.push({
+      name: 'cases',
+      query: {
+        projectId: 'project-1',
+        sourceRevisionId: 'source-current',
+        environmentRevisionId: 'environment-current',
+      },
+    })
+    await router.isReady()
+    mount(CasesView, {
+      global: {
+        plugins: [router],
+        stubs: { ContextBar: true, EndpointDetail: true, CaseEditor: true, DebugDrawer: true },
+      },
+    })
+    await flushPromises()
+
+    expect(context.sourceRevisionId).toBe('source-current')
+    expect(context.environmentRevisionId).toBe('environment-current')
+    expect(loadAssets).toHaveBeenCalledWith('source-current')
+    expect(loadCases).toHaveBeenCalledWith('source-current')
+  })
 })
 
 function savedCase(id: string, name: string): CaseVersion {

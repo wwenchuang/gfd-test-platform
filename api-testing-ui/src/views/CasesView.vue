@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { ArrowLeft, CircleAlert, CircleCheck, Clock3, ListChecks, Plus, RefreshCw, Sparkles } from 'lucide-vue-next'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 
 import type { ApiEndpoint, CaseDraft, CaseVersion, GeneratedCasePreview } from '../api/contracts'
 import CaseEditor from '../components/CaseEditor.vue'
@@ -22,6 +22,7 @@ const assets = useAssetsStore()
 const cases = useCasesStore()
 const tasks = useTasksStore()
 const router = useRouter()
+const route = useRoute()
 
 const selectedIds = ref<string[]>([])
 const activeEndpoint = ref<ApiEndpoint | null>(null)
@@ -71,8 +72,8 @@ const aiJobStateLabel = computed(() => {
 })
 const aiJobFailed = computed(() => Boolean(cases.aiJob && ['failed', 'failed_gateway', 'failed_validation'].includes(cases.aiJob.state)))
 
-function openEndpointHistory(endpointId: string): void {
-  void router.push({ name: 'runs', query: { endpointId } })
+function openEndpointHistory(endpointId: string, endpointKey?: string): void {
+  void router.push({ name: 'runs', query: { endpointId, ...(endpointKey ? { endpointKey } : {}) } })
 }
 
 function openCaseDebugHistory(version: CaseVersion): void {
@@ -87,6 +88,7 @@ function openCaseBaseline(version: CaseVersion): void {
 
 onMounted(async () => {
   await Promise.all([context.loadSavedContext(), context.loadOptions()])
+  restoreContextFromRoute()
   if (context.projectId) {
     await tasks.list(context.projectId)
     const restored = await tasks.restore(context.projectId)
@@ -97,6 +99,26 @@ onMounted(async () => {
     await cases.restoreLatestAiJob(context.projectId, context.sourceRevisionId)
   }
 })
+
+function restoreContextFromRoute(): boolean {
+  const projectId = routeValue(route.query.projectId)
+  const sourceRevisionId = routeValue(route.query.sourceRevisionId)
+  const requestedEnvironmentId = routeValue(route.query.environmentRevisionId)
+  const source = context.sourceRevisions.find(item => item.id === sourceRevisionId && item.project_id === projectId)
+  if (!projectId || !source) return false
+  const savedEnvironmentId = context.environmentRevisions.some(item => (
+    item.id === context.environmentRevisionId && item.project_id === projectId
+  )) ? context.environmentRevisionId : null
+  const environmentRevisionId = context.environmentRevisions.some(item => (
+    item.id === requestedEnvironmentId && item.project_id === projectId
+  )) ? requestedEnvironmentId : savedEnvironmentId
+  context.restoreExecutionContext({ project_id: projectId, source_revision_id: source.id, environment_revision_id: environmentRevisionId })
+  return true
+}
+
+function routeValue(value: unknown): string {
+  return typeof value === 'string' ? value : ''
+}
 
 async function loadSource(sourceRevisionId: string): Promise<void> {
   localError.value = ''

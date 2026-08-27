@@ -1,10 +1,12 @@
-"""Read-only assertion audit for adopted API baselines."""
+"""Assertion audit and evidence-gated review drafts for adopted API baselines."""
 
 import copy
 import json
 from collections.abc import Mapping
 
+from ..contracts.case import parse_case_payload
 from ..repositories.case_repository import CaseRepository
+from .case_service import CaseNotFoundError, CaseService
 from .workflow_policy import (
     classify_endpoint_workflow,
     is_print_cancel_step,
@@ -13,6 +15,10 @@ from .workflow_policy import (
 
 
 BUSINESS_SUCCESS_VALUES = {"$.code": (0, 200), "$.success": (True,)}
+
+
+class BaselineAssertionUpgradeError(ValueError):
+    pass
 
 
 class BaselineAssertionAuditService:
@@ -77,6 +83,11 @@ class BaselineAssertionAuditService:
                     "environment_revision_id": baseline.environment_revision_id,
                     "evidence_execution_case_id": baseline.debug_execution_case_id,
                     "evidence_captured_at": _captured_at(evidence, attempt),
+                    "upgrade_draft_case_version_id": (
+                        case.active_version_id
+                        if case.active_version_id != version.id
+                        else None
+                    ),
                     **analysis,
                 })
 
@@ -104,6 +115,91 @@ class BaselineAssertionAuditService:
             },
             "items": items,
         }
+
+    def create_upgrade_draft(self, baseline_id, actor_id):
+        with self.session_factory.begin() as session:
+            repository = CaseRepository(session)
+            baseline = repository.get_baseline_for_update(baseline_id)
+            if (
+                baseline is None
+                or baseline.owner_id != actor_id
+                or baseline.status != "active"
+            ):
+                raise CaseNotFoundError("API baseline was not found")
+
+            version = repository.get_version(baseline.case_version_id)
+            case = repository.get_case_for_update(baseline.case_id)
+            endpoint = repository.get_endpoint(version.endpoint_id) if version else None
+            if version is None or case is None or endpoint is None:
+                raise CaseNotFoundError("API baseline case was not found")
+            if case.active_version_id != version.id:
+                raise BaselineAssertionUpgradeError(
+                    "该用例已有较新的用例版本，请继续复核现有版本，避免覆盖人工修改"
+                )
+
+            evidence = repository.get_execution_case(
+                baseline.debug_execution_case_id
+            )
+            attempt = repository.latest_execution_attempts(
+                [baseline.debug_execution_case_id]
+            ).get(baseline.debug_execution_case_id)
+            assertions = [
+                _stored_assertion(item)
+                for item in repository.get_assertions(version.id)
+            ]
+            extractions = [
+                _stored_extraction(item)
+                for item in repository.get_extractions(version.id)
+            ]
+            analysis = analyze_baseline_assertions(
+                assertions,
+                _evidence_response(evidence, attempt),
+                classify_endpoint_workflow(endpoint),
+                version.processing_spec or {},
+                extractions,
+            )
+            suggestions = analysis["suggested_assertions"]
+            if analysis["status"] != "upgrade_available" or not suggestions:
+                raise BaselineAssertionUpgradeError(
+                    f"当前审计结果为“{analysis['status_label']}”，不能生成待复核版本"
+                )
+            for suggestion in suggestions:
+                if any(
+                    item.get("enabled", True) is not False
+                    and item.get("type") == suggestion.get("type")
+                    and item.get("path") == suggestion.get("path")
+                    for item in assertions
+                ):
+                    raise BaselineAssertionUpgradeError(
+                        "现有业务断言与实际响应冲突，请人工确认测试意图后修改"
+                    )
+
+            current_view = CaseService._version_view(repository, version, case)
+            payload = parse_case_payload(
+                _upgrade_payload(current_view, suggestions),
+                allow_disabled_scope=True,
+            )
+            upgraded = CaseService._persist_version(
+                repository,
+                case,
+                payload,
+                repository.next_version_number(case.id),
+                actor_id,
+                version.group_name or "",
+            )
+            case.active_version_id = upgraded.id
+            case.updated_by = actor_id
+            repository.flush()
+            return {
+                "case_version": CaseService._version_view(
+                    repository,
+                    upgraded,
+                    case,
+                ),
+                "source_baseline_id": baseline.id,
+                "source_case_version_id": version.id,
+                "suggestion_count": len(suggestions),
+            }
 
 
 def analyze_baseline_assertions(assertions, response, workflow, processing, extractions=()):
@@ -232,6 +328,65 @@ def _result(status, reason, actual_http_status, business_path, business_value, s
         "suggested_assertions": copy.deepcopy(suggestions),
         "execution": execution,
     }
+
+
+def _upgrade_payload(version, suggestions):
+    assertions = [
+        _compact({
+            "type": item.type,
+            "operator": item.operator,
+            "expected": _plain(item.expected),
+            "path": item.path,
+            "name": item.name,
+            "timeout_ms": item.timeout_ms,
+            "enabled": item.enabled,
+        })
+        for item in version.assertions
+    ]
+    assertions.extend(_plain(item) for item in suggestions)
+    return {
+        "name": version.name,
+        "purpose": version.purpose,
+        "priority": version.priority,
+        "app_package": version.app_package,
+        "app_name": version.app_name,
+        "business": version.business,
+        "request": _plain(version.request),
+        "data_rows": [
+            {
+                "name": item.name,
+                "values": _plain(item.values),
+                "enabled": item.enabled,
+            }
+            for item in version.data_rows
+        ],
+        "assertions": assertions,
+        "extractions": [
+            _compact({
+                "target": item.target,
+                "type": item.type,
+                "path": item.path,
+                "name": item.name,
+                "required": item.required,
+                "default": _plain(item.default),
+            })
+            for item in version.extractions
+        ],
+        "dependencies": [_plain(item) for item in version.dependencies],
+        "processing": _plain(version.processing),
+    }
+
+
+def _compact(value):
+    return {key: item for key, item in value.items() if item is not None}
+
+
+def _plain(value):
+    if isinstance(value, Mapping):
+        return {str(key): _plain(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_plain(item) for item in value]
+    return copy.deepcopy(value)
 
 
 def _assertion_dict(item):

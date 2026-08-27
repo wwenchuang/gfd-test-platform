@@ -7,6 +7,7 @@ import EndpointDetail from './EndpointDetail.vue'
 
 const endpoint = {
   id: 'endpoint-1',
+  stable_key: 'stable-favorites-list',
   operation_id: 'listFavorites',
   method: 'GET',
   path: '/collection/list',
@@ -43,6 +44,6 @@ describe('EndpointDetail', () => {
     await wrapper.findAll('.detail-tabs button')[4].trigger('click')
     await wrapper.get('[data-testid="endpoint-open-history"]').trigger('click')
 
-    expect(wrapper.emitted('open-history')).toEqual([['endpoint-1']])
+    expect(wrapper.emitted('open-history')).toEqual([['endpoint-1', 'stable-favorites-list']])
   })
 })

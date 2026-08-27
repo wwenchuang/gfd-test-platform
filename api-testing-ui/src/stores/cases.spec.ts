@@ -416,6 +416,63 @@ describe('cases store', () => {
     expect(store.activeVersionByEndpoint['endpoint-1']).toBe('version-2')
   })
 
+  it('does not let an older AI generation result replace a newer debugged baseline version', async () => {
+    const current = {
+      ...VERSION,
+      id: 'version-2',
+      version: 2,
+      lifecycle: {
+        debug_status: 'PASSED',
+        debug_execution_id: 'execution-debug',
+        baseline_status: 'active',
+        baseline_id: 'baseline-1',
+      },
+    } as CaseVersion
+    const completedJob = {
+      id: 'job-completed', state: 'completed', endpoint_ids: ['endpoint-1'],
+      requested_model: 'qwen', actual_model: 'qwen', fallback_used: false, summary: {},
+      batches: [{
+        id: 'batch-1', sequence: 1, state: 'completed', endpoint_ids: ['endpoint-1'],
+        requested_model: 'qwen', actual_model: 'qwen', fallback_used: false, fallback_reason: '',
+        generated_draft_ids: ['version-1'], validation_errors: [],
+      }],
+    }
+    vi.spyOn(apiClient, 'get')
+      .mockResolvedValueOnce({ data: { job: completedJob } })
+      .mockResolvedValueOnce({ data: { case_version: VERSION } })
+    const store = useCasesStore()
+    store.registerVersion(current)
+
+    await store.restoreLatestAiJob('project-1', 'source-1')
+
+    expect(store.versionIdsByEndpoint['endpoint-1']).toEqual(['version-2'])
+    expect(store.activeVersionByEndpoint['endpoint-1']).toBe('version-2')
+    expect(store.versions['version-2'].lifecycle).toMatchObject({
+      debug_status: 'PASSED', baseline_status: 'active',
+    })
+    expect(store.versions['version-1']).toBeUndefined()
+  })
+
+  it('keeps lifecycle evidence when the same version is refreshed by a metadata-only response', () => {
+    const store = useCasesStore()
+    store.registerVersion({
+      ...VERSION,
+      lifecycle: {
+        debug_status: 'PASSED',
+        debug_execution_id: 'execution-debug',
+        baseline_status: 'active',
+        baseline_id: 'baseline-1',
+      },
+    } as CaseVersion)
+
+    store.registerVersion({ ...VERSION, group_name: '发版回归', lifecycle: {} } as CaseVersion, false)
+
+    expect(store.versions[VERSION.id].group_name).toBe('发版回归')
+    expect(store.versions[VERSION.id].lifecycle).toMatchObject({
+      debug_status: 'PASSED', baseline_status: 'active', baseline_id: 'baseline-1',
+    })
+  })
+
   it('archives the selected saved case and activates the next available version', async () => {
     const post = vi.spyOn(apiClient, 'post')
     const del = vi.spyOn(apiClient, 'delete').mockResolvedValue({ data: { case: { id: 'case-1', status: 'archived' } } })

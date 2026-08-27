@@ -27,6 +27,8 @@ onMounted(async () => {
     && (executionId === initialExecutionId || executionId !== executions.selectingExecutionId)
   ) {
     await executions.select(executionId)
+  } else if (!executionId) {
+    await selectFirstEndpointExecution()
   }
 })
 watch(() => route.query.executionId, async value => {
@@ -40,9 +42,20 @@ function requestedExecutionId(): string {
   return typeof route.query.executionId === 'string' ? route.query.executionId : ''
 }
 
+async function selectFirstEndpointExecution(): Promise<void> {
+  const endpointId = typeof route.query.endpointId === 'string' ? route.query.endpointId : ''
+  const endpointKey = typeof route.query.endpointKey === 'string' ? route.query.endpointKey : ''
+  if (!endpointId && !endpointKey) return
+  const matching = executions.executions.find(execution => execution.case_results.some(result => (
+    result.endpoint_id === endpointId || Boolean(endpointKey && result.endpoint_stable_key === endpointKey)
+  )))
+  if (matching && matching.id !== executions.active?.id) await executions.select(matching.id)
+}
+
 function clearEndpointFilter(): void {
   const query = { ...route.query }
   delete query.endpointId
+  delete query.endpointKey
   void router.replace({ query })
 }
 
@@ -88,6 +101,7 @@ async function deleteExecutions(executionIds: string[]): Promise<void> {
       :connection-state="executions.connectionState"
       :loading="executions.loading || Boolean(executions.selectingExecutionId)"
       :endpoint-id="typeof route.query.endpointId === 'string' ? route.query.endpointId : ''"
+      :endpoint-stable-key="typeof route.query.endpointKey === 'string' ? route.query.endpointKey : ''"
       @select="executions.select($event)"
       @cancel="executions.cancel($event)"
       @rerun="rerun"

@@ -1,7 +1,12 @@
 import { defineStore } from 'pinia'
 
 import { apiClient } from '../api/client'
-import type { ApiBaselineCase, BaselineAssertionAuditResponse } from '../api/contracts'
+import type {
+  ApiBaselineCase,
+  BaselineAssertionAuditResponse,
+  BaselineAssertionUpgradeResponse,
+  CaseVersion,
+} from '../api/contracts'
 
 interface BaselineContext {
   projectId: string
@@ -20,6 +25,7 @@ export const useBaselinesStore = defineStore('api-baselines', {
     auditRequestId: 0,
     auditLoading: false,
     auditError: '',
+    creatingUpgradeBaselineId: '',
   }),
   getters: {
     groups(state): string[] {
@@ -122,6 +128,27 @@ export const useBaselinesStore = defineStore('api-baselines', {
         return updated ? { ...item, group_name: updated } : item
       })
       this.clearAudit()
+    },
+    async createAssertionUpgradeDraft(baselineId: string): Promise<CaseVersion> {
+      this.creatingUpgradeBaselineId = baselineId
+      this.auditError = ''
+      try {
+        const response = await apiClient.post<BaselineAssertionUpgradeResponse>(
+          `/api/api-testing/v1/baselines/${baselineId}/assertion-upgrade-draft`,
+          {},
+        )
+        if (this.audit) {
+          this.audit = {
+            ...this.audit,
+            items: this.audit.items.map(item => item.baseline_id === baselineId
+              ? { ...item, upgrade_draft_case_version_id: response.data.case_version.id }
+              : item),
+          }
+        }
+        return response.data.case_version
+      } finally {
+        this.creatingUpgradeBaselineId = ''
+      }
     },
     async archive(id: string): Promise<void> {
       this.error = ''

@@ -951,6 +951,120 @@ def test_baseline_assertion_audit_batches_stored_assertions_and_debug_evidence(
     assert SYNTHETIC_SECRET not in repr(result)
 
 
+def test_baseline_assertion_audit_creates_a_review_draft_without_replacing_baseline(
+    case_service, project_context, session_factory
+):
+    from task_server.api_testing.services.baseline_assertion_audit_service import (
+        BaselineAssertionAuditService,
+        BaselineAssertionUpgradeError,
+    )
+
+    endpoint = project_context["endpoints"]["favoriteList"]
+    dependency_endpoint = project_context["endpoints"]["favoriteAdd"]
+    dependency = case_service.create_draft(
+        dependency_endpoint.id,
+        valid_add_case(dependency_endpoint),
+        "manual",
+        "admin",
+    )
+    payload = valid_list_case(endpoint)
+    payload["dependencies"] = [{
+        "case_version_id": dependency.id,
+        "required": True,
+        "exports": ["favoriteId"],
+    }]
+    payload["assertions"] = [
+        {"type": "status_code", "operator": "equals", "expected": 200}
+    ]
+    draft = case_service.create_draft(endpoint.id, payload, "manual", "admin")
+    evidence_id = _create_execution_evidence(
+        session_factory,
+        project_context,
+        draft,
+        response={
+            "status_code": 200,
+            "body": json.dumps({"code": 0, "data": []}),
+            "headers": {},
+        },
+    )
+    baseline = case_service.adopt_baseline(draft.id, evidence_id, "admin")
+
+    result = BaselineAssertionAuditService(session_factory).create_upgrade_draft(
+        baseline.id,
+        "admin",
+    )
+
+    upgraded = result["case_version"]
+    assert upgraded.version == 2
+    assert upgraded.case_id == draft.case_id
+    assert [(item.type, item.path, item.expected) for item in upgraded.assertions] == [
+        ("status_code", None, 200),
+        ("json_path", "$.code", 0),
+    ]
+    assert tuple(upgraded.dependencies) == ({
+        "case_version_id": dependency.id,
+        "required": True,
+        "exports": ["favoriteId"],
+    },)
+    assert result["source_baseline_id"] == baseline.id
+    assert result["source_case_version_id"] == draft.id
+    assert result["suggestion_count"] == 1
+
+    active_baselines = case_service.list_active_baselines(
+        project_context["project"].id,
+        "admin",
+    )
+    unchanged = next(item for item in active_baselines if item.id == baseline.id)
+    assert unchanged.case_version_id == draft.id
+    assert unchanged.status == "active"
+
+    audit = BaselineAssertionAuditService(session_factory).list(
+        project_context["project"].id,
+        "admin",
+    )
+    audited = next(item for item in audit["items"] if item["baseline_id"] == baseline.id)
+    assert audited["upgrade_draft_case_version_id"] == upgraded.id
+
+    with pytest.raises(BaselineAssertionUpgradeError, match="已有较新的用例版本"):
+        BaselineAssertionAuditService(session_factory).create_upgrade_draft(
+            baseline.id,
+            "admin",
+        )
+
+
+def test_baseline_assertion_audit_never_turns_business_failure_into_success_draft(
+    case_service, project_context, session_factory
+):
+    from task_server.api_testing.services.baseline_assertion_audit_service import (
+        BaselineAssertionAuditService,
+        BaselineAssertionUpgradeError,
+    )
+
+    endpoint = project_context["endpoints"]["favoriteList"]
+    payload = valid_list_case(endpoint)
+    payload["assertions"] = [
+        {"type": "status_code", "operator": "equals", "expected": 200}
+    ]
+    draft = case_service.create_draft(endpoint.id, payload, "manual", "admin")
+    evidence_id = _create_execution_evidence(
+        session_factory,
+        project_context,
+        draft,
+        response={
+            "status_code": 200,
+            "body": json.dumps({"code": 1001, "message": "设备不存在"}),
+            "headers": {},
+        },
+    )
+    baseline = case_service.adopt_baseline(draft.id, evidence_id, "admin")
+
+    with pytest.raises(BaselineAssertionUpgradeError, match="不能生成待复核版本"):
+        BaselineAssertionAuditService(session_factory).create_upgrade_draft(
+            baseline.id,
+            "admin",
+        )
+
+
 def test_active_case_list_exposes_debug_and_baseline_lifecycle(
     case_service, project_context, session_factory
 ):

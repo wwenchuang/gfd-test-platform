@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import type { ExecutionCaseResult, ExecutionView } from '../api/contracts'
 import {
   executionConclusion,
+  executionDisplayName,
   executionFailureBuckets,
   executionMetrics,
   executionScopeLabel,
@@ -98,6 +99,18 @@ describe('execution presentation', () => {
     expect(executionSourceScope({ ...execution, execution_type: 'regression' })).toBe('formal')
     expect(executionSourceScope({ ...execution, execution_type: 'baseline_regression' })).toBe('formal')
     expect(executionSourceScope({ ...execution, execution_type: 'scheduled', execution_source: 'scheduled_job' })).toBe('formal')
+  })
+
+  it('names single-case debug history by the case instead of a repeated task name', () => {
+    const debug = {
+      ...execution,
+      execution_type: 'debug' as const,
+      task_name: 'API接口测试',
+      case_results: [{ ...result('PASSED'), case_name: '查询我的收藏 - 成功响应' }],
+    }
+
+    expect(executionDisplayName(debug)).toBe('查询我的收藏 - 成功响应 · 在线调试')
+    expect(executionDisplayName({ ...execution, task_name: '每日发版回归' })).toBe('每日发版回归')
   })
 
   it('presents the snapshotted application and business without internal identifiers', () => {

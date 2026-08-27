@@ -118,4 +118,30 @@ describe('RunsView', () => {
     expect(rerun).not.toHaveBeenCalled()
     expect(confirm).toHaveBeenCalledWith(expect.stringMatching(/生产环境.*重新执行.*真实发送/))
   })
+
+  it('opens the newest matching history record when filtering by a stable interface key', async () => {
+    routeState.query = { endpointId: 'endpoint-current', endpointKey: 'stable-favorites-list' }
+    const context = useContextStore()
+    const executions = useExecutionsStore()
+    context.projectId = 'project-1'
+    vi.spyOn(context, 'loadSavedContext').mockResolvedValue()
+    vi.spyOn(context, 'loadOptions').mockResolvedValue()
+    executions.executions = [{
+      ...debugExecution,
+      id: 'execution-old-revision',
+      case_results: [{
+        execution_case_id: 'case-1', case_version_id: 'version-1', endpoint_id: 'endpoint-old',
+        endpoint_stable_key: 'stable-favorites-list', case_name: '查询收藏', endpoint_summary: '',
+        method: 'POST', path: '/favorites/page', status: 'PASSED', failure_category: '', duration_ms: 10,
+        sanitized_result: {},
+      }],
+    }]
+    vi.spyOn(executions, 'load').mockResolvedValue()
+    const select = vi.spyOn(executions, 'select').mockResolvedValue()
+
+    mount(RunsView, { global: { stubs: { ExecutionConsole: true, ExecutionDetailDrawer: true } } })
+    await flushPromises()
+
+    expect(select).toHaveBeenCalledWith('execution-old-revision')
+  })
 })

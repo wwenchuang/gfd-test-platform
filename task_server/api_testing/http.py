@@ -34,7 +34,10 @@ from .repositories.source_repository import audit_fields
 from .services.ai_service import AiCaseService, AiJobInputError, AiJobNotFoundError
 from .services.apifox_service import ApifoxInputError, ApifoxService
 from .services.basic_case_service import BasicCaseService
-from .services.baseline_assertion_audit_service import BaselineAssertionAuditService
+from .services.baseline_assertion_audit_service import (
+    BaselineAssertionAuditService,
+    BaselineAssertionUpgradeError,
+)
 from .services.case_service import BaselineGateError, CaseNotFoundError, CaseService, EndpointNotFoundError
 from .services.environment_service import EnvironmentInputError, EnvironmentNotFoundError, EnvironmentService
 from .services.execution_service import ExecutionConflictError, ExecutionNotFoundError, ExecutionService
@@ -638,6 +641,17 @@ def _post(segments, payload, actor, settings):
                 )
             ]
         }
+    if (
+        len(segments) == 3
+        and segments[0] == "baselines"
+        and segments[2] == "assertion-upgrade-draft"
+    ):
+        return _view(
+            BaselineAssertionAuditService(factory).create_upgrade_draft(
+                _uuid(segments[1]),
+                actor,
+            )
+        )
     if segments == ("executions",):
         request = _execution_request(payload)
         task_id = _optional_uuid(payload.get("task_id"))
@@ -1225,6 +1239,12 @@ def _domain_error(error):
         return _not_found()
     if isinstance(error, NotificationNotConfiguredError):
         return ApiHttpError(422, "notification_not_configured", "请先配置并启用飞书群机器人 Webhook")
+    if isinstance(error, BaselineAssertionUpgradeError):
+        return ApiHttpError(
+            409,
+            "baseline_assertion_upgrade_conflict",
+            str(error),
+        )
     if isinstance(error, ExecutionConflictError) and str(error).startswith(
         "no active baselines"
     ):

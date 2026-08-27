@@ -14,8 +14,8 @@ const execution: ExecutionView = {
   case_statuses: ['PASSED', 'FAILED'], summary: { PASSED: 1, FAILED: 1 }, cancellation_requested: false,
   created_at: '2026-08-12T07:00:00Z', started_at: '2026-08-12T07:00:01Z', finished_at: '2026-08-12T07:00:03Z',
   case_results: [
-    { execution_case_id: 'case-1', case_version_id: 'version-1', endpoint_id: 'endpoint-1', case_name: '查询收藏', endpoint_summary: '', method: 'POST', path: '/favorites/page', status: 'PASSED', failure_category: '', duration_ms: 100, sanitized_result: {} },
-    { execution_case_id: 'case-2', case_version_id: 'version-2', endpoint_id: 'endpoint-2', case_name: '取消收藏', endpoint_summary: '', method: 'POST', path: '/favorites/cancel', status: 'FAILED', failure_category: 'product_assertion', duration_ms: 200, sanitized_result: { assertion_results: [{ passed: false, message: '业务码不匹配' }] } },
+    { execution_case_id: 'case-1', case_version_id: 'version-1', endpoint_id: 'endpoint-1', endpoint_stable_key: 'stable-favorites-list', case_name: '查询收藏', endpoint_summary: '', method: 'POST', path: '/favorites/page', status: 'PASSED', failure_category: '', duration_ms: 100, sanitized_result: {} },
+    { execution_case_id: 'case-2', case_version_id: 'version-2', endpoint_id: 'endpoint-2', endpoint_stable_key: 'stable-favorites-cancel', case_name: '取消收藏', endpoint_summary: '', method: 'POST', path: '/favorites/cancel', status: 'FAILED', failure_category: 'product_assertion', duration_ms: 200, sanitized_result: { assertion_results: [{ passed: false, message: '业务码不匹配' }] } },
   ],
 }
 
@@ -104,6 +104,7 @@ describe('ExecutionConsole', () => {
     })
 
     expect(wrapper.text()).toContain('在线调试')
+    expect(wrapper.get('[data-testid="execution-row-execution-debug"]').text()).toContain('查询收藏 · 在线调试')
     expect(wrapper.text()).toContain('单条')
     expect(wrapper.text()).toContain('收藏接口发版回归')
     expect(wrapper.text()).toContain('多条')
@@ -199,5 +200,39 @@ describe('ExecutionConsole', () => {
 
     await wrapper.get('[data-testid="execution-clear-endpoint-filter"]').trigger('click')
     expect(wrapper.emitted('clearEndpointFilter')).toHaveLength(1)
+  })
+
+  it('keeps historical executions visible after an interface revision changes its endpoint id', () => {
+    const oldRevisionExecution = {
+      ...execution,
+      id: 'execution-old-revision',
+      case_results: [{
+        ...execution.case_results[0],
+        endpoint_id: 'endpoint-old-revision',
+        endpoint_stable_key: 'stable-favorites-list',
+      }],
+    }
+    const unrelatedExecution = {
+      ...execution,
+      id: 'execution-unrelated',
+      case_results: [{
+        ...execution.case_results[0],
+        endpoint_id: 'endpoint-unrelated',
+        endpoint_stable_key: 'stable-unrelated',
+      }],
+    }
+    const wrapper = mount(ExecutionConsole, {
+      props: {
+        executions: [oldRevisionExecution, unrelatedExecution],
+        active: oldRevisionExecution,
+        events: [],
+        connectionState: 'complete',
+        endpointId: 'endpoint-current-revision',
+        endpointStableKey: 'stable-favorites-list',
+      },
+    })
+
+    expect(wrapper.find('[data-testid="execution-row-execution-old-revision"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="execution-row-execution-unrelated"]').exists()).toBe(false)
   })
 })

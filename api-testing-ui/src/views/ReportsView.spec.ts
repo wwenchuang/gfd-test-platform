@@ -163,6 +163,26 @@ describe('ReportsView', () => {
     expect(wrapper.text()).not.toContain('自动回归')
   })
 
+  it('identifies a debug report by its case name', () => {
+    const executions = useExecutionsStore()
+    const context = useContextStore()
+    vi.spyOn(context, 'loadSavedContext').mockResolvedValue()
+    vi.spyOn(context, 'loadOptions').mockResolvedValue()
+    executions.executions = [{
+      ...report,
+      id: 'debug-report-1',
+      execution_type: 'debug',
+      task_name: 'API接口测试',
+      case_statuses: ['PASSED'],
+      case_results: [{ ...report.case_results[0], case_name: '查询我的收藏 - 成功响应' }],
+      summary: { total: 1, passed: 1, failed: 0 },
+    }]
+
+    const wrapper = mount(ReportsView)
+
+    expect(wrapper.get('[data-testid="report-history-row"]').text()).toContain('查询我的收藏 - 成功响应 · 在线调试')
+  })
+
   it('shows the persisted Feishu sent state on the report card', () => {
     const executions = useExecutionsStore()
     const context = useContextStore()

@@ -73,6 +73,24 @@ test('我的收藏三接口完成导入、AI 设计、调试、基线回归和�
   await expect(page.locator('.ai-assistant')).toHaveClass(/collapsed/)
   await page.getByTitle('展开 AI 助手').click()
 
+  await page.getByRole('link', { name: '用例管理' }).click()
+  await expect(page.getByTestId('cases-page')).toBeVisible()
+  await expect(page.getByTestId('case-generation-status')).toContainText('已完成')
+  await page.getByTestId('case-generation-results').click()
+  await expect(page.locator('[data-testid^="case-version-"]').first()).toBeVisible()
+  for (const view of ['regular', 'debugged', 'baseline', 'task', 'orchestrated', 'one-time', 'candidate', 'all']) {
+    await page.getByTestId(`case-work-view-${view}`).click()
+  }
+  await page.getByTestId('case-list-search').fill('查询我的收藏')
+  await expect(page.getByText('查询我的收藏', { exact: false }).first()).toBeVisible()
+  await page.getByTestId('case-list-search').fill('')
+  await page.getByTestId('open-case-endpoint-picker').click()
+  await page.getByTestId('case-endpoint-search').fill('查询我的收藏')
+  await expect(page.locator('[data-testid^="case-endpoint-"]').filter({ hasText: '查询我的收藏' }).first()).toBeVisible()
+  await page.getByTitle('关闭接口选择').click()
+  await page.getByRole('link', { name: '工作台' }).click()
+  await expect(page.locator('.design-workspace')).toBeVisible()
+
   await page.setViewportSize({ width: 390, height: 844 })
   await assertNoHorizontalOverflow(page)
   await page.screenshot({ path: testInfo.outputPath('workbench-mobile.png'), fullPage: true })
@@ -93,6 +111,7 @@ test('我的收藏三接口完成导入、AI 设计、调试、基线回归和�
   await acceptExecutionConfirmation(page, () => page.getByRole('button', { name: '保存并调试' }).click())
   await expect(page.locator('.result-status').getByText('通过', { exact: true })).toBeVisible()
   await page.getByTestId('adopt-baseline').click()
+  await expect(page.getByTestId('baseline-success')).toBeVisible()
   await page.getByTitle('关闭调试').click()
 
   for (const summary of ['添加收藏', '取消收藏']) {
@@ -101,8 +120,22 @@ test('我的收藏三接口完成导入、AI 设计、调试、基线回归和�
     await acceptExecutionConfirmation(page, () => page.getByRole('button', { name: '保存并调试' }).click())
     await expect(page.locator('.result-status').getByText('通过', { exact: true })).toBeVisible()
     await page.getByTestId('adopt-baseline').click()
+    await expect(page.getByTestId('baseline-success')).toBeVisible()
     await page.getByTitle('关闭调试').click()
   }
+
+  await page.getByRole('link', { name: '用例管理' }).click()
+  await expect(page.getByTestId('cases-page')).toBeVisible()
+  await page.getByTestId('case-work-view-baseline').click()
+  await expect(page.locator('[data-testid^="case-version-baseline-"]').first()).toBeVisible()
+  await page.locator('[data-testid^="case-version-baseline-"]').first().click()
+  await expect(page.getByRole('heading', { name: '基线用例' })).toBeVisible()
+  await page.getByRole('button', { name: '检查断言' }).click()
+  await expect(page.getByTestId('baseline-audit-summary')).toBeVisible()
+  await page.getByPlaceholder('搜索用例、接口或路径').fill('查询我的收藏')
+  await expect(page.getByText('查询我的收藏', { exact: false }).first()).toBeVisible()
+  await page.getByRole('link', { name: '工作台' }).click()
+  await expect(page.locator('.design-workspace')).toBeVisible()
 
   acceptance.useRegressionResponses()
   await page.evaluate(() => { window.__apiAcceptancePageMarker = 'preserved' })

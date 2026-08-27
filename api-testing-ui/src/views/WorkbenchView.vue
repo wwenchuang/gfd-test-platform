@@ -231,11 +231,15 @@ function openAiGenerated(version: CaseVersion): void {
 }
 
 function manageAiGenerated(): void {
-  void router.push({ name: 'cases', query: { projectId: context.projectId || '', sourceRevisionId: context.sourceRevisionId || '' } })
+  void router.push({ name: 'cases', query: {
+    projectId: context.projectId || '',
+    sourceRevisionId: context.sourceRevisionId || '',
+    environmentRevisionId: context.environmentRevisionId || '',
+  } })
 }
 
-function openEndpointHistory(endpointId: string): void {
-  void router.push({ name: 'runs', query: { endpointId } })
+function openEndpointHistory(endpointId: string, endpointKey?: string): void {
+  void router.push({ name: 'runs', query: { endpointId, ...(endpointKey ? { endpointKey } : {}) } })
 }
 
 function startNewTask(): void {

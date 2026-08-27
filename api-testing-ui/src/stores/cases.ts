@@ -75,18 +75,31 @@ export const useCasesStore = defineStore('api-cases', {
       this.clearBaselineFeedback()
     },
     registerVersion(version: CaseVersion, makeActive = true): void {
-      this.versions[version.id] = version
-      const endpointId = displayEndpointId(version)
+      const sameVersion = this.versions[version.id]
+      const nextVersion = sameVersion
+        ? { ...version, lifecycle: { ...(sameVersion.lifecycle || {}), ...(version.lifecycle || {}) } }
+        : version
+      const previousVersions = Object.values(this.versions).filter(
+        item => item.case_id === nextVersion.case_id,
+      )
+      if (previousVersions.some(item => item.version > nextVersion.version)) return
+      for (const previous of previousVersions) {
+        const previousEndpointId = displayEndpointId(previous)
+        this.versionIdsByEndpoint[previousEndpointId] = (
+          this.versionIdsByEndpoint[previousEndpointId] || []
+        ).filter(id => id !== previous.id)
+        if (this.activeVersionByEndpoint[previousEndpointId] === previous.id) {
+          delete this.activeVersionByEndpoint[previousEndpointId]
+        }
+        if (previous.id !== nextVersion.id) delete this.versions[previous.id]
+      }
+      this.versions[nextVersion.id] = nextVersion
+      const endpointId = displayEndpointId(nextVersion)
       const ids = this.versionIdsByEndpoint[endpointId] || []
-      const previousId = ids.find(id => this.versions[id]?.case_id === version.case_id)
-      const nextIds = previousId
-        ? ids.map(id => id === previousId ? version.id : id)
-        : [...ids, version.id]
-      this.versionIdsByEndpoint[endpointId] = [...new Set(nextIds)]
-      if (previousId && previousId !== version.id) delete this.versions[previousId]
+      this.versionIdsByEndpoint[endpointId] = [...new Set([...ids, nextVersion.id])]
       if (makeActive || !this.activeVersionByEndpoint[endpointId]) {
-        this.activeVersionByEndpoint[endpointId] = version.id
-        this.drafts[endpointId] = fromVersion(version)
+        this.activeVersionByEndpoint[endpointId] = nextVersion.id
+        this.drafts[endpointId] = fromVersion(nextVersion)
       }
     },
     async loadSavedCases(sourceRevisionId: string): Promise<void> {

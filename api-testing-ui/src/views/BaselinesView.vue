@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
-import { Edit3, ListPlus, Play, RefreshCw, ScanSearch, Search, ShieldCheck, Trash2 } from 'lucide-vue-next'
+import { Edit3, FilePlus2, ListPlus, Play, RefreshCw, ScanSearch, Search, ShieldCheck, Trash2 } from 'lucide-vue-next'
 import { useRoute, useRouter } from 'vue-router'
 
 import ContextBar from '../components/ContextBar.vue'
@@ -387,10 +387,37 @@ async function editBaseline(item: ApiBaselineCase): Promise<void> {
   await router.push({
     name: 'workbench',
     query: {
+      projectId: item.project_id,
+      sourceRevisionId: item.source_revision_id,
+      environmentRevisionId: item.environment_revision_id,
       endpointId: item.endpoint_id,
       caseVersionId: item.case_version_id,
     },
   })
+}
+
+async function openAssertionReviewDraft(
+  item: ApiBaselineCase,
+  audit: BaselineAssertionAuditItem,
+): Promise<void> {
+  localError.value = ''
+  localMessage.value = ''
+  try {
+    const caseVersionId = audit.upgrade_draft_case_version_id
+      || (await baselines.createAssertionUpgradeDraft(item.id)).id
+    await router.push({
+      name: 'workbench',
+      query: {
+        projectId: item.project_id,
+        sourceRevisionId: item.source_revision_id,
+        environmentRevisionId: item.environment_revision_id,
+        endpointId: item.endpoint_id,
+        caseVersionId,
+      },
+    })
+  } catch (error) {
+    localError.value = error instanceof Error ? error.message : '待复核版本生成失败'
+  }
 }
 
 async function archiveBaseline(item: ApiBaselineCase): Promise<void> {
@@ -492,7 +519,7 @@ function adoptionReasonLabel(reason: string): string {
         <ScanSearch :size="18" />
         <div>
           <strong>断言有效性检查</strong>
-          <span>读取已保存的调试证据，核对 HTTP 状态、业务结果和现有断言；检查不会执行接口或修改基线。</span>
+          <span>读取已保存的调试证据，核对 HTTP 状态、业务结果和现有断言；可从明确的成功证据生成下一版草稿，原基线不会被覆盖。</span>
         </div>
       </div>
       <div class="baseline-audit-actions">
@@ -514,7 +541,7 @@ function adoptionReasonLabel(reason: string): string {
         <span>缺少领域断言 <b>{{ baselines.audit.summary.domain_assertion_required }}</b> 条</span>
         <span>证据不足 <b>{{ baselines.audit.summary.evidence_missing }}</b> 条</span>
         <span>当前环境可安全复核 <b>{{ currentSafeAuditIds.length }}</b> 条</span>
-        <small>只选择与当前执行环境一致、应用和业务仍启用且流程安全的候选；实际执行仍会再次确认环境和请求影响。</small>
+        <small>“生成待复核版本”只补充证据明确的精确业务断言；新版本仍需在原环境重新调试并采纳后，才会替换活动基线。</small>
       </div>
       <p v-if="baselines.auditError" class="inline-error">{{ baselines.auditError }}</p>
     </section>
@@ -620,6 +647,17 @@ function adoptionReasonLabel(reason: string): string {
                 <span>{{ auditEvidenceLabel(baselines.auditByBaselineId.get(item.id)!) }}</span>
                 <span>{{ baselines.auditByBaselineId.get(item.id)!.reason }}</span>
                 <span :class="{ warning: !baselines.auditByBaselineId.get(item.id)!.execution.selectable }">{{ baselines.auditByBaselineId.get(item.id)!.execution.label }}：{{ baselines.auditByBaselineId.get(item.id)!.execution.reason }}</span>
+                <button
+                  v-if="baselines.auditByBaselineId.get(item.id)!.status === 'upgrade_available'"
+                  class="tiny-command baseline-audit-upgrade"
+                  type="button"
+                  :data-testid="`baseline-upgrade-${item.id}`"
+                  :disabled="baselines.creatingUpgradeBaselineId === item.id"
+                  @click="openAssertionReviewDraft(item, baselines.auditByBaselineId.get(item.id)!)"
+                >
+                  <FilePlus2 :size="13" />
+                  {{ baselines.auditByBaselineId.get(item.id)!.upgrade_draft_case_version_id ? '继续复核新版本' : (baselines.creatingUpgradeBaselineId === item.id ? '生成中' : '生成待复核版本') }}
+                </button>
               </small>
             </span>
             <span class="baseline-endpoint-copy">
