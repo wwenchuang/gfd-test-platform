@@ -652,6 +652,8 @@ class CaseVersionView:
     case_id: str
     project_id: str
     endpoint_id: str
+    current_endpoint_id: str
+    source_state: str
     name: str
     status: str
     origin: str
@@ -669,6 +671,7 @@ class CaseVersionView:
     dependencies: Tuple[Mapping[str, Any], ...]
     processing: Mapping[str, Any]
     validation_summary: Mapping[str, Any]
+    lifecycle: Mapping[str, Any]
     created_at: datetime
     updated_at: datetime
 
@@ -680,6 +683,7 @@ class CaseVersionView:
         object.__setattr__(self, "dependencies", tuple(_frozen_mapping(item) for item in self.dependencies))
         object.__setattr__(self, "processing", _frozen_mapping(self.processing))
         object.__setattr__(self, "validation_summary", _frozen_mapping(self.validation_summary))
+        object.__setattr__(self, "lifecycle", _frozen_mapping(self.lifecycle))
 
 
 @dataclass(frozen=True)

@@ -25,7 +25,7 @@ describe('AiAssistant', () => {
     const wrapper = mount(AiAssistant, { props: { selectedCount: 1, job: null } })
     const textarea = wrapper.get('textarea').element as HTMLTextAreaElement
 
-    expect(textarea.value).toContain('Body')
+    expect(textarea.value).toContain('请求体')
     expect(textarea.value).toContain('环境自动注入')
     expect(textarea.value).not.toContain('覆盖正常流程、鉴权')
     expect(textarea.value).not.toContain('生成正常、边界与鉴权')

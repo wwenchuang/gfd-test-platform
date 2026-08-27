@@ -437,7 +437,7 @@ function dateText(value?: string | null): string {
     </section>
 
     <details class="advanced-import">
-      <summary><FileJson :size="16" />高级导入：OpenAPI JSON</summary>
+      <summary><FileJson :size="16" />高级导入：接口定义文件（JSON）</summary>
       <div class="advanced-import-body">
         <p>仅在 Apifox 无法读取时使用。读取文件不会立即覆盖当前版本。</p>
         <div class="file-import">

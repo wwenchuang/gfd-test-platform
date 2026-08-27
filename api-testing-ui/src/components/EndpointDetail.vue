@@ -63,12 +63,12 @@ function contentTypes(body: OperationRecord | null): string[] {
         <button v-for="item in [['definition','接口定义'],['request','请求参数'],['response','响应结构'],['cases','测试用例'],['history','执行记录']]" :key="item[0]" type="button" :class="{ active: tab === item[0] }" @click="tab = item[0] as DetailTab">{{ item[1] }}</button>
       </nav>
       <div class="detail-body">
-        <dl v-if="tab === 'definition'" class="definition-list"><div><dt>Operation ID</dt><dd>{{ endpoint.operation_id || '未提供' }}</dd></div><div><dt>标签</dt><dd>{{ endpoint.tags.join(' / ') || '未分组' }}</dd></div></dl>
+        <dl v-if="tab === 'definition'" class="definition-list"><div><dt>操作标识</dt><dd>{{ endpoint.operation_id || '未提供' }}</dd></div><div><dt>标签</dt><dd>{{ endpoint.tags.join(' / ') || '未分组' }}</dd></div></dl>
         <section v-else-if="tab === 'request'" class="contract-summary">
           <article v-for="parameter in parameters" :key="`${parameter.in}-${parameter.name}`" class="contract-row">
             <span>{{ parameterLocation(parameter.in) }}</span><strong>{{ parameter.name }}</strong><code>{{ schemaType(parameter) }}</code><b :class="{ required: parameter.required }">{{ parameter.required ? '必填' : '可选' }}</b><small>{{ parameter.description || '未提供说明' }}</small>
           </article>
-          <article v-if="requestBody" class="contract-row"><span>请求 Body</span><strong>{{ contentTypes(requestBody).join('、') || '已定义' }}</strong><b :class="{ required: requestBody.required }">{{ requestBody.required ? '必填' : '可选' }}</b><small>{{ requestBody.description || '按接口契约填写' }}</small></article>
+          <article v-if="requestBody" class="contract-row"><span>请求体</span><strong>{{ contentTypes(requestBody).join('、') || '已定义' }}</strong><b :class="{ required: requestBody.required }">{{ requestBody.required ? '必填' : '可选' }}</b><small>{{ requestBody.description || '按接口契约填写' }}</small></article>
           <p v-if="!parameters.length && !requestBody" class="compact-empty">该接口没有声明请求参数。</p>
           <details class="raw-contract"><summary>查看原始 JSON</summary><pre>{{ JSON.stringify(rawRequest, null, 2) }}</pre></details>
         </section>

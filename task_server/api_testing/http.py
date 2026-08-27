@@ -330,9 +330,14 @@ def _get(segments, qs, actor, settings):
     if segments == ("ai-jobs", "latest"):
         project_id = _uuid(qs.get("project_id", ""))
         _scope_project(factory, project_id, actor)
+        source_revision_id = _optional_uuid(qs.get("source_revision_id"))
+        if source_revision_id:
+            source_revision = _scope_source_revision(factory, source_revision_id, actor)
+            if _scope_source(factory, source_revision.source_id, actor).project_id != project_id:
+                raise _not_found()
         return {
             "job": _view(
-                AiCaseService(factory).get_latest_incomplete_job(project_id)
+                AiCaseService(factory).get_latest_job(project_id, source_revision_id)
             )
         }
     if len(segments) == 2 and segments[0] == "executions":
@@ -606,7 +611,10 @@ def _post(segments, payload, actor, settings):
         }
     if len(segments) == 3 and segments[0] == "cases" and segments[2] == "versions":
         _scope_case(factory, _uuid(segments[1]), actor)
-        return {"case_version": _view(CaseService(factory).create_version(_uuid(segments[1]), _required_object(payload, "case"), actor))}
+        endpoint_id = _optional_uuid(payload.get("endpoint_id"))
+        if endpoint_id:
+            _scope_endpoint(factory, endpoint_id, actor)
+        return {"case_version": _view(CaseService(factory).create_version(_uuid(segments[1]), _required_object(payload, "case"), actor, endpoint_id=endpoint_id))}
     if len(segments) == 3 and segments[0] == "case-versions" and segments[2] == "validate":
         _scope_case_version(factory, _uuid(segments[1]), actor)
         return {"validation": _view(CaseService(factory).validate_case(_uuid(segments[1]), payload.get("environment_metadata") or {}))}

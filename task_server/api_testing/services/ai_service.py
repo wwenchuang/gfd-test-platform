@@ -417,10 +417,10 @@ class AiCaseService:
                 raise AiJobNotFoundError("AI case generation job was not found")
             return self._job_view(repository, job)
 
-    def get_latest_incomplete_job(self, project_id):
+    def get_latest_job(self, project_id, source_revision_id=None):
         with self.session_factory() as session:
             repository = AiJobRepository(session)
-            job = repository.latest_incomplete_job(project_id)
+            job = repository.latest_job(project_id, source_revision_id)
             return self._job_view(repository, job) if job is not None else None
 
     def mark_enqueue_failure(self, job_id, actor_id):

@@ -24,7 +24,7 @@ const emit = defineEmits<{
   'manage-generated': []
 }>()
 const collapsed = ref(false)
-const intent = ref('覆盖正常流程、请求 Body 字段边界、参数边界与业务失败响应；Biz、Authorization、ZXBToken 由环境自动注入，不生成请求头或鉴权类用例')
+const intent = ref('覆盖正常流程、请求体字段边界、参数边界与业务失败响应；Biz、Authorization、ZXBToken 由环境自动注入，不生成请求头或鉴权类用例')
 const elapsedSeconds = ref(0)
 let elapsedTimer: ReturnType<typeof setInterval> | null = null
 const STATE_LABELS: Record<string, string> = { queued: '排队中', running: '生成中', completed: '已完成', partial: '部分完成', failed: '失败', failed_gateway: '模型调用失败', failed_validation: '校验失败' }

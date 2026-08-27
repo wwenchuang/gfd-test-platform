@@ -3,6 +3,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { Bug, CheckCircle2, Play, X } from 'lucide-vue-next'
 
 import type { DebugResult, DebugTraceStep } from '../api/contracts'
+import { failureCategoryLabel, statusLabel } from '../utils/executionPresentation'
 import DebugTrace from './DebugTrace.vue'
 
 const props = withDefaults(defineProps<{ caseVersionId: string; environmentRevisionId: string; environmentLabel?: string; result?: DebugResult | null; running?: boolean; canResume?: boolean; open?: boolean; error?: string; baselineAdopting?: boolean; baselineMessage?: string; baselineError?: string }>(), {
@@ -29,6 +30,39 @@ const displayTrace = computed<DebugTraceStep[]>(() => {
     request: props.result.resolvedRequest, response: props.result.sanitizedResponse,
     error: props.result.errorMessage, attempt: 1, maxAttempts: 1,
   }]
+})
+
+const responseStatus = computed(() => {
+  const value = props.result?.sanitizedResponse?.status_code
+  return typeof value === 'number' || typeof value === 'string' ? String(value) : '未获取'
+})
+const responseBody = computed<Record<string, unknown> | null>(() => {
+  const body = props.result?.sanitizedResponse?.body
+  if (body && typeof body === 'object' && !Array.isArray(body)) return body as Record<string, unknown>
+  if (typeof body !== 'string') return null
+  try {
+    const parsed = JSON.parse(body)
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as Record<string, unknown> : null
+  } catch {
+    return null
+  }
+})
+const businessCode = computed(() => {
+  const value = responseBody.value?.code
+  return value === undefined || value === null ? '未提供' : String(value)
+})
+const assertionRows = computed(() => (props.result?.assertions || []).filter(
+  (item): item is Record<string, unknown> => Boolean(item && typeof item === 'object'),
+))
+const failedAssertion = computed(() => assertionRows.value.find(item => item.passed === false))
+const assertionConclusion = computed(() => failedAssertion.value
+  ? String(failedAssertion.value.message || '存在未满足的断言')
+  : assertionRows.value.length ? `${assertionRows.value.length} 条断言均满足` : '未配置断言')
+const repairSuggestion = computed(() => {
+  if (props.result?.failureCategory === 'business_response') return '请将业务码断言改为精确预期值；成功场景通常为 0 或 200，失败场景应填写明确错误码。'
+  if (failedAssertion.value) return '请核对实际响应与预期值，修改请求数据或断言后重新调试。'
+  if (props.result?.status === 'BROKEN') return '请先检查执行环境、网络和变量配置，再重新调试。'
+  return ''
 })
 
 function submit(): void {
@@ -86,7 +120,16 @@ function handleKeydown(event: KeyboardEvent): void {
     <p v-if="running" class="state-message" aria-live="polite">请求已进入执行队列，正在等待真实结果...</p>
     <p v-if="error" class="state-message state-error" role="alert">{{ error }}</p>
     <section v-if="result" class="debug-result">
-      <div class="result-status"><strong :class="result.status === 'PASSED' ? 'status-pass' : 'status-fail'">{{ result.status }}</strong><span v-if="result.failureCategory">{{ result.failureCategory }}</span><span>{{ result.durationMs }} ms</span></div>
+      <div class="result-status"><strong :class="result.status === 'PASSED' ? 'status-pass' : 'status-fail'">{{ statusLabel(result.status) }}</strong><span v-if="result.failureCategory">{{ failureCategoryLabel(result.failureCategory) }}</span><span>{{ result.durationMs }} ms</span></div>
+      <section data-testid="debug-conclusion" class="debug-conclusion" :class="result.status === 'PASSED' ? 'conclusion-pass' : 'conclusion-fail'">
+        <header><CheckCircle2 v-if="result.status === 'PASSED'" :size="18" /><Bug v-else :size="18" /><strong>{{ result.status === 'PASSED' ? '调试通过' : '调试未通过' }}</strong></header>
+        <dl>
+          <div><dt>HTTP 状态</dt><dd>{{ responseStatus }}</dd></div>
+          <div><dt>业务码</dt><dd>{{ businessCode }}</dd></div>
+          <div><dt>断言结论</dt><dd>{{ assertionConclusion }}</dd></div>
+        </dl>
+        <p v-if="repairSuggestion">{{ repairSuggestion }}</p>
+      </section>
       <p v-if="result.errorMessage" class="state-message state-error">{{ result.errorMessage }}</p>
       <DebugTrace :trace="displayTrace" @edit-step="emit('edit-step', $event)" />
       <details class="debug-raw-evidence"><summary>原始执行证据</summary>

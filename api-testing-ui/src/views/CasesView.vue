@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { ArrowLeft, ListChecks, RefreshCw } from 'lucide-vue-next'
+import { ArrowLeft, CircleAlert, CircleCheck, Clock3, ListChecks, Plus, RefreshCw, Sparkles } from 'lucide-vue-next'
 import { useRouter } from 'vue-router'
 
 import type { ApiEndpoint, CaseDraft, CaseVersion, GeneratedCasePreview } from '../api/contracts'
 import CaseEditor from '../components/CaseEditor.vue'
+import CaseEndpointPicker from '../components/CaseEndpointPicker.vue'
 import CaseListPanel from '../components/CaseListPanel.vue'
 import ContextBar from '../components/ContextBar.vue'
 import DebugDrawer from '../components/DebugDrawer.vue'
@@ -27,10 +28,19 @@ const activeEndpoint = ref<ApiEndpoint | null>(null)
 const debugOpen = ref(false)
 const localError = ref('')
 const mobileDetailOpen = ref(false)
+const endpointPickerOpen = ref(false)
 
 const activeDraft = computed(() => activeEndpoint.value ? cases.draftFor(activeEndpoint.value) : null)
 const activeVersionId = computed(() => activeEndpoint.value ? cases.activeVersionByEndpoint[activeEndpoint.value.id] || '' : '')
 const allCaseVersions = computed(() => Object.values(cases.versions))
+const caseCountByEndpoint = computed(() => {
+  const counts: Record<string, number> = {}
+  for (const version of allCaseVersions.value) {
+    const endpointId = version.current_endpoint_id || version.endpoint_id
+    counts[endpointId] = (counts[endpointId] || 0) + 1
+  }
+  return counts
+})
 const dependencyOptions = computed(() => buildCaseDependencyOptions(
   allCaseVersions.value,
   assets.endpoints,
@@ -43,9 +53,36 @@ const environmentLabel = computed(() => selectedEnvironment.value
   ? `${selectedEnvironment.value.name} · v${selectedEnvironment.value.revision}`
   : context.environmentRevisionId ? '任务保存环境 · 已保存任务引用' : '未选择环境')
 const activeTaskName = computed(() => tasks.task?.name || '未绑定任务')
+const aiGeneratedVersionIds = computed(() => Array.from(new Set(
+  cases.aiJob?.batches.flatMap(batch => batch.generated_draft_ids) || [],
+)))
+const aiCompletedBatchCount = computed(() => cases.aiJob?.batches.filter(batch => batch.state === 'completed').length || 0)
+const aiJobStateLabel = computed(() => {
+  if (!cases.aiJob) return ''
+  return {
+    queued: '排队中',
+    running: '生成中',
+    completed: '生成完成',
+    partial: '部分生成完成',
+    failed: '生成失败',
+    failed_gateway: 'AI 服务调用失败',
+    failed_validation: '生成结果校验失败',
+  }[cases.aiJob.state]
+})
+const aiJobFailed = computed(() => Boolean(cases.aiJob && ['failed', 'failed_gateway', 'failed_validation'].includes(cases.aiJob.state)))
 
 function openEndpointHistory(endpointId: string): void {
   void router.push({ name: 'runs', query: { endpointId } })
+}
+
+function openCaseDebugHistory(version: CaseVersion): void {
+  const executionId = version.lifecycle?.debug_execution_id
+  if (executionId) void router.push({ name: 'runs', query: { executionId } })
+}
+
+function openCaseBaseline(version: CaseVersion): void {
+  if (!version.lifecycle?.baseline_id) return
+  void router.push({ name: 'baselines', query: { search: version.name } })
 }
 
 onMounted(async () => {
@@ -56,6 +93,9 @@ onMounted(async () => {
     if (restored?.source_revision_id === context.sourceRevisionId) selectedIds.value = [...restored.selected_endpoint_ids]
   }
   if (context.sourceRevisionId) await loadSource(context.sourceRevisionId)
+  if (context.projectId && context.sourceRevisionId) {
+    await cases.restoreLatestAiJob(context.projectId, context.sourceRevisionId)
+  }
 })
 
 async function loadSource(sourceRevisionId: string): Promise<void> {
@@ -93,6 +133,7 @@ async function changeSource(sourceRevisionId: string | null): Promise<void> {
   selectedIds.value = []
   if (sourceRevisionId) await loadSource(sourceRevisionId)
   else assets.endpoints = []
+  if (sourceRevisionId && context.projectId) await cases.restoreLatestAiJob(context.projectId, sourceRevisionId)
 }
 
 function changeEnvironment(environmentRevisionId: string | null): void {
@@ -113,7 +154,8 @@ async function saveScope(): Promise<void> {
 }
 
 function editCaseVersion(version: CaseVersion): void {
-  const endpoint = assets.endpoints.find(item => item.id === version.endpoint_id)
+  const endpointId = version.current_endpoint_id || version.endpoint_id
+  const endpoint = assets.endpoints.find(item => item.id === endpointId)
   if (!endpoint) {
     localError.value = '该用例对应的接口不在当前接口版本中'
     return
@@ -137,6 +179,52 @@ function editGeneratedPreview(preview: GeneratedCasePreview): void {
   mobileDetailOpen.value = true
   cases.setDraftFromGeneratedPreview(preview.id)
   debugOpen.value = false
+}
+
+function createManualCase(endpoint: ApiEndpoint): void {
+  activeEndpoint.value = endpoint
+  cases.startManualDraft(endpoint)
+  endpointPickerOpen.value = false
+  mobileDetailOpen.value = true
+}
+
+async function generateBasicForEndpoint(endpoint: ApiEndpoint): Promise<void> {
+  if (!context.environmentRevisionId) {
+    localError.value = '请先选择执行环境'
+    return
+  }
+  if (!selectedIds.value.includes(endpoint.id)) selectedIds.value = [...selectedIds.value, endpoint.id]
+  const task = await saveCurrentTask()
+  if (!task) return
+  localError.value = ''
+  try {
+    const previews = await cases.previewBasicPositive([endpoint.id], context.environmentRevisionId, task.id)
+    if (previews[0]) editGeneratedPreview(previews[0])
+    endpointPickerOpen.value = false
+  } catch (error) {
+    localError.value = error instanceof Error ? error.message : '基础正向候选生成失败'
+  }
+}
+
+async function generateAiForEndpoint(endpoint: ApiEndpoint): Promise<void> {
+  if (!context.environmentRevisionId) {
+    localError.value = '请先选择执行环境'
+    return
+  }
+  if (!selectedIds.value.includes(endpoint.id)) selectedIds.value = [...selectedIds.value, endpoint.id]
+  const task = await saveCurrentTask()
+  if (!task) return
+  await cases.generate(
+    [endpoint.id],
+    context.environmentRevisionId,
+    '覆盖正常流程、参数边界、业务失败和接口契约',
+    task.id,
+  )
+  if (cases.aiError) return
+  const generatedId = cases.aiJob?.batches.flatMap(item => item.generated_draft_ids)[0]
+  const version = generatedId ? cases.versions[generatedId] : null
+  if (version) editCaseVersion(version)
+  endpointPickerOpen.value = false
 }
 
 function updateDraft(draft: CaseDraft): void {
@@ -197,7 +285,7 @@ async function deleteCaseVersion(version: CaseVersion): Promise<void> {
   if (!confirmed) return
   localError.value = ''
   try {
-    const endpointId = version.endpoint_id
+    const endpointId = version.current_endpoint_id || version.endpoint_id
     await cases.archiveCase(endpointId, version.id)
     if (activeEndpoint.value?.id === endpointId && !cases.versionIdsByEndpoint[endpointId]?.length) {
       activeEndpoint.value = null
@@ -263,7 +351,15 @@ async function runCaseVersion(version: CaseVersion): Promise<void> {
   }
   if (!confirmApiExecution({ action: '执行用例', environmentName: environmentName.value, targetName: version.name, caseCount: 1 })) return
   editCaseVersion(version)
-  if (!selectedIds.value.includes(version.endpoint_id)) selectedIds.value = [...selectedIds.value, version.endpoint_id]
+  const endpointId = version.current_endpoint_id || version.endpoint_id
+  if (!selectedIds.value.includes(endpointId)) selectedIds.value = [...selectedIds.value, endpointId]
+  let prepared
+  try {
+    prepared = await cases.saveForDebug(endpointId, context.environmentRevisionId)
+  } catch (error) {
+    localError.value = error instanceof Error ? error.message : '当前用例保存或校验失败'
+    return
+  }
   const task = await saveCurrentTask()
   if (!task) return
   cases.debugExecution = null
@@ -274,7 +370,7 @@ async function runCaseVersion(version: CaseVersion): Promise<void> {
       projectId: context.projectId,
       sourceRevisionId: context.sourceRevisionId,
       environmentRevisionId: context.environmentRevisionId,
-      caseVersionId: version.id,
+      caseVersionId: prepared.id,
       taskId: task.id,
     })
     await tasks.restore(context.projectId)
@@ -322,10 +418,31 @@ async function submitDebug(): Promise<void> {
 async function adoptBaseline(input: { caseVersionId: string; executionCaseId: string }): Promise<void> {
   await cases.adoptBaseline(input.caseVersionId, input.executionCaseId)
   if (!cases.baselineError && context.projectId) {
-    try { await tasks.restore(context.projectId) } catch (error) {
+    const activeCaseId = cases.versions[input.caseVersionId]?.case_id
+    try {
+      await Promise.all([
+        tasks.restore(context.projectId),
+        context.sourceRevisionId ? cases.loadSavedCases(context.sourceRevisionId) : Promise.resolve(),
+      ])
+      const refreshed = activeCaseId
+        ? Object.values(cases.versions).find(version => version.case_id === activeCaseId)
+        : null
+      if (refreshed) editCaseVersion(refreshed)
+    } catch (error) {
       localError.value = error instanceof Error ? `基线已采纳，但任务状态刷新失败：${error.message}` : '基线已采纳，但任务状态刷新失败'
     }
   }
+}
+
+function openAiGenerationResults(): void {
+  const version = aiGeneratedVersionIds.value
+    .map(versionId => cases.versions[versionId])
+    .find(Boolean)
+  if (!version) {
+    localError.value = '生成记录已恢复，但当前接口版本中没有可打开的用例'
+    return
+  }
+  editCaseVersion(version)
 }
 
 async function refreshCases(): Promise<void> {
@@ -357,11 +474,12 @@ function defaultTaskName(): string {
       <div>
         <p class="eyebrow">用例管理</p>
         <h1>用例管理</h1>
-        <p class="page-subtitle">集中管理已生成和已保存的 API 用例，支持编辑、删除、执行和加入任务范围。</p>
+        <p class="page-subtitle">从接口创建用例，并在同一处查看调试、基线和回归状态。</p>
       </div>
-      <button class="icon-command" type="button" title="重新读取用例" :disabled="!context.sourceRevisionId || assets.state === 'loading'" @click="refreshCases">
-        <RefreshCw :size="18" />
-      </button>
+      <div class="page-toolbar-actions">
+        <button data-testid="open-case-endpoint-picker" class="primary-command" type="button" :disabled="!context.sourceRevisionId" @click="endpointPickerOpen = true"><Plus :size="16" />从接口创建用例</button>
+        <button class="icon-command" type="button" title="重新读取用例" :disabled="!context.sourceRevisionId || assets.state === 'loading'" @click="refreshCases"><RefreshCw :size="18" /></button>
+      </div>
     </header>
     <ContextBar
       :projects="context.projects"
@@ -379,6 +497,55 @@ function defaultTaskName(): string {
       @update:environment-revision-id="changeEnvironment"
       @save="saveScope"
     />
+    <CaseEndpointPicker
+      v-if="endpointPickerOpen"
+      :endpoints="assets.endpoints"
+      :case-count-by-endpoint="caseCountByEndpoint"
+      :busy="cases.saving || cases.basicGenerating || cases.aiPolling"
+      @close="endpointPickerOpen = false"
+      @create-manual="createManualCase"
+      @generate-basic="generateBasicForEndpoint"
+      @generate-ai="generateAiForEndpoint"
+    />
+    <section
+      v-if="cases.aiJob"
+      :class="['case-generation-status', { failed: aiJobFailed }]"
+      data-testid="case-generation-status"
+      aria-live="polite"
+    >
+      <CircleAlert v-if="aiJobFailed" :size="19" />
+      <CircleCheck v-else-if="cases.aiJob.state === 'completed'" :size="19" />
+      <Clock3 v-else :size="19" />
+      <div>
+        <strong>{{ aiJobStateLabel }}</strong>
+        <p>
+          {{ aiCompletedBatchCount }}/{{ cases.aiJob.batches.length }} 批已完成
+          <span>·</span>
+          {{ aiGeneratedVersionIds.length }} 条用例
+        </p>
+        <small v-if="cases.aiError">{{ cases.aiError }}</small>
+      </div>
+      <div class="case-generation-actions">
+        <button
+          v-if="aiGeneratedVersionIds.length"
+          data-testid="case-generation-results"
+          class="text-command"
+          type="button"
+          @click="openAiGenerationResults"
+        >
+          <Sparkles :size="14" />查看生成结果
+        </button>
+        <button
+          v-if="cases.aiCanResume"
+          data-testid="case-generation-resume"
+          class="secondary-command"
+          type="button"
+          :disabled="cases.aiPolling"
+          @click="cases.resumeAiJob()"
+        >继续查看进度</button>
+        <button v-else-if="aiJobFailed" class="secondary-command" type="button" @click="endpointPickerOpen = true">重新选择接口</button>
+      </div>
+    </section>
     <p v-if="context.error || tasks.error || localError" class="inline-error">{{ context.error || tasks.error || localError }}</p>
     <div :class="['management-shell', 'case-management-shell', { 'mobile-detail-open': mobileDetailOpen }]" data-testid="case-management-shell">
       <CaseListPanel
@@ -400,6 +567,9 @@ function defaultTaskName(): string {
         @save-all-previews="saveAllGeneratedPreviews"
         @update-version-group="updateCaseGroup"
         @update-version-groups="updateCaseGroups"
+        @open-endpoints="endpointPickerOpen = true"
+        @open-debug-history="openCaseDebugHistory"
+        @open-baseline="openCaseBaseline"
       />
       <main class="management-detail">
         <header class="management-detail-head">

@@ -21,7 +21,7 @@ export type CaseListItem =
     preview: GeneratedCasePreview
   }
 
-export type CaseWorkView = 'all' | 'task' | 'orchestrated' | 'one-time' | 'candidate'
+export type CaseWorkView = 'all' | 'regular' | 'debugged' | 'baseline' | 'task' | 'orchestrated' | 'one-time' | 'candidate'
 
 export interface CaseGroupNode {
   id: string
@@ -71,6 +71,11 @@ export function matchesCaseWorkView(
   if (view === 'task') return selectedEndpointIds.has(item.endpoint.id)
   if (view === 'candidate') return item.kind === 'preview'
   if (view === 'one-time') return isOneTimeCase(item)
+  if (view === 'regular') return item.kind === 'version'
+    && !item.version.lifecycle?.debug_status
+    && item.version.lifecycle?.baseline_status !== 'active'
+  if (view === 'debugged') return item.kind === 'version' && Boolean(item.version.lifecycle?.debug_status)
+  if (view === 'baseline') return item.kind === 'version' && item.version.lifecycle?.baseline_status === 'active'
   return item.kind === 'version' && hasWorkflowSteps(item.version)
 }
 

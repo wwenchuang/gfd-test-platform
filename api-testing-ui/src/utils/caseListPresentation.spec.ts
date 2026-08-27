@@ -12,7 +12,11 @@ function endpoint(id: string, path: string, tags: string[] = []): ApiEndpoint {
   return { id, method: 'GET', path, summary: id, tags }
 }
 
-function versionItem(id: string, groupName: string, processing: CaseVersion['processing'] = { pre: [], post: [] }): CaseListItem {
+function versionItem(
+  id: string,
+  groupName: string,
+  processing: CaseVersion['processing'] = { pre: [], post: [] },
+): Extract<CaseListItem, { kind: 'version' }> {
   const version = {
     id,
     case_id: `case-${id}`,
@@ -126,6 +130,20 @@ describe('case list presentation', () => {
     expect(matchesCaseWorkView(preview, 'candidate', selected)).toBe(true)
     expect(matchesCaseWorkView(normal, 'candidate', selected)).toBe(false)
     expect(matchesCaseWorkView(preview, 'all', selected)).toBe(true)
+  })
+
+  it('classifies normal, debugged, and baseline lifecycle views', () => {
+    const normal = versionItem('normal', '家用业务')
+    const debugged = versionItem('debugged', '家用业务')
+    debugged.version.lifecycle = { debug_status: 'FAILED', debug_execution_id: 'execution-debug' }
+    const baseline = versionItem('baseline', '家用业务')
+    baseline.version.lifecycle = { debug_status: 'PASSED', baseline_status: 'active', baseline_id: 'baseline-1' }
+    const selected = new Set<string>()
+
+    expect(matchesCaseWorkView(normal, 'regular', selected)).toBe(true)
+    expect(matchesCaseWorkView(debugged, 'regular', selected)).toBe(false)
+    expect(matchesCaseWorkView(debugged, 'debugged', selected)).toBe(true)
+    expect(matchesCaseWorkView(baseline, 'baseline', selected)).toBe(true)
   })
 
   it('builds searchable text from group, case, method, path and metadata', () => {

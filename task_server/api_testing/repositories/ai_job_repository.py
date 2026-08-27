@@ -132,16 +132,24 @@ class AiJobRepository:
     def get_job(self, job_id):
         return self.session.get(ApiAiJob, job_id)
 
-    def latest_incomplete_job(self, project_id):
-        return self.session.scalar(
+    def latest_job(self, project_id, source_revision_id=None):
+        query = (
             select(ApiAiJob)
-            .where(
-                ApiAiJob.project_id == project_id,
-                ApiAiJob.state.in_(("queued", "running")),
-            )
+            .where(ApiAiJob.project_id == project_id)
             .order_by(ApiAiJob.created_at.desc(), ApiAiJob.id.desc())
-            .limit(1)
         )
+        if source_revision_id is None:
+            return self.session.scalar(query.limit(1))
+
+        current_endpoint_ids = {
+            item.id for item in self.get_revision_endpoints(source_revision_id)
+        }
+        if not current_endpoint_ids:
+            return None
+        for job in self.session.scalars(query).yield_per(100):
+            if current_endpoint_ids.intersection(job.endpoint_ids or ()):
+                return job
+        return None
 
     def get_job_for_update(self, job_id):
         return self.session.scalar(

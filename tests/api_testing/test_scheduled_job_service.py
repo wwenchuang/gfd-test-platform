@@ -7,8 +7,9 @@ import pytest
 from sqlalchemy.orm import sessionmaker
 
 from task_server.api_testing.db import engine_for_url
-from task_server.api_testing.models.case import ApiCase, ApiCaseVersion
+from task_server.api_testing.models.case import ApiBaseline, ApiCase, ApiCaseVersion
 from task_server.api_testing.models.environment import ApiEnvironment, ApiEnvironmentRevision
+from task_server.api_testing.models.execution import ApiExecution, ApiExecutionCase
 from task_server.api_testing.models.project import ApiProject
 from task_server.api_testing.models.source import ApiSource, ApiSourceEndpoint, ApiSourceRevision
 from tests.api_testing.test_migrations import (
@@ -135,12 +136,51 @@ def scheduled_records(scheduled_factory):
         session.add(version)
         session.flush()
         case.active_version_id = version.id
+        execution = ApiExecution(
+            project_id=project.id,
+            source_revision_id=revision.id,
+            environment_revision_id=environment_revision.id,
+            execution_type="debug",
+            state="DONE",
+            idempotency_key="scheduled-baseline-" + suffix,
+            requested_case_ids=[case.id],
+            request_snapshot={},
+            **_audit(),
+        )
+        session.add(execution)
+        session.flush()
+        execution_case = ApiExecutionCase(
+            execution_id=execution.id,
+            case_version_id=version.id,
+            endpoint_id=endpoint.id,
+            environment_revision_id=environment_revision.id,
+            ordinal=1,
+            status="PASSED",
+            sanitized_result={},
+            **_audit(),
+        )
+        session.add(execution_case)
+        session.flush()
+        baseline = ApiBaseline(
+            project_id=project.id,
+            case_id=case.id,
+            case_version_id=version.id,
+            environment_revision_id=environment_revision.id,
+            debug_execution_case_id=execution_case.id,
+            group_name="核心回归",
+            status="active",
+            adoption_reason="定时任务测试基线",
+            **_audit(),
+        )
+        session.add(baseline)
+        session.flush()
         return {
             "project": project,
             "source_revision": revision,
             "environment": environment,
             "environment_revision": environment_revision,
             "case_version": version,
+            "baseline": baseline,
         }
 
 
@@ -264,6 +304,44 @@ def test_existing_disabled_target_remains_editable_but_cannot_run(
     assert updated.name == "历史回归（改周期）"
     with pytest.raises(ScheduledJobInputError, match="应用.*已停用"):
         service.run_once(job.id, "owner-a", idempotency_key="disabled-" + job.id)
+
+
+@pytest.mark.parametrize(
+    ("target_type", "target_ids"),
+    (("baselines", "baseline"), ("baseline_group", "核心回归")),
+)
+def test_new_scheduled_target_rejects_superseded_baselines(
+    scheduled_factory, scheduled_records, target_type, target_ids
+):
+    from task_server.api_testing.services.scheduled_job_service import (
+        ScheduledJobInputError,
+        ScheduledJobService,
+    )
+
+    with scheduled_factory.begin() as session:
+        session.get(ApiBaseline, scheduled_records["baseline"].id).status = "superseded"
+
+    selected_ids = [
+        scheduled_records["baseline"].id if target_ids == "baseline" else target_ids
+    ]
+    with pytest.raises(ScheduledJobInputError, match="没有当前有效基线|当前有效基线不存在"):
+        ScheduledJobService(scheduled_factory).create(
+            {
+                "project_id": scheduled_records["project"].id,
+                "name": "历史基线不应进入新计划",
+                "schedule_type": "daily",
+                "cron_expression": "0 2 * * *",
+                "environment_strategy": "fixed_revision",
+                "environment_revision_id": scheduled_records["environment_revision"].id,
+                "target_type": target_type,
+                "target_ids": selected_ids,
+                "enabled": True,
+                "notify_feishu": False,
+                "retry_count": 0,
+                "timeout_seconds": 900,
+            },
+            "owner-a",
+        )
 
 
 def test_next_cron_match_uses_the_next_minute_and_supports_weekdays():

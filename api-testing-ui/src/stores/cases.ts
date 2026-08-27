@@ -37,8 +37,26 @@ export const useCasesStore = defineStore('api-cases', {
     baselineError: '',
   }),
   actions: {
+    startManualDraft(endpoint: ApiEndpoint): CaseDraft {
+      delete this.activeVersionByEndpoint[endpoint.id]
+      this.activeGeneratedPreviewId = ''
+      this.drafts[endpoint.id] = blankDraft(endpoint)
+      this.validationErrors = {}
+      this.validationWarnings = {}
+      this.savedMessage = ''
+      this.clearDebug()
+      return this.drafts[endpoint.id]
+    },
     draftFor(endpoint: ApiEndpoint): CaseDraft {
-      if (!this.drafts[endpoint.id]) this.drafts[endpoint.id] = blankDraft(endpoint)
+      const versionId = this.activeVersionByEndpoint[endpoint.id]
+      const version = versionId ? this.versions[versionId] : null
+      if (!this.drafts[endpoint.id]) {
+        this.drafts[endpoint.id] = version ? fromVersion(version) : blankDraft(endpoint)
+      }
+      if (version?.source_state === 'needs_adaptation') {
+        this.drafts[endpoint.id].request.method = endpoint.method
+        this.drafts[endpoint.id].request.path = endpoint.path
+      }
       return this.drafts[endpoint.id]
     },
     updateDraft(endpointId: string, draft: CaseDraft): void {
@@ -58,16 +76,17 @@ export const useCasesStore = defineStore('api-cases', {
     },
     registerVersion(version: CaseVersion, makeActive = true): void {
       this.versions[version.id] = version
-      const ids = this.versionIdsByEndpoint[version.endpoint_id] || []
+      const endpointId = displayEndpointId(version)
+      const ids = this.versionIdsByEndpoint[endpointId] || []
       const previousId = ids.find(id => this.versions[id]?.case_id === version.case_id)
       const nextIds = previousId
         ? ids.map(id => id === previousId ? version.id : id)
         : [...ids, version.id]
-      this.versionIdsByEndpoint[version.endpoint_id] = [...new Set(nextIds)]
+      this.versionIdsByEndpoint[endpointId] = [...new Set(nextIds)]
       if (previousId && previousId !== version.id) delete this.versions[previousId]
-      if (makeActive || !this.activeVersionByEndpoint[version.endpoint_id]) {
-        this.activeVersionByEndpoint[version.endpoint_id] = version.id
-        this.drafts[version.endpoint_id] = fromVersion(version)
+      if (makeActive || !this.activeVersionByEndpoint[endpointId]) {
+        this.activeVersionByEndpoint[endpointId] = version.id
+        this.drafts[endpointId] = fromVersion(version)
       }
     },
     async loadSavedCases(sourceRevisionId: string): Promise<void> {
@@ -92,7 +111,9 @@ export const useCasesStore = defineStore('api-cases', {
         const path = existing
           ? `/api/api-testing/v1/cases/${existing.case_id}/versions`
           : '/api/api-testing/v1/cases'
-        const body = existing ? { case: draft } : { endpoint_id: endpointId, case: draft, origin: 'manual' }
+        const body = existing
+          ? { endpoint_id: endpointId, case: draft }
+          : { endpoint_id: endpointId, case: draft, origin: 'manual' }
         const response = await apiClient.post<{ case_version: CaseVersion }>(path, body)
         const version = response.data.case_version
         this.registerVersion(version)
@@ -276,6 +297,7 @@ export const useCasesStore = defineStore('api-cases', {
           const response = await apiClient.get<{ job: AiJob }>(`/api/api-testing/v1/ai-jobs/${jobId}`)
           this.aiJob = response.data.job
           if (TERMINAL_AI.has(this.aiJob.state)) {
+            this.aiError = aiJobFailureMessage(this.aiJob)
             for (const batch of this.aiJob.batches) {
               for (const versionId of batch.generated_draft_ids) await this.loadVersion(versionId)
             }
@@ -304,15 +326,26 @@ export const useCasesStore = defineStore('api-cases', {
       this.aiCanResume = false
       this.lastAiJobId = ''
     },
-    async restoreLatestAiJob(projectId: string): Promise<void> {
+    async restoreLatestAiJob(projectId: string, sourceRevisionId?: string): Promise<void> {
       try {
+        const sourceQuery = sourceRevisionId
+          ? `&source_revision_id=${encodeURIComponent(sourceRevisionId)}`
+          : ''
         const response = await apiClient.get<{ job: AiJob | null }>(
-          `/api/api-testing/v1/ai-jobs/latest?project_id=${encodeURIComponent(projectId)}`,
+          `/api/api-testing/v1/ai-jobs/latest?project_id=${encodeURIComponent(projectId)}${sourceQuery}`,
         )
         const job = response.data.job
-        if (!job || TERMINAL_AI.has(job.state)) return
+        if (!job) return
         this.aiJob = job
         this.lastAiJobId = job.id
+        if (TERMINAL_AI.has(job.state)) {
+          this.aiCanResume = false
+          this.aiError = aiJobFailureMessage(job)
+          for (const versionId of new Set(job.batches.flatMap(batch => batch.generated_draft_ids))) {
+            await this.loadVersion(versionId)
+          }
+          return
+        }
         this.aiCanResume = true
         this.aiError = '发现后台生成任务，点击“继续查看”恢复进度'
       } catch {
@@ -611,6 +644,10 @@ function fromVersion(version: CaseVersion): CaseDraft {
   })
 }
 
+function displayEndpointId(version: CaseVersion): string {
+  return version.current_endpoint_id || version.endpoint_id
+}
+
 function cloneJson<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T
 }
@@ -685,6 +722,23 @@ function toDebugResult(value: ExecutionView['case_results'][number]): DebugResul
 
 function delay(milliseconds: number): Promise<void> {
   return new Promise(resolve => globalThis.setTimeout(resolve, milliseconds))
+}
+
+function aiJobFailureMessage(job: AiJob): string {
+  if (!['failed', 'failed_gateway', 'failed_validation'].includes(job.state)) return ''
+  const issue = job.batches
+    .flatMap(batch => batch.validation_errors || [])
+    .find(item => typeof item.message === 'string')
+  if (issue?.code === 'missing_endpoint_coverage') {
+    return '部分已选接口没有生成有效用例，请调整测试意图后重试'
+  }
+  if (issue?.message === 'AI Gateway content is not strict JSON') {
+    return 'AI 返回内容格式不正确，请重新生成'
+  }
+  if (typeof issue?.message === 'string' && /[\u4e00-\u9fff]/.test(issue.message)) return issue.message
+  if (job.state === 'failed_gateway') return 'AI 服务调用失败，请稍后重试或检查模型配置'
+  if (job.state === 'failed_validation') return 'AI 生成结果未通过平台校验，请调整测试意图后重试'
+  return 'AI 生成未完成，请重新生成当前范围'
 }
 
 function issueMap(issues: Array<{ field: string; message: string }>): Record<string, string> {

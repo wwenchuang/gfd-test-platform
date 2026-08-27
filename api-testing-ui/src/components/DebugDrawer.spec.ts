@@ -46,6 +46,34 @@ describe('DebugDrawer', () => {
     expect(failed.find('[data-testid="adopt-baseline"]').exists()).toBe(false)
   })
 
+  it('explains HTTP success and business failure separately in Chinese', () => {
+    const wrapper = mount(DebugDrawer, {
+      props: {
+        caseVersionId: 'draft-1', environmentRevisionId: 'environment-1',
+        result: {
+          status: 'FAILED', executionCaseId: 'execution-case-1', durationMs: 54,
+          errorMessage: '', trace: [], resolvedRequest: {},
+          sanitizedResponse: { status_code: 200, body: '{"code":1001,"msg":"404:null"}' },
+          assertions: [
+            { type: 'status_code', actual: 200, expected: 200, passed: true },
+            { type: 'business_code', actual: 1001, expected: '精确业务码', passed: false, message: 'HTTP 请求成功，但业务码 1001 未被精确断言接受' },
+          ],
+          failureCategory: 'business_response', logs: [],
+        },
+      },
+    })
+
+    const conclusion = wrapper.get('[data-testid="debug-conclusion"]')
+    expect(conclusion.text()).toContain('调试未通过')
+    expect(conclusion.text()).toContain('HTTP 状态')
+    expect(conclusion.text()).toContain('200')
+    expect(conclusion.text()).toContain('业务码')
+    expect(conclusion.text()).toContain('1001')
+    expect(conclusion.text()).toContain('请将业务码断言改为精确预期值')
+    expect(wrapper.text()).toContain('业务响应不符合预期')
+    expect(wrapper.find('[data-testid="adopt-baseline"]').exists()).toBe(false)
+  })
+
   it('shows baseline adoption progress and completion', async () => {
     const wrapper = mount(DebugDrawer, {
       props: {

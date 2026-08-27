@@ -271,6 +271,19 @@ export interface CaseVersion extends CaseDraft {
   id: string
   case_id: string
   endpoint_id: string
+  current_endpoint_id?: string
+  source_state?: 'current' | 'needs_adaptation'
+  lifecycle?: {
+    debug_status?: string
+    debug_execution_id?: string
+    debugged_at?: string
+    baseline_id?: string
+    baseline_status?: string
+    baseline_adopted_at?: string
+    regression_status?: string
+    regression_execution_id?: string
+    regressed_at?: string
+  }
   status: string
   origin: string
   version: number

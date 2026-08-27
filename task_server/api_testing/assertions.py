@@ -34,33 +34,33 @@ class AssertionResult:
 
 def json_path_get(document, path, *, missing=_NO_DEFAULT):
     if not isinstance(path, str) or not path or len(path) > _MAX_PATH_LENGTH:
-        raise JsonPathError("JSON path is invalid")
+        raise JsonPathError("JSON 路径无效")
     if path == "$":
         return copy.deepcopy(document)
     if not path.startswith("$"):
-        raise JsonPathError("JSON path must start with $")
+        raise JsonPathError("JSON 路径必须以 $ 开头")
     position = 1
     tokens = []
     while position < len(path):
         match = _PATH_TOKEN.match(path, position)
         if match is None:
-            raise JsonPathError("JSON path uses unsupported syntax")
+            raise JsonPathError("JSON 路径使用了不支持的语法")
         tokens.append(match.group(1) if match.group(1) is not None else int(match.group(2)))
         if len(tokens) > _MAX_PATH_DEPTH:
-            raise JsonPathError("JSON path exceeds maximum depth")
+            raise JsonPathError("JSON 路径层级过深")
         position = match.end()
     value = document
     for token in tokens:
         if isinstance(token, str):
             if not isinstance(value, dict) or token not in value:
                 if missing is _NO_DEFAULT:
-                    raise JsonPathError("JSON path was not found")
+                    raise JsonPathError("JSON 路径未找到对应字段")
                 return missing
             value = value[token]
         else:
             if not isinstance(value, list) or token >= len(value):
                 if missing is _NO_DEFAULT:
-                    raise JsonPathError("JSON path was not found")
+                    raise JsonPathError("JSON 路径未找到对应字段")
                 return missing
             value = value[token]
     return copy.deepcopy(value)
@@ -101,16 +101,16 @@ def _matches(actual, operator, expected, *, exists=True):
         return isinstance(actual, str) and re.search(expected, actual) is not None
     if operator == "in":
         return actual in expected
-    raise AssertionDefinitionError("assertion operator is not supported")
+    raise AssertionDefinitionError("不支持该断言比较方式")
 
 
 def _schema_matches(value, schema, depth=0):
     if depth > 20:
-        raise AssertionDefinitionError("schema exceeds maximum depth")
+        raise AssertionDefinitionError("响应结构定义层级过深")
     if isinstance(schema, bool):
         return schema
     if not isinstance(schema, dict):
-        raise AssertionDefinitionError("schema must be an object or boolean")
+        raise AssertionDefinitionError("响应结构定义必须是对象或布尔值")
     schema_type = schema.get("type")
     type_map = {
         "object": dict,
@@ -124,7 +124,7 @@ def _schema_matches(value, schema, depth=0):
     if schema_type is not None:
         expected_type = type_map.get(schema_type)
         if expected_type is None:
-            raise AssertionDefinitionError("schema type is not supported")
+            raise AssertionDefinitionError("不支持该响应结构类型")
         if schema_type in {"number", "integer"} and isinstance(value, bool):
             return False
         if not isinstance(value, expected_type):
@@ -161,15 +161,15 @@ def evaluate_assertions(assertions, response):
             exists = actual is not _MISSING
         elif assertion.type == "json_path":
             if response.json_body is None:
-                raise JsonPathError("response is not valid JSON")
+                raise JsonPathError("响应不是有效的 JSON")
             actual = json_path_get(response.json_body, assertion.path, missing=_MISSING)
             exists = actual is not _MISSING
         elif assertion.type == "schema":
             if response.json_body is None:
-                raise JsonPathError("response is not valid JSON")
+                raise JsonPathError("响应不是有效的 JSON")
             actual = response.json_body
         else:
-            raise AssertionDefinitionError("assertion type is not supported")
+            raise AssertionDefinitionError("不支持该断言类型")
         if assertion.type == "schema":
             passed = _schema_matches(actual, assertion.expected)
         else:
@@ -181,10 +181,42 @@ def evaluate_assertions(assertions, response):
                 passed=passed,
                 actual=None if actual is _MISSING else copy.deepcopy(actual),
                 expected=copy.deepcopy(assertion.expected),
-                message="passed" if passed else "assertion did not match",
+                message="通过" if passed else "实际响应与期望值不一致",
             )
         )
     return tuple(results)
+
+
+def evaluate_business_response(assertions, response):
+    """Reject false-green JSON business failures unless the actual code is explicit."""
+    body = response.json_body
+    if not isinstance(body, dict) or "code" not in body:
+        return None
+    actual = body["code"]
+    success_codes = {0, 200, "0", "200"}
+    if actual in success_codes:
+        return None
+    for assertion in assertions:
+        if not getattr(assertion, "enabled", True):
+            continue
+        if getattr(assertion, "type", "") != "json_path":
+            continue
+        if getattr(assertion, "path", "") != "$.code":
+            continue
+        operator = getattr(assertion, "operator", "")
+        expected = getattr(assertion, "expected", None)
+        if operator == "equals":
+            return None
+        if operator == "in" and isinstance(expected, (list, tuple)):
+            return None
+    return AssertionResult(
+        type="business_code",
+        operator="exact_match",
+        passed=False,
+        actual=copy.deepcopy(actual),
+        expected="0、200 或精确声明的预期业务码",
+        message=f"HTTP 请求成功，但业务码 {actual} 未被精确断言接受",
+    )
 
 
 def extract_values(extractions, response):
@@ -194,7 +226,7 @@ def extract_values(extractions, response):
         try:
             if extraction.type == "json_path":
                 if response.json_body is None:
-                    raise JsonPathError("response is not valid JSON")
+                    raise JsonPathError("响应不是有效的 JSON")
                 value = json_path_get(response.json_body, extraction.path)
             elif extraction.type == "header":
                 value = headers[(extraction.name or "").lower()]
@@ -204,7 +236,7 @@ def extract_values(extractions, response):
             elif extraction.type == "status_code":
                 value = response.status_code
             else:
-                raise AssertionDefinitionError("extraction type is not supported")
+                raise AssertionDefinitionError("不支持该变量提取类型")
         except (JsonPathError, KeyError):
             if extraction.required:
                 raise

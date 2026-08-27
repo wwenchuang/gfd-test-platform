@@ -895,6 +895,34 @@ def test_baseline_requires_exact_passing_debug_evidence(
     assert SYNTHETIC_SECRET not in repr(baseline)
 
 
+def test_active_case_list_exposes_debug_and_baseline_lifecycle(
+    case_service, project_context, session_factory
+):
+    endpoint = project_context["endpoints"]["favoriteList"]
+    draft = case_service.create_draft(
+        endpoint.id,
+        valid_list_case(endpoint),
+        "manual",
+        "admin",
+    )
+    evidence_id = _create_execution_evidence(
+        session_factory,
+        project_context,
+        draft,
+    )
+    baseline = case_service.adopt_baseline(draft.id, evidence_id, "admin")
+
+    listed = case_service.list_active_versions_for_source_revision(
+        project_context["source_revision"].id,
+        "admin",
+    )
+
+    current = next(item for item in listed if item.case_id == draft.case_id)
+    assert current.lifecycle["debug_status"] == "PASSED"
+    assert current.lifecycle["baseline_status"] == "active"
+    assert current.lifecycle["baseline_id"] == baseline.id
+
+
 @pytest.mark.parametrize(
     "parent_state",
     ["QUEUED", "RUNNING", "FAILED", "BROKEN", "CANCELLED", "PASSED"],
@@ -1165,6 +1193,58 @@ def test_archived_case_is_removed_from_active_case_list(
         case = session.get(ApiCase, draft.case_id)
         assert case.status == "archived"
         assert case.active_version_id is None
+
+
+def test_case_follows_stable_endpoint_and_adapts_lazily_to_new_source_revision(
+    case_service, project_context, session_factory
+):
+    from task_server.api_testing.services.source_service import SourceService
+
+    old_endpoint = project_context["endpoints"]["favoriteList"]
+    first = case_service.create_draft(
+        old_endpoint.id,
+        valid_list_case(old_endpoint),
+        "manual",
+        "admin",
+    )
+    preview = SourceService(session_factory).preview_refresh(
+        project_context["project"].id,
+        project_context["source_revision"].source_id,
+        copy.deepcopy(FAVORITES_OPENAPI),
+        "admin",
+    )
+    new_revision = SourceService(session_factory).activate_preview(preview.id, "admin")
+    current_endpoint = next(
+        item for item in new_revision.endpoints if item.operation_id == "favoriteList"
+    )
+
+    projected = case_service.list_active_versions_for_source_revision(
+        new_revision.id,
+        "admin",
+    )
+
+    inherited = next(item for item in projected if item.case_id == first.case_id)
+    assert inherited.id == first.id
+    assert inherited.endpoint_id == old_endpoint.id
+    assert inherited.current_endpoint_id == current_endpoint.id
+    assert inherited.source_state == "needs_adaptation"
+
+    adapted = case_service.create_version(
+        first.case_id,
+        valid_list_case(current_endpoint),
+        "admin",
+        endpoint_id=current_endpoint.id,
+    )
+
+    assert adapted.endpoint_id == current_endpoint.id
+    assert adapted.current_endpoint_id == current_endpoint.id
+    assert adapted.source_state == "current"
+    with session_factory() as session:
+        assert session.get(ApiCaseVersion, first.id).endpoint_id == old_endpoint.id
+        assert session.get(ApiCaseVersion, adapted.id).endpoint_id == current_endpoint.id
+        case = session.get(ApiCase, first.case_id)
+        assert case.endpoint_id == current_endpoint.id
+        assert case.active_version_id == adapted.id
 
 
 def test_case_version_group_can_be_updated_independently(

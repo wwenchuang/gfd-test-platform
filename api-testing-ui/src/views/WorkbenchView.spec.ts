@@ -164,6 +164,54 @@ describe('WorkbenchView debug workflow', () => {
     expect(wrapper.get('[data-testid="endpoint-tree-tab"]').text()).toBe('selected')
   })
 
+  it('keeps the newly activated source when the latest task belongs to an older source', async () => {
+    const context = useContextStore()
+    Object.assign(context, {
+      projectId: 'project-1', sourceRevisionId: 'source-new', environmentRevisionId: 'environment-new',
+      projects: [{ id: 'project-1', name: '3D 家用' }],
+      sourceRevisions: [
+        { id: 'source-new', source_id: 'source-asset', project_id: 'project-1', name: '默认模块', revision_number: 9, endpoint_count: 1025 },
+        { id: 'source-old', source_id: 'source-asset', project_id: 'project-1', name: '默认模块', revision_number: 8, endpoint_count: 1024 },
+      ],
+      environmentRevisions: [{ id: 'environment-new', project_id: 'project-1', name: '生产环境', revision: 28 }],
+    })
+    vi.spyOn(context, 'loadSavedContext').mockResolvedValue()
+    vi.spyOn(context, 'loadOptions').mockResolvedValue()
+    const assets = useAssetsStore()
+    const loadAssets = vi.spyOn(assets, 'load').mockImplementation(async revisionId => {
+      assets.endpoints = revisionId === 'source-new' ? [{ ...ENDPOINT, id: 'endpoint-new' }] : [ENDPOINT]
+      assets.state = 'ready'
+    })
+    const cases = useCasesStore()
+    vi.spyOn(cases, 'loadSavedCases').mockResolvedValue()
+    vi.spyOn(cases, 'restoreLatestAiJob').mockResolvedValue()
+    const oldTask = {
+      id: 'task-old', project_id: 'project-1', source_revision_id: 'source-old', environment_revision_id: 'environment-old',
+      name: '旧版本任务', state: 'ready', selected_endpoint_ids: [ENDPOINT.id], runnable_baseline_count: 1,
+      latest_ai_job_id: null, latest_execution_id: null, summary: {}, created_at: '', updated_at: '',
+    } as ApiTestTask
+    const tasks = useTasksStore()
+    vi.spyOn(tasks, 'list').mockResolvedValue([oldTask])
+    vi.spyOn(tasks, 'restore').mockResolvedValue(oldTask)
+
+    const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/', name: 'workbench', component: WorkbenchView }] })
+    await router.push('/')
+    await router.isReady()
+    const wrapper = mount(WorkbenchView, {
+      global: {
+        plugins: [router],
+        stubs: { ContextBar: true, TaskStatusStrip: true, EndpointDetail: true, CaseEditor: true, AiAssistant: true, DebugDrawer: true, EndpointTree: true },
+      },
+    })
+    await flushPromises()
+
+    expect(context.sourceRevisionId).toBe('source-new')
+    expect(loadAssets).toHaveBeenCalledWith('source-new')
+    expect(loadAssets).not.toHaveBeenCalledWith('source-old')
+    expect(wrapper.get('[data-testid="source-version-mismatch"]').text()).toContain('旧版本任务')
+    expect(wrapper.get('[data-testid="source-version-mismatch"]').text()).toContain('当前接口版本')
+  })
+
   it('saves the current draft and debugs the exact version returned by that save', async () => {
     const context = useContextStore()
     Object.assign(context, {

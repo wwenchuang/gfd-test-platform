@@ -18,6 +18,7 @@ from .assertions import (
     AssertionDefinitionError,
     JsonPathError,
     evaluate_assertions,
+    evaluate_business_response,
     extract_values,
 )
 from .services.case_service import CaseService
@@ -78,16 +79,16 @@ class HostPolicy:
         if parsed.scheme not in {"http", "https"} or not parsed.hostname:
             raise HostPolicyError("only absolute HTTP and HTTPS URLs are allowed")
         if parsed.username is not None or parsed.password is not None:
-            raise HostPolicyError("URL credentials are not allowed")
+            raise HostPolicyError("服务地址不允许包含账号密码")
         try:
             port = parsed.port or (443 if parsed.scheme == "https" else 80)
         except ValueError as exc:
-            raise HostPolicyError("URL port is invalid") from exc
+            raise HostPolicyError("服务地址端口无效") from exc
         hostname = parsed.hostname.rstrip(".").lower()
         try:
             records = socket.getaddrinfo(hostname, port, type=socket.SOCK_STREAM)
         except socket.gaierror as exc:
-            raise HostPolicyError("host could not be resolved") from exc
+            raise HostPolicyError("无法解析服务主机") from exc
         addresses = []
         for record in records:
             address = record[4][0]
@@ -109,11 +110,11 @@ class ExecutorLimits:
 
     def __post_init__(self):
         if not 0 < self.timeout_seconds <= 60:
-            raise ValueError("timeout must be between 0 and 60 seconds")
+            raise ValueError("超时时间必须在 0 到 60 秒之间")
         if not 0 < self.max_response_bytes <= 50 * 1024 * 1024:
-            raise ValueError("response limit is invalid")
+            raise ValueError("响应大小限制无效")
         if not 0 <= self.max_redirects <= 10:
-            raise ValueError("redirect limit is invalid")
+            raise ValueError("重定向次数限制无效")
 
 
 @dataclass(frozen=True)
@@ -304,7 +305,7 @@ class HttpExecutor:
                         {},
                         (),
                         {},
-                        "required workflow variables are missing: "
+                        "缺少流程必需变量："
                         + ", ".join(missing),
                         (),
                     )
@@ -372,7 +373,7 @@ class HttpExecutor:
                             {},
                             (),
                             {},
-                            "required cleanup variables are missing: "
+                            "缺少清理步骤必需变量："
                             + ", ".join(missing),
                             (),
                         )
@@ -409,7 +410,7 @@ class HttpExecutor:
                 category = main_outcome.failure_category
                 error = main_outcome.error
             else:
-                status, category, error = "BROKEN", "setup", "main request was not executed"
+                status, category, error = "BROKEN", "setup", "主体请求未执行"
             if cleanup_problem is not None and status == "PASSED":
                 status, category, error = "FAILED", "cleanup", cleanup_problem.error
             return self._result(
@@ -440,11 +441,11 @@ class HttpExecutor:
         """Execute an enabled setup prefix without persisting an execution."""
         steps = tuple(copy.deepcopy(list(setup_steps or [])))
         if not isinstance(target_index, int) or isinstance(target_index, bool):
-            raise ValueError("target_index must be an integer")
+            raise ValueError("目标步骤序号必须是整数")
         if target_index < 0 or target_index >= len(steps):
-            raise ValueError("target_index is outside setup_steps")
+            raise ValueError("目标步骤序号超出前置步骤范围")
         if not steps[target_index].get("enabled", True):
-            raise ValueError("target setup step is disabled")
+            raise ValueError("目标前置步骤已停用")
 
         variables = copy.deepcopy(dict(initial_variables or {}))
         self._apply_processing(processing_pre or [], variables)
@@ -470,7 +471,7 @@ class HttpExecutor:
                     {},
                     (),
                     {},
-                    "required workflow variables are missing: "
+                    "缺少流程必需变量："
                     + ", ".join(missing),
                     (),
                 )
@@ -495,7 +496,7 @@ class HttpExecutor:
                     variables[name] = copy.deepcopy(overrides[name])
 
         if target_outcome is None:
-            raise ValueError("no enabled setup step was executed")
+            raise ValueError("没有可执行的前置步骤")
         return {
             "status": target_outcome.status,
             "failure_category": target_outcome.failure_category,
@@ -713,23 +714,26 @@ class HttpExecutor:
                     )
             self._check_cancel("before_assertion", cancel)
             if assertion_views:
-                raw_assertion_results = evaluate_assertions(
-                    assertion_views, response
+                raw_assertion_results = list(evaluate_assertions(assertion_views, response))
+            else:
+                raw_assertion_results = []
+            business_result = evaluate_business_response(assertion_views, response)
+            if business_result is not None:
+                raw_assertion_results.append(business_result)
+            assertion_results = tuple(
+                redact(asdict(item), response_secrets)
+                for item in raw_assertion_results
+            )
+            if record_main_phases and assertion_results:
+                self._emit_phase(
+                    callback,
+                    trace,
+                    "assertion",
+                    {
+                        "count": len(assertion_results),
+                        "results": assertion_results,
+                    },
                 )
-                assertion_results = tuple(
-                    redact(asdict(item), response_secrets)
-                    for item in raw_assertion_results
-                )
-                if record_main_phases:
-                    self._emit_phase(
-                        callback,
-                        trace,
-                        "assertion",
-                        {
-                            "count": len(assertion_results),
-                            "results": assertion_results,
-                        },
-                    )
             assertion_failed = any(
                 not item["passed"] for item in assertion_results
             )
@@ -737,7 +741,9 @@ class HttpExecutor:
                 item.enabled and item.type == "status_code"
                 for item in assertion_views
             )
-            if assertion_failed:
+            if business_result is not None:
+                status, category = "FAILED", "business_response"
+            elif assertion_failed:
                 status, category = "FAILED", "product_assertion"
             elif response.status_code >= 400 and not has_status_assertion:
                 status, category = "FAILED", "product_response"
@@ -853,14 +859,14 @@ class HttpExecutor:
                 "response": {},
                 "assertions": [],
                 "extracted_variables": {},
-                "error_message": "required workflow variables are missing",
+                "error_message": "缺少流程必需变量",
             },
         )
 
     @staticmethod
     def _exception_details(exc):
         if isinstance(exc, CancelledExecution):
-            return "CANCELLED", "cancelled", "cancelled"
+            return "CANCELLED", "cancelled", "执行已取消"
         if isinstance(exc, HostPolicyError):
             return "BROKEN", "host_policy", str(exc)
         if isinstance(exc, RedirectLimitError):
@@ -868,7 +874,7 @@ class HttpExecutor:
         if isinstance(exc, ResponseLimitError):
             return "BROKEN", "response_limit", str(exc)
         if isinstance(exc, (socket.timeout, RequestTimeoutError)):
-            return "BROKEN", "timeout", str(exc) or "request deadline exceeded"
+            return "BROKEN", "timeout", str(exc) or "请求超时"
         if isinstance(exc, (ConnectionError, http.client.HTTPException, OSError)):
             return "BROKEN", "transport", str(exc)
         if isinstance(exc, (JsonPathError, json.JSONDecodeError)):
@@ -902,7 +908,7 @@ class HttpExecutor:
                     connection_error = exc
                     candidate.close()
             if connection is None:
-                raise connection_error or ConnectionError("host could not be reached")
+                raise connection_error or ConnectionError("无法连接服务主机")
             transport_socket = connection.sock
             path = urlunsplit(("", "", parsed.path or "/", parsed.query, ""))
             request_headers = dict(headers)
@@ -920,9 +926,9 @@ class HttpExecutor:
                     location = raw.getheader("Location")
                     raw.read(0)
                     if not location:
-                        raise http.client.HTTPException("redirect is missing Location")
+                        raise http.client.HTTPException("重定向响应缺少 Location 请求头")
                     if redirect_count >= self.limits.max_redirects:
-                        raise RedirectLimitError("redirect limit exceeded")
+                        raise RedirectLimitError("重定向次数超过限制")
                     redirected_url = urljoin(url, location)
                     if self._origin(url) != self._origin(redirected_url):
                         headers = {
@@ -946,7 +952,7 @@ class HttpExecutor:
                         break
                     size += len(chunk)
                     if size > self.limits.max_response_bytes:
-                        raise ResponseLimitError("response body exceeds configured limit")
+                        raise ResponseLimitError("响应体大小超过配置限制")
                     chunks.append(chunk)
                 raw_body = b"".join(chunks)
                 encoding = "utf-8"
@@ -979,13 +985,13 @@ class HttpExecutor:
                 )
             finally:
                 connection.close()
-        raise RedirectLimitError("redirect limit exceeded")
+        raise RedirectLimitError("重定向次数超过限制")
 
     @staticmethod
     def _remaining(deadline):
         remaining = deadline - time.monotonic()
         if remaining <= 0:
-            raise RequestTimeoutError("request deadline exceeded")
+            raise RequestTimeoutError("请求超时")
         return remaining
 
     @staticmethod
@@ -997,7 +1003,7 @@ class HttpExecutor:
             return response_socket
         if connection.sock is not None and connection.sock.fileno() >= 0:
             return connection.sock
-        raise ConnectionError("response transport is unavailable")
+        raise ConnectionError("响应传输通道不可用")
 
     @staticmethod
     def _origin(url):
@@ -1063,7 +1069,7 @@ class HttpExecutor:
             elif action == "json_decode":
                 variables[item["target"]] = json.loads(variables[item["source"]])
             else:
-                raise ValueError("processing action is not supported")
+                raise ValueError("不支持该数据处理动作")
 
     @staticmethod
     def _result(started, status, category, request, response, assertions, extracted, error, trace, secrets):

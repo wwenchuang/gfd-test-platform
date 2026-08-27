@@ -28,8 +28,28 @@ const EXECUTION_TYPE_LABELS: Record<string, string> = {
   scheduled: '定时任务',
 }
 
+const FAILURE_CATEGORY_LABELS: Record<string, string> = {
+  business_response: '业务响应不符合预期',
+  product_assertion: '断言未满足',
+  product_response: 'HTTP 响应不符合预期',
+  assertion_definition: '断言配置错误',
+  setup: '前置步骤失败',
+  cleanup: '清理步骤失败',
+  dependency: '依赖用例未满足',
+  timeout: '请求超时',
+  transport: '网络传输失败',
+  host_policy: '目标地址不允许访问',
+  response_limit: '响应内容超过限制',
+  environment: '执行环境异常',
+  worker: '执行服务异常',
+}
+
 export function statusLabel(status: string): string {
   return STATUS_LABELS[String(status || '').toUpperCase()] || String(status || '未知')
+}
+
+export function failureCategoryLabel(category: string): string {
+  return FAILURE_CATEGORY_LABELS[String(category || '')] || String(category || '未分类异常')
 }
 
 export function executionTypeLabel(executionOrType: ExecutionView | string): string {
@@ -113,7 +133,7 @@ export function executionFailureBuckets(execution: ExecutionView): {
     if (result.status === 'SKIPPED') { buckets.skipped += 1; continue }
     if (result.status === 'CANCELLED') { buckets.cancelled += 1; continue }
     if (!['FAILED', 'BROKEN'].includes(result.status)) continue
-    if (['product_assertion', 'product_response'].includes(result.failure_category)) buckets.product += 1
+    if (['business_response', 'product_assertion', 'product_response'].includes(result.failure_category)) buckets.product += 1
     else if ([
       'environment', 'network', 'transport', 'timeout', 'auth', 'authentication',
       'infrastructure', 'worker', 'host_policy', 'redirect_limit', 'response_limit',

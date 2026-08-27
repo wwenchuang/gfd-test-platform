@@ -108,6 +108,23 @@ describe('EndpointTree', () => {
     expect(wrapper.get('[data-testid="group-selected-count-我的收藏"]').text()).toContain('2 已选')
   })
 
+  it('does not render a thousand endpoint rows until a group or search result is opened', async () => {
+    const endpoints = Array.from({ length: 1000 }, (_, index) => ({
+      id: `endpoint-${index}`,
+      method: 'GET',
+      path: `/large-list/${index}`,
+      summary: `批量接口 ${index}`,
+      tags: [`分组 ${index % 20}`],
+    }))
+    const wrapper = mount(EndpointTree, { props: { endpoints } })
+
+    expect(wrapper.findAll('.endpoint-row')).toHaveLength(0)
+
+    await wrapper.get('[data-testid="endpoint-search"]').setValue('/large-list/999')
+    expect(wrapper.findAll('.endpoint-row')).toHaveLength(1)
+    expect(wrapper.text()).toContain('批量接口 999')
+  })
+
   it('auto-expands matching collapsed groups while searching', async () => {
     const wrapper = mount(EndpointTree, {
       props: {

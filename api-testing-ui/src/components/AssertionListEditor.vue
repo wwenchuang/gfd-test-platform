@@ -17,6 +17,18 @@ const operators: Record<string, string[]> = {
   response_time: ['greater_than', 'less_than'],
   schema: ['equals'],
 }
+const operatorLabels: Record<string, string> = {
+  equals: '等于',
+  not_equals: '不等于',
+  contains: '包含',
+  not_contains: '不包含',
+  exists: '存在',
+  not_exists: '不存在',
+  greater_than: '大于',
+  less_than: '小于',
+  matches: '匹配正则',
+  in: '属于集合',
+}
 
 function clone(): Array<Record<string, unknown>> {
   return JSON.parse(JSON.stringify(props.modelValue)) as Array<Record<string, unknown>>
@@ -38,6 +50,26 @@ function messages(index: number, source: Record<string, string>): Array<[string,
 function patch(index: number, field: string, value: unknown): void {
   const assertions = clone()
   assertions[index][field] = value
+  emit('update:modelValue', assertions)
+}
+
+function isBusinessCode(assertion: Record<string, unknown>): boolean {
+  return assertion.type === 'json_path' && String(assertion.path || '').trim() === '$.code'
+}
+
+function availableOperators(assertion: Record<string, unknown>): string[] {
+  return isBusinessCode(assertion)
+    ? ['equals', 'in']
+    : operators[String(assertion.type)] || ['equals']
+}
+
+function updatePath(index: number, value: string): void {
+  const assertions = clone()
+  const assertion = assertions[index]
+  assertion.path = value
+  if (isBusinessCode(assertion) && !['equals', 'in'].includes(String(assertion.operator))) {
+    assertion.operator = 'equals'
+  }
   emit('update:modelValue', assertions)
 }
 
@@ -82,13 +114,14 @@ function renderValue(value: unknown): string {
     <p v-if="!modelValue.length" class="compact-empty">尚未配置业务断言。</p>
     <div v-for="(assertion, index) in modelValue" :key="index" class="assertion-card">
       <label>类型<select :value="assertion.type" @change="changeType(index, ($event.target as HTMLSelectElement).value)"><option value="status_code">HTTP 状态码</option><option value="json_path">响应 JSON 字段</option><option value="header">响应头</option><option value="response_time">响应时间</option><option value="schema">响应结构</option></select></label>
-      <label>比较<select :value="assertion.operator" @change="patch(index, 'operator', ($event.target as HTMLSelectElement).value)"><option v-for="operator in operators[String(assertion.type)] || ['equals']" :key="operator" :value="operator">{{ operator }}</option></select></label>
-      <label v-if="['json_path','schema'].includes(String(assertion.type))">路径<input :value="String(assertion.path || '')" :placeholder="assertion.type === 'json_path' ? '$.code' : '$.data'" @input="patch(index, 'path', ($event.target as HTMLInputElement).value)" /></label>
+      <label>比较<select :data-testid="testId(`assertion-operator-${index}`)" :value="assertion.operator" @change="patch(index, 'operator', ($event.target as HTMLSelectElement).value)"><option v-for="operator in availableOperators(assertion)" :key="operator" :value="operator">{{ operatorLabels[operator] || operator }}</option></select></label>
+      <label v-if="['json_path','schema'].includes(String(assertion.type))">路径<input :data-testid="testId(`assertion-path-${index}`)" :value="String(assertion.path || '')" :placeholder="assertion.type === 'json_path' ? '$.code' : '$.data'" @input="updatePath(index, ($event.target as HTMLInputElement).value)" /></label>
       <label v-if="assertion.type === 'header'">响应头<input :value="String(assertion.name || '')" placeholder="Content-Type" @input="patch(index, 'name', ($event.target as HTMLInputElement).value)" /></label>
       <label v-if="!['exists','not_exists'].includes(String(assertion.operator))">期望值<input :data-testid="testId(`assertion-expected-${index}`)" :value="renderValue(assertion.expected)" @input="updateExpected(index, ($event.target as HTMLInputElement).value)" /></label>
-      <label>超时(ms)<input :value="Number(assertion.timeout_ms || 0)" type="number" min="0" max="60000" @input="patch(index, 'timeout_ms', Number(($event.target as HTMLInputElement).value))" /></label>
+      <label>超时（毫秒）<input :value="Number(assertion.timeout_ms || 0)" type="number" min="0" max="60000" @input="patch(index, 'timeout_ms', Number(($event.target as HTMLInputElement).value))" /></label>
       <label class="toggle-line"><input :checked="assertion.enabled !== false" type="checkbox" @change="patch(index, 'enabled', ($event.target as HTMLInputElement).checked)" />启用</label>
       <button class="mini-icon danger" type="button" title="删除断言" @click="emit('update:modelValue', clone().filter((_, row) => row !== index))"><Trash2 :size="15" /></button>
+      <small v-if="isBusinessCode(assertion)" :data-testid="testId(`business-code-assertion-hint-${index}`)" class="business-code-assertion-hint">业务码必须精确断言预期值；HTTP 成功不代表业务成功。</small>
       <small v-for="([field, message]) in messages(index, errors)" :key="field" :data-error-for="field" class="field-error row-feedback">{{ message }}</small>
       <small v-for="([field, message]) in messages(index, warnings)" :key="field" :data-warning-for="field" class="field-warning row-feedback">{{ message }}</small>
     </div>

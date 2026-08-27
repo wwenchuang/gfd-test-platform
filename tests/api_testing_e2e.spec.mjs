@@ -26,7 +26,7 @@ test('我的收藏三接口完成导入、AI 设计、调试、基线回归和�
   await page.getByLabel('项目名称').fill('3D 我的收藏')
   await page.getByRole('button', { name: '创建', exact: true }).click()
   await expect(page.getByRole('combobox', { name: '平台项目', exact: true })).toHaveValue(/.+/)
-  await page.getByText('高级导入：OpenAPI JSON', { exact: true }).click()
+  await page.getByText('高级导入：接口定义文件（JSON）', { exact: true }).click()
   await page.locator('input[type="file"]').setInputFiles(acceptance.openApiPath)
   await page.getByRole('button', { name: '读取并比较' }).click()
   await page.getByRole('button', { name: '确认保存接口' }).click()
@@ -91,7 +91,7 @@ test('我的收藏三接口完成导入、AI 设计、调试、基线回归和�
   await expect(page.getByTestId('setup-0-extraction-target-0')).toHaveValue('favoriteId')
   await page.getByTestId('assertion-expected-0').fill('200')
   await acceptExecutionConfirmation(page, () => page.getByRole('button', { name: '保存并调试' }).click())
-  await expect(page.locator('.result-status').getByText('PASSED', { exact: true })).toBeVisible()
+  await expect(page.locator('.result-status').getByText('通过', { exact: true })).toBeVisible()
   await page.getByTestId('adopt-baseline').click()
   await page.getByTitle('关闭调试').click()
 
@@ -99,7 +99,7 @@ test('我的收藏三接口完成导入、AI 设计、调试、基线回归和�
     await page.getByTestId('endpoint-search').fill(summary)
     await page.locator('.endpoint-tree').getByRole('button', { name: new RegExp(summary) }).click()
     await acceptExecutionConfirmation(page, () => page.getByRole('button', { name: '保存并调试' }).click())
-    await expect(page.locator('.result-status').getByText('PASSED', { exact: true })).toBeVisible()
+    await expect(page.locator('.result-status').getByText('通过', { exact: true })).toBeVisible()
     await page.getByTestId('adopt-baseline').click()
     await page.getByTitle('关闭调试').click()
   }

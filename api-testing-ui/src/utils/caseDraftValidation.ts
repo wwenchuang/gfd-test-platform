@@ -6,6 +6,14 @@ export function validateCaseDraftLocally(draft: CaseDraft): Record<string, strin
   if (!String(draft.app_name || '').trim()) errors.app_name = '请选择应用'
   if (!String(draft.business || '').trim()) errors.business = '请选择所属业务'
   draft.assertions.forEach((assertion, index) => {
+    if (
+      assertion.type === 'json_path'
+      && assertion.path === '$.code'
+      && assertion.enabled !== false
+      && !['equals', 'in'].includes(String(assertion.operator))
+    ) {
+      errors[`assertions[${index}].operator`] = '业务码断言必须精确填写预期值，请选择“等于”或“属于集合”'
+    }
     if (assertion.type !== 'status_code') return
     const expected = assertion.expected
     const values = assertion.operator === 'in' ? expected : [expected]

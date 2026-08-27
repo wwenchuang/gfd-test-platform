@@ -108,6 +108,14 @@ const EXTRA_CASES = EXTRA_ENDPOINTS.map((endpoint, index) => ({
 })) as CaseVersion[]
 
 describe('CaseListPanel', () => {
+  it('opens the interface picker from the empty case list', async () => {
+    const wrapper = mount(CaseListPanel, { props: { endpoints: ENDPOINTS, versions: [] } })
+
+    await wrapper.get('[data-testid="case-list-open-endpoints"]').trigger('click')
+
+    expect(wrapper.emitted('open-endpoints')).toHaveLength(1)
+  })
+
   it('shows application plus its package-scoped business without package or business IDs', () => {
     replaceTestApplications([{
       package: 'com.example.school', name: '校园应用', enabled: true,
@@ -318,6 +326,46 @@ describe('CaseListPanel', () => {
 
     await wrapper.get('[data-testid="case-list-search"]').setValue('不存在')
     expect(wrapper.get('[data-testid="case-list-empty"]').text()).toContain('当前筛选下没有匹配用例')
+  })
+
+  it('shows lifecycle badges and filters ordinary, debugged, and baseline cases', async () => {
+    const ordinary = { ...SAVED, id: 'version-ordinary', case_id: 'case-ordinary', lifecycle: {} } as CaseVersion
+    const debugged = {
+      ...DEVICE_CASE,
+      id: 'version-debugged', case_id: 'case-debugged',
+      lifecycle: { debug_status: 'FAILED', debug_execution_id: 'execution-debug' },
+    } as CaseVersion
+    const baseline = {
+      ...EXTRA_CASES[0],
+      id: 'version-baseline', case_id: 'case-baseline',
+      lifecycle: { debug_status: 'PASSED', debug_execution_id: 'execution-baseline', baseline_status: 'active', baseline_id: 'baseline-1', regression_status: 'PASSED' },
+    } as CaseVersion
+    const wrapper = mount(CaseListPanel, {
+      props: {
+        endpoints: [...ENDPOINTS, DEVICE_ENDPOINT, ...EXTRA_ENDPOINTS],
+        versions: [ordinary, debugged, baseline],
+      },
+    })
+    await wrapper.get('[data-testid="case-list-expand-all"]').trigger('click')
+
+    expect(wrapper.get('[data-testid="case-version-version-debugged"]').text()).toContain('调试失败')
+    expect(wrapper.get('[data-testid="case-version-version-baseline"]').text()).toContain('已基线')
+    expect(wrapper.get('[data-testid="case-version-version-baseline"]').text()).toContain('回归通过')
+    await wrapper.get('[data-testid="case-version-debug-history-version-debugged"]').trigger('click')
+    await wrapper.get('[data-testid="case-version-baseline-version-baseline"]').trigger('click')
+    expect(wrapper.emitted('open-debug-history')?.[0]).toEqual([debugged])
+    expect(wrapper.emitted('open-baseline')?.[0]).toEqual([baseline])
+
+    await wrapper.get('[data-testid="case-work-view-regular"]').trigger('click')
+    expect(wrapper.find('[data-testid="case-version-version-ordinary"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="case-version-version-debugged"]').exists()).toBe(false)
+
+    await wrapper.get('[data-testid="case-work-view-debugged"]').trigger('click')
+    expect(wrapper.find('[data-testid="case-version-version-debugged"]').exists()).toBe(true)
+
+    await wrapper.get('[data-testid="case-work-view-baseline"]').trigger('click')
+    expect(wrapper.find('[data-testid="case-version-version-baseline"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="case-version-version-ordinary"]').exists()).toBe(false)
   })
 
   it('selects saved cases and emits a batch group movement', async () => {

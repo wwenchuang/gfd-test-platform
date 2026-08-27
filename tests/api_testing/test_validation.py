@@ -31,13 +31,13 @@ def _extraction(target, path):
     return {"target": target, "type": "json_path", "path": path, "required": True}
 
 
-def _case(endpoint, *, request=None, processing=None, extractions=None):
+def _case(endpoint, *, request=None, processing=None, assertions=None, extractions=None):
     return SimpleNamespace(
         id="case-version-1",
         endpoint_id=endpoint.id,
         request=request or _request(endpoint.path, method=endpoint.method),
         data_rows=(),
-        assertions=(),
+        assertions=tuple(assertions or ()),
         extractions=tuple(extractions or ()),
         dependencies=(),
         processing=processing
@@ -45,13 +45,24 @@ def _case(endpoint, *, request=None, processing=None, extractions=None):
     )
 
 
-def _endpoint(path="/resource/detail", *, method="GET", summary="资源详情"):
+def _assertion(path, operator, expected):
+    return SimpleNamespace(
+        type="json_path",
+        path=path,
+        name=None,
+        operator=operator,
+        expected=expected,
+        enabled=True,
+    )
+
+
+def _endpoint(path="/resource/detail", *, method="GET", summary="资源详情", operation=None):
     return SimpleNamespace(
         id="endpoint-1",
         method=method,
         path=path,
         summary=summary,
-        operation={},
+        operation=operation or {},
     )
 
 
@@ -83,6 +94,53 @@ def test_validation_tracks_setup_exports_in_order_and_into_main_request():
     result = validate_case(case, endpoint, {"variables": {}, "services": {}})
 
     assert not any(item.code == "undefined_variable" for item in result.errors)
+
+
+def test_validation_rejects_imprecise_business_failure_assertion():
+    endpoint = _endpoint()
+    case = _case(
+        endpoint,
+        assertions=[_assertion("$.code", "not_equals", 0)],
+    )
+
+    result = validate_case(case, endpoint, {"variables": {}, "services": {}})
+
+    issue = next(item for item in result.errors if item.code == "business_assertion_imprecise")
+    assert issue.field == "assertions[0].operator"
+    assert "精确" in issue.message
+
+
+def test_validation_allows_exact_expected_business_failure_code():
+    endpoint = _endpoint()
+    case = _case(
+        endpoint,
+        assertions=[_assertion("$.code", "equals", 1001)],
+    )
+
+    result = validate_case(case, endpoint, {"variables": {}, "services": {}})
+
+    assert "business_assertion_imprecise" not in {item.code for item in result.errors}
+
+
+def test_validation_explains_omitted_openapi_parameter_in_chinese():
+    endpoint = _endpoint(operation={
+        "parameters": [{
+            "in": "header",
+            "name": "Authorization",
+            "required": False,
+            "schema": {"type": "string"},
+        }],
+    })
+
+    result = validate_case(
+        _case(endpoint),
+        endpoint,
+        {"variables": {}, "headers": {}, "services": {}},
+    )
+
+    issue = next(item for item in result.warnings if item.code == "optional_parameter_omitted")
+    assert issue.message == "可选请求头 Authorization 未填写；如由环境统一注入可忽略，否则请补充"
+    assert "OpenAPI" not in issue.message
 
 
 def test_validation_reports_undefined_setup_and_cleanup_variables_at_the_step():

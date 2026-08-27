@@ -94,7 +94,7 @@ const targetSearchPlaceholder = computed(() => ({
   baselines: '搜索基线名称、路径、分组',
   baseline_group: '搜索分组名称',
 }[form.targetType]))
-const availableBaselines = computed(() => baselines.items.filter(item => item.status !== 'archived'))
+const availableBaselines = computed(() => baselines.items.filter(item => item.status === 'active'))
 const targetOptions = computed<TargetOption[]>(() => {
   if (form.targetType === 'baseline_group') return baselineGroupOptions()
   if (form.targetType === 'baselines') return availableBaselines.value.map(baselineOption)

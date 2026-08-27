@@ -932,6 +932,40 @@ def test_success_and_truthful_product_statuses(target_server):
     assert server_failed.failure_category == "product_response"
 
 
+def test_business_failure_cannot_pass_with_broad_negative_assertion(target_server):
+    result = _executor(
+        target_server,
+        _case(
+            "/business-fail",
+            assertions=[
+                _assertion("status_code", "equals", 200),
+                _assertion("json_path", "not_equals", 0, "$.code"),
+            ],
+        ),
+    ).execute_case("case-version-1", "environment-revision-1", {})
+
+    assert result.status == "FAILED"
+    assert result.failure_category == "business_response"
+    business_guard = next(item for item in result.assertion_results if item["type"] == "business_code")
+    assert business_guard["actual"] == 4009
+    assert business_guard["passed"] is False
+
+
+def test_exact_expected_business_failure_code_can_pass(target_server):
+    result = _executor(
+        target_server,
+        _case(
+            "/business-fail",
+            assertions=[
+                _assertion("status_code", "equals", 200),
+                _assertion("json_path", "equals", 4009, "$.code"),
+            ],
+        ),
+    ).execute_case("case-version-1", "environment-revision-1", {})
+
+    assert result.status == "PASSED"
+
+
 def test_dependency_overrides_take_precedence_over_static_data_rows(target_server):
     case = _case(
         "/{{resourceSn}}",

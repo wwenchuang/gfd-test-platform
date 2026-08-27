@@ -54,13 +54,15 @@ class CaseService:
             repository.flush()
             return self._version_view(repository, version, case)
 
-    def create_version(self, case_id, payload, actor_id):
+    def create_version(self, case_id, payload, actor_id, endpoint_id=None):
         parsed = parse_case_payload(payload, allow_disabled_scope=True)
         with self.session_factory.begin() as session:
             repository = CaseRepository(session)
             case = repository.get_case_for_update(case_id)
             if case is None or case.status == "archived":
                 raise CaseNotFoundError("API case was not found")
+            if endpoint_id and endpoint_id != case.endpoint_id:
+                self._adapt_case_endpoint(repository, case, endpoint_id)
             version_number = repository.next_version_number(case.id)
             previous_group_name = ""
             if case.active_version_id:
@@ -123,11 +125,24 @@ class CaseService:
     def list_active_versions_for_source_revision(self, revision_id, actor_id):
         with self.session_factory() as session:
             repository = CaseRepository(session)
+            projected = repository.list_active_versions_for_source_revision(
+                revision_id,
+                actor_id,
+            )
+            lifecycle = repository.case_lifecycle(
+                [case.id for _version, case, _endpoint, _state in projected],
+                actor_id,
+            )
             return tuple(
-                self._version_view(repository, version, case)
-                for version, case in repository.list_active_versions_for_source_revision(
-                    revision_id, actor_id
+                self._version_view(
+                    repository,
+                    version,
+                    case,
+                    current_endpoint_id=current_endpoint.id,
+                    source_state=source_state,
+                    lifecycle=lifecycle.get(case.id, {}),
                 )
+                for version, case, current_endpoint, source_state in projected
             )
 
     def list_active_baselines(self, project_id, actor_id):
@@ -293,6 +308,26 @@ class CaseService:
             raise EndpointNotFoundError("API endpoint source was not found")
         return source.project_id
 
+    @classmethod
+    def _adapt_case_endpoint(cls, repository, case, endpoint_id):
+        previous_endpoint = repository.get_endpoint(case.endpoint_id)
+        current_endpoint = repository.get_endpoint(endpoint_id)
+        if previous_endpoint is None or current_endpoint is None:
+            raise EndpointNotFoundError("API source endpoint was not found")
+        previous_revision = repository.get_source_revision(previous_endpoint.revision_id)
+        current_revision = repository.get_source_revision(current_endpoint.revision_id)
+        if (
+            previous_revision is None
+            or current_revision is None
+            or previous_revision.source_id != current_revision.source_id
+            or previous_endpoint.stable_key != current_endpoint.stable_key
+            or cls._endpoint_project_id(repository, current_endpoint) != case.project_id
+        ):
+            raise EndpointNotFoundError(
+                "API case can only adapt to the same logical endpoint in a newer source revision"
+            )
+        case.endpoint_id = current_endpoint.id
+
     @staticmethod
     def _persist_version(repository, case, payload, version_number, actor_id, group_name=""):
         version = repository.create_version(
@@ -320,7 +355,15 @@ class CaseService:
         )
 
     @staticmethod
-    def _version_view(repository, version, case):
+    def _version_view(
+        repository,
+        version,
+        case,
+        *,
+        current_endpoint_id=None,
+        source_state="current",
+        lifecycle=None,
+    ):
         request_template = copy.deepcopy(dict(version.request_template))
         name = request_template.get("name", case.name)
         request = request_template.get("request", request_template)
@@ -364,6 +407,8 @@ class CaseService:
             case_id=case.id,
             project_id=case.project_id,
             endpoint_id=version.endpoint_id,
+            current_endpoint_id=current_endpoint_id or version.endpoint_id,
+            source_state=source_state,
             name=name,
             status=version.status,
             origin=case.origin,
@@ -381,6 +426,7 @@ class CaseService:
             dependencies=dependencies,
             processing=copy.deepcopy(dict(version.processing_spec)),
             validation_summary=copy.deepcopy(dict(version.validation_summary)),
+            lifecycle=copy.deepcopy(dict(lifecycle or {})),
             created_at=version.created_at,
             updated_at=version.updated_at,
         )

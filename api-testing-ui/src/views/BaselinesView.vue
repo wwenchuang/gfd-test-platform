@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { Edit3, ListPlus, Play, RefreshCw, Search, ShieldCheck, Trash2 } from 'lucide-vue-next'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 
 import ContextBar from '../components/ContextBar.vue'
 import type { ApiBaselineCase } from '../api/contracts'
@@ -17,7 +17,8 @@ const baselines = useBaselinesStore()
 const executions = useExecutionsStore()
 const tasks = useTasksStore()
 const router = useRouter()
-const search = ref('')
+const route = useRoute()
+const search = ref(typeof route.query.search === 'string' ? route.query.search : '')
 const group = ref('all')
 const baselineType = ref<'all' | 'regular' | 'one-time'>('all')
 const methodFilter = ref('all')

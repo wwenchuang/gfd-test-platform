@@ -1062,6 +1062,48 @@ def test_latest_unfinished_ai_job_can_be_restored_after_reload(
     assert denied.status == 404
 
 
+def test_latest_completed_ai_job_can_be_restored_for_current_source_revision(
+    http_client, api_context, owned_records
+):
+    with api_context["factory"].begin() as session:
+        completed = ApiAiJob(
+            project_id=owned_records["project"].id,
+            environment_revision_id=owned_records["environment_revision"].id,
+            state="completed",
+            endpoint_ids=[owned_records["endpoint"].id],
+            requested_model="qwen",
+            actual_model="qwen",
+            summary={"generated_count": 1},
+            **_audit("owner-a"),
+        )
+        session.add(completed)
+        session.flush()
+        session.add(
+            ApiAiJobBatch(
+                job_id=completed.id,
+                sequence=1,
+                state="completed",
+                endpoint_ids=[owned_records["endpoint"].id],
+                requested_model="qwen",
+                actual_model="qwen",
+                result={"draft_version_ids": [], "validation_errors": []},
+                error={},
+                **_audit("owner-a"),
+            )
+        )
+
+    response = http_client.get(
+        "/api/api-testing/v1/ai-jobs/latest"
+        f"?project_id={owned_records['project'].id}"
+        f"&source_revision_id={owned_records['revision'].id}",
+        _auth(),
+    )
+
+    assert response.status == 200
+    assert response.body["data"]["job"]["id"] == completed.id
+    assert response.body["data"]["job"]["state"] == "completed"
+
+
 def test_ai_job_submission_enqueues_real_processing(http_client, owned_records, monkeypatch):
     queued = []
     monkeypatch.setattr(http, "_enqueue_ai_job", queued.append)

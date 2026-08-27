@@ -129,6 +129,7 @@ describe('cases store', () => {
 
     expect(get).toHaveBeenCalledOnce()
     expect(post.mock.calls[0][1]).toEqual({
+      endpoint_id: 'endpoint-1',
       case: expect.objectContaining({ name: '收藏列表', request: expect.any(Object) }),
     })
     expect(Object.keys((post.mock.calls[0][1] as { case: object }).case).sort()).toEqual([
@@ -208,7 +209,7 @@ describe('cases store', () => {
     expect(prepared.id).toBe('version-2')
     expect(store.activeVersionByEndpoint[VERSION.endpoint_id]).toBe('version-2')
     expect(get).toHaveBeenCalledOnce()
-    expect(post.mock.calls[0][1]).toEqual({ case: expect.objectContaining({
+    expect(post.mock.calls[0][1]).toEqual({ endpoint_id: 'endpoint-1', case: expect.objectContaining({
       assertions: [expect.objectContaining({ expected: 201 })],
     }) })
   })
@@ -228,6 +229,21 @@ describe('cases store', () => {
     expect(store.validationErrors['assertions[0].expected']).toContain('100 到 599')
   })
 
+  it('blocks imprecise business code assertions before saving the draft', async () => {
+    const post = vi.spyOn(apiClient, 'post')
+    const store = useCasesStore()
+    store.registerVersion(VERSION)
+    store.drafts[VERSION.endpoint_id] = {
+      ...JSON.parse(JSON.stringify(store.drafts[VERSION.endpoint_id])),
+      assertions: [{ type: 'json_path', path: '$.code', operator: 'not_equals', expected: 0, timeout_ms: 0, enabled: true }],
+    }
+
+    await expect(store.saveForDebug(VERSION.endpoint_id, 'environment-1')).rejects.toThrow('精确')
+
+    expect(post).not.toHaveBeenCalled()
+    expect(store.validationErrors['assertions[0].operator']).toContain('等于')
+  })
+
   it('restores every persisted case version for the saved source revision', async () => {
     const second = { ...VERSION, id: 'version-2', case_id: 'case-2', name: '收藏列表鉴权失败' }
     const get = vi.spyOn(apiClient, 'get').mockResolvedValue({ data: { case_versions: [VERSION, second] } })
@@ -238,6 +254,44 @@ describe('cases store', () => {
     expect(get).toHaveBeenCalledWith('/api/api-testing/v1/cases?source_revision_id=source-revision-1')
     expect(store.versionIdsByEndpoint['endpoint-1']).toEqual(['version-1', 'version-2'])
     expect(store.activeVersionByEndpoint['endpoint-1']).toBe('version-1')
+  })
+
+  it('projects a historical logical case onto the current endpoint and adapts it on save', async () => {
+    const currentEndpoint = {
+      id: 'endpoint-current', method: 'POST', path: '/favorite/list/v2', summary: '收藏列表', tags: [],
+    } as ApiEndpoint
+    const historical = {
+      ...VERSION,
+      endpoint_id: 'endpoint-old',
+      current_endpoint_id: currentEndpoint.id,
+      source_state: 'needs_adaptation',
+    } as CaseVersion
+    const adapted = {
+      ...historical,
+      id: 'version-2', version: 2, endpoint_id: currentEndpoint.id,
+      current_endpoint_id: currentEndpoint.id, source_state: 'current',
+      request: { ...historical.request, method: currentEndpoint.method, path: currentEndpoint.path },
+    } as CaseVersion
+    const post = vi.spyOn(apiClient, 'post')
+      .mockResolvedValueOnce({ data: { case_version: adapted } })
+      .mockResolvedValueOnce({ data: { validation: { valid: true, errors: [], warnings: [] } } })
+    const store = useCasesStore()
+
+    store.registerVersion(historical, false)
+    const draft = store.draftFor(currentEndpoint)
+
+    expect(store.versionIdsByEndpoint[currentEndpoint.id]).toEqual([historical.id])
+    expect(draft.request.method).toBe('POST')
+    expect(draft.request.path).toBe('/favorite/list/v2')
+
+    await store.save(currentEndpoint.id)
+
+    expect(post.mock.calls[0][1]).toEqual({
+      endpoint_id: currentEndpoint.id,
+      case: expect.objectContaining({ request: expect.objectContaining({ path: '/favorite/list/v2' }) }),
+    })
+    expect(store.activeVersionByEndpoint[currentEndpoint.id]).toBe('version-2')
+    expect(store.versions['version-1']).toBeUndefined()
   })
 
   it('previews basic positive drafts without registering persisted versions', async () => {
@@ -360,6 +414,26 @@ describe('cases store', () => {
     expect(store.aiError).toContain('继续查看')
   })
 
+  it('keeps a readable validation reason when AI generation ends in failure', async () => {
+    vi.spyOn(apiClient, 'get').mockResolvedValue({ data: {
+      job: {
+        id: 'job-failed', state: 'failed_validation', endpoint_ids: ['endpoint-1'],
+        requested_model: 'qwen', actual_model: 'qwen', fallback_used: false, summary: {},
+        batches: [{
+          id: 'batch-1', sequence: 1, state: 'failed_validation', endpoint_ids: ['endpoint-1'],
+          requested_model: 'qwen', actual_model: 'qwen', fallback_used: false, fallback_reason: '',
+          generated_draft_ids: [], validation_errors: [{ code: 'missing_endpoint_coverage', message: 'missing endpoint coverage' }],
+        }],
+      },
+    } })
+    const store = useCasesStore()
+
+    await store.pollAiJob('job-failed', { maxAttempts: 1, delayMs: 0 })
+
+    expect(store.aiCanResume).toBe(false)
+    expect(store.aiError).toContain('部分已选接口没有生成有效用例')
+  })
+
   it('restores the latest unfinished AI job after a page reload', async () => {
     const get = vi.spyOn(apiClient, 'get').mockResolvedValue({ data: {
       job: { id: 'job-9', state: 'running', endpoint_ids: ['endpoint-1'], requested_model: 'qwen', actual_model: 'qwen', fallback_used: false, summary: {}, batches: [] },
@@ -371,6 +445,27 @@ describe('cases store', () => {
     expect(get).toHaveBeenCalledWith('/api/api-testing/v1/ai-jobs/latest?project_id=project-1')
     expect(store.lastAiJobId).toBe('job-9')
     expect(store.aiCanResume).toBe(true)
+  })
+
+  it('restores the latest completed AI job and its generated results after reload', async () => {
+    const completedJob = {
+      id: 'job-completed', state: 'completed', endpoint_ids: ['endpoint-1'],
+      requested_model: 'qwen', actual_model: 'qwen', fallback_used: false, summary: {},
+      batches: [{ id: 'batch-1', sequence: 1, state: 'completed', endpoint_ids: ['endpoint-1'], requested_model: 'qwen', actual_model: 'qwen', fallback_used: false, fallback_reason: '', generated_draft_ids: ['version-1'], validation_errors: [] }],
+    }
+    const get = vi.spyOn(apiClient, 'get')
+      .mockResolvedValueOnce({ data: { job: completedJob } })
+      .mockResolvedValueOnce({ data: { case_version: VERSION } })
+    const store = useCasesStore()
+
+    await store.restoreLatestAiJob('project-1', 'source-1')
+
+    expect(store.aiJob?.id).toBe('job-completed')
+    expect(store.lastAiJobId).toBe('job-completed')
+    expect(store.aiCanResume).toBe(false)
+    expect(store.versions['version-1']).toEqual(VERSION)
+    expect(get.mock.calls[0][0]).toBe('/api/api-testing/v1/ai-jobs/latest?project_id=project-1&source_revision_id=source-1')
+    expect(get.mock.calls[1][0]).toBe('/api/api-testing/v1/case-versions/version-1')
   })
 
   it('attaches AI generation and debug execution to the current task', async () => {

@@ -251,9 +251,10 @@ describe('ScheduledJobsView', () => {
               ? [baselineFixture({ id: 'baseline-1', group_name: '基线', case_name: '登录成功用例' })]
               : [
                   baselineFixture({ id: 'baseline-1', group_name: '基线', case_name: '登录成功用例' }),
-                  baselineFixture({ id: 'baseline-2', group_name: '测试', case_name: '支付成功用例', path: '/pay', status: 'ready' }),
-                  baselineFixture({ id: 'baseline-3', group_name: '', case_name: '未分组用例', path: '/profile', status: 'adopted', tags: [] }),
+                  baselineFixture({ id: 'baseline-2', group_name: '测试', case_name: '支付成功用例', path: '/pay' }),
+                  baselineFixture({ id: 'baseline-3', group_name: '', case_name: '未分组用例', path: '/profile', tags: [] }),
                   baselineFixture({ id: 'baseline-4', group_name: '已删除', case_name: '归档用例', path: '/archived', status: 'archived' }),
+                  baselineFixture({ id: 'baseline-5', group_name: '历史', case_name: '历史版本用例', path: '/history', status: 'superseded' }),
                 ],
           },
         }
@@ -277,6 +278,7 @@ describe('ScheduledJobsView', () => {
     expect(wrapper.text()).toContain('测试')
     expect(wrapper.text()).toContain('未分组')
     expect(wrapper.text()).not.toContain('已删除')
+    expect(wrapper.text()).not.toContain('历史')
     await wrapper.get('[data-testid="scheduled-target-type"]').setValue('baselines')
     expect(wrapper.text()).toContain('基线')
     expect(wrapper.text()).toContain('测试')
@@ -287,6 +289,7 @@ describe('ScheduledJobsView', () => {
     expect(wrapper.text()).toContain('支付成功用例')
     expect(wrapper.text()).toContain('未分组用例')
     expect(wrapper.text()).not.toContain('归档用例')
+    expect(wrapper.text()).not.toContain('历史版本用例')
   })
 
   it('validates cron expressions and explains the edited schedule', async () => {

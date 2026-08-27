@@ -42,38 +42,119 @@ class CaseRepository:
         )
 
     def list_active_versions_for_source_revision(self, revision_id, actor_id):
-        return tuple(
-            self.session.execute(
-                select(ApiCaseVersion, ApiCase)
-                .join(ApiCase, ApiCase.id == ApiCaseVersion.case_id)
-                .join(
-                    ApiSourceEndpoint,
-                    ApiSourceEndpoint.id == ApiCaseVersion.endpoint_id,
-                )
-                .join(
-                    ApiSourceRevision,
-                    ApiSourceRevision.id == ApiSourceEndpoint.revision_id,
-                )
-                .join(ApiSource, ApiSource.id == ApiSourceRevision.source_id)
-                .join(ApiProject, ApiProject.id == ApiSource.project_id)
-                .where(
-                    ApiSourceRevision.id == revision_id,
-                    ApiProject.owner_id == actor_id,
-                    ApiCase.owner_id == actor_id,
-                    ApiCase.project_id == ApiProject.id,
-                    ApiCase.endpoint_id == ApiSourceEndpoint.id,
-                    ApiCase.status != "archived",
-                    ApiCaseVersion.endpoint_id == ApiCase.endpoint_id,
-                    ApiCase.active_version_id == ApiCaseVersion.id,
-                )
-                .order_by(
-                    ApiSourceEndpoint.normalized_path,
-                    ApiSourceEndpoint.method,
-                    ApiCase.name,
-                    ApiCase.id,
+        current_revision = self.get_source_revision(revision_id)
+        if current_revision is None:
+            return ()
+        current_endpoints = {
+            item.stable_key: item
+            for item in self.session.scalars(
+                select(ApiSourceEndpoint).where(
+                    ApiSourceEndpoint.revision_id == revision_id
                 )
             )
+        }
+        rows = self.session.execute(
+            select(ApiCaseVersion, ApiCase, ApiSourceEndpoint, ApiSourceRevision)
+            .join(ApiCase, ApiCase.id == ApiCaseVersion.case_id)
+            .join(ApiSourceEndpoint, ApiSourceEndpoint.id == ApiCaseVersion.endpoint_id)
+            .join(ApiSourceRevision, ApiSourceRevision.id == ApiSourceEndpoint.revision_id)
+            .join(ApiSource, ApiSource.id == ApiSourceRevision.source_id)
+            .join(ApiProject, ApiProject.id == ApiSource.project_id)
+            .where(
+                ApiSource.id == current_revision.source_id,
+                ApiProject.owner_id == actor_id,
+                ApiCase.owner_id == actor_id,
+                ApiCase.project_id == ApiProject.id,
+                ApiCase.endpoint_id == ApiSourceEndpoint.id,
+                ApiCase.status != "archived",
+                ApiCaseVersion.endpoint_id == ApiCase.endpoint_id,
+                ApiCase.active_version_id == ApiCaseVersion.id,
+            )
         )
+        projected = []
+        for version, case, historical_endpoint, historical_revision in rows:
+            current_endpoint = current_endpoints.get(historical_endpoint.stable_key)
+            if current_endpoint is None:
+                continue
+            projected.append(
+                (
+                    version,
+                    case,
+                    current_endpoint,
+                    "current"
+                    if historical_revision.id == revision_id
+                    else "needs_adaptation",
+                )
+            )
+        projected.sort(
+            key=lambda item: (
+                item[2].normalized_path,
+                item[2].method,
+                item[1].name,
+                item[1].id,
+            )
+        )
+        return tuple(projected)
+
+    def case_lifecycle(self, case_ids, actor_id):
+        identifiers = tuple(set(case_ids))
+        lifecycle = {case_id: {} for case_id in identifiers}
+        if not identifiers:
+            return lifecycle
+        baseline_rows = self.session.execute(
+            select(ApiBaseline)
+            .where(
+                ApiBaseline.case_id.in_(identifiers),
+                ApiBaseline.owner_id == actor_id,
+                ApiBaseline.status == "active",
+            )
+            .distinct(ApiBaseline.case_id)
+            .order_by(ApiBaseline.case_id, ApiBaseline.created_at.desc())
+        ).scalars()
+        for baseline in baseline_rows:
+            lifecycle[baseline.case_id].update(
+                {
+                    "baseline_id": baseline.id,
+                    "baseline_status": baseline.status,
+                    "baseline_adopted_at": baseline.created_at,
+                }
+            )
+
+        execution_rows = self.session.execute(
+            select(ApiCaseVersion.case_id, ApiExecutionCase, ApiExecution)
+            .join(ApiExecutionCase, ApiExecutionCase.case_version_id == ApiCaseVersion.id)
+            .join(ApiExecution, ApiExecution.id == ApiExecutionCase.execution_id)
+            .where(
+                ApiCaseVersion.case_id.in_(identifiers),
+                ApiExecution.owner_id == actor_id,
+            )
+            .distinct(ApiCaseVersion.case_id, ApiExecution.execution_type)
+            .order_by(
+                ApiCaseVersion.case_id,
+                ApiExecution.execution_type,
+                ApiExecutionCase.created_at.desc(),
+            )
+        )
+        for case_id, execution_case, execution in execution_rows:
+            if execution.execution_type == "debug":
+                lifecycle[case_id].update(
+                    {
+                        "debug_status": execution_case.status,
+                        "debug_execution_id": execution.id,
+                        "debugged_at": execution_case.created_at,
+                    }
+                )
+            else:
+                current = lifecycle[case_id].get("regressed_at")
+                if current is None or execution_case.created_at > current:
+                    lifecycle[case_id].update(
+                        {
+                            "regression_status": execution_case.status,
+                            "regression_execution_id": execution.id,
+                            "regressed_at": execution_case.created_at,
+                        }
+                    )
+        return lifecycle
 
     def create_case(self, project_id, endpoint_id, name, origin, actor_id):
         record = ApiCase(

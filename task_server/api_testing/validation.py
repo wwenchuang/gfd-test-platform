@@ -115,14 +115,26 @@ def _validate_response_rules(assertions, extractions, field, errors):
                 errors,
                 "assertion_path_invalid",
                 f"{prefix}assertions[{index}].path",
-                "JSONPath assertions must start with $",
+                "JSONPath 断言路径必须以 $ 开头",
             )
         if assertion_type == "header" and not name:
             _issue(
                 errors,
                 "assertion_header_invalid",
                 f"{prefix}assertions[{index}].name",
-                "header assertions require a header name",
+                "请求头断言必须填写请求头名称",
+            )
+        if (
+            assertion_type == "json_path"
+            and path == "$.code"
+            and _item_value(assertion, "enabled", True) is not False
+            and _item_value(assertion, "operator") not in {"equals", "in"}
+        ):
+            _issue(
+                errors,
+                "business_assertion_imprecise",
+                f"{prefix}assertions[{index}].operator",
+                "业务码断言必须精确填写预期值，请使用“等于”或有限集合“属于”；宽泛判断无法证明接口返回了预期结果",
             )
 
     for index, extraction in enumerate(extractions):
@@ -135,7 +147,7 @@ def _validate_response_rules(assertions, extractions, field, errors):
                 errors,
                 "extraction_target_invalid",
                 f"{prefix}extractions[{index}].target",
-                "extraction target is not a valid variable name",
+                "提取目标不是有效的变量名",
             )
         if extraction_type == "json_path" and (
             not path or not path.startswith("$")
@@ -144,14 +156,14 @@ def _validate_response_rules(assertions, extractions, field, errors):
                 errors,
                 "extraction_path_invalid",
                 f"{prefix}extractions[{index}].path",
-                "JSONPath extraction must start with $",
+                "JSONPath 提取路径必须以 $ 开头",
             )
         if extraction_type in {"header", "cookie"} and not name:
             _issue(
                 errors,
                 "extraction_name_invalid",
                 f"{prefix}extractions[{index}].name",
-                "header and cookie extraction require a name",
+                "请求头或 Cookie 提取必须填写名称",
             )
 
 
@@ -162,7 +174,7 @@ def _validate_inline_step(step, field, available, errors):
             errors,
             "unsafe_absolute_url",
             f"{field}.request.path",
-            "case paths must be relative to the selected environment",
+            "用例路径必须是相对路径，请通过已选环境配置服务地址",
         )
     for invalid_field in _malformed_placeholder_fields(
         request, f"{field}.request"
@@ -171,7 +183,7 @@ def _validate_inline_step(step, field, available, errors):
             errors,
             "placeholder_invalid",
             invalid_field,
-            "placeholder syntax must be {{variableName}}",
+            "变量占位符格式必须为 {{variableName}}",
         )
     required = set(step.get("required_variables", []))
     missing = sorted((_variables_in(request) | required) - available)
@@ -180,7 +192,7 @@ def _validate_inline_step(step, field, available, errors):
             errors,
             "undefined_variable",
             f"{field}.request",
-            f"variable is undefined: {name}",
+            f"变量未定义：{name}",
         )
     _validate_response_rules(
         step.get("assertions", []),
@@ -232,13 +244,13 @@ def _validate_value(value, schema, operation, field, errors):
         return
     schema_type = schema.get("type")
     if not _json_type_matches(value, schema_type):
-        _issue(errors, "body_type_mismatch", field, f"value does not match OpenAPI type {schema_type}")
+        _issue(errors, "body_type_mismatch", field, f"字段值类型与接口定义不一致，应为 {schema_type}")
         return
     if isinstance(value, dict) and (schema_type == "object" or "properties" in schema):
         required = schema.get("required", [])
         for name in required if isinstance(required, list) else []:
             if name not in value:
-                _issue(errors, "body_required_property", f"{field}.{name}", "required body property is missing")
+                _issue(errors, "body_required_property", f"{field}.{name}", f"请求体必填字段 {name} 未填写")
         properties = schema.get("properties", {})
         if isinstance(properties, Mapping):
             for name, item in value.items():
@@ -281,22 +293,28 @@ def validate_case(
     operation = endpoint.operation if isinstance(endpoint.operation, Mapping) else {}
 
     if case_version.endpoint_id != endpoint.id:
-        _issue(errors, "endpoint_identity_mismatch", "endpoint_id", "case version belongs to a different source endpoint")
+        _issue(errors, "endpoint_identity_mismatch", "endpoint_id", "该用例版本属于其他源接口，请重新选择接口")
 
     if request.get("method") != endpoint.method.upper():
-        _issue(errors, "method_mismatch", "request.method", "request method differs from the source endpoint")
+        _issue(errors, "method_mismatch", "request.method", "请求方法与当前接口定义不一致")
     if request.get("path") != endpoint.path:
-        _issue(errors, "path_mismatch", "request.path", "request path differs from the source endpoint")
+        _issue(errors, "path_mismatch", "request.path", "请求路径与当前接口定义不一致")
     if _unsafe_absolute_path(request.get("path")):
-        _issue(errors, "unsafe_absolute_url", "request.path", "case paths must be relative to the selected environment")
+        _issue(errors, "unsafe_absolute_url", "request.path", "用例路径必须是相对路径，请通过已选环境配置服务地址")
     for field in _malformed_placeholder_fields(request):
-        _issue(errors, "placeholder_invalid", field, "placeholder syntax must be {{variableName}}")
+        _issue(errors, "placeholder_invalid", field, "变量占位符格式必须为 {{variableName}}")
 
     location_fields = {
         "path": "path_params",
         "query": "query",
         "header": "headers",
         "cookie": "cookies",
+    }
+    location_labels = {
+        "path": "路径参数",
+        "query": "查询参数",
+        "header": "请求头",
+        "cookie": "Cookie",
     }
     parameters = []
     seen_parameters = set()
@@ -329,19 +347,19 @@ def validate_case(
         ):
             present = True
         if parameter.get("required") and not present:
-            _issue(errors, "required_parameter_missing", f"request.{target_field}.{name}", "required OpenAPI parameter is missing")
+            _issue(errors, "required_parameter_missing", f"request.{target_field}.{name}", f"必填{location_labels[location]} {name} 未填写")
         elif not parameter.get("required") and not present:
-            _issue(warnings, "optional_parameter_omitted", f"request.{target_field}.{name}", "optional OpenAPI parameter is omitted")
+            _issue(warnings, "optional_parameter_omitted", f"request.{target_field}.{name}", f"可选{location_labels[location]} {name} 未填写；如由环境统一注入可忽略，否则请补充")
         if explicitly_supplied:
             schema = parameter.get("schema", {})
             schema = _resolve_schema(schema, operation)
             if isinstance(schema, Mapping) and not _json_type_matches(supplied[name], schema.get("type")):
-                _issue(errors, "parameter_type_mismatch", f"request.{target_field}.{name}", "parameter type differs from OpenAPI")
+                _issue(errors, "parameter_type_mismatch", f"request.{target_field}.{name}", f"{location_labels[location]} {name} 的类型与接口定义不一致")
 
     body_required, body_schema = _request_body_schema(operation)
     body = request.get("body")
     if body_required and body is None:
-        _issue(errors, "body_required", "request.body", "OpenAPI request body is required")
+        _issue(errors, "body_required", "request.body", "接口定义要求填写请求体")
     elif body is not None and body_schema is not None:
         _validate_value(body, body_schema, operation, "request.body", errors)
 
@@ -381,7 +399,7 @@ def validate_case(
         missing = sorted(request_variables - row_available)
         for name in missing:
             field = "request" if row is None else f"data_rows[{row.name}].request"
-            _issue(errors, "undefined_variable", field, f"variable is undefined: {name}")
+            _issue(errors, "undefined_variable", field, f"变量未定义：{name}")
 
     _validate_response_rules(
         case_version.assertions, case_version.extractions, "", errors
@@ -415,7 +433,7 @@ def validate_case(
                 errors,
                 "print_task_extraction_required",
                 "extractions",
-                "print dispatch must extract the task identifier returned by this execution",
+                "下发打印后必须从本次响应中提取打印任务标识",
             )
         if not task_targets or not any(
             is_print_cancel_step(step, task_targets) for step in cleanup_steps
@@ -424,26 +442,26 @@ def validate_case(
                 errors,
                 "print_cleanup_required",
                 "processing.cleanup_steps",
-                "print dispatch must cancel the task created by this execution",
+                "下发打印用例必须在清理步骤中取消本次创建的打印任务",
             )
 
     for index, dependency in enumerate(case_version.dependencies):
         identifier = dependency.get("case_version_id", "")
         if not UUID_PATTERN.fullmatch(identifier) or identifier == case_version.id:
-            _issue(errors, "dependency_invalid", f"dependencies[{index}].case_version_id", "dependency must reference another case version UUID")
+            _issue(errors, "dependency_invalid", f"dependencies[{index}].case_version_id", "依赖项必须引用另一个有效的用例版本")
             continue
         metadata = dependency_metadata.get(identifier, {})
         if metadata.get("status") == "missing" or not metadata:
-            _issue(errors, "dependency_not_found", f"dependencies[{index}].case_version_id", "dependency case version does not exist")
+            _issue(errors, "dependency_not_found", f"dependencies[{index}].case_version_id", "依赖的用例版本不存在或已删除")
             continue
         if metadata.get("status") == "project_mismatch":
-            _issue(errors, "dependency_project_mismatch", f"dependencies[{index}].case_version_id", "dependency belongs to a different project")
+            _issue(errors, "dependency_project_mismatch", f"dependencies[{index}].case_version_id", "依赖用例属于其他项目")
             continue
         actual_exports = set(metadata.get("exports", []))
         for name in dependency.get("exports", []):
             if not VARIABLE_NAME_PATTERN.fullmatch(name):
-                _issue(errors, "dependency_invalid", f"dependencies[{index}].exports", "dependency exports must be valid variable names")
+                _issue(errors, "dependency_invalid", f"dependencies[{index}].exports", "依赖输出必须是有效的变量名")
             elif name not in actual_exports:
-                _issue(errors, "dependency_export_invalid", f"dependencies[{index}].exports", f"dependency does not extract variable: {name}")
+                _issue(errors, "dependency_export_invalid", f"dependencies[{index}].exports", f"依赖用例没有提取变量：{name}")
 
     return ValidationResult(tuple(errors), tuple(warnings))

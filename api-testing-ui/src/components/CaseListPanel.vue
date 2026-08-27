@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { FileCheck2, FolderInput, Play, Plus, Save, Search, Trash2, X } from 'lucide-vue-next'
+import { FileCheck2, FolderInput, History, Play, Plus, Save, Search, ShieldCheck, Trash2, X } from 'lucide-vue-next'
 
 import type { ApiEndpoint, CaseVersion, GeneratedCasePreview } from '../api/contracts'
 import {
@@ -49,10 +49,16 @@ const emit = defineEmits<{
   'save-all-previews': []
   'update-version-group': [version: CaseVersion, groupName: string]
   'update-version-groups': [versionIds: string[], groupName: string]
+  'open-endpoints': []
+  'open-debug-history': [version: CaseVersion]
+  'open-baseline': [version: CaseVersion]
 }>()
 
 const WORK_VIEWS: Array<{ id: CaseWorkView; label: string }> = [
   { id: 'all', label: '全部' },
+  { id: 'regular', label: '普通用例' },
+  { id: 'debugged', label: '已调试' },
+  { id: 'baseline', label: '已基线' },
   { id: 'task', label: '当前任务' },
   { id: 'orchestrated', label: '有编排' },
   { id: 'one-time', label: '一次性' },
@@ -73,11 +79,12 @@ const totalCount = computed(() => props.versions.length + props.generatedPreview
 const keyword = computed(() => query.value.trim().toLocaleLowerCase())
 const allItems = computed<CaseListItem[]>(() => {
   const versions = props.versions.map((version): CaseListItem => {
-    const endpoint = endpointById.value.get(version.endpoint_id)
+    const displayEndpointId = version.current_endpoint_id || version.endpoint_id
+    const endpoint = endpointById.value.get(displayEndpointId)
       || fallbackEndpoint(version.endpoint_id, version.request.method, version.request.path, version.name)
     return {
       kind: 'version', id: version.id, endpoint, name: version.name,
-      meta: `v${version.version} · ${originLabel(version.origin)} · ${caseScopeLabel(version, endpoint)}`,
+      meta: `v${version.version} · ${originLabel(version.origin)} · ${version.source_state === 'needs_adaptation' ? '待适配 · ' : ''}${caseScopeLabel(version, endpoint)}`,
       groupName: version.group_name?.trim() || endpointGroupName(endpoint), version,
     }
   })
@@ -173,6 +180,21 @@ function baselinePolicyLabel(policy?: string): string {
   return '需人工补全编排'
 }
 
+function debugStatusLabel(status?: string): string {
+  if (status === 'PASSED') return '调试通过'
+  if (status === 'FAILED') return '调试失败'
+  if (status === 'BROKEN') return '调试异常'
+  if (status === 'CANCELLED') return '调试取消'
+  return status ? '调试未完成' : ''
+}
+
+function regressionStatusLabel(status?: string): string {
+  if (status === 'PASSED') return '回归通过'
+  if (status === 'FAILED') return '回归失败'
+  if (status === 'BROKEN') return '回归异常'
+  return status ? '回归未完成' : ''
+}
+
 function isActive(item: CaseListItem): boolean {
   return item.kind === 'preview' ? item.id === props.activePreviewId : item.id === props.activeVersionId
 }
@@ -263,6 +285,13 @@ function chooseBatchGroup(groupName: string): void {
               <span class="case-list-copy">
                 <strong :title="item.name"><SearchHighlight :text="item.name" :query="query" /></strong>
                 <small :title="item.endpoint.path"><SearchHighlight :text="item.endpoint.path" :query="query" /></small>
+                <span v-if="item.kind === 'version'" class="case-lifecycle-badges">
+                  <i v-if="item.version.source_state === 'needs_adaptation'" class="lifecycle-adapt">待适配</i>
+                  <i v-if="item.version.lifecycle?.debug_status" :class="item.version.lifecycle.debug_status === 'PASSED' ? 'lifecycle-pass' : 'lifecycle-fail'">{{ debugStatusLabel(item.version.lifecycle.debug_status) }}</i>
+                  <i v-if="item.version.lifecycle?.baseline_status === 'active'" class="lifecycle-baseline">已基线</i>
+                  <i v-if="item.version.lifecycle?.regression_status" :class="item.version.lifecycle.regression_status === 'PASSED' ? 'lifecycle-pass' : 'lifecycle-fail'">{{ regressionStatusLabel(item.version.lifecycle.regression_status) }}</i>
+                  <i v-if="!item.version.lifecycle?.debug_status && item.version.lifecycle?.baseline_status !== 'active' && item.version.source_state !== 'needs_adaptation'" class="lifecycle-regular">普通用例</i>
+                </span>
                 <span v-if="item.kind === 'preview' && item.preview.workflow" class="workflow-preview-line" :title="item.preview.workflow.reason"><b>{{ item.preview.workflow.label }}</b><i>{{ baselinePolicyLabel(item.preview.workflow.baseline_policy) }}</i></span>
               </span>
             </button>
@@ -274,6 +303,8 @@ function chooseBatchGroup(groupName: string): void {
               </span>
               <button v-if="item.kind === 'preview'" :data-testid="`case-preview-save-${item.id}`" class="mini-icon" type="button" title="保存候选用例" :disabled="saving" @click="emit('save-preview', item.preview)"><Save :size="14" /></button>
               <button v-if="item.kind === 'preview'" :data-testid="`case-preview-discard-${item.id}`" class="mini-icon danger" type="button" title="丢弃候选用例" :disabled="saving" @click="emit('discard-preview', item.id)"><X :size="14" /></button>
+              <button v-if="item.kind === 'version' && item.version.lifecycle?.debug_execution_id" :data-testid="`case-version-debug-history-${item.id}`" class="mini-icon" type="button" title="查看最近调试记录" @click="emit('open-debug-history', item.version)"><History :size="14" /></button>
+              <button v-if="item.kind === 'version' && item.version.lifecycle?.baseline_id" :data-testid="`case-version-baseline-${item.id}`" class="mini-icon" type="button" title="管理该用例基线" @click="emit('open-baseline', item.version)"><ShieldCheck :size="14" /></button>
               <button v-if="item.kind === 'version'" :data-testid="`case-version-run-${item.id}`" class="mini-icon" type="button" title="执行该用例" :disabled="running" @click="emit('run-version', item.version)"><Play :size="14" /></button>
               <button v-if="item.kind === 'version'" :data-testid="`case-version-scope-${item.id}`" class="mini-icon" type="button" :title="scopeTitle(item.endpoint.id)" @click="emit('toggle-scope', item.endpoint.id)"><X v-if="inScope(item.endpoint.id)" :size="14" /><Plus v-else :size="14" /></button>
               <button v-if="item.kind === 'version'" :data-testid="`case-version-delete-${item.id}`" class="mini-icon danger" type="button" title="删除该用例" :disabled="saving || running" @click="emit('delete-version', item.version)"><Trash2 :size="14" /></button>
@@ -281,7 +312,11 @@ function chooseBatchGroup(groupName: string): void {
           </article>
         </template>
       </CaseGroupBranch>
-      <p v-if="!visibleTree.length" data-testid="case-list-empty" class="section-empty"><FileCheck2 :size="16" />{{ totalCount ? '当前筛选下没有匹配用例，请调整视图或搜索条件。' : '暂无用例，选择接口后可手工编辑或生成候选。' }}</p>
+      <div v-if="!visibleTree.length" data-testid="case-list-empty" class="section-empty case-list-empty-actions">
+        <FileCheck2 :size="16" />
+        <span>{{ totalCount ? '当前筛选下没有匹配用例，请调整视图或搜索条件。' : '当前接口版本还没有用例。' }}</span>
+        <button v-if="!totalCount" data-testid="case-list-open-endpoints" class="primary-command" type="button" @click="emit('open-endpoints')"><Plus :size="15" />从接口创建用例</button>
+      </div>
     </div>
   </aside>
 </template>

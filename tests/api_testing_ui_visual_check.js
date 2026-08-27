@@ -321,7 +321,7 @@ async function openCompactPage(page, navigationLabel, heading, label) {
 
     await acceptExecutionConfirmation(page, () => page.getByRole('button', { name: '保存并调试' }).click(), 'case debug');
     await page.getByRole('dialog', { name: '在线调试' }).waitFor();
-    await page.locator('.result-status').getByText('PASSED', { exact: true }).waitFor();
+    await page.locator('.result-status').getByText('通过', { exact: true }).waitFor();
     await page.getByTestId('debug-trace').getByText('添加收藏', { exact: true }).waitFor();
     await page.keyboard.press('Escape');
     if (await page.getByRole('dialog', { name: '在线调试' }).count()) throw new Error('Escape did not close the debug dialog');

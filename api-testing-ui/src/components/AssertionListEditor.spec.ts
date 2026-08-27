@@ -25,4 +25,22 @@ describe('AssertionListEditor', () => {
     await wrapper.get('[data-testid="setup-0-add-assertion"]').trigger('click')
     expect(latestAssertions(wrapper)[0]).toMatchObject({ type: 'status_code', expected: 200 })
   })
+
+  it('uses Chinese operators and restricts business code assertions to exact matches', async () => {
+    const wrapper = mount(AssertionListEditor, {
+      props: {
+        modelValue: [{ type: 'json_path', path: '$.data', operator: 'not_equals', expected: 0, enabled: true }],
+      },
+    })
+
+    await wrapper.get('[data-testid="assertion-path-0"]').setValue('$.code')
+    await wrapper.setProps({ modelValue: latestAssertions(wrapper) })
+
+    expect(latestAssertions(wrapper)[0].operator).toBe('equals')
+    const operator = wrapper.get('[data-testid="assertion-operator-0"]')
+    expect(operator.text()).toContain('等于')
+    expect(operator.text()).toContain('属于集合')
+    expect(operator.text()).not.toContain('not_equals')
+    expect(wrapper.get('[data-testid="business-code-assertion-hint-0"]').text()).toContain('精确断言')
+  })
 })

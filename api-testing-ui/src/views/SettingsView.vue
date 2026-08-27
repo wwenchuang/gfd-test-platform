@@ -500,7 +500,7 @@ function formatDate(value: string): string { return value ? new Date(value).toLo
 
           <section class="environment-editor-section">
             <header><div><h3>服务地址</h3><p>内部服务键只用于执行匹配；页面、工作台和报告展示业务名称或模块。</p></div><button class="mini-icon" type="button" title="添加服务" @click="services.push(emptyService(`service-${services.length + 1}`))"><Plus :size="15" /></button></header>
-            <div class="editable-table"><div class="table-head"><span>服务名称</span><span>模块</span><span>Base URL</span><span></span></div><div v-for="(item, index) in services" :key="item.key || index" class="table-row service-row"><input v-model="item.name" aria-label="服务名" /><input v-model="item.module" aria-label="服务模块" /><input v-model="item.base_url" aria-label="服务地址" placeholder="https://api.example.com" /><button class="mini-icon danger" type="button" title="删除服务" @click="services.splice(index, 1)"><Trash2 :size="14" /></button></div></div>
+            <div class="editable-table"><div class="table-head"><span>服务名称</span><span>模块</span><span>服务地址</span><span></span></div><div v-for="(item, index) in services" :key="item.key || index" class="table-row service-row"><input v-model="item.name" aria-label="服务名" /><input v-model="item.module" aria-label="服务模块" /><input v-model="item.base_url" aria-label="服务地址" placeholder="https://api.example.com" /><button class="mini-icon danger" type="button" title="删除服务" @click="services.splice(index, 1)"><Trash2 :size="14" /></button></div></div>
           </section>
 
           <section class="environment-editor-section split-section">

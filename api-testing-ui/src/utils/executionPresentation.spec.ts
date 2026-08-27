@@ -9,6 +9,7 @@ import {
   executionSourceScope,
   formatDuration,
   formatPassRate,
+  failureCategoryLabel,
   redactSensitiveEvidence,
   statusLabel,
 } from './executionPresentation'
@@ -74,6 +75,13 @@ describe('execution presentation', () => {
     expect(statusLabel('BROKEN')).toBe('运行异常')
     expect(statusLabel('SKIPPED')).toBe('已跳过')
     expect(formatDuration(1280)).toBe('1.28 秒')
+    expect(failureCategoryLabel('business_response')).toBe('业务响应不符合预期')
+  })
+
+  it('classifies business response failures as product failures', () => {
+    const classified = { ...execution, case_results: [result('FAILED', 'business_response')] }
+
+    expect(executionFailureBuckets(classified).product).toBe(1)
   })
 
   it('never rounds an imperfect execution up to a perfect pass rate', () => {

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
-import { ListTree, PencilLine, RefreshCw, Sparkles } from 'lucide-vue-next'
+import { AlertTriangle, ListTree, PencilLine, RefreshCw, Sparkles } from 'lucide-vue-next'
 import { useRoute, useRouter } from 'vue-router'
 
 import AiAssistant from '../components/AiAssistant.vue'
@@ -31,6 +31,7 @@ const debugOpen = ref(false)
 const localError = ref('')
 const workspaceRestoring = ref(true)
 const taskNameDraft = ref('')
+const outdatedRestoredTask = ref<ApiTestTask | null>(null)
 const mobilePane = ref<'scope' | 'editor' | 'ai'>('scope')
 const caseEditor = ref<{ editStep(target: { stage: 'setup' | 'main' | 'cleanup'; index: number }): Promise<void> } | null>(null)
 const activeDraft = computed(() => activeEndpoint.value ? cases.draftFor(activeEndpoint.value) : null)
@@ -76,7 +77,19 @@ onMounted(async () => {
       tasks.clear()
       taskNameDraft.value = defaultTaskName(true)
     }
-    if (restoredTask && !routeContext) {
+    const implicitSourceMismatch = Boolean(
+      restoredTask
+      && !routeTaskId
+      && !routeContext
+      && context.sourceRevisionId
+      && restoredTask.project_id === context.projectId
+      && restoredTask.source_revision_id !== context.sourceRevisionId,
+    )
+    if (implicitSourceMismatch && restoredTask) {
+      outdatedRestoredTask.value = restoredTask
+      tasks.clear()
+      restoredTask = null
+    } else if (restoredTask && !routeContext) {
       const runtimeEnvironmentId = restoredTask.project_id === context.projectId
         ? context.environmentRevisionId || restoredTask.environment_revision_id
         : restoredTask.environment_revision_id
@@ -94,7 +107,9 @@ onMounted(async () => {
       : []
     if (context.sourceRevisionId) await loadSource(context.sourceRevisionId, directNewTask ? [] : restoredSelection)
     await restoreDeepLink()
-    if (context.projectId) await cases.restoreLatestAiJob(context.projectId)
+    if (context.projectId && context.sourceRevisionId) {
+      await cases.restoreLatestAiJob(context.projectId, context.sourceRevisionId)
+    }
   } catch (error) {
     localError.value = error instanceof Error ? error.message : '工作区恢复失败，请刷新后重试'
   } finally {
@@ -140,6 +155,7 @@ function changeProject(projectId: string | null): void {
   context.selectProject(projectId)
   tasks.clear()
   tasks.tasks = []
+  outdatedRestoredTask.value = null
   cases.clearDebug()
   cases.clearAiJob()
   debugOpen.value = false
@@ -153,11 +169,15 @@ function changeProject(projectId: string | null): void {
 async function changeSource(sourceRevisionId: string | null): Promise<void> {
   context.selectSourceRevision(sourceRevisionId)
   tasks.clear()
+  outdatedRestoredTask.value = null
   cases.clearDebug()
   cases.clearAiJob()
   debugOpen.value = false
   mobilePane.value = 'scope'
-  if (sourceRevisionId) await loadSource(sourceRevisionId)
+  if (sourceRevisionId) {
+    await loadSource(sourceRevisionId)
+    if (context.projectId) await cases.restoreLatestAiJob(context.projectId, sourceRevisionId)
+  }
   else {
     assets.endpoints = []
     activeEndpoint.value = null
@@ -175,6 +195,7 @@ async function selectTask(taskId: string): Promise<void> {
   localError.value = ''
   const task = tasks.select(taskId)
   if (!task) return
+  outdatedRestoredTask.value = null
   cases.clearDebug()
   cases.clearAiJob()
   debugOpen.value = false
@@ -188,6 +209,7 @@ async function selectTask(taskId: string): Promise<void> {
     environment_revision_id: runtimeEnvironmentId,
   })
   await loadSource(task.source_revision_id, task.selected_endpoint_ids)
+  await cases.restoreLatestAiJob(task.project_id, task.source_revision_id)
   const endpoint = assets.endpoints.find(item => task.selected_endpoint_ids.includes(item.id))
   activeEndpoint.value = endpoint || null
 }
@@ -218,6 +240,7 @@ function openEndpointHistory(endpointId: string): void {
 
 function startNewTask(): void {
   tasks.clear()
+  outdatedRestoredTask.value = null
   cases.clearDebug()
   cases.clearAiJob()
   debugOpen.value = false
@@ -482,6 +505,14 @@ function defaultTaskName(newTask = false): string {
       @update:environment-revision-id="changeEnvironment"
       @save="saveScope"
     />
+    <section v-if="outdatedRestoredTask" data-testid="source-version-mismatch" class="source-version-mismatch" role="status">
+      <AlertTriangle :size="18" />
+      <div>
+        <strong>已使用当前接口版本</strong>
+        <p>最近任务“{{ outdatedRestoredTask.name }}”属于旧接口版本，未自动覆盖同步后的当前版本。需要复用时请从任务记录显式打开；继续编辑会在当前版本创建新任务。</p>
+      </div>
+      <button class="secondary-command" type="button" @click="startNewTask">在当前版本新建任务</button>
+    </section>
     <TaskStatusStrip
       v-model:task-name-draft="taskNameDraft"
       :task="tasks.task"

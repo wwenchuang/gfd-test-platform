@@ -543,13 +543,13 @@ class ScheduledJobService:
                 .where(
                     ApiBaseline.project_id == project_id,
                     ApiBaseline.owner_id == actor_id,
-                    ApiBaseline.status != "archived",
+                    ApiBaseline.status == "active",
                     ApiBaseline.group_name.in_(target_ids),
                 )
                 .order_by(ApiBaseline.created_at, ApiBaseline.id)
             ))
             if not baselines:
-                raise ScheduledJobInputError("baseline group has no active baselines")
+                raise ScheduledJobInputError("基线分组没有当前有效基线")
             return self._baseline_source_revision_id(session, baselines, project_id), (), tuple(item.id for item in baselines)
         if target_type == "task":
             if len(target_ids) != 1:
@@ -563,13 +563,13 @@ class ScheduledJobService:
                 .where(
                     ApiBaseline.project_id == project_id,
                     ApiBaseline.owner_id == actor_id,
-                    ApiBaseline.status != "archived",
+                    ApiBaseline.status == "active",
                     ApiCaseVersion.endpoint_id.in_(tuple(task.selected_endpoint_ids or ())),
                 )
                 .order_by(ApiBaseline.created_at, ApiBaseline.id)
             ))
             if not baselines:
-                raise ScheduledJobInputError("scheduled task has no active baselines")
+                raise ScheduledJobInputError("任务没有当前有效基线")
             return task.source_revision_id, (), tuple(item.id for item in baselines)
         raise ScheduledJobInputError("target_type is not supported")
 
@@ -614,12 +614,12 @@ class ScheduledJobService:
                 ApiBaseline.id.in_(tuple(target_ids)),
                 ApiBaseline.project_id == project_id,
                 ApiBaseline.owner_id == actor_id,
-                ApiBaseline.status != "archived",
+                ApiBaseline.status == "active",
             )
             .order_by(ApiBaseline.created_at, ApiBaseline.id)
         ))
         if len(baselines) != len(target_ids):
-            raise ScheduledJobInputError("scheduled baseline was not found")
+            raise ScheduledJobInputError("所选当前有效基线不存在")
         return baselines
 
     @staticmethod

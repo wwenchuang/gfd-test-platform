@@ -55,7 +55,12 @@ describe('CasesView', () => {
     const cases = useCasesStore()
     const version = savedCase('version-1', '我的收藏列表 - 基础正向流程')
     cases.registerVersion(version, false)
+    cases.aiJob = {
+      id: 'job-1', state: 'completed', endpoint_ids: [ENDPOINT.id], requested_model: 'qwen', actual_model: 'qwen', fallback_used: false, summary: {},
+      batches: [{ id: 'batch-1', sequence: 1, state: 'completed', endpoint_ids: [ENDPOINT.id], requested_model: 'qwen', actual_model: 'qwen', fallback_used: false, fallback_reason: '', generated_draft_ids: [version.id], validation_errors: [] }],
+    }
     const loadCases = vi.spyOn(cases, 'loadSavedCases').mockResolvedValue()
+    vi.spyOn(cases, 'restoreLatestAiJob').mockResolvedValue()
     const moveCases = vi.spyOn(cases, 'updateVersionGroups').mockResolvedValue([])
     const saveForDebug = vi.spyOn(cases, 'saveForDebug').mockResolvedValue(version)
     const debug = vi.spyOn(cases, 'debug').mockResolvedValue({} as never)
@@ -89,6 +94,18 @@ describe('CasesView', () => {
     expect(wrapper.text()).not.toContain('接口测试工作台')
     expect(loadAssets).toHaveBeenCalledWith('source-1')
     expect(loadCases).toHaveBeenCalledWith('source-1')
+    expect(wrapper.get('[data-testid="case-generation-status"]').text()).toContain('生成完成')
+    expect(wrapper.get('[data-testid="case-generation-status"]').text()).toContain('1 条用例')
+    await wrapper.get('[data-testid="case-generation-results"]').trigger('click')
+    expect((wrapper.get('[data-testid="case-name"]').element as HTMLInputElement).value).toBe('我的收藏列表 - 基础正向流程')
+
+    expect(wrapper.find('[data-testid="open-case-endpoint-picker"]').exists()).toBe(true)
+    await wrapper.get('[data-testid="open-case-endpoint-picker"]').trigger('click')
+    await wrapper.get('[data-testid="case-endpoint-search"]').setValue('收藏')
+    await wrapper.get('[data-testid="case-endpoint-endpoint-1"]').trigger('click')
+    await wrapper.get('[data-testid="case-endpoint-create-manual"]').trigger('click')
+    expect(wrapper.find('[data-testid="case-endpoint-search"]').exists()).toBe(false)
+    expect((wrapper.get('[data-testid="case-name"]').element as HTMLInputElement).value).toBe('我的收藏列表')
 
     await wrapper.get('[data-testid="case-version-edit-version-1"]').trigger('click')
     await flushPromises()
@@ -139,6 +156,7 @@ describe('CasesView', () => {
     const version = savedCase('version-1', '我的收藏列表 - 基础正向流程')
     cases.registerVersion(version, false)
     vi.spyOn(cases, 'loadSavedCases').mockResolvedValue()
+    vi.spyOn(cases, 'restoreLatestAiJob').mockResolvedValue()
     const archive = vi.spyOn(cases, 'archiveCase').mockImplementation(async () => {
       cases.versions = {}
       cases.versionIdsByEndpoint = {}
