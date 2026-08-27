@@ -1,14 +1,15 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
-import { Edit3, ListPlus, Play, RefreshCw, Search, ShieldCheck, Trash2 } from 'lucide-vue-next'
+import { Edit3, ListPlus, Play, RefreshCw, ScanSearch, Search, ShieldCheck, Trash2 } from 'lucide-vue-next'
 import { useRoute, useRouter } from 'vue-router'
 
 import ContextBar from '../components/ContextBar.vue'
-import type { ApiBaselineCase } from '../api/contracts'
+import type { ApiBaselineCase, BaselineAssertionAuditItem, BaselineAssertionAuditStatus } from '../api/contracts'
 import { baselineGroup, useBaselinesStore } from '../stores/baselines'
 import { useContextStore } from '../stores/context'
 import { useExecutionsStore } from '../stores/executions'
 import { useTasksStore } from '../stores/tasks'
+import { hasExplicitOneTimeMarker } from '../utils/caseClassification'
 import { confirmApiExecution } from '../utils/executionConfirmation'
 import { applicationBusinessLabel, applicationBusinessSelection } from '../utils/testApplications'
 
@@ -24,6 +25,7 @@ const baselineType = ref<'all' | 'regular' | 'one-time'>('all')
 const methodFilter = ref('all')
 const priorityFilter = ref('all')
 const originFilter = ref('all')
+const auditFilter = ref<'all' | 'needs-review' | BaselineAssertionAuditStatus>('all')
 const groupName = ref('')
 const moveTargetGroup = ref('')
 const localError = ref('')
@@ -65,11 +67,29 @@ const selectedBaselineScopeIssue = computed(() => {
   }
   return ''
 })
+const selectedAuditEnvironmentIssue = computed(() => {
+  if (!context.environmentRevisionId) return ''
+  const mismatched = baselines.selectedItems.some(item => {
+    const audit = baselines.auditByBaselineId.get(item.id)
+    return Boolean(
+      audit
+      && audit.status !== 'verified'
+      && audit.execution.selectable
+      && audit.environment_revision_id !== context.environmentRevisionId,
+    )
+  })
+  return mismatched
+    ? '所选复核基线的审计证据环境与当前执行环境不一致，请切回原基线环境或重新选择'
+    : ''
+})
+const selectedBaselineActionIssue = computed(() => (
+  selectedBaselineScopeIssue.value || selectedAuditEnvironmentIssue.value
+))
 const baselineActionReady = computed(() => Boolean(
   context.projectId
   && context.environmentRevisionId
   && baselines.selectedIds.length
-  && !selectedBaselineScopeIssue.value,
+  && !selectedBaselineActionIssue.value,
 ))
 const selectedSourceById = computed(() => new Map(context.sourceRevisions.map(item => [item.id, item])))
 const methodOptions = computed(() => [...new Set(baselines.items.map(item => item.method.toUpperCase()))].sort())
@@ -84,6 +104,9 @@ const filteredBaselines = computed(() => {
     if (methodFilter.value !== 'all' && item.method.toUpperCase() !== methodFilter.value) return false
     if (priorityFilter.value !== 'all' && item.priority !== priorityFilter.value) return false
     if (originFilter.value !== 'all' && item.origin !== originFilter.value) return false
+    const audit = baselines.auditByBaselineId.get(item.id)
+    if (auditFilter.value === 'needs-review' && (!audit || audit.status === 'verified')) return false
+    if (auditFilter.value !== 'all' && auditFilter.value !== 'needs-review' && audit?.status !== auditFilter.value) return false
     if (!needle) return true
     return [item.case_name, item.endpoint_summary, item.path, item.method, baselineGroup(item), baselineScopeLabel(item), ...item.tags]
       .join(' ')
@@ -111,8 +134,20 @@ const allFilteredSelected = computed(() => Boolean(
 ))
 const selectedGroups = computed(() => [...new Set(baselines.selectedItems.map(item => baselineGroup(item)))])
 const moveTargetName = computed(() => groupName.value.trim() || moveTargetGroup.value.trim())
+const currentSafeAuditIds = computed(() => {
+  if (!context.projectId || !context.environmentRevisionId || baselines.auditProjectId !== context.projectId) return []
+  return baselines.items
+    .filter(item => {
+      const audit = baselines.auditByBaselineId.get(item.id)
+      return item.status === 'active'
+        && Boolean(audit && audit.status !== 'verified' && audit.execution.selectable)
+        && audit?.environment_revision_id === context.environmentRevisionId
+        && baselineSelection(item).selectable
+    })
+    .map(item => item.id)
+})
 
-watch([search, group, baselineType, methodFilter, priorityFilter, originFilter], () => {
+watch([search, group, baselineType, methodFilter, priorityFilter, originFilter, auditFilter], () => {
   baselinePage.value = 1
 })
 watch(baselinePageCount, pageCount => {
@@ -147,10 +182,30 @@ async function changeEnvironment(environmentRevisionId: string | null): Promise<
 async function loadBaselines(): Promise<void> {
   localError.value = ''
   localMessage.value = ''
+  auditFilter.value = 'all'
   if (!context.projectId) return
   await baselines.load({
     projectId: context.projectId,
   })
+}
+
+async function loadAssertionAudit(): Promise<void> {
+  localError.value = ''
+  localMessage.value = ''
+  if (!context.projectId) {
+    localError.value = '请先选择项目，再检查基线断言'
+    return
+  }
+  await baselines.loadAudit(context.projectId)
+  auditFilter.value = 'all'
+}
+
+function selectSafeAuditItems(): void {
+  const safeIds = currentSafeAuditIds.value
+  baselines.select(safeIds)
+  localMessage.value = safeIds.length
+    ? `已选择 ${safeIds.length} 条可安全复核基线；执行前仍需确认目标环境和请求影响`
+    : '当前没有可安全批量复核的基线'
 }
 
 function toggleFiltered(): void {
@@ -195,6 +250,10 @@ function validateBaselineAction(options: { requireEndpointIds?: boolean } = {}):
   }
   if (selectedBaselineScopeIssue.value) {
     localError.value = `${selectedBaselineScopeIssue.value}，历史基线仅支持查看、编辑和分组管理，不能创建新任务或执行`
+    return { ok: false }
+  }
+  if (selectedAuditEnvironmentIssue.value) {
+    localError.value = selectedAuditEnvironmentIssue.value
     return { ok: false }
   }
   if (selectedBaselineSourceRevisionIds.value.length > 1) {
@@ -352,8 +411,17 @@ function rowTitle(item: ApiBaselineCase): string {
 }
 
 function isOneTimeBaseline(item: ApiBaselineCase): boolean {
-  const text = [item.case_name, baselineGroup(item), ...item.tags].join(' ').toLocaleLowerCase()
-  return text.includes('一次性') || text.includes('api test')
+  return hasExplicitOneTimeMarker([item.case_name, baselineGroup(item), ...item.tags])
+}
+
+function auditEvidenceLabel(audit: BaselineAssertionAuditItem): string {
+  if (audit.actual_http_status === null) return '未找到可解析的历史调试响应'
+  const http = `HTTP ${audit.actual_http_status}`
+  if (!audit.business_path) return `实际响应：${http}`
+  const value = typeof audit.business_value === 'string'
+    ? `“${audit.business_value}”`
+    : JSON.stringify(audit.business_value)
+  return `实际响应：${http} · ${audit.business_path} = ${value}`
 }
 
 function baselineOriginLabel(origin: string): string {
@@ -419,6 +487,38 @@ function adoptionReasonLabel(reason: string): string {
       <div><span>已选择</span><strong>{{ baselines.selectedItems.length }} 条</strong></div>
     </section>
 
+    <section class="baseline-audit-band" aria-label="基线断言检查">
+      <div class="baseline-audit-heading">
+        <ScanSearch :size="18" />
+        <div>
+          <strong>断言有效性检查</strong>
+          <span>读取已保存的调试证据，核对 HTTP 状态、业务结果和现有断言；检查不会执行接口或修改基线。</span>
+        </div>
+      </div>
+      <div class="baseline-audit-actions">
+        <button class="secondary-command" type="button" :disabled="baselines.auditLoading || !projectReady" @click="loadAssertionAudit">
+          <ScanSearch :size="15" />{{ baselines.auditLoading ? '检查中' : '检查断言' }}
+        </button>
+        <button v-if="baselines.audit" class="secondary-command" type="button" :disabled="!currentSafeAuditIds.length" @click="selectSafeAuditItems">
+          <ShieldCheck :size="15" />选择可安全复核项
+        </button>
+      </div>
+      <div v-if="baselines.auditLoading" class="baseline-audit-progress" role="status">正在批量核对有效基线和最近一次调试证据…</div>
+      <div v-else-if="baselines.audit" class="baseline-audit-summary" data-testid="baseline-audit-summary">
+        <span>有效基线 <b>{{ baselines.audit.summary.total }}</b> 条</span>
+        <span class="success">断言已精确 <b>{{ baselines.audit.summary.verified }}</b> 条</span>
+        <span class="warning">需要复核 <b>{{ baselines.audit.summary.needs_review }}</b> 条</span>
+        <span>可补精确断言 <b>{{ baselines.audit.summary.upgrade_available }}</b> 条</span>
+        <span>HTTP 失败 <b>{{ baselines.audit.summary.http_failure }}</b> 条</span>
+        <span>业务失败 <b>{{ baselines.audit.summary.business_failure }}</b> 条</span>
+        <span>缺少领域断言 <b>{{ baselines.audit.summary.domain_assertion_required }}</b> 条</span>
+        <span>证据不足 <b>{{ baselines.audit.summary.evidence_missing }}</b> 条</span>
+        <span>当前环境可安全复核 <b>{{ currentSafeAuditIds.length }}</b> 条</span>
+        <small>只选择与当前执行环境一致、应用和业务仍启用且流程安全的候选；实际执行仍会再次确认环境和请求影响。</small>
+      </div>
+      <p v-if="baselines.auditError" class="inline-error">{{ baselines.auditError }}</p>
+    </section>
+
     <section class="baseline-board">
       <aside class="baseline-filter-panel">
         <div class="search-box baseline-search"><Search :size="15" /><input v-model="search" placeholder="搜索用例、接口或路径" /></div>
@@ -434,6 +534,11 @@ function adoptionReasonLabel(reason: string): string {
           </select></label>
           <label><span>来源</span><select v-model="originFilter" data-testid="baseline-filter-origin">
             <option value="all">全部来源</option><option value="ai">AI</option><option value="imported">平台导入</option><option value="manual">手工</option>
+          </select></label>
+          <label><span>断言检查</span><select v-model="auditFilter" data-testid="baseline-filter-audit" :disabled="!baselines.audit">
+            <option value="all">全部结果</option><option value="needs-review">需要复核</option><option value="verified">断言已精确</option>
+            <option value="upgrade_available">可补精确断言</option><option value="http_failure">实际 HTTP 失败</option>
+            <option value="business_failure">实际业务失败</option><option value="domain_assertion_required">缺少领域断言</option><option value="evidence_missing">证据不足</option>
           </select></label>
         </div>
         <div class="baseline-group-list" aria-label="基线分组">
@@ -458,7 +563,7 @@ function adoptionReasonLabel(reason: string): string {
             <button class="secondary-command" type="button" :disabled="!baselines.selectedIds.length" @click="baselines.clearSelection">清空选择</button>
             <button class="primary-command" type="button" :disabled="tasks.saving || !baselineActionReady" @click="saveSelectedAsRegressionTask"><ListPlus :size="15" />{{ tasks.saving ? '保存中' : '保存为基线回归任务' }}</button>
             <button class="primary-command" type="button" :disabled="executions.baselineStarting || !baselineActionReady" @click="runSelectedBaselines"><Play :size="15" />{{ executions.baselineStarting ? '创建执行中' : '按当前环境执行所选基线' }}</button>
-            <small class="baseline-action-hint" :class="{ warning: selectedBaselineScopeIssue }">{{ selectedBaselineScopeIssue ? `${selectedBaselineScopeIssue}，历史基线不能创建新任务或执行` : '保存会创建独立基线回归任务；立即执行只使用当前执行环境，不修改工作台任务。' }}</small>
+            <small class="baseline-action-hint" :class="{ warning: selectedBaselineActionIssue }">{{ selectedBaselineActionIssue || '保存会创建独立基线回归任务；立即执行只使用当前执行环境，不修改工作台任务。' }}</small>
           </div>
         </header>
         <div class="baseline-group-editor" aria-label="基线分组编辑">
@@ -509,6 +614,12 @@ function adoptionReasonLabel(reason: string): string {
                 <b v-if="item.status !== 'active'" class="baseline-status-pill">历史版本</b>
                 <b v-if="!baselineSelection(item).selectable" class="baseline-status-pill">{{ baselineSelection(item).reason }}</b>
                 {{ adoptionReasonLabel(item.adoption_reason) }}
+              </small>
+              <small v-if="baselines.auditByBaselineId.get(item.id)" class="baseline-audit-result">
+                <b :class="['baseline-audit-status', `status-${baselines.auditByBaselineId.get(item.id)!.status}`]">{{ baselines.auditByBaselineId.get(item.id)!.status_label }}</b>
+                <span>{{ auditEvidenceLabel(baselines.auditByBaselineId.get(item.id)!) }}</span>
+                <span>{{ baselines.auditByBaselineId.get(item.id)!.reason }}</span>
+                <span :class="{ warning: !baselines.auditByBaselineId.get(item.id)!.execution.selectable }">{{ baselines.auditByBaselineId.get(item.id)!.execution.label }}：{{ baselines.auditByBaselineId.get(item.id)!.execution.reason }}</span>
               </small>
             </span>
             <span class="baseline-endpoint-copy">

@@ -254,6 +254,46 @@ def test_api_routes_require_existing_session(http_client):
     assert response.headers["Cache-Control"] == "no-store"
 
 
+def test_baseline_assertion_audit_is_owner_scoped(
+    http_client, owned_records, monkeypatch
+):
+    calls = []
+
+    def fake_list(_service, project_id, actor_id):
+        calls.append((project_id, actor_id))
+        return {
+            "summary": {
+                "total": 1,
+                "verified": 0,
+                "upgrade_available": 1,
+                "http_failure": 0,
+                "business_failure": 0,
+                "domain_assertion_required": 0,
+                "evidence_missing": 0,
+                "needs_review": 1,
+                "safe_review": 1,
+            },
+            "items": [],
+        }
+
+    monkeypatch.setattr(http.BaselineAssertionAuditService, "list", fake_list)
+    project_id = owned_records["project"].id
+
+    response = http_client.get(
+        f"/api/api-testing/v1/baselines/assertion-audit?project_id={project_id}",
+        headers=_auth(),
+    )
+    forbidden = http_client.get(
+        f"/api/api-testing/v1/baselines/assertion-audit?project_id={project_id}",
+        headers=_auth("owner-b"),
+    )
+
+    assert response.status == 200
+    assert response.body["data"]["summary"]["upgrade_available"] == 1
+    assert calls == [(project_id, "owner-a")]
+    assert forbidden.status == 404
+
+
 def test_workflow_step_preview_is_owner_scoped_and_returns_selectable_fields(
     http_client, owned_records, monkeypatch
 ):
@@ -1030,6 +1070,7 @@ def test_latest_unfinished_ai_job_can_be_restored_after_reload(
             requested_model="qwen",
             actual_model="qwen",
             summary={},
+            created_at=datetime(2026, 8, 27, 10, 1, tzinfo=timezone.utc),
             **_audit("owner-a"),
         )
         running = ApiAiJob(
@@ -1040,6 +1081,7 @@ def test_latest_unfinished_ai_job_can_be_restored_after_reload(
             requested_model="qwen",
             actual_model="qwen",
             summary={},
+            created_at=datetime(2026, 8, 27, 10, 0, tzinfo=timezone.utc),
             **_audit("owner-a"),
         )
         session.add_all((completed, running))

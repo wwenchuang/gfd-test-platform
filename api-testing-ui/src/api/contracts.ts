@@ -530,6 +530,60 @@ export interface ApiBaselineCase {
   adopted_at: string
 }
 
+export type BaselineAssertionAuditStatus =
+  | 'verified'
+  | 'upgrade_available'
+  | 'http_failure'
+  | 'business_failure'
+  | 'domain_assertion_required'
+  | 'evidence_missing'
+
+export interface BaselineAssertionAuditExecution {
+  level: 'direct' | 'guarded' | 'manual' | 'excluded'
+  label: string
+  selectable: boolean
+  reason: string
+}
+
+export interface BaselineAssertionAuditItem {
+  baseline_id: string
+  case_id: string
+  case_version_id: string
+  endpoint_id: string
+  case_name: string
+  method: string
+  path: string
+  group_name: string
+  environment_revision_id: string
+  evidence_execution_case_id: string | null
+  evidence_captured_at: string | null
+  status: BaselineAssertionAuditStatus
+  status_label: string
+  reason: string
+  actual_http_status: number | null
+  business_path: string
+  business_value: unknown
+  suggested_assertions: Array<Record<string, unknown>>
+  execution: BaselineAssertionAuditExecution
+}
+
+export interface BaselineAssertionAuditSummary {
+  total: number
+  verified: number
+  upgrade_available: number
+  http_failure: number
+  business_failure: number
+  domain_assertion_required: number
+  evidence_missing: number
+  needs_review: number
+  safe_review: number
+}
+
+export interface BaselineAssertionAuditResponse {
+  summary: BaselineAssertionAuditSummary
+  items: BaselineAssertionAuditItem[]
+}
+
 export interface FeishuNotification {
   project_id: string
   channel_type: 'feishu'

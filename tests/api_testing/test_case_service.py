@@ -24,7 +24,11 @@ from task_server.api_testing.models.environment import (
     ApiEnvironment,
     ApiEnvironmentRevision,
 )
-from task_server.api_testing.models.execution import ApiExecution, ApiExecutionCase
+from task_server.api_testing.models.execution import (
+    ApiExecution,
+    ApiExecutionAttempt,
+    ApiExecutionCase,
+)
 from task_server.api_testing.models.project import ApiProject
 from task_server.api_testing.models.source import ApiSourceEndpoint, ApiSourceRevision
 from tests.api_testing.test_migrations import (
@@ -832,6 +836,7 @@ def _create_execution_evidence(
     project_id=None,
     source_revision_id=None,
     parent_state="DONE",
+    response=None,
 ):
     with session_factory.begin() as session:
         execution = ApiExecution(
@@ -863,6 +868,18 @@ def _create_execution_evidence(
         )
         session.add(evidence)
         session.flush()
+        if response is not None:
+            session.add(
+                ApiExecutionAttempt(
+                    execution_case_id=evidence.id,
+                    attempt_number=1,
+                    status=status,
+                    request={"headers": {"Authorization": "***"}},
+                    response=copy.deepcopy(response),
+                    assertion_results=[],
+                    **_audit(),
+                )
+            )
         return evidence.id
 
 
@@ -893,6 +910,45 @@ def test_baseline_requires_exact_passing_debug_evidence(
     assert baseline.case_version_id == draft.id
     assert baseline.environment_revision_id == project_context["environment_revision"].id
     assert SYNTHETIC_SECRET not in repr(baseline)
+
+
+def test_baseline_assertion_audit_batches_stored_assertions_and_debug_evidence(
+    case_service, project_context, session_factory
+):
+    from task_server.api_testing.services.baseline_assertion_audit_service import (
+        BaselineAssertionAuditService,
+    )
+
+    endpoint = project_context["endpoints"]["favoriteList"]
+    payload = valid_list_case(endpoint)
+    payload["assertions"] = [
+        {"type": "status_code", "operator": "equals", "expected": 200}
+    ]
+    draft = case_service.create_draft(endpoint.id, payload, "manual", "admin")
+    evidence_id = _create_execution_evidence(
+        session_factory,
+        project_context,
+        draft,
+        response={
+            "status_code": 200,
+            "body": json.dumps({"code": 0, "data": []}),
+            "headers": {"Authorization": SYNTHETIC_SECRET},
+        },
+    )
+    baseline = case_service.adopt_baseline(draft.id, evidence_id, "admin")
+
+    result = BaselineAssertionAuditService(session_factory).list(
+        project_context["project"].id,
+        "admin",
+    )
+
+    item = next(value for value in result["items"] if value["baseline_id"] == baseline.id)
+    assert item["status"] == "upgrade_available"
+    assert item["business_path"] == "$.code"
+    assert item["business_value"] == 0
+    assert item["execution"]["level"] == "direct"
+    assert result["summary"]["upgrade_available"] >= 1
+    assert SYNTHETIC_SECRET not in repr(result)
 
 
 def test_active_case_list_exposes_debug_and_baseline_lifecycle(

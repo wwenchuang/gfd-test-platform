@@ -3,6 +3,7 @@
 import copy
 
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import array
 
 from ..models.case import ApiAiJob, ApiAiJobBatch, ApiCaseVersion
 from ..models.environment import (
@@ -133,23 +134,30 @@ class AiJobRepository:
         return self.session.get(ApiAiJob, job_id)
 
     def latest_job(self, project_id, source_revision_id=None):
-        query = (
-            select(ApiAiJob)
-            .where(ApiAiJob.project_id == project_id)
-            .order_by(ApiAiJob.created_at.desc(), ApiAiJob.id.desc())
-        )
+        base_query = select(ApiAiJob).where(ApiAiJob.project_id == project_id)
+        unfinished_query = base_query.where(ApiAiJob.state.in_(("queued", "running")))
+
+        def newest(query):
+            return query.order_by(ApiAiJob.created_at.desc(), ApiAiJob.id.desc())
+
         if source_revision_id is None:
-            return self.session.scalar(query.limit(1))
+            unfinished = self.session.scalar(newest(unfinished_query).limit(1))
+            return unfinished or self.session.scalar(newest(base_query).limit(1))
 
         current_endpoint_ids = {
             item.id for item in self.get_revision_endpoints(source_revision_id)
         }
         if not current_endpoint_ids:
             return None
-        for job in self.session.scalars(query).yield_per(100):
-            if current_endpoint_ids.intersection(job.endpoint_ids or ()):
-                return job
-        return None
+        endpoint_filter = ApiAiJob.endpoint_ids.op("?|")(
+            array(sorted(current_endpoint_ids))
+        )
+        unfinished = self.session.scalar(
+            newest(unfinished_query.where(endpoint_filter)).limit(1)
+        )
+        return unfinished or self.session.scalar(
+            newest(base_query.where(endpoint_filter)).limit(1)
+        )
 
     def get_job_for_update(self, job_id):
         return self.session.scalar(

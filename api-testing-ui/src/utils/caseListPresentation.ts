@@ -1,4 +1,5 @@
 import type { ApiEndpoint, CaseVersion, GeneratedCasePreview } from '../api/contracts'
+import { hasExplicitOneTimeMarker } from './caseClassification'
 import { compareGroupNames } from './endpointGroups'
 
 export type CaseListItem =
@@ -138,8 +139,5 @@ function hasWorkflowSteps(version: CaseVersion): boolean {
 }
 
 function isOneTimeCase(item: CaseListItem): boolean {
-  const markers = [item.groupName, item.name, ...item.endpoint.tags]
-    .join(' ')
-    .toLocaleLowerCase()
-  return markers.includes('一次性') || markers.includes('api test')
+  return hasExplicitOneTimeMarker([item.groupName, item.name, ...item.endpoint.tags])
 }

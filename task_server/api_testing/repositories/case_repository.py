@@ -14,7 +14,7 @@ from ..models.case import (
     ApiCaseVersion,
 )
 from ..models.environment import ApiEnvironment, ApiEnvironmentRevision
-from ..models.execution import ApiExecution, ApiExecutionCase
+from ..models.execution import ApiExecution, ApiExecutionAttempt, ApiExecutionCase
 from ..models.project import ApiProject
 from ..models.source import ApiSource, ApiSourceEndpoint, ApiSourceRevision
 from .source_repository import audit_fields
@@ -310,6 +310,20 @@ class CaseRepository:
             )
         )
 
+    def get_assertions_for_versions(self, version_ids):
+        identifiers = tuple(dict.fromkeys(version_ids))
+        if not identifiers:
+            return {}
+        output = {version_id: [] for version_id in identifiers}
+        records = self.session.scalars(
+            select(ApiCaseAssertion)
+            .where(ApiCaseAssertion.case_version_id.in_(identifiers))
+            .order_by(ApiCaseAssertion.case_version_id, ApiCaseAssertion.sequence)
+        )
+        for record in records:
+            output[record.case_version_id].append(record)
+        return {key: tuple(value) for key, value in output.items()}
+
     def get_extractions(self, version_id):
         return tuple(
             self.session.scalars(
@@ -319,8 +333,50 @@ class CaseRepository:
             )
         )
 
+    def get_extractions_for_versions(self, version_ids):
+        identifiers = tuple(dict.fromkeys(version_ids))
+        if not identifiers:
+            return {}
+        output = {version_id: [] for version_id in identifiers}
+        records = self.session.scalars(
+            select(ApiCaseExtraction)
+            .where(ApiCaseExtraction.case_version_id.in_(identifiers))
+            .order_by(ApiCaseExtraction.case_version_id, ApiCaseExtraction.target_name)
+        )
+        for record in records:
+            output[record.case_version_id].append(record)
+        return {key: tuple(value) for key, value in output.items()}
+
     def get_execution_case(self, execution_case_id):
         return self.session.get(ApiExecutionCase, execution_case_id)
+
+    def get_execution_cases(self, execution_case_ids):
+        identifiers = tuple(dict.fromkeys(execution_case_ids))
+        if not identifiers:
+            return {}
+        return {
+            item.id: item
+            for item in self.session.scalars(
+                select(ApiExecutionCase).where(ApiExecutionCase.id.in_(identifiers))
+            )
+        }
+
+    def latest_execution_attempts(self, execution_case_ids):
+        identifiers = tuple(dict.fromkeys(execution_case_ids))
+        if not identifiers:
+            return {}
+        records = self.session.scalars(
+            select(ApiExecutionAttempt)
+            .where(ApiExecutionAttempt.execution_case_id.in_(identifiers))
+            .order_by(
+                ApiExecutionAttempt.execution_case_id,
+                ApiExecutionAttempt.attempt_number.desc(),
+            )
+        )
+        output = {}
+        for record in records:
+            output.setdefault(record.execution_case_id, record)
+        return output
 
     def get_execution(self, execution_id):
         return self.session.get(ApiExecution, execution_id)
@@ -331,7 +387,12 @@ class CaseRepository:
     def get_environment(self, environment_id):
         return self.session.get(ApiEnvironment, environment_id)
 
-    def list_active_baselines(self, project_id, actor_id):
+    def list_active_baselines(self, project_id, actor_id, *, current_only=False):
+        status_filter = (
+            ApiBaseline.status == "active"
+            if current_only
+            else ApiBaseline.status != "archived"
+        )
         return tuple(
             self.session.execute(
                 select(ApiBaseline, ApiCase, ApiCaseVersion, ApiSourceEndpoint)
@@ -340,7 +401,7 @@ class CaseRepository:
                 .join(ApiSourceEndpoint, ApiSourceEndpoint.id == ApiCaseVersion.endpoint_id)
                 .where(
                     ApiBaseline.project_id == project_id,
-                    ApiBaseline.status != "archived",
+                    status_filter,
                     ApiBaseline.owner_id == actor_id,
                     ApiCase.project_id == project_id,
                     ApiCase.owner_id == actor_id,

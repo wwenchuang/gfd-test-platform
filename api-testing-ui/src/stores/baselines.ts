@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 
 import { apiClient } from '../api/client'
-import type { ApiBaselineCase } from '../api/contracts'
+import type { ApiBaselineCase, BaselineAssertionAuditResponse } from '../api/contracts'
 
 interface BaselineContext {
   projectId: string
@@ -15,6 +15,11 @@ export const useBaselinesStore = defineStore('api-baselines', {
     selectedIds: [] as string[],
     loading: false,
     error: '',
+    audit: null as BaselineAssertionAuditResponse | null,
+    auditProjectId: '',
+    auditRequestId: 0,
+    auditLoading: false,
+    auditError: '',
   }),
   getters: {
     groups(state): string[] {
@@ -28,11 +33,15 @@ export const useBaselinesStore = defineStore('api-baselines', {
     selectedEndpointIds(): string[] {
       return [...new Set(this.selectedItems.map(item => item.endpoint_id))]
     },
+    auditByBaselineId(state) {
+      return new Map((state.audit?.items || []).map(item => [item.baseline_id, item]))
+    },
   },
   actions: {
     async load(context: BaselineContext): Promise<void> {
       this.loading = true
       this.error = ''
+      this.clearAudit()
       try {
         const query = new URLSearchParams({
           project_id: context.projectId,
@@ -47,6 +56,36 @@ export const useBaselinesStore = defineStore('api-baselines', {
         this.error = error instanceof Error ? error.message : '无法读取基线用例'
       } finally {
         this.loading = false
+      }
+    },
+    clearAudit(): void {
+      this.auditRequestId += 1
+      this.audit = null
+      this.auditProjectId = ''
+      this.auditLoading = false
+      this.auditError = ''
+    },
+    async loadAudit(projectId: string): Promise<void> {
+      const requestId = this.auditRequestId + 1
+      this.auditRequestId = requestId
+      this.auditLoading = true
+      this.auditError = ''
+      try {
+        const query = new URLSearchParams({ project_id: projectId })
+        const response = await apiClient.get<BaselineAssertionAuditResponse>(
+          `/api/api-testing/v1/baselines/assertion-audit?${query}`,
+        )
+        if (requestId !== this.auditRequestId) return
+        this.audit = response.data
+        this.auditProjectId = projectId
+      } catch (error) {
+        if (requestId !== this.auditRequestId) return
+        this.audit = null
+        this.auditProjectId = ''
+        const message = error instanceof Error ? error.message : '未知错误'
+        this.auditError = `基线断言检查失败：${message}`
+      } finally {
+        if (requestId === this.auditRequestId) this.auditLoading = false
       }
     },
     toggle(id: string): void {
@@ -82,12 +121,14 @@ export const useBaselinesStore = defineStore('api-baselines', {
         const updated = updates.get(item.id)
         return updated ? { ...item, group_name: updated } : item
       })
+      this.clearAudit()
     },
     async archive(id: string): Promise<void> {
       this.error = ''
       await apiClient.delete(`/api/api-testing/v1/baselines/${id}`)
       this.items = this.items.filter(item => item.id !== id)
       this.selectedIds = this.selectedIds.filter(item => item !== id)
+      this.clearAudit()
     },
   },
 })

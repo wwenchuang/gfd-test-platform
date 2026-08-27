@@ -34,6 +34,7 @@ from .repositories.source_repository import audit_fields
 from .services.ai_service import AiCaseService, AiJobInputError, AiJobNotFoundError
 from .services.apifox_service import ApifoxInputError, ApifoxService
 from .services.basic_case_service import BasicCaseService
+from .services.baseline_assertion_audit_service import BaselineAssertionAuditService
 from .services.case_service import BaselineGateError, CaseNotFoundError, CaseService, EndpointNotFoundError
 from .services.environment_service import EnvironmentInputError, EnvironmentNotFoundError, EnvironmentService
 from .services.execution_service import ExecutionConflictError, ExecutionNotFoundError, ExecutionService
@@ -391,6 +392,10 @@ def _get(segments, qs, actor, settings):
                 )
             ]
         }
+    if segments == ("baselines", "assertion-audit"):
+        project_id = _uuid(qs.get("project_id", ""))
+        _scope_project(factory, project_id, actor)
+        return BaselineAssertionAuditService(factory).list(project_id, actor)
     if segments == ("notifications", "feishu"):
         project_id = _uuid(qs.get("project_id", ""))
         _scope_project(factory, project_id, actor)

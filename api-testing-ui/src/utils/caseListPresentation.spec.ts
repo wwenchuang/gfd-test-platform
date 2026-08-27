@@ -119,6 +119,7 @@ describe('case list presentation', () => {
       }],
     })
     const oneTime = versionItem('api-test', 'API Test / 一次性')
+    const ordinaryApiTest = versionItem('api-regular', 'API Test / 收藏回归')
     const preview = previewItem('candidate', '家用业务 / 我的')
     const selected = new Set(['endpoint-normal'])
 
@@ -126,6 +127,7 @@ describe('case list presentation', () => {
     expect(matchesCaseWorkView(orchestrated, 'orchestrated', selected)).toBe(true)
     expect(matchesCaseWorkView(disabledOnly, 'orchestrated', selected)).toBe(false)
     expect(matchesCaseWorkView(oneTime, 'one-time', selected)).toBe(true)
+    expect(matchesCaseWorkView(ordinaryApiTest, 'one-time', selected)).toBe(false)
     expect(matchesCaseWorkView(normal, 'one-time', selected)).toBe(false)
     expect(matchesCaseWorkView(preview, 'candidate', selected)).toBe(true)
     expect(matchesCaseWorkView(normal, 'candidate', selected)).toBe(false)

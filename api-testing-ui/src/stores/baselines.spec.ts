@@ -43,6 +43,102 @@ describe('baselines store', () => {
     expect(store.selectedEndpointIds).toEqual(['endpoint-1', 'endpoint-2'])
   })
 
+  it('loads assertion audit only when requested and clears stale project evidence', async () => {
+    const get = vi.spyOn(apiClient, 'get')
+      .mockResolvedValueOnce({ data: { baselines: [] } })
+      .mockResolvedValueOnce({ data: {
+        summary: {
+          total: 2,
+          verified: 1,
+          upgrade_available: 1,
+          http_failure: 0,
+          business_failure: 0,
+          domain_assertion_required: 0,
+          evidence_missing: 0,
+          needs_review: 1,
+          safe_review: 1,
+        },
+        items: [{
+          baseline_id: 'baseline-1',
+          case_id: 'case-1',
+          case_version_id: 'version-1',
+          endpoint_id: 'endpoint-1',
+          case_name: '收藏成功',
+          method: 'POST',
+          path: '/collection/add',
+          group_name: '收藏链路',
+          environment_revision_id: 'environment-1',
+          evidence_execution_case_id: 'execution-case-1',
+          evidence_captured_at: '2026-08-27T10:00:00Z',
+          status: 'upgrade_available',
+          status_label: '可补精确断言',
+          reason: '实际响应为业务成功，可在新版本补充精确业务断言后重新调试',
+          actual_http_status: 200,
+          business_path: '$.code',
+          business_value: 0,
+          suggested_assertions: [{ type: 'json_path', operator: 'equals', expected: 0, path: '$.code', enabled: true }],
+          execution: { level: 'direct', label: '可直接复核', selectable: true, reason: '只读接口，可安全批量复核' },
+        }],
+      } })
+    const store = useBaselinesStore()
+
+    await store.load({ projectId: 'project-1' })
+    expect(store.audit).toBeNull()
+    expect(get).toHaveBeenCalledTimes(1)
+
+    await store.loadAudit('project-1')
+    expect(get).toHaveBeenLastCalledWith('/api/api-testing/v1/baselines/assertion-audit?project_id=project-1')
+    expect(store.audit?.summary.safe_review).toBe(1)
+    expect(store.auditByBaselineId.get('baseline-1')?.business_value).toBe(0)
+
+    get.mockResolvedValueOnce({ data: { baselines: [] } })
+    await store.load({ projectId: 'project-2' })
+    expect(store.audit).toBeNull()
+  })
+
+  it('keeps baseline data visible when assertion audit fails', async () => {
+    const get = vi.spyOn(apiClient, 'get')
+      .mockResolvedValueOnce({ data: { baselines: [{
+        id: 'baseline-1', project_id: 'project-1', case_id: 'case-1', case_version_id: 'version-1',
+        environment_revision_id: 'environment-1', source_revision_id: 'source-old', endpoint_id: 'endpoint-1', status: 'active', case_name: '我的收藏列表',
+        case_version: 2, priority: 'P1', origin: 'ai', method: 'POST', path: '/print3d/api/v1/collection/page',
+        endpoint_summary: '我的收藏列表', tags: [], group_name: '我的收藏', adoption_reason: '',
+        adopted_at: '2026-08-12T10:00:00Z',
+      }] } })
+      .mockRejectedValueOnce(new Error('请求超时'))
+    const store = useBaselinesStore()
+
+    await store.load({ projectId: 'project-1' })
+    await store.loadAudit('project-1')
+
+    expect(store.items).toHaveLength(1)
+    expect(store.audit).toBeNull()
+    expect(store.auditError).toBe('基线断言检查失败：请求超时')
+  })
+
+  it('ignores an audit response invalidated by project navigation', async () => {
+    let resolveAudit!: (value: unknown) => void
+    vi.spyOn(apiClient, 'get').mockReturnValue(new Promise(resolve => {
+      resolveAudit = resolve
+    }) as never)
+    const store = useBaselinesStore()
+
+    const pending = store.loadAudit('project-1')
+    store.clearAudit()
+    resolveAudit({ data: {
+      summary: {
+        total: 0, verified: 0, upgrade_available: 0, http_failure: 0, business_failure: 0,
+        domain_assertion_required: 0, evidence_missing: 0, needs_review: 0, safe_review: 0,
+      },
+      items: [],
+    } })
+    await pending
+
+    expect(store.audit).toBeNull()
+    expect(store.auditProjectId).toBe('')
+    expect(store.auditLoading).toBe(false)
+  })
+
   it('renames selected baselines into a platform group', async () => {
     vi.spyOn(apiClient, 'post').mockResolvedValue({ data: { baselines: [
       { id: 'baseline-1', group_name: '发版冒烟' },
@@ -66,6 +162,7 @@ describe('baselines store', () => {
       },
     ]
     store.select(['baseline-1', 'baseline-2'])
+    store.audit = { summary: {}, items: [] } as never
 
     await store.updateGroup(store.selectedIds, '发版冒烟')
 
@@ -74,6 +171,7 @@ describe('baselines store', () => {
       group_name: '发版冒烟',
     })
     expect(store.groups).toEqual(['发版冒烟'])
+    expect(store.audit).toBeNull()
   })
 
   it('archives a baseline without deleting the reusable case draft', async () => {

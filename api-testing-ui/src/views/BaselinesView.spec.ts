@@ -37,6 +37,7 @@ function mountWithContext(): ReturnType<typeof mount> {
     routes: [
       { path: '/', name: 'baselines', component: BaselinesView },
       { path: '/runs', name: 'runs', component: { template: '<div />' } },
+      { path: '/workbench', name: 'workbench', component: { template: '<div />' } },
     ],
   })
 
@@ -73,6 +74,7 @@ function baselineFixture(overrides: Record<string, unknown> = {}) {
     environment_revision_id: 'env-v6',
     source_revision_id: 'source-v1',
     endpoint_id: 'endpoint-1',
+    status: 'active',
     case_name: '添加收藏 - 正常流程',
     case_version: 2,
     priority: 'P0',
@@ -312,6 +314,140 @@ describe('BaselinesView fixed project assets', () => {
 
     await wrapper.get('[data-testid="baseline-filter-origin"]').setValue('ai')
     expect(wrapper.text()).toContain('当前筛选下没有匹配基线')
+  })
+
+  it('does not classify an ordinary API Test group as one-time', async () => {
+    vi.spyOn(apiClient, 'get').mockResolvedValue({ data: { baselines: [
+      baselineFixture({ id: 'baseline-api-test', group_name: 'API Test / 收藏回归', case_name: '收藏接口常规回归' }),
+    ] } })
+    const wrapper = mountWithContext()
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="baseline-one-time-baseline-api-test"]').exists()).toBe(false)
+    await wrapper.get('[data-testid="baseline-filter-type"]').setValue('regular')
+    expect(wrapper.text()).toContain('收藏接口常规回归')
+  })
+
+  it('checks stored response evidence on demand and selects only safe review candidates', async () => {
+    const get = vi.spyOn(apiClient, 'get').mockImplementation(async path => {
+      if (path.includes('assertion-audit')) {
+        return { data: {
+          summary: {
+            total: 4,
+            verified: 1,
+            upgrade_available: 2,
+            http_failure: 0,
+            business_failure: 0,
+            domain_assertion_required: 0,
+            evidence_missing: 1,
+            needs_review: 3,
+            safe_review: 2,
+          },
+          items: [
+            {
+              baseline_id: 'baseline-safe', case_id: 'case-safe', case_version_id: 'version-safe', endpoint_id: 'endpoint-safe',
+              case_name: '收藏查询成功', method: 'GET', path: '/collection/page', group_name: '收藏链路', environment_revision_id: 'env-v9',
+              evidence_execution_case_id: 'execution-safe', evidence_captured_at: '2026-08-27T10:00:00Z',
+              status: 'upgrade_available', status_label: '可补精确断言', reason: '实际响应为业务成功，可在新版本补充精确业务断言后重新调试',
+              actual_http_status: 200, business_path: '$.code', business_value: 0,
+              suggested_assertions: [{ type: 'json_path', operator: 'equals', expected: 0, path: '$.code', enabled: true }],
+              execution: { level: 'direct', label: '可直接复核', selectable: true, reason: '只读接口，可安全批量复核' },
+            },
+            {
+              baseline_id: 'baseline-other-env', case_id: 'case-other-env', case_version_id: 'version-other-env', endpoint_id: 'endpoint-other-env',
+              case_name: '旧环境列表查询', method: 'GET', path: '/collection/page', group_name: '收藏链路', environment_revision_id: 'env-v6',
+              evidence_execution_case_id: 'execution-other-env', evidence_captured_at: '2026-08-27T10:00:30Z',
+              status: 'upgrade_available', status_label: '可补精确断言', reason: '实际响应为业务成功，可在新版本补充精确业务断言后重新调试',
+              actual_http_status: 200, business_path: '$.code', business_value: 0,
+              suggested_assertions: [{ type: 'json_path', operator: 'equals', expected: 0, path: '$.code', enabled: true }],
+              execution: { level: 'direct', label: '可直接复核', selectable: true, reason: '只读接口，可安全批量复核' },
+            },
+            {
+              baseline_id: 'baseline-verified', case_id: 'case-verified', case_version_id: 'version-verified', endpoint_id: 'endpoint-verified',
+              case_name: '列表查询', method: 'GET', path: '/collection/page', group_name: '收藏链路', environment_revision_id: 'env-v6',
+              evidence_execution_case_id: 'execution-verified', evidence_captured_at: '2026-08-27T10:01:00Z',
+              status: 'verified', status_label: '断言已精确', reason: '精确业务断言与实际响应一致',
+              actual_http_status: 200, business_path: '$.code', business_value: 0, suggested_assertions: [],
+              execution: { level: 'direct', label: '可直接复核', selectable: true, reason: '只读接口，可安全批量复核' },
+            },
+            {
+              baseline_id: 'baseline-manual', case_id: 'case-manual', case_version_id: 'version-manual', endpoint_id: 'endpoint-manual',
+              case_name: '重新打印 - 一次性验证', method: 'POST', path: '/print/retry', group_name: '一次性', environment_revision_id: 'env-v6',
+              evidence_execution_case_id: null, evidence_captured_at: null,
+              status: 'evidence_missing', status_label: '证据不足', reason: '缺少可解析的历史调试响应，需要重新执行后判断',
+              actual_http_status: null, business_path: '', business_value: null, suggested_assertions: [],
+              execution: { level: 'manual', label: '一次性人工复核', selectable: false, reason: '一次性基线不得进入批量连续执行' },
+            },
+          ],
+        } } as never
+      }
+      return { data: { baselines: [
+        baselineFixture({ id: 'baseline-safe', endpoint_id: 'endpoint-safe', case_id: 'case-safe', case_version_id: 'version-safe', case_name: '收藏查询成功', method: 'GET', environment_revision_id: 'env-v9' }),
+        baselineFixture({ id: 'baseline-other-env', endpoint_id: 'endpoint-other-env', case_id: 'case-other-env', case_version_id: 'version-other-env', case_name: '旧环境列表查询', method: 'GET', environment_revision_id: 'env-v6' }),
+        baselineFixture({ id: 'baseline-verified', endpoint_id: 'endpoint-verified', case_id: 'case-verified', case_version_id: 'version-verified', case_name: '列表查询', method: 'GET' }),
+        baselineFixture({ id: 'baseline-manual', endpoint_id: 'endpoint-manual', case_id: 'case-manual', case_version_id: 'version-manual', case_name: '重新打印 - 一次性验证', group_name: '一次性' }),
+      ] } } as never
+    })
+    const wrapper = mountWithContext()
+    await flushPromises()
+
+    expect(get.mock.calls.filter(([path]) => path.includes('assertion-audit'))).toHaveLength(0)
+    await buttonByText(wrapper, '检查断言').trigger('click')
+    await flushPromises()
+
+    expect(get).toHaveBeenCalledWith('/api/api-testing/v1/baselines/assertion-audit?project_id=project-1')
+    expect(wrapper.text()).toContain('需要复核 3 条')
+    expect(wrapper.text()).toContain('当前环境可安全复核 1 条')
+    expect(wrapper.text()).toContain('可补精确断言 2 条')
+    expect(wrapper.text()).toContain('HTTP 失败 0 条')
+    expect(wrapper.text()).toContain('业务失败 0 条')
+    expect(wrapper.text()).toContain('缺少领域断言 0 条')
+    expect(wrapper.text()).toContain('证据不足 1 条')
+    expect(wrapper.text()).toContain('可补精确断言')
+    expect(wrapper.text()).toContain('实际响应：HTTP 200 · $.code = 0')
+    expect(wrapper.text()).toContain('一次性人工复核')
+
+    await buttonByText(wrapper, '选择可安全复核项').trigger('click')
+    expect(useBaselinesStore().selectedIds).toEqual(['baseline-safe'])
+
+    await wrapper.get('[data-testid="switch-environment"]').trigger('click')
+    await flushPromises()
+    expect(buttonByText(wrapper, '保存为基线回归任务').attributes('disabled')).toBeDefined()
+    expect(buttonByText(wrapper, '按当前环境执行所选基线').attributes('disabled')).toBeDefined()
+    expect(wrapper.text()).toContain('所选复核基线的审计证据环境与当前执行环境不一致')
+  })
+
+  it('clears an audit-only filter when baselines are refreshed', async () => {
+    const baseline = baselineFixture({ id: 'baseline-review' })
+    vi.spyOn(apiClient, 'get').mockImplementation(async path => {
+      if (path.includes('assertion-audit')) return { data: {
+        summary: {
+          total: 1, verified: 0, upgrade_available: 1, http_failure: 0, business_failure: 0,
+          domain_assertion_required: 0, evidence_missing: 0, needs_review: 1, safe_review: 1,
+        },
+        items: [{
+          baseline_id: 'baseline-review', case_id: 'case-1', case_version_id: 'version-1', endpoint_id: 'endpoint-1',
+          case_name: '添加收藏 - 正常流程', method: 'POST', path: '/collection/add', group_name: '我的收藏', environment_revision_id: 'env-v6',
+          evidence_execution_case_id: 'execution-1', evidence_captured_at: '2026-08-27T10:00:00Z',
+          status: 'upgrade_available', status_label: '可补精确断言', reason: '需要补充业务断言',
+          actual_http_status: 200, business_path: '$.code', business_value: 0, suggested_assertions: [],
+          execution: { level: 'direct', label: '可直接复核', selectable: true, reason: '只读接口' },
+        }],
+      } } as never
+      if (path.includes('/baselines?')) return { data: { baselines: [baseline] } } as never
+      return { data: { tasks: [] } } as never
+    })
+    const wrapper = mountWithContext()
+    await flushPromises()
+
+    await buttonByText(wrapper, '检查断言').trigger('click')
+    await flushPromises()
+    await wrapper.get('[data-testid="baseline-filter-audit"]').setValue('needs-review')
+    await wrapper.get('button[title="重新读取基线"]').trigger('click')
+    await flushPromises()
+
+    expect((wrapper.get('[data-testid="baseline-filter-audit"]').element as HTMLSelectElement).value).toBe('all')
+    expect(wrapper.text()).toContain('添加收藏 - 正常流程')
   })
 
   it('keeps disabled application baselines manageable but blocks new task and execution actions', async () => {
