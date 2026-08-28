@@ -1604,6 +1604,9 @@ def test_validation_error_diagnosis_uses_sanitized_evidence_and_is_saved(
     assert "requestBody" in calls[0]["interfaces"][0]["contract"]
     assert "结合当前接口合同" in calls[0]["request"]
     assert "明确指出要修改的字段或断言" in calls[0]["request"]
+    assert "不得编造或建议写死" in calls[0]["request"]
+    assert "前置接口" in calls[0]["request"]
+    assert "{{变量名}}" in calls[0]["request"]
     assert diagnosed.batches[0].validation_errors[0]["diagnosis"]["model"] == "qwen3.7-plus"
     restored = service.get_job(job.id)
     assert restored.batches[0].validation_errors[0]["diagnosis"]["analysis"]["summary"] == "响应断言范围不明确"

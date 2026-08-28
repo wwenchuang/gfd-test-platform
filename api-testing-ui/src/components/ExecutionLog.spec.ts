@@ -88,4 +88,20 @@ describe('ExecutionLog', () => {
     expect(wrapper.get('[data-testid="log-evidence"]').text()).toContain('status_code')
     expect(wrapper.findAll('[data-testid="log-line"]')).toHaveLength(1)
   })
+
+  it('translates raw execution status words in user-facing log messages', () => {
+    const wrapper = mount(ExecutionLog, {
+      props: {
+        events: [
+          { id: 1, type: 'case_finished', level: 'success', caseId: 'case-1', message: 'PASSED', payload: {} },
+          { id: 2, type: 'execution_finished', level: 'success', caseId: '', message: 'Execution DONE', payload: {} },
+        ],
+      },
+    })
+
+    expect(wrapper.text()).toContain('通过')
+    expect(wrapper.text()).toContain('执行 完成')
+    expect(wrapper.text()).not.toContain('PASSED')
+    expect(wrapper.text()).not.toContain('DONE')
+  })
 })

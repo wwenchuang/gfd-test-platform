@@ -34,6 +34,7 @@ const baselinePage = ref(1)
 const BASELINE_PAGE_SIZE = 25
 
 const projectReady = computed(() => Boolean(context.projectId))
+const activeBaselineCount = computed(() => baselines.items.filter(item => item.status === 'active').length)
 const projectName = computed(() => context.projects.find(item => item.id === context.projectId)?.name || '未选择项目')
 const selectedSourceName = computed(() => {
   const source = context.sourceRevisions.find(item => item.id === context.sourceRevisionId)
@@ -516,8 +517,8 @@ function adoptionReasonLabel(reason: string): string {
       <div><span>项目</span><strong>{{ projectName }}</strong></div>
       <div><span>执行记录接口版本</span><strong>{{ selectedSourceName }}</strong><small>不筛选基线</small></div>
       <div><span>本次执行目标</span><strong>{{ environmentName }}</strong></div>
-      <div><span>基线数量</span><strong>{{ baselines.items.length }} 条</strong></div>
-      <div><span>已选择</span><strong>{{ baselines.selectedItems.length }} 条</strong></div>
+      <div><span>全部记录</span><strong>{{ baselines.items.length }} 条</strong></div>
+      <div><span>当前有效</span><strong>{{ activeBaselineCount }} 条</strong></div>
     </section>
 
     <section class="baseline-audit-band" aria-label="基线断言检查">
@@ -540,12 +541,12 @@ function adoptionReasonLabel(reason: string): string {
       <div v-else-if="baselines.audit" class="baseline-audit-summary" data-testid="baseline-audit-summary">
         <span>有效基线 <b>{{ baselines.audit.summary.total }}</b> 条</span>
         <span class="success">断言已精确 <b>{{ baselines.audit.summary.verified }}</b> 条</span>
-        <span class="warning">需要复核 <b>{{ baselines.audit.summary.needs_review }}</b> 条</span>
+        <span class="warning">自动回归需复核 <b>{{ baselines.audit.summary.needs_review }}</b> 条</span>
         <span>仅人工执行 <b>{{ baselines.audit.summary.manual_only || 0 }}</b> 条</span>
         <span>可补精确断言 <b>{{ baselines.audit.summary.upgrade_available }}</b> 条</span>
         <span>HTTP 失败 <b>{{ baselines.audit.summary.http_failure }}</b> 条</span>
         <span>业务失败 <b>{{ baselines.audit.summary.business_failure }}</b> 条</span>
-        <span>缺少领域断言 <b>{{ baselines.audit.summary.domain_assertion_required }}</b> 条</span>
+        <span>建议补领域断言 <b>{{ baselines.audit.summary.domain_assertion_required }}</b> 条</span>
         <span>证据不足 <b>{{ baselines.audit.summary.evidence_missing }}</b> 条</span>
         <span>当前环境可安全复核 <b>{{ currentSafeAuditIds.length }}</b> 条</span>
         <small>“生成待复核版本”只补充证据明确的精确业务断言；新版本仍需在原环境重新调试并采纳后，才会替换活动基线。</small>
@@ -570,9 +571,9 @@ function adoptionReasonLabel(reason: string): string {
             <option value="all">全部来源</option><option value="ai">AI</option><option value="imported">平台导入</option><option value="manual">手工</option>
           </select></label>
           <label><span>断言检查</span><select v-model="auditFilter" data-testid="baseline-filter-audit" :disabled="!baselines.audit">
-            <option value="all">全部结果</option><option value="needs-review">需要复核</option><option value="verified">断言已精确</option>
+            <option value="all">全部结果</option><option value="needs-review">自动回归需复核</option><option value="verified">断言已精确</option>
             <option value="upgrade_available">可补精确断言</option><option value="http_failure">实际 HTTP 失败</option>
-            <option value="business_failure">实际业务失败</option><option value="domain_assertion_required">缺少领域断言</option><option value="evidence_missing">证据不足</option>
+            <option value="business_failure">实际业务失败</option><option value="domain_assertion_required">建议补领域断言</option><option value="evidence_missing">证据不足</option>
           </select></label>
         </div>
         <div class="baseline-group-list" aria-label="基线分组">
@@ -587,18 +588,18 @@ function adoptionReasonLabel(reason: string): string {
 
       <main class="baseline-table-panel">
         <header class="baseline-action-bar">
-          <div>
+          <div class="baseline-selection-summary" data-testid="baseline-selection-summary">
             <ShieldCheck :size="17" />
-            <strong>{{ filteredBaselines.length }} 条基线</strong>
-            <span>{{ filteredSelectedCount }} 条已选</span>
+            <span class="baseline-selection-metric"><strong>{{ filteredBaselines.length }}</strong><span>筛选结果</span></span>
+            <span class="baseline-selection-metric"><strong>{{ filteredSelectedCount }}</strong><span>已选择</span></span>
           </div>
-          <div>
+          <div class="baseline-action-buttons">
             <button class="secondary-command" type="button" :disabled="!filteredBaselines.length" @click="toggleFiltered">{{ allFilteredSelected ? '取消当前筛选' : '全选当前筛选' }}</button>
             <button class="secondary-command" type="button" :disabled="!baselines.selectedIds.length" @click="baselines.clearSelection">清空选择</button>
             <button class="primary-command" type="button" :disabled="tasks.saving || !baselineActionReady" @click="saveSelectedAsRegressionTask"><ListPlus :size="15" />{{ tasks.saving ? '保存中' : '保存为基线回归任务' }}</button>
             <button class="primary-command" type="button" :disabled="executions.baselineStarting || !baselineActionReady" @click="runSelectedBaselines"><Play :size="15" />{{ executions.baselineStarting ? '创建执行中' : '按当前环境执行所选基线' }}</button>
-            <small class="baseline-action-hint" :class="{ warning: selectedBaselineActionIssue }">{{ selectedBaselineActionIssue || '保存会创建独立基线回归任务；立即执行只使用当前执行环境，不修改工作台任务。' }}</small>
           </div>
+          <small class="baseline-action-hint" :class="{ warning: selectedBaselineActionIssue }">{{ selectedBaselineActionIssue || '保存会创建独立基线回归任务；立即执行只使用当前执行环境，不修改工作台任务。' }}</small>
         </header>
         <div class="baseline-group-editor" aria-label="基线分组编辑">
           <div>

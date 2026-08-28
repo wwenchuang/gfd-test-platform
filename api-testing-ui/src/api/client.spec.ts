@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { ApiClient, ApiClientError } from './client'
 
-const LOGIN_PATH = '/task-manager.html?return_to=%2Fapi-test%2F'
+const LOGIN_PATH = '/task-manager.html?return_to=%2Fapi-test%2F%23%2Fbaselines'
 
 function response(status: number, body: unknown): Response {
   const serialized = typeof body === 'string' ? body : JSON.stringify(body)
@@ -27,7 +27,13 @@ describe('ApiClient', () => {
       setItem: (key: string, value: string) => values.set(key, value),
       removeItem: (key: string) => values.delete(key),
     })
-    vi.stubGlobal('window', { location: { assign } })
+    vi.stubGlobal('window', {
+      location: {
+        pathname: '/api-test/',
+        hash: '#/baselines',
+        assign,
+      },
+    })
     vi.stubGlobal('fetch', vi.fn())
   })
 
@@ -41,6 +47,16 @@ describe('ApiClient', () => {
 
     const [, options] = vi.mocked(fetch).mock.calls[0]
     expect((options?.headers as Headers).get('Authorization')).toBe('Bearer session-value')
+  })
+
+  it('redirects a logged-out deep link to login before sending any request', async () => {
+    await expect(new ApiClient().get('/api/api-testing/v1/baselines')).rejects.toMatchObject({
+      status: 401,
+      message: '登录已失效',
+    })
+
+    expect(fetch).not.toHaveBeenCalled()
+    expect(assign).toHaveBeenCalledWith(LOGIN_PATH)
   })
 
   it('clears only session auth and redirects in the same tab after a 401', async () => {
@@ -67,7 +83,7 @@ describe('ApiClient', () => {
     })
   })
 
-  it('aborts an unresponsive request and returns a Chinese recovery message', async () => {
+  it('explains that a timed-out read request did not submit changes', async () => {
     vi.useFakeTimers()
     values.set('sessionToken', 'session-value')
     vi.mocked(fetch).mockImplementation((_path, options) => new Promise((_resolve, reject) => {
@@ -76,7 +92,23 @@ describe('ApiClient', () => {
 
     const result = expect(new ApiClient(1_000).get('/api/api-testing/v1/workspace')).rejects.toMatchObject({
       status: 408,
-      message: expect.stringContaining('服务响应超时'),
+      message: expect.stringMatching(/读取超时.*不会提交或修改数据.*重试/),
+    })
+    await vi.advanceTimersByTimeAsync(1_000)
+    await result
+    vi.useRealTimers()
+  })
+
+  it('warns that a timed-out write may already have been submitted', async () => {
+    vi.useFakeTimers()
+    values.set('sessionToken', 'session-value')
+    vi.mocked(fetch).mockImplementation((_path, options) => new Promise((_resolve, reject) => {
+      options?.signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')))
+    }))
+
+    const result = expect(new ApiClient(1_000).post('/api/api-testing/v1/cases', { name: 'draft' })).rejects.toMatchObject({
+      status: 408,
+      message: expect.stringMatching(/提交超时.*可能已经提交.*刷新对应列表/),
     })
     await vi.advanceTimersByTimeAsync(1_000)
     await result

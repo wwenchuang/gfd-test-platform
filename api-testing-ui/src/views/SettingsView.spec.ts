@@ -195,6 +195,10 @@ describe('SettingsView environment asset center', () => {
     expect(wrapper.text()).toContain('默认服务、图片建模')
     expect(wrapper.text()).toContain('1 个服务键未配置地址')
 
+    await wrapper.get('[data-tab="services"]').trigger('click')
+    expect(wrapper.text()).toContain('已配置服务（2）')
+    expect(wrapper.text()).toContain('未配置服务（1）')
+
     await wrapper.get('[data-action="edit"]').trigger('click')
     expect(wrapper.findAll('input[aria-label="服务地址"]')).toHaveLength(3)
 

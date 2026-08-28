@@ -132,6 +132,35 @@ describe('BaselinesView fixed project assets', () => {
     expect(vi.mocked(apiClient.get).mock.calls.filter(([path]) => path.includes('/baselines'))).toHaveLength(1)
   })
 
+  it('separates all baseline records from the currently effective baseline count', async () => {
+    vi.spyOn(apiClient, 'get').mockResolvedValue({ data: { baselines: [
+      baselineFixture({ id: 'baseline-active', status: 'active' }),
+      baselineFixture({ id: 'baseline-history', status: 'superseded', case_name: '添加收藏 - 历史版本' }),
+    ] } })
+
+    const wrapper = mountWithContext()
+    await flushPromises()
+
+    const summaryItems = wrapper.findAll('.baseline-summary-grid > div')
+    expect(summaryItems[3].text()).toBe('全部记录2 条')
+    expect(summaryItems[4].text()).toBe('当前有效1 条')
+  })
+
+  it('renders filter and selection counts as stable labeled metrics', async () => {
+    vi.spyOn(apiClient, 'get').mockResolvedValue({ data: { baselines: [baselineFixture()] } })
+
+    const wrapper = mountWithContext()
+    await flushPromises()
+
+    const summary = wrapper.get('[data-testid="baseline-selection-summary"]')
+    const metrics = summary.findAll('.baseline-selection-metric')
+    expect(metrics).toHaveLength(2)
+    expect(metrics[0].get('strong').text()).toBe('1')
+    expect(metrics[0].get('span').text()).toBe('筛选结果')
+    expect(metrics[1].get('strong').text()).toBe('0')
+    expect(metrics[1].get('span').text()).toBe('已选择')
+  })
+
   it('opens a historical baseline in its own source and environment context', async () => {
     vi.spyOn(apiClient, 'get').mockResolvedValue({ data: { baselines: [
       baselineFixture({
@@ -431,12 +460,12 @@ describe('BaselinesView fixed project assets', () => {
     await flushPromises()
 
     expect(get).toHaveBeenCalledWith('/api/api-testing/v1/baselines/assertion-audit?project_id=project-1')
-    expect(wrapper.text()).toContain('需要复核 3 条')
+    expect(wrapper.text()).toContain('自动回归需复核 3 条')
     expect(wrapper.text()).toContain('当前环境可安全复核 1 条')
     expect(wrapper.text()).toContain('可补精确断言 2 条')
     expect(wrapper.text()).toContain('HTTP 失败 0 条')
     expect(wrapper.text()).toContain('业务失败 0 条')
-    expect(wrapper.text()).toContain('缺少领域断言 0 条')
+    expect(wrapper.text()).toContain('建议补领域断言 0 条')
     expect(wrapper.text()).toContain('证据不足 1 条')
     expect(wrapper.text()).toContain('可补精确断言')
     expect(wrapper.text()).toContain('实际响应：HTTP 200 · $.code = 0')

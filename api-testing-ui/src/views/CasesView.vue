@@ -71,6 +71,15 @@ const aiJobStateLabel = computed(() => {
   }[cases.aiJob.state]
 })
 const aiJobFailed = computed(() => Boolean(cases.aiJob && ['failed', 'failed_gateway', 'failed_validation'].includes(cases.aiJob.state)))
+const aiJobGuidance = computed(() => {
+  const state = cases.aiJob?.state
+  if (state === 'completed') return '结果已保存，可在用例列表继续调试；离开页面后也不会丢失。'
+  if (state === 'partial') return '已保存成功生成的用例；可先调试现有结果，再重新生成失败批次。'
+  if (state === 'queued' || state === 'running') return '任务在后台继续生成，可以离开页面，稍后回到用例管理查看结果。'
+  if (aiJobFailed.value && aiGeneratedVersionIds.value.length) return '已保存成功生成的部分结果，可查看后决定是否重新生成。'
+  if (aiJobFailed.value) return '未生成可用结果，请根据下方原因修正后重新生成。'
+  return ''
+})
 
 function openEndpointHistory(endpointId: string, endpointKey?: string): void {
   void router.push({ name: 'runs', query: { endpointId, ...(endpointKey ? { endpointKey } : {}) } })
@@ -551,6 +560,7 @@ function defaultTaskName(): string {
           <span>·</span>
           {{ aiGeneratedVersionIds.length }} 条用例
         </p>
+        <small v-if="aiJobGuidance" class="case-generation-guidance">{{ aiJobGuidance }}</small>
         <small v-if="cases.aiError">{{ cases.aiError }}</small>
       </div>
       <div class="case-generation-actions">

@@ -322,9 +322,9 @@ const WORKFLOW_SECTIONS = {
   },
   failure_analysis: {
     index: '6',
-    title: '失败分析',
-    subtitle: 'AI 分析失败原因并生成修复建议',
-    help: '选择失败任务，AI 自动分析失败原因并生成修复草稿。',
+    title: '失败处理',
+    subtitle: '集中查看失败证据、AI 归因和修复重跑',
+    help: '先查看报告、截图和日志，确认属于脚本问题后，再生成修复草稿或重跑。',
     cards: [
       { title: '分析失败原因', text: '选择失败任务后，AI 会分析失败原因并给出归因。', actions: [
         { label: 'AI 分析失败原因', cls: 'ai', fn: 'showAiRepairCenter()' }
@@ -573,6 +573,24 @@ function openModal(id) {
 function closeModal(id) {
   const modal = document.getElementById(id);
   if (modal) modal.classList.remove('show');
+}
+
+function hideToast() {
+  const toast = document.getElementById('toast');
+  if (!toast) return;
+  if (toast._toastTimer) clearTimeout(toast._toastTimer);
+  toast._toastTimer = null;
+  toast.textContent = '';
+  toast.className = 'toast';
+}
+
+function closeTransientUiForNavigation() {
+  document.querySelectorAll('.modal-overlay.show').forEach(modal => {
+    if (modal.dataset.persistentNavigation === '1') return;
+    modal.classList.remove('show');
+  });
+  document.getElementById('more-actions')?.classList.remove('show');
+  hideToast();
 }
 
 function toggleMoreMenu(event) {

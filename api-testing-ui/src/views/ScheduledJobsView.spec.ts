@@ -413,7 +413,7 @@ describe('ScheduledJobsView', () => {
         latest_execution_state: 'DONE',
         latest_execution_summary: { total: 2, passed: 1, failed: 1, broken: 0, skipped: 0, cancelled: 0 },
       })] } }
-      if (path.startsWith('/api/api-testing/v1/baselines')) return { data: { baselines: [] } }
+      if (path.startsWith('/api/api-testing/v1/baselines')) return { data: { baselines: [baselineFixture({})] } }
       if (path.startsWith('/api/api-testing/v1/cases')) return { data: { case_versions: [] } }
       if (path.startsWith('/api/api-testing/v1/tasks')) return { data: { tasks: [] } }
       return { data: {} }
@@ -480,6 +480,28 @@ describe('ScheduledJobsView', () => {
     expect(option.attributes('disabled')).toBeDefined()
     await option.trigger('click')
     expect(wrapper.text()).toContain('可多选')
+  })
+
+  it('marks an existing job as blocked when its saved target is no longer executable', async () => {
+    replaceTestApplications([])
+    vi.spyOn(apiClient, 'get').mockImplementation(async url => {
+      const path = String(url)
+      if (path.startsWith('/api/api-testing/v1/scheduled-jobs')) return { data: { scheduled_jobs: [scheduledJobFixture({ id: 'job-blocked' })] } }
+      if (path.startsWith('/api/api-testing/v1/baselines')) return { data: { baselines: [baselineFixture({})] } }
+      if (path.startsWith('/api/api-testing/v1/cases')) return { data: { case_versions: [] } }
+      if (path.startsWith('/api/api-testing/v1/tasks')) return { data: { tasks: [] } }
+      return { data: {} }
+    })
+    const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/', name: 'scheduled-jobs', component: ScheduledJobsView }] })
+
+    const wrapper = mount(ScheduledJobsView, { global: { plugins: [router] } })
+    await flushPromises()
+
+    const row = wrapper.get('[data-testid="scheduled-row-job-blocked"]')
+    expect(row.text()).toContain('执行已阻断')
+    expect(row.text()).toContain('应用未配置或已移除')
+    expect(row.text()).not.toContain('下次执行')
+    expect(wrapper.get('[data-testid="scheduled-run-job-blocked"]').attributes('disabled')).toBeDefined()
   })
 })
 

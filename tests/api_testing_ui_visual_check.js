@@ -215,6 +215,29 @@ async function assertNoHorizontalOverflow(page, label) {
   if (metrics.scrollWidth > metrics.width + 1) throw new Error(`${label} horizontal overflow: ${JSON.stringify(metrics)}`);
 }
 
+async function assertBaselineSelectionReadable(page, label) {
+  const diagnostic = await page.getByTestId('baseline-selection-summary').evaluate(element => {
+    const style = getComputedStyle(element);
+    const metrics = Array.from(element.querySelectorAll('.baseline-selection-metric')).map(metric => {
+      const strong = metric.querySelector('strong');
+      const copy = metric.querySelector('span');
+      return {
+        metricWidth: Math.round(metric.getBoundingClientRect().width),
+        numberHeight: Math.round(strong?.getBoundingClientRect().height || 0),
+        labelHeight: Math.round(copy?.getBoundingClientRect().height || 0),
+        labelLineHeight: Number.parseFloat(getComputedStyle(copy).lineHeight || '0'),
+      };
+    });
+    return { whiteSpace: style.whiteSpace, width: Math.round(element.getBoundingClientRect().width), metrics };
+  });
+  if (diagnostic.whiteSpace !== 'nowrap') throw new Error(`${label} baseline summary may split: ${JSON.stringify(diagnostic)}`);
+  for (const metric of diagnostic.metrics) {
+    if (metric.metricWidth < 48 || metric.numberHeight > 24 || metric.labelHeight > metric.labelLineHeight + 2) {
+      throw new Error(`${label} baseline metric wrapped or collapsed: ${JSON.stringify(diagnostic)}`);
+    }
+  }
+}
+
 async function acceptExecutionConfirmation(page, click, label) {
   const dialogPromise = page.waitForEvent('dialog');
   const clickPromise = click();
@@ -272,6 +295,14 @@ async function openCompactPage(page, navigationLabel, heading, label) {
       ? { executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH }
       : {}),
   });
+  const loggedOutPage = await browser.newPage();
+  await loggedOutPage.goto(`${url}#/baselines`, { waitUntil: 'domcontentloaded' });
+  await loggedOutPage.waitForURL(current => current.pathname === '/task-manager.html');
+  const returnTo = new URL(loggedOutPage.url()).searchParams.get('return_to');
+  if (returnTo !== '/api-test/#/baselines') {
+    throw new Error(`logged-out baseline deep link was not preserved: ${loggedOutPage.url()}`);
+  }
+  await loggedOutPage.close();
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));
@@ -352,6 +383,7 @@ async function openCompactPage(page, navigationLabel, heading, label) {
     for (const [navigationLabel, heading, label] of compactPages) {
       await openCompactPage(page, navigationLabel, heading, label);
       if (navigationLabel === '基线用例') {
+        await assertBaselineSelectionReadable(page, 'baselines mobile');
         const action = page.locator('.baseline-row-actions').first();
         await action.waitFor();
         if (!await action.isVisible()) {
@@ -362,6 +394,7 @@ async function openCompactPage(page, navigationLabel, heading, label) {
           throw new Error(`baseline row actions are hidden on mobile: ${JSON.stringify(diagnostic)}`);
         }
         if (!await page.getByTestId('baseline-page-next').isVisible()) throw new Error('baseline pagination is hidden on mobile');
+        await page.screenshot({ path: path.join(ARTIFACTS, 'baselines-mobile.png'), fullPage: true });
       }
       if (navigationLabel === '任务管理') {
         await page.getByTestId('task-list-item-task-1').click();
@@ -378,8 +411,14 @@ async function openCompactPage(page, navigationLabel, heading, label) {
       }
     }
     await page.screenshot({ path: path.join(ARTIFACTS, 'settings-mobile.png'), fullPage: true });
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.getByRole('link', { name: '基线用例', exact: true }).click();
+    await page.getByRole('heading', { name: '基线用例', exact: true, level: 1 }).waitFor();
+    await assertBaselineSelectionReadable(page, 'baselines desktop');
+    await assertNoHorizontalOverflow(page, 'baselines desktop');
+    await page.screenshot({ path: path.join(ARTIFACTS, 'baselines-desktop.png'), fullPage: true });
     if (errors.length) throw new Error(`browser errors: ${errors.join(' | ')}`);
-    console.log(JSON.stringify({ ok: true, url, screenshots: ['workflow-preview-desktop.png', 'workflow-preview-mobile.png', 'workbench-desktop.png', 'workbench-compact-desktop.png', 'workbench-tablet.png', 'workbench-mobile.png', 'settings-mobile.png'] }));
+    console.log(JSON.stringify({ ok: true, url, screenshots: ['workflow-preview-desktop.png', 'workflow-preview-mobile.png', 'workbench-desktop.png', 'workbench-compact-desktop.png', 'workbench-tablet.png', 'workbench-mobile.png', 'baselines-mobile.png', 'settings-mobile.png', 'baselines-desktop.png'] }));
   } finally {
     await browser.close();
     await new Promise(resolve => server.close(resolve));

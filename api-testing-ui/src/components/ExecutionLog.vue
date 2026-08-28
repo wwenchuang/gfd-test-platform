@@ -53,6 +53,20 @@ function eventEvidence(event: ExecutionEventView): unknown {
   return redactSensitiveEvidence(event.payload)
 }
 
+function eventMessage(message: string): string {
+  const labels: Record<string, string> = {
+    Execution: '执行',
+    PASSED: '通过',
+    FAILED: '失败',
+    BROKEN: '异常',
+    CANCELLED: '已取消',
+    DONE: '完成',
+    RUNNING: '执行中',
+    QUEUED: '排队中',
+  }
+  return String(message || '').replace(/\b(Execution|PASSED|FAILED|BROKEN|CANCELLED|DONE|RUNNING|QUEUED)\b/g, token => labels[token] || token)
+}
+
 function handleScroll(): void {
   if (!output.value) return
   const distance = output.value.scrollHeight - output.value.clientHeight - output.value.scrollTop
@@ -73,7 +87,7 @@ async function toggleFollowing(): Promise<void> {
     <header class="panel-header"><div><h2>实时日志</h2><span :class="`connection-${connectionState}`">{{ connectionLabel }}</span></div><button data-testid="log-follow" class="mini-icon" type="button" :title="following ? '暂停自动滚动' : '继续跟随最新日志'" @click="toggleFollowing"><CirclePause v-if="following" :size="15" /><CirclePlay v-else :size="15" /></button></header>
     <div class="log-tools"><label><Search :size="14" /><span class="sr-only">日志级别</span><select v-model="level" data-testid="log-level"><option value="all">全部级别</option><option value="info">信息</option><option value="success">通过</option><option value="warning">提醒</option><option value="error">失败</option></select></label><label><span class="sr-only">用例</span><select v-model="caseId"><option value="all">全部用例</option><option v-for="item in caseOptions" :key="item" :value="item">{{ caseLabel(item) }}</option></select></label><span v-if="!following" class="paused-label">滚动已暂停<span v-if="unseenCount"> · {{ unseenCount }} 条新日志</span></span></div>
     <div ref="output" data-testid="log-output" class="log-output" aria-live="polite" @scroll="handleScroll">
-      <div v-for="event in filtered" :key="event.id" data-testid="log-line" :class="['log-line', `log-${event.level}`]"><time>{{ eventTime(event) }}</time><strong>{{ event.message }}</strong><code v-if="event.caseId">{{ caseLabel(event.caseId) }}</code><button v-if="Object.keys(event.payload).length" data-testid="log-evidence-toggle" class="log-evidence-toggle" type="button" :title="expanded.has(event.id) ? '收起事件证据' : '查看事件证据'" @click="toggleEvidence(event.id)"><ChevronDown v-if="expanded.has(event.id)" :size="13" /><ChevronRight v-else :size="13" /></button><pre v-if="expanded.has(event.id)" data-testid="log-evidence">{{ JSON.stringify(eventEvidence(event), null, 2) }}</pre></div>
+      <div v-for="event in filtered" :key="event.id" data-testid="log-line" :class="['log-line', `log-${event.level}`]"><time>{{ eventTime(event) }}</time><strong>{{ eventMessage(event.message) }}</strong><code v-if="event.caseId">{{ caseLabel(event.caseId) }}</code><button v-if="Object.keys(event.payload).length" data-testid="log-evidence-toggle" class="log-evidence-toggle" type="button" :title="expanded.has(event.id) ? '收起事件证据' : '查看事件证据'" @click="toggleEvidence(event.id)"><ChevronDown v-if="expanded.has(event.id)" :size="13" /><ChevronRight v-else :size="13" /></button><pre v-if="expanded.has(event.id)" data-testid="log-evidence">{{ JSON.stringify(eventEvidence(event), null, 2) }}</pre></div>
       <p v-if="!filtered.length" class="state-message">暂无匹配日志</p>
     </div>
   </section>

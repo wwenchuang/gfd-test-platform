@@ -2664,6 +2664,11 @@
     display: grid;
     gap: 10px;
   }
+  .generation-record-load-more {
+    display: flex;
+    justify-content: center;
+    padding: 4px 0 12px;
+  }
   .generation-record-sections {
     display: grid;
     gap: 14px;
@@ -5118,12 +5123,32 @@
       linear-gradient(135deg, rgba(34,211,238,.07), rgba(167,139,250,.035)),
       rgba(3, 7, 18, .42);
   }
+  .agent-source-materials > summary {
+    list-style: none;
+    cursor: pointer;
+  }
+  .agent-source-materials > summary::-webkit-details-marker {
+    display: none;
+  }
   .agent-source-material-head {
     display: flex;
     align-items: flex-start;
     justify-content: space-between;
     gap: 12px;
-    margin-bottom: 10px;
+    margin-bottom: 0;
+  }
+  .agent-source-material-head::after {
+    content: '展开';
+    flex: 0 0 auto;
+    color: var(--accent-strong);
+    font-family: var(--mono);
+    font-size: 11px;
+  }
+  .agent-source-materials[open] .agent-source-material-head::after {
+    content: '收起';
+  }
+  .agent-source-material-body {
+    margin-top: 12px;
   }
   .agent-source-material-head h3 {
     font-size: 14px;
@@ -6038,6 +6063,41 @@
   .agent-side-title {
     font-weight: 900;
     margin-bottom: 8px;
+  }
+  .agent-onboarding-card {
+    border-color: rgba(34, 211, 238, .42);
+    background: linear-gradient(145deg, rgba(34, 211, 238, .09), rgba(9, 18, 32, .88));
+  }
+  .agent-onboarding-steps {
+    display: grid;
+    gap: 9px;
+    margin: 12px 0;
+    padding: 0;
+    list-style: none;
+  }
+  .agent-onboarding-steps li {
+    display: grid;
+    grid-template-columns: 26px minmax(0, 1fr);
+    align-items: center;
+    gap: 8px;
+    color: var(--text2);
+    font-size: 12px;
+  }
+  .agent-onboarding-steps strong {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    border: 1px solid rgba(34, 211, 238, .48);
+    border-radius: 6px;
+    color: var(--accent-strong);
+    background: rgba(34, 211, 238, .08);
+  }
+  .agent-side-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
   }
   .agent-kv {
     display: grid;

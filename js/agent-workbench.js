@@ -644,7 +644,7 @@ async function showAgentWorkbench() {
   const riskLevel = classifyRiskLevel(savedFormState['agent-goal']?.value || document.getElementById('agent-goal')?.value || '');
   area.className = 'editor-area agent-workbench';
   area.innerHTML = `
-    <div class="agent-shell">
+    <div class="agent-shell" data-agent-workbench-mode="${run ? 'run' : 'new'}">
       <div class="agent-hero">
         <div class="workflow-kicker">自动化 Agent · 自动规划 / 自动执行 / 安全确认 / 可追踪产物</div>
         <h2>全自动 Agent 工作台</h2>
@@ -750,39 +750,41 @@ async function showAgentWorkbench() {
             </div>
           </section>
 
-          <section class="agent-source-materials">
-            <div class="agent-source-material-head">
+          <details class="agent-source-materials">
+            <summary class="agent-source-material-head">
               <div>
-                <h3>本次 Agent 输入资料</h3>
-                <p>Figma、需求说明、需求文档和截图会一起进入Agent 的资料整理步骤。</p>
+                <h3>补充需求资料（可选）</h3>
+                <p>需要时再添加 Figma、需求文档或截图，只写测试目标也可以直接启动。</p>
               </div>
               <span class="agent-source-counter" id="agent-source-counter">${escapeHtml(agentSourceFileSummary())}</span>
-            </div>
-            <div class="agent-source-grid">
-              <div class="agent-field">
-                <label for="agent-source-figma-url">Figma / UI 设计稿链接</label>
-                <textarea id="agent-source-figma-url" class="agent-url-input" rows="2" placeholder="可选：优先粘贴具体 Frame 链接；文件链接会按目标筛选相关页面"></textarea>
+            </summary>
+            <div class="agent-source-material-body">
+              <div class="agent-source-grid">
+                <div class="agent-field">
+                  <label for="agent-source-figma-url">Figma / UI 设计稿链接</label>
+                  <textarea id="agent-source-figma-url" class="agent-url-input" rows="2" placeholder="可选：优先粘贴具体 Frame 链接；文件链接会按目标筛选相关页面"></textarea>
+                </div>
+                <div class="agent-field">
+                  <label for="agent-source-requirement-text">需求补充说明</label>
+                  <textarea id="agent-source-requirement-text" rows="3" placeholder="可选：补充业务规则、风险点、待确认事项、截图说明或验收口径。"></textarea>
+                </div>
               </div>
-              <div class="agent-field">
-                <label for="agent-source-requirement-text">需求补充说明</label>
-                <textarea id="agent-source-requirement-text" rows="3" placeholder="可选：补充业务规则、风险点、待确认事项、截图说明或验收口径。"></textarea>
+              <div class="upload-zone agent-source-upload-zone"
+                   onclick="document.getElementById('agent-source-file-input').click()"
+                   ondragover="handleAgentSourceDragOver(event)"
+                   ondragleave="handleAgentSourceDragLeave(event)"
+                   ondrop="handleAgentSourceDrop(event)"
+                   tabindex="0">
+                <div class="agent-source-upload-copy">
+                  <strong>添加需求资料</strong>
+                  <span>支持 PDF / Word / Markdown / YAML / 截图；也可以拖拽或粘贴截图、文本。</span>
+                </div>
+                <button class="btn-sm primary" type="button" onclick="event.stopPropagation();document.getElementById('agent-source-file-input').click()">添加资料</button>
+                <input type="file" id="agent-source-file-input" accept=".txt,.md,.json,.pdf,.doc,.docx,.mm,.yaml,.yml,.png,.jpg,.jpeg" multiple style="display:none" onchange="handleAgentSourceFiles(this)">
               </div>
+              <div class="agent-source-file-list asset-list" id="agent-source-file-list"></div>
             </div>
-            <div class="upload-zone agent-source-upload-zone"
-                 onclick="document.getElementById('agent-source-file-input').click()"
-                 ondragover="handleAgentSourceDragOver(event)"
-                 ondragleave="handleAgentSourceDragLeave(event)"
-                 ondrop="handleAgentSourceDrop(event)"
-                 tabindex="0">
-              <div class="agent-source-upload-copy">
-                <strong>添加需求资料</strong>
-                <span>支持 PDF / Word / Markdown / YAML / 截图；也可以拖拽或粘贴截图、文本。</span>
-              </div>
-              <button class="btn-sm primary" type="button" onclick="event.stopPropagation();document.getElementById('agent-source-file-input').click()">添加资料</button>
-              <input type="file" id="agent-source-file-input" accept=".txt,.md,.json,.pdf,.doc,.docx,.mm,.yaml,.yml,.png,.jpg,.jpeg" multiple style="display:none" onchange="handleAgentSourceFiles(this)">
-            </div>
-            <div class="agent-source-file-list asset-list" id="agent-source-file-list"></div>
-          </section>
+          </details>
           <div class="agent-field agent-failed-job-field" id="agent-failed-job-field" style="display:none;">
             <label for="agent-failed-job">最近失败任务</label>
             <select id="agent-failed-job">
@@ -834,17 +836,7 @@ async function showAgentWorkbench() {
       <div class="agent-card agent-artifacts-card" id="agent-artifacts-card">
         ${renderAgentArtifactPanel(run)}
       </div>
-      ` : `
-      <div class="agent-card agent-empty-run-card">
-        <div class="agent-timeline-head">
-          <div>
-            <h3>还没有选择运行记录</h3>
-            <p>这里默认用于创建新的 Agent 任务。需要查看上次执行过程时，请进入“运行记录”选择对应 Run；启动新任务后，本次步骤时间线会显示在这里。</p>
-          </div>
-          <button class="btn-sm" onclick="activateWorkflow('agent_history')">查看运行记录</button>
-        </div>
-      </div>
-      `}
+      ` : ''}
     </div>
   `;
   restoreAgentTimelineViewState(document.getElementById('agent-progress'), timelineViewState);

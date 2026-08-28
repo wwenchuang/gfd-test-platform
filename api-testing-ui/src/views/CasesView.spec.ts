@@ -96,6 +96,7 @@ describe('CasesView', () => {
     expect(loadCases).toHaveBeenCalledWith('source-1')
     expect(wrapper.get('[data-testid="case-generation-status"]').text()).toContain('生成完成')
     expect(wrapper.get('[data-testid="case-generation-status"]').text()).toContain('1 条用例')
+    expect(wrapper.get('[data-testid="case-generation-status"]').text()).toContain('结果已保存，可在用例列表继续调试')
     await wrapper.get('[data-testid="case-generation-results"]').trigger('click')
     expect((wrapper.get('[data-testid="case-name"]').element as HTMLInputElement).value).toBe('我的收藏列表 - 基础正向流程')
 

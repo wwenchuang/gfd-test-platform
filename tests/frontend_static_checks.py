@@ -82,6 +82,9 @@ def check_api_automation_frontend_residue_is_removed():
 
 def check_api_testing_frontend_workspace():
     source_root = ROOT / "api-testing-ui" / "src"
+    api_testing_main = (source_root / "main.ts").read_text(encoding="utf-8")
+    api_testing_auth_redirect = source_root / "utils" / "authRedirect.ts"
+    api_testing_styles = (source_root / "styles" / "app.css").read_text(encoding="utf-8")
     require(source_root.is_dir(), "API testing Vue source workspace is missing")
     app_source = (source_root / "App.vue").read_text(encoding="utf-8")
     router_source = (source_root / "router.ts").read_text(encoding="utf-8")
@@ -90,6 +93,16 @@ def check_api_testing_frontend_workspace():
     for route in ("WorkbenchView", "AssetsView", "RunsView", "ReportsView", "SettingsView"):
         require(route in router_source, f"API testing router is missing: {route}")
     require((ROOT / "api-test" / "index.html").exists(), "Built API testing frontend is missing")
+    require(api_testing_auth_redirect.exists(), "API testing frontend must centralize login deep-link redirects")
+    require(
+        "requireApiTestingSession" in api_testing_main
+        and "if (requireApiTestingSession()) void bootstrap()" in api_testing_main,
+        "API testing frontend must redirect logged-out deep links before loading page data",
+    )
+    require(
+        "baseline-selection-metric" in api_testing_styles and "white-space: nowrap" in api_testing_styles,
+        "Baseline counts must stay readable without splitting numbers and labels into fragments",
+    )
 
     view_source = "\n".join(path.read_text(encoding="utf-8") for path in sorted((source_root / "views").glob("*.vue")))
     for english_kicker in (
@@ -136,13 +149,14 @@ def check_original_platform_management_experience():
     require('type="submit"' in html, "Login button must submit the login form instead of relying on click-only behavior")
     require("function loginReturnToPath" in auth_js and "return_to" in auth_js, "Login must parse safe same-origin return_to redirects")
     require("window.location.assign(returnTo)" in auth_js, "Login must redirect to return_to after successful authentication")
+    require(auth_js.count("continueAfterAuthentication()") >= 2, "Manual and restored login sessions must both honor return_to deep links")
     require("clearTransientAuthFeedback" in auth_js and "showAuthedApp" in auth_js, "Successful login must clear stale error and toast feedback")
     require("showAgentPlanPreview" in workbench_js and "copyAgentPlanPreview" in workbench_js, "Agent startup preview must render in an in-page modal with copy support")
     require("alert(lines.join" not in workbench_js, "Agent startup preview must not use a blocking browser alert")
     require("modal-agent-plan-preview" in html and "agent-plan-preview-body" in html, "Agent startup preview modal is missing")
     for filename in ("auth.js", "agent-workbench.js", "agent-status.js", "empty-states.js", "execution.js", "utils.js"):
         require(
-            f'{filename}?v=20260826-full-flow-ux' in html,
+            f'{filename}?v=20260828-full-platform-ux' in html,
             f"Changed static asset must use the full-flow UX cache key: {filename}",
         )
         require(
@@ -169,6 +183,14 @@ def check_original_platform_management_experience():
         require(marker in reports_js, f"Report management control is missing: {marker}")
 
     require("loadFullAgentModelCatalog" in workbench_js and "加载更多模型" in workbench_js, "Large model catalog must be opt-in instead of blocking workbench entry")
+    require(
+        '<details class="agent-source-materials">' in workbench_js,
+        "Optional Agent source materials must stay collapsed until the user needs them",
+    )
+    require(
+        "agent-onboarding-steps" in status_js and "本次产物（空）" not in status_js,
+        "Empty Agent status must guide first-time users instead of rendering several empty panels",
+    )
     preview_plan = workbench_js[workbench_js.index("async function previewAgentPlan"):workbench_js.index("function showAgentPlanPreview")]
     require("请先输入测试目标" in preview_plan, "Agent plan preview must reject an empty goal before requesting AI planning")
     load_agent_model_options = workbench_js[workbench_js.index("async function loadAgentModelOptions"):workbench_js.index("function dashboardStats")]
@@ -250,7 +272,16 @@ def main():
     require("const API_BASE = '/api'" in utils_js and "async function apiRequest" in utils_js and "const WORKFLOW_SECTIONS" in utils_js, "Shared frontend client and workflow registry must remain available outside the removed API module")
     require("api_dashboard:" not in utils_js and "api_assets:" not in utils_js, "Shared workflow registry must not retain API workflow definitions")
     require("Agent 工作台" in html, "Dashboard must serve as the Agent workbench entry")
-    require(("AI修复" in html or "AI 修复" in html) and 'data-workflow="repair"' in html, "Sidebar must expose independent AI repair entry")
+    require('data-workflow="repair"' not in html, "Sidebar must not duplicate failure handling across execution and report groups")
+    require('data-workflow="failure_analysis"' in html and "失败处理" in html, "Sidebar must expose one clear failure handling entry")
+    require('data-nav-group="agent" open' in html, "First visit must expand the active Agent navigation group")
+    for collapsed_group in ("cases", "run", "report", "settings"):
+        require(
+            f'data-nav-group="{collapsed_group}" open' not in html,
+            f"First visit must keep the {collapsed_group} navigation group collapsed",
+        )
+    require("midscene_nav_density_v2" in agent_status_js, "Existing all-open sidebar preferences must receive a one-time compact migration")
+    require("closeTransientUiForNavigation" in agent_status_js and "hideToast" in utils_js, "Page navigation must close stale modals and page-scoped notices")
     require("const AI_GATEWAY_BASE = '/ai-gateway'" in html, "AI Gateway calls must use same-origin reverse proxy")
     require("const USERS" not in html and "test123" not in html, "Frontend must not contain plaintext login credentials")
     require("/auth/login" in html and "/auth/me" in html and "/auth/logout" in html, "Frontend login must use backend auth endpoints")
@@ -298,7 +329,11 @@ def main():
     require("POST /agent/run" not in html, "UI should call Agent endpoints without exposing implementation text in visible copy")
     require("/agent-runs" in html and "/agent-runs/" in html, "AI Agent endpoint calls are missing")
     require("Agent 状态" in html and "运行轨迹" in html, "Right panel must become Agent status panel with timeline")
-    require("还没有选择运行记录" in html and "启动新任务后，本次步骤时间线会显示在这里" in html, "Agent workbench must default to new-run mode instead of showing the last run")
+    require(
+        'data-agent-workbench-mode="${run ? \'run\' : \'new\'}"' in html
+        and "还没有选择运行记录" not in html,
+        "Agent workbench must expose new-run mode without duplicating an empty history panel",
+    )
     require("return normalizeAgentRun(agentCurrentRun || null)" in html and "agentCurrentRun = agentRuns[0]" not in html, "Loading Agent history must not auto-select the latest run")
     require("copyAgentArtifact" in html and "downloadAgentYaml" in html and "downloadAgentMindmap" in html and "下载脑图" in html, "Agent artifacts must support copy plus YAML and mindmap download")
     require("agentGeneratedCaseArtifact" in html and "artifactHasValue(artifacts.matchedCases)" not in html and "Array.isArray(artifacts.matchedCases) && artifacts.matchedCases.length" in html, "Agent case artifact rendering must not treat an empty matchedCases array as real output")
@@ -363,6 +398,10 @@ def main():
     require("function jobDurationText(job)" in html, "Generation records must display elapsed generation time")
     require("function jobTimingText(job)" in html, "Generation job details must include start/end/duration timing")
     require("耗时" in html and "已用时" in html, "Generation duration labels must be user friendly")
+    require("GENERATION_RECORD_PAGE_SIZE = 20" in app_js and "loadMoreGenerationRecords" in app_js, "Generation history must render incrementally instead of creating every record at once")
+    require("请先选择应用，再查看该应用的页面知识" in app_js, "Generation must not load a fallback application's knowledge before the user chooses an application")
+    nginx_source = (ROOT / "deploy" / "nginx-midscene-task.conf").read_text(encoding="utf-8")
+    require("location = /api-test" in nginx_source and "absolute_redirect off" in nginx_source, "The /api-test entry redirect must retain the public host and port")
     require("function jobTimelineHtml(job)" in html and "进度流水" in html, "Execution job detail must show progress timeline")
     require("单条/多条调试" in html and "multiple size=\"8\"" in html, "Execution modal must support selecting one or multiple tasks")
     require("不会触发 Sonic 测试套整套回归" in html and "每个任务只下发选中的一个 task" in html, "Single/multi-task execution must clearly state it does not run the full Sonic suite")
@@ -627,7 +666,7 @@ def main():
         "js/navigation.js", "js/agent-workbench.js", "js/agent-status.js",
         "css/app.css", "css/round5.css",
     ):
-        require(f"{active_asset}?v=20260826-full-flow-ux" in html, f"Frontend cache version is stale for active asset: {active_asset}")
+        require(f"{active_asset}?v=20260828-full-platform-ux" in html, f"Frontend cache version is stale for active asset: {active_asset}")
     require("function jobDeviceLabel" in html and "runnerDevices" in html and "runnerDeviceDisplayName(device)" in html, "Job rows must resolve device ids to public runner device names when available")
     require(
         "const job = activeJobs.find(isRunnerExecutionJob);" in html

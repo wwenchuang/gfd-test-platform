@@ -59,6 +59,12 @@ const visibleExecutions = computed(() => {
   })
 })
 const executionPageCount = computed(() => Math.max(1, Math.ceil(visibleExecutions.value.length / EXECUTION_PAGE_SIZE)))
+const executionRangeLabel = computed(() => {
+  if (!visibleExecutions.value.length) return '共 0 条'
+  const start = (executionPage.value - 1) * EXECUTION_PAGE_SIZE + 1
+  const end = Math.min(executionPage.value * EXECUTION_PAGE_SIZE, visibleExecutions.value.length)
+  return `第 ${start}-${end} 条，共 ${visibleExecutions.value.length} 条`
+})
 const pagedExecutions = computed(() => {
   const start = (executionPage.value - 1) * EXECUTION_PAGE_SIZE
   return visibleExecutions.value.slice(start, start + EXECUTION_PAGE_SIZE)
@@ -138,7 +144,7 @@ function executionRowConclusion(execution: ExecutionView): { label: string; tone
   <div class="execution-console">
     <aside class="execution-list panel">
       <header class="panel-header">
-        <h2>执行记录</h2><span>{{ visibleExecutions.length }}/{{ executions.length }} 条</span>
+        <h2>执行记录</h2><span>{{ executionRangeLabel }}</span>
       </header>
       <div class="execution-filter-tools">
         <label class="search-box"><Search :size="14" /><span class="sr-only">搜索执行记录</span><input v-model="executionSearch" data-testid="execution-filter-search" placeholder="搜索任务或环境" /></label>

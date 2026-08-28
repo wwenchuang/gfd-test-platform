@@ -695,7 +695,7 @@ async function anyVisible(locator) {
     await page.waitForSelector('#agent-goal');
     const agentModelOptions = await page.locator('#agent-model').innerText();
     if (!/自动（按模型策略：千问 Qwen Plus）/.test(agentModelOptions)) throw new Error(`Agent model auto option did not use AI Gateway router: ${agentModelOptions}`);
-    if (!await page.locator('text=还没有选择运行记录').isVisible()) throw new Error('Agent workbench should open in new-run mode');
+    if (await page.locator('[data-agent-workbench-mode="new"]').count() !== 1) throw new Error('Agent workbench should open in new-run mode');
     if (await page.locator('text=Agent 执行阶段').isVisible()) throw new Error('Agent workbench should not show the previous run phases by default');
     await page.fill('#agent-goal', '关节龙打印流程回归');
     await page.selectOption('#agent-app-name', {label: '校园助手'});

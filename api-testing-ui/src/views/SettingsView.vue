@@ -60,6 +60,9 @@ const publicVariables = computed(() => Object.entries(environmentDetail.value?.v
 const secretVariables = computed(() => Object.entries(environmentDetail.value?.variables || {}).filter(([, value]) => isSecretDescriptor(value)))
 const projectEnvironmentStats = computed(() => setup.environmentProjectStats)
 const servicePresentation = computed(() => environmentServicePresentation(environmentDetail.value?.services || {}))
+const configuredServiceGroups = computed(() => servicePresentation.value.groups.filter(group => group.configured))
+const unconfiguredServiceGroups = computed(() => servicePresentation.value.groups.filter(group => !group.configured))
+const configuredServiceCount = computed(() => configuredServiceGroups.value.reduce((total, group) => total + group.serviceKeys.length, 0))
 const serviceSummary = computed(() => {
   const presentation = servicePresentation.value
   const base = `${presentation.serviceKeyCount} 个服务键映射到 ${presentation.effectiveAddressCount} 个有效地址`
@@ -556,7 +559,12 @@ function formatDate(value: string): string { return value ? new Date(value).toLo
 
           <section v-else-if="detailTab === 'services'" class="environment-read-section">
             <header><div><h3>服务地址</h3><p>{{ serviceSummary }}</p></div></header>
-            <div class="environment-service-list"><article v-for="group in servicePresentation.groups" :key="group.id" data-testid="environment-service-group"><div><strong>{{ group.labels.join('、') }}</strong><small>{{ group.serviceKeys.length }} 个服务键{{ group.configured ? '共享此地址' : '等待配置' }}</small></div><code>{{ group.baseUrl || '未配置地址' }}</code></article></div>
+            <div class="environment-service-list">
+              <h4 v-if="configuredServiceGroups.length">已配置服务（{{ configuredServiceCount }}）</h4>
+              <article v-for="group in configuredServiceGroups" :key="group.id" data-testid="environment-service-group"><div><strong>{{ group.labels.join('、') }}</strong><small>{{ group.serviceKeys.length }} 个服务键共享此地址</small></div><code>{{ group.baseUrl }}</code></article>
+              <h4 v-if="unconfiguredServiceGroups.length">未配置服务（{{ servicePresentation.unconfiguredKeyCount }}）</h4>
+              <article v-for="group in unconfiguredServiceGroups" :key="group.id" data-testid="environment-service-group"><div><strong>{{ group.labels.join('、') }}</strong><small>{{ group.serviceKeys.length }} 个服务键等待配置</small></div><code>未配置地址</code></article>
+            </div>
           </section>
 
           <section v-else-if="detailTab === 'variables'" class="environment-read-grid">

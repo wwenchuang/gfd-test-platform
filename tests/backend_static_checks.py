@@ -14588,7 +14588,7 @@ def check_mindmap_compact_mode():
     task_manager_source = (ROOT / "task-manager.html").read_text(encoding="utf-8")
     require(
         "生成用例脑图" in task_manager_source
-        and "js/app.js?v=20260826-full-flow-ux" in task_manager_source,
+        and "js/app.js?v=20260828-full-platform-ux" in task_manager_source,
         "Mindmap modal and cache key must expose the cases-only presentation after deployment",
     )
 
@@ -16751,7 +16751,12 @@ def main():
     env_example = (ROOT / "deploy" / "midscene.env.example").read_text(encoding="utf-8")
     require("64 * 1024 * 1024" in source and "_limit_mb(limit)" in source, "Backend JSON body limit must default to 64MB and show the active limit")
     require("client_max_body_size 300m" in nginx_conf, "Nginx template must allow 300MB uploads")
-    require("NGINX_CLIENT_MAX_BODY_SIZE=\"${NGINX_CLIENT_MAX_BODY_SIZE:-300m}\"" in deploy_install and "midscene-upload-size.conf" in deploy_install, "Installer must apply 300MB Nginx upload override")
+    require(
+        "NGINX_CLIENT_MAX_BODY_SIZE=\"${NGINX_CLIENT_MAX_BODY_SIZE:-300m}\"" in deploy_install
+        and "midscene-upload-size.conf" in deploy_install
+        and "absolute_redirect off;" in deploy_install,
+        "Installer must apply the upload override and preserve the public port on directory redirects",
+    )
     require("find /etc/nginx -type f" in deploy_install and "s/client_max_body_size[[:space:]][^;]*;" in deploy_install, "Installer must replace older Nginx client_max_body_size values")
     require("/usr/share/nginx/html/task-manager.html" in deploy_install and "/usr/share/nginx/html/reports/task-manager.html" in deploy_install and "existing_container_pages" in deploy_install, "Installer must always publish both root and /reports Docker web entrypoints")
     require("/usr/share/nginx/html/task-manager.html" in docker_sync_script and "/usr/share/nginx/html/reports/task-manager.html" in docker_sync_script and "existing_pages" in docker_sync_script, "Docker web sync script must keep both legacy root and /reports URLs available")

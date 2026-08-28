@@ -444,7 +444,12 @@ function syncGenerateAppFromModule() {
     updateGenerateAppHint();
   }
   renderGenerateBusinessOptions();
-  loadGenerateKnowledgePages();
+  if (selectedGenerateApplication()?.package) {
+    loadGenerateKnowledgePages();
+  } else {
+    generateKnowledgePages = [];
+    renderGenerateKnowledgePages();
+  }
 }
 
 function renderGenerateBusinessOptions(selectedValue = null) {
@@ -478,8 +483,13 @@ function handleGenerateModuleChange() {
 }
 
 async function loadGenerateKnowledgePages() {
-  const appPackage = document.getElementById('generate-app-package').value.trim() || 'com.kfb.model';
+  const appPackage = document.getElementById('generate-app-package').value.trim();
   const tier = document.getElementById('generate-knowledge-tier')?.value || 'all';
+  if (!appPackage) {
+    generateKnowledgePages = [];
+    renderGenerateKnowledgePages();
+    return;
+  }
   rememberAppPackage(appPackage);
   try {
     const data = await apiRequest(`/knowledge/pages?app_package=${encodeURIComponent(appPackage)}&tier=${encodeURIComponent(tier)}`);
@@ -500,6 +510,12 @@ function renderGenerateKnowledgePages(error='') {
   if (error) {
     if (count) count.textContent = '读取失败';
     list.innerHTML = `<div class="generate-knowledge-empty">${escapeHtml(error)}</div>`;
+    return;
+  }
+  const appPackage = document.getElementById('generate-app-package').value.trim();
+  if (!appPackage) {
+    if (count) count.textContent = '尚未选择应用';
+    list.innerHTML = '<div class="generate-knowledge-empty">请先选择应用，再查看该应用的页面知识</div>';
     return;
   }
   if (!generateKnowledgePages.length) {
@@ -3273,10 +3289,14 @@ function generationRecordCard(job) {
   `;
 }
 
+const GENERATION_RECORD_PAGE_SIZE = 20;
+let generationRecordVisibleCount = GENERATION_RECORD_PAGE_SIZE;
+
 function generationRecordsHtml(jobs) {
   const active = jobs.filter(job => ['pending', 'running'].includes(job.status || '')).length;
   const success = jobs.filter(job => ['success', 'passed'].includes(job.status || '')).length;
   const failed = jobs.filter(job => job.status === 'failed').length;
+  const visibleJobs = jobs.slice(0, generationRecordVisibleCount);
   return `
     <div class="generation-records">
       <div class="generation-record-head">
@@ -3303,7 +3323,10 @@ function generationRecordsHtml(jobs) {
         </div>
       </div>
       ${jobs.length
-        ? `<div class="generation-record-list">${jobs.map(generationRecordCard).join('')}</div>`
+        ? `<div class="generation-record-list">${visibleJobs.map(generationRecordCard).join('')}</div>
+           ${visibleJobs.length < jobs.length ? `<div class="generation-record-load-more">
+             <button class="btn-sm" onclick="loadMoreGenerationRecords()">继续加载（已显示 ${visibleJobs.length} / ${jobs.length}）</button>
+           </div>` : ''}`
         : `<div class="generation-record-empty">暂无生成记录。点击“新建自动化测试”，上传需求文档、UI 稿或截图后，这里会展示生成进度和结果入口。</div>`}
     </div>
   `;
@@ -3314,8 +3337,7 @@ function renderGenerateJobsCenter() {
   if (!area) return;
   activeWorkspaceMode = '';
   const jobs = generationJobs()
-    .sort((a, b) => Date.parse((b.updated_at || b.created_at || '').replace(' ', 'T')) - Date.parse((a.updated_at || a.created_at || '').replace(' ', 'T')))
-    .slice(0, 80);
+    .sort((a, b) => Date.parse((b.updated_at || b.created_at || '').replace(' ', 'T')) - Date.parse((a.updated_at || a.created_at || '').replace(' ', 'T')));
   setActiveWorkflow('generate');
   resetYamlToolbarForManager();
   area.className = 'editor-area';
@@ -3327,12 +3349,18 @@ function renderGenerateJobsCenter() {
 }
 
 async function showGenerateJobsCenter() {
+  generationRecordVisibleCount = GENERATION_RECORD_PAGE_SIZE;
   await loadJobs(false, true);
   renderGenerateJobsCenter();
 }
 
 async function refreshGenerateJobsCenter() {
   await loadJobs(true, true);
+  renderGenerateJobsCenter();
+}
+
+function loadMoreGenerationRecords() {
+  generationRecordVisibleCount += GENERATION_RECORD_PAGE_SIZE;
   renderGenerateJobsCenter();
 }
 
@@ -5341,7 +5369,7 @@ async function initAuthSession() {
     const data = await apiRequest('/auth/me');
     if (data.ok && data.user) {
       sessionStorage.setItem('user', data.user);
-      showAuthedApp();
+      continueAfterAuthentication();
       return;
     }
   } catch(e) {}

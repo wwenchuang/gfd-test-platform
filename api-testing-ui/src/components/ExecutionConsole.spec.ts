@@ -175,6 +175,7 @@ describe('ExecutionConsole', () => {
 
     expect(wrapper.findAll('.execution-row')).toHaveLength(20)
     expect(wrapper.text()).toContain('第 1 / 2 页')
+    expect(wrapper.text()).toContain('第 1-20 条，共 21 条')
 
     await wrapper.find('.execution-list-tools .text-command').trigger('click')
     expect(wrapper.text()).toContain('删除 21')
@@ -182,6 +183,7 @@ describe('ExecutionConsole', () => {
     await wrapper.get('[data-testid="execution-page-next"]').trigger('click')
     expect(wrapper.findAll('.execution-row')).toHaveLength(1)
     expect(wrapper.text()).toContain('回归任务 21')
+    expect(wrapper.text()).toContain('第 21-21 条，共 21 条')
   })
 
   it('filters execution history by endpoint and allows clearing the filter', async () => {

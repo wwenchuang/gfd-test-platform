@@ -192,6 +192,11 @@ function buildJobInput(ids: string[]): ScheduledJobInput {
 }
 
 async function runJob(job: ScheduledJob): Promise<void> {
+  const targetIssue = jobTargetIssue(job)
+  if (targetIssue) {
+    scheduledJobs.error = `定时任务“${job.name}”执行已阻断：${targetIssue}。请编辑任务并重新选择有效目标。`
+    return
+  }
   const revisionId = job.environment_strategy === 'latest_environment'
     ? context.environmentRevisions.find(item => item.environment_id === job.environment_id)?.id
     : job.environment_revision_id
@@ -290,6 +295,14 @@ function jobTargetSummary(job: ScheduledJob): string {
   return `${labels.join('；')}${remaining > 0 ? `；另 ${remaining} 项` : ''}`
 }
 
+function jobTargetIssue(job: ScheduledJob): string {
+  const optionMap = new Map(targetOptionsForType(job.target_type).map(option => [option.id, option]))
+  const missingIds = job.target_ids.filter(id => !optionMap.has(id))
+  if (missingIds.length) return `${missingIds.length} 个目标已删除或不属于当前项目`
+  const blocked = job.target_ids.map(id => optionMap.get(id)).find(option => option && !option.selectable)
+  return blocked?.unavailableReason || ''
+}
+
 function targetOptionsForType(type: ScheduledJob['target_type']): TargetOption[] {
   if (type === 'baselines') return availableBaselines.value.map(baselineOption)
   if (type === 'cases') return Object.values(cases.versions).map(caseOption)
@@ -380,6 +393,10 @@ function resetEditor(): void {
 }
 
 async function toggleJobFlag(job: ScheduledJob, flag: 'enabled' | 'notify_feishu'): Promise<void> {
+  if (flag === 'enabled' && !job.enabled && jobTargetIssue(job)) {
+    scheduledJobs.error = `无法启用定时任务“${job.name}”：${jobTargetIssue(job)}。请先编辑并重新选择有效目标。`
+    return
+  }
   await scheduledJobs.update(job.id, jobInputFromJob({
     ...job,
     [flag]: !job[flag],
@@ -617,7 +634,8 @@ function weekDayName(value: number): string {
             <strong>{{ job.name }}</strong>
             <span>{{ targetTypeLabel(job.target_type) }} · {{ scheduleLabel(job) }} · 调度时区 {{ schedulerTimezoneLabel(job) }} · {{ job.notify_feishu ? '飞书通知' : '不通知' }}</span>
             <span class="scheduled-runtime-line">
-              <b>{{ job.enabled ? `下次执行 ${formatDateTime(job.next_run_at, job.scheduler_utc_offset)}` : '当前已停用' }}</b>
+              <b v-if="jobTargetIssue(job)" class="scheduled-blocked">执行已阻断 · {{ jobTargetIssue(job) }}</b>
+              <b v-else>{{ job.enabled ? `下次执行 ${formatDateTime(job.next_run_at, job.scheduler_utc_offset)}` : '当前已停用' }}</b>
               <b v-if="job.latest_run_at">最近{{ triggerLabel(job.latest_run_trigger) }} {{ formatDateTime(job.latest_run_at, job.scheduler_utc_offset) }} · {{ scheduleExecutionSummary(job) }}</b>
               <b v-else>尚无执行记录</b>
             </span>
@@ -633,7 +651,7 @@ function weekDayName(value: number): string {
             <button :data-testid="`scheduled-edit-${job.id}`" type="button" class="mini-icon" title="编辑" @click="editJob(job)"><Pencil :size="14" /></button>
             <button :data-testid="`scheduled-delete-${job.id}`" type="button" class="mini-icon danger" title="删除" @click="deleteJob(job)"><Trash2 :size="14" /></button>
             <button v-if="job.latest_execution_id" :data-testid="`scheduled-latest-execution-${job.id}`" type="button" class="mini-icon" title="查看最近执行" @click="openLatestExecution(job)"><ExternalLink :size="14" /></button>
-            <button :data-testid="`scheduled-run-${job.id}`" type="button" class="secondary-command" :disabled="scheduledJobs.runningId === job.id" @click="runJob(job)">
+            <button :data-testid="`scheduled-run-${job.id}`" type="button" class="secondary-command" :disabled="scheduledJobs.runningId === job.id || Boolean(jobTargetIssue(job))" @click="runJob(job)">
               <Play :size="14" />{{ scheduledJobs.runningId === job.id ? '投递中' : '手动执行一次' }}
             </button>
           </div>

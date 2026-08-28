@@ -1,4 +1,5 @@
 import type { ApiEnvelope } from './contracts'
+import { redirectToApiTestingLogin } from '../utils/authRedirect'
 
 export class ApiClientError extends Error {
   constructor(public readonly status: number, message: string) {
@@ -8,7 +9,6 @@ export class ApiClientError extends Error {
 
 type RequestOptions = Omit<RequestInit, 'body'> & { body?: unknown }
 
-const LOGIN_PATH = '/task-manager.html?return_to=%2Fapi-test%2F'
 const DEFAULT_TIMEOUT_MS = 30_000
 
 export class ApiClient {
@@ -63,7 +63,11 @@ export class ApiClient {
       })
     } catch (error) {
       if (timedOut) {
-        throw new ApiClientError(408, `服务响应超时（${formatTimeout(this.timeoutMs)}），请稍后重试；保存或执行操作可能已提交，可先刷新对应列表确认`)
+        const method = String(options.method || 'GET').toUpperCase()
+        const message = ['GET', 'HEAD'].includes(method)
+          ? `读取超时（${formatTimeout(this.timeoutMs)}），本次请求不会提交或修改数据，请检查网络后重试`
+          : `提交超时（${formatTimeout(this.timeoutMs)}），操作可能已经提交，请先刷新对应列表确认，避免重复执行`
+        throw new ApiClientError(408, message)
       }
       if (isAbortError(error)) throw new ApiClientError(499, '请求已取消')
       throw new ApiClientError(0, '无法连接测试服务，请检查网络或服务状态后重试')
@@ -89,7 +93,7 @@ export class ApiClient {
   }
 
   private redirectToLogin(): void {
-    window.location.assign(LOGIN_PATH)
+    redirectToApiTestingLogin()
   }
 }
 

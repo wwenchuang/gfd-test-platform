@@ -1912,49 +1912,35 @@ function renderAgentCenter() {
   count.textContent = run ? `${agentModeText(run.mode)} · ${agentStatusText(run.status)}${agentRunIsTerminal(run) ? ' · 最近记录' : ''}` : '暂无 Agent 任务';
 
   if (!run) {
+    const recentRuns = agentRuns.slice(0, 5);
     list.innerHTML = `
       <div class="agent-side">
-        <!-- Block 1: 当前运行（空） -->
-        <div class="agent-side-card">
-          <div class="agent-side-title" style="font-size:14px;font-weight:600;">当前运行</div>
-          ${renderEmptyState('agent_history')}
-        </div>
-        <!-- Block 2: 待我确认（空） -->
-        <div class="agent-side-card">
-          <div class="agent-side-title" style="font-size:14px;font-weight:600;color:var(--warn);">待我确认</div>
-          ${renderEmptyState('agent_confirm')}
-        </div>
-        <!-- Block 3: 本次产物（空） -->
-        <div class="agent-side-card">
-          <div class="agent-side-title" style="font-size:14px;font-weight:600;">本次产物</div>
-          <div class="artifacts-section">
-            ${[
-              ['匹配用例', 'cases'],
-              ['质量检查', 'quality'],
-              ['生成YAML', 'yaml'],
-              ['同步至 Sonic 平台', 'sonic'],
-              ['执行任务', 'execution'],
-              ['报告', 'report'],
-              ['失败分析', 'failure'],
-              ['修复草稿', 'repair'],
-              ['缺陷草稿', 'bug'],
-              ['总结', 'summary']
-            ].map(([label, key]) => renderArtifactItem(label, '', null, key)).join('')}
+        <div class="agent-side-card agent-onboarding-card">
+          <div class="agent-side-title">从这里开始</div>
+          <ol class="agent-onboarding-steps">
+            <li><strong>1</strong><span>在左侧写清测试目标</span></li>
+            <li><strong>2</strong><span>确认应用、业务和在线设备</span></li>
+            <li><strong>3</strong><span>预览计划或直接启动 Agent</span></li>
+          </ol>
+          <div class="agent-side-actions">
+            <button class="btn-sm primary" onclick="document.getElementById('agent-goal')?.focus()">填写测试目标</button>
+            <button class="btn-sm" onclick="activateWorkflow('agent_history')">查看运行记录</button>
           </div>
         </div>
-        <!-- Block 4: 最近运行 -->
+        ${recentRuns.length ? `
         <div class="agent-side-card">
           <div class="agent-side-title" style="font-size:14px;font-weight:600;">最近运行</div>
           <div class="agent-timeline">
-            ${agentRuns.slice(0, 10).map(r => `
+            ${recentRuns.map(r => `
               <div class="agent-timeline-item ${r.status === 'DONE' ? 'success' : (r.status === 'CANCELLED' || r.status === 'FAILED' ? 'failed' : (r.status === 'WAIT_CONFIRM' ? 'waiting' : 'running'))}">
                 <strong>${escapeHtml((r.runId || '').slice(0, 20))}</strong>
                 <div>${escapeHtml(agentStatusText(r.status))} · ${escapeHtml(agentModeText(r.mode))}</div>
                 <div style="font-size:11px;color:var(--text3);">${escapeHtml(agentRunDisplayTime(r).slice(0, 16))}</div>
               </div>
-            `).join('') || `${renderEmptyState('agent_history')}`}
+            `).join('')}
           </div>
         </div>
+        ` : ''}
       </div>
     `;
     return;
@@ -2221,9 +2207,14 @@ async function loadPreflightDashboard(live=false) {
   }
 }
 
+function normalizeWorkflowKey(sectionKey) {
+  return sectionKey === 'repair' ? 'failure_analysis' : sectionKey;
+}
+
 function setActiveWorkflow(sectionKey, options = {}) {
   clearManagementSearchTimers();
-  activeWorkflow = WORKFLOW_SECTIONS[sectionKey] ? sectionKey : 'dashboard';
+  const normalizedKey = normalizeWorkflowKey(sectionKey);
+  activeWorkflow = WORKFLOW_SECTIONS[normalizedKey] ? normalizedKey : 'dashboard';
   sessionStorage.setItem('midscene_active_workflow', activeWorkflow);
   resetWorkflowScrollPosition();
   updateWorkbenchPanelMode();
@@ -2260,20 +2251,30 @@ function resetWorkflowScrollPosition() {
 }
 
 function restoreWorkflowPreference() {
-  const saved = sessionStorage.getItem('midscene_active_workflow') || '';
+  const saved = normalizeWorkflowKey(sessionStorage.getItem('midscene_active_workflow') || '');
   activeWorkflow = WORKFLOW_SECTIONS[saved] ? saved : 'dashboard';
   return activeWorkflow;
 }
 
 function initNavigationGroupPreferences() {
+  const densityKey = 'midscene_nav_density_v2';
+  const needsCompactMigration = localStorage.getItem(densityKey) !== 'done';
+  const activeButton = document.querySelector(`.workflow-step[data-workflow="${activeWorkflow}"]`);
+  const activeGroup = activeButton?.closest('.nav-group')?.dataset.navGroup || 'agent';
   document.querySelectorAll('.nav-group[data-nav-group]').forEach(group => {
     if (group.dataset.preferenceReady === '1') return;
     const key = `midscene_nav_group_${group.dataset.navGroup}`;
     const stored = localStorage.getItem(key);
-    if (stored !== null) group.open = stored === 'open';
+    if (needsCompactMigration) {
+      group.open = group.dataset.navGroup === activeGroup;
+      localStorage.setItem(key, group.open ? 'open' : 'closed');
+    } else if (stored !== null) {
+      group.open = stored === 'open';
+    }
     group.addEventListener('toggle', () => localStorage.setItem(key, group.open ? 'open' : 'closed'));
     group.dataset.preferenceReady = '1';
   });
+  if (needsCompactMigration) localStorage.setItem(densityKey, 'done');
 }
 
 function setWorkflowBadge(id, value) {
@@ -2392,22 +2393,18 @@ function refreshActiveWorkflow() {
 }
 
 async function activateWorkflow(sectionKey) {
-  activeWorkspaceMode = '';
-  setActiveWorkflow(sectionKey);
-  const section = WORKFLOW_SECTIONS[activeWorkflow];
+  const targetWorkflow = normalizeWorkflowKey(sectionKey);
+  const section = WORKFLOW_SECTIONS[targetWorkflow] || WORKFLOW_SECTIONS.dashboard;
   if (!(await saveEditorBeforeNavigation(`已进入「${section.title}」流程页`))) return;
+  closeTransientUiForNavigation();
+  activeWorkspaceMode = '';
+  setActiveWorkflow(targetWorkflow);
   resetYamlToolbarForManager();
   // 用例相关页面显示操作入口，其他页面隐藏
   const assetsHeader = document.getElementById('sidebar-header-assets');
   if (assetsHeader) assetsHeader.style.display = ['assets', 'generate', 'yaml_edit'].includes(activeWorkflow) ? '' : 'none';
   // round 4: 切换页面前，按目标页面动态决定数据加载与轮询
   applyLazyLoadForSection(activeWorkflow);
-  if (activeWorkflow === 'repair') {
-    showAiRepairCenter();
-    // 失败重跑不强制打开左侧目录，避免干扰
-    toggleLibrary(false);
-    return;
-  }
   // Handle config sub-pages
   if (activeWorkflow === 'config') {
     showModelConfigCenter();
