@@ -34,6 +34,21 @@
 
 ## 最近完成的关键修复
 
+### 2026-08-28 基线审计 2.2 GiB 复现、全链路内存收敛与 Sonic 策略自动安装
+
+线上再次点击基线“检查断言”后，Python RSS 从约 263 MiB 上升到约 2.19 GiB；用户随后提供的 `top/htop` 也显示主 Python 启动约 12 秒即占 2.2 GiB。列表中的其他同 RES Python 行是线程。当前修复位于工作区，尚未提交部署；线上需先重启 `midscene-task` 回收该次请求占用，部署前不要再次发起全量断言检查。
+
+- 基线断言审计改为逐条会话读取，最新执行尝试只取最后一条；不复制完整历史响应，超过 1 MiB 的字符串响应只提取有限样本中的顶层 `code/success`。
+- API 执行器移除逐子用例反复加载全证据的 O(N²) 路径，依赖上下文只保留下游实际引用的提取值；执行收尾由 SQL 聚合。
+- 执行列表、批量归档和飞书通知使用轻量证据；报告诊断按需加载。报告分片、报告分析和后台任务恢复均改为有界/流式。
+- OpenAPI 只规范化一次；接口树不返回全部 operation，选择单个接口时按需读取详情；环境页只查询 `servers`，同步激活不回传完整 OpenAPI。
+- Agent 使用固定工作/子调用线程池，容量满明确落为可重试失败。Sonic、AI Gateway、DashScope 和 Figma 响应默认上限 16 MiB；Sonic 缓存总预算 32 MiB。
+- API Worker 与 Scheduler 增加独立 systemd 内存上限；Celery 子进程按任务数或内存回收。
+- 旧提交只提供 `configure-sonic-restart.sh`，`update-main-server.sh` 没有调用，因此线上 Eureka 仍可能是 `restart=no`。当前工作区已改为每次部署自动设置 `unless-stopped`；不会启动部署前已停止的容器，首次需显式执行 `bash deploy/configure-sonic-restart.sh --start-stopped`。
+- 详细证据、修复项和保留风险见 `docs/api-testing-memory-audit-2026-08-28.md`。约 240 条线上活动基线仍未完成逐条新版本、调试和重新采纳，不能记为已修改完成。
+
+验证：资源保护专项 33 项通过；API 正式门禁后端 534 项、Vue 61 个文件 357 项、生产构建、7 个桌面/平板/手机视觉场景，以及 1 条 Chromium“导入接口 -> AI 设计 -> 调试 -> 采纳基线 -> 回归 -> 报告”闭环全部通过；后端静态 63 项、前端静态 84 项、核心 Python 编译、部署脚本语法和 `git diff --check` 均通过。该结果只证明本地修复通过，仍需部署后观察全量断言审计期间的 RSS，并执行线上基线迁移。
+
 ### 2026-08-28 后端 OOM 隔离与 Sonic 自动恢复配置
 
 线上 `dmesg` 确认宿主机在 2026-08-27 17:28 和 18:57 两次触发全局 OOM，直接被杀的是 `midscene-task.service` 的 Python 进程，匿名 RSS 分别约 5.04 GiB 和 4.63 GiB。现场主机总内存 7.44 GiB，Sonic 六个容器当前合计约 1.7 GiB，平台重启后约 422 MiB；Eureka 当前运行但 Docker 重启策略为 `no`。因此根因不是部署脚本误杀 Sonic，而是平台进程曾耗尽宿主机内存，加上 Eureka 退出后没有自动恢复。

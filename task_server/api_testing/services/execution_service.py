@@ -56,6 +56,12 @@ class ExecutionView:
     finished_at: object
 
 
+@dataclass(frozen=True)
+class DependencyOutcome:
+    status: str
+    extracted_variables: dict
+
+
 def _canonical(value):
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
@@ -287,7 +293,11 @@ class ExecutionService:
                 self._repository_view(
                     repository,
                     execution,
-                    repository.get_execution_cases(execution.id),
+                    repository.get_execution_cases(
+                        execution.id,
+                        include_evidence=False,
+                    ),
+                    include_evidence=False,
                 )
                 for execution in repository.list_executions(
                     project_id, actor_id, limit
@@ -336,7 +346,11 @@ class ExecutionService:
                         self._repository_view(
                             repository,
                             execution,
-                            repository.get_execution_cases(execution.id),
+                            repository.get_execution_cases(
+                                execution.id,
+                                include_evidence=False,
+                            ),
+                            include_evidence=False,
                         )
                     )
             except ValueError as error:
@@ -354,7 +368,10 @@ class ExecutionService:
             if not repository.compare_and_set_execution(execution_id, {"QUEUED"}, "RUNNING"):
                 return False
             snapshot = copy.deepcopy(execution.request_snapshot)
-            children = repository.get_execution_cases(execution_id)
+            children = repository.get_execution_cases(
+                execution_id,
+                include_evidence=False,
+            )
         worker_error = None
         outcomes = {}
         version_snapshots = {
@@ -362,6 +379,9 @@ class ExecutionService:
             for item in snapshot.get("case_versions", ())
             if isinstance(item, dict) and isinstance(item.get("id"), str)
         }
+        required_exports = self._required_dependency_exports(
+            version_snapshots.values()
+        )
         try:
             self.event_stream.append(execution_id, "execution_started", {})
             allow_failure_analysis = self._should_dispatch_failure_analysis(children)
@@ -401,7 +421,10 @@ class ExecutionService:
                 except Exception as exc:
                     worker_error = exc
                     result = self._broken_result(exc)
-                outcomes[child.case_version_id] = result
+                outcomes[child.case_version_id] = self._dependency_outcome(
+                    result,
+                    required_exports.get(child.case_version_id, ()),
+                )
                 attempt_id = self._persist_child_result(execution_id, child.id, result)
                 self._dispatch_failure_analysis(
                     execution_id,
@@ -474,14 +497,12 @@ class ExecutionService:
     def _persist_child_result(self, execution_id, child_id, result):
         with self.session_factory.begin() as session:
             repository = ExecutionRepository(session)
-            current = next(
-                item
-                for item in repository.get_execution_cases(
-                    execution_id, for_update=True
-                )
-                if item.id == child_id
+            current = repository.get_execution_case(
+                execution_id,
+                child_id,
+                for_update=True,
             )
-            if current.status == "RUNNING":
+            if current is not None and current.status == "RUNNING":
                 return repository.create_attempt(current, result, "worker").id
         return None
 
@@ -522,10 +543,12 @@ class ExecutionService:
             payload = self.failure_analyzer.analyze(redact(copy.deepcopy(evidence)))
             with self.session_factory.begin() as session:
                 repository = ExecutionRepository(session)
-                child = next(
-                    item for item in repository.get_execution_cases(execution_id)
-                    if item.id == child_id
+                child = repository.get_execution_case(
+                    execution_id,
+                    child_id,
                 )
+                if child is None:
+                    raise ExecutionNotFoundError("API execution case was not found")
                 analysis = repository.create_failure_analysis(
                     child, attempt_id, payload, "worker"
                 )
@@ -571,11 +594,10 @@ class ExecutionService:
         with self.session_factory.begin() as session:
             repository = ExecutionRepository(session)
             execution = repository.get_execution(execution_id, for_update=True)
-            for child in repository.get_execution_cases(
-                execution_id, for_update=True
+            for child in repository.get_outstanding_execution_cases(
+                execution_id,
+                for_update=True,
             ):
-                if child.status not in {"QUEUED", "RUNNING"}:
-                    continue
                 if execution.cancellation_requested_at is not None:
                     child.status = "CANCELLED"
                     child.failure_category = "cancelled"
@@ -587,21 +609,21 @@ class ExecutionService:
         with self.session_factory.begin() as session:
             repository = ExecutionRepository(session)
             execution = repository.get_execution(execution_id, for_update=True)
-            for child in repository.get_execution_cases(
-                execution_id, for_update=True
+            for child in repository.get_outstanding_execution_cases(
+                execution_id,
+                for_update=True,
             ):
-                if child.status in {"QUEUED", "RUNNING"}:
-                    if execution.cancellation_requested_at is not None:
-                        child.status = "CANCELLED"
-                        child.failure_category = "cancelled"
-                    else:
-                        repository.create_attempt(
-                            child,
-                            self._broken_result(
-                                RuntimeError("worker ended before case completion")
-                            ),
-                            "worker",
-                        )
+                if execution.cancellation_requested_at is not None:
+                    child.status = "CANCELLED"
+                    child.failure_category = "cancelled"
+                else:
+                    repository.create_attempt(
+                        child,
+                        self._broken_result(
+                            RuntimeError("worker ended before case completion")
+                        ),
+                        "worker",
+                    )
             finalized = repository.finalize_execution(execution_id, "worker")
             return finalized.state, copy.deepcopy(finalized.summary)
 
@@ -698,6 +720,39 @@ class ExecutionService:
                     f"{dependency_id} did not export {', '.join(missing)}",
                 )
         return overrides, ""
+
+    @staticmethod
+    def _required_dependency_exports(version_snapshots):
+        output = {}
+        for snapshot in version_snapshots:
+            if not isinstance(snapshot, dict):
+                continue
+            dependencies = snapshot.get("dependencies", ())
+            if not isinstance(dependencies, (list, tuple)):
+                continue
+            for dependency in dependencies:
+                if not isinstance(dependency, dict):
+                    continue
+                dependency_id = dependency.get("case_version_id")
+                if not isinstance(dependency_id, str) or not dependency_id:
+                    continue
+                names = output.setdefault(dependency_id, set())
+                for name in dependency.get("exports", ()):
+                    if isinstance(name, str) and name:
+                        names.add(name)
+        return output
+
+    @staticmethod
+    def _dependency_outcome(result, required_exports):
+        extracted = result.extracted_variables or {}
+        return DependencyOutcome(
+            status=result.status,
+            extracted_variables={
+                name: copy.deepcopy(extracted[name])
+                for name in required_exports
+                if name in extracted
+            },
+        )
 
     def _is_cancelled(self, execution_id):
         with self.session_factory() as session:
@@ -836,11 +891,23 @@ class ExecutionService:
         }
 
     @classmethod
-    def _repository_view(cls, repository, execution, children):
+    def _repository_view(
+        cls,
+        repository,
+        execution,
+        children,
+        *,
+        include_evidence=True,
+    ):
         return cls._view(
             execution,
             children,
-            repository.display_metadata(execution, children),
+            repository.display_metadata(
+                execution,
+                children,
+                include_details=include_evidence,
+            ),
+            include_evidence=include_evidence,
         )
 
     @staticmethod
@@ -874,7 +941,13 @@ class ExecutionService:
         return snapshot
 
     @staticmethod
-    def _view(execution, children, display_metadata=None):
+    def _view(
+        execution,
+        children,
+        display_metadata=None,
+        *,
+        include_evidence=True,
+    ):
         display = display_metadata or {}
         snapshot = getattr(execution, "request_snapshot", {}) or {}
         task = snapshot.get("task", {}) if isinstance(snapshot, dict) else {}
@@ -950,7 +1023,11 @@ class ExecutionService:
                     "status": item.status,
                     "failure_category": item.failure_category,
                     "duration_ms": item.duration_ms,
-                    "sanitized_result": copy.deepcopy(dict(item.sanitized_result)),
+                    "sanitized_result": (
+                        copy.deepcopy(dict(item.sanitized_result))
+                        if include_evidence
+                        else {}
+                    ),
                     "failure_analysis": (
                         {
                             "category": failure_analyses[item.id].category,
@@ -958,7 +1035,7 @@ class ExecutionService:
                             "model": failure_analyses[item.id].model,
                             "analysis": copy.deepcopy(dict(failure_analyses[item.id].analysis)),
                         }
-                        if item.id in failure_analyses else None
+                        if include_evidence and item.id in failure_analyses else None
                     ),
                 })
                 for item in children

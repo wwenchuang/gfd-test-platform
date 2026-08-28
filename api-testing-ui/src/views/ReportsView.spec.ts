@@ -39,6 +39,10 @@ describe('ReportsView', () => {
     vi.spyOn(context, 'loadSavedContext').mockResolvedValue()
     vi.spyOn(context, 'loadOptions').mockResolvedValue()
     executions.executions = [report]
+    const loadExecution = vi.spyOn(executions, 'loadExecution').mockResolvedValue({
+      ...report,
+      business_name: '详情业务',
+    })
     const wrapper = mount(ReportsView)
 
     expect(wrapper.text()).toContain('项目报告驾驶舱')
@@ -59,10 +63,12 @@ describe('ReportsView', () => {
     expect(routerState.replace).toHaveBeenLastCalledWith({ query: {} })
     await wrapper.get('[data-testid="report-history-row"]').trigger('click')
     await wrapper.get('[data-testid="report-open-diagnostic"]').trigger('click')
+    await flushPromises()
+    expect(loadExecution).toHaveBeenCalledWith('report-1')
     expect(wrapper.text()).toContain('返回报告列表')
     expect(wrapper.text()).toContain('诊断结论')
     expect(wrapper.text()).toContain('校园助手')
-    expect(wrapper.text()).toContain('校园业务')
+    expect(wrapper.text()).toContain('详情业务')
   })
 
   it('loads and filters report results by the selected project', async () => {
@@ -111,6 +117,7 @@ describe('ReportsView', () => {
     const context = useContextStore()
     vi.spyOn(context, 'loadSavedContext').mockResolvedValue()
     vi.spyOn(context, 'loadOptions').mockResolvedValue()
+    vi.spyOn(executions, 'loadExecution').mockResolvedValue(report)
     executions.executions = [report]
     const wrapper = mount(ReportsView)
     await nextTick()

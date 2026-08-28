@@ -2920,6 +2920,20 @@ def _post_report(handler, qs):
 
 # ── 报告分片上传 ────────────────────────────────────────────────────
 
+REPORT_MAX_CHUNKS = 4096
+REPORT_CHUNK_LOCK = threading.Lock()
+
+
+def _validate_report_chunk_shape(total, index=None):
+    if total <= 0 or total > REPORT_MAX_CHUNKS:
+        raise ValueError(f"分片数量必须在 1 到 {REPORT_MAX_CHUNKS} 之间")
+    if index is not None and (index < 0 or index >= total):
+        raise ValueError("分片序号超出总分片范围")
+
+
+def _report_chunk_manifest_path(chunk_dir):
+    return safe_join(chunk_dir, "manifest.json")
+
 @route_post("/api/report/chunk")
 def _post_report_chunk(handler, qs):
     if _require_runner_auth(handler):
@@ -2931,13 +2945,43 @@ def _post_report_chunk(handler, qs):
         index = safe_int(d.get("index"), -1)
         total = safe_int(d.get("total"), 0)
         content = d.get("contentBase64") or ""
-        if not upload_id or index < 0 or total <= 0 or not content:
+        if not upload_id or not content:
             handler._json({"ok": False, "error": "分片参数不完整"}, 400)
             return
+        _validate_report_chunk_shape(total, index)
+        data = base64.b64decode(content, validate=True)
+        if not data:
+            raise ValueError("分片内容为空")
         chunk_dir = safe_join(REPORT_DIR, ".chunks", upload_id)
-        os.makedirs(chunk_dir, exist_ok=True)
-        write_bytes_file(safe_join(chunk_dir, f"{index:05d}.part"), base64.b64decode(content))
-        write_text_file(safe_join(chunk_dir, "filename.txt"), filename)
+        with REPORT_CHUNK_LOCK:
+            os.makedirs(chunk_dir, exist_ok=True)
+            manifest_path = _report_chunk_manifest_path(chunk_dir)
+            manifest = read_json_file(manifest_path, default={}) or {}
+            if manifest and (
+                safe_int(manifest.get("total"), 0) != total
+                or str(manifest.get("filename") or "") != filename
+            ):
+                raise ValueError("分片上传参数与首次上传不一致")
+            received = manifest.get("received") if isinstance(manifest, dict) else {}
+            if not isinstance(received, dict):
+                received = {}
+            old_size = safe_int(received.get(str(index)), 0)
+            cumulative_size = safe_int(manifest.get("cumulative_size"), 0)
+            next_size = cumulative_size - old_size + len(data)
+            if next_size > MAX_UPLOAD_BODY_SIZE:
+                raise ValueError(
+                    f"分片累计大小超过平台上传上限 {MAX_UPLOAD_BODY_SIZE // 1024 // 1024}MB"
+                )
+            write_bytes_file(safe_join(chunk_dir, f"{index:05d}.part"), data)
+            received[str(index)] = len(data)
+            write_json_file(manifest_path, {
+                "upload_id": upload_id,
+                "filename": filename,
+                "total": total,
+                "cumulative_size": next_size,
+                "received": received,
+            })
+            write_text_file(safe_join(chunk_dir, "filename.txt"), filename)
         handler._json({"ok": True, "upload_id": upload_id, "index": index, "total": total})
     except Exception as e:
         handler._json({"ok": False, "error": str(e)}, 400)
@@ -2953,34 +2997,53 @@ def _post_report_chunk_finish(handler, qs):
         d = handler._body()
         upload_id = clean_id(d.get("upload_id") or d.get("uploadId") or "", "report")
         total = safe_int(d.get("total"), 0)
+        _validate_report_chunk_shape(total)
         chunk_dir = safe_join(REPORT_DIR, ".chunks", upload_id)
         filename_path = safe_join(chunk_dir, "filename.txt")
-        if not upload_id or total <= 0 or not os.path.exists(filename_path):
+        if not upload_id or not os.path.exists(filename_path):
             handler._json({"ok": False, "error": "分片上传不存在"}, 404)
             return
-        filename = open(filename_path, encoding="utf-8").read().strip() or "report.html"
-        final_path = safe_join(REPORT_DIR, filename)
-        parts = [safe_join(chunk_dir, f"{index:05d}.part") for index in range(total)]
-        for index, part in enumerate(parts):
-            if not os.path.exists(part):
-                handler._json({"ok": False, "error": f"缺少分片 {index}"}, 400)
-                return
-        tmp_final = final_path + f".tmp.{os.getpid()}.{threading.get_ident()}"
-        try:
-            with open(tmp_final, "wb") as out:
-                for part in parts:
-                    with open(part, "rb") as f:
-                        shutil.copyfileobj(f, out)
+        with REPORT_CHUNK_LOCK:
+            filename = open(filename_path, encoding="utf-8").read().strip() or "report.html"
+            manifest = read_json_file(
+                _report_chunk_manifest_path(chunk_dir),
+                default={},
+            ) or {}
+            if manifest:
+                if (
+                    safe_int(manifest.get("total"), 0) != total
+                    or str(manifest.get("filename") or "") != filename
+                ):
+                    raise ValueError("完成参数与分片上传记录不一致")
+                if safe_int(manifest.get("cumulative_size"), 0) > MAX_UPLOAD_BODY_SIZE:
+                    raise ValueError("分片累计大小超过平台上传上限")
+            observed_size = 0
+            for index in range(total):
+                part = safe_join(chunk_dir, f"{index:05d}.part")
+                if not os.path.exists(part):
+                    handler._json({"ok": False, "error": f"缺少分片 {index}"}, 400)
+                    return
+                observed_size += os.path.getsize(part)
+                if observed_size > MAX_UPLOAD_BODY_SIZE:
+                    raise ValueError("分片累计大小超过平台上传上限")
+            final_path = safe_join(REPORT_DIR, filename)
+            tmp_final = final_path + f".tmp.{os.getpid()}.{threading.get_ident()}"
+            try:
+                with open(tmp_final, "wb") as out:
+                    for index in range(total):
+                        part = safe_join(chunk_dir, f"{index:05d}.part")
+                        with open(part, "rb") as f:
+                            shutil.copyfileobj(f, out)
                     out.flush()
                     os.fsync(out.fileno())
                 os.replace(tmp_final, final_path)
-        finally:
-            if os.path.exists(tmp_final):
-                try:
-                    os.remove(tmp_final)
-                except Exception:
-                    pass
-        shutil.rmtree(chunk_dir, ignore_errors=True)
+            finally:
+                if os.path.exists(tmp_final):
+                    try:
+                        os.remove(tmp_final)
+                    except Exception:
+                        pass
+            shutil.rmtree(chunk_dir, ignore_errors=True)
         handler._json({"ok": True, "url": public_report_url(filename)})
     except Exception as e:
         handler._json({"ok": False, "error": str(e)}, 400)

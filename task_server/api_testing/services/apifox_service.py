@@ -200,7 +200,7 @@ class ApifoxService:
             if not isinstance(candidate, dict):
                 raise ApifoxInputError("Apifox 环境候选数据不存在，请重新检查更新")
             source_revision = self._source_service.activate_preview_in_session(
-                session, preview_id, actor
+                session, preview_id, actor, include_content=False
             )
             candidate["project_id"] = source_revision.project_id
             candidate["source_id"] = source_revision.source_id

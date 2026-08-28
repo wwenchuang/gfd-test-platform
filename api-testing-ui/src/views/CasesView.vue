@@ -203,9 +203,15 @@ function editGeneratedPreview(preview: GeneratedCasePreview): void {
   debugOpen.value = false
 }
 
-function createManualCase(endpoint: ApiEndpoint): void {
-  activeEndpoint.value = endpoint
-  cases.startManualDraft(endpoint)
+async function createManualCase(endpoint: ApiEndpoint): Promise<void> {
+  localError.value = ''
+  const detailed = await assets.ensureEndpointDetail(endpoint.id)
+  if (!detailed) {
+    localError.value = assets.error || '接口详情读取失败，请重试'
+    return
+  }
+  activeEndpoint.value = detailed
+  cases.startManualDraft(detailed)
   endpointPickerOpen.value = false
   mobileDetailOpen.value = true
 }

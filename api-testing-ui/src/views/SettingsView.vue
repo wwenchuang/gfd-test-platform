@@ -3,7 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ArrowRight, Bell, Check, KeyRound, Pencil, Plus, RotateCcw, Save, Trash2 } from 'lucide-vue-next'
 
-import type { EnvironmentAsset, EnvironmentRevisionSummary, EnvironmentView, SourceRevision } from '../api/contracts'
+import type { EnvironmentAsset, EnvironmentRevisionSummary, EnvironmentView } from '../api/contracts'
 import { apiClient } from '../api/client'
 import EnvironmentAssetList from '../components/EnvironmentAssetList.vue'
 import { useContextStore } from '../stores/context'
@@ -289,10 +289,10 @@ async function openSync(): Promise<void> {
 async function prefillFromSource(): Promise<void> {
   if (!sourceRevisionId.value) return
   try {
-    const response = await apiClient.get<{ source_revision: SourceRevision }>(
-      `/api/api-testing/v1/source-revisions/${sourceRevisionId.value}`,
+    const response = await apiClient.get<{ servers: Array<Record<string, unknown>> }>(
+      `/api/api-testing/v1/source-revisions/${sourceRevisionId.value}/servers`,
     )
-    const sourceServers = response.data.source_revision.normalized_document.servers
+    const sourceServers = response.data.servers
     const serverRows = Array.isArray(sourceServers) ? sourceServers as Array<Record<string, unknown>> : []
     const url = typeof serverRows[0]?.url === 'string' ? serverRows[0].url : ''
     if (url && !services.value.some(item => item.base_url)) services.value = [{ ...emptyService('default'), base_url: url }]

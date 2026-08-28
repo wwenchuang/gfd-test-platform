@@ -33,6 +33,8 @@ const filter = ref<'all' | 'failed' | 'passed'>('all')
 const sourceScope = ref<'formal' | 'debug' | 'all'>(defaultSourceScope(executions.executions))
 const reportSearch = ref('')
 const sendingReportId = ref('')
+const openingDiagnosticId = ref('')
+const diagnosticError = ref('')
 const reportProjectId = ref('')
 const mobileReportDetailOpen = ref(false)
 const projectOptions = computed(() => context.projects)
@@ -221,9 +223,17 @@ function selectReport(report: ExecutionView): void {
   replaceReportRoute(report.id)
 }
 
-function openDiagnostic(report: ExecutionView): void {
+async function openDiagnostic(report: ExecutionView): Promise<void> {
   selectReport(report)
-  selected.value = report
+  openingDiagnosticId.value = report.id
+  diagnosticError.value = ''
+  try {
+    selected.value = await executions.loadExecution(report.id)
+  } catch (error) {
+    diagnosticError.value = error instanceof Error ? error.message : '无法读取完整诊断，请稍后重试'
+  } finally {
+    openingDiagnosticId.value = ''
+  }
 }
 
 function showReportList(): void {
@@ -388,7 +398,13 @@ async function deleteReports(reportIds: string[]): Promise<void> {
                 <strong>{{ currentMetrics.passRate }}%</strong>
               </header>
               <div class="report-detail-actions">
-                <button data-testid="report-open-diagnostic" type="button" class="secondary-command" @click="openDiagnostic(currentReport)"><Eye :size="14" />查看完整诊断</button>
+                <button
+                  data-testid="report-open-diagnostic"
+                  type="button"
+                  class="secondary-command"
+                  :disabled="openingDiagnosticId === currentReport.id"
+                  @click="openDiagnostic(currentReport)"
+                ><Eye :size="14" />{{ openingDiagnosticId === currentReport.id ? '读取诊断中' : '查看完整诊断' }}</button>
                 <button
                   data-testid="report-feishu-status"
                   type="button"
@@ -400,6 +416,7 @@ async function deleteReports(reportIds: string[]): Promise<void> {
                 </button>
                 <button type="button" class="danger-command" @click="deleteReports([currentReport.id])"><Trash2 :size="14" />删除报告</button>
               </div>
+              <p v-if="diagnosticError" class="inline-error" role="alert">{{ diagnosticError }}</p>
               <div class="report-detail-stats">
                 <div><span>总用例</span><strong>{{ currentMetrics.total }}</strong></div>
                 <div><span>通过</span><strong class="tone-passed">{{ currentMetrics.passed }}</strong></div>

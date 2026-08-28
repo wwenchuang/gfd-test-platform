@@ -214,9 +214,11 @@ TASK_SERVICE_MEMORY_HIGH=2G TASK_SERVICE_MEMORY_MAX=3G \
   TASK_SERVICE_TASKS_MAX=256 bash deploy/update-main-server.sh
 ```
 
-Platform deployment observes Sonic but does not manage its lifecycle. Configure
-existing Sonic containers once so Eureka and the other services recover after a
-process exit without restarting containers that are currently running:
+Platform deployment does not stop or restart a running Sonic container. Every
+deployment now applies `restart=unless-stopped` to existing Sonic containers so
+Eureka and the other services recover after a future abnormal process exit. The
+policy update does not start a container that was already stopped before the
+deployment. To apply the same policy manually without deploying:
 
 ```bash
 bash deploy/configure-sonic-restart.sh
@@ -226,6 +228,21 @@ To also start Sonic containers that are already stopped, use the explicit form:
 
 ```bash
 bash deploy/configure-sonic-restart.sh --start-stopped
+```
+
+The task service, API worker, and scheduler have independent systemd memory
+limits. External Sonic, AI Gateway, DashScope, and Figma responses are bounded
+before JSON decoding; the Sonic in-process cache also has a byte budget. The
+defaults written to `/opt/midscene.env` are:
+
+```bash
+MIDSCENE_AGENT_WORKERS=2
+MIDSCENE_AGENT_QUEUE_SIZE=8
+MIDSCENE_AI_MAX_RESPONSE_BYTES=16777216
+API_TESTING_AI_MAX_RESPONSE_BYTES=16777216
+MIDSCENE_KNOWLEDGE_HTTP_MAX_RESPONSE_BYTES=16777216
+MIDSCENE_SONIC_MAX_RESPONSE_BYTES=16777216
+SONIC_MEMORY_CACHE_MAX_BYTES=33554432
 ```
 
 AI generation uses `MIDSCENE_AI_CHAT_TIMEOUT_SECONDS` for each Qwen/DashScope

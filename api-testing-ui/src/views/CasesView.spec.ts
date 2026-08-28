@@ -104,6 +104,7 @@ describe('CasesView', () => {
     await wrapper.get('[data-testid="case-endpoint-search"]').setValue('收藏')
     await wrapper.get('[data-testid="case-endpoint-endpoint-1"]').trigger('click')
     await wrapper.get('[data-testid="case-endpoint-create-manual"]').trigger('click')
+    await flushPromises()
     expect(wrapper.find('[data-testid="case-endpoint-search"]').exists()).toBe(false)
     expect((wrapper.get('[data-testid="case-name"]').element as HTMLInputElement).value).toBe('我的收藏列表')
 

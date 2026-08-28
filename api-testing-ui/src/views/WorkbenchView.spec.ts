@@ -373,6 +373,7 @@ describe('WorkbenchView debug workflow', () => {
     expect(wrapper.get('[data-testid="mobile-workbench-scope"]').attributes('aria-controls')).toBe('mobile-workbench-panel-scope')
     expect(wrapper.get('#mobile-workbench-panel-scope').attributes('role')).toBe('tabpanel')
     await wrapper.get('[data-testid="activate-endpoint"]').trigger('click')
+    await flushPromises()
     expect(wrapper.get('[data-testid="mobile-workbench-editor"]').attributes('aria-selected')).toBe('true')
     await wrapper.get('[data-testid="mobile-workbench-ai"]').trigger('click')
     expect(wrapper.get('[data-testid="mobile-workbench-ai"]').attributes('aria-selected')).toBe('true')

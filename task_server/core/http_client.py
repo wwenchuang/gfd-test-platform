@@ -9,6 +9,27 @@ from dataclasses import dataclass
 from typing import Any, Dict
 
 
+class ResponseTooLargeError(RuntimeError):
+    """Raised before an upstream response can grow process memory without bound."""
+
+
+def read_response_bytes(response, max_bytes: int, label: str = "上游服务") -> bytes:
+    max_bytes = max(1, int(max_bytes))
+    content_length = ""
+    try:
+        content_length = str(response.headers.get("Content-Length") or "").strip()
+    except Exception:
+        content_length = ""
+    if content_length.isdigit() and int(content_length) > max_bytes:
+        raise ResponseTooLargeError(
+            f"{label}响应超过 {max_bytes} 字节限制（Content-Length={content_length}）"
+        )
+    payload = response.read(max_bytes + 1)
+    if len(payload) > max_bytes:
+        raise ResponseTooLargeError(f"{label}响应超过 {max_bytes} 字节限制")
+    return payload
+
+
 @dataclass
 class HttpResponse:
     status: int
@@ -48,10 +69,20 @@ class HttpClient:
         )
         try:
             with urllib.request.urlopen(req, timeout=timeout) as resp:
-                raw = resp.read(read_limit).decode("utf-8", errors="replace")
+                payload = (
+                    read_response_bytes(resp, read_limit, "HTTP")
+                    if read_limit is not None
+                    else resp.read()
+                )
+                raw = payload.decode("utf-8", errors="replace")
                 return HttpResponse(int(resp.status), raw, dict(resp.headers.items()))
         except urllib.error.HTTPError as exc:
-            body = exc.read(read_limit).decode("utf-8", errors="replace")
+            payload = (
+                read_response_bytes(exc, read_limit, "HTTP 错误")
+                if read_limit is not None
+                else exc.read()
+            )
+            body = payload.decode("utf-8", errors="replace")
             return HttpResponse(int(exc.code or 0), body, dict(exc.headers.items()) if exc.headers else {})
 
     def get(

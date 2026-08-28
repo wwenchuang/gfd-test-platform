@@ -1355,7 +1355,8 @@ def test_default_gateway_client_posts_to_api_case_generation_endpoint(monkeypatc
         def __exit__(self, *_args):
             return False
 
-        def read(self):
+        def read(self, size=-1):
+            captured["read_size"] = size
             return json.dumps(
                 {
                     "success": True,
@@ -1387,6 +1388,7 @@ def test_default_gateway_client_posts_to_api_case_generation_endpoint(monkeypatc
     assert captured["payload"]["providerId"] == "qwen_plus"
     assert captured["payload"]["model"] == "qwen3.6-plus"
     assert captured["payload"]["messages"][0]["content"] == "contract"
+    assert captured["read_size"] > 0
     assert result["providerId"] == "qwen_plus"
 
 

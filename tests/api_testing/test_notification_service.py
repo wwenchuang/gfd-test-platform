@@ -6,6 +6,7 @@ import pytest
 from task_server.services import business_line_service
 from task_server.api_testing.repositories.execution_repository import ExecutionRepository
 from task_server.api_testing.repositories.notification_repository import NotificationRepository
+from task_server.api_testing.services import notification_service as notification_service_module
 from task_server.api_testing.services.notification_service import (
     NotificationInputError,
     NotificationService,
@@ -73,6 +74,64 @@ def test_feishu_report_card_contains_report_link_and_readable_summary(monkeypatc
     assert "执行：" not in text
     assert "Sonic" not in text
     assert "设备：" not in text
+
+
+def test_sending_report_loads_only_lightweight_case_summaries(monkeypatch):
+    execution = _execution(owner_id="admin")
+    notification = SimpleNamespace(
+        enabled=True,
+        ciphertext="encrypted",
+    )
+    case_options = []
+    metadata_options = []
+
+    class FakeSession:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+    monkeypatch.setattr(
+        ExecutionRepository,
+        "get_execution",
+        lambda _self, _execution_id: execution,
+    )
+
+    def get_cases(_self, _execution_id, **options):
+        case_options.append(options)
+        return ()
+
+    def display_metadata(_self, _execution, _children, **options):
+        metadata_options.append(options)
+        return {"project_name": "智小白3D", "environment_name": "生产环境"}
+
+    monkeypatch.setattr(ExecutionRepository, "get_execution_cases", get_cases)
+    monkeypatch.setattr(ExecutionRepository, "display_metadata", display_metadata)
+    monkeypatch.setattr(
+        NotificationRepository,
+        "get",
+        lambda *_args, **_kwargs: notification,
+    )
+    monkeypatch.setattr(
+        notification_service_module,
+        "decrypt_secret",
+        lambda _ciphertext: "https://open.feishu.cn/open-apis/bot/v2/hook/test-token",
+    )
+    monkeypatch.setattr(
+        notification_service_module,
+        "send_feishu_notification",
+        lambda *_args, **_kwargs: {"ok": True},
+    )
+
+    result = NotificationService(lambda: FakeSession()).send_execution_report(
+        execution.id,
+        "admin",
+    )
+
+    assert result.sent is True
+    assert case_options == [{"include_evidence": False}]
+    assert metadata_options == [{"include_details": False}]
 
 
 def test_feishu_report_card_marks_scheduled_job_type():
@@ -286,7 +345,7 @@ def test_display_metadata_includes_project_name_for_feishu_card():
     repository.get_endpoints = lambda _ids: {}
     repository.get_environment_revision = lambda _id: SimpleNamespace(name="生产环境")
     repository.latest_failure_analyses = lambda _ids: {}
-    repository.read_events = lambda _execution_id, _after_id: []
+    repository.read_events = lambda _execution_id, _after_id, **_options: []
 
     metadata = repository.display_metadata(
         SimpleNamespace(id="execution-1", project_id="project-1", environment_revision_id="env-1"),

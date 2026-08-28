@@ -96,6 +96,26 @@ AGENT_LEARNING_FILE = os.path.join(LEARNING_DIR, "agent-learning.json")
 AGENT_LEARNING_LOCK = threading.Lock()
 AGENT_ACTIVE_WORKERS = set()
 AGENT_ACTIVE_WORKERS_LOCK = threading.Lock()
+AGENT_WORKER_COUNT = max(
+    1,
+    min(4, safe_int(os.getenv("MIDSCENE_AGENT_WORKERS"), 2)),
+)
+AGENT_WORKER_QUEUE_SIZE = max(
+    1,
+    min(32, safe_int(os.getenv("MIDSCENE_AGENT_QUEUE_SIZE"), 8)),
+)
+AGENT_WORKER_EXECUTOR = concurrent.futures.ThreadPoolExecutor(
+    max_workers=AGENT_WORKER_COUNT,
+    thread_name_prefix="agent-run-worker",
+)
+AGENT_WORKER_CAPACITY = threading.BoundedSemaphore(
+    AGENT_WORKER_COUNT + AGENT_WORKER_QUEUE_SIZE
+)
+AGENT_SUBCALL_EXECUTOR = concurrent.futures.ThreadPoolExecutor(
+    max_workers=AGENT_WORKER_COUNT,
+    thread_name_prefix="agent-blocking-call",
+)
+AGENT_SUBCALL_CAPACITY = threading.BoundedSemaphore(AGENT_WORKER_COUNT)
 
 AGENT_RUN_STEPS = AGENT_STATE_STEPS
 
@@ -196,15 +216,19 @@ def _agent_run_cancel_requested(run):
 def _run_agent_call_with_hard_timeout(func, timeout_seconds, label):
     """Bound blocking Agent subcalls so the run can reach a terminal state."""
     timeout_seconds = max(30, safe_int(timeout_seconds, 300))
-    executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
-    future = executor.submit(func)
+    if not AGENT_SUBCALL_CAPACITY.acquire(blocking=False):
+        raise RuntimeError("Agent 阻塞调用容量已满，请稍后重试")
+    try:
+        future = AGENT_SUBCALL_EXECUTOR.submit(func)
+    except Exception:
+        AGENT_SUBCALL_CAPACITY.release()
+        raise
+    future.add_done_callback(lambda _future: AGENT_SUBCALL_CAPACITY.release())
     try:
         return future.result(timeout=timeout_seconds)
     except concurrent.futures.TimeoutError as exc:
         future.cancel()
         raise TimeoutError(f"{label} 超过 {timeout_seconds}s 未返回，已终止等待") from exc
-    finally:
-        executor.shutdown(wait=False, cancel_futures=True)
 
 
 def _run_agent_steps_guarded(run_id):
@@ -213,25 +237,59 @@ def _run_agent_steps_guarded(run_id):
     finally:
         with AGENT_ACTIVE_WORKERS_LOCK:
             AGENT_ACTIVE_WORKERS.discard(str(run_id or ""))
+        AGENT_WORKER_CAPACITY.release()
 
 
-def _start_agent_worker(run_id):
-    """Start one background executor per run in the current service process."""
+def _dispatch_agent_worker(run_id):
+    """Return started, active, capacity, invalid, or error for one Agent run."""
     run_id = str(run_id or "").strip()
     if not run_id:
-        return False
+        return "invalid"
     with AGENT_ACTIVE_WORKERS_LOCK:
         if run_id in AGENT_ACTIVE_WORKERS:
-            return False
+            return "active"
+        if not AGENT_WORKER_CAPACITY.acquire(blocking=False):
+            return "capacity"
         AGENT_ACTIVE_WORKERS.add(run_id)
     try:
-        worker = threading.Thread(target=_run_agent_steps_guarded, args=(run_id,), daemon=True)
-        worker.start()
-        return True
+        AGENT_WORKER_EXECUTOR.submit(_run_agent_steps_guarded, run_id)
+        return "started"
     except Exception:
         with AGENT_ACTIVE_WORKERS_LOCK:
             AGENT_ACTIVE_WORKERS.discard(run_id)
-        return False
+        AGENT_WORKER_CAPACITY.release()
+        return "error"
+
+
+def _mark_agent_dispatch_failed(run_id, dispatch_status):
+    if dispatch_status not in ("capacity", "error", "invalid"):
+        return None
+    with AGENT_RUN_LOCK:
+        runs = load_agent_runs()
+        persisted = next(
+            (item for item in runs if item.get("runId") == run_id),
+            None,
+        )
+        if not persisted:
+            return None
+        persisted["status"] = "FAILED"
+        persisted["currentStep"] = "DISPATCH"
+        persisted["retryable"] = True
+        persisted["error"] = (
+            "当前 Agent 任务较多，本次尚未开始执行。请稍后在历史记录中点击重试。"
+            if dispatch_status == "capacity"
+            else "Agent 后台任务启动失败，请稍后在历史记录中点击重试。"
+        )
+        persisted["updatedAt"] = time.strftime("%Y-%m-%dT%H:%M:%S")
+        save_agent_runs(runs)
+        return persisted
+
+
+def _start_agent_worker(run_id):
+    """Dispatch a run and persist capacity failures for recovery callers."""
+    dispatch_status = _dispatch_agent_worker(run_id)
+    _mark_agent_dispatch_failed(str(run_id or "").strip(), dispatch_status)
+    return dispatch_status == "started"
 
 AGENT_TOOLS = {
     # READ_TOOLS
@@ -1526,8 +1584,10 @@ def advance_agent_run(run_id):
         run["updatedAt"] = now
         save_agent_runs(runs)
 
-    # Start background step execution
-    _start_agent_worker(run_id)
+    dispatch_status = _dispatch_agent_worker(run_id)
+    persisted_failure = _mark_agent_dispatch_failed(run_id, dispatch_status)
+    if persisted_failure:
+        return persisted_failure
     return run
 
 

@@ -185,7 +185,7 @@ async function loadSource(
     endpointTreeTab.value = selectedIds.value.length ? 'selected' : 'all'
     if (selectedIds.value.length === 1) {
       const endpoint = assets.endpoints.find(item => item.id === selectedIds.value[0])
-      if (endpoint) activate(endpoint)
+      if (endpoint) await activate(endpoint, client)
     }
   } catch (error) {
     localError.value = error instanceof Error ? error.message : '无法读取已保存接口和用例'
@@ -256,19 +256,29 @@ async function selectTask(taskId: string): Promise<void> {
   activeEndpoint.value = endpoint || null
 }
 
-function activate(endpoint: ApiEndpoint): void {
-  activeEndpoint.value = endpoint
-  cases.draftFor(endpoint)
+async function activate(
+  endpoint: ApiEndpoint,
+  client: Pick<ApiClient, 'get'> = apiClient,
+): Promise<void> {
+  localError.value = ''
+  const detailed = await assets.ensureEndpointDetail(endpoint.id, client)
+  if (!detailed) {
+    localError.value = assets.error || '接口详情读取失败，请重试'
+    return
+  }
+  activeEndpoint.value = detailed
+  cases.draftFor(detailed)
   mobilePane.value = 'editor'
 }
 
-function openAiGenerated(version: CaseVersion): void {
+async function openAiGenerated(version: CaseVersion): Promise<void> {
   const endpoint = assets.endpoints.find(item => item.id === version.endpoint_id)
   if (!endpoint) {
     localError.value = '生成用例对应的接口不在当前接口版本中'
     return
   }
-  activate(endpoint)
+  await activate(endpoint)
+  if (!activeEndpoint.value) return
   cases.setActiveVersion(version.endpoint_id, version.id)
 }
 
@@ -328,7 +338,7 @@ async function restoreDeepLink(
       return
     }
   }
-  activate(endpoint)
+  await activate(endpoint, client)
 }
 function updateDraft(draft: CaseDraft): void {
   if (activeEndpoint.value) {
@@ -361,7 +371,7 @@ async function generate(intent: string): Promise<void> {
   if (firstGenerated) {
     const version = cases.versions[firstGenerated]
     const endpoint = assets.endpoints.find(item => item.id === version?.endpoint_id)
-    if (endpoint) activate(endpoint)
+    if (endpoint) await activate(endpoint)
   }
 }
 async function generateBasicPositive(): Promise<void> {

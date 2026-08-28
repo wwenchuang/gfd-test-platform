@@ -36,6 +36,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from .. import config as cfg
 from ..config import JOB_LOCK, SONIC_NOTIFY_LOG_FILE, SONIC_SUITE_LOCK
+from ..core.http_client import read_response_bytes
 from ..storage import (
     invalidate_json_cache,
     read_json_cached,
@@ -78,6 +79,15 @@ def _safe_bool(value: Any, default: bool = False) -> bool:
     if text in ("0", "false", "no", "n", "off", "否", "关闭"):
         return False
     return default
+
+
+SONIC_MAX_RESPONSE_BYTES = max(
+    1024 * 1024,
+    min(
+        64 * 1024 * 1024,
+        _safe_int(os.getenv("MIDSCENE_SONIC_MAX_RESPONSE_BYTES"), 16 * 1024 * 1024),
+    ),
+)
 
 
 def _parse_time(value: str) -> int:
@@ -135,8 +145,12 @@ _SUITE_CACHE_TTL = 30
 _RESULT_CACHE_TTL = 5
 
 _MEM_CACHE_LOCK = threading.Lock()
-_MEM_CACHE: Dict[str, Tuple[float, Any]] = {}
+_MEM_CACHE: Dict[str, Tuple[float, Any, int]] = {}
 _MEM_CACHE_MAX_ENTRIES = max(8, int(os.getenv("SONIC_MEMORY_CACHE_MAX_ENTRIES", "64") or 64))
+_MEM_CACHE_MAX_BYTES = max(
+    1024 * 1024,
+    _env_int("SONIC_MEMORY_CACHE_MAX_BYTES", 32 * 1024 * 1024),
+)
 
 # 登录状态
 SONIC_LOGIN_STATE: Dict[str, Any] = {
@@ -161,13 +175,22 @@ def _cache_get(key: str, ttl: float) -> Optional[Any]:
 
 
 def _cache_set(key: str, value: Any) -> None:
+    try:
+        value_size = len(
+            json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        )
+    except Exception:
+        return
+    if value_size > _MEM_CACHE_MAX_BYTES:
+        return
     with _MEM_CACHE_LOCK:
-        _MEM_CACHE[key] = (time.time(), value)
-        overflow = len(_MEM_CACHE) - _MEM_CACHE_MAX_ENTRIES
-        if overflow > 0:
-            oldest = sorted(_MEM_CACHE.items(), key=lambda item: item[1][0])[:overflow]
-            for stale_key, _entry in oldest:
-                _MEM_CACHE.pop(stale_key, None)
+        _MEM_CACHE[key] = (time.time(), value, value_size)
+        while _MEM_CACHE and (
+            len(_MEM_CACHE) > _MEM_CACHE_MAX_ENTRIES
+            or sum(entry[2] for entry in _MEM_CACHE.values()) > _MEM_CACHE_MAX_BYTES
+        ):
+            oldest_key = min(_MEM_CACHE, key=lambda item: _MEM_CACHE[item][0])
+            _MEM_CACHE.pop(oldest_key, None)
 
 
 def _cache_invalidate(prefix: str = "") -> None:
@@ -314,7 +337,9 @@ def sonic_login() -> str:
     with cfg.SONIC_LOCK:
         try:
             with urllib.request.urlopen(req, timeout=15) as resp:
-                raw = resp.read().decode("utf-8", errors="replace")
+                raw = read_response_bytes(
+                    resp, SONIC_MAX_RESPONSE_BYTES, "Sonic 登录"
+                ).decode("utf-8", errors="replace")
             parsed = json.loads(raw) if raw else {}
             token = ""
             if isinstance(parsed, dict):
@@ -383,7 +408,9 @@ def sonic_login_token() -> str:
         method="POST",
     )
     with urllib.request.urlopen(req, timeout=15) as resp:
-        raw = resp.read().decode("utf-8", errors="replace")
+        raw = read_response_bytes(
+            resp, SONIC_MAX_RESPONSE_BYTES, "Sonic 登录"
+        ).decode("utf-8", errors="replace")
     parsed = json.loads(raw) if raw else {}
     token = ""
     if isinstance(parsed, dict):
@@ -672,7 +699,9 @@ def sonic_request(
     )
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
-            raw = resp.read().decode("utf-8", errors="replace")
+            raw = read_response_bytes(
+                resp, SONIC_MAX_RESPONSE_BYTES, "Sonic"
+            ).decode("utf-8", errors="replace")
         parsed = json.loads(raw) if raw else {}
         if _sonic_response_auth_status(parsed) == "token_invalid":
             refreshed = sonic_get_token(force=True)
@@ -688,11 +717,18 @@ def sonic_request(
                     method=method.upper(),
                 )
                 with urllib.request.urlopen(retry_req, timeout=timeout) as retry_resp:
-                    retry_raw = retry_resp.read().decode("utf-8", errors="replace")
+                    retry_raw = read_response_bytes(
+                        retry_resp, SONIC_MAX_RESPONSE_BYTES, "Sonic 重试"
+                    ).decode("utf-8", errors="replace")
                 return json.loads(retry_raw) if retry_raw else {}
         return parsed
     except urllib.error.HTTPError as exc:
-        body_text = exc.read().decode("utf-8", errors="replace") if exc.fp else ""
+        body_text = (
+            read_response_bytes(exc, min(SONIC_MAX_RESPONSE_BYTES, 1024 * 1024), "Sonic 错误")
+            .decode("utf-8", errors="replace")
+            if exc.fp
+            else ""
+        )
         raise RuntimeError(f"Sonic HTTP {exc.code} {path}: {body_text[:1000]}")
     except Exception as exc:
         raise RuntimeError(f"Sonic 请求失败 {path}：{exc}")
@@ -1540,7 +1576,9 @@ def _post_feishu_card(webhook: str, card: dict) -> dict:
         method="POST",
     )
     with urllib.request.urlopen(req, timeout=15) as resp:
-        raw = resp.read().decode("utf-8", errors="replace")
+        raw = read_response_bytes(
+            resp, min(SONIC_MAX_RESPONSE_BYTES, 1024 * 1024), "飞书机器人"
+        ).decode("utf-8", errors="replace")
         result = json.loads(raw) if raw else {"ok": True}
         if isinstance(result, dict):
             code = result.get("code")

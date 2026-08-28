@@ -62,6 +62,7 @@ from ..config import (
     env_int,
     safe_int,
 )
+from ..core.http_client import read_response_bytes
 from ..storage import (
     clean_asset_filename,
     clean_filename,
@@ -72,6 +73,14 @@ from ..storage import (
     write_bytes_file,
     write_json_file,
     write_text_file,
+)
+
+KNOWLEDGE_HTTP_MAX_RESPONSE_BYTES = max(
+    1024 * 1024,
+    min(
+        64 * 1024 * 1024,
+        env_int("MIDSCENE_KNOWLEDGE_HTTP_MAX_RESPONSE_BYTES", 16 * 1024 * 1024),
+    ),
 )
 
 
@@ -512,7 +521,11 @@ APP 包名：{app_package}
         method="POST",
     )
     with urllib.request.urlopen(req, timeout=120) as resp:
-        resp_data = json.loads(resp.read().decode("utf-8"))
+        resp_data = json.loads(
+            read_response_bytes(
+                resp, KNOWLEDGE_HTTP_MAX_RESPONSE_BYTES, "千问视觉模型"
+            ).decode("utf-8")
+        )
 
     draft = _normalize_model_json(resp_data["choices"][0]["message"]["content"])
     return {
@@ -1562,14 +1575,15 @@ def _urlopen_with_retry(
             open_fn = opener.open if opener else urllib.request.urlopen
             with open_fn(req, timeout=timeout) as resp:
                 if binary:
-                    if max_bytes:
-                        data = resp.read(max_bytes + 1)
-                    else:
-                        data = resp.read()
-                    if max_bytes and len(data) > max_bytes:
+                    binary_limit = max_bytes or KNOWLEDGE_HTTP_MAX_RESPONSE_BYTES
+                    try:
+                        data = read_response_bytes(resp, binary_limit, "Figma 图片")
+                    except RuntimeError:
                         raise ValueError("图片过大，请选择更小的 Frame 或降低导出范围")
                     return data
-                return resp.read().decode("utf-8")
+                return read_response_bytes(
+                    resp, KNOWLEDGE_HTTP_MAX_RESPONSE_BYTES, "Figma"
+                ).decode("utf-8")
         except (TimeoutError, socket.timeout, urllib.error.URLError) as e:
             last_error = e
             if attempt < retries:

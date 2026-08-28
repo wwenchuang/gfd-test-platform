@@ -15,6 +15,7 @@ from .workflow_policy import (
 
 
 BUSINESS_SUCCESS_VALUES = {"$.code": (0, 200), "$.success": (True,)}
+MAX_AUDIT_BODY_PARSE_CHARS = 1024 * 1024
 
 
 class BaselineAssertionUpgradeError(ValueError):
@@ -22,74 +23,100 @@ class BaselineAssertionUpgradeError(ValueError):
 
 
 class BaselineAssertionAuditService:
+    BATCH_SIZE = 1
+
     def __init__(self, session_factory):
         self.session_factory = session_factory
 
     def list(self, project_id, actor_id):
-        with self.session_factory() as session:
-            repository = CaseRepository(session)
-            rows = repository.list_active_baselines(
-                project_id,
-                actor_id,
-                current_only=True,
-            )
-            version_ids = [version.id for _baseline, _case, version, _endpoint in rows]
-            evidence_ids = [
-                baseline.debug_execution_case_id
-                for baseline, _case, _version, _endpoint in rows
-            ]
-            assertions_by_version = repository.get_assertions_for_versions(version_ids)
-            extractions_by_version = repository.get_extractions_for_versions(version_ids)
-            evidence_by_id = repository.get_execution_cases(evidence_ids)
-            attempts_by_evidence = repository.latest_execution_attempts(evidence_ids)
-
-            items = []
-            for baseline, case, version, endpoint in rows:
-                evidence = evidence_by_id.get(baseline.debug_execution_case_id)
-                attempt = attempts_by_evidence.get(baseline.debug_execution_case_id)
-                response = _evidence_response(evidence, attempt)
-                assertions = [
-                    _stored_assertion(item)
-                    for item in assertions_by_version.get(version.id, ())
-                ]
-                extractions = [
-                    _stored_extraction(item)
-                    for item in extractions_by_version.get(version.id, ())
-                ]
-                workflow = classify_endpoint_workflow(endpoint)
-                analysis = analyze_baseline_assertions(
-                    assertions,
-                    response,
-                    workflow,
-                    version.processing_spec or {},
-                    extractions,
+        items = []
+        offset = 0
+        while True:
+            with self.session_factory() as session:
+                repository = CaseRepository(session)
+                rows = repository.list_active_baselines(
+                    project_id,
+                    actor_id,
+                    current_only=True,
+                    limit=self.BATCH_SIZE,
+                    offset=offset,
                 )
-                if _is_one_time(case.name, baseline.group_name, endpoint.tags):
-                    analysis["execution"] = {
-                        "level": "manual",
-                        "label": "一次性人工复核",
-                        "selectable": False,
-                        "reason": "一次性基线不得进入批量连续执行",
-                    }
-                items.append({
-                    "baseline_id": baseline.id,
-                    "case_id": case.id,
-                    "case_version_id": version.id,
-                    "endpoint_id": endpoint.id,
-                    "case_name": case.name,
-                    "method": endpoint.method,
-                    "path": endpoint.path,
-                    "group_name": baseline.group_name or "未分组",
-                    "environment_revision_id": baseline.environment_revision_id,
-                    "evidence_execution_case_id": baseline.debug_execution_case_id,
-                    "evidence_captured_at": _captured_at(evidence, attempt),
-                    "upgrade_draft_case_version_id": (
-                        case.active_version_id
-                        if case.active_version_id != version.id
-                        else None
-                    ),
-                    **analysis,
-                })
+                if not rows:
+                    break
+                version_ids = [
+                    version.id for _baseline, _case, version, _endpoint in rows
+                ]
+                evidence_ids = [
+                    baseline.debug_execution_case_id
+                    for baseline, _case, _version, _endpoint in rows
+                ]
+                assertions_by_version = repository.get_assertions_for_versions(
+                    version_ids
+                )
+                extractions_by_version = repository.get_extractions_for_versions(
+                    version_ids
+                )
+                evidence_by_id = repository.get_execution_cases(evidence_ids)
+                attempts_by_evidence = repository.latest_execution_attempts(
+                    evidence_ids
+                )
+
+                for baseline, case, version, endpoint in rows:
+                    evidence = evidence_by_id.get(
+                        baseline.debug_execution_case_id
+                    )
+                    attempt = attempts_by_evidence.get(
+                        baseline.debug_execution_case_id
+                    )
+                    response = _evidence_response(evidence, attempt)
+                    assertions = [
+                        _stored_assertion(item)
+                        for item in assertions_by_version.get(version.id, ())
+                    ]
+                    extractions = [
+                        _stored_extraction(item)
+                        for item in extractions_by_version.get(version.id, ())
+                    ]
+                    workflow = classify_endpoint_workflow(endpoint)
+                    analysis = analyze_baseline_assertions(
+                        assertions,
+                        response,
+                        workflow,
+                        version.processing_spec or {},
+                        extractions,
+                    )
+                    if _is_one_time(
+                        case.name,
+                        baseline.group_name,
+                        endpoint.tags,
+                    ):
+                        analysis["execution"] = {
+                            "level": "manual",
+                            "label": "一次性人工复核",
+                            "selectable": False,
+                            "reason": "一次性基线不得进入批量连续执行",
+                        }
+                    items.append({
+                        "baseline_id": baseline.id,
+                        "case_id": case.id,
+                        "case_version_id": version.id,
+                        "endpoint_id": endpoint.id,
+                        "case_name": case.name,
+                        "method": endpoint.method,
+                        "path": endpoint.path,
+                        "group_name": baseline.group_name or "未分组",
+                        "environment_revision_id": baseline.environment_revision_id,
+                        "evidence_execution_case_id": baseline.debug_execution_case_id,
+                        "evidence_captured_at": _captured_at(evidence, attempt),
+                        "upgrade_draft_case_version_id": (
+                            case.active_version_id
+                            if case.active_version_id != version.id
+                            else None
+                        ),
+                        **analysis,
+                    })
+                batch_size = len(rows)
+            offset += batch_size
 
         counts = {
             status: sum(item["status"] == status for item in items)
@@ -415,11 +442,62 @@ def _response_evidence(response):
         status = None
     body = response.get("body")
     if isinstance(body, str):
-        try:
-            body = json.loads(body)
-        except (TypeError, ValueError):
-            body = None
+        if len(body) > MAX_AUDIT_BODY_PARSE_CHARS:
+            body = _oversized_body_business_values(body)
+        else:
+            try:
+                body = json.loads(body)
+            except (TypeError, ValueError):
+                body = None
     return status, body
+
+
+def _oversized_body_business_values(body):
+    sample_size = min(64 * 1024, MAX_AUDIT_BODY_PARSE_CHARS)
+    sample = body[:sample_size]
+    values = {"__oversized_body__": True}
+    decoder = json.JSONDecoder()
+    index = _skip_json_whitespace(sample, 0)
+    if index >= len(sample) or sample[index] != "{":
+        return values
+    index += 1
+    while index < len(sample):
+        index = _skip_json_whitespace(sample, index)
+        if index >= len(sample) or sample[index] == "}":
+            return values
+        if sample[index] != '"':
+            return values
+        try:
+            name, index = decoder.raw_decode(sample, index)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return values
+        if not isinstance(name, str):
+            return values
+        index = _skip_json_whitespace(sample, index)
+        if index >= len(sample) or sample[index] != ":":
+            return values
+        index = _skip_json_whitespace(sample, index + 1)
+        try:
+            value, index = decoder.raw_decode(sample, index)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return values
+        if name in {"code", "success"} and not isinstance(value, (dict, list)):
+            values[name] = value
+        index = _skip_json_whitespace(sample, index)
+        if index >= len(sample):
+            return values
+        if sample[index] == "}":
+            return values
+        if sample[index] != ",":
+            return values
+        index += 1
+    return values
+
+
+def _skip_json_whitespace(value, index):
+    while index < len(value) and value[index] in " \t\r\n":
+        index += 1
+    return index
 
 
 def _business_values(body):
@@ -584,10 +662,10 @@ def _evidence_response(evidence, attempt):
     if evidence is None or evidence.status != "PASSED":
         return None
     if attempt is not None and isinstance(attempt.response, Mapping):
-        return copy.deepcopy(dict(attempt.response))
+        return attempt.response
     result = evidence.sanitized_result or {}
     response = result.get("response") if isinstance(result, Mapping) else None
-    return copy.deepcopy(dict(response)) if isinstance(response, Mapping) else None
+    return response if isinstance(response, Mapping) else None
 
 
 def _captured_at(evidence, attempt):

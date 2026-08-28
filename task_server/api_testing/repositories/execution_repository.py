@@ -4,6 +4,7 @@ import copy
 from datetime import datetime, timezone
 
 from sqlalchemy import func, select, update
+from sqlalchemy.orm import defer
 
 from ..models.case import ApiBaseline, ApiCase, ApiCaseVersion
 from ..models.environment import ApiEnvironment, ApiEnvironmentRevision
@@ -208,13 +209,17 @@ class ExecutionRepository:
             records.append(self.archive_execution(execution_id, actor_id))
         return tuple(record for record in records if record is not None)
 
-    def display_metadata(self, execution, children):
+    def display_metadata(self, execution, children, *, include_details=True):
         versions = self.get_case_versions(item.case_version_id for item in children)
         cases = self.get_cases(item.case_id for item in versions.values())
         endpoints = self.get_endpoints(item.endpoint_id for item in children)
         project = self.get_project(execution.project_id)
         environment = self.get_environment_revision(execution.environment_revision_id)
-        analyses = self.latest_failure_analyses(item.id for item in children)
+        analyses = (
+            self.latest_failure_analyses(item.id for item in children)
+            if include_details
+            else {}
+        )
         return {
             "project_name": project.name if project is not None else "",
             "environment_name": environment.name if environment is not None else "",
@@ -222,27 +227,78 @@ class ExecutionRepository:
             "versions": versions,
             "endpoints": endpoints,
             "failure_analyses": analyses,
-            "events": self.read_events(execution.id, 0),
+            "events": self.read_events(
+                execution.id,
+                0,
+                event_types=("notification_sent", "notification_failed"),
+            ),
         }
 
     def latest_failure_analyses(self, execution_case_ids):
         identifiers = tuple(dict.fromkeys(execution_case_ids))
         if not identifiers:
             return {}
+        ranked = (
+            select(
+                ApiFailureAnalysis.id.label("analysis_id"),
+                ApiFailureAnalysis.execution_case_id.label("execution_case_id"),
+                func.row_number()
+                .over(
+                    partition_by=ApiFailureAnalysis.execution_case_id,
+                    order_by=(
+                        ApiFailureAnalysis.created_at.desc(),
+                        ApiFailureAnalysis.id.desc(),
+                    ),
+                )
+                .label("row_number"),
+            )
+            .where(ApiFailureAnalysis.execution_case_id.in_(identifiers))
+            .subquery()
+        )
         records = self.session.scalars(
             select(ApiFailureAnalysis)
-            .where(ApiFailureAnalysis.execution_case_id.in_(identifiers))
-            .order_by(ApiFailureAnalysis.created_at.desc(), ApiFailureAnalysis.id.desc())
+            .join(ranked, ApiFailureAnalysis.id == ranked.c.analysis_id)
+            .where(ranked.c.row_number == 1)
         )
-        output = {}
-        for record in records:
-            output.setdefault(record.execution_case_id, record)
-        return output
+        return {record.execution_case_id: record for record in records}
 
-    def get_execution_cases(self, execution_id, *, for_update=False):
+    def get_execution_cases(
+        self,
+        execution_id,
+        *,
+        for_update=False,
+        include_evidence=True,
+    ):
         query = (
             select(ApiExecutionCase)
             .where(ApiExecutionCase.execution_id == execution_id)
+            .order_by(ApiExecutionCase.ordinal)
+        )
+        if not include_evidence:
+            query = query.options(
+                defer(ApiExecutionCase.sanitized_result, raiseload=True)
+            )
+        if for_update:
+            query = query.with_for_update()
+        return tuple(self.session.scalars(query))
+
+    def get_execution_case(self, execution_id, execution_case_id, *, for_update=False):
+        query = select(ApiExecutionCase).where(
+            ApiExecutionCase.execution_id == execution_id,
+            ApiExecutionCase.id == execution_case_id,
+        )
+        if for_update:
+            query = query.with_for_update()
+        return self.session.scalar(query)
+
+    def get_outstanding_execution_cases(self, execution_id, *, for_update=False):
+        query = (
+            select(ApiExecutionCase)
+            .where(
+                ApiExecutionCase.execution_id == execution_id,
+                ApiExecutionCase.status.in_(("QUEUED", "RUNNING")),
+            )
+            .options(defer(ApiExecutionCase.sanitized_result, raiseload=True))
             .order_by(ApiExecutionCase.ordinal)
         )
         if for_update:
@@ -348,7 +404,6 @@ class ExecutionRepository:
 
     def finalize_execution(self, execution_id, actor_id):
         execution = self.get_execution(execution_id, for_update=True)
-        children = self.get_execution_cases(execution_id, for_update=True)
         counts = {
             "passed": 0,
             "failed": 0,
@@ -356,11 +411,18 @@ class ExecutionRepository:
             "skipped": 0,
             "cancelled": 0,
         }
-        for child in children:
-            key = child.status.lower()
+        total = 0
+        for status, count in self.session.execute(
+            select(ApiExecutionCase.status, func.count(ApiExecutionCase.id))
+            .where(ApiExecutionCase.execution_id == execution_id)
+            .group_by(ApiExecutionCase.status)
+        ):
+            count = int(count or 0)
+            total += count
+            key = str(status or "").lower()
             if key in counts:
-                counts[key] += 1
-        execution.summary = {"total": len(children), **counts}
+                counts[key] += count
+        execution.summary = {"total": total, **counts}
         execution.state = (
             "CANCELLED" if execution.cancellation_requested_at is not None else "DONE"
         )
@@ -392,14 +454,12 @@ class ExecutionRepository:
         self.session.flush()
         return record
 
-    def read_events(self, execution_id, after_id):
-        return tuple(
-            self.session.scalars(
-                select(ApiExecutionEvent)
-                .where(
-                    ApiExecutionEvent.execution_id == execution_id,
-                    ApiExecutionEvent.sequence > after_id,
-                )
-                .order_by(ApiExecutionEvent.sequence)
-            )
+    def read_events(self, execution_id, after_id, *, event_types=None):
+        query = select(ApiExecutionEvent).where(
+            ApiExecutionEvent.execution_id == execution_id,
+            ApiExecutionEvent.sequence > after_id,
         )
+        event_type_values = tuple(dict.fromkeys(event_types or ()))
+        if event_type_values:
+            query = query.where(ApiExecutionEvent.event_type.in_(event_type_values))
+        return tuple(self.session.scalars(query.order_by(ApiExecutionEvent.sequence)))

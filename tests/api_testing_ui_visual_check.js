@@ -117,10 +117,19 @@ function createServer() {
         environment_revisions: [{ id: 'environment-revision-1', environment_id: 'environment-1', project_id: 'project-1', name: '生产环境（新）- 腾讯云', revision: 2 }],
       });
     }
-    if (url.pathname === '/api/api-testing/v1/endpoints') {
-      return sendJson(res, { endpoints: [endpoint,
+    if (url.pathname.startsWith('/api/api-testing/v1/endpoints/')) {
+      const endpointId = url.pathname.split('/').pop();
+      const rows = [endpoint,
         { ...endpoint, id: 'endpoint-favorite-add', method: 'POST', path: '/print3d/api/v1/favorite/add', summary: '添加收藏' },
         { ...endpoint, id: 'endpoint-favorite-cancel', method: 'POST', path: '/print3d/api/v1/favorite/cancel', summary: '取消收藏' },
+      ];
+      return sendJson(res, { endpoint: rows.find(item => item.id === endpointId) || endpoint });
+    }
+    if (url.pathname === '/api/api-testing/v1/endpoints') {
+      return sendJson(res, { endpoints: [
+        { ...endpoint, operation: {} },
+        { ...endpoint, id: 'endpoint-favorite-add', method: 'POST', path: '/print3d/api/v1/favorite/add', summary: '添加收藏', operation: {} },
+        { ...endpoint, id: 'endpoint-favorite-cancel', method: 'POST', path: '/print3d/api/v1/favorite/cancel', summary: '取消收藏', operation: {} },
       ] });
     }
     if (url.pathname === '/api/api-testing/v1/cases' && req.method === 'GET') return sendJson(res, { case_versions: [caseVersion] });
@@ -233,6 +242,8 @@ async function assertCompactWorkbench(page, label, viewport, screenshotName) {
   await page.getByRole('button', { name: '关闭导航' }).first().click();
   await page.getByTestId('endpoint-search').fill('我的收藏列表');
   await page.getByRole('button', { name: '我的收藏列表' }).click();
+  await page.getByTestId('mobile-workbench-editor').waitFor();
+  await page.waitForFunction(() => document.querySelector('[data-testid="mobile-workbench-editor"]')?.getAttribute('aria-selected') === 'true');
   const boxes = await Promise.all(['.endpoint-tree', '.design-center', '.ai-assistant'].map(selector => page.locator(selector).boundingBox()));
   if (boxes[0] || !boxes[1] || boxes[2]) {
     throw new Error(`${label} workbench must show only the selected editor pane: ${JSON.stringify(boxes)}`);

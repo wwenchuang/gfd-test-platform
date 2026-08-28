@@ -772,6 +772,41 @@ def test_preview_does_not_replace_active_revision(source_service, project, sessi
         ) == 3
 
 
+def test_preview_normalizes_large_openapi_document_only_once(
+    source_service, project, monkeypatch
+):
+    from task_server.api_testing.services import source_service as source_service_module
+
+    original = source_service_module.normalize_openapi_document
+    calls = []
+
+    def observed(document, source_id):
+        calls.append(source_id)
+        return original(document, source_id)
+
+    monkeypatch.setattr(
+        source_service_module,
+        "normalize_openapi_document",
+        observed,
+    )
+
+    preview = source_service.preview_refresh(
+        project.id,
+        None,
+        copy.deepcopy(FAVORITES_OPENAPI),
+        "admin",
+    )
+    revision = source_service.get_revision(preview.candidate_revision_id)
+
+    assert calls == ["validation"]
+    assert all(endpoint.stable_key for endpoint in revision.endpoints)
+    assert all(
+        endpoint.stable_key
+        != original(FAVORITES_OPENAPI, "validation").endpoints[index].stable_key
+        for index, endpoint in enumerate(revision.endpoints)
+    )
+
+
 def test_canonical_extensions_and_business_keys_round_trip_through_postgresql(
     source_service, project
 ):
@@ -821,6 +856,23 @@ def test_repeated_document_after_activation_has_deterministic_no_change_diff(
     assert preview.removed_count == 0
     assert preview.changes == ()
     assert source_service.get_active_revision(project.id, active.source_id).id == active.id
+
+
+def test_activation_response_does_not_duplicate_full_document_and_endpoint_catalog(
+    source_service, project
+):
+    preview = source_service.preview_refresh(
+        project.id, None, copy.deepcopy(FAVORITES_OPENAPI), "admin"
+    )
+    active = source_service.activate_preview(
+        preview.id, "admin", include_content=False
+    )
+    fetched = source_service.get_revision(active.id)
+
+    assert active.normalized_document == {}
+    assert active.endpoints == ()
+    assert fetched.normalized_document["paths"]
+    assert fetched.endpoints
 
 
 def test_diff_reports_added_changed_and_removed_endpoints(source_service, project):

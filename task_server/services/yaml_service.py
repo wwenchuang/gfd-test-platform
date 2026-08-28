@@ -9646,21 +9646,21 @@ def generate_job_should_stop(job_id):
 
 def iter_raw_generate_jobs(limit=300):
     if not os.path.exists(GENERATE_JOB_DIR):
-        return []
+        return
     try:
         names = [name for name in os.listdir(GENERATE_JOB_DIR) if name.endswith(".json")]
     except Exception:
-        return []
-    rows = []
-    for name in sorted(names, reverse=True)[:limit]:
+        return
+    ordered_names = sorted(names, reverse=True)
+    if limit is not None:
+        ordered_names = ordered_names[:limit]
+    for name in ordered_names:
         try:
             job = read_json_file(safe_join(GENERATE_JOB_DIR, name), default=None)
         except Exception:
             job = None
         if isinstance(job, dict):
-            rows.append(job)
-    rows.sort(key=lambda item: item.get("updated_at") or item.get("created_at") or "", reverse=True)
-    return rows
+            yield job
 
 
 

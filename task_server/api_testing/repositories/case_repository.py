@@ -365,18 +365,29 @@ class CaseRepository:
         identifiers = tuple(dict.fromkeys(execution_case_ids))
         if not identifiers:
             return {}
+        ranked = (
+            select(
+                ApiExecutionAttempt.id.label("attempt_id"),
+                ApiExecutionAttempt.execution_case_id.label("execution_case_id"),
+                func.row_number()
+                .over(
+                    partition_by=ApiExecutionAttempt.execution_case_id,
+                    order_by=ApiExecutionAttempt.attempt_number.desc(),
+                )
+                .label("row_number"),
+            )
+            .where(ApiExecutionAttempt.execution_case_id.in_(identifiers))
+            .subquery()
+        )
         records = self.session.scalars(
             select(ApiExecutionAttempt)
-            .where(ApiExecutionAttempt.execution_case_id.in_(identifiers))
-            .order_by(
-                ApiExecutionAttempt.execution_case_id,
-                ApiExecutionAttempt.attempt_number.desc(),
+            .join(
+                ranked,
+                ApiExecutionAttempt.id == ranked.c.attempt_id,
             )
+            .where(ranked.c.row_number == 1)
         )
-        output = {}
-        for record in records:
-            output.setdefault(record.execution_case_id, record)
-        return output
+        return {record.execution_case_id: record for record in records}
 
     def get_execution(self, execution_id):
         return self.session.get(ApiExecution, execution_id)
@@ -387,36 +398,50 @@ class CaseRepository:
     def get_environment(self, environment_id):
         return self.session.get(ApiEnvironment, environment_id)
 
-    def list_active_baselines(self, project_id, actor_id, *, current_only=False):
+    def list_active_baselines(
+        self,
+        project_id,
+        actor_id,
+        *,
+        current_only=False,
+        limit=None,
+        offset=0,
+    ):
         status_filter = (
             ApiBaseline.status == "active"
             if current_only
             else ApiBaseline.status != "archived"
         )
-        return tuple(
-            self.session.execute(
-                select(ApiBaseline, ApiCase, ApiCaseVersion, ApiSourceEndpoint)
-                .join(ApiCase, ApiCase.id == ApiBaseline.case_id)
-                .join(ApiCaseVersion, ApiCaseVersion.id == ApiBaseline.case_version_id)
-                .join(ApiSourceEndpoint, ApiSourceEndpoint.id == ApiCaseVersion.endpoint_id)
-                .where(
-                    ApiBaseline.project_id == project_id,
-                    status_filter,
-                    ApiBaseline.owner_id == actor_id,
-                    ApiCase.project_id == project_id,
-                    ApiCase.owner_id == actor_id,
-                    ApiCase.status != "archived",
-                    ApiCaseVersion.endpoint_id == ApiSourceEndpoint.id,
-                )
-                .order_by(
-                    ApiBaseline.group_name,
-                    ApiSourceEndpoint.tags,
-                    ApiSourceEndpoint.normalized_path,
-                    ApiSourceEndpoint.method,
-                    ApiCase.name,
-                    ApiBaseline.created_at.desc(),
-                )
+        statement = (
+            select(ApiBaseline, ApiCase, ApiCaseVersion, ApiSourceEndpoint)
+            .join(ApiCase, ApiCase.id == ApiBaseline.case_id)
+            .join(ApiCaseVersion, ApiCaseVersion.id == ApiBaseline.case_version_id)
+            .join(ApiSourceEndpoint, ApiSourceEndpoint.id == ApiCaseVersion.endpoint_id)
+            .where(
+                ApiBaseline.project_id == project_id,
+                status_filter,
+                ApiBaseline.owner_id == actor_id,
+                ApiCase.project_id == project_id,
+                ApiCase.owner_id == actor_id,
+                ApiCase.status != "archived",
+                ApiCaseVersion.endpoint_id == ApiSourceEndpoint.id,
             )
+            .order_by(
+                ApiBaseline.group_name,
+                ApiSourceEndpoint.tags,
+                ApiSourceEndpoint.normalized_path,
+                ApiSourceEndpoint.method,
+                ApiCase.name,
+                ApiBaseline.created_at.desc(),
+                ApiBaseline.id,
+            )
+        )
+        if offset:
+            statement = statement.offset(offset)
+        if limit is not None:
+            statement = statement.limit(limit)
+        return tuple(
+            self.session.execute(statement)
         )
 
     def create_baseline(

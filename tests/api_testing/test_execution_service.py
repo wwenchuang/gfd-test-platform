@@ -7,7 +7,7 @@ import threading
 import time
 
 from alembic import command
-from sqlalchemy import create_engine, func, select
+from sqlalchemy import create_engine, event, func, select
 from sqlalchemy.orm import sessionmaker
 import pytest
 import redis
@@ -642,6 +642,23 @@ def test_dependency_exports_are_allowlisted_and_override_static_values(
     assert "undeclaredSecret" not in executor.dependency_overrides[1]
 
 
+def test_dependency_outcome_only_keeps_exports_needed_downstream():
+    outcome = ExecutionService._dependency_outcome(
+        _Result(
+            "PASSED",
+            extracted_variables={
+                "resourceSn": "real-resource-sn",
+                "largeUnusedBody": "x" * 100_000,
+            },
+        ),
+        {"resourceSn"},
+    )
+
+    assert outcome.status == "PASSED"
+    assert outcome.extracted_variables == {"resourceSn": "real-resource-sn"}
+    assert not hasattr(outcome, "sanitized_response")
+
+
 def test_required_dependency_failure_skips_dependent_without_request(
     session_factory, redis_client, execution_context
 ):
@@ -1082,6 +1099,170 @@ def test_duplicate_worker_is_compare_and_set_and_summary_keeps_child_truth(
     assert view.case_results[0]["status"] == "PASSED"
     assert view.case_results[0]["sanitized_result"]["status"] == "PASSED"
     assert executor.calls == 2
+
+
+def test_execution_list_omits_full_evidence_but_detail_keeps_it(
+    session_factory, redis_client, execution_context
+):
+    service = ExecutionService(
+        session_factory,
+        executor=_FakeExecutor([_Result("PASSED")]),
+        event_stream=EventStream(session_factory, redis_client),
+    )
+    submitted = service.submit(
+        _request(execution_context),
+        "admin",
+        "lightweight-execution-list",
+    )
+
+    assert service.run(submitted.id) is True
+
+    summary = next(item for item in service.list(submitted.project_id, "admin") if item.id == submitted.id)
+    detail = service.get(submitted.id)
+
+    assert summary.case_results[0]["status"] == "PASSED"
+    assert summary.case_results[0]["sanitized_result"] == {}
+    assert summary.case_results[0]["failure_analysis"] is None
+    assert detail.case_results[0]["sanitized_result"]["status"] == "PASSED"
+
+
+def test_bulk_archive_returns_lightweight_execution_summaries(
+    session_factory, redis_client, execution_context
+):
+    service = ExecutionService(
+        session_factory,
+        executor=_FakeExecutor([_Result("PASSED")]),
+        event_stream=EventStream(session_factory, redis_client),
+    )
+    submitted = service.submit(
+        _request(execution_context),
+        "admin",
+        "lightweight-bulk-archive",
+    )
+    assert service.run(submitted.id) is True
+
+    archived = service.archive_many([submitted.id], "admin")
+
+    assert archived[0].id == submitted.id
+    assert archived[0].case_results[0]["status"] == "PASSED"
+    assert archived[0].case_results[0]["sanitized_result"] == {}
+
+
+def test_execution_worker_only_loads_lightweight_case_collections(
+    session_factory, redis_client, execution_context, monkeypatch
+):
+    calls = []
+    original = ExecutionRepository.get_execution_cases
+
+    def observed(self, execution_id, **options):
+        calls.append(options)
+        return original(self, execution_id, **options)
+
+    monkeypatch.setattr(ExecutionRepository, "get_execution_cases", observed)
+    service = ExecutionService(
+        session_factory,
+        executor=_FakeExecutor([_Result("PASSED")]),
+        event_stream=EventStream(session_factory, redis_client),
+    )
+    submitted = service.submit(
+        _request(execution_context),
+        "admin",
+        "lightweight-worker-cases",
+    )
+    calls.clear()
+
+    assert service.run(submitted.id) is True
+    assert calls
+    assert all(call.get("include_evidence") is False for call in calls)
+
+
+def test_finalize_execution_counts_statuses_without_loading_case_rows(
+    session_factory, execution_context
+):
+    service = ExecutionService(session_factory)
+    submitted = service.submit(
+        _request(execution_context),
+        "admin",
+        "sql-finalize-counts",
+    )
+    with session_factory.begin() as session:
+        child = session.scalar(
+            select(ApiExecutionCase).where(
+                ApiExecutionCase.execution_id == submitted.id
+            )
+        )
+        child.status = "PASSED"
+
+    loaded = []
+
+    def record_load(target, _context):
+        loaded.append(target.id)
+
+    event.listen(ApiExecutionCase, "load", record_load)
+    try:
+        with session_factory.begin() as session:
+            finalized = ExecutionRepository(session).finalize_execution(
+                submitted.id,
+                "worker",
+            )
+    finally:
+        event.remove(ApiExecutionCase, "load", record_load)
+
+    assert loaded == []
+    assert finalized.summary == {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "broken": 0,
+        "skipped": 0,
+        "cancelled": 0,
+    }
+
+
+def test_latest_failure_analysis_query_only_loads_latest_record(
+    session_factory, redis_client, execution_context
+):
+    service = ExecutionService(
+        session_factory,
+        executor=_FakeExecutor([_Result("FAILED", "product_assertion")]),
+        event_stream=EventStream(session_factory, redis_client),
+    )
+    submitted = service.submit(
+        _request(execution_context),
+        "admin",
+        "latest-failure-analysis",
+    )
+    assert service.run(submitted.id) is True
+    execution_case_id = service.get(submitted.id).case_results[0]["execution_case_id"]
+
+    with session_factory.begin() as session:
+        for index in range(3):
+            session.add(ApiFailureAnalysis(
+                execution_case_id=execution_case_id,
+                attempt_id=None,
+                category="product_assertion",
+                analyzer="test",
+                model="",
+                analysis={"index": index},
+                **_audit(),
+            ))
+
+    loaded = []
+
+    def record_load(target, _context):
+        loaded.append(target.analysis["index"])
+
+    event.listen(ApiFailureAnalysis, "load", record_load)
+    try:
+        with session_factory() as session:
+            latest = ExecutionRepository(session).latest_failure_analyses(
+                [execution_case_id]
+            )
+    finally:
+        event.remove(ApiFailureAnalysis, "load", record_load)
+
+    assert len(loaded) == 1
+    assert latest[execution_case_id].analysis["index"] == loaded[0]
 
 
 def test_failed_case_persists_ai_analysis_evidence_in_report(

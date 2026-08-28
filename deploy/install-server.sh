@@ -8,6 +8,8 @@ SERVICE_FILE="${SERVICE_FILE:-/etc/systemd/system/midscene-task.service}"
 WORKER_SERVICE_FILE="${WORKER_SERVICE_FILE:-/etc/systemd/system/midscene-api-worker.service}"
 SCHEDULER_SERVICE_FILE="${SCHEDULER_SERVICE_FILE:-/etc/systemd/system/midscene-api-scheduler.service}"
 SERVICE_OVERRIDE_DIR="${SERVICE_OVERRIDE_DIR:-/etc/systemd/system/midscene-task.service.d}"
+WORKER_SERVICE_OVERRIDE_DIR="${WORKER_SERVICE_OVERRIDE_DIR:-/etc/systemd/system/midscene-api-worker.service.d}"
+SCHEDULER_SERVICE_OVERRIDE_DIR="${SCHEDULER_SERVICE_OVERRIDE_DIR:-/etc/systemd/system/midscene-api-scheduler.service.d}"
 USER_NAME="${USER_NAME:-midscene}"
 GROUP_NAME="${GROUP_NAME:-midscene}"
 PORT="${PORT:-8091}"
@@ -20,6 +22,9 @@ RELEASE_REVISION="${RELEASE_REVISION:-}"
 TASK_SERVICE_MEMORY_HIGH="${TASK_SERVICE_MEMORY_HIGH:-2G}"
 TASK_SERVICE_MEMORY_MAX="${TASK_SERVICE_MEMORY_MAX:-3G}"
 TASK_SERVICE_TASKS_MAX="${TASK_SERVICE_TASKS_MAX:-256}"
+API_WORKER_MEMORY_HIGH="${API_WORKER_MEMORY_HIGH:-1G}"
+API_WORKER_MEMORY_MAX="${API_WORKER_MEMORY_MAX:-1536M}"
+API_SCHEDULER_MEMORY_MAX="${API_SCHEDULER_MEMORY_MAX:-512M}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SRC_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
@@ -470,6 +475,9 @@ ensure_env_default "MIDSCENE_MINDMAP_VISUAL_TIMEOUT_SECONDS" "90"
 ensure_env_default "MIDSCENE_MINDMAP_VISUAL_TOTAL_BUDGET_SECONDS" "360"
 ensure_env_default "MIDSCENE_AI_CHAT_TIMEOUT_SECONDS" "480"
 ensure_env_default "MIDSCENE_AI_CHAT_RETRY_COUNT" "1"
+ensure_env_default "MIDSCENE_AI_MAX_RESPONSE_BYTES" "16777216"
+ensure_env_default "API_TESTING_AI_MAX_RESPONSE_BYTES" "16777216"
+ensure_env_default "MIDSCENE_KNOWLEDGE_HTTP_MAX_RESPONSE_BYTES" "16777216"
 ensure_env_default "MIDSCENE_AUTOMATION_FILTER_TIMEOUT_SECONDS" "150"
 ensure_env_default "MIDSCENE_COVERAGE_MODEL_WHEN_LOCAL_OK" "0"
 ensure_env_default "MIDSCENE_YAML_BASELINE_CACHE_TTL_SECONDS" "600"
@@ -484,6 +492,8 @@ ensure_env_default "MIDSCENE_AGENT_RUNNER_JOB_WAIT_TIMEOUT_SECONDS" "1800"
 ensure_env_default "MIDSCENE_AGENT_RUNNER_JOB_WAIT_TIMEOUT_PER_JOB_SECONDS" "900"
 ensure_env_default "MIDSCENE_AGENT_RUNNER_JOB_WAIT_TIMEOUT_MAX_SECONDS" "7200"
 ensure_env_default "MIDSCENE_AGENT_GENERATE_YAML_TIMEOUT_SECONDS" "900"
+ensure_env_default "MIDSCENE_AGENT_WORKERS" "2"
+ensure_env_default "MIDSCENE_AGENT_QUEUE_SIZE" "8"
 ensure_env_default "MIDSCENE_AGENT_GENERATED_RUNNER_SMOKE_LIMIT" "3"
 ensure_env_default "MIDSCENE_AGENT_GENERATED_RUNNER_FIRST_SMOKE_LIMIT" "3"
 ensure_env_default "MIDSCENE_AGENT_GENERATED_RUNNER_EXPAND_LIMIT" "5"
@@ -494,6 +504,8 @@ upgrade_env_default_if_old "MIDSCENE_AGENT_GENERATED_RUNNER_EXPAND_LIMIT" "5" "3
 upgrade_env_default_if_old "MIDSCENE_AGENT_GENERATED_RUNNER_EXPAND_BATCH_LIMIT" "5" "16"
 upgrade_env_default_if_old "MIDSCENE_AUTOMATION_FILTER_TIMEOUT_SECONDS" "150" "90"
 ensure_env_default "SONIC_TASK_CALLBACK_GRACE_SECONDS" "180"
+ensure_env_default "MIDSCENE_SONIC_MAX_RESPONSE_BYTES" "16777216"
+ensure_env_default "SONIC_MEMORY_CACHE_MAX_BYTES" "33554432"
 
 upgrade_env_default_if_old "FIGMA_PARSE_LIMIT" "80" "20|40|60"
 upgrade_env_default_if_old "FIGMA_REFERENCE_LIMIT" "36" "12|24"
@@ -540,6 +552,8 @@ render_api_scheduler_unit > "${scheduler_service_tmp}"
 install -m 0644 "${scheduler_service_tmp}" "${SCHEDULER_SERVICE_FILE}"
 rm -f "${scheduler_service_tmp}"
 install -d -m 0755 "${SERVICE_OVERRIDE_DIR}"
+install -d -m 0755 "${WORKER_SERVICE_OVERRIDE_DIR}"
+install -d -m 0755 "${SCHEDULER_SERVICE_OVERRIDE_DIR}"
 printf '%s\n' \
   '[Service]' \
   'ExecStart=' \
@@ -553,6 +567,21 @@ printf '%s\n' \
   "TasksMax=${TASK_SERVICE_TASKS_MAX}" \
   'OOMPolicy=stop' \
   > "${SERVICE_OVERRIDE_DIR}/resource-guard.conf"
+printf '%s\n' \
+  '[Service]' \
+  'MemoryAccounting=true' \
+  "MemoryHigh=${API_WORKER_MEMORY_HIGH}" \
+  "MemoryMax=${API_WORKER_MEMORY_MAX}" \
+  'TasksMax=128' \
+  'OOMPolicy=stop' \
+  > "${WORKER_SERVICE_OVERRIDE_DIR}/resource-guard.conf"
+printf '%s\n' \
+  '[Service]' \
+  'MemoryAccounting=true' \
+  "MemoryMax=${API_SCHEDULER_MEMORY_MAX}" \
+  'TasksMax=64' \
+  'OOMPolicy=stop' \
+  > "${SCHEDULER_SERVICE_OVERRIDE_DIR}/resource-guard.conf"
 systemctl daemon-reload
 systemctl enable midscene-task.service
 

@@ -3,6 +3,7 @@
 import copy
 
 from sqlalchemy import func, select
+from sqlalchemy.orm import defer
 
 from ..models.project import ApiProject
 from ..models.source import (
@@ -151,6 +152,16 @@ class SourceRepository:
 
     def get_revision(self, revision_id):
         return self.session.get(ApiSourceRevision, revision_id)
+
+    def get_revision_metadata(self, revision_id):
+        return self.session.scalar(
+            select(ApiSourceRevision)
+            .options(
+                defer(ApiSourceRevision.normalized_document, raiseload=True),
+                defer(ApiSourceRevision.import_metadata, raiseload=True),
+            )
+            .where(ApiSourceRevision.id == revision_id)
+        )
 
     def get_endpoints(self, revision_id):
         return tuple(

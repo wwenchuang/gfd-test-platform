@@ -29,6 +29,81 @@ def test_only_raw_report_uses_large_upload_limit():
     assert request_body_limit("/api/app-install/upload-chunk") == config.MAX_BODY_SIZE
 
 
+def test_report_chunk_finish_rejects_huge_chunk_count_before_path_expansion(
+    tmp_path, monkeypatch
+):
+    from task_server import router
+
+    monkeypatch.setattr(router, "REPORT_DIR", str(tmp_path))
+    chunk_dir = tmp_path / ".chunks" / "large-total"
+    chunk_dir.mkdir(parents=True)
+    (chunk_dir / "filename.txt").write_text("report.html", encoding="utf-8")
+    responses = []
+    handler = SimpleNamespace(
+        _authorized_runner=lambda: True,
+        _body=lambda: {"upload_id": "large-total", "total": 4097},
+        _json=lambda payload, code=200: responses.append((code, payload)),
+    )
+
+    router._post_report_chunk_finish(handler, {})
+
+    assert responses[-1][0] == 400
+    assert "分片数量" in responses[-1][1]["error"]
+
+
+def test_report_chunk_rejects_upload_when_cumulative_size_exceeds_limit(
+    tmp_path, monkeypatch
+):
+    from task_server import router
+
+    monkeypatch.setattr(router, "REPORT_DIR", str(tmp_path))
+    monkeypatch.setattr(router, "MAX_UPLOAD_BODY_SIZE", 3)
+    responses = []
+    handler = SimpleNamespace(
+        _authorized_runner=lambda: True,
+        _body=lambda: {
+            "upload_id": "too-large",
+            "filename": "report.html",
+            "index": 0,
+            "total": 1,
+            "contentBase64": "YWJjZA==",
+        },
+        _json=lambda payload, code=200: responses.append((code, payload)),
+    )
+
+    router._post_report_chunk(handler, {})
+
+    assert responses[-1][0] == 400
+    assert "累计大小" in responses[-1][1]["error"]
+    assert not (tmp_path / ".chunks" / "too-large" / "00000.part").exists()
+
+
+def test_report_analysis_reads_only_bounded_tail_for_large_html(tmp_path, monkeypatch):
+    from task_server.services import report_service
+
+    report = tmp_path / "large.html"
+    report.write_text("0123456789", encoding="utf-8")
+    monkeypatch.setattr(report_service, "MAX_REPORT_ANALYSIS_BYTES", 4)
+
+    assert report_service._read_text(report) == "6789"
+
+
+def test_report_image_rejects_oversized_base64_before_decoding(monkeypatch):
+    from task_server.services import report_service
+
+    monkeypatch.setattr(report_service, "MAX_REPORT_IMAGE_BASE64_CHARS", 16)
+
+    def must_not_decode(*_args, **_kwargs):
+        raise AssertionError("oversized report image must not be decoded")
+
+    monkeypatch.setattr(report_service.base64, "b64decode", must_not_decode)
+
+    assert report_service._decode_report_image(
+        "data:image/png;base64," + "A" * 20,
+        "oversized",
+    ) is None
+
+
 def test_stream_body_to_file_does_not_call_unbounded_read(tmp_path):
     from task_server.response import ResponseMixin
 
@@ -107,6 +182,17 @@ def test_sonic_cache_prunes_expired_and_old_entries(monkeypatch):
     assert "result:2" not in sonic_service._MEM_CACHE
 
 
+def test_sonic_cache_rejects_single_value_over_byte_budget(monkeypatch):
+    from task_server.services import sonic_service
+
+    monkeypatch.setattr(sonic_service, "_MEM_CACHE_MAX_BYTES", 16)
+    sonic_service._cache_invalidate()
+
+    sonic_service._cache_set("result:large", {"body": "x" * 100})
+
+    assert sonic_service._cache_get("result:large", 60) is None
+
+
 def test_runtime_metrics_report_current_process_shape():
     from task_server.runtime_metrics import process_runtime_metrics
 
@@ -153,6 +239,122 @@ def test_server_bounds_large_inflight_requests():
         assert server.runtime_status()["active_large_requests"] == 0
     finally:
         server.server_close()
+
+
+def test_agent_worker_dispatch_is_bounded(monkeypatch):
+    from task_server.services import agent_service
+
+    submitted = []
+
+    class FakeExecutor:
+        def submit(self, function, run_id):
+            submitted.append((function, run_id))
+            return SimpleNamespace()
+
+    monkeypatch.setattr(agent_service, "AGENT_WORKER_EXECUTOR", FakeExecutor(), raising=False)
+    monkeypatch.setattr(
+        agent_service,
+        "AGENT_WORKER_CAPACITY",
+        __import__("threading").BoundedSemaphore(2),
+        raising=False,
+    )
+    agent_service.AGENT_ACTIVE_WORKERS.clear()
+    try:
+        assert agent_service._start_agent_worker("bounded-agent-1") is True
+        assert agent_service._start_agent_worker("bounded-agent-1") is False
+        assert agent_service._start_agent_worker("bounded-agent-2") is True
+        assert agent_service._start_agent_worker("bounded-agent-3") is False
+        assert [item[1] for item in submitted] == [
+            "bounded-agent-1",
+            "bounded-agent-2",
+        ]
+    finally:
+        agent_service.AGENT_ACTIVE_WORKERS.clear()
+
+
+def test_agent_dispatch_reports_capacity_instead_of_fake_running(monkeypatch):
+    from task_server.services import agent_service
+
+    runs = [{"runId": "capacity-run", "status": "PENDING", "steps": []}]
+    monkeypatch.setattr(agent_service, "load_agent_runs", lambda: runs)
+    monkeypatch.setattr(agent_service, "save_agent_runs", lambda value: None)
+    monkeypatch.setattr(
+        agent_service,
+        "_dispatch_agent_worker",
+        lambda _run_id: "capacity",
+        raising=False,
+    )
+
+    result = agent_service.advance_agent_run("capacity-run")
+
+    assert result["status"] == "FAILED"
+    assert result["currentStep"] == "DISPATCH"
+    assert "任务较多" in result["error"]
+    assert result["retryable"] is True
+
+
+def test_recovered_agent_dispatch_capacity_does_not_leave_fake_running(monkeypatch):
+    from task_server.services import agent_service
+
+    runs = [{"runId": "recovered-capacity-run", "status": "RUNNING", "steps": []}]
+    saved = []
+    monkeypatch.setattr(agent_service, "load_agent_runs", lambda: runs)
+    monkeypatch.setattr(agent_service, "save_agent_runs", lambda value: saved.append(value))
+    monkeypatch.setattr(
+        agent_service,
+        "_dispatch_agent_worker",
+        lambda _run_id: "capacity",
+        raising=False,
+    )
+
+    assert agent_service._start_agent_worker("recovered-capacity-run") is False
+    assert runs[0]["status"] == "FAILED"
+    assert runs[0]["currentStep"] == "DISPATCH"
+    assert runs[0]["retryable"] is True
+    assert saved
+
+
+def test_agent_subcall_timeout_uses_shared_bounded_executor():
+    source = Path("task_server/services/agent_service.py").read_text(encoding="utf-8")
+
+    assert "AGENT_SUBCALL_EXECUTOR" in source
+    assert "AGENT_SUBCALL_CAPACITY" in source
+    assert "ThreadPoolExecutor(max_workers=1)" not in source
+
+
+def test_bounded_response_reader_rejects_oversized_payload():
+    from task_server.core.http_client import ResponseTooLargeError, read_response_bytes
+
+    class Response:
+        def read(self, size=-1):
+            assert size == 5
+            return b"12345"
+
+    with pytest.raises(ResponseTooLargeError, match="Sonic.*4"):
+        read_response_bytes(Response(), 4, "Sonic")
+
+
+def test_figma_json_download_uses_a_bounded_response_reader(monkeypatch):
+    from task_server.services import knowledge_service
+
+    class Response:
+        headers = {}
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self, size=-1):
+            assert size == 5
+            return b"12345"
+
+    monkeypatch.setattr(knowledge_service, "KNOWLEDGE_HTTP_MAX_RESPONSE_BYTES", 4)
+    monkeypatch.setattr(knowledge_service.urllib.request, "urlopen", lambda *_args, **_kwargs: Response())
+
+    with pytest.raises(RuntimeError, match="Figma.*4"):
+        knowledge_service._urlopen_with_retry("https://api.figma.com/v1/files/demo")
 
 
 def test_api_testing_authentication_precedes_outer_large_request_limit():
@@ -335,7 +537,35 @@ def test_active_job_restore_can_scan_beyond_history_display_limit(tmp_path, monk
             encoding="utf-8",
         )
 
-    assert len(yaml_service.iter_raw_generate_jobs(limit=None)) == 305
+    assert len(list(yaml_service.iter_raw_generate_jobs(limit=None))) == 305
+
+
+def test_raw_generate_job_scan_streams_payloads_instead_of_loading_all(
+    tmp_path, monkeypatch
+):
+    from task_server.services import yaml_service
+
+    monkeypatch.setattr(yaml_service, "GENERATE_JOB_DIR", str(tmp_path))
+    for index in range(3):
+        (tmp_path / f"gen-{index}.json").write_text(
+            json.dumps({"job_id": f"gen-{index}", "status": "pending"}),
+            encoding="utf-8",
+        )
+    reads = []
+    original = yaml_service.read_json_file
+
+    def observed(path, *args, **kwargs):
+        reads.append(path)
+        return original(path, *args, **kwargs)
+
+    monkeypatch.setattr(yaml_service, "read_json_file", observed)
+
+    jobs = yaml_service.iter_raw_generate_jobs(limit=None)
+
+    assert iter(jobs) is jobs
+    assert reads == []
+    assert next(jobs)["job_id"] == "gen-2"
+    assert len(reads) == 1
 
 
 def test_figma_and_repair_jobs_do_not_overwrite_running_cancellation(monkeypatch):
@@ -373,6 +603,24 @@ def test_installer_writes_configurable_systemd_resource_guard():
     assert 'TasksMax=${TASK_SERVICE_TASKS_MAX}' in source
     assert 'ensure_env_default "TASK_BACKGROUND_WORKERS" "2"' in source
     assert 'ensure_env_default "TASK_BACKGROUND_QUEUE_SIZE" "8"' in source
+    assert 'ensure_env_default "MIDSCENE_AGENT_WORKERS" "2"' in source
+    assert 'ensure_env_default "MIDSCENE_AGENT_QUEUE_SIZE" "8"' in source
+    assert 'ensure_env_default "MIDSCENE_AI_MAX_RESPONSE_BYTES" "16777216"' in source
+    assert 'ensure_env_default "MIDSCENE_SONIC_MAX_RESPONSE_BYTES" "16777216"' in source
+    assert 'ensure_env_default "SONIC_MEMORY_CACHE_MAX_BYTES" "33554432"' in source
+
+
+def test_api_worker_and_scheduler_have_independent_memory_guards():
+    installer = Path("deploy/install-server.sh").read_text(encoding="utf-8")
+    worker = Path("deploy/midscene-api-worker.service").read_text(encoding="utf-8")
+
+    assert 'API_WORKER_MEMORY_HIGH="${API_WORKER_MEMORY_HIGH:-1G}"' in installer
+    assert 'API_WORKER_MEMORY_MAX="${API_WORKER_MEMORY_MAX:-1536M}"' in installer
+    assert 'API_SCHEDULER_MEMORY_MAX="${API_SCHEDULER_MEMORY_MAX:-512M}"' in installer
+    assert 'MemoryMax=${API_WORKER_MEMORY_MAX}' in installer
+    assert 'MemoryMax=${API_SCHEDULER_MEMORY_MAX}' in installer
+    assert "--max-tasks-per-child=50" in worker
+    assert "--max-memory-per-child=786432" in worker
 
 
 def test_sonic_restart_script_is_explicit_and_non_destructive_by_default():
@@ -428,10 +676,13 @@ fi
     assert explicit_calls.count("start sonic-server") == 2
 
 
-def test_platform_deploy_warns_about_non_restarting_sonic_without_changing_it():
+def test_platform_deploy_configures_sonic_restart_without_starting_containers():
     source = Path("deploy/update-main-server.sh").read_text(encoding="utf-8")
 
+    assert 'CONFIGURE_SONIC_RESTART="${CONFIGURE_SONIC_RESTART:-1}"' in source
+    assert "configure_sonic_restart_policy" in source
+    assert 'SONIC_CONTAINER_PREFIX="${SONIC_CONTAINER_PREFIX}"' in source
+    assert "bash deploy/configure-sonic-restart.sh" in source
     assert "warn_sonic_restart_policies" in source
     assert "restart=no" in source
-    assert "bash deploy/configure-sonic-restart.sh" in source
-    assert "docker update --restart" not in source
+    assert "--start-stopped" not in source

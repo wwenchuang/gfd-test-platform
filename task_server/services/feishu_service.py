@@ -12,6 +12,8 @@ import uuid
 from contextlib import contextmanager
 from typing import Any, Dict, List, Optional
 
+from task_server.core.http_client import read_response_bytes
+
 try:
     import fcntl
 except ImportError:  # pragma: no cover - production server is Linux
@@ -81,7 +83,9 @@ def _post_to_webhook(webhook: str, payload: Dict[str, Any], timeout: int = 15) -
         method="POST",
     )
     with urllib.request.urlopen(req, timeout=timeout) as resp:
-        raw = resp.read().decode("utf-8", errors="replace")
+        raw = read_response_bytes(resp, 1024 * 1024, "飞书机器人").decode(
+            "utf-8", errors="replace"
+        )
         return json.loads(raw) if raw else {"ok": True}
 
 

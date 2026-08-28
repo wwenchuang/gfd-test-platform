@@ -14,6 +14,7 @@ from uuid import UUID, uuid4
 import redis
 from sqlalchemy import select
 from sqlalchemy.exc import InterfaceError, OperationalError
+from sqlalchemy.orm import defer
 
 from task_server.auth import bearer_token, verify_session_token
 
@@ -373,6 +374,28 @@ def _get(segments, qs, actor, settings):
     if len(segments) == 2 and segments[0] == "environment-revisions":
         _scope_environment_revision(factory, _uuid(segments[1]), actor)
         return {"environment_revision": _view(EnvironmentService(factory).get_revision(_uuid(segments[1])))}
+    if (
+        len(segments) == 3
+        and segments[0] == "source-revisions"
+        and segments[2] == "servers"
+    ):
+        revision_id = _uuid(segments[1])
+        with factory() as session:
+            row = session.execute(
+                select(
+                    ApiSourceRevision.id,
+                    ApiSourceRevision.normalized_document["servers"].label("servers"),
+                )
+                .join(ApiSource, ApiSourceRevision.source_id == ApiSource.id)
+                .join(ApiProject, ApiSource.project_id == ApiProject.id)
+                .where(
+                    ApiSourceRevision.id == revision_id,
+                    ApiProject.owner_id == actor,
+                )
+            ).one_or_none()
+        if row is None:
+            raise _not_found()
+        return {"servers": row.servers if isinstance(row.servers, list) else []}
     if len(segments) == 2 and segments[0] == "source-revisions":
         _scope_source_revision(factory, _uuid(segments[1]), actor)
         return {"source_revision": _view(SourceService(factory).get_revision(_uuid(segments[1])))}
@@ -407,12 +430,26 @@ def _get(segments, qs, actor, settings):
                 NotificationService(factory).get_feishu(project_id, actor)
             )
         }
+    if len(segments) == 2 and segments[0] == "endpoints":
+        endpoint = _scope_endpoint(
+            factory, _uuid(segments[1]), actor, include_operation=True
+        )
+        return {"endpoint": _endpoint_view(endpoint)}
     if segments == ("endpoints",):
         revision_id = _uuid(qs.get("source_revision_id", ""))
         _scope_source_revision(factory, revision_id, actor)
         with factory() as session:
-            endpoints = session.scalars(select(ApiSourceEndpoint).where(ApiSourceEndpoint.revision_id == revision_id)).all()
-        return {"endpoints": [_endpoint_view(item) for item in endpoints]}
+            endpoints = session.scalars(
+                select(ApiSourceEndpoint)
+                .options(defer(ApiSourceEndpoint.operation, raiseload=True))
+                .where(ApiSourceEndpoint.revision_id == revision_id)
+                .order_by(ApiSourceEndpoint.normalized_path, ApiSourceEndpoint.method)
+            ).all()
+        return {
+            "endpoints": [
+                _endpoint_view(item, include_operation=False) for item in endpoints
+            ]
+        }
     raise ApiHttpError(404, "not_found", "Resource was not found")
 
 
@@ -542,7 +579,7 @@ def _post(segments, payload, actor, settings):
         return {"preview": _view(SourceService(factory).preview_refresh(project_id, source_id, _required_object(payload, "document"), actor))}
     if len(segments) == 3 and segments[0] == "sources" and segments[2] == "activate":
         _scope_source_preview(factory, _uuid(segments[1]), actor)
-        return {"source_revision": _view(SourceService(factory).activate_preview(_uuid(segments[1]), actor))}
+        return {"source_revision": _view(SourceService(factory).activate_preview(_uuid(segments[1]), actor, include_content=False))}
     if segments == ("environments", "import"):
         _scope_environment_import(factory, payload, actor)
         return {"environment": _view(EnvironmentService(factory).import_from_source(payload, actor))}
@@ -933,7 +970,16 @@ def _scope_source(factory, source_id, actor):
 
 def _scope_source_revision(factory, revision_id, actor):
     with factory() as session:
-        revision = session.scalar(select(ApiSourceRevision).join(ApiSource, ApiSourceRevision.source_id == ApiSource.id).join(ApiProject, ApiSource.project_id == ApiProject.id).where(ApiSourceRevision.id == revision_id, ApiProject.owner_id == actor))
+        revision = session.scalar(
+            select(ApiSourceRevision)
+            .options(
+                defer(ApiSourceRevision.normalized_document, raiseload=True),
+                defer(ApiSourceRevision.import_metadata, raiseload=True),
+            )
+            .join(ApiSource, ApiSourceRevision.source_id == ApiSource.id)
+            .join(ApiProject, ApiSource.project_id == ApiProject.id)
+            .where(ApiSourceRevision.id == revision_id, ApiProject.owner_id == actor)
+        )
     if revision is None:
         raise _not_found()
     return revision
@@ -947,9 +993,20 @@ def _scope_source_preview(factory, preview_id, actor):
     return preview
 
 
-def _scope_endpoint(factory, endpoint_id, actor):
+def _scope_endpoint(factory, endpoint_id, actor, include_operation=False):
     with factory() as session:
-        endpoint = session.scalar(select(ApiSourceEndpoint).join(ApiSourceRevision, ApiSourceEndpoint.revision_id == ApiSourceRevision.id).join(ApiSource, ApiSourceRevision.source_id == ApiSource.id).join(ApiProject, ApiSource.project_id == ApiProject.id).where(ApiSourceEndpoint.id == endpoint_id, ApiProject.owner_id == actor))
+        statement = (
+            select(ApiSourceEndpoint)
+            .join(ApiSourceRevision, ApiSourceEndpoint.revision_id == ApiSourceRevision.id)
+            .join(ApiSource, ApiSourceRevision.source_id == ApiSource.id)
+            .join(ApiProject, ApiSource.project_id == ApiProject.id)
+            .where(ApiSourceEndpoint.id == endpoint_id, ApiProject.owner_id == actor)
+        )
+        if not include_operation:
+            statement = statement.options(
+                defer(ApiSourceEndpoint.operation, raiseload=True)
+            )
+        endpoint = session.scalar(statement)
     if endpoint is None:
         raise _not_found()
     return endpoint
@@ -1333,8 +1390,8 @@ def _project_view(project):
     return {"id": project.id, "name": project.name, "slug": project.slug, "description": project.description, "status": project.status}
 
 
-def _endpoint_view(endpoint):
-    return {"id": endpoint.id, "revision_id": endpoint.revision_id, "operation_id": endpoint.operation_id, "method": endpoint.method, "path": endpoint.path, "summary": endpoint.summary, "tags": endpoint.tags, "operation": endpoint.operation}
+def _endpoint_view(endpoint, include_operation=True):
+    return {"id": endpoint.id, "revision_id": endpoint.revision_id, "operation_id": endpoint.operation_id, "method": endpoint.method, "path": endpoint.path, "summary": endpoint.summary, "tags": endpoint.tags, "operation": endpoint.operation if include_operation else {}}
 
 
 def _workspace_view(workspace):

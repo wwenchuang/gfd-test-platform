@@ -57,7 +57,7 @@ def check_ai_gateway_response_diagnostics():
         def __exit__(self, *_args):
             return False
 
-        def read(self):
+        def read(self, _size=-1):
             return json.dumps({
                 "success": True,
                 "content": "",
@@ -14335,30 +14335,29 @@ def check_agent_history_compacts_uploaded_blobs_after_prepare():
 def check_agent_worker_start_is_idempotent():
     from task_server.services import agent_service
 
-    original_thread = agent_service.threading.Thread
-    started = []
+    original_executor = agent_service.AGENT_WORKER_EXECUTOR
+    original_capacity = agent_service.AGENT_WORKER_CAPACITY
+    submitted = []
 
-    class FakeThread:
-        def __init__(self, target, args=(), daemon=None):
-            self.target = target
-            self.args = args
-            self.daemon = daemon
+    class FakeExecutor:
+        def submit(self, target, run_id):
+            submitted.append((target, run_id))
 
-        def start(self):
-            started.append({"target": getattr(self.target, "__name__", ""), "args": self.args, "daemon": self.daemon})
-
-    agent_service.threading.Thread = FakeThread
+    agent_service.AGENT_WORKER_EXECUTOR = FakeExecutor()
+    agent_service.AGENT_WORKER_CAPACITY = agent_service.threading.BoundedSemaphore(2)
     agent_service.AGENT_ACTIVE_WORKERS.clear()
     try:
         first = agent_service._start_agent_worker("agent-static-worker")
         second = agent_service._start_agent_worker("agent-static-worker")
         other = agent_service._start_agent_worker("agent-static-worker-2")
+        overflow = agent_service._start_agent_worker("agent-static-worker-3")
     finally:
-        agent_service.threading.Thread = original_thread
+        agent_service.AGENT_WORKER_EXECUTOR = original_executor
+        agent_service.AGENT_WORKER_CAPACITY = original_capacity
         agent_service.AGENT_ACTIVE_WORKERS.clear()
 
-    require(first is True and second is False and other is True, "Agent worker start must suppress duplicate run executors")
-    require(len(started) == 2, "Agent worker guard must start only one thread per run id")
+    require(first is True and second is False and other is True and overflow is False, "Agent worker start must suppress duplicates and enforce bounded capacity")
+    require(len(submitted) == 2, "Agent worker guard must submit only bounded unique runs")
 
 
 def check_snapshot_store_concurrent_save():
@@ -17789,7 +17788,13 @@ def main():
     require('"neither android_home nor android_sdk_root" in lowered' in agent_source and "_agent_failed_item_has_concrete_environment_evidence" in agent_source and "not environment_locked" in agent_source, "Agent must lock concrete Android SDK/ADB failures as ENV_ISSUE while allowing bare timeouts to use AI keyframe reclassification")
     require('POST_FAILURE_ANALYSIS_STEPS = ("RUN_SONIC",)' in agent_source, "RUN_SONIC failure must continue into report collection, failure analysis and repair planning")
     require("AGENT_PLAN_MINDMAP_TIMEOUT_SECONDS" in agent_source, "Agent PLAN must have its own bounded MM planning timeout instead of relying only on shared job expiry")
-    require("_run_agent_call_with_hard_timeout" in agent_source and "executor.shutdown(wait=False, cancel_futures=True)" in agent_source, "Agent hard timeout wrapper must stop waiting for stuck planning calls without blocking on executor shutdown")
+    require(
+        "_run_agent_call_with_hard_timeout" in agent_source
+        and "AGENT_SUBCALL_EXECUTOR" in agent_source
+        and "AGENT_SUBCALL_CAPACITY" in agent_source
+        and "ThreadPoolExecutor(max_workers=1)" not in agent_source,
+        "Agent hard timeout wrapper must use shared bounded workers so timed-out calls cannot create unbounded threads",
+    )
     require("generate_mindmap_from_request(" in agent_source and "_run_agent_call_with_hard_timeout(" in agent_source and "PLAN AI业务规划" in agent_source, "Agent PLAN must wrap platform mindmap generation in a hard timeout")
     require('safe_int(os.getenv("MIDSCENE_AGENT_PLAN_MINDMAP_TIMEOUT_SECONDS"), 240)' in agent_source and "min(600" in agent_source, "Agent PLAN timeout default must stay bounded and not regress to long 900s waits")
     require("def _agent_plan_timeout_fallback" in agent_source and '"planTimeoutFallback": True' in agent_source and '"plan_timeout_degraded_source_contract"' in agent_source, "Agent PLAN timeout must degrade to an explicit source-contract plan instead of hanging")

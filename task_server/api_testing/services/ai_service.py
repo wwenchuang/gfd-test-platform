@@ -18,6 +18,9 @@ from urllib.parse import urlsplit
 from jsonschema import Draft202012Validator, ValidationError
 from sqlalchemy import func, select
 
+from task_server.config import safe_int
+from task_server.core.http_client import read_response_bytes
+
 from ..contracts.case import CasePayloadError, CaseVersionView, parse_case_payload
 from ..executor import redact
 from ..repositories.ai_job_repository import AiJobRepository
@@ -27,6 +30,13 @@ from .workflow_policy import is_print_dispatch_endpoint
 
 
 MAX_ENDPOINTS = 60
+AI_GATEWAY_MAX_RESPONSE_BYTES = max(
+    1024 * 1024,
+    min(
+        64 * 1024 * 1024,
+        safe_int(os.getenv("API_TESTING_AI_MAX_RESPONSE_BYTES"), 16 * 1024 * 1024),
+    ),
+)
 DEFAULT_BATCH_SIZE = 10
 DEFAULT_PROVIDER_ID = ""
 DEFAULT_MODEL = ""
@@ -155,7 +165,13 @@ class AiGatewayClient:
         )
         try:
             with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
-                parsed = json.loads(response.read().decode("utf-8"))
+                parsed = json.loads(
+                    read_response_bytes(
+                        response,
+                        AI_GATEWAY_MAX_RESPONSE_BYTES,
+                        "AI Gateway",
+                    ).decode("utf-8")
+                )
         except urllib.error.HTTPError as exc:
             raise AiGatewayError(f"AI Gateway HTTP {exc.code}") from None
         except (urllib.error.URLError, TimeoutError) as exc:

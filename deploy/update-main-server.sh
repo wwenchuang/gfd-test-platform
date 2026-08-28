@@ -24,6 +24,7 @@ Environment:
   ALLOW_DIRTY         Set to 1 to allow deploying from a dirty git checkout. Default: 0
   BUILD_API_TEST      Set to 1 to run npm install/build before install. Default: 0
   SONIC_CONTAINER_PREFIX  Sonic Docker container name prefix observed before/after deploy. Default: sonic-server-272-
+  CONFIGURE_SONIC_RESTART Set to 1 to configure existing Sonic containers with restart=unless-stopped. Default: 1
 USAGE
 }
 
@@ -56,6 +57,7 @@ REQUIRE_API_TEST_TEXT="${REQUIRE_API_TEST_TEXT:-用例管理}"
 ALLOW_DIRTY="${ALLOW_DIRTY:-0}"
 BUILD_API_TEST="${BUILD_API_TEST:-0}"
 SONIC_CONTAINER_PREFIX="${SONIC_CONTAINER_PREFIX:-sonic-server-272-}"
+CONFIGURE_SONIC_RESTART="${CONFIGURE_SONIC_RESTART:-1}"
 
 if [ ! -d "${SOURCE_DIR}/.git" ]; then
   cat >&2 <<EOF
@@ -124,11 +126,34 @@ capture_sonic_container_state() {
   if [ -z "${all_containers}" ]; then
     echo "部署前未发现 ${SONIC_CONTAINER_PREFIX}* 容器"
   elif [ -z "${SONIC_RUNNING_BEFORE}" ]; then
-    echo "部署前 Sonic 容器已全部停止；本次部署不会自动启动或修改 Sonic"
+    echo "部署前 Sonic 容器已全部停止；本次部署不会自动启动，但会更新异常恢复策略"
   else
     echo "部署前运行中的 Sonic 容器："
     printf '%s\n' "${SONIC_RUNNING_BEFORE}"
   fi
+}
+
+configure_sonic_restart_policy() {
+  if [ "${CONFIGURE_SONIC_RESTART}" != "1" ]; then
+    echo "已按配置跳过 Sonic 自动恢复策略设置"
+    return 0
+  fi
+  if ! command -v docker >/dev/null 2>&1; then
+    echo "未检测到 Docker，跳过 Sonic 自动恢复策略设置"
+    return 0
+  fi
+
+  local containers
+  containers="$(sonic_container_names 1 2>/dev/null || true)"
+  if [ -z "${containers}" ]; then
+    echo "未发现 ${SONIC_CONTAINER_PREFIX}* 容器，跳过 Sonic 自动恢复策略设置"
+    return 0
+  fi
+
+  echo "配置 Sonic 容器异常退出后自动恢复（不会启动、停止或重启容器）"
+  run_as_root env \
+    SONIC_CONTAINER_PREFIX="${SONIC_CONTAINER_PREFIX}" \
+    bash deploy/configure-sonic-restart.sh
 }
 
 verify_sonic_container_state() {
@@ -447,6 +472,7 @@ if [ "${BUILD_API_TEST}" = "1" ]; then
 fi
 
 capture_sonic_container_state
+configure_sonic_restart_policy
 migrate_legacy_task_launchers
 
 APP_DIR="${APP_DIR}" WEB_DIR="${WEB_DIR}" PORT="${PORT}" RELEASE_REVISION="${DEPLOY_REVISION}" run_as_root bash deploy/install-server.sh

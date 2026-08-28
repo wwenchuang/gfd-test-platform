@@ -248,7 +248,7 @@ def background_job_runtime_metrics():
 
 def restore_persisted_background_jobs(limit=None):
     """Restore queued jobs and make interrupted running jobs explicit."""
-    from .services.yaml_service import iter_raw_generate_jobs, load_generate_job, update_generate_job
+    from .services.yaml_service import iter_raw_generate_jobs, update_generate_job
 
     start_persisted_background_dispatcher()
     restored = 0
@@ -263,8 +263,7 @@ def restore_persisted_background_jobs(limit=None):
             job_id = str(raw_job.get("job_id") or "").strip()
             if not job_id:
                 continue
-            job = load_generate_job(job_id) or raw_job
-            status = str(job.get("status") or "").strip().lower()
+            status = str(raw_job.get("status") or "").strip().lower()
             if status == "running":
                 message = "服务重启中断了正在执行的后台任务，请重新发起或使用重试功能"
                 update_generate_job(
@@ -279,7 +278,7 @@ def restore_persisted_background_jobs(limit=None):
                 continue
             if status != "pending":
                 continue
-            request_data = job.get("request_data") or job.get("requestData")
+            request_data = raw_job.get("request_data") or raw_job.get("requestData")
             if not isinstance(request_data, dict):
                 _default_failure_recorder(job_id, "服务重启后无法恢复：任务缺少原始请求，请重新发起")
                 interrupted += 1

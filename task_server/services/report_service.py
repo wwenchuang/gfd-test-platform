@@ -62,6 +62,9 @@ from ..storage import (
 # ---------------------------------------------------------------------------
 
 REPORT_INDEX_FILE = os.path.join(LEARNING_DIR, "report-index.json")
+MAX_REPORT_ANALYSIS_BYTES = 16 * 1024 * 1024
+MAX_REPORT_IMAGE_BYTES = 2 * 1024 * 1024
+MAX_REPORT_IMAGE_BASE64_CHARS = (MAX_REPORT_IMAGE_BYTES * 4 // 3) + 8192
 
 
 # ---------------------------------------------------------------------------
@@ -351,12 +354,20 @@ __all__ = [
 # ===================================================================
 
 def _read_text(path: Any, default: str = "") -> str:
-    """读取文本文件，失败返回 default。"""
+    """读取报告尾部的有限文本，避免诊断阶段重新载入巨型 HTML。"""
     try:
         p = Path(path)
         if not p.exists():
             return default
-        return p.read_text(encoding="utf-8", errors="ignore")
+        with p.open("rb") as handle:
+            size = p.stat().st_size
+            if size > MAX_REPORT_ANALYSIS_BYTES:
+                handle.seek(size - MAX_REPORT_ANALYSIS_BYTES)
+            data = handle.read(MAX_REPORT_ANALYSIS_BYTES + 1)
+        return data[-MAX_REPORT_ANALYSIS_BYTES:].decode(
+            "utf-8",
+            errors="ignore",
+        )
     except Exception:
         return default
 
@@ -525,22 +536,25 @@ def _midscene_screenshot_reference_ids(value: Any) -> List[str]:
 
 
 def _decode_report_image(data_url: str, name: str) -> Optional[Dict[str, Any]]:
+    raw = str(data_url or "")
+    if len(raw) > MAX_REPORT_IMAGE_BASE64_CHARS + 128:
+        return None
     match = re.fullmatch(
         r"\s*data:(image/(?:png|jpe?g|webp));base64,([A-Za-z0-9+/=\r\n]+)\s*",
-        str(data_url or ""),
+        raw,
         flags=re.I,
     )
     if not match:
         return None
     mime = match.group(1).lower().replace("image/jpg", "image/jpeg")
     encoded = re.sub(r"\s+", "", match.group(2))
-    if len(encoded) < 1000:
+    if len(encoded) < 1000 or len(encoded) > MAX_REPORT_IMAGE_BASE64_CHARS:
         return None
     try:
         data = base64.b64decode(encoded, validate=False)
     except Exception:
         return None
-    if not data or len(data) > 2 * 1024 * 1024:
+    if not data or len(data) > MAX_REPORT_IMAGE_BYTES:
         return None
     extension = "jpg" if mime == "image/jpeg" else mime.split("/", 1)[-1]
     return {
@@ -550,7 +564,11 @@ def _decode_report_image(data_url: str, name: str) -> Optional[Dict[str, Any]]:
     }
 
 
-def _structured_midscene_report_images(text: str, report_name: str) -> Tuple[List[Dict[str, Any]], bool]:
+def _structured_midscene_report_images(
+    text: str,
+    report_name: str,
+    limit: int = 4,
+) -> Tuple[List[Dict[str, Any]], bool]:
     parser = _MidsceneReportScriptParser()
     try:
         parser.feed(text)
@@ -575,6 +593,8 @@ def _structured_midscene_report_images(text: str, report_name: str) -> Tuple[Lis
             ordered_ids.append(image_id)
     if not ordered_ids:
         ordered_ids = list(dict.fromkeys(image_id for image_id, _data_url in parser.images))
+    if limit:
+        ordered_ids = ordered_ids[-limit:]
 
     images = []
     for image_id in ordered_ids:
@@ -608,6 +628,7 @@ def report_image_context(
         structured, has_midscene_image_store = _structured_midscene_report_images(
             text,
             Path(path).name,
+            limit=max(0, limit),
         )
         candidates = structured
         if not has_midscene_image_store:
@@ -619,6 +640,8 @@ def report_image_context(
                 )
                 if decoded:
                     candidates.append(decoded)
+                    if limit and len(candidates) >= limit:
+                        break
         for image in candidates:
             encoded = str(image.get("base64") or "")
             if not encoded:
@@ -628,6 +651,8 @@ def report_image_context(
                 continue
             seen.add(key)
             collected.append(image)
+            if limit and len(collected) > limit:
+                collected.pop(0)
     return collected[-limit:] if limit else collected
 
 

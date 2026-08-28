@@ -11,7 +11,9 @@ WorkingDirectory=/opt/midscene-task-platform
 Environment=MIDSCENE_ENV_FILE=/opt/midscene.env
 ExecStart=/opt/midscene-task-platform/.venv/bin/celery \
   -A task_server.api_testing.tasks:celery_app worker \
-  --loglevel=INFO --queues=api-testing --concurrency=2
+  --loglevel=INFO --queues=api-testing --concurrency=2 \
+  --max-tasks-per-child=50 \
+  --max-memory-per-child=786432
 Restart=always
 RestartSec=3
 NoNewPrivileges=true

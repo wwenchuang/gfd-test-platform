@@ -1,8 +1,9 @@
 """Manual source preview, deterministic diff, and atomic activation."""
 
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
-from ..adapters.openapi import normalize_openapi_document
+from ..adapters.openapi import normalize_openapi_document, stable_endpoint_key
 from ..contracts.source import (
     SourceChange,
     SourceEndpointView,
@@ -34,6 +35,24 @@ class SourcePreviewStateError(RuntimeError):
 
 def _utc_now():
     return datetime.now(timezone.utc)
+
+
+def _rebind_normalized_source(normalized, source_id):
+    return replace(
+        normalized,
+        endpoints=tuple(
+            replace(
+                endpoint,
+                stable_key=stable_endpoint_key(
+                    source_id,
+                    endpoint.operation_id,
+                    endpoint.method,
+                    endpoint.normalized_path,
+                ),
+            )
+            for endpoint in normalized.endpoints
+        ),
+    )
 
 
 def _changed_fields(previous, candidate):
@@ -131,7 +150,7 @@ class SourceService:
                 else:
                     source = repository.get_source_for_update(source.id)
 
-            normalized = normalize_openapi_document(document, source.id)
+            normalized = _rebind_normalized_source(prevalidated, source.id)
             active_revision = (
                 repository.get_revision(source.active_revision_id)
                 if source.active_revision_id
@@ -189,11 +208,15 @@ class SourceService:
                 expires_at=expires_at,
             )
 
-    def activate_preview(self, preview_id, actor_id):
+    def activate_preview(self, preview_id, actor_id, include_content=True):
         with self._session_factory.begin() as session:
-            return self.activate_preview_in_session(session, preview_id, actor_id)
+            return self.activate_preview_in_session(
+                session, preview_id, actor_id, include_content=include_content
+            )
 
-    def activate_preview_in_session(self, session, preview_id, actor_id):
+    def activate_preview_in_session(
+        self, session, preview_id, actor_id, include_content=True
+    ):
         now = _utc_now()
         repository = SourceRepository(session)
         diff = repository.get_diff_for_update(preview_id)
@@ -213,7 +236,11 @@ class SourceService:
             raise StaleSourcePreviewError(
                 "Source active revision changed after this preview was created"
             )
-        candidate = repository.get_revision(diff.candidate_revision_id)
+        candidate = (
+            repository.get_revision(diff.candidate_revision_id)
+            if include_content
+            else repository.get_revision_metadata(diff.candidate_revision_id)
+        )
         if (
             candidate is None
             or candidate.source_id != source.id
@@ -222,7 +249,7 @@ class SourceService:
             raise SourcePreviewStateError("Source candidate revision is not activatable")
 
         if source.active_revision_id:
-            previous = repository.get_revision(source.active_revision_id)
+            previous = repository.get_revision_metadata(source.active_revision_id)
             previous.status = "superseded"
             previous.superseded_at = now
             previous.updated_by = actor_id
@@ -235,7 +262,12 @@ class SourceService:
         diff.status = "activated"
         diff.updated_by = actor_id
         session.flush()
-        return self._revision_view(repository, candidate, source.project_id)
+        return self._revision_view(
+            repository,
+            candidate,
+            source.project_id,
+            include_content=include_content,
+        )
 
     def get_revision(self, revision_id):
         with self._session_factory() as session:
@@ -256,20 +288,24 @@ class SourceService:
             return self._revision_view(repository, revision, source.project_id)
 
     @staticmethod
-    def _revision_view(repository, revision, project_id):
-        endpoints = tuple(
-            SourceEndpointView(
-                id=item.id,
-                stable_key=item.stable_key,
-                operation_id=item.operation_id,
-                method=item.method,
-                path=item.path,
-                normalized_path=item.normalized_path,
-                summary=item.summary,
-                tags=tuple(item.tags),
-                operation=item.operation,
+    def _revision_view(repository, revision, project_id, include_content=True):
+        endpoints = (
+            tuple(
+                SourceEndpointView(
+                    id=item.id,
+                    stable_key=item.stable_key,
+                    operation_id=item.operation_id,
+                    method=item.method,
+                    path=item.path,
+                    normalized_path=item.normalized_path,
+                    summary=item.summary,
+                    tags=tuple(item.tags),
+                    operation=item.operation,
+                )
+                for item in repository.get_endpoints(revision.id)
             )
-            for item in repository.get_endpoints(revision.id)
+            if include_content
+            else ()
         )
         return SourceRevisionView(
             id=revision.id,
@@ -278,8 +314,8 @@ class SourceService:
             revision_number=revision.revision_number,
             status=revision.status,
             document_hash=revision.document_hash,
-            normalized_document=revision.normalized_document,
-            import_metadata=revision.import_metadata,
+            normalized_document=revision.normalized_document if include_content else {},
+            import_metadata=revision.import_metadata if include_content else {},
             activated_at=revision.activated_at,
             superseded_at=revision.superseded_at,
             endpoints=endpoints,

@@ -5,7 +5,7 @@ import os
 from pathlib import Path
 
 from alembic import command
-from sqlalchemy import create_engine, func, select
+from sqlalchemy import create_engine, event, func, select
 from sqlalchemy.orm import sessionmaker
 import pytest
 
@@ -949,6 +949,152 @@ def test_baseline_assertion_audit_batches_stored_assertions_and_debug_evidence(
     assert item["execution"]["level"] == "direct"
     assert result["summary"]["upgrade_available"] >= 1
     assert SYNTHETIC_SECRET not in repr(result)
+
+
+def test_baseline_assertion_audit_reads_large_projects_in_bounded_batches(
+    case_service, project_context, session_factory, monkeypatch
+):
+    from task_server.api_testing.repositories.case_repository import CaseRepository
+    from task_server.api_testing.services.baseline_assertion_audit_service import (
+        BaselineAssertionAuditService,
+    )
+
+    endpoint = project_context["endpoints"]["favoriteList"]
+    baseline_ids = []
+    for index in range(5):
+        payload = valid_list_case(endpoint)
+        payload["name"] = f"分批审计用例-{index}"
+        payload["assertions"] = [
+            {"type": "status_code", "operator": "equals", "expected": 200}
+        ]
+        draft = case_service.create_draft(endpoint.id, payload, "manual", "admin")
+        evidence_id = _create_execution_evidence(
+            session_factory,
+            project_context,
+            draft,
+            response={
+                "status_code": 200,
+                "body": json.dumps({"code": 0, "data": []}),
+                "headers": {},
+            },
+        )
+        baseline_ids.append(case_service.adopt_baseline(draft.id, evidence_id, "admin").id)
+
+    calls = []
+    original = CaseRepository.list_active_baselines
+
+    def observed(self, project_id, actor_id, **options):
+        calls.append((options.get("limit"), options.get("offset")))
+        return original(self, project_id, actor_id, **options)
+
+    monkeypatch.setattr(CaseRepository, "list_active_baselines", observed)
+    monkeypatch.setattr(BaselineAssertionAuditService, "BATCH_SIZE", 2, raising=False)
+
+    result = BaselineAssertionAuditService(session_factory).list(
+        project_context["project"].id,
+        "admin",
+    )
+
+    assert set(baseline_ids).issubset({item["baseline_id"] for item in result["items"]})
+    assert calls == [(2, 0), (2, 2), (2, 4), (2, 5)]
+
+
+def test_latest_execution_attempt_query_only_loads_latest_attempt(
+    case_service, project_context, session_factory
+):
+    from task_server.api_testing.repositories.case_repository import CaseRepository
+
+    endpoint = project_context["endpoints"]["favoriteList"]
+    draft = case_service.create_draft(
+        endpoint.id,
+        valid_list_case(endpoint),
+        "manual",
+        "admin",
+    )
+    evidence_id = _create_execution_evidence(
+        session_factory,
+        project_context,
+        draft,
+        response={
+            "status_code": 200,
+            "body": json.dumps({"code": 0, "attempt": 1}),
+            "headers": {},
+        },
+    )
+    with session_factory.begin() as session:
+        for attempt_number in (2, 3):
+            session.add(
+                ApiExecutionAttempt(
+                    execution_case_id=evidence_id,
+                    attempt_number=attempt_number,
+                    status="PASSED",
+                    request={"attempt": attempt_number},
+                    response={
+                        "status_code": 200,
+                        "body": json.dumps({"code": 0, "attempt": attempt_number}),
+                        "headers": {},
+                    },
+                    assertion_results=[],
+                    **_audit(),
+                )
+            )
+
+    loaded_attempts = []
+
+    def record_load(target, _context):
+        loaded_attempts.append(target.attempt_number)
+
+    event.listen(ApiExecutionAttempt, "load", record_load)
+    try:
+        with session_factory() as session:
+            latest = CaseRepository(session).latest_execution_attempts([evidence_id])
+    finally:
+        event.remove(ApiExecutionAttempt, "load", record_load)
+
+    assert latest[evidence_id].attempt_number == 3
+    assert loaded_attempts == [3]
+
+
+def test_baseline_audit_does_not_parse_an_oversized_response_body(monkeypatch):
+    from task_server.api_testing.services import baseline_assertion_audit_service as audit
+
+    monkeypatch.setattr(audit, "MAX_AUDIT_BODY_PARSE_CHARS", 32)
+    body = '{"code":0,"payload":"' + ("x" * 500) + '"}'
+    original_loads = audit.json.loads
+
+    def guarded_loads(value, *args, **kwargs):
+        assert len(value) <= 32
+        return original_loads(value, *args, **kwargs)
+
+    monkeypatch.setattr(audit.json, "loads", guarded_loads)
+
+    result = audit.analyze_baseline_assertions(
+        [{"type": "status_code", "operator": "equals", "expected": 200}],
+        {"status_code": 200, "body": body},
+        {"baseline_policy": "direct"},
+        {},
+    )
+
+    assert result["status"] == "upgrade_available"
+    assert result["business_path"] == "$.code"
+    assert result["business_value"] == 0
+
+
+def test_baseline_audit_does_not_treat_nested_code_as_top_level_evidence(monkeypatch):
+    from task_server.api_testing.services import baseline_assertion_audit_service as audit
+
+    monkeypatch.setattr(audit, "MAX_AUDIT_BODY_PARSE_CHARS", 64)
+    body = '{"data":{"code":0},"payload":"' + ("x" * 500) + '"}'
+
+    result = audit.analyze_baseline_assertions(
+        [{"type": "status_code", "operator": "equals", "expected": 200}],
+        {"status_code": 200, "body": body},
+        {"baseline_policy": "direct"},
+        {},
+    )
+
+    assert result["status"] == "domain_assertion_required"
+    assert result["business_path"] == ""
 
 
 def test_baseline_assertion_audit_creates_a_review_draft_without_replacing_baseline(

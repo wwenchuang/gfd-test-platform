@@ -23,11 +23,14 @@ import urllib.error
 import urllib.request
 from typing import Any, Dict, Optional
 
+from task_server.core.http_client import read_response_bytes
+
 # ---------------------------------------------------------------------------
 # AI Gateway 基地址
 # ---------------------------------------------------------------------------
 
 AI_GATEWAY_URL = os.getenv("AI_GATEWAY_URL", "http://127.0.0.1:8090").rstrip("/")
+AI_GATEWAY_MAX_RESPONSE_BYTES = 16 * 1024 * 1024
 
 
 # ---------------------------------------------------------------------------
@@ -59,7 +62,9 @@ def _post_json(
     )
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
-            raw = resp.read().decode("utf-8", errors="replace")
+            raw = read_response_bytes(
+                resp, AI_GATEWAY_MAX_RESPONSE_BYTES, "AI Gateway"
+            ).decode("utf-8", errors="replace")
         parsed = json.loads(raw) if raw else {}
         if isinstance(parsed, dict):
             parsed.setdefault("ok", True)
@@ -67,7 +72,9 @@ def _post_json(
     except urllib.error.HTTPError as exc:
         body = ""
         try:
-            body = exc.read().decode("utf-8", errors="replace")[:500]
+            body = read_response_bytes(exc, 1024 * 1024, "AI Gateway 错误").decode(
+                "utf-8", errors="replace"
+            )[:500]
         except Exception:
             pass
         return {"ok": False, "error": f"AI Gateway HTTP {exc.code}: {body}", "http_status": exc.code}
@@ -84,7 +91,9 @@ def _get_json(
     req = urllib.request.Request(url, method="GET")
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
-            raw = resp.read().decode("utf-8", errors="replace")
+            raw = read_response_bytes(
+                resp, AI_GATEWAY_MAX_RESPONSE_BYTES, "AI Gateway"
+            ).decode("utf-8", errors="replace")
         parsed = json.loads(raw) if raw else {}
         if isinstance(parsed, dict):
             parsed.setdefault("ok", True)
@@ -92,7 +101,9 @@ def _get_json(
     except urllib.error.HTTPError as exc:
         body = ""
         try:
-            body = exc.read().decode("utf-8", errors="replace")[:500]
+            body = read_response_bytes(exc, 1024 * 1024, "AI Gateway 错误").decode(
+                "utf-8", errors="replace"
+            )[:500]
         except Exception:
             pass
         return {"ok": False, "error": f"AI Gateway HTTP {exc.code}: {body}", "http_status": exc.code}

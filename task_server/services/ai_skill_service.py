@@ -46,6 +46,7 @@ from task_server.config import (
     safe_bool,
     safe_int,
 )
+from task_server.core.http_client import read_response_bytes
 from task_server.storage import (
     clean_asset_filename,
     clean_id,
@@ -86,6 +87,11 @@ from task_server.services.knowledge_service import (
 from task_server.services.report_service import (
     report_image_context,
     report_text_context,
+)
+
+AI_MAX_RESPONSE_BYTES = max(
+    1024 * 1024,
+    min(64 * 1024 * 1024, safe_int(os.getenv("MIDSCENE_AI_MAX_RESPONSE_BYTES"), 16 * 1024 * 1024)),
 )
 
 AI_SMOKE_SELECTOR_ENABLED = safe_bool(os.getenv("MIDSCENE_AI_SMOKE_SELECTOR_ENABLED", "1"), True)
@@ -499,7 +505,7 @@ def ai_gateway_skill_content(
     try:
         with urllib.request.urlopen(req, timeout=max(30, safe_int(timeout, 180))) as resp:
             data = _decode_ai_gateway_json_response(
-                resp.read(),
+                read_response_bytes(resp, AI_MAX_RESPONSE_BYTES, "AI Gateway"),
                 status=getattr(resp, "status", 200),
                 content_type=_ai_gateway_response_content_type(resp),
                 endpoint=endpoint,
@@ -507,7 +513,7 @@ def ai_gateway_skill_content(
     except urllib.error.HTTPError as exc:
         try:
             error_data = _decode_ai_gateway_json_response(
-                exc.read(),
+                read_response_bytes(exc, AI_MAX_RESPONSE_BYTES, "AI Gateway 错误"),
                 status=exc.code,
                 content_type=_ai_gateway_response_content_type(exc),
                 endpoint=endpoint,
@@ -642,7 +648,9 @@ def dashscope_chat_content(
         )
         try:
             with urllib.request.urlopen(req, timeout=timeout) as resp:
-                resp_data = json.loads(resp.read().decode("utf-8"))
+                resp_data = json.loads(
+                    read_response_bytes(resp, AI_MAX_RESPONSE_BYTES, "千问模型").decode("utf-8")
+                )
             return resp_data["choices"][0]["message"]["content"]
         except (TimeoutError, socket.timeout, urllib.error.URLError) as e:
             last_error = e
@@ -10455,7 +10463,9 @@ def call_dashscope_cases_legacy(title, module, text_assets, image_assets, model_
             method="POST"
         )
         with urllib.request.urlopen(req, timeout=360) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
+            data = json.loads(
+                read_response_bytes(resp, AI_MAX_RESPONSE_BYTES, "千问模型").decode("utf-8")
+            )
         content = data["choices"][0]["message"]["content"]
         model_runtime_trace.update({
             "providerId": "dashscope_direct",
@@ -10744,7 +10754,9 @@ APP 包名：{app_package}
         method="POST"
     )
     with urllib.request.urlopen(req, timeout=120) as resp:
-        resp_data = json.loads(resp.read().decode("utf-8"))
+        resp_data = json.loads(
+            read_response_bytes(resp, AI_MAX_RESPONSE_BYTES, "千问视觉模型").decode("utf-8")
+        )
 
     draft = normalize_model_json(resp_data["choices"][0]["message"]["content"])
     return {

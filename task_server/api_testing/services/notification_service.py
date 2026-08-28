@@ -155,8 +155,15 @@ class NotificationService:
             )
             if notification is None or not notification.enabled or not notification.ciphertext:
                 raise NotificationNotConfiguredError("Feishu notification is not configured")
-            children = execution_repository.get_execution_cases(execution.id)
-            metadata = execution_repository.display_metadata(execution, children)
+            children = execution_repository.get_execution_cases(
+                execution.id,
+                include_evidence=False,
+            )
+            metadata = execution_repository.display_metadata(
+                execution,
+                children,
+                include_details=False,
+            )
             webhook = _validate_api_testing_feishu_webhook(
                 decrypt_secret(notification.ciphertext)
             )

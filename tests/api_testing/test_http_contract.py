@@ -210,7 +210,7 @@ def owned_records(api_context):
         session.add(revision)
         session.flush()
         source.active_revision_id = revision.id
-        endpoint = ApiSourceEndpoint(revision_id=revision.id, stable_key="b" * 64, operation_id="favoriteList", method="GET", path="/favorites", normalized_path="/favorites", operation={}, **_audit("owner-a"))
+        endpoint = ApiSourceEndpoint(revision_id=revision.id, stable_key="b" * 64, operation_id="favoriteList", method="GET", path="/favorites", normalized_path="/favorites", operation={"responses": {"200": {"description": "ok"}}}, **_audit("owner-a"))
         environment = ApiEnvironment(project_id=first.id, source_id=source.id, name="env", **_audit("owner-a"))
         session.add_all((endpoint, environment))
         session.flush()
@@ -398,6 +398,45 @@ def test_authenticated_reads_are_owner_scoped(http_client, owned_records):
     assert other.body["error"]["code"] == endpoints.body["error"]["code"] == "not_found"
 
 
+def test_endpoint_collection_is_lightweight_and_detail_loads_operation(
+    http_client, owned_records
+):
+    collection = http_client.get(
+        f"/api/api-testing/v1/endpoints?source_revision_id={owned_records['revision'].id}",
+        _auth(),
+    )
+    detail = http_client.get(
+        f"/api/api-testing/v1/endpoints/{owned_records['endpoint'].id}",
+        _auth(),
+    )
+
+    assert collection.status == detail.status == 200
+    assert collection.body["data"]["endpoints"][0]["operation"] == {}
+    assert detail.body["data"]["endpoint"]["operation"]
+
+
+def test_source_revision_servers_route_does_not_require_full_revision_payload(
+    http_client, api_context, owned_records
+):
+    with api_context["factory"].begin() as session:
+        revision = session.get(ApiSourceRevision, owned_records["revision"].id)
+        revision.normalized_document = {
+            "openapi": "3.0.0",
+            "servers": [{"url": "https://api.example.test"}],
+            "paths": {"/large": {"get": {"responses": {"200": {}}}}},
+        }
+
+    response = http_client.get(
+        f"/api/api-testing/v1/source-revisions/{owned_records['revision'].id}/servers",
+        _auth(),
+    )
+
+    assert response.status == 200
+    assert response.body["data"] == {
+        "servers": [{"url": "https://api.example.test"}]
+    }
+
+
 def test_execution_collection_is_owner_scoped_and_uses_display_metadata(
     http_client, api_context, owned_records
 ):
@@ -458,12 +497,8 @@ def test_execution_collection_is_owner_scoped_and_uses_display_metadata(
         "failure_category": "product_assertion",
         "failure_analysis": None,
         "duration_ms": 86,
-        "sanitized_result": {
-            "sanitized_request": {"method": "GET", "url": "https://example.test/favorites"},
-            "sanitized_response": {"status_code": 200},
-            "assertion_results": [{"passed": False, "message": "列表为空"}],
-        },
-    }
+            "sanitized_result": {},
+        }
     assert denied.status == 404
 
 
