@@ -1,11 +1,13 @@
 """Transaction-scoped durable API execution state."""
 
 import copy
+from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from sqlalchemy import func, select, update
 from sqlalchemy.orm import defer
 
+from ..case_classification import is_one_time_case
 from ..models.case import ApiBaseline, ApiCase, ApiCaseVersion
 from ..models.environment import ApiEnvironment, ApiEnvironmentRevision
 from ..models.execution import (
@@ -22,6 +24,12 @@ from .source_repository import audit_fields
 
 def utc_now():
     return datetime.now(timezone.utc)
+
+
+@dataclass(frozen=True)
+class ActiveBaselineSelection:
+    version_ids: tuple
+    excluded_one_time_count: int
 
 
 class ExecutionRepository:
@@ -72,11 +80,13 @@ class ExecutionRepository:
         return {
             item.id: item
             for item in self.session.scalars(
-                select(ApiSourceEndpoint).where(ApiSourceEndpoint.id.in_(identifiers))
+                select(ApiSourceEndpoint)
+                .options(defer(ApiSourceEndpoint.operation, raiseload=True))
+                .where(ApiSourceEndpoint.id.in_(identifiers))
             )
         }
 
-    def active_baseline_version_ids(
+    def active_baseline_selection(
         self,
         project_id,
         owner_id,
@@ -84,7 +94,15 @@ class ExecutionRepository:
         baseline_ids=None,
     ):
         statement = (
-            select(ApiBaseline.case_version_id)
+            select(
+                ApiBaseline.case_version_id,
+                func.coalesce(
+                    ApiCaseVersion.request_template["name"].as_string(),
+                    ApiCase.name,
+                ),
+                ApiBaseline.group_name,
+                ApiSourceEndpoint.tags,
+            )
             .join(
                 ApiCaseVersion,
                 ApiCaseVersion.id == ApiBaseline.case_version_id,
@@ -93,6 +111,7 @@ class ExecutionRepository:
                 ApiSourceEndpoint,
                 ApiSourceEndpoint.id == ApiCaseVersion.endpoint_id,
             )
+            .join(ApiCase, ApiCase.id == ApiBaseline.case_id)
             .where(
                 ApiBaseline.project_id == project_id,
                 ApiBaseline.owner_id == owner_id,
@@ -106,7 +125,17 @@ class ExecutionRepository:
         baseline_identifiers = tuple(dict.fromkeys(baseline_ids or ()))
         if baseline_identifiers:
             statement = statement.where(ApiBaseline.id.in_(baseline_identifiers))
-        return tuple(self.session.scalars(statement))
+        version_ids = []
+        excluded_one_time_count = 0
+        for version_id, case_name, group_name, tags in self.session.execute(statement):
+            if is_one_time_case(case_name, group_name, tags):
+                excluded_one_time_count += 1
+                continue
+            version_ids.append(version_id)
+        return ActiveBaselineSelection(
+            version_ids=tuple(version_ids),
+            excluded_one_time_count=excluded_one_time_count,
+        )
 
     def get_by_idempotency(self, project_id, key):
         return self.session.scalar(
@@ -234,6 +263,53 @@ class ExecutionRepository:
             ),
         }
 
+    def display_metadata_for_execution_list(self, executions, children):
+        execution_rows = tuple(executions)
+        execution_ids = tuple(item.id for item in execution_rows)
+        versions = self.get_case_versions(item.case_version_id for item in children)
+        cases = self.get_cases(item.case_id for item in versions.values())
+        endpoints = self.get_endpoints(item.endpoint_id for item in children)
+        environment_ids = tuple(
+            dict.fromkeys(item.environment_revision_id for item in execution_rows)
+        )
+        environments = {
+            item.id: item
+            for item in self.session.scalars(
+                select(ApiEnvironmentRevision).where(
+                    ApiEnvironmentRevision.id.in_(environment_ids)
+                )
+            )
+        } if environment_ids else {}
+        events_by_execution = {execution_id: [] for execution_id in execution_ids}
+        if execution_ids:
+            events = self.session.scalars(
+                select(ApiExecutionEvent)
+                .where(
+                    ApiExecutionEvent.execution_id.in_(execution_ids),
+                    ApiExecutionEvent.event_type.in_(
+                        ("notification_sent", "notification_failed")
+                    ),
+                )
+                .order_by(ApiExecutionEvent.execution_id, ApiExecutionEvent.sequence)
+            )
+            for event in events:
+                events_by_execution.setdefault(event.execution_id, []).append(event)
+        return {
+            execution.id: {
+                "environment_name": (
+                    environments[execution.environment_revision_id].name
+                    if execution.environment_revision_id in environments
+                    else ""
+                ),
+                "cases": cases,
+                "versions": versions,
+                "endpoints": endpoints,
+                "failure_analyses": {},
+                "events": tuple(events_by_execution.get(execution.id, ())),
+            }
+            for execution in execution_rows
+        }
+
     def latest_failure_analyses(self, execution_case_ids):
         identifiers = tuple(dict.fromkeys(execution_case_ids))
         if not identifiers:
@@ -280,6 +356,26 @@ class ExecutionRepository:
             )
         if for_update:
             query = query.with_for_update()
+        return tuple(self.session.scalars(query))
+
+    def get_execution_cases_for_executions(
+        self,
+        execution_ids,
+        *,
+        include_evidence=False,
+    ):
+        identifiers = tuple(dict.fromkeys(execution_ids))
+        if not identifiers:
+            return ()
+        query = (
+            select(ApiExecutionCase)
+            .where(ApiExecutionCase.execution_id.in_(identifiers))
+            .order_by(ApiExecutionCase.execution_id, ApiExecutionCase.ordinal)
+        )
+        if not include_evidence:
+            query = query.options(
+                defer(ApiExecutionCase.sanitized_result, raiseload=True)
+            )
         return tuple(self.session.scalars(query))
 
     def get_execution_case(self, execution_id, execution_case_id, *, for_update=False):

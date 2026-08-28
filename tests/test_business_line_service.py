@@ -130,6 +130,37 @@ def test_configured_test_applications_prefer_saved_name_and_resolve_disabled_his
     assert business_line_service.test_application_name("com.kfb.model", "旧智小白") == "创想智造"
 
 
+def test_legacy_case_application_is_resolved_only_from_unique_configured_business(tmp_path, monkeypatch):
+    path = tmp_path / "task-apps.json"
+    _write_apps(path, [
+        {
+            "package": "com.kfb.model",
+            "name": "智小白3D",
+            "enabled": True,
+            "business_lines": [
+                {"id": "home", "name": "家用", "enabled": True},
+                {"id": "shared", "name": "共享", "enabled": True},
+            ],
+        },
+        {
+            "package": "com.example.school",
+            "name": "校园打印",
+            "enabled": True,
+            "business_lines": [{"id": "school", "name": "校园业务", "enabled": True}],
+        },
+    ])
+    monkeypatch.setattr(business_line_service, "TASK_APPS_FILE", str(path))
+
+    assert business_line_service.resolve_test_application(business="home")["package"] == "com.kfb.model"
+    assert business_line_service.resolve_test_application(snapshot_name="校园打印")["package"] == "com.example.school"
+    assert business_line_service.resolve_test_application(business="unknown") == {}
+    assert business_line_service.resolve_test_application(
+        package="com.removed.legacy",
+        snapshot_name="智小白3D",
+        business="home",
+    ) == {}
+
+
 def test_explicit_empty_application_catalog_does_not_restore_defaults(tmp_path, monkeypatch):
     path = tmp_path / "task-apps.json"
     _write_apps(path, [])

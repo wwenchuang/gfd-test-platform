@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 
 import { apiClient, type ApiClient } from '../api/client'
 import type { AiJob, ApiEndpoint, CaseDraft, CaseValidation, CaseVersion, DebugResult, EnvironmentRevisionSnapshot, ExecutionView, GeneratedCasePreview } from '../api/contracts'
+import { aiValidationSummary } from '../utils/aiValidationPresentation'
 import { validateCaseDraftLocally } from '../utils/caseDraftValidation'
 import { createIdempotencyKey } from '../utils/idempotency'
 
@@ -20,6 +21,7 @@ export const useCasesStore = defineStore('api-cases', {
     aiError: '',
     aiPolling: false,
     aiCanResume: false,
+    aiDiagnosisBatchId: '',
     lastAiJobId: '',
     aiRestoreGeneration: 0,
     basicGenerating: false,
@@ -349,12 +351,31 @@ export const useCasesStore = defineStore('api-cases', {
       this.aiError = ''
       await this.pollAiJob(this.lastAiJobId)
     },
+    async diagnoseAiValidation(batchId: string, errorIndex: number): Promise<void> {
+      if (!this.aiJob || this.aiDiagnosisBatchId) return
+      this.aiDiagnosisBatchId = batchId
+      this.aiError = ''
+      try {
+        const response = await apiClient.post<{ job: AiJob }>(
+          `/api/api-testing/v1/ai-jobs/${this.aiJob.id}/validation-diagnosis`,
+          { batch_id: batchId, error_index: errorIndex },
+        )
+        this.aiJob = response.data.job
+      } catch (error) {
+        this.aiError = error instanceof Error
+          ? error.message
+          : '千问暂时无法分析该错误，请稍后重试'
+      } finally {
+        this.aiDiagnosisBatchId = ''
+      }
+    },
     clearAiJob(): void {
       this.aiRestoreGeneration += 1
       this.aiJob = null
       this.aiError = ''
       this.aiPolling = false
       this.aiCanResume = false
+      this.aiDiagnosisBatchId = ''
       this.lastAiJobId = ''
     },
     async restoreLatestAiJob(
@@ -769,9 +790,8 @@ function delay(milliseconds: number): Promise<void> {
 
 function aiJobFailureMessage(job: AiJob): string {
   if (!['failed', 'failed_gateway', 'failed_validation'].includes(job.state)) return ''
-  const issue = job.batches
-    .flatMap(batch => batch.validation_errors || [])
-    .find(item => typeof item.message === 'string')
+  const issues = job.batches.flatMap(batch => batch.validation_errors || [])
+  const issue = issues.find(item => typeof item.message === 'string')
   if (issue?.code === 'missing_endpoint_coverage') {
     return '部分已选接口没有生成有效用例，请调整测试意图后重试'
   }
@@ -779,6 +799,8 @@ function aiJobFailureMessage(job: AiJob): string {
     return 'AI 返回内容格式不正确，请重新生成'
   }
   if (typeof issue?.message === 'string' && /[\u4e00-\u9fff]/.test(issue.message)) return issue.message
+  const translated = aiValidationSummary(issues)
+  if (translated) return translated
   if (job.state === 'failed_gateway') return 'AI 服务调用失败，请稍后重试或检查模型配置'
   if (job.state === 'failed_validation') return 'AI 生成结果未通过平台校验，请调整测试意图后重试'
   return 'AI 生成未完成，请重新生成当前范围'

@@ -43,7 +43,93 @@ describe('AiAssistant', () => {
       },
     })
 
-    expect(wrapper.text()).toContain('AI 返回内容格式不正确，请重新生成')
+    expect(wrapper.text()).toContain('AI 返回内容格式不正确')
+    expect(wrapper.text()).toContain('重新生成当前范围')
+  })
+
+  it('translates a literal runtime value error and explains both repair paths', () => {
+    const wrapper = mount(AiAssistant, {
+      props: {
+        selectedCount: 7,
+        job: {
+          ...job,
+          state: 'partial',
+          batches: [{
+            ...job.batches[0],
+            state: 'partial',
+            generated_draft_ids: ['version-1'],
+            validation_errors: [{
+              code: 'candidate_validation_error',
+              message: 'literal credential is not allowed at case.request.body.actionRequestId; use a variable placeholder',
+            }],
+          }],
+        },
+      },
+    })
+
+    expect(wrapper.text()).toContain('检测到写死的敏感值或运行时标识')
+    expect(wrapper.text()).toContain('主体请求 → 请求体 → actionRequestId')
+    expect(wrapper.text()).toContain('环境设置')
+    expect(wrapper.text()).toContain('{{actionRequestId}}')
+    expect(wrapper.text()).toContain('前置步骤')
+    expect(wrapper.text()).toContain('查看英文原文')
+    expect(wrapper.find('[data-testid="validation-original-message"]').text()).toContain('literal credential is not allowed')
+  })
+
+  it('offers configured Qwen analysis for an unknown rule and renders the saved diagnosis', async () => {
+    const validationError = {
+      code: 'candidate_validation_error',
+      message: 'must constrain response fields',
+    }
+    const wrapper = mount(AiAssistant, {
+      props: {
+        selectedCount: 1,
+        job: {
+          ...job,
+          state: 'failed_validation',
+          batches: [{
+            ...job.batches[0],
+            state: 'failed_validation',
+            generated_draft_ids: [],
+            validation_errors: [validationError],
+          }],
+        },
+      },
+    })
+
+    expect(wrapper.text()).toContain('可使用当前配置的千问分析')
+    await wrapper.get('[data-testid="diagnose-validation-batch-1"]').trigger('click')
+    expect(wrapper.emitted('diagnose-validation')).toEqual([['batch-1', 0]])
+
+    await wrapper.setProps({
+      job: {
+        ...job,
+        state: 'failed_validation',
+        batches: [{
+          ...job.batches[0],
+          state: 'failed_validation',
+          generated_draft_ids: [],
+          validation_errors: [{
+            ...validationError,
+            diagnosis: {
+              analyzer: 'ai_gateway',
+              model: 'qwen3.7-plus',
+              analysis: {
+                summary: '响应断言范围不明确',
+                root_cause: 'Schema 断言没有限定需要校验的响应字段。',
+                recommendations: ['改为断言明确的 JSON 字段路径。'],
+                evidence: ['平台校验规则返回 must constrain response fields'],
+              },
+            },
+          }],
+        }],
+      },
+    })
+
+    expect(wrapper.text()).toContain('千问分析 · qwen3.7-plus')
+    expect(wrapper.text()).toContain('响应断言范围不明确')
+    expect(wrapper.text()).toContain('改为断言明确的 JSON 字段路径')
+    expect(wrapper.find('[data-testid="diagnose-validation-batch-1"]').exists()).toBe(false)
   })
 
   it('emits a separate event for deterministic basic positive case generation', async () => {

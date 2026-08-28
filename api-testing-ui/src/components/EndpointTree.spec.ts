@@ -229,6 +229,31 @@ describe('EndpointTree', () => {
     expect(wrapper.text()).not.toContain('/pmc/api/v1/deviceCmd/deviceStatus')
   })
 
+  it('reveals matching synced endpoints outside the restored task selection', async () => {
+    const wrapper = mount(EndpointTree, {
+      props: {
+        endpoints: [
+          { id: 'endpoint-selected', method: 'POST', path: '/api/v1/devices/editFt', summary: '保存设备耗材（EPOne 复用）', tags: ['EPOne'] },
+          { id: 'endpoint-new-1', method: 'POST', path: '/api/v1/deviceSettings/query', summary: '查询EPOne设备设置', tags: ['EPOne'] },
+          { id: 'endpoint-new-2', method: 'POST', path: '/api/v1/deviceSettings/set', summary: '修改EPOne设备设置', tags: ['EPOne'] },
+        ],
+        selectedIds: ['endpoint-selected'],
+        initialTab: 'selected',
+      },
+    })
+
+    await wrapper.get('[data-testid="endpoint-search"]').setValue('EPOne')
+
+    expect(wrapper.get('[data-testid="selected-search-more"]').text()).toContain('还有 2 个匹配结果')
+    expect(wrapper.text()).not.toContain('查询EPOne设备设置')
+
+    await wrapper.get('[data-testid="selected-search-more"] button').trigger('click')
+
+    expect(wrapper.get('[data-testid="all-tab"]').classes()).toContain('active')
+    expect(wrapper.text()).toContain('查询EPOne设备设置')
+    expect(wrapper.text()).toContain('修改EPOne设备设置')
+  })
+
   it('renders selected endpoint summaries in a dedicated readable row layout', async () => {
     const wrapper = mount(EndpointTree, {
       props: {

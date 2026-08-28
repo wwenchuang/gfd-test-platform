@@ -34,7 +34,14 @@ _BEARER = re.compile(r"(?i)(bearer\s+)[^\s,;]+")
 _PATH_PARAMETER = re.compile(r"{([A-Za-z_][A-Za-z0-9_.-]*)}")
 _REDacted = "***"
 _POLL_RETRYABLE_CATEGORIES = frozenset(
-    {"product_assertion", "product_response", "parser", "timeout", "transport"}
+    {
+        "business_response",
+        "product_assertion",
+        "product_response",
+        "parser",
+        "timeout",
+        "transport",
+    }
 )
 
 
@@ -402,6 +409,7 @@ class HttpExecutor:
                     status = "FAILED" if setup_failure.status == "FAILED" else "BROKEN"
                     category = "setup"
                 error = setup_failure.error
+                assertion_results = setup_failure.assertions
                 if not request_view:
                     request_view = setup_failure.request
                     response_view = setup_failure.response
@@ -703,15 +711,6 @@ class HttpExecutor:
                     callback, trace, "response", {"response": response_view}
                 )
             self._check_cancel("after_response", cancel)
-            if extraction_views:
-                extracted = extract_values(extraction_views, response)
-                if record_main_phases:
-                    self._emit_phase(
-                        callback,
-                        trace,
-                        "extraction",
-                        {"variables": redact(extracted, response_secrets)},
-                    )
             self._check_cancel("before_assertion", cancel)
             if assertion_views:
                 raw_assertion_results = list(evaluate_assertions(assertion_views, response))
@@ -749,6 +748,43 @@ class HttpExecutor:
                 status, category = "FAILED", "product_response"
             else:
                 status, category = "PASSED", ""
+            if status != "PASSED":
+                if extraction_views:
+                    extracted = self._extract_available_values(
+                        extraction_views,
+                        response,
+                    )
+                    if record_main_phases and extracted:
+                        self._emit_phase(
+                            callback,
+                            trace,
+                            "extraction",
+                            {"variables": redact(extracted, response_secrets)},
+                        )
+                return _HttpStepOutcome(
+                    status,
+                    category,
+                    request_view,
+                    response_view,
+                    assertion_results,
+                    extracted,
+                    self._response_failure_message(
+                        response,
+                        assertion_results,
+                        category,
+                    ),
+                    response_secrets,
+                    raw_response,
+                )
+            if extraction_views:
+                extracted = extract_values(extraction_views, response)
+                if record_main_phases:
+                    self._emit_phase(
+                        callback,
+                        trace,
+                        "extraction",
+                        {"variables": redact(extracted, response_secrets)},
+                    )
             return _HttpStepOutcome(
                 status,
                 category,
@@ -772,6 +808,51 @@ class HttpExecutor:
                 error,
                 secrets,
             )
+
+    @staticmethod
+    def _extract_available_values(extractions, response):
+        values = {}
+        for extraction in extractions:
+            try:
+                values.update(extract_values((extraction,), response))
+            except (JsonPathError, KeyError, AssertionDefinitionError):
+                continue
+        return values
+
+    @staticmethod
+    def _response_failure_message(response, assertion_results, category):
+        body = response.json_body if isinstance(response.json_body, dict) else {}
+        business_code = body.get("code")
+        server_message = next(
+            (
+                body.get(key)
+                for key in ("msg", "message", "error")
+                if isinstance(body.get(key), str) and body.get(key).strip()
+            ),
+            "",
+        )
+        failed = next(
+            (item for item in assertion_results if item.get("passed") is False),
+            None,
+        )
+        if category in {"business_response", "product_assertion"} and business_code is not None:
+            parts = [f"接口业务校验未通过：业务码 {business_code}"]
+        elif category == "product_assertion":
+            parts = ["接口响应断言未通过"]
+        elif category == "product_response":
+            parts = [f"接口返回 HTTP {response.status_code}"]
+        else:
+            parts = ["接口响应未通过校验"]
+        if server_message:
+            parts.append(f"服务端提示：{server_message}")
+        if failed is not None:
+            parts.append(
+                "断言期望 "
+                + json.dumps(failed.get("expected"), ensure_ascii=False)
+                + "，实际 "
+                + json.dumps(failed.get("actual"), ensure_ascii=False)
+            )
+        return "；".join(parts)
 
     @staticmethod
     def _object_views(items):

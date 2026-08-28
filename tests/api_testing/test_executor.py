@@ -65,6 +65,14 @@ class _TargetHandler(BaseHTTPRequestHandler):
             self._send(200, {"code": 0, "data": [{"id": "favorite-1"}]})
         elif self.path.startswith("/business-fail"):
             self._send(200, {"code": 4009, "message": "not logged in"})
+        elif self.path.startswith("/business-line-fail"):
+            self._send(200, {
+                "code": 4009,
+                "msg": "业务线未知！",
+                "data": {"resourceSn": "cleanup-resource-1"},
+            })
+        elif self.path.startswith("/boolean-code"):
+            self._send(200, {"code": False, "message": "业务处理失败"})
         elif self.path.startswith("/status-500"):
             self._send(500, {"message": "server error"})
         elif self.path.startswith("/text"):
@@ -697,7 +705,7 @@ def test_main_assertion_failure_still_cancels_print(target_server):
     )
 
     assert result.status == "FAILED"
-    assert result.failure_category == "product_assertion"
+    assert result.failure_category == "business_response"
     assert handler.workflow_calls[-1][1] == "/workflow/cancel"
     assert handler.workflow_calls[-1][2] == {"printTaskSn": "print-task-failed"}
 
@@ -927,7 +935,7 @@ def test_success_and_truthful_product_statuses(target_server):
 
     assert passed.status == "PASSED"
     assert assertion_failed.status == "FAILED"
-    assert assertion_failed.failure_category == "product_assertion"
+    assert assertion_failed.failure_category == "business_response"
     assert server_failed.status == "FAILED"
     assert server_failed.failure_category == "product_response"
 
@@ -949,6 +957,64 @@ def test_business_failure_cannot_pass_with_broad_negative_assertion(target_serve
     business_guard = next(item for item in result.assertion_results if item["type"] == "business_code")
     assert business_guard["actual"] == 4009
     assert business_guard["passed"] is False
+
+
+def test_business_assertion_failure_is_reported_before_required_extraction(
+    target_server,
+):
+    result = _executor(
+        target_server,
+        _case(
+            "/business-line-fail",
+            assertions=[_assertion("json_path", "equals", 0, "$.code")],
+            extractions=[
+                _extraction(
+                    "cleanupResourceSn",
+                    "json_path",
+                    "$.data.resourceSn",
+                ),
+                _extraction(
+                    "resourceSn",
+                    "json_path",
+                    "$.data.records[0].sn",
+                )
+            ],
+        ),
+    ).execute_case("case-version-1", "environment-revision-1", {})
+
+    assert result.status == "FAILED"
+    assert result.failure_category == "business_response"
+    assert result.extracted_variables == {
+        "cleanupResourceSn": "cleanup-resource-1",
+    }
+    assert result.assertion_results[0]["actual"] == 4009
+    assert "业务码 4009" in result.error_message
+    assert "业务线未知" in result.error_message
+    assert "期望 0" in result.error_message
+    assert "JSON 路径未找到" not in result.error_message
+    assert [event["phase"] for event in result.trace] == [
+        "request",
+        "response",
+        "assertion",
+        "extraction",
+    ]
+
+
+def test_boolean_business_code_does_not_equal_numeric_zero(target_server):
+    result = _executor(
+        target_server,
+        _case(
+            "/boolean-code",
+            assertions=[_assertion("json_path", "equals", 0, "$.code")],
+        ),
+    ).execute_case("case-version-1", "environment-revision-1", {})
+
+    assert result.status == "FAILED"
+    assert result.failure_category == "business_response"
+    assert result.assertion_results[0]["actual"] is False
+    assert result.assertion_results[0]["passed"] is False
+    assert result.assertion_results[1]["type"] == "business_code"
+    assert result.assertion_results[1]["passed"] is False
 
 
 def test_exact_expected_business_failure_code_can_pass(target_server):
@@ -1043,7 +1109,7 @@ def test_non_json_is_allowed_until_json_operation_requires_it(target_server):
     assert parsed.failure_category == "parser"
 
 
-def test_extraction_runs_before_assertions(target_server):
+def test_extraction_runs_only_after_assertions_pass(target_server):
     result = _executor(
         target_server,
         _case(
@@ -1053,7 +1119,7 @@ def test_extraction_runs_before_assertions(target_server):
     ).execute_case("case-version-1", "environment-revision-1", {})
     assert result.status == "PASSED"
     assert result.extracted_variables == {"favoriteId": "favorite-1"}
-    assert [event["phase"] for event in result.trace] == ["request", "response", "extraction", "assertion"]
+    assert [event["phase"] for event in result.trace] == ["request", "response", "assertion", "extraction"]
 
 
 def test_ssrf_redirects_and_redirect_limit_are_enforced(target_server):

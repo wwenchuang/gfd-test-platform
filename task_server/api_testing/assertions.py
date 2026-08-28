@@ -74,15 +74,19 @@ def _matches(actual, operator, expected, *, exists=True):
     if not exists:
         return False
     if operator == "equals":
-        return actual == expected
+        return _json_equals(actual, expected)
     if operator == "not_equals":
-        return actual != expected
+        return not _json_equals(actual, expected)
     if operator == "contains":
+        if isinstance(actual, list):
+            return any(_json_equals(item, expected) for item in actual)
         try:
             return expected in actual
         except TypeError:
             return False
     if operator == "not_contains":
+        if isinstance(actual, list):
+            return not any(_json_equals(item, expected) for item in actual)
         try:
             return expected not in actual
         except TypeError:
@@ -100,8 +104,14 @@ def _matches(actual, operator, expected, *, exists=True):
     if operator == "matches":
         return isinstance(actual, str) and re.search(expected, actual) is not None
     if operator == "in":
-        return actual in expected
+        return any(_json_equals(actual, item) for item in expected)
     raise AssertionDefinitionError("不支持该断言比较方式")
+
+
+def _json_equals(left, right):
+    if isinstance(left, bool) or isinstance(right, bool):
+        return type(left) is type(right) and left == right
+    return left == right
 
 
 def _schema_matches(value, schema, depth=0):
@@ -193,8 +203,8 @@ def evaluate_business_response(assertions, response):
     if not isinstance(body, dict) or "code" not in body:
         return None
     actual = body["code"]
-    success_codes = {0, 200, "0", "200"}
-    if actual in success_codes:
+    success_codes = (0, 200, "0", "200")
+    if any(_json_equals(actual, item) for item in success_codes):
         return None
     for assertion in assertions:
         if not getattr(assertion, "enabled", True):
@@ -205,9 +215,13 @@ def evaluate_business_response(assertions, response):
             continue
         operator = getattr(assertion, "operator", "")
         expected = getattr(assertion, "expected", None)
-        if operator == "equals":
+        if operator == "equals" and _json_equals(actual, expected):
             return None
-        if operator == "in" and isinstance(expected, (list, tuple)):
+        if (
+            operator == "in"
+            and isinstance(expected, (list, tuple))
+            and any(_json_equals(actual, item) for item in expected)
+        ):
             return None
     return AssertionResult(
         type="business_code",

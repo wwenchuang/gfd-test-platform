@@ -433,6 +433,98 @@ class AiCaseService:
                 raise AiJobNotFoundError("AI case generation job was not found")
             return self._job_view(repository, job)
 
+    def diagnose_validation_error(
+        self,
+        job_id,
+        batch_id,
+        error_index,
+        actor_id,
+        *,
+        analyzer=None,
+    ):
+        with self.session_factory() as session:
+            repository = AiJobRepository(session)
+            job = repository.get_job(job_id)
+            if job is None or job.owner_id != actor_id:
+                raise AiJobNotFoundError("AI case generation job was not found")
+            batch = next(
+                (item for item in repository.list_batches(job.id) if item.id == batch_id),
+                None,
+            )
+            errors = list((batch.result or {}).get("validation_errors", [])) if batch else []
+            if not isinstance(error_index, int) or error_index < 0 or error_index >= len(errors):
+                raise AiJobInputError("validation error index is invalid")
+            issue = copy.deepcopy(dict(errors[error_index]))
+            existing = issue.get("diagnosis")
+            if isinstance(existing, dict):
+                return self._job_view(repository, job)
+            endpoint_ids = [issue.get("endpoint_id")] if issue.get("endpoint_id") else list(batch.endpoint_ids)
+            endpoint_map = repository.get_endpoints(endpoint_ids)
+            interface_context = []
+            for endpoint_id in endpoint_ids:
+                endpoint = endpoint_map.get(endpoint_id)
+                if endpoint is None:
+                    continue
+                operation = endpoint.operation if isinstance(endpoint.operation, dict) else {}
+                interface_context.append({
+                    "method": endpoint.method,
+                    "path": endpoint.path,
+                    "name": endpoint.summary,
+                    "tags": copy.deepcopy(endpoint.tags),
+                    "contract": self._sanitize_contract({
+                        "parameters": operation.get("parameters", []),
+                        "requestBody": operation.get("requestBody", {}),
+                        "responses": operation.get("responses", {}),
+                    }),
+                })
+
+        issue_code = str(issue.get("code", "candidate_validation_error"))
+        if issue_code not in {
+            "candidate_validation_error",
+            "missing_endpoint_coverage",
+        }:
+            issue_code = "candidate_validation_error"
+        safe_issue = {
+            "code": issue_code,
+            "message": self._safe_error(issue.get("message", "validation failed")),
+        }
+        diagnosis = (analyzer or AiFailureAnalyzer()).analyze({
+            "stage": "AI 用例生成结果校验",
+            "error": safe_issue,
+            "interfaces": interface_context,
+            "request": "请结合当前接口合同，用中文解释原因，明确指出要修改的字段或断言并给出可执行步骤；不得建议绕过平台校验。",
+        })
+
+        with self.session_factory.begin() as session:
+            repository = AiJobRepository(session)
+            job = repository.get_job_for_update(job_id)
+            batch = repository.get_batch_for_update(batch_id)
+            if job is None or job.owner_id != actor_id or batch is None or batch.job_id != job.id:
+                raise AiJobNotFoundError("AI case generation job was not found")
+            result = copy.deepcopy(batch.result or {})
+            errors = list(result.get("validation_errors", []))
+            if error_index < 0 or error_index >= len(errors):
+                raise AiJobInputError("validation error index is invalid")
+            current = copy.deepcopy(dict(errors[error_index]))
+            if (
+                current.get("code") != issue.get("code")
+                or current.get("message") != issue.get("message")
+            ):
+                raise AiJobInputError("validation error changed before diagnosis completed")
+            current["diagnosis"] = redact(copy.deepcopy(diagnosis))
+            errors[error_index] = current
+            result["validation_errors"] = errors
+            repository.update_batch(
+                batch,
+                state=batch.state,
+                actual_model=batch.actual_model,
+                result=result,
+                error=batch.error,
+                actor_id=actor_id,
+            )
+
+        return self.get_job(job_id)
+
     def get_latest_job(self, project_id, source_revision_id=None):
         with self.session_factory() as session:
             repository = AiJobRepository(session)

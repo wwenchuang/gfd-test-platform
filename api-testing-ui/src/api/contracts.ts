@@ -568,6 +568,7 @@ export interface BaselineAssertionAuditItem {
   business_value: unknown
   suggested_assertions: Array<Record<string, unknown>>
   execution: BaselineAssertionAuditExecution
+  manual_only?: boolean
 }
 
 export interface BaselineAssertionAuditSummary {
@@ -579,6 +580,7 @@ export interface BaselineAssertionAuditSummary {
   domain_assertion_required: number
   evidence_missing: number
   needs_review: number
+  manual_only?: number
   safe_review: number
 }
 

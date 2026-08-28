@@ -1,6 +1,7 @@
 import json
 
 from task_server.api_testing.services.baseline_assertion_audit_service import (
+    BaselineAssertionAuditService,
     _is_one_time,
     analyze_baseline_assertions,
 )
@@ -276,3 +277,30 @@ def test_print_review_requires_this_job_extraction_and_cancel_cleanup():
 def test_normal_api_test_name_is_not_misclassified_as_one_time():
     assert _is_one_time("API test 设备列表", "基础回归", ("api",)) is False
     assert _is_one_time("一次性数据初始化", "人工验证", ()) is True
+
+
+def test_one_time_audit_is_counted_as_manual_only_not_automated_review():
+    items = [
+        {
+            "status": "domain_assertion_required",
+            "manual_only": True,
+            "execution": {"selectable": False},
+        },
+        {
+            "status": "business_failure",
+            "manual_only": False,
+            "execution": {"selectable": False},
+        },
+        {
+            "status": "verified",
+            "manual_only": False,
+            "execution": {"selectable": True},
+        },
+    ]
+
+    summary = BaselineAssertionAuditService._summary(items)
+
+    assert summary["total"] == 3
+    assert summary["verified"] == 1
+    assert summary["needs_review"] == 1
+    assert summary["manual_only"] == 1

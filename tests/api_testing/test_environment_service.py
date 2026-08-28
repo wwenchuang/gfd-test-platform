@@ -310,6 +310,63 @@ def test_import_preserves_services_public_variables_and_headers(
     assert imported.default_headers["X-Biz"] == "{{Biz}}"
 
 
+def test_source_refresh_keeps_platform_runtime_configuration_when_provider_omits_it(
+    environment_service, production_environment, session_factory
+):
+    initial_payload = copy.deepcopy(production_environment)
+    initial_payload["variables"]["sourceOnly"] = "remove-on-provider-delete"
+    imported = environment_service.import_from_source(initial_payload, "admin")
+    configured = environment_service.create_revision(
+        imported.id,
+        {
+            "variables": {
+                "Biz": "ZXB",
+                "tenant": "{{Biz}}-tenant",
+                "platformOnly": "keep-me",
+            },
+        },
+        {"ZXBToken": BUSINESS_TOKEN},
+        "admin",
+    )
+    refreshed_payload = copy.deepcopy(production_environment)
+    refreshed_payload["variables"] = {
+        "settings": {"locale": "zh-CN", "enabled": False},
+        "providerNew": "new-value",
+    }
+    refreshed_payload["default_headers"] = {}
+    refreshed_payload["description"] = "provider refresh without runtime variables"
+
+    with session_factory.begin() as session:
+        refreshed = environment_service.upsert_from_source_in_session(
+            session,
+            refreshed_payload,
+            "admin",
+        )
+
+    assert refreshed.revision == configured.revision + 1
+    assert refreshed.variables["Biz"] == "ZXB"
+    assert refreshed.variables["tenant"] == "{{Biz}}-tenant"
+    assert refreshed.variables["platformOnly"] == "keep-me"
+    assert refreshed.variables["providerNew"] == "new-value"
+    assert refreshed.variables["settings"] == {
+        "locale": "zh-CN",
+        "enabled": False,
+    }
+    assert "sourceOnly" not in refreshed.variables
+    assert refreshed.variables["ZXBToken"].configured is True
+    assert refreshed.default_headers == production_environment["default_headers"]
+    with session_factory() as session:
+        rows = session.scalars(
+            select(ApiEnvironmentVariable).where(
+                ApiEnvironmentVariable.revision_id == refreshed.revision_id,
+                ApiEnvironmentVariable.is_secret.is_(False),
+            )
+        )
+        scopes = {row.name: row.scope for row in rows}
+    assert scopes["Biz"] == "environment"
+    assert scopes["providerNew"] == "source"
+
+
 @pytest.mark.parametrize(
     "base_url",
     [

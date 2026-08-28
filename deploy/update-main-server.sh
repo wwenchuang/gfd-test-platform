@@ -92,6 +92,20 @@ run_as_root() {
   fi
 }
 
+TASK_SERVICE_NEEDS_RESTORE=0
+
+restore_task_service_on_exit() {
+  local status=$?
+  trap - EXIT
+  if [ "${TASK_SERVICE_NEEDS_RESTORE}" = "1" ]; then
+    echo "部署异常退出，自动恢复 midscene-task.service" >&2
+    run_as_root systemctl start midscene-task.service >/dev/null 2>&1 || true
+  fi
+  exit "${status}"
+}
+
+trap restore_task_service_on_exit EXIT
+
 SONIC_STATE_CAPTURED=0
 SONIC_RUNNING_BEFORE=""
 
@@ -341,12 +355,14 @@ restart_task_service_cleanly() {
     echo "缺少 systemctl，无法确保后端进程已替换" >&2
     return 2
   fi
+  TASK_SERVICE_NEEDS_RESTORE=1
   run_as_root systemctl stop midscene-task.service >/dev/null 2>&1 || true
   stop_stale_task_listeners
   run_as_root systemctl start midscene-task.service
   for _ in $(seq 1 40); do
     if run_as_root systemctl is-active --quiet midscene-task.service \
       && curl -fsS --max-time 1 "http://127.0.0.1:${PORT}/api/health" >/dev/null 2>&1; then
+      TASK_SERVICE_NEEDS_RESTORE=0
       return 0
     fi
     sleep 0.5
@@ -475,7 +491,9 @@ capture_sonic_container_state
 configure_sonic_restart_policy
 migrate_legacy_task_launchers
 
+TASK_SERVICE_NEEDS_RESTORE=1
 APP_DIR="${APP_DIR}" WEB_DIR="${WEB_DIR}" PORT="${PORT}" RELEASE_REVISION="${DEPLOY_REVISION}" run_as_root bash deploy/install-server.sh
+TASK_SERVICE_NEEDS_RESTORE=0
 
 restart_task_service_cleanly
 restart_service_if_present midscene-api-worker

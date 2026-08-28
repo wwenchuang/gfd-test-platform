@@ -129,13 +129,23 @@ class EnvironmentRepository:
         self.session.add(record)
         return record
 
-    def add_public_variable(self, revision_id, environment_id, name, value, actor_id):
+    def add_public_variable(
+        self,
+        revision_id,
+        environment_id,
+        name,
+        value,
+        actor_id,
+        *,
+        scope="environment",
+    ):
         record = ApiEnvironmentVariable(
             revision_id=revision_id,
             environment_id=environment_id,
             name=name,
             value=copy.deepcopy(value),
             is_secret=False,
+            scope=scope,
             **audit_fields(actor_id),
         )
         self.session.add(record)

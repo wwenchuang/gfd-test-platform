@@ -6,6 +6,7 @@ from pathlib import Path
 
 from alembic import command
 from sqlalchemy import create_engine, event, func, select
+from sqlalchemy.exc import InvalidRequestError
 from sqlalchemy.orm import sessionmaker
 import pytest
 
@@ -298,8 +299,8 @@ def test_draft_persists_application_identity_and_legacy_versions_stay_readable(
         session.commit()
 
     legacy = case_service.get_version(draft.id)
-    assert legacy.app_package == ""
-    assert legacy.app_name == ""
+    assert legacy.app_package == "com.kfb.model"
+    assert legacy.app_name == "智小白3D"
 
 
 def test_disabled_application_case_can_be_edited_but_keeps_historical_scope(
@@ -999,6 +1000,41 @@ def test_baseline_assertion_audit_reads_large_projects_in_bounded_batches(
     assert calls == [(2, 0), (2, 2), (2, 4), (2, 5)]
 
 
+def test_active_baseline_list_does_not_load_endpoint_operation_payloads(
+    case_service, project_context, session_factory
+):
+    from task_server.api_testing.repositories.case_repository import CaseRepository
+
+    endpoint = project_context["endpoints"]["favoriteList"]
+    draft = case_service.create_draft(
+        endpoint.id,
+        valid_list_case(endpoint),
+        "manual",
+        "admin",
+    )
+    evidence_id = _create_execution_evidence(
+        session_factory,
+        project_context,
+        draft,
+        response={
+            "status_code": 200,
+            "body": json.dumps({"code": 0, "data": []}),
+            "headers": {},
+        },
+    )
+    case_service.adopt_baseline(draft.id, evidence_id, "admin")
+
+    with session_factory() as session:
+        rows = CaseRepository(session).list_active_baselines(
+            project_context["project"].id,
+            "admin",
+        )
+        listed_endpoint = rows[0][3]
+        assert listed_endpoint.path
+        with pytest.raises(InvalidRequestError):
+            _ = listed_endpoint.operation
+
+
 def test_latest_execution_attempt_query_only_loads_latest_attempt(
     case_service, project_context, session_factory
 ):
@@ -1379,39 +1415,38 @@ def test_baseline_rejects_cross_version_endpoint_environment_and_project(
         case_service.adopt_baseline(second.id, wrong_project, "admin")
 
 
-def test_readoption_keeps_multiple_active_baseline_versions_until_manual_archive(
+def test_readoption_supersedes_previous_baseline_and_keeps_version_name(
     case_service, project_context, session_factory
 ):
     endpoint = project_context["endpoints"]["favoriteList"]
-    first = case_service.create_draft(endpoint.id, valid_list_case(endpoint), "manual", "admin")
+    first_payload = valid_list_case(endpoint)
+    first_payload["name"] = "收藏列表旧基线"
+    first = case_service.create_draft(endpoint.id, first_payload, "manual", "admin")
     first_evidence = _create_execution_evidence(session_factory, project_context, first)
     first_baseline = case_service.adopt_baseline(first.id, first_evidence, "admin")
 
-    second = case_service.create_version(first.case_id, valid_list_case(endpoint), "admin")
+    second_payload = valid_list_case(endpoint)
+    second_payload["name"] = "收藏列表新基线"
+    second = case_service.create_version(first.case_id, second_payload, "admin")
     second_evidence = _create_execution_evidence(session_factory, project_context, second)
     second_baseline = case_service.adopt_baseline(second.id, second_evidence, "admin")
 
-    assert case_service.get_baseline(first_baseline.id).status == "active"
+    assert case_service.get_baseline(first_baseline.id).status == "superseded"
     assert case_service.get_baseline(second_baseline.id).status == "active"
-    active = case_service.list_active_baselines(project_context["project"].id, "admin")
-    assert {item.id for item in active} >= {first_baseline.id, second_baseline.id}
-
-    archived = case_service.archive_baseline(first_baseline.id, "admin")
-    active_after_archive = case_service.list_active_baselines(
+    visible = case_service.list_active_baselines(
         project_context["project"].id,
         "admin",
     )
-
-    assert archived.status == "archived"
-    assert first_baseline.id not in {item.id for item in active_after_archive}
-    assert second_baseline.id in {item.id for item in active_after_archive}
+    visible_by_id = {item.id: item for item in visible}
+    assert visible_by_id[first_baseline.id].case_name == "收藏列表旧基线"
+    assert visible_by_id[second_baseline.id].case_name == "收藏列表新基线"
     with session_factory() as session:
         assert session.scalar(
             select(func.count(ApiBaseline.id)).where(ApiBaseline.case_id == first.case_id)
         ) == 2
 
 
-def test_new_environment_revision_keeps_old_baseline_visible_until_manual_archive(
+def test_new_environment_revision_supersedes_old_baseline_but_keeps_history_visible(
     case_service, project_context, session_factory
 ):
     endpoint = project_context["endpoints"]["favoriteList"]
@@ -1442,11 +1477,11 @@ def test_new_environment_revision_keeps_old_baseline_visible_until_manual_archiv
     )
     second_baseline = case_service.adopt_baseline(second.id, second_evidence, "admin")
 
-    assert case_service.get_baseline(first_baseline.id).status == "active"
+    assert case_service.get_baseline(first_baseline.id).status == "superseded"
     assert case_service.get_baseline(second_baseline.id).status == "active"
-    active = case_service.list_active_baselines(project_context["project"].id, "admin")
-    active_ids = {item.id for item in active}
-    assert {first_baseline.id, second_baseline.id} <= active_ids
+    visible = case_service.list_active_baselines(project_context["project"].id, "admin")
+    visible_ids = {item.id for item in visible}
+    assert {first_baseline.id, second_baseline.id} <= visible_ids
     assert case_service.get_baseline(first_baseline.id).environment_revision_id != (
         case_service.get_baseline(second_baseline.id).environment_revision_id
     )

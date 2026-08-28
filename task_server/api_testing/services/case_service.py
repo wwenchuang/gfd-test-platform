@@ -2,6 +2,8 @@
 
 import copy
 
+from task_server.services.business_line_service import resolve_test_application
+
 from ..contracts.case import (
     AssertionView,
     BaselineCaseView,
@@ -252,6 +254,7 @@ class CaseService:
                 raise BaselineGateError(
                     "baseline requires passing debug evidence for the same project, endpoint, case version, and environment revision"
                 )
+            repository.supersede_active_baselines(case.id, actor_id)
             baseline = repository.create_baseline(
                 case.project_id,
                 case.id,
@@ -377,6 +380,18 @@ class CaseService:
         request_template = copy.deepcopy(dict(version.request_template))
         name = request_template.get("name", case.name)
         request = request_template.get("request", request_template)
+        application = resolve_test_application(
+            request_template.get("app_package"),
+            request_template.get("app_name"),
+            request_template.get("business"),
+            include_disabled=True,
+        )
+        app_package = str(
+            request_template.get("app_package") or application.get("package") or ""
+        )
+        app_name = str(
+            request_template.get("app_name") or application.get("name") or ""
+        )
         rows = tuple(
             DataRowView(item.name, item.values, item.enabled, item.sequence)
             for item in (
@@ -437,8 +452,8 @@ class CaseService:
             version=version.version_number,
             purpose=version.purpose,
             priority=version.priority,
-            app_package=str(request_template.get("app_package") or ""),
-            app_name=str(request_template.get("app_name") or ""),
+            app_package=app_package,
+            app_name=app_name,
             business=str(request_template.get("business") or ""),
             group_name=version.group_name or "",
             request=request,
@@ -470,6 +485,13 @@ class CaseService:
 
     @staticmethod
     def _baseline_case_view(baseline, case, version, endpoint):
+        request_template = dict(version.request_template or {})
+        application = resolve_test_application(
+            request_template.get("app_package"),
+            request_template.get("app_name"),
+            request_template.get("business"),
+            include_disabled=True,
+        )
         return BaselineCaseView(
             id=baseline.id,
             project_id=baseline.project_id,
@@ -479,12 +501,16 @@ class CaseService:
             source_revision_id=endpoint.revision_id,
             endpoint_id=endpoint.id,
             status=baseline.status,
-            case_name=case.name,
+            case_name=str(request_template.get("name") or case.name),
             case_version=version.version_number,
             priority=version.priority,
-            app_package=str((version.request_template or {}).get("app_package") or ""),
-            app_name=str((version.request_template or {}).get("app_name") or ""),
-            business=str((version.request_template or {}).get("business") or ""),
+            app_package=str(
+                request_template.get("app_package") or application.get("package") or ""
+            ),
+            app_name=str(
+                request_template.get("app_name") or application.get("name") or ""
+            ),
+            business=str(request_template.get("business") or ""),
             origin=case.origin,
             method=endpoint.method,
             path=endpoint.path,

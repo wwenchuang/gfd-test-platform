@@ -118,6 +118,30 @@ def test_case_payload_error_keeps_actionable_assertion_feedback():
     assert "响应 JSON 字段" in error.message
 
 
+def test_execution_scope_conflicts_keep_actionable_chinese_guidance():
+    from task_server.api_testing.services.execution_service import (
+        ExecutionScopeConflictError,
+        OneTimeBaselineConflictError,
+    )
+
+    one_time = http._domain_error(
+        OneTimeBaselineConflictError(
+            "所选基线包含一次性用例，请取消选择后重试"
+        )
+    )
+    unavailable = http._domain_error(
+        ExecutionScopeConflictError("所选目标的应用已停用，请重新选择")
+    )
+
+    assert (one_time.status, one_time.code) == (
+        409,
+        "one_time_baseline_manual_only",
+    )
+    assert one_time.message == "所选基线包含一次性用例，请取消选择后重试"
+    assert (unavailable.status, unavailable.code) == (409, "test_scope_unavailable")
+    assert unavailable.message == "所选目标的应用已停用，请重新选择"
+
+
 class HttpResponse:
     def __init__(self, response):
         self.status = response.status
@@ -1127,6 +1151,69 @@ def test_ai_job_status_is_queryable_and_owner_scoped(http_client, api_context, o
     assert accepted.status == 200
     assert accepted.body["data"]["job"]["state"] == "running"
     assert accepted.body["data"]["job"]["batches"][0]["actual_model"] == "qwen3.6-plus"
+    assert denied.status == 404
+
+
+def test_ai_validation_diagnosis_route_is_owner_scoped_and_returns_updated_job(
+    http_client, api_context, owned_records, monkeypatch
+):
+    with api_context["factory"].begin() as session:
+        job = ApiAiJob(
+            project_id=owned_records["project"].id,
+            environment_revision_id=owned_records["environment_revision"].id,
+            state="failed_validation",
+            endpoint_ids=[owned_records["endpoint"].id],
+            requested_model="qwen3.7-plus",
+            actual_model="qwen3.7-plus",
+            summary={},
+            **_audit("owner-a"),
+        )
+        session.add(job)
+        session.flush()
+        batch = ApiAiJobBatch(
+            job_id=job.id,
+            sequence=1,
+            state="failed_validation",
+            endpoint_ids=[owned_records["endpoint"].id],
+            requested_model="qwen3.7-plus",
+            actual_model="qwen3.7-plus",
+            result={
+                "draft_version_ids": [],
+                "validation_errors": [{
+                    "code": "candidate_validation_error",
+                    "message": "must constrain response fields",
+                }],
+            },
+            error={},
+            **_audit("owner-a"),
+        )
+        session.add(batch)
+        session.flush()
+        job_id = job.id
+        batch_id = batch.id
+
+    calls = []
+
+    def diagnose(service, target_job_id, target_batch_id, error_index, actor, *, analyzer):
+        calls.append((target_job_id, target_batch_id, error_index, actor, analyzer.__class__.__name__))
+        return service.get_job(target_job_id)
+
+    monkeypatch.setattr(http.AiCaseService, "diagnose_validation_error", diagnose)
+
+    accepted = http_client.post(
+        f"/api/api-testing/v1/ai-jobs/{job_id}/validation-diagnosis",
+        {"batch_id": batch_id, "error_index": 0},
+        _auth(),
+    )
+    denied = http_client.post(
+        f"/api/api-testing/v1/ai-jobs/{job_id}/validation-diagnosis",
+        {"batch_id": batch_id, "error_index": 0},
+        _auth("owner-b"),
+    )
+
+    assert accepted.status == 200
+    assert accepted.body["data"]["job"]["id"] == job_id
+    assert calls == [(job_id, batch_id, 0, "owner-a", "AiFailureAnalyzer")]
     assert denied.status == 404
 
 

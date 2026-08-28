@@ -321,7 +321,7 @@ describe('BaselinesView fixed project assets', () => {
     expect(wrapper.text()).not.toContain('测试任务范围与当前请求不一致')
   })
 
-  it('combines baseline type, method, priority and origin filters without disabling one-time cases', async () => {
+  it('keeps one-time cases manageable but blocks regression actions', async () => {
     vi.spyOn(apiClient, 'get').mockResolvedValue({ data: { baselines: [
       baselineFixture({ id: 'baseline-regular-ai', method: 'POST', priority: 'P0', origin: 'ai', group_name: '收藏链路' }),
       baselineFixture({ id: 'baseline-one-time', method: 'POST', priority: 'P1', origin: 'manual', group_name: 'API Test / 一次性', case_name: '重新打印 - 一次性验证' }),
@@ -343,6 +343,9 @@ describe('BaselinesView fixed project assets', () => {
     const oneTimeCheckbox = wrapper.get('[data-testid="baseline-select-baseline-one-time"]')
     expect((oneTimeCheckbox.element as HTMLInputElement).checked).toBe(true)
     expect(oneTimeCheckbox.attributes('disabled')).toBeUndefined()
+    expect(wrapper.text()).toContain('一次性用例仅供人工调试')
+    expect(buttonByText(wrapper, '保存为基线回归任务').attributes('disabled')).toBeDefined()
+    expect(buttonByText(wrapper, '按当前环境执行所选基线').attributes('disabled')).toBeDefined()
 
     await wrapper.get('[data-testid="baseline-filter-origin"]').setValue('ai')
     expect(wrapper.text()).toContain('当前筛选下没有匹配基线')

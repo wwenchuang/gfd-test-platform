@@ -5,10 +5,13 @@ import { ApiClient, ApiClientError } from './client'
 const LOGIN_PATH = '/task-manager.html?return_to=%2Fapi-test%2F'
 
 function response(status: number, body: unknown): Response {
+  const serialized = typeof body === 'string' ? body : JSON.stringify(body)
   return {
     status,
     ok: status >= 200 && status < 300,
     json: async () => body,
+    text: async () => serialized,
+    headers: new Headers({ 'Content-Type': 'application/json; charset=utf-8' }),
   } as Response
 }
 
@@ -87,6 +90,36 @@ describe('ApiClient', () => {
     await expect(new ApiClient().get('/api/api-testing/v1/workspace')).rejects.toMatchObject({
       status: 0,
       message: expect.stringContaining('无法连接测试服务'),
+    })
+  })
+
+  it('explains an HTML 502 response as a backend deployment or restart problem', async () => {
+    values.set('sessionToken', 'session-value')
+    vi.mocked(fetch).mockResolvedValue({
+      status: 502,
+      ok: false,
+      headers: new Headers({ 'Content-Type': 'text/html' }),
+      text: async () => '<html><h1>502 Bad Gateway</h1></html>',
+    } as Response)
+
+    await expect(new ApiClient().get('/api/api-testing/v1/cases')).rejects.toMatchObject({
+      status: 502,
+      message: expect.stringMatching(/后端服务暂不可用.*部署或重启.*刷新.*管理员/),
+    })
+  })
+
+  it('explains a non-JSON 404 as a possible frontend/backend version mismatch', async () => {
+    values.set('sessionToken', 'session-value')
+    vi.mocked(fetch).mockResolvedValue({
+      status: 404,
+      ok: false,
+      headers: new Headers({ 'Content-Type': 'text/html' }),
+      text: async () => '<html><h1>Not Found</h1></html>',
+    } as Response)
+
+    await expect(new ApiClient().get('/api/api-testing/v1/new-route')).rejects.toMatchObject({
+      status: 404,
+      message: expect.stringMatching(/接口地址不存在.*前后端版本.*重新部署/),
     })
   })
 })

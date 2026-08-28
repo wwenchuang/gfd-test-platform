@@ -686,3 +686,22 @@ def test_platform_deploy_configures_sonic_restart_without_starting_containers():
     assert "warn_sonic_restart_policies" in source
     assert "restart=no" in source
     assert "--start-stopped" not in source
+
+
+def test_platform_deploy_restores_task_service_when_restart_sequence_aborts():
+    source = Path("deploy/update-main-server.sh").read_text(encoding="utf-8")
+
+    assert "restore_task_service_on_exit" in source
+    assert "trap restore_task_service_on_exit EXIT" in source
+    assert "TASK_SERVICE_NEEDS_RESTORE=1" in source
+    assert "TASK_SERVICE_NEEDS_RESTORE=0" in source
+    assert "部署异常退出，自动恢复 midscene-task.service" in source
+    restart_body = source.split("restart_task_service_cleanly() {", 1)[1].split(
+        "\n}\n", 1
+    )[0]
+    assert restart_body.index("TASK_SERVICE_NEEDS_RESTORE=1") < restart_body.index(
+        "systemctl stop midscene-task.service"
+    )
+    assert restart_body.index("/api/health") < restart_body.index(
+        "TASK_SERVICE_NEEDS_RESTORE=0"
+    )

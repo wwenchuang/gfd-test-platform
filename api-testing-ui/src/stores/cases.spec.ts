@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 
 import { apiClient, type ApiClient } from '../api/client'
-import type { ApiEndpoint, CaseVersion, GeneratedCasePreview } from '../api/contracts'
+import type { AiJob, ApiEndpoint, CaseVersion, GeneratedCasePreview } from '../api/contracts'
 import { useCasesStore } from './cases'
 
 const VERSION = {
@@ -521,6 +521,33 @@ describe('cases store', () => {
 
     expect(store.aiCanResume).toBe(false)
     expect(store.aiError).toContain('部分已选接口没有生成有效用例')
+  })
+
+  it('requests and restores a saved Qwen diagnosis for one validation error', async () => {
+    const diagnosedJob = {
+      id: 'job-failed', state: 'failed_validation', endpoint_ids: ['endpoint-1'],
+      requested_model: 'qwen', actual_model: 'qwen3.7-plus', fallback_used: false, summary: {},
+      batches: [{
+        id: 'batch-1', sequence: 1, state: 'failed_validation', endpoint_ids: ['endpoint-1'],
+        requested_model: 'qwen', actual_model: 'qwen3.7-plus', fallback_used: false, fallback_reason: '',
+        generated_draft_ids: [],
+        validation_errors: [{
+          code: 'candidate_validation_error', message: 'must constrain response fields',
+          diagnosis: { model: 'qwen3.7-plus', analysis: { summary: '断言范围不明确' } },
+        }],
+      }],
+    } as AiJob
+    const post = vi.spyOn(apiClient, 'post').mockResolvedValue({ data: { job: diagnosedJob } })
+    const store = useCasesStore()
+    store.aiJob = { ...diagnosedJob, batches: [] }
+
+    await store.diagnoseAiValidation('batch-1', 0)
+
+    expect(post).toHaveBeenCalledWith('/api/api-testing/v1/ai-jobs/job-failed/validation-diagnosis', {
+      batch_id: 'batch-1', error_index: 0,
+    })
+    expect(store.aiJob).toEqual(diagnosedJob)
+    expect(store.aiDiagnosisBatchId).toBe('')
   })
 
   it('restores the latest unfinished AI job after a page reload', async () => {

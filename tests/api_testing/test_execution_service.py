@@ -161,6 +161,34 @@ def test_case_version_snapshot_keeps_explicit_application_and_business():
     assert snapshot["business"] == "shared"
 
 
+def test_case_version_snapshot_resolves_legacy_application_from_business(tmp_path, monkeypatch):
+    from task_server.services import business_line_service
+
+    path = tmp_path / "task-apps.json"
+    path.write_text(
+        '{"apps":[{"package":"com.kfb.model","name":"智小白3D","enabled":true,'
+        '"business_lines":[{"id":"home","name":"家用","enabled":true}]}]}',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(business_line_service, "TASK_APPS_FILE", str(path))
+
+    snapshot = ExecutionService._case_version_snapshot(
+        SimpleNamespace(
+            id="version-legacy",
+            case_id="case-legacy",
+            endpoint_id="endpoint-legacy",
+            version_number=1,
+            request_template={"app_package": "", "app_name": "", "business": "home"},
+            dependency_spec={"dependencies": []},
+        ),
+        requested_version_ids={"version-legacy"},
+    )
+
+    assert snapshot["app_package"] == "com.kfb.model"
+    assert snapshot["app_name"] == "智小白3D"
+    assert snapshot["business"] == "home"
+
+
 def test_execution_view_aggregates_application_scope_from_requested_and_dependency_snapshots(monkeypatch):
     execution = SimpleNamespace(
         id="execution-scope",
@@ -828,6 +856,58 @@ def test_submit_active_baselines_creates_one_click_regression(
     assert execution.case_results[0]["case_version_id"] == execution_context["case"].id
 
 
+def test_submit_active_baselines_rejects_an_explicit_one_time_baseline(
+    session_factory, redis_client, execution_context
+):
+    service = ExecutionService(
+        session_factory,
+        executor=_FakeExecutor([_Result("PASSED")]),
+        event_stream=EventStream(session_factory, redis_client),
+    )
+    one_time_payload = valid_list_case(execution_context["endpoint"])
+    one_time_payload["name"] = "数据初始化 - 一次性人工验证"
+    one_time_case = CaseService(session_factory).create_draft(
+        execution_context["endpoint"].id,
+        one_time_payload,
+        "manual",
+        "admin",
+    )
+    debug = service.submit(
+        _request(execution_context, case_version_ids=[one_time_case.id]),
+        "admin",
+        "one-time-baseline-debug",
+    )
+    assert service.run(debug.id) is True
+    debug_result = service.get(debug.id).case_results[0]
+    baseline = CaseService(session_factory).adopt_baseline(
+        one_time_case.id,
+        debug_result["execution_case_id"],
+        "admin",
+    )
+    renamed_payload = valid_list_case(execution_context["endpoint"])
+    renamed_payload["name"] = "数据初始化 - 后续普通版本"
+    CaseService(session_factory).create_version(
+        one_time_case.case_id,
+        renamed_payload,
+        "admin",
+    )
+
+    with pytest.raises(
+        ExecutionConflictError,
+        match="一次性.*人工调试.*批量或定时回归",
+    ):
+        service.submit_active_baselines(
+            {
+                "project_id": execution_context["project"].id,
+                "source_revision_id": execution_context["source_revision"].id,
+                "environment_revision_id": execution_context["environment_revision"].id,
+                "baseline_ids": [baseline.id],
+            },
+            "admin",
+            "one-time-baseline-regression",
+        )
+
+
 def test_submit_rejects_a_case_after_its_application_is_disabled(
     session_factory, redis_client, execution_context, tmp_path, monkeypatch
 ):
@@ -1174,6 +1254,67 @@ def test_execution_worker_only_loads_lightweight_case_collections(
     assert service.run(submitted.id) is True
     assert calls
     assert all(call.get("include_evidence") is False for call in calls)
+
+
+def test_execution_list_batches_children_and_display_metadata(
+    session_factory, redis_client, execution_context, monkeypatch
+):
+    service = ExecutionService(
+        session_factory,
+        event_stream=EventStream(session_factory, redis_client),
+    )
+    first = service.submit(
+        _request(execution_context),
+        "admin",
+        "batched-execution-list-first",
+    )
+    second = service.submit(
+        _request(execution_context),
+        "admin",
+        "batched-execution-list-second",
+    )
+    child_calls = []
+    metadata_calls = []
+    original_children = ExecutionRepository.get_execution_cases_for_executions
+    original_metadata = ExecutionRepository.display_metadata_for_execution_list
+
+    def fail_single_children(*_args, **_kwargs):
+        raise AssertionError("execution list must not query child cases one execution at a time")
+
+    def fail_single_metadata(*_args, **_kwargs):
+        raise AssertionError("execution list must not query display metadata one execution at a time")
+
+    def observed_children(repository, execution_ids, **options):
+        identifiers = tuple(execution_ids)
+        child_calls.append((identifiers, options))
+        return original_children(repository, identifiers, **options)
+
+    def observed_metadata(repository, executions, children):
+        execution_rows = tuple(executions)
+        metadata_calls.append((tuple(item.id for item in execution_rows), len(children)))
+        return original_metadata(repository, execution_rows, children)
+
+    monkeypatch.setattr(ExecutionRepository, "get_execution_cases", fail_single_children)
+    monkeypatch.setattr(ExecutionRepository, "display_metadata", fail_single_metadata)
+    monkeypatch.setattr(
+        ExecutionRepository,
+        "get_execution_cases_for_executions",
+        observed_children,
+    )
+    monkeypatch.setattr(
+        ExecutionRepository,
+        "display_metadata_for_execution_list",
+        observed_metadata,
+    )
+
+    listed = service.list(execution_context["project"].id, "admin")
+
+    listed_ids = {item.id for item in listed}
+    assert {first.id, second.id} <= listed_ids
+    assert len(child_calls) == 1
+    assert child_calls[0][1] == {"include_evidence": False}
+    assert {first.id, second.id} <= set(child_calls[0][0])
+    assert len(metadata_calls) == 1
 
 
 def test_finalize_execution_counts_statuses_without_loading_case_rows(

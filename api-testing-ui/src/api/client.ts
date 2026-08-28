@@ -77,7 +77,13 @@ export class ApiClient {
       this.redirectToLogin()
       throw new ApiClientError(401, '登录已失效')
     }
-    const payload = await response.json() as ApiEnvelope<T> & { error?: unknown; message?: unknown }
+    let payload: ApiEnvelope<T> & { error?: unknown; message?: unknown }
+    try {
+      const raw = await response.text()
+      payload = (raw ? JSON.parse(raw) : {}) as ApiEnvelope<T> & { error?: unknown; message?: unknown }
+    } catch {
+      throw new ApiClientError(response.status, nonJsonResponseMessage(response.status))
+    }
     if (!response.ok) throw new ApiClientError(response.status, errorMessage(payload))
     return payload
   }
@@ -106,6 +112,16 @@ function errorMessage(payload: { error?: unknown; message?: unknown }): string {
     if (typeof message === 'string') return message
   }
   return '请求失败'
+}
+
+function nonJsonResponseMessage(status: number): string {
+  if ([502, 503, 504].includes(status)) {
+    return `后端服务暂不可用（HTTP ${status}），可能正在部署或重启。请稍后点击刷新；持续出现请联系管理员检查 midscene-task 服务。`
+  }
+  if (status === 404) {
+    return '接口地址不存在（HTTP 404），可能是前后端版本不一致。请联系管理员重新部署后端和页面。'
+  }
+  return `服务器返回格式异常（HTTP ${status || '未知'}），页面没有收到预期的 JSON 数据。请刷新重试；持续出现请联系管理员查看服务日志。`
 }
 
 export const apiClient = new ApiClient()

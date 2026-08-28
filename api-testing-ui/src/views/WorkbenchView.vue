@@ -393,6 +393,10 @@ async function generateBasicPositive(): Promise<void> {
   }
 }
 
+async function diagnoseValidation(batchId: string, errorIndex: number): Promise<void> {
+  await cases.diagnoseAiValidation(batchId, errorIndex)
+}
+
 async function submitDebug(): Promise<void> {
   if (!context.projectId || !context.sourceRevisionId || !context.environmentRevisionId || !activeEndpoint.value) return
   if (!confirmApiExecution({
@@ -611,7 +615,7 @@ function defaultTaskName(newTask = false): string {
           <CaseEditor v-if="activeDraft" ref="caseEditor" :model-value="activeDraft" :dependency-options="dependencyOptions" :endpoint-options="assets.endpoints" :environment-variable-names="context.environmentVariableNames" :environment-revision-id="context.environmentRevisionId || ''" :environment-name="environmentName" :saving="cases.saving" :debugging="debugRunning" :saved-message="cases.savedMessage" :validation-errors="cases.validationErrors" :validation-warnings="cases.validationWarnings" @update:model-value="updateDraft" @save="saveDraft" @debug="submitDebug" />
           <div v-else class="state-message center-empty">选择接口后，可手工编辑或让 AI 生成测试用例。</div>
         </main>
-        <AiAssistant id="mobile-workbench-panel-ai" role="tabpanel" aria-labelledby="mobile-workbench-tab-ai" :class="['mobile-workbench-pane', { 'mobile-pane-active': mobilePane === 'ai' }]" :selected-count="selectedIds.length" :job="cases.aiJob" :generated-cases="aiGeneratedCases" :error="cases.aiError" :polling="cases.aiPolling" :can-resume="cases.aiCanResume" :basic-generating="cases.basicGenerating" @generate-basic="generateBasicPositive" @generate="generate" @retry="generate" @resume="cases.resumeAiJob()" @open-generated="openAiGenerated" @manage-generated="manageAiGenerated" />
+        <AiAssistant id="mobile-workbench-panel-ai" role="tabpanel" aria-labelledby="mobile-workbench-tab-ai" :class="['mobile-workbench-pane', { 'mobile-pane-active': mobilePane === 'ai' }]" :selected-count="selectedIds.length" :job="cases.aiJob" :generated-cases="aiGeneratedCases" :error="cases.aiError" :polling="cases.aiPolling" :can-resume="cases.aiCanResume" :basic-generating="cases.basicGenerating" :diagnosing-batch-id="cases.aiDiagnosisBatchId" @generate-basic="generateBasicPositive" @generate="generate" @retry="generate" @resume="cases.resumeAiJob()" @diagnose-validation="diagnoseValidation" @open-generated="openAiGenerated" @manage-generated="manageAiGenerated" />
       </div>
     </div>
     </template>

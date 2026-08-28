@@ -43,6 +43,10 @@ const filteredSelectedEndpoints = computed(() => {
   if (!needle) return selectedEndpoints.value
   return selectedEndpoints.value.filter(item => matchesEndpoint(item, needle))
 })
+const additionalSearchMatches = computed(() => {
+  if (activeTab.value !== 'selected' || !query.value.trim()) return 0
+  return Math.max(0, filtered.value.length - filteredSelectedEndpoints.value.length)
+})
 const selectedGroups = computed(() => groupEndpoints(filteredSelectedEndpoints.value))
 const knownGroupNames = ref(new Set<string>())
 
@@ -131,6 +135,10 @@ function highlightText(value: string): HighlightSegment[] {
 function clearSelected(): void {
   updateSelection(new Set())
 }
+
+function showAllSearchMatches(): void {
+  activeTab.value = 'all'
+}
 </script>
 
 <template>
@@ -147,6 +155,10 @@ function clearSelected(): void {
     <p v-else-if="state === 'failed'" class="state-message state-error">{{ error || '接口读取失败' }}</p>
     <p v-else-if="state === 'empty'" class="state-message">尚无已保存接口，请先导入接口来源。</p>
     <p v-if="state === 'partial'" class="partial-notice">部分接口未能读取，已展示可用结果。</p>
+    <p v-if="additionalSearchMatches" class="selected-search-more" data-testid="selected-search-more">
+      当前任务已选接口之外还有 {{ additionalSearchMatches }} 个匹配结果。
+      <button type="button" class="text-command" @click="showAllSearchMatches">查看全部匹配</button>
+    </p>
     <template v-if="activeTab === 'all'">
       <div v-for="[group, items] in groups" :key="group" class="endpoint-group">
         <h3 class="endpoint-group-head">

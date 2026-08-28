@@ -4,6 +4,7 @@ import copy
 import json
 from collections.abc import Mapping
 
+from ..case_classification import is_one_time_case
 from ..contracts.case import parse_case_payload
 from ..repositories.case_repository import CaseRepository
 from .case_service import CaseNotFoundError, CaseService
@@ -78,6 +79,9 @@ class BaselineAssertionAuditService:
                         for item in extractions_by_version.get(version.id, ())
                     ]
                     workflow = classify_endpoint_workflow(endpoint)
+                    version_name = str(
+                        (version.request_template or {}).get("name") or case.name
+                    )
                     analysis = analyze_baseline_assertions(
                         assertions,
                         response,
@@ -85,11 +89,12 @@ class BaselineAssertionAuditService:
                         version.processing_spec or {},
                         extractions,
                     )
-                    if _is_one_time(
-                        case.name,
+                    manual_only = _is_one_time(
+                        version_name,
                         baseline.group_name,
                         endpoint.tags,
-                    ):
+                    )
+                    if manual_only:
                         analysis["execution"] = {
                             "level": "manual",
                             "label": "一次性人工复核",
@@ -101,7 +106,7 @@ class BaselineAssertionAuditService:
                         "case_id": case.id,
                         "case_version_id": version.id,
                         "endpoint_id": endpoint.id,
-                        "case_name": case.name,
+                        "case_name": version_name,
                         "method": endpoint.method,
                         "path": endpoint.path,
                         "group_name": baseline.group_name or "未分组",
@@ -113,11 +118,16 @@ class BaselineAssertionAuditService:
                             if case.active_version_id != version.id
                             else None
                         ),
+                        "manual_only": manual_only,
                         **analysis,
                     })
                 batch_size = len(rows)
             offset += batch_size
 
+        return {"summary": self._summary(items), "items": items}
+
+    @staticmethod
+    def _summary(items):
         counts = {
             status: sum(item["status"] == status for item in items)
             for status in (
@@ -130,17 +140,19 @@ class BaselineAssertionAuditService:
             )
         }
         return {
-            "summary": {
-                "total": len(items),
-                **counts,
-                "needs_review": len(items) - counts["verified"],
-                "safe_review": sum(
-                    item["status"] != "verified"
-                    and item["execution"]["selectable"]
-                    for item in items
-                ),
-            },
-            "items": items,
+            "total": len(items),
+            **counts,
+            "needs_review": sum(
+                item["status"] != "verified" and not item.get("manual_only")
+                for item in items
+            ),
+            "manual_only": sum(bool(item.get("manual_only")) for item in items),
+            "safe_review": sum(
+                item["status"] != "verified"
+                and not item.get("manual_only")
+                and item["execution"]["selectable"]
+                for item in items
+            ),
         }
 
     def create_upgrade_draft(self, baseline_id, actor_id):
@@ -674,5 +686,4 @@ def _captured_at(evidence, attempt):
 
 
 def _is_one_time(case_name, group_name, tags):
-    text = " ".join([str(case_name or ""), str(group_name or ""), *(tags or ())]).lower()
-    return any(marker in text for marker in ("一次性", "one-time", "one time"))
+    return is_one_time_case(case_name, group_name, tags)

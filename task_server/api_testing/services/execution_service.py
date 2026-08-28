@@ -13,6 +13,7 @@ from ..events import EventStream
 from ..executor import CaseExecutionResult, HttpExecutor, redact
 from ..repositories.execution_repository import ExecutionRepository
 from ...services.notification_presentation import canonical_test_scope_summary
+from ...services.business_line_service import resolve_test_application
 from .case_service import CaseService
 from .environment_service import EnvironmentService
 from .test_scope_service import InactiveTestScopeError, ensure_active_case_version_scopes
@@ -24,6 +25,18 @@ MAX_EXECUTION_CASES = 500
 
 
 class ExecutionConflictError(ValueError):
+    pass
+
+
+class BaselineRequiredError(ExecutionConflictError):
+    pass
+
+
+class OneTimeBaselineConflictError(ExecutionConflictError):
+    pass
+
+
+class ExecutionScopeConflictError(ExecutionConflictError):
     pass
 
 
@@ -181,7 +194,7 @@ class ExecutionService:
             try:
                 ensure_active_case_version_scopes(context["versions"])
             except InactiveTestScopeError as exc:
-                raise ExecutionConflictError(str(exc)) from exc
+                raise ExecutionScopeConflictError(str(exc)) from exc
             snapshot = {
                 "fingerprint": fingerprint,
                 "request": redact(parsed),
@@ -253,15 +266,20 @@ class ExecutionService:
         endpoint_ids = _optional_identifier_array(request.get("endpoint_ids"), "endpoint_ids")
         baseline_ids = _optional_identifier_array(request.get("baseline_ids"), "baseline_ids")
         with self.session_factory() as session:
-            version_ids = ExecutionRepository(session).active_baseline_version_ids(
+            baseline_selection = ExecutionRepository(session).active_baseline_selection(
                 request["project_id"],
                 actor_id,
                 endpoint_ids,
                 baseline_ids,
             )
+        if baseline_ids and baseline_selection.excluded_one_time_count:
+            raise OneTimeBaselineConflictError(
+                "所选基线包含一次性用例。一次性用例仅供人工调试，不会进入批量或定时回归；请取消选择后重试"
+            )
+        version_ids = baseline_selection.version_ids
         if not version_ids:
-            raise ExecutionConflictError(
-                "no active baselines match the selected project or baseline selection"
+            raise BaselineRequiredError(
+                "当前项目或所选范围没有可执行的活动基线；一次性用例仅供人工调试，请先采纳常规用例基线"
             )
         return self.submit(
             {
@@ -289,19 +307,26 @@ class ExecutionService:
             raise ValueError("execution list limit must be between 1 and 100")
         with self.session_factory() as session:
             repository = ExecutionRepository(session)
+            executions = repository.list_executions(project_id, actor_id, limit)
+            children = repository.get_execution_cases_for_executions(
+                (execution.id for execution in executions),
+                include_evidence=False,
+            )
+            children_by_execution = {execution.id: [] for execution in executions}
+            for child in children:
+                children_by_execution.setdefault(child.execution_id, []).append(child)
+            metadata = repository.display_metadata_for_execution_list(
+                executions,
+                children,
+            )
             return tuple(
-                self._repository_view(
-                    repository,
+                self._view(
                     execution,
-                    repository.get_execution_cases(
-                        execution.id,
-                        include_evidence=False,
-                    ),
+                    tuple(children_by_execution.get(execution.id, ())),
+                    metadata.get(execution.id, {}),
                     include_evidence=False,
                 )
-                for execution in repository.list_executions(
-                    project_id, actor_id, limit
-                )
+                for execution in executions
             )
 
     def cancel(self, execution_id, actor_id):
@@ -878,14 +903,28 @@ class ExecutionService:
     def _case_version_snapshot(cls, version, requested_version_ids):
         request_template = getattr(version, "request_template", {}) or {}
         application = request_template if isinstance(request_template, dict) else {}
+        configured_application = resolve_test_application(
+            application.get("app_package"),
+            application.get("app_name"),
+            application.get("business"),
+            include_disabled=True,
+        )
         return {
             "id": version.id,
             "case_id": version.case_id,
             "endpoint_id": version.endpoint_id,
             "version": version.version_number,
             "role": "requested" if version.id in requested_version_ids else "dependency",
-            "app_package": str(application.get("app_package") or "").strip(),
-            "app_name": str(application.get("app_name") or "").strip(),
+            "app_package": str(
+                application.get("app_package")
+                or configured_application.get("package")
+                or ""
+            ).strip(),
+            "app_name": str(
+                application.get("app_name")
+                or configured_application.get("name")
+                or ""
+            ).strip(),
             "business": str(application.get("business") or "").strip(),
             "dependencies": cls._case_dependencies(version),
         }

@@ -1549,6 +1549,66 @@ def test_literal_credentials_are_rejected_before_case_service(
         assert secret not in stored_text
 
 
+def test_validation_error_diagnosis_uses_sanitized_evidence_and_is_saved(
+    session_factory, ai_context
+):
+    endpoint = ai_context["endpoints"]["favoriteList"]
+    candidate = _candidate(endpoint, "invalid schema assertion")
+    candidate["case"]["assertions"].append(
+        {
+            "type": "schema",
+            "operator": "equals",
+            "expected": {"type": "object"},
+            "enabled": True,
+        }
+    )
+    service = _service(
+        session_factory, FakeGateway(_gateway_response([candidate]))
+    )
+    job = service.submit(
+        [endpoint.id], ai_context["environment"].revision_id, "admin"
+    )
+    failed = service.process(job.id)
+    calls = []
+
+    class Analyzer:
+        def analyze(self, evidence):
+            calls.append(evidence)
+            return {
+                "analyzer": "ai_gateway",
+                "model": "qwen3.7-plus",
+                "analysis": {
+                    "summary": "响应断言范围不明确",
+                    "root_cause": "Schema 断言没有限定响应字段。",
+                    "recommendations": ["改为断言明确的 JSON 字段路径。"],
+                    "evidence": ["平台校验失败"],
+                },
+            }
+
+    diagnosed = service.diagnose_validation_error(
+        job.id,
+        failed.batches[0].id,
+        0,
+        "admin",
+        analyzer=Analyzer(),
+    )
+
+    assert len(calls) == 1
+    assert calls[0]["stage"] == "AI 用例生成结果校验"
+    assert calls[0]["error"] == {
+        "code": "candidate_validation_error",
+        "message": "assertions[1] expected must constrain response fields or values",
+    }
+    assert calls[0]["interfaces"][0]["method"] == endpoint.method
+    assert calls[0]["interfaces"][0]["path"] == endpoint.path
+    assert "requestBody" in calls[0]["interfaces"][0]["contract"]
+    assert "结合当前接口合同" in calls[0]["request"]
+    assert "明确指出要修改的字段或断言" in calls[0]["request"]
+    assert diagnosed.batches[0].validation_errors[0]["diagnosis"]["model"] == "qwen3.7-plus"
+    restored = service.get_job(job.id)
+    assert restored.batches[0].validation_errors[0]["diagnosis"]["analysis"]["summary"] == "响应断言范围不明确"
+
+
 def test_short_sensitive_output_values_require_full_placeholders(
     session_factory, ai_context
 ):

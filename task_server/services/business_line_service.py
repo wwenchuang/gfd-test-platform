@@ -200,6 +200,36 @@ def configured_test_application(package, include_disabled=True) -> dict:
     return {}
 
 
+def resolve_test_application(package="", snapshot_name="", business="", include_disabled=True) -> dict:
+    """Resolve legacy case identity only when platform configuration is unambiguous."""
+    package_value = str(package or "").strip()
+    if package_value:
+        return configured_test_application(
+            package_value,
+            include_disabled=include_disabled,
+        )
+
+    name = str(snapshot_name or "").strip()
+    business_value = str(business or "").strip()
+    apps = configured_test_applications(include_disabled=include_disabled)
+    if name:
+        named = [app for app in apps if str(app.get("name") or "").strip() == name]
+        if len(named) == 1:
+            return dict(named[0])
+    if business_value:
+        matched = [
+            app
+            for app in apps
+            if any(
+                business_value in {str(line.get("id") or ""), str(line.get("name") or "")}
+                for line in configured_business_lines(app["package"], include_disabled=True)
+            )
+        ]
+        if len(matched) == 1:
+            return dict(matched[0])
+    return {}
+
+
 def test_application_name(package, snapshot_name="") -> str:
     app = configured_test_application(package, include_disabled=True)
     if app.get("name"):

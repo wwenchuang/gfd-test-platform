@@ -32,7 +32,7 @@ from .models.project import ApiProject, ApiWorkspace
 from .models.source import ApiSource, ApiSourceDiff, ApiSourceEndpoint, ApiSourceRevision
 from .repositories.context_repository import ContextRepository
 from .repositories.source_repository import audit_fields
-from .services.ai_service import AiCaseService, AiJobInputError, AiJobNotFoundError
+from .services.ai_service import AiCaseService, AiFailureAnalyzer, AiGatewayError, AiJobInputError, AiJobNotFoundError
 from .services.apifox_service import ApifoxInputError, ApifoxService
 from .services.basic_case_service import BasicCaseService
 from .services.baseline_assertion_audit_service import (
@@ -41,7 +41,14 @@ from .services.baseline_assertion_audit_service import (
 )
 from .services.case_service import BaselineGateError, CaseNotFoundError, CaseService, EndpointNotFoundError
 from .services.environment_service import EnvironmentInputError, EnvironmentNotFoundError, EnvironmentService
-from .services.execution_service import ExecutionConflictError, ExecutionNotFoundError, ExecutionService
+from .services.execution_service import (
+    BaselineRequiredError,
+    ExecutionConflictError,
+    ExecutionNotFoundError,
+    ExecutionScopeConflictError,
+    OneTimeBaselineConflictError,
+    ExecutionService,
+)
 from .services.notification_service import (
     NotificationInputError,
     NotificationNotConfiguredError,
@@ -803,6 +810,25 @@ def _post(segments, payload, actor, settings):
                 "AI generation queue is unavailable",
             )
         return {"job": _view(job)}
+    if (
+        len(segments) == 3
+        and segments[0] == "ai-jobs"
+        and segments[2] == "validation-diagnosis"
+    ):
+        job_id = _uuid(segments[1])
+        _scope_ai_job_record(factory, job_id, actor)
+        batch_id = _uuid(payload.get("batch_id"))
+        error_index = payload.get("error_index", 0)
+        if not isinstance(error_index, int) or isinstance(error_index, bool):
+            raise ApiHttpError(422, "invalid_request", "校验错误序号无效")
+        job = AiCaseService(factory).diagnose_validation_error(
+            job_id,
+            batch_id,
+            error_index,
+            actor,
+            analyzer=AiFailureAnalyzer(),
+        )
+        return {"job": _view(job)}
     raise ApiHttpError(404, "not_found", "Resource was not found")
 
 
@@ -1302,13 +1328,23 @@ def _domain_error(error):
             "baseline_assertion_upgrade_conflict",
             str(error),
         )
-    if isinstance(error, ExecutionConflictError) and str(error).startswith(
-        "no active baselines"
-    ):
+    if isinstance(error, BaselineRequiredError):
         return ApiHttpError(
             409,
             "baseline_required",
             "请先调试通过并采纳至少一条用例为基线",
+        )
+    if isinstance(error, OneTimeBaselineConflictError):
+        return ApiHttpError(
+            409,
+            "one_time_baseline_manual_only",
+            str(error),
+        )
+    if isinstance(error, ExecutionScopeConflictError):
+        return ApiHttpError(
+            409,
+            "test_scope_unavailable",
+            str(error),
         )
     if isinstance(error, (ExecutionConflictError, BaselineGateError, SourcePreviewExpiredError, SourcePreviewStateError, StaleSourcePreviewError)):
         return ApiHttpError(409, "conflict", "Resource state conflicts with this request")
@@ -1353,6 +1389,12 @@ def _domain_error(error):
             503,
             "redis_unavailable",
             "API 测试任务队列暂时不可用，请稍后重试",
+        )
+    if isinstance(error, AiGatewayError):
+        return ApiHttpError(
+            502,
+            "ai_diagnosis_failed",
+            "千问暂时无法分析该错误，请稍后重试；英文原文和平台基础建议仍可查看",
         )
     if isinstance(error, TestTaskScopeError):
         return ApiHttpError(409, "task_scope_conflict", "测试任务范围与当前请求不一致")

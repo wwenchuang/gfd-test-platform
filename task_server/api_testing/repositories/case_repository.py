@@ -465,6 +465,7 @@ class CaseRepository:
         )
         statement = (
             select(ApiBaseline, ApiCase, ApiCaseVersion, ApiSourceEndpoint)
+            .options(defer(ApiSourceEndpoint.operation, raiseload=True))
             .join(ApiCase, ApiCase.id == ApiBaseline.case_id)
             .join(ApiCaseVersion, ApiCaseVersion.id == ApiBaseline.case_version_id)
             .join(ApiSourceEndpoint, ApiSourceEndpoint.id == ApiCaseVersion.endpoint_id)
@@ -519,6 +520,19 @@ class CaseRepository:
         self.session.add(record)
         self.session.flush()
         return record
+
+    def supersede_active_baselines(self, case_id, actor_id):
+        records = self.session.scalars(
+            select(ApiBaseline)
+            .where(
+                ApiBaseline.case_id == case_id,
+                ApiBaseline.status == "active",
+            )
+            .with_for_update()
+        )
+        for record in records:
+            record.status = "superseded"
+            record.updated_by = actor_id
 
     def get_baseline(self, baseline_id):
         return self.session.get(ApiBaseline, baseline_id)

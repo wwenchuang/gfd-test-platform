@@ -462,6 +462,12 @@ function baselineScopeLabel(item: ApiBaselineCase): string {
 }
 
 function baselineSelection(item: ApiBaselineCase) {
+  if (item.status !== 'active') {
+    return { selectable: false, reason: '历史基线仅供查看，不能执行' }
+  }
+  if (isOneTimeBaseline(item)) {
+    return { selectable: false, reason: '一次性用例仅供人工调试，不进入批量或定时回归' }
+  }
   return applicationBusinessSelection(item.app_package, item.business)
 }
 
@@ -535,6 +541,7 @@ function adoptionReasonLabel(reason: string): string {
         <span>有效基线 <b>{{ baselines.audit.summary.total }}</b> 条</span>
         <span class="success">断言已精确 <b>{{ baselines.audit.summary.verified }}</b> 条</span>
         <span class="warning">需要复核 <b>{{ baselines.audit.summary.needs_review }}</b> 条</span>
+        <span>仅人工执行 <b>{{ baselines.audit.summary.manual_only || 0 }}</b> 条</span>
         <span>可补精确断言 <b>{{ baselines.audit.summary.upgrade_available }}</b> 条</span>
         <span>HTTP 失败 <b>{{ baselines.audit.summary.http_failure }}</b> 条</span>
         <span>业务失败 <b>{{ baselines.audit.summary.business_failure }}</b> 条</span>

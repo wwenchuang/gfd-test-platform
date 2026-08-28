@@ -316,24 +316,43 @@ class EnvironmentService:
             raise EnvironmentNotFoundError(
                 "API environment active revision was not found"
             )
-        _, _, previous_secrets = self._revision_state(repository, previous.id)
-        public_variables = {
+        _, previous_public_variables, previous_secrets = self._revision_state(
+            repository, previous.id
+        )
+        previous_scopes = self._public_variable_scopes(repository, previous.id)
+        source_variables = {
             name: value
             for name, value in source["variables"].items()
             if name not in previous_secrets
         }
+        platform_variables = {
+            name: value
+            for name, value in previous_public_variables.items()
+            if previous_scopes.get(name, "environment") != "source"
+        }
+        public_variables = copy.deepcopy(source_variables)
+        public_variables.update(copy.deepcopy(platform_variables))
+        variable_scopes = {name: "source" for name in source_variables}
+        variable_scopes.update({name: "environment" for name in platform_variables})
+        default_headers = copy.deepcopy(previous.default_headers)
+        default_headers.update(source["default_headers"])
         revision = repository.create_revision(
             environment.id,
             source_revision.id if source_revision else None,
             repository.next_revision_number(environment.id),
             source["name"],
             source["description"],
-            source["default_headers"],
+            default_headers,
             actor,
         )
         self._persist_services(repository, revision.id, source["services"], actor)
         self._persist_public_variables(
-            repository, revision.id, environment.id, public_variables, actor
+            repository,
+            revision.id,
+            environment.id,
+            public_variables,
+            actor,
+            scopes=variable_scopes,
         )
         for secret_name, secret in sorted(previous_secrets.items()):
             repository.add_secret_variable(
@@ -403,7 +422,12 @@ class EnvironmentService:
         )
         self._persist_services(repository, revision.id, source["services"], actor)
         self._persist_public_variables(
-            repository, revision.id, environment.id, source["variables"], actor
+            repository,
+            revision.id,
+            environment.id,
+            source["variables"],
+            actor,
+            scopes={name: "source" for name in source["variables"]},
         )
         environment.active_revision_id = revision.id
         repository.flush()
@@ -435,6 +459,7 @@ class EnvironmentService:
             previous_services, public_variables, previous_secrets = self._revision_state(
                 repository, previous.id
             )
+            variable_scopes = self._public_variable_scopes(repository, previous.id)
             variable_changes = (
                 _normalize_public_variables(changes["variables"])
                 if "variables" in changes
@@ -447,9 +472,13 @@ class EnvironmentService:
                     + ", ".join(sorted(conflicting))
                 )
             public_variables.update(variable_changes)
+            variable_scopes.update(
+                {name: "environment" for name in variable_changes}
+            )
             for secret_name, secret_value in secret_changes.items():
                 if secret_name in public_variables:
                     del public_variables[secret_name]
+                    variable_scopes.pop(secret_name, None)
                 if secret_value is None:
                     previous_secrets.pop(secret_name, None)
                     continue
@@ -501,7 +530,12 @@ class EnvironmentService:
             )
             self._persist_services(repository, revision.id, services, actor)
             self._persist_public_variables(
-                repository, revision.id, environment.id, public_variables, actor
+                repository,
+                revision.id,
+                environment.id,
+                public_variables,
+                actor,
+                scopes=variable_scopes,
             )
             for secret_name, secret in sorted(previous_secrets.items()):
                 repository.add_secret_variable(
@@ -543,7 +577,15 @@ class EnvironmentService:
             )
             self._persist_services(repository, revision.id, services, actor)
             self._persist_public_variables(
-                repository, revision.id, environment.id, public_variables, actor
+                repository,
+                revision.id,
+                environment.id,
+                public_variables,
+                actor,
+                scopes=self._public_variable_scopes(
+                    repository,
+                    source_revision.id,
+                ),
             )
             for secret_name, secret in sorted(secrets.items()):
                 repository.add_secret_variable(
@@ -766,12 +808,32 @@ class EnvironmentService:
 
     @staticmethod
     def _persist_public_variables(
-        repository, revision_id, environment_id, variables, actor_id
+        repository,
+        revision_id,
+        environment_id,
+        variables,
+        actor_id,
+        *,
+        scopes=None,
     ):
+        scopes = scopes or {}
         for name, value in sorted(variables.items()):
             repository.add_public_variable(
-                revision_id, environment_id, name, value, actor_id
+                revision_id,
+                environment_id,
+                name,
+                value,
+                actor_id,
+                scope=scopes.get(name, "environment"),
             )
+
+    @staticmethod
+    def _public_variable_scopes(repository, revision_id):
+        return {
+            row.name: str(row.scope or "environment")
+            for row in repository.get_variables(revision_id)
+            if not row.is_secret
+        }
 
     @staticmethod
     def _revision_state(repository, revision_id):
