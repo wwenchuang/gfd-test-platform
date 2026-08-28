@@ -73,6 +73,7 @@ from task_server.services.yaml_service import (
     changed_line_count,
     detect_yaml_platform,
     generate_job_id,
+    generate_job_should_stop,
     normalize_yaml_from_model,
     normalize_yaml_task_block_from_model,
     normalize_yaml_runtime_guards,
@@ -1626,9 +1627,13 @@ def repair_job_and_create_next(job, create_next=True, force=False):
 
 def run_repair_job(job_id, request_data):
     try:
+        if generate_job_should_stop(job_id):
+            return
         scope = request_data.get("scope") or "file"
         update_generate_job(job_id, status="running", progress=5, step="开始修复", message="修复任务已启动")
         result = repair_task_latest_result(request_data, job_id=job_id) if scope == "task" else repair_file_latest_result(request_data, job_id=job_id)
+        if generate_job_should_stop(job_id):
+            return
         update_generate_job(
             job_id,
             status="success",
@@ -1638,6 +1643,8 @@ def run_repair_job(job_id, request_data):
             result=result
         )
     except Exception as e:
+        if generate_job_should_stop(job_id):
+            return
         update_generate_job(job_id, status="failed", progress=90, step="修复失败", message=str(e), error=str(e))
 
 

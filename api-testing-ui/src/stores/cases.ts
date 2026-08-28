@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 
-import { apiClient } from '../api/client'
+import { apiClient, type ApiClient } from '../api/client'
 import type { AiJob, ApiEndpoint, CaseDraft, CaseValidation, CaseVersion, DebugResult, EnvironmentRevisionSnapshot, ExecutionView, GeneratedCasePreview } from '../api/contracts'
 import { validateCaseDraftLocally } from '../utils/caseDraftValidation'
 import { createIdempotencyKey } from '../utils/idempotency'
@@ -21,6 +21,7 @@ export const useCasesStore = defineStore('api-cases', {
     aiPolling: false,
     aiCanResume: false,
     lastAiJobId: '',
+    aiRestoreGeneration: 0,
     basicGenerating: false,
     saving: false,
     savedMessage: '',
@@ -38,6 +39,7 @@ export const useCasesStore = defineStore('api-cases', {
   }),
   actions: {
     startManualDraft(endpoint: ApiEndpoint): CaseDraft {
+      this.aiRestoreGeneration += 1
       delete this.activeVersionByEndpoint[endpoint.id]
       this.activeGeneratedPreviewId = ''
       this.drafts[endpoint.id] = blankDraft(endpoint)
@@ -60,11 +62,13 @@ export const useCasesStore = defineStore('api-cases', {
       return this.drafts[endpoint.id]
     },
     updateDraft(endpointId: string, draft: CaseDraft): void {
+      this.aiRestoreGeneration += 1
       this.drafts[endpointId] = structuredClone(draft)
       this.savedMessage = ''
     },
     setActiveVersion(endpointId: string, versionId: string): void {
       if (!this.versionIdsByEndpoint[endpointId]?.includes(versionId)) return
+      this.aiRestoreGeneration += 1
       this.activeVersionByEndpoint[endpointId] = versionId
       this.activeGeneratedPreviewId = ''
       const version = this.versions[versionId]
@@ -102,8 +106,8 @@ export const useCasesStore = defineStore('api-cases', {
         this.drafts[endpointId] = fromVersion(nextVersion)
       }
     },
-    async loadSavedCases(sourceRevisionId: string): Promise<void> {
-      const response = await apiClient.get<{ case_versions: CaseVersion[] }>(
+    async loadSavedCases(sourceRevisionId: string, client: Pick<ApiClient, 'get'> = apiClient): Promise<void> {
+      const response = await client.get<{ case_versions: CaseVersion[] }>(
         `/api/api-testing/v1/cases?source_revision_id=${encodeURIComponent(sourceRevisionId)}`,
       )
       this.versions = {}
@@ -164,6 +168,7 @@ export const useCasesStore = defineStore('api-cases', {
       return version
     },
     async generate(endpointIds: string[], environmentRevisionId: string, intent: string, taskId?: string): Promise<void> {
+      this.aiRestoreGeneration += 1
       this.aiError = ''
       this.aiCanResume = false
       try {
@@ -345,20 +350,27 @@ export const useCasesStore = defineStore('api-cases', {
       await this.pollAiJob(this.lastAiJobId)
     },
     clearAiJob(): void {
+      this.aiRestoreGeneration += 1
       this.aiJob = null
       this.aiError = ''
       this.aiPolling = false
       this.aiCanResume = false
       this.lastAiJobId = ''
     },
-    async restoreLatestAiJob(projectId: string, sourceRevisionId?: string): Promise<void> {
+    async restoreLatestAiJob(
+      projectId: string,
+      sourceRevisionId?: string,
+      client: Pick<ApiClient, 'get'> = apiClient,
+    ): Promise<void> {
+      const restoreGeneration = ++this.aiRestoreGeneration
       try {
         const sourceQuery = sourceRevisionId
           ? `&source_revision_id=${encodeURIComponent(sourceRevisionId)}`
           : ''
-        const response = await apiClient.get<{ job: AiJob | null }>(
+        const response = await client.get<{ job: AiJob | null }>(
           `/api/api-testing/v1/ai-jobs/latest?project_id=${encodeURIComponent(projectId)}${sourceQuery}`,
         )
+        if (restoreGeneration !== this.aiRestoreGeneration) return
         const job = response.data.job
         if (!job) return
         this.aiJob = job
@@ -367,7 +379,8 @@ export const useCasesStore = defineStore('api-cases', {
           this.aiCanResume = false
           this.aiError = aiJobFailureMessage(job)
           for (const versionId of new Set(job.batches.flatMap(batch => batch.generated_draft_ids))) {
-            await this.loadVersion(versionId)
+            if (restoreGeneration !== this.aiRestoreGeneration) return
+            await this.loadVersion(versionId, client, restoreGeneration)
           }
           return
         }
@@ -377,8 +390,13 @@ export const useCasesStore = defineStore('api-cases', {
         // Workspace startup remains usable when no prior AI job can be restored.
       }
     },
-    async loadVersion(versionId: string): Promise<void> {
-      const response = await apiClient.get<{ case_version: CaseVersion }>(`/api/api-testing/v1/case-versions/${versionId}`)
+    async loadVersion(
+      versionId: string,
+      client: Pick<ApiClient, 'get'> = apiClient,
+      restoreGeneration?: number,
+    ): Promise<void> {
+      const response = await client.get<{ case_version: CaseVersion }>(`/api/api-testing/v1/case-versions/${versionId}`)
+      if (restoreGeneration !== undefined && restoreGeneration !== this.aiRestoreGeneration) return
       const version = response.data.case_version
       this.registerVersion(version)
     },

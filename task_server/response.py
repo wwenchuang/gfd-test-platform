@@ -1,8 +1,12 @@
 """HTTP 响应工具方法 Mixin，供 Handler 继承使用。"""
 
 import json
+import os
+import threading
+import time
 import traceback
 import urllib.parse
+from pathlib import Path
 
 from .config import MAX_BODY_SIZE, MAX_UPLOAD_BODY_SIZE, TASK_ALLOWED_ORIGINS
 
@@ -11,11 +15,24 @@ class BodyTooLarge(Exception):
     pass
 
 
+class InvalidBodyLength(Exception):
+    pass
+
+
 def _limit_mb(limit):
     try:
         return max(1, round(int(limit) / 1024 / 1024))
     except Exception:
         return 0
+
+
+def request_body_limit(path):
+    """Return the in-memory body limit for a route.
+
+    The legacy raw report endpoint is streamed to disk and may use the larger
+    upload limit. JSON and base64 chunk endpoints stay on the normal limit.
+    """
+    return MAX_UPLOAD_BODY_SIZE if path == "/report" else MAX_BODY_SIZE
 
 
 class ResponseMixin:
@@ -32,6 +49,11 @@ class ResponseMixin:
         except BodyTooLarge as e:
             try:
                 self._json({"ok": False, "error": str(e) or "请求体过大"}, 413)
+            except Exception:
+                pass
+        except InvalidBodyLength as e:
+            try:
+                self._json({"ok": False, "error": str(e) or "Content-Length 格式无效"}, 400)
             except Exception:
                 pass
         except Exception as e:
@@ -97,32 +119,56 @@ class ResponseMixin:
     def _raw_body(self):
         """读取原始请求体"""
         length = int(self.headers.get("Content-Length", 0))
-        qs, path = self._qs()
-        upload_paths = (
-            "/report",
-            "/api/report/chunk",
-            "/api/report/chunk-finish",
-            "/api/app-install/request",
-            "/api/app-install/upload-chunk",
-            "/api/app-install/upload-finish",
-        )
-        limit = MAX_UPLOAD_BODY_SIZE if path in upload_paths else MAX_BODY_SIZE
+        if length < 0:
+            raise InvalidBodyLength("Content-Length 不能为负数")
+        _qs, path = self._qs()
+        limit = request_body_limit(path)
         if length > limit:
             raise BodyTooLarge(f"请求体过大，当前上限约 {_limit_mb(limit)}MB")
         return self.rfile.read(length) if length else b""
 
+    def _stream_body_to_file(self, destination, chunk_size=1024 * 1024):
+        """Stream the current request body to *destination* using an atomic rename."""
+        length = int(self.headers.get("Content-Length", 0))
+        _qs, path = self._qs()
+        limit = request_body_limit(path)
+        if length < 0:
+            raise InvalidBodyLength("Content-Length 不能为负数")
+        if length > limit:
+            raise BodyTooLarge(f"请求体过大，当前上限约 {_limit_mb(limit)}MB")
+        chunk_size = max(1, min(int(chunk_size or 0), 1024 * 1024))
+        target = Path(destination)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        tmp = target.with_name(
+            f".{target.name}.tmp.{os.getpid()}.{threading.get_ident()}.{time.time_ns()}"
+        )
+        remaining = length
+        try:
+            with open(tmp, "wb") as output:
+                while remaining:
+                    chunk = self.rfile.read(min(chunk_size, remaining))
+                    if not chunk:
+                        raise ConnectionError("请求体未完整接收，请重新上传")
+                    output.write(chunk)
+                    remaining -= len(chunk)
+                output.flush()
+                os.fsync(output.fileno())
+            os.replace(tmp, target)
+        finally:
+            if tmp.exists():
+                try:
+                    tmp.unlink()
+                except OSError:
+                    pass
+        return length
+
     def _body_size_allowed(self, path):
         """验证请求体大小是否允许"""
         length = int(self.headers.get("Content-Length", 0))
-        upload_paths = (
-            "/report",
-            "/api/report/chunk",
-            "/api/report/chunk-finish",
-            "/api/app-install/request",
-            "/api/app-install/upload-chunk",
-            "/api/app-install/upload-finish",
-        )
-        limit = MAX_UPLOAD_BODY_SIZE if path in upload_paths else MAX_BODY_SIZE
+        if length < 0:
+            self._json({"ok": False, "error": "Content-Length 不能为负数"}, 400)
+            return False
+        limit = request_body_limit(path)
         if length > limit:
             self._json({"ok": False, "error": f"请求体过大，当前上限约 {_limit_mb(limit)}MB"}, 413)
             return False

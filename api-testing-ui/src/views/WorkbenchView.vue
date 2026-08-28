@@ -10,6 +10,7 @@ import DebugDrawer from '../components/DebugDrawer.vue'
 import EndpointDetail from '../components/EndpointDetail.vue'
 import EndpointTree from '../components/EndpointTree.vue'
 import TaskStatusStrip from '../components/TaskStatusStrip.vue'
+import { ApiClient, apiClient } from '../api/client'
 import type { ApiEndpoint, ApiTestTask, CaseDraft, CaseVersion } from '../api/contracts'
 import { useAssetsStore } from '../stores/assets'
 import { useCasesStore } from '../stores/cases'
@@ -30,6 +31,7 @@ const activeEndpoint = ref<ApiEndpoint | null>(null)
 const debugOpen = ref(false)
 const localError = ref('')
 const workspaceRestoring = ref(true)
+const workspaceRestoreFailed = ref(false)
 const taskNameDraft = ref('')
 const outdatedRestoredTask = ref<ApiTestTask | null>(null)
 const mobilePane = ref<'scope' | 'editor' | 'ai'>('scope')
@@ -59,20 +61,42 @@ const aiGeneratedCases = computed(() => {
   const ids = new Set(cases.aiJob?.batches.flatMap(batch => batch.generated_draft_ids) || [])
   return [...ids].map(id => cases.versions[id]).filter((item): item is CaseVersion => Boolean(item))
 })
+const workspaceRestoreClient = new ApiClient(8_000)
 
 watch(() => context.environmentRevisionId, revisionId => {
-  void context.loadEnvironmentVariableNames(revisionId)
+  const client = workspaceRestoring.value ? workspaceRestoreClient : apiClient
+  void context.loadEnvironmentVariableNames(revisionId, client)
 })
 
-onMounted(async () => {
+onMounted(() => {
+  void restoreWorkspace()
+})
+
+async function restoreWorkspace(): Promise<void> {
+  workspaceRestoring.value = true
+  workspaceRestoreFailed.value = false
+  context.error = ''
+  tasks.error = ''
+  assets.error = ''
+  localError.value = ''
   try {
-    await Promise.all([context.loadSavedContext(), context.loadOptions()])
+    await Promise.all([
+      context.loadSavedContext(workspaceRestoreClient),
+      context.loadOptions(workspaceRestoreClient),
+    ])
+    if (context.error) throw new Error(context.error)
     const directNewTask = routeValue(route.query.newTask) === '1'
     const routeContext = restoreExecutionContextFromRoute()
-    if (context.projectId) await tasks.list(context.projectId)
     const routeTaskId = routeValue(route.query.taskId)
+    if (routeTaskId && context.projectId) {
+      await tasks.list(context.projectId, workspaceRestoreClient)
+      if (tasks.error) throw new Error(tasks.error)
+    }
     let restoredTask = directNewTask ? null : (routeTaskId ? tasks.select(routeTaskId) : null)
-    if (!directNewTask && !restoredTask && context.projectId) restoredTask = await tasks.restore(context.projectId)
+    if (!directNewTask && !restoredTask && context.projectId) {
+      restoredTask = await tasks.restore(context.projectId, workspaceRestoreClient)
+      if (tasks.error) throw new Error(tasks.error)
+    }
     if (directNewTask) {
       tasks.clear()
       taskNameDraft.value = defaultTaskName(true)
@@ -105,17 +129,25 @@ onMounted(async () => {
       && restoredTask.source_revision_id === context.sourceRevisionId
       ? restoredTask.selected_endpoint_ids
       : []
-    if (context.sourceRevisionId) await loadSource(context.sourceRevisionId, directNewTask ? [] : restoredSelection)
-    await restoreDeepLink()
+    if (context.sourceRevisionId) {
+      await loadSource(
+        context.sourceRevisionId,
+        directNewTask ? [] : restoredSelection,
+        workspaceRestoreClient,
+        true,
+      )
+    }
+    await restoreDeepLink(workspaceRestoreClient, true)
     if (context.projectId && context.sourceRevisionId) {
-      await cases.restoreLatestAiJob(context.projectId, context.sourceRevisionId)
+      void cases.restoreLatestAiJob(context.projectId, context.sourceRevisionId, workspaceRestoreClient)
     }
   } catch (error) {
-    localError.value = error instanceof Error ? error.message : '工作区恢复失败，请刷新后重试'
+    workspaceRestoreFailed.value = true
+    localError.value = error instanceof Error ? error.message : '工作区恢复失败，请稍后重试'
   } finally {
     workspaceRestoring.value = false
   }
-})
+}
 
 watch(() => tasks.task?.name, name => {
   taskNameDraft.value = name || defaultTaskName(routeValue(route.query.newTask) === '1')
@@ -134,10 +166,19 @@ function restoreExecutionContextFromRoute(): boolean {
   return true
 }
 
-async function loadSource(sourceRevisionId: string, restoredSelection: string[] = []): Promise<void> {
+async function loadSource(
+  sourceRevisionId: string,
+  restoredSelection: string[] = [],
+  client: Pick<ApiClient, 'get'> = apiClient,
+  throwOnError = false,
+): Promise<void> {
   localError.value = ''
   try {
-    await Promise.all([assets.load(sourceRevisionId), cases.loadSavedCases(sourceRevisionId)])
+    await Promise.all([
+      assets.load(sourceRevisionId, client),
+      cases.loadSavedCases(sourceRevisionId, client),
+    ])
+    if (assets.error) throw new Error(assets.error)
     activeEndpoint.value = null
     const available = new Set(assets.endpoints.map(item => item.id))
     selectedIds.value = restoredSelection.filter(item => available.has(item))
@@ -148,6 +189,7 @@ async function loadSource(sourceRevisionId: string, restoredSelection: string[] 
     }
   } catch (error) {
     localError.value = error instanceof Error ? error.message : '无法读取已保存接口和用例'
+    if (throwOnError) throw new Error(localError.value)
   }
 }
 
@@ -266,18 +308,23 @@ async function saveScope(): Promise<void> {
   }
 }
 
-async function restoreDeepLink(): Promise<void> {
+async function restoreDeepLink(
+  client: Pick<ApiClient, 'get'> = apiClient,
+  throwOnError = false,
+): Promise<void> {
   const endpointId = routeValue(route.query.endpointId)
   const caseVersionId = routeValue(route.query.caseVersionId)
   if (!endpointId) return
   const endpoint = assets.endpoints.find(item => item.id === endpointId)
   if (!endpoint) {
     localError.value = '执行记录对应的接口不在当前接口版本中'
+    if (throwOnError) throw new Error(localError.value)
     return
   }
   if (caseVersionId) {
-    try { await cases.loadVersion(caseVersionId) } catch (error) {
+    try { await cases.loadVersion(caseVersionId, client) } catch (error) {
       localError.value = error instanceof Error ? error.message : '无法恢复执行记录对应的用例版本'
+      if (throwOnError) throw new Error(localError.value)
       return
     }
   }
@@ -494,6 +541,17 @@ function defaultTaskName(newTask = false): string {
       <RefreshCw class="spinning" :size="18" />
       <div><strong>正在恢复上次工作区</strong><small>正在读取任务、接口版本和执行环境…</small></div>
     </div>
+    <section v-else-if="workspaceRestoreFailed" class="workspace-restore-error" data-testid="workspace-restore-error" role="alert">
+      <AlertTriangle :size="20" />
+      <div>
+        <strong>工作区恢复失败</strong>
+        <p>{{ localError }}</p>
+        <small>已停止继续读取任务和用例，避免重复等待。服务恢复后可直接重试。</small>
+      </div>
+      <button class="secondary-command" data-testid="workspace-restore-retry" type="button" @click="restoreWorkspace">
+        <RefreshCw :size="16" />重试恢复
+      </button>
+    </section>
     <template v-else>
     <ContextBar
       :projects="context.projects"

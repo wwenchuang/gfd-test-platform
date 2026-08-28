@@ -22,6 +22,8 @@ from .config import (
     CASE_DIR, GENERATE_JOB_DIR, KNOWLEDGE_DIR, PORT,
     TOKEN, SONIC_CALLBACK_TOKEN, TASK_ALLOWED_ORIGINS,
     MAX_BODY_SIZE, MAX_UPLOAD_BODY_SIZE, ALLOW_QUERY_TOKEN,
+    MAX_CONCURRENT_REQUESTS, MAX_CONCURRENT_LARGE_REQUESTS,
+    LARGE_REQUEST_THRESHOLD,
     safe_int, safe_bool, AGENT_RISK_KEYWORDS,
     ENABLE_AUTOMATIC_BASELINE_REPAIR,
     validate_runtime_secrets,
@@ -72,6 +74,81 @@ def guess_mime(filename):
 # ── 线程化 HTTP 服务器 ──────────────────────────────────────────────
 class ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
     daemon_threads = True
+    block_on_close = False
+    request_queue_size = 128
+
+    def __init__(self, server_address, handler_class, bind_and_activate=True, max_requests=None):
+        self.max_requests = max(1, int(max_requests or MAX_CONCURRENT_REQUESTS))
+        self.max_large_requests = MAX_CONCURRENT_LARGE_REQUESTS
+        self._request_slots = threading.BoundedSemaphore(self.max_requests)
+        self._large_request_slots = threading.BoundedSemaphore(self.max_large_requests)
+        self._runtime_lock = threading.Lock()
+        self._active_requests = 0
+        self._active_large_requests = 0
+        super().__init__(server_address, handler_class, bind_and_activate=bind_and_activate)
+
+    @staticmethod
+    def _reject_busy(request):
+        body = json.dumps({
+            "ok": False,
+            "error": "服务当前请求较多，请稍后重试",
+        }, ensure_ascii=False).encode("utf-8")
+        response = (
+            b"HTTP/1.1 503 Service Unavailable\r\n"
+            b"Content-Type: application/json; charset=utf-8\r\n"
+            b"Connection: close\r\n"
+            + f"Content-Length: {len(body)}\r\n\r\n".encode("ascii")
+            + body
+        )
+        try:
+            request.sendall(response)
+        except OSError:
+            pass
+
+    def process_request(self, request, client_address):
+        if not self._request_slots.acquire(blocking=False):
+            self._reject_busy(request)
+            self.shutdown_request(request)
+            return
+        with self._runtime_lock:
+            self._active_requests += 1
+        try:
+            super().process_request(request, client_address)
+        except BaseException:
+            self._release_request_slot()
+            raise
+
+    def process_request_thread(self, request, client_address):
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            self._release_request_slot()
+
+    def _release_request_slot(self):
+        with self._runtime_lock:
+            self._active_requests = max(0, self._active_requests - 1)
+        self._request_slots.release()
+
+    def acquire_large_request(self):
+        acquired = self._large_request_slots.acquire(blocking=False)
+        if acquired:
+            with self._runtime_lock:
+                self._active_large_requests += 1
+        return acquired
+
+    def release_large_request(self):
+        with self._runtime_lock:
+            self._active_large_requests = max(0, self._active_large_requests - 1)
+        self._large_request_slots.release()
+
+    def runtime_status(self):
+        with self._runtime_lock:
+            return {
+                "active_requests": self._active_requests,
+                "max_requests": self.max_requests,
+                "active_large_requests": self._active_large_requests,
+                "max_large_requests": self.max_large_requests,
+            }
 
 
 # ── 请求处理器 ──────────────────────────────────────────────────────
@@ -97,13 +174,35 @@ class TaskHTTPHandler(ResponseMixin, BaseHTTPRequestHandler):
         return self._safe_call(lambda: dispatch_get(self))
 
     def do_POST(self):
-        return self._safe_call(lambda: dispatch_post(self))
+        return self._safe_write_call(lambda: dispatch_post(self))
 
     def do_PUT(self):
-        return self._safe_call(lambda: dispatch_put(self))
+        return self._safe_write_call(lambda: dispatch_put(self))
 
     def do_DELETE(self):
         return self._safe_call(lambda: dispatch_delete(self))
+
+    def _safe_write_call(self, fn):
+        _qs, path = self._qs()
+        if path.startswith("/api/api-testing/"):
+            return self._safe_call(fn)
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+        except (TypeError, ValueError):
+            self._json({"ok": False, "error": "Content-Length 格式无效"}, 400)
+            return
+        if length <= LARGE_REQUEST_THRESHOLD:
+            return self._safe_call(fn)
+        if not self.server.acquire_large_request():
+            self._json({
+                "ok": False,
+                "error": "当前有较大的上传或生成请求正在处理，请稍后重试",
+            }, 503)
+            return
+        try:
+            return self._safe_call(fn)
+        finally:
+            self.server.release_large_request()
 
     # ── 认证快捷方法（供路由 handler 调用）────────────────────────
     def _authorized(self):
@@ -129,9 +228,10 @@ def _send_static_file(handler, file_path):
     handler._cors()
     handler.send_header("Content-Type", guess_mime(file_path))
     handler.send_header("Cache-Control", "public, max-age=3600")
+    handler.send_header("Content-Length", str(os.path.getsize(file_path)))
     handler.end_headers()
     with open(file_path, "rb") as f:
-        handler.wfile.write(f.read())
+        shutil.copyfileobj(f, handler.wfile)
 
 
 def _serve_api_test(handler, path):
@@ -187,9 +287,10 @@ def _serve_static(handler, path):
         handler._cors()
         handler.send_header("Content-Type", guess_mime(asset_path))
         handler.send_header("Cache-Control", "public, max-age=3600")
+        handler.send_header("Content-Length", str(os.path.getsize(asset_path)))
         handler.end_headers()
         with open(asset_path, "rb") as f:
-            handler.wfile.write(f.read())
+            shutil.copyfileobj(f, handler.wfile)
         return True
 
     # /css/ 目录
@@ -205,9 +306,10 @@ def _serve_static(handler, path):
         handler._cors()
         handler.send_header("Content-Type", guess_mime(file_path))
         handler.send_header("Cache-Control", "public, max-age=3600")
+        handler.send_header("Content-Length", str(os.path.getsize(file_path)))
         handler.end_headers()
         with open(file_path, "rb") as f:
-            handler.wfile.write(f.read())
+            shutil.copyfileobj(f, handler.wfile)
         return True
 
     # /js/ 目录
@@ -223,9 +325,10 @@ def _serve_static(handler, path):
         handler._cors()
         handler.send_header("Content-Type", guess_mime(file_path))
         handler.send_header("Cache-Control", "public, max-age=3600")
+        handler.send_header("Content-Length", str(os.path.getsize(file_path)))
         handler.end_headers()
         with open(file_path, "rb") as f:
-            handler.wfile.write(f.read())
+            shutil.copyfileobj(f, handler.wfile)
         return True
 
     return False
@@ -256,10 +359,14 @@ def ensure_dirs():
 
 def start_background_jobs():
     """启动后台任务"""
+    from .background_jobs import restore_persisted_background_jobs
     from .services.sonic_service import restore_pending_sonic_suite_summary_timers
     from .services.report_service import start_report_cleanup_scheduler
+    from .runtime_metrics import start_runtime_memory_monitor
+    restore_persisted_background_jobs()
     restore_pending_sonic_suite_summary_timers()
     start_report_cleanup_scheduler()
+    start_runtime_memory_monitor()
 
 
 # ── 主入口 ──────────────────────────────────────────────────────────

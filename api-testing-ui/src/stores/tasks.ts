@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 
-import { apiClient } from '../api/client'
+import { apiClient, type ApiClient } from '../api/client'
 import type { ApiTestTask, ExecutionView } from '../api/contracts'
 import { createIdempotencyKey } from '../utils/idempotency'
 
@@ -20,11 +20,11 @@ export const useTasksStore = defineStore('api-test-tasks', {
     error: '',
   }),
   actions: {
-    async list(projectId: string): Promise<ApiTestTask[]> {
+    async list(projectId: string, client: Pick<ApiClient, 'get'> = apiClient): Promise<ApiTestTask[]> {
       this.loading = true
       this.error = ''
       try {
-        const response = await apiClient.get<{ tasks: ApiTestTask[] }>(
+        const response = await client.get<{ tasks: ApiTestTask[] }>(
           `/api/api-testing/v1/tasks?project_id=${encodeURIComponent(projectId)}`,
         )
         this.tasks = response.data.tasks
@@ -43,11 +43,11 @@ export const useTasksStore = defineStore('api-test-tasks', {
       this.error = ''
       return task
     },
-    async restore(projectId: string): Promise<ApiTestTask | null> {
+    async restore(projectId: string, client: Pick<ApiClient, 'get'> = apiClient): Promise<ApiTestTask | null> {
       this.loading = true
       this.error = ''
       try {
-        const response = await apiClient.get<{ task: ApiTestTask | null }>(
+        const response = await client.get<{ task: ApiTestTask | null }>(
           `/api/api-testing/v1/tasks/active?project_id=${encodeURIComponent(projectId)}`,
         )
         this.task = response.data.task

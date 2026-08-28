@@ -98,6 +98,9 @@ def test_health_exposes_the_running_release_revision(http_client, monkeypatch):
 
     assert response.status == 200
     assert response.body["release_revision"] == "release-test-sha"
+    assert response.body["runtime"]["rss_mb"] > 0
+    assert response.body["runtime"]["threads"] >= 1
+    assert response.body["runtime"]["max_requests"] == 64
 
 
 def test_case_payload_error_keeps_actionable_assertion_feedback():

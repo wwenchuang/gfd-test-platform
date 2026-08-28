@@ -161,6 +161,27 @@ verify_sonic_container_state() {
   echo "Sonic 容器状态未被本次部署改变"
 }
 
+warn_sonic_restart_policies() {
+  command -v docker >/dev/null 2>&1 || return 0
+  local containers container policy unsafe=""
+  containers="$(sonic_container_names 1 2>/dev/null || true)"
+  [ -n "${containers}" ] || return 0
+  while IFS= read -r container; do
+    [ -n "${container}" ] || continue
+    policy="$(run_as_root docker inspect -f '{{.HostConfig.RestartPolicy.Name}}' "${container}" 2>/dev/null || true)"
+    if [ -z "${policy}" ] || [ "${policy}" = "no" ]; then
+      unsafe="${unsafe}${container} restart=${policy:-未知}"$'\n'
+    fi
+  done <<< "${containers}"
+  if [ -n "${unsafe}" ]; then
+    echo "提示：以下 Sonic 容器退出后不会自动恢复（restart=no）：" >&2
+    printf '%s' "${unsafe}" >&2
+    echo "一次性修正：bash deploy/configure-sonic-restart.sh" >&2
+  else
+    echo "Sonic 容器均已配置退出后自动恢复"
+  fi
+}
+
 disable_legacy_systemd_units() {
   if ! command -v systemctl >/dev/null 2>&1; then
     return 0
@@ -434,6 +455,7 @@ restart_task_service_cleanly
 restart_service_if_present midscene-api-worker
 restart_service_if_present midscene-api-scheduler
 verify_sonic_container_state
+warn_sonic_restart_policies
 
 for url in ${HEALTH_URLS}; do
   verify_health_release "${url}" "${DEPLOY_REVISION}"

@@ -136,6 +136,7 @@ _RESULT_CACHE_TTL = 5
 
 _MEM_CACHE_LOCK = threading.Lock()
 _MEM_CACHE: Dict[str, Tuple[float, Any]] = {}
+_MEM_CACHE_MAX_ENTRIES = max(8, int(os.getenv("SONIC_MEMORY_CACHE_MAX_ENTRIES", "64") or 64))
 
 # 登录状态
 SONIC_LOGIN_STATE: Dict[str, Any] = {
@@ -154,12 +155,19 @@ def _cache_get(key: str, ttl: float) -> Optional[Any]:
         entry = _MEM_CACHE.get(key)
         if entry and (now - entry[0]) < ttl:
             return entry[1]
+        if entry:
+            _MEM_CACHE.pop(key, None)
     return None
 
 
 def _cache_set(key: str, value: Any) -> None:
     with _MEM_CACHE_LOCK:
         _MEM_CACHE[key] = (time.time(), value)
+        overflow = len(_MEM_CACHE) - _MEM_CACHE_MAX_ENTRIES
+        if overflow > 0:
+            oldest = sorted(_MEM_CACHE.items(), key=lambda item: item[1][0])[:overflow]
+            for stale_key, _entry in oldest:
+                _MEM_CACHE.pop(stale_key, None)
 
 
 def _cache_invalidate(prefix: str = "") -> None:

@@ -5,6 +5,7 @@ import { createPinia, setActivePinia } from 'pinia'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { ApiClient } from '../api/client'
 import type { ApiEndpoint, ApiTestTask, CaseVersion, GeneratedCasePreview } from '../api/contracts'
 import { useAssetsStore } from '../stores/assets'
 import { useCasesStore } from '../stores/cases'
@@ -67,6 +68,104 @@ describe('WorkbenchView debug workflow', () => {
 
     expect(wrapper.find('[data-testid="workspace-restoring"]').exists()).toBe(false)
     expect(wrapper.findComponent({ name: 'TaskStatusStrip' }).exists()).toBe(true)
+  })
+
+  it('stops workspace restoration after the initial service timeout and offers retry', async () => {
+    const context = useContextStore()
+    const loadSavedContext = vi.spyOn(context, 'loadSavedContext').mockImplementation(async () => {
+      context.error = '服务响应超时（8 秒），请检查服务状态后重试'
+    })
+    vi.spyOn(context, 'loadOptions').mockResolvedValue()
+    const tasks = useTasksStore()
+    const restoreTask = vi.spyOn(tasks, 'restore').mockResolvedValue(null)
+    const assets = useAssetsStore()
+    const loadAssets = vi.spyOn(assets, 'load').mockResolvedValue()
+
+    const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/', name: 'workbench', component: WorkbenchView }] })
+    await router.push('/')
+    await router.isReady()
+    const wrapper = mount(WorkbenchView, {
+      global: {
+        plugins: [router],
+        stubs: { ContextBar: true, TaskStatusStrip: true, EndpointDetail: true, CaseEditor: true, AiAssistant: true, DebugDrawer: true, EndpointTree: true },
+      },
+    })
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="workspace-restoring"]').exists()).toBe(false)
+    expect(wrapper.get('[data-testid="workspace-restore-error"]').text()).toContain('服务响应超时')
+    expect(wrapper.get('[data-testid="workspace-restore-retry"]').text()).toContain('重试恢复')
+    expect(restoreTask).not.toHaveBeenCalled()
+    expect(loadAssets).not.toHaveBeenCalled()
+    expect(wrapper.findComponent({ name: 'TaskStatusStrip' }).exists()).toBe(false)
+
+    await wrapper.get('[data-testid="workspace-restore-retry"]').trigger('click')
+    await flushPromises()
+    expect(loadSavedContext).toHaveBeenCalledTimes(2)
+  })
+
+  it('renders the workspace without waiting for prior AI job restoration', async () => {
+    const context = useContextStore()
+    Object.assign(context, {
+      projectId: 'project-1', sourceRevisionId: 'source-1', environmentRevisionId: 'environment-1',
+    })
+    vi.spyOn(context, 'loadSavedContext').mockResolvedValue()
+    vi.spyOn(context, 'loadOptions').mockResolvedValue()
+    const tasks = useTasksStore()
+    vi.spyOn(tasks, 'restore').mockResolvedValue(null)
+    const assets = useAssetsStore()
+    vi.spyOn(assets, 'load').mockResolvedValue()
+    const cases = useCasesStore()
+    vi.spyOn(cases, 'loadSavedCases').mockResolvedValue()
+    vi.spyOn(cases, 'restoreLatestAiJob').mockImplementation(() => new Promise<void>(() => {}))
+
+    const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/', name: 'workbench', component: WorkbenchView }] })
+    await router.push('/')
+    await router.isReady()
+    const wrapper = mount(WorkbenchView, {
+      global: {
+        plugins: [router],
+        stubs: { ContextBar: true, TaskStatusStrip: true, EndpointDetail: true, CaseEditor: true, AiAssistant: true, DebugDrawer: true, EndpointTree: true },
+      },
+    })
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="workspace-restoring"]').exists()).toBe(false)
+    expect(wrapper.findComponent({ name: 'TaskStatusStrip' }).exists()).toBe(true)
+  })
+
+  it('shows the retry state when a routed case version cannot be restored', async () => {
+    const context = useContextStore()
+    Object.assign(context, {
+      projectId: 'project-1', sourceRevisionId: 'source-1', environmentRevisionId: 'environment-1',
+    })
+    vi.spyOn(context, 'loadSavedContext').mockResolvedValue()
+    vi.spyOn(context, 'loadOptions').mockResolvedValue()
+    const tasks = useTasksStore()
+    vi.spyOn(tasks, 'restore').mockResolvedValue(null)
+    const assets = useAssetsStore()
+    vi.spyOn(assets, 'load').mockImplementation(async () => {
+      assets.endpoints = [ENDPOINT]
+      assets.state = 'ready'
+    })
+    const cases = useCasesStore()
+    vi.spyOn(cases, 'loadSavedCases').mockResolvedValue()
+    vi.spyOn(cases, 'loadVersion').mockRejectedValue(new Error('用例版本读取超时'))
+    vi.spyOn(cases, 'restoreLatestAiJob').mockResolvedValue()
+
+    const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/', name: 'workbench', component: WorkbenchView }] })
+    await router.push('/?endpointId=endpoint-1&caseVersionId=version-missing')
+    await router.isReady()
+    const wrapper = mount(WorkbenchView, {
+      global: {
+        plugins: [router],
+        stubs: { ContextBar: true, TaskStatusStrip: true, EndpointDetail: true, CaseEditor: true, AiAssistant: true, DebugDrawer: true, EndpointTree: true },
+      },
+    })
+    await flushPromises()
+
+    expect(wrapper.get('[data-testid="workspace-restore-error"]').text()).toContain('用例版本读取超时')
+    expect(wrapper.findComponent({ name: 'TaskStatusStrip' }).exists()).toBe(false)
   })
 
   it('opens a direct new-task route without restoring the previous task', async () => {
@@ -206,8 +305,8 @@ describe('WorkbenchView debug workflow', () => {
     await flushPromises()
 
     expect(context.sourceRevisionId).toBe('source-new')
-    expect(loadAssets).toHaveBeenCalledWith('source-new')
-    expect(loadAssets).not.toHaveBeenCalledWith('source-old')
+    expect(loadAssets).toHaveBeenCalledWith('source-new', expect.anything())
+    expect(loadAssets).not.toHaveBeenCalledWith('source-old', expect.anything())
     expect(wrapper.get('[data-testid="source-version-mismatch"]').text()).toContain('旧版本任务')
     expect(wrapper.get('[data-testid="source-version-mismatch"]').text()).toContain('当前接口版本')
   })
@@ -581,8 +680,9 @@ describe('WorkbenchView debug workflow', () => {
     expect(context.projectId).toBe('project-2')
     expect(context.sourceRevisionId).toBe('source-2')
     expect(context.environmentRevisionId).toBe('env-2')
-    expect(loadAssets).toHaveBeenCalledWith('source-2')
-    expect(listTasks).toHaveBeenCalledWith('project-2')
+    expect(loadAssets).toHaveBeenCalledWith('source-2', expect.anything())
+    expect(listTasks).not.toHaveBeenCalled()
+    expect(context.loadEnvironmentVariableNames).toHaveBeenCalledWith('env-2', expect.any(ApiClient))
   })
 
   it('keeps full task and case management lists out of the workbench', async () => {

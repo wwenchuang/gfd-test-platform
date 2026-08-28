@@ -16750,14 +16750,14 @@ def main():
     docker_sync_script = (ROOT / "deploy" / "sync-docker-web.sh").read_text(encoding="utf-8")
     nginx_conf = (ROOT / "deploy" / "nginx-midscene-task.conf").read_text(encoding="utf-8")
     env_example = (ROOT / "deploy" / "midscene.env.example").read_text(encoding="utf-8")
-    require("300 * 1024 * 1024" in source and "_limit_mb(limit)" in source, "Backend request body limit must default to 300MB and show the active limit")
+    require("64 * 1024 * 1024" in source and "_limit_mb(limit)" in source, "Backend JSON body limit must default to 64MB and show the active limit")
     require("client_max_body_size 300m" in nginx_conf, "Nginx template must allow 300MB uploads")
     require("NGINX_CLIENT_MAX_BODY_SIZE=\"${NGINX_CLIENT_MAX_BODY_SIZE:-300m}\"" in deploy_install and "midscene-upload-size.conf" in deploy_install, "Installer must apply 300MB Nginx upload override")
     require("find /etc/nginx -type f" in deploy_install and "s/client_max_body_size[[:space:]][^;]*;" in deploy_install, "Installer must replace older Nginx client_max_body_size values")
     require("/usr/share/nginx/html/task-manager.html" in deploy_install and "/usr/share/nginx/html/reports/task-manager.html" in deploy_install and "existing_container_pages" in deploy_install, "Installer must always publish both root and /reports Docker web entrypoints")
     require("/usr/share/nginx/html/task-manager.html" in docker_sync_script and "/usr/share/nginx/html/reports/task-manager.html" in docker_sync_script and "existing_pages" in docker_sync_script, "Docker web sync script must keep both legacy root and /reports URLs available")
-    require("TASK_MAX_BODY_SIZE\" \"314572800" in deploy_install and "TASK_MAX_UPLOAD_BODY_SIZE\" \"314572800" in deploy_install, "Installer must set backend upload body limits to 300MB")
-    require("TASK_MAX_BODY_SIZE='314572800'" in env_example and "TASK_MAX_UPLOAD_BODY_SIZE='314572800'" in env_example, "Environment example must document 300MB upload limits")
+    require("TASK_MAX_BODY_SIZE\" \"67108864" in deploy_install and "TASK_MAX_UPLOAD_BODY_SIZE\" \"314572800" in deploy_install, "Installer must limit JSON bodies while retaining streamed report uploads")
+    require("TASK_MAX_BODY_SIZE='67108864'" in env_example and "TASK_MAX_UPLOAD_BODY_SIZE='314572800'" in env_example, "Environment example must document separate JSON and streamed upload limits")
     require("SONIC_CALLBACK_TOKEN" in source and "query token auth is deprecated" in source, "Sonic callback auth must be separated and query token deprecated")
     config_source = (ROOT / "task_server" / "config.py").read_text(encoding="utf-8")
     require("MIDSCENE_API_KEY" in config_source and "MIDSCENE_BASE_URL" in config_source, "Task model config must accept MIDSCENE_API_KEY/MIDSCENE_BASE_URL aliases")
@@ -17166,6 +17166,7 @@ def main():
     require("def _evaluate_risk_detail" in agent_service_source and '"riskDetail"' in agent_service_source and '"riskSource"' in agent_service_source and '"riskSnippet"' in agent_service_source, "Agent high-risk confirmations must include source and snippet details")
     require('step_name == "SYNC_SONIC" and execution_mode != "SONIC_SUITE"' in agent_service_source and "Runner 单条/多条调试模式不需要同步 Sonic" in agent_service_source, "Runner Agent execution must skip Sonic sync and run matched YAML directly")
     router_source = (ROOT / "task_server" / "router.py").read_text(encoding="utf-8")
+    background_jobs_source = (ROOT / "task_server" / "background_jobs.py").read_text(encoding="utf-8")
     require("_start_agent_worker" in router_source and "target=_execute_agent_steps" not in router_source, "Agent routes must start workers through the duplicate-safe service helper")
     require("runner_yaml_dry_run" in agent_service_source and "mock_dry_run" in agent_service_source and "创建 {len(job_ids)} 个本地任务" in agent_service_source and "避免“匹配 1 条却跑完整套件”" in agent_service_source, "Agent RUN_TASK must explain dry-run/local Runner mode instead of suite execution")
     require('"runnerId": runner_id' in agent_service_source and '"deviceId": device_id' in agent_service_source and '"deviceStrategy": device_strategy' in agent_service_source, "Agent runs must persist selected Runner/device execution target")
@@ -17241,7 +17242,13 @@ def main():
     require("generation_mindmap_record_deleted_path" in yaml_service_source and '"/api/cases/mindmap-record"' in router_source, "Mindmap center must support deleting/hiding generation records")
     require('"mindmap_sort_ts": sort_ts' in yaml_service_source and "def _mindmap_time_value" in yaml_service_source and 'item.get("mindmap_sort_ts")' in yaml_service_source, "Mindmap center must sort by robust numeric latest-update timestamp")
     require("完整需求覆盖追踪矩阵" in yaml_service_source and "进入 YAML 的自动化用例" in yaml_service_source and "人工验证 / 待准备" in yaml_service_source, "Mindmap must preserve full requirement coverage beyond executable YAML cases")
-    require('job.get("type") in ("generate", "mindmap_only")' in yaml_service_source and 'old_type not in ("generate", "mindmap_only")' in router_source and "run_mindmap_only_job if old_type == \"mindmap_only\"" in router_source, "Mindmap-only background jobs must be listed as retryable and retry through the mindmap worker")
+    require(
+        'job.get("type") in ("generate", "mindmap_only")' in yaml_service_source
+        and 'old_type not in ("generate", "mindmap_only")' in router_source
+        and "enqueue_persisted_background_job" in router_source
+        and '"mindmap_only": run_mindmap_only_job' in background_jobs_source,
+        "Mindmap-only background jobs must be listed as retryable and retry through the bounded mindmap worker",
+    )
     for runner_name in ("windows-midscene-runner.py", "mac-midscene-runner.py"):
         runner_source = (ROOT / runner_name).read_text(encoding="utf-8")
         require("def http_json_retry" in runner_source, f"{runner_name} must retry transient callback failures")
@@ -17261,7 +17268,7 @@ def main():
     require('"APPLIED"' in source and '"REJECTED"' in source and '"WAIT_CONFIRM"' in source, "Repair draft statuses must include applied/rejected/waiting")
     backend = load_backend()
     from task_server.services import knowledge_service as figma_backend
-    require(backend.MAX_BODY_SIZE == 300 * 1024 * 1024, "Default JSON body limit must be 300MB for Agent source uploads")
+    require(backend.MAX_BODY_SIZE == 64 * 1024 * 1024, "Default JSON body limit must contain request memory amplification")
     require(backend.MAX_UPLOAD_BODY_SIZE == 300 * 1024 * 1024, "Upload body limit must align with the 300MB Nginx limit")
     check_apk_chunk_upload_roundtrip()
     require(callable(backend.verify_session_token), "verify_session_token must be importable")

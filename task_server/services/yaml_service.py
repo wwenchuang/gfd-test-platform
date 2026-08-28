@@ -11405,9 +11405,13 @@ def supported_asset_file(filename):
 
 def run_figma_parse_job(job_id, request_data):
     try:
+        if generate_job_should_stop(job_id):
+            return
         update_generate_job(job_id, status="running", progress=10, step="读取 Figma", message="正在连接 Figma API")
         update_generate_job(job_id, progress=35, step="解析节点", message="正在按页面级 Frame 解析设计稿")
         result = parse_figma_design(request_data)
+        if generate_job_should_stop(job_id):
+            return
         update_generate_job(
             job_id,
             status="success",
@@ -11417,6 +11421,8 @@ def run_figma_parse_job(job_id, request_data):
             result=result
         )
     except Exception as e:
+        if generate_job_should_stop(job_id):
+            return
         update_generate_job(
             job_id,
             status="failed",

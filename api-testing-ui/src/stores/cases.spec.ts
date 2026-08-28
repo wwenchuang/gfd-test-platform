@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 
-import { apiClient } from '../api/client'
+import { apiClient, type ApiClient } from '../api/client'
 import type { ApiEndpoint, CaseVersion, GeneratedCasePreview } from '../api/contracts'
 import { useCasesStore } from './cases'
 
@@ -534,6 +534,58 @@ describe('cases store', () => {
     expect(get).toHaveBeenCalledWith('/api/api-testing/v1/ai-jobs/latest?project_id=project-1')
     expect(store.lastAiJobId).toBe('job-9')
     expect(store.aiCanResume).toBe(true)
+  })
+
+  it('ignores a stale AI restoration response after the source changes', async () => {
+    let resolveOld!: (value: { data: { job: Record<string, unknown> } }) => void
+    const oldClient = {
+      get: vi.fn(() => new Promise<{ data: { job: Record<string, unknown> } }>(resolve => { resolveOld = resolve })),
+    } as unknown as Pick<ApiClient, 'get'>
+    const newJob = {
+      id: 'job-new', state: 'running', endpoint_ids: ['endpoint-2'],
+      requested_model: 'qwen', actual_model: 'qwen', fallback_used: false, summary: {}, batches: [],
+    }
+    const oldJob = { ...newJob, id: 'job-old', endpoint_ids: ['endpoint-1'] }
+    const newClient = { get: vi.fn().mockResolvedValue({ data: { job: newJob } }) } as unknown as Pick<ApiClient, 'get'>
+    const store = useCasesStore()
+
+    const oldRestore = store.restoreLatestAiJob('project-1', 'source-old', oldClient)
+    await store.restoreLatestAiJob('project-1', 'source-new', newClient)
+    resolveOld({ data: { job: oldJob } })
+    await oldRestore
+
+    expect(store.aiJob?.id).toBe('job-new')
+    expect(store.lastAiJobId).toBe('job-new')
+  })
+
+  it('ignores a delayed restored AI version after manual draft editing starts', async () => {
+    let resolveVersion!: (value: { data: { case_version: CaseVersion } }) => void
+    const completedJob = {
+      id: 'job-completed', state: 'completed', endpoint_ids: ['endpoint-1'],
+      requested_model: 'qwen', actual_model: 'qwen', fallback_used: false, summary: {},
+      batches: [{
+        id: 'batch-1', sequence: 1, state: 'completed', endpoint_ids: ['endpoint-1'],
+        requested_model: 'qwen', actual_model: 'qwen', fallback_used: false, fallback_reason: '',
+        generated_draft_ids: [VERSION.id], validation_errors: [],
+      }],
+    }
+    const client = {
+      get: vi.fn()
+        .mockResolvedValueOnce({ data: { job: completedJob } })
+        .mockImplementationOnce(() => new Promise<{ data: { case_version: CaseVersion } }>(resolve => { resolveVersion = resolve })),
+    } as unknown as Pick<ApiClient, 'get'>
+    const store = useCasesStore()
+
+    const restore = store.restoreLatestAiJob('project-1', 'source-1', client)
+    await vi.waitFor(() => expect(client.get).toHaveBeenCalledTimes(2))
+    store.startManualDraft({ id: 'endpoint-1', method: 'GET', path: '/favorite/list', summary: '收藏列表', tags: [] } as ApiEndpoint)
+    store.drafts['endpoint-1'].name = '用户正在编辑的草稿'
+    resolveVersion({ data: { case_version: VERSION } })
+    await restore
+
+    expect(store.versions[VERSION.id]).toBeUndefined()
+    expect(store.activeVersionByEndpoint['endpoint-1']).toBeUndefined()
+    expect(store.drafts['endpoint-1'].name).toBe('用户正在编辑的草稿')
   })
 
   it('restores the latest completed AI job and its generated results after reload', async () => {

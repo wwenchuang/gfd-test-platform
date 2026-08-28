@@ -42,6 +42,13 @@ from task_server.auth import (
     is_authorized_with_query, REVOKED_SESSION_TOKENS,
 )
 from task_server.response import BodyTooLarge
+from task_server.runtime_metrics import process_runtime_metrics
+from task_server.background_jobs import (
+    acquire_heavy_workload_slot,
+    background_job_runtime_metrics,
+    enqueue_persisted_background_job,
+    release_heavy_workload_slot,
+)
 from task_server.api_testing.routes import register_api_testing_routes
 
 from task_server.services.agent_service import (
@@ -130,7 +137,6 @@ from task_server.services.repair_service import (
     repair_file_latest_result,
     repair_job_and_create_next,
     repair_task_latest_result,
-    run_repair_job,
     safe_repair_artifact_dir,
     validate_midscene_yaml_executability,
 )
@@ -241,9 +247,6 @@ from task_server.services.yaml_service import (
     resolve_ui_generation_business,
     resolve_app_package,
     restore_excluded_figma_node,
-    run_figma_parse_job,
-    run_generate_job,
-    run_mindmap_only_job,
     sanitize_generate_job_for_client,
     save_case_ui_design_files,
     save_file_version,
@@ -812,11 +815,17 @@ def validate_install_package_request(install_mode, package_source, apk_url):
 
 @route_get("/api/health")
 def _get_health(handler, qs):
+    server_runtime = handler.server.runtime_status() if hasattr(handler.server, "runtime_status") else {}
     handler._json({
         "ok": True,
         "time": time.strftime("%Y-%m-%d %H:%M:%S"),
         "port": PORT,
         "release_revision": TASK_RELEASE_REVISION,
+        "runtime": {
+            **process_runtime_metrics(),
+            **server_runtime,
+            **background_job_runtime_metrics(),
+        },
         "paths": {
             "tasks": runtime_path_status(TASK_DIR),
             "reports": runtime_path_status(REPORT_DIR),
@@ -2905,7 +2914,7 @@ def _post_report(handler, qs):
     filename = urllib.parse.unquote(handler.headers.get("x-filename", "report.html"))
     filename = filename.replace("/", "_").replace("\\", "_")
     os.makedirs(REPORT_DIR, exist_ok=True)
-    write_bytes_file(safe_join(REPORT_DIR, filename), handler._raw_body())
+    handler._stream_body_to_file(safe_join(REPORT_DIR, filename))
     handler._text(public_report_url(filename))
 
 
@@ -3246,14 +3255,49 @@ def _post_knowledge_analyze(handler, qs):
 
 # ── Figma 解析 ──────────────────────────────────────────────────────
 
+def _acquire_sync_heavy_workload(handler):
+    if acquire_heavy_workload_slot("sync", blocking=False):
+        return True
+    handler._json({
+        "ok": False,
+        "error": "当前已有较多 AI 或 Figma 任务正在执行，请稍后重试或使用异步入口查看排队进度",
+    }, 503)
+    return False
+
+def _persist_and_enqueue_background_job(handler, job):
+    save_generate_job(job)
+    if enqueue_persisted_background_job(job.get("job_id")):
+        return True
+    message = "后台任务队列已满，请稍后重试；本次任务已保留为失败记录"
+    failed_job = update_generate_job(
+        job.get("job_id"),
+        ok=False,
+        status="failed",
+        step="排队失败",
+        message=message,
+        error=message,
+    )
+    handler._json({
+        "ok": False,
+        "error": message,
+        "job_id": job.get("job_id"),
+        "job": sanitize_generate_job_for_client(failed_job),
+    }, 503)
+    return False
+
+
 @route_post("/api/figma/parse")
 def _post_figma_parse(handler, qs):
     d = handler._body()
+    if not _acquire_sync_heavy_workload(handler):
+        return
     try:
         result = parse_figma_design(d)
     except Exception as e:
         handler._json({"ok": False, "error": str(e)}, 500)
         return
+    finally:
+        release_heavy_workload_slot("sync")
     handler._json({"ok": True, **result})
 
 
@@ -3264,14 +3308,13 @@ def _post_figma_parse_async(handler, qs):
     job = {
         "ok": True, "job_id": job_id, "type": "figma_parse",
         "status": "pending", "progress": 0, "step": "排队中",
-        "message": "Figma 解析任务已创建",
+        "message": "Figma 解析任务已创建", "request_data": d,
         "created_at": time.strftime("%Y-%m-%d %H:%M:%S"),
         "updated_at": time.strftime("%Y-%m-%d %H:%M:%S")
     }
-    save_generate_job(job)
-    worker = threading.Thread(target=run_figma_parse_job, args=(job_id, d), daemon=True)
-    worker.start()
-    handler._json({"ok": True, "job_id": job_id, "job": job})
+    if not _persist_and_enqueue_background_job(handler, job):
+        return
+    handler._json({"ok": True, "job_id": job_id, "job": sanitize_generate_job_for_client(job)})
 
 
 @route_post("/api/figma/import")
@@ -3297,14 +3340,13 @@ def _post_file_repair_latest_async(handler, qs):
     job = {
         "ok": True, "job_id": job_id, "type": "repair", "scope": scope,
         "status": "pending", "progress": 0, "step": "排队中",
-        "message": "修复任务已创建",
+        "message": "修复任务已创建", "request_data": request_data,
         "created_at": time.strftime("%Y-%m-%d %H:%M:%S"),
         "updated_at": time.strftime("%Y-%m-%d %H:%M:%S")
     }
-    save_generate_job(job)
-    worker = threading.Thread(target=run_repair_job, args=(job_id, request_data), daemon=True)
-    worker.start()
-    handler._json({"ok": True, "job_id": job_id, "job": job})
+    if not _persist_and_enqueue_background_job(handler, job):
+        return
+    handler._json({"ok": True, "job_id": job_id, "job": sanitize_generate_job_for_client(job)})
 
 
 @route_post("/api/file/repair-task-latest-async")
@@ -3317,14 +3359,13 @@ def _post_file_repair_task_latest_async(handler, qs):
     job = {
         "ok": True, "job_id": job_id, "type": "repair", "scope": scope,
         "status": "pending", "progress": 0, "step": "排队中",
-        "message": "修复任务已创建",
+        "message": "修复任务已创建", "request_data": request_data,
         "created_at": time.strftime("%Y-%m-%d %H:%M:%S"),
         "updated_at": time.strftime("%Y-%m-%d %H:%M:%S")
     }
-    save_generate_job(job)
-    worker = threading.Thread(target=run_repair_job, args=(job_id, request_data), daemon=True)
-    worker.start()
-    handler._json({"ok": True, "job_id": job_id, "job": job})
+    if not _persist_and_enqueue_background_job(handler, job):
+        return
+    handler._json({"ok": True, "job_id": job_id, "job": sanitize_generate_job_for_client(job)})
 
 
 # ── 用例生成 ────────────────────────────────────────────────────────
@@ -3342,11 +3383,13 @@ def _post_cases_generate(handler, qs):
         return
     title = d.get("title") or meta.get("title") or "测试用例"
     module = d.get("module") or meta.get("module") or "AI测试"
-    text_assets, image_assets = load_asset_contents(case_set_id, meta)
-    if not text_assets and not image_assets:
-        handler._json({"ok": False, "error": "没有可用于生成的文本或图片资产"}, 400)
+    if not _acquire_sync_heavy_workload(handler):
         return
     try:
+        text_assets, image_assets = load_asset_contents(case_set_id, meta)
+        if not text_assets and not image_assets:
+            handler._json({"ok": False, "error": "没有可用于生成的文本或图片资产"}, 400)
+            return
         payload = call_dashscope_cases(title, module, text_assets, image_assets)
         payload["id"] = case_set_id
         payload["module"] = module
@@ -3354,6 +3397,8 @@ def _post_cases_generate(handler, qs):
     except Exception as e:
         handler._json({"ok": False, "error": f"生成用例失败：{e}"}, 500)
         return
+    finally:
+        release_heavy_workload_slot("sync")
     handler._json({"ok": True, "case_set_id": case_set_id, "cases": payload})
 
 
@@ -3362,6 +3407,8 @@ def _post_cases_generate(handler, qs):
 @route_post("/api/ui/generate-yaml")
 def _post_ui_generate_yaml(handler, qs):
     d = handler._body()
+    if not _acquire_sync_heavy_workload(handler):
+        return
     try:
         result = generate_ui_yaml_from_request(d)
     except ValueError as e:
@@ -3370,6 +3417,8 @@ def _post_ui_generate_yaml(handler, qs):
     except Exception as e:
         handler._json({"ok": False, "error": str(e)}, 500)
         return
+    finally:
+        release_heavy_workload_slot("sync")
     handler._json(result)
 
 
@@ -3406,9 +3455,8 @@ def _post_ui_generate_yaml_async(handler, qs):
         "created_at": time.strftime("%Y-%m-%d %H:%M:%S"),
         "updated_at": time.strftime("%Y-%m-%d %H:%M:%S")
     }
-    save_generate_job(job)
-    worker = threading.Thread(target=run_generate_job, args=(job_id, d), daemon=True)
-    worker.start()
+    if not _persist_and_enqueue_background_job(handler, job):
+        return
     handler._json({"ok": True, "job_id": job_id, "job": sanitize_generate_job_for_client(job)})
 
 
@@ -3468,9 +3516,8 @@ def _post_cases_mindmap_only_async(handler, qs):
         "created_at": time.strftime("%Y-%m-%d %H:%M:%S"),
         "updated_at": time.strftime("%Y-%m-%d %H:%M:%S")
     }
-    save_generate_job(job)
-    worker = threading.Thread(target=run_mindmap_only_job, args=(job_id, d), daemon=True)
-    worker.start()
+    if not _persist_and_enqueue_background_job(handler, job):
+        return
     handler._json({"ok": True, "job_id": job_id, "job": sanitize_generate_job_for_client(job)})
 
 
@@ -3636,9 +3683,8 @@ def _post_ui_regenerate_yaml_async(handler, qs):
         "created_at": time.strftime("%Y-%m-%d %H:%M:%S"),
         "updated_at": time.strftime("%Y-%m-%d %H:%M:%S")
     }
-    save_generate_job(job)
-    worker = threading.Thread(target=run_generate_job, args=(job_id, request_data), daemon=True)
-    worker.start()
+    if not _persist_and_enqueue_background_job(handler, job):
+        return
     handler._json({"ok": True, "job_id": job_id, "job": sanitize_generate_job_for_client(job)})
 
 
@@ -3700,10 +3746,8 @@ def _handle_generate_job_retry(handler, m, job_id):
         "created_at": time.strftime("%Y-%m-%d %H:%M:%S"),
         "updated_at": time.strftime("%Y-%m-%d %H:%M:%S")
     }
-    save_generate_job(next_job)
-    worker_target = run_mindmap_only_job if old_type == "mindmap_only" else run_generate_job
-    worker = threading.Thread(target=worker_target, args=(next_job_id, request_data), daemon=True)
-    worker.start()
+    if not _persist_and_enqueue_background_job(handler, next_job):
+        return
     handler._json({"ok": True, "job_id": next_job_id, "job": sanitize_generate_job_for_client(next_job)})
 
 

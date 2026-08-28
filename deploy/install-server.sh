@@ -17,6 +17,9 @@ WEB_CONTAINER="${WEB_CONTAINER:-sonic-server-272-midscene-reports-1}"
 NGINX_CLIENT_MAX_BODY_SIZE="${NGINX_CLIENT_MAX_BODY_SIZE:-300m}"
 NGINX_UPLOAD_LIMIT_CONF="${NGINX_UPLOAD_LIMIT_CONF:-/etc/nginx/conf.d/midscene-upload-size.conf}"
 RELEASE_REVISION="${RELEASE_REVISION:-}"
+TASK_SERVICE_MEMORY_HIGH="${TASK_SERVICE_MEMORY_HIGH:-2G}"
+TASK_SERVICE_MEMORY_MAX="${TASK_SERVICE_MEMORY_MAX:-3G}"
+TASK_SERVICE_TASKS_MAX="${TASK_SERVICE_TASKS_MAX:-256}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SRC_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
@@ -141,6 +144,7 @@ fi
 install -m 0755 -o "${USER_NAME}" -g "${GROUP_NAME}" "${SCRIPT_DIR}/install-server.sh" "${APP_DIR}/deploy/install-server.sh"
 install -m 0755 -o "${USER_NAME}" -g "${GROUP_NAME}" "${SCRIPT_DIR}/package-server.sh" "${APP_DIR}/deploy/package-server.sh"
 install -m 0755 -o "${USER_NAME}" -g "${GROUP_NAME}" "${SCRIPT_DIR}/update-main-server.sh" "${APP_DIR}/deploy/update-main-server.sh"
+install -m 0755 -o "${USER_NAME}" -g "${GROUP_NAME}" "${SCRIPT_DIR}/configure-sonic-restart.sh" "${APP_DIR}/deploy/configure-sonic-restart.sh"
 install -m 0755 -o "${USER_NAME}" -g "${GROUP_NAME}" "${SCRIPT_DIR}/sync-docker-web.sh" "${APP_DIR}/deploy/sync-docker-web.sh"
 install -m 0755 -o "${USER_NAME}" -g "${GROUP_NAME}" "${SCRIPT_DIR}/cleanup-server-packages.sh" "${APP_DIR}/deploy/cleanup-server-packages.sh"
 install -m 0644 -o "${USER_NAME}" -g "${GROUP_NAME}" "${SCRIPT_DIR}/README.md" "${APP_DIR}/deploy/README.md"
@@ -451,7 +455,7 @@ ensure_env_default "API_TESTING_REDIS_URL" "redis://127.0.0.1:6379/0"
 ensure_env_default "API_TESTING_SECRET_KEY" ""
 ensure_env_default "API_TESTING_QUEUE" "api-testing"
 upgrade_env_default_if_old "PORT" "8091" "8088"
-ensure_env_default "TASK_MAX_BODY_SIZE" "314572800"
+ensure_env_default "TASK_MAX_BODY_SIZE" "67108864"
 ensure_env_default "TASK_MAX_UPLOAD_BODY_SIZE" "314572800"
 ensure_env_default "FIGMA_PARSE_LIMIT" "80"
 ensure_env_default "FIGMA_REFERENCE_LIMIT" "36"
@@ -499,8 +503,15 @@ upgrade_env_default_if_old "MIDSCENE_AI_VISION_IMAGE_LIMIT" "40" "16|24"
 upgrade_env_default_if_old "MIDSCENE_MINDMAP_VISUAL_BATCH_SIZE" "1" "2|4|8"
 upgrade_env_default_if_old "MIDSCENE_MINDMAP_VISUAL_TIMEOUT_SECONDS" "90" "120"
 upgrade_env_default_if_old "MIDSCENE_MINDMAP_VISUAL_TOTAL_BUDGET_SECONDS" "360" "300"
-upgrade_env_default_if_old "TASK_MAX_BODY_SIZE" "314572800" "20971520|52428800|83886080|125829120"
+upgrade_env_default_if_old "TASK_MAX_BODY_SIZE" "67108864" "20971520|52428800|83886080|125829120|314572800"
 upgrade_env_default_if_old "TASK_MAX_UPLOAD_BODY_SIZE" "314572800" "83886080|125829120"
+ensure_env_default "TASK_MAX_CONCURRENT_REQUESTS" "64"
+ensure_env_default "TASK_MAX_CONCURRENT_LARGE_REQUESTS" "2"
+ensure_env_default "TASK_LARGE_REQUEST_THRESHOLD" "8388608"
+ensure_env_default "TASK_BACKGROUND_WORKERS" "2"
+ensure_env_default "TASK_BACKGROUND_QUEUE_SIZE" "8"
+ensure_env_default "TASK_MEMORY_WARN_MB" "1536"
+ensure_env_default "TASK_MEMORY_MONITOR_INTERVAL_SECONDS" "60"
 ensure_env_default "MIDSCENE_YAML_VISUAL_BATCH_SIZE" "4"
 ensure_env_default "MIDSCENE_YAML_VISUAL_TIMEOUT_SECONDS" "900"
 ensure_env_default "MIDSCENE_YAML_VISUAL_TOTAL_BUDGET_SECONDS" "3600"
@@ -534,6 +545,14 @@ printf '%s\n' \
   'ExecStart=' \
   "ExecStart=${VENV_DIR}/bin/python -m task_server" \
   > "${SERVICE_OVERRIDE_DIR}/api-testing-venv.conf"
+printf '%s\n' \
+  '[Service]' \
+  'MemoryAccounting=true' \
+  "MemoryHigh=${TASK_SERVICE_MEMORY_HIGH}" \
+  "MemoryMax=${TASK_SERVICE_MEMORY_MAX}" \
+  "TasksMax=${TASK_SERVICE_TASKS_MAX}" \
+  'OOMPolicy=stop' \
+  > "${SERVICE_OVERRIDE_DIR}/resource-guard.conf"
 systemctl daemon-reload
 systemctl enable midscene-task.service
 

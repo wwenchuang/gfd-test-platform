@@ -177,8 +177,13 @@ API keys stay in `.env` or systemd environment only.
 Report retention defaults are appended automatically during install when missing:
 
 ```bash
-export TASK_MAX_BODY_SIZE='314572800'
+export TASK_MAX_BODY_SIZE='67108864'
 export TASK_MAX_UPLOAD_BODY_SIZE='314572800'
+export TASK_MAX_CONCURRENT_REQUESTS='64'
+export TASK_MAX_CONCURRENT_LARGE_REQUESTS='2'
+export TASK_BACKGROUND_WORKERS='2'
+export TASK_BACKGROUND_QUEUE_SIZE='8'
+export TASK_MEMORY_WARN_MB='1536'
 export MIDSCENE_AI_CHAT_TIMEOUT_SECONDS='480'
 export MIDSCENE_AI_CHAT_RETRY_COUNT='1'
 export MIDSCENE_COVERAGE_MODEL_WHEN_LOCAL_OK='0'
@@ -190,6 +195,37 @@ export MIDSCENE_AGENT_RUNNER_JOB_WAIT_TIMEOUT_SECONDS='1800'
 export MIDSCENE_AGENT_RUNNER_JOB_WAIT_TIMEOUT_PER_JOB_SECONDS='900'
 export MIDSCENE_AGENT_RUNNER_JOB_WAIT_TIMEOUT_MAX_SECONDS='7200'
 export SONIC_TASK_CALLBACK_GRACE_SECONDS='180'
+```
+
+`TASK_MAX_BODY_SIZE` applies to JSON and base64 chunk requests. The legacy raw
+report endpoint keeps the 300 MiB upload allowance but streams directly to disk.
+AI generation, Figma parsing, mind-map generation, repair, regeneration, and retry
+share a persisted background queue. Two jobs run at once and eight wait by
+default; a full queue returns HTTP 503 and leaves an explicit failed job record.
+Legacy synchronous AI/Figma endpoints share the same two execution slots and
+cannot bypass this limit. `/api/health` reports the running, queued, capacity,
+active heavy-work, and rejected counts.
+The installer also writes `/etc/systemd/system/midscene-task.service.d/resource-guard.conf`
+with `MemoryHigh=2G`, `MemoryMax=3G`, and `TasksMax=256`. Override these defaults
+for a different host only when running the installer:
+
+```bash
+TASK_SERVICE_MEMORY_HIGH=2G TASK_SERVICE_MEMORY_MAX=3G \
+  TASK_SERVICE_TASKS_MAX=256 bash deploy/update-main-server.sh
+```
+
+Platform deployment observes Sonic but does not manage its lifecycle. Configure
+existing Sonic containers once so Eureka and the other services recover after a
+process exit without restarting containers that are currently running:
+
+```bash
+bash deploy/configure-sonic-restart.sh
+```
+
+To also start Sonic containers that are already stopped, use the explicit form:
+
+```bash
+bash deploy/configure-sonic-restart.sh --start-stopped
 ```
 
 AI generation uses `MIDSCENE_AI_CHAT_TIMEOUT_SECONDS` for each Qwen/DashScope

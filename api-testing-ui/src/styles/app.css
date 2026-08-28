@@ -23,6 +23,9 @@ code, pre { font-family: "SFMono-Regular", Consolas, monospace; }
 .main-content { min-width: 0; }
 .workspace { min-width: 0; padding: 18px 22px 32px; }
 .workspace-restoring { display: flex; align-items: center; justify-content: center; gap: 10px; min-height: 180px; }.workspace-restoring div { display: grid; gap: 3px; }.workspace-restoring small { color: var(--muted); }.spinning { animation: spin 1s linear infinite; }
+.workspace-restore-error { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 12px; min-height: 150px; padding: 18px; border: 1px solid #f1b2b2; border-left: 3px solid var(--red); border-radius: 6px; background: #fff7f7; color: #8f3d3d; }
+.workspace-restore-error > div { display: grid; gap: 5px; min-width: 0; }.workspace-restore-error p { margin: 0; overflow-wrap: anywhere; font-size: 13px; line-height: 1.5; }.workspace-restore-error small { color: var(--muted); font-size: 11px; line-height: 1.5; }
+@media (max-width: 760px) { .workspace-restore-error { grid-template-columns: auto minmax(0, 1fr); }.workspace-restore-error button { grid-column: 2; justify-self: start; } }
 .page-toolbar { display: flex; align-items: center; justify-content: space-between; min-height: 48px; margin-bottom: 16px; }
 .eyebrow { margin: 0 0 3px; color: var(--teal); font-size: 12px; font-weight: 600; }
 h1, h2, p { margin-top: 0; } h1 { margin-bottom: 0; font-size: 21px; font-weight: 650; } h2 { margin-bottom: 0; font-size: 14px; font-weight: 650; }
