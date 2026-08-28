@@ -1239,6 +1239,56 @@ def test_active_case_list_exposes_debug_and_baseline_lifecycle(
     assert current.lifecycle["baseline_id"] == baseline.id
 
 
+def test_active_case_list_batches_children_and_skips_heavy_execution_payloads(
+    case_service, project_context, session_factory
+):
+    endpoint = project_context["endpoints"]["favoriteList"]
+    drafts = []
+    for index in range(3):
+        payload = valid_list_case(endpoint)
+        payload["name"] = f"查询我的收藏-批量读取-{index}"
+        drafts.append(
+            case_service.create_draft(endpoint.id, payload, "manual", "admin")
+        )
+
+    evidence_id = _create_execution_evidence(
+        session_factory,
+        project_context,
+        drafts[0],
+    )
+    with session_factory.begin() as session:
+        evidence = session.get(ApiExecutionCase, evidence_id)
+        evidence.sanitized_result = {"large_evidence": "x" * 1_000_000}
+
+    statements = []
+    engine = session_factory.kw["bind"]
+
+    def capture_statement(_conn, _cursor, statement, _params, _context, _many):
+        if statement.lstrip().upper().startswith("SELECT"):
+            statements.append(statement.lower())
+
+    event.listen(engine, "before_cursor_execute", capture_statement)
+    try:
+        listed = case_service.list_active_versions_for_source_revision(
+            project_context["source_revision"].id,
+            "admin",
+        )
+    finally:
+        event.remove(engine, "before_cursor_execute", capture_statement)
+
+    selected = [item for item in listed if item.case_id in {draft.case_id for draft in drafts}]
+    assert len(selected) == 3
+    assert all(len(item.data_rows) == 1 for item in selected)
+    assert all(len(item.assertions) == 2 for item in selected)
+    assert all(len(item.extractions) == 1 for item in selected)
+    assert len(statements) <= 8
+    lifecycle_statements = [
+        statement for statement in statements if "api_execution_cases" in statement
+    ]
+    assert lifecycle_statements
+    assert all("sanitized_result" not in statement for statement in lifecycle_statements)
+
+
 @pytest.mark.parametrize(
     "parent_state",
     ["QUEUED", "RUNNING", "FAILED", "BROKEN", "CANCELLED", "PASSED"],

@@ -79,7 +79,9 @@ EXPECTED_INDEXES = {
     "api_source_revisions": {"ix_api_source_revisions_source_number"},
     "api_source_endpoints": {"ix_api_source_endpoints_revision_method_path"},
     "api_cases": {"ix_api_cases_project_status"},
+    "api_baselines": {"ix_api_baselines_case_status_created"},
     "api_executions": {"ix_api_executions_project_state_created"},
+    "api_execution_cases": {"ix_api_execution_cases_version_created"},
     "api_execution_events": {"ix_api_execution_events_execution_sequence"},
 }
 

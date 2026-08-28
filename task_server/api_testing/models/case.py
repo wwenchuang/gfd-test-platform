@@ -107,6 +107,7 @@ class ApiBaseline(PrimaryRecord, Base):
     __table_args__ = (
         Index("ix_api_baselines_project_case", "project_id", "case_id"),
         Index("ix_api_baselines_project_group", "project_id", "group_name"),
+        Index("ix_api_baselines_case_status_created", "case_id", "status", "created_at"),
     )
 
     project_id: Mapped[str] = mapped_column(ForeignKey("api_projects.id", ondelete="CASCADE"), nullable=False)

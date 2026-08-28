@@ -32,7 +32,14 @@ class ApiExecution(PrimaryRecord, Base):
 
 class ApiExecutionCase(PrimaryRecord, Base):
     __tablename__ = "api_execution_cases"
-    __table_args__ = (UniqueConstraint("execution_id", "ordinal"),)
+    __table_args__ = (
+        UniqueConstraint("execution_id", "ordinal"),
+        Index(
+            "ix_api_execution_cases_version_created",
+            "case_version_id",
+            "created_at",
+        ),
+    )
 
     execution_id: Mapped[str] = mapped_column(ForeignKey("api_executions.id", ondelete="CASCADE"), nullable=False)
     case_version_id: Mapped[str] = mapped_column(ForeignKey("api_case_versions.id", ondelete="RESTRICT"), nullable=False)

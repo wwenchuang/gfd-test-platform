@@ -129,6 +129,10 @@ class CaseService:
                 revision_id,
                 actor_id,
             )
+            version_ids = [version.id for version, _case, _endpoint, _state in projected]
+            data_rows = repository.get_data_rows_for_versions(version_ids)
+            assertions = repository.get_assertions_for_versions(version_ids)
+            extractions = repository.get_extractions_for_versions(version_ids)
             lifecycle = repository.case_lifecycle(
                 [case.id for _version, case, _endpoint, _state in projected],
                 actor_id,
@@ -141,6 +145,9 @@ class CaseService:
                     current_endpoint_id=current_endpoint.id,
                     source_state=source_state,
                     lifecycle=lifecycle.get(case.id, {}),
+                    data_rows=data_rows.get(version.id, ()),
+                    assertion_records=assertions.get(version.id, ()),
+                    extraction_records=extractions.get(version.id, ()),
                 )
                 for version, case, current_endpoint, source_state in projected
             )
@@ -363,16 +370,27 @@ class CaseService:
         current_endpoint_id=None,
         source_state="current",
         lifecycle=None,
+        data_rows=None,
+        assertion_records=None,
+        extraction_records=None,
     ):
         request_template = copy.deepcopy(dict(version.request_template))
         name = request_template.get("name", case.name)
         request = request_template.get("request", request_template)
         rows = tuple(
             DataRowView(item.name, item.values, item.enabled, item.sequence)
-            for item in repository.get_data_rows(version.id)
+            for item in (
+                repository.get_data_rows(version.id)
+                if data_rows is None
+                else data_rows
+            )
         )
         assertions = []
-        for item in repository.get_assertions(version.id):
+        for item in (
+            repository.get_assertions(version.id)
+            if assertion_records is None
+            else assertion_records
+        ):
             definition = dict(item.definition)
             assertions.append(
                 AssertionView(
@@ -387,7 +405,11 @@ class CaseService:
                 )
             )
         extractions = []
-        for item in repository.get_extractions(version.id):
+        for item in (
+            repository.get_extractions(version.id)
+            if extraction_records is None
+            else extraction_records
+        ):
             definition = dict(item.definition)
             extractions.append(
                 ExtractionView(

@@ -3,6 +3,7 @@
 import copy
 
 from sqlalchemy import func, select
+from sqlalchemy.orm import defer
 
 from ..models.case import (
     ApiBaseline,
@@ -42,26 +43,35 @@ class CaseRepository:
         )
 
     def list_active_versions_for_source_revision(self, revision_id, actor_id):
-        current_revision = self.get_source_revision(revision_id)
-        if current_revision is None:
+        current_source_id = self.session.scalar(
+            select(ApiSourceRevision.source_id).where(
+                ApiSourceRevision.id == revision_id
+            )
+        )
+        if current_source_id is None:
             return ()
         current_endpoints = {
             item.stable_key: item
             for item in self.session.scalars(
-                select(ApiSourceEndpoint).where(
-                    ApiSourceEndpoint.revision_id == revision_id
-                )
+                select(ApiSourceEndpoint)
+                .options(defer(ApiSourceEndpoint.operation, raiseload=True))
+                .where(ApiSourceEndpoint.revision_id == revision_id)
             )
         }
         rows = self.session.execute(
-            select(ApiCaseVersion, ApiCase, ApiSourceEndpoint, ApiSourceRevision)
+            select(
+                ApiCaseVersion,
+                ApiCase,
+                ApiSourceEndpoint.stable_key,
+                ApiSourceEndpoint.revision_id,
+            )
             .join(ApiCase, ApiCase.id == ApiCaseVersion.case_id)
             .join(ApiSourceEndpoint, ApiSourceEndpoint.id == ApiCaseVersion.endpoint_id)
             .join(ApiSourceRevision, ApiSourceRevision.id == ApiSourceEndpoint.revision_id)
             .join(ApiSource, ApiSource.id == ApiSourceRevision.source_id)
             .join(ApiProject, ApiProject.id == ApiSource.project_id)
             .where(
-                ApiSource.id == current_revision.source_id,
+                ApiSource.id == current_source_id,
                 ApiProject.owner_id == actor_id,
                 ApiCase.owner_id == actor_id,
                 ApiCase.project_id == ApiProject.id,
@@ -72,8 +82,8 @@ class CaseRepository:
             )
         )
         projected = []
-        for version, case, historical_endpoint, historical_revision in rows:
-            current_endpoint = current_endpoints.get(historical_endpoint.stable_key)
+        for version, case, historical_stable_key, historical_revision_id in rows:
+            current_endpoint = current_endpoints.get(historical_stable_key)
             if current_endpoint is None:
                 continue
             projected.append(
@@ -82,7 +92,7 @@ class CaseRepository:
                     case,
                     current_endpoint,
                     "current"
-                    if historical_revision.id == revision_id
+                    if historical_revision_id == revision_id
                     else "needs_adaptation",
                 )
             )
@@ -102,7 +112,12 @@ class CaseRepository:
         if not identifiers:
             return lifecycle
         baseline_rows = self.session.execute(
-            select(ApiBaseline)
+            select(
+                ApiBaseline.id,
+                ApiBaseline.case_id,
+                ApiBaseline.status,
+                ApiBaseline.created_at,
+            )
             .where(
                 ApiBaseline.case_id.in_(identifiers),
                 ApiBaseline.owner_id == actor_id,
@@ -110,48 +125,70 @@ class CaseRepository:
             )
             .distinct(ApiBaseline.case_id)
             .order_by(ApiBaseline.case_id, ApiBaseline.created_at.desc())
-        ).scalars()
-        for baseline in baseline_rows:
-            lifecycle[baseline.case_id].update(
+        )
+        for baseline_id, case_id, status, created_at in baseline_rows:
+            lifecycle[case_id].update(
                 {
-                    "baseline_id": baseline.id,
-                    "baseline_status": baseline.status,
-                    "baseline_adopted_at": baseline.created_at,
+                    "baseline_id": baseline_id,
+                    "baseline_status": status,
+                    "baseline_adopted_at": created_at,
                 }
             )
 
-        execution_rows = self.session.execute(
-            select(ApiCaseVersion.case_id, ApiExecutionCase, ApiExecution)
+        ranked_executions = (
+            select(
+                ApiCaseVersion.case_id.label("case_id"),
+                ApiExecutionCase.status.label("status"),
+                ApiExecutionCase.execution_id.label("execution_id"),
+                ApiExecutionCase.created_at.label("created_at"),
+                ApiExecution.execution_type.label("execution_type"),
+                func.row_number()
+                .over(
+                    partition_by=(
+                        ApiCaseVersion.case_id,
+                        ApiExecution.execution_type,
+                    ),
+                    order_by=(
+                        ApiExecutionCase.created_at.desc(),
+                        ApiExecutionCase.id.desc(),
+                    ),
+                )
+                .label("row_number"),
+            )
             .join(ApiExecutionCase, ApiExecutionCase.case_version_id == ApiCaseVersion.id)
             .join(ApiExecution, ApiExecution.id == ApiExecutionCase.execution_id)
             .where(
                 ApiCaseVersion.case_id.in_(identifiers),
                 ApiExecution.owner_id == actor_id,
             )
-            .distinct(ApiCaseVersion.case_id, ApiExecution.execution_type)
-            .order_by(
-                ApiCaseVersion.case_id,
-                ApiExecution.execution_type,
-                ApiExecutionCase.created_at.desc(),
-            )
+            .subquery()
         )
-        for case_id, execution_case, execution in execution_rows:
-            if execution.execution_type == "debug":
+        execution_rows = self.session.execute(
+            select(
+                ranked_executions.c.case_id,
+                ranked_executions.c.status,
+                ranked_executions.c.execution_id,
+                ranked_executions.c.created_at,
+                ranked_executions.c.execution_type,
+            ).where(ranked_executions.c.row_number == 1)
+        )
+        for case_id, status, execution_id, created_at, execution_type in execution_rows:
+            if execution_type == "debug":
                 lifecycle[case_id].update(
                     {
-                        "debug_status": execution_case.status,
-                        "debug_execution_id": execution.id,
-                        "debugged_at": execution_case.created_at,
+                        "debug_status": status,
+                        "debug_execution_id": execution_id,
+                        "debugged_at": created_at,
                     }
                 )
             else:
                 current = lifecycle[case_id].get("regressed_at")
-                if current is None or execution_case.created_at > current:
+                if current is None or created_at > current:
                     lifecycle[case_id].update(
                         {
-                            "regression_status": execution_case.status,
-                            "regression_execution_id": execution.id,
-                            "regressed_at": execution_case.created_at,
+                            "regression_status": status,
+                            "regression_execution_id": execution_id,
+                            "regressed_at": created_at,
                         }
                     )
         return lifecycle
@@ -300,6 +337,20 @@ class CaseRepository:
                 .order_by(ApiCaseDataRow.sequence)
             )
         )
+
+    def get_data_rows_for_versions(self, version_ids):
+        identifiers = tuple(dict.fromkeys(version_ids))
+        if not identifiers:
+            return {}
+        output = {version_id: [] for version_id in identifiers}
+        records = self.session.scalars(
+            select(ApiCaseDataRow)
+            .where(ApiCaseDataRow.case_version_id.in_(identifiers))
+            .order_by(ApiCaseDataRow.case_version_id, ApiCaseDataRow.sequence)
+        )
+        for record in records:
+            output[record.case_version_id].append(record)
+        return {key: tuple(value) for key, value in output.items()}
 
     def get_assertions(self, version_id):
         return tuple(
