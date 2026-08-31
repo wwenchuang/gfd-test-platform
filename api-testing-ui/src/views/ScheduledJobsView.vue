@@ -303,6 +303,25 @@ function jobTargetIssue(job: ScheduledJob): string {
   return blocked?.unavailableReason || ''
 }
 
+function scheduledBlockMessage(job: ScheduledJob): string {
+  switch (job.blocked_reason) {
+    case undefined:
+    case '':
+      return ''
+    case 'blocked: permission or scope revoked':
+      return '保存任务配置的成员的执行权限或数据范围已撤销。请联系管理员恢复保存任务配置的成员对项目、环境及执行操作的授权，再手动执行一次并刷新结果。'
+    case 'blocked: scheduled target unavailable or outside current scope':
+      return '定时任务目标不可用，或已超出当前数据范围。请检查目标及环境是否有效，并编辑任务重新选择；若授权已撤销，请联系管理员恢复。完成后可手动执行一次并刷新结果。'
+    default:
+      return '服务端阻断原因尚未识别。请联系管理员检查任务权限、目标和环境后重试。'
+  }
+}
+
+const editingBlockMessage = computed(() => {
+  const job = scheduledJobs.items.find(item => item.id === editingJobId.value)
+  return job ? scheduledBlockMessage(job) : ''
+})
+
 function targetOptionsForType(type: ScheduledJob['target_type']): TargetOption[] {
   if (type === 'baselines') return availableBaselines.value.map(baselineOption)
   if (type === 'cases') return Object.values(cases.versions).map(caseOption)
@@ -619,8 +638,8 @@ function weekDayName(value: number): string {
         <h1>定时任务</h1>
         <p class="page-subtitle">定时任务独立保存项目、目标和环境策略；手动执行会生成带“定时任务”来源的执行记录。</p>
       </div>
-      <button type="button" class="secondary-command" data-testid="scheduled-refresh" :disabled="!projectId || scheduledJobs.loading" @click="refreshAll">
-        <RefreshCw :size="15" :class="{ 'is-spinning': scheduledJobs.loading }" />刷新
+      <button type="button" class="icon-command scheduled-refresh" data-testid="scheduled-refresh" title="刷新定时任务" aria-label="刷新定时任务" :disabled="!projectId || scheduledJobs.loading" @click="refreshAll">
+        <RefreshCw :size="18" :class="{ 'is-spinning': scheduledJobs.loading }" />
       </button>
     </header>
 
@@ -629,16 +648,18 @@ function weekDayName(value: number): string {
     <div class="scheduled-layout">
       <section class="scheduled-list">
         <header class="panel-header"><h2>任务列表</h2><span>{{ scheduledJobs.items.length }}</span></header>
-        <article v-for="job in scheduledJobs.items" :key="job.id" :data-testid="`scheduled-row-${job.id}`" class="scheduled-row">
+        <article v-for="job in scheduledJobs.items" :key="job.id" :data-testid="`scheduled-row-${job.id}`" class="scheduled-row" :class="{ 'has-server-block': Boolean(scheduledBlockMessage(job)) }">
           <div class="scheduled-row-main">
             <strong>{{ job.name }}</strong>
             <span>{{ targetTypeLabel(job.target_type) }} · {{ scheduleLabel(job) }} · 调度时区 {{ schedulerTimezoneLabel(job) }} · {{ job.notify_feishu ? '飞书通知' : '不通知' }}</span>
             <span class="scheduled-runtime-line">
-              <b v-if="jobTargetIssue(job)" class="scheduled-blocked">执行已阻断 · {{ jobTargetIssue(job) }}</b>
-              <b v-else>{{ job.enabled ? `下次执行 ${formatDateTime(job.next_run_at, job.scheduler_utc_offset)}` : '当前已停用' }}</b>
+              <b>配置：{{ job.enabled ? '已启用' : '已停用' }}</b>
+              <b v-if="!scheduledBlockMessage(job) && jobTargetIssue(job)" class="scheduled-blocked">执行已阻断 · {{ jobTargetIssue(job) }}</b>
+              <b v-else-if="!scheduledBlockMessage(job) && job.enabled">下次执行 {{ formatDateTime(job.next_run_at, job.scheduler_utc_offset) }}</b>
               <b v-if="job.latest_run_at">最近{{ triggerLabel(job.latest_run_trigger) }} {{ formatDateTime(job.latest_run_at, job.scheduler_utc_offset) }} · {{ scheduleExecutionSummary(job) }}</b>
               <b v-else>尚无执行记录</b>
             </span>
+            <p v-if="scheduledBlockMessage(job)" class="inline-error" role="status">执行已阻断 · {{ scheduledBlockMessage(job) }}</p>
             <small>{{ jobTargetSummary(job) }}</small>
           </div>
           <div class="scheduled-row-actions">
@@ -665,6 +686,7 @@ function weekDayName(value: number): string {
           <button v-if="editingJobId" type="button" class="text-command" data-testid="scheduled-new" @click="resetEditor">新建</button>
           <CalendarClock v-else :size="17" />
         </header>
+        <p v-if="editingBlockMessage" data-testid="scheduled-editor-blocked" class="inline-error" role="status">执行已阻断 · {{ editingBlockMessage }}</p>
         <div class="setup-grid two">
           <label>任务名称<input v-model="form.name" data-testid="scheduled-name" placeholder="例如：每日发版回归" /></label>
           <label>目标类型
@@ -784,3 +806,10 @@ function weekDayName(value: number): string {
     </div>
   </section>
 </template>
+
+<style scoped>
+.scheduled-refresh { flex: 0 0 34px; }
+.scheduled-row.has-server-block { grid-template-columns: minmax(0, 1fr); }
+.scheduled-row.has-server-block .scheduled-row-actions { flex-wrap: wrap; }
+.scheduled-editor > .inline-error { margin: 10px 13px 0; }
+</style>

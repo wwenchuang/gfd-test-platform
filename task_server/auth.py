@@ -5,11 +5,7 @@ the new task_server package can validate requests without depending on the
 single-file server.
 """
 
-import base64
-import hashlib
-import json
 import secrets
-import time
 
 from .config import (
     ALLOW_QUERY_TOKEN,
@@ -23,23 +19,15 @@ from .config import (
     safe_int,
 )
 
-# ---------------------------------------------------------------------------
-# Revoked session token store (in-process, lost on restart – acceptable for now)
-# ---------------------------------------------------------------------------
-REVOKED_SESSION_TOKENS: set = set()
+
+class _PersistentRevocations:
+    """Compatibility for the old router's ``REVOKED_SESSION_TOKENS.add`` call."""
+
+    def add(self, token):
+        logout(token)
 
 
-# ---------------------------------------------------------------------------
-# Internal helpers
-# ---------------------------------------------------------------------------
-
-def _sign_session_payload(payload):
-    """Sign a JSON payload with the session secret, returning ``body.signature``."""
-    body = base64.urlsafe_b64encode(
-        json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
-    ).decode("ascii").rstrip("=")
-    sig = hashlib.sha256((body + TASK_SESSION_SECRET).encode("utf-8")).hexdigest()
-    return f"{body}.{sig}"
+REVOKED_SESSION_TOKENS = _PersistentRevocations()
 
 
 # ---------------------------------------------------------------------------
@@ -49,73 +37,35 @@ def _sign_session_payload(payload):
 def bearer_token(headers):
     """Extract Bearer token from *Authorization* header."""
     value = (headers or {}).get("Authorization", "")
-    if value.lower().startswith("bearer "):
+    if isinstance(value, str) and value.lower().startswith("bearer "):
         return value[7:].strip()
     return ""
 
 
 def verify_password(username, password):
-    """Verify *username* / *password* credentials.
+    """Verify a local account, including persistent login throttling."""
+    from . import identity
 
-    Supports two modes (matching the original ``task_password_valid``):
-    * ``TASK_ADMIN_PASSWORD_HASH`` – sha256 hex digest of the password.
-    * ``TASK_ADMIN_PASSWORD`` – plaintext comparison (fallback).
-
-    Returns ``True`` only when *username* matches ``TASK_ADMIN_USER`` **and**
-    the password is valid.
-    """
-    if username != TASK_ADMIN_USER:
+    try:
+        return bool(identity.get_identity_store().authenticate(username, password))
+    except identity.IdentityError:
         return False
-    raw = password or ""
-    if TASK_ADMIN_PASSWORD_HASH:
-        digest = hashlib.sha256(raw.encode("utf-8")).hexdigest()
-        return secrets.compare_digest(digest, TASK_ADMIN_PASSWORD_HASH)
-    if TASK_ADMIN_PASSWORD:
-        return secrets.compare_digest(raw, TASK_ADMIN_PASSWORD)
-    return False
 
 
-def create_session_token():
-    """Create a new session token for ``TASK_ADMIN_USER``.
+def create_session_token(user=None):
+    """Issue an opaque token for an existing user (trusted internal callers only)."""
+    from . import identity
 
-    Returns the signed token string (``base64_payload.signature``).
-    """
-    now = int(time.time())
-    return _sign_session_payload({
-        "user": TASK_ADMIN_USER,
-        "iat": now,
-        "exp": now + max(300, TASK_SESSION_TTL_SECONDS),
-        "nonce": secrets.token_hex(12),
-    })
+    return identity.get_identity_store().create_session(TASK_ADMIN_USER if user is None else user)
 
 
 def verify_session_token(token):
-    """Verify a session token.
+    """Resolve an unexpired, active session against current persistent identity."""
+    from . import identity
 
-    Checks signature integrity, expiry (TTL), and that the embedded user
-    matches ``TASK_ADMIN_USER``.  Also rejects tokens in the revoke set.
-
-    Returns the decoded payload dict on success, or ``None`` on failure.
-    """
-    token = (token or "").strip()
-    if not token or token in REVOKED_SESSION_TOKENS or "." not in token:
+    if not isinstance(token, str) or not token.strip():
         return None
-    body, sig = token.rsplit(".", 1)
-    expected = hashlib.sha256((body + TASK_SESSION_SECRET).encode("utf-8")).hexdigest()
-    if not secrets.compare_digest(sig, expected):
-        return None
-    try:
-        padded = body + "=" * (-len(body) % 4)
-        payload = json.loads(
-            base64.urlsafe_b64decode(padded.encode("ascii")).decode("utf-8")
-        )
-    except Exception:
-        return None
-    if safe_int(payload.get("exp"), 0) < int(time.time()):
-        return None
-    if payload.get("user") != TASK_ADMIN_USER:
-        return None
-    return payload
+    return identity.get_identity_store().verify_session(token.strip())
 
 
 def login(username, password):
@@ -124,10 +74,13 @@ def login(username, password):
     On success returns ``(True, token_string)``; on failure returns
     ``(False, error_message)``.
     """
-    if not verify_password(username, password):
-        return False, "账号或密码错误"
-    token = create_session_token()
-    return True, token
+    from . import identity
+
+    try:
+        result = identity.get_identity_store().login(username, password)
+        return (True, result["token"]) if result else (False, "账号或密码错误")
+    except identity.IdentityError as exc:
+        return False, str(exc)
 
 
 def logout(token):
@@ -135,8 +88,10 @@ def logout(token):
 
     This is a no-op when *token* is empty/falsy.
     """
+    from . import identity
+
     if token:
-        REVOKED_SESSION_TOKENS.add(token)
+        identity.get_identity_store().logout(token)
 
 
 def is_user_authorized(headers):
@@ -145,19 +100,21 @@ def is_user_authorized(headers):
     Accepts either an ``x-token`` matching the Runner token **or** a valid
     Bearer session token.
     """
-    if (headers or {}).get("x-token", "") == TOKEN:
+    if is_runner_authorized(headers):
         return True
     return bool(verify_session_token(bearer_token(headers)))
 
 
 def is_runner_authorized(headers):
     """Check whether the request carries the Runner token via ``x-token``."""
-    return (headers or {}).get("x-token", "") == TOKEN
+    value = (headers or {}).get("x-token", "")
+    return bool(TOKEN and isinstance(value, str) and secrets.compare_digest(value.encode(), TOKEN.encode()))
 
 
 def is_sonic_callback_authorized(headers):
     """Check whether the request carries the Sonic callback token via ``x-token``."""
-    return (headers or {}).get("x-token", "") == SONIC_CALLBACK_TOKEN
+    value = (headers or {}).get("x-token", "")
+    return bool(SONIC_CALLBACK_TOKEN and isinstance(value, str) and secrets.compare_digest(value.encode(), SONIC_CALLBACK_TOKEN.encode()))
 
 
 def is_authorized_with_query(headers, qs):
@@ -176,7 +133,7 @@ def is_authorized_with_query(headers, qs):
     if not ALLOW_QUERY_TOKEN:
         return False
     qtoken = (qs or {}).get("token", "")
-    if qtoken in (TOKEN, SONIC_CALLBACK_TOKEN):
+    if qtoken and qtoken in (TOKEN, SONIC_CALLBACK_TOKEN):
         print(
             "WARNING: query token auth is deprecated; use x-token or Authorization header",
             flush=True,

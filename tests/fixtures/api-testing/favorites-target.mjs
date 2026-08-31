@@ -43,6 +43,7 @@ export async function startFavoritesAcceptance() {
     MIDSCENE_ENV_FILE: '/dev/null',
     PORT: String(platformPort),
     TASK_APP_ENV: 'test',
+    TASK_AUTH_DB: path.join(temporaryRoot, 'identity.sqlite3'),
     TASK_ADMIN_USER: 'admin',
     TASK_ADMIN_PASSWORD: 'sonic2026',
     TASK_ADMIN_PASSWORD_HASH: '',

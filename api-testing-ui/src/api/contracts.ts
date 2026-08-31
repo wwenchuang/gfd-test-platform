@@ -429,6 +429,7 @@ export interface ScheduledJob {
   latest_run_trigger: string | null
   latest_execution_state: string | null
   latest_execution_summary: Record<string, number>
+  blocked_reason?: string
   created_at: string
   updated_at: string
 }

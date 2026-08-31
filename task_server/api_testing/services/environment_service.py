@@ -1,9 +1,12 @@
 """Editable API environments with encrypted secrets and strict runtime rendering."""
 
 import copy
+import hashlib
 import ipaddress
 import re
 from urllib.parse import urlsplit
+
+from .. import access
 
 from ..contracts.environment import (
     EnvironmentAssetView,
@@ -21,6 +24,16 @@ from ..repositories.environment_repository import EnvironmentRepository
 VARIABLE_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_.-]*$")
 PLACEHOLDER = re.compile(r"{{([A-Za-z_][A-Za-z0-9_.-]*)}}")
 MAX_PLACEHOLDER_DEPTH = 10
+SENSITIVE_HEADER = re.compile(r"authorization|cookie|token|password|secret|api[-_]?key|signature", re.I)
+
+
+def _header_is_template(name, value):
+    if not value or PLACEHOLDER.fullmatch(value):
+        return True
+    if "authorization" in name.lower():
+        scheme, _, credential = value.partition(" ")
+        return bool(re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]*", scheme) and PLACEHOLDER.fullmatch(credential))
+    return False
 
 
 class EnvironmentNotFoundError(LookupError):
@@ -171,10 +184,14 @@ def _normalize_headers(value):
     normalized = {}
     for raw_name, raw_value in headers.items():
         name = _text(raw_name, "header name")
-        if "\r" in name or "\n" in name:
-            raise EnvironmentInputError("header name must not contain line breaks")
+        if re.fullmatch(r"[!#$%&'*+.^_`|~0-9A-Za-z-]+", name) is None:
+            raise EnvironmentInputError("header name is invalid")
         if not isinstance(raw_value, str):
             raise EnvironmentInputError("default header values must be strings")
+        if any(existing.lower() == name.lower() for existing in normalized):
+            raise EnvironmentInputError("default header names must be unique")
+        if "\r" in raw_value or "\n" in raw_value:
+            raise EnvironmentInputError("default headers must not contain line breaks")
         normalized[name] = raw_value
     return normalized
 
@@ -284,23 +301,27 @@ class EnvironmentService:
         self._session_factory = session_factory
 
     def import_from_source(self, payload, actor_id):
+        access.require_permission(actor_id, "api.environment")
         source = _source_payload(payload)
         actor = _text(actor_id, "actor id")
         with self._session_factory.begin() as session:
             return self._import_normalized_in_session(session, source, actor)
 
     def import_from_source_in_session(self, session, payload, actor_id):
+        access.require_permission(actor_id, "api.environment")
         return self._import_normalized_in_session(
             session, _source_payload(payload), _text(actor_id, "actor id")
         )
 
     def upsert_from_source_in_session(self, session, payload, actor_id):
+        access.require_permission(actor_id, "api.environment")
         source = _source_payload(payload)
         actor = _text(actor_id, "actor id")
         repository = EnvironmentRepository(session)
         project, source_record, source_revision = self._validate_source_scope(
             repository, source
         )
+        access.require_resource(session, project, actor, "api.environment")
         environment = repository.find_environment_for_update(
             project.id,
             source_record.id if source_record else None,
@@ -311,6 +332,7 @@ class EnvironmentService:
                 repository, source, project, source_record, source_revision, actor
             )
 
+        access.require_environment_configuration(session, environment, actor)
         previous = repository.get_revision(environment.active_revision_id)
         if previous is None:
             raise EnvironmentNotFoundError(
@@ -336,6 +358,7 @@ class EnvironmentService:
         variable_scopes.update({name: "environment" for name in platform_variables})
         default_headers = copy.deepcopy(previous.default_headers)
         default_headers.update(source["default_headers"])
+        default_headers = self._protect_headers(repository, environment, default_headers, previous_secrets, public_variables, actor, previous.default_headers)
         revision = repository.create_revision(
             environment.id,
             source_revision.id if source_revision else None,
@@ -369,6 +392,7 @@ class EnvironmentService:
         project, source_record, source_revision = self._validate_source_scope(
             repository, source
         )
+        access.require_resource(session, project, actor, "api.environment")
         return self._create_imported_revision(
             repository, source, project, source_record, source_revision, actor
         )
@@ -405,19 +429,22 @@ class EnvironmentService:
     def _create_imported_revision(
         self, repository, source, project, source_record, source_revision, actor
     ):
+        access.require_environment_configuration(repository.session, None, actor, name=source["name"], services=source["services"])
         environment = repository.create_environment(
             project.id,
             source_record.id if source_record else None,
             source["name"],
             actor,
         )
+        secrets = {}
+        headers = self._protect_headers(repository, environment, source["default_headers"], secrets, source["variables"], actor)
         revision = repository.create_revision(
             environment.id,
             source_revision.id if source_revision else None,
             1,
             source["name"],
             source["description"],
-            source["default_headers"],
+            headers,
             actor,
         )
         self._persist_services(repository, revision.id, source["services"], actor)
@@ -429,11 +456,14 @@ class EnvironmentService:
             actor,
             scopes={name: "source" for name in source["variables"]},
         )
+        for secret_name, secret in sorted(secrets.items()):
+            repository.add_secret_variable(revision.id, environment.id, secret_name, secret.id, actor)
         environment.active_revision_id = revision.id
         repository.flush()
         return self._view(repository, environment, revision)
 
     def create_revision(self, environment_id, payload, secret_updates, actor_id):
+        access.require_permission(actor_id, "api.environment")
         changes = _mapping(payload, "environment revision")
         unknown = set(changes) - {
             "name",
@@ -453,6 +483,7 @@ class EnvironmentService:
             environment = repository.get_environment_for_update(environment_id)
             if environment is None:
                 raise EnvironmentNotFoundError("API environment was not found")
+            access.require_environment_configuration(session, environment, actor, name=str(changes.get("name") or ""))
             previous = repository.get_revision(environment.active_revision_id)
             if previous is None:
                 raise EnvironmentNotFoundError("API environment active revision was not found")
@@ -505,6 +536,7 @@ class EnvironmentService:
                 if "default_headers" in changes
                 else copy.deepcopy(previous.default_headers)
             )
+            headers = self._protect_headers(repository, environment, headers, previous_secrets, public_variables, actor, previous.default_headers)
             name = (
                 _text(changes["name"], "environment name")
                 if "name" in changes
@@ -548,6 +580,7 @@ class EnvironmentService:
             return self._view(repository, environment, revision)
 
     def restore_revision(self, revision_id, actor_id):
+        access.require_permission(actor_id, "api.environment")
         actor = _text(actor_id, "actor id")
         with self._session_factory.begin() as session:
             repository = EnvironmentRepository(session)
@@ -559,20 +592,24 @@ class EnvironmentService:
             )
             if environment is None:
                 raise EnvironmentNotFoundError("API environment was not found")
+            access.require_environment_configuration(session, environment, actor)
             project = repository.get_project(environment.project_id)
-            if project is None or project.owner_id != actor:
+            if not access.resource_allowed(session, environment, actor):
+                raise EnvironmentNotFoundError("API environment was not found")
+            if project is None or not access.resource_allowed(session, project, actor):
                 raise EnvironmentNotFoundError("API environment was not found")
 
             services, public_variables, secrets = self._revision_state(
                 repository, source_revision.id
             )
+            headers = self._protect_headers(repository, environment, source_revision.default_headers, secrets, public_variables, actor)
             revision = repository.create_revision(
                 environment.id,
                 source_revision.source_revision_id,
                 repository.next_revision_number(environment.id),
                 source_revision.name,
                 source_revision.description,
-                copy.deepcopy(source_revision.default_headers),
+                headers,
                 actor,
             )
             self._persist_services(repository, revision.id, services, actor)
@@ -609,6 +646,7 @@ class EnvironmentService:
             return self._view(repository, environment, revision)
 
     def list_assets(self, project_id, actor_id, status="active"):
+        access.require_permission(actor_id, "api.view")
         project_identifier = _text(project_id, "project id")
         actor = _text(actor_id, "actor id")
         normalized_status = _text(status, "environment status")
@@ -617,11 +655,11 @@ class EnvironmentService:
         with self._session_factory() as session:
             repository = EnvironmentRepository(session)
             project = repository.get_project(project_identifier)
-            if project is None or project.owner_id != actor:
+            if project is None or not access.resource_allowed(session, project, actor):
                 raise EnvironmentNotFoundError("API testing project was not found")
             assets = []
             for environment in repository.list_environments(
-                project_identifier, normalized_status
+                project_identifier, normalized_status, actor
             ):
                 if not environment.active_revision_id:
                     continue
@@ -652,6 +690,7 @@ class EnvironmentService:
             return tuple(assets)
 
     def list_revisions(self, environment_id, actor_id):
+        access.require_permission(actor_id, "api.view")
         actor = _text(actor_id, "actor id")
         with self._session_factory() as session:
             repository = EnvironmentRepository(session)
@@ -659,7 +698,9 @@ class EnvironmentService:
             if environment is None:
                 raise EnvironmentNotFoundError("API environment was not found")
             project = repository.get_project(environment.project_id)
-            if project is None or project.owner_id != actor:
+            if not access.resource_allowed(session, environment, actor):
+                raise EnvironmentNotFoundError("API environment was not found")
+            if project is None or not access.resource_allowed(session, project, actor):
                 raise EnvironmentNotFoundError("API environment was not found")
             return tuple(
                 EnvironmentRevisionSummary(
@@ -677,9 +718,11 @@ class EnvironmentService:
             )
 
     def archive(self, environment_id, actor_id):
+        access.require_permission(actor_id, "api.environment")
         return self._set_status(environment_id, actor_id, "archived")
 
     def restore(self, environment_id, actor_id):
+        access.require_permission(actor_id, "api.environment")
         return self._set_status(environment_id, actor_id, "active")
 
     def _set_status(self, environment_id, actor_id, status):
@@ -689,8 +732,11 @@ class EnvironmentService:
             environment = repository.get_environment_for_update(environment_id)
             if environment is None:
                 raise EnvironmentNotFoundError("API environment was not found")
+            access.require_environment_configuration(session, environment, actor)
             project = repository.get_project(environment.project_id)
-            if project is None or project.owner_id != actor:
+            if not access.resource_allowed(session, environment, actor):
+                raise EnvironmentNotFoundError("API environment was not found")
+            if project is None or not access.resource_allowed(session, project, actor):
                 raise EnvironmentNotFoundError("API environment was not found")
             environment.status = status
             environment.updated_by = actor
@@ -755,6 +801,7 @@ class EnvironmentService:
         raw_public = copy.deepcopy(public_variables)
         raw_public.update(runtime_overrides)
         resolver = _PlaceholderResolver({**raw_public, **secrets})
+        configured_resolver = _PlaceholderResolver({**public_variables, **secrets})
         resolved_values = resolver.resolve_all()
         resolved_public = {name: resolved_values[name] for name in raw_public}
         resolved_secrets = {name: resolved_values[name] for name in secrets}
@@ -766,7 +813,7 @@ class EnvironmentService:
                 unresolved_services.append(name)
                 continue
             try:
-                base_url = resolver.render(item["base_url"])
+                base_url = configured_resolver.render(item["base_url"])
                 if not isinstance(base_url, str):
                     raise EnvironmentInputError("resolved service URL must be a string")
                 base_urls[name] = _validate_service_url(base_url)
@@ -795,7 +842,32 @@ class EnvironmentService:
         return runtime
 
     @staticmethod
+    def _protect_headers(repository, environment, headers, secrets, public_variables, actor, previous=None):
+        protected = _normalize_headers(headers)
+        previous = {name.lower(): value for name, value in (previous or {}).items()}
+        for name, value in protected.items():
+            if not SENSITIVE_HEADER.search(name):
+                continue
+            if "***" in value or "[redacted]" in value.lower():
+                value = previous.get(name.lower())
+                if value is None or "***" in value or "[redacted]" in value.lower():
+                    raise EnvironmentInputError("redacted headers cannot be saved as credentials")
+            if _header_is_template(name, value):
+                protected[name] = value
+                continue
+            secret_name = "__header_" + hashlib.sha256(name.lower().encode()).hexdigest()[:24]
+            if secret_name in public_variables:
+                raise EnvironmentInputError("header secret name conflicts with a public variable")
+            secrets[secret_name] = repository.create_secret(
+                environment.project_id, environment.id, secret_name,
+                encrypt_secret(value), secret_fingerprint(value), actor,
+            )
+            protected[name] = "{{" + secret_name + "}}"
+        return protected
+
+    @staticmethod
     def _persist_services(repository, revision_id, services, actor_id):
+        access.require_environment_configuration(repository.session, None, actor_id, services=services)
         for service in services.values():
             repository.add_service(
                 revision_id,
@@ -898,7 +970,8 @@ class EnvironmentService:
                 for name, item in services.items()
             },
             variables=variables,
-            default_headers=copy.deepcopy(revision.default_headers),
+            default_headers={name: "***" if SENSITIVE_HEADER.search(name) and not _header_is_template(name, value) else value
+                             for name, value in revision.default_headers.items()},
             created_at=revision.created_at,
             updated_at=revision.updated_at,
         )

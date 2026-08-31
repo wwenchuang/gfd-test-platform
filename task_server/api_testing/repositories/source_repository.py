@@ -5,6 +5,8 @@ import copy
 from sqlalchemy import func, select
 from sqlalchemy.orm import defer
 
+from .. import access
+
 from ..models.project import ApiProject
 from ..models.source import (
     ApiSource,
@@ -52,7 +54,7 @@ class SourceRepository:
             name=name,
             source_type=source_type,
             connection_config={},
-            **audit_fields(actor_id),
+            **access.inherited_audit(self.session, actor_id, ApiProject, project_id),
         )
         self.session.add(source)
         self.session.flush()
@@ -84,7 +86,7 @@ class SourceRepository:
             normalized_document=dict(normalized.document),
             import_metadata=dict(import_metadata),
             expires_at=expires_at,
-            **audit_fields(actor_id),
+            **access.inherited_audit(self.session, actor_id, ApiSource, source_id),
         )
         self.session.add(revision)
         self.session.flush()
@@ -103,7 +105,7 @@ class SourceRepository:
                 summary=endpoint.summary,
                 tags=list(endpoint.tags),
                 operation=dict(endpoint.operation),
-                **audit_fields(actor_id),
+                **access.inherited_audit(self.session, actor_id, ApiSourceRevision, revision_id),
             )
             self.session.add(record)
             records.append(record)
@@ -117,7 +119,7 @@ class SourceRepository:
                     revision_id=revision_id,
                     schema_key=schema_key,
                     schema=copy.deepcopy(schema),
-                    **audit_fields(actor_id),
+                    **access.inherited_audit(self.session, actor_id, ApiSourceRevision, revision_id),
                 )
             )
         self.session.flush()
@@ -139,7 +141,7 @@ class SourceRepository:
             summary=summary,
             changes=changes,
             expires_at=expires_at,
-            **audit_fields(actor_id),
+            **access.inherited_audit(self.session, actor_id, ApiSource, source_id),
         )
         self.session.add(diff)
         self.session.flush()

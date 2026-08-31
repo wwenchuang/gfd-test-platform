@@ -160,8 +160,8 @@ def main():
     installer = (ROOT / "deploy" / "install-server.sh").read_text(encoding="utf-8")
     require(
         'AI_GATEWAY_PORT="${AI_GATEWAY_PORT:-8090}"' in installer
-        and 'env PORT="${AI_GATEWAY_PORT}" pm2 restart ai-gateway --update-env' in installer
-        and 'env PORT="${AI_GATEWAY_PORT}" pm2 start server.js --name ai-gateway --update-env' in installer,
+        and 'env PORT="${AI_GATEWAY_PORT}" AI_GATEWAY_HOST="${AI_GATEWAY_HOST}" AI_GATEWAY_AUTH_BASE_URL="${AI_GATEWAY_AUTH_BASE_URL}" pm2 restart ai-gateway --update-env' in installer
+        and 'env PORT="${AI_GATEWAY_PORT}" AI_GATEWAY_HOST="${AI_GATEWAY_HOST}" AI_GATEWAY_AUTH_BASE_URL="${AI_GATEWAY_AUTH_BASE_URL}" pm2 start server.js --name ai-gateway --update-env' in installer,
         "installer must isolate AI Gateway port 8090 from the task server PORT environment",
     )
     for marker in (

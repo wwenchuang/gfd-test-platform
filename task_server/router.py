@@ -385,6 +385,9 @@ def route_delete_regex(pattern):
 def dispatch_get(handler):
     """分发 GET 请求：精确匹配 → 前缀匹配 → 正则匹配 → 静态文件 → 404"""
     qs, path = handler._qs()
+    from task_server.access_control import prepare_request_access
+    if prepare_request_access(handler, "GET", path, qs):
+        return
 
     # 1. 精确匹配
     if path in GET_ROUTES:
@@ -413,6 +416,9 @@ def dispatch_get(handler):
 def dispatch_post(handler):
     """分发 POST 请求：精确匹配 → 前缀匹配 → 正则匹配 → 404"""
     qs, path = handler._qs()
+    from task_server.access_control import prepare_request_access
+    if prepare_request_access(handler, "POST", path, qs):
+        return
     for prefix, fn in _POST_PREFIX_BEFORE_BODY_ROUTES:
         if path.startswith(prefix):
             return fn(handler, qs, path)
@@ -441,6 +447,9 @@ def dispatch_post(handler):
 def dispatch_put(handler):
     """分发 PUT 请求；当前仅模块前缀自行执行认证和请求体限制。"""
     qs, path = handler._qs()
+    from task_server.access_control import prepare_request_access
+    if prepare_request_access(handler, "PUT", path, qs):
+        return
     for prefix, fn in _PUT_PREFIX_ROUTES:
         if path.startswith(prefix):
             return fn(handler, qs, path)
@@ -450,6 +459,9 @@ def dispatch_put(handler):
 def dispatch_delete(handler):
     """分发 DELETE 请求：精确匹配 → 前缀匹配 → 正则匹配 → 404"""
     qs, path = handler._qs()
+    from task_server.access_control import prepare_request_access
+    if prepare_request_access(handler, "DELETE", path, qs):
+        return
 
     # 1. 精确匹配
     if path in DELETE_ROUTES:
@@ -473,6 +485,9 @@ def dispatch_delete(handler):
 def dispatch_head(handler):
     """分发 HEAD 请求"""
     qs, path = handler._qs()
+    from task_server.access_control import prepare_request_access
+    if prepare_request_access(handler, "HEAD", path, qs):
+        return
 
     # 首页
     if path in ("/", "/task-manager.html", "/trace-viewer.html"):
@@ -1995,6 +2010,9 @@ def _get_jobs(handler, qs):
     background_limit = max(20, min(500, safe_int(qs.get("background_limit") or qs.get("backgroundLimit"), 100)))
     with JOB_LOCK:
         jobs = load_jobs(limit=None)
+    policy = getattr(handler, "_main_access", None)
+    if policy is not None:
+        jobs = [job for job in jobs if policy.visible(job)]
     with RUNNER_LOCK:
         runners = load_runners()
     active_jobs = [job for job in jobs if job.get("status") in ("pending", "running")]
@@ -2616,6 +2634,9 @@ def _get_cases_list(handler, qs):
     page_size = max(1, min(200, safe_int(qs.get('pageSize') or qs.get('page_size'), 50)))
     return_all = safe_bool(qs.get('all') or qs.get('includeAll'))
     cases = list_cases_by_module(module) if module else list_all_cases()
+    policy = getattr(handler, "_main_access", None)
+    if policy is not None:
+        cases = [case for case in cases if policy.visible(case)]
     if keyword:
         def match_case(case):
             if not isinstance(case, dict):

@@ -3,6 +3,8 @@
 import copy
 from types import MappingProxyType
 
+from .. import access
+
 from ..contracts.test_task import ApiTestTaskView
 from ..repositories.test_task_repository import TestTaskRepository
 
@@ -47,13 +49,14 @@ class TestTaskService:
         self._session_factory = session_factory
 
     def save_context(self, owner_id, payload, actor_id):
+        access.require_permission(actor_id, "api.edit")
         owner = _text(owner_id, "owner id", 128)
         actor = _text(actor_id, "actor id", 128)
         if owner != actor:
             raise TestTaskScopeError("task actor does not own this workflow")
         parsed = self._parse_context(payload)
         with self._session_factory.begin() as session:
-            repository = TestTaskRepository(session)
+            repository = TestTaskRepository(session, actor)
             self._validate_context(repository, owner, parsed)
             task = repository.get_active(
                 parsed["project_id"], owner, for_update=True
@@ -77,13 +80,14 @@ class TestTaskService:
             return self._view(repository, task)
 
     def update_context(self, task_id, owner_id, payload, actor_id):
+        access.require_permission(actor_id, "api.edit")
         owner = _text(owner_id, "owner id", 128)
         actor = _text(actor_id, "actor id", 128)
         if owner != actor:
             raise TestTaskScopeError("task actor does not own this workflow")
         parsed = self._parse_context(payload)
         with self._session_factory.begin() as session:
-            repository = TestTaskRepository(session)
+            repository = TestTaskRepository(session, actor)
             task = self._owned_task(repository, task_id, owner, for_update=True)
             if parsed["project_id"] != task.project_id:
                 raise TestTaskScopeError("task project cannot be changed")
@@ -104,51 +108,57 @@ class TestTaskService:
             return self._view(repository, task)
 
     def create_context(self, owner_id, payload, actor_id):
+        access.require_permission(actor_id, "api.edit")
         owner = _text(owner_id, "owner id", 128)
         actor = _text(actor_id, "actor id", 128)
         if owner != actor:
             raise TestTaskScopeError("task actor does not own this workflow")
         parsed = self._parse_context(payload)
         with self._session_factory.begin() as session:
-            repository = TestTaskRepository(session)
+            repository = TestTaskRepository(session, actor)
             self._validate_context(repository, owner, parsed)
             task = repository.create(parsed, actor)
             return self._view(repository, task)
 
     def get(self, task_id, owner_id):
+        access.require_permission(owner_id, "api.view")
         owner = _text(owner_id, "owner id", 128)
         with self._session_factory() as session:
-            repository = TestTaskRepository(session)
+            repository = TestTaskRepository(session, owner)
             task = repository.get_task(task_id)
-            if task is None or task.owner_id != owner:
+            if task is None or not access.resource_allowed(session, task, owner):
                 raise TestTaskNotFoundError("API testing task was not found")
             return self._view(repository, task)
 
     def list(self, project_id, owner_id):
+        access.require_permission(owner_id, "api.view")
         owner = _text(owner_id, "owner id", 128)
         with self._session_factory() as session:
-            repository = TestTaskRepository(session)
+            repository = TestTaskRepository(session, owner)
             project = repository.get_project(project_id)
-            if project is None or project.owner_id != owner:
+            if project is None or not access.resource_allowed(session, project, owner):
                 raise TestTaskNotFoundError("API testing project was not found")
             tasks = repository.list_tasks(project_id, owner)
             latest_executions = repository.get_executions(
                 task.latest_execution_id for task in tasks
             )
+            visible_ai_job_ids = repository.visible_ai_job_ids(task.latest_ai_job_id for task in tasks)
             return tuple(
                 self._view(
                     repository,
                     task,
                     latest_execution=latest_executions.get(task.latest_execution_id),
+                    visible_ai_job_ids=visible_ai_job_ids,
                 )
                 for task in tasks
             )
 
     def rename(self, task_id, name, actor_id):
+        access.require_permission(actor_id, "api.edit")
         actor = _text(actor_id, "actor id", 128)
         parsed_name = _text(name, "task name")
         with self._session_factory.begin() as session:
-            repository = TestTaskRepository(session)
+            repository = TestTaskRepository(session, actor)
             task = self._owned_task(repository, task_id, actor, for_update=True)
             task.name = parsed_name
             task.updated_by = actor
@@ -156,33 +166,36 @@ class TestTaskService:
             return self._view(repository, task)
 
     def delete(self, task_id, actor_id):
+        access.require_permission(actor_id, "api.delete")
         actor = _text(actor_id, "actor id", 128)
         with self._session_factory.begin() as session:
-            repository = TestTaskRepository(session)
+            repository = TestTaskRepository(session, actor)
             task = self._owned_task(repository, task_id, actor, for_update=True)
             view = self._view(repository, task)
             repository.delete(task)
             return view
 
     def get_active(self, project_id, owner_id):
+        access.require_permission(owner_id, "api.view")
         owner = _text(owner_id, "owner id", 128)
         with self._session_factory() as session:
-            repository = TestTaskRepository(session)
+            repository = TestTaskRepository(session, owner)
             project = repository.get_project(project_id)
-            if project is None or project.owner_id != owner:
+            if project is None or not access.resource_allowed(session, project, owner):
                 raise TestTaskNotFoundError("API testing project was not found")
             task = repository.get_active(project_id, owner)
             return self._view(repository, task) if task is not None else None
 
     def attach_ai_job(self, task_id, ai_job_id, actor_id):
+        access.require_permission(actor_id, "api.edit")
         actor = _text(actor_id, "actor id", 128)
         with self._session_factory.begin() as session:
-            repository = TestTaskRepository(session)
+            repository = TestTaskRepository(session, actor)
             task = self._owned_task(repository, task_id, actor, for_update=True)
             job = repository.get_ai_job(ai_job_id)
             if (
                 job is None
-                or job.owner_id != actor
+                or not access.resource_allowed(session, job, actor)
                 or job.project_id != task.project_id
                 or not set(job.endpoint_ids).issubset(set(task.selected_endpoint_ids))
             ):
@@ -194,14 +207,15 @@ class TestTaskService:
             return self._view(repository, task)
 
     def attach_execution(self, task_id, execution_id, actor_id):
+        access.require_permission(actor_id, "api.execute")
         actor = _text(actor_id, "actor id", 128)
         with self._session_factory.begin() as session:
-            repository = TestTaskRepository(session)
+            repository = TestTaskRepository(session, actor)
             task = self._owned_task(repository, task_id, actor, for_update=True)
             execution = repository.get_execution(execution_id)
             if (
                 execution is None
-                or execution.owner_id != actor
+                or not access.resource_allowed(session, execution, actor)
                 or execution.project_id != task.project_id
                 or execution.source_revision_id != task.source_revision_id
             ):
@@ -232,7 +246,7 @@ class TestTaskService:
     def refresh_terminal_summary(self, task_id, actor_id):
         actor = _text(actor_id, "actor id", 128)
         with self._session_factory.begin() as session:
-            repository = TestTaskRepository(session)
+            repository = TestTaskRepository(session, actor)
             task = self._owned_task(repository, task_id, actor, for_update=True)
             execution = repository.get_execution(task.latest_execution_id)
             if execution is None:
@@ -317,7 +331,7 @@ class TestTaskService:
     @staticmethod
     def _owned_task(repository, task_id, actor_id, *, for_update=False):
         task = repository.get_task(task_id, for_update=for_update)
-        if task is None or task.owner_id != actor_id:
+        if task is None or not access.resource_allowed(repository.session, task, actor_id):
             raise TestTaskNotFoundError("API testing task was not found")
         return task
 
@@ -342,11 +356,12 @@ class TestTaskService:
         )
         if (
             project is None
-            or project.owner_id != owner
+            or not access.resource_allowed(repository.session, project, owner)
             or source is None
             or source.project_id != project.id
             or environment is None
             or environment.project_id != project.id
+            or not access.resource_allowed(repository.session, environment, owner)
             or environment_revision.source_revision_id != source_revision.id
         ):
             raise TestTaskScopeError("task context is outside this project")
@@ -359,7 +374,10 @@ class TestTaskService:
             )
 
     @staticmethod
-    def _view(repository, task, *, latest_execution=_LATEST_EXECUTION_UNSET):
+    def _view(repository, task, *, latest_execution=_LATEST_EXECUTION_UNSET, visible_ai_job_ids=None):
+        if visible_ai_job_ids is None:
+            visible_ai_job_ids = repository.visible_ai_job_ids((task.latest_ai_job_id,)) if task.latest_ai_job_id else set()
+        ai_visible = not task.latest_ai_job_id or task.latest_ai_job_id in visible_ai_job_ids
         if latest_execution is _LATEST_EXECUTION_UNSET:
             latest_execution = (
                 repository.get_execution(task.latest_execution_id)
@@ -379,8 +397,8 @@ class TestTaskService:
             selected_endpoint_ids=tuple(task.selected_endpoint_ids),
             runnable_baseline_count=runnable_baseline_count,
             runnable_endpoint_count=runnable_endpoint_count,
-            latest_ai_job_id=task.latest_ai_job_id,
-            latest_execution_id=task.latest_execution_id,
+            latest_ai_job_id=task.latest_ai_job_id if ai_visible else None,
+            latest_execution_id=task.latest_execution_id if latest_execution else None,
             latest_execution_state=(latest_execution.state if latest_execution else None),
             latest_execution_summary=MappingProxyType(
                 copy.deepcopy(dict(latest_execution.summary or {}))
@@ -394,7 +412,7 @@ class TestTaskService:
                 if latest_execution
                 else None
             ),
-            summary=MappingProxyType(copy.deepcopy(dict(task.summary))),
+            summary=MappingProxyType(copy.deepcopy(dict(task.summary)) if ai_visible and (not task.latest_execution_id or latest_execution) else {}),
             created_at=task.created_at,
             updated_at=task.updated_at,
         )

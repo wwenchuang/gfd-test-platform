@@ -4,6 +4,8 @@ import copy
 
 from sqlalchemy import func, select
 
+from .. import access
+
 from ..models.environment import (
     ApiEnvironment,
     ApiEnvironmentRevision,
@@ -13,7 +15,6 @@ from ..models.environment import (
 )
 from ..models.project import ApiProject
 from ..models.source import ApiSource, ApiSourceRevision
-from .source_repository import audit_fields
 
 
 class EnvironmentRepository:
@@ -39,8 +40,10 @@ class EnvironmentRepository:
             .with_for_update()
         )
 
-    def list_environments(self, project_id, status="active"):
+    def list_environments(self, project_id, status="active", actor_id=None):
         query = select(ApiEnvironment).where(ApiEnvironment.project_id == project_id)
+        if actor_id is not None:
+            query = query.where(access.resource_predicate(actor_id, ApiEnvironment))
         if status != "all":
             query = query.where(ApiEnvironment.status == status)
         return tuple(
@@ -63,7 +66,7 @@ class EnvironmentRepository:
             project_id=project_id,
             source_id=source_id,
             name=name,
-            **audit_fields(actor_id),
+            **access.inherited_audit(self.session, actor_id, ApiProject, project_id),
         )
         self.session.add(environment)
         self.session.flush()
@@ -109,7 +112,7 @@ class EnvironmentRepository:
             name=name,
             description=description,
             default_headers=copy.deepcopy(dict(default_headers)),
-            **audit_fields(actor_id),
+            **access.inherited_audit(self.session, actor_id, ApiEnvironment, environment_id),
         )
         self.session.add(revision)
         self.session.flush()
@@ -124,7 +127,7 @@ class EnvironmentRepository:
             module_name=module_name,
             base_url=base_url,
             metadata_json=copy.deepcopy(dict(metadata)),
-            **audit_fields(actor_id),
+            **access.inherited_audit(self.session, actor_id, ApiEnvironmentRevision, revision_id),
         )
         self.session.add(record)
         return record
@@ -146,7 +149,7 @@ class EnvironmentRepository:
             value=copy.deepcopy(value),
             is_secret=False,
             scope=scope,
-            **audit_fields(actor_id),
+            **access.inherited_audit(self.session, actor_id, ApiEnvironment, environment_id),
         )
         self.session.add(record)
         return record
@@ -160,7 +163,7 @@ class EnvironmentRepository:
             name=name,
             ciphertext=ciphertext,
             fingerprint=fingerprint,
-            **audit_fields(actor_id),
+            **access.inherited_audit(self.session, actor_id, ApiProject, project_id),
         )
         self.session.add(record)
         self.session.flush()
@@ -176,7 +179,7 @@ class EnvironmentRepository:
             name=name,
             value=None,
             is_secret=True,
-            **audit_fields(actor_id),
+            **access.inherited_audit(self.session, actor_id, ApiEnvironment, environment_id),
         )
         self.session.add(record)
         return record

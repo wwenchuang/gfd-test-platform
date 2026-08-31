@@ -56,6 +56,7 @@ def test_execution_worker_refreshes_linked_task_after_running(monkeypatch):
 
     class FakeExecution:
         owner_id = "owner-a"
+        created_by = "member"
         execution_type = "debug"
         state = "DONE"
 
@@ -91,6 +92,7 @@ def test_execution_worker_sends_project_feishu_for_baseline_regression(monkeypat
 
     class FakeExecution:
         owner_id = "owner-a"
+        created_by = "member"
         execution_type = "baseline_regression"
         state = "DONE"
 
@@ -154,7 +156,7 @@ def test_execution_worker_sends_project_feishu_for_baseline_regression(monkeypat
         ("run", "execution-1"),
         ("refresh", "execution-1"),
         ("load-execution", "execution-1"),
-        ("notify", "execution-1", "owner-a"),
+        ("notify", "execution-1", "member"),
         ("event", "execution-1", "notification_sent", "飞书通知已发"),
     ]
 
@@ -164,6 +166,7 @@ def test_execution_worker_sends_feishu_for_scheduled_job_when_enabled(monkeypatc
 
     class FakeExecution:
         owner_id = "owner-a"
+        created_by = "member"
         execution_type = "scheduled"
         state = "DONE"
         request_snapshot = {
@@ -236,7 +239,7 @@ def test_execution_worker_sends_feishu_for_scheduled_job_when_enabled(monkeypatc
         ("run", "execution-1"),
         ("refresh", "execution-1"),
         ("load-execution", "execution-1"),
-        ("notify", "execution-1", "owner-a"),
+        ("notify", "execution-1", "member"),
         ("event", "execution-1", "notification_sent", "飞书通知已发"),
     ]
 
@@ -246,6 +249,7 @@ def test_execution_worker_does_not_auto_notify_debug_runs(monkeypatch):
 
     class FakeExecution:
         owner_id = "owner-a"
+        created_by = "member"
         execution_type = "debug"
         state = "DONE"
 

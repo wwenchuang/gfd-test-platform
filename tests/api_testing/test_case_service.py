@@ -128,7 +128,15 @@ def project_context(session_factory):
 
 
 @pytest.fixture()
-def case_service(session_factory):
+def case_service(session_factory, monkeypatch):
+    from task_server.api_testing import access
+    original_profile = access.get_access_profile
+    def profile(actor):
+        if actor == "editor" or actor.startswith("editor-"):
+            return {"status": "active", "permissions": ["api.edit"],
+                    "scope": {"api_projects": "*", "api_environments": "*"}}
+        return original_profile(actor)
+    monkeypatch.setattr(access, "get_access_profile", profile)
     from task_server.api_testing.services.case_service import CaseService
 
     return CaseService(session_factory)

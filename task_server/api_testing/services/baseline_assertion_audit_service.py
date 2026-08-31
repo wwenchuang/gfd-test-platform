@@ -4,6 +4,8 @@ import copy
 import json
 from collections.abc import Mapping
 
+from .. import access
+
 from ..case_classification import is_one_time_case
 from ..contracts.case import parse_case_payload
 from ..repositories.case_repository import CaseRepository
@@ -156,12 +158,13 @@ class BaselineAssertionAuditService:
         }
 
     def create_upgrade_draft(self, baseline_id, actor_id):
+        access.require_permission(actor_id, "api.baseline")
         with self.session_factory.begin() as session:
             repository = CaseRepository(session)
             baseline = repository.get_baseline_for_update(baseline_id)
             if (
                 baseline is None
-                or baseline.owner_id != actor_id
+                or not access.resource_allowed(session, baseline, actor_id)
                 or baseline.status != "active"
             ):
                 raise CaseNotFoundError("API baseline was not found")

@@ -21,6 +21,8 @@ from sqlalchemy import func, select
 from task_server.config import safe_int
 from task_server.core.http_client import read_response_bytes
 
+from .. import access
+
 from ..contracts.case import CasePayloadError, CaseVersionView, parse_case_payload
 from ..executor import redact
 from ..repositories.ai_job_repository import AiJobRepository
@@ -298,6 +300,7 @@ class AiCaseService:
         model_config=None,
         intent="",
     ):
+        access.require_permission(actor_id, "api.edit")
         identifiers = self._endpoint_ids(endpoint_ids)
         actor = self._text(actor_id, "actor id", 128)
         intent_text = self._text(intent, "intent", 10_000, allow_empty=True)
@@ -329,6 +332,8 @@ class AiCaseService:
             )
             if environment is None or environment.project_id != source.project_id:
                 raise AiJobInputError("environment and endpoints must belong to the same project")
+            access.require_resource(session, environment, actor, "api.edit")
+            access.require_resource(session, source, actor, "api.edit")
             job = repository.create_job(
                 project_id=source.project_id,
                 environment_revision_id=environment_revision.id,
@@ -377,6 +382,7 @@ class AiCaseService:
                 raise AiJobNotFoundError("AI case generation job was not found")
             if job.state in TERMINAL_JOB_STATES:
                 return self._job_view(repository, job)
+            access.require_resource(session, job, job.created_by, "api.edit")
             summary = copy.deepcopy(job.summary)
             if job.state == "running":
                 for batch in repository.list_batches(job.id):
@@ -387,16 +393,16 @@ class AiCaseService:
                             actual_model=batch.actual_model,
                             result=batch.result,
                             error=batch.error,
-                            actor_id=job.updated_by,
+                            actor_id=job.created_by,
                         )
             repository.update_job(
                 job,
                 state="running",
                 actual_model=job.actual_model,
                 summary=summary,
-                actor_id=job.updated_by,
+                actor_id=job.created_by,
             )
-            actor_id = job.updated_by
+            actor_id = job.created_by
             batch_ids = [item.id for item in repository.list_batches(job.id)]
 
         for batch_id in batch_ids:
@@ -442,10 +448,11 @@ class AiCaseService:
         *,
         analyzer=None,
     ):
+        access.require_permission(actor_id, "api.edit")
         with self.session_factory() as session:
             repository = AiJobRepository(session)
             job = repository.get_job(job_id)
-            if job is None or job.owner_id != actor_id:
+            if job is None or not access.resource_allowed(session, job, actor_id):
                 raise AiJobNotFoundError("AI case generation job was not found")
             batch = next(
                 (item for item in repository.list_batches(job.id) if item.id == batch_id),
@@ -504,7 +511,7 @@ class AiCaseService:
             repository = AiJobRepository(session)
             job = repository.get_job_for_update(job_id)
             batch = repository.get_batch_for_update(batch_id)
-            if job is None or job.owner_id != actor_id or batch is None or batch.job_id != job.id:
+            if job is None or not access.resource_allowed(session, job, actor_id) or batch is None or batch.job_id != job.id:
                 raise AiJobNotFoundError("AI case generation job was not found")
             result = copy.deepcopy(batch.result or {})
             errors = list(result.get("validation_errors", []))
@@ -530,17 +537,17 @@ class AiCaseService:
 
         return self.get_job(job_id)
 
-    def get_latest_job(self, project_id, source_revision_id=None):
+    def get_latest_job(self, project_id, source_revision_id=None, actor_id=None):
         with self.session_factory() as session:
             repository = AiJobRepository(session)
-            job = repository.latest_job(project_id, source_revision_id)
+            job = repository.latest_job(project_id, source_revision_id, actor_id)
             return self._job_view(repository, job) if job is not None else None
 
     def mark_enqueue_failure(self, job_id, actor_id):
         with self.session_factory.begin() as session:
             repository = AiJobRepository(session)
             job = repository.get_job_for_update(job_id)
-            if job is None or job.owner_id != actor_id:
+            if job is None or not access.resource_allowed(session, job, actor_id):
                 raise AiJobNotFoundError("AI case generation job was not found")
             if job.state != "queued":
                 return self._job_view(repository, job)

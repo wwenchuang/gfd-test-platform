@@ -19,6 +19,8 @@ mkdir -p "${pkg_dir}"
 
 cp "${SRC_DIR}/midscene-upload.py" "${pkg_dir}/"
 cp "${SRC_DIR}/midscene_upload_compat.py" "${pkg_dir}/"
+cp "${SRC_DIR}/requirements-api-testing.txt" "${pkg_dir}/"
+cp "${SRC_DIR}/requirements-api-testing-dev.txt" "${pkg_dir}/"
 cp "${SRC_DIR}/task-manager.html" "${pkg_dir}/"
 cp "${SRC_DIR}/trace-viewer.html" "${pkg_dir}/"
 cp "${SRC_DIR}/sonic-midscene-task-runner.groovy" "${pkg_dir}/"
@@ -43,6 +45,7 @@ if [ -d "${SRC_DIR}/ai-gateway" ]; then
   cp "${SRC_DIR}/ai-gateway/package-lock.json" "${pkg_dir}/ai-gateway/" 2>/dev/null || true
   cp "${SRC_DIR}/ai-gateway/.env.example" "${pkg_dir}/ai-gateway/"
   cp "${SRC_DIR}/ai-gateway/server.js" "${pkg_dir}/ai-gateway/"
+  cp "${SRC_DIR}/ai-gateway/gateway-auth.js" "${pkg_dir}/ai-gateway/"
   cp "${SRC_DIR}/ai-gateway/README.md" "${pkg_dir}/ai-gateway/"
   mkdir -p "${pkg_dir}/ai-gateway/agent-assets"
   touch "${pkg_dir}/ai-gateway/agent-assets/.gitkeep"

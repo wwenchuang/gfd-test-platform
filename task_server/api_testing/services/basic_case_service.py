@@ -5,6 +5,8 @@ import json
 import re
 from typing import Mapping
 
+from .. import access
+
 from ..repositories.ai_job_repository import AiJobRepository
 from .ai_service import AiCaseService, SENSITIVE_KEY
 from .case_service import CaseService
@@ -29,9 +31,11 @@ class BasicCaseService:
         self.session_factory = session_factory
 
     def preview(self, endpoint_ids, environment_revision_id, actor_id):
+        access.require_permission(actor_id, "api.edit")
         ordered_endpoints, environment_revision, variables, endpoint_catalog = self._generation_context(
             endpoint_ids,
             environment_revision_id,
+            actor_id,
         )
         previews = []
         for endpoint in ordered_endpoints:
@@ -68,7 +72,7 @@ class BasicCaseService:
             )
         return tuple(generated)
 
-    def _generation_context(self, endpoint_ids, environment_revision_id):
+    def _generation_context(self, endpoint_ids, environment_revision_id, actor_id):
         identifiers = AiCaseService._endpoint_ids(endpoint_ids)
         with self.session_factory() as session:
             repository = AiJobRepository(session)
@@ -95,6 +99,8 @@ class BasicCaseService:
             )
             if environment is None or environment.project_id != source.project_id:
                 raise ValueError("environment and endpoints must belong to the same project")
+            access.require_resource(session, source, actor_id, "api.edit")
+            access.require_resource(session, environment, actor_id, "api.edit")
             variables = repository.get_environment_variables(environment_revision.id)
             endpoint_catalog = repository.get_revision_endpoints(source_revision.id)
         return ordered_endpoints, environment_revision, variables, endpoint_catalog

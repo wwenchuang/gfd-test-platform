@@ -178,7 +178,9 @@ class HttpClient:
 
 
 @pytest.fixture()
-def http_client():
+def http_client(monkeypatch):
+    from task_server import access_control
+    monkeypatch.setattr(access_control, "prepare_request_access", lambda *_args: False)
     server = ThreadingHTTPServer(("127.0.0.1", 0), TaskHTTPHandler)
     thread = Thread(target=server.serve_forever, daemon=True)
     thread.start()

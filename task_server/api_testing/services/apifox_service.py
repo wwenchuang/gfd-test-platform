@@ -6,6 +6,8 @@ from types import MappingProxyType
 
 from sqlalchemy import select
 
+from .. import access
+
 from ..models.project import ApiWorkspace
 from ..models.source import ApiSource, ApiSourceDiff
 from ..repositories.source_repository import audit_fields
@@ -132,6 +134,9 @@ class ApifoxService:
         )
 
     def preview_refresh(self, owner_id, request, actor_id):
+        access.require_permission(actor_id, "api.edit")
+        if owner_id != actor_id:
+            raise access.AccessDeniedError("api.edit")
         if not isinstance(request, dict):
             raise ApifoxInputError("Apifox 刷新请求必须是对象")
         local_project_id = _text(request.get("project_id"), "本地项目")
@@ -183,16 +188,19 @@ class ApifoxService:
         return ApifoxRefreshPreviewView(source_preview, candidate)
 
     def activate_preview(self, owner_id, preview_id, actor_id):
+        access.require_permission(actor_id, "api.environment")
         if self._session_factory is None or self._environment_service is None:
             raise RuntimeError("Apifox activation persistence is unavailable")
         owner = _text(owner_id, "用户")
         actor = _text(actor_id, "操作人")
+        if owner != actor:
+            raise access.AccessDeniedError("api.environment")
         with self._session_factory.begin() as session:
             diff = session.get(ApiSourceDiff, preview_id)
             if diff is None:
                 raise ApifoxInputError("Apifox 更新预览不存在")
             source = session.get(ApiSource, diff.source_id)
-            if source is None or source.owner_id != owner:
+            if source is None or not access.resource_allowed(session, source, actor):
                 raise ApifoxInputError("Apifox 更新预览不存在")
             candidate = copy.deepcopy(
                 (diff.summary or {}).get("environment_candidate")
@@ -246,7 +254,7 @@ class ApifoxService:
             if diff is None:
                 raise ApifoxInputError("Apifox 更新预览不存在")
             source = session.get(ApiSource, diff.source_id)
-            if source is None or source.owner_id != actor_id:
+            if source is None or not access.resource_allowed(session, source, actor_id):
                 raise ApifoxInputError("Apifox 更新预览不存在")
             diff.summary = {
                 **dict(diff.summary or {}),

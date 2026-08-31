@@ -80,6 +80,9 @@ class ResponseMixin:
 
     def _json(self, data, code=200):
         """发送 JSON 响应"""
+        if getattr(self, "_main_access", None) is not None:
+            from task_server.access_control import filter_access_response
+            data = filter_access_response(self, data, code)
         body = json.dumps(data, ensure_ascii=False).encode()
         self.send_response(code)
         self._cors()
@@ -176,13 +179,17 @@ class ResponseMixin:
 
     def _body(self):
         """读取并解析 JSON 请求体（支持多编码）"""
+        if hasattr(self, "_parsed_body"):
+            return self._parsed_body
         raw = self._raw_body()
         if not raw:
-            return {}
+            self._parsed_body = {}
+            return self._parsed_body
         last_error = None
         for encoding in ("utf-8", "utf-8-sig", "gb18030", "latin1"):
             try:
-                return json.loads(raw.decode(encoding))
+                self._parsed_body = json.loads(raw.decode(encoding))
+                return self._parsed_body
             except Exception as e:
                 last_error = e
         raise last_error

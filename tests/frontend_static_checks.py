@@ -94,10 +94,19 @@ def check_api_testing_frontend_workspace():
         require(route in router_source, f"API testing router is missing: {route}")
     require((ROOT / "api-test" / "index.html").exists(), "Built API testing frontend is missing")
     require(api_testing_auth_redirect.exists(), "API testing frontend must centralize login deep-link redirects")
+    identity_gate = api_testing_auth_redirect.read_text(encoding="utf-8")
+    mount_body = api_testing_main.split("async function mountVerifiedApp", 1)[-1]
+    gate_index = mount_body.find("if (!await verifyApiTestingSession()) return")
+    load_index = mount_body.find("loadTestApplications()")
+    mount_index = mount_body.find("createApp(App)")
     require(
-        "requireApiTestingSession" in api_testing_main
-        and "if (requireApiTestingSession()) void bootstrap()" in api_testing_main,
-        "API testing frontend must redirect logged-out deep links before loading page data",
+        "async function mountVerifiedApp" in api_testing_main
+        and 0 <= gate_index < load_index < mount_index
+        and "if (!requireApiTestingSession(location)) return false" in identity_gate
+        and "fetch('/api/auth/me'" in identity_gate
+        and "if (requiresPasswordChange(payload))" in identity_gate
+        and "redirectToApiTestingLogin(location)" in identity_gate,
+        "API testing must verify the session and mandatory password gate before loading business data or mounting",
     )
     require(
         "baseline-selection-metric" in api_testing_styles and "white-space: nowrap" in api_testing_styles,
@@ -429,7 +438,7 @@ def main():
     require("ASSET_PAGE_SIZE" in html and "MODULE_DIRECTORY_PAGE_SIZE" in html and "paginationHtml" in html and "setAssetListPage" in html, "Long YAML asset lists must render with pagination")
     require("取消任务" in html and "基线回归" in html and "调试执行" in html, "Runner side panel must expose cancel action and distinguish baseline from debug runs")
     require("取消运行" in html and "cancelAgentRunById" in html, "Agent confirmation cards must allow cancelling without entering the run detail")
-    require("const canCancel = !agentRunIsTerminal(run)" in html and "canCancel ? `<button class=\"btn-sm danger\"" in html, "Running Agent history cards must expose direct cancellation")
+    require("const canCancel = canOperateAgent() && !agentRunIsTerminal(run)" in html and "canCancel ? `<button class=\"btn-sm danger\"" in html, "Authorized running Agent history cards must expose direct cancellation")
     require("normalizeFailureAnalysis" in html and "SCRIPT_ISSUE" in html and "PRODUCT_BUG" in html and "ENV_ISSUE" in html and "UNKNOWN" in html, "AI repair must normalize and gate failure types")
     require("AI修复工作台" in html and "失败任务列表" in html and "结构化分析" in html and "YAML 修复草稿" in html, "AI repair must be an independent three-column workspace")
     require("原始 YAML" in html and "修复 YAML" in html and "Diff / 校验" in html, "YAML repair draft must show original, fixed, diff, and validation")
@@ -666,7 +675,8 @@ def main():
         "js/navigation.js", "js/agent-workbench.js", "js/agent-status.js",
         "css/app.css", "css/round5.css",
     ):
-        require(f"{active_asset}?v=20260828-full-platform-ux" in html, f"Frontend cache version is stale for active asset: {active_asset}")
+        cache_key = "20260831-identity" if active_asset in {"js/app.js", "css/app.css"} else "20260828-full-platform-ux"
+        require(f"{active_asset}?v={cache_key}" in html, f"Frontend cache version is stale for active asset: {active_asset}")
     require("function jobDeviceLabel" in html and "runnerDevices" in html and "runnerDeviceDisplayName(device)" in html, "Job rows must resolve device ids to public runner device names when available")
     require(
         "const job = activeJobs.find(isRunnerExecutionJob);" in html

@@ -5,7 +5,10 @@ import copy
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import array
 
+from .. import access
+
 from ..models.case import ApiAiJob, ApiAiJobBatch, ApiCaseVersion
+from ..models.project import ApiProject
 from ..models.environment import (
     ApiEnvironment,
     ApiEnvironmentRevision,
@@ -13,7 +16,6 @@ from ..models.environment import (
     ApiEnvironmentVariable,
 )
 from ..models.source import ApiSource, ApiSourceEndpoint, ApiSourceRevision
-from .source_repository import audit_fields
 
 
 class AiJobRepository:
@@ -95,7 +97,7 @@ class AiJobRepository:
                 "invalid_candidates": 0,
                 "gateway_failures": 0,
             },
-            **audit_fields(actor_id),
+            **access.inherited_audit(self.session, actor_id, ApiProject, project_id),
         )
         self.session.add(job)
         self.session.flush()
@@ -124,7 +126,7 @@ class AiJobRepository:
                 "validation_errors": [],
             },
             error={},
-            **audit_fields(actor_id),
+            **access.inherited_audit(self.session, actor_id, ApiAiJob, job_id),
         )
         self.session.add(batch)
         self.session.flush()
@@ -133,8 +135,10 @@ class AiJobRepository:
     def get_job(self, job_id):
         return self.session.get(ApiAiJob, job_id)
 
-    def latest_job(self, project_id, source_revision_id=None):
+    def latest_job(self, project_id, source_revision_id=None, actor_id=None):
         base_query = select(ApiAiJob).where(ApiAiJob.project_id == project_id)
+        if actor_id is not None:
+            base_query = base_query.where(access.resource_predicate(actor_id, ApiAiJob))
         unfinished_query = base_query.where(ApiAiJob.state.in_(("queued", "running")))
 
         def newest(query):

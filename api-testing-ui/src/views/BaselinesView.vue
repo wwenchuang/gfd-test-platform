@@ -31,9 +31,11 @@ const moveTargetGroup = ref('')
 const localError = ref('')
 const localMessage = ref('')
 const baselinePage = ref(1)
+const initializing = ref(true)
 const BASELINE_PAGE_SIZE = 25
 
-const projectReady = computed(() => Boolean(context.projectId))
+const projectReady = computed(() => Boolean(context.projectId)
+  && !initializing.value && !context.loading && !context.optionsLoading && !baselines.loading)
 const activeBaselineCount = computed(() => baselines.items.filter(item => item.status === 'active').length)
 const projectName = computed(() => context.projects.find(item => item.id === context.projectId)?.name || '未选择项目')
 const selectedSourceName = computed(() => {
@@ -87,7 +89,7 @@ const selectedBaselineActionIssue = computed(() => (
   selectedBaselineScopeIssue.value || selectedAuditEnvironmentIssue.value
 ))
 const baselineActionReady = computed(() => Boolean(
-  context.projectId
+  projectReady.value
   && context.environmentRevisionId
   && baselines.selectedIds.length
   && !selectedBaselineActionIssue.value,
@@ -156,9 +158,13 @@ watch(baselinePageCount, pageCount => {
 })
 
 onMounted(async () => {
-  await Promise.all([context.loadSavedContext(), context.loadOptions()])
-  if (context.projectId) await tasks.restore(context.projectId)
-  await loadBaselines()
+  try {
+    await Promise.all([context.loadSavedContext(), context.loadOptions()])
+    if (context.projectId) await tasks.restore(context.projectId)
+    await loadBaselines()
+  } finally {
+    initializing.value = false
+  }
 })
 
 function nullable(value: string): string | null {
@@ -181,6 +187,7 @@ async function changeEnvironment(environmentRevisionId: string | null): Promise<
 }
 
 async function loadBaselines(): Promise<void> {
+  if (baselines.loading || baselines.auditLoading) return
   localError.value = ''
   localMessage.value = ''
   auditFilter.value = 'all'
@@ -191,6 +198,7 @@ async function loadBaselines(): Promise<void> {
 }
 
 async function loadAssertionAudit(): Promise<void> {
+  if (!projectReady.value || baselines.auditLoading) return
   localError.value = ''
   localMessage.value = ''
   if (!context.projectId) {
@@ -493,7 +501,7 @@ function adoptionReasonLabel(reason: string): string {
         <h1>基线用例</h1>
         <p class="page-subtitle">已调试通过并采纳的用例在这里统一查看。基线按项目固定保存，执行时再选择目标环境。</p>
       </div>
-      <button class="icon-command" type="button" title="重新读取基线" :disabled="baselines.loading || !projectReady" @click="loadBaselines"><RefreshCw :class="{ 'is-spinning': baselines.loading }" :size="18" /></button>
+      <button class="icon-command" type="button" title="重新读取基线" :disabled="baselines.auditLoading || !projectReady" @click="loadBaselines"><RefreshCw :class="{ 'is-spinning': baselines.loading }" :size="18" /></button>
     </header>
 
     <ContextBar
@@ -503,7 +511,7 @@ function adoptionReasonLabel(reason: string): string {
       :project-id="context.projectId"
       :source-revision-id="context.sourceRevisionId"
       :environment-revision-id="context.environmentRevisionId"
-      :loading="context.loading || context.optionsLoading || baselines.loading"
+      :loading="initializing || context.loading || context.optionsLoading || baselines.loading || baselines.auditLoading"
       :saved="context.isSaved"
       save-label="保存执行环境"
       saved-label="执行环境已保存"

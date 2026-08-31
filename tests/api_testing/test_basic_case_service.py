@@ -93,7 +93,7 @@ def test_basic_positive_preview_exposes_endpoint_workflow_assessment(monkeypatch
     monkeypatch.setattr(
         service,
         "_generation_context",
-        lambda endpoint_ids, environment_revision_id: (
+        lambda endpoint_ids, environment_revision_id, actor_id: (
             [endpoint],
             _environment_revision(),
             _variables("ZXBToken"),
@@ -794,8 +794,7 @@ def test_http_route_scopes_basic_positive_generation(monkeypatch):
 
     monkeypatch.setattr(http, "_factory", lambda: "factory")
     monkeypatch.setattr(http, "BasicCaseService", FakeService, raising=False)
-    monkeypatch.setattr(http, "_scope_endpoint", lambda factory, record_id, actor: calls.append(("scope-endpoint", factory, record_id, actor)))
-    monkeypatch.setattr(http, "_scope_environment_revision", lambda factory, record_id, actor: calls.append(("scope-environment", factory, record_id, actor)))
+    monkeypatch.setattr(http, "_scope_ai_job", lambda factory, ids, revision, actor: calls.append(("scope-context", factory, ids, revision, actor)))
     def scope_task(factory, record_id, actor):
         calls.append(("scope-task", factory, record_id, actor))
         return SimpleNamespace(
@@ -814,8 +813,7 @@ def test_http_route_scopes_basic_positive_generation(monkeypatch):
 
     assert result == {"case_versions": [{"id": "version-1", "endpoint_id": endpoint_id}]}
     assert calls == [
-        ("scope-endpoint", "factory", endpoint_id, "owner-a"),
-        ("scope-environment", "factory", environment_revision_id, "owner-a"),
+        ("scope-context", "factory", [endpoint_id], environment_revision_id, "owner-a"),
         ("scope-task", "factory", task_id, "owner-a"),
         ("service", "factory"),
         ("generate", [endpoint_id], environment_revision_id, "owner-a"),
@@ -844,8 +842,7 @@ def test_http_route_scopes_basic_positive_preview_without_persisting(monkeypatch
 
     monkeypatch.setattr(http, "_factory", lambda: "factory")
     monkeypatch.setattr(http, "BasicCaseService", FakeService, raising=False)
-    monkeypatch.setattr(http, "_scope_endpoint", lambda factory, record_id, actor: calls.append(("scope-endpoint", factory, record_id, actor)))
-    monkeypatch.setattr(http, "_scope_environment_revision", lambda factory, record_id, actor: calls.append(("scope-environment", factory, record_id, actor)))
+    monkeypatch.setattr(http, "_scope_ai_job", lambda factory, ids, revision, actor: calls.append(("scope-context", factory, ids, revision, actor)))
 
     def scope_task(factory, record_id, actor):
         calls.append(("scope-task", factory, record_id, actor))
@@ -865,8 +862,7 @@ def test_http_route_scopes_basic_positive_preview_without_persisting(monkeypatch
 
     assert result == {"case_previews": [preview]}
     assert calls == [
-        ("scope-endpoint", "factory", endpoint_id, "owner-a"),
-        ("scope-environment", "factory", environment_revision_id, "owner-a"),
+        ("scope-context", "factory", [endpoint_id], environment_revision_id, "owner-a"),
         ("scope-task", "factory", task_id, "owner-a"),
         ("service", "factory"),
         ("preview", [endpoint_id], environment_revision_id, "owner-a"),

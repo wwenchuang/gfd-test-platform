@@ -60,6 +60,8 @@ function authHeaders(headers = {}) {
 }
 
 const WORKFLOW_SECTIONS = {
+  identity: { index: '', title: '成员与权限', subtitle: '成员与权限', help: '', cards: [], checklist: [] },
+  account: { index: '', title: '个人账号', subtitle: '个人账号', help: '', cards: [], checklist: [] },
   dashboard: {
     index: '0',
     title: 'Agent 工作台',
@@ -370,6 +372,21 @@ async function readAiGatewayResponse(res) {
 }
 
 async function apiRequest(path, options = {}) {
+  if (path.startsWith('/agent-runs/') && !['GET', 'HEAD', 'DELETE'].includes(String(options.method || 'GET').toUpperCase())
+      && typeof canOperateAgent === 'function' && !canOperateAgent()) {
+    const message = agentAccessReason();
+    showToast(message, 'error');
+    throw Object.assign(new Error(message), { status: 403 });
+  }
+  const sharedUiAiPaths = ['/ui/generate-yaml', '/ui/generate-yaml-async', '/ui/regenerate-yaml-async', '/cases/mindmap-only-async',
+    '/file/repair-latest', '/file/repair-task-latest', '/file/repair-latest-async', '/file/repair-task-latest-async'];
+  if (String(options.method || 'GET').toUpperCase() === 'POST'
+      && (sharedUiAiPaths.includes(path) || path.startsWith('/ui/generate-jobs/') || /^\/jobs\/[^/]+\/repair$/.test(path))
+      && typeof canUseSharedUiAi === 'function' && !canUseSharedUiAi()) {
+    const message = uiAiAccessReason();
+    showToast(message, 'error');
+    throw Object.assign(new Error(message), { status: 403 });
+  }
   const { skipAuthRedirect, timeoutMs, ...rest } = options || {};
   const headers = authHeaders(rest.headers || {});
   // FormData 上传不要主动设置 Content-Type，浏览器会自动处理 boundary
@@ -411,7 +428,15 @@ async function apiRequest(path, options = {}) {
       forceLogoutWithMessage();
     }
   } else if (res.status === 403) {
-    showFriendlyError(res.status, '无权限执行此操作');
+    let payload = {};
+    try { payload = await res.json(); } catch (_) {}
+    const detail = payload.error;
+    const code = typeof detail === 'object' ? detail?.code : payload.code;
+    const reason = (typeof detail === 'string' ? detail : detail?.message) || payload.message || '无权限执行此操作';
+    const message = `${reason}。请联系管理员确认角色和数据授权。`;
+    if (['must_change_password', 'password_change_required'].includes(code) && typeof showChangePassword === 'function') showChangePassword(true);
+    showToast(message, 'error');
+    throw Object.assign(new Error(message), { status: 403, code });
   } else if (res.status === 413) {
     showFriendlyError(res.status, '请求体过大');
   } else if (res.status === 502 || res.status === 504) {
@@ -441,14 +466,14 @@ async function apiTextRequest(path, options = {}) {
 
 function forceLogoutWithMessage(message) {
   const msg = message || friendlyError(401, '').msg;
-  sessionStorage.removeItem('user');
-  sessionStorage.removeItem('sessionToken');
+  if (typeof clearAuthSession === 'function') clearAuthSession();
+  else { sessionStorage.removeItem('user'); sessionStorage.removeItem('sessionToken'); }
   showToast(`🔐 ${msg}`, 'error');
   const login = document.getElementById('login-screen');
-  const app = document.getElementById('app-root');
+  const app = document.getElementById('app');
   if (login) login.style.display = 'flex';
   if (app) app.style.display = 'none';
-  throw new Error(msg);
+  throw Object.assign(new Error(msg), { status: 401 });
 }
 
 async function aiRequest(path, options = {}) {
@@ -585,6 +610,9 @@ function hideToast() {
 }
 
 function closeTransientUiForNavigation() {
+  if (typeof closeIdentityDialog === 'function') closeIdentityDialog();
+  const accountMenu = document.getElementById('account-menu');
+  if (accountMenu) accountMenu.hidden = true;
   document.querySelectorAll('.modal-overlay.show').forEach(modal => {
     if (modal.dataset.persistentNavigation === '1') return;
     modal.classList.remove('show');

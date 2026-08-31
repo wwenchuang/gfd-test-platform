@@ -8,6 +8,8 @@ from sqlalchemy import func, select, update
 from sqlalchemy.orm import defer
 
 from ..case_classification import is_one_time_case
+from .. import access
+
 from ..models.case import ApiBaseline, ApiCase, ApiCaseVersion
 from ..models.environment import ApiEnvironment, ApiEnvironmentRevision
 from ..models.execution import (
@@ -114,7 +116,7 @@ class ExecutionRepository:
             .join(ApiCase, ApiCase.id == ApiBaseline.case_id)
             .where(
                 ApiBaseline.project_id == project_id,
-                ApiBaseline.owner_id == owner_id,
+                access.resource_predicate(owner_id, ApiBaseline),
                 ApiBaseline.status == "active",
             )
             .order_by(ApiBaseline.created_at, ApiBaseline.id)
@@ -176,7 +178,7 @@ class ExecutionRepository:
                 "skipped": 0,
                 "cancelled": 0,
             },
-            **audit_fields(actor_id),
+            **access.inherited_audit(self.session, actor_id, ApiProject, request["project_id"]),
         )
         self.session.add(record)
         self.session.flush()
@@ -191,7 +193,7 @@ class ExecutionRepository:
             ordinal=ordinal,
             status="QUEUED",
             sanitized_result={},
-            **audit_fields(actor_id),
+            **access.inherited_audit(self.session, actor_id, ApiExecution, execution.id),
         )
         self.session.add(record)
         self.session.flush()
@@ -209,7 +211,7 @@ class ExecutionRepository:
                 select(ApiExecution)
                 .where(
                     ApiExecution.project_id == project_id,
-                    ApiExecution.owner_id == owner_id,
+                    access.resource_predicate(owner_id, ApiExecution),
                     ApiExecution.state != "ARCHIVED",
                 )
                 .order_by(ApiExecution.created_at.desc(), ApiExecution.id.desc())
@@ -219,7 +221,7 @@ class ExecutionRepository:
 
     def archive_execution(self, execution_id, actor_id):
         execution = self.get_execution(execution_id, for_update=True)
-        if execution is None:
+        if execution is None or not access.resource_allowed(self.session, execution, actor_id):
             return None
         if execution.state in {"QUEUED", "RUNNING"}:
             raise ValueError("running executions cannot be archived")
@@ -426,9 +428,11 @@ class ExecutionRepository:
         )
         return result.rowcount == 1
 
-    def request_cancellation(self, execution_id, actor_id):
+    def request_cancellation(self, execution_id, actor_id, *, authorize=True):
         execution = self.get_execution(execution_id, for_update=True)
         if execution is None:
+            return None
+        if authorize and not access.resource_allowed(self.session, execution, actor_id):
             return None
         if execution.cancellation_requested_at is None:
             execution.cancellation_requested_at = utc_now()
@@ -473,7 +477,7 @@ class ExecutionRepository:
             ],
             timing={"duration_ms": result.duration_ms},
             error_message=result.error_message,
-            **audit_fields(actor_id),
+            **{**audit_fields(actor_id), "owner_id": execution_case.owner_id},
         )
         self.session.add(record)
         execution_case.status = result.status
@@ -492,7 +496,7 @@ class ExecutionRepository:
             analyzer=payload["analyzer"],
             model=payload["model"],
             analysis=copy.deepcopy(payload["analysis"]),
-            **audit_fields(actor_id),
+            **{**audit_fields(actor_id), "owner_id": execution_case.owner_id},
         )
         self.session.add(record)
         self.session.flush()
@@ -544,7 +548,7 @@ class ExecutionRepository:
             sequence=sequence,
             event_type=event_type,
             payload=copy.deepcopy(payload),
-            **audit_fields(actor_id),
+            **{**audit_fields(actor_id), "owner_id": execution.owner_id},
         )
         self.session.add(record)
         self.session.flush()

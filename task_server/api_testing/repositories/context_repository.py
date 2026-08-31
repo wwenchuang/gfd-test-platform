@@ -2,6 +2,8 @@
 
 from sqlalchemy import func, or_, select
 
+from .. import access
+
 from ..models.environment import ApiEnvironment, ApiEnvironmentRevision
 from ..models.project import ApiProject, ApiWorkspace
 from ..models.source import ApiSource, ApiSourceEndpoint, ApiSourceRevision
@@ -29,7 +31,7 @@ class ContextRepository:
                 ApiProject.created_at,
                 ApiProject.updated_at,
             )
-            .where(ApiProject.owner_id == actor_id, ApiProject.status == "active")
+            .where(access.project_predicate(actor_id), ApiProject.status == "active")
             .order_by(ApiProject.name, ApiProject.id)
         ).all()
         source_revisions = self.session.execute(
@@ -55,7 +57,7 @@ class ContextRepository:
                 ApiSourceEndpoint.revision_id == ApiSourceRevision.id,
             )
             .where(
-                ApiProject.owner_id == actor_id,
+                access.project_predicate(actor_id),
                 ApiProject.status == "active",
                 ApiSource.status == "active",
                 or_(
@@ -98,9 +100,10 @@ class ContextRepository:
             )
             .join(ApiProject, ApiProject.id == ApiEnvironment.project_id)
             .where(
-                ApiProject.owner_id == actor_id,
+                access.project_predicate(actor_id),
                 ApiProject.status == "active",
                 ApiEnvironment.status == "active",
+                access.environment_predicate(actor_id),
                 or_(
                     ApiEnvironment.active_revision_id
                     == ApiEnvironmentRevision.id,

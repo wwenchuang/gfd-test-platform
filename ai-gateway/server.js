@@ -8,6 +8,7 @@ import OpenAI from 'openai';
 import {v4 as uuidv4} from 'uuid';
 import {cancelAgentRun, confirmAgentRun, getAgentRun, listAgentRuns, startAgentRun} from './agent/agent-orchestrator.js';
 import {validateMidsceneYaml} from './validators/midscene-yaml-validator.js';
+import {createGatewayAuth} from './gateway-auth.js';
 
 dotenv.config();
 
@@ -15,6 +16,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const PORT = Number(process.env.PORT || 8090);
+const HOST = process.env.AI_GATEWAY_HOST || '127.0.0.1';
 const LOG_ENABLED = String(process.env.LOG_ENABLED || 'true').toLowerCase() !== 'false';
 const MOCK_ENABLED = String(process.env.AI_GATEWAY_MOCK || '0').toLowerCase() === '1';
 const LOG_FILE = path.join(__dirname, 'logs', 'ai-calls.jsonl');
@@ -907,7 +909,8 @@ function asyncRoute(handler) {
 }
 
 const app = express();
-app.use(cors());
+app.use(cors({preflightContinue: true}));
+app.use(createGatewayAuth());
 app.use(express.json({limit: JSON_BODY_LIMIT}));
 
 app.get('/health', asyncRoute(async (_req, res) => {
@@ -1336,6 +1339,6 @@ app.post('/ai/generate-bug', asyncRoute(async (req, res) => {
   });
 }));
 
-app.listen(PORT, () => {
+app.listen(PORT, HOST, () => {
   console.log(`ai-gateway running on port ${PORT}`);
 });

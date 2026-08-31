@@ -1,5 +1,11 @@
 # Server Deployment
 
+Local accounts and configurable access are documented in
+[Local Identity Operations](../docs/local-identity-operations.md), including
+first administrator migration, HTTPS requirements, persistent SQLite backup,
+emergency password recovery, and UI/API scope limitations. Account data belongs
+in `/opt/midscene-auth`, never inside a release directory.
+
 This deployment package publishes the complete Task platform:
 
 - `midscene-upload.py`: Python Task service and API.

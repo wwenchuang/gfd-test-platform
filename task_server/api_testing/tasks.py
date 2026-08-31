@@ -82,7 +82,7 @@ def _notify_execution_if_enabled(factory, event_stream, execution_id):
             return
         if not _should_send_execution_notification(execution):
             return
-        actor_id = execution.owner_id
+        actor_id = execution.created_by
     try:
         result = NotificationService(factory).send_execution_report(execution_id, actor_id)
     except NotificationNotConfiguredError as error:

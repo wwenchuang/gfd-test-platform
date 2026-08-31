@@ -3,6 +3,8 @@
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
+from .. import access
+
 from ..adapters.openapi import normalize_openapi_document, stable_endpoint_key
 from ..contracts.source import (
     SourceChange,
@@ -126,6 +128,7 @@ class SourceService:
         self._preview_ttl = preview_ttl
 
     def preview_refresh(self, project_id, source_id, document, actor_id):
+        access.require_permission(actor_id, "api.edit")
         # Validate before opening a write transaction. Stable keys are rebound after
         # the source identity is known.
         prevalidated = normalize_openapi_document(document, "validation")
@@ -134,7 +137,7 @@ class SourceService:
         with self._session_factory.begin() as session:
             repository = SourceRepository(session)
             project = repository.get_project(project_id)
-            if project is None:
+            if project is None or not access.resource_allowed(session, project, actor_id):
                 raise SourceNotFoundError("API testing project was not found")
             source_name = str(prevalidated.document["info"]["title"]).strip()
             if source_id:
@@ -209,6 +212,7 @@ class SourceService:
             )
 
     def activate_preview(self, preview_id, actor_id, include_content=True):
+        access.require_permission(actor_id, "api.edit")
         with self._session_factory.begin() as session:
             return self.activate_preview_in_session(
                 session, preview_id, actor_id, include_content=include_content
@@ -217,6 +221,7 @@ class SourceService:
     def activate_preview_in_session(
         self, session, preview_id, actor_id, include_content=True
     ):
+        access.require_permission(actor_id, "api.edit")
         now = _utc_now()
         repository = SourceRepository(session)
         diff = repository.get_diff_for_update(preview_id)
@@ -230,7 +235,7 @@ class SourceService:
         if source is None:
             raise SourceNotFoundError("API source was not found")
         project = repository.get_project(source.project_id)
-        if project is None or project.owner_id != actor_id:
+        if project is None or not access.resource_allowed(session, project, actor_id):
             raise SourceNotFoundError("API source was not found")
         if source.active_revision_id != diff.previous_revision_id:
             raise StaleSourcePreviewError(

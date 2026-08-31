@@ -5,6 +5,8 @@ import copy
 from sqlalchemy import func, select
 from sqlalchemy.orm import defer
 
+from .. import access
+
 from ..models.case import (
     ApiBaseline,
     ApiCase,
@@ -18,7 +20,6 @@ from ..models.environment import ApiEnvironment, ApiEnvironmentRevision
 from ..models.execution import ApiExecution, ApiExecutionAttempt, ApiExecutionCase
 from ..models.project import ApiProject
 from ..models.source import ApiSource, ApiSourceEndpoint, ApiSourceRevision
-from .source_repository import audit_fields
 
 
 class CaseRepository:
@@ -72,8 +73,8 @@ class CaseRepository:
             .join(ApiProject, ApiProject.id == ApiSource.project_id)
             .where(
                 ApiSource.id == current_source_id,
-                ApiProject.owner_id == actor_id,
-                ApiCase.owner_id == actor_id,
+                access.project_predicate(actor_id),
+                access.resource_predicate(actor_id, ApiCase),
                 ApiCase.project_id == ApiProject.id,
                 ApiCase.endpoint_id == ApiSourceEndpoint.id,
                 ApiCase.status != "archived",
@@ -120,7 +121,7 @@ class CaseRepository:
             )
             .where(
                 ApiBaseline.case_id.in_(identifiers),
-                ApiBaseline.owner_id == actor_id,
+                access.resource_predicate(actor_id, ApiBaseline),
                 ApiBaseline.status == "active",
             )
             .distinct(ApiBaseline.case_id)
@@ -159,7 +160,7 @@ class CaseRepository:
             .join(ApiExecution, ApiExecution.id == ApiExecutionCase.execution_id)
             .where(
                 ApiCaseVersion.case_id.in_(identifiers),
-                ApiExecution.owner_id == actor_id,
+                access.resource_predicate(actor_id, ApiExecution),
             )
             .subquery()
         )
@@ -200,7 +201,7 @@ class CaseRepository:
             name=name,
             origin=origin,
             status="draft",
-            **audit_fields(actor_id),
+            **access.inherited_audit(self.session, actor_id, ApiProject, project_id),
         )
         self.session.add(record)
         self.session.flush()
@@ -234,7 +235,7 @@ class CaseRepository:
             validation_summary={},
             dependency_spec={"dependencies": copy.deepcopy(payload["dependencies"])},
             processing_spec=copy.deepcopy(payload["processing"]),
-            **audit_fields(actor_id),
+            **access.inherited_audit(self.session, actor_id, ApiCase, case.id),
         )
         self.session.add(record)
         self.session.flush()
@@ -249,7 +250,7 @@ class CaseRepository:
                     values=copy.deepcopy(row["values"]),
                     enabled=row["enabled"],
                     sequence=sequence,
-                    **audit_fields(actor_id),
+                    **access.inherited_audit(self.session, actor_id, ApiCaseVersion, version_id),
                 )
             )
 
@@ -265,7 +266,7 @@ class CaseRepository:
                     assertion_type=assertion_type,
                     definition=definition,
                     enabled=enabled,
-                    **audit_fields(actor_id),
+                    **access.inherited_audit(self.session, actor_id, ApiCaseVersion, version_id),
                 )
             )
 
@@ -280,7 +281,7 @@ class CaseRepository:
                     target_name=target_name,
                     extraction_type=extraction_type,
                     definition=definition,
-                    **audit_fields(actor_id),
+                    **access.inherited_audit(self.session, actor_id, ApiCaseVersion, version_id),
                 )
             )
 
@@ -295,7 +296,7 @@ class CaseRepository:
                         language="declarative",
                         source="",
                         config=copy.deepcopy(action),
-                        **audit_fields(actor_id),
+                        **access.inherited_audit(self.session, actor_id, ApiCaseVersion, version_id),
                     )
                 )
 
@@ -472,9 +473,9 @@ class CaseRepository:
             .where(
                 ApiBaseline.project_id == project_id,
                 status_filter,
-                ApiBaseline.owner_id == actor_id,
+                access.resource_predicate(actor_id, ApiBaseline),
                 ApiCase.project_id == project_id,
-                ApiCase.owner_id == actor_id,
+                access.resource_predicate(actor_id, ApiCase),
                 ApiCase.status != "archived",
                 ApiCaseVersion.endpoint_id == ApiSourceEndpoint.id,
             )
@@ -515,7 +516,7 @@ class CaseRepository:
             group_name=group_name,
             status="active",
             adoption_reason="passing debug evidence",
-            **audit_fields(actor_id),
+            **access.inherited_audit(self.session, actor_id, ApiProject, project_id),
         )
         self.session.add(record)
         self.session.flush()

@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Optional
 
+from .. import access
 from ..crypto import decrypt_secret, encrypt_secret, secret_fingerprint
 from ..repositories.provider_repository import ProviderRepository
 
@@ -44,8 +45,11 @@ class ProviderService:
         self._session_factory = session_factory
 
     def save_apifox_credential(self, owner_id, token, actor_id):
+        access.require_permission(actor_id, "api.environment")
         owner = _owner(owner_id)
         actor = _owner(actor_id)
+        if owner != actor:
+            raise access.AccessDeniedError("api.environment")
         plaintext = _token(token)
         ciphertext = encrypt_secret(plaintext)
         fingerprint = secret_fingerprint(plaintext)

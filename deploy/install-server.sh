@@ -14,6 +14,7 @@ USER_NAME="${USER_NAME:-midscene}"
 GROUP_NAME="${GROUP_NAME:-midscene}"
 PORT="${PORT:-8091}"
 AI_GATEWAY_PORT="${AI_GATEWAY_PORT:-8090}"
+AI_GATEWAY_AUTH_BASE_URL="${AI_GATEWAY_AUTH_BASE_URL:-http://127.0.0.1:${PORT}}"
 VENV_DIR="${VENV_DIR:-${APP_DIR}/.venv}"
 WEB_CONTAINER="${WEB_CONTAINER:-sonic-server-272-midscene-reports-1}"
 NGINX_CLIENT_MAX_BODY_SIZE="${NGINX_CLIENT_MAX_BODY_SIZE:-300m}"
@@ -377,7 +378,7 @@ AI_GATEWAY_DIR="${AI_GATEWAY_DIR:-/opt/ai-gateway}"
 if [ -d "${SRC_DIR}/ai-gateway" ]; then
   echo "同步 AI Gateway 到 ${AI_GATEWAY_DIR} ..."
   install -d -m 0755 "${AI_GATEWAY_DIR}"
-  for item in server.js package.json package-lock.json README.md prompts validators agent agent-assets; do
+  for item in server.js gateway-auth.js package.json package-lock.json README.md prompts validators agent agent-assets; do
     if [ -e "${SRC_DIR}/ai-gateway/${item}" ]; then
       rm -rf "${AI_GATEWAY_DIR:?}/${item}"
       cp -R "${SRC_DIR}/ai-gateway/${item}" "${AI_GATEWAY_DIR}/${item}"
@@ -397,10 +398,20 @@ if [ -d "${SRC_DIR}/ai-gateway" ]; then
     echo "警告：未检测到 npm，跳过 AI Gateway 依赖安装"
   fi
   if command -v pm2 >/dev/null 2>&1; then
+    if [ -z "${AI_GATEWAY_HOST:-}" ]; then
+      AI_GATEWAY_HOST="127.0.0.1"
+      if command -v docker >/dev/null 2>&1 && docker inspect "${WEB_CONTAINER}" >/dev/null 2>&1; then
+        web_network_mode="$(docker inspect -f '{{.HostConfig.NetworkMode}}' "${WEB_CONTAINER}")"
+        if [ "${web_network_mode}" != "host" ]; then
+          AI_GATEWAY_HOST="0.0.0.0"
+          echo "容器反向代理需要访问主机 AI 网关：外部请求已强制验证登录，请限制 8090 端口只允许可信代理访问。"
+        fi
+      fi
+    fi
     if pm2 describe ai-gateway >/dev/null 2>&1; then
-      env PORT="${AI_GATEWAY_PORT}" pm2 restart ai-gateway --update-env || true
+      env PORT="${AI_GATEWAY_PORT}" AI_GATEWAY_HOST="${AI_GATEWAY_HOST}" AI_GATEWAY_AUTH_BASE_URL="${AI_GATEWAY_AUTH_BASE_URL}" pm2 restart ai-gateway --update-env
     else
-      (cd "${AI_GATEWAY_DIR}" && env PORT="${AI_GATEWAY_PORT}" pm2 start server.js --name ai-gateway --update-env) || true
+      (cd "${AI_GATEWAY_DIR}" && env PORT="${AI_GATEWAY_PORT}" AI_GATEWAY_HOST="${AI_GATEWAY_HOST}" AI_GATEWAY_AUTH_BASE_URL="${AI_GATEWAY_AUTH_BASE_URL}" pm2 start server.js --name ai-gateway --update-env)
     fi
     pm2 save || true
   else
@@ -524,6 +535,30 @@ ensure_env_default "TASK_BACKGROUND_WORKERS" "2"
 ensure_env_default "TASK_BACKGROUND_QUEUE_SIZE" "8"
 ensure_env_default "TASK_MEMORY_WARN_MB" "1536"
 ensure_env_default "TASK_MEMORY_MONITOR_INTERVAL_SECONDS" "60"
+ensure_env_default "TASK_AUTH_DB" "/opt/midscene-auth/identity.sqlite3"
+identity_db="$(sed -n "s/^export TASK_AUTH_DB=['\"]\{0,1\}\([^'\"]*\)['\"]\{0,1\}$/\1/p" "${ENV_FILE}" | tail -n 1)"
+identity_db="${identity_db:-/opt/midscene-auth/identity.sqlite3}"
+if [[ "${identity_db}" != /* ]]; then
+  echo "TASK_AUTH_DB 必须使用绝对路径" >&2
+  exit 1
+fi
+identity_db="$(realpath -m -- "${identity_db}")"
+identity_app_dir="$(realpath -m -- "${APP_DIR}")"
+identity_src_dir="$(realpath -m -- "${SRC_DIR}")"
+case "${identity_db}" in
+  "${identity_app_dir}"|"${identity_app_dir}"/*|"${identity_src_dir}"|"${identity_src_dir}"/*)
+    echo "身份数据库不能放在发布目录内：请把 TASK_AUTH_DB 配置到独立持久目录" >&2
+    exit 1 ;;
+esac
+identity_dir="$(dirname "${identity_db}")"
+if [ ! -d "${identity_dir}" ]; then
+  install -d -m 0700 -o "${USER_NAME}" -g "${GROUP_NAME}" "${identity_dir}"
+fi
+if ! runuser -u "${USER_NAME}" -- test -w "${identity_dir}"; then
+  echo "身份目录不可写：${identity_dir}，请授权 ${USER_NAME} 后重新部署" >&2
+  exit 1
+fi
+echo "账号与权限数据保存在 ${identity_db}，后续发布不会覆盖；首次分发个人密码前请启用 HTTPS。"
 ensure_env_default "MIDSCENE_YAML_VISUAL_BATCH_SIZE" "4"
 ensure_env_default "MIDSCENE_YAML_VISUAL_TIMEOUT_SECONDS" "900"
 ensure_env_default "MIDSCENE_YAML_VISUAL_TOTAL_BUDGET_SECONDS" "3600"

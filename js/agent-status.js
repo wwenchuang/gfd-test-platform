@@ -1073,9 +1073,9 @@ function agentRunCardHtml(run, options = {}) {
   const target = run.target || run.options?.goal || run.goal || '未命名任务';
   const resultMeta = agentRunResultMeta(run);
   const status = resultMeta.hasReportResult ? resultMeta.label : agentStatusText(run.status);
-  const canCancel = !agentRunIsTerminal(run);
-  const canDelete = agentRunIsTerminal(run);
-  const canRetry = agentRunIsTerminal(run);
+  const canCancel = canOperateAgent() && !agentRunIsTerminal(run);
+  const canDelete = hasPermission('ui.delete') && agentRunIsTerminal(run);
+  const canRetry = canOperateAgent() && agentRunIsTerminal(run);
   const pill = agentRunPillClass(run);
   const cardStatus = agentRunCardStatusClass(run);
   const progress = agentRunProgressPct(run);
@@ -1105,7 +1105,7 @@ function agentRunCardHtml(run, options = {}) {
       <div class="workflow-card-actions">
         <button class="btn-sm" onclick="openAgentRunTrace(${jsArg(run.runId || '')})">查看轨迹</button>
         ${resultMeta.hasReportResult ? `<button class="btn-sm primary" onclick="openAgentRunReport(${jsArg(run.runId || '')})">查看报告</button>` : ''}
-        ${options.confirm ? `<button class="btn-sm success" onclick="openAgentRunTrace(${jsArg(run.runId || '')}, 'dashboard')">处理确认</button>` : ''}
+        ${options.confirm && canOperateAgent() ? `<button class="btn-sm success" onclick="openAgentRunTrace(${jsArg(run.runId || '')}, 'dashboard')">处理确认</button>` : ''}
         ${canRetry ? `<button class="btn-sm" onclick="retryAgentRunById(${jsArg(run.runId || '')})">重试</button>` : ''}
         ${canCancel ? `<button class="btn-sm danger" onclick="cancelAgentRunById(${jsArg(run.runId || '')})">取消运行</button>` : ''}
         ${canDelete ? `<button class="btn-sm danger" onclick="deleteAgentRunById(${jsArg(run.runId || '')})">删除记录</button>` : ''}
@@ -1269,7 +1269,7 @@ function renderAgentHistoryPage(options = {}) {
     ? visibleRuns.map(run => agentRunCardHtml(run, { selectable: true })).join('')
     : (error ? agentRunErrorHtml(error) : (loading ? agentRunLoadingHtml() : (agentHistoryFilters.query || agentHistoryFilters.status !== 'all'
       ? '<div class="empty-state"><div class="empty-state-icon">🔍</div><h3 class="empty-state-title">没有匹配的运行记录</h3><p class="empty-state-desc">请调整关键词或状态筛选后重试。</p></div>'
-      : renderEmptyState('agent_history'))));
+      : canOperateAgent() ? renderEmptyState('agent_history') : '<p class="identity-empty">暂无可查看的运行记录</p>')));
   activeWorkspaceMode = 'agent-history';
   resetYamlToolbarForManager();
   document.getElementById('toolbar-path').innerHTML = '<span>⌂</span> Agent 运行记录';
@@ -1284,9 +1284,10 @@ function renderAgentHistoryPage(options = {}) {
         <p>这里集中查看最近 Agent 任务。点“查看轨迹”会打开 Agent 工作台，并显示该任务的状态、时间线和产物。</p>
         <div class="workflow-card-actions">
           <button class="btn-sm primary" onclick="loadAgentRunsHistory()">刷新历史</button>
-          <button class="btn-sm" onclick="activateWorkflow('dashboard')">回Agent 工作台</button>
+          ${canOperateAgent() ? '<button class="btn-sm" onclick="activateWorkflow(\'dashboard\')">回Agent 工作台</button>' : ''}
         </div>
       </div>
+      ${canOperateAgent() ? '' : `<p class="identity-muted">${escapeHtml(agentAccessReason())}</p>`}
       <div class="management-filter-bar">
         <input id="agent-history-search" type="search" value="${escapeHtml(agentHistoryFilters.query)}" placeholder="搜索任务、应用或结果" oninput="setAgentHistoryFilter('query', this.value)">
         <select onchange="setAgentHistoryFilter('status', this.value)">
@@ -1389,6 +1390,18 @@ async function selectAgentRun(runId) {
 }
 
 async function openAgentRunTrace(runId, workflow = 'dashboard') {
+  if (!canOperateAgent()) {
+    const area = document.getElementById('editor-area');
+    area.innerHTML = '<div class="identity-center" id="agent-readonly-record"><p role="status">正在加载运行记录...</p></div>';
+    const record = area.firstElementChild;
+    try {
+      const data = await apiRequest(`/agent-runs/${encodeURIComponent(runId)}`, { timeoutMs: 15000 });
+      if (!record.isConnected) return;
+      const run = normalizeAgentRun(data.run || data);
+      record.innerHTML = `<h2>${escapeHtml(run.target || run.goal || '运行记录')}</h2><p class="identity-muted">${escapeHtml(agentAccessReason())}</p>${agentRunResultSummaryHtml(run)}${agentInputSummaryHtml(run, { compact: true, collapsed: true })}${agentProgressHtml(run)}<button class="btn-sm" type="button" onclick="loadAgentRunsHistory()">返回运行记录</button>`;
+    } catch (error) { if (record.isConnected) record.innerHTML = `<p role="alert">${escapeHtml(error.message)}</p><button class="btn-sm" type="button" onclick="loadAgentRunsHistory()">返回运行记录</button>`; }
+    return;
+  }
   await activateWorkflow(workflow);
   await selectAgentRun(runId);
 }
@@ -1399,6 +1412,7 @@ async function openAgentRunReport(runId) {
 }
 
 async function retryAgentRunById(runId) {
+  if (!canOperateAgent()) { showToast(agentAccessReason(), 'error'); return; }
   if (!runId) return;
   if (!confirm(`确认重试 Agent 任务 ${runId}？\n会使用原始输入重新创建一个新运行，旧记录和旧报告会保留。`)) return;
   try {
@@ -1449,6 +1463,7 @@ function renderAgentPageAfterRunUpdate() {
 }
 
 async function confirmAgentStep(runId, confirmationId, decision='confirmed') {
+  if (!canOperateAgent()) { showToast(agentAccessReason(), 'error'); return; }
   try {
     const data = await apiRequest(`/agent-runs/${encodeURIComponent(runId)}/confirm`, {
       method: 'POST',
@@ -1548,6 +1563,7 @@ async function refreshAgentRuns(showMessage=false) {
 }
 
 async function confirmAgentRun(action='CONTINUE', confirmationId='', extra={}) {
+  if (!canOperateAgent()) { showToast(agentAccessReason(), 'error'); return; }
   const run = currentAgentRun();
   if (!run?.runId) return;
   try {
@@ -2219,6 +2235,7 @@ function setActiveWorkflow(sectionKey, options = {}) {
   resetWorkflowScrollPosition();
   updateWorkbenchPanelMode();
   renderWorkflowNav();
+  if (typeof applyAccessNavigation === 'function') applyAccessNavigation();
   const section = WORKFLOW_SECTIONS[activeWorkflow];
   const help = document.getElementById('toolbar-help');
   if (help) help.textContent = section.help;
@@ -2300,6 +2317,7 @@ function updateNavigationBadges() {
 }
 
 function renderActiveWorkflowPage(options = {}) {
+  if (activeWorkflow === 'identity') return showIdentityManagement() || true;
   if (activeWorkflow === 'dashboard' || activeWorkflow === 'agent') {
     showAgentWorkbench();
     return true;
@@ -2336,6 +2354,8 @@ function updateWorkbenchPanelMode() {
 
 // 上下文工具栏：根据当前模块动态展示标题/按钮
 const CONTEXT_TOOLBAR_MAP = {
+  identity: { module: 'settings', icon: '', title: '成员与权限', refreshLabel: '刷新', refreshFn: 'showIdentityManagement()' },
+  account: { module: 'settings', icon: '', title: '个人账号', refreshLabel: '个人资料与会话', refreshFn: 'showPersonalAccount()' },
   // Agent模块
   dashboard:        { module: 'agent',    icon: '⌂', title: 'Agent 控制', refreshLabel: '刷新状态', refreshFn: 'loadJobs(true)' },
   agent_history:    { module: 'agent',    icon: '⌂', title: 'Agent 控制', refreshLabel: '刷新状态', refreshFn: 'loadAgentRunsHistory()' },
@@ -2394,6 +2414,10 @@ function refreshActiveWorkflow() {
 
 async function activateWorkflow(sectionKey) {
   const targetWorkflow = normalizeWorkflowKey(sectionKey);
+  if (!canAccessWorkflow(targetWorkflow)) {
+    showToast(targetWorkflow === 'generate' ? uiAiAccessReason() : ['dashboard', 'agent', 'agent_confirm'].includes(targetWorkflow) ? agentAccessReason() : `缺少 ${WORKFLOW_PERMISSIONS[targetWorkflow]} 权限，请联系管理员。`, 'error');
+    return;
+  }
   const section = WORKFLOW_SECTIONS[targetWorkflow] || WORKFLOW_SECTIONS.dashboard;
   if (!(await saveEditorBeforeNavigation(`已进入「${section.title}」流程页`))) return;
   closeTransientUiForNavigation();
@@ -2405,6 +2429,11 @@ async function activateWorkflow(sectionKey) {
   if (assetsHeader) assetsHeader.style.display = ['assets', 'generate', 'yaml_edit'].includes(activeWorkflow) ? '' : 'none';
   // round 4: 切换页面前，按目标页面动态决定数据加载与轮询
   applyLazyLoadForSection(activeWorkflow);
+  if (activeWorkflow === 'identity') {
+    showIdentityManagement();
+    toggleLibrary(false);
+    return;
+  }
   // Handle config sub-pages
   if (activeWorkflow === 'config') {
     showModelConfigCenter();
@@ -4328,6 +4357,12 @@ async function refreshSonicPreview(force=false) {
   const list = document.getElementById('sonic-preview-list');
   const sub = document.getElementById('sonic-preview-sub');
   if (!list || !sub || !currentModule || !currentFile) return;
+  if (!canAccessGlobalSonic()) {
+    sonicStatusData = null;
+    sub.textContent = sonicAccessReason();
+    list.innerHTML = '';
+    return;
+  }
   if (!force && sonicStatusData?.module === currentModule && sonicStatusData?.file === currentFile) {
     renderSonicPreview();
     return;
@@ -4372,6 +4407,10 @@ function renderSonicPreview() {
 }
 
 async function showCurrentFileSonicStatus() {
+  if (!canAccessGlobalSonic()) {
+    showToast(sonicAccessReason(), 'error');
+    return;
+  }
   if (!requireCurrentYaml('查看同步至 Sonic 平台检查')) return;
   setSonicStatusActionMode('status');
   document.getElementById('sonic-status-title').textContent = '当前 YAML 的同步至 Sonic 平台状态';

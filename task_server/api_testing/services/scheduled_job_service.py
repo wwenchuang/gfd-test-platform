@@ -6,6 +6,8 @@ from typing import Optional
 
 from sqlalchemy import select
 
+from .. import access
+
 from ..models.case import ApiBaseline, ApiCaseVersion
 from ..models.environment import ApiEnvironment, ApiEnvironmentRevision
 from ..models.execution import ApiExecution
@@ -13,7 +15,6 @@ from ..models.project import ApiProject
 from ..models.scheduled_job import ApiScheduledJob, ApiScheduledJobRun, ApiScheduledJobTarget
 from ..models.source import ApiSource, ApiSourceEndpoint, ApiSourceRevision
 from ..models.test_task import ApiTestTask
-from ..repositories.source_repository import audit_fields
 from .execution_service import ExecutionService
 from .test_scope_service import InactiveTestScopeError, ensure_active_case_version_scopes
 
@@ -63,6 +64,7 @@ class ScheduledJobView:
     latest_execution_summary: dict
     created_at: object
     updated_at: object
+    blocked_reason: str = ""
 
 
 def _text(value, field, maximum=200, *, allow_empty=False):
@@ -204,10 +206,18 @@ class ScheduledJobService:
         self.event_stream = event_stream
 
     def create(self, payload, actor_id):
+        access.require_permission(actor_id, "api.execute")
         parsed = self._parse(payload)
         with self.session_factory.begin() as session:
             self._validate_project(session, parsed["project_id"], actor_id)
             environment_revision_id, environment_id = self._resolve_environment(session, parsed)
+            access.require_permission(actor_id, "api.edit")
+            access.require_resource(session, session.get(ApiEnvironment, environment_id), actor_id, "api.execute")
+            if parsed["enabled"]:
+                runtime_revision_id = environment_revision_id or session.get(ApiEnvironment, environment_id).active_revision_id
+                access.require_execution_environment(session, runtime_revision_id, actor_id, parsed["project_id"])
+            if parsed["notify_feishu"]:
+                access.require_permission(actor_id, "platform.notify")
             source_revision_id = self._resolve_source_revision(session, parsed, actor_id)
             self._validate_target_scopes(
                 session,
@@ -231,15 +241,16 @@ class ScheduledJobService:
                 retry_count=parsed["retry_count"],
                 timeout_seconds=parsed["timeout_seconds"],
                 summary="",
-                **audit_fields(actor_id),
+                **access.inherited_audit(session, actor_id, ApiProject, parsed["project_id"]),
             )
             session.add(record)
             session.flush()
             self._replace_targets(session, record.id, parsed, actor_id)
             session.flush()
-            return self._view(session, record)
+            return self._view(session, record, actor_id)
 
     def update(self, job_id, payload, actor_id):
+        access.require_permission(actor_id, "api.execute")
         parsed = self._parse(payload)
         with self.session_factory.begin() as session:
             record = self._owned_job(session, job_id, actor_id, for_update=True)
@@ -249,6 +260,13 @@ class ScheduledJobService:
                 raise ScheduledJobInputError("scheduled job project cannot be changed")
             self._validate_project(session, parsed["project_id"], actor_id)
             environment_revision_id, environment_id = self._resolve_environment(session, parsed)
+            access.require_permission(actor_id, "api.edit")
+            access.require_resource(session, session.get(ApiEnvironment, environment_id), actor_id, "api.execute")
+            if parsed["enabled"]:
+                runtime_revision_id = environment_revision_id or session.get(ApiEnvironment, environment_id).active_revision_id
+                access.require_execution_environment(session, runtime_revision_id, actor_id, parsed["project_id"])
+            if parsed["notify_feishu"]:
+                access.require_permission(actor_id, "platform.notify")
             source_revision_id = self._resolve_source_revision(session, parsed, actor_id)
             if (
                 existing_target_type != parsed["target_type"]
@@ -276,12 +294,13 @@ class ScheduledJobService:
             record.updated_by = actor_id
             self._replace_targets(session, record.id, parsed, actor_id)
             session.flush()
-            return self._view(session, record)
+            return self._view(session, record, actor_id)
 
     def delete(self, job_id, actor_id):
+        access.require_permission(actor_id, "api.delete")
         with self.session_factory.begin() as session:
             record = self._owned_job(session, job_id, actor_id, for_update=True)
-            view = self._view(session, record)
+            view = self._view(session, record, actor_id)
             for target in self._targets(session, record.id):
                 session.delete(target)
             session.flush()
@@ -290,21 +309,23 @@ class ScheduledJobService:
             return view
 
     def list(self, project_id, actor_id):
+        access.require_permission(actor_id, "api.view")
         with self.session_factory() as session:
             self._validate_project(session, project_id, actor_id)
             return tuple(
-                self._view(session, record)
+                self._view(session, record, actor_id)
                 for record in session.scalars(
                     select(ApiScheduledJob)
-                    .where(ApiScheduledJob.project_id == project_id, ApiScheduledJob.owner_id == actor_id)
+                    .where(ApiScheduledJob.project_id == project_id, access.resource_predicate(actor_id, ApiScheduledJob))
                     .order_by(ApiScheduledJob.updated_at.desc(), ApiScheduledJob.id.desc())
                 )
             )
 
     def get(self, job_id, actor_id):
+        access.require_permission(actor_id, "api.view")
         with self.session_factory() as session:
             record = self._owned_job(session, job_id, actor_id)
-            return self._view(session, record)
+            return self._view(session, record, actor_id)
 
     def dispatch_due(self, *, now=None, limit=100):
         current = now or datetime.now().astimezone()
@@ -324,27 +345,40 @@ class ScheduledJobService:
             idempotency_key = self._scheduled_idempotency_key(job.id, slot)
             if self._execution_exists(job.project_id, idempotency_key):
                 continue
-            dispatched.append(
-                self.run_once(
+            try:
+                execution = self.run_once(
                     job.id,
-                    job.owner_id,
+                    job.updated_by,
                     idempotency_key=idempotency_key,
                     trigger_type="schedule",
                 )
-            )
+            except (access.AccessDeniedError, ScheduledJobNotFoundError, ScheduledJobInputError) as error:
+                with self.session_factory.begin() as session:
+                    current_job = session.get(ApiScheduledJob, job.id)
+                    if current_job is not None:
+                        current_job.summary = "blocked: " + (
+                            "permission or scope revoked" if isinstance(error, access.AccessDeniedError)
+                            else "scheduled target unavailable or outside current scope"
+                        )
+                continue
+            dispatched.append(execution)
         return tuple(dispatched)
 
     def run_once(self, job_id, actor_id, *, idempotency_key, trigger_type="manual"):
+        access.require_permission(actor_id, "api.execute")
         with self.session_factory.begin() as session:
             job = self._owned_job(session, job_id, actor_id, for_update=True)
             environment_revision_id = self._runtime_environment_revision_id(session, job)
+            access.require_execution_environment(session, environment_revision_id, actor_id, job.project_id)
+            if job.notify_feishu:
+                access.require_permission(actor_id, "platform.notify")
             source_revision_id, case_version_ids, baseline_ids = self._runtime_targets(session, job, actor_id)
             run = ApiScheduledJobRun(
                 job_id=job.id,
                 execution_id=None,
                 trigger_type=trigger_type,
                 state="queued",
-                **audit_fields(actor_id),
+                **access.inherited_audit(session, actor_id, ApiProject, job.project_id),
             )
             session.add(run)
             session.flush()
@@ -387,6 +421,9 @@ class ScheduledJobService:
                 task=task,
             )
         with self.session_factory.begin() as session:
+            current_job = session.get(ApiScheduledJob, job_id)
+            if current_job is not None:
+                current_job.summary = ""
             persisted_run = session.get(ApiScheduledJobRun, run.id)
             if persisted_run is not None:
                 persisted_run.execution_id = execution.id
@@ -455,7 +492,7 @@ class ScheduledJobService:
     @staticmethod
     def _validate_project(session, project_id, actor_id):
         project = session.get(ApiProject, project_id)
-        if project is None or project.owner_id != actor_id:
+        if project is None or not access.resource_allowed(session, project, actor_id):
             raise ScheduledJobNotFoundError("API testing project was not found")
         return project
 
@@ -542,7 +579,7 @@ class ScheduledJobService:
                 select(ApiBaseline)
                 .where(
                     ApiBaseline.project_id == project_id,
-                    ApiBaseline.owner_id == actor_id,
+                    access.resource_predicate(actor_id, ApiBaseline),
                     ApiBaseline.status == "active",
                     ApiBaseline.group_name.in_(target_ids),
                 )
@@ -555,14 +592,14 @@ class ScheduledJobService:
             if len(target_ids) != 1:
                 raise ScheduledJobInputError("scheduled task target must contain exactly one task")
             task = session.get(ApiTestTask, target_ids[0])
-            if task is None or task.owner_id != actor_id or task.project_id != project_id:
+            if task is None or not access.resource_allowed(session, task, actor_id) or task.project_id != project_id:
                 raise ScheduledJobInputError("scheduled task is outside this project")
             baselines = tuple(session.scalars(
                 select(ApiBaseline)
                 .join(ApiCaseVersion, ApiCaseVersion.id == ApiBaseline.case_version_id)
                 .where(
                     ApiBaseline.project_id == project_id,
-                    ApiBaseline.owner_id == actor_id,
+                    access.resource_predicate(actor_id, ApiBaseline),
                     ApiBaseline.status == "active",
                     ApiCaseVersion.endpoint_id.in_(tuple(task.selected_endpoint_ids or ())),
                 )
@@ -613,7 +650,7 @@ class ScheduledJobService:
             .where(
                 ApiBaseline.id.in_(tuple(target_ids)),
                 ApiBaseline.project_id == project_id,
-                ApiBaseline.owner_id == actor_id,
+                access.resource_predicate(actor_id, ApiBaseline),
                 ApiBaseline.status == "active",
             )
             .order_by(ApiBaseline.created_at, ApiBaseline.id)
@@ -646,7 +683,7 @@ class ScheduledJobService:
         if for_update:
             query = query.with_for_update()
         job = session.scalar(query)
-        if job is None or job.owner_id != actor_id:
+        if job is None or not access.resource_allowed(session, job, actor_id):
             raise ScheduledJobNotFoundError("API scheduled job was not found")
         return job
 
@@ -670,11 +707,11 @@ class ScheduledJobService:
                 target_type=parsed["target_type"],
                 target_id=target_id,
                 group_name=target_id if parsed["target_type"] == "baseline_group" else "",
-                **audit_fields(actor_id),
+                **access.inherited_audit(session, actor_id, ApiProject, parsed["project_id"]),
             ))
 
     @classmethod
-    def _view(cls, session, job):
+    def _view(cls, session, job, actor_id=None):
         targets = cls._targets(session, job.id)
         latest_run = session.scalar(
             select(ApiScheduledJobRun)
@@ -683,7 +720,10 @@ class ScheduledJobService:
             .limit(1)
         )
         latest_execution = (
-            session.get(ApiExecution, latest_run.execution_id)
+            session.execute(select(ApiExecution.id, ApiExecution.state, ApiExecution.summary).where(
+                ApiExecution.id == latest_run.execution_id,
+                access.resource_predicate(actor_id, ApiExecution) if actor_id is not None else True,
+            )).one_or_none()
             if latest_run and latest_run.execution_id
             else None
         )
@@ -715,7 +755,7 @@ class ScheduledJobService:
             notify_feishu=job.notify_feishu,
             retry_count=job.retry_count,
             timeout_seconds=job.timeout_seconds,
-            latest_execution_id=latest_run.execution_id if latest_run else None,
+            latest_execution_id=latest_execution.id if latest_execution else None,
             effective_cron_expression=effective_cron,
             scheduler_timezone=scheduler_timezone,
             scheduler_utc_offset=scheduler_utc_offset,
@@ -726,4 +766,5 @@ class ScheduledJobService:
             latest_execution_summary=dict(latest_execution.summary or {}) if latest_execution else {},
             created_at=job.created_at,
             updated_at=job.updated_at,
+            blocked_reason=job.summary if (job.summary or "").startswith("blocked: ") else "",
         )

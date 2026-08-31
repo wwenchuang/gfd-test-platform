@@ -9,6 +9,7 @@ import pytest
 from task_server.api_testing.executor import (
     ExecutorLimits,
     HostPolicy,
+    HostPolicyError,
     HttpExecutor,
 )
 from task_server.api_testing.contracts.case import AssertionView
@@ -116,6 +117,10 @@ class _TargetHandler(BaseHTTPRequestHandler):
         elif self.path.startswith("/redirect-private"):
             self.send_response(302)
             self.send_header("Location", "http://169.254.169.254/latest/meta-data")
+            self.end_headers()
+        elif self.path.startswith("/qa/redirect-outside"):
+            self.send_response(302)
+            self.send_header("Location", "/capture")
             self.end_headers()
         elif self.path.startswith("/redirect-loop"):
             self.send_response(302)
@@ -1142,6 +1147,7 @@ def test_cross_origin_redirect_does_not_forward_credentials(target_server):
     handler.captured_authorization = None
     handler.captured_cookie = None
     base_url, _ = target_server
+    before = handler.request_count
     executor = HttpExecutor(
         _CaseService(
             _case(
@@ -1155,9 +1161,106 @@ def test_cross_origin_redirect_does_not_forward_credentials(target_server):
         ),
     )
     result = executor.execute_case("case-version-1", "environment-revision-1", {})
-    assert result.status == "PASSED"
+    assert result.status == "BROKEN"
+    assert result.failure_category == "host_policy"
+    assert handler.request_count == before + 1
     assert handler.captured_authorization is None
     assert handler.captured_cookie is None
+
+
+@pytest.mark.parametrize("path", ["absolute", "../capture", "%2e%2e/capture", "%252e%252e/capture", "..\\capture"])
+def test_preview_destination_cannot_escape_authorized_service(target_server, path):
+    base_url, handler = target_server
+    before = handler.request_count
+    if path == "absolute":
+        path = base_url.replace("127.0.0.1", "localhost") + "/capture"
+    executor = HttpExecutor(
+        _CaseService(_case()), _EnvironmentService(base_url + "/qa", {"token": "private-preview-token"}),
+        host_policy=HostPolicy(test_only_allowed_hosts=frozenset({"127.0.0.1", "localhost"})),
+    )
+    result = executor.preview_setup_steps("revision", [_workflow_step("preview", "GET", path)], 0,
+                                          initial_variables={}, processing_pre=[], extraction_overrides={})
+    assert result["status"] == "BROKEN"
+    assert result["failure_category"] == "host_policy"
+    assert handler.request_count == before
+
+
+def test_absolute_url_requires_matching_selected_service(target_server):
+    base_url, _ = target_server
+    result = _executor(target_server, _case(base_url + "/ok")).execute_case("case", "revision", {})
+    assert result.status == "PASSED"
+
+
+def test_same_origin_redirect_cannot_escape_service_base(target_server):
+    base_url, handler = target_server
+    before = handler.request_count
+    executor = HttpExecutor(
+        _CaseService(_case("/redirect-outside")), _EnvironmentService(base_url + "/qa", {"token": "private-preview-token"}),
+        host_policy=HostPolicy(test_only_allowed_hosts=frozenset({"127.0.0.1"})),
+    )
+    result = executor.execute_case("case", "revision", {})
+    assert result.status == "BROKEN"
+    assert result.failure_category == "host_policy"
+    assert handler.request_count == before + 1
+
+
+def test_absolute_domain_requires_explicit_service_selection(target_server):
+    base_url, _ = target_server
+    other_base = base_url.replace("127.0.0.1", "localhost")
+    class Environment:
+        def resolve_runtime(self, _revision, _values, service_name=None):
+            runtime = _Runtime(base_url, {"token": "service-fixture"})
+            runtime.base_url_for = lambda name: {"default": base_url, "other": other_base}[name]
+            return runtime
+    executor = HttpExecutor(_CaseService(_case()), Environment(),
+                            host_policy=HostPolicy(test_only_allowed_hosts=frozenset({"127.0.0.1", "localhost"})))
+    step = _workflow_step("other", "GET", other_base + "/ok")
+    result = executor.preview_setup_steps("revision", [step], 0, initial_variables={}, processing_pre=[], extraction_overrides={})
+    assert result["failure_category"] == "host_policy"
+    step["request"]["service"] = "other"
+    result = executor.preview_setup_steps("revision", [step], 0, initial_variables={}, processing_pre=[], extraction_overrides={})
+    assert result["status"] == "PASSED"
+
+
+def test_host_header_cannot_override_authorized_service(target_server):
+    _, handler = target_server
+    before = handler.request_count
+    result = _executor(target_server, _case(headers={"hOsT": "production.example.test"})).execute_case("case", "revision", {})
+    assert result.status == "BROKEN"
+    assert result.failure_category == "host_policy"
+    assert handler.request_count == before
+
+
+def test_destination_policy_errors_have_chinese_recovery_guidance():
+    messages = {
+        "Host header must match the configured service": ("Host", "删除"),
+        "Request destination requires a matching configured service binding": ("授权服务", "管理员"),
+        "Request destination must not include credentials": ("账号密码", "移除"),
+        "Request destination is outside the configured service base": ("基础路径", "修改"),
+        "Request destination contains an ambiguous path": ("歧义字符", "移除"),
+        "Request destination must not traverse the service base": ("上级目录", "修改"),
+        "Request destination contains excessive URL encoding": ("重复编码", "单次编码"),
+    }
+    for internal_message, expected_terms in messages.items():
+        error = HostPolicyError(internal_message)
+        state, category, message = HttpExecutor._exception_details(error)
+        assert (state, category) == ("BROKEN", "host_policy")
+        assert str(error) == internal_message
+        assert "请" in message
+        assert all(term in message for term in expected_terms)
+    assert HttpExecutor._exception_details(HostPolicyError("host has no usable address"))[2] == "host has no usable address"
+
+
+def test_preview_destination_error_is_chinese_without_sending_request(monkeypatch):
+    executor = HttpExecutor(_CaseService(_case()), _EnvironmentService("https://qa.example.test/api"))
+    monkeypatch.setattr(executor, "_request", lambda *_args, **_kwargs: pytest.fail("blocked preview must not send a request"))
+    step = _workflow_step("preview", "GET", "https://other.example.test/collect")
+    result = executor.preview_setup_steps("revision", [step], 0, initial_variables={}, processing_pre=[], extraction_overrides={})
+    assert result["status"] == "BROKEN"
+    assert result["failure_category"] == "host_policy"
+    assert "授权服务" in result["error_message"]
+    assert "请" in result["error_message"]
+    assert "管理员" in result["error_message"]
 
 
 def test_default_host_policy_rejects_loopback_before_request(target_server):

@@ -4,6 +4,8 @@ import copy
 
 from task_server.services.business_line_service import resolve_test_application
 
+from .. import access
+
 from ..contracts.case import (
     AssertionView,
     BaselineCaseView,
@@ -39,6 +41,7 @@ class CaseService:
         self.session_factory = session_factory
 
     def create_draft(self, endpoint_id, payload, origin, actor_id):
+        access.require_permission(actor_id, "api.edit")
         parsed = parse_case_payload(payload)
         if origin not in ALLOWED_ORIGINS:
             raise ValueError("case origin is not supported")
@@ -48,6 +51,7 @@ class CaseService:
             if endpoint is None:
                 raise EndpointNotFoundError("API source endpoint was not found")
             project_id = self._endpoint_project_id(repository, endpoint)
+            access.require_resource(session, endpoint, actor_id, "api.edit")
             case = repository.create_case(
                 project_id, endpoint.id, parsed["name"], origin, actor_id
             )
@@ -57,11 +61,12 @@ class CaseService:
             return self._version_view(repository, version, case)
 
     def create_version(self, case_id, payload, actor_id, endpoint_id=None):
+        access.require_permission(actor_id, "api.edit")
         parsed = parse_case_payload(payload, allow_disabled_scope=True)
         with self.session_factory.begin() as session:
             repository = CaseRepository(session)
             case = repository.get_case_for_update(case_id)
-            if case is None or case.status == "archived":
+            if case is None or not access.resource_allowed(session, case, actor_id) or case.status == "archived":
                 raise CaseNotFoundError("API case was not found")
             if endpoint_id and endpoint_id != case.endpoint_id:
                 self._adapt_case_endpoint(repository, case, endpoint_id)
@@ -81,10 +86,11 @@ class CaseService:
             return self._version_view(repository, version, case)
 
     def archive_case(self, case_id, actor_id):
+        access.require_permission(actor_id, "api.delete")
         with self.session_factory.begin() as session:
             repository = CaseRepository(session)
             case = repository.get_case_for_update(case_id)
-            if case is None or case.owner_id != actor_id:
+            if case is None or not access.resource_allowed(session, case, actor_id):
                 raise CaseNotFoundError("API case was not found")
             case.status = "archived"
             case.active_version_id = None
@@ -110,14 +116,15 @@ class CaseService:
             return self._version_view(repository, version, case)
 
     def update_case_version_group(self, version_id, group_name, actor_id):
+        access.require_permission(actor_id, "api.edit")
         group_name = self._clean_group_name(group_name, "case group name is invalid")
         with self.session_factory.begin() as session:
             repository = CaseRepository(session)
             version = repository.get_version_for_update(version_id)
-            if version is None or version.owner_id != actor_id:
+            if version is None or not access.resource_allowed(session, version, actor_id):
                 raise CaseNotFoundError("API case version was not found")
             case = repository.get_case(version.case_id)
-            if case is None or case.owner_id != actor_id or case.status == "archived":
+            if case is None or not access.resource_allowed(session, case, actor_id) or case.status == "archived":
                 raise CaseNotFoundError("API case version was not found")
             version.group_name = group_name
             version.updated_by = actor_id
@@ -125,6 +132,7 @@ class CaseService:
             return self._version_view(repository, version, case)
 
     def list_active_versions_for_source_revision(self, revision_id, actor_id):
+        access.require_permission(actor_id, "api.view")
         with self.session_factory() as session:
             repository = CaseRepository(session)
             projected = repository.list_active_versions_for_source_revision(
@@ -155,6 +163,7 @@ class CaseService:
             )
 
     def list_active_baselines(self, project_id, actor_id):
+        access.require_permission(actor_id, "api.view")
         with self.session_factory() as session:
             repository = CaseRepository(session)
             return tuple(
@@ -215,6 +224,7 @@ class CaseService:
             )
 
     def adopt_baseline(self, case_version_id, debug_execution_case_id, actor_id):
+        access.require_permission(actor_id, "api.baseline")
         with self.session_factory.begin() as session:
             repository = CaseRepository(session)
             version = repository.get_version(case_version_id)
@@ -234,6 +244,8 @@ class CaseService:
             )
             if not all((case, execution, endpoint, environment_revision, environment)):
                 raise BaselineGateError("baseline requires complete passing debug evidence")
+            access.require_resource(session, case, actor_id, "api.baseline")
+            access.require_resource(session, execution, actor_id, "api.baseline")
             if execution.state != "DONE":
                 raise BaselineGateError(
                     "baseline requires a successful terminal debug execution"
@@ -275,6 +287,7 @@ class CaseService:
             return self._baseline_view(baseline)
 
     def update_baseline_group(self, baseline_ids, group_name, actor_id):
+        access.require_permission(actor_id, "api.baseline")
         group_name = self._clean_group_name(group_name, "baseline group name is invalid")
         if not baseline_ids:
             raise ValueError("baseline_ids is required")
@@ -285,7 +298,7 @@ class CaseService:
                 baseline = repository.get_baseline_for_update(baseline_id)
                 if (
                     baseline is None
-                    or baseline.owner_id != actor_id
+                    or not access.resource_allowed(session, baseline, actor_id)
                     or baseline.status == "archived"
                 ):
                     raise CaseNotFoundError("API baseline was not found")
@@ -296,12 +309,13 @@ class CaseService:
             return tuple(views)
 
     def archive_baseline(self, baseline_id, actor_id):
+        access.require_permission(actor_id, "api.baseline")
         with self.session_factory.begin() as session:
             repository = CaseRepository(session)
             baseline = repository.get_baseline_for_update(baseline_id)
             if (
                 baseline is None
-                or baseline.owner_id != actor_id
+                or not access.resource_allowed(session, baseline, actor_id)
                 or baseline.status == "archived"
             ):
                 raise CaseNotFoundError("API baseline was not found")

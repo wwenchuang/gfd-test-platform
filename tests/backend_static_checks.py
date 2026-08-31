@@ -14588,7 +14588,7 @@ def check_mindmap_compact_mode():
     task_manager_source = (ROOT / "task-manager.html").read_text(encoding="utf-8")
     require(
         "生成用例脑图" in task_manager_source
-        and "js/app.js?v=20260828-full-platform-ux" in task_manager_source,
+        and "js/app.js?v=20260831-identity" in task_manager_source,
         "Mindmap modal and cache key must expose the cases-only presentation after deployment",
     )
 
@@ -16661,7 +16661,7 @@ def check_api_testing_runtime_infrastructure():
     workspace_source = workspace_migration.read_text(encoding="utf-8")
     require("api_workspaces" in workspace_source and "UniqueConstraint(\"owner_id\")" in workspace_source and "api_source_revisions.id" in workspace_source and "api_environment_revisions.id" in workspace_source, "Workspace migration must have one owner row and source/environment foreign keys")
     api_http_source = (ROOT / "task_server" / "api_testing" / "http.py").read_text(encoding="utf-8")
-    require("_scope_execution" in api_http_source and "ApiProject.owner_id == actor" in api_http_source, "API HTTP resources must resolve nested records through the current owner project root")
+    require("_scope_execution" in api_http_source and "access.project_predicate(actor)" in api_http_source and "access.resource_predicate(actor, ApiExecution)" in api_http_source and "access.resource_predicate(actor, ApiExecutionCase)" in api_http_source, "API HTTP resources must resolve the authorized project root and nested execution/environment scopes through shared access predicates")
     require("SSE_TICKET_TTL_SECONDS" in api_http_source and "_SSE_TICKET_REDEEM_LUA" in api_http_source and "eval(" in api_http_source and "_issue_sse_ticket" in api_http_source, "Browser SSE must use short-lived, reconnectable execution-bound Redis tickets")
     require("SSE_HEARTBEAT_SECONDS * 1000" in api_http_source and "if execution.state in TERMINAL_EXECUTION_STATES" in api_http_source, "SSE must heartbeat live streams and close terminal reconnects before blocking")
     router_source = (ROOT / "task_server" / "router.py").read_text(encoding="utf-8")

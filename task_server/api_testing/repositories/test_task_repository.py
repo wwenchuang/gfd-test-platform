@@ -4,21 +4,23 @@ import copy
 
 from sqlalchemy import distinct, func, select
 
+from .. import access
+
 from ..models.case import ApiAiJob, ApiBaseline, ApiCaseVersion
 from ..models.environment import ApiEnvironment, ApiEnvironmentRevision
 from ..models.execution import ApiExecution
 from ..models.project import ApiProject
 from ..models.source import ApiSource, ApiSourceEndpoint, ApiSourceRevision
 from ..models.test_task import ApiTestTask
-from .source_repository import audit_fields
 
 
 TERMINAL_TASK_STATES = ("completed", "cancelled")
 
 
 class TestTaskRepository:
-    def __init__(self, session):
+    def __init__(self, session, actor_id=None):
         self.session = session
+        self.actor_id = actor_id
 
     def get_project(self, record_id):
         return self.session.get(ApiProject, record_id)
@@ -49,8 +51,19 @@ class TestTaskRepository:
     def get_ai_job(self, record_id):
         return self.session.get(ApiAiJob, record_id)
 
+    def visible_ai_job_ids(self, record_ids):
+        identifiers = {item for item in record_ids if item}
+        if not identifiers or self.actor_id is None:
+            return identifiers
+        return set(self.session.scalars(select(ApiAiJob.id).where(
+            ApiAiJob.id.in_(identifiers), access.resource_predicate(self.actor_id, ApiAiJob),
+        )))
+
     def get_execution(self, record_id):
-        return self.session.get(ApiExecution, record_id)
+        query = select(ApiExecution).where(ApiExecution.id == record_id)
+        if self.actor_id is not None:
+            query = query.where(access.resource_predicate(self.actor_id, ApiExecution))
+        return self.session.scalar(query)
 
     def get_executions(self, record_ids):
         identifiers = tuple(dict.fromkeys(item for item in record_ids if item))
@@ -59,7 +72,8 @@ class TestTaskRepository:
         return {
             item.id: item
             for item in self.session.scalars(
-                select(ApiExecution).where(ApiExecution.id.in_(identifiers))
+                select(ApiExecution).where(ApiExecution.id.in_(identifiers),
+                    access.resource_predicate(self.actor_id, ApiExecution) if self.actor_id is not None else True)
             )
         }
 
@@ -80,7 +94,7 @@ class TestTaskRepository:
             )
             .where(
                 ApiBaseline.project_id == task.project_id,
-                ApiBaseline.owner_id == task.owner_id,
+                access.resource_predicate(self.actor_id, ApiBaseline) if self.actor_id is not None else ApiBaseline.owner_id == task.owner_id,
                 ApiBaseline.status == "active",
                 ApiSourceEndpoint.id.in_(selected),
             )
@@ -102,7 +116,7 @@ class TestTaskRepository:
                 select(ApiTestTask)
                 .where(
                     ApiTestTask.project_id == project_id,
-                    ApiTestTask.owner_id == owner_id,
+                    access.resource_predicate(owner_id, ApiTestTask),
                 )
                 .order_by(ApiTestTask.updated_at.desc(), ApiTestTask.id.desc())
                 .limit(limit)
@@ -128,7 +142,7 @@ class TestTaskRepository:
             select(ApiTestTask)
             .where(
                 ApiTestTask.project_id == project_id,
-                ApiTestTask.owner_id == owner_id,
+                access.resource_predicate(owner_id, ApiTestTask),
                 ApiTestTask.state.notin_(TERMINAL_TASK_STATES),
             )
             .order_by(ApiTestTask.updated_at.desc(), ApiTestTask.id.desc())
@@ -147,7 +161,7 @@ class TestTaskRepository:
             state="draft",
             selected_endpoint_ids=copy.deepcopy(payload["selected_endpoint_ids"]),
             summary={},
-            **audit_fields(actor_id),
+            **access.inherited_audit(self.session, actor_id, ApiProject, payload["project_id"]),
         )
         self.session.add(record)
         self.session.flush()

@@ -77,6 +77,8 @@ def test_feishu_report_card_contains_report_link_and_readable_summary(monkeypatc
 
 
 def test_sending_report_loads_only_lightweight_case_summaries(monkeypatch):
+    from task_server.api_testing import access
+    monkeypatch.setattr(access, "get_access_profile", lambda _actor: None)
     execution = _execution(owner_id="admin")
     notification = SimpleNamespace(
         enabled=True,

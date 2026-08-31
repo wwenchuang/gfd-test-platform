@@ -614,6 +614,7 @@ async function anyVisible(locator) {
     });
     await page.evaluate(() => closeGenerateModal());
 
+    await page.locator('details[data-nav-group="run"]').evaluate(el => { el.open = true; });
     await page.click('.workflow-step[data-workflow="execute"]');
     await page.waitForSelector('text=调试执行');
     await page.waitForSelector('text=选择要调试的 YAML');
@@ -675,6 +676,7 @@ async function anyVisible(locator) {
     await page.selectOption('#agent-source-type', 'figma');
     await page.selectOption('#agent-business', 'home');
     await page.waitForSelector('text=Figma 链接在下方');
+    await page.locator('details.agent-source-materials').evaluate(el => { el.open = true; });
     await page.fill('#agent-source-figma-url', 'https://www.figma.com/design/mx4x043OQjy1IYB1OfUdxw/%E6%99%BA%E5%B0%8F%E7%99%BDAPP?node-id=4458-1905&p=f&t=visual-smoke-0');
     const figmaWrapOk = await page.locator('#agent-source-figma-url').evaluate(el => {
       const style = window.getComputedStyle(el);

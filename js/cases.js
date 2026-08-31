@@ -19,7 +19,7 @@ async function loadModules(options = {}) {
         apiRequest('/modules'),
         apiRequest('/task-apps?include_disabled=1').catch(() => null),
         apiRequest('/task-meta').catch(() => null),
-        apiRequest('/sonic/cases').catch(() => null)
+        canAccessGlobalSonic() ? apiRequest('/sonic/cases').catch(() => null) : null
       ]);
       modules = moduleData || {};
       if (appData) {
@@ -31,6 +31,8 @@ async function loadModules(options = {}) {
       }
       if (sonicData) {
         sonicCaseRows = sonicData.cases || [];
+      } else if (!canAccessGlobalSonic()) {
+        sonicCaseRows = [];
       }
       modulesLoaded = true;
       AppState.loaded.modules = true;

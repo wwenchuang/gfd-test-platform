@@ -8,6 +8,10 @@ from types import MappingProxyType
 from typing import Optional
 
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy import select
+from ..models.case import ApiBaseline
+
+from .. import access
 
 from ..events import EventStream
 from ..executor import CaseExecutionResult, HttpExecutor, redact
@@ -184,8 +188,13 @@ class ExecutionService:
         fingerprint = _fingerprint(fingerprint_payload)
         with self.session_factory.begin() as session:
             repository = ExecutionRepository(session)
+            access.require_resource(session, repository.get_project(parsed["project_id"]), actor_id, "api.execute")
+            access.require_execution_environment(session, parsed["environment_revision_id"], actor_id, parsed["project_id"])
             existing = repository.get_by_idempotency(parsed["project_id"], idempotency_key)
             if existing is not None:
+                access.require_resource(session, existing, actor_id, "api.execute")
+                if access.get_access_profile(actor_id) is not None and existing.created_by != actor_id:
+                    raise ExecutionConflictError("idempotency key belongs to another actor")
                 if existing.request_snapshot.get("fingerprint") != fingerprint:
                     raise ExecutionConflictError("idempotency key was used with a different payload")
                 children = repository.get_execution_cases(existing.id)
@@ -237,6 +246,9 @@ class ExecutionService:
                     raise ExecutionConflictError(
                         "idempotency key conflicted during submit"
                     )
+                access.require_resource(session, existing, actor_id, "api.execute")
+                if access.get_access_profile(actor_id) is not None and existing.created_by != actor_id:
+                    raise ExecutionConflictError("idempotency key belongs to another actor")
                 if existing.request_snapshot.get("fingerprint") != fingerprint:
                     raise ExecutionConflictError(
                         "idempotency key was used with a different payload"
@@ -248,6 +260,7 @@ class ExecutionService:
         return view
 
     def submit_active_baselines(self, request, actor_id, idempotency_key, *, task=None):
+        access.require_permission(actor_id, "api.execute")
         required_fields = {
             "project_id",
             "source_revision_id",
@@ -266,6 +279,13 @@ class ExecutionService:
         endpoint_ids = _optional_identifier_array(request.get("endpoint_ids"), "endpoint_ids")
         baseline_ids = _optional_identifier_array(request.get("baseline_ids"), "baseline_ids")
         with self.session_factory() as session:
+            if baseline_ids:
+                allowed = set(session.scalars(select(ApiBaseline.id).where(
+                    ApiBaseline.id.in_(baseline_ids), ApiBaseline.project_id == request["project_id"],
+                    ApiBaseline.status == "active", access.resource_predicate(actor_id, ApiBaseline),
+                )))
+                if allowed != set(baseline_ids):
+                    raise ExecutionNotFoundError("API baseline was not found")
             baseline_selection = ExecutionRepository(session).active_baseline_selection(
                 request["project_id"],
                 actor_id,
@@ -303,6 +323,7 @@ class ExecutionService:
             return self._repository_view(repository, execution, children)
 
     def list(self, project_id, actor_id, limit=50):
+        access.require_permission(actor_id, "api.view")
         if not isinstance(limit, int) or isinstance(limit, bool) or not 1 <= limit <= 100:
             raise ValueError("execution list limit must be between 1 and 100")
         with self.session_factory() as session:
@@ -330,6 +351,7 @@ class ExecutionService:
             )
 
     def cancel(self, execution_id, actor_id):
+        access.require_permission(actor_id, "api.execute")
         with self.session_factory.begin() as session:
             repository = ExecutionRepository(session)
             execution = repository.request_cancellation(execution_id, actor_id)
@@ -342,6 +364,7 @@ class ExecutionService:
         return view
 
     def archive(self, execution_id, actor_id):
+        access.require_permission(actor_id, "api.delete")
         with self.session_factory.begin() as session:
             repository = ExecutionRepository(session)
             try:
@@ -354,6 +377,7 @@ class ExecutionService:
             return self._repository_view(repository, execution, children)
 
     def archive_many(self, execution_ids, actor_id):
+        access.require_permission(actor_id, "api.delete")
         identifiers = tuple(dict.fromkeys(execution_ids))
         if not identifiers:
             raise ValueError("execution_ids must not be empty")
@@ -388,6 +412,12 @@ class ExecutionService:
             execution = repository.get_execution(execution_id)
             if execution is None:
                 raise ExecutionNotFoundError("API execution was not found")
+            try:
+                access.require_resource(session, execution, execution.created_by, "api.execute")
+                access.require_execution_environment(session, execution.environment_revision_id, execution.created_by, execution.project_id)
+            except access.AccessDeniedError:
+                repository.request_cancellation(execution.id, execution.created_by, authorize=False)
+                return False
             if execution.cancellation_requested_at is not None:
                 return False
             if not repository.compare_and_set_execution(execution_id, {"QUEUED"}, "RUNNING"):

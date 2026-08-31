@@ -70,6 +70,19 @@ function buttonByText(wrapper: ReturnType<typeof mount>, text: string) {
   return button!
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>(done => { resolve = done })
+  return { promise, resolve }
+}
+
+function verifiedAuditFixture() {
+  return { data: {
+    summary: { total: 3, verified: 3, upgrade_available: 0, http_failure: 0, business_failure: 0, domain_assertion_required: 0, evidence_missing: 0, needs_review: 0, safe_review: 0 },
+    items: [],
+  } }
+}
+
 function baselineFixture(overrides: Record<string, unknown> = {}) {
   return {
     id: 'baseline-1',
@@ -390,6 +403,77 @@ describe('BaselinesView fixed project assets', () => {
     expect(wrapper.find('[data-testid="baseline-one-time-baseline-api-test"]').exists()).toBe(false)
     await wrapper.get('[data-testid="baseline-filter-type"]').setValue('regular')
     expect(wrapper.text()).toContain('收藏接口常规回归')
+  })
+
+  it('waits for task restoration and the initial baseline load before allowing assertion audit', async () => {
+    const restore = deferred<null>()
+    const initialLoad = deferred<{ data: { baselines: ReturnType<typeof baselineFixture>[] } }>()
+    vi.spyOn(useTasksStore(), 'restore').mockReturnValue(restore.promise)
+    const store = useBaselinesStore()
+    store.items = [baselineFixture()]
+    store.selectedIds = ['baseline-1']
+    const get = vi.spyOn(apiClient, 'get').mockImplementation(async path => {
+      if (path.includes('assertion-audit')) return verifiedAuditFixture() as never
+      return initialLoad.promise as never
+    })
+    const wrapper = mountWithContext()
+    await flushPromises()
+
+    expect(useTasksStore().restore).toHaveBeenCalledWith('project-1')
+    expect(store.loading).toBe(false)
+    const auditButton = buttonByText(wrapper, '检查断言')
+    expect(auditButton.attributes('disabled')).toBeDefined()
+    expect(wrapper.get('button[title="重新读取基线"]').attributes('disabled')).toBeDefined()
+    expect(buttonByText(wrapper, '保存为基线回归任务').attributes('disabled')).toBeDefined()
+    expect(buttonByText(wrapper, '按当前环境执行所选基线').attributes('disabled')).toBeDefined()
+    auditButton.element.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    await flushPromises()
+    expect(get).not.toHaveBeenCalled()
+
+    restore.resolve(null)
+    await flushPromises()
+    expect(store.loading).toBe(true)
+    expect(auditButton.attributes('disabled')).toBeDefined()
+    initialLoad.resolve({ data: { baselines: [baselineFixture()] } })
+    await flushPromises()
+
+    expect(auditButton.attributes('disabled')).toBeUndefined()
+    await auditButton.trigger('click')
+    await flushPromises()
+    expect(get.mock.calls.filter(([path]) => path.includes('assertion-audit'))).toHaveLength(1)
+    expect(wrapper.get('[data-testid="baseline-audit-summary"]').text()).toContain('断言已精确 3 条')
+  })
+
+  it('prevents assertion audits and baseline refreshes from clearing each other in flight', async () => {
+    vi.spyOn(useTasksStore(), 'restore').mockResolvedValue(null)
+    const get = vi.spyOn(apiClient, 'get').mockResolvedValue({ data: { baselines: [baselineFixture()] } })
+    const wrapper = mountWithContext()
+    await flushPromises()
+    const refresh = deferred<{ data: { baselines: ReturnType<typeof baselineFixture>[] } }>()
+    const audit = deferred<ReturnType<typeof verifiedAuditFixture>>()
+    get.mockImplementation(async path => path.includes('assertion-audit') ? audit.promise as never : refresh.promise as never)
+    get.mockClear()
+
+    const refreshButton = wrapper.get('button[title="重新读取基线"]')
+    const auditButton = buttonByText(wrapper, '检查断言')
+    await refreshButton.trigger('click')
+    expect(auditButton.attributes('disabled')).toBeDefined()
+    auditButton.element.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    await flushPromises()
+    expect(get.mock.calls.filter(([path]) => path.includes('assertion-audit'))).toHaveLength(0)
+
+    refresh.resolve({ data: { baselines: [baselineFixture()] } })
+    await flushPromises()
+    await auditButton.trigger('click')
+    expect(refreshButton.attributes('disabled')).toBeDefined()
+    refreshButton.element.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    await flushPromises()
+    expect(get.mock.calls.filter(([path]) => path.includes('/baselines?'))).toHaveLength(1)
+
+    audit.resolve(verifiedAuditFixture())
+    await flushPromises()
+    expect(wrapper.get('[data-testid="baseline-audit-summary"]').text()).toContain('断言已精确 3 条')
+    expect(refreshButton.attributes('disabled')).toBeUndefined()
   })
 
   it('checks stored response evidence on demand and selects only safe review candidates', async () => {

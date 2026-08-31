@@ -1,5 +1,5 @@
 import type { ApiEnvelope } from './contracts'
-import { redirectToApiTestingLogin } from '../utils/authRedirect'
+import { redirectToApiTestingLogin, requiresPasswordChange } from '../utils/authRedirect'
 
 export class ApiClientError extends Error {
   constructor(public readonly status: number, message: string) {
@@ -87,6 +87,10 @@ export class ApiClient {
       payload = (raw ? JSON.parse(raw) : {}) as ApiEnvelope<T> & { error?: unknown; message?: unknown }
     } catch {
       throw new ApiClientError(response.status, nonJsonResponseMessage(response.status))
+    }
+    if (response.status === 403) {
+      if (requiresPasswordChange(payload)) redirectToApiTestingLogin()
+      throw new ApiClientError(403, `${errorMessage(payload)}。请联系管理员确认角色和数据授权。`)
     }
     if (!response.ok) throw new ApiClientError(response.status, errorMessage(payload))
     return payload

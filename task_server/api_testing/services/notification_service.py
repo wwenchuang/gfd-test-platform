@@ -16,6 +16,8 @@ from task_server.services.notification_presentation import (
     canonical_test_scope_summary,
 )
 
+from .. import access
+
 from ..crypto import decrypt_secret, encrypt_secret, secret_fingerprint
 from ..models.project import ApiProject
 from ..repositories.execution_repository import ExecutionRepository
@@ -108,22 +110,26 @@ class NotificationService:
         self.session_factory = session_factory
 
     def get_feishu(self, project_id, actor_id):
+        access.require_permission(actor_id, "api.view")
         with self.session_factory() as session:
             record = NotificationRepository(session).get(
-                actor_id, project_id, FEISHU_CHANNEL
+                self._channel_owner(session, project_id, actor_id), project_id, FEISHU_CHANNEL
             )
             return self._view(project_id, record)
 
     def save_feishu(self, project_id, payload, actor_id):
+        access.require_permission(actor_id, "platform.configure")
+        access.require_permission(actor_id, "platform.notify")
         name = _text(payload.get("name", "接口回归通知"), "name", 200) or "接口回归通知"
         enabled = bool(payload.get("enabled", False))
         webhook = str(payload.get("webhook") or "").strip()
         with self.session_factory.begin() as session:
             repository = NotificationRepository(session)
-            record = repository.get(actor_id, project_id, FEISHU_CHANNEL, for_update=True)
+            owner_id = self._channel_owner(session, project_id, actor_id)
+            record = repository.get(owner_id, project_id, FEISHU_CHANNEL, for_update=True)
             if record is None:
                 record = repository.create(
-                    actor_id,
+                    owner_id,
                     project_id,
                     FEISHU_CHANNEL,
                     name,
@@ -143,13 +149,14 @@ class NotificationService:
             return self._view(project_id, record)
 
     def send_execution_report(self, execution_id, actor_id):
+        access.require_permission(actor_id, "platform.notify")
         with self.session_factory() as session:
             execution_repository = ExecutionRepository(session)
             execution = execution_repository.get_execution(execution_id)
-            if execution is None or execution.owner_id != actor_id:
+            if execution is None or not access.resource_allowed(session, execution, actor_id):
                 raise NotificationNotConfiguredError("execution was not found")
             notification = NotificationRepository(session).get(
-                execution.owner_id,
+                self._channel_owner(session, execution.project_id, actor_id),
                 execution.project_id,
                 FEISHU_CHANNEL,
             )
@@ -179,15 +186,16 @@ class NotificationService:
             )
 
     def test_feishu(self, project_id, actor_id):
+        access.require_permission(actor_id, "platform.notify")
         with self.session_factory() as session:
             project = session.scalar(
                 select(ApiProject).where(
                     ApiProject.id == project_id,
-                    ApiProject.owner_id == actor_id,
+                    access.project_predicate(actor_id),
                 )
             )
             notification = NotificationRepository(session).get(
-                actor_id,
+                self._channel_owner(session, project_id, actor_id),
                 project_id,
                 FEISHU_CHANNEL,
             )
@@ -206,6 +214,14 @@ class NotificationService:
                 sent=True,
                 message="飞书测试通知已发",
             )
+
+    @staticmethod
+    def _channel_owner(session, project_id, actor_id):
+        if access.get_access_profile(actor_id) is None:
+            return actor_id
+        project = session.get(ApiProject, project_id)
+        access.require_resource(session, project, actor_id)
+        return project.owner_id if access.get_access_profile(actor_id) is not None else actor_id
 
     @staticmethod
     def _test_card(project_name, channel_name):

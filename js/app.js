@@ -2020,7 +2020,8 @@ async function readJsonResponse(res) {
   }
   if (!res.ok || data.ok === false || data.success === false) {
     const businessMessage = data && (data.error || data.message || data.reason);
-    throw new Error(businessMessage || (res.ok ? '请求返回业务失败，请查看操作结果详情' : `请求失败：HTTP ${res.status}`));
+    const message = typeof businessMessage === 'string' ? businessMessage : businessMessage?.message;
+    throw Object.assign(new Error(message || (res.ok ? '请求返回业务失败，请查看操作结果详情' : `请求失败：HTTP ${res.status}`)), { status: res.status, code: data.code || data.error?.code });
   }
   return data;
 }
@@ -5365,15 +5366,21 @@ initResizableLayout();
 async function initAuthSession() {
   const token = sessionToken();
   if (!token) return;
+  let data;
   try {
-    const data = await apiRequest('/auth/me');
-    if (data.ok && data.user) {
-      sessionStorage.setItem('user', data.user);
-      continueAfterAuthentication();
-      return;
+    data = await apiRequest('/auth/me', { timeoutMs: 15000 });
+    if (!data.ok || !data.user) throw new Error('无法确认当前会话，请重试');
+  } catch(e) {
+    if (e.status !== 401) {
+      const error = document.getElementById('login-error');
+      error.textContent = e.message || '会话验证失败，请重试';
+      error.style.display = 'block';
+      document.getElementById('auth-retry').hidden = false;
     }
-  } catch(e) {}
-  sessionStorage.removeItem('user');
-  sessionStorage.removeItem('sessionToken');
+    return;
+  }
+  acceptAuthSession(data);
+  // A denied business request or a render failure must not erase a verified session.
+  continueAfterAuthentication();
 }
 initAuthSession();

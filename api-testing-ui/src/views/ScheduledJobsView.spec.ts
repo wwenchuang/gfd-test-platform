@@ -503,7 +503,80 @@ describe('ScheduledJobsView', () => {
     expect(row.text()).not.toContain('下次执行')
     expect(wrapper.get('[data-testid="scheduled-run-job-blocked"]').attributes('disabled')).toBeDefined()
   })
+
+  it.each([
+    ['blocked: permission or scope revoked', '保存任务配置的成员的执行权限或数据范围已撤销', '请联系管理员恢复保存任务配置的成员对项目、环境及执行操作的授权'],
+    ['blocked: scheduled target unavailable or outside current scope', '定时任务目标不可用，或已超出当前数据范围', '请检查目标及环境是否有效，并编辑任务重新选择；若授权已撤销，请联系管理员恢复'],
+  ])('shows server block %s in the row and editor without treating enabled as execution success', async (reason, message, remedy) => {
+    const wrapper = await mountScheduledState(() => scheduledJobFixture({ id: 'job-server-blocked', blocked_reason: reason }))
+    const row = wrapper.get('[data-testid="scheduled-row-job-server-blocked"]')
+
+    expect(row.text()).toContain(`执行已阻断 · ${message}`)
+    expect(row.text()).toContain(remedy)
+    expect(row.text()).toContain('配置：已启用')
+    expect(row.text()).not.toContain('下次执行')
+    expect(row.text()).not.toContain(reason)
+    expect(wrapper.get('[data-testid="scheduled-list-enabled-job-server-blocked"]').attributes('aria-checked')).toBe('true')
+    // A previous dispatch denial must not prevent a retry after authorization is restored.
+    expect(wrapper.get('[data-testid="scheduled-run-job-server-blocked"]').attributes('disabled')).toBeUndefined()
+
+    await wrapper.get('[data-testid="scheduled-edit-job-server-blocked"]').trigger('click')
+    expect(wrapper.get('[data-testid="scheduled-editor-blocked"]').text()).toContain(message)
+    expect(wrapper.get('[data-testid="scheduled-editor-blocked"]').text()).toContain(remedy)
+    expect(wrapper.get('[data-testid="scheduled-enabled-toggle"]').attributes('aria-checked')).toBe('true')
+  })
+
+  it('removes both block notices only when the refreshed server state clears the reason', async () => {
+    let job = scheduledJobFixture({ id: 'job-recovered', blocked_reason: 'blocked: permission or scope revoked' })
+    const wrapper = await mountScheduledState(() => job)
+    await wrapper.get('[data-testid="scheduled-edit-job-recovered"]').trigger('click')
+    expect(wrapper.get('[data-testid="scheduled-editor-blocked"]').text()).toContain('执行已阻断')
+
+    job = scheduledJobFixture({ id: 'job-recovered', blocked_reason: '', latest_execution_id: 'execution-recovered', latest_execution_state: 'DONE', latest_run_at: '2026-08-31T08:00:00Z', latest_execution_summary: { total: 1, passed: 1 } })
+    await wrapper.get('[data-testid="scheduled-refresh"]').trigger('click')
+    await flushPromises()
+
+    const row = wrapper.get('[data-testid="scheduled-row-job-recovered"]')
+    expect(row.text()).not.toContain('执行已阻断')
+    expect(row.text()).toContain('下次执行')
+    expect(row.text()).toContain('通过 1/1')
+    expect(wrapper.find('[data-testid="scheduled-editor-blocked"]').exists()).toBe(false)
+    expect(wrapper.get('[data-testid="scheduled-enabled-toggle"]').attributes('aria-checked')).toBe('true')
+  })
+
+  it('preserves disabled configuration while showing the last dispatch block', async () => {
+    const wrapper = await mountScheduledState(() => scheduledJobFixture({ id: 'job-disabled-blocked', enabled: false, blocked_reason: 'blocked: permission or scope revoked' }))
+    const row = wrapper.get('[data-testid="scheduled-row-job-disabled-blocked"]')
+    expect(row.text()).toContain('配置：已停用')
+    expect(row.text()).toContain('执行已阻断')
+    expect(row.text()).not.toContain('下次执行')
+    expect(wrapper.get('[data-testid="scheduled-list-enabled-job-disabled-blocked"]').attributes('aria-checked')).toBe('false')
+  })
+
+  it('keeps unknown server blocks visible with a safe Chinese fallback', async () => {
+    const wrapper = await mountScheduledState(() => scheduledJobFixture({ id: 'job-unknown-blocked', blocked_reason: 'blocked: <img src=x onerror=alert(1)>' }))
+    const row = wrapper.get('[data-testid="scheduled-row-job-unknown-blocked"]')
+    expect(row.text()).toContain('服务端阻断原因尚未识别')
+    expect(row.text()).toContain('请联系管理员检查任务权限、目标和环境后重试')
+    expect(row.find('img').exists()).toBe(false)
+    expect(row.text()).not.toContain('下次执行')
+  })
 })
+
+async function mountScheduledState(job: () => ReturnType<typeof scheduledJobFixture>) {
+  vi.spyOn(apiClient, 'get').mockImplementation(async url => {
+    const path = String(url)
+    if (path.startsWith('/api/api-testing/v1/scheduled-jobs')) return { data: { scheduled_jobs: [job()] } }
+    if (path.startsWith('/api/api-testing/v1/baselines')) return { data: { baselines: [baselineFixture({})] } }
+    if (path.startsWith('/api/api-testing/v1/cases')) return { data: { case_versions: [] } }
+    if (path.startsWith('/api/api-testing/v1/tasks')) return { data: { tasks: [] } }
+    return { data: {} }
+  })
+  const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/', name: 'scheduled-jobs', component: ScheduledJobsView }] })
+  const wrapper = mount(ScheduledJobsView, { global: { plugins: [router] } })
+  await flushPromises()
+  return wrapper
+}
 
 function mockScheduledJobAssets(): void {
   vi.spyOn(apiClient, 'get').mockImplementation(async url => {

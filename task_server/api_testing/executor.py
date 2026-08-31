@@ -12,7 +12,7 @@ import ssl
 import time
 from types import MappingProxyType, SimpleNamespace
 from typing import Optional
-from urllib.parse import urlencode, urljoin, urlsplit, urlunsplit
+from urllib.parse import unquote, urlencode, urljoin, urlsplit, urlunsplit
 
 from .assertions import (
     AssertionDefinitionError,
@@ -33,6 +33,29 @@ _SENSITIVE_NAME = re.compile(
 _BEARER = re.compile(r"(?i)(bearer\s+)[^\s,;]+")
 _PATH_PARAMETER = re.compile(r"{([A-Za-z_][A-Za-z0-9_.-]*)}")
 _REDacted = "***"
+_DESTINATION_POLICY_MESSAGES = {
+    "Host header must match the configured service": (
+        "Host 请求头与当前服务地址不一致。请删除自定义 Host 请求头，或改为当前服务地址中的主机和端口。"
+    ),
+    "Request destination requires a matching configured service binding": (
+        "请求或重定向的目标与当前授权服务不一致。请选择匹配的环境服务；如需访问其他域名，请联系管理员配置并授权该服务。"
+    ),
+    "Request destination must not include credentials": (
+        "请求地址包含账号密码，已阻止发送。请从地址中移除账号密码，并通过环境密钥配置认证。"
+    ),
+    "Request destination is outside the configured service base": (
+        "请求或重定向超出当前服务的基础路径。请修改请求路径或重定向目标，使其位于已配置的服务基础路径内。"
+    ),
+    "Request destination contains an ambiguous path": (
+        "请求路径包含反斜杠或控制字符等歧义字符。请移除这些字符，并使用明确的服务内路径。"
+    ),
+    "Request destination must not traverse the service base": (
+        "请求路径尝试访问上级目录，已阻止发送。请移除 . 或 .. 目录跳转，并修改为当前服务基础路径内的路径。"
+    ),
+    "Request destination contains excessive URL encoding": (
+        "请求路径存在过多重复编码。请使用单次编码的路径，避免多层百分号编码。"
+    ),
+}
 _POLL_RETRYABLE_CATEGORIES = frozenset(
     {
         "business_response",
@@ -618,6 +641,7 @@ class HttpExecutor:
             )
             base_url = runtime.base_url_for(rendered.get("service", "default"))
             url = urljoin(base_url.rstrip("/") + "/", path.lstrip("/"))
+            self._authorize_destination(url, base_url)
             query = rendered.get("query") or {}
             if query:
                 parsed = urlsplit(url)
@@ -665,7 +689,7 @@ class HttpExecutor:
                 self._emit_phase(
                     callback, trace, "request", {"request": request_view}
                 )
-            response = self._request(rendered["method"], url, headers, body_bytes)
+            response = self._request(rendered["method"], url, headers, body_bytes, authorized_base=base_url)
             response_secrets = tuple(
                 dict.fromkeys(
                     secrets
@@ -949,7 +973,7 @@ class HttpExecutor:
         if isinstance(exc, CancelledExecution):
             return "CANCELLED", "cancelled", "执行已取消"
         if isinstance(exc, HostPolicyError):
-            return "BROKEN", "host_policy", str(exc)
+            return "BROKEN", "host_policy", _DESTINATION_POLICY_MESSAGES.get(str(exc), str(exc))
         if isinstance(exc, RedirectLimitError):
             return "BROKEN", "redirect_limit", str(exc)
         if isinstance(exc, ResponseLimitError):
@@ -964,12 +988,18 @@ class HttpExecutor:
             return "BROKEN", "assertion_definition", str(exc)
         return "BROKEN", "environment", str(exc)
 
-    def _request(self, method, initial_url, headers, body):
+    def _request(self, method, initial_url, headers, body, *, authorized_base=None):
         network_started = time.monotonic()
         deadline = network_started + self.limits.timeout_seconds
         url = initial_url
         headers = dict(headers)
+        authorized_base = authorized_base or urlunsplit((*urlsplit(initial_url)[:2], "/", "", ""))
         for redirect_count in range(self.limits.max_redirects + 1):
+            self._authorize_destination(url, authorized_base)
+            parsed = urlsplit(url)
+            for name, value in headers.items():
+                if name.lower() == "host" and str(value).lower() != parsed.netloc.lower():
+                    raise HostPolicyError("Host header must match the configured service")
             self._remaining(deadline)
             parsed, port, addresses = self.host_policy.resolve(url)
             self._remaining(deadline)
@@ -992,8 +1022,8 @@ class HttpExecutor:
                 raise connection_error or ConnectionError("无法连接服务主机")
             transport_socket = connection.sock
             path = urlunsplit(("", "", parsed.path or "/", parsed.query, ""))
-            request_headers = dict(headers)
-            request_headers.setdefault("Host", parsed.netloc)
+            request_headers = {name: value for name, value in headers.items() if name.lower() != "host"}
+            request_headers["Host"] = parsed.netloc
             started = time.monotonic()
             try:
                 transport_socket.settimeout(self._remaining(deadline))
@@ -1011,12 +1041,7 @@ class HttpExecutor:
                     if redirect_count >= self.limits.max_redirects:
                         raise RedirectLimitError("重定向次数超过限制")
                     redirected_url = urljoin(url, location)
-                    if self._origin(url) != self._origin(redirected_url):
-                        headers = {
-                            name: value
-                            for name, value in headers.items()
-                            if not _SENSITIVE_NAME.search(name)
-                        }
+                    self._authorize_destination(redirected_url, authorized_base)
                     url = redirected_url
                     if raw.status == 303:
                         method, body = "GET", None
@@ -1067,6 +1092,32 @@ class HttpExecutor:
             finally:
                 connection.close()
         raise RedirectLimitError("重定向次数超过限制")
+
+    @classmethod
+    def _authorize_destination(cls, url, base_url):
+        if cls._origin(url) != cls._origin(base_url):
+            raise HostPolicyError("Request destination requires a matching configured service binding")
+        target = urlsplit(url)
+        if target.username is not None or target.password is not None:
+            raise HostPolicyError("Request destination must not include credentials")
+        base_path = cls._destination_path(urlsplit(base_url).path).rstrip("/")
+        path = cls._destination_path(target.path)
+        if base_path and path != base_path and not path.startswith(base_path + "/"):
+            raise HostPolicyError("Request destination is outside the configured service base")
+
+    @staticmethod
+    def _destination_path(path):
+        # Decode conservatively before comparing: proxies may decode more than once.
+        for _ in range(10):
+            if "\\" in path or any(ord(char) < 32 or ord(char) == 127 for char in path):
+                raise HostPolicyError("Request destination contains an ambiguous path")
+            if any(segment.split(";", 1)[0] in {".", ".."} for segment in path.split("/")):
+                raise HostPolicyError("Request destination must not traverse the service base")
+            decoded = unquote(path)
+            if decoded == path:
+                return path or "/"
+            path = decoded
+        raise HostPolicyError("Request destination contains excessive URL encoding")
 
     @staticmethod
     def _remaining(deadline):

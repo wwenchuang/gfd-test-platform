@@ -63,6 +63,7 @@ function createServer() {
       return res.end();
     }
     if (url.pathname.startsWith('/api-test/') && serveStatic(url.pathname, res)) return;
+    if (url.pathname === '/api/auth/me') return sendJson(res, { ok: true, user: 'visual-user' });
     if (url.pathname === '/api/task-apps') {
       return sendJson(res, { apps: [
         {
@@ -284,6 +285,47 @@ async function openCompactPage(page, navigationLabel, heading, label) {
   await assertNoHorizontalOverflow(page, label);
 }
 
+async function assertScheduledServerBlocks(page) {
+  let blockedReason = 'blocked: permission or scope revoked';
+  await page.route(url => url.pathname === '/api/api-testing/v1/scheduled-jobs', async route => {
+    const response = await route.fetch();
+    const payload = await response.json();
+    payload.data.scheduled_jobs.forEach(job => { job.blocked_reason = blockedReason; });
+    await route.fulfill({ response, json: payload });
+  });
+  await page.getByRole('link', { name: '定时任务', exact: true }).click();
+  await page.getByTestId('scheduled-edit-scheduled-job-1').click();
+  for (const [size, reason, message, viewport] of [
+    ['desktop', 'blocked: permission or scope revoked', '保存任务配置的成员的执行权限或数据范围已撤销', { width: 1440, height: 900 }],
+    ['mobile', 'blocked: scheduled target unavailable or outside current scope', '定时任务目标不可用，或已超出当前数据范围', { width: 390, height: 844 }],
+  ]) {
+    blockedReason = reason;
+    await page.setViewportSize(viewport);
+    if (size === 'mobile') {
+      if (await page.locator('.side-rail.mobile-open').isVisible()) await page.getByRole('button', { name: '关闭导航' }).first().click();
+      await page.locator('.side-rail').waitFor({ state: 'hidden' });
+    }
+    await page.getByTestId('scheduled-refresh').click();
+    const refreshBox = await page.getByTestId('scheduled-refresh').boundingBox();
+    if (!refreshBox || Math.abs(refreshBox.width - 34) > 1 || Math.abs(refreshBox.height - 34) > 1) throw new Error(`scheduled ${size} refresh must remain a 34px square: ${JSON.stringify(refreshBox)}`);
+    const row = page.getByTestId('scheduled-row-scheduled-job-1');
+    await row.getByRole('status').filter({ hasText: message }).waitFor();
+    await page.getByTestId('scheduled-editor-blocked').filter({ hasText: message }).waitFor();
+    if (!(await row.textContent()).includes('配置：已启用') || (await row.textContent()).includes('下次执行')) throw new Error(`blocked ${size} must distinguish configuration from dispatch`);
+    if (!await page.getByTestId('scheduled-run-scheduled-job-1').isEnabled()) throw new Error(`blocked ${size} must allow an authorized retry`);
+    const contentBox = await row.locator('.scheduled-row-main').boundingBox();
+    const rowBox = await row.boundingBox();
+    if (!contentBox || !rowBox || contentBox.width < Math.min(260, rowBox.width - 30)) throw new Error(`blocked ${size} status is squeezed by row actions: ${JSON.stringify(contentBox)}`);
+    await assertNoHorizontalOverflow(page, `scheduled blocked ${size}`);
+    await page.screenshot({ path: path.join(ARTIFACTS, `scheduled-blocked-${size}.png`), fullPage: true });
+  }
+  blockedReason = '';
+  await page.getByTestId('scheduled-refresh').click();
+  await page.getByTestId('scheduled-editor-blocked').waitFor({ state: 'hidden' });
+  const rowText = await page.getByTestId('scheduled-row-scheduled-job-1').textContent();
+  if (rowText.includes('执行已阻断') || !rowText.includes('下次执行')) throw new Error('cleared server reason must restore the schedule display');
+}
+
 (async () => {
   fs.mkdirSync(ARTIFACTS, { recursive: true });
   const server = createServer();
@@ -417,8 +459,9 @@ async function openCompactPage(page, navigationLabel, heading, label) {
     await assertBaselineSelectionReadable(page, 'baselines desktop');
     await assertNoHorizontalOverflow(page, 'baselines desktop');
     await page.screenshot({ path: path.join(ARTIFACTS, 'baselines-desktop.png'), fullPage: true });
+    await assertScheduledServerBlocks(page);
     if (errors.length) throw new Error(`browser errors: ${errors.join(' | ')}`);
-    console.log(JSON.stringify({ ok: true, url, screenshots: ['workflow-preview-desktop.png', 'workflow-preview-mobile.png', 'workbench-desktop.png', 'workbench-compact-desktop.png', 'workbench-tablet.png', 'workbench-mobile.png', 'baselines-mobile.png', 'settings-mobile.png', 'baselines-desktop.png'] }));
+    console.log(JSON.stringify({ ok: true, url, screenshots: ['workflow-preview-desktop.png', 'workflow-preview-mobile.png', 'workbench-desktop.png', 'workbench-compact-desktop.png', 'workbench-tablet.png', 'workbench-mobile.png', 'baselines-mobile.png', 'settings-mobile.png', 'baselines-desktop.png', 'scheduled-blocked-desktop.png', 'scheduled-blocked-mobile.png'] }));
   } finally {
     await browser.close();
     await new Promise(resolve => server.close(resolve));

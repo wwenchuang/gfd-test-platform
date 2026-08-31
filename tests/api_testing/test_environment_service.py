@@ -136,7 +136,15 @@ def production_environment(source_context):
 
 
 @pytest.fixture()
-def environment_service(session_factory):
+def environment_service(session_factory, monkeypatch):
+    from task_server.api_testing import access
+    original_profile = access.get_access_profile
+    def profile(actor):
+        if actor in {"editor", "writer-a", "writer-b"} or actor.startswith("editor-"):
+            return {"status": "active", "permissions": ["api.environment", "api.production"],
+                    "scope": {"api_projects": "*", "api_environments": "*"}}
+        return original_profile(actor)
+    monkeypatch.setattr(access, "get_access_profile", profile)
     from task_server.api_testing.services.environment_service import EnvironmentService
 
     return EnvironmentService(session_factory)
@@ -150,6 +158,54 @@ def _import_with_token(environment_service, production_environment):
         {"ZXBToken": BUSINESS_TOKEN},
         "admin",
     )
+
+
+def test_literal_sensitive_headers_are_encrypted_on_write(environment_service, production_environment, session_factory):
+    production_environment["default_headers"] = {"Authorization": "Bearer header-fixture", "Cookie": "sid=cookie-fixture", "X-Biz": "{{Biz}}"}
+    view = environment_service.import_from_source(production_environment, "admin")
+    for header in ("Authorization", "Cookie"):
+        assert view.default_headers[header].startswith("{{")
+        assert view.default_headers[header].endswith("}}")
+    with session_factory() as session:
+        revision = session.get(ApiEnvironmentRevision, view.revision_id)
+        assert "header-fixture" not in str(revision.default_headers)
+        variables = session.scalars(select(ApiEnvironmentVariable).where(ApiEnvironmentVariable.revision_id == revision.id)).all()
+        assert len([v for v in variables if v.is_secret and v.value is None]) == 2
+    runtime = environment_service.resolve_runtime(view.revision_id, {})
+    assert runtime.headers["Authorization"] == "Bearer header-fixture"
+    assert runtime.headers["Cookie"] == "sid=cookie-fixture"
+    changed = environment_service.create_revision(view.id, {"default_headers": dict(view.default_headers)}, {}, "admin")
+    assert changed.default_headers == view.default_headers
+    assert environment_service.resolve_runtime(changed.revision_id, {}).headers == runtime.headers
+
+
+def test_historical_literal_headers_are_masked_and_redaction_roundtrips(environment_service, production_environment, session_factory):
+    view = environment_service.import_from_source(production_environment, "admin")
+    with session_factory.begin() as session:
+        session.get(ApiEnvironmentRevision, view.revision_id).default_headers = {"Authorization": "Bearer historical-fixture", "Cookie": "sid=old-cookie"}
+    historical = environment_service.get_revision(view.revision_id)
+    assert historical.default_headers == {"Authorization": "***", "Cookie": "***"}
+    changed = environment_service.create_revision(view.id, {"default_headers": dict(historical.default_headers)}, {}, "admin")
+    assert environment_service.resolve_runtime(changed.revision_id, {}).headers == {"Authorization": "Bearer historical-fixture", "Cookie": "sid=old-cookie"}
+    restored = environment_service.restore_revision(view.revision_id, "admin")
+    assert restored.default_headers["Authorization"].startswith("{{")
+    assert "historical-fixture" not in str(restored.default_headers)
+
+
+def test_new_sensitive_header_cannot_save_redaction(environment_service, production_environment):
+    from task_server.api_testing.services.environment_service import EnvironmentInputError
+    production_environment["default_headers"] = {"Cookie": "***"}
+    with pytest.raises(EnvironmentInputError):
+        environment_service.import_from_source(production_environment, "admin")
+
+
+def test_runtime_overrides_cannot_change_configured_service_destination(environment_service, production_environment):
+    production_environment["services"] = {"default": {"base_url": "https://{{host}}/{{prefix}}"}}
+    production_environment["variables"].update(host="qa.example.test", prefix="qa")
+    production_environment["default_headers"] = {}
+    view = environment_service.import_from_source(production_environment, "admin")
+    runtime = environment_service.resolve_runtime(view.revision_id, {"host": "production.example.test", "prefix": "prod"})
+    assert runtime.base_url_for("default") == "https://qa.example.test/qa"
 
 
 def test_environment_assets_are_project_scoped_and_keep_revision_history(
