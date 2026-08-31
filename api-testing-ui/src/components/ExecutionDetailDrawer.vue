@@ -13,6 +13,8 @@ const emit = defineEmits<{ close: []; edit: [result: ExecutionCaseResult, execut
 const active = ref<ExecutionCaseResult | null>(props.execution.case_results.find(item => item.execution_case_id === props.initialCaseId) || props.execution.case_results[0] || null)
 const duration = computed(() => props.execution.case_results.reduce((total, item) => total + item.duration_ms, 0))
 const drawer = ref<HTMLElement | null>(null)
+const listPane = ref<HTMLElement | null>(null)
+const evidencePane = ref<HTMLElement | null>(null)
 let returnTarget: HTMLElement | null = null
 
 onMounted(async () => {
@@ -28,6 +30,17 @@ watch(() => props.execution.case_results, results => {
 watch(() => props.initialCaseId, id => {
   if (id) active.value = props.execution.case_results.find(item => item.execution_case_id === id) || active.value
 })
+watch(() => active.value?.execution_case_id, async () => {
+  await nextTick()
+  if (evidencePane.value) evidencePane.value.scrollTop = 0
+  const pane = listPane.value
+  const selected = pane?.querySelector<HTMLElement>('.active')
+  if (!pane || !selected) return
+  const bounds = pane.getBoundingClientRect()
+  const row = selected.getBoundingClientRect()
+  if (row.height > pane.clientHeight || row.top < bounds.top) pane.scrollTop += row.top - bounds.top
+  else if (row.bottom > bounds.bottom) pane.scrollTop += row.bottom - bounds.bottom
+}, { immediate: true })
 
 function focusableElements(): HTMLElement[] {
   if (!drawer.value) return []
@@ -61,5 +74,16 @@ function handleKeydown(event: KeyboardEvent): void {
 </script>
 
 <template>
-  <aside ref="drawer" class="execution-detail-drawer" role="dialog" aria-modal="true" aria-label="执行详情" tabindex="-1" @keydown="handleKeydown"><header><div><h2>执行详情</h2><span>{{ executionTypeLabel(execution) }}</span></div><button class="mini-icon" type="button" title="关闭详情" @click="emit('close')"><X :size="17" /></button></header><ReportSummary :summary="execution.summary" :duration-ms="duration" :environment-name="execution.environment_name" /><div class="execution-detail-grid"><CaseResultList :results="execution.case_results" :active-id="active?.execution_case_id" @select="active = $event" /><CaseEvidence v-if="active" :result="active" @edit="emit('edit', $event, execution)" @rerun="emit('rerun', execution)" /></div></aside>
+  <aside ref="drawer" class="execution-detail-drawer" role="dialog" aria-modal="true" aria-label="执行详情" tabindex="-1" @keydown="handleKeydown">
+    <header><div><h2>执行详情</h2><span>{{ executionTypeLabel(execution) }}</span></div><button class="mini-icon" type="button" title="关闭详情" @click="emit('close')"><X :size="17" /></button></header>
+    <ReportSummary :summary="execution.summary" :duration-ms="duration" :environment-name="execution.environment_name" />
+    <div class="execution-detail-grid">
+      <div ref="listPane" class="execution-detail-list" role="region" aria-label="用例结果列表" tabindex="0">
+        <CaseResultList :results="execution.case_results" :active-id="active?.execution_case_id" @select="active = $event" />
+      </div>
+      <div ref="evidencePane" class="execution-detail-evidence" role="region" aria-label="当前用例证据" tabindex="0">
+        <CaseEvidence v-if="active" :result="active" @edit="emit('edit', $event, execution)" @rerun="emit('rerun', execution)" />
+      </div>
+    </div>
+  </aside>
 </template>

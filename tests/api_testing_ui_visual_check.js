@@ -187,16 +187,17 @@ function createServer() {
     if (url.pathname === '/api/api-testing/v1/executions' && req.method === 'POST') {
       return sendJson(res, { execution: { id: 'execution-1', state: 'QUEUED', case_statuses: [], case_results: [], summary: {} } }, 202);
     }
-    if (url.pathname === '/api/api-testing/v1/executions/execution-1/sse-ticket' && req.method === 'POST') {
+    if (/^\/api\/api-testing\/v1\/executions\/execution-(1|drawer)\/sse-ticket$/.test(url.pathname) && req.method === 'POST') {
       return sendJson(res, { ticket: 'visual-sse-ticket' });
     }
-    if (url.pathname === '/api/api-testing/v1/executions/execution-1/events' && req.method === 'GET') {
+    if (/^\/api\/api-testing\/v1\/executions\/execution-(1|drawer)\/events$/.test(url.pathname) && req.method === 'GET') {
       res.writeHead(200, {
         'content-type': 'text/event-stream; charset=utf-8',
         'cache-control': 'no-cache',
         connection: 'close',
       });
-      return res.end('id: 1\nevent: execution_finished\ndata: {"execution_id":"execution-1","state":"DONE"}\n\n');
+      const executionId = url.pathname.split('/').at(-2);
+      return res.end(`id: 1\nevent: execution_finished\ndata: ${JSON.stringify({ execution_id: executionId, state: 'DONE' })}\n\n`);
     }
     if (url.pathname === '/api/api-testing/v1/executions/execution-1') {
       return sendJson(res, { execution: {
@@ -215,6 +216,61 @@ function createServer() {
 async function assertNoHorizontalOverflow(page, label) {
   const metrics = await page.evaluate(() => ({ width: document.documentElement.clientWidth, scrollWidth: document.documentElement.scrollWidth }));
   if (metrics.scrollWidth > metrics.width + 1) throw new Error(`${label} horizontal overflow: ${JSON.stringify(metrics)}`);
+}
+
+async function assertLargeExecutionDrawer(page, url) {
+  const results = Array.from({ length: 120 }, (_, index) => ({
+    execution_case_id: `drawer-case-${index}`, case_version_id: `drawer-version-${index}`,
+    endpoint_id: endpoint.id, case_name: `大量基线用例 ${index + 1}`, method: 'GET', path: `/fixture/${index}`,
+    status: 'PASSED', failure_category: '', duration_ms: 5,
+    sanitized_result: { request: { method: 'GET', url: `https://example.test/fixture/${index}` },
+      response: { status_code: 200, body: JSON.stringify({ code: 0, data: '详细响应'.repeat(200) }) },
+      assertions: [{ type: 'status_code', passed: true, expected: 200, actual: 200 }] },
+  }));
+  const execution = {
+    id: 'execution-drawer', project_id: 'project-1', source_revision_id: 'source-revision-1',
+    environment_revision_id: 'environment-revision-1', environment_name: '测试环境',
+    state: 'DONE', execution_type: 'baseline', summary: { total: 120, passed: 120 },
+    case_results: results, case_statuses: results.map(result => result.status), cancellation_requested: false,
+  };
+  await page.route('**/executions/execution-drawer', route => route.fulfill({ json: { data: { execution } } }));
+  for (const [label, viewport] of [['desktop', { width: 1440, height: 900 }], ['mobile', { width: 390, height: 844 }], ['short-mobile', { width: 390, height: 320 }], ['tiny-mobile', { width: 390, height: 260 }]]) {
+    await page.setViewportSize(viewport);
+    await page.goto(`${url}#/runs?executionId=execution-drawer`, { waitUntil: 'networkidle' });
+    await page.getByRole('button', { name: '测试报告', exact: true }).click();
+    await page.getByTestId('case-result-row').last().click();
+    const drawer = page.getByRole('dialog', { name: '执行详情', exact: true });
+    await drawer.waitFor();
+    await expect(drawer.locator('.case-evidence > header')).toContainText('大量基线用例 120');
+    const assertEvidenceVisible = async () => {
+      const header = await drawer.locator('.case-evidence > header').boundingBox();
+      const close = await drawer.getByRole('button', { name: '关闭详情' }).boundingBox();
+      if (!header || header.y < 0 || header.y + header.height > viewport.height || !close || close.y < 0 || close.y + close.height > viewport.height) {
+        throw new Error(`large drawer ${label} selected evidence and close must remain in view: ${JSON.stringify({ header, close })}`);
+      }
+      for (const [container, title] of [['.execution-detail-list', '.active strong'], ['.execution-detail-evidence', '.case-evidence > header']]) {
+        const pane = await drawer.locator(container).boundingBox();
+        const content = await drawer.locator(container).locator(title).boundingBox();
+        if (!pane || !content || content.y < pane.y - 1 || content.y + content.height > pane.y + pane.height + 1) {
+          throw new Error(`large drawer ${label} title clipped inside ${container}: ${JSON.stringify({ pane, content })}`);
+        }
+      }
+    };
+    await assertEvidenceVisible();
+    await drawer.locator('.case-evidence').evaluate(element => { element.parentElement.scrollTop = element.parentElement.scrollHeight; });
+    await drawer.getByTestId('case-result-row').first().click();
+    await expect(drawer.locator('.case-evidence > header')).toContainText('大量基线用例 1');
+    await assertEvidenceVisible();
+    await drawer.getByTestId('case-result-row').last().click();
+    await assertEvidenceVisible();
+    await assertNoHorizontalOverflow(page, `large drawer ${label}`);
+    await page.screenshot({ path: path.join(ARTIFACTS, `execution-drawer-${label}.png`) });
+    await page.keyboard.press('Escape');
+    await drawer.waitFor({ state: 'hidden' });
+  }
+  await page.unroute('**/executions/execution-drawer');
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto(url, { waitUntil: 'networkidle' });
 }
 
 async function assertBaselineSelectionReadable(page, label) {
@@ -404,6 +460,7 @@ async function assertAssetSyncClarity(page, url) {
     await page.goto(url, { waitUntil: 'networkidle' });
     const taskAppsPayload = await (await taskAppsResponsePromise).json();
     if (!JSON.stringify(taskAppsPayload).includes('校园版')) throw new Error(`business-line configuration response is incomplete: ${JSON.stringify(taskAppsPayload)}`);
+    await assertLargeExecutionDrawer(page, url);
     await page.getByRole('heading', { name: '接口测试工作台' }).waitFor();
     await page.goto(`${url}#/?newTask=1`, { waitUntil: 'networkidle' });
     await page.getByText('从一个接口开始', { exact: true }).waitFor();
@@ -517,7 +574,7 @@ async function assertAssetSyncClarity(page, url) {
     await assertScheduledServerBlocks(page);
     await assertAssetSyncClarity(page, url);
     if (errors.length) throw new Error(`browser errors: ${errors.join(' | ')}`);
-    console.log(JSON.stringify({ ok: true, url, screenshots: ['workbench-start-desktop.png', 'workbench-start-mobile.png', 'workflow-preview-desktop.png', 'workflow-preview-mobile.png', 'workbench-desktop.png', 'workbench-compact-desktop.png', 'workbench-tablet.png', 'workbench-mobile.png', 'baselines-mobile.png', 'settings-mobile.png', 'baselines-desktop.png', 'scheduled-blocked-desktop.png', 'scheduled-blocked-mobile.png', 'assets-saved-desktop.png', 'assets-preview-desktop.png', 'assets-preview-compact.png', 'assets-preview-mobile.png'] }));
+    console.log(JSON.stringify({ ok: true, url, screenshots: ['execution-drawer-desktop.png', 'execution-drawer-mobile.png', 'execution-drawer-short-mobile.png', 'execution-drawer-tiny-mobile.png', 'workbench-start-desktop.png', 'workbench-start-mobile.png', 'workflow-preview-desktop.png', 'workflow-preview-mobile.png', 'workbench-desktop.png', 'workbench-compact-desktop.png', 'workbench-tablet.png', 'workbench-mobile.png', 'baselines-mobile.png', 'settings-mobile.png', 'baselines-desktop.png', 'scheduled-blocked-desktop.png', 'scheduled-blocked-mobile.png', 'assets-saved-desktop.png', 'assets-preview-desktop.png', 'assets-preview-compact.png', 'assets-preview-mobile.png'] }));
   } finally {
     await browser.close();
     await new Promise(resolve => server.close(resolve));

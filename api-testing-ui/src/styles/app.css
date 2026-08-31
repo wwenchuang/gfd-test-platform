@@ -958,7 +958,24 @@ h1, h2, p { margin-top: 0; } h1 { margin-bottom: 0; font-size: 21px; font-weight
   .asset-sync-panel > summary span { display: block; margin: 6px 0 0; }
 }
 .source-change-link { display: inline-block; margin-left: 10px; white-space: nowrap; color: var(--blue); }
+.execution-detail-drawer { display: flex; flex-direction: column; height: 100dvh; overflow: hidden; }
+.execution-detail-drawer > header, .execution-detail-drawer > .report-summary { flex-shrink: 0; }
+.execution-detail-grid { flex: 1; min-height: 0; overflow: hidden; }
+.execution-detail-list, .execution-detail-evidence { min-width: 0; min-height: 0; overflow: auto; overscroll-behavior: contain; }
+.execution-detail-list .case-result-list { max-height: none; overflow: visible; }
 @media (max-width: 620px) {
+  .execution-detail-grid { grid-template-rows: minmax(68px, 30%) minmax(0, 1fr); }
   .asset-sync-panel .setup-section > header { display: grid; gap: 12px; }
   .asset-sync-panel .setup-section > header > button { width: 100%; }
+}
+@media (max-height: 540px) {
+  .execution-detail-drawer { padding: 8px; }
+  .execution-detail-drawer > header { margin-bottom: 4px; }
+  .execution-detail-drawer > header > div { display: flex; align-items: center; gap: 8px; }
+  .execution-detail-drawer > .report-summary { padding: 4px 0; gap: 4px; }
+  .execution-detail-drawer .report-context { flex-wrap: nowrap; overflow: auto; white-space: nowrap; }
+  .execution-detail-drawer .summary-grid { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+  .execution-detail-drawer .summary-grid > div { display: flex; justify-content: center; gap: 3px; min-height: 22px; padding: 2px; white-space: nowrap; }
+  .execution-detail-drawer .summary-grid strong { font-size: 12px; }
+  .execution-detail-grid { padding-top: 4px; gap: 4px; }
 }
