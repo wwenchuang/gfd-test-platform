@@ -7,7 +7,7 @@ export class ApiClientError extends Error {
   }
 }
 
-type RequestOptions = Omit<RequestInit, 'body'> & { body?: unknown }
+type RequestOptions = Omit<RequestInit, 'body'> & { body?: unknown; readOnly?: boolean }
 
 const DEFAULT_TIMEOUT_MS = 30_000
 
@@ -22,8 +22,8 @@ export class ApiClient {
     return this.request<T>(path, { method: 'PUT', body })
   }
 
-  async post<T>(path: string, body: unknown): Promise<ApiEnvelope<T>> {
-    return this.request<T>(path, { method: 'POST', body })
+  async post<T>(path: string, body: unknown, options: { readOnly?: boolean } = {}): Promise<ApiEnvelope<T>> {
+    return this.request<T>(path, { ...options, method: 'POST', body })
   }
 
   async delete<T>(path: string): Promise<ApiEnvelope<T>> {
@@ -54,8 +54,9 @@ export class ApiClient {
 
     let response: Response
     try {
+      const { readOnly: _readOnly, ...fetchOptions } = options
       response = await fetch(path, {
-        ...options,
+        ...fetchOptions,
         headers,
         body: options.body === undefined ? undefined : JSON.stringify(options.body),
         credentials: 'same-origin',
@@ -64,7 +65,7 @@ export class ApiClient {
     } catch (error) {
       if (timedOut) {
         const method = String(options.method || 'GET').toUpperCase()
-        const message = ['GET', 'HEAD'].includes(method)
+        const message = options.readOnly || ['GET', 'HEAD'].includes(method)
           ? `读取超时（${formatTimeout(this.timeoutMs)}），本次请求不会提交或修改数据，请检查网络后重试`
           : `提交超时（${formatTimeout(this.timeoutMs)}），操作可能已经提交，请先刷新对应列表确认，避免重复执行`
         throw new ApiClientError(408, message)

@@ -21,6 +21,27 @@ const generatedCases = [
 ] as CaseVersion[]
 
 describe('AiAssistant', () => {
+  it('uses the assertion contract instead of a saved misleading AI operator diagnosis', () => {
+    const wrapper = mount(AiAssistant, { props: { selectedCount: 1, job: {
+      ...job,
+      batches: [{ ...job.batches[0], validation_errors: [{
+        message: 'assertions[1].operator is not supported',
+        diagnosis: { model: 'qwen-plus', analysis: {
+          summary: '错误的旧建议', root_cause: '把 operator 改为 code == 200',
+          recommendations: ['jsonpath:$.code==0', '调用未核实的前置接口'],
+        } },
+      }] }],
+    } } })
+    expect(wrapper.text()).toContain('第 2 条断言')
+    expect(wrapper.text()).toContain('equals')
+    expect(wrapper.text()).toContain('expected')
+    expect(wrapper.text()).toContain('HTTP 200 不代表业务成功')
+    expect(wrapper.text()).not.toContain('错误的旧建议')
+    expect(wrapper.text()).not.toContain('code == 200')
+    expect(wrapper.text()).not.toContain('jsonpath:$.code==0')
+    expect(wrapper.find('[data-testid="diagnose-validation-batch-1"]').exists()).toBe(false)
+  })
+
   it('defaults to business and parameter cases instead of runtime header cases', () => {
     const wrapper = mount(AiAssistant, { props: { selectedCount: 1, job: null } })
     const textarea = wrapper.get('textarea').element as HTMLTextAreaElement

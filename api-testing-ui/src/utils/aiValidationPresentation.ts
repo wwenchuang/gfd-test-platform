@@ -47,6 +47,20 @@ export function presentAiValidationIssue(
   if (!issue) return null
 
   const originalMessage = stringValue(issue, 'original_message') || stringValue(issue, 'message')
+  // The platform contract takes precedence over cached AI advice for known rules.
+  const operatorIssue = originalMessage.match(/assertions\[(\d+)\](?:\.operator is not supported| operator \S+ is not supported for \S+)$/)
+  if (operatorIssue) {
+    return {
+      title: `第 ${Number(operatorIssue[1]) + 1} 条断言的比较方式不受支持`,
+      reason: 'operator 只能填写平台支持的比较方式，例如 equals（等于）或 in（属于集合），不能填写完整表达式；不同断言类型支持的比较方式不同。',
+      actions: [
+        '在用例编辑器选择断言类型和对应的比较方式；期望值单独填入 expected，JSON 字段路径单独填入 path。',
+        '期望 HTTP 200 时使用 status_code、equals、expected=200；HTTP 200 不代表业务成功。业务断言使用 json_path，预期值需依据接口合同、实际响应和业务期望确定，不能统一设置成功码。',
+        '未通过校验的候选没有保存为可执行用例。补充上述约束后重新生成并调试；已有草稿可从下方结果列表打开编辑。',
+      ],
+      originalMessage, model: '', needsAiDiagnosis: false, issueIndex,
+    }
+  }
   const structuredTitle = stringValue(issue, 'title')
   const structuredReason = stringValue(issue, 'reason')
   const structuredSolution = stringValue(issue, 'solution')

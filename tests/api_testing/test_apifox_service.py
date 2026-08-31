@@ -71,6 +71,27 @@ def test_discovery_passes_token_only_on_login_stdin_and_parses_projects():
         )
 
 
+@pytest.mark.parametrize("preferred", ["", "12"])
+def test_discovery_does_not_fetch_every_environment_detail(preferred):
+    responses = [
+        {"stdout": "2.2.8"}, {"stdout": "登录成功"},
+        {"stdout": envelope({"id": 5904970, "name": "3D"})},
+        {"stdout": envelope([])},
+        {"stdout": envelope([{"id": i, "name": f"环境{i}"} for i in range(1, 21)])},
+    ]
+    if preferred:
+        responses.append({"stdout": envelope({"id": 12, "services": [{"name": "default", "url": "https://api.example.test"}]})})
+    runner = FakeRunner(responses)
+    context = ApifoxDiscoveryAdapter(runner=runner, cli_resolver=lambda _: "/usr/bin/apifox").get_context(
+        TOKEN, "5904970", preferred_environment_id=preferred,
+    )
+    assert len(context.environments) == 20
+    detail_calls = [call[0] for call in runner.calls if call[0][1:3] == ["environment", "get"]]
+    assert [call[3] for call in detail_calls] == ([preferred] if preferred else [])
+    if preferred:
+        assert next(item for item in context.environments if item.id == preferred).services
+
+
 def test_discovery_parses_branches_environments_services_and_secret_placeholders():
     runner = FakeRunner(
         [

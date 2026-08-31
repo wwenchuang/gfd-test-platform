@@ -103,7 +103,7 @@ export const useSetupStore = defineStore('api-setup', {
       this.message = ''
       try {
         const response = await apiClient.post<{ projects: ApifoxProject[] }>(
-          '/api/api-testing/v1/providers/apifox/projects', {},
+          '/api/api-testing/v1/providers/apifox/projects', {}, { readOnly: true },
         )
         this.apifoxProjects = response.data.projects
         this.message = this.apifoxProjects.length ? `已读取 ${this.apifoxProjects.length} 个 Apifox 项目` : '当前令牌下没有可用项目'
@@ -125,7 +125,7 @@ export const useSetupStore = defineStore('api-setup', {
         const response = await apiClient.post<{ context: ApifoxProjectContext }>(
           '/api/api-testing/v1/providers/apifox/context', {
             project_id: projectId, environment_id: environmentId,
-          },
+          }, { readOnly: true },
         )
         this.apifoxContext = response.data.context
         this.message = `已读取 ${this.apifoxContext.environments.length} 个环境`

@@ -415,7 +415,10 @@ class ApifoxDiscoveryAdapter:
                     "Apifox 环境 ID",
                 )
                 detail = raw
-                if len(values) <= 30 or raw_id == str(preferred_environment_id or ""):
+                # The selector only needs names/IDs. Fetch details for the selected
+                # environment (or the sole one), not up to 30 sequential CLI calls.
+                # preview_refresh always supplies its selected environment ID.
+                if raw_id == str(preferred_environment_id or "") or (len(values) == 1 and not preferred_environment_id):
                     detail_value = json_command(
                         [
                             path,

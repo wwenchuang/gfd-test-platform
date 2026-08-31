@@ -115,6 +115,22 @@ describe('ApiClient', () => {
     vi.useRealTimers()
   })
 
+  it('describes an explicitly read-only POST timeout without suggesting a sync was submitted', async () => {
+    vi.useFakeTimers()
+    values.set('sessionToken', 'session-value')
+    vi.mocked(fetch).mockImplementation((_path, options) => new Promise((_resolve, reject) => {
+      options?.signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')))
+    }))
+    const result = expect(new ApiClient(1_000).post('/api/api-testing/v1/providers/apifox/context', {}, { readOnly: true })).rejects.toMatchObject({
+      status: 408,
+      message: expect.stringMatching(/读取超时.*不会提交或修改数据.*重试/),
+    })
+    await vi.advanceTimersByTimeAsync(1_000)
+    await result
+    expect(vi.mocked(fetch).mock.calls[0][1]).not.toHaveProperty('readOnly')
+    vi.useRealTimers()
+  })
+
   it('localizes a network connection failure', async () => {
     values.set('sessionToken', 'session-value')
     vi.mocked(fetch).mockRejectedValue(new TypeError('Failed to fetch'))
