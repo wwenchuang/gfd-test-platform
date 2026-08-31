@@ -481,36 +481,26 @@ function openRepairDraft(draftId) {
 }
 
 async function confirmApplyRepairDraft(draftId) {
+  if (pendingBatchBusy || !hasPermission('ui.edit')) return;
   const draft = repairDraftById(draftId) || currentRepairDraft();
   if (!draft) {
     showToast('没有可应用的修复草稿', 'error');
     return;
   }
-  const riskHits = draft.riskHits || [];
-  const confirmText = riskHits.length
-    ? `这个草稿命中高风险动作：${riskHits.join('、')}。\n\n确认人工应用到 ${draft.module}/${draft.file}？系统会先自动备份当前 YAML。`
-    : `确认人工应用修复草稿到 ${draft.module}/${draft.file}？系统会先自动备份当前 YAML。`;
-  if (!confirm(confirmText)) return;
-  try {
-    const data = await apiRequest('/repair-drafts/apply', {
-      method: 'POST',
-      body: JSON.stringify({
-        draftId: draft.draftId || draft.draft_id,
-        confirmRisk: true,
-        confirmApply: true
-      })
-    });
-    const saved = data.draft || draft;
-    await upsertRepairDraft(saved, {persist: false});
-    showToast('✓ 修复草稿已人工应用，当前 YAML 已自动备份', 'success');
-    if (saved.module && saved.file) await openFile(saved.module, saved.file);
-    else if (activeWorkflow === 'repair') showAiRepairCenter();
-  } catch(e) {
-    showToast(e.message || '应用修复草稿失败', 'error');
+  if (hasOpenEditor() && currentModule === draft.module && currentFile === draft.file
+      && (editorDirty || document.getElementById('editor').value !== editorInitialContent)) {
+    showToast('当前编辑器有未保存修改，请先保存并重新生成草稿，或撤销修改后再处理', 'error');
+    return;
   }
+  if (!['DRAFTED', 'WAIT_CONFIRM'].includes(draft.status)) {
+    showToast('草稿已处理，请刷新查看最新状态', 'error');
+    return;
+  }
+  showPendingBatchDialog('apply', [`repair:${draft.draftId || draft.draft_id}`]);
 }
 
 async function rejectRepairDraft(draftId) {
+  if (pendingBatchBusy || !hasPermission('ui.edit')) return;
   const draft = repairDraftById(draftId) || currentRepairDraft();
   if (!draft) return;
   const reason = prompt('拒绝这个修复草稿的原因（可选）：', '');
@@ -520,7 +510,8 @@ async function rejectRepairDraft(draftId) {
       method: 'POST',
       body: JSON.stringify({draftId: draft.draftId || draft.draft_id, reason})
     });
-    await upsertRepairDraft(data.draft || {...draft, status: 'REJECTED'}, {persist: false});
+    if (data.draft?.status !== 'REJECTED') throw new Error('未收到草稿最终状态，请刷新核实，勿重复提交');
+    await upsertRepairDraft(data.draft, {persist: false});
     showToast('✓ 已拒绝修复草稿', 'success');
     if (activeWorkflow === 'repair') showAiRepairCenter();
     else renderJobs();

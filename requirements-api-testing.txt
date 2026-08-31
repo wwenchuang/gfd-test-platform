@@ -6,3 +6,4 @@ celery[redis]>=5.4,<6
 cryptography>=44,<46
 jsonschema>=4.23,<5
 argon2-cffi>=23.1,<26
+PyYAML>=6,<7

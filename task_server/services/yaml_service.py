@@ -5522,6 +5522,20 @@ def _yaml_ai_tap_has_ambiguous_target(value):
     return False
 
 
+def yaml_runtime_readiness():
+    """Check the strong validator's dependency before starting expensive AI work."""
+    ready = _pyyaml is not None
+    return {
+        "ok": ready,
+        "code": "" if ready else "YAML_DEPENDENCY_UNAVAILABLE",
+        "error": "" if ready else (
+            "服务端缺少 PyYAML，暂不能生成或强校验 YAML。"
+            "请管理员在 Task 服务实际使用的 Python 虚拟环境安装 PyYAML，"
+            "重启服务后确认 /api/health 的 dependencies.pyyaml=true，再重试。"
+        ),
+    }
+
+
 def validate_midscene_yaml_executability(text):
     """Strong executable YAML validation shared by Agent, repair and Sonic."""
     yaml_text_value = str(text or "")

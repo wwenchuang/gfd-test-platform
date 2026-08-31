@@ -624,10 +624,12 @@ function runnerDeviceVersionLabel(device = {}, packageName = '') {
 }
 
 function runnerHeartbeatLabel(row = {}) {
-  const age = Number(row.last_seen_age_seconds);
+  const age = row.last_seen_age_seconds == null ? NaN : Number(row.last_seen_age_seconds);
   if (Number.isFinite(age)) {
     if (age < 5) return '刚刚';
     if (age < 60) return `${age} 秒前`;
+    if (age >= 86400) return `${Math.floor(age / 86400)} 天前`;
+    if (age >= 3600) return `${Math.floor(age / 3600)} 小时前`;
     const minutes = Math.floor(age / 60);
     const seconds = age % 60;
     return `${minutes}分${seconds}秒前`;
@@ -782,7 +784,9 @@ function updateAgentRunnerDeviceHint() {
     hint.textContent = '暂无在线设备。请先启动 Mac/Windows Runner，或刷新 Runner 列表。';
     hint.className = 'form-hint agent-device-hint warn';
   } else if (selected.device_strategy === 'auto') {
-    const appText = appPackage ? `当前应用：${appDisplayLabel(appPackage)}。` : '';
+    const app = typeof agentApplicationByPackage === 'function' ? agentApplicationByPackage(appPackage) : null;
+    const appLabel = app?.name && app.name !== appPackage ? `${app.name} / ${appPackage}` : appDisplayLabel(appPackage);
+    const appText = appPackage ? `当前应用：${appLabel}。` : '';
     const versionText = agentRunnerVersionSummary(appPackage);
     hint.textContent = `自动分配：当前 ${runnerDevices.length} 台在线设备可接任务。${appText}${versionText ? `版本：${versionText}` : ''}`;
     hint.className = 'form-hint agent-device-hint';
@@ -1277,18 +1281,18 @@ function buildPendingActions(jobs=[], activeJobs=[]) {
   const actions = [];
   repairDrafts
     .filter(draft => ['DRAFTED', 'WAIT_CONFIRM'].includes(String(draft.status || '').toUpperCase()))
-    .slice(0, 6)
     .forEach(draft => {
       const draftId = draft.draftId || draft.draft_id || '';
       actions.push({
         id: `repair:${draftId}`,
+        draftId,
         type: (draft.riskHits || []).length ? 'RISK_CONFIRM' : 'REPAIR_DRAFT',
         title: draft.taskName || draft.file || 'YAML 修复草稿',
         meta: `${repairDraftStatusText(draft.status)} · ${failureTypeText(draft.failureType || 'SCRIPT_ISSUE')}${(draft.riskHits || []).length ? ` · 风险 ${draft.riskHits.join('、')}` : ''}`,
         actions: `
           <button class="btn-sm" onclick="openRepairDraft(${jsArg(draftId)})">查看草稿</button>
-          <button class="btn-sm success" onclick="confirmApplyRepairDraft(${jsArg(draftId)})">人工确认替换</button>
-          <button class="btn-sm danger" onclick="rejectRepairDraft(${jsArg(draftId)})">拒绝</button>
+          <button class="btn-sm success" ${!hasPermission('ui.edit') || pendingBatchBusy ? 'disabled' : ''} onclick="confirmApplyRepairDraft(${jsArg(draftId)})">人工确认替换</button>
+          <button class="btn-sm danger" ${!hasPermission('ui.edit') || pendingBatchBusy ? 'disabled' : ''} onclick="rejectRepairDraft(${jsArg(draftId)})">拒绝</button>
         `
       });
     });
@@ -1298,7 +1302,6 @@ function buildPendingActions(jobs=[], activeJobs=[]) {
     .filter(job => ['failed', 'timeout', 'error'].includes(String(job.status || '').toLowerCase()))
     .filter(job => !jobReviewConfirmed(job))
     .filter(job => !draftJobIds.has(job.job_id))
-    .slice(0, 6)
     .forEach(job => {
       const normalized = normalizeFailureAnalysis(job.failureReview || job.failure_review || job.error || '');
       let actionsHtml = `<button class="btn-sm" onclick="focusJob(${jsArg(job.job_id || '')})">查看</button>`;
@@ -1313,6 +1316,7 @@ function buildPendingActions(jobs=[], activeJobs=[]) {
       actionsHtml += `<button class="btn-sm" onclick="markJobHandled(${jsArg(job.job_id || '')})">已处理</button>`;
       actions.push({
         id: `job:${job.job_id}`,
+        jobId: job.job_id,
         type: normalized.failureType || 'FAILED_JOB',
         title: job.taskName || job.file || job.job_id || '失败任务',
         meta: `${jobExecutionLabel(job)} · ${jobStatusText(job.status)} · ${summarizeJobError(normalized.conclusion || jobErrorText(job) || '等待分析')}`,
@@ -1331,15 +1335,16 @@ function buildPendingActions(jobs=[], activeJobs=[]) {
         : `<button class="btn-sm success" onclick="confirmAgentRun('CONFIRM_BUG')">提交缺陷</button><button class="btn-sm" onclick="setAgentTab('bug')">查看草稿</button><button class="btn-sm" onclick="confirmAgentRun('SKIP_BUG')">暂不提交</button>`
     });
   }
-  return actions.slice(0, 8);
+  return actions;
 }
 
 function pendingActionCardHtml(action) {
   return `
     <div class="job-meta pending-action-card">
       <div class="pending-action-head">
+        ${(action.draftId || action.jobId) ? `<input type="checkbox" data-pending-id="${escapeHtml(action.id)}" aria-label="选择 ${escapeHtml(action.title)}" onchange="togglePendingAction(${jsArg(action.id)}, this.checked)" ${selectedPendingActions.has(action.id) ? 'checked' : ''} ${!canSelectPendingAction(action) || pendingBatchBusy ? 'disabled' : ''}>` : ''}
         <strong>${escapeHtml(action.title || '待处理')}</strong>
-        <span>${escapeHtml(action.type || '')}</span>
+        <span>${escapeHtml(({REPAIR_DRAFT: '修复草稿', RISK_CONFIRM: '风险确认', UNKNOWN: '待归因'})[action.type] || failureTypeText(action.type))}</span>
       </div>
       <div class="pending-action-meta">${escapeHtml(action.meta || '')}</div>
       <div class="job-actions">${action.actions || ''}</div>
@@ -1397,16 +1402,17 @@ function renderJobs() {
   const jobs = [...activeJobs, ...recentDone].slice(0, 40);
   const activeCount = activeJobs.length;
   count.textContent = activeCount ? `${activeCount} 个进行中 / 显示 ${jobs.length} 个` : `最近 ${jobs.length} 个`;
-  if (!jobs.length) {
+  const pendingActions = buildPendingActions(normalizedJobs, activeJobs);
+  if (!jobs.length && !pendingActions.length) {
     list.innerHTML = '<div class="job-empty">暂无 Runner 执行任务</div>';
     if (activeWorkflow === 'dashboard' && !hasOpenEditor()) showWorkflowGuide('dashboard');
     return;
   }
-  const pendingActions = buildPendingActions(normalizedJobs, activeJobs);
   const todoHtml = `
     <div class="agent-side-card">
       <div class="agent-side-title">待我处理</div>
-      ${pendingActions.length ? pendingActions.map(pendingActionCardHtml).join('') : '<div class="job-meta">暂无需要人工处理的失败或确认项。</div>'}
+      ${pendingActions.length ? pendingBatchToolbarHtml(pendingActions) + pendingActions.slice(0, pendingActionsVisibleLimit).map(pendingActionCardHtml).join('') : '<div class="job-meta">暂无需要人工处理的失败或确认项。</div>'}
+      ${pendingActions.length > pendingActionsVisibleLimit ? `<button class="btn-sm" onclick="showMorePendingActions()">显示更多待处理（${pendingActionsVisibleLimit}/${pendingActions.length}）</button>` : ''}
     </div>
     <div class="agent-side-card">
       <div class="agent-side-title">Runner 当前任务</div>
@@ -2554,8 +2560,6 @@ function generationSmokeAdjustmentHtml(summary={}, mod='', caseSetId='') {
   const groups = generatedCaseGroupsFromSummary(summary);
   const executableCount = groups.executable_cases.length;
   const remainingExecutableCount = Math.max(0, executableCount - refs.length);
-  const generatedCount = ['executable_cases', 'needs_review_cases', 'draft_cases', 'manual_cases']
-    .reduce((sum, key) => sum + (groups[key] || []).length, 0);
   const visibleRefs = refs.slice(0, 12);
   const defaultLimit = generatedSmokeRerunLimit(summary, refs.length);
   const remainingLimit = generatedSmokeRerunLimit(summary, remainingExecutableCount || executableCount);
@@ -2567,12 +2571,12 @@ function generationSmokeAdjustmentHtml(summary={}, mod='', caseSetId='') {
           <p>首次生成时，Agent 会自动下发通过准入的首批冒烟用例，不需要人工介入。这里用于首次失败、安装包更新或页面入口变化后，手动微调 YAML 再复跑。</p>
           <p>需要改入口、等待、滑动、弹窗或定位描述时，先打开 YAML 编辑并保存，再点“重跑冒烟”。重跑只使用当前已保存的 YAML，不会重新上传资料或重新分析需求。</p>
         </div>
-        ${caseSetId && (refs.length || generatedCount) ? `
+        ${caseSetId && (refs.length || executableCount) ? `
           <div class="review-actions">
             ${refs.length ? `<button class="btn-sm success" onclick="rerunGenerationSmokeCases(${jsArg(caseSetId)}, ${jsArg(mod)}, ${defaultLimit}, false, ${refs.length})">重跑首批冒烟 ${escapeHtml(defaultLimit)}/${escapeHtml(refs.length)}</button>` : ''}
             ${refs.length > defaultLimit ? `<button class="btn-sm" onclick="rerunGenerationSmokeCases(${jsArg(caseSetId)}, ${jsArg(mod)}, 0, true, ${refs.length})">重跑全部冒烟 ${escapeHtml(refs.length)}</button>` : ''}
-            <button class="btn-sm" onclick="rerunGenerationSmokeCases(${jsArg(caseSetId)}, ${jsArg(mod)}, ${remainingLimit}, false, ${Math.max(remainingExecutableCount, executableCount)}, 'remaining_executable')">继续下一批可执行 ${escapeHtml(remainingLimit)}/${escapeHtml(Math.max(remainingExecutableCount, executableCount))}</button>
-            <button class="btn-sm" onclick="rerunGenerationSmokeCases(${jsArg(caseSetId)}, ${jsArg(mod)}, 0, true, ${generatedCount}, 'all_executable')">执行全部当前可执行</button>
+            ${remainingExecutableCount ? `<button class="btn-sm" onclick="rerunGenerationSmokeCases(${jsArg(caseSetId)}, ${jsArg(mod)}, ${remainingLimit}, false, ${remainingExecutableCount}, 'remaining_executable')">继续下一批可执行 ${Math.min(remainingLimit, remainingExecutableCount)}/${remainingExecutableCount}</button>` : ''}
+            <button class="btn-sm" onclick="rerunGenerationSmokeCases(${jsArg(caseSetId)}, ${jsArg(mod)}, 0, true, ${executableCount || refs.length}, 'all_executable')">执行全部当前可执行</button>
           </div>
         ` : ''}
       </div>
@@ -2596,8 +2600,8 @@ function generationSmokeAdjustmentHtml(summary={}, mod='', caseSetId='') {
         ${refs.length > visibleRefs.length ? `<p>已展示前 ${visibleRefs.length} 条冒烟 YAML，剩余 ${escapeHtml(refs.length - visibleRefs.length)} 条可在用例资产中继续编辑。</p>` : ''}
       ` : `
         <div class="generate-hint">
-          当前批次没有标记为可重跑的冒烟 YAML${executableCount ? `，但有 ${escapeHtml(executableCount)} 条可执行用例。` : '。'}
-          可以先在用例资产里手工编辑 YAML，保存后点击“执行全部当前可执行”或按小批次继续执行。
+          ${executableCount ? `当前批次没有标记为可重跑的冒烟 YAML，但有 ${executableCount} 条可执行用例。请先在用例资产中检查 YAML，再按小批次执行。` : '当前批次没有可执行 YAML。用例设计、脑图和人工验证项不能直接执行，请先生成 YAML 并通过平台校验。'}
+          ${!executableCount ? '<button class="btn-sm" onclick="showGenerateYaml()">生成 YAML</button>' : ''}
         </div>
       `}
       <p>如果你想让下次生成的用例结构变化，例如入口路径、先跑哪些场景、哪些不自动化，请在下面“人工确认 / 补充资料”中补充规则后重新生成。</p>

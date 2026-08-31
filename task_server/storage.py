@@ -9,7 +9,35 @@ import os
 import re
 import threading
 import time
+import weakref
+from contextlib import contextmanager
 from pathlib import Path
+
+try:
+    import fcntl
+except ImportError:
+    fcntl = None
+
+_FILE_LOCKS = weakref.WeakValueDictionary()
+_FILE_LOCKS_GUARD = threading.Lock()
+
+
+@contextmanager
+def file_mutation_lock(path):
+    """Serialize a YAML read/backup/write transaction across threads and processes."""
+    target = os.path.realpath(path)
+    with _FILE_LOCKS_GUARD:
+        lock = _FILE_LOCKS.setdefault(target, threading.RLock())
+    os.makedirs(os.path.dirname(target), exist_ok=True)
+    with lock:
+        with open(f"{target}.lock", "a+", encoding="utf-8") as handle:
+            if fcntl is not None:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                if fcntl is not None:
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
 _ID_COUNTER = 0
 _ID_LOCK = threading.Lock()

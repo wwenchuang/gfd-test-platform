@@ -325,7 +325,8 @@ def main():
     require("let repairDrafts = []" in html, "Frontend must keep repair draft state")
     for fn in ("createRepairDraftFromAiResult", "upsertRepairDraft", "currentRepairDraft", "repairDraftStatusText", "buildPendingActions"):
         require(fn in html, f"Frontend missing repair draft function: {fn}")
-    require("/repair-drafts/apply" in html and "confirmApply" in html and "confirmRisk" in html, "Repair draft apply must be explicit manual confirmation")
+    pending_actions = (JS_DIR / "pending-actions.js").read_text(encoding="utf-8")
+    require("/repair-drafts/${operation}" in pending_actions and "confirmApply: operation === 'apply'" in pending_actions and "confirmRisk: operation === 'apply'" in pending_actions, "Repair draft apply must be explicit manual confirmation")
     require("人工确认替换" in html and "拒绝草稿" in html and "待我处理" in html, "Repair drafts must surface as pending manual actions")
     require("JSON.stringify(job)" not in html, "Pending actions must not rely on string matching whole job JSON")
     # Full-auto Agent workbench checks

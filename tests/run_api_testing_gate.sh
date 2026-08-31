@@ -15,6 +15,11 @@ if [ ! -x "${PYTHON_BIN}" ]; then
   exit 1
 fi
 
+# Service tests must never open the host's production identity database. HTTP
+# identity/E2E tests bootstrap their own accounts and access profiles separately.
+GATE_AUTH_DIR="$(mktemp -d "${TMPDIR:-/tmp}/midscene-api-gate-auth.XXXXXX")"
+trap 'rm -rf -- "${GATE_AUTH_DIR}"' EXIT
+
 API_TESTING_POSTGRES_PASSWORD="${POSTGRES_PASSWORD}" \
   docker compose -f deploy/api-testing-compose.yml up -d --wait
 
@@ -25,6 +30,7 @@ API_TESTING_DATABASE_URL="${DATABASE_URL}" \
 TEST_DATABASE_URL="${DATABASE_URL}" \
 TEST_REDIS_URL="${PYTEST_REDIS_URL}" \
 API_TESTING_REQUIRE_POSTGRES_TESTS=1 \
+TASK_AUTH_DB="${GATE_AUTH_DIR}/identity.sqlite3" \
   "${PYTHON_BIN}" -m pytest tests/api_testing -q
 
 npm --prefix api-testing-ui test -- --run

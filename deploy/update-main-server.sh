@@ -381,6 +381,10 @@ verify_health_release() {
   body="$(curl -fsS "${url}")"
   local actual_revision
   actual_revision="$(printf '%s' "${body}" | python3 -c 'import json, sys; print(str(json.load(sys.stdin).get("release_revision") or ""))')"
+  if ! printf '%s' "${body}" | python3 -c 'import json, sys; sys.exit(0 if json.load(sys.stdin).get("dependencies", {}).get("pyyaml") is True else 1)'; then
+    echo "YAML 强校验未就绪：请在 Task 服务虚拟环境安装 PyYAML 并重启，再检查 /api/health。" >&2
+    return 1
+  fi
   if [ "${actual_revision}" != "${expected_revision}" ]; then
     echo "后端运行版本不一致：${url}" >&2
     echo "期望：${expected_revision}" >&2

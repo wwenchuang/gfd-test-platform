@@ -497,6 +497,7 @@ async function anyVisible(locator) {
     page.on('pageerror', err => errors.push(err.message));
     page.on('response', response => {
       const responseUrl = response.url();
+      if (response.status() === 409 && response.headers()['x-test-expected'] === 'batch-conflict') return;
       if (responseUrl.includes('/api/') && response.status() >= 400) {
         apiFailures.push(`${response.status()} ${responseUrl}`);
       }
@@ -521,6 +522,9 @@ async function anyVisible(locator) {
     await page.click('button:has-text("登 录")');
     await page.waitForSelector('#app', {state: 'visible'});
     await page.waitForSelector('text=全自动 Agent 工作台');
+    await page.waitForFunction(() => document.querySelector('#agent-app-name')?.selectedOptions[0]?.dataset.package === 'com.kfb.model');
+    const coldDeviceHint = await page.locator('#agent-runner-device-hint').innerText();
+    if (!coldDeviceHint.includes('当前应用：智小白3D / com.kfb.model')) throw new Error(`Cold Agent entry lost its configured application name: ${coldDeviceHint}`);
     await page.screenshot({path: path.join(ARTIFACTS, 'dashboard.png'), fullPage: true});
 
     if (!await page.locator('.header-logo.brand-mark').isVisible()) throw new Error('header brand mark is not visible');
@@ -533,6 +537,7 @@ async function anyVisible(locator) {
     if (!await anyVisible(page.locator('text=启动 Agent'))) throw new Error('primary Agent action is missing');
     if (await page.locator('text=演示模式').count()) throw new Error('page incorrectly entered demo mode');
     if (getFileReadCount() !== 0) throw new Error(`dashboard should not read full YAML files during stats warmup, got ${getFileReadCount()}`);
+    await require('./auth_gateway_browser_checks')(page, url);
 
     await page.evaluate(() => showMindmapCenter());
     await page.waitForSelector('text=脑图中心');
@@ -561,6 +566,17 @@ async function anyVisible(locator) {
     if (!commandBox || commandBox.width < 700) throw new Error('dashboard command area is too narrow and may render vertical text');
     if (!jobsBox || jobsBox.width > 430) throw new Error(`jobs panel is too wide: ${jobsBox && jobsBox.width}`);
 
+    await page.locator('details[data-nav-group="run"]').evaluate(el => { el.open = true; });
+    await page.click('.workflow-step[data-workflow="baseline"]');
+    for (const label of ['同步当前 YAML 至 Sonic 平台', '历史版本', '全选当前模块', '打开更多']) {
+      await page.locator('.workflow-guide').getByRole('button', {name: label, exact: true}).click();
+      if (!await page.locator('#toast').isVisible() || !/请先/.test(await page.locator('#toast').innerText())) {
+        throw new Error(`Empty Sonic guide action has no next-step feedback: ${label}`);
+      }
+      await page.evaluate(() => hideToast());
+    }
+    await require('./trace_browser_checks')(page);
+
     await page.click('.workflow-step:has-text("用例资产")');
     await page.waitForSelector('text=YAML 文件');
     await page.waitForSelector('.assets-table');
@@ -572,6 +588,21 @@ async function anyVisible(locator) {
     await page.screenshot({path: path.join(ARTIFACTS, 'assets.png'), fullPage: true});
     const assetsBox = await page.locator('.assets-browser').boundingBox();
     if (!assetsBox || assetsBox.width < 900) throw new Error(`assets workspace is too narrow: ${assetsBox && assetsBox.width}`);
+    await page.locator('.assets-table button').filter({hasText: /^打开$/}).first().click();
+    await page.waitForSelector('#editor');
+    if (!await page.locator('#btn-save').isVisible()) throw new Error('Opening a YAML from assets hides the save action');
+    const selectedFileContent = await page.locator('#editor').inputValue();
+    await page.click('.workflow-step[data-workflow="yaml_edit"]');
+    if (!await page.locator('#editor').isVisible() || await page.locator('#editor').inputValue() !== selectedFileContent) throw new Error('Script editing navigation discards the selected YAML');
+    if (!await page.locator('#btn-save').isVisible()) throw new Error('Script editing workflow hides the save action');
+    await page.locator('details[data-nav-group="run"]').evaluate(el => { el.open = true; });
+    await page.click('.workflow-step[data-workflow="baseline"]');
+    if (!await page.locator('#editor').isVisible() || !await page.locator('#btn-publish-sonic').isVisible()) throw new Error('Sonic workflow loses the YAML selected upstream');
+    await page.click('.workflow-step[data-workflow="execute"]');
+    if (!await page.locator('#editor').isVisible() || !await page.locator('#btn-run-file').isVisible()) throw new Error('Debug workflow loses the YAML selected upstream');
+    await require('./pending_actions_browser_checks')(page, path.join(ARTIFACTS, 'pending-batch-result.png'));
+    await page.click('.workflow-step[data-workflow="assets"]');
+    await page.waitForSelector('.assets-table');
 
     await page.evaluate(() => showGenerateYaml());
     await page.waitForSelector('#modal-generate.show');
@@ -666,6 +697,8 @@ async function anyVisible(locator) {
       throw new Error(`Agent preview did not submit the selected configured application identity: ${JSON.stringify(campusPreviewRequest)}`);
     }
     if (!/应用：校园助手/.test(await page.locator('#agent-plan-preview-body').innerText())) throw new Error('Agent preview did not display the configured second application');
+    const campusPreviewText = await page.locator('#agent-plan-preview-body').innerText();
+    if (!/输入来源：直接输入/.test(campusPreviewText) || !/范围：自动（AI 判断）/.test(campusPreviewText)) throw new Error(`Agent preview exposes untranslated input or scope: ${campusPreviewText}`);
     await page.click('#modal-agent-plan-preview .btn-cancel');
     await page.selectOption('#agent-app-name', {label: '智小白3D'});
     if (await page.locator('#agent-business').inputValue()) throw new Error('Agent application changes must clear an incompatible business selection');
@@ -1027,6 +1060,39 @@ async function anyVisible(locator) {
     await page.locator('#agent-history-search').fill('连续输入检查');
     await page.waitForTimeout(240);
     if (await page.locator('#agent-history-search').inputValue() !== '连续输入检查') throw new Error('Agent history search lost text after filtering');
+    await page.locator('#agent-history-search').evaluate(input => {
+      input.focus();
+      input.setSelectionRange(2, 4);
+      renderAgentPageAfterRunUpdate();
+    });
+    const historyFocus = await page.locator('#agent-history-search').evaluate(input => ({
+      focused: document.activeElement === input, start: input.selectionStart, end: input.selectionEnd,
+    }));
+    if (!historyFocus.focused || historyFocus.start !== 2 || historyFocus.end !== 4) throw new Error(`Agent polling interrupted search editing: ${JSON.stringify(historyFocus)}`);
+    await page.keyboard.type('回归');
+    await page.waitForTimeout(240);
+    if (await page.locator('#agent-history-search').inputValue() !== '连续回归检查') throw new Error('Typing after an Agent update no longer replaces the selected query text');
+    if (await page.evaluate(() => agentStatusText('RUNNING')) !== '执行中') throw new Error('Running Agent status is not translated');
+    const terminalAudit = await page.evaluate(() => {
+      const failed = {status: 'FAILED', currentStep: 'GENERATE_YAML', error: '服务端缺少 PyYAML', steps: [
+        {step: 'GENERATE_YAML', status: 'FAILED', summary: '依赖缺失'}, {step: 'FINISH', status: 'SKIPPED', summary: '前序步骤结束，自动跳过'},
+      ]};
+      return {state: agentArtifactState('yaml', failed), message: agentRunCardMessage(failed, failed.steps[1], {}),
+        draftActions: generationSmokeAdjustmentHtml({manual_cases: [{name: '人工观察'}]}, 'AI测试', 'mindmap-only')};
+    });
+    if (terminalAudit.state !== 'missing' || !terminalAudit.message.includes('PyYAML')) throw new Error('A terminal Agent still appears generating or hides its real failure');
+    if (terminalAudit.draftActions.includes('执行全部当前可执行') || !terminalAudit.draftActions.includes('没有可执行 YAML')) throw new Error('Draft-only generation offers impossible Runner actions');
+    const staleRunner = await page.evaluate(() => {
+      const saved = runnerDevices;
+      const savedRunners = AppState.runners;
+      AppState.runners = {};
+      runnerDevices = [{device_id: 'stale-device', runner_id: 'old-runner', status: 'online', runner_online: false, last_seen_age_seconds: 8640000}];
+      const html = renderExecutionTabRunners();
+      runnerDevices = saved;
+      AppState.runners = savedRunners;
+      return {html, heartbeat: runnerHeartbeatLabel({last_seen_age_seconds: 8640000})};
+    });
+    if (!staleRunner.html.includes('Runner 离线') || !staleRunner.heartbeat.includes('100 天')) throw new Error('Stale devices appear online and have unreadable heartbeat ages');
     await page.locator('#agent-history-search').fill('');
     await page.waitForTimeout(240);
     await page.locator('details[data-nav-group="report"]').evaluate(el => { el.open = true; });

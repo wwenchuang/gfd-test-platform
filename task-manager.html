@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>功夫豆测试平台</title>
 <link rel="icon" href="assets/brand/kongfudou-icon.png">
-<link rel="stylesheet" href="css/app.css?v=20260831-identity">
+<link rel="stylesheet" href="css/app.css?v=20260831-identity-full-audit">
   <link rel="stylesheet" href="css/round5.css?v=20260828-full-platform-ux">
 </head>
 <body>
@@ -19,12 +19,12 @@
       <p>// qwen · midscene · sonic</p>
     </div>
     <div class="form-group">
-      <label>用户名</label>
-      <input type="text" id="username" placeholder="admin" autocomplete="off">
+      <label for="username">用户名</label>
+      <input type="text" id="username" placeholder="请输入用户名" autocomplete="username" maxlength="128" required>
     </div>
     <div class="form-group">
-      <label>密码</label>
-      <input type="password" id="password" placeholder="••••••••">
+      <label for="password">密码</label>
+      <input type="password" id="password" placeholder="请输入密码" autocomplete="current-password" required>
     </div>
     <button class="btn-primary" type="submit">登 录</button>
     <div class="login-error" id="login-error">用户名或密码错误</div>
@@ -211,14 +211,14 @@
             <button class="btn-sm" onclick="showAddTask()" title="手动创建一个新的 YAML 文件">新建</button>
             <button class="btn-sm" onclick="showUpload()" title="上传已有 YAML 到当前模块">上传</button>
           </div>
-          <div class="action-group file-only workflow-action" id="current-file-action-group" data-workflows="generate execute repair baseline">
+          <div class="action-group file-only workflow-action" id="current-file-action-group" data-workflows="assets yaml_edit generate execute repair baseline">
             <span class="action-label">当前文件</span>
             <button class="btn-sm btn-save" id="btn-save" onclick="saveFile()" style="display:none" title="保存当前编辑器中的 YAML">保存</button>
             <button class="btn-sm" id="btn-generation-review" onclick="showCurrentGenerationReview()" style="display:none" title="查看当前自动化脚本对应的需求分析、覆盖矩阵和用例卡片">生成分析</button>
             <button class="btn-sm" id="toggle-refs-panel" onclick="toggleRefsPanel()" style="display:none" title="显示或隐藏左侧基线参考截图和同步至 Sonic 平台信息">隐藏截图</button>
             <button class="btn-sm" id="toggle-case-panel" onclick="toggleCaseNavPanel()" style="display:none" title="显示或隐藏当前 YAML 用例列表">隐藏用例</button>
           </div>
-          <div class="action-group file-only workflow-action" id="run-action-group" data-workflows="execute repair">
+          <div class="action-group file-only workflow-action" id="run-action-group" data-workflows="yaml_edit execute repair">
             <span class="action-label">执行</span>
             <button class="btn-sm success" id="btn-run-file" onclick="showRunCurrentFile()" style="display:none" title="执行当前 YAML 文件里的全部用例">整文件</button>
             <button class="btn-sm success" id="btn-run-task" onclick="showRunSelectedTask()" style="display:none" title="只执行当前 YAML 中选定的一条或几条 tasks[].name">单条/多条</button>
@@ -233,7 +233,7 @@
             <button class="btn-sm" id="btn-sonic-status" onclick="showCurrentFileSonicStatus()" style="display:none" title="检查当前 YAML 是否已同步至 Sonic 平台，以及是否残留旧或重复执行步骤">同步检查</button>
             <button class="btn-sm success" id="btn-publish-sonic" onclick="publishCurrentFileToSonic()" style="display:none" title="把当前 YAML 或当前选中用例同步至 Sonic 平台">同步至 Sonic 平台</button>
           </div>
-          <div class="action-group file-only workflow-action" id="more-action-group" data-workflows="generate execute repair baseline">
+          <div class="action-group file-only workflow-action" id="more-action-group" data-workflows="assets yaml_edit generate execute repair baseline">
             <span class="action-label">更多</span>
             <div class="toolbar-menu">
             <button class="btn-sm" onclick="toggleMoreMenu(event)" title="状态标记、复制移动、历史版本、批量操作">更多 ▾</button>
@@ -958,7 +958,7 @@
 <div class="toast" id="toast"></div>
 
 
-<script src="js/utils.js?v=20260828-full-platform-ux-20260831-identity"></script>
+<script src="js/utils.js?v=20260828-full-platform-ux-20260831-identity-full-audit"></script>
 <script src="js/error-handler.js?v=20260828-full-platform-ux"></script>
 <script src="js/empty-states.js?v=20260828-full-platform-ux"></script>
 <script src="js/loading-manager.js?v=20260828-full-platform-ux"></script>
@@ -967,15 +967,16 @@
 <script src="js/auth.js?v=20260828-full-platform-ux-20260831-identity-sonic"></script>
 <script src="js/identity-management.js?v=20260831-identity"></script>
 <script src="js/navigation.js?v=20260828-full-platform-ux"></script>
-<script src="js/agent-workbench.js?v=20260828-full-platform-ux"></script>
-<script src="js/agent-status.js?v=20260828-full-platform-ux-20260831-identity-sonic"></script>
+<script src="js/agent-workbench.js?v=20260828-full-platform-ux-full-audit"></script>
+<script src="js/agent-status.js?v=20260828-full-platform-ux-20260831-identity-sonic-full-audit"></script>
 <script src="js/cases.js?v=20260828-full-platform-ux-20260831-identity-sonic"></script>
-<script src="js/execution.js?v=20260828-full-platform-ux"></script>
+<script src="js/execution.js?v=20260828-full-platform-ux-full-audit"></script>
 <script src="js/reports.js?v=20260828-full-platform-ux"></script>
-<script src="js/ai-repair.js?v=20260828-full-platform-ux"></script>
+<script src="js/ai-repair.js?v=20260828-full-platform-ux-20260831-full-audit"></script>
 <script src="js/model-config.js?v=20260828-full-platform-ux"></script>
 <script src="js/yaml-editor.js?v=20260828-full-platform-ux"></script>
-<script src="js/app.js?v=20260831-identity"></script>
+<script src="js/pending-actions.js?v=20260831-full-audit"></script>
+<script src="js/app.js?v=20260831-identity-full-audit"></script>
 <!-- legacy-static-check: 半自动 Agent 工作台 启动半自动 Agent 半自动 Agent 启动 Agent 进度 Agent 产物 SEMI_AUTO 半自动 AUTO_SAFE 安全自动（后续开放） 自动生成测试用例 自动生成 Midscene YAML 自动校验 YAML 生成后等待确认执行 Sonic 生成飞书缺陷草稿（不自动提交） autoRun: false autoCreateBug: false 执行与 AI 诊断中心 运行轨迹 从失败任务或测试目标出发 模型策略摘要 去模型配置 -->
 </body>
 </html>

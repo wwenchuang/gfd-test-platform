@@ -628,6 +628,11 @@ def platform_preflight_dashboard(include_sonic_scan=False):
         })
 
     add_check("task_service", "Task 服务", True, "normal", f"端口 {PORT}，服务在线")
+    from .yaml_service import yaml_runtime_readiness
+    yaml_ready = yaml_runtime_readiness()
+    add_check("pyyaml", "YAML 强校验依赖", yaml_ready["ok"], "normal" if yaml_ready["ok"] else "error",
+              "PyYAML 已就绪" if yaml_ready["ok"] else yaml_ready["error"],
+              "在 Task 服务虚拟环境安装 PyYAML，重启后重新体检")
     dashscope_key_ok = bool(dashscope_api_key(required=False))
     add_check("dashscope", "模型配置", dashscope_key_ok, "normal" if dashscope_key_ok else "error", dashscope_text_model())
     sonic_ok = False
@@ -690,7 +695,7 @@ def platform_preflight_dashboard(include_sonic_scan=False):
         )
 
     return {
-        "ok": all(item["ok"] for item in checks if item["key"] in ("task_service", "dashscope", "sonic", "bridge")),
+        "ok": all(item["ok"] for item in checks if item["key"] in ("task_service", "pyyaml", "dashscope", "sonic", "bridge")),
         "checks": checks,
         "sonic": {
             "base_url": sonic_base_url(),

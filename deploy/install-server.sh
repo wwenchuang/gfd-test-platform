@@ -79,23 +79,6 @@ if ! command -v python3 >/dev/null 2>&1; then
 fi
 
 if ! python3 - <<'PY' >/dev/null 2>&1
-import yaml
-PY
-then
-  echo "未检测到 PyYAML，正在安装 python3-yaml（用于 YAML 结构解析和可执行性检查）..."
-  if command -v apt-get >/dev/null 2>&1; then
-    apt-get update
-    apt-get install -y python3-yaml
-  elif command -v yum >/dev/null 2>&1; then
-    yum install -y python3-pyyaml || yum install -y PyYAML
-  elif python3 -m pip --version >/dev/null 2>&1; then
-    python3 -m pip install PyYAML
-  else
-    echo "警告：无法自动安装 PyYAML；服务仍可启动，但会使用文本兜底校验。建议手动安装 python3-yaml 或 PyYAML。"
-  fi
-fi
-
-if ! python3 - <<'PY' >/dev/null 2>&1
 import pypdf
 PY
 then
@@ -314,6 +297,7 @@ fi
   --disable-pip-version-check \
   --no-input \
   -r "${APP_DIR}/requirements-api-testing.txt"
+"${VENV_DIR}/bin/python" -c 'import yaml; print("Task Python PyYAML:", yaml.__version__)'
 
 # Deploy css/ and js/ frontend assets
 if [ -d "${SRC_DIR}/css" ]; then

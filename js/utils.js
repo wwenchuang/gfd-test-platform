@@ -477,7 +477,7 @@ function forceLogoutWithMessage(message) {
 }
 
 async function aiRequest(path, options = {}) {
-  const headers = new Headers(options.headers || {});
+  const headers = authHeaders(options.headers || {});
   if (options.body && !(options.body instanceof FormData) && !headers.has('Content-Type')) {
     headers.set('Content-Type', 'application/json');
   }
@@ -486,7 +486,15 @@ async function aiRequest(path, options = {}) {
     headers
   });
   if (res.status === 401) {
-    forceLogoutWithMessage();
+    // The gateway can reject a valid session because of its own configuration.
+    // Only the identity service can decide whether to clear the main session.
+    try {
+      await apiRequest('/auth/me', {timeoutMs: 5000});
+    } catch (error) {
+      if (error.status === 401) throw error;
+      throw new Error('AI 网关鉴权失败，暂时无法确认登录状态，请稍后重试或联系管理员检查服务连接');
+    }
+    throw new Error('AI 网关未接受当前登录凭证，主平台登录仍有效，请联系管理员检查网关版本和会话校验配置');
   } else if (res.status === 403) {
     showFriendlyError(res.status, '无权限调用 AI 模型服务');
   } else if (res.status === 413) {
@@ -623,6 +631,7 @@ function closeTransientUiForNavigation() {
 
 function toggleMoreMenu(event) {
   event?.stopPropagation();
+  if (!requireCurrentYaml('文件状态维护')) return;
   document.getElementById('more-actions')?.classList.toggle('show');
 }
 

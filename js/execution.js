@@ -33,14 +33,16 @@ function resetEditorToWorkflowGuide() {
 let executionActiveTab = 'debug';
 let debugTraceData = null;
 let debugSnapshotData = null;
+let debugTraceLoading = false;
+let debugTraceError = '';
+let debugSnapshotError = '';
 let selectedTraceSnapshots = [];
 let apkInstallDeviceRefreshPromise = null;
 
 function setExecutionTab(tab) {
   executionActiveTab = tab;
   if (tab === 'trace') {
-    showExecutionCenter();
-    loadDebugTraces(true).then(() => loadDebugSnapshots(true)).then(() => showExecutionCenter()).catch(() => showExecutionCenter());
+    refreshDebugTracePanel();
     return;
   }
   if (tab === 'install' || tab === 'runners') {
@@ -102,7 +104,7 @@ function renderExecutionCenter() {
         <div class="review-actions">
           <button class="btn-sm primary" onclick="loadJobs(true).then(()=>showExecutionCenter())">刷新任务</button>
           <button class="btn-sm" onclick="loadRunnerDevices && loadRunnerDevices({force:true}).then(()=>showExecutionCenter())">刷新 Runner</button>
-          <button class="btn-sm" onclick="loadDebugTraces(true).then(()=>showExecutionCenter())">刷新 Trace</button>
+          <button class="btn-sm" onclick="setExecutionTab('trace')" ${debugTraceLoading ? 'disabled' : ''}>刷新 Trace</button>
         </div>
       </div>
       <div class="agent-tabs execution-tabs">${tabsHtml}</div>
@@ -770,7 +772,7 @@ function renderExecutionTabRunners() {
             <tr class="report-row ${isOnline ? 'success' : ''}">
               <td><strong>${escapeHtml(typeof runnerDeviceDisplayName === 'function' ? runnerDeviceDisplayName(d) : (d.label || d.device_id || '-'))}</strong><div class="report-muted">${escapeHtml(d.device_id || '')}</div></td>
               <td>${escapeHtml(d.runner_id || '-')}</td>
-              <td><span class="status-pill ${isOnline ? 'success' : 'warn'}">${isOnline ? '在线' : (d.status || '离线')}</span></td>
+              <td><span class="status-pill ${isOnline ? 'success' : 'warn'}">${isOnline ? '在线' : !d.runner_online ? 'Runner 离线' : escapeHtml(({offline: '设备离线', unauthorized: 'ADB 未授权', disconnected: '设备已断开'})[d.status] || '设备不可用')}</span></td>
               <td>${escapeHtml(d.runner_version || '未上报')}<div class="report-muted">${escapeHtml(capabilityText || '未上报')}</div></td>
               <td>${escapeHtml(d.android_version || d.androidVersion ? `Android ${d.android_version || d.androidVersion}` : '-')}${d.resolution ? `<div class="report-muted">${escapeHtml(d.resolution)}</div>` : ''}</td>
               <td>${escapeHtml(appLabel || '未上报')}</td>
@@ -785,14 +787,41 @@ function renderExecutionTabRunners() {
 
 async function loadDebugTraces(force = false) {
   if (debugTraceData && !force) return debugTraceData;
-  debugTraceData = await apiRequest('/debug/traces?limit=40');
-  return debugTraceData;
+  debugTraceError = '';
+  try {
+    const data = await apiRequest('/debug/traces?limit=40', {timeoutMs: 20000});
+    if (data.ok === false || !Array.isArray(data.traces)) throw new Error(data.error || 'Trace 响应格式无效');
+    debugTraceData = data;
+    return data;
+  } catch (error) {
+    debugTraceError = error.message || 'Trace 加载失败';
+    throw error;
+  }
 }
 
 async function loadDebugSnapshots(force = false) {
   if (debugSnapshotData && !force) return debugSnapshotData;
-  debugSnapshotData = await apiRequest('/debug/snapshots?limit=40');
-  return debugSnapshotData;
+  debugSnapshotError = '';
+  try {
+    const data = await apiRequest('/debug/snapshots?limit=40', {timeoutMs: 20000});
+    if (data.ok === false || !Array.isArray(data.snapshots)) throw new Error(data.error || '快照响应格式无效');
+    debugSnapshotData = data;
+    return data;
+  } catch (error) {
+    debugSnapshotError = error.message || '快照加载失败';
+    throw error;
+  }
+}
+
+async function refreshDebugTracePanel() {
+  if (debugTraceLoading) { showExecutionCenter(); return; }
+  debugTraceLoading = true;
+  debugTraceError = '';
+  debugSnapshotError = '';
+  showExecutionCenter();
+  await Promise.allSettled([loadDebugTraces(true), loadDebugSnapshots(true)]);
+  debugTraceLoading = false;
+  if (activeWorkflow === 'execute' && activeWorkspaceMode === 'execution' && executionActiveTab === 'trace') showExecutionCenter();
 }
 
 function renderExecutionTabTrace() {
@@ -806,13 +835,16 @@ function renderExecutionTabTrace() {
           <p>基于真实Agent 运行、Runner 任务和 DAG Span 生成链路视图。可保存快照、回放计划、对比两次执行差异。</p>
         </div>
         <div class="review-actions">
-          <button class="btn-sm primary" onclick="loadDebugTraces(true).then(()=>loadDebugSnapshots(true)).then(()=>showExecutionCenter())">刷新 Trace</button>
+          <button class="btn-sm primary" onclick="refreshDebugTracePanel()" ${debugTraceLoading ? 'disabled' : ''}>刷新 Trace</button>
           <button class="btn-sm" onclick="window.open('/trace-viewer.html', '_blank')">打开 Viewer</button>
         </div>
       </div>
+      ${debugTraceLoading ? '<p role="status">正在加载 Trace 与快照，请稍候…</p>' : ''}
+      ${debugTraceError ? `<p role="alert">Trace 加载失败：${escapeHtml(debugTraceError)}。请刷新重试；已有列表为上次加载结果。</p>` : ''}
+      ${debugSnapshotError ? `<p role="alert">快照加载失败：${escapeHtml(debugSnapshotError)}。请刷新重试；已有快照为上次加载结果。</p>` : ''}
       <div class="review-stats" style="grid-template-columns:repeat(4,1fr);">
-        <div class="review-stat"><strong>${traces.length}</strong><span>Trace</span></div>
-        <div class="review-stat"><strong>${snapshots.length}</strong><span>快照</span></div>
+        <div class="review-stat"><strong>${debugTraceData ? traces.length : '—'}</strong><span>Trace</span></div>
+        <div class="review-stat"><strong>${debugSnapshotData ? snapshots.length : '—'}</strong><span>快照</span></div>
         <div class="review-stat"><strong>${traces.filter(t => t.status === 'failed').length}</strong><span>失败链路</span></div>
         <div class="review-stat"><strong>${selectedTraceSnapshots.length}</strong><span>已选快照</span></div>
       </div>
@@ -834,7 +866,7 @@ function renderExecutionTabTrace() {
             </td>
           </tr>
         `).join('')}</tbody>
-      </table>` : `${renderEmptyState('trace')}`}
+      </table>` : (!debugTraceLoading && !debugTraceError ? renderEmptyState('trace') : '')}
       <h3 style="margin-top:16px;">执行快照</h3>
       ${snapshots.length ? `<table class="report-table" style="margin-top:12px;">
         <thead><tr><th>选择</th><th>快照</th><th>来源</th><th>创建时间</th><th>操作</th></tr></thead>
@@ -858,7 +890,7 @@ function renderExecutionTabTrace() {
       <div class="review-actions" style="margin-top:10px;">
         <button class="btn-sm primary" onclick="diffSelectedTraceSnapshots()" ${selectedTraceSnapshots.length === 2 ? '' : 'disabled'}>对比已选 2 个快照</button>
         <button class="btn-sm" onclick="selectedTraceSnapshots=[]; showExecutionCenter()">清空选择</button>
-      </div>` : `${renderEmptyState('trace_snapshot')}`}
+      </div>` : (!debugTraceLoading && !debugSnapshotError ? renderEmptyState('trace_snapshot') : '')}
     </div>
   `;
 }
@@ -1371,6 +1403,10 @@ function handleTab(e) {
 }
 
 async function saveFile(options = {}) {
+  if (pendingBatchBusy) {
+    showToast('正在处理修复草稿，请等待处理完成后再保存', 'warning');
+    return false;
+  }
   const showSuccess = options.showSuccess !== false;
   const content = document.getElementById('editor')?.value;
   if (!content || !currentFile) return false;

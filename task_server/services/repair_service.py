@@ -22,8 +22,16 @@ import json
 import os
 import re
 import time
+import threading
+from contextlib import contextmanager
+from functools import wraps
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
+
+try:
+    import fcntl
+except ImportError:  # Windows uses the in-process lock.
+    fcntl = None
 
 try:
     import yaml as pyyaml
@@ -44,6 +52,8 @@ from task_server.schemas import FLOW_CHILD_KEYS, HIGH_RISK_KEYWORDS, REPAIRABLE_
 from task_server.storage import (
     clean_filename,
     clean_id,
+    file_mutation_lock,
+    invalidate_json_cache,
     read_json_cached,
     read_json_file,
     read_text_file,
@@ -644,7 +654,47 @@ def active_repair_draft_for_job(job_id: Any) -> Optional[Dict[str, Any]]:
     return None
 
 
+_REPAIR_STORE_LOCK = threading.RLock()
+_REPAIR_LOCK_STATE = threading.local()
+
+
+@contextmanager
+def _repair_store_lock():
+    with _REPAIR_STORE_LOCK:
+        if getattr(_REPAIR_LOCK_STATE, "held", False):
+            yield
+            return
+        os.makedirs(os.path.dirname(os.path.abspath(REPAIR_DRAFTS_FILE)), exist_ok=True)
+        with open(f"{REPAIR_DRAFTS_FILE}.lock", "a+", encoding="utf-8") as lock_file:
+            if fcntl is not None:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+            _REPAIR_LOCK_STATE.held = True
+            try:
+                invalidate_json_cache(REPAIR_DRAFTS_FILE)
+                yield
+            finally:
+                _REPAIR_LOCK_STATE.held = False
+                if fcntl is not None:
+                    fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+
+
+def _serialized_repair_mutation(func):
+    @wraps(func)
+    def wrapped(*args, **kwargs):
+        with _repair_store_lock():
+            return func(*args, **kwargs)
+    return wrapped
+
+
 def upsert_repair_draft(draft: Dict[str, Any]) -> Dict[str, Any]:
+    """Untrusted callers can save drafts, but cannot claim a processing outcome."""
+    if str(draft.get("status") or "DRAFTED").upper() not in ("DRAFTED", "WAIT_CONFIRM"):
+        raise ValueError("保存草稿仅允许 DRAFTED/WAIT_CONFIRM；最终状态由人工应用或拒绝操作生成")
+    return _upsert_repair_draft(draft)
+
+
+@_serialized_repair_mutation
+def _upsert_repair_draft(draft: Dict[str, Any]) -> Dict[str, Any]:
     """创建或更新修复草稿，按 ``draftId`` 替换。"""
     normalized = normalize_repair_draft(draft)
     normalized["updatedAt"] = normalized["updated_at"] = _now_ts()
@@ -652,15 +702,24 @@ def upsert_repair_draft(draft: Dict[str, Any]) -> Dict[str, Any]:
     replaced = False
     for idx, item in enumerate(drafts):
         if item.get("draftId") == normalized.get("draftId"):
+            if item.get("status") in ("APPLIED", "REJECTED", "EXPIRED"):
+                raise ValueError("草稿已处理，不能覆盖其最终状态；请创建新的修复草稿")
+            normalized = normalize_repair_draft({**item, **draft})
+            normalized["updatedAt"] = normalized["updated_at"] = _now_ts()
             drafts[idx] = normalized
             replaced = True
             break
     if not replaced:
         drafts.insert(0, normalized)
+    if normalized["status"] in ("DRAFTED", "WAIT_CONFIRM"):
+        for field in ("appliedAt", "applied_at", "appliedBy", "applied_by", "rejectedAt", "rejected_at",
+                      "rejectedBy", "rejected_by", "rejectReason", "reject_reason", "backup"):
+            normalized.pop(field, None)
     save_repair_drafts(drafts[:_MAX_DRAFTS_KEPT])
     return normalized
 
 
+@_serialized_repair_mutation
 def reject_repair_draft(draft_id: Any, reason: str = "") -> Dict[str, Any]:
     """拒绝草稿，写回 ``REJECTED`` 状态并记录原因。"""
     draft = get_repair_draft(draft_id)
@@ -673,7 +732,7 @@ def reject_repair_draft(draft_id: Any, reason: str = "") -> Dict[str, Any]:
     draft["rejectReason"] = reason_text
     draft["reject_reason"] = reason_text
     draft["rejectedAt"] = draft["rejected_at"] = _now_ts()
-    return upsert_repair_draft(draft)
+    return _upsert_repair_draft(draft)
 
 
 # ---------------------------------------------------------------------------
@@ -719,8 +778,8 @@ def assess_repair_risk(old_yaml: str, new_yaml: str) -> Dict[str, Any]:
 
 def _version_dir_for(module: str, file: str) -> str:
     """``$LEARNING_DIR/versions/<module>/<file>/`` 形式的版本目录。"""
-    safe_module = clean_id(module or "default", "module")
-    safe_file = clean_filename(file or "task.yaml")
+    safe_module = clean_id(module, "module")
+    safe_file = clean_id(clean_filename(file), "file")
     return safe_join(VERSION_DIR, safe_module, safe_file)
 
 
@@ -784,6 +843,7 @@ class RepairApplyError(Exception):
         self.payload = payload or {}
 
 
+@_serialized_repair_mutation
 def apply_repair_draft(
     draft_id: Any,
     *,
@@ -842,26 +902,32 @@ def apply_repair_draft(
     except ValueError as exc:
         raise RepairApplyError("非法路径") from exc
 
-    # 必须先备份再写入
-    backup = backup_before_repair(module, file, reason="before_repair_draft_apply")
+    with file_mutation_lock(target_path):
+        # Refuse stale drafts instead of overwriting a newer manual edit or another repair.
+        original = draft.get("originalYaml") or draft.get("original_yaml") or ""
+        if not original:
+            raise RepairApplyError("草稿缺少原始 YAML 快照，请重新生成修复草稿", status=409)
+        try:
+            old_content = Path(target_path).read_text(encoding="utf-8")
+        except OSError as exc:
+            raise RepairApplyError("原 YAML 不存在或不可读取，不能替换", status=409) from exc
+        if old_content != original:
+            raise RepairApplyError("原 YAML 已变化，请查看当前文件并重新生成修复草稿", status=409)
 
-    # 记录旧 YAML 哈希用于知识库
-    old_content = ""
-    try:
-        old_content = read_text_file(target_path, default="")
-    except Exception:
-        pass
+        backup = backup_before_repair(module, file, reason="before_repair_draft_apply")
+        if not backup:
+            raise RepairApplyError("原 YAML 备份失败，未执行替换，请检查版本目录写权限或磁盘空间", status=500)
 
-    try:
-        write_text_file(target_path, fixed_yaml)
-    except Exception as exc:  # noqa: BLE001
-        raise RepairApplyError(f"写入基线 YAML 失败：{exc}", status=500) from exc
+        try:
+            write_text_file(target_path, fixed_yaml)
+        except Exception as exc:  # noqa: BLE001
+            raise RepairApplyError(f"写入基线 YAML 失败：{exc}", status=500) from exc
 
     draft["status"] = "APPLIED"
     draft["appliedAt"] = draft["applied_at"] = _now_ts()
     draft["backup"] = backup or {}
     draft["yaml_check"] = yaml_check
-    saved = upsert_repair_draft(draft)
+    saved = _upsert_repair_draft(draft)
 
     # 知识记录钩子：修复成功后记录修复历史
     try:

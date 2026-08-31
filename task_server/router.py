@@ -2779,79 +2779,41 @@ def _post_feishu_drafts_reject(handler, qs):
 
 @route_post("/api/repair-drafts/reject")
 def _post_repair_drafts_reject(handler, qs):
-    from task_server.services.repair_service import get_repair_draft, upsert_repair_draft
+    from task_server.services.repair_service import reject_repair_draft
+    d = handler._body()
     try:
-        d = handler._body()
-    except Exception:
-        d = {}
-    draft_id = d.get("draftId") or d.get("draft_id")
-    draft = get_repair_draft(draft_id)
-    if not draft:
-        handler._json({"ok": False, "error": "修复草稿不存在"}, 404)
-        return
-    draft["status"] = "REJECTED"
-    draft["rejectReason"] = d.get("reason") or d.get("rejectReason") or ""
-    draft["reject_reason"] = draft["rejectReason"]
-    draft["rejectedAt"] = draft["rejected_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
-    draft = upsert_repair_draft(draft)
-    handler._json({"ok": True, "draft": draft})
+        draft = reject_repair_draft(d.get("draftId") or d.get("draft_id"), d.get("reason") or d.get("rejectReason") or "")
+        handler._json({"ok": True, "draft": draft})
+    except ValueError as exc:
+        handler._json({"ok": False, "error": str(exc)}, 404 if "不存在" in str(exc) else 409)
 
 
 # ── 修复草稿应用 ────────────────────────────────────────────────────
 
 @route_post("/api/repair-drafts/apply")
 def _post_repair_drafts_apply(handler, qs):
-    from task_server.services.repair_service import get_repair_draft, upsert_repair_draft
+    from task_server.services.repair_service import apply_repair_draft, RepairApplyError
+    d = handler._body()
+    executability = {}
+
+    def validate(fixed_yaml):
+        nonlocal executability
+        check = validate_midscene_yaml(fixed_yaml)
+        executability = validate_midscene_yaml_executability(fixed_yaml)
+        if not executability.get("ok"):
+            check = {**check, "ok": False, "issues": executability.get("issues") or []}
+        return check
+
     try:
-        d = handler._body()
-    except Exception:
-        d = {}
-    draft_id = d.get("draftId") or d.get("draft_id")
-    draft = get_repair_draft(draft_id)
-    if not draft:
-        handler._json({"ok": False, "error": "修复草稿不存在"}, 404)
-        return
-    if draft.get("status") not in ("DRAFTED", "WAIT_CONFIRM"):
-        handler._json({"ok": False, "error": f"当前草稿状态不可应用：{draft.get('status')}"}, 400)
-        return
-    if not safe_bool(d.get("confirmApply") or d.get("confirm_apply")):
-        handler._json({"ok": False, "error": "必须人工确认 confirmApply=true 后才能应用修复草稿"}, 400)
-        return
-    risk_hits = draft.get("riskHits") or draft.get("risk_hits") or []
-    if risk_hits and not safe_bool(d.get("confirmRisk") or d.get("confirm_risk")):
-        handler._json({"ok": False, "error": "修复草稿包含高风险动作，必须 confirmRisk=true"}, 400)
-        return
-    module = draft.get("module") or d.get("module") or ""
-    file = clean_filename(draft.get("file") or d.get("file") or "")
-    fixed_yaml = draft.get("fixedYaml") or draft.get("fixed_yaml") or ""
-    if not module or not file:
-        handler._json({"ok": False, "error": "草稿缺少 module/file，不能应用"}, 400)
-        return
-    if not str(fixed_yaml or "").strip():
-        handler._json({"ok": False, "error": "草稿缺少 fixedYaml，不能应用"}, 400)
-        return
-    yaml_check = validate_midscene_yaml(fixed_yaml)
-    yaml_executability = validate_midscene_yaml_executability(fixed_yaml)
-    if not yaml_check.get("ok"):
-        handler._json({"ok": False, "error": "YAML 校验未通过，不能应用", "yaml_check": yaml_check, "yaml_executability": yaml_executability}, 400)
-        return
-    try:
-        fpath = safe_join(TASK_DIR, module, file)
-        backup = save_file_version(module, file, reason="before_repair_draft_apply")
-        write_text_file(fpath, fixed_yaml)
-    except ValueError:
-        handler._json({"ok": False, "error": "非法路径"}, 400)
-        return
-    except Exception as e:
-        handler._json({"ok": False, "error": str(e)}, 500)
-        return
-    draft["status"] = "APPLIED"
-    draft["appliedAt"] = draft["applied_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
-    draft["backup"] = backup or {}
-    draft["yaml_check"] = yaml_check
-    draft["yaml_executability"] = yaml_executability
-    draft = upsert_repair_draft(draft)
-    handler._json({"ok": True, "applied": True, "draft": draft, "backup": backup, "yaml_check": yaml_check, "yaml_executability": yaml_executability})
+        result = apply_repair_draft(
+            d.get("draftId") or d.get("draft_id"),
+            confirm=safe_bool(d.get("confirmApply") or d.get("confirm_apply")),
+            confirm_risk=safe_bool(d.get("confirmRisk") or d.get("confirm_risk")),
+            yaml_validator=validate,
+        )
+        handler._json({**result, "yaml_executability": executability})
+    except RepairApplyError as exc:
+        handler._json({"ok": False, "error": str(exc), **exc.payload, "yaml_executability": executability}, exc.status)
 
 
 # ── 报告清理（POST）─────────────────────────────────────────────────
@@ -3488,8 +3450,19 @@ def _post_cases_generate(handler, qs):
 
 # ── UI YAML 生成 ────────────────────────────────────────────────────
 
+def _require_yaml_runtime(handler):
+    from task_server.services.yaml_service import yaml_runtime_readiness
+    readiness = yaml_runtime_readiness()
+    if not readiness["ok"]:
+        handler._json(readiness, 503)
+        return False
+    return True
+
+
 @route_post("/api/ui/generate-yaml")
 def _post_ui_generate_yaml(handler, qs):
+    if not _require_yaml_runtime(handler):
+        return
     d = handler._body()
     if not _acquire_sync_heavy_workload(handler):
         return
@@ -3508,6 +3481,8 @@ def _post_ui_generate_yaml(handler, qs):
 
 @route_post("/api/ui/generate-yaml-async")
 def _post_ui_generate_yaml_async(handler, qs):
+    if not _require_yaml_runtime(handler):
+        return
     d = handler._body()
     try:
         d["business"] = resolve_ui_generation_business(
@@ -3675,6 +3650,8 @@ def _post_cases_ui_design_exclusion(handler, qs):
 
 @route_post("/api/ui/regenerate-yaml-async")
 def _post_ui_regenerate_yaml_async(handler, qs):
+    if not _require_yaml_runtime(handler):
+        return
     d = handler._body()
     case_set_id = d.get("case_set_id") or d.get("caseSetId") or d.get("id")
     if not case_set_id:
@@ -5122,6 +5099,7 @@ def _post_files_op(handler, qs):
 
 @route_post("/api/file/restore")
 def _post_file_restore(handler, qs):
+    from task_server.storage import file_mutation_lock
     d = handler._body()
     mod = d.get("module", "")
     file = d.get("file", "")
@@ -5132,9 +5110,10 @@ def _post_file_restore(handler, qs):
     try:
         meta, content = read_file_version(mod, file, version_id)
         fpath = safe_join(TASK_DIR, mod, clean_filename(file))
-        if os.path.exists(fpath):
-            save_file_version(mod, file, reason="before_restore")
-        write_text_file(fpath, content)
+        with file_mutation_lock(fpath):
+            if os.path.exists(fpath):
+                save_file_version(mod, file, reason="before_restore")
+            write_text_file(fpath, content)
     except FileNotFoundError:
         handler._json({"ok": False, "error": "版本不存在"}, 404)
         return
@@ -5148,6 +5127,7 @@ def _post_file_restore(handler, qs):
 
 @route_post("/api/file")
 def _post_file_save(handler, qs):
+    from task_server.storage import file_mutation_lock
     d = handler._body()
     mod = d.get("module", "")
     file = clean_filename(d.get("file", ""))
@@ -5156,9 +5136,10 @@ def _post_file_save(handler, qs):
         module_dir = safe_join(TASK_DIR, mod)
         os.makedirs(module_dir, exist_ok=True)
         fpath = safe_join(module_dir, file)
-        if os.path.exists(fpath):
-            save_file_version(mod, file, reason=d.get("reason") or "save")
-        write_text_file(fpath, content)
+        with file_mutation_lock(fpath):
+            if os.path.exists(fpath):
+                save_file_version(mod, file, reason=d.get("reason") or "save")
+            write_text_file(fpath, content)
     except ValueError:
         handler._json({"ok": False, "error": "非法路径"}, 400)
         return
@@ -5169,6 +5150,8 @@ def _post_file_save(handler, qs):
 
 @route_post("/api/agent-runs/start")
 def _post_agent_runs_start(handler, qs):
+    if not _require_yaml_runtime(handler):
+        return
     d = handler._body()
     try:
         d["business"] = resolve_ui_generation_business(

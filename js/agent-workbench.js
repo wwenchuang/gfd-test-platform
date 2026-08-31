@@ -2704,6 +2704,10 @@ function agentArtifactAvailable(tab, run) {
 
 function agentArtifactState(tab, run) {
   if (agentArtifactAvailable(tab, run)) return 'ready';
+  const runStatus = String(run?.status || '').toUpperCase();
+  if (['DONE', 'FINISH', 'FAILED', 'CANCELLED'].includes(runStatus)) {
+    return AGENT_RECOVERY_ARTIFACTS.has(tab) && runStatus !== 'FAILED' ? 'optional' : 'missing';
+  }
   const relatedSteps = AGENT_ARTIFACT_STEP_MAP[tab] || [];
   const currentStep = String(run?.currentStep || '').toUpperCase();
   const stepRows = Array.isArray(run?.steps) ? run.steps : [];
@@ -2713,7 +2717,6 @@ function agentArtifactState(tab, run) {
   ));
   if (isRunning) return 'running';
 
-  const runStatus = String(run?.status || '').toUpperCase();
   const failureSeen = runStatus === 'FAILED' || matchingRows.some(step => (
     step?.success === false || ['FAILED', 'PARTIAL_FAILED'].includes(String(step?.status || '').toUpperCase())
   ));
@@ -4076,9 +4079,9 @@ async function previewAgentPlan() {
         `模式：${agentModeText(plan.mode || payload.mode)}`,
         `应用：${plan.appName || payload.appName} / ${plan.platform || payload.platform}`,
         `所属业务：${businessLineLabel(payload.business, payload.app_package)}`,
-        `范围：${plan.scope || payload.scope}`,
+        `范围：${agentScopeText(plan.scope || payload.scope)}`,
         runnerLine,
-        `输入来源：${payload.sourceType || 'manual'}`,
+        `输入来源：${agentSourceTypeText(payload.sourceType || 'manual')}`,
         `输入资料：Figma ${payload.figmaUrl ? '1' : '0'} 个，文件 ${payload.files?.length || 0} 个，截图 ${payload.images?.length || 0} 张`,
         `风险：${hits.length ? hits.join('、') : '未命中高风险关键词'}`,
         '',
@@ -4098,6 +4101,10 @@ async function previewAgentPlan() {
   }, { btn: previewBtn, btnLabel: '生成中...', overlay: 'AI 正在规划...' });
 }
 
+function agentScopeText(scope) {
+  return { auto: '自动（AI 判断）', smoke: '冒烟', regression: '回归', failed_rerun: '失败重跑', module: '指定模块' }[scope] || scope || '自动（AI 判断）';
+}
+
 function showAgentPlanPreview(lines, plan={}, payload={}) {
   lastAgentPlanPreviewText = (Array.isArray(lines) ? lines : []).join('\n');
   const summary = document.getElementById('agent-plan-preview-summary');
@@ -4105,7 +4112,7 @@ function showAgentPlanPreview(lines, plan={}, payload={}) {
   if (summary) {
     const modeText = agentModeText(plan.mode || payload.mode || 'AUTO_SAFE');
     const appText = plan.appName || payload.appName || '未选择应用';
-    const sourceText = payload.sourceType || 'manual';
+    const sourceText = agentSourceTypeText(payload.sourceType || 'manual');
     summary.textContent = `${modeText} · ${appText} · 输入来源：${sourceText}`;
   }
   if (body) body.textContent = lastAgentPlanPreviewText || '暂无预览内容';

@@ -10,6 +10,7 @@ function agentStatusText(status) {
     START: '未开始',
     pending: '未开始',
     running: '执行中',
+    RUNNING: '执行中',
     success: '成功',
     failed: '失败',
     waiting: '等待人工确认',
@@ -410,7 +411,9 @@ function agentRunResultSummaryHtml(run) {
 }
 
 function agentRunCardMessage(run, lastStep, resultMeta) {
-  const text = String(lastStep?.summary || run?.summary || run?.error || '').trim();
+  const failedStep = (run?.steps || []).slice().reverse().find(step => ['FAILED', 'PARTIAL_FAILED'].includes(String(step.status || '').toUpperCase()));
+  const failure = String(run?.status || '').toUpperCase() === 'FAILED' ? (run?.error || failedStep?.summary) : '';
+  const text = String(failure || lastStep?.summary || run?.summary || run?.error || '').trim();
   if (!text) return '';
   if (resultMeta?.hasReportResult && /没有\s*PRODUCT_BUG|跳过缺陷草稿|不存在缺陷草稿/.test(text)) return '';
   if (resultMeta?.hasReportResult && text.length > 90) return '';
@@ -1181,9 +1184,6 @@ function setAgentHistoryFilter(key, value) {
   agentHistoryFilterTimer = setTimeout(() => {
     if (activeWorkflow !== 'agent_history') return;
     renderAgentHistoryPage();
-    const input = document.getElementById('agent-history-search');
-    input?.focus();
-    input?.setSelectionRange(input.value.length, input.value.length);
   }, 180);
 }
 
@@ -1256,6 +1256,10 @@ function agentHistoryPager(total, page, pages) {
 function renderAgentHistoryPage(options = {}) {
   const area = document.getElementById('editor-area');
   if (!area) return;
+  const search = document.getElementById('agent-history-search');
+  const searchSelection = search && document.activeElement === search
+    ? { start: search.selectionStart, end: search.selectionEnd, direction: search.selectionDirection }
+    : null;
   const loading = Boolean(options.loading);
   const error = String(options.error || '').trim();
   const filteredRuns = filterAgentRuns();
@@ -1315,6 +1319,11 @@ function renderAgentHistoryPage(options = {}) {
       ${agentHistoryPager(filteredRuns.length, agentHistoryFilters.page, totalPages)}
     </div>
   `;
+  if (searchSelection) {
+    const input = document.getElementById('agent-history-search');
+    input?.focus({ preventScroll: true });
+    input?.setSelectionRange(searchSelection.start, searchSelection.end, searchSelection.direction);
+  }
 }
 
 async function renderAgentConfirmPage(options = {}) {
@@ -2420,15 +2429,22 @@ async function activateWorkflow(sectionKey) {
   }
   const section = WORKFLOW_SECTIONS[targetWorkflow] || WORKFLOW_SECTIONS.dashboard;
   if (!(await saveEditorBeforeNavigation(`已进入「${section.title}」流程页`))) return;
+  const keepFileContext = Boolean(currentFile && hasOpenEditor()
+    && ['yaml_edit', 'execute', 'baseline', 'repair'].includes(targetWorkflow));
   closeTransientUiForNavigation();
   activeWorkspaceMode = '';
   setActiveWorkflow(targetWorkflow);
-  resetYamlToolbarForManager();
+  if (!keepFileContext) resetYamlToolbarForManager();
   // 用例相关页面显示操作入口，其他页面隐藏
   const assetsHeader = document.getElementById('sidebar-header-assets');
   if (assetsHeader) assetsHeader.style.display = ['assets', 'generate', 'yaml_edit'].includes(activeWorkflow) ? '' : 'none';
   // round 4: 切换页面前，按目标页面动态决定数据加载与轮询
   applyLazyLoadForSection(activeWorkflow);
+  if (keepFileContext) {
+    updateWorkflowActionGroups();
+    updateToolbarState();
+    return;
+  }
   if (activeWorkflow === 'identity') {
     showIdentityManagement();
     toggleLibrary(false);
