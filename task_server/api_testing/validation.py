@@ -5,6 +5,8 @@ import re
 from typing import Any, Mapping, Tuple
 from urllib.parse import urlsplit
 
+from .assertions import AssertionDefinitionError, validate_response_schema
+
 from .services.workflow_policy import (
     is_print_cancel_step,
     is_print_dispatch_endpoint,
@@ -108,6 +110,11 @@ def _validate_response_rules(assertions, extractions, field, errors):
         assertion_type = _item_value(assertion, "type")
         path = _item_value(assertion, "path")
         name = _item_value(assertion, "name")
+        if assertion_type == "schema" and _item_value(assertion, "enabled", True):
+            try:
+                validate_response_schema(_item_value(assertion, "expected"))
+            except AssertionDefinitionError as exc:
+                _issue(errors, "assertion_schema_invalid", f"{prefix}assertions[{index}].expected", str(exc))
         if assertion_type == "json_path" and (
             not path or not path.startswith("$")
         ):

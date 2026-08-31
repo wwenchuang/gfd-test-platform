@@ -81,6 +81,30 @@ def test_case_contract_rejects_unknown_business():
         parse_case_payload(payload)
 
 
+@pytest.mark.parametrize("schema", [
+    {"properties": {"data": {"minItems": "one"}}},
+    {"properties": {"data": {"$ref": "https://example.test/schema"}}},
+    {"properties": {"data": {"minItem": 1}}},
+])
+def test_case_contract_rejects_schema_rules_that_cannot_be_executed(schema):
+    payload = _payload({"pre": [], "post": []})
+    payload["assertions"] = [{"type": "schema", "operator": "equals", "expected": schema}]
+    with pytest.raises(CasePayloadError):
+        parse_case_payload(payload)
+
+
+def test_case_contract_and_executor_agree_on_string_length_constraint():
+    from types import SimpleNamespace
+    from task_server.api_testing.assertions import evaluate_assertions
+
+    payload = _payload({"pre": [], "post": []})
+    payload["assertions"] = [{"type": "schema", "operator": "equals", "expected": {"type": "string", "minLength": 1}}]
+    parsed = parse_case_payload(payload)
+    rules = [SimpleNamespace(**item) for item in parsed["assertions"]]
+    assert evaluate_assertions(rules, SimpleNamespace(json_body="valid"))[0].passed
+    assert not evaluate_assertions(rules, SimpleNamespace(json_body=""))[0].passed
+
+
 def test_case_contract_rejects_creation_when_application_catalog_is_explicitly_empty(tmp_path, monkeypatch):
     path = tmp_path / "task-apps.json"
     path.write_text(json.dumps({"apps": []}), encoding="utf-8")

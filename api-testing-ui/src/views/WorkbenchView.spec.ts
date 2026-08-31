@@ -365,6 +365,8 @@ describe('WorkbenchView debug workflow', () => {
           TaskStatusStrip: true,
           EndpointDetail: true,
           CaseEditor: {
+            name: 'CaseEditor',
+            props: ['operationError'],
             emits: ['debug'],
             template: '<button data-testid="editor-debug" @click="$emit(\'debug\')">保存并调试</button>',
           },
@@ -406,6 +408,14 @@ describe('WorkbenchView debug workflow', () => {
       caseVersionId: 'version-new', taskId: 'task-1', environmentRevisionId: 'environment-1',
     }))
     expect(prepare.mock.invocationCallOrder[0]).toBeLessThan(debug.mock.invocationCallOrder[0])
+
+    vi.mocked(tasks.saveSelection).mockRejectedValueOnce(new Error('测试任务范围与当前请求不一致'))
+    debug.mockClear()
+    await wrapper.get('[data-testid="editor-debug"]').trigger('click')
+    await flushPromises()
+    expect(debug).not.toHaveBeenCalled()
+    expect(wrapper.getComponent({ name: 'CaseEditor' }).props('operationError')).toContain('调试未开始')
+    expect(wrapper.text()).toContain('测试任务范围与当前请求不一致')
   })
 
   it('generates cases against the exact saved task scope', async () => {

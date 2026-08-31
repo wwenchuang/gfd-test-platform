@@ -4,6 +4,8 @@ import copy
 from dataclasses import dataclass
 import re
 
+from jsonschema import Draft202012Validator, SchemaError
+
 
 _PATH_TOKEN = re.compile(
     r"(?:\.([A-Za-z_][A-Za-z0-9_-]*))|(?:\[(0|[1-9][0-9]{0,5})\])"
@@ -114,45 +116,76 @@ def _json_equals(left, right):
     return left == right
 
 
-def _schema_matches(value, schema, depth=0):
-    if depth > 20:
-        raise AssertionDefinitionError("响应结构定义层级过深")
+_SCHEMA_CHILDREN = frozenset({"items", "additionalProperties", "not", "contains", "if", "then", "else"})
+_SCHEMA_BRANCHES = frozenset({"allOf", "anyOf", "oneOf", "prefixItems"})
+_SCHEMA_KEYWORDS = _SCHEMA_CHILDREN | _SCHEMA_BRANCHES | frozenset({
+    "type", "required", "properties", "const", "enum", "minItems", "maxItems",
+    "uniqueItems", "minContains", "maxContains", "minProperties", "maxProperties",
+    "minLength", "maxLength", "minimum", "maximum", "exclusiveMinimum",
+    "exclusiveMaximum", "multipleOf", "title", "description", "default", "examples",
+    "$comment", "readOnly", "writeOnly", "deprecated",
+})
+
+
+def validate_response_schema(schema):
+    """Validate a bounded, inline JSON Schema; never resolve URLs or ignore rules."""
+    pending = [(schema, 0)]
+    visited = 0
+    while pending:
+        current, depth = pending.pop()
+        visited += 1
+        if depth > 20:
+            raise AssertionDefinitionError("响应结构定义层级过深")
+        if visited > 2000:
+            raise AssertionDefinitionError("响应结构定义过大，请拆分断言")
+        if isinstance(current, bool):
+            continue
+        if not isinstance(current, dict):
+            raise AssertionDefinitionError("响应结构定义必须是对象或布尔值")
+        if set(current) - _SCHEMA_KEYWORDS:
+            raise AssertionDefinitionError("响应结构含不支持的关键字；请使用内联结构，不支持引用、pattern 或 format")
+        properties = current.get("properties", {})
+        if isinstance(properties, dict):
+            pending.extend((child, depth + 1) for child in properties.values())
+        for key in _SCHEMA_CHILDREN:
+            if key in current:
+                pending.append((current[key], depth + 1))
+        for key in _SCHEMA_BRANCHES:
+            if isinstance(current.get(key), list):
+                pending.extend((child, depth + 1) for child in current[key])
+    try:
+        Draft202012Validator.check_schema(schema)
+    except SchemaError as exc:
+        raise AssertionDefinitionError("响应结构定义无效，请检查字段类型和约束参数") from exc
+
+
+def _legacy_object_constraints(schema):
+    """Keep old required/properties assertions rejecting non-object responses."""
     if isinstance(schema, bool):
         return schema
-    if not isinstance(schema, dict):
-        raise AssertionDefinitionError("响应结构定义必须是对象或布尔值")
-    schema_type = schema.get("type")
-    type_map = {
-        "object": dict,
-        "array": list,
-        "string": str,
-        "number": (int, float),
-        "integer": int,
-        "boolean": bool,
-        "null": type(None),
-    }
-    if schema_type is not None:
-        expected_type = type_map.get(schema_type)
-        if expected_type is None:
-            raise AssertionDefinitionError("不支持该响应结构类型")
-        if schema_type in {"number", "integer"} and isinstance(value, bool):
-            return False
-        if not isinstance(value, expected_type):
-            return False
-    if "required" in schema:
-        if not isinstance(value, dict) or not all(key in value for key in schema["required"]):
-            return False
-    properties = schema.get("properties", {})
-    if properties:
-        if not isinstance(properties, dict) or not isinstance(value, dict):
-            return False
-        for key, child_schema in properties.items():
-            if key in value and not _schema_matches(value[key], child_schema, depth + 1):
-                return False
-    if "items" in schema and isinstance(value, list):
-        if not all(_schema_matches(item, schema["items"], depth + 1) for item in value):
-            return False
-    return True
+    normalized = dict(schema)
+    if "properties" in schema:
+        normalized["properties"] = {
+            key: _legacy_object_constraints(child) for key, child in schema["properties"].items()
+        }
+    for key in _SCHEMA_CHILDREN:
+        if key in schema:
+            normalized[key] = _legacy_object_constraints(schema[key])
+    for key in _SCHEMA_BRANCHES:
+        if key in schema:
+            normalized[key] = [_legacy_object_constraints(child) for child in schema[key]]
+    if (
+        ("required" in schema or schema.get("properties"))
+        and schema.get("type") != "object"
+        and not isinstance(schema.get("type"), list)
+    ):
+        normalized["allOf"] = [*normalized.get("allOf", []), {"type": "object"}]
+    return normalized
+
+
+def _schema_matches(value, schema):
+    validate_response_schema(schema)
+    return Draft202012Validator(_legacy_object_constraints(schema)).is_valid(value)
 
 
 def evaluate_assertions(assertions, response):

@@ -16,8 +16,8 @@ import CaseValidationSummary from './CaseValidationSummary.vue'
 
 type ProcessingPhase = 'pre' | 'post'
 
-const props = withDefaults(defineProps<{ modelValue: CaseDraft; validationErrors?: Record<string, string>; validationWarnings?: Record<string, string>; saving?: boolean; debugging?: boolean; savedMessage?: string; dependencyOptions?: CaseDependencyOption[]; endpointOptions?: ApiEndpoint[]; environmentVariableNames?: string[]; environmentRevisionId?: string; environmentName?: string }>(), {
-  validationErrors: () => ({}), validationWarnings: () => ({}), saving: false, debugging: false, savedMessage: '', dependencyOptions: () => [], endpointOptions: () => [], environmentVariableNames: () => [], environmentRevisionId: '', environmentName: '',
+const props = withDefaults(defineProps<{ modelValue: CaseDraft; validationErrors?: Record<string, string>; validationWarnings?: Record<string, string>; saving?: boolean; debugging?: boolean; savedMessage?: string; operationError?: string; dependencyOptions?: CaseDependencyOption[]; endpointOptions?: ApiEndpoint[]; environmentVariableNames?: string[]; environmentRevisionId?: string; environmentName?: string }>(), {
+  validationErrors: () => ({}), validationWarnings: () => ({}), saving: false, debugging: false, savedMessage: '', operationError: '', dependencyOptions: () => [], endpointOptions: () => [], environmentVariableNames: () => [], environmentRevisionId: '', environmentName: '',
 })
 const emit = defineEmits<{ 'update:modelValue': [draft: CaseDraft]; save: []; debug: [] }>()
 const { active: testApplications } = useTestApplications()
@@ -374,6 +374,6 @@ function normalizeDraft(value: CaseDraft): CaseDraft {
     </div>
 
     <div v-else class="raw-editor"><textarea v-model="raw" rows="26" spellcheck="false" @blur="applyRaw" /><p v-if="rawError" class="field-error">{{ rawError }}</p></div>
-    <footer class="editor-footer"><span role="status">{{ savedMessage || (hasBlockingError ? '请先处理阻塞错误' : '可保存草稿或直接调试') }}</span><small v-if="Object.keys(displayValidationErrors).length">错误 {{ Object.keys(displayValidationErrors).length }}</small><small v-if="Object.keys(validationWarnings).length">警告 {{ Object.keys(validationWarnings).length }}</small><button data-testid="save-case-draft" class="secondary-command" type="button" :disabled="saving || hasBlockingError" @click="emit('save')">{{ saving ? '保存中...' : '保存草稿' }}</button><button data-testid="save-and-debug" class="primary-command" type="button" :disabled="saving || debugging || hasBlockingError" @click="emit('debug')"><Play :size="15" />{{ debugging ? '调试中...' : '保存并调试' }}</button></footer>
+    <footer class="editor-footer"><span role="status">{{ savedMessage || (hasBlockingError ? '请先处理阻塞错误' : '可保存草稿或直接调试') }}</span><span v-if="operationError" class="inline-error" role="alert">{{ operationError }}</span><small v-if="Object.keys(displayValidationErrors).length">错误 {{ Object.keys(displayValidationErrors).length }}</small><small v-if="Object.keys(validationWarnings).length">警告 {{ Object.keys(validationWarnings).length }}</small><button data-testid="save-case-draft" class="secondary-command" type="button" :disabled="saving || hasBlockingError" @click="emit('save')">{{ saving ? '保存中...' : '保存草稿' }}</button><button data-testid="save-and-debug" class="primary-command" type="button" :disabled="saving || debugging || hasBlockingError" @click="emit('debug')"><Play :size="15" />{{ debugging ? '调试中...' : '保存并调试' }}</button></footer>
   </section>
 </template>

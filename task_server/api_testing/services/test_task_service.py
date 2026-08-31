@@ -362,7 +362,6 @@ class TestTaskService:
             or environment is None
             or environment.project_id != project.id
             or not access.resource_allowed(repository.session, environment, owner)
-            or environment_revision.source_revision_id != source_revision.id
         ):
             raise TestTaskScopeError("task context is outside this project")
         endpoints = repository.get_endpoints(payload["selected_endpoint_ids"])

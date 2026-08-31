@@ -8,6 +8,8 @@ import re
 from types import MappingProxyType
 from typing import Any, Mapping, Optional, Tuple
 
+from task_server.api_testing.assertions import AssertionDefinitionError, validate_response_schema
+
 from task_server.services.business_line_service import (
     business_line_id,
     configured_business_lines,
@@ -78,6 +80,22 @@ MEANINGFUL_SCHEMA_KEYS = frozenset(
         "maxItems",
         "minProperties",
         "maxProperties",
+        "minLength",
+        "maxLength",
+        "minimum",
+        "maximum",
+        "exclusiveMinimum",
+        "exclusiveMaximum",
+        "multipleOf",
+        "uniqueItems",
+        "contains",
+        "minContains",
+        "maxContains",
+        "prefixItems",
+        "additionalProperties",
+        "if",
+        "then",
+        "else",
     }
 )
 EXTRACTION_TYPES = frozenset({"json_path", "header", "cookie", "status_code"})
@@ -253,6 +271,10 @@ def _validate_assertion_operand(item, assertion_type, operator, index):
     if assertion_type == "schema":
         if not isinstance(expected, (dict, bool)):
             raise CasePayloadError(f"{field} expected must be a schema object or boolean")
+        try:
+            validate_response_schema(expected)
+        except AssertionDefinitionError as exc:
+            raise CasePayloadError(f"{field} {exc}") from exc
         if not _schema_has_meaningful_constraint(expected):
             raise CasePayloadError(
                 f"{field} expected must constrain response fields or values"

@@ -1,5 +1,7 @@
 from types import SimpleNamespace
 
+import pytest
+
 from task_server.api_testing.validation import validate_case
 
 
@@ -64,6 +66,22 @@ def _endpoint(path="/resource/detail", *, method="GET", summary="资源详情", 
         summary=summary,
         operation=operation or {},
     )
+
+
+@pytest.mark.parametrize("stage", ["main", "setup_steps", "cleanup_steps"])
+def test_validation_blocks_unsupported_historical_schema_before_execution(stage):
+    endpoint = _endpoint()
+    rule = {"type": "schema", "operator": "equals", "enabled": True,
+            "expected": {"properties": {"data": {"format": "email"}}}}
+    case = _case(endpoint)
+    if stage == "main":
+        case.assertions = (SimpleNamespace(**rule),)
+    else:
+        step = _step("历史流程", _request("/resource/query"))
+        step["assertions"] = [rule]
+        case.processing[stage] = [step]
+    result = validate_case(case, endpoint, {"variables": {}, "services": {}})
+    assert any(item.code == "assertion_schema_invalid" for item in result.errors)
 
 
 def test_validation_tracks_setup_exports_in_order_and_into_main_request():

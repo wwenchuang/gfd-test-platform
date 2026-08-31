@@ -2,6 +2,7 @@ const fs = require('fs');
 const http = require('http');
 const path = require('path');
 const { chromium } = require('playwright');
+const { expect } = require('playwright/test');
 
 const ROOT = path.resolve(__dirname, '..');
 const APP_ROOT = path.join(ROOT, 'api-test');
@@ -312,8 +313,7 @@ async function assertScheduledServerBlocks(page) {
     await row.getByRole('status').filter({ hasText: message }).waitFor();
     await page.getByTestId('scheduled-editor-blocked').filter({ hasText: message }).waitFor();
     if (!(await row.textContent()).includes('配置：已启用') || (await row.textContent()).includes('下次执行')) throw new Error(`blocked ${size} must distinguish configuration from dispatch`);
-    await page.waitForFunction(() => !document.querySelector('[data-testid="scheduled-run-scheduled-job-1"]')?.disabled);
-    if (!await page.getByTestId('scheduled-run-scheduled-job-1').isEnabled()) throw new Error(`blocked ${size} must allow an authorized retry`);
+    await expect(page.getByTestId('scheduled-run-scheduled-job-1'), `blocked ${size} must allow an authorized retry`).toBeEnabled();
     const contentBox = await row.locator('.scheduled-row-main').boundingBox();
     const rowBox = await row.boundingBox();
     if (!contentBox || !rowBox || contentBox.width < Math.min(260, rowBox.width - 30)) throw new Error(`blocked ${size} status is squeezed by row actions: ${JSON.stringify(contentBox)}`);

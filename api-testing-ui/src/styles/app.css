@@ -347,6 +347,7 @@ h1, h2, p { margin-top: 0; } h1 { margin-bottom: 0; font-size: 21px; font-weight
 .mini-icon { display: inline-grid; place-items: center; width: 30px; height: 30px; padding: 0; border: 1px solid var(--line); border-radius: 5px; background: #fff; color: var(--muted); cursor: pointer; }.mini-icon.danger { color: var(--red); }
 .raw-editor { padding: 13px; }.raw-editor textarea { min-height: 420px; }
 .editor-footer { position: sticky; z-index: 12; bottom: 0; display: flex; align-items: center; justify-content: flex-end; gap: 8px; min-height: 58px; padding: 9px 13px; border-top: 1px solid var(--line); background: rgba(255,255,255,.97); box-shadow: 0 -5px 14px rgba(28, 42, 61, .07); backdrop-filter: blur(8px); }.editor-footer span { margin-right: auto; color: var(--teal); font-size: 11px; }.editor-footer > small { color: var(--muted); font-size: 9px; white-space: nowrap; }
+.editor-footer .inline-error { color: var(--red); }
 .primary-command, .secondary-command, .baseline-command, .debug-command, .danger-command, .text-command { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 34px; padding: 0 12px; border-radius: 5px; cursor: pointer; }
 .primary-command { border: 1px solid var(--blue); background: var(--blue); color: #fff; }.primary-command:disabled { opacity: .48; cursor: not-allowed; }.wide { width: 100%; }
 .is-spinning { animation: command-spin .8s linear infinite; }

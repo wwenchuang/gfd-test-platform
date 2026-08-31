@@ -61,6 +61,16 @@ function workflowDraft(): CaseDraft {
 }
 
 describe('CaseEditor', () => {
+  it('shows an operation failure beside save actions even when the draft was saved', () => {
+    const wrapper = mount(CaseEditor, { props: {
+      modelValue: DRAFT,
+      savedMessage: '草稿 v6 已保存',
+      operationError: '草稿已保存，但调试未开始：测试任务范围保存失败',
+    } })
+    expect(wrapper.get('.editor-footer [role="alert"]').text()).toContain('调试未开始')
+    expect(wrapper.get('.editor-footer').text()).toContain('草稿 v6 已保存')
+  })
+
   it('deduplicates application errors and focuses the real identity controls from issue links', async () => {
     const wrapper = mount(CaseEditor, { attachTo: document.body, props: { modelValue: { ...DRAFT, app_package: '', app_name: '', business: '' } } })
     try {

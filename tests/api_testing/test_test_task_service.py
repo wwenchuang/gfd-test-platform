@@ -328,6 +328,57 @@ def test_task_rejects_endpoint_from_another_source_revision(
         )
 
 
+@pytest.mark.parametrize("operation", ["create_context", "save_context", "update_context"])
+def test_historical_task_can_select_newer_environment_from_same_project(
+    task_factory, task_records, operation
+):
+    service = TaskService(task_factory)
+    original = service.create_context("owner-a", _payload(task_records), "owner-a")
+    with task_factory.begin() as session:
+        revision = session.get(ApiEnvironmentRevision, task_records["runtime_environment_revision"].id)
+        revision.source_revision_id = task_records["foreign_endpoint"].revision_id
+    payload = {
+        **_payload(task_records),
+        "environment_revision_id": task_records["runtime_environment_revision"].id,
+    }
+
+    if operation == "update_context":
+        task = service.update_context(original.id, "owner-a", payload, "owner-a")
+    else:
+        task = getattr(service, operation)("owner-a", payload, "owner-a")
+
+    assert task.source_revision_id == task_records["revision"].id
+    assert task.selected_endpoint_ids == (task_records["endpoint"].id,)
+    assert task.environment_revision_id == task_records["runtime_environment_revision"].id
+
+
+@pytest.mark.parametrize("foreign_project", [True, False])
+def test_historical_task_still_rejects_foreign_environment(task_factory, task_records, foreign_project):
+    with task_factory.begin() as session:
+        environment = ApiEnvironment(
+            project_id=(task_records["other_project"] if foreign_project else task_records["project"]).id,
+            name="其他范围环境",
+            **_audit("owner-a" if foreign_project else "owner-b"),
+        )
+        session.add(environment)
+        session.flush()
+        revision = ApiEnvironmentRevision(
+            environment_id=environment.id,
+            source_revision_id=task_records["foreign_endpoint"].revision_id,
+            revision_number=1,
+            name="其他范围环境",
+            **_audit("owner-a" if foreign_project else "owner-b"),
+        )
+        session.add(revision)
+        session.flush()
+        revision_id = revision.id
+
+    with pytest.raises(TaskScopeError):
+        TaskService(task_factory).create_context(
+            "owner-a", {**_payload(task_records), "environment_revision_id": revision_id}, "owner-a"
+        )
+
+
 def test_task_is_hidden_from_another_owner(task_factory, task_records):
     service = TaskService(task_factory)
     task = service.save_context("owner-a", _payload(task_records), "owner-a")

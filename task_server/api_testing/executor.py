@@ -20,6 +20,7 @@ from .assertions import (
     evaluate_assertions,
     evaluate_business_response,
     extract_values,
+    validate_response_schema,
 )
 from .services.case_service import CaseService
 from .services.environment_service import EnvironmentService
@@ -305,6 +306,11 @@ class HttpExecutor:
         secrets = ()
         try:
             case = self.case_service.get_version(case_version_id)
+            self._validate_schema_definitions(case.assertions)
+            for stage in ("setup_steps", "cleanup_steps"):
+                for step in case.processing.get(stage, []):
+                    if step.get("enabled", True):
+                        self._validate_schema_definitions(step.get("assertions", []))
             row_values = {}
             for row in case.data_rows:
                 if row.enabled:
@@ -456,6 +462,8 @@ class HttpExecutor:
                 trace,
                 secrets,
             )
+        except AssertionDefinitionError as exc:
+            return self._failure_result(callback, started, "BROKEN", "assertion_definition", request_view, response_view, (), {}, str(exc), trace, secrets)
         except Exception as exc:
             return self._failure_result(callback, started, "BROKEN", "environment", request_view, response_view, (), {}, str(exc), trace, secrets)
 
@@ -477,6 +485,10 @@ class HttpExecutor:
             raise ValueError("目标步骤序号超出前置步骤范围")
         if not steps[target_index].get("enabled", True):
             raise ValueError("目标前置步骤已停用")
+
+        for step in steps[: target_index + 1]:
+            if step.get("enabled", True):
+                self._validate_schema_definitions(step.get("assertions", []))
 
         variables = copy.deepcopy(dict(initial_variables or {}))
         self._apply_processing(processing_pre or [], variables)
@@ -877,6 +889,12 @@ class HttpExecutor:
                 + json.dumps(failed.get("actual"), ensure_ascii=False)
             )
         return "；".join(parts)
+
+    @staticmethod
+    def _validate_schema_definitions(assertions):
+        for assertion in HttpExecutor._object_views(assertions):
+            if assertion.type == "schema" and getattr(assertion, "enabled", True):
+                validate_response_schema(assertion.expected)
 
     @staticmethod
     def _object_views(items):

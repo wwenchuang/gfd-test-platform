@@ -287,6 +287,21 @@ def test_default_executor_timeout_covers_slow_ai_endpoints():
     assert ExecutorLimits().timeout_seconds == 30
 
 
+@pytest.mark.parametrize("stage", ["main", "setup_steps", "cleanup_steps"])
+def test_invalid_historical_schema_blocks_entire_chain_before_http(target_server, stage):
+    rule = _assertion("schema", "equals", {"properties": {"data": {"format": "email"}}})
+    case = _case(processing={"pre": [], "post": [], "setup_steps": [], "cleanup_steps": []})
+    if stage == "main":
+        case.assertions = (rule,)
+    else:
+        case.processing[stage] = [_workflow_step("历史步骤", "GET", "/ok", assertions=[vars(rule)])]
+    before = target_server[1].request_count
+    result = _executor(target_server, case).execute_case("case-version-1", "environment-revision-1", {})
+    assert target_server[1].request_count == before
+    assert result.status == "BROKEN"
+    assert result.failure_category == "assertion_definition"
+
+
 def test_setup_preview_returns_raw_target_response_but_keeps_trace_sanitized(
     target_server,
 ):

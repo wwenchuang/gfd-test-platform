@@ -398,7 +398,10 @@ async function runCaseVersion(version: CaseVersion): Promise<void> {
     return
   }
   const task = await saveCurrentTask()
-  if (!task) return
+  if (!task) {
+    localError.value = `草稿已保存，但调试未开始：${localError.value || tasks.error || '测试任务保存失败'}`
+    return
+  }
   cases.debugExecution = null
   debugOpen.value = true
   localError.value = ''
@@ -434,7 +437,10 @@ async function submitDebug(): Promise<void> {
   }
   if (!selectedIds.value.includes(activeEndpoint.value.id)) selectedIds.value = [...selectedIds.value, activeEndpoint.value.id]
   const task = await saveCurrentTask()
-  if (!task) return
+  if (!task) {
+    localError.value = `草稿已保存，但调试未开始：${localError.value || tasks.error || '测试任务保存失败'}`
+    return
+  }
   cases.debugExecution = null
   debugOpen.value = true
   localError.value = ''
@@ -636,6 +642,7 @@ function defaultTaskName(): string {
             :saving="cases.saving"
             :debugging="debugRunning"
             :saved-message="cases.savedMessage"
+            :operation-error="localError"
             :validation-errors="cases.validationErrors"
             :validation-warnings="cases.validationWarnings"
             @update:model-value="updateDraft"
