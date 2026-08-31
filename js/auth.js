@@ -17,6 +17,18 @@ function hasPermission(permission) {
   return currentAccessProfile.is_superuser === true || (currentAccessProfile.permissions || []).includes(permission);
 }
 
+function requireUiEditPermission() {
+  if (hasPermission('ui.edit')) return true;
+  showToast('当前账号没有用例编辑权限，请联系管理员确认角色和数据授权', 'error');
+  return false;
+}
+
+function requireUiDeletePermission() {
+  if (hasPermission('ui.delete')) return true;
+  showToast('当前账号没有删除用例权限；移动和重命名也需要此权限，请联系管理员', 'error');
+  return false;
+}
+
 function canOperateAgent() {
   return currentAccessProfile === null || (hasPermission('platform.configure') && hasPermission('ui.execute')
     && (currentAccessProfile.is_superuser === true || currentAccessProfile.scope?.ui_apps === '*'));
@@ -61,8 +73,16 @@ function applyRestrictedActionControls() {
     });
   };
   restrict('#agent-start-btn', canOperateAgent(), agentAccessReason());
+  restrict('[onclick*="showAddTask("], [onclick*="showUpload("], [onclick*="changeTaskBusiness("], [onclick*="openKnowledgePageForEdit("], #btn-copy-file, #btn-save, .task-nav-bulk-select, .priority-select, [data-action-permission="ui.edit"]', hasPermission('ui.edit'), '当前账号没有用例编辑权限，请联系管理员');
+  restrict('[data-action-permission="ui.delete"]', hasPermission('ui.delete'), '当前账号没有删除用例权限，请联系管理员');
+  restrict('#btn-move-file, #btn-rename-file, [data-action-permission="ui.edit ui.delete"]', hasPermission('ui.edit') && hasPermission('ui.delete'), '移动和重命名需要编辑及删除用例权限，请联系管理员');
+  restrict('[data-action-permission="platform.configure"]', canAccessGlobalSonic(), '此操作需要平台配置权限及完整 UI 应用范围，请联系管理员');
+  restrict('[onclick*="runTaskFromNav("], #btn-run-file, #btn-run-task, [data-action-permission="ui.execute"]', hasPermission('ui.execute'), '当前账号没有执行用例权限，请联系管理员');
+  restrict('[onclick*="showBaselineRefsForCurrentTask("], [onclick*="removeBaselinePreviewRef("], [data-action-permission="ui.baseline"]', hasPermission('ui.baseline'), '当前账号没有基线管理权限，请联系管理员');
+  const editor = document.getElementById('editor');
+  if (editor) editor.readOnly = !hasPermission('ui.edit');
   restrict('#btn-sonic-status, .sonic-preview-actions button', canAccessGlobalSonic(), sonicAccessReason());
-  restrict('[data-workflow="generate"], #btn-generate-yaml, #btn-repair-file, #btn-repair-task, [onclick*="showGenerateYaml("], [onclick*="showGenerateMindmap("], [onclick*="retryGenerateJob("]', canUseSharedUiAi(), uiAiAccessReason());
+  restrict('[data-workflow="generate"], #btn-generate-yaml, #btn-repair-file, #btn-repair-task, [onclick*="repairTaskFromNav("], [onclick*="showGenerateYaml("], [onclick*="showGenerateMindmap("], [onclick*="retryGenerateJob("]', canUseSharedUiAi(), uiAiAccessReason());
 }
 
 const WORKFLOW_PERMISSIONS = {

@@ -12851,7 +12851,8 @@ def check_ai_skills_receive_yaml_reference_context():
         payload = ai_skill_service.build_cases_payload_from_skills(
             "AI建模测试",
             "AI测试",
-            ["需求正文", "【现有 YAML 步骤经验库】\n```yaml\n- name: 入口\n  flow:\n    - aiTap: \"AI建模入口\"\n```"],
+            ["需求正文", "当前用户明确提供的脚本片段：```yaml\n- aiAssert: 首页可见\n```"],
+            yaml_reference_context="【现有 YAML 步骤经验库】\n```yaml\n- name: 历史发票流程\n  flow:\n    - aiTap: \"历史发票入口\"\n```",
             model_config={"providerId": "qwen_plus", "model": "qwen3.6-plus"},
             generation_scope_plan={
                 "size": "large",
@@ -12863,6 +12864,9 @@ def check_ai_skills_receive_yaml_reference_context():
     finally:
         ai_skill_service.run_ai_skill = original_run_ai_skill
 
+    requirement_payload = next(item[1] for item in calls if item[0] == "requirement_analyzer")
+    require("历史发票" not in requirement_payload.get("text_assets", ""), "Historical YAML must not become current requirement facts")
+    require("首页可见" in requirement_payload.get("text_assets", ""), "Explicit current requirement YAML must not be removed just because it is YAML")
     scenario_payload = next(item[1] for item in calls if item[0] == "scenario_designer")
     automation_payload = next(item[1] for item in calls if item[0] == "automation_filter")
     smoke_payload = next(item[1] for item in calls if item[0] == "smoke_selector")

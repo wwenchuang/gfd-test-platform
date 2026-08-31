@@ -3194,6 +3194,8 @@ function clearAssetSelection() {
 }
 
 function assetFileOp(mod, file, op) {
+  if (!requireUiEditPermission()) return;
+  if (['move', 'rename'].includes(op) && !requireUiDeletePermission()) return;
   currentModule = mod;
   currentFile = file;
   renderModules();
@@ -3202,6 +3204,7 @@ function assetFileOp(mod, file, op) {
 }
 
 async function deleteAssetFile(mod, file) {
+  if (!requireUiDeletePermission()) return;
   await deleteFile(mod, file);
   if (activeWorkflow === 'assets') showAssetsCenter();
 }
@@ -3209,6 +3212,10 @@ async function deleteAssetFile(mod, file) {
 function showAssetsCenter() {
   const area = document.getElementById('editor-area');
   if (!area) return;
+  const search = document.getElementById('asset-search');
+  const searchSelection = search && document.activeElement === search
+    ? { start: search.selectionStart, end: search.selectionEnd, direction: search.selectionDirection }
+    : null;
   if (!AppState.loaded.modules && AppState.loading.modules) {
     area.className = 'editor-area assets-center';
     area.innerHTML = `
@@ -3305,11 +3312,11 @@ function showAssetsCenter() {
               <button class="btn-sm" onclick="selectCurrentAssetRows()">选择当前列表</button>
               ${currentModule ? `<button class="btn-sm" onclick="selectCurrentModuleFiles();showAssetsCenter()">全选当前模块</button>` : ''}
               <button class="btn-sm" onclick="clearAssetSelection()">清空选择</button>
-              <button class="btn-sm success" onclick="publishSelectedFilesToSonic()" ${summary.selected ? '' : 'disabled'}>同步当前已选至 Sonic 平台</button>
-              ${currentModule ? `<button class="btn-sm success" onclick="publishCurrentModuleToSonic()">同步当前模块至 Sonic 平台</button>` : ''}
-              <button class="btn-sm" onclick="showBatchMove()" ${summary.selected ? '' : 'disabled'}>批量移动</button>
-              <button class="btn-sm danger" onclick="deleteSelectedFiles()" ${summary.selected ? '' : 'disabled'}>批量删除</button>
-              ${currentModule ? `<button class="btn-sm danger" onclick="deleteCurrentModule()">删除当前模块</button>` : ''}
+              <button class="btn-sm success" data-action-permission="platform.configure" onclick="publishSelectedFilesToSonic()" ${summary.selected ? '' : 'disabled'}>同步当前已选至 Sonic 平台</button>
+              ${currentModule ? `<button class="btn-sm success" data-action-permission="platform.configure" onclick="publishCurrentModuleToSonic()">同步当前模块至 Sonic 平台</button>` : ''}
+              <button class="btn-sm" data-action-permission="ui.edit ui.delete" onclick="showBatchMove()" ${summary.selected ? '' : 'disabled'}>批量移动</button>
+              <button class="btn-sm danger" data-action-permission="ui.delete" onclick="deleteSelectedFiles()" ${summary.selected ? '' : 'disabled'}>批量删除</button>
+              ${currentModule ? `<button class="btn-sm danger" data-action-permission="platform.configure" onclick="deleteCurrentModule()">删除当前模块</button>` : ''}
             </div>
           </div>
           <div class="assets-table-wrap">
@@ -3348,10 +3355,10 @@ function showAssetsCenter() {
                         <td>${prioritySummaryHtml(stats, true)}</td>
                         <td class="asset-row-actions">
                           <button class="btn-sm" onclick="openFile(${jsArg(row.mod)},${jsArg(row.file)})">打开</button>
-                          <button class="btn-sm" onclick="openFile(${jsArg(row.mod)},${jsArg(row.file)}).then(()=>showRunCurrentFile())">执行</button>
-                          <button class="btn-sm" onclick="assetFileOp(${jsArg(row.mod)},${jsArg(row.file)},'rename')">重命名</button>
-                          <button class="btn-sm" onclick="assetFileOp(${jsArg(row.mod)},${jsArg(row.file)},'move')">移动</button>
-                          <button class="btn-sm danger" onclick="deleteAssetFile(${jsArg(row.mod)},${jsArg(row.file)})">删除</button>
+                          <button class="btn-sm" data-action-permission="ui.execute" onclick="openFile(${jsArg(row.mod)},${jsArg(row.file)}).then(()=>showRunCurrentFile())">执行</button>
+                          <button class="btn-sm" data-action-permission="ui.edit ui.delete" onclick="assetFileOp(${jsArg(row.mod)},${jsArg(row.file)},'rename')">重命名</button>
+                          <button class="btn-sm" data-action-permission="ui.edit ui.delete" onclick="assetFileOp(${jsArg(row.mod)},${jsArg(row.file)},'move')">移动</button>
+                          <button class="btn-sm danger" data-action-permission="ui.delete" onclick="deleteAssetFile(${jsArg(row.mod)},${jsArg(row.file)})">删除</button>
                         </td>
                       </tr>
                     `;
@@ -3369,6 +3376,11 @@ function showAssetsCenter() {
   document.getElementById('toolbar-help').textContent = '集中管理 YAML 文件、模块、状态和最近执行结果；右侧执行面板已隐藏，资产页使用完整宽度。';
   document.getElementById('file-info').textContent = currentModule ? `用例资产 / ${currentModule}` : '用例资产';
   updateToolbarState();
+  if (searchSelection) {
+    const input = document.getElementById('asset-search');
+    input?.focus({ preventScroll: true });
+    input?.setSelectionRange(searchSelection.start, searchSelection.end, searchSelection.direction);
+  }
 }
 
 function syncAssetFiltersToSidebar() {

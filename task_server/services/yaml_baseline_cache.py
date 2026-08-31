@@ -44,6 +44,9 @@ _STOPWORDS = {
     "测试", "验证", "页面", "功能", "需求", "用例", "执行", "当前", "进行", "是否", "可以", "需要",
     "点击", "进入", "打开", "显示", "相关", "流程", "按钮", "模块", "状态", "结果", "完成", "成功",
     "失败", "检查", "确认", "一个", "这个", "那个", "用户", "操作", "场景", "自动化", "生成",
+    "a", "an", "the", "and", "or", "of", "on", "in", "at", "to", "from", "for", "with", "by",
+    "is", "are", "be", "it", "its", "this", "that", "these", "those", "only", "do", "not", "no",
+    "should", "must", "can", "will", "as", "then", "than", "into", "without",
 }
 
 
@@ -455,6 +458,14 @@ def get_yaml_baseline_cache(force: bool = False) -> Dict[str, Any]:
         return cache
 
 
+def _baseline_term_matches(term: str, text: str) -> bool:
+    if not term or term in _STOPWORDS:
+        return False
+    if re.fullmatch(r"[a-z0-9_./-]+", term):
+        return bool(re.search(r"(?<![a-z0-9])" + re.escape(term) + r"(?![a-z0-9])", text))
+    return term in text
+
+
 def _score_item(query_terms: List[str], module: str, item: Dict[str, Any]) -> Tuple[int, List[str]]:
     score = 0
     matched: List[str] = []
@@ -466,26 +477,26 @@ def _score_item(query_terms: List[str], module: str, item: Dict[str, Any]) -> Tu
     keywords = {str(term).lower() for term in (item.get("keywords") or [])}
     for term in query_terms or []:
         term = str(term or "").lower()
-        if not term:
+        if not term or term in _STOPWORDS:
             continue
         term_score = 0
-        if term in title:
+        if _baseline_term_matches(term, title):
             term_score += 4
-        if term in item_module:
+        if _baseline_term_matches(term, item_module):
             term_score += 5
-        if term in business_path:
+        if _baseline_term_matches(term, business_path):
             term_score += 4
-        if term in file:
+        if _baseline_term_matches(term, file):
             term_score += 3
         if term in keywords:
             term_score += 3
-        if term in snippet:
+        if _baseline_term_matches(term, snippet):
             term_score += 1
         if term_score:
             score += term_score
             matched.append(term)
     module_text = str(module or "").strip().lower()
-    if module_text and (module_text in item_module or module_text in file):
+    if _baseline_term_matches(module_text, item_module) or _baseline_term_matches(module_text, file):
         score += 5
         matched.append(module_text)
     if not matched:

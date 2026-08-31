@@ -3617,8 +3617,11 @@ def _evaluate_agent_quality_gate(run, stage, payload):
             "plan_timeout_degraded_source_contract",
         )
         ai_or_degraded = ai_generated or plan_timeout_fallback
-        passed = bool(steps) and bool(business_flows) and not missing_branches and not generic_only and ai_or_degraded and trusted_source
-        if plan_timeout_fallback and passed:
+        readiness_issues = _agent_plan_readiness_issues(payload.get("goalAnalysis"), payload.get("coverageAudit"))
+        passed = bool(steps) and bool(business_flows) and not missing_branches and not generic_only and ai_or_degraded and trusted_source and not readiness_issues
+        if readiness_issues:
+            reason = "；".join(readiness_issues)
+        elif plan_timeout_fallback and passed:
             reason = "PLAN AI 超时，已明确标记并使用源需求合同降级计划继续验证"
         elif not ai_or_degraded or not trusted_source:
             reason = "PLAN 必须来自平台 MM skills 的真实 AI 结果，规则兜底不能冒充成功"
@@ -3636,6 +3639,7 @@ def _evaluate_agent_quality_gate(run, stage, payload):
             stepCount=len(steps),
             businessFlowCount=len(business_flows),
             missingBranches=missing_branches,
+            readinessIssues=readiness_issues,
             aiGenerated=ai_generated,
             fallbackUsed=bool(payload.get("fallbackUsed")),
             planTimeoutFallback=plan_timeout_fallback,
@@ -5030,6 +5034,21 @@ def _agent_mm_visual_status(review):
     }
 
 
+def _agent_plan_readiness_issues(analysis, coverage):
+    """Explicit blockers cannot be downgraded into display-only unknowns."""
+    analysis = analysis if isinstance(analysis, dict) else {}
+    coverage = coverage if isinstance(coverage, dict) else {}
+    reasons = []
+    blockers = _agent_plan_text_list(analysis.get("blockers"), limit=6)
+    if blockers:
+        reasons.append("需求仍有阻断项，请补充目标、页面或安全边界后重新规划：" + "；".join(blockers))
+    elif str(analysis.get("readiness_level") or analysis.get("readiness") or "").lower() == "blocked":
+        reasons.append("需求分析标记为阻断，不能自动生成；请查看规划草稿并补充缺少的需求证据")
+    if coverage.get("ok") is False:
+        reasons.append("规划覆盖检查未通过，请查看未覆盖需求并重新规划；本轮不进入 YAML 生成")
+    return reasons
+
+
 def _agent_business_plan_from_mindmap(run, mindmap_result, requirement_candidates):
     result = mindmap_result if isinstance(mindmap_result, dict) else {}
     payload = result.get("cases") if isinstance(result.get("cases"), dict) else {}
@@ -5037,6 +5056,9 @@ def _agent_business_plan_from_mindmap(run, mindmap_result, requirement_candidate
     if failure_reasons:
         return None, failure_reasons
     analysis = payload.get("analysis") if isinstance(payload.get("analysis"), dict) else {}
+    readiness_issues = _agent_plan_readiness_issues(analysis, result.get("coverageAudit"))
+    if readiness_issues:
+        return None, readiness_issues
     review = payload.get("review") if isinstance(payload.get("review"), dict) else {}
     scenarios = [item for item in (payload.get("scenarios") or []) if isinstance(item, dict)]
     cases = [item for item in (payload.get("cases") or []) if isinstance(item, dict)]
@@ -5169,8 +5191,12 @@ def _agent_business_plan_from_mindmap(run, mindmap_result, requirement_candidate
             "requirementPoints": analysis.get("requirement_points") or [],
             "confidence": analysis.get("confidence") or "",
             "readiness": analysis.get("readiness_level") or "",
+            "blockers": _agent_plan_text_list(analysis.get("blockers"), limit=6),
+            "questions": _agent_plan_text_list(analysis.get("questions"), limit=6),
+            "missingInputs": _agent_plan_text_list(analysis.get("missing_inputs"), limit=6),
             "aiSource": "requirement_analyzer.v1",
         },
+        "coverageAudit": copy.deepcopy(result.get("coverageAudit") or {}),
         "visualReference": {
             "figmaPageCount": len(source_context.get("figmaUsedPages") or []),
             "figmaImageCount": int(source_context.get("figmaImageCount") or 0),
@@ -5387,6 +5413,14 @@ def _tool_agent_plan(run):
                     error=str(exc),
                     timeout_seconds=AGENT_PLAN_MINDMAP_TIMEOUT_SECONDS,
                 )
+                previous_analysis = (mindmap_result.get("cases") or {}).get("analysis") or {}
+                previous_blockers = _agent_plan_readiness_issues(previous_analysis, mindmap_result.get("coverageAudit"))
+                if previous_blockers:
+                    # A retry timeout is not evidence that earlier blockers were resolved.
+                    # Keep the rejected draft and its issues visible below.
+                    plan = None
+                    plan_issues = previous_blockers + ["重试规划超时，原有阻断仍未消解，不使用超时降级计划"]
+                    break
                 plan, plan_issues = _agent_plan_timeout_fallback(
                     run,
                     source_context,

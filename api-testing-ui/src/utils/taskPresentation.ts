@@ -11,8 +11,17 @@ const TASK_STATE_LABELS: Record<string, string> = {
   completed: '已完成',
 }
 
-export function taskStateLabel(state: string): string {
+export function taskStateLabel(state: string, runnableCount?: number): string {
+  if (state === 'ready' && runnableCount !== undefined && runnableCount <= 0) return '待采纳基线'
   return TASK_STATE_LABELS[state] || state || '未知'
+}
+
+export function taskRunBlockReason(task: ApiTestTask): string {
+  if (task.state === 'designing') return 'AI 生成中，请等待结果并完成调试后再执行。'
+  if (task.state === 'debugging') return '用例调试中，请等待调试结束后再执行任务。'
+  if (task.state === 'running') return '任务正在执行，请到最近执行查看进度，避免重复提交。'
+  if (task.runnable_baseline_count <= 0) return '当前任务没有可执行基线。点击“编辑范围”，选择或设计用例，调试通过后采纳为基线，再回来执行。'
+  return ''
 }
 
 export function taskLatestResult(task: ApiTestTask): string {

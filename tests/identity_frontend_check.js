@@ -204,6 +204,79 @@ async function run() {
       assert.equal(await page.locator('.api-test-link').isVisible(), true);
       await context.close();
     });
+    await check('readonly assets disable mutations and keep file content read-only', async () => {
+      const { page, context, state } = await fixture(browser, base, {
+        profile: READER, workflow: 'assets',
+        setup(state) {
+          state.hooks.set('GET /api/modules', route => route.fulfill({ json: { '只读模块': ['only.yaml'] } }));
+          state.hooks.set('GET /api/file', route => route.fulfill({ contentType: 'text/plain', body: 'android: {}\ntasks:\n  - name: Audit readonly\n    flow:\n      - aiAssert: Home visible\n' }));
+        },
+      });
+      await page.getByRole('button', { name: '新建 YAML', exact: true }).waitFor();
+      assert.equal(await page.getByRole('button', { name: '新建 YAML', exact: true }).isDisabled(), true);
+      assert.equal(await page.getByRole('button', { name: '上传 YAML', exact: true }).isDisabled(), true);
+      await page.getByRole('button', { name: '选择当前列表', exact: true }).click();
+      for (const name of ['批量移动', '批量删除', '同步当前已选至 Sonic 平台']) {
+        assert.equal(await page.getByRole('button', { name, exact: true }).isDisabled(), true, name);
+      }
+      for (const name of ['执行', '重命名', '移动', '删除']) {
+        assert.equal(await page.locator('.asset-row-actions').getByRole('button', { name, exact: true }).isDisabled(), true, name);
+      }
+      await page.evaluate(() => { showAddTask(); showUpload(); });
+      assert.equal(await page.locator('#modal-task').isVisible(), false);
+      assert.equal(await page.locator('#modal-upload').isVisible(), false);
+      await page.locator('.asset-row-actions').getByRole('button', { name: '打开', exact: true }).click();
+      await page.locator('#editor').waitFor();
+      assert.equal(await page.locator('#editor').evaluate(el => el.readOnly), true);
+      const content = await page.locator('#editor').inputValue();
+      assert.equal(await page.evaluate(() => parseYamlTasks(document.getElementById('editor').value).length), 1);
+      await page.locator('#editor').press('Tab');
+      assert.equal(await page.locator('#editor').inputValue(), content);
+      for (const select of await page.locator('.priority-select').all()) assert.equal(await select.isDisabled(), true);
+      assert.equal(await page.getByRole('button', { name: '执行当前', exact: true }).isDisabled(), true);
+      assert.equal(await page.getByRole('button', { name: '修复当前', exact: true }).isDisabled(), true);
+      await page.evaluate(() => changeTaskPriority(0, 'P0'));
+      assert.equal(await page.locator('#editor').inputValue(), content);
+      await page.evaluate(() => saveFile());
+      assert.equal(state.calls.some(call => call.key === 'POST /api/file'), false);
+      await context.close();
+    });
+    await check('asset search keeps focus while typing and after background refresh', async () => {
+      const { page, context } = await fixture(browser, base, {
+        workflow: 'assets', setup(state) {
+          state.hooks.set('GET /api/modules', route => route.fulfill({ json: { audit: ['Codex-Audit.yaml', 'Other.yaml'] } }));
+        },
+      });
+      await page.locator('#asset-search').click();
+      await page.keyboard.type('Codex', { delay: 20 });
+      assert.equal(await page.locator('#asset-search').inputValue(), 'Codex');
+      await page.evaluate(() => { document.getElementById('asset-search').setSelectionRange(1, 3); showAssetsCenter(); });
+      assert.deepEqual(await page.locator('#asset-search').evaluate(el => [document.activeElement === el, el.selectionStart, el.selectionEnd]), [true, 1, 3]);
+      assert.equal(await page.locator('.asset-row-actions').count(), 1);
+      await context.close();
+    });
+    await check('asset actions follow edit, delete and shared configuration permissions separately', async () => {
+      for (const [permissions, editable, deletable, movable, syncable] of [
+        [['ui.view', 'ui.edit', 'ui.execute'], true, false, false, false],
+        [['ui.view', 'ui.delete'], false, true, false, false],
+        [['ui.view', 'ui.edit', 'ui.delete'], true, true, true, false],
+        [['ui.view', 'ui.baseline'], false, false, false, false],
+        [['ui.view', 'platform.configure'], false, false, false, true],
+      ]) {
+        const { page, context } = await fixture(browser, base, {
+          profile: { ...READER, permissions, scope: ALL_SCOPE }, workflow: 'assets',
+          setup(state) { state.hooks.set('GET /api/modules', route => route.fulfill({ json: { audit: ['only.yaml'] } })); },
+        });
+        await page.getByRole('button', { name: '选择当前列表', exact: true }).click();
+        assert.equal(await page.getByRole('button', { name: '新建 YAML', exact: true }).isDisabled(), !editable);
+        assert.equal(await page.locator('.asset-row-actions').getByRole('button', { name: '删除', exact: true }).isDisabled(), !deletable);
+        assert.equal(await page.getByRole('button', { name: '批量删除', exact: true }).isDisabled(), !deletable);
+        assert.equal(await page.locator('.asset-row-actions').getByRole('button', { name: '移动', exact: true }).isDisabled(), !movable);
+        assert.equal(await page.getByRole('button', { name: '同步当前已选至 Sonic 平台', exact: true }).isDisabled(), !syncable);
+        assert.equal(await page.evaluate(() => requireUiDeletePermission()), deletable);
+        await context.close();
+      }
+    });
     await check('audit renders safe columns and mobile layout fits', async () => {
       const { page, context, state } = await fixture(browser, base, { mobile: true });
       await page.getByRole('tab', { name: '操作记录', exact: true }).click();

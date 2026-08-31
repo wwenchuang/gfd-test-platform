@@ -7982,7 +7982,6 @@ def generate_ui_yaml_from_request(d, job_id=None):
         {},
     )
     if decision_context_text:
-        stage1_text_assets = list(stage1_text_assets) + [decision_context_text]
         if job_id:
             update_generate_job(
                 job_id,
@@ -8020,7 +8019,6 @@ def generate_ui_yaml_from_request(d, job_id=None):
     yaml_baseline_patterns = []
     yaml_reference_text = build_yaml_reference_examples_text(yaml_reference_examples)
     if yaml_reference_text:
-        stage1_text_assets = list(stage1_text_assets) + [yaml_reference_text]
         if job_id:
             names = "、".join((item.get("title") or item.get("file") or "") for item in yaml_reference_examples[:3])
             message = (
@@ -8041,7 +8039,6 @@ def generate_ui_yaml_from_request(d, job_id=None):
     )
     yaml_template_matcher_text = build_yaml_template_matcher_text(yaml_template_candidates)
     if yaml_template_matcher_text:
-        stage1_text_assets = list(stage1_text_assets) + [yaml_template_matcher_text]
         if job_id:
             template_names = "、".join((item.get("title") or item.get("file") or "") for item in yaml_template_candidates[:3])
             update_generate_job(
@@ -8055,7 +8052,6 @@ def generate_ui_yaml_from_request(d, job_id=None):
         yaml_baseline_patterns = extract_yaml_patterns_from_examples(yaml_reference_examples, limit=3)
         yaml_pattern_contract_text = build_yaml_pattern_contract_text(yaml_baseline_patterns, yaml_action_contract)
     if yaml_pattern_contract_text:
-        stage1_text_assets = list(stage1_text_assets) + [yaml_pattern_contract_text]
         if job_id:
             pattern_names = "、".join((item.get("title") or item.get("file") or "") for item in yaml_baseline_patterns[:3])
             update_generate_job(
@@ -8065,7 +8061,10 @@ def generate_ui_yaml_from_request(d, job_id=None):
                 message=f"已抽取 {len(yaml_baseline_patterns)} 个可执行基线模式，限制模型按白名单动作仿写：{pattern_names}",
             )
     smoke_policy_text = build_executable_smoke_yaml_policy_text()
-    stage1_text_assets = list(stage1_text_assets) + [smoke_policy_text]
+    generation_reference_context = "\n\n".join(filter(None, [
+        yaml_reference_text, yaml_template_matcher_text,
+        yaml_pattern_contract_text, decision_context_text, smoke_policy_text,
+    ]))
     skill_pipeline_error = ""
     if prepared_cases_payload:
         payload = normalize_cases_payload(copy.deepcopy(prepared_cases_payload))
@@ -8091,6 +8090,7 @@ def generate_ui_yaml_from_request(d, job_id=None):
                 allow_entry_visibility_fast_path=deterministic_entry_visibility_source,
                 generation_scope_plan=execution_scope_plan,
                 requirement_contract=requirement_contract,
+                yaml_reference_context=generation_reference_context,
             )
         except Exception as e:
             skill_pipeline_error = str(e)
@@ -8102,6 +8102,7 @@ def generate_ui_yaml_from_request(d, job_id=None):
                 stage1_text_assets,
                 [],
                 model_config=model_config,
+                yaml_reference_context=generation_reference_context,
             )
             review = payload.setdefault("review", {})
             review["skill_pipeline_error"] = skill_pipeline_error
@@ -8113,6 +8114,7 @@ def generate_ui_yaml_from_request(d, job_id=None):
             stage1_text_assets,
             [],
             model_config=model_config,
+            yaml_reference_context=generation_reference_context,
         )
         review = payload.setdefault("review", {})
         review["skill_pipeline_disabled"] = True
@@ -9844,6 +9846,7 @@ def _mindmap_generate_structure_payload(
     app_name="",
     require_ai_planning=False,
     requirement_contract=None,
+    yaml_reference_context="",
     job_id=None,
 ):
     def build_with_skills():
@@ -9858,6 +9861,7 @@ def _mindmap_generate_structure_payload(
             allow_entry_visibility_fast_path=not require_ai_planning,
             require_ai_core=require_ai_planning,
             requirement_contract=requirement_contract or {},
+            yaml_reference_context=yaml_reference_context,
         )
 
     try:
@@ -9869,6 +9873,7 @@ def _mindmap_generate_structure_payload(
             stage1_text_assets,
             [],
             model_config=model_config,
+            yaml_reference_context=yaml_reference_context,
         ))
     except Exception as exc:
         if job_id:
@@ -10017,6 +10022,7 @@ def generate_mindmap_from_request(d, job_id=None):
             + "\n- ".join(plan_validation_issues[:8])
         ]
     yaml_reference_examples = []
+    yaml_reference_text = ""
     baseline_rerank_trace = {}
     if use_yaml_baseline_context:
         baseline_query_text = "\n".join([title, module, query_text] + stage1_text_assets)
@@ -10041,8 +10047,6 @@ def generate_mindmap_from_request(d, job_id=None):
             yaml_reference_examples = baseline_candidates[:3]
             baseline_rerank_trace = {"enabled": True, "fallback": True, "error": str(exc)}
         yaml_reference_text = build_yaml_reference_examples_text(yaml_reference_examples)
-        if yaml_reference_text:
-            stage1_text_assets = list(stage1_text_assets) + [yaml_reference_text]
     if job_id:
         update_generate_job(job_id, progress=50, step="生成用例结构", message="正在生成场景、用例、边界和人工待准备事项")
     payload = _mindmap_generate_structure_payload(
@@ -10055,6 +10059,7 @@ def generate_mindmap_from_request(d, job_id=None):
         app_name=d.get("appName") or d.get("app_name") or "",
         require_ai_planning=require_ai_planning,
         requirement_contract=requirement_contract,
+        yaml_reference_context=yaml_reference_text,
         job_id=job_id,
     )
 

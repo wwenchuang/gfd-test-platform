@@ -1053,7 +1053,7 @@ function showEditor(content) {
       </aside>
       <div class="layout-resizer case-nav-resizer" data-resize="caseNav" role="separator" aria-label="调整当前用例列表宽度"></div>
       <div class="line-nums" id="line-nums"></div>
-      <textarea class="editor" id="editor" spellcheck="false" wrap="off" oninput="updateLines();markEditorDirty()">${escHtml(content)}</textarea>
+      <textarea class="editor" id="editor" ${hasPermission('ui.edit') ? '' : 'readonly title="当前账号只能查看用例，修改需要用例编辑权限"'} spellcheck="false" wrap="off" oninput="updateLines();markEditorDirty()">${escHtml(content)}</textarea>
     </div>
   `;
   updateLines();
@@ -1211,6 +1211,7 @@ function taskBusinessLabel(business, taskName = '') {
 }
 
 async function changeTaskBusiness(taskName, business) {
+  if (!requireUiEditPermission()) return;
   if (!currentModule || !currentFile || !taskName) return;
   if (!taskCaseBusinessEditable(taskName)) {
     showToast('当前应用不可编辑，仅保留历史业务展示', 'error');
@@ -1352,6 +1353,7 @@ function setTaskPriorityInLines(lines, task, nextTask, priority) {
 }
 
 function changeTaskPriority(index, priority) {
+  if (!requireUiEditPermission()) return;
   const ta = document.getElementById('editor');
   if (!ta) return;
   const allowed = ['P0', 'P1', 'P2', 'P3'];
@@ -1370,6 +1372,7 @@ function changeTaskPriority(index, priority) {
 }
 
 function changeAllTaskPriorities(priority) {
+  if (!requireUiEditPermission()) return;
   const ta = document.getElementById('editor');
   if (!ta || !priority) return;
   const allowed = ['P0', 'P1', 'P2', 'P3'];
@@ -1393,7 +1396,7 @@ function changeAllTaskPriorities(priority) {
 }
 
 function handleTab(e) {
-  if (e.key === 'Tab') {
+  if (e.key === 'Tab' && !e.target.readOnly) {
     e.preventDefault();
     const ta = e.target;
     const s = ta.selectionStart;
@@ -1403,6 +1406,7 @@ function handleTab(e) {
 }
 
 async function saveFile(options = {}) {
+  if (!requireUiEditPermission()) return false;
   if (pendingBatchBusy) {
     showToast('正在处理修复草稿，请等待处理完成后再保存', 'warning');
     return false;
@@ -1471,6 +1475,8 @@ async function updateCurrentFileStatus() {
 }
 
 function showFileOp(op) {
+  if (!requireUiEditPermission()) return;
+  if (['move', 'rename'].includes(op) && !requireUiDeletePermission()) return;
   if (!currentModule || !currentFile) {
     showToast('请先选择一个 YAML 文件', 'error');
     return;

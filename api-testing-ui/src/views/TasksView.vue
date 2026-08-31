@@ -13,7 +13,7 @@ import { useTasksStore } from '../stores/tasks'
 import { compareGroupNames, endpointGroupName } from '../utils/endpointGroups'
 import { confirmApiExecution } from '../utils/executionConfirmation'
 import { applicationBusinessLabel } from '../utils/testApplications'
-import { compactDateTime, taskLatestResult, taskStateLabel } from '../utils/taskPresentation'
+import { compactDateTime, taskLatestResult, taskStateLabel, taskRunBlockReason } from '../utils/taskPresentation'
 
 const context = useContextStore()
 const assets = useAssetsStore()
@@ -26,6 +26,7 @@ const taskNameDraft = ref('')
 const mobileDetailOpen = ref(false)
 
 const activeTask = computed(() => tasks.task)
+const runBlockReason = computed(() => activeTask.value ? taskRunBlockReason(activeTask.value) : '')
 const taskEnvironmentNames = computed(() => Object.fromEntries(
   context.environmentRevisions.map(item => [item.id, `${item.name} · v${item.revision}`]),
 ))
@@ -133,6 +134,10 @@ async function runTask(taskId?: string): Promise<void> {
   if (taskId) await selectTask(taskId)
   if (!tasks.task) {
     localError.value = '请先选择任务'
+    return
+  }
+  if (tasks.running || runBlockReason.value) {
+    localError.value = runBlockReason.value || '正在创建执行，请勿重复提交'
     return
   }
   const environmentRevisionId = context.environmentRevisionId || tasks.task.environment_revision_id
@@ -266,7 +271,7 @@ function ensureTaskContextOptions(task: ApiTestTask, environmentRevisionId: stri
               <p>当前选中任务</p>
               <h2 data-testid="selected-task-title">{{ activeTask.name }}</h2>
             </div>
-            <span data-testid="selected-task-state" :class="`task-state-pill task-state-${activeTask.state}`">{{ taskStateLabel(activeTask.state) }}</span>
+            <span data-testid="selected-task-state" :class="`task-state-pill task-state-${activeTask.state}`">{{ taskStateLabel(activeTask.state, activeTask.runnable_baseline_count) }}</span>
           </header>
           <div class="management-detail-body">
             <div class="task-detail-form">
@@ -276,7 +281,7 @@ function ensureTaskContextOptions(task: ApiTestTask, environmentRevisionId: stri
               <div class="detail-action-row">
                 <button class="secondary-command" type="button" :disabled="tasks.saving" @click="renameTask"><Save :size="15" />保存名称</button>
                 <button class="secondary-command" type="button" @click="editTaskInWorkbench"><Edit3 :size="15" />编辑范围</button>
-                <button data-testid="task-detail-run" class="primary-command" type="button" :disabled="tasks.running || activeTask.runnable_baseline_count <= 0" @click="runTask()">
+                <button data-testid="task-detail-run" class="primary-command" type="button" :disabled="tasks.running || Boolean(runBlockReason)" :title="runBlockReason" @click="runTask()">
                   <Play :size="15" />执行任务
                 </button>
                 <button v-if="activeTask.latest_execution_id" data-testid="task-latest-execution" class="secondary-command" type="button" @click="openLatestExecution">
@@ -286,6 +291,7 @@ function ensureTaskContextOptions(task: ApiTestTask, environmentRevisionId: stri
                   <Trash2 :size="15" />删除
                 </button>
               </div>
+              <p v-if="runBlockReason" data-testid="task-run-block-reason" class="section-empty" role="status">{{ runBlockReason }}</p>
             </div>
             <section class="management-summary-grid" aria-label="任务概要">
               <div><span>接口版本</span><strong>{{ sourceLabel }}</strong></div>

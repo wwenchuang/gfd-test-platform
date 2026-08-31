@@ -128,6 +128,20 @@ describe('TasksView', () => {
 
     await wrapper.get('[data-testid="management-back-to-list"]').trigger('click')
     expect(wrapper.get('[data-testid="task-management-shell"]').classes()).not.toContain('mobile-detail-open')
+
+    tasks.task = { ...TASK, runnable_baseline_count: 0 }
+    tasks.tasks = [tasks.task]
+    await flushPromises()
+    expect(wrapper.get('[data-testid="selected-task-state"]').text()).toBe('待采纳基线')
+    expect(wrapper.get('[data-testid="task-list-item-task-1"]').text()).toContain('待采纳基线')
+    expect(wrapper.get('[data-testid="task-detail-run"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.get('[data-testid="task-run-block-reason"]').text()).toContain('调试通过后采纳为基线')
+    expect(wrapper.find('[data-testid="task-latest-execution"]').exists()).toBe(true)
+
+    tasks.task = { ...TASK, state: 'designing' }
+    await flushPromises()
+    expect(wrapper.get('[data-testid="task-detail-run"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.get('[data-testid="task-run-block-reason"]').text()).toContain('AI 生成')
   })
 
   it('runs and deletes tasks from the independent management page', async () => {

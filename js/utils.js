@@ -535,8 +535,9 @@ async function addModule() {
 }
 
 // ===== ADD YAML CASE =====
-function showAddTask() { document.getElementById('modal-task').classList.add('show'); }
+function showAddTask() { if (requireUiEditPermission()) document.getElementById('modal-task').classList.add('show'); }
 async function addTask() {
+  if (!requireUiEditPermission()) return;
   const mod = document.getElementById('new-task-module').value;
   const name = document.getElementById('new-task-name').value.trim();
   if (!mod || !name) { showToast('请填写完整信息', 'error'); return; }
@@ -561,7 +562,7 @@ async function addTask() {
 }
 
 // ===== UPLOAD =====
-function showUpload() { document.getElementById('modal-upload').classList.add('show'); }
+function showUpload() { if (requireUiEditPermission()) document.getElementById('modal-upload').classList.add('show'); }
 function handleFileSelect(input) {
   const file = input.files[0];
   if (!file) return;
@@ -572,6 +573,7 @@ function handleFileSelect(input) {
   reader.readAsText(file);
 }
 async function uploadFile() {
+  if (!requireUiEditPermission()) return;
   const mod = document.getElementById('upload-module').value;
   if (!mod || !uploadFileName) { showToast('请选择模块和文件', 'error'); return; }
   try {

@@ -3577,10 +3577,13 @@ def build_cases_payload_from_skills(
     generation_scope_plan=None,
     require_ai_core=False,
     requirement_contract=None,
+    yaml_reference_context="",
 ):
     """通过 AI skills pipeline 生成用例 payload。"""
     mode = str(mode or "full").strip().lower()
-    yaml_reference_context = extract_yaml_reference_context(text_assets)
+    # Historical execution examples are style evidence, never current requirements.
+    # Keep caller-supplied requirement YAML intact instead of guessing by content.
+    yaml_reference_context = str(yaml_reference_context or "")[:14000]
     skill_model_traces = {}
     if allow_entry_visibility_fast_path and _should_fast_path_baidu_entry_visibility(title, module, text_assets):
         analysis = _fallback_requirement_analysis(
@@ -10423,9 +10426,12 @@ def build_case_generation_prompt(title, module, text_assets):
 """
 
 
-def call_dashscope_cases_legacy(title, module, text_assets, image_assets, model_config=None):
+def call_dashscope_cases_legacy(title, module, text_assets, image_assets, model_config=None, yaml_reference_context=""):
     """Legacy 模式：直接调用 DashScope 生成用例。"""
     prompt = build_case_generation_prompt(title, module, text_assets)
+    if yaml_reference_context:
+        prompt += ("\n\n历史写法参考（不是当前需求，不得从中增加业务目标、页面或断言）：\n"
+                   + str(yaml_reference_context)[:14000])
     model_runtime_trace = {}
     explicit_model = isinstance(model_config, dict) and any(
         model_config.get(key)
@@ -10484,19 +10490,20 @@ def call_dashscope_cases_legacy(title, module, text_assets, image_assets, model_
     return payload
 
 
-def call_dashscope_cases(title, module, text_assets, image_assets, model_config=None):
+def call_dashscope_cases(title, module, text_assets, image_assets, model_config=None, yaml_reference_context=""):
     """生成用例：优先 skill pipeline，有截图时走 legacy。"""
+    reference_kwargs = {"yaml_reference_context": yaml_reference_context} if yaml_reference_context else {}
     if image_assets:
-        return call_dashscope_cases_legacy(title, module, text_assets, image_assets, model_config=model_config)
+        return call_dashscope_cases_legacy(title, module, text_assets, image_assets, model_config=model_config, **reference_kwargs)
     try:
-        return build_cases_payload_from_skills(title, module, text_assets, model_config=model_config)
+        return build_cases_payload_from_skills(title, module, text_assets, model_config=model_config, **reference_kwargs)
     except Exception as exc:
         if isinstance(model_config, dict) and any(
             model_config.get(key)
             for key in ("providerId", "provider", "model", "modelName")
         ):
             raise
-        payload = call_dashscope_cases_legacy(title, module, text_assets, image_assets)
+        payload = call_dashscope_cases_legacy(title, module, text_assets, image_assets, **reference_kwargs)
         review = payload.setdefault("review", {})
         review["skill_pipeline"] = "fallback_legacy_prompt"
         review["skill_pipeline_error"] = str(exc)

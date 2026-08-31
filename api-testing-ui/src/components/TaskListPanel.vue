@@ -85,7 +85,7 @@ function environmentName(task: ApiTestTask): string {
           <small>{{ taskLatestResult(task) }}</small>
           <small>更新 {{ compactDateTime(task.updated_at) }}</small>
         </span>
-        <em :class="`task-state-${task.state}`">{{ taskStateLabel(task.state) }}</em>
+        <em :class="`task-state-${task.state}`">{{ taskStateLabel(task.state, task.runnable_baseline_count) }}</em>
         <span class="task-list-actions" @click.stop>
           <button :data-testid="`task-list-edit-${task.id}`" class="mini-icon" type="button" title="编辑任务" @click="emit('select', task.id)">
             <Pencil :size="14" />
