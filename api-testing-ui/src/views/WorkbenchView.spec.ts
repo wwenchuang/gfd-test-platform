@@ -263,7 +263,7 @@ describe('WorkbenchView debug workflow', () => {
     expect(wrapper.get('[data-testid="endpoint-tree-tab"]').text()).toBe('selected')
   })
 
-  it('keeps the newly activated source when the latest task belongs to an older source', async () => {
+  it.each(['/', '/?projectId=project-1&sourceRevisionId=source-new&environmentRevisionId=environment-new'])('keeps the newly activated source and separates old tasks on %s', async (path) => {
     const context = useContextStore()
     Object.assign(context, {
       projectId: 'project-1', sourceRevisionId: 'source-new', environmentRevisionId: 'environment-new',
@@ -294,7 +294,7 @@ describe('WorkbenchView debug workflow', () => {
     vi.spyOn(tasks, 'restore').mockResolvedValue(oldTask)
 
     const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/', name: 'workbench', component: WorkbenchView }] })
-    await router.push('/')
+    await router.push(path)
     await router.isReady()
     const wrapper = mount(WorkbenchView, {
       global: {
@@ -831,7 +831,9 @@ describe('WorkbenchView debug workflow', () => {
 
     expect(saveSelection).not.toHaveBeenCalled()
     expect(run).not.toHaveBeenCalled()
-    expect(confirm).toHaveBeenCalledWith(expect.stringMatching(/生产环境.*3D 家用基线回归.*真实发送/))
+    expect(confirm).not.toHaveBeenCalled()
+    expect(wrapper.get('[data-testid="run-task"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.get('[data-testid="task-next-step"]').text()).toContain('先保存当前任务范围')
 
     await wrapper.get('[data-testid="restore-selection"]').trigger('click')
     await flushPromises()
@@ -840,6 +842,7 @@ describe('WorkbenchView debug workflow', () => {
     await flushPromises()
 
     expect(run).toHaveBeenCalledWith('environment-current')
+    expect(confirm).toHaveBeenCalledWith(expect.stringMatching(/生产环境.*3D 家用基线回归.*真实发送/))
     expect(router.currentRoute.value.name).toBe('runs')
     expect(router.currentRoute.value.query.executionId).toBe('execution-1')
   })

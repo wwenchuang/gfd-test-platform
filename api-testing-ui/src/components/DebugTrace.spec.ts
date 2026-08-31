@@ -15,6 +15,7 @@ const TRACE: DebugTraceStep[] = [
 describe('DebugTrace', () => {
   it('shows setup main and cleanup status before raw evidence', async () => {
     const wrapper = mount(DebugTrace, { props: { trace: TRACE } })
+    expect(wrapper.findAll('.trace-content header b').map(item => item.text())).toEqual(['通过', '通过', '未通过'])
     expect(wrapper.text()).toContain('前置步骤')
     expect(wrapper.text()).toContain('主体请求')
     expect(wrapper.text()).toContain('清理步骤')

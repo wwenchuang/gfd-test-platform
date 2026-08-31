@@ -85,7 +85,7 @@ describe('AssetsView Apifox actions', () => {
       ]
     })
 
-    const newProjectButton = wrapper.findAll('button').find(button => button.text() === '新建平台项目')
+    const newProjectButton = wrapper.findAll('button').find(button => button.attributes('aria-label') === '打开项目创建面板')
     expect(newProjectButton).toBeDefined()
     await newProjectButton!.trigger('click')
     await wrapper.get('input[placeholder="例如：3D 家用业务"]').setValue('3D 我的收藏')
@@ -233,10 +233,10 @@ describe('AssetsView Apifox actions', () => {
     expect(wrapper.text()).toContain('打印后台')
     expect(wrapper.text()).toContain('v2 · 999 个接口')
     expect(wrapper.text()).toContain('2 个环境')
-    expect(wrapper.text()).toContain('检查接口更新')
+    expect(wrapper.text()).toContain('同步接口更新')
     expect(wrapper.text()).toContain('进入用例管理')
     expect(wrapper.text()).toContain('编辑项目')
-    expect(wrapper.text()).toContain('删除项目')
+    expect(wrapper.text()).toContain('归档项目')
     expect(wrapper.text()).toContain('进入工作台')
     expect(links).toContainEqual({
       path: '/',
@@ -246,6 +246,9 @@ describe('AssetsView Apifox actions', () => {
         environmentRevisionId: 'env-2',
       },
     })
+    expect(wrapper.get('[data-testid="apifox-sync-panel"]').attributes('open')).toBeUndefined()
+    await wrapper.get('[data-testid="open-apifox-sync"]').trigger('click')
+    expect(wrapper.get('[data-testid="apifox-sync-panel"]').attributes('open')).toBeDefined()
   })
 
   it('allows leaving project editing without saving changes', async () => {
@@ -257,6 +260,104 @@ describe('AssetsView Apifox actions', () => {
     await wrapper.get('[data-testid="project-edit-cancel"]').trigger('click')
 
     expect(wrapper.text()).not.toContain('只修改平台侧名称和备注')
+  })
+
+  it('requires a choice among multiple Apifox projects and clears stale environments on project change', async () => {
+    const wrapper = mount(AssetsView, { global: { stubs: { RouterLink: true } } })
+    await flushPromises()
+    const setup = useSetupStore()
+    vi.spyOn(setup, 'discoverApifoxProjects').mockImplementation(async () => {
+      setup.apifoxProjects = [
+        { id: 'fox-a', name: '家用', description: '', team_name: '' },
+        { id: 'fox-b', name: '后台', description: '', team_name: '' },
+      ]
+      return setup.apifoxProjects
+    })
+    await buttonByText(wrapper, '读取项目').trigger('click')
+    await flushPromises()
+    expect((wrapper.get('[data-testid="apifox-project"]').element as HTMLSelectElement).value).toBe('')
+    await wrapper.get('[data-testid="apifox-project"]').setValue('fox-a')
+    setup.apifoxContext = { project: setup.apifoxProjects[0], branches: [], environments: [{ id: 'env-a', name: '开发', services: [], variables: [] }], cli_version: '' }
+    await nextTick()
+    await wrapper.get('[data-testid="apifox-environment"]').setValue('env-a')
+    await wrapper.get('[data-testid="apifox-project"]').setValue('fox-b')
+    expect(setup.apifoxContext).toBeNull()
+    expect(buttonByText(wrapper, '检查更新').attributes('disabled')).toBeDefined()
+  })
+
+  it('keeps the saved environment by unique name and never silently chooses the first environment', async () => {
+    const wrapper = mount(AssetsView, { global: { stubs: { RouterLink: true } } })
+    await flushPromises()
+    const setup = useSetupStore()
+    const context = useContextStore()
+    context.environmentRevisions = [{ id: 'saved-env', environment_id: 'env', project_id: 'project-1', name: '生产', revision: 4 }]
+    await nextTick()
+    await wrapper.get('[data-testid="saved-environment"]').setValue('saved-env')
+    setup.apifoxProjects = [{ id: 'fox-a', name: '家用', description: '', team_name: '' }]
+    await nextTick()
+    await wrapper.get('[data-testid="apifox-project"]').setValue('fox-a')
+    const result = { project: setup.apifoxProjects[0], branches: [{ id: 'main', name: '主分支', is_default: true }], environments: [
+      { id: 'dev', name: '开发', services: [], variables: [] },
+      { id: 'prod', name: '生产', services: [], variables: [] },
+    ], cli_version: '' }
+    vi.spyOn(setup, 'discoverApifoxContext').mockImplementation(async () => { setup.apifoxContext = result; return result })
+    await buttonByText(wrapper, '读取环境').trigger('click')
+    await flushPromises()
+    expect((wrapper.get('[data-testid="apifox-environment"]').element as HTMLSelectElement).value).toBe('prod')
+    result.environments = [{ id: 'dev', name: '开发', services: [], variables: [] }, { id: 'staging', name: '预发', services: [], variables: [] }]
+    await buttonByText(wrapper, '读取环境').trigger('click')
+    await flushPromises()
+    expect((wrapper.get('[data-testid="apifox-environment"]').element as HTMLSelectElement).value).toBe('')
+  })
+
+  it('shows searchable change details instead of only counts before activation', async () => {
+    const wrapper = mount(AssetsView, { global: { stubs: { RouterLink: true } } })
+    await flushPromises()
+    useSetupStore().preview = {
+      id: 'preview-a', project_id: 'project-1', source_id: 'source-1', previous_revision_id: null,
+      candidate_revision_id: 'candidate-a', added_count: 1, changed_count: 1, removed_count: 0,
+      changes: [
+        { change_type: 'added', method: 'GET', path: '/new-interface', changed_fields: [] },
+        { change_type: 'changed', method: 'POST', path: '/old-interface', changed_fields: ['responses'] },
+      ],
+    }
+    await nextTick()
+    expect(wrapper.get('[data-testid="source-changes"]').text()).toContain('/new-interface')
+    expect(wrapper.get('[data-testid="source-changes"]').text()).toContain('响应定义')
+    await wrapper.get('[data-testid="source-change-search"]').setValue('new-interface')
+    expect(wrapper.get('[data-testid="source-changes"]').text()).not.toContain('/old-interface')
+  })
+
+  it('keeps saved changes with direct links to the new endpoint after activation', async () => {
+    const wrapper = mount(AssetsView, { global: { stubs: { RouterLink: { props: ['to'], template: '<a :href="JSON.stringify(to)"><slot /></a>' } } } })
+    await flushPromises()
+    const setup = useSetupStore()
+    const context = useContextStore()
+    const preview = { id: 'preview-a', project_id: 'project-1', source_id: 'source-a', previous_revision_id: null,
+      candidate_revision_id: 'source-v2', added_count: 1, changed_count: 0, removed_count: 0,
+      changes: [{ change_type: 'added', method: 'GET', path: '/new-endpoint', changed_fields: [] }] }
+    setup.preview = preview
+    setup.apifoxPreview = { source_preview: preview, environment_candidate: { name: '测试环境', secret_placeholders: [] } }
+    vi.spyOn(setup, 'activateApifoxPreview').mockImplementation(async () => {
+      setup.activeRevision = { id: 'source-v2', endpoints: [{ id: 'new-endpoint-id', method: 'GET', path: '/new-endpoint' }] } as never
+      setup.preview = null
+      setup.apifoxPreview = null
+      return { workspace: { project_id: 'project-1', source_revision_id: 'source-v2', environment_revision_id: 'env-v2' },
+        source_revision: setup.activeRevision, environment: { revision_id: 'env-v2' } } as never
+    })
+    vi.spyOn(context, 'loadOptions').mockImplementation(async () => {
+      context.sourceRevisions = [{ id: 'source-v2', source_id: 'source-a', project_id: 'project-1', name: '默认模块', revision_number: 2, endpoint_count: 2 }]
+      context.environmentRevisions = [{ id: 'env-v2', environment_id: 'env-a', project_id: 'project-1', name: '测试环境', revision: 2 }]
+    })
+    await nextTick()
+    await buttonByText(wrapper, '保存并切换到新版本').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('[data-testid="source-preview"]').text()).toContain('本次更新已保存')
+    const link = wrapper.get('.source-change-link')
+    expect(JSON.parse(link.attributes('href')!)).toEqual({ path: '/', query: {
+      projectId: 'project-1', sourceRevisionId: 'source-v2', environmentRevisionId: 'env-v2', endpointId: 'new-endpoint-id',
+    } })
+    expect(buttonText(wrapper)).not.toContain('保存并切换到新版本')
   })
 })
 

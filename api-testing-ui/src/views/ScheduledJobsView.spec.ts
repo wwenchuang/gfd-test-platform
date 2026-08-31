@@ -561,6 +561,195 @@ describe('ScheduledJobsView', () => {
     expect(row.find('img').exists()).toBe(false)
     expect(row.text()).not.toContain('下次执行')
   })
+
+  it('preserves the saved source and fixed environment when editing from another workbench scope', async () => {
+    const original = scheduledJobFixture({ source_revision_id: 'old-source', environment_revision_id: 'old-env', environment_id: 'old-environment' })
+    const wrapper = await mountScheduledState(() => original)
+    const put = vi.spyOn(apiClient, 'put').mockResolvedValue({ data: { scheduled_job: original } })
+    await wrapper.get('[data-testid="scheduled-edit-job-1"]').trigger('click')
+    await flushPromises()
+    await wrapper.get('[data-testid="scheduled-name"]').setValue('只修改名称')
+    await wrapper.get('[data-testid="scheduled-save"]').trigger('click')
+    await flushPromises()
+    expect(put).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({
+      name: '只修改名称', source_revision_id: 'old-source', environment_revision_id: 'old-env',
+    }))
+  })
+
+  it('keeps saved target IDs after changing the editor target type during edit', async () => {
+    const original = scheduledJobFixture({ target_type: 'baselines', target_ids: ['baseline-1'] })
+    const wrapper = await mountScheduledState(() => original)
+    const put = vi.spyOn(apiClient, 'put').mockResolvedValue({ data: { scheduled_job: original } })
+    await wrapper.get('[data-testid="scheduled-edit-job-1"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('已选 1 项')
+    await wrapper.get('[data-testid="scheduled-save"]').trigger('click')
+    await flushPromises()
+    expect(put).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ target_ids: ['baseline-1'] }))
+  })
+
+  it('shows target loading and read failures instead of claiming targets were deleted', async () => {
+    mockScheduledJobAssets()
+    const realGet = apiClient.get
+    let fail!: (error: Error) => void
+    vi.spyOn(apiClient, 'get').mockImplementation(url => String(url).startsWith('/api/api-testing/v1/baselines')
+      ? new Promise((_resolve, reject) => { fail = reject })
+      : String(url).startsWith('/api/api-testing/v1/scheduled-jobs')
+        ? Promise.resolve({ data: { scheduled_jobs: [scheduledJobFixture({})] } })
+        : realGet(url))
+    const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/', component: ScheduledJobsView }] })
+    const wrapper = mount(ScheduledJobsView, { global: { plugins: [router] } })
+    await flushPromises()
+    expect(wrapper.text()).toContain('正在读取目标')
+    expect(wrapper.text()).not.toContain('目标已删除')
+    expect(wrapper.get('[data-testid="scheduled-refresh"]').attributes('disabled')).toBeDefined()
+    fail(new Error('基线读取超时，请重试'))
+    await flushPromises()
+    expect(wrapper.text()).toContain('基线读取超时，请重试')
+    expect(wrapper.text()).not.toContain('目标已删除')
+    expect(wrapper.get('[data-testid="scheduled-run-job-1"]').attributes('disabled')).toBeDefined()
+    wrapper.unmount()
+  })
+
+  it('surfaces delete failure in the page and keeps the row for retry', async () => {
+    const wrapper = await mountScheduledState(() => scheduledJobFixture({}))
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    vi.spyOn(apiClient, 'delete').mockRejectedValue(new Error('没有删除权限，请联系管理员'))
+    const unhandled = vi.fn()
+    wrapper.vm.$.appContext.config.errorHandler = unhandled
+    await wrapper.get('[data-testid="scheduled-delete-job-1"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.findAll('[role="alert"]').some(item => item.text().includes('没有删除权限'))).toBe(true)
+    expect(wrapper.find('[data-testid="scheduled-row-job-1"]').exists()).toBe(true)
+    expect(unhandled).not.toHaveBeenCalled()
+  })
+
+  it('rejects a blank name locally and keeps submit failures next to the form without losing edits', async () => {
+    const wrapper = await mountScheduledState(() => scheduledJobFixture({}))
+    const post = vi.spyOn(apiClient, 'post').mockRejectedValue(new Error('保存失败，请刷新列表核对后重试'))
+    const unhandled = vi.fn()
+    wrapper.vm.$.appContext.config.errorHandler = unhandled
+    await wrapper.get('[data-testid="scheduled-target-option"]').trigger('click')
+    await wrapper.get('[data-testid="scheduled-save"]').trigger('click')
+    await flushPromises()
+    expect(post).not.toHaveBeenCalled()
+    expect(wrapper.get('[data-testid="scheduled-editor-feedback"]').text()).toContain('请输入任务名称')
+    await wrapper.get('[data-testid="scheduled-name"]').setValue('保留未保存修改')
+    await wrapper.get('[data-testid="scheduled-save"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('[data-testid="scheduled-editor-feedback"]').text()).toContain('保存失败')
+    expect((wrapper.get('[data-testid="scheduled-name"]').element as HTMLInputElement).value).toBe('保留未保存修改')
+    expect(unhandled).not.toHaveBeenCalled()
+  })
+
+  it('announces refresh completion and focuses the editor after edit', async () => {
+    const wrapper = await mountScheduledState(() => scheduledJobFixture({}))
+    const focus = vi.spyOn(wrapper.get('[data-testid="scheduled-name"]').element as HTMLInputElement, 'focus')
+    await wrapper.get('[data-testid="scheduled-edit-job-1"]').trigger('click')
+    await flushPromises()
+    expect(focus).toHaveBeenCalled()
+    await wrapper.get('[data-testid="scheduled-refresh"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.findAll('[role="status"]').some(item => item.text().includes('已刷新'))).toBe(true)
+  })
+
+
+  it('does not classify an old-source case as deleted from the current-source cache', async () => {
+    const wrapper = await mountScheduledState(() => scheduledJobFixture({ source_revision_id: 'old-source', target_type: 'cases', target_ids: ['old-case'] }))
+    expect(wrapper.text()).not.toContain('目标已删除')
+    expect(wrapper.get('[data-testid="scheduled-row-job-1"]').text()).toContain('原接口版本')
+    expect(wrapper.get('[data-testid="scheduled-run-job-1"]').attributes('disabled')).toBeUndefined()
+  })
+
+  it('serializes row switches so a pending disable cannot be undone by a notification update', async () => {
+    const original = scheduledJobFixture({ notify_feishu: false })
+    const wrapper = await mountScheduledState(() => original)
+    let complete!: (value: any) => void
+    const put = vi.spyOn(apiClient, 'put').mockReturnValue(new Promise(resolve => { complete = resolve }))
+    await wrapper.get('[data-testid="scheduled-list-enabled-job-1"]').trigger('click')
+    await wrapper.get('[data-testid="scheduled-list-notify-job-1"]').trigger('click')
+    expect(put).toHaveBeenCalledTimes(1)
+    expect(wrapper.get('[data-testid="scheduled-delete-job-1"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.text()).toContain('正在保存')
+    complete({ data: { scheduled_job: { ...original, enabled: false } } })
+    await flushPromises()
+    expect(wrapper.get('[data-testid="scheduled-list-enabled-job-1"]').attributes('aria-checked')).toBe('false')
+    expect(wrapper.text()).toContain('已停用')
+  })
+
+  it('preserves a non-default daily time when only the name is edited', async () => {
+    const original = scheduledJobFixture({ schedule_type: 'daily', cron_expression: '0 8 * * *' })
+    const wrapper = await mountScheduledState(() => original)
+    const put = vi.spyOn(apiClient, 'put').mockResolvedValue({ data: { scheduled_job: original } })
+    await wrapper.get('[data-testid="scheduled-edit-job-1"]').trigger('click')
+    await flushPromises()
+    await wrapper.get('[data-testid="scheduled-save"]').trigger('click')
+    await flushPromises()
+    expect(put).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ cron_expression: '0 8 * * *' }))
+  })
+
+
+  it('omits the absent fixed revision when toggling a latest-environment job', async () => {
+    const original = scheduledJobFixture({ environment_strategy: 'latest_environment', environment_revision_id: null, enabled: false })
+    const wrapper = await mountScheduledState(() => original)
+    const put = vi.spyOn(apiClient, 'put').mockResolvedValue({ data: { scheduled_job: { ...original, enabled: true } } })
+    await wrapper.get('[data-testid="scheduled-list-enabled-job-1"]').trigger('click')
+    await flushPromises()
+    const wirePayload = JSON.parse(JSON.stringify(put.mock.calls[0][1]))
+    expect(wirePayload).not.toHaveProperty('environment_revision_id')
+    expect(wirePayload).toMatchObject({ environment_strategy: 'latest_environment', environment_id: 'env-1', enabled: true })
+  })
+
+
+  it('keeps a pinned earlier case version executable even within the current source', async () => {
+    const wrapper = await mountScheduledState(() => scheduledJobFixture({ target_type: 'cases', target_ids: ['earlier-case-version'] }))
+    expect(wrapper.text()).not.toContain('目标已删除')
+    expect(wrapper.get('[data-testid="scheduled-run-job-1"]').attributes('disabled')).toBeUndefined()
+    expect(wrapper.get('[data-testid="scheduled-row-job-1"]').text()).toContain('固定用例版本')
+  })
+
+  it('does not announce successful refresh when the context store swallowed a read error', async () => {
+    const wrapper = await mountScheduledState(() => scheduledJobFixture({}))
+    const context = useContextStore()
+    vi.spyOn(context, 'loadOptions').mockImplementation(async () => { context.error = '项目与环境读取超时' })
+    await wrapper.get('[data-testid="scheduled-name"]').setValue('保留正在编辑的名称')
+    await wrapper.get('[data-testid="scheduled-refresh"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.findAll('[role="alert"]').some(item => item.text().includes('项目与环境读取超时'))).toBe(true)
+    expect(wrapper.text()).not.toContain('已刷新')
+    expect((wrapper.get('[data-testid="scheduled-name"]').element as HTMLInputElement).value).toBe('保留正在编辑的名称')
+  })
+
+  it('preserves the saved project even if the workspace project changes during an edit', async () => {
+    const original = scheduledJobFixture({})
+    const wrapper = await mountScheduledState(() => original)
+    const put = vi.spyOn(apiClient, 'put').mockResolvedValue({ data: { scheduled_job: original } })
+    await wrapper.get('[data-testid="scheduled-edit-job-1"]').trigger('click')
+    await flushPromises()
+    useContextStore().projectId = 'other-project'
+    await wrapper.get('[data-testid="scheduled-save"]').trigger('click')
+    await flushPromises()
+    expect(put).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ project_id: 'project-1' }))
+  })
+
+
+  it('does not offer a ready task with zero executable baselines as a runnable target', async () => {
+    mockScheduledJobAssets()
+    const get = apiClient.get
+    vi.spyOn(apiClient, 'get').mockImplementation(url => String(url).startsWith('/api/api-testing/v1/tasks')
+      ? Promise.resolve({ data: { tasks: [{ id: 'task-empty', name: '无基线的任务', selected_endpoint_ids: [], state: 'ready', runnable_baseline_count: 0 }] } })
+      : get(url))
+    const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/', component: ScheduledJobsView }] })
+    const wrapper = mount(ScheduledJobsView, { global: { plugins: [router] } })
+    await flushPromises()
+    await wrapper.get('[data-testid="scheduled-target-type"]').setValue('task')
+    const option = wrapper.get('[data-testid="scheduled-target-option"]')
+    expect(option.attributes('disabled')).toBeDefined()
+    expect(option.text()).toContain('待采纳基线')
+    expect(option.text()).toContain('0 条可执行基线')
+    expect(option.text()).not.toContain('ready')
+  })
+
 })
 
 async function mountScheduledState(job: () => ReturnType<typeof scheduledJobFixture>) {

@@ -343,7 +343,13 @@ function repairRiskText(level) {
 }
 
 function promptRepairUnavailable(reason) {
-  showToast(reason || '当前条件还不能执行这个操作，请先完成前一步。', 'warn');
+  const message = reason || '当前条件还不能执行这个操作，请先完成前一步。';
+  const feedback = document.getElementById('repair-action-feedback');
+  if (feedback) {
+    feedback.textContent = message;
+    feedback.hidden = false;
+  }
+  showToast(message, 'warn');
 }
 
 async function copyRepairDraftYaml() {
@@ -675,6 +681,7 @@ function repairYamlDraftHtml(normalized) {
           <button class="btn-sm danger" onclick="${draftId ? `rejectRepairDraft(${jsArg(draftId)})` : `promptRepairUnavailable(${jsArg('暂无可拒绝的修复草稿')})`}">拒绝草稿</button>
         </div>
       </div>
+      <p id="repair-action-feedback" class="generate-hint" role="status" hidden></p>
       ${!canRepair ? `<div class="agent-risk show">当前归因为${escapeHtml(repairFailureTypeText(normalized.failureType))}，不建议自动改 YAML。请人工复核，或生成飞书缺陷草稿。</div>` : ''}
       ${riskHits.length ? `<div class="agent-risk show">该任务包含高风险动作：${escapeHtml(riskHits.join('、'))}。禁止自动执行，请人工确认后继续。</div>` : ''}
       <div class="agent-tabs">

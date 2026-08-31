@@ -199,7 +199,7 @@ const WORKFLOW_SECTIONS = {
     help: '默认全部使用千问；页面只配置能力到模型的路由，需要时可手动切换单项能力。',
     cards: [
       { title: '推荐策略：默认千问版', text: '用例、YAML、失败分析、修复、Agent 判断和缺陷草稿默认使用千问；需要时可在模型配置里按能力切换。', actions: [
-        { label: '应用推荐策略', cls: 'primary', fn: 'showModelConfigCenter()' }
+        { label: '打开模型配置', cls: 'primary', fn: 'showModelConfigCenter()' }
       ]},
       { title: '测试当前策略', text: '发送一条测试请求，确认 AI 模型服务和模型策略可用。', actions: [
         { label: '测试 AI 模型服务', cls: 'success', fn: 'testAiGateway()' }
@@ -541,8 +541,13 @@ async function addTask() {
   const mod = document.getElementById('new-task-module').value;
   const name = document.getElementById('new-task-name').value.trim();
   if (!mod || !name) { showToast('请填写完整信息', 'error'); return; }
+  const app = moduleApp(mod);
+  if (!app?.package || app.enabled === false || app.historical_only === true) {
+    showToast('请先在应用配置中将当前模块绑定到启用的应用，再新建 YAML', 'error');
+    return;
+  }
   const filename = name.endsWith('.yaml') ? name : name + '.yaml';
-  const defaultContent = `android: {}\n\ntasks:\n  - name: ${JSON.stringify(name)}\n    flow:\n      - ai: "请描述需要执行的页面操作"\n      - aiAssert: "请描述需要验证的页面结果"\n`;
+  const defaultContent = `android: {}\n\ntasks:\n  - name: ${JSON.stringify(name)}\n    flow:\n      - launch: ${JSON.stringify(app.package)}\n      - ai: "请描述需要执行的页面操作"\n      - aiAssert: "请描述需要验证的页面结果"\n`;
   try {
     await apiRequest('/file', {
       method: 'POST',

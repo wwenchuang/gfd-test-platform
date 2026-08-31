@@ -585,6 +585,98 @@ describe('cases store', () => {
     expect(store.lastAiJobId).toBe('job-new')
   })
 
+  it('clears the previous AI result while restoring a revision with no AI job', async () => {
+    const store = useCasesStore()
+    store.aiJob = { id: 'old-job', state: 'completed', batches: [], endpoint_ids: [], requested_model: 'qwen', actual_model: 'qwen', fallback_used: false, summary: {} }
+    store.lastAiJobId = 'old-job'
+    store.aiError = '旧版本的失败'
+    let finish!: (value: unknown) => void
+    const client = { get: vi.fn(() => new Promise(resolve => { finish = resolve })) } as unknown as Pick<ApiClient, 'get'>
+    const pending = store.restoreLatestAiJob('project-1', 'source-new', client)
+    expect(store.aiJob).toBeNull()
+    expect(store.aiError).toBe('')
+    finish({ data: { job: null } })
+    await pending
+    expect(store.aiJob).toBeNull()
+    expect(store.lastAiJobId).toBe('')
+  })
+
+  it('ignores an old polling response and its generated versions after switching scope', async () => {
+    const store = useCasesStore()
+    let finish!: (value: unknown) => void
+    vi.spyOn(apiClient, 'get').mockImplementation(() => new Promise(resolve => { finish = resolve }) as never)
+    const load = vi.spyOn(store, 'loadVersion').mockResolvedValue()
+    const poll = store.pollAiJob('old-job', { maxAttempts: 1, delayMs: 0 })
+    await store.restoreLatestAiJob('project-new', 'source-new', { get: vi.fn().mockResolvedValue({ data: { job: null } }) })
+    finish({ data: { job: { id: 'old-job', state: 'completed', batches: [{ generated_draft_ids: ['old-version'] }] } } })
+    await poll
+    expect(store.aiJob).toBeNull()
+    expect(store.aiError).toBe('')
+    expect(load).not.toHaveBeenCalled()
+  })
+
+  it('does not register delayed generated versions or errors into a new polling session', async () => {
+    const store = useCasesStore()
+    let failOld!: (error: Error) => void
+    vi.spyOn(apiClient, 'get')
+      .mockResolvedValueOnce({ data: { job: { id: 'old-job', state: 'completed', batches: [{ generated_draft_ids: ['old-version'] }] } } } as never)
+      .mockImplementationOnce(() => new Promise((_, reject) => { failOld = reject }) as never)
+      .mockImplementationOnce(() => new Promise(() => {}) as never)
+    const oldPoll = store.pollAiJob('old-job', { maxAttempts: 1, delayMs: 0 })
+    await vi.waitFor(() => expect(apiClient.get).toHaveBeenCalledTimes(2))
+    store.clearAiJob()
+    void store.pollAiJob('new-job', { maxAttempts: 1, delayMs: 0 })
+    failOld(new Error('old scope error'))
+    await oldPoll
+    expect(store.aiError).toBe('')
+    expect(store.aiPolling).toBe(true)
+    expect(store.lastAiJobId).toBe('new-job')
+    expect(store.versions['old-version']).toBeUndefined()
+  })
+
+  it('ignores a delayed diagnosis after the source has changed', async () => {
+    const store = useCasesStore()
+    store.aiJob = { id: 'old-job', state: 'completed', batches: [], endpoint_ids: [], requested_model: 'qwen', actual_model: 'qwen', fallback_used: false, summary: {} }
+    let finish!: (value: unknown) => void
+    vi.spyOn(apiClient, 'post').mockImplementation(() => new Promise(resolve => { finish = resolve }) as never)
+    const diagnosis = store.diagnoseAiValidation('old-batch', 0)
+    store.clearAiJob()
+    store.aiDiagnosisBatchId = 'new-batch'
+    finish({ data: { job: { id: 'old-job', state: 'completed', batches: [] } } })
+    await diagnosis
+    expect(store.aiJob).toBeNull()
+    expect(store.aiDiagnosisBatchId).toBe('new-batch')
+  })
+
+  it('preserves edits made while the AI job creation request is pending', async () => {
+    const store = useCasesStore()
+    let finish!: (value: unknown) => void
+    vi.spyOn(apiClient, 'post').mockImplementation(() => new Promise(resolve => { finish = resolve }) as never)
+    vi.spyOn(apiClient, 'get')
+      .mockResolvedValueOnce({ data: { job: { id: 'job-a', state: 'completed', batches: [{ generated_draft_ids: [VERSION.id] }] } } } as never)
+      .mockResolvedValueOnce({ data: { case_version: VERSION } } as never)
+    const generating = store.generate(['endpoint-1'], 'env-1', '正常流程')
+    store.updateDraft('endpoint-1', { ...VERSION, name: '用户正在编辑的未保存内容' })
+    finish({ data: { job: { id: 'job-a', state: 'queued', batches: [] } } })
+    await generating
+    expect(store.drafts['endpoint-1'].name).toBe('用户正在编辑的未保存内容')
+    expect(store.aiJob?.state).toBe('completed')
+  })
+
+  it('releases the previous diagnosis busy state when resuming the same AI task', async () => {
+    const store = useCasesStore()
+    store.aiJob = { id: 'job-a', state: 'running', batches: [], endpoint_ids: [], requested_model: 'qwen', actual_model: 'qwen', fallback_used: false, summary: {} }
+    let finish!: (value: unknown) => void
+    vi.spyOn(apiClient, 'post').mockImplementation(() => new Promise(resolve => { finish = resolve }) as never)
+    vi.spyOn(apiClient, 'get').mockResolvedValue({ data: { job: { id: 'job-a', state: 'completed', batches: [] } } } as never)
+    const diagnosis = store.diagnoseAiValidation('batch-a', 0)
+    await store.pollAiJob('job-a', { maxAttempts: 1, delayMs: 0 })
+    finish({ data: { job: { id: 'job-a', state: 'running', batches: [] } } })
+    await diagnosis
+    expect(store.aiDiagnosisBatchId).toBe('')
+    expect(store.aiJob?.state).toBe('completed')
+  })
+
   it('ignores a delayed restored AI version after manual draft editing starts', async () => {
     let resolveVersion!: (value: { data: { case_version: CaseVersion } }) => void
     const completedJob = {

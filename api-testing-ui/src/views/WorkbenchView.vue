@@ -104,7 +104,6 @@ async function restoreWorkspace(): Promise<void> {
     const implicitSourceMismatch = Boolean(
       restoredTask
       && !routeTaskId
-      && !routeContext
       && context.sourceRevisionId
       && restoredTask.project_id === context.projectId
       && restoredTask.source_revision_id !== context.sourceRevisionId,
@@ -593,6 +592,7 @@ function defaultTaskName(newTask = false): string {
       v-model:task-name-draft="taskNameDraft"
       :task="tasks.task"
       :selected-count="selectedIds.length"
+      :scope-matches-task="taskMatchesSelection"
       :environment-name="environmentName"
       :saving="tasks.saving"
       :running="tasks.running"

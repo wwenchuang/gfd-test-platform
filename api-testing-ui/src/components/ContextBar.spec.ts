@@ -88,6 +88,8 @@ describe('ContextBar', () => {
     })
 
     expect(wrapper.get('[data-testid="context-summary"]').text()).toContain('3D 项目')
+    expect(wrapper.get('[data-testid="context-summary"]').text()).toContain('v3 · 986 个接口')
+    expect(wrapper.get('[data-testid="context-summary"]').text()).toContain('v7')
     expect(wrapper.get('[data-testid="context-summary"]').text()).toContain('生产环境（腾讯云）')
     expect(wrapper.get('[data-testid="context-toggle"]').attributes('aria-expanded')).toBe('false')
     expect(wrapper.get('.context-bar').classes()).not.toContain('context-expanded')

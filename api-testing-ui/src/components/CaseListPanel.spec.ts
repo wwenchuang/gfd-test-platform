@@ -108,6 +108,16 @@ const EXTRA_CASES = EXTRA_ENDPOINTS.map((endpoint, index) => ({
 })) as CaseVersion[]
 
 describe('CaseListPanel', () => {
+  it('explains overlapping progress counts and separates candidates from saved cases', async () => {
+    const wrapper = mount(CaseListPanel, { props: { endpoints: ENDPOINTS, versions: [SAVED], generatedPreviews: [PREVIEW] } })
+    expect(wrapper.text()).toContain('已保存 1 条 · 未保存候选 1 条')
+    expect(wrapper.get('[data-testid="case-view-guidance"]').text()).toContain('数量不能相加')
+    await wrapper.get('[data-testid="case-work-view-debugged"]').trigger('click')
+    expect(wrapper.get('[data-testid="case-view-guidance"]').text()).toContain('包括通过、失败和异常')
+    await wrapper.get('[data-testid="case-work-view-candidate"]').trigger('click')
+    expect(wrapper.get('[data-testid="case-view-guidance"]').text()).toContain('先检查内容并保存')
+    expect(wrapper.text()).toContain(PREVIEW.case.name)
+  })
   it('opens the interface picker from the empty case list', async () => {
     const wrapper = mount(CaseListPanel, { props: { endpoints: ENDPOINTS, versions: [] } })
 

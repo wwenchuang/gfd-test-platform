@@ -1582,17 +1582,29 @@ function fileHistoryReasonText(reason = '') {
   return value || '自动留档';
 }
 
+function isCurrentFileHistory(modal, context) {
+  return !!context && modal?.classList.contains('show') && modal._fileHistoryContext === context
+    && currentModule === context.module && currentFile === context.file;
+}
+
 async function showFileHistory() {
   if (!currentModule || !currentFile) {
     showToast('请先选择一个 YAML 文件', 'error');
     return;
   }
-  document.getElementById('history-source').textContent = `${currentModule}/${currentFile}`;
+  const modal = document.getElementById('modal-history');
+  const context = {module: currentModule, file: currentFile};
+  modal._fileHistoryContext = context;
+  document.getElementById('history-source').textContent = `${context.module}/${context.file}`;
+  document.getElementById('history-preview').hidden = true;
+  document.getElementById('history-preview-content').value = '';
+  document.getElementById('history-preview-status').textContent = '';
   const list = document.getElementById('history-list');
   list.innerHTML = '<div class="job-empty">正在加载历史版本...</div>';
-  document.getElementById('modal-history').classList.add('show');
+  modal.classList.add('show');
   try {
-    const data = await apiRequest(`/file/history?module=${encodeURIComponent(currentModule)}&file=${encodeURIComponent(currentFile)}`);
+    const data = await apiRequest(`/file/history?module=${encodeURIComponent(context.module)}&file=${encodeURIComponent(context.file)}`);
+    if (!isCurrentFileHistory(modal, context)) return;
     const versions = data.versions || [];
     if (!versions.length) {
       list.innerHTML = '<div class="job-empty">暂无历史版本。保存、AI 修复、覆盖、移动前会自动生成历史。</div>';
@@ -1604,38 +1616,95 @@ async function showFileHistory() {
           <div class="app-row-name">${escapeHtml(v.created_at || v.id)}</div>
           <div class="app-row-sub">${escapeHtml(fileHistoryReasonText(v.reason))} · ${formatBytes(v.size || 0)} · 版本编号 ${escapeHtml(String(v.id || '').slice(-16))}</div>
         </div>
-        <button class="btn-sm" onclick="previewFileVersion('${escapeHtml(v.id)}')">预览</button>
-        <button class="btn-sm danger" onclick="restoreFileVersion('${escapeHtml(v.id)}')">回滚</button>
+        <button class="btn-sm" onclick="previewFileVersion(${jsArg(v.id)})">预览</button>
+        <button class="btn-sm danger" data-action-permission="ui.edit" onclick="restoreFileVersion(${jsArg(v.id)})">回滚</button>
       </div>
     `).join('');
+    applyRestrictedActionControls();
   } catch(e) {
+    if (!isCurrentFileHistory(modal, context)) return;
     list.innerHTML = `<div class="job-empty">${escapeHtml(e.message || '读取历史失败')}</div>`;
   }
 }
 
 async function previewFileVersion(versionId) {
+  const modal = document.getElementById('modal-history');
+  const context = modal?._fileHistoryContext;
+  if (!isCurrentFileHistory(modal, context) || context.restoring) return;
+  const request = {};
+  context.previewRequest = request;
+  const content = document.getElementById('history-preview-content');
+  const status = document.getElementById('history-preview-status');
+  document.getElementById('history-preview').hidden = false;
+  document.getElementById('history-preview-title').textContent = `历史版本 ${versionId} · 只读预览`;
+  content.value = '';
+  status.textContent = '正在读取历史版本...';
   try {
-    const data = await apiRequest(`/file/version?module=${encodeURIComponent(currentModule)}&file=${encodeURIComponent(currentFile)}&version=${encodeURIComponent(versionId)}`);
-    showEditor(data.content || '');
-    showToast('已加载历史版本到编辑器，确认后可手动保存', 'success');
-    closeModal('modal-history');
+    const data = await apiRequest(`/file/version?module=${encodeURIComponent(context.module)}&file=${encodeURIComponent(context.file)}&version=${encodeURIComponent(versionId)}`);
+    if (!isCurrentFileHistory(modal, context) || context.previewRequest !== request) return;
+    if (typeof data.content !== 'string') throw new Error('历史版本内容缺失，请重试');
+    content.value = data.content;
+    status.textContent = data.content
+      ? (hasPermission('ui.edit') ? '仅供查看，不会替换当前编辑内容。需要恢复时请点击对应版本的“回滚”。' : '仅供查看，不会替换当前编辑内容。回滚需要用例编辑权限。')
+      : '此历史版本内容为空；当前编辑内容未改变。';
+    content.focus();
+    content.setSelectionRange(0, 0);
+    content.scrollTop = 0;
+    content.scrollLeft = 0;
   } catch(e) {
-    showToast(e.message || '预览版本失败', 'error');
+    if (!isCurrentFileHistory(modal, context) || context.previewRequest !== request) return;
+    status.textContent = e.message || '预览版本失败，请重试';
   }
 }
 
 async function restoreFileVersion(versionId) {
-  if (!confirm('确认回滚到这个历史版本？当前内容会先自动保存为历史。')) return;
+  if (!requireUiEditPermission()) return;
+  const modal = document.getElementById('modal-history');
+  const context = modal?._fileHistoryContext;
+  if (!isCurrentFileHistory(modal, context) || context.restoring) return;
+  const editor = document.getElementById('editor');
+  if (editorDirty || (editor && editor.value !== editorInitialContent)) {
+    showToast('当前 YAML 有未保存修改，请先保存或放弃修改后再回滚。历史预览不会改变当前编辑内容。', 'error');
+    return;
+  }
+  if (!confirm(`确认将「${context.module}/${context.file}」回滚到历史版本 ${versionId}？服务器上当前已保存的内容会先自动留档。`)) return;
+  context.restoring = true;
+  context.previewRequest = null;
+  const previousContent = editor?.value;
+  modal.querySelectorAll('#history-list button').forEach(button => button.disabled = true);
   try {
     await apiRequest('/file/restore', {
       method: 'POST',
-      body: JSON.stringify({ module: currentModule, file: currentFile, version: versionId })
+      body: JSON.stringify({ module: context.module, file: context.file, version: versionId })
     });
-    await openFile(currentModule, currentFile);
-    closeModal('modal-history');
-    showToast('✓ 已回滚到历史版本', 'success');
+    const canRefreshEditor = () => !!editor && currentModule === context.module && currentFile === context.file
+      && document.getElementById('editor') === editor && !editorDirty && editor.value === previousContent;
+    let refreshed = false;
+    let reloadError = '';
+    if (canRefreshEditor()) {
+      try {
+        const content = await apiTextRequest(`/file?module=${encodeURIComponent(context.module)}&file=${encodeURIComponent(context.file)}`);
+        if (canRefreshEditor()) {
+          if (typeof content !== 'string' || /^\s*</.test(content) || !content.includes('tasks:')) throw new Error('服务器返回内容不是有效 YAML');
+          sonicStatusData = null;
+          showEditor(content);
+          refreshed = true;
+        }
+      } catch(e) {
+        reloadError = e.message || '读取最新内容失败';
+      }
+    }
+    if (modal._fileHistoryContext === context) closeModal('modal-history');
+    if (reloadError) showToast(`文件已回滚，但读取最新内容失败：${reloadError}。当前编辑内容已保留，请重新打开文件。`, 'warning');
+    else showToast(refreshed ? '✓ 已回滚到历史版本' : '✓ 文件已回滚，当前页面或新编辑内容未被替换', 'success');
   } catch(e) {
     showToast(e.message || '回滚失败', 'error');
+  } finally {
+    context.restoring = false;
+    if (modal._fileHistoryContext === context) {
+      modal.querySelectorAll('#history-list button').forEach(button => button.disabled = false);
+      applyRestrictedActionControls();
+    }
   }
 }
 
@@ -1972,6 +2041,7 @@ async function repairTaskByName(taskName) {
 
 function showRunCurrentFile() {
   setActiveWorkflow('execute');
+  applyLazyLoadForSection('execute');
   if (!currentModule || !currentFile) {
     showToast('请先选择一个 YAML 文件', 'error');
     return;
@@ -2030,6 +2100,7 @@ async function runCurrentFile() {
 
 function showRunSelectedTask() {
   setActiveWorkflow('execute');
+  applyLazyLoadForSection('execute');
   if (!currentModule || !currentFile) {
     showToast('请先选择一个 YAML 文件', 'error');
     return;

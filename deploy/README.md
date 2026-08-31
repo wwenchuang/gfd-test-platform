@@ -303,6 +303,36 @@ sudo journalctl -u midscene-task -f
 
 ## Windows Runner Service
 
+### 2026-08-31 TLS certificate verification correction
+
+Both desktop Runner scripts now keep Node's default TLS certificate verification
+instead of injecting `NODE_TLS_REJECT_UNAUTHORIZED=0`. This affects HTTPS calls
+made by the Midscene subprocess, not the platform's separate HTTP listener.
+The default Runner version is `2026.08.31-qwen3.7-result-retry-v1-tls`.
+
+After all Runner jobs finish, copy the matching script to the existing Runner
+workspace. On Windows, restart only the existing Runner service from an
+Administrator PowerShell (use the installed service name if customized):
+
+```powershell
+Restart-Service -Name MidsceneWindowsRunner
+Get-Service -Name MidsceneWindowsRunner
+```
+
+On Mac, stop the existing Runner process after its jobs finish, replace
+`mac-midscene-runner.py`, and start it with the same configured launcher. Do not
+start a second Runner using the same Runner ID.
+
+An explicitly configured `NODE_TLS_REJECT_UNAUTHORIZED=0` is still inherited;
+remove it from the Runner service environment to enable verification. If your
+organization uses a private CA, configure `NODE_EXTRA_CA_CERTS` to the trusted
+PEM CA file and restart that Runner. Do not work around certificate errors by
+disabling verification. Verify the reported Runner version, then run one harmless
+case and check that the Node insecure-TLS warning is absent and the model call
+succeeds. Updating the Task server alone does not update a running desktop Runner.
+
+### Installation and service management
+
 Use NSSM to run `windows-midscene-runner.py` as an auto-starting Windows
 service. Directly wrapping Python with `sc.exe` is not recommended because the
 process does not implement the Windows service protocol.

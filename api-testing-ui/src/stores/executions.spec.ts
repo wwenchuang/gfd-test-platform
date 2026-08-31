@@ -2,6 +2,7 @@
 
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
+import { flushPromises } from '@vue/test-utils'
 
 import { apiClient } from '../api/client'
 import type { ApiEnvelope, ExecutionView } from '../api/contracts'
@@ -202,6 +203,36 @@ describe('executions store', () => {
     expect(connect).toHaveBeenCalledWith('execution-b')
   })
 
+  it.each(['success', 'failure'])('ignores a late archived snapshot %s after another execution is selected', async outcome => {
+    vi.useFakeTimers()
+    try {
+      const first = { id: 'execution-a', state: 'RUNNING', case_results: [] } as unknown as ExecutionView
+      const second = { ...first, id: 'execution-b' }
+      let respond: ((value: ApiEnvelope<{ execution: ExecutionView }>) => void) | undefined
+      let reject: ((reason: Error) => void) | undefined
+      vi.spyOn(apiClient, 'get')
+        .mockImplementationOnce(() => new Promise((resolve, fail) => { respond = resolve; reject = fail }))
+        .mockResolvedValueOnce({ data: { execution: second } })
+      vi.spyOn(apiClient, 'delete').mockResolvedValue({ data: { execution: first } })
+      const store = useExecutionsStore()
+      store.active = first
+      vi.spyOn(store, 'connect').mockImplementation(async () => { store.connectionState = 'open' })
+      store.scheduleFinalSnapshotPoll(first.id)
+      const pendingTimer = vi.advanceTimersByTimeAsync(5000)
+      await vi.waitFor(() => expect(apiClient.get).toHaveBeenCalledTimes(1))
+      await store.deleteExecutions([first.id])
+      await store.select(second.id)
+      if (outcome === 'success') respond?.({ data: { execution: { ...first, state: 'DONE' } } })
+      else reject?.(new Error('旧请求失败'))
+      await pendingTimer
+      await flushPromises()
+      expect(store.active?.id).toBe(second.id)
+      expect(store.connectionState).toBe('open')
+      expect(store.error).toBe('')
+      expect(store.finalSnapshotTimer).toBeNull()
+    } finally { vi.useRealTimers() }
+  })
+
   it('ignores late events from a previously selected execution', async () => {
     vi.spyOn(apiClient, 'post').mockResolvedValue({ data: { ticket: 'opaque-ticket' } })
     const listeners = new Map<string, (event: MessageEvent) => void>()
@@ -348,6 +379,39 @@ describe('executions store', () => {
     })
     expect(store.executions.map(item => item.id)).toEqual(['execution-3'])
     expect(store.active?.id).toBe('execution-3')
+  })
+
+  it.each(['detail', 'selection', 'list'])('does not restore an archived execution from a late %s response', async kind => {
+    const first = { id: 'execution-1', state: 'DONE', case_results: [] } as unknown as ExecutionView
+    const second = { ...first, id: 'execution-2' }
+    let respond: ((value: ApiEnvelope<{ execution: ExecutionView; executions: ExecutionView[] }>) => void) | undefined
+    vi.spyOn(apiClient, 'get').mockImplementationOnce(() => new Promise(resolve => { respond = resolve }))
+    vi.spyOn(apiClient, 'delete').mockResolvedValue({ data: { execution: first } })
+    const store = useExecutionsStore()
+    vi.spyOn(store, 'connect').mockResolvedValue()
+    store.executions = [first, second]
+    const pending = kind === 'detail' ? store.loadExecution(first.id) : kind === 'selection' ? store.select(first.id) : store.load('project-1')
+    await store.deleteExecutions([first.id])
+    respond?.({ data: { execution: first, executions: [first, second] } })
+    await pending
+    expect(store.executions.map(item => item.id)).toEqual([second.id])
+    expect(store.active).toBeNull()
+    expect(store.connect).not.toHaveBeenCalled()
+    expect(store.selectingExecutionId).toBe('')
+  })
+
+  it('keeps a pending diagnostic readable when archival fails', async () => {
+    const record = { id: 'execution-1', state: 'DONE', case_results: [] } as unknown as ExecutionView
+    let respond: ((value: ApiEnvelope<{ execution: ExecutionView }>) => void) | undefined
+    vi.spyOn(apiClient, 'get').mockImplementationOnce(() => new Promise(resolve => { respond = resolve }))
+    vi.spyOn(apiClient, 'delete').mockRejectedValue(new Error('归档失败'))
+    const store = useExecutionsStore()
+    const pending = store.loadExecution(record.id)
+    await expect(store.deleteExecutions([record.id])).rejects.toThrow('归档失败')
+    respond?.({ data: { execution: record } })
+    await pending
+    expect(store.active?.id).toBe(record.id)
+    expect(store.executions.map(item => item.id)).toEqual([record.id])
   })
 
   it('reruns requested cases without promoting expanded dependencies', async () => {

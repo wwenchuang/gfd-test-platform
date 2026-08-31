@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { CheckCircle2, CircleDashed, Pencil, XCircle } from 'lucide-vue-next'
 
+import { statusLabel } from '../utils/executionPresentation'
 import type { DebugTraceStep } from '../api/contracts'
 
 withDefaults(defineProps<{ trace?: DebugTraceStep[] }>(), { trace: () => [] })
@@ -30,7 +31,7 @@ function skipped(status: string): boolean {
         <XCircle v-else :size="17" />
       </div>
       <div class="trace-content">
-        <header><span>{{ stageLabel(step.stage) }}{{ step.stage === 'main' ? '' : ` ${step.index + 1}` }}</span><strong>{{ step.name }}</strong><b>{{ step.status }}</b></header>
+        <header><span>{{ stageLabel(step.stage) }}{{ step.stage === 'main' ? '' : ` ${step.index + 1}` }}</span><strong>{{ step.name }}</strong><b>{{ step.status.toUpperCase() === 'FAILED' ? '未通过' : statusLabel(step.status) }}</b></header>
         <div class="trace-metadata">
           <span v-if="step.attempt > 1 || step.maxAttempts > 1">尝试 {{ step.attempt }}/{{ step.maxAttempts }}</span>
           <span v-if="step.assertions.length">断言 {{ step.assertions.length }}</span>

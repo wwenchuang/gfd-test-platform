@@ -909,3 +909,47 @@ h1, h2, p { margin-top: 0; } h1 { margin-bottom: 0; font-size: 21px; font-weight
 .baseline-action-hint { flex-basis: 100%; color: var(--muted); font-size: 10px; text-align: right; }
 .baseline-action-hint.warning { color: var(--danger); font-weight: 700; }
 @media (max-width: 620px) { .case-validation-summary > header { align-items: flex-start; flex-direction: column; }.validation-counts { justify-content: flex-start; }.validation-issues button { grid-template-columns: 58px minmax(0, 1fr); }.validation-issues button small { display: none; }.editor-footer { flex-wrap: wrap; }.editor-footer span { flex-basis: 100%; margin-right: 0; }.editor-footer .secondary-command, .editor-footer .primary-command { flex: 1; }.editor-footer > small { display: none; } }
+
+/* Keep the saved testing context primary; expose synchronization only when needed. */
+.api-asset-shell { grid-template-columns: minmax(190px, 240px) minmax(0, 1fr) minmax(180px, 220px); }
+.asset-kpis { grid-template-columns: minmax(100px, .65fr) minmax(180px, 1.35fr); }
+.asset-kpis strong { white-space: normal; overflow-wrap: anywhere; font-size: 18px; line-height: 1.4; }
+.asset-next-note { margin: 0; padding: 16px; color: #43536a; font-size: 13px; line-height: 1.7; }
+.asset-sync-panel { margin: 14px 0; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); scroll-margin-top: 16px; }
+.asset-sync-panel > summary { padding: 16px; cursor: pointer; color: var(--ink); font-size: 15px; font-weight: 650; }
+.asset-sync-panel > summary span, .sync-credential summary span { margin-left: 10px; color: var(--muted); font-size: 12px; font-weight: 400; }
+.asset-sync-panel .setup-section { margin: 0; border: 0; border-top: 1px solid var(--line); border-radius: 0; }
+.sync-credential { padding: 12px 16px; border-top: 1px solid var(--line); }
+.sync-credential summary { cursor: pointer; font-size: 13px; }
+.sync-credential summary svg { vertical-align: middle; }
+.sync-credential p { color: var(--muted); font-size: 12px; }
+.sync-credential .credential-row { grid-template-columns: minmax(0, 1fr) auto; margin-top: 10px; }
+.project-maintenance { border-top: 1px solid var(--line); margin-top: 6px; padding-top: 12px; }
+.project-maintenance summary { font-size: 12px; cursor: pointer; color: var(--muted); }
+.project-maintenance button { margin: 10px 0; width: 100%; }
+.asset-diff-summary > p { font-size: 13px; line-height: 1.7; }
+.source-change-list { max-height: 360px; overflow: auto; margin: 12px 0; }
+.source-change-list table { width: 100%; border-collapse: collapse; font-size: 12px; text-align: left; }
+.source-change-list th, .source-change-list td { padding: 9px; border-bottom: 1px solid var(--line); vertical-align: top; }
+.source-change-list th { position: sticky; top: 0; background: #f0f5fa; }
+.source-change-list td:first-child { white-space: nowrap; }
+.source-change-list code { overflow-wrap: anywhere; }
+.case-count-note, .case-view-guidance { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.6; }
+.case-view-guidance { padding: 8px 10px; border-left: 2px solid var(--blue); background: #f3f7fb; }
+.task-help { font-size: 12px; line-height: 1.7; color: #43536a; }
+@media (max-width: 1100px) {
+  .api-asset-shell { grid-template-columns: minmax(160px, .5fr) minmax(0, 1fr); }
+  .api-asset-actions { grid-column: 1 / -1; display: grid; grid-template-columns: 1fr 1fr; }
+  .api-asset-actions header, .project-maintenance { grid-column: 1 / -1; }
+}
+@media (max-width: 620px) {
+  .api-asset-shell { grid-template-columns: 1fr; }
+  .asset-kpis { grid-template-columns: 1fr; }
+  .asset-kpis > div { border-left: 0; }
+  .asset-sync-panel > summary span { display: block; margin: 6px 0 0; }
+}
+.source-change-link { display: inline-block; margin-left: 10px; white-space: nowrap; color: var(--blue); }
+@media (max-width: 620px) {
+  .asset-sync-panel .setup-section > header { display: grid; gap: 12px; }
+  .asset-sync-panel .setup-section > header > button { width: 100%; }
+}

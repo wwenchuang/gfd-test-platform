@@ -20,7 +20,7 @@ RUNNER_ID = os.getenv("RUNNER_ID", "win-runner-01")
 TOKEN = os.getenv("MIDSCENE_RUNNER_TOKEN", "").strip()
 WORKSPACE = Path(os.getenv("MIDSCENE_RUNNER_WORKSPACE", r"D:\sonic\midscene_run"))
 CALLBACK_OUTBOX_DIR = WORKSPACE / "callback_outbox"
-RUNNER_VERSION = os.getenv("MIDSCENE_RUNNER_VERSION", "2026.07.26-qwen3.7-result-retry-v1")
+RUNNER_VERSION = os.getenv("MIDSCENE_RUNNER_VERSION", "2026.08.31-qwen3.7-result-retry-v1-tls")
 RUNNER_STARTED_AT = time.strftime("%Y-%m-%d %H:%M:%S")
 POLL_INTERVAL = int(os.getenv("POLL_INTERVAL", "3"))
 MIDSCENE_BIN = os.getenv("MIDSCENE_BIN", "midscene")
@@ -237,7 +237,8 @@ def midscene_env(device_id=""):
             env.pop(legacy_key, None)
     env.setdefault("MIDSCENE_SKIP_CONFIG_CHECK", "1")
     env.setdefault("MIDSCENE_REPLANNING_CYCLE_LIMIT", "8")
-    env.setdefault("NODE_TLS_REJECT_UNAUTHORIZED", "0")
+    # Use Node's default certificate verification; preserve an explicit operator override.
+    # Private CAs should be supplied with NODE_EXTRA_CA_CERTS instead of disabling TLS.
     ensure_android_sdk_env(env)
     if device_id:
         env["ANDROID_SERIAL"] = str(device_id)

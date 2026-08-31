@@ -2342,6 +2342,7 @@ function renderActiveWorkflowPage(options = {}) {
   if (activeWorkflow === 'reports' && typeof showReportsCenter === 'function') return showReportsCenter() || true;
   if (activeWorkflow === 'failure_analysis' && typeof showAiRepairCenter === 'function') return showAiRepairCenter() || true;
   if (activeWorkflow === 'bug_drafts') return showBugDraftCenter({ refresh: false }) || true;
+  if (activeWorkflow === 'config') return showModelConfigCenter() || true;
   if (activeWorkflow === 'app_config') return showAppConfigCenter() || true;
   if (activeWorkflow === 'feishu_config') return showFeishuConfigCenter() || true;
   if (activeWorkflow === 'sonic_config') return showSonicConfigCenter() || true;
@@ -2441,6 +2442,7 @@ async function activateWorkflow(sectionKey) {
   // round 4: 切换页面前，按目标页面动态决定数据加载与轮询
   applyLazyLoadForSection(activeWorkflow);
   if (keepFileContext) {
+    document.getElementById('toolbar-help').textContent = '当前 YAML 已保留；编辑后先保存，再选择单条调试或整文件执行。';
     updateWorkflowActionGroups();
     updateToolbarState();
     return;
@@ -3781,7 +3783,7 @@ function toggleFileSelected(mod, file, checked) {
 
 function selectCurrentModuleFiles() {
   if (!currentModule || !modules[currentModule]) {
-    showToast('请先展开一个模块', 'error');
+    showToast('请先到“用例资产”展开一个模块，再全选模块文件', 'error');
     return;
   }
   modules[currentModule].forEach(file => selectedFiles.add(fileKey(currentModule, file)));

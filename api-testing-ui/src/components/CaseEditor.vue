@@ -46,7 +46,12 @@ const identityErrors = computed(() => {
   }
   return errors
 })
-const displayValidationErrors = computed(() => ({ ...props.validationErrors, ...localValidationErrors.value, ...identityErrors.value }))
+const displayValidationErrors = computed(() => {
+  const errors = { ...props.validationErrors, ...localValidationErrors.value, ...identityErrors.value }
+  // Application name is filled by the same selector as its package.
+  if (errors.app_package && errors.app_name === errors.app_package) delete errors.app_name
+  return errors
+})
 const hasBlockingError = computed(() => Boolean(
   !requestEditorValid.value
   || rawError.value
@@ -87,6 +92,18 @@ function hasFeedback(prefix: string): boolean {
 }
 
 async function navigateToField(path: string): Promise<void> {
+  const identityControls: Record<string, string> = {
+    name: '[data-testid="case-name"]', app_package: '[data-testid="case-application"]',
+    app_name: '[data-testid="case-application"]',
+    business: businessLines.value.length ? '.business-segmented button' : '[data-testid="case-application"]',
+    purpose: '[data-testid="case-purpose"]', priority: '[data-testid="case-priority"]',
+  }
+  const control = identityControls[path] ? editorRoot.value?.querySelector<HTMLElement>(identityControls[path]) : null
+  if (control) {
+    control.scrollIntoView?.({ block: 'center', behavior: 'smooth' })
+    control.focus()
+    return
+  }
   const setup = path.match(/^processing\.setup_steps\[(\d+)]/)
   const cleanup = path.match(/^processing\.cleanup_steps\[(\d+)]/)
   if (setup) setupEditor.value?.openStep(Number(setup[1]))
@@ -298,7 +315,7 @@ function normalizeDraft(value: CaseDraft): CaseDraft {
       <div class="form-grid case-identity-grid">
         <label>用例名称<input v-model="local.name" data-testid="case-name" @input="publish" /></label>
         <label>应用<select :value="local.app_package" data-testid="case-application" @change="updateApplication(($event.target as HTMLSelectElement).value)"><option value="">请选择应用</option><option v-for="application in testApplications" :key="application.package" :value="application.package">{{ application.name }}</option></select><small v-if="currentApplicationUnavailable" class="field-warning">历史应用：{{ local.app_name || '名称未记录' }}（已停用或未配置，请重新选择）</small></label>
-        <label>优先级<select v-model="local.priority" @change="publish"><option v-for="priority in ['P0','P1','P2','P3']" :key="priority">{{ priority }}</option></select></label>
+        <label>优先级<select v-model="local.priority" data-testid="case-priority" @change="publish"><option v-for="priority in ['P0','P1','P2','P3']" :key="priority">{{ priority }}</option></select></label>
         <div class="business-field">
           <span>所属业务</span>
           <small v-if="currentBusinessUnavailable" class="field-warning">历史业务：{{ businessLineLabel(local.business, local.app_package) }}（已停用或未配置，请重新选择）</small>
@@ -307,7 +324,7 @@ function normalizeDraft(value: CaseDraft): CaseDraft {
           </div>
         </div>
       </div>
-      <label>测试目的<textarea v-model="local.purpose" rows="2" @input="publish" /></label>
+      <label>测试目的<textarea v-model="local.purpose" data-testid="case-purpose" rows="2" @input="publish" /></label>
 
       <CaseValidationSummary :setup-count="local.processing.setup_steps?.length || 0" :assertion-count="local.assertions.length" :cleanup-count="local.processing.cleanup_steps?.length || 0" :errors="displayValidationErrors" :warnings="validationWarnings" @navigate="navigateToField" />
 

@@ -17775,7 +17775,7 @@ def main():
     require('line.strip() == "android: {}"' in runner_sources and 'lines[i] = "android:"' in runner_sources and 'lines.insert(i + 1, f"  deviceId: {device_id}")' in runner_sources, "Runner device injection must expand android: {} before adding deviceId to keep CLI YAML valid")
     require("def normalize_empty_cli_interface_config" in runner_sources and "text = normalize_empty_cli_interface_config(text)" in runner_sources, "Runner CLI normalization must preserve non-empty interface blocks")
     require('midscene_command.extend(["--android.deviceId", device_id])' in runner_sources, "Runner must apply the selected Android device through the official Midscene CLI override")
-    require('"2026.07.26-qwen3.7-result-retry-v1"' in runner_sources, "Runner heartbeat must expose the Qwen3.7/Midscene 1.10 version for deployment verification")
+    require('"2026.08.31-qwen3.7-result-retry-v1-tls"' in runner_sources, "Runner heartbeat must expose the Qwen3.7/Midscene 1.10 version for deployment verification")
     require('"MIDSCENE_MODEL_FAMILY"' in runner_service_source and '"MIDSCENE_MODEL_API_KEY"' in runner_service_source and '"MIDSCENE_MODEL_BASE_URL"' in runner_service_source, "Server must publish the modern Midscene model configuration contract")
     require('"MIDSCENE_USE_QWEN_VL": "1"' not in runner_service_source, "Server must not declare a Qwen3 model through the legacy qwen2.5-vl switch")
     require("def infer_midscene_model_family" in runner_sources and '"midscene_model_family"' in runner_sources and 'env.pop(legacy_key, None)' in runner_sources, "Runners must infer, report, and enforce the explicit Midscene model family")

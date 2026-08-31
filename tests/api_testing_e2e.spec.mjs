@@ -22,7 +22,7 @@ test('我的收藏三接口完成导入、AI 设计、调试、基线回归和�
   await page.locator('.api-test-link').click()
 
   await page.getByRole('link', { name: '接口资产' }).click()
-  await page.getByRole('button', { name: '新建平台项目' }).click()
+  await page.getByRole('button', { name: '打开项目创建面板' }).click()
   await page.getByLabel('项目名称').fill('3D 我的收藏')
   await page.getByRole('button', { name: '创建', exact: true }).click()
   await expect(page.getByRole('combobox', { name: '平台项目', exact: true })).toHaveValue(/.+/)

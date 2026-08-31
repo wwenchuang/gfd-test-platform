@@ -964,6 +964,7 @@ function jobTimingText(job) {
 }
 
 function jobErrorText(job) {
+  if (['success', 'passed', 'done'].includes(String(job.status || '').toLowerCase())) return '';
   if (job.kind === 'background') {
     const detail = job.error_detail || job.errorDetail || {};
     return explainCallbackHttp000(detail.message || detail.error || job.error || (job.status === 'failed' ? job.message : '') || '');
@@ -1153,7 +1154,7 @@ function jobDetailHtml(job, error, reportHint) {
   const stdout = job.stdout_tail || '';
   const stderr = job.stderr_tail || '';
   const uploadWarning = job.upload_warning || job.uploadWarning || '';
-  const rawError = extractJobRawError(job);
+  const rawError = ['failed', 'timeout', 'error'].includes(String(job.status || '').toLowerCase()) ? extractJobRawError(job) : '';
   const timeline = jobTimelineHtml(job);
   return `
     <div class="job-detail">

@@ -312,6 +312,7 @@ async function assertScheduledServerBlocks(page) {
     await row.getByRole('status').filter({ hasText: message }).waitFor();
     await page.getByTestId('scheduled-editor-blocked').filter({ hasText: message }).waitFor();
     if (!(await row.textContent()).includes('配置：已启用') || (await row.textContent()).includes('下次执行')) throw new Error(`blocked ${size} must distinguish configuration from dispatch`);
+    await page.waitForFunction(() => !document.querySelector('[data-testid="scheduled-run-scheduled-job-1"]')?.disabled);
     if (!await page.getByTestId('scheduled-run-scheduled-job-1').isEnabled()) throw new Error(`blocked ${size} must allow an authorized retry`);
     const contentBox = await row.locator('.scheduled-row-main').boundingBox();
     const rowBox = await row.boundingBox();
@@ -324,6 +325,51 @@ async function assertScheduledServerBlocks(page) {
   await page.getByTestId('scheduled-editor-blocked').waitFor({ state: 'hidden' });
   const rowText = await page.getByTestId('scheduled-row-scheduled-job-1').textContent();
   if (rowText.includes('执行已阻断') || !rowText.includes('下次执行')) throw new Error('cleared server reason must restore the schedule display');
+}
+
+async function assertAssetSyncClarity(page, url) {
+  const project = { id: 'fox-1', name: '3D接口库', description: '', team_name: '' };
+  await page.route('**/providers/apifox/projects', route => route.fulfill({ json: { data: { projects: [project] } } }));
+  await page.route('**/providers/apifox/context', route => route.fulfill({ json: { data: { context: {
+    project, branches: [{ id: 'main', name: '主分支', is_default: true }], cli_version: 'fixture',
+    environments: [{ id: 'dev', name: '开发环境', services: [], variables: [] }, { id: 'prod', name: '生产环境（新）- 腾讯云', services: [], variables: [] }],
+  } } } }));
+  await page.route('**/sources/apifox/preview', route => route.fulfill({ json: { data: { preview: {
+    source_preview: { id: 'preview-clarity', project_id: 'project-1', source_id: 'source-1', candidate_revision_id: 'next-source',
+      previous_revision_id: 'source-revision-1', added_count: 1, changed_count: 1, removed_count: 0,
+      changes: [
+        { change_type: 'added', method: 'GET', path: '/print3d/api/v1/new/endpoint/with/a/long/path', changed_fields: [] },
+        { change_type: 'changed', method: 'POST', path: '/print3d/api/v1/favorite/add', changed_fields: ['responses'] },
+      ] }, environment_candidate: { name: '生产环境（新）- 腾讯云', secret_placeholders: [] },
+  } } } }));
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto(`${url}#/assets`, { waitUntil: 'networkidle' });
+  const panel = page.getByTestId('apifox-sync-panel');
+  if (await panel.getAttribute('open') !== null) throw new Error('saved assets should not start with synchronization expanded');
+  await page.getByRole('link', { name: '进入工作台', exact: true }).waitFor();
+  await page.screenshot({ path: path.join(ARTIFACTS, 'assets-saved-desktop.png'), fullPage: true });
+  await page.getByTestId('open-apifox-sync').click();
+  await page.getByRole('button', { name: '读取项目', exact: true }).click();
+  await page.getByRole('button', { name: '读取环境', exact: true }).click();
+  await page.getByTestId('apifox-environment').locator('option[value="prod"]').waitFor({ state: 'attached' });
+  if (await page.getByTestId('apifox-environment').inputValue() !== 'prod') throw new Error('sync changed saved production environment to the first development environment');
+  await page.getByRole('button', { name: '检查更新', exact: true }).click();
+  await page.getByTestId('source-changes').getByText('响应定义', { exact: true }).waitFor();
+  for (const [size, viewport] of [['desktop', { width: 1440, height: 900 }], ['compact', { width: 1024, height: 768 }], ['mobile', { width: 390, height: 844 }]]) {
+    await page.setViewportSize(viewport);
+    if (size === 'mobile') {
+      if (await page.locator('.side-rail.mobile-open').isVisible()) await page.getByRole('button', { name: '关闭导航' }).first().click();
+      // A desktop-to-mobile resize also animates the closed drawer for 180ms.
+      await page.locator('.side-rail').waitFor({ state: 'hidden' });
+    }
+    await assertNoHorizontalOverflow(page, `asset sync ${size}`);
+    await page.getByTestId('source-preview').scrollIntoViewIfNeeded();
+    await page.screenshot({ path: path.join(ARTIFACTS, `assets-preview-${size}.png`), fullPage: size !== 'mobile' });
+  }
+  await page.getByTestId('source-change-search').fill('long/path');
+  if (await page.getByTestId('source-changes').locator('tbody tr').count() !== 1) throw new Error('change search should find only the new endpoint');
+  await page.getByTestId('apifox-environment').selectOption('dev');
+  if (await page.getByTestId('source-preview').count()) throw new Error('changing the import environment must invalidate the old preview');
 }
 
 (async () => {
@@ -460,8 +506,9 @@ async function assertScheduledServerBlocks(page) {
     await assertNoHorizontalOverflow(page, 'baselines desktop');
     await page.screenshot({ path: path.join(ARTIFACTS, 'baselines-desktop.png'), fullPage: true });
     await assertScheduledServerBlocks(page);
+    await assertAssetSyncClarity(page, url);
     if (errors.length) throw new Error(`browser errors: ${errors.join(' | ')}`);
-    console.log(JSON.stringify({ ok: true, url, screenshots: ['workflow-preview-desktop.png', 'workflow-preview-mobile.png', 'workbench-desktop.png', 'workbench-compact-desktop.png', 'workbench-tablet.png', 'workbench-mobile.png', 'baselines-mobile.png', 'settings-mobile.png', 'baselines-desktop.png', 'scheduled-blocked-desktop.png', 'scheduled-blocked-mobile.png'] }));
+    console.log(JSON.stringify({ ok: true, url, screenshots: ['workflow-preview-desktop.png', 'workflow-preview-mobile.png', 'workbench-desktop.png', 'workbench-compact-desktop.png', 'workbench-tablet.png', 'workbench-mobile.png', 'baselines-mobile.png', 'settings-mobile.png', 'baselines-desktop.png', 'scheduled-blocked-desktop.png', 'scheduled-blocked-mobile.png', 'assets-saved-desktop.png', 'assets-preview-desktop.png', 'assets-preview-compact.png', 'assets-preview-mobile.png'] }));
   } finally {
     await browser.close();
     await new Promise(resolve => server.close(resolve));

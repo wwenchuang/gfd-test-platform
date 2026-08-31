@@ -511,7 +511,7 @@ function defaultTaskName(): string {
       <div>
         <p class="eyebrow">用例管理</p>
         <h1>用例管理</h1>
-        <p class="page-subtitle">从接口创建用例，并在同一处查看调试、基线和回归状态。</p>
+        <p class="page-subtitle">这里保存测试用例及其版本。调试通过后需采纳为基线，才能加入任务回归；“已调试”不代表通过，“已基线”不代表本轮已执行。</p>
       </div>
       <div class="page-toolbar-actions">
         <button data-testid="open-case-endpoint-picker" class="primary-command" type="button" :disabled="!context.sourceRevisionId" @click="endpointPickerOpen = true"><Plus :size="16" />从接口创建用例</button>

@@ -360,10 +360,13 @@ def update_task_case_business(case_id, business):
     """Persist one UI case's business without adding unsupported YAML fields."""
     case = find_task_case_asset(case_id)
     app_package = str(case.get("app_package") or "").strip()
+    if not app_package:
+        raise ValueError("YAML 缺少有效的应用启动步骤；请在 flow 中配置 launch 为平台已配置的应用包名，保存后重试")
     application = configured_test_application(app_package, include_disabled=True)
+    if not application:
+        raise ValueError("YAML 的应用包名未在平台配置；请核对启动步骤和应用配置后重试")
     if (
-        not application
-        or application.get("enabled") is False
+        application.get("enabled") is False
         or application.get("historical_only") is True
     ):
         raise ValueError("当前应用已停用或仅用于历史展示，不能修改所属业务")

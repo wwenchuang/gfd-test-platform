@@ -18,6 +18,7 @@ const FINAL_SNAPSHOT_POLL_MS = 5000
 export const useExecutionsStore = defineStore('api-executions', {
   state: () => ({
     executions: [] as ExecutionView[],
+    archivedExecutionIds: new Set<string>(),
     active: null as ExecutionView | null,
     events: [] as ExecutionEventView[],
     connectionState: 'idle' as ExecutionConnectionState,
@@ -52,7 +53,7 @@ export const useExecutionsStore = defineStore('api-executions', {
         const response = await apiClient.get<{ executions: ExecutionView[] }>(
           `/api/api-testing/v1/executions?project_id=${encodeURIComponent(projectId)}&limit=50`,
         )
-        this.executions = response.data.executions
+        this.executions = response.data.executions.filter(item => !this.archivedExecutionIds.has(item.id))
         if (this.active) this.active = this.executions.find(item => item.id === this.active?.id) || this.active
       } catch (error) {
         this.error = error instanceof Error ? error.message : '无法读取执行记录'
@@ -64,6 +65,7 @@ export const useExecutionsStore = defineStore('api-executions', {
       const response = await apiClient.get<{ execution: ExecutionView }>(
         `/api/api-testing/v1/executions/${executionId}`,
       )
+      if (this.archivedExecutionIds.has(executionId)) return response.data.execution
       if (this.active && this.active.id !== executionId) return response.data.execution
       this.active = response.data.execution
       const index = this.executions.findIndex(item => item.id === executionId)
@@ -79,7 +81,7 @@ export const useExecutionsStore = defineStore('api-executions', {
         const response = await apiClient.get<{ execution: ExecutionView }>(
           `/api/api-testing/v1/executions/${executionId}`,
         )
-        if (selectionVersion !== this.selectionVersion) return
+        if (selectionVersion !== this.selectionVersion || this.archivedExecutionIds.has(executionId)) return
         const execution = response.data.execution
         this.active = execution
         const index = this.executions.findIndex(item => item.id === executionId)
@@ -180,6 +182,7 @@ export const useExecutionsStore = defineStore('api-executions', {
         if (selectionVersion !== this.selectionVersion || (this.active && this.active.id !== executionId)) return
         try {
           const execution = await this.loadExecution(executionId)
+          if (selectionVersion !== this.selectionVersion || this.active?.id !== executionId) return
           if (TERMINAL.has(execution.state)) {
             this.connectionState = 'complete'
             this.analysisRefreshAttempts = 0
@@ -190,6 +193,7 @@ export const useExecutionsStore = defineStore('api-executions', {
             return
           }
         } catch (error) {
+          if (selectionVersion !== this.selectionVersion || this.active?.id !== executionId) return
           this.error = error instanceof Error ? error.message : '无法刷新执行终态'
         }
         this.scheduleFinalSnapshotPoll(executionId)
@@ -268,7 +272,12 @@ export const useExecutionsStore = defineStore('api-executions', {
           )
         }
         const archived = new Set(ids)
+        for (const id of ids) this.archivedExecutionIds.add(id)
         this.executions = this.executions.filter(item => !archived.has(item.id))
+        if (archived.has(this.selectingExecutionId) || (this.active && archived.has(this.active.id))) {
+          this.selectionVersion += 1
+          this.selectingExecutionId = ''
+        }
         if (this.active && archived.has(this.active.id)) {
           this.disconnect()
           this.active = null

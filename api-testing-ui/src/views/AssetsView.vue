@@ -1,13 +1,13 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import {
-  ArrowRight, Check, CheckCircle2, ClipboardList, CloudDownload, Database,
+  ArrowRight, Check, ClipboardList, CloudDownload, Database,
   Edit3, FileJson, FolderPlus, KeyRound, Layers, RefreshCw, Save, Trash2,
   Upload,
 } from 'lucide-vue-next'
 
-import type { EnvironmentRevisionOption, SourceRevisionOption } from '../api/contracts'
+import type { EnvironmentRevisionOption, SourcePreview, SourceRevisionOption } from '../api/contracts'
 import { useContextStore } from '../stores/context'
 import { useSetupStore } from '../stores/setup'
 
@@ -29,6 +29,10 @@ const environmentId = ref('')
 const selectedFile = ref<File | null>(null)
 const fileName = ref('')
 const localError = ref('')
+const syncOpen = ref(false)
+const syncPanel = ref<HTMLDetailsElement | null>(null)
+const changeSearch = ref('')
+const savedPreview = ref<{ sourceId: string; preview: SourcePreview } | null>(null)
 
 const selectedProject = computed(() => context.projects.find(item => item.id === projectId.value) || null)
 const revisions = computed(() => context.sourceRevisions.filter(item => item.project_id === projectId.value))
@@ -63,15 +67,47 @@ const projectCards = computed(() => context.projects.map(project => {
     lastSync: latest?.activated_at || latest?.created_at || project.updated_at || project.created_at || '',
   }
 }))
-const diffSummary = computed(() => setup.preview ? [
-  { label: '新增', value: setup.preview.added_count },
-  { label: '变更', value: setup.preview.changed_count },
-  { label: '删除', value: setup.preview.removed_count },
+const displayedPreview = computed(() => setup.preview || (savedPreview.value?.sourceId === revisionId.value ? savedPreview.value.preview : null))
+const diffSummary = computed(() => displayedPreview.value ? [
+  { label: '新增', value: displayedPreview.value.added_count },
+  { label: '变更', value: displayedPreview.value.changed_count },
+  { label: '删除', value: displayedPreview.value.removed_count },
 ] : [
   { label: '新增', value: '-' },
   { label: '变更', value: '-' },
   { label: '删除', value: '-' },
 ])
+const visibleChanges = computed(() => (displayedPreview.value?.changes || []).filter(change =>
+  `${change.method} ${change.path}`.toLowerCase().includes(changeSearch.value.trim().toLowerCase()),
+))
+const changeLabels: Record<string, string> = { added: '新增', changed: '变更', removed: '删除' }
+const fieldLabels: Record<string, string> = {
+  responses: '响应定义', parameters: '请求参数', requestBody: '请求体', summary: '接口名称',
+  description: '说明', tags: '分组', security: '鉴权', method: '请求方式', path: '路径', operationId: '接口标识', operation_id: '接口标识',
+}
+function changedFields(change: Record<string, unknown>): string {
+  return Array.isArray(change.changed_fields) ? change.changed_fields.map(key => fieldLabels[String(key)] || String(key)).join('、') : ''
+}
+function savedEndpointLink(change: Record<string, unknown>) {
+  if (setup.preview || !workbenchLink.value || setup.activeRevision?.id !== revisionId.value) return null
+  const endpoint = setup.activeRevision.endpoints.find(item => item.method === change.method && item.path === change.path)
+  return endpoint ? { ...workbenchLink.value, query: { ...workbenchLink.value.query, endpointId: endpoint.id } } : null
+}
+async function openSync(): Promise<void> {
+  syncOpen.value = true
+  await nextTick()
+  syncPanel.value?.scrollIntoView?.({ behavior: 'smooth', block: 'start' })
+}
+watch(apifoxProjectId, () => {
+  setup.apifoxContext = null
+  branchId.value = ''
+  environmentId.value = ''
+})
+watch([apifoxProjectId, branchId, environmentId, projectId, revisionId], () => {
+  setup.preview = null
+  setup.apifoxPreview = null
+  changeSearch.value = ''
+})
 
 onMounted(async () => {
   await Promise.all([context.loadSavedContext(), context.loadOptions(), setup.loadApifoxCredential()])
@@ -80,6 +116,7 @@ onMounted(async () => {
     ? requestedProjectId
     : context.projectId || context.projects[0]?.id || ''
   chooseDefaultContext()
+  syncOpen.value = !currentRevision.value
 })
 
 function routeValue(value: unknown): string {
@@ -169,7 +206,8 @@ async function readProjects(): Promise<void> {
   localError.value = ''
   try {
     const projects = await setup.discoverApifoxProjects()
-    apifoxProjectId.value = projects[0]?.id || ''
+    apifoxProjectId.value = projects.some(item => item.id === apifoxProjectId.value)
+      ? apifoxProjectId.value : projects.length === 1 ? projects[0].id : ''
     setup.apifoxContext = null
     branchId.value = ''
     environmentId.value = ''
@@ -182,7 +220,9 @@ async function readContext(): Promise<void> {
   try {
     const result = await setup.discoverApifoxContext(apifoxProjectId.value)
     branchId.value = result.branches.find(item => item.is_default)?.id || result.branches[0]?.id || ''
-    environmentId.value = result.environments[0]?.id || ''
+    const matching = result.environments.filter(item => item.name === currentEnvironmentRevision.value?.name)
+    environmentId.value = result.environments.some(item => item.id === environmentId.value)
+      ? environmentId.value : matching.length === 1 ? matching[0].id : result.environments.length === 1 ? result.environments[0].id : ''
   } catch (error) { localError.value = error instanceof Error ? error.message : 'Apifox 环境读取失败' }
 }
 
@@ -203,6 +243,7 @@ async function checkApifoxUpdate(): Promise<void> {
 
 async function saveApifoxUpdate(): Promise<void> {
   localError.value = ''
+  const preview = setup.preview
   try {
     const result = await setup.activateApifoxPreview()
     context.applyWorkspace(result.workspace)
@@ -210,6 +251,7 @@ async function saveApifoxUpdate(): Promise<void> {
     projectId.value = result.workspace.project_id || projectId.value
     revisionId.value = result.source_revision.id
     environmentRevisionId.value = result.environment.revision_id
+    if (preview) savedPreview.value = { sourceId: result.source_revision.id, preview }
   } catch (error) { localError.value = error instanceof Error ? error.message : 'Apifox 更新保存失败' }
 }
 
@@ -229,6 +271,7 @@ async function readSource(): Promise<void> {
   try {
     const document = JSON.parse(await selectedFile.value.text()) as Record<string, unknown>
     await setup.previewSource(projectId.value, currentRevision.value?.source_id || null, document)
+    await openSync()
   } catch (error) {
     localError.value = error instanceof SyntaxError ? '接口文件不是有效的 JSON' : error instanceof Error ? error.message : '接口文件读取失败'
   }
@@ -236,6 +279,7 @@ async function readSource(): Promise<void> {
 
 async function saveJsonRevision(): Promise<void> {
   localError.value = ''
+  const preview = setup.preview
   let revision
   try {
     revision = await setup.activatePreview()
@@ -249,6 +293,7 @@ async function saveJsonRevision(): Promise<void> {
     await context.loadOptions()
     projectId.value = revision.project_id || projectId.value
     revisionId.value = revision.id
+    if (preview) savedPreview.value = { sourceId: revision.id, preview }
     const projectEnvironments = context.environmentRevisions.filter(
       item => item.project_id === projectId.value,
     )
@@ -280,7 +325,7 @@ function dateText(value?: string | null): string {
       <div>
         <p class="eyebrow">接口资产</p>
         <h1>接口资产</h1>
-        <p class="page-subtitle">按项目管理已保存的接口版本和环境；只有点击同步时才访问 Apifox。</p>
+        <p class="page-subtitle">已有接口可直接进入工作台。需要更新时，再展开 Apifox 同步；接口版本与执行环境分别保存。</p>
       </div>
     </header>
 
@@ -311,19 +356,20 @@ function dateText(value?: string | null): string {
           class="asset-project-card"
           :class="{ active: card.project.id === projectId }"
           type="button"
+          :disabled="setup.busy"
           @click="selectProject(card.project.id)"
         >
           <span class="project-name">{{ card.project.name }}</span>
           <span class="project-meta">{{ card.endpointCount }} 个接口 · {{ card.environmentCount }} 个环境</span>
           <span class="project-sync">最近同步：{{ dateText(card.lastSync) }}</span>
-          <span class="project-binding">Apifox：{{ card.latest?.name || '未绑定' }}</span>
+          <span class="project-binding">接口来源：{{ card.latest?.name || '未绑定' }}</span>
         </button>
       </aside>
 
       <section class="api-asset-detail">
         <header>
           <div>
-            <p class="eyebrow">资产详情</p>
+            <p class="eyebrow">当前使用的数据</p>
             <h2>{{ selectedProject?.name || '尚未选择项目' }}</h2>
             <p>{{ selectedProject?.description || '选择项目后查看接口版本、分组、环境和变更摘要。' }}</p>
           </div>
@@ -332,15 +378,15 @@ function dateText(value?: string | null): string {
 
         <div class="asset-version-grid">
           <label>接口版本
-            <select v-model="revisionId" :disabled="!revisions.length">
+            <select v-model="revisionId" data-testid="saved-source" :disabled="setup.busy || !revisions.length">
               <option value="">暂无接口版本</option>
               <option v-for="item in revisions" :key="item.id" :value="item.id">
                 {{ item.name }} · v{{ item.revision_number }} · {{ item.endpoint_count }} 个接口
               </option>
             </select>
           </label>
-          <label>执行环境
-            <select v-model="environmentRevisionId" :disabled="!environments.length">
+          <label>已保存执行环境
+            <select v-model="environmentRevisionId" data-testid="saved-environment" :disabled="setup.busy || !environments.length">
               <option value="">暂无环境</option>
               <option v-for="item in environments" :key="item.id" :value="item.id">
                 {{ item.name }} · v{{ item.revision }}
@@ -350,40 +396,22 @@ function dateText(value?: string | null): string {
         </div>
 
         <div class="asset-kpis">
-          <div><span>当前版本</span><strong>{{ currentRevision ? `v${currentRevision.revision_number}` : '-' }}</strong><small>{{ currentRevision?.name || '暂无接口来源' }}</small></div>
           <div><span>接口数量</span><strong>{{ currentRevision?.endpoint_count || 0 }}</strong><small>工作台只加载该版本</small></div>
-          <div><span>环境数量</span><strong>{{ environments.length }}</strong><small>{{ currentEnvironmentRevision ? `${currentEnvironmentRevision.name} · v${currentEnvironmentRevision.revision}` : '未选择环境' }}</small></div>
           <div><span>最近同步</span><strong>{{ dateText(currentRevision?.activated_at || currentRevision?.created_at) }}</strong><small>手动同步生成新版本</small></div>
         </div>
 
-        <div class="asset-diff-summary">
-          <h3><Layers :size="16" />变更摘要</h3>
-          <div class="diff-review-grid">
-            <div v-for="item in diffSummary" :key="item.label">
-              <strong>{{ item.value }}</strong>
-              <span>{{ item.label }}</span>
-            </div>
-          </div>
-          <p>{{ setup.preview ? '检查更新只生成预览，不会覆盖当前版本。点击“保存并切换到新版本”后，新增接口才会出现在工作台和用例管理。' : '点击右侧“检查接口更新”后，这里会展示新增、变更和删除数量。' }}</p>
-        </div>
+        <p class="asset-next-note" data-testid="asset-next-step">
+          <template v-if="!currentRevision">下一步：展开下方同步，读取 Apifox 接口；也可以导入 OpenAPI JSON 文件。</template>
+          <template v-else-if="!currentEnvironmentRevision">接口已保存。下一步：<RouterLink :to="{ path: '/settings', query: { projectId } }">配置执行环境</RouterLink>，再进入工作台。</template>
+          <template v-else>下一步：进入工作台选接口、生成和调试用例。历史用例仍可从“用例管理”查看，切换版本不会删除它们。</template>
+        </p>
       </section>
 
       <aside class="api-asset-actions">
         <header>
-          <p class="eyebrow">常用操作</p>
-          <h2>项目操作</h2>
+          <p class="eyebrow">开始测试</p>
+          <h2>下一步</h2>
         </header>
-        <button class="primary-command wide" type="button" :disabled="setup.busy || !canCheckUpdate" @click="checkApifoxUpdate">
-          <RefreshCw :class="{ 'is-spinning': setup.apifoxOperation === 'checking_update' }" :size="16" />
-          {{ setup.apifoxOperation === 'checking_update' ? '正在检查更新…' : '检查接口更新' }}
-        </button>
-        <button v-if="setup.apifoxPreview" class="primary-command wide" type="button" :disabled="setup.busy" @click="saveApifoxUpdate">
-          <RefreshCw v-if="setup.apifoxOperation === 'saving_revision'" class="is-spinning" :size="16" />
-          <Check v-else :size="16" />
-          {{ setup.apifoxOperation === 'saving_revision' ? '正在保存并切换…' : '保存并切换到新版本' }}
-        </button>
-        <button class="secondary-command wide" type="button" :disabled="!selectedProject" @click="openProjectEditor"><Edit3 :size="16" />编辑项目</button>
-        <button class="secondary-command wide danger" type="button" :disabled="!selectedProject" @click="archiveProject"><Trash2 :size="16" />删除项目</button>
         <RouterLink v-if="workbenchLink" class="primary-command wide" :to="workbenchLink">
           <span>进入工作台</span><ArrowRight :size="16" />
         </RouterLink>
@@ -391,6 +419,12 @@ function dateText(value?: string | null): string {
         <RouterLink v-if="casesLink" class="secondary-command wide" :to="casesLink">
           <ClipboardList :size="16" /><span>进入用例管理</span>
         </RouterLink>
+        <button class="secondary-command wide" type="button" :disabled="setup.busy" data-testid="open-apifox-sync" @click="openSync"><RefreshCw :size="16" />同步接口更新</button>
+        <details class="project-maintenance"><summary>项目设置</summary>
+          <button class="secondary-command wide" type="button" :disabled="setup.busy || !selectedProject" @click="openProjectEditor"><Edit3 :size="16" />编辑项目</button>
+          <button class="secondary-command wide danger" type="button" :disabled="setup.busy || !selectedProject" @click="archiveProject"><Trash2 :size="16" />归档项目</button>
+          <p>归档后从项目列表隐藏，历史记录保留。</p>
+        </details>
       </aside>
     </section>
 
@@ -406,36 +440,36 @@ function dateText(value?: string | null): string {
       </div>
     </section>
 
-    <section class="setup-section compact-step">
-      <header>
-        <div><h2><KeyRound :size="17" />访问令牌</h2><p>只加密保存在平台，不会展示给页面、日志或 AI。</p></div>
-        <span v-if="setup.credential?.configured" class="configured-state"><CheckCircle2 :size="15" />已配置 · {{ setup.credential.fingerprint }}</span>
-      </header>
+    <details ref="syncPanel" class="asset-sync-panel" data-testid="apifox-sync-panel" :open="syncOpen" @toggle="syncOpen = ($event.target as HTMLDetailsElement).open">
+      <summary>从 Apifox 同步接口 <span>仅更新时需要 · 不会执行接口请求</span></summary>
+    <details class="sync-credential" :open="!setup.credential?.configured">
+      <summary><KeyRound :size="17" />Apifox 访问令牌 <span>{{ setup.credential?.configured ? '已配置 · 需要更换时展开' : '尚未配置 · 先填写令牌' }}</span></summary>
+      <p>只加密保存在平台，不会展示给页面、日志或 AI。</p>
       <div class="credential-row">
         <input v-model="apifoxToken" type="password" autocomplete="off" placeholder="输入新的 Apifox Access Token" @keyup.enter="saveToken" />
         <button class="secondary-command" type="button" :disabled="setup.busy || !apifoxToken.trim()" @click="saveToken"><Save :size="15" />保存令牌</button>
+
+      </div>
+    </details>
+
+    <section class="setup-section compact-step">
+      <header>
+        <div><h2>1. 选择同步来源</h2><p>读取项目 → 选择项目 → 读取环境 → 检查更新。同步来源环境会保存为平台新的执行环境版本。</p></div>
         <button class="primary-command" type="button" :disabled="setup.busy || !setup.credential?.configured" @click="readProjects">
           <RefreshCw v-if="setup.apifoxOperation === 'loading_projects'" class="is-spinning" :size="15" />
           <CloudDownload v-else :size="15" />
           {{ setup.apifoxOperation === 'loading_projects' ? '正在读取项目…' : '读取项目' }}
         </button>
-      </div>
-    </section>
-
-    <section class="setup-section compact-step">
-      <header>
-        <div><h2>Apifox 同步来源</h2><p>选择当前平台项目绑定的 Apifox 项目、分支和环境；同步会生成新接口版本。</p></div>
-        <button class="secondary-command" type="button" @click="showProjectForm = !showProjectForm"><FolderPlus :size="15" />新建平台项目</button>
       </header>
       <div class="scope-picker-grid">
         <label>平台项目
-          <select v-model="projectId" data-testid="platform-project-select" @change="selectProject(projectId)">
+          <select v-model="projectId" :disabled="setup.busy" data-testid="platform-project-select" @change="selectProject(projectId)">
             <option value="">请选择</option>
             <option v-for="item in context.projects" :key="item.id" :value="item.id">{{ item.name }}</option>
           </select>
         </label>
         <label>Apifox 项目
-          <select v-model="apifoxProjectId">
+          <select v-model="apifoxProjectId" data-testid="apifox-project" :disabled="setup.busy">
             <option value="">{{ setup.apifoxProjects.length ? '请选择' : '先点击读取项目' }}</option>
             <option v-for="item in setup.apifoxProjects" :key="item.id" :value="item.id">{{ item.name }}{{ item.team_name ? ` · ${item.team_name}` : '' }}</option>
           </select>
@@ -445,12 +479,12 @@ function dateText(value?: string | null): string {
           {{ setup.apifoxOperation === 'loading_context' ? '正在读取环境…' : '读取环境' }}
         </button>
         <label>分支
-          <select v-model="branchId" :disabled="!setup.apifoxContext">
+          <select v-model="branchId" :disabled="setup.busy || !setup.apifoxContext">
             <option v-for="item in setup.apifoxContext?.branches || []" :key="item.id" :value="item.id">{{ item.name }}</option>
           </select>
         </label>
-        <label>执行环境
-          <select v-model="environmentId" :disabled="!setup.apifoxContext">
+        <label>Apifox 来源环境
+          <select v-model="environmentId" data-testid="apifox-environment" :disabled="setup.busy || !setup.apifoxContext">
             <option value="">请选择</option>
             <option v-for="item in setup.apifoxContext?.environments || []" :key="item.id" :value="item.id">{{ item.name }}</option>
           </select>
@@ -460,8 +494,26 @@ function dateText(value?: string | null): string {
           {{ setup.apifoxOperation === 'checking_update' ? '正在检查更新…' : '检查更新' }}
         </button>
       </div>
-      <p v-if="selectedEnvironment" class="selection-note">将读取“{{ selectedEnvironment.name }}”的接口定义、服务地址和非敏感变量。</p>
+      <p v-if="selectedEnvironment" class="selection-note">将读取“{{ selectedEnvironment.name }}”的接口定义、服务地址和非敏感变量；只有保存更新后才切换当前测试范围。</p>
+      <p v-else class="selection-note">存在多个项目或环境时请明确选择，平台不会默认选中第一个环境。</p>
     </section>
+
+      <section v-if="displayedPreview" class="asset-diff-summary" data-testid="source-preview">
+        <h3><Layers :size="16" />{{ setup.preview ? '2. 核对更新，再保存' : '本次更新已保存' }}</h3>
+        <div class="diff-review-grid"><div v-for="item in diffSummary" :key="item.label"><strong>{{ item.value }}</strong><span>{{ item.label }}</span></div></div>
+        <p v-if="setup.preview">检查更新只生成预览，不会覆盖当前版本。保存后自动切换到新接口版本；Apifox 同步还会切换到“{{ setup.apifoxPreview?.environment_candidate.name || currentEnvironmentRevision?.name || '当前选择' }}”的环境版本。</p>
+        <p v-else>当前已切换为接口 v{{ currentRevision?.revision_number }}。点击下方“查看接口”可直接定位新增或变更接口；历史用例仍保留在用例管理。</p>
+        <label v-if="displayedPreview.changes.length">查找本次变更<input v-model="changeSearch" data-testid="source-change-search" placeholder="输入接口路径或请求方式" /></label>
+        <div class="source-change-list" data-testid="source-changes">
+          <table v-if="visibleChanges.length"><thead><tr><th>变更</th><th>接口</th><th>变更内容</th></tr></thead><tbody>
+            <tr v-for="(change, index) in visibleChanges" :key="index"><td>{{ changeLabels[String(change.change_type)] || change.change_type }}</td><td><strong>{{ change.method }}</strong> <code>{{ change.path }}</code><RouterLink v-if="savedEndpointLink(change)" class="source-change-link" :to="savedEndpointLink(change)!">查看接口</RouterLink></td><td>{{ changedFields(change) || (change.change_type === 'added' ? '新增接口，可在新版本工作台搜索' : change.change_type === 'removed' ? '旧用例保留，需核对是否仍适用' : '接口定义更新') }}</td></tr>
+          </tbody></table>
+          <p v-else>{{ changeSearch ? '没有匹配的变更接口' : '接口定义没有变更；仍可保存本次环境更新。' }}</p>
+        </div>
+        <button v-if="setup.apifoxPreview" class="primary-command" type="button" :disabled="setup.busy" @click="saveApifoxUpdate"><Check :size="16" />{{ setup.apifoxOperation === 'saving_revision' ? '正在保存并切换…' : '保存并切换到新版本' }}</button>
+        <button v-else-if="setup.preview" class="primary-command" type="button" :disabled="setup.busy" @click="saveJsonRevision"><Check :size="16" />确认保存接口</button>
+      </section>
+    </details>
 
     <details class="advanced-import">
       <summary><FileJson :size="16" />高级导入：接口定义文件（JSON）</summary>
@@ -470,7 +522,6 @@ function dateText(value?: string | null): string {
         <div class="file-import">
           <label class="file-picker"><input type="file" accept="application/json,.json" @change="pickFile" /><FileJson :size="19" /><span>{{ fileName || '选择 OpenAPI JSON 文件' }}</span></label>
           <button class="secondary-command" type="button" :disabled="setup.busy || !selectedFile" @click="readSource"><RefreshCw :size="15" />读取并比较</button>
-          <button v-if="setup.preview && !setup.apifoxPreview" class="primary-command" type="button" :disabled="setup.busy" @click="saveJsonRevision"><Check :size="15" />确认保存接口</button>
         </div>
       </div>
     </details>

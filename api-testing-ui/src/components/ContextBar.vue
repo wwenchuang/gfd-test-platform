@@ -63,6 +63,8 @@ const environments = computed(() => {
   return list
 })
 const selectedProjectName = computed(() => props.projects.find(item => item.id === props.projectId)?.name || '未选择项目')
+const selectedSource = computed(() => sources.value.find(item => item.id === props.sourceRevisionId))
+const selectedEnvironment = computed(() => environments.value.find(item => item.id === props.environmentRevisionId))
 const selectedEnvironmentName = computed(() => environments.value.find(item => item.id === props.environmentRevisionId)?.name || '未选择环境')
 const productionEnvironment = computed(() => isProductionLikeEnvironment(selectedEnvironmentName.value))
 
@@ -87,7 +89,7 @@ function nullable(value: string): string | null {
       <Database :size="17" /><strong>测试范围</strong>
       <span v-if="productionEnvironment" data-testid="production-environment-warning" class="production-environment-warning">生产环境 · 执行前确认</span>
     </div>
-    <p data-testid="context-summary" class="context-summary"><strong>{{ selectedProjectName }}</strong><span>{{ selectedEnvironmentName }}</span></p>
+    <p data-testid="context-summary" class="context-summary"><strong>{{ selectedProjectName }}</strong><span>{{ selectedSource ? sourceLabel(selectedSource) : '未选择接口版本' }}</span><span>{{ selectedEnvironment ? environmentLabel(selectedEnvironment) : '未选择环境' }}</span></p>
     <button
       data-testid="context-toggle"
       class="context-toggle"

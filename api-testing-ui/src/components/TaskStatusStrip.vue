@@ -8,10 +8,11 @@ const props = withDefaults(defineProps<{
   task: ApiTestTask | null
   taskNameDraft?: string
   selectedCount: number
+  scopeMatchesTask?: boolean
   environmentName?: string
   saving?: boolean
   running?: boolean
-}>(), { taskNameDraft: '', environmentName: '未选择环境', saving: false, running: false })
+}>(), { taskNameDraft: '', environmentName: '未选择环境', saving: false, running: false, scopeMatchesTask: true })
 
 const emit = defineEmits<{
   save: []
@@ -45,6 +46,13 @@ const taskTypeLabel = (task: ApiTestTask | null, selectedCount = 0): string => {
   return count > 1 ? '多条任务' : '单条任务'
 }
 const currentTaskType = computed(() => taskTypeLabel(props.task, props.selectedCount))
+const nextStep = computed(() => {
+  if (!props.selectedCount) return '先在左侧勾选接口，再生成用例或手工编辑。点击接口名称可查看详情。'
+  if (!props.task || !props.scopeMatchesTask) return '先保存当前任务范围，平台将重新统计可执行基线；保存范围不会执行接口。'
+  if (['designing', 'debugging', 'running'].includes(props.task.state)) return '当前任务正在处理，请查看生成进度或执行记录，完成后再进行下一步。'
+  if (!props.task.runnable_baseline_count) return '生成或编辑用例 → 保存并调试 → 在调试结果中采纳为基线，才可执行本任务。已保存用例可在“用例管理”找回。'
+  return '可以执行本任务；执行后自动进入“执行记录”，正式回归结果可在“测试报告”查看。只运行已采纳的基线，不包含其他草稿。'
+})
 
 function updateName(event: Event): void {
   emit('update:taskNameDraft', (event.target as HTMLInputElement).value)
@@ -63,12 +71,12 @@ function updateName(event: Event): void {
     </div>
     <div class="task-fact"><span>范围</span><strong>{{ task ? `已保存 ${task.selected_endpoint_ids.length} 个接口` : '未保存' }}</strong><small>当前选择 {{ selectedCount }} 个</small></div>
     <div class="task-fact"><span>环境</span><strong>{{ environmentName }}</strong></div>
-    <div class="task-fact"><span>执行用例</span><strong>{{ task ? `${task.runnable_baseline_count} 条` : '0 条' }}</strong><small>覆盖 {{ runnableEndpointCount(task) }} 个接口</small><small v-if="task && task.runnable_baseline_count > runnableEndpointCount(task)" class="task-count-warning">同一接口存在多版本基线</small></div>
-    <div class="task-fact"><span>状态</span><strong :class="task ? `task-state-${task.state}` : ''">{{ runnableLabel(task) }}</strong></div>
+    <div class="task-fact"><span>执行用例 · 已采纳基线</span><strong>{{ task && !scopeMatchesTask ? '待重新统计' : task ? `${task.runnable_baseline_count} 条` : '0 条' }}</strong><small v-if="scopeMatchesTask">覆盖 {{ runnableEndpointCount(task) }} 个接口</small><small v-if="scopeMatchesTask && task && task.runnable_baseline_count > runnableEndpointCount(task)" class="task-count-warning">同一接口存在多版本基线</small></div>
+    <div class="task-fact"><span>状态</span><strong :class="task ? `task-state-${task.state}` : ''">{{ task && !scopeMatchesTask ? '范围已调整，待保存' : runnableLabel(task) }}</strong></div>
     <div class="task-actions">
       <button data-testid="new-task" class="secondary-command" type="button" :disabled="saving || running" @click="$emit('new')"><FilePlus2 :size="15" />新建任务</button>
       <button data-testid="save-task" class="secondary-command" type="button" :disabled="saving || !selectedCount" @click="$emit('save')"><Save :size="15" />{{ saving ? '保存中' : '保存任务范围' }}</button>
-      <button data-testid="run-task" class="primary-command" type="button" :disabled="running || !task || task.runnable_baseline_count < 1 || ['designing','debugging','running'].includes(task.state)" @click="$emit('run')"><Play :size="15" />{{ running ? '创建执行中' : '执行本任务' }}</button>
+      <button data-testid="run-task" class="primary-command" type="button" :title="nextStep" :disabled="running || !scopeMatchesTask || !selectedCount || !task || task.runnable_baseline_count < 1 || ['designing','debugging','running'].includes(task.state)" @click="$emit('run')"><Play :size="15" />{{ running ? '创建执行中' : '执行本任务' }}</button>
     </div>
     <div class="task-management">
       <label>任务名称
@@ -76,6 +84,6 @@ function updateName(event: Event): void {
       </label>
       <button data-testid="rename-task" class="secondary-command" type="button" :disabled="saving || !task" @click="emit('rename-task')"><Pencil :size="15" />保存名称</button>
     </div>
-    <p class="task-help">任务保存当前接口范围；调试通过后采纳为基线，后续可作为发版定时回归的执行集合。</p>
+    <p class="task-help" role="status" data-testid="task-next-step"><strong>下一步：</strong>{{ nextStep }}</p>
   </section>
 </template>

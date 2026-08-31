@@ -24,6 +24,7 @@ export const useCasesStore = defineStore('api-cases', {
     aiDiagnosisBatchId: '',
     lastAiJobId: '',
     aiRestoreGeneration: 0,
+    aiScopeGeneration: 0,
     basicGenerating: false,
     saving: false,
     savedMessage: '',
@@ -170,18 +171,20 @@ export const useCasesStore = defineStore('api-cases', {
       return version
     },
     async generate(endpointIds: string[], environmentRevisionId: string, intent: string, taskId?: string): Promise<void> {
-      this.aiRestoreGeneration += 1
-      this.aiError = ''
-      this.aiCanResume = false
+      this.clearAiJob()
+      const scopeGeneration = this.aiScopeGeneration
+      const draftGeneration = this.aiRestoreGeneration
       try {
         const response = await apiClient.post<{ job: AiJob }>('/api/api-testing/v1/ai-jobs', {
           endpoint_ids: endpointIds, environment_revision_id: environmentRevisionId, intent,
           ...(taskId ? { task_id: taskId } : {}),
         })
+        if (scopeGeneration !== this.aiScopeGeneration) return
         this.aiJob = response.data.job
         this.lastAiJobId = response.data.job.id
-        await this.pollAiJob(response.data.job.id)
+        await this.pollAiJob(response.data.job.id, { draftGeneration })
       } catch (error) {
+        if (scopeGeneration !== this.aiScopeGeneration) return
         this.aiError = error instanceof Error ? error.message : 'AI 生成失败'
       }
     },
@@ -318,7 +321,11 @@ export const useCasesStore = defineStore('api-cases', {
         }
       }
     },
-    async pollAiJob(jobId: string, options: { maxAttempts?: number; delayMs?: number } = {}): Promise<void> {
+    async pollAiJob(jobId: string, options: { maxAttempts?: number; delayMs?: number; draftGeneration?: number } = {}): Promise<void> {
+      const scopeGeneration = ++this.aiScopeGeneration
+      const restoreGeneration = options.draftGeneration ?? ++this.aiRestoreGeneration
+      const isCurrent = () => scopeGeneration === this.aiScopeGeneration
+      this.aiDiagnosisBatchId = ''
       const maxAttempts = options.maxAttempts ?? 120
       const delayMs = options.delayMs ?? 1500
       this.aiPolling = true
@@ -326,24 +333,31 @@ export const useCasesStore = defineStore('api-cases', {
       this.lastAiJobId = jobId
       try {
         for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+          if (!isCurrent()) return
           const response = await apiClient.get<{ job: AiJob }>(`/api/api-testing/v1/ai-jobs/${jobId}`)
+          if (!isCurrent()) return
           this.aiJob = response.data.job
           if (TERMINAL_AI.has(this.aiJob.state)) {
             this.aiError = aiJobFailureMessage(this.aiJob)
             for (const batch of this.aiJob.batches) {
-              for (const versionId of batch.generated_draft_ids) await this.loadVersion(versionId)
+              for (const versionId of batch.generated_draft_ids) {
+                if (!isCurrent()) return
+                await this.loadVersion(versionId, apiClient, restoreGeneration)
+              }
             }
             return
           }
           if (delayMs > 0) await delay(delayMs)
         }
+        if (!isCurrent()) return
         this.aiCanResume = true
         this.aiError = 'AI 仍在后台生成，点击“继续查看”即可恢复进度'
       } catch (error) {
+        if (!isCurrent()) return
         this.aiCanResume = true
         this.aiError = error instanceof Error ? `${error.message}，可继续查看任务` : 'AI 进度读取失败，可继续查看任务'
       } finally {
-        this.aiPolling = false
+        if (isCurrent()) this.aiPolling = false
       }
     },
     async resumeAiJob(): Promise<void> {
@@ -353,6 +367,7 @@ export const useCasesStore = defineStore('api-cases', {
     },
     async diagnoseAiValidation(batchId: string, errorIndex: number): Promise<void> {
       if (!this.aiJob || this.aiDiagnosisBatchId) return
+      const scopeGeneration = this.aiScopeGeneration
       this.aiDiagnosisBatchId = batchId
       this.aiError = ''
       try {
@@ -360,17 +375,20 @@ export const useCasesStore = defineStore('api-cases', {
           `/api/api-testing/v1/ai-jobs/${this.aiJob.id}/validation-diagnosis`,
           { batch_id: batchId, error_index: errorIndex },
         )
+        if (scopeGeneration !== this.aiScopeGeneration) return
         this.aiJob = response.data.job
       } catch (error) {
+        if (scopeGeneration !== this.aiScopeGeneration) return
         this.aiError = error instanceof Error
           ? error.message
           : '千问暂时无法分析该错误，请稍后重试'
       } finally {
-        this.aiDiagnosisBatchId = ''
+        if (scopeGeneration === this.aiScopeGeneration) this.aiDiagnosisBatchId = ''
       }
     },
     clearAiJob(): void {
       this.aiRestoreGeneration += 1
+      this.aiScopeGeneration += 1
       this.aiJob = null
       this.aiError = ''
       this.aiPolling = false
@@ -383,7 +401,8 @@ export const useCasesStore = defineStore('api-cases', {
       sourceRevisionId?: string,
       client: Pick<ApiClient, 'get'> = apiClient,
     ): Promise<void> {
-      const restoreGeneration = ++this.aiRestoreGeneration
+      this.clearAiJob()
+      const restoreGeneration = this.aiRestoreGeneration
       try {
         const sourceQuery = sourceRevisionId
           ? `&source_revision_id=${encodeURIComponent(sourceRevisionId)}`

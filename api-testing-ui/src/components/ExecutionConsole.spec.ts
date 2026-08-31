@@ -20,6 +20,16 @@ const execution: ExecutionView = {
 }
 
 describe('ExecutionConsole', () => {
+  it('labels a completed historical execution as ended without hiding active connection failures', async () => {
+    const wrapper = mount(ExecutionConsole, { props: { executions: [execution], active: execution, events: [], connectionState: 'idle' } })
+    expect(wrapper.text()).toContain('执行已结束')
+    expect(wrapper.text()).not.toContain('未连接')
+    await wrapper.setProps({ connectionState: 'failed' })
+    expect(wrapper.text()).toContain('连接失败')
+    await wrapper.setProps({ active: { ...execution, state: 'RUNNING' }, connectionState: 'connecting' })
+    expect(wrapper.text()).toContain('正在连接')
+  })
+
   it('renders the overview and the approved three-view structure', () => {
     const wrapper = mount(ExecutionConsole, {
       props: { executions: [execution], active: execution, events: [], connectionState: 'complete' },

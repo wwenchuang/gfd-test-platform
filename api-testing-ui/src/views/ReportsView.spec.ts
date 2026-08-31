@@ -5,7 +5,8 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { nextTick } from 'vue'
 
-import type { ExecutionView } from '../api/contracts'
+import type { ApiEnvelope, ExecutionView } from '../api/contracts'
+import { apiClient } from '../api/client'
 import { useExecutionsStore } from '../stores/executions'
 import { useContextStore } from '../stores/context'
 import { useNotificationsStore } from '../stores/notifications'
@@ -139,15 +140,69 @@ describe('ReportsView', () => {
       report,
       { ...report, id: 'report-2', summary: { total: 1, passed: 1, failed: 0 }, case_results: [report.case_results[0]] },
     ]
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false)
     const wrapper = mount(ReportsView)
 
     await nextTick()
+    routeState.query = { executionId: 'report-1' }
     await wrapper.findAll('input[aria-label="选择报告"]')[0].trigger('click')
     await wrapper.findAll('input[aria-label="选择报告"]')[1].trigger('click')
     await wrapper.get('.report-board-actions .danger-command').trigger('click')
 
+    expect(deleteExecutions).not.toHaveBeenCalled()
+    expect(confirm).toHaveBeenCalledWith(expect.stringMatching(/2.*报告/))
+    confirm.mockReturnValue(true)
+    await wrapper.get('.report-board-actions .danger-command').trigger('click')
+    await flushPromises()
     expect(deleteExecutions).toHaveBeenCalledWith(['report-1', 'report-2'])
+    expect(routerState.replace).toHaveBeenLastCalledWith({ query: {} })
+    expect(wrapper.text()).toContain('已删除 2 条报告')
     expect(wrapper.text()).toContain('0 / 0')
+  })
+
+
+  it('shows a failed report deletion and preserves selection for a retry', async () => {
+    const executions = useExecutionsStore()
+    const context = useContextStore()
+    vi.spyOn(context, 'loadSavedContext').mockResolvedValue()
+    vi.spyOn(context, 'loadOptions').mockResolvedValue()
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    vi.spyOn(executions, 'deleteExecutions').mockImplementation(async () => { executions.error = '删除失败，请重试'; throw new Error(executions.error) })
+    executions.executions = [report]
+    const wrapper = mount(ReportsView)
+    const unhandled = vi.fn()
+    wrapper.vm.$.appContext.config.errorHandler = unhandled
+    await nextTick()
+    await wrapper.get('input[aria-label="选择报告"]').trigger('click')
+    await wrapper.get('.report-board-actions .danger-command').trigger('click')
+    await flushPromises()
+    expect(wrapper.findAll('[role="alert"]').some(item => item.text().includes('删除失败，请重试'))).toBe(true)
+    expect(wrapper.text()).toContain('已选 1 条')
+    expect(unhandled).not.toHaveBeenCalled()
+  })
+
+  it('does not reopen or restore a deleted report when its diagnostic response arrives late', async () => {
+    const executions = useExecutionsStore()
+    const context = useContextStore()
+    vi.spyOn(context, 'loadSavedContext').mockResolvedValue()
+    vi.spyOn(context, 'loadOptions').mockResolvedValue()
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    let respond: ((value: ApiEnvelope<{ execution: ExecutionView }>) => void) | undefined
+    vi.spyOn(apiClient, 'get').mockImplementationOnce(() => new Promise(resolve => { respond = resolve }))
+    vi.spyOn(apiClient, 'delete').mockResolvedValue({ data: { execution: report } })
+    executions.executions = [report, { ...report, id: 'report-2' }]
+    const wrapper = mount(ReportsView)
+    await nextTick()
+    await wrapper.get('[data-testid="report-open-diagnostic"]').trigger('click')
+    await wrapper.findAll('input[aria-label="选择报告"]')[0].trigger('click')
+    await wrapper.get('.report-board-actions .danger-command').trigger('click')
+    await flushPromises()
+    expect(executions.executions.map(item => item.id)).toEqual(['report-2'])
+    respond?.({ data: { execution: report } })
+    await flushPromises()
+    expect(executions.executions.map(item => item.id)).toEqual(['report-2'])
+    expect(executions.active).toBeNull()
+    expect(wrapper.findComponent({ name: 'DiagnosticReport' }).exists()).toBe(false)
   })
 
   it('labels baseline regression reports separately from ad-hoc debug runs', () => {

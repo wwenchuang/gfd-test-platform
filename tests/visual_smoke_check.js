@@ -669,6 +669,16 @@ async function anyVisible(locator) {
     if (runTaskOptions < 2) throw new Error(`single-task modal did not parse YAML tasks, options=${runTaskOptions}`);
     await page.click('#modal-run-task .btn-cancel');
 
+    // Opening a debug dialog from an editor must start progress updates too.
+    for (const [button, modal] of [['#btn-run-task', '#modal-run-task'], ['#btn-run-file', '#modal-run-file']]) {
+      await page.evaluate(() => { setActiveWorkflow('yaml_edit'); stopJobsAutoRefresh(); });
+      await page.click(button);
+      await page.waitForSelector(`${modal}.show`);
+      await page.waitForTimeout(300);
+      await page.waitForRequest(req => new URL(req.url()).pathname === '/api/jobs', {timeout: 3500});
+      await page.locator(`${modal} .btn-cancel`).click();
+    }
+
     await page.click('.workflow-step:has-text("Agent 工作台")');
     await page.waitForSelector('#agent-goal');
     const initialAgentModelOptions = await page.locator('#agent-model').innerText();
@@ -1154,6 +1164,9 @@ async function anyVisible(locator) {
     await page.locator('details[data-nav-group="settings"]').evaluate(el => { el.open = true; });
     await page.click('.workflow-step[data-workflow="config"]');
     await page.waitForSelector('text=当前模型策略');
+    await page.reload();
+    await page.waitForSelector('text=当前模型策略', {timeout: 4000});
+    if (!await page.locator('button:has-text("测试当前策略")').isVisible()) throw new Error('Reloading model configuration must restore the actual strategy controls');
     await page.click('button:has-text("一键应用推荐策略")');
     if (!/影响后续 AI 生成、分析和修复任务/.test(strategyConfirmation)) throw new Error(`Recommended strategy confirmation is unclear: ${strategyConfirmation}`);
     await page.waitForSelector('text=当前模型策略');
@@ -1166,6 +1179,31 @@ async function anyVisible(locator) {
     const gatewayResultText = await page.locator('#modal-model-test-result').innerText();
     if (!/模型服务连接正常/.test(gatewayResultText) || !/调用成功/.test(gatewayResultText)) throw new Error('AI Gateway test result did not show the dedicated success state');
     if (/原始 YAML|修复 YAML|生成修复/.test(gatewayResultText)) throw new Error('Model service test reused the YAML repair dialog');
+    await page.locator('#modal-model-test-result .modal-close').click();
+    await page.evaluate(() => { aiFailureDraft = null; });
+    await page.locator('details[data-nav-group="report"]').evaluate(el => { el.open = true; });
+    await page.click('.workflow-step[data-workflow="failure_analysis"]');
+    const emptyRepairActions = {
+      '生成修复草稿': '不能自动修 YAML',
+      '复制草稿': '暂无修复草稿可复制',
+      '下载草稿': '暂无修复草稿可下载',
+      '人工确认替换': '需要先生成并保存修复草稿',
+      '拒绝草稿': '暂无可拒绝的修复草稿',
+    };
+    for (const [label, message] of Object.entries(emptyRepairActions)) {
+      await page.locator('.ai-repair-draft-panel').getByRole('button', {name: label, exact: true}).click();
+      const feedback = page.locator('#repair-action-feedback');
+      if (!await feedback.isVisible() || !(await feedback.innerText()).includes(message)) throw new Error(`${label} did not leave a visible next step`);
+    }
+    await page.waitForFunction(() => !document.getElementById('toast')?.classList.contains('show'));
+    if (!await page.locator('#repair-action-feedback').isVisible()) throw new Error('Repair next step disappeared with the toast');
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await page.screenshot({path: path.join(ARTIFACTS, 'repair-empty-actions-desktop.png'), fullPage: true});
+    await page.setViewportSize({width: 390, height: 844});
+    await page.locator('.ai-repair-draft-panel').getByRole('button', {name: '复制草稿', exact: true}).click();
+    await page.waitForFunction(() => !document.getElementById('toast')?.classList.contains('show'));
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await page.screenshot({path: path.join(ARTIFACTS, 'repair-empty-actions-mobile.png'), fullPage: true});
     if (apiFailures.length) throw new Error(`api failures: ${apiFailures.join(' | ')}`);
     if (errors.length) throw new Error(`page errors: ${errors.join(' | ')}`);
     console.log(JSON.stringify({
@@ -1187,6 +1225,8 @@ async function anyVisible(locator) {
         path.join(ARTIFACTS, 'reports-management.png'),
         path.join(ARTIFACTS, 'bug-drafts-management.png'),
         path.join(ARTIFACTS, 'bug-drafts-management-mobile.png'),
+        path.join(ARTIFACTS, 'repair-empty-actions-desktop.png'),
+        path.join(ARTIFACTS, 'repair-empty-actions-mobile.png'),
       ],
     }, null, 2));
   } finally {

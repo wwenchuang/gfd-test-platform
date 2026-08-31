@@ -61,6 +61,21 @@ function workflowDraft(): CaseDraft {
 }
 
 describe('CaseEditor', () => {
+  it('deduplicates application errors and focuses the real identity controls from issue links', async () => {
+    const wrapper = mount(CaseEditor, { attachTo: document.body, props: { modelValue: { ...DRAFT, app_package: '', app_name: '', business: '' } } })
+    try {
+      const issues = wrapper.findAll('.validation-issues button')
+      expect(issues).toHaveLength(2)
+      expect(issues[0].text()).toContain('应用')
+      await issues[0].trigger('click')
+      expect(document.activeElement).toBe(wrapper.get('[data-testid="case-application"]').element)
+      await wrapper.setProps({ modelValue: { ...DRAFT, business: '' } })
+      const business = wrapper.findAll('.validation-issues button').find(button => button.text().includes('所属业务'))
+      expect(business).toBeDefined()
+      await business!.trigger('click')
+      expect(document.activeElement?.getAttribute('data-testid')).toContain('case-business-')
+    } finally { wrapper.unmount() }
+  })
   beforeEach(() => {
     replaceTestApplications([
       { package: 'com.kfb.model', name: '智小白3D', enabled: true, business_lines: [

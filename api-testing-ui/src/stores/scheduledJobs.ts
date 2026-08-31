@@ -27,6 +27,7 @@ export const useScheduledJobsStore = defineStore('api-scheduled-jobs', {
     loading: false,
     saving: false,
     runningId: '',
+    removingId: '',
     error: '',
   }),
   actions: {
@@ -80,8 +81,14 @@ export const useScheduledJobsStore = defineStore('api-scheduled-jobs', {
     },
     async remove(jobId: string): Promise<void> {
       this.error = ''
-      await apiClient.delete(`/api/api-testing/v1/scheduled-jobs/${encodeURIComponent(jobId)}`)
-      this.items = this.items.filter(item => item.id !== jobId)
+      this.removingId = jobId
+      try {
+        await apiClient.delete(`/api/api-testing/v1/scheduled-jobs/${encodeURIComponent(jobId)}`)
+        this.items = this.items.filter(item => item.id !== jobId)
+      } catch (error) {
+        this.error = error instanceof Error ? error.message : '定时任务删除失败，请刷新列表确认后重试'
+        throw error
+      } finally { this.removingId = '' }
     },
     async runOnce(jobId: string): Promise<ExecutionView> {
       this.runningId = jobId

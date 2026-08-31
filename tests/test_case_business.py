@@ -104,6 +104,17 @@ def test_update_task_case_business_rejects_non_creatable_application(monkeypatch
         case_service.update_task_case_business("case-1", "校园业务")
 
 
+@pytest.mark.parametrize("package, expected", [
+    ("", "YAML 缺少有效的应用启动步骤"),
+    ("com.unconfigured.app", "YAML 的应用包名未在平台配置"),
+])
+def test_update_task_case_business_explains_missing_or_unconfigured_launch(monkeypatch, package, expected):
+    monkeypatch.setattr(case_service, "find_task_case_asset", lambda _case_id: {"app_package": package})
+    monkeypatch.setattr(case_service, "configured_test_application", lambda *_args, **_kwargs: {})
+    with pytest.raises(ValueError, match=expected):
+        case_service.update_task_case_business("case-1", "家用")
+
+
 def test_task_case_info_resolves_metadata_business_in_its_application(monkeypatch):
     monkeypatch.setattr(case_service, "resolve_app_package", lambda *_args, **_kwargs: "com.example.school")
     monkeypatch.setattr(case_service, "extract_baseline_meta_from_block", lambda _block: {"case_id": "case-1"})

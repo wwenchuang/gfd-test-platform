@@ -31,6 +31,7 @@ const executionPage = ref(1)
 const EXECUTION_PAGE_SIZE = 20
 const terminalStates = new Set(['DONE', 'CANCELLED', 'PASSED', 'FAILED', 'BROKEN'])
 const running = computed(() => props.active && !terminalStates.has(props.active.state))
+const logConnectionState = computed(() => props.connectionState === 'idle' && props.active && terminalStates.has(props.active.state) ? 'complete' : props.connectionState)
 const canRerunActive = computed(() => Boolean(props.active && terminalStates.has(props.active.state) && props.active.case_results.length))
 const caseLabels = computed(() => Object.fromEntries((props.active?.case_results || []).map(result => [result.execution_case_id, result.case_name || result.endpoint_summary || result.path])))
 const metrics = computed(() => props.active ? executionMetrics(props.active) : null)
@@ -200,7 +201,7 @@ function executionRowConclusion(execution: ExecutionView): { label: string; tone
         </nav>
         <div v-if="tab === 'trace'" class="execution-trace-grid">
           <section class="trace-case-panel panel"><header class="panel-header"><h2>用例进度</h2><span>{{ active.case_results.length }} 条</span></header><CaseResultList :results="active.case_results" :active-id="selected?.execution_case_id" row-test-id="realtime-case-row" @select="selectCase" /></section>
-          <ExecutionLog :key="active.id" :events="events" :connection-state="connectionState" :case-labels="caseLabels" />
+          <ExecutionLog :key="active.id" :events="events" :connection-state="logConnectionState" :case-labels="caseLabels" />
         </div>
         <div v-else-if="tab === 'cases'" class="execution-detail-grid embedded-evidence">
           <CaseResultList :results="active.case_results" :active-id="selected?.execution_case_id" @select="selected = $event" />

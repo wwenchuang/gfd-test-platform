@@ -16,6 +16,8 @@ const issues = computed(() => [
 ])
 
 function location(path: string): string {
+  const identityLabels: Record<string, string> = { name: '用例名称', app_package: '应用', app_name: '应用', business: '所属业务', purpose: '测试目的', priority: '优先级' }
+  if (identityLabels[path]) return identityLabels[path]
   const setup = path.match(/^processing\.setup_steps\[(\d+)]/)
   if (setup) return `前置 ${Number(setup[1]) + 1}`
   const cleanup = path.match(/^processing\.cleanup_steps\[(\d+)]/)

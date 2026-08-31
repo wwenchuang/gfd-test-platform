@@ -3745,6 +3745,18 @@
     resize: vertical;
     line-height: 1.6;
   }
+  .history-preview {
+    margin-bottom: 14px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--border);
+  }
+  .history-preview .modal-label { overflow-wrap: anywhere; }
+  .history-preview .generate-hint { margin: 0 0 8px; }
+  #history-list button:disabled { opacity: .45; cursor: not-allowed; }
+  .modal #history-preview-content {
+    min-height: 180px;
+    max-height: 36vh;
+  }
   .modal input:focus, .modal select:focus, .modal textarea:focus {
     border-color: var(--accent);
     box-shadow: 0 0 0 3px rgba(34,211,238,.1);

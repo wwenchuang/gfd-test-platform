@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { CalendarClock, Check, ChevronDown, ChevronRight, ExternalLink, Pencil, Play, RefreshCw, Save, Trash2 } from 'lucide-vue-next'
 
@@ -11,6 +11,7 @@ import { type ScheduledJobInput, useScheduledJobsStore } from '../stores/schedul
 import { useTasksStore } from '../stores/tasks'
 import { confirmApiExecution } from '../utils/executionConfirmation'
 import { formatPassRate, statusLabel } from '../utils/executionPresentation'
+import { taskStateLabel } from '../utils/taskPresentation'
 import { applicationBusinessLabel, applicationBusinessSelection } from '../utils/testApplications'
 
 const context = useContextStore()
@@ -34,6 +35,13 @@ const form = reactive({
 const selectedTargetIds = ref<string[]>([])
 const targetSearch = ref('')
 const targetLoadError = ref('')
+const targetsLoading = ref(true)
+const loadedCaseSourceId = ref('')
+const refreshing = ref(false)
+const actionMessage = ref('')
+const nameInput = ref<HTMLInputElement | null>(null)
+const editorScope = ref<{ projectId: string; sourceRevisionId: string; environmentRevisionId: string; environmentId: string } | null>(null)
+const busy = computed(() => scheduledJobs.saving || Boolean(scheduledJobs.removingId) || Boolean(scheduledJobs.runningId))
 const editingJobId = ref('')
 const expandedTargetGroups = ref<Set<string>>(new Set())
 let suspendTargetReset = false
@@ -75,10 +83,10 @@ const scheduleTimeDescriptions: Record<ScheduledJob['schedule_type'], string> = 
   cron: '按 Cron 表达式执行',
 }
 
-const projectId = computed(() => context.projectId || context.projects[0]?.id || '')
-const sourceRevisionId = computed(() => context.sourceRevisionId || context.sourceRevisions.find(item => item.project_id === projectId.value)?.id || '')
-const environmentRevisionId = computed(() => context.environmentRevisionId || context.environmentRevisions.find(item => item.project_id === projectId.value)?.id || '')
-const environmentId = computed(() => context.environmentRevisions.find(item => item.id === environmentRevisionId.value)?.environment_id || '')
+const projectId = computed(() => editorScope.value ? editorScope.value.projectId : context.projectId || context.projects[0]?.id || '')
+const sourceRevisionId = computed(() => editorScope.value ? editorScope.value.sourceRevisionId : context.sourceRevisionId || context.sourceRevisions.find(item => item.project_id === projectId.value)?.id || '')
+const environmentRevisionId = computed(() => editorScope.value ? editorScope.value.environmentRevisionId : context.environmentRevisionId || context.environmentRevisions.find(item => item.project_id === projectId.value)?.id || '')
+const environmentId = computed(() => editorScope.value ? editorScope.value.environmentId : context.environmentRevisions.find(item => item.id === environmentRevisionId.value)?.environment_id || '')
 const targetPickerTitle = computed(() => ({
   cases: '选择已保存用例',
   task: '选择已保存任务',
@@ -119,6 +127,7 @@ const filteredBaselineGroups = computed(() => {
     .sort(([left], [right]) => left.localeCompare(right, 'zh-CN'))
     .map(([name, options]) => ({ name, options }))
 })
+const pendingFixedCaseCount = computed(() => editingJobId.value && form.targetType === 'cases' ? selectedTargetIds.value.filter(id => !cases.versions[id]).length : 0)
 const editorTitle = computed(() => editingJobId.value ? '编辑定时任务' : '新建定时任务')
 const saveLabel = computed(() => {
   if (scheduledJobs.saving) return '保存中'
@@ -130,28 +139,34 @@ const scheduleDescription = computed(() => {
   return scheduleTimeDescriptions[form.scheduleType]
 })
 
-onMounted(async () => {
-  await Promise.all([context.loadSavedContext(), context.loadOptions()])
-  await Promise.all([
-    projectId.value ? scheduledJobs.load(projectId.value) : Promise.resolve(),
-    loadTargetAssets(),
-  ])
-})
+onMounted(() => refreshAll(false))
 
 watch(() => form.targetType, () => {
   if (suspendTargetReset) return
   selectedTargetIds.value = []
   targetSearch.value = ''
   expandedTargetGroups.value = new Set()
-})
+}, { flush: 'sync' })
 
 function targetIds(): string[] {
   return [...selectedTargetIds.value]
 }
 
 async function saveJob(): Promise<void> {
-  if (!projectId.value || !sourceRevisionId.value || !environmentRevisionId.value) {
-    scheduledJobs.error = '请先选择项目、接口版本和执行环境'
+  if (busy.value) return
+  scheduledJobs.error = ''
+  actionMessage.value = ''
+  if (!form.name.trim()) {
+    scheduledJobs.error = '请输入任务名称'
+    focusEditor()
+    return
+  }
+  if (!projectId.value || !sourceRevisionId.value || (form.environmentStrategy === 'fixed_revision' ? !environmentRevisionId.value : !environmentId.value)) {
+    scheduledJobs.error = '请先选择项目、接口版本和执行环境；编辑历史任务时保留原范围，不会自动改用工作台当前环境'
+    return
+  }
+  if (targetsLoading.value || targetLoadError.value) {
+    scheduledJobs.error = targetsLoading.value ? '正在读取目标，请稍后保存' : `目标读取失败：${targetLoadError.value}。请刷新后重试`
     return
   }
   const ids = targetIds()
@@ -159,18 +174,40 @@ async function saveJob(): Promise<void> {
     scheduledJobs.error = `请先${targetPickerTitle.value}`
     return
   }
+  if (!Number.isInteger(form.retryCount) || form.retryCount < 0 || form.retryCount > 5) {
+    scheduledJobs.error = '失败重试次数必须是 0 到 5 的整数'
+    return
+  }
+  if (!Number.isInteger(form.timeoutSeconds) || form.timeoutSeconds < 30 || form.timeoutSeconds > 86400) {
+    scheduledJobs.error = '超时秒数必须是 30 到 86400 的整数'
+    return
+  }
   if (form.scheduleType === 'cron' && !cronValidation.value.valid) {
     scheduledJobs.error = cronValidation.value.message
     return
   }
   const input = buildJobInput(ids)
-  if (editingJobId.value) {
-    await scheduledJobs.update(editingJobId.value, input)
-  } else {
-    await scheduledJobs.create(input)
-  }
-  resetEditor()
+  try {
+    if (editingJobId.value) await scheduledJobs.update(editingJobId.value, input)
+    else await scheduledJobs.create(input)
+    resetEditor()
+    actionMessage.value = `定时任务“${input.name}”已保存（${input.enabled ? '已启用' : '已停用'}，${input.notify_feishu ? '开启通知' : '不通知'}）。可在任务列表查看或手动执行一次。`
+  } catch { /* Store retains the actionable error; keep the user's draft. */ }
 }
+
+function focusEditor(): void {
+  void nextTick(() => {
+    nameInput.value?.scrollIntoView?.({ block: 'center', behavior: 'smooth' })
+    nameInput.value?.focus({ preventScroll: true })
+  })
+}
+
+const scopeLabel = computed(() => {
+  const source = context.sourceRevisions.find(item => item.id === sourceRevisionId.value)
+  const environment = context.environmentRevisions.find(item => item.id === environmentRevisionId.value)
+    || context.environmentRevisions.find(item => item.environment_id === environmentId.value)
+  return `${context.projects.find(item => item.id === projectId.value)?.name || '未选择项目'} · ${source ? `接口 v${source.revision_number}` : '已保存的历史接口版本'} · ${environment?.name || '已保存的历史环境'}${form.environmentStrategy === 'latest_environment' ? '（执行时取最新版本）' : environment ? ` v${environment.revision}` : '（固定原版本）'}`
+})
 
 function buildJobInput(ids: string[]): ScheduledJobInput {
   return {
@@ -192,6 +229,8 @@ function buildJobInput(ids: string[]): ScheduledJobInput {
 }
 
 async function runJob(job: ScheduledJob): Promise<void> {
+  if (busy.value) return
+  actionMessage.value = ''
   const targetIssue = jobTargetIssue(job)
   if (targetIssue) {
     scheduledJobs.error = `定时任务“${job.name}”执行已阻断：${targetIssue}。请编辑任务并重新选择有效目标。`
@@ -207,29 +246,47 @@ async function runJob(job: ScheduledJob): Promise<void> {
     targetName: job.name,
     caseCount: job.target_ids.length,
   })) return
-  const execution = await scheduledJobs.runOnce(job.id)
-  await router.push({ name: 'runs', query: { executionId: execution.id } })
+  try {
+    const execution = await scheduledJobs.runOnce(job.id)
+    await router.push({ name: 'runs', query: { executionId: execution.id } })
+  } catch { /* Store exposes the request failure. */ }
 }
 
 async function loadTargetAssets(): Promise<void> {
-  if (!projectId.value) return
+  targetsLoading.value = true
   targetLoadError.value = ''
-  const results = await Promise.allSettled([
-    baselines.load({ projectId: projectId.value, sourceRevisionId: sourceRevisionId.value, environmentRevisionId: environmentRevisionId.value }),
-    tasks.list(projectId.value),
-    sourceRevisionId.value ? cases.loadSavedCases(sourceRevisionId.value) : Promise.resolve(),
-  ])
-  const rejected = results.find(item => item.status === 'rejected')
-  if (rejected?.status === 'rejected') {
-    targetLoadError.value = rejected.reason instanceof Error ? rejected.reason.message : '无法读取可选目标'
-  }
+  try {
+    if (!projectId.value) return
+    const loadingSource = sourceRevisionId.value
+    const results = await Promise.allSettled([
+      baselines.load({ projectId: projectId.value, sourceRevisionId: sourceRevisionId.value, environmentRevisionId: environmentRevisionId.value }),
+      tasks.list(projectId.value),
+      sourceRevisionId.value ? cases.loadSavedCases(sourceRevisionId.value) : Promise.resolve(),
+    ])
+    if (results[2]?.status === 'fulfilled') loadedCaseSourceId.value = loadingSource
+    const rejected = results.find(item => item.status === 'rejected')
+    targetLoadError.value = baselines.error || tasks.error || (rejected?.status === 'rejected'
+      ? rejected.reason instanceof Error ? rejected.reason.message : '无法读取可选目标'
+      : '')
+  } finally { targetsLoading.value = false }
 }
 
-async function refreshAll(): Promise<void> {
-  await Promise.all([
-    projectId.value ? scheduledJobs.load(projectId.value) : Promise.resolve(),
-    loadTargetAssets(),
-  ])
+async function refreshAll(announce = true): Promise<void> {
+  if (refreshing.value || busy.value) return
+  refreshing.value = true
+  actionMessage.value = ''
+  try {
+    await Promise.all([context.loadSavedContext(), context.loadOptions()])
+    if (context.error) throw new Error(context.error)
+    await Promise.all([
+      projectId.value ? scheduledJobs.load(projectId.value) : Promise.resolve(),
+      loadTargetAssets(),
+    ])
+    if (announce && !scheduledJobs.error && !targetLoadError.value) actionMessage.value = `已刷新 ${scheduledJobs.items.length} 个定时任务及可选目标`
+  } catch (error) {
+    scheduledJobs.error = error instanceof Error ? error.message : '定时任务读取失败，请重试'
+    targetLoadError.value = scheduledJobs.error
+  } finally { refreshing.value = false; targetsLoading.value = false }
 }
 
 function setScheduleType(type: ScheduledJob['schedule_type']): void {
@@ -287,17 +344,23 @@ function toggleTargetGroup(name: string): void {
 }
 
 function jobTargetSummary(job: ScheduledJob): string {
+  if (targetsLoading.value) return `已选 ${job.target_ids.length} 项，正在读取目标`
+  if (targetLoadError.value) return `目标读取失败：${targetLoadError.value}。请刷新后重试`
+  if (job.target_type === 'cases' && (job.source_revision_id !== loadedCaseSourceId.value || job.target_ids.some(id => !cases.versions[id]))) return `已选 ${job.target_ids.length} 项固定用例版本，使用任务原接口版本；当前列表未加载全部历史版本，保存与执行仍保留固定版本，由服务端核验`
   const optionMap = new Map(targetOptionsForType(job.target_type).map(option => [option.id, option]))
   const resolved = job.target_ids.map(id => optionMap.get(id)).filter((item): item is TargetOption => Boolean(item))
-  if (!resolved.length) return `已选 ${job.target_ids.length} 项，目标详情待加载`
+  if (!resolved.length) return `已选 ${job.target_ids.length} 项，未找到可用目标，请编辑重新选择`
   const labels = resolved.slice(0, 2).map(option => `${option.title}${option.meta ? ` · ${option.meta}` : ''}`)
   const remaining = job.target_ids.length - labels.length
   return `${labels.join('；')}${remaining > 0 ? `；另 ${remaining} 项` : ''}`
 }
 
 function jobTargetIssue(job: ScheduledJob): string {
+  if (targetsLoading.value) return '正在读取目标，请稍候'
+  if (targetLoadError.value) return '目标读取失败，请刷新后重试'
   const optionMap = new Map(targetOptionsForType(job.target_type).map(option => [option.id, option]))
   const missingIds = job.target_ids.filter(id => !optionMap.has(id))
+  if (missingIds.length && job.target_type === 'cases') return ''
   if (missingIds.length) return `${missingIds.length} 个目标已删除或不属于当前项目`
   const blocked = job.target_ids.map(id => optionMap.get(id)).find(option => option && !option.selectable)
   return blocked?.unavailableReason || ''
@@ -378,11 +441,21 @@ async function openLatestExecution(job: ScheduledJob): Promise<void> {
 }
 
 function editJob(job: ScheduledJob): void {
+  if (busy.value || targetsLoading.value) return
+  scheduledJobs.error = ''
+  actionMessage.value = ''
+  const oldSource = sourceRevisionId.value
+  editorScope.value = {
+    projectId: job.project_id,
+    sourceRevisionId: job.source_revision_id || '',
+    environmentRevisionId: job.environment_revision_id || context.environmentRevisions.find(item => item.environment_id === job.environment_id)?.id || '',
+    environmentId: job.environment_id || context.environmentRevisions.find(item => item.id === job.environment_revision_id)?.environment_id || '',
+  }
   suspendTargetReset = true
   editingJobId.value = job.id
   form.name = job.name
   form.targetType = job.target_type
-  form.scheduleType = job.schedule_type
+  form.scheduleType = job.cron_expression && job.cron_expression !== scheduleDefaultExpressions[job.schedule_type] ? 'cron' : job.schedule_type
   form.cronExpression = job.cron_expression || scheduleDefaultExpressions[job.schedule_type]
   form.environmentStrategy = job.environment_strategy
   form.enabled = job.enabled
@@ -392,9 +465,17 @@ function editJob(job: ScheduledJob): void {
   selectedTargetIds.value = [...job.target_ids]
   targetSearch.value = ''
   suspendTargetReset = false
+  focusEditor()
+  if (oldSource !== sourceRevisionId.value) void loadTargetAssets()
 }
 
 function resetEditor(): void {
+  if (busy.value) return
+  const oldSource = sourceRevisionId.value
+  const oldProject = projectId.value
+  editorScope.value = null
+  scheduledJobs.error = ''
+  actionMessage.value = ''
   suspendTargetReset = true
   editingJobId.value = ''
   form.name = ''
@@ -409,32 +490,45 @@ function resetEditor(): void {
   selectedTargetIds.value = []
   targetSearch.value = ''
   suspendTargetReset = false
+  if (oldProject !== projectId.value) void refreshAll(false)
+  else if (oldSource !== sourceRevisionId.value) void loadTargetAssets()
 }
 
 async function toggleJobFlag(job: ScheduledJob, flag: 'enabled' | 'notify_feishu'): Promise<void> {
+  if (busy.value) return
+  actionMessage.value = ''
   if (flag === 'enabled' && !job.enabled && jobTargetIssue(job)) {
     scheduledJobs.error = `无法启用定时任务“${job.name}”：${jobTargetIssue(job)}。请先编辑并重新选择有效目标。`
     return
   }
-  await scheduledJobs.update(job.id, jobInputFromJob({
-    ...job,
-    [flag]: !job[flag],
-  }))
+  try {
+    await scheduledJobs.update(job.id, jobInputFromJob({ ...job, [flag]: !job[flag] }))
+    actionMessage.value = `定时任务“${job.name}”${flag === 'enabled' ? (job.enabled ? '已停用' : '已启用') : (job.notify_feishu ? '已关闭飞书通知' : '已开启飞书通知')}`
+    if (editingJobId.value === job.id) {
+      if (flag === 'enabled') form.enabled = !job.enabled
+      else form.notifyFeishu = !job.notify_feishu
+    }
+  } catch { /* Store exposes the request failure. */ }
 }
 
 async function deleteJob(job: ScheduledJob): Promise<void> {
+  if (busy.value) return
+  actionMessage.value = ''
   const confirmed = window.confirm(`删除定时任务“${job.name}”？该操作不可恢复。`)
   if (!confirmed) return
-  await scheduledJobs.remove(job.id)
-  if (editingJobId.value === job.id) resetEditor()
+  try {
+    await scheduledJobs.remove(job.id)
+    if (editingJobId.value === job.id) resetEditor()
+    actionMessage.value = `定时任务“${job.name}”已删除，已有执行记录仍保留`
+  } catch { /* Store exposes the request failure. */ }
 }
 
 function jobInputFromJob(job: ScheduledJob): ScheduledJobInput {
   return {
     project_id: job.project_id,
-    source_revision_id: job.source_revision_id,
-    environment_revision_id: job.environment_revision_id,
-    environment_id: job.environment_id,
+    source_revision_id: job.source_revision_id || undefined,
+    environment_revision_id: job.environment_revision_id || undefined,
+    environment_id: job.environment_id || undefined,
     name: job.name,
     target_type: job.target_type,
     target_ids: [...job.target_ids],
@@ -510,12 +604,14 @@ function scopeSummary(items: Array<Pick<CaseVersion, 'app_package' | 'app_name' 
 function taskOption(item: ApiTestTask): TargetOption {
   const selected = new Set(item.selected_endpoint_ids)
   const versions = Object.values(cases.versions).filter(version => selected.has(version.endpoint_id))
-  const unavailableReason = versions.map(version => applicationBusinessSelection(version.app_package, version.business))
-    .find(selection => !selection.selectable)?.reason || ''
+  const unavailableReason = item.runnable_baseline_count === 0
+    ? '当前任务没有可执行基线。请到任务管理编辑范围，调试通过并采纳基线后再选择。'
+    : versions.map(version => applicationBusinessSelection(version.app_package, version.business))
+      .find(selection => !selection.selectable)?.reason || ''
   return {
     id: item.id,
     title: item.name,
-    subtitle: `${item.selected_endpoint_ids.length} 个接口 · ${item.state}`,
+    subtitle: `${item.selected_endpoint_ids.length} 个接口 · ${taskStateLabel(item.state, item.runnable_baseline_count)}${item.runnable_baseline_count !== undefined ? ` · ${item.runnable_baseline_count} 条可执行基线` : ''}`,
     meta: `已保存任务 · ${scopeSummary(versions)}${unavailableReason ? ` · ${unavailableReason}` : ''}`,
     selectable: !unavailableReason,
     unavailableReason,
@@ -638,12 +734,16 @@ function weekDayName(value: number): string {
         <h1>定时任务</h1>
         <p class="page-subtitle">定时任务独立保存项目、目标和环境策略；手动执行会生成带“定时任务”来源的执行记录。</p>
       </div>
-      <button type="button" class="icon-command scheduled-refresh" data-testid="scheduled-refresh" title="刷新定时任务" aria-label="刷新定时任务" :disabled="!projectId || scheduledJobs.loading" @click="refreshAll">
-        <RefreshCw :size="18" :class="{ 'is-spinning': scheduledJobs.loading }" />
+      <button type="button" class="icon-command scheduled-refresh" data-testid="scheduled-refresh" title="刷新定时任务" aria-label="刷新定时任务" :disabled="refreshing || targetsLoading || busy" @click="refreshAll()">
+        <RefreshCw :size="18" :class="{ 'is-spinning': refreshing || targetsLoading }" />
       </button>
     </header>
 
-    <p v-if="scheduledJobs.error" class="inline-error">{{ scheduledJobs.error }}</p>
+    <p v-if="scheduledJobs.error" class="inline-error" role="alert">{{ scheduledJobs.error }}</p>
+
+    <p v-if="actionMessage" class="scheduled-feedback" role="status">{{ actionMessage }}</p>
+    <p v-if="busy" class="scheduled-feedback" role="status">{{ scheduledJobs.saving ? '正在保存配置…' : scheduledJobs.removingId ? '正在删除任务…' : '正在投递执行任务…' }} 请等待结果，避免重复提交。</p>
+    <p v-if="refreshing" class="scheduled-feedback" role="status">正在读取定时任务和可选目标…</p>
 
     <div class="scheduled-layout">
       <section class="scheduled-list">
@@ -663,32 +763,34 @@ function weekDayName(value: number): string {
             <small>{{ jobTargetSummary(job) }}</small>
           </div>
           <div class="scheduled-row-actions">
-            <button :data-testid="`scheduled-list-enabled-${job.id}`" type="button" class="mini-switch" :class="{ active: job.enabled }" role="switch" :aria-checked="job.enabled" :aria-label="job.enabled ? '停用定时任务' : '启用定时任务'" :title="job.enabled ? '停用定时任务' : '启用定时任务'" @click="toggleJobFlag(job, 'enabled')">
+            <button :data-testid="`scheduled-list-enabled-${job.id}`" type="button" class="mini-switch" :disabled="busy || targetsLoading" :class="{ active: job.enabled }" role="switch" :aria-checked="job.enabled" :aria-label="job.enabled ? '停用定时任务' : '启用定时任务'" :title="job.enabled ? '停用定时任务' : '启用定时任务'" @click="toggleJobFlag(job, 'enabled')">
               <span class="mini-switch-text">启用</span><span class="mini-switch-track"><span class="mini-switch-dot" /></span>
             </button>
-            <button :data-testid="`scheduled-list-notify-${job.id}`" type="button" class="mini-switch" :class="{ active: job.notify_feishu }" role="switch" :aria-checked="job.notify_feishu" :aria-label="job.notify_feishu ? '关闭飞书通知' : '开启飞书通知'" :title="job.notify_feishu ? '关闭飞书通知' : '开启飞书通知'" @click="toggleJobFlag(job, 'notify_feishu')">
+            <button :data-testid="`scheduled-list-notify-${job.id}`" type="button" class="mini-switch" :disabled="busy || targetsLoading" :class="{ active: job.notify_feishu }" role="switch" :aria-checked="job.notify_feishu" :aria-label="job.notify_feishu ? '关闭飞书通知' : '开启飞书通知'" :title="job.notify_feishu ? '关闭飞书通知' : '开启飞书通知'" @click="toggleJobFlag(job, 'notify_feishu')">
               <span class="mini-switch-text">飞书</span><span class="mini-switch-track"><span class="mini-switch-dot" /></span>
             </button>
-            <button :data-testid="`scheduled-edit-${job.id}`" type="button" class="mini-icon" title="编辑" @click="editJob(job)"><Pencil :size="14" /></button>
-            <button :data-testid="`scheduled-delete-${job.id}`" type="button" class="mini-icon danger" title="删除" @click="deleteJob(job)"><Trash2 :size="14" /></button>
+            <button :data-testid="`scheduled-edit-${job.id}`" type="button" class="mini-icon" :disabled="busy || targetsLoading" title="编辑" @click="editJob(job)"><Pencil :size="14" /></button>
+            <button :data-testid="`scheduled-delete-${job.id}`" type="button" class="mini-icon danger" :disabled="busy" title="删除" @click="deleteJob(job)"><Trash2 :size="14" /></button>
             <button v-if="job.latest_execution_id" :data-testid="`scheduled-latest-execution-${job.id}`" type="button" class="mini-icon" title="查看最近执行" @click="openLatestExecution(job)"><ExternalLink :size="14" /></button>
-            <button :data-testid="`scheduled-run-${job.id}`" type="button" class="secondary-command" :disabled="scheduledJobs.runningId === job.id || Boolean(jobTargetIssue(job))" @click="runJob(job)">
+            <button :data-testid="`scheduled-run-${job.id}`" type="button" class="secondary-command" :disabled="busy || Boolean(jobTargetIssue(job))" :title="jobTargetIssue(job) || '立即执行已保存配置，不受启用开关影响'" @click="runJob(job)">
               <Play :size="14" />{{ scheduledJobs.runningId === job.id ? '投递中' : '手动执行一次' }}
             </button>
           </div>
         </article>
-        <p v-if="!scheduledJobs.items.length" class="section-empty">暂无定时任务。</p>
+        <p v-if="!scheduledJobs.items.length && !refreshing && !scheduledJobs.error" class="section-empty">暂无定时任务。</p>
       </section>
 
       <section class="scheduled-editor">
         <header class="panel-header">
           <h2>{{ editorTitle }}</h2>
-          <button v-if="editingJobId" type="button" class="text-command" data-testid="scheduled-new" @click="resetEditor">新建</button>
+          <button v-if="editingJobId" type="button" class="text-command" data-testid="scheduled-new" :disabled="busy || targetsLoading" @click="resetEditor">新建</button>
           <CalendarClock v-else :size="17" />
         </header>
         <p v-if="editingBlockMessage" data-testid="scheduled-editor-blocked" class="inline-error" role="status">执行已阻断 · {{ editingBlockMessage }}</p>
-        <div class="setup-grid two">
-          <label>任务名称<input v-model="form.name" data-testid="scheduled-name" placeholder="例如：每日发版回归" /></label>
+        <p class="scheduled-scope" data-testid="scheduled-scope">{{ editingJobId ? '保留任务原范围' : '新任务使用当前范围' }}：{{ scopeLabel }}。<router-link v-if="!editingJobId" to="/">去工作台调整范围</router-link></p>
+        <fieldset class="setup-grid two scheduled-form" :disabled="busy">
+
+          <label>任务名称<input ref="nameInput" v-model="form.name" data-testid="scheduled-name" placeholder="例如：每日发版回归" /></label>
           <label>目标类型
             <select v-model="form.targetType" data-testid="scheduled-target-type">
               <option value="baseline_group">基线分组</option>
@@ -705,7 +807,9 @@ function weekDayName(value: number): string {
               </div>
               <input v-model="targetSearch" data-testid="scheduled-target-search" :placeholder="targetSearchPlaceholder" />
             </header>
-            <p v-if="targetLoadError" class="compact-empty">{{ targetLoadError }}</p>
+            <p v-if="pendingFixedCaseCount && !targetsLoading" class="compact-empty">已保留 {{ pendingFixedCaseCount }} 个原固定用例版本；它们未出现在最新用例列表中，不代表已删除。保存不会自动升级版本，执行时服务端仍会校验。</p>
+            <p v-if="targetsLoading" class="compact-empty" role="status">正在读取目标…</p>
+            <p v-else-if="targetLoadError" class="compact-empty" role="alert">{{ targetLoadError }}</p>
             <div v-else class="target-option-list">
               <template v-if="form.targetType === 'baselines'">
                 <div v-for="group in filteredBaselineGroups" :key="group.name" class="target-group">
@@ -797,10 +901,11 @@ function weekDayName(value: number): string {
             <span class="switch-track"><span class="switch-thumb"><Check :size="10" /></span></span>
             <span><strong>飞书通知</strong><small>使用当前项目机器人</small></span>
           </button>
-        </div>
+        </fieldset>
+        <p v-if="scheduledJobs.error || actionMessage" data-testid="scheduled-editor-feedback" :class="scheduledJobs.error ? 'inline-error' : 'scheduled-feedback'" :role="scheduledJobs.error ? 'alert' : 'status'">{{ scheduledJobs.error || actionMessage }}</p>
         <footer class="notification-actions">
           <span>当前项目：{{ context.projects.find(item => item.id === projectId)?.name || '未选择' }}</span>
-          <button data-testid="scheduled-save" type="button" class="primary-command" :disabled="scheduledJobs.saving" @click="saveJob"><Save :size="14" />{{ saveLabel }}</button>
+          <button data-testid="scheduled-save" type="button" class="primary-command" :disabled="busy || targetsLoading" @click="saveJob"><Save :size="14" />{{ saveLabel }}</button>
         </footer>
       </section>
     </div>
@@ -808,6 +913,12 @@ function weekDayName(value: number): string {
 </template>
 
 <style scoped>
+.scheduled-form { border: 0; margin: 0; min-width: 0; }
+.scheduled-feedback, .scheduled-scope { margin: 10px 13px; font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
+.scheduled-scope { color: var(--text-muted); }
+.scheduled-row { grid-template-columns: minmax(0, 1fr); }
+.scheduled-row-actions { flex-wrap: wrap; }
+.scheduled-row-main > span, .scheduled-row-main > small { white-space: normal; overflow: visible; text-overflow: clip; }
 .scheduled-refresh { flex: 0 0 34px; }
 .scheduled-row.has-server-block { grid-template-columns: minmax(0, 1fr); }
 .scheduled-row.has-server-block .scheduled-row-actions { flex-wrap: wrap; }

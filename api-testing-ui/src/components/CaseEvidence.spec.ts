@@ -39,6 +39,7 @@ describe('CaseEvidence', () => {
 
     const wrapper = mount(CaseEvidence, { props: { result: workflowResult } })
 
+    expect(wrapper.findAll('.workflow-evidence-head b').map(item => item.text())).toEqual(['通过', '通过', '未通过'])
     expect(wrapper.get('[data-testid="workflow-evidence"]').text()).toContain('前置步骤')
     expect(wrapper.get('[data-testid="workflow-evidence"]').text()).toContain('主体请求')
     expect(wrapper.get('[data-testid="workflow-evidence"]').text()).toContain('清理步骤')

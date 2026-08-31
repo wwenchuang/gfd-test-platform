@@ -28,12 +28,14 @@ const router = useRouter()
 const route = useRoute()
 const selected = ref<ExecutionView | null>(null)
 const selectedReportId = ref('')
+const reportActionMessage = ref('')
 const selectedReportIds = ref<Set<string>>(new Set())
 const filter = ref<'all' | 'failed' | 'passed'>('all')
 const sourceScope = ref<'formal' | 'debug' | 'all'>(defaultSourceScope(executions.executions))
 const reportSearch = ref('')
 const sendingReportId = ref('')
 const openingDiagnosticId = ref('')
+let diagnosticRequestVersion = 0
 const diagnosticError = ref('')
 const reportProjectId = ref('')
 const mobileReportDetailOpen = ref(false)
@@ -138,6 +140,11 @@ watch([() => route.query.project_id, () => route.query.projectId], async () => {
   await loadProjectReports(requestedProjectId, true)
 })
 
+watch([selectedReportId, reportProjectId], () => {
+  diagnosticRequestVersion += 1
+  openingDiagnosticId.value = ''
+}, { flush: 'sync' })
+
 function projectIdFromRoute(): string {
   const value = route.query.project_id ?? route.query.projectId
   if (Array.isArray(value)) return String(value[0] || '')
@@ -224,15 +231,20 @@ function selectReport(report: ExecutionView): void {
 }
 
 async function openDiagnostic(report: ExecutionView): Promise<void> {
+  if (executions.deleting) return
   selectReport(report)
+  const requestVersion = ++diagnosticRequestVersion
   openingDiagnosticId.value = report.id
   diagnosticError.value = ''
   try {
-    selected.value = await executions.loadExecution(report.id)
+    const detail = await executions.loadExecution(report.id)
+    if (requestVersion !== diagnosticRequestVersion || executions.archivedExecutionIds.has(report.id)) return
+    selected.value = detail
   } catch (error) {
+    if (requestVersion !== diagnosticRequestVersion) return
     diagnosticError.value = error instanceof Error ? error.message : '无法读取完整诊断，请稍后重试'
   } finally {
-    openingDiagnosticId.value = ''
+    if (requestVersion === diagnosticRequestVersion) openingDiagnosticId.value = ''
   }
 }
 
@@ -263,15 +275,29 @@ function toggleAllReports(): void {
 }
 
 async function deleteReports(reportIds: string[]): Promise<void> {
+  if (executions.deleting) return
   const ids = [...new Set(reportIds)].filter(Boolean)
   if (!ids.length) return
-  await executions.deleteExecutions(ids)
-  selectedReportIds.value = new Set()
-  if (selected.value && ids.includes(selected.value.id)) selected.value = null
-  if (ids.includes(selectedReportId.value)) {
-    selectedReportId.value = visibleReports.value.find(item => !ids.includes(item.id))?.id || ''
+  const names = executions.executions.filter(item => ids.includes(item.id)).slice(0, 3).map(executionDisplayName).join('、')
+  if (!window.confirm(`确认删除 ${ids.length} 条报告及对应执行记录？${names ? `\n${names}${ids.length > 3 ? ' 等' : ''}` : ''}\n这些记录将从列表移除，不会删除用例或基线。`)) return
+  if (ids.includes(openingDiagnosticId.value)) {
+    diagnosticRequestVersion += 1
+    openingDiagnosticId.value = ''
+  }
+  reportActionMessage.value = ''
+  try {
+    await executions.deleteExecutions(ids)
+    selectedReportIds.value = new Set([...selectedReportIds.value].filter(id => !ids.includes(id)))
+    if (selected.value && ids.includes(selected.value.id)) selected.value = null
+    if (ids.includes(selectedReportId.value)) selectedReportId.value = visibleReports.value[0]?.id || ''
+    const linkedId = String(route.query.executionId || route.query.execution_id || '')
+    if (ids.includes(linkedId)) replaceReportRoute(currentReport.value?.id || '')
+    reportActionMessage.value = `已删除 ${ids.length} 条报告及对应执行记录，用例和基线仍保留。`
+  } catch (error) {
+    executions.error = error instanceof Error ? error.message : '报告删除失败，请刷新列表核对后重试'
   }
 }
+
 </script>
 
 <template>
@@ -331,6 +357,8 @@ async function deleteReports(reportIds: string[]): Promise<void> {
           <span :style="{ flexGrow: Math.max(dashboard.skipped + dashboard.cancelled, 0) }" class="bucket-neutral">未完成 {{ dashboard.skipped + dashboard.cancelled }}</span>
         </div>
       </section>
+      <p v-if="executions.error" class="inline-error" role="alert">{{ executions.error }}</p>
+      <p v-if="executions.deleting || reportActionMessage" class="setup-success" role="status">{{ executions.deleting ? '正在删除选中的报告，请等待结果…' : reportActionMessage }}</p>
       <p v-if="notifications.error" class="inline-error">{{ notifications.error }}</p>
       <p v-if="notifications.lastSendMessage" class="setup-success"><Send :size="16" />{{ notifications.lastSendMessage }}</p>
 
@@ -352,7 +380,7 @@ async function deleteReports(reportIds: string[]): Promise<void> {
               <button type="button" :class="{ active: filter === 'failed' }" @click="filter = 'failed'">有问题</button>
               <button data-testid="report-filter-passed" type="button" :class="{ active: filter === 'passed' }" @click="filter = 'passed'">已通过</button>
             </div>
-            <button type="button" class="danger-command" :disabled="!selectedReportCount" @click="deleteReports([...selectedReportIds])"><Trash2 :size="14" />批量删除 {{ selectedReportCount || '' }}</button>
+            <button type="button" class="danger-command" :disabled="executions.deleting || !selectedReportCount" @click="deleteReports([...selectedReportIds])"><Trash2 :size="14" />批量删除 {{ selectedReportCount || '' }}</button>
           </div>
         </header>
         <div data-testid="report-workbench" :class="['report-workbench', { 'mobile-detail-open': mobileReportDetailOpen }]">
@@ -381,7 +409,7 @@ async function deleteReports(reportIds: string[]): Promise<void> {
                 <small>{{ executionScopeLabel(report) }} · {{ report.environment_name || '未命名环境' }} · {{ executionMetrics(report).total }} 条用例</small>
               </div>
               <b>{{ executionMetrics(report).passRate }}%</b>
-              <button type="button" class="icon-danger" aria-label="删除报告" @click.stop="deleteReports([report.id])"><Trash2 :size="13" /></button>
+              <button type="button" class="icon-danger" aria-label="删除报告" :disabled="executions.deleting" @click.stop="deleteReports([report.id])"><Trash2 :size="13" /></button>
             </article>
             <div v-if="!visibleReports.length" class="section-empty">暂无匹配报告。</div>
           </aside>
@@ -414,7 +442,7 @@ async function deleteReports(reportIds: string[]): Promise<void> {
                 >
                   <Send :size="13" />{{ sendingReportId === currentReport.id ? '发送中' : feishuReportState(currentReport).label }}
                 </button>
-                <button type="button" class="danger-command" @click="deleteReports([currentReport.id])"><Trash2 :size="14" />删除报告</button>
+                <button type="button" class="danger-command" :disabled="executions.deleting" @click="deleteReports([currentReport.id])"><Trash2 :size="14" />删除报告</button>
               </div>
               <p v-if="diagnosticError" class="inline-error" role="alert">{{ diagnosticError }}</p>
               <div class="report-detail-stats">
@@ -441,7 +469,7 @@ async function deleteReports(reportIds: string[]): Promise<void> {
                 </article>
               </section>
             </template>
-            <div v-else class="section-empty">暂无报告。执行接口或基线回归后，这里会展示报告摘要。</div>
+            <div v-else class="section-empty">{{ reports.length ? '暂无匹配报告。请清空搜索或切换筛选查看已有记录。' : '暂无报告。执行接口或基线回归后，这里会展示报告摘要。' }}</div>
           </main>
         </div>
       </section>

@@ -56,14 +56,24 @@ const emit = defineEmits<{
 
 const WORK_VIEWS: Array<{ id: CaseWorkView; label: string }> = [
   { id: 'all', label: '全部' },
-  { id: 'regular', label: '普通用例' },
+  { id: 'regular', label: '待调试' },
   { id: 'debugged', label: '已调试' },
   { id: 'baseline', label: '已基线' },
   { id: 'task', label: '当前任务' },
   { id: 'orchestrated', label: '有编排' },
   { id: 'one-time', label: '一次性' },
-  { id: 'candidate', label: '候选' },
+  { id: 'candidate', label: '未保存候选' },
 ]
+const viewGuidance: Record<CaseWorkView, string> = {
+  all: '按用例版本计数，同一接口可有多条用例。各视图可能重叠，数量不能相加。',
+  regular: '已保存、尚无调试记录且未采纳基线。下一步：打开用例，核对参数和断言后“保存并调试”。',
+  debugged: '有调试记录，包括通过、失败和异常；是否通过以每条用例的调试结果为准。',
+  baseline: '已采纳的基线版本；不代表本轮回归通过。执行任务后到“测试报告”查看结果。',
+  task: '当前任务范围内的用例，未采纳为基线的草稿不会随任务回归执行。',
+  orchestrated: '包含前后处理或前置、清理步骤。写操作需确认清理成功，再采纳基线。',
+  'one-time': '一次性人工用例可保留在库中，不进入自动批量回归。',
+  candidate: '生成后尚未保存的候选。先检查内容并保存，再调试；未保存候选可能在切换范围后清除。',
+}
 
 const query = ref('')
 const workView = ref<CaseWorkView>('all')
@@ -246,13 +256,15 @@ function chooseBatchGroup(groupName: string): void {
 
 <template>
   <aside class="case-list-panel" aria-label="用例列表">
-    <header class="panel-header"><h2>用例列表</h2><span>{{ totalCount }}</span></header>
+    <header class="panel-header"><h2>用例列表</h2><span>{{ totalCount }} 条</span></header>
     <div class="case-list-tools">
+      <p class="case-count-note">已保存 {{ versions.length }} 条 · 未保存候选 {{ generatedPreviews.length }} 条</p>
       <div class="case-work-views" role="tablist" aria-label="用例工作视图">
         <button v-for="view in WORK_VIEWS" :key="view.id" :data-testid="`case-work-view-${view.id}`" type="button" role="tab" :aria-selected="workView === view.id" :class="{ active: workView === view.id }" @click="workView = view.id">
           <span>{{ view.label }}</span><b>{{ workViewCounts[view.id] }}</b>
         </button>
       </div>
+      <p class="case-view-guidance" data-testid="case-view-guidance" role="status">{{ viewGuidance[workView] }}</p>
       <label class="search-box case-list-search"><Search :size="15" /><span class="sr-only">搜索用例</span><input v-model="query" data-testid="case-list-search" placeholder="搜索用例、接口或路径" /></label>
       <div v-if="visibleTree.length" data-testid="case-list-group-toolbar" class="case-list-group-toolbar" aria-label="用例分组视图">
         <span data-testid="case-list-group-summary" class="case-list-group-summary"><strong>分组浏览</strong><small>{{ groupStateText }}</small></span>
