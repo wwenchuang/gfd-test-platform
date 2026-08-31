@@ -47,8 +47,8 @@ test('我的收藏三接口完成导入、AI 设计、调试、基线回归和�
   await page.getByTestId('context-project').selectOption({ label: '3D 我的收藏' })
   await page.getByTestId('context-source').selectOption({ index: 1 })
   await page.getByTestId('context-environment').selectOption({ index: 1 })
-  await page.getByRole('button', { name: '保存测试范围' }).click()
-  await expect(page.getByText('范围已保存')).toBeVisible()
+  await page.getByRole('button', { name: '保存当前选择' }).click()
+  await expect(page.getByText('选择已保存', { exact: true })).toBeVisible()
   for (const summary of ['查询我的收藏', '添加收藏', '取消收藏']) {
     await page.getByTestId('endpoint-search').fill(summary)
     await page.getByRole('button', { name: new RegExp(summary) }).locator('..').getByRole('checkbox').check()

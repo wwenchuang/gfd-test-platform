@@ -44,7 +44,7 @@ describe('ContextBar', () => {
     })
 
     expect(wrapper.text()).toContain('先创建项目')
-    expect(wrapper.text()).not.toContain('范围已保存')
+    expect(wrapper.text()).not.toContain('选择已保存')
   })
 
   it('labels range saving as an explicit save action', () => {
@@ -55,7 +55,7 @@ describe('ContextBar', () => {
       },
     })
 
-    expect(wrapper.text()).toContain('保存测试范围')
+    expect(wrapper.text()).toContain('保存当前选择')
     expect(wrapper.text()).not.toContain('应用范围')
   })
 

@@ -6,6 +6,22 @@ import { describe, expect, it } from 'vitest'
 import TaskStatusStrip from './TaskStatusStrip.vue'
 
 describe('TaskStatusStrip', () => {
+  it('guides a new workspace without offering actions on a nonexistent task', async () => {
+    const wrapper = mount(TaskStatusStrip, { props: { task: null, selectedCount: 0, taskNameDraft: '默认任务名' } })
+    expect(wrapper.text()).toContain('从一个接口开始')
+    expect(wrapper.text()).toContain('保存并调试')
+    expect(wrapper.text()).not.toContain('默认任务名')
+    expect(wrapper.find('[data-testid="rename-task"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="run-task"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="save-task"]').exists()).toBe(false)
+    await wrapper.setProps({ selectedCount: 1 })
+    await wrapper.get('[data-testid="task-name-input"]').setValue('首页只读冒烟')
+    expect(wrapper.emitted('update:taskNameDraft')?.at(-1)).toEqual(['首页只读冒烟'])
+    await wrapper.get('[data-testid="save-task"]').trigger('click')
+    expect(wrapper.emitted('save')).toHaveLength(1)
+    expect(wrapper.find('[data-testid="rename-task"]').exists()).toBe(false)
+  })
+
   it('blocks regression until a debugged case is adopted as a baseline', async () => {
     const wrapper = mount(TaskStatusStrip, {
       props: {

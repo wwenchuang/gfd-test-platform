@@ -559,7 +559,7 @@ function baselineGroupOptions(): TargetOption[] {
         id: name,
         title: name,
         subtitle: [`${items.length} 条基线`, sampleText].filter(Boolean).join(' · '),
-        meta: `基线分组 · ${scopeSummary(items)}${unavailableReason ? ` · ${unavailableReason}` : ''}`,
+        meta: `${items.length} 条基线 · ${scopeSummary(items)}${unavailableReason ? ` · ${unavailableReason}` : ''}`,
         selectable: !unavailableReason,
         unavailableReason,
       }
@@ -756,11 +756,11 @@ function weekDayName(value: number): string {
               <b>配置：{{ job.enabled ? '已启用' : '已停用' }}</b>
               <b v-if="!scheduledBlockMessage(job) && jobTargetIssue(job)" class="scheduled-blocked">执行已阻断 · {{ jobTargetIssue(job) }}</b>
               <b v-else-if="!scheduledBlockMessage(job) && job.enabled">下次执行 {{ formatDateTime(job.next_run_at, job.scheduler_utc_offset) }}</b>
-              <b v-if="job.latest_run_at">最近{{ triggerLabel(job.latest_run_trigger) }} {{ formatDateTime(job.latest_run_at, job.scheduler_utc_offset) }} · {{ scheduleExecutionSummary(job) }}</b>
+              <b v-if="job.latest_run_at">上次结果（历史）· 最近{{ triggerLabel(job.latest_run_trigger) }} {{ formatDateTime(job.latest_run_at, job.scheduler_utc_offset) }} · {{ scheduleExecutionSummary(job) }}</b>
               <b v-else>尚无执行记录</b>
             </span>
             <p v-if="scheduledBlockMessage(job)" class="inline-error" role="status">执行已阻断 · {{ scheduledBlockMessage(job) }}</p>
-            <small>{{ jobTargetSummary(job) }}</small>
+            <small :data-testid="`scheduled-current-target-${job.id}`">当前目标：{{ jobTargetSummary(job) }}</small>
           </div>
           <div class="scheduled-row-actions">
             <button :data-testid="`scheduled-list-enabled-${job.id}`" type="button" class="mini-switch" :disabled="busy || targetsLoading" :class="{ active: job.enabled }" role="switch" :aria-checked="job.enabled" :aria-label="job.enabled ? '停用定时任务' : '启用定时任务'" :title="job.enabled ? '停用定时任务' : '启用定时任务'" @click="toggleJobFlag(job, 'enabled')">

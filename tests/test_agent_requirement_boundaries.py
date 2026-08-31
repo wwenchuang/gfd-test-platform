@@ -19,6 +19,15 @@ def plan_fixture():
     return run, result
 
 
+def test_manual_only_design_is_saved_but_cannot_become_an_automatic_plan():
+    run, result = plan_fixture()
+    result["cases"]["manual_cases"] = [{"title": "需人工准备设计稿", "reason": "缺少页面证据"}]
+    plan, issues = agent_service._agent_business_plan_from_mindmap(run, result, {})
+    assert plan is None
+    assert any("人工" in issue and "缺少页面证据" in issue for issue in issues)
+    assert not any("覆盖检查未通过" in issue for issue in issues)
+
+
 @pytest.mark.parametrize("analysis,coverage", [
     ({"readiness_level": "blocked"}, {"ok": True}),
     ({"readiness_level": "ready", "blockers": ["目标入口及安全边界尚不明确"]}, {"ok": True}),
@@ -85,14 +94,18 @@ def test_english_business_token_does_not_match_inside_another_word():
     assert yaml_baseline_cache._score_item(["invoice"], "", {"title": "invoicedraft"}) == (0, [])
 
 
-def test_blocked_first_plan_cannot_be_bypassed_by_retry_timeout(monkeypatch):
+@pytest.mark.parametrize("manual_only", [False, True])
+def test_blocked_first_plan_cannot_be_bypassed_by_retry_timeout(monkeypatch, manual_only):
     from task_server.services import yaml_service
 
     run, result = plan_fixture()
     run.update({"runId": "audit-boundary-fixture", "target": "首页新增发票入口并校验可见"})
     run["artifacts"]["sourceContext"] = {"requirementText": run["target"]}
-    result["cases"]["analysis"].update({"readiness_level": "blocked", "blockers": ["执行边界未知"]})
-    result["coverageAudit"] = {"ok": False}
+    if manual_only:
+        result["cases"]["manual_cases"] = [{"title": "人工执行", "reason": "执行边界未知"}]
+    else:
+        result["cases"]["analysis"].update({"readiness_level": "blocked", "blockers": ["执行边界未知"]})
+        result["coverageAudit"] = {"ok": False}
     attempts = []
 
     def generate(*args, **kwargs):
@@ -110,7 +123,7 @@ def test_blocked_first_plan_cannot_be_bypassed_by_retry_timeout(monkeypatch):
     assert len(attempts) == 2
     assert tool["status"] == "FAILED"
     assert "执行边界未知" in str(run["artifacts"]["plan"]["issues"])
-    assert run["artifacts"]["mindmapPlan"]["coverageAudit"]["ok"] is False
+    assert run["artifacts"]["mindmapPlan"]["coverageAudit"]["ok"] is manual_only
     assert not run["artifacts"]["plan"].get("planTimeoutFallback")
 
 

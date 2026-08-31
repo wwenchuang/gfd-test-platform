@@ -405,6 +405,15 @@ async function assertAssetSyncClarity(page, url) {
     const taskAppsPayload = await (await taskAppsResponsePromise).json();
     if (!JSON.stringify(taskAppsPayload).includes('校园版')) throw new Error(`business-line configuration response is incomplete: ${JSON.stringify(taskAppsPayload)}`);
     await page.getByRole('heading', { name: '接口测试工作台' }).waitFor();
+    await page.goto(`${url}#/?newTask=1`, { waitUntil: 'networkidle' });
+    await page.getByText('从一个接口开始', { exact: true }).waitFor();
+    for (const [label, viewport] of [['desktop', { width: 1440, height: 900 }], ['mobile', { width: 390, height: 844 }]]) {
+      await page.setViewportSize(viewport);
+      if (label === 'mobile') await page.waitForFunction(() => document.querySelector('.side-rail')?.getBoundingClientRect().right <= 0);
+      await assertNoHorizontalOverflow(page, `new workbench ${label}`);
+      await page.screenshot({ path: path.join(ARTIFACTS, `workbench-start-${label}.png`), fullPage: true });
+    }
+    await page.setViewportSize({ width: 1440, height: 900 });
     await page.getByTestId('endpoint-search').fill('我的收藏列表');
     await page.getByRole('button', { name: '我的收藏列表' }).click();
     await page.getByTestId('case-business-campus').waitFor();
@@ -508,7 +517,7 @@ async function assertAssetSyncClarity(page, url) {
     await assertScheduledServerBlocks(page);
     await assertAssetSyncClarity(page, url);
     if (errors.length) throw new Error(`browser errors: ${errors.join(' | ')}`);
-    console.log(JSON.stringify({ ok: true, url, screenshots: ['workflow-preview-desktop.png', 'workflow-preview-mobile.png', 'workbench-desktop.png', 'workbench-compact-desktop.png', 'workbench-tablet.png', 'workbench-mobile.png', 'baselines-mobile.png', 'settings-mobile.png', 'baselines-desktop.png', 'scheduled-blocked-desktop.png', 'scheduled-blocked-mobile.png', 'assets-saved-desktop.png', 'assets-preview-desktop.png', 'assets-preview-compact.png', 'assets-preview-mobile.png'] }));
+    console.log(JSON.stringify({ ok: true, url, screenshots: ['workbench-start-desktop.png', 'workbench-start-mobile.png', 'workflow-preview-desktop.png', 'workflow-preview-mobile.png', 'workbench-desktop.png', 'workbench-compact-desktop.png', 'workbench-tablet.png', 'workbench-mobile.png', 'baselines-mobile.png', 'settings-mobile.png', 'baselines-desktop.png', 'scheduled-blocked-desktop.png', 'scheduled-blocked-mobile.png', 'assets-saved-desktop.png', 'assets-preview-desktop.png', 'assets-preview-compact.png', 'assets-preview-mobile.png'] }));
   } finally {
     await browser.close();
     await new Promise(resolve => server.close(resolve));

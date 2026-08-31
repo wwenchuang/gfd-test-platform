@@ -2482,7 +2482,7 @@ def extract_app_package_from_yaml(yaml_text):
 # 用例 payload 规范化
 # ---------------------------------------------------------------------------
 
-def normalize_cases_payload(value: Any) -> dict:
+def normalize_cases_payload(value: Any, *, allow_empty_cases: bool = False) -> dict:
     """规范化用例 JSON 负载。"""
     if isinstance(value, str):
         value = json.loads(value)
@@ -2494,7 +2494,9 @@ def normalize_cases_payload(value: Any) -> dict:
     cases = value.get("cases") or value.get("testCases") or value.get("items")
     if cases is None and all(key in value for key in ("title", "steps")):
         cases = [value]
-    if not isinstance(cases, list) or not cases:
+    if allow_empty_cases and cases is None:
+        cases = []
+    if not isinstance(cases, list) or (not cases and not allow_empty_cases):
         raise ValueError("JSON 中必须包含非空 cases 数组")
     scenarios = value.get("scenarios") or []
     if not isinstance(scenarios, list):
@@ -2847,9 +2849,9 @@ def _point_covered(point: str, blobs: Iterable[str]) -> bool:
     return False
 
 
-def audit_case_coverage(payload: Any) -> Tuple[dict, dict]:
+def audit_case_coverage(payload: Any, *, allow_empty_cases: bool = False) -> Tuple[dict, dict]:
     """审计用例覆盖度。返回 ``(normalized_payload, coverage_audit_dict)``。"""
-    normalized = normalize_cases_payload(payload)
+    normalized = normalize_cases_payload(payload, allow_empty_cases=allow_empty_cases)
     points = _requirement_points_from_payload(normalized)
     case_blobs = [_coverage_blob_for_item(item) for item in normalized.get("cases") or []]
     scenario_blobs = [_coverage_blob_for_item(item) for item in normalized.get("scenarios") or []]
@@ -2873,9 +2875,9 @@ def audit_case_coverage(payload: Any) -> Tuple[dict, dict]:
     return normalized, review["coverage_audit"]
 
 
-def split_automation_ready_cases(payload: Any) -> dict:
-    """分离可自动化用例。"""
-    normalized = normalize_cases_payload(payload)
+def split_automation_ready_cases(payload: Any, *, require_executable: bool = True) -> dict:
+    """分离可自动化用例；只做测试设计时保留全人工结果及原因。"""
+    normalized = normalize_cases_payload(payload, allow_empty_cases=not require_executable)
     if normalized.get("_automation_ready"):
         return normalized
 
@@ -2946,7 +2948,7 @@ def split_automation_ready_cases(payload: Any) -> dict:
     normalized["cases"] = ready
     normalized["manual_cases"] = manual
     normalized["_automation_ready"] = True
-    if not ready:
+    if not ready and require_executable:
         raise ValueError("没有可转换为自动化 YAML 的用例：请补充可执行 UI 步骤")
     return normalized
 
@@ -10119,6 +10121,8 @@ def generate_mindmap_from_request(d, job_id=None):
             review.get("visual_refine_skipped")
             or "脑图结构已使用本地降级结果，本轮跳过视觉模型以避免后台任务再次超时。"
         )
+    elif not payload.get("cases") and payload.get("manual_cases"):
+        review["visual_refine_skipped"] = "当前为全人工测试设计，无自动化候选；保留人工准备条件，本轮不调用自动化用例视觉校准。"
     elif visual_text_assets or mindmap_visual_image_assets:
         if job_id:
             update_generate_job(
@@ -10303,13 +10307,15 @@ def generate_mindmap_from_request(d, job_id=None):
     if job_id:
         update_generate_job(job_id, progress=78, step="本地覆盖检查", message="正在做本地覆盖检查并写入脑图")
     try:
-        payload, coverage_audit = audit_case_coverage(payload)
+        payload, coverage_audit = audit_case_coverage(payload, allow_empty_cases=True)
         payload.setdefault("review", {})["coverage_auditor_skipped"] = "只生成脑图流程跳过 coverage_auditor 重模型审查，避免长时间卡在思考；需要补齐用例时可在生成分析里重新生成"
     except Exception as e:
         coverage_audit = {"ok": False, "error": str(e)}
         payload.setdefault("review", {})["coverage_repair_error"] = str(e)
 
-    converted_payload = split_automation_ready_cases(payload)
+    # PLAN/脑图是测试设计产物，不要求此时已有可下发 Runner 的用例。
+    # 真正生成 YAML 的调用仍使用默认严格门禁。
+    converted_payload = split_automation_ready_cases(payload, require_executable=False)
     converted_payload["id"] = case_set_id
     converted_payload["module"] = module
     write_json_file(cases_path(case_set_id), converted_payload)

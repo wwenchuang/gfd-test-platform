@@ -521,7 +521,7 @@ async function anyVisible(locator) {
     await page.fill('#password', 'visual-smoke-password');
     await page.click('button:has-text("登 录")');
     await page.waitForSelector('#app', {state: 'visible'});
-    await page.waitForSelector('text=全自动 Agent 工作台');
+    await page.getByRole('heading', { name: 'Agent 工作台', exact: true }).waitFor();
     await page.waitForFunction(() => document.querySelector('#agent-app-name')?.selectedOptions[0]?.dataset.package === 'com.kfb.model');
     const coldDeviceHint = await page.locator('#agent-runner-device-hint').innerText();
     if (!coldDeviceHint.includes('当前应用：智小白3D / com.kfb.model')) throw new Error(`Cold Agent entry lost its configured application name: ${coldDeviceHint}`);
@@ -710,6 +710,11 @@ async function anyVisible(locator) {
     const campusPreviewText = await page.locator('#agent-plan-preview-body').innerText();
     if (!/输入来源：直接输入/.test(campusPreviewText) || !/范围：自动（AI 判断）/.test(campusPreviewText)) throw new Error(`Agent preview exposes untranslated input or scope: ${campusPreviewText}`);
     await page.click('#modal-agent-plan-preview .btn-cancel');
+    await page.click('.workflow-step:has-text("待我确认")');
+    await page.click('.workflow-step:has-text("Agent 工作台")');
+    await page.waitForFunction(() => document.querySelector('#agent-app-name')?.value === '校园助手');
+    if (await page.locator('#agent-goal').inputValue() !== '校园助手登录流程回归') throw new Error('Agent goal was lost after leaving and returning');
+    if (await page.locator('#agent-business').inputValue() !== 'campus') throw new Error('Agent business was lost after leaving and returning');
     await page.selectOption('#agent-app-name', {label: '智小白3D'});
     if (await page.locator('#agent-business').inputValue()) throw new Error('Agent application changes must clear an incompatible business selection');
     await page.waitForFunction(() => {
@@ -751,6 +756,7 @@ async function anyVisible(locator) {
     if (campusStartRequest?.app_package !== 'com.example.school' || campusStartRequest?.business !== 'campus') {
       throw new Error(`Agent start did not preserve the selected configured application identity: ${JSON.stringify(campusStartRequest)}`);
     }
+    await page.waitForFunction(() => document.querySelector('#agent-business')?.value === 'campus');
     await page.waitForSelector('.agent-phase-list');
     if (await page.locator('.agent-phase-step').count() !== 5) throw new Error('The normal Agent path should show five phases; failure recovery must remain conditional');
     if (await page.locator('.agent-checkpoint-trace').evaluate(el => el.open)) throw new Error('Internal Agent checkpoints should be collapsed by default');

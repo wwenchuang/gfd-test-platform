@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { AlertTriangle, ListTree, PencilLine, RefreshCw, Sparkles } from 'lucide-vue-next'
-import { useRoute, useRouter } from 'vue-router'
+import { RouterLink, useRoute, useRouter } from 'vue-router'
 
 import AiAssistant from '../components/AiAssistant.vue'
 import CaseEditor from '../components/CaseEditor.vue'
@@ -584,9 +584,9 @@ function defaultTaskName(newTask = false): string {
       <AlertTriangle :size="18" />
       <div>
         <strong>已使用当前接口版本</strong>
-        <p>最近任务“{{ outdatedRestoredTask.name }}”属于旧接口版本，未自动覆盖同步后的当前版本。需要复用时请从任务记录显式打开；继续编辑会在当前版本创建新任务。</p>
+        <p>最近任务“{{ outdatedRestoredTask.name }}”属于旧接口版本，仍保留在“任务管理”。当前可直接选择新版本接口，旧任务和用例不会被删除。</p>
       </div>
-      <button class="secondary-command" type="button" @click="startNewTask">在当前版本新建任务</button>
+      <RouterLink class="secondary-command" :to="{ name: 'tasks' }">查看历史任务</RouterLink>
     </section>
     <TaskStatusStrip
       v-model:task-name-draft="taskNameDraft"

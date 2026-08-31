@@ -8,6 +8,8 @@ const agentTimelineDetailStates = new Map();
 let agentRestoringTimelineDetails = false;
 let lastAgentPlanPreviewText = '';
 let agentBusinessDraft = '';
+let agentFormDraft = {};
+let agentAppListRequestSeq = 0;
 let agentApplicationCatalog = [];
 const DEFAULT_AGENT_APP_NAME = '智小白3D APP';
 const DEFAULT_AGENT_APP_PACKAGE = 'com.kfb.model';
@@ -616,6 +618,17 @@ async function openAgentAppInstall() {
   }
 }
 
+function captureAgentFormDraft() {
+  _AGENT_FORM_FIELD_IDS.forEach(id => {
+    const field = document.getElementById(id);
+    if (field) agentFormDraft[id] = {
+      value: field.value,
+      selectionStart: field.selectionStart,
+      selectionEnd: field.selectionEnd,
+    };
+  });
+}
+
 async function showAgentWorkbench() {
   const area = document.getElementById('editor-area');
   if (!area) return;
@@ -628,17 +641,8 @@ async function showAgentWorkbench() {
   const artifactViewState = captureAgentArtifactViewState(document.getElementById('agent-artifacts-card'));
 
   // Preserve form values before innerHTML replacement (prevents textarea/input reset during polling)
-  const savedFormState = {};
-  _AGENT_FORM_FIELD_IDS.forEach(id => {
-    const el = document.getElementById(id);
-    if (el) {
-      savedFormState[id] = {
-        value: el.value,
-        selectionStart: el.selectionStart,
-        selectionEnd: el.selectionEnd
-      };
-    }
-  });
+  captureAgentFormDraft();
+  const savedFormState = { ...agentFormDraft };
   const savedActiveId = document.activeElement?.id || '';
 
   const riskLevel = classifyRiskLevel(savedFormState['agent-goal']?.value || document.getElementById('agent-goal')?.value || '');
@@ -647,8 +651,8 @@ async function showAgentWorkbench() {
     <div class="agent-shell" data-agent-workbench-mode="${run ? 'run' : 'new'}">
       <div class="agent-hero">
         <div class="workflow-kicker">自动化 Agent · 自动规划 / 自动执行 / 安全确认 / 可追踪产物</div>
-        <h2>全自动 Agent 工作台</h2>
-        <p>输入测试目标，Agent 自动完成用例选择、YAML 生成、Sonic 执行、失败分析、修复草稿和报告沉淀。</p>
+        <h2>Agent 工作台</h2>
+        <p>输入目标并选择应用、业务和设备。Agent 先规划，再校验 YAML 并交给 Runner 执行；需要准备或人工确认时会暂停，失败原因和产物保留在运行记录。</p>
       </div>
 
       <!-- 主卡片：单一启动入口 -->
@@ -688,7 +692,7 @@ async function showAgentWorkbench() {
               <div class="agent-field">
                 <label for="agent-app-name">应用</label>
                 <select id="agent-app-name" onchange="handleAgentApplicationChange()">
-                  <option value="智小白3D APP" data-package="com.kfb.model" selected>智小白3D</option>
+                  <option value="">正在读取已配置应用…</option>
                 </select>
               </div>
               <div class="agent-field">
@@ -855,6 +859,11 @@ async function showAgentWorkbench() {
     }
   } catch(e) {}
 
+  // Restore option lists synchronously before values. Otherwise a second render
+  // can snapshot the empty selects while /task-apps is still loading.
+  appendAgentAppOptions(document.getElementById('agent-app-name'), agentApplicationCatalog, savedFormState['agent-app-name']?.value);
+  renderAgentBusinessOptions(savedFormState['agent-business']?.value || agentBusinessDraft);
+
   // Restore preserved form values after innerHTML replacement
   if (Object.keys(savedFormState).length) {
     _AGENT_FORM_FIELD_IDS.forEach(id => {
@@ -919,16 +928,24 @@ async function showAgentWorkbench() {
 
 // Load the enabled platform application catalog for Agent creation.
 async function loadAppList(preferredValue, preferredBusiness = '') {
+  const requestSeq = ++agentAppListRequestSeq;
+  const originalSelect = document.getElementById('agent-app-name');
+  const originalApp = originalSelect?.value;
+  const originalBusiness = document.getElementById('agent-business')?.value;
   try {
     const data = await apiRequest('/task-apps');
+    if (requestSeq !== agentAppListRequestSeq) return;
     const apps = agentAppsWithDefault(data.apps || []);
     agentApplicationCatalog = apps;
 
     // Populate workbench select
     const workbenchSelect = document.getElementById('agent-app-name');
-    if (workbenchSelect) {
-      appendAgentAppOptions(workbenchSelect, apps, preferredValue);
-      renderAgentBusinessOptions(preferredBusiness);
+    if (workbenchSelect && workbenchSelect === originalSelect) {
+      const appChanged = workbenchSelect.value !== originalApp;
+      const businessNow = document.getElementById('agent-business')?.value || '';
+      const businessChanged = businessNow !== originalBusiness;
+      appendAgentAppOptions(workbenchSelect, apps, appChanged ? workbenchSelect.value : preferredValue);
+      renderAgentBusinessOptions(appChanged || businessChanged ? businessNow : preferredBusiness);
       if (typeof updateAgentRunnerDeviceHint === 'function') updateAgentRunnerDeviceHint();
     }
 
@@ -4098,7 +4115,7 @@ async function previewAgentPlan() {
     } catch(e) {
       showToast(e.message || '获取执行计划失败', 'error');
     }
-  }, { btn: previewBtn, btnLabel: '生成中...', overlay: 'AI 正在规划...' });
+  }, { btn: previewBtn, btnLabel: '检查中...', overlay: '正在检查启动配置；AI 业务计划将在启动后生成…' });
 }
 
 function agentScopeText(scope) {
@@ -4170,7 +4187,6 @@ async function startAgentRun(options={}) {
       });
       agentCurrentRun = normalizeAgentRun(data.run || data);
       if (agentCurrentRun && agentCurrentRun.runId) {
-        agentBusinessDraft = '';
         // Sync to AppState
         AppState.currentAgentRun = agentCurrentRun;
 

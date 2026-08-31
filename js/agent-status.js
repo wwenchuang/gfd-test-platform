@@ -1575,6 +1575,10 @@ async function confirmAgentRun(action='CONTINUE', confirmationId='', extra={}) {
   if (!canOperateAgent()) { showToast(agentAccessReason(), 'error'); return; }
   const run = currentAgentRun();
   if (!run?.runId) return;
+  if (!(run.pendingConfirmations || []).length && !/^WAIT_CONFIRM/.test(run.status)) {
+    showToast('没有可处理的待确认项，请查看诊断后新建重试；旧记录不会被改成成功。', 'warn');
+    return;
+  }
   try {
     const data = await apiRequest(`/agent-runs/${encodeURIComponent(run.runId)}/confirm`, {
       method: 'POST',
@@ -1924,6 +1928,14 @@ function escapeRegExp(s) {
   return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+function agentFailureActionsHtml(run) {
+  return `<p class="generate-hint">先查看失败诊断。修正目标或配置后可启动新任务；按原输入重试会创建新记录，旧记录和报告保留。修复草稿需先生成并人工确认，才会替换 YAML。</p>
+    <div class="agent-actions" style="margin-top:8px;">
+      <button class="btn-sm primary" type="button" onclick="setAgentTab('failure');document.getElementById('agent-artifacts-card')?.scrollIntoView({block:'start'})">查看失败诊断</button>
+      <button class="btn-sm" type="button" onclick="retryAgentRunById(${jsArg(run.runId)})" ${canOperateAgent() ? '' : 'disabled'}>按原输入新建重试</button>
+    </div>`;
+}
+
 function renderAgentCenter() {
   const title = document.getElementById('jobs-title');
   const count = document.getElementById('jobs-count');
@@ -1958,7 +1970,7 @@ function renderAgentCenter() {
           <div class="agent-timeline">
             ${recentRuns.map(r => `
               <div class="agent-timeline-item ${r.status === 'DONE' ? 'success' : (r.status === 'CANCELLED' || r.status === 'FAILED' ? 'failed' : (r.status === 'WAIT_CONFIRM' ? 'waiting' : 'running'))}">
-                <strong>${escapeHtml((r.runId || '').slice(0, 20))}</strong>
+                <button class="btn-sm" type="button" onclick="openAgentRunTrace(${jsArg(r.runId)}, 'agent')">${escapeHtml((r.target || r.goal || r.runId || '未命名运行').slice(0, 60))}</button>
                 <div>${escapeHtml(agentStatusText(r.status))} · ${escapeHtml(agentModeText(r.mode))}</div>
                 <div style="font-size:11px;color:var(--text3);">${escapeHtml(agentRunDisplayTime(r).slice(0, 16))}</div>
               </div>
@@ -2031,11 +2043,7 @@ function renderAgentCenter() {
           <strong>失败原因</strong><span>${escapeHtml(String(failure || '暂无').slice(0, 200))}</span>
         </div>
         ${agentDiagnosisHtml(run)}
-        <div class="agent-actions" style="margin-top:8px;">
-          <button class="btn-sm ai" onclick="confirmAgentRun('APPLY_REPAIR_AND_RERUN')">应用修复并重跑</button>
-          <button class="btn-sm" onclick="confirmAgentRun('GENERATE_BUG_DRAFT')">生成缺陷草稿</button>
-          <button class="btn-sm danger" onclick="cancelAgentRun()">人工处理</button>
-        </div>
+        ${agentFailureActionsHtml(run)}
       </div>
       ` : ''}
 
@@ -2430,6 +2438,7 @@ async function activateWorkflow(sectionKey) {
   }
   const section = WORKFLOW_SECTIONS[targetWorkflow] || WORKFLOW_SECTIONS.dashboard;
   if (!(await saveEditorBeforeNavigation(`已进入「${section.title}」流程页`))) return;
+  if (typeof captureAgentFormDraft === 'function') captureAgentFormDraft();
   const keepFileContext = Boolean(currentFile && hasOpenEditor()
     && ['yaml_edit', 'execute', 'baseline', 'repair'].includes(targetWorkflow));
   closeTransientUiForNavigation();

@@ -435,6 +435,8 @@ describe('ScheduledJobsView', () => {
     expect(row.text()).toContain('下次执行 2026/08/27 18:00')
     expect(row.text()).toContain('最近调度 2026/08/26 18:00')
     expect(row.text()).toContain('通过 1/2 · 50%')
+    expect(row.text()).toContain('上次结果（历史）')
+    expect(wrapper.get('[data-testid="scheduled-current-target-job-observable"]').text()).toContain('1 条基线')
 
     await wrapper.get('[data-testid="scheduled-latest-execution-job-observable"]').trigger('click')
     await flushPromises()

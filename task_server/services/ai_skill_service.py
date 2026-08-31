@@ -3177,14 +3177,15 @@ def call_skill_automation_filter(
         cases = result.get("cases") or []
     except Exception as exc:
         return fallback(exc)
-    if not isinstance(cases, list) or not cases:
+    raw_manual_cases = result.get("manual_cases") or []
+    manual_cases, manual_dedup_review = deduplicate_generated_cases(raw_manual_cases)
+    manual_design = str(mode).strip().lower() == "mindmap" and bool(manual_cases)
+    if not isinstance(cases, list) or (not cases and not manual_design):
         return fallback("automation_filter 未产出自动化用例")
     raw_case_count = len(cases)
     cases, case_dedup_review = deduplicate_generated_cases(cases)
-    if not cases:
+    if not cases and not manual_design:
         return fallback("automation_filter 仅产出无效或重复用例")
-    raw_manual_cases = result.get("manual_cases") or []
-    manual_cases, manual_dedup_review = deduplicate_generated_cases(raw_manual_cases)
     review = result.get("review") or {}
     review["automation_filter_skill"] = "automation_filter.v1"
     review["automation_filter_input"] = input_review
@@ -3527,8 +3528,14 @@ def select_smoke_cases_for_payload(
     runtime_trace=None,
 ):
     """Run final smoke selection on a normalized cases payload."""
-    normalized = normalize_cases_payload(payload)
+    normalized = normalize_cases_payload(payload, allow_empty_cases=str(mode).strip().lower() == "mindmap")
     cases = normalized.get("cases") or []
+    if not cases:
+        review = normalized.setdefault("review", {})
+        review["smoke_selector_skill"] = "skipped_no_automatic_cases"
+        review["smoke_case_ids"] = []
+        review["smoke_eligible_case_count"] = 0
+        return normalized
     eligible_cases = [
         case for case in cases
         if str(case.get("executionLevel") or case.get("level") or "executable").strip().lower() == "executable"
@@ -3781,7 +3788,7 @@ def build_cases_payload_from_skills(
         "blockers": analysis.get("blockers") or [],
         "questions": analysis.get("questions") or [],
     }
-    normalized = normalize_cases_payload(payload)
+    normalized = normalize_cases_payload(payload, allow_empty_cases=mode == "mindmap")
     smoke_runtime_trace = {}
     normalized = select_smoke_cases_for_payload(
         title,

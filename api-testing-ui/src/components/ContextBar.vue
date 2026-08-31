@@ -18,7 +18,7 @@ const props = withDefaults(defineProps<{
   savedLabel?: string
 }>(), {
   projects: () => [], sourceRevisions: () => [], environmentRevisions: () => [], loading: false, saved: false,
-  saveLabel: '保存测试范围', savedLabel: '范围已保存',
+  saveLabel: '保存当前选择', savedLabel: '选择已保存',
 })
 
 const emit = defineEmits<{
@@ -86,7 +86,7 @@ function nullable(value: string): string | null {
 <template>
   <section :class="['context-bar', { 'context-expanded': expanded }]" aria-label="当前测试范围">
     <div class="context-heading">
-      <Database :size="17" /><strong>测试范围</strong>
+      <Database :size="17" /><strong>项目与环境</strong>
       <span v-if="productionEnvironment" data-testid="production-environment-warning" class="production-environment-warning">生产环境 · 执行前确认</span>
     </div>
     <p data-testid="context-summary" class="context-summary"><strong>{{ selectedProjectName }}</strong><span>{{ selectedSource ? sourceLabel(selectedSource) : '未选择接口版本' }}</span><span>{{ selectedEnvironment ? environmentLabel(selectedEnvironment) : '未选择环境' }}</span></p>
@@ -96,7 +96,7 @@ function nullable(value: string): string | null {
       type="button"
       :aria-expanded="expanded"
       @click="expanded = !expanded"
-    >调整范围<ChevronDown :size="15" :class="{ rotated: expanded }" /></button>
+    >切换项目 / 环境<ChevronDown :size="15" :class="{ rotated: expanded }" /></button>
     <div class="context-selectors">
       <label>项目
         <select data-testid="context-project" :value="projectId || ''" :disabled="loading" @change="emit('update:projectId', nullable(($event.target as HTMLSelectElement).value))">
@@ -121,6 +121,6 @@ function nullable(value: string): string | null {
     <a v-else-if="!sources.length" class="context-next" href="#/assets">先保存接口来源</a>
     <a v-else-if="!environments.length" class="context-next" href="#/settings">先配置执行环境</a>
     <span v-else-if="saved && projectId && sourceRevisionId && environmentRevisionId" class="saved-state" role="status">{{ savedLabel }}</span>
-    <button class="context-save" type="button" :disabled="loading || !projectId || !sourceRevisionId || !environmentRevisionId" @click="emit('save')"><Save :size="16" />{{ saveLabel }}</button>
+    <button class="context-save" type="button" title="保存项目、接口版本和执行环境的选择，不会创建任务或执行接口" :disabled="loading || !projectId || !sourceRevisionId || !environmentRevisionId" @click="emit('save')"><Save :size="16" />{{ saveLabel }}</button>
   </section>
 </template>

@@ -2521,6 +2521,8 @@ def confirm_agent_step(run_id, step_id, decision, payload=None):
         run = next((r for r in runs if r.get("runId") == run_id), None)
         if not run:
             return None
+        if run.get("status") in ("FAILED", "CANCELLED", "DONE"):
+            return {"error": "任务已结束，不能继续确认；请查看原记录后新建重试", "run": run}
         now = time.strftime("%Y-%m-%dT%H:%M:%S")
         confirmation = next(
             (c for c in run.get("pendingConfirmations", []) if c.get("id") == step_id),
@@ -2548,8 +2550,10 @@ def confirm_agent_step(run_id, step_id, decision, payload=None):
             "apply_baseline", "apply_repair_and_rerun",
         )
         if not confirmation:
-            artifacts = run.setdefault("artifacts", {})
-            if run.get("status") == "WAIT_CONFIRM" and (artifacts.get("draftPath") or artifacts.get("generatedYaml")):
+            artifacts = run.get("artifacts") or {}
+            if (run.get("status") == "WAIT_CONFIRM" and not step_id
+                    and not run.get("pendingConfirmations")
+                    and (artifacts.get("draftPath") or artifacts.get("generatedYaml"))):
                 confirmation = {
                     "id": step_id or f"confirm-{int(time.time())}",
                     "type": "generated_yaml_draft",
@@ -2557,20 +2561,8 @@ def confirm_agent_step(run_id, step_id, decision, payload=None):
                     "draftPath": artifacts.get("draftPath") or "",
                     "createdAt": now,
                 }
-            elif decision_key in approve_keys and not (run.get("pendingConfirmations") or []):
-                next_step = next_pending_step_after(run.get("lastConfirmedStep") or run.get("currentStep") or "")
-                if next_step == "DONE":
-                    run["status"] = "DONE"
-                    run["currentStep"] = "DONE"
-                    run["progress"] = 100
-                else:
-                    run["status"] = "RUNNING"
-                    run["currentStep"] = next_step
-                run["updatedAt"] = now
-                save_agent_runs(runs)
-                return run
             else:
-                return {"error": "确认项不存在", "run": run}
+                return {"error": "没有可处理的待确认项，请刷新任务；失败任务请查看诊断后新建重试", "run": run}
         generate_draft_keys = (
             "generate_yaml_draft", "generate_draft", "new_yaml",
             "create_yaml_draft", "reject_case_reuse",
@@ -5034,7 +5026,7 @@ def _agent_mm_visual_status(review):
     }
 
 
-def _agent_plan_readiness_issues(analysis, coverage):
+def _agent_plan_readiness_issues(analysis, coverage, payload=None):
     """Explicit blockers cannot be downgraded into display-only unknowns."""
     analysis = analysis if isinstance(analysis, dict) else {}
     coverage = coverage if isinstance(coverage, dict) else {}
@@ -5046,6 +5038,11 @@ def _agent_plan_readiness_issues(analysis, coverage):
         reasons.append("需求分析标记为阻断，不能自动生成；请查看规划草稿并补充缺少的需求证据")
     if coverage.get("ok") is False:
         reasons.append("规划覆盖检查未通过，请查看未覆盖需求并重新规划；本轮不进入 YAML 生成")
+    payload = payload if isinstance(payload, dict) else {}
+    manual_cases = [item for item in payload.get("manual_cases") or [] if isinstance(item, dict)]
+    if not payload.get("cases") and manual_cases:
+        manual_reasons = [str(item.get("reason") or item.get("title") or "待人工准备")[:160] for item in manual_cases[:4]]
+        reasons.append("已保留全人工测试设计，尚无可自动执行用例；请先补充准备条件后重试：" + "；".join(manual_reasons))
     return reasons
 
 
@@ -5056,7 +5053,7 @@ def _agent_business_plan_from_mindmap(run, mindmap_result, requirement_candidate
     if failure_reasons:
         return None, failure_reasons
     analysis = payload.get("analysis") if isinstance(payload.get("analysis"), dict) else {}
-    readiness_issues = _agent_plan_readiness_issues(analysis, result.get("coverageAudit"))
+    readiness_issues = _agent_plan_readiness_issues(analysis, result.get("coverageAudit"), payload)
     if readiness_issues:
         return None, readiness_issues
     review = payload.get("review") if isinstance(payload.get("review"), dict) else {}
@@ -5413,8 +5410,9 @@ def _tool_agent_plan(run):
                     error=str(exc),
                     timeout_seconds=AGENT_PLAN_MINDMAP_TIMEOUT_SECONDS,
                 )
-                previous_analysis = (mindmap_result.get("cases") or {}).get("analysis") or {}
-                previous_blockers = _agent_plan_readiness_issues(previous_analysis, mindmap_result.get("coverageAudit"))
+                previous_payload = mindmap_result.get("cases") or {}
+                previous_analysis = previous_payload.get("analysis") or {}
+                previous_blockers = _agent_plan_readiness_issues(previous_analysis, mindmap_result.get("coverageAudit"), previous_payload)
                 if previous_blockers:
                     # A retry timeout is not evidence that earlier blockers were resolved.
                     # Keep the rejected draft and its issues visible below.

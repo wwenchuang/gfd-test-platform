@@ -198,6 +198,10 @@ describe('WorkbenchView debug workflow', () => {
 
     expect(restore).not.toHaveBeenCalled()
     expect(tasks.task).toBeNull()
+    expect(wrapper.find('[data-testid="task-name-input"]').exists()).toBe(false)
+    expect(wrapper.get('.task-start-heading').text()).toContain('从一个接口开始')
+    wrapper.findComponent({ name: 'EndpointTree' }).vm.$emit('selection-change', ['endpoint-1'])
+    await flushPromises()
     expect(wrapper.get('[data-testid="task-name-input"]').element).toHaveProperty('value', '3D 家用新建任务')
   })
 
@@ -293,7 +297,10 @@ describe('WorkbenchView debug workflow', () => {
     vi.spyOn(tasks, 'list').mockResolvedValue([oldTask])
     vi.spyOn(tasks, 'restore').mockResolvedValue(oldTask)
 
-    const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/', name: 'workbench', component: WorkbenchView }] })
+    const router = createRouter({ history: createMemoryHistory(), routes: [
+      { path: '/', name: 'workbench', component: WorkbenchView },
+      { path: '/tasks', name: 'tasks', component: { template: '<div />' } },
+    ] })
     await router.push(path)
     await router.isReady()
     const wrapper = mount(WorkbenchView, {
@@ -309,6 +316,10 @@ describe('WorkbenchView debug workflow', () => {
     expect(loadAssets).not.toHaveBeenCalledWith('source-old', expect.anything())
     expect(wrapper.get('[data-testid="source-version-mismatch"]').text()).toContain('旧版本任务')
     expect(wrapper.get('[data-testid="source-version-mismatch"]').text()).toContain('当前接口版本')
+    await wrapper.get('[data-testid="source-version-mismatch"] a').trigger('click')
+    await flushPromises()
+    expect(router.currentRoute.value.name).toBe('tasks')
+    expect(context.sourceRevisionId).toBe('source-new')
   })
 
   it('saves the current draft and debugs the exact version returned by that save', async () => {
@@ -833,7 +844,7 @@ describe('WorkbenchView debug workflow', () => {
     expect(run).not.toHaveBeenCalled()
     expect(confirm).not.toHaveBeenCalled()
     expect(wrapper.get('[data-testid="run-task"]').attributes('disabled')).toBeDefined()
-    expect(wrapper.get('[data-testid="task-next-step"]').text()).toContain('先保存当前任务范围')
+    expect(wrapper.get('[data-testid="task-next-step"]').text()).toContain('更新任务接口')
 
     await wrapper.get('[data-testid="restore-selection"]').trigger('click')
     await flushPromises()
