@@ -3891,7 +3891,7 @@ function showAppConfigCenter() {
     <div class="management-list">
       ${taskApps.length ? taskApps.map(app => `<div class="management-row">
         <div class="management-row-main"><strong>${escapeHtml(app.name || app.package)}</strong><span>${escapeHtml(app.package || '-')}</span><small>${escapeHtml((app.modules || []).join('、') || '尚未绑定用例模块')}</small></div>
-        <div class="management-row-meta"><span>${escapeHtml(app.sonic_project_name || app.sonic_project_id || 'Sonic 未绑定')}</span><span>${escapeHtml(taskAppFeishuLabel(app))}</span></div>
+        <div class="management-row-meta"><span>${app.enabled === false ? '已停用 · 不用于新建测试' : '已启用'}</span><span>${escapeHtml(app.sonic_project_name || app.sonic_project_id || 'Sonic 未绑定')}</span><span>${escapeHtml(taskAppFeishuLabel(app))}</span></div>
         <button class="btn-sm" onclick="openTaskAppEditor(${jsArg(app.package || '')})">编辑</button>
       </div>`).join('') : '<div class="job-empty">暂无应用配置。先新增应用，再关联用例模块。</div>'}
     </div>
@@ -4176,6 +4176,8 @@ function editTaskApp(packageName) {
   );
   const selected = new Set(app.modules || []);
   document.querySelectorAll('.task-app-module-check').forEach(input => input.checked = selected.has(input.value));
+  if (typeof FormSteps !== 'undefined') FormSteps.goTo(0);
+  document.getElementById('task-app-name').focus();
 }
 
 function taskAppFeishuLabel(app) {
@@ -4197,7 +4199,7 @@ function renderTaskAppList() {
     return `
     <div class="app-row">
       <div class="app-row-main" onclick="editTaskApp('${escapeHtml(app.package)}')">
-        <div class="app-row-name">${escapeHtml(app.name || app.package)}</div>
+        <div class="app-row-name">${escapeHtml(app.name || app.package)}${app.enabled === false ? ' · 已停用' : ''}</div>
         <div class="app-row-sub">${escapeHtml(app.package)} · 业务线：${escapeHtml(businessText)} · 项目：${escapeHtml(app.sonic_project_name || app.sonic_project_id || '未绑定')} · 测试套：${escapeHtml(app.sonic_suite_name || app.sonic_suite_id || '未绑定')} · ${escapeHtml(taskAppFeishuLabel(app))} · ${(app.modules || []).length} 个模块：${escapeHtml((app.modules || []).join('、'))}</div>
       </div>
       <button class="btn-sm" onclick="editTaskApp('${escapeHtml(app.package)}')">编辑</button>
@@ -4253,6 +4255,8 @@ async function saveTaskApp() {
     clearTaskAppForm();
     renderTaskAppModal();
     renderModules();
+    if (activeWorkflow === 'app_config') showAppConfigCenter();
+    if (activeWorkflow === 'feishu_config') showFeishuConfigCenter();
     refreshBusinessLineControls();
     showToast(`应用已保存${data.app.sonic_suite_id ? '，Sonic 测试套已绑定' : ''}`, 'success');
   } catch(e) {
@@ -4690,8 +4694,16 @@ async function deleteTaskApp(packageName) {
   try {
     await apiRequest(`/task-app?package=${encodeURIComponent(packageName)}`, { method: 'DELETE' });
     taskApps = taskApps.filter(app => app.package !== packageName);
+    if (document.getElementById('task-app-package').value.trim() === packageName) {
+      clearTaskAppForm();
+      if (typeof FormSteps !== 'undefined') FormSteps.goTo(0);
+    }
+    const selectedModules = new Set(Array.from(document.querySelectorAll('.task-app-module-check:checked')).map(input => input.value));
     renderTaskAppModal();
+    document.querySelectorAll('.task-app-module-check').forEach(input => input.checked = selectedModules.has(input.value));
     renderModules();
+    if (activeWorkflow === 'app_config') showAppConfigCenter();
+    if (activeWorkflow === 'feishu_config') showFeishuConfigCenter();
     showToast('✓ 应用分组已删除', 'success');
   } catch(e) {
     showToast(e.message || '删除应用分组失败', 'error');

@@ -224,7 +224,9 @@ async function save(): Promise<void> {
 }
 
 async function archiveEnvironment(id: string): Promise<void> {
-  if (!window.confirm('归档后该环境不会出现在工作台选择项中，历史版本和执行记录仍会保留。确定归档吗？')) return
+  const asset = setup.environmentAssets.find(item => item.id === id)
+  if (!asset) return
+  if (!window.confirm(`确认归档环境“${asset.name}”？归档后不会出现在工作台选择项中，历史版本和执行记录仍会保留。`)) return
   try {
     await setup.archiveEnvironment(id)
     await refreshProjectEnvironmentStats([projectId.value])
@@ -245,7 +247,9 @@ async function restoreEnvironment(id: string): Promise<void> {
 }
 
 async function restoreEnvironmentRevision(revisionId: string): Promise<void> {
-  if (!window.confirm('确认将该历史版本恢复为新的当前版本吗？旧版本仍会保留。')) return
+  const revision = setup.environmentHistory.find(item => item.id === revisionId)
+  if (!revision || !selectedAsset.value) return
+  if (!window.confirm(`确认将环境“${selectedAsset.value.name}”的历史版本 v${revision.revision} 恢复为新的当前版本吗？旧版本仍会保留。`)) return
   loadingDetail.value = true
   localError.value = ''
   try {
@@ -270,6 +274,10 @@ async function restoreEnvironmentRevision(revisionId: string): Promise<void> {
 async function openWorkbench(): Promise<void> {
   const asset = selectedAsset.value
   if (!asset) return
+  if (asset.status === 'archived') {
+    localError.value = '该环境已归档，请先在左侧恢复环境，再进入工作台'
+    return
+  }
   const sourceRevision = asset.source_revision_id || sourceOptions.value.at(-1)?.id || ''
   if (!sourceRevision) {
     localError.value = '该环境尚未关联接口版本，请先前往接口资产同步最新接口'
@@ -519,8 +527,9 @@ function formatDate(value: string): string { return value ? new Date(value).toLo
         <template v-else-if="selectedAsset && environmentDetail">
           <header class="environment-detail-header">
             <div><p class="eyebrow">环境详情</p><h2>{{ selectedAsset.name }}</h2><p>{{ selectedAsset.description || '暂无说明' }}</p></div>
-            <div class="toolbar-actions"><button class="secondary-command" type="button" data-action="edit" @click="startEdit"><Pencil :size="15" />编辑</button><button class="primary-command" type="button" data-action="workbench" @click="openWorkbench">进入工作台<ArrowRight :size="15" /></button></div>
+            <div class="toolbar-actions"><button class="secondary-command" type="button" data-action="edit" @click="startEdit"><Pencil :size="15" />编辑</button><button class="primary-command" type="button" data-action="workbench" :disabled="selectedAsset.status === 'archived'" @click="openWorkbench">进入工作台<ArrowRight :size="15" /></button></div>
           </header>
+          <p v-if="selectedAsset.status === 'archived'" class="compact-empty" role="status">该环境已归档，请先在左侧恢复环境，再进入工作台</p>
 
           <div class="environment-overview-strip">
             <div><small>所属项目</small><strong>{{ selectedProject?.name }}</strong></div>

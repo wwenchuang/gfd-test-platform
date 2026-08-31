@@ -141,6 +141,23 @@ describe('SettingsView environment asset center', () => {
     expect(loadAssets).toHaveBeenLastCalledWith('project-1', 'archived')
   })
 
+  it('keeps an archived environment out of the workbench and explains how to restore it', async () => {
+    const setup = useSetupStore()
+    vi.mocked(setup.loadEnvironmentAssets).mockImplementation(async () => {
+      setup.environmentAssets = [{ ...environment, status: 'archived' }]
+      return setup.environmentAssets
+    })
+    vi.mocked(setup.loadEnvironmentRevision).mockImplementation(async () => {
+      setup.environment = { ...environmentView, status: 'archived' }
+      return setup.environment
+    })
+    const { wrapper, router } = await mountView()
+    expect(wrapper.get('[data-action="workbench"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.text()).toContain('已归档，请先在左侧恢复环境，再进入工作台')
+    await wrapper.get('[data-action="workbench"]').trigger('click')
+    expect(router.currentRoute.value.name).toBe('settings')
+  })
+
   it('uses readable detail tabs and restores a historical environment revision', async () => {
     const { wrapper } = await mountView()
     const setup = useSetupStore()

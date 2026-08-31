@@ -1122,6 +1122,9 @@ async function anyVisible(locator) {
     const hasSchoolBusiness = await page.locator('.task-app-business-name').evaluateAll(inputs => inputs.some(input => input.value === '校园版'));
     if (!hasSchoolBusiness) throw new Error('Application configuration did not expose the configured Chinese business line');
     if (!await page.locator('#task-app-enabled').isChecked()) throw new Error('Application configuration must show enabled status for the selected application');
+    for (let step = 0; step < 3; step++) await page.locator('#modal-task-apps .step-next-btn').click();
+    await page.locator('#task-app-list .app-row').first().getByRole('button', {name: '编辑', exact: true}).click();
+    if (!await page.locator('#task-app-name').isVisible()) throw new Error('Editing a listed application must return to visible basic fields from the final wizard step');
     await page.screenshot({path: path.join(ARTIFACTS, 'app-business-lines.png'), fullPage: true});
     await page.click('#modal-task-apps .modal-close');
     await page.locator('.management-row', {hasText: '已停用应用'}).locator('button').click();
