@@ -61,7 +61,7 @@
 - 公开静态 HTML 报告、外部 Sonic 页面、数据库/主机管理员访问不由本轮身份层保护；历史数据库中的明文敏感头未做批量迁移。生产地址也不能仅靠 URL 自动判断，需管理员审定环境配置和白名单。
 - 用户负责拉取代码并运行 `bash deploy/update-main-server.sh`。部署后先更换共享管理员密码、验证备用实名管理员，再验证只读/受限账号和定时任务。线上全平台点检及真实历史基线回放仍是原计划的待验收项，不因本地 IAM 检查而宣布完成。
 
-设计与逐项记录：`docs/superpowers/specs/2026-08-31-local-identity-access-design.md`、`docs/superpowers/plans/2026-08-31-local-identity-access.md`。
+功能提交 `5afa237` 已推送到 `origin/main`，等待用户部署；本条状态更新仅补齐交付记录，不含生产代码变化。设计与逐项记录：`docs/superpowers/specs/2026-08-31-local-identity-access-design.md`、`docs/superpowers/plans/2026-08-31-local-identity-access.md`。
 
 ### 2026-08-28 全平台连续点检、深链登录与首屏降噪
 

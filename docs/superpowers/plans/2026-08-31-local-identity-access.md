@@ -61,7 +61,7 @@ Files: `js/identity-management.js`, `js/auth.js`, `js/app.js`, `js/agent-status.
 - [x] Independent review of privilege escalation, forgotten endpoints, cross-project IDs, retired sessions, SQLite locking and secret exposure. Review findings were reproduced and covered by regression tests; API origin/header/scheduler and session/machine-boundary corrections received independent confirmation. The final main-platform path/alias corrections were verified by focused and real HTTP tests, not a completed second independent review.
 - [x] Run `bash tests/run_api_testing_gate.sh`, main-platform visual smoke, static checks and `git diff --check`. Final complete gate exited 0 on 2026-08-31: API 621, Vue 382, production build, 11 visual screenshots, Chromium import/generation/debug/baseline/report/schedule/task-cleanup flow passed.
 - [x] Update CODEX_STATE and design/plan with exact implemented coverage and remaining deployment constraints.
-- [ ] Commit and push tested code; user deploys. Do not report online migration/HTTPS as completed by local tests.
+- [x] Commit and push tested code; feature commit `5afa237` was pushed to `origin/main` on 2026-08-31. User deploys. Do not report online migration/HTTPS as completed by local tests.
 
 ## Review Findings Tracked In This Plan
 
@@ -91,5 +91,5 @@ Files: `js/identity-management.js`, `js/auth.js`, `js/app.js`, `js/agent-status.
 - The API end-to-end fixture now has its own identity database. Reusing a unit-test identity database had produced a legitimate login rejection, not a production password-migration defect.
 - Earlier complete-gate attempts exposed a baseline audit initialization race and outdated scheduled-state wording. Both were corrected; failed attempts are not recorded as successful acceptance.
 - Standalone main-platform visual smoke: 15 screenshots. API visual smoke: 11 screenshots. Main/frontend/gateway static checks: 63/84/46. Gateway authorization: 13 unit + 11 integration tests.
-- Final full API gate has passed. Commit/push remains the delivery checkpoint until its commands finish. Online migration, HTTPS, public static report protection, external Sonic authentication and historical baseline replay are not completed by local acceptance.
+- Final full API gate and feature commit/push have completed. Online migration, HTTPS, public static report protection, external Sonic authentication and historical baseline replay are not completed by local acceptance.
 - The build emits a non-blocking chunk-size warning for the approximately 506 kB main JavaScript bundle; route-level code splitting is not included in this authorization change.
