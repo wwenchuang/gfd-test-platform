@@ -54,6 +54,7 @@ def classify_endpoint_workflow(endpoint):
 
     method = str(_value(endpoint, "method", "GET") or "GET").upper()
     text = _endpoint_text(endpoint)
+    read_only = method in {"GET", "HEAD", "OPTIONS"}
 
     if is_print_dispatch_endpoint(endpoint):
         return _workflow(
@@ -65,7 +66,7 @@ def classify_endpoint_workflow(endpoint):
             baseline_policy="guarded",
             reason="动态获取设备和切片产物；打印成功后必须取消本次打印",
         )
-    if any(label in text for label in ("积分兑换", "账号注销", "真实扣费", "正式支付")):
+    if not read_only and any(label in text for label in ("积分兑换", "账号注销", "真实扣费", "正式支付")):
         return _workflow(
             "irreversible",
             "不可逆业务",
@@ -75,7 +76,7 @@ def classify_endpoint_workflow(endpoint):
             baseline_policy="excluded",
             reason="操作不可可靠回滚，默认排除定时基线，仅保留人工验证",
         )
-    if any(label in text for label in ("切片", "slice")):
+    if not read_only and any(label in text for label in ("切片", "slice")):
         return _workflow(
             "slice_lifecycle",
             "切片生命周期",
@@ -85,7 +86,7 @@ def classify_endpoint_workflow(endpoint):
             baseline_policy="guarded",
             reason="动态选择模型和在线设备，并回收本次切片任务及产物",
         )
-    if any(label in text for label in ("收藏", "关注", "点赞", "favorite", "follow", "like")) and method not in {"GET", "HEAD", "OPTIONS"}:
+    if any(label in text for label in ("收藏", "关注", "点赞", "favorite", "follow", "like")) and not read_only:
         return _workflow(
             "reversible_state",
             "可逆状态变更",
@@ -95,7 +96,7 @@ def classify_endpoint_workflow(endpoint):
             baseline_policy="guarded",
             reason="先查询执行前状态，主体变更后必须恢复原状态",
         )
-    if any(label in text for label in ("设备", "device", "打印机", "printer")) and method not in {"GET", "HEAD", "OPTIONS"}:
+    if any(label in text for label in ("设备", "device", "打印机", "printer")) and not read_only:
         return _workflow(
             "device_control",
             "设备控制",
@@ -105,7 +106,7 @@ def classify_endpoint_workflow(endpoint):
             baseline_policy="guarded",
             reason="先确认设备在线并读取原设置，执行后取消动作或恢复原值",
         )
-    if any(label in text for label in ("上传", "upload", "生成模型", "文件生成")):
+    if not read_only and any(label in text for label in ("上传", "upload", "生成模型", "文件生成")):
         return _workflow(
             "file_lifecycle",
             "文件或生成任务",
@@ -135,7 +136,7 @@ def classify_endpoint_workflow(endpoint):
             baseline_policy="guarded",
             reason="前置创建本次专用临时资源，禁止删除列表中已有的历史数据",
         )
-    if any(label in text for label in ("异步", "任务状态", "进度", "status", "progress")) and method not in {"GET", "HEAD", "OPTIONS"}:
+    if any(label in text for label in ("异步", "任务状态", "进度", "status", "progress")) and not read_only:
         return _workflow(
             "async_task",
             "异步任务",
@@ -165,7 +166,7 @@ def classify_endpoint_workflow(endpoint):
             baseline_policy="guarded",
             reason="先读取并保存原值，修改验证后恢复原值并再次确认",
         )
-    if method in {"GET", "HEAD", "OPTIONS"}:
+    if read_only:
         detail_markers = ("详情", "状态", "detail", "/info", "/status", "{id}", "{sn}")
         if any(label in text for label in detail_markers):
             return _workflow(
@@ -174,8 +175,8 @@ def classify_endpoint_workflow(endpoint):
                 "low",
                 requires_setup=True,
                 requires_cleanup=False,
-                baseline_policy="guarded",
-                reason="先从同资源列表动态提取有效标识，列表为空时明确跳过",
+                baseline_policy="direct",
+                reason="无业务状态变更；优先从同资源列表动态提取有效标识，固定标识失效会以回归失败暴露",
             )
         return _workflow(
             "read_only",

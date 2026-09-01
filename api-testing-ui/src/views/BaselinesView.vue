@@ -83,7 +83,7 @@ const selectedBaselineScopeIssue = computed(() => {
   }
   return ''
 })
-const selectedAuditEnvironmentIssue = computed(() => {
+const selectedAuditEvidenceNotice = computed(() => {
   if (!context.environmentRevisionId) return ''
   const mismatched = baselines.selectedItems.some(item => {
     const audit = baselines.auditByBaselineId.get(item.id)
@@ -95,12 +95,10 @@ const selectedAuditEnvironmentIssue = computed(() => {
     )
   })
   return mismatched
-    ? '所选复核基线的审计证据环境与当前执行环境不一致，请切回原基线环境或重新选择'
+    ? '部分审计证据来自其他环境；本次会在当前环境重新执行并生成新证据，通过后再补断言和采纳'
     : ''
 })
-const selectedBaselineActionIssue = computed(() => (
-  selectedBaselineScopeIssue.value || selectedAuditEnvironmentIssue.value
-))
+const selectedBaselineActionIssue = computed(() => selectedBaselineScopeIssue.value)
 const baselineActionReady = computed(() => Boolean(
   projectReady.value
   && context.environmentRevisionId
@@ -135,6 +133,14 @@ const filteredBaselines = computed(() => {
       .includes(needle)
   })
 })
+const filteredBulkBaselines = computed(() => {
+  if (auditFilter.value === 'all' || !baselines.audit) return filteredBaselines.value
+  return filteredBaselines.value.filter(item => {
+    const audit = baselines.auditByBaselineId.get(item.id)
+    return baselineSelection(item).selectable && Boolean(audit?.execution.selectable)
+  })
+})
+const filteredBulkSkippedCount = computed(() => filteredBaselines.value.length - filteredBulkBaselines.value.length)
 const baselinePageCount = computed(() => Math.max(1, Math.ceil(filteredBaselines.value.length / BASELINE_PAGE_SIZE)))
 const pagedBaselines = computed(() => {
   const start = (baselinePage.value - 1) * BASELINE_PAGE_SIZE
@@ -151,7 +157,8 @@ const canManageCurrentGroup = computed(() => (
   group.value !== 'all' && group.value !== '未分组' && activeGroupItems.value.length > 0
 ))
 const allFilteredSelected = computed(() => Boolean(
-  filteredBaselines.value.length && filteredSelectedCount.value === filteredBaselines.value.length,
+  filteredBulkBaselines.value.length
+  && filteredBulkBaselines.value.every(item => baselines.selectedIds.includes(item.id)),
 ))
 const selectedGroups = computed(() => [...new Set(baselines.selectedItems.map(item => baselineGroup(item)))])
 const moveTargetName = computed(() => groupName.value.trim() || moveTargetGroup.value.trim())
@@ -162,7 +169,6 @@ const currentSafeAuditIds = computed(() => {
       const audit = baselines.auditByBaselineId.get(item.id)
       return item.status === 'active'
         && Boolean(audit && audit.status !== 'verified' && audit.execution.selectable)
-        && audit?.environment_revision_id === context.environmentRevisionId
         && baselineSelection(item).selectable
     })
     .map(item => item.id)
@@ -249,12 +255,15 @@ function selectSafeAuditItems(): void {
 }
 
 function toggleFiltered(): void {
-  const visibleIds = filteredBaselines.value.map(item => item.id)
+  const visibleIds = filteredBulkBaselines.value.map(item => item.id)
   if (allFilteredSelected.value) {
     const visible = new Set(visibleIds)
     baselines.select(baselines.selectedIds.filter(id => !visible.has(id)))
   } else {
     baselines.select([...baselines.selectedIds, ...visibleIds])
+    if (filteredBulkSkippedCount.value) {
+      localMessage.value = `已选择 ${visibleIds.length} 条可批量处理基线，已跳过 ${filteredBulkSkippedCount.value} 条仅人工或不可自动执行的基线`
+    }
   }
 }
 
@@ -290,10 +299,6 @@ function validateBaselineAction(options: { requireEndpointIds?: boolean } = {}):
   }
   if (selectedBaselineScopeIssue.value) {
     localError.value = `${selectedBaselineScopeIssue.value}，历史基线仅支持查看、编辑和分组管理，不能创建新任务或执行`
-    return { ok: false }
-  }
-  if (selectedAuditEnvironmentIssue.value) {
-    localError.value = selectedAuditEnvironmentIssue.value
     return { ok: false }
   }
   if (selectedBaselineSourceRevisionIds.value.length > 1) {
@@ -623,7 +628,7 @@ function adoptionReasonLabel(reason: string): string {
         <span>业务失败 <b>{{ baselines.audit.summary.business_failure }}</b> 条</span>
         <span>建议补领域断言 <b>{{ baselines.audit.summary.domain_assertion_required }}</b> 条</span>
         <span>证据不足 <b>{{ baselines.audit.summary.evidence_missing }}</b> 条</span>
-        <span>当前环境可安全补断言 <b>{{ currentSafeAuditIds.length }}</b> 条</span>
+        <span>可批量重新复验 <b>{{ currentSafeAuditIds.length }}</b> 条</span>
         <small>“生成待复核版本”只补充证据明确的精确业务断言；新版本仍需在原环境重新调试并采纳后，才会替换活动基线。</small>
       </div>
       <p v-if="baselines.auditError" class="inline-error">{{ baselines.auditError }}</p>
@@ -670,6 +675,7 @@ function adoptionReasonLabel(reason: string): string {
             <ShieldCheck :size="17" />
             <span class="baseline-selection-metric"><strong>{{ filteredBaselines.length }}</strong><span>筛选结果</span></span>
             <span class="baseline-selection-metric"><strong>{{ filteredSelectedCount }}</strong><span>已选择</span></span>
+            <span v-if="auditFilter !== 'all' && filteredBulkSkippedCount" class="baseline-selection-metric warning"><strong>{{ filteredBulkSkippedCount }}</strong><span>仅人工/跳过</span></span>
           </div>
           <div class="baseline-action-buttons">
             <button class="secondary-command" type="button" :disabled="!filteredBaselines.length" @click="toggleFiltered">{{ allFilteredSelected ? '取消当前筛选' : '全选当前筛选' }}</button>
@@ -677,7 +683,7 @@ function adoptionReasonLabel(reason: string): string {
             <button class="primary-command" type="button" :disabled="tasks.saving || !baselineActionReady" @click="saveSelectedAsRegressionTask"><ListPlus :size="15" />{{ tasks.saving ? '保存中' : '保存为基线回归任务' }}</button>
             <button class="primary-command" type="button" :disabled="executions.baselineStarting || !baselineActionReady" @click="runSelectedBaselines"><Play :size="15" />{{ executions.baselineStarting ? '创建执行中' : '按当前环境执行所选基线' }}</button>
           </div>
-          <small class="baseline-action-hint" :class="{ warning: selectedBaselineActionIssue }">{{ selectedBaselineActionIssue || '保存会创建独立基线回归任务；立即执行只使用当前执行环境，不修改工作台任务。' }}</small>
+          <small class="baseline-action-hint" :class="{ warning: selectedBaselineActionIssue }">{{ selectedBaselineActionIssue || selectedAuditEvidenceNotice || '保存会创建独立基线回归任务；立即执行只使用当前执行环境，不修改工作台任务。' }}</small>
         </header>
         <div class="baseline-group-editor" aria-label="基线分组编辑">
           <div>

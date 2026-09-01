@@ -631,7 +631,7 @@ describe('BaselinesView fixed project assets', () => {
 
     expect(get).toHaveBeenCalledWith('/api/api-testing/v1/baselines/assertion-audit?project_id=project-1')
     expect(wrapper.text()).toContain('自动回归需复核 3 条')
-    expect(wrapper.text()).toContain('当前环境可安全补断言 1 条')
+    expect(wrapper.text()).toContain('可批量重新复验 2 条')
     expect(wrapper.text()).toContain('可补精确断言 2 条')
     expect(wrapper.text()).toContain('HTTP 失败 0 条')
     expect(wrapper.text()).toContain('业务失败 0 条')
@@ -642,13 +642,19 @@ describe('BaselinesView fixed project assets', () => {
     expect(wrapper.text()).toContain('一次性人工复核')
 
     await buttonByText(wrapper, '选择可安全补断言项').trigger('click')
-    expect(useBaselinesStore().selectedIds).toEqual(['baseline-safe'])
+    expect(useBaselinesStore().selectedIds).toEqual(['baseline-safe', 'baseline-other-env'])
+
+    useBaselinesStore().clearSelection()
+    await wrapper.get('[data-testid="baseline-filter-audit"]').setValue('needs-review')
+    await buttonByText(wrapper, '全选当前筛选').trigger('click')
+    expect(useBaselinesStore().selectedIds).toEqual(['baseline-safe', 'baseline-other-env'])
+    expect(wrapper.text()).toContain('已跳过 1 条仅人工或不可自动执行的基线')
 
     await wrapper.get('[data-testid="switch-environment"]').trigger('click')
     await flushPromises()
-    expect(buttonByText(wrapper, '保存为基线回归任务').attributes('disabled')).toBeDefined()
-    expect(buttonByText(wrapper, '按当前环境执行所选基线').attributes('disabled')).toBeDefined()
-    expect(wrapper.text()).toContain('所选复核基线的审计证据环境与当前执行环境不一致')
+    expect(buttonByText(wrapper, '保存为基线回归任务').attributes('disabled')).toBeUndefined()
+    expect(buttonByText(wrapper, '按当前环境执行所选基线').attributes('disabled')).toBeUndefined()
+    expect(wrapper.text()).toContain('本次会在当前环境重新执行并生成新证据')
   })
 
   it('creates an assertion review draft and opens it in the original baseline context', async () => {

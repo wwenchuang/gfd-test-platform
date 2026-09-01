@@ -61,6 +61,23 @@ def test_classifies_irreversible_business_action_as_excluded():
     assert result["requires_cleanup"] is False
 
 
+def test_read_only_queries_do_not_inherit_mutation_risk_from_business_words():
+    exchange_page = classify_endpoint_workflow(
+        endpoint("GET", "/points/exchange/page", "积分兑换商品分页")
+    )
+    uploaded_models = classify_endpoint_workflow(
+        endpoint("GET", "/models/upload/list", "上传模型查询")
+    )
+    slice_detail = classify_endpoint_workflow(
+        endpoint("GET", "/slice/{id}", "切片详情")
+    )
+
+    assert exchange_page["baseline_policy"] == "direct"
+    assert uploaded_models["baseline_policy"] == "direct"
+    assert slice_detail["kind"] == "resource_query"
+    assert slice_detail["baseline_policy"] == "direct"
+
+
 def test_classifies_device_settings_as_restore_required():
     result = classify_endpoint_workflow(
         endpoint("POST", "/devices/settings/update", "修改设备参数", ("设备控制",))
