@@ -472,6 +472,8 @@ h1, h2, p { margin-top: 0; } h1 { margin-bottom: 0; font-size: 21px; font-weight
 .source-version-mismatch { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 10px 12px; border-left: 3px solid #c48513; background: #fff9ec; color: #694b16; }
 .source-version-mismatch p { margin: 3px 0 0; font-size: 12px; line-height: 1.5; }
 @media (max-width: 760px) { .source-version-mismatch { grid-template-columns: auto minmax(0, 1fr); }.source-version-mismatch button { grid-column: 2; justify-self: start; } }
+.standalone-case-edit-note { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: start; gap: 10px; padding: 10px 12px; border-left: 3px solid var(--blue); background: #f1f7fd; color: #254f73; }
+.standalone-case-edit-note p { margin: 3px 0 0; font-size: 12px; line-height: 1.5; }
 .case-generation-status { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 10px 12px; border-left: 3px solid var(--teal); background: #f1faf7; color: #176b58; }
 .case-generation-status.failed { border-left-color: var(--red); background: #fff6f6; color: #963d3d; }
 .case-generation-status > div { min-width: 0; }

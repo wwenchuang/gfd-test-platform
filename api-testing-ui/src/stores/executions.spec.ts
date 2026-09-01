@@ -120,6 +120,31 @@ describe('executions store', () => {
     })
   })
 
+  it('keeps visible case rows when a terminal snapshot is transiently empty', async () => {
+    const running = {
+      id: 'execution-1', state: 'RUNNING', summary: { total: 2 },
+      case_results: [
+        { execution_case_id: 'case-1', status: 'PASSED', sanitized_result: {}, evidence_loaded: false },
+        { execution_case_id: 'case-2', status: 'PASSED', sanitized_result: {}, evidence_loaded: false },
+      ],
+    } as unknown as ExecutionView
+    const transientTerminal = {
+      ...running,
+      state: 'DONE',
+      summary: { total: 2, passed: 2 },
+      case_results: [],
+    }
+    vi.spyOn(apiClient, 'get').mockResolvedValue({ data: { execution: transientTerminal } })
+    const store = useExecutionsStore()
+    store.active = running
+    store.executions = [running]
+
+    const refreshed = await store.loadExecution('execution-1')
+
+    expect(refreshed.state).toBe('DONE')
+    expect(refreshed.case_results.map(item => item.execution_case_id)).toEqual(['case-1', 'case-2'])
+  })
+
   it('keeps the lightweight case usable and exposes a retryable evidence error', async () => {
     const summary = {
       id: 'execution-1', case_results: [{ execution_case_id: 'case-1', evidence_loaded: false, sanitized_result: {} }],

@@ -57,6 +57,10 @@ const taskMatchesSelection = computed(() => Boolean(
   && tasks.task.source_revision_id === context.sourceRevisionId
   && [...tasks.task.selected_endpoint_ids].sort().join('|') === [...selectedIds.value].sort().join('|'),
 ))
+const editingSavedCaseFromLink = computed(() => Boolean(
+  routeValue(route.query.caseVersionId)
+  && activeEndpoint.value?.id === routeValue(route.query.endpointId),
+))
 const aiGeneratedCases = computed(() => {
   const ids = new Set(cases.aiJob?.batches.flatMap(batch => batch.generated_draft_ids) || [])
   return [...ids].map(id => cases.versions[id]).filter((item): item is CaseVersion => Boolean(item))
@@ -413,18 +417,24 @@ async function submitDebug(): Promise<void> {
     localError.value = error instanceof Error ? error.message : '当前草稿保存或校验失败'
     return
   }
-  if (!selectedIds.value.includes(endpointId)) selectedIds.value = [...selectedIds.value, endpointId]
-  const task = await saveCurrentTask()
-  if (!task) {
-    localError.value = `草稿已保存，但调试未开始：${localError.value || tasks.error || '测试任务保存失败'}`
-    return
+  let taskId: string | undefined
+  if (editingSavedCaseFromLink.value) {
+    taskId = tasks.task?.selected_endpoint_ids.includes(endpointId) ? tasks.task.id : undefined
+  } else {
+    if (!selectedIds.value.includes(endpointId)) selectedIds.value = [...selectedIds.value, endpointId]
+    const task = await saveCurrentTask()
+    if (!task) {
+      localError.value = `草稿已保存，但调试未开始：${localError.value || tasks.error || '测试任务保存失败'}`
+      return
+    }
+    taskId = task.id
   }
   cases.debugExecution = null
   debugOpen.value = true
   localError.value = ''
   try {
-    await cases.debug({ projectId: context.projectId, sourceRevisionId: context.sourceRevisionId, environmentRevisionId: context.environmentRevisionId, caseVersionId: version.id, taskId: task.id })
-    await tasks.restore(context.projectId)
+    await cases.debug({ projectId: context.projectId, sourceRevisionId: context.sourceRevisionId, environmentRevisionId: context.environmentRevisionId, caseVersionId: version.id, taskId })
+    if (taskId) await tasks.restore(context.projectId)
   } catch (error) {
     cases.debugError = error instanceof Error ? error.message : '调试任务创建失败'
   }
@@ -604,6 +614,13 @@ function defaultTaskName(newTask = false): string {
       @save="saveCurrentTask"
       @run="runCurrentTask"
     />
+    <section v-if="editingSavedCaseFromLink" data-testid="standalone-case-edit-note" class="standalone-case-edit-note" role="status">
+      <PencilLine :size="18" />
+      <div>
+        <strong>正在单独编辑已保存用例</strong>
+        <p>保存并调试不会更改当前任务的接口范围。需要调整任务时，请在左侧勾选接口后使用上方的任务保存操作。</p>
+      </div>
+    </section>
     <p v-if="context.error || tasks.error || localError" class="inline-error">{{ context.error || tasks.error || localError }}</p>
     <div class="workbench-shell workbench-shell-focused">
       <nav class="mobile-workbench-tabs" role="tablist" aria-label="移动工作台视图">

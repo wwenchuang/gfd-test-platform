@@ -418,6 +418,83 @@ describe('WorkbenchView debug workflow', () => {
     expect(wrapper.text()).toContain('测试任务范围与当前请求不一致')
   })
 
+  it('debugs a deep-linked case without silently adding it to the restored saved task', async () => {
+    const context = useContextStore()
+    Object.assign(context, {
+      projectId: 'project-1', sourceRevisionId: 'source-1', environmentRevisionId: 'environment-1',
+      projects: [{ id: 'project-1', name: '3D 家用' }],
+      sourceRevisions: [{ id: 'source-1', project_id: 'project-1', name: '默认模块', revision: 1 }],
+      environmentRevisions: [{ id: 'environment-1', project_id: 'project-1', name: '生产环境', revision: 7 }],
+    })
+    vi.spyOn(context, 'loadSavedContext').mockResolvedValue()
+    vi.spyOn(context, 'loadOptions').mockResolvedValue()
+
+    const savedEndpoint = { ...ENDPOINT, id: 'endpoint-saved' }
+    const editedEndpoint = { ...ENDPOINT, id: 'endpoint-edited', path: '/guidance/finishMark', summary: '新手必学是否完成' }
+    const assets = useAssetsStore()
+    vi.spyOn(assets, 'load').mockImplementation(async () => {
+      assets.endpoints = [savedEndpoint, editedEndpoint]
+      assets.state = 'ready'
+    })
+    vi.spyOn(assets, 'ensureEndpointDetail').mockImplementation(async endpointId => (
+      assets.endpoints.find(item => item.id === endpointId) || null
+    ))
+
+    const cases = useCasesStore()
+    vi.spyOn(cases, 'loadSavedCases').mockResolvedValue()
+    vi.spyOn(cases, 'restoreLatestAiJob').mockResolvedValue()
+    vi.spyOn(cases, 'loadVersion').mockResolvedValue()
+    vi.spyOn(cases, 'saveForDebug').mockResolvedValue({ id: 'version-edited-next', endpoint_id: editedEndpoint.id } as CaseVersion)
+    const debug = vi.spyOn(cases, 'debug').mockResolvedValue()
+
+    const restoredTask = {
+      id: 'task-saved', name: '3D家用接口测试', project_id: 'project-1', source_revision_id: 'source-1',
+      environment_revision_id: 'environment-1', selected_endpoint_ids: [savedEndpoint.id], state: 'ready',
+      runnable_baseline_count: 1, latest_ai_job_id: null, latest_execution_id: null,
+      summary: {}, created_at: '', updated_at: '',
+    } as ApiTestTask
+    const tasks = useTasksStore()
+    vi.spyOn(tasks, 'restore').mockImplementation(async () => {
+      tasks.task = restoredTask
+      tasks.tasks = [restoredTask]
+      return restoredTask
+    })
+    const saveSelection = vi.spyOn(tasks, 'saveSelection')
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+
+    const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/', name: 'workbench', component: WorkbenchView }] })
+    await router.push(`/?endpointId=${editedEndpoint.id}&caseVersionId=version-edited&projectId=project-1&sourceRevisionId=source-1&environmentRevisionId=environment-1`)
+    await router.isReady()
+    const wrapper = mount(WorkbenchView, {
+      global: {
+        plugins: [router],
+        stubs: {
+          ContextBar: true,
+          TaskStatusStrip: true,
+          EndpointDetail: true,
+          CaseEditor: {
+            name: 'CaseEditor', props: ['operationError'], emits: ['debug'],
+            template: '<button data-testid="editor-debug" @click="$emit(\'debug\')">保存并调试</button>',
+          },
+          AiAssistant: true,
+          DebugDrawer: true,
+          EndpointTree: true,
+        },
+      },
+    })
+    await flushPromises()
+
+    expect(wrapper.get('[data-testid="standalone-case-edit-note"]').text()).toContain('不会更改当前任务的接口范围')
+    await wrapper.get('[data-testid="editor-debug"]').trigger('click')
+    await flushPromises()
+
+    expect(saveSelection).not.toHaveBeenCalled()
+    expect(tasks.task?.selected_endpoint_ids).toEqual([savedEndpoint.id])
+    expect(debug).toHaveBeenCalledWith(expect.objectContaining({
+      caseVersionId: 'version-edited-next', taskId: undefined,
+    }))
+  })
+
   it('generates cases against the exact saved task scope', async () => {
     const context = useContextStore()
     Object.assign(context, {

@@ -424,15 +424,33 @@ function toEvent(id: number, type: string, payload: Record<string, unknown>): Ex
 
 function mergeLoadedCaseEvidence(summary: ExecutionView, previous?: ExecutionView | null): ExecutionView {
   if (!previous || previous.id !== summary.id) return summary
+  const expectedCaseCount = Number(
+    summary.summary?.total
+    ?? summary.summary?.TOTAL
+    ?? summary.case_statuses?.length
+    ?? 0,
+  )
+  const mergedSummary = (
+    summary.case_results.length === 0
+    && previous.case_results.length > 0
+    && expectedCaseCount > 0
+  ) ? {
+      ...summary,
+      case_results: previous.case_results.map((item, index) => ({
+        ...item,
+        status: summary.case_statuses?.[index] || item.status,
+      })),
+    }
+    : summary
   const loaded = new Map(
     previous.case_results
       .filter(item => hasLoadedCaseEvidence(item))
       .map(item => [item.execution_case_id, item]),
   )
-  if (!loaded.size) return summary
+  if (!loaded.size) return mergedSummary
   return {
-    ...summary,
-    case_results: summary.case_results.map(item => {
+    ...mergedSummary,
+    case_results: mergedSummary.case_results.map(item => {
       const evidence = loaded.get(item.execution_case_id)
       if (!evidence) return item
       return {
