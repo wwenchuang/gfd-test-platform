@@ -26,3 +26,33 @@ test('a legacy Sonic warning provides the next action instead of a dead-end sugg
   assert.equal(dom.window.preflightActionHtml({key: 'legacy', ok: true, action: 'unused'}), '');
   assert.match(source, /preflightActionHtml\(item\)/);
 });
+
+test('Sonic status treats a resolved Task path as a real YAML match', t => {
+  const source = fs.readFileSync('js/agent-status.js', 'utf8');
+  const dom = new JSDOM('<body><div id="rows"></div></body>', {runScripts: 'dangerously'});
+  t.after(() => dom.window.close());
+  const win = dom.window;
+  Object.assign(win, {
+    escapeHtml: value => String(value ?? ''),
+    jsArg: value => JSON.stringify(value),
+  });
+  loadFunction(win, source, 'sonicStateText');
+  loadFunction(win, source, 'renderSonicStatusRows');
+  win.renderSonicStatusRows([{
+    action: 'bridge',
+    step_state: 'bridge',
+    sonic_case_name: '标牌打印',
+    project_name: '3D打印',
+    sonic_case_id: 56,
+    module: '3D打印基线',
+    file: '标牌打印.yaml',
+    task_name: '标牌打印',
+    match_type: 'case_id',
+    case_id: 'COM_KFB_MODEL_38708c2d47ee',
+  }], 'rows');
+  const text = win.document.getElementById('rows').textContent;
+  assert.match(text, /Task：3D打印基线\/标牌打印\.yaml · 标牌打印/);
+  assert.match(text, /匹配方式：case_id/);
+  assert.doesNotMatch(text, /未找到对应 YAML/);
+  assert.match(text, /Runner 单条调试/);
+});

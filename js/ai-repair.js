@@ -296,14 +296,18 @@ function normalizeFailureAnalysis(raw) {
     }
     return '';
   };
-  let failureType = pick('failureType', 'failure_type', 'type', 'category').toUpperCase();
+  const broadTypes = ['SCRIPT_ISSUE', 'ENV_ISSUE', 'PRODUCT_BUG', 'UNKNOWN'];
+  const typeCandidates = [
+    pick('category', 'failureCategory', 'failure_category'),
+    pick('failureType', 'failure_type', 'type')
+  ].map(value => String(value || '').toUpperCase());
+  let failureType = typeCandidates.find(value => broadTypes.includes(value)) || '';
   if (!failureType) {
     if (/PRODUCT[_\s-]?BUG|产品\s*Bug|产品缺陷|真实缺陷/i.test(text)) failureType = 'PRODUCT_BUG';
     else if (/ENV[_\s-]?ISSUE|环境问题|设备问题|网络|模型超时|服务不可用|Request was aborted/i.test(text)) failureType = 'ENV_ISSUE';
-    else if (/SCRIPT[_\s-]?ISSUE|脚本问题|定位失败|断言|YAML|selector|locate element/i.test(text)) failureType = 'SCRIPT_ISSUE';
+    else if (/SCRIPT[_\s-]?ISSUE|scroll_not_effective|wait_strategy|input_failed|popup_overlay|yaml_syntax|脚本问题|定位失败|断言|YAML|selector|locate element/i.test(text)) failureType = 'SCRIPT_ISSUE';
     else failureType = 'UNKNOWN';
   }
-  if (!['SCRIPT_ISSUE', 'ENV_ISSUE', 'PRODUCT_BUG', 'UNKNOWN'].includes(failureType)) failureType = 'UNKNOWN';
   const conclusion = pick('conclusion', 'summary', 'title') || extractByLabel(text, ['失败结论', '结论', 'Conclusion']) || `${failureTypeText(failureType)}待复核`;
   const reason = pick('reason', 'possibleReason', 'possible_reasons', 'rootCause', 'root_cause') || extractByLabel(text, ['可能原因', '失败原因', '原因', 'Root Cause']) || '暂未识别到明确原因，请查看完整分析。';
   const suggestion = pick('suggestion', 'suggestions', 'nextAction', 'next_action', 'recommendedAction') || extractByLabel(text, ['修复建议', '建议动作', '建议', 'Next Action']) || (failureType === 'SCRIPT_ISSUE' ? '可以生成 YAML 修复草稿，但需要人工确认后再覆盖。' : '不建议自动修改 YAML，请人工复核。');

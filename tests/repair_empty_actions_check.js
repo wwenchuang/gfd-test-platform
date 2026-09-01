@@ -54,3 +54,23 @@ test('a missing selected failure job does not silently highlight an unrelated fi
   win.selectedRepairJobId = '';
   assert.equal(win.resolveAiRepairSelectedJob(jobs), jobs[0]);
 });
+
+test('a repairable script subtype keeps its broad script classification', t => {
+  const dom = new JSDOM('<body></body>', { runScripts: 'dangerously' });
+  t.after(() => dom.window.close());
+  const win = dom.window;
+  Object.assign(win, {
+    stringifyArtifact: value => typeof value === 'string' ? value : JSON.stringify(value),
+    failureTypeText: type => type,
+  });
+  const source = fs.readFileSync('js/ai-repair.js', 'utf8');
+  for (const name of ['extractByLabel', 'normalizeFailureAnalysis']) loadFunction(win, source, name);
+  const normalized = win.normalizeFailureAnalysis({
+    category: 'script_issue',
+    failure_type: 'scroll_not_effective',
+    can_auto_repair: true,
+    reason: '横向滑动没有生效',
+  });
+  assert.equal(normalized.failureType, 'SCRIPT_ISSUE');
+  assert.equal(normalized.canAutoRepair, true);
+});

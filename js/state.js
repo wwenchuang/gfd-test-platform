@@ -90,6 +90,7 @@ let activeWorkspaceMode = '';
 let modulesLoaded = false;
 let libraryView = 'module';
 let expandedJobs = new Set();
+let focusedJobId = '';
 let yamlStatsCache = {};
 let yamlStatsWarmupStarted = false;
 let modulePriorityFilter = 'all';

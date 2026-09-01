@@ -148,3 +148,45 @@ test('closing an unsubmitted generate form restores the workflow that opened it'
   assert.equal(win.generateModalReturnWorkflow, '');
   assert.match(source, /generateModalReturnWorkflow = activeWorkflow !== 'generate' \? activeWorkflow : '';/);
 });
+
+test('rerun confirmation identifies the business task instead of only an internal id', t => {
+  const source = fs.readFileSync('js/app.js', 'utf8');
+  const dom = new JSDOM('<body></body>', {runScripts: 'dangerously'});
+  t.after(() => dom.window.close());
+  const win = dom.window;
+  Object.assign(win, {
+    latestJobs: [{
+      job_id: 'sonic_123',
+      target_task_name: '姓名牌打印',
+      module: '3D打印基线',
+      finished_at: '2026-09-01T09:27:08',
+    }],
+  });
+  loadFunction(win, source, 'retryJobConfirmationText');
+  const message = win.retryJobConfirmationText('sonic_123');
+  assert.match(message, /姓名牌打印/);
+  assert.match(message, /3D打印基线/);
+  assert.match(message, /2026-09-01 09:27:08/);
+  assert.match(message, /sonic_123/);
+});
+
+test('locating an older job keeps it in the short Runner history rail', t => {
+  const source = fs.readFileSync('js/app.js', 'utf8');
+  const dom = new JSDOM('<body></body>', {runScripts: 'dangerously'});
+  t.after(() => dom.window.close());
+  const win = dom.window;
+  loadFunction(win, source, 'recentJobsWithFocus');
+  const jobs = Array.from({length: 10}, (_, index) => ({job_id: `job-${index}`, status: 'success'}));
+  const recent = jobs.slice(0, 6);
+  const result = Array.from(win.recentJobsWithFocus(recent, jobs, new Set(), 'job-9', 6), job => job.job_id);
+  assert.deepEqual(result, ['job-9', 'job-0', 'job-1', 'job-2', 'job-3', 'job-4']);
+  assert.match(source, /executionActiveTab = 'debug'/);
+  assert.match(source, /expandedJobs\.add\(jobId\)/);
+});
+
+test('Runner status distinguishes executable devices from historical binding rows', t => {
+  const source = fs.readFileSync('js/execution.js', 'utf8');
+  assert.match(source, />可执行设备</);
+  assert.match(source, />设备绑定记录</);
+  assert.match(source, /同一设备可能保留多个 Runner 绑定记录/);
+});

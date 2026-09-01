@@ -1218,12 +1218,30 @@ function jobTimelineHtml(job) {
   `;
 }
 
+function recentJobsWithFocus(recentJobs = [], normalizedJobs = [], activeIds = new Set(), focusId = '', limit = 6) {
+  const rows = Array.isArray(recentJobs) ? [...recentJobs] : [];
+  if (!focusId) return rows.slice(0, limit);
+  const focused = (Array.isArray(normalizedJobs) ? normalizedJobs : [])
+    .find(job => (job.job_id || job.jobId || job.id) === focusId);
+  if (!focused || activeIds.has(focusId)) return rows.slice(0, limit);
+  return [focused, ...rows.filter(job => (job.job_id || job.jobId || job.id) !== focusId)].slice(0, limit);
+}
+
 async function focusJob(jobId) {
   if (!jobId) {
     showToast('没有可定位的任务编号', 'warn');
     return;
   }
   await loadJobs(true);
+  const job = (Array.isArray(latestJobs) ? latestJobs : [])
+    .find(item => (item.job_id || item.jobId || item.id) === jobId);
+  if (!job) {
+    showToast('当前加载范围内没有这条任务，可能记录已被清理', 'warn');
+    return;
+  }
+  focusedJobId = jobId;
+  expandedJobs.add(jobId);
+  if (typeof executionActiveTab !== 'undefined') executionActiveTab = 'debug';
   if (activeWorkflow !== 'execute') {
     setActiveWorkflow('execute');
     showExecutionCenter();
@@ -1231,6 +1249,7 @@ async function focusJob(jobId) {
   } else if (typeof showExecutionCenter === 'function') {
     showExecutionCenter();
   }
+  renderJobs();
   setTimeout(() => {
     const row = Array.from(document.querySelectorAll('.job-row, .report-row, tr, .job-meta'))
       .find(el => el.textContent.includes(jobId));
@@ -1240,7 +1259,7 @@ async function focusJob(jobId) {
       setTimeout(() => row.classList.remove('focus-flash'), 1800);
       showToast('已定位到执行任务', 'success');
     } else {
-      showToast('已切到执行页，但没有找到这条任务；可能记录已被刷新或清理', 'warn');
+      showToast('已打开调试执行，但任务详情未能定位，请刷新 Runner 记录后重试', 'warn');
     }
   }, 80);
 }
@@ -1395,11 +1414,12 @@ function renderJobs() {
     .sort((a, b) => timeValue(b) - timeValue(a));
   const activeIds = new Set(activeJobs.map(job => job.job_id));
   const recentDoneLimit = activeWorkflow === 'execute' ? 6 : 18;
-  const recentDone = normalizedJobs
+  let recentDone = normalizedJobs
     .filter(isRunnerExecutionJob)
     .filter(job => !activeIds.has(job.job_id))
     .sort((a, b) => timeValue(b) - timeValue(a))
     .slice(0, recentDoneLimit);
+  recentDone = recentJobsWithFocus(recentDone, normalizedJobs, activeIds, focusedJobId, recentDoneLimit);
   const jobs = [...activeJobs, ...recentDone].slice(0, 40);
   const activeCount = activeJobs.length;
   count.textContent = activeCount ? `${activeCount} 个进行中 / 显示 ${jobs.length} 个` : `最近 ${jobs.length} 个`;
@@ -1539,9 +1559,19 @@ async function retryJob(jobId) {
   }
 }
 
+function retryJobConfirmationText(jobId) {
+  const job = (Array.isArray(latestJobs) ? latestJobs : [])
+    .find(item => (item.job_id || item.jobId || item.id) === jobId) || {};
+  const taskName = job.target_task_name || job.current_task_name || job.task_name || job.taskName || job.file || '未命名任务';
+  const moduleName = job.module || '未标注模块';
+  const time = String(job.finished_at || job.updated_at || job.started_at || job.created_at || '')
+    .replace('T', ' ').slice(0, 19) || '时间未知';
+  return `确认重跑“${taskName}”？\n模块：${moduleName}\n原任务时间：${time}\n原任务 ID：${jobId}\n\n系统会创建一个新的执行任务，并重新占用 Runner 与设备。`;
+}
+
 function retryJobWithConfirmation(jobId) {
   if (!jobId) return;
-  if (!confirm(`确认重跑任务 ${jobId}？系统会创建一个新的执行任务，并重新占用 Runner 与设备。`)) return;
+  if (!confirm(retryJobConfirmationText(jobId))) return;
   return retryJob(jobId);
 }
 

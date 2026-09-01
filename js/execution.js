@@ -786,9 +786,10 @@ function renderExecutionTabRunners() {
       </div>
       <div class="review-stats" style="grid-template-columns:repeat(3,1fr);">
         <div class="review-stat"><strong>${onlineRunnerCount}</strong><span>在线 Runner</span></div>
-        <div class="review-stat"><strong>${online.length}</strong><span>在线设备</span></div>
-        <div class="review-stat"><strong>${all.length}</strong><span>已登记设备</span></div>
+        <div class="review-stat"><strong>${online.length}</strong><span>可执行设备</span></div>
+        <div class="review-stat"><strong>${all.length}</strong><span>设备绑定记录</span></div>
       </div>
+      <p class="generate-hint" style="margin-top:10px;">同一设备可能保留多个 Runner 绑定记录；上方“可执行设备”按当前在线 Runner 统计，历史离线绑定保留在下表便于排查。</p>
       ${renderRunnerDevicePreflightCards(online, '')}
       ${all.length ? `<table class="report-table" style="margin-top:12px;">
         <thead><tr><th>设备</th><th>Runner</th><th>状态</th><th>版本/能力</th><th>系统/分辨率</th><th>App 版本</th><th>最近心跳</th></tr></thead>

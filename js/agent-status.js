@@ -4356,17 +4356,18 @@ function renderSonicStatusRows(rows, containerId) {
     const mod = matched.module || row.module || '';
     const file = matched.file || row.file || '';
     const taskName = row.task_name || row.taskName || matched.task_name || row.sonic_case_name || '';
-    const caseInfo = matched.task_name
-      ? `${matched.module}/${matched.file} · ${matched.task_name}`
-      : `${mod}/${file} ${taskName || ''}`.trim();
-    const canTaskRun = mod && file && taskName && !['manual', 'legacy', 'mixed', 'project_missing'].includes(action);
+    const hasTaskMatch = Boolean(mod && file && taskName);
+    const caseInfo = hasTaskMatch
+      ? `${mod}/${file} · ${taskName}`
+      : '未匹配';
+    const canTaskRun = hasTaskMatch && !['manual', 'legacy', 'mixed', 'project_missing'].includes(action);
     const runActions = canTaskRun ? `
       <div class="sonic-status-actions">
         <button class="btn-sm success" onclick="openFileAndRunTask(${jsArg(mod)}, ${jsArg(file)}, ${jsArg(taskName)})">Runner 单条调试</button>
       </div>
     ` : '';
-    const matchText = matched.task_name
-      ? `匹配方式：${escapeHtml(row.match_type || '名称规则')}`
+    const matchText = hasTaskMatch
+      ? `匹配方式：${escapeHtml(row.match_type || (matched.task_name ? '名称规则' : 'Task 路径'))}`
       : '匹配方式：未找到对应 YAML';
     const reasonText = row.reason || (row.case_id || matched.case_id ? `case_id：${row.case_id || matched.case_id}` : '');
     return `
@@ -4377,7 +4378,7 @@ function renderSonicStatusRows(rows, containerId) {
         </div>
         <div class="sonic-status-meta">
           Sonic：${escapeHtml(row.project_name || row.sonic_project_name || row.project_id || '-')} / case ${escapeHtml(row.sonic_case_id || '-')} / ${escapeHtml(state)}<br>
-          Task：${escapeHtml(caseInfo || '未匹配')}<br>
+          Task：${escapeHtml(caseInfo)}<br>
           ${matchText}<br>
           ${reasonText ? `处理建议：${escapeHtml(reasonText)}` : ''}
         </div>
