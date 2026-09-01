@@ -79,7 +79,16 @@ function providerLabelById(id) {
 function renderModelConfigCenter(loading=false, errorText='') {
   const area = document.getElementById('editor-area');
   if (!area) return;
-  const providerCards = aiProviders.length ? aiProviders.map(provider => {
+  const stateKnown = typeof AppState !== 'undefined'
+    && Object.prototype.hasOwnProperty.call(AppState.loaded || {}, 'modelConfig');
+  const configReady = stateKnown ? Boolean(AppState.loaded.modelConfig) : !loading && !errorText;
+  const controlsDisabled = loading || !configReady;
+  const unavailableText = loading ? '正在加载...' : '暂不可用';
+  const providerCards = loading
+    ? '<div class="workflow-card"><h3>正在加载模型通道...</h3><p>正在从服务端读取模型名称、配置状态和参数策略。</p></div>'
+    : (!configReady && errorText)
+      ? '<div class="workflow-card"><h3>模型通道加载失败</h3><p>重新加载成功后才会显示可用模型。</p></div>'
+      : aiProviders.length ? aiProviders.map(provider => {
     const tempInfo = provider.temperatureLocked
       ? `<span class="status-pill warn" title="该模型由服务商固定参数，平台自动适配">参数策略：平台固定</span>`
       : `<span class="status-pill success" title="可按任务类型自定义参数策略">参数策略：可自定义</span>`;
@@ -98,16 +107,14 @@ function renderModelConfigCenter(loading=false, errorText='') {
         ${tempInfo}
       </div>
     </div>
-  `}).join('') : `
-    <div class="workflow-card"><h3>暂无模型通道</h3><p>请联系管理员检查模型通道配置。</p></div>
-  `;
+  `}).join('') : '<div class="workflow-card"><h3>暂无模型通道</h3><p>请联系管理员检查模型通道配置。</p></div>';
   const routerRows = MODEL_ROUTER_FIELDS.map(([key, label]) => {
     const selected = aiModelRouter[key] || 'qwen_plus';
     return `
       <label class="agent-field">
         <span>${escapeHtml(label)}</span>
-        <select data-model-router="${escapeHtml(key)}" ${loading ? 'disabled' : ''}>
-          ${modelProviderOptions(selected)}
+        <select data-model-router="${escapeHtml(key)}" ${controlsDisabled ? 'disabled' : ''}>
+          ${controlsDisabled ? `<option>${escapeHtml(unavailableText)}</option>` : modelProviderOptions(selected)}
         </select>
       </label>
     `;
@@ -118,11 +125,16 @@ function renderModelConfigCenter(loading=false, errorText='') {
     return `
       <tr>
         <td>${escapeHtml(label)}</td>
-        <td class="model-strategy-model">${escapeHtml(providerLabelById(selected))}</td>
+        <td class="model-strategy-model">${configReady ? escapeHtml(providerLabelById(selected)) : '—'}</td>
       </tr>
     `;
   }).join('');
-  const strategyName = currentStrategyName();
+  const strategyName = loading ? '正在加载模型策略…' : (!configReady && errorText ? '模型配置加载失败' : currentStrategyName());
+  const strategyHint = loading
+    ? '正在从服务端读取当前策略，加载完成前不会把默认值当成已保存配置。'
+    : (!configReady && errorText
+      ? '当前策略未能读取，页面不会用默认模型代替服务端真实配置。请重新加载。'
+      : '推荐策略：默认全部使用 Qwen Plus。需要更换某一类能力时，可以在高级设置里单独切换并保存。');
   area.className = 'editor-area';
   area.innerHTML = `
     <div class="workflow-guide model-config-guide">
@@ -131,7 +143,7 @@ function renderModelConfigCenter(loading=false, errorText='') {
         <h2>模型配置</h2>
         <p>这里只配置各能力对应的模型策略；日常执行请回到全自动 Agent 工作台。</p>
       </div>
-      ${errorText ? `<div class="agent-risk show">${escapeHtml(errorText)}</div>` : ''}
+      ${errorText ? `<div class="agent-risk show">${escapeHtml(errorText)} <button class="btn-sm" onclick="showModelConfigCenter()">重新加载</button></div>` : ''}
 
       <!-- 当前策略概览 -->
       <div class="model-strategy-card">
@@ -141,16 +153,16 @@ function renderModelConfigCenter(loading=false, errorText='') {
             <h3 class="model-strategy-name">${escapeHtml(strategyName)}</h3>
           </div>
           <div class="model-strategy-actions">
-            <button class="btn-sm primary" onclick="applyRecommendedStrategy()" ${loading ? 'disabled' : ''}>一键应用推荐策略</button>
-            <button class="btn-sm success" onclick="testAiGateway()" ${loading ? 'disabled' : ''}>测试当前策略</button>
-            <button class="btn-sm" onclick="document.getElementById('model-config-advanced')?.toggleAttribute('open')">高级设置</button>
+            <button class="btn-sm primary" onclick="applyRecommendedStrategy()" ${controlsDisabled ? 'disabled' : ''}>一键应用推荐策略</button>
+            <button class="btn-sm success" onclick="testAiGateway()" ${controlsDisabled ? 'disabled' : ''}>测试当前策略</button>
+            <button class="btn-sm" ${controlsDisabled ? 'disabled' : ''} onclick="document.getElementById('model-config-advanced')?.toggleAttribute('open')">高级设置</button>
           </div>
         </div>
         <table class="model-strategy-table">
           <thead><tr><th>能力</th><th>模型</th></tr></thead>
           <tbody>${strategyRows}</tbody>
         </table>
-        <div class="generate-hint" style="margin-top:8px;">推荐策略：默认全部使用 Qwen Plus。需要更换某一类能力时，可以在高级设置里单独切换并保存。</div>
+        <div class="generate-hint" style="margin-top:8px;">${escapeHtml(strategyHint)}</div>
       </div>
 
       <!-- 高级设置（折叠） -->
@@ -161,10 +173,10 @@ function renderModelConfigCenter(loading=false, errorText='') {
           <p class="generate-hint" style="margin-bottom:10px;">先按能力选择模型，再点击“保存模型策略”才会生效。列表较长时可键入模型名快速跳转；未配置 Key 的模型调用会失败。</p>
           <div class="agent-form-grid">${routerRows}</div>
           <div class="agent-actions" style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
-            <button class="btn-sm primary" onclick="saveModelRouterConfig()" ${loading ? 'disabled' : ''}>保存模型策略</button>
+            <button class="btn-sm primary" onclick="saveModelRouterConfig()" ${controlsDisabled ? 'disabled' : ''}>保存模型策略</button>
             <span class="generate-hint" style="margin-left:auto;">测试目标：</span>
-            <select id="model-test-provider" class="inline-select" ${loading ? 'disabled' : ''}>
-              ${modelProviderOptions(aiModelRouter.analyze_failure || 'qwen_plus')}
+            <select id="model-test-provider" class="inline-select" ${controlsDisabled ? 'disabled' : ''}>
+              ${controlsDisabled ? `<option>${escapeHtml(unavailableText)}</option>` : modelProviderOptions(aiModelRouter.analyze_failure || 'qwen_plus')}
             </select>
           </div>
           <details class="dashboard-panel dashboard-accordion model-provider-catalog" style="margin-top:12px;">
