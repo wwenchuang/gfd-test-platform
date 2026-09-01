@@ -19,6 +19,7 @@ from ..models.case import (
 from ..models.environment import ApiEnvironment, ApiEnvironmentRevision
 from ..models.execution import ApiExecution, ApiExecutionAttempt, ApiExecutionCase
 from ..models.project import ApiProject
+from ..models.scheduled_job import ApiScheduledJob, ApiScheduledJobTarget
 from ..models.source import ApiSource, ApiSourceEndpoint, ApiSourceRevision
 
 
@@ -523,17 +524,63 @@ class CaseRepository:
         return record
 
     def supersede_active_baselines(self, case_id, actor_id):
-        records = self.session.scalars(
+        records = tuple(self.session.scalars(
             select(ApiBaseline)
             .where(
                 ApiBaseline.case_id == case_id,
                 ApiBaseline.status == "active",
             )
+            .order_by(ApiBaseline.created_at.desc(), ApiBaseline.id.desc())
             .with_for_update()
-        )
+        ))
         for record in records:
             record.status = "superseded"
             record.updated_by = actor_id
+        return records
+
+    def repoint_scheduled_baseline_targets(
+        self,
+        previous_baseline_ids,
+        new_baseline_id,
+        actor_id,
+        *,
+        replacement_is_one_time=False,
+    ):
+        previous_ids = tuple(dict.fromkeys(previous_baseline_ids))
+        if not previous_ids:
+            return 0
+        targets = tuple(self.session.scalars(
+            select(ApiScheduledJobTarget)
+            .where(
+                ApiScheduledJobTarget.target_type == "baselines",
+                ApiScheduledJobTarget.target_id.in_(previous_ids),
+            )
+            .with_for_update()
+        ))
+        job_ids = {target.job_id for target in targets}
+        jobs = {
+            job.id: job
+            for job in self.session.scalars(
+                select(ApiScheduledJob)
+                .where(ApiScheduledJob.id.in_(job_ids))
+                .with_for_update()
+            )
+        }
+        repointed = 0
+        for target in targets:
+            job = jobs.get(target.job_id)
+            if (
+                replacement_is_one_time
+                and job is not None
+                and not job.allow_one_time_baselines
+            ):
+                continue
+            target.target_id = new_baseline_id
+            target.updated_by = actor_id
+            repointed += 1
+        for job in jobs.values():
+            job.updated_by = actor_id
+        return repointed
 
     def get_baseline(self, baseline_id):
         return self.session.get(ApiBaseline, baseline_id)

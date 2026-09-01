@@ -212,7 +212,7 @@ def authorize_http(actor, method, segments):
         if method == "DELETE":
             require_permission(actor, "api.delete")
         return
-    if method == "DELETE" or (head == "executions" and tail == "archive"):
+    if method == "DELETE" or (head == "executions" and tail in {"archive", "restore"}):
         require_permission(actor, "api.delete")
         return
     if head in {"executions", "regressions", "workflow-steps"} or tail == "run":

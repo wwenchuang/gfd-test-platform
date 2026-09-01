@@ -121,6 +121,47 @@ describe('RunsView', () => {
     expect(confirm).not.toHaveBeenCalledWith(expect.stringContaining(debugExecution.id))
   })
 
+  it('confirms before archiving execution history and offers an immediate restore', async () => {
+    const context = useContextStore()
+    const executions = useExecutionsStore()
+    vi.spyOn(context, 'loadSavedContext').mockResolvedValue()
+    vi.spyOn(context, 'loadOptions').mockResolvedValue()
+    vi.spyOn(executions, 'load').mockResolvedValue()
+    const archive = vi.spyOn(executions, 'deleteExecutions').mockResolvedValue()
+    const restore = vi.spyOn(executions, 'restoreExecutions').mockResolvedValue()
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false)
+    executions.executions = [debugExecution]
+    executions.active = debugExecution
+
+    const wrapper = mount(RunsView, {
+      global: {
+        stubs: {
+          ExecutionConsole: {
+            emits: ['deleteMany'],
+            template: '<button data-testid="archive" @click="$emit(\'deleteMany\', [\'debug-execution-1\'])">归档</button>',
+          },
+          ExecutionDetailDrawer: true,
+        },
+      },
+    })
+    await flushPromises()
+
+    await wrapper.get('[data-testid="archive"]').trigger('click')
+    expect(confirm).toHaveBeenCalledWith(expect.stringMatching(/确认归档 1 条执行记录.*可以撤销/))
+    expect(archive).not.toHaveBeenCalled()
+
+    confirm.mockReturnValue(true)
+    await wrapper.get('[data-testid="archive"]').trigger('click')
+    await flushPromises()
+    expect(archive).toHaveBeenCalledWith(['debug-execution-1'])
+    expect(wrapper.text()).toContain('已归档 1 条执行记录')
+
+    await wrapper.get('[data-testid="restore-archived-executions"]').trigger('click')
+    await flushPromises()
+    expect(restore).toHaveBeenCalledWith(['debug-execution-1'])
+    expect(wrapper.text()).toContain('已恢复 1 条执行记录')
+  })
+
   it('updates the URL to the new execution after rerunning a record', async () => {
     routeState.query = { executionId: debugExecution.id }
     const context = useContextStore()

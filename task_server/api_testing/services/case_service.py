@@ -10,6 +10,7 @@ from task_server.services.business_line_service import (
 )
 
 from .. import access
+from ..case_classification import is_one_time_case
 
 from ..contracts.case import (
     AssertionView,
@@ -275,15 +276,35 @@ class CaseService:
                 raise BaselineGateError(
                     "baseline requires passing debug evidence for the same project, endpoint, case version, and environment revision"
                 )
-            repository.supersede_active_baselines(case.id, actor_id)
+            previous_baselines = repository.supersede_active_baselines(
+                case.id, actor_id
+            )
+            group_name = next(
+                (
+                    item.group_name
+                    for item in previous_baselines
+                    if item.group_name
+                ),
+                self._default_group_name(endpoint),
+            )
             baseline = repository.create_baseline(
                 case.project_id,
                 case.id,
                 version.id,
                 evidence.environment_revision_id,
                 evidence.id,
-                self._default_group_name(endpoint),
+                group_name,
                 actor_id,
+            )
+            repository.repoint_scheduled_baseline_targets(
+                (item.id for item in previous_baselines),
+                baseline.id,
+                actor_id,
+                replacement_is_one_time=is_one_time_case(
+                    version.request_template.get("name") or case.name,
+                    group_name,
+                    endpoint.tags,
+                ),
             )
             repository.flush()
             return self._baseline_view(baseline)

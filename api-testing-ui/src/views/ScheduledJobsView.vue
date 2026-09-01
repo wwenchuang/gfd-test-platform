@@ -63,8 +63,8 @@ interface CronValidation {
 }
 
 const scheduleOptions: Array<{ value: ScheduledJob['schedule_type']; label: string }> = [
-  { value: 'daily', label: '每天' },
-  { value: 'weekly', label: '每周' },
+  { value: 'daily', label: '每天 02:00' },
+  { value: 'weekly', label: '每周一 09:00' },
   { value: 'cron', label: '自定义表达式' },
 ]
 const cronPresets = [
@@ -132,6 +132,11 @@ const filteredBaselineGroups = computed(() => {
     .map(([name, options]) => ({ name, options }))
 })
 const pendingFixedCaseCount = computed(() => editingJobId.value && form.targetType === 'cases' ? selectedTargetIds.value.filter(id => !cases.versions[id]).length : 0)
+const pendingMissingTargetIds = computed(() => {
+  if (!editingJobId.value || targetsLoading.value || targetLoadError.value || form.targetType === 'cases') return []
+  const knownIds = new Set(targetOptions.value.map(option => option.id))
+  return selectedTargetIds.value.filter(id => !knownIds.has(id))
+})
 const editorTitle = computed(() => editingJobId.value ? '编辑定时任务' : '新建定时任务')
 const saveLabel = computed(() => {
   if (scheduledJobs.saving) return '保存中'
@@ -172,6 +177,10 @@ async function saveJob(): Promise<void> {
   }
   if (targetsLoading.value || targetLoadError.value) {
     scheduledJobs.error = targetsLoading.value ? '正在读取目标，请稍后保存' : `目标读取失败：${targetLoadError.value}。请刷新后重试`
+    return
+  }
+  if (pendingMissingTargetIds.value.length) {
+    scheduledJobs.error = `当前选择包含 ${pendingMissingTargetIds.value.length} 个已失效目标，请先移除失效目标并选择替代项`
     return
   }
   const ids = targetIds()
@@ -376,6 +385,13 @@ function toggleTargetGroupSelection(options: TargetOption[]): void {
     return
   }
   selectedTargetIds.value = [...new Set([...selectedTargetIds.value, ...ids])]
+}
+
+function removeMissingTargets(): void {
+  const missing = new Set(pendingMissingTargetIds.value)
+  if (!missing.size) return
+  selectedTargetIds.value = selectedTargetIds.value.filter(id => !missing.has(id))
+  actionMessage.value = `已移除 ${missing.size} 个失效目标，请选择替代目标后保存。`
 }
 
 function jobTargetSummary(job: ScheduledJob): string {
@@ -849,7 +865,7 @@ function weekDayName(value: number): string {
       <section class="scheduled-editor">
         <header class="panel-header">
           <h2>{{ editorTitle }}</h2>
-          <button v-if="editingJobId" type="button" class="text-command" data-testid="scheduled-new" :disabled="busy || targetsLoading" @click="resetEditor">新建</button>
+          <button v-if="editingJobId" type="button" class="text-command" data-testid="scheduled-new" :disabled="busy || targetsLoading" @click="resetEditor">取消编辑</button>
           <CalendarClock v-else :size="17" />
         </header>
         <p v-if="editingBlockMessage" data-testid="scheduled-editor-blocked" class="inline-error" role="status">执行已阻断 · {{ editingBlockMessage }}</p>
@@ -874,6 +890,11 @@ function weekDayName(value: number): string {
               <input v-model="targetSearch" data-testid="scheduled-target-search" :placeholder="targetSearchPlaceholder" />
             </header>
             <p v-if="pendingFixedCaseCount && !targetsLoading" class="compact-empty">已保留 {{ pendingFixedCaseCount }} 个原固定用例版本；它们未出现在最新用例列表中，不代表已删除。保存不会自动升级版本，执行时服务端仍会校验。</p>
+            <p v-if="pendingMissingTargetIds.length" class="compact-empty" data-testid="scheduled-missing-targets">
+              当前选择包含 {{ pendingMissingTargetIds.length }} 个已失效目标，不能继续执行。
+              <button type="button" class="text-command" data-testid="scheduled-remove-missing-targets" @click="removeMissingTargets">移除失效目标</button>
+              后请在下方选择替代目标再保存。
+            </p>
             <p v-if="targetsLoading" class="compact-empty" role="status">正在读取目标…</p>
             <p v-else-if="targetLoadError" class="compact-empty" role="alert">{{ targetLoadError }}</p>
             <div v-else class="target-option-list">
@@ -942,6 +963,7 @@ function weekDayName(value: number): string {
               >{{ option.label }}</button>
             </div>
             <p class="schedule-time-note">{{ scheduleDescription }}</p>
+            <p class="schedule-switch-note">切换“每天 02:00”或“每周一 09:00”会使用按钮标注的默认时间；其他执行时间请保留或选择“自定义表达式”。</p>
           </fieldset>
           <section v-if="form.scheduleType === 'cron'" class="cron-preset-panel wide">
             <label>自定义表达式（Cron）<input v-model="form.cronExpression" data-testid="scheduled-cron" placeholder="例如：0 2 * * *" /></label>

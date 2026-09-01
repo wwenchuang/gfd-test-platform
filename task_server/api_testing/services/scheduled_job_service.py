@@ -390,6 +390,7 @@ class ScheduledJobService:
                 "name": job.name,
                 "type": "scheduled_job",
                 "source": "scheduled_job",
+                "trigger": trigger_type,
                 "notify_feishu": bool(job.notify_feishu),
             }
 

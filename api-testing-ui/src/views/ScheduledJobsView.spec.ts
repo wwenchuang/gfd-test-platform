@@ -463,6 +463,7 @@ describe('ScheduledJobsView', () => {
     await flushPromises()
 
     expect((wrapper.get('[data-testid="scheduled-name"]').element as HTMLInputElement).value).toBe('基线回归测试')
+    expect(wrapper.get('[data-testid="scheduled-new"]').text()).toBe('取消编辑')
     await wrapper.get('[data-testid="scheduled-name"]').setValue('编辑后的回归')
     await wrapper.get('[data-testid="scheduled-save"]').trigger('click')
     await flushPromises()
@@ -672,6 +673,30 @@ describe('ScheduledJobsView', () => {
     expect(put).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ target_ids: ['baseline-1'] }))
   })
 
+  it('lets an editor remove retired baseline IDs before selecting the replacement', async () => {
+    const original = scheduledJobFixture({ target_type: 'baselines', target_ids: ['retired-baseline'] })
+    const replacement = scheduledJobFixture({ target_type: 'baselines', target_ids: ['baseline-1'] })
+    const wrapper = await mountScheduledState(() => original)
+    const put = vi.spyOn(apiClient, 'put').mockResolvedValue({ data: { scheduled_job: replacement } })
+
+    await wrapper.get('[data-testid="scheduled-edit-job-1"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.get('[data-testid="scheduled-missing-targets"]').text()).toContain('1 个已失效目标')
+    await wrapper.get('[data-testid="scheduled-save"]').trigger('click')
+    expect(put).not.toHaveBeenCalled()
+    expect(wrapper.get('[data-testid="scheduled-editor-feedback"]').text()).toContain('先移除失效目标')
+
+    await wrapper.get('[data-testid="scheduled-remove-missing-targets"]').trigger('click')
+    expect(wrapper.text()).toContain('选择基线可多选')
+    await wrapper.get('[data-testid="scheduled-target-group-select"]').trigger('click')
+    expect(wrapper.text()).toContain('选择基线已选 1 项')
+    await wrapper.get('[data-testid="scheduled-save"]').trigger('click')
+    await flushPromises()
+
+    expect(put).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ target_ids: ['baseline-1'] }))
+  })
+
   it('shows target loading and read failures instead of claiming targets were deleted', async () => {
     mockScheduledJobAssets()
     const realGet = apiClient.get
@@ -770,6 +795,16 @@ describe('ScheduledJobsView', () => {
     await wrapper.get('[data-testid="scheduled-save"]').trigger('click')
     await flushPromises()
     expect(put).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ cron_expression: '0 8 * * *' }))
+  })
+
+  it('labels schedule shortcuts with their exact time before replacing a custom time', async () => {
+    const wrapper = await mountScheduledState(() => scheduledJobFixture({ schedule_type: 'daily', cron_expression: '0 8 * * *' }))
+    await wrapper.get('[data-testid="scheduled-edit-job-1"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('[data-testid="scheduled-schedule-daily"]').text()).toBe('每天 02:00')
+    expect(wrapper.get('[data-testid="scheduled-schedule-weekly"]').text()).toBe('每周一 09:00')
+    expect(wrapper.text()).toContain('会使用按钮标注的默认时间')
+    expect(wrapper.text()).toContain('其他执行时间请保留或选择“自定义表达式”')
   })
 
 

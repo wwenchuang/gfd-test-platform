@@ -56,6 +56,7 @@ class ExecutionView:
     task_name: Optional[str]
     task_type: Optional[str]
     execution_source: str
+    execution_trigger: str
     state: str
     execution_type: str
     source_revision_id: str
@@ -349,6 +350,8 @@ class ExecutionService:
                     "rerun cases must belong to the source execution request"
                 )
             task = snapshot.get("task") if isinstance(snapshot.get("task"), dict) else None
+            if task is not None:
+                task = {**task, "trigger": "rerun"}
             request = {
                 "project_id": source.project_id,
                 "source_revision_id": source.source_revision_id,
@@ -461,6 +464,36 @@ class ExecutionService:
             try:
                 for execution_id in identifiers:
                     execution = repository.archive_execution(execution_id, actor_id)
+                    if execution is None:
+                        raise ExecutionNotFoundError("API execution was not found")
+                    views.append(
+                        self._repository_view(
+                            repository,
+                            execution,
+                            repository.get_execution_cases(
+                                execution.id,
+                                include_evidence=False,
+                            ),
+                            include_evidence=False,
+                        )
+                    )
+            except ValueError as error:
+                raise ExecutionConflictError(str(error))
+            return tuple(views)
+
+    def restore_many(self, execution_ids, actor_id):
+        access.require_permission(actor_id, "api.delete")
+        identifiers = tuple(dict.fromkeys(execution_ids))
+        if not identifiers:
+            raise ValueError("execution_ids must not be empty")
+        if len(identifiers) > 200:
+            raise ValueError("execution_ids cannot exceed 200")
+        with self.session_factory.begin() as session:
+            repository = ExecutionRepository(session)
+            views = []
+            try:
+                for execution_id in identifiers:
+                    execution = repository.restore_execution(execution_id, actor_id)
                     if execution is None:
                         raise ExecutionNotFoundError("API execution was not found")
                     views.append(
@@ -1059,17 +1092,20 @@ class ExecutionService:
             return None
         task_type = None
         source = None
+        trigger = None
         if isinstance(task, dict):
             raw_id = task.get("id")
             raw_name = task.get("name")
             task_type = task.get("type")
             source = task.get("source")
+            trigger = task.get("trigger")
             notify_feishu = task.get("notify_feishu")
         else:
             raw_id = getattr(task, "id", None)
             raw_name = getattr(task, "name", None)
             task_type = getattr(task, "type", None)
             source = getattr(task, "source", None)
+            trigger = getattr(task, "trigger", None)
             notify_feishu = getattr(task, "notify_feishu", None)
         if not isinstance(raw_id, str) or not raw_id.strip():
             return None
@@ -1079,6 +1115,8 @@ class ExecutionService:
             snapshot["type"] = task_type.strip()[:32]
         if isinstance(source, str) and source.strip():
             snapshot["source"] = source.strip()[:32]
+        if isinstance(trigger, str) and trigger.strip():
+            snapshot["trigger"] = trigger.strip()[:32]
         if isinstance(notify_feishu, bool):
             snapshot["notify_feishu"] = notify_feishu
         return snapshot
@@ -1128,6 +1166,11 @@ class ExecutionService:
                     "baseline_regression": "baseline_regression",
                     "scheduled": "scheduled_job",
                 }.get(execution.execution_type, "manual_task")
+            ),
+            execution_trigger=(
+                task.get("trigger")
+                if isinstance(task.get("trigger"), str)
+                else ""
             ),
             state=execution.state,
             execution_type=execution.execution_type,

@@ -30,6 +30,7 @@ const selected = ref<ExecutionView | null>(null)
 const selectedReportId = ref('')
 const reportActionMessage = ref('')
 const selectedReportIds = ref<Set<string>>(new Set())
+const archivedReportIds = ref<string[]>([])
 const filter = ref<'all' | 'failed' | 'passed'>('all')
 const sourceScope = ref<'formal' | 'debug' | 'all'>(defaultSourceScope(executions.executions))
 const reportSearch = ref('')
@@ -205,6 +206,13 @@ function feishuReportState(report: ExecutionView): FeishuReportState {
   return { label: '发飞书', tone: 'idle' }
 }
 
+function feishuActionLabel(report: ExecutionView): string {
+  const tone = feishuReportState(report).tone
+  if (tone === 'sent') return '重新发飞书'
+  if (tone === 'failed') return '重试发飞书'
+  return '发飞书'
+}
+
 function markFeishuSent(reportId: string, message: string): void {
   const status = { sent: true, failed: false, message: message || '飞书通知已发' }
   const report = executions.executions.find(item => item.id === reportId)
@@ -215,6 +223,8 @@ function markFeishuSent(reportId: string, message: string): void {
 }
 
 async function sendFeishu(report: ExecutionView): Promise<void> {
+  if (feishuReportState(report).tone === 'sent'
+    && !window.confirm(`确认重新发送报告“${reportName(report)}”到飞书？这份报告已发送过一次。`)) return
   sendingReportId.value = report.id
   try {
     const result = await notifications.sendExecutionReport(report.id)
@@ -296,7 +306,7 @@ async function deleteReports(reportIds: string[]): Promise<void> {
   const ids = [...new Set(reportIds)].filter(Boolean)
   if (!ids.length) return
   const names = executions.executions.filter(item => ids.includes(item.id)).slice(0, 3).map(executionDisplayName).join('、')
-  if (!window.confirm(`确认删除 ${ids.length} 条报告及对应执行记录？${names ? `\n${names}${ids.length > 3 ? ' 等' : ''}` : ''}\n这些记录将从列表移除，不会删除用例或基线。`)) return
+  if (!window.confirm(`确认归档 ${ids.length} 条报告及对应执行记录？${names ? `\n${names}${ids.length > 3 ? ' 等' : ''}` : ''}\n归档后会从列表中隐藏，可以撤销恢复；用例和基线不会受影响。`)) return
   if (ids.includes(openingDiagnosticId.value)) {
     diagnosticRequestVersion += 1
     openingDiagnosticId.value = ''
@@ -304,14 +314,28 @@ async function deleteReports(reportIds: string[]): Promise<void> {
   reportActionMessage.value = ''
   try {
     await executions.deleteExecutions(ids)
+    archivedReportIds.value = ids
     selectedReportIds.value = new Set([...selectedReportIds.value].filter(id => !ids.includes(id)))
     if (selected.value && ids.includes(selected.value.id)) selected.value = null
     if (ids.includes(selectedReportId.value)) selectedReportId.value = visibleReports.value[0]?.id || ''
     const linkedId = String(route.query.executionId || route.query.execution_id || '')
     if (ids.includes(linkedId)) replaceReportRoute(currentReport.value?.id || '')
-    reportActionMessage.value = `已删除 ${ids.length} 条报告及对应执行记录，用例和基线仍保留。`
+    reportActionMessage.value = `已归档 ${ids.length} 条报告及对应执行记录，用例和基线仍保留。`
   } catch (error) {
-    executions.error = error instanceof Error ? error.message : '报告删除失败，请刷新列表核对后重试'
+    executions.error = error instanceof Error ? error.message : '报告归档失败，请刷新列表核对后重试'
+  }
+}
+
+async function restoreArchivedReports(): Promise<void> {
+  const ids = [...archivedReportIds.value]
+  if (!ids.length || executions.deleting) return
+  reportActionMessage.value = ''
+  try {
+    await executions.restoreExecutions(ids)
+    archivedReportIds.value = []
+    reportActionMessage.value = `已恢复 ${ids.length} 条报告及对应执行记录。`
+  } catch (error) {
+    executions.error = error instanceof Error ? error.message : '报告恢复失败，请刷新列表核对后重试'
   }
 }
 
@@ -375,7 +399,10 @@ async function deleteReports(reportIds: string[]): Promise<void> {
         </div>
       </section>
       <p v-if="executions.error" class="inline-error" role="alert">{{ executions.error }}</p>
-      <p v-if="executions.deleting || reportActionMessage" class="setup-success" role="status">{{ executions.deleting ? '正在删除选中的报告，请等待结果…' : reportActionMessage }}</p>
+      <p v-if="executions.deleting || reportActionMessage" class="setup-success" role="status">
+        {{ executions.deleting ? '正在更新选中的报告，请等待结果…' : reportActionMessage }}
+        <button v-if="archivedReportIds.length && !executions.deleting" data-testid="restore-archived-reports" type="button" class="text-command" @click="restoreArchivedReports">撤销归档</button>
+      </p>
       <p v-if="notifications.error" class="inline-error">{{ notifications.error }}</p>
       <p v-if="notifications.lastSendMessage" class="setup-success"><Send :size="16" />{{ notifications.lastSendMessage }}</p>
 
@@ -397,7 +424,7 @@ async function deleteReports(reportIds: string[]): Promise<void> {
               <button type="button" :class="{ active: filter === 'failed' }" @click="filter = 'failed'">有问题</button>
               <button data-testid="report-filter-passed" type="button" :class="{ active: filter === 'passed' }" @click="filter = 'passed'">已通过</button>
             </div>
-            <button type="button" class="danger-command" :disabled="executions.deleting || !selectedReportCount" @click="deleteReports([...selectedReportIds])"><Trash2 :size="14" />批量删除 {{ selectedReportCount || '' }}</button>
+            <button type="button" class="danger-command" :disabled="executions.deleting || !selectedReportCount" @click="deleteReports([...selectedReportIds])"><Trash2 :size="14" />批量归档 {{ selectedReportCount || '' }}</button>
           </div>
         </header>
         <div data-testid="report-workbench" :class="['report-workbench', { 'mobile-detail-open': mobileReportDetailOpen }]">
@@ -426,7 +453,7 @@ async function deleteReports(reportIds: string[]): Promise<void> {
                 <small>{{ executionScopeLabel(report) }} · {{ report.environment_name || '未命名环境' }} · {{ executionMetrics(report).total }} 条用例</small>
               </div>
               <b>{{ executionMetrics(report).passRate }}%</b>
-              <button type="button" class="icon-danger" aria-label="删除报告" :disabled="executions.deleting" @click.stop="deleteReports([report.id])"><Trash2 :size="13" /></button>
+              <button type="button" class="icon-danger" aria-label="归档报告" :disabled="executions.deleting" @click.stop="deleteReports([report.id])"><Trash2 :size="13" /></button>
             </article>
             <div v-if="!visibleReports.length" class="section-empty">暂无匹配报告。</div>
           </aside>
@@ -450,16 +477,23 @@ async function deleteReports(reportIds: string[]): Promise<void> {
                   :disabled="openingDiagnosticId === currentReport.id"
                   @click="openDiagnostic(currentReport)"
                 ><Eye :size="14" />{{ openingDiagnosticId === currentReport.id ? '读取诊断中' : '查看完整诊断' }}</button>
-                <button
+                <span
                   data-testid="report-feishu-status"
+                  :class="['report-feishu-state', `feishu-${feishuReportState(currentReport).tone}`]"
+                  role="status"
+                >
+                  <Send :size="13" />{{ feishuReportState(currentReport).label }}
+                </span>
+                <button
+                  data-testid="report-feishu-action"
                   type="button"
-                  :class="['secondary-command', 'report-send-command', `feishu-${feishuReportState(currentReport).tone}`]"
+                  class="secondary-command report-send-command"
                   :disabled="notifications.sending && sendingReportId === currentReport.id"
                   @click="sendFeishu(currentReport)"
                 >
-                  <Send :size="13" />{{ sendingReportId === currentReport.id ? '发送中' : feishuReportState(currentReport).label }}
+                  <Send :size="13" />{{ sendingReportId === currentReport.id ? '发送中' : feishuActionLabel(currentReport) }}
                 </button>
-                <button type="button" class="danger-command" :disabled="executions.deleting" @click="deleteReports([currentReport.id])"><Trash2 :size="14" />删除报告</button>
+                <button type="button" class="danger-command" :disabled="executions.deleting" @click="deleteReports([currentReport.id])"><Trash2 :size="14" />归档报告</button>
               </div>
               <p v-if="diagnosticError" class="inline-error" role="alert">{{ diagnosticError }}</p>
               <div class="report-detail-stats">

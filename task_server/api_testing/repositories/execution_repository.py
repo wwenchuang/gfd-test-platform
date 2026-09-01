@@ -242,6 +242,22 @@ class ExecutionRepository:
             records.append(self.archive_execution(execution_id, actor_id))
         return tuple(record for record in records if record is not None)
 
+    def restore_execution(self, execution_id, actor_id):
+        execution = self.get_execution(execution_id, for_update=True)
+        if execution is None or not access.resource_allowed(self.session, execution, actor_id):
+            return None
+        if execution.state != "ARCHIVED":
+            raise ValueError("execution is not archived")
+        summary = copy.deepcopy(execution.summary or {})
+        restored_state = summary.pop("_archived_from_state", "")
+        if restored_state not in {"DONE", "CANCELLED"}:
+            raise ValueError("archived execution state is invalid")
+        execution.summary = summary
+        execution.state = restored_state
+        execution.updated_by = actor_id
+        self.session.flush()
+        return execution
+
     def display_metadata(self, execution, children, *, include_details=True):
         versions = self.get_case_versions(item.case_version_id for item in children)
         cases = self.get_cases(item.case_id for item in versions.values())

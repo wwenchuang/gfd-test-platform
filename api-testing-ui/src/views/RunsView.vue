@@ -15,6 +15,8 @@ const executions = useExecutionsStore()
 const route = useRoute()
 const router = useRouter()
 const inspected = ref<ExecutionCaseResult | null>(null)
+const archivedExecutionIds = ref<string[]>([])
+const archiveActionMessage = ref('')
 
 onMounted(async () => {
   const initialExecutionId = requestedExecutionId()
@@ -83,14 +85,25 @@ async function rerun(execution: ExecutionView): Promise<void> {
 }
 
 async function deleteExecution(executionId: string): Promise<void> {
-  const wasActive = executions.active?.id === executionId
-  await executions.deleteExecution(executionId)
-  if (wasActive) inspected.value = null
+  await deleteExecutions([executionId])
 }
 
 async function deleteExecutions(executionIds: string[]): Promise<void> {
-  await executions.deleteExecutions(executionIds)
-  if (!executions.active || executionIds.includes(executions.active.id)) inspected.value = null
+  const ids = [...new Set(executionIds)].filter(Boolean)
+  if (!ids.length) return
+  if (!window.confirm(`确认归档 ${ids.length} 条执行记录？归档后会从列表和报告中隐藏，并且可以撤销恢复。`)) return
+  await executions.deleteExecutions(ids)
+  archivedExecutionIds.value = ids
+  archiveActionMessage.value = `已归档 ${ids.length} 条执行记录。`
+  if (!executions.active || ids.includes(executions.active.id)) inspected.value = null
+}
+
+async function restoreArchivedExecutions(): Promise<void> {
+  const ids = [...archivedExecutionIds.value]
+  if (!ids.length) return
+  await executions.restoreExecutions(ids)
+  archivedExecutionIds.value = []
+  archiveActionMessage.value = `已恢复 ${ids.length} 条执行记录。`
 }
 
 function inspectResult(result: ExecutionCaseResult): void {
@@ -114,6 +127,10 @@ async function loadCaseEvidence(result: ExecutionCaseResult): Promise<void> {
       <div><p class="eyebrow">执行记录</p><h1>执行记录</h1><p class="page-subtitle">选择任务即可继续查看实时日志，不会重复发起请求。</p></div>
     </header>
     <p v-if="executions.error" class="inline-error">{{ executions.error }}</p>
+    <p v-if="archiveActionMessage" class="setup-success" role="status">
+      {{ archiveActionMessage }}
+      <button v-if="archivedExecutionIds.length" data-testid="restore-archived-executions" type="button" class="text-command" :disabled="executions.deleting" @click="restoreArchivedExecutions">撤销归档</button>
+    </p>
     <ExecutionConsole
       :executions="executions.executions"
       :active="executions.active"

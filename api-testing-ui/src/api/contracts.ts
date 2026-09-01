@@ -387,6 +387,7 @@ export interface ExecutionView {
   task_name?: string | null
   task_type?: string | null
   execution_source?: string
+  execution_trigger?: string
   state: string
   execution_type: 'debug' | 'regression' | 'baseline_regression' | 'scheduled'
   source_revision_id: string

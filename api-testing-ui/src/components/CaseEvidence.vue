@@ -9,6 +9,7 @@ import FailureAnalysis from './FailureAnalysis.vue'
 const props = defineProps<{ result: ExecutionCaseResult; loading?: boolean; error?: string }>()
 const emit = defineEmits<{ edit: [result: ExecutionCaseResult]; rerun: [result: ExecutionCaseResult]; retry: [result: ExecutionCaseResult] }>()
 const JSON_PREVIEW_LIMIT = 12_000
+const ASSERTION_PREVIEW_LIMIT = 160
 const expandedBlocks = ref<Set<string>>(new Set())
 const evidenceReady = computed(() => hasLoadedCaseEvidence(props.result))
 const detail = computed(() => props.result.sanitized_result || {})
@@ -18,6 +19,12 @@ const assertions = computed(() => {
   const value = detail.value.assertion_results || detail.value.assertions
   return Array.isArray(value) ? redactSensitiveEvidence(value) as Array<Record<string, unknown>> : []
 })
+const assertionRows = computed(() => assertions.value.map((item, index) => ({
+  item,
+  index,
+  expectedBlock: assertionBlock(item.expected, `assertion-expected-${index}`),
+  actualBlock: assertionBlock(item.actual, `assertion-actual-${index}`),
+})))
 const trace = computed(() => {
   const value = detail.value.trace || detail.value.logs
   return Array.isArray(value) ? redactSensitiveEvidence(value) as Array<Record<string, unknown>> : []
@@ -46,6 +53,18 @@ watch(() => props.result.execution_case_id, () => {
 
 function stageLabel(stage: unknown): string {
   return ({ setup: '前置步骤', main: '主体请求', cleanup: '清理步骤' } as Record<string, string>)[String(stage)] || '执行步骤'
+}
+
+function assertionBlock(value: unknown, key: string): { text: string; oversized: boolean; expanded: boolean; length: number } {
+  const full = formatCompactEvidenceValue(value, Number.MAX_SAFE_INTEGER)
+  const oversized = full.length > ASSERTION_PREVIEW_LIMIT
+  const expanded = oversized && expandedBlocks.value.has(key)
+  return {
+    text: expanded ? full : formatCompactEvidenceValue(value, ASSERTION_PREVIEW_LIMIT),
+    oversized,
+    expanded,
+    length: full.length,
+  }
 }
 
 function jsonBlock(value: unknown, key: string): { text: string; oversized: boolean; expanded: boolean; length: number } {
@@ -104,7 +123,43 @@ function toggleBlock(key: string): void {
     </section>
     <details open><summary>请求明细</summary><pre>{{ requestBlock.text }}</pre><div v-if="requestBlock.oversized" class="evidence-preview-actions"><span>请求共 {{ requestBlock.length.toLocaleString('zh-CN') }} 个字符</span><button data-testid="expand-request-evidence" class="text-command" type="button" @click="toggleBlock('request')">{{ requestBlock.expanded ? '恢复精简预览' : '显示完整请求' }}</button></div></details>
     <details data-testid="response-evidence" :open="!responseBlock.oversized"><summary>响应明细<span v-if="responseBlock.oversized"> · {{ responseBlock.length.toLocaleString('zh-CN') }} 字符，默认收起</span></summary><pre>{{ responseBlock.text }}</pre><div v-if="responseBlock.oversized" class="evidence-preview-actions"><span>响应共 {{ responseBlock.length.toLocaleString('zh-CN') }} 个字符</span><button data-testid="expand-response-evidence" class="text-command" type="button" @click="toggleBlock('response')">{{ responseBlock.expanded ? '恢复精简预览' : '显示完整响应' }}</button></div></details>
-    <details open class="assertion-evidence"><summary>断言结果（{{ assertions.length }}）</summary><div v-if="assertions.length" class="assertion-result-list"><div v-for="(item, index) in assertions" :key="index" :class="item.passed === false ? 'assertion-failed' : 'assertion-passed'"><CircleX v-if="item.passed === false" :size="15" /><CheckCircle2 v-else :size="15" /><span><strong>{{ item.message || item.type || `断言 ${index + 1}` }}</strong><small>期望 {{ formatCompactEvidenceValue(item.expected) }} · 实际 {{ formatCompactEvidenceValue(item.actual) }}</small></span></div></div><p v-else class="state-message">本用例没有配置断言</p></details>
+    <details open class="assertion-evidence">
+      <summary>断言结果（{{ assertions.length }}）</summary>
+      <div v-if="assertions.length" class="assertion-result-list">
+        <div v-for="row in assertionRows" :key="row.index" :class="row.item.passed === false ? 'assertion-failed' : 'assertion-passed'">
+          <CircleX v-if="row.item.passed === false" :size="15" />
+          <CheckCircle2 v-else :size="15" />
+          <span>
+            <strong>{{ row.item.message || row.item.type || `断言 ${row.index + 1}` }}</strong>
+            <small class="assertion-value-list">
+              <span :data-testid="`assertion-expected-${row.index}`">
+                <b>期望</b>
+                <span>{{ row.expectedBlock.text }}</span>
+                <button
+                  v-if="row.expectedBlock.oversized"
+                  :data-testid="`expand-assertion-expected-${row.index}`"
+                  class="text-command"
+                  type="button"
+                  @click="toggleBlock(`assertion-expected-${row.index}`)"
+                >{{ row.expectedBlock.expanded ? '收起完整值' : '显示完整值' }}</button>
+              </span>
+              <span :data-testid="`assertion-actual-${row.index}`">
+                <b>实际</b>
+                <span>{{ row.actualBlock.text }}</span>
+                <button
+                  v-if="row.actualBlock.oversized"
+                  :data-testid="`expand-assertion-actual-${row.index}`"
+                  class="text-command"
+                  type="button"
+                  @click="toggleBlock(`assertion-actual-${row.index}`)"
+                >{{ row.actualBlock.expanded ? '收起完整值' : '显示完整值' }}</button>
+              </span>
+            </small>
+          </span>
+        </div>
+      </div>
+      <p v-else class="state-message">本用例没有配置断言</p>
+    </details>
     <details><summary>执行轨迹（{{ trace.length }}）</summary><pre>{{ traceBlock.text }}</pre><div v-if="traceBlock.oversized" class="evidence-preview-actions"><span>轨迹共 {{ traceBlock.length.toLocaleString('zh-CN') }} 个字符</span><button data-testid="expand-trace-evidence" class="text-command" type="button" @click="toggleBlock('trace')">{{ traceBlock.expanded ? '恢复精简预览' : '显示完整轨迹' }}</button></div></details>
     </template>
   </section>

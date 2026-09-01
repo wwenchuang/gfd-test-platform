@@ -8,6 +8,7 @@ import {
   executionMetrics,
   executionScopeLabel,
   executionSourceScope,
+  executionTriggerLabel,
   formatDuration,
   formatPassRate,
   failureCategoryLabel,
@@ -127,6 +128,15 @@ describe('execution presentation', () => {
     expect(executionSourceScope({ ...execution, execution_type: 'regression' })).toBe('formal')
     expect(executionSourceScope({ ...execution, execution_type: 'baseline_regression' })).toBe('formal')
     expect(executionSourceScope({ ...execution, execution_type: 'scheduled', execution_source: 'scheduled_job' })).toBe('formal')
+  })
+
+  it('explains how a scheduled execution was triggered without guessing older records', () => {
+    const scheduled = { ...execution, execution_source: 'scheduled_job', execution_type: 'scheduled' as const }
+
+    expect(executionTriggerLabel({ ...scheduled, execution_trigger: 'schedule' })).toBe('自动调度')
+    expect(executionTriggerLabel({ ...scheduled, execution_trigger: 'manual' })).toBe('手动触发')
+    expect(executionTriggerLabel({ ...scheduled, execution_trigger: 'rerun' })).toBe('历史记录重跑')
+    expect(executionTriggerLabel(scheduled)).toBe('触发方式未记录')
   })
 
   it('names single-case debug history by the case instead of a repeated task name', () => {

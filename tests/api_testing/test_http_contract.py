@@ -758,6 +758,43 @@ def test_context_options_return_only_owned_active_display_metadata(
     assert "default_headers" not in json.dumps(options)
 
 
+def test_execution_archive_can_be_restored_without_losing_history(
+    http_client, api_context, owned_records
+):
+    execution_id = owned_records["execution"].id
+    with api_context["factory"].begin() as session:
+        execution = session.get(type(owned_records["execution"]), execution_id)
+        execution.state = "DONE"
+        execution.summary = {"total": 1, "passed": 1}
+
+    archived = http_client.post(
+        "/api/api-testing/v1/executions/archive",
+        {"execution_ids": [execution_id]},
+        _auth(),
+    )
+    hidden = http_client.get(
+        f"/api/api-testing/v1/executions?project_id={owned_records['project'].id}",
+        _auth(),
+    )
+    restored = http_client.post(
+        "/api/api-testing/v1/executions/restore",
+        {"execution_ids": [execution_id]},
+        _auth(),
+    )
+    listed = http_client.get(
+        f"/api/api-testing/v1/executions?project_id={owned_records['project'].id}",
+        _auth(),
+    )
+
+    assert archived.status == 200
+    assert archived.body["data"]["executions"][0]["state"] == "ARCHIVED"
+    assert hidden.status == 200
+    assert execution_id not in {item["id"] for item in hidden.body["data"]["executions"]}
+    assert restored.status == 200
+    assert restored.body["data"]["executions"][0]["state"] == "DONE"
+    assert execution_id in {item["id"] for item in listed.body["data"]["executions"]}
+
+
 def test_context_options_are_empty_without_owned_saved_context(http_client, api_context):
     response = http_client.get("/api/api-testing/v1/context-options", _auth("owner-b"))
 

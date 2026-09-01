@@ -209,6 +209,7 @@ describe('ExecutionConsole', () => {
     await wrapper.get('[data-testid="execution-filter-conclusion"]').setValue('running')
     expect(wrapper.find('[data-testid="execution-row-execution-running"]').exists()).toBe(true)
     expect(wrapper.get('[data-testid="execution-row-execution-running"]').text()).toContain('执行中')
+    expect(wrapper.get('[data-testid="execution-row-execution-running"]').text()).toContain('触发方式未记录')
 
     await wrapper.get('[data-testid="execution-filter-conclusion"]').setValue('all')
     await wrapper.get('[data-testid="execution-filter-search"]').setValue('测试环境')
@@ -231,7 +232,7 @@ describe('ExecutionConsole', () => {
     expect(wrapper.text()).toContain('第 1-20 条，共 21 条')
 
     await wrapper.find('.execution-list-tools .text-command').trigger('click')
-    expect(wrapper.text()).toContain('删除 21')
+    expect(wrapper.text()).toContain('归档 21')
 
     await wrapper.get('[data-testid="execution-page-next"]').trigger('click')
     expect(wrapper.findAll('.execution-row')).toHaveLength(1)

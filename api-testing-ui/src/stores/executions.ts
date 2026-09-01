@@ -335,7 +335,31 @@ export const useExecutionsStore = defineStore('api-executions', {
           this.events = []
         }
       } catch (error) {
-        this.error = error instanceof Error ? error.message : '执行记录删除失败'
+        this.error = error instanceof Error ? error.message : '执行记录归档失败'
+        throw error
+      } finally {
+        this.deleting = false
+      }
+    },
+    async restoreExecutions(executionIds: string[]): Promise<void> {
+      const ids = [...new Set(executionIds)].filter(Boolean)
+      if (!ids.length) return
+      this.deleting = true
+      this.error = ''
+      try {
+        const response = await apiClient.post<{ executions: ExecutionView[] }>(
+          '/api/api-testing/v1/executions/restore',
+          { execution_ids: ids },
+        )
+        const restored = response.data.executions || []
+        const restoredIds = new Set(restored.map(item => item.id))
+        for (const id of restoredIds) this.archivedExecutionIds.delete(id)
+        this.executions = [
+          ...restored,
+          ...this.executions.filter(item => !restoredIds.has(item.id)),
+        ].sort((left, right) => String(right.created_at || '').localeCompare(String(left.created_at || '')))
+      } catch (error) {
+        this.error = error instanceof Error ? error.message : '执行记录恢复失败'
         throw error
       } finally {
         this.deleting = false

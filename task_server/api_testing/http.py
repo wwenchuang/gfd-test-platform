@@ -801,6 +801,22 @@ def _post(segments, payload, actor, settings, *, session_digest=None):
                 ).archive_many(execution_ids, actor)
             ]
         }
+    if segments == ("executions", "restore"):
+        execution_ids = _uuid_array(payload.get("execution_ids"), "execution_ids")
+        with factory() as session:
+            allowed = set(session.scalars(select(ApiExecution.id).where(
+                ApiExecution.id.in_(execution_ids), access.resource_predicate(actor, ApiExecution)
+            )))
+            if allowed != set(execution_ids):
+                raise _not_found()
+        return {
+            "executions": [
+                _view(item)
+                for item in ExecutionService(
+                    factory, event_stream=_event_stream(factory)
+                ).restore_many(execution_ids, actor)
+            ]
+        }
     if segments == ("regressions",):
         regression = {
             "project_id": _uuid(payload.get("project_id")),

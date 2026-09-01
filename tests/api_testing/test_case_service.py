@@ -1454,6 +1454,175 @@ def test_readoption_supersedes_previous_baseline_and_keeps_version_name(
         ) == 2
 
 
+def test_readoption_preserves_curated_baseline_group(
+    case_service, project_context, session_factory
+):
+    endpoint = project_context["endpoints"]["favoriteList"]
+    first = case_service.create_draft(
+        endpoint.id, valid_list_case(endpoint), "manual", "admin"
+    )
+    first_evidence = _create_execution_evidence(
+        session_factory, project_context, first
+    )
+    first_baseline = case_service.adopt_baseline(
+        first.id, first_evidence, "admin"
+    )
+    case_service.update_baseline_group(
+        [first_baseline.id], "家用业务 · 已复验", "admin"
+    )
+
+    second = case_service.create_version(
+        first.case_id, valid_list_case(endpoint), "admin"
+    )
+    second_evidence = _create_execution_evidence(
+        session_factory, project_context, second
+    )
+    second_baseline = case_service.adopt_baseline(
+        second.id, second_evidence, "admin"
+    )
+
+    assert second_baseline.group_name == "家用业务 · 已复验"
+
+
+def test_readoption_repoints_saved_scheduled_baseline_targets(
+    case_service, project_context, session_factory
+):
+    from task_server.api_testing.services.scheduled_job_service import (
+        ScheduledJobService,
+    )
+
+    endpoint = project_context["endpoints"]["favoriteList"]
+    first = case_service.create_draft(
+        endpoint.id, valid_list_case(endpoint), "manual", "admin"
+    )
+    first_evidence = _create_execution_evidence(
+        session_factory, project_context, first
+    )
+    first_baseline = case_service.adopt_baseline(
+        first.id, first_evidence, "admin"
+    )
+    scheduled_service = ScheduledJobService(
+        session_factory, enqueue=lambda _execution_id: None
+    )
+    job = scheduled_service.create(
+        {
+            "project_id": project_context["project"].id,
+            "name": "每日家用基线回归",
+            "schedule_type": "daily",
+            "cron_expression": "0 8 * * *",
+            "environment_strategy": "fixed_revision",
+            "environment_revision_id": project_context[
+                "environment_revision"
+            ].id,
+            "target_type": "baselines",
+            "target_ids": [first_baseline.id],
+            "enabled": True,
+            "notify_feishu": False,
+            "allow_one_time_baselines": False,
+            "retry_count": 0,
+            "timeout_seconds": 900,
+        },
+        "admin",
+    )
+
+    second = case_service.create_version(
+        first.case_id, valid_list_case(endpoint), "admin"
+    )
+    second_evidence = _create_execution_evidence(
+        session_factory, project_context, second
+    )
+    second_baseline = case_service.adopt_baseline(
+        second.id, second_evidence, "admin"
+    )
+
+    listed = next(
+        item
+        for item in scheduled_service.list(project_context["project"].id, "admin")
+        if item.id == job.id
+    )
+    assert listed.target_ids == (second_baseline.id,)
+
+
+@pytest.mark.parametrize(
+    ("allow_one_time_baselines", "expected_target"),
+    ((False, "previous"), (True, "replacement")),
+)
+def test_readoption_respects_scheduled_one_time_policy_when_repointing(
+    case_service,
+    project_context,
+    session_factory,
+    allow_one_time_baselines,
+    expected_target,
+):
+    from task_server.api_testing.services.scheduled_job_service import (
+        ScheduledJobInputError,
+        ScheduledJobService,
+    )
+
+    endpoint = project_context["endpoints"]["favoriteList"]
+    first = case_service.create_draft(
+        endpoint.id, valid_list_case(endpoint), "manual", "admin"
+    )
+    first_evidence = _create_execution_evidence(
+        session_factory, project_context, first
+    )
+    first_baseline = case_service.adopt_baseline(
+        first.id, first_evidence, "admin"
+    )
+    scheduled_service = ScheduledJobService(
+        session_factory, enqueue=lambda _execution_id: None
+    )
+    job = scheduled_service.create(
+        {
+            "project_id": project_context["project"].id,
+            "name": "一次性策略回归",
+            "schedule_type": "daily",
+            "cron_expression": "0 8 * * *",
+            "environment_strategy": "fixed_revision",
+            "environment_revision_id": project_context[
+                "environment_revision"
+            ].id,
+            "target_type": "baselines",
+            "target_ids": [first_baseline.id],
+            "enabled": True,
+            "notify_feishu": False,
+            "allow_one_time_baselines": allow_one_time_baselines,
+            "retry_count": 0,
+            "timeout_seconds": 900,
+        },
+        "admin",
+    )
+
+    one_time_payload = valid_list_case(endpoint)
+    one_time_payload["name"] = "查询我的收藏 - 一次性人工验证"
+    second = case_service.create_version(
+        first.case_id, one_time_payload, "admin"
+    )
+    second_evidence = _create_execution_evidence(
+        session_factory, project_context, second
+    )
+    second_baseline = case_service.adopt_baseline(
+        second.id, second_evidence, "admin"
+    )
+
+    listed = next(
+        item
+        for item in scheduled_service.list(project_context["project"].id, "admin")
+        if item.id == job.id
+    )
+    expected_id = (
+        first_baseline.id if expected_target == "previous" else second_baseline.id
+    )
+    assert listed.target_ids == (expected_id,)
+    if not allow_one_time_baselines:
+        with pytest.raises(ScheduledJobInputError, match="当前有效基线"):
+            scheduled_service.run_once(
+                job.id,
+                "admin",
+                idempotency_key=f"one-time-policy-{job.id}",
+            )
+
+
 def test_new_environment_revision_supersedes_old_baseline_but_keeps_history_visible(
     case_service, project_context, session_factory
 ):

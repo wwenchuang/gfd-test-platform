@@ -172,6 +172,7 @@ def test_rerun_preserves_source_task_identity(
     assert rerun.task_name == "基线回归测试（已复验113条）"
     assert rerun.task_type == "scheduled_job"
     assert rerun.execution_source == "scheduled_job"
+    assert rerun.execution_trigger == "rerun"
     assert rerun.execution_type == "scheduled"
 
     with pytest.raises(ExecutionScopeConflictError, match="source execution"):
@@ -1357,6 +1358,44 @@ def test_bulk_archive_returns_lightweight_execution_summaries(
     assert archived[0].id == submitted.id
     assert archived[0].case_results[0]["status"] == "PASSED"
     assert archived[0].case_results[0]["sanitized_result"] == {}
+
+
+def test_bulk_restore_returns_archived_executions_to_history(
+    session_factory, redis_client, execution_context
+):
+    service = ExecutionService(
+        session_factory,
+        executor=_FakeExecutor([_Result("PASSED")]),
+        event_stream=EventStream(session_factory, redis_client),
+    )
+    submitted = service.submit(
+        _request(execution_context),
+        "admin",
+        "restore-bulk-archive",
+    )
+    assert service.run(submitted.id) is True
+    service.archive_many([submitted.id], "admin")
+
+    restored = service.restore_many([submitted.id], "admin")
+
+    assert restored[0].id == submitted.id
+    assert restored[0].state == "DONE"
+    assert "_archived_from_state" not in restored[0].summary
+    assert [item.id for item in service.list(submitted.project_id, "admin", 50)] == [submitted.id]
+
+
+def test_bulk_restore_rejects_execution_that_is_not_archived(
+    session_factory, execution_context
+):
+    service = ExecutionService(session_factory)
+    submitted = service.submit(
+        _request(execution_context),
+        "admin",
+        "restore-active-execution",
+    )
+
+    with pytest.raises(ExecutionConflictError, match="not archived"):
+        service.restore_many([submitted.id], "admin")
 
 
 def test_execution_worker_only_loads_lightweight_case_collections(

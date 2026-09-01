@@ -3,7 +3,7 @@ import { computed, ref, watch } from 'vue'
 import { RotateCw, Search, Square, Trash2 } from 'lucide-vue-next'
 
 import type { ExecutionCaseResult, ExecutionConnectionState, ExecutionEventView, ExecutionView } from '../api/contracts'
-import { executionConclusion, executionDisplayName, executionFailureBuckets, executionMetrics, executionScopeLabel, executionSourceScope, executionTypeLabel, hasLoadedCaseEvidence } from '../utils/executionPresentation'
+import { executionConclusion, executionDisplayName, executionFailureBuckets, executionMetrics, executionScopeLabel, executionSourceScope, executionTriggerLabel, executionTypeLabel, hasLoadedCaseEvidence } from '../utils/executionPresentation'
 import CaseEvidence from './CaseEvidence.vue'
 import CaseResultList from './CaseResultList.vue'
 import ExecutionLog from './ExecutionLog.vue'
@@ -162,10 +162,11 @@ function executionSubtitle(execution: ExecutionView): string {
   const parts = [
     executionScopeLabel(execution),
     executionTypeLabel(execution),
+    executionTriggerLabel(execution),
     `${executionResultCount(execution)} 条`,
     execution.environment_name || '未命名环境',
   ]
-  return parts.join(' · ')
+  return parts.filter(Boolean).join(' · ')
 }
 
 function executionRowConclusion(execution: ExecutionView): { label: string; tone: string } {
@@ -191,7 +192,7 @@ function executionRowConclusion(execution: ExecutionView): { label: string; tone
       <div v-if="endpointId" class="execution-scope-filter"><span>当前仅显示所选接口参与的执行</span><button data-testid="execution-clear-endpoint-filter" type="button" class="text-command" @click="emit('clearEndpointFilter')">清除接口筛选</button></div>
       <div class="execution-list-tools">
         <button type="button" class="text-command" :disabled="!visibleExecutions.length" @click="toggleAllExecutions">{{ allVisibleSelected ? '取消当前筛选' : '全选当前筛选' }}</button>
-        <button type="button" class="danger-command" :disabled="!selectedExecutionCount" @click="deleteSelected"><Trash2 :size="13" />删除 {{ selectedExecutionCount || '' }}</button>
+        <button type="button" class="danger-command" :disabled="!selectedExecutionCount" @click="deleteSelected"><Trash2 :size="13" />归档 {{ selectedExecutionCount || '' }}</button>
       </div>
       <article
         v-for="execution in pagedExecutions"
@@ -210,7 +211,7 @@ function executionRowConclusion(execution: ExecutionView): { label: string; tone
           <small>{{ execution.created_at ? new Date(execution.created_at).toLocaleString('zh-CN') : '' }}</small>
         </span>
         <b :class="`tone-${executionRowConclusion(execution).tone}`">{{ executionRowConclusion(execution).label }}</b>
-        <button type="button" class="icon-danger" aria-label="删除执行记录" @click.stop="emit('delete', execution.id)"><Trash2 :size="13" /></button>
+        <button type="button" class="icon-danger" aria-label="归档执行记录" title="归档执行记录" @click.stop="emit('delete', execution.id)"><Trash2 :size="13" /></button>
       </article>
       <nav v-if="executionPageCount > 1" class="list-pagination" aria-label="执行记录分页">
         <button type="button" :disabled="executionPage === 1" @click="executionPage -= 1">上一页</button>

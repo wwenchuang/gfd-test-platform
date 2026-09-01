@@ -136,6 +136,7 @@ describe('ReportsView', () => {
     const deleteExecutions = vi.spyOn(executions, 'deleteExecutions').mockImplementation(async ids => {
       executions.executions = executions.executions.filter(item => !ids.includes(item.id))
     })
+    const restoreExecutions = vi.spyOn(executions, 'restoreExecutions').mockResolvedValue()
     executions.executions = [
       report,
       { ...report, id: 'report-2', summary: { total: 1, passed: 1, failed: 0 }, case_results: [report.case_results[0]] },
@@ -156,18 +157,41 @@ describe('ReportsView', () => {
     await flushPromises()
     expect(deleteExecutions).toHaveBeenCalledWith(['report-1', 'report-2'])
     expect(routerState.replace).toHaveBeenLastCalledWith({ query: {} })
-    expect(wrapper.text()).toContain('已删除 2 条报告')
+    expect(wrapper.text()).toContain('已归档 2 条报告')
     expect(wrapper.text()).toContain('0 / 0')
+
+    await wrapper.get('[data-testid="restore-archived-reports"]').trigger('click')
+    await flushPromises()
+    expect(restoreExecutions).toHaveBeenCalledWith(['report-1', 'report-2'])
+    expect(wrapper.text()).toContain('已恢复 2 条报告')
+  })
+
+  it('labels and confirms the single-report archive entry point', async () => {
+    const executions = useExecutionsStore()
+    const context = useContextStore()
+    vi.spyOn(context, 'loadSavedContext').mockResolvedValue()
+    vi.spyOn(context, 'loadOptions').mockResolvedValue()
+    const archive = vi.spyOn(executions, 'deleteExecutions').mockResolvedValue()
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    executions.executions = [report]
+    const wrapper = mount(ReportsView)
+    await nextTick()
+
+    await wrapper.get('button[aria-label="归档报告"]').trigger('click')
+    await flushPromises()
+
+    expect(confirm).toHaveBeenCalledWith(expect.stringMatching(/确认归档 1 条报告[\s\S]*可以撤销/))
+    expect(archive).toHaveBeenCalledWith(['report-1'])
   })
 
 
-  it('shows a failed report deletion and preserves selection for a retry', async () => {
+  it('shows a failed report archive and preserves selection for a retry', async () => {
     const executions = useExecutionsStore()
     const context = useContextStore()
     vi.spyOn(context, 'loadSavedContext').mockResolvedValue()
     vi.spyOn(context, 'loadOptions').mockResolvedValue()
     vi.spyOn(window, 'confirm').mockReturnValue(true)
-    vi.spyOn(executions, 'deleteExecutions').mockImplementation(async () => { executions.error = '删除失败，请重试'; throw new Error(executions.error) })
+    vi.spyOn(executions, 'deleteExecutions').mockImplementation(async () => { executions.error = '归档失败，请重试'; throw new Error(executions.error) })
     executions.executions = [report]
     const wrapper = mount(ReportsView)
     const unhandled = vi.fn()
@@ -176,7 +200,7 @@ describe('ReportsView', () => {
     await wrapper.get('input[aria-label="选择报告"]').trigger('click')
     await wrapper.get('.report-board-actions .danger-command').trigger('click')
     await flushPromises()
-    expect(wrapper.findAll('[role="alert"]').some(item => item.text().includes('删除失败，请重试'))).toBe(true)
+    expect(wrapper.findAll('[role="alert"]').some(item => item.text().includes('归档失败，请重试'))).toBe(true)
     expect(wrapper.text()).toContain('已选 1 条')
     expect(unhandled).not.toHaveBeenCalled()
   })
@@ -245,11 +269,16 @@ describe('ReportsView', () => {
     expect(wrapper.get('[data-testid="report-history-row"]').text()).toContain('查询我的收藏 - 成功响应 · 在线调试')
   })
 
-  it('shows the persisted Feishu sent state on the report card', () => {
+  it('shows sent state separately and confirms before resending a Feishu report', async () => {
     const executions = useExecutionsStore()
     const context = useContextStore()
+    const notifications = useNotificationsStore()
     vi.spyOn(context, 'loadSavedContext').mockResolvedValue()
     vi.spyOn(context, 'loadOptions').mockResolvedValue()
+    const send = vi.spyOn(notifications, 'sendExecutionReport').mockResolvedValue({
+      execution_id: 'report-1', channel_type: 'feishu', sent: true, message: '飞书通知已发',
+    })
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false)
     executions.executions = [{
       ...report,
       notifications: {
@@ -260,6 +289,17 @@ describe('ReportsView', () => {
     const wrapper = mount(ReportsView)
 
     expect(wrapper.get('[data-testid="report-feishu-status"]').text()).toContain('飞书通知已发')
+    expect(wrapper.get('[data-testid="report-feishu-status"].report-feishu-state').element.tagName).toBe('SPAN')
+    expect(wrapper.get('[data-testid="report-feishu-action"]').text()).toContain('重新发飞书')
+
+    await wrapper.get('[data-testid="report-feishu-action"]').trigger('click')
+    expect(confirm).toHaveBeenCalledWith(expect.stringMatching(/确认重新发送.*飞书/))
+    expect(send).not.toHaveBeenCalled()
+
+    confirm.mockReturnValue(true)
+    await wrapper.get('[data-testid="report-feishu-action"]').trigger('click')
+    await flushPromises()
+    expect(send).toHaveBeenCalledWith('report-1')
   })
 
   it('opens the report requested by Feishu link query', async () => {

@@ -89,6 +89,14 @@ export function executionSourceScope(execution: ExecutionView): ExecutionSourceS
   return execution.execution_type === 'debug' ? 'debug' : 'formal'
 }
 
+export function executionTriggerLabel(execution: ExecutionView): string {
+  const trigger = String(execution.execution_trigger || '').trim().toLowerCase()
+  if (['schedule', 'scheduler'].includes(trigger)) return '自动调度'
+  if (trigger === 'manual') return '手动触发'
+  if (trigger === 'rerun') return '历史记录重跑'
+  return execution.execution_source === 'scheduled_job' ? '触发方式未记录' : ''
+}
+
 export function executionScopeLabel(execution: ExecutionView): string {
   const application = String(execution.application_name || '').trim() || '未标注应用'
   const business = String(execution.business_name || '').trim() || '未标注业务'

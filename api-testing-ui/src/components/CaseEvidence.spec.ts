@@ -102,16 +102,18 @@ describe('CaseEvidence', () => {
     expect(wrapper.emitted('rerun')?.[0]?.[0]).toEqual(result)
   })
 
-  it('keeps oversized response and assertion values in a readable preview until explicitly expanded', async () => {
-    const tailMarker = 'RESPONSE_TAIL_MUST_BE_LAZY'
-    const oversized = `${'x'.repeat(18_000)}${tailMarker}`
+  it('keeps oversized response and computed assertion values compact until each is explicitly expanded', async () => {
+    const responseTailMarker = 'RESPONSE_TAIL_MUST_BE_LAZY'
+    const assertionTailMarker = 'COMPUTED_ASSERTION_TAIL_MUST_BE_ACCESSIBLE'
+    const oversizedResponse = `${'x'.repeat(18_000)}${responseTailMarker}`
+    const computedAssertion = `${'y'.repeat(18_000)}${assertionTailMarker}`
     const largeResult: ExecutionCaseResult = {
       ...result,
       evidence_loaded: true,
       sanitized_result: {
         ...result.sanitized_result,
-        sanitized_response: { status_code: 200, body: { payload: oversized } },
-        assertion_results: [{ passed: true, message: '响应结构完整', expected: '存在 payload', actual: oversized }],
+        sanitized_response: { status_code: 200, body: { payload: oversizedResponse } },
+        assertion_results: [{ passed: true, message: '计算字段符合预期', expected: '存在计算结果', actual: computedAssertion }],
       },
     }
     const wrapper = mount(CaseEvidence, { props: { result: largeResult } })
@@ -119,16 +121,53 @@ describe('CaseEvidence', () => {
     expect(wrapper.get('[data-testid="response-evidence"]').attributes('open')).toBeUndefined()
     expect(wrapper.get('[data-testid="response-evidence"]').text()).toContain('默认收起')
     expect(wrapper.text()).toContain('内容较大，已先展示前')
-    expect(wrapper.text()).toContain('实际 x')
+    expect(wrapper.get('[data-testid="assertion-actual-0"]').text()).toContain('实际y')
     expect(wrapper.text()).toContain('已截断')
-    expect(wrapper.text()).not.toContain(tailMarker)
+    expect(wrapper.text()).not.toContain(responseTailMarker)
+    expect(wrapper.text()).not.toContain(assertionTailMarker)
+
+    await wrapper.get('[data-testid="expand-assertion-actual-0"]').trigger('click')
+    expect(wrapper.text()).toContain(assertionTailMarker)
+    expect(wrapper.text()).not.toContain(responseTailMarker)
+    expect(wrapper.get('[data-testid="expand-assertion-actual-0"]').text()).toContain('收起完整值')
+
+    await wrapper.get('[data-testid="expand-assertion-actual-0"]').trigger('click')
+    expect(wrapper.text()).not.toContain(assertionTailMarker)
 
     await wrapper.get('[data-testid="expand-response-evidence"]').trigger('click')
-    expect(wrapper.text()).toContain(tailMarker)
+    expect(wrapper.text()).toContain(responseTailMarker)
     expect(wrapper.get('[data-testid="expand-response-evidence"]').text()).toContain('恢复精简预览')
 
     await wrapper.get('[data-testid="expand-response-evidence"]').trigger('click')
-    expect(wrapper.text()).not.toContain(tailMarker)
+    expect(wrapper.text()).not.toContain(responseTailMarker)
+  })
+
+  it('keeps oversized binary assertion values out of the first-screen assertion summary', () => {
+    const binaryValue = `data:image/png;base64,${'A'.repeat(100_000)}`
+    const binaryResult: ExecutionCaseResult = {
+      ...result,
+      evidence_loaded: true,
+      sanitized_result: {
+        ...result.sanitized_result,
+        sanitized_response: { status_code: 200, body: { slideImage: binaryValue } },
+        assertion_results: [{
+          passed: true,
+          message: '滑块图片已返回',
+          expected: '存在 slideImage',
+          actual: { code: 0, data: { slideImage: binaryValue } },
+        }],
+      },
+    }
+
+    const wrapper = mount(CaseEvidence, { props: { result: binaryResult } })
+    const actual = wrapper.get('[data-testid="assertion-actual-0"]')
+
+    expect(actual.text()).toContain('实际')
+    expect(actual.text()).toContain('已截断')
+    expect(actual.text()).not.toContain('完整值请在上方响应明细查看')
+    expect(wrapper.get('[data-testid="expand-assertion-actual-0"]').text()).toContain('显示完整值')
+    expect(actual.text().length).toBeLessThan(360)
+    expect(actual.text()).not.toContain('A'.repeat(200))
   })
 
   it('keeps ordinary responses open for quick inspection', () => {

@@ -213,6 +213,7 @@ def test_scheduled_job_can_be_created_and_manually_run(scheduled_factory, schedu
     assert job.target_ids == (scheduled_records["case_version"].id,)
     assert execution.execution_type == "scheduled"
     assert execution.execution_source == "scheduled_job"
+    assert execution.execution_trigger == "manual"
     assert execution.task_name == "每日发版回归"
 
     listed = service.list(scheduled_records["project"].id, "owner-a")[0]

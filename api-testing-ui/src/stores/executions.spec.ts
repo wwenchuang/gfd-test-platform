@@ -576,6 +576,26 @@ describe('executions store', () => {
     expect(store.active?.id).toBe('execution-3')
   })
 
+  it('restores archived executions through the recovery endpoint and returns them to date order', async () => {
+    const restored = {
+      id: 'execution-1', state: 'DONE', created_at: '2026-08-12T09:00:00Z', case_results: [],
+    } as unknown as ExecutionView
+    const post = vi.spyOn(apiClient, 'post').mockResolvedValue({ data: { executions: [restored] } })
+    const store = useExecutionsStore()
+    store.executions = [{
+      id: 'execution-2', state: 'DONE', created_at: '2026-08-12T08:00:00Z', case_results: [],
+    } as unknown as ExecutionView]
+    store.archivedExecutionIds.add(restored.id)
+
+    await store.restoreExecutions([restored.id, restored.id])
+
+    expect(post).toHaveBeenCalledWith('/api/api-testing/v1/executions/restore', {
+      execution_ids: [restored.id],
+    })
+    expect(store.executions.map(item => item.id)).toEqual(['execution-1', 'execution-2'])
+    expect(store.archivedExecutionIds.has(restored.id)).toBe(false)
+  })
+
   it.each(['detail', 'selection', 'list'])('does not restore an archived execution from a late %s response', async kind => {
     const first = { id: 'execution-1', state: 'DONE', case_results: [] } as unknown as ExecutionView
     const second = { ...first, id: 'execution-2' }
