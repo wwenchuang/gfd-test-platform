@@ -66,6 +66,26 @@ def classify_endpoint_workflow(endpoint):
             baseline_policy="guarded",
             reason="动态获取设备和切片产物；打印成功后必须取消本次打印",
         )
+    if _is_authentication_endpoint(endpoint):
+        return _workflow(
+            "authentication",
+            "登录与鉴权",
+            "high",
+            requires_setup=True,
+            requires_cleanup=True,
+            baseline_policy="manual",
+            reason="必须使用可刷新测试凭证并在完成后清理临时会话",
+        )
+    if read_only and _is_semantic_get_mutation(endpoint):
+        return _workflow(
+            "semantic_get_mutation",
+            "GET 状态变更",
+            "high",
+            requires_setup=True,
+            requires_cleanup=True,
+            baseline_policy="manual",
+            reason="接口虽然使用 GET，但名称或动作路径表明会改变业务状态；需逐条确认前置、影响和清理后才能定时执行",
+        )
     if not read_only and any(label in text for label in ("积分兑换", "账号注销", "真实扣费", "正式支付")):
         return _workflow(
             "irreversible",
@@ -115,16 +135,6 @@ def classify_endpoint_workflow(endpoint):
             requires_cleanup=True,
             baseline_policy="guarded",
             reason="准备稳定测试素材，校验产物后删除本次文件或生成任务",
-        )
-    if any(label in text for label in ("验证码", "登录", "oauth", "login", "短信")):
-        return _workflow(
-            "authentication",
-            "登录与鉴权",
-            "high",
-            requires_setup=True,
-            requires_cleanup=True,
-            baseline_policy="manual",
-            reason="必须使用可刷新测试凭证并在完成后清理临时会话",
         )
     if method == "DELETE" or any(label in text for label in ("删除", "移除", "/delete", "/remove")):
         return _workflow(
@@ -196,6 +206,37 @@ def classify_endpoint_workflow(endpoint):
         baseline_policy="manual",
         reason="无法可靠确定资源关系，保存前需人工补全前置、断言和清理步骤",
     )
+
+
+def _is_semantic_get_mutation(endpoint):
+    path = str(_value(endpoint, "path", "") or "").lower().rstrip("/")
+    summary = str(_value(endpoint, "summary", "") or "").strip().lower()
+    action = path.rsplit("/", 1)[-1]
+    if action in {
+        "cancel",
+        "continue",
+        "retry",
+        "upgrade",
+        "topicmsg",
+        "clicklatestmodel",
+        "clickmaterialdeplete",
+        "devicestatemark",
+    }:
+        return True
+    return summary.startswith(("发送", "创建", "点击", "取消", "继续", "重试"))
+
+
+def _is_authentication_endpoint(endpoint):
+    path = str(_value(endpoint, "path", "") or "").lower().rstrip("/")
+    summary = str(_value(endpoint, "summary", "") or "").strip().lower()
+    tags = " ".join(str(item).lower() for item in (_value(endpoint, "tags", ()) or ()))
+    text = " ".join((path, summary, tags))
+    action = path.rsplit("/", 1)[-1]
+    if any(label in text for label in ("验证码", "登录", "鉴权", "oauth", "login", "短信", "captcha", "公钥")):
+        return True
+    if "/auth/" in path or action in {"token", "getnewtoken", "publickey"}:
+        return True
+    return False
 
 
 def _value(item, name, default=None):

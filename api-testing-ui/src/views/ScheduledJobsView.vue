@@ -9,6 +9,7 @@ import { useCasesStore } from '../stores/cases'
 import { useContextStore } from '../stores/context'
 import { type ScheduledJobInput, useScheduledJobsStore } from '../stores/scheduledJobs'
 import { useTasksStore } from '../stores/tasks'
+import { hasExplicitOneTimeMarker } from '../utils/caseClassification'
 import { confirmApiExecution } from '../utils/executionConfirmation'
 import { formatPassRate, statusLabel } from '../utils/executionPresentation'
 import { taskStateLabel } from '../utils/taskPresentation'
@@ -29,6 +30,7 @@ const form = reactive({
   environmentStrategy: 'fixed_revision' as ScheduledJob['environment_strategy'],
   enabled: true,
   notifyFeishu: false,
+  allowOneTimeBaselines: false,
   retryCount: 0,
   timeoutSeconds: 1800,
 })
@@ -103,6 +105,8 @@ const targetSearchPlaceholder = computed(() => ({
   baseline_group: '搜索分组名称',
 }[form.targetType]))
 const availableBaselines = computed(() => baselines.items.filter(item => item.status === 'active'))
+const supportsOneTimeBaselines = computed(() => ['baselines', 'baseline_group', 'task'].includes(form.targetType))
+const selectedOneTimeBaselineCount = computed(() => oneTimeBaselineCount(form.targetType, selectedTargetIds.value))
 const targetOptions = computed<TargetOption[]>(() => {
   if (form.targetType === 'baseline_group') return baselineGroupOptions()
   if (form.targetType === 'baselines') return availableBaselines.value.map(baselineOption)
@@ -144,6 +148,7 @@ onMounted(() => refreshAll(false))
 watch(() => form.targetType, () => {
   if (suspendTargetReset) return
   selectedTargetIds.value = []
+  form.allowOneTimeBaselines = false
   targetSearch.value = ''
   expandedTargetGroups.value = new Set()
 }, { flush: 'sync' })
@@ -172,6 +177,10 @@ async function saveJob(): Promise<void> {
   const ids = targetIds()
   if (!ids.length) {
     scheduledJobs.error = `请先${targetPickerTitle.value}`
+    return
+  }
+  if (selectedOneTimeBaselineCount.value && !form.allowOneTimeBaselines) {
+    scheduledJobs.error = `所选目标包含 ${selectedOneTimeBaselineCount.value} 条一次性基线。请明确开启“一次性基线也执行”，或重新选择目标。`
     return
   }
   if (!Number.isInteger(form.retryCount) || form.retryCount < 0 || form.retryCount > 5) {
@@ -223,6 +232,7 @@ function buildJobInput(ids: string[]): ScheduledJobInput {
     environment_strategy: form.environmentStrategy,
     enabled: form.enabled,
     notify_feishu: form.notifyFeishu,
+    allow_one_time_baselines: form.allowOneTimeBaselines,
     retry_count: form.retryCount,
     timeout_seconds: form.timeoutSeconds,
   }
@@ -363,7 +373,12 @@ function jobTargetIssue(job: ScheduledJob): string {
   if (missingIds.length && job.target_type === 'cases') return ''
   if (missingIds.length) return `${missingIds.length} 个目标已删除或不属于当前项目`
   const blocked = job.target_ids.map(id => optionMap.get(id)).find(option => option && !option.selectable)
-  return blocked?.unavailableReason || ''
+  if (blocked?.unavailableReason) return blocked.unavailableReason
+  const oneTimeCount = oneTimeBaselineCount(job.target_type, job.target_ids)
+  if (oneTimeCount && !job.allow_one_time_baselines) {
+    return `目标包含 ${oneTimeCount} 条一次性基线，请编辑任务并明确开启“一次性基线也执行”`
+  }
+  return ''
 }
 
 function scheduledBlockMessage(job: ScheduledJob): string {
@@ -460,6 +475,7 @@ function editJob(job: ScheduledJob): void {
   form.environmentStrategy = job.environment_strategy
   form.enabled = job.enabled
   form.notifyFeishu = job.notify_feishu
+  form.allowOneTimeBaselines = Boolean(job.allow_one_time_baselines)
   form.retryCount = job.retry_count
   form.timeoutSeconds = job.timeout_seconds
   selectedTargetIds.value = [...job.target_ids]
@@ -485,6 +501,7 @@ function resetEditor(): void {
   form.environmentStrategy = 'fixed_revision'
   form.enabled = true
   form.notifyFeishu = false
+  form.allowOneTimeBaselines = false
   form.retryCount = 0
   form.timeoutSeconds = 1800
   selectedTargetIds.value = []
@@ -537,6 +554,7 @@ function jobInputFromJob(job: ScheduledJob): ScheduledJobInput {
     environment_strategy: job.environment_strategy,
     enabled: job.enabled,
     notify_feishu: job.notify_feishu,
+    allow_one_time_baselines: Boolean(job.allow_one_time_baselines),
     retry_count: job.retry_count,
     timeout_seconds: job.timeout_seconds,
   }
@@ -578,6 +596,29 @@ function baselineOption(item: ApiBaselineCase): TargetOption {
     selectable: selection.selectable,
     unavailableReason: selection.reason,
   }
+}
+
+function isOneTimeBaseline(item: ApiBaselineCase): boolean {
+  return hasExplicitOneTimeMarker([item.case_name, baselineGroup(item), ...item.tags])
+}
+
+function oneTimeBaselineCount(type: ScheduledJob['target_type'], targetIds: string[]): number {
+  const selected = new Set(targetIds)
+  if (type === 'baselines') {
+    return availableBaselines.value.filter(item => selected.has(item.id) && isOneTimeBaseline(item)).length
+  }
+  if (type === 'baseline_group') {
+    return availableBaselines.value.filter(item => selected.has(baselineGroup(item)) && isOneTimeBaseline(item)).length
+  }
+  if (type === 'task') {
+    const endpointIds = new Set(
+      tasks.tasks
+        .filter(item => selected.has(item.id))
+        .flatMap(item => item.selected_endpoint_ids),
+    )
+    return availableBaselines.value.filter(item => endpointIds.has(item.endpoint_id) && isOneTimeBaseline(item)).length
+  }
+  return 0
 }
 
 function caseOption(item: CaseVersion): TargetOption {
@@ -751,7 +792,7 @@ function weekDayName(value: number): string {
         <article v-for="job in scheduledJobs.items" :key="job.id" :data-testid="`scheduled-row-${job.id}`" class="scheduled-row" :class="{ 'has-server-block': Boolean(scheduledBlockMessage(job)) }">
           <div class="scheduled-row-main">
             <strong>{{ job.name }}</strong>
-            <span>{{ targetTypeLabel(job.target_type) }} · {{ scheduleLabel(job) }} · 调度时区 {{ schedulerTimezoneLabel(job) }} · {{ job.notify_feishu ? '飞书通知' : '不通知' }}</span>
+            <span>{{ targetTypeLabel(job.target_type) }} · {{ scheduleLabel(job) }} · 调度时区 {{ schedulerTimezoneLabel(job) }} · {{ job.notify_feishu ? '飞书通知' : '不通知' }} · {{ job.allow_one_time_baselines ? '一次性基线已允许' : '一次性基线未开启' }}</span>
             <span class="scheduled-runtime-line">
               <b>配置：{{ job.enabled ? '已启用' : '已停用' }}</b>
               <b v-if="!scheduledBlockMessage(job) && jobTargetIssue(job)" class="scheduled-blocked">执行已阻断 · {{ jobTargetIssue(job) }}</b>
@@ -901,6 +942,11 @@ function weekDayName(value: number): string {
             <span class="switch-track"><span class="switch-thumb"><Check :size="10" /></span></span>
             <span><strong>飞书通知</strong><small>使用当前项目机器人</small></span>
           </button>
+          <button v-if="supportsOneTimeBaselines" type="button" class="setting-toggle" :class="{ active: form.allowOneTimeBaselines }" role="switch" :aria-checked="form.allowOneTimeBaselines" data-testid="scheduled-one-time-toggle" @click="form.allowOneTimeBaselines = !form.allowOneTimeBaselines">
+            <span class="switch-track"><span class="switch-thumb"><Check :size="10" /></span></span>
+            <span><strong>一次性基线也执行</strong><small>显式允许该任务重复执行一次性用例</small></span>
+          </button>
+          <p v-if="supportsOneTimeBaselines && selectedOneTimeBaselineCount" class="compact-empty wide" data-testid="scheduled-one-time-warning">当前目标包含 {{ selectedOneTimeBaselineCount }} 条一次性基线。开启后，手动触发和每天调度都会执行；请确保前置和清理步骤可重复。</p>
         </fieldset>
         <p v-if="scheduledJobs.error || actionMessage" data-testid="scheduled-editor-feedback" :class="scheduledJobs.error ? 'inline-error' : 'scheduled-feedback'" :role="scheduledJobs.error ? 'alert' : 'status'">{{ scheduledJobs.error || actionMessage }}</p>
         <footer class="notification-actions">

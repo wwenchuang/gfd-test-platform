@@ -312,6 +312,35 @@ describe('executions store', () => {
     vi.useRealTimers()
   })
 
+  it('polls the durable snapshot while SSE remains open but stops delivering events', async () => {
+    vi.useFakeTimers()
+    try {
+      const running = { id: 'execution-1', state: 'RUNNING', case_results: [] } as unknown as ExecutionView
+      const done = { ...running, state: 'DONE' } as ExecutionView
+      vi.spyOn(apiClient, 'post').mockResolvedValue({ data: { ticket: 'opaque-ticket' } })
+      vi.spyOn(apiClient, 'get').mockResolvedValue({ data: { execution: done } })
+      class SilentEventSource {
+        onopen: null | (() => void) = null
+        onerror: null | (() => void) = null
+        addEventListener(): void {}
+        close(): void {}
+      }
+      vi.stubGlobal('EventSource', SilentEventSource)
+      const store = useExecutionsStore()
+      store.active = running
+
+      await store.connect(running.id)
+
+      expect(store.finalSnapshotTimer).not.toBeNull()
+      await vi.advanceTimersByTimeAsync(5000)
+      expect(store.active?.state).toBe('DONE')
+      expect(store.finalSnapshotTimer).toBeNull()
+    } finally {
+      vi.useRealTimers()
+      vi.unstubAllGlobals()
+    }
+  })
+
   it('keeps polling the durable snapshot after the finished event arrives before the summary', async () => {
     vi.useFakeTimers()
     try {

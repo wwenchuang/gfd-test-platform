@@ -1,13 +1,14 @@
 const LOGIN_PAGE = '/task-manager.html'
 const API_TEST_ROOT = '/api-test/'
 
-type BrowserLocation = Pick<Location, 'pathname' | 'hash'> & {
+type BrowserLocation = Pick<Location, 'pathname' | 'search' | 'hash'> & {
   assign: (url: string) => void
 }
 
 function currentApiTestingRoute(location: BrowserLocation = window.location): string {
   const hash = location.hash.startsWith('#/') ? location.hash : '#/'
-  return `${API_TEST_ROOT}${hash}`
+  const search = String(location.search || '')
+  return `${API_TEST_ROOT}${search}${hash}`
 }
 
 export function apiTestingLoginPath(location: BrowserLocation = window.location): string {

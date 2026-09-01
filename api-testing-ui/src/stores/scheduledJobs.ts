@@ -17,6 +17,7 @@ export interface ScheduledJobInput {
   environment_strategy: ScheduledJob['environment_strategy']
   enabled: boolean
   notify_feishu: boolean
+  allow_one_time_baselines: boolean
   retry_count: number
   timeout_seconds: number
 }

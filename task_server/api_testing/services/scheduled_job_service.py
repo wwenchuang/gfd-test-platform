@@ -51,6 +51,7 @@ class ScheduledJobView:
     environment_strategy: str
     enabled: bool
     notify_feishu: bool
+    allow_one_time_baselines: bool
     retry_count: int
     timeout_seconds: int
     latest_execution_id: Optional[str]
@@ -238,6 +239,7 @@ class ScheduledJobService:
                 environment_strategy=parsed["environment_strategy"],
                 enabled=parsed["enabled"],
                 notify_feishu=parsed["notify_feishu"],
+                allow_one_time_baselines=parsed["allow_one_time_baselines"],
                 retry_count=parsed["retry_count"],
                 timeout_seconds=parsed["timeout_seconds"],
                 summary="",
@@ -289,6 +291,7 @@ class ScheduledJobService:
             record.environment_strategy = parsed["environment_strategy"]
             record.enabled = parsed["enabled"]
             record.notify_feishu = parsed["notify_feishu"]
+            record.allow_one_time_baselines = parsed["allow_one_time_baselines"]
             record.retry_count = parsed["retry_count"]
             record.timeout_seconds = parsed["timeout_seconds"]
             record.updated_by = actor_id
@@ -405,6 +408,7 @@ class ScheduledJobService:
                 actor_id,
                 idempotency_key,
                 task=task,
+                allow_one_time=bool(job.allow_one_time_baselines),
             )
         else:
             execution = service.submit(
@@ -477,6 +481,10 @@ class ScheduledJobService:
             "environment_strategy": environment_strategy,
             "enabled": _bool(payload.get("enabled", True), "enabled"),
             "notify_feishu": _bool(payload.get("notify_feishu", False), "notify_feishu"),
+            "allow_one_time_baselines": _bool(
+                payload.get("allow_one_time_baselines", False),
+                "allow_one_time_baselines",
+            ),
             "retry_count": _int(payload.get("retry_count", 0), "retry_count", 0, 5),
             "timeout_seconds": _int(payload.get("timeout_seconds", 1800), "timeout_seconds", 30, 86_400),
         }
@@ -753,6 +761,7 @@ class ScheduledJobService:
             environment_strategy=job.environment_strategy,
             enabled=job.enabled,
             notify_feishu=job.notify_feishu,
+            allow_one_time_baselines=job.allow_one_time_baselines,
             retry_count=job.retry_count,
             timeout_seconds=job.timeout_seconds,
             latest_execution_id=latest_execution.id if latest_execution else None,

@@ -186,6 +186,9 @@ export const useExecutionsStore = defineStore('api-executions', {
             this.consumeEvent(type, event as MessageEvent, executionId)
           })
         }
+        if (!this.active || !TERMINAL.has(this.active.state)) {
+          this.scheduleFinalSnapshotPoll(executionId)
+        }
       } catch (error) {
         this.error = error instanceof Error ? error.message : '实时日志连接失败'
         this.scheduleReconnect(executionId)

@@ -448,10 +448,10 @@ async function assertAssetSyncClarity(page, url) {
       : {}),
   });
   const loggedOutPage = await browser.newPage();
-  await loggedOutPage.goto(`${url}#/baselines`, { waitUntil: 'domcontentloaded' });
+  await loggedOutPage.goto(`${url}?verify=fixture#/baselines`, { waitUntil: 'domcontentloaded' });
   await loggedOutPage.waitForURL(current => current.pathname === '/task-manager.html');
   const returnTo = new URL(loggedOutPage.url()).searchParams.get('return_to');
-  if (returnTo !== '/api-test/#/baselines') {
+  if (returnTo !== '/api-test/?verify=fixture#/baselines') {
     throw new Error(`logged-out baseline deep link was not preserved: ${loggedOutPage.url()}`);
   }
   await loggedOutPage.close();

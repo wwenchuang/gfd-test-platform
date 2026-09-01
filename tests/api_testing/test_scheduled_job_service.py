@@ -225,6 +225,50 @@ def test_scheduled_job_can_be_created_and_manually_run(scheduled_factory, schedu
     assert listed.latest_run_trigger == "manual"
     assert listed.latest_execution_state == execution.state
     assert listed.latest_execution_summary == execution.summary
+    assert listed.allow_one_time_baselines is False
+
+
+def test_scheduled_baseline_job_can_explicitly_include_one_time_baselines(
+    scheduled_factory, scheduled_records
+):
+    from task_server.api_testing.services.scheduled_job_service import ScheduledJobService
+
+    with scheduled_factory.begin() as session:
+        version = session.get(ApiCaseVersion, scheduled_records["case_version"].id)
+        version.request_template = {
+            **dict(version.request_template or {}),
+            "name": "收藏初始化 - 一次性人工验证",
+        }
+
+    service = ScheduledJobService(scheduled_factory, enqueue=lambda execution_id: None)
+    job = service.create(
+        {
+            "project_id": scheduled_records["project"].id,
+            "name": "每日一次性基线回归",
+            "schedule_type": "daily",
+            "cron_expression": "0 8 * * *",
+            "environment_strategy": "fixed_revision",
+            "environment_revision_id": scheduled_records["environment_revision"].id,
+            "target_type": "baselines",
+            "target_ids": [scheduled_records["baseline"].id],
+            "enabled": True,
+            "notify_feishu": False,
+            "allow_one_time_baselines": True,
+            "retry_count": 0,
+            "timeout_seconds": 900,
+        },
+        "owner-a",
+    )
+
+    execution = service.run_once(
+        job.id,
+        "owner-a",
+        idempotency_key="scheduled-one-time-" + job.id,
+    )
+
+    assert job.allow_one_time_baselines is True
+    assert execution.execution_type == "baseline_regression"
+    assert execution.case_results[0]["case_version_id"] == scheduled_records["case_version"].id
 
 
 def test_new_scheduled_target_rejects_a_disabled_application(

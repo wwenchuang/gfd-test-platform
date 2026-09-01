@@ -1,5 +1,7 @@
 from types import SimpleNamespace
 
+import pytest
+
 from task_server.api_testing.services.workflow_policy import classify_endpoint_workflow
 
 
@@ -76,6 +78,64 @@ def test_read_only_queries_do_not_inherit_mutation_risk_from_business_words():
     assert uploaded_models["baseline_policy"] == "direct"
     assert slice_detail["kind"] == "resource_query"
     assert slice_detail["baseline_policy"] == "direct"
+
+
+@pytest.mark.parametrize(
+    ("path", "summary"),
+    (
+        ("/pmc/api/v1/iot/topicMsg", "发送消息"),
+        ("/print3dAI/api/v1/imageModel", "创建建模任务"),
+        ("/print3d/api/v1/devices/clickMaterialDeplete", "点击正品耗材提示"),
+        ("/print3d/api/v1/model/clickLatestModel", "点击最新模型接口"),
+        ("/print3d/api/v1/devices/upgrade", "设备手动升级"),
+        ("/print3d/api/v1/imageModel/cancel", "图片建模取消"),
+        ("/print3d/api/v1/createTextModel/continue", "继续文字建模"),
+        ("/print3d/api/v1/createTextModel/retry", "重试文字建模"),
+    ),
+)
+def test_get_endpoints_with_action_semantics_are_not_treated_as_read_only(path, summary):
+    result = classify_endpoint_workflow(endpoint("GET", path, summary))
+
+    assert result["kind"] == "semantic_get_mutation"
+    assert result["baseline_policy"] == "manual"
+    assert result["requires_setup"] is True
+    assert result["requires_cleanup"] is True
+
+
+def test_get_query_with_create_in_the_resource_name_remains_read_only():
+    result = classify_endpoint_workflow(
+        endpoint("GET", "/print3d/api/v1/createTextModel/queryCurrentModel", "查询当前生成的任务")
+    )
+
+    assert result["kind"] == "read_only"
+    assert result["baseline_policy"] == "direct"
+
+
+@pytest.mark.parametrize(
+    ("path", "summary"),
+    (
+        ("/print3d/api/v1/auth/generateCaptcha", "获取滑块信息接口"),
+        ("/print3d/api/v1/auth/publicKey", "获取加密公钥"),
+        ("/print3d/api/v1/qidi/token", "获取obstoken"),
+        ("/print3d/api/v1/users/getNewToken", "刷新token接口(鉴权)"),
+    ),
+)
+def test_credential_and_challenge_get_endpoints_are_manual_authentication_flows(path, summary):
+    result = classify_endpoint_workflow(endpoint("GET", path, summary))
+
+    assert result["kind"] == "authentication"
+    assert result["baseline_policy"] == "manual"
+    assert result["requires_setup"] is True
+    assert result["requires_cleanup"] is True
+
+
+def test_get_device_state_mark_is_treated_as_a_state_change():
+    result = classify_endpoint_workflow(
+        endpoint("GET", "/print3d/api/v1/devices/deviceStateMark", "设备进料标记")
+    )
+
+    assert result["kind"] == "semantic_get_mutation"
+    assert result["baseline_policy"] == "manual"
 
 
 def test_classifies_device_settings_as_restore_required():

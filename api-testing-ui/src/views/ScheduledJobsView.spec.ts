@@ -118,6 +118,7 @@ describe('ScheduledJobsView', () => {
       environment_strategy: 'fixed_revision',
       enabled: true,
       notify_feishu: true,
+      allow_one_time_baselines: false,
       retry_count: 0,
       timeout_seconds: 1800,
     })
@@ -136,6 +137,42 @@ describe('ScheduledJobsView', () => {
     expect(post.mock.calls[1][0]).toBe('/api/api-testing/v1/scheduled-jobs/job-1/run')
     expect(router.currentRoute.value.name).toBe('runs')
     expect(router.currentRoute.value.query.executionId).toBe('execution-1')
+  })
+
+  it('requires and persists an explicit opt-in before scheduling one-time baselines', async () => {
+    mockScheduledJobAssets(true)
+    const saved = scheduledJobFixture({
+      name: '每日含一次性回归',
+      target_ids: ['发版冒烟'],
+      allow_one_time_baselines: true,
+    })
+    const post = vi.spyOn(apiClient, 'post').mockResolvedValueOnce({ data: { scheduled_job: saved } })
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [{ path: '/', name: 'scheduled-jobs', component: ScheduledJobsView }],
+    })
+    const wrapper = mount(ScheduledJobsView, { global: { plugins: [router] } })
+    await flushPromises()
+
+    await wrapper.get('[data-testid="scheduled-name"]').setValue('每日含一次性回归')
+    await wrapper.findAll('[data-testid="scheduled-target-option"]')
+      .find(item => item.text().includes('发版冒烟'))!
+      .trigger('click')
+    expect(wrapper.text()).toContain('包含 1 条一次性基线')
+    await wrapper.get('[data-testid="scheduled-save"]').trigger('click')
+    await flushPromises()
+    expect(post).not.toHaveBeenCalled()
+    expect(wrapper.get('[data-testid="scheduled-editor-feedback"]').text()).toContain('请明确开启')
+
+    await wrapper.get('[data-testid="scheduled-one-time-toggle"]').trigger('click')
+    await wrapper.get('[data-testid="scheduled-save"]').trigger('click')
+    await flushPromises()
+
+    expect(post).toHaveBeenCalledWith('/api/api-testing/v1/scheduled-jobs', expect.objectContaining({
+      allow_one_time_baselines: true,
+      target_ids: ['发版冒烟'],
+    }))
+    expect(wrapper.text()).toContain('一次性基线已允许')
   })
 
   it('fills a cron expression from examples', async () => {
@@ -769,7 +806,7 @@ async function mountScheduledState(job: () => ReturnType<typeof scheduledJobFixt
   return wrapper
 }
 
-function mockScheduledJobAssets(): void {
+function mockScheduledJobAssets(includeOneTime = false): void {
   vi.spyOn(apiClient, 'get').mockImplementation(async url => {
     const path = String(url)
     if (path.startsWith('/api/api-testing/v1/scheduled-jobs')) return { data: { scheduled_jobs: [] } }
@@ -778,6 +815,14 @@ function mockScheduledJobAssets(): void {
         data: {
           baselines: [
             baselineFixture({ id: 'baseline-1', group_name: '发版冒烟', case_name: '登录成功用例' }),
+            ...(includeOneTime ? [baselineFixture({
+              id: 'baseline-one-time',
+              case_id: 'case-one-time',
+              case_version_id: 'case-version-one-time',
+              case_name: '数据初始化 - 一次性人工验证',
+              group_name: '发版冒烟',
+              tags: ['一次性'],
+            })] : []),
           ],
         },
       }
@@ -869,6 +914,7 @@ function scheduledJobFixture(overrides: Record<string, unknown>) {
     environment_strategy: 'fixed_revision',
     enabled: true,
     notify_feishu: true,
+    allow_one_time_baselines: false,
     retry_count: 0,
     timeout_seconds: 1800,
     latest_execution_id: null,

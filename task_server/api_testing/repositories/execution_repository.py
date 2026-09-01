@@ -94,6 +94,8 @@ class ExecutionRepository:
         owner_id,
         endpoint_ids=None,
         baseline_ids=None,
+        *,
+        include_one_time=False,
     ):
         statement = (
             select(
@@ -130,7 +132,7 @@ class ExecutionRepository:
         version_ids = []
         excluded_one_time_count = 0
         for version_id, case_name, group_name, tags in self.session.execute(statement):
-            if is_one_time_case(case_name, group_name, tags):
+            if not include_one_time and is_one_time_case(case_name, group_name, tags):
                 excluded_one_time_count += 1
                 continue
             version_ids.append(version_id)

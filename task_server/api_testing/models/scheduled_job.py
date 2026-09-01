@@ -25,6 +25,7 @@ class ApiScheduledJob(PrimaryRecord, Base):
     environment_strategy: Mapped[str] = mapped_column(String(32), nullable=False)
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
     notify_feishu: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
+    allow_one_time_baselines: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
     retry_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     timeout_seconds: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1800")
     summary: Mapped[str] = mapped_column(Text, nullable=False, server_default="")

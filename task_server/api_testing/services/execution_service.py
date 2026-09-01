@@ -259,7 +259,15 @@ class ExecutionService:
         self.event_stream.append(view.id, "execution_queued", {"case_count": len(view.case_statuses)})
         return view
 
-    def submit_active_baselines(self, request, actor_id, idempotency_key, *, task=None):
+    def submit_active_baselines(
+        self,
+        request,
+        actor_id,
+        idempotency_key,
+        *,
+        task=None,
+        allow_one_time=False,
+    ):
         access.require_permission(actor_id, "api.execute")
         required_fields = {
             "project_id",
@@ -291,8 +299,9 @@ class ExecutionService:
                 actor_id,
                 endpoint_ids,
                 baseline_ids,
+                include_one_time=allow_one_time,
             )
-        if baseline_ids and baseline_selection.excluded_one_time_count:
+        if baseline_ids and baseline_selection.excluded_one_time_count and not allow_one_time:
             raise OneTimeBaselineConflictError(
                 "所选基线包含一次性用例。一次性用例仅供人工调试，不会进入批量或定时回归；请取消选择后重试"
             )

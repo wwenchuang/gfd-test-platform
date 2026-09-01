@@ -418,6 +418,7 @@ export interface ScheduledJob {
   environment_strategy: 'fixed_revision' | 'latest_environment'
   enabled: boolean
   notify_feishu: boolean
+  allow_one_time_baselines: boolean
   retry_count: number
   timeout_seconds: number
   latest_execution_id: string | null

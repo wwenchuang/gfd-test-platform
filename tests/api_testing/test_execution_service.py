@@ -952,6 +952,50 @@ def test_submit_active_baselines_rejects_an_explicit_one_time_baseline(
         )
 
 
+def test_submit_active_baselines_allows_an_explicit_one_time_baseline_only_when_opted_in(
+    session_factory, redis_client, execution_context
+):
+    service = ExecutionService(
+        session_factory,
+        executor=_FakeExecutor([_Result("PASSED")]),
+        event_stream=EventStream(session_factory, redis_client),
+    )
+    one_time_payload = valid_list_case(execution_context["endpoint"])
+    one_time_payload["name"] = "数据初始化 - 一次性人工验证"
+    one_time_case = CaseService(session_factory).create_draft(
+        execution_context["endpoint"].id,
+        one_time_payload,
+        "manual",
+        "admin",
+    )
+    debug = service.submit(
+        _request(execution_context, case_version_ids=[one_time_case.id]),
+        "admin",
+        "one-time-opt-in-debug",
+    )
+    assert service.run(debug.id) is True
+    baseline = CaseService(session_factory).adopt_baseline(
+        one_time_case.id,
+        service.get(debug.id).case_results[0]["execution_case_id"],
+        "admin",
+    )
+
+    execution = service.submit_active_baselines(
+        {
+            "project_id": execution_context["project"].id,
+            "source_revision_id": execution_context["source_revision"].id,
+            "environment_revision_id": execution_context["environment_revision"].id,
+            "baseline_ids": [baseline.id],
+        },
+        "admin",
+        "one-time-opt-in-regression",
+        allow_one_time=True,
+    )
+
+    assert execution.execution_type == "baseline_regression"
+    assert execution.case_results[0]["case_version_id"] == one_time_case.id
+
+
 def test_submit_rejects_a_case_after_its_application_is_disabled(
     session_factory, redis_client, execution_context, tmp_path, monkeypatch
 ):
