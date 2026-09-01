@@ -114,6 +114,39 @@ def test_submit_feishu_draft_uses_app_webhook_and_updates_state(draft_store, mon
     assert submitted["submitError"] == ""
 
 
+def test_submit_feishu_draft_blocks_missing_app_instead_of_using_default_group(draft_store, monkeypatch):
+    feishu_service.create_feishu_draft(
+        {"draftId": "unlinked", "title": "未关联应用", "description": "不能发送到默认群"}
+    )
+    sent = []
+    monkeypatch.setattr(
+        feishu_service,
+        "send_feishu_notification",
+        lambda payload, webhook=None: sent.append(webhook) or {"code": 0},
+    )
+
+    result = feishu_service.submit_feishu_draft("unlinked", user="admin")
+
+    assert result["ok"] is False
+    assert "未关联平台应用" in result["error"]
+    assert sent == []
+    assert feishu_service.get_feishu_draft("unlinked")["status"] == "DRAFT"
+
+
+def test_draft_webhook_resolves_the_apps_list_inside_platform_config(draft_store, monkeypatch):
+    from task_server.services import job_service
+
+    monkeypatch.setattr(
+        job_service,
+        "load_task_apps",
+        lambda: {"apps": [{"package": "com.example.demo", "feishu_webhook": "https://open.feishu.cn/open-apis/bot/v2/hook/app"}]},
+    )
+
+    assert feishu_service._webhook_for_draft({"appPackage": "com.example.demo"}).endswith("/app")
+    with pytest.raises(ValueError, match="不在平台应用配置"):
+        feishu_service._webhook_for_draft({"appPackage": "com.unknown"})
+
+
 @pytest.mark.parametrize("response", ({"code": 0}, {"code": "0"}, {"StatusCode": "0"}))
 def test_submit_feishu_draft_accepts_feishu_success_code_variants(draft_store, monkeypatch, response):
     feishu_service.create_feishu_draft(

@@ -4026,9 +4026,27 @@ async function showBugDraftCenter(options = {}) {
       const id = draft.draftId || draft.draft_id || '';
       const pending = String(draft.status || '').toUpperCase() === 'DRAFT';
       const reportUrl = /^https?:\/\//i.test(String(draft.reportUrl || '')) ? draft.reportUrl : '';
-      return `<article class="bug-draft-row"><div class="bug-draft-head"><div><strong>${escapeHtml(draft.title || '未命名缺陷')}</strong><span>${escapeHtml(draft.appName || draft.appPackage || '未关联应用')}</span></div><span class="status-pill ${pending ? 'warn' : (String(draft.status).toUpperCase() === 'SUBMITTED' ? 'success' : '')}">${escapeHtml(feishuDraftStatusText(draft.status))}</span></div><p>${escapeHtml(draft.description || draft.summary || '暂无描述')}</p><div class="bug-draft-evidence"><span>来源：${escapeHtml(draft.sourceRunId || draft.sourceJobId || '-')}</span>${reportUrl ? `<a class="job-link" href="${escapeHtml(reportUrl)}" target="_blank" rel="noopener">查看执行报告</a>` : ''}<span>${escapeHtml(formatDisplayTime(draft.updatedAt || draft.createdAt) || '-')}</span></div><div class="review-actions"><button class="btn-sm" onclick="copyText(${jsArg(`${draft.title || ''}\n\n${draft.description || ''}`)}).then(()=>showToast('已复制缺陷内容','success'))">复制</button>${pending ? `<button class="btn-sm danger" onclick="rejectFeishuDraft(${jsArg(id)})">拒绝</button><button class="btn-sm primary" onclick="submitFeishuDraft(${jsArg(id)})">确认并发送飞书</button>` : ''}</div></article>`;
+      const submitState = feishuDraftSubmitReadiness(draft);
+      return `<article class="bug-draft-row"><div class="bug-draft-head"><div><strong>${escapeHtml(draft.title || '未命名缺陷')}</strong><span>${escapeHtml(draft.appName || draft.appPackage || '未关联应用')}</span></div><span class="status-pill ${pending ? 'warn' : (String(draft.status).toUpperCase() === 'SUBMITTED' ? 'success' : '')}">${escapeHtml(feishuDraftStatusText(draft.status))}</span></div><p>${escapeHtml(draft.description || draft.summary || '暂无描述')}</p><div class="bug-draft-evidence"><span>来源：${escapeHtml(draft.sourceRunId || draft.sourceJobId || '-')}</span>${reportUrl ? `<a class="job-link" href="${escapeHtml(reportUrl)}" target="_blank" rel="noopener">查看执行报告</a>` : ''}<span>${escapeHtml(formatDisplayTime(draft.updatedAt || draft.createdAt) || '-')}</span></div>${pending && !submitState.enabled ? `<div class="agent-risk show">暂不可发送：${escapeHtml(submitState.reason)}。请在失败任务补齐应用归属后重新生成草稿，或先去应用配置核对通知目标。 <button class="btn-sm" onclick="activateWorkflow('app_config')">去应用配置</button></div>` : ''}<div class="review-actions"><button class="btn-sm" onclick="copyText(${jsArg(`${draft.title || ''}\n\n${draft.description || ''}`)}).then(()=>showToast('已复制缺陷内容','success'))">复制</button>${pending ? `<button class="btn-sm danger" onclick="rejectFeishuDraft(${jsArg(id)})">拒绝</button><button class="btn-sm primary" ${submitState.enabled ? '' : 'disabled'} title="${escapeHtml(submitState.enabled ? `发送到 ${submitState.target}` : submitState.reason)}" onclick="submitFeishuDraft(${jsArg(id)})">确认并发送飞书</button>` : ''}</div></article>`;
     }).join('') : '<div class="job-empty">当前筛选下没有缺陷草稿。</div>'}</div>
   </div>`;
+}
+
+function feishuDraftSubmitReadiness(draft = {}) {
+  const packageName = String(draft.appPackage || draft.app_package || '').trim();
+  if (!packageName) return {enabled: false, reason: '未关联平台应用，不能确定通知目标', target: ''};
+  const app = (Array.isArray(taskApps) ? taskApps : [])
+    .find(item => String(item?.package || '').trim() === packageName);
+  if (!app) return {enabled: false, reason: `应用 ${packageName} 不在平台应用配置中`, target: ''};
+  const label = taskAppFeishuLabel(app);
+  if (label === '飞书：未配置') {
+    return {enabled: false, reason: `应用 ${app.name || packageName} 尚未配置飞书通知目标`, target: ''};
+  }
+  return {
+    enabled: true,
+    reason: '',
+    target: `${app.name || packageName} · ${label.replace('飞书：', '')}`,
+  };
 }
 
 async function rejectFeishuDraft(draftId) {
@@ -4046,7 +4064,13 @@ async function rejectFeishuDraft(draftId) {
 
 async function submitFeishuDraft(draftId) {
   const draft = feishuDrafts.find(item => (item.draftId || item.draft_id) === draftId);
-  if (!draft || !confirm(`确认把“${draft.title || '未命名缺陷'}”发送到 ${draft.appName || draft.appPackage || '默认'} 通知群？`)) return;
+  if (!draft) return;
+  const submitState = feishuDraftSubmitReadiness(draft);
+  if (!submitState.enabled) {
+    showToast(`暂不可发送：${submitState.reason}`, 'error');
+    return;
+  }
+  if (!confirm(`确认把“${draft.title || '未命名缺陷'}”发送到 ${submitState.target}？`)) return;
   try {
     await apiRequest('/feishu-drafts/submit', {method: 'POST', body: JSON.stringify({draftId})});
     AppState.loaded.feishuDrafts = false;

@@ -119,6 +119,30 @@ async function analyzeCurrentAgentFailure() {
   }, { overlay: 'AI 正在分析 Agent 失败原因...' });
 }
 
+function bugDraftEnvironmentFacts(job = {}) {
+  const pick = (...keys) => {
+    for (const key of keys) {
+      const value = job?.[key];
+      if (value !== undefined && value !== null && String(value).trim()) return String(value).trim();
+    }
+    return '未提供';
+  };
+  const appName = pick('app_name', 'appName');
+  const appPackage = pick('app_package', 'appPackage', 'package');
+  const app = appName === '未提供' && appPackage === '未提供'
+    ? '未提供'
+    : (appName !== '未提供' && appPackage !== '未提供' ? `${appName}（${appPackage}）` : (appName !== '未提供' ? appName : appPackage));
+  return [
+    '测试平台：功夫豆测试平台',
+    `应用：${app}`,
+    `设备：${pick('device_name', 'deviceName', 'device_id', 'deviceId')}`,
+    `Runner：${pick('runner_id', 'runnerId')}`,
+    `Midscene 版本：${pick('midscene_version', 'midsceneVersion', 'midscene_cli_version')}`,
+    `Sonic 版本：${pick('sonic_version', 'sonicVersion')}`,
+    `报告地址：${pick('report_url', 'reportUrl', 'sonic_report_url')}`,
+  ].join('\n');
+}
+
 async function generateBugDraftFromAnalysis() {
   if (!aiFailureDraft?.analysis) {
     showToast('请先进行 AI 失败分析', 'error');
@@ -126,13 +150,13 @@ async function generateBugDraftFromAnalysis() {
   }
   await LoadingManager.withLoading(async () => {
     try {
+      const job = normalizeJob(latestJobs.find(item => (item.job_id || item.jobId) === selectedRepairJobId) || {});
       const data = await aiGatewayPost('/ai/generate-bug', {
         taskName: aiFailureDraft.requirement || 'AI Agent 任务',
-        envInfo: '功夫豆测试平台 / Midscene / Sonic',
+        envInfo: bugDraftEnvironmentFacts(job),
         failureAnalysis: aiFailureDraft.analysis
       });
       const bug = data.bug || data;
-      const job = normalizeJob(latestJobs.find(item => (item.job_id || item.jobId) === selectedRepairJobId) || {});
       const description = typeof bug === 'string'
         ? bug
         : (bug.description || bug.summary || stringifyArtifact(bug));

@@ -132,6 +132,7 @@ function serve() {
       json(res, {ok: true, drafts: [
         {draftId: 'draft-001', title: '打印确认按钮无响应', description: '点击确认打印后页面没有进入任务进度页', status: 'DRAFT', appName: '智小白3D APP', appPackage: 'com.kfb.model', sourceRunId: 'agent-001', reportUrl: 'http://127.0.0.1/reports/agent-001.html', updatedAt: '2026-08-26T11:20:00'},
         {draftId: 'draft-002', title: '历史环境问题', description: 'Runner 暂时离线，已人工确认不是产品缺陷', status: 'REJECTED', appName: '智小白3D APP', appPackage: 'com.kfb.model', sourceJobId: 'job-002', updatedAt: '2026-08-26T10:10:00'},
+        {draftId: 'draft-003', title: '未关联应用的历史草稿', description: '缺少平台应用归属时不能回退发送到默认群', status: 'DRAFT', sourceJobId: 'job-003', updatedAt: '2026-08-26T09:50:00'},
       ]});
       return;
     }
@@ -1137,6 +1138,11 @@ async function anyVisible(locator) {
     await page.waitForTimeout(240);
     if (!await page.locator('text=打印确认按钮无响应').isVisible()) throw new Error('Persisted Feishu draft is missing from management page');
     await page.screenshot({path: path.join(ARTIFACTS, 'bug-drafts-management.png'), fullPage: true});
+    await page.locator('#feishu-draft-search').fill('未关联应用');
+    await page.waitForTimeout(240);
+    if (!await page.locator('.agent-risk', {hasText: '暂不可发送'}).isVisible()) throw new Error('Unlinked defect draft must explain why Feishu submission is blocked');
+    if (!await page.getByRole('button', {name: '确认并发送飞书'}).isDisabled()) throw new Error('Unlinked defect draft still allows fallback-group submission');
+    await page.screenshot({path: path.join(ARTIFACTS, 'bug-drafts-unlinked.png'), fullPage: true});
     await page.locator('details[data-nav-group="settings"]').evaluate(el => { el.open = true; });
     await page.click('.workflow-step[data-workflow="app_config"]');
     await page.waitForSelector('h2:has-text("应用配置")');
@@ -1248,6 +1254,7 @@ async function anyVisible(locator) {
         path.join(ARTIFACTS, 'agent-rerun-mobile.png'),
         path.join(ARTIFACTS, 'reports-management.png'),
         path.join(ARTIFACTS, 'bug-drafts-management.png'),
+        path.join(ARTIFACTS, 'bug-drafts-unlinked.png'),
         path.join(ARTIFACTS, 'bug-drafts-management-mobile.png'),
         path.join(ARTIFACTS, 'repair-empty-actions-desktop.png'),
         path.join(ARTIFACTS, 'repair-empty-actions-mobile.png'),

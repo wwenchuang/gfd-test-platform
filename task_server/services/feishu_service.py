@@ -296,15 +296,20 @@ def list_feishu_drafts(
 def _webhook_for_draft(draft: Dict[str, Any]) -> str:
     """Resolve a draft's app-specific webhook at send time."""
     package = str(draft.get("appPackage") or draft.get("package") or "").strip()
-    app = None
-    if package:
-        from task_server.services.job_service import load_task_apps
+    if not package:
+        raise ValueError("缺陷草稿未关联平台应用，不能发送到默认通知群")
+    from task_server.services.job_service import load_task_apps
 
-        app = next(
-            (item for item in load_task_apps() if str(item.get("package") or "").strip() == package),
-            None,
-        )
-    return task_app_feishu_webhook(app or ({"package": package} if package else None))
+    configured = load_task_apps()
+    apps = configured.get("apps") if isinstance(configured, dict) else configured
+    apps = apps if isinstance(apps, list) else []
+    app = next(
+        (item for item in apps if isinstance(item, dict) and str(item.get("package") or "").strip() == package),
+        None,
+    )
+    if not app:
+        raise ValueError(f"缺陷草稿应用 {package} 不在平台应用配置中")
+    return task_app_feishu_webhook(app)
 
 
 def reject_feishu_draft(
