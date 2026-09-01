@@ -4726,7 +4726,7 @@ function reportCleanupResultHtml(data={}) {
       <h3>${data.dry_run ? '清理预览' : '清理结果'}</h3>
       <div class="dashboard-metrics">
         <div class="dashboard-metric"><strong>${data.dry_run ? data.candidate_count || 0 : data.deleted_count || 0}</strong><span>${data.dry_run ? '候选文件' : '已删除'}</span></div>
-        <div class="dashboard-metric"><strong>${formatBytes(data.reclaimed_bytes || 0)}</strong><span>预计/已释放</span></div>
+        <div class="dashboard-metric"><strong>${formatBytes(data.reclaimed_bytes || 0)}</strong><span>${data.dry_run ? '预计可释放' : '已释放'}</span></div>
         <div class="dashboard-metric"><strong>${stats.total_html || 0}</strong><span>报告总数</span></div>
         <div class="dashboard-metric"><strong>${policy.retention_days || '-'}</strong><span>保留天数</span></div>
       </div>
@@ -4737,22 +4737,54 @@ function reportCleanupResultHtml(data={}) {
   `;
 }
 
+function reportCleanupPolicyInput() {
+  const daysInput = document.getElementById('report-clean-days');
+  const minKeepInput = document.getElementById('report-clean-keep');
+  const daysRaw = String(daysInput?.value ?? '').trim();
+  const minKeepRaw = String(minKeepInput?.value ?? '').trim();
+  const days = Number(daysRaw);
+  const minKeep = Number(minKeepRaw);
+  if (!daysRaw || !Number.isInteger(days) || days < 1) {
+    showToast('保留天数必须是大于等于 1 的整数', 'error');
+    daysInput?.focus();
+    return null;
+  }
+  if (!minKeepRaw || !Number.isInteger(minKeep) || minKeep < 0) {
+    showToast('至少保留份数必须是大于等于 0 的整数', 'error');
+    minKeepInput?.focus();
+    return null;
+  }
+  return {days, minKeep};
+}
+
+function syncReportCleanupPolicyInputs(policy = {}) {
+  const daysInput = document.getElementById('report-clean-days');
+  const minKeepInput = document.getElementById('report-clean-keep');
+  if (daysInput && Number.isInteger(Number(policy.retention_days))) daysInput.value = String(policy.retention_days);
+  if (minKeepInput && Number.isInteger(Number(policy.min_keep))) minKeepInput.value = String(policy.min_keep);
+}
+
 async function previewReportCleanup() {
-  const days = Number(document.getElementById('report-clean-days')?.value || 14);
-  const minKeep = Number(document.getElementById('report-clean-keep')?.value || 200);
+  const policy = reportCleanupPolicyInput();
+  if (!policy) return;
+  const {days, minKeep} = policy;
   const target = document.getElementById('report-clean-result');
   if (target) target.innerHTML = '<div class="generation-record-empty">正在计算清理候选...</div>';
   try {
     const data = await apiRequest(`/reports/cleanup?dry_run=1&days=${encodeURIComponent(days)}&min_keep=${encodeURIComponent(minKeep)}`);
+    syncReportCleanupPolicyInputs(data.policy);
     if (target) target.innerHTML = reportCleanupResultHtml(data);
+    showToast(`✓ 清理预览完成，候选 ${data.candidate_count || 0} 个，未删除文件`, 'success');
   } catch(e) {
     if (target) target.innerHTML = `<div class="generate-status show error">${escapeHtml(e.message || '预览失败')}</div>`;
+    showToast(e.message || '预览失败', 'error');
   }
 }
 
 async function runReportCleanup() {
-  const days = Number(document.getElementById('report-clean-days')?.value || 14);
-  const minKeep = Number(document.getElementById('report-clean-keep')?.value || 200);
+  const policy = reportCleanupPolicyInput();
+  if (!policy) return;
+  const {days, minKeep} = policy;
   if (!confirm(`确认清理超过 ${days} 天的 Midscene HTML 报告？系统仍会至少保留最近 ${minKeep} 份。`)) return;
   const target = document.getElementById('report-clean-result');
   if (target) target.innerHTML = '<div class="generation-record-empty">正在清理报告...</div>';
@@ -4761,6 +4793,7 @@ async function runReportCleanup() {
       method: 'POST',
       body: JSON.stringify({ days, min_keep: minKeep, dry_run: false })
     });
+    syncReportCleanupPolicyInputs(data.policy);
     if (target) target.innerHTML = reportCleanupResultHtml(data);
     showToast(`✓ 报告清理完成，删除 ${data.deleted_count || 0} 个文件`, 'success');
   } catch(e) {
@@ -4772,7 +4805,7 @@ async function runReportCleanup() {
 async function showReportCleanupCenter() {
   const area = document.getElementById('editor-area');
   if (!area) return;
-  setActiveWorkflow('config');
+  setActiveWorkflow('reports');
   resetYamlToolbarForManager();
   area.className = 'editor-area';
   area.innerHTML = `
@@ -4786,6 +4819,7 @@ async function showReportCleanupCenter() {
           <input id="report-clean-keep" type="number" min="0" value="200" title="至少保留最近多少份">
         </div>
         <div class="generation-record-actions">
+          <button class="btn-sm" onclick="showReportsCenter()">返回执行报告</button>
           <button class="btn-sm" onclick="previewReportCleanup()">预览清理</button>
           <button class="btn-sm danger" onclick="runReportCleanup()">立即清理</button>
           <button class="btn-sm" onclick="showPreflightDashboard()">环境体检</button>
@@ -4891,6 +4925,7 @@ function updateGenerateCreateJobControls() {
 
 function openGenerateApplicationConfiguration() {
   if (generateBusy) return;
+  generateModalReturnWorkflow = '';
   closeGenerateModal();
   activateWorkflow('app_config');
 }
@@ -4900,11 +4935,15 @@ function closeGenerateModal() {
     setGenerateStatus('正在生成中，完成后会自动关闭并打开 YAML。', 'busy');
     return;
   }
+  const returnWorkflow = generateModalReturnWorkflow;
+  generateModalReturnWorkflow = '';
   closeModal('modal-generate');
   resetGenerateModal();
+  if (returnWorkflow && activeWorkflow === 'generate') activateWorkflow(returnWorkflow);
 }
 
 function showGenerateYaml() {
+  generateModalReturnWorkflow = activeWorkflow !== 'generate' ? activeWorkflow : '';
   setActiveWorkflow('generate');
   renderModuleSelects();
   resetGenerateModal();
@@ -5292,6 +5331,7 @@ async function generateYaml() {
     });
     setGenerateProgress(40, '后台任务已创建，等待模型生成', 2);
     showToast('✓ 生成任务已提交，已切到生成记录查看进度', 'success');
+    generateModalReturnWorkflow = '';
     closeModal('modal-generate');
     await showGenerateJobsCenter();
     const data = await pollGenerateJob(created.job_id);

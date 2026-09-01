@@ -767,7 +767,7 @@ function aiRepairDraftContextHtml(selectedJob) {
 async function returnToRunnerPendingActions() {
   if (typeof activateWorkflow === 'function') await activateWorkflow('execute');
   else if (typeof setActiveWorkflow === 'function') setActiveWorkflow('execute');
-  if (typeof setExecutionTab === 'function') setExecutionTab('runner');
+  if (typeof setExecutionTab === 'function') setExecutionTab('debug');
 }
 
 function showAiRepairCenter() {

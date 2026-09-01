@@ -113,12 +113,17 @@ function renderExecutionCenter() {
   `;
 }
 
+function isExecutionHistoryModule(moduleName = '') {
+  return /^AI_Agent_/i.test(String(moduleName || '').trim());
+}
+
 function executionYamlRows() {
-  const selectedModule = currentModule && modules[currentModule] ? currentModule : '';
+  const selectedModule = String(executionModuleFilter || '');
   const search = String(executionYamlSearch || '').trim().toLowerCase();
   let rows = [];
   Object.keys(modules || {}).sort((a, b) => a.localeCompare(b, 'zh-CN')).forEach(mod => {
-    if (selectedModule && mod !== selectedModule) return;
+    if (selectedModule === '__AI_HISTORY__' && !isExecutionHistoryModule(mod)) return;
+    if (selectedModule && selectedModule !== '__AI_HISTORY__' && mod !== selectedModule) return;
     (modules[mod] || []).forEach(file => {
       if (!/\.ya?ml$/i.test(file || '')) return;
       const haystack = `${mod}/${file}`.toLowerCase();
@@ -130,18 +135,30 @@ function executionYamlRows() {
 }
 
 function executionModuleOptionsHtml() {
-  const selectedModule = currentModule && modules[currentModule] ? currentModule : '';
-  const options = Object.keys(modules || {}).sort((a, b) => a.localeCompare(b, 'zh-CN'))
-    .map(mod => `<option value="${escapeHtml(mod)}" ${mod === selectedModule ? 'selected' : ''}>${escapeHtml(mod)}（${(modules[mod] || []).length}）</option>`)
+  const selectedModule = String(executionModuleFilter || '');
+  const moduleRows = Object.keys(modules || {}).map(mod => ({
+    mod,
+    count: (modules[mod] || []).filter(file => /\.ya?ml$/i.test(file || '')).length,
+  })).filter(item => item.count > 0);
+  const businessRows = moduleRows.filter(item => !isExecutionHistoryModule(item.mod))
+    .sort((a, b) => a.mod.localeCompare(b.mod, 'zh-CN'));
+  const historyRows = moduleRows.filter(item => isExecutionHistoryModule(item.mod));
+  const businessOptions = businessRows
+    .map(item => `<option value="${escapeHtml(item.mod)}" ${item.mod === selectedModule ? 'selected' : ''}>${escapeHtml(item.mod)}（${item.count}）</option>`)
     .join('');
-  return `<option value="">全部模块</option>${options}`;
+  const historyCount = historyRows.reduce((sum, item) => sum + item.count, 0);
+  const historyOption = historyRows.length
+    ? `<option value="__AI_HISTORY__" ${selectedModule === '__AI_HISTORY__' ? 'selected' : ''}>AI 生成/修复历史（${historyRows.length} 个模块 · ${historyCount} 个 YAML）</option>`
+    : '';
+  const allSelected = selectedModule ? '' : 'selected';
+  return `<option value="" ${allSelected}>全部可调试 YAML（${moduleRows.reduce((sum, item) => sum + item.count, 0)}）</option>`
+    + (businessOptions ? `<optgroup label="业务与基线模块">${businessOptions}</optgroup>` : '')
+    + (historyOption ? `<optgroup label="AI 生成与修复记录">${historyOption}</optgroup>` : '');
 }
 
 function selectExecutionModule(value) {
-  currentModule = value || null;
-  currentFile = currentModule && modules[currentModule]?.includes(currentFile) ? currentFile : null;
+  executionModuleFilter = value || '';
   executionYamlPage = 1;
-  renderModules();
   showExecutionCenter();
 }
 
@@ -481,14 +498,14 @@ function renderExecutionTabAppInstall() {
           <h3>创建安装任务</h3>
           <div class="agent-field">
             <label for="apk-install-mode">使用场景</label>
-            <select id="apk-install-mode" onchange="syncAppInstallMode()">
+            <select id="apk-install-mode" onchange="clearAppInstallFeedback(); syncAppInstallMode()">
               <option value="test_validation" ${mode === 'test_validation' ? 'selected' : ''}>测试环境验证：可上传 APK / 蒲公英 / 直链</option>
               <option value="baseline_regression" ${mode === 'baseline_regression' ? 'selected' : ''}>基线回归：只能使用线上包地址</option>
             </select>
           </div>
           <div class="agent-field" style="margin-top:10px;">
             <label for="apk-install-source">安装包来源</label>
-            <select id="apk-install-source" onchange="syncAppInstallMode()">
+            <select id="apk-install-source" onchange="clearAppInstallFeedback(); syncAppInstallMode()">
               <option value="upload" ${source === 'upload' ? 'selected' : ''}>上传 APK（测试验证推荐）</option>
               <option value="pgyer" ${source === 'pgyer' ? 'selected' : ''}>蒲公英链接（测试验证）</option>
               <option value="url" ${source === 'url' ? 'selected' : ''}>APK 直链（测试验证）</option>
@@ -497,22 +514,22 @@ function renderExecutionTabAppInstall() {
           </div>
           <div class="agent-field" id="apk-install-file-field" style="margin-top:10px;">
             <label for="apk-install-file">上传 APK</label>
-            <input id="apk-install-file" type="file" accept=".apk,application/vnd.android.package-archive">
+            <input id="apk-install-file" type="file" accept=".apk,application/vnd.android.package-archive" onchange="clearAppInstallFeedback()">
           </div>
           <div class="agent-field" id="apk-install-url-field" style="margin-top:10px;">
             <label for="apk-install-url">下载地址</label>
-            <input id="apk-install-url" value="${escapeHtml(urlValue)}" placeholder="https://www.pgyer.com/oY0S7Zg4 或 APK 直链">
+            <input id="apk-install-url" value="${escapeHtml(urlValue)}" oninput="clearAppInstallFeedback()" placeholder="https://www.pgyer.com/oY0S7Zg4 或 APK 直链">
           </div>
           <div class="agent-field" style="margin-top:10px;">
             <label for="apk-install-package">包名校验（可选）</label>
-            <input id="apk-install-package" value="${escapeHtml(appPackage)}" oninput="refreshAppInstallPreflight()" placeholder="例如 com.kfb.model；不填则只校验 adb install 结果">
+            <input id="apk-install-package" value="${escapeHtml(appPackage)}" oninput="clearAppInstallFeedback(); refreshAppInstallPreflight()" placeholder="例如 com.kfb.model；不填则只校验 adb install 结果">
           </div>
         </div>
         <div class="agent-card">
           <h3>安装到哪台设备</h3>
           <div class="agent-field">
             <label for="apk-install-device">执行设备</label>
-            <select id="apk-install-device">
+            <select id="apk-install-device" onchange="clearAppInstallFeedback()">
               <option value="">请选择执行设备（不自动分配）</option>
               <option value="__AUTO_DEVICE__">自动选择在线设备（可选）</option>
             </select>
@@ -521,7 +538,7 @@ function renderExecutionTabAppInstall() {
           <div class="generate-status" id="apk-install-status"></div>
           <div class="review-actions" style="margin-top:12px;">
             <button class="btn-sm primary" id="btn-create-apk-install" onclick="createApkInstallRequest()">创建安装任务</button>
-            <button class="btn-sm" onclick="setExecutionTab('debug')">不安装，直接执行</button>
+            <button class="btn-sm" onclick="clearAppInstallFeedback(); setExecutionTab('debug')">不安装，直接执行</button>
           </div>
         </div>
       </div>
@@ -553,6 +570,19 @@ function refreshAppInstallPreflight() {
   if (!target) return;
   const appPackage = document.getElementById('apk-install-package')?.value || '';
   target.innerHTML = renderRunnerDevicePreflightCards(Array.isArray(runnerDevices) ? runnerDevices : [], appPackage);
+}
+
+function clearAppInstallFeedback() {
+  const status = document.getElementById('apk-install-status');
+  if (status) {
+    status.textContent = '';
+    status.className = 'generate-status';
+  }
+  const toast = document.getElementById('toast');
+  if (!toast) return;
+  if (toast._toastTimer) clearTimeout(toast._toastTimer);
+  toast._toastTimer = null;
+  toast.className = 'toast';
 }
 
 function syncAppInstallMode(showNotice = true) {

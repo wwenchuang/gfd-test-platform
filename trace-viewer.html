@@ -71,7 +71,8 @@
   <script>
     const API_BASE = '/api';
     let traces = [];
-    let activeTraceId = new URLSearchParams(location.search).get('id') || '';
+    const requestedTraceId = new URLSearchParams(location.search).get('id') || '';
+    let activeTraceId = requestedTraceId;
 
     function token() {
       return sessionStorage.getItem('sessionToken') || '';
@@ -101,12 +102,15 @@
       const list = document.getElementById('trace-list');
       list.innerHTML = '<div class="empty">正在加载...</div>';
       try {
-        const data = activeTraceId
-          ? await api(`/debug/traces?id=${encodeURIComponent(activeTraceId)}`)
+        const data = requestedTraceId
+          ? await api(`/debug/traces?id=${encodeURIComponent(requestedTraceId)}`)
           : await api('/debug/traces?limit=60');
         traces = data.trace ? [data.trace] : (data.traces || []);
         renderList();
-        if (traces.length) renderTrace(traces[0].traceId || traces[0].id);
+        if (traces.length) {
+          const preferred = traces.find(t => (t.traceId || t.id) === activeTraceId) || traces[0];
+          renderTrace(preferred.traceId || preferred.id);
+        }
       } catch (e) {
         list.innerHTML = `<div class="empty">加载失败：${esc(e.message)}</div>`;
       }

@@ -22,7 +22,7 @@ function reportsFailureType(job) {
   const fr = job.failure_review || job.failureReview || {};
   const t = String(fr.failureType || fr.failure_type || job.failure_type || job.failureType || '').toUpperCase();
   if (['SCRIPT_ISSUE', 'PRODUCT_BUG', 'ENV_ISSUE', 'UNKNOWN'].includes(t)) return t;
-  return '';
+  return reportCenterStatusKey(job) === 'failed' ? 'UNKNOWN' : '';
 }
 
 function reportsHasRepairDraft(job) {
@@ -45,7 +45,7 @@ function filterReportsForCenter(rows = latestJobs) {
   return (Array.isArray(rows) ? rows : [])
     .filter(job => {
       if (reportFilters.status !== 'all' && reportCenterStatusKey(job) !== reportFilters.status) return false;
-      const failureType = reportsFailureType(job) || 'NONE';
+      const failureType = reportsFailureType(job);
       if (reportFilters.failureType !== 'all' && failureType !== reportFilters.failureType) return false;
       if (!query) return true;
       return [job.job_id, job.jobId, job.target_task_name, job.current_task_name, job.task_name, job.file, job.module, job.app_name, job.appName]
@@ -123,11 +123,11 @@ function showReportsCenter() {
           <strong class="report-overview-value">${ov.success}</strong>
         </div>
         <div class="report-overview-card danger">
-          <span class="report-overview-label">失败</span>
+          <span class="report-overview-label">未通过</span>
           <strong class="report-overview-value">${ov.failed}</strong>
         </div>
         <div class="report-overview-card warn">
-          <span class="report-overview-label">失败率</span>
+          <span class="report-overview-label">未通过率</span>
           <strong class="report-overview-value">${ov.failRate}%</strong>
         </div>
         <div class="report-overview-card">
@@ -141,7 +141,7 @@ function showReportsCenter() {
         <select onchange="setReportCenterFilter('status', this.value)">
           <option value="all" ${reportFilters.status === 'all' ? 'selected' : ''}>全部状态</option>
           <option value="success" ${reportFilters.status === 'success' ? 'selected' : ''}>成功</option>
-          <option value="failed" ${reportFilters.status === 'failed' ? 'selected' : ''}>失败</option>
+          <option value="failed" ${reportFilters.status === 'failed' ? 'selected' : ''}>未通过（失败/超时/取消）</option>
           <option value="running" ${reportFilters.status === 'running' ? 'selected' : ''}>进行中</option>
         </select>
         <select onchange="setReportCenterFilter('failureType', this.value)">
@@ -149,7 +149,7 @@ function showReportsCenter() {
           <option value="PRODUCT_BUG" ${reportFilters.failureType === 'PRODUCT_BUG' ? 'selected' : ''}>产品缺陷</option>
           <option value="SCRIPT_ISSUE" ${reportFilters.failureType === 'SCRIPT_ISSUE' ? 'selected' : ''}>脚本问题</option>
           <option value="ENV_ISSUE" ${reportFilters.failureType === 'ENV_ISSUE' ? 'selected' : ''}>环境问题</option>
-          <option value="UNKNOWN" ${reportFilters.failureType === 'UNKNOWN' ? 'selected' : ''}>待确认</option>
+          <option value="UNKNOWN" ${reportFilters.failureType === 'UNKNOWN' ? 'selected' : ''}>待确认/未归因</option>
         </select>
         <span class="management-filter-count">显示 ${jobs.length}/${filteredJobs.length} 条</span>
         <span class="management-filter-scope">${escapeHtml(jobHistoryScopeText())}</span>
@@ -163,7 +163,7 @@ function showReportsCenter() {
               <th>状态</th>
               <th>模块</th>
               <th>执行时间</th>
-              <th>失败类型</th>
+              <th>失败归因</th>
               <th>报告 / 草稿</th>
               <th>操作</th>
             </tr>

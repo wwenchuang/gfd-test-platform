@@ -2157,6 +2157,14 @@ function preflightStatusText(status, ok) {
   return ok ? '正常' : '待处理';
 }
 
+function preflightActionHtml(item = {}) {
+  if (item.key !== 'legacy' || item.ok) return '';
+  return `<div class="preflight-card-actions">
+    <button class="btn-sm primary" onclick="scanLegacySonicCases('all')">扫描旧/重复步骤</button>
+    <small>先展示全部待处理项；清理时仍需人工确认，不会直接删除。</small>
+  </div>`;
+}
+
 function preflightDashboardHtml() {
   return `
     <div class="preflight-dashboard">
@@ -2216,6 +2224,7 @@ function renderPreflightDashboard(data) {
       </div>
       <div class="preflight-detail">${escapeHtml(item.detail || '-')}</div>
       ${item.action && !item.ok ? `<div class="preflight-detail">建议：${escapeHtml(item.action)}</div>` : ''}
+      ${preflightActionHtml(item)}
     </div>
   `).join('');
 }
