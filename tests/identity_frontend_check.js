@@ -62,10 +62,23 @@ async function fixture(browser, base, options = {}) {
     } else if (url.pathname.endsWith('/reset-password')) payload.temporary_password = 'fixture-only-reset-password';
     else if (url.pathname === '/api/auth/roles' && request.method() === 'GET') payload.roles = state.roles;
     else if (url.pathname === '/api/auth/roles' && request.method() === 'POST') { const role = { ...body, id: body.id || 'custom' }; state.roles.push(role); payload.role = role; }
-    else if (url.pathname === '/api/auth/permissions') payload.permissions = [{ id: 'ui.view', label: '查看 UI 测试', group: 'UI 测试' }, { id: 'api.view', label: '查看 API 测试', group: 'API 测试' }, { id: 'auth.manage', label: '管理成员与权限', group: '平台' }];
+    else if (url.pathname === '/api/auth/permissions') payload.permissions = [
+      { id: 'ui.view', label: '查看 UI 测试', group: 'UI 测试' },
+      { id: 'ui.edit', label: '编辑 UI 测试', group: 'UI 测试' },
+      { id: 'api.view', label: '查看 API 测试', group: 'API 测试' },
+      { id: 'api.execute', label: '执行 API 测试', group: 'API 测试' },
+      { id: 'auth.manage', label: '管理成员与权限', group: '平台' },
+    ];
     else if (url.pathname === '/api/auth/scope-options') payload = { ...payload, ui_apps: [{ id: 'com.fixture.app', name: '智小白 3D' }], api_projects: [{ id: 'p1', name: '家用 API' }, { id: 'p2', name: '共享 API' }], api_environments: [{ id: 'e1', name: '测试环境', project_id: 'p1' }, { id: 'e2', name: '生产环境', project_id: 'p2' }] };
-    else if (url.pathname === '/api/auth/audit') payload.events = [{ id: 1, actor: 'admin', action: 'user.create', target: '<img src=x onerror=alert(1)>', created_at: Date.UTC(2026, 7, 31, 8) / 1000, detail: { password: 'fixture-must-not-render' } }];
-    else if (url.pathname === '/api/auth/sessions') payload.sessions = [{ id: 's1', created_at: Date.UTC(2026, 7, 31, 8) / 1000, expires_at: Date.UTC(2026, 8, 1, 8) / 1000, is_current: true }];
+    else if (url.pathname === '/api/auth/audit') payload.events = [
+      { id: 2, actor: 'admin', action: 'operation.result', target: '/api/api-testing/v1/scheduled-jobs/job-123/run', created_at: Date.UTC(2026, 7, 31, 9) / 1000, details: { method: 'POST', status: 200, ok: true } },
+      { id: 1, actor: 'admin', action: 'user.create', target: '<img src=x onerror=alert(1)>', created_at: Date.UTC(2026, 7, 31, 8) / 1000, details: { password: 'fixture-must-not-render' } },
+      { id: 0, actor: '', action: 'login.failure', target: '', created_at: Date.UTC(2026, 7, 31, 7) / 1000, details: { outcome: 'failure' } },
+    ];
+    else if (url.pathname === '/api/auth/sessions') payload.sessions = [
+      { id: 's2', created_at: Date.UTC(2026, 7, 31, 7) / 1000, expires_at: Date.UTC(2026, 8, 1, 7) / 1000, is_current: false },
+      { id: 's1', created_at: Date.UTC(2026, 7, 31, 8) / 1000, expires_at: Date.UTC(2026, 8, 1, 8) / 1000, is_current: true },
+    ];
     else if (url.pathname === '/api/modules') payload = {};
     else if (url.pathname === '/api/task-apps') payload.apps = [];
     else if (url.pathname === '/api/task-meta') payload.meta = {};
@@ -128,6 +141,38 @@ async function run() {
       await page.getByRole('button', { name: '保存角色', exact: true }).click();
       await page.getByRole('cell', { name: '接口观察员', exact: true }).waitFor();
       assert.deepEqual(state.calls.find(call => call.key === 'POST /api/auth/roles').body.permissions, ['api.view']);
+      await context.close();
+    });
+    await check('member roles avoid contradictory administrator and readonly combinations', async () => {
+      const { page, context } = await fixture(browser, base);
+      await page.getByRole('button', { name: '新增成员', exact: true }).click();
+      const dialog = page.getByRole('dialog');
+      await dialog.getByLabel('超级管理员', { exact: true }).check();
+      assert.equal(await dialog.getByLabel('测试成员', { exact: true }).isChecked(), false);
+      await dialog.getByLabel('只读成员', { exact: true }).check();
+      assert.equal(await dialog.getByLabel('超级管理员', { exact: true }).isChecked(), false);
+      assert.equal(await dialog.getByLabel('只读成员', { exact: true }).isChecked(), true);
+      await dialog.getByLabel('测试成员', { exact: true }).check();
+      assert.equal(await dialog.getByLabel('只读成员', { exact: true }).isChecked(), false);
+      await context.close();
+    });
+    await check('role editor adds required view permission and supports group selection', async () => {
+      const { page, context, state } = await fixture(browser, base);
+      await page.getByRole('tab', { name: '角色', exact: true }).click();
+      await page.getByRole('button', { name: '新增角色', exact: true }).click();
+      const dialog = page.getByRole('dialog');
+      await dialog.getByLabel('角色名称', { exact: true }).fill('接口执行员');
+      await dialog.getByLabel('执行 API 测试', { exact: true }).check();
+      assert.equal(await dialog.getByLabel('查看 API 测试', { exact: true }).isChecked(), true);
+      const uiGroup = dialog.getByRole('group', { name: 'UI 测试' });
+      await uiGroup.getByRole('button', { name: '全选本组', exact: true }).click();
+      assert.equal(await dialog.getByLabel('查看 UI 测试', { exact: true }).isChecked(), true);
+      assert.equal(await dialog.getByLabel('编辑 UI 测试', { exact: true }).isChecked(), true);
+      await uiGroup.getByRole('button', { name: '清空本组', exact: true }).click();
+      assert.equal(await dialog.getByLabel('查看 UI 测试', { exact: true }).isChecked(), false);
+      await dialog.getByRole('button', { name: '保存角色', exact: true }).click();
+      const permissions = state.calls.find(call => call.key === 'POST /api/auth/roles').body.permissions;
+      assert.deepEqual(permissions.sort(), ['api.execute', 'api.view']);
       await context.close();
     });
     await check('scope selection uses names and persists selected IDs', async () => {
@@ -283,6 +328,14 @@ async function run() {
       await page.getByRole('cell', { name: '<img src=x onerror=alert(1)>', exact: true }).waitFor();
       assert.equal(await page.locator('#identity-center img').count(), 0);
       assert.equal(await page.getByText('fixture-must-not-render').count(), 0);
+      await page.getByRole('cell', { name: '手动执行定时任务', exact: true }).waitFor();
+      await page.getByRole('cell', { name: '成功 · POST 200', exact: true }).waitFor();
+      await page.getByRole('searchbox', { name: '搜索操作记录', exact: true }).fill('不存在');
+      await page.getByText('没有匹配的操作记录', { exact: true }).waitFor();
+      await page.getByRole('searchbox', { name: '搜索操作记录', exact: true }).fill('');
+      await page.getByRole('combobox', { name: '筛选操作结果', exact: true }).selectOption('failure');
+      assert.equal(await page.getByRole('row').filter({ hasText: '登录失败' }).count(), 1);
+      assert.equal(await page.getByRole('row').filter({ hasText: '手动执行定时任务' }).count(), 0);
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth), false);
       await page.screenshot({ path: path.join(ARTIFACTS, 'audit-mobile.png'), fullPage: true });
       assert.deepEqual(state.errors, []);
@@ -298,6 +351,17 @@ async function run() {
       await page.locator('#login-screen').waitFor({ state: 'visible' });
       assert.equal(await page.evaluate(() => sessionStorage.getItem('sessionToken')), null);
       assert(state.calls.some(call => call.key === 'POST /api/auth/revoke-sessions'));
+      await context.close();
+    });
+    await check('one old session can be revoked without ending the current session', async () => {
+      const { page, context, state } = await fixture(browser, base);
+      await page.getByRole('button', { name: '个人账号', exact: true }).click();
+      await page.getByRole('button', { name: '个人资料与会话', exact: true }).click();
+      await page.getByRole('button', { name: '撤销此会话', exact: true }).click();
+      await page.getByRole('button', { name: '确认撤销', exact: true }).click();
+      await page.getByRole('heading', { name: '个人资料与会话', exact: true }).waitFor();
+      assert.deepEqual(state.calls.find(call => call.key === 'POST /api/auth/sessions/revoke').body, { session_id: 's2' });
+      assert.equal(await page.evaluate(() => sessionStorage.getItem('sessionToken')), 'fixture-session-token');
       await context.close();
     });
     await check('legacy fixtures without a profile still mount', async () => {
@@ -401,8 +465,9 @@ async function run() {
       const disable = page.getByRole('row').filter({ hasText: 'admin' }).getByRole('button', { name: '停用', exact: true });
       assert.equal(await disable.isDisabled(), true);
       assert.match(await disable.getAttribute('title'), /最后一个/);
+      await page.getByRole('row').filter({ hasText: 'admin' }).getByText('需保留至少 1 名有效超级管理员', { exact: true }).waitFor();
       await page.getByRole('tab', { name: '角色', exact: true }).click();
-      await page.getByRole('cell', { name: '管理成员与权限', exact: true }).waitFor();
+      await page.getByText('管理成员与权限', { exact: true }).first().waitFor();
       assert.equal(await page.getByRole('cell', { name: 'auth.manage', exact: true }).count(), 0);
       await page.screenshot({ path: path.join(ARTIFACTS, 'roles-desktop.png'), fullPage: true });
       await context.close();

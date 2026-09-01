@@ -13,9 +13,10 @@ _ROUTES = {
     "/me": {"GET"}, "/login": {"POST"}, "/logout": {"POST"},
     "/users": {"GET", "POST"}, "/roles": {"GET", "POST"},
     "/permissions": {"GET"}, "/audit": {"GET"}, "/sessions": {"GET"},
+    "/sessions/revoke": {"POST"},
     "/revoke-sessions": {"POST"}, "/change-password": {"POST"},
 }
-_SELF_ROUTES = {"/me", "/logout", "/sessions", "/revoke-sessions", "/change-password"}
+_SELF_ROUTES = {"/me", "/logout", "/sessions", "/sessions/revoke", "/revoke-sessions", "/change-password"}
 
 
 def _body(handler):
@@ -107,6 +108,9 @@ def handle_auth_request(handler, method, path, qs):
             auth.logout(token)
         elif route == "/sessions":
             result = {"sessions": store.list_sessions(username, token)}
+        elif route == "/sessions/revoke":
+            _fields(data, {"session_id"})
+            store.revoke_session(username, data.get("session_id"))
         elif route == "/revoke-sessions":
             _fields(data, {})
             store.revoke_sessions(username)

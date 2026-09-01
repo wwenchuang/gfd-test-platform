@@ -33,6 +33,18 @@ PERMISSIONS = [
     ) for key, label in items
 ]
 PERMISSION_IDS = frozenset(item["id"] for item in PERMISSIONS)
+PERMISSION_PREREQUISITES = {
+    "ui.edit": ("ui.view",),
+    "ui.execute": ("ui.view",),
+    "ui.delete": ("ui.view",),
+    "ui.baseline": ("ui.view",),
+    "api.edit": ("api.view",),
+    "api.execute": ("api.view",),
+    "api.delete": ("api.view",),
+    "api.baseline": ("api.view",),
+    "api.environment": ("api.view",),
+    "api.production": ("api.view", "api.execute"),
+}
 SCOPE_KINDS = ("ui_apps", "api_projects", "api_environments")
 PRESET_ROLES = {
     "super_admin": ("超级管理员", sorted(PERMISSION_IDS)),
@@ -136,7 +148,10 @@ def _scope(value):
 def _permissions(value):
     if not isinstance(value, list) or any(not isinstance(item, str) or item not in PERMISSION_IDS for item in value):
         raise IdentityError("包含未知权限")
-    return sorted(set(value))
+    result = set(value)
+    for permission in tuple(result):
+        result.update(PERMISSION_PREREQUISITES.get(permission, ()))
+    return sorted(result)
 
 
 def default_db_path():
@@ -290,11 +305,17 @@ class IdentityStore:
         if not isinstance(values, list) or len(values) > 100 or any(not isinstance(item, str) for item in values):
             raise IdentityError("角色必须是角色 ID 列表")
         values = sorted(set(values))
+        identity_roles = []
         for role in values:
             row = db.execute("SELECT permissions FROM roles WHERE id=?", (role,)).fetchone()
             if not row:
                 raise IdentityError("包含不存在的角色")
-            self._permission_ceiling(actor, json.loads(row[0]))
+            permissions = json.loads(row[0])
+            self._permission_ceiling(actor, permissions)
+            if role == "super_admin" or role == "viewer" or (permissions and set(permissions).issubset({"ui.view", "api.view"})):
+                identity_roles.append(role)
+        if len(values) > 1 and identity_roles:
+            raise IdentityError("超级管理员或只读身份不能与其他角色同时选择")
         if "super_admin" in values and not actor["is_superuser"]:
             raise IdentityError("仅超级管理员可以授予超级管理员角色", 403, "permission_denied")
         return values
@@ -567,6 +588,20 @@ class IdentityStore:
                 self._manage(db, actor, user)
             self._revoke_user(db, user["user_id"])
             self._audit(db, actor, "session.revoke_all", username)
+
+    def revoke_session(self, actor, session_id):
+        if not isinstance(session_id, str) or not re.fullmatch(r"[a-f0-9]{32}", session_id):
+            raise IdentityError("会话编号无效")
+        with self._transaction() as db:
+            user = self._user(db, actor)
+            row = db.execute(
+                "SELECT token_hash FROM sessions WHERE id=? AND user_id=? AND revoked_at IS NULL AND expires_at>?",
+                (session_id, user["user_id"], int(time.time())),
+            ).fetchone()
+            if not row:
+                raise IdentityError("会话不存在或已失效", 404, "not_found")
+            db.execute("UPDATE sessions SET revoked_at=? WHERE id=? AND user_id=?", (int(time.time()), session_id, user["user_id"]))
+            self._audit(db, actor, "session.revoke", session_id)
 
     def list_sessions(self, username, current_token=None):
         digest = hashlib.sha256(current_token.encode()).hexdigest() if isinstance(current_token, str) else ""

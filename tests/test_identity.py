@@ -173,6 +173,18 @@ def test_opaque_sessions_persist_revocation_and_disable(identity_db):
     assert reopened.verify_session(token3) is None
 
 
+def test_member_can_revoke_one_old_session_without_revoking_current(identity_db):
+    _, store = identity_db
+    create_member(store)
+    current = auth.create_session_token("member")
+    old = auth.create_session_token("member")
+    old_session = next(item for item in store.list_sessions("member", current) if not item["is_current"])
+    store.revoke_session("member", old_session["id"])
+    assert auth.verify_session_token(current) is not None
+    assert auth.verify_session_token(old) is None
+    assert len(store.list_sessions("member", current)) == 1
+
+
 def test_password_change_requires_current_password_and_revokes_all_prior_sessions(identity_db):
     identity, store = identity_db
     create_member(store)
@@ -201,6 +213,27 @@ def test_custom_role_crud_and_in_use_guard(identity_db):
     store.update_user("admin", "member", {"role_ids": []})
     store.delete_role("admin", "qa-custom")
     assert "qa-custom" not in {role["id"] for role in store.list_roles("admin")}
+
+
+def test_custom_role_write_permissions_include_their_view_prerequisite(identity_db):
+    _, store = identity_db
+    role = store.create_role("admin", {
+        "id": "api-runner",
+        "name": "接口执行员",
+        "permissions": ["api.execute"],
+    })
+    assert role["permissions"] == ["api.execute", "api.view"]
+    updated = store.update_role("admin", "api-runner", {
+        "permissions": ["ui.edit", "api.environment"],
+    })
+    assert updated["permissions"] == ["api.environment", "api.view", "ui.edit", "ui.view"]
+
+
+@pytest.mark.parametrize("role_ids", [["super_admin", "tester"], ["viewer", "tester"]])
+def test_member_role_identity_conflicts_are_rejected_by_store(identity_db, role_ids):
+    identity, store = identity_db
+    with pytest.raises(identity.IdentityError, match="不能与其他角色同时选择"):
+        create_member(store, role_ids=role_ids)
 
 
 @pytest.mark.parametrize("changes", [{"username": "renamed"}, {"is_superuser": True}, {"must_change_password": False},
@@ -523,12 +556,12 @@ def test_empty_machine_credentials_never_authorize(identity_db, monkeypatch):
     assert auth.bearer_token({"Authorization": None}) == ""
 
 
-def test_role_names_remain_aligned_for_readonly_member(identity_db):
+def test_role_names_remain_aligned_for_combined_write_roles(identity_db):
     identity, store = identity_db
-    create_member(store, role_ids=["viewer", "tester"])
+    create_member(store, role_ids=["test_manager", "tester"])
     activate(store)
     profile = identity.get_access_profile("member")
-    assert list(zip(profile["role_ids"], profile["role_names"])) == [("tester", "测试成员"), ("viewer", "只读成员")]
+    assert list(zip(profile["role_ids"], profile["role_names"])) == [("test_manager", "测试负责人"), ("tester", "测试成员")]
 
 
 def test_real_cli_help_is_clean_and_does_not_create_database(tmp_path):

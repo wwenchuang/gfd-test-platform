@@ -2,6 +2,11 @@
 (() => {
   const tabs = { members: '成员', roles: '角色', scope: '数据授权', audit: '操作记录' };
   const scopeLabels = { ui_apps: 'UI 应用', api_projects: 'API 项目', api_environments: 'API 环境' };
+  const permissionPrerequisites = {
+    'ui.edit': ['ui.view'], 'ui.execute': ['ui.view'], 'ui.delete': ['ui.view'], 'ui.baseline': ['ui.view'],
+    'api.edit': ['api.view'], 'api.execute': ['api.view'], 'api.delete': ['api.view'],
+    'api.baseline': ['api.view'], 'api.environment': ['api.view'], 'api.production': ['api.view', 'api.execute'],
+  };
   let selectedTab = 'members';
   let pageVersion = 0;
   let activeDialog = null;
@@ -147,11 +152,12 @@
       const query = panel.querySelector('input').value.trim().toLocaleLowerCase();
       const rows = users.map((user, index) => {
         if (!`${user.username} ${user.display_name}`.toLocaleLowerCase().includes(query)) return '';
+        const protectsLastSuper = isSuper(user) && user.status === 'active' && activeSuperCount === 1;
         const actions = scopes ? (isSuper(user) ? '<span class="identity-muted">全部数据</span>' : button('编辑范围', 'scope', index)) : [
           button('编辑', 'edit', index),
-          button(user.status === 'active' ? '停用' : '启用', 'status', index, '', isSuper(user) && user.status === 'active' && activeSuperCount === 1 ? 'disabled title="不能停用最后一个有效超级管理员"' : ''),
+          button(user.status === 'active' ? '停用' : '启用', 'status', index, '', protectsLastSuper ? 'disabled title="不能停用最后一个有效超级管理员"' : ''),
           button(user.username === sessionStorage.getItem('user') ? '修改密码' : '重置密码', 'reset', index), button('撤销会话', 'revoke', index)
-        ].join('');
+        ].join('') + (protectsLastSuper ? '<span class="identity-action-note">需保留至少 1 名有效超级管理员</span>' : '');
         return `<tr><td><strong>${e(user.display_name || user.username)}</strong><span class="identity-secondary">${e(user.username)}</span></td><td>${e(roleNames(user, roles))}</td><td>${scopes ? e(scopeSummary(user.scope, user)) : `<span class="identity-status ${user.status === 'active' ? 'active' : ''}">${user.status === 'active' ? '启用' : '停用'}</span>${user.must_change_password ? '<span class="identity-secondary">待修改密码</span>' : ''}`}</td><td><div class="identity-row-actions">${actions}</div></td></tr>`;
       }).join('');
       panel.querySelector('[data-rows]').innerHTML = table(['成员', '角色', scopes ? '数据范围' : '状态', '操作'], rows, query ? '没有匹配的成员' : '暂无成员');
@@ -175,7 +181,25 @@
   function roleSelectors(roles, selected, immutable) {
     const choices = [...roles];
     selected.filter(id => !choices.some(role => role.id === id)).forEach(id => choices.push({ id, name: id }));
-    return `<fieldset class="identity-fieldset"><legend>角色</legend><div class="identity-checks">${choices.map(role => `<label><input type="checkbox" name="role_ids" value="${e(role.id)}" ${selected.includes(role.id) ? 'checked' : ''} ${immutable ? 'disabled' : ''}>${e(role.name)}</label>`).join('')}</div></fieldset>`;
+    return `<fieldset class="identity-fieldset" data-role-selector><legend>角色</legend><div class="identity-checks">${choices.map(role => {
+      const permissions = Array.isArray(role.permissions) ? role.permissions : [];
+      const readOnly = role.id === 'viewer' || (permissions.length > 0 && permissions.every(id => id === 'ui.view' || id === 'api.view'));
+      return `<label><input type="checkbox" name="role_ids" value="${e(role.id)}" data-role-kind="${role.id === 'super_admin' ? 'super' : readOnly ? 'readonly' : 'write'}" ${selected.includes(role.id) ? 'checked' : ''} ${immutable ? 'disabled' : ''}>${e(role.name)}</label>`;
+    }).join('')}</div>${immutable ? '' : '<p class="identity-muted">超级管理员和只读角色为独立身份；选择它们会自动清除冲突角色。负责人和测试成员可以组合。</p>'}</fieldset>`;
+  }
+
+  function bindRoleSelectors(node) {
+    const fieldset = node.querySelector('[data-role-selector]');
+    if (!fieldset) return;
+    const boxes = Array.from(fieldset.querySelectorAll('[name="role_ids"]'));
+    boxes.forEach(input => input.addEventListener('change', () => {
+      if (!input.checked) return;
+      const kind = input.dataset.roleKind;
+      boxes.forEach(other => {
+        if (other === input) return;
+        if (kind === 'super' || kind === 'readonly' || other.dataset.roleKind === 'super' || other.dataset.roleKind === 'readonly') other.checked = false;
+      });
+    }));
   }
 
   async function openMember(user, roles) {
@@ -186,6 +210,7 @@
       const options = user ? null : await request('/scope-options');
       if (!current(node)) return;
       contents(node, `<form><label class="identity-field">用户名<input name="username" required autocomplete="off" ${user ? 'readonly' : ''} value="${e(user?.username || '')}"></label><label class="identity-field">姓名<input name="display_name" required value="${e(user?.display_name || '')}"></label>${roleSelectors(roles, user ? roleIds(user) : ['tester'], user && isSuper(user))}${user ? '' : '<label class="identity-field">初始密码（留空自动生成）<input type="password" name="password" minlength="15" maxlength="128" autocomplete="new-password"></label>'}${user ? `<p class="identity-muted">${e(scopeSummary(user.scope, user))}</p>` : scopeFields(emptyScope(), options)}${alertHtml}${footer(user ? '保存成员' : '创建成员')}</form>`);
+      bindRoleSelectors(node);
       if (!user) bindScopes(node);
       bindForm(node, async form => {
         const values = new FormData(form);
@@ -209,10 +234,10 @@
       const selected = Array.isArray(scope[key]) ? scope[key] : [];
       const items = [...(options[key] || [])];
       selected.filter(id => !items.some(item => String(item.id) === String(id))).forEach(id => items.push({ id, name: `已失效或不可见：${id}` }));
-      return `<fieldset class="identity-fieldset" data-scope="${key}"><legend>${label}</legend><div class="identity-scope-mode"><label><input type="radio" name="mode_${key}" value="selected" ${scope[key] !== '*' ? 'checked' : ''}>指定范围</label><label><input type="radio" name="mode_${key}" value="all" ${scope[key] === '*' ? 'checked' : ''}>全部${label}</label></div><div class="identity-checks">${items.length ? items.map(item => {
+      return `<fieldset class="identity-fieldset" data-scope="${key}"><legend>${label}</legend><div class="identity-scope-mode"><label><input type="radio" name="mode_${key}" value="selected" ${scope[key] !== '*' ? 'checked' : ''}>指定范围</label><label><input type="radio" name="mode_${key}" value="all" ${scope[key] === '*' ? 'checked' : ''}>全部${label}（含今后新增）</label></div><div class="identity-checks">${items.length ? items.map(item => {
         const project = key === 'api_environments' ? options.api_projects?.find(project => String(project.id) === String(item.project_id)) : null;
         return `<label><input type="checkbox" name="scope_${key}" value="${e(item.id)}" ${selected.includes(item.id) ? 'checked' : ''}>${e(item.name)}${project ? `（${e(project.name)}）` : ''}</label>`;
-      }).join('') : '<span class="identity-muted">暂无可选数据</span>'}</div></fieldset>`;
+      }).join('') : '<span class="identity-muted">暂无可选数据</span>'}</div><p class="identity-muted identity-scope-hint">指定范围未勾选任何项目时，该类数据不可见。</p></fieldset>`;
     }).join('');
   }
 
@@ -253,8 +278,18 @@
   }
 
   function renderRoles(panel, roles, permissions) {
-    const labels = new Map(permissions.map(permission => [permission.id, permission.label]));
-    panel.innerHTML = `<div class="identity-list-tools">${button('新增角色', 'create', '', 'primary')}</div>` + table(['角色', '权限', '操作'], roles.map((role, index) => `<tr><td>${e(role.name)}${role.id === 'super_admin' ? '<span class="identity-secondary">内置，不可修改</span>' : ''}</td><td>${(role.permissions || []).map(id => `<span title="${e(id)}">${e(labels.get(id) || id)}</span>`).join('、') || '未配置权限'}</td><td><div class="identity-row-actions">${button('复制', 'copy', index)}${role.id === 'super_admin' ? '' : button('编辑', 'edit', index) + button('删除', 'delete', index)}</div></td></tr>`).join(''), '暂无角色');
+    const catalog = new Map(permissions.map(permission => [permission.id, permission]));
+    const summary = role => {
+      const groups = new Map();
+      (role.permissions || []).forEach(id => {
+        const permission = catalog.get(id) || { id, label: id, group: '其他' };
+        if (!groups.has(permission.group)) groups.set(permission.group, []);
+        groups.get(permission.group).push(permission);
+      });
+      if (!groups.size) return '<span class="identity-muted">未配置权限</span>';
+      return `<div class="identity-permission-summary">${Array.from(groups, ([group, items]) => `<div><strong>${e(group)}</strong><span>${items.map(item => `<em title="${e(item.id)}">${e(item.label)}</em>`).join('')}</span></div>`).join('')}</div>`;
+    };
+    panel.innerHTML = `<div class="identity-list-tools">${button('新增角色', 'create', '', 'primary')}</div>` + table(['角色', '权限', '操作'], roles.map((role, index) => `<tr><td>${e(role.name)}${role.id === 'super_admin' ? '<span class="identity-secondary">内置，不可修改</span>' : ''}</td><td>${summary(role)}</td><td><div class="identity-row-actions">${button('复制', 'copy', index)}${role.id === 'super_admin' ? '' : button('编辑', 'edit', index) + button('删除', 'delete', index)}</div></td></tr>`).join(''), '暂无角色');
     panel.onclick = event => {
       const control = event.target.closest('[data-action]');
       if (!control) return;
@@ -279,13 +314,38 @@
         if (!groups.has(group)) groups.set(group, []);
         groups.get(group).push(permission);
       });
-      contents(node, `<form><label class="identity-field">角色名称<input name="name" required value="${e(role.name || '')}"></label>${Array.from(groups, ([group, permissions]) => `<fieldset class="identity-fieldset"><legend>${e(group)}</legend><div class="identity-checks">${permissions.map(permission => `<label><input type="checkbox" name="permissions" value="${e(permission.id)}" ${(role.permissions || []).includes(permission.id) ? 'checked' : ''}>${e(permission.label)}</label>`).join('')}</div></fieldset>`).join('')}${alertHtml}${footer('保存角色')}</form>`);
+      contents(node, `<form><label class="identity-field">角色名称<input name="name" required value="${e(role.name || '')}"></label><p class="identity-muted">编辑、执行、删除、基线和环境管理会自动补齐对应的查看权限，避免成员有操作权却看不到入口。</p>${Array.from(groups, ([group, permissions]) => `<fieldset class="identity-fieldset" data-permission-group><legend>${e(group)}</legend><div class="identity-permission-group-actions"><button type="button" class="btn-sm" data-permission-all>全选本组</button><button type="button" class="btn-sm" data-permission-clear>清空本组</button></div><div class="identity-checks">${permissions.map(permission => `<label><input type="checkbox" name="permissions" value="${e(permission.id)}" ${(role.permissions || []).includes(permission.id) ? 'checked' : ''}>${e(permission.label)}</label>`).join('')}</div></fieldset>`).join('')}${alertHtml}${footer('保存角色')}</form>`);
+      bindPermissionSelectors(node);
       bindForm(node, async form => {
         const values = new FormData(form);
         await request(role.id ? `/roles/${encodeURIComponent(role.id)}` : '/roles', { method: role.id ? 'PUT' : 'POST', body: { name: values.get('name').trim(), permissions: values.getAll('permissions') } });
         await changed(node, '角色已保存');
       });
     } catch (error) { if (current(node)) { contents(node, `${alertHtml}<button type="button" class="btn-sm" data-retry>重试</button>`); message(node, error.message); node.querySelector('[data-retry]').onclick = () => openRole(role); } }
+  }
+
+  function bindPermissionSelectors(node) {
+    const form = node.querySelector('form');
+    const input = id => form.querySelector(`[name="permissions"][value="${CSS.escape(id)}"]`);
+    const applyPrerequisites = changed => {
+      if (!changed.checked) {
+        const stillRequired = Array.from(form.querySelectorAll('[name="permissions"]:checked')).some(item => (permissionPrerequisites[item.value] || []).includes(changed.value));
+        if (stillRequired) changed.checked = true;
+        return;
+      }
+      (permissionPrerequisites[changed.value] || []).forEach(id => { const dependency = input(id); if (dependency) dependency.checked = true; });
+    };
+    form.querySelectorAll('[name="permissions"]').forEach(control => control.addEventListener('change', () => applyPrerequisites(control)));
+    form.querySelectorAll('[data-permission-group]').forEach(fieldset => {
+      const controls = Array.from(fieldset.querySelectorAll('[name="permissions"]'));
+      fieldset.querySelector('[data-permission-all]').onclick = () => {
+        controls.forEach(control => { control.checked = true; applyPrerequisites(control); });
+      };
+      fieldset.querySelector('[data-permission-clear]').onclick = () => {
+        controls.forEach(control => { control.checked = false; });
+        Array.from(form.querySelectorAll('[name="permissions"]:checked')).forEach(applyPrerequisites);
+      };
+    });
   }
 
   function confirmAction(title, description, label, action, after) {
@@ -320,10 +380,65 @@
     });
   }
 
+  function auditOperationPresentation(event) {
+    const actions = { 'user.create': '新增成员', 'user.update': '更新成员', 'user.reset_password': '重置密码', 'user.revoke_sessions': '撤销成员会话', 'role.create': '新增角色', 'role.update': '更新角色', 'role.delete': '删除角色', 'password.change': '修改密码', 'user.change_password': '修改密码', 'session.revoke': '撤销会话', 'session.revoke_all': '撤销全部会话', 'session.logout': '退出登录', 'login.success': '登录成功', 'login.failure': '登录失败', 'access.denied': '访问被拒绝', login: '登录', logout: '退出登录' };
+    const path = String(event.target || '');
+    const details = event.details && typeof event.details === 'object' ? event.details : {};
+    const method = String(details.method || '').toUpperCase();
+    let action = actions[event.action] || event.action || '-';
+    let target = path || '-';
+    if (event.action === 'operation.result') {
+      const routes = [
+        [/^\/api\/api-testing\/v1\/scheduled-jobs\/[^/]+\/run$/, '手动执行定时任务', 'API 定时任务'],
+        [/^\/api\/api-testing\/v1\/scheduled-jobs(?:\/|$)/, method === 'DELETE' ? '删除 API 定时任务' : '保存 API 定时任务', 'API 定时任务'],
+        [/^\/api\/sonic\/refresh-bridges$/, '刷新 Sonic 托管桥接', 'Sonic 托管脚本'],
+        [/^\/api\/sonic\/scan-legacy$/, '扫描 Sonic 旧步骤', 'Sonic 维护'],
+        [/^\/api\/sonic\/diagnose$/, '诊断 Sonic 连接', 'Sonic 配置'],
+        [/^\/api\/jobs\/[^/]+\/analyze-failure$/, '分析 UI 失败任务', 'UI 失败任务'],
+        [/^\/api\/feishu-drafts(?:\/|$)/, '生成缺陷草稿', '缺陷草稿'],
+        [/^\/api\/task-app(?:\/|$)/, '保存应用配置', '应用配置'],
+      ];
+      const matched = routes.find(([pattern]) => pattern.test(path));
+      action = matched?.[1] || `${method || '提交'}平台操作`;
+      target = matched?.[2] || '平台接口';
+    }
+    let kind = 'success';
+    let result = '已完成';
+    if (event.action === 'access.denied' || details.outcome === 'denied') {
+      kind = 'denied'; result = '已拒绝';
+    } else if (event.action === 'login.failure' || details.outcome === 'failure' || details.ok === false || Number(details.status || 0) >= 400) {
+      kind = 'failure'; result = '失败';
+    } else if (details.ok === true) result = '成功';
+    const facts = [method, details.status].filter(value => value !== '' && value !== undefined && value !== null);
+    if (facts.length) result += ` · ${facts.join(' ')}`;
+    return { event, action, target, rawTarget: path, kind, result };
+  }
+
   function renderAudit(panel, events) {
-    const actions = { 'user.create': '新增成员', 'user.update': '更新成员', 'user.reset_password': '重置密码', 'user.revoke_sessions': '撤销成员会话', 'role.create': '新增角色', 'role.update': '更新角色', 'role.delete': '删除角色', 'password.change': '修改密码', 'user.change_password': '修改密码', 'session.revoke': '撤销会话', 'session.revoke_all': '撤销全部会话', 'session.logout': '退出登录', 'login.success': '登录成功', 'login.failure': '登录失败', 'access.denied': '访问被拒绝', 'operation.result': '操作结果', login: '登录', logout: '退出登录' };
-    // Only explicit safe columns are rendered. Never stringify arbitrary audit detail.
-    panel.innerHTML = table(['时间', '操作者', '操作', '对象'], events.map(event => `<tr><td>${e(identityTime(event.created_at || event.timestamp))}</td><td>${e(event.actor || event.username || '-')}</td><td>${e(actions[event.action] || event.action || '-')}</td><td>${e(event.target || '-')}</td></tr>`).join(''), '暂无操作记录');
+    const items = events.map(auditOperationPresentation);
+    let page = 1;
+    const pageSize = 20;
+    panel.innerHTML = `<div class="identity-list-tools identity-audit-tools"><input type="search" aria-label="搜索操作记录" placeholder="搜索操作者、操作或对象"><select aria-label="筛选操作结果"><option value="all">全部结果</option><option value="success">成功</option><option value="failure">失败</option><option value="denied">已拒绝</option></select><span class="identity-muted" data-audit-count></span></div><div data-audit-rows></div><div class="identity-audit-pagination"><button type="button" class="btn-sm" data-audit-prev>上一页</button><span class="identity-muted" data-audit-page></span><button type="button" class="btn-sm" data-audit-next>下一页</button></div>`;
+    const search = panel.querySelector('input');
+    const status = panel.querySelector('select');
+    const render = () => {
+      const query = search.value.trim().toLocaleLowerCase();
+      const filtered = items.filter(item => (status.value === 'all' || item.kind === status.value) && `${item.event.actor || item.event.username || ''} ${item.action} ${item.target} ${item.rawTarget}`.toLocaleLowerCase().includes(query));
+      const pages = Math.max(1, Math.ceil(filtered.length / pageSize));
+      page = Math.min(page, pages);
+      const visible = filtered.slice((page - 1) * pageSize, page * pageSize);
+      const rows = visible.map(item => `<tr><td>${e(identityTime(item.event.created_at || item.event.timestamp))}</td><td>${e(item.event.actor || item.event.username || '-')}</td><td>${e(item.action)}</td><td>${e(item.target)}${item.rawTarget && item.rawTarget !== item.target ? `<span class="identity-secondary" title="原始接口">${e(item.rawTarget)}</span>` : ''}</td><td><span class="identity-audit-result ${e(item.kind)}">${e(item.result)}</span></td></tr>`).join('');
+      panel.querySelector('[data-audit-rows]').innerHTML = table(['时间', '操作者', '操作', '对象', '结果'], rows, query || status.value !== 'all' ? '没有匹配的操作记录' : '暂无操作记录');
+      panel.querySelector('[data-audit-count]').textContent = `${filtered.length}/${items.length} 条`;
+      panel.querySelector('[data-audit-page]').textContent = `第 ${page}/${pages} 页`;
+      panel.querySelector('[data-audit-prev]').disabled = page <= 1;
+      panel.querySelector('[data-audit-next]').disabled = page >= pages;
+    };
+    search.oninput = () => { page = 1; render(); };
+    status.onchange = () => { page = 1; render(); };
+    panel.querySelector('[data-audit-prev]').onclick = () => { page--; render(); };
+    panel.querySelector('[data-audit-next]').onclick = () => { page++; render(); };
+    render();
   }
 
   async function showPersonalAccount() {
@@ -336,9 +451,18 @@
       const profile = currentAccessProfile || { username: data.user };
       const roleLabels = { super_admin: '超级管理员', test_manager: '测试负责人', tester: '测试成员', viewer: '只读成员' };
       const names = Array.isArray(profile.role_names) ? profile.role_names : roleIds(profile).map(id => roleLabels[id] || id);
-      contents(node, `<dl class="identity-profile"><dt>用户名</dt><dd>${e(profile.username)}</dd><dt>姓名</dt><dd>${e(profile.display_name || '-')}</dd><dt>角色</dt><dd>${e(names.join('、') || '未分配')}</dd><dt>数据范围</dt><dd>${e(scopeSummary(profile.scope, profile))}</dd></dl><h3>登录会话</h3>${table(['创建时间', '到期时间', '状态'], (sessions.sessions || []).map(session => `<tr><td>${e(identityTime(session.created_at))}</td><td>${e(identityTime(session.expires_at))}</td><td>${session.is_current || session.current ? '当前会话' : session.revoked_at ? '已撤销' : '有效'}</td></tr>`).join(''), '暂无会话')}<div class="identity-form-actions"><button class="btn-sm" type="button" data-password>修改密码</button><button class="btn-sm" type="button" data-revoke>撤销全部会话</button></div>`);
+      const sessionItems = sessions.sessions || [];
+      const sessionRows = sessionItems.map((session, index) => {
+        const currentSession = session.is_current || session.current;
+        return `<tr><td>${e(identityTime(session.created_at))}</td><td>${e(identityTime(session.expires_at))}</td><td>${currentSession ? '当前会话' : session.revoked_at ? '已撤销' : '有效'}</td><td>${currentSession || session.revoked_at ? '<span class="identity-muted">—</span>' : `<button class="btn-sm" type="button" data-revoke-session="${index}">撤销此会话</button>`}</td></tr>`;
+      }).join('');
+      contents(node, `<dl class="identity-profile"><dt>用户名</dt><dd>${e(profile.username)}</dd><dt>姓名</dt><dd>${e(profile.display_name || '-')}</dd><dt>角色</dt><dd>${e(names.join('、') || '未分配')}</dd><dt>数据范围</dt><dd>${e(scopeSummary(profile.scope, profile))}</dd></dl><h3>登录会话 · ${sessionItems.length} 个</h3><p class="identity-muted">可单独撤销不认识的旧会话；“撤销全部会话”会同时退出当前设备。</p>${table(['创建时间', '到期时间', '状态', '操作'], sessionRows, '暂无会话')}<div class="identity-form-actions"><button class="btn-sm" type="button" data-password>修改密码</button><button class="btn-sm" type="button" data-revoke>撤销全部会话</button></div>`);
       node.querySelector('[data-password]').onclick = () => showChangePassword();
       node.querySelector('[data-revoke]').onclick = () => confirmAction('撤销全部会话', '包括当前会话，所有设备需要重新登录。', '确认撤销', () => request('/revoke-sessions', { method: 'POST', body: {} }), clearAuthSession);
+      node.querySelectorAll('[data-revoke-session]').forEach(control => {
+        const session = sessionItems[Number(control.dataset.revokeSession)];
+        control.onclick = () => confirmAction('撤销登录会话', `创建于 ${identityTime(session.created_at)}，撤销后该设备需要重新登录。`, '确认撤销', () => request('/sessions/revoke', { method: 'POST', body: { session_id: session.id } }), showPersonalAccount);
+      });
     } catch (error) { if (current(node)) { contents(node, `${alertHtml}<button type="button" class="btn-sm" data-retry>重试</button>`); message(node, error.message); node.querySelector('[data-retry]').onclick = showPersonalAccount; } }
   }
 
