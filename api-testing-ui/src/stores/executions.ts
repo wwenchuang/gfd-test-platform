@@ -256,7 +256,7 @@ export const useExecutionsStore = defineStore('api-executions', {
         this.connectionState = 'complete'
         this.disconnect(false)
         this.analysisRefreshAttempts = 0
-        void this.refreshPendingAnalysis(executionId)
+        this.scheduleFinalSnapshotPoll(executionId)
       }
     },
     async refreshPendingAnalysis(executionId: string): Promise<void> {

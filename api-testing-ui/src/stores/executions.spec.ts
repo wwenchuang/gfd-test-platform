@@ -312,6 +312,43 @@ describe('executions store', () => {
     vi.useRealTimers()
   })
 
+  it('keeps polling the durable snapshot after the finished event arrives before the summary', async () => {
+    vi.useFakeTimers()
+    try {
+      const running = {
+        id: 'execution-1', state: 'RUNNING', summary: { total: 5, passed: 1 },
+        case_statuses: ['PASSED', 'RUNNING', 'QUEUED', 'QUEUED', 'QUEUED'], case_results: [],
+      } as unknown as ExecutionView
+      const done = {
+        ...running,
+        state: 'DONE', summary: { total: 5, passed: 5 },
+        case_statuses: ['PASSED', 'PASSED', 'PASSED', 'PASSED', 'PASSED'],
+      } as ExecutionView
+      vi.spyOn(apiClient, 'get')
+        .mockResolvedValueOnce({ data: { execution: running } })
+        .mockResolvedValueOnce({ data: { execution: done } })
+      const store = useExecutionsStore()
+      store.active = running
+
+      store.consumeEvent(
+        'execution_finished',
+        { data: '{"state":"DONE"}', lastEventId: '108' } as MessageEvent,
+        running.id,
+      )
+
+      expect(store.finalSnapshotTimer).not.toBeNull()
+      await vi.advanceTimersByTimeAsync(5000)
+      expect(store.active?.state).toBe('RUNNING')
+      expect(store.finalSnapshotTimer).not.toBeNull()
+      await vi.advanceTimersByTimeAsync(5000)
+      expect(store.active?.state).toBe('DONE')
+      expect(store.active?.summary.passed).toBe(5)
+      expect(store.finalSnapshotTimer).toBeNull()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('keeps the latest execution when record requests resolve out of order', async () => {
     let resolveFirst: ((value: ApiEnvelope<{ execution: ExecutionView }>) => void) | undefined
     let resolveSecond: ((value: ApiEnvelope<{ execution: ExecutionView }>) => void) | undefined
