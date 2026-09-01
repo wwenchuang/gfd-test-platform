@@ -30,6 +30,7 @@ from task_server.api_testing.services import execution_service as execution_serv
 from task_server.api_testing.services.execution_service import (
     ExecutionConflictError,
     ExecutionNotFoundError,
+    ExecutionScopeConflictError,
     ExecutionService,
 )
 from task_server.api_testing.services.source_service import SourceService
@@ -138,6 +139,48 @@ def test_task_snapshot_normalizes_empty_task_name():
     assert snapshot == {"id": "task-2", "name": "未命名任务"}
     assert ExecutionService._task_snapshot(None) is None
     assert ExecutionService._task_snapshot({"name": "无 ID 任务"}) is None
+
+
+def test_rerun_preserves_source_task_identity(
+    session_factory, redis_client, execution_context
+):
+    service = ExecutionService(
+        session_factory,
+        event_stream=EventStream(session_factory, redis_client),
+    )
+    source = service.submit(
+        _request(execution_context, execution_type="scheduled"),
+        "admin",
+        "scheduled-source-for-rerun",
+        task={
+            "id": "scheduled-job-113",
+            "name": "基线回归测试（已复验113条）",
+            "type": "scheduled_job",
+            "source": "scheduled_job",
+            "notify_feishu": False,
+        },
+    )
+
+    rerun = service.rerun(
+        source.id,
+        "admin",
+        "scheduled-source-rerun",
+        [execution_context["case"].id],
+    )
+
+    assert rerun.task_id == "scheduled-job-113"
+    assert rerun.task_name == "基线回归测试（已复验113条）"
+    assert rerun.task_type == "scheduled_job"
+    assert rerun.execution_source == "scheduled_job"
+    assert rerun.execution_type == "scheduled"
+
+    with pytest.raises(ExecutionScopeConflictError, match="source execution"):
+        service.rerun(
+            source.id,
+            "admin",
+            "scheduled-source-rerun-outside-scope",
+            [execution_context["environment_revision"].id],
+        )
 
 
 def test_case_version_snapshot_keeps_explicit_application_and_business():

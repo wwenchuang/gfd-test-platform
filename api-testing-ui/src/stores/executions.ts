@@ -355,14 +355,9 @@ export const useExecutionsStore = defineStore('api-executions', {
     },
     async createRerun(execution: ExecutionView, caseIds: string[]): Promise<ExecutionView> {
       const response = await apiClient.post<{ execution: ExecutionView }>(
-        '/api/api-testing/v1/executions',
+        `/api/api-testing/v1/executions/${encodeURIComponent(execution.id)}/rerun`,
         {
-          project_id: execution.project_id,
-          source_revision_id: execution.source_revision_id,
-          environment_revision_id: execution.environment_revision_id,
           case_version_ids: caseIds,
-          execution_type: execution.execution_type,
-          overrides: {},
           idempotency_key: createIdempotencyKey(),
         },
       )

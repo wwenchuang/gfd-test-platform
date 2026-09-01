@@ -796,6 +796,19 @@ def _post(segments, payload, actor, settings, *, session_digest=None):
         )
         _enqueue_execution(execution.id)
         return {"execution": _view(execution)}
+    if len(segments) == 3 and segments[0] == "executions" and segments[2] == "rerun":
+        execution_id = _uuid(segments[1])
+        _scope_execution(factory, execution_id, actor)
+        execution = ExecutionService(
+            factory, event_stream=_event_stream(factory)
+        ).rerun(
+            execution_id,
+            actor,
+            _string(payload.get("idempotency_key"), "idempotency_key", 200),
+            _uuid_array(payload.get("case_version_ids"), "case_version_ids"),
+        )
+        _enqueue_execution(execution.id)
+        return {"execution": _view(execution)}
     if len(segments) == 3 and segments[0] == "executions" and segments[2] == "cancel":
         _scope_execution(factory, _uuid(segments[1]), actor)
         return {"execution": _view(ExecutionService(factory, event_stream=_event_stream(factory)).cancel(_uuid(segments[1]), actor))}

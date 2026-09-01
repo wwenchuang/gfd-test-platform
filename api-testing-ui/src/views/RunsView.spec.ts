@@ -117,6 +117,8 @@ describe('RunsView', () => {
 
     expect(rerun).not.toHaveBeenCalled()
     expect(confirm).toHaveBeenCalledWith(expect.stringMatching(/生产环境.*重新执行.*真实发送/))
+    expect(confirm).toHaveBeenCalledWith(expect.stringContaining('在线调试'))
+    expect(confirm).not.toHaveBeenCalledWith(expect.stringContaining(debugExecution.id))
   })
 
   it('opens the newest matching history record when filtering by a stable interface key', async () => {

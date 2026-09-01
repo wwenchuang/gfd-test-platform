@@ -8,6 +8,7 @@ import type { ExecutionCaseResult, ExecutionView } from '../api/contracts'
 import { useContextStore } from '../stores/context'
 import { useExecutionsStore } from '../stores/executions'
 import { confirmApiExecution } from '../utils/executionConfirmation'
+import { executionDisplayName } from '../utils/executionPresentation'
 
 const context = useContextStore()
 const executions = useExecutionsStore()
@@ -70,7 +71,7 @@ async function rerun(execution: ExecutionView): Promise<void> {
   if (!confirmApiExecution({
     action: '重新执行',
     environmentName: execution.environment_name || '原执行环境',
-    targetName: execution.task_name || execution.id,
+    targetName: executionDisplayName(execution),
     caseCount: execution.case_results.length || execution.summary.total,
   })) return
   await executions.rerunExecution(execution)

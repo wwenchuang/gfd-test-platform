@@ -313,6 +313,48 @@ class ExecutionService:
             task=task,
         )
 
+    def rerun(self, execution_id, actor_id, idempotency_key, case_version_ids):
+        identifiers = _optional_identifier_array(case_version_ids, "case_version_ids")
+        with self.session_factory() as session:
+            repository = ExecutionRepository(session)
+            source = repository.get_execution(execution_id)
+            if source is None:
+                raise ExecutionNotFoundError("API execution was not found")
+            access.require_resource(session, source, actor_id, "api.execute")
+            snapshot = copy.deepcopy(source.request_snapshot or {})
+            source_request = snapshot.get("request", {}) if isinstance(snapshot, dict) else {}
+            allowed_identifiers = source_request.get("case_version_ids", ()) if isinstance(source_request, dict) else ()
+            if not isinstance(allowed_identifiers, (list, tuple)):
+                allowed_identifiers = ()
+            allowed = {item for item in allowed_identifiers if isinstance(item, str) and item}
+            if not allowed:
+                allowed = {
+                    item.get("id")
+                    for item in snapshot.get("case_versions", ())
+                    if isinstance(item, dict)
+                    and item.get("role") != "dependency"
+                    and isinstance(item.get("id"), str)
+                }
+            if not identifiers or not set(identifiers) <= allowed:
+                raise ExecutionScopeConflictError(
+                    "rerun cases must belong to the source execution request"
+                )
+            task = snapshot.get("task") if isinstance(snapshot.get("task"), dict) else None
+            request = {
+                "project_id": source.project_id,
+                "source_revision_id": source.source_revision_id,
+                "environment_revision_id": source.environment_revision_id,
+                "case_version_ids": list(identifiers),
+                "execution_type": source.execution_type,
+                "overrides": {},
+            }
+        return self.submit(
+            request,
+            actor_id,
+            idempotency_key,
+            task=task,
+        )
+
     def get(self, execution_id, *, include_evidence=True):
         with self.session_factory() as session:
             repository = ExecutionRepository(session)

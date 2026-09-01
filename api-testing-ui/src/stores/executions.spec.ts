@@ -551,13 +551,8 @@ describe('executions store', () => {
       finished_at: null,
     } as ExecutionView)
 
-    expect(post).toHaveBeenCalledWith('/api/api-testing/v1/executions', {
-      project_id: 'project-1',
-      source_revision_id: 'source-1',
-      environment_revision_id: 'environment-1',
+    expect(post).toHaveBeenCalledWith('/api/api-testing/v1/executions/execution-source/rerun', {
       case_version_ids: ['case-version-2'],
-      execution_type: 'regression',
-      overrides: {},
       idempotency_key: expect.any(String),
     })
     expect(rerun?.id).toBe('execution-rerun')
