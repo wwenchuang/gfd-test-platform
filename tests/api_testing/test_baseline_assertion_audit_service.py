@@ -43,6 +43,11 @@ def test_exact_business_success_assertion_matches_actual_response():
         [
             assertion("status_code", "equals", expected=200),
             assertion("json_path", "equals", expected=0, path="$.code"),
+            assertion(
+                "schema",
+                "matches",
+                expected={"type": "object", "required": ["code", "data"]},
+            ),
         ],
         response(200, {"code": 0, "data": []}),
         READ_ONLY,
@@ -54,6 +59,38 @@ def test_exact_business_success_assertion_matches_actual_response():
     assert result["business_value"] == 0
     assert result["suggested_assertions"] == []
     assert result["execution"]["selectable"] is True
+
+
+def test_read_only_business_success_with_only_data_exists_needs_domain_assertion():
+    result = analyze_baseline_assertions(
+        [
+            assertion("status_code", "equals", expected=200),
+            assertion("json_path", "equals", expected=0, path="$.code"),
+            assertion("json_path", "exists", path="$.data"),
+        ],
+        response(200, {"code": 0, "data": []}),
+        READ_ONLY,
+        {},
+    )
+
+    assert result["status"] == "domain_assertion_required"
+    assert "业务成功" in result["reason"]
+    assert "领域" in result["reason"]
+
+
+def test_read_only_business_success_with_precise_domain_assertion_is_verified():
+    result = analyze_baseline_assertions(
+        [
+            assertion("status_code", "equals", expected=200),
+            assertion("json_path", "equals", expected=0, path="$.code"),
+            assertion("json_path", "equals", expected=10, path="$.data.size"),
+        ],
+        response(200, {"code": 0, "data": {"size": 10, "records": []}}),
+        READ_ONLY,
+        {},
+    )
+
+    assert result["status"] == "verified"
 
 
 def test_status_only_success_response_receives_exact_business_suggestion():

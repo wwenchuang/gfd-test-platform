@@ -321,6 +321,20 @@ def analyze_baseline_assertions(assertions, response, workflow, processing, extr
                 execution,
             )
         business_path, business_value = business_values[0]
+        if (
+            _requires_domain_assertion(workflow)
+            and all(_is_business_success(path, value) for path, value in business_values)
+            and not _has_domain_assertion(normalized)
+        ):
+            return _result(
+                "domain_assertion_required",
+                "HTTP与业务成功断言已匹配，但只读查询仍缺少精确领域断言；仅检查data存在不能证明结果内容有效",
+                actual_status,
+                business_path,
+                business_value,
+                [],
+                execution,
+            )
         return _result(
             "verified",
             "精确业务断言与实际响应一致",
@@ -587,8 +601,16 @@ def _has_domain_assertion(assertions):
     return any(
         item.get("type") in {"json_path", "schema"}
         and item.get("path") not in BUSINESS_SUCCESS_VALUES
+        and not (
+            item.get("type") == "json_path"
+            and item.get("operator") == "exists"
+        )
         for item in assertions
     )
+
+
+def _requires_domain_assertion(workflow):
+    return str((workflow or {}).get("baseline_policy") or "") == "direct"
 
 
 def _execution_readiness(workflow, processing, extractions):
