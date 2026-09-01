@@ -28,6 +28,7 @@ const selectedExecutionIds = ref<Set<string>>(new Set())
 const executionSearch = ref('')
 const sourceFilter = ref<'all' | 'formal' | 'debug'>('all')
 const conclusionFilter = ref<'all' | 'passed' | 'problem' | 'running'>('all')
+const reportFilter = ref<'all' | 'problem' | 'skipped' | 'cancelled'>('all')
 const executionPage = ref(1)
 const EXECUTION_PAGE_SIZE = 20
 const terminalStates = new Set(['DONE', 'CANCELLED', 'PASSED', 'FAILED', 'BROKEN'])
@@ -37,6 +38,22 @@ const canRerunActive = computed(() => Boolean(props.active && terminalStates.has
 const caseLabels = computed(() => Object.fromEntries((props.active?.case_results || []).map(result => [result.execution_case_id, result.case_name || result.endpoint_summary || result.path])))
 const metrics = computed(() => props.active ? executionMetrics(props.active) : null)
 const buckets = computed(() => props.active ? executionFailureBuckets(props.active) : null)
+const reportCounts = computed(() => {
+  const results = props.active?.case_results || []
+  return {
+    all: results.length,
+    problem: results.filter(result => ['FAILED', 'BROKEN'].includes(result.status)).length,
+    skipped: results.filter(result => result.status === 'SKIPPED').length,
+    cancelled: results.filter(result => result.status === 'CANCELLED').length,
+  }
+})
+const reportResults = computed(() => {
+  const results = props.active?.case_results || []
+  if (reportFilter.value === 'problem') return results.filter(result => ['FAILED', 'BROKEN'].includes(result.status))
+  if (reportFilter.value === 'skipped') return results.filter(result => result.status === 'SKIPPED')
+  if (reportFilter.value === 'cancelled') return results.filter(result => result.status === 'CANCELLED')
+  return results
+})
 const selectedExecutionCount = computed(() => selectedExecutionIds.value.size)
 const visibleExecutions = computed(() => {
   const keyword = executionSearch.value.trim().toLocaleLowerCase()
@@ -62,6 +79,7 @@ const visibleExecutions = computed(() => {
 })
 const executionPageCount = computed(() => Math.max(1, Math.ceil(visibleExecutions.value.length / EXECUTION_PAGE_SIZE)))
 const executionRangeLabel = computed(() => {
+  if (props.loading && !props.executions.length) return '正在读取执行记录…'
   if (!visibleExecutions.value.length) return '共 0 条'
   const start = (executionPage.value - 1) * EXECUTION_PAGE_SIZE + 1
   const end = Math.min(executionPage.value * EXECUTION_PAGE_SIZE, visibleExecutions.value.length)
@@ -84,6 +102,7 @@ watch(() => props.active?.id, () => {
   const active = props.active
   selected.value = active?.case_results[0] || null
   tab.value = 'trace'
+  reportFilter.value = 'all'
 }, { immediate: true })
 watch(() => props.active?.case_results, results => {
   if (!results) return
@@ -119,6 +138,17 @@ function selectCase(result: ExecutionCaseResult): void {
 function openCases(): void {
   tab.value = 'cases'
   if (selected.value) emit('loadEvidence', selected.value)
+}
+
+function openReport(): void {
+  tab.value = 'report'
+  reportFilter.value = reportCounts.value.problem ? 'problem' : 'all'
+  selected.value = reportResults.value[0] || null
+}
+
+function setReportFilter(value: 'all' | 'problem' | 'skipped' | 'cancelled'): void {
+  reportFilter.value = value
+  selected.value = reportResults.value[0] || null
 }
 
 function selectEvidence(result: ExecutionCaseResult): void {
@@ -230,7 +260,7 @@ function executionRowConclusion(execution: ExecutionView): { label: string; tone
         <nav class="execution-tabs" aria-label="执行详情视图">
           <button type="button" :class="{ active: tab === 'trace' }" @click="tab = 'trace'">实时轨迹</button>
           <button data-testid="execution-tab-cases" type="button" :class="{ active: tab === 'cases' }" @click="openCases">用例明细</button>
-          <button type="button" :class="{ active: tab === 'report' }" @click="tab = 'report'">测试报告</button>
+          <button data-testid="execution-tab-report" type="button" :class="{ active: tab === 'report' }" @click="openReport">测试报告</button>
         </nav>
         <div v-if="tab === 'trace'" class="execution-trace-grid">
           <section class="trace-case-panel panel"><header class="panel-header"><h2>用例进度</h2><span>{{ active.case_results.length }} 条</span></header><CaseResultList :results="active.case_results" :active-id="selected?.execution_case_id" row-test-id="realtime-case-row" @select="selectCase" /></section>
@@ -243,7 +273,15 @@ function executionRowConclusion(execution: ExecutionView): { label: string; tone
         <section v-else class="execution-report-preview">
           <header><div><span>本次执行</span><strong>{{ active.environment_name }}</strong></div><p>完整诊断报告保留真实用例状态，并按产品、脚本数据和环境问题归类。</p></header>
           <div v-if="metrics && buckets" class="report-preview-grid"><div><span>通过率</span><strong>{{ metrics.passRate }}%</strong></div><div><span>产品失败</span><strong>{{ buckets.product }}</strong></div><div><span>脚本/数据</span><strong>{{ buckets.scriptData }}</strong></div><div><span>环境异常</span><strong>{{ buckets.environment }}</strong></div></div>
-          <CaseResultList :results="active.case_results" :active-id="selected?.execution_case_id" @select="selectCase" />
+          <p v-if="reportCounts.problem" class="report-focus-note" role="status">本次未通过，已优先定位 {{ reportCounts.problem }} 个问题；可切回“全部”核对完整执行范围。</p>
+          <div class="report-case-filters" aria-label="报告用例状态筛选">
+            <button data-testid="execution-report-filter-all" type="button" :class="{ active: reportFilter === 'all' }" @click="setReportFilter('all')">全部 {{ reportCounts.all }}</button>
+            <button data-testid="execution-report-filter-problem" type="button" :class="{ active: reportFilter === 'problem' }" @click="setReportFilter('problem')">失败/异常 {{ reportCounts.problem }}</button>
+            <button data-testid="execution-report-filter-skipped" type="button" :class="{ active: reportFilter === 'skipped' }" @click="setReportFilter('skipped')">跳过 {{ reportCounts.skipped }}</button>
+            <button data-testid="execution-report-filter-cancelled" type="button" :class="{ active: reportFilter === 'cancelled' }" @click="setReportFilter('cancelled')">取消 {{ reportCounts.cancelled }}</button>
+          </div>
+          <CaseResultList v-if="reportResults.length" :results="reportResults" :active-id="selected?.execution_case_id" row-test-id="report-preview-case-row" @select="selectCase" />
+          <p v-else class="state-message">当前筛选没有用例。</p>
         </section>
       </template>
       <div v-else class="section-empty">{{ loading ? '正在读取本次执行，请稍候…' : '选择一条执行记录查看实时日志和结果。' }}</div>

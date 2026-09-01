@@ -45,6 +45,35 @@ describe('ExecutionConsole', () => {
     expect(wrapper.text()).toContain('实时日志')
   })
 
+  it('does not present an empty execution count while a targeted record is still loading', () => {
+    const wrapper = mount(ExecutionConsole, {
+      props: { executions: [], active: null, events: [], connectionState: 'idle', loading: true },
+    })
+
+    expect(wrapper.text()).toContain('正在读取执行记录')
+    expect(wrapper.text()).not.toContain('共 0 条')
+    expect(wrapper.text()).not.toContain('还没有执行记录')
+  })
+
+  it('opens a failed report on the problem cases and allows returning to all results', async () => {
+    const wrapper = mount(ExecutionConsole, {
+      props: { executions: [execution], active: execution, events: [], connectionState: 'complete' },
+    })
+
+    await wrapper.get('[data-testid="execution-tab-report"]').trigger('click')
+    expect(wrapper.text()).toContain('已优先定位 1 个问题')
+    expect(wrapper.findAll('[data-testid="report-preview-case-row"]')).toHaveLength(1)
+    expect(wrapper.get('[data-testid="report-preview-case-row"]').text()).toContain('取消收藏')
+    expect(wrapper.get('[data-testid="execution-report-filter-problem"]').classes()).toContain('active')
+
+    await wrapper.get('[data-testid="execution-report-filter-skipped"]').trigger('click')
+    expect(wrapper.text()).toContain('当前筛选没有用例')
+    await wrapper.get('[data-testid="execution-report-filter-cancelled"]').trigger('click')
+    expect(wrapper.text()).toContain('当前筛选没有用例')
+    await wrapper.get('[data-testid="execution-report-filter-all"]').trigger('click')
+    expect(wrapper.findAll('[data-testid="report-preview-case-row"]')).toHaveLength(2)
+  })
+
   it('selects a case for evidence and emits the exact result for inspection', async () => {
     const wrapper = mount(ExecutionConsole, {
       props: { executions: [execution], active: execution, events: [], connectionState: 'complete' },

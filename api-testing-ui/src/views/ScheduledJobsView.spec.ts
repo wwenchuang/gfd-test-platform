@@ -697,6 +697,36 @@ describe('ScheduledJobsView', () => {
     expect(put).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ target_ids: ['baseline-1'] }))
   })
 
+  it('replaces a retired scheduled baseline with the active version of the same case', async () => {
+    const original = scheduledJobFixture({ target_type: 'baselines', target_ids: ['baseline-retired'] })
+    const replacement = scheduledJobFixture({ target_type: 'baselines', target_ids: ['baseline-current'] })
+    vi.spyOn(apiClient, 'get').mockImplementation(async url => {
+      const path = String(url)
+      if (path.startsWith('/api/api-testing/v1/scheduled-jobs')) return { data: { scheduled_jobs: [original] } }
+      if (path.startsWith('/api/api-testing/v1/baselines')) return { data: { baselines: [
+        baselineFixture({ id: 'baseline-retired', status: 'superseded', case_id: 'case-upgraded', case_version: 10 }),
+        baselineFixture({ id: 'baseline-current', status: 'active', case_id: 'case-upgraded', case_version: 11 }),
+      ] } }
+      if (path.startsWith('/api/api-testing/v1/cases')) return { data: { case_versions: [] } }
+      if (path.startsWith('/api/api-testing/v1/tasks')) return { data: { tasks: [] } }
+      return { data: {} }
+    })
+    const put = vi.spyOn(apiClient, 'put').mockResolvedValue({ data: { scheduled_job: replacement } })
+    const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/', component: ScheduledJobsView }] })
+    const wrapper = mount(ScheduledJobsView, { global: { plugins: [router] } })
+    await flushPromises()
+
+    await wrapper.get('[data-testid="scheduled-edit-job-1"]').trigger('click')
+    expect(wrapper.get('[data-testid="scheduled-missing-targets"]').text()).toContain('1 个已失效目标')
+    await wrapper.get('[data-testid="scheduled-replace-missing-targets"]').trigger('click')
+    expect(wrapper.text()).toContain('已将 1 个失效基线替换为当前有效版本')
+    expect(wrapper.text()).toContain('已选 1 项')
+
+    await wrapper.get('[data-testid="scheduled-save"]').trigger('click')
+    await flushPromises()
+    expect(put).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ target_ids: ['baseline-current'] }))
+  })
+
   it('shows target loading and read failures instead of claiming targets were deleted', async () => {
     mockScheduledJobAssets()
     const realGet = apiClient.get

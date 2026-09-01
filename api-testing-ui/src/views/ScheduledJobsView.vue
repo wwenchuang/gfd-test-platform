@@ -137,6 +137,27 @@ const pendingMissingTargetIds = computed(() => {
   const knownIds = new Set(targetOptions.value.map(option => option.id))
   return selectedTargetIds.value.filter(id => !knownIds.has(id))
 })
+const missingBaselineReplacements = computed(() => {
+  const replacements = new Map<string, string>()
+  if (form.targetType !== 'baselines') return replacements
+  for (const missingId of pendingMissingTargetIds.value) {
+    const retired = baselines.items.find(item => item.id === missingId)
+    if (!retired) continue
+    const current = availableBaselines.value
+      .filter(item => (
+        item.case_id === retired.case_id
+        && item.source_revision_id === retired.source_revision_id
+        && baselineOption(item).selectable
+      ))
+      .sort((left, right) => right.case_version - left.case_version)[0]
+    if (current) replacements.set(missingId, current.id)
+  }
+  return replacements
+})
+const canReplaceAllMissingBaselines = computed(() => (
+  Boolean(pendingMissingTargetIds.value.length)
+  && missingBaselineReplacements.value.size === pendingMissingTargetIds.value.length
+))
 const editorTitle = computed(() => editingJobId.value ? '编辑定时任务' : '新建定时任务')
 const saveLabel = computed(() => {
   if (scheduledJobs.saving) return '保存中'
@@ -392,6 +413,13 @@ function removeMissingTargets(): void {
   if (!missing.size) return
   selectedTargetIds.value = selectedTargetIds.value.filter(id => !missing.has(id))
   actionMessage.value = `已移除 ${missing.size} 个失效目标，请选择替代目标后保存。`
+}
+
+function replaceMissingBaselineTargets(): void {
+  if (!canReplaceAllMissingBaselines.value) return
+  const replacements = new Map(missingBaselineReplacements.value)
+  selectedTargetIds.value = [...new Set(selectedTargetIds.value.map(id => replacements.get(id) || id))]
+  actionMessage.value = `已将 ${replacements.size} 个失效基线替换为当前有效版本，请保存任务后恢复执行。`
 }
 
 function jobTargetSummary(job: ScheduledJob): string {
@@ -892,8 +920,10 @@ function weekDayName(value: number): string {
             <p v-if="pendingFixedCaseCount && !targetsLoading" class="compact-empty">已保留 {{ pendingFixedCaseCount }} 个原固定用例版本；它们未出现在最新用例列表中，不代表已删除。保存不会自动升级版本，执行时服务端仍会校验。</p>
             <p v-if="pendingMissingTargetIds.length" class="compact-empty" data-testid="scheduled-missing-targets">
               当前选择包含 {{ pendingMissingTargetIds.length }} 个已失效目标，不能继续执行。
+              <button v-if="canReplaceAllMissingBaselines" type="button" class="text-command" data-testid="scheduled-replace-missing-targets" @click="replaceMissingBaselineTargets">替换为当前有效版本</button>
               <button type="button" class="text-command" data-testid="scheduled-remove-missing-targets" @click="removeMissingTargets">移除失效目标</button>
-              后请在下方选择替代目标再保存。
+              <template v-if="canReplaceAllMissingBaselines">替换会沿用同一用例的最新已采纳版本。</template>
+              <template v-else>移除后请在下方选择替代目标再保存。</template>
             </p>
             <p v-if="targetsLoading" class="compact-empty" role="status">正在读取目标…</p>
             <p v-else-if="targetLoadError" class="compact-empty" role="alert">{{ targetLoadError }}</p>
