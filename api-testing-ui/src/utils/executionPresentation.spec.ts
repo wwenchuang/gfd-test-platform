@@ -11,6 +11,7 @@ import {
   formatDuration,
   formatPassRate,
   failureCategoryLabel,
+  hasLoadedCaseEvidence,
   redactSensitiveEvidence,
   statusLabel,
 } from './executionPresentation'
@@ -77,6 +78,14 @@ describe('execution presentation', () => {
     expect(statusLabel('SKIPPED')).toBe('已跳过')
     expect(formatDuration(1280)).toBe('1.28 秒')
     expect(failureCategoryLabel('business_response')).toBe('业务响应不符合预期')
+  })
+
+  it('does not treat an explicit loaded flag with empty evidence as completed', () => {
+    expect(hasLoadedCaseEvidence({
+      ...result('PASSED'),
+      evidence_loaded: true,
+      sanitized_result: {},
+    })).toBe(false)
   })
 
   it('classifies business response failures as product failures', () => {

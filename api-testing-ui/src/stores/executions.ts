@@ -426,7 +426,7 @@ function mergeLoadedCaseEvidence(summary: ExecutionView, previous?: ExecutionVie
   if (!previous || previous.id !== summary.id) return summary
   const loaded = new Map(
     previous.case_results
-      .filter(item => item.evidence_loaded === true)
+      .filter(item => hasLoadedCaseEvidence(item))
       .map(item => [item.execution_case_id, item]),
   )
   if (!loaded.size) return summary

@@ -121,4 +121,27 @@ describe('ExecutionDetailDrawer', () => {
     await wrapper.findAll('.case-result-list button')[1].trigger('click')
     expect(wrapper.emitted('loadEvidence')?.at(-1)?.[0]).toMatchObject({ execution_case_id: 'execution-case-2' })
   })
+
+  it('reloads the opened case when it becomes terminal without evidence', async () => {
+    const running: ExecutionView = {
+      ...execution,
+      state: 'RUNNING',
+      case_statuses: ['RUNNING'],
+      case_results: [{
+        ...execution.case_results[0], status: 'RUNNING', sanitized_result: {}, evidence_loaded: false,
+      }],
+    }
+    const wrapper = mount(ExecutionDetailDrawer, { props: { execution: running } })
+    await nextTick()
+    expect(wrapper.emitted('loadEvidence')).toHaveLength(1)
+
+    await wrapper.setProps({ execution: {
+      ...running,
+      state: 'DONE',
+      case_statuses: ['PASSED'],
+      case_results: [{ ...running.case_results[0], status: 'PASSED', evidence_loaded: false }],
+    } })
+
+    expect(wrapper.emitted('loadEvidence')).toHaveLength(2)
+  })
 })

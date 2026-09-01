@@ -73,6 +73,33 @@ describe('ExecutionConsole', () => {
     expect(wrapper.emitted('loadEvidence')?.at(-1)?.[0]).toMatchObject({ execution_case_id: 'case-2' })
   })
 
+  it('reloads selected evidence when an opened running case becomes terminal', async () => {
+    const running = {
+      ...execution,
+      state: 'RUNNING',
+      case_results: [{
+        ...execution.case_results[0], status: 'RUNNING', sanitized_result: {}, evidence_loaded: false,
+      }],
+    }
+    const wrapper = mount(ExecutionConsole, {
+      props: { executions: [running], active: running, events: [], connectionState: 'open' },
+    })
+
+    await wrapper.get('[data-testid="execution-tab-cases"]').trigger('click')
+    expect(wrapper.emitted('loadEvidence')).toHaveLength(1)
+
+    await wrapper.setProps({
+      active: {
+        ...running,
+        state: 'DONE',
+        case_results: [{ ...running.case_results[0], status: 'PASSED', evidence_loaded: false }],
+      },
+      connectionState: 'complete',
+    })
+
+    expect(wrapper.emitted('loadEvidence')).toHaveLength(2)
+  })
+
   it('keeps the selected case when background analysis refreshes the execution object', async () => {
     const wrapper = mount(ExecutionConsole, {
       props: { executions: [execution], active: execution, events: [], connectionState: 'complete' },

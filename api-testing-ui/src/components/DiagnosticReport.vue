@@ -34,7 +34,15 @@ watch(() => props.execution, execution => {
 watch(filteredResults, results => {
   if (!results.some(result => result.execution_case_id === selected.value?.execution_case_id)) selected.value = results[0] || null
 })
-watch(() => selected.value?.execution_case_id, () => {
+watch(() => {
+  const result = selected.value
+  return [
+    result?.execution_case_id,
+    result?.status,
+    result?.evidence_loaded,
+    Object.keys(result?.sanitized_result || {}).length,
+  ]
+}, () => {
   if (selected.value && !hasLoadedCaseEvidence(selected.value)) emit('loadEvidence', selected.value)
 }, { immediate: true })
 

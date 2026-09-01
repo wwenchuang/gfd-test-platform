@@ -1239,6 +1239,13 @@ def test_execution_detail_can_omit_evidence_and_load_one_case_on_demand(
         "lightweight-execution-list",
     )
 
+    queued_case_result = service.get_case_result(
+        submitted.id,
+        submitted.case_results[0]["execution_case_id"],
+    )
+    assert queued_case_result["sanitized_result"] == {}
+    assert queued_case_result["evidence_loaded"] is False
+
     assert service.run(submitted.id) is True
 
     summary = next(item for item in service.list(submitted.project_id, "admin") if item.id == submitted.id)

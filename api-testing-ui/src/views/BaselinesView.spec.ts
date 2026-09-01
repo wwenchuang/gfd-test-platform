@@ -631,7 +631,7 @@ describe('BaselinesView fixed project assets', () => {
 
     expect(get).toHaveBeenCalledWith('/api/api-testing/v1/baselines/assertion-audit?project_id=project-1')
     expect(wrapper.text()).toContain('自动回归需复核 3 条')
-    expect(wrapper.text()).toContain('当前环境可安全复核 1 条')
+    expect(wrapper.text()).toContain('当前环境可安全补断言 1 条')
     expect(wrapper.text()).toContain('可补精确断言 2 条')
     expect(wrapper.text()).toContain('HTTP 失败 0 条')
     expect(wrapper.text()).toContain('业务失败 0 条')
@@ -641,7 +641,7 @@ describe('BaselinesView fixed project assets', () => {
     expect(wrapper.text()).toContain('实际响应：HTTP 200 · $.code = 0')
     expect(wrapper.text()).toContain('一次性人工复核')
 
-    await buttonByText(wrapper, '选择可安全复核项').trigger('click')
+    await buttonByText(wrapper, '选择可安全补断言项').trigger('click')
     expect(useBaselinesStore().selectedIds).toEqual(['baseline-safe'])
 
     await wrapper.get('[data-testid="switch-environment"]').trigger('click')

@@ -30,7 +30,15 @@ watch(() => props.execution.case_results, results => {
 watch(() => props.initialCaseId, id => {
   if (id) active.value = props.execution.case_results.find(item => item.execution_case_id === id) || active.value
 })
-watch(() => active.value?.execution_case_id, async () => {
+watch(() => {
+  const result = active.value
+  return [
+    result?.execution_case_id,
+    result?.status,
+    result?.evidence_loaded,
+    Object.keys(result?.sanitized_result || {}).length,
+  ]
+}, async () => {
   if (active.value && !hasLoadedCaseEvidence(active.value)) emit('loadEvidence', active.value)
   await nextTick()
   if (evidencePane.value) evidencePane.value.scrollTop = 0

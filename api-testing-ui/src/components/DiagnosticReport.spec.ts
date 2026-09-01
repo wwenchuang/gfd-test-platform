@@ -83,4 +83,24 @@ describe('DiagnosticReport', () => {
     expect(wrapper.text()).toContain('选择用例后读取请求、响应、断言和执行轨迹')
     expect(wrapper.text()).not.toContain('未收到响应')
   })
+
+  it('reloads the selected case when it becomes terminal without evidence', async () => {
+    const running = {
+      ...execution,
+      state: 'RUNNING',
+      case_results: [{
+        ...execution.case_results[0], status: 'RUNNING', sanitized_result: {}, evidence_loaded: false,
+      }],
+    }
+    const wrapper = mount(DiagnosticReport, { props: { execution: running } })
+    expect(wrapper.emitted('loadEvidence')).toHaveLength(1)
+
+    await wrapper.setProps({ execution: {
+      ...running,
+      state: 'DONE',
+      case_results: [{ ...running.case_results[0], status: 'PASSED', evidence_loaded: false }],
+    } })
+
+    expect(wrapper.emitted('loadEvidence')).toHaveLength(2)
+  })
 })

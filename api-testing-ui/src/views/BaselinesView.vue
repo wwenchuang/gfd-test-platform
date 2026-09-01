@@ -244,8 +244,8 @@ function selectSafeAuditItems(): void {
   const safeIds = currentSafeAuditIds.value
   baselines.select(safeIds)
   localMessage.value = safeIds.length
-    ? `已选择 ${safeIds.length} 条可安全复核基线；执行前仍需确认目标环境和请求影响`
-    : '当前没有可安全批量复核的基线'
+    ? `已选择 ${safeIds.length} 条可安全补断言基线；执行前仍需确认目标环境和请求影响`
+    : '当前没有可安全补断言的整改项'
 }
 
 function toggleFiltered(): void {
@@ -609,7 +609,7 @@ function adoptionReasonLabel(reason: string): string {
           <ScanSearch :size="15" />{{ baselines.auditLoading ? '检查中' : '检查断言' }}
         </button>
         <button v-if="baselines.audit" class="secondary-command" type="button" :disabled="!currentSafeAuditIds.length" @click="selectSafeAuditItems">
-          <ShieldCheck :size="15" />选择可安全复核项
+          <ShieldCheck :size="15" />选择可安全补断言项
         </button>
       </div>
       <div v-if="baselines.auditLoading" class="baseline-audit-progress" role="status">正在批量核对有效基线和最近一次调试证据…</div>
@@ -623,7 +623,7 @@ function adoptionReasonLabel(reason: string): string {
         <span>业务失败 <b>{{ baselines.audit.summary.business_failure }}</b> 条</span>
         <span>建议补领域断言 <b>{{ baselines.audit.summary.domain_assertion_required }}</b> 条</span>
         <span>证据不足 <b>{{ baselines.audit.summary.evidence_missing }}</b> 条</span>
-        <span>当前环境可安全复核 <b>{{ currentSafeAuditIds.length }}</b> 条</span>
+        <span>当前环境可安全补断言 <b>{{ currentSafeAuditIds.length }}</b> 条</span>
         <small>“生成待复核版本”只补充证据明确的精确业务断言；新版本仍需在原环境重新调试并采纳后，才会替换活动基线。</small>
       </div>
       <p v-if="baselines.auditError" class="inline-error">{{ baselines.auditError }}</p>

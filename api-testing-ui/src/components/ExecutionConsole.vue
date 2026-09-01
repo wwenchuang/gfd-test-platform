@@ -3,7 +3,7 @@ import { computed, ref, watch } from 'vue'
 import { RotateCw, Search, Square, Trash2 } from 'lucide-vue-next'
 
 import type { ExecutionCaseResult, ExecutionConnectionState, ExecutionEventView, ExecutionView } from '../api/contracts'
-import { executionConclusion, executionDisplayName, executionFailureBuckets, executionMetrics, executionScopeLabel, executionSourceScope, executionTypeLabel } from '../utils/executionPresentation'
+import { executionConclusion, executionDisplayName, executionFailureBuckets, executionMetrics, executionScopeLabel, executionSourceScope, executionTypeLabel, hasLoadedCaseEvidence } from '../utils/executionPresentation'
 import CaseEvidence from './CaseEvidence.vue'
 import CaseResultList from './CaseResultList.vue'
 import ExecutionLog from './ExecutionLog.vue'
@@ -88,6 +88,23 @@ watch(() => props.active?.id, () => {
 watch(() => props.active?.case_results, results => {
   if (!results) return
   selected.value = results.find(item => item.execution_case_id === selected.value?.execution_case_id) || results[0] || null
+})
+watch(() => {
+  const result = selected.value
+  return [
+    result?.execution_case_id,
+    result?.status,
+    result?.evidence_loaded,
+    Object.keys(result?.sanitized_result || {}).length,
+  ]
+}, () => {
+  const result = selected.value
+  if (
+    tab.value === 'cases'
+    && result
+    && terminalStates.has(result.status)
+    && !hasLoadedCaseEvidence(result)
+  ) emit('loadEvidence', result)
 })
 watch(() => props.executions.map(item => item.id).join('|'), () => {
   const visible = new Set(props.executions.map(item => item.id))

@@ -49,9 +49,10 @@ export function statusLabel(status: string): string {
 }
 
 export function hasLoadedCaseEvidence(result: ExecutionCaseResult): boolean {
-  if (result.evidence_loaded === true) return true
+  const hasEvidence = Boolean(result.sanitized_result && Object.keys(result.sanitized_result).length)
+  if (result.evidence_loaded === true) return hasEvidence
   if (result.evidence_loaded === false) return false
-  return Boolean(result.sanitized_result && Object.keys(result.sanitized_result).length)
+  return hasEvidence
 }
 
 export function formatCompactEvidenceValue(value: unknown, limit = 600): string {

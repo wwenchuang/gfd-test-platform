@@ -1163,7 +1163,9 @@ class ExecutionService:
                         if include_evidence
                         else {}
                     ),
-                    "evidence_loaded": include_evidence,
+                    "evidence_loaded": bool(
+                        include_evidence and item.sanitized_result
+                    ),
                     "failure_analysis": (
                         {
                             "category": failure_analyses[item.id].category,
