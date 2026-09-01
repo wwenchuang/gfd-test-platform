@@ -74,7 +74,12 @@ async function rerun(execution: ExecutionView): Promise<void> {
     targetName: executionDisplayName(execution),
     caseCount: execution.case_results.length || execution.summary.total,
   })) return
-  await executions.rerunExecution(execution)
+  const rerunExecution = await executions.rerunExecution(execution)
+  if (!rerunExecution) return
+  await router.push({
+    name: 'runs',
+    query: { ...route.query, executionId: rerunExecution.id },
+  })
 }
 
 async function deleteExecution(executionId: string): Promise<void> {

@@ -121,6 +121,45 @@ describe('RunsView', () => {
     expect(confirm).not.toHaveBeenCalledWith(expect.stringContaining(debugExecution.id))
   })
 
+  it('updates the URL to the new execution after rerunning a record', async () => {
+    routeState.query = { executionId: debugExecution.id }
+    const context = useContextStore()
+    const executions = useExecutionsStore()
+    vi.spyOn(context, 'loadSavedContext').mockResolvedValue()
+    vi.spyOn(context, 'loadOptions').mockResolvedValue()
+    vi.spyOn(executions, 'load').mockResolvedValue()
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    vi.spyOn(executions, 'rerunExecution').mockResolvedValue({
+      ...debugExecution,
+      id: 'debug-execution-rerun',
+      state: 'QUEUED',
+    })
+    executions.executions = [debugExecution]
+    executions.active = debugExecution
+
+    const wrapper = mount(RunsView, {
+      global: {
+        stubs: {
+          ExecutionConsole: {
+            props: ['active'],
+            emits: ['rerun'],
+            template: '<button data-testid="rerun" @click="$emit(\'rerun\', active)">重新执行</button>',
+          },
+          ExecutionDetailDrawer: true,
+        },
+      },
+    })
+    await flushPromises()
+
+    await wrapper.get('[data-testid="rerun"]').trigger('click')
+    await flushPromises()
+
+    expect(routerState.push).toHaveBeenLastCalledWith({
+      name: 'runs',
+      query: { executionId: 'debug-execution-rerun' },
+    })
+  })
+
   it('opens the newest matching history record when filtering by a stable interface key', async () => {
     routeState.query = { endpointId: 'endpoint-current', endpointKey: 'stable-favorites-list' }
     const context = useContextStore()
