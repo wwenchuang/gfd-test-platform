@@ -1525,6 +1525,99 @@ def test_historical_superseded_baseline_remains_manageable_until_archived(
     assert baseline.id not in {item.id for item in active_after_archive}
 
 
+def test_bulk_baseline_scope_repair_previews_and_fills_only_missing_identity(
+    case_service, project_context, session_factory
+):
+    endpoint = project_context["endpoints"]["favoriteList"]
+    draft = case_service.create_draft(
+        endpoint.id, valid_list_case(endpoint), "manual", "admin"
+    )
+    evidence_id = _create_execution_evidence(
+        session_factory, project_context, draft
+    )
+    baseline = case_service.adopt_baseline(draft.id, evidence_id, "admin")
+    with session_factory.begin() as session:
+        version = session.get(ApiCaseVersion, draft.id)
+        original_request = copy.deepcopy(version.request_template["request"])
+        template = copy.deepcopy(version.request_template)
+        template["app_package"] = ""
+        template["app_name"] = ""
+        template["business"] = ""
+        version.request_template = template
+
+    preview = case_service.preview_baseline_scope_repair(
+        [baseline.id], "com.kfb.model", "home", "admin"
+    )
+
+    assert preview["total"] == 1
+    assert preview["eligible"] == 1
+    assert preview["unchanged"] == 0
+    assert preview["conflicts"] == 0
+    assert preview["items"][0]["status"] == "eligible"
+    assert preview["items"][0]["before"] == {
+        "app_package": "",
+        "app_name": "",
+        "business": "",
+    }
+    assert preview["target"] == {
+        "app_package": "com.kfb.model",
+        "app_name": "智小白3D",
+        "business": "home",
+        "business_name": "家用",
+    }
+
+    applied = case_service.repair_baseline_scope(
+        [baseline.id], "com.kfb.model", "home", "admin"
+    )
+
+    assert applied["updated"] == 1
+    current = case_service.get_version(draft.id)
+    assert current.app_package == "com.kfb.model"
+    assert current.app_name == "智小白3D"
+    assert current.business == "home"
+    assert dict(current.request) == original_request
+    visible = case_service.list_active_baselines(
+        project_context["project"].id, "admin"
+    )
+    repaired = next(item for item in visible if item.id == baseline.id)
+    assert repaired.case_version_id == draft.id
+    assert repaired.app_package == "com.kfb.model"
+    assert repaired.business == "home"
+
+
+def test_bulk_baseline_scope_repair_is_idempotent_and_rejects_conflicts(
+    case_service, project_context, session_factory
+):
+    from task_server.api_testing.services.case_service import BaselineGateError
+
+    endpoint = project_context["endpoints"]["favoriteList"]
+    draft = case_service.create_draft(
+        endpoint.id, valid_list_case(endpoint), "manual", "admin"
+    )
+    evidence_id = _create_execution_evidence(
+        session_factory, project_context, draft
+    )
+    baseline = case_service.adopt_baseline(draft.id, evidence_id, "admin")
+
+    exact = case_service.preview_baseline_scope_repair(
+        [baseline.id], "com.kfb.model", "home", "admin"
+    )
+    conflict = case_service.preview_baseline_scope_repair(
+        [baseline.id], "com.kfb.model", "shared", "admin"
+    )
+
+    assert exact["unchanged"] == 1
+    assert exact["eligible"] == 0
+    assert conflict["conflicts"] == 1
+    assert conflict["items"][0]["status"] == "conflict"
+    with pytest.raises(BaselineGateError, match="已有不同归属"):
+        case_service.repair_baseline_scope(
+            [baseline.id], "com.kfb.model", "shared", "admin"
+        )
+    current = case_service.get_version(draft.id)
+    assert current.business == "home"
+
+
 def test_case_and_baseline_views_do_not_expose_execution_payloads(
     case_service, project_context, session_factory
 ):

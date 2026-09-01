@@ -41,7 +41,13 @@ from .services.baseline_assertion_audit_service import (
     BaselineAssertionAuditService,
     BaselineAssertionUpgradeError,
 )
-from .services.case_service import BaselineGateError, CaseNotFoundError, CaseService, EndpointNotFoundError
+from .services.case_service import (
+    BaselineGateError,
+    BaselineScopeRepairError,
+    CaseNotFoundError,
+    CaseService,
+    EndpointNotFoundError,
+)
 from .services.environment_service import EnvironmentInputError, EnvironmentNotFoundError, EnvironmentService
 from .services.execution_service import (
     BaselineRequiredError,
@@ -712,6 +718,28 @@ def _post(segments, payload, actor, settings, *, session_digest=None):
         _scope_case_version(factory, _uuid(segments[1]), actor)
         _scope_execution_case(factory, _uuid(payload.get("debug_execution_case_id")), actor)
         return {"baseline": _view(CaseService(factory).adopt_baseline(_uuid(segments[1]), _uuid(payload.get("debug_execution_case_id")), actor))}
+    if segments == ("baselines", "scope-repair", "preview"):
+        return {
+            "preview": _view(
+                CaseService(factory).preview_baseline_scope_repair(
+                    _uuid_array(payload.get("baseline_ids"), "baseline_ids"),
+                    _string(payload.get("app_package"), "app_package", 300),
+                    _string(payload.get("business"), "business", 80),
+                    actor,
+                )
+            )
+        }
+    if segments == ("baselines", "scope-repair"):
+        return {
+            "result": _view(
+                CaseService(factory).repair_baseline_scope(
+                    _uuid_array(payload.get("baseline_ids"), "baseline_ids"),
+                    _string(payload.get("app_package"), "app_package", 300),
+                    _string(payload.get("business"), "business", 80),
+                    actor,
+                )
+            )
+        }
     if segments == ("baselines", "bulk-group"):
         return {
             "baselines": [
@@ -1447,6 +1475,8 @@ def _domain_error(error):
             "test_scope_unavailable",
             str(error),
         )
+    if isinstance(error, BaselineScopeRepairError):
+        return ApiHttpError(409, "baseline_scope_conflict", str(error))
     if isinstance(error, (ExecutionConflictError, BaselineGateError, SourcePreviewExpiredError, SourcePreviewStateError, StaleSourcePreviewError)):
         return ApiHttpError(409, "conflict", "Resource state conflicts with this request")
     if isinstance(error, ProviderCredentialNotFoundError):

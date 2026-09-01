@@ -534,6 +534,31 @@ export interface ApiBaselineCase {
   adopted_at: string
 }
 
+export interface BaselineScopeRepairItem {
+  baseline_id: string
+  case_version_id: string
+  case_name: string
+  group_name: string
+  status: 'eligible' | 'unchanged' | 'conflict' | 'updated'
+  reason: string
+  before: { app_package: string; app_name: string; business: string }
+}
+
+export interface BaselineScopeRepairResult {
+  total: number
+  eligible: number
+  unchanged: number
+  conflicts: number
+  updated?: number
+  target: {
+    app_package: string
+    app_name: string
+    business: string
+    business_name: string
+  }
+  items: BaselineScopeRepairItem[]
+}
+
 export type BaselineAssertionAuditStatus =
   | 'verified'
   | 'upgrade_available'

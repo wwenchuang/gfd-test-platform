@@ -11,7 +11,12 @@ import { useExecutionsStore } from '../stores/executions'
 import { useTasksStore } from '../stores/tasks'
 import { hasExplicitOneTimeMarker } from '../utils/caseClassification'
 import { confirmApiExecution } from '../utils/executionConfirmation'
-import { applicationBusinessLabel, applicationBusinessSelection } from '../utils/testApplications'
+import {
+  activeBusinessLinesFor,
+  applicationBusinessLabel,
+  applicationBusinessSelection,
+  useTestApplications,
+} from '../utils/testApplications'
 
 const context = useContextStore()
 const baselines = useBaselinesStore()
@@ -19,6 +24,7 @@ const executions = useExecutionsStore()
 const tasks = useTasksStore()
 const router = useRouter()
 const route = useRoute()
+const testApplications = useTestApplications()
 const search = ref(typeof route.query.search === 'string' ? route.query.search : '')
 const group = ref('all')
 const baselineType = ref<'all' | 'regular' | 'one-time'>('all')
@@ -28,6 +34,8 @@ const originFilter = ref('all')
 const auditFilter = ref<'all' | 'needs-review' | BaselineAssertionAuditStatus>('all')
 const groupName = ref('')
 const moveTargetGroup = ref('')
+const scopeAppPackage = ref('')
+const scopeBusiness = ref('')
 const localError = ref('')
 const localMessage = ref('')
 const baselinePage = ref(1)
@@ -37,6 +45,10 @@ const BASELINE_PAGE_SIZE = 25
 const projectReady = computed(() => Boolean(context.projectId)
   && !initializing.value && !context.loading && !context.optionsLoading && !baselines.loading)
 const activeBaselineCount = computed(() => baselines.items.filter(item => item.status === 'active').length)
+const scopeApplications = computed(() => testApplications.active.value.filter(
+  item => activeBusinessLinesFor(item.package).length,
+))
+const scopeBusinessLines = computed(() => activeBusinessLinesFor(scopeAppPackage.value))
 const projectName = computed(() => context.projects.find(item => item.id === context.projectId)?.name || '未选择项目')
 const selectedSourceName = computed(() => {
   const source = context.sourceRevisions.find(item => item.id === context.sourceRevisionId)
@@ -153,6 +165,15 @@ const currentSafeAuditIds = computed(() => {
 watch([search, group, baselineType, methodFilter, priorityFilter, originFilter, auditFilter], () => {
   baselinePage.value = 1
 })
+watch(scopeAppPackage, () => {
+  if (!scopeBusinessLines.value.some(item => item.id === scopeBusiness.value)) {
+    scopeBusiness.value = scopeBusinessLines.value.length === 1 ? scopeBusinessLines.value[0].id : ''
+  }
+  baselines.scopeRepairPreview = null
+})
+watch(scopeBusiness, () => {
+  baselines.scopeRepairPreview = null
+})
 watch(baselinePageCount, pageCount => {
   if (baselinePage.value > pageCount) baselinePage.value = pageCount
 })
@@ -162,6 +183,10 @@ onMounted(async () => {
     await Promise.all([context.loadSavedContext(), context.loadOptions()])
     if (context.projectId) await tasks.restore(context.projectId)
     await loadBaselines()
+    if (scopeApplications.value.length === 1) {
+      scopeAppPackage.value = scopeApplications.value[0].package
+      if (scopeBusinessLines.value.length === 1) scopeBusiness.value = scopeBusinessLines.value[0].id
+    }
   } finally {
     initializing.value = false
   }
@@ -389,6 +414,42 @@ async function deleteCurrentGroup(): Promise<void> {
     groupName.value = ''
   } catch (error) {
     localError.value = error instanceof Error ? error.message : '基线分组删除失败'
+  }
+}
+
+async function previewScopeRepair(): Promise<void> {
+  localError.value = ''
+  localMessage.value = ''
+  if (!baselines.selectedIds.length) {
+    localError.value = '请先选择要补归属的基线'
+    return
+  }
+  if (!scopeAppPackage.value || !scopeBusiness.value) {
+    localError.value = '请选择平台已配置的应用和所属业务'
+    return
+  }
+  try {
+    await baselines.previewScopeRepair(scopeAppPackage.value, scopeBusiness.value)
+  } catch (error) {
+    localError.value = error instanceof Error ? error.message : '批量归属预览失败'
+  }
+}
+
+async function applyScopeRepair(): Promise<void> {
+  localError.value = ''
+  localMessage.value = ''
+  const preview = baselines.scopeRepairPreview
+  if (!preview || preview.conflicts || !preview.eligible) {
+    localError.value = preview?.conflicts
+      ? '预览中存在归属冲突，请缩小选择范围后重新预览'
+      : '当前预览没有可补齐的基线'
+    return
+  }
+  try {
+    const result = await baselines.applyScopeRepair(scopeAppPackage.value, scopeBusiness.value)
+    localMessage.value = `已补齐 ${result.updated || 0} 条基线的应用和业务归属`
+  } catch (error) {
+    localError.value = error instanceof Error ? error.message : '批量归属补齐失败'
   }
 }
 
@@ -637,6 +698,42 @@ function adoptionReasonLabel(reason: string): string {
             <button class="secondary-command danger" type="button" :disabled="!canManageCurrentGroup" @click="deleteCurrentGroup">
               删除分组
             </button>
+          </div>
+        </div>
+        <div class="baseline-group-editor baseline-scope-editor" aria-label="批量补应用和业务归属">
+          <div>
+            <strong>批量补归属</strong>
+            <span>先选择基线并预览；只填空缺应用/业务，不改请求、断言、版本号或调试证据。已有不同归属会阻断整批。</span>
+          </div>
+          <div class="baseline-group-controls">
+            <label>
+              <span>平台应用</span>
+              <select v-model="scopeAppPackage" data-testid="baseline-scope-application">
+                <option value="">选择已配置应用</option>
+                <option v-for="item in scopeApplications" :key="item.package" :value="item.package">{{ item.name }}</option>
+              </select>
+            </label>
+            <label>
+              <span>所属业务</span>
+              <select v-model="scopeBusiness" data-testid="baseline-scope-business" :disabled="!scopeAppPackage">
+                <option value="">选择已配置业务</option>
+                <option v-for="item in scopeBusinessLines" :key="item.id" :value="item.id">{{ item.name }}</option>
+              </select>
+            </label>
+          </div>
+          <div class="baseline-group-actions">
+            <button class="secondary-command" type="button" data-testid="baseline-scope-preview" :disabled="baselines.scopeRepairLoading || !baselines.selectedIds.length || !scopeAppPackage || !scopeBusiness" @click="previewScopeRepair">
+              {{ baselines.scopeRepairLoading ? '处理中' : '预览补齐' }}
+            </button>
+            <button class="primary-command" type="button" data-testid="baseline-scope-apply" :disabled="baselines.scopeRepairLoading || !baselines.scopeRepairPreview?.eligible || Boolean(baselines.scopeRepairPreview?.conflicts)" @click="applyScopeRepair">
+              应用本批
+            </button>
+          </div>
+          <div v-if="baselines.scopeRepairPreview" class="baseline-scope-preview" data-testid="baseline-scope-preview-result">
+            <strong>{{ baselines.scopeRepairPreview.target.app_name }} · {{ baselines.scopeRepairPreview.target.business_name }}</strong>
+            <span>共 {{ baselines.scopeRepairPreview.total }} 条 · 可补齐 {{ baselines.scopeRepairPreview.eligible }} 条 · 已完整 {{ baselines.scopeRepairPreview.unchanged }} 条 · 冲突 {{ baselines.scopeRepairPreview.conflicts }} 条</span>
+            <small v-if="baselines.scopeRepairPreview.conflicts">存在冲突时不会修改任何一条；请按分组缩小选择范围。</small>
+            <small v-else>确认后仅补空缺归属；一次性用例仍只供人工执行，不会进入定时回归。</small>
           </div>
         </div>
 

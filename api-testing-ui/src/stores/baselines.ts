@@ -5,6 +5,7 @@ import type {
   ApiBaselineCase,
   BaselineAssertionAuditResponse,
   BaselineAssertionUpgradeResponse,
+  BaselineScopeRepairResult,
   CaseVersion,
 } from '../api/contracts'
 
@@ -26,6 +27,8 @@ export const useBaselinesStore = defineStore('api-baselines', {
     auditLoading: false,
     auditError: '',
     creatingUpgradeBaselineId: '',
+    scopeRepairPreview: null as BaselineScopeRepairResult | null,
+    scopeRepairLoading: false,
   }),
   getters: {
     groups(state): string[] {
@@ -95,16 +98,56 @@ export const useBaselinesStore = defineStore('api-baselines', {
       }
     },
     toggle(id: string): void {
+      this.scopeRepairPreview = null
       this.selectedIds = this.selectedIds.includes(id)
         ? this.selectedIds.filter(item => item !== id)
         : [...this.selectedIds, id]
     },
     select(ids: string[]): void {
+      this.scopeRepairPreview = null
       const valid = new Set(this.items.map(item => item.id))
       this.selectedIds = [...new Set(ids.filter(item => valid.has(item)))]
     },
     clearSelection(): void {
+      this.scopeRepairPreview = null
       this.selectedIds = []
+    },
+    async previewScopeRepair(appPackage: string, business: string): Promise<BaselineScopeRepairResult> {
+      this.scopeRepairLoading = true
+      this.error = ''
+      try {
+        const response = await apiClient.post<{ preview: BaselineScopeRepairResult }>(
+          '/api/api-testing/v1/baselines/scope-repair/preview',
+          { baseline_ids: this.selectedIds, app_package: appPackage, business },
+        )
+        this.scopeRepairPreview = response.data.preview
+        return response.data.preview
+      } finally {
+        this.scopeRepairLoading = false
+      }
+    },
+    async applyScopeRepair(appPackage: string, business: string): Promise<BaselineScopeRepairResult> {
+      this.scopeRepairLoading = true
+      this.error = ''
+      try {
+        const response = await apiClient.post<{ result: BaselineScopeRepairResult }>(
+          '/api/api-testing/v1/baselines/scope-repair',
+          { baseline_ids: this.selectedIds, app_package: appPackage, business },
+        )
+        const result = response.data.result
+        const updated = new Set(result.items.filter(item => item.status === 'updated').map(item => item.baseline_id))
+        this.items = this.items.map(item => updated.has(item.id) ? {
+          ...item,
+          app_package: result.target.app_package,
+          app_name: result.target.app_name,
+          business: result.target.business,
+        } : item)
+        this.scopeRepairPreview = null
+        this.clearAudit()
+        return result
+      } finally {
+        this.scopeRepairLoading = false
+      }
     },
     async updateGroup(ids: string[], groupName: string): Promise<void> {
       const baselineIds = [...new Set(ids)]

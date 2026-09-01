@@ -142,6 +142,19 @@ def test_execution_scope_conflicts_keep_actionable_chinese_guidance():
     assert unavailable.message == "所选目标的应用已停用，请重新选择"
 
 
+def test_baseline_scope_repair_conflict_keeps_actionable_chinese_guidance():
+    from task_server.api_testing.services.case_service import (
+        BaselineScopeRepairError,
+    )
+
+    error = http._domain_error(
+        BaselineScopeRepairError("所选基线已有不同归属，请缩小范围后重新预览")
+    )
+
+    assert (error.status, error.code) == (409, "baseline_scope_conflict")
+    assert error.message == "所选基线已有不同归属，请缩小范围后重新预览"
+
+
 class HttpResponse:
     def __init__(self, response):
         self.status = response.status
@@ -1565,6 +1578,63 @@ def test_api_task_run_executes_only_adopted_baselines_in_saved_selection(
     assert response.body["data"]["task"]["latest_execution_id"] == response.body[
         "data"
     ]["execution"]["id"]
+
+
+def test_baseline_scope_repair_preview_and_apply_use_configured_identity(
+    http_client, api_context, owned_records
+):
+    with api_context["factory"].begin() as session:
+        version = session.get(ApiCaseVersion, owned_records["version"].id)
+        template = dict(version.request_template)
+        template.update({"app_package": "", "app_name": "", "business": ""})
+        version.request_template = template
+        debug_case = ApiExecutionCase(
+            execution_id=owned_records["execution"].id,
+            case_version_id=version.id,
+            endpoint_id=owned_records["endpoint"].id,
+            environment_revision_id=owned_records["environment_revision"].id,
+            ordinal=0,
+            status="PASSED",
+            **_audit("owner-a"),
+        )
+        session.add(debug_case)
+        session.flush()
+        baseline = ApiBaseline(
+            project_id=owned_records["project"].id,
+            case_id=owned_records["case"].id,
+            case_version_id=version.id,
+            environment_revision_id=owned_records["environment_revision"].id,
+            debug_execution_case_id=debug_case.id,
+            group_name="待整改",
+            status="active",
+            **_audit("owner-a"),
+        )
+        session.add(baseline)
+        session.flush()
+        baseline_id = baseline.id
+
+    payload = {
+        "baseline_ids": [baseline_id],
+        "app_package": "com.kfb.model",
+        "business": "home",
+    }
+    preview = http_client.post(
+        "/api/api-testing/v1/baselines/scope-repair/preview", payload, _auth()
+    )
+    applied = http_client.post(
+        "/api/api-testing/v1/baselines/scope-repair", payload, _auth()
+    )
+
+    assert preview.status == 200
+    assert preview.body["data"]["preview"]["eligible"] == 1
+    assert preview.body["data"]["preview"]["target"]["business_name"] == "家用"
+    assert applied.status == 200
+    assert applied.body["data"]["result"]["updated"] == 1
+    with api_context["factory"]() as session:
+        repaired = session.get(ApiCaseVersion, owned_records["version"].id)
+        assert repaired.request_template["app_package"] == "com.kfb.model"
+        assert repaired.request_template["app_name"] == "智小白3D"
+        assert repaired.request_template["business"] == "home"
 
 
 def test_selected_baseline_regression_does_not_use_task_scope(

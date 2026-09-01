@@ -271,6 +271,63 @@ describe('BaselinesView fixed project assets', () => {
     expect(wrapper.text()).toContain('已将 1 条基线移动到“登录鉴权”')
   })
 
+  it('previews and applies missing application and business ownership in one batch', async () => {
+    vi.spyOn(apiClient, 'get').mockResolvedValue({ data: { baselines: [
+      baselineFixture({
+        id: 'baseline-missing', app_package: '', app_name: '', business: '',
+        group_name: '待整改', case_name: '待补归属用例',
+      }),
+    ] } })
+    const preview = {
+      total: 1, eligible: 1, unchanged: 0, conflicts: 0,
+      target: {
+        app_package: 'com.example.school', app_name: '校园应用',
+        business: 'shared', business_name: '校园共享',
+      },
+      items: [{
+        baseline_id: 'baseline-missing', case_version_id: 'version-1',
+        case_name: '待补归属用例', group_name: '待整改', status: 'eligible',
+        reason: '只补齐空缺归属，请求、断言和调试证据保持不变',
+        before: { app_package: '', app_name: '', business: '' },
+      }],
+    }
+    const post = vi.spyOn(apiClient, 'post')
+      .mockResolvedValueOnce({ data: { preview } })
+      .mockResolvedValueOnce({ data: {
+        result: {
+          ...preview, eligible: 1, updated: 1,
+          items: preview.items.map(item => ({ ...item, status: 'updated' })),
+        },
+      } })
+
+    const wrapper = mountWithContext()
+    await flushPromises()
+    await wrapper.get('input[type="checkbox"]').setValue(true)
+    await wrapper.get('[data-testid="baseline-scope-application"]').setValue('com.example.school')
+    await wrapper.get('[data-testid="baseline-scope-business"]').setValue('shared')
+    await wrapper.get('[data-testid="baseline-scope-preview"]').trigger('click')
+    await flushPromises()
+
+    expect(post).toHaveBeenNthCalledWith(1, '/api/api-testing/v1/baselines/scope-repair/preview', {
+      baseline_ids: ['baseline-missing'],
+      app_package: 'com.example.school',
+      business: 'shared',
+    })
+    expect(wrapper.get('[data-testid="baseline-scope-preview-result"]').text()).toContain('可补齐 1 条')
+    expect(wrapper.get('[data-testid="baseline-scope-preview-result"]').text()).toContain('冲突 0 条')
+
+    await wrapper.get('[data-testid="baseline-scope-apply"]').trigger('click')
+    await flushPromises()
+
+    expect(post).toHaveBeenNthCalledWith(2, '/api/api-testing/v1/baselines/scope-repair', {
+      baseline_ids: ['baseline-missing'],
+      app_package: 'com.example.school',
+      business: 'shared',
+    })
+    expect(wrapper.text()).toContain('已补齐 1 条基线的应用和业务归属')
+    expect(wrapper.text()).toContain('校园应用 · 校园共享')
+  })
+
   it('saves selected baselines as a regression task without saving workspace context', async () => {
     vi.spyOn(apiClient, 'get').mockResolvedValue({ data: { baselines: [
       baselineFixture(),

@@ -2,7 +2,12 @@
 
 import copy
 
-from task_server.services.business_line_service import resolve_test_application
+from task_server.services.business_line_service import (
+    business_line_id,
+    business_line_name,
+    configured_test_application,
+    resolve_test_application,
+)
 
 from .. import access
 
@@ -29,6 +34,10 @@ class CaseNotFoundError(LookupError):
 
 
 class BaselineGateError(ValueError):
+    pass
+
+
+class BaselineScopeRepairError(BaselineGateError):
     pass
 
 
@@ -308,6 +317,54 @@ class CaseService:
             repository.flush()
             return tuple(views)
 
+    def preview_baseline_scope_repair(
+        self, baseline_ids, app_package, business, actor_id
+    ):
+        access.require_permission(actor_id, "api.baseline")
+        target = self._baseline_scope_target(app_package, business)
+        with self.session_factory() as session:
+            return self._baseline_scope_repair_result(
+                CaseRepository(session), baseline_ids, target, actor_id
+            )
+
+    def repair_baseline_scope(
+        self, baseline_ids, app_package, business, actor_id
+    ):
+        access.require_permission(actor_id, "api.baseline")
+        target = self._baseline_scope_target(app_package, business)
+        with self.session_factory.begin() as session:
+            repository = CaseRepository(session)
+            result = self._baseline_scope_repair_result(
+                repository, baseline_ids, target, actor_id, for_update=True
+            )
+            if result["conflicts"]:
+                raise BaselineScopeRepairError(
+                    "所选基线已有不同归属，请缩小范围后重新预览"
+                )
+            updated = 0
+            for item in result["items"]:
+                if item["status"] != "eligible":
+                    continue
+                baseline = repository.get_baseline_for_update(item["baseline_id"])
+                version = repository.get_version_for_update(baseline.case_version_id)
+                template = copy.deepcopy(dict(version.request_template or {}))
+                template.update(
+                    {
+                        "app_package": target["app_package"],
+                        "app_name": target["app_name"],
+                        "business": target["business"],
+                    }
+                )
+                version.request_template = template
+                version.updated_by = actor_id
+                baseline.updated_by = actor_id
+                item["status"] = "updated"
+                item["reason"] = "已补齐缺失的应用和业务归属"
+                updated += 1
+            repository.flush()
+            result["updated"] = updated
+            return result
+
     def archive_baseline(self, baseline_id, actor_id):
         access.require_permission(actor_id, "api.baseline")
         with self.session_factory.begin() as session:
@@ -331,6 +388,113 @@ class CaseService:
         if source is None:
             raise EndpointNotFoundError("API endpoint source was not found")
         return source.project_id
+
+    @staticmethod
+    def _baseline_scope_target(app_package, business):
+        package = str(app_package or "").strip()
+        application = configured_test_application(package, include_disabled=False)
+        if not application or not application.get("enabled"):
+            raise BaselineScopeRepairError("目标应用未配置、已移除或已停用，请重新选择")
+        try:
+            business_id = business_line_id(
+                business, app_package=package, require_active=True
+            )
+        except ValueError as exc:
+            raise BaselineScopeRepairError(f"目标业务不可用：{exc}") from exc
+        return {
+            "app_package": package,
+            "app_name": str(application["name"]),
+            "business": business_id,
+            "business_name": business_line_name(
+                business_id, app_package=package
+            ),
+        }
+
+    @staticmethod
+    def _baseline_scope_repair_result(
+        repository, baseline_ids, target, actor_id, *, for_update=False
+    ):
+        ids = list(dict.fromkeys(str(item or "").strip() for item in baseline_ids))
+        if not ids or any(not item for item in ids):
+            raise ValueError("baseline_ids is required")
+        if len(ids) > 500:
+            raise ValueError("baseline scope repair is limited to 500 items")
+        items = []
+        counts = {"eligible": 0, "unchanged": 0, "conflict": 0}
+        for baseline_id in ids:
+            baseline = (
+                repository.get_baseline_for_update(baseline_id)
+                if for_update
+                else repository.get_baseline(baseline_id)
+            )
+            if (
+                baseline is None
+                or not access.resource_allowed(repository.session, baseline, actor_id)
+                or baseline.status == "archived"
+            ):
+                raise CaseNotFoundError("API baseline was not found")
+            version = (
+                repository.get_version_for_update(baseline.case_version_id)
+                if for_update
+                else repository.get_version(baseline.case_version_id)
+            )
+            case = repository.get_case(baseline.case_id)
+            if version is None or case is None:
+                raise CaseNotFoundError("API baseline case version was not found")
+            template = dict(version.request_template or {})
+            before = {
+                "app_package": str(template.get("app_package") or "").strip(),
+                "app_name": str(template.get("app_name") or "").strip(),
+                "business": str(template.get("business") or "").strip(),
+            }
+            conflicts = []
+            if baseline.status != "active":
+                conflicts.append("仅允许补齐当前有效基线")
+            if before["app_package"] and before["app_package"] != target["app_package"]:
+                conflicts.append("已有应用与目标应用不同")
+            if before["app_name"] and before["app_name"] != target["app_name"]:
+                conflicts.append("已有应用名称与平台配置不同")
+            if before["business"]:
+                current_business = business_line_id(
+                    before["business"],
+                    app_package=before["app_package"] or target["app_package"],
+                )
+                if current_business != target["business"]:
+                    conflicts.append("已有业务与目标业务不同")
+            exact = before == {
+                "app_package": target["app_package"],
+                "app_name": target["app_name"],
+                "business": target["business"],
+            }
+            if conflicts:
+                status = "conflict"
+                reason = "；".join(conflicts)
+            elif exact:
+                status = "unchanged"
+                reason = "应用和业务归属已经完整，无需修改"
+            else:
+                status = "eligible"
+                reason = "只补齐空缺归属，请求、断言和调试证据保持不变"
+            counts[status] += 1
+            items.append(
+                {
+                    "baseline_id": baseline.id,
+                    "case_version_id": version.id,
+                    "case_name": str(template.get("name") or case.name),
+                    "group_name": baseline.group_name or DEFAULT_BASELINE_GROUP,
+                    "status": status,
+                    "reason": reason,
+                    "before": before,
+                }
+            )
+        return {
+            "total": len(items),
+            "eligible": counts["eligible"],
+            "unchanged": counts["unchanged"],
+            "conflicts": counts["conflict"],
+            "target": dict(target),
+            "items": items,
+        }
 
     @classmethod
     def _adapt_case_endpoint(cls, repository, case, endpoint_id):
