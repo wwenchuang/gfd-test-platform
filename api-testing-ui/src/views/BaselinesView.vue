@@ -27,6 +27,7 @@ const route = useRoute()
 const testApplications = useTestApplications()
 const search = ref(typeof route.query.search === 'string' ? route.query.search : '')
 const group = ref('all')
+const baselineStatus = ref<'active' | 'all' | 'history'>('active')
 const baselineType = ref<'all' | 'regular' | 'one-time'>('all')
 const methodFilter = ref('all')
 const priorityFilter = ref('all')
@@ -108,9 +109,14 @@ const baselineActionReady = computed(() => Boolean(
 ))
 const selectedSourceById = computed(() => new Map(context.sourceRevisions.map(item => [item.id, item])))
 const methodOptions = computed(() => [...new Set(baselines.items.map(item => item.method.toUpperCase()))].sort())
+const statusFilteredBaselines = computed(() => baselines.items.filter(item => {
+  if (baselineStatus.value === 'active') return item.status === 'active'
+  if (baselineStatus.value === 'history') return item.status !== 'active'
+  return true
+}))
 const filteredBaselines = computed(() => {
   const needle = search.value.trim().toLowerCase()
-  return baselines.items.filter(item => {
+  return statusFilteredBaselines.value.filter(item => {
     const matchGroup = group.value === 'all' || baselineGroup(item) === group.value
     if (!matchGroup) return false
     const oneTime = isOneTimeBaseline(item)
@@ -162,7 +168,7 @@ const currentSafeAuditIds = computed(() => {
     .map(item => item.id)
 })
 
-watch([search, group, baselineType, methodFilter, priorityFilter, originFilter, auditFilter], () => {
+watch([search, group, baselineStatus, baselineType, methodFilter, priorityFilter, originFilter, auditFilter], () => {
   baselinePage.value = 1
 })
 watch(scopeAppPackage, () => {
@@ -627,6 +633,9 @@ function adoptionReasonLabel(reason: string): string {
       <aside class="baseline-filter-panel">
         <div class="search-box baseline-search"><Search :size="15" /><input v-model="search" placeholder="搜索用例、接口或路径" /></div>
         <div class="baseline-filter-grid" aria-label="基线筛选">
+          <label><span>版本状态</span><select v-model="baselineStatus" data-testid="baseline-filter-status">
+            <option value="active">当前有效</option><option value="all">全部记录</option><option value="history">历史版本</option>
+          </select></label>
           <label><span>基线类型</span><select v-model="baselineType" data-testid="baseline-filter-type">
             <option value="all">全部类型</option><option value="regular">常规基线</option><option value="one-time">一次性</option>
           </select></label>
@@ -647,10 +656,10 @@ function adoptionReasonLabel(reason: string): string {
         </div>
         <div class="baseline-group-list" aria-label="基线分组">
           <button type="button" :class="{ active: group === 'all' }" @click="group = 'all'">
-            <span>全部基线</span><strong>{{ baselines.items.length }}</strong>
+            <span>全部分组</span><strong>{{ statusFilteredBaselines.length }}</strong>
           </button>
           <button v-for="item in baselines.groups" :key="item" type="button" :class="{ active: group === item }" @click="group = item">
-            <span>{{ item }}</span><strong>{{ baselines.items.filter(row => baselineGroup(row) === item).length }}</strong>
+            <span>{{ item }}</span><strong>{{ statusFilteredBaselines.filter(row => baselineGroup(row) === item).length }}</strong>
           </button>
         </div>
       </aside>
@@ -739,7 +748,7 @@ function adoptionReasonLabel(reason: string): string {
 
         <div v-if="baselines.loading" class="section-empty">正在读取基线用例…</div>
         <div v-else-if="!context.projectId" class="section-empty">先选择项目，再查看该项目沉淀的基线。</div>
-        <div v-else-if="!filteredBaselines.length" class="section-empty">{{ baselines.items.length ? '当前筛选下没有匹配基线，请调整类型、方法、优先级、来源或搜索条件。' : '该项目暂无基线。基线按项目固定保存，切换接口版本或执行环境不会影响这里；请先在工作台调试通过后采纳为基线。' }}</div>
+        <div v-else-if="!filteredBaselines.length" class="section-empty">{{ baselines.items.length ? '当前筛选下没有匹配基线，请调整版本状态、类型、方法、优先级、来源或搜索条件。' : '该项目暂无基线。基线按项目固定保存，切换接口版本或执行环境不会影响这里；请先在工作台调试通过后采纳为基线。' }}</div>
         <div v-else class="baseline-table" role="table" aria-label="基线用例列表">
           <div class="baseline-table-head" role="row">
             <span></span><span>用例</span><span>接口</span><span>分组</span><span>版本</span><span>采纳时间</span><span>操作</span>

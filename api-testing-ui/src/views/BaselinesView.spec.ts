@@ -159,6 +159,35 @@ describe('BaselinesView fixed project assets', () => {
     expect(summaryItems[4].text()).toBe('当前有效1 条')
   })
 
+  it('defaults to current baselines and keeps historical versions out of bulk selection', async () => {
+    vi.spyOn(apiClient, 'get').mockResolvedValue({ data: { baselines: [
+      baselineFixture({ id: 'baseline-active', status: 'active', group_name: '待整改', case_name: '当前待整改用例' }),
+      baselineFixture({ id: 'baseline-history', status: 'superseded', group_name: '待整改', case_name: '历史待整改用例' }),
+    ] } })
+
+    const wrapper = mountWithContext()
+    await flushPromises()
+
+    expect((wrapper.get('[data-testid="baseline-filter-status"]').element as HTMLSelectElement).value).toBe('active')
+    expect(wrapper.get('[data-testid="baseline-selection-summary"] .baseline-selection-metric strong').text()).toBe('1')
+    expect(buttonByText(wrapper, '待整改').text()).toBe('待整改1')
+    expect(wrapper.text()).toContain('当前待整改用例')
+    expect(wrapper.text()).not.toContain('历史待整改用例')
+
+    await buttonByText(wrapper, '全选当前筛选').trigger('click')
+    expect(useBaselinesStore().selectedIds).toEqual(['baseline-active'])
+
+    await wrapper.get('[data-testid="baseline-filter-status"]').setValue('history')
+    await flushPromises()
+    expect(buttonByText(wrapper, '待整改').text()).toBe('待整改1')
+    expect(wrapper.text()).not.toContain('当前待整改用例')
+    expect(wrapper.text()).toContain('历史待整改用例')
+
+    await wrapper.get('[data-testid="baseline-filter-status"]').setValue('all')
+    await flushPromises()
+    expect(buttonByText(wrapper, '待整改').text()).toBe('待整改2')
+  })
+
   it('renders filter and selection counts as stable labeled metrics', async () => {
     vi.spyOn(apiClient, 'get').mockResolvedValue({ data: { baselines: [baselineFixture()] } })
 
