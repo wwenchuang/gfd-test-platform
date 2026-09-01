@@ -201,6 +201,20 @@ def _passing_evidence(factory, records):
         return child.id
 
 
+def test_execution_case_evidence_rechecks_reader_scope(
+    owned_records, identities, api_context, http_client
+):
+    evidence_id = _passing_evidence(api_context["factory"], owned_records)
+    path = (
+        http.API_PREFIX
+        + f"/executions/{owned_records['execution'].id}/cases/{evidence_id}"
+    )
+
+    assert http_client.get(path, _auth("reader")).status == 200
+    identities["reader"]["scope"]["api_environments"] = []
+    assert http_client.get(path, _auth("reader")).status == 404
+
+
 def test_shared_baseline_adoption_and_atomic_mixed_batch(owned_records, identities, api_context, http_client):
     evidence_id = _passing_evidence(api_context["factory"], owned_records)
     service = CaseService(api_context["factory"])

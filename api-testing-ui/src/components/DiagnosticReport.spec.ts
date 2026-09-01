@@ -57,4 +57,16 @@ describe('DiagnosticReport', () => {
     expect(rows[0].text()).toContain('添加收藏')
     expect(rows[0].text()).toContain('运行异常')
   })
+
+  it('requests evidence for the first case and each selected report row', async () => {
+    const lightweight = {
+      ...execution,
+      case_results: execution.case_results.map(item => ({ ...item, sanitized_result: {}, evidence_loaded: false })),
+    }
+    const wrapper = mount(DiagnosticReport, { props: { execution: lightweight } })
+
+    expect(wrapper.emitted('loadEvidence')?.[0]?.[0]).toMatchObject({ execution_case_id: 'case-1' })
+    await wrapper.findAll('[data-testid="report-case-row"]')[1].trigger('click')
+    expect(wrapper.emitted('loadEvidence')?.at(-1)?.[0]).toMatchObject({ execution_case_id: 'case-2' })
+  })
 })

@@ -31,6 +31,83 @@ describe('executions store', () => {
     expect(store.selectingExecutionId).toBe('execution-new')
   })
 
+  it('loads a lightweight execution first and merges one selected case evidence', async () => {
+    const summary = {
+      id: 'execution-1', project_id: 'project-1', state: 'DONE', execution_type: 'regression',
+      source_revision_id: 'source-1', environment_revision_id: 'environment-1', environment_name: '测试环境',
+      case_statuses: ['PASSED'], summary: { total: 1, passed: 1 }, cancellation_requested: false,
+      created_at: '', started_at: '', finished_at: '',
+      case_results: [{
+        execution_case_id: 'case-1', case_version_id: 'version-1', endpoint_id: 'endpoint-1',
+        case_name: '查询收藏', endpoint_summary: '', method: 'GET', path: '/favorites', status: 'PASSED',
+        failure_category: '', duration_ms: 20, sanitized_result: {}, evidence_loaded: false,
+      }],
+    } as ExecutionView
+    const evidence = {
+      ...summary.case_results[0],
+      evidence_loaded: true,
+      sanitized_result: { sanitized_response: { status_code: 200 }, assertion_results: [{ passed: true }] },
+    }
+    const get = vi.spyOn(apiClient, 'get')
+      .mockResolvedValueOnce({ data: { execution: summary } })
+      .mockResolvedValueOnce({ data: { case_result: evidence } })
+    const store = useExecutionsStore()
+    vi.spyOn(store, 'connect').mockResolvedValue()
+
+    await store.select(summary.id)
+    const loaded = await store.loadExecutionCase(summary.id, 'case-1')
+
+    expect(get.mock.calls[0]?.[0]).toBe('/api/api-testing/v1/executions/execution-1')
+    expect(get.mock.calls[1]?.[0]).toBe('/api/api-testing/v1/executions/execution-1/cases/case-1')
+    expect(loaded.sanitized_result).toMatchObject({ sanitized_response: { status_code: 200 } })
+    expect(store.active?.case_results[0].evidence_loaded).toBe(true)
+    expect(store.loadingCaseKeys).toEqual([])
+  })
+
+  it('keeps fresh terminal status when a summary refresh preserves loaded evidence', async () => {
+    const loaded = {
+      id: 'execution-1', state: 'RUNNING',
+      case_results: [{
+        execution_case_id: 'case-1', status: 'RUNNING', duration_ms: 0,
+        sanitized_result: { trace: [{ phase: 'request' }] }, evidence_loaded: true,
+      }],
+    } as unknown as ExecutionView
+    const finished = {
+      ...loaded,
+      state: 'DONE',
+      case_results: [{
+        ...loaded.case_results[0], status: 'PASSED', duration_ms: 42,
+        sanitized_result: {}, evidence_loaded: false,
+      }],
+    }
+    vi.spyOn(apiClient, 'get').mockResolvedValue({ data: { execution: finished } })
+    const store = useExecutionsStore()
+    store.active = loaded
+    store.executions = [loaded]
+
+    const refreshed = await store.loadExecution('execution-1')
+
+    expect(refreshed.case_results[0]).toMatchObject({
+      status: 'PASSED', duration_ms: 42, evidence_loaded: true,
+      sanitized_result: { trace: [{ phase: 'request' }] },
+    })
+  })
+
+  it('keeps the lightweight case usable and exposes a retryable evidence error', async () => {
+    const summary = {
+      id: 'execution-1', case_results: [{ execution_case_id: 'case-1', evidence_loaded: false, sanitized_result: {} }],
+    } as unknown as ExecutionView
+    vi.spyOn(apiClient, 'get').mockRejectedValue(new Error('证据读取超时'))
+    const store = useExecutionsStore()
+    store.active = summary
+
+    await expect(store.loadExecutionCase('execution-1', 'case-1')).rejects.toThrow('证据读取超时')
+
+    expect(store.active).toStrictEqual(summary)
+    expect(store.caseEvidenceErrors['execution-1:case-1']).toBe('证据读取超时')
+    expect(store.loadingCaseKeys).toEqual([])
+  })
+
   it('deduplicates monotonic SSE events without replacing existing evidence', () => {
     const store = useExecutionsStore()
     store.appendEvent({ id: 2, type: 'case_finished', level: 'error', caseId: 'case-a', message: '原始失败', payload: {} })
@@ -293,7 +370,7 @@ describe('executions store', () => {
     vi.useFakeTimers()
     const pending = {
       id: 'execution-1', state: 'DONE',
-      case_results: [{ execution_case_id: 'case-1', status: 'FAILED', failure_analysis: null }],
+      case_results: [{ execution_case_id: 'case-1', status: 'FAILED', failure_analysis: null, evidence_loaded: false, sanitized_result: {} }],
     } as unknown as ExecutionView
     const analyzed = {
       ...pending,

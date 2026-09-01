@@ -773,6 +773,30 @@ describe('cases store', () => {
     ])
   })
 
+  it('loads the requested debug case evidence after the terminal summary arrives', async () => {
+    const summaryResult = {
+      execution_case_id: 'execution-case-1', case_version_id: 'version-1', endpoint_id: 'endpoint-1',
+      execution_role: 'requested', status: 'PASSED', failure_category: '', duration_ms: 21,
+      sanitized_result: {}, evidence_loaded: false,
+    }
+    const get = vi.spyOn(apiClient, 'get')
+      .mockResolvedValueOnce({ data: { execution: {
+        id: 'execution-1', state: 'DONE', case_statuses: ['PASSED'], summary: { total: 1, passed: 1 },
+        case_results: [summaryResult],
+      } } })
+      .mockResolvedValueOnce({ data: { case_result: {
+        ...summaryResult, evidence_loaded: true,
+        sanitized_result: { sanitized_response: { status_code: 200 }, assertion_results: [{ passed: true }] },
+      } } })
+    const store = useCasesStore()
+
+    await store.pollExecution('execution-1', { maxAttempts: 1, delayMs: 0 })
+
+    expect(get.mock.calls[1]?.[0]).toBe('/api/api-testing/v1/executions/execution-1/cases/execution-case-1')
+    expect(store.debugResult?.executionCaseId).toBe('execution-case-1')
+    expect(store.debugResult?.status).toBe('PASSED')
+  })
+
   it('shows the requested debug case instead of an expanded dependency result', async () => {
     vi.spyOn(apiClient, 'get').mockResolvedValue({ data: { execution: {
       id: 'execution-1', state: 'DONE', case_statuses: ['PASSED', 'FAILED'], summary: {},

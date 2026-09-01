@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 
 import { apiClient, type ApiClient } from '../api/client'
-import type { AiJob, ApiEndpoint, CaseDraft, CaseValidation, CaseVersion, DebugResult, EnvironmentRevisionSnapshot, ExecutionView, GeneratedCasePreview } from '../api/contracts'
+import type { AiJob, ApiEndpoint, CaseDraft, CaseValidation, CaseVersion, DebugResult, EnvironmentRevisionSnapshot, ExecutionCaseResult, ExecutionView, GeneratedCasePreview } from '../api/contracts'
 import { aiValidationSummary } from '../utils/aiValidationPresentation'
 import { validateCaseDraftLocally } from '../utils/caseDraftValidation'
 import { createIdempotencyKey } from '../utils/idempotency'
@@ -519,9 +519,21 @@ export const useCasesStore = defineStore('api-cases', {
           if (generation !== this.debugGeneration) return
           this.debugExecution = response.data.execution
           if (TERMINAL_EXECUTION.has(this.debugExecution.state)) {
-            const result = this.debugExecution.case_results.find(
+            let result = this.debugExecution.case_results.find(
               item => item.execution_role === 'requested',
             ) || this.debugExecution.case_results[0]
+            if (result?.evidence_loaded === false) {
+              const evidence = await apiClient.get<{ case_result: ExecutionCaseResult }>(
+                `/api/api-testing/v1/executions/${executionId}/cases/${result.execution_case_id}`,
+              )
+              result = evidence.data.case_result
+              this.debugExecution = {
+                ...this.debugExecution,
+                case_results: this.debugExecution.case_results.map(item => (
+                  item.execution_case_id === result?.execution_case_id ? result : item
+                )),
+              }
+            }
             if (result) this.debugResult = toDebugResult(result)
             this.debugCanResume = false
             return

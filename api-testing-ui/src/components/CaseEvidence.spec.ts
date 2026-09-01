@@ -22,6 +22,19 @@ const result: ExecutionCaseResult = {
 }
 
 describe('CaseEvidence', () => {
+  it('explains deferred evidence loading and provides a retry action after failure', async () => {
+    const deferredResult = { ...result, evidence_loaded: false, sanitized_result: {} }
+    const wrapper = mount(CaseEvidence, { props: { result: deferredResult, error: '证据读取超时' } })
+
+    expect(wrapper.text()).toContain('证据读取超时')
+    await wrapper.get('[data-testid="retry-case-evidence"]').trigger('click')
+    expect(wrapper.emitted('retry')).toHaveLength(1)
+
+    await wrapper.setProps({ error: '', loading: true })
+    expect(wrapper.text()).toContain('正在读取当前用例的请求、响应和断言')
+    expect(wrapper.find('details').exists()).toBe(false)
+  })
+
   it('shows setup, main and cleanup workflow evidence as separate stages', () => {
     const workflowResult: ExecutionCaseResult = {
       ...result,

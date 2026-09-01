@@ -523,9 +523,56 @@ def test_execution_collection_is_owner_scoped_and_uses_display_metadata(
         "failure_category": "product_assertion",
         "failure_analysis": None,
         "duration_ms": 86,
-            "sanitized_result": {},
+        "sanitized_result": {},
+        "evidence_loaded": False,
         }
     assert denied.status == 404
+
+
+def test_execution_detail_is_lightweight_and_case_evidence_is_loaded_separately(
+    http_client, api_context, owned_records
+):
+    with api_context["factory"].begin() as session:
+        execution = session.get(ApiExecution, owned_records["execution"].id)
+        child = ApiExecutionCase(
+            execution_id=execution.id,
+            case_version_id=owned_records["version"].id,
+            endpoint_id=owned_records["endpoint"].id,
+            environment_revision_id=owned_records["environment_revision"].id,
+            ordinal=0,
+            status="PASSED",
+            duration_ms=86,
+            sanitized_result={
+                "sanitized_request": {"method": "GET", "url": "https://example.test/favorites"},
+                "sanitized_response": {"status_code": 200, "body": {"items": [1, 2, 3]}},
+                "assertion_results": [{"passed": True, "message": "列表读取成功"}],
+            },
+            **_audit("owner-a"),
+        )
+        session.add(child)
+        session.flush()
+        child_id = child.id
+
+    detail = http_client.get(
+        f"/api/api-testing/v1/executions/{owned_records['execution'].id}",
+        _auth(),
+    )
+    evidence = http_client.get(
+        f"/api/api-testing/v1/executions/{owned_records['execution'].id}/cases/{child_id}",
+        _auth(),
+    )
+    mismatched = http_client.get(
+        f"/api/api-testing/v1/executions/{owned_records['second_execution'].id}/cases/{child_id}",
+        _auth(),
+    )
+
+    assert detail.status == 200
+    assert detail.body["data"]["execution"]["case_results"][0]["sanitized_result"] == {}
+    assert detail.body["data"]["execution"]["case_results"][0]["evidence_loaded"] is False
+    assert evidence.status == 200
+    assert evidence.body["data"]["case_result"]["sanitized_result"]["sanitized_response"]["status_code"] == 200
+    assert evidence.body["data"]["case_result"]["evidence_loaded"] is True
+    assert mismatched.status == 404
 
 
 def test_active_case_versions_are_restored_for_owned_source_revision(

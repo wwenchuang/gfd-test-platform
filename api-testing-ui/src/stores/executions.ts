@@ -2,7 +2,7 @@ import { defineStore } from 'pinia'
 import { markRaw } from 'vue'
 
 import { apiClient } from '../api/client'
-import type { ExecutionConnectionState, ExecutionEventView, ExecutionView } from '../api/contracts'
+import type { ExecutionCaseResult, ExecutionConnectionState, ExecutionEventView, ExecutionView } from '../api/contracts'
 import { createIdempotencyKey } from '../utils/idempotency'
 
 const TERMINAL = new Set(['DONE', 'CANCELLED', 'PASSED', 'FAILED', 'BROKEN'])
@@ -27,6 +27,8 @@ export const useExecutionsStore = defineStore('api-executions', {
     baselineStarting: false,
     deleting: false,
     error: '',
+    loadingCaseKeys: [] as string[],
+    caseEvidenceErrors: {} as Record<string, string>,
     eventSource: null as EventSource | null,
     reconnectTimer: null as ReturnType<typeof setTimeout> | null,
     reconnectAttempts: 0,
@@ -53,7 +55,11 @@ export const useExecutionsStore = defineStore('api-executions', {
         const response = await apiClient.get<{ executions: ExecutionView[] }>(
           `/api/api-testing/v1/executions?project_id=${encodeURIComponent(projectId)}&limit=50`,
         )
-        this.executions = response.data.executions.filter(item => !this.archivedExecutionIds.has(item.id))
+        const previousById = new Map(this.executions.map(item => [item.id, item]))
+        if (this.active) previousById.set(this.active.id, this.active)
+        this.executions = response.data.executions
+          .filter(item => !this.archivedExecutionIds.has(item.id))
+          .map(item => mergeLoadedCaseEvidence(item, previousById.get(item.id)))
         if (this.active) this.active = this.executions.find(item => item.id === this.active?.id) || this.active
       } catch (error) {
         this.error = error instanceof Error ? error.message : '无法读取执行记录'
@@ -65,13 +71,53 @@ export const useExecutionsStore = defineStore('api-executions', {
       const response = await apiClient.get<{ execution: ExecutionView }>(
         `/api/api-testing/v1/executions/${executionId}`,
       )
-      if (this.archivedExecutionIds.has(executionId)) return response.data.execution
-      if (this.active && this.active.id !== executionId) return response.data.execution
-      this.active = response.data.execution
+      const previous = this.active?.id === executionId
+        ? this.active
+        : this.executions.find(item => item.id === executionId)
+      const execution = mergeLoadedCaseEvidence(response.data.execution, previous)
+      if (this.archivedExecutionIds.has(executionId)) return execution
+      if (this.active && this.active.id !== executionId) return execution
+      this.active = execution
       const index = this.executions.findIndex(item => item.id === executionId)
       if (index >= 0) this.executions[index] = this.active
       else this.executions.unshift(this.active)
       return this.active
+    },
+    async loadExecutionCase(
+      executionId: string,
+      executionCaseId: string,
+      force = false,
+    ): Promise<ExecutionCaseResult> {
+      const key = `${executionId}:${executionCaseId}`
+      const currentExecution = this.active?.id === executionId
+        ? this.active
+        : this.executions.find(item => item.id === executionId)
+      const current = currentExecution?.case_results.find(item => item.execution_case_id === executionCaseId)
+      if (!force && current && current.evidence_loaded !== false) return current
+      this.loadingCaseKeys = [...new Set([...this.loadingCaseKeys, key])]
+      const errors = { ...this.caseEvidenceErrors }
+      delete errors[key]
+      this.caseEvidenceErrors = errors
+      try {
+        const response = await apiClient.get<{ case_result: ExecutionCaseResult }>(
+          `/api/api-testing/v1/executions/${executionId}/cases/${executionCaseId}`,
+        )
+        const result = response.data.case_result
+        if (!this.archivedExecutionIds.has(executionId)) {
+          if (this.active?.id === executionId) this.active = replaceExecutionCase(this.active, result)
+          const index = this.executions.findIndex(item => item.id === executionId)
+          if (index >= 0) this.executions[index] = replaceExecutionCase(this.executions[index], result)
+        }
+        return result
+      } catch (error) {
+        this.caseEvidenceErrors = {
+          ...this.caseEvidenceErrors,
+          [key]: error instanceof Error ? error.message : '无法读取当前用例证据',
+        }
+        throw error
+      } finally {
+        this.loadingCaseKeys = this.loadingCaseKeys.filter(item => item !== key)
+      }
     },
     async select(executionId: string): Promise<void> {
       this.prepareSelection(executionId)
@@ -82,7 +128,8 @@ export const useExecutionsStore = defineStore('api-executions', {
           `/api/api-testing/v1/executions/${executionId}`,
         )
         if (selectionVersion !== this.selectionVersion || this.archivedExecutionIds.has(executionId)) return
-        const execution = response.data.execution
+        const previous = this.executions.find(item => item.id === executionId)
+        const execution = mergeLoadedCaseEvidence(response.data.execution, previous)
         this.active = execution
         const index = this.executions.findIndex(item => item.id === executionId)
         if (index >= 0) this.executions[index] = execution
@@ -376,5 +423,37 @@ function toEvent(id: number, type: string, payload: Record<string, unknown>): Ex
     createdAt,
     message: labels[type] || String(payload.message || type),
     payload: visiblePayload,
+  }
+}
+
+function mergeLoadedCaseEvidence(summary: ExecutionView, previous?: ExecutionView | null): ExecutionView {
+  if (!previous || previous.id !== summary.id) return summary
+  const loaded = new Map(
+    previous.case_results
+      .filter(item => item.evidence_loaded === true)
+      .map(item => [item.execution_case_id, item]),
+  )
+  if (!loaded.size) return summary
+  return {
+    ...summary,
+    case_results: summary.case_results.map(item => {
+      const evidence = loaded.get(item.execution_case_id)
+      if (!evidence) return item
+      return {
+        ...item,
+        sanitized_result: evidence.sanitized_result,
+        evidence_loaded: true,
+        failure_analysis: item.failure_analysis || evidence.failure_analysis,
+      }
+    }),
+  }
+}
+
+function replaceExecutionCase(execution: ExecutionView, result: ExecutionCaseResult): ExecutionView {
+  return {
+    ...execution,
+    case_results: execution.case_results.map(item => (
+      item.execution_case_id === result.execution_case_id ? result : item
+    )),
   }
 }

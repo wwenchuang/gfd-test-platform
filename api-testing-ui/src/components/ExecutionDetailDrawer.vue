@@ -8,8 +8,8 @@ import CaseResultList from './CaseResultList.vue'
 import ReportSummary from './ReportSummary.vue'
 import CaseEvidence from './CaseEvidence.vue'
 
-const props = defineProps<{ execution: ExecutionView; initialCaseId?: string }>()
-const emit = defineEmits<{ close: []; edit: [result: ExecutionCaseResult, execution: ExecutionView]; rerun: [execution: ExecutionView] }>()
+const props = defineProps<{ execution: ExecutionView; initialCaseId?: string; loadingCaseKeys?: string[]; caseEvidenceErrors?: Record<string, string> }>()
+const emit = defineEmits<{ close: []; edit: [result: ExecutionCaseResult, execution: ExecutionView]; rerun: [execution: ExecutionView]; loadEvidence: [result: ExecutionCaseResult] }>()
 const active = ref<ExecutionCaseResult | null>(props.execution.case_results.find(item => item.execution_case_id === props.initialCaseId) || props.execution.case_results[0] || null)
 const duration = computed(() => props.execution.case_results.reduce((total, item) => total + item.duration_ms, 0))
 const drawer = ref<HTMLElement | null>(null)
@@ -31,6 +31,7 @@ watch(() => props.initialCaseId, id => {
   if (id) active.value = props.execution.case_results.find(item => item.execution_case_id === id) || active.value
 })
 watch(() => active.value?.execution_case_id, async () => {
+  if (active.value?.evidence_loaded === false) emit('loadEvidence', active.value)
   await nextTick()
   if (evidencePane.value) evidencePane.value.scrollTop = 0
   const pane = listPane.value
@@ -41,6 +42,10 @@ watch(() => active.value?.execution_case_id, async () => {
   if (row.height > pane.clientHeight || row.top < bounds.top) pane.scrollTop += row.top - bounds.top
   else if (row.bottom > bounds.bottom) pane.scrollTop += row.bottom - bounds.bottom
 }, { immediate: true })
+
+function evidenceKey(result: ExecutionCaseResult): string {
+  return `${props.execution.id}:${result.execution_case_id}`
+}
 
 function focusableElements(): HTMLElement[] {
   if (!drawer.value) return []
@@ -82,7 +87,7 @@ function handleKeydown(event: KeyboardEvent): void {
         <CaseResultList :results="execution.case_results" :active-id="active?.execution_case_id" @select="active = $event" />
       </div>
       <div ref="evidencePane" class="execution-detail-evidence" role="region" aria-label="当前用例证据" tabindex="0">
-        <CaseEvidence v-if="active" :result="active" @edit="emit('edit', $event, execution)" @rerun="emit('rerun', execution)" />
+        <CaseEvidence v-if="active" :result="active" :loading="loadingCaseKeys?.includes(evidenceKey(active))" :error="caseEvidenceErrors?.[evidenceKey(active)]" @retry="emit('loadEvidence', $event)" @edit="emit('edit', $event, execution)" @rerun="emit('rerun', execution)" />
       </div>
     </div>
   </aside>

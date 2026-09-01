@@ -448,6 +448,7 @@ export interface ExecutionCaseResult {
   failure_category: string
   duration_ms: number
   sanitized_result: Record<string, unknown>
+  evidence_loaded?: boolean
   failure_analysis?: {
     category: string
     analyzer: string

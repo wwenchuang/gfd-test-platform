@@ -313,14 +313,34 @@ class ExecutionService:
             task=task,
         )
 
-    def get(self, execution_id):
+    def get(self, execution_id, *, include_evidence=True):
         with self.session_factory() as session:
             repository = ExecutionRepository(session)
             execution = repository.get_execution(execution_id)
             if execution is None:
                 raise ExecutionNotFoundError("API execution was not found")
-            children = repository.get_execution_cases(execution.id)
-            return self._repository_view(repository, execution, children)
+            children = repository.get_execution_cases(
+                execution.id,
+                include_evidence=include_evidence,
+            )
+            return self._repository_view(
+                repository,
+                execution,
+                children,
+                include_evidence=include_evidence,
+            )
+
+    def get_case_result(self, execution_id, execution_case_id):
+        with self.session_factory() as session:
+            repository = ExecutionRepository(session)
+            execution = repository.get_execution(execution_id)
+            if execution is None:
+                raise ExecutionNotFoundError("API execution was not found")
+            child = repository.get_execution_case(execution_id, execution_case_id)
+            if child is None:
+                raise ExecutionNotFoundError("API execution case was not found")
+            view = self._repository_view(repository, execution, (child,))
+            return view.case_results[0]
 
     def list(self, project_id, actor_id, limit=50):
         access.require_permission(actor_id, "api.view")
@@ -346,6 +366,7 @@ class ExecutionService:
                     tuple(children_by_execution.get(execution.id, ())),
                     metadata.get(execution.id, {}),
                     include_evidence=False,
+                    include_failure_analysis=False,
                 )
                 for execution in executions
             )
@@ -967,6 +988,7 @@ class ExecutionService:
         children,
         *,
         include_evidence=True,
+        include_failure_analysis=True,
     ):
         return cls._view(
             execution,
@@ -974,9 +996,10 @@ class ExecutionService:
             repository.display_metadata(
                 execution,
                 children,
-                include_details=include_evidence,
+                include_details=include_failure_analysis,
             ),
             include_evidence=include_evidence,
+            include_failure_analysis=include_failure_analysis,
         )
 
     @staticmethod
@@ -1016,6 +1039,7 @@ class ExecutionService:
         display_metadata=None,
         *,
         include_evidence=True,
+        include_failure_analysis=True,
     ):
         display = display_metadata or {}
         snapshot = getattr(execution, "request_snapshot", {}) or {}
@@ -1097,6 +1121,7 @@ class ExecutionService:
                         if include_evidence
                         else {}
                     ),
+                    "evidence_loaded": include_evidence,
                     "failure_analysis": (
                         {
                             "category": failure_analyses[item.id].category,
@@ -1104,7 +1129,7 @@ class ExecutionService:
                             "model": failure_analyses[item.id].model,
                             "analysis": copy.deepcopy(dict(failure_analyses[item.id].analysis)),
                         }
-                        if include_evidence and item.id in failure_analyses else None
+                        if include_failure_analysis and item.id in failure_analyses else None
                     ),
                 })
                 for item in children

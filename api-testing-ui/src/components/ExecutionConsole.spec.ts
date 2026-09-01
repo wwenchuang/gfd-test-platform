@@ -57,6 +57,22 @@ describe('ExecutionConsole', () => {
     expect(wrapper.text()).toContain('业务码不匹配')
   })
 
+  it('loads evidence only when the user opens or changes the case detail', async () => {
+    const lightweight = {
+      ...execution,
+      case_results: execution.case_results.map(item => ({ ...item, sanitized_result: {}, evidence_loaded: false })),
+    }
+    const wrapper = mount(ExecutionConsole, {
+      props: { executions: [lightweight], active: lightweight, events: [], connectionState: 'complete' },
+    })
+
+    expect(wrapper.emitted('loadEvidence')).toBeUndefined()
+    await wrapper.get('[data-testid="execution-tab-cases"]').trigger('click')
+    expect(wrapper.emitted('loadEvidence')?.[0]?.[0]).toMatchObject({ execution_case_id: 'case-1' })
+    await wrapper.findAll('.embedded-evidence .case-result-list button')[1].trigger('click')
+    expect(wrapper.emitted('loadEvidence')?.at(-1)?.[0]).toMatchObject({ execution_case_id: 'case-2' })
+  })
+
   it('keeps the selected case when background analysis refreshes the execution object', async () => {
     const wrapper = mount(ExecutionConsole, {
       props: { executions: [execution], active: execution, events: [], connectionState: 'complete' },

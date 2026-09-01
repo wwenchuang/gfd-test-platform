@@ -9,13 +9,14 @@ import CaseResultList from './CaseResultList.vue'
 import ExecutionLog from './ExecutionLog.vue'
 import ExecutionOverview from './ExecutionOverview.vue'
 
-const props = defineProps<{ executions: ExecutionView[]; active: ExecutionView | null; events: ExecutionEventView[]; connectionState: ExecutionConnectionState; loading?: boolean; endpointId?: string; endpointStableKey?: string }>()
+const props = defineProps<{ executions: ExecutionView[]; active: ExecutionView | null; events: ExecutionEventView[]; connectionState: ExecutionConnectionState; loading?: boolean; endpointId?: string; endpointStableKey?: string; loadingCaseKeys?: string[]; caseEvidenceErrors?: Record<string, string> }>()
 const emit = defineEmits<{
   select: [id: string]
   cancel: [id: string]
   rerun: [execution: ExecutionView]
   reconnect: [id: string]
   inspect: [result: ExecutionCaseResult]
+  loadEvidence: [result: ExecutionCaseResult]
   edit: [result: ExecutionCaseResult, execution: ExecutionView]
   delete: [id: string]
   deleteMany: [ids: string[]]
@@ -96,6 +97,20 @@ watch(() => props.executions.map(item => item.id).join('|'), () => {
 function selectCase(result: ExecutionCaseResult): void {
   selected.value = result
   emit('inspect', result)
+}
+
+function openCases(): void {
+  tab.value = 'cases'
+  if (selected.value) emit('loadEvidence', selected.value)
+}
+
+function selectEvidence(result: ExecutionCaseResult): void {
+  selected.value = result
+  emit('loadEvidence', result)
+}
+
+function evidenceKey(result: ExecutionCaseResult): string {
+  return `${props.active?.id || ''}:${result.execution_case_id}`
 }
 
 function toggleExecution(id: string): void {
@@ -196,7 +211,7 @@ function executionRowConclusion(execution: ExecutionView): { label: string; tone
         <ExecutionOverview :execution="active" />
         <nav class="execution-tabs" aria-label="执行详情视图">
           <button type="button" :class="{ active: tab === 'trace' }" @click="tab = 'trace'">实时轨迹</button>
-          <button data-testid="execution-tab-cases" type="button" :class="{ active: tab === 'cases' }" @click="tab = 'cases'">用例明细</button>
+          <button data-testid="execution-tab-cases" type="button" :class="{ active: tab === 'cases' }" @click="openCases">用例明细</button>
           <button type="button" :class="{ active: tab === 'report' }" @click="tab = 'report'">测试报告</button>
         </nav>
         <div v-if="tab === 'trace'" class="execution-trace-grid">
@@ -204,8 +219,8 @@ function executionRowConclusion(execution: ExecutionView): { label: string; tone
           <ExecutionLog :key="active.id" :events="events" :connection-state="logConnectionState" :case-labels="caseLabels" />
         </div>
         <div v-else-if="tab === 'cases'" class="execution-detail-grid embedded-evidence">
-          <CaseResultList :results="active.case_results" :active-id="selected?.execution_case_id" @select="selected = $event" />
-          <CaseEvidence v-if="selected" :result="selected" @edit="emit('edit', $event, active)" @rerun="emit('rerun', active)" />
+          <CaseResultList :results="active.case_results" :active-id="selected?.execution_case_id" @select="selectEvidence" />
+          <CaseEvidence v-if="selected" :result="selected" :loading="loadingCaseKeys?.includes(evidenceKey(selected))" :error="caseEvidenceErrors?.[evidenceKey(selected)]" @retry="emit('loadEvidence', $event)" @edit="emit('edit', $event, active)" @rerun="emit('rerun', active)" />
         </div>
         <section v-else class="execution-report-preview">
           <header><div><span>本次执行</span><strong>{{ active.environment_name }}</strong></div><p>完整诊断报告保留真实用例状态，并按产品、脚本数据和环境问题归类。</p></header>

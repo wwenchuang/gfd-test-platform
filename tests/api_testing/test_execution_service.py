@@ -29,6 +29,7 @@ from task_server.api_testing.services.case_service import CaseService
 from task_server.api_testing.services import execution_service as execution_service_module
 from task_server.api_testing.services.execution_service import (
     ExecutionConflictError,
+    ExecutionNotFoundError,
     ExecutionService,
 )
 from task_server.api_testing.services.source_service import SourceService
@@ -1181,7 +1182,7 @@ def test_duplicate_worker_is_compare_and_set_and_summary_keeps_child_truth(
     assert executor.calls == 2
 
 
-def test_execution_list_omits_full_evidence_but_detail_keeps_it(
+def test_execution_detail_can_omit_evidence_and_load_one_case_on_demand(
     session_factory, redis_client, execution_context
 ):
     service = ExecutionService(
@@ -1198,12 +1199,48 @@ def test_execution_list_omits_full_evidence_but_detail_keeps_it(
     assert service.run(submitted.id) is True
 
     summary = next(item for item in service.list(submitted.project_id, "admin") if item.id == submitted.id)
-    detail = service.get(submitted.id)
+    detail = service.get(submitted.id, include_evidence=False)
+    case_result = service.get_case_result(
+        submitted.id,
+        detail.case_results[0]["execution_case_id"],
+    )
 
     assert summary.case_results[0]["status"] == "PASSED"
     assert summary.case_results[0]["sanitized_result"] == {}
     assert summary.case_results[0]["failure_analysis"] is None
-    assert detail.case_results[0]["sanitized_result"]["status"] == "PASSED"
+    assert summary.case_results[0]["evidence_loaded"] is False
+    assert detail.case_results[0]["sanitized_result"] == {}
+    assert detail.case_results[0]["evidence_loaded"] is False
+    assert case_result["sanitized_result"]["status"] == "PASSED"
+    assert case_result["evidence_loaded"] is True
+
+
+def test_execution_case_evidence_cannot_be_read_through_another_execution(
+    session_factory, redis_client, execution_context
+):
+    service = ExecutionService(
+        session_factory,
+        executor=_FakeExecutor([_Result("PASSED"), _Result("PASSED")]),
+        event_stream=EventStream(session_factory, redis_client),
+    )
+    first = service.submit(
+        _request(execution_context),
+        "admin",
+        "case-evidence-first",
+    )
+    second = service.submit(
+        _request(execution_context),
+        "admin",
+        "case-evidence-second",
+    )
+    assert service.run(first.id) is True
+    assert service.run(second.id) is True
+    first_case_id = service.get(first.id, include_evidence=False).case_results[0][
+        "execution_case_id"
+    ]
+
+    with pytest.raises(ExecutionNotFoundError):
+        service.get_case_result(second.id, first_case_id)
 
 
 def test_bulk_archive_returns_lightweight_execution_summaries(

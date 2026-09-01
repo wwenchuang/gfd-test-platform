@@ -86,6 +86,20 @@ async function deleteExecutions(executionIds: string[]): Promise<void> {
   await executions.deleteExecutions(executionIds)
   if (!executions.active || executionIds.includes(executions.active.id)) inspected.value = null
 }
+
+function inspectResult(result: ExecutionCaseResult): void {
+  inspected.value = result
+}
+
+async function loadCaseEvidence(result: ExecutionCaseResult): Promise<void> {
+  const executionId = executions.active?.id
+  if (!executionId) return
+  try {
+    await executions.loadExecutionCase(executionId, result.execution_case_id)
+  } catch {
+    // The store keeps a visible, retryable error beside the selected case.
+  }
+}
 </script>
 
 <template>
@@ -100,18 +114,21 @@ async function deleteExecutions(executionIds: string[]): Promise<void> {
       :events="executions.events"
       :connection-state="executions.connectionState"
       :loading="executions.loading || Boolean(executions.selectingExecutionId)"
+      :loading-case-keys="executions.loadingCaseKeys"
+      :case-evidence-errors="executions.caseEvidenceErrors"
       :endpoint-id="typeof route.query.endpointId === 'string' ? route.query.endpointId : ''"
       :endpoint-stable-key="typeof route.query.endpointKey === 'string' ? route.query.endpointKey : ''"
       @select="executions.select($event)"
       @cancel="executions.cancel($event)"
       @rerun="rerun"
       @reconnect="executions.reconnect($event)"
-      @inspect="inspected = $event"
+      @inspect="inspectResult"
+      @load-evidence="loadCaseEvidence"
       @edit="edit"
       @delete="deleteExecution"
       @delete-many="deleteExecutions"
       @clear-endpoint-filter="clearEndpointFilter"
     />
-    <ExecutionDetailDrawer v-if="executions.active && inspected" :execution="executions.active" :initial-case-id="inspected.execution_case_id" @close="inspected = null" @edit="edit" @rerun="rerun" />
+    <ExecutionDetailDrawer v-if="executions.active && inspected" :execution="executions.active" :initial-case-id="inspected.execution_case_id" :loading-case-keys="executions.loadingCaseKeys" :case-evidence-errors="executions.caseEvidenceErrors" @load-evidence="loadCaseEvidence" @close="inspected = null" @edit="edit" @rerun="rerun" />
   </section>
 </template>

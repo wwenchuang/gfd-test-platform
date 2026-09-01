@@ -366,8 +366,35 @@ def _get(segments, qs, actor, settings):
             )
         }
     if len(segments) == 2 and segments[0] == "executions":
-        _scope_execution(factory, _uuid(segments[1]), actor)
-        return {"execution": _view(ExecutionService(factory, event_stream=_event_stream(factory)).get(_uuid(segments[1])))}
+        execution_id = _uuid(segments[1])
+        _scope_execution(factory, execution_id, actor)
+        return {
+            "execution": _view(
+                ExecutionService(factory, event_stream=_event_stream(factory)).get(
+                    execution_id,
+                    include_evidence=False,
+                )
+            )
+        }
+    if (
+        len(segments) == 4
+        and segments[0] == "executions"
+        and segments[2] == "cases"
+    ):
+        execution_id = _uuid(segments[1])
+        execution_case_id = _uuid(segments[3])
+        _scope_execution(factory, execution_id, actor)
+        scoped_case = _scope_execution_case(factory, execution_case_id, actor)
+        if scoped_case.execution_id != execution_id:
+            raise _not_found()
+        return {
+            "case_result": _view(
+                ExecutionService(factory, event_stream=_event_stream(factory)).get_case_result(
+                    execution_id,
+                    execution_case_id,
+                )
+            )
+        }
     if len(segments) == 2 and segments[0] == "cases":
         _scope_case(factory, _uuid(segments[1]), actor)
         return {"case": _view(CaseService(factory).get_case(_uuid(segments[1])))}

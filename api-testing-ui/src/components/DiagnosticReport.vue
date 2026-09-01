@@ -8,8 +8,8 @@ import CaseEvidence from './CaseEvidence.vue'
 import CaseResultList from './CaseResultList.vue'
 import ExecutionOverview from './ExecutionOverview.vue'
 
-const props = defineProps<{ execution: ExecutionView }>()
-const emit = defineEmits<{ back: []; edit: [result: ExecutionCaseResult, execution: ExecutionView]; rerun: [execution: ExecutionView] }>()
+const props = defineProps<{ execution: ExecutionView; loadingCaseKeys?: string[]; caseEvidenceErrors?: Record<string, string> }>()
+const emit = defineEmits<{ back: []; edit: [result: ExecutionCaseResult, execution: ExecutionView]; rerun: [execution: ExecutionView]; loadEvidence: [result: ExecutionCaseResult] }>()
 const selected = ref<ExecutionCaseResult | null>(props.execution.case_results[0] || null)
 const filter = ref<'all' | 'failed' | 'broken' | 'skipped'>('all')
 const buckets = computed(() => executionFailureBuckets(props.execution))
@@ -27,10 +27,24 @@ const technicalLog = computed(() => redactSensitiveEvidence(props.execution.case
   trace: result.sanitized_result.trace || result.sanitized_result.logs || [],
 }))))
 
-watch(() => props.execution, execution => { selected.value = execution.case_results[0] || null })
+watch(() => props.execution, execution => {
+  const selectedId = selected.value?.execution_case_id
+  selected.value = execution.case_results.find(item => item.execution_case_id === selectedId) || execution.case_results[0] || null
+})
 watch(filteredResults, results => {
   if (!results.some(result => result.execution_case_id === selected.value?.execution_case_id)) selected.value = results[0] || null
 })
+watch(() => selected.value?.execution_case_id, () => {
+  if (selected.value?.evidence_loaded === false) emit('loadEvidence', selected.value)
+}, { immediate: true })
+
+function selectEvidence(result: ExecutionCaseResult): void {
+  selected.value = result
+}
+
+function evidenceKey(result: ExecutionCaseResult): string {
+  return `${props.execution.id}:${result.execution_case_id}`
+}
 </script>
 
 <template>
@@ -39,7 +53,7 @@ watch(filteredResults, results => {
     <section class="report-section"><div class="section-title"><span>01</span><div><h2>诊断结论</h2><p>状态来自真实执行，AI 仅补充失败解释。</p></div></div><ExecutionOverview :execution="execution" /></section>
     <section class="report-section"><div class="section-title"><span>02</span><div><h2>问题分布</h2><p>产品断言、脚本数据和环境问题分开统计。</p></div></div><div class="failure-bucket-grid"><div><strong>{{ buckets.product }}</strong><span>产品失败</span></div><div><strong>{{ buckets.scriptData }}</strong><span>脚本/数据</span></div><div><strong>{{ buckets.environment }}</strong><span>环境异常</span></div><div><strong>{{ buckets.skipped }}</strong><span>依赖跳过</span></div><div><strong>{{ buckets.cancelled }}</strong><span>已取消</span></div></div></section>
     <section class="report-section"><div class="section-title"><span>03</span><div><h2>AI 诊断摘要</h2><p>仅展示已有分析，缺失时保留平台确定性分类。</p></div></div><div v-if="diagnoses.length" class="diagnosis-list"><div v-for="result in diagnoses" :key="result.execution_case_id"><strong>{{ result.case_name }}</strong><span>{{ result.failure_analysis?.model }}</span><p>{{ result.failure_analysis?.analysis.summary }}</p><small>{{ result.failure_analysis?.analysis.root_cause }}</small></div></div><p v-else class="state-message">本次没有可用的 AI 失败分析。</p></section>
-    <section class="report-section report-case-section"><div class="section-title"><span>04</span><div><h2>用例明细</h2><p>选择用例查看请求、响应、断言与执行轨迹。</p></div></div><div class="report-case-filters" aria-label="用例状态筛选"><button type="button" :class="{ active: filter === 'all' }" @click="filter = 'all'">全部</button><button type="button" :class="{ active: filter === 'failed' }" @click="filter = 'failed'">失败</button><button data-testid="report-filter-broken" type="button" :class="{ active: filter === 'broken' }" @click="filter = 'broken'">异常</button><button type="button" :class="{ active: filter === 'skipped' }" @click="filter = 'skipped'">跳过</button></div><div class="diagnostic-case-grid"><CaseResultList :results="filteredResults" :active-id="selected?.execution_case_id" row-test-id="report-case-row" @select="selected = $event" /><div><p v-if="selected" class="case-conclusion">{{ caseResultSummary(selected) }}</p><CaseEvidence v-if="selected" :result="selected" @edit="emit('edit', $event, execution)" @rerun="emit('rerun', execution)" /><p v-else class="state-message">当前筛选没有用例</p></div></div></section>
+    <section class="report-section report-case-section"><div class="section-title"><span>04</span><div><h2>用例明细</h2><p>选择用例后按需读取请求、响应、断言与执行轨迹。</p></div></div><div class="report-case-filters" aria-label="用例状态筛选"><button type="button" :class="{ active: filter === 'all' }" @click="filter = 'all'">全部</button><button type="button" :class="{ active: filter === 'failed' }" @click="filter = 'failed'">失败</button><button data-testid="report-filter-broken" type="button" :class="{ active: filter === 'broken' }" @click="filter = 'broken'">异常</button><button type="button" :class="{ active: filter === 'skipped' }" @click="filter = 'skipped'">跳过</button></div><div class="diagnostic-case-grid"><CaseResultList :results="filteredResults" :active-id="selected?.execution_case_id" row-test-id="report-case-row" @select="selectEvidence" /><div><p v-if="selected" class="case-conclusion">{{ caseResultSummary(selected) }}</p><CaseEvidence v-if="selected" :result="selected" :loading="loadingCaseKeys?.includes(evidenceKey(selected))" :error="caseEvidenceErrors?.[evidenceKey(selected)]" @retry="emit('loadEvidence', $event)" @edit="emit('edit', $event, execution)" @rerun="emit('rerun', execution)" /><p v-else class="state-message">当前筛选没有用例</p></div></div></section>
     <details class="technical-log"><summary>技术日志</summary><pre>{{ JSON.stringify(technicalLog, null, 2) }}</pre></details>
   </article>
 </template>

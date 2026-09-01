@@ -6,8 +6,9 @@ import type { ExecutionCaseResult } from '../api/contracts'
 import { redactSensitiveEvidence, statusLabel } from '../utils/executionPresentation'
 import FailureAnalysis from './FailureAnalysis.vue'
 
-const props = defineProps<{ result: ExecutionCaseResult }>()
-const emit = defineEmits<{ edit: [result: ExecutionCaseResult]; rerun: [result: ExecutionCaseResult] }>()
+const props = defineProps<{ result: ExecutionCaseResult; loading?: boolean; error?: string }>()
+const emit = defineEmits<{ edit: [result: ExecutionCaseResult]; rerun: [result: ExecutionCaseResult]; retry: [result: ExecutionCaseResult] }>()
+const evidenceReady = computed(() => props.result.evidence_loaded !== false)
 const detail = computed(() => props.result.sanitized_result || {})
 const request = computed(() => redactSensitiveEvidence(detail.value.sanitized_request || detail.value.request || {}) as Record<string, unknown>)
 const response = computed(() => redactSensitiveEvidence(detail.value.sanitized_response || detail.value.response || {}) as Record<string, unknown>)
@@ -36,6 +37,13 @@ function stageLabel(stage: unknown): string {
         <button v-if="['FAILED','BROKEN'].includes(result.status)" data-testid="rerun-case" class="secondary-command" type="button" @click="emit('rerun', result)"><RotateCw :size="14" />重跑失败项</button>
       </div>
     </header>
+    <div v-if="error" class="evidence-load-state inline-error" role="alert">
+      <span>{{ error }}</span>
+      <button data-testid="retry-case-evidence" class="secondary-command" type="button" @click="emit('retry', result)">重新读取证据</button>
+    </div>
+    <p v-else-if="loading" class="evidence-load-state state-message">正在读取当前用例的请求、响应和断言，请稍候…</p>
+    <p v-else-if="!evidenceReady" class="evidence-load-state state-message">选择用例后读取请求、响应、断言和执行轨迹。</p>
+    <template v-else>
     <FailureAnalysis :result="result" />
     <div class="evidence-summary">
       <div><span>状态</span><strong :class="`status-${result.status.toLowerCase()}`">{{ statusLabel(result.status) }}</strong></div>
@@ -56,5 +64,6 @@ function stageLabel(stage: unknown): string {
     <details open><summary>响应明细</summary><pre>{{ JSON.stringify(response, null, 2) }}</pre></details>
     <details open class="assertion-evidence"><summary>断言结果（{{ assertions.length }}）</summary><div v-if="assertions.length" class="assertion-result-list"><div v-for="(item, index) in assertions" :key="index" :class="item.passed === false ? 'assertion-failed' : 'assertion-passed'"><CircleX v-if="item.passed === false" :size="15" /><CheckCircle2 v-else :size="15" /><span><strong>{{ item.message || item.type || `断言 ${index + 1}` }}</strong><small>期望 {{ item.expected ?? '-' }} · 实际 {{ item.actual ?? '-' }}</small></span></div></div><p v-else class="state-message">本用例没有配置断言</p></details>
     <details><summary>执行轨迹（{{ trace.length }}）</summary><pre>{{ JSON.stringify(trace, null, 2) }}</pre></details>
+    </template>
   </section>
 </template>

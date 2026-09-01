@@ -105,4 +105,20 @@ describe('ExecutionDetailDrawer', () => {
     await wrapper.get('[data-testid="edit-case"]').trigger('click')
     expect(wrapper.emitted('edit')?.[0]?.[0]).toMatchObject({ endpoint_id: 'endpoint-2' })
   })
+
+  it('requests evidence for the opened case and every newly selected case', async () => {
+    const second = {
+      ...execution.case_results[0], execution_case_id: 'execution-case-2', endpoint_id: 'endpoint-2',
+      case_version_id: 'case-version-2', case_name: '取消收藏', path: '/favorites/cancel', evidence_loaded: false,
+      sanitized_result: {},
+    }
+    const wrapper = mount(ExecutionDetailDrawer, {
+      props: { execution: { ...execution, case_results: [{ ...execution.case_results[0], evidence_loaded: false, sanitized_result: {} }, second] } },
+    })
+    await nextTick()
+
+    expect(wrapper.emitted('loadEvidence')?.[0]?.[0]).toMatchObject({ execution_case_id: 'execution-case-1' })
+    await wrapper.findAll('.case-result-list button')[1].trigger('click')
+    expect(wrapper.emitted('loadEvidence')?.at(-1)?.[0]).toMatchObject({ execution_case_id: 'execution-case-2' })
+  })
 })

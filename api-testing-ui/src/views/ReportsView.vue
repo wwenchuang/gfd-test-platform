@@ -248,6 +248,23 @@ async function openDiagnostic(report: ExecutionView): Promise<void> {
   }
 }
 
+async function loadDiagnosticEvidence(result: ExecutionCaseResult): Promise<void> {
+  const reportId = selected.value?.id
+  if (!reportId) return
+  try {
+    const loaded = await executions.loadExecutionCase(reportId, result.execution_case_id)
+    if (selected.value?.id !== reportId) return
+    selected.value = {
+      ...selected.value,
+      case_results: selected.value.case_results.map(item => (
+        item.execution_case_id === loaded.execution_case_id ? loaded : item
+      )),
+    }
+  } catch {
+    // The selected report keeps a visible retry action beside the evidence pane.
+  }
+}
+
 function showReportList(): void {
   mobileReportDetailOpen.value = false
   replaceReportRoute('')
@@ -302,7 +319,7 @@ async function deleteReports(reportIds: string[]): Promise<void> {
 
 <template>
   <section class="workspace">
-    <template v-if="selected"><DiagnosticReport :execution="selected" @back="selected = null" @edit="edit" @rerun="executions.rerunFailed($event)" /></template>
+    <template v-if="selected"><DiagnosticReport :execution="selected" :loading-case-keys="executions.loadingCaseKeys" :case-evidence-errors="executions.caseEvidenceErrors" @load-evidence="loadDiagnosticEvidence" @back="selected = null" @edit="edit" @rerun="executions.rerunFailed($event)" /></template>
     <template v-else>
       <header class="page-toolbar">
         <div>
