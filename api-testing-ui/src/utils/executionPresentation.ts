@@ -48,6 +48,20 @@ export function statusLabel(status: string): string {
   return STATUS_LABELS[String(status || '').toUpperCase()] || String(status || '未知')
 }
 
+export function hasLoadedCaseEvidence(result: ExecutionCaseResult): boolean {
+  if (result.evidence_loaded === true) return true
+  if (result.evidence_loaded === false) return false
+  return Boolean(result.sanitized_result && Object.keys(result.sanitized_result).length)
+}
+
+export function formatCompactEvidenceValue(value: unknown, limit = 600): string {
+  if (value === undefined || value === null) return '-'
+  const serialized = typeof value === 'string' ? value : JSON.stringify(value)
+  const text = serialized === undefined ? String(value) : serialized
+  if (text.length <= limit) return text
+  return `${text.slice(0, limit)}…（已截断，共 ${text.length.toLocaleString('zh-CN')} 个字符）`
+}
+
 export function failureCategoryLabel(category: string): string {
   return FAILURE_CATEGORY_LABELS[String(category || '')] || String(category || '未分类异常')
 }

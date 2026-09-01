@@ -169,6 +169,8 @@ test('我的收藏三接口完成导入、AI 设计、调试、基线回归和�
   await expect(page.getByText('环境异常', { exact: true })).toBeVisible()
   await expect(page.getByText('AI 诊断摘要', { exact: true })).toBeVisible()
   await expect(page.getByText('技术日志', { exact: true })).toBeVisible()
+  await expect(page.getByText('HTTP 200', { exact: true }).first()).toBeVisible()
+  await expect(page.getByText('未收到响应', { exact: true })).toHaveCount(0)
   await page.screenshot({ path: testInfo.outputPath('report-desktop.png'), fullPage: true })
 
   await page.setViewportSize({ width: 390, height: 844 })

@@ -3,7 +3,7 @@ import { computed, ref, watch } from 'vue'
 import { ArrowLeft, Pencil, RotateCw } from 'lucide-vue-next'
 
 import type { ExecutionCaseResult, ExecutionView } from '../api/contracts'
-import { caseResultSummary, executionFailureBuckets, redactSensitiveEvidence } from '../utils/executionPresentation'
+import { caseResultSummary, executionFailureBuckets, hasLoadedCaseEvidence, redactSensitiveEvidence } from '../utils/executionPresentation'
 import CaseEvidence from './CaseEvidence.vue'
 import CaseResultList from './CaseResultList.vue'
 import ExecutionOverview from './ExecutionOverview.vue'
@@ -35,7 +35,7 @@ watch(filteredResults, results => {
   if (!results.some(result => result.execution_case_id === selected.value?.execution_case_id)) selected.value = results[0] || null
 })
 watch(() => selected.value?.execution_case_id, () => {
-  if (selected.value?.evidence_loaded === false) emit('loadEvidence', selected.value)
+  if (selected.value && !hasLoadedCaseEvidence(selected.value)) emit('loadEvidence', selected.value)
 }, { immediate: true })
 
 function selectEvidence(result: ExecutionCaseResult): void {

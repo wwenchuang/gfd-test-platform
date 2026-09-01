@@ -64,6 +64,33 @@ describe('executions store', () => {
     expect(store.loadingCaseKeys).toEqual([])
   })
 
+  it('loads evidence for a legacy lightweight case whose evidence flag is missing', async () => {
+    const summary = {
+      id: 'execution-legacy', project_id: 'project-1', state: 'DONE', execution_type: 'regression',
+      source_revision_id: 'source-1', environment_revision_id: 'environment-1', environment_name: '测试环境',
+      case_statuses: ['PASSED'], summary: { total: 1, passed: 1 }, cancellation_requested: false,
+      created_at: '', started_at: '', finished_at: '',
+      case_results: [{
+        execution_case_id: 'case-legacy', case_version_id: 'version-legacy', endpoint_id: 'endpoint-legacy',
+        case_name: '旧摘要', endpoint_summary: '', method: 'GET', path: '/legacy', status: 'PASSED',
+        failure_category: '', duration_ms: 20, sanitized_result: {},
+      }],
+    } as ExecutionView
+    const loadedResult = {
+      ...summary.case_results[0],
+      evidence_loaded: true,
+      sanitized_result: { sanitized_response: { status_code: 200, body: { code: 0 } } },
+    }
+    const get = vi.spyOn(apiClient, 'get').mockResolvedValue({ data: { case_result: loadedResult } })
+    const store = useExecutionsStore()
+    store.active = summary
+
+    await store.loadExecutionCase(summary.id, 'case-legacy')
+
+    expect(get).toHaveBeenCalledOnce()
+    expect(store.active.case_results[0].evidence_loaded).toBe(true)
+  })
+
   it('keeps fresh terminal status when a summary refresh preserves loaded evidence', async () => {
     const loaded = {
       id: 'execution-1', state: 'RUNNING',

@@ -224,7 +224,7 @@ async function assertLargeExecutionDrawer(page, url) {
     endpoint_id: endpoint.id, case_name: `大量基线用例 ${index + 1}`, method: 'GET', path: `/fixture/${index}`,
     status: 'PASSED', failure_category: '', duration_ms: 5,
     sanitized_result: { request: { method: 'GET', url: `https://example.test/fixture/${index}` },
-      response: { status_code: 200, body: JSON.stringify({ code: 0, data: '详细响应'.repeat(200) }) },
+      response: { status_code: 200, body: JSON.stringify({ code: 0, data: index === 119 ? `${'详细响应'.repeat(5000)}LARGE_RESPONSE_TAIL` : '详细响应'.repeat(200) }) },
       assertions: [{ type: 'status_code', passed: true, expected: 200, actual: 200 }] },
   }));
   const execution = {
@@ -263,6 +263,14 @@ async function assertLargeExecutionDrawer(page, url) {
     await assertEvidenceVisible();
     await drawer.getByTestId('case-result-row').last().click();
     await assertEvidenceVisible();
+    const expandResponse = drawer.getByTestId('expand-response-evidence');
+    await expect(expandResponse).toBeVisible();
+    await expect(drawer).not.toContainText('LARGE_RESPONSE_TAIL');
+    await expandResponse.click();
+    await expect(drawer).toContainText('LARGE_RESPONSE_TAIL');
+    await expect(expandResponse).toContainText('恢复精简预览');
+    await expandResponse.click();
+    await expect(drawer).not.toContainText('LARGE_RESPONSE_TAIL');
     await assertNoHorizontalOverflow(page, `large drawer ${label}`);
     await page.screenshot({ path: path.join(ARTIFACTS, `execution-drawer-${label}.png`) });
     await page.keyboard.press('Escape');

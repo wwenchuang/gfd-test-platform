@@ -4,6 +4,7 @@ import { markRaw } from 'vue'
 import { apiClient } from '../api/client'
 import type { ExecutionCaseResult, ExecutionConnectionState, ExecutionEventView, ExecutionView } from '../api/contracts'
 import { createIdempotencyKey } from '../utils/idempotency'
+import { hasLoadedCaseEvidence } from '../utils/executionPresentation'
 
 const TERMINAL = new Set(['DONE', 'CANCELLED', 'PASSED', 'FAILED', 'BROKEN'])
 const EVENT_TYPES = [
@@ -93,7 +94,7 @@ export const useExecutionsStore = defineStore('api-executions', {
         ? this.active
         : this.executions.find(item => item.id === executionId)
       const current = currentExecution?.case_results.find(item => item.execution_case_id === executionCaseId)
-      if (!force && current && current.evidence_loaded !== false) return current
+      if (!force && current && hasLoadedCaseEvidence(current)) return current
       this.loadingCaseKeys = [...new Set([...this.loadingCaseKeys, key])]
       const errors = { ...this.caseEvidenceErrors }
       delete errors[key]

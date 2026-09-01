@@ -3,7 +3,7 @@ import { computed } from 'vue'
 import { AlertTriangle, Lightbulb } from 'lucide-vue-next'
 
 import type { ExecutionCaseResult } from '../api/contracts'
-import { redactSensitiveEvidence } from '../utils/executionPresentation'
+import { formatCompactEvidenceValue, redactSensitiveEvidence } from '../utils/executionPresentation'
 
 const props = defineProps<{ result: ExecutionCaseResult }>()
 const detail = computed(() => props.result.sanitized_result)
@@ -13,7 +13,7 @@ const aiRecommendations = computed(() => Array.isArray(ai.value?.recommendations
 const errorMessage = computed(() => String(detail.value.error_message || ''))
 const evidence = computed(() => {
   const assertions = Array.isArray(detail.value.assertion_results) ? detail.value.assertion_results : []
-  if (assertions.length) return assertions.map(item => JSON.stringify(redactSensitiveEvidence(item))).slice(0, 3)
+  if (assertions.length) return assertions.map(item => formatCompactEvidenceValue(redactSensitiveEvidence(item))).slice(0, 3)
   if (errorMessage.value) return [errorMessage.value]
   return [`失败分类：${props.result.failure_category || 'unknown'}`]
 })

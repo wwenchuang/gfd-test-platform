@@ -69,4 +69,18 @@ describe('DiagnosticReport', () => {
     await wrapper.findAll('[data-testid="report-case-row"]')[1].trigger('click')
     expect(wrapper.emitted('loadEvidence')?.at(-1)?.[0]).toMatchObject({ execution_case_id: 'case-2' })
   })
+
+  it('treats an empty legacy summary without an evidence flag as deferred evidence', async () => {
+    const lightweight = {
+      ...execution,
+      case_results: execution.case_results.map(item => ({ ...item, sanitized_result: {}, evidence_loaded: undefined })),
+    }
+    const wrapper = mount(DiagnosticReport, { props: { execution: lightweight } })
+
+    expect(wrapper.emitted('loadEvidence')?.[0]?.[0]).toMatchObject({ execution_case_id: 'case-1' })
+    await wrapper.findAll('[data-testid="report-case-row"]')[1].trigger('click')
+    expect(wrapper.emitted('loadEvidence')?.at(-1)?.[0]).toMatchObject({ execution_case_id: 'case-2' })
+    expect(wrapper.text()).toContain('选择用例后读取请求、响应、断言和执行轨迹')
+    expect(wrapper.text()).not.toContain('未收到响应')
+  })
 })

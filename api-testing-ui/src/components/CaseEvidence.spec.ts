@@ -101,4 +101,31 @@ describe('CaseEvidence', () => {
     expect(wrapper.emitted('edit')?.[0]?.[0]).toEqual(result)
     expect(wrapper.emitted('rerun')?.[0]?.[0]).toEqual(result)
   })
+
+  it('keeps oversized response and assertion values in a readable preview until explicitly expanded', async () => {
+    const tailMarker = 'RESPONSE_TAIL_MUST_BE_LAZY'
+    const oversized = `${'x'.repeat(18_000)}${tailMarker}`
+    const largeResult: ExecutionCaseResult = {
+      ...result,
+      evidence_loaded: true,
+      sanitized_result: {
+        ...result.sanitized_result,
+        sanitized_response: { status_code: 200, body: { payload: oversized } },
+        assertion_results: [{ passed: true, message: '响应结构完整', expected: '存在 payload', actual: oversized }],
+      },
+    }
+    const wrapper = mount(CaseEvidence, { props: { result: largeResult } })
+
+    expect(wrapper.text()).toContain('内容较大，已先展示前')
+    expect(wrapper.text()).toContain('实际 x')
+    expect(wrapper.text()).toContain('已截断')
+    expect(wrapper.text()).not.toContain(tailMarker)
+
+    await wrapper.get('[data-testid="expand-response-evidence"]').trigger('click')
+    expect(wrapper.text()).toContain(tailMarker)
+    expect(wrapper.get('[data-testid="expand-response-evidence"]').text()).toContain('恢复精简预览')
+
+    await wrapper.get('[data-testid="expand-response-evidence"]').trigger('click')
+    expect(wrapper.text()).not.toContain(tailMarker)
+  })
 })

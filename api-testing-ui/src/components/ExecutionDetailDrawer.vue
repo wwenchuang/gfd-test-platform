@@ -3,7 +3,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { X } from 'lucide-vue-next'
 
 import type { ExecutionCaseResult, ExecutionView } from '../api/contracts'
-import { executionTypeLabel } from '../utils/executionPresentation'
+import { executionTypeLabel, hasLoadedCaseEvidence } from '../utils/executionPresentation'
 import CaseResultList from './CaseResultList.vue'
 import ReportSummary from './ReportSummary.vue'
 import CaseEvidence from './CaseEvidence.vue'
@@ -31,7 +31,7 @@ watch(() => props.initialCaseId, id => {
   if (id) active.value = props.execution.case_results.find(item => item.execution_case_id === id) || active.value
 })
 watch(() => active.value?.execution_case_id, async () => {
-  if (active.value?.evidence_loaded === false) emit('loadEvidence', active.value)
+  if (active.value && !hasLoadedCaseEvidence(active.value)) emit('loadEvidence', active.value)
   await nextTick()
   if (evidencePane.value) evidencePane.value.scrollTop = 0
   const pane = listPane.value
