@@ -58,6 +58,9 @@ module.exports = async function checkPendingActions(page, screenshotPath) {
   await page.evaluate(() => document.getElementById('editor-area').appendChild(window.__batchDetachedEditor));
   await page.getByRole('button', {name: '批量确认替换', exact: true}).click();
   const dialog = page.locator('#pending-batch-dialog');
+  assert.equal(await dialog.locator('.pending-batch-details-primary > li').count(), 10, 'Large previews need a bounded first page');
+  assert.match(await dialog.locator('.pending-batch-more summary').innerText(), /展开剩余 1 项/);
+  assert.match(await dialog.locator('.pending-batch-skip-summary').innerText(), /重复选择|未保存修改/);
   async function checkDialogLayout(buttonName) {
     const viewport = page.viewportSize();
     const box = await dialog.boundingBox();

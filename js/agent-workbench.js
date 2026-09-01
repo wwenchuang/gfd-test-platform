@@ -48,6 +48,17 @@ function agentAppsWithDefault(apps) {
   ));
 }
 
+function preferredAgentApplication(activeApps, preferredValue = '') {
+  const apps = Array.isArray(activeApps) ? activeApps : [];
+  const preferred = apps.find(app => (
+    (app.name || app.package || '') === preferredValue
+    || agentApplicationPackage(app) === preferredValue
+  ));
+  if (preferred) return preferred;
+  return apps.find(app => (Array.isArray(app.business_lines) ? app.business_lines : [])
+    .some(line => line && line.id && line.enabled !== false)) || apps[0] || null;
+}
+
 function appendAgentAppOptions(select, apps, preferredValue) {
   if (!select) return;
   const currentValue = preferredValue || select.value || '';
@@ -70,10 +81,11 @@ function appendAgentAppOptions(select, apps, preferredValue) {
     opt.dataset.modules = JSON.stringify(app.modules || []);
     select.appendChild(opt);
   });
+  const preferredApp = preferredAgentApplication(activeApps, currentValue);
   const options = Array.from(select.options);
   const selectedOption = options.find(o => (
-    o.value === currentValue ||
-    o.dataset.package === currentValue
+    o.value === (preferredApp?.name || preferredApp?.package || '')
+    || o.dataset.package === agentApplicationPackage(preferredApp || {})
   )) || options[0];
   if (selectedOption) {
     select.value = selectedOption.value;
@@ -90,6 +102,13 @@ function renderAgentBusinessOptions(preferredValue = '') {
   select.value = selected;
   select.disabled = !lines.length;
   agentBusinessDraft = selected;
+  const hint = document.getElementById('agent-business-hint');
+  if (hint) {
+    hint.textContent = lines.length
+      ? '请选择本次测试所属业务；Agent 生成、执行和报告会沿用该归属。'
+      : '该应用尚未在“应用配置”中配置启用业务，请先补充业务后再启动 Agent。';
+    hint.classList.toggle('form-error-hint', !lines.length);
+  }
 }
 
 function handleAgentApplicationChange() {
@@ -700,6 +719,7 @@ async function showAgentWorkbench() {
                 <select id="agent-business" onchange="rememberAgentBusiness(this.value)">
                   ${agentBusinessOptionsHtml()}
                 </select>
+                <div class="form-hint" id="agent-business-hint">正在读取该应用的业务配置...</div>
               </div>
               <div class="agent-field">
                 <label for="agent-platform">平台</label>

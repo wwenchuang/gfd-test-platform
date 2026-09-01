@@ -1739,6 +1739,18 @@
   .pending-batch-dialog .job-actions { margin-top: 16px; }
   .pending-batch-details { padding-left: 22px; overflow-wrap: anywhere; overflow-y: auto; min-height: 0; }
   .pending-batch-details li { margin: 12px 0; line-height: 1.6; }
+  .pending-batch-skip-summary { display: grid; gap: 6px; padding: 10px 12px; border: 1px solid rgba(245,158,11,.28); border-radius: 10px; background: rgba(245,158,11,.07); }
+  .pending-batch-skip-summary span { color: var(--text2); line-height: 1.5; overflow-wrap: anywhere; }
+  .pending-batch-more { border-top: 1px solid rgba(148,163,184,.18); padding-top: 8px; }
+  .pending-batch-more summary { color: var(--accent); cursor: pointer; font-weight: 700; }
+  .pending-batch-more[open] { max-height: 42dvh; overflow: auto; flex-shrink: 1 !important; }
+  .pending-batch-more[open] summary { position: sticky; top: 0; z-index: 1; margin-bottom: 8px; padding: 4px 0; background: #101b2c; }
+  .ai-repair-source-context { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 16px; margin: 0 0 14px; padding: 12px 14px; border: 1px solid rgba(34,211,238,.36); border-radius: 12px; background: rgba(34,211,238,.08); }
+  .ai-repair-source-context div { display: grid; gap: 4px; min-width: 0; }
+  .ai-repair-source-context span { color: var(--text2); line-height: 1.5; overflow-wrap: anywhere; }
+  .ai-repair-page .btn-sm:disabled,
+  #modal-ai-gateway-result button:disabled { opacity: .42; filter: saturate(.35); cursor: not-allowed; box-shadow: none; }
+  .form-error-hint { color: var(--warning, #f59e0b) !important; }
   .pending-action-head {
     display: flex;
     justify-content: space-between;

@@ -691,6 +691,13 @@ async function anyVisible(locator) {
       const select = document.querySelector('#agent-model');
       return select && select.innerText.includes('Highway GPT-5 Mini') && select.innerText.includes('千问 Qwen Plus');
     });
+    await page.fill('#agent-model-search', 'Qwen');
+    await page.waitForFunction(() => {
+      const text = document.querySelector('#agent-model')?.innerText || '';
+      return text.includes('Qwen') && !text.includes('Highway GPT-5 Mini');
+    });
+    await page.fill('#agent-model-search', '');
+    await page.waitForFunction(() => (document.querySelector('#agent-model')?.innerText || '').includes('Highway GPT-5 Mini'));
     if (!await page.locator('.agent-start-layout').isVisible()) throw new Error('Agent grouped start layout is missing');
     if (await page.locator('.agent-form-section').count() < 2) throw new Error('Agent form sections are missing');
     if (!await page.locator('.agent-start-button').isVisible()) throw new Error('Agent start button is missing after layout change');
@@ -1197,17 +1204,28 @@ async function anyVisible(locator) {
       '拒绝草稿': '暂无可拒绝的修复草稿',
     };
     for (const [label, message] of Object.entries(emptyRepairActions)) {
-      await page.locator('.ai-repair-draft-panel').getByRole('button', {name: label, exact: true}).click();
-      const feedback = page.locator('#repair-action-feedback');
-      if (!await feedback.isVisible() || !(await feedback.innerText()).includes(message)) throw new Error(`${label} did not leave a visible next step`);
+      const button = page.locator('.ai-repair-draft-panel').getByRole('button', {name: label, exact: true});
+      if (!await button.isDisabled()) throw new Error(`${label} must be disabled until its prerequisite exists`);
+      if (!String(await button.getAttribute('title') || '').includes(message)) throw new Error(`${label} did not explain its prerequisite`);
     }
-    await page.waitForFunction(() => !document.getElementById('toast')?.classList.contains('show'));
-    if (!await page.locator('#repair-action-feedback').isVisible()) throw new Error('Repair next step disappeared with the toast');
+    const repairFeedback = page.locator('#repair-action-feedback');
+    if (!await repairFeedback.isVisible() || !/不能自动修 YAML/.test(await repairFeedback.innerText())) throw new Error('Repair next step must remain visible without a click');
+    await page.evaluate(() => {
+      aiFailureDraft = {
+        title: '环境问题分析',
+        analysis: JSON.stringify({failure_type:'env_issue', can_auto_repair:false, conclusion:'设备环境异常'}),
+        originalYaml: 'android: {}', fixedYaml: '', activeTab: 'analysis',
+      };
+      renderAiGatewayResult();
+    });
+    if (!await page.locator('#ai-gateway-generate-repair').isDisabled()) throw new Error('Failure dialog must disable repair generation for environment issues');
+    if (!await page.locator('#ai-gateway-download-repair').isDisabled()) throw new Error('Failure dialog must disable download without a repair YAML');
+    if (!/人工处理/.test(await page.locator('#ai-gateway-action-feedback').innerText())) throw new Error('Failure dialog must explain the manual next step');
+    await page.locator('#modal-ai-gateway-result .modal-close').click();
     await page.evaluate(() => window.scrollTo(0, 0));
     await page.screenshot({path: path.join(ARTIFACTS, 'repair-empty-actions-desktop.png'), fullPage: true});
     await page.setViewportSize({width: 390, height: 844});
-    await page.locator('.ai-repair-draft-panel').getByRole('button', {name: '复制草稿', exact: true}).click();
-    await page.waitForFunction(() => !document.getElementById('toast')?.classList.contains('show'));
+    if (!await page.locator('.ai-repair-draft-panel').getByRole('button', {name: '复制草稿', exact: true}).isDisabled()) throw new Error('Unavailable mobile repair action must stay disabled');
     await page.evaluate(() => window.scrollTo(0, 0));
     await page.screenshot({path: path.join(ARTIFACTS, 'repair-empty-actions-mobile.png'), fullPage: true});
     if (apiFailures.length) throw new Error(`api failures: ${apiFailures.join(' | ')}`);

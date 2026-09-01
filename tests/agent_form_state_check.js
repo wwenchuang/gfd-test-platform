@@ -36,7 +36,7 @@ test('an application response cannot overwrite the user selection made while loa
     escapeHtml: value => value,
     selectedAgentAppPackage: () => win.document.getElementById('agent-app-name')?.selectedOptions[0]?.dataset.package || '',
   });
-  for(const name of ['agentApplicationPackage','agentApplicationByPackage','agentBusinessLines','agentBusinessOptionsHtml','agentAppsWithDefault','appendAgentAppOptions','renderAgentBusinessOptions','loadAppList']) load(win,name);
+  for(const name of ['agentApplicationPackage','agentApplicationByPackage','agentBusinessLines','agentBusinessOptionsHtml','agentAppsWithDefault','preferredAgentApplication','appendAgentAppOptions','renderAgentBusinessOptions','loadAppList']) load(win,name);
   const pending = win.loadAppList('甲','home');
   win.document.getElementById('agent-app-name').value='乙';
   win.document.getElementById('agent-business').value='shared';
@@ -44,4 +44,40 @@ test('an application response cannot overwrite the user selection made while loa
   await pending;
   assert.equal(win.document.getElementById('agent-app-name').value,'乙');
   assert.equal(win.document.getElementById('agent-business').value,'shared');
+});
+
+test('Agent defaults to the first enabled application that has an active business line', t => {
+  const dom = new JSDOM('<select id="agent-app-name"></select><select id="agent-business"></select><div id="agent-business-hint"></div>', {runScripts:'dangerously'});
+  t.after(() => dom.window.close());
+  const win = dom.window;
+  Object.assign(win, {
+    agentApplicationCatalog: [
+      {name:'小白学习', package:'app.study', business_lines:[]},
+      {name:'智小白3D', package:'com.kfb.model', business_lines:[{id:'home', name:'家用', enabled:true}]},
+    ],
+    agentBusinessDraft:'',
+    escapeHtml: value => value,
+    selectedAgentAppPackage: () => win.document.getElementById('agent-app-name')?.selectedOptions[0]?.dataset.package || '',
+  });
+  for (const name of ['agentApplicationPackage','agentApplicationByPackage','agentBusinessLines','agentBusinessOptionsHtml','agentAppsWithDefault','preferredAgentApplication','appendAgentAppOptions','renderAgentBusinessOptions']) load(win,name);
+  win.appendAgentAppOptions(win.document.getElementById('agent-app-name'), win.agentApplicationCatalog, '');
+  win.renderAgentBusinessOptions('');
+  assert.equal(win.document.getElementById('agent-app-name').value, '智小白3D');
+  assert.equal(win.document.getElementById('agent-business').disabled, false);
+  assert.match(win.document.getElementById('agent-business-hint').textContent, /请选择本次测试所属业务/);
+});
+
+test('Agent explains how to fix an application with no active business line', t => {
+  const dom = new JSDOM('<select id="agent-app-name"><option value="小白学习" data-package="app.study">小白学习</option></select><select id="agent-business"></select><div id="agent-business-hint"></div>', {runScripts:'dangerously'});
+  t.after(() => dom.window.close());
+  const win = dom.window;
+  Object.assign(win, {
+    agentApplicationCatalog:[{name:'小白学习', package:'app.study', business_lines:[]}],
+    agentBusinessDraft:'', escapeHtml: value => value,
+    selectedAgentAppPackage: () => 'app.study',
+  });
+  for (const name of ['agentApplicationPackage','agentApplicationByPackage','agentBusinessLines','agentBusinessOptionsHtml','renderAgentBusinessOptions']) load(win,name);
+  win.renderAgentBusinessOptions('');
+  assert.equal(win.document.getElementById('agent-business').disabled, true);
+  assert.match(win.document.getElementById('agent-business-hint').textContent, /应用配置.*业务/);
 });

@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>功夫豆测试平台</title>
 <link rel="icon" href="assets/brand/kongfudou-icon.png">
-<link rel="stylesheet" href="css/app.css?v=20260831-identity-full-audit-history-preview">
+<link rel="stylesheet" href="css/app.css?v=20260831-identity-20260901-a67-ui-audit">
   <link rel="stylesheet" href="css/round5.css?v=20260828-full-platform-ux">
 </head>
 <body>
@@ -950,11 +950,12 @@
       <button class="agent-tab" type="button" onclick="showAiGatewayResultTab('fixed')">修复 YAML</button>
     </div>
     <pre class="agent-artifact-box" id="ai-gateway-result-box" style="min-height:320px;"></pre>
+    <div class="generate-hint" id="ai-gateway-action-feedback" role="status" style="margin-top:10px;"></div>
     <div class="modal-btns">
       <button class="btn-cancel" onclick="closeModal('modal-ai-gateway-result')">关闭</button>
       <button class="btn-confirm" onclick="copyAiGatewayResult()">复制当前内容</button>
-      <button class="btn-confirm" onclick="generateRepairYamlFromAnalysis()">生成修复 YAML</button>
-      <button class="btn-confirm" onclick="downloadAiGatewayYamlDraft()">下载修复 YAML</button>
+      <button class="btn-confirm" id="ai-gateway-generate-repair" onclick="generateRepairYamlFromAnalysis()">生成修复 YAML</button>
+      <button class="btn-confirm" id="ai-gateway-download-repair" onclick="downloadAiGatewayYamlDraft()">下载修复 YAML</button>
     </div>
     <div class="generate-hint" style="margin-top:10px;">修复后的 YAML 只作为草稿展示，不会自动覆盖当前文件或基线；替换前必须人工确认。</div>
   </div>
@@ -972,15 +973,15 @@
 <script src="js/auth.js?v=20260828-full-platform-ux-20260831-identity-sonic-readonly"></script>
 <script src="js/identity-management.js?v=20260831-identity"></script>
 <script src="js/navigation.js?v=20260828-full-platform-ux"></script>
-<script src="js/agent-workbench.js?v=20260828-full-platform-ux-20260831-form-preservation"></script>
+<script src="js/agent-workbench.js?v=20260828-full-platform-ux-20260901-a67-ui-audit"></script>
 <script src="js/agent-status.js?v=20260828-full-platform-ux-20260831-confirmation-integrity"></script>
 <script src="js/cases.js?v=20260828-full-platform-ux-20260831-identity-sonic"></script>
 <script src="js/execution.js?v=20260828-full-platform-ux-20260831-history-progress"></script>
 <script src="js/reports.js?v=20260828-full-platform-ux"></script>
-<script src="js/ai-repair.js?v=20260831-repair-action-feedback"></script>
+<script src="js/ai-repair.js?v=20260901-a67-full-platform-ui-audit"></script>
 <script src="js/model-config.js?v=20260828-full-platform-ux"></script>
 <script src="js/yaml-editor.js?v=20260828-full-platform-ux"></script>
-<script src="js/pending-actions.js?v=20260831-full-audit"></script>
+<script src="js/pending-actions.js?v=20260901-a67-full-platform-ui-audit"></script>
 <script src="js/app.js?v=20260831-identity-full-audit-runner-result"></script>
 <!-- legacy-static-check: 半自动 Agent 工作台 启动半自动 Agent 半自动 Agent 启动 Agent 进度 Agent 产物 SEMI_AUTO 半自动 AUTO_SAFE 安全自动（后续开放） 自动生成测试用例 自动生成 Midscene YAML 自动校验 YAML 生成后等待确认执行 Sonic 生成飞书缺陷草稿（不自动提交） autoRun: false autoCreateBug: false 执行与 AI 诊断中心 运行轨迹 从失败任务或测试目标出发 模型策略摘要 去模型配置 -->
 </body>

@@ -55,6 +55,27 @@ function pendingBatchToolbarHtml(actions) {
   </div>`;
 }
 
+function pendingBatchRowHtml(row, result = false) {
+  const detail = result
+    ? `<br>${escapeHtml(row.detail || '')}`
+    : `${row.riskHits?.length ? `<br>风险：${escapeHtml(row.riskHits.join('、'))}` : ''}${row.skip ? `<br>跳过：${escapeHtml(row.skip)}` : ''}`;
+  return `<li><strong>${escapeHtml(result ? `${row.status} · ${row.title}` : row.title)}</strong><br>${escapeHtml(row.target)}${detail}</li>`;
+}
+
+function pendingBatchDetailsHtml(rows, {result = false} = {}) {
+  const previewLimit = 10;
+  const primary = rows.slice(0, previewLimit);
+  const remaining = rows.slice(previewLimit);
+  const skipGroups = new Map();
+  if (!result) rows.filter(row => row.skip).forEach(row => skipGroups.set(row.skip, (skipGroups.get(row.skip) || 0) + 1));
+  const skipSummary = skipGroups.size
+    ? `<div class="pending-batch-skip-summary"><strong>跳过原因</strong>${Array.from(skipGroups.entries()).map(([reason, count]) => `<span>${escapeHtml(reason)} · ${count}</span>`).join('')}</div>`
+    : '';
+  return `${skipSummary}
+    <ul class="pending-batch-details pending-batch-details-primary">${primary.map(row => pendingBatchRowHtml(row, result)).join('')}</ul>
+    ${remaining.length ? `<details class="pending-batch-more"><summary>展开剩余 ${remaining.length} 项</summary><ul class="pending-batch-details">${remaining.map(row => pendingBatchRowHtml(row, result)).join('')}</ul></details>` : ''}`;
+}
+
 function showPendingBatchDialog(operation, actionIds = null) {
   if (pendingBatchBusy || !hasPermission('ui.edit') || !['apply', 'reject', 'handled'].includes(operation)) return;
   const ids = actionIds ? new Set(actionIds) : selectedPendingActions;
@@ -87,7 +108,7 @@ function showPendingBatchDialog(operation, actionIds = null) {
   dialog.innerHTML = `<h3>${title}</h3>
     <p>已选 ${rows.length} 项，本次处理 ${eligible.length} 项，跳过 ${rows.length - eligible.length} 项。</p>
     <p>${operation === 'apply' ? '请检查下面的文件和风险。系统逐项校验、核对原版本并备份，再替换正式 YAML；不会自动执行。' : operation === 'reject' ? '拒绝后草稿将退出待处理列表，不修改正式 YAML。' : '标记后失败任务退出待处理列表，不改变原执行结果，也不自动重跑。'}</p>
-    <ul class="pending-batch-details">${rows.map(row => `<li><strong>${escapeHtml(row.title)}</strong><br>${escapeHtml(row.target)}${row.riskHits.length ? `<br>风险：${escapeHtml(row.riskHits.join('、'))}` : ''}${row.skip ? `<br>跳过：${escapeHtml(row.skip)}` : ''}</li>`).join('')}</ul>
+    ${pendingBatchDetailsHtml(rows)}
     ${operation === 'apply' ? '<label><input id="pending-batch-ack" type="checkbox"> 已逐项检查所选草稿及风险，确认替换并备份</label>' : ''}
     ${operation === 'reject' ? '<label>拒绝原因（可选）<textarea id="pending-batch-reason" rows="2" maxlength="1000"></textarea></label>' : ''}
     <div class="job-actions"><button class="btn-sm" data-cancel>取消</button><button class="btn-sm success" data-confirm ${!eligible.length || operation === 'apply' ? 'disabled' : ''}>确认处理</button></div>`;
@@ -154,7 +175,7 @@ async function executePendingBatch(operation, rows, dialog) {
     pendingBatchResult = {title, results};
     dialog.innerHTML = `<h3>批量处理结果</h3><p role="status">${escapeHtml(title)}</p>
       <p>成功项已取消勾选；失败及跳过项保留选择。请按具体原因处理后再重试。</p>
-      <ul class="pending-batch-details">${results.map(row => `<li><strong>${escapeHtml(row.status)} · ${escapeHtml(row.title)}</strong><br>${escapeHtml(row.target)}<br>${escapeHtml(row.detail)}</li>`).join('')}</ul>
+      ${pendingBatchDetailsHtml(results, {result: true})}
       <button class="btn-sm" onclick="document.getElementById('pending-batch-dialog').close()">关闭</button>`;
     renderJobs();
     await loadJobs(false, true);

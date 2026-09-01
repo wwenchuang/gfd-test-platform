@@ -228,6 +228,27 @@ function renderAiGatewayResult() {
   const riskHits = agentRiskHits([aiFailureDraft.originalYaml, aiFailureDraft.fixedYaml].filter(Boolean).join('\n'));
   risk.classList.toggle('show', riskHits.length > 0);
   risk.textContent = riskHits.length ? `风险提示：YAML 命中 ${riskHits.join('、')}，修复草稿必须人工确认后才能使用。` : '';
+  const normalized = aiFailureDraftNormalized();
+  const generateButton = document.getElementById('ai-gateway-generate-repair');
+  const downloadButton = document.getElementById('ai-gateway-download-repair');
+  const feedback = document.getElementById('ai-gateway-action-feedback');
+  const canGenerate = Boolean(normalized.canAutoRepair);
+  const canDownload = Boolean(aiFailureDraft.fixedYaml);
+  if (generateButton) {
+    generateButton.disabled = !canGenerate;
+    generateButton.title = canGenerate ? '' : `${failureTypeText(normalized.failureType)}不允许自动修 YAML`;
+  }
+  if (downloadButton) {
+    downloadButton.disabled = !canDownload;
+    downloadButton.title = canDownload ? '' : '请先生成修复 YAML';
+  }
+  if (feedback) {
+    feedback.textContent = !canGenerate
+      ? `${failureTypeText(normalized.failureType)}只做人工处理；请人工复核或生成缺陷草稿。`
+      : !canDownload
+        ? '当前还没有修复 YAML；先生成草稿，再下载或人工确认。'
+        : '修复 YAML 已生成；下载只保存草稿，不会覆盖正式文件。';
+  }
   document.getElementById('ai-gateway-result-box').textContent = aiGatewayResultText();
   document.getElementById('modal-ai-gateway-result').classList.add('show');
 }
@@ -665,6 +686,17 @@ function repairYamlDraftHtml(normalized) {
   const noDraftReason = !canRepair
     ? `当前归因为${repairFailureTypeText(normalized.failureType)}，不能自动修 YAML`
     : '请先点击“生成修复草稿”';
+  const fixedYamlReady = Boolean(aiFailureDraft?.fixedYaml);
+  const actionButton = ({label, cls = '', enabled, onClick, unavailable}) => `<button class="btn-sm ${cls}" ${enabled
+    ? `onclick="${onClick}"`
+    : `disabled aria-disabled="true" title="${escapeHtml(unavailable)}"`}>${escapeHtml(label)}</button>`;
+  const nextStep = !canRepair
+    ? `${noDraftReason}。请人工复核，或生成飞书缺陷草稿。`
+    : !fixedYamlReady
+      ? '请先生成修复草稿；生成后才能复制、下载或人工确认替换。'
+      : !canApplyDraft
+        ? '修复 YAML 已生成，但草稿尚未进入可确认状态，请刷新草稿状态后再处理。'
+        : '';
   return `
     <div class="review-panel ai-repair-draft-panel">
       <div class="section-head">
@@ -674,14 +706,14 @@ function repairYamlDraftHtml(normalized) {
           <div class="job-meta">草稿状态：${escapeHtml(draftStatus)}${draftId ? ` · ${escapeHtml(draftId)}` : ''}</div>
         </div>
         <div class="review-actions">
-          <button class="btn-sm ai" onclick="${canRepair ? 'generateRepairYamlFromAnalysis()' : `promptRepairUnavailable(${jsArg(noDraftReason)})`}">生成修复草稿</button>
-          <button class="btn-sm" onclick="${aiFailureDraft?.fixedYaml ? 'copyRepairDraftYaml()' : `promptRepairUnavailable(${jsArg('暂无修复草稿可复制，请先生成修复草稿')})`}">复制草稿</button>
-          <button class="btn-sm" onclick="${aiFailureDraft?.fixedYaml ? 'downloadAiGatewayYamlDraft()' : `promptRepairUnavailable(${jsArg('暂无修复草稿可下载，请先生成修复草稿')})`}">下载草稿</button>
-          <button class="btn-sm success" onclick="${canApplyDraft ? `confirmApplyRepairDraft(${jsArg(draftId)})` : `promptRepairUnavailable(${jsArg('需要先生成并保存修复草稿，才能人工确认替换')})`}">人工确认替换</button>
-          <button class="btn-sm danger" onclick="${draftId ? `rejectRepairDraft(${jsArg(draftId)})` : `promptRepairUnavailable(${jsArg('暂无可拒绝的修复草稿')})`}">拒绝草稿</button>
+          ${actionButton({label: '生成修复草稿', cls: 'ai', enabled: canRepair, onClick: 'generateRepairYamlFromAnalysis()', unavailable: noDraftReason})}
+          ${actionButton({label: '复制草稿', enabled: fixedYamlReady, onClick: 'copyRepairDraftYaml()', unavailable: '暂无修复草稿可复制，请先生成修复草稿'})}
+          ${actionButton({label: '下载草稿', enabled: fixedYamlReady, onClick: 'downloadAiGatewayYamlDraft()', unavailable: '暂无修复草稿可下载，请先生成修复草稿'})}
+          ${actionButton({label: '人工确认替换', cls: 'success', enabled: canApplyDraft, onClick: `confirmApplyRepairDraft(${jsArg(draftId)})`, unavailable: '需要先生成并保存修复草稿，才能人工确认替换'})}
+          ${actionButton({label: '拒绝草稿', cls: 'danger', enabled: Boolean(draftId), onClick: `rejectRepairDraft(${jsArg(draftId)})`, unavailable: '暂无可拒绝的修复草稿'})}
         </div>
       </div>
-      <p id="repair-action-feedback" class="generate-hint" role="status" hidden></p>
+      <p id="repair-action-feedback" class="generate-hint" role="status" ${nextStep ? '' : 'hidden'}>${escapeHtml(nextStep)}</p>
       ${!canRepair ? `<div class="agent-risk show">当前归因为${escapeHtml(repairFailureTypeText(normalized.failureType))}，不建议自动改 YAML。请人工复核，或生成飞书缺陷草稿。</div>` : ''}
       ${riskHits.length ? `<div class="agent-risk show">该任务包含高风险动作：${escapeHtml(riskHits.join('、'))}。禁止自动执行，请人工确认后继续。</div>` : ''}
       <div class="agent-tabs">
@@ -716,6 +748,28 @@ function showAiRepairTab(tab) {
   showAiRepairCenter();
 }
 
+function resolveAiRepairSelectedJob(failedJobs = []) {
+  const matched = failedJobs.find(job => job.job_id === selectedRepairJobId) || null;
+  if (matched || selectedRepairJobId) return matched;
+  if (aiFailureDraft?.draftId) return null;
+  return failedJobs[0] || null;
+}
+
+function aiRepairDraftContextHtml(selectedJob) {
+  if (!aiFailureDraft?.draftId) return '';
+  const title = aiFailureDraft.title || aiFailureDraft.file || 'YAML 修复草稿';
+  const source = selectedRepairJobId
+    ? (selectedJob ? `关联失败任务：${selectedJob.taskName || selectedJob.file || selectedRepairJobId}` : `关联失败任务 ${selectedRepairJobId} 不在当前加载范围`)
+    : '未关联失败任务';
+  return `<div class="ai-repair-source-context" role="status"><div><strong>当前从 Runner 打开的草稿：${escapeHtml(title)}</strong><span>${escapeHtml(source)}。右侧分析、原始 YAML 和修复 YAML 均属于这份草稿。</span></div><button class="btn-sm" onclick="returnToRunnerPendingActions()">返回 Runner 待我处理</button></div>`;
+}
+
+async function returnToRunnerPendingActions() {
+  if (typeof activateWorkflow === 'function') await activateWorkflow('execute');
+  else if (typeof setActiveWorkflow === 'function') setActiveWorkflow('execute');
+  if (typeof setExecutionTab === 'function') setExecutionTab('runner');
+}
+
 function showAiRepairCenter() {
   activeWorkspaceMode = 'ai-repair';
   const area = document.getElementById('editor-area');
@@ -724,7 +778,7 @@ function showAiRepairCenter() {
   const totalPages = Math.max(1, Math.ceil(failedJobs.length / REPAIR_JOB_PAGE_SIZE));
   repairJobFilters.page = Math.min(Math.max(1, repairJobFilters.page), totalPages);
   const visibleFailedJobs = failedJobs.slice((repairJobFilters.page - 1) * REPAIR_JOB_PAGE_SIZE, repairJobFilters.page * REPAIR_JOB_PAGE_SIZE);
-  const selectedJob = failedJobs.find(job => job.job_id === selectedRepairJobId) || failedJobs[0] || null;
+  const selectedJob = resolveAiRepairSelectedJob(failedJobs);
   if (!selectedRepairJobId && selectedJob?.job_id) selectedRepairJobId = selectedJob.job_id;
   const normalized = aiFailureDraft ? aiFailureDraftNormalized() : normalizeFailureAnalysis('');
   area.className = 'editor-area';
@@ -742,6 +796,7 @@ function showAiRepairCenter() {
           <button class="btn-sm" onclick="generateBugDraftFromAnalysis()" ${aiFailureDraft ? '' : 'disabled'}>生成飞书缺陷草稿</button>
         </div>
       </div>
+      ${aiRepairDraftContextHtml(selectedJob)}
       <div class="review-grid ai-repair-grid">
         <div class="review-panel ai-repair-job-panel">
           <h3>失败任务列表</h3><div class="management-filter-scope">${escapeHtml(jobHistoryScopeText())}</div>

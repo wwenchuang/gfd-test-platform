@@ -11,7 +11,7 @@ function loadFunction(window, source, name) {
   window.eval(source.slice(start, end < 0 ? undefined : end));
 }
 
-test('every unavailable repair action leaves a readable next step inside its panel', t => {
+test('unavailable repair actions are visibly disabled and the panel keeps a readable next step', t => {
   const dom = new JSDOM('<body></body>', { runScripts: 'dangerously' });
   t.after(() => dom.window.close());
   const win = dom.window;
@@ -35,9 +35,22 @@ test('every unavailable repair action leaves a readable next step inside its pan
   for (const [label, message] of Object.entries(messages)) {
     const button = [...win.document.querySelectorAll('button')].find(item => item.textContent === label);
     assert.ok(button, label);
-    button.click();
-    const feedback = win.document.getElementById('repair-action-feedback');
-    assert.ok(feedback && !feedback.hidden, `${label} must leave visible feedback even after the toast disappears`);
-    assert.ok(feedback.textContent.includes(message), label);
+    assert.equal(button.disabled, true, `${label} must look unavailable before the user tries it`);
+    assert.ok(button.title.includes(message), `${label} must explain its prerequisite`);
   }
+  const feedback = win.document.getElementById('repair-action-feedback');
+  assert.ok(feedback && !feedback.hidden, 'The next step must stay visible without requiring a click');
+  assert.match(feedback.textContent, /待人工复核.*不能自动修 YAML/);
+});
+
+test('a missing selected failure job does not silently highlight an unrelated first row', t => {
+  const dom = new JSDOM('<body></body>', { runScripts: 'dangerously' });
+  t.after(() => dom.window.close());
+  const win = dom.window;
+  Object.assign(win, {selectedRepairJobId: 'old-job', aiFailureDraft: null});
+  loadFunction(win, fs.readFileSync('js/ai-repair.js', 'utf8'), 'resolveAiRepairSelectedJob');
+  const jobs = [{job_id:'new-job'}];
+  assert.equal(win.resolveAiRepairSelectedJob(jobs), null);
+  win.selectedRepairJobId = '';
+  assert.equal(win.resolveAiRepairSelectedJob(jobs), jobs[0]);
 });
