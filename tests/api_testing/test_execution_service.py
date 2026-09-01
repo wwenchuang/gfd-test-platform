@@ -938,7 +938,7 @@ def test_submit_active_baselines_rejects_an_explicit_one_time_baseline(
 
     with pytest.raises(
         ExecutionConflictError,
-        match="一次性.*人工调试.*批量或定时回归",
+        match="一次性.*基线页批量执行.*定时任务.*显式允许",
     ):
         service.submit_active_baselines(
             {

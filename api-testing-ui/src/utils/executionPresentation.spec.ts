@@ -48,6 +48,25 @@ describe('execution presentation', () => {
     expect(executionConclusion(execution)).toEqual({ label: '未通过', tone: 'failed' })
   })
 
+  it('keeps the parent execution running while completed children already contain failures', () => {
+    const running = {
+      ...execution,
+      state: 'RUNNING',
+      case_results: [
+        result('PASSED'), result('FAILED', 'product_assertion'), result('BROKEN', 'environment'), result('QUEUED'),
+      ],
+      summary: { total: 4, passed: 1, failed: 1, broken: 1, queued: 1 },
+      finished_at: null,
+    }
+    const queued = {
+      ...running,
+      state: 'QUEUED',
+    }
+
+    expect(executionConclusion(running)).toEqual({ label: '执行中（已完成 3/4）', tone: 'running' })
+    expect(executionConclusion(queued)).toEqual({ label: '等待执行', tone: 'running' })
+  })
+
   it('groups deterministic failures without asking AI to reclassify them', () => {
     expect(executionFailureBuckets(execution)).toEqual({
       product: 1, scriptData: 0, environment: 1, skipped: 1, cancelled: 0,

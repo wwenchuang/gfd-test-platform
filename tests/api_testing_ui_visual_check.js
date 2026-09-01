@@ -29,15 +29,32 @@ const caseVersion = {
   data_rows: [], assertions: [{ type: 'status_code', operator: 'equals', expected: 200, timeout_ms: 0, enabled: true }],
   extractions: [], dependencies: [], processing: { pre: [], post: [] },
 };
-const baselines = Array.from({ length: 51 }, (_, index) => ({
-  id: `baseline-${index + 1}`, project_id: 'project-1', case_id: `case-${index + 1}`,
-  case_version_id: `case-version-${index + 1}`, environment_revision_id: 'environment-revision-1',
-  source_revision_id: 'source-revision-1', endpoint_id: endpoint.id, status: 'active',
-  case_name: `收藏基线 ${index + 1}`, case_version: 1, priority: 'P0', origin: 'manual',
-  app_package: 'com.example.school', app_name: '校园应用', business: 'campus',
-  method: endpoint.method, path: endpoint.path, endpoint_summary: endpoint.summary,
-  tags: ['我的收藏'], group_name: '我的收藏', adoption_reason: '真实调试通过', adopted_at: '2026-08-25T08:00:00Z',
-}));
+const baselines = Array.from({ length: 51 }, (_, index) => {
+  const baseline = {
+    id: `baseline-${index + 1}`, project_id: 'project-1', case_id: `case-${index + 1}`,
+    case_version_id: `case-version-${index + 1}`, environment_revision_id: 'environment-revision-1',
+    source_revision_id: 'source-revision-1', endpoint_id: endpoint.id, status: 'active',
+    case_name: `收藏基线 ${index + 1}`, case_version: 1, priority: 'P0', origin: 'manual',
+    app_package: 'com.example.school', app_name: '校园应用', business: 'campus',
+    method: endpoint.method, path: endpoint.path, endpoint_summary: endpoint.summary,
+    tags: ['我的收藏'], group_name: '我的收藏', adoption_reason: '真实调试通过', adopted_at: '2026-08-25T08:00:00Z',
+  };
+  if (index === 0) return {
+    ...baseline,
+    case_name: '重新打印判断 - 创建后取消并清理完整业务链路验证',
+    app_package: 'com.kfb.model', app_name: '智小白3D', business: 'home',
+    method: 'POST',
+    path: '/print3d/api/v1/printJob/createReprintWithCancellationAndResourceCleanup',
+    endpoint_summary: '重新打印判断接口创建后取消并清理所有临时资源',
+    group_name: 'API Test / 一次性',
+  };
+  if (index === 1) return {
+    ...baseline,
+    app_package: 'com.kfb.model', app_name: '智小白3D', business: 'shared',
+    group_name: '设备共享',
+  };
+  return baseline;
+});
 
 function sendJson(res, data, status = 200) {
   res.writeHead(status, { 'content-type': 'application/json; charset=utf-8' });
@@ -263,6 +280,9 @@ async function assertLargeExecutionDrawer(page, url) {
     await assertEvidenceVisible();
     await drawer.getByTestId('case-result-row').last().click();
     await assertEvidenceVisible();
+    const responseEvidence = drawer.getByTestId('response-evidence');
+    await expect(responseEvidence).not.toHaveAttribute('open', '');
+    await responseEvidence.locator('summary').click();
     const expandResponse = drawer.getByTestId('expand-response-evidence');
     await expect(expandResponse).toBeVisible();
     await expect(drawer).not.toContainText('LARGE_RESPONSE_TAIL');
@@ -300,6 +320,44 @@ async function assertBaselineSelectionReadable(page, label) {
   for (const metric of diagnostic.metrics) {
     if (metric.metricWidth < 48 || metric.numberHeight > 24 || metric.labelHeight > metric.labelLineHeight + 2) {
       throw new Error(`${label} baseline metric wrapped or collapsed: ${JSON.stringify(diagnostic)}`);
+    }
+  }
+}
+
+async function assertBaselineRowsReadable(page, label) {
+  const firstRow = page.locator('.baseline-row').first();
+  await firstRow.waitFor();
+  await expect(page.getByTestId('baseline-business-baseline-1')).toHaveText('家用');
+  await expect(page.getByTestId('baseline-application-baseline-1')).toHaveText('智小白3D');
+  await expect(page.getByTestId('baseline-maintenance-group-baseline-1')).toHaveText('API Test');
+  await expect(page.getByTestId('baseline-one-time-baseline-1')).toHaveText('一次性');
+  const diagnostic = await firstRow.evaluate(element => {
+    const selectors = [
+      '.baseline-case-title',
+      '.baseline-case-copy > small',
+      '.baseline-endpoint-copy b > span:last-child',
+      '.baseline-endpoint-copy code',
+      '.baseline-classification-copy',
+    ];
+    return selectors.map(selector => {
+      const target = element.querySelector(selector);
+      if (!target) return { selector, missing: true };
+      const style = getComputedStyle(target);
+      return {
+        selector,
+        display: style.display,
+        whiteSpace: style.whiteSpace,
+        textOverflow: style.textOverflow,
+        clientWidth: Math.round(target.clientWidth),
+        scrollWidth: Math.round(target.scrollWidth),
+        clientHeight: Math.round(target.clientHeight),
+        scrollHeight: Math.round(target.scrollHeight),
+      };
+    });
+  });
+  for (const item of diagnostic) {
+    if (item.missing || item.display === 'none' || item.whiteSpace === 'nowrap' || item.textOverflow === 'ellipsis' || item.scrollWidth > item.clientWidth + 1) {
+      throw new Error(`${label} baseline content is clipped: ${JSON.stringify(diagnostic)}`);
     }
   }
 }
@@ -546,6 +604,7 @@ async function assertAssetSyncClarity(page, url) {
       await openCompactPage(page, navigationLabel, heading, label);
       if (navigationLabel === '基线用例') {
         await assertBaselineSelectionReadable(page, 'baselines mobile');
+        await assertBaselineRowsReadable(page, 'baselines mobile');
         const action = page.locator('.baseline-row-actions').first();
         await action.waitFor();
         if (!await action.isVisible()) {
@@ -577,6 +636,7 @@ async function assertAssetSyncClarity(page, url) {
     await page.getByRole('link', { name: '基线用例', exact: true }).click();
     await page.getByRole('heading', { name: '基线用例', exact: true, level: 1 }).waitFor();
     await assertBaselineSelectionReadable(page, 'baselines desktop');
+    await assertBaselineRowsReadable(page, 'baselines desktop');
     await assertNoHorizontalOverflow(page, 'baselines desktop');
     await page.screenshot({ path: path.join(ARTIFACTS, 'baselines-desktop.png'), fullPage: true });
     await assertScheduledServerBlocks(page);

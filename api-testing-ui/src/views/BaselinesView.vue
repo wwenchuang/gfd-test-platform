@@ -542,12 +542,30 @@ function baselineScopeLabel(item: ApiBaselineCase): string {
   return applicationBusinessLabel(item.app_package, item.app_name, item.business)
 }
 
+function baselineBusinessLabel(item: ApiBaselineCase): string {
+  const scope = baselineScopeLabel(item)
+  const separator = scope.lastIndexOf(' · ')
+  return separator >= 0 ? scope.slice(separator + 3) : scope
+}
+
+function baselineApplicationLabel(item: ApiBaselineCase): string {
+  const scope = baselineScopeLabel(item)
+  const separator = scope.lastIndexOf(' · ')
+  return separator >= 0 ? scope.slice(0, separator) : '未标注应用'
+}
+
+function baselineMaintenanceGroupLabel(item: ApiBaselineCase): string {
+  const groupLabel = baselineGroup(item).trim()
+  if (!isOneTimeBaseline(item)) return groupLabel
+  return groupLabel.replace(/(?:\s*[\/·-]\s*)?一次性\s*$/, '').trim()
+}
+
 function baselineSelection(item: ApiBaselineCase) {
   if (item.status !== 'active') {
     return { selectable: false, reason: '历史基线仅供查看，不能执行' }
   }
   if (isOneTimeBaseline(item)) {
-    return { selectable: false, reason: '一次性用例仅供人工调试，不进入批量或定时回归' }
+    return { selectable: false, reason: '一次性用例在基线页不参与批量执行；定时任务可显式开启，并在确认可重复执行和清理影响后运行' }
   }
   return applicationBusinessSelection(item.app_package, item.business)
 }
@@ -748,7 +766,7 @@ function adoptionReasonLabel(reason: string): string {
             <strong>{{ baselines.scopeRepairPreview.target.app_name }} · {{ baselines.scopeRepairPreview.target.business_name }}</strong>
             <span>共 {{ baselines.scopeRepairPreview.total }} 条 · 可补齐 {{ baselines.scopeRepairPreview.eligible }} 条 · 已完整 {{ baselines.scopeRepairPreview.unchanged }} 条 · 冲突 {{ baselines.scopeRepairPreview.conflicts }} 条</span>
             <small v-if="baselines.scopeRepairPreview.conflicts">存在冲突时不会修改任何一条；请按分组缩小选择范围。</small>
-            <small v-else>确认后仅补空缺归属；一次性用例仍只供人工执行，不会进入定时回归。</small>
+            <small v-else>确认后仅补空缺归属；基线页批量执行仍跳过一次性用例，定时任务需显式开启后才会运行。</small>
           </div>
         </div>
 
@@ -757,14 +775,14 @@ function adoptionReasonLabel(reason: string): string {
         <div v-else-if="!filteredBaselines.length" class="section-empty">{{ baselines.items.length ? '当前筛选下没有匹配基线，请调整版本状态、类型、方法、优先级、来源或搜索条件。' : '该项目暂无基线。基线按项目固定保存，切换接口版本或执行环境不会影响这里；请先在工作台调试通过后采纳为基线。' }}</div>
         <div v-else class="baseline-table" role="table" aria-label="基线用例列表">
           <div class="baseline-table-head" role="row">
-            <span></span><span>用例</span><span>接口</span><span>分组</span><span>版本</span><span>采纳时间</span><span>操作</span>
+            <span></span><span>用例</span><span>接口</span><span>业务 / 标签</span><span>版本</span><span>采纳时间</span><span>操作</span>
           </div>
           <div v-for="item in pagedBaselines" :key="item.id" class="baseline-row" role="row">
             <label class="baseline-checkbox">
               <input type="checkbox" :data-testid="`baseline-select-${item.id}`" :checked="baselines.selectedIds.includes(item.id)" @change="baselines.toggle(item.id)" />
             </label>
             <span class="baseline-case-copy">
-              <strong>{{ item.case_name }} <b class="baseline-business-pill" :class="`business-${item.business || 'unset'}`">{{ baselineScopeLabel(item) }}</b> <b v-if="isOneTimeBaseline(item)" :data-testid="`baseline-one-time-${item.id}`" class="baseline-one-time-pill">一次性</b></strong>
+              <strong class="baseline-case-title">{{ item.case_name }}</strong>
               <small>
                 <b v-if="item.status !== 'active'" class="baseline-status-pill">历史版本</b>
                 <b v-if="!baselineSelection(item).selectable" class="baseline-status-pill">{{ baselineSelection(item).reason }}</b>
@@ -789,11 +807,16 @@ function adoptionReasonLabel(reason: string): string {
               </small>
             </span>
             <span class="baseline-endpoint-copy">
-              <b><span :class="['method-badge', `method-${item.method.toLowerCase()}`]">{{ item.method }}</span>{{ rowTitle(item) }}</b>
+              <b><span :class="['method-badge', `method-${item.method.toLowerCase()}`]">{{ item.method }}</span><span>{{ rowTitle(item) }}</span></b>
               <code>{{ item.path }}</code>
             </span>
-            <span>{{ baselineGroup(item) }}</span>
-            <span>{{ item.priority }} · 用例 v{{ item.case_version }} · {{ baselineOriginLabel(item.origin) }}<small>来源版本：{{ sourceRevisionName(item) }}</small></span>
+            <span class="baseline-classification-copy">
+              <b :data-testid="`baseline-business-${item.id}`" class="baseline-business-pill" :class="`business-${item.business || 'unset'}`" :title="baselineScopeLabel(item)">{{ baselineBusinessLabel(item) }}</b>
+              <small :data-testid="`baseline-application-${item.id}`" class="baseline-application-label">{{ baselineApplicationLabel(item) }}</small>
+              <b v-if="baselineMaintenanceGroupLabel(item)" :data-testid="`baseline-maintenance-group-${item.id}`" class="baseline-maintenance-pill">{{ baselineMaintenanceGroupLabel(item) }}</b>
+              <b v-if="isOneTimeBaseline(item)" :data-testid="`baseline-one-time-${item.id}`" class="baseline-one-time-pill">一次性</b>
+            </span>
+            <span class="baseline-version-copy">{{ item.priority }} · 用例 v{{ item.case_version }} · {{ baselineOriginLabel(item.origin) }}<small>来源版本：{{ sourceRevisionName(item) }}</small></span>
             <time>{{ new Date(item.adopted_at).toLocaleString('zh-CN') }}</time>
             <span class="baseline-row-actions">
               <button class="tiny-command" type="button" title="编辑用例" @click="editBaseline(item)"><Edit3 :size="14" />编辑</button>

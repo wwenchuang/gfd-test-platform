@@ -130,7 +130,8 @@ describe('BaselinesView fixed project assets', () => {
     await flushPromises()
 
     expect(wrapper.text()).toContain('添加收藏 - 正常流程')
-    expect(wrapper.text()).toContain('校园应用 · 校园共享')
+    expect(wrapper.get('[data-testid="baseline-application-baseline-1"]').text()).toBe('校园应用')
+    expect(wrapper.get('[data-testid="baseline-business-baseline-1"]').text()).toBe('校园共享')
     expect(wrapper.text()).not.toContain('com.example.school')
     expect(wrapper.text()).toContain('已通过调试并采纳')
     expect(wrapper.text()).not.toContain('passing debug evidence')
@@ -354,7 +355,8 @@ describe('BaselinesView fixed project assets', () => {
       business: 'shared',
     })
     expect(wrapper.text()).toContain('已补齐 1 条基线的应用和业务归属')
-    expect(wrapper.text()).toContain('校园应用 · 校园共享')
+    expect(wrapper.get('[data-testid="baseline-application-baseline-missing"]').text()).toBe('校园应用')
+    expect(wrapper.get('[data-testid="baseline-business-baseline-missing"]').text()).toBe('校园共享')
   })
 
   it('saves selected baselines as a regression task without saving workspace context', async () => {
@@ -471,12 +473,51 @@ describe('BaselinesView fixed project assets', () => {
     const oneTimeCheckbox = wrapper.get('[data-testid="baseline-select-baseline-one-time"]')
     expect((oneTimeCheckbox.element as HTMLInputElement).checked).toBe(true)
     expect(oneTimeCheckbox.attributes('disabled')).toBeUndefined()
-    expect(wrapper.text()).toContain('一次性用例仅供人工调试')
+    expect(wrapper.text()).toContain('基线页不参与批量执行')
+    expect(wrapper.text()).toContain('定时任务可显式开启')
     expect(buttonByText(wrapper, '保存为基线回归任务').attributes('disabled')).toBeDefined()
     expect(buttonByText(wrapper, '按当前环境执行所选基线').attributes('disabled')).toBeDefined()
 
     await wrapper.get('[data-testid="baseline-filter-origin"]').setValue('ai')
     expect(wrapper.text()).toContain('当前筛选下没有匹配基线')
+  })
+
+  it('uses business as the primary classification and renders maintenance and one-time markers as tags', async () => {
+    replaceTestApplications([{
+      package: 'com.kfb.model', name: '智小白3D', enabled: true,
+      business_lines: [
+        { id: 'home', name: '家用', enabled: true },
+        { id: 'shared', name: '共享', enabled: true },
+      ],
+    }])
+    vi.spyOn(apiClient, 'get').mockResolvedValue({ data: { baselines: [
+      baselineFixture({
+        id: 'baseline-home-once',
+        app_package: 'com.kfb.model',
+        app_name: '智小白3D',
+        business: 'home',
+        group_name: 'API Test / 一次性',
+        case_name: '重新打印判断 - 创建后取消并清理',
+      }),
+      baselineFixture({
+        id: 'baseline-shared',
+        app_package: 'com.kfb.model',
+        app_name: '智小白3D',
+        business: 'shared',
+        group_name: '设备共享',
+        case_name: '共享设备列表',
+      }),
+    ] } })
+
+    const wrapper = mountWithContext()
+    await flushPromises()
+
+    expect(wrapper.get('.baseline-table-head').text()).toContain('业务 / 标签')
+    expect(wrapper.get('[data-testid="baseline-business-baseline-home-once"]').text()).toBe('家用')
+    expect(wrapper.get('[data-testid="baseline-maintenance-group-baseline-home-once"]').text()).toBe('API Test')
+    expect(wrapper.get('[data-testid="baseline-one-time-baseline-home-once"]').text()).toBe('一次性')
+    expect(wrapper.get('[data-testid="baseline-business-baseline-shared"]').text()).toBe('共享')
+    expect(wrapper.get('[data-testid="baseline-maintenance-group-baseline-shared"]').text()).toBe('设备共享')
   })
 
   it('does not classify an ordinary API Test group as one-time', async () => {
@@ -610,7 +651,7 @@ describe('BaselinesView fixed project assets', () => {
               evidence_execution_case_id: null, evidence_captured_at: null,
               status: 'evidence_missing', status_label: '证据不足', reason: '缺少可解析的历史调试响应，需要重新执行后判断',
               actual_http_status: null, business_path: '', business_value: null, suggested_assertions: [],
-              execution: { level: 'manual', label: '一次性人工复核', selectable: false, reason: '一次性基线不得进入批量连续执行' },
+              execution: { level: 'manual', label: '一次性人工复核', selectable: false, reason: '一次性基线在普通批量回归中默认跳过；定时任务需显式允许，并确认可重复执行和清理影响' },
             },
           ],
         } } as never

@@ -303,12 +303,12 @@ class ExecutionService:
             )
         if baseline_ids and baseline_selection.excluded_one_time_count and not allow_one_time:
             raise OneTimeBaselineConflictError(
-                "所选基线包含一次性用例。一次性用例仅供人工调试，不会进入批量或定时回归；请取消选择后重试"
+                "所选基线包含一次性用例。基线页批量执行默认跳过一次性用例；如需定时运行，请在定时任务中显式允许并确认可重复执行和清理影响"
             )
         version_ids = baseline_selection.version_ids
         if not version_ids:
             raise BaselineRequiredError(
-                "当前项目或所选范围没有可执行的活动基线；一次性用例仅供人工调试，请先采纳常规用例基线"
+                "当前项目或所选范围没有可执行的常规活动基线；一次性用例在基线页批量执行中默认跳过，可在定时任务中显式允许"
             )
         return self.submit(
             {

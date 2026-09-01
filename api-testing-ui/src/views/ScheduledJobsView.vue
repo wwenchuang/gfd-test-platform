@@ -353,6 +353,31 @@ function toggleTargetGroup(name: string): void {
   expandedTargetGroups.value = next
 }
 
+function selectableTargetGroupIds(options: TargetOption[]): string[] {
+  return options.filter(option => option.selectable).map(option => option.id)
+}
+
+function selectedTargetGroupCount(options: TargetOption[]): number {
+  const ids = new Set(selectableTargetGroupIds(options))
+  return selectedTargetIds.value.filter(id => ids.has(id)).length
+}
+
+function allTargetGroupSelected(options: TargetOption[]): boolean {
+  const ids = selectableTargetGroupIds(options)
+  return Boolean(ids.length) && ids.every(id => isTargetSelected(id))
+}
+
+function toggleTargetGroupSelection(options: TargetOption[]): void {
+  const ids = selectableTargetGroupIds(options)
+  if (!ids.length) return
+  const groupIds = new Set(ids)
+  if (ids.every(id => isTargetSelected(id))) {
+    selectedTargetIds.value = selectedTargetIds.value.filter(id => !groupIds.has(id))
+    return
+  }
+  selectedTargetIds.value = [...new Set([...selectedTargetIds.value, ...ids])]
+}
+
 function jobTargetSummary(job: ScheduledJob): string {
   if (targetsLoading.value) return `已选 ${job.target_ids.length} 项，正在读取目标`
   if (targetLoadError.value) return `目标读取失败：${targetLoadError.value}。请刷新后重试`
@@ -854,7 +879,17 @@ function weekDayName(value: number): string {
             <div v-else class="target-option-list">
               <template v-if="form.targetType === 'baselines'">
                 <div v-for="group in filteredBaselineGroups" :key="group.name" class="target-group">
-                  <button data-testid="scheduled-target-group-toggle" type="button" class="target-group-head" :aria-expanded="targetGroupExpanded(group.name)" @click="toggleTargetGroup(group.name)"><ChevronDown v-if="targetGroupExpanded(group.name)" :size="14" /><ChevronRight v-else :size="14" /><strong>{{ group.name }}</strong><span>{{ group.options.length }}</span></button>
+                  <div class="target-group-head">
+                    <button data-testid="scheduled-target-group-toggle" type="button" class="target-group-toggle" :aria-expanded="targetGroupExpanded(group.name)" @click="toggleTargetGroup(group.name)"><ChevronDown v-if="targetGroupExpanded(group.name)" :size="14" /><ChevronRight v-else :size="14" /><strong>{{ group.name }}</strong><span>{{ group.options.length }}</span></button>
+                    <small>已选 {{ selectedTargetGroupCount(group.options) }}/{{ selectableTargetGroupIds(group.options).length }}</small>
+                    <button
+                      data-testid="scheduled-target-group-select"
+                      type="button"
+                      class="text-command target-group-select"
+                      :disabled="!selectableTargetGroupIds(group.options).length"
+                      @click="toggleTargetGroupSelection(group.options)"
+                    >{{ group.name }} · {{ allTargetGroupSelected(group.options) ? '清空本组' : '全选本组' }}</button>
+                  </div>
                   <template v-if="targetGroupExpanded(group.name)">
                     <button
                       v-for="option in group.options"

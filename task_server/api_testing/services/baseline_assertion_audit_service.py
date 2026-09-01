@@ -101,7 +101,7 @@ class BaselineAssertionAuditService:
                             "level": "manual",
                             "label": "一次性人工复核",
                             "selectable": False,
-                            "reason": "一次性基线不得进入批量连续执行",
+                            "reason": "一次性基线在普通批量回归中默认跳过；定时任务需显式允许，并确认可重复执行和清理影响",
                         }
                     items.append({
                         "baseline_id": baseline.id,

@@ -116,6 +116,8 @@ describe('CaseEvidence', () => {
     }
     const wrapper = mount(CaseEvidence, { props: { result: largeResult } })
 
+    expect(wrapper.get('[data-testid="response-evidence"]').attributes('open')).toBeUndefined()
+    expect(wrapper.get('[data-testid="response-evidence"]').text()).toContain('默认收起')
     expect(wrapper.text()).toContain('内容较大，已先展示前')
     expect(wrapper.text()).toContain('实际 x')
     expect(wrapper.text()).toContain('已截断')
@@ -127,5 +129,12 @@ describe('CaseEvidence', () => {
 
     await wrapper.get('[data-testid="expand-response-evidence"]').trigger('click')
     expect(wrapper.text()).not.toContain(tailMarker)
+  })
+
+  it('keeps ordinary responses open for quick inspection', () => {
+    const wrapper = mount(CaseEvidence, { props: { result } })
+
+    expect(wrapper.get('[data-testid="response-evidence"]').attributes('open')).toBe('')
+    expect(wrapper.get('[data-testid="response-evidence"]').text()).not.toContain('默认收起')
   })
 })

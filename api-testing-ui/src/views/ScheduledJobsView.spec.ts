@@ -329,6 +329,51 @@ describe('ScheduledJobsView', () => {
     expect(wrapper.text()).not.toContain('历史版本用例')
   })
 
+  it('selects or clears a whole baseline group without losing selections from other groups', async () => {
+    vi.spyOn(apiClient, 'get').mockImplementation(async url => {
+      const path = String(url)
+      if (path.startsWith('/api/api-testing/v1/scheduled-jobs')) return { data: { scheduled_jobs: [] } }
+      if (path.startsWith('/api/api-testing/v1/baselines')) {
+        return {
+          data: {
+            baselines: [
+              baselineFixture({ id: 'home-1', group_name: '家用业务', case_name: '家用查询一' }),
+              baselineFixture({ id: 'home-2', group_name: '家用业务', case_name: '家用查询二', path: '/home-two' }),
+              baselineFixture({ id: 'shared-1', group_name: '共享业务', case_name: '共享查询', path: '/shared' }),
+            ],
+          },
+        }
+      }
+      if (path.startsWith('/api/api-testing/v1/cases')) return { data: { case_versions: [] } }
+      if (path.startsWith('/api/api-testing/v1/tasks')) return { data: { tasks: [] } }
+      return { data: {} }
+    })
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [{ path: '/', name: 'scheduled-jobs', component: ScheduledJobsView }],
+    })
+    const wrapper = mount(ScheduledJobsView, { global: { plugins: [router] } })
+    await flushPromises()
+
+    await wrapper.get('[data-testid="scheduled-target-type"]').setValue('baselines')
+    const groupActions = () => wrapper.findAll('[data-testid="scheduled-target-group-select"]')
+    const homeAction = () => groupActions().find(item => item.text().includes('家用业务'))!
+    const sharedAction = () => groupActions().find(item => item.text().includes('共享业务'))!
+
+    expect(homeAction().text()).toContain('全选本组')
+    await homeAction().trigger('click')
+    expect(wrapper.text()).toContain('已选 2 项')
+    expect(homeAction().text()).toContain('清空本组')
+
+    await sharedAction().trigger('click')
+    expect(wrapper.text()).toContain('已选 3 项')
+
+    await homeAction().trigger('click')
+    expect(wrapper.text()).toContain('已选 1 项')
+    expect(sharedAction().text()).toContain('清空本组')
+    expect(homeAction().text()).toContain('全选本组')
+  })
+
   it('validates cron expressions and explains the edited schedule', async () => {
     mockScheduledJobAssets()
     const post = vi.spyOn(apiClient, 'post').mockResolvedValue({

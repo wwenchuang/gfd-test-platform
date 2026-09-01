@@ -137,11 +137,20 @@ export function executionMetrics(execution: ExecutionView): ExecutionMetrics {
 
 export function executionConclusion(execution: ExecutionView): { label: string; tone: ExecutionTone } {
   const metrics = executionMetrics(execution)
-  if (execution.state === 'CANCELLED' || metrics.cancelled > 0) return { label: '已取消', tone: 'cancelled' }
+  if (execution.state === 'CANCELLED') return { label: '已取消', tone: 'cancelled' }
+  if (execution.state === 'QUEUED') return { label: '等待执行', tone: 'running' }
+  if (execution.state === 'RUNNING') {
+    const completed = metrics.passed + metrics.failed + metrics.broken + metrics.skipped + metrics.cancelled
+    const progress = metrics.total > 0 ? `（已完成 ${completed}/${metrics.total}）` : ''
+    return { label: `执行中${progress}`, tone: 'running' }
+  }
+  if (metrics.cancelled > 0) return { label: '已取消', tone: 'cancelled' }
   if (metrics.failed > 0) return { label: '未通过', tone: 'failed' }
   if (metrics.broken > 0) return { label: '运行异常', tone: 'broken' }
-  if (['RUNNING', 'QUEUED'].includes(execution.state) || metrics.running > 0 || metrics.queued > 0) {
-    return { label: execution.state === 'QUEUED' ? '等待执行' : '执行中', tone: 'running' }
+  if (metrics.running > 0 || metrics.queued > 0) {
+    const completed = metrics.passed + metrics.failed + metrics.broken + metrics.skipped + metrics.cancelled
+    const progress = metrics.total > 0 ? `（已完成 ${completed}/${metrics.total}）` : ''
+    return { label: `执行中${progress}`, tone: 'running' }
   }
   if (metrics.skipped > 0) return { label: '执行不完整', tone: 'neutral' }
   if (metrics.total > 0 && metrics.passed === metrics.total) return { label: '通过', tone: 'passed' }
