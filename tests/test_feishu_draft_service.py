@@ -147,6 +147,36 @@ def test_draft_webhook_resolves_the_apps_list_inside_platform_config(draft_store
         feishu_service._webhook_for_draft({"appPackage": "com.unknown"})
 
 
+def test_application_delivery_status_reports_real_non_secret_webhook_source(monkeypatch):
+    package_key = "FEISHU_WEBHOOK_COM_KFB_MODEL"
+    monkeypatch.delenv(package_key, raising=False)
+    monkeypatch.delenv("FEISHU_WEBHOOK_DEFAULT", raising=False)
+    missing = feishu_service.task_app_feishu_delivery_status({"package": "com.kfb.model"})
+    assert missing == {
+        "feishu_ready": False,
+        "feishu_source": "missing",
+        "feishu_target_label": "未配置",
+    }
+
+    monkeypatch.setenv(package_key, "https://open.feishu.cn/open-apis/bot/v2/hook/package")
+    package_default = feishu_service.task_app_feishu_delivery_status({"package": "com.kfb.model"})
+    assert package_default == {
+        "feishu_ready": True,
+        "feishu_source": "package_default",
+        "feishu_target_label": "应用默认群",
+    }
+
+    explicit = feishu_service.task_app_feishu_delivery_status({
+        "package": "com.kfb.model",
+        "feishu_webhook": "https://open.feishu.cn/open-apis/bot/v2/hook/app",
+    })
+    assert explicit == {
+        "feishu_ready": True,
+        "feishu_source": "app",
+        "feishu_target_label": "专属群",
+    }
+
+
 @pytest.mark.parametrize("response", ({"code": 0}, {"code": "0"}, {"StatusCode": "0"}))
 def test_submit_feishu_draft_accepts_feishu_success_code_variants(draft_store, monkeypatch, response):
     feishu_service.create_feishu_draft(

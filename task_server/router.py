@@ -82,6 +82,7 @@ from task_server.services.feishu_service import (
     list_feishu_drafts,
     reject_feishu_draft,
     submit_feishu_draft,
+    task_app_feishu_delivery_status,
     task_app_feishu_webhook,
 )
 from task_server.services.job_service import (
@@ -1010,7 +1011,12 @@ def _get_task_apps(handler, qs):
     apps = sonic_notify_known_apps()
     if not include_disabled:
         apps = [app for app in apps if app.get("enabled", True) and not app.get("historical_only")]
-    handler._json({"ok": True, "apps": apps})
+    public_apps = []
+    for item in apps:
+        app = dict(item)
+        app.update(task_app_feishu_delivery_status(app))
+        public_apps.append(app)
+    handler._json({"ok": True, "apps": public_apps})
 
 
 # ── Sonic 配置 ──────────────────────────────────────────────────────
@@ -4788,7 +4794,9 @@ def _post_task_app(handler, qs):
     except Exception as e:
         handler._json({"ok": False, "error": str(e)}, 400)
         return
-    handler._json({"ok": True, "app": app})
+    response_app = dict(app)
+    response_app.update(task_app_feishu_delivery_status(response_app))
+    handler._json({"ok": True, "app": response_app})
 
 
 # ── Sonic 诊断 ──────────────────────────────────────────────────────

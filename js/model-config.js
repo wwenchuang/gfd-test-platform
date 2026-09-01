@@ -157,10 +157,8 @@ function renderModelConfigCenter(loading=false, errorText='') {
       <details class="dashboard-panel dashboard-accordion" id="model-config-advanced" style="margin-top:8px;">
         <summary style="cursor:pointer;padding:10px 14px;font-weight:600;font-size:14px;">高级设置：模型通道 / 自定义路由</summary>
         <div class="dashboard-accordion-body" style="padding:12px 14px;">
-          <h3 style="margin:0 0 8px 0;font-size:13px;">模型通道状态</h3>
-          <div class="workflow-grid">${providerCards}</div>
-          <h3 style="margin:16px 0 8px 0;font-size:13px;">自定义路由</h3>
-          <p class="generate-hint" style="margin-bottom:10px;">手动为每种能力选择模型。未配置 Key 的模型可保存路由但调用会失败。</p>
+          <h3 style="margin:0 0 8px 0;font-size:13px;">自定义路由</h3>
+          <p class="generate-hint" style="margin-bottom:10px;">先按能力选择模型，再点击“保存模型策略”才会生效。列表较长时可键入模型名快速跳转；未配置 Key 的模型调用会失败。</p>
           <div class="agent-form-grid">${routerRows}</div>
           <div class="agent-actions" style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
             <button class="btn-sm primary" onclick="saveModelRouterConfig()" ${loading ? 'disabled' : ''}>保存模型策略</button>
@@ -169,6 +167,13 @@ function renderModelConfigCenter(loading=false, errorText='') {
               ${modelProviderOptions(aiModelRouter.analyze_failure || 'qwen_plus')}
             </select>
           </div>
+          <details class="dashboard-panel dashboard-accordion model-provider-catalog" style="margin-top:12px;">
+            <summary style="cursor:pointer;padding:10px 14px;font-weight:600;font-size:13px;">模型通道目录 · ${aiProviders.length} 个（按需查看）</summary>
+            <div class="dashboard-accordion-body" style="padding:12px 14px;">
+              <p class="generate-hint" style="margin-bottom:10px;">这里展示服务端发现的全部通道，只用于核对名称、配置状态和参数策略；日常使用无需逐项查看。</p>
+              <div class="workflow-grid">${providerCards}</div>
+            </div>
+          </details>
         </div>
       </details>
     </div>
@@ -225,6 +230,12 @@ async function saveModelRouterConfig() {
   document.querySelectorAll('[data-model-router]').forEach(select => {
     router[select.dataset.modelRouter] = select.value;
   });
+  const changed = Object.keys(router).filter(key => String(router[key] || '') !== String(aiModelRouter[key] || ''));
+  if (!changed.length) {
+    showToast('当前模型策略没有变化，无需保存', 'success');
+    return;
+  }
+  if (!confirm(`确认保存模型策略？本次将修改 ${changed.length} 项能力路由，并影响后续 AI 生成、分析和修复任务。`)) return;
   try {
     const data = await aiGatewayPost('/ai/model-router', router);
     aiModelRouter = data.router || router;

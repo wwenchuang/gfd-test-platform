@@ -51,8 +51,9 @@ function fixture(t, { workflow = 'app_config', deleteWait } = {}) {
         sonic_project_name: '测试项目', sonic_project_id: 'fixture-project',
         sonic_suite_name: '测试套', sonic_suite_id: 'fixture-suite',
         feishu_webhook: 'https://example.invalid/fixture-only-webhook',
+        feishu_ready: true, feishu_source: 'app',
       },
-      { package: APP_B, name: '应用乙', enabled: false, modules: ['模块乙'], business_lines: [{ id: 'home', name: '家用', enabled: true }] },
+      { package: APP_B, name: '应用乙', enabled: false, modules: ['模块乙'], business_lines: [{ id: 'home', name: '家用', enabled: true }], feishu_ready: false, feishu_source: 'missing' },
     ],
     modules: { '模块甲': {}, '模块乙': {}, '模块丙': {} },
     activeWorkflow: workflow,
@@ -82,9 +83,12 @@ function fixture(t, { workflow = 'app_config', deleteWait } = {}) {
   loadFunctions(context, 'js/utils.js', ['defaultBusinessLines']);
   loadFunctions(context, 'js/agent-status.js', [
     'resetYamlToolbarForManager', 'setManagementToolbar', 'showAppConfigCenter', 'showFeishuConfigCenter',
-    'showTaskApps', 'openTaskAppEditor', 'isTemporaryAgentModule', 'taskAppBusinessModuleNames',
+    'showTaskApps', 'openTaskAppEditor', 'nextTaskAppStep', 'validateTaskAppBasicInfo', 'goToTaskAppStep',
+    'openUnassignedTaskAppModules', 'selectTaskAppModuleOwner', 'renderTaskAppModuleOwnerGuide',
+    'isTemporaryAgentModule', 'taskAppBusinessModuleNames',
     'renderTaskAppModal', 'renderTaskAppBusinessLineEditor', 'readTaskAppBusinessLines',
-    'filterTaskAppModules', 'clearTaskAppForm', 'editTaskApp', 'taskAppFeishuLabel',
+    'addTaskAppBusinessLine', 'removeTaskAppBusinessLine', 'filterTaskAppModules', 'clearTaskAppForm',
+    'editTaskApp', 'taskAppFeishuReady', 'taskAppFeishuLabel', 'setSonicMigrationAvailability',
     'renderTaskAppList', 'saveTaskApp', 'deleteTaskApp',
   ]);
   const run = code => vm.runInContext(code, context);
@@ -196,6 +200,52 @@ test('notification configuration still opens its visible target step without sen
   assert.doesNotMatch(f.field('editor-area').textContent, /应用乙/);
   assert.match(f.field('editor-area').textContent, /应用甲/);
   f.expectCalls([`DELETE /task-app?package=${APP_B}`]);
+});
+
+test('notification readiness uses server evidence instead of package-name guesses', t => {
+  const f = fixture(t, { workflow: 'feishu_config' });
+  f.run(`taskApps = [{package: 'com.kfb.model', name: '智小白3D', feishu_ready: false, feishu_source: 'missing'}]`);
+  assert.equal(f.run('taskAppFeishuReady(taskApps[0])'), false);
+  assert.equal(f.run('taskAppFeishuLabel(taskApps[0])'), '飞书：未配置');
+  f.run('showFeishuConfigCenter()');
+  assert.match(f.field('editor-area').textContent, /0\/1/);
+  assert.match(f.field('editor-area').textContent, /请先配置机器人 Webhook/);
+});
+
+test('unassigned-module entry requires an explicit target app before saving', t => {
+  const f = fixture(t);
+  f.run('openUnassignedTaskAppModules()');
+  assert.equal(f.run('FormSteps.currentStep'), 3);
+  assert.equal(f.field('task-app-name').value, '');
+  assert.equal(f.field('task-app-module-unassigned').checked, true);
+  assert.equal(f.field('task-app-module-owner-guide').textContent.includes('先选择归属应用'), true);
+  assert.equal(f.field('modal-task-apps').querySelector('.step-submit-btn').disabled, true);
+
+  f.run(`selectTaskAppModuleOwner('${APP_A}')`);
+  assert.equal(f.run('FormSteps.currentStep'), 3);
+  assert.equal(f.field('task-app-name').value, '应用甲');
+  assert.equal(f.field('task-app-module-unassigned').checked, true);
+  assert.equal(f.field('modal-task-apps').querySelector('.step-submit-btn').disabled, false);
+  assert.match(f.field('task-app-module-owner-guide').textContent, /当前归入：应用甲/);
+});
+
+test('extra business lines can be removed before save', t => {
+  const f = fixture(t);
+  f.run(`openTaskAppEditor('${APP_A}')`);
+  f.run('addTaskAppBusinessLine()');
+  assert.equal(f.field('task-app-business-lines').children.length, 2);
+  f.run('removeTaskAppBusinessLine(1)');
+  assert.equal(f.field('task-app-business-lines').children.length, 1);
+  assert.equal(f.field('task-app-business-lines').querySelector('input').value, '校园版');
+});
+
+test('Sonic cleanup is disabled when the scan has no automatic matches', t => {
+  const f = fixture(t);
+  f.run('setSonicMigrationAvailability(0, 37)');
+  assert.equal(f.field('sonic-action-migrate').disabled, true);
+  assert.match(f.field('sonic-action-migrate').title, /0 条可自动清理/);
+  f.run('setSonicMigrationAvailability(2, 0)');
+  assert.equal(f.field('sonic-action-migrate').disabled, false);
 });
 
 test('editing from the final wizard step reveals and focuses the selected app basics', t => {

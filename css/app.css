@@ -3898,7 +3898,7 @@
   }
   .task-app-business-line {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-columns: minmax(0, 1fr) auto auto;
     align-items: center;
     gap: 10px;
     padding: 8px;
@@ -3916,6 +3916,12 @@
     white-space: nowrap;
   }
   .task-app-business-toggle input { width: auto; margin: 0; }
+  .task-app-owner-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 8px;
+  }
   .app-row {
     display: flex;
     align-items: center;

@@ -2510,26 +2510,32 @@ def test_sync_case_adds_managed_case_to_bound_suite():
 
 
 def test_app_binding_resolves_suite_name_to_stable_ids():
-    original_find_project_id = midscene.sonic_find_project_id
-    original_list_projects = midscene.sonic_list_projects
-    original_request = midscene.sonic_request
+    original_find_project_id = sonic_service.sonic_find_project_id
+    original_list_projects = sonic_service.sonic_list_projects
+    original_request = sonic_service.sonic_request
 
     try:
-        midscene.sonic_find_project_id = lambda app: 3
-        midscene.sonic_list_projects = lambda: [{"id": 3, "projectName": "3D 打印"}]
-        midscene.sonic_request = lambda method, path, params=None, body=None, timeout=0: {
+        sonic_service.sonic_find_project_id = lambda app: 3
+        # Production ``sonic_list_projects`` returns a wrapper object.  The
+        # binding resolver must not iterate its string keys as project rows.
+        sonic_service.sonic_list_projects = lambda: {
+            "ok": True,
+            "projects": [{"id": 3, "projectName": "3D 打印"}],
+            "total": 1,
+        }
+        sonic_service.sonic_request = lambda method, path, params=None, body=None, timeout=0: {
             "code": 2000,
             "data": [{"id": 46, "projectId": 3, "name": "每日基线", "testCases": [{"id": 100}, {"id": 101}]}],
         }
-        bound = midscene.resolve_task_app_sonic_binding({
+        bound = sonic_service.resolve_task_app_sonic_binding({
             "package": "com.kfb.model",
             "sonic_project_name": "3D 打印",
             "sonic_suite_name": "每日基线",
         })
     finally:
-        midscene.sonic_find_project_id = original_find_project_id
-        midscene.sonic_list_projects = original_list_projects
-        midscene.sonic_request = original_request
+        sonic_service.sonic_find_project_id = original_find_project_id
+        sonic_service.sonic_list_projects = original_list_projects
+        sonic_service.sonic_request = original_request
 
     assert bound["sonic_project_id"] == "3"
     assert bound["sonic_suite_id"] == "46"
@@ -2537,19 +2543,19 @@ def test_app_binding_resolves_suite_name_to_stable_ids():
 
 
 def test_app_binding_rejects_suite_from_another_project():
-    original_find_project_id = midscene.sonic_find_project_id
-    original_list_projects = midscene.sonic_list_projects
-    original_request = midscene.sonic_request
+    original_find_project_id = sonic_service.sonic_find_project_id
+    original_list_projects = sonic_service.sonic_list_projects
+    original_request = sonic_service.sonic_request
 
     try:
-        midscene.sonic_find_project_id = lambda app: 3
-        midscene.sonic_list_projects = lambda: [{"id": 3, "projectName": "3D 打印"}]
-        midscene.sonic_request = lambda method, path, params=None, body=None, timeout=0: {
+        sonic_service.sonic_find_project_id = lambda app: 3
+        sonic_service.sonic_list_projects = lambda: [{"id": 3, "projectName": "3D 打印"}]
+        sonic_service.sonic_request = lambda method, path, params=None, body=None, timeout=0: {
             "code": 2000,
             "data": {"id": 46, "projectId": 7, "name": "错误项目的基线", "testCases": []},
         }
         try:
-            midscene.resolve_task_app_sonic_binding({
+            sonic_service.resolve_task_app_sonic_binding({
                 "package": "com.kfb.model",
                 "sonic_project_id": "3",
                 "sonic_suite_id": "46",
@@ -2558,9 +2564,9 @@ def test_app_binding_rejects_suite_from_another_project():
         except ValueError:
             raised = True
     finally:
-        midscene.sonic_find_project_id = original_find_project_id
-        midscene.sonic_list_projects = original_list_projects
-        midscene.sonic_request = original_request
+        sonic_service.sonic_find_project_id = original_find_project_id
+        sonic_service.sonic_list_projects = original_list_projects
+        sonic_service.sonic_request = original_request
 
     assert raised
 

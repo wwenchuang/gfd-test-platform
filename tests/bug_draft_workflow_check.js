@@ -18,6 +18,7 @@ test('an unlinked or unknown-app defect draft cannot be sent to a fallback group
   const win = dom.window;
   Object.assign(win, {
     taskApps: [{package: 'com.kfb.model', name: '智小白3D'}],
+    taskAppFeishuReady: () => true,
     taskAppFeishuLabel: () => '飞书：默认群',
   });
   loadFunction(win, source, 'feishuDraftSubmitReadiness');

@@ -1146,6 +1146,12 @@ async function anyVisible(locator) {
     await page.locator('details[data-nav-group="settings"]').evaluate(el => { el.open = true; });
     await page.click('.workflow-step[data-workflow="app_config"]');
     await page.waitForSelector('h2:has-text("应用配置")');
+    await page.getByRole('button', {name: '查看未归属模块', exact: true}).click();
+    await page.waitForSelector('#task-app-module-owner-guide');
+    if (!await page.locator('#task-app-module-owner-guide').getByText('先选择归属应用').isVisible()) throw new Error('Unassigned-module flow must ask for an explicit application owner');
+    if (!await page.locator('#modal-task-apps .step-submit-btn').isDisabled()) throw new Error('Unassigned modules can be saved without selecting an application');
+    await page.screenshot({path: path.join(ARTIFACTS, 'app-unassigned-owner.png'), fullPage: true});
+    await page.click('#modal-task-apps .modal-close');
     await page.click('.config-management-page button:has-text("编辑")');
     await page.waitForSelector('#modal-task-apps.show');
     const hasSchoolBusiness = await page.locator('.task-app-business-name').evaluateAll(inputs => inputs.some(input => input.value === '校园版'));
@@ -1191,7 +1197,20 @@ async function anyVisible(locator) {
     await page.waitForSelector('text=当前模型策略');
     await page.click('summary:has-text("高级设置")');
     await page.waitForSelector('text=自定义路由');
+    if (await page.locator('.model-provider-catalog').evaluate(el => el.open)) throw new Error('Large model provider catalog should stay collapsed until explicitly requested');
+    await page.screenshot({path: path.join(ARTIFACTS, 'model-routing-first.png'), fullPage: true});
     await page.click('button:has-text("保存模型策略")');
+    await page.waitForSelector('.toast:has-text("当前模型策略没有变化")');
+    let customStrategyConfirmation = '';
+    page.once('dialog', async dialog => {
+      customStrategyConfirmation = dialog.message();
+      await dialog.accept();
+    });
+    await page.locator('[data-model-router="generate_case"]').selectOption('highway_gpt5_mini');
+    await page.click('button:has-text("保存模型策略")');
+    if (!/修改 1 项能力路由/.test(customStrategyConfirmation) || !/影响后续 AI 生成、分析和修复任务/.test(customStrategyConfirmation)) {
+      throw new Error(`Custom strategy confirmation is unclear: ${customStrategyConfirmation}`);
+    }
     await page.waitForSelector('text=当前模型策略');
     await page.click('button:has-text("测试当前策略")');
     await page.waitForSelector('#modal-model-test-result.show');
@@ -1256,6 +1275,8 @@ async function anyVisible(locator) {
         path.join(ARTIFACTS, 'bug-drafts-management.png'),
         path.join(ARTIFACTS, 'bug-drafts-unlinked.png'),
         path.join(ARTIFACTS, 'bug-drafts-management-mobile.png'),
+        path.join(ARTIFACTS, 'app-unassigned-owner.png'),
+        path.join(ARTIFACTS, 'model-routing-first.png'),
         path.join(ARTIFACTS, 'repair-empty-actions-desktop.png'),
         path.join(ARTIFACTS, 'repair-empty-actions-mobile.png'),
       ],

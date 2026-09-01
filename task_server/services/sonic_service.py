@@ -6229,7 +6229,16 @@ def resolve_task_app_sonic_binding(app):
     if not project_id:
         raise ValueError(f"未在 Sonic 找到项目「{app.get('sonic_project_name') or app.get('sonic_project_id')}」")
     app["sonic_project_id"] = str(project_id)
-    for project in sonic_list_projects():
+    projects_payload = sonic_list_projects()
+    if isinstance(projects_payload, dict):
+        projects = projects_payload.get("projects") or projects_payload.get("data") or []
+    elif isinstance(projects_payload, list):
+        projects = projects_payload
+    else:
+        projects = []
+    for project in projects:
+        if not isinstance(project, dict):
+            continue
         if _safe_int(project.get("id"), 0) == project_id:
             app["sonic_project_name"] = project.get("projectName") or project.get("name") or app.get("sonic_project_name", "")
             break

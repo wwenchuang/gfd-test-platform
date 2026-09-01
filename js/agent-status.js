@@ -3844,8 +3844,8 @@ function setManagementToolbar(title, help, icon = '⚙') {
 
 function openTaskAppEditor(packageName = '', step = 0) {
   showTaskApps();
-  if (packageName) editTaskApp(packageName);
-  if (typeof FormSteps !== 'undefined') FormSteps.goTo(step);
+  if (packageName) editTaskApp(packageName, step);
+  else if (typeof FormSteps !== 'undefined') FormSteps.goTo(step);
 }
 
 function nextTaskAppStep() {
@@ -3878,11 +3878,48 @@ function goToTaskAppStep(step) {
 }
 
 function openUnassignedTaskAppModules() {
-  openTaskAppEditor();
+  showTaskApps();
+  taskAppModuleAssignmentMode = true;
+  taskAppModuleAssignmentPackage = '';
+  clearTaskAppForm();
   if (typeof FormSteps !== 'undefined') FormSteps.goTo(3);
   const only = document.getElementById('task-app-module-unassigned');
   if (only) only.checked = true;
   filterTaskAppModules(document.getElementById('task-app-module-search')?.value || '', true);
+  renderTaskAppModuleOwnerGuide();
+}
+
+function selectTaskAppModuleOwner(packageName) {
+  taskAppModuleAssignmentMode = true;
+  taskAppModuleAssignmentPackage = String(packageName || '');
+  editTaskApp(taskAppModuleAssignmentPackage, 3);
+  const only = document.getElementById('task-app-module-unassigned');
+  if (only) only.checked = true;
+  filterTaskAppModules(document.getElementById('task-app-module-search')?.value || '', true);
+  renderTaskAppModuleOwnerGuide();
+}
+
+function renderTaskAppModuleOwnerGuide() {
+  const guide = document.getElementById('task-app-module-owner-guide');
+  const submit = document.querySelector('#modal-task-apps .step-submit-btn');
+  if (!guide) return;
+  if (!taskAppModuleAssignmentMode) {
+    guide.style.display = 'none';
+    if (submit) {
+      submit.disabled = false;
+      submit.textContent = '保存分组';
+    }
+    return;
+  }
+  const active = taskApps.find(app => app.package === taskAppModuleAssignmentPackage);
+  guide.style.display = 'block';
+  guide.innerHTML = `<strong>${active ? `当前归入：${escapeHtml(active.name || active.package)}` : '先选择归属应用'}</strong><br>
+    ${active ? '勾选下方模块后保存；已有模块归属会保留。' : '未选择应用时不会保存，避免把模块归到错误产品。'}
+    <div class="task-app-owner-actions">${taskApps.map(app => `<button type="button" class="btn-sm ${app.package === taskAppModuleAssignmentPackage ? 'primary' : ''}" onclick="selectTaskAppModuleOwner(${jsArg(app.package || '')})">${escapeHtml(app.name || app.package)}</button>`).join('')}</div>`;
+  if (submit) {
+    submit.disabled = !active;
+    submit.textContent = active ? `保存到${active.name || active.package}` : '先选择应用';
+  }
 }
 
 function showAppConfigCenter() {
@@ -3906,7 +3943,7 @@ function showAppConfigCenter() {
       <div class="review-stat"><strong>${assignedModules.size} / ${totalModules} 个</strong><span>已归属模块</span></div>
       <div class="review-stat"><strong>${unassignedModules} 个</strong><span>未归属模块</span></div>
       <div class="review-stat"><strong>${taskApps.filter(app => app.sonic_project_id || app.sonic_project_name).length}</strong><span>已绑定 Sonic</span></div>
-      <div class="review-stat"><strong>${taskApps.filter(app => taskAppFeishuLabel(app) !== '飞书：未配置').length}</strong><span>可发送通知</span></div>
+      <div class="review-stat"><strong>${taskApps.filter(taskAppFeishuReady).length}</strong><span>可发送通知</span></div>
     </div>
     <div class="management-list">
       ${taskApps.length ? taskApps.map(app => `<div class="management-row">
@@ -3923,14 +3960,14 @@ function showFeishuConfigCenter() {
   if (!area) return;
   activeWorkspaceMode = 'feishu-config';
   setManagementToolbar('群通知', '按应用检查通知目标，缺陷草稿只有人工确认后才会发送。', '💬');
-  const configured = taskApps.filter(app => taskAppFeishuLabel(app) !== '飞书：未配置');
+  const configured = taskApps.filter(taskAppFeishuReady);
   area.className = 'editor-area';
   area.innerHTML = `<div class="review-page config-management-page">
     <div class="review-head"><div><div class="workflow-kicker">群通知 · 应用级通知配置</div><h2>群通知</h2><p>每个应用独立选择通知群，避免不同产品的执行结果和缺陷发送到错误群聊。</p></div><div class="review-actions"><button class="btn-sm primary" onclick="openTaskAppEditor(${jsArg(taskApps[0]?.package || '')}, ${taskApps.length ? 2 : 0})">维护通知配置</button><button class="btn-sm" onclick="activateWorkflow('bug_drafts')">查看缺陷草稿</button></div></div>
     <div class="review-stats"><div class="review-stat"><strong>${configured.length}/${taskApps.length}</strong><span>通知可用应用</span></div><div class="review-stat"><strong>${feishuDrafts.filter(d => String(d.status || '').toUpperCase() === 'DRAFT').length}</strong><span>待确认草稿</span></div></div>
     <div class="management-list">
       ${taskApps.length ? taskApps.map(app => {
-        const ready = taskAppFeishuLabel(app) !== '飞书：未配置';
+        const ready = taskAppFeishuReady(app);
         return `<div class="management-row"><div class="management-row-main"><strong>${escapeHtml(app.name || app.package)}</strong><span>${escapeHtml(app.package || '-')}</span><small>${ready ? '执行报告和缺陷草稿可按此应用路由' : '请先配置机器人 Webhook 或默认群'}</small></div><span class="status-pill ${ready ? 'success' : 'warn'}">${escapeHtml(taskAppFeishuLabel(app).replace('飞书：', ''))}</span><button class="btn-sm" onclick="openTaskAppEditor(${jsArg(app.package || '')}, 2)">配置</button></div>`;
       }).join('') : '<div class="job-empty">暂无应用。新增应用后才能配置对应通知群。</div>'}
     </div>
@@ -4039,7 +4076,7 @@ function feishuDraftSubmitReadiness(draft = {}) {
     .find(item => String(item?.package || '').trim() === packageName);
   if (!app) return {enabled: false, reason: `应用 ${packageName} 不在平台应用配置中`, target: ''};
   const label = taskAppFeishuLabel(app);
-  if (label === '飞书：未配置') {
+  if (!taskAppFeishuReady(app)) {
     return {enabled: false, reason: `应用 ${app.name || packageName} 尚未配置飞书通知目标`, target: ''};
   }
   return {
@@ -4085,6 +4122,8 @@ function showTaskApps() {
   if (!['app_config', 'feishu_config'].includes(activeWorkflow)) {
     setActiveWorkflow('app_config');
   }
+  taskAppModuleAssignmentMode = false;
+  taskAppModuleAssignmentPackage = '';
   renderTaskAppModal();
   document.getElementById('modal-task-apps').classList.add('show');
   FormSteps.init('#modal-task-apps');
@@ -4116,6 +4155,7 @@ function renderTaskAppModal() {
     renderTaskAppBusinessLineEditor(defaultBusinessLines());
   }
   renderTaskAppList();
+  renderTaskAppModuleOwnerGuide();
 }
 
 function renderTaskAppBusinessLineEditor(lines = []) {
@@ -4134,6 +4174,7 @@ function renderTaskAppBusinessLineEditor(lines = []) {
         <input type="checkbox" class="task-app-business-enabled" ${item.enabled ? 'checked' : ''}>
         <span>${item.enabled ? '启用' : '停用'}</span>
       </label>
+      <button type="button" class="btn-sm danger task-app-business-remove" onclick="removeTaskAppBusinessLine(${index})" ${taskAppBusinessLineDraft.length <= 1 ? 'disabled' : ''} title="${taskAppBusinessLineDraft.length <= 1 ? '至少保留一个业务线' : `删除业务线${item.name ? `：${escapeHtml(item.name)}` : ''}`}">删除</button>
     </div>
   `).join('');
   container.querySelectorAll('.task-app-business-enabled').forEach(input => {
@@ -4155,6 +4196,16 @@ function addTaskAppBusinessLine() {
   renderTaskAppBusinessLineEditor(lines);
   const inputs = document.querySelectorAll('.task-app-business-name');
   inputs[inputs.length - 1]?.focus();
+}
+
+function removeTaskAppBusinessLine(index) {
+  const lines = readTaskAppBusinessLines({allowIncomplete: true});
+  if (lines.length <= 1) {
+    showToast('至少保留一个业务线', 'error');
+    return;
+  }
+  lines.splice(Number(index), 1);
+  renderTaskAppBusinessLineEditor(lines);
 }
 
 function readTaskAppBusinessLines(options = {}) {
@@ -4202,9 +4253,11 @@ function clearTaskAppForm() {
   document.getElementById('task-app-feishu-webhook').value = '';
   renderTaskAppBusinessLineEditor(defaultBusinessLines());
   document.querySelectorAll('.task-app-module-check').forEach(input => input.checked = false);
+  taskAppModuleAssignmentPackage = '';
+  renderTaskAppModuleOwnerGuide();
 }
 
-function editTaskApp(packageName) {
+function editTaskApp(packageName, step = 0) {
   const app = taskApps.find(item => item.package === packageName);
   if (!app) return;
   document.getElementById('task-app-name').value = app.name || '';
@@ -4220,14 +4273,26 @@ function editTaskApp(packageName) {
   );
   const selected = new Set(app.modules || []);
   document.querySelectorAll('.task-app-module-check').forEach(input => input.checked = selected.has(input.value));
-  if (typeof FormSteps !== 'undefined') FormSteps.goTo(0);
-  document.getElementById('task-app-name').focus();
+  if (typeof FormSteps !== 'undefined') FormSteps.goTo(step);
+  taskAppModuleAssignmentPackage = taskAppModuleAssignmentMode ? packageName : '';
+  renderTaskAppModuleOwnerGuide();
+  if (step === 3) document.getElementById('task-app-module-search')?.focus();
+  else document.getElementById('task-app-name').focus();
+}
+
+function taskAppFeishuReady(app = {}) {
+  if (typeof app.feishu_ready === 'boolean') return app.feishu_ready;
+  return Boolean(app.feishu_webhook);
 }
 
 function taskAppFeishuLabel(app) {
-  if (app.feishu_webhook) return '飞书：已配置';
-  if (['com.kfb.model', 'com.xbxxhz.box'].includes(app.package)) return '飞书：默认群';
-  return '飞书：未配置';
+  if (!taskAppFeishuReady(app)) return app.feishu_source === 'invalid' ? '飞书：配置无效' : '飞书：未配置';
+  const labels = {
+    app: '专属群',
+    package_default: '应用默认群',
+    platform_default: '平台默认群',
+  };
+  return `飞书：${app.feishu_target_label || labels[app.feishu_source] || '已配置'}`;
 }
 
 function renderTaskAppList() {
@@ -4296,6 +4361,8 @@ async function saveTaskApp() {
     taskApps = taskApps.filter(app => app.package !== data.app.package);
     taskApps.push(data.app);
     taskApps.sort((a, b) => (a.name || a.package).localeCompare(b.name || b.package, 'zh-Hans-CN'));
+    taskAppModuleAssignmentMode = false;
+    taskAppModuleAssignmentPackage = '';
     clearTaskAppForm();
     renderTaskAppModal();
     renderModules();
@@ -4421,6 +4488,16 @@ function setSonicStatusActionMode(mode='scan') {
   if (refresh) refresh.style.display = mode === 'refresh' ? 'none' : '';
 }
 
+function setSonicMigrationAvailability(migratable = 0, manual = 0) {
+  lastSonicMigratable = Math.max(0, Number(migratable || 0));
+  const migrate = document.getElementById('sonic-action-migrate');
+  if (!migrate) return;
+  migrate.disabled = lastSonicMigratable === 0;
+  migrate.title = lastSonicMigratable
+    ? `清理 ${lastSonicMigratable} 条已精确匹配的旧/重复步骤`
+    : `当前 0 条可自动清理${Number(manual || 0) ? `，${Number(manual)} 条需人工处理` : ''}`;
+}
+
 async function openFileAndRunTask(mod, file, taskName='') {
   await openFile(mod, file);
   const ta = document.getElementById('editor');
@@ -4516,6 +4593,7 @@ async function scanLegacySonicCases(scope='auto') {
   document.getElementById('sonic-status-title').textContent = payload.file ? '当前 YAML 的 Sonic 维护检查' : 'Sonic 旧步骤维护检查';
   document.getElementById('sonic-status-summary').textContent = '正在扫描 Sonic 中的历史旧模板、重复 Midscene 步骤，并尝试匹配 Task YAML 用例...';
   document.getElementById('sonic-status-list').innerHTML = '<div class="job-empty">正在扫描...</div>';
+  setSonicMigrationAvailability(0, 0);
   openModal('modal-sonic-status');
   try {
     const data = await apiRequest('/sonic/scan-legacy', {
@@ -4525,6 +4603,7 @@ async function scanLegacySonicCases(scope='auto') {
     const risk = (data.legacy || 0) + (data.mixed || 0);
     const warning = risk ? ' 未清理前可能绕开汇总通知，单独发送旧报告或乱码消息。' : ' 当前未发现旧 Midscene 步骤。';
     document.getElementById('sonic-status-summary').textContent = `维护扫描完成：旧模板 ${data.legacy || 0} 条，重复残留 ${data.mixed || 0} 条，可自动清理 ${data.migratable || 0} 条，需要人工处理 ${data.manual || 0} 条。${warning} 新 YAML 同步请在「用例资产」里操作。`;
+    setSonicMigrationAvailability(data.migratable || 0, data.manual || 0);
     renderSonicStatusRows(data.rows || [], 'sonic-status-list');
   } catch(e) {
     document.getElementById('sonic-status-summary').textContent = e.message || '扫描失败';
@@ -4539,6 +4618,10 @@ async function rescanLegacySonicCases() {
 
 async function migrateLegacySonicCases() {
   const payload = lastSonicScanPayload || (currentFile ? { module: currentModule, file: currentFile } : {});
+  if (!lastSonicMigratable) {
+    showToast('当前 0 条可自动清理，请按列表建议人工处理', 'warn');
+    return;
+  }
   if (!confirm('确认清理可自动匹配的 Sonic 旧/重复 Midscene 步骤？\n\n系统会按 Task YAML 的 case_id 补齐桥接脚本，并删除残留旧步骤；不会修改 YAML、不触发执行。')) return;
   document.getElementById('sonic-status-summary').textContent = '正在按 Task YAML 匹配结果清理旧/重复步骤...';
   try {

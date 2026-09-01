@@ -66,6 +66,34 @@ def task_app_feishu_webhook(app: Optional[Dict[str, Any]]) -> str:
     )
 
 
+def task_app_feishu_delivery_status(app: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """Return non-secret delivery readiness for application-management UIs."""
+    app = app or {}
+    package = str(app.get("package") or "").strip()
+    explicit = app.get("feishu_webhook") or app.get("feishuWebhook") or ""
+    package_key = _env_key_for_package("FEISHU_WEBHOOK_", package) if package else ""
+    package_default = os.getenv(package_key, "") if package_key else ""
+    platform_default = os.getenv("FEISHU_WEBHOOK_DEFAULT", "")
+    if explicit:
+        source, value, label = "app", explicit, "专属群"
+    elif package_default:
+        source, value, label = "package_default", package_default, "应用默认群"
+    elif platform_default:
+        source, value, label = "platform_default", platform_default, "平台默认群"
+    else:
+        return {"feishu_ready": False, "feishu_source": "missing", "feishu_target_label": "未配置"}
+    try:
+        ready = bool(validate_feishu_webhook(value))
+    except ValueError as exc:
+        return {
+            "feishu_ready": False,
+            "feishu_source": "invalid",
+            "feishu_target_label": "配置无效",
+            "feishu_config_error": str(exc),
+        }
+    return {"feishu_ready": ready, "feishu_source": source, "feishu_target_label": label}
+
+
 # ---------------------------------------------------------------------------
 # Sending primitives
 # ---------------------------------------------------------------------------
