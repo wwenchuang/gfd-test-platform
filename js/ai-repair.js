@@ -575,8 +575,8 @@ async function rejectRepairDraft(draftId) {
   }
 }
 
-function aiRepairFailedJobs() {
-  const query = String(repairJobFilters.query || '').trim().toLowerCase();
+function aiRepairFailedJobs({ignoreQuery = false} = {}) {
+  const query = ignoreQuery ? '' : String(repairJobFilters.query || '').trim().toLowerCase();
   return latestJobs
     .filter(job => {
       const status = String(job.status || '').toLowerCase();
@@ -588,6 +588,26 @@ function aiRepairFailedJobs() {
         .filter(Boolean).join(' ').toLowerCase().includes(query);
     })
     .slice(0, 200);
+}
+
+function repairJobCountText(totalCount, matchedCount, visibleCount, hasQuery) {
+  if (hasQuery) return `匹配 ${matchedCount}/${totalCount} 条`;
+  return totalCount === visibleCount ? `${totalCount} 条` : `${totalCount} 条 · 当前页 ${visibleCount}`;
+}
+
+function repairJobEmptyStateHtml(hasQuery, totalCount) {
+  if (hasQuery && totalCount > 0) {
+    return `<div class="job-empty">没有匹配当前搜索的失败任务。共加载 ${totalCount} 条失败记录。<button class="btn-sm" onclick="clearRepairJobSearch()">清除搜索</button></div>`;
+  }
+  return '<div class="job-empty">暂无失败任务。</div>';
+}
+
+function clearRepairJobSearch() {
+  repairJobFilters.query = '';
+  repairJobFilters.page = 1;
+  if (repairJobFilterTimer) clearTimeout(repairJobFilterTimer);
+  repairJobFilterTimer = null;
+  if (['repair', 'failure_analysis'].includes(activeWorkflow)) showAiRepairCenter();
 }
 
 function setRepairJobSearch(value) {
@@ -629,7 +649,7 @@ async function generateBugDraftForJob(jobId) {
 const FAILURE_TYPE_META = {
   SCRIPT_ISSUE: { tag: '脚本问题', tone: 'warn', primary: { label: '生成修复草稿', onClick: 'generateRepairYamlFromAnalysis()' } },
   PRODUCT_BUG: { tag: '产品缺陷', tone: 'danger', primary: { label: '生成缺陷草稿', onClick: 'generateBugDraftFromAnalysis()' } },
-  ENV_ISSUE: { tag: '环境问题', tone: 'warn', primary: { label: '查看环境建议', onClick: 'showAiRepairTab(\'analysis\')' } },
+  ENV_ISSUE: { tag: '环境问题', tone: 'warn', primary: { label: '查看环境建议', onClick: 'showPreflightDashboard()' } },
   UNKNOWN: { tag: '待人工复核', tone: '', primary: { label: '人工复核', onClick: 'showToast(\'已标记为人工复核，请在右侧查看完整分析\',\'success\')' } }
 };
 
@@ -723,8 +743,11 @@ function repairYamlDraftHtml(normalized) {
     : !fixedYamlReady
       ? '请先生成修复草稿；生成后才能复制、下载或人工确认替换。'
       : !canApplyDraft
-        ? '修复 YAML 已生成，但草稿尚未进入可确认状态，请刷新草稿状态后再处理。'
-        : '';
+      ? '修复 YAML 已生成，但草稿尚未进入可确认状态，请刷新草稿状态后再处理。'
+      : '';
+  const tabUnavailable = aiFailureDraft
+    ? ''
+    : 'disabled aria-disabled="true" title="请先选择失败任务并完成 AI 分析"';
   return `
     <div class="review-panel ai-repair-draft-panel">
       <div class="section-head">
@@ -745,9 +768,9 @@ function repairYamlDraftHtml(normalized) {
       ${!canRepair ? `<div class="agent-risk show">当前归因为${escapeHtml(repairFailureTypeText(normalized.failureType))}，不建议自动改 YAML。请人工复核，或生成飞书缺陷草稿。</div>` : ''}
       ${riskHits.length ? `<div class="agent-risk show">该任务包含高风险动作：${escapeHtml(riskHits.join('、'))}。禁止自动执行，请人工确认后继续。</div>` : ''}
       <div class="agent-tabs">
-        <button class="agent-tab ${aiFailureDraft?.activeTab === 'original' ? 'active' : ''}" onclick="showAiRepairTab('original')">原始 YAML</button>
-        <button class="agent-tab ${aiFailureDraft?.activeTab === 'fixed' ? 'active' : ''}" onclick="showAiRepairTab('fixed')">修复 YAML</button>
-        <button class="agent-tab ${aiFailureDraft?.activeTab === 'diff' || aiFailureDraft?.activeTab === 'validation' ? 'active' : ''}" onclick="showAiRepairTab('diff')">Diff / 校验</button>
+        <button class="agent-tab ${aiFailureDraft?.activeTab === 'original' ? 'active' : ''}" onclick="showAiRepairTab('original')" ${tabUnavailable}>原始 YAML</button>
+        <button class="agent-tab ${aiFailureDraft?.activeTab === 'fixed' ? 'active' : ''}" onclick="showAiRepairTab('fixed')" ${tabUnavailable}>修复 YAML</button>
+        <button class="agent-tab ${aiFailureDraft?.activeTab === 'diff' || aiFailureDraft?.activeTab === 'validation' ? 'active' : ''}" onclick="showAiRepairTab('diff')" ${tabUnavailable}>Diff / 校验</button>
       </div>
       ${aiFailureDraft?.activeTab === 'diff'
         ? buildYamlDiffHtml(aiFailureDraft?.originalYaml || '', aiFailureDraft?.fixedYaml || '')
@@ -802,7 +825,9 @@ function showAiRepairCenter() {
   activeWorkspaceMode = 'ai-repair';
   const area = document.getElementById('editor-area');
   if (!area) return;
-  const failedJobs = aiRepairFailedJobs();
+  const hasSearch = Boolean(String(repairJobFilters.query || '').trim());
+  const allFailedJobs = aiRepairFailedJobs({ignoreQuery: true});
+  const failedJobs = hasSearch ? aiRepairFailedJobs() : allFailedJobs;
   const totalPages = Math.max(1, Math.ceil(failedJobs.length / REPAIR_JOB_PAGE_SIZE));
   repairJobFilters.page = Math.min(Math.max(1, repairJobFilters.page), totalPages);
   const visibleFailedJobs = failedJobs.slice((repairJobFilters.page - 1) * REPAIR_JOB_PAGE_SIZE, repairJobFilters.page * REPAIR_JOB_PAGE_SIZE);
@@ -828,7 +853,7 @@ function showAiRepairCenter() {
       <div class="review-grid ai-repair-grid">
         <div class="review-panel ai-repair-job-panel">
           <h3>失败任务列表</h3><div class="management-filter-scope">${escapeHtml(jobHistoryScopeText())}</div>
-          <div class="management-filter-bar compact"><input id="repair-job-search" type="search" value="${escapeHtml(repairJobFilters.query)}" placeholder="搜索失败任务、模块或错误" oninput="setRepairJobSearch(this.value)"><span class="management-filter-count">${visibleFailedJobs.length}/${failedJobs.length} 条</span></div>
+          <div class="management-filter-bar compact"><input id="repair-job-search" type="search" value="${escapeHtml(repairJobFilters.query)}" placeholder="搜索失败任务、模块或错误" oninput="setRepairJobSearch(this.value)"><span class="management-filter-count">${escapeHtml(repairJobCountText(allFailedJobs.length, failedJobs.length, visibleFailedJobs.length, hasSearch))}</span></div>
           ${visibleFailedJobs.length ? `<div class="yaml-task-nav-list ai-repair-job-list">${visibleFailedJobs.map(job => `
             <div class="yaml-task-nav-item ${job.job_id === selectedRepairJobId ? 'active' : ''}" onclick="selectRepairJob(${jsArg(job.job_id || '')})">
               <div class="yaml-task-nav-name">${escapeHtml(job.file || job.target_task_name || job.task_name || job.job_id || '失败任务')}</div>
@@ -838,7 +863,7 @@ function showAiRepairCenter() {
                 <button onclick="event.stopPropagation(); focusJob(${jsArg(job.job_id || '')})">去执行页</button>
               </div>
             </div>
-          `).join('')}</div>${failedJobs.length > REPAIR_JOB_PAGE_SIZE ? `<div class="management-pager"><span>第 ${repairJobFilters.page}/${totalPages} 页</span><div><button class="btn-sm" onclick="setRepairJobPage(${repairJobFilters.page - 1})" ${repairJobFilters.page <= 1 ? 'disabled' : ''}>上一页</button><button class="btn-sm" onclick="setRepairJobPage(${repairJobFilters.page + 1})" ${repairJobFilters.page >= totalPages ? 'disabled' : ''}>下一页</button></div></div>` : ''}` : '<div class="job-empty">暂无匹配的失败任务。</div>'}
+          `).join('')}</div>${failedJobs.length > REPAIR_JOB_PAGE_SIZE ? `<div class="management-pager"><span>第 ${repairJobFilters.page}/${totalPages} 页</span><div><button class="btn-sm" onclick="setRepairJobPage(${repairJobFilters.page - 1})" ${repairJobFilters.page <= 1 ? 'disabled' : ''}>上一页</button><button class="btn-sm" onclick="setRepairJobPage(${repairJobFilters.page + 1})" ${repairJobFilters.page >= totalPages ? 'disabled' : ''}>下一页</button></div></div>` : ''}` : repairJobEmptyStateHtml(hasSearch, allFailedJobs.length)}
         </div>
         ${aiRepairSummaryHtml(normalized)}
         ${repairYamlDraftHtml(normalized)}

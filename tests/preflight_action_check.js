@@ -27,6 +27,25 @@ test('a legacy Sonic warning provides the next action instead of a dead-end sugg
   assert.match(source, /preflightActionHtml\(item\)/);
 });
 
+test('quick health check does not claim that unscanned deep-maintenance items passed', t => {
+  const source = fs.readFileSync('js/agent-status.js', 'utf8');
+  const dom = new JSDOM('<body><div id="preflight-next"></div><div id="preflight-grid"></div></body>', {runScripts: 'dangerously'});
+  t.after(() => dom.window.close());
+  const win = dom.window;
+  win.escapeHtml = value => String(value ?? '');
+  loadFunction(win, source, 'preflightStatusText');
+  loadFunction(win, source, 'preflightActionHtml');
+  loadFunction(win, source, 'renderPreflightDashboard');
+
+  win.renderPreflightDashboard({checks: []}, {deep: false});
+  assert.match(win.document.getElementById('preflight-next').textContent, /基础检查正常/);
+  assert.match(win.document.getElementById('preflight-next').textContent, /深度体检/);
+
+  win.renderPreflightDashboard({checks: []}, {deep: true});
+  assert.match(win.document.getElementById('preflight-next').textContent, /环境正常/);
+  assert.doesNotMatch(win.document.getElementById('preflight-next').textContent, /未扫描/);
+});
+
 test('Sonic status treats a resolved Task path as a real YAML match', t => {
   const source = fs.readFileSync('js/agent-status.js', 'utf8');
   const dom = new JSDOM('<body><div id="rows"></div></body>', {runScripts: 'dangerously'});

@@ -65,3 +65,31 @@ test('defect prompt forbids invented environment versions, devices, and addresse
   assert.match(prompt, /缺失信息写“未提供”/);
   assert.match(prompt, /禁止编造版本号、设备型号、账号权限、URL/);
 });
+
+test('long historical drafts are summarized before their full content is expanded', t => {
+  const source = fs.readFileSync('js/agent-status.js', 'utf8');
+  const dom = new JSDOM('<body></body>', {runScripts: 'dangerously'});
+  t.after(() => dom.window.close());
+  const win = dom.window;
+  win.escapeHtml = value => String(value ?? '')
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;');
+  loadFunction(win, source, 'bugDraftPreviewText');
+  loadFunction(win, source, 'bugDraftBodyHtml');
+  const body = Array.from({length: 20}, (_, index) => `${index + 1}. 未核实的历史草稿字段`).join('\n');
+  const html = win.bugDraftBodyHtml(body);
+  assert.match(html, /bug-draft-preview/);
+  assert.match(html, /<details/);
+  assert.match(html, /查看完整草稿/);
+  assert.match(html, /<pre>/);
+  assert.ok(win.bugDraftPreviewText(body).length <= 183);
+  assert.match(source, /bugDraftBodyHtml\(draft\.description \|\| draft\.summary/);
+});
+
+test('disabled compact actions do not look like active primary actions', () => {
+  const css = fs.readFileSync('css/round5.css', 'utf8');
+  assert.match(css, /\.btn-sm:disabled\s*\{/);
+  assert.match(css, /cursor:\s*not-allowed/);
+  assert.match(css, /box-shadow:\s*none/);
+});

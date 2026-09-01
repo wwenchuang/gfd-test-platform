@@ -5,7 +5,7 @@
 async function loadModules(options = {}) {
   const force = options && options.force;
   // round 4: 同一会话只首次拉取，后续切换页面直接渲染，避免反复请求 /modules
-  if (!force && AppState.loaded.modules && modulesLoaded) {
+  if (!force && AppState.loaded.modules && AppState.loaded.taskApps && modulesLoaded) {
     if (activeWorkflow === 'dashboard' && !hasOpenEditor()) showWorkflowGuide('dashboard');
     renderModules();
     return;
@@ -15,16 +15,23 @@ async function loadModules(options = {}) {
   if (activeWorkflow === 'dashboard' && !hasOpenEditor()) showWorkflowGuide('dashboard');
   const task = (async () => {
     try {
-      const [moduleData, appData, metaData, sonicData] = await Promise.all([
+      const [moduleData, appResult, metaData, sonicData] = await Promise.all([
         apiRequest('/modules'),
-        apiRequest('/task-apps?include_disabled=1').catch(() => null),
+        apiRequest('/task-apps?include_disabled=1')
+          .then(data => ({data, error: null}))
+          .catch(error => ({data: null, error})),
         apiRequest('/task-meta').catch(() => null),
         canAccessGlobalSonic() ? apiRequest('/sonic/cases').catch(() => null) : null
       ]);
       modules = moduleData || {};
-      if (appData) {
-        taskApps = appData.apps || [];
+      if (appResult.data) {
+        taskApps = appResult.data.apps || [];
+        AppState.loaded.taskApps = true;
+        AppState.errors.taskApps = null;
         refreshBusinessLineControls();
+      } else {
+        AppState.loaded.taskApps = taskApps.length > 0;
+        AppState.errors.taskApps = appResult.error || new Error('应用配置加载失败');
       }
       if (metaData) {
         taskMeta = metaData.meta || {};
@@ -64,7 +71,7 @@ async function loadModules(options = {}) {
 
 // round 4: 在进入用例/执行/Agent 等需要模块树的页面时调用，避免重复请求
 function ensureModulesLoaded(options = {}) {
-  if (AppState.loaded.modules || AppState.loading.modules) return AppState.loading.modules || Promise.resolve();
+  if ((AppState.loaded.modules && AppState.loaded.taskApps) || AppState.loading.modules) return AppState.loading.modules || Promise.resolve();
   return loadModules(options);
 }
 

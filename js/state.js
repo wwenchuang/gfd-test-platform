@@ -20,6 +20,7 @@ const AppState = {
   // round 4: lazy-load cache flags so each section only fetches on demand
   loaded: {
     modules: false,
+    taskApps: false,
     jobs: false,
     reports: false,
     feishuDrafts: false,

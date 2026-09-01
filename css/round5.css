@@ -2405,6 +2405,12 @@
 
 .config-management-page,
 .bug-draft-page { max-width: 1320px; margin: 0 auto; }
+.btn-sm:disabled {
+  opacity: .45;
+  filter: saturate(.35);
+  cursor: not-allowed;
+  box-shadow: none;
+}
 .management-list {
   overflow: hidden;
   border: 1px solid rgba(148, 163, 184, .18);
@@ -2437,7 +2443,10 @@
 .bug-draft-head span { display: block; }
 .bug-draft-head strong { font-size: 15px; }
 .bug-draft-head div > span { margin-top: 4px; color: var(--text2); font-size: 12px; }
-.bug-draft-row > p { margin: 12px 0; color: #dbe6f3; line-height: 1.65; white-space: pre-wrap; }
+.bug-draft-preview { margin: 12px 0; color: #dbe6f3; line-height: 1.65; }
+.bug-draft-content { margin: -2px 0 12px; border: 1px solid rgba(148, 163, 184, .18); border-radius: 10px; background: rgba(15, 23, 42, .28); }
+.bug-draft-content summary { padding: 10px 12px; color: #bae6fd; cursor: pointer; font-size: 12px; font-weight: 700; }
+.bug-draft-content pre { max-height: 420px; margin: 0; padding: 0 12px 12px; overflow: auto; color: #dbe6f3; font: 12px/1.65 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; }
 .bug-draft-evidence { display: flex; flex-wrap: wrap; gap: 8px 18px; color: var(--text2); font-family: var(--mono); font-size: 11px; }
 .bug-draft-row .review-actions { justify-content: flex-end; margin-top: 12px; }
 

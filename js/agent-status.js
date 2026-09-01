@@ -2202,7 +2202,7 @@ async function showPreflightDashboard(live=false) {
   await loadPreflightDashboard(live);
 }
 
-function renderPreflightDashboard(data) {
+function renderPreflightDashboard(data, options = {}) {
   const grid = document.getElementById('preflight-grid');
   const next = document.getElementById('preflight-next');
   if (!grid || !next) return;
@@ -2213,8 +2213,10 @@ function renderPreflightDashboard(data) {
     next.textContent = `下一步：先处理 ${criticalBad.map(item => item.title).join('、')}，否则同步和 Sonic 执行会不稳定。`;
   } else if (warn.length) {
     next.textContent = `下一步：核心链路可用，但建议处理 ${warn.map(item => item.title).join('、')}。`;
-  } else {
+  } else if (options.deep) {
     next.textContent = '下一步：环境正常，可以上传需求新建自动化测试，或把已入库/基线用例同步至 Sonic 平台。';
+  } else {
+    next.textContent = '下一步：基础检查正常；快速体检未扫描旧/重复 Sonic 脚本。同步或执行 Sonic 前，请再运行深度体检。';
   }
   grid.innerHTML = checks.map(item => `
     <div class="preflight-card ${escapeHtml(item.status || (item.ok ? 'normal' : 'warn'))}">
@@ -2236,12 +2238,12 @@ async function loadPreflightDashboard(live=false) {
   if (next) next.textContent = live ? '正在深度体检，包含 Sonic 旧/重复步骤扫描...' : '正在快速体检...';
   try {
     const data = await apiRequest(`/preflight/dashboard${live ? '?live=1' : ''}`);
-    renderPreflightDashboard(data);
+    renderPreflightDashboard(data, {deep: live});
     const checks = Array.isArray(data.checks) ? data.checks : [];
     const pendingCount = checks.filter(item => item.status === 'warn' || !item.ok).length;
     if (!data.ok) showToast('环境体检发现阻断项', 'error');
     else if (pendingCount) showToast(`核心链路可用，但有 ${pendingCount} 项待处理`, 'warn');
-    else showToast('✓ 环境体检通过', 'success');
+    else showToast(live ? '✓ 环境体检通过' : '✓ 基础检查通过；深度维护项尚未扫描', 'success');
   } catch(e) {
     if (next) next.textContent = e.message || '体检失败';
     if (grid) grid.innerHTML = '';
@@ -3922,11 +3924,38 @@ function renderTaskAppModuleOwnerGuide() {
   }
 }
 
+function taskAppCatalogPageState() {
+  const stateKnown = typeof AppState !== 'undefined'
+    && Object.prototype.hasOwnProperty.call(AppState.loaded || {}, 'taskApps');
+  const loaded = stateKnown ? Boolean(AppState.loaded.taskApps) : true;
+  const error = stateKnown ? AppState.errors?.taskApps : null;
+  return {
+    loaded,
+    error,
+    loading: !loaded && !error,
+    unavailable: !loaded,
+  };
+}
+
+function taskAppCatalogNoticeHtml(catalog) {
+  if (catalog.loading) {
+    return '<div class="job-empty">正在加载应用配置，请稍候...</div>';
+  }
+  if (catalog.error && !catalog.loaded) {
+    return `<div class="job-empty">应用配置加载失败：${escapeHtml(catalog.error.message || catalog.error)} <button class="btn-sm" onclick="reloadTaskAppCatalog()">重新加载</button></div>`;
+  }
+  if (catalog.error) {
+    return `<div class="agent-risk show">刷新失败，当前继续展示上次成功加载的数据：${escapeHtml(catalog.error.message || catalog.error)} <button class="btn-sm" onclick="reloadTaskAppCatalog()">重试</button></div>`;
+  }
+  return '';
+}
+
 function showAppConfigCenter() {
   const area = document.getElementById('editor-area');
   if (!area) return;
   activeWorkspaceMode = 'app-config';
   setManagementToolbar('应用配置', '应用配置统一维护包名、模块归属、Sonic 项目和群通知目标。', '📱');
+  const catalog = taskAppCatalogPageState();
   const businessModules = taskAppBusinessModuleNames();
   const businessModuleSet = new Set(businessModules);
   const assignedModules = new Set(taskApps.flatMap(app => app.modules || []).filter(moduleName => businessModuleSet.has(moduleName)));
@@ -3936,23 +3965,32 @@ function showAppConfigCenter() {
   area.innerHTML = `<div class="review-page config-management-page">
     <div class="review-head">
       <div><div class="workflow-kicker">应用与测试资源归属</div><h2>应用配置</h2><p>先维护应用，再把用例模块、Sonic 项目和通知机器人归到对应应用。</p></div>
-      <div class="review-actions"><button class="btn-sm" onclick="openUnassignedTaskAppModules()">查看未归属模块</button><button class="btn-sm primary" onclick="openTaskAppEditor()">新增应用</button></div>
+      <div class="review-actions"><button class="btn-sm" ${catalog.unavailable ? 'disabled' : ''} onclick="openUnassignedTaskAppModules()">查看未归属模块</button><button class="btn-sm primary" ${catalog.unavailable ? 'disabled' : ''} onclick="openTaskAppEditor()">新增应用</button></div>
     </div>
     <div class="review-stats">
-      <div class="review-stat"><strong>${taskApps.length} 个</strong><span>应用</span></div>
-      <div class="review-stat"><strong>${assignedModules.size} / ${totalModules} 个</strong><span>已归属模块</span></div>
-      <div class="review-stat"><strong>${unassignedModules} 个</strong><span>未归属模块</span></div>
-      <div class="review-stat"><strong>${taskApps.filter(app => app.sonic_project_id || app.sonic_project_name).length}</strong><span>已绑定 Sonic</span></div>
-      <div class="review-stat"><strong>${taskApps.filter(taskAppFeishuReady).length}</strong><span>可发送通知</span></div>
+      <div class="review-stat"><strong>${catalog.unavailable ? '—' : `${taskApps.length} 个`}</strong><span>应用</span></div>
+      <div class="review-stat"><strong>${catalog.unavailable ? '—' : `${assignedModules.size} / ${totalModules} 个`}</strong><span>已归属模块</span></div>
+      <div class="review-stat"><strong>${catalog.unavailable ? '—' : `${unassignedModules} 个`}</strong><span>未归属模块</span></div>
+      <div class="review-stat"><strong>${catalog.unavailable ? '—' : taskApps.filter(app => app.sonic_project_id || app.sonic_project_name).length}</strong><span>已绑定 Sonic</span></div>
+      <div class="review-stat"><strong>${catalog.unavailable ? '—' : taskApps.filter(taskAppFeishuReady).length}</strong><span>可发送通知</span></div>
     </div>
     <div class="management-list">
-      ${taskApps.length ? taskApps.map(app => `<div class="management-row">
+      ${catalog.unavailable
+        ? taskAppCatalogNoticeHtml(catalog)
+        : `${taskAppCatalogNoticeHtml(catalog)}${taskApps.length ? taskApps.map(app => `<div class="management-row">
         <div class="management-row-main"><strong>${escapeHtml(app.name || app.package)}</strong><span>${escapeHtml(app.package || '-')}</span><small>${escapeHtml((app.modules || []).join('、') || '尚未绑定用例模块')}</small></div>
         <div class="management-row-meta"><span>${app.enabled === false ? '已停用 · 不用于新建测试' : '已启用'}</span><span>${escapeHtml(app.sonic_project_name || app.sonic_project_id || 'Sonic 未绑定')}</span><span>${escapeHtml(taskAppFeishuLabel(app))}</span></div>
         <button class="btn-sm" onclick="openTaskAppEditor(${jsArg(app.package || '')})">编辑</button>
-      </div>`).join('') : '<div class="job-empty">暂无应用配置。先新增应用，再关联用例模块。</div>'}
+      </div>`).join('') : '<div class="job-empty">暂无应用配置。先新增应用，再关联用例模块。</div>'}`}
     </div>
   </div>`;
+}
+
+async function reloadTaskAppCatalog() {
+  await loadModules({force: true});
+  if (activeWorkflow === 'app_config') showAppConfigCenter();
+  if (activeWorkflow === 'feishu_config') showFeishuConfigCenter();
+  if (activeWorkflow === 'sonic_config') showSonicConfigCenter();
 }
 
 function showFeishuConfigCenter() {
@@ -3960,16 +3998,17 @@ function showFeishuConfigCenter() {
   if (!area) return;
   activeWorkspaceMode = 'feishu-config';
   setManagementToolbar('群通知', '按应用检查通知目标，缺陷草稿只有人工确认后才会发送。', '💬');
-  const configured = taskApps.filter(taskAppFeishuReady);
+  const catalog = taskAppCatalogPageState();
+  const configured = catalog.loaded ? taskApps.filter(taskAppFeishuReady) : [];
   area.className = 'editor-area';
   area.innerHTML = `<div class="review-page config-management-page">
-    <div class="review-head"><div><div class="workflow-kicker">群通知 · 应用级通知配置</div><h2>群通知</h2><p>每个应用独立选择通知群，避免不同产品的执行结果和缺陷发送到错误群聊。</p></div><div class="review-actions"><button class="btn-sm primary" onclick="openTaskAppEditor(${jsArg(taskApps[0]?.package || '')}, ${taskApps.length ? 2 : 0})">维护通知配置</button><button class="btn-sm" onclick="activateWorkflow('bug_drafts')">查看缺陷草稿</button></div></div>
-    <div class="review-stats"><div class="review-stat"><strong>${configured.length}/${taskApps.length}</strong><span>通知可用应用</span></div><div class="review-stat"><strong>${feishuDrafts.filter(d => String(d.status || '').toUpperCase() === 'DRAFT').length}</strong><span>待确认草稿</span></div></div>
+    <div class="review-head"><div><div class="workflow-kicker">群通知 · 应用级通知配置</div><h2>群通知</h2><p>每个应用独立选择通知群，避免不同产品的执行结果和缺陷发送到错误群聊。</p></div><div class="review-actions"><button class="btn-sm primary" ${catalog.unavailable ? 'disabled' : ''} onclick="openTaskAppEditor(${jsArg(taskApps[0]?.package || '')}, ${taskApps.length ? 2 : 0})">维护通知配置</button><button class="btn-sm" onclick="activateWorkflow('bug_drafts')">查看缺陷草稿</button></div></div>
+    <div class="review-stats"><div class="review-stat"><strong>${catalog.unavailable ? '—' : `${configured.length}/${taskApps.length}`}</strong><span>通知可用应用</span></div><div class="review-stat"><strong>${feishuDrafts.filter(d => String(d.status || '').toUpperCase() === 'DRAFT').length}</strong><span>待确认草稿</span></div></div>
     <div class="management-list">
-      ${taskApps.length ? taskApps.map(app => {
+      ${catalog.unavailable ? taskAppCatalogNoticeHtml(catalog) : `${taskAppCatalogNoticeHtml(catalog)}${taskApps.length ? taskApps.map(app => {
         const ready = taskAppFeishuReady(app);
         return `<div class="management-row"><div class="management-row-main"><strong>${escapeHtml(app.name || app.package)}</strong><span>${escapeHtml(app.package || '-')}</span><small>${ready ? '执行报告和缺陷草稿可按此应用路由' : '请先配置机器人 Webhook 或默认群'}</small></div><span class="status-pill ${ready ? 'success' : 'warn'}">${escapeHtml(taskAppFeishuLabel(app).replace('飞书：', ''))}</span><button class="btn-sm" onclick="openTaskAppEditor(${jsArg(app.package || '')}, 2)">配置</button></div>`;
-      }).join('') : '<div class="job-empty">暂无应用。新增应用后才能配置对应通知群。</div>'}
+      }).join('') : '<div class="job-empty">暂无应用。新增应用后才能配置对应通知群。</div>'}`}
     </div>
   </div>`;
 }
@@ -3979,14 +4018,15 @@ function showSonicConfigCenter() {
   if (!area) return;
   activeWorkspaceMode = 'sonic-config';
   setManagementToolbar('执行环境', '查看 Runner、设备和 Sonic 绑定；深度扫描只在手工点击时执行。', '🔗');
+  const catalog = taskAppCatalogPageState();
   const onlineDevices = Array.isArray(runnerDevices) ? runnerDevices.filter(device => device.online !== false) : [];
-  const sonicBound = taskApps.filter(app => app.sonic_project_id || app.sonic_project_name || app.sonic_suite_id || app.sonic_suite_name);
+  const sonicBound = catalog.loaded ? taskApps.filter(app => app.sonic_project_id || app.sonic_project_name || app.sonic_suite_id || app.sonic_suite_name) : [];
   area.className = 'editor-area';
   area.innerHTML = `<div class="review-page config-management-page">
     <div class="review-head"><div><div class="workflow-kicker">执行环境 · Runner / 设备 / Sonic</div><h2>执行环境</h2><p>先确认设备在线和应用绑定，再执行用例。进入本页不会自动扫描或修改 Sonic 数据。</p></div><div class="review-actions"><button class="btn-sm" onclick="showPreflightDashboard()">快速体检</button><button class="btn-sm" onclick="showPreflightDashboard(true)">深度体检</button><button class="btn-sm primary" onclick="scanLegacySonicCases('all')">扫描旧/重复步骤</button></div></div>
-    <div class="review-stats"><div class="review-stat"><strong>${onlineDevices.length}</strong><span>在线设备</span></div><div class="review-stat"><strong>${sonicBound.length}/${taskApps.length}</strong><span>已绑定 Sonic 应用</span></div></div>
+    <div class="review-stats"><div class="review-stat"><strong>${onlineDevices.length}</strong><span>在线设备</span></div><div class="review-stat"><strong>${catalog.unavailable ? '—' : `${sonicBound.length}/${taskApps.length}`}</strong><span>已绑定 Sonic 应用</span></div></div>
     <div class="management-list">
-      ${taskApps.length ? taskApps.map(app => `<div class="management-row"><div class="management-row-main"><strong>${escapeHtml(app.name || app.package)}</strong><span>${escapeHtml(app.package || '-')}</span><small>${escapeHtml([app.sonic_project_name || app.sonic_project_id || '项目未绑定', app.sonic_suite_name || app.sonic_suite_id || '测试套未绑定'].join(' · '))}</small></div><button class="btn-sm" onclick="openTaskAppEditor(${jsArg(app.package || '')})">编辑绑定</button></div>`).join('') : '<div class="job-empty">暂无应用绑定信息。</div>'}
+      ${catalog.unavailable ? taskAppCatalogNoticeHtml(catalog) : `${taskAppCatalogNoticeHtml(catalog)}${taskApps.length ? taskApps.map(app => `<div class="management-row"><div class="management-row-main"><strong>${escapeHtml(app.name || app.package)}</strong><span>${escapeHtml(app.package || '-')}</span><small>${escapeHtml([app.sonic_project_name || app.sonic_project_id || '项目未绑定', app.sonic_suite_name || app.sonic_suite_id || '测试套未绑定'].join(' · '))}</small></div><button class="btn-sm" onclick="openTaskAppEditor(${jsArg(app.package || '')})">编辑绑定</button></div>`).join('') : '<div class="job-empty">暂无应用绑定信息。</div>'}`}
     </div>
   </div>`;
 }
@@ -4010,6 +4050,21 @@ function setFeishuDraftFilter(key, value) {
     input?.focus();
     input?.setSelectionRange(input.value.length, input.value.length);
   }, 180);
+}
+
+function bugDraftPreviewText(value, limit = 180) {
+  const normalized = String(value || '暂无描述').replace(/\s+/g, ' ').trim();
+  return normalized.length > limit ? `${normalized.slice(0, limit)}...` : normalized;
+}
+
+function bugDraftBodyHtml(value) {
+  const body = String(value || '暂无描述').trim();
+  const preview = bugDraftPreviewText(body);
+  if (body.replace(/\s+/g, ' ').trim().length <= 180) {
+    return `<p class="bug-draft-preview">${escapeHtml(body)}</p>`;
+  }
+  return `<p class="bug-draft-preview">${escapeHtml(preview)}</p>
+    <details class="bug-draft-content"><summary>查看完整草稿</summary><pre>${escapeHtml(body)}</pre></details>`;
 }
 
 async function showBugDraftCenter(options = {}) {
@@ -4064,7 +4119,7 @@ async function showBugDraftCenter(options = {}) {
       const pending = String(draft.status || '').toUpperCase() === 'DRAFT';
       const reportUrl = /^https?:\/\//i.test(String(draft.reportUrl || '')) ? draft.reportUrl : '';
       const submitState = feishuDraftSubmitReadiness(draft);
-      return `<article class="bug-draft-row"><div class="bug-draft-head"><div><strong>${escapeHtml(draft.title || '未命名缺陷')}</strong><span>${escapeHtml(draft.appName || draft.appPackage || '未关联应用')}</span></div><span class="status-pill ${pending ? 'warn' : (String(draft.status).toUpperCase() === 'SUBMITTED' ? 'success' : '')}">${escapeHtml(feishuDraftStatusText(draft.status))}</span></div><p>${escapeHtml(draft.description || draft.summary || '暂无描述')}</p><div class="bug-draft-evidence"><span>来源：${escapeHtml(draft.sourceRunId || draft.sourceJobId || '-')}</span>${reportUrl ? `<a class="job-link" href="${escapeHtml(reportUrl)}" target="_blank" rel="noopener">查看执行报告</a>` : ''}<span>${escapeHtml(formatDisplayTime(draft.updatedAt || draft.createdAt) || '-')}</span></div>${pending && !submitState.enabled ? `<div class="agent-risk show">暂不可发送：${escapeHtml(submitState.reason)}。请在失败任务补齐应用归属后重新生成草稿，或先去应用配置核对通知目标。 <button class="btn-sm" onclick="activateWorkflow('app_config')">去应用配置</button></div>` : ''}<div class="review-actions"><button class="btn-sm" onclick="copyText(${jsArg(`${draft.title || ''}\n\n${draft.description || ''}`)}).then(()=>showToast('已复制缺陷内容','success'))">复制</button>${pending ? `<button class="btn-sm danger" onclick="rejectFeishuDraft(${jsArg(id)})">拒绝</button><button class="btn-sm primary" ${submitState.enabled ? '' : 'disabled'} title="${escapeHtml(submitState.enabled ? `发送到 ${submitState.target}` : submitState.reason)}" onclick="submitFeishuDraft(${jsArg(id)})">确认并发送飞书</button>` : ''}</div></article>`;
+      return `<article class="bug-draft-row"><div class="bug-draft-head"><div><strong>${escapeHtml(draft.title || '未命名缺陷')}</strong><span>${escapeHtml(draft.appName || draft.appPackage || '未关联应用')}</span></div><span class="status-pill ${pending ? 'warn' : (String(draft.status).toUpperCase() === 'SUBMITTED' ? 'success' : '')}">${escapeHtml(feishuDraftStatusText(draft.status))}</span></div>${bugDraftBodyHtml(draft.description || draft.summary || '暂无描述')}<div class="bug-draft-evidence"><span>来源：${escapeHtml(draft.sourceRunId || draft.sourceJobId || '-')}</span>${reportUrl ? `<a class="job-link" href="${escapeHtml(reportUrl)}" target="_blank" rel="noopener">查看执行报告</a>` : ''}<span>${escapeHtml(formatDisplayTime(draft.updatedAt || draft.createdAt) || '-')}</span></div>${pending && !submitState.enabled ? `<div class="agent-risk show">暂不可发送：${escapeHtml(submitState.reason)}。请在失败任务补齐应用归属后重新生成草稿，或先去应用配置核对通知目标。 <button class="btn-sm" onclick="activateWorkflow('app_config')">去应用配置</button></div>` : ''}<div class="review-actions"><button class="btn-sm" onclick="copyText(${jsArg(`${draft.title || ''}\n\n${draft.description || ''}`)}).then(()=>showToast('已复制缺陷内容','success'))">复制</button>${pending ? `<button class="btn-sm danger" onclick="rejectFeishuDraft(${jsArg(id)})">拒绝</button><button class="btn-sm primary" ${submitState.enabled ? '' : 'disabled'} title="${escapeHtml(submitState.enabled ? `发送到 ${submitState.target}` : submitState.reason)}" onclick="submitFeishuDraft(${jsArg(id)})">确认并发送飞书</button>` : ''}</div></article>`;
     }).join('') : '<div class="job-empty">当前筛选下没有缺陷草稿。</div>'}</div>
   </div>`;
 }

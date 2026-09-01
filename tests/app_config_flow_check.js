@@ -22,12 +22,13 @@ function loadFunctions(context, filename, names) {
   }
 }
 
-function fixture(t, { workflow = 'app_config', deleteWait } = {}) {
+function fixture(t, { workflow = 'app_config', deleteWait, catalogLoaded = true, catalogError = null } = {}) {
   // jsdom does not load subresources or run page scripts by default.
   const dom = new JSDOM(fs.readFileSync(path.join(ROOT, 'task-manager.html'), 'utf8'));
   t.after(() => dom.window.close());
   const calls = [];
   const toasts = [];
+  let catalogReloads = 0;
   const forbiddenNetwork = [];
   const blockNetwork = () => {
     forbiddenNetwork.push('unexpected real network request');
@@ -56,10 +57,17 @@ function fixture(t, { workflow = 'app_config', deleteWait } = {}) {
       { package: APP_B, name: '应用乙', enabled: false, modules: ['模块乙'], business_lines: [{ id: 'home', name: '家用', enabled: true }], feishu_ready: false, feishu_source: 'missing' },
     ],
     modules: { '模块甲': {}, '模块乙': {}, '模块丙': {} },
+    AppState: {loaded: {taskApps: catalogLoaded}, errors: {taskApps: catalogError}},
     activeWorkflow: workflow,
     feishuDrafts: [],
+    runnerDevices: [{id: 'fixture-device', online: true}],
     confirm: () => true,
     showToast: (message, type) => toasts.push({ message, type }),
+    loadModules: async () => {
+      catalogReloads += 1;
+      context.AppState.loaded.taskApps = true;
+      context.AppState.errors.taskApps = null;
+    },
     // Unrelated sidebar and YAML controls are outside this form regression.
     renderModules() {},
     refreshBusinessLineControls() {},
@@ -82,7 +90,8 @@ function fixture(t, { workflow = 'app_config', deleteWait } = {}) {
   loadFunctions(context, 'js/app.js', ['escapeHtml', 'jsArg']);
   loadFunctions(context, 'js/utils.js', ['defaultBusinessLines']);
   loadFunctions(context, 'js/agent-status.js', [
-    'resetYamlToolbarForManager', 'setManagementToolbar', 'showAppConfigCenter', 'showFeishuConfigCenter',
+    'resetYamlToolbarForManager', 'setManagementToolbar', 'taskAppCatalogPageState', 'taskAppCatalogNoticeHtml',
+    'showAppConfigCenter', 'reloadTaskAppCatalog', 'showFeishuConfigCenter', 'showSonicConfigCenter',
     'showTaskApps', 'openTaskAppEditor', 'nextTaskAppStep', 'validateTaskAppBasicInfo', 'goToTaskAppStep',
     'openUnassignedTaskAppModules', 'selectTaskAppModuleOwner', 'renderTaskAppModuleOwnerGuide',
     'isTemporaryAgentModule', 'taskAppBusinessModuleNames',
@@ -104,8 +113,41 @@ function fixture(t, { workflow = 'app_config', deleteWait } = {}) {
     assert.deepEqual(forbiddenNetwork, []);
   };
   t.after(() => assert.deepEqual(forbiddenNetwork, []));
-  return { run, field, calls, toasts, selectedModules, selectModule, expectCalls };
+  return { run, field, calls, toasts, selectedModules, selectModule, expectCalls, catalogReloads: () => catalogReloads };
 }
+
+test('application center shows a loading state instead of false zero counts', t => {
+  const f = fixture(t, {catalogLoaded: false});
+  f.run('showAppConfigCenter()');
+  const text = f.field('editor-area').textContent;
+  assert.match(text, /正在加载应用配置/);
+  assert.doesNotMatch(text, /0 个应用/);
+});
+
+test('notification center does not publish false readiness while applications are loading', t => {
+  const f = fixture(t, {workflow: 'feishu_config', catalogLoaded: false});
+  f.run('showFeishuConfigCenter()');
+  const text = f.field('editor-area').textContent;
+  assert.match(text, /正在加载应用配置/);
+  assert.doesNotMatch(text, /1\/2/);
+});
+
+test('execution environment does not publish false Sonic binding counts while applications are loading', t => {
+  const f = fixture(t, {workflow: 'sonic_config', catalogLoaded: false});
+  f.run('showSonicConfigCenter()');
+  const text = f.field('editor-area').textContent;
+  assert.match(text, /正在加载应用配置/);
+  assert.match(text, /1在线设备/);
+  assert.doesNotMatch(text, /1\/2已绑定 Sonic 应用/);
+});
+
+test('catalog retry rerenders the notification center with the loaded readiness count', async t => {
+  const f = fixture(t, {workflow: 'feishu_config', catalogLoaded: false});
+  f.run('showFeishuConfigCenter()');
+  await f.run('reloadTaskAppCatalog()');
+  assert.equal(f.catalogReloads(), 1);
+  assert.match(f.field('editor-area').textContent, /1\/2通知可用应用/);
+});
 
 test('deleting another app preserves saved module assignments in the next save', async t => {
   const f = fixture(t);

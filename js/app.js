@@ -330,16 +330,31 @@ function enabledGenerateApplications() {
   ));
 }
 
+function taskAppCatalogLoading() {
+  return Boolean(
+    typeof AppState !== 'undefined'
+    && !AppState.loaded?.taskApps
+    && !AppState.errors?.taskApps
+  );
+}
+
+function taskAppCatalogError() {
+  return typeof AppState !== 'undefined' ? AppState.errors?.taskApps : null;
+}
+
 function updateGenerateSubmitState() {
   const hasEnabledApplications = enabledGenerateApplications().length > 0;
+  const catalogLoading = taskAppCatalogLoading();
+  const catalogError = taskAppCatalogError();
   const select = document.getElementById('generate-application');
   const button = document.getElementById('btn-generate-yaml');
   const configAction = document.getElementById('generate-app-config-action');
-  if (select) select.disabled = generateBusy || !hasEnabledApplications;
-  if (button) button.disabled = generateBusy || !hasEnabledApplications;
+  if (select) select.disabled = generateBusy || catalogLoading || !hasEnabledApplications;
+  if (button) button.disabled = generateBusy || catalogLoading || !hasEnabledApplications;
   if (configAction) {
-    configAction.hidden = hasEnabledApplications;
+    configAction.hidden = catalogLoading || hasEnabledApplications;
     configAction.disabled = generateBusy;
+    configAction.textContent = catalogError ? '查看加载问题' : '前往应用配置';
   }
 }
 
@@ -348,15 +363,24 @@ function renderGenerateApplicationOptions(selectedPackage = '') {
   const detail = document.getElementById('generate-app-package-detail');
   const name = document.querySelector('.generate-application-name');
   const activeApps = enabledGenerateApplications();
+  const catalogLoading = taskAppCatalogLoading();
+  const catalogError = taskAppCatalogError();
   if (!select) return;
-  const current = activeApps.some(app => app.package === selectedPackage) ? selectedPackage : '';
-  select.innerHTML = '<option value="">选择已启用应用</option>' + activeApps.map(app => (
+  const current = !catalogLoading && activeApps.some(app => app.package === selectedPackage) ? selectedPackage : '';
+  const emptyOption = catalogLoading ? '正在加载应用配置...' : (catalogError ? '应用配置加载失败' : '选择已启用应用');
+  select.innerHTML = `<option value="">${emptyOption}</option>` + activeApps.map(app => (
     `<option value="${escapeHtml(app.package)}">${escapeHtml(app.name || app.package)}</option>`
   )).join('');
   select.value = current;
-  select.disabled = !activeApps.length;
+  select.disabled = catalogLoading || !activeApps.length;
   if (detail) detail.value = current;
-  if (name) name.textContent = current ? (selectedGenerateApplication()?.name || current) : (activeApps.length ? '未选择应用' : '暂无已启用应用');
+  if (name) {
+    name.textContent = catalogLoading
+      ? '正在加载应用配置...'
+      : (catalogError
+        ? '应用配置加载失败，请重试'
+        : (current ? (selectedGenerateApplication()?.name || current) : (activeApps.length ? '未选择应用' : '暂无已启用应用')));
+  }
   document.getElementById('generate-app-package').value = current;
   updateGenerateSubmitState();
 }
@@ -4982,7 +5006,8 @@ function showGenerateYaml() {
   updateGenerateAppHint();
   setGenerateStatus('先上传资料或粘贴说明，平台会先做需求分析、用例分类，再生成可调试的 Midscene 自动化脚本。');
   document.getElementById('modal-generate').classList.add('show');
-  loadKnowledgeApps().then(() => {
+  Promise.all([ensureModulesLoaded(), loadKnowledgeApps()]).catch(() => {}).then(() => {
+    if (!document.getElementById('modal-generate')?.classList.contains('show')) return;
     renderGenerateApplicationOptions(moduleAppPackage(currentModule));
     handleGenerateApplicationChange();
   });
