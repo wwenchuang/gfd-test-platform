@@ -111,6 +111,7 @@ class ResponseMixin:
         self.send_response(code)
         self._cors()
         self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Cache-Control", "no-cache, must-revalidate")
         self.end_headers()
         try:
             self.wfile.write(body)

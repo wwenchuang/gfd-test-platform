@@ -221,6 +221,7 @@ class TaskHTTPHandler(ResponseMixin, BaseHTTPRequestHandler):
 # ── 静态文件服务 ─────────────────────────────────────────────────────
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _API_TEST_BUILD_ROOT = os.path.join(_PROJECT_ROOT, "api-test")
+_MAIN_STATIC_CACHE_CONTROL = "no-cache, must-revalidate"
 
 
 def _send_static_file(handler, file_path):
@@ -286,7 +287,7 @@ def _serve_static(handler, path):
         handler.send_response(200)
         handler._cors()
         handler.send_header("Content-Type", guess_mime(asset_path))
-        handler.send_header("Cache-Control", "public, max-age=3600")
+        handler.send_header("Cache-Control", _MAIN_STATIC_CACHE_CONTROL)
         handler.send_header("Content-Length", str(os.path.getsize(asset_path)))
         handler.end_headers()
         with open(asset_path, "rb") as f:
@@ -305,7 +306,7 @@ def _serve_static(handler, path):
         handler.send_response(200)
         handler._cors()
         handler.send_header("Content-Type", guess_mime(file_path))
-        handler.send_header("Cache-Control", "public, max-age=3600")
+        handler.send_header("Cache-Control", _MAIN_STATIC_CACHE_CONTROL)
         handler.send_header("Content-Length", str(os.path.getsize(file_path)))
         handler.end_headers()
         with open(file_path, "rb") as f:
@@ -324,7 +325,7 @@ def _serve_static(handler, path):
         handler.send_response(200)
         handler._cors()
         handler.send_header("Content-Type", guess_mime(file_path))
-        handler.send_header("Cache-Control", "public, max-age=3600")
+        handler.send_header("Cache-Control", _MAIN_STATIC_CACHE_CONTROL)
         handler.send_header("Content-Length", str(os.path.getsize(file_path)))
         handler.end_headers()
         with open(file_path, "rb") as f:

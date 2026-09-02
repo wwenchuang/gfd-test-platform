@@ -60,6 +60,15 @@ class ApiTestStaticFilesTest(unittest.TestCase):
         self.assertEqual(handler.status, 404)
         self.assertEqual(handler.text, 'api test asset not found')
 
+    def test_main_platform_assets_revalidate_after_each_deploy(self):
+        for path in ('/js/agent-workbench.js', '/css/round5.css'):
+            handler = _StaticHandler()
+
+            self.assertTrue(_serve_static(handler, path))
+
+            self.assertEqual(handler.status, 200)
+            self.assertIn(('Cache-Control', 'no-cache, must-revalidate'), handler.headers)
+
 
 if __name__ == '__main__':
     unittest.main()
