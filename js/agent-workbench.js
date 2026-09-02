@@ -2257,6 +2257,281 @@ function agentGeneratedCaseGroups(artifacts = {}) {
   };
 }
 
+function agentCaseTextList(value) {
+  if (Array.isArray(value)) {
+    return value.map(item => {
+      if (item && typeof item === 'object') {
+        return item.text || item.label || item.name || item.title || item.description || JSON.stringify(item);
+      }
+      return String(item ?? '').trim();
+    }).filter(Boolean);
+  }
+  if (value && typeof value === 'object') {
+    return Object.values(value).map(item => String(item ?? '').trim()).filter(Boolean);
+  }
+  const text = String(value ?? '').trim();
+  return text ? [text] : [];
+}
+
+function agentCaseIdentity(item = {}, index = 0) {
+  return String(
+    item.case_id || item.caseId || item.id || item.file || item.path || item.title || item.name || `case-${index + 1}`
+  ).trim();
+}
+
+function agentCaseExecutionLabel(item = {}, groups = {}) {
+  const identity = agentCaseIdentity(item);
+  const definitions = [
+    ['executable_cases', '可执行'],
+    ['needs_review_cases', '需确认'],
+    ['draft_cases', '草稿'],
+    ['manual_cases', '人工/一次性'],
+  ];
+  for (const [key, label] of definitions) {
+    if ((groups[key] || []).some(candidate => agentCaseIdentity(candidate) === identity)) return label;
+  }
+  const explicit = String(item.executionLevel || item.execution_level || item.level || item.type || '').toLowerCase();
+  if (/needs[_ -]?review|review|confirm/.test(explicit)) return '需确认';
+  if (/manual|one[_ -]?time|一次性|人工/.test(explicit)) return '人工/一次性';
+  if (/draft|草稿/.test(explicit)) return '草稿';
+  if (/executable|automatic|auto|可执行/.test(explicit)) return '可执行';
+  if (item.__agentDisplayLevel) return item.__agentDisplayLevel;
+  return '自动化候选';
+}
+
+function renderAgentCasesArtifact(run) {
+  const artifacts = (run && run.artifacts) || {};
+  const generated = artifacts.generatedCases && typeof artifacts.generatedCases === 'object'
+    ? artifacts.generatedCases
+    : {};
+  const groups = agentGeneratedCaseGroups(artifacts);
+  const automaticCases = Array.isArray(generated.cases)
+    ? generated.cases
+    : (Array.isArray(artifacts.cases) ? artifacts.cases : []);
+  const manualCases = Array.isArray(generated.manual_cases)
+    ? generated.manual_cases
+    : (Array.isArray(generated.manualCases) ? generated.manualCases : []);
+  const caseRows = [];
+  const rowIndexByIdentity = new Map();
+  const addRows = (rows, fallbackLevel = '') => (rows || []).forEach((raw, index) => {
+    const item = raw && typeof raw === 'object' ? raw : {title: String(raw || '')};
+    const identity = agentCaseIdentity(item, caseRows.length + index);
+    if (!identity) return;
+    const normalized = fallbackLevel && !item.__agentDisplayLevel ? {...item, __agentDisplayLevel: fallbackLevel} : item;
+    if (rowIndexByIdentity.has(identity)) {
+      const rowIndex = rowIndexByIdentity.get(identity);
+      caseRows[rowIndex] = {...caseRows[rowIndex], ...normalized};
+      return;
+    }
+    rowIndexByIdentity.set(identity, caseRows.length);
+    caseRows.push(normalized);
+  });
+  addRows(automaticCases, '自动化候选');
+  addRows(manualCases, '人工/一次性');
+  addRows(groups.executable_cases, '可执行');
+  addRows(groups.needs_review_cases, '需确认');
+  addRows(groups.draft_cases, '草稿');
+  addRows(groups.manual_cases, '人工/一次性');
+
+  const analysis = generated.analysis && typeof generated.analysis === 'object' ? generated.analysis : {};
+  const goals = agentCaseTextList(analysis.business_goals || analysis.businessGoals);
+  const entries = agentCaseTextList(analysis.entry_points || analysis.entryPoints);
+  const requirements = agentCaseTextList(analysis.requirement_points || analysis.requirementPoints);
+  const matchedCount = Array.isArray(artifacts.matchedCases) ? artifacts.matchedCases.length : 0;
+  const groupedCount = Object.values(groups).reduce((sum, rows) => sum + rows.length, 0);
+  const executableCount = groups.executable_cases.length;
+  const reviewCount = groups.needs_review_cases.length;
+  const draftCount = groups.draft_cases.length;
+  const manualCount = Math.max(groups.manual_cases.length, manualCases.length);
+  const title = generated.title || run?.target || '本次 Agent 生成用例';
+  const moduleName = generated.module || artifacts.generationPipeline?.business || '-';
+
+  let html = '<div class="agent-readable-detail agent-cases-detail">';
+  html += '<section class="agent-readable-panel agent-cases-overview"><strong>用例总览</strong>';
+  html += `<p>${escapeHtml(title)} · 分组 ${escapeHtml(moduleName)}。先看业务目标和用例分层；只有“可执行”用例会进入 YAML 校验与 Runner，“需确认、草稿、人工/一次性”不会自动下发。</p>`;
+  html += agentInfoGrid([
+    {label: '自动化候选', value: automaticCases.length},
+    {label: '可执行', value: executableCount},
+    {label: '需确认', value: reviewCount},
+    {label: '草稿', value: draftCount},
+    {label: '人工/一次性', value: manualCount},
+    {label: '匹配历史', value: matchedCount},
+  ]);
+  if (!groupedCount && automaticCases.length) {
+    html += '<p class="text-warning">当前用例尚未完成执行分层，请继续查看“质量”和“校验”产物确认哪些用例可下发。</p>';
+  }
+  html += '</section>';
+  if (goals.length) {
+    html += agentReadableList('业务目标', goals.slice(0, 8));
+  }
+  if (entries.length || requirements.length) {
+    html += agentReadableList('入口与覆盖范围', [
+      ...entries.slice(0, 6).map(item => `入口：${item}`),
+      ...requirements.slice(0, 8).map(item => `需求：${item}`),
+    ]);
+  }
+  if (caseRows.length) {
+    html += '<section class="agent-readable-panel"><strong>用例明细</strong><div class="agent-case-list">';
+    html += caseRows.slice(0, 30).map((item, index) => {
+      const identity = agentCaseIdentity(item, index);
+      const name = item.title || item.name || item.scenario || identity || `用例 ${index + 1}`;
+      const level = agentCaseExecutionLabel(item, groups);
+      const priority = item.priority || item.rank || '';
+      const requirementsForCase = agentCaseTextList(item.requirementRefs || item.requirement_refs || item.requirements);
+      const preconditions = agentCaseTextList(item.preconditions || item.precondition || item.data_requirements || item.dataRequirements);
+      const steps = agentCaseTextList(item.steps || item.flow || item.actions);
+      const assertions = agentCaseTextList(item.assertions || item.expects || item.expected_result || item.expectedResult || item.expected);
+      const reasons = agentCaseTextList(item.reasons || item.reason || item.automation_reason || item.automationReason);
+      const businessPath = item.business_path || item.businessPath || item.path || '';
+      const smoke = item.smoke === true || item.smokeCandidate === true || item.runnerCandidate === true;
+      return `
+        <details class="agent-case-card" ${index < 2 ? 'open' : ''}>
+          <summary>
+            <span class="agent-case-title"><b>${escapeHtml(name)}</b><small>${escapeHtml(identity)}</small></span>
+            <span class="agent-case-tags">
+              <em class="agent-case-level">${escapeHtml(level)}</em>
+              ${priority ? `<em>${escapeHtml(priority)}</em>` : ''}
+              ${smoke ? '<em>冒烟</em>' : ''}
+            </span>
+          </summary>
+          <div class="agent-case-body">
+            ${businessPath ? `<p><b>业务路径：</b>${escapeHtml(businessPath)}</p>` : ''}
+            ${requirementsForCase.length ? `<p><b>覆盖：</b>${requirementsForCase.map(escapeHtml).join('；')}</p>` : ''}
+            ${preconditions.length ? `<p><b>前置：</b>${preconditions.map(escapeHtml).join('；')}</p>` : ''}
+            ${steps.length ? `<ol>${steps.map((step, stepIndex) => `<li><b>第 ${stepIndex + 1} 步：</b>${escapeHtml(step)}</li>`).join('')}</ol>` : '<p>未提供操作步骤。</p>'}
+            ${assertions.length ? `<p class="agent-case-expected"><b>预期：</b>${assertions.map(escapeHtml).join('；')}</p>` : '<p class="text-warning">未提供明确预期结果。</p>'}
+            ${reasons.length ? `<p><b>说明：</b>${reasons.map(escapeHtml).join('；')}</p>` : ''}
+          </div>
+        </details>`;
+    }).join('');
+    if (caseRows.length > 30) html += `<p>其余 ${escapeHtml(caseRows.length - 30)} 条请在原始 JSON 或生成摘要文件中查看。</p>`;
+    html += '</div></section>';
+  } else {
+    html += '<section class="agent-readable-panel"><strong>用例明细</strong><p>本次没有收到可展示的用例记录。</p></section>';
+  }
+  const rawPayload = {
+    generatedCases: generated,
+    executionGroups: artifacts.generatedCaseGroups || artifacts.yamlValidation?.executionGroups || null,
+    matchedCases: artifacts.matchedCases || [],
+    caseDraft: artifacts.caseDraft || null,
+  };
+  html += `<details class="agent-readable-panel agent-raw-json"><summary>查看原始 JSON</summary><p>供定位模型输出或字段映射问题使用，日常验收无需阅读。</p><pre class="agent-artifact-pre">${escapeHtml(JSON.stringify(rawPayload, null, 2))}</pre></details>`;
+  html += '</div>';
+  return html;
+}
+
+function agentYamlDisplayRows(artifacts = {}) {
+  const validation = artifacts.yamlValidation || artifacts.validation || {};
+  const pipeline = artifacts.generationPipeline || {};
+  const rows = [];
+  const rowIndexByFile = new Map();
+  const add = (raw, fallbackStatus = '') => {
+    if (!raw) return;
+    const item = typeof raw === 'string' ? {file: raw} : raw;
+    if (!item || typeof item !== 'object') return;
+    const file = item.file || item.name || String(item.path || '').split(/[\\/]/).pop() || '';
+    if (!file) return;
+    const key = String(file).trim().toLowerCase();
+    const normalized = {...item, file, statusText: item.statusText || item.executionLevel || item.level || fallbackStatus};
+    if (rowIndexByFile.has(key)) {
+      const rowIndex = rowIndexByFile.get(key);
+      rows[rowIndex] = {...normalized, ...rows[rowIndex], file};
+      return;
+    }
+    rowIndexByFile.set(key, rows.length);
+    rows.push(normalized);
+  };
+  (Array.isArray(artifacts.yamlRefs) ? artifacts.yamlRefs : []).forEach(item => add(item, '可执行'));
+  (Array.isArray(artifacts.quarantinedYamlRefs) ? artifacts.quarantinedYamlRefs : []).forEach(item => add(item, '已隔离'));
+  (Array.isArray(validation.quarantinedRefs) ? validation.quarantinedRefs : []).forEach(item => add(item, '已隔离'));
+  (Array.isArray(pipeline.yamlFiles) ? pipeline.yamlFiles : []).forEach(item => add(item, '已生成'));
+  (Array.isArray(artifacts.generatedYamlPaths) ? artifacts.generatedYamlPaths : []).forEach(item => add({path: item}, '已生成'));
+  return rows;
+}
+
+function renderAgentYamlArtifact(run) {
+  const artifacts = (run && run.artifacts) || {};
+  const validation = artifacts.yamlValidation || artifacts.validation || {};
+  const rows = agentYamlDisplayRows(artifacts);
+  const passedCount = Number(validation.passedCount ?? rows.filter(item => !/隔离|失败|review/i.test(String(item.statusText || ''))).length) || 0;
+  const failedCount = Number(validation.failedCount ?? rows.filter(item => /隔离|失败|review/i.test(String(item.statusText || ''))).length) || 0;
+  const inlineYaml = typeof artifacts.generatedYaml === 'string'
+    ? artifacts.generatedYaml
+    : (typeof artifacts.yamlDraft === 'string' ? artifacts.yamlDraft : (typeof artifacts.yaml === 'string' ? artifacts.yaml : ''));
+  let html = '<div class="agent-readable-detail agent-yaml-detail">';
+  html += agentInfoGrid([
+    {label: 'YAML 文件', value: rows.length || (inlineYaml ? 1 : 0)},
+    {label: '校验通过', value: passedCount},
+    {label: '已隔离', value: failedCount},
+    {label: '生成方式', value: rows.length ? '按用例拆分' : (inlineYaml ? '单份草稿' : '未记录')},
+  ]);
+  html += `<section class="agent-readable-panel"><strong>下一步</strong><p>${rows.length ? '从下方文件打开脚本继续编辑，或使用顶部“下载 YAML”统一下载；需要确认的脚本先到“校验”查看阻断原因，再决定是否下发 Runner。' : '当前没有拆分后的 YAML 文件；可查看单份草稿或回到生成阶段重新产出。'}</p></section>`;
+  if (rows.length) {
+    html += agentReadableList('YAML 文件', rows.slice(0, 40), item => {
+      const issues = agentCaseTextList(item.issues || item.executableScore?.errors || item.executableScore?.warnings);
+      const score = item.score || item.executableScore?.score || '';
+      const smoke = item.smoke === true || item.smokeCandidate === true || item.runnerCandidate === true;
+      const status = [item.statusText || '已生成', score !== '' ? `评分 ${score}` : '', smoke ? '冒烟' : ''].filter(Boolean).join(' · ');
+      return `<b>${escapeHtml(item.file)}</b><span>${escapeHtml(status)}${issues.length ? ` · ${escapeHtml(issues[0])}` : ''}</span>${item.module && item.file ? `<button class="btn-sm" type="button" onclick="openFile(${jsArg(item.module)}, ${jsArg(item.file)})">编辑 YAML</button>` : ''}`;
+    });
+  }
+  if (inlineYaml) {
+    html += `<details class="agent-readable-panel agent-inline-yaml"><summary>查看单份 YAML 草稿</summary><pre class="agent-artifact-pre">${escapeHtml(inlineYaml)}</pre></details>`;
+  }
+  html += `<details class="agent-readable-panel agent-raw-json"><summary>查看原始 JSON</summary><p>供定位文件映射和生成问题使用。</p><pre class="agent-artifact-pre">${escapeHtml(JSON.stringify({yamlFiles: rows, validation}, null, 2))}</pre></details>`;
+  html += '</div>';
+  return html;
+}
+
+function agentLogDurationText(step = {}) {
+  let durationMs = Number(step.durationMs ?? step.duration_ms);
+  if (!Number.isFinite(durationMs) || durationMs < 0) {
+    const startedAt = Date.parse(step.startedAt || step.started_at || '');
+    const endedAt = Date.parse(step.endedAt || step.ended_at || '');
+    durationMs = Number.isFinite(startedAt) && Number.isFinite(endedAt) ? Math.max(0, endedAt - startedAt) : NaN;
+  }
+  if (!Number.isFinite(durationMs)) return '-';
+  if (durationMs < 1000) return `${Math.round(durationMs)}ms`;
+  if (durationMs < 60000) return `${(durationMs / 1000).toFixed(durationMs % 1000 ? 1 : 0)}s`;
+  return `${Math.floor(durationMs / 60000)}m${Math.round((durationMs % 60000) / 1000)}s`;
+}
+
+function renderAgentLogArtifact(run) {
+  const steps = Array.isArray(run?.steps) ? run.steps : [];
+  const statusOf = step => String(step.status || step.stateStatus || (step.success === true ? 'SUCCESS' : (step.success === false ? 'FAILED' : ''))).toUpperCase();
+  const failedCount = steps.filter(step => ['FAILED', 'PARTIAL_FAILED'].includes(statusOf(step))).length;
+  const runningCount = steps.filter(step => statusOf(step) === 'RUNNING').length;
+  const endedCount = steps.filter(step => ['SUCCESS', 'FAILED', 'PARTIAL_FAILED', 'SKIPPED', 'CANCELLED'].includes(statusOf(step))).length;
+  let html = '<div class="agent-readable-detail agent-log-detail">';
+  html += agentInfoGrid([
+    {label: '阶段轨迹', value: steps.length},
+    {label: '已结束', value: endedCount},
+    {label: '失败', value: failedCount},
+    {label: '执行中', value: runningCount},
+  ]);
+  if (steps.length) {
+    html += '<section class="agent-readable-panel"><strong>阶段轨迹</strong><div class="agent-log-list">';
+    html += steps.map((step, index) => {
+      const key = String(step.step || step.state || step.name || `STEP_${index + 1}`).toUpperCase();
+      const status = statusOf(step) || 'PENDING';
+      const tools = (Array.isArray(step.toolCalls) ? step.toolCalls : []).map(item => item?.toolName || item?.name).filter(Boolean);
+      const refs = agentCaseTextList(step.artifactRefs || step.artifacts);
+      const summary = step.summary || step.message || step.error || '未记录阶段摘要';
+      return `
+        <details class="agent-log-step status-${escapeHtml(status.toLowerCase())}" ${index < 3 || ['FAILED', 'PARTIAL_FAILED'].includes(status) ? 'open' : ''}>
+          <summary><span><b>${escapeHtml(String(index + 1).padStart(2, '0'))} ${escapeHtml(agentStepLabel(key))}</b><small>${escapeHtml(agentStatusText(status))}</small></span><em>${escapeHtml(agentLogDurationText(step))}</em></summary>
+          <div><p>${escapeHtml(summary)}</p>${tools.length ? `<span>工具调用 ${escapeHtml(tools.length)}：${escapeHtml(tools.slice(0, 4).join('、'))}</span>` : ''}${refs.length ? `<span>产物 ${escapeHtml(refs.length)}：${escapeHtml(refs.slice(0, 3).join('、'))}</span>` : ''}</div>
+        </details>`;
+    }).join('');
+    html += '</div></section>';
+  } else {
+    html += '<section class="agent-readable-panel"><strong>阶段轨迹</strong><p>本次没有收到可展示的执行阶段。</p></section>';
+  }
+  html += `<details class="agent-readable-panel agent-raw-json"><summary>查看完整阶段 JSON</summary><p>包含工具输入输出和内部诊断字段，仅在定位问题时展开。</p><pre class="agent-artifact-pre">${escapeHtml(JSON.stringify(steps, null, 2))}</pre></details>`;
+  html += '</div>';
+  return html;
+}
+
 function agentGeneratedSmokeTargets(artifacts = {}) {
   const pipeline = artifacts.generationPipeline || {};
   const summary = artifacts.generationSummary || {};
@@ -2811,14 +3086,28 @@ function agentArtifactStateLabel(state) {
   }[state] || state;
 }
 
-function renderAgentArtifactEmpty(tab, state) {
+function renderAgentArtifactEmpty(tab, state, run = null) {
   const meta = agentArtifactDefinition(tab);
-  const copy = {
+  let copy = {
     running: [`正在生成${meta.title}`, 'Agent 完成当前阶段后会自动刷新，无需手动重载。'],
     pending: ['等待前序阶段', `${meta.title}将在相关阶段开始后显示。`],
     optional: [`当前无需${meta.title}`, '失败恢复类产物只在出现可分析的执行失败时生成。'],
     missing: [`本次未生成${meta.title}`, '该阶段已结束或任务已终止，平台没有收到对应产物。']
   }[state] || ['暂无产物', '当前没有可展示的内容。'];
+  if (tab === 'bug' && state === 'optional') {
+    const failure = run?.artifacts?.failureAnalysis || run?.failureAnalysis || {};
+    const type = String(failure.failureType || failure.failure_type || '').toUpperCase();
+    const label = {
+      SCRIPT_ISSUE: '脚本问题',
+      ENV_ISSUE: '环境问题',
+      CONFIG_ISSUE: '配置问题',
+      UNKNOWN: '待归因问题',
+      PRODUCT_BUG: '产品问题',
+    }[type] || '';
+    copy = label
+      ? [`当前未生成缺陷草稿`, `本次失败被归为${label}，${type === 'PRODUCT_BUG' ? '虽已识别产品问题，但尚未生成结构化缺陷草稿' : '未确认产品问题，因此不会自动创建缺陷'}；可在“失败”查看依据，人工确认后再进入缺陷草稿流程。`]
+      : ['当前无需缺陷草稿', '只有失败被确认是产品问题时才生成缺陷草稿；脚本、环境和待归因问题继续留在失败处理。'];
+  }
   return `
     <div class="agent-artifact-empty" data-empty-state="${escapeHtml(state)}">
       <span>${escapeHtml(agentArtifactStateLabel(state))}</span>
@@ -2829,11 +3118,14 @@ function renderAgentArtifactEmpty(tab, state) {
 }
 
 function renderAgentArtifactContent(tab, run, state = agentArtifactState(tab, run)) {
-  if (state !== 'ready') return renderAgentArtifactEmpty(tab, state);
+  if (state !== 'ready') return renderAgentArtifactEmpty(tab, state, run);
   const artifacts = (run && run.artifacts) || {};
   if (tab === 'plan') return renderPlanDetail({}, (run && run.artifacts) || {});
+  if (tab === 'cases') return renderAgentCasesArtifact(run);
   if (tab === 'quality') return renderAgentQualityArtifact(run);
+  if (tab === 'yaml') return renderAgentYamlArtifact(run);
   if (tab === 'validation') return renderValidateYamlDetail({}, (run && run.artifacts) || {});
+  if (tab === 'logs') return renderAgentLogArtifact(run);
   if (tab === 'report') return renderAgentReportArtifact(run);
   if (tab === 'failure') return renderAnalysisDetail({}, artifacts, run);
   if (tab === 'repair') return renderRepairDraftDetail({}, artifacts);
@@ -2861,7 +3153,7 @@ function renderAgentArtifactPanel(run) {
       ? '<button class="btn-sm" type="button" onclick="downloadAgentMindmap()">下载脑图</button>'
       : ''
   ].filter(Boolean);
-  const rich = ['plan', 'quality', 'validation', 'report', 'failure', 'repair', 'summary'].includes(agentActiveTab);
+  const rich = ['plan', 'cases', 'quality', 'yaml', 'validation', 'logs', 'report', 'failure', 'repair', 'summary'].includes(agentActiveTab);
   return `
     <div class="agent-artifact-head">
       <div>
@@ -3191,6 +3483,20 @@ function renderAnalysisDetail(step, artifacts, run = null) {
   return html;
 }
 
+function agentRepairAttemptGroups(drafts = []) {
+  const groups = new Map();
+  (Array.isArray(drafts) ? drafts : []).forEach((item, index) => {
+    if (!item || typeof item !== 'object') return;
+    const target = String(item.targetTaskName || item.taskName || item.targetJobId || item.sourceJobId || item.file || `修复目标 ${index + 1}`).trim();
+    if (!groups.has(target)) groups.set(target, {target, attempts: [], yamlCandidateCount: 0, latestPath: ''});
+    const group = groups.get(target);
+    group.attempts.push(item);
+    if (item.fixedYaml || item.fixed_yaml) group.yamlCandidateCount += 1;
+    if (item.path) group.latestPath = item.path;
+  });
+  return [...groups.values()];
+}
+
 function renderRepairDraftDetail(step, artifacts) {
   const draft = (artifacts || {}).repairDraft || {};
   const drafts = (artifacts || {}).repairDrafts || (draft && Object.keys(draft).length ? [draft] : []);
@@ -3205,12 +3511,18 @@ function renderRepairDraftDetail(step, artifacts) {
     diagnosis_only: '仅保存诊断草稿，未生成可应用 YAML',
     not_started: '未开始生成修复',
   }[source] || source;
+  const attempts = agentRepairAttemptGroups(drafts);
+  const hasCurrentApplicableCount = ['applicableDraftCount', 'currentApplicableCount', 'aiUsedCount'].some(key => summary[key] !== undefined && summary[key] !== null);
+  const currentApplicableCount = hasCurrentApplicableCount
+    ? Number(summary.applicableDraftCount ?? summary.currentApplicableCount ?? summary.aiUsedCount ?? 0) || 0
+    : drafts.filter(item => item && (item.fixedYaml || item.fixed_yaml) && item.validation?.ok !== false).length;
   let html = '<div class="match-detail agent-readable-detail">';
   html += agentInfoGrid([
     { label: '修复方式', value: sourceText },
     { label: '失败任务', value: summary.failedTaskCount ?? call.failedTaskCount ?? '-' },
     { label: '修复目标', value: summary.repairTargetCount ?? call.repairTargetCount ?? drafts.length ?? 0 },
-    { label: '草稿数量', value: summary.draftCount ?? drafts.length ?? 0 },
+    { label: '处理记录', value: summary.draftCount ?? attempts.length ?? 0 },
+    { label: '当前可应用 YAML', value: currentApplicableCount },
     { label: 'AI 返回 YAML', value: summary.aiUsedCount ?? (summary.aiUsed || call.aiUsed ? 1 : 0) },
     { label: 'YAML 校验', value: validation && Object.keys(validation).length ? (validation.ok ? '通过' : '未通过') : '未校验' },
   ]);
@@ -3224,15 +3536,23 @@ function renderRepairDraftDetail(step, artifacts) {
   if (draft.analysis || draft.suggestion) {
     html += `<section class="agent-readable-panel"><strong>修复依据</strong><p>${escapeHtml(draft.analysis || '')}</p>${draft.suggestion ? `<p>${escapeHtml(draft.suggestion)}</p>` : ''}</section>`;
   }
-  if (drafts.length) {
-    html += agentReadableList('修复草稿文件', drafts.slice(0, 20), item => {
-      const target = item.targetTaskName || item.taskName || item.file || item.targetJobId || '修复草稿';
-      const status = item.fixedYaml || item.fixed_yaml ? '已生成 YAML 草稿' : (item.analysis ? '仅生成诊断' : '未生成');
-      return `<b>${escapeHtml(target)}</b><span>${escapeHtml(status)}${item.path ? ' · ' + escapeHtml(item.path) : ''}</span>`;
-    });
+  if (attempts.length) {
+    html += `
+      <section class="agent-readable-panel">
+        <strong>修复尝试记录</strong>
+        <p>同一失败目标的诊断和 YAML 候选合并展示；这里保留历史尝试，不代表候选已通过当前门禁。</p>
+        <div class="agent-readable-list">
+          ${attempts.slice(0, 20).map(group => {
+            const status = group.yamlCandidateCount
+              ? (currentApplicableCount ? `生成过 ${group.yamlCandidateCount} 份 YAML 候选；当前可应用结果以顶部统计为准` : `生成过 ${group.yamlCandidateCount} 份 YAML 候选，但未通过当前门禁`)
+              : '仅保存诊断，没有生成 YAML 候选';
+            return `<div class="agent-repair-attempt"><b>${escapeHtml(group.target)}</b><span>${escapeHtml(group.attempts.length)} 次尝试 · ${escapeHtml(status)}${group.latestPath ? ` · ${escapeHtml(group.latestPath)}` : ''}</span></div>`;
+          }).join('')}
+        </div>
+      </section>`;
   }
   if (draft.evidence) {
-    html += `<section class="agent-readable-panel"><strong>使用的失败日志</strong><pre class="agent-artifact-pre">${escapeHtml(String(draft.evidence).slice(0, 1600))}</pre></section>`;
+    html += `<details class="agent-readable-panel agent-repair-evidence"><summary>查看使用的失败日志</summary><pre class="agent-artifact-pre">${escapeHtml(String(draft.evidence).slice(0, 1600))}</pre></details>`;
   }
   if (Array.isArray(changes) && changes.length) {
     html += agentReadableList('修复变化', changes.slice(0, 8), item => `<span>${escapeHtml(typeof item === 'string' ? item : JSON.stringify(item))}</span>`);
@@ -3240,10 +3560,10 @@ function renderRepairDraftDetail(step, artifacts) {
   if (validation && Array.isArray(validation.issues) && validation.issues.length) {
     html += agentReadableList('校验问题', validation.issues.slice(0, 8));
   }
-  if (draft.fixedYaml || draft.fixed_yaml) {
-    html += `<section class="agent-readable-panel"><strong>草稿状态</strong><p>已生成可查看/确认的 YAML 修复草稿，不会自动覆盖原 YAML。</p></section>`;
+  if (currentApplicableCount > 0) {
+    html += `<section class="agent-readable-panel"><strong>当前结果</strong><p>已有 ${escapeHtml(currentApplicableCount)} 条通过当前门禁的可应用 YAML；仍需人工确认后才会替换或重跑，不会自动覆盖原 YAML。</p></section>`;
   } else {
-    html += `<section class="agent-readable-panel"><strong>草稿状态</strong><p>没有生成可应用 YAML，只记录了失败证据；需要重新分析日志或人工修正。</p></section>`;
+    html += `<section class="agent-readable-panel"><strong>当前结果</strong><p>当前没有通过门禁的可应用 YAML；历史生成候选只作为尝试记录，不会下发 Runner。需要重新分析日志或人工修正。</p></section>`;
   }
   html += '</div>';
   return html;

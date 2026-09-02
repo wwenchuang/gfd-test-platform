@@ -444,7 +444,15 @@ def main():
     require("AI修复工作台" in html and "失败任务列表" in html and "结构化分析" in html and "YAML 修复草稿" in html, "AI repair must be an independent three-column workspace")
     require("原始 YAML" in html and "修复 YAML" in html and "Diff / 校验" in html, "YAML repair draft must show original, fixed, diff, and validation")
     require("/analyze-failure" in html and "used_full_logs" in html and "Runner 完整日志" in html, "Failed-job AI analysis must prefer backend full runner logs")
-    require("function renderRepairDraftDetail" in html and "修复方式" in html and "AI 调用" in html and "使用的失败日志" in html and "修复草稿文件" in html, "Agent timeline must explain repair draft source, AI usage, target drafts, and failure evidence")
+    require(
+        "function renderRepairDraftDetail" in html
+        and "修复方式" in html
+        and "当前可应用 YAML" in html
+        and "查看使用的失败日志" in html
+        and "修复尝试记录" in html
+        and "当前没有通过门禁的可应用 YAML" in html,
+        "Agent repair artifact must separate current applicable YAML from historical attempts and keep failure evidence on demand",
+    )
     require("function renderRerunDetail" in html and "agent-rerun-overview" in html and "重跑触发" in html and "AI 修复" in html and "固定设备重跑" in html and "function renderLearningDetail" in html and "沉淀内容" in html and "学习明细" in html, "Agent timeline must show task-level failure, AI repair, fixed-device rerun, and learning contents")
     require("执行前 dry-run" in html and "dry-run 拦截明细" in html and "YAML dry-run 结果" in html, "Agent timeline must expose dry-run checks and blockers")
     require("failureReason" in html and "failureType" in html and "失败类型：" in html, "Agent final report must show concrete Runner failure reasons")

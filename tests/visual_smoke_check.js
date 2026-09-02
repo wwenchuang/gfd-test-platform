@@ -404,6 +404,26 @@ function serve() {
                 platformLifecycle: ['生成并校验 YAML', '固定 Runner 设备执行'],
                 visualReference: {figmaPageCount: 1, figmaImageCount: 1, sentToAiForJudgement: true, aiJudgementCompleted: true},
               },
+              generatedCases: {
+                title: '关节龙打印流程回归',
+                module: '校园助手 / 校园业务',
+                analysis: {
+                  business_goals: ['确认关节龙打印入口与确认页可正常使用'],
+                  entry_points: ['首页 -> 模型详情 -> 打印'],
+                  requirement_points: ['REQ-001 打印入口可见', 'REQ-002 确认页可达'],
+                },
+                cases: [
+                  {case_id: 'TC-001', title: '打印入口可见性', priority: 'P1', smoke: true, steps: ['进入首页', '打开模型详情'], assertions: ['打印入口可见']},
+                  {case_id: 'TC-002', title: '确认页可达性', priority: 'P1', steps: ['进入打印流程', '点击确认打印'], assertions: ['确认页正常展示']},
+                ],
+                manual_cases: [{case_id: 'MC-001', title: '真实打印结果人工确认', reason: '依赖真实打印机和耗材'}],
+              },
+              generatedCaseGroups: {
+                executable_cases: [{case_id: 'TC-001'}],
+                needs_review_cases: [{case_id: 'TC-002', reason: '确认打印是写操作，需要人工确认'}],
+                draft_cases: [],
+                manual_cases: [{case_id: 'MC-001'}],
+              },
               caseDraft: '关节龙打印流程回归测试用例',
               yamlDraft: 'android:\\n  tasks:\\n    - name: 关节龙打印流程回归\\n      flow:\\n        - sleep: 1000',
               validation: {valid: true, errors: []},
@@ -452,6 +472,26 @@ function serve() {
               businessFlows: [{name: '关节龙打印', steps: ['进入首页', '打开模型详情', '进入打印流程'], checks: ['打印入口可见', '确认页可达']}],
               platformLifecycle: ['生成并校验 YAML', '固定 Runner 设备执行'],
               visualReference: {figmaPageCount: 1, figmaImageCount: 1, sentToAiForJudgement: true, aiJudgementCompleted: true},
+            },
+            generatedCases: {
+              title: '关节龙打印流程回归',
+              module: '校园助手 / 校园业务',
+              analysis: {
+                business_goals: ['确认关节龙打印入口与确认页可正常使用'],
+                entry_points: ['首页 -> 模型详情 -> 打印'],
+                requirement_points: ['REQ-001 打印入口可见', 'REQ-002 确认页可达'],
+              },
+              cases: [
+                {case_id: 'TC-001', title: '打印入口可见性', priority: 'P1', smoke: true, steps: ['进入首页', '打开模型详情'], assertions: ['打印入口可见']},
+                {case_id: 'TC-002', title: '确认页可达性', priority: 'P1', steps: ['进入打印流程', '点击确认打印'], assertions: ['确认页正常展示']},
+              ],
+              manual_cases: [{case_id: 'MC-001', title: '真实打印结果人工确认', reason: '依赖真实打印机和耗材'}],
+            },
+            generatedCaseGroups: {
+              executable_cases: [{case_id: 'TC-001'}],
+              needs_review_cases: [{case_id: 'TC-002', reason: '确认打印是写操作，需要人工确认'}],
+              draft_cases: [],
+              manual_cases: [{case_id: 'MC-001'}],
             },
             yamlDraft: 'android:\\n  tasks:\\n    - name: 关节龙打印流程回归\\n      flow:\\n        - sleep: 1000',
             validation: {valid: true, errors: []},
@@ -842,6 +882,24 @@ async function anyVisible(locator) {
     const artifactOverflow = await page.locator('#agent-artifacts-card').evaluate(el => el.scrollWidth > el.clientWidth + 1);
     if (artifactOverflow) throw new Error('Agent artifact card overflows horizontally on desktop');
     await page.screenshot({path: path.join(ARTIFACTS, 'agent.png'), fullPage: true});
+    await page.locator('.agent-artifact-nav-item[data-tab="cases"]').click();
+    await page.waitForSelector('.agent-cases-overview');
+    if (!/自动化候选\s*2/.test(await visibleText(page, '#agent-artifact-box'))) throw new Error('Generated cases do not expose a readable candidate count');
+    if (!/确认打印是写操作/.test(await visibleText(page, '#agent-artifact-box'))) throw new Error('Generated case cards hide the review reason');
+    if (await page.locator('.agent-raw-json').evaluate(el => el.open)) throw new Error('Raw generated case JSON must stay collapsed by default');
+    await page.locator('#agent-artifacts-card').screenshot({path: path.join(ARTIFACTS, 'agent-cases.png')});
+    await page.locator('.agent-artifact-nav-item[data-tab="yaml"]').click();
+    await page.waitForSelector('.agent-yaml-detail');
+    if (!/单份草稿/.test(await visibleText(page, '#agent-artifact-box'))) throw new Error('YAML artifact does not explain its current storage form');
+    if (await page.locator('.agent-yaml-detail .agent-raw-json').evaluate(el => el.open)) throw new Error('Raw YAML JSON must stay collapsed by default');
+    await page.locator('#agent-artifacts-card').screenshot({path: path.join(ARTIFACTS, 'agent-yaml.png')});
+    await page.locator('.agent-artifact-nav-item[data-tab="logs"]').click();
+    await page.waitForSelector('.agent-log-detail');
+    if (!/阶段轨迹\s*5/.test(await visibleText(page, '#agent-artifact-box'))) throw new Error('Agent log artifact does not summarize its five real stages');
+    if (/\bSUCCESS\b|\bFAILED\b|\bSKIPPED\b/.test(await visibleText(page, '#agent-artifact-box'))) throw new Error('Readable Agent logs expose untranslated status codes');
+    if (await page.locator('.agent-log-detail .agent-raw-json').evaluate(el => el.open)) throw new Error('Full Agent step JSON must stay collapsed by default');
+    await page.locator('#agent-artifacts-card').screenshot({path: path.join(ARTIFACTS, 'agent-logs.png')});
+    await page.locator('.agent-artifact-nav-item[data-tab="plan"]').click();
     if (!await page.locator('text=Agent 状态').isVisible()) throw new Error('Agent status center is missing');
     if (!await anyVisible(page.locator('text=确认执行'))) throw new Error('Agent wait-confirm action is missing');
     if (!await page.locator('button:has-text("下载 YAML")').isVisible()) throw new Error('Agent YAML download button is missing');
@@ -856,6 +914,10 @@ async function anyVisible(locator) {
     const mobileView = await page.locator('.agent-artifact-view').boundingBox();
     if (!mobileNav || !mobileView || mobileView.y < mobileNav.y + mobileNav.height - 1) throw new Error('Agent artifact mobile navigation must sit above the detail view');
     await page.screenshot({path: path.join(ARTIFACTS, 'agent-mobile.png'), fullPage: true});
+    await page.locator('.agent-artifact-nav-item[data-tab="cases"]').click();
+    if (await page.locator('#agent-artifacts-card').evaluate(el => el.scrollWidth > el.clientWidth + 1)) throw new Error('Generated cases overflow horizontally on mobile');
+    await page.locator('#agent-artifacts-card').screenshot({path: path.join(ARTIFACTS, 'agent-cases-mobile.png')});
+    await page.locator('.agent-artifact-nav-item[data-tab="plan"]').click();
     await page.setViewportSize({width: 1440, height: 900});
     await page.evaluate(async () => {
       const branchNames = ['文档打印入口文案校验', '照片打印入口可达性校验', '扫描复印入口同级关系校验'];
@@ -1321,7 +1383,11 @@ async function anyVisible(locator) {
         path.join(ARTIFACTS, 'assets.png'),
         path.join(ARTIFACTS, 'assets-history.png'),
         path.join(ARTIFACTS, 'agent.png'),
+        path.join(ARTIFACTS, 'agent-cases.png'),
+        path.join(ARTIFACTS, 'agent-yaml.png'),
+        path.join(ARTIFACTS, 'agent-logs.png'),
         path.join(ARTIFACTS, 'agent-mobile.png'),
+        path.join(ARTIFACTS, 'agent-cases-mobile.png'),
         path.join(ARTIFACTS, 'agent-failure.png'),
         path.join(ARTIFACTS, 'agent-failure-mobile.png'),
         path.join(ARTIFACTS, 'agent-rerun.png'),
