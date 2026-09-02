@@ -264,10 +264,17 @@ async function assertLargeExecutionDrawer(page, url) {
     await page.getByTestId('execution-report-filter-cancelled').click();
     await expect(page.getByText('当前筛选没有用例。')).toBeVisible();
     await page.getByTestId('execution-report-filter-all').click();
+    const reportPreview = page.locator('.execution-report-preview');
+    await reportPreview.getByTestId('case-result-next').click();
+    await reportPreview.getByTestId('case-result-next').click();
     await page.getByTestId('report-preview-case-row').last().click();
     const drawer = page.getByRole('dialog', { name: '执行详情', exact: true });
     await drawer.waitFor();
     await expect(drawer.locator('.case-evidence > header')).toContainText('大量基线用例 120');
+    const resultSearch = drawer.getByTestId('case-result-search');
+    await resultSearch.fill('大量基线用例 120');
+    await expect(drawer.getByTestId('case-result-row')).toHaveCount(1);
+    await resultSearch.fill('');
     const assertEvidenceVisible = async () => {
       const header = await drawer.locator('.case-evidence > header').boundingBox();
       const close = await drawer.getByRole('button', { name: '关闭详情' }).boundingBox();
@@ -284,10 +291,15 @@ async function assertLargeExecutionDrawer(page, url) {
     };
     await assertEvidenceVisible();
     await drawer.locator('.case-evidence').evaluate(element => { element.parentElement.scrollTop = element.parentElement.scrollHeight; });
+    await drawer.getByRole('button', { name: '上一页', exact: true }).click();
+    await drawer.getByRole('button', { name: '上一页', exact: true }).click();
     await drawer.getByTestId('case-result-row').first().click();
     await expect(drawer.locator('.case-evidence > header')).toContainText('大量基线用例 1');
     await assertEvidenceVisible();
+    await drawer.getByTestId('case-result-next').click();
+    await drawer.getByTestId('case-result-next').click();
     await drawer.getByTestId('case-result-row').last().click();
+    await expect(drawer.locator('.case-evidence > header')).toContainText('大量基线用例 120');
     await assertEvidenceVisible();
     const responseEvidence = drawer.getByTestId('response-evidence');
     await expect(responseEvidence).not.toHaveAttribute('open', '');

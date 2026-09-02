@@ -106,6 +106,25 @@ describe('ExecutionDetailDrawer', () => {
     expect(wrapper.emitted('edit')?.[0]?.[0]).toMatchObject({ endpoint_id: 'endpoint-2' })
   })
 
+  it('keeps the requested case visible when its result is on a later page', () => {
+    const results = Array.from({ length: 51 }, (_, index) => ({
+      ...execution.case_results[0],
+      execution_case_id: `execution-case-${index + 1}`,
+      case_version_id: `case-version-${index + 1}`,
+      case_name: `回归用例 ${index + 1}`,
+      path: `/cases/${index + 1}`,
+    }))
+    const wrapper = mount(ExecutionDetailDrawer, {
+      props: {
+        execution: { ...execution, case_results: results },
+        initialCaseId: 'execution-case-51',
+      },
+    })
+
+    expect(wrapper.get('[data-testid="case-result-row"]').classes()).toContain('active')
+    expect(wrapper.text()).toContain('第 51-51 条，共 51 条')
+  })
+
   it('requests evidence for the opened case and every newly selected case', async () => {
     const second = {
       ...execution.case_results[0], execution_case_id: 'execution-case-2', endpoint_id: 'endpoint-2',

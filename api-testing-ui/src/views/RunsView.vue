@@ -52,6 +52,7 @@ async function selectFirstEndpointExecution(): Promise<void> {
   const matching = executions.executions.find(execution => execution.case_results.some(result => (
     result.endpoint_id === endpointId || Boolean(endpointKey && result.endpoint_stable_key === endpointKey)
   )))
+  if (matching?.id !== executions.active?.id) executions.prepareSelection(matching?.id || '')
   if (matching && matching.id !== executions.active?.id) await executions.select(matching.id)
 }
 

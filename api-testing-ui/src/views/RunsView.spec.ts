@@ -226,4 +226,34 @@ describe('RunsView', () => {
 
     expect(select).toHaveBeenCalledWith('execution-old-revision')
   })
+
+  it('clears an unrelated detail before loading the first execution for an interface filter', async () => {
+    routeState.query = { endpointId: 'endpoint-edit-ft' }
+    const context = useContextStore()
+    const executions = useExecutionsStore()
+    context.projectId = 'project-1'
+    vi.spyOn(context, 'loadSavedContext').mockResolvedValue()
+    vi.spyOn(context, 'loadOptions').mockResolvedValue()
+    executions.executions = [{
+      ...debugExecution,
+      id: 'execution-matching-edit-ft',
+      case_results: [{
+        execution_case_id: 'case-edit-ft', case_version_id: 'version-edit-ft', endpoint_id: 'endpoint-edit-ft',
+        endpoint_stable_key: 'stable-edit-ft', case_name: '编辑耗材', endpoint_summary: '',
+        method: 'POST', path: '/devices/editFt', status: 'PASSED', failure_category: '', duration_ms: 10,
+        sanitized_result: {},
+      }],
+    }]
+    executions.active = { ...debugExecution, id: 'execution-unrelated-shared' }
+    executions.events = [{ id: 1, type: 'response', level: 'info', caseId: '', message: '共享执行旧详情', payload: {} }]
+    vi.spyOn(executions, 'load').mockResolvedValue()
+    const select = vi.spyOn(executions, 'select').mockResolvedValue()
+
+    mount(RunsView, { global: { stubs: { ExecutionConsole: true, ExecutionDetailDrawer: true } } })
+    await flushPromises()
+
+    expect(executions.active).toBeNull()
+    expect(executions.events).toEqual([])
+    expect(select).toHaveBeenCalledWith('execution-matching-edit-ft')
+  })
 })

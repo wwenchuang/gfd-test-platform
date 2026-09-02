@@ -21,6 +21,7 @@ onMounted(async () => {
   returnTarget = document.activeElement instanceof HTMLElement ? document.activeElement : null
   await nextTick()
   focusableElements()[0]?.focus()
+  await revealActiveRow()
 })
 onBeforeUnmount(() => returnTarget?.focus())
 watch(() => props.execution.case_results, results => {
@@ -42,6 +43,11 @@ watch(() => {
   if (active.value && !hasLoadedCaseEvidence(active.value)) emit('loadEvidence', active.value)
   await nextTick()
   if (evidencePane.value) evidencePane.value.scrollTop = 0
+  await revealActiveRow()
+}, { immediate: true })
+
+async function revealActiveRow(): Promise<void> {
+  await nextTick()
   const pane = listPane.value
   const selected = pane?.querySelector<HTMLElement>('.active')
   if (!pane || !selected) return
@@ -49,7 +55,7 @@ watch(() => {
   const row = selected.getBoundingClientRect()
   if (row.height > pane.clientHeight || row.top < bounds.top) pane.scrollTop += row.top - bounds.top
   else if (row.bottom > bounds.bottom) pane.scrollTop += row.bottom - bounds.bottom
-}, { immediate: true })
+}
 
 function evidenceKey(result: ExecutionCaseResult): string {
   return `${props.execution.id}:${result.execution_case_id}`
