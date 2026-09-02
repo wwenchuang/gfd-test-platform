@@ -61,7 +61,10 @@ test('generated Agent cases open as a readable workflow summary instead of raw J
         manual_cases: [{case_id: 'MC-001', title: '真实账号授权确认', reason: '需要人工登录第三方账号'}],
       },
       generatedCaseGroups: {
-        executable_cases: [{case_id: 'TC-001'}],
+        executable_cases: [
+          {case_id: 'TC-001'},
+          {module: 'AI_Agent_草稿', file: '01-文档打印入口展示.yaml', executionLevel: 'executable'},
+        ],
         needs_review_cases: [{case_id: 'TC-002', reason: '路径证据不足'}],
         draft_cases: [],
         manual_cases: [{case_id: 'MC-001'}],
@@ -75,14 +78,16 @@ test('generated Agent cases open as a readable workflow summary instead of raw J
   container.innerHTML = html;
   const visibleText = container.textContent;
   assert.match(html, /用例总览/);
-  assert.match(html, /自动化候选<\/span>\s*<strong>2<\/strong>/);
-  assert.match(html, /可执行<\/span>\s*<strong>1<\/strong>/);
-  assert.match(html, /需确认<\/span>\s*<strong>1<\/strong>/);
-  assert.match(html, /人工\/一次性<\/span>\s*<strong>1<\/strong>/);
+  assert.match(html, /自动化设计<\/span>\s*<strong>2<\/strong>/);
+  assert.match(html, /可执行 YAML<\/span>\s*<strong>2<\/strong>/);
+  assert.match(html, /需确认 YAML<\/span>\s*<strong>1<\/strong>/);
+  assert.match(html, /人工\/一次性设计<\/span>\s*<strong>1<\/strong>/);
   assert.match(html, /三个基础打印入口都展示百度网盘/);
   assert.match(html, /文档打印入口展示/);
   assert.match(html, /照片打印入口展示/);
   assert.match(html, /真实账号授权确认/);
+  assert.equal(container.querySelectorAll('.agent-case-card').length, 3);
+  assert.doesNotMatch(container.querySelector('.agent-case-list').textContent, /01-文档打印入口展示\.yaml/);
   const reviewCard = [...container.querySelectorAll('.agent-case-card')]
     .find(item => item.textContent.includes('照片打印入口展示'));
   assert.match(reviewCard.textContent, /路径证据不足/);

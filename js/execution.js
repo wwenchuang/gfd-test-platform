@@ -272,8 +272,8 @@ function renderExecutionTabDebug() {
                     <td><span class="task-ext sonic ${escapeHtml(sonic.cls)}" title="${escapeHtml(sonic.title || '')}">${escapeHtml(sonic.text || '-')}</span></td>
                     <td class="asset-row-actions">
                       <button class="btn-sm" onclick="openFile(${jsArg(row.mod)}, ${jsArg(row.file)})">打开</button>
-                      <button class="btn-sm primary" onclick="openFile(${jsArg(row.mod)}, ${jsArg(row.file)}).then(()=>showRunSelectedTask())">单条调试</button>
-                      <button class="btn-sm success" onclick="openFile(${jsArg(row.mod)}, ${jsArg(row.file)}).then(()=>showRunCurrentFile())">整文件执行</button>
+                      <button class="btn-sm primary" onclick="openFile(${jsArg(row.mod)}, ${jsArg(row.file)}).then(opened=>opened&&showRunSelectedTask())">单条调试</button>
+                      <button class="btn-sm success" onclick="openFile(${jsArg(row.mod)}, ${jsArg(row.file)}).then(opened=>opened&&showRunCurrentFile())">整文件执行</button>
                     </td>
                   </tr>
                 `;
@@ -982,6 +982,17 @@ async function diffSelectedTraceSnapshots() {
 
 async function openFile(mod, file) {
   if (!canLeaveEditor()) return;
+  let content = '';
+  try {
+    content = await apiTextRequest(`/file?module=${encodeURIComponent(mod)}&file=${encodeURIComponent(file)}`);
+    if (/^\s*</.test(content) || !content.includes('tasks:')) {
+      throw new Error('服务器返回内容不是有效 YAML');
+    }
+  } catch(e) {
+    const reason = String(e.message || '读取 YAML 失败').replace(/[。.]+$/, '');
+    showToast(`无法打开 ${mod}/${file}：${reason}。文件可能已被清理，请从原运行记录查看历史结果。`, 'error');
+    return false;
+  }
   activeWorkspaceMode = '';
   currentModule = mod;
   currentFile = file;
@@ -1009,20 +1020,11 @@ async function openFile(mod, file) {
   document.getElementById('toggle-refs-panel').style.display = 'flex';
   document.getElementById('toggle-case-panel').style.display = 'flex';
 
-  try {
-    const content = await apiTextRequest(`/file?module=${encodeURIComponent(mod)}&file=${encodeURIComponent(file)}`);
-    if (/^\s*</.test(content) || !content.includes('tasks:')) {
-      throw new Error('服务器返回内容不是有效 YAML');
-    }
-    showEditor(content);
-  } catch(e) {
-    const demo = `android: {}\n\ntasks:\n  - name: ${JSON.stringify(yamlDisplayName(file))}\n    flow:\n      - ai: "请描述需要执行的页面操作"\n      - aiAssert: "请描述需要验证的页面结果"\n`;
-    showEditor(demo);
-    showToast(e.message || '读取 YAML 失败，已加载兜底模板', 'error');
-  }
+  showEditor(content);
   renderModules();
   document.getElementById('file-info').textContent = `${mod}/${file}`;
   updateToolbarState();
+  return true;
 }
 
 function showEditor(content) {

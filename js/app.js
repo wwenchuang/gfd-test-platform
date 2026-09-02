@@ -1094,7 +1094,7 @@ function jobActions(job) {
     if (isGenerateBackgroundJob(job) && caseSetId) {
       parts.push(`<button class="job-action" onclick="showGenerationReviewByCaseSet(${jsArg(caseSetId)})">生成分析</button>`);
       if (job.type !== 'mindmap_only') parts.push(`<button class="job-action" onclick="regenerateGenerationCases(${jsArg(caseSetId)})">重新生成用例</button>`);
-      parts.push(`<a class="job-action" href="${mindmapDownloadUrl(caseSetId)}" target="_blank">下载脑图</a>`);
+      parts.push(`<button class="job-action" type="button" onclick="downloadMindmap(${jsArg(caseSetId)})">下载脑图</button>`);
       parts.push(`<button class="job-action" onclick="regenerateGenerationMindmap(${jsArg(caseSetId)}, this)" title="只按现有生成分析重建脑图文件（FreeMind .mm）；不调用千问，不改用例，不覆盖 YAML">重建脑图文件</button>`);
     }
     if (isGenerateBackgroundJob(job) && mod && file && /\.ya?ml$/i.test(file)) {
@@ -2647,7 +2647,7 @@ function generationSmokeAdjustmentHtml(summary={}, mod='', caseSetId='') {
               ${ref.reasons?.length ? `<p>提示：${escapeHtml(ref.reasons.slice(0, 2).join('；'))}</p>` : ''}
               <div class="review-design-actions">
                 ${mod ? `<button class="btn-sm primary" onclick="openFile(${jsArg(mod)}, ${jsArg(ref.file)})">编辑 YAML</button>` : ''}
-                ${mod ? `<button class="btn-sm" onclick="openFile(${jsArg(mod)}, ${jsArg(ref.file)}).then(() => showRunSelectedTask())">打开调试</button>` : ''}
+                ${mod ? `<button class="btn-sm" onclick="openFile(${jsArg(mod)}, ${jsArg(ref.file)}).then(opened => opened && showRunSelectedTask())">打开调试</button>` : ''}
               </div>
             </div>
           `).join('')}
@@ -2889,11 +2889,11 @@ function generationReviewHtml(data={}) {
           <button class="btn-sm" onclick="activateWorkflow('dashboard')">回工作台</button>
           ${caseSetId ? `<button class="btn-sm primary" onclick="regenerateGenerationCases(${jsArg(caseSetId)})">重新生成用例</button>` : ''}
           ${caseSetId && smokeRefs.length ? `<button class="btn-sm success" onclick="rerunGenerationSmokeCases(${jsArg(caseSetId)}, ${jsArg(mod)}, ${smokeDefaultLimit}, false, ${smokeRefs.length})">重跑首批冒烟 ${escapeHtml(smokeDefaultLimit)}/${escapeHtml(smokeRefs.length)}</button>` : ''}
-          ${caseSetId ? `<a class="btn-sm" href="${mindmapDownloadUrl(caseSetId)}" target="_blank">下载脑图</a>` : ''}
+          ${caseSetId ? `<button class="btn-sm" type="button" onclick="downloadMindmap(${jsArg(caseSetId)})">下载脑图</button>` : ''}
           ${caseSetId ? `<button class="btn-sm" onclick="regenerateGenerationMindmap(${jsArg(caseSetId)}, this)" title="只按现有生成分析重建脑图文件（FreeMind .mm）；不调用千问，不改用例，不覆盖 YAML">重建脑图文件</button>` : ''}
           ${caseSetId ? `<button class="btn-sm danger" onclick="deleteGenerationMindmap(${jsArg(caseSetId)})">删除脑图</button>` : ''}
           ${mod && file ? `<button class="btn-sm" onclick="openFile(${jsArg(mod)}, ${jsArg(file)})">查看自动化脚本</button>` : ''}
-          ${mod && file ? `<button class="btn-sm success" onclick="openFile(${jsArg(mod)}, ${jsArg(file)}).then(() => showRunSelectedTask())">单条调试</button>` : ''}
+          ${mod && file ? `<button class="btn-sm success" onclick="openFile(${jsArg(mod)}, ${jsArg(file)}).then(opened => opened && showRunSelectedTask())">单条调试</button>` : ''}
           <button class="btn-sm primary" onclick="showGenerateYaml()">继续新建</button>
         </div>
       </div>
@@ -3147,7 +3147,7 @@ function generationJobActions(job) {
   if (caseSetId) parts.push(`<button class="btn-sm" onclick="showGenerationReviewByCaseSet(${jsArg(caseSetId)})">生成分析</button>`);
   if (caseSetId && job.type !== 'mindmap_only') parts.push(`<button class="btn-sm primary" onclick="regenerateGenerationCases(${jsArg(caseSetId)})">重新生成用例</button>`);
   if (caseSetId && job.type !== 'mindmap_only') parts.push(`<button class="btn-sm success" onclick="rerunGenerationSmokeCases(${jsArg(caseSetId)}, ${jsArg(mod)}, 0, false, 0)">重跑首批冒烟</button>`);
-  if (caseSetId) parts.push(`<a class="btn-sm" href="${mindmapDownloadUrl(caseSetId)}" target="_blank">下载脑图</a>`);
+  if (caseSetId) parts.push(`<button class="btn-sm" type="button" onclick="downloadMindmap(${jsArg(caseSetId)})">下载脑图</button>`);
   if (caseSetId) parts.push(`<button class="btn-sm" onclick="regenerateGenerationMindmap(${jsArg(caseSetId)}, this)" title="只按现有生成分析重建脑图文件（FreeMind .mm）；不调用千问，不改用例，不覆盖 YAML">重建脑图文件</button>`);
   if (caseSetId) parts.push(`<button class="btn-sm danger" onclick="deleteGenerationMindmap(${jsArg(caseSetId)})">删除脑图</button>`);
   if (mod && file && /\.ya?ml$/i.test(file)) parts.push(`<button class="btn-sm primary" onclick="openFile(${jsArg(mod)}, ${jsArg(file)})">打开 YAML</button>`);
@@ -3175,12 +3175,25 @@ async function retryGenerationJob(jobId) {
   }
 }
 
-function mindmapDownloadUrl(caseSetId) {
-  return `${API_BASE}/cases/mindmap?case_set_id=${encodeURIComponent(caseSetId || '')}`;
-}
-
 function mindmapApiPath(caseSetId) {
   return `/cases/mindmap?case_set_id=${encodeURIComponent(caseSetId || '')}`;
+}
+
+async function downloadMindmap(caseSetId, title='测试用例') {
+  const id = String(caseSetId || '').trim();
+  if (!id) {
+    showToast('当前没有可下载的脑图文件', 'warn');
+    return false;
+  }
+  const fallbackBase = String(title || '测试用例').replace(/[\\/:*?"<>|\s]+/g, '-').slice(0, 80) || '测试用例';
+  try {
+    const filename = await downloadAuthenticatedFile(mindmapApiPath(id), `${fallbackBase}.mm`);
+    showToast(`✓ 已下载脑图：${filename}`, 'success');
+    return true;
+  } catch (error) {
+    showToast(error.message || '脑图下载失败', 'error');
+    return false;
+  }
 }
 
 async function regenerateGenerationCases(caseSetId) {
@@ -3805,7 +3818,7 @@ function mindmapTaskRow(job={}) {
   if (['failed', 'timeout'].includes(status) && id && job.can_retry !== false) actions.push(`<button class="btn-sm primary" onclick="retryGenerationJob(${jsArg(id)})">重试</button>`);
   if (!['pending', 'running'].includes(status) && id) actions.push(`<button class="btn-sm danger" onclick="deleteGenerateJob(${jsArg(id)})">删除任务</button>`);
   if (caseSetId) actions.push(`<button class="btn-sm" onclick="showGenerationReviewByCaseSet(${jsArg(caseSetId)})">分析</button>`);
-  if (caseSetId) actions.push(`<a class="btn-sm" href="${mindmapDownloadUrl(caseSetId)}" target="_blank">下载</a>`);
+  if (caseSetId) actions.push(`<button class="btn-sm" type="button" onclick="downloadMindmap(${jsArg(caseSetId)})">下载</button>`);
   if (id) actions.push(`<button class="btn-sm" onclick="focusJob(${jsArg(id)})">定位</button>`);
   return `
     <div class="mindmap-row task ${escapeHtml(status)}">
@@ -3858,7 +3871,7 @@ function mindmapRecordCard(item={}) {
       </div>
       <div class="mindmap-row-actions">
         <button class="btn-sm" onclick="showGenerationReviewByCaseSet(${jsArg(caseSetId)})">生成分析</button>
-        ${item.mindmap_downloadable ? `<a class="btn-sm" href="${mindmapDownloadUrl(caseSetId)}" target="_blank">下载</a>` : ''}
+        ${item.mindmap_downloadable ? `<button class="btn-sm" type="button" onclick="downloadMindmap(${jsArg(caseSetId)})">下载</button>` : ''}
         <button class="btn-sm success" onclick="openMindmapReportBuilder(${jsArg(caseSetId)})">生成报告</button>
         <button class="btn-sm primary" onclick="regenerateGenerationMindmap(${jsArg(caseSetId)}, this)" title="只按现有生成分析重建脑图文件（FreeMind .mm）；不调用千问，不改用例，不覆盖 YAML">刷新脑图文件</button>
         <button class="btn-sm danger" onclick="deleteGenerationMindmap(${jsArg(caseSetId)})">删除文件</button>

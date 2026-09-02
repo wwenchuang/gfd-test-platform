@@ -28,7 +28,7 @@ function makeWindow() {
 test('YAML artifact presents files and validation status before technical JSON', () => {
   const source = fs.readFileSync('js/agent-workbench.js', 'utf8');
   const {dom, win} = makeWindow();
-  for (const name of ['agentInfoGrid', 'agentReadableList', 'agentCaseTextList', 'agentYamlDisplayRows', 'renderAgentYamlArtifact']) {
+  for (const name of ['agentInfoGrid', 'agentReadableList', 'agentCaseTextList', 'agentYamlDisplayRows', 'agentYamlStatusText', 'renderAgentYamlArtifact']) {
     loadFunction(win, source, name);
   }
   const artifacts = {
@@ -47,6 +47,11 @@ test('YAML artifact presents files and validation status before technical JSON',
   assert.match(html, /冒烟/);
   assert.match(html, /路径证据不足/);
   assert.match(html, /编辑 YAML/);
+  const container = win.document.createElement('div');
+  container.innerHTML = html;
+  container.querySelector('.agent-raw-json').remove();
+  assert.match(container.textContent, /可执行/);
+  assert.doesNotMatch(container.textContent, /executable/i);
   assert.match(html, /<details class="agent-readable-panel agent-raw-json">/);
   assert.doesNotMatch(html, /^<pre class="agent-artifact-pre">/);
   assert.match(source, /if \(tab === 'yaml'\) return renderAgentYamlArtifact\(run\);/);

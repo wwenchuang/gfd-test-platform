@@ -884,7 +884,7 @@ async function anyVisible(locator) {
     await page.screenshot({path: path.join(ARTIFACTS, 'agent.png'), fullPage: true});
     await page.locator('.agent-artifact-nav-item[data-tab="cases"]').click();
     await page.waitForSelector('.agent-cases-overview');
-    if (!/自动化候选\s*2/.test(await visibleText(page, '#agent-artifact-box'))) throw new Error('Generated cases do not expose a readable candidate count');
+    if (!/自动化设计\s*2/.test(await visibleText(page, '#agent-artifact-box'))) throw new Error('Generated cases do not expose a readable design count');
     if (!/确认打印是写操作/.test(await visibleText(page, '#agent-artifact-box'))) throw new Error('Generated case cards hide the review reason');
     if (await page.locator('.agent-raw-json').evaluate(el => el.open)) throw new Error('Raw generated case JSON must stay collapsed by default');
     await page.locator('#agent-artifacts-card').screenshot({path: path.join(ARTIFACTS, 'agent-cases.png')});

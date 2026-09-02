@@ -1643,7 +1643,8 @@ async function downloadAgentYaml() {
   const run = currentAgentRun();
   const artifacts = run?.artifacts || {};
   let yaml = firstArtifactValue(artifacts.generatedYaml, artifacts.yamlDraft, artifacts.yaml);
-  let suffix = 'yaml';
+  let downloadedCount = yaml ? 1 : 0;
+  let missingCount = 0;
   if (!yaml) {
     const refs = agentYamlRefsFromArtifacts(artifacts);
     const chunks = [];
@@ -1664,24 +1665,32 @@ async function downloadAgentYaml() {
     }
     if (chunks.length) {
       yaml = chunks.join('\n\n---\n\n');
+      downloadedCount = chunks.length;
+      missingCount = Math.max(0, refs.length - chunks.length);
     } else if (refs.length) {
-      suffix = 'json';
-      yaml = stringifyArtifact(agentYamlArtifactPayload(artifacts));
+      showToast('历史 YAML 文件已被清理，无法下载真实脚本；仍可在 YAML 产物中查看文件索引和校验记录。', 'error');
+      return false;
     }
   }
   if (!yaml || String(yaml).includes('暂无 Midscene YAML')) {
     showToast('暂无可下载 YAML', 'error');
-    return;
+    return false;
   }
-  const blob = new Blob([String(yaml)], {type: suffix === 'yaml' ? 'text/yaml;charset=utf-8' : 'application/json;charset=utf-8'});
+  const blob = new Blob([String(yaml)], {type: 'text/yaml;charset=utf-8'});
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = `${safeFilename(run?.options?.goal || run?.target || 'agent-yaml')}.${suffix}`;
+  a.download = `${safeFilename(run?.options?.goal || run?.target || 'agent-yaml')}.yaml`;
   document.body.appendChild(a);
   a.click();
   a.remove();
   URL.revokeObjectURL(url);
+  if (missingCount) {
+    showToast(`已下载 ${downloadedCount} 份仍存在的 YAML；另有 ${missingCount} 份历史文件已清理。`, 'warn');
+  } else {
+    showToast(`✓ 已下载 ${downloadedCount} 份 YAML`, 'success');
+  }
+  return true;
 }
 
 function safeFilename(text) {
@@ -2753,8 +2762,8 @@ function moduleDirectoryHtml(mod) {
         </div>
         <div class="module-file-actions">
           <button class="btn-sm primary" onclick="openFile(${jsArg(mod)}, ${jsArg(file)})">编辑</button>
-          <button class="btn-sm success" onclick="openFile(${jsArg(mod)}, ${jsArg(file)}).then(()=>showRunCurrentFile())">执行</button>
-          <button class="btn-sm" onclick="openFile(${jsArg(mod)}, ${jsArg(file)}).then(()=>showFileHistory())">历史</button>
+          <button class="btn-sm success" onclick="openFile(${jsArg(mod)}, ${jsArg(file)}).then(opened=>opened&&showRunCurrentFile())">执行</button>
+          <button class="btn-sm" onclick="openFile(${jsArg(mod)}, ${jsArg(file)}).then(opened=>opened&&showFileHistory())">历史</button>
         </div>
       </div>
     `;
@@ -3398,7 +3407,7 @@ function showAssetsCenter() {
                         <td>${prioritySummaryHtml(stats, true)}</td>
                         <td class="asset-row-actions">
                           <button class="btn-sm" onclick="openFile(${jsArg(row.mod)},${jsArg(row.file)})">打开</button>
-                          <button class="btn-sm" data-action-permission="ui.execute" onclick="openFile(${jsArg(row.mod)},${jsArg(row.file)}).then(()=>showRunCurrentFile())">执行</button>
+                          <button class="btn-sm" data-action-permission="ui.execute" onclick="openFile(${jsArg(row.mod)},${jsArg(row.file)}).then(opened=>opened&&showRunCurrentFile())">执行</button>
                           <button class="btn-sm" data-action-permission="ui.edit ui.delete" onclick="assetFileOp(${jsArg(row.mod)},${jsArg(row.file)},'rename')">重命名</button>
                           <button class="btn-sm" data-action-permission="ui.edit ui.delete" onclick="assetFileOp(${jsArg(row.mod)},${jsArg(row.file)},'move')">移动</button>
                           <button class="btn-sm danger" data-action-permission="ui.delete" onclick="deleteAssetFile(${jsArg(row.mod)},${jsArg(row.file)})">删除</button>
@@ -4676,7 +4685,8 @@ function setSonicMigrationAvailability(migratable = 0, manual = 0) {
 }
 
 async function openFileAndRunTask(mod, file, taskName='') {
-  await openFile(mod, file);
+  const opened = await openFile(mod, file);
+  if (!opened) return;
   const ta = document.getElementById('editor');
   const tasks = parseYamlTasks(ta?.value || '');
   const index = tasks.findIndex(task => task.name === taskName);

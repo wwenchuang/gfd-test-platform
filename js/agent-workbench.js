@@ -1908,13 +1908,13 @@ function renderYamlReferenceExamples(examples = []) {
   `;
 }
 
-function downloadAgentMindmap() {
+async function downloadAgentMindmap() {
   const info = agentMindmapInfo(currentAgentRun());
-  if (!info.url) {
+  if (!info.caseSetId) {
     showToast('当前 Agent 还没有可下载的脑图文件', 'warn');
-    return;
+    return false;
   }
-  window.open(info.url, '_blank', 'noopener');
+  return downloadMindmap(info.caseSetId, currentAgentRun()?.target || 'Agent测试用例');
 }
 
 function agentUiDesignImageUrl(caseSetId, item = {}) {
@@ -2313,7 +2313,7 @@ function renderAgentCasesArtifact(run) {
     : (Array.isArray(generated.manualCases) ? generated.manualCases : []);
   const caseRows = [];
   const rowIndexByIdentity = new Map();
-  const addRows = (rows, fallbackLevel = '') => (rows || []).forEach((raw, index) => {
+  const addRows = (rows, fallbackLevel = '', appendMissing = true) => (rows || []).forEach((raw, index) => {
     const item = raw && typeof raw === 'object' ? raw : {title: String(raw || '')};
     const identity = agentCaseIdentity(item, caseRows.length + index);
     if (!identity) return;
@@ -2323,15 +2323,17 @@ function renderAgentCasesArtifact(run) {
       caseRows[rowIndex] = {...caseRows[rowIndex], ...normalized};
       return;
     }
+    if (!appendMissing) return;
     rowIndexByIdentity.set(identity, caseRows.length);
     caseRows.push(normalized);
   });
   addRows(automaticCases, '自动化候选');
   addRows(manualCases, '人工/一次性');
-  addRows(groups.executable_cases, '可执行');
-  addRows(groups.needs_review_cases, '需确认');
-  addRows(groups.draft_cases, '草稿');
-  addRows(groups.manual_cases, '人工/一次性');
+  const hasDesignedCases = automaticCases.length > 0 || manualCases.length > 0;
+  addRows(groups.executable_cases, '可执行', !hasDesignedCases);
+  addRows(groups.needs_review_cases, '需确认', !hasDesignedCases);
+  addRows(groups.draft_cases, '草稿', !hasDesignedCases);
+  addRows(groups.manual_cases, '人工/一次性', !hasDesignedCases);
 
   const analysis = generated.analysis && typeof generated.analysis === 'object' ? generated.analysis : {};
   const goals = agentCaseTextList(analysis.business_goals || analysis.businessGoals);
@@ -2342,19 +2344,19 @@ function renderAgentCasesArtifact(run) {
   const executableCount = groups.executable_cases.length;
   const reviewCount = groups.needs_review_cases.length;
   const draftCount = groups.draft_cases.length;
-  const manualCount = Math.max(groups.manual_cases.length, manualCases.length);
+  const manualCount = manualCases.length || groups.manual_cases.length;
   const title = generated.title || run?.target || '本次 Agent 生成用例';
   const moduleName = generated.module || artifacts.generationPipeline?.business || '-';
 
   let html = '<div class="agent-readable-detail agent-cases-detail">';
   html += '<section class="agent-readable-panel agent-cases-overview"><strong>用例总览</strong>';
-  html += `<p>${escapeHtml(title)} · 分组 ${escapeHtml(moduleName)}。先看业务目标和用例分层；只有“可执行”用例会进入 YAML 校验与 Runner，“需确认、草稿、人工/一次性”不会自动下发。</p>`;
+  html += `<p>${escapeHtml(title)} · 分组 ${escapeHtml(moduleName)}。这里展示用例设计；下方 YAML 数量单独反映执行门禁，可能包含复用的历史脚本，不会再混入用例明细。</p>`;
   html += agentInfoGrid([
-    {label: '自动化候选', value: automaticCases.length},
-    {label: '可执行', value: executableCount},
-    {label: '需确认', value: reviewCount},
-    {label: '草稿', value: draftCount},
-    {label: '人工/一次性', value: manualCount},
+    {label: '自动化设计', value: automaticCases.length},
+    {label: '人工/一次性设计', value: manualCount},
+    {label: '可执行 YAML', value: executableCount},
+    {label: '需确认 YAML', value: reviewCount},
+    {label: '草稿 YAML', value: draftCount},
     {label: '匹配历史', value: matchedCount},
   ]);
   if (!groupedCount && automaticCases.length) {
@@ -2449,6 +2451,23 @@ function agentYamlDisplayRows(artifacts = {}) {
   return rows;
 }
 
+function agentYamlStatusText(value) {
+  const raw = String(value ?? '').trim();
+  const key = raw.toUpperCase().replace(/[ -]+/g, '_');
+  const labels = {
+    EXECUTABLE: '可执行',
+    NEEDS_REVIEW: '需确认',
+    DRAFT: '草稿',
+    MANUAL: '人工/一次性',
+    QUARANTINED: '已隔离',
+    GENERATED: '已生成',
+    SUCCESS: '校验通过',
+    PASSED: '校验通过',
+    FAILED: '失败',
+  };
+  return labels[key] || raw || '已生成';
+}
+
 function renderAgentYamlArtifact(run) {
   const artifacts = (run && run.artifacts) || {};
   const validation = artifacts.yamlValidation || artifacts.validation || {};
@@ -2471,7 +2490,7 @@ function renderAgentYamlArtifact(run) {
       const issues = agentCaseTextList(item.issues || item.executableScore?.errors || item.executableScore?.warnings);
       const score = item.score || item.executableScore?.score || '';
       const smoke = item.smoke === true || item.smokeCandidate === true || item.runnerCandidate === true;
-      const status = [item.statusText || '已生成', score !== '' ? `评分 ${score}` : '', smoke ? '冒烟' : ''].filter(Boolean).join(' · ');
+      const status = [agentYamlStatusText(item.statusText), score !== '' ? `评分 ${score}` : '', smoke ? '冒烟' : ''].filter(Boolean).join(' · ');
       return `<b>${escapeHtml(item.file)}</b><span>${escapeHtml(status)}${issues.length ? ` · ${escapeHtml(issues[0])}` : ''}</span>${item.module && item.file ? `<button class="btn-sm" type="button" onclick="openFile(${jsArg(item.module)}, ${jsArg(item.file)})">编辑 YAML</button>` : ''}`;
     });
   }

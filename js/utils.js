@@ -520,6 +520,38 @@ async function apiTextRequest(path, options = {}) {
   return res.text();
 }
 
+function responseAttachmentFilename(response, fallbackName='download') {
+  const disposition = String(response?.headers?.get?.('Content-Disposition') || '');
+  const encoded = disposition.match(/filename\*=UTF-8''([^;]+)/i)?.[1]
+    || disposition.match(/filename="([^"]+)"/i)?.[1]
+    || disposition.match(/filename=([^;]+)/i)?.[1]
+    || '';
+  let filename = encoded.trim();
+  try { filename = decodeURIComponent(filename); } catch (_) {}
+  filename = filename.replace(/[\\/]+/g, '-').trim();
+  return filename || fallbackName;
+}
+
+async function downloadAuthenticatedFile(path, fallbackName='download') {
+  const res = await nativeFetch(`${API_BASE}${path}`, {headers: authHeaders()});
+  if (res.status === 401) forceLogoutWithMessage();
+  if (!res.ok) {
+    const message = (await res.text()).trim() || `下载失败：HTTP ${res.status}`;
+    throw Object.assign(new Error(message), {status: res.status});
+  }
+  const blob = await res.blob();
+  const filename = responseAttachmentFilename(res, fallbackName);
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 0);
+  return filename;
+}
+
 function forceLogoutWithMessage(message) {
   const msg = message || friendlyError(401, '').msg;
   if (typeof clearAuthSession === 'function') clearAuthSession();
