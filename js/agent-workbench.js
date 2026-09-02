@@ -1996,6 +1996,37 @@ function renderFigmaPreviewGrid(items = []) {
 }
 
 // ===== COLLECT_REPORT 报告详情 =====
+function agentReportSummaryMetrics(artifacts = {}, reportJobs = [], outcomeGroups = {}, failedJobs = []) {
+  const rawTotal = Array.isArray(reportJobs) ? reportJobs.length : 0;
+  const fallback = {
+    total: rawTotal,
+    passed: (outcomeGroups.success || []).length,
+    failed: (outcomeGroups.failed || []).length || (failedJobs || []).length,
+    pending: (outcomeGroups.active || []).length + (outcomeGroups.unknown || []).length,
+    attemptNote: '',
+  };
+  if (typeof agentRunResultMeta !== 'function') return fallback;
+  const logical = agentRunResultMeta({ artifacts });
+  if (!logical?.hasReportResult || !logical.total) return fallback;
+  const failed = Math.max(0, Number(logical.failed || 0) + Number(logical.timeout || 0));
+  const running = Math.max(0, Number(logical.running || 0));
+  const passed = Math.max(0, Number(logical.passed || 0));
+  const accounted = passed + failed + running;
+  const pending = running + Math.max(0, Number(logical.total || 0) - accounted);
+  const rawAttempts = Math.max(rawTotal, Number(logical.rawAttempted || 0));
+  const repairAttempts = Math.max(0, Number(logical.repairAttempted || 0));
+  const attemptNote = rawAttempts > logical.total
+    ? `原始执行 ${rawAttempts} 次${repairAttempts ? `，其中修复重跑 ${repairAttempts} 次` : ''}；最终按 ${logical.total} 条逻辑用例统计，重复尝试不重复计数。`
+    : '';
+  return {
+    total: logical.total,
+    passed,
+    failed,
+    pending,
+    attemptNote,
+  };
+}
+
 function renderReportDetail(step, artifacts) {
   const report = (artifacts || {}).report || {};
   const normalizedReport = normalizeAgentReportArtifacts(report);
@@ -2016,17 +2047,18 @@ function renderReportDetail(step, artifacts) {
       : (outcomeGroups.active.length ? 'running'
         : (outcomeGroups.success.length && !outcomeGroups.unknown.length ? 'complete' : 'unknown')));
   const totalJobs = reportJobs.length || Math.max(reports.length, yamlRefs.length, jobStatuses.length);
-  const activeCount = outcomeGroups.active.length;
-  const unknownCount = outcomeGroups.unknown.length;
+  const reportMetrics = agentReportSummaryMetrics(artifacts || {}, reportJobs, outcomeGroups, failedJobs);
+  if (!reportMetrics.total && totalJobs) reportMetrics.total = totalJobs;
   let html = '<div class="report-detail rich-report">';
   html += `
     <div class="report-summary-grid">
       <div><span>报告状态</span><strong>${escapeHtml(agentJobStatusText(derivedStatus))}</strong></div>
-      <div><span>执行用例</span><strong>${escapeHtml(totalJobs)}</strong></div>
-      <div class="metric-success"><span>通过</span><strong>${escapeHtml(outcomeGroups.success.length)}</strong></div>
-      <div class="metric-danger"><span>失败</span><strong>${escapeHtml(outcomeGroups.failed.length || failedJobs.length)}</strong></div>
-      <div class="metric-warn"><span>未完成 / 待判定</span><strong>${escapeHtml(activeCount + unknownCount)}</strong></div>
+      <div><span>逻辑用例</span><strong>${escapeHtml(reportMetrics.total)}</strong></div>
+      <div class="metric-success"><span>通过</span><strong>${escapeHtml(reportMetrics.passed)}</strong></div>
+      <div class="metric-danger"><span>未通过</span><strong>${escapeHtml(reportMetrics.failed)}</strong></div>
+      <div class="metric-warn"><span>未完成 / 待判定</span><strong>${escapeHtml(reportMetrics.pending)}</strong></div>
     </div>
+    ${reportMetrics.attemptNote ? `<div class="generate-hint report-attempt-note">${escapeHtml(reportMetrics.attemptNote)}</div>` : ''}
   `;
   if (reportJobs.length > 0) {
     html += '<div class="agent-report-outcomes">';

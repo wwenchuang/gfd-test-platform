@@ -68,13 +68,14 @@ function agentRunElapsedText(run) {
 }
 
 function agentRunProgressColor(run) {
+  const status = agentRunStatus(run);
+  if (status === 'CANCELLED') return 'var(--danger)';
   const result = agentRunResultMeta(run);
   if (result.hasReportResult) {
     if (result.outcome === 'passed') return 'var(--success)';
     if (result.outcome === 'partial') return 'var(--warn)';
     if (result.outcome === 'failed') return 'var(--danger)';
   }
-  const status = agentRunStatus(run);
   if (status === 'DONE' || status === 'FINISH') return 'var(--success)';
   if (status === 'FAILED' || status === 'CANCELLED') return 'var(--danger)';
   if (/WAIT_CONFIRM/.test(status)) return 'var(--warn)';
@@ -82,13 +83,14 @@ function agentRunProgressColor(run) {
 }
 
 function agentRunPillClass(run) {
+  const status = agentRunStatus(run);
+  if (status === 'CANCELLED') return 'warn';
   const result = agentRunResultMeta(run);
   if (result.hasReportResult) {
     if (result.outcome === 'passed') return 'success';
     if (result.outcome === 'partial') return 'partial';
     if (result.outcome === 'failed') return 'failed';
   }
-  const status = agentRunStatus(run);
   if (status === 'DONE' || status === 'FINISH') return 'success';
   if (status === 'FAILED' || status === 'CANCELLED') return 'warn';
   if (/WAIT_CONFIRM/.test(status)) return 'waiting';
@@ -96,13 +98,14 @@ function agentRunPillClass(run) {
 }
 
 function agentRunCardStatusClass(run) {
+  const status = agentRunStatus(run);
+  if (status === 'CANCELLED') return 'cancelled';
   const result = agentRunResultMeta(run);
   if (result.hasReportResult) {
     if (result.outcome === 'passed') return 'success';
     if (result.outcome === 'partial') return 'partial';
     if (result.outcome === 'failed') return 'failed';
   }
-  const status = agentRunStatus(run);
   if (status === 'DONE' || status === 'FINISH') return 'success';
   if (status === 'FAILED') return 'failed';
   if (status === 'CANCELLED') return 'cancelled';
@@ -1075,7 +1078,7 @@ function agentRunCardHtml(run, options = {}) {
   const mode = agentModeText(run.mode || run.options?.mode || '-');
   const target = run.target || run.options?.goal || run.goal || '未命名任务';
   const resultMeta = agentRunResultMeta(run);
-  const status = resultMeta.hasReportResult ? resultMeta.label : agentStatusText(run.status);
+  const status = agentRunDisplayStatusText(run, resultMeta);
   const canCancel = canOperateAgent() && !agentRunIsTerminal(run);
   const canDelete = hasPermission('ui.delete') && agentRunIsTerminal(run);
   const canRetry = canOperateAgent() && agentRunIsTerminal(run);
@@ -1117,6 +1120,11 @@ function agentRunCardHtml(run, options = {}) {
   `;
 }
 
+function agentRunDisplayStatusText(run, resultMeta = agentRunResultMeta(run)) {
+  if (agentRunStatus(run) === 'CANCELLED') return agentStatusText('CANCELLED');
+  return resultMeta.hasReportResult ? resultMeta.label : agentStatusText(run?.status);
+}
+
 function agentRunLoadingHtml(text = '正在刷新 Agent 运行记录...') {
   return `<div class="workflow-card agent-run-history-card">
     <div class="loading-inline"><span class="spinner"></span>${escapeHtml(text)}</div>
@@ -1143,6 +1151,7 @@ function agentHistoryStatusKey(run) {
   const result = agentRunResultMeta(run || {});
   if (/^WAIT_CONFIRM/.test(status)) return 'confirm';
   if (!agentRunIsTerminal(run || {})) return 'running';
+  if (status === 'CANCELLED') return 'cancelled';
   if (result.outcome === 'failed') return 'failed';
   if (result.outcome === 'partial') return 'partial';
   if (result.outcome === 'passed' || ['DONE', 'SUCCESS', 'COMPLETED'].includes(status)) return 'success';
@@ -1301,6 +1310,7 @@ function renderAgentHistoryPage(options = {}) {
           <option value="failed" ${agentHistoryFilters.status === 'failed' ? 'selected' : ''}>失败</option>
           <option value="running" ${agentHistoryFilters.status === 'running' ? 'selected' : ''}>运行中</option>
           <option value="confirm" ${agentHistoryFilters.status === 'confirm' ? 'selected' : ''}>待确认</option>
+          <option value="cancelled" ${agentHistoryFilters.status === 'cancelled' ? 'selected' : ''}>已取消</option>
         </select>
         <select onchange="setAgentHistoryFilter('mode', this.value)">
           <option value="all" ${agentHistoryFilters.mode === 'all' ? 'selected' : ''}>全部模式</option>
