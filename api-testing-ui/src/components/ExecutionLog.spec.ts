@@ -12,6 +12,30 @@ const EVENTS: ExecutionEventView[] = [
 ]
 
 describe('ExecutionLog', () => {
+  it('renders a bounded latest window for a large history and lets the user move through earlier events', async () => {
+    const events = Array.from({ length: 650 }, (_, index) => ({
+      id: index + 1,
+      type: 'request',
+      level: 'info' as const,
+      caseId: `case-${Math.floor(index / 5)}`,
+      message: `日志 ${index + 1}`,
+      payload: {},
+    }))
+    const wrapper = mount(ExecutionLog, { props: { events, connectionState: 'complete' } })
+
+    expect(wrapper.findAll('[data-testid="log-line"]')).toHaveLength(200)
+    expect(wrapper.text()).toContain('第 451-650 条，共 650 条')
+    expect(wrapper.text()).toContain('日志 650')
+    expect(wrapper.text()).not.toContain('日志 1')
+
+    await wrapper.get('[data-testid="log-window-older"]').trigger('click')
+
+    expect(wrapper.findAll('[data-testid="log-line"]')).toHaveLength(200)
+    expect(wrapper.text()).toContain('第 251-450 条，共 650 条')
+    expect(wrapper.text()).toContain('日志 251')
+    expect(wrapper.text()).not.toContain('日志 650')
+  })
+
   it('redacts sensitive keys in expanded event evidence', async () => {
     const wrapper = mount(ExecutionLog, {
       props: {

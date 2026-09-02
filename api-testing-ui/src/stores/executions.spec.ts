@@ -169,6 +169,32 @@ describe('executions store', () => {
     expect(store.events.map(item => item.message)).toEqual(['原始失败', '执行完成'])
   })
 
+  it('batches a large durable event replay before updating reactive history', async () => {
+    vi.useFakeTimers()
+    try {
+      const store = useExecutionsStore()
+      store.active = { id: 'execution-large', state: 'DONE' } as ExecutionView
+
+      for (let id = 1; id <= 1200; id += 1) {
+        store.consumeEvent(
+          'request',
+          { data: `{"execution_case_id":"case-${Math.ceil(id / 4)}"}`, lastEventId: String(id) } as MessageEvent,
+          'execution-large',
+        )
+      }
+
+      expect(store.events).toEqual([])
+      expect(store.pendingEvents).toHaveLength(1200)
+      await vi.advanceTimersByTimeAsync(16)
+      expect(store.events).toHaveLength(1200)
+      expect(store.events[0]?.id).toBe(1)
+      expect(store.events.at(-1)?.id).toBe(1200)
+      expect(store.pendingEvents).toEqual([])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('uses an opaque ticket URL and never places the session token in EventSource', async () => {
     vi.spyOn(apiClient, 'post').mockResolvedValue({ data: { ticket: 'opaque-ticket' } })
     const opened: string[] = []

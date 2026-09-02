@@ -22,6 +22,8 @@ export const useExecutionsStore = defineStore('api-executions', {
     archivedExecutionIds: new Set<string>(),
     active: null as ExecutionView | null,
     events: [] as ExecutionEventView[],
+    pendingEvents: [] as ExecutionEventView[],
+    eventFlushTimer: null as ReturnType<typeof setTimeout> | null,
     connectionState: 'idle' as ExecutionConnectionState,
     loading: false,
     selectingExecutionId: '',
@@ -144,9 +146,31 @@ export const useExecutionsStore = defineStore('api-executions', {
     },
     appendEvent(event: ExecutionEventView): void {
       if (!Number.isInteger(event.id) || event.id <= 0) return
-      if (this.events.some(item => item.id === event.id)) return
-      if (this.events.length && event.id < this.events[this.events.length - 1].id) return
+      const lastId = this.events.at(-1)?.id || 0
+      if (event.id <= lastId) return
       this.events.push(event)
+    },
+    enqueueEvent(event: ExecutionEventView): void {
+      if (!Number.isInteger(event.id) || event.id <= 0) return
+      const lastId = this.pendingEvents.at(-1)?.id || this.events.at(-1)?.id || 0
+      if (event.id <= lastId) return
+      this.pendingEvents.push(event)
+      if (this.eventFlushTimer) return
+      this.eventFlushTimer = setTimeout(() => this.flushPendingEvents(), 16)
+    },
+    flushPendingEvents(): void {
+      if (this.eventFlushTimer) clearTimeout(this.eventFlushTimer)
+      this.eventFlushTimer = null
+      if (!this.pendingEvents.length) return
+      const lastId = this.events.at(-1)?.id || 0
+      const additions = this.pendingEvents.filter(item => item.id > lastId)
+      this.pendingEvents = []
+      if (additions.length) this.events = [...this.events, ...additions]
+    },
+    clearPendingEvents(): void {
+      if (this.eventFlushTimer) clearTimeout(this.eventFlushTimer)
+      this.eventFlushTimer = null
+      this.pendingEvents = []
     },
     async connect(executionId: string): Promise<void> {
       const selectionVersion = this.selectionVersion
@@ -172,6 +196,7 @@ export const useExecutionsStore = defineStore('api-executions', {
         }
         source.onerror = () => {
           if (this.eventSource !== source) return
+          this.flushPendingEvents()
           source.close()
           this.eventSource = null
           if (this.active && TERMINAL.has(this.active.state)) {
@@ -254,8 +279,11 @@ export const useExecutionsStore = defineStore('api-executions', {
       let payload: Record<string, unknown> = {}
       try { payload = JSON.parse(String(event.data || '{}')) as Record<string, unknown> } catch { payload = { message: '事件内容无法解析' } }
       const id = Number(event.lastEventId)
-      this.appendEvent(toEvent(id, type, payload))
+      const view = toEvent(id, type, payload)
+      if (this.active && TERMINAL.has(this.active.state)) this.enqueueEvent(view)
+      else this.appendEvent(view)
       if (type === 'execution_finished') {
+        this.flushPendingEvents()
         this.connectionState = 'complete'
         this.disconnect(false)
         this.analysisRefreshAttempts = 0
@@ -285,6 +313,7 @@ export const useExecutionsStore = defineStore('api-executions', {
     disconnect(resetState = true): void {
       this.eventSource?.close()
       this.eventSource = null
+      this.clearPendingEvents()
       if (this.reconnectTimer) clearTimeout(this.reconnectTimer)
       this.reconnectTimer = null
       if (this.analysisRefreshTimer) clearTimeout(this.analysisRefreshTimer)

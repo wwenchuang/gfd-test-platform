@@ -15,20 +15,38 @@ const following = ref(true)
 const output = ref<HTMLElement | null>(null)
 const expanded = ref(new Set<number>())
 const unseenCount = ref(0)
+const windowEnd = ref(0)
+const LOG_WINDOW_SIZE = 200
 const caseOptions = computed(() => [...new Set(props.events.map(item => item.caseId).filter(Boolean))])
 const filtered = computed(() => props.events.filter(item => (
   (level.value === 'all' || item.level === level.value)
   && (caseId.value === 'all' || item.caseId === caseId.value)
 )))
+const windowStart = computed(() => Math.max(0, windowEnd.value - LOG_WINDOW_SIZE))
+const visibleEvents = computed(() => filtered.value.slice(windowStart.value, windowEnd.value))
+const windowLabel = computed(() => {
+  if (!filtered.value.length) return '共 0 条'
+  return `第 ${windowStart.value + 1}-${windowEnd.value} 条，共 ${filtered.value.length} 条`
+})
 const connectionLabel = computed(() => ({
   idle: '未连接', connecting: '正在连接', open: '实时连接', reconnecting: '正在重连', complete: '执行已结束', failed: '连接失败',
 }[props.connectionState]))
 
 watch(() => props.events.length, async (length, previous) => {
   if (!following.value) {
-    unseenCount.value += Math.max(0, length - previous)
+    unseenCount.value += Math.max(0, length - (previous || 0))
+    if (filtered.value.length <= LOG_WINDOW_SIZE) windowEnd.value = filtered.value.length
     return
   }
+  windowEnd.value = filtered.value.length
+  await nextTick()
+  if (output.value) output.value.scrollTop = output.value.scrollHeight
+}, { immediate: true })
+
+watch([level, caseId], async () => {
+  following.value = true
+  unseenCount.value = 0
+  windowEnd.value = filtered.value.length
   await nextTick()
   if (output.value) output.value.scrollTop = output.value.scrollHeight
 })
@@ -77,6 +95,21 @@ async function toggleFollowing(): Promise<void> {
   following.value = !following.value
   if (!following.value) return
   unseenCount.value = 0
+  windowEnd.value = filtered.value.length
+  await nextTick()
+  if (output.value) output.value.scrollTop = output.value.scrollHeight
+}
+
+function showOlderEvents(): void {
+  following.value = false
+  windowEnd.value = Math.max(LOG_WINDOW_SIZE, windowEnd.value - LOG_WINDOW_SIZE)
+}
+
+async function showNewerEvents(): Promise<void> {
+  windowEnd.value = Math.min(filtered.value.length, windowEnd.value + LOG_WINDOW_SIZE)
+  if (windowEnd.value < filtered.value.length) return
+  following.value = true
+  unseenCount.value = 0
   await nextTick()
   if (output.value) output.value.scrollTop = output.value.scrollHeight
 }
@@ -86,8 +119,13 @@ async function toggleFollowing(): Promise<void> {
   <section class="execution-log panel">
     <header class="panel-header"><div><h2>实时日志</h2><span :class="`connection-${connectionState}`">{{ connectionLabel }}</span></div><button data-testid="log-follow" class="mini-icon" type="button" :title="following ? '暂停自动滚动' : '继续跟随最新日志'" @click="toggleFollowing"><CirclePause v-if="following" :size="15" /><CirclePlay v-else :size="15" /></button></header>
     <div class="log-tools"><label><Search :size="14" /><span class="sr-only">日志级别</span><select v-model="level" data-testid="log-level"><option value="all">全部级别</option><option value="info">信息</option><option value="success">通过</option><option value="warning">提醒</option><option value="error">失败</option></select></label><label><span class="sr-only">用例</span><select v-model="caseId"><option value="all">全部用例</option><option v-for="item in caseOptions" :key="item" :value="item">{{ caseLabel(item) }}</option></select></label><span v-if="!following" class="paused-label">滚动已暂停<span v-if="unseenCount"> · {{ unseenCount }} 条新日志</span></span></div>
+    <div v-if="filtered.length > LOG_WINDOW_SIZE" class="log-window-tools" aria-label="日志分段">
+      <span>{{ windowLabel }}；分段展示以保持页面流畅</span>
+      <button data-testid="log-window-older" class="text-command" type="button" :disabled="windowStart === 0" @click="showOlderEvents">查看更早 {{ LOG_WINDOW_SIZE }} 条</button>
+      <button data-testid="log-window-newer" class="text-command" type="button" :disabled="windowEnd === filtered.length" @click="showNewerEvents">查看更新日志</button>
+    </div>
     <div ref="output" data-testid="log-output" class="log-output" aria-live="polite" @scroll="handleScroll">
-      <div v-for="event in filtered" :key="event.id" data-testid="log-line" :class="['log-line', `log-${event.level}`]"><time>{{ eventTime(event) }}</time><strong>{{ eventMessage(event.message) }}</strong><code v-if="event.caseId">{{ caseLabel(event.caseId) }}</code><button v-if="Object.keys(event.payload).length" data-testid="log-evidence-toggle" class="log-evidence-toggle" type="button" :title="expanded.has(event.id) ? '收起事件证据' : '查看事件证据'" @click="toggleEvidence(event.id)"><ChevronDown v-if="expanded.has(event.id)" :size="13" /><ChevronRight v-else :size="13" /></button><pre v-if="expanded.has(event.id)" data-testid="log-evidence">{{ JSON.stringify(eventEvidence(event), null, 2) }}</pre></div>
+      <div v-for="event in visibleEvents" :key="event.id" data-testid="log-line" :class="['log-line', `log-${event.level}`]"><time>{{ eventTime(event) }}</time><strong>{{ eventMessage(event.message) }}</strong><code v-if="event.caseId">{{ caseLabel(event.caseId) }}</code><button v-if="Object.keys(event.payload).length" data-testid="log-evidence-toggle" class="log-evidence-toggle" type="button" :title="expanded.has(event.id) ? '收起事件证据' : '查看事件证据'" @click="toggleEvidence(event.id)"><ChevronDown v-if="expanded.has(event.id)" :size="13" /><ChevronRight v-else :size="13" /></button><pre v-if="expanded.has(event.id)" data-testid="log-evidence">{{ JSON.stringify(eventEvidence(event), null, 2) }}</pre></div>
       <p v-if="!filtered.length" class="state-message">暂无匹配日志</p>
     </div>
   </section>
