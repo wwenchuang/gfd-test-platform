@@ -1248,7 +1248,7 @@ async function anyVisible(locator) {
         draftActions: generationSmokeAdjustmentHtml({manual_cases: [{name: '人工观察'}]}, 'AI测试', 'mindmap-only')};
     });
     if (terminalAudit.state !== 'missing' || !terminalAudit.message.includes('PyYAML')) throw new Error('A terminal Agent still appears generating or hides its real failure');
-    if (terminalAudit.draftActions.includes('执行全部当前可执行') || !terminalAudit.draftActions.includes('没有可执行 YAML')) throw new Error('Draft-only generation offers impossible Runner actions');
+    if (terminalAudit.draftActions.includes('执行全部可执行') || !terminalAudit.draftActions.includes('没有可执行 YAML')) throw new Error('Draft-only generation offers impossible Runner actions');
     const staleRunner = await page.evaluate(() => {
       const saved = runnerDevices;
       const savedRunners = AppState.runners;

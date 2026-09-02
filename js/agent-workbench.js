@@ -1327,11 +1327,18 @@ function agentPhaseSummary(phase, run, status) {
       .map(stepKey => [stepKey, timelineStepData(stepKey, run) || {}, resolvedTimelineStatus(stepKey, run)])
       .reverse()
       .find(([, , stepStatus]) => stepStatus === 'failed');
-    if (failed) return `失败：${agentStepLabel(failed[0])}`;
+    if (failed) return agentPhaseFailureSummary(failed[0]);
   }
   if (status === 'skipped' && phase.conditional) return '本次未进入失败恢复';
   if (status === 'success') return '已完成';
   return phase.description;
+}
+
+function agentPhaseFailureSummary(stepKey) {
+  const key = String(stepKey || '').toUpperCase();
+  if (key === 'RUN_SONIC' || key === 'RUN_TASK') return 'Runner 执行未通过';
+  if (key === 'RERUN') return '安全重跑未恢复';
+  return `${agentStepLabel(stepKey)} 未通过`;
 }
 
 function renderAgentPhaseOverview(run) {
@@ -1903,6 +1910,13 @@ function renderAgentReportOutcomeSection(title, jobs = [], tone = '') {
   `;
 }
 
+function agentReportFailureSectionTitle(metrics = {}) {
+  if (metrics.attemptNote && Number(metrics.failed || 0) > 0) {
+    return `失败执行记录（${Number(metrics.failed)} 条逻辑用例）`;
+  }
+  return '失败用例';
+}
+
 function agentArtifactsOf(runOrArtifacts = {}) {
   const value = runOrArtifacts || {};
   return value.artifacts && typeof value.artifacts === 'object' ? value.artifacts : value;
@@ -2122,7 +2136,7 @@ function renderReportDetail(step, artifacts) {
   `;
   if (reportJobs.length > 0) {
     html += '<div class="agent-report-outcomes">';
-    html += renderAgentReportOutcomeSection('失败用例', outcomeGroups.failed, 'danger');
+    html += renderAgentReportOutcomeSection(agentReportFailureSectionTitle(reportMetrics), outcomeGroups.failed, 'danger');
     html += renderAgentReportOutcomeSection('执行中 / 未完成', outcomeGroups.active, 'warn');
     html += renderAgentReportOutcomeSection('待判定结果', outcomeGroups.unknown, 'neutral');
     html += renderAgentReportOutcomeSection('通过用例', outcomeGroups.success, 'success');
@@ -2162,12 +2176,12 @@ function renderReportDetail(step, artifacts) {
     }
     html += '</div>';
   }
-  if (failedJobs.length > 0) {
+  if (!reportJobs.length && failedJobs.length > 0) {
     html += '<div class="failed-summary">';
     html += `<div class="failure-title">${failedJobs.length} 个任务失败：</div>`;
     html += '<ul class="failure-list">';
     for (const fj of failedJobs.slice(0, 5)) {
-      html += `<li><strong>${escapeHtml(agentCaseLabel(fj))}</strong><span>${escapeHtml(agentCaseSubLabel(fj))}</span>：${escapeHtml(fj.error || '未知')}</li>`;
+      html += `<li><strong>${escapeHtml(agentCaseLabel(fj))}</strong><span>${escapeHtml(agentCaseSubLabel(fj))}</span>：${escapeHtml(agentReportFailureReason(fj) || 'Runner 未返回失败原因')}</li>`;
     }
     html += '</ul></div>';
   }
@@ -2670,7 +2684,8 @@ function renderGeneratedExecutionLevelSummary(artifacts = {}) {
   const groups = agentGeneratedCaseGroups(artifacts);
   const mindmap = agentMindmapInfo(artifacts);
   const smokeExecutableCount = (groups.executable_cases || []).filter(agentGeneratedCaseIsSmoke).length;
-  const remainingExecutableCount = Math.max(0, (groups.executable_cases || []).length - smokeExecutableCount);
+  const executableCount = (groups.executable_cases || []).length;
+  const remainingExecutableCount = Math.max(0, executableCount - smokeExecutableCount);
   const generatedCount = ['executable_cases', 'needs_review_cases', 'draft_cases', 'manual_cases']
     .reduce((sum, key) => sum + ((groups[key] || []).length), 0);
   const smokeLimit = agentGeneratedSmokeRerunLimit(artifacts, smokeExecutableCount);
@@ -2715,8 +2730,8 @@ function renderGeneratedExecutionLevelSummary(artifacts = {}) {
           <div class="review-actions">
             ${smokeExecutableCount ? `<button class="btn-sm success" onclick="rerunGenerationSmokeCases(${jsArg(mindmap.caseSetId)}, '', ${smokeLimit}, false, ${smokeExecutableCount})">重跑首批冒烟 ${escapeHtml(smokeLimit)}/${escapeHtml(smokeExecutableCount)}</button>` : ''}
             ${smokeExecutableCount > smokeLimit ? `<button class="btn-sm" onclick="rerunGenerationSmokeCases(${jsArg(mindmap.caseSetId)}, '', 0, true, ${smokeExecutableCount})">重跑全部冒烟 ${escapeHtml(smokeExecutableCount)}</button>` : ''}
-            <button class="btn-sm" onclick="rerunGenerationSmokeCases(${jsArg(mindmap.caseSetId)}, '', ${remainingLimit}, false, ${Math.max(remainingExecutableCount, (groups.executable_cases || []).length)}, 'remaining_executable')">继续下一批可执行 ${escapeHtml(remainingLimit)}/${escapeHtml(Math.max(remainingExecutableCount, (groups.executable_cases || []).length))}</button>
-            <button class="btn-sm" onclick="rerunGenerationSmokeCases(${jsArg(mindmap.caseSetId)}, '', 0, true, ${generatedCount}, 'all_executable')">执行全部当前可执行</button>
+            ${remainingExecutableCount ? `<button class="btn-sm" onclick="rerunGenerationSmokeCases(${jsArg(mindmap.caseSetId)}, '', ${remainingLimit}, false, ${remainingExecutableCount}, 'remaining_executable')">继续下一批可执行 ${escapeHtml(Math.min(remainingLimit, remainingExecutableCount))}/${escapeHtml(remainingExecutableCount)}</button>` : ''}
+            <button class="btn-sm" onclick="rerunGenerationSmokeCases(${jsArg(mindmap.caseSetId)}, '', 0, true, ${executableCount}, 'all_executable')">执行全部可执行 ${escapeHtml(executableCount)}</button>
           </div>
         ` : ''}
       </div>
@@ -3237,7 +3252,7 @@ function renderAgentArtifactPanel(run) {
     <div class="agent-artifact-head">
       <div>
         <h3>Agent 产物</h3>
-        <p>已生成 ${escapeHtml(readyCount)}/${escapeHtml(allItems.length)} · 当前阶段 ${escapeHtml(agentStepLabel(run?.currentStep || run?.status || '-'))}</p>
+        <p>已生成 ${escapeHtml(readyCount)}/${escapeHtml(allItems.length)} · ${agentRunIsTerminal(run) ? '结束于' : '当前阶段'} ${escapeHtml(agentStepLabel(run?.currentStep || run?.status || '-'))}</p>
       </div>
       ${actions.length ? `<div class="agent-artifact-actions">${actions.join('')}</div>` : ''}
     </div>

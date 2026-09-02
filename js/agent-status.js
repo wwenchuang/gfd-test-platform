@@ -37,6 +37,44 @@ function agentRunIsTerminal(run) {
   return ['DONE', 'FINISH', 'FAILED', 'CANCELLED'].includes(agentRunStatus(run));
 }
 
+function agentRunStepFieldLabel(run) {
+  return agentRunIsTerminal(run) ? '结束步骤' : '当前步骤';
+}
+
+function agentFailureDisplayText(value, fallback = '暂无') {
+  if (value == null || value === '') return fallback;
+  if (typeof value === 'string' || typeof value === 'number') {
+    return String(value).replace(/\s+/g, ' ').trim().slice(0, 200) || fallback;
+  }
+  if (Array.isArray(value)) {
+    const text = value.slice(0, 3)
+      .map(item => agentFailureDisplayText(item, ''))
+      .filter(Boolean)
+      .join('；');
+    return text.slice(0, 200) || fallback;
+  }
+  if (typeof value === 'object') {
+    const candidates = [
+      value.conclusion,
+      value.rootCause,
+      value.root_cause,
+      value.failureReason,
+      value.failure_reason,
+      value.reason,
+      value.message,
+      value.summary,
+      value.error,
+    ];
+    for (const candidate of candidates) {
+      if (candidate == null || candidate === '' || candidate === value) continue;
+      const text = agentFailureDisplayText(candidate, '');
+      if (text) return text;
+    }
+    return '已记录结构化失败信息，请查看下方诊断';
+  }
+  return fallback;
+}
+
 function agentRunPanelTitle(run) {
   const status = agentRunStatus(run);
   if (status === 'DONE' || status === 'FINISH') return '最近完成';
@@ -1106,7 +1144,7 @@ function agentRunCardHtml(run, options = {}) {
       <div class="agent-run-progress"><div style="width:${Math.max(0, Math.min(100, progress))}%;background:${escapeHtml(agentRunProgressColor(run))};"></div></div>
       <div class="agent-run-meta">
         <span>模式：${escapeHtml(mode)}</span>
-        <span>步骤：${escapeHtml(agentStepLabel(run.currentStep))}</span>
+        <span>${escapeHtml(agentRunStepFieldLabel(run))}：${escapeHtml(agentStepLabel(run.currentStep))}</span>
       </div>
       ${agentInputSummaryHtml(run, { compact: true, collapsed: true })}
       ${cardMessage ? `<div class="agent-run-summary">${escapeHtml(cardMessage)}</div>` : ''}
@@ -2023,7 +2061,7 @@ function renderAgentCenter() {
         <div class="agent-kv">
           <strong>运行编号</strong><span style="font-family:var(--mono);font-size:12px;">${escapeHtml((run.runId || '').slice(0, 24))}</span>
           <strong>模式</strong><span>${escapeHtml(agentModeText(run.mode))}</span>
-          <strong>当前步骤</strong><span>${escapeHtml(agentStepLabel(run.currentStep))}</span>
+          <strong>${escapeHtml(agentRunStepFieldLabel(run))}</strong><span>${escapeHtml(agentStepLabel(run.currentStep))}</span>
           <strong>目标</strong><span>${escapeHtml((run.target || run.options?.goal || '').slice(0, 60))}</span>
           <strong>进度</strong><span>${progressPct}%</span>
           <strong>已耗时</strong><span>${elapsedText}</span>
@@ -2063,7 +2101,7 @@ function renderAgentCenter() {
       <div class="agent-side-card">
         <div class="agent-side-title" style="color:var(--danger);">失败处理</div>
         <div class="agent-kv">
-          <strong>失败原因</strong><span>${escapeHtml(String(failure || '暂无').slice(0, 200))}</span>
+          <strong>失败原因</strong><span>${escapeHtml(agentFailureDisplayText(failure))}</span>
         </div>
         ${agentDiagnosisHtml(run)}
         ${agentFailureActionsHtml(run)}

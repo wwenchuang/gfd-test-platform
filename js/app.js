@@ -3041,12 +3041,15 @@ async function rerunGenerationSmokeCases(caseSetId, moduleName='', limit=GENERAT
     : (explicitLimit
       ? `首批${scopeName}（最多 ${safeLimit} 条${totalCount ? ` / 共 ${totalCount} 条` : ''}）`
       : `首批${scopeName}（按本批次规模自动选择）`);
+  const batchNotice = rerunScope === 'remaining_executable'
+    ? '继续执行会按小批次下发，本次不会回头重复首批冒烟。'
+    : '默认和首次 Agent 自动执行一致，只跑首批 3 条以内冒烟。';
   const ok = confirm([
     `重新执行本批次的${scopeText}？`,
     '',
     '只会重新创建已生成 YAML 的 Runner 任务，不会重新上传资料，也不会重新做需求分析。',
     '如果刚刚手动编辑并保存过 YAML，本次会使用当前保存内容执行。',
-    runAll ? `注意：${scopeName}会创建更多 Runner 任务，建议首批通过率稳定后再使用。` : '默认和首次 Agent 自动执行一致，只跑首批 3 条以内冒烟。',
+    runAll ? `注意：${scopeName}会创建更多 Runner 任务，建议首批通过率稳定后再使用。` : batchNotice,
     `执行设备：${deviceText}`
   ].join('\n'));
   if (!ok) return;
