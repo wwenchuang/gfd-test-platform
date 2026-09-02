@@ -69,6 +69,17 @@ class ApiTestStaticFilesTest(unittest.TestCase):
             self.assertEqual(handler.status, 200)
             self.assertIn(('Cache-Control', 'no-cache, must-revalidate'), handler.headers)
 
+    def test_nginx_deploy_path_revalidates_main_platform_assets(self):
+        root = Path(_PROJECT_ROOT)
+        nginx = (root / 'deploy' / 'nginx-midscene-task.conf').read_text(encoding='utf-8')
+        cache_override = (root / 'deploy' / 'nginx-static-cache.conf').read_text(encoding='utf-8')
+        installer = (root / 'deploy' / 'install-server.sh').read_text(encoding='utf-8')
+
+        self.assertIn('Cache-Control "no-cache, must-revalidate" always', nginx)
+        self.assertIn('map $uri $midscene_static_cache_control', cache_override)
+        self.assertIn('add_header Cache-Control $midscene_static_cache_control always', cache_override)
+        self.assertIn('nginx-static-cache.conf', installer)
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -7,6 +7,7 @@ SOURCE_TRACE_VIEWER="${SOURCE_TRACE_VIEWER:-/opt/midscene-task-platform/trace-vi
 SOURCE_ASSETS="${SOURCE_ASSETS:-/opt/midscene-task-platform/assets}"
 SOURCE_CSS="${SOURCE_CSS:-/opt/midscene-task-platform/css}"
 SOURCE_JS="${SOURCE_JS:-/opt/midscene-task-platform/js}"
+SOURCE_CACHE_CONF="${SOURCE_CACHE_CONF:-/opt/midscene-task-platform/deploy/nginx-static-cache.conf}"
 TARGET_HTML="${TARGET_HTML:-}"
 
 if ! command -v docker >/dev/null 2>&1; then
@@ -48,6 +49,20 @@ for page in "${target_pages[@]}"; do
   seen_pages="${seen_pages}${page}|"
   deduped_pages+=("${page}")
 done
+
+if [ -f "${SOURCE_CACHE_CONF}" ]; then
+  docker exec "${CONTAINER}" sh -lc "mkdir -p /etc/nginx/conf.d"
+  docker cp "${SOURCE_CACHE_CONF}" "${CONTAINER}:/etc/nginx/conf.d/midscene-static-cache.conf"
+  if docker exec "${CONTAINER}" nginx -t; then
+    docker exec "${CONTAINER}" sh -lc "nginx -s reload"
+    echo "已更新静态资源重新验证策略"
+  else
+    docker exec "${CONTAINER}" sh -lc "rm -f /etc/nginx/conf.d/midscene-static-cache.conf"
+    docker exec "${CONTAINER}" nginx -t >/dev/null 2>&1 || true
+    echo "静态资源缓存策略校验失败，已回滚" >&2
+    exit 1
+  fi
+fi
 
 for target_html in "${deduped_pages[@]}"; do
   backup_path="${target_html}.bak.$(date +%Y%m%d-%H%M%S)"

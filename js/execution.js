@@ -294,21 +294,22 @@ function renderExecutionTabDebug() {
 }
 
 function renderExecutionTabSonic() {
-  const jobs = (Array.isArray(latestJobs) ? latestJobs : []).filter(j => !isApkInstallJob(j) && (j.module || j.file)).slice(0, 60);
+  const allJobs = (Array.isArray(latestJobs) ? latestJobs : []).filter(j => !isApkInstallJob(j) && (j.module || j.file));
+  const jobs = allJobs.slice(0, 12);
   return `
     <div class="review-panel">
       <div class="section-head">
         <div>
           <h3>同步至 Sonic 平台</h3>
-          <p>把 YAML 用例同步至 Sonic 平台；可单条或批量同步。</p>
+          <p>这里同步当前打开的 YAML；批量同步请到“用例资产”勾选需要的文件。</p>
         </div>
         <div class="review-actions">
           <button class="btn-sm" onclick="document.getElementById('btn-sonic-status')?.click()" ${currentFile ? '' : 'disabled title="请先打开 YAML 文件"'}>查看同步状态</button>
           <button class="btn-sm primary" onclick="document.getElementById('btn-publish-sonic')?.click()" ${currentFile ? '' : 'disabled title="请先打开 YAML 文件"'}>同步当前文件</button>
         </div>
       </div>
-      ${currentFile ? `<div class="generate-hint">当前文件：${escapeHtml(currentModule)}/${escapeHtml(currentFile)}</div>` : `<div class="generate-hint">请先从“用例资产”打开 YAML，再进行 Sonic 操作。 <button class="btn-sm" onclick="activateWorkflow('assets')">选择 YAML</button></div>`}
-      <h3 style="margin-top:12px;">最近任务</h3>
+      ${currentFile ? `<div class="generate-hint">当前文件：${escapeHtml(currentModule)}/${escapeHtml(currentFile)}</div>` : `<div class="generate-hint">请先从“用例资产”打开 YAML；批量同步请到“用例资产”勾选文件。 <button class="btn-sm" onclick="activateWorkflow('assets')">选择 YAML</button></div>`}
+      <h3 style="margin-top:12px;">最近任务 <span class="section-count">显示 ${jobs.length}/${allJobs.length} 条</span></h3>
       ${jobs.length ? `<table class="report-table">
         <thead><tr><th>任务</th><th>模块</th><th>状态</th><th>时间</th></tr></thead>
         <tbody>${jobs.map(j => `
@@ -1573,7 +1574,7 @@ function showBatchMove() {
     return;
   }
   document.getElementById('batch-move-count').textContent = `已选择 ${items.length} 个 YAML 文件`;
-  document.getElementById('batch-move-module').innerHTML = moduleOptionsHtml(currentModule || '');
+  document.getElementById('batch-move-module').innerHTML = `<option value="">请选择目标模块</option>${moduleOptionsHtml('')}`;
   document.getElementById('batch-move-overwrite').checked = false;
   document.getElementById('modal-batch-move').classList.add('show');
 }

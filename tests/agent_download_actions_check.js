@@ -59,3 +59,21 @@ test('all main-platform mindmap actions use the authenticated downloader', () =>
   assert.match(source, /async function downloadMindmap\(/);
   assert.match(source, /downloadAuthenticatedFile\(/);
 });
+
+test('deleted mindmap guidance names the page that owns the refresh action', async () => {
+  const source = fs.readFileSync('js/app.js', 'utf8');
+  const dom = new JSDOM('<body></body>', {runScripts: 'dangerously'});
+  const win = dom.window;
+  win.downloadAuthenticatedFile = async () => { throw new Error('脑图文件已删除；请点击刷新脑图文件'); };
+  win.showToast = (message, type) => { win.lastToast = {message, type}; };
+  loadFunction(win, source, 'mindmapApiPath');
+  loadFunction(win, source, 'mindmapDownloadErrorMessage');
+  loadFunction(win, source, 'downloadMindmap');
+
+  assert.equal(await win.downloadMindmap('case-set-1'), false);
+  assert.deepEqual(win.lastToast, {
+    message: '脑图文件已清理。请到“AI 生成用例 → 脑图中心”点击“刷新脑图文件”后再下载。',
+    type: 'error',
+  });
+  dom.window.close();
+});

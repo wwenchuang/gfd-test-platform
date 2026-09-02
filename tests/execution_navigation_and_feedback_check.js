@@ -186,6 +186,67 @@ test('the execution module picker keeps business modules clear and consolidates 
   );
 });
 
+test('batch move requires an explicit target instead of defaulting to the source module', t => {
+  const dom = new JSDOM(`
+    <body>
+      <div id="modal-batch-move"></div>
+      <div id="batch-move-count"></div>
+      <select id="batch-move-module"></select>
+      <input id="batch-move-overwrite" type="checkbox" checked>
+    </body>
+  `, {runScripts: 'dangerously'});
+  t.after(() => dom.window.close());
+  const win = dom.window;
+  Object.assign(win, {
+    activeWorkflow: 'assets',
+    currentModule: '3D打印基线',
+    modules: {'3D打印基线': ['标牌打印.yaml'], '共享业务基线': ['分享.yaml']},
+    selectedFiles: new Set(),
+    selectedAssetRowsForCurrentFilters: () => [{mod: '3D打印基线', file: '标牌打印.yaml'}],
+    escapeHtml: value => String(value),
+    showToast: () => {},
+  });
+  loadFunction(win, fs.readFileSync('js/agent-status.js', 'utf8'), 'moduleOptionsHtml');
+  const source = fs.readFileSync('js/execution.js', 'utf8');
+  loadFunction(win, source, 'selectedFileItems');
+  loadFunction(win, source, 'showBatchMove');
+
+  win.showBatchMove();
+
+  const target = win.document.getElementById('batch-move-module');
+  assert.equal(target.value, '');
+  assert.match(target.options[0].textContent, /请选择目标模块/);
+  assert.equal(win.document.getElementById('batch-move-overwrite').checked, false);
+});
+
+test('Sonic workspace keeps recent execution history concise and points batch users to assets', t => {
+  const dom = new JSDOM('<body></body>', {runScripts: 'dangerously'});
+  t.after(() => dom.window.close());
+  const win = dom.window;
+  Object.assign(win, {
+    latestJobs: Array.from({length: 30}, (_, index) => ({
+      job_id: `job-${index}`,
+      module: '3D打印基线',
+      file: `用例-${index}.yaml`,
+      status: 'success',
+      finished_at: '2026-09-02T12:00:00',
+    })),
+    currentFile: '',
+    currentModule: '',
+    isApkInstallJob: () => false,
+    escapeHtml: value => String(value),
+    jobStatusText: () => '成功',
+    renderEmptyState: () => 'empty',
+  });
+  loadFunction(win, fs.readFileSync('js/execution.js', 'utf8'), 'renderExecutionTabSonic');
+
+  win.document.body.innerHTML = win.renderExecutionTabSonic();
+
+  assert.equal(win.document.querySelectorAll('tbody tr').length, 12);
+  assert.match(win.document.body.textContent, /最近任务.*显示 12\/30 条/);
+  assert.match(win.document.body.textContent, /批量同步请到.*用例资产.*勾选/);
+});
+
 test('closing an unsubmitted generate form restores the workflow that opened it', t => {
   const source = fs.readFileSync('js/app.js', 'utf8');
   const dom = new JSDOM('<body></body>', {runScripts: 'dangerously'});

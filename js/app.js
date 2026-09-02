@@ -484,6 +484,10 @@ function renderGenerateBusinessOptions(selectedValue = null) {
     ? (document.querySelector('input[name="generate-business"]:checked')?.value || '')
     : String(selectedValue || '');
   const lines = packageName ? taskAppBusinessLines(packageName) : [];
+  if (!packageName) {
+    container.innerHTML = '<span class="generate-business-empty">请先选择应用，再选择本次测试所属业务。</span>';
+    return;
+  }
   if (!lines.length) {
     container.innerHTML = '<span class="generate-business-empty">当前应用没有启用的业务线，请先到应用配置中维护。</span>';
     return;
@@ -3179,6 +3183,14 @@ function mindmapApiPath(caseSetId) {
   return `/cases/mindmap?case_set_id=${encodeURIComponent(caseSetId || '')}`;
 }
 
+function mindmapDownloadErrorMessage(error) {
+  const message = String(error?.message || error || '脑图下载失败').trim();
+  if (/脑图文件已删除|刷新脑图文件/.test(message)) {
+    return '脑图文件已清理。请到“AI 生成用例 → 脑图中心”点击“刷新脑图文件”后再下载。';
+  }
+  return message || '脑图下载失败';
+}
+
 async function downloadMindmap(caseSetId, title='测试用例') {
   const id = String(caseSetId || '').trim();
   if (!id) {
@@ -3191,7 +3203,7 @@ async function downloadMindmap(caseSetId, title='测试用例') {
     showToast(`✓ 已下载脑图：${filename}`, 'success');
     return true;
   } catch (error) {
-    showToast(error.message || '脑图下载失败', 'error');
+    showToast(mindmapDownloadErrorMessage(error), 'error');
     return false;
   }
 }

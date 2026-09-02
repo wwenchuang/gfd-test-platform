@@ -1969,7 +1969,7 @@ function renderAgentCenter() {
   const elapsedText = agentRunElapsedText(run);
   const progressPct = agentRunProgressPct(run);
 
-  count.textContent = run ? `${agentModeText(run.mode)} · ${agentStatusText(run.status)}${agentRunIsTerminal(run) ? ' · 最近记录' : ''}` : '暂无 Agent 任务';
+  count.textContent = run ? `${agentModeText(run.mode)} · ${agentRunDisplayStatusText(run)}${agentRunIsTerminal(run) ? ' · 最近记录' : ''}` : '暂无 Agent 任务';
 
   if (!run) {
     const recentRuns = agentRuns.slice(0, 5);
@@ -2027,7 +2027,7 @@ function renderAgentCenter() {
           <strong>目标</strong><span>${escapeHtml((run.target || run.options?.goal || '').slice(0, 60))}</span>
           <strong>进度</strong><span>${progressPct}%</span>
           <strong>已耗时</strong><span>${elapsedText}</span>
-          <strong>状态</strong><span class="status-pill ${escapeHtml(agentRunPillClass(run))}">${escapeHtml(agentStatusText(run.status))}</span>
+          <strong>状态</strong><span class="status-pill ${escapeHtml(agentRunPillClass(run))}">${escapeHtml(agentRunDisplayStatusText(run))}</span>
           <strong>风险</strong><span>${escapeHtml(agentRiskText(run.riskLevel))}${run.riskHits?.length ? ' · ' + run.riskHits.join('、') : ''}</span>
         </div>
         <div style="margin-top:8px;height:6px;background:var(--surface3);border-radius:3px;overflow:hidden;">
@@ -2080,7 +2080,13 @@ function renderAgentCenter() {
             return renderArtifactItem('匹配用例', mcText, mc || artifacts.matchedCount, 'cases');
           })()}
           ${renderArtifactItem('质量检查', artifacts.qualityReport ? (artifacts.qualityReport.statusText || '已生成') : '', artifacts.qualityReport, 'quality')}
-          ${renderArtifactItem('生成YAML', (artifacts.generatedYaml || artifacts.yamlDraft) ? '已生成' : '', '', artifacts.generatedYaml || artifacts.yamlDraft, 'yaml')}
+          ${(() => {
+            const rows = typeof agentYamlDisplayRows === 'function' ? agentYamlDisplayRows(artifacts) : [];
+            const data = rows.length
+              ? rows
+              : (artifacts.generatedYaml || artifacts.yamlDraft || artifacts.generatedYamlPaths || artifacts.generatedYamlPath || '');
+            return renderArtifactItem('生成YAML', rows.length ? `${rows.length} 份` : (data ? '已生成' : ''), data, 'yaml');
+          })()}
           ${renderArtifactItem('同步至 Sonic 平台', artifacts.sonicSync ? (agentToolStatusText(artifacts.sonicSync.status) || '已完成') : '', artifacts.sonicSync, 'sonic')}
           ${(() => {
             const progress = artifacts.rerunProgress || artifacts.jobProgress || {};
@@ -2620,7 +2626,8 @@ function applyLazyLoadForSection(sectionKey) {
   }
 
   if (NEEDS_JOBS.has(sectionKey) && typeof ensureJobsLoaded === 'function') {
-    ensureJobsLoaded().then(() => {
+    const requiresFullJobHistory = ['reports', 'failure_analysis'].includes(sectionKey);
+    ensureJobsLoaded(requiresFullJobHistory ? {force: true} : undefined).then(() => {
       if (sectionKey === 'reports' && activeWorkflow === 'reports' && typeof showReportsCenter === 'function') showReportsCenter();
       if (sectionKey === 'failure_analysis' && activeWorkflow === 'failure_analysis' && typeof showAiRepairCenter === 'function') showAiRepairCenter();
     }).catch(() => {});
@@ -4157,7 +4164,7 @@ function showSonicConfigCenter() {
     <div class="review-head"><div><div class="workflow-kicker">执行环境 · Runner / 设备 / Sonic</div><h2>执行环境</h2><p>先确认设备在线和应用绑定，再执行用例。进入本页不会自动扫描或修改 Sonic 数据。</p></div><div class="review-actions"><button class="btn-sm" onclick="showPreflightDashboard()">快速体检</button><button class="btn-sm" onclick="showPreflightDashboard(true)">深度体检</button><button class="btn-sm primary" onclick="scanLegacySonicCases('all')">扫描旧/重复步骤</button></div></div>
     <div class="review-stats"><div class="review-stat"><strong>${onlineDevices.length}</strong><span>在线设备</span></div><div class="review-stat"><strong>${catalog.unavailable ? '—' : `${sonicBound.length}/${taskApps.length}`}</strong><span>已绑定 Sonic 应用</span></div></div>
     <div class="management-list">
-      ${catalog.unavailable ? taskAppCatalogNoticeHtml(catalog) : `${taskAppCatalogNoticeHtml(catalog)}${taskApps.length ? taskApps.map(app => `<div class="management-row"><div class="management-row-main"><strong>${escapeHtml(app.name || app.package)}</strong><span>${escapeHtml(app.package || '-')}</span><small>${escapeHtml([app.sonic_project_name || app.sonic_project_id || '项目未绑定', app.sonic_suite_name || app.sonic_suite_id || '测试套未绑定'].join(' · '))}</small></div><button class="btn-sm" onclick="openTaskAppEditor(${jsArg(app.package || '')})">编辑绑定</button></div>`).join('') : '<div class="job-empty">暂无应用绑定信息。</div>'}`}
+      ${catalog.unavailable ? taskAppCatalogNoticeHtml(catalog) : `${taskAppCatalogNoticeHtml(catalog)}${taskApps.length ? taskApps.map(app => `<div class="management-row"><div class="management-row-main"><strong>${escapeHtml(app.name || app.package)}</strong><span>${escapeHtml(app.package || '-')}</span><small>${escapeHtml([app.sonic_project_name || app.sonic_project_id || '项目未绑定', app.sonic_suite_name || app.sonic_suite_id || '测试套未绑定'].join(' · '))}</small></div><button class="btn-sm" onclick="openTaskAppEditor(${jsArg(app.package || '')}, 1)">编辑绑定</button></div>`).join('') : '<div class="job-empty">暂无应用绑定信息。</div>'}`}
     </div>
   </div>`;
 }
@@ -4305,6 +4312,7 @@ async function submitFeishuDraft(draftId) {
 }
 
 function showTaskApps() {
+  if (typeof hideToast === 'function') hideToast();
   if (!['app_config', 'feishu_config'].includes(activeWorkflow)) {
     setActiveWorkflow('app_config');
   }
@@ -4316,7 +4324,8 @@ function showTaskApps() {
 }
 
 function isTemporaryAgentModule(moduleName = '') {
-  return /^AI[_ ]Agent[_ ]修复重跑[_ ]agent-/i.test(String(moduleName || ''));
+  const normalized = String(moduleName || '').trim();
+  return /^AI[_ ]Agent(?:[_ ]|$)/i.test(normalized) || /^cache$/i.test(normalized);
 }
 
 function taskAppBusinessModuleNames() {
@@ -4446,6 +4455,7 @@ function clearTaskAppForm() {
 function editTaskApp(packageName, step = 0) {
   const app = taskApps.find(item => item.package === packageName);
   if (!app) return;
+  if (typeof hideToast === 'function') hideToast();
   document.getElementById('task-app-name').value = app.name || '';
   document.getElementById('task-app-package').value = app.package || '';
   document.getElementById('task-app-enabled').checked = app.enabled !== false;

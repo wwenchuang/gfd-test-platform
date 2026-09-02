@@ -49,6 +49,8 @@ test('cancelled Agent runs stay separate from partial business results', () => {
   assert.equal(win.agentRunCardStatusClass(completedPartial), 'partial');
   assert.equal(win.agentRunProgressColor(completedPartial), 'var(--warn)');
   assert.match(source, /<option value="cancelled"[^>]*>已取消<\/option>/);
+  assert.match(source, /count\.textContent = run \? `\$\{agentModeText\(run\.mode\)\} · \$\{agentRunDisplayStatusText\(run\)/);
+  assert.match(source, /<strong>状态<\/strong><span[^>]*>\$\{escapeHtml\(agentRunDisplayStatusText\(run\)\)\}<\/span>/);
+  assert.match(source, /agentYamlDisplayRows\(artifacts\)/);
   dom.window.close();
 });
-

@@ -19,6 +19,7 @@ VENV_DIR="${VENV_DIR:-${APP_DIR}/.venv}"
 WEB_CONTAINER="${WEB_CONTAINER:-sonic-server-272-midscene-reports-1}"
 NGINX_CLIENT_MAX_BODY_SIZE="${NGINX_CLIENT_MAX_BODY_SIZE:-300m}"
 NGINX_UPLOAD_LIMIT_CONF="${NGINX_UPLOAD_LIMIT_CONF:-/etc/nginx/conf.d/midscene-upload-size.conf}"
+NGINX_STATIC_CACHE_CONF="${NGINX_STATIC_CACHE_CONF:-/etc/nginx/conf.d/midscene-static-cache.conf}"
 RELEASE_REVISION="${RELEASE_REVISION:-}"
 TASK_SERVICE_MEMORY_HIGH="${TASK_SERVICE_MEMORY_HIGH:-2G}"
 TASK_SERVICE_MEMORY_MAX="${TASK_SERVICE_MEMORY_MAX:-3G}"
@@ -144,6 +145,7 @@ install -m 0644 -o "${USER_NAME}" -g "${GROUP_NAME}" "${SCRIPT_DIR}/midscene-api
 install -m 0755 -o "${USER_NAME}" -g "${GROUP_NAME}" "${SCRIPT_DIR}/api-testing-migrate.sh" "${APP_DIR}/deploy/api-testing-migrate.sh"
 install -m 0644 -o "${USER_NAME}" -g "${GROUP_NAME}" "${SCRIPT_DIR}/api-testing-compose.yml" "${APP_DIR}/deploy/api-testing-compose.yml"
 install -m 0644 -o "${USER_NAME}" -g "${GROUP_NAME}" "${SCRIPT_DIR}/nginx-midscene-task.conf" "${APP_DIR}/deploy/nginx-midscene-task.conf"
+install -m 0644 -o "${USER_NAME}" -g "${GROUP_NAME}" "${SCRIPT_DIR}/nginx-static-cache.conf" "${APP_DIR}/deploy/nginx-static-cache.conf"
 install -m 0644 -o "${USER_NAME}" -g "${GROUP_NAME}" "${SRC_DIR}/requirements-api-testing.txt" "${APP_DIR}/requirements-api-testing.txt"
 install -m 0644 -o "${USER_NAME}" -g "${GROUP_NAME}" "${SRC_DIR}/requirements-api-testing-dev.txt" "${APP_DIR}/requirements-api-testing-dev.txt"
 if [ -f "${SRC_DIR}/sonic-midscene-task-runner.groovy" ]; then
@@ -243,10 +245,11 @@ if command -v docker >/dev/null 2>&1 && docker ps --format '{{.Names}}' | grep -
       echo "已同步页面到 Docker 容器：${WEB_CONTAINER}:${target_html}"
     fi
   done
+  docker cp "${SCRIPT_DIR}/nginx-static-cache.conf" "${WEB_CONTAINER}:/etc/nginx/conf.d/midscene-static-cache.conf"
   docker exec "${WEB_CONTAINER}" sh -lc "if [ -d /etc/nginx ]; then find /etc/nginx -type f \( -name '*.conf' -o -name 'nginx.conf' \) -print | while IFS= read -r f; do tmp=\"/tmp/nginx-conf.\$\$.tmp\"; sed 's/client_max_body_size[[:space:]][^;]*;/client_max_body_size ${NGINX_CLIENT_MAX_BODY_SIZE};/g' \"\$f\" > \"\$tmp\" && cat \"\$tmp\" > \"\$f\"; rm -f \"\$tmp\"; done; fi; mkdir -p /etc/nginx/conf.d; printf 'client_max_body_size ${NGINX_CLIENT_MAX_BODY_SIZE};\nabsolute_redirect off;\n' > /etc/nginx/conf.d/midscene-upload-size.conf && nginx -t" \
     && docker exec "${WEB_CONTAINER}" sh -lc "nginx -s reload 2>/dev/null || true" \
     && echo "已更新 Docker Nginx 上传上限：${NGINX_CLIENT_MAX_BODY_SIZE}" \
-    || docker exec "${WEB_CONTAINER}" sh -lc "rm -f /etc/nginx/conf.d/midscene-upload-size.conf; nginx -t >/dev/null 2>&1 || true"
+    || docker exec "${WEB_CONTAINER}" sh -lc "rm -f /etc/nginx/conf.d/midscene-upload-size.conf /etc/nginx/conf.d/midscene-static-cache.conf; nginx -t >/dev/null 2>&1 || true"
   docker exec "${WEB_CONTAINER}" sh -lc "nginx -s reload 2>/dev/null || true"
 fi
 
@@ -260,11 +263,12 @@ if command -v nginx >/dev/null 2>&1 && [ -d "$(dirname "${NGINX_UPLOAD_LIMIT_CON
     done
   fi
   printf 'client_max_body_size %s;\nabsolute_redirect off;\n' "${NGINX_CLIENT_MAX_BODY_SIZE}" > "${NGINX_UPLOAD_LIMIT_CONF}"
+  install -m 0644 "${SCRIPT_DIR}/nginx-static-cache.conf" "${NGINX_STATIC_CACHE_CONF}"
   if nginx -t; then
     systemctl reload nginx 2>/dev/null || nginx -s reload 2>/dev/null || true
     echo "已更新宿主机 Nginx 上传上限：${NGINX_CLIENT_MAX_BODY_SIZE}"
   else
-    rm -f "${NGINX_UPLOAD_LIMIT_CONF}"
+    rm -f "${NGINX_UPLOAD_LIMIT_CONF}" "${NGINX_STATIC_CACHE_CONF}"
     nginx -t >/dev/null 2>&1 || true
     echo "警告：宿主机 Nginx 上传上限配置校验失败，已回滚 ${NGINX_UPLOAD_LIMIT_CONF}"
   fi

@@ -29,6 +29,7 @@ function fixture(t, { workflow = 'app_config', deleteWait, catalogLoaded = true,
   const calls = [];
   const toasts = [];
   let catalogReloads = 0;
+  let feedbackClears = 0;
   const forbiddenNetwork = [];
   const blockNetwork = () => {
     forbiddenNetwork.push('unexpected real network request');
@@ -63,6 +64,7 @@ function fixture(t, { workflow = 'app_config', deleteWait, catalogLoaded = true,
     runnerDevices: [{id: 'fixture-device', online: true}],
     confirm: () => true,
     showToast: (message, type) => toasts.push({ message, type }),
+    hideToast: () => { feedbackClears += 1; },
     loadModules: async () => {
       catalogReloads += 1;
       context.AppState.loaded.taskApps = true;
@@ -88,7 +90,10 @@ function fixture(t, { workflow = 'app_config', deleteWait, catalogLoaded = true,
   });
   vm.runInContext(fs.readFileSync(path.join(ROOT, 'js/form-steps.js'), 'utf8'), context);
   loadFunctions(context, 'js/app.js', ['escapeHtml', 'jsArg']);
-  loadFunctions(context, 'js/utils.js', ['defaultBusinessLines']);
+  loadFunctions(context, 'js/utils.js', ['defaultBusinessLines', 'taskAppBusinessLines']);
+  loadFunctions(context, 'js/app.js', [
+    'selectedGenerateApplication', 'enabledGenerateApplications', 'renderGenerateBusinessOptions',
+  ]);
   loadFunctions(context, 'js/agent-status.js', [
     'resetYamlToolbarForManager', 'setManagementToolbar', 'taskAppCatalogPageState', 'taskAppCatalogNoticeHtml',
     'showAppConfigCenter', 'reloadTaskAppCatalog', 'showFeishuConfigCenter', 'showSonicConfigCenter',
@@ -113,8 +118,40 @@ function fixture(t, { workflow = 'app_config', deleteWait, catalogLoaded = true,
     assert.deepEqual(forbiddenNetwork, []);
   };
   t.after(() => assert.deepEqual(forbiddenNetwork, []));
-  return { run, field, calls, toasts, selectedModules, selectModule, expectCalls, catalogReloads: () => catalogReloads };
+  return {
+    run, field, calls, toasts, selectedModules, selectModule, expectCalls,
+    catalogReloads: () => catalogReloads,
+    feedbackClears: () => feedbackClears,
+  };
 }
+
+test('opening or switching the application editor clears stale operation feedback', t => {
+  const f = fixture(t);
+  f.run('openTaskAppEditor()');
+  f.run(`editTaskApp('${APP_A}')`);
+  assert.equal(f.feedbackClears(), 2);
+});
+
+test('generation asks for an application before diagnosing its business configuration', t => {
+  const f = fixture(t);
+  f.field('generate-application').innerHTML = '<option value="">选择已启用应用</option>';
+  f.field('generate-application').value = '';
+
+  f.run(`renderGenerateBusinessOptions('')`);
+
+  const text = f.field('generate-business-options').textContent;
+  assert.match(text, /请先选择应用/);
+  assert.doesNotMatch(text, /当前应用没有启用的业务线/);
+});
+
+test('application ownership hides cache and Agent history modules', t => {
+  const f = fixture(t);
+  f.run(`modules.cache = []; modules['AI_Agent_草稿_agent-1'] = []; modules['AI_Agent_修复重跑_agent-2'] = ['repair.yaml']`);
+
+  const names = f.run('taskAppBusinessModuleNames()');
+
+  assert.deepEqual(Array.from(names), ['模块丙', '模块乙', '模块甲']);
+});
 
 test('application center shows a loading state instead of false zero counts', t => {
   const f = fixture(t, {catalogLoaded: false});
@@ -139,6 +176,18 @@ test('execution environment does not publish false Sonic binding counts while ap
   assert.match(text, /正在加载应用配置/);
   assert.match(text, /1在线设备/);
   assert.doesNotMatch(text, /1\/2已绑定 Sonic 应用/);
+});
+
+test('execution environment edit binding opens the Sonic step directly', t => {
+  const f = fixture(t, {workflow: 'sonic_config'});
+  f.run('showSonicConfigCenter()');
+  const configure = f.field('editor-area').querySelector('.management-row button');
+
+  f.run(configure.getAttribute('onclick'));
+
+  assert.equal(f.run('FormSteps.currentStep'), 1);
+  assert.equal(f.field('task-app-sonic-project-name').closest('.form-step-content').style.display, 'block');
+  assert.equal(f.field('task-app-package').value, APP_A);
 });
 
 test('catalog retry rerenders the notification center with the loaded readiness count', async t => {
