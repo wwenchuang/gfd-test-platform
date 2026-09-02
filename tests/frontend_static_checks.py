@@ -429,7 +429,7 @@ def main():
     require("GENERATION_RECORD_PAGE_SIZE = 20" in app_js and "loadMoreGenerationRecords" in app_js, "Generation history must render incrementally instead of creating every record at once")
     require("请先选择应用，再查看该应用的页面知识" in app_js, "Generation must not load a fallback application's knowledge before the user chooses an application")
     require("请先选择应用，再选择本次测试所属业务" in app_js, "Generation must not diagnose missing business lines before the user chooses an application")
-    require('execution.js?v=20260828-full-platform-ux-20260902-a105-agent-scopes' in html, "execution must publish the A105 Agent install return flow")
+    require('execution.js?v=20260828-full-platform-ux-20260902-a106-execution-actions' in html, "execution must publish the A106 execution action fixes")
     require('empty-states.js?v=20260828-full-platform-ux-20260902-a105-agent-scopes' in html, "empty states must publish the A105 Agent install return flow")
     require('agent-workbench.js?v=20260828-full-platform-ux-20260902-a105-agent-scopes' in html, "Agent workbench must publish the A105 analysis and module scope controls")
     require('utils.js?v=20260828-full-platform-ux-20260902-a104-review-controls' in html, "utils must publish the A104 Safari download and upload controls")

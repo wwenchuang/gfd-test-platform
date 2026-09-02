@@ -328,9 +328,10 @@ test('batch move requires an explicit target instead of defaulting to the source
     escapeHtml: value => String(value),
     showToast: () => {},
   });
-  loadFunction(win, fs.readFileSync('js/agent-status.js', 'utf8'), 'moduleOptionsHtml');
   const source = fs.readFileSync('js/execution.js', 'utf8');
+  loadFunction(win, source, 'isExecutionHistoryModule');
   loadFunction(win, source, 'selectedFileItems');
+  loadFunction(win, source, 'batchMoveModuleOptionsHtml');
   loadFunction(win, source, 'showBatchMove');
 
   win.showBatchMove();
@@ -339,6 +340,85 @@ test('batch move requires an explicit target instead of defaulting to the source
   assert.equal(target.value, '');
   assert.match(target.options[0].textContent, /请选择目标模块/);
   assert.equal(win.document.getElementById('batch-move-overwrite').checked, false);
+});
+
+test('batch move excludes its only source and keeps generated repair history out of targets', t => {
+  const dom = new JSDOM(`
+    <body>
+      <div id="modal-batch-move"></div>
+      <div id="batch-move-count"></div>
+      <select id="batch-move-module"></select>
+      <input id="batch-move-overwrite" type="checkbox">
+    </body>
+  `, {runScripts: 'dangerously'});
+  t.after(() => dom.window.close());
+  const win = dom.window;
+  Object.assign(win, {
+    activeWorkflow: 'assets',
+    currentModule: 'AI测试',
+    modules: {
+      'AI测试': ['试卷夹.yaml'],
+      '3D打印基线': ['打印.yaml'],
+      '共享业务基线': ['分享.yaml'],
+      '普通草稿': ['草稿.yaml'],
+      'AI_Agent_修复重跑_agent-123': ['repair.yaml'],
+      'cache': [],
+    },
+    selectedFiles: new Set(),
+    selectedAssetRowsForCurrentFilters: () => [{mod: 'AI测试', file: '试卷夹.yaml'}],
+    escapeHtml: value => String(value),
+    showToast: () => {},
+  });
+  const source = fs.readFileSync('js/execution.js', 'utf8');
+  loadFunction(win, source, 'isExecutionHistoryModule');
+  loadFunction(win, source, 'selectedFileItems');
+  loadFunction(win, source, 'batchMoveModuleOptionsHtml');
+  loadFunction(win, source, 'showBatchMove');
+
+  win.showBatchMove();
+
+  const target = win.document.getElementById('batch-move-module');
+  const labels = Array.from(target.options, option => option.textContent);
+  assert.doesNotMatch(labels.join('\n'), /AI测试|AI_Agent_|cache/);
+  assert.match(labels.join('\n'), /3D打印基线|共享业务基线|普通草稿/);
+  assert.deepEqual(Array.from(target.querySelectorAll('optgroup'), group => group.label), [
+    '业务与固定基线',
+    '其他模块',
+  ]);
+});
+
+test('Trace actions use reliable viewer links and distinguish view from refresh', t => {
+  const source = fs.readFileSync('js/execution.js', 'utf8');
+  const dom = new JSDOM('<body></body>', {runScripts: 'dangerously'});
+  t.after(() => dom.window.close());
+  const win = dom.window;
+  Object.assign(win, {
+    executionActiveTab: 'trace',
+    debugTraceLoading: false,
+    debugTraceError: '',
+    debugSnapshotError: '',
+    debugTraceData: {traces: [{traceId: 'trace 1', title: '打印链路', status: 'success', sourceType: 'job'}]},
+    debugSnapshotData: {snapshots: [{snapshotId: 'snapshot-1', sourceId: 'trace 1'}]},
+    selectedTraceSnapshots: [],
+    escapeHtml: value => String(value),
+    jsArg: value => JSON.stringify(value),
+    renderEmptyState: () => '',
+  });
+  loadFunction(win, source, 'renderExecutionTabTrace');
+  win.document.body.innerHTML = win.renderExecutionTabTrace();
+
+  const links = Array.from(win.document.querySelectorAll('a[target="_blank"]'));
+  assert.deepEqual(links.map(link => link.textContent.trim()), ['打开 Viewer', '查看', '查看 Trace']);
+  assert.equal(links[0].getAttribute('href'), '/trace-viewer.html');
+  assert.equal(links[1].getAttribute('href'), '/trace-viewer.html?id=trace%201');
+  assert.equal(links[2].getAttribute('rel'), 'noopener');
+  assert.doesNotMatch(win.document.body.innerHTML, /window\.open/);
+
+  loadFunction(win, source, 'executionTraceActionLabel');
+  win.executionActiveTab = 'debug';
+  assert.equal(win.executionTraceActionLabel(), '查看 Trace');
+  win.executionActiveTab = 'trace';
+  assert.equal(win.executionTraceActionLabel(), '刷新 Trace');
 });
 
 test('Sonic workspace keeps recent execution history concise and points batch users to assets', t => {

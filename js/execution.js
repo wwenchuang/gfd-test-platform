@@ -119,13 +119,17 @@ function renderExecutionCenter() {
         <div class="review-actions">
           <button class="btn-sm primary" onclick="loadJobs(true).then(()=>showExecutionCenter())">刷新任务</button>
           <button class="btn-sm" onclick="loadRunnerDevices && loadRunnerDevices({force:true}).then(()=>showExecutionCenter())">刷新 Runner</button>
-          <button class="btn-sm" onclick="setExecutionTab('trace')" ${debugTraceLoading ? 'disabled' : ''}>刷新 Trace</button>
+          <button class="btn-sm" onclick="setExecutionTab('trace')" ${debugTraceLoading ? 'disabled' : ''}>${executionTraceActionLabel()}</button>
         </div>
       </div>
       <div class="agent-tabs execution-tabs">${tabsHtml}</div>
       <div class="execution-tab-body">${body}</div>
     </div>
   `;
+}
+
+function executionTraceActionLabel() {
+  return executionActiveTab === 'trace' ? '刷新 Trace' : '查看 Trace';
 }
 
 function isExecutionHistoryModule(moduleName = '') {
@@ -883,7 +887,7 @@ function renderExecutionTabTrace() {
         </div>
         <div class="review-actions">
           <button class="btn-sm primary" onclick="refreshDebugTracePanel()" ${debugTraceLoading ? 'disabled' : ''}>刷新 Trace</button>
-          <button class="btn-sm" onclick="window.open('/trace-viewer.html', '_blank')">打开 Viewer</button>
+          <a class="btn-sm" href="/trace-viewer.html" target="_blank" rel="noopener">打开 Viewer</a>
         </div>
       </div>
       ${debugTraceLoading ? '<p role="status">正在加载 Trace 与快照，请稍候…</p>' : ''}
@@ -908,7 +912,7 @@ function renderExecutionTabTrace() {
             <td>${escapeHtml(String((trace.summary && trace.summary.totalNodes) || 0))}</td>
             <td class="report-cell-time">${escapeHtml(String(trace.updatedAt || '').replace('T',' ').slice(0,19) || '-')}</td>
             <td class="report-cell-actions">
-              <button class="btn-sm" onclick="openTraceViewer(${jsArg(trace.traceId || trace.id)})">查看</button>
+              <a class="btn-sm" href="/trace-viewer.html?id=${encodeURIComponent(trace.traceId || trace.id || '')}" target="_blank" rel="noopener">查看</a>
               <button class="btn-sm primary" onclick="saveDebugSnapshot(${jsArg(trace.traceId || trace.id)})">保存快照</button>
             </td>
           </tr>
@@ -928,7 +932,7 @@ function renderExecutionTabTrace() {
               <td class="report-cell-time">${escapeHtml(snapshot.createdAt || '-')}</td>
               <td class="report-cell-actions">
                 <button class="btn-sm" onclick="replayDebugSnapshot(${jsArg(id)}, true)">回放计划</button>
-                <button class="btn-sm" onclick="openTraceViewer(${jsArg(snapshot.sourceId || '')})">查看 Trace</button>
+                <a class="btn-sm" href="/trace-viewer.html?id=${encodeURIComponent(snapshot.sourceId || '')}" target="_blank" rel="noopener">查看 Trace</a>
               </td>
             </tr>
           `;
@@ -1582,6 +1586,23 @@ function selectedFileItems() {
   });
 }
 
+function batchMoveModuleOptionsHtml(items = []) {
+  const sources = new Set(items.map(item => String(item.module || '').trim()).filter(Boolean));
+  const onlySource = sources.size === 1 ? [...sources][0] : '';
+  const candidates = Object.keys(modules || {})
+    .filter(mod => mod !== onlySource)
+    .filter(mod => !isExecutionHistoryModule(mod) && !/^cache$/i.test(mod))
+    .sort((a, b) => a.localeCompare(b, 'zh-CN'));
+  const groups = [
+    ['业务与固定基线', candidates.filter(mod => /业务|基线/.test(mod))],
+    ['其他模块', candidates.filter(mod => !/业务|基线/.test(mod))],
+  ];
+  return groups
+    .filter(([, names]) => names.length)
+    .map(([label, names]) => `<optgroup label="${label}">${names.map(mod => `<option value="${escapeHtml(mod)}">${escapeHtml(mod)}</option>`).join('')}</optgroup>`)
+    .join('');
+}
+
 function showBatchMove() {
   const items = selectedFileItems();
   if (!items.length) {
@@ -1589,7 +1610,7 @@ function showBatchMove() {
     return;
   }
   document.getElementById('batch-move-count').textContent = `已选择 ${items.length} 个 YAML 文件`;
-  document.getElementById('batch-move-module').innerHTML = `<option value="">请选择目标模块</option>${moduleOptionsHtml('')}`;
+  document.getElementById('batch-move-module').innerHTML = `<option value="">请选择目标模块</option>${batchMoveModuleOptionsHtml(items)}`;
   document.getElementById('batch-move-overwrite').checked = false;
   document.getElementById('modal-batch-move').classList.add('show');
 }
