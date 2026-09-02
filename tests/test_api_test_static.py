@@ -35,6 +35,15 @@ class _StaticHandler:
 
 
 class ApiTestStaticFilesTest(unittest.TestCase):
+    def test_committed_bundle_contains_current_retry_scope_labels(self):
+        root = Path(_PROJECT_ROOT) / 'api-test'
+        bundles = list((root / 'assets').glob('*.js'))
+
+        self.assertTrue(bundles, 'API testing build must include a JavaScript bundle')
+        bundle_text = '\n'.join(path.read_text(encoding='utf-8') for path in bundles)
+        self.assertIn('仅重跑当前失败项', bundle_text)
+        self.assertIn('重跑全部失败项', bundle_text)
+
     def test_serves_base_assets_and_spa_refresh(self):
         root = Path(_PROJECT_ROOT) / 'api-test'
         asset = next((root / 'assets').glob('*.js'))
