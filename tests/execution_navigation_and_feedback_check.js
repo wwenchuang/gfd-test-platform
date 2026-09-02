@@ -88,6 +88,37 @@ test('returning from a repair draft restores a real execution tab instead of a b
   assert.deepEqual(calls, [['workflow', 'execute'], ['tab', 'debug']]);
 });
 
+test('the optional Agent install step returns to the preserved Agent form', async t => {
+  const executionSource = fs.readFileSync('js/execution.js', 'utf8');
+  const agentSource = fs.readFileSync('js/agent-workbench.js', 'utf8');
+  const dom = new JSDOM('<body></body>', {runScripts: 'dangerously'});
+  t.after(() => dom.window.close());
+  const win = dom.window;
+  const calls = [];
+  Object.assign(win, {
+    appInstallReturnWorkflow: 'agent',
+    activeWorkflow: 'agent',
+    clearAppInstallFeedback: () => calls.push(['clear']),
+    activateWorkflow: async key => calls.push(['workflow', key]),
+    setExecutionTab: (key, options) => calls.push(['tab', key, options]),
+    captureAgentFormDraft: () => calls.push(['capture']),
+    showToast: () => {},
+  });
+  loadFunction(win, executionSource, 'returnFromAppInstall');
+  await win.returnFromAppInstall();
+  assert.deepEqual(calls, [['clear'], ['workflow', 'agent']]);
+  assert.equal(win.appInstallReturnWorkflow, 'execute');
+
+  calls.length = 0;
+  loadFunction(win, agentSource, 'openAgentAppInstall');
+  await win.openAgentAppInstall();
+  assert.deepEqual(JSON.parse(JSON.stringify(calls)), [
+    ['capture'],
+    ['workflow', 'execute'],
+    ['tab', 'install', {returnWorkflow: 'agent'}],
+  ]);
+});
+
 test('editing the APK install form clears contradictory validation feedback immediately', t => {
   const source = fs.readFileSync('js/execution.js', 'utf8');
   const dom = new JSDOM(`
@@ -112,7 +143,7 @@ test('editing the APK install form clears contradictory validation feedback imme
   assert.match(source, /id="apk-install-file"[^>]+onchange="clearAppInstallFeedback\(\)"/);
   assert.match(source, /id="apk-install-url"[^>]+oninput="clearAppInstallFeedback\(\)"/);
   assert.match(source, /id="apk-install-device" onchange="clearAppInstallFeedback\(\)"/);
-  assert.match(source, /clearAppInstallFeedback\(\); setExecutionTab\('debug'\)/);
+  assert.match(source, /onclick="returnFromAppInstall\(\)"/);
 });
 
 test('mindmap report validation feedback stays visible after an action is rejected', t => {

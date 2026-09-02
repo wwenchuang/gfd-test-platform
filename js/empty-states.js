@@ -31,9 +31,9 @@ const EMPTY_STATES = {
   },
   app_install: {
     icon: '📦', title: '还没有安装包更新任务',
-    desc: '安装 App 是可选步骤；设备已安装正确版本时可以直接调试 YAML。',
-    actions: [{ label: '返回调试执行', fn: "setExecutionTab('debug')" }],
-    tips: ['测试包可上传 APK 或使用可信下载地址', '创建前必须明确选择 Runner 设备', '安装完成后再回到调试执行选择 YAML']
+    desc: '安装 App 是可选步骤；设备已安装正确版本时可以返回刚才的 Agent 或调试流程。',
+    actions: [{ label: '返回上一步', fn: 'returnFromAppInstall()' }],
+    tips: ['测试包可上传 APK 或使用可信下载地址', '创建前必须明确选择 Runner 设备', '从 Agent 进入时可返回原表单继续分析或执行']
   },
   runner: {
     icon: '🖥️', title: '暂无在线 Runner',

@@ -111,8 +111,37 @@ function renderAgentBusinessOptions(preferredValue = '') {
   }
 }
 
+function agentModuleNames() {
+  const option = document.getElementById('agent-app-name')?.selectedOptions?.[0];
+  let configured = [];
+  const hasConfiguredModules = option && Object.prototype.hasOwnProperty.call(option.dataset || {}, 'modules');
+  try {
+    configured = JSON.parse(option?.dataset?.modules || '[]');
+  } catch (_) {
+    configured = [];
+  }
+  const names = hasConfiguredModules ? configured : Object.keys(typeof modules === 'object' && modules ? modules : {});
+  return [...new Set(names.map(value => String(value || '').trim()).filter(Boolean))];
+}
+
+function renderAgentModuleOptions(preferredValue = '') {
+  const select = document.getElementById('agent-module');
+  if (!select) return;
+  const names = agentModuleNames();
+  select.innerHTML = '<option value="">请选择目标模块</option>' + names
+    .map(name => `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`)
+    .join('');
+  select.disabled = !names.length;
+  select.value = names.includes(preferredValue) ? preferredValue : '';
+  const hint = document.getElementById('agent-module-hint');
+  if (hint) hint.textContent = names.length
+    ? '只在所选模块内匹配已有 YAML；不会扩大到应用下其他模块。'
+    : '当前应用没有可选模块，请先到“应用配置”绑定模块。';
+}
+
 function handleAgentApplicationChange() {
   renderAgentBusinessOptions('');
+  renderAgentModuleOptions('');
   refreshAgentRunnerDeviceByApp();
 }
 
@@ -606,7 +635,7 @@ function launchDashboardAgent() {
 
 // Form field IDs used in the Agent workbench for value preservation across re-renders
 const _AGENT_FORM_FIELD_IDS = [
-  'agent-goal', 'agent-app-name', 'agent-business', 'agent-platform', 'agent-scope',
+  'agent-goal', 'agent-app-name', 'agent-business', 'agent-platform', 'agent-scope', 'agent-module',
   'agent-mode-select', 'agent-runner-device', 'agent-failed-job', 'agent-source-type',
   'agent-source-generate-job-id', 'agent-source-case-set-id',
   'agent-source-figma-url', 'agent-source-requirement-text',
@@ -626,12 +655,13 @@ async function openAgentAppInstall() {
       showToast('安装包更新入口还没有加载完成，请稍后再试', 'warn');
       return;
     }
+    captureAgentFormDraft();
     if (typeof activateWorkflow === 'function' && activeWorkflow !== 'execute') {
       await activateWorkflow('execute');
     } else if (typeof setActiveWorkflow === 'function' && activeWorkflow !== 'execute') {
       setActiveWorkflow('execute');
     }
-    setExecutionTab('install');
+    setExecutionTab('install', {returnWorkflow: 'agent'});
   } catch (e) {
     showToast('打开安装包更新失败：' + (e.message || e), 'error');
   }
@@ -703,8 +733,8 @@ async function showAgentWorkbench() {
             <div class="agent-section-head">
               <span>第 2 步</span>
               <div>
-                <strong>执行配置</strong>
-                <em>应用、设备、模式和模型集中在这里选择</em>
+                <strong id="agent-config-title">执行配置</strong>
+                <em id="agent-config-description">应用、设备、模式和模型集中在这里选择</em>
               </div>
             </div>
             <div class="agent-compact-grid">
@@ -738,6 +768,11 @@ async function showAgentWorkbench() {
                   <option value="module">指定模块</option>
                 </select>
               </div>
+              <div class="agent-field" id="agent-module-field" hidden>
+                <label for="agent-module">目标模块</label>
+                <select id="agent-module"><option value="">请选择目标模块</option></select>
+                <div class="form-hint" id="agent-module-hint">只在所选模块内匹配已有 YAML。</div>
+              </div>
               <div class="agent-field">
                 <label for="agent-mode-select">Agent 模式</label>
                 <select id="agent-mode-select" onchange="syncAgentModeRadios()">
@@ -757,7 +792,7 @@ async function showAgentWorkbench() {
                 <input id="agent-model-search" type="search" value="${escapeHtml(agentModelSearchQuery)}" placeholder="搜索模型名称、厂商或标识" oninput="filterAgentTaskModelCatalog(this.value)" ${agentTaskModelCatalogLoaded ? '' : 'hidden'}>
                 <div class="form-hint">默认使用平台模型策略；仅需指定具体模型时再加载完整目录。</div>
               </div>
-              <div class="agent-field agent-wide-field">
+              <div class="agent-field agent-wide-field" id="agent-runner-field">
                 <label for="agent-runner-device">执行机器 / 设备</label>
                 <select id="agent-runner-device" onchange="updateAgentRunnerDeviceHint()">
                   <option value="__AUTO_DEVICE__">自动选择在线设备（推荐）</option>
@@ -765,7 +800,7 @@ async function showAgentWorkbench() {
                 <div class="form-hint agent-device-hint" id="agent-runner-device-hint">正在读取在线 Runner 和设备...</div>
               </div>
             </div>
-            <div class="agent-preflight-strip">
+            <div class="agent-preflight-strip" id="agent-install-strip">
               <div>
                 <strong>App 安装/更新（可选）</strong>
                 <span>默认不安装；验证测试包、蒲公英包或线上回归包时再创建 Runner 安装任务。</span>
@@ -886,6 +921,7 @@ async function showAgentWorkbench() {
   // can snapshot the empty selects while /task-apps is still loading.
   appendAgentAppOptions(document.getElementById('agent-app-name'), agentApplicationCatalog, savedFormState['agent-app-name']?.value);
   renderAgentBusinessOptions(savedFormState['agent-business']?.value || agentBusinessDraft);
+  renderAgentModuleOptions(savedFormState['agent-module']?.value || '');
 
   // Restore preserved form values after innerHTML replacement
   if (Object.keys(savedFormState).length) {
@@ -911,6 +947,7 @@ async function showAgentWorkbench() {
     const businessSelect = document.getElementById('agent-business');
     if (businessSelect) businessSelect.value = agentBusinessDraft;
   }
+  syncAgentModeRadios();
 
   updateAgentRiskHint();
   if (savedFormState['agent-source-type']) {
@@ -969,6 +1006,8 @@ async function loadAppList(preferredValue, preferredBusiness = '') {
       const businessChanged = businessNow !== originalBusiness;
       appendAgentAppOptions(workbenchSelect, apps, appChanged ? workbenchSelect.value : preferredValue);
       renderAgentBusinessOptions(appChanged || businessChanged ? businessNow : preferredBusiness);
+      renderAgentModuleOptions(document.getElementById('agent-module')?.value || '');
+      toggleFailedJobField();
       if (typeof updateAgentRunnerDeviceHint === 'function') updateAgentRunnerDeviceHint();
     }
 
@@ -1110,6 +1149,24 @@ function syncAgentModeRadios() {
   document.querySelectorAll('input[name="agent-mode"]').forEach(radio => {
     radio.checked = radio.value === value;
   });
+  const analysisOnly = value === 'ANALYZE_ONLY';
+  const runnerField = document.getElementById('agent-runner-field');
+  const installStrip = document.getElementById('agent-install-strip');
+  const startButton = document.getElementById('agent-start-btn');
+  const configTitle = document.getElementById('agent-config-title');
+  const configDescription = document.getElementById('agent-config-description');
+  if (runnerField) runnerField.hidden = analysisOnly;
+  if (installStrip) installStrip.hidden = analysisOnly;
+  if (configTitle) configTitle.textContent = analysisOnly ? '分析配置' : '执行配置';
+  if (configDescription) configDescription.textContent = analysisOnly
+    ? '选择应用、业务、分析范围和模型；不会生成 YAML 或下发 Runner'
+    : '应用、设备、模式和模型集中在这里选择';
+  if (startButton) {
+    const busy = typeof agentBusy !== 'undefined' && agentBusy;
+    startButton.textContent = analysisOnly
+      ? (busy ? '分析启动中...' : '开始分析')
+      : (busy ? '启动中...' : '启动 Agent');
+  }
 }
 
 function toggleStepExpanded(el, idx) {
@@ -4097,6 +4154,8 @@ function toggleFailedJobField() {
   const scope = document.getElementById('agent-scope')?.value;
   const field = document.getElementById('agent-failed-job-field');
   if (field) field.style.display = scope === 'failed_rerun' ? '' : 'none';
+  const moduleField = document.getElementById('agent-module-field');
+  if (moduleField) moduleField.hidden = scope !== 'module';
 }
 
 const AGENT_SOURCE_ALLOWED_RE = /\.(txt|md|json|pdf|docx?|mm|ya?ml|png|jpe?g)$/i;
@@ -4385,6 +4444,7 @@ function agentPayloadFromForm(options={}) {
   const business = document.getElementById('agent-business')?.value || '';
   rememberAgentBusiness(business);
   const scope = document.getElementById('agent-scope')?.value || 'auto';
+  const module = scope === 'module' ? (document.getElementById('agent-module')?.value || '') : '';
   const modelInfo = selectedAgentModelInfo();
   const model = modelInfo.kind === 'task-model' ? modelInfo.model : '';
   const sourceMaterials = collectAgentSourceMaterials();
@@ -4396,12 +4456,12 @@ function agentPayloadFromForm(options={}) {
     goal = '基于 Figma 设计稿分析自动化测试';
   }
   const selectedMode = document.querySelector('input[name="agent-mode"]:checked')?.value || 'AUTO_SAFE';
-  const analyzeOnly = selectedMode === 'ANALYZE_ONLY';
-  const mode = analyzeOnly ? 'AUTO_SAFE' : (options.yamlOnly ? 'SEMI_AUTO' : selectedMode);
+  const analyzeOnly = Boolean(options.analyzeOnly) || selectedMode === 'ANALYZE_ONLY';
+  const mode = analyzeOnly ? 'ANALYZE_ONLY' : (options.yamlOnly ? 'SEMI_AUTO' : selectedMode);
   const riskHits = agentRiskHits(goal);
   const platformRisk = riskHits.some(hit => ['覆盖基线', '批量同步', '批量执行'].includes(hit));
-  const autoRunEnabled = !options.yamlOnly && !!document.getElementById('agent-policy-runSonic')?.checked && !platformRisk;
-  const autoRepairEnabled = !options.yamlOnly && !!document.getElementById('agent-policy-autoRepair')?.checked && !platformRisk;
+  const autoRunEnabled = !analyzeOnly && !options.yamlOnly && !!document.getElementById('agent-policy-runSonic')?.checked && !platformRisk;
+  const autoRepairEnabled = !analyzeOnly && !options.yamlOnly && !!document.getElementById('agent-policy-autoRepair')?.checked && !platformRisk;
   const source = collectAgentSourceRefs();
   if (sourceMaterials.figmaUrl && !source.sourceRefs.figmaUrl) {
     source.sourceRefs.figmaUrl = sourceMaterials.figmaUrl;
@@ -4424,6 +4484,7 @@ function agentPayloadFromForm(options={}) {
     business,
     platform,
     scope,
+    module,
     executionMode: 'RUNNER_JOB',
     runnerId: runnerSelection.runner_id,
     deviceId: runnerSelection.device_id,
@@ -4438,18 +4499,18 @@ function agentPayloadFromForm(options={}) {
     testCase: goal,
     autoRun: autoRunEnabled,
     autoRepair: autoRepairEnabled,
-    autoCreateBug: mode === 'FULL_AUTO' && !!document.getElementById('agent-policy-bugDraft')?.checked && !platformRisk,
+    autoCreateBug: !analyzeOnly && mode === 'FULL_AUTO' && !!document.getElementById('agent-policy-bugDraft')?.checked && !platformRisk,
     autoOverwriteBaseline: false,
     maxRetries: 2,
     requireConfirmBeforePrint: riskHits.includes('确认打印') || riskHits.includes('开始打印'),
     riskHits,
     strategy: {
       generateCase: !!document.getElementById('agent-policy-generateCase')?.checked,
-      generateYaml: true,
-      validateYaml: !!document.getElementById('agent-policy-validateYaml')?.checked,
+      generateYaml: !analyzeOnly,
+      validateYaml: !analyzeOnly && !!document.getElementById('agent-policy-validateYaml')?.checked,
       runSonic: autoRunEnabled,
-      safeRerun: !!document.getElementById('agent-policy-safeRerun')?.checked && !platformRisk,
-      bugDraftOnly: !!document.getElementById('agent-policy-bugDraft')?.checked,
+      safeRerun: !analyzeOnly && !!document.getElementById('agent-policy-safeRerun')?.checked && !platformRisk,
+      bugDraftOnly: !analyzeOnly && !!document.getElementById('agent-policy-bugDraft')?.checked,
       yamlOnly: Boolean(options.yamlOnly)
     }
   };
@@ -4467,6 +4528,11 @@ async function previewAgentPlan() {
     document.getElementById('agent-business')?.focus();
     return;
   }
+  if (payload.scope === 'module' && !payload.module) {
+    showToast('请选择目标模块', 'error');
+    document.getElementById('agent-module')?.focus();
+    return;
+  }
   const previewBtn = document.querySelector('.agent-actions .btn-sm:not(.primary):not([onclick*="agent_history"])');
   await LoadingManager.withLoading(async () => {
     try {
@@ -4475,6 +4541,7 @@ async function previewAgentPlan() {
         body: payload
       });
       const plan = data.plan || data;
+      const analysisOnly = payload.mode === 'ANALYZE_ONLY';
       const hits = agentRiskHits(payload.goal);
       const runnerLine = payload.deviceStrategy === 'fixed'
         ? `执行设备：${payload.deviceId || '未指定设备'} / ${payload.runnerId || '任意 Runner'}`
@@ -4484,14 +4551,18 @@ async function previewAgentPlan() {
       const candidateLines = (plan.requirementCandidates || []).map((candidate, index) =>
         `${index + 1}. ${candidate.branch || candidate.name || candidate.id || '需求候选'}`
       );
-      const platformLines = (plan.platformLifecycle || []).map((item, index) => `${index + 1}. ${item}`);
+      const platformLines = (plan.steps || plan.platformLifecycle || []).map((item, index) => {
+        const text = String(item || '').trim();
+        return /^\d+[.、]\s*/.test(text) ? text : `${index + 1}. ${text}`;
+      });
       const lines = [
         'Agent 启动前预览：',
         `模式：${agentModeText(plan.mode || payload.mode)}`,
         `应用：${plan.appName || payload.appName} / ${plan.platform || payload.platform}`,
         `所属业务：${businessLineLabel(payload.business, payload.app_package)}`,
         `范围：${agentScopeText(plan.scope || payload.scope)}`,
-        runnerLine,
+        ...(payload.scope === 'module' ? [`目标模块：${plan.module || payload.module}`] : []),
+        ...(!analysisOnly ? [runnerLine] : []),
         `输入来源：${agentSourceTypeText(payload.sourceType || 'manual')}`,
         `输入资料：Figma ${payload.figmaUrl ? '1' : '0'} 个，文件 ${payload.files?.length || 0} 个，截图 ${payload.images?.length || 0} 张`,
         `风险：${hits.length ? hits.join('、') : '未命中高风险关键词'}`,
@@ -4500,10 +4571,12 @@ async function previewAgentPlan() {
         ...(candidateLines.length ? candidateLines : ['未从输入中提取到候选；这不会阻止 AI 读取完整需求。']),
         'AI 业务计划：尚未执行；任务启动后会先整理资料，再由平台 MM skills 判断业务分支、层级和路径。',
         '',
-        '平台执行与门禁：',
+        analysisOnly ? '平台分析范围：' : '平台执行与门禁：',
         ...platformLines,
         '',
-        plan.note || '任务启动后由所选模型补全业务步骤并接受平台门禁。'
+        plan.note || (analysisOnly
+          ? '分析任务只整理资料、形成业务计划并匹配已有用例，不会生成 YAML 或下发 Runner。'
+          : '任务启动后由所选模型补全业务步骤并接受平台门禁。')
       ];
       showAgentPlanPreview(lines, plan, payload);
     } catch(e) {
@@ -4560,6 +4633,11 @@ async function startAgentRun(options={}) {
   if (!payload.business) {
     showToast('请选择所属业务', 'error');
     document.getElementById('agent-business')?.focus();
+    return;
+  }
+  if (payload.scope === 'module' && !payload.module) {
+    showToast('请选择目标模块', 'error');
+    document.getElementById('agent-module')?.focus();
     return;
   }
   const riskHits = agentRiskHits(payload.goal);

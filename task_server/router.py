@@ -5169,6 +5169,9 @@ def _post_agent_runs_start(handler, qs):
     except ValueError as e:
         handler._json({"ok": False, "error": str(e)}, 400)
         return
+    if str(d.get("scope") or "").strip() == "module" and not str(d.get("module") or "").strip():
+        handler._json({"ok": False, "error": "指定模块范围时必须选择目标模块"}, 400)
+        return
     run = create_agent_run(d)
     run = advance_agent_run(run["runId"])
     handler._json({"ok": True, "run": run})
@@ -5185,28 +5188,43 @@ def _post_agent_runs_preview(handler, qs):
     except ValueError as e:
         handler._json({"ok": False, "error": str(e)}, 400)
         return
+    if str(d.get("scope") or "").strip() == "module" and not str(d.get("module") or "").strip():
+        handler._json({"ok": False, "error": "指定模块范围时必须选择目标模块"}, 400)
+        return
     goal = str(d.get("target") or d.get("goal") or "").strip()
     app_name = str(d.get("appName") or "").strip() or "智小白3D APP"
     platform = str(d.get("platform") or "android").strip()
     scope = str(d.get("scope") or "smoke").strip()
     mode = str(d.get("mode") or "AUTO_SAFE").upper()
     risk_hits = [kw for kw in AGENT_RISK_KEYWORDS if kw in goal]
+    steps = (
+        [
+            "1. 整理输入来源",
+            "2. 分析测试目标并形成业务计划",
+            "3. 分析需求影响范围",
+            "4. 检索并匹配已有用例",
+            "5. 输出分析结论；不生成 YAML、不下发 Runner",
+        ]
+        if mode == "ANALYZE_ONLY"
+        else [
+            "1. 分析测试目标",
+            "2. 整理输入来源",
+            "3. 匹配已有用例或生成新用例",
+            "4. 生成并校验 Midscene YAML",
+            "5. 通过 Windows/Mac Runner 执行已确认 YAML",
+            "6. 收集报告并分析失败",
+            "7. SCRIPT_ISSUE 生成修复草稿；PRODUCT_BUG 生成缺陷草稿",
+            "8. Runner 测试动作风险仅提醒；平台级写操作进入 WAIT_CONFIRM",
+            "9. 生成总结报告",
+        ]
+    )
     handler._json({
         "ok": True,
         "plan": {
             "mode": mode, "appName": app_name, "business": business, "platform": platform, "scope": scope,
+            "module": str(d.get("module") or "").strip(),
             "riskHits": risk_hits,
-            "steps": [
-                "1. 分析测试目标",
-                "2. 整理输入来源",
-                "3. 匹配已有用例或生成新用例",
-                "4. 生成并校验 Midscene YAML",
-                "5. 通过 Windows/Mac Runner 执行已确认 YAML",
-                "6. 收集报告并分析失败",
-                "7. SCRIPT_ISSUE 生成修复草稿；PRODUCT_BUG 生成缺陷草稿",
-                "8. Runner 测试动作风险仅提醒；平台级写操作进入 WAIT_CONFIRM",
-                "9. 生成总结报告"
-            ]
+            "steps": steps,
         }
     })
 

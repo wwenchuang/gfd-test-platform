@@ -31,6 +31,7 @@ function resetEditorToWorkflowGuide() {
 
 // Round 5: 执行页 4 个子 tab (调试执行 / 同步至 Sonic 平台 / 失败重跑 / Runner状态)
 let executionActiveTab = 'debug';
+let appInstallReturnWorkflow = 'execute';
 let debugTraceData = null;
 let debugSnapshotData = null;
 let debugTraceLoading = false;
@@ -39,7 +40,10 @@ let debugSnapshotError = '';
 let selectedTraceSnapshots = [];
 let apkInstallDeviceRefreshPromise = null;
 
-function setExecutionTab(tab) {
+function setExecutionTab(tab, options={}) {
+  if (tab === 'install') {
+    appInstallReturnWorkflow = options && options.returnWorkflow === 'agent' ? 'agent' : 'execute';
+  }
   executionActiveTab = tab;
   if (tab === 'trace') {
     refreshDebugTracePanel();
@@ -53,6 +57,17 @@ function setExecutionTab(tab) {
     return;
   }
   showExecutionCenter();
+}
+
+async function returnFromAppInstall() {
+  clearAppInstallFeedback();
+  const destination = appInstallReturnWorkflow;
+  appInstallReturnWorkflow = 'execute';
+  if (destination === 'agent' && typeof activateWorkflow === 'function') {
+    await activateWorkflow('agent');
+    return;
+  }
+  setExecutionTab('debug');
 }
 
 function showExecutionCenter() {
@@ -539,7 +554,7 @@ function renderExecutionTabAppInstall() {
           <div class="generate-status" id="apk-install-status"></div>
           <div class="review-actions" style="margin-top:12px;">
             <button class="btn-sm primary" id="btn-create-apk-install" onclick="createApkInstallRequest()">创建安装任务</button>
-            <button class="btn-sm" onclick="clearAppInstallFeedback(); setExecutionTab('debug')">不安装，直接执行</button>
+            <button class="btn-sm" onclick="returnFromAppInstall()">${appInstallReturnWorkflow === 'agent' ? '暂不安装，返回 Agent' : '不安装，直接执行'}</button>
           </div>
         </div>
       </div>

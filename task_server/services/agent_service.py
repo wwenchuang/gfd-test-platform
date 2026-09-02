@@ -1348,11 +1348,12 @@ def create_agent_run(payload):
 
     payload 支持的字段:
         - target / goal: 测试目标描述
-        - mode: AUTO_SAFE | FULL_AUTO | SEMI_AUTO
+        - mode: AUTO_SAFE | FULL_AUTO | SEMI_AUTO | ANALYZE_ONLY
         - appName: 应用名称
         - appPackage/app_package: 应用包名，用于知识库、安装包和 Runner 版本校验
         - platform: android | ios
         - scope: smoke | regression | ...
+        - module: 指定模块范围时的 YAML 模块名称
         - sourceType: manual | requirement | figma | failed_job
         - sourceRefs: 输入来源引用，如 generateJobId / caseSetId / figmaUrl / failedJobId
         - requirement / requirementText: 本次需求正文，优先作为新需求覆盖真相
@@ -1362,7 +1363,7 @@ def create_agent_run(payload):
     run_id = f"agent-{int(time.time() * 1000)}-{secrets.token_hex(4)}"
     now = time.strftime("%Y-%m-%dT%H:%M:%S")
     mode = str(payload.get("mode") or "AUTO_SAFE").upper()
-    if mode not in ("AUTO_SAFE", "FULL_AUTO", "SEMI_AUTO"):
+    if mode not in ("AUTO_SAFE", "FULL_AUTO", "SEMI_AUTO", "ANALYZE_ONLY"):
         mode = "AUTO_SAFE"
     execution_mode = str(payload.get("executionMode") or payload.get("execution_mode") or "RUNNER_JOB").strip().upper()
     if execution_mode not in ("RUNNER_JOB", "SONIC_SUITE"):
@@ -1413,6 +1414,7 @@ def create_agent_run(payload):
         "business": str(payload.get("business") or "").strip().lower(),
         "platform": str(payload.get("platform") or "android").strip(),
         "scope": str(payload.get("scope") or "smoke").strip(),
+        "module": str(payload.get("module") or "").strip(),
         "executionMode": execution_mode,
         "runnerId": runner_id,
         "deviceId": device_id,
@@ -1509,6 +1511,7 @@ def _agent_retry_payload_from_run(run):
         "business": run.get("business") or "",
         "platform": run.get("platform") or "android",
         "scope": run.get("scope") or "smoke",
+        "module": run.get("module") or "",
         "executionMode": run.get("executionMode") or run.get("execution_mode") or "RUNNER_JOB",
         "runnerId": run.get("runnerId") or normalized.get("runnerId") or "",
         "deviceId": run.get("deviceId") or normalized.get("deviceId") or "",
@@ -9593,6 +9596,11 @@ def _collect_candidate_yamls(run):
     module = run.get("module", "")
     base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     search_dirs = _get_search_dirs_for_app(app_name, base_dir)
+    if module:
+        search_dirs = [
+            path for path in search_dirs
+            if os.path.basename(os.path.normpath(path)) == module
+        ]
     all_yamls = []
     seen = set()
     for search_dir in search_dirs:
@@ -9600,8 +9608,6 @@ def _collect_candidate_yamls(run):
             continue
         for root, dirs, files in os.walk(search_dir):
             dir_name = os.path.basename(root)
-            if module and module not in dir_name:
-                continue
             for f in files:
                 if not f.endswith((".yaml", ".yml")):
                     continue
@@ -10503,6 +10509,11 @@ def _tool_match_cases(run):
 
         # 确定搜索目录
         search_dirs = _get_search_dirs_for_app(app_name, base_dir)
+        if module:
+            search_dirs = [
+                path for path in search_dirs
+                if os.path.basename(os.path.normpath(path)) == module
+            ]
         if not search_dirs:
             call["status"] = "FAILED"
             call["error"] = f"未找到用例目录"
@@ -10520,9 +10531,6 @@ def _tool_match_cases(run):
                 continue
             for root, dirs, files in os.walk(search_dir):
                 dir_name = os.path.basename(root)
-                # 策略2: 如果指定了module，只匹配该module目录
-                if module and module not in dir_name:
-                    continue
                 for f in files:
                     if f.endswith(".yaml") or f.endswith(".yml"):
                         dedup_key = (dir_name, f)
@@ -18766,6 +18774,16 @@ _STEP_ORDER = [
     "RERUN", "LEARN_FROM_RESULT", "GENERATE_SUMMARY",
 ]
 
+_AGENT_ANALYSIS_ONLY_STEPS = {
+    "PREPARE_SOURCE", "PLAN", "IMPACT_ANALYSIS", "CASE_RETRIEVAL", "MATCH_CASES",
+}
+
+
+def _agent_step_allowed_for_mode(mode, step_name):
+    """Keep the selected Agent mode as a hard server-side execution boundary."""
+    normalized_mode = str(mode or "AUTO_SAFE").strip().upper()
+    return normalized_mode != "ANALYZE_ONLY" or str(step_name or "").strip().upper() in _AGENT_ANALYSIS_ONLY_STEPS
+
 
 def _refresh_agent_run_progress(run: Dict[str, Any]) -> int:
     steps = run.get("steps") if isinstance(run, dict) else []
@@ -18989,6 +19007,16 @@ def _execute_agent_steps(run_id):
             step = next((s for s in run["steps"] if s["step"] == step_name), None)
             if not step:
                 continue
+            if not _agent_step_allowed_for_mode(run.get("mode"), step_name):
+                now = time.strftime("%Y-%m-%dT%H:%M:%S")
+                step["status"] = "SKIPPED"
+                step["startedAt"] = now
+                step["endedAt"] = now
+                step["summary"] = "只分析模式不生成 YAML、不下发 Runner，已跳过"
+                run["updatedAt"] = now
+                _refresh_agent_run_progress(run)
+                _persist_agent_run_snapshot(run)
+                continue
             execution_mode = str(run.get("executionMode") or run.get("execution_mode") or "RUNNER_JOB").strip().upper()
             if execution_mode not in ("RUNNER_JOB", "SONIC_SUITE"):
                 execution_mode = "RUNNER_JOB"
@@ -19138,12 +19166,17 @@ def _execute_agent_steps(run_id):
                 completed = sum(1 for s in run["steps"] if s.get("status") == "SUCCESS")
                 failed = sum(1 for s in run["steps"] if s.get("status") == "FAILED")
                 skipped = sum(1 for s in run["steps"] if s.get("status") == "SKIPPED")
+                analysis_only = str(run.get("mode") or "").upper() == "ANALYZE_ONLY"
                 run["artifacts"]["summary"] = {
                     "totalSteps": len(run["steps"]),
                     "completed": completed,
                     "failed": failed,
                     "skipped": skipped,
-                    "message": f"Agent 执行完成：{completed}/{len(run['steps'])} 成功，{failed} 失败，{skipped} 跳过",
+                    "message": (
+                        f"Agent 分析完成：{completed} 个分析步骤成功，未生成 YAML、未下发 Runner"
+                        if analysis_only
+                        else f"Agent 执行完成：{completed}/{len(run['steps'])} 成功，{failed} 失败，{skipped} 跳过"
+                    ),
                 }
         try:
             if run.get("status") in ("FAILED", "DONE", "CANCELLED") or run.get("currentStep") == "WAIT_CONFIRM":
