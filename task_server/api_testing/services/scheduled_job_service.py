@@ -273,6 +273,7 @@ class ScheduledJobService:
             if (
                 existing_target_type != parsed["target_type"]
                 or existing_target_ids != tuple(parsed["target_ids"])
+                or (record.summary or "").startswith("blocked: ")
             ):
                 self._validate_target_scopes(
                     session,
@@ -294,6 +295,7 @@ class ScheduledJobService:
             record.allow_one_time_baselines = parsed["allow_one_time_baselines"]
             record.retry_count = parsed["retry_count"]
             record.timeout_seconds = parsed["timeout_seconds"]
+            record.summary = ""
             record.updated_by = actor_id
             self._replace_targets(session, record.id, parsed, actor_id)
             session.flush()

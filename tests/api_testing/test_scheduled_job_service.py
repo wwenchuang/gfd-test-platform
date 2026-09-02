@@ -458,6 +458,39 @@ def test_scheduled_job_can_be_updated_and_deleted(scheduled_factory, scheduled_r
     assert service.list(scheduled_records["project"].id, "owner-a") == ()
 
 
+def test_saving_a_valid_blocked_job_revalidates_targets_and_clears_the_stale_block(
+    scheduled_factory, scheduled_records
+):
+    from task_server.api_testing.models.scheduled_job import ApiScheduledJob
+    from task_server.api_testing.services.scheduled_job_service import ScheduledJobService
+
+    service = ScheduledJobService(scheduled_factory)
+    payload = {
+        "project_id": scheduled_records["project"].id,
+        "name": "被阻断后重新保存",
+        "schedule_type": "daily",
+        "cron_expression": "0 8 * * *",
+        "environment_strategy": "fixed_revision",
+        "environment_revision_id": scheduled_records["environment_revision"].id,
+        "target_type": "baselines",
+        "target_ids": [scheduled_records["baseline"].id],
+        "enabled": True,
+        "notify_feishu": False,
+        "retry_count": 0,
+        "timeout_seconds": 900,
+    }
+    job = service.create(payload, "owner-a")
+    with scheduled_factory.begin() as session:
+        session.get(ApiScheduledJob, job.id).summary = (
+            "blocked: scheduled target unavailable or outside current scope"
+        )
+
+    updated = service.update(job.id, payload, "owner-a")
+
+    assert updated.blocked_reason == ""
+    assert service.get(job.id, "owner-a").blocked_reason == ""
+
+
 def test_due_scheduled_job_dispatches_once_per_matching_minute(scheduled_factory, scheduled_records):
     from task_server.api_testing.services.scheduled_job_service import ScheduledJobService
 
