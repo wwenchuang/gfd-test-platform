@@ -97,7 +97,7 @@ function fixture(t, { workflow = 'app_config', deleteWait, catalogLoaded = true,
   loadFunctions(context, 'js/agent-status.js', [
     'resetYamlToolbarForManager', 'setManagementToolbar', 'taskAppCatalogPageState', 'taskAppCatalogNoticeHtml',
     'showAppConfigCenter', 'reloadTaskAppCatalog', 'showFeishuConfigCenter', 'showSonicConfigCenter',
-    'showTaskApps', 'openTaskAppEditor', 'nextTaskAppStep', 'validateTaskAppBasicInfo', 'goToTaskAppStep',
+    'showTaskApps', 'setTaskAppEditorContext', 'openTaskAppEditor', 'nextTaskAppStep', 'validateTaskAppBasicInfo', 'goToTaskAppStep',
     'openUnassignedTaskAppModules', 'selectTaskAppModuleOwner', 'renderTaskAppModuleOwnerGuide',
     'isTemporaryAgentModule', 'taskAppBusinessModuleNames',
     'renderTaskAppModal', 'renderTaskAppBusinessLineEditor', 'readTaskAppBusinessLines',
@@ -130,6 +130,45 @@ test('opening or switching the application editor clears stale operation feedbac
   f.run('openTaskAppEditor()');
   f.run(`editTaskApp('${APP_A}')`);
   assert.equal(f.feedbackClears(), 2);
+});
+
+test('new application entry clears the previously edited application draft', t => {
+  const f = fixture(t);
+  f.run(`openTaskAppEditor('${APP_A}', 3)`);
+  assert.equal(f.field('task-app-package').value, APP_A);
+  assert.deepEqual(f.selectedModules(), ['模块甲']);
+
+  f.run('openTaskAppEditor()');
+
+  assert.equal(f.run('FormSteps.currentStep'), 0);
+  assert.equal(f.field('task-app-name').value, '');
+  assert.equal(f.field('task-app-package').value, '');
+  assert.equal(f.field('task-app-sonic-project-name').value, '');
+  assert.equal(f.field('task-app-feishu-webhook').value, '');
+  assert.deepEqual(f.selectedModules(), []);
+  assert.deepEqual(
+    Array.from(f.field('task-app-business-lines').querySelectorAll('.task-app-business-name'), input => input.value),
+    ['家用', '共享'],
+  );
+  assert.equal(f.field('task-app-modal-title').textContent, '新增应用');
+  assert.match(f.field('task-app-edit-context').textContent, /正在新建应用/);
+});
+
+test('application editor names the target app and assignment purpose', t => {
+  const f = fixture(t);
+
+  f.run(`openTaskAppEditor('${APP_A}', 2)`);
+  assert.equal(f.field('task-app-modal-title').textContent, '编辑应用 · 应用甲');
+  assert.match(f.field('task-app-edit-context').textContent, /当前编辑：应用甲/);
+  assert.match(f.field('task-app-edit-context').textContent, /群通知/);
+
+  f.run('openUnassignedTaskAppModules()');
+  assert.equal(f.field('task-app-modal-title').textContent, '分配未归属模块');
+  assert.match(f.field('task-app-edit-context').textContent, /先选择目标应用/);
+
+  f.run(`selectTaskAppModuleOwner('${APP_B}')`);
+  assert.equal(f.field('task-app-modal-title').textContent, '分配模块 · 应用乙');
+  assert.match(f.field('task-app-edit-context').textContent, /当前归入：应用乙/);
 });
 
 test('generation asks for an application before diagnosing its business configuration', t => {

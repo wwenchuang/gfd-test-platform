@@ -4035,7 +4035,35 @@ function setManagementToolbar(title, help, icon = '⚙') {
 function openTaskAppEditor(packageName = '', step = 0) {
   showTaskApps();
   if (packageName) editTaskApp(packageName, step);
-  else if (typeof FormSteps !== 'undefined') FormSteps.goTo(step);
+  else {
+    clearTaskAppForm();
+    if (typeof FormSteps !== 'undefined') FormSteps.goTo(step);
+    setTaskAppEditorContext({mode: 'create', step});
+    document.getElementById('task-app-name')?.focus();
+  }
+}
+
+function setTaskAppEditorContext({mode = 'browse', app = null, step = 0} = {}) {
+  const title = document.getElementById('task-app-modal-title');
+  const context = document.getElementById('task-app-edit-context');
+  if (!title || !context) return;
+  const stepNames = ['基本信息', '设备连接', '群通知', '关联模块'];
+  const appName = app ? String(app.name || app.package || '未命名应用') : '';
+  if (mode === 'create') {
+    title.textContent = '新增应用';
+    context.textContent = '正在新建应用。请先填写中文名、包名和业务线，再继续绑定设备、通知及模块。';
+  } else if (mode === 'assign') {
+    title.textContent = app ? `分配模块 · ${appName}` : '分配未归属模块';
+    context.textContent = app
+      ? `当前归入：${appName}（${app.package || '-'}）。这里只显示尚未归属的业务模块。`
+      : '先选择目标应用，再勾选尚未归属的业务模块；未选择目标时不能保存。';
+  } else if (mode === 'edit' && app) {
+    title.textContent = `编辑应用 · ${appName}`;
+    context.textContent = `当前编辑：${appName}（${app.package || '-'}） · ${stepNames[Number(step)] || stepNames[0]}。保存会更新该应用配置。`;
+  } else {
+    title.textContent = '应用配置';
+    context.textContent = '请选择要编辑的应用，或新建应用。';
+  }
 }
 
 function nextTaskAppStep() {
@@ -4077,6 +4105,7 @@ function openUnassignedTaskAppModules() {
   if (only) only.checked = true;
   filterTaskAppModules(document.getElementById('task-app-module-search')?.value || '', true);
   renderTaskAppModuleOwnerGuide();
+  setTaskAppEditorContext({mode: 'assign'});
 }
 
 function selectTaskAppModuleOwner(packageName) {
@@ -4500,6 +4529,7 @@ function clearTaskAppForm() {
   document.querySelectorAll('.task-app-module-check').forEach(input => input.checked = false);
   taskAppModuleAssignmentPackage = '';
   renderTaskAppModuleOwnerGuide();
+  setTaskAppEditorContext({mode: 'create'});
 }
 
 function editTaskApp(packageName, step = 0) {
@@ -4522,6 +4552,7 @@ function editTaskApp(packageName, step = 0) {
   if (typeof FormSteps !== 'undefined') FormSteps.goTo(step);
   taskAppModuleAssignmentPackage = taskAppModuleAssignmentMode ? packageName : '';
   renderTaskAppModuleOwnerGuide();
+  setTaskAppEditorContext({mode: taskAppModuleAssignmentMode ? 'assign' : 'edit', app, step});
   if (step === 3) document.getElementById('task-app-module-search')?.focus();
   else document.getElementById('task-app-name').focus();
 }

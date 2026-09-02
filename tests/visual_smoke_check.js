@@ -708,6 +708,7 @@ async function anyVisible(locator) {
     if (!await page.locator('#generate-status.error', {hasText: '请选择已启用应用'}).isVisible()) throw new Error('Generation must explain the missing application');
     await page.locator('#generate-application').selectOption('com.kfb.model');
     if (await page.locator('#generate-status.error').isVisible()) throw new Error('Choosing an application must clear the stale validation error');
+    if (await page.locator('#toast.show', {hasText: '请选择已启用应用'}).isVisible()) throw new Error('Choosing an application must clear the stale validation toast');
     await page.locator('#generate-module').selectOption('AI测试');
     if (await page.locator('#generate-application').inputValue() !== 'com.example.school') throw new Error('UI generation must auto-select the application bound to the current module');
     await page.locator('#generate-application').selectOption('com.kfb.model');

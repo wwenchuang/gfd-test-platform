@@ -421,6 +421,7 @@ async function run() {
       const paths = [
         ['POST', '/api/api-testing/v1/providers/apifox/context', '读取 Apifox 上下文'],
         ['POST', '/api/api-testing/v1/providers/apifox/projects', '读取 Apifox 项目'],
+        ['PUT', '/api/api-testing/v1/workspace', '保存 API 工作台'],
         ['POST', '/api/api-testing/v1/sources/apifox/preview', '预览 Apifox 同步'],
         ['POST', '/api/api-testing/v1/sources/apifox/source-1/activate', '启用接口来源版本'],
         ['PUT', '/api/api-testing/v1/projects/project-1', '保存 API 项目'],
@@ -430,7 +431,12 @@ async function run() {
         ['POST', '/api/api-testing/v1/case-versions/version-1/baseline', '采纳 API 基线'],
         ['POST', '/api/api-testing/v1/case-versions/version-1/validate', '校验 API 用例版本'],
         ['POST', '/api/api-testing/v1/cases/case-1/versions', '保存 API 用例版本'],
+        ['POST', '/api/api-testing/v1/cases', '新建 API 用例'],
+        ['POST', '/api/api-testing/v1/cases/basic-positive/preview', '预览 API 基础正向用例'],
+        ['POST', '/api/api-testing/v1/tasks', '新建 API 任务'],
+        ['PUT', '/api/api-testing/v1/tasks/task-1', '保存 API 任务'],
         ['PUT', '/api/api-testing/v1/tasks/task-1/name', '更新 API 任务名称'],
+        ['POST', '/api/test-reports/preview', '预览 UI 测试报告'],
         ['DELETE', '/api/module', '删除 YAML 模块'],
       ];
       state.hooks.set('GET /api/auth/audit', route => route.fulfill({json: {

@@ -1988,7 +1988,10 @@ function setGenerateStatus(text, type='') {
 
 function clearGenerateValidationFeedback() {
   const status = document.getElementById('generate-status');
-  if (!generateBusy && status?.classList.contains('error')) setGenerateStatus('');
+  if (!generateBusy && status?.classList.contains('error')) {
+    setGenerateStatus('');
+    if (typeof hideToast === 'function') hideToast();
+  }
 }
 
 function setGenerateWizardStep(stepIndex=0, state='running') {
