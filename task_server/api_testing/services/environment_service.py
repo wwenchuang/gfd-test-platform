@@ -239,15 +239,15 @@ class _PlaceholderResolver:
         if name in self._cache:
             return copy.deepcopy(self._cache[name])
         if name not in self._values:
-            raise UnresolvedVariableError(f"undefined environment variable: {name}")
+            raise UnresolvedVariableError(f"环境变量“{name}”未配置")
         if name in stack:
             cycle = stack[stack.index(name) :] + (name,)
             raise PlaceholderCycleError(
-                "environment variable cycle: " + " -> ".join(cycle)
+                "环境变量存在循环引用：" + " -> ".join(cycle)
             )
         if len(stack) >= MAX_PLACEHOLDER_DEPTH:
             raise PlaceholderDepthError(
-                f"environment variable maximum depth is {MAX_PLACEHOLDER_DEPTH}"
+                f"环境变量引用层级超过上限（{MAX_PLACEHOLDER_DEPTH} 层）"
             )
         resolved = self._render(self._values[name], stack + (name,))
         self._cache[name] = copy.deepcopy(resolved)

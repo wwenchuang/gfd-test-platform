@@ -93,6 +93,21 @@ const dashboard = computed(() => {
 const latestReport = computed(() => sourceScopedReports.value[0] || null)
 const projectName = computed(() => selectedProject.value?.name || '未选择项目')
 const reportRangeLabel = computed(() => sourceScopedReports.value.length ? `最近 ${sourceScopedReports.value.length} 次执行` : '暂无报告')
+const reportCoverageLabel = computed(() => {
+  const applications = new Map<string, Set<string>>()
+  for (const report of reports.value) {
+    const application = String(report.application_name || '').trim() || '未标注应用'
+    const businesses = String(report.business_name || '').split(/[、,，/]/).map(item => item.trim()).filter(Boolean)
+    const bucket = applications.get(application) || new Set<string>()
+    for (const business of businesses.length ? businesses : ['未标注业务']) bucket.add(business)
+    applications.set(application, bucket)
+  }
+  if (!applications.size) return '暂无应用与业务数据'
+  return [...applications.entries()]
+    .sort(([left], [right]) => left.localeCompare(right, 'zh-CN'))
+    .map(([application, businesses]) => `${application} · ${[...businesses].sort((left, right) => left.localeCompare(right, 'zh-CN')).join('、')}`)
+    .join('；')
+})
 const currentReport = computed(() => visibleReports.value.find(item => item.id === selectedReportId.value) || visibleReports.value[0] || null)
 const currentMetrics = computed(() => currentReport.value ? executionMetrics(currentReport.value) : null)
 const currentBuckets = computed(() => currentReport.value ? executionFailureBuckets(currentReport.value) : null)
@@ -357,14 +372,14 @@ async function restoreArchivedReports(): Promise<void> {
         <div class="report-project-identity">
           <BarChart3 :size="18" />
           <div>
-            <span>项目报告</span>
+            <span>接口项目报告</span>
             <strong>{{ projectName }}</strong>
-            <small>{{ reportRangeLabel }} · 只展示当前项目执行结果</small>
+            <small>{{ reportRangeLabel }} · 当前接口项目覆盖：{{ reportCoverageLabel }}</small>
           </div>
         </div>
         <div class="report-project-controls">
           <label>
-            项目
+            接口项目
             <select data-testid="report-project-select" :value="reportProjectId" @change="changeReportProject">
               <option value="" disabled>请选择项目</option>
               <option v-for="project in projectOptions" :key="project.id" :value="project.id">{{ project.name }}</option>

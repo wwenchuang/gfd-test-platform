@@ -135,7 +135,7 @@ h1, h2, p { margin-top: 0; } h1 { margin-bottom: 0; font-size: 21px; font-weight
 .case-work-views button b { font-size: 9px; font-weight: 700; }
 .case-lifecycle-badges { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 3px; }
 .case-lifecycle-badges i { padding: 1px 5px; border-radius: 3px; font-size: 9px; font-style: normal; line-height: 1.5; }
-.lifecycle-regular { background: #eef1f5; color: #596579; }.lifecycle-adapt { background: #fff2d8; color: #8a5a00; }.lifecycle-pass { background: #e8f7f2; color: #087866; }.lifecycle-fail { background: #fff0f0; color: #aa3333; }.lifecycle-baseline { background: #eaf2ff; color: #245fa5; }
+.lifecycle-regular { background: #eef1f5; color: #596579; }.lifecycle-adapt { background: #fff2d8; color: #8a5a00; }.lifecycle-pass { background: #e8f7f2; color: #087866; }.lifecycle-fail { background: #fff0f0; color: #aa3333; }.lifecycle-baseline { background: #eaf2ff; color: #245fa5; }.lifecycle-one-time { background: #fff4d9; color: #8a5a00; }
 .case-endpoint-picker { margin-bottom: 12px; border: 1px solid var(--line); background: #fff; }
 .case-endpoint-picker > header { display: flex; align-items: center; justify-content: space-between; padding: 10px 12px; border-bottom: 1px solid var(--line); }
 .case-endpoint-picker > header > div { display: flex; align-items: baseline; gap: 8px; }.case-endpoint-picker > header span { color: var(--muted); font-size: 11px; }
@@ -976,6 +976,7 @@ h1, h2, p { margin-top: 0; } h1 { margin-bottom: 0; font-size: 21px; font-weight
 .execution-detail-drawer > header, .execution-detail-drawer > .report-summary { flex-shrink: 0; }
 .execution-detail-grid { flex: 1; min-height: 0; overflow: hidden; }
 .execution-detail-list, .execution-detail-evidence { min-width: 0; min-height: 0; overflow: auto; overscroll-behavior: contain; }
+.execution-detail-list { overflow-anchor: none; }
 .execution-detail-list .case-result-list { max-height: none; overflow: visible; }
 @media (max-width: 620px) {
   .execution-detail-grid { grid-template-rows: minmax(68px, 30%) minmax(0, 1fr); }

@@ -10,6 +10,7 @@ export type CaseListItem =
     name: string
     meta: string
     groupName: string
+    browseGroupName?: string
     version: CaseVersion
   }
   | {
@@ -19,6 +20,7 @@ export type CaseListItem =
     name: string
     meta: string
     groupName: string
+    browseGroupName?: string
     preview: GeneratedCasePreview
   }
 
@@ -40,7 +42,7 @@ interface MutableCaseGroupNode extends Omit<CaseGroupNode, 'children'> {
 export function buildCaseGroupTree(items: CaseListItem[]): CaseGroupNode[] {
   const roots = new Map<string, MutableCaseGroupNode>()
   for (const item of items) {
-    const parts = groupParts(item.groupName)
+    const parts = groupParts(item.browseGroupName || item.groupName)
     let siblings = roots
     let parentPath = ''
     let node: MutableCaseGroupNode | null = null
@@ -63,6 +65,14 @@ export function buildCaseGroupTree(items: CaseListItem[]): CaseGroupNode[] {
   return finalizeNodes(roots)
 }
 
+export function caseBrowseGroupName(scopeLabel: string, groupName: string): string {
+  const scope = scopeLabel.trim() || '未标注应用 · 未标注业务'
+  const business = scope.split('·').at(-1)?.trim() || ''
+  const parts = groupParts(groupName)
+  if (parts[0] === business || parts[0] === `${business}业务`) parts.shift()
+  return [scope, ...(parts.length ? parts : ['未分组用例'])].join(' / ')
+}
+
 export function matchesCaseWorkView(
   item: CaseListItem,
   view: CaseWorkView,
@@ -83,6 +93,7 @@ export function matchesCaseWorkView(
 export function caseSearchText(item: CaseListItem): string {
   return [
     item.groupName,
+    item.browseGroupName,
     item.name,
     item.endpoint.method,
     item.endpoint.path,
@@ -125,7 +136,17 @@ function finalizeNodes(nodes: Map<string, MutableCaseGroupNode>): CaseGroupNode[
 function compareCaseGroupNames(left: string, right: string): number {
   if (left === '未分组用例') return 1
   if (right === '未分组用例') return -1
+  const leftScope = businessScopePriority(left)
+  const rightScope = businessScopePriority(right)
+  if (leftScope !== rightScope) return leftScope - rightScope
   return compareGroupNames(left, right)
+}
+
+function businessScopePriority(label: string): number {
+  if (/·\s*家用$/.test(label)) return 0
+  if (/·\s*共享$/.test(label)) return 1
+  if (/·\s*未标注业务$/.test(label)) return 9
+  return 5
 }
 
 function hasWorkflowSteps(version: CaseVersion): boolean {
@@ -138,6 +159,6 @@ function hasWorkflowSteps(version: CaseVersion): boolean {
   )
 }
 
-function isOneTimeCase(item: CaseListItem): boolean {
+export function isOneTimeCase(item: CaseListItem): boolean {
   return hasExplicitOneTimeMarker([item.groupName, item.name, ...item.endpoint.tags])
 }

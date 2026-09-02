@@ -721,7 +721,7 @@ def test_runtime_rejects_secret_overrides_and_strict_placeholder_failures(
         UnresolvedVariableError,
     )
 
-    with pytest.raises(UnresolvedVariableError, match="missingModelId"):
+    with pytest.raises(UnresolvedVariableError, match="环境变量.*missingModelId.*未配置"):
         runtime.render("{{missingModelId}}")
     with pytest.raises(PlaceholderSyntaxError):
         runtime.render("{{ missingModelId }}")
@@ -734,7 +734,7 @@ def test_runtime_rejects_secret_overrides_and_strict_placeholder_failures(
         {},
         "admin",
     )
-    with pytest.raises(PlaceholderCycleError, match="cycleA.*cycleB"):
+    with pytest.raises(PlaceholderCycleError, match="环境变量存在循环引用.*cycleA.*cycleB"):
         environment_service.resolve_runtime(cycle_view.revision_id, {})
 
     depth_source = copy.deepcopy(production_environment)
@@ -745,7 +745,7 @@ def test_runtime_rejects_secret_overrides_and_strict_placeholder_failures(
     depth_view = environment_service.create_revision(
         depth_environment.id, {"variables": depth_variables}, {}, "admin"
     )
-    with pytest.raises(PlaceholderDepthError, match="maximum depth"):
+    with pytest.raises(PlaceholderDepthError, match="环境变量引用层级超过上限"):
         environment_service.resolve_runtime(depth_view.revision_id, {})
 
 

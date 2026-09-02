@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import type { ApiEndpoint, CaseVersion, GeneratedCasePreview } from '../api/contracts'
 import {
   buildCaseGroupTree,
+  caseBrowseGroupName,
   caseSearchText,
   matchesCaseWorkView,
   type CaseListItem,
@@ -72,6 +73,19 @@ function previewItem(id: string, groupName: string): CaseListItem {
 }
 
 describe('case list presentation', () => {
+  it('puts application and business above maintenance groups without repeating the business folder', () => {
+    expect(caseBrowseGroupName('智小白3D · 家用', '家用业务 / app接口 / 我的收藏'))
+      .toBe('智小白3D · 家用 / app接口 / 我的收藏')
+    expect(caseBrowseGroupName('智小白3D · 家用', 'API Test / 一次性'))
+      .toBe('智小白3D · 家用 / API Test / 一次性')
+  })
+
+  it('keeps home before shared in the primary business scope', () => {
+    const home = { ...versionItem('home', '家用业务'), browseGroupName: '智小白3D · 家用 / 回归' }
+    const shared = { ...versionItem('shared', '共享业务'), browseGroupName: '智小白3D · 共享 / 回归' }
+    expect(buildCaseGroupTree([shared, home]).map(node => node.label)).toEqual(['智小白3D · 家用', '智小白3D · 共享'])
+  })
+
   it('builds a recursive tree, merges ancestors and counts descendants', () => {
     const tree = buildCaseGroupTree([
       versionItem('direct', '家用业务'),

@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { mount } from '@vue/test-utils'
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it } from 'vitest'
 
 import type { ApiEndpoint, CaseVersion, GeneratedCasePreview } from '../api/contracts'
 import { replaceTestApplications } from '../utils/testApplications'
@@ -105,9 +105,18 @@ const EXTRA_CASES = EXTRA_ENDPOINTS.map((endpoint, index) => ({
   name: `${endpoint.summary} - 基础正向流程`,
   purpose: `验证${endpoint.summary}`,
   request: { ...SAVED.request, method: endpoint.method, path: endpoint.path },
+  business: index === 0 ? 'shared' : 'home',
 })) as CaseVersion[]
 
 describe('CaseListPanel', () => {
+  beforeEach(() => replaceTestApplications([{
+    package: 'com.kfb.model', name: '智小白3D', enabled: true,
+    business_lines: [
+      { id: 'home', name: '家用', enabled: true },
+      { id: 'shared', name: '共享', enabled: true },
+    ],
+  }]))
+
   it('explains overlapping progress counts and separates candidates from saved cases', async () => {
     const wrapper = mount(CaseListPanel, { props: { endpoints: ENDPOINTS, versions: [SAVED], generatedPreviews: [PREVIEW] } })
     expect(wrapper.text()).toContain('已保存 1 条 · 未保存候选 1 条')
@@ -157,7 +166,7 @@ describe('CaseListPanel', () => {
       },
     })
 
-    expect(wrapper.get('[data-testid="case-list-group-家用业务 / app接口 / 我的收藏"]').text()).toContain('2')
+    expect(wrapper.get('[data-testid="case-list-group-智小白3D · 家用 / app接口 / 我的收藏"]').text()).toContain('2')
     expect(wrapper.get('[data-testid="case-version-version-add"]').text()).toContain('添加收藏 - 基础正向流程')
     expect(wrapper.get('[data-testid="case-version-version-add"]').text()).toContain('v1 · 平台')
     expect(wrapper.get('[data-testid="case-version-version-add"]').text()).toContain('家用')
@@ -206,15 +215,15 @@ describe('CaseListPanel', () => {
       },
     })
 
-    const collectionGroup = '家用业务 / app接口 / 我的收藏'
-    const deviceGroup = '本地测试 / 启迪设备 / 设备详情'
+    const scopeGroup = '智小白3D · 家用'
+    const collectionGroup = `${scopeGroup} / app接口 / 我的收藏`
+    const deviceGroup = `${scopeGroup} / 本地测试 / 启迪设备 / 设备详情`
 
-    expect(wrapper.get('[data-testid="case-list-group-toggle-本地测试"]').attributes('aria-expanded')).toBe('true')
+    expect(wrapper.get(`[data-testid="case-list-group-toggle-${scopeGroup} / 本地测试"]`).attributes('aria-expanded')).toBe('true')
     expect(wrapper.find('[data-testid="case-version-version-add"]').exists()).toBe(false)
     expect(wrapper.find('[data-testid="case-version-version-device"]').exists()).toBe(true)
 
-    await wrapper.get('[data-testid="case-list-group-toggle-家用业务"]').trigger('click')
-    await wrapper.get('[data-testid="case-list-group-toggle-家用业务 / app接口"]').trigger('click')
+    await wrapper.get(`[data-testid="case-list-group-toggle-${scopeGroup} / app接口"]`).trigger('click')
     await wrapper.get(`[data-testid="case-list-group-toggle-${collectionGroup}"]`).trigger('click')
 
     expect(wrapper.get(`[data-testid="case-list-group-toggle-${collectionGroup}"]`).attributes('aria-expanded')).toBe('true')
@@ -248,17 +257,17 @@ describe('CaseListPanel', () => {
         generatedPreviews: [PREVIEW],
       },
     })
-    const firstGroup = '本地测试 / 启迪设备 / 设备详情'
-    const laterGroup = '共享业务 / 订单接口'
+    const firstGroup = '智小白3D · 家用 / 本地测试 / 启迪设备 / 设备详情'
+    const laterGroup = '智小白3D · 共享 / 订单接口'
 
     expect(wrapper.get('[data-testid="case-list-group-toolbar"]').text()).toContain('分组浏览')
-    expect(wrapper.get('[data-testid="case-list-group-summary"]').text()).toContain('3 个根目录')
+    expect(wrapper.get('[data-testid="case-list-group-summary"]').text()).toContain('2 个应用/业务范围')
     expect(wrapper.find('.case-group-index').exists()).toBe(false)
     expect(wrapper.get(`[data-testid="case-list-group-toggle-${firstGroup}"]`).attributes('aria-expanded')).toBe('true')
     expect(wrapper.find(`[data-testid="case-list-group-toggle-${laterGroup}"]`).exists()).toBe(false)
     expect(wrapper.find('[data-testid="case-version-version-extra-0"]').exists()).toBe(false)
 
-    await wrapper.get('[data-testid="case-list-group-toggle-共享业务"]').trigger('click')
+    await wrapper.get('[data-testid="case-list-group-toggle-智小白3D · 共享"]').trigger('click')
     await wrapper.get(`[data-testid="case-list-group-toggle-${laterGroup}"]`).trigger('click')
 
     expect(wrapper.get(`[data-testid="case-list-group-toggle-${laterGroup}"]`).attributes('aria-expanded')).toBe('true')
@@ -281,8 +290,8 @@ describe('CaseListPanel', () => {
       },
     })
 
-    expect(wrapper.get('[data-testid="case-list-group-发版回归"]').text()).toContain('1')
-    await wrapper.get('[data-testid="case-list-group-toggle-发版回归"]').trigger('click')
+    expect(wrapper.get('[data-testid="case-list-group-智小白3D · 家用 / 发版回归"]').text()).toContain('1')
+    await wrapper.get('[data-testid="case-list-group-toggle-智小白3D · 家用 / 发版回归"]').trigger('click')
     expect(wrapper.get('[data-testid="case-version-version-release"]').text()).toContain('添加收藏 - 发版主链')
     expect(wrapper.find('[data-testid="case-version-group-version-release"] select').exists()).toBe(false)
 
@@ -320,6 +329,10 @@ describe('CaseListPanel', () => {
     expect(wrapper.get('[data-testid="case-work-view-orchestrated"]').text()).toContain('1')
     expect(wrapper.get('[data-testid="case-work-view-one-time"]').text()).toContain('1')
     expect(wrapper.get('[data-testid="case-work-view-candidate"]').text()).toContain('1')
+
+    await wrapper.get('[data-testid="case-work-view-one-time"]').trigger('click')
+    expect(wrapper.get('[data-testid="case-version-version-extra-0"] .lifecycle-one-time').text()).toBe('一次性')
+    expect(wrapper.find('[data-testid="case-version-version-extra-0"] .lifecycle-regular').exists()).toBe(false)
 
     await wrapper.get('[data-testid="case-list-search"]').setValue('设备')
     expect(wrapper.get('[data-testid="case-work-view-all"]').text()).toContain('1')

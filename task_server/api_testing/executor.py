@@ -882,12 +882,13 @@ class HttpExecutor:
         if server_message:
             parts.append(f"服务端提示：{server_message}")
         if failed is not None:
-            parts.append(
+            detail = str(failed.get("message") or "").strip()
+            parts.append(detail or (
                 "断言期望 "
                 + json.dumps(failed.get("expected"), ensure_ascii=False)
                 + "，实际 "
                 + json.dumps(failed.get("actual"), ensure_ascii=False)
-            )
+            ))
         return "；".join(parts)
 
     @staticmethod

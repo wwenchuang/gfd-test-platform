@@ -38,4 +38,17 @@ describe('FailureAnalysis', () => {
     expect(wrapper.text()).toContain('平台诊断')
     expect(wrapper.text()).not.toContain('AI 失败分析')
   })
+
+  it('translates missing environment variables and tells the user where to fix them', () => {
+    const wrapper = mount(FailureAnalysis, { props: { result: {
+      ...failed,
+      status: 'BROKEN',
+      failure_category: 'environment',
+      sanitized_result: { error_message: 'undefined environment variable: sessionId' },
+    } } })
+
+    expect(wrapper.text()).toContain('环境变量“sessionId”未配置')
+    expect(wrapper.text()).toContain('到“环境配置”补充变量 sessionId')
+    expect(wrapper.text()).not.toContain('undefined environment variable')
+  })
 })

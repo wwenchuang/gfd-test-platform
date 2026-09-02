@@ -102,8 +102,10 @@ describe('ReportsView', () => {
     expect((wrapper.get('[data-testid="report-project-select"]').element as HTMLSelectElement).value).toBe('project-1')
     expect(wrapper.text()).toContain('项目报告驾驶舱')
     expect(wrapper.text()).toContain('3D家用')
+    expect(wrapper.text()).toContain('当前接口项目覆盖：校园助手 · 校园业务')
     expect(wrapper.text()).toContain('取消收藏')
     expect(wrapper.text()).not.toContain('商城项目用例')
+    expect(wrapper.findAll('.report-detail-hero > strong')).toHaveLength(1)
 
     await wrapper.get('[data-testid="report-project-select"]').setValue('project-2')
     await flushPromises()

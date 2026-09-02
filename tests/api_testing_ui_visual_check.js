@@ -282,10 +282,12 @@ async function assertLargeExecutionDrawer(page, url) {
         throw new Error(`large drawer ${label} selected evidence and close must remain in view: ${JSON.stringify({ header, close })}`);
       }
       for (const [container, title] of [['.execution-detail-list', '.active strong'], ['.execution-detail-evidence', '.case-evidence > header']]) {
+        await expect(drawer.locator(container).locator(title)).toBeInViewport();
         const pane = await drawer.locator(container).boundingBox();
         const content = await drawer.locator(container).locator(title).boundingBox();
+        const scroll = await drawer.locator(container).evaluate(element => ({ scrollTop: element.scrollTop, scrollHeight: element.scrollHeight, clientHeight: element.clientHeight }));
         if (!pane || !content || content.y < pane.y - 1 || content.y + content.height > pane.y + pane.height + 1) {
-          throw new Error(`large drawer ${label} title clipped inside ${container}: ${JSON.stringify({ pane, content })}`);
+          throw new Error(`large drawer ${label} title clipped inside ${container}: ${JSON.stringify({ pane, content, scroll })}`);
         }
       }
     };

@@ -5,9 +5,11 @@ import { FileCheck2, FolderInput, History, Play, Plus, Save, Search, ShieldCheck
 import type { ApiEndpoint, CaseVersion, GeneratedCasePreview } from '../api/contracts'
 import {
   buildCaseGroupTree,
+  caseBrowseGroupName,
   caseGroupAncestorIds,
   caseGroupNodeIds,
   caseSearchText,
+  isOneTimeCase,
   matchesCaseWorkView,
   type CaseGroupNode,
   type CaseListItem,
@@ -92,18 +94,27 @@ const allItems = computed<CaseListItem[]>(() => {
     const displayEndpointId = version.current_endpoint_id || version.endpoint_id
     const endpoint = endpointById.value.get(displayEndpointId)
       || fallbackEndpoint(version.endpoint_id, version.request.method, version.request.path, version.name)
+    const groupName = version.group_name?.trim() || endpointGroupName(endpoint)
+    const scope = caseScopeLabel(version, endpoint)
     return {
       kind: 'version', id: version.id, endpoint, name: version.name,
-      meta: `v${version.version} · ${originLabel(version.origin)} · ${version.source_state === 'needs_adaptation' ? '待适配 · ' : ''}${caseScopeLabel(version, endpoint)}`,
-      groupName: version.group_name?.trim() || endpointGroupName(endpoint), version,
+      meta: `v${version.version} · ${originLabel(version.origin)} · ${version.source_state === 'needs_adaptation' ? '待适配 · ' : ''}${scope}`,
+      groupName,
+      browseGroupName: caseBrowseGroupName(scope, groupName),
+      version,
     }
   })
   const previews = props.generatedPreviews.map((preview): CaseListItem => {
     const endpoint = endpointById.value.get(preview.endpoint_id)
       || fallbackEndpoint(preview.endpoint_id, preview.case.request.method, preview.case.request.path, preview.case.name)
+    const groupName = endpointGroupName(endpoint)
+    const scope = caseScopeLabel(preview.case, endpoint)
     return {
       kind: 'preview', id: preview.id, endpoint, name: preview.case.name,
-      meta: `候选 · ${originLabel(preview.origin)} · ${caseScopeLabel(preview.case, endpoint)}`, groupName: endpointGroupName(endpoint), preview,
+      meta: `候选 · ${originLabel(preview.origin)} · ${scope}`,
+      groupName,
+      browseGroupName: caseBrowseGroupName(scope, groupName),
+      preview,
     }
   })
   return [...previews, ...versions]
@@ -127,10 +138,10 @@ const allGroupsCollapsed = computed(() => hasGroups.value && visibleNodeIds.valu
 const groupOptions = computed(() => [...new Set(allItems.value.map(item => item.groupName))].sort(compareGroupNames))
 const groupStateText = computed(() => keyword.value
   ? `搜索命中 ${visibleItems.value.length} 条用例`
-  : `${visibleItems.value.length} 条 · ${visibleTree.value.length} 个根目录`)
+  : `${visibleItems.value.length} 条 · ${visibleTree.value.length} 个应用/业务范围`)
 const selectedCount = computed(() => selectedVersionIds.value.size)
 
-watch(() => allItems.value.map(item => `${item.kind}:${item.id}:${item.groupName}`).join('\u001f'), signature => {
+watch(() => allItems.value.map(item => `${item.kind}:${item.id}:${item.browseGroupName || item.groupName}`).join('\u001f'), signature => {
   const validVersionIds = new Set(props.versions.map(version => version.id))
   selectedVersionIds.value = new Set([...selectedVersionIds.value].filter(id => validVersionIds.has(id)))
   if (signature === initializedSignature.value) return
@@ -142,7 +153,7 @@ watch([() => props.activeVersionId, () => props.activePreviewId], () => {
   const active = allItems.value.find(item => item.kind === 'version' ? item.id === props.activeVersionId : item.id === props.activePreviewId)
   if (!active) return
   const next = new Set(expandedNodeIds.value)
-  caseGroupAncestorIds(active.groupName).forEach(id => next.add(id))
+  caseGroupAncestorIds(active.browseGroupName || active.groupName).forEach(id => next.add(id))
   expandedNodeIds.value = next
 }, { immediate: true })
 
@@ -302,7 +313,8 @@ function chooseBatchGroup(groupName: string): void {
                   <i v-if="item.version.lifecycle?.debug_status" :class="item.version.lifecycle.debug_status === 'PASSED' ? 'lifecycle-pass' : 'lifecycle-fail'">{{ debugStatusLabel(item.version.lifecycle.debug_status) }}</i>
                   <i v-if="item.version.lifecycle?.baseline_status === 'active'" class="lifecycle-baseline">已基线</i>
                   <i v-if="item.version.lifecycle?.regression_status" :class="item.version.lifecycle.regression_status === 'PASSED' ? 'lifecycle-pass' : 'lifecycle-fail'">{{ regressionStatusLabel(item.version.lifecycle.regression_status) }}</i>
-                  <i v-if="!item.version.lifecycle?.debug_status && item.version.lifecycle?.baseline_status !== 'active' && item.version.source_state !== 'needs_adaptation'" class="lifecycle-regular">普通用例</i>
+                  <i v-if="isOneTimeCase(item)" class="lifecycle-one-time">一次性</i>
+                  <i v-if="!isOneTimeCase(item) && !item.version.lifecycle?.debug_status && item.version.lifecycle?.baseline_status !== 'active' && item.version.source_state !== 'needs_adaptation'" class="lifecycle-regular">普通用例</i>
                 </span>
                 <span v-if="item.kind === 'preview' && item.preview.workflow" class="workflow-preview-line" :title="item.preview.workflow.reason"><b>{{ item.preview.workflow.label }}</b><i>{{ baselinePolicyLabel(item.preview.workflow.baseline_policy) }}</i></span>
               </span>

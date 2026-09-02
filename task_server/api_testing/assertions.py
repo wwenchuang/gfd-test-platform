@@ -116,6 +116,49 @@ def _json_equals(left, right):
     return left == right
 
 
+def _display_value(value):
+    if value is None:
+        return "null"
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, str):
+        return repr(value)
+    return repr(value)
+
+
+def _assertion_failure_message(assertion, actual, *, exists):
+    if assertion.type == "schema":
+        return "响应结构不符合预期 Schema"
+    target = getattr(assertion, "path", None) if assertion.type == "json_path" else getattr(assertion, "name", None)
+    target = target or ("HTTP 状态码" if assertion.type == "status_code" else "响应")
+    expected = assertion.expected
+    if assertion.operator == "exists":
+        return f"字段 {target} 必须存在，实际未找到"
+    if assertion.operator == "not_exists":
+        return f"字段 {target} 不应存在，实际为 {_display_value(actual)}"
+    if assertion.operator == "not_equals" and expected is None:
+        return f"字段 {target} 必须非空，实际为 null"
+    if assertion.operator == "equals":
+        return f"{target} 期望 {_display_value(expected)}，实际 {_display_value(actual)}"
+    if assertion.operator == "not_equals":
+        return f"{target} 不应为 {_display_value(expected)}，实际仍为 {_display_value(actual)}"
+    if assertion.operator == "in":
+        return f"{target} 应为 {_display_value(expected)} 中的一项，实际 {_display_value(actual)}"
+    if assertion.operator == "contains":
+        return f"{target} 应包含 {_display_value(expected)}，实际 {_display_value(actual)}"
+    if assertion.operator == "not_contains":
+        return f"{target} 不应包含 {_display_value(expected)}，实际 {_display_value(actual)}"
+    if assertion.operator == "greater_than":
+        return f"{target} 应大于 {_display_value(expected)}，实际 {_display_value(actual)}"
+    if assertion.operator == "less_than":
+        return f"{target} 应小于 {_display_value(expected)}，实际 {_display_value(actual)}"
+    if assertion.operator == "matches":
+        return f"{target} 应匹配 {_display_value(expected)}，实际 {_display_value(actual)}"
+    if not exists:
+        return f"字段 {target} 未找到，无法完成断言"
+    return "实际响应与期望值不一致"
+
+
 _SCHEMA_CHILDREN = frozenset({"items", "additionalProperties", "not", "contains", "if", "then", "else"})
 _SCHEMA_BRANCHES = frozenset({"allOf", "anyOf", "oneOf", "prefixItems"})
 _SCHEMA_KEYWORDS = _SCHEMA_CHILDREN | _SCHEMA_BRANCHES | frozenset({
@@ -224,7 +267,7 @@ def evaluate_assertions(assertions, response):
                 passed=passed,
                 actual=None if actual is _MISSING else copy.deepcopy(actual),
                 expected=copy.deepcopy(assertion.expected),
-                message="通过" if passed else "实际响应与期望值不一致",
+                message="通过" if passed else _assertion_failure_message(assertion, actual, exists=exists),
             )
         )
     return tuple(results)

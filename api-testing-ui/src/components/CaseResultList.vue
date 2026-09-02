@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, nextTick, onUpdated, ref, watch } from 'vue'
 
 import type { ExecutionCaseResult } from '../api/contracts'
 import { statusLabel } from '../utils/executionPresentation'
@@ -32,15 +32,7 @@ const rangeLabel = computed(() => {
   return `第 ${start}-${end} 条，共 ${filteredResults.value.length} 条`
 })
 
-async function revealActive(activeId = props.activeId): Promise<void> {
-  if (!activeId) return
-  const index = filteredResults.value.findIndex(result => result.execution_case_id === activeId)
-  if (index < 0) return
-  page.value = Math.floor(index / PAGE_SIZE) + 1
-  await nextTick()
-  if (typeof window.requestAnimationFrame === 'function') {
-    await new Promise<void>(resolve => window.requestAnimationFrame(() => resolve()))
-  }
+function alignActive(): void {
   const selected = root.value?.querySelector<HTMLElement>('.active')
   const pane = root.value?.parentElement
   if (!selected || !pane) return
@@ -50,15 +42,27 @@ async function revealActive(activeId = props.activeId): Promise<void> {
   else if (row.bottom > bounds.bottom) pane.scrollTop += row.bottom - bounds.bottom
 }
 
+async function revealActive(activeId = props.activeId): Promise<void> {
+  if (!activeId) return
+  const index = filteredResults.value.findIndex(result => result.execution_case_id === activeId)
+  if (index < 0) return
+  page.value = Math.floor(index / PAGE_SIZE) + 1
+  await nextTick()
+  if (typeof window.requestAnimationFrame === 'function') {
+    await new Promise<void>(resolve => window.requestAnimationFrame(() => resolve()))
+  }
+  alignActive()
+}
+
 watch(query, async () => {
   page.value = 1
-  await nextTick()
-  revealActive()
+  await revealActive()
 })
 watch([() => props.activeId, () => props.results], ([activeId]) => revealActive(activeId), { immediate: true })
 watch(pageCount, count => {
   if (page.value > count) page.value = count
 })
+onUpdated(alignActive)
 </script>
 
 <template>

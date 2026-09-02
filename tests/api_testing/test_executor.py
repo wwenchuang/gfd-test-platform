@@ -64,6 +64,8 @@ class _TargetHandler(BaseHTTPRequestHandler):
             self._send(200, {"code": 0})
         elif self.path.startswith("/ok"):
             self._send(200, {"code": 0, "data": [{"id": "favorite-1"}]})
+        elif self.path.startswith("/nullable"):
+            self._send(200, {"code": 0, "data": None})
         elif self.path.startswith("/business-fail"):
             self._send(200, {"code": 4009, "message": "not logged in"})
         elif self.path.startswith("/business-line-fail"):
@@ -1035,6 +1037,24 @@ def test_boolean_business_code_does_not_equal_numeric_zero(target_server):
     assert result.assertion_results[0]["passed"] is False
     assert result.assertion_results[1]["type"] == "business_code"
     assert result.assertion_results[1]["passed"] is False
+
+
+def test_non_null_assertion_failure_explains_the_operator_and_path(target_server):
+    result = _executor(
+        target_server,
+        _case(
+            "/nullable",
+            assertions=[
+                _assertion("json_path", "not_equals", None, "$.data"),
+            ],
+        ),
+    ).execute_case("case-version-1", "environment-revision-1", {})
+
+    assert result.status == "FAILED"
+    assert result.failure_category == "product_assertion"
+    assert result.assertion_results[0]["message"] == "字段 $.data 必须非空，实际为 null"
+    assert "字段 $.data 必须非空，实际为 null" in result.error_message
+    assert "断言期望 null，实际 null" not in result.error_message
 
 
 def test_exact_expected_business_failure_code_can_pass(target_server):
