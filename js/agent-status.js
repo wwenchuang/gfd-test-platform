@@ -3170,6 +3170,9 @@ function assetRowsForCurrentFilters() {
   const allowedModules = selectedApp ? new Set(selectedApp.modules || []) : null;
   let rows = moduleFileRows();
   if (allowedModules) rows = rows.filter(row => allowedModules.has(row.mod));
+  rows = rows.filter(row => assetModuleScope === 'history'
+    ? isAssetHistoryModule(row.mod)
+    : !isAssetHistoryModule(row.mod));
   if (currentModule && modules[currentModule]) rows = rows.filter(row => row.mod === currentModule);
   if (libraryView === 'recent') rows = rows.filter(row => row.time > 0).sort((a, b) => b.time - a.time);
   else if (libraryView === 'failed') rows = rows.filter(row => row.job.status === 'failed').sort((a, b) => b.time - a.time);
@@ -3182,6 +3185,7 @@ function assetRowsForCurrentFilters() {
 }
 
 function showAllAssetModules() {
+  assetModuleScope = 'business';
   currentModule = null;
   currentFile = null;
   resetAssetListPage();
@@ -3255,7 +3259,7 @@ function showAssetsCenter() {
   }
   const appValue = document.getElementById('asset-app-filter')?.value || document.getElementById('app-filter')?.value || '';
   const searchValue = document.getElementById('asset-search')?.value || document.getElementById('task-search')?.value || '';
-  const filterKey = `${appValue}::${searchValue}::${currentModule || ''}::${libraryView}`;
+  const filterKey = `${appValue}::${searchValue}::${currentModule || ''}::${libraryView}::${assetModuleScope}`;
   if (lastAssetFilterKey && lastAssetFilterKey !== filterKey) resetAssetListPage();
   lastAssetFilterKey = filterKey;
   const rows = assetRowsForCurrentFilters();
@@ -3272,7 +3276,10 @@ function showAssetsCenter() {
     selected: selectedInRows.length,
     selectedTotal
   };
-  const moduleCount = currentModule ? 1 : Object.keys(modules).length;
+  const businessModules = Object.entries(modules).filter(([mod, files]) => !isAssetHistoryModule(mod) && files.length > 0);
+  const historyModules = Object.entries(modules).filter(([mod]) => isAssetHistoryModule(mod));
+  const moduleCount = currentModule ? 1 : (assetModuleScope === 'history' ? historyModules.length : businessModules.length);
+  const scopeTitle = assetModuleScope === 'history' ? 'AI 生成/修复历史' : '业务与基线模块';
   area.className = 'editor-area assets-center';
   area.innerHTML = `
     <div class="assets-page">
@@ -3289,7 +3296,7 @@ function showAssetsCenter() {
         </div>
       </div>
       <div class="assets-summary">
-        <div><strong>${summary.total}</strong><span>当前 YAML</span></div>
+        <div><strong>${summary.total}</strong><span>${assetModuleScope === 'history' ? '历史 YAML' : '当前 YAML'}</span></div>
         <div><strong>${moduleCount}</strong><span>${currentModule ? '当前模块' : '模块数'}</span></div>
         <div><strong>${summary.baseline}</strong><span>已入库/基线</span></div>
         <div><strong>${summary.failed}</strong><span>最近失败</span></div>
@@ -3327,7 +3334,7 @@ function showAssetsCenter() {
         <div class="assets-table-panel">
           <div class="assets-table-head">
             <div>
-              <strong>${currentModule ? escapeHtml(currentModule) : '全部模块'}</strong>
+              <strong>${currentModule ? escapeHtml(currentModule) : scopeTitle}</strong>
               <span>${escapeHtml(libraryView === 'module' ? '按模块' : ({recent: '最近', failed: '失败', baseline: '基线'}[libraryView] || libraryView))}</span>
             </div>
             <div class="assets-actions">
@@ -3415,6 +3422,7 @@ function syncAssetFiltersToSidebar() {
 }
 
 function selectAssetModule(mod='') {
+  assetModuleScope = 'business';
   currentModule = mod || null;
   currentFile = null;
   resetAssetListPage();
@@ -3423,12 +3431,27 @@ function selectAssetModule(mod='') {
   showAssetsCenter();
 }
 
+function selectAssetModuleScope(scope='business') {
+  assetModuleScope = scope === 'history' ? 'history' : 'business';
+  currentModule = null;
+  currentFile = null;
+  resetAssetListPage();
+  resetYamlToolbarForManager();
+  renderModules();
+  showAssetsCenter();
+}
+
+function isAssetHistoryModule(moduleName='') {
+  const normalized = String(moduleName || '').trim();
+  return /^AI_Agent_/i.test(normalized) || /^cache$/i.test(normalized);
+}
+
 function assetModuleListHtml() {
   const appFilter = document.getElementById('asset-app-filter')?.value || document.getElementById('app-filter')?.value || '';
   const selectedApp = taskApps.find(app => app.package === appFilter);
   const allowedModules = selectedApp ? new Set(selectedApp.modules || []) : null;
   const keyword = (document.getElementById('asset-search')?.value || document.getElementById('task-search')?.value || '').trim().toLowerCase();
-  const moduleRows = Object.entries(modules)
+  const allModuleRows = Object.entries(modules)
     .filter(([mod]) => !allowedModules || allowedModules.has(mod))
     .map(([mod, files]) => {
       const visibleCount = keyword ? files.filter(file => `${mod}/${file}`.toLowerCase().includes(keyword)).length : files.length;
@@ -3436,12 +3459,20 @@ function assetModuleListHtml() {
       const stats = mergeYamlStats(files.map(file => yamlStatsForFile(mod, file)));
       return { mod, files, visibleCount, failedCount, stats };
     })
-    .filter(row => !keyword || row.visibleCount > 0)
     .sort((a, b) => a.mod.localeCompare(b.mod, 'zh-CN'));
+  const moduleRows = allModuleRows
+    .filter(row => !isAssetHistoryModule(row.mod) && row.files.length > 0)
+    .filter(row => !keyword || row.visibleCount > 0);
+  const historyRows = allModuleRows.filter(row => isAssetHistoryModule(row.mod));
+  const visibleHistoryRows = historyRows.filter(row => !keyword || row.visibleCount > 0);
+  const historyYamlCount = historyRows.reduce((sum, row) => sum + row.files.length, 0);
+  const visibleHistoryYamlCount = visibleHistoryRows.reduce((sum, row) => sum + row.visibleCount, 0);
+  const emptyHistoryCount = historyRows.filter(row => row.files.length === 0).length;
   return `
-    <button class="asset-module-item ${!currentModule ? 'active' : ''}" onclick="selectAssetModule('')">
-      <span>全部模块</span>
+    <button class="asset-module-item ${assetModuleScope === 'business' && !currentModule ? 'active' : ''}" onclick="selectAssetModuleScope('business')">
+      <span>业务与基线模块</span>
       <strong>${moduleRows.reduce((sum, row) => sum + row.files.length, 0)}</strong>
+      <em>${moduleRows.length} 个有用例的模块</em>
     </button>
     ${moduleRows.map(row => `
       <button class="asset-module-item ${currentModule === row.mod ? 'active' : ''}" onclick="selectAssetModule(${jsArg(row.mod)})">
@@ -3449,8 +3480,55 @@ function assetModuleListHtml() {
         <strong>${row.visibleCount}/${row.files.length}</strong>
         <em>${escapeHtml(prioritySummaryText(row.stats, true))}${row.failedCount ? ` · 失败 ${row.failedCount}` : ''}</em>
       </button>
-    `).join('') || '<div class="job-empty">没有匹配模块</div>'}
+    `).join('') || '<div class="job-empty">没有匹配的业务模块</div>'}
+    <div class="asset-module-separator"><span>系统生成记录</span></div>
+    <button class="asset-module-item asset-history-module ${assetModuleScope === 'history' ? 'active' : ''}" onclick="selectAssetModuleScope('history')">
+      <span>AI 生成/修复历史</span>
+      <strong>${keyword ? visibleHistoryYamlCount : historyYamlCount}</strong>
+      <em>${historyRows.length} 个历史模块 · ${historyYamlCount} 个 YAML · ${emptyHistoryCount} 个空模块</em>
+    </button>
+    ${emptyHistoryCount ? `
+      <button class="asset-history-cleanup" type="button" data-action-permission="ui.delete" onclick="cleanupEmptyAssetHistoryModules(event)">
+        清理 ${emptyHistoryCount} 个空历史模块
+      </button>
+    ` : ''}
   `;
+}
+
+async function cleanupEmptyAssetHistoryModules(event) {
+  event?.stopPropagation?.();
+  if (!requireUiDeletePermission()) return;
+  const emptyModules = Object.entries(modules)
+    .filter(([mod, files]) => isAssetHistoryModule(mod) && files.length === 0)
+    .map(([mod]) => mod)
+    .sort((a, b) => a.localeCompare(b, 'zh-CN'));
+  if (!emptyModules.length) {
+    showToast('没有可清理的空历史模块', 'info');
+    return;
+  }
+  const confirmed = confirm(
+    `确认清理 ${emptyModules.length} 个空的 AI 生成/修复历史模块？\n\n` +
+    `将删除：\n${emptyModules.map(mod => `• ${mod}`).join('\n')}\n\n` +
+    '这里只删除空目录，不会删除任何 YAML。'
+  );
+  if (!confirmed) return;
+  const failedModules = [];
+  for (const mod of emptyModules) {
+    try {
+      await apiRequest(`/module?module=${encodeURIComponent(mod)}`, { method: 'DELETE' });
+      delete modules[mod];
+    } catch (error) {
+      failedModules.push(`${mod}：${error?.message || error}`);
+    }
+  }
+  renderModules();
+  showAssetsCenter();
+  const deletedCount = emptyModules.length - failedModules.length;
+  if (failedModules.length) {
+    showToast(`已清理 ${deletedCount} 个，${failedModules.length} 个失败：${failedModules.join('；')}`, 'error');
+    return;
+  }
+  showToast(`已清理 ${deletedCount} 个空历史模块`, 'success');
 }
 
 function sonicFileSummary(mod, file) {
@@ -3667,13 +3745,13 @@ function fillModuleSelect(select, placeholder, selectedValue='') {
   if (!select) return;
   const previous = selectedValue || select.value || '';
   select.innerHTML = `<option value="">${placeholder}</option>`;
-  Object.keys(modules).sort((a, b) => a.localeCompare(b, 'zh-CN')).forEach(mod => {
+  Object.keys(modules).filter(mod => !isAssetHistoryModule(mod)).sort((a, b) => a.localeCompare(b, 'zh-CN')).forEach(mod => {
     const opt = document.createElement('option');
     opt.value = mod;
     opt.textContent = moduleApp(mod) ? `${mod} / ${moduleApp(mod).name || moduleApp(mod).package}` : mod;
     select.appendChild(opt);
   });
-  if (previous && Object.prototype.hasOwnProperty.call(modules, previous)) {
+  if (previous && Object.prototype.hasOwnProperty.call(modules, previous) && !isAssetHistoryModule(previous)) {
     select.value = previous;
   }
 }
@@ -3725,6 +3803,7 @@ function renderModules() {
   }
 
   Object.entries(modules).forEach(([mod, files]) => {
+    if (isAssetHistoryModule(mod)) return;
     if (allowedModules && !allowedModules.has(mod)) return;
     const visibleFiles = keyword
       ? files.filter(f => {
@@ -3762,6 +3841,35 @@ function renderModules() {
     `;
     list.appendChild(div);
   });
+  const historyRows = Object.entries(modules)
+    .filter(([mod]) => isAssetHistoryModule(mod))
+    .filter(([mod]) => !allowedModules || allowedModules.has(mod))
+    .flatMap(([mod, files]) => files
+      .filter(file => !keyword || `${mod}/${file}/${lifecycleText(fileMeta(mod, file).status)}`.toLowerCase().includes(keyword))
+      .map(file => ({ mod, file })));
+  if (historyRows.length) {
+    const div = document.createElement('div');
+    div.className = `module-item module-history-group ${historyRows.some(row => currentModule === row.mod) || keyword ? 'open active' : ''}`;
+    div.innerHTML = `
+      <div class="module-header" onclick="this.parentElement.classList.toggle('open')">
+        <span class="module-icon">🧰</span>
+        <span class="module-name">AI 生成/修复历史</span>
+        <span class="module-count">${historyRows.length}</span>
+        <span class="module-arrow">▶</span>
+      </div>
+      <div class="task-list">
+        ${historyRows.map(({mod, file}) => `
+          <div class="task-item ${currentFile===file&&currentModule===mod?'active':''}" onclick="openFile(${jsArg(mod)},${jsArg(file)})">
+            <input class="task-check" type="checkbox" ${selectedFiles.has(fileKey(mod, file)) ? 'checked' : ''} onclick="event.stopPropagation();toggleFileSelected(${jsArg(mod)},${jsArg(file)},this.checked)">
+            <span class="task-status ${(latestJobForFile(mod, file)?.status || '')}" title="最近执行：${jobStatusText(latestJobForFile(mod, file)?.status || '')}"></span>
+            <span class="task-name" title="${escapeHtml(mod + '/' + file)}">${escapeHtml(yamlDisplayName(file))}</span>
+            <span class="task-ext" title="系统自动生成的记录">${escapeHtml(mod.replace(/^AI_Agent_/i, '') || '缓存')}</span>
+          </div>
+        `).join('')}
+      </div>
+    `;
+    list.appendChild(div);
+  }
   if (!list.innerHTML) {
     list.innerHTML = '<div style="padding:16px;color:var(--text2);font-family:var(--mono);font-size:12px;">没有匹配的 YAML 文件</div>';
   }

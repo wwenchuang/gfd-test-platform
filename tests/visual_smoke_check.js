@@ -63,6 +63,8 @@ function serve() {
       json(res, {
         'AI测试': ['AI建模.yaml', '耗材确认弹窗.yaml'],
         '3D打印基线': ['十二生肖印章打印.yaml'],
+        'AI_Agent_修复重跑_agent-123': ['自动修复记录.yaml'],
+        cache: [],
       });
       return;
     }
@@ -617,6 +619,23 @@ async function anyVisible(locator) {
     await page.waitForSelector('.assets-table');
     if (await page.locator('.jobs-panel').isVisible()) throw new Error('assets page should hide the right Agent/status panel');
     if (!await page.locator('.assets-table thead input[type="checkbox"]').isVisible()) throw new Error('assets table select-all checkbox is missing');
+    if (!await page.locator('.asset-history-module', {hasText: 'AI 生成/修复历史'}).isVisible()) throw new Error('generated repair history is not consolidated');
+    if (await page.locator('.asset-module-item', {hasText: 'AI_Agent_修复重跑_agent-123'}).count()) throw new Error('generated repair module leaks into the business module list');
+    if (await page.locator('#new-task-module option[value="AI_Agent_修复重跑_agent-123"]').count()) throw new Error('generated repair history can be selected as a new YAML target');
+    let cleanupConfirmMessage = '';
+    page.once('dialog', async dialog => {
+      cleanupConfirmMessage = dialog.message();
+      await dialog.dismiss();
+    });
+    await page.locator('.asset-history-cleanup').click();
+    if (!/1 个空的 AI 生成\/修复历史模块/.test(cleanupConfirmMessage) || !/不会删除任何 YAML/.test(cleanupConfirmMessage)) {
+      throw new Error(`empty history cleanup confirmation is unclear: ${cleanupConfirmMessage}`);
+    }
+    await page.locator('.asset-history-module').click();
+    await page.waitForSelector('.assets-table button:has-text("自动修复记录")');
+    if (await page.locator('.assets-table tbody tr').count() !== 1) throw new Error('history scope includes business YAML files');
+    await page.screenshot({path: path.join(ARTIFACTS, 'assets-history.png'), fullPage: true});
+    await page.locator('.asset-module-item', {hasText: '业务与基线模块'}).click();
     for (const label of ['重命名', '移动', '删除']) {
       if (!await anyVisible(page.locator('.assets-table button', {hasText: label}))) throw new Error(`assets row action is missing: ${label}`);
     }
@@ -1299,6 +1318,8 @@ async function anyVisible(locator) {
         path.join(ARTIFACTS, 'generate-business-mobile.png'),
         path.join(ARTIFACTS, 'app-business-lines.png'),
         path.join(ARTIFACTS, 'execution.png'),
+        path.join(ARTIFACTS, 'assets.png'),
+        path.join(ARTIFACTS, 'assets-history.png'),
         path.join(ARTIFACTS, 'agent.png'),
         path.join(ARTIFACTS, 'agent-mobile.png'),
         path.join(ARTIFACTS, 'agent-failure.png'),

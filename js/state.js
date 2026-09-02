@@ -100,6 +100,7 @@ let yamlStatsWarmupStarted = false;
 let modulePriorityFilter = 'all';
 let assetListPage = 1;
 let moduleDirectoryPage = 1;
+let assetModuleScope = 'business';
 const EXECUTION_YAML_PAGE_SIZE = 30;
 let executionYamlPage = 1;
 let executionYamlSearch = '';
