@@ -125,6 +125,56 @@ def test_execution_view_exposes_stable_endpoint_key_for_cross_revision_history()
     assert view.case_results[0]["endpoint_stable_key"] == "stable-favorites-list"
 
 
+@pytest.mark.parametrize(
+    ("snapshot_version", "expected_name"),
+    [
+        ({"id": "version-1", "case_name": "执行时快照名称"}, "执行时快照名称"),
+        ({"id": "version-1"}, "历史版本名称"),
+    ],
+)
+def test_execution_view_keeps_historical_case_name(snapshot_version, expected_name):
+    execution = SimpleNamespace(
+        id="execution-history-name",
+        project_id="project-1",
+        state="DONE",
+        execution_type="baseline_regression",
+        source_revision_id="source-1",
+        environment_revision_id="environment-1",
+        request_snapshot={"case_versions": [snapshot_version]},
+        summary={"total": 1, "passed": 1},
+        cancellation_requested_at=None,
+        created_at=None,
+        started_at=None,
+        finished_at=None,
+    )
+    child = SimpleNamespace(
+        id="execution-case-1",
+        case_version_id="version-1",
+        endpoint_id="endpoint-1",
+        status="PASSED",
+        failure_category="",
+        duration_ms=10,
+        sanitized_result={},
+    )
+    version = SimpleNamespace(
+        id="version-1",
+        case_id="case-1",
+        request_template={"name": "历史版本名称"},
+    )
+    current_case = SimpleNamespace(name="后来改过的当前名称")
+
+    view = ExecutionService._view(
+        execution,
+        (child,),
+        {
+            "versions": {version.id: version},
+            "cases": {version.case_id: current_case},
+        },
+    )
+
+    assert view.case_results[0]["case_name"] == expected_name
+
+
 def test_task_snapshot_keeps_task_identity_for_execution_history():
     snapshot = ExecutionService._task_snapshot(
         SimpleNamespace(id="task-1", name="收藏接口回归")
@@ -192,6 +242,7 @@ def test_case_version_snapshot_keeps_explicit_application_and_business():
             endpoint_id="endpoint-1",
             version_number=3,
             request_template={
+                "name": "收藏列表 - 执行快照",
                 "app_package": "com.example.school",
                 "app_name": "校园应用",
                 "business": "shared",
@@ -204,6 +255,7 @@ def test_case_version_snapshot_keeps_explicit_application_and_business():
     assert snapshot["app_package"] == "com.example.school"
     assert snapshot["app_name"] == "校园应用"
     assert snapshot["business"] == "shared"
+    assert snapshot["case_name"] == "收藏列表 - 执行快照"
 
 
 def test_case_version_snapshot_resolves_legacy_application_from_business(tmp_path, monkeypatch):

@@ -1049,6 +1049,7 @@ class ExecutionService:
             "case_id": version.case_id,
             "endpoint_id": version.endpoint_id,
             "version": version.version_number,
+            "case_name": str(application.get("name") or "").strip()[:300],
             "role": "requested" if version.id in requested_version_ids else "dependency",
             "app_package": str(
                 application.get("app_package")
@@ -1141,6 +1142,14 @@ class ExecutionService:
         failure_analyses = display.get("failure_analyses", {})
         events = display.get("events", ())
         snapshot_versions = snapshot.get("case_versions", ()) if isinstance(snapshot, dict) else ()
+        snapshot_case_names = {
+            item["id"]: item["case_name"].strip()
+            for item in snapshot_versions
+            if isinstance(item, dict)
+            and isinstance(item.get("id"), str)
+            and isinstance(item.get("case_name"), str)
+            and item["case_name"].strip()
+        }
         application_name, business_name = canonical_test_scope_summary(
             snapshot_versions,
             fallback_package="",
@@ -1193,10 +1202,32 @@ class ExecutionService:
                     if item.endpoint_id in endpoints
                     else "",
                     "case_name": (
-                        cases.get(versions[item.case_version_id].case_id).name
-                        if item.case_version_id in versions
-                        and cases.get(versions[item.case_version_id].case_id)
-                        else ""
+                        snapshot_case_names.get(item.case_version_id)
+                        or (
+                            str(
+                                (
+                                    versions[item.case_version_id].request_template
+                                    if isinstance(
+                                        getattr(
+                                            versions[item.case_version_id],
+                                            "request_template",
+                                            {},
+                                        ),
+                                        dict,
+                                    )
+                                    else {}
+                                ).get("name")
+                                or ""
+                            ).strip()
+                            if item.case_version_id in versions
+                            else ""
+                        )
+                        or (
+                            cases.get(versions[item.case_version_id].case_id).name
+                            if item.case_version_id in versions
+                            and cases.get(versions[item.case_version_id].case_id)
+                            else ""
+                        )
                     ),
                     "endpoint_summary": endpoints[item.endpoint_id].summary
                     if item.endpoint_id in endpoints
