@@ -9,7 +9,7 @@ import ReportSummary from './ReportSummary.vue'
 import CaseEvidence from './CaseEvidence.vue'
 
 const props = defineProps<{ execution: ExecutionView; initialCaseId?: string; loadingCaseKeys?: string[]; caseEvidenceErrors?: Record<string, string> }>()
-const emit = defineEmits<{ close: []; edit: [result: ExecutionCaseResult, execution: ExecutionView]; rerun: [execution: ExecutionView]; loadEvidence: [result: ExecutionCaseResult] }>()
+const emit = defineEmits<{ close: []; edit: [result: ExecutionCaseResult, execution: ExecutionView]; rerunCase: [result: ExecutionCaseResult, execution: ExecutionView]; loadEvidence: [result: ExecutionCaseResult] }>()
 const active = ref<ExecutionCaseResult | null>(props.execution.case_results.find(item => item.execution_case_id === props.initialCaseId) || props.execution.case_results[0] || null)
 const duration = computed(() => props.execution.case_results.reduce((total, item) => total + item.duration_ms, 0))
 const drawer = ref<HTMLElement | null>(null)
@@ -101,7 +101,7 @@ function handleKeydown(event: KeyboardEvent): void {
         <CaseResultList :results="execution.case_results" :active-id="active?.execution_case_id" @select="active = $event" />
       </div>
       <div ref="evidencePane" class="execution-detail-evidence" role="region" aria-label="当前用例证据" tabindex="0">
-        <CaseEvidence v-if="active" :result="active" :loading="loadingCaseKeys?.includes(evidenceKey(active))" :error="caseEvidenceErrors?.[evidenceKey(active)]" @retry="emit('loadEvidence', $event)" @edit="emit('edit', $event, execution)" @rerun="emit('rerun', execution)" />
+        <CaseEvidence v-if="active" :result="active" :loading="loadingCaseKeys?.includes(evidenceKey(active))" :error="caseEvidenceErrors?.[evidenceKey(active)]" @retry="emit('loadEvidence', $event)" @edit="emit('edit', $event, execution)" @rerun="emit('rerunCase', $event, execution)" />
       </div>
     </div>
   </aside>

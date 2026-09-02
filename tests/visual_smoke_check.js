@@ -644,9 +644,10 @@ async function anyVisible(locator) {
     await page.setViewportSize({width: 1440, height: 900});
 
     await page.locator('details[data-nav-group="run"]').evaluate(el => { el.open = true; });
-    await page.click('.workflow-step[data-workflow="baseline"]');
     for (const label of ['同步当前 YAML 至 Sonic 平台', '历史版本', '全选当前模块', '打开更多']) {
+      await page.click('.workflow-step[data-workflow="baseline"]');
       await page.locator('.workflow-guide').getByRole('button', {name: label, exact: true}).click();
+      await page.waitForSelector('.assets-page');
       if (!await page.locator('#toast').isVisible() || !/请先/.test(await page.locator('#toast').innerText())) {
         throw new Error(`Empty Sonic guide action has no next-step feedback: ${label}`);
       }

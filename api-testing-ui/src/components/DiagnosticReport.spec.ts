@@ -58,6 +58,18 @@ describe('DiagnosticReport', () => {
     expect(rows[0].text()).toContain('运行异常')
   })
 
+  it('separates one selected failure from rerunning every failed case', async () => {
+    const wrapper = mount(DiagnosticReport, { props: { execution } })
+
+    await wrapper.findAll('[data-testid="report-case-row"]')[1].trigger('click')
+    await wrapper.get('[data-testid="rerun-case"]').trigger('click')
+    await wrapper.get('[data-testid="rerun-all-failed"]').trigger('click')
+
+    expect(wrapper.emitted('rerunCase')?.[0]?.[0]).toMatchObject({ case_version_id: 'version-2' })
+    expect(wrapper.emitted('rerunCase')?.[0]?.[1]).toMatchObject({ id: execution.id })
+    expect(wrapper.emitted('rerunFailed')?.[0]?.[0]).toMatchObject({ id: execution.id })
+  })
+
   it('requests evidence for the first case and each selected report row', async () => {
     const lightweight = {
       ...execution,

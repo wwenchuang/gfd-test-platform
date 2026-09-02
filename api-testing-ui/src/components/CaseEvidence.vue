@@ -95,7 +95,7 @@ function toggleBlock(key: string): void {
       <div><strong>{{ result.case_name || result.endpoint_summary || result.path }}</strong><code>{{ result.method }} {{ result.path }}</code></div>
       <div>
         <button data-testid="edit-case" class="secondary-command" type="button" @click="emit('edit', result)"><Pencil :size="14" />编辑用例</button>
-        <button v-if="['FAILED','BROKEN'].includes(result.status)" data-testid="rerun-case" class="secondary-command" type="button" @click="emit('rerun', result)"><RotateCw :size="14" />重跑失败项</button>
+        <button v-if="['FAILED','BROKEN'].includes(result.status)" data-testid="rerun-case" class="secondary-command" type="button" @click="emit('rerun', result)"><RotateCw :size="14" />仅重跑当前失败项</button>
       </div>
     </header>
     <div v-if="error" class="evidence-load-state inline-error" role="alert">

@@ -2986,9 +2986,20 @@ function showIntegrationPlan() {
   showToast('外部平台建议：先稳定 Runner 回传，再接 Figma 设计源和飞书缺陷平台。');
 }
 
+function guideToYamlAssets(message) {
+  const text = String(message || '请先从“用例资产”打开一个 YAML 文件');
+  if (activeWorkflow === 'assets') {
+    showToast(text, 'warn', 6000);
+    return;
+  }
+  Promise.resolve(activateWorkflow('assets'))
+    .then(() => showToast(text, 'warn', 6000))
+    .catch(error => showToast(error?.message || text, 'error', 6000));
+}
+
 function requireCurrentYaml(actionName='操作') {
   if (currentModule && currentFile) return true;
-  showToast(`请先从“用例资产”打开一个 YAML 文件，再进行${actionName}`, 'error');
+  guideToYamlAssets(`请先从“用例资产”打开一个 YAML 文件，再进行${actionName}`);
   return false;
 }
 
@@ -3941,7 +3952,7 @@ function toggleFileSelected(mod, file, checked) {
 
 function selectCurrentModuleFiles() {
   if (!currentModule || !modules[currentModule]) {
-    showToast('请先到“用例资产”展开一个模块，再全选模块文件', 'error');
+    guideToYamlAssets('请先在“用例资产”选择一个业务模块，再全选模块文件');
     return;
   }
   modules[currentModule].forEach(file => selectedFiles.add(fileKey(currentModule, file)));

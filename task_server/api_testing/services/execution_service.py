@@ -350,8 +350,11 @@ class ExecutionService:
                     "rerun cases must belong to the source execution request"
                 )
             task = snapshot.get("task") if isinstance(snapshot.get("task"), dict) else None
-            if task is not None:
-                task = {**task, "trigger": "rerun"}
+            task = self._rerun_task_snapshot(
+                task,
+                selected_count=len(identifiers),
+                source_count=len(allowed),
+            )
             request = {
                 "project_id": source.project_id,
                 "source_revision_id": source.source_revision_id,
@@ -1086,6 +1089,17 @@ class ExecutionService:
             include_evidence=include_evidence,
             include_failure_analysis=include_failure_analysis,
         )
+
+    @staticmethod
+    def _rerun_task_snapshot(task, *, selected_count, source_count):
+        if not isinstance(task, dict):
+            return None
+        rerun_task = {**task, "trigger": "rerun"}
+        if 0 < selected_count < source_count:
+            source_name = str(task.get("name") or "未命名任务").strip()
+            scope_suffix = f" · 部分重跑 {selected_count}/{source_count} 条"
+            rerun_task["name"] = f"{source_name[:200 - len(scope_suffix)]}{scope_suffix}"
+        return rerun_task
 
     @staticmethod
     def _task_snapshot(task):

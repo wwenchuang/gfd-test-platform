@@ -33,6 +33,18 @@ describe('ExecutionDetailDrawer', () => {
     })
   })
 
+  it('emits the exact failed case and source execution for a scoped rerun', async () => {
+    const wrapper = mount(ExecutionDetailDrawer, { props: { execution } })
+
+    await wrapper.get('[data-testid="rerun-case"]').trigger('click')
+
+    expect(wrapper.emitted('rerunCase')?.[0]?.[0]).toMatchObject({
+      execution_case_id: 'execution-case-1', case_version_id: 'case-version-1',
+    })
+    expect(wrapper.emitted('rerunCase')?.[0]?.[1]).toMatchObject({ id: 'execution-1' })
+    expect(wrapper.emitted('rerun')).toBeUndefined()
+  })
+
   it('traps keyboard focus and returns it when closed', async () => {
     const opener = document.createElement('button')
     document.body.appendChild(opener)

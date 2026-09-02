@@ -90,6 +90,23 @@ async function rerun(execution: ExecutionView): Promise<void> {
   })
 }
 
+async function rerunCase(result: ExecutionCaseResult, execution: ExecutionView): Promise<void> {
+  const caseVersionId = String(result.case_version_id || '').trim()
+  if (!caseVersionId) return
+  const caseName = String(result.case_name || result.endpoint_summary || result.path || '当前失败用例').trim()
+  if (!confirmApiExecution({
+    action: '仅重跑当前失败项',
+    environmentName: execution.environment_name || '原执行环境',
+    targetName: caseName,
+    caseCount: 1,
+  })) return
+  const rerunExecution = await executions.createRerun(execution, [caseVersionId])
+  await router.push({
+    name: 'runs',
+    query: { ...route.query, executionId: rerunExecution.id },
+  })
+}
+
 async function deleteExecution(executionId: string): Promise<void> {
   await deleteExecutions([executionId])
 }
@@ -150,6 +167,7 @@ async function loadCaseEvidence(result: ExecutionCaseResult): Promise<void> {
       @select="executions.select($event)"
       @cancel="executions.cancel($event)"
       @rerun="rerun"
+      @rerun-case="rerunCase"
       @reconnect="executions.reconnect($event)"
       @inspect="inspectResult"
       @load-evidence="loadCaseEvidence"
@@ -158,6 +176,6 @@ async function loadCaseEvidence(result: ExecutionCaseResult): Promise<void> {
       @delete-many="deleteExecutions"
       @clear-endpoint-filter="clearEndpointFilter"
     />
-    <ExecutionDetailDrawer v-if="executions.active && inspected" :execution="executions.active" :initial-case-id="inspected.execution_case_id" :loading-case-keys="executions.loadingCaseKeys" :case-evidence-errors="executions.caseEvidenceErrors" @load-evidence="loadCaseEvidence" @close="inspected = null" @edit="edit" @rerun="rerun" />
+    <ExecutionDetailDrawer v-if="executions.active && inspected" :execution="executions.active" :initial-case-id="inspected.execution_case_id" :loading-case-keys="executions.loadingCaseKeys" :case-evidence-errors="executions.caseEvidenceErrors" @load-evidence="loadCaseEvidence" @close="inspected = null" @edit="edit" @rerun-case="rerunCase" />
   </section>
 </template>

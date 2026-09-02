@@ -234,6 +234,26 @@ def test_rerun_preserves_source_task_identity(
         )
 
 
+def test_rerun_task_snapshot_labels_a_partial_retry_scope():
+    task = {
+        "id": "scheduled-job-282",
+        "name": "家用业务基线回归（已复验282条）",
+        "type": "scheduled_job",
+        "source": "scheduled_job",
+    }
+
+    rerun_task = ExecutionService._rerun_task_snapshot(
+        task,
+        selected_count=9,
+        source_count=282,
+    )
+
+    assert rerun_task["id"] == task["id"]
+    assert rerun_task["source"] == task["source"]
+    assert rerun_task["trigger"] == "rerun"
+    assert rerun_task["name"] == "家用业务基线回归（已复验282条） · 部分重跑 9/282 条"
+
+
 def test_case_version_snapshot_keeps_explicit_application_and_business():
     snapshot = ExecutionService._case_version_snapshot(
         SimpleNamespace(

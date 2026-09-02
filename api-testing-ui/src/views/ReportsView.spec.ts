@@ -130,6 +130,32 @@ describe('ReportsView', () => {
     expect(routerState.replace).toHaveBeenLastCalledWith({ query: { executionId: 'report-1' } })
   })
 
+  it('confirms the exact report rerun scope before sending production requests', async () => {
+    const executions = useExecutionsStore()
+    const context = useContextStore()
+    vi.spyOn(context, 'loadSavedContext').mockResolvedValue()
+    vi.spyOn(context, 'loadOptions').mockResolvedValue()
+    vi.spyOn(executions, 'loadExecution').mockResolvedValue(report)
+    const createRerun = vi.spyOn(executions, 'createRerun').mockResolvedValue({ ...report, id: 'report-rerun-1' })
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false)
+    executions.executions = [report]
+    const wrapper = mount(ReportsView)
+    await nextTick()
+
+    await wrapper.get('[data-testid="report-open-diagnostic"]').trigger('click')
+    await flushPromises()
+    await wrapper.findAll('[data-testid="report-case-row"]')[1].trigger('click')
+    await wrapper.get('[data-testid="rerun-case"]').trigger('click')
+    expect(confirm).toHaveBeenCalledWith(expect.stringMatching(/取消收藏.*1 条用例/))
+    expect(createRerun).not.toHaveBeenCalled()
+
+    confirm.mockReturnValue(true)
+    await wrapper.get('[data-testid="rerun-all-failed"]').trigger('click')
+    await flushPromises()
+    expect(createRerun).toHaveBeenCalledWith(expect.objectContaining({ id: report.id }), ['version-2'])
+    expect(routerState.push).toHaveBeenLastCalledWith({ name: 'runs', query: { executionId: 'report-rerun-1' } })
+  })
+
   it('archives selected reports in bulk from the report dashboard', async () => {
     const executions = useExecutionsStore()
     const context = useContextStore()

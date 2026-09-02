@@ -20,6 +20,7 @@ import {
 import { useContextStore } from '../stores/context'
 import { useExecutionsStore } from '../stores/executions'
 import { useNotificationsStore } from '../stores/notifications'
+import { confirmApiExecution } from '../utils/executionConfirmation'
 
 const context = useContextStore()
 const executions = useExecutionsStore()
@@ -210,6 +211,39 @@ function edit(result: ExecutionCaseResult, execution: ExecutionView): void {
   } })
 }
 
+async function createConfirmedRerun(
+  execution: ExecutionView,
+  caseVersionIds: string[],
+  action: string,
+  targetName: string,
+): Promise<void> {
+  const ids = [...new Set(caseVersionIds.map(value => String(value || '').trim()).filter(Boolean))]
+  if (!ids.length || !confirmApiExecution({
+    action,
+    environmentName: execution.environment_name || '原执行环境',
+    targetName,
+    caseCount: ids.length,
+  })) return
+  const rerunExecution = await executions.createRerun(execution, ids)
+  selected.value = null
+  await router.push({ name: 'runs', query: { executionId: rerunExecution.id } })
+}
+
+async function rerunReportCase(result: ExecutionCaseResult, execution: ExecutionView): Promise<void> {
+  const name = String(result.case_name || result.endpoint_summary || result.path || '当前失败用例').trim()
+  await createConfirmedRerun(execution, [result.case_version_id], '仅重跑当前失败项', name)
+}
+
+async function rerunFailedResults(execution: ExecutionView): Promise<void> {
+  const failed = execution.case_results.filter(item => ['FAILED', 'BROKEN'].includes(item.status))
+  await createConfirmedRerun(
+    execution,
+    failed.map(item => item.case_version_id),
+    '重跑全部失败项',
+    `${executionDisplayName(execution)}中的失败/异常用例`,
+  )
+}
+
 function reportName(report: ExecutionView): string {
   return executionDisplayName(report)
 }
@@ -358,7 +392,7 @@ async function restoreArchivedReports(): Promise<void> {
 
 <template>
   <section class="workspace">
-    <template v-if="selected"><DiagnosticReport :execution="selected" :loading-case-keys="executions.loadingCaseKeys" :case-evidence-errors="executions.caseEvidenceErrors" @load-evidence="loadDiagnosticEvidence" @back="selected = null" @edit="edit" @rerun="executions.rerunFailed($event)" /></template>
+    <template v-if="selected"><DiagnosticReport :execution="selected" :loading-case-keys="executions.loadingCaseKeys" :case-evidence-errors="executions.caseEvidenceErrors" @load-evidence="loadDiagnosticEvidence" @back="selected = null" @edit="edit" @rerun-failed="rerunFailedResults" @rerun-case="rerunReportCase" /></template>
     <template v-else>
       <header class="page-toolbar">
         <div>

@@ -201,6 +201,58 @@ describe('RunsView', () => {
     })
   })
 
+  it('reruns only the selected failed case from case evidence', async () => {
+    const failedCase = {
+      execution_case_id: 'execution-case-failed', case_version_id: 'case-version-failed', endpoint_id: 'endpoint-1',
+      case_name: '判断是否重新切片', endpoint_summary: '重新切片判断', method: 'GET', path: '/checkReslice',
+      status: 'FAILED', failure_category: 'product_assertion', duration_ms: 719, sanitized_result: {},
+    }
+    const source = {
+      ...debugExecution,
+      id: 'baseline-execution-282',
+      execution_type: 'baseline_regression',
+      task_name: '家用业务基线回归（已复验282条）',
+      case_statuses: ['FAILED'],
+      case_results: [failedCase],
+      summary: { total: 282, passed: 281, failed: 1 },
+    } as ExecutionView
+    const context = useContextStore()
+    const executions = useExecutionsStore()
+    vi.spyOn(context, 'loadSavedContext').mockResolvedValue()
+    vi.spyOn(context, 'loadOptions').mockResolvedValue()
+    vi.spyOn(executions, 'load').mockResolvedValue()
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    const createRerun = vi.spyOn(executions, 'createRerun').mockResolvedValue({
+      ...source, id: 'partial-rerun-1', state: 'QUEUED',
+    })
+    executions.executions = [source]
+    executions.active = source
+
+    const wrapper = mount(RunsView, {
+      global: {
+        stubs: {
+          ExecutionConsole: {
+            props: ['active'],
+            emits: ['rerunCase'],
+            template: '<button data-testid="rerun-case" @click="$emit(\'rerunCase\', active.case_results[0], active)">重跑失败项</button>',
+          },
+          ExecutionDetailDrawer: true,
+        },
+      },
+    })
+    await flushPromises()
+
+    await wrapper.get('[data-testid="rerun-case"]').trigger('click')
+    await flushPromises()
+
+    expect(confirm).toHaveBeenCalledWith(expect.stringMatching(/判断是否重新切片.*1 条用例/))
+    expect(confirm).not.toHaveBeenCalledWith(expect.stringContaining('282 条用例'))
+    expect(createRerun).toHaveBeenCalledWith(expect.objectContaining({ id: source.id }), ['case-version-failed'])
+    expect(routerState.push).toHaveBeenLastCalledWith({
+      name: 'runs', query: { executionId: 'partial-rerun-1' },
+    })
+  })
+
   it('opens the newest matching history record when filtering by a stable interface key', async () => {
     routeState.query = { endpointId: 'endpoint-current', endpointKey: 'stable-favorites-list' }
     const context = useContextStore()

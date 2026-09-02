@@ -416,6 +416,35 @@ async function run() {
       await page.getByRole('cell', { name: '2026-08-31 16:00:00', exact: true }).waitFor();
       await context.close();
     });
+    await check('common API testing operations use business labels in the audit log', async () => {
+      const { page, context, state } = await fixture(browser, base);
+      const paths = [
+        ['POST', '/api/api-testing/v1/providers/apifox/context', '读取 Apifox 上下文'],
+        ['POST', '/api/api-testing/v1/providers/apifox/projects', '读取 Apifox 项目'],
+        ['POST', '/api/api-testing/v1/sources/apifox/preview', '预览 Apifox 同步'],
+        ['POST', '/api/api-testing/v1/sources/apifox/source-1/activate', '启用接口来源版本'],
+        ['PUT', '/api/api-testing/v1/projects/project-1', '保存 API 项目'],
+        ['POST', '/api/api-testing/v1/executions', '创建 API 执行'],
+        ['POST', '/api/api-testing/v1/executions/execution-1/rerun', '重跑 API 执行'],
+        ['POST', '/api/api-testing/v1/executions/restore', '恢复 API 执行记录'],
+        ['POST', '/api/api-testing/v1/case-versions/version-1/baseline', '采纳 API 基线'],
+        ['POST', '/api/api-testing/v1/case-versions/version-1/validate', '校验 API 用例版本'],
+        ['POST', '/api/api-testing/v1/cases/case-1/versions', '保存 API 用例版本'],
+        ['PUT', '/api/api-testing/v1/tasks/task-1/name', '更新 API 任务名称'],
+        ['DELETE', '/api/module', '删除 YAML 模块'],
+      ];
+      state.hooks.set('GET /api/auth/audit', route => route.fulfill({json: {
+        ok: true,
+        events: paths.map(([method, target]) => ({
+          created_at: '2026-09-02T12:00:00', actor: 'admin', action: 'operation.result', target,
+          details: {method, status: 200, ok: true},
+        })),
+      }}));
+      await page.getByRole('tab', {name: '操作记录', exact: true}).click();
+      for (const [, , label] of paths) await page.getByRole('cell', {name: label, exact: true}).waitFor();
+      assert.equal(await page.getByText(/POST平台操作|PUT平台操作/).count(), 0);
+      await context.close();
+    });
     await check('pending scope save cannot close a newer dialog', async () => {
       const { page, context, state } = await fixture(browser, base);
       await page.getByRole('tab', { name: '数据授权', exact: true }).click();

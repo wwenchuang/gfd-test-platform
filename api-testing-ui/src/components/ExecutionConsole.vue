@@ -14,6 +14,7 @@ const emit = defineEmits<{
   select: [id: string]
   cancel: [id: string]
   rerun: [execution: ExecutionView]
+  rerunCase: [result: ExecutionCaseResult, execution: ExecutionView]
   reconnect: [id: string]
   inspect: [result: ExecutionCaseResult]
   loadEvidence: [result: ExecutionCaseResult]
@@ -268,7 +269,7 @@ function executionRowConclusion(execution: ExecutionView): { label: string; tone
         </div>
         <div v-else-if="tab === 'cases'" class="execution-detail-grid embedded-evidence">
           <CaseResultList :results="active.case_results" :active-id="selected?.execution_case_id" @select="selectEvidence" />
-          <CaseEvidence v-if="selected" :result="selected" :loading="loadingCaseKeys?.includes(evidenceKey(selected))" :error="caseEvidenceErrors?.[evidenceKey(selected)]" @retry="emit('loadEvidence', $event)" @edit="emit('edit', $event, active)" @rerun="emit('rerun', active)" />
+          <CaseEvidence v-if="selected" :result="selected" :loading="loadingCaseKeys?.includes(evidenceKey(selected))" :error="caseEvidenceErrors?.[evidenceKey(selected)]" @retry="emit('loadEvidence', $event)" @edit="emit('edit', $event, active)" @rerun="emit('rerunCase', $event, active)" />
         </div>
         <section v-else class="execution-report-preview">
           <header><div><span>本次执行</span><strong>{{ active.environment_name }}</strong></div><p>完整诊断报告保留真实用例状态，并按产品、脚本数据和环境问题归类。</p></header>

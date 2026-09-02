@@ -391,12 +391,25 @@
       const routes = [
         [/^\/api\/api-testing\/v1\/scheduled-jobs\/[^/]+\/run$/, '手动执行定时任务', 'API 定时任务'],
         [/^\/api\/api-testing\/v1\/scheduled-jobs(?:\/|$)/, method === 'DELETE' ? '删除 API 定时任务' : '保存 API 定时任务', 'API 定时任务'],
+        [/^\/api\/api-testing\/v1\/providers\/apifox\/context$/, '读取 Apifox 上下文', '接口同步'],
+        [/^\/api\/api-testing\/v1\/providers\/apifox\/projects$/, '读取 Apifox 项目', '接口同步'],
+        [/^\/api\/api-testing\/v1\/sources\/apifox\/preview$/, '预览 Apifox 同步', '接口同步'],
+        [/^\/api\/api-testing\/v1\/sources\/apifox\/[^/]+\/activate$/, '启用接口来源版本', '接口版本'],
+        [/^\/api\/api-testing\/v1\/projects(?:\/[^/]+)?$/, '保存 API 项目', 'API 项目'],
+        [/^\/api\/api-testing\/v1\/executions\/[^/]+\/rerun$/, '重跑 API 执行', 'API 执行'],
+        [/^\/api\/api-testing\/v1\/executions\/restore$/, '恢复 API 执行记录', 'API 执行记录'],
+        [/^\/api\/api-testing\/v1\/executions$/, '创建 API 执行', 'API 执行'],
+        [/^\/api\/api-testing\/v1\/case-versions\/[^/]+\/baseline$/, '采纳 API 基线', 'API 基线'],
+        [/^\/api\/api-testing\/v1\/case-versions\/[^/]+\/validate$/, '校验 API 用例版本', 'API 用例'],
+        [/^\/api\/api-testing\/v1\/cases\/[^/]+\/versions$/, '保存 API 用例版本', 'API 用例'],
+        [/^\/api\/api-testing\/v1\/tasks\/[^/]+\/name$/, '更新 API 任务名称', 'API 任务'],
         [/^\/api\/sonic\/refresh-bridges$/, '刷新 Sonic 托管桥接', 'Sonic 托管脚本'],
         [/^\/api\/sonic\/scan-legacy$/, '扫描 Sonic 旧步骤', 'Sonic 维护'],
         [/^\/api\/sonic\/diagnose$/, '诊断 Sonic 连接', 'Sonic 配置'],
         [/^\/api\/jobs\/[^/]+\/analyze-failure$/, '分析 UI 失败任务', 'UI 失败任务'],
         [/^\/api\/feishu-drafts(?:\/|$)/, '生成缺陷草稿', '缺陷草稿'],
         [/^\/api\/task-app(?:\/|$)/, '保存应用配置', '应用配置'],
+        [/^\/api\/module$/, method === 'DELETE' ? '删除 YAML 模块' : '保存 YAML 模块', 'YAML 模块'],
       ];
       const matched = routes.find(([pattern]) => pattern.test(path));
       action = matched?.[1] || `${method || '提交'}平台操作`;
