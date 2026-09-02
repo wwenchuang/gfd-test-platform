@@ -929,7 +929,7 @@
     grid-template-columns: minmax(220px, var(--refs-width)) 6px minmax(0, 1fr);
   }
   .editor-area.editor-open.refs-collapsed {
-    grid-template-columns: 0 0 minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr);
   }
   .editor-area.editor-open.refs-collapsed > .baseline-preview,
   .editor-area.editor-open.refs-collapsed > .refs-resizer {

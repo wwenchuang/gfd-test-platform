@@ -5140,18 +5140,22 @@ def _post_file_save(handler, qs):
     mod = d.get("module", "")
     file = clean_filename(d.get("file", ""))
     content = d.get("content", "")
+    unchanged = False
     try:
         module_dir = safe_join(TASK_DIR, mod)
         os.makedirs(module_dir, exist_ok=True)
         fpath = safe_join(module_dir, file)
         with file_mutation_lock(fpath):
             if os.path.exists(fpath):
-                save_file_version(mod, file, reason=d.get("reason") or "save")
-            write_text_file(fpath, content)
+                unchanged = read_text_file(fpath, default=None) == content
+                if not unchanged:
+                    save_file_version(mod, file, reason=d.get("reason") or "save")
+            if not unchanged:
+                write_text_file(fpath, content)
     except ValueError:
         handler._json({"ok": False, "error": "非法路径"}, 400)
         return
-    handler._json({"ok": True})
+    handler._json({"ok": True, **({"unchanged": True} if unchanged else {})})
 
 
 # ── Agent Runs ──────────────────────────────────────────────────────

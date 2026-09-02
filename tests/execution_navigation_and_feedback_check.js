@@ -88,6 +88,31 @@ test('returning from a repair draft restores a real execution tab instead of a b
   assert.deepEqual(calls, [['workflow', 'execute'], ['tab', 'debug']]);
 });
 
+test('cancelling repair prompts keeps the current workflow and editor actions visible', async t => {
+  const source = fs.readFileSync('js/execution.js', 'utf8');
+  const dom = new JSDOM('<body></body>', {runScripts: 'dangerously'});
+  t.after(() => dom.window.close());
+  const win = dom.window;
+  const transitions = [];
+  Object.assign(win, {
+    showToast: () => {},
+    confirm: () => false,
+    prompt: () => '',
+    setActiveWorkflow: key => transitions.push(key),
+    detectSelectedTaskName: () => '当前用例',
+  });
+  win.eval("var currentModule = '业务基线'; var currentFile = '当前.yaml';");
+  loadFunction(win, source, 'repairCurrentFile');
+  loadFunction(win, source, 'repairSelectedTask');
+  loadFunction(win, source, 'repairTaskByName');
+
+  await win.repairCurrentFile();
+  await win.repairSelectedTask();
+  await win.repairTaskByName('当前用例');
+
+  assert.deepEqual(transitions, []);
+});
+
 test('the optional Agent install step returns to the preserved Agent form', async t => {
   const executionSource = fs.readFileSync('js/execution.js', 'utf8');
   const agentSource = fs.readFileSync('js/agent-workbench.js', 'utf8');
@@ -385,6 +410,103 @@ test('batch move excludes its only source and keeps generated repair history out
     '业务与固定基线',
     '其他模块',
   ]);
+});
+
+test('destructive YAML actions identify their scope and explain that deletion is permanent', async t => {
+  const dom = new JSDOM('<body></body>', {runScripts: 'dangerously'});
+  t.after(() => dom.window.close());
+  const win = dom.window;
+  const confirmations = [];
+  let requestCount = 0;
+  Object.assign(win, {
+    activeWorkflow: 'assets',
+    currentModule: '3D打印基线',
+    modules: {
+      '3D打印基线': ['标牌打印.yaml'],
+      '共享业务基线': ['分享.yaml'],
+    },
+    selectedFiles: new Set(),
+    selectedAssetRowsForCurrentFilters: () => [
+      {mod: '3D打印基线', file: '标牌打印.yaml'},
+      {mod: '共享业务基线', file: '分享.yaml'},
+    ],
+    confirm: message => {
+      confirmations.push(message);
+      return false;
+    },
+    apiRequest: async () => {
+      requestCount += 1;
+    },
+    showToast: () => {},
+  });
+  const source = fs.readFileSync('js/execution.js', 'utf8');
+  loadFunction(win, source, 'deleteFile');
+  loadFunction(win, source, 'deleteSelectedFiles');
+  loadFunction(win, source, 'deleteCurrentModule');
+
+  await win.deleteFile('3D打印基线', '标牌打印.yaml');
+  await win.deleteSelectedFiles();
+  await win.deleteCurrentModule();
+
+  assert.equal(requestCount, 0);
+  assert.equal(confirmations.length, 3);
+  assert.match(confirmations[0], /永久删除/);
+  assert.match(confirmations[0], /3D打印基线\/标牌打印\.yaml/);
+  assert.match(confirmations[0], /无法.*恢复/);
+  assert.match(confirmations[1], /永久删除 2 个 YAML 文件/);
+  assert.match(confirmations[1], /3D打印基线、共享业务基线/);
+  assert.match(confirmations[1], /无法.*恢复/);
+  assert.match(confirmations[2], /永久删除模块「3D打印基线」/);
+  assert.match(confirmations[2], /其中 1 个 YAML 文件/);
+  assert.match(confirmations[2], /无法.*恢复/);
+});
+
+test('failed YAML deletion stays visible and batch deletion retains failed selections', async t => {
+  const dom = new JSDOM('<body><div id="file-info"></div></body>', {runScripts: 'dangerously'});
+  t.after(() => dom.window.close());
+  const win = dom.window;
+  const toasts = [];
+  Object.assign(win, {
+    activeWorkflow: 'assets',
+    currentModule: '3D打印基线',
+    currentFile: '仍在编辑.yaml',
+    modules: {
+      '3D打印基线': ['标牌打印.yaml'],
+      '共享业务基线': ['分享.yaml'],
+    },
+    selectedFiles: new Set([
+      '3D打印基线::标牌打印.yaml',
+      '共享业务基线::分享.yaml',
+    ]),
+    selectedAssetRowsForCurrentFilters: () => [
+      {mod: '3D打印基线', file: '标牌打印.yaml'},
+      {mod: '共享业务基线', file: '分享.yaml'},
+    ],
+    confirm: () => true,
+    apiRequest: async url => {
+      if (url.includes(encodeURIComponent('标牌打印.yaml'))) throw new Error('服务暂不可用');
+      return {ok: true};
+    },
+    fileKey: (mod, file) => `${mod}::${file}`,
+    renderModules: () => {},
+    showAssetsCenter: () => {},
+    showToast: (message, type) => toasts.push({message, type}),
+  });
+  const source = fs.readFileSync('js/execution.js', 'utf8');
+  loadFunction(win, source, 'deleteFile');
+  loadFunction(win, source, 'deleteSelectedFiles');
+
+  await win.deleteFile('3D打印基线', '标牌打印.yaml');
+  assert.deepEqual(win.modules['3D打印基线'], ['标牌打印.yaml']);
+  assert.equal(win.selectedFiles.has('3D打印基线::标牌打印.yaml'), true);
+  assert.match(toasts.at(-1).message, /删除文件失败.*服务暂不可用/);
+
+  await win.deleteSelectedFiles();
+  assert.deepEqual(win.modules['3D打印基线'], ['标牌打印.yaml']);
+  assert.deepEqual(win.modules['共享业务基线'], []);
+  assert.deepEqual(Array.from(win.selectedFiles), ['3D打印基线::标牌打印.yaml']);
+  assert.match(win.document.getElementById('file-info').textContent, /成功 1 个.*失败 1 个/);
+  assert.deepEqual(toasts.at(-1), {message: '批量删除完成：成功 1 个，失败 1 个；失败项已保留', type: 'error'});
 });
 
 test('Trace actions use reliable viewer links and distinguish view from refresh', t => {

@@ -66,3 +66,22 @@ test('ordinary execution pages keep their existing cached-load behavior', async 
   assert.equal(calls[0].force, undefined);
   assert.equal(calls[1].force, undefined);
 });
+
+test('restored Agent history starts a real history refresh instead of rendering a false empty state', async t => {
+  const dom = new JSDOM('<body></body>', {runScripts: 'dangerously'});
+  t.after(() => dom.window.close());
+  const win = dom.window;
+  const calls = [];
+  Object.assign(win, {
+    activeWorkflow: 'agent_history',
+    AppState: {polling: {jobs: null}},
+    loadAgentRunsHistory: () => calls.push('history'),
+    maybeAdjustAgentPolling: () => {},
+    stopJobsAutoRefresh: () => {},
+  });
+  loadFunction(win, fs.readFileSync('js/agent-status.js', 'utf8'), 'applyLazyLoadForSection');
+
+  win.applyLazyLoadForSection('agent_history');
+
+  assert.deepEqual(calls, ['history']);
+});

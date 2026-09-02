@@ -77,6 +77,7 @@ function agentFailureDisplayText(value, fallback = '暂无') {
 
 function agentRunPanelTitle(run) {
   const status = agentRunStatus(run);
+  if (agentRunHasBlockingFailureWithoutResult(run)) return '最近失败';
   if (status === 'DONE' || status === 'FINISH') return '最近完成';
   if (status === 'FAILED') return '最近失败';
   if (status === 'CANCELLED') return '已取消任务';
@@ -109,6 +110,14 @@ function agentRunElapsedText(run) {
   return `${seconds}s`;
 }
 
+function agentRunHasBlockingFailureWithoutResult(run) {
+  const result = agentRunResultMeta(run || {});
+  if (result.hasReportResult) return false;
+  return (Array.isArray(run?.steps) ? run.steps : []).some(step => (
+    ['FAILED', 'PARTIAL_FAILED'].includes(String(step?.status || '').toUpperCase())
+  ));
+}
+
 function agentRunProgressColor(run) {
   const status = agentRunStatus(run);
   if (status === 'CANCELLED') return 'var(--danger)';
@@ -118,6 +127,7 @@ function agentRunProgressColor(run) {
     if (result.outcome === 'partial') return 'var(--warn)';
     if (result.outcome === 'failed') return 'var(--danger)';
   }
+  if (agentRunHasBlockingFailureWithoutResult(run)) return 'var(--danger)';
   if (status === 'DONE' || status === 'FINISH') return 'var(--success)';
   if (status === 'FAILED' || status === 'CANCELLED') return 'var(--danger)';
   if (/WAIT_CONFIRM/.test(status)) return 'var(--warn)';
@@ -133,6 +143,7 @@ function agentRunPillClass(run) {
     if (result.outcome === 'partial') return 'partial';
     if (result.outcome === 'failed') return 'failed';
   }
+  if (agentRunHasBlockingFailureWithoutResult(run)) return 'failed';
   if (status === 'DONE' || status === 'FINISH') return 'success';
   if (status === 'FAILED' || status === 'CANCELLED') return 'warn';
   if (/WAIT_CONFIRM/.test(status)) return 'waiting';
@@ -148,6 +159,7 @@ function agentRunCardStatusClass(run) {
     if (result.outcome === 'partial') return 'partial';
     if (result.outcome === 'failed') return 'failed';
   }
+  if (agentRunHasBlockingFailureWithoutResult(run)) return 'failed';
   if (status === 'DONE' || status === 'FINISH') return 'success';
   if (status === 'FAILED') return 'failed';
   if (status === 'CANCELLED') return 'cancelled';
@@ -1164,6 +1176,7 @@ function agentRunCardHtml(run, options = {}) {
 
 function agentRunDisplayStatusText(run, resultMeta = agentRunResultMeta(run)) {
   if (agentRunStatus(run) === 'CANCELLED') return agentStatusText('CANCELLED');
+  if (agentRunHasBlockingFailureWithoutResult(run)) return '失败';
   return resultMeta.hasReportResult ? resultMeta.label : agentStatusText(run?.status);
 }
 
@@ -1196,6 +1209,7 @@ function agentHistoryStatusKey(run) {
   if (status === 'CANCELLED') return 'cancelled';
   if (result.outcome === 'failed') return 'failed';
   if (result.outcome === 'partial') return 'partial';
+  if (agentRunHasBlockingFailureWithoutResult(run)) return 'failed';
   if (result.outcome === 'passed' || ['DONE', 'SUCCESS', 'COMPLETED'].includes(status)) return 'success';
   return 'failed';
 }
@@ -2573,7 +2587,6 @@ async function activateWorkflow(sectionKey) {
   }
   // Agent sub-pages
   if (activeWorkflow === 'agent_history') {
-    loadAgentRunsHistory();
     toggleLibrary(false);
     return;
   }
@@ -2640,6 +2653,10 @@ function applyLazyLoadForSection(sectionKey) {
   const NEEDS_RUNNERS = new Set([
     'execute', 'generate', 'baseline', 'repair', 'sonic_config'
   ]);
+
+  if (sectionKey === 'agent_history' && typeof loadAgentRunsHistory === 'function') {
+    loadAgentRunsHistory();
+  }
 
   if (NEEDS_MODULES.has(sectionKey) && typeof ensureModulesLoaded === 'function') {
     ensureModulesLoaded().then(() => {

@@ -1467,6 +1467,12 @@ async function saveFile(options = {}) {
   const showSuccess = options.showSuccess !== false;
   const content = document.getElementById('editor')?.value;
   if (!content || !currentFile) return false;
+  if (content === editorInitialContent) {
+    editorDirty = false;
+    updateToolbarState();
+    if (showSuccess) showToast('当前内容没有修改，无需保存', 'info');
+    return true;
+  }
   try {
     const data = await apiRequest('/file', {
       method: 'POST',
@@ -1866,12 +1872,12 @@ async function saveBaselineRefs() {
 }
 
 async function repairCurrentFile() {
-  setActiveWorkflow('repair');
   if (!currentModule || !currentFile) {
     showToast('请先选择一个 YAML 文件', 'error');
     return;
   }
   if (!confirm(`为「${currentModule}/${currentFile}」生成 AI 修复草稿？\n\n平台会先分析失败日志、页面知识和 YAML 结构，默认不直接覆盖基线；修复草稿仍需要你复核后再应用。`)) return;
+  setActiveWorkflow('repair');
   const button = document.getElementById('btn-repair-file');
   await LoadingManager.withLoading(async () => {
     try {
@@ -2064,7 +2070,6 @@ async function removeBaselinePreviewRef(pageId, source) {
 }
 
 async function repairSelectedTask() {
-  setActiveWorkflow('repair');
   if (!currentModule || !currentFile) {
     showToast('请先选择一个 YAML 文件', 'error');
     return;
@@ -2076,12 +2081,12 @@ async function repairSelectedTask() {
 }
 
 async function repairTaskByName(taskName) {
-  setActiveWorkflow('repair');
   if (!currentModule || !currentFile || !taskName) {
     showToast('请先选择一个 YAML 文件和用例', 'error');
     return;
   }
   if (!confirm(`修复用例「${taskName}」？\n\n人工修复会强制进入脚本修复流程；如果失败本身是产品 Bug，修复结果仍需要你复核，避免把真实缺陷改没。`)) return;
+  setActiveWorkflow('repair');
 
   const button = document.getElementById('btn-repair-task');
   await LoadingManager.withLoading(async () => {
@@ -2248,10 +2253,13 @@ async function runSelectedTask() {
 }
 
 async function deleteFile(mod, file) {
-  if (!confirm(`确认删除 ${mod}/${file}？`)) return;
+  if (!confirm(`确认永久删除「${mod}/${file}」？\n\n删除后无法从平台恢复，该文件的历史版本也不能继续使用。`)) return;
   try {
     await apiRequest(`/file?module=${encodeURIComponent(mod)}&file=${encodeURIComponent(file)}`, { method: 'DELETE' });
-  } catch(e) {}
+  } catch(e) {
+    showToast(`删除文件失败：${e.message || e}`, 'error');
+    return;
+  }
   if (modules[mod]) modules[mod] = modules[mod].filter(f => f !== file);
   selectedFiles.delete(fileKey(mod, file));
   if (currentFile === file && currentModule === mod) {
@@ -2290,21 +2298,28 @@ async function deleteSelectedFiles() {
     showToast('请先勾选要删除的文件', 'error');
     return;
   }
-  if (!confirm(`确认批量删除 ${items.length} 个 YAML 文件？`)) return;
+  const affectedModules = Array.from(new Set(items.map(item => item.mod)));
+  const visibleModules = affectedModules.slice(0, 3).join('、');
+  const remainingModuleCount = Math.max(0, affectedModules.length - 3);
+  const moduleSummary = `${visibleModules}${remainingModuleCount ? `等 ${affectedModules.length} 个模块` : ''}`;
+  if (!confirm(`确认永久删除 ${items.length} 个 YAML 文件？\n\n涉及模块：${moduleSummary}\n删除后无法从平台恢复，请确认已选范围无误。`)) return;
 
   let deleted = 0;
+  const failed = [];
   for (const item of items) {
     try {
       await apiRequest(`/file?module=${encodeURIComponent(item.mod)}&file=${encodeURIComponent(item.file)}`, { method: 'DELETE' });
       deleted += 1;
-    } catch(e) {}
-    if (modules[item.mod]) modules[item.mod] = modules[item.mod].filter(f => f !== item.file);
-    if (currentModule === item.mod && currentFile === item.file) {
-      currentFile = null;
+      if (modules[item.mod]) modules[item.mod] = modules[item.mod].filter(f => f !== item.file);
+      selectedFiles.delete(fileKey(item.mod, item.file));
+      if (currentModule === item.mod && currentFile === item.file) {
+        currentFile = null;
+      }
+    } catch(e) {
+      failed.push({ ...item, error: e.message || String(e) });
     }
   }
 
-  selectedFiles.clear();
   if (!currentFile) {
     if (!resetEditorToWorkflowGuide()) {
       /* already handled */
@@ -2327,8 +2342,13 @@ async function deleteSelectedFiles() {
   }
   renderModules();
   if (activeWorkflow === 'assets' && typeof showAssetsCenter === 'function') showAssetsCenter();
-  document.getElementById('file-info').textContent = `已删除 ${deleted} 个文件`;
-  showToast(`✓ 已删除 ${deleted} 个文件`, 'success');
+  if (failed.length > 0) {
+    document.getElementById('file-info').textContent = `批量删除：成功 ${deleted} 个，失败 ${failed.length} 个`;
+    showToast(`批量删除完成：成功 ${deleted} 个，失败 ${failed.length} 个；失败项已保留`, 'error');
+  } else {
+    document.getElementById('file-info').textContent = `已删除 ${deleted} 个文件`;
+    showToast(`✓ 已删除 ${deleted} 个文件`, 'success');
+  }
 }
 
 async function deleteCurrentModule() {
@@ -2337,7 +2357,7 @@ async function deleteCurrentModule() {
     return;
   }
   const count = modules[currentModule]?.length || 0;
-  if (!confirm(`确认删除模块「${currentModule}」及其中 ${count} 个 YAML 文件？`)) return;
+  if (!confirm(`确认永久删除模块「${currentModule}」及其中 ${count} 个 YAML 文件？\n\n模块目录和文件删除后无法从平台恢复。`)) return;
 
   const deletingModule = currentModule;
   try {

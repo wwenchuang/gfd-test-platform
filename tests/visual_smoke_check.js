@@ -690,6 +690,23 @@ async function anyVisible(locator) {
     await page.click('.workflow-step[data-workflow="yaml_edit"]');
     if (!await page.locator('#editor').isVisible() || await page.locator('#editor').inputValue() !== selectedFileContent) throw new Error('Script editing navigation discards the selected YAML');
     if (!await page.locator('#btn-save').isVisible()) throw new Error('Script editing workflow hides the save action');
+    await page.evaluate(() => {
+      setPanelCollapsed('refs', true);
+      setPanelCollapsed('caseNav', true);
+    });
+    const collapsedAreaBox = await page.locator('#editor-area').boundingBox();
+    const collapsedWrapBox = await page.locator('.editor-wrap').boundingBox();
+    const collapsedEditorBox = await page.locator('#editor').boundingBox();
+    if (!collapsedAreaBox || !collapsedWrapBox || collapsedWrapBox.width < collapsedAreaBox.width - 2) {
+      throw new Error(`Collapsed editor does not reclaim the reference panel width: area=${JSON.stringify(collapsedAreaBox)} wrap=${JSON.stringify(collapsedWrapBox)}`);
+    }
+    if (!collapsedEditorBox || collapsedEditorBox.width < 500) {
+      throw new Error(`Collapsed YAML text editor is too narrow: ${JSON.stringify(collapsedEditorBox)}`);
+    }
+    await page.evaluate(() => {
+      setPanelCollapsed('refs', false);
+      setPanelCollapsed('caseNav', false);
+    });
     await page.locator('details[data-nav-group="run"]').evaluate(el => { el.open = true; });
     await page.click('.workflow-step[data-workflow="baseline"]');
     if (!await page.locator('#editor').isVisible() || !await page.locator('#btn-publish-sonic').isVisible()) throw new Error('Sonic workflow loses the YAML selected upstream');

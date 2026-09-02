@@ -44,7 +44,7 @@ function fixture(t, { dirty = true, response, confirmResult = false, restoreWait
   const context = vm.createContext({
     window: dom.window, document: dom.window.document, navigator: dom.window.navigator,
     fetch: blockNetwork, XMLHttpRequest: blockNetwork, WebSocket: blockNetwork,
-    currentModule: '历史测试', currentFile: '当前.yaml', editorDirty: false, editorInitialContent: '',
+    currentModule: '历史测试', currentFile: '当前.yaml', editorDirty: false, editorInitialContent: '', pendingBatchBusy: false,
     currentAccessProfile: { permissions: canEdit ? ['ui.view', 'ui.edit'] : ['ui.view'], scope: {ui_apps: '*'} },
     activeWorkflow: 'yaml_edit', activeWorkspaceMode: '', sonicStatusData: null,
     isPanelCollapsed: () => false, fileMeta: () => ({}), yamlDisplayName: file => file,
@@ -76,7 +76,7 @@ function fixture(t, { dirty = true, response, confirmResult = false, restoreWait
   loadFunctions(context, 'js/utils.js', ['closeModal']);
   loadFunctions(context, 'js/navigation.js', ['hasOpenEditor']);
   loadFunctions(context, 'js/auth.js', ['hasPermission', 'requireUiEditPermission', 'applyRestrictedActionControls', 'canOperateAgent', 'agentAccessReason', 'canAccessGlobalSonic', 'sonicAccessReason', 'canUseSharedUiAi', 'uiAiAccessReason']);
-  loadFunctions(context, 'js/execution.js', ['openFile', 'showEditor', 'escHtml', 'updateLines', 'markEditorDirty', 'canLeaveEditor']);
+  loadFunctions(context, 'js/execution.js', ['openFile', 'showEditor', 'escHtml', 'updateLines', 'markEditorDirty', 'canLeaveEditor', 'saveFile']);
   const openFile = context.openFile;
   context.openFile = async (module, file) => { opened.push({module, file}); await openFile(module, file); };
   const execution = fs.readFileSync(path.join(ROOT, 'js/execution.js'), 'utf8');
@@ -128,6 +128,34 @@ test('clean-editor preview is visibly readonly and renders historical content as
   assert.match(f.field('history-preview').textContent, /只读/);
   assert.equal(f.field('modal-history').querySelectorAll('img').length, 0);
   assert.ok(f.calls.every(call => call.method === 'GET'));
+});
+
+test('saving an unchanged editor is a visible no-op without creating history', async t => {
+  const f = fixture(t, { dirty: false });
+
+  assert.equal(await f.run('saveFile()'), true);
+  assert.equal(f.calls.length, 0);
+  assert.deepEqual(f.toasts.at(-1), { message: '当前内容没有修改，无需保存', type: 'info' });
+});
+
+test('toolbar disables save until the editor content changes', t => {
+  const dom = new JSDOM('<button id="btn-save">保存</button><div id="toolbar-state"></div>');
+  t.after(() => dom.window.close());
+  const context = vm.createContext({
+    document: dom.window.document,
+    currentModule: '历史测试', currentFile: '当前.yaml', editorDirty: false,
+    moduleAppPackage: () => '', appDisplayLabel: value => value,
+    escapeHtml: value => String(value), detectSelectedTaskName: () => '',
+    latestJobForFile: () => null, jobStatusText: value => value,
+  });
+  loadFunctions(context, 'js/navigation.js', ['toolbarStateChip', 'updateToolbarState']);
+
+  vm.runInContext('updateToolbarState()', context);
+  assert.equal(dom.window.document.getElementById('btn-save').disabled, true);
+  assert.match(dom.window.document.getElementById('btn-save').title, /没有修改/);
+
+  vm.runInContext('editorDirty = true; updateToolbarState()', context);
+  assert.equal(dom.window.document.getElementById('btn-save').disabled, false);
 });
 
 test('an older preview response cannot replace the most recently selected version', async t => {

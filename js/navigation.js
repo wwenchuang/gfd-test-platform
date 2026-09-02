@@ -122,6 +122,13 @@ function toolbarStateChip(text, cls='') {
 function updateToolbarState(message='') {
   const el = document.getElementById('toolbar-state');
   if (!el) return;
+  const saveButton = document.getElementById('btn-save');
+  if (saveButton && currentFile) {
+    saveButton.disabled = !editorDirty;
+    saveButton.title = editorDirty
+      ? '保存当前编辑器中的 YAML'
+      : '当前内容没有修改，无需保存';
+  }
   const chips = [];
   if (currentModule) {
     const appPackage = moduleAppPackage(currentModule);

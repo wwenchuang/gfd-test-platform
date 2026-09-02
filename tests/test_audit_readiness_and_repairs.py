@@ -133,6 +133,27 @@ def test_file_save_waits_for_repair_snapshot_and_backup(repair_store, monkeypatc
     assert target.read_text() == 'manual edit'
 
 
+def test_file_save_skips_identical_content_without_new_history(repair_store, monkeypatch):
+    from task_server import router
+    service, target = repair_store
+    monkeypatch.setattr(router, 'TASK_DIR', service.TASK_DIR)
+    backups = []
+    writes = []
+    monkeypatch.setattr(router, 'save_file_version', lambda *a, **kw: backups.append((a, kw)))
+    monkeypatch.setattr(router, 'write_text_file', lambda *a, **kw: writes.append((a, kw)))
+    responses = []
+    handler = SimpleNamespace(
+        _body=lambda: {'module': 'audit', 'file': 'sample.yaml', 'content': target.read_text()},
+        _json=lambda payload, code=200: responses.append((code, payload)),
+    )
+
+    router._post_file_save(handler, {})
+
+    assert responses == [(200, {'ok': True, 'unchanged': True})]
+    assert backups == []
+    assert writes == []
+
+
 def test_agent_save_does_not_reopen_a_rejected_draft(repair_store):
     from task_server.services import agent_service
     service, _ = repair_store

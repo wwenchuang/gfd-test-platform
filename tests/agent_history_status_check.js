@@ -21,6 +21,8 @@ test('cancelled Agent runs stay separate from partial business results', () => {
     'agentRunIsTerminal',
     'agentRunResultSource',
     'agentRunResultMeta',
+    'agentRunHasBlockingFailureWithoutResult',
+    'agentRunPanelTitle',
     'agentRunProgressColor',
     'agentRunPillClass',
     'agentRunCardStatusClass',
@@ -36,6 +38,17 @@ test('cancelled Agent runs stay separate from partial business results', () => {
     status: 'DONE',
     reportSummary: {attempted: 8, passed: 5, failed: 3, outcome: 'partial', label: '部分通过'},
   };
+  const staleDoneAfterFailedPlan = {
+    status: 'DONE',
+    currentStep: 'DONE',
+    error: '没有可转换为自动化 YAML 的用例',
+    steps: [
+      {step: 'PREPARE_SOURCE', status: 'SUCCESS'},
+      {step: 'PLAN', status: 'FAILED', error: '没有可转换为自动化 YAML 的用例'},
+      {step: 'GENERATE_YAML', status: 'SKIPPED'},
+    ],
+    artifacts: {},
+  };
 
   assert.equal(win.agentHistoryStatusKey(cancelled), 'cancelled');
   assert.equal(win.agentRunDisplayStatusText(cancelled), '已取消');
@@ -48,6 +61,14 @@ test('cancelled Agent runs stay separate from partial business results', () => {
   assert.equal(win.agentRunPillClass(completedPartial), 'partial');
   assert.equal(win.agentRunCardStatusClass(completedPartial), 'partial');
   assert.equal(win.agentRunProgressColor(completedPartial), 'var(--warn)');
+
+  assert.equal(win.agentRunHasBlockingFailureWithoutResult(staleDoneAfterFailedPlan), true);
+  assert.equal(win.agentHistoryStatusKey(staleDoneAfterFailedPlan), 'failed');
+  assert.equal(win.agentRunDisplayStatusText(staleDoneAfterFailedPlan), '失败');
+  assert.equal(win.agentRunPanelTitle(staleDoneAfterFailedPlan), '最近失败');
+  assert.equal(win.agentRunPillClass(staleDoneAfterFailedPlan), 'failed');
+  assert.equal(win.agentRunCardStatusClass(staleDoneAfterFailedPlan), 'failed');
+  assert.equal(win.agentRunProgressColor(staleDoneAfterFailedPlan), 'var(--danger)');
   assert.match(source, /<option value="cancelled"[^>]*>已取消<\/option>/);
   assert.match(source, /count\.textContent = run \? `\$\{agentModeText\(run\.mode\)\} · \$\{agentRunDisplayStatusText\(run\)/);
   assert.match(source, /<strong>状态<\/strong><span[^>]*>\$\{escapeHtml\(agentRunDisplayStatusText\(run\)\)\}<\/span>/);
