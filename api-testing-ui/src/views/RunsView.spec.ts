@@ -256,4 +256,21 @@ describe('RunsView', () => {
     expect(executions.events).toEqual([])
     expect(select).toHaveBeenCalledWith('execution-matching-edit-ft')
   })
+
+  it('clears a restored detail immediately while an interface-scoped list is loading', async () => {
+    routeState.query = { endpointId: 'endpoint-new-without-history' }
+    const context = useContextStore()
+    const executions = useExecutionsStore()
+    context.projectId = 'project-1'
+    executions.active = { ...debugExecution, id: 'execution-restored-from-previous-page' }
+    executions.events = [{ id: 1, type: 'response', level: 'info', caseId: '', message: '旧执行详情', payload: {} }]
+    vi.spyOn(context, 'loadSavedContext').mockImplementation(() => new Promise<void>(() => {}))
+    vi.spyOn(context, 'loadOptions').mockImplementation(() => new Promise<void>(() => {}))
+
+    mount(RunsView, { global: { stubs: { ExecutionConsole: true, ExecutionDetailDrawer: true } } })
+
+    expect(executions.active).toBeNull()
+    expect(executions.events).toEqual([])
+    expect(executions.selectingExecutionId).toBe('')
+  })
 })

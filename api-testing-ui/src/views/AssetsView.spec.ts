@@ -6,6 +6,7 @@ import { nextTick } from 'vue'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { apiClient } from '../api/client'
+import { useAssetsStore } from '../stores/assets'
 import { useContextStore } from '../stores/context'
 import { useSetupStore } from '../stores/setup'
 import AssetsView from './AssetsView.vue'
@@ -262,6 +263,20 @@ describe('AssetsView Apifox actions', () => {
     expect(wrapper.text()).not.toContain('只修改平台侧名称和备注')
   })
 
+  it('clears stale success feedback before validating a project edit', async () => {
+    const wrapper = mount(AssetsView, { global: { stubs: { RouterLink: { template: '<a><slot /></a>' } } } })
+    await flushPromises()
+    const setup = useSetupStore()
+    setup.message = '项目信息已保存'
+
+    await wrapper.findAll('button').find(button => button.text().includes('编辑项目'))!.trigger('click')
+    await wrapper.get('[data-testid="project-edit-name"]').setValue('')
+    await wrapper.get('[data-testid="project-edit-save"]').trigger('click')
+
+    expect(wrapper.text()).toContain('请输入项目名称')
+    expect(wrapper.text()).not.toContain('项目信息已保存')
+  })
+
   it('requires a choice among multiple Apifox projects and clears stale environments on project change', async () => {
     const wrapper = mount(AssetsView, { global: { stubs: { RouterLink: true } } })
     await flushPromises()
@@ -310,6 +325,26 @@ describe('AssetsView Apifox actions', () => {
     expect((wrapper.get('[data-testid="apifox-environment"]').element as HTMLSelectElement).value).toBe('')
   })
 
+  it('distinguishes duplicate Apifox environment names in the selector', async () => {
+    const wrapper = mount(AssetsView, { global: { stubs: { RouterLink: true } } })
+    await flushPromises()
+    useSetupStore().apifoxContext = {
+      project: { id: 'fox-a', name: '3D', description: '', team_name: '' },
+      branches: [{ id: '', name: '主分支（默认）', is_default: true }, { id: 'main', name: 'main', is_default: false }],
+      environments: [
+        { id: 'server-a-123456', name: '测试环境-腾讯SERVER', services: [], variables: [] },
+        { id: 'server-b-654321', name: '测试环境-腾讯SERVER', services: [], variables: [] },
+      ],
+      cli_version: '',
+    }
+    await nextTick()
+
+    const environmentLabels = wrapper.get('[data-testid="apifox-environment"]').findAll('option').map(option => option.text())
+    expect(environmentLabels).toContain('测试环境-腾讯SERVER · ID 123456')
+    expect(environmentLabels).toContain('测试环境-腾讯SERVER · ID 654321')
+    expect(wrapper.get('[data-testid="apifox-branch"]').findAll('option').map(option => option.text())).toContain('主分支（默认） · 项目默认入口')
+  })
+
   it('shows searchable change details instead of only counts before activation', async () => {
     const wrapper = mount(AssetsView, { global: { stubs: { RouterLink: true } } })
     await flushPromises()
@@ -339,11 +374,15 @@ describe('AssetsView Apifox actions', () => {
     setup.preview = preview
     setup.apifoxPreview = { source_preview: preview, environment_candidate: { name: '测试环境', secret_placeholders: [] } }
     vi.spyOn(setup, 'activateApifoxPreview').mockImplementation(async () => {
-      setup.activeRevision = { id: 'source-v2', endpoints: [{ id: 'new-endpoint-id', method: 'GET', path: '/new-endpoint' }] } as never
+      setup.activeRevision = { id: 'source-v2', endpoints: [] } as never
       setup.preview = null
       setup.apifoxPreview = null
       return { workspace: { project_id: 'project-1', source_revision_id: 'source-v2', environment_revision_id: 'env-v2' },
         source_revision: setup.activeRevision, environment: { revision_id: 'env-v2' } } as never
+    })
+    const assets = useAssetsStore()
+    vi.spyOn(assets, 'load').mockImplementation(async () => {
+      assets.endpoints = [{ id: 'new-endpoint-id', method: 'GET', path: '/new-endpoint' }] as never
     })
     vi.spyOn(context, 'loadOptions').mockImplementation(async () => {
       context.sourceRevisions = [{ id: 'source-v2', source_id: 'source-a', project_id: 'project-1', name: '默认模块', revision_number: 2, endpoint_count: 2 }]
@@ -352,6 +391,7 @@ describe('AssetsView Apifox actions', () => {
     await nextTick()
     await buttonByText(wrapper, '保存并切换到新版本').trigger('click')
     await flushPromises()
+    expect(assets.load).toHaveBeenCalledWith('source-v2')
     expect(wrapper.get('[data-testid="source-preview"]').text()).toContain('本次更新已保存')
     const link = wrapper.get('.source-change-link')
     expect(JSON.parse(link.attributes('href')!)).toEqual({ path: '/', query: {

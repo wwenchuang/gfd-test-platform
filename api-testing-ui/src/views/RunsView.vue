@@ -21,6 +21,7 @@ const archiveActionMessage = ref('')
 onMounted(async () => {
   const initialExecutionId = requestedExecutionId()
   if (initialExecutionId) executions.prepareSelection(initialExecutionId)
+  else if (requestedEndpointFilter()) executions.prepareSelection('')
   await Promise.all([context.loadSavedContext(), context.loadOptions()])
   if (context.projectId) await executions.load(context.projectId)
   const executionId = requestedExecutionId()
@@ -43,6 +44,10 @@ onBeforeUnmount(() => executions.disconnect())
 
 function requestedExecutionId(): string {
   return typeof route.query.executionId === 'string' ? route.query.executionId : ''
+}
+
+function requestedEndpointFilter(): boolean {
+  return typeof route.query.endpointId === 'string' || typeof route.query.endpointKey === 'string'
 }
 
 async function selectFirstEndpointExecution(): Promise<void> {

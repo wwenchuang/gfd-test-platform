@@ -8,10 +8,12 @@ import {
 } from 'lucide-vue-next'
 
 import type { EnvironmentRevisionOption, SourcePreview, SourceRevisionOption } from '../api/contracts'
+import { useAssetsStore } from '../stores/assets'
 import { useContextStore } from '../stores/context'
 import { useSetupStore } from '../stores/setup'
 
 const context = useContextStore()
+const assets = useAssetsStore()
 const setup = useSetupStore()
 const route = useRoute()
 const projectId = ref('')
@@ -40,6 +42,13 @@ const environments = computed(() => context.environmentRevisions.filter(item => 
 const currentRevision = computed(() => revisions.value.find(item => item.id === revisionId.value) || null)
 const currentEnvironmentRevision = computed(() => environments.value.find(item => item.id === environmentRevisionId.value) || null)
 const selectedEnvironment = computed(() => setup.apifoxContext?.environments.find(item => item.id === environmentId.value) || null)
+const apifoxEnvironmentNameCounts = computed(() => {
+  const counts = new Map<string, number>()
+  for (const item of setup.apifoxContext?.environments || []) {
+    counts.set(item.name, (counts.get(item.name) || 0) + 1)
+  }
+  return counts
+})
 const canCheckUpdate = computed(() => Boolean(projectId.value && apifoxProjectId.value && environmentId.value))
 const workbenchLink = computed(() => {
   if (!selectedProject.value || !currentRevision.value || !currentEnvironmentRevision.value) return null
@@ -88,9 +97,16 @@ const fieldLabels: Record<string, string> = {
 function changedFields(change: Record<string, unknown>): string {
   return Array.isArray(change.changed_fields) ? change.changed_fields.map(key => fieldLabels[String(key)] || String(key)).join('、') : ''
 }
+function apifoxBranchLabel(item: { id: string; name: string; is_default: boolean }): string {
+  return item.is_default && !item.id ? `${item.name} · 项目默认入口` : item.name
+}
+function apifoxEnvironmentLabel(item: { id: string; name: string }): string {
+  if ((apifoxEnvironmentNameCounts.value.get(item.name) || 0) <= 1) return item.name
+  return `${item.name} · ID ${item.id.slice(-6)}`
+}
 function savedEndpointLink(change: Record<string, unknown>) {
   if (setup.preview || !workbenchLink.value || setup.activeRevision?.id !== revisionId.value) return null
-  const endpoint = setup.activeRevision.endpoints.find(item => item.method === change.method && item.path === change.path)
+  const endpoint = assets.endpoints.find(item => item.method === change.method && item.path === change.path)
   return endpoint ? { ...workbenchLink.value, query: { ...workbenchLink.value.query, endpointId: endpoint.id } } : null
 }
 async function openSync(): Promise<void> {
@@ -149,6 +165,8 @@ function selectProject(id: string): void {
 
 function openProjectEditor(): void {
   if (!selectedProject.value) return
+  localError.value = ''
+  setup.message = ''
   projectEditName.value = selectedProject.value.name
   projectEditDescription.value = selectedProject.value.description || ''
   showProjectEditor.value = true
@@ -156,6 +174,7 @@ function openProjectEditor(): void {
 
 async function saveProjectEdit(): Promise<void> {
   localError.value = ''
+  setup.message = ''
   if (!selectedProject.value) return
   if (!projectEditName.value.trim()) { localError.value = '请输入项目名称'; return }
   try {
@@ -166,6 +185,12 @@ async function saveProjectEdit(): Promise<void> {
     await context.loadOptions()
     showProjectEditor.value = false
   } catch (error) { localError.value = error instanceof Error ? error.message : '项目信息保存失败' }
+}
+
+function cancelProjectEdit(): void {
+  showProjectEditor.value = false
+  localError.value = ''
+  setup.message = ''
 }
 
 async function archiveProject(): Promise<void> {
@@ -251,6 +276,7 @@ async function saveApifoxUpdate(): Promise<void> {
     projectId.value = result.workspace.project_id || projectId.value
     revisionId.value = result.source_revision.id
     environmentRevisionId.value = result.environment.revision_id
+    await assets.load(result.source_revision.id)
     if (preview) savedPreview.value = { sourceId: result.source_revision.id, preview }
   } catch (error) { localError.value = error instanceof Error ? error.message : 'Apifox 更新保存失败' }
 }
@@ -433,10 +459,10 @@ function dateText(value?: string | null): string {
         <div><h2><Edit3 :size="17" />编辑项目</h2><p>只修改平台侧名称和备注，不会改动 Apifox 原始项目。</p></div>
       </header>
       <div class="scope-picker-grid">
-        <label>项目名称<input v-model="projectEditName" placeholder="项目名称" /></label>
+        <label>项目名称<input v-model="projectEditName" data-testid="project-edit-name" placeholder="项目名称" /></label>
         <label>项目备注<input v-model="projectEditDescription" placeholder="例如：3D 家用业务接口" /></label>
-        <button class="primary-command scope-check" type="button" :disabled="setup.busy" @click="saveProjectEdit"><Save :size="15" />保存项目</button>
-        <button data-testid="project-edit-cancel" class="secondary-command scope-check" type="button" :disabled="setup.busy" @click="showProjectEditor = false">取消</button>
+        <button data-testid="project-edit-save" class="primary-command scope-check" type="button" :disabled="setup.busy" @click="saveProjectEdit"><Save :size="15" />保存项目</button>
+        <button data-testid="project-edit-cancel" class="secondary-command scope-check" type="button" :disabled="setup.busy" @click="cancelProjectEdit">取消</button>
       </div>
     </section>
 
@@ -479,14 +505,14 @@ function dateText(value?: string | null): string {
           {{ setup.apifoxOperation === 'loading_context' ? '正在读取环境…' : '读取环境' }}
         </button>
         <label>分支
-          <select v-model="branchId" :disabled="setup.busy || !setup.apifoxContext">
-            <option v-for="item in setup.apifoxContext?.branches || []" :key="item.id" :value="item.id">{{ item.name }}</option>
+          <select v-model="branchId" data-testid="apifox-branch" :disabled="setup.busy || !setup.apifoxContext">
+            <option v-for="item in setup.apifoxContext?.branches || []" :key="item.id" :value="item.id">{{ apifoxBranchLabel(item) }}</option>
           </select>
         </label>
         <label>Apifox 来源环境
           <select v-model="environmentId" data-testid="apifox-environment" :disabled="setup.busy || !setup.apifoxContext">
             <option value="">请选择</option>
-            <option v-for="item in setup.apifoxContext?.environments || []" :key="item.id" :value="item.id">{{ item.name }}</option>
+            <option v-for="item in setup.apifoxContext?.environments || []" :key="item.id" :value="item.id">{{ apifoxEnvironmentLabel(item) }}</option>
           </select>
         </label>
         <button class="primary-command scope-check" type="button" :disabled="setup.busy || !canCheckUpdate" @click="checkApifoxUpdate">
@@ -526,7 +552,7 @@ function dateText(value?: string | null): string {
       </div>
     </details>
 
-    <p v-if="localError || setup.error" class="inline-error" role="alert">{{ localError || setup.error }}</p>
+    <p v-if="localError || setup.error || assets.error" class="inline-error" role="alert">{{ localError || setup.error || assets.error }}</p>
     <div v-if="setup.message" class="setup-success">
       <Upload :size="16" />
       <span>{{ setup.message }}</span>
