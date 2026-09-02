@@ -416,7 +416,7 @@ def main():
     require('utils.js?v=20260828-full-platform-ux-20260902-a101-figma-route' in html, "utils must publish the A101 Figma route")
     require('identity-management.js?v=20260902-a97-guided-actions' in html, "identity management must publish the A97 audit-action labels")
     require('agent-status.js?v=20260828-full-platform-ux-20260902-a101-figma-route' in html, "agent status must publish the A101 Figma route")
-    require('app.js?v=20260831-identity-20260902-a101-figma-route' in html, "app.js must publish the A101 Figma route")
+    require('app.js?v=20260831-identity-20260902-a102-generation-loading' in html, "app.js must publish the A102 generation loading state")
     nginx_source = (ROOT / "deploy" / "nginx-midscene-task.conf").read_text(encoding="utf-8")
     require("location = /api-test" in nginx_source and "absolute_redirect off" in nginx_source, "The /api-test entry redirect must retain the public host and port")
     require("function jobTimelineHtml(job)" in html and "进度流水" in html, "Execution job detail must show progress timeline")

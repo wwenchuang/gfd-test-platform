@@ -3407,10 +3407,11 @@ function generationRecordsHtml(jobs) {
         </div>
         <div class="generation-record-actions">
           <button class="btn-sm primary" onclick="showGenerateYaml()">新建自动化测试</button>
-          <button class="btn-sm" onclick="refreshGenerateJobsCenter()">刷新生成记录</button>
+          <button class="btn-sm" onclick="refreshGenerateJobsCenter(this)">刷新生成记录</button>
           <button class="btn-sm" onclick="showMindmapCenter()">脑图中心</button>
           <button class="btn-sm" onclick="activateWorkflow('dashboard')">回工作台</button>
         </div>
+        <div id="generation-record-status" class="generate-status"></div>
       </div>
       ${jobs.length
         ? `<div class="generation-record-list">${visibleJobs.map(generationRecordCard).join('')}</div>
@@ -3420,6 +3421,31 @@ function generationRecordsHtml(jobs) {
         : `<div class="generation-record-empty">暂无生成记录。点击“新建自动化测试”，上传需求文档、UI 稿或截图后，这里会展示生成进度和结果入口。</div>`}
     </div>
   `;
+}
+
+function renderGenerateJobsCenterLoading(message = '正在读取生成记录...') {
+  const area = document.getElementById('editor-area');
+  if (!area) return;
+  activeWorkspaceMode = '';
+  setActiveWorkflow('generate');
+  resetYamlToolbarForManager();
+  area.className = 'editor-area';
+  area.innerHTML = `
+    <div class="generation-records">
+      <div class="generation-record-head">
+        <div class="workflow-kicker">AI 生成记录 · 需求解析 / 用例生成 / YAML</div>
+        <h2>生成记录</h2>
+        <p>任务提交后不用守着生成弹窗；加载完成后可继续查看进度、结果、脑图和 YAML。</p>
+        <div class="generation-record-actions">
+          <button class="btn-sm" onclick="activateWorkflow('generate')">返回 AI 生成</button>
+        </div>
+      </div>
+      <div class="generation-record-empty">${escapeHtml(message)}</div>
+    </div>`;
+  document.getElementById('toolbar-path').innerHTML = '<span>📁</span> 生成任务 / 生成记录';
+  document.getElementById('toolbar-help').textContent = '正在读取 AI 需求解析和 YAML 生成任务，请稍候。';
+  document.getElementById('file-info').textContent = '正在加载生成记录';
+  updateToolbarState('正在加载生成记录');
 }
 
 function renderGenerateJobsCenter() {
@@ -3440,13 +3466,44 @@ function renderGenerateJobsCenter() {
 
 async function showGenerateJobsCenter() {
   generationRecordVisibleCount = GENERATION_RECORD_PAGE_SIZE;
-  await loadJobs(false, true);
-  renderGenerateJobsCenter();
+  renderGenerateJobsCenterLoading();
+  try {
+    await loadJobs(false, true);
+    renderGenerateJobsCenter();
+  } catch (error) {
+    renderGenerateJobsCenterLoading(`生成记录读取失败：${error?.message || '请稍后重试'}`);
+    showToast(error?.message || '生成记录读取失败，请稍后重试', 'error');
+  }
 }
 
-async function refreshGenerateJobsCenter() {
-  await loadJobs(true, true);
-  renderGenerateJobsCenter();
+async function refreshGenerateJobsCenter(triggerEl = null) {
+  const button = triggerEl?.tagName ? triggerEl : null;
+  const originalText = button?.textContent || '';
+  const status = document.getElementById('generation-record-status');
+  if (button) {
+    button.disabled = true;
+    button.textContent = '刷新中...';
+  }
+  if (status) {
+    status.textContent = '正在刷新生成记录...';
+    status.className = 'generate-status show busy';
+  }
+  try {
+    await loadJobs(true, true);
+    renderGenerateJobsCenter();
+    showToast('✓ 生成记录已刷新', 'success');
+  } catch (error) {
+    if (status && document.body.contains(status)) {
+      status.textContent = error?.message || '刷新生成记录失败，请稍后重试';
+      status.className = 'generate-status show error';
+    }
+    showToast(error?.message || '刷新生成记录失败，请稍后重试', 'error');
+  } finally {
+    if (button && document.body.contains(button)) {
+      button.disabled = false;
+      button.textContent = originalText || '刷新生成记录';
+    }
+  }
 }
 
 function loadMoreGenerationRecords() {

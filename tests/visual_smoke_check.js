@@ -754,6 +754,18 @@ async function anyVisible(locator) {
     if (!await page.locator('#modal-knowledge.show').isVisible()) throw new Error('AI generation Figma action must open the Figma import form');
     if (await page.evaluate(() => activeWorkflow) !== 'generate') throw new Error('Opening Figma import from AI generation must preserve the generation workflow');
     await page.locator('#modal-knowledge .modal-close').click();
+    await page.evaluate(() => {
+      window.__visualOriginalLoadJobs = loadJobs;
+      loadJobs = () => new Promise(resolve => { window.__visualReleaseGenerationRecords = resolve; });
+      window.__visualGenerationRecordsPromise = showGenerateJobsCenter();
+    });
+    if (!await page.locator('.generation-records', {hasText: '正在读取生成记录'}).isVisible()) throw new Error('Generation records must show immediate loading feedback');
+    await page.evaluate(async () => {
+      loadJobs = window.__visualOriginalLoadJobs;
+      window.__visualReleaseGenerationRecords();
+      await window.__visualGenerationRecordsPromise;
+    });
+    if (!await page.locator('.generation-records h2', {hasText: '生成记录'}).isVisible()) throw new Error('Generation records must render after loading completes');
 
     await page.locator('details[data-nav-group="run"]').evaluate(el => { el.open = true; });
     await page.click('.workflow-step[data-workflow="execute"]');
