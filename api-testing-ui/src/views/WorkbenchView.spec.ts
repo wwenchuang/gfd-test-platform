@@ -316,10 +316,79 @@ describe('WorkbenchView debug workflow', () => {
     expect(loadAssets).not.toHaveBeenCalledWith('source-old', expect.anything())
     expect(wrapper.get('[data-testid="source-version-mismatch"]').text()).toContain('旧版本任务')
     expect(wrapper.get('[data-testid="source-version-mismatch"]').text()).toContain('当前接口版本')
+    expect(wrapper.get('[data-testid="restore-version-task"]').text()).toContain('恢复最近任务')
     await wrapper.get('[data-testid="source-version-mismatch"] a').trigger('click')
     await flushPromises()
     expect(router.currentRoute.value.name).toBe('tasks')
     expect(context.sourceRevisionId).toBe('source-new')
+  })
+
+  it('keeps a version-scoped task discoverable and restores it when switching back', async () => {
+    const context = useContextStore()
+    Object.assign(context, {
+      projectId: 'project-1', sourceRevisionId: 'source-old', environmentRevisionId: 'environment-1',
+      projects: [{ id: 'project-1', name: '3D 家用' }],
+      sourceRevisions: [
+        { id: 'source-old', source_id: 'source-asset', project_id: 'project-1', name: '默认模块', revision_number: 7, endpoint_count: 1007 },
+        { id: 'source-new', source_id: 'source-asset', project_id: 'project-1', name: '默认模块', revision_number: 10, endpoint_count: 1025 },
+      ],
+      environmentRevisions: [{ id: 'environment-1', project_id: 'project-1', name: '生产环境', revision: 29 }],
+    })
+    vi.spyOn(context, 'loadSavedContext').mockResolvedValue()
+    vi.spyOn(context, 'loadOptions').mockResolvedValue()
+    const assets = useAssetsStore()
+    vi.spyOn(assets, 'load').mockImplementation(async sourceRevisionId => {
+      assets.endpoints = sourceRevisionId === 'source-old' ? [ENDPOINT] : [{ ...ENDPOINT, id: 'endpoint-new' }]
+      assets.state = 'ready'
+    })
+    const cases = useCasesStore()
+    vi.spyOn(cases, 'loadSavedCases').mockResolvedValue()
+    vi.spyOn(cases, 'restoreLatestAiJob').mockResolvedValue()
+    const oldTask = {
+      id: 'task-old', project_id: 'project-1', source_revision_id: 'source-old', environment_revision_id: 'environment-1',
+      name: '3D家用接口测试', state: 'ready', selected_endpoint_ids: [ENDPOINT.id], runnable_baseline_count: 1,
+      latest_ai_job_id: null, latest_execution_id: null, summary: {}, created_at: '', updated_at: '',
+    } as ApiTestTask
+    const tasks = useTasksStore()
+    vi.spyOn(tasks, 'restore').mockImplementation(async () => {
+      tasks.task = oldTask
+      tasks.tasks = [oldTask]
+      return oldTask
+    })
+
+    const router = createRouter({ history: createMemoryHistory(), routes: [
+      { path: '/', name: 'workbench', component: WorkbenchView },
+      { path: '/tasks', name: 'tasks', component: { template: '<div />' } },
+    ] })
+    await router.push('/')
+    await router.isReady()
+    const wrapper = mount(WorkbenchView, {
+      global: {
+        plugins: [router],
+        stubs: {
+          ContextBar: {
+            emits: ['update:sourceRevisionId'],
+            template: '<div><button data-testid="switch-new" @click="$emit(\'update:sourceRevisionId\', \'source-new\')">v10</button><button data-testid="switch-old" @click="$emit(\'update:sourceRevisionId\', \'source-old\')">v7</button></div>',
+          },
+          EndpointDetail: true, CaseEditor: true, AiAssistant: true, DebugDrawer: true, EndpointTree: true,
+        },
+      },
+    })
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('3D家用接口测试')
+    await wrapper.get('[data-testid="switch-new"]').trigger('click')
+    await flushPromises()
+    expect(context.sourceRevisionId).toBe('source-new')
+    expect(tasks.task).toBeNull()
+    expect(wrapper.get('[data-testid="source-version-mismatch"]').text()).toContain('v7')
+    expect(wrapper.get('[data-testid="source-version-mismatch"]').text()).toContain('v10')
+
+    await wrapper.get('[data-testid="switch-old"]').trigger('click')
+    await flushPromises()
+    expect(context.sourceRevisionId).toBe('source-old')
+    expect(tasks.task?.id).toBe('task-old')
+    expect(wrapper.text()).toContain('已保存 1 个接口')
   })
 
   it('saves the current draft and debugs the exact version returned by that save', async () => {

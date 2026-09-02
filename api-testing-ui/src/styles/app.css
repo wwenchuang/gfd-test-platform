@@ -475,7 +475,8 @@ h1, h2, p { margin-top: 0; } h1 { margin-bottom: 0; font-size: 21px; font-weight
 .debug-result details { margin-top: 7px; border: 1px solid var(--line); border-radius: 5px; overflow: hidden; }.debug-result summary { padding: 8px 10px; color: #344055; font-size: 11px; font-weight: 700; cursor: pointer; }
 .source-version-mismatch { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 10px 12px; border-left: 3px solid #c48513; background: #fff9ec; color: #694b16; }
 .source-version-mismatch p { margin: 3px 0 0; font-size: 12px; line-height: 1.5; }
-@media (max-width: 760px) { .source-version-mismatch { grid-template-columns: auto minmax(0, 1fr); }.source-version-mismatch button { grid-column: 2; justify-self: start; } }
+.source-version-mismatch-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
+@media (max-width: 760px) { .source-version-mismatch { grid-template-columns: auto minmax(0, 1fr); }.source-version-mismatch-actions { grid-column: 2; justify-content: flex-start; } }
 .standalone-case-edit-note { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: start; gap: 10px; padding: 10px 12px; border-left: 3px solid var(--blue); background: #f1f7fd; color: #254f73; }
 .standalone-case-edit-note p { margin: 3px 0 0; font-size: 12px; line-height: 1.5; }
 .case-generation-status { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 10px 12px; border-left: 3px solid var(--teal); background: #f1faf7; color: #176b58; }

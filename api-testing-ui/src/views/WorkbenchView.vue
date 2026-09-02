@@ -51,6 +51,8 @@ const environmentName = computed(() => selectedEnvironment.value?.name || (conte
 const environmentLabel = computed(() => selectedEnvironment.value
   ? `${selectedEnvironment.value.name} · v${selectedEnvironment.value.revision}`
   : context.environmentRevisionId ? '任务保存环境 · 已保存任务引用' : '未选择环境')
+const currentSourceLabel = computed(() => sourceRevisionLabel(context.sourceRevisionId))
+const outdatedTaskSourceLabel = computed(() => sourceRevisionLabel(outdatedRestoredTask.value?.source_revision_id || null))
 const taskMatchesSelection = computed(() => Boolean(
   tasks.task
   && tasks.task.project_id === context.projectId
@@ -212,6 +214,7 @@ function changeProject(projectId: string | null): void {
 }
 
 async function changeSource(sourceRevisionId: string | null): Promise<void> {
+  const recoverableTask = tasks.task || outdatedRestoredTask.value
   context.selectSourceRevision(sourceRevisionId)
   tasks.clear()
   outdatedRestoredTask.value = null
@@ -220,6 +223,18 @@ async function changeSource(sourceRevisionId: string | null): Promise<void> {
   debugOpen.value = false
   mobilePane.value = 'scope'
   if (sourceRevisionId) {
+    if (
+      recoverableTask
+      && recoverableTask.project_id === context.projectId
+      && recoverableTask.source_revision_id === sourceRevisionId
+    ) {
+      tasks.upsertTask(recoverableTask)
+      await selectTask(recoverableTask.id)
+      return
+    }
+    if (recoverableTask && recoverableTask.project_id === context.projectId) {
+      outdatedRestoredTask.value = recoverableTask
+    }
     await loadSource(sourceRevisionId)
     if (context.projectId) await cases.restoreLatestAiJob(context.projectId, sourceRevisionId)
   }
@@ -227,6 +242,11 @@ async function changeSource(sourceRevisionId: string | null): Promise<void> {
     assets.endpoints = []
     activeEndpoint.value = null
   }
+}
+
+async function restoreOutdatedTask(): Promise<void> {
+  if (!outdatedRestoredTask.value) return
+  await selectTask(outdatedRestoredTask.value.id)
 }
 
 function changeEnvironment(environmentRevisionId: string | null): void {
@@ -558,6 +578,14 @@ function defaultTaskName(newTask = false): string {
   return newTask ? `${projectName}新建任务` : `${projectName}接口测试`
 }
 
+function sourceRevisionLabel(revisionId: string | null): string {
+  if (!revisionId) return '未选择接口版本'
+  const source = context.sourceRevisions.find(item => item.id === revisionId)
+  if (!source) return '任务保存接口版本'
+  if (!source.revision_number) return source.name || '任务保存接口版本'
+  return `${source.name} · v${source.revision_number}`
+}
+
 </script>
 
 <template>
@@ -596,10 +624,13 @@ function defaultTaskName(newTask = false): string {
     <section v-if="outdatedRestoredTask" data-testid="source-version-mismatch" class="source-version-mismatch" role="status">
       <AlertTriangle :size="18" />
       <div>
-        <strong>已使用当前接口版本</strong>
-        <p>最近任务“{{ outdatedRestoredTask.name }}”属于旧接口版本，仍保留在“任务管理”。当前可直接选择新版本接口，旧任务和用例不会被删除。</p>
+        <strong>当前接口版本未包含最近任务</strong>
+        <p>当前为{{ currentSourceLabel }}；最近任务“{{ outdatedRestoredTask.name }}”属于{{ outdatedTaskSourceLabel }}。任务和用例仍然保留，可直接恢复或到任务管理选择。</p>
       </div>
-      <RouterLink class="secondary-command" :to="{ name: 'tasks' }">查看历史任务</RouterLink>
+      <div class="source-version-mismatch-actions">
+        <button data-testid="restore-version-task" class="secondary-command" type="button" @click="restoreOutdatedTask">恢复最近任务</button>
+        <RouterLink class="secondary-command" :to="{ name: 'tasks' }">查看历史任务</RouterLink>
+      </div>
     </section>
     <TaskStatusStrip
       v-model:task-name-draft="taskNameDraft"
