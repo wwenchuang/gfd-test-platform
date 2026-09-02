@@ -53,6 +53,8 @@ interface TargetOption {
   title: string
   subtitle: string
   meta: string
+  scope?: string
+  baselineCount?: number
   selectable: boolean
   unavailableReason: string
 }
@@ -124,12 +126,16 @@ const filteredTargetOptions = computed(() => {
 const filteredBaselineGroups = computed(() => {
   const groups = new Map<string, TargetOption[]>()
   for (const option of filteredTargetOptions.value) {
-    const name = option.meta || '未分组'
+    const name = option.scope || '未标注应用 · 未标注业务'
     groups.set(name, [...(groups.get(name) || []), option])
   }
   return [...groups.entries()]
     .sort(([left], [right]) => left.localeCompare(right, 'zh-CN'))
-    .map(([name, options]) => ({ name, options }))
+    .map(([name, options]) => ({
+      name,
+      options,
+      baselineCount: options.reduce((total, option) => total + (option.baselineCount || 0), 0),
+    }))
 })
 const pendingFixedCaseCount = computed(() => editingJobId.value && form.targetType === 'cases' ? selectedTargetIds.value.filter(id => !cases.versions[id]).length : 0)
 const pendingMissingTargetIds = computed(() => {
@@ -177,6 +183,11 @@ watch(() => form.targetType, () => {
   form.allowOneTimeBaselines = false
   targetSearch.value = ''
   expandedTargetGroups.value = new Set()
+  if (form.targetType === 'baseline_group') {
+    void nextTick(() => {
+      expandedTargetGroups.value = new Set(filteredBaselineGroups.value.map(group => group.name))
+    })
+  }
 }, { flush: 'sync' })
 
 function targetIds(): string[] {
@@ -308,7 +319,12 @@ async function loadTargetAssets(): Promise<void> {
     targetLoadError.value = baselines.error || tasks.error || (rejected?.status === 'rejected'
       ? rejected.reason instanceof Error ? rejected.reason.message : '无法读取可选目标'
       : '')
-  } finally { targetsLoading.value = false }
+  } finally {
+    targetsLoading.value = false
+    if (form.targetType === 'baseline_group') {
+      expandedTargetGroups.value = new Set(filteredBaselineGroups.value.map(group => group.name))
+    }
+  }
 }
 
 async function refreshAll(announce = true): Promise<void> {
@@ -488,6 +504,7 @@ function scheduleExecutionSummary(job: ScheduledJob): string {
   const passed = numberValue(summary.passed)
   if (!job.latest_execution_id) return '尚未触发'
   if (!total) return statusLabel(job.latest_execution_state || 'QUEUED')
+  if (passed < total) return `未通过 · ${passed}/${total} 通过 · ${formatPassRate(passed, total)}`
   return `通过 ${passed}/${total} · ${formatPassRate(passed, total)}`
 }
 
@@ -646,7 +663,9 @@ function baselineGroupOptions(): TargetOption[] {
         id: name,
         title: name,
         subtitle: [`${items.length} 条基线`, sampleText].filter(Boolean).join(' · '),
-        meta: `${items.length} 条基线 · ${scopeSummary(items)}${unavailableReason ? ` · ${unavailableReason}` : ''}`,
+        meta: `${items.length} 条基线 · 维护分组 · ${name}${unavailableReason ? ` · ${unavailableReason}` : ''}`,
+        scope: scopeSummary(items),
+        baselineCount: items.length,
         selectable: !unavailableReason,
         unavailableReason,
       }
@@ -661,7 +680,9 @@ function baselineOption(item: ApiBaselineCase): TargetOption {
     id: item.id,
     title: `${item.case_name || item.endpoint_summary || item.path} · v${item.case_version}`,
     subtitle: `${item.method} ${item.path} · ${origin} · 采纳于 ${adoptedAt}`,
-    meta: `${caseScopeLabel(item)} · ${baselineGroup(item)}${selection.reason ? ` · ${selection.reason}` : ''}`,
+    meta: `${baselineGroup(item)}${selection.reason ? ` · ${selection.reason}` : ''}`,
+    scope: caseScopeLabel(item),
+    baselineCount: 1,
     selectable: selection.selectable,
     unavailableReason: selection.reason,
   }
@@ -928,10 +949,10 @@ function weekDayName(value: number): string {
             <p v-if="targetsLoading" class="compact-empty" role="status">正在读取目标…</p>
             <p v-else-if="targetLoadError" class="compact-empty" role="alert">{{ targetLoadError }}</p>
             <div v-else class="target-option-list">
-              <template v-if="form.targetType === 'baselines'">
+              <template v-if="form.targetType === 'baselines' || form.targetType === 'baseline_group'">
                 <div v-for="group in filteredBaselineGroups" :key="group.name" class="target-group">
                   <div class="target-group-head">
-                    <button data-testid="scheduled-target-group-toggle" type="button" class="target-group-toggle" :aria-expanded="targetGroupExpanded(group.name)" @click="toggleTargetGroup(group.name)"><ChevronDown v-if="targetGroupExpanded(group.name)" :size="14" /><ChevronRight v-else :size="14" /><strong>{{ group.name }}</strong><span>{{ group.options.length }}</span></button>
+                    <button data-testid="scheduled-target-group-toggle" type="button" class="target-group-toggle" :aria-expanded="targetGroupExpanded(group.name)" @click="toggleTargetGroup(group.name)"><ChevronDown v-if="targetGroupExpanded(group.name)" :size="14" /><ChevronRight v-else :size="14" /><strong>{{ group.name }}</strong><span>{{ group.baselineCount }} 条基线</span></button>
                     <small>已选 {{ selectedTargetGroupCount(group.options) }}/{{ selectableTargetGroupIds(group.options).length }}</small>
                     <button
                       data-testid="scheduled-target-group-select"
@@ -939,7 +960,7 @@ function weekDayName(value: number): string {
                       class="text-command target-group-select"
                       :disabled="!selectableTargetGroupIds(group.options).length"
                       @click="toggleTargetGroupSelection(group.options)"
-                    >{{ group.name }} · {{ allTargetGroupSelected(group.options) ? '清空本组' : '全选本组' }}</button>
+                    >{{ group.name }} · {{ allTargetGroupSelected(group.options) ? '清空本业务' : '全选本业务' }}</button>
                   </div>
                   <template v-if="targetGroupExpanded(group.name)">
                     <button

@@ -9,6 +9,9 @@ const TEST_APP_PACKAGE = 'com.kfb.model';
 function installImeCompositionGuard(root = document) {
   if (!root || root.__midsceneImeCompositionGuardInstalled) return () => {};
   const composing = new WeakSet();
+  const pendingCommit = new WeakMap();
+  let commitSequence = 0;
+  let active = true;
   const editableTextTarget = target => {
     if (!target || typeof target.matches !== 'function') return false;
     return target.matches('textarea, input:not([type]), input[type="text"], input[type="search"], input[type="email"], input[type="url"], input[type="tel"], input[type="password"]');
@@ -17,17 +20,39 @@ function installImeCompositionGuard(root = document) {
     if (editableTextTarget(event.target)) composing.add(event.target);
   };
   const onCompositionEnd = event => {
-    if (editableTextTarget(event.target)) composing.delete(event.target);
+    if (!editableTextTarget(event.target)) return;
+    const target = event.target;
+    const committedValue = target.value;
+    const token = ++commitSequence;
+    composing.delete(target);
+    pendingCommit.set(target, token);
+    root.defaultView?.setTimeout(() => {
+      if (!active || pendingCommit.get(target) !== token || target.value !== committedValue) return;
+      pendingCommit.delete(target);
+      const InputEventClass = root.defaultView?.InputEvent;
+      const finalInput = InputEventClass
+        ? new InputEventClass('input', {
+            bubbles: true,
+            composed: true,
+            data: event.data || null,
+            inputType: 'insertCompositionText',
+            isComposing: false
+          })
+        : new Event('input', {bubbles: true});
+      target.dispatchEvent(finalInput);
+    }, 0);
   };
   const onInput = event => {
     if (!editableTextTarget(event.target)) return;
     if (event.isComposing || composing.has(event.target)) event.stopImmediatePropagation();
+    else pendingCommit.delete(event.target);
   };
   root.addEventListener('compositionstart', onCompositionStart, true);
   root.addEventListener('compositionend', onCompositionEnd, true);
   root.addEventListener('input', onInput, true);
   root.__midsceneImeCompositionGuardInstalled = true;
   return () => {
+    active = false;
     root.removeEventListener('compositionstart', onCompositionStart, true);
     root.removeEventListener('compositionend', onCompositionEnd, true);
     root.removeEventListener('input', onInput, true);

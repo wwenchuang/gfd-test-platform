@@ -11,15 +11,35 @@ export function installImeCompositionGuard(root: Document = document): () => voi
   const installedRoot = root as Document & { __midsceneImeCompositionGuardInstalled?: boolean }
   if (installedRoot.__midsceneImeCompositionGuardInstalled) return () => {}
   const composing = new WeakSet<EventTarget>()
+  const pendingCommit = new WeakMap<EventTarget, number>()
+  let commitSequence = 0
+  let active = true
   const onCompositionStart = (event: Event): void => {
     if (isEditableTextTarget(event.target, root)) composing.add(event.target)
   }
   const onCompositionEnd = (event: Event): void => {
-    if (isEditableTextTarget(event.target, root)) composing.delete(event.target)
+    if (!isEditableTextTarget(event.target, root)) return
+    const target = event.target
+    const committedValue = target.value
+    const token = ++commitSequence
+    composing.delete(target)
+    pendingCommit.set(target, token)
+    root.defaultView?.setTimeout(() => {
+      if (!active || pendingCommit.get(target) !== token || target.value !== committedValue) return
+      pendingCommit.delete(target)
+      target.dispatchEvent(new root.defaultView!.InputEvent('input', {
+        bubbles: true,
+        composed: true,
+        data: (event as CompositionEvent).data || null,
+        inputType: 'insertCompositionText',
+        isComposing: false,
+      }))
+    }, 0)
   }
   const onInput = (event: Event): void => {
     if (!isEditableTextTarget(event.target, root)) return
     if ((event as InputEvent).isComposing || composing.has(event.target)) event.stopImmediatePropagation()
+    else pendingCommit.delete(event.target)
   }
 
   root.addEventListener('compositionstart', onCompositionStart, true)
@@ -27,6 +47,7 @@ export function installImeCompositionGuard(root: Document = document): () => voi
   root.addEventListener('input', onInput, true)
   installedRoot.__midsceneImeCompositionGuardInstalled = true
   return () => {
+    active = false
     root.removeEventListener('compositionstart', onCompositionStart, true)
     root.removeEventListener('compositionend', onCompositionEnd, true)
     root.removeEventListener('input', onInput, true)

@@ -11,7 +11,7 @@ function loadFunction(window, source, name) {
   window.eval(next < 0 ? rest : rest.slice(0, next + 1));
 }
 
-test('the main platform defers every text search handler until Chinese IME composition finishes', t => {
+test('the main platform commits Chinese input when Safari omits the final input event', async t => {
   const source = fs.readFileSync('js/utils.js', 'utf8');
   const dom = new JSDOM('<body><input id="search" type="search"><input id="text" type="text"><textarea id="notes"></textarea></body>', {runScripts: 'dangerously'});
   t.after(() => dom.window.close());
@@ -23,6 +23,7 @@ test('the main platform defers every text search handler until Chinese IME compo
     const input = win.document.getElementById(id);
     let inputCount = 0;
     input.addEventListener('input', () => { inputCount += 1; });
+    input.dispatchEvent(new win.CompositionEvent('compositionstart', {bubbles: true, data: ''}));
     input.value = 'shoucang';
     input.dispatchEvent(new win.InputEvent('input', {
       bubbles: true,
@@ -33,8 +34,10 @@ test('the main platform defers every text search handler until Chinese IME compo
     assert.equal(inputCount, 0, `${id} must not filter or rerender during IME composition`);
 
     input.value = '收藏';
-    input.dispatchEvent(new win.InputEvent('input', {bubbles: true, data: '收藏'}));
+    input.dispatchEvent(new win.CompositionEvent('compositionend', {bubbles: true, data: '收藏'}));
+    await new Promise(resolve => win.setTimeout(resolve, 0));
     assert.equal(inputCount, 1, `${id} must handle the committed Chinese value once`);
+    assert.equal(input.value, '收藏');
   }
 });
 

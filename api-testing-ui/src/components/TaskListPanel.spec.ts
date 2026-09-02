@@ -46,7 +46,7 @@ describe('TaskListPanel', () => {
     expect(wrapper.emitted('run')).toEqual([['task-1']])
     expect(wrapper.emitted('delete')).toEqual([[TASK]])
     expect(wrapper.get('[data-testid="task-list-run-task-2"]').attributes('disabled')).toBeDefined()
-    expect(wrapper.get('[data-testid="task-list-item-task-1"]').text()).toContain('最近结果 通过 1/2 · 50%')
+    expect(wrapper.get('[data-testid="task-list-item-task-1"]').text()).toContain('最近结果 未通过 · 1/2 通过 · 50%')
     expect(wrapper.get('[data-testid="task-list-item-task-1"]').text()).toContain('范围 2 个接口 · 执行 3 条用例')
     expect(wrapper.get('[data-testid="task-list-item-task-1"]').text()).toContain('覆盖 1 个接口，含多版本基线')
     expect(wrapper.get('[data-testid="task-list-item-task-1"]').text()).toContain('更新')

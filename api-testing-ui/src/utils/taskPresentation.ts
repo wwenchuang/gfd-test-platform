@@ -13,6 +13,7 @@ const TASK_STATE_LABELS: Record<string, string> = {
 
 export function taskStateLabel(state: string, runnableCount?: number): string {
   if (state === 'ready' && runnableCount !== undefined && runnableCount <= 0) return '待采纳基线'
+  if (state === 'draft' && runnableCount !== undefined && runnableCount > 0) return '可执行'
   return TASK_STATE_LABELS[state] || state || '未知'
 }
 
@@ -30,6 +31,7 @@ export function taskLatestResult(task: ApiTestTask): string {
   const total = numberValue(summary.total)
   const passed = numberValue(summary.passed)
   if (!total) return `最近执行 ${task.latest_execution_state ? executionStateLabel(task.latest_execution_state) : '已记录'}`
+  if (passed < total) return `最近结果 未通过 · ${passed}/${total} 通过 · ${formatPassRate(passed, total)}`
   return `最近结果 通过 ${passed}/${total} · ${formatPassRate(passed, total)}`
 }
 

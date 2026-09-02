@@ -34,4 +34,30 @@ describe('installImeCompositionGuard', () => {
 
     cleanup()
   })
+
+  it('commits the final Chinese value when Safari emits no input after compositionend', async () => {
+    const cleanup = installImeCompositionGuard(document)
+    const input = document.createElement('input')
+    input.type = 'text'
+    document.body.append(input)
+    const values: string[] = []
+    input.addEventListener('input', () => { values.push(input.value) })
+
+    input.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true, data: '' }))
+    input.value = 'zhongwen'
+    input.dispatchEvent(new InputEvent('input', {
+      bubbles: true,
+      data: 'n',
+      inputType: 'insertCompositionText',
+      isComposing: true,
+    }))
+    input.value = '中文'
+    input.dispatchEvent(new CompositionEvent('compositionend', { bubbles: true, data: '中文' }))
+
+    await new Promise(resolve => setTimeout(resolve, 0))
+    expect(values).toEqual(['中文'])
+
+    input.remove()
+    cleanup()
+  })
 })

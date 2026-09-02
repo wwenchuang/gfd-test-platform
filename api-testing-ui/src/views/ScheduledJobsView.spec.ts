@@ -317,11 +317,12 @@ describe('ScheduledJobsView', () => {
     expect(wrapper.text()).not.toContain('已删除')
     expect(wrapper.text()).not.toContain('历史')
     await wrapper.get('[data-testid="scheduled-target-type"]').setValue('baselines')
+    expect(wrapper.text()).toContain('校园应用 · 校园共享')
+    expect(wrapper.text()).not.toContain('登录成功用例')
+    for (const toggle of wrapper.findAll('[data-testid="scheduled-target-group-toggle"]')) await toggle.trigger('click')
     expect(wrapper.text()).toContain('基线')
     expect(wrapper.text()).toContain('测试')
     expect(wrapper.text()).toContain('未分组')
-    expect(wrapper.text()).not.toContain('登录成功用例')
-    for (const toggle of wrapper.findAll('[data-testid="scheduled-target-group-toggle"]')) await toggle.trigger('click')
     expect(wrapper.text()).toContain('登录成功用例')
     expect(wrapper.text()).toContain('支付成功用例')
     expect(wrapper.text()).toContain('未分组用例')
@@ -329,7 +330,14 @@ describe('ScheduledJobsView', () => {
     expect(wrapper.text()).not.toContain('历史版本用例')
   })
 
-  it('selects or clears a whole baseline group without losing selections from other groups', async () => {
+  it('uses application and business as the primary schedule grouping', async () => {
+    replaceTestApplications([{
+      package: 'com.example.school', name: '智小白3D', enabled: true,
+      business_lines: [
+        { id: 'home', name: '家用', enabled: true },
+        { id: 'shared', name: '共享', enabled: true },
+      ],
+    }])
     vi.spyOn(apiClient, 'get').mockImplementation(async url => {
       const path = String(url)
       if (path.startsWith('/api/api-testing/v1/scheduled-jobs')) return { data: { scheduled_jobs: [] } }
@@ -337,8 +345,53 @@ describe('ScheduledJobsView', () => {
         return {
           data: {
             baselines: [
-              baselineFixture({ id: 'home-1', group_name: '家用业务', case_name: '家用查询一' }),
-              baselineFixture({ id: 'home-2', group_name: '家用业务', case_name: '家用查询二', path: '/home-two' }),
+              baselineFixture({ id: 'home-local', business: 'home', group_name: '本地测试', case_name: '家用本地用例' }),
+              baselineFixture({ id: 'home-verified', business: 'home', group_name: '家用业务 · 已复验', case_name: '家用已复验用例' }),
+              baselineFixture({ id: 'home-one-time', business: 'home', group_name: 'API Test / 一次性', case_name: '家用一次性用例' }),
+              baselineFixture({ id: 'shared', business: 'shared', group_name: '共享业务', case_name: '共享用例' }),
+            ],
+          },
+        }
+      }
+      if (path.startsWith('/api/api-testing/v1/cases')) return { data: { case_versions: [] } }
+      if (path.startsWith('/api/api-testing/v1/tasks')) return { data: { tasks: [] } }
+      return { data: {} }
+    })
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [{ path: '/', name: 'scheduled-jobs', component: ScheduledJobsView }],
+    })
+    const wrapper = mount(ScheduledJobsView, { global: { plugins: [router] } })
+    await flushPromises()
+
+    const primaryGroups = wrapper.findAll('[data-testid="scheduled-target-group-toggle"]')
+    expect(primaryGroups).toHaveLength(2)
+    expect(primaryGroups.map(item => item.text())).toEqual(expect.arrayContaining([
+      expect.stringContaining('智小白3D · 家用'),
+      expect.stringContaining('智小白3D · 共享'),
+    ]))
+    expect(wrapper.text()).toContain('本地测试')
+    expect(wrapper.text()).toContain('家用业务 · 已复验')
+    expect(wrapper.text()).toContain('API Test / 一次性')
+  })
+
+  it('selects or clears a whole baseline group without losing selections from other groups', async () => {
+    replaceTestApplications([{
+      package: 'com.example.school', name: '智小白3D', enabled: true,
+      business_lines: [
+        { id: 'home', name: '家用', enabled: true },
+        { id: 'shared', name: '共享', enabled: true },
+      ],
+    }])
+    vi.spyOn(apiClient, 'get').mockImplementation(async url => {
+      const path = String(url)
+      if (path.startsWith('/api/api-testing/v1/scheduled-jobs')) return { data: { scheduled_jobs: [] } }
+      if (path.startsWith('/api/api-testing/v1/baselines')) {
+        return {
+          data: {
+            baselines: [
+              baselineFixture({ id: 'home-1', business: 'home', group_name: '家用业务', case_name: '家用查询一' }),
+              baselineFixture({ id: 'home-2', business: 'home', group_name: '家用业务 · 已复验', case_name: '家用查询二', path: '/home-two' }),
               baselineFixture({ id: 'shared-1', group_name: '共享业务', case_name: '共享查询', path: '/shared' }),
             ],
           },
@@ -357,21 +410,21 @@ describe('ScheduledJobsView', () => {
 
     await wrapper.get('[data-testid="scheduled-target-type"]').setValue('baselines')
     const groupActions = () => wrapper.findAll('[data-testid="scheduled-target-group-select"]')
-    const homeAction = () => groupActions().find(item => item.text().includes('家用业务'))!
-    const sharedAction = () => groupActions().find(item => item.text().includes('共享业务'))!
+    const homeAction = () => groupActions().find(item => item.text().includes('智小白3D · 家用'))!
+    const sharedAction = () => groupActions().find(item => item.text().includes('智小白3D · 共享'))!
 
-    expect(homeAction().text()).toContain('全选本组')
+    expect(homeAction().text()).toContain('全选本业务')
     await homeAction().trigger('click')
     expect(wrapper.text()).toContain('已选 2 项')
-    expect(homeAction().text()).toContain('清空本组')
+    expect(homeAction().text()).toContain('清空本业务')
 
     await sharedAction().trigger('click')
     expect(wrapper.text()).toContain('已选 3 项')
 
     await homeAction().trigger('click')
     expect(wrapper.text()).toContain('已选 1 项')
-    expect(sharedAction().text()).toContain('清空本组')
-    expect(homeAction().text()).toContain('全选本组')
+    expect(sharedAction().text()).toContain('清空本业务')
+    expect(homeAction().text()).toContain('全选本业务')
   })
 
   it('validates cron expressions and explains the edited schedule', async () => {
@@ -517,7 +570,7 @@ describe('ScheduledJobsView', () => {
     expect(row.text()).toContain('调度时区 Asia/Shanghai（UTC+08:00）')
     expect(row.text()).toContain('下次执行 2026/08/27 18:00')
     expect(row.text()).toContain('最近调度 2026/08/26 18:00')
-    expect(row.text()).toContain('通过 1/2 · 50%')
+    expect(row.text()).toContain('未通过 · 1/2 通过 · 50%')
     expect(row.text()).toContain('上次结果（历史）')
     expect(wrapper.get('[data-testid="scheduled-current-target-job-observable"]').text()).toContain('1 条基线')
 
