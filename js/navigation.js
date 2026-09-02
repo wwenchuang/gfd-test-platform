@@ -202,7 +202,7 @@ function workflowGuideHtml(sectionKey = activeWorkflow) {
       <p>${escapeHtml(card.text)}</p>
       <div class="workflow-card-actions">
         ${(card.actions || []).map(action => `
-          <button class="btn-sm ${escapeHtml(action.cls || '')}" onclick="${action.fn}">${escapeHtml(action.label)}</button>
+          <button class="btn-sm ${escapeHtml(action.cls || '')}" onclick="${escapeHtml(action.fn || '')}">${escapeHtml(action.label)}</button>
         `).join('')}
       </div>
     </div>

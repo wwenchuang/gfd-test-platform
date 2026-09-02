@@ -6,6 +6,37 @@ const API_BASE = '/api';
 const AI_GATEWAY_BASE = '/ai-gateway';
 const TEST_APP_PACKAGE = 'com.kfb.model';
 
+function installImeCompositionGuard(root = document) {
+  if (!root || root.__midsceneImeCompositionGuardInstalled) return () => {};
+  const composing = new WeakSet();
+  const editableTextTarget = target => {
+    if (!target || typeof target.matches !== 'function') return false;
+    return target.matches('textarea, input:not([type]), input[type="text"], input[type="search"], input[type="email"], input[type="url"], input[type="tel"], input[type="password"]');
+  };
+  const onCompositionStart = event => {
+    if (editableTextTarget(event.target)) composing.add(event.target);
+  };
+  const onCompositionEnd = event => {
+    if (editableTextTarget(event.target)) composing.delete(event.target);
+  };
+  const onInput = event => {
+    if (!editableTextTarget(event.target)) return;
+    if (event.isComposing || composing.has(event.target)) event.stopImmediatePropagation();
+  };
+  root.addEventListener('compositionstart', onCompositionStart, true);
+  root.addEventListener('compositionend', onCompositionEnd, true);
+  root.addEventListener('input', onInput, true);
+  root.__midsceneImeCompositionGuardInstalled = true;
+  return () => {
+    root.removeEventListener('compositionstart', onCompositionStart, true);
+    root.removeEventListener('compositionend', onCompositionEnd, true);
+    root.removeEventListener('input', onInput, true);
+    delete root.__midsceneImeCompositionGuardInstalled;
+  };
+}
+
+installImeCompositionGuard(document);
+
 function defaultBusinessLines() {
   return [
     {id: 'home', name: '家用', enabled: true},

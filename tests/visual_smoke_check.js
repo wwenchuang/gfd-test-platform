@@ -567,6 +567,40 @@ async function anyVisible(locator) {
     if (!commandBox || commandBox.width < 700) throw new Error('dashboard command area is too narrow and may render vertical text');
     if (!jobsBox || jobsBox.width > 430) throw new Error(`jobs panel is too wide: ${jobsBox && jobsBox.width}`);
 
+    await page.setViewportSize({width: 1110, height: 629});
+    await page.evaluate(() => {
+      document.querySelectorAll('.nav-group').forEach(group => { group.open = true; });
+      const nav = document.querySelector('.workflow-nav');
+      if (nav) nav.scrollTop = nav.scrollHeight;
+    });
+    const compactJobsBox = await page.locator('.jobs-panel').boundingBox();
+    const compactCommandBox = await page.locator('.agent-primary-card').boundingBox();
+    const compactLastNavBox = await page.locator('.workflow-step[data-workflow="system_config"]').boundingBox();
+    const compactNavState = await page.locator('.workflow-nav').evaluate(nav => ({
+      clientHeight: nav.clientHeight,
+      scrollHeight: nav.scrollHeight,
+      scrollTop: nav.scrollTop,
+      overflowY: getComputedStyle(nav).overflowY,
+      parentClientHeight: nav.parentElement?.clientHeight,
+      parentScrollHeight: nav.parentElement?.scrollHeight,
+      layoutClientHeight: nav.parentElement?.parentElement?.clientHeight,
+      layoutScrollHeight: nav.parentElement?.parentElement?.scrollHeight,
+      layoutHeight: nav.parentElement?.parentElement ? getComputedStyle(nav.parentElement.parentElement).height : null,
+      layoutRows: nav.parentElement?.parentElement ? getComputedStyle(nav.parentElement.parentElement).gridTemplateRows : null,
+      appClientHeight: document.querySelector('#app')?.clientHeight,
+    }));
+    if (!compactJobsBox || compactJobsBox.x < 0 || compactJobsBox.x + compactJobsBox.width > 1110) {
+      throw new Error(`Retina-sized Agent status panel is clipped: ${JSON.stringify(compactJobsBox)}`);
+    }
+    if (!compactCommandBox || compactCommandBox.x < 0 || compactCommandBox.x + compactCommandBox.width > compactJobsBox.x) {
+      throw new Error(`Retina-sized Agent form is clipped by the status panel: ${JSON.stringify(compactCommandBox)}`);
+    }
+    if (!compactLastNavBox || compactLastNavBox.y < 60 || compactLastNavBox.y + compactLastNavBox.height > 629) {
+      throw new Error(`Short-height sidebar cannot scroll to its last action: ${JSON.stringify({compactLastNavBox, compactNavState})}`);
+    }
+    await page.screenshot({path: path.join(ARTIFACTS, 'agent-retina-1110x629.png')});
+    await page.setViewportSize({width: 1440, height: 900});
+
     await page.locator('details[data-nav-group="run"]').evaluate(el => { el.open = true; });
     await page.click('.workflow-step[data-workflow="baseline"]');
     for (const label of ['同步当前 YAML 至 Sonic 平台', '历史版本', '全选当前模块', '打开更多']) {

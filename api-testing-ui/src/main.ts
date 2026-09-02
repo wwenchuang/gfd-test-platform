@@ -4,9 +4,12 @@ import { createPinia } from 'pinia'
 import App from './App.vue'
 import { router } from './router'
 import { requireApiTestingSession, verifyApiTestingSession } from './utils/authRedirect'
+import { installImeCompositionGuard } from './utils/imeCompositionGuard'
 import { loadTestApplications } from './utils/testApplications'
 import './styles/tokens.css'
 import './styles/app.css'
+
+installImeCompositionGuard(document)
 
 async function mountVerifiedApp(): Promise<void> {
   if (!await verifyApiTestingSession()) return

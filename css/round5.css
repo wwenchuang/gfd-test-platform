@@ -2403,6 +2403,41 @@
 }
 .management-pager > div { display: flex; gap: 8px; }
 
+/* Keep every navigation action reachable on short screens, and reserve the
+   right execution rail inside Retina-sized laptop viewports. */
+#app {
+  height: 100vh;
+  min-height: 0;
+  overflow: hidden;
+}
+.layout {
+  min-height: 0;
+  grid-template-rows: minmax(0, 1fr);
+  overflow: hidden;
+}
+.sidebar { min-height: 0; }
+.workflow-nav {
+  flex: 1 1 auto;
+  height: 100%;
+  min-height: 0;
+  align-content: start;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+@media (min-width: 981px) and (max-width: 1380px) {
+  .workbench {
+    grid-template-columns: minmax(0, 1fr) 6px var(--jobs-width);
+  }
+  .agent-start-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .agent-start-layout > .agent-source-materials,
+  .agent-start-layout > .agent-failed-job-field {
+    grid-column: 1;
+  }
+}
+
 .config-management-page,
 .bug-draft-page { max-width: 1320px; margin: 0 auto; }
 .btn-sm:disabled {

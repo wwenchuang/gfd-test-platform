@@ -11,6 +11,66 @@ function loadFunction(window, source, name) {
   window.eval(next < 0 ? rest : rest.slice(0, next + 1));
 }
 
+test('the main platform defers every text search handler until Chinese IME composition finishes', t => {
+  const source = fs.readFileSync('js/utils.js', 'utf8');
+  const dom = new JSDOM('<body><input id="search" type="search"><input id="text" type="text"><textarea id="notes"></textarea></body>', {runScripts: 'dangerously'});
+  t.after(() => dom.window.close());
+  const win = dom.window;
+  loadFunction(win, source, 'installImeCompositionGuard');
+  win.installImeCompositionGuard(win.document);
+
+  for (const id of ['search', 'text', 'notes']) {
+    const input = win.document.getElementById(id);
+    let inputCount = 0;
+    input.addEventListener('input', () => { inputCount += 1; });
+    input.value = 'shoucang';
+    input.dispatchEvent(new win.InputEvent('input', {
+      bubbles: true,
+      data: 'g',
+      inputType: 'insertCompositionText',
+      isComposing: true,
+    }));
+    assert.equal(inputCount, 0, `${id} must not filter or rerender during IME composition`);
+
+    input.value = '收藏';
+    input.dispatchEvent(new win.InputEvent('input', {bubbles: true, data: '收藏'}));
+    assert.equal(inputCount, 1, `${id} must handle the committed Chinese value once`);
+  }
+});
+
+test('workflow guide action buttons keep quoted navigation calls clickable', t => {
+  const source = fs.readFileSync('js/navigation.js', 'utf8');
+  const dom = new JSDOM('<body></body>', {runScripts: 'dangerously'});
+  t.after(() => dom.window.close());
+  const win = dom.window;
+  const calls = [];
+  win.escapeHtml = value => String(value || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+  win.activateWorkflow = key => calls.push(key);
+  win.eval(`
+    var activeWorkflow = 'yaml_edit';
+    var WORKFLOW_SECTIONS = {
+      yaml_edit: {
+        index: '1', title: 'YAML 编辑', subtitle: '选择 YAML', help: '先选择文件', checklist: [],
+        cards: [{title: '选择', text: '从资产打开', actions: [
+          {label: '去用例资产选择', cls: 'primary', fn: 'activateWorkflow("assets")'}
+        ]}]
+      }
+    };
+  `);
+  loadFunction(win, source, 'workflowGuideHtml');
+  win.document.body.innerHTML = win.workflowGuideHtml('yaml_edit');
+
+  const button = win.document.querySelector('.workflow-card-actions button');
+  assert.equal(button.textContent.trim(), '去用例资产选择');
+  button.click();
+  assert.deepEqual(calls, ['assets']);
+});
+
 test('returning from a repair draft restores a real execution tab instead of a blank body', async t => {
   const dom = new JSDOM('<body></body>', {runScripts: 'dangerously'});
   t.after(() => dom.window.close());

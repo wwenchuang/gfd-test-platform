@@ -15,6 +15,7 @@ interface HighlightSegment {
 }
 
 const query = ref('')
+const searchComposing = ref(false)
 const selected = ref(new Set(props.selectedIds))
 const activeTab = ref<'all' | 'selected'>(props.initialTab)
 const collapsedGroups = ref(new Set<string>())
@@ -28,6 +29,21 @@ watch(() => props.initialTab, tab => { activeTab.value = tab })
 
 function selectTab(tab: 'all' | 'selected'): void {
   activeTab.value = tab
+}
+
+function handleSearchCompositionStart(): void {
+  searchComposing.value = true
+}
+
+function handleSearchInput(event: Event): void {
+  const inputEvent = event as InputEvent
+  if (searchComposing.value || inputEvent.isComposing) return
+  query.value = (event.target as HTMLInputElement).value
+}
+
+function handleSearchCompositionEnd(event: CompositionEvent): void {
+  searchComposing.value = false
+  query.value = (event.target as HTMLInputElement).value
 }
 
 const filtered = computed(() => {
@@ -149,7 +165,7 @@ function showAllSearchMatches(): void {
       <button data-testid="selected-tab" type="button" :class="{ active: activeTab === 'selected' }" @click="selectTab('selected')">已选接口 <span>{{ selected.size }}</span></button>
     </div>
     <div class="endpoint-search-bar">
-      <label class="search-box"><Search :size="15" /><span class="sr-only">搜索接口</span><input v-model="query" data-testid="endpoint-search" placeholder="搜索名称或路径" /></label>
+      <label class="search-box"><Search :size="15" /><span class="sr-only">搜索接口</span><input :value="query" data-testid="endpoint-search" placeholder="搜索名称或路径" @compositionstart="handleSearchCompositionStart" @compositionend="handleSearchCompositionEnd" @input="handleSearchInput" /></label>
     </div>
     <p v-if="state === 'loading'" class="state-message">正在读取接口...</p>
     <p v-else-if="state === 'failed'" class="state-message state-error">{{ error || '接口读取失败' }}</p>

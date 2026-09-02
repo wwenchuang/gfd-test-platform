@@ -143,6 +143,39 @@ describe('EndpointTree', () => {
     expect(wrapper.text()).toContain('/favorite/list')
   })
 
+  it('does not filter the endpoint list until Chinese IME composition finishes', async () => {
+    const wrapper = mount(EndpointTree, {
+      attachTo: document.body,
+      props: { endpoints: FAVORITES },
+    })
+    const search = wrapper.get<HTMLInputElement>('[data-testid="endpoint-search"]')
+
+    search.element.focus()
+    search.element.value = 'shoucang'
+    search.element.dispatchEvent(new InputEvent('input', {
+      bubbles: true,
+      data: 'g',
+      inputType: 'insertCompositionText',
+      isComposing: true,
+    }))
+    await wrapper.vm.$nextTick()
+
+    expect(document.activeElement).toBe(search.element)
+    expect(wrapper.text()).not.toContain('没有匹配的接口')
+
+    search.element.value = '收藏'
+    search.element.dispatchEvent(new CompositionEvent('compositionend', {
+      bubbles: true,
+      data: '收藏',
+    }))
+    await wrapper.vm.$nextTick()
+
+    expect(document.activeElement).toBe(search.element)
+    expect(wrapper.text()).toContain('收藏列表')
+    expect(wrapper.text()).toContain('删除收藏')
+    wrapper.unmount()
+  })
+
   it('highlights search matches in endpoint names, paths, and groups', async () => {
     const wrapper = mount(EndpointTree, {
       props: {
