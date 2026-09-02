@@ -227,6 +227,9 @@ h1, h2, p { margin-top: 0; } h1 { margin-bottom: 0; font-size: 21px; font-weight
 .task-endpoint-section > header { display: flex; align-items: center; justify-content: space-between; min-height: 42px; padding: 0 12px; border-bottom: 1px solid var(--line); background: #f8fafc; }
 .task-endpoint-section h3, .task-endpoint-section h4 { margin: 0; font-size: 12px; }
 .task-endpoint-section header span, .task-endpoint-section h4 span { color: var(--muted); font-size: 10px; font-weight: 700; }
+.task-endpoint-toolbar { display: grid; grid-template-columns: minmax(180px, 1fr) auto; align-items: center; gap: 8px; padding: 8px 10px; border-bottom: 1px solid var(--line); background: #fff; }
+.task-endpoint-toolbar input { min-width: 0; height: 32px; padding: 0 9px; border: 1px solid var(--line); border-radius: 5px; }
+.task-endpoint-toolbar span { color: var(--muted); font-size: 10px; white-space: nowrap; }
 .task-endpoint-list { display: grid; max-height: calc(100vh - 480px); overflow: auto; }
 .task-endpoint-list h4 { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 34px; padding: 0 12px; border-bottom: 1px solid #edf0f4; background: #f7f9fb; color: #344055; }
 .task-endpoint-row { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 10px; min-height: 58px; padding: 8px 12px; border-bottom: 1px solid #edf0f4; }

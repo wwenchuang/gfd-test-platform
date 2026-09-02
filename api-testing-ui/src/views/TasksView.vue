@@ -7,7 +7,7 @@ import type { ApiEndpoint, ApiTestTask } from '../api/contracts'
 import ContextBar from '../components/ContextBar.vue'
 import TaskListPanel from '../components/TaskListPanel.vue'
 import { useAssetsStore } from '../stores/assets'
-import { useCasesStore } from '../stores/cases'
+import { useBaselinesStore } from '../stores/baselines'
 import { useContextStore } from '../stores/context'
 import { useTasksStore } from '../stores/tasks'
 import { compareGroupNames, endpointGroupName } from '../utils/endpointGroups'
@@ -17,13 +17,16 @@ import { compactDateTime, taskLatestResult, taskStateLabel, taskRunBlockReason }
 
 const context = useContextStore()
 const assets = useAssetsStore()
-const cases = useCasesStore()
+const baselines = useBaselinesStore()
 const tasks = useTasksStore()
 const router = useRouter()
 
 const localError = ref('')
 const taskNameDraft = ref('')
 const mobileDetailOpen = ref(false)
+const taskEndpointSearch = ref('')
+const taskEndpointPage = ref(1)
+const TASK_ENDPOINT_PAGE_SIZE = 50
 
 const activeTask = computed(() => tasks.task)
 const runBlockReason = computed(() => activeTask.value ? taskRunBlockReason(activeTask.value) : '')
@@ -34,9 +37,27 @@ const selectedEndpoints = computed(() => {
   const selected = new Set(activeTask.value?.selected_endpoint_ids || [])
   return assets.endpoints.filter(endpoint => selected.has(endpoint.id))
 })
+const filteredSelectedEndpoints = computed(() => {
+  const query = taskEndpointSearch.value.trim().toLocaleLowerCase('zh-CN')
+  if (!query) return selectedEndpoints.value
+  return selectedEndpoints.value.filter(endpoint => [
+    endpoint.method,
+    endpoint.summary,
+    endpoint.path,
+    ...(endpoint.tags || []),
+  ].some(value => String(value || '').toLocaleLowerCase('zh-CN').includes(query)))
+})
+const taskEndpointPageCount = computed(() => Math.max(
+  1,
+  Math.ceil(filteredSelectedEndpoints.value.length / TASK_ENDPOINT_PAGE_SIZE),
+))
+const pagedSelectedEndpoints = computed(() => {
+  const start = (taskEndpointPage.value - 1) * TASK_ENDPOINT_PAGE_SIZE
+  return filteredSelectedEndpoints.value.slice(start, start + TASK_ENDPOINT_PAGE_SIZE)
+})
 const groupedSelectedEndpoints = computed(() => {
   const grouped = new Map<string, ApiEndpoint[]>()
-  for (const endpoint of selectedEndpoints.value) {
+  for (const endpoint of pagedSelectedEndpoints.value) {
     const group = endpointGroupName(endpoint)
     grouped.set(group, [...(grouped.get(group) || []), endpoint])
   }
@@ -44,10 +65,12 @@ const groupedSelectedEndpoints = computed(() => {
 })
 const taskApplicationScope = computed(() => {
   const selected = new Set(activeTask.value?.selected_endpoint_ids || [])
-  const labels = Object.values(cases.versions)
-    .filter(version => selected.has(version.endpoint_id))
-    .map(version => applicationBusinessLabel(version.app_package, version.app_name, version.business))
-  return [...new Set(labels)].join('；') || '未标注应用 · 未标注业务'
+  const labels = baselines.items
+    .filter(item => item.status === 'active' && selected.has(item.endpoint_id))
+    .map(item => applicationBusinessLabel(item.app_package, item.app_name, item.business))
+  if (labels.length) return [...new Set(labels)].join('；')
+  if (baselines.loading) return '正在读取活动基线…'
+  return activeTask.value?.runnable_baseline_count ? '活动基线归属未记录' : '尚无可执行基线'
 })
 const sourceLabel = computed(() => {
   const source = context.sourceRevisions.find(item => item.id === activeTask.value?.source_revision_id)
@@ -62,7 +85,10 @@ const environmentLabel = computed(() => {
 onMounted(async () => {
   await Promise.all([context.loadSavedContext(), context.loadOptions()])
   if (context.projectId) {
-    await tasks.list(context.projectId)
+    await Promise.all([
+      tasks.list(context.projectId),
+      baselines.load({ projectId: context.projectId }),
+    ])
     const restored = await tasks.restore(context.projectId)
     if (restored) await selectTask(restored.id, false)
   }
@@ -73,14 +99,28 @@ watch(() => tasks.task?.name, name => {
   taskNameDraft.value = name || ''
 }, { immediate: true })
 
+watch([() => tasks.task?.id, taskEndpointSearch], () => {
+  taskEndpointPage.value = 1
+})
+
+watch(taskEndpointPageCount, count => {
+  if (taskEndpointPage.value > count) taskEndpointPage.value = count
+})
+
 function changeProject(projectId: string | null): void {
   context.selectProject(projectId)
   tasks.clear()
   mobileDetailOpen.value = false
   tasks.tasks = []
   assets.endpoints = []
+  baselines.items = []
   localError.value = ''
-  if (projectId) void tasks.list(projectId)
+  if (projectId) {
+    void Promise.all([
+      tasks.list(projectId),
+      baselines.load({ projectId }),
+    ])
+  }
 }
 
 async function changeSource(sourceRevisionId: string | null): Promise<void> {
@@ -113,10 +153,7 @@ async function selectTask(taskId: string, revealDetail = true): Promise<void> {
     source_revision_id: task.source_revision_id,
     environment_revision_id: context.environmentRevisionId || task.environment_revision_id,
   })
-  await Promise.all([
-    assets.load(task.source_revision_id),
-    cases.loadSavedCases(task.source_revision_id),
-  ])
+  await assets.load(task.source_revision_id)
   mobileDetailOpen.value = revealDetail
 }
 
@@ -249,7 +286,7 @@ function ensureTaskContextOptions(task: ApiTestTask, environmentRevisionId: stri
       @update:environment-revision-id="changeEnvironment"
       @save="saveScope"
     />
-    <p v-if="context.error || tasks.error || assets.error || localError" class="inline-error">{{ context.error || tasks.error || assets.error || localError }}</p>
+    <p v-if="context.error || tasks.error || assets.error || baselines.error || localError" class="inline-error">{{ context.error || tasks.error || assets.error || baselines.error || localError }}</p>
     <div :class="['management-shell', 'task-management-shell', { 'mobile-detail-open': mobileDetailOpen }]" data-testid="task-management-shell">
       <TaskListPanel
         :tasks="tasks.tasks"
@@ -303,7 +340,11 @@ function ensureTaskContextOptions(task: ApiTestTask, environmentRevisionId: stri
               <div><span>最近更新</span><strong>{{ compactDateTime(activeTask.updated_at) }}</strong></div>
             </section>
             <section class="task-endpoint-section">
-              <header><h3>任务接口范围</h3><span>{{ selectedEndpoints.length }} / {{ activeTask.selected_endpoint_ids.length }}</span></header>
+              <header><h3>任务接口范围</h3><span>{{ filteredSelectedEndpoints.length }} / {{ activeTask.selected_endpoint_ids.length }}</span></header>
+              <div class="task-endpoint-toolbar">
+                <input v-model="taskEndpointSearch" data-testid="task-endpoint-search" type="search" placeholder="搜索接口名称、路径或分组" />
+                <span data-testid="task-endpoint-page-status">第 {{ taskEndpointPage }} / {{ taskEndpointPageCount }} 页 · {{ filteredSelectedEndpoints.length }} 条匹配</span>
+              </div>
               <div class="task-endpoint-list">
                 <template v-for="[group, endpoints] in groupedSelectedEndpoints" :key="group">
                   <h4>{{ group }} <span>{{ endpoints.length }}</span></h4>
@@ -312,7 +353,12 @@ function ensureTaskContextOptions(task: ApiTestTask, environmentRevisionId: stri
                     <div><strong>{{ endpoint.summary || endpoint.path }}</strong><code>{{ endpoint.path }}</code></div>
                   </article>
                 </template>
-                <p v-if="!selectedEndpoints.length" class="section-empty">{{ assets.state === 'loading' ? '正在读取任务接口...' : '当前接口版本里未找到该任务保存的接口。' }}</p>
+                <p v-if="!filteredSelectedEndpoints.length" class="section-empty">{{ assets.state === 'loading' ? '正在读取任务接口...' : taskEndpointSearch ? '没有匹配的任务接口。' : '当前接口版本里未找到该任务保存的接口。' }}</p>
+              </div>
+              <div v-if="taskEndpointPageCount > 1" class="list-pagination task-endpoint-pagination">
+                <button data-testid="task-endpoint-previous" type="button" :disabled="taskEndpointPage <= 1" @click="taskEndpointPage -= 1">上一页</button>
+                <span>每页最多 {{ TASK_ENDPOINT_PAGE_SIZE }} 个接口</span>
+                <button data-testid="task-endpoint-next" type="button" :disabled="taskEndpointPage >= taskEndpointPageCount" @click="taskEndpointPage += 1">下一页</button>
               </div>
             </section>
           </div>
