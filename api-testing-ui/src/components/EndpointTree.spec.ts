@@ -125,6 +125,44 @@ describe('EndpointTree', () => {
     expect(wrapper.text()).toContain('批量接口 999')
   })
 
+  it('consolidates a large interface catalog by business before showing folder groups', async () => {
+    const endpoints = [
+      ...Array.from({ length: 10 }, (_, index) => ({
+        id: `home-${index}`,
+        method: 'GET',
+        path: `/home/${index}`,
+        summary: `家用接口 ${index}`,
+        tags: ['家用业务', 'app接口', `家用分组 ${index}`],
+      })),
+      ...Array.from({ length: 3 }, (_, index) => ({
+        id: `shared-${index}`,
+        method: 'POST',
+        path: `/shared/${index}`,
+        summary: `共享接口 ${index}`,
+        tags: ['共享业务', `共享分组 ${index}`],
+      })),
+    ]
+    const wrapper = mount(EndpointTree, { props: { endpoints } })
+
+    expect(wrapper.get('[data-testid="domain-toggle-家用"]').text()).toContain('家用')
+    expect(wrapper.get('[data-testid="domain-count-家用"]').text()).toContain('10 个分组 · 10 个接口')
+    expect(wrapper.get('[data-testid="domain-count-共享"]').text()).toContain('3 个分组 · 3 个接口')
+    expect(wrapper.find('[data-testid="group-toggle-家用业务 / app接口 / 家用分组 0"]').exists()).toBe(false)
+
+    await wrapper.get('[data-testid="domain-toggle-家用"]').trigger('click')
+
+    expect(wrapper.get('[data-testid="group-toggle-家用业务 / app接口 / 家用分组 0"]').text()).toContain('app接口 / 家用分组 0')
+    expect(wrapper.get('[data-testid="group-toggle-家用业务 / app接口 / 家用分组 0"]').text()).not.toContain('家用业务')
+
+    await wrapper.get('[data-testid="domain-select-共享"]').setValue(true)
+    expect(wrapper.emitted('selection-change')?.at(-1)?.[0]).toEqual(['shared-0', 'shared-1', 'shared-2'])
+
+    await wrapper.get('[data-testid="endpoint-search"]').setValue('共享接口 2')
+
+    expect(wrapper.text()).toContain('共享接口 2')
+    expect(wrapper.text()).toContain('/shared/2')
+  })
+
   it('auto-expands matching collapsed groups while searching', async () => {
     const wrapper = mount(EndpointTree, {
       props: {

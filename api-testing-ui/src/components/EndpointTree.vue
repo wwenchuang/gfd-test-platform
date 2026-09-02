@@ -13,12 +13,18 @@ interface HighlightSegment {
   text: string
   match: boolean
 }
+interface EndpointDomain {
+  name: string
+  groups: Array<[string, ApiEndpoint[]]>
+  items: ApiEndpoint[]
+}
 
 const query = ref('')
 const searchComposing = ref(false)
 const selected = ref(new Set(props.selectedIds))
 const activeTab = ref<'all' | 'selected'>(props.initialTab)
 const collapsedGroups = ref(new Set<string>())
+const collapsedDomains = ref(new Set<string>())
 
 watch(() => props.selectedIds, ids => {
   selected.value = new Set(ids)
@@ -53,6 +59,9 @@ const filtered = computed(() => {
 })
 const groups = computed(() => groupEndpoints(filtered.value))
 const allGroupNames = computed(() => groupEndpoints(props.endpoints).map(([group]) => group))
+const domains = computed(() => groupByDomain(groups.value))
+const allDomains = computed(() => groupByDomain(groupEndpoints(props.endpoints)))
+const useDomainHierarchy = computed(() => allGroupNames.value.length > 8)
 const selectedEndpoints = computed(() => props.endpoints.filter(endpoint => selected.value.has(endpoint.id)))
 const filteredSelectedEndpoints = computed(() => {
   const needle = query.value.trim().toLocaleLowerCase()
@@ -65,6 +74,7 @@ const additionalSearchMatches = computed(() => {
 })
 const selectedGroups = computed(() => groupEndpoints(filteredSelectedEndpoints.value))
 const knownGroupNames = ref(new Set<string>())
+const knownDomainNames = ref(new Set<string>())
 
 watch(allGroupNames, names => {
   const visible = new Set(names)
@@ -74,6 +84,19 @@ watch(allGroupNames, names => {
   }
   knownGroupNames.value = visible
   collapsedGroups.value = next
+}, { immediate: true })
+
+watch(allDomains, value => {
+  const names = value.map(domain => domain.name)
+  const visible = new Set(names)
+  const next = new Set([...collapsedDomains.value].filter(domain => visible.has(domain)))
+  if (useDomainHierarchy.value) {
+    for (const domain of names) {
+      if (!knownDomainNames.value.has(domain)) next.add(domain)
+    }
+  }
+  knownDomainNames.value = visible
+  collapsedDomains.value = next
 }, { immediate: true })
 
 function matchesEndpoint(endpoint: ApiEndpoint, needle: string): boolean {
@@ -124,8 +147,58 @@ function toggleCollapsed(group: string): void {
   collapsedGroups.value = next
 }
 
+function toggleDomainCollapsed(domain: string): void {
+  const next = new Set(collapsedDomains.value)
+  if (next.has(domain)) next.delete(domain); else next.add(domain)
+  collapsedDomains.value = next
+}
+
+function isDomainCollapsed(domain: string): boolean {
+  return useDomainHierarchy.value && !query.value.trim() && collapsedDomains.value.has(domain)
+}
+
 function isGroupCollapsed(group: string): boolean {
   return !query.value.trim() && collapsedGroups.value.has(group)
+}
+
+function groupByDomain(entries: Array<[string, ApiEndpoint[]]>): EndpointDomain[] {
+  const grouped = new Map<string, EndpointDomain>()
+  for (const entry of entries) {
+    const name = domainName(entry[0])
+    const domain = grouped.get(name) || { name, groups: [], items: [] }
+    domain.groups.push(entry)
+    domain.items.push(...entry[1])
+    grouped.set(name, domain)
+  }
+  const order = ['家用', '共享', '本地', '地铁', '其他', '未分类']
+  return [...grouped.values()].sort((left, right) => {
+    const leftIndex = order.indexOf(left.name)
+    const rightIndex = order.indexOf(right.name)
+    if (leftIndex >= 0 || rightIndex >= 0) {
+      if (leftIndex < 0) return 1
+      if (rightIndex < 0) return -1
+      return leftIndex - rightIndex
+    }
+    return left.name.localeCompare(right.name, 'zh-Hans-CN')
+  })
+}
+
+function domainName(group: string): string {
+  if (group === '未分组接口') return '未分类'
+  const parts = group.split(' / ').map(part => part.trim()).filter(Boolean)
+  const first = parts[0] || ''
+  if (first.includes('家用')) return '家用'
+  if (first.includes('共享')) return '共享'
+  if (first.includes('本地')) return '本地'
+  if (first.includes('地铁')) return '地铁'
+  if (parts.length === 1) return '其他'
+  return first.replace(/业务$/, '') || '其他'
+}
+
+function subgroupName(group: string, domain: string): string {
+  const parts = group.split(' / ').map(part => part.trim()).filter(Boolean)
+  if (parts.length > 1 && domainName(group) === domain) return parts.slice(1).join(' / ')
+  return group
 }
 
 function highlightText(value: string): HighlightSegment[] {
@@ -176,57 +249,78 @@ function showAllSearchMatches(): void {
       <button type="button" class="text-command" @click="showAllSearchMatches">查看全部匹配</button>
     </p>
     <template v-if="activeTab === 'all'">
-      <div v-for="[group, items] in groups" :key="group" class="endpoint-group">
-        <h3 class="endpoint-group-head">
-          <label class="group-select">
+      <section v-for="domain in domains" :key="domain.name" class="endpoint-domain">
+        <div v-if="useDomainHierarchy" class="endpoint-domain-head" role="heading" aria-level="3">
+          <label class="domain-select">
             <input
-              :data-testid="`group-select-${group}`"
+              :data-testid="`domain-select-${domain.name}`"
               type="checkbox"
-              :checked="groupChecked(items)"
-              :indeterminate.prop="groupIndeterminate(items)"
-              @change="toggleGroup(items, ($event.target as HTMLInputElement).checked)"
+              :checked="groupChecked(domain.items)"
+              :indeterminate.prop="groupIndeterminate(domain.items)"
+              @change="toggleGroup(domain.items, ($event.target as HTMLInputElement).checked)"
             />
-            <button :data-testid="`group-toggle-${group}`" type="button" @click="toggleCollapsed(group)">
-              <ChevronRight v-if="isGroupCollapsed(group)" :size="14" />
+            <button :data-testid="`domain-toggle-${domain.name}`" type="button" @click="toggleDomainCollapsed(domain.name)">
+              <ChevronRight v-if="isDomainCollapsed(domain.name)" :size="15" />
               <ChevronDown v-else :size="14" />
-              <span>
-                <template v-for="(segment, index) in highlightText(group)" :key="`${group}-group-${index}`">
-                  <mark v-if="segment.match" class="search-highlight">{{ segment.text }}</mark>
-                  <template v-else>{{ segment.text }}</template>
-                </template>
-              </span>
+              <span>{{ domain.name }}</span>
             </button>
           </label>
-          <span :data-testid="`group-selected-count-${group}`">{{ selectedCount(items) ? `${selectedCount(items)} 已选 / ` : '' }}{{ items.length }}</span>
-        </h3>
-        <template v-if="!isGroupCollapsed(group)">
-          <label v-for="endpoint in items" :key="endpoint.id" class="endpoint-row" @dblclick="emit('activate', endpoint)">
-            <input
-              :data-testid="`endpoint-${endpoint.id}`"
-              type="checkbox"
-              :checked="selected.has(endpoint.id)"
-              @change="toggle(endpoint.id, ($event.target as HTMLInputElement).checked)"
-            />
-            <button type="button" class="endpoint-open" @click="emit('activate', endpoint)">
-              <span :class="['method-badge', `method-${endpoint.method.toLowerCase()}`]">{{ endpoint.method }}</span>
-              <span class="endpoint-copy">
-                <strong :title="endpoint.summary || endpoint.path">
-                  <template v-for="(segment, index) in highlightText(endpoint.summary || endpoint.path)" :key="`${endpoint.id}-summary-${index}`">
-                    <mark v-if="segment.match" class="search-highlight">{{ segment.text }}</mark>
-                    <template v-else>{{ segment.text }}</template>
-                  </template>
-                </strong>
-                <small :title="endpoint.path">
-                  <template v-for="(segment, index) in highlightText(endpoint.path)" :key="`${endpoint.id}-path-${index}`">
-                    <mark v-if="segment.match" class="search-highlight">{{ segment.text }}</mark>
-                    <template v-else>{{ segment.text }}</template>
-                  </template>
-                </small>
-              </span>
-            </button>
-          </label>
+          <span :data-testid="`domain-count-${domain.name}`">{{ selectedCount(domain.items) ? `${selectedCount(domain.items)} 已选 · ` : '' }}{{ domain.groups.length }} 个分组 · {{ domain.items.length }} 个接口</span>
+        </div>
+        <template v-if="!isDomainCollapsed(domain.name)">
+          <div v-for="[group, items] in domain.groups" :key="group" :class="['endpoint-group', { 'endpoint-subgroup': useDomainHierarchy }]">
+            <h3 class="endpoint-group-head">
+              <label class="group-select">
+                <input
+                  :data-testid="`group-select-${group}`"
+                  type="checkbox"
+                  :checked="groupChecked(items)"
+                  :indeterminate.prop="groupIndeterminate(items)"
+                  @change="toggleGroup(items, ($event.target as HTMLInputElement).checked)"
+                />
+                <button :data-testid="`group-toggle-${group}`" type="button" @click="toggleCollapsed(group)">
+                  <ChevronRight v-if="isGroupCollapsed(group)" :size="14" />
+                  <ChevronDown v-else :size="14" />
+                  <span :title="group">
+                    <template v-for="(segment, index) in highlightText(useDomainHierarchy ? subgroupName(group, domain.name) : group)" :key="`${group}-group-${index}`">
+                      <mark v-if="segment.match" class="search-highlight">{{ segment.text }}</mark>
+                      <template v-else>{{ segment.text }}</template>
+                    </template>
+                  </span>
+                </button>
+              </label>
+              <span :data-testid="`group-selected-count-${group}`">{{ selectedCount(items) ? `${selectedCount(items)} 已选 / ` : '' }}{{ items.length }}</span>
+            </h3>
+            <template v-if="!isGroupCollapsed(group)">
+              <label v-for="endpoint in items" :key="endpoint.id" class="endpoint-row" @dblclick="emit('activate', endpoint)">
+                <input
+                  :data-testid="`endpoint-${endpoint.id}`"
+                  type="checkbox"
+                  :checked="selected.has(endpoint.id)"
+                  @change="toggle(endpoint.id, ($event.target as HTMLInputElement).checked)"
+                />
+                <button type="button" class="endpoint-open" @click="emit('activate', endpoint)">
+                  <span :class="['method-badge', `method-${endpoint.method.toLowerCase()}`]">{{ endpoint.method }}</span>
+                  <span class="endpoint-copy">
+                    <strong :title="endpoint.summary || endpoint.path">
+                      <template v-for="(segment, index) in highlightText(endpoint.summary || endpoint.path)" :key="`${endpoint.id}-summary-${index}`">
+                        <mark v-if="segment.match" class="search-highlight">{{ segment.text }}</mark>
+                        <template v-else>{{ segment.text }}</template>
+                      </template>
+                    </strong>
+                    <small :title="endpoint.path">
+                      <template v-for="(segment, index) in highlightText(endpoint.path)" :key="`${endpoint.id}-path-${index}`">
+                        <mark v-if="segment.match" class="search-highlight">{{ segment.text }}</mark>
+                        <template v-else>{{ segment.text }}</template>
+                      </template>
+                    </small>
+                  </span>
+                </button>
+              </label>
+            </template>
+          </div>
         </template>
-      </div>
+      </section>
       <p v-if="state === 'ready' && !filtered.length" class="state-message">没有匹配的接口。</p>
     </template>
     <template v-else>
