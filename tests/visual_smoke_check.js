@@ -703,6 +703,11 @@ async function anyVisible(locator) {
     await page.waitForSelector('#modal-generate.show');
     if (!await page.locator('#generate-application').isVisible()) throw new Error('UI generation modal is missing the configured application selector');
     if (await page.locator('#generate-application option[value="com.example.disabled"]').count()) throw new Error('Disabled applications must not be selectable for a new UI generation');
+    await page.locator('#generate-application').selectOption('');
+    await page.click('#btn-generate-yaml');
+    if (!await page.locator('#generate-status.error', {hasText: '请选择已启用应用'}).isVisible()) throw new Error('Generation must explain the missing application');
+    await page.locator('#generate-application').selectOption('com.kfb.model');
+    if (await page.locator('#generate-status.error').isVisible()) throw new Error('Choosing an application must clear the stale validation error');
     await page.locator('#generate-module').selectOption('AI测试');
     if (await page.locator('#generate-application').inputValue() !== 'com.example.school') throw new Error('UI generation must auto-select the application bound to the current module');
     await page.locator('#generate-application').selectOption('com.kfb.model');

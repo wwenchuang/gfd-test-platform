@@ -1986,6 +1986,11 @@ function setGenerateStatus(text, type='') {
   el.className = `generate-status${text ? ' show' : ''}${type ? ` ${type}` : ''}`;
 }
 
+function clearGenerateValidationFeedback() {
+  const status = document.getElementById('generate-status');
+  if (!generateBusy && status?.classList.contains('error')) setGenerateStatus('');
+}
+
 function setGenerateWizardStep(stepIndex=0, state='running') {
   const normalized = Math.max(0, Math.min(3, Number(stepIndex || 0)));
   document.querySelectorAll('#generate-wizard .generate-wizard-step').forEach((step, index) => {
@@ -5484,6 +5489,10 @@ document.addEventListener('paste', async e => {
   if (!zone) return;
   zone.addEventListener('focus', () => zone.classList.add('paste-active'));
   zone.addEventListener('blur', () => zone.classList.remove('paste-active'));
+});
+
+['input', 'change'].forEach(eventName => {
+  document.getElementById('modal-generate')?.addEventListener(eventName, clearGenerateValidationFeedback);
 });
 
 // 初始化检查登录
