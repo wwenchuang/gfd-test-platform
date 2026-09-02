@@ -413,10 +413,10 @@ def main():
     require("请先选择应用，再选择本次测试所属业务" in app_js, "Generation must not diagnose missing business lines before the user chooses an application")
     for asset in ("agent-workbench.js", "execution.js"):
         require(f'{asset}?v=20260828-full-platform-ux-20260902-a96-consistent-assets' in html, f"{asset} must leave the pre-A96 browser cache together")
-    require('utils.js?v=20260828-full-platform-ux-20260902-a100-knowledge-route' in html, "utils must publish the A100 knowledge-manager route")
+    require('utils.js?v=20260828-full-platform-ux-20260902-a101-figma-route' in html, "utils must publish the A101 Figma route")
     require('identity-management.js?v=20260902-a97-guided-actions' in html, "identity management must publish the A97 audit-action labels")
-    require('agent-status.js?v=20260828-full-platform-ux-20260902-a100-knowledge-route' in html, "agent status must publish the A100 knowledge-manager route")
-    require('app.js?v=20260831-identity-20260902-a99-generation-feedback' in html, "app.js must publish the A99 generation-feedback fix")
+    require('agent-status.js?v=20260828-full-platform-ux-20260902-a101-figma-route' in html, "agent status must publish the A101 Figma route")
+    require('app.js?v=20260831-identity-20260902-a101-figma-route' in html, "app.js must publish the A101 Figma route")
     nginx_source = (ROOT / "deploy" / "nginx-midscene-task.conf").read_text(encoding="utf-8")
     require("location = /api-test" in nginx_source and "absolute_redirect off" in nginx_source, "The /api-test entry redirect must retain the public host and port")
     require("function jobTimelineHtml(job)" in html and "进度流水" in html, "Execution job detail must show progress timeline")

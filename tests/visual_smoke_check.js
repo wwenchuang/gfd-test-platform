@@ -750,6 +750,10 @@ async function anyVisible(locator) {
     if (!await page.locator('.knowledge-manager button', {hasText: '返回 AI 生成'}).isVisible()) throw new Error('Page knowledge manager must return to the originating AI generation workflow');
     await page.locator('.knowledge-manager button', {hasText: '返回 AI 生成'}).click();
     if (!await page.locator('.workflow-guide', {hasText: '资料准备、需求解析、脑图和 YAML'}).isVisible()) throw new Error('Page knowledge return action must restore the AI generation workflow');
+    await page.locator('.workflow-guide button', {hasText: '导入 Figma'}).click();
+    if (!await page.locator('#modal-knowledge.show').isVisible()) throw new Error('AI generation Figma action must open the Figma import form');
+    if (await page.evaluate(() => activeWorkflow) !== 'generate') throw new Error('Opening Figma import from AI generation must preserve the generation workflow');
+    await page.locator('#modal-knowledge .modal-close').click();
 
     await page.locator('details[data-nav-group="run"]').evaluate(el => { el.open = true; });
     await page.click('.workflow-step[data-workflow="execute"]');

@@ -2941,10 +2941,10 @@ async function openKnowledgeQuickCreate() {
   clearKnowledgeForm();
 }
 
-async function openKnowledgeFigmaImport() {
+async function openKnowledgeFigmaImport(returnWorkflow = '') {
   const app = document.getElementById('km-app')?.value || currentModuleAppPackage() || 'com.kfb.model';
   document.getElementById('knowledge-app-package').value = app;
-  await showKnowledge();
+  await showKnowledge({ preserveWorkflow: returnWorkflow === 'generate' });
   document.getElementById('figma-url')?.focus();
 }
 

@@ -250,8 +250,8 @@ async function importFigmaDrafts() {
   }
 }
 
-async function showKnowledge() {
-  setActiveWorkflow('assets');
+async function showKnowledge(options = {}) {
+  if (!options.preserveWorkflow) setActiveWorkflow('assets');
   const currentApp = currentModuleAppPackage() || document.getElementById('generate-app-package')?.value.trim() || 'com.kfb.model';
   document.getElementById('knowledge-app-package').value = currentApp;
   document.getElementById('modal-knowledge').classList.add('show');
