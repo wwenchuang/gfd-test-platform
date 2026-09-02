@@ -9,13 +9,14 @@ const props = withDefaults(defineProps<{
   selectedCount: number
   job: AiJob | null
   generatedCases?: CaseVersion[]
+  historicalScopeMessage?: string
   error?: string
   polling?: boolean
   canResume?: boolean
   basicGenerating?: boolean
   diagnosingBatchId?: string
 }>(), {
-  generatedCases: () => [], error: '', polling: false, canResume: false, basicGenerating: false, diagnosingBatchId: '',
+  generatedCases: () => [], historicalScopeMessage: '', error: '', polling: false, canResume: false, basicGenerating: false, diagnosingBatchId: '',
 })
 const emit = defineEmits<{
   generate: [intent: string]
@@ -65,6 +66,11 @@ function validationIssue(batch: AiJob['batches'][number]) {
         <button class="primary-command wide" type="button" :disabled="!selectedCount || running || basicGenerating" @click="emit('generate', intent)"><Sparkles :size="16" />{{ running ? 'AI 正在生成' : '生成测试用例' }}</button>
         <p v-if="running" class="ai-progress-note"><Clock3 :size="14" />已等待 {{ elapsedLabel }}，生成会在后台继续，可稍后返回查看。</p>
         <p v-if="error" class="state-message" :class="{ 'state-error': !canResume }">{{ error }}</p>
+        <section v-if="historicalScopeMessage" class="ai-historical-scope" role="status">
+          <strong>当前接口范围暂无对应生成结果</strong>
+          <p>{{ historicalScopeMessage }}</p>
+          <button data-testid="manage-historical-ai-cases" type="button" class="text-command" @click="emit('manage-generated')"><ListChecks :size="13" />查看历史用例</button>
+        </section>
         <section v-if="job" class="ai-job" aria-live="polite">
           <div class="job-summary"><strong>{{ stateLabel }}</strong><span>{{ job.actual_model || job.requested_model || '由平台选择模型' }}</span></div>
           <article v-for="batch in job.batches" :key="batch.id" class="batch-row"><span>批次 {{ batch.sequence }}</span><strong>{{ ({ queued: '排队', running: '生成中', completed: '完成', partial: '部分完成', failed: '失败', failed_gateway: '模型失败', failed_validation: '校验失败' } as Record<string,string>)[batch.state] || batch.state }}</strong><small>{{ batch.actual_model || batch.requested_model || '等待模型' }} · {{ batch.generated_draft_ids.length }} 个草稿</small><section v-if="validationIssue(batch)" class="batch-diagnostic" role="alert"><small v-if="validationIssue(batch)?.model" class="diagnosis-model">千问分析 · {{ validationIssue(batch)?.model }}</small><strong>{{ validationIssue(batch)?.title }}</strong><p>{{ validationIssue(batch)?.reason }}</p><ol v-if="validationIssue(batch)?.actions.length"><li v-for="action in validationIssue(batch)?.actions" :key="action">{{ action }}</li></ol><button v-if="validationIssue(batch)?.needsAiDiagnosis" :data-testid="`diagnose-validation-${batch.id}`" class="secondary-command validation-diagnose-command" type="button" :disabled="Boolean(diagnosingBatchId)" @click="emit('diagnose-validation', batch.id, validationIssue(batch)?.issueIndex || 0)"><Sparkles :size="14" />{{ diagnosingBatchId === batch.id ? '千问正在分析' : '使用当前配置的千问分析' }}</button><details v-if="validationIssue(batch)?.originalMessage"><summary>查看英文原文</summary><code data-testid="validation-original-message">{{ validationIssue(batch)?.originalMessage }}</code></details></section></article>

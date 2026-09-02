@@ -643,6 +643,104 @@ describe('WorkbenchView debug workflow', () => {
     expect(cases.aiError).toBe('')
   })
 
+  it('hides a restored AI job outside the saved task scope and blocks opening its draft', async () => {
+    const context = useContextStore()
+    Object.assign(context, {
+      projectId: 'project-1', sourceRevisionId: 'source-1', environmentRevisionId: 'environment-1',
+      projects: [{ id: 'project-1', name: '3D 家用' }],
+      sourceRevisions: [{ id: 'source-1', project_id: 'project-1', name: '默认模块', revision: 1 }],
+      environmentRevisions: [{ id: 'environment-1', project_id: 'project-1', name: '生产环境', revision: 7 }],
+    })
+    vi.spyOn(context, 'loadSavedContext').mockResolvedValue()
+    vi.spyOn(context, 'loadOptions').mockResolvedValue()
+
+    const unrelatedEndpoint = { ...ENDPOINT, id: 'endpoint-2', path: '/componentPage', summary: '组件列表' }
+    const assets = useAssetsStore()
+    vi.spyOn(assets, 'load').mockImplementation(async () => {
+      assets.endpoints = [ENDPOINT, unrelatedEndpoint]
+      assets.state = 'ready'
+    })
+    vi.spyOn(assets, 'ensureEndpointDetail').mockImplementation(async endpointId => (
+      assets.endpoints.find(item => item.id === endpointId) || null
+    ))
+
+    const unrelatedVersion = {
+      id: 'version-unrelated', case_id: 'case-unrelated', endpoint_id: unrelatedEndpoint.id,
+      name: '无关历史草稿', purpose: '验证无关接口', priority: 'P1', version: 1,
+      status: 'draft', origin: 'ai', group_name: '组件', validation_summary: {},
+      request: {
+        method: 'GET', path: '/componentPage', service: 'default', path_params: {}, query: {},
+        headers: {}, cookies: {}, body: null,
+      },
+      data_rows: [], processing: { pre: [], post: [] }, dependencies: [], extractions: [], assertions: [],
+    } as CaseVersion
+    const cases = useCasesStore()
+    vi.spyOn(cases, 'loadSavedCases').mockImplementation(async () => {
+      cases.versions[unrelatedVersion.id] = unrelatedVersion
+    })
+    vi.spyOn(cases, 'restoreLatestAiJob').mockImplementation(async () => {
+      cases.aiJob = {
+        id: 'job-unrelated', state: 'completed', endpoint_ids: [unrelatedEndpoint.id],
+        requested_model: 'qwen-plus', actual_model: 'qwen-plus', fallback_used: false, summary: {},
+        batches: [{
+          id: 'batch-unrelated', sequence: 1, state: 'completed', endpoint_ids: [unrelatedEndpoint.id],
+          requested_model: 'qwen-plus', actual_model: 'qwen-plus', fallback_used: false, fallback_reason: '',
+          generated_draft_ids: [unrelatedVersion.id], validation_errors: [],
+        }],
+      }
+    })
+
+    const restoredTask = {
+      id: 'task-1', name: '3D 家用接口测试', project_id: 'project-1', source_revision_id: 'source-1',
+      environment_revision_id: 'environment-1', selected_endpoint_ids: [ENDPOINT.id], state: 'ready',
+      runnable_baseline_count: 1, latest_ai_job_id: null, latest_execution_id: null,
+      summary: {}, created_at: '', updated_at: '',
+    } as ApiTestTask
+    const tasks = useTasksStore()
+    vi.spyOn(tasks, 'restore').mockImplementation(async () => {
+      tasks.task = restoredTask
+      tasks.tasks = [restoredTask]
+      return restoredTask
+    })
+
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [{ path: '/', name: 'workbench', component: WorkbenchView }],
+    })
+    await router.push('/')
+    await router.isReady()
+    const wrapper = mount(WorkbenchView, {
+      global: {
+        plugins: [router],
+        stubs: {
+          ContextBar: true,
+          TaskStatusStrip: true,
+          EndpointDetail: true,
+          CaseEditor: true,
+          DebugDrawer: true,
+          EndpointTree: true,
+          AiAssistant: {
+            props: ['job', 'generatedCases', 'historicalScopeMessage'],
+            emits: ['open-generated'],
+            template: '<div data-testid="ai-scope"><span>{{ job?.id || "no-current-job" }}</span><span>{{ generatedCases.length }}</span><span>{{ historicalScopeMessage }}</span><button data-testid="open-unrelated" @click="$emit(\'open-generated\', unrelatedVersion)">打开</button></div>',
+            data: () => ({ unrelatedVersion }),
+          },
+        },
+      },
+    })
+    await flushPromises()
+
+    expect(wrapper.get('[data-testid="ai-scope"]').text()).toContain('no-current-job')
+    expect(wrapper.get('[data-testid="ai-scope"]').text()).toContain('当前 1 个接口')
+    expect(wrapper.get('[data-testid="ai-scope"]').text()).not.toContain('job-unrelated')
+
+    await wrapper.get('[data-testid="open-unrelated"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.get('.inline-error').text()).toContain('不属于当前任务接口范围')
+    expect(assets.ensureEndpointDetail).not.toHaveBeenCalledWith(unrelatedEndpoint.id)
+  })
+
   it('previews basic positive cases against the exact saved task scope before saving', async () => {
     const context = useContextStore()
     Object.assign(context, {

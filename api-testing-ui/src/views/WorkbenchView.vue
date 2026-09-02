@@ -63,8 +63,34 @@ const editingSavedCaseFromLink = computed(() => Boolean(
   routeValue(route.query.caseVersionId)
   && activeEndpoint.value?.id === routeValue(route.query.endpointId),
 ))
+const aiJobEndpointIds = computed(() => {
+  const job = cases.aiJob
+  if (!job) return []
+  const explicitIds = job.endpoint_ids.length
+    ? job.endpoint_ids
+    : job.batches.flatMap(batch => batch.endpoint_ids)
+  if (explicitIds.length) return [...new Set(explicitIds)]
+  const draftIds = new Set(job.batches.flatMap(batch => batch.generated_draft_ids))
+  return [...new Set(
+    [...draftIds]
+      .map(id => cases.versions[id]?.endpoint_id)
+      .filter((id): id is string => Boolean(id)),
+  )]
+})
+const aiJobMatchesSelection = computed(() => {
+  if (!cases.aiJob || !selectedIds.value.length) return false
+  const selected = new Set(selectedIds.value)
+  return aiJobEndpointIds.value.length === selected.size
+    && aiJobEndpointIds.value.every(id => selected.has(id))
+})
+const visibleAiJob = computed(() => aiJobMatchesSelection.value ? cases.aiJob : null)
+const historicalAiScopeMessage = computed(() => {
+  if (!cases.aiJob || !selectedIds.value.length || aiJobMatchesSelection.value) return ''
+  const historicalCount = aiJobEndpointIds.value.length
+  return `最近一次 AI 生成属于其他接口范围（${historicalCount || '未知数量'} 个接口），已与当前 ${selectedIds.value.length} 个接口分开显示。可到用例管理查看历史。`
+})
 const aiGeneratedCases = computed(() => {
-  const ids = new Set(cases.aiJob?.batches.flatMap(batch => batch.generated_draft_ids) || [])
+  const ids = new Set(visibleAiJob.value?.batches.flatMap(batch => batch.generated_draft_ids) || [])
   return [...ids].map(id => cases.versions[id]).filter((item): item is CaseVersion => Boolean(item))
 })
 const workspaceRestoreClient = new ApiClient(8_000)
@@ -295,6 +321,10 @@ async function activate(
 }
 
 async function openAiGenerated(version: CaseVersion): Promise<void> {
+  if (!selectedIds.value.includes(version.endpoint_id)) {
+    localError.value = '该生成用例不属于当前任务接口范围，已阻止打开；请到用例管理查看历史。'
+    return
+  }
   const endpoint = assets.endpoints.find(item => item.id === version.endpoint_id)
   if (!endpoint) {
     localError.value = '生成用例对应的接口不在当前接口版本中'
@@ -666,7 +696,7 @@ function sourceRevisionLabel(revisionId: string | null): string {
           <CaseEditor v-if="activeDraft" ref="caseEditor" :model-value="activeDraft" :dependency-options="dependencyOptions" :endpoint-options="assets.endpoints" :environment-variable-names="context.environmentVariableNames" :environment-revision-id="context.environmentRevisionId || ''" :environment-name="environmentName" :saving="cases.saving" :debugging="debugRunning" :saved-message="cases.savedMessage" :operation-error="localError" :validation-errors="cases.validationErrors" :validation-warnings="cases.validationWarnings" @update:model-value="updateDraft" @save="saveDraft" @debug="submitDebug" />
           <div v-else class="state-message center-empty">选择接口后，可手工编辑或让 AI 生成测试用例。</div>
         </main>
-        <AiAssistant id="mobile-workbench-panel-ai" role="tabpanel" aria-labelledby="mobile-workbench-tab-ai" :class="['mobile-workbench-pane', { 'mobile-pane-active': mobilePane === 'ai' }]" :selected-count="selectedIds.length" :job="cases.aiJob" :generated-cases="aiGeneratedCases" :error="cases.aiError" :polling="cases.aiPolling" :can-resume="cases.aiCanResume" :basic-generating="cases.basicGenerating" :diagnosing-batch-id="cases.aiDiagnosisBatchId" @generate-basic="generateBasicPositive" @generate="generate" @retry="generate" @resume="cases.resumeAiJob()" @diagnose-validation="diagnoseValidation" @open-generated="openAiGenerated" @manage-generated="manageAiGenerated" />
+        <AiAssistant id="mobile-workbench-panel-ai" role="tabpanel" aria-labelledby="mobile-workbench-tab-ai" :class="['mobile-workbench-pane', { 'mobile-pane-active': mobilePane === 'ai' }]" :selected-count="selectedIds.length" :job="visibleAiJob" :generated-cases="aiGeneratedCases" :historical-scope-message="historicalAiScopeMessage" :error="cases.aiError" :polling="cases.aiPolling" :can-resume="cases.aiCanResume" :basic-generating="cases.basicGenerating" :diagnosing-batch-id="cases.aiDiagnosisBatchId" @generate-basic="generateBasicPositive" @generate="generate" @retry="generate" @resume="cases.resumeAiJob()" @diagnose-validation="diagnoseValidation" @open-generated="openAiGenerated" @manage-generated="manageAiGenerated" />
       </div>
     </div>
     </template>

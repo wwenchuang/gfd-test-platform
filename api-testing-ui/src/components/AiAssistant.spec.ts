@@ -173,4 +173,21 @@ describe('AiAssistant', () => {
     await wrapper.get('[data-testid="ai-generated-open-version-2"]').trigger('click')
     expect(wrapper.emitted('open-generated')).toEqual([[generatedCases[1]]])
   })
+
+  it('separates an AI result restored from another endpoint scope', async () => {
+    const wrapper = mount(AiAssistant, {
+      props: {
+        selectedCount: 2,
+        job: null,
+        historicalScopeMessage: '最近一次 AI 生成属于其他接口范围，已与当前 2 个接口分开显示。',
+      },
+    })
+
+    expect(wrapper.text()).toContain('当前接口范围暂无对应生成结果')
+    expect(wrapper.text()).toContain('已与当前 2 个接口分开显示')
+    expect(wrapper.text()).not.toContain('已完成')
+
+    await wrapper.get('[data-testid="manage-historical-ai-cases"]').trigger('click')
+    expect(wrapper.emitted('manage-generated')).toEqual([[]])
+  })
 })

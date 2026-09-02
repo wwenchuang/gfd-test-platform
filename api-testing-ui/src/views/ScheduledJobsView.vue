@@ -190,6 +190,22 @@ watch(() => form.targetType, () => {
   }
 }, { flush: 'sync' })
 
+watch(() => [
+  form.name,
+  form.targetType,
+  form.scheduleType,
+  form.cronExpression,
+  form.environmentStrategy,
+  form.retryCount,
+  form.timeoutSeconds,
+  form.allowOneTimeBaselines,
+  selectedTargetIds.value.join('|'),
+], () => {
+  if (busy.value) return
+  scheduledJobs.error = ''
+  actionMessage.value = ''
+}, { flush: 'sync' })
+
 function targetIds(): string[] {
   return [...selectedTargetIds.value]
 }
@@ -734,16 +750,16 @@ function scopeSummary(items: Array<Pick<CaseVersion, 'app_package' | 'app_name' 
 
 function taskOption(item: ApiTestTask): TargetOption {
   const selected = new Set(item.selected_endpoint_ids)
-  const versions = Object.values(cases.versions).filter(version => selected.has(version.endpoint_id))
-  const unavailableReason = item.runnable_baseline_count === 0
+  const runnableBaselines = availableBaselines.value.filter(baseline => selected.has(baseline.endpoint_id))
+  const unavailableReason = item.runnable_baseline_count === 0 || !runnableBaselines.length
     ? '当前任务没有可执行基线。请到任务管理编辑范围，调试通过并采纳基线后再选择。'
-    : versions.map(version => applicationBusinessSelection(version.app_package, version.business))
+    : runnableBaselines.map(baseline => applicationBusinessSelection(baseline.app_package, baseline.business))
       .find(selection => !selection.selectable)?.reason || ''
   return {
     id: item.id,
     title: item.name,
     subtitle: `${item.selected_endpoint_ids.length} 个接口 · ${taskStateLabel(item.state, item.runnable_baseline_count)}${item.runnable_baseline_count !== undefined ? ` · ${item.runnable_baseline_count} 条可执行基线` : ''}`,
-    meta: `已保存任务 · ${scopeSummary(versions)}${unavailableReason ? ` · ${unavailableReason}` : ''}`,
+    meta: `已保存任务 · ${scopeSummary(runnableBaselines)}${unavailableReason ? ` · ${unavailableReason}` : ''}`,
     selectable: !unavailableReason,
     unavailableReason,
   }

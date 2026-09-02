@@ -175,6 +175,28 @@ describe('ScheduledJobsView', () => {
     expect(wrapper.text()).toContain('一次性基线已允许')
   })
 
+  it('clears a resolved validation message when the user changes target type', async () => {
+    mockScheduledJobAssets(true)
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [{ path: '/', name: 'scheduled-jobs', component: ScheduledJobsView }],
+    })
+    const wrapper = mount(ScheduledJobsView, { global: { plugins: [router] } })
+    await flushPromises()
+
+    await wrapper.get('[data-testid="scheduled-name"]').setValue('一次性门禁检查')
+    await wrapper.findAll('[data-testid="scheduled-target-option"]')
+      .find(item => item.text().includes('发版冒烟'))!
+      .trigger('click')
+    await wrapper.get('[data-testid="scheduled-save"]').trigger('click')
+    expect(wrapper.get('[data-testid="scheduled-editor-feedback"]').text()).toContain('请明确开启')
+
+    await wrapper.get('[data-testid="scheduled-target-type"]').setValue('cases')
+
+    expect(wrapper.find('[data-testid="scheduled-editor-feedback"]').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('请明确开启“一次性基线也执行”')
+  })
+
   it('fills a cron expression from examples', async () => {
     mockScheduledJobAssets()
     const post = vi.spyOn(apiClient, 'post').mockResolvedValueOnce({
@@ -950,6 +972,37 @@ describe('ScheduledJobsView', () => {
     expect(option.text()).toContain('待采纳基线')
     expect(option.text()).toContain('0 条可执行基线')
     expect(option.text()).not.toContain('ready')
+  })
+
+  it('uses runnable active baseline ownership when deciding whether a saved task is selectable', async () => {
+    vi.spyOn(apiClient, 'get').mockImplementation(async url => {
+      const path = String(url)
+      if (path.startsWith('/api/api-testing/v1/scheduled-jobs')) return { data: { scheduled_jobs: [] } }
+      if (path.startsWith('/api/api-testing/v1/baselines')) return { data: { baselines: [baselineFixture({})] } }
+      if (path.startsWith('/api/api-testing/v1/cases')) return { data: { case_versions: [{
+        id: 'legacy-unassigned', case_id: 'legacy-case', endpoint_id: 'endpoint-1', status: 'active', origin: 'manual', version: 1,
+        group_name: '', name: '旧未归属用例', purpose: '', app_package: '', app_name: '', business: '', priority: 'P1',
+        request: { method: 'GET', path: '/legacy', service: '', path_params: {}, query: {}, headers: {}, cookies: {}, body: {} },
+        data_rows: [], assertions: [], extractions: [], dependencies: [], processing: { pre: [], post: [] }, validation_summary: {},
+      }] } }
+      if (path.startsWith('/api/api-testing/v1/tasks')) return { data: { tasks: [{
+        id: 'task-runnable', project_id: 'project-1', source_revision_id: 'source-1', environment_revision_id: 'env-revision-1',
+        name: '已保存可执行任务', state: 'ready', selected_endpoint_ids: ['endpoint-1'], runnable_baseline_count: 1,
+      }] } }
+      return { data: {} }
+    })
+    const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/', component: ScheduledJobsView }] })
+    const wrapper = mount(ScheduledJobsView, { global: { plugins: [router] } })
+    await flushPromises()
+
+    await wrapper.get('[data-testid="scheduled-target-type"]').setValue('task')
+    const option = wrapper.get('[data-testid="scheduled-target-option"]')
+
+    expect(option.attributes('disabled')).toBeUndefined()
+    expect(option.text()).toContain('校园应用 · 校园共享')
+    expect(option.text()).not.toContain('应用未配置或已移除')
+    await option.trigger('click')
+    expect(wrapper.text()).toContain('选择已保存任务已选 1 项')
   })
 
 })
