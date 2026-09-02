@@ -749,6 +749,16 @@ async function anyVisible(locator) {
     await page.locator('.workflow-guide button', {hasText: '页面知识库'}).click();
     if (!await page.locator('.knowledge-manager').isVisible()) throw new Error('AI generation page knowledge action must open the page knowledge manager');
     if (!await page.locator('.knowledge-manager button', {hasText: '返回 AI 生成'}).isVisible()) throw new Error('Page knowledge manager must return to the originating AI generation workflow');
+    await page.locator('#km-app').selectOption('com.kfb.model');
+    if (await page.locator('#km-module').inputValue()) throw new Error('Switching page-knowledge applications must clear an incompatible module filter');
+    await page.locator('.knowledge-manager button', {hasText: '新建页面知识'}).click();
+    if (!await page.locator('#modal-knowledge.show').isVisible()) throw new Error('Page knowledge manager new action must open the knowledge form');
+    if (!await page.locator('#toolbar-path', {hasText: '页面知识库'}).isVisible()) throw new Error('Opening the knowledge form must preserve its manager context');
+    if (await page.locator('#knowledge-app-package').inputValue() !== 'com.kfb.model') throw new Error('Page knowledge form must preserve the application selected in the manager');
+    await page.locator('#modal-knowledge .modal-close').click();
+    await page.locator('.knowledge-manager button', {hasText: '导入 Figma'}).click();
+    if (!await page.locator('#modal-knowledge.show').isVisible()) throw new Error('Page knowledge manager Figma action must open the import form');
+    await page.locator('#modal-knowledge .modal-close').click();
     await page.locator('.knowledge-manager button', {hasText: '返回 AI 生成'}).click();
     if (!await page.locator('.workflow-guide', {hasText: '资料准备、需求解析、脑图和 YAML'}).isVisible()) throw new Error('Page knowledge return action must restore the AI generation workflow');
     await page.locator('.workflow-guide button', {hasText: '导入 Figma'}).click();

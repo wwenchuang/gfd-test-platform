@@ -2203,7 +2203,7 @@ function knowledgeManagerHtml(returnWorkflow = '') {
         </div>
       </div>
       <div class="knowledge-manager-filters">
-        <select id="km-app" onchange="refreshKnowledgeManagerPages()"></select>
+        <select id="km-app" onchange="handleKnowledgeManagerAppChange()"></select>
         <select id="km-module" onchange="syncKnowledgeManagerAppFromModule(); refreshKnowledgeManagerPages()"></select>
         <select id="km-tier" onchange="refreshKnowledgeManagerPages()">
           <option value="all">全部知识</option>
@@ -2917,6 +2917,14 @@ function syncKnowledgeManagerAppFromModule() {
   if (pkg) document.getElementById('km-app').value = pkg;
 }
 
+function handleKnowledgeManagerAppChange() {
+  const app = document.getElementById('km-app')?.value || '';
+  const moduleSelect = document.getElementById('km-module');
+  const mod = moduleSelect?.value || '';
+  if (mod && moduleAppPackage(mod) !== app) moduleSelect.value = '';
+  refreshKnowledgeManagerPages();
+}
+
 async function refreshKnowledgeManagerPages() {
   const appPackage = document.getElementById('km-app')?.value || currentModuleAppPackage() || 'com.kfb.model';
   const tier = document.getElementById('km-tier')?.value || 'all';
@@ -2974,22 +2982,19 @@ function renderKnowledgeManagerCards() {
 
 async function openKnowledgeQuickCreate() {
   const app = document.getElementById('km-app')?.value || currentModuleAppPackage() || 'com.kfb.model';
-  document.getElementById('knowledge-app-package').value = app;
-  await showKnowledge();
+  await showKnowledge({preserveWorkflow: true, appPackage: app});
   clearKnowledgeForm();
 }
 
 async function openKnowledgeFigmaImport(returnWorkflow = '') {
   const app = document.getElementById('km-app')?.value || currentModuleAppPackage() || 'com.kfb.model';
-  document.getElementById('knowledge-app-package').value = app;
-  await showKnowledge({ preserveWorkflow: returnWorkflow === 'generate' });
+  await showKnowledge({preserveWorkflow: true, appPackage: app});
   document.getElementById('figma-url')?.focus();
 }
 
 async function openKnowledgePageEditor(pageId) {
   const app = document.getElementById('km-app')?.value || 'com.kfb.model';
-  document.getElementById('knowledge-app-package').value = app;
-  await showKnowledge();
+  await showKnowledge({preserveWorkflow: true, appPackage: app});
   editKnowledgePage(pageId);
 }
 

@@ -252,7 +252,7 @@ async function importFigmaDrafts() {
 
 async function showKnowledge(options = {}) {
   if (!options.preserveWorkflow) setActiveWorkflow('assets');
-  const currentApp = currentModuleAppPackage() || document.getElementById('generate-app-package')?.value.trim() || 'com.kfb.model';
+  const currentApp = options.appPackage || currentModuleAppPackage() || document.getElementById('generate-app-package')?.value.trim() || 'com.kfb.model';
   document.getElementById('knowledge-app-package').value = currentApp;
   document.getElementById('modal-knowledge').classList.add('show');
   clearKnowledgeForm(false);
