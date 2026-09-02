@@ -815,6 +815,8 @@ describe('ScheduledJobsView', () => {
     const wrapper = mount(ScheduledJobsView, { global: { plugins: [router] } })
     await flushPromises()
     expect(wrapper.text()).toContain('正在读取目标')
+    expect(wrapper.get('[data-testid="scheduled-row-job-1"]').text()).toContain('正在校验目标')
+    expect(wrapper.get('[data-testid="scheduled-row-job-1"]').text()).not.toContain('执行已阻断')
     expect(wrapper.text()).not.toContain('目标已删除')
     expect(wrapper.get('[data-testid="scheduled-refresh"]').attributes('disabled')).toBeDefined()
     fail(new Error('基线读取超时，请重试'))

@@ -73,4 +73,21 @@ describe('CaseEndpointPicker', () => {
     await wrapper.get('[data-testid="case-endpoint-search"]').setValue('家用接口 9')
     expect(wrapper.find('[data-testid="case-endpoint-home-9"]').exists()).toBe(true)
   })
+
+  it('explains that a developing endpoint may not exist in the selected environment', async () => {
+    const developing = {
+      ...ENDPOINTS[0],
+      operation: { 'x-apifox-status': 'developing' },
+    }
+    const wrapper = mount(CaseEndpointPicker, {
+      props: { endpoints: [developing], caseCountByEndpoint: {} },
+    })
+
+    await wrapper.get('[data-testid="case-endpoint-endpoint-favorite"]').trigger('click')
+
+    const warning = wrapper.get('[data-testid="case-endpoint-development-warning"]')
+    expect(warning.text()).toContain('开发中')
+    expect(warning.text()).toContain('当前环境可能尚未上线')
+    expect(warning.text()).toContain('调试通过后')
+  })
 })

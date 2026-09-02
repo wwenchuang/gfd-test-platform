@@ -36,6 +36,7 @@ const matchedEndpoints = computed(() => {
   return items.slice(0, 50)
 })
 const activeEndpoint = computed(() => props.endpoints.find(item => item.id === activeEndpointId.value) || null)
+const activeEndpointDeveloping = computed(() => String(activeEndpoint.value?.operation?.['x-apifox-status'] || '').toLowerCase() === 'developing')
 
 watch(domainOptions, domains => {
   if (!useDomainNavigation.value) {
@@ -97,6 +98,7 @@ function selectDomain(domain: string): void {
           <div><span :class="['method-badge', `method-${activeEndpoint.method.toLowerCase()}`]">{{ activeEndpoint.method }}</span><strong>{{ activeEndpoint.summary || activeEndpoint.path }}</strong></div>
           <code>{{ activeEndpoint.path }}</code>
           <p>{{ (caseCountByEndpoint[activeEndpoint.id] || 0) ? `该接口已有 ${caseCountByEndpoint[activeEndpoint.id]} 条用例，可继续新增场景。` : '该接口暂无用例。' }}</p>
+          <p v-if="activeEndpointDeveloping" data-testid="case-endpoint-development-warning" class="endpoint-development-warning" role="status"><strong>接口来源标记为开发中</strong>当前环境可能尚未上线。可先准备候选，调试通过后再纳入基线。</p>
           <button data-testid="case-endpoint-create-manual" class="secondary-command wide" type="button" :disabled="busy" @click="emit('create-manual', activeEndpoint)"><PencilLine :size="16" />新建手工用例</button>
           <button data-testid="case-endpoint-generate-basic" class="secondary-command wide" type="button" :disabled="busy" @click="emit('generate-basic', activeEndpoint)"><FilePlus2 :size="16" />生成基础正向候选</button>
           <button data-testid="case-endpoint-generate-ai" class="primary-command wide" type="button" :disabled="busy" @click="emit('generate-ai', activeEndpoint)"><Sparkles :size="16" />AI 生成测试用例</button>

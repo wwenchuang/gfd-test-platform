@@ -46,4 +46,19 @@ describe('EndpointDetail', () => {
 
     expect(wrapper.emitted('open-history')).toEqual([['endpoint-1', 'stable-favorites-list']])
   })
+
+  it('warns before treating an Apifox developing endpoint as runnable', () => {
+    const wrapper = mount(EndpointDetail, {
+      props: {
+        endpoint: {
+          ...endpoint,
+          operation: { ...endpoint.operation, 'x-apifox-status': 'developing' },
+        },
+      },
+    })
+
+    expect(wrapper.get('[data-testid="endpoint-development-warning"]').text()).toContain('开发中')
+    expect(wrapper.get('[data-testid="endpoint-development-warning"]').text()).toContain('真实调试通过')
+    expect(wrapper.get('[data-testid="endpoint-development-warning"]').text()).toContain('基线')
+  })
 })

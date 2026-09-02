@@ -11,6 +11,7 @@ const props = defineProps<{ endpoint: ApiEndpoint | null }>()
 const emit = defineEmits<{ 'open-history': [endpointId: string, endpointStableKey?: string] }>()
 const tab = ref<DetailTab>('definition')
 const operation = computed<OperationRecord>(() => props.endpoint?.operation || {})
+const isDeveloping = computed(() => String(operation.value['x-apifox-status'] || '').toLowerCase() === 'developing')
 const parameters = computed<OperationRecord[]>(() => Array.isArray(operation.value.parameters)
   ? operation.value.parameters.filter(item => item && typeof item === 'object') as OperationRecord[]
   : [])
@@ -62,7 +63,8 @@ function openHistory(): void {
   <section class="endpoint-detail">
     <div v-if="!endpoint" class="state-message detail-empty">从左侧选择一个接口开始。</div>
     <template v-else>
-      <header class="endpoint-title"><span :class="['method-badge', `method-${endpoint.method.toLowerCase()}`]">{{ endpoint.method }}</span><div><h2>{{ endpoint.summary || endpoint.path }}</h2><code>{{ endpoint.path }}</code></div></header>
+      <header class="endpoint-title"><span :class="['method-badge', `method-${endpoint.method.toLowerCase()}`]">{{ endpoint.method }}</span><div><h2>{{ endpoint.summary || endpoint.path }}</h2><code>{{ endpoint.path }}</code></div><span v-if="isDeveloping" class="endpoint-status-badge">开发中</span></header>
+      <p v-if="isDeveloping" data-testid="endpoint-development-warning" class="endpoint-development-warning" role="status"><strong>接口来源标记为开发中</strong>当前执行环境可能尚未上线。可以先设计用例，必须真实调试通过后才能采纳为基线。</p>
       <nav class="detail-tabs" aria-label="接口详情">
         <button v-for="item in [['definition','接口定义'],['request','请求参数'],['response','响应结构'],['cases','测试用例'],['history','执行记录']]" :key="item[0]" type="button" :class="{ active: tab === item[0] }" @click="tab = item[0] as DetailTab">{{ item[1] }}</button>
       </nav>

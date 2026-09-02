@@ -296,7 +296,7 @@ function buildJobInput(ids: string[]): ScheduledJobInput {
 }
 
 async function runJob(job: ScheduledJob): Promise<void> {
-  if (busy.value) return
+  if (busy.value || targetsLoading.value) return
   actionMessage.value = ''
   const targetIssue = jobTargetIssue(job)
   if (targetIssue) {
@@ -901,7 +901,8 @@ function weekDayName(value: number): string {
             <span>{{ targetTypeLabel(job.target_type) }} · {{ scheduleLabel(job) }} · 调度时区 {{ schedulerTimezoneLabel(job) }} · {{ job.notify_feishu ? '飞书通知' : '不通知' }} · {{ job.allow_one_time_baselines ? '一次性基线已允许' : '一次性基线未开启' }}</span>
             <span class="scheduled-runtime-line">
               <b>配置：{{ job.enabled ? '已启用' : '已停用' }}</b>
-              <b v-if="!scheduledBlockMessage(job) && jobTargetIssue(job)" class="scheduled-blocked">执行已阻断 · {{ jobTargetIssue(job) }}</b>
+              <b v-if="!scheduledBlockMessage(job) && targetsLoading">正在校验目标，配置未变</b>
+              <b v-else-if="!scheduledBlockMessage(job) && jobTargetIssue(job)" class="scheduled-blocked">执行已阻断 · {{ jobTargetIssue(job) }}</b>
               <b v-else-if="!scheduledBlockMessage(job) && job.enabled">下次执行 {{ formatDateTime(job.next_run_at, job.scheduler_utc_offset) }}</b>
               <b v-if="job.latest_run_at">上次结果（历史）· 最近{{ triggerLabel(job.latest_run_trigger) }} {{ formatDateTime(job.latest_run_at, job.scheduler_utc_offset) }} · {{ scheduleExecutionSummary(job) }}</b>
               <b v-else>尚无执行记录</b>
