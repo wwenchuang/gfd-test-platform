@@ -751,6 +751,9 @@ async function anyVisible(locator) {
     if (!await page.locator('.knowledge-manager button', {hasText: '返回 AI 生成'}).isVisible()) throw new Error('Page knowledge manager must return to the originating AI generation workflow');
     await page.locator('#km-app').selectOption('com.kfb.model');
     if (await page.locator('#km-module').inputValue()) throw new Error('Switching page-knowledge applications must clear an incompatible module filter');
+    const managerModuleOptions = await page.locator('#km-module option').allTextContents();
+    if (managerModuleOptions.some(label => label === 'cache' || label.startsWith('AI_Agent_'))) throw new Error('Page knowledge module filter must exclude system and automatic repair history');
+    if (managerModuleOptions.some(label => label.startsWith('小白学习'))) throw new Error('Page knowledge module filter must stay within the selected application');
     await page.locator('.knowledge-manager button', {hasText: '新建页面知识'}).click();
     if (!await page.locator('#modal-knowledge.show').isVisible()) throw new Error('Page knowledge manager new action must open the knowledge form');
     if (!await page.locator('#toolbar-path', {hasText: '页面知识库'}).isVisible()) throw new Error('Opening the knowledge form must preserve its manager context');

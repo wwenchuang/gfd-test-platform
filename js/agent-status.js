@@ -2907,8 +2907,17 @@ function renderKnowledgeManagerFilters() {
   const apps = allAppPackages();
   appSelect.innerHTML = apps.map(app => `<option value="${escapeHtml(app)}">${escapeHtml(appDisplayLabel(app))}</option>`).join('');
   if (apps.includes(currentApp)) appSelect.value = currentApp;
-  moduleSelect.innerHTML = '<option value="">全部模块</option>' + Object.keys(modules).sort((a,b)=>a.localeCompare(b,'zh-CN')).map(mod => `<option value="${escapeHtml(mod)}">${escapeHtml(mod)}</option>`).join('');
-  if (currentModule && modules[currentModule]) moduleSelect.value = currentModule;
+  renderKnowledgeManagerModuleOptions(appSelect.value, currentModule);
+}
+
+function renderKnowledgeManagerModuleOptions(appPackage, preferredModule = '') {
+  const moduleSelect = document.getElementById('km-module');
+  if (!moduleSelect) return;
+  const availableModules = Object.keys(modules)
+    .filter(mod => !isAssetHistoryModule(mod) && (!appPackage || moduleAppPackage(mod) === appPackage))
+    .sort((a,b)=>a.localeCompare(b,'zh-CN'));
+  moduleSelect.innerHTML = '<option value="">全部模块</option>' + availableModules.map(mod => `<option value="${escapeHtml(mod)}">${escapeHtml(mod)}</option>`).join('');
+  moduleSelect.value = availableModules.includes(preferredModule) ? preferredModule : '';
 }
 
 function syncKnowledgeManagerAppFromModule() {
@@ -2921,7 +2930,7 @@ function handleKnowledgeManagerAppChange() {
   const app = document.getElementById('km-app')?.value || '';
   const moduleSelect = document.getElementById('km-module');
   const mod = moduleSelect?.value || '';
-  if (mod && moduleAppPackage(mod) !== app) moduleSelect.value = '';
+  renderKnowledgeManagerModuleOptions(app, mod);
   refreshKnowledgeManagerPages();
 }
 
