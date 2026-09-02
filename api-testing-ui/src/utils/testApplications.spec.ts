@@ -5,6 +5,7 @@ import {
   activeBusinessLinesFor,
   applicationBusinessLabel,
   applicationBusinessSelection,
+  inferTestApplicationBusiness,
   loadTestApplications,
   replaceTestApplications,
   testApplicationLabel,
@@ -28,6 +29,36 @@ describe('configured test applications', () => {
     expect(useTestApplications().active.value.map(item => item.name)).toEqual(['智小白3D', '校园版'])
     expect(testApplicationFor('com.example.school')?.name).toBe('校园版')
     expect(activeBusinessLinesFor('com.example.school').map(item => item.id)).toEqual(['school'])
+  })
+
+  it('infers ownership only when endpoint labels match one configured application scope', () => {
+    replaceTestApplications([
+      {
+        package: 'com.kfb.model', name: '智小白3D', enabled: true,
+        business_lines: [{ id: 'home', name: '家用', enabled: true }, { id: 'shared', name: '共享', enabled: true }],
+      },
+      {
+        package: 'com.example.school', name: '校园版', enabled: true,
+        business_lines: [{ id: 'school', name: '校园', enabled: true }],
+      },
+    ])
+
+    expect(inferTestApplicationBusiness(['家用业务', '京东之家体验'])).toEqual({
+      appPackage: 'com.kfb.model', appName: '智小白3D', business: 'home', businessName: '家用',
+    })
+    expect(inferTestApplicationBusiness(['未分组接口'])).toBeNull()
+
+    replaceTestApplications([
+      {
+        package: 'com.kfb.model', name: '智小白3D', enabled: true,
+        business_lines: [{ id: 'home', name: '家用', enabled: true }],
+      },
+      {
+        package: 'com.example.home', name: '家庭版', enabled: true,
+        business_lines: [{ id: 'home', name: '家用', enabled: true }],
+      },
+    ])
+    expect(inferTestApplicationBusiness(['家用业务'])).toBeNull()
   })
 
   it('loads active and disabled history entries from the task application response', async () => {

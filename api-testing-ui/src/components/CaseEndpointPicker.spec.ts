@@ -47,4 +47,30 @@ describe('CaseEndpointPicker', () => {
     expect(wrapper.findAll('[data-testid^="case-endpoint-endpoint-"]')).toHaveLength(50)
     expect(wrapper.text()).toContain('当前展示前 50 个接口')
   })
+
+  it('guides a large interface catalog through business domains', async () => {
+    const endpoints: ApiEndpoint[] = [
+      ...Array.from({ length: 10 }, (_, index) => ({
+        id: `home-${index}`, method: 'GET', path: `/home/${index}`, summary: `家用接口 ${index}`,
+        tags: ['家用业务', `家用分组 ${index}`],
+      })),
+      ...Array.from({ length: 3 }, (_, index) => ({
+        id: `shared-${index}`, method: 'POST', path: `/shared/${index}`, summary: `共享接口 ${index}`,
+        tags: ['共享业务', `共享分组 ${index}`],
+      })),
+    ]
+    const wrapper = mount(CaseEndpointPicker, { props: { endpoints, caseCountByEndpoint: {} } })
+
+    expect(wrapper.get('[data-testid="case-endpoint-domain-家用"]').text()).toContain('家用 10')
+    expect(wrapper.find('[data-testid="case-endpoint-home-0"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="case-endpoint-shared-0"]').exists()).toBe(false)
+
+    await wrapper.get('[data-testid="case-endpoint-domain-共享"]').trigger('click')
+
+    expect(wrapper.findAll('[data-testid^="case-endpoint-shared-"]')).toHaveLength(3)
+    expect(wrapper.find('[data-testid="case-endpoint-home-0"]').exists()).toBe(false)
+
+    await wrapper.get('[data-testid="case-endpoint-search"]').setValue('家用接口 9')
+    expect(wrapper.find('[data-testid="case-endpoint-home-9"]').exists()).toBe(true)
+  })
 })

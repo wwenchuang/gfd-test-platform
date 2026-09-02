@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { FilePlus2, PencilLine, Search, Sparkles, X } from 'lucide-vue-next'
 
 import type { ApiEndpoint } from '../api/contracts'
+import { groupEndpointDomains, groupEndpoints } from '../utils/endpointGroups'
 
 const props = withDefaults(defineProps<{
   endpoints: ApiEndpoint[]
@@ -19,20 +20,41 @@ const emit = defineEmits<{
 
 const query = ref('')
 const activeEndpointId = ref('')
+const activeDomain = ref('')
 const keyword = computed(() => query.value.trim().toLocaleLowerCase())
+const domainOptions = computed(() => groupEndpointDomains(groupEndpoints(props.endpoints)))
+const useDomainNavigation = computed(() => groupEndpoints(props.endpoints).length > 8)
 const matchedEndpoints = computed(() => {
-  const items = keyword.value
+  let items = keyword.value
     ? props.endpoints.filter(endpoint => [
       endpoint.summary, endpoint.method, endpoint.path, ...endpoint.tags,
     ].join(' ').toLocaleLowerCase().includes(keyword.value))
     : props.endpoints
+  if (!keyword.value && useDomainNavigation.value && activeDomain.value) {
+    items = domainOptions.value.find(domain => domain.name === activeDomain.value)?.endpoints || []
+  }
   return items.slice(0, 50)
 })
 const activeEndpoint = computed(() => props.endpoints.find(item => item.id === activeEndpointId.value) || null)
 
+watch(domainOptions, domains => {
+  if (!useDomainNavigation.value) {
+    activeDomain.value = ''
+    return
+  }
+  if (!domains.some(domain => domain.name === activeDomain.value)) activeDomain.value = domains[0]?.name || ''
+}, { immediate: true })
+
 function caseState(endpoint: ApiEndpoint): string {
   const count = props.caseCountByEndpoint[endpoint.id] || 0
   return count ? `已有 ${count} 条用例` : '暂无用例'
+}
+
+function selectDomain(domain: string): void {
+  activeDomain.value = domain
+  if (!domainOptions.value.find(item => item.name === domain)?.endpoints.some(item => item.id === activeEndpointId.value)) {
+    activeEndpointId.value = ''
+  }
 }
 </script>
 
@@ -43,6 +65,16 @@ function caseState(endpoint: ApiEndpoint): string {
       <button class="mini-icon" type="button" title="关闭接口选择" @click="emit('close')"><X :size="17" /></button>
     </header>
     <label class="search-box case-endpoint-search"><Search :size="15" /><span class="sr-only">搜索接口</span><input v-model="query" data-testid="case-endpoint-search" placeholder="搜索接口名称、路径或分组" /></label>
+    <div v-if="useDomainNavigation && !keyword" class="case-endpoint-domains" aria-label="接口业务范围">
+      <button
+        v-for="domain in domainOptions"
+        :key="domain.name"
+        :data-testid="`case-endpoint-domain-${domain.name}`"
+        type="button"
+        :class="{ active: activeDomain === domain.name }"
+        @click="selectDomain(domain.name)"
+      >{{ domain.name }} <span>{{ domain.endpoints.length }}</span></button>
+    </div>
     <div class="case-endpoint-picker-body">
       <div class="case-endpoint-results">
         <button
@@ -58,7 +90,7 @@ function caseState(endpoint: ApiEndpoint): string {
           <em>{{ caseState(endpoint) }}</em>
         </button>
         <p v-if="!matchedEndpoints.length" class="section-empty">没有匹配的接口</p>
-        <p v-else-if="!keyword && endpoints.length > matchedEndpoints.length" class="case-endpoint-limit">当前展示前 50 个接口，请使用搜索定位其他接口。</p>
+        <p v-else-if="!keyword && (useDomainNavigation ? (domainOptions.find(domain => domain.name === activeDomain)?.endpoints.length || 0) : endpoints.length) > matchedEndpoints.length" class="case-endpoint-limit">{{ useDomainNavigation ? '当前业务范围展示前 50 个接口' : '当前展示前 50 个接口' }}，请使用搜索定位其他接口。</p>
       </div>
       <div class="case-endpoint-actions">
         <template v-if="activeEndpoint">

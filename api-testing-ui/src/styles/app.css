@@ -148,6 +148,10 @@ h1, h2, p { margin-top: 0; } h1 { margin-bottom: 0; font-size: 21px; font-weight
 .case-endpoint-picker > header { display: flex; align-items: center; justify-content: space-between; padding: 10px 12px; border-bottom: 1px solid var(--line); }
 .case-endpoint-picker > header > div { display: flex; align-items: baseline; gap: 8px; }.case-endpoint-picker > header span { color: var(--muted); font-size: 11px; }
 .case-endpoint-search { margin: 10px 12px; }
+.case-endpoint-domains { display: flex; gap: 6px; overflow-x: auto; padding: 0 12px 10px; }
+.case-endpoint-domains button { display: inline-flex; align-items: center; gap: 5px; min-height: 30px; padding: 0 10px; border: 1px solid var(--line); border-radius: 15px; background: #fff; color: #526176; font-size: 11px; font-weight: 750; white-space: nowrap; cursor: pointer; }
+.case-endpoint-domains button:hover, .case-endpoint-domains button.active { border-color: var(--blue); background: #edf5fc; color: var(--blue); }
+.case-endpoint-domains button span { color: inherit; font-size: 10px; }
 .case-endpoint-picker-body { display: grid; grid-template-columns: minmax(280px, 1fr) minmax(260px, .75fr); min-height: 260px; border-top: 1px solid var(--line); }
 .case-endpoint-results { max-height: 360px; overflow: auto; border-right: 1px solid var(--line); }
 .case-endpoint-results > button { display: grid; grid-template-columns: 54px minmax(0, 1fr) auto; align-items: center; gap: 8px; width: 100%; min-height: 52px; padding: 8px 12px; border: 0; border-bottom: 1px solid #edf0f4; background: #fff; color: var(--ink); text-align: left; cursor: pointer; }

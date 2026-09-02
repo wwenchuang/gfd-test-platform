@@ -20,6 +20,13 @@ export interface TestApplicationSelection {
   reason: string
 }
 
+export interface InferredTestApplicationBusiness {
+  appPackage: string
+  appName: string
+  business: string
+  businessName: string
+}
+
 const applications = ref<TestApplication[]>([])
 const active = computed(() => applications.value.filter(item => item.enabled))
 let loading: Promise<void> | null = null
@@ -86,6 +93,20 @@ export function applicationBusinessLabel(appPackage: unknown, appName: unknown, 
 
 export function activeBusinessLinesFor(appPackage: unknown): TestApplicationBusinessLine[] {
   return testApplicationFor(appPackage)?.business_lines.filter(item => item.enabled) || []
+}
+
+export function inferTestApplicationBusiness(values: unknown[]): InferredTestApplicationBusiness | null {
+  const text = values.map(value => String(value || '').trim()).filter(Boolean).join(' ')
+  if (!text) return null
+  const matches = active.value.flatMap(application => application.business_lines
+    .filter(line => line.enabled && text.includes(line.name))
+    .map(line => ({
+      appPackage: application.package,
+      appName: application.name,
+      business: line.id,
+      businessName: line.name,
+    })))
+  return matches.length === 1 ? matches[0] : null
 }
 
 export function applicationBusinessSelection(appPackage: unknown, business: unknown): TestApplicationSelection {

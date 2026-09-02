@@ -108,6 +108,8 @@ describe('CasesView', () => {
     await flushPromises()
     expect(wrapper.find('[data-testid="case-endpoint-search"]').exists()).toBe(false)
     expect((wrapper.get('[data-testid="case-name"]').element as HTMLInputElement).value).toBe('我的收藏列表')
+    expect((wrapper.get('[data-testid="case-application"]').element as HTMLSelectElement).value).toBe('com.kfb.model')
+    expect(wrapper.get('[data-testid="case-business-home"]').classes()).toContain('active')
 
     await wrapper.get('[data-testid="case-version-edit-version-1"]').trigger('click')
     await flushPromises()

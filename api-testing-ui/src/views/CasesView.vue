@@ -16,6 +16,8 @@ import { useContextStore } from '../stores/context'
 import { useTasksStore } from '../stores/tasks'
 import { buildCaseDependencyOptions } from '../utils/caseDependencyOptions'
 import { confirmApiExecution } from '../utils/executionConfirmation'
+import { endpointGroupName } from '../utils/endpointGroups'
+import { inferTestApplicationBusiness } from '../utils/testApplications'
 
 const context = useContextStore()
 const assets = useAssetsStore()
@@ -220,7 +222,13 @@ async function createManualCase(endpoint: ApiEndpoint): Promise<void> {
     return
   }
   activeEndpoint.value = detailed
-  cases.startManualDraft(detailed)
+  const draft = cases.startManualDraft(detailed)
+  const ownership = inferTestApplicationBusiness([endpointGroupName(detailed), ...detailed.tags])
+  if (ownership) {
+    draft.app_package = ownership.appPackage
+    draft.app_name = ownership.appName
+    draft.business = ownership.business
+  }
   endpointPickerOpen.value = false
   mobileDetailOpen.value = true
 }
