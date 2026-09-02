@@ -152,6 +152,24 @@ def check_original_platform_management_experience():
     router = (ROOT / "task_server" / "router.py").read_text(encoding="utf-8")
     app_js = (JS_DIR / "app.js").read_text(encoding="utf-8")
     repair_js = (JS_DIR / "ai-repair.js").read_text(encoding="utf-8")
+    require(
+        "function activateUploadZoneFromKeyboard" in utils_js,
+        "Main-platform upload zones must share a keyboard activation handler",
+    )
+    for input_id in (
+        "generate-asset-files",
+        "mindmap-asset-files",
+        "knowledge-screenshot",
+        "file-input",
+    ):
+        require(
+            f"activateUploadZoneFromKeyboard(event, '{input_id}')" in html,
+            f"Upload zone for {input_id} must support Enter and Space",
+        )
+    require(
+        "activateUploadZoneFromKeyboard(event, 'agent-source-file-input')" in workbench_js,
+        "Agent source upload zone must support Enter and Space",
+    )
     require("fonts.googleapis.com" not in html, "Main platform must not block on external Google Fonts")
     require('rel="icon"' in html and "assets/brand/kongfudou-icon.png" in html, "Main platform must expose a local favicon to avoid a noisy 404")
     require('<form class="login-box"' in html and "onsubmit=\"event.preventDefault(); doLogin();\"" in html, "Login controls must be wrapped in a submit form")
@@ -411,12 +429,12 @@ def main():
     require("GENERATION_RECORD_PAGE_SIZE = 20" in app_js and "loadMoreGenerationRecords" in app_js, "Generation history must render incrementally instead of creating every record at once")
     require("请先选择应用，再查看该应用的页面知识" in app_js, "Generation must not load a fallback application's knowledge before the user chooses an application")
     require("请先选择应用，再选择本次测试所属业务" in app_js, "Generation must not diagnose missing business lines before the user chooses an application")
-    for asset in ("agent-workbench.js", "execution.js"):
-        require(f'{asset}?v=20260828-full-platform-ux-20260902-a96-consistent-assets' in html, f"{asset} must leave the pre-A96 browser cache together")
-    require('utils.js?v=20260828-full-platform-ux-20260902-a101-figma-route' in html, "utils must publish the A101 Figma route")
+    require('execution.js?v=20260828-full-platform-ux-20260902-a96-consistent-assets' in html, "execution must publish the A96 consistent asset actions")
+    require('agent-workbench.js?v=20260828-full-platform-ux-20260902-a104-review-controls' in html, "Agent workbench must publish the A104 keyboard upload controls")
+    require('utils.js?v=20260828-full-platform-ux-20260902-a104-review-controls' in html, "utils must publish the A104 Safari download and upload controls")
     require('identity-management.js?v=20260902-a97-guided-actions' in html, "identity management must publish the A97 audit-action labels")
     require('agent-status.js?v=20260828-full-platform-ux-20260902-a101-figma-route' in html, "agent status must publish the A101 Figma route")
-    require('app.js?v=20260831-identity-20260902-a103-report-feedback' in html, "app.js must publish the A103 mindmap report feedback")
+    require('app.js?v=20260831-identity-20260902-a104-review-controls' in html, "app.js must publish the A104 review controls")
     nginx_source = (ROOT / "deploy" / "nginx-midscene-task.conf").read_text(encoding="utf-8")
     require("location = /api-test" in nginx_source and "absolute_redirect off" in nginx_source, "The /api-test entry redirect must retain the public host and port")
     require("function jobTimelineHtml(job)" in html and "进度流水" in html, "Execution job detail must show progress timeline")

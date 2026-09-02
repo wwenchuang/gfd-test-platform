@@ -60,6 +60,42 @@ test('all main-platform mindmap actions use the authenticated downloader', () =>
   assert.match(source, /downloadAuthenticatedFile\(/);
 });
 
+test('authenticated downloads keep the object URL alive long enough for Safari to accept it', async () => {
+  const source = fs.readFileSync('js/utils.js', 'utf8');
+  const dom = new JSDOM('<body></body>', {runScripts: 'dangerously'});
+  const win = dom.window;
+  let clicked = false;
+  let revoked = '';
+  let revokeDelay = -1;
+  win.API_BASE = '/api';
+  win.authHeaders = () => ({});
+  win.forceLogoutWithMessage = () => {};
+  win.responseAttachmentFilename = () => '测试脑图.mm';
+  win.nativeFetch = async () => ({
+    ok: true,
+    status: 200,
+    headers: {get: () => ''},
+    blob: async () => new win.Blob(['mindmap']),
+  });
+  win.URL.createObjectURL = () => 'blob:mindmap';
+  win.URL.revokeObjectURL = value => { revoked = value; };
+  win.HTMLAnchorElement.prototype.click = function click() { clicked = true; };
+  win.setTimeout = (callback, delay) => {
+    revokeDelay = delay;
+    callback();
+    return 1;
+  };
+  loadFunction(win, source, 'downloadAuthenticatedFile');
+
+  const filename = await win.downloadAuthenticatedFile('/cases/mindmap?id=1', 'fallback.mm');
+
+  assert.equal(filename, '测试脑图.mm');
+  assert.equal(clicked, true);
+  assert.equal(revoked, 'blob:mindmap');
+  assert.ok(revokeDelay >= 30_000, `expected delayed object URL cleanup, got ${revokeDelay}ms`);
+  dom.window.close();
+});
+
 test('deleted mindmap guidance names the page that owns the refresh action', async () => {
   const source = fs.readFileSync('js/app.js', 'utf8');
   const dom = new JSDOM('<body></body>', {runScripts: 'dangerously'});

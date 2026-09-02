@@ -2307,7 +2307,7 @@ function setSupplementIssueState(button, state) {
   card.classList.toggle('accepted', state === 'accepted');
   card.classList.toggle('ignored', state === 'ignored');
   const label = card.querySelector('[data-state-label]');
-  if (label) label.textContent = state === 'accepted' ? '' : (state === 'ignored' ? '' : '待处理');
+  if (label) label.textContent = state === 'accepted' ? '已采纳' : (state === 'ignored' ? '本轮不考虑' : '待处理');
 }
 
 function clearSupplementIssue(button) {
@@ -2357,6 +2357,8 @@ function acceptAllSupplementIssues() {
     card.dataset.state = 'accepted';
     card.classList.add('accepted');
     card.classList.remove('ignored');
+    const label = card.querySelector('[data-state-label]');
+    if (label) label.textContent = '已采纳';
   });
 }
 
@@ -2365,6 +2367,8 @@ function ignoreAllSupplementIssues() {
     card.dataset.state = 'ignored';
     card.classList.add('ignored');
     card.classList.remove('accepted');
+    const label = card.querySelector('[data-state-label]');
+    if (label) label.textContent = '本轮不考虑';
   });
 }
 
@@ -4009,7 +4013,8 @@ function mindmapReportCleanText(value) {
 function mindmapReportHistoryTextOptions(type) {
   const history = mindmapReportHistory();
   const rows = type === 'tester' ? history.testers : history.versions;
-  return '<option value="">选择历史</option>' + (rows || [])
+  const values = rows || [];
+  return `<option value="">${values.length ? '选择历史' : '暂无历史记录'}</option>` + values
     .map(value => `<option value="${escapeHtml(value)}">${escapeHtml(value)}</option>`)
     .join('');
 }
@@ -4022,7 +4027,8 @@ function mindmapReportRecordLabel(record = {}) {
 
 function mindmapReportRequirementOptions() {
   const history = mindmapReportHistory();
-  return '<option value="">选择飞书需求</option>' + (history.requirements || [])
+  const rows = history.requirements || [];
+  return `<option value="">${rows.length ? '选择飞书需求' : '暂无飞书需求历史'}</option>` + rows
     .map(record => {
       const label = mindmapReportRecordLabel(record);
       const version = mindmapReportCleanText(record.version);
@@ -4033,17 +4039,21 @@ function mindmapReportRequirementOptions() {
 
 function mindmapReportCaseLinkOptions() {
   const history = mindmapReportHistory();
-  return '<option value="">选择测试用例平台链接</option>' + (history.caseLinks || [])
+  const rows = history.caseLinks || [];
+  return `<option value="">${rows.length ? '选择测试用例平台链接' : '暂无用例平台历史'}</option>` + rows
     .map(record => `<option value="${escapeHtml(record.url || '')}">${escapeHtml(mindmapReportRecordLabel(record))}</option>`)
     .join('');
 }
 
 function mindmapReportMemoryRow(inputHtml, selectId, selectHtml, applyCode, deleteCode) {
+  const hasHistory = (String(selectHtml || '').match(/<option\b/gi) || []).length > 1;
+  const selectDisabled = hasHistory ? '' : ' disabled title="暂无历史记录"';
+  const deleteDisabled = hasHistory ? '' : ' disabled title="暂无可删除的历史记录"';
   return `
     <span class="mindmap-report-memory-row">
       ${inputHtml}
-      <select id="${escapeHtml(selectId)}" onchange="${applyCode}">${selectHtml}</select>
-      <button class="btn-sm danger" type="button" onclick="${deleteCode}">删除记录</button>
+      <select id="${escapeHtml(selectId)}" onchange="${applyCode}"${selectDisabled}>${selectHtml}</select>
+      <button class="btn-sm danger" type="button" onclick="${deleteCode}"${deleteDisabled}>删除记录</button>
     </span>
   `;
 }
@@ -4229,6 +4239,16 @@ function refreshMindmapReportMemoryControls() {
   if (requirementSelect) requirementSelect.innerHTML = mindmapReportRequirementOptions();
   const caseLinkSelect = document.getElementById('mindmap-report-case-link-select');
   if (caseLinkSelect) caseLinkSelect.innerHTML = mindmapReportCaseLinkOptions();
+  [testerSelect, versionSelect, requirementSelect, caseLinkSelect].filter(Boolean).forEach(select => {
+    const hasHistory = select.options.length > 1;
+    select.disabled = !hasHistory;
+    select.title = hasHistory ? '' : '暂无历史记录';
+    const remove = select.parentElement?.querySelector('button');
+    if (remove) {
+      remove.disabled = !hasHistory;
+      remove.title = hasHistory ? '' : '暂无可删除的历史记录';
+    }
+  });
 }
 
 function deleteMindmapReportMemory(type) {

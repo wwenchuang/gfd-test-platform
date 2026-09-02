@@ -532,6 +532,13 @@ function responseAttachmentFilename(response, fallbackName='download') {
   return filename || fallbackName;
 }
 
+function activateUploadZoneFromKeyboard(event, inputId) {
+  if (event?.target !== event?.currentTarget || !['Enter', ' '].includes(event?.key)) return false;
+  event.preventDefault();
+  document.getElementById(inputId)?.click();
+  return true;
+}
+
 async function downloadAuthenticatedFile(path, fallbackName='download') {
   const res = await nativeFetch(`${API_BASE}${path}`, {headers: authHeaders()});
   if (res.status === 401) forceLogoutWithMessage();
@@ -548,7 +555,10 @@ async function downloadAuthenticatedFile(path, fallbackName='download') {
   document.body.appendChild(anchor);
   anchor.click();
   anchor.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 0);
+  // Safari can hand the object URL to its download manager after the click
+  // returns. Revoking it on the next tick cancels that handoff without an
+  // error or a download entry, so keep it alive for the browser to claim.
+  setTimeout(() => URL.revokeObjectURL(url), 60_000);
   return filename;
 }
 

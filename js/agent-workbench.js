@@ -795,9 +795,12 @@ async function showAgentWorkbench() {
               </div>
               <div class="upload-zone agent-source-upload-zone"
                    onclick="document.getElementById('agent-source-file-input').click()"
+                   onkeydown="activateUploadZoneFromKeyboard(event, 'agent-source-file-input')"
                    ondragover="handleAgentSourceDragOver(event)"
                    ondragleave="handleAgentSourceDragLeave(event)"
                    ondrop="handleAgentSourceDrop(event)"
+                   role="button"
+                   aria-label="添加 Agent 需求资料"
                    tabindex="0">
                 <div class="agent-source-upload-copy">
                   <strong>添加需求资料</strong>

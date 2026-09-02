@@ -147,6 +147,65 @@ test('mindmap report preview distinguishes automation totals from pending manual
   assert.match(html, /<strong>1<\/strong><span>待人工确认<\/span>/);
 });
 
+test('mindmap report history controls explain and disable an empty history', t => {
+  const source = fs.readFileSync('js/app.js', 'utf8');
+  const dom = new JSDOM('<body></body>', {runScripts: 'dangerously'});
+  t.after(() => dom.window.close());
+  const win = dom.window;
+  win.escapeHtml = value => String(value ?? '');
+  loadFunction(win, source, 'mindmapReportMemoryRow');
+
+  win.document.body.innerHTML = win.mindmapReportMemoryRow(
+    '<input id="tester">',
+    'tester-history',
+    '<option value="">暂无历史记录</option>',
+    "void 0",
+    "void 0",
+  );
+
+  const select = win.document.getElementById('tester-history');
+  const remove = win.document.querySelector('.mindmap-report-memory-row button');
+  assert.equal(select.disabled, true);
+  assert.equal(select.title, '暂无历史记录');
+  assert.equal(remove.disabled, true);
+  assert.equal(remove.title, '暂无可删除的历史记录');
+});
+
+test('generation supplement actions keep visible state labels in sync', t => {
+  const source = fs.readFileSync('js/app.js', 'utf8');
+  const dom = new JSDOM(`
+    <body>
+      <div data-supplement-card="1" data-state="pending">
+        <span data-state-label>待处理</span>
+        <button id="accept"></button>
+      </div>
+      <div data-supplement-card="1" data-state="pending">
+        <span data-state-label>待处理</span>
+      </div>
+    </body>
+  `, {runScripts: 'dangerously'});
+  t.after(() => dom.window.close());
+  const win = dom.window;
+  loadFunction(win, source, 'setSupplementIssueState');
+  loadFunction(win, source, 'acceptAllSupplementIssues');
+  loadFunction(win, source, 'ignoreAllSupplementIssues');
+
+  win.setSupplementIssueState(win.document.getElementById('accept'), 'accepted');
+  assert.equal(win.document.querySelector('[data-state-label]').textContent, '已采纳');
+
+  win.ignoreAllSupplementIssues();
+  for (const card of win.document.querySelectorAll('[data-supplement-card]')) {
+    assert.equal(card.dataset.state, 'ignored');
+    assert.equal(card.querySelector('[data-state-label]').textContent, '本轮不考虑');
+  }
+
+  win.acceptAllSupplementIssues();
+  for (const card of win.document.querySelectorAll('[data-supplement-card]')) {
+    assert.equal(card.dataset.state, 'accepted');
+    assert.equal(card.querySelector('[data-state-label]').textContent, '已采纳');
+  }
+});
+
 test('refreshing the generic Trace Viewer keeps the full list after a trace is selected', async t => {
   const html = fs.readFileSync('trace-viewer.html', 'utf8');
   const script = html.match(/<script>([\s\S]*?)<\/script>\s*<\/body>/)[1]
