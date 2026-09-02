@@ -450,7 +450,7 @@ def _indexed_execution_map(cases: List[Dict[str, Any]]) -> Dict[str, Dict[str, A
 def _case_with_status(case: Dict[str, Any], execution: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
     result = dict(case)
     evidence = execution.get(str(case.get("selection_id") or "")) or execution.get(str(case.get("case_id") or "")) or {}
-    result["status"] = "passed"
+    result["status"] = _normalize_status(evidence.get("status"))
     result["report_url"] = _text(evidence.get("report_url") or evidence.get("reportUrl") or evidence.get("sonic_report_url"))
     result["failure_reason"] = _text(evidence.get("failure_reason") or evidence.get("failureReason") or evidence.get("error"))
     return result
@@ -478,28 +478,84 @@ def _defect_statistics(payload: Dict[str, Any]) -> Dict[str, int]:
     return stats
 
 
-def _statistics(cases: List[Dict[str, Any]], defects: Optional[Dict[str, int]] = None) -> Dict[str, Any]:
+def _statistics(
+    cases: List[Dict[str, Any]],
+    defects: Optional[Dict[str, int]] = None,
+    manual_cases: Optional[List[Dict[str, Any]]] = None,
+) -> Dict[str, Any]:
     total = len(cases)
     defects = defects or {"total": 0}
+    manual_cases = manual_cases or []
+    status_counts = {
+        status: len([case for case in cases if case.get("status") == status])
+        for status in REPORT_STATUS_TEXT
+    }
+    manual_confirmed = len([case for case in manual_cases if case.get("status") == "passed"])
+    manual_pending = max(0, len(manual_cases) - manual_confirmed)
     return {
         "total": total,
-        "passed": total,
-        "failed": 0,
-        "blocked": 0,
-        "not_executed": 0,
-        "pass_rate": 100 if total else 0,
+        "passed": status_counts["passed"],
+        "failed": status_counts["failed"],
+        "blocked": status_counts["blocked"],
+        "not_executed": status_counts["not_executed"],
+        "manual_total": len(manual_cases),
+        "manual_confirmed": manual_confirmed,
+        "manual_pending": manual_pending,
+        "pass_rate": round(status_counts["passed"] / total * 100) if total else 0,
         "defect_total": int(defects.get("total") or 0),
     }
 
 
 def _quality(statistics: Dict[str, Any], cases: List[Dict[str, Any]]) -> Dict[str, Any]:
+    total = int(statistics.get("total") or 0)
+    passed = int(statistics.get("passed") or 0)
+    failed = int(statistics.get("failed") or 0)
+    blocked = int(statistics.get("blocked") or 0)
+    not_executed = int(statistics.get("not_executed") or 0)
+    manual_pending = int(statistics.get("manual_pending") or 0)
+    if failed:
+        return {
+            "result": "未通过",
+            "text": f"核心测试范围内有 {failed} 条自动化用例失败；请先修复失败并重跑，当前不能形成发布结论。",
+        }
+    if blocked:
+        return {
+            "result": "阻塞",
+            "text": f"核心测试范围内有 {blocked} 条自动化用例阻塞；请先处理环境、设备或前置数据问题，当前不能形成发布结论。",
+        }
+    if not_executed:
+        result = "未执行" if passed == 0 else "未完成"
+        return {
+            "result": result,
+            "text": f"核心测试范围内的自动化用例尚有 {not_executed}/{total} 条未执行；当前证据不足，不能形成发布结论。",
+        }
+    if manual_pending:
+        return {
+            "result": "待人工确认",
+            "text": f"自动化用例已执行通过，但仍有 {manual_pending} 条人工用例待确认；人工结论补齐前不能形成发布结论。",
+        }
+    if int(statistics.get("defect_total") or 0) > 0:
+        return {
+            "result": "存在缺陷",
+            "text": f"自动化用例已执行完成，但仍记录有 {statistics.get('defect_total')} 个缺陷；缺陷处理结论闭环前不能形成发布结论。",
+        }
+    if not total:
+        return {
+            "result": "未执行",
+            "text": "当前没有可核对的自动化执行结果，不能形成发布结论。",
+        }
     return {
         "result": "通过",
         "text": "本轮测试已覆盖核心测试范围内的自动化用例，全部用例执行完成且结果通过；关键业务流程、主要功能点及回归风险点验证符合预期，测试结果满足发布准入要求。",
     }
 
 
-def _release(quality: Dict[str, Any]) -> Dict[str, str]:
+def _release(quality: Dict[str, Any], statistics: Dict[str, Any]) -> Dict[str, str]:
+    if quality.get("result") != "通过" or int(statistics.get("defect_total") or 0) > 0:
+        return {
+            "suggestion": "暂不建议发布",
+            "text": "当前执行证据、人工确认或缺陷结论尚未闭环；请完成执行和人工确认，处理失败、阻塞及已记录缺陷后再评估发布。",
+        }
     return {
         "suggestion": "建议发布",
         "text": "本轮测试结论为通过，未发现影响发布的阻断问题，版本质量满足发布要求；建议按既定发布流程推进上线，并在发布后持续关注核心业务指标、异常告警及用户反馈。",
@@ -627,13 +683,14 @@ def _markdown_table(headers: List[str], rows: List[List[Any]]) -> str:
 
 def _summary_table(statistics: Dict[str, Any]) -> str:
     return _markdown_table(
-        ["总计", "通过", "失败", "阻塞", "未执行", "通过率", "缺陷总数"],
+        ["总计", "通过", "失败", "阻塞", "未执行", "待人工确认", "通过率", "缺陷总数"],
         [[
             statistics.get("total", 0),
             statistics.get("passed", 0),
             statistics.get("failed", 0),
             statistics.get("blocked", 0),
             statistics.get("not_executed", 0),
+            statistics.get("manual_pending", 0),
             f"{statistics.get('pass_rate', 0)}%",
             statistics.get("defect_total", 0),
         ]],
@@ -664,7 +721,7 @@ def _conclusion_summary(data: Dict[str, Any]) -> str:
             ["准入结论", f"{quality.get('result') or '通过'}，{release.get('suggestion') or '建议发布'}"],
             [
                 "执行情况",
-                f"自动化用例共 {statistics.get('total', 0)} 条，已执行 {statistics.get('passed', 0)} 条且全部通过，通过率 {statistics.get('pass_rate', 0)}%。",
+                f"自动化用例共 {statistics.get('total', 0)} 条，通过 {statistics.get('passed', 0)} 条，失败 {statistics.get('failed', 0)} 条，阻塞 {statistics.get('blocked', 0)} 条，未执行 {statistics.get('not_executed', 0)} 条；待人工确认 {statistics.get('manual_pending', 0)} 条。",
             ],
             [
                 "缺陷情况",
@@ -715,8 +772,14 @@ def _manual_case_table(cases: List[Dict[str, Any]]) -> str:
     if not manual:
         return "未选择人工用例。"
     return _markdown_table(
-        ["用例编号", "场景", "用例名称", "人工原因/风险"],
-        [[case.get("display_id") or case.get("case_id"), case.get("scenario"), case.get("title"), case.get("risk") or "需要人工确认"] for case in manual],
+        ["用例编号", "场景", "用例名称", "状态", "人工原因/风险"],
+        [[
+            case.get("display_id") or case.get("case_id"),
+            case.get("scenario"),
+            case.get("title"),
+            "已确认" if case.get("status") == "passed" else "待人工确认",
+            case.get("risk") or "需要人工确认",
+        ] for case in manual],
     )
 
 
@@ -755,14 +818,16 @@ def _overview(meta: Dict[str, str], scope: str) -> str:
 
 def _default_markdown(data: Dict[str, Any]) -> str:
     meta = data["meta"]
+    quality_icon = "✅" if data["quality"]["result"] == "通过" else "⚠️"
+    release_icon = "✅" if data["release"]["suggestion"] == "建议发布" else "⚠️"
     return "\n\n".join([
         f"# {meta['report_title']}",
         f"## 1. 基本信息\n\n{_basic_info(meta)}",
         f"## 2. 测试概要\n\n{_overview(meta, data['scope_markdown'])}",
         f"## 3. 主要测试点\n\n{data['test_points_markdown']}",
         f"## 4. 测试数据\n\n用例统计：\n\n{data['summary_table']}\n\n缺陷统计：\n\n{data['defect_table']}",
-        f"## 5. 质量评估\n\n测试结果： ✅ {data['quality']['result']}\n\n{data['quality']['text']}",
-        f"## 6. 发布建议\n\n✅ {data['release']['suggestion']}：{data['release']['text']}",
+        f"## 5. 质量评估\n\n测试结果： {quality_icon} {data['quality']['result']}\n\n{data['quality']['text']}",
+        f"## 6. 发布建议\n\n{release_icon} {data['release']['suggestion']}：{data['release']['text']}",
     ]) + "\n"
 
 
@@ -781,6 +846,8 @@ def _template_body(template_id: str) -> str:
 
 
 def _render_template(template: str, data: Dict[str, Any]) -> str:
+    quality_icon = "✅" if data["quality"]["result"] == "通过" else "⚠️"
+    release_icon = "✅" if data["release"]["suggestion"] == "建议发布" else "⚠️"
     values = {
         **data.get("meta", {}),
         "test_scope": data.get("scope_markdown") or "",
@@ -793,8 +860,8 @@ def _render_template(template: str, data: Dict[str, Any]) -> str:
         "case_table": data.get("case_table") or "",
         "failure_table": data.get("failure_table") or "",
         "manual_case_table": data.get("manual_case_table") or "",
-        "quality_assessment": f"✅ {data['quality']['result']}：{data['quality']['text']}",
-        "release_suggestion": f"✅ {data['release']['suggestion']}：{data['release']['text']}",
+        "quality_assessment": f"{quality_icon} {data['quality']['result']}：{data['quality']['text']}",
+        "release_suggestion": f"{release_icon} {data['release']['suggestion']}：{data['release']['text']}",
         "generated_at": data.get("generated_at") or "",
     }
     rendered = template
@@ -934,10 +1001,11 @@ def _build_report_data(payload: Dict[str, Any]) -> Dict[str, Any]:
     execution = {**_indexed_execution_map(report_cases), **_execution_map(payload)}
     cases = [_case_with_status(case, execution) for case in selected]
     report_cases_with_status = [_case_with_status(case, execution) for case in report_cases]
+    manual_cases_with_status = [case for case in cases if case.get("source_type") == "manual"]
     defects = _defect_statistics(payload)
-    statistics = _statistics(report_cases_with_status, defects)
+    statistics = _statistics(report_cases_with_status, defects, manual_cases_with_status)
     quality = _quality(statistics, report_cases_with_status)
-    release = _release(quality)
+    release = _release(quality, statistics)
     meta = _meta(sources, payload)
     scope = _scope_markdown(cases)
     source_metas = [source["meta"] for source in sources]

@@ -4334,7 +4334,7 @@ function setMindmapReportStatus(text, type = '') {
   const el = document.getElementById('mindmap-report-status');
   if (!el) return;
   el.textContent = text || '';
-  el.className = `generate-status ${type || ''}`;
+  el.className = `generate-status${text ? ' show' : ''}${type ? ` ${type}` : ''}`;
 }
 
 function mindmapReportMetaPayload() {
@@ -4373,11 +4373,12 @@ function mindmapReportStatsHtml(data = {}) {
   const release = data.release || {};
   return `
     <div class="mindmap-report-stats">
-      <div><strong>${escapeHtml(stats.total ?? '-')}</strong><span>总计</span></div>
+      <div><strong>${escapeHtml(stats.total ?? '-')}</strong><span>自动化总计</span></div>
       <div><strong>${escapeHtml(stats.passed ?? '-')}</strong><span>通过</span></div>
       <div><strong>${escapeHtml(stats.failed ?? '-')}</strong><span>失败</span></div>
       <div><strong>${escapeHtml(stats.blocked ?? '-')}</strong><span>阻塞</span></div>
       <div><strong>${escapeHtml(stats.not_executed ?? '-')}</strong><span>未执行</span></div>
+      <div><strong>${escapeHtml(stats.manual_pending ?? 0)}</strong><span>待人工确认</span></div>
       <div><strong>${escapeHtml(stats.pass_rate ?? 0)}%</strong><span>通过率</span></div>
       <div><strong>${escapeHtml(stats.defect_total ?? 0)}</strong><span>缺陷总数</span></div>
     </div>

@@ -115,6 +115,38 @@ test('editing the APK install form clears contradictory validation feedback imme
   assert.match(source, /clearAppInstallFeedback\(\); setExecutionTab\('debug'\)/);
 });
 
+test('mindmap report validation feedback stays visible after an action is rejected', t => {
+  const source = fs.readFileSync('js/app.js', 'utf8');
+  const dom = new JSDOM('<body><div id="mindmap-report-status" class="generate-status show">ready</div></body>', {runScripts: 'dangerously'});
+  t.after(() => dom.window.close());
+  const win = dom.window;
+  loadFunction(win, source, 'setMindmapReportStatus');
+
+  win.setMindmapReportStatus('请至少选择一条用例。', 'error');
+
+  const status = win.document.getElementById('mindmap-report-status');
+  assert.equal(status.textContent, '请至少选择一条用例。');
+  assert.equal(status.className, 'generate-status show error');
+});
+
+test('mindmap report preview distinguishes automation totals from pending manual checks', t => {
+  const source = fs.readFileSync('js/app.js', 'utf8');
+  const dom = new JSDOM('<body></body>', {runScripts: 'dangerously'});
+  t.after(() => dom.window.close());
+  const win = dom.window;
+  win.escapeHtml = value => String(value ?? '');
+  loadFunction(win, source, 'mindmapReportStatsHtml');
+
+  const html = win.mindmapReportStatsHtml({
+    statistics: {total: 2, passed: 2, manual_pending: 1, pass_rate: 100, defect_total: 0},
+    quality: {result: '待人工确认'},
+    release: {suggestion: '暂不建议发布'},
+  });
+
+  assert.match(html, /自动化总计/);
+  assert.match(html, /<strong>1<\/strong><span>待人工确认<\/span>/);
+});
+
 test('refreshing the generic Trace Viewer keeps the full list after a trace is selected', async t => {
   const html = fs.readFileSync('trace-viewer.html', 'utf8');
   const script = html.match(/<script>([\s\S]*?)<\/script>\s*<\/body>/)[1]
