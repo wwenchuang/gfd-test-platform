@@ -4,6 +4,7 @@ import { FlaskConical, Plus, Search } from 'lucide-vue-next'
 
 import { apiClient } from '../api/client'
 import type { ApiEndpoint, InlineWorkflowStep, WorkflowStepPreview, WorkflowVariableOption } from '../api/contracts'
+import { endpointRequestFromDefinition } from '../stores/cases'
 import { confirmApiExecution } from '../utils/executionConfirmation'
 import { withLegacyVariables } from '../utils/workflowVariables'
 import EndpointPicker from './EndpointPicker.vue'
@@ -29,6 +30,8 @@ const emit = defineEmits<{ 'update:modelValue': [steps: InlineWorkflowStep[]] }>
 const jsonErrors = ref<Record<string, string>>({})
 const pickerOpen = ref(false)
 const pickerTargetIndex = ref<number | null>(null)
+const pickerBusy = ref(false)
+const pickerError = ref('')
 const activeIndex = ref<number | null>(props.modelValue.length ? 0 : null)
 const preview = ref<WorkflowStepPreview | null>(null)
 const previewIndex = ref<number | null>(null)
@@ -52,6 +55,7 @@ function update(mutator: (steps: InlineWorkflowStep[]) => void): void {
 
 function addStep(): void {
   pickerTargetIndex.value = null
+  pickerError.value = ''
   pickerOpen.value = true
 }
 
@@ -79,13 +83,31 @@ function addManualStep(): void {
   pickerOpen.value = false
 }
 
-function addEndpointStep(endpoint: ApiEndpoint): void {
+async function addEndpointStep(endpoint: ApiEndpoint): Promise<void> {
+  if (pickerBusy.value) return
+  pickerBusy.value = true
+  pickerError.value = ''
+  let detailed = endpoint
+  try {
+    if (endpoint.operation !== undefined) {
+      const response = await apiClient.get<{ endpoint: ApiEndpoint }>(
+        `/api/api-testing/v1/endpoints/${encodeURIComponent(endpoint.id)}`,
+      )
+      detailed = response.data.endpoint
+    }
+  } catch (error) {
+    const detail = error instanceof Error ? error.message.trim() : ''
+    pickerError.value = detail ? `接口详情读取失败：${detail}。请重试。` : '接口详情读取失败，请重试。'
+    return
+  } finally {
+    pickerBusy.value = false
+  }
   const targetIndex = pickerTargetIndex.value
   if (targetIndex === null) {
     update(steps => steps.push({
-      name: endpoint.summary || `${endpoint.method} ${endpoint.path}`,
+      name: detailed.summary || `${detailed.method} ${detailed.path}`,
       enabled: true,
-      request: endpointRequest(endpoint),
+      request: endpointRequestFromDefinition(detailed),
       assertions: [
         { type: 'status_code', operator: 'equals', expected: 200, timeout_ms: 0, enabled: true },
         { type: 'json_path', operator: 'equals', path: '$.code', expected: 0, timeout_ms: 0, enabled: true },
@@ -95,23 +117,16 @@ function addEndpointStep(endpoint: ApiEndpoint): void {
     }))
     activeIndex.value = props.modelValue.length
   } else {
-    update(steps => applyEndpoint(steps[targetIndex], endpoint))
+    update(steps => applyEndpoint(steps[targetIndex], detailed))
     activeIndex.value = targetIndex
   }
   pickerTargetIndex.value = null
   pickerOpen.value = false
 }
 
-function endpointRequest(endpoint: ApiEndpoint): InlineWorkflowStep['request'] {
-  return {
-    method: endpoint.method, path: endpoint.path, service: 'default',
-    path_params: {}, query: {}, headers: {}, cookies: {}, body: null,
-  }
-}
-
 function applyEndpoint(step: InlineWorkflowStep, endpoint: ApiEndpoint): void {
   step.name = endpoint.summary || `${endpoint.method} ${endpoint.path}`
-  step.request = endpointRequest(endpoint)
+  step.request = endpointRequestFromDefinition(endpoint)
   if (!['GET', 'HEAD'].includes(endpoint.method)) delete step.polling
 }
 
@@ -145,11 +160,13 @@ function matchedEndpoint(step: InlineWorkflowStep): ApiEndpoint | undefined {
 
 function reselectEndpoint(index: number): void {
   pickerTargetIndex.value = index
+  pickerError.value = ''
   pickerOpen.value = true
 }
 
 function closePicker(): void {
   pickerTargetIndex.value = null
+  pickerError.value = ''
   pickerOpen.value = false
 }
 
@@ -322,6 +339,8 @@ watch(() => props.validationErrors, errors => {
       :endpoints="endpointOptions || []"
       :title="pickerTargetIndex === null ? `添加${stageLabel}` : `重新选择${stageLabel}接口`"
       :allow-manual="pickerTargetIndex === null"
+      :busy="pickerBusy"
+      :error="pickerError"
       @select="addEndpointStep"
       @manual="addManualStep"
       @close="closePicker"

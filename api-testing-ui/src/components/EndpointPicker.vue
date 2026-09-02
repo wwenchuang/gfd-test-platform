@@ -15,7 +15,9 @@ const props = withDefaults(defineProps<{
   endpoints: ApiEndpoint[]
   title: string
   allowManual?: boolean
-}>(), { allowManual: true })
+  busy?: boolean
+  error?: string
+}>(), { allowManual: true, busy: false, error: '' })
 
 const emit = defineEmits<{
   select: [endpoint: ApiEndpoint]
@@ -177,6 +179,7 @@ function handleKeydown(event: KeyboardEvent): void {
                   :data-testid="`endpoint-picker-option-${endpoint.id}`"
                   class="endpoint-picker-option"
                   type="button"
+                  :disabled="busy"
                   @click="emit('select', endpoint)"
                 >
                   <span :class="['method-badge', `method-${endpoint.method.toLowerCase()}`]">{{ endpoint.method }}</span>
@@ -201,7 +204,11 @@ function handleKeydown(event: KeyboardEvent): void {
         </section>
         <p v-if="!groups.length" class="state-message">没有匹配的接口。</p>
       </div>
-      <footer v-if="allowManual"><button data-testid="endpoint-picker-manual" class="secondary-command" type="button" @click="emit('manual')">手工配置请求</button></footer>
+      <p v-if="error" data-testid="endpoint-picker-error" class="inline-error">{{ error }}</p>
+      <footer v-if="allowManual || busy">
+        <span v-if="busy">正在读取完整接口定义…</span>
+        <button v-if="allowManual" data-testid="endpoint-picker-manual" class="secondary-command" type="button" :disabled="busy" @click="emit('manual')">手工配置请求</button>
+      </footer>
     </section>
   </div>
 </template>

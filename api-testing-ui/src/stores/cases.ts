@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 
 import { apiClient, type ApiClient } from '../api/client'
-import type { AiJob, ApiEndpoint, CaseDraft, CaseValidation, CaseVersion, DebugResult, EnvironmentRevisionSnapshot, ExecutionCaseResult, ExecutionView, GeneratedCasePreview } from '../api/contracts'
+import type { AiJob, ApiEndpoint, CaseDraft, CaseRequest, CaseValidation, CaseVersion, DebugResult, EnvironmentRevisionSnapshot, ExecutionCaseResult, ExecutionView, GeneratedCasePreview } from '../api/contracts'
 import { aiValidationSummary } from '../utils/aiValidationPresentation'
 import { validateCaseDraftLocally } from '../utils/caseDraftValidation'
 import { hasLoadedCaseEvidence } from '../utils/executionPresentation'
@@ -596,9 +596,20 @@ function blankDraft(endpoint: ApiEndpoint): CaseDraft {
     app_name: '',
     business: '',
     priority: 'P1',
-    request: { method: endpoint.method, path: endpoint.path, service: 'default', ...requestParameterExamples(endpoint.operation), headers: {}, body: requestBodyExample(endpoint.operation) },
+    request: endpointRequestFromDefinition(endpoint),
     data_rows: [], assertions: [{ type: 'status_code', operator: 'equals', expected: 200, timeout_ms: 0, enabled: true }],
     extractions: [], dependencies: [], processing: { pre: [], post: [], setup_steps: [], cleanup_steps: [] },
+  }
+}
+
+export function endpointRequestFromDefinition(endpoint: ApiEndpoint): CaseRequest {
+  return {
+    method: endpoint.method,
+    path: endpoint.path,
+    service: 'default',
+    ...requestParameterExamples(endpoint.operation),
+    headers: {},
+    body: requestBodyExample(endpoint.operation),
   }
 }
 

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { mount } from '@vue/test-utils'
+import { flushPromises, mount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { apiClient } from '../api/client'
@@ -42,6 +42,56 @@ describe('InlineWorkflowStepEditor', () => {
       name: '查询模型列表',
       request: { method: 'POST', path: '/models/page' },
     })
+  })
+
+  it('loads the complete endpoint contract before creating a workflow step', async () => {
+    const lightweight: ApiEndpoint = {
+      id: 'device-status', method: 'GET', path: '/devices/status', summary: '查询设备状态',
+      tags: ['家用业务', '设备'], operation: {},
+    }
+    const get = vi.spyOn(apiClient, 'get').mockResolvedValue({
+      data: {
+        endpoint: {
+          ...lightweight,
+          operation: {
+            parameters: [{ name: 'deviceSn', in: 'query', schema: { type: 'string', example: 'sn-001' } }],
+          },
+        },
+      },
+      request_id: 'request-1',
+    })
+    const wrapper = mount(InlineWorkflowStepEditor, {
+      props: { modelValue: [], stage: 'setup', endpointOptions: [lightweight] },
+    })
+
+    await wrapper.get('[data-testid="add-setup-step"]').trigger('click')
+    await wrapper.get('[data-testid="endpoint-picker-search"]').setValue('设备状态')
+    await wrapper.get('[data-testid="endpoint-picker-option-device-status"]').trigger('click')
+    await flushPromises()
+
+    expect(get).toHaveBeenCalledWith('/api/api-testing/v1/endpoints/device-status')
+    const steps = wrapper.emitted('update:modelValue')?.at(-1)?.[0] as InlineWorkflowStep[]
+    expect(steps[0].request.query).toEqual({ deviceSn: 'sn-001' })
+  })
+
+  it('keeps the endpoint picker open when the complete contract cannot be loaded', async () => {
+    const lightweight: ApiEndpoint = {
+      id: 'device-status', method: 'GET', path: '/devices/status', summary: '查询设备状态',
+      tags: ['家用业务', '设备'], operation: {},
+    }
+    vi.spyOn(apiClient, 'get').mockRejectedValue(new Error('服务暂时不可用'))
+    const wrapper = mount(InlineWorkflowStepEditor, {
+      props: { modelValue: [], stage: 'cleanup', endpointOptions: [lightweight] },
+    })
+
+    await wrapper.get('[data-testid="add-cleanup-step"]').trigger('click')
+    await wrapper.get('[data-testid="endpoint-picker-search"]').setValue('设备状态')
+    await wrapper.get('[data-testid="endpoint-picker-option-device-status"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.get('[data-testid="endpoint-picker-error"]').text()).toContain('接口详情读取失败：服务暂时不可用。请重试。')
+    expect(wrapper.find('[data-testid="endpoint-picker-search"]').exists()).toBe(true)
+    expect(wrapper.emitted('update:modelValue')).toBeUndefined()
   })
 
   it('runs through the selected setup step and converts selected response fields into extractions', async () => {
