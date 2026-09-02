@@ -1,5 +1,11 @@
 import type { ApiEndpoint } from '../api/contracts'
 
+export interface EndpointDomainGroup {
+  name: string
+  groups: Array<[string, ApiEndpoint[]]>
+  endpoints: ApiEndpoint[]
+}
+
 export function groupEndpoints(endpoints: ApiEndpoint[]): Array<[string, ApiEndpoint[]]> {
   const grouped = new Map<string, ApiEndpoint[]>()
   for (const endpoint of endpoints) {
@@ -26,6 +32,46 @@ export function compareGroupNames(left: string, right: string): number {
   if (left === '未分组接口') return 1
   if (right === '未分组接口') return -1
   return left.localeCompare(right, 'zh-Hans-CN')
+}
+
+export function groupEndpointDomains(entries: Array<[string, ApiEndpoint[]]>): EndpointDomainGroup[] {
+  const grouped = new Map<string, EndpointDomainGroup>()
+  for (const entry of entries) {
+    const name = endpointDomainName(entry[0])
+    const domain = grouped.get(name) || { name, groups: [], endpoints: [] }
+    domain.groups.push(entry)
+    domain.endpoints.push(...entry[1])
+    grouped.set(name, domain)
+  }
+  const order = ['家用', '共享', '本地', '地铁', '其他', '未分类']
+  return [...grouped.values()].sort((left, right) => {
+    const leftIndex = order.indexOf(left.name)
+    const rightIndex = order.indexOf(right.name)
+    if (leftIndex >= 0 || rightIndex >= 0) {
+      if (leftIndex < 0) return 1
+      if (rightIndex < 0) return -1
+      return leftIndex - rightIndex
+    }
+    return left.name.localeCompare(right.name, 'zh-Hans-CN')
+  })
+}
+
+export function endpointDomainName(group: string): string {
+  if (group === '未分组接口') return '未分类'
+  const parts = group.split(' / ').map(part => part.trim()).filter(Boolean)
+  const first = parts[0] || ''
+  if (first.includes('家用')) return '家用'
+  if (first.includes('共享')) return '共享'
+  if (first.includes('本地')) return '本地'
+  if (first.includes('地铁')) return '地铁'
+  if (parts.length === 1) return '其他'
+  return first.replace(/业务$/, '') || '其他'
+}
+
+export function endpointSubgroupName(group: string, domain: string): string {
+  const parts = group.split(' / ').map(part => part.trim()).filter(Boolean)
+  if (parts.length > 1 && endpointDomainName(group) === domain) return parts.slice(1).join(' / ')
+  return group
 }
 
 function folderParts(value: unknown): string[] {

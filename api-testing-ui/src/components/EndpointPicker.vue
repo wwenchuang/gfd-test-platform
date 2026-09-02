@@ -3,7 +3,7 @@ import { computed, nextTick, ref, watch } from 'vue'
 import { ChevronDown, ChevronRight, Search, X } from 'lucide-vue-next'
 
 import type { ApiEndpoint } from '../api/contracts'
-import { endpointGroupName, groupEndpoints } from '../utils/endpointGroups'
+import { endpointGroupName, endpointSubgroupName, groupEndpointDomains, groupEndpoints } from '../utils/endpointGroups'
 
 interface HighlightSegment {
   text: string
@@ -26,6 +26,7 @@ const emit = defineEmits<{
 const query = ref('')
 const searchInput = ref<HTMLInputElement | null>(null)
 const collapsedGroups = ref(new Set<string>())
+const collapsedDomains = ref(new Set<string>())
 let returnTarget: HTMLElement | null = null
 
 const filteredEndpoints = computed(() => {
@@ -34,10 +35,16 @@ const filteredEndpoints = computed(() => {
   return props.endpoints.filter(endpoint => endpointSearchText(endpoint).includes(needle))
 })
 const groups = computed(() => groupEndpoints(filteredEndpoints.value))
+const domains = computed(() => groupEndpointDomains(groups.value))
+const allGroups = computed(() => groupEndpoints(props.endpoints))
+const useDomainHierarchy = computed(() => allGroups.value.length > 8)
 
 watch(() => props.endpoints, endpoints => {
-  const names = groupEndpoints(endpoints).map(([name]) => name)
-  collapsedGroups.value = new Set(names)
+  const entries = groupEndpoints(endpoints)
+  collapsedGroups.value = new Set(entries.map(([name]) => name))
+  collapsedDomains.value = useDomainHierarchy.value
+    ? new Set(groupEndpointDomains(entries).map(domain => domain.name))
+    : new Set()
 }, { immediate: true })
 
 watch(() => props.open, async open => {
@@ -75,6 +82,17 @@ function toggleGroup(group: string): void {
   if (next.has(group)) next.delete(group)
   else next.add(group)
   collapsedGroups.value = next
+}
+
+function isDomainCollapsed(domain: string): boolean {
+  return useDomainHierarchy.value && !normalizedQuery() && collapsedDomains.value.has(domain)
+}
+
+function toggleDomain(domain: string): void {
+  const next = new Set(collapsedDomains.value)
+  if (next.has(domain)) next.delete(domain)
+  else next.add(domain)
+  collapsedDomains.value = next
 }
 
 function highlightText(value: string): HighlightSegment[] {
@@ -119,49 +137,66 @@ function handleKeydown(event: KeyboardEvent): void {
         <input ref="searchInput" v-model="query" data-testid="endpoint-picker-search" placeholder="搜索名称、方法、路径或分组" />
       </label>
       <div class="endpoint-picker-results">
-        <section v-for="[group, endpoints] in groups" :key="group" class="endpoint-picker-group">
+        <section v-for="domain in domains" :key="domain.name" class="endpoint-picker-domain">
           <button
-            :data-testid="`endpoint-picker-group-${group}`"
-            class="endpoint-picker-group-toggle"
+            v-if="useDomainHierarchy"
+            :data-testid="`endpoint-picker-domain-${domain.name}`"
+            class="endpoint-picker-domain-toggle"
             type="button"
-            :aria-expanded="isCollapsed(group) ? 'false' : 'true'"
-            @click="toggleGroup(group)"
+            :aria-expanded="isDomainCollapsed(domain.name) ? 'false' : 'true'"
+            @click="toggleDomain(domain.name)"
           >
-            <ChevronRight v-if="isCollapsed(group)" :size="15" />
-            <ChevronDown v-else :size="15" />
-            <span>
-              <template v-for="(segment, index) in highlightText(group)" :key="`${group}-${index}`">
-                <mark v-if="segment.match" class="search-highlight">{{ segment.text }}</mark>
-                <template v-else>{{ segment.text }}</template>
-              </template>
-            </span>
-            <b>{{ endpoints.length }}</b>
+            <ChevronRight v-if="isDomainCollapsed(domain.name)" :size="16" />
+            <ChevronDown v-else :size="16" />
+            <strong>{{ domain.name }}</strong>
+            <span>{{ domain.groups.length }} 个分组 · {{ domain.endpoints.length }} 个接口</span>
           </button>
-          <template v-if="!isCollapsed(group)">
-            <button
-              v-for="endpoint in endpoints"
-              :key="endpoint.id"
-              :data-testid="`endpoint-picker-option-${endpoint.id}`"
-              class="endpoint-picker-option"
-              type="button"
-              @click="emit('select', endpoint)"
-            >
-              <span :class="['method-badge', `method-${endpoint.method.toLowerCase()}`]">{{ endpoint.method }}</span>
-              <span>
-                <strong>
-                  <template v-for="(segment, index) in highlightText(endpoint.summary || endpoint.path)" :key="`${endpoint.id}-summary-${index}`">
+          <template v-if="!isDomainCollapsed(domain.name)">
+            <section v-for="[group, endpoints] in domain.groups" :key="group" :class="['endpoint-picker-group', { 'endpoint-picker-subgroup': useDomainHierarchy }]">
+              <button
+                :data-testid="`endpoint-picker-group-${group}`"
+                class="endpoint-picker-group-toggle"
+                type="button"
+                :aria-expanded="isCollapsed(group) ? 'false' : 'true'"
+                @click="toggleGroup(group)"
+              >
+                <ChevronRight v-if="isCollapsed(group)" :size="15" />
+                <ChevronDown v-else :size="15" />
+                <span :title="group">
+                  <template v-for="(segment, index) in highlightText(useDomainHierarchy ? endpointSubgroupName(group, domain.name) : group)" :key="`${group}-${index}`">
                     <mark v-if="segment.match" class="search-highlight">{{ segment.text }}</mark>
                     <template v-else>{{ segment.text }}</template>
                   </template>
-                </strong>
-                <code>
-                  <template v-for="(segment, index) in highlightText(endpoint.path)" :key="`${endpoint.id}-path-${index}`">
-                    <mark v-if="segment.match" class="search-highlight">{{ segment.text }}</mark>
-                    <template v-else>{{ segment.text }}</template>
-                  </template>
-                </code>
-              </span>
-            </button>
+                </span>
+                <b>{{ endpoints.length }}</b>
+              </button>
+              <template v-if="!isCollapsed(group)">
+                <button
+                  v-for="endpoint in endpoints"
+                  :key="endpoint.id"
+                  :data-testid="`endpoint-picker-option-${endpoint.id}`"
+                  class="endpoint-picker-option"
+                  type="button"
+                  @click="emit('select', endpoint)"
+                >
+                  <span :class="['method-badge', `method-${endpoint.method.toLowerCase()}`]">{{ endpoint.method }}</span>
+                  <span>
+                    <strong>
+                      <template v-for="(segment, index) in highlightText(endpoint.summary || endpoint.path)" :key="`${endpoint.id}-summary-${index}`">
+                        <mark v-if="segment.match" class="search-highlight">{{ segment.text }}</mark>
+                        <template v-else>{{ segment.text }}</template>
+                      </template>
+                    </strong>
+                    <code>
+                      <template v-for="(segment, index) in highlightText(endpoint.path)" :key="`${endpoint.id}-path-${index}`">
+                        <mark v-if="segment.match" class="search-highlight">{{ segment.text }}</mark>
+                        <template v-else>{{ segment.text }}</template>
+                      </template>
+                    </code>
+                  </span>
+                </button>
+              </template>
+            </section>
           </template>
         </section>
         <p v-if="!groups.length" class="state-message">没有匹配的接口。</p>

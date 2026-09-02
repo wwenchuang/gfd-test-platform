@@ -3,7 +3,7 @@ import { computed, ref, watch } from 'vue'
 import { ChevronDown, ChevronRight, Search, X } from 'lucide-vue-next'
 
 import type { ApiEndpoint, LoadState } from '../api/contracts'
-import { endpointGroupName, groupEndpoints } from '../utils/endpointGroups'
+import { endpointGroupName, endpointSubgroupName, groupEndpointDomains, groupEndpoints } from '../utils/endpointGroups'
 
 const props = withDefaults(defineProps<{ endpoints: ApiEndpoint[]; selectedIds?: string[]; state?: LoadState; error?: string; initialTab?: 'all' | 'selected' }>(), {
   selectedIds: () => [], state: 'ready', error: '', initialTab: 'all',
@@ -12,11 +12,6 @@ const emit = defineEmits<{ 'selection-change': [ids: string[]]; activate: [endpo
 interface HighlightSegment {
   text: string
   match: boolean
-}
-interface EndpointDomain {
-  name: string
-  groups: Array<[string, ApiEndpoint[]]>
-  items: ApiEndpoint[]
 }
 
 const query = ref('')
@@ -59,8 +54,8 @@ const filtered = computed(() => {
 })
 const groups = computed(() => groupEndpoints(filtered.value))
 const allGroupNames = computed(() => groupEndpoints(props.endpoints).map(([group]) => group))
-const domains = computed(() => groupByDomain(groups.value))
-const allDomains = computed(() => groupByDomain(groupEndpoints(props.endpoints)))
+const domains = computed(() => groupEndpointDomains(groups.value))
+const allDomains = computed(() => groupEndpointDomains(groupEndpoints(props.endpoints)))
 const useDomainHierarchy = computed(() => allGroupNames.value.length > 8)
 const selectedEndpoints = computed(() => props.endpoints.filter(endpoint => selected.value.has(endpoint.id)))
 const filteredSelectedEndpoints = computed(() => {
@@ -161,46 +156,6 @@ function isGroupCollapsed(group: string): boolean {
   return !query.value.trim() && collapsedGroups.value.has(group)
 }
 
-function groupByDomain(entries: Array<[string, ApiEndpoint[]]>): EndpointDomain[] {
-  const grouped = new Map<string, EndpointDomain>()
-  for (const entry of entries) {
-    const name = domainName(entry[0])
-    const domain = grouped.get(name) || { name, groups: [], items: [] }
-    domain.groups.push(entry)
-    domain.items.push(...entry[1])
-    grouped.set(name, domain)
-  }
-  const order = ['家用', '共享', '本地', '地铁', '其他', '未分类']
-  return [...grouped.values()].sort((left, right) => {
-    const leftIndex = order.indexOf(left.name)
-    const rightIndex = order.indexOf(right.name)
-    if (leftIndex >= 0 || rightIndex >= 0) {
-      if (leftIndex < 0) return 1
-      if (rightIndex < 0) return -1
-      return leftIndex - rightIndex
-    }
-    return left.name.localeCompare(right.name, 'zh-Hans-CN')
-  })
-}
-
-function domainName(group: string): string {
-  if (group === '未分组接口') return '未分类'
-  const parts = group.split(' / ').map(part => part.trim()).filter(Boolean)
-  const first = parts[0] || ''
-  if (first.includes('家用')) return '家用'
-  if (first.includes('共享')) return '共享'
-  if (first.includes('本地')) return '本地'
-  if (first.includes('地铁')) return '地铁'
-  if (parts.length === 1) return '其他'
-  return first.replace(/业务$/, '') || '其他'
-}
-
-function subgroupName(group: string, domain: string): string {
-  const parts = group.split(' / ').map(part => part.trim()).filter(Boolean)
-  if (parts.length > 1 && domainName(group) === domain) return parts.slice(1).join(' / ')
-  return group
-}
-
 function highlightText(value: string): HighlightSegment[] {
   const text = value || ''
   const needle = query.value.trim()
@@ -255,9 +210,9 @@ function showAllSearchMatches(): void {
             <input
               :data-testid="`domain-select-${domain.name}`"
               type="checkbox"
-              :checked="groupChecked(domain.items)"
-              :indeterminate.prop="groupIndeterminate(domain.items)"
-              @change="toggleGroup(domain.items, ($event.target as HTMLInputElement).checked)"
+              :checked="groupChecked(domain.endpoints)"
+              :indeterminate.prop="groupIndeterminate(domain.endpoints)"
+              @change="toggleGroup(domain.endpoints, ($event.target as HTMLInputElement).checked)"
             />
             <button :data-testid="`domain-toggle-${domain.name}`" type="button" @click="toggleDomainCollapsed(domain.name)">
               <ChevronRight v-if="isDomainCollapsed(domain.name)" :size="15" />
@@ -265,7 +220,7 @@ function showAllSearchMatches(): void {
               <span>{{ domain.name }}</span>
             </button>
           </label>
-          <span :data-testid="`domain-count-${domain.name}`">{{ selectedCount(domain.items) ? `${selectedCount(domain.items)} 已选 · ` : '' }}{{ domain.groups.length }} 个分组 · {{ domain.items.length }} 个接口</span>
+          <span :data-testid="`domain-count-${domain.name}`">{{ selectedCount(domain.endpoints) ? `${selectedCount(domain.endpoints)} 已选 · ` : '' }}{{ domain.groups.length }} 个分组 · {{ domain.endpoints.length }} 个接口</span>
         </div>
         <template v-if="!isDomainCollapsed(domain.name)">
           <div v-for="[group, items] in domain.groups" :key="group" :class="['endpoint-group', { 'endpoint-subgroup': useDomainHierarchy }]">
@@ -282,7 +237,7 @@ function showAllSearchMatches(): void {
                   <ChevronRight v-if="isGroupCollapsed(group)" :size="14" />
                   <ChevronDown v-else :size="14" />
                   <span :title="group">
-                    <template v-for="(segment, index) in highlightText(useDomainHierarchy ? subgroupName(group, domain.name) : group)" :key="`${group}-group-${index}`">
+                    <template v-for="(segment, index) in highlightText(useDomainHierarchy ? endpointSubgroupName(group, domain.name) : group)" :key="`${group}-group-${index}`">
                       <mark v-if="segment.match" class="search-highlight">{{ segment.text }}</mark>
                       <template v-else>{{ segment.text }}</template>
                     </template>

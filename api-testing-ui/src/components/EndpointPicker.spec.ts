@@ -23,6 +23,39 @@ describe('EndpointPicker', () => {
     expect(wrapper.find('[data-testid="endpoint-picker-option-resource-page"]').exists()).toBe(true)
   })
 
+  it('consolidates a large step catalog by business before folder groups', async () => {
+    const endpoints: ApiEndpoint[] = [
+      ...Array.from({ length: 10 }, (_, index) => ({
+        id: `home-${index}`,
+        method: 'GET',
+        path: `/home/${index}`,
+        summary: `家用步骤 ${index}`,
+        tags: ['家用业务', 'app接口', `分组 ${index}`],
+      })),
+      ...Array.from({ length: 3 }, (_, index) => ({
+        id: `shared-${index}`,
+        method: 'POST',
+        path: `/shared/${index}`,
+        summary: `共享步骤 ${index}`,
+        tags: ['共享业务', `分组 ${index}`],
+      })),
+    ]
+    const wrapper = mount(EndpointPicker, {
+      props: { open: true, title: '添加前置步骤', endpoints },
+    })
+
+    expect(wrapper.get('[data-testid="endpoint-picker-domain-家用"]').text()).toContain('10 个分组 · 10 个接口')
+    expect(wrapper.get('[data-testid="endpoint-picker-domain-共享"]').text()).toContain('3 个分组 · 3 个接口')
+    expect(wrapper.find('[data-testid="endpoint-picker-group-家用业务 / app接口 / 分组 0"]').exists()).toBe(false)
+
+    await wrapper.get('[data-testid="endpoint-picker-domain-家用"]').trigger('click')
+    expect(wrapper.get('[data-testid="endpoint-picker-group-家用业务 / app接口 / 分组 0"]').text()).toContain('app接口 / 分组 0')
+
+    await wrapper.get('[data-testid="endpoint-picker-search"]').setValue('共享步骤 2')
+    expect(wrapper.text()).toContain('共享步骤 2')
+    expect(wrapper.text()).toContain('/shared/2')
+  })
+
   it('searches endpoint name path method and group with highlighted matches', async () => {
     const wrapper = mount(EndpointPicker, {
       props: { open: true, title: '添加前置步骤', endpoints: ENDPOINTS },
