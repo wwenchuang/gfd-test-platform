@@ -157,7 +157,7 @@ const WORKFLOW_SECTIONS = {
         { label: '新建自动化测试', cls: 'primary', fn: 'showGenerateYaml()' }
       ]},
       { title: '页面知识 / Figma', text: '把长期复用的页面截图、入口、断言和 Figma Frame 放到页面知识库；生成和修复会自动引用。', actions: [
-        { label: '页面知识库', fn: 'showKnowledgeManager()' },
+        { label: '页面知识库', fn: 'showKnowledgeManager("generate")' },
         { label: '导入 Figma', fn: 'openKnowledgeFigmaImport()' }
       ]},
       { title: '生成任务 / 生成记录', text: '查看需求解析、用例生成、Figma 解析和 AI 修复等后台任务，不再去执行中心里翻。', actions: [

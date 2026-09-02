@@ -744,6 +744,12 @@ async function anyVisible(locator) {
       handleGenerateApplicationChange();
     });
     await page.evaluate(() => closeGenerateModal());
+    await page.click('.workflow-step[data-workflow="generate"]');
+    await page.locator('.workflow-guide button', {hasText: '页面知识库'}).click();
+    if (!await page.locator('.knowledge-manager').isVisible()) throw new Error('AI generation page knowledge action must open the page knowledge manager');
+    if (!await page.locator('.knowledge-manager button', {hasText: '返回 AI 生成'}).isVisible()) throw new Error('Page knowledge manager must return to the originating AI generation workflow');
+    await page.locator('.knowledge-manager button', {hasText: '返回 AI 生成'}).click();
+    if (!await page.locator('.workflow-guide', {hasText: '资料准备、需求解析、脑图和 YAML'}).isVisible()) throw new Error('Page knowledge return action must restore the AI generation workflow');
 
     await page.locator('details[data-nav-group="run"]').evaluate(el => { el.open = true; });
     await page.click('.workflow-step[data-workflow="execute"]');

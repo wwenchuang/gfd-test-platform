@@ -2149,7 +2149,7 @@ function renderAgentCenter() {
   `;
 }
 
-function knowledgeManagerHtml() {
+function knowledgeManagerHtml(returnWorkflow = '') {
   return `
     <div class="knowledge-manager">
       <div class="knowledge-manager-head">
@@ -2158,6 +2158,7 @@ function knowledgeManagerHtml() {
           <p>按应用、模块、链路和测试/基线库维护页面资产。生成和修复会按 APP 包名隔离引用。</p>
         </div>
         <div class="knowledge-manager-actions">
+          ${returnWorkflow === 'generate' ? '<button class="btn-sm" onclick="activateWorkflow(\'generate\')">返回 AI 生成</button>' : ''}
           <button class="btn-sm" onclick="refreshKnowledgeManager()">刷新</button>
           <button class="btn-sm success" onclick="openKnowledgeQuickCreate()">新建页面知识</button>
           <button class="btn-sm primary" onclick="openKnowledgeFigmaImport()">导入 Figma</button>
@@ -2829,7 +2830,7 @@ async function showModuleDirectory(mod) {
   refreshModuleDirectoryStats(mod).catch(() => {});
 }
 
-async function showKnowledgeManager() {
+async function showKnowledgeManager(returnWorkflow = '') {
   setActiveWorkflow('assets');
   resetYamlToolbarForManager();
   currentModule = currentModule || Object.keys(modules)[0] || null;
@@ -2838,7 +2839,7 @@ async function showKnowledgeManager() {
   document.getElementById('file-info').textContent = '页面知识库';
   const area = document.getElementById('editor-area');
   area.className = 'editor-area';
-  area.innerHTML = knowledgeManagerHtml();
+  area.innerHTML = knowledgeManagerHtml(returnWorkflow);
   updateToolbarState('页面知识库');
   renderModules();
   await refreshKnowledgeManager();
@@ -3827,7 +3828,7 @@ function renderModules() {
     }
     if (!rows.length) {
       list.innerHTML = '<div style="padding:16px;color:var(--text2);font-family:var(--mono);font-size:12px;">没有匹配的 YAML 文件</div>';
-      if (activeWorkflow === 'assets' && !hasOpenEditor()) showAssetsCenter();
+      if (activeWorkflow === 'assets' && !hasOpenEditor() && !document.querySelector('.knowledge-manager')) showAssetsCenter();
       return;
     }
     list.innerHTML = rows.map(row => `
@@ -3914,7 +3915,7 @@ function renderModules() {
   if (!list.innerHTML) {
     list.innerHTML = '<div style="padding:16px;color:var(--text2);font-family:var(--mono);font-size:12px;">没有匹配的 YAML 文件</div>';
   }
-  if (activeWorkflow === 'assets' && !hasOpenEditor()) showAssetsCenter();
+  if (activeWorkflow === 'assets' && !hasOpenEditor() && !document.querySelector('.knowledge-manager')) showAssetsCenter();
 }
 
 function toggleModule(mod, el) {
