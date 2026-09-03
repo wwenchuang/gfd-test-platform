@@ -87,8 +87,11 @@ function runName(run: { id: string; configuration: Record<string, unknown> }): s
   const value = run.configuration.scenario
   return value && typeof value === 'object' && 'name' in value ? String(value.name || run.id) : run.id
 }
-function allocationText(agent: Record<string, any>): string {
-  const allocation = agent.allocation || {}
+function objectValue(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' ? value as Record<string, unknown> : {}
+}
+function allocationText(agent: Record<string, unknown>): string {
+  const allocation = objectValue(agent.allocation)
   const parts = []
   if (Number(allocation.vus || 0) > 0) parts.push(`${Number(allocation.vus)} VU`)
   if (Number(allocation.rate || 0) > 0) parts.push(`${Number(allocation.rate)} 次/秒`)
@@ -96,6 +99,16 @@ function allocationText(agent: Record<string, any>): string {
 }
 function tierLabel(value: unknown): string {
   return ({ preferred: '首选节点', normal: '普通节点', fallback: '备用节点' } as Record<string, string>)[String(value || '')] || String(value || '未标记')
+}
+function agentTier(agent: Record<string, unknown>): string { return tierLabel(objectValue(agent.allocation).scheduling_tier) }
+function agentExitLabel(agent: Record<string, unknown>): string {
+  const value = objectValue(agent.summary).exit_code
+  return value === 0 ? '正常退出' : `退出码 ${value ?? '未上报'}`
+}
+function agentBucketCount(agent: Record<string, unknown>): number { return Number(objectValue(agent.summary).metric_bucket_count || 0) }
+function agentErrorText(agent: Record<string, unknown>): string {
+  const error = objectValue(agent.error)
+  return String(error.message || error.code || '节点执行失败')
 }
 </script>
 
@@ -113,7 +126,7 @@ function tierLabel(value: unknown): string {
         <section class="load-latency"><h2>响应时间分布</h2><div><span>P50<strong>{{ number(report.latency, 'p50_ms') }} ms</strong></span><span>P90<strong>{{ number(report.latency, 'p90_ms') }} ms</strong></span><span>P95<strong>{{ number(report.latency, 'p95_ms') }} ms</strong></span><span>P99<strong>{{ number(report.latency, 'p99_ms') }} ms</strong></span><span>最大<strong>{{ number(report.latency, 'max_ms') }} ms</strong></span></div></section>
         <section class="load-thresholds"><header><div><h2>性能阈值</h2><p>达到负载目标和阈值通过是两项独立结论。</p></div></header><div><article v-for="item in thresholds" :key="String(item.key)" :class="{ failed: !item.passed }"><strong>{{ item.label }}</strong><span>要求 {{ thresholdText(item) }}</span><span>实际 {{ item.actual }}</span><b>{{ item.passed ? '通过' : '未通过' }}</b></article><p v-if="!thresholds.length" class="compact-empty">本次未配置性能阈值。</p></div></section>
         <LoadMetricChart :series="report.series || []" :missing-windows="number(report.evidence, 'missing_windows')" />
-        <section class="load-agent-report"><h2>节点明细</h2><details v-for="agent in agents" :key="String(agent.id)"><summary>{{ agent.name || agent.id }} · {{ agent.state_label || agent.state }}</summary><dl class="load-agent-facts"><dt>分配压力</dt><dd>{{ allocationText(agent) }}</dd><dt>调度级别</dt><dd>{{ tierLabel(agent.allocation?.scheduling_tier) }}</dd><dt>进程结果</dt><dd>{{ agent.summary?.exit_code === 0 ? '正常退出' : `退出码 ${agent.summary?.exit_code ?? '未上报'}` }}</dd><dt>指标窗口</dt><dd>{{ Number(agent.summary?.metric_bucket_count || 0) }} 个</dd></dl><p v-if="agent.error" class="state-message state-error">{{ agent.error.message || agent.error.code || '节点执行失败' }}</p><details class="load-agent-technical"><summary>查看技术明细（JSON）</summary><pre>{{ JSON.stringify(agent, null, 2) }}</pre></details></details><p v-if="!agents.length" class="compact-empty">没有节点证据。</p></section>
+        <section class="load-agent-report"><h2>节点明细</h2><details v-for="agent in agents" :key="String(agent.id)"><summary>{{ agent.name || agent.id }} · {{ agent.state_label || agent.state }}</summary><dl class="load-agent-facts"><dt>分配压力</dt><dd>{{ allocationText(agent) }}</dd><dt>调度级别</dt><dd>{{ agentTier(agent) }}</dd><dt>进程结果</dt><dd>{{ agentExitLabel(agent) }}</dd><dt>指标窗口</dt><dd>{{ agentBucketCount(agent) }} 个</dd></dl><p v-if="agent.error" class="state-message state-error">{{ agentErrorText(agent) }}</p><details class="load-agent-technical"><summary>查看技术明细（JSON）</summary><pre>{{ JSON.stringify(agent, null, 2) }}</pre></details></details><p v-if="!agents.length" class="compact-empty">没有节点证据。</p></section>
         <p v-if="report.comparison?.compatible === false" class="load-warning">历史运行不可直接对比：{{ report.comparison.reason }}</p>
         <LoadAiAnalysis :analysis="analysis" :loading="analyzing" @reanalyze="reanalyze" />
       </template>
