@@ -187,6 +187,14 @@ def test_compiler_adds_stable_request_name_tags_and_csv_data_access():
     assert "const datasetVariables" not in compiled.script
 
 
+def test_compiler_avoids_javascript_syntax_rejected_by_bundled_k6():
+    compiled = compile_scenario(SEARCH_CHAIN, FIXED_RATE)
+
+    assert "??" not in compiled.script
+    assert "?." not in compiled.script
+    assert 'state[name] === undefined || state[name] === null' in compiled.script
+
+
 def test_control_setup_is_not_executed_by_agent_and_agent_setup_runs_once_per_shard():
     control_setup = dict(
         SEARCH_CHAIN["steps"][0],

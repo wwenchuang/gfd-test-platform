@@ -9,6 +9,7 @@ from task_server.api_testing.models.load_testing import ApiLoadAiAnalysis, ApiLo
 from task_server.api_testing.services.load_ai_analysis_service import (
     LoadAiAnalysisError,
     LoadAiAnalysisService,
+    _default_analyzer,
     build_evidence_package,
 )
 from tests.api_testing.test_load_testing_repository import load_factory, load_records, load_run_with_shard
@@ -130,6 +131,33 @@ def test_timeout_is_recorded_without_breaking_deterministic_report(load_factory,
     assert failed.state == "failed"
     assert "超时" in failed.error
     assert service.report_service.build(run.id, "load-owner")["business"]["failure_rate"] == 0.1
+
+
+def test_default_analyzer_supplies_schema_complete_low_confidence_defaults(monkeypatch):
+    captured = {}
+
+    def fake_run_ai_skill(_skill, **kwargs):
+        captured.update(kwargs)
+        return kwargs["output_defaults"]
+
+    monkeypatch.setattr(
+        "task_server.api_testing.services.load_ai_analysis_service.run_ai_skill",
+        fake_run_ai_skill,
+    )
+
+    result = _default_analyzer(build_evidence_package(_report()))
+
+    assert set(result) == {
+        "conclusion",
+        "bottleneck_category",
+        "evidence",
+        "recommendations",
+        "next_run",
+        "confidence",
+    }
+    assert result["evidence"] == ["load.goal"]
+    assert result["confidence"]["level"] == "low"
+    assert captured["repair_invalid_json"] is True
 
 
 def test_model_cannot_cite_nonexistent_evidence(load_factory, load_run_with_shard):

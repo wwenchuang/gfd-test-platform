@@ -165,7 +165,7 @@ def _assertion_expression(assertion):
         "not_exists": f"{actual} === undefined || {actual} === null",
         "greater_than": f"{actual} > {expected}",
         "less_than": f"{actual} < {expected}",
-        "matches": f"new RegExp({expected}).test(String({actual} ?? ''))",
+        "matches": f"new RegExp({expected}).test(String(({actual}) === undefined || ({actual}) === null ? '' : ({actual})))",
         "in": f"{expected}.includes({actual})",
     }[operator]
     return label, expression
@@ -279,7 +279,7 @@ function resolveValue(value, state, data) {{
 
 function resolveTemplate(value, state, encode) {{
   return value.replace(/\\{{\\{{([A-Za-z_][A-Za-z0-9_.-]*)\\}}\\}}/g, (_, name) => {{
-    const rendered = String(state[name] ?? \"\");
+    const rendered = String(state[name] === undefined || state[name] === null ? \"\" : state[name]);
     return encode ? encodeURIComponent(rendered) : rendered;
   }});
 }}
@@ -306,13 +306,16 @@ function jsonPath(value, path) {{
   if (path === \"$\") return value;
   return String(path).replace(/^\\$\\.?/, \"\").split(\".\").filter(Boolean).reduce((current, key) => current == null ? undefined : current[key], value);
 }}
-function containsValue(actual, expected) {{ return Array.isArray(actual) ? actual.includes(expected) : String(actual ?? \"\").includes(String(expected)); }}
+function containsValue(actual, expected) {{ return Array.isArray(actual) ? actual.includes(expected) : String(actual === undefined || actual === null ? \"\" : actual).includes(String(expected)); }}
 function applyExtractions(extractions, response, state) {{
   for (const item of extractions) {{
     let value;
     if (item.type === \"json_path\") value = jsonPath(responseJson(response), item.path);
     else if (item.type === \"header\") value = response.headers[item.name];
-    else if (item.type === \"cookie\") value = response.cookies[item.name]?.[0]?.value;
+    else if (item.type === \"cookie\") {{
+      const cookies = response.cookies[item.name];
+      value = cookies && cookies[0] ? cookies[0].value : undefined;
+    }}
     else if (item.type === \"status_code\") value = response.status;
     if ((value === undefined || value === null) && Object.prototype.hasOwnProperty.call(item, \"default\")) value = item.default;
     if ((value === undefined || value === null) && item.required) throw new Error(\"必需变量提取失败：\" + item.target);
@@ -330,7 +333,7 @@ export function setup() {{
 }}
 
 export default function(data) {{
-  Object.assign(vuState, data?.state || {{}});
+  Object.assign(vuState, data && data.state ? data.state : {{}});
   let iterationOk = true;
   try {{
     if (!vuInitialized) {{

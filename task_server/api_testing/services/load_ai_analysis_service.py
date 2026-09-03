@@ -160,6 +160,30 @@ def _validate_result(value, evidence):
 
 
 def _default_analyzer(evidence):
+    load_goal = evidence.get("load_goal") if isinstance(evidence.get("load_goal"), dict) else {}
+    load_model = load_goal.get("model")
+    if load_model not in {"constant-vus", "ramping-vus", "constant-arrival-rate", "ramping-arrival-rate"}:
+        load_model = "constant-arrival-rate"
+    target = load_goal.get("target_iterations_per_second") or load_goal.get("target_vus") or 1
+    if isinstance(target, bool) or not isinstance(target, (int, float)) or target <= 0:
+        target = 1
+    output_defaults = {
+        "conclusion": "AI 未返回完整诊断字段，请先依据平台确定性指标判断并使用小流量复验。",
+        "bottleneck_category": "insufficient_evidence",
+        "evidence": ["load.goal"],
+        "recommendations": [{
+            "priority": "high",
+            "action": "先检查节点证据完整性、负载目标和失败率，再以相同小流量重跑。",
+            "verification": "确认全部节点完成、存在指标窗口，并对比重跑后的 P95 与失败率。",
+        }],
+        "next_run": {
+            "load_model": load_model,
+            "target": target,
+            "duration_seconds": 60,
+            "agent_suggestion": "优先使用已校准且资源余量充足的专用节点；备用节点仅用于小流量验证。",
+        },
+        "confidence": {"level": "low", "reason": "模型输出字段不完整，当前仅提供保守复验建议。"},
+    }
     return run_ai_skill(
         "api-load-analysis",
         payload=evidence,
@@ -168,6 +192,7 @@ def _default_analyzer(evidence):
         timeout=60,
         respect_global_timeout=False,
         repair_invalid_json=True,
+        output_defaults=output_defaults,
     )
 
 
