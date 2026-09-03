@@ -34,6 +34,14 @@
 
 ## 最近完成的关键修复
 
+### 2026-09-03 主平台测试报告认证下载热修复
+
+用户在线点击脑图测试报告的“下载 Word”后，新标签直接打开`/api/test-reports/download`并返回`unauthorized / 登录已失效`。根因是报告结果区用普通`<a target="_blank">`导航到受保护资源，新页面不会携带保存在`sessionStorage`中的Bearer会话；服务端拒绝未认证下载是正确行为，不能通过开放报告接口解决。
+
+本地已把HTML、Word和Markdown三个报告入口统一改为按钮：使用既有`downloadAuthenticatedFile`附带当前会话请求文件，按响应`Content-Disposition`保存；下载期间显示“下载中...”并禁止重复点击，完成后提示真实文件名，失败停留原页显示中文原因，不再进入JSON错误页。报告地址只接受当前站点的`/api/test-reports/download`，不会把会话发送到外部地址。主平台`app.js`静态版本已更新，部署后普通刷新即可加载新代码。
+
+新增3项报告下载专项回归，连同已有认证下载、报告筛选和主平台流程反馈共32项通过；前端静态84项、主平台访问控制52项（项目`.venv`）、JavaScript/JSON语法和`git diff --check`通过。系统`/usr/bin/python3`缺少`argon2`导致同一权限测试14项环境失败，改用仓库`.venv/bin/python`后52/52通过。本地修复尚需提交推送及用户部署；部署后必须用登录会话实际点击Word、Markdown和HTML三个下载按钮，并核对Safari下载记录及文件内容，不能只用接口响应代替页面复验。
+
 ### 2026-09-03 API 性能测试设计待评审
 
 已完成现有 API 平台性能测试正式设计，文档为`docs/superpowers/specs/2026-09-03-api-load-testing-design.md`。方案使用独立 Docker k6 Agent，不复用功能回归`HttpExecutor`制造负载；同时支持单接口和有序业务链路、固定/阶梯 VU、固定/阶梯到达率、一台到多台 Agent 分片、节点调度级别与任务优先级、实时聚合指标、停止恢复、确定性报告和 AI 诊断。

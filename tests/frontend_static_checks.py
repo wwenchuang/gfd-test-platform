@@ -435,7 +435,7 @@ def main():
     require('utils.js?v=20260828-full-platform-ux-20260902-a104-review-controls' in html, "utils must publish the A104 Safari download and upload controls")
     require('identity-management.js?v=20260902-a108-workflow-clarity' in html, "identity management must publish the A108 audit-action labels")
     require('agent-status.js?v=20260828-full-platform-ux-20260902-a110-knowledge-filtering' in html, "agent status must publish the A110 page-knowledge filtering fixes")
-    require('app.js?v=20260831-identity-20260902-a109-knowledge-context' in html, "app.js must publish the A109 page-knowledge app selection fixes")
+    require('app.js?v=20260831-identity-20260903-a113-report-download' in html, "app.js must publish the A113 authenticated report download fix")
     nginx_source = (ROOT / "deploy" / "nginx-midscene-task.conf").read_text(encoding="utf-8")
     require("location = /api-test" in nginx_source and "absolute_redirect off" in nginx_source, "The /api-test entry redirect must retain the public host and port")
     require("function jobTimelineHtml(job)" in html and "进度流水" in html, "Execution job detail must show progress timeline")

@@ -4747,6 +4747,45 @@ async function previewMindmapTestReport() {
   }
 }
 
+function mindmapReportDownloadPath(rawUrl) {
+  const value = String(rawUrl || '').trim();
+  if (!value) throw new Error('报告下载地址缺失，请重新生成报告');
+  let path = value;
+  if (/^https?:\/\//i.test(value)) {
+    const parsed = new URL(value, window.location.origin);
+    if (parsed.origin !== window.location.origin) throw new Error('报告下载地址不是当前平台地址');
+    path = `${parsed.pathname}${parsed.search}`;
+  }
+  const apiBase = typeof API_BASE === 'string' ? API_BASE : '/api';
+  if (path.startsWith(`${apiBase}/`)) path = path.slice(apiBase.length);
+  if (!path.startsWith('/test-reports/download?')) throw new Error('报告下载地址无效，请重新生成报告');
+  return path;
+}
+
+async function downloadMindmapTestReport(button) {
+  if (!button || button.disabled) return false;
+  const originalLabel = button.textContent;
+  button.disabled = true;
+  button.textContent = '下载中...';
+  try {
+    const path = mindmapReportDownloadPath(button.dataset.reportDownload);
+    const filename = await downloadAuthenticatedFile(path, button.dataset.reportFilename || '测试报告');
+    showToast(`✓ 已下载：${filename}`, 'success');
+    return true;
+  } catch(e) {
+    let message = e?.message || '下载测试报告失败';
+    try {
+      const payload = JSON.parse(message);
+      message = payload.error || payload.message || message;
+    } catch (_) {}
+    showToast(message, 'error');
+    return false;
+  } finally {
+    button.disabled = false;
+    button.textContent = originalLabel;
+  }
+}
+
 async function createMindmapTestReport() {
   if (mindmapReportBusy) return;
   if (!mindmapReportSelection.size) {
@@ -4766,16 +4805,19 @@ async function createMindmapTestReport() {
     showToast('✓ 测试报告已生成', 'success');
     const preview = document.getElementById('mindmap-report-preview');
     if (preview) {
+      const reportTitle = String(data.title || data.report_id || '测试报告').trim();
+      const htmlUrl = data.download?.html || (data.report_id ? `/api/test-reports/download?report_id=${encodeURIComponent(data.report_id)}&format=html` : '');
       const wordUrl = data.download?.word || (data.report_id ? `/api/test-reports/download?report_id=${encodeURIComponent(data.report_id)}&format=doc` : '');
+      const markdownUrl = data.download?.markdown || (data.report_id ? `/api/test-reports/download?report_id=${encodeURIComponent(data.report_id)}&format=md` : '');
       preview.innerHTML = `
         ${mindmapReportStatsHtml(data)}
         <div class="mindmap-report-result">
-          <strong>${escapeHtml(data.title || '测试报告')}</strong>
+          <strong>${escapeHtml(reportTitle)}</strong>
           <span>${escapeHtml(data.report_id || '')}</span>
           <div class="mindmap-report-actions">
-            <a class="btn-sm primary" href="${escapeHtml(data.download?.html || '')}" target="_blank">打开 HTML</a>
-            <a class="btn-sm success" href="${escapeHtml(wordUrl)}" target="_blank">下载 Word</a>
-            <a class="btn-sm" href="${escapeHtml(data.download?.markdown || '')}" target="_blank">下载 Markdown</a>
+            <button class="btn-sm primary" data-report-download="${escapeHtml(htmlUrl)}" data-report-filename="${escapeHtml(`${reportTitle}_测试报告.html`)}" onclick="downloadMindmapTestReport(this)" ${htmlUrl ? '' : 'disabled'}>下载 HTML</button>
+            <button class="btn-sm success" data-report-download="${escapeHtml(wordUrl)}" data-report-filename="${escapeHtml(`${reportTitle}_测试报告.doc`)}" onclick="downloadMindmapTestReport(this)" ${wordUrl ? '' : 'disabled'}>下载 Word</button>
+            <button class="btn-sm" data-report-download="${escapeHtml(markdownUrl)}" data-report-filename="${escapeHtml(`${reportTitle}_测试报告.md`)}" onclick="downloadMindmapTestReport(this)" ${markdownUrl ? '' : 'disabled'}>下载 Markdown</button>
             <button class="btn-sm" onclick="showMindmapCenter()">回到脑图中心</button>
           </div>
         </div>
