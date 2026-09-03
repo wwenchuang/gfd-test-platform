@@ -189,6 +189,7 @@ function dateTime(value?: string | null): string {
           <b :class="`calibration-${item.calibration_state}`">{{ calibration(item.calibration_state).label }}</b>
         </header>
         <p class="agent-help">{{ calibration(item.calibration_state).help }}</p>
+        <p v-if="item.calibration_state === 'failed' && item.health.calibration?.message" class="agent-calibration-error" role="alert">失败原因：{{ item.health.calibration.message }}</p>
         <div class="load-capacity-grid">
           <div><span>本机硬上限</span><strong>{{ item.hard_limits.max_vus }} VU · {{ item.hard_limits.max_iterations_per_second }} 次/秒</strong><small>进程 {{ item.hard_limits.max_processes }} · 最长 {{ item.hard_limits.max_duration_seconds }} 秒 · CPU {{ item.hard_limits.cpu_cores }} 核 · 内存 {{ item.hard_limits.memory_mb }} MB。Agent按容器资源上报，平台不能调高。</small></div>
           <div><span>平台软上限</span><strong>{{ item.soft_limits.max_vus }} VU · {{ item.soft_limits.max_iterations_per_second }} 次/秒</strong><small>进程 {{ item.soft_limits.max_processes }} · 最长 {{ item.soft_limits.max_duration_seconds }} 秒 · CPU {{ item.soft_limits.cpu_cores }} 核 · 内存 {{ item.soft_limits.memory_mb }} MB。任务实际分配不会超过这个保护值。</small></div>

@@ -107,6 +107,23 @@ describe('LoadAgentsView', () => {
     wrapper.unmount()
   })
 
+  it('shows the Agent calibration failure reason instead of only generic advice', async () => {
+    const store = useLoadTestingStore()
+    vi.spyOn(store, 'loadAgents').mockImplementation(async () => {
+      store.agents = [agent({
+        calibration_state: 'failed',
+        health: { schedulable: false, calibration: {
+          state: 'failed', message: '校准结果缺少迭代率或虚拟用户数',
+        } },
+      })]
+      return store.agents
+    })
+    const wrapper = mount(LoadAgentsView)
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('失败原因：校准结果缺少迭代率或虚拟用户数')
+  })
+
   it('creates a one-time enrollment, copies its command and warns about HTTP transport', async () => {
     Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: vi.fn().mockResolvedValue(undefined) } })
     const store = useLoadTestingStore()

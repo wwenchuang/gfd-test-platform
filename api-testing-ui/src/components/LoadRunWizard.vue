@@ -25,7 +25,10 @@ const environment = computed(() => props.environments.find(item => item.id === e
 const production = computed(() => /生产|正式|prod(uction)?/i.test(environment.value?.name || ''))
 const hasProductionPermission = computed(() => apiTestingHasPermission('api.production'))
 const arrivalModel = computed(() => executor.value.includes('arrival-rate'))
-const targetIterations = computed(() => arrivalModel.value ? rate.value * duration.value : vus.value * duration.value)
+const targetIterations = computed(() => rate.value * duration.value)
+const iterationEstimate = computed(() => arrivalModel.value
+  ? `按目标吞吐预计约 ${targetIterations.value} 次完整链路。`
+  : `${executor.value === 'constant-vus' ? '固定并发' : '阶梯并发'}会在时长内持续循环；实际次数取决于接口响应时间，不能按 VU × 秒数推算。`)
 
 function availableCapacity(agent: LoadAgent, field: 'max_vus' | 'max_iterations_per_second'): number {
   const candidates = [agent.hard_limits[field], agent.soft_limits[field], agent.health.calibration?.[field]]
@@ -93,6 +96,7 @@ function submit(): void {
       <div class="load-option-grid">
         <button v-for="item in [{ value: 'constant-vus', label: '固定并发', help: '保持固定虚拟用户，VU 不等于 QPS。' }, { value: 'ramping-vus', label: '阶梯并发', help: '逐步升高并发，观察性能拐点。' }, { value: 'constant-arrival-rate', label: '固定吞吐', help: '保持每秒完整链路次数，适合验证目标 QPS。' }, { value: 'ramping-arrival-rate', label: '阶梯吞吐', help: '逐级提高吞吐，寻找容量上限。' }]" :key="item.value" :data-testid="`load-model-${item.value}`" :class="{ active: executor === item.value }" type="button" @click="selectExecutor(item.value)"><strong>{{ item.label }}</strong><span>{{ item.help }}</span></button>
       </div>
+      <p class="load-model-guide"><strong>第一次怎么选：</strong>只想确认流程时，使用安全的只读接口和“固定吞吐”，先从 1 次/秒、10 秒开始；“固定并发”用于模拟同时在线用户，不会把请求速度限制为 VU 数。</p>
       <div class="load-field-grid">
         <label v-if="!arrivalModel">并发用户（VU）<input v-model.number="vus" data-testid="load-vus" type="number" min="1" /></label>
         <template v-else><label>目标吞吐（次/秒）<input v-model.number="rate" data-testid="load-rate" type="number" min="1" /></label><label>预分配并发（VU）<input v-model.number="vus" data-testid="load-vus" type="number" min="1" /></label></template>
@@ -108,7 +112,7 @@ function submit(): void {
       <p v-if="selected.length && !capacityEnough" class="load-warning" data-testid="capacity-shortfall">所选节点容量不足：合计可用 {{ selectedCapacity.vus }} VU / {{ selectedCapacity.rate }} 次/秒。请降低目标或增加节点。</p>
       <label class="load-check"><input v-model="allowRunAnyway" data-testid="allow-run-anyway" type="checkbox" />容量不足时仍创建任务（报告固定标记为证据不足）</label>
       <label v-if="production && hasProductionPermission" class="load-check"><input v-model="productionConfirmed" type="checkbox" />我确认本次会向生产环境持续发送真实请求</label>
-      <div class="load-review-box"><strong>执行前预估</strong><p>预计约 {{ targetIterations }} 次完整链路；持续 {{ duration }} 秒；选择 {{ selected.length }} 台节点；当前可用 {{ selectedCapacity.vus }} VU / {{ selectedCapacity.rate }} 次/秒。创建后还需依次完成目标连通性检查、单用户预检和开始执行。</p></div>
+      <div class="load-review-box"><strong>执行前预估</strong><p>{{ iterationEstimate }} 持续 {{ duration }} 秒；选择 {{ selected.length }} 台节点；当前可用 {{ selectedCapacity.vus }} VU / {{ selectedCapacity.rate }} 次/秒。创建后还需依次完成目标连通性检查、单用户预检和开始执行。</p></div>
     </div>
     <footer><button class="secondary-command" type="button" @click="emit('cancel')">取消</button><span /><button data-testid="load-run-submit" class="primary-command" type="button" :disabled="!canSubmit" @click="submit">创建压测草稿</button></footer>
   </section>

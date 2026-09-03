@@ -22,6 +22,17 @@ class _FakeProcess:
         )
 
 
+class _LegacySummaryProcess(_FakeProcess):
+    """k6 0.52 --summary-export writes metric values directly on each metric."""
+
+    def communicate(self, timeout):
+        return (
+            '{"metrics":{"iterations":{"count":9240,"rate":420},'
+            '"vus_max":{"value":180,"min":180,"max":180}}}',
+            "",
+        )
+
+
 def test_calibration_uses_local_only_k6_script_and_records_seven_day_signature(tmp_path):
     commands = []
 
@@ -56,6 +67,25 @@ def test_calibration_uses_local_only_k6_script_and_records_seven_day_signature(t
     assert result["memory_peak_mb"] == 256.5
     assert "ramping-vus" in script
     assert '"target":200' in script
+
+
+def test_calibration_parses_k6_052_legacy_summary_export(tmp_path):
+    result = CalibrationRunner(
+        k6_binary="k6",
+        data_dir=tmp_path,
+        popen=lambda *_args, **_kwargs: _LegacySummaryProcess(),
+        now=lambda: datetime(2026, 9, 3, 8, 0, tzinfo=timezone.utc),
+        hardware_signature=lambda: "cpu4-mem8g",
+        agent_version="0.1.0",
+        k6_version="k6 v0.52.0",
+        hard_max_vus=200,
+        hard_max_iterations_per_second=1000,
+        process_sampler=lambda: (60.0, 200.0),
+    ).run()
+
+    assert result["state"] == "valid"
+    assert result["max_iterations_per_second"] == 336
+    assert result["max_vus"] == 144
 
 
 def test_calibration_expires_or_invalidates_on_binary_or_hardware_change():

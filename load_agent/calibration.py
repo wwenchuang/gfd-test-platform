@@ -192,10 +192,20 @@ class CalibrationRunner:
             else:
                 summary = json.loads(stdout)
             metrics = summary.get("metrics", {})
-            rate = float(metrics.get("iterations", {}).get("values", {}).get("rate") or 0)
-            vus = float(metrics.get("vus_max", {}).get("values", {}).get("max") or 0)
+            iterations = metrics.get("iterations", {})
+            vus_max = metrics.get("vus_max", {})
+            # k6 0.52 --summary-export writes values directly on the metric;
+            # handleSummary and newer machine-readable summaries nest them in
+            # `values`. Accept both because deployed Agents currently use 0.52.
+            iteration_values = iterations.get("values", iterations)
+            vu_values = vus_max.get("values", vus_max)
+            rate = float(iteration_values.get("rate") or 0)
+            vus = float(vu_values.get("max") or vu_values.get("value") or 0)
             if rate <= 0 or vus <= 0:
-                raise ValueError("校准结果缺少迭代率或虚拟用户数")
+                raise ValueError(
+                    "校准结果缺少迭代率或虚拟用户数"
+                    f"（iterations.rate={rate:g}，vus_max={vus:g}）"
+                )
             return {
                 "id": str(uuid.uuid4()),
                 "state": "valid",

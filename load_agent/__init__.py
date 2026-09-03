@@ -1,3 +1,3 @@
 """Isolated Docker client for distributed API load execution."""
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
