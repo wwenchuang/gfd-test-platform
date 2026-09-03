@@ -94,6 +94,27 @@ def test_unreached_rate_is_inconclusive_even_when_all_requests_pass(load_factory
     assert "未达到目标负载" in report["verdict_explanation"]
 
 
+def test_rate_uses_configured_load_window_instead_of_orchestration_wall_clock(
+    load_factory, load_run_with_shard
+):
+    run, shard, _ = _prepare(load_factory, load_run_with_shard, target_rate=1)
+    LoadMetricService(load_factory).ingest(
+        shard.agent_id,
+        shard.id,
+        _metric_payload("complete-window", requests=10, iterations=10),
+    )
+    _finish(load_factory, run, shard)
+    with load_factory.begin() as session:
+        session.get(ApiLoadRun, run.id).finished_at = START + timedelta(seconds=13)
+
+    report = LoadReportService(load_factory).build(run.id, "load-owner")
+
+    assert report["transport"]["requests_per_second"] == 1.0
+    assert report["load_goal"]["actual_iterations_per_second"] == 1.0
+    assert report["load_goal"]["reached"] is True
+    assert report["verdict"] == "passed"
+
+
 def test_http_200_business_failure_is_not_transport_success_verdict(load_factory, load_run_with_shard):
     thresholds = {"business_failure_rate": {"operator": "less_than_or_equal", "value": 0, "required": True}}
     run, shard, _ = _prepare(load_factory, load_run_with_shard, target_rate=4, thresholds=thresholds)

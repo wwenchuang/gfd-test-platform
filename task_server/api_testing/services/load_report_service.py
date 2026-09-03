@@ -62,6 +62,25 @@ def _duration(run, buckets):
     return 0.0
 
 
+def _configured_load_duration(configuration):
+    workload = (configuration or {}).get("workload") or configuration or {}
+    duration = workload.get("duration_seconds")
+    if isinstance(duration, (int, float)) and not isinstance(duration, bool) and duration > 0:
+        return float(duration)
+    stages = workload.get("stages") if isinstance(workload.get("stages"), list) else []
+    durations = [
+        item.get("duration_seconds")
+        for item in stages
+        if isinstance(item, dict)
+    ]
+    if durations and all(
+        isinstance(item, (int, float)) and not isinstance(item, bool) and item > 0
+        for item in durations
+    ):
+        return float(sum(durations))
+    return 0.0
+
+
 def _missing_windows(buckets):
     groups = {}
     for item in buckets:
@@ -144,7 +163,11 @@ class LoadReportService:
                     )
                 )
 
-        aggregate = self._aggregate(run, buckets)
+        aggregate = self._aggregate(
+            run,
+            buckets,
+            duration_seconds=_configured_load_duration(run.configuration),
+        )
         missing_windows = _missing_windows(buckets)
         evidence_complete = (
             run.state == "finished"
@@ -213,7 +236,7 @@ class LoadReportService:
         }
 
     @staticmethod
-    def _aggregate(run, buckets):
+    def _aggregate(run, buckets, *, duration_seconds=0.0):
         totals = {
             key: 0
             for key in (
@@ -239,7 +262,7 @@ class LoadReportService:
             histogram["count"] += int(current.get("count") or 0)
             histogram["sum_ms"] += float(current.get("sum_ms") or 0)
             histogram["max_ms"] = max(histogram["max_ms"], float(current.get("max_ms") or 0))
-        duration = _duration(run, buckets)
+        duration = float(duration_seconds) if duration_seconds > 0 else _duration(run, buckets)
         return {"totals": totals, "histogram": histogram, "duration_seconds": duration}
 
     @staticmethod
@@ -458,7 +481,11 @@ class LoadReportService:
             return result
         if previous is None or not previous_buckets:
             return {"label": "历史对比", "compatible": False, "reason": "没有可比历史运行"}
-        baseline = cls._aggregate(previous, previous_buckets)
+        baseline = cls._aggregate(
+            previous,
+            previous_buckets,
+            duration_seconds=_configured_load_duration(previous.configuration),
+        )
         current_sections = cls._sections(current)
         previous_sections = cls._sections(baseline)
         current_p95 = current_sections["latency"]["p95_ms"]
