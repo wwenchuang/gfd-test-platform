@@ -682,32 +682,32 @@ git commit -m "feat(load): add performance navigation and agent management"
 - Scenario wizard emits only server-validated definitions.
 - Run wizard emits workload, thresholds, allocation policy and risk acknowledgment.
 
-- [ ] **Step 1: Write failing scenario wizard tests**
+- [x] **Step 1: Write failing scenario wizard tests**
 
 Click every step, source selector, single/workflow switch, data mode, validation issue, preflight, version save, cancel and reopen action. Verify dangerous endpoints show the backend reason and cannot be silently selected. Assert Chinese names and usage guidance for all four k6 executors, thresholds and data modes.
 
-- [ ] **Step 2: Write failing run wizard tests**
+- [x] **Step 2: Write failing run wizard tests**
 
 Cover four load models, stage editing, threshold rows, automatic/specific/group nodes, fallback opt-in, priority, uncalibrated-node blocking, calibrated capacity and expiry, capacity shortfall, per-node connectivity, request estimate, production confirmation, start and post-start navigation.
 
-- [ ] **Step 3: Run tests and verify missing views**
+- [x] **Step 3: Run tests and verify missing views**
 
-- [ ] **Step 4: Implement scenario wizard with one clear next action**
+- [x] **Step 4: Implement scenario wizard with one clear next action**
 
 Each step shows completion state and keeps previously entered data when navigating backward. Search inputs use the existing IME composition guard.
 
-- [ ] **Step 5: Implement run wizard and capacity summary**
+- [x] **Step 5: Implement run wizard and capacity summary**
 
 Show target, estimated capacity, chosen nodes, per-node allocation, fallback participation, duration and estimated requests before enabling start.
 
-- [ ] **Step 6: Run targeted and existing API UI tests**
+- [x] **Step 6: Run targeted and existing API UI tests**
 
 ```bash
 npm --prefix api-testing-ui test -- --run src/components/LoadScenarioWizard.spec.ts \
   src/components/LoadRunWizard.spec.ts src/views/LoadScenariosView.spec.ts src/views/LoadRunsView.spec.ts
 ```
 
-- [ ] **Step 7: Commit scenario and run UI**
+- [x] **Step 7: Commit scenario and run UI**
 
 ```bash
 git add api-testing-ui/src/views/LoadScenariosView.* api-testing-ui/src/views/LoadRunsView.* \

@@ -4,6 +4,7 @@ import base64
 import binascii
 import copy
 import logging
+from urllib.parse import urlsplit
 
 from sqlalchemy import select
 
@@ -21,6 +22,7 @@ from .models.load_testing import (
     ApiLoadScenario,
     ApiLoadScenarioVersion,
 )
+from .models.environment import ApiEnvironmentService
 from .repositories.load_testing_repository import LoadTestingRepository
 from .services.case_service import CaseService
 from .services.environment_service import EnvironmentService
@@ -228,6 +230,9 @@ def _post(factory, segments, payload, actor):
     if len(segments) == 3 and segments[0] == "load-runs" and segments[2] == "preflight":
         run = _run_service(factory).preflight(segments[1], actor)
         return {"run": _run_view(run)}, 200
+    if len(segments) == 3 and segments[0] == "load-runs" and segments[2] == "connectivity":
+        agents = _prepare_run_connectivity(factory, segments[1], actor)
+        return {"agents": [_agent_view(item) for item in agents]}, 202
     if len(segments) == 3 and segments[0] == "load-runs" and segments[2] == "start":
         try:
             run = _run_service(factory).start(segments[1], actor)
@@ -321,6 +326,43 @@ def _run_service(factory):
         FunctionalLoadStepRunner(executor), connectivity_probe=connectivity_probe,
     )
     return LoadRunService(factory, preflight_service=preflight)
+
+
+def _prepare_run_connectivity(factory, run_id, actor):
+    access.require_permission(actor, "api.loadtest.execute")
+    with factory() as session:
+        run = session.get(ApiLoadRun, run_id)
+        access.require_resource(session, run, actor, "api.loadtest.execute")
+        if run.state != "draft":
+            raise LoadRunError("只有预检前的压测草稿可以检查目标连通性", status=409, code="connectivity_state_conflict")
+        shards = tuple(session.scalars(select(ApiLoadRunShard).where(ApiLoadRunShard.run_id == run.id)))
+        agents = [session.get(ApiLoadAgent, item.agent_id) for item in shards]
+        services = tuple(session.scalars(select(ApiEnvironmentService).where(
+            ApiEnvironmentService.revision_id == run.environment_revision_id,
+        ).order_by(ApiEnvironmentService.service_name)))
+        targets = []
+        seen = set()
+        for item in services:
+            parsed = urlsplit(item.base_url)
+            if not parsed.hostname:
+                continue
+            key = (parsed.hostname, parsed.port, parsed.scheme)
+            if key in seen:
+                continue
+            seen.add(key)
+            targets.append({
+                "name": item.module_name or item.service_name,
+                "host": parsed.hostname,
+                "port": parsed.port or (443 if parsed.scheme == "https" else 80),
+                "tls": parsed.scheme == "https",
+            })
+    if not targets:
+        raise LoadAgentError("目标环境没有可检查的有效服务地址", code="target_missing")
+    service = LoadAgentService(factory)
+    return [
+        service.request_target_connectivity(item.id, run.environment_revision_id, targets, actor)
+        for item in agents if item is not None
+    ]
 
 
 def _project(factory, project_id, actor, permission):

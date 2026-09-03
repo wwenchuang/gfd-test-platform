@@ -246,19 +246,22 @@ class LoadAgentService:
             previous_health = agent.health if isinstance(agent.health, dict) else {}
             pending_command = previous_health.get("pending_command")
             calibration = health.get("calibration") if isinstance(health.get("calibration"), dict) else {}
-            command_completed = (
-                isinstance(pending_command, dict)
-                and calibration.get("command_id") == pending_command.get("id")
-                and calibration.get("state") in {"valid", "failed"}
-            )
+            command_completed = False
+            if isinstance(pending_command, dict) and pending_command.get("type") == "calibrate":
+                command_completed = calibration.get("command_id") == pending_command.get("id") and calibration.get("state") in {"valid", "failed"}
+            elif isinstance(pending_command, dict) and pending_command.get("type") == "target_connectivity":
+                connectivity = health.get("target_connectivity") if isinstance(health.get("target_connectivity"), dict) else {}
+                result = connectivity.get(pending_command.get("environment_revision_id"))
+                command_completed = isinstance(result, dict) and result.get("command_id") == pending_command.get("id")
             if isinstance(pending_command, dict) and not command_completed:
                 health["pending_command"] = copy.deepcopy(pending_command)
-                health["schedulable"] = False
-                health["calibration"] = {
-                    **copy.deepcopy(calibration),
-                    "state": "calibrating",
-                    "requested_at": pending_command.get("requested_at"),
-                }
+                if pending_command.get("type") == "calibrate":
+                    health["schedulable"] = False
+                    health["calibration"] = {
+                        **copy.deepcopy(calibration),
+                        "state": "calibrating",
+                        "requested_at": pending_command.get("requested_at"),
+                    }
             _soft_limits(agent.soft_limits, hard_limits)
             agent.hard_limits = hard_limits
             agent.current_usage = current_usage
@@ -310,6 +313,37 @@ class LoadAgentService:
                 "state": "calibrating",
                 "requested_at": pending["requested_at"],
             }
+            agent.health = health
+            agent.updated_by = actor_id
+            session.flush()
+            return agent
+
+    def request_target_connectivity(self, agent_id, environment_revision_id, targets, actor_id):
+        access.require_permission(actor_id, "api.loadtest.execute")
+        if not isinstance(environment_revision_id, str) or not environment_revision_id:
+            raise LoadAgentError("环境版本不能为空")
+        if not isinstance(targets, list) or not targets:
+            raise LoadAgentError("目标环境没有可检查的服务地址", code="target_missing")
+        with self.session_factory.begin() as session:
+            agent = session.scalar(select(ApiLoadAgent).where(ApiLoadAgent.id == agent_id).with_for_update())
+            if agent is None or agent.status != "online":
+                raise LoadAgentError("压测节点离线，无法检查目标环境", status=409, code="agent_offline")
+            usage = agent.current_usage if isinstance(agent.current_usage, dict) else {}
+            if float(usage.get("processes") or 0) > 0:
+                raise LoadAgentError("压测节点正在执行任务，无法检查目标环境", status=409, code="agent_busy")
+            health = copy.deepcopy(agent.health if isinstance(agent.health, dict) else {})
+            existing = health.get("pending_command")
+            if isinstance(existing, dict) and (
+                existing.get("type") != "target_connectivity"
+                or existing.get("environment_revision_id") != environment_revision_id
+            ):
+                raise LoadAgentError("节点还有待执行的管理命令，请稍后重试", status=409, code="agent_command_pending")
+            command = existing if isinstance(existing, dict) else {
+                "type": "target_connectivity", "id": str(uuid.uuid4()),
+                "environment_revision_id": environment_revision_id,
+                "targets": copy.deepcopy(targets), "requested_at": _now_utc(self.now()).isoformat(),
+            }
+            health["pending_command"] = command
             agent.health = health
             agent.updated_by = actor_id
             session.flush()

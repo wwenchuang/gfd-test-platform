@@ -35,7 +35,7 @@ def agent_permissions(monkeypatch):
             "status": "active",
             "must_change_password": False,
             "is_superuser": False,
-            "permissions": ["api.view", "api.loadtest.view", "api.loadtest.manage_agents"],
+            "permissions": ["api.view", "api.loadtest.view", "api.loadtest.execute", "api.loadtest.manage_agents"],
         },
         "viewer": {
             "status": "active",
@@ -269,3 +269,40 @@ def test_offline_agent_calibration_request_explains_how_to_recover(load_factory,
 
     assert offline.value.code == "agent_offline"
     assert "启动Agent" in str(offline.value)
+
+
+def test_target_connectivity_command_survives_heartbeat_until_matching_result(load_factory, agent_permissions):
+    service = _service(load_factory)
+    enrollment = service.create_enrollment({"name": "连通性节点", "scheduling_tier": "normal"}, "admin")
+    registration = service.register(enrollment.token, CAPABILITIES)
+    heartbeat = {
+        "agent_version": "1.0.0", "k6_version": "0.52.0", "hard_limits": HARD_LIMITS,
+        "current_usage": {"processes": 0, "vus": 0},
+        "health": {"schedulable": True, "calibration": {"state": "valid"}}, "egress_ip": "",
+    }
+    service.heartbeat(registration.secret, heartbeat)
+    requested = service.request_target_connectivity(
+        registration.agent.id, "environment-revision-1",
+        [{"name": "default", "host": "api.example.test", "port": 443, "tls": True}], "admin",
+    )
+    command = requested.health["pending_command"]
+    with pytest.raises(LoadAgentError) as conflicting:
+        service.request_target_connectivity(
+            registration.agent.id, "environment-revision-2",
+            [{"name": "other", "host": "other.example.test", "port": 443, "tls": True}], "admin",
+        )
+    assert conflicting.value.code == "agent_command_pending"
+    waiting = service.heartbeat(registration.secret, heartbeat)
+    assert waiting.health["pending_command"]["id"] == command["id"]
+
+    completed = service.heartbeat(registration.secret, {
+        **heartbeat,
+        "health": {**heartbeat["health"], "target_connectivity": {
+            "environment-revision-1": {
+                "command_id": command["id"], "reachable": True, "stage": "complete",
+                "dns_ms": 2.1, "connect_ms": 6.2, "tls_ms": 12.5,
+            },
+        }},
+    })
+    assert "pending_command" not in completed.health
+    assert completed.health["target_connectivity"]["environment-revision-1"]["reachable"] is True

@@ -8,8 +8,8 @@ import pytest
 from sqlalchemy import select
 
 from task_server.api_testing import access
-from task_server.api_testing.load_testing_http import handle_load_testing_request
-from task_server.api_testing.models.environment import ApiEnvironment, ApiEnvironmentRevision
+from task_server.api_testing.load_testing_http import _prepare_run_connectivity, handle_load_testing_request
+from task_server.api_testing.models.environment import ApiEnvironment, ApiEnvironmentRevision, ApiEnvironmentService
 from task_server.api_testing.models.load_testing import (
     ApiLoadAgent,
     ApiLoadEvent,
@@ -142,6 +142,35 @@ def test_agent_calibration_action_requires_management_permission(load_factory, u
     assert result["agent"]["calibration_state"] == "calibrating"
 
 
+def test_run_connectivity_uses_selected_shards_and_environment_service_targets(load_factory, catalog, users, monkeypatch):
+    with load_factory.begin() as session:
+        scenario = ApiLoadScenario(project_id=catalog["project"].id, name="目标检查", scenario_type="single_interface", **_audit())
+        session.add(scenario)
+        session.flush()
+        version = ApiLoadScenarioVersion(scenario_id=scenario.id, version_number=1, definition=_definition(), source_snapshot={}, validation_summary={"accepted": True}, compiler_version="k6-safe-v1", content_hash="c" * 64, **_audit())
+        session.add(version)
+        agent = ApiLoadAgent(name="北京专用节点", status="online", scheduling_tier="preferred", node_group="北京", credential_hash="secret", agent_version="1", k6_version="1", hard_limits={}, soft_limits={}, current_usage={}, health={}, **_audit())
+        session.add(agent)
+        session.flush()
+        run = ApiLoadRun(project_id=catalog["project"].id, scenario_version_id=version.id, environment_revision_id=catalog["revision"].id, load_model="constant-vus", queue_priority="normal", configuration={}, state="draft", **_audit())
+        session.add(run)
+        session.flush()
+        session.add(ApiLoadRunShard(run_id=run.id, agent_id=agent.id, sequence=1, global_sequence=1, allocation={}, state="assigned", **_audit()))
+        session.add(ApiEnvironmentService(revision_id=catalog["revision"].id, service_name="default", module_name="主服务", base_url="https://api.example.test:8443/base", metadata_json={}, **_audit()))
+        session.flush()
+        run_id, agent_id = run.id, agent.id
+
+    captured = []
+    monkeypatch.setattr(
+        "task_server.api_testing.load_testing_http.LoadAgentService.request_target_connectivity",
+        lambda _self, requested_agent, revision_id, targets, actor: captured.append((requested_agent, revision_id, targets, actor)) or SimpleNamespace(id=requested_agent),
+    )
+    agents = _prepare_run_connectivity(load_factory, run_id, "runner")
+
+    assert agents[0].id == agent_id
+    assert captured == [(agent_id, catalog["revision"].id, [{"name": "主服务", "host": "api.example.test", "port": 8443, "tls": True}], "runner")]
+
+
 def test_run_read_events_report_ai_and_actions_use_separate_permissions(load_factory, catalog, users, monkeypatch):
     now = datetime(2026, 9, 3, 16, 0, tzinfo=timezone.utc)
     with load_factory.begin() as session:
@@ -179,6 +208,16 @@ def test_run_read_events_report_ai_and_actions_use_separate_permissions(load_fac
     monkeypatch.setattr("task_server.api_testing.load_testing_http._run_service", lambda _factory: FakeRunService())
     monkeypatch.setattr("task_server.api_testing.load_testing_http.LoadReportService.build", lambda _self, requested_id, actor: {"run_id": requested_id, "verdict": "inconclusive", "actor": actor})
     monkeypatch.setattr("task_server.api_testing.load_testing_http.LoadAiAnalysisService.request", lambda _self, requested_id, actor, force=False: SimpleNamespace(id="analysis-1", run_id=requested_id, state="queued", evidence_hash="e" * 64, model="平台自动路由", prompt_version="api-load-analysis.v1", result={}, error=""))
+    connectivity_agent = SimpleNamespace(
+        id="agent-connectivity", name="专用节点", status="online", scheduling_tier="preferred", node_group="腾讯云",
+        labels={}, agent_version="1.0.0", k6_version="0.52.0", hard_limits={}, soft_limits={}, current_usage={},
+        health={"pending_command": {"type": "target_connectivity"}, "calibration": {"state": "valid"}},
+        egress_ip="", last_heartbeat_at=None, offline_reason="",
+    )
+    monkeypatch.setattr(
+        "task_server.api_testing.load_testing_http._prepare_run_connectivity",
+        lambda factory, requested_id, actor: [connectivity_agent] if requested_id == run_id and actor == "runner" else [],
+    )
 
     detail, _ = _call(load_factory, "GET", f"/load-runs/{run_id}", "viewer")
     assert detail["run"]["id"] == run_id
@@ -190,6 +229,9 @@ def test_run_read_events_report_ai_and_actions_use_separate_permissions(load_fac
     assert status == 202 and analysis["analysis"]["state"] == "queued"
     with pytest.raises(access.AccessDeniedError):
         _call(load_factory, "POST", f"/load-runs/{run_id}/start", "viewer")
+    connectivity, status = _call(load_factory, "POST", f"/load-runs/{run_id}/connectivity", "runner")
+    assert status == 202
+    assert connectivity["agents"][0]["health"]["pending_command"]["type"] == "target_connectivity"
     started, _ = _call(load_factory, "POST", f"/load-runs/{run_id}/start", "runner")
     assert started["run"]["state"] == "starting"
     stopped, _ = _call(load_factory, "POST", f"/load-runs/{run_id}/stop", "runner", {"reason": "人工停止"})

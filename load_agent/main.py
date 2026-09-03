@@ -12,6 +12,7 @@ from . import __version__
 from .calibration import CalibrationRunner, calibration_state, hardware_signature
 from .client import AgentClient
 from .config import AgentConfig
+from .connectivity import run_connectivity_command
 from .runtime import K6Runtime
 
 
@@ -135,6 +136,17 @@ def _run_requested_calibration(commands, current, *, runner, save):
     return result
 
 
+def _run_requested_connectivity(commands, current):
+    command = next((item for item in commands if item.get("type") == "target_connectivity"), None)
+    if not command:
+        return current
+    environment_revision_id = str(command.get("environment_revision_id") or "")
+    previous = current.get(environment_revision_id) if isinstance(current, dict) else None
+    if isinstance(previous, dict) and previous.get("command_id") == command.get("id"):
+        return current
+    return {**current, environment_revision_id: run_connectivity_command(command)}
+
+
 def main():
     config = AgentConfig.from_env()
     config.data_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -162,6 +174,7 @@ def main():
         hard_max_iterations_per_second=config.max_iterations_per_second,
     )
     calibration = _read_json(config.calibration_file)
+    target_connectivity = {}
     now = datetime.now(timezone.utc)
     if calibration_state(calibration, now, __version__, k6_version, signature) != "valid":
         logger.info("节点开始本地k6校准，不访问业务环境 agent_id=%s", credential.agent_id)
@@ -179,7 +192,7 @@ def main():
                 "k6_version": k6_version,
                 "hard_limits": hard_limits,
                 "current_usage": {"processes": 0, "vus": 0, "iterations_per_second": 0},
-                "health": {"schedulable": calibration.get("state") == "valid", "calibration": calibration},
+                "health": {"schedulable": calibration.get("state") == "valid", "calibration": calibration, "target_connectivity": target_connectivity},
                 "egress_ip": "",
             }
         )
@@ -190,6 +203,9 @@ def main():
             calibration,
             runner=calibration_runner,
             save=lambda value: _write_private_json(config.calibration_file, value),
+        )
+        target_connectivity = _run_requested_connectivity(
+            commands if isinstance(commands, list) else [], target_connectivity,
         )
         shard = client.claim()
         if shard:

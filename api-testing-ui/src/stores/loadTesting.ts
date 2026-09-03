@@ -97,6 +97,10 @@ export const useLoadTestingStore = defineStore('api-load-testing', {
       await this.loadScenarios(this.scenarios.find(item => item.id === scenarioId)?.project_id || '')
       return response.data.version
     },
+    async archiveScenario(scenarioId: string): Promise<void> {
+      await apiClient.delete(`/api/api-testing/v1/load-scenarios/${encodeURIComponent(scenarioId)}`)
+      this.scenarios = this.scenarios.filter(item => item.id !== scenarioId)
+    },
     async loadRuns(projectId: string): Promise<LoadRun[]> {
       this.loadingRuns = true
       this.runError = ''
@@ -115,6 +119,11 @@ export const useLoadTestingStore = defineStore('api-load-testing', {
       return response.data.run
     },
     async preflightRun(runId: string): Promise<LoadRun> { return this.runAction(runId, 'preflight') },
+    async prepareConnectivity(runId: string): Promise<LoadAgent[]> {
+      const response = await apiClient.post<{ agents: LoadAgent[] }>(`/api/api-testing/v1/load-runs/${encodeURIComponent(runId)}/connectivity`, {})
+      for (const agent of response.data.agents) this.replaceAgent(agent)
+      return response.data.agents
+    },
     async startRun(runId: string): Promise<LoadRun> { return this.runAction(runId, 'start') },
     async stopRun(runId: string, reason = '用户在页面停止'): Promise<LoadRun> { return this.runAction(runId, 'stop', { reason }) },
     async loadReport(runId: string): Promise<LoadReport> {

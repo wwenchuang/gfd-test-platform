@@ -6,7 +6,7 @@ export interface WorkspaceContext {
 
 export type LoadSchedulingTier = 'preferred' | 'normal' | 'fallback' | 'disabled'
 export type LoadCalibrationState = 'uncalibrated' | 'calibrating' | 'valid' | 'expired' | 'invalidated' | 'failed'
-export type LoadRunState = 'draft' | 'preflight' | 'queued' | 'starting' | 'running' | 'stopping' | 'finished' | 'failed' | 'cancelled'
+export type LoadRunState = 'draft' | 'preflighting' | 'queued' | 'starting' | 'running' | 'stopping' | 'finished' | 'failed' | 'cancelled'
 export type LoadVerdict = 'passed' | 'failed' | 'inconclusive' | null
 
 export interface LoadCapacityLimits {
@@ -73,15 +73,15 @@ export interface LoadScenarioDefinition {
   steps: Array<{
     id: string
     name: string
-    scope: 'setup' | 'iteration' | 'cleanup'
-    action: 'http_request' | 'sleep'
+    scope: 'setup_once' | 'agent_setup' | 'vu_once' | 'iteration' | 'cleanup_once'
+    action: 'http_request'
     request?: CaseRequest
     assertions: Array<Record<string, unknown>>
     extractions: Array<Record<string, unknown>>
     sleep_ms: number
-    side_effect: 'readonly' | 'write' | 'destructive'
+    side_effect: 'readonly' | 'creates_owned_resource' | 'mutates_owned_resource' | 'cleanup_owned_resource'
   }>
-  dataset_contract: { dataset_id: string | null; usage_mode: 'cycle' | 'unique' | 'per_vu'; variables: string[] }
+  dataset_contract: { dataset_id: string | null; usage_mode: 'cycle' | 'fixed_per_vu' | 'exclusive_per_iteration'; variables: string[] }
   risk: { level: 'low' | 'medium' | 'high'; ownership_variable: string | null; notes: string }
   source_snapshot: Record<string, unknown>
 }
