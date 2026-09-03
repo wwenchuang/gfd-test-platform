@@ -1,8 +1,8 @@
 {
-  "captured_at": "2026-09-03T08:47:44+08:00",
+  "captured_at": "2026-09-03T09:33:53+08:00",
   "live": {
     "release_revision": "1aac3f31ec67b34204f655fa0a126033ac065b88",
-    "rss_mb": 127.7,
+    "rss_mb": 277.5,
     "active_large_requests": 0,
     "heavy_workloads_active": 0,
     "project": {
@@ -19,21 +19,26 @@
       "id": "46271e34-35c2-4a19-bb84-dc949dc7be82",
       "name": "生产环境（新）-腾讯云",
       "revision": 30
-    }
+    },
+    "peak_rss_mb": 278.1,
+    "background_running": 0,
+    "pyyaml": true
   },
   "existing": {
-    "case_versions": 1087,
-    "current_source_cases": 1,
+    "case_versions": 1096,
+    "current_source_cases": 10,
     "needs_adaptation": 1086,
-    "baseline_records": 486,
-    "active_baselines": 291,
-    "active_home": 283,
-    "active_shared": 8,
+    "baseline_records": 495,
+    "active_baselines": 300,
+    "active_home": 290,
+    "active_shared": 10,
     "scheduled_jobs": [
       {
         "id": "da304955-cf2e-447b-b8f6-f189dd26cc6a",
         "name": "家用业务基线回归（已复验283条）",
+        "enabled": true,
         "target_count": 283,
+        "next_run_at": "2026-09-04T08:00:00+08:00",
         "latest_execution_id": "2be98cac-b705-4e11-9e10-e5749ebb6400",
         "latest_state": "DONE",
         "latest_summary": {
@@ -48,7 +53,9 @@
       {
         "id": "9c703d9e-dac9-4047-b064-e89d37512e12",
         "name": "共享业务基线回归（已复验8条）",
+        "enabled": true,
         "target_count": 8,
+        "next_run_at": "2026-09-04T08:00:00+08:00",
         "latest_execution_id": "aefd77a2-973b-4cab-8b4c-32e588aa2459",
         "latest_state": "DONE",
         "latest_summary": {
@@ -395,7 +402,26 @@
           "regression_status": "PASSED"
         }
       ],
-      "status": "planned"
+      "status": "ready",
+      "case_id": "316613a5-25f9-46be-95b1-d78830e88c31",
+      "case_version_id": "3b401379-08f1-4f3f-8d63-3e9e124cdd37",
+      "baseline_id": "52002a39-7aca-4232-9ed9-9d861fb84919",
+      "debug_execution_id": "b01178d4-ec4d-44a8-bb71-d117a518fb64",
+      "validation": {
+        "errors": [],
+        "warnings": [
+          {
+            "code": "optional_parameter_omitted",
+            "field": "request.query.ip",
+            "message": "可选查询参数 ip 未填写；如由环境统一注入可忽略，否则请补充"
+          },
+          {
+            "code": "optional_parameter_omitted",
+            "field": "request.query.mobileDevice",
+            "message": "可选查询参数 mobileDevice 未填写；如由环境统一注入可忽略，否则请补充"
+          }
+        ]
+      }
     },
     {
       "key": "home_model_favorite",
@@ -471,7 +497,19 @@
           "regression_status": "PASSED"
         }
       ],
-      "status": "planned"
+      "status": "ready",
+      "case_id": "cf5d14ee-1411-46db-bb8d-21a6d4beacf8",
+      "case_version_id": "de059125-af80-4a6e-9f3d-f41742d3fc21",
+      "baseline_id": "b5058d04-a1d8-492f-8e78-124973dba9e2",
+      "debug_execution_id": "19088e29-92bf-4892-927a-c68353a75398",
+      "validation": {
+        "errors": [],
+        "warnings": []
+      },
+      "repeat_execution_ids": [
+        "d54cb812-815a-41d6-a644-75f800926c7d",
+        "19088e29-92bf-4892-927a-c68353a75398"
+      ]
     },
     {
       "key": "home_device_status",
@@ -539,7 +577,15 @@
           "regression_status": "PASSED"
         }
       ],
-      "status": "planned"
+      "status": "ready",
+      "case_id": "135c659f-19e2-4c21-bef6-c2f9af403fe6",
+      "case_version_id": "68a0143d-c50f-4e5f-a36c-ea18e93b6c04",
+      "baseline_id": "10a67ef4-decb-4efc-8a43-57a63a319308",
+      "debug_execution_id": "0338cc1b-5114-4f49-9f23-b87866e1788f",
+      "validation": {
+        "errors": [],
+        "warnings": []
+      }
     },
     {
       "key": "home_print_history",
@@ -596,7 +642,15 @@
           "regression_status": "PASSED"
         }
       ],
-      "status": "planned"
+      "status": "ready",
+      "case_id": "3e82c9d0-d3f8-4ae9-ab01-28b752d08707",
+      "case_version_id": "e96b583c-96fe-4ba7-8b16-e98fca7a6395",
+      "baseline_id": "7c47c76c-feb3-487e-b47a-7f3464aa06db",
+      "debug_execution_id": "8562ae51-4e36-4d15-a16e-e8cc214b587b",
+      "validation": {
+        "errors": [],
+        "warnings": []
+      }
     },
     {
       "key": "home_download",
@@ -674,7 +728,19 @@
           "regression_status": "PASSED"
         }
       ],
-      "status": "planned"
+      "status": "ready",
+      "case_id": "858fa012-b905-44fd-a627-6a7f0c51655a",
+      "case_version_id": "93b43267-3602-446e-baa5-92d9c0c6411b",
+      "baseline_id": "2cffb1b7-8ca0-43ed-89b5-6171f75b461a",
+      "debug_execution_id": "ad56054a-ee81-4a87-a9f3-3e514dd001c2",
+      "validation": {
+        "errors": [],
+        "warnings": []
+      },
+      "repeat_execution_ids": [
+        "368d8279-1705-467f-a308-6e12680f591c",
+        "ad56054a-ee81-4a87-a9f3-3e514dd001c2"
+      ]
     },
     {
       "key": "home_learning",
@@ -731,7 +797,15 @@
           "regression_status": "PASSED"
         }
       ],
-      "status": "planned"
+      "status": "ready",
+      "case_id": "66775216-9c04-444c-b63f-39e9b3670b41",
+      "case_version_id": "585241bc-a271-4cc2-8c48-4cb427a3f57c",
+      "baseline_id": "cf87f3d1-a2e9-44b7-bf20-a993785d70e1",
+      "debug_execution_id": "b045423e-68b3-415e-b22f-ad8bbb71c526",
+      "validation": {
+        "errors": [],
+        "warnings": []
+      }
     },
     {
       "key": "shared_region",
@@ -811,7 +885,15 @@
           "regression_status": "PASSED"
         }
       ],
-      "status": "planned"
+      "status": "ready",
+      "case_id": "5b2e818e-bedd-4b39-9b1e-00f097109047",
+      "case_version_id": "8575655c-3b6e-4f35-b03e-d9c13e11d1f1",
+      "baseline_id": "eb04f39e-7f13-4ec8-bf78-3159957a8e13",
+      "debug_execution_id": "137f0843-2b99-48a3-ab2b-947ff1dc17f5",
+      "validation": {
+        "errors": [],
+        "warnings": []
+      }
     },
     {
       "key": "shared_captcha",
@@ -857,7 +939,15 @@
           "regression_status": "PASSED"
         }
       ],
-      "status": "planned"
+      "status": "ready",
+      "case_id": "cee54fac-da55-40d5-8b81-c16f9f9ef93c",
+      "case_version_id": "045bc9dc-e2cb-4443-9c54-a946c69b7daa",
+      "baseline_id": "63735ec6-e50f-4201-804d-d8c099f4471f",
+      "debug_execution_id": "73823072-d902-4eff-8ccb-314dab2adf69",
+      "validation": {
+        "errors": [],
+        "warnings": []
+      }
     },
     {
       "key": "cad_lifecycle",
@@ -933,8 +1023,33 @@
         }
       ],
       "templates": [],
-      "status": "planned",
-      "external_requirement": "AI creation is allowed by the approved design; record runtime and clean the created task"
+      "status": "ready_extended",
+      "external_requirement": "AI creation is allowed by the approved design; record runtime and clean the created task",
+      "case_id": "b466054c-9dc8-4dd6-8bce-e849fd73e654",
+      "case_version_id": "2ee68542-3050-4f06-9f97-7ef6783b494c",
+      "baseline_id": "2ee343bd-17fd-478e-afab-fc18567811c8",
+      "debug_execution_ids": [
+        "f4966182-dbf0-48c7-b350-e76de4e2ad54",
+        "ad9ea292-9352-4bcd-804a-3e7e6a05a1c5"
+      ],
+      "ui_execution_id": "c2189c08-4f29-4082-8c63-0ed5e4d05154",
+      "ui_execution_summary": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "broken": 0,
+        "duration_ms": 32845
+      },
+      "validation": {
+        "errors": [],
+        "warnings": []
+      },
+      "observed_contract": {
+        "create_data": "integer task id, not data.id object",
+        "rename_limit": "taskName accepts at most 10 Chinese characters",
+        "async_status": "PROCESSING must be polled to SUCCESS before delete",
+        "cleanup": "delete returned code=0 and exact-name page total became 0"
+      }
     },
     {
       "key": "jdhome_slice",
@@ -965,8 +1080,9 @@
         }
       ],
       "templates": [],
-      "status": "discovering",
-      "external_requirement": "a bound device and model component with a configured default slice for that device type"
+      "status": "excluded_by_user",
+      "external_requirement": "a bound device and model component with a configured default slice for that device type",
+      "scope_decision": "用户明确不做京东之家链路"
     },
     {
       "key": "epone_camera",
@@ -1019,8 +1135,9 @@
         }
       ],
       "templates": [],
-      "status": "discovering",
-      "external_requirement": "a bound online EPONEPro with capabilities.camera=true"
+      "status": "excluded_by_user",
+      "external_requirement": "a bound online EPONEPro with capabilities.camera=true",
+      "scope_decision": "用户明确不做 EPONE/EPONEPro 链路"
     },
     {
       "key": "epone_settings",
@@ -1057,8 +1174,9 @@
         }
       ],
       "templates": [],
-      "status": "discovering",
-      "external_requirement": "a bound online idle EPOne and permission to write and restore settings"
+      "status": "excluded_by_user",
+      "external_requirement": "a bound online idle EPOne and permission to write and restore settings",
+      "scope_decision": "用户明确不做 EPOne 链路"
     },
     {
       "key": "real_print",
@@ -1113,6 +1231,464 @@
       "external_requirement": "a dedicated idle printer and explicit permission for an actual print task"
     }
   ],
-  "execution_log": [],
-  "data_requests": []
+  "execution_log": [
+    {
+      "kind": "stable_debug",
+      "execution_ids": [
+        "b01178d4-ec4d-44a8-bb71-d117a518fb64",
+        "19088e29-92bf-4892-927a-c68353a75398",
+        "0338cc1b-5114-4f49-9f23-b87866e1788f",
+        "8562ae51-4e36-4d15-a16e-e8cc214b587b",
+        "ad56054a-ee81-4a87-a9f3-3e514dd001c2",
+        "b045423e-68b3-415e-b22f-ad8bbb71c526",
+        "137f0843-2b99-48a3-ab2b-947ff1dc17f5",
+        "73823072-d902-4eff-8ccb-314dab2adf69"
+      ],
+      "result": "8 admitted cases passed; favorite and download mutations repeated"
+    },
+    {
+      "kind": "stable_task_api",
+      "execution_id": "39252585-904c-4065-82e5-37bbf9e79f15",
+      "summary": {
+        "total": 8,
+        "broken": 0,
+        "failed": 0,
+        "passed": 8,
+        "skipped": 0,
+        "cancelled": 0
+      },
+      "notification": "sent"
+    },
+    {
+      "kind": "stable_task_safari",
+      "execution_id": "bc99d003-7137-47a5-be46-a7cf3f1aa0ad",
+      "summary": {
+        "total": 8,
+        "passed": 8,
+        "failed": 0,
+        "broken": 0
+      },
+      "report_checked": true
+    },
+    {
+      "kind": "shared_task",
+      "execution_id": "1e766f8a-f2c4-4c67-a9f8-131ca0fb2a6f",
+      "summary": {
+        "total": 2,
+        "broken": 0,
+        "failed": 0,
+        "passed": 2,
+        "skipped": 0,
+        "cancelled": 0
+      }
+    },
+    {
+      "kind": "cad_debug",
+      "execution_ids": [
+        "f4966182-dbf0-48c7-b350-e76de4e2ad54",
+        "ad9ea292-9352-4bcd-804a-3e7e6a05a1c5"
+      ],
+      "summary": [
+        {
+          "total": 1,
+          "broken": 0,
+          "failed": 0,
+          "passed": 1,
+          "skipped": 0,
+          "cancelled": 0
+        },
+        {
+          "total": 1,
+          "broken": 0,
+          "failed": 0,
+          "passed": 1,
+          "skipped": 0,
+          "cancelled": 0
+        }
+      ]
+    },
+    {
+      "kind": "cad_task_safari",
+      "execution_id": "c2189c08-4f29-4083-8c63-0ed5e4d05154",
+      "summary": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "broken": 0
+      },
+      "stage_count": 13,
+      "report_checked": true,
+      "cleanup_verified": true
+    }
+  ],
+  "data_requests": [
+    {
+      "flow": "核心链路-真实打印创建查询取消",
+      "status": "awaiting_user",
+      "required": [
+        "一台专用于测试且当前空闲的打印机 SN",
+        "确认允许真实创建打印任务并立即取消"
+      ],
+      "reason": "该链路会触发物理设备；模型与历史切片数据可由平台动态取得"
+    }
+  ],
+  "tasks": [
+    {
+      "id": "2975548b-8fa8-43fd-b92f-3b019ca17211",
+      "name": "3D核心业务链路回归（v11）",
+      "scope": "stable",
+      "runnable_baseline_count": 8,
+      "ui_execution_id": "bc99d003-7137-47a5-be46-a7cf3f1aa0ad",
+      "ui_execution_summary": {
+        "total": 8,
+        "passed": 8,
+        "failed": 0,
+        "broken": 0,
+        "duration_ms": 4520
+      },
+      "api_execution_id": "39252585-904c-4065-82e5-37bbf9e79f15",
+      "api_execution_summary": {
+        "total": 8,
+        "broken": 0,
+        "failed": 0,
+        "passed": 8,
+        "skipped": 0,
+        "cancelled": 0
+      },
+      "feishu_notification": {
+        "sent": true,
+        "status": null
+      }
+    },
+    {
+      "id": "6d4b03a9-f437-4721-ba49-5ba667b3b74e",
+      "name": "3D核心链路-共享稳定回归（v11）",
+      "scope": "shared_stable",
+      "runnable_baseline_count": 2,
+      "execution_id": "1e766f8a-f2c4-4c67-a9f8-131ca0fb2a6f",
+      "execution_summary": {
+        "total": 2,
+        "broken": 0,
+        "failed": 0,
+        "passed": 2,
+        "skipped": 0,
+        "cancelled": 0
+      }
+    },
+    {
+      "id": "4e6e1120-2278-4082-a180-6b59f641f341",
+      "name": "3D核心扩展链路（按需）",
+      "scope": "ai_extended",
+      "runnable_baseline_count": 1,
+      "ui_execution_id": "c2189c08-4f29-4083-8c63-0ed5e4d05154",
+      "ui_execution_summary": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "broken": 0,
+        "duration_ms": 32845
+      }
+    }
+  ],
+  "ui_verification": {
+    "browser": "Safari",
+    "stable_task": {
+      "task_card_checked": true,
+      "run_confirm_checked": true,
+      "case_detail_checked": true,
+      "report_filters_checked": [
+        "全部",
+        "失败/异常",
+        "跳过",
+        "取消"
+      ]
+    },
+    "cad_task": {
+      "task_card_checked": true,
+      "run_confirm_checked": true,
+      "all_stage_evidence_expanded": true,
+      "full_trace_checked": true,
+      "report_filters_checked": [
+        "全部",
+        "失败/异常",
+        "跳过",
+        "取消"
+      ]
+    },
+    "case_assets": {
+      "opened_count": 9,
+      "home_stable": 6,
+      "shared_stable": 2,
+      "ai_extended": 1,
+      "checked": [
+        "current v11 version",
+        "group",
+        "debug status",
+        "baseline status",
+        "regression status",
+        "structured workflow"
+      ]
+    }
+  },
+  "observed_issues": [
+    {
+      "issue": "Apifox CAD create response shape differs from production",
+      "impact": "data.id extraction fails after creating a real task",
+      "resolution": "v3 extracts integer from $.data and performs owned cleanup",
+      "state": "resolved_in_case"
+    },
+    {
+      "issue": "CAD rename length constraint absent from planned case",
+      "impact": "server returns code=1002 when taskName exceeds 10 Chinese characters",
+      "resolution": "use 核心链路立方体 and assert rename result",
+      "state": "resolved_in_case"
+    },
+    {
+      "issue": "CAD task cannot be deleted while PROCESSING",
+      "impact": "immediate delete returns code=1001 and leaves generated task",
+      "resolution": "bounded polling to SUCCESS before rename/delete, then verify page total=0",
+      "state": "resolved_in_case"
+    },
+    {
+      "issue": "execution list initially took about 22 seconds in Safari",
+      "impact": "user sees 正在读取执行记录 too long",
+      "measurement": [
+        {
+          "attempt": 1,
+          "duration_ms": 367,
+          "count": 50
+        },
+        {
+          "attempt": 2,
+          "duration_ms": 2174,
+          "count": 50
+        },
+        {
+          "attempt": 3,
+          "duration_ms": 1578,
+          "count": 50
+        }
+      ],
+      "resolution": "three direct list reads were 367-2174 ms, so backend delay was not reproduced; keep as monitored UI/cold-load issue",
+      "state": "monitor"
+    }
+  ],
+  "extended_discovery": {
+    "jd_default_slice": {
+      "status": "FAILED",
+      "target_reached": true,
+      "trace": [
+        {
+          "name": "读取当前设备",
+          "status": "PASSED",
+          "code": 0,
+          "data_keys": [
+            "sn",
+            "type",
+            "mac",
+            "maxSize",
+            "name",
+            "selected",
+            "roleType",
+            "showGotoBuy",
+            "deviceStatus",
+            "statusColor",
+            "deviceStatusTitle",
+            "printStatus",
+            "printStatusTitle",
+            "jobStatus",
+            "jobStatusTitle",
+            "stepType",
+            "loadMaterialFlag",
+            "materialDepleteFlag",
+            "components",
+            "maintenanceAdvice",
+            "printStatisticInfo",
+            "devicePrintInfo",
+            "lastVersionFormat",
+            "youzanStoreUrl",
+            "pingLoss",
+            "networkStrength",
+            "deviceSeries",
+            "deviceType",
+            "deviceImage",
+            "matlStationInfo"
+          ],
+          "error": ""
+        },
+        {
+          "name": "读取当前模型",
+          "status": "PASSED",
+          "code": 0,
+          "data_keys": [
+            "records",
+            "total",
+            "size",
+            "current",
+            "pages"
+          ],
+          "error": ""
+        },
+        {
+          "name": "读取模型组件",
+          "status": "PASSED",
+          "code": 0,
+          "data_keys": [
+            "id",
+            "sn",
+            "modelType",
+            "modelFrom",
+            "downloadFrom",
+            "modelName",
+            "searchKey",
+            "categoryFirstId",
+            "categoryFirstIds",
+            "categorySecondId",
+            "categorySecondIds",
+            "modelSize",
+            "modelDescription",
+            "modelSummary",
+            "downloadCount",
+            "favoriteCount",
+            "publishedAt",
+            "riskLevel",
+            "longestDimension",
+            "modelImage",
+            "modelPrintedImage",
+            "shelveStatus",
+            "virtualViewCount",
+            "virtualFavoriteCount",
+            "virtualPrintCount",
+            "realPrintCount",
+            "realPrintUserCount",
+            "totalPrintCount",
+            "totalPrintUserCount",
+            "dynamicVideoUrl"
+          ],
+          "error": ""
+        },
+        {
+          "name": "查询京东之家默认切片",
+          "status": "FAILED",
+          "code": 1001,
+          "data_keys": [],
+          "error": "接口业务校验未通过：业务码 1001；服务端提示：404:null；$.code 期望 0，实际 1001"
+        }
+      ]
+    },
+    "jd_shared_device": {
+      "status": "FAILED",
+      "target_reached": true,
+      "trace": [
+        {
+          "name": "读取当前设备",
+          "status": "PASSED",
+          "code": 0,
+          "data_keys": [
+            "sn",
+            "type",
+            "mac",
+            "maxSize",
+            "name",
+            "selected",
+            "roleType",
+            "showGotoBuy",
+            "deviceStatus",
+            "statusColor",
+            "deviceStatusTitle",
+            "printStatus",
+            "printStatusTitle",
+            "jobStatus",
+            "jobStatusTitle",
+            "stepType",
+            "loadMaterialFlag",
+            "materialDepleteFlag",
+            "components",
+            "maintenanceAdvice",
+            "printStatisticInfo",
+            "devicePrintInfo",
+            "lastVersionFormat",
+            "youzanStoreUrl",
+            "pingLoss",
+            "networkStrength",
+            "deviceSeries",
+            "deviceType",
+            "deviceImage",
+            "matlStationInfo"
+          ],
+          "error": ""
+        },
+        {
+          "name": "查询京东之家共享设备状态",
+          "status": "FAILED",
+          "code": 1001,
+          "data_keys": [],
+          "error": "接口业务校验未通过：业务码 1001；服务端提示：404:null；$.code 期望 0，实际 1001"
+        }
+      ]
+    },
+    "device_settings_query": {
+      "status": "FAILED",
+      "target_reached": true,
+      "trace": [
+        {
+          "name": "读取当前设备",
+          "status": "PASSED",
+          "code": 0,
+          "data_keys": [
+            "sn",
+            "type",
+            "mac",
+            "maxSize",
+            "name",
+            "selected",
+            "roleType",
+            "showGotoBuy",
+            "deviceStatus",
+            "statusColor",
+            "deviceStatusTitle",
+            "printStatus",
+            "printStatusTitle",
+            "jobStatus",
+            "jobStatusTitle",
+            "stepType",
+            "loadMaterialFlag",
+            "materialDepleteFlag",
+            "components",
+            "maintenanceAdvice",
+            "printStatisticInfo",
+            "devicePrintInfo",
+            "lastVersionFormat",
+            "youzanStoreUrl",
+            "pingLoss",
+            "networkStrength",
+            "deviceSeries",
+            "deviceType",
+            "deviceImage",
+            "matlStationInfo"
+          ],
+          "error": ""
+        },
+        {
+          "name": "查询当前设备设置能力",
+          "status": "FAILED",
+          "code": null,
+          "data_keys": [],
+          "error": "接口响应断言未通过；服务端提示：Not Found；HTTP 状态码 期望 200，实际 404"
+        }
+      ]
+    }
+  },
+  "scope_decisions": [
+    {
+      "scope": "京东之家默认切片与共享设备",
+      "decision": "excluded_by_user",
+      "effect": "不建用例、不进核心任务、不索取设备或组件数据"
+    },
+    {
+      "scope": "EPOne设置与EPONEPro Camera",
+      "decision": "excluded_by_user",
+      "effect": "不建用例、不进核心任务、不索取设备数据"
+    }
+  ]
 }

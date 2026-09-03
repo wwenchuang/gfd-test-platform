@@ -56,17 +56,17 @@ Run `python3 -m json.tool docs/evidence/3d-api-core-flow-inventory-2026-09-03.js
 - Consumes: v11 endpoint IDs and the proven old-version case structures recorded by Task 1.
 - Produces: new v11 cases under `核心链路 / 家用 / 稳定回归`.
 
-- [ ] **Step 1: Create new case identities**
+- [x] **Step 1: Create new case identities**
 
 Create v11 cases for model/favorite, device status, print history, download lifecycle, and learning read-only flows. Do not create new versions on old case identities because that would supersede existing active baselines.
 
-- [ ] **Step 2: Validate each case against environment v30**
+- [x] **Step 2: Validate each case against environment v30**
 
 Call each case version validation endpoint and require zero blocking errors. Record warnings without silently changing business assertions.
 
-- [ ] **Step 3: Open every case in Safari**
+- [x] **Step 3: Open every case in Safari**
 
-From 用例管理, search the exact `核心链路` name, open the case, inspect structured setup/main/cleanup content, and confirm the displayed source is v11.
+From 用例管理, expand the `核心链路` groups, open every case, inspect structured setup/main/cleanup content, and confirm the displayed source is v11. Do not use programmatic search-field assignment as evidence for Chinese IME input.
 
 ### Task 3: Execute and Admit Stable Home Flows
 
@@ -77,19 +77,19 @@ From 用例管理, search the exact `核心链路` name, open the case, inspect 
 - Consumes: Task 2 v11 case versions.
 - Produces: completed debug execution IDs and active baseline IDs.
 
-- [ ] **Step 1: Debug one stable flow at a time**
+- [x] **Step 1: Debug one stable flow at a time**
 
 Use environment v30 and wait for a terminal execution state before starting the next mutation-heavy flow.
 
-- [ ] **Step 2: Inspect detailed evidence**
+- [x] **Step 2: Inspect detailed evidence**
 
 For each result, inspect request, response, assertions, setup trace, cleanup trace, and sanitized technical log. Require exact business success and successful cleanup.
 
-- [ ] **Step 3: Adopt only passed case versions**
+- [x] **Step 3: Adopt only passed case versions**
 
 Adopt using the debug execution case ID. Keep failed drafts outside the fixed core baseline and record the blocker.
 
-- [ ] **Step 4: Repeat stable mutations**
+- [x] **Step 4: Repeat stable mutations**
 
 Run the favorite and download lifecycle cases at least twice to prove cleanup prevents state leakage.
 
@@ -99,20 +99,20 @@ Run the favorite and download lifecycle cases at least twice to prove cleanup pr
 - Modify: `docs/evidence/3d-api-core-flow-inventory-2026-09-03.json`
 
 **Interfaces:**
-- Consumes: the eight active shared baselines and their latest 8/8 execution evidence.
-- Produces: a separately named shared core task/selection, preserving business scope.
+- Consumes: the historical eight shared baselines for coverage context and two new v11 end-to-end shared chains.
+- Produces: a separately named current-version shared core task, preserving business scope.
 
-- [ ] **Step 1: Reopen all eight shared baselines in Safari**
+- [x] **Step 1: Open both current-version shared core chains in Safari**
 
-Verify application, business, request method/path, assertions, and latest execution evidence.
+Verify application, business, request method/path, assertions, latest execution evidence, and the four related region APIs plus two captcha APIs represented by the chains. The historical eight-baseline schedule remains separate and unchanged.
 
-- [ ] **Step 2: Create a shared core task**
+- [x] **Step 2: Create a shared core task**
 
-Create `3D核心链路-共享稳定回归` referencing only the verified shared baseline IDs.
+Create `3D核心链路-共享稳定回归（v11）` referencing only the two verified v11 shared baseline IDs.
 
-- [ ] **Step 3: Execute the shared task**
+- [x] **Step 3: Execute the shared task**
 
-Record the new execution ID and require 8/8 before marking this task ready.
+Record the new execution ID and require 2/2 before marking this representative current-version task ready.
 
 ### Task 5: Create and Execute the Combined Stable Core Task
 
@@ -123,15 +123,15 @@ Record the new execution ID and require 8/8 before marking this task ready.
 - Consumes: active passed baseline IDs from Tasks 3 and 4.
 - Produces: `3D核心业务链路回归` and a completed combined execution.
 
-- [ ] **Step 1: Create the combined baseline task**
+- [x] **Step 1: Create the combined baseline task**
 
 Reference only passed stable baseline IDs. Do not include AI, device-control, real-print, repair-draft, or one-time candidates.
 
-- [ ] **Step 2: Execute once in Safari**
+- [x] **Step 2: Execute once in Safari**
 
 Confirm the production warning, start the task, and wait for completion.
 
-- [ ] **Step 3: Verify report evidence**
+- [x] **Step 3: Verify report evidence**
 
 Record execution ID, raw totals, duration, and notification state; inspect at least one read-only and one cleanup-bearing case.
 
@@ -144,15 +144,15 @@ Record execution ID, raw totals, duration, and notification state; inspect at le
 - Consumes: the 25 uncovered v11 endpoints and live precondition responses.
 - Produces: passed extended baselines or exact external-data requests.
 
-- [ ] **Step 1: Try data discovery without mutation**
+- [x] **Step 1: Try data discovery without mutation**
 
 Check CAD, JD Home, EPOne, Camera, print, and shared prerequisites using list/status/capability endpoints. Do not execute physical device actions during discovery.
 
-- [ ] **Step 2: Execute safe AI lifecycle candidates**
+- [x] **Step 2: Execute safe AI lifecycle candidates**
 
 Where authorized by the approved design, create a task, extract its ID, poll within the documented limit, and delete/cancel it. Record cost/time implications.
 
-- [ ] **Step 3: Stop at physical or missing-data boundaries**
+- [x] **Step 3: Stop at physical or missing-data boundaries**
 
 For each blocked flow, record the exact field, acceptable state, source endpoint attempted, and why no safe dynamic source exists. Request only those values from the user.
 
@@ -166,18 +166,18 @@ For each blocked flow, record the exact field, acceptable state, source endpoint
 - Consumes: all execution, baseline, and task IDs from earlier tasks.
 - Produces: a reproducible handoff distinguishing ready, failed, and externally blocked flows.
 
-- [ ] **Step 1: Re-read live task and baseline counts**
+- [x] **Step 1: Re-read live task and baseline counts**
 
 Confirm all new assets are current-version assets and the original 291 activity history remains intact except for intentionally added new baselines.
 
-- [ ] **Step 2: Reopen the combined task and report in Safari**
+- [x] **Step 2: Reopen the combined task and report in Safari**
 
 Verify task name, selected targets, execution result, report navigation, and detailed evidence.
 
-- [ ] **Step 3: Validate local documentation**
+- [x] **Step 3: Validate local documentation**
 
 Run `python3 -m json.tool docs/evidence/3d-api-core-flow-inventory-2026-09-03.json >/dev/null` and `git diff --check`.
 
-- [ ] **Step 4: Commit and push the documentation**
+- [x] **Step 4: Commit and push the documentation**
 
 Commit only the specification, plan, evidence, and `CODEX_STATE.md`; do not persist authentication material or raw sensitive responses.
