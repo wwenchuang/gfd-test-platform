@@ -31,19 +31,19 @@
 - Consumes: `/api/health`, `/api/api-testing/v1/context-options`, `/endpoints`, `/cases`, `/baselines`, `/scheduled-jobs`, `/executions`.
 - Produces: a sanitized candidate matrix containing stable keys, current endpoint IDs, reusable case version IDs, data source, mutation class, and admission status.
 
-- [ ] **Step 1: Verify the live revision and idle workload state**
+- [x] **Step 1: Verify the live revision and idle workload state**
 
 Run `curl -sS http://101.34.197.12:8088/api/health` and require `release_revision=1aac3f31ec67b34204f655fa0a126033ac065b88`, `active_large_requests=0`, and `heavy_workloads_active=0` before starting executions.
 
-- [ ] **Step 2: Read v11 endpoints and current assets without exposing secrets**
+- [x] **Step 2: Read v11 endpoints and current assets without exposing secrets**
 
 Use authenticated read-only platform endpoints and write only IDs, names, paths, methods, tags, state, counts, and sanitized execution summaries to the evidence JSON.
 
-- [ ] **Step 3: Classify candidates**
+- [x] **Step 3: Classify candidates**
 
 Classify every candidate as `stable_read`, `stable_reversible`, `shared_stable`, `ai_extended`, `hardware_extended`, `blocked_external_data`, or `excluded_destructive`.
 
-- [ ] **Step 4: Validate the evidence file**
+- [x] **Step 4: Validate the evidence file**
 
 Run `python3 -m json.tool docs/evidence/3d-api-core-flow-inventory-2026-09-03.json >/dev/null` and confirm no value matches token, authorization, cookie, password, secret, or private URL fields.
 

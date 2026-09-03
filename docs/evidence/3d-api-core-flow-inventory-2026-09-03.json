@@ -1,0 +1,1118 @@
+{
+  "captured_at": "2026-09-03T08:47:44+08:00",
+  "live": {
+    "release_revision": "1aac3f31ec67b34204f655fa0a126033ac065b88",
+    "rss_mb": 127.7,
+    "active_large_requests": 0,
+    "heavy_workloads_active": 0,
+    "project": {
+      "id": "01c72b31-a9be-4aab-8375-b054f33b826c",
+      "name": "3D家用"
+    },
+    "source": {
+      "id": "0a64dd01-ecdb-428d-adbe-7c4b2fd4f7de",
+      "name": "默认模块",
+      "revision": 11,
+      "endpoint_count": 1031
+    },
+    "environment": {
+      "id": "46271e34-35c2-4a19-bb84-dc949dc7be82",
+      "name": "生产环境（新）-腾讯云",
+      "revision": 30
+    }
+  },
+  "existing": {
+    "case_versions": 1087,
+    "current_source_cases": 1,
+    "needs_adaptation": 1086,
+    "baseline_records": 486,
+    "active_baselines": 291,
+    "active_home": 283,
+    "active_shared": 8,
+    "scheduled_jobs": [
+      {
+        "id": "da304955-cf2e-447b-b8f6-f189dd26cc6a",
+        "name": "家用业务基线回归（已复验283条）",
+        "target_count": 283,
+        "latest_execution_id": "2be98cac-b705-4e11-9e10-e5749ebb6400",
+        "latest_state": "DONE",
+        "latest_summary": {
+          "total": 283,
+          "broken": 0,
+          "failed": 0,
+          "passed": 283,
+          "skipped": 0,
+          "cancelled": 0
+        }
+      },
+      {
+        "id": "9c703d9e-dac9-4047-b064-e89d37512e12",
+        "name": "共享业务基线回归（已复验8条）",
+        "target_count": 8,
+        "latest_execution_id": "aefd77a2-973b-4cab-8b4c-32e588aa2459",
+        "latest_state": "DONE",
+        "latest_summary": {
+          "total": 8,
+          "broken": 0,
+          "failed": 0,
+          "passed": 8,
+          "skipped": 0,
+          "cancelled": 0
+        }
+      }
+    ]
+  },
+  "uncovered_v11_endpoints": [
+    {
+      "id": "99cc7ba0-1ba4-4d00-be73-24a75881b66c",
+      "method": "GET",
+      "path": "/api/v1/jdHome/print/defaultSlicePreview",
+      "summary": "获取京东之家默认切片预览",
+      "tags": [
+        "家用业务",
+        "京东之家体验"
+      ]
+    },
+    {
+      "id": "c995e832-d7a8-4787-add1-024b2220e0bd",
+      "method": "POST",
+      "path": "/pds/api/v1/modelTransforms",
+      "summary": "分盘服务调试",
+      "tags": [
+        "本地测试",
+        "切片相关服务调试"
+      ]
+    },
+    {
+      "id": "3d5b23ce-0dd0-423b-9fc3-01b1be56623e",
+      "method": "POST",
+      "path": "/print3d/api/v1/aiModeling/cad/create",
+      "summary": "创建 DeepSeek CAD 建模任务",
+      "tags": [
+        "家用业务",
+        "app接口",
+        "AI建模",
+        "CAD建模",
+        "CAD建模（DeepSeek App）"
+      ]
+    },
+    {
+      "id": "1db1a092-d791-4b18-815f-12499d75af87",
+      "method": "POST",
+      "path": "/print3d/api/v1/aiModeling/cad/delete",
+      "summary": "删除我的 DeepSeek CAD 建模任务",
+      "tags": [
+        "家用业务",
+        "app接口",
+        "AI建模",
+        "CAD建模",
+        "CAD建模（DeepSeek App）"
+      ]
+    },
+    {
+      "id": "ed965a79-cc6d-4196-a51d-51e64dfa213e",
+      "method": "GET",
+      "path": "/print3d/api/v1/aiModeling/cad/detail",
+      "summary": "查询 DeepSeek CAD 建模任务详情",
+      "tags": [
+        "家用业务",
+        "app接口",
+        "AI建模",
+        "CAD建模",
+        "CAD建模（DeepSeek App）"
+      ]
+    },
+    {
+      "id": "c890a072-38af-4268-abd7-4bcaab3b26ac",
+      "method": "GET",
+      "path": "/print3d/api/v1/aiModeling/cad/hasGeneratingTask",
+      "summary": "查询是否有生成中的 CAD 任务",
+      "tags": [
+        "家用业务",
+        "app接口",
+        "AI建模",
+        "CAD建模",
+        "CAD建模（DeepSeek App）"
+      ]
+    },
+    {
+      "id": "ef4c501b-2857-477d-bc33-89e9d81b93b4",
+      "method": "GET",
+      "path": "/print3d/api/v1/aiModeling/cad/page",
+      "summary": "查询我的 DeepSeek CAD 建模任务",
+      "tags": [
+        "家用业务",
+        "app接口",
+        "AI建模",
+        "CAD建模",
+        "CAD建模（DeepSeek App）"
+      ]
+    },
+    {
+      "id": "306522c9-dfe2-471c-b160-82951f2ea072",
+      "method": "POST",
+      "path": "/print3d/api/v1/aiModeling/cad/rename",
+      "summary": "修改我的 DeepSeek CAD 建模任务名称",
+      "tags": [
+        "家用业务",
+        "app接口",
+        "AI建模",
+        "CAD建模",
+        "CAD建模（DeepSeek App）"
+      ]
+    },
+    {
+      "id": "adc05cbe-7122-447a-ab69-33f576f20bb5",
+      "method": "POST",
+      "path": "/print3d/api/v1/aiModeling/cad/retry",
+      "summary": "重新生成失败的 DeepSeek CAD 任务",
+      "tags": [
+        "家用业务",
+        "app接口",
+        "AI建模",
+        "CAD建模",
+        "CAD建模（DeepSeek App）"
+      ]
+    },
+    {
+      "id": "7ba9aea0-15a0-49c6-9942-0ebd7db075c8",
+      "method": "GET",
+      "path": "/print3d/api/v1/badge/overview",
+      "summary": "获取勋章总览",
+      "tags": [
+        "家用业务",
+        "app接口",
+        "用户活动",
+        "勋章任务"
+      ]
+    },
+    {
+      "id": "a4fcd109-7ffb-4813-9b03-175992780427",
+      "method": "GET",
+      "path": "/print3d/api/v1/badge/task/detail",
+      "summary": "获取勋章任务详情",
+      "tags": [
+        "家用业务",
+        "app接口",
+        "用户活动",
+        "勋章任务"
+      ]
+    },
+    {
+      "id": "52fa4e85-a022-44f3-b5a2-d01b8db782bc",
+      "method": "POST",
+      "path": "/print3d/api/v1/device/realVideo/license",
+      "summary": "获取设备实时视频license",
+      "tags": [
+        "本地测试",
+        "启迪设备"
+      ]
+    },
+    {
+      "id": "473e1bd3-8513-4c18-bc06-872bf11dcd88",
+      "method": "POST",
+      "path": "/print3d/api/v1/device/realVideo/secret",
+      "summary": "获取设备实时视频密钥",
+      "tags": [
+        "本地测试",
+        "启迪设备"
+      ]
+    },
+    {
+      "id": "e09061d3-eb0c-4898-8b26-095ae70c0ea0",
+      "method": "POST",
+      "path": "/print3d/api/v1/device/realVideo/verify",
+      "summary": "获取设备实时视频密钥验证",
+      "tags": [
+        "本地测试",
+        "启迪设备"
+      ]
+    },
+    {
+      "id": "3a786d20-023f-47a5-8be4-5ff0e134ddf4",
+      "method": "POST",
+      "path": "/print3d/api/v1/deviceSettings/set",
+      "summary": "修改EPOne标量设置",
+      "tags": [
+        "家用业务",
+        "app接口",
+        "EPOne设备接入",
+        "EPOne",
+        "APP"
+      ]
+    },
+    {
+      "id": "4c50f6e4-df77-4df3-993d-7089022915fe",
+      "method": "POST",
+      "path": "/print3d/api/v1/deviceSettings/setSleepWindow",
+      "summary": "修改EPOne勿扰时段",
+      "tags": [
+        "家用业务",
+        "app接口",
+        "EPOne设备接入",
+        "EPOne",
+        "APP"
+      ]
+    },
+    {
+      "id": "467d8dcd-7697-46b5-946b-b94904e3d973",
+      "method": "POST",
+      "path": "/print3d/api/v1/devices/mulColorMatchPlate",
+      "summary": "合盘耗材颜色自动匹配",
+      "tags": [
+        "家用业务",
+        "app接口",
+        "设备绑定"
+      ]
+    },
+    {
+      "id": "835472cd-5315-4098-a9cc-3351ef53010c",
+      "method": "POST",
+      "path": "/print3d/api/v1/epone/actions/execute",
+      "summary": "执行EPOne设备动作",
+      "tags": [
+        "家用业务",
+        "app接口",
+        "EPOne设备接入",
+        "EPOne",
+        "APP"
+      ]
+    },
+    {
+      "id": "2683225d-474b-4e83-bff0-25c9406ea673",
+      "method": "POST",
+      "path": "/print3d/api/v1/epone/actions/status",
+      "summary": "查询EPOne设备动作状态",
+      "tags": [
+        "家用业务",
+        "app接口",
+        "EPOne设备接入",
+        "EPOne",
+        "APP"
+      ]
+    },
+    {
+      "id": "9407a6c8-1832-4b3a-95a2-c344d168bb30",
+      "method": "POST",
+      "path": "/print3d/api/v1/printJob/drops",
+      "summary": "打印记录删除",
+      "tags": [
+        "家用业务",
+        "app接口",
+        "打印"
+      ]
+    },
+    {
+      "id": "908959e5-6590-441f-a057-05eadbaa8fcf",
+      "method": "GET",
+      "path": "/print3d/api/v1/printTaskQueue/itemDetail",
+      "summary": "合盘分盘详情",
+      "tags": [
+        "家用业务",
+        "app接口",
+        "打印任务队列接口"
+      ]
+    },
+    {
+      "id": "35040e21-d4df-4872-88d2-d134f85516c6",
+      "method": "POST",
+      "path": "/print3d/api/v2/camera/lan-sessions/heartbeat",
+      "summary": "Camera LAN 心跳续租（EPONEPro 复用）",
+      "tags": [
+        "家用业务",
+        "app接口",
+        "EPOne设备接入",
+        "EPOne",
+        "Camera",
+        "EPONEPro"
+      ]
+    },
+    {
+      "id": "571cbfe9-b7b2-4a00-ab8f-39d4072c6aee",
+      "method": "POST",
+      "path": "/print3d/api/v2/camera/lan-sessions/prepare",
+      "summary": "Camera LAN 创建会话（EPONEPro 复用）",
+      "tags": [
+        "家用业务",
+        "app接口",
+        "EPOne设备接入",
+        "EPOne",
+        "Camera",
+        "EPONEPro"
+      ]
+    },
+    {
+      "id": "238064b8-214a-4bc4-aeb7-b413d57a67d9",
+      "method": "POST",
+      "path": "/print3d/api/v2/camera/lan-sessions/stop",
+      "summary": "Camera LAN 停止会话（EPONEPro 复用）",
+      "tags": [
+        "家用业务",
+        "app接口",
+        "EPOne设备接入",
+        "EPOne",
+        "Camera",
+        "EPONEPro"
+      ]
+    },
+    {
+      "id": "758d08fd-d888-4014-9ddc-a3f783b5666d",
+      "method": "GET",
+      "path": "/print3d/manage/v1/userCadComponent/syncToES",
+      "summary": "全量同步公共CAD组件到ES",
+      "tags": [
+        "家用业务",
+        "app接口",
+        "AI建模",
+        "CAD建模",
+        "用户CAD组件"
+      ]
+    }
+  ],
+  "candidates": [
+    {
+      "key": "home_identity",
+      "name": "核心链路-账户会话与用户资料",
+      "class": "stable_read",
+      "business": "home",
+      "group": "核心链路 / 家用 / 稳定回归",
+      "main": {
+        "id": "f21e675e-6be5-419a-a9ec-3eece8f9676a",
+        "method": "GET",
+        "path": "/print3d/api/v1/users/info",
+        "summary": "用户详情 ",
+        "tags": [
+          "家用业务",
+          "app接口",
+          "登陆注册"
+        ]
+      },
+      "templates": [
+        {
+          "case_version_id": "913a4fef-8b72-47c7-a97b-c5a5bc0f04a6",
+          "case_id": "8fe5680d-3b32-4a51-9fe8-165833a1264e",
+          "debug_status": "PASSED",
+          "regression_status": "PASSED"
+        }
+      ],
+      "status": "planned"
+    },
+    {
+      "key": "home_model_favorite",
+      "name": "核心链路-模型浏览与收藏闭环",
+      "class": "stable_reversible",
+      "business": "home",
+      "group": "核心链路 / 家用 / 稳定回归",
+      "main": {
+        "id": "a7ff9412-7d2e-476d-969c-80a01c751102",
+        "method": "POST",
+        "path": "/print3d/api/v1/collection/add",
+        "summary": "添加修改收藏",
+        "tags": [
+          "家用业务",
+          "app接口",
+          "我的",
+          "我的收藏"
+        ]
+      },
+      "related": [
+        {
+          "id": "c8ea1a42-f817-4f6d-9555-9bf95c9f9e65",
+          "method": "GET",
+          "path": "/print3d/api/v1/model/page",
+          "summary": "模型分页查询",
+          "tags": [
+            "家用业务",
+            "app接口",
+            "模型库"
+          ]
+        },
+        {
+          "id": "4f5ca4c6-4168-45cb-bdb8-021a100abbaf",
+          "method": "GET",
+          "path": "/print3d/api/v1/model/detail",
+          "summary": "查询接口详情",
+          "tags": [
+            "家用业务",
+            "app接口",
+            "模型库"
+          ]
+        },
+        {
+          "id": "73904624-34d2-4305-9a44-0f7ccff179cd",
+          "method": "POST",
+          "path": "/print3d/api/v1/collection/page",
+          "summary": "我的收藏列表",
+          "tags": [
+            "家用业务",
+            "app接口",
+            "我的",
+            "我的收藏"
+          ]
+        },
+        {
+          "id": "4b6a6878-f0d5-43e0-a0a2-3f63280b365b",
+          "method": "POST",
+          "path": "/print3d/api/v1/collection/cancel",
+          "summary": "取消收藏",
+          "tags": [
+            "家用业务",
+            "app接口",
+            "我的",
+            "我的收藏"
+          ]
+        }
+      ],
+      "templates": [
+        {
+          "case_version_id": "f507906b-1352-47b5-ba0e-75109059fe7b",
+          "case_id": "76caa6b0-41eb-4cea-aed8-9002ab5fb7cb",
+          "debug_status": "PASSED",
+          "regression_status": "PASSED"
+        }
+      ],
+      "status": "planned"
+    },
+    {
+      "key": "home_device_status",
+      "name": "核心链路-设备状态与耗材能力",
+      "class": "stable_read",
+      "business": "home",
+      "group": "核心链路 / 家用 / 稳定回归",
+      "main": {
+        "id": "e96d24be-1bde-4acb-81a7-166be56ba92e",
+        "method": "GET",
+        "path": "/print3d/api/v1/devices/status",
+        "summary": "设备状态",
+        "tags": [
+          "家用业务",
+          "app接口",
+          "设备绑定"
+        ]
+      },
+      "related": [
+        {
+          "id": "28666a19-a9c1-4742-9d96-1553ca9b741c",
+          "method": "GET",
+          "path": "/print3d/api/v1/devices/list",
+          "summary": "查询设备列表",
+          "tags": [
+            "家用业务",
+            "app接口",
+            "设备绑定"
+          ]
+        },
+        {
+          "id": "32d166f7-1427-458f-8e6b-dfd9f42f854f",
+          "method": "GET",
+          "path": "/print3d/api/v1/devices/hpDevice",
+          "summary": "首页默认设备",
+          "tags": [
+            "家用业务",
+            "app接口",
+            "设备绑定"
+          ]
+        },
+        {
+          "id": "da02ff3e-adf9-4af9-a9ff-5e3ab549ae0f",
+          "method": "GET",
+          "path": "/print3d/api/v1/devices/filamentInfo",
+          "summary": "设备耗材信息",
+          "tags": [
+            "家用业务",
+            "app接口",
+            "设备绑定"
+          ]
+        }
+      ],
+      "templates": [
+        {
+          "case_version_id": "99efaac5-1a5f-4750-b295-eeee8181b5c4",
+          "case_id": "b16a93e6-54de-47be-8873-cb252760d85b",
+          "debug_status": "FAILED",
+          "regression_status": null
+        },
+        {
+          "case_version_id": "5ec38bdf-3b8b-4231-a72d-0ce3e245e3e6",
+          "case_id": "9f41b3db-c69e-4de3-a192-d9989d0d6982",
+          "debug_status": "PASSED",
+          "regression_status": "PASSED"
+        }
+      ],
+      "status": "planned"
+    },
+    {
+      "key": "home_print_history",
+      "name": "核心链路-打印历史与详情查询",
+      "class": "stable_read",
+      "business": "home",
+      "group": "核心链路 / 家用 / 稳定回归",
+      "main": {
+        "id": "e5dc8c82-58e7-43cb-a3ba-b510327106d4",
+        "method": "GET",
+        "path": "/print3d/api/v1/printJob/detail",
+        "summary": "打印作业详情",
+        "tags": [
+          "家用业务",
+          "app接口",
+          "打印"
+        ]
+      },
+      "related": [
+        {
+          "id": "58f66b23-0a48-49e6-9d22-259afd358bed",
+          "method": "GET",
+          "path": "/print3d/api/v1/printJob/page",
+          "summary": "打印作业列表",
+          "tags": [
+            "家用业务",
+            "app接口",
+            "打印"
+          ]
+        },
+        {
+          "id": "6e03d727-d526-48a8-8d97-c5ba91e6a112",
+          "method": "POST",
+          "path": "/print3d/api/v1/printJob/query",
+          "summary": "切片打印任务查询",
+          "tags": [
+            "家用业务",
+            "app接口",
+            "打印"
+          ]
+        }
+      ],
+      "templates": [
+        {
+          "case_version_id": "245e5f5c-ff06-4c85-a0b8-586b37f92cb3",
+          "case_id": "5955d77b-ace9-47e8-9f18-61071448c12f",
+          "debug_status": "PASSED",
+          "regression_status": "PASSED"
+        },
+        {
+          "case_version_id": "d933b72b-5d3e-41f6-b29f-edadd86ecb92",
+          "case_id": "64e40e65-0a01-425c-987e-3997194db2eb",
+          "debug_status": "PASSED",
+          "regression_status": "PASSED"
+        }
+      ],
+      "status": "planned"
+    },
+    {
+      "key": "home_download",
+      "name": "核心链路-下载记录创建查询清理",
+      "class": "stable_reversible",
+      "business": "home",
+      "group": "核心链路 / 家用 / 稳定回归",
+      "main": {
+        "id": "b99b8b36-4735-415c-afe2-4c1a4c5df966",
+        "method": "POST",
+        "path": "/print3d/api/v1/modelDownloads/add",
+        "summary": "添加下载任务",
+        "tags": [
+          "家用业务",
+          "app接口",
+          "我的",
+          "我的下载"
+        ]
+      },
+      "related": [
+        {
+          "id": "2385c53e-cebd-4ac7-bfd1-68b2441cb6ac",
+          "method": "GET",
+          "path": "/print3d/api/v1/aiModeling/myWorks",
+          "summary": "我的作品",
+          "tags": [
+            "家用业务",
+            "app接口",
+            "AI建模",
+            "AI建模首页端侧接口"
+          ]
+        },
+        {
+          "id": "80e6bde4-8ad0-4d51-a0b6-44c945161bfc",
+          "method": "GET",
+          "path": "/print3d/api/v1/modelDownloads/info",
+          "summary": "下载详情",
+          "tags": [
+            "家用业务",
+            "app接口",
+            "我的",
+            "我的下载"
+          ]
+        },
+        {
+          "id": "6d875a10-29df-429e-868a-91aa65f26fdd",
+          "method": "POST",
+          "path": "/print3d/api/v1/modelDownloads/page",
+          "summary": "我的下载查询",
+          "tags": [
+            "家用业务",
+            "app接口",
+            "我的",
+            "我的下载"
+          ]
+        },
+        {
+          "id": "4fa3b63e-ac01-4425-bf6b-bcb008030fd8",
+          "method": "POST",
+          "path": "/print3d/api/v1/modelDownloads/drops",
+          "summary": "我的下载删除",
+          "tags": [
+            "家用业务",
+            "app接口",
+            "我的",
+            "我的下载"
+          ]
+        }
+      ],
+      "templates": [
+        {
+          "case_version_id": "3feb305f-d3c7-481b-aab6-e35de5cfe3d4",
+          "case_id": "52908960-611c-4167-ae1e-b59a4c707473",
+          "debug_status": "PASSED",
+          "regression_status": "PASSED"
+        }
+      ],
+      "status": "planned"
+    },
+    {
+      "key": "home_learning",
+      "name": "核心链路-学习冒险地图与任务详情",
+      "class": "stable_read",
+      "business": "home",
+      "group": "核心链路 / 家用 / 稳定回归",
+      "main": {
+        "id": "c78fe496-8ac7-4668-b556-e06fdfeb3095",
+        "method": "GET",
+        "path": "/print3d/api/v1/learningAdventure/task/detail",
+        "summary": "获取冒险任务详情",
+        "tags": [
+          "家用业务",
+          "app接口",
+          "用户活动",
+          "3D学习法",
+          "冒险任务"
+        ]
+      },
+      "related": [
+        {
+          "id": "d23892ac-18e8-4fc4-9f83-4d64aa517c81",
+          "method": "GET",
+          "path": "/print3d/api/v1/learningAdventure/current",
+          "summary": "获取冒险code",
+          "tags": [
+            "家用业务",
+            "app接口",
+            "用户活动",
+            "3D学习法",
+            "四维立体 3D 学习法用户端接口。"
+          ]
+        },
+        {
+          "id": "bc85971c-c183-4f44-b042-2263f4ec196a",
+          "method": "GET",
+          "path": "/print3d/api/v1/learningAdventure/map/world",
+          "summary": "获取世界地图配置",
+          "tags": [
+            "家用业务",
+            "app接口",
+            "用户活动",
+            "3D学习法",
+            "四维立体 3D 学习法用户端接口。"
+          ]
+        }
+      ],
+      "templates": [
+        {
+          "case_version_id": "e02a9e8c-65e8-412b-8dc6-73a3c332fbce",
+          "case_id": "298b4919-7cad-4b8e-98f4-b80daaee6957",
+          "debug_status": "PASSED",
+          "regression_status": "PASSED"
+        }
+      ],
+      "status": "planned"
+    },
+    {
+      "key": "shared_region",
+      "name": "核心链路-共享地区级联查询",
+      "class": "shared_stable",
+      "business": "shared",
+      "group": "核心链路 / 共享 / 稳定回归",
+      "main": {
+        "id": "8552756c-46e1-433f-bf6c-bf89adca4314",
+        "method": "GET",
+        "path": "/share/open/v1/region/addressInfo",
+        "summary": "经纬度换地址详情",
+        "tags": [
+          "共享业务",
+          "商户小程序接口",
+          "店铺"
+        ]
+      },
+      "related": [
+        {
+          "id": "396a3c7e-c17e-4ba9-be32-b07cedc8dce5",
+          "method": "GET",
+          "path": "/share/open/v1/region/provinces",
+          "summary": "查询省份",
+          "tags": [
+            "共享业务",
+            "商户小程序接口",
+            "店铺"
+          ]
+        },
+        {
+          "id": "c014e868-d835-4ff9-aa13-0340238ef003",
+          "method": "GET",
+          "path": "/share/open/v1/region/cities",
+          "summary": "查询城市",
+          "tags": [
+            "共享业务",
+            "商户小程序接口",
+            "店铺"
+          ]
+        },
+        {
+          "id": "92bc8331-4d77-426a-9d26-cb5c779888dd",
+          "method": "GET",
+          "path": "/share/open/v1/region/areas",
+          "summary": "查询地区",
+          "tags": [
+            "共享业务",
+            "商户小程序接口",
+            "店铺"
+          ]
+        }
+      ],
+      "templates": [
+        {
+          "case_version_id": "baef0efc-24e8-4a6d-bf68-ccd6bf29928e",
+          "case_id": "e21280ff-e181-468e-ba66-ed8c1f0311f2",
+          "debug_status": "PASSED",
+          "regression_status": "PASSED"
+        },
+        {
+          "case_version_id": "46044529-a504-4492-ad28-13eda428d6e2",
+          "case_id": "69d44fc0-b38f-4f30-971b-e153f0cba389",
+          "debug_status": "PASSED",
+          "regression_status": "PASSED"
+        },
+        {
+          "case_version_id": "651ab9a7-654e-414f-9d5a-caa082d50542",
+          "case_id": "2b72f63f-b912-4be1-a2cd-75ad079d6646",
+          "debug_status": "PASSED",
+          "regression_status": "PASSED"
+        },
+        {
+          "case_version_id": "9c3b77e6-3232-4a8d-b565-f47f1d23d1fb",
+          "case_id": "79eeb192-37b1-450b-bbe6-25944244549e",
+          "debug_status": "PASSED",
+          "regression_status": "PASSED"
+        }
+      ],
+      "status": "planned"
+    },
+    {
+      "key": "shared_captcha",
+      "name": "核心链路-共享登录滑块契约",
+      "class": "shared_stable",
+      "business": "shared",
+      "group": "核心链路 / 共享 / 稳定回归",
+      "main": {
+        "id": "389db5a4-2612-4aa1-8875-9f6bfeb9c517",
+        "method": "POST",
+        "path": "/share/open/v1/BLogin/verifyCaptcha",
+        "summary": "验证滑块验证码",
+        "tags": [
+          "共享业务",
+          "商户小程序接口",
+          "B端登录接口"
+        ]
+      },
+      "related": [
+        {
+          "id": "21c4b486-31ff-4950-ad9c-49cc7d64fd8b",
+          "method": "GET",
+          "path": "/share/open/v1/BLogin/generateCaptcha",
+          "summary": "生成滑块验证",
+          "tags": [
+            "共享业务",
+            "商户小程序接口",
+            "B端登录接口"
+          ]
+        }
+      ],
+      "templates": [
+        {
+          "case_version_id": "2bb328e9-672c-4af9-ab8e-75cc6b75d5b1",
+          "case_id": "5e5336e3-8a00-46f1-bfee-91cec078ebe6",
+          "debug_status": "PASSED",
+          "regression_status": "PASSED"
+        },
+        {
+          "case_version_id": "6cfc8ec9-f834-4518-8297-623f77bc6788",
+          "case_id": "ae85d47e-b33f-4ef6-b841-af43d2e27b53",
+          "debug_status": "PASSED",
+          "regression_status": "PASSED"
+        }
+      ],
+      "status": "planned"
+    },
+    {
+      "key": "cad_lifecycle",
+      "name": "核心链路-DeepSeek CAD创建查询删除",
+      "class": "ai_extended",
+      "business": "home",
+      "group": "核心链路 / 扩展 / 按需执行",
+      "main": {
+        "id": "3d5b23ce-0dd0-423b-9fc3-01b1be56623e",
+        "method": "POST",
+        "path": "/print3d/api/v1/aiModeling/cad/create",
+        "summary": "创建 DeepSeek CAD 建模任务",
+        "tags": [
+          "家用业务",
+          "app接口",
+          "AI建模",
+          "CAD建模",
+          "CAD建模（DeepSeek App）"
+        ]
+      },
+      "related": [
+        {
+          "id": "ed965a79-cc6d-4196-a51d-51e64dfa213e",
+          "method": "GET",
+          "path": "/print3d/api/v1/aiModeling/cad/detail",
+          "summary": "查询 DeepSeek CAD 建模任务详情",
+          "tags": [
+            "家用业务",
+            "app接口",
+            "AI建模",
+            "CAD建模",
+            "CAD建模（DeepSeek App）"
+          ]
+        },
+        {
+          "id": "ef4c501b-2857-477d-bc33-89e9d81b93b4",
+          "method": "GET",
+          "path": "/print3d/api/v1/aiModeling/cad/page",
+          "summary": "查询我的 DeepSeek CAD 建模任务",
+          "tags": [
+            "家用业务",
+            "app接口",
+            "AI建模",
+            "CAD建模",
+            "CAD建模（DeepSeek App）"
+          ]
+        },
+        {
+          "id": "306522c9-dfe2-471c-b160-82951f2ea072",
+          "method": "POST",
+          "path": "/print3d/api/v1/aiModeling/cad/rename",
+          "summary": "修改我的 DeepSeek CAD 建模任务名称",
+          "tags": [
+            "家用业务",
+            "app接口",
+            "AI建模",
+            "CAD建模",
+            "CAD建模（DeepSeek App）"
+          ]
+        },
+        {
+          "id": "1db1a092-d791-4b18-815f-12499d75af87",
+          "method": "POST",
+          "path": "/print3d/api/v1/aiModeling/cad/delete",
+          "summary": "删除我的 DeepSeek CAD 建模任务",
+          "tags": [
+            "家用业务",
+            "app接口",
+            "AI建模",
+            "CAD建模",
+            "CAD建模（DeepSeek App）"
+          ]
+        }
+      ],
+      "templates": [],
+      "status": "planned",
+      "external_requirement": "AI creation is allowed by the approved design; record runtime and clean the created task"
+    },
+    {
+      "key": "jdhome_slice",
+      "name": "核心链路-京东之家默认切片预览",
+      "class": "blocked_external_data",
+      "business": "home",
+      "group": "核心链路 / 扩展 / 按需执行",
+      "main": {
+        "id": "99cc7ba0-1ba4-4d00-be73-24a75881b66c",
+        "method": "GET",
+        "path": "/api/v1/jdHome/print/defaultSlicePreview",
+        "summary": "获取京东之家默认切片预览",
+        "tags": [
+          "家用业务",
+          "京东之家体验"
+        ]
+      },
+      "related": [
+        {
+          "id": "44a0f646-046c-4805-8465-4d8fbb49efde",
+          "method": "GET",
+          "path": "/api/v1/jdHome/device/isSharedDevice",
+          "summary": "查询京东之家共享设备状态",
+          "tags": [
+            "家用业务",
+            "京东之家体验"
+          ]
+        }
+      ],
+      "templates": [],
+      "status": "discovering",
+      "external_requirement": "a bound device and model component with a configured default slice for that device type"
+    },
+    {
+      "key": "epone_camera",
+      "name": "核心链路-EPONEPro Camera会话",
+      "class": "hardware_extended",
+      "business": "home",
+      "group": "核心链路 / 扩展 / 按需执行",
+      "main": {
+        "id": "571cbfe9-b7b2-4a00-ab8f-39d4072c6aee",
+        "method": "POST",
+        "path": "/print3d/api/v2/camera/lan-sessions/prepare",
+        "summary": "Camera LAN 创建会话（EPONEPro 复用）",
+        "tags": [
+          "家用业务",
+          "app接口",
+          "EPOne设备接入",
+          "EPOne",
+          "Camera",
+          "EPONEPro"
+        ]
+      },
+      "related": [
+        {
+          "id": "35040e21-d4df-4872-88d2-d134f85516c6",
+          "method": "POST",
+          "path": "/print3d/api/v2/camera/lan-sessions/heartbeat",
+          "summary": "Camera LAN 心跳续租（EPONEPro 复用）",
+          "tags": [
+            "家用业务",
+            "app接口",
+            "EPOne设备接入",
+            "EPOne",
+            "Camera",
+            "EPONEPro"
+          ]
+        },
+        {
+          "id": "238064b8-214a-4bc4-aeb7-b413d57a67d9",
+          "method": "POST",
+          "path": "/print3d/api/v2/camera/lan-sessions/stop",
+          "summary": "Camera LAN 停止会话（EPONEPro 复用）",
+          "tags": [
+            "家用业务",
+            "app接口",
+            "EPOne设备接入",
+            "EPOne",
+            "Camera",
+            "EPONEPro"
+          ]
+        }
+      ],
+      "templates": [],
+      "status": "discovering",
+      "external_requirement": "a bound online EPONEPro with capabilities.camera=true"
+    },
+    {
+      "key": "epone_settings",
+      "name": "核心链路-EPOne设置原值回写",
+      "class": "hardware_extended",
+      "business": "home",
+      "group": "核心链路 / 扩展 / 按需执行",
+      "main": {
+        "id": "3a786d20-023f-47a5-8be4-5ff0e134ddf4",
+        "method": "POST",
+        "path": "/print3d/api/v1/deviceSettings/set",
+        "summary": "修改EPOne标量设置",
+        "tags": [
+          "家用业务",
+          "app接口",
+          "EPOne设备接入",
+          "EPOne",
+          "APP"
+        ]
+      },
+      "related": [
+        {
+          "id": "f44de3ba-b275-429b-a020-8a3428da7195",
+          "method": "POST",
+          "path": "/print3d/api/v1/deviceSettings/query",
+          "summary": "查询EPOne设备设置与能力",
+          "tags": [
+            "家用业务",
+            "app接口",
+            "EPOne设备接入",
+            "EPOne",
+            "APP"
+          ]
+        }
+      ],
+      "templates": [],
+      "status": "discovering",
+      "external_requirement": "a bound online idle EPOne and permission to write and restore settings"
+    },
+    {
+      "key": "real_print",
+      "name": "核心链路-真实打印创建查询取消",
+      "class": "hardware_extended",
+      "business": "home",
+      "group": "核心链路 / 扩展 / 按需执行",
+      "main": {
+        "id": "e9fe7ad3-dc79-4f48-a549-61b2389df29d",
+        "method": "POST",
+        "path": "/print3d/api/v1/printJob/createReprint",
+        "summary": "判断重新打印是否需要切片",
+        "tags": [
+          "家用业务",
+          "app接口",
+          "打印"
+        ]
+      },
+      "related": [
+        {
+          "id": "6e03d727-d526-48a8-8d97-c5ba91e6a112",
+          "method": "POST",
+          "path": "/print3d/api/v1/printJob/query",
+          "summary": "切片打印任务查询",
+          "tags": [
+            "家用业务",
+            "app接口",
+            "打印"
+          ]
+        },
+        {
+          "id": "4b964f1f-88ec-4c1d-9676-a59c47d12b6c",
+          "method": "POST",
+          "path": "/print3d/api/v1/printJob/cancel",
+          "summary": "打印任务取消",
+          "tags": [
+            "本地测试",
+            "启迪设备",
+            "设备详情 Copy"
+          ]
+        }
+      ],
+      "templates": [
+        {
+          "case_version_id": "681ee143-1534-4ff8-9e44-9dde5845602f",
+          "case_id": "52818cf3-5dee-4d94-bbba-4ae03261a42e",
+          "debug_status": "PASSED",
+          "regression_status": "PASSED"
+        }
+      ],
+      "status": "blocked_external_data",
+      "external_requirement": "a dedicated idle printer and explicit permission for an actual print task"
+    }
+  ],
+  "execution_log": [],
+  "data_requests": []
+}
