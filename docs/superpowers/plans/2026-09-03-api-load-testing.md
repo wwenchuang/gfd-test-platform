@@ -579,17 +579,17 @@ git commit -m "feat(load): diagnose performance reports with evidence"
 - Uses current browser identity, project/environment scope and new permissions.
 - Sends a performance-specific Feishu card after deterministic report completion.
 
-- [ ] **Step 1: Write failing user API authorization and lifecycle tests**
+- [x] **Step 1: Write failing user API authorization and lifecycle tests**
 
 Cover read-only visibility, edit/execute/agent-management separation, cross-project IDs, production permission, direct-link reads, enrollment secret returned only once, start/stop idempotency, report access and AI retry.
 
-- [ ] **Step 2: Write failing Feishu card tests**
+- [x] **Step 2: Write failing Feishu card tests**
 
 Assert task/scenario name, environment, target versus actual load, verdict, p95/p99, error rate, report link and AI status. Do not include raw samples or credentials.
 
-- [ ] **Step 3: Run tests and verify missing routes/card**
+- [x] **Step 3: Run tests and verify missing routes/card**
 
-- [ ] **Step 4: Implement narrow load-testing dispatch**
+- [x] **Step 4: Implement narrow load-testing dispatch**
 
 ```python
 def dispatch_load_testing_request(handler, method: str, path: str, query: dict, actor_id: str) -> bool:
@@ -598,18 +598,18 @@ def dispatch_load_testing_request(handler, method: str, path: str, query: dict, 
 
 Call it once from the current API-testing dispatch before the generic not-found response.
 
-- [ ] **Step 5: Implement performance notification presentation**
+- [x] **Step 5: Implement performance notification presentation**
 
 Use a separate formatter so existing functional-regression cards remain unchanged.
 
-- [ ] **Step 6: Run HTTP, authorization and notification tests**
+- [x] **Step 6: Run HTTP, authorization and notification tests**
 
 ```bash
 .venv/bin/python -m pytest tests/api_testing/test_load_testing_http.py \
   tests/api_testing/test_notification_service.py -q
 ```
 
-- [ ] **Step 7: Commit user API and notification**
+- [x] **Step 7: Commit user API and notification**
 
 ```bash
 git add task_server/api_testing/load_testing_http.py task_server/api_testing/http.py \

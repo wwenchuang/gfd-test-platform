@@ -432,3 +432,36 @@ def test_api_testing_feishu_webhook_accepts_official_feishu_and_lark_hosts():
     assert _validate_api_testing_feishu_webhook(
         "https://open.larksuite.com/open-apis/bot/v2/hook/test"
     )
+
+
+def test_performance_feishu_card_contains_targets_evidence_and_ai_state_without_samples(monkeypatch):
+    monkeypatch.setenv("API_TESTING_REPORT_BASE_URL", "https://qa.example.test")
+    report = {
+        "run_id": "run-1",
+        "verdict": "inconclusive",
+        "verdict_label": "证据不足",
+        "verdict_explanation": "未达到目标负载",
+        "load_goal": {"executor": "constant-arrival-rate", "target_iterations_per_second": 100, "actual_iterations_per_second": 82.5, "reached": False},
+        "transport": {"requests": 5000, "http_error_rate": 0.012},
+        "latency": {"p95_ms": 480, "p99_ms": 920},
+        "evidence": {"complete": True, "finished_shards": 2, "total_shards": 2},
+        "samples": [{"summary": "Authorization: Bearer secret-value"}],
+    }
+    run = SimpleNamespace(
+        id="run-1", project_id="project-1", ai_analysis_state="completed",
+        configuration={"scenario": {"name": "登录到模型详情核心链路"}, "environment": {"name": "性能测试环境"}},
+    )
+
+    card = NotificationService._load_test_card(run, report)
+    text = json.dumps(card, ensure_ascii=False)
+
+    assert "登录到模型详情核心链路" in text
+    assert "性能测试环境" in text
+    assert "目标 100 次/秒｜实际 82.5 次/秒" in text
+    assert "证据不足" in text
+    assert "P95 480 ms｜P99 920 ms" in text
+    assert "HTTP错误率 1.2%" in text
+    assert "AI诊断：已完成" in text
+    assert "https://qa.example.test/api-test/#/load-reports?project_id=project-1&run_id=run-1" in text
+    assert "secret-value" not in text
+    assert "samples" not in text

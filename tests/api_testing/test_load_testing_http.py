@@ -1,0 +1,234 @@
+"""User-facing HTTP contracts for performance scenarios, runs, reports and Agents."""
+
+from datetime import datetime, timezone
+from types import SimpleNamespace
+from uuid import uuid4
+
+import pytest
+from sqlalchemy import select
+
+from task_server.api_testing import access
+from task_server.api_testing.load_testing_http import handle_load_testing_request
+from task_server.api_testing.models.environment import ApiEnvironment, ApiEnvironmentRevision
+from task_server.api_testing.models.load_testing import (
+    ApiLoadAgent,
+    ApiLoadEvent,
+    ApiLoadRun,
+    ApiLoadRunShard,
+    ApiLoadScenario,
+    ApiLoadScenarioVersion,
+)
+from task_server.api_testing.models.project import ApiProject
+from task_server.api_testing.services.load_run_service import LoadRunError
+from tests.api_testing.test_load_testing_repository import load_factory
+
+
+def _audit(actor="owner"):
+    return {"owner_id": actor, "created_by": actor, "updated_by": actor}
+
+
+def _definition(name="搜索模型"):
+    return {
+        "name": name,
+        "description": "核心查询",
+        "mode": "single_interface",
+        "steps": [{
+            "id": "search", "name": "搜索", "scope": "iteration", "action": "http_request",
+            "request": {"method": "GET", "path": "/search", "service": "default", "path_params": {}, "query": {}, "headers": {}, "cookies": {}, "body": None},
+            "assertions": [{"type": "status_code", "operator": "equals", "expected": 200, "enabled": True}],
+            "extractions": [], "sleep_ms": 0, "side_effect": "readonly",
+        }],
+        "dataset_contract": {"dataset_id": None, "usage_mode": "cycle", "variables": []},
+        "risk": {"level": "low", "ownership_variable": None, "notes": ""},
+        "source_snapshot": {"type": "manual", "version_ids": [], "items": []},
+    }
+
+
+@pytest.fixture()
+def users(monkeypatch):
+    common = {"status": "active", "must_change_password": False, "is_superuser": False, "scope": {"api_projects": "*", "api_environments": "*"}}
+    profiles = {
+        "viewer": {**common, "permissions": ["api.view", "api.loadtest.view"]},
+        "editor": {**common, "permissions": ["api.view", "api.loadtest.view", "api.loadtest.edit"]},
+        "runner": {**common, "permissions": ["api.view", "api.execute", "api.loadtest.view", "api.loadtest.execute"]},
+        "manager": {**common, "permissions": ["api.view", "api.loadtest.view", "api.loadtest.manage_agents"]},
+        "other": {**common, "permissions": ["api.view", "api.loadtest.view"], "scope": {"api_projects": [], "api_environments": []}},
+    }
+    monkeypatch.setattr(access, "get_access_profile", lambda actor: profiles.get(actor))
+    return profiles
+
+
+@pytest.fixture()
+def catalog(load_factory):
+    suffix = uuid4().hex[:10]
+    with load_factory.begin() as session:
+        project = ApiProject(name="性能项目", slug=f"performance-{suffix}", **_audit())
+        session.add(project)
+        session.flush()
+        environment = ApiEnvironment(project_id=project.id, name="测试环境", **_audit())
+        session.add(environment)
+        session.flush()
+        revision = ApiEnvironmentRevision(environment_id=environment.id, revision_number=1, name="测试环境 v1", **_audit())
+        session.add(revision)
+        session.flush()
+        environment.active_revision_id = revision.id
+        return {"project": project, "environment": environment, "revision": revision}
+
+
+def _call(load_factory, method, path, actor, payload=None, query=None):
+    segments = tuple(part for part in path.strip("/").split("/") if part)
+    return handle_load_testing_request(method, segments, query or {}, payload or {}, actor, load_factory)
+
+
+def test_scenario_version_lifecycle_and_direct_reads_enforce_scope(load_factory, catalog, users):
+    with pytest.raises(access.AccessDeniedError):
+        _call(load_factory, "POST", "/load-scenarios", "viewer", {"project_id": catalog["project"].id, "name": "越权创建", "scenario_type": "single_interface"})
+
+    created, status = _call(load_factory, "POST", "/load-scenarios", "editor", {
+        "project_id": catalog["project"].id,
+        "name": "模型搜索核心链路",
+        "scenario_type": "single_interface",
+        "description": "新人可直接复用",
+    })
+    scenario_id = created["scenario"]["id"]
+    assert status == 201
+    versioned, status = _call(load_factory, "POST", f"/load-scenarios/{scenario_id}/versions", "editor", {"definition": _definition()})
+    assert status == 201
+    version_id = versioned["version"]["id"]
+    assert versioned["version"]["validation_summary"]["accepted"] is True
+
+    listing, _ = _call(load_factory, "GET", "/load-scenarios", "viewer", query={"project_id": catalog["project"].id})
+    assert listing["scenarios"][0]["active_version_id"] == version_id
+    direct, _ = _call(load_factory, "GET", f"/load-scenarios/{scenario_id}", "viewer")
+    assert direct["scenario"]["name"] == "模型搜索核心链路"
+    with pytest.raises(access.AccessDeniedError):
+        _call(load_factory, "GET", f"/load-scenarios/{scenario_id}", "other")
+
+
+def test_agent_management_separates_view_and_enrollment_secret(load_factory, users):
+    with pytest.raises(access.AccessDeniedError):
+        _call(load_factory, "POST", "/load-agent-enrollments", "viewer", {"name": "专用节点", "scheduling_tier": "preferred"})
+    enrolled, status = _call(load_factory, "POST", "/load-agent-enrollments", "manager", {
+        "name": "专用节点", "node_group": "腾讯云", "scheduling_tier": "preferred", "expires_in_seconds": 600,
+    })
+    assert status == 201
+    assert enrolled["enrollment"]["token"]
+    assert enrolled["enrollment"]["credential_notice"] == "注册令牌仅显示一次，请立即保存"
+
+    listing, _ = _call(load_factory, "GET", "/load-agent-enrollments", "manager")
+    assert listing["enrollments"][0]["id"] == enrolled["enrollment"]["id"]
+    assert "token" not in listing["enrollments"][0]
+
+
+def test_run_read_events_report_ai_and_actions_use_separate_permissions(load_factory, catalog, users, monkeypatch):
+    now = datetime(2026, 9, 3, 16, 0, tzinfo=timezone.utc)
+    with load_factory.begin() as session:
+        scenario = ApiLoadScenario(project_id=catalog["project"].id, name="搜索链路", scenario_type="single_interface", **_audit())
+        session.add(scenario)
+        session.flush()
+        version = ApiLoadScenarioVersion(scenario_id=scenario.id, version_number=1, definition=_definition(), source_snapshot={}, validation_summary={"accepted": True}, compiler_version="k6-safe-v1", content_hash="x" * 64, **_audit())
+        session.add(version)
+        session.flush()
+        scenario.active_version_id = version.id
+        run = ApiLoadRun(project_id=catalog["project"].id, scenario_version_id=version.id, environment_revision_id=catalog["revision"].id, load_model="constant-vus", queue_priority="normal", configuration={"scenario": {"name": "搜索链路"}}, state="queued", **_audit())
+        session.add(run)
+        session.flush()
+        event = ApiLoadEvent(run_id=run.id, sequence=1, event_type="run.queued", payload={"message": "等待节点"}, **_audit())
+        session.add(event)
+        session.flush()
+        run_id = run.id
+
+    class FakeRunService:
+        def start(self, requested_id, actor):
+            assert actor == "runner" and requested_id == run_id
+            with load_factory.begin() as session:
+                row = session.get(ApiLoadRun, run_id)
+                row.state = "starting"
+                return row
+
+        def stop(self, requested_id, reason, actor):
+            assert actor == "runner" and reason == "人工停止"
+            with load_factory.begin() as session:
+                row = session.get(ApiLoadRun, run_id)
+                row.state = "cancelled"
+                row.verdict = "inconclusive"
+                return row
+
+    monkeypatch.setattr("task_server.api_testing.load_testing_http._run_service", lambda _factory: FakeRunService())
+    monkeypatch.setattr("task_server.api_testing.load_testing_http.LoadReportService.build", lambda _self, requested_id, actor: {"run_id": requested_id, "verdict": "inconclusive", "actor": actor})
+    monkeypatch.setattr("task_server.api_testing.load_testing_http.LoadAiAnalysisService.request", lambda _self, requested_id, actor, force=False: SimpleNamespace(id="analysis-1", run_id=requested_id, state="queued", evidence_hash="e" * 64, model="平台自动路由", prompt_version="api-load-analysis.v1", result={}, error=""))
+
+    detail, _ = _call(load_factory, "GET", f"/load-runs/{run_id}", "viewer")
+    assert detail["run"]["id"] == run_id
+    events, _ = _call(load_factory, "GET", f"/load-runs/{run_id}/events", "viewer", query={"after": "0"})
+    assert events["events"][0]["type"] == "run.queued"
+    report, _ = _call(load_factory, "GET", f"/load-runs/{run_id}/report", "viewer")
+    assert report["report"]["verdict"] == "inconclusive"
+    analysis, status = _call(load_factory, "POST", f"/load-runs/{run_id}/ai-analysis", "viewer", {"force": True})
+    assert status == 202 and analysis["analysis"]["state"] == "queued"
+    with pytest.raises(access.AccessDeniedError):
+        _call(load_factory, "POST", f"/load-runs/{run_id}/start", "viewer")
+    started, _ = _call(load_factory, "POST", f"/load-runs/{run_id}/start", "runner")
+    assert started["run"]["state"] == "starting"
+    stopped, _ = _call(load_factory, "POST", f"/load-runs/{run_id}/stop", "runner", {"reason": "人工停止"})
+    assert stopped["run"]["state"] == "cancelled"
+
+
+def test_load_route_is_mounted_once_before_generic_not_found():
+    source = open("task_server/api_testing/http.py", encoding="utf-8").read()
+    assert "dispatch_load_testing_request" in source
+    assert source.index("dispatch_load_testing_request") < source.index("def _route(")
+
+
+def test_completed_run_persists_deterministic_verdict_and_queues_ai(load_factory, catalog, users, monkeypatch):
+    from task_server.api_testing import tasks
+
+    with load_factory.begin() as session:
+        scenario = ApiLoadScenario(project_id=catalog["project"].id, name="完成链路", scenario_type="single_interface", **_audit())
+        session.add(scenario)
+        session.flush()
+        version = ApiLoadScenarioVersion(scenario_id=scenario.id, version_number=1, definition=_definition(), source_snapshot={}, validation_summary={"accepted": True}, compiler_version="k6-safe-v1", content_hash="z" * 64, **_audit())
+        session.add(version)
+        session.flush()
+        run = ApiLoadRun(project_id=catalog["project"].id, scenario_version_id=version.id, environment_revision_id=catalog["revision"].id, load_model="constant-vus", queue_priority="normal", configuration={"scenario": {"name": "完成链路"}}, state="finished", **_audit())
+        session.add(run)
+        session.flush()
+        run_id = run.id
+
+    report = {"run_id": run_id, "verdict": "passed", "verdict_label": "通过", "evidence": {"complete": True}}
+    queued = []
+    monkeypatch.setattr(tasks, "_session_factory", lambda: load_factory)
+    monkeypatch.setattr(tasks.LoadReportService, "build", lambda _self, requested_id, actor: report)
+    monkeypatch.setattr(tasks.LoadAiAnalysisService, "request", lambda _self, requested_id, actor, force=False: SimpleNamespace(id="analysis-auto", state="queued"))
+    monkeypatch.setattr(tasks.analyze_load_report, "delay", lambda analysis_id: queued.append(analysis_id))
+
+    assert tasks.finalize_load_run.run(run_id) == "queued"
+    assert queued == ["analysis-auto"]
+    with load_factory() as session:
+        persisted = session.get(ApiLoadRun, run_id)
+        assert persisted.verdict == "passed"
+        assert persisted.summary["deterministic_report"] == {"verdict": "passed", "evidence_complete": True}
+
+
+def test_repeated_http_start_returns_the_existing_running_task(load_factory, catalog, users, monkeypatch):
+    with load_factory.begin() as session:
+        scenario = ApiLoadScenario(project_id=catalog["project"].id, name="幂等链路", scenario_type="single_interface", **_audit())
+        session.add(scenario)
+        session.flush()
+        version = ApiLoadScenarioVersion(scenario_id=scenario.id, version_number=1, definition=_definition(), source_snapshot={}, validation_summary={"accepted": True}, compiler_version="k6-safe-v1", content_hash="i" * 64, **_audit())
+        session.add(version)
+        session.flush()
+        run = ApiLoadRun(project_id=catalog["project"].id, scenario_version_id=version.id, environment_revision_id=catalog["revision"].id, load_model="constant-vus", queue_priority="normal", configuration={}, state="running", **_audit())
+        session.add(run)
+        session.flush()
+        run_id = run.id
+
+    class DuplicateStart:
+        def start(self, _run_id, _actor):
+            raise LoadRunError("任务已经启动，请勿重复点击", status=409, code="duplicate_start")
+
+    monkeypatch.setattr("task_server.api_testing.load_testing_http._run_service", lambda _factory: DuplicateStart())
+
+    result, status = _call(load_factory, "POST", f"/load-runs/{run_id}/start", "runner")
+    assert status == 200
+    assert result["run"]["state"] == "running"

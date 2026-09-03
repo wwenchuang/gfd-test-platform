@@ -292,8 +292,13 @@ def test_agent_can_claim_and_update_only_its_own_shard(
 
 
 def test_duplicate_metrics_replace_the_bucket_and_finish_is_idempotent(
-    http_client, agent_http_context, load_records
+    http_client, agent_http_context, load_records, monkeypatch
 ):
+    completions = []
+    monkeypatch.setattr(
+        "task_server.api_testing.load_agent_http._dispatch_load_completion",
+        lambda run_id: completions.append(run_id),
+    )
     registered = _register(http_client, agent_http_context, "HTTP指标节点")
     repository = LoadTestingRepository.from_factory(agent_http_context["factory"])
     scenario = repository.create_scenario(
@@ -352,6 +357,7 @@ def test_duplicate_metrics_replace_the_bucket_and_finish_is_idempotent(
     )
 
     assert finished.status == repeated.status == 200
+    assert completions == [run.id]
     with agent_http_context["factory"]() as session:
         buckets = tuple(
             session.scalars(select(ApiLoadMetricBucket).where(ApiLoadMetricBucket.run_id == run.id))

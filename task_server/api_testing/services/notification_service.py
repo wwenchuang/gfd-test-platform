@@ -20,6 +20,7 @@ from .. import access
 
 from ..crypto import decrypt_secret, encrypt_secret, secret_fingerprint
 from ..models.project import ApiProject
+from ..models.load_testing import ApiLoadRun
 from ..repositories.execution_repository import ExecutionRepository
 from ..repositories.notification_repository import NotificationRepository
 
@@ -59,6 +60,14 @@ class NotificationSendView:
 @dataclass(frozen=True)
 class NotificationTestView:
     project_id: str
+    channel_type: str
+    sent: bool
+    message: str
+
+
+@dataclass(frozen=True)
+class LoadNotificationSendView:
+    run_id: str
     channel_type: str
     sent: bool
     message: str
@@ -185,6 +194,34 @@ class NotificationService:
                 message="飞书通知已发",
             )
 
+    def send_load_test_report(self, run_id, actor_id, report=None):
+        """Send a compact performance card without raw samples or credentials."""
+        access.require_permission(actor_id, "platform.notify")
+        access.require_permission(actor_id, "api.loadtest.view")
+        with self.session_factory() as session:
+            run = session.get(ApiLoadRun, run_id)
+            if run is None or not access.resource_allowed(session, run, actor_id):
+                raise NotificationNotConfiguredError("load run was not found")
+            notification = NotificationRepository(session).get(
+                self._channel_owner(session, run.project_id, actor_id),
+                run.project_id,
+                FEISHU_CHANNEL,
+            )
+            if notification is None or not notification.enabled or not notification.ciphertext:
+                raise NotificationNotConfiguredError("Feishu notification is not configured")
+            webhook = _validate_api_testing_feishu_webhook(decrypt_secret(notification.ciphertext))
+            if report is None:
+                from .load_report_service import LoadReportService
+                report = LoadReportService(self.session_factory).build(run.id, actor_id)
+            card = self._load_test_card(run, report)
+        send_feishu_notification({"card": card}, webhook=webhook)
+        return LoadNotificationSendView(
+            run_id=run_id,
+            channel_type=FEISHU_CHANNEL,
+            sent=True,
+            message="性能测试飞书报告已发",
+        )
+
     def test_feishu(self, project_id, actor_id):
         access.require_permission(actor_id, "platform.notify")
         with self.session_factory() as session:
@@ -246,6 +283,82 @@ class NotificationService:
                 },
             ],
         }
+
+    @classmethod
+    def _load_test_card(cls, run, report):
+        configuration = run.configuration if isinstance(run.configuration, dict) else {}
+        scenario = configuration.get("scenario") if isinstance(configuration.get("scenario"), dict) else {}
+        environment = configuration.get("environment") if isinstance(configuration.get("environment"), dict) else {}
+        goal = report.get("load_goal") if isinstance(report.get("load_goal"), dict) else {}
+        transport = report.get("transport") if isinstance(report.get("transport"), dict) else {}
+        latency = report.get("latency") if isinstance(report.get("latency"), dict) else {}
+        evidence = report.get("evidence") if isinstance(report.get("evidence"), dict) else {}
+        verdict = str(report.get("verdict") or "inconclusive")
+        verdict_label = str(report.get("verdict_label") or {"passed": "通过", "failed": "未通过"}.get(verdict, "证据不足"))
+        template = {"passed": "green", "failed": "red"}.get(verdict, "orange")
+        icon = {"passed": "✅", "failed": "❌"}.get(verdict, "⚠️")
+        target = goal.get("target_iterations_per_second")
+        actual = goal.get("actual_iterations_per_second")
+        if target is None:
+            target = goal.get("target_vus", 0)
+            actual = goal.get("actual_peak_vus", 0)
+            load_text = f"目标 {cls._number(target)} 并发用户｜实际峰值 {cls._number(actual)} 并发用户"
+        else:
+            load_text = f"目标 {cls._number(target)} 次/秒｜实际 {cls._number(actual)} 次/秒"
+        ai_label = {
+            "completed": "已完成", "running": "诊断中", "queued": "等待诊断",
+            "failed": "诊断失败", "pending": "尚未诊断",
+        }.get(str(getattr(run, "ai_analysis_state", "pending") or "pending"), "尚未诊断")
+        report_url = cls._load_report_url(run.id, run.project_id)
+        rows = [
+            f"**场景名称：** {scenario.get('name') or '未命名性能场景'}",
+            f"**环境：** {environment.get('name') or '未命名环境'}",
+            f"**压测结论：** {verdict_label}｜{report.get('verdict_explanation') or '请查看确定性报告'}",
+            f"**负载目标：** {load_text}",
+            f"**吞吐与错误：** 请求 {int(transport.get('requests') or 0)}｜HTTP错误率 {cls._percent(transport.get('http_error_rate'))}",
+            f"**响应时间：** P95 {cls._number(latency.get('p95_ms'))} ms｜P99 {cls._number(latency.get('p99_ms'))} ms",
+            f"**证据：** 节点 {int(evidence.get('finished_shards') or 0)}/{int(evidence.get('total_shards') or 0)}｜{'完整' if evidence.get('complete') else '不完整'}",
+            f"AI诊断：{ai_label}",
+        ]
+        elements = [{"tag": "div", "text": {"tag": "lark_md", "content": row}} for row in rows]
+        if report_url:
+            elements.extend([
+                {"tag": "hr"},
+                {"tag": "action", "actions": [{"tag": "button", "type": "primary", "text": {"tag": "plain_text", "content": "查看性能报告"}, "url": report_url}]},
+            ])
+        return {
+            "config": {"wide_screen_mode": True},
+            "header": {"template": template, "title": {"tag": "plain_text", "content": f"{icon} API性能测试｜{verdict_label}"}},
+            "elements": elements,
+        }
+
+    @staticmethod
+    def _number(value):
+        try:
+            number = float(value or 0)
+        except (TypeError, ValueError):
+            number = 0.0
+        return str(int(number)) if number.is_integer() else f"{number:.2f}".rstrip("0").rstrip(".")
+
+    @staticmethod
+    def _percent(value):
+        try:
+            number = max(0.0, float(value or 0) * 100)
+        except (TypeError, ValueError):
+            number = 0.0
+        return f"{number:.1f}%" if not number.is_integer() else f"{int(number)}%"
+
+    @staticmethod
+    def _load_report_url(run_id, project_id=""):
+        base_url = ""
+        for key in ("API_TESTING_REPORT_BASE_URL", "API_TESTING_PUBLIC_BASE_URL", "MIDSCENE_PUBLIC_BASE_URL", "PUBLIC_BASE_URL"):
+            value = os.getenv(key, "").strip()
+            if value:
+                base_url = value
+                break
+        if not base_url:
+            return ""
+        return f"{base_url.rstrip('/')}/api-test/#/load-reports?{urlencode({'project_id': project_id, 'run_id': run_id})}"
 
     @staticmethod
     def _view(project_id, record):

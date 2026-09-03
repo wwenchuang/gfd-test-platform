@@ -161,6 +161,13 @@ def _dispatch(handler, method, qs, path):
                 actor,
                 after=qs.get("after"),
             )
+        if segments and segments[0] in {
+            "load-scenarios", "load-scenario-versions", "load-datasets",
+            "load-runs", "load-agents", "load-agent-enrollments",
+        }:
+            from .load_testing_http import dispatch_load_testing_request
+            if dispatch_load_testing_request(handler, method, path, qs, actor):
+                return
         payload = _read_json_body(handler) if method in {"POST", "PUT"} else None
         result, status = _route(method, segments, qs, payload, actor, settings, session_digest=handler._api_session_digest)
         return _success(handler, result, request_id, status)

@@ -1,6 +1,9 @@
 """Celery entry point for API execution; core behavior remains synchronously testable."""
 
 import logging
+import copy
+
+from sqlalchemy import select
 
 from celery import Celery
 from celery.signals import heartbeat_sent, worker_ready
@@ -12,7 +15,9 @@ from .repositories.execution_repository import ExecutionRepository
 from .services.execution_service import ExecutionService
 from .services.ai_service import AiCaseService, AiFailureAnalyzer
 from .services.load_ai_analysis_service import LoadAiAnalysisService
+from .services.load_report_service import LoadReportService
 from .services.notification_service import NotificationNotConfiguredError, NotificationService
+from .models.load_testing import ApiLoadRun
 from .services.test_task_service import TestTaskService
 
 
@@ -159,4 +164,51 @@ def generate_api_cases(self, job_id):
 
 @celery_app.task(name="api_testing.analyze_load_report", bind=True, acks_late=True)
 def analyze_load_report(self, analysis_id):
-    return LoadAiAnalysisService(_session_factory()).process(analysis_id).state
+    factory = _session_factory()
+    record = LoadAiAnalysisService(factory).process(analysis_id)
+    _notify_load_run_if_enabled(factory, record.run_id)
+    return record.state
+
+
+@celery_app.task(name="api_testing.finalize_load_run", bind=True, acks_late=True)
+def finalize_load_run(self, run_id):
+    """Freeze the deterministic verdict before optional AI and notification work."""
+    factory = _session_factory()
+    with factory() as session:
+        run = session.get(ApiLoadRun, run_id)
+        if run is None or run.state not in {"finished", "failed", "cancelled"}:
+            return "ignored"
+        actor_id = run.created_by
+    report = LoadReportService(factory).build(run_id, actor_id)
+    with factory.begin() as session:
+        run = session.scalar(select(ApiLoadRun).where(ApiLoadRun.id == run_id).with_for_update())
+        run.verdict = report["verdict"]
+        run.summary = {
+            **copy.deepcopy(run.summary or {}),
+            "deterministic_report": {
+                "verdict": report["verdict"],
+                "evidence_complete": bool((report.get("evidence") or {}).get("complete")),
+            },
+        }
+    try:
+        analysis = LoadAiAnalysisService(factory).request(run_id, actor_id)
+        analyze_load_report.delay(analysis.id)
+        return analysis.state
+    except Exception:
+        logger.warning("Unable to queue load-test AI analysis", exc_info=True)
+        _notify_load_run_if_enabled(factory, run_id, report=report)
+        return "report_completed"
+
+
+def _notify_load_run_if_enabled(factory, run_id, report=None):
+    with factory() as session:
+        run = session.get(ApiLoadRun, run_id)
+        if run is None:
+            return
+        actor_id = run.created_by
+    try:
+        NotificationService(factory).send_load_test_report(run_id, actor_id, report=report)
+    except NotificationNotConfiguredError:
+        return
+    except Exception:
+        logger.warning("Unable to send performance-test Feishu report", exc_info=True)

@@ -355,6 +355,7 @@ def _finish_shard(agent_id, shard_id, payload):
     if not isinstance(summary, dict) or not isinstance(error, dict):
         raise ApiHttpError(422, "invalid_request", "summary and error must be objects")
     factory = _factory()
+    completed_run_id = None
     with factory.begin() as session:
         snapshot = _owned_shard(session, agent_id, shard_id)
         run = session.scalar(
@@ -390,7 +391,16 @@ def _finish_shard(agent_id, shard_id, payload):
             else:
                 run.state = "finished"
             session.flush()
-        return _shard_view(shard)
+            completed_run_id = run.id
+        view = _shard_view(shard)
+    if completed_run_id:
+        _dispatch_load_completion(completed_run_id)
+    return view
+
+
+def _dispatch_load_completion(run_id):
+    from .tasks import finalize_load_run
+    finalize_load_run.delay(run_id)
 
 
 def _agent_view(agent):

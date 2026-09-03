@@ -190,6 +190,18 @@ def authorize_http(actor, method, segments):
         return
     head = segments[0] if segments else ""
     tail = segments[-1] if segments else ""
+    if head in {"load-scenarios", "load-scenario-versions", "load-datasets", "load-runs", "load-agents", "load-agent-enrollments"}:
+        if head in {"load-agents", "load-agent-enrollments"} and method != "GET":
+            require_permission(actor, "api.loadtest.manage_agents")
+        elif head == "load-agent-enrollments":
+            require_permission(actor, "api.loadtest.manage_agents")
+        elif method == "GET" or tail in {"report", "events", "ai-analysis"}:
+            require_permission(actor, "api.loadtest.view")
+        elif head == "load-runs":
+            require_permission(actor, "api.loadtest.execute")
+        else:
+            require_permission(actor, "api.loadtest.edit")
+        return
     if method == "PUT" and segments == ("workspace",):
         return
     if method == "POST" and head == "executions" and tail == "sse-ticket":
