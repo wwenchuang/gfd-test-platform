@@ -426,31 +426,31 @@ git commit -m "feat(load): orchestrate preflight and distributed runs"
 - `K6Runtime.run(shard, command_source, metric_sink) -> ShardResult` owns graceful and forced termination.
 - `MetricAggregator.accept(point)` and `flush(window)` produce platform bucket payloads.
 
-- [ ] **Step 1: Write failing client, process, and aggregation tests**
+- [x] **Step 1: Write failing client, process, and aggregation tests**
 
 Use a fake control server and fake executable. Verify registration persistence, heartbeat, local calibration without business traffic, calibration expiry/signature invalidation, claim, secret-free logs, SIGINT stop, SIGKILL after grace period, crash summary, five-second percentile buckets, bounded samples and retry without duplicate batch IDs.
 
-- [ ] **Step 2: Run tests and verify missing package failures**
+- [x] **Step 2: Run tests and verify missing package failures**
 
 ```bash
 .venv/bin/python -m pytest tests/load_agent -q
 ```
 
-- [ ] **Step 3: Implement strict environment configuration**
+- [x] **Step 3: Implement strict environment configuration**
 
 Require `PLATFORM_URL`, `AGENT_DATA_DIR`, and either `ENROLL_TOKEN` for first registration or a persisted credential. Reject insecure public HTTP secret transport unless `ALLOW_INSECURE_PRIVATE_AGENT_TRANSPORT=1`.
 
-- [ ] **Step 4: Implement control client and credential storage**
+- [x] **Step 4: Implement control client and credential storage**
 
 Store the Agent token in a `0600` file under the mounted data directory. Never log request Authorization or job secrets.
 
 Implement the calibration command with a bounded local-only k6 target. Record sustainable VU/rate, CPU and memory peaks, Agent/k6 versions, hardware signature, calibration ID and seven-day validity; never send calibration traffic to a configured business environment.
 
-- [ ] **Step 5: Implement k6 output aggregation**
+- [x] **Step 5: Implement k6 output aggregation**
 
 Parse k6 JSON output incrementally from stdout or a named pipe. Keep t-digest-equivalent bounded latency samples per window or exact bounded arrays with an enforced maximum; do not retain the full stream.
 
-- [ ] **Step 6: Implement process lifecycle and cleanup**
+- [x] **Step 6: Implement process lifecycle and cleanup**
 
 Send graceful interrupt on `stop`, wait the configured grace period, force terminate if necessary, upload final partial summary, overwrite/delete secret material, and remove the work directory.
 
@@ -464,7 +464,7 @@ docker history --no-trunc midscene-load-agent:test
 
 Expected: pinned k6 version prints; image history contains no enrollment token or environment secret.
 
-- [ ] **Step 8: Run Agent tests and commit**
+- [x] **Step 8: Run Agent tests and commit**
 
 ```bash
 .venv/bin/python -m pytest tests/load_agent -q

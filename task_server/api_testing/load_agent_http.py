@@ -2,7 +2,7 @@
 
 import copy
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
 from sqlalchemy import case, select
@@ -147,11 +147,20 @@ def _get(agent, segments, query):
     if len(segments) == 3 and segments[0] == "shards" and segments[2] == "commands":
         shard_id = _uuid(segments[1])
         factory = _factory()
-        with factory() as session:
-            shard = _owned_shard(session, agent.id, shard_id)
+        with factory.begin() as session:
+            shard = _owned_shard(session, agent.id, shard_id, for_update=True)
             run = session.get(ApiLoadRun, shard.run_id)
             stop = run is None or run.state in {"stopping", "cancelled", "failed"}
             start = run is not None and run.state == "running" and shard.state == "ready"
+            now = datetime.now(timezone.utc)
+            previous = shard.last_heartbeat_at
+            if previous is not None and previous.tzinfo is None:
+                previous = previous.replace(tzinfo=timezone.utc)
+            if (
+                shard.state in {"ready", "running", "stopping"}
+                and (previous is None or now - previous >= timedelta(seconds=5))
+            ):
+                shard.last_heartbeat_at = now
             return {
                 "commands": (
                     [{"type": "stop", "reason": run.stop_reason if run else "运行不存在"}]
@@ -289,6 +298,14 @@ def _assert_owned(agent_id, shard_id):
         return _owned_shard(session, agent_id, shard_id)
 
 
+def _touch_shard(agent_id, shard_id):
+    factory = _factory()
+    with factory.begin() as session:
+        shard = _owned_shard(session, agent_id, shard_id, for_update=True)
+        if shard.state in {"ready", "running", "stopping"}:
+            shard.last_heartbeat_at = datetime.now(timezone.utc)
+
+
 def _ingest_metrics(agent_id, shard_id, payload):
     shard = _assert_owned(agent_id, shard_id)
     repository = LoadTestingRepository.from_factory(_factory())
@@ -310,6 +327,7 @@ def _ingest_metrics(agent_id, shard_id, payload):
             started_at,
             metrics,
         )
+    _touch_shard(agent_id, shard.id)
     return {"accepted": len(buckets)}
 
 
@@ -331,6 +349,7 @@ def _ingest_samples(agent_id, shard_id, payload):
         parsed.append((step_id, kind, body))
     for step_id, kind, body in parsed:
         repository.append_bounded_sample(shard.run_id, shard.id, step_id, kind, body)
+    _touch_shard(agent_id, shard.id)
     return {"accepted": len(samples)}
 
 
@@ -353,6 +372,7 @@ def _ingest_events(agent_id, shard_id, payload):
             "agent." + event_type,
             {"shard_id": shard.id, **copy.deepcopy(body)},
         )
+    _touch_shard(agent_id, shard.id)
     return {"accepted": len(events)}
 
 

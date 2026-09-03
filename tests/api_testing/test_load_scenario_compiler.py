@@ -180,6 +180,8 @@ def test_compiler_adds_stable_request_name_tags_and_csv_data_access():
     assert 'name: "login 登录"' in compiled.script
     assert 'name: "search 搜索收纳盒"' in compiled.script
     assert "datasetRows" in compiled.script
+    assert 'open(__ENV["LOAD_DATASET_FILE"])' in compiled.script
+    assert "LOAD_DATASET_JSON" not in compiled.script
     assert 'dataValue("username")' in compiled.script
     assert "exec.scenario.iterationInTest" in compiled.script
     assert "const datasetVariables" not in compiled.script

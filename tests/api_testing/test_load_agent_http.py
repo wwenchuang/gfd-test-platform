@@ -2,7 +2,7 @@
 
 import io
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from sqlalchemy import select
@@ -235,6 +235,9 @@ def test_agent_can_claim_and_update_only_its_own_shard(
         _agent_auth(first["secret"]),
     )
     assert started.status == 200
+    previous_heartbeat = datetime.now(timezone.utc) - timedelta(minutes=5)
+    with agent_http_context["factory"].begin() as session:
+        session.get(ApiLoadRunShard, shard.id).last_heartbeat_at = previous_heartbeat
     sample = http_client.post(
         AGENT_PREFIX + f"/shards/{shard.id}/samples",
         {
@@ -264,6 +267,7 @@ def test_agent_can_claim_and_update_only_its_own_shard(
         persisted = session.get(ApiLoadRunShard, shard.id)
         assert persisted.state == "running"
         assert persisted.process_info == {"pid": 321}
+        assert persisted.last_heartbeat_at > previous_heartbeat
 
 
 def test_duplicate_metrics_replace_the_bucket_and_finish_is_idempotent(

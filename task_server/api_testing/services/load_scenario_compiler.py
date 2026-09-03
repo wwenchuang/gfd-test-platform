@@ -244,7 +244,7 @@ import exec from \"k6/execution\";
 
 export const options = {_json(options)};
 const workflowIterationSuccess = new Rate(\"workflow_iteration_success\");
-const datasetRows = JSON.parse(__ENV[\"LOAD_DATASET_JSON\"] || \"[]\");
+const datasetRows = JSON.parse(open(__ENV[\"LOAD_DATASET_FILE\"]));
 const requiredSecrets = {{}};
 {secret_bindings}
 const datasetMode = {_json(parsed['dataset_contract']['usage_mode'])};
