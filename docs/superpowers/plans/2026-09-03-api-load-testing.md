@@ -134,7 +134,7 @@ git commit -m "feat(load): add durable load testing domain"
 - Produces `LoadAgentService.create_enrollment()`, `register()`, `authenticate()`, `heartbeat()`, and `update_agent()`.
 - Agent credentials are random 32-byte tokens stored only as SHA-256 hashes.
 
-- [ ] **Step 1: Write failing identity and agent lifecycle tests**
+- [x] **Step 1: Write failing identity and agent lifecycle tests**
 
 Cover permission prerequisites, delegated role constraints, one-time enrollment, expiry, replay rejection, credential revocation, heartbeat capacity validation, and prohibition on soft limits above hard limits.
 
@@ -147,11 +147,11 @@ def test_enrollment_is_one_time_and_agent_secret_is_hashed(session_factory):
     assert registration.secret not in service.debug_persisted_values()
 ```
 
-- [ ] **Step 2: Run focused tests and verify expected failures**
+- [x] **Step 2: Run focused tests and verify expected failures**
 
 Expected: unknown permission and missing service failures.
 
-- [ ] **Step 3: Add permission catalog entries and prerequisites**
+- [x] **Step 3: Add permission catalog entries and prerequisites**
 
 Use:
 
@@ -164,18 +164,18 @@ Use:
 
 Super administrators receive all permissions through the existing catalog. Preset tester roles do not automatically receive Agent-management permission.
 
-- [ ] **Step 4: Implement enrollment and heartbeat validation**
+- [x] **Step 4: Implement enrollment and heartbeat validation**
 
 Accept exact tiers `preferred`, `normal`, `fallback`, and `disabled`. Validate positive hard/soft `max_vus`, `max_iterations_per_second`, `max_duration_seconds`, CPU and memory values. Heartbeat never accepts platform ownership or project scope from the Agent.
 
-- [ ] **Step 5: Run identity, agent, and frontend permission tests**
+- [x] **Step 5: Run identity, agent, and frontend permission tests**
 
 ```bash
 .venv/bin/python -m pytest tests/test_identity.py tests/api_testing/test_load_agent_service.py -q
 node tests/identity_frontend_check.js
 ```
 
-- [ ] **Step 6: Commit access and enrollment**
+- [x] **Step 6: Commit access and enrollment**
 
 ```bash
 git add task_server/identity.py task_server/api_testing/access.py \

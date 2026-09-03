@@ -67,6 +67,10 @@ async function fixture(browser, base, options = {}) {
       { id: 'ui.edit', label: '编辑 UI 测试', group: 'UI 测试' },
       { id: 'api.view', label: '查看 API 测试', group: 'API 测试' },
       { id: 'api.execute', label: '执行 API 测试', group: 'API 测试' },
+      { id: 'api.loadtest.view', label: '查看性能测试', group: '性能测试' },
+      { id: 'api.loadtest.edit', label: '编辑性能测试', group: '性能测试' },
+      { id: 'api.loadtest.execute', label: '执行性能测试', group: '性能测试' },
+      { id: 'api.loadtest.manage_agents', label: '管理压测节点', group: '性能测试' },
       { id: 'auth.manage', label: '管理成员与权限', group: '平台' },
     ];
     else if (url.pathname === '/api/auth/scope-options') payload = { ...payload, ui_apps: [{ id: 'com.fixture.app', name: '智小白 3D' }], api_projects: [{ id: 'p1', name: '家用 API' }, { id: 'p2', name: '共享 API' }], api_environments: [{ id: 'e1', name: '测试环境', project_id: 'p1' }, { id: 'e2', name: '生产环境', project_id: 'p2' }] };
@@ -173,6 +177,22 @@ async function run() {
       await dialog.getByRole('button', { name: '保存角色', exact: true }).click();
       const permissions = state.calls.find(call => call.key === 'POST /api/auth/roles').body.permissions;
       assert.deepEqual(permissions.sort(), ['api.execute', 'api.view']);
+      await context.close();
+    });
+    await check('performance permissions use Chinese names and add safe prerequisites', async () => {
+      const { page, context, state } = await fixture(browser, base);
+      await page.getByRole('tab', { name: '角色', exact: true }).click();
+      await page.getByRole('button', { name: '新增角色', exact: true }).click();
+      const dialog = page.getByRole('dialog');
+      await dialog.getByLabel('角色名称', { exact: true }).fill('性能测试执行员');
+      await dialog.getByLabel('执行性能测试', { exact: true }).check();
+      assert.equal(await dialog.getByLabel('查看性能测试', { exact: true }).isChecked(), true);
+      assert.equal(await dialog.getByLabel('查看 API 测试', { exact: true }).isChecked(), true);
+      assert.equal(await dialog.getByLabel('执行 API 测试', { exact: true }).isChecked(), true);
+      assert.equal(await dialog.getByLabel('管理压测节点', { exact: true }).isChecked(), false);
+      await dialog.getByRole('button', { name: '保存角色', exact: true }).click();
+      const created = state.calls.filter(call => call.key === 'POST /api/auth/roles').at(-1).body;
+      assert.deepEqual(created.permissions.sort(), ['api.execute', 'api.loadtest.execute', 'api.loadtest.view', 'api.view']);
       await context.close();
     });
     await check('scope selection uses names and persists selected IDs', async () => {

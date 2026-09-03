@@ -229,6 +229,60 @@ def test_custom_role_write_permissions_include_their_view_prerequisite(identity_
     assert updated["permissions"] == ["api.environment", "api.view", "ui.edit", "ui.view"]
 
 
+def test_load_testing_permissions_have_safe_prerequisites(identity_db):
+    identity, store = identity_db
+    catalog = {item["id"]: item for item in identity.PERMISSIONS}
+    assert catalog["api.loadtest.view"]["label"] == "查看性能测试"
+    assert catalog["api.loadtest.execute"]["label"] == "执行性能测试"
+    assert catalog["api.loadtest.manage_agents"]["label"] == "管理压测节点"
+
+    role = store.create_role(
+        "admin",
+        {
+            "id": "load-runner",
+            "name": "性能测试执行员",
+            "permissions": ["api.loadtest.execute"],
+        },
+    )
+    assert role["permissions"] == [
+        "api.execute",
+        "api.loadtest.execute",
+        "api.loadtest.view",
+        "api.view",
+    ]
+
+    manager = next(item for item in store.list_roles("admin") if item["id"] == "test_manager")
+    assert "api.loadtest.view" in manager["permissions"]
+    assert "api.loadtest.execute" in manager["permissions"]
+    assert "api.loadtest.manage_agents" not in manager["permissions"]
+
+
+def test_existing_builtin_roles_receive_load_permissions_once(identity_db):
+    identity, store = identity_db
+    with sqlite3.connect(store.path) as db:
+        db.execute(
+            "UPDATE roles SET permissions=? WHERE id='super_admin'",
+            (json.dumps(["auth.manage"]),),
+        )
+        db.execute(
+            "UPDATE roles SET permissions=? WHERE id='test_manager'",
+            (json.dumps(["api.view", "api.execute"]),),
+        )
+        db.execute("DELETE FROM metadata WHERE key='load_permissions_v1'")
+    reopened = identity.IdentityStore(store.path)
+    roles = {role["id"]: role for role in reopened.list_roles("admin")}
+
+    assert set(roles["super_admin"]["permissions"]) == identity.PERMISSION_IDS
+    assert {
+        "api.view",
+        "api.execute",
+        "api.loadtest.view",
+        "api.loadtest.edit",
+        "api.loadtest.execute",
+    }.issubset(roles["test_manager"]["permissions"])
+    assert "api.loadtest.manage_agents" not in roles["test_manager"]["permissions"]
+
+
 @pytest.mark.parametrize("role_ids", [["super_admin", "tester"], ["viewer", "tester"]])
 def test_member_role_identity_conflicts_are_rejected_by_store(identity_db, role_ids):
     identity, store = identity_db

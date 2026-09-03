@@ -30,6 +30,9 @@ PERMISSIONS = [
         ("接口测试", [("api.view", "查看接口测试"), ("api.edit", "编辑接口测试"), ("api.execute", "执行接口测试"),
                     ("api.delete", "删除接口测试"), ("api.baseline", "管理接口基线"),
                     ("api.environment", "管理接口环境"), ("api.production", "执行生产环境")]),
+        ("性能测试", [("api.loadtest.view", "查看性能测试"), ("api.loadtest.edit", "编辑性能测试"),
+                     ("api.loadtest.execute", "执行性能测试"),
+                     ("api.loadtest.manage_agents", "管理压测节点")]),
     ) for key, label in items
 ]
 PERMISSION_IDS = frozenset(item["id"] for item in PERMISSIONS)
@@ -44,11 +47,15 @@ PERMISSION_PREREQUISITES = {
     "api.baseline": ("api.view",),
     "api.environment": ("api.view",),
     "api.production": ("api.view", "api.execute"),
+    "api.loadtest.view": ("api.view",),
+    "api.loadtest.edit": ("api.view", "api.loadtest.view"),
+    "api.loadtest.execute": ("api.view", "api.execute", "api.loadtest.view"),
+    "api.loadtest.manage_agents": ("api.view", "api.loadtest.view"),
 }
 SCOPE_KINDS = ("ui_apps", "api_projects", "api_environments")
 PRESET_ROLES = {
     "super_admin": ("超级管理员", sorted(PERMISSION_IDS)),
-    "test_manager": ("测试负责人", sorted(PERMISSION_IDS - {"auth.manage", "platform.configure", "api.production"})),
+    "test_manager": ("测试负责人", sorted(PERMISSION_IDS - {"auth.manage", "platform.configure", "api.production", "api.loadtest.manage_agents"})),
     "tester": ("测试成员", ["ui.view", "ui.edit", "ui.execute", "api.view", "api.edit", "api.execute"]),
     "viewer": ("只读成员", ["ui.view", "api.view"]),
 }
@@ -226,6 +233,30 @@ class IdentityStore:
                 ))
                 db.execute("INSERT INTO user_roles VALUES (?, 'super_admin')", (user_id,))
                 db.execute("INSERT INTO metadata VALUES ('initialized','1')")
+            if not db.execute("SELECT 1 FROM metadata WHERE key='load_permissions_v1'").fetchone():
+                db.execute(
+                    "UPDATE roles SET permissions=?,version=version+1 WHERE id='super_admin'",
+                    (json.dumps(sorted(PERMISSION_IDS)),),
+                )
+                row = db.execute(
+                    "SELECT permissions FROM roles WHERE id='test_manager'"
+                ).fetchone()
+                if row:
+                    permissions = set(json.loads(row[0]))
+                    permissions.update(
+                        {
+                            "api.view",
+                            "api.execute",
+                            "api.loadtest.view",
+                            "api.loadtest.edit",
+                            "api.loadtest.execute",
+                        }
+                    )
+                    db.execute(
+                        "UPDATE roles SET permissions=?,version=version+1 WHERE id='test_manager'",
+                        (json.dumps(sorted(permissions)),),
+                    )
+                db.execute("INSERT INTO metadata VALUES ('load_permissions_v1','1')")
         _dummy_hash()
 
     @contextmanager

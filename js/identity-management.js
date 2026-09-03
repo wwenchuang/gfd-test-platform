@@ -6,6 +6,9 @@
     'ui.edit': ['ui.view'], 'ui.execute': ['ui.view'], 'ui.delete': ['ui.view'], 'ui.baseline': ['ui.view'],
     'api.edit': ['api.view'], 'api.execute': ['api.view'], 'api.delete': ['api.view'],
     'api.baseline': ['api.view'], 'api.environment': ['api.view'], 'api.production': ['api.view', 'api.execute'],
+    'api.loadtest.view': ['api.view'], 'api.loadtest.edit': ['api.view', 'api.loadtest.view'],
+    'api.loadtest.execute': ['api.view', 'api.execute', 'api.loadtest.view'],
+    'api.loadtest.manage_agents': ['api.view', 'api.loadtest.view'],
   };
   let selectedTab = 'members';
   let pageVersion = 0;
