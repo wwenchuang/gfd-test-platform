@@ -39,6 +39,35 @@ def test_worker_heartbeat_settings_have_bounded_defaults(monkeypatch):
     assert settings.worker_heartbeat_ttl_seconds == 45
 
 
+def test_load_orchestration_timeouts_have_safe_bounded_defaults(monkeypatch):
+    monkeypatch.setenv("API_TESTING_ENABLED", "0")
+    monkeypatch.delenv("API_LOAD_START_BARRIER_TIMEOUT_SECONDS", raising=False)
+    monkeypatch.delenv("API_LOAD_SHARD_STALE_SECONDS", raising=False)
+    monkeypatch.delenv("API_LOAD_PREFLIGHT_TIMEOUT_SECONDS", raising=False)
+
+    settings = ApiTestingSettings.from_env()
+
+    assert settings.load_start_barrier_timeout_seconds == 60
+    assert settings.load_shard_stale_seconds == 120
+    assert settings.load_preflight_timeout_seconds == 30
+
+
+@pytest.mark.parametrize(
+    "name,value",
+    [
+        ("API_LOAD_START_BARRIER_TIMEOUT_SECONDS", "14"),
+        ("API_LOAD_SHARD_STALE_SECONDS", "3601"),
+        ("API_LOAD_PREFLIGHT_TIMEOUT_SECONDS", "0"),
+    ],
+)
+def test_load_orchestration_rejects_unsafe_timeouts(monkeypatch, name, value):
+    monkeypatch.setenv("API_TESTING_ENABLED", "0")
+    monkeypatch.setenv(name, value)
+
+    with pytest.raises(ValueError, match=name):
+        ApiTestingSettings.from_env()
+
+
 def test_settings_reject_short_secret_when_enabled(monkeypatch):
     monkeypatch.setenv("API_TESTING_ENABLED", "1")
     monkeypatch.setenv("API_TESTING_SECRET_KEY", "x" * 31)

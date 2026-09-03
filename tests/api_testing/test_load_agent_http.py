@@ -8,7 +8,7 @@ import pytest
 from sqlalchemy import select
 
 from task_server.api_testing import access
-from task_server.api_testing.models.load_testing import ApiLoadMetricBucket, ApiLoadRunShard
+from task_server.api_testing.models.load_testing import ApiLoadMetricBucket, ApiLoadRun, ApiLoadRunShard
 from task_server.api_testing.repositories.load_testing_repository import LoadTestingRepository
 from task_server.api_testing.services.load_agent_service import LoadAgentService
 from task_server.api_testing import load_agent_http
@@ -71,6 +71,12 @@ def _register(http_client, context, name):
 
 def _agent_auth(secret, scheme="Agent"):
     return {"Authorization": f"{scheme} {secret}"}
+
+
+def _begin_start(repository, run):
+    repository.transition_run(run.id, ("draft",), "preflighting")
+    repository.transition_run(run.id, ("preflighting",), "queued")
+    repository.transition_run(run.id, ("queued",), "starting")
 
 
 def test_registration_is_one_time_and_browser_bearer_cannot_authenticate_agent(
@@ -177,12 +183,26 @@ def test_agent_can_claim_and_update_only_its_own_shard(
     shard = repository.create_shard(
         run.id, first["agent"]["id"], 0, {"vus": 2}, "load-owner"
     )
+    repository.create_shard(
+        run.id, second["agent"]["id"], 1, {"vus": 1}, "load-owner"
+    )
+
+    before_barrier = http_client.post(
+        AGENT_PREFIX + "/claim", {}, _agent_auth(first["secret"])
+    )
+    assert before_barrier.body["data"]["shard"] is None
+    _begin_start(repository, run)
 
     claimed = http_client.post(
         AGENT_PREFIX + "/claim", {}, _agent_auth(first["secret"])
     )
     assert claimed.status == 200
     assert claimed.body["data"]["shard"]["id"] == shard.id
+    waiting = http_client.get(
+        AGENT_PREFIX + f"/shards/{shard.id}/commands",
+        _agent_auth(first["secret"]),
+    )
+    assert waiting.body["data"]["commands"] == []
 
     foreign = http_client.post(
         AGENT_PREFIX + f"/shards/{shard.id}/started",
@@ -198,6 +218,16 @@ def test_agent_can_claim_and_update_only_its_own_shard(
     )
     assert foreign_finish.status == 403
     assert foreign_finish.body["error"]["code"] == "shard_not_owned"
+
+    second_claim = http_client.post(
+        AGENT_PREFIX + "/claim", {}, _agent_auth(second["secret"])
+    )
+    assert second_claim.body["data"]["shard"] is not None
+    released = http_client.get(
+        AGENT_PREFIX + f"/shards/{shard.id}/commands",
+        _agent_auth(first["secret"]),
+    )
+    assert released.body["data"]["commands"] == [{"type": "start"}]
 
     started = http_client.post(
         AGENT_PREFIX + f"/shards/{shard.id}/started",
@@ -260,6 +290,8 @@ def test_duplicate_metrics_replace_the_bucket_and_finish_is_idempotent(
         run.id, registered["agent"]["id"], 0, {"vus": 1}, "load-owner"
     )
     auth = _agent_auth(registered["secret"])
+    _begin_start(repository, run)
+    assert http_client.post(AGENT_PREFIX + "/claim", {}, auth).status == 200
     http_client.post(
         AGENT_PREFIX + f"/shards/{shard.id}/started", {"process_info": {}}, auth
     )
@@ -308,10 +340,12 @@ def test_duplicate_metrics_replace_the_bucket_and_finish_is_idempotent(
             session.scalars(select(ApiLoadMetricBucket).where(ApiLoadMetricBucket.run_id == run.id))
         )
         persisted = session.get(ApiLoadRunShard, shard.id)
+        persisted_run = session.get(ApiLoadRun, run.id)
         assert len(buckets) == 1
         assert buckets[0].metrics["requests"] == 12
         assert persisted.state == "finished"
         assert persisted.summary == {"requests": 12}
+        assert persisted_run.state == "finished"
 
 
 def test_unknown_agent_route_and_method_fail_closed(http_client, agent_http_context):

@@ -71,7 +71,7 @@ def _candidates(agents, allow_fallback):
             or tier not in TIER_ORDER
             or (tier == "fallback" and not allow_fallback)
             or health.get("schedulable", True) is False
-            or not _calibration_is_current(calibration, agent)
+            or calibration_state(agent) != "valid"
         ):
             continue
         process_limit = _limit(agent, "max_processes")
@@ -99,30 +99,42 @@ def _candidates(agents, allow_fallback):
     return tuple(sorted(result, key=lambda item: (TIER_ORDER[item.tier], str(item.agent.id))))
 
 
-def _calibration_is_current(calibration, agent):
-    if not isinstance(calibration, dict) or calibration.get("state") != "valid":
-        return False
+def calibration_state(agent, *, now=None):
+    """Return the stable UI state for an Agent's local capacity calibration."""
+    health = getattr(agent, "health", None) or {}
+    calibration = health.get("calibration") if isinstance(health, dict) else None
+    if not isinstance(calibration, dict) or calibration.get("state") in {None, "missing"}:
+        return "missing"
+    if calibration.get("state") in {"running", "calibrating"}:
+        return "calibrating"
+    if calibration.get("state") == "failed":
+        return "failed"
+    if calibration.get("state") != "valid":
+        return "invalidated"
     for field in ("max_iterations_per_second", "max_vus"):
         value = calibration.get(field)
         if not isinstance(value, (int, float)) or isinstance(value, bool) or value <= 0:
-            return False
+            return "invalidated"
     try:
         valid_until = datetime.fromisoformat(
             str(calibration.get("valid_until") or "").replace("Z", "+00:00")
         )
     except ValueError:
-        return False
+        return "invalidated"
     if valid_until.tzinfo is None:
-        return False
-    if valid_until.astimezone(timezone.utc) <= datetime.now(timezone.utc):
-        return False
+        return "invalidated"
+    current = now or datetime.now(timezone.utc)
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=timezone.utc)
+    if valid_until.astimezone(timezone.utc) <= current.astimezone(timezone.utc):
+        return "expired"
     expected_agent_version = calibration.get("agent_version")
     expected_k6_version = calibration.get("k6_version")
     if expected_agent_version and expected_agent_version != getattr(agent, "agent_version", ""):
-        return False
+        return "invalidated"
     if expected_k6_version and expected_k6_version != getattr(agent, "k6_version", ""):
-        return False
-    return True
+        return "invalidated"
+    return "valid"
 
 
 def _workload_target(workload):

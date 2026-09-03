@@ -5,7 +5,7 @@ import logging
 from datetime import datetime, timezone
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import case, select
 
 from .config import ApiTestingSettings
 from .db import _session_factory
@@ -151,8 +151,13 @@ def _get(agent, segments, query):
             shard = _owned_shard(session, agent.id, shard_id)
             run = session.get(ApiLoadRun, shard.run_id)
             stop = run is None or run.state in {"stopping", "cancelled", "failed"}
+            start = run is not None and run.state == "running" and shard.state == "ready"
             return {
-                "commands": ([{"type": "stop", "reason": run.stop_reason if run else "运行不存在"}] if stop else []),
+                "commands": (
+                    [{"type": "stop", "reason": run.stop_reason if run else "运行不存在"}]
+                    if stop
+                    else [{"type": "start"}] if start else []
+                ),
                 "poll_after_ms": 1000,
             }
     if segments and segments[0] == "shards":
@@ -175,22 +180,54 @@ def _owned_shard(session, agent_id, shard_id, *, for_update=False):
 def _claim_shard(agent_id):
     factory = _factory()
     with factory.begin() as session:
-        shard = session.scalar(
-            select(ApiLoadRunShard)
+        priority_order = case(
+            (ApiLoadRun.queue_priority == "urgent", 0),
+            (ApiLoadRun.queue_priority == "high", 1),
+            (ApiLoadRun.queue_priority == "normal", 2),
+            else_=3,
+        )
+        run = session.scalar(
+            select(ApiLoadRun)
+            .join(ApiLoadRunShard, ApiLoadRunShard.run_id == ApiLoadRun.id)
             .where(
                 ApiLoadRunShard.agent_id == agent_id,
                 ApiLoadRunShard.state == "assigned",
+                ApiLoadRun.state == "starting",
             )
-            .order_by(ApiLoadRunShard.created_at, ApiLoadRunShard.sequence)
-            .with_for_update(skip_locked=True)
+            .order_by(priority_order, ApiLoadRun.created_at)
+            .with_for_update(of=ApiLoadRun, skip_locked=True)
+            .limit(1)
+        )
+        if run is None:
+            return None
+        shard = session.scalar(
+            select(ApiLoadRunShard)
+            .where(
+                ApiLoadRunShard.run_id == run.id,
+                ApiLoadRunShard.agent_id == agent_id,
+                ApiLoadRunShard.state == "assigned",
+            )
+            .order_by(ApiLoadRunShard.sequence)
+            .with_for_update()
             .limit(1)
         )
         if shard is None:
             return None
-        run = session.get(ApiLoadRun, shard.run_id)
         version = session.get(ApiLoadScenarioVersion, run.scenario_version_id) if run else None
         if run is None or version is None:
             raise ApiHttpError(409, "shard_configuration_missing", "分片运行配置不完整")
+        shard.state = "ready"
+        shard.last_heartbeat_at = datetime.now(timezone.utc)
+        session.flush()
+        shard_states = tuple(
+            session.scalars(
+                select(ApiLoadRunShard.state).where(ApiLoadRunShard.run_id == run.id)
+            )
+        )
+        if shard_states and all(state == "ready" for state in shard_states):
+            run.state = "running"
+            run.started_at = datetime.now(timezone.utc)
+            session.flush()
         return {
             **_shard_view(shard),
             "run": {"id": run.id, "configuration": copy.deepcopy(run.configuration)},
@@ -210,7 +247,10 @@ def _start_shard(agent_id, shard_id, payload):
     factory = _factory()
     with factory.begin() as session:
         shard = _owned_shard(session, agent_id, shard_id, for_update=True)
-        if shard.state == "assigned":
+        run = session.get(ApiLoadRun, shard.run_id)
+        if run is None or run.state != "running":
+            raise ApiHttpError(409, "start_barrier_pending", "正在等待全部压测节点就绪，尚未下发开始指令")
+        if shard.state == "ready":
             shard.state = "running"
             shard.process_info = copy.deepcopy(process_info)
             shard.last_heartbeat_at = datetime.now(timezone.utc)
@@ -326,18 +366,40 @@ def _finish_shard(agent_id, shard_id, payload):
         raise ApiHttpError(422, "invalid_request", "summary and error must be objects")
     factory = _factory()
     with factory.begin() as session:
+        snapshot = _owned_shard(session, agent_id, shard_id)
+        run = session.scalar(
+            select(ApiLoadRun).where(ApiLoadRun.id == snapshot.run_id).with_for_update()
+        )
+        if run is None:
+            raise ApiHttpError(409, "shard_configuration_missing", "分片运行配置不完整")
         shard = _owned_shard(session, agent_id, shard_id, for_update=True)
         if shard.state in TERMINAL_SHARD_STATES:
             if shard.state != state:
                 raise ApiHttpError(409, "shard_state_conflict", "分片已经以其他状态结束")
             return _shard_view(shard)
-        if shard.state not in {"assigned", "running", "stopping"}:
+        if shard.state not in {"ready", "running", "stopping"}:
             raise ApiHttpError(409, "shard_state_conflict", "分片当前状态不能结束")
         shard.state = state
         shard.summary = copy.deepcopy(summary)
         shard.error = copy.deepcopy(error)
         shard.last_heartbeat_at = datetime.now(timezone.utc)
         session.flush()
+        states = tuple(
+            session.scalars(
+                select(ApiLoadRunShard.state).where(ApiLoadRunShard.run_id == run.id)
+            )
+        )
+        if states and all(item in TERMINAL_SHARD_STATES for item in states):
+            run.finished_at = datetime.now(timezone.utc)
+            if run.state == "stopping":
+                run.state = "cancelled"
+                run.verdict = "inconclusive"
+            elif any(item == "failed" for item in states):
+                run.state = "failed"
+                run.verdict = "inconclusive"
+            else:
+                run.state = "finished"
+            session.flush()
         return _shard_view(shard)
 
 

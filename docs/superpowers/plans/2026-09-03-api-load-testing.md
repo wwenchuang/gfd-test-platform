@@ -370,27 +370,27 @@ git commit -m "feat(load): shard load capacity and datasets safely"
 - `LoadRunService.create()`, `preflight()`, `start()`, `stop()`, `claim_shard()`, `finish_shard()`, and `recover_stale_runs()`.
 - `LoadPreflightService.run_once()` executes exactly one iteration without k6 load and returns validation, observed duration, cleanup result and capacity estimate.
 
-- [ ] **Step 1: Write failing state-machine and preflight tests**
+- [x] **Step 1: Write failing state-machine and preflight tests**
 
 Cover project/environment authorization, production permission, duplicate start, preflight failure, capacity shortfall, explicit run-anyway yielding `inconclusive`, uncalibrated/expired/version-mismatched Agent hard blocking, per-Agent target connectivity, all-Agent start barrier, stop before start, stop while running, one lost shard and recovery after process restart.
 
-- [ ] **Step 2: Run tests and confirm missing services**
+- [x] **Step 2: Run tests and confirm missing services**
 
-- [ ] **Step 3: Implement preflight using isolated functional request primitives**
+- [x] **Step 3: Implement preflight using isolated functional request primitives**
 
 Reuse low-volume request resolution/assertion helpers, not `ExecutionService` persistence. Capture only preflight evidence and always attempt owned cleanup.
 
-- [ ] **Step 4: Implement run creation and snapshots**
+- [x] **Step 4: Implement run creation and snapshots**
 
 Freeze scenario version, environment revision ID/name, workload, thresholds, allocation policy, compiler hash and selected Agent capabilities in `ApiLoadRun.configuration`.
 
 Require a valid local calibration for every selected Agent. Store calibration ID/time/signature and calibrated VU/rate limits in the run snapshot, then compare the scenario preflight duration with those limits to estimate required VUs.
 
-- [ ] **Step 5: Implement start, stop, and stale recovery**
+- [x] **Step 5: Implement start, stop, and stale recovery**
 
 Use compare-and-swap state transitions. Start becomes `running` only after assigned Agents acknowledge; failure to reach the start barrier ends as `failed` without partial hidden load. Stop creates durable commands read by Agent long polling.
 
-- [ ] **Step 6: Run service tests and commit**
+- [x] **Step 6: Run service tests and commit**
 
 ```bash
 .venv/bin/python -m pytest tests/api_testing/test_load_run_service.py \
