@@ -302,6 +302,8 @@ def test_all_load_options_have_chinese_name_usage_and_risk_help():
         "dataset_modes",
         "queue_priorities",
         "agent_tiers",
+        "calibration_states",
+        "capacity_fields",
         "thresholds",
     ):
         for item in catalog[section]:

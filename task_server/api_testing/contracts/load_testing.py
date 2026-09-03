@@ -426,6 +426,19 @@ def load_testing_option_catalog():
                 {"value": "fallback", "name": "备用节点", "description": "只有任务明确允许时才参与调度。", "risk_tip": "主平台机器建议保持此级别，避免压测影响平台服务。"},
                 {"value": "disabled", "name": "停用节点", "description": "保留注册记录但不领取任务。", "risk_tip": "停用后凭据失效，需要重新注册才能恢复。"},
             ],
+            "calibration_states": [
+                {"value": "uncalibrated", "name": "未校准", "description": "节点已经注册，但尚未测量可信压测容量。", "risk_tip": "不能执行正式压测，请先运行本地校准。"},
+                {"value": "calibrating", "name": "校准中", "description": "节点正在运行本地 k6 容量测量。", "risk_tip": "校准期间不会领取业务压测任务。"},
+                {"value": "valid", "name": "校准有效", "description": "校准结果仍在有效期内且版本、硬件签名一致。", "risk_tip": "实际容量仍取硬上限、软上限和校准上限中的最小值。"},
+                {"value": "expired", "name": "校准已过期", "description": "结果超过七天，或 Agent、k6、硬件已经变化。", "risk_tip": "不能执行正式压测，需要重新校准。"},
+                {"value": "failed", "name": "校准失败", "description": "本地 k6、资源采集或稳定性检查没有完成。", "risk_tip": "先按页面错误处理后重新校准，不能手工填写结果绕过。"},
+            ],
+            "capacity_fields": [
+                {"value": "hard_limit", "name": "本机硬上限", "description": "Agent 根据容器和主机资源声明的绝对上限。", "risk_tip": "平台和任务永远不能突破该值。"},
+                {"value": "soft_limit", "name": "平台软上限", "description": "管理员为共享资源预留余量后设置的日常上限。", "risk_tip": "必须小于等于本机硬上限。"},
+                {"value": "calibrated_limit", "name": "校准容量", "description": "本地 k6 校准实测得到的可持续容量。", "risk_tip": "过期或版本变化后不再作为有效证据。"},
+                {"value": "available_capacity", "name": "当前可用容量", "description": "三类上限的最小值减去节点当前占用。", "risk_tip": "这是本次可分配值，会随其他任务实时变化。"},
+            ],
             "thresholds": [
                 {"value": "minimum_iteration_rate", "name": "最低实际吞吐", "description": "检查实际完成的每秒迭代数是否达到目标。", "risk_tip": "业务链路的一次迭代可能包含多个接口，不能直接当作单接口 QPS。"},
                 {"value": "maximum_http_error_rate", "name": "最大 HTTP 错误率", "description": "限制网络错误和非预期 HTTP 状态所占比例。", "risk_tip": "HTTP 200 仍可能是业务失败，必须同时配置业务断言失败率。"},

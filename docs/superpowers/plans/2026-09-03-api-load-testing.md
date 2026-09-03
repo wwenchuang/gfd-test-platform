@@ -319,7 +319,7 @@ git commit -m "feat(load): compile safe API scenarios for k6"
 - `LoadDatasetService.import_bytes(project_id, name, filename, content, mode, actor_id)` validates and stores CSV/JSON under a configured private directory.
 - `allocate_run(workload, agents, allow_fallback) -> tuple[ShardAllocation, ...]` returns exact non-overlapping fractions and dataset ranges.
 
-- [ ] **Step 1: Write failing dataset and allocation tests**
+- [x] **Step 1: Write failing dataset and allocation tests**
 
 Cover UTF-8 Chinese values, duplicate headers, inconsistent rows, oversized uploads, path traversal, cycle/fixed/exclusive modes, two-Agent weighted splits, fallback exclusion, insufficient capacity and integer rounding whose total exactly equals requested rate.
 
@@ -330,21 +330,23 @@ def test_allocator_never_uses_fallback_without_opt_in():
     assert allocations[0].capacity_shortfall == 1000
 ```
 
-- [ ] **Step 2: Run tests and verify missing services**
+- [x] **Step 2: Run tests and verify missing services**
 
-- [ ] **Step 3: Implement private dataset storage**
+- [x] **Step 3: Implement private dataset storage**
 
 Use a non-public root configured by `API_LOAD_DATA_DIR`, file mode `0600`, generated filenames and content SHA-256. Previews return field names and redacted sample cells only.
 
-- [ ] **Step 4: Implement tiered capacity allocation**
+- [x] **Step 4: Implement tiered capacity allocation**
 
 Allocate `preferred`, then `normal`, then opted-in `fallback`, using available soft capacity bounded by hard capacity. Return shortfall instead of silently exceeding a node.
 
-- [ ] **Step 5: Implement deterministic data ranges**
+Only Agents with a current successful local calibration are eligible. Effective capacity is the minimum of reported hard limits, platform soft limits, and calibrated sustainable limits; an Agent/k6 version or hardware-signature change invalidates calibration.
+
+- [x] **Step 5: Implement deterministic data ranges**
 
 Exclusive rows are partitioned without overlap. Fixed-per-VU mode fails preflight when rows are fewer than allocated VUs. Cycle mode allows repeats and records the fact in the run snapshot.
 
-- [ ] **Step 6: Run focused tests and commit**
+- [x] **Step 6: Run focused tests and commit**
 
 ```bash
 .venv/bin/python -m pytest tests/api_testing/test_load_dataset_service.py \
@@ -370,7 +372,7 @@ git commit -m "feat(load): shard load capacity and datasets safely"
 
 - [ ] **Step 1: Write failing state-machine and preflight tests**
 
-Cover project/environment authorization, production permission, duplicate start, preflight failure, capacity shortfall, explicit run-anyway yielding `inconclusive`, all-Agent start barrier, stop before start, stop while running, one lost shard and recovery after process restart.
+Cover project/environment authorization, production permission, duplicate start, preflight failure, capacity shortfall, explicit run-anyway yielding `inconclusive`, uncalibrated/expired/version-mismatched Agent hard blocking, per-Agent target connectivity, all-Agent start barrier, stop before start, stop while running, one lost shard and recovery after process restart.
 
 - [ ] **Step 2: Run tests and confirm missing services**
 
@@ -381,6 +383,8 @@ Reuse low-volume request resolution/assertion helpers, not `ExecutionService` pe
 - [ ] **Step 4: Implement run creation and snapshots**
 
 Freeze scenario version, environment revision ID/name, workload, thresholds, allocation policy, compiler hash and selected Agent capabilities in `ApiLoadRun.configuration`.
+
+Require a valid local calibration for every selected Agent. Store calibration ID/time/signature and calibrated VU/rate limits in the run snapshot, then compare the scenario preflight duration with those limits to estimate required VUs.
 
 - [ ] **Step 5: Implement start, stop, and stale recovery**
 
@@ -424,7 +428,7 @@ git commit -m "feat(load): orchestrate preflight and distributed runs"
 
 - [ ] **Step 1: Write failing client, process, and aggregation tests**
 
-Use a fake control server and fake executable. Verify registration persistence, heartbeat, claim, secret-free logs, SIGINT stop, SIGKILL after grace period, crash summary, five-second percentile buckets, bounded samples and retry without duplicate batch IDs.
+Use a fake control server and fake executable. Verify registration persistence, heartbeat, local calibration without business traffic, calibration expiry/signature invalidation, claim, secret-free logs, SIGINT stop, SIGKILL after grace period, crash summary, five-second percentile buckets, bounded samples and retry without duplicate batch IDs.
 
 - [ ] **Step 2: Run tests and verify missing package failures**
 
@@ -439,6 +443,8 @@ Require `PLATFORM_URL`, `AGENT_DATA_DIR`, and either `ENROLL_TOKEN` for first re
 - [ ] **Step 4: Implement control client and credential storage**
 
 Store the Agent token in a `0600` file under the mounted data directory. Never log request Authorization or job secrets.
+
+Implement the calibration command with a bounded local-only k6 target. Record sustainable VU/rate, CPU and memory peaks, Agent/k6 versions, hardware signature, calibration ID and seven-day validity; never send calibration traffic to a configured business environment.
 
 - [ ] **Step 5: Implement k6 output aggregation**
 
@@ -633,7 +639,7 @@ git commit -m "feat(load): expose performance workflows and notifications"
 
 - [ ] **Step 1: Write failing navigation and node-page tests**
 
-Assert permission-aware navigation, loading/error/empty states, Chinese search composition, enrollment token shown once, copy feedback, preferred/normal/fallback/disabled controls, local hard versus soft capacity, disabled action reasons and responsive layout. Every Agent tier, capacity field and status must have a visible Chinese name or explanation.
+Assert permission-aware navigation, loading/error/empty states, Chinese search composition, enrollment token shown once, copy feedback, preferred/normal/fallback/disabled controls, local hard versus soft versus calibrated capacity, calibration action and the five Chinese calibration states, disabled action reasons and responsive layout. Every Agent tier, capacity field and status must have a visible Chinese name or explanation.
 
 - [ ] **Step 2: Run the targeted Vitest file and observe failures**
 
@@ -647,7 +653,7 @@ Do not use `any` for load definitions, run states, metric buckets or AI output. 
 
 - [ ] **Step 4: Add lazy navigation and Agent page**
 
-Show “本机备用节点不会自动参与” beside fallback nodes. Enrollment dialog contains platform URL, expiration and exact Docker command, with explicit HTTPS/private-network warning.
+Show “本机备用节点不会自动参与” beside fallback nodes. Enrollment dialog contains platform URL, expiration and exact Docker command, with explicit HTTPS/private-network warning. Newly registered nodes show “先校准，再执行压测”; calibration state, last time, validity, measured capacity and failure remedy remain visible after refresh.
 
 - [ ] **Step 5: Run tests and responsive component checks**
 
@@ -682,7 +688,7 @@ Click every step, source selector, single/workflow switch, data mode, validation
 
 - [ ] **Step 2: Write failing run wizard tests**
 
-Cover four load models, stage editing, threshold rows, automatic/specific/group nodes, fallback opt-in, priority, capacity shortfall, request estimate, production confirmation, start and post-start navigation.
+Cover four load models, stage editing, threshold rows, automatic/specific/group nodes, fallback opt-in, priority, uncalibrated-node blocking, calibrated capacity and expiry, capacity shortfall, per-node connectivity, request estimate, production confirmation, start and post-start navigation.
 
 - [ ] **Step 3: Run tests and verify missing views**
 
