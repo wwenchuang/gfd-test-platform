@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["conclusion", "bottleneck_category", "evidence", "recommendations", "next_run", "confidence"],
+  "additionalProperties": false,
+  "properties": {
+    "conclusion": {"type": "string"},
+    "bottleneck_category": {"type": "string", "enum": ["target_service", "network", "load_agent", "test_data", "mixed", "insufficient_evidence"]},
+    "evidence": {"type": "array", "items": {"type": "string"}},
+    "recommendations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["priority", "action", "verification"],
+        "additionalProperties": false,
+        "properties": {
+          "priority": {"type": "string", "enum": ["high", "medium", "low"]},
+          "action": {"type": "string"},
+          "verification": {"type": "string"}
+        }
+      }
+    },
+    "next_run": {
+      "type": "object",
+      "required": ["load_model", "target", "duration_seconds", "agent_suggestion"],
+      "additionalProperties": false,
+      "properties": {
+        "load_model": {"type": "string", "enum": ["constant-vus", "ramping-vus", "constant-arrival-rate", "ramping-arrival-rate"]},
+        "target": {"type": "number"},
+        "duration_seconds": {"type": "integer"},
+        "agent_suggestion": {"type": "string"}
+      }
+    },
+    "confidence": {
+      "type": "object",
+      "required": ["level", "reason"],
+      "additionalProperties": false,
+      "properties": {
+        "level": {"type": "string", "enum": ["high", "medium", "low"]},
+        "reason": {"type": "string"}
+      }
+    }
+  }
+}

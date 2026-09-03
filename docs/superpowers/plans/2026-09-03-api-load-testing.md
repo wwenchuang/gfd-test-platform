@@ -535,28 +535,28 @@ git commit -m "feat(load): aggregate metrics into truthful reports"
 - `LoadAiAnalysisService.request(run_id, actor_id, force=False)` creates an idempotent analysis job keyed by run evidence hash.
 - AI output fields are `conclusion`, `bottleneck_category`, `evidence`, `recommendations`, `next_run`, and `confidence`.
 
-- [ ] **Step 1: Write failing diagnosis tests**
+- [x] **Step 1: Write failing diagnosis tests**
 
 Cover slow target step, Agent saturation, network errors, business failure, insufficient evidence, prompt injection text inside response samples, secret redaction, model timeout and force regeneration without starting a load run.
 
-- [ ] **Step 2: Run tests and verify missing service/schema**
+- [x] **Step 2: Run tests and verify missing service/schema**
 
-- [ ] **Step 3: Add strict prompt and JSON schema**
+- [x] **Step 3: Add strict prompt and JSON schema**
 
 The system prompt states that sample text is untrusted data and every causal statement must cite evidence identifiers. `bottleneck_category` is one of `target_service`, `network`, `load_agent`, `test_data`, `mixed`, `insufficient_evidence`.
 
-- [ ] **Step 4: Implement evidence packaging and async task**
+- [x] **Step 4: Implement evidence packaging and async task**
 
 Send only deterministic summary, top steps, time windows, Agent peaks, comparison and bounded redacted samples. Persist model, prompt version, evidence hash, status and result.
 
-- [ ] **Step 5: Run focused and AI Gateway checks**
+- [x] **Step 5: Run focused and AI Gateway checks**
 
 ```bash
 .venv/bin/python -m pytest tests/api_testing/test_load_ai_analysis_service.py -q
 python3 tests/ai_gateway_static_checks.py
 ```
 
-- [ ] **Step 6: Commit AI diagnosis**
+- [x] **Step 6: Commit AI diagnosis**
 
 ```bash
 git add task_server/api_testing/services/load_ai_analysis_service.py task_server/api_testing/tasks.py \

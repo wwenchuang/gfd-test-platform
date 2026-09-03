@@ -11,6 +11,7 @@ from .events import EventStream
 from .repositories.execution_repository import ExecutionRepository
 from .services.execution_service import ExecutionService
 from .services.ai_service import AiCaseService, AiFailureAnalyzer
+from .services.load_ai_analysis_service import LoadAiAnalysisService
 from .services.notification_service import NotificationNotConfiguredError, NotificationService
 from .services.test_task_service import TestTaskService
 
@@ -51,6 +52,10 @@ def publish_worker_heartbeat(sender=None, **kwargs):
 
 def _dispatch_failure_analysis(execution_id, child_id, attempt_id, evidence):
     analyze_api_failure.delay(execution_id, child_id, attempt_id, evidence)
+
+
+def dispatch_load_analysis(analysis_id):
+    analyze_load_report.delay(analysis_id)
 
 
 @celery_app.task(name="api_testing.execute", bind=True, acks_late=True)
@@ -150,3 +155,8 @@ def generate_api_cases(self, job_id):
     result = AiCaseService(factory).process(job_id)
     TestTaskService(factory).refresh_for_ai_job(job_id)
     return result.state
+
+
+@celery_app.task(name="api_testing.analyze_load_report", bind=True, acks_late=True)
+def analyze_load_report(self, analysis_id):
+    return LoadAiAnalysisService(_session_factory()).process(analysis_id).state
