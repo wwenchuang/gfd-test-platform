@@ -131,3 +131,27 @@ def test_runtime_executes_a_real_fake_k6_binary(tmp_path):
     assert result.state == "finished"
     assert sink.metrics[0][1]["buckets"][0]["metrics"]["requests"] == 1
     assert not list(tmp_path.glob("run-*"))
+
+
+def test_runtime_tolerates_non_utf8_k6_console_bytes_and_keeps_valid_metrics(tmp_path):
+    fake_k6 = tmp_path / "fake-k6-non-utf8"
+    fake_k6.write_text(
+        "#!/usr/bin/env python3\n"
+        "import json\n"
+        "import os\n"
+        "os.write(1, b'\\xff\\xfeprogress\\n')\n"
+        "print(json.dumps({'type':'Point','metric':'http_reqs','data':"
+        "{'time':'2026-09-03T08:00:00+00:00','value':1,'tags':{'step_id':'real'}}}), flush=True)\n",
+        encoding="utf-8",
+    )
+    fake_k6.chmod(0o700)
+    sink = _Sink()
+
+    result = K6Runtime(tmp_path, k6_binary=str(fake_k6), poll_interval=0.01).run(
+        _shard(), lambda: [], sink
+    )
+
+    assert result.state == "finished"
+    assert result.exit_code == 0
+    assert sink.metrics[0][1]["buckets"][0]["metrics"]["requests"] == 1
+    assert not list(tmp_path.glob("run-*"))

@@ -88,6 +88,8 @@ class K6Runtime:
                 stdout=subprocess.PIPE,
                 stderr=stderr_stream,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 bufsize=1,
                 env=process_env,
                 cwd=work,
@@ -127,7 +129,11 @@ class K6Runtime:
             if final_buckets:
                 bucket_count += self._send_buckets(metric_sink, final_buckets)
             stderr_stream.flush()
-            stderr = self._read_stderr(process.stderr) if process.stderr is not None else stderr_path.read_text(encoding="utf-8")[:4000]
+            stderr = (
+                self._read_stderr(process.stderr)
+                if process.stderr is not None
+                else stderr_path.read_text(encoding="utf-8", errors="replace")[:4000]
+            )
             error_message = self._redact(stderr, secret_values)[:2000]
             state = "cancelled" if stopped else "finished" if exit_code == 0 else "failed"
             return ShardResult(state, int(exit_code or 0), stop_reason, error_message, bucket_count)
