@@ -13,7 +13,7 @@
 - Do not route load traffic through `ExecutionService` or create one database row per HTTP request.
 - Do not broadly refactor `router.py`; mount load-testing dispatch through the existing API-testing boundary.
 - All configured environments are selectable. Production runs require existing `api.production` plus the new load-execution permission and explicit risk confirmation.
-- Supported first-release load models are `fixed-vus`, `fixed-arrival-rate`, and `ramping-arrival-rate`; their requested load and actual achieved load are reported separately.
+- Supported first-release k6 executors are `constant-vus`, `ramping-vus`, `constant-arrival-rate`, and `ramping-arrival-rate`; their requested load and actual achieved load are reported separately.
 - The platform host defaults to `fallback`; automatic allocation excludes fallback agents unless the run explicitly allows them.
 - Agent hard limits always win over platform soft limits and task requests.
 - Remote agents use platform HTTP APIs only; they never connect directly to Redis or PostgreSQL.
