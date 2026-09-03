@@ -167,7 +167,41 @@ def test_model_cannot_cite_nonexistent_evidence(load_factory, load_run_with_shar
     service = LoadAiAnalysisService(load_factory, report_service=_Report(_report()), analyzer=lambda _evidence: invalid)
     record = service.request(run.id, "load-owner")
 
-    failed = service.process(record.id)
+    completed = service.process(record.id)
 
-    assert failed.state == "failed"
-    assert "不存在的证据" in failed.error
+    assert completed.state == "completed"
+    assert completed.result["evidence"] == ["load.goal"]
+    assert completed.result["confidence"]["level"] == "low"
+    assert "模型引用无效" in completed.result["confidence"]["reason"]
+
+
+def test_passing_run_with_invalid_model_citations_gets_safe_no_bottleneck_advice(
+    load_factory, load_run_with_shard
+):
+    _repository, run, shard = load_run_with_shard
+    _finish(load_factory, run, shard)
+    passing = _report()
+    passing.update({
+        "verdict": "passed",
+        "verdict_explanation": "目标负载和全部必选性能阈值均已通过。",
+        "thresholds": [{
+            "key": "p95_ms", "label": "P95响应时间", "actual": 10,
+            "expected": 1000, "passed": True,
+        }],
+    })
+    passing["business"] = {"assertions": 10, "failures": 0, "failure_rate": 0}
+    passing["workflow"] = {"iterations": 10, "failures": 0, "failure_rate": 0}
+    invalid = {**_analysis(), "evidence": ["fabricated.metric"]}
+    service = LoadAiAnalysisService(
+        load_factory,
+        report_service=_Report(passing),
+        analyzer=lambda _evidence: invalid,
+    )
+    record = service.request(run.id, "load-owner")
+
+    completed = service.process(record.id)
+
+    assert completed.state == "completed"
+    assert completed.result["bottleneck_category"] == "no_bottleneck"
+    assert "未发现明确瓶颈" in completed.result["conclusion"]
+    assert completed.result["evidence"] == ["load.goal"]

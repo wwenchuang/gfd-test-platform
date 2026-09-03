@@ -16,7 +16,7 @@ from .load_report_service import LoadReportService
 
 
 PROMPT_VERSION = "api-load-analysis.v1"
-CATEGORIES = frozenset({"target_service", "network", "load_agent", "test_data", "mixed", "insufficient_evidence"})
+CATEGORIES = frozenset({"no_bottleneck", "target_service", "network", "load_agent", "test_data", "mixed", "insufficient_evidence"})
 CONFIDENCE_LEVELS = frozenset({"high", "medium", "low"})
 
 
@@ -159,6 +159,43 @@ def _validate_result(value, evidence):
     })
 
 
+def _citation_safe_fallback(evidence, error):
+    """Return conservative advice when model prose cannot be tied to evidence."""
+    verdict = str(evidence.get("verdict") or "inconclusive")
+    load_goal = evidence.get("load_goal") if isinstance(evidence.get("load_goal"), dict) else {}
+    target = load_goal.get("target_iterations_per_second") or load_goal.get("target_vus") or 1
+    if isinstance(target, bool) or not isinstance(target, (int, float)) or target <= 0:
+        target = 1
+    load_model = load_goal.get("model")
+    if load_model not in {"constant-vus", "ramping-vus", "constant-arrival-rate", "ramping-arrival-rate"}:
+        load_model = "constant-arrival-rate"
+    complete = bool((evidence.get("evidence") or {}).get("complete"))
+    reached = bool(load_goal.get("reached"))
+    if verdict == "passed" and complete and reached:
+        category = "no_bottleneck"
+        conclusion = "本轮已达到目标负载且必选阈值通过，现有证据未发现明确瓶颈。"
+        action = "保持当前场景和阈值，下一轮逐级提高目标负载，观察响应时间和失败率的拐点。"
+        verification = "每级保持相同时长，对比 P95、HTTP 错误率、业务失败率和丢弃迭代率。"
+    else:
+        category = "insufficient_evidence"
+        conclusion = "模型结论无法绑定到本次真实证据，平台未采纳其根因判断。"
+        action = "先依据确定性报告检查负载目标、节点完整性和未通过阈值，再用相同配置复跑。"
+        verification = "确认全部节点完成且指标窗口连续，并比较复跑后的 P95 与各类失败率。"
+    return redact({
+        "conclusion": conclusion,
+        "bottleneck_category": category,
+        "evidence": ["load.goal"],
+        "recommendations": [{"priority": "medium", "action": action, "verification": verification}],
+        "next_run": {
+            "load_model": load_model,
+            "target": target,
+            "duration_seconds": 60,
+            "agent_suggestion": "优先使用校准有效且资源余量充足的专用节点；备用节点只用于小流量验证。",
+        },
+        "confidence": {"level": "low", "reason": f"模型引用无效，已回退为平台安全建议：{error}"[:1000]},
+    })
+
+
 def _default_analyzer(evidence):
     load_goal = evidence.get("load_goal") if isinstance(evidence.get("load_goal"), dict) else {}
     load_model = load_goal.get("model")
@@ -259,7 +296,13 @@ class LoadAiAnalysisService:
             evidence = build_evidence_package(report)
             if _hash(evidence) != record.evidence_hash:
                 raise LoadAiAnalysisError("压测证据已经变化，请重新发起诊断")
-            result = _validate_result(self.analyzer(evidence), evidence)
+            candidate = self.analyzer(evidence)
+            try:
+                result = _validate_result(candidate, evidence)
+            except LoadAiAnalysisError as error:
+                if "引用了不存在的证据" not in str(error):
+                    raise
+                result = _citation_safe_fallback(evidence, error)
         except Exception as error:
             message = "AI诊断超时，请稍后重试" if isinstance(error, TimeoutError) else f"AI诊断失败：{error}"
             with self.session_factory.begin() as session:

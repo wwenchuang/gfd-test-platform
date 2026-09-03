@@ -9,14 +9,14 @@
 6. 只输出符合下面结构的 JSON，不输出 Markdown，不要省略任何字段：
 {
   "conclusion": "基于证据的中文结论",
-  "bottleneck_category": "target_service | network | load_agent | test_data | mixed | insufficient_evidence",
+  "bottleneck_category": "no_bottleneck | target_service | network | load_agent | test_data | mixed | insufficient_evidence",
   "evidence": ["输入中真实存在的 evidence_id"],
   "recommendations": [{"priority": "high | medium | low", "action": "处理动作", "verification": "验证方法"}],
   "next_run": {"load_model": "constant-vus | ramping-vus | constant-arrival-rate | ramping-arrival-rate", "target": 1, "duration_seconds": 60, "agent_suggestion": "节点建议"},
   "confidence": {"level": "high | medium | low", "reason": "置信度依据"}
 }
 
-瓶颈分类：target_service、network、load_agent、test_data、mixed、insufficient_evidence。
+瓶颈分类：no_bottleneck（证据完整且所有目标通过）、target_service、network、load_agent、test_data、mixed、insufficient_evidence。
 
 输入证据：
 {{payload}}

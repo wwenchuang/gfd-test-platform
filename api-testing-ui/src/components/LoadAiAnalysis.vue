@@ -18,7 +18,7 @@ const nextRun = computed(() => {
 const stateLabel = computed(() => ({ queued: '等待诊断', running: '诊断中', completed: '诊断完成', failed: '诊断失败' } as Record<string, string>)[props.analysis?.state || ''] || '尚未诊断')
 function categoryLabel(value: unknown): string {
   return ({
-    target_service: '疑似目标服务瓶颈', network: '疑似网络瓶颈', load_agent: '疑似压测节点瓶颈',
+    no_bottleneck: '未发现明显瓶颈', target_service: '疑似目标服务瓶颈', network: '疑似网络瓶颈', load_agent: '疑似压测节点瓶颈',
     test_data: '疑似测试数据问题', mixed: '多因素混合', insufficient_evidence: '证据不足',
   } as Record<string, string>)[String(value || '')] || '尚未分类'
 }

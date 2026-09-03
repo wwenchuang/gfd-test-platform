@@ -5,7 +5,7 @@
   "additionalProperties": false,
   "properties": {
     "conclusion": {"type": "string"},
-    "bottleneck_category": {"type": "string", "enum": ["target_service", "network", "load_agent", "test_data", "mixed", "insufficient_evidence"]},
+    "bottleneck_category": {"type": "string", "enum": ["no_bottleneck", "target_service", "network", "load_agent", "test_data", "mixed", "insufficient_evidence"]},
     "evidence": {"type": "array", "items": {"type": "string"}},
     "recommendations": {
       "type": "array",

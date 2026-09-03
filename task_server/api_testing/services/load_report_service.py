@@ -181,7 +181,10 @@ class LoadReportService:
         report_basis = {"load_goal": load_goal, **sections}
         thresholds = self._thresholds(run.configuration.get("thresholds") or {}, report_basis)
         required_failures = [item for item in thresholds if item["required"] and not item["passed"]]
-        forced_inconclusive = run.verdict == "inconclusive" or not evidence_complete or not load_goal["reached"]
+        # The stored verdict is a dispatch-time/finalization snapshot. Rebuild
+        # the report from durable metrics so a reporting fix cannot leave an
+        # otherwise complete historical run permanently marked inconclusive.
+        forced_inconclusive = not evidence_complete or not load_goal["reached"]
         verdict = "inconclusive" if forced_inconclusive else "failed" if required_failures else "passed"
         if not evidence_complete:
             explanation = "运行证据不完整：至少一个压测节点未正常完成。"
@@ -368,18 +371,24 @@ class LoadReportService:
     @classmethod
     def _series(cls, buckets):
         rows = []
+        grouped = {}
         for item in buckets:
-            metrics = item.metrics or {}
-            histogram = metrics.get("latency_histogram") or {"bounds_ms": [], "counts": [], "count": 0, "sum_ms": 0, "max_ms": 0}
+            grouped.setdefault(_utc(item.bucket_started_at), []).append(item)
+        for started_at in sorted(grouped):
+            selected = grouped[started_at]
+            aggregate = cls._aggregate(
+                type("RunWindow", (), {"started_at": None, "finished_at": None})(),
+                selected,
+            )
+            sections = cls._sections(aggregate)
+            totals = aggregate["totals"]
             rows.append({
-                "started_at": _utc(item.bucket_started_at).isoformat(),
-                "shard_id": item.shard_id,
-                "step_id": item.scenario_step_id,
-                "requests": int(metrics.get("requests") or 0),
-                "iterations": int(metrics.get("iterations") or 0),
-                "http_failures": int(metrics.get("http_failures") or 0),
-                "business_failures": int(metrics.get("business_failures") or 0),
-                "p95_ms": _percentile(histogram, 0.95),
+                "started_at": started_at.isoformat(),
+                "requests": totals["requests"],
+                "iterations": totals["iterations"],
+                "http_failures": totals["http_failures"],
+                "business_failures": totals["business_failures"],
+                "p95_ms": sections["latency"]["p95_ms"],
             })
         return rows
 

@@ -115,6 +115,45 @@ def test_rate_uses_configured_load_window_instead_of_orchestration_wall_clock(
     assert report["verdict"] == "passed"
 
 
+def test_report_recomputes_a_stale_persisted_verdict_from_current_evidence(
+    load_factory, load_run_with_shard
+):
+    run, shard, _ = _prepare(load_factory, load_run_with_shard, target_rate=1)
+    LoadMetricService(load_factory).ingest(
+        shard.agent_id,
+        shard.id,
+        _metric_payload("complete-after-fix", requests=10, iterations=10),
+    )
+    _finish(load_factory, run, shard)
+    with load_factory.begin() as session:
+        session.get(ApiLoadRun, run.id).verdict = "inconclusive"
+
+    report = LoadReportService(load_factory).build(run.id, "load-owner")
+
+    assert report["evidence"]["complete"] is True
+    assert report["load_goal"]["reached"] is True
+    assert report["verdict"] == "passed"
+    assert report["verdict_label"] == "通过"
+
+
+def test_series_combines_step_and_workflow_metrics_in_the_same_five_second_window(
+    load_factory, load_run_with_shard
+):
+    run, shard, _ = _prepare(load_factory, load_run_with_shard, target_rate=1)
+    request_bucket = _metric_payload("request-window", requests=3, iterations=0)
+    workflow_bucket = _metric_payload("workflow-window", requests=0, iterations=3)
+    workflow_bucket["buckets"][0]["step_id"] = "all"
+    LoadMetricService(load_factory).ingest(shard.agent_id, shard.id, request_bucket)
+    LoadMetricService(load_factory).ingest(shard.agent_id, shard.id, workflow_bucket)
+    _finish(load_factory, run, shard)
+
+    report = LoadReportService(load_factory).build(run.id, "load-owner")
+
+    assert len(report["series"]) == 1
+    assert report["series"][0]["requests"] == 3
+    assert report["series"][0]["iterations"] == 3
+
+
 def test_http_200_business_failure_is_not_transport_success_verdict(load_factory, load_run_with_shard):
     thresholds = {"business_failure_rate": {"operator": "less_than_or_equal", "value": 0, "required": True}}
     run, shard, _ = _prepare(load_factory, load_run_with_shard, target_rate=4, thresholds=thresholds)
