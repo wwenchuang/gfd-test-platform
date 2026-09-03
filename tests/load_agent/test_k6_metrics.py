@@ -28,6 +28,9 @@ def test_five_second_buckets_include_exact_percentiles_and_counts():
     metrics = buckets[0]["metrics"]
     assert metrics["requests"] == 5
     assert metrics["http_failures"] == 1
+    assert metrics["latency_histogram"]["count"] == 5
+    assert sum(metrics["latency_histogram"]["counts"]) == 5
+    assert metrics["latency_histogram"]["sum_ms"] == 150.0
     assert metrics["latency_ms"] == {"count": 5, "p50": 30.0, "p90": 50.0, "p95": 50.0, "p99": 50.0, "max": 50.0}
     assert buckets[0]["started_at"] == datetime(2026, 9, 3, 8, 0, tzinfo=timezone.utc).isoformat()
 
@@ -43,3 +46,18 @@ def test_latency_memory_and_error_samples_are_bounded():
     assert bucket["metrics"]["latency_ms"]["count"] == 20
     assert len(bucket["samples"]) == 2
     assert aggregator.retained_latency_values <= 4
+
+
+def test_business_and_workflow_assertion_totals_are_kept_separate():
+    aggregator = MetricAggregator(window_seconds=5)
+    aggregator.accept(_point("checks", 1, 1))
+    aggregator.accept(_point("checks", 0, 1, tags={"check": "业务码为0"}))
+    aggregator.accept(_point("workflow_iteration_success", 1, 1))
+    aggregator.accept(_point("workflow_iteration_success", 0, 1))
+
+    metrics = aggregator.flush_all()[0]["metrics"]
+
+    assert metrics["business_assertions"] == 2
+    assert metrics["business_failures"] == 1
+    assert metrics["workflow_iterations"] == 2
+    assert metrics["workflow_failures"] == 1

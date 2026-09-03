@@ -1,6 +1,7 @@
 """Bounded aggregation of incremental k6 JSON point output."""
 
 from datetime import datetime, timezone
+from bisect import bisect_left
 import math
 
 
@@ -11,6 +12,7 @@ COUNTERS = {
     "data_sent": "bytes_sent",
     "data_received": "bytes_received",
 }
+LATENCY_BOUNDS_MS = (10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000)
 
 
 def _utc(value):
@@ -36,29 +38,46 @@ class _Bucket:
         self.max_samples = max_samples
         self.counters = {name: 0.0 for name in COUNTERS.values()}
         self.http_failures = 0
+        self.business_assertions = 0
         self.business_failures = 0
+        self.workflow_iterations = 0
+        self.workflow_failures = 0
         self.latencies = []
         self.latency_count = 0
+        self.latency_sum = 0.0
+        self.latency_max = 0.0
+        self.latency_histogram = [0 for _ in range(len(LATENCY_BOUNDS_MS) + 1)]
         self.samples = []
 
     def accept(self, metric, value, tags):
         if metric in COUNTERS:
             self.counters[COUNTERS[metric]] += float(value)
         elif metric == "http_req_duration":
+            latency = float(value)
             self.latency_count += 1
+            self.latency_sum += latency
+            self.latency_max = max(self.latency_max, latency)
+            self.latency_histogram[bisect_left(LATENCY_BOUNDS_MS, latency)] += 1
             if len(self.latencies) < self.max_latency_samples:
-                self.latencies.append(float(value))
+                self.latencies.append(latency)
             else:
                 # Deterministic bounded reservoir: retain evenly distributed
                 # positions without keeping the complete point stream.
                 position = self.latency_count % self.max_latency_samples
-                self.latencies[position] = float(value)
+                self.latencies[position] = latency
         elif metric == "http_req_failed" and float(value) > 0:
             self.http_failures += 1
             self._sample("http_error", tags)
-        elif metric in {"checks", "workflow_iteration_success"} and float(value) <= 0:
-            self.business_failures += 1
-            self._sample("business_assertion", tags)
+        elif metric == "checks":
+            self.business_assertions += 1
+            if float(value) <= 0:
+                self.business_failures += 1
+                self._sample("business_assertion", tags)
+        elif metric == "workflow_iteration_success":
+            self.workflow_iterations += 1
+            if float(value) <= 0:
+                self.workflow_failures += 1
+                self._sample("workflow_failure", tags)
 
     def _sample(self, kind, tags):
         if len(self.samples) >= self.max_samples:
@@ -76,7 +95,10 @@ class _Bucket:
         metrics.update(
             {
                 "http_failures": self.http_failures,
+                "business_assertions": self.business_assertions,
                 "business_failures": self.business_failures,
+                "workflow_iterations": self.workflow_iterations,
+                "workflow_failures": self.workflow_failures,
                 "latency_ms": {
                     "count": self.latency_count,
                     "p50": _percentile(self.latencies, 0.50),
@@ -84,6 +106,13 @@ class _Bucket:
                     "p95": _percentile(self.latencies, 0.95),
                     "p99": _percentile(self.latencies, 0.99),
                     "max": round(max(self.latencies), 3) if self.latencies else 0.0,
+                },
+                "latency_histogram": {
+                    "bounds_ms": list(LATENCY_BOUNDS_MS),
+                    "counts": list(self.latency_histogram),
+                    "count": self.latency_count,
+                    "sum_ms": round(self.latency_sum, 3),
+                    "max_ms": round(self.latency_max, 3),
                 },
             }
         )

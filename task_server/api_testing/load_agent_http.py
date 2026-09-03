@@ -13,10 +13,10 @@ from .http import ApiHttpError, _domain_error, _failure, _read_json_body, _reque
 from .models.load_testing import ApiLoadRun, ApiLoadRunShard, ApiLoadScenarioVersion
 from .repositories.load_testing_repository import LoadTestingRepository
 from .services.load_agent_service import LoadAgentError, LoadAgentService
+from .services.load_metric_service import LoadMetricError, LoadMetricService
 
 
 AGENT_API_PREFIX = "/api/api-testing/load-agent/v1"
-MAX_BUCKETS_PER_REQUEST = 200
 MAX_SAMPLES_PER_REQUEST = 100
 MAX_EVENTS_PER_REQUEST = 100
 TERMINAL_SHARD_STATES = frozenset({"finished", "failed", "cancelled"})
@@ -280,18 +280,6 @@ def _items(payload, key, limit):
     return value
 
 
-def _started_at(value):
-    if not isinstance(value, str) or not value:
-        raise ApiHttpError(422, "invalid_request", "started_at must be an ISO timestamp")
-    try:
-        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except ValueError:
-        raise ApiHttpError(422, "invalid_request", "started_at must be an ISO timestamp")
-    if parsed.tzinfo is None:
-        raise ApiHttpError(422, "invalid_request", "started_at must include a timezone")
-    return parsed
-
-
 def _assert_owned(agent_id, shard_id):
     factory = _factory()
     with factory() as session:
@@ -307,28 +295,10 @@ def _touch_shard(agent_id, shard_id):
 
 
 def _ingest_metrics(agent_id, shard_id, payload):
-    shard = _assert_owned(agent_id, shard_id)
-    repository = LoadTestingRepository.from_factory(_factory())
-    buckets = _items(payload, "buckets", MAX_BUCKETS_PER_REQUEST)
-    parsed = []
-    for bucket in buckets:
-        step_id = bucket.get("step_id")
-        metrics = bucket.get("metrics")
-        if not isinstance(step_id, str) or not step_id or len(step_id) > 120:
-            raise ApiHttpError(422, "invalid_request", "step_id is invalid")
-        if not isinstance(metrics, dict):
-            raise ApiHttpError(422, "invalid_request", "metrics must be an object")
-        parsed.append((step_id, _started_at(bucket.get("started_at")), metrics))
-    for step_id, started_at, metrics in parsed:
-        repository.upsert_metric_bucket(
-            shard.run_id,
-            shard.id,
-            step_id,
-            started_at,
-            metrics,
-        )
-    _touch_shard(agent_id, shard.id)
-    return {"accepted": len(buckets)}
+    try:
+        return LoadMetricService(_factory()).ingest(agent_id, shard_id, payload)
+    except LoadMetricError as error:
+        raise ApiHttpError(error.status, error.code, str(error)) from error
 
 
 def _ingest_samples(agent_id, shard_id, payload):

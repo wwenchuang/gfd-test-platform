@@ -79,6 +79,27 @@ def _begin_start(repository, run):
     repository.transition_run(run.id, ("queued",), "starting")
 
 
+def _metric_batch(batch_id, started_at, requests):
+    return {
+        "batch_id": batch_id,
+        "buckets": [{
+            "step_id": "search",
+            "started_at": started_at,
+            "bucket_seconds": 5,
+            "metrics": {
+                "requests": requests,
+                "latency_histogram": {
+                    "bounds_ms": [10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000],
+                    "counts": [0, 0, requests, 0, 0, 0, 0, 0, 0, 0, 0],
+                    "count": requests,
+                    "sum_ms": requests * 40,
+                    "max_ms": 45,
+                },
+            },
+        }],
+    }
+
+
 def test_registration_is_one_time_and_browser_bearer_cannot_authenticate_agent(
     http_client, agent_http_context
 ):
@@ -300,28 +321,20 @@ def test_duplicate_metrics_replace_the_bucket_and_finish_is_idempotent(
         AGENT_PREFIX + f"/shards/{shard.id}/started", {"process_info": {}}, auth
     )
     started_at = datetime(2026, 9, 3, 12, 0, tzinfo=timezone.utc).isoformat()
-    first = {
-        "buckets": [
-            {"step_id": "search", "started_at": started_at, "metrics": {"requests": 10}}
-        ]
-    }
-    second = {
-        "buckets": [
-            {"step_id": "search", "started_at": started_at, "metrics": {"requests": 12}}
-        ]
-    }
+    first = _metric_batch("batch-http-1", started_at, 10)
+    second = _metric_batch("batch-http-2", started_at, 12)
     assert http_client.post(AGENT_PREFIX + f"/shards/{shard.id}/metrics", first, auth).status == 200
     assert http_client.post(AGENT_PREFIX + f"/shards/{shard.id}/metrics", second, auth).status == 200
     invalid_batch = http_client.post(
         AGENT_PREFIX + f"/shards/{shard.id}/metrics",
-        {
+        {**_metric_batch("batch-http-invalid", started_at, 3),
             "buckets": [
-                {
-                    "step_id": "search",
-                    "started_at": datetime(2026, 9, 3, 12, 0, 5, tzinfo=timezone.utc).isoformat(),
-                    "metrics": {"requests": 3},
-                },
-                {"step_id": "search", "started_at": "not-a-time", "metrics": {}},
+                _metric_batch(
+                    "unused",
+                    datetime(2026, 9, 3, 12, 0, 5, tzinfo=timezone.utc).isoformat(),
+                    3,
+                )["buckets"][0],
+                {**_metric_batch("unused-2", started_at, 1)["buckets"][0], "started_at": "not-a-time"},
             ]
         },
         auth,

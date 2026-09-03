@@ -485,7 +485,7 @@ git commit -m "feat(load): add isolated Docker k6 agent"
 - `LoadMetricService.ingest()` validates shard ownership, bucket order, metric schema and idempotency.
 - `LoadReportService.build(run_id, actor_id) -> dict` returns goal attainment, threshold verdict, series, rankings, shard evidence, sample summaries and comparison.
 
-- [ ] **Step 1: Write failing aggregation and verdict tests**
+- [x] **Step 1: Write failing aggregation and verdict tests**
 
 Cover two-shard sums, percentile aggregation from compatible histograms, duplicate buckets, missing windows, dropped iterations, HTTP 200 with business failure, reached-load threshold failure, unreached-load `inconclusive`, lost shard, stopped run and incompatible historical comparison.
 
@@ -496,17 +496,17 @@ def test_unreached_rate_is_inconclusive_even_when_all_requests_pass(report_servi
     assert report["verdict"] == "inconclusive"
 ```
 
-- [ ] **Step 2: Run tests and verify missing services**
+- [x] **Step 2: Run tests and verify missing services**
 
-- [ ] **Step 3: Implement schema validation and idempotent ingestion**
+- [x] **Step 3: Implement schema validation and idempotent ingestion**
 
 Reject negative counters, NaN/Infinity, unknown step IDs, bucket widths other than the run contract and uploads for terminal/reassigned shards. Publish compact SSE events after database commit.
 
-- [ ] **Step 4: Implement deterministic report**
+- [x] **Step 4: Implement deterministic report**
 
 Keep `load_goal`, `thresholds`, `transport`, `business`, `workflow`, `dropped_iterations`, `steps`, `agents`, `samples`, `comparison`, and `evidence` as separate sections.
 
-- [ ] **Step 5: Run focused tests and commit**
+- [x] **Step 5: Run focused tests and commit**
 
 ```bash
 .venv/bin/python -m pytest tests/api_testing/test_load_metric_service.py \
