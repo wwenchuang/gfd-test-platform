@@ -74,6 +74,20 @@ COMPLETION_TABLES = {
     "api_scheduled_job_runs",
 }
 
+LOAD_TESTING_TABLES = {
+    "api_load_agents",
+    "api_load_agent_enrollments",
+    "api_load_scenarios",
+    "api_load_scenario_versions",
+    "api_load_datasets",
+    "api_load_runs",
+    "api_load_run_shards",
+    "api_load_metric_buckets",
+    "api_load_samples",
+    "api_load_events",
+    "api_load_ai_analyses",
+}
+
 EXPECTED_INDEXES = {
     "api_project_members": {"ix_api_project_members_project_status"},
     "api_source_revisions": {"ix_api_source_revisions_source_number"},
@@ -83,6 +97,11 @@ EXPECTED_INDEXES = {
     "api_executions": {"ix_api_executions_project_state_created"},
     "api_execution_cases": {"ix_api_execution_cases_version_created"},
     "api_execution_events": {"ix_api_execution_events_execution_sequence"},
+    "api_load_agents": {"ix_api_load_agents_status_tier"},
+    "api_load_scenarios": {"ix_api_load_scenarios_project_status"},
+    "api_load_runs": {"ix_api_load_runs_project_state_created"},
+    "api_load_metric_buckets": {"ix_api_load_metric_buckets_run_time"},
+    "api_load_events": {"ix_api_load_events_run_sequence"},
 }
 
 JSONB_COLUMNS = {
@@ -96,6 +115,13 @@ JSONB_COLUMNS = {
     "api_execution_attempts": {"request", "response", "assertion_results"},
     "api_execution_events": {"payload"},
     "api_failure_analyses": {"analysis"},
+    "api_load_scenario_versions": {"definition", "source_snapshot", "validation_summary", "preflight_summary"},
+    "api_load_runs": {"configuration", "summary"},
+    "api_load_run_shards": {"allocation", "process_info", "summary", "error"},
+    "api_load_metric_buckets": {"metrics"},
+    "api_load_samples": {"payload"},
+    "api_load_events": {"payload"},
+    "api_load_ai_analyses": {"result"},
 }
 
 
@@ -322,7 +348,7 @@ def test_offline_upgrade_contains_complete_phase1_schema():
         text=True,
     )
     generated_sql = result.stdout.lower()
-    for table_name in PHASE1_TABLES | COMPLETION_TABLES:
+    for table_name in PHASE1_TABLES | COMPLETION_TABLES | LOAD_TESTING_TABLES:
         assert f"create table {table_name}" in generated_sql
 
 
@@ -421,7 +447,7 @@ def test_test_database_url_wins_when_alembic_url_is_empty(isolated_schema):
 def test_upgrade_creates_complete_phase1_schema(migrated_database):
     _, _, schema_url, _, _ = migrated_database
     inspector = inspect(create_engine(schema_url))
-    assert (PHASE1_TABLES | COMPLETION_TABLES).issubset(
+    assert (PHASE1_TABLES | COMPLETION_TABLES | LOAD_TESTING_TABLES).issubset(
         set(inspector.get_table_names())
     )
 
@@ -446,7 +472,7 @@ def test_phase1_schema_uses_explicit_foreign_keys_indexes_and_jsonb(migrated_dat
 def test_all_primary_tables_have_uuid_owner_and_utc_audit_columns(migrated_database):
     _, _, schema_url, _, _ = migrated_database
     inspector = inspect(create_engine(schema_url))
-    for table_name in PHASE1_TABLES:
+    for table_name in PHASE1_TABLES | COMPLETION_TABLES | LOAD_TESTING_TABLES:
         columns = {column["name"]: column for column in inspector.get_columns(table_name)}
         assert {"id", "owner_id", "created_at", "updated_at"}.issubset(columns), table_name
         assert str(columns["id"]["type"]).upper().startswith("VARCHAR"), table_name

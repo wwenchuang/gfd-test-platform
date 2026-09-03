@@ -14,6 +14,7 @@
 - Do not broadly refactor `router.py`; mount load-testing dispatch through the existing API-testing boundary.
 - All configured environments are selectable. Production runs require existing `api.production` plus the new load-execution permission and explicit risk confirmation.
 - Supported first-release k6 executors are `constant-vus`, `ramping-vus`, `constant-arrival-rate`, and `ramping-arrival-rate`; their requested load and actual achieved load are reported separately.
+- Every user-visible protocol term has a Chinese name and short explanation. For example, show `固定并发（constant-vus）` and explain when to use it; node tier, task priority, threshold, state, and capacity fields must also explain purpose and risk in Chinese instead of exposing unexplained English values.
 - The platform host defaults to `fallback`; automatic allocation excludes fallback agents unless the run explicitly allows them.
 - Agent hard limits always win over platform soft limits and task requests.
 - Remote agents use platform HTTP APIs only; they never connect directly to Redis or PostgreSQL.
@@ -44,7 +45,7 @@
 - Produces `LoadTestingRepository` methods used by all later tasks.
 - Metric idempotency key is `(run_id, shard_id, scenario_step_id, bucket_started_at)`.
 
-- [ ] **Step 1: Write failing repository tests**
+- [x] **Step 1: Write failing repository tests**
 
 Add tests that create a project/environment, persist an immutable scenario version, create a run and two shards, insert the same metric bucket twice, and assert one stored bucket with the replacement payload. Add a transition test that rejects `finished -> running` and a retention test that caps samples per `(run, shard, step, kind)`.
 
@@ -58,7 +59,7 @@ def test_metric_bucket_upsert_is_idempotent(load_repository, load_run_with_shard
     assert len(repository.list_metric_buckets(run.id)) == 1
 ```
 
-- [ ] **Step 2: Run the tests and observe the missing module failure**
+- [x] **Step 2: Run the tests and observe the missing module failure**
 
 Run:
 
@@ -69,7 +70,7 @@ TEST_DATABASE_URL='postgresql+psycopg://midscene:midscene@127.0.0.1:5432/midscen
 
 Expected: collection fails because `models.load_testing` and `LoadTestingRepository` do not exist.
 
-- [ ] **Step 3: Add normalized models and migration**
+- [x] **Step 3: Add normalized models and migration**
 
 Use existing `PrimaryRecord` fields. Keep immutable scenario definitions in `ApiLoadScenarioVersion.definition` JSONB, run configuration in `ApiLoadRun.configuration` JSONB, summaries in JSONB, and indexed state/time columns. Store dataset metadata only; filesystem/object content uses `storage_ref`. Add foreign-key delete behavior exactly as specified by the design.
 
@@ -88,7 +89,7 @@ class ApiLoadMetricBucket(PrimaryRecord, Base):
     metrics: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default="{}")
 ```
 
-- [ ] **Step 4: Implement repository state and idempotency methods**
+- [x] **Step 4: Implement repository state and idempotency methods**
 
 Define and use these exact signatures:
 
@@ -104,11 +105,11 @@ class LoadTestingRepository:
     def append_bounded_sample(self, run_id: str, shard_id: str, step_id: str, kind: str, payload: dict, limit: int = 20): ...
 ```
 
-- [ ] **Step 5: Run migration and repository tests**
+- [x] **Step 5: Run migration and repository tests**
 
 Expected: migration upgrades and downgrades cleanly; focused tests pass with no duplicate bucket or invalid transition.
 
-- [ ] **Step 6: Commit the domain foundation**
+- [x] **Step 6: Commit the domain foundation**
 
 ```bash
 git add task_server/api_testing/models task_server/api_testing/repositories \
@@ -632,7 +633,7 @@ git commit -m "feat(load): expose performance workflows and notifications"
 
 - [ ] **Step 1: Write failing navigation and node-page tests**
 
-Assert permission-aware navigation, loading/error/empty states, Chinese search composition, enrollment token shown once, copy feedback, preferred/normal/fallback/disabled controls, local hard versus soft capacity, disabled action reasons and responsive layout.
+Assert permission-aware navigation, loading/error/empty states, Chinese search composition, enrollment token shown once, copy feedback, preferred/normal/fallback/disabled controls, local hard versus soft capacity, disabled action reasons and responsive layout. Every Agent tier, capacity field and status must have a visible Chinese name or explanation.
 
 - [ ] **Step 2: Run the targeted Vitest file and observe failures**
 
@@ -677,7 +678,7 @@ git commit -m "feat(load): add performance navigation and agent management"
 
 - [ ] **Step 1: Write failing scenario wizard tests**
 
-Click every step, source selector, single/workflow switch, data mode, validation issue, preflight, version save, cancel and reopen action. Verify dangerous endpoints show the backend reason and cannot be silently selected.
+Click every step, source selector, single/workflow switch, data mode, validation issue, preflight, version save, cancel and reopen action. Verify dangerous endpoints show the backend reason and cannot be silently selected. Assert Chinese names and usage guidance for all four k6 executors, thresholds and data modes.
 
 - [ ] **Step 2: Write failing run wizard tests**
 

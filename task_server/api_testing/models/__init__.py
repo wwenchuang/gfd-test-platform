@@ -28,6 +28,19 @@ from .execution import (
     ApiFailureAnalysis,
 )
 from .notification import ApiNotificationChannel
+from .load_testing import (
+    ApiLoadAgent,
+    ApiLoadAgentEnrollment,
+    ApiLoadAiAnalysis,
+    ApiLoadDataset,
+    ApiLoadEvent,
+    ApiLoadMetricBucket,
+    ApiLoadRun,
+    ApiLoadRunShard,
+    ApiLoadSample,
+    ApiLoadScenario,
+    ApiLoadScenarioVersion,
+)
 from .project import ApiProject, ApiProjectMember, ApiWorkspace
 from .provider import ApiProviderCredential
 from .scheduled_job import ApiScheduledJob, ApiScheduledJobRun, ApiScheduledJobTarget
