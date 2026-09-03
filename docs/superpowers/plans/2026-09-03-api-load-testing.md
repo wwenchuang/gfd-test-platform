@@ -255,7 +255,7 @@ git commit -m "feat(load): expose isolated load agent protocol"
 - Produces immutable definitions with `mode`, `steps`, `dataset_contract`, `risk`, and `source_snapshot`.
 - `compile_scenario(definition: dict, workload: dict) -> CompiledLoadScenario` returns script text, non-secret k6 options, SHA-256 and step manifest.
 
-- [ ] **Step 1: Write failing admission and compiler tests**
+- [x] **Step 1: Write failing admission and compiler tests**
 
 Cover a GET endpoint, an ordered login/search/detail chain, JSONPath extraction, business-code assertion, CSV variable, Unicode payload, request-name tags, fixed VU and fixed arrival-rate output. Prove real-print, payment, SMS, device-control, high-cost AI, missing cleanup and unknown k6 action cases are rejected with Chinese remedies.
 
@@ -268,15 +268,15 @@ def test_compiler_separates_transport_business_and_iteration_checks():
     assert "constant-arrival-rate" in compiled.script
 ```
 
-- [ ] **Step 2: Run compiler tests and verify missing behavior**
+- [x] **Step 2: Run compiler tests and verify missing behavior**
 
 Expected: missing modules/functions.
 
-- [ ] **Step 3: Implement strict definition parsing**
+- [x] **Step 3: Implement strict definition parsing**
 
 Reject unknown fields. Use exact scope names `setup_once`, `agent_setup`, `vu_once`, `iteration`, `cleanup_once`. Restrict generated k6 behavior to HTTP requests, bounded sleep, checks, variable extraction and data selection; do not accept arbitrary JavaScript.
 
-- [ ] **Step 4: Implement case-copy and safety policy**
+- [x] **Step 4: Implement case-copy and safety policy**
 
 Copy the full source version snapshot. Return structured issues:
 
@@ -284,11 +284,11 @@ Copy the full source version snapshot. Return structured issues:
 {"level": "error", "code": "hardware_action_blocked", "step_id": "create-print", "message": "真实打印不能进入压测场景"}
 ```
 
-- [ ] **Step 5: Implement deterministic k6 generation**
+- [x] **Step 5: Implement deterministic k6 generation**
 
 Generate stable scripts from sorted/canonical input so the same definition has the same hash. Environment secrets remain `__ENV` references and are absent from source text.
 
-- [ ] **Step 6: Run focused tests and scan generated fixtures for secrets**
+- [x] **Step 6: Run focused tests and scan generated fixtures for secrets**
 
 ```bash
 .venv/bin/python -m pytest tests/api_testing/test_load_scenario_service.py \
@@ -298,7 +298,7 @@ rg -n "Authorization: Bearer|Cookie:|password" tests/artifacts/load-testing || t
 
 Expected: tests pass; secret scan prints no generated credential values.
 
-- [ ] **Step 7: Commit scenario compilation**
+- [x] **Step 7: Commit scenario compilation**
 
 ```bash
 git add task_server/api_testing/contracts/load_testing.py \
