@@ -172,6 +172,9 @@ function loginReturnToPath() {
   if (/[\x00-\x20\\]/.test(value)) return '';
   const target = new URL(value, window.location.origin);
   if (target.origin !== window.location.origin || target.pathname === '/task-manager.html') return '';
+  // Safari may reuse a cached nginx 404 for the bare SPA entry after a deploy.
+  // Keep the hash route intact while giving the login handoff its own cache key.
+  if (target.pathname === '/api-test/' && !target.search) target.search = '?from=login';
   return target.pathname + target.search + target.hash;
 }
 

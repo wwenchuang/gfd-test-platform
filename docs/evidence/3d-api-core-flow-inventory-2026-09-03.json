@@ -1,8 +1,8 @@
 {
-  "captured_at": "2026-09-03T09:33:53+08:00",
+  "captured_at": "2026-09-03T11:40:00+08:00",
   "live": {
-    "release_revision": "1aac3f31ec67b34204f655fa0a126033ac065b88",
-    "rss_mb": 277.5,
+    "release_revision": "f4012f905be795a0c861e51c761804a7150ace4a",
+    "rss_mb": 232.0,
     "active_large_requests": 0,
     "heavy_workloads_active": 0,
     "project": {
@@ -20,24 +20,24 @@
       "name": "生产环境（新）-腾讯云",
       "revision": 30
     },
-    "peak_rss_mb": 278.1,
+    "peak_rss_mb": 232.0,
     "background_running": 0,
     "pyyaml": true
   },
   "existing": {
-    "case_versions": 1096,
-    "current_source_cases": 10,
+    "case_versions": 1099,
+    "current_source_cases": 13,
     "needs_adaptation": 1086,
-    "baseline_records": 495,
-    "active_baselines": 300,
-    "active_home": 290,
+    "baseline_records": 498,
+    "active_baselines": 303,
+    "active_home": 293,
     "active_shared": 10,
     "scheduled_jobs": [
       {
         "id": "da304955-cf2e-447b-b8f6-f189dd26cc6a",
-        "name": "家用业务基线回归（已复验283条）",
+        "name": "家用业务基线回归（当前290条）",
         "enabled": true,
-        "target_count": 283,
+        "target_count": 290,
         "next_run_at": "2026-09-04T08:00:00+08:00",
         "latest_execution_id": "2be98cac-b705-4e11-9e10-e5749ebb6400",
         "latest_state": "DONE",
@@ -52,9 +52,9 @@
       },
       {
         "id": "9c703d9e-dac9-4047-b064-e89d37512e12",
-        "name": "共享业务基线回归（已复验8条）",
+        "name": "共享业务基线回归（当前10条）",
         "enabled": true,
-        "target_count": 8,
+        "target_count": 10,
         "next_run_at": "2026-09-04T08:00:00+08:00",
         "latest_execution_id": "aefd77a2-973b-4cab-8b4c-32e588aa2459",
         "latest_state": "DONE",
@@ -382,7 +382,7 @@
       "name": "核心链路-账户会话与用户资料",
       "class": "stable_read",
       "business": "home",
-      "group": "核心链路 / 家用 / 稳定回归",
+      "group": "核心链路",
       "main": {
         "id": "f21e675e-6be5-419a-a9ec-3eece8f9676a",
         "method": "GET",
@@ -428,7 +428,7 @@
       "name": "核心链路-模型浏览与收藏闭环",
       "class": "stable_reversible",
       "business": "home",
-      "group": "核心链路 / 家用 / 稳定回归",
+      "group": "核心链路",
       "main": {
         "id": "a7ff9412-7d2e-476d-969c-80a01c751102",
         "method": "POST",
@@ -516,7 +516,7 @@
       "name": "核心链路-设备状态与耗材能力",
       "class": "stable_read",
       "business": "home",
-      "group": "核心链路 / 家用 / 稳定回归",
+      "group": "核心链路",
       "main": {
         "id": "e96d24be-1bde-4acb-81a7-166be56ba92e",
         "method": "GET",
@@ -592,7 +592,7 @@
       "name": "核心链路-打印历史与详情查询",
       "class": "stable_read",
       "business": "home",
-      "group": "核心链路 / 家用 / 稳定回归",
+      "group": "核心链路",
       "main": {
         "id": "e5dc8c82-58e7-43cb-a3ba-b510327106d4",
         "method": "GET",
@@ -657,7 +657,7 @@
       "name": "核心链路-下载记录创建查询清理",
       "class": "stable_reversible",
       "business": "home",
-      "group": "核心链路 / 家用 / 稳定回归",
+      "group": "核心链路",
       "main": {
         "id": "b99b8b36-4735-415c-afe2-4c1a4c5df966",
         "method": "POST",
@@ -747,7 +747,7 @@
       "name": "核心链路-学习冒险地图与任务详情",
       "class": "stable_read",
       "business": "home",
-      "group": "核心链路 / 家用 / 稳定回归",
+      "group": "核心链路",
       "main": {
         "id": "c78fe496-8ac7-4668-b556-e06fdfeb3095",
         "method": "GET",
@@ -812,7 +812,7 @@
       "name": "核心链路-共享地区级联查询",
       "class": "shared_stable",
       "business": "shared",
-      "group": "核心链路 / 共享 / 稳定回归",
+      "group": "核心链路",
       "main": {
         "id": "8552756c-46e1-433f-bf6c-bf89adca4314",
         "method": "GET",
@@ -900,7 +900,7 @@
       "name": "核心链路-共享登录滑块契约",
       "class": "shared_stable",
       "business": "shared",
-      "group": "核心链路 / 共享 / 稳定回归",
+      "group": "核心链路",
       "main": {
         "id": "389db5a4-2612-4aa1-8875-9f6bfeb9c517",
         "method": "POST",
@@ -952,9 +952,9 @@
     {
       "key": "cad_lifecycle",
       "name": "核心链路-DeepSeek CAD创建查询删除",
-      "class": "ai_extended",
+      "class": "ai_core",
       "business": "home",
-      "group": "核心链路 / 扩展 / 按需执行",
+      "group": "核心链路",
       "main": {
         "id": "3d5b23ce-0dd0-423b-9fc3-01b1be56623e",
         "method": "POST",
@@ -1023,7 +1023,7 @@
         }
       ],
       "templates": [],
-      "status": "ready_extended",
+      "status": "ready",
       "external_requirement": "AI creation is allowed by the approved design; record runtime and clean the created task",
       "case_id": "b466054c-9dc8-4dd6-8bce-e849fd73e654",
       "case_version_id": "2ee68542-3050-4f06-9f97-7ef6783b494c",
@@ -1181,9 +1181,9 @@
     {
       "key": "real_print",
       "name": "核心链路-真实打印创建查询取消",
-      "class": "hardware_extended",
+      "class": "hardware_core",
       "business": "home",
-      "group": "核心链路 / 扩展 / 按需执行",
+      "group": "核心链路",
       "main": {
         "id": "e9fe7ad3-dc79-4f48-a549-61b2389df29d",
         "method": "POST",
@@ -1221,14 +1221,132 @@
       ],
       "templates": [
         {
-          "case_version_id": "681ee143-1534-4ff8-9e44-9dde5845602f",
-          "case_id": "52818cf3-5dee-4d94-bbba-4ae03261a42e",
+          "case_version_id": "c2d727eb-3de0-4abf-99ca-7f26fc369f29",
+          "case_id": "6f96756f-6ee5-473e-880a-069c4ae53569",
           "debug_status": "PASSED",
           "regression_status": "PASSED"
         }
       ],
-      "status": "blocked_external_data",
-      "external_requirement": "a dedicated idle printer and explicit permission for an actual print task"
+      "status": "ready",
+      "external_requirement": "fulfilled: approved printer Mac 9888E0094F2A / SN 1385270626257522688",
+      "case_id": "6f96756f-6ee5-473e-880a-069c4ae53569",
+      "case_version_id": "c2d727eb-3de0-4abf-99ca-7f26fc369f29",
+      "baseline_id": "6ad4b223-fb31-4cf8-82cb-2c74b79368ac",
+      "ui_execution_id": "c80e84b7-4931-4474-aff1-65ce65f88337",
+      "ui_execution_summary": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "broken": 0
+      },
+      "observed_contract": {
+        "precondition": "exact printer is ready / standingBy before dispatch",
+        "cleanup": "cancel succeeds and exact printer returns ready / standingBy with printingFlag=false"
+      }
+    },
+    {
+      "key": "model_import",
+      "name": "核心链路-CAD产物导入处理与清理",
+      "class": "stable_reversible",
+      "business": "home",
+      "group": "核心链路",
+      "main": {
+        "id": "8e58434d-9fd1-45e3-94a1-66fa691c24a9",
+        "method": "POST",
+        "path": "/print3d/api/v1/model/importV2",
+        "summary": "导入模型文件",
+        "tags": [
+          "家用业务",
+          "app接口",
+          "我的模型"
+        ]
+      },
+      "related": [
+        {
+          "id": "6e992e1a-3fb8-48e7-9ab5-99e982408d91",
+          "method": "GET",
+          "path": "/print3d/api/v1/model/import/status",
+          "summary": "查询模型导入状态"
+        },
+        {
+          "id": "b2668023-32dc-414d-9970-1fd10950ff1d",
+          "method": "GET",
+          "path": "/print3d/api/v1/model/detail",
+          "summary": "查询模型详情"
+        },
+        {
+          "id": "9fe69c91-ef93-4d55-b9c3-5bb41a4e18bf",
+          "method": "POST",
+          "path": "/print3d/api/v1/createModel/page",
+          "summary": "查询我的模型并取得数据库ID"
+        },
+        {
+          "id": "4fdb02df-bf9e-4441-9b12-e1618bc8132d",
+          "method": "POST",
+          "path": "/print3d/api/v1/createModel/delete",
+          "summary": "按数据库ID删除我的模型"
+        }
+      ],
+      "templates": [],
+      "status": "ready",
+      "case_id": "73708c40-14c5-4218-b3ca-39256173615c",
+      "case_version_id": "471eb365-a361-421d-ba3c-3c2c75ff45b8",
+      "baseline_id": "f1596faf-07c4-48eb-ba73-663cecb63626",
+      "debug_execution_ids": [
+        "dc7b8861-2710-4f88-97ba-8bd8ebed79a3",
+        "08d57071-ff0d-4b20-be8d-020a130da4cf"
+      ],
+      "validation": {
+        "errors": [],
+        "warnings": []
+      },
+      "observed_contract": {
+        "delete_identifier": "createModel/delete requires database ID from createModel/page, not model SN",
+        "cleanup": "detail returns code=1001, msg=模型不存在 and data=null after deletion"
+      }
+    },
+    {
+      "key": "model_search",
+      "name": "核心链路-中文搜索结果与模型详情",
+      "class": "stable_read_only",
+      "business": "home",
+      "group": "核心链路",
+      "main": {
+        "id": "32d03b84-644c-462c-b6f1-f830113a26d1",
+        "method": "GET",
+        "path": "/print3d/api/v1/model/search",
+        "summary": "中文关键词搜索模型",
+        "tags": [
+          "家用业务",
+          "app接口",
+          "模型库"
+        ]
+      },
+      "related": [
+        {
+          "id": "4f5ca4c6-4168-45cb-bdb8-021a100abbaf",
+          "method": "GET",
+          "path": "/print3d/api/v1/model/detail",
+          "summary": "查询同一模型详情"
+        }
+      ],
+      "templates": [],
+      "status": "ready",
+      "case_id": "b08c3b3b-d3a5-49b0-8182-782e759bf43a",
+      "case_version_id": "44d9550e-2f91-47e5-b530-2d8cec6af30e",
+      "baseline_id": "63cf8c5e-6ec2-4917-a8a9-b3a2f1f6e622",
+      "debug_execution_ids": [
+        "17b25df7-f13c-4b49-9bbf-3d0730dbc603",
+        "106906ef-e274-4fec-93e9-af2c389eda49"
+      ],
+      "validation": {
+        "errors": [],
+        "warnings": []
+      },
+      "observed_contract": {
+        "query": "searchKey=收纳盒 with current device type",
+        "result": "first result name contains 收纳盒 and the same SN opens a valid model detail"
+      }
     }
   ],
   "execution_log": [
@@ -1319,32 +1437,77 @@
       "stage_count": 13,
       "report_checked": true,
       "cleanup_verified": true
+    },
+    {
+      "kind": "real_print_task_safari",
+      "execution_id": "c80e84b7-4931-4474-aff1-65ce65f88337",
+      "summary": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "broken": 0
+      },
+      "printer_mac": "9888E0094F2A",
+      "printer_sn": "1385270626257522688",
+      "cleanup_verified": true
+    },
+    {
+      "kind": "model_import_debug",
+      "execution_ids": [
+        "dc7b8861-2710-4f88-97ba-8bd8ebed79a3",
+        "08d57071-ff0d-4b20-be8d-020a130da4cf"
+      ],
+      "result": "two consecutive 1/1 passes with exact model cleanup"
+    },
+    {
+      "kind": "model_search_debug",
+      "execution_ids": [
+        "17b25df7-f13c-4b49-9bbf-3d0730dbc603",
+        "106906ef-e274-4fec-93e9-af2c389eda49"
+      ],
+      "result": "two consecutive 1/1 passes with Chinese result-to-detail identity assertion"
+    },
+    {
+      "kind": "unified_core_task_safari",
+      "execution_id": "117f0e97-1a43-4da4-82fe-3f2e14896b67",
+      "summary": {
+        "total": 12,
+        "passed": 12,
+        "failed": 0,
+        "broken": 0,
+        "duration_ms": 122160
+      },
+      "notification": "sent",
+      "report_checked": true,
+      "new_case_stage_evidence_expanded": true,
+      "cleanup_verified": true
     }
   ],
   "data_requests": [
     {
       "flow": "核心链路-真实打印创建查询取消",
-      "status": "awaiting_user",
-      "required": [
-        "一台专用于测试且当前空闲的打印机 SN",
-        "确认允许真实创建打印任务并立即取消"
+      "status": "fulfilled",
+      "provided": [
+        "Mac 9888E0094F2A",
+        "SN 1385270626257522688",
+        "允许创建后立即取消"
       ],
-      "reason": "该链路会触发物理设备；模型与历史切片数据可由平台动态取得"
+      "result": "two debug passes and Safari executions passed; printer returned to idle"
     }
   ],
   "tasks": [
     {
       "id": "2975548b-8fa8-43fd-b92f-3b019ca17211",
-      "name": "3D核心业务链路回归（v11）",
-      "scope": "stable",
-      "runnable_baseline_count": 8,
-      "ui_execution_id": "bc99d003-7137-47a5-be46-a7cf3f1aa0ad",
+      "name": "3D核心链路回归（v11）",
+      "scope": "unified_core",
+      "runnable_baseline_count": 12,
+      "ui_execution_id": "117f0e97-1a43-4da4-82fe-3f2e14896b67",
       "ui_execution_summary": {
-        "total": 8,
-        "passed": 8,
+        "total": 12,
+        "passed": 12,
         "failed": 0,
         "broken": 0,
-        "duration_ms": 4520
+        "duration_ms": 122160
       },
       "api_execution_id": "39252585-904c-4065-82e5-37bbf9e79f15",
       "api_execution_summary": {
@@ -1357,7 +1520,11 @@
       },
       "feishu_notification": {
         "sent": true,
-        "status": null
+        "status": "飞书通知已发"
+      },
+      "historical_executions": {
+        "api_8_case": "39252585-904c-4065-82e5-37bbf9e79f15",
+        "safari_8_case": "bc99d003-7137-47a5-be46-a7cf3f1aa0ad"
       }
     },
     {
@@ -1392,34 +1559,29 @@
   ],
   "ui_verification": {
     "browser": "Safari",
-    "stable_task": {
+    "unified_core_task": {
       "task_card_checked": true,
       "run_confirm_checked": true,
+      "production_warning_accepted": true,
+      "execution_id": "117f0e97-1a43-4da4-82fe-3f2e14896b67",
+      "result": "12/12 passed",
       "case_detail_checked": true,
-      "report_filters_checked": [
-        "全部",
-        "失败/异常",
-        "跳过",
-        "取消"
-      ]
-    },
-    "cad_task": {
-      "task_card_checked": true,
-      "run_confirm_checked": true,
-      "all_stage_evidence_expanded": true,
+      "new_case_stage_evidence_expanded": [
+        "CAD产物导入处理与清理",
+        "中文搜索结果与模型详情"
+      ],
       "full_trace_checked": true,
       "report_filters_checked": [
         "全部",
         "失败/异常",
         "跳过",
         "取消"
-      ]
+      ],
+      "feishu_notification": "sent"
     },
     "case_assets": {
-      "opened_count": 9,
-      "home_stable": 6,
-      "shared_stable": 2,
-      "ai_extended": 1,
+      "opened_count": 12,
+      "group": "核心链路",
       "checked": [
         "current v11 version",
         "group",
@@ -1428,6 +1590,13 @@
         "regression status",
         "structured workflow"
       ]
+    },
+    "printer_postcondition": {
+      "mac": "9888E0094F2A",
+      "sn": "1385270626257522688",
+      "deviceStatus": "ready",
+      "printStatus": "standingBy",
+      "printingFlag": false
     }
   },
   "observed_issues": [
@@ -1471,6 +1640,18 @@
       ],
       "resolution": "three direct list reads were 367-2174 ms, so backend delay was not reproduced; keep as monitored UI/cold-load issue",
       "state": "monitor"
+    },
+    {
+      "issue": "createModel/delete returns HTTP 200 and code=0 when a model SN is passed instead of the required database ID",
+      "impact": "false-success feedback leaves the imported model visible",
+      "resolution": "resolve the exact database ID through createModel/page, delete by ID, then require model/detail to return 模型不存在",
+      "state": "resolved_in_case"
+    },
+    {
+      "issue": "Safari login handoff to bare /api-test/#/... can reuse an nginx 404",
+      "impact": "successful login appears unable to enter the API platform",
+      "resolution": "loginReturnToPath adds ?from=login while preserving the hash route; deployment and Safari recheck pending",
+      "state": "fixed_locally_pending_deploy"
     }
   ],
   "extended_discovery": {
@@ -1689,6 +1870,16 @@
       "scope": "EPOne设置与EPONEPro Camera",
       "decision": "excluded_by_user",
       "effect": "不建用例、不进核心任务、不索取设备数据"
+    },
+    {
+      "scope": "设备首次绑定与解绑",
+      "decision": "excluded_by_user",
+      "effect": "不准备备用设备，不进入核心链路"
+    },
+    {
+      "scope": "共享商城下单与支付",
+      "decision": "excluded_by_user",
+      "effect": "不索取测试账号或店铺模型，只保留已通过的共享只读契约"
     }
   ]
 }

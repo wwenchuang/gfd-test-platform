@@ -217,8 +217,18 @@ async function run() {
       await page.getByLabel('确认新密码', { exact: true }).fill('fixture-new-password-123');
       await page.route('**/api-test/**', route => route.fulfill({ contentType: 'text/html', body: '<h1>Fixture API</h1>' }));
       await page.getByRole('button', { name: '保存密码', exact: true }).click();
-      await page.waitForURL('**/api-test/#/reports?projectId=p1');
+      await page.waitForURL('**/api-test/?from=login#/reports?projectId=p1');
       assert.equal(await page.evaluate(() => sessionStorage.getItem('sessionToken')), 'fixture-fresh-token');
+      await context.close();
+    });
+    await check('bare API return path bypasses a cached deployment 404', async () => {
+      const { page, context } = await fixture(browser, base, {
+        query: '?return_to=%2Fapi-test%2F%23%2Fruns%3FexecutionId%3De1',
+      });
+      assert.equal(
+        await page.evaluate(() => loginReturnToPath()),
+        '/api-test/?from=login#/runs?executionId=e1',
+      );
       await context.close();
     });
     await check('login also gates must-change users and clears the password field', async () => {
