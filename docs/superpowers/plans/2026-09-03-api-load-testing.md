@@ -197,17 +197,17 @@ git commit -m "feat(load): add agent enrollment and permissions"
 - Agent authentication uses `Authorization: Agent <token>` and never accepts browser session tokens.
 - Produces register, heartbeat, claim, command, started, metric, sample, event, and finish endpoints.
 
-- [ ] **Step 1: Write failing HTTP boundary tests**
+- [x] **Step 1: Write failing HTTP boundary tests**
 
 Exercise missing/expired/revoked Agent tokens, browser-token rejection, registration replay, payload size limits, shard ownership, duplicate metric upload, and cross-Agent finish rejection.
 
-- [ ] **Step 2: Run the HTTP tests and verify missing dispatch**
+- [x] **Step 2: Run the HTTP tests and verify missing dispatch**
 
 ```bash
 .venv/bin/python -m pytest tests/api_testing/test_load_agent_http.py -q
 ```
 
-- [ ] **Step 3: Implement a narrow Agent dispatcher**
+- [x] **Step 3: Implement a narrow Agent dispatcher**
 
 ```python
 AGENT_API_PREFIX = "/api/api-testing/load-agent/v1"
@@ -218,18 +218,18 @@ def dispatch_load_agent_request(handler, method: str, path: str, query: dict) ->
 
 Keep request parsing, response envelopes and size limits consistent with `http.py`, but do not add Agent branches throughout the existing large dispatcher.
 
-- [ ] **Step 4: Wire service operations and idempotency**
+- [x] **Step 4: Wire service operations and idempotency**
 
 Metric uploads use a client batch ID plus the database unique bucket key. `claim` returns at most one shard. `commands` returns `stop` only for the authenticated Agent's current shard.
 
-- [ ] **Step 5: Run focused tests and backend static checks**
+- [x] **Step 5: Run focused tests and backend static checks**
 
 ```bash
 .venv/bin/python -m pytest tests/api_testing/test_load_agent_http.py tests/api_testing/test_load_agent_service.py -q
 python3 tests/backend_static_checks.py
 ```
 
-- [ ] **Step 6: Commit Agent protocol**
+- [x] **Step 6: Commit Agent protocol**
 
 ```bash
 git add task_server/api_testing/load_agent_http.py task_server/api_testing/http.py \
