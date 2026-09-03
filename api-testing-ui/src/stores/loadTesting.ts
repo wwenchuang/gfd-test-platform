@@ -1,8 +1,9 @@
+import { markRaw } from 'vue'
 import { defineStore } from 'pinia'
 
 import { apiClient } from '../api/client'
 import type {
-  LoadAgent, LoadAgentEnrollmentResult, LoadAiAnalysis, LoadReport, LoadRun,
+  LoadAgent, LoadAgentEnrollmentResult, LoadAiAnalysis, LoadReport, LoadRun, LoadRunEvent,
   LoadScenario, LoadScenarioDefinition, LoadScenarioVersion,
 } from '../api/contracts'
 
@@ -18,6 +19,10 @@ export const useLoadTestingStore = defineStore('api-load-testing', {
     agentError: '',
     scenarioError: '',
     runError: '',
+    runEvents: [] as LoadRunEvent[],
+    runConnectionState: 'idle' as 'idle' | 'connecting' | 'open' | 'polling' | 'complete' | 'failed',
+    runEventSource: null as EventSource | null,
+    runPollTimer: null as ReturnType<typeof setTimeout> | null,
   }),
   actions: {
     async loadAgents(): Promise<LoadAgent[]> {
@@ -113,6 +118,63 @@ export const useLoadTestingStore = defineStore('api-load-testing', {
         return []
       } finally { this.loadingRuns = false }
     },
+    async loadRun(runId: string): Promise<LoadRun> {
+      const response = await apiClient.get<{ run: LoadRun }>(`/api/api-testing/v1/load-runs/${encodeURIComponent(runId)}`)
+      this.replaceRun(response.data.run)
+      return response.data.run
+    },
+    async loadRunEvents(runId: string): Promise<LoadRunEvent[]> {
+      const after = this.runEvents.at(-1)?.id || 0
+      const response = await apiClient.get<{ events: LoadRunEvent[]; terminal: boolean }>(`/api/api-testing/v1/load-runs/${encodeURIComponent(runId)}/events?after=${after}`)
+      for (const event of response.data.events) this.appendRunEvent(event)
+      if (response.data.terminal) this.runConnectionState = 'complete'
+      return response.data.events
+    },
+    async connectRunEvents(runId: string): Promise<void> {
+      this.disconnectRunEvents(false)
+      this.runEvents = []
+      this.runConnectionState = 'connecting'
+      try {
+        const response = await apiClient.post<{ ticket: string }>(`/api/api-testing/v1/load-runs/${encodeURIComponent(runId)}/sse-ticket`, {})
+        const after = this.runEvents.at(-1)?.id || 0
+        const source = markRaw(new EventSource(`/api/api-testing/v1/load-runs/${encodeURIComponent(runId)}/events?ticket=${encodeURIComponent(response.data.ticket)}${after ? `&after=${after}` : ''}`))
+        this.runEventSource = source
+        source.onopen = () => { this.runConnectionState = 'open' }
+        source.addEventListener('load_event', event => {
+          const message = event as MessageEvent
+          try {
+            const data = JSON.parse(String(message.data || '{}')) as { type?: string; payload?: Record<string, unknown>; _event_created_at?: string }
+            this.appendRunEvent({ id: Number(message.lastEventId), type: String(data.type || 'unknown'), payload: data.payload || {}, created_at: data._event_created_at })
+          } catch { /* malformed event is ignored; durable polling can recover it */ }
+        })
+        source.onerror = () => {
+          if (this.runEventSource !== source) return
+          source.close(); this.runEventSource = null; this.runConnectionState = 'polling'; this.scheduleRunPoll(runId)
+        }
+      } catch {
+        this.runConnectionState = 'polling'
+        this.scheduleRunPoll(runId)
+      }
+    },
+    appendRunEvent(event: LoadRunEvent): void {
+      if (!Number.isInteger(event.id) || event.id <= (this.runEvents.at(-1)?.id || 0)) return
+      this.runEvents.push(event)
+    },
+    scheduleRunPoll(runId: string): void {
+      if (this.runPollTimer || this.runConnectionState === 'complete') return
+      this.runPollTimer = setTimeout(async () => {
+        this.runPollTimer = null
+        try { await Promise.all([this.loadRunEvents(runId), this.loadRun(runId)]) }
+        catch { this.runConnectionState = 'failed' }
+        if (this.runConnectionState !== 'complete') this.scheduleRunPoll(runId)
+      }, 3000)
+    },
+    disconnectRunEvents(reset = true): void {
+      this.runEventSource?.close(); this.runEventSource = null
+      if (this.runPollTimer) clearTimeout(this.runPollTimer)
+      this.runPollTimer = null
+      if (reset) this.runConnectionState = 'idle'
+    },
     async createRun(input: Record<string, unknown>): Promise<LoadRun> {
       const response = await apiClient.post<{ run: LoadRun }>('/api/api-testing/v1/load-runs', input)
       this.replaceRun(response.data.run)
@@ -134,6 +196,10 @@ export const useLoadTestingStore = defineStore('api-load-testing', {
     },
     async requestAiAnalysis(runId: string, force = false): Promise<LoadAiAnalysis> {
       return (await apiClient.post<{ analysis: LoadAiAnalysis }>(`/api/api-testing/v1/load-runs/${encodeURIComponent(runId)}/ai-analysis`, { force })).data.analysis
+    },
+    async notifyReport(runId: string): Promise<string> {
+      const response = await apiClient.post<{ notification: { message: string } }>(`/api/api-testing/v1/load-runs/${encodeURIComponent(runId)}/notify`, {})
+      return response.data.notification.message
     },
     replaceAgent(agent: LoadAgent): void {
       this.agents = this.agents.some(item => item.id === agent.id)

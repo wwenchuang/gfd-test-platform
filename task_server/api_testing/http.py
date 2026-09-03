@@ -26,10 +26,11 @@ from .adapters.apifox_discovery import ApifoxDiscoveryAdapter, ApifoxDiscoveryEr
 from .adapters.apifox_openapi import ApifoxOpenApiAdapter, ApifoxOpenApiError
 from .adapters.openapi import OpenApiValidationError
 from .db import _session_factory
-from .events import EventStream
+from .events import EventStream, LoadEventStream
 from .models.case import ApiAiJob, ApiCase, ApiCaseVersion
 from .models.environment import ApiEnvironment, ApiEnvironmentRevision
 from .models.execution import ApiExecution, ApiExecutionCase
+from .models.load_testing import ApiLoadRun
 from .models.project import ApiProject, ApiWorkspace
 from .models.source import ApiSource, ApiSourceDiff, ApiSourceEndpoint, ApiSourceRevision
 from .repositories.context_repository import ContextRepository
@@ -161,6 +162,12 @@ def _dispatch(handler, method, qs, path):
                 actor,
                 after=qs.get("after"),
             )
+        if method == "GET" and _is_load_run_events(segments):
+            return _stream_load_events(handler, _uuid(segments[1]), request_id, actor, after=qs.get("after"))
+        if method == "POST" and _is_load_run_sse_ticket(segments):
+            run_id = _uuid(segments[1])
+            _scope_load_run(_factory(), run_id, actor)
+            return _success(handler, {"ticket": _issue_sse_ticket(settings, actor, run_id, session_digest=handler._api_session_digest)}, request_id, 200)
         if segments and segments[0] in {
             "load-scenarios", "load-scenario-versions", "load-datasets",
             "load-runs", "load-agents", "load-agent-enrollments",
@@ -198,7 +205,7 @@ def _log_dispatch_error(error, mapped_error, request_id, method, path, actor):
 def _authenticate(handler, qs, segments, settings):
     ticket = str(qs.get("ticket") or "")
     if ticket:
-        if not _is_execution_events(segments):
+        if not (_is_execution_events(segments) or _is_load_run_events(segments)):
             raise ApiHttpError(401, "unauthorized", "Authentication is required")
         return _consume_sse_ticket(settings, ticket, _uuid(segments[1]), handler=handler)
     token = bearer_token(handler.headers)
@@ -1398,6 +1405,46 @@ def _stream_events(handler, execution_id, request_id, actor, *, after=None):
             return
 
 
+def _stream_load_events(handler, run_id, request_id, actor, *, after=None):
+    access.require_permission(actor, "api.loadtest.view")
+    identity_bound = access.get_access_profile(actor) is not None
+    session_digest = getattr(handler, "_api_session_digest", None)
+    _require_stream_session(actor, session_digest, identity_bound)
+    last_event_id = str(after if after is not None else handler.headers.get("Last-Event-ID", "0")).strip() or "0"
+    try:
+        after_id = int(last_event_id)
+    except ValueError:
+        raise ApiHttpError(400, "invalid_last_event_id", "Last-Event-ID must be a non-negative integer")
+    if after_id < 0:
+        raise ApiHttpError(400, "invalid_last_event_id", "Last-Event-ID must be a non-negative integer")
+    factory = _factory()
+    run = _scope_load_run(factory, run_id, actor)
+    handler.send_response(200)
+    handler._cors()
+    handler.send_header("Content-Type", "text/event-stream; charset=utf-8")
+    handler.send_header("Cache-Control", "no-cache")
+    handler.send_header("X-Request-Id", request_id)
+    handler.end_headers()
+    stream = _load_event_stream(factory)
+    while True:
+        terminal = run.state in {"finished", "failed", "cancelled"}
+        events = stream.read(run_id, after_id, 0 if terminal else SSE_HEARTBEAT_SECONDS * 1000)
+        try:
+            _require_stream_session(actor, session_digest, identity_bound)
+            access.require_permission(actor, "api.loadtest.view")
+            run = _scope_load_run(factory, run_id, actor)
+        except (access.AccessDeniedError, ApiHttpError):
+            return
+        if events:
+            for event in events:
+                _write_sse(handler, event.sequence, "load_event", {"type": event.type, "payload": event.payload}, event.created_at)
+                after_id = event.sequence
+        elif not terminal:
+            _write_sse(handler, None, "heartbeat", {"request_id": request_id})
+        if run.state in {"finished", "failed", "cancelled"} or terminal:
+            return
+
+
 def _write_sse(handler, sequence, event_type, payload, created_at=None):
     lines = []
     if sequence is not None:
@@ -1423,6 +1470,30 @@ def _enqueue_ai_job(job_id):
 
 def _is_execution_events(segments):
     return len(segments) == 3 and segments[0] == "executions" and segments[2] == "events"
+
+
+def _is_load_run_events(segments):
+    return len(segments) == 3 and segments[0] == "load-runs" and segments[2] == "events"
+
+
+def _is_load_run_sse_ticket(segments):
+    return len(segments) == 3 and segments[0] == "load-runs" and segments[2] == "sse-ticket"
+
+
+def _scope_load_run(factory, run_id, actor):
+    access.require_permission(actor, "api.loadtest.view")
+    with factory() as session:
+        run = session.get(ApiLoadRun, run_id)
+        access.require_resource(session, run, actor, "api.loadtest.view")
+        return run
+
+
+def _load_event_stream(factory):
+    try:
+        client = redis.Redis.from_url(ApiTestingSettings.from_env().redis_url, decode_responses=True)
+    except Exception:
+        client = None
+    return LoadEventStream(factory, client)
 
 
 def _success(handler, data, request_id, status):

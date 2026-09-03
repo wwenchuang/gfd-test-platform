@@ -195,7 +195,7 @@ def authorize_http(actor, method, segments):
             require_permission(actor, "api.loadtest.manage_agents")
         elif head == "load-agent-enrollments":
             require_permission(actor, "api.loadtest.manage_agents")
-        elif method == "GET" or tail in {"report", "events", "ai-analysis"}:
+        elif method == "GET" or tail in {"report", "events", "ai-analysis", "sse-ticket", "notify"}:
             require_permission(actor, "api.loadtest.view")
         elif head == "load-runs":
             require_permission(actor, "api.loadtest.execute")

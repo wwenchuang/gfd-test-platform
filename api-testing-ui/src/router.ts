@@ -23,7 +23,7 @@ export const router = createRouter({
     { path: '/reports', name: 'reports', component: ReportsView },
     { path: '/load-scenarios', name: 'load-scenarios', component: () => import('./views/LoadScenariosView.vue'), meta: { title: '性能场景' } },
     { path: '/load-runs', name: 'load-runs', component: () => import('./views/LoadRunsView.vue'), meta: { title: '压测执行' } },
-    { path: '/load-reports', name: 'load-reports', component: () => import('./views/LoadPlaceholderView.vue'), meta: { title: '性能报告' } },
+    { path: '/load-reports', name: 'load-reports', component: () => import('./views/LoadReportsView.vue'), meta: { title: '性能报告' } },
     { path: '/load-agents', name: 'load-agents', component: () => import('./views/LoadAgentsView.vue') },
     { path: '/settings', name: 'settings', component: SettingsView },
   ],

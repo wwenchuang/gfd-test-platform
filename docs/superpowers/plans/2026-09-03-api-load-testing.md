@@ -732,25 +732,25 @@ git commit -m "feat(load): guide scenario and load run creation"
 - Report shows deterministic evidence before AI analysis.
 - Chart component has an accessible table equivalent and handles missing windows explicitly.
 
-- [ ] **Step 1: Write failing real-time console tests**
+- [x] **Step 1: Write failing real-time console tests**
 
 Cover queued/starting/running/stopping/finished/failed/cancelled, started versus planned Agent count, stop confirmation, duplicate clicks, SSE reconnect, fallback polling and a lost shard.
 
-- [ ] **Step 2: Write failing report and AI tests**
+- [x] **Step 2: Write failing report and AI tests**
 
 Assert target attainment and threshold verdict are separate, p50/p90/p95/p99 values are labeled, transport/business/workflow failures are separate, Agent drill-down works, incompatible comparison is marked, AI cites evidence, low-confidence output is visible, and AI failure leaves the report intact.
 
-- [ ] **Step 3: Run targeted tests and verify missing components**
+- [x] **Step 3: Run targeted tests and verify missing components**
 
-- [ ] **Step 4: Implement real-time and report presentation**
+- [x] **Step 4: Implement real-time and report presentation**
 
 Use route-level lazy loading. Render time-series with a focused SVG component and accessible tabular fallback rather than adding a full chart framework to the main bundle.
 
-- [ ] **Step 5: Implement AI panel and reanalysis**
+- [x] **Step 5: Implement AI panel and reanalysis**
 
 “重新诊断” displays model/version/evidence hash, never says it reruns load, and refreshes only the analysis section.
 
-- [ ] **Step 6: Run UI suite, production build, and visual smoke**
+- [x] **Step 6: Run UI suite, production build, and visual smoke**
 
 ```bash
 npm --prefix api-testing-ui test -- --run
@@ -760,7 +760,7 @@ python3 tests/frontend_static_checks.py
 
 Capture desktop, tablet, phone and short-screen screenshots for all new views and verify no hidden controls or horizontal overflow.
 
-- [ ] **Step 7: Commit reporting UI**
+- [x] **Step 7: Commit reporting UI**
 
 ```bash
 git add api-testing-ui/src/views/LoadReportsView.* api-testing-ui/src/components/LoadRunConsole.* \

@@ -55,6 +55,29 @@ const baselines = Array.from({ length: 51 }, (_, index) => {
   };
   return baseline;
 });
+const loadRun = {
+  id: 'load-run-1', project_id: 'project-1', scenario_version_id: 'load-version-1',
+  environment_revision_id: 'environment-revision-1', load_model: 'constant-arrival-rate',
+  queue_priority: 'normal', state: 'finished', verdict: 'failed', stop_reason: '',
+  ai_analysis_state: 'completed', created_at: '2026-09-03T08:00:00Z', started_at: '2026-09-03T08:01:00Z',
+  finished_at: '2026-09-03T08:03:00Z', updated_at: '2026-09-03T08:03:00Z', summary: {},
+  configuration: { scenario: { name: '登录到模型详情核心链路' }, agents: [{ id: 'load-agent-1', name: '上海专用压测节点' }] },
+};
+const loadReport = {
+  run_id: loadRun.id, state: 'finished', verdict: 'failed', verdict_label: '未通过',
+  verdict_explanation: '目标负载已达到，但有必选性能阈值未通过。',
+  load_goal: { reached: true, target_iterations_per_second: 100, actual_iterations_per_second: 99.8 },
+  transport: { requests: 11976, requests_per_second: 99.8, http_failures: 2, http_error_rate: 0.000167 },
+  business: { assertions: 11976, failures: 12, failure_rate: 0.001002 },
+  workflow: { iterations: 5988, failures: 8, failure_rate: 0.001336 },
+  dropped_iterations: { count: 24, rate: 0.004 },
+  latency: { average_ms: 110, p50_ms: 82, p90_ms: 180, p95_ms: 245, p99_ms: 680, max_ms: 1320 },
+  thresholds: [{ key: 'p95_ms', label: 'P95响应时间', operator_label: '小于等于', expected: 200, actual: 245, required: true, passed: false }],
+  series: Array.from({ length: 12 }, (_, i) => ({ started_at: `08:01:${String(i * 5).padStart(2, '0')}`, requests: 500, p95_ms: 120 + i * 12 })),
+  steps: [], agents: [{ id: 'load-agent-1', name: '上海专用压测节点', state: 'finished', state_label: '已完成', summary: { cpu_peak_percent: 68, memory_peak_mb: 812 } }], samples: [],
+  comparison: { compatible: false, reason: '最近历史运行使用了不同的负载参数' },
+  evidence: { complete: true, bucket_count: 24, missing_windows: 1, finished_shards: 1, total_shards: 1 },
+};
 
 function sendJson(res, data, status = 200) {
   res.writeHead(status, { 'content-type': 'application/json; charset=utf-8' });
@@ -164,6 +187,13 @@ function createServer() {
       created_at: '2026-08-25T08:00:00Z', updated_at: '2026-08-26T08:30:00Z',
     }] });
     if (url.pathname === '/api/api-testing/v1/executions' && req.method === 'GET') return sendJson(res, { executions: [] });
+    if (url.pathname === '/api/api-testing/v1/load-runs' && req.method === 'GET') return sendJson(res, { runs: [loadRun] });
+    if (url.pathname === '/api/api-testing/v1/load-runs/load-run-1' && req.method === 'GET') return sendJson(res, { run: loadRun, shards: [] });
+    if (url.pathname === '/api/api-testing/v1/load-runs/load-run-1/report') return sendJson(res, { report: loadReport });
+    if (url.pathname === '/api/api-testing/v1/load-runs/load-run-1/ai-analysis') return sendJson(res, { analysis: {
+      id: 'analysis-1', run_id: loadRun.id, model: 'qwen-plus', prompt_version: 'api-load-analysis.v1', evidence_hash: 'abcdef1234567890', state: 'completed', error: '', created_at: '2026-09-03T08:03:10Z',
+      result: { conclusion: '主要瓶颈位于目标服务响应时间。', bottleneck_category: 'target_service', evidence: ['latency.summary', 'threshold.p95_ms'], recommendations: [{ priority: 'high', action: '检查模型详情查询慢 SQL', verification: '使用相同负载和环境版本重新执行' }], next_run: { load_model: 'constant-arrival-rate', target: 100, duration_seconds: 120, agent_suggestion: '保持节点不变' }, confidence: { level: 'low', reason: '缺失一个指标窗口' } },
+    } });
     if (url.pathname === '/api/api-testing/v1/providers/apifox/credential' && req.method === 'GET') {
       return sendJson(res, { credential: { provider: 'apifox', configured: true, fingerprint: 'visual-check', updated_at: null } });
     }
@@ -233,6 +263,21 @@ function createServer() {
 async function assertNoHorizontalOverflow(page, label) {
   const metrics = await page.evaluate(() => ({ width: document.documentElement.clientWidth, scrollWidth: document.documentElement.scrollWidth }));
   if (metrics.scrollWidth > metrics.width + 1) throw new Error(`${label} horizontal overflow: ${JSON.stringify(metrics)}`);
+}
+
+async function assertLoadReportResponsive(page, url) {
+  for (const [label, viewport] of [['desktop', { width: 1440, height: 900 }], ['tablet', { width: 768, height: 1024 }], ['mobile', { width: 390, height: 844 }], ['short', { width: 700, height: 420 }]]) {
+    await page.setViewportSize(viewport);
+    await page.goto(`${url}#/load-reports?run_id=load-run-1`, { waitUntil: 'networkidle' });
+    if (viewport.width <= 920) await page.waitForFunction(() => document.querySelector('.side-rail')?.getBoundingClientRect().right <= 0);
+    await page.getByRole('heading', { name: '性能报告', exact: true }).waitFor();
+    await page.getByText('目标负载已达到，但有必选性能阈值未通过。').waitFor();
+    await page.getByText('低置信度：缺失一个指标窗口').waitFor();
+    await assertNoHorizontalOverflow(page, `load report ${label}`);
+    await page.screenshot({ path: path.join(ARTIFACTS, `load-report-${label}.png`), fullPage: true });
+  }
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto(url, { waitUntil: 'networkidle' });
 }
 
 async function assertLargeExecutionDrawer(page, url) {
@@ -550,6 +595,7 @@ async function assertAssetSyncClarity(page, url) {
     const taskAppsPayload = await (await taskAppsResponsePromise).json();
     if (!JSON.stringify(taskAppsPayload).includes('校园版')) throw new Error(`business-line configuration response is incomplete: ${JSON.stringify(taskAppsPayload)}`);
     await assertLargeExecutionDrawer(page, url);
+    await assertLoadReportResponsive(page, url);
     await page.getByRole('heading', { name: '接口测试工作台' }).waitFor();
     await page.goto(`${url}#/?newTask=1`, { waitUntil: 'networkidle' });
     await page.getByText('从一个接口开始', { exact: true }).waitFor();
@@ -665,7 +711,7 @@ async function assertAssetSyncClarity(page, url) {
     await assertScheduledServerBlocks(page);
     await assertAssetSyncClarity(page, url);
     if (errors.length) throw new Error(`browser errors: ${errors.join(' | ')}`);
-    console.log(JSON.stringify({ ok: true, url, screenshots: ['execution-report-focus-desktop.png', 'execution-report-focus-mobile.png', 'execution-report-focus-short-mobile.png', 'execution-report-focus-tiny-mobile.png', 'execution-drawer-desktop.png', 'execution-drawer-mobile.png', 'execution-drawer-short-mobile.png', 'execution-drawer-tiny-mobile.png', 'workbench-start-desktop.png', 'workbench-start-mobile.png', 'workflow-preview-desktop.png', 'workflow-preview-mobile.png', 'workbench-desktop.png', 'workbench-compact-desktop.png', 'workbench-tablet.png', 'workbench-mobile.png', 'baselines-mobile.png', 'settings-mobile.png', 'baselines-desktop.png', 'scheduled-blocked-desktop.png', 'scheduled-blocked-mobile.png', 'assets-saved-desktop.png', 'assets-preview-desktop.png', 'assets-preview-compact.png', 'assets-preview-mobile.png'] }));
+    console.log(JSON.stringify({ ok: true, url, screenshots: ['load-report-desktop.png', 'load-report-tablet.png', 'load-report-mobile.png', 'load-report-short.png', 'execution-report-focus-desktop.png', 'execution-report-focus-mobile.png', 'execution-report-focus-short-mobile.png', 'execution-report-focus-tiny-mobile.png', 'execution-drawer-desktop.png', 'execution-drawer-mobile.png', 'execution-drawer-short-mobile.png', 'execution-drawer-tiny-mobile.png', 'workbench-start-desktop.png', 'workbench-start-mobile.png', 'workflow-preview-desktop.png', 'workflow-preview-mobile.png', 'workbench-desktop.png', 'workbench-compact-desktop.png', 'workbench-tablet.png', 'workbench-mobile.png', 'baselines-mobile.png', 'settings-mobile.png', 'baselines-desktop.png', 'scheduled-blocked-desktop.png', 'scheduled-blocked-mobile.png', 'assets-saved-desktop.png', 'assets-preview-desktop.png', 'assets-preview-compact.png', 'assets-preview-mobile.png'] }));
   } finally {
     await browser.close();
     await new Promise(resolve => server.close(resolve));

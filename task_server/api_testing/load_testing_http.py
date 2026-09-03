@@ -35,6 +35,7 @@ from .services.load_report_service import LoadReportError, LoadReportService
 from .services.load_run_service import LoadRunError, LoadRunService
 from .services.load_scenario_compiler import COMPILER_VERSION
 from .services.load_scenario_service import LoadScenarioService
+from .services.notification_service import NotificationNotConfiguredError, NotificationService
 
 
 LOAD_ROUTE_HEADS = frozenset({
@@ -252,6 +253,13 @@ def _post(factory, segments, payload, actor):
         from .tasks import dispatch_load_analysis
         record = LoadAiAnalysisService(factory, dispatcher=dispatch_load_analysis).request(segments[1], actor, force=force)
         return {"analysis": _analysis_view(record)}, 202
+    if len(segments) == 3 and segments[0] == "load-runs" and segments[2] == "notify":
+        _run(factory, segments[1], actor)
+        try:
+            result = NotificationService(factory).send_load_test_report(segments[1], actor)
+        except NotificationNotConfiguredError as error:
+            raise ApiHttpError(409, "notification_not_configured", "当前项目尚未配置可用的飞书机器人") from error
+        return {"notification": {"run_id": result.run_id, "channel_type": result.channel_type, "sent": result.sent, "message": result.message}}, 200
     if len(segments) == 3 and segments[0] == "load-agents" and segments[2] == "calibrate":
         record = LoadAgentService(factory).request_calibration(segments[1], actor)
         return {"agent": _agent_view(record)}, 202

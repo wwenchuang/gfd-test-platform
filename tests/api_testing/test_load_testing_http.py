@@ -52,6 +52,7 @@ def users(monkeypatch):
         "editor": {**common, "permissions": ["api.view", "api.loadtest.view", "api.loadtest.edit"]},
         "runner": {**common, "permissions": ["api.view", "api.execute", "api.loadtest.view", "api.loadtest.execute"]},
         "manager": {**common, "permissions": ["api.view", "api.loadtest.view", "api.loadtest.manage_agents"]},
+        "notifier": {**common, "permissions": ["api.view", "api.loadtest.view", "platform.notify"]},
         "other": {**common, "permissions": ["api.view", "api.loadtest.view"], "scope": {"api_projects": [], "api_environments": []}},
     }
     monkeypatch.setattr(access, "get_access_profile", lambda actor: profiles.get(actor))
@@ -208,6 +209,7 @@ def test_run_read_events_report_ai_and_actions_use_separate_permissions(load_fac
     monkeypatch.setattr("task_server.api_testing.load_testing_http._run_service", lambda _factory: FakeRunService())
     monkeypatch.setattr("task_server.api_testing.load_testing_http.LoadReportService.build", lambda _self, requested_id, actor: {"run_id": requested_id, "verdict": "inconclusive", "actor": actor})
     monkeypatch.setattr("task_server.api_testing.load_testing_http.LoadAiAnalysisService.request", lambda _self, requested_id, actor, force=False: SimpleNamespace(id="analysis-1", run_id=requested_id, state="queued", evidence_hash="e" * 64, model="平台自动路由", prompt_version="api-load-analysis.v1", result={}, error=""))
+    monkeypatch.setattr("task_server.api_testing.load_testing_http.NotificationService.send_load_test_report", lambda _self, requested_id, actor: SimpleNamespace(run_id=requested_id, channel_type="feishu", sent=True, message="性能测试飞书报告已发"))
     connectivity_agent = SimpleNamespace(
         id="agent-connectivity", name="专用节点", status="online", scheduling_tier="preferred", node_group="腾讯云",
         labels={}, agent_version="1.0.0", k6_version="0.52.0", hard_limits={}, soft_limits={}, current_usage={},
@@ -227,6 +229,8 @@ def test_run_read_events_report_ai_and_actions_use_separate_permissions(load_fac
     assert report["report"]["verdict"] == "inconclusive"
     analysis, status = _call(load_factory, "POST", f"/load-runs/{run_id}/ai-analysis", "viewer", {"force": True})
     assert status == 202 and analysis["analysis"]["state"] == "queued"
+    notified, status = _call(load_factory, "POST", f"/load-runs/{run_id}/notify", "notifier")
+    assert status == 200 and notified["notification"]["message"] == "性能测试飞书报告已发"
     with pytest.raises(access.AccessDeniedError):
         _call(load_factory, "POST", f"/load-runs/{run_id}/start", "viewer")
     connectivity, status = _call(load_factory, "POST", f"/load-runs/{run_id}/connectivity", "runner")

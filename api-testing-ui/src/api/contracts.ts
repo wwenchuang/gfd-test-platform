@@ -129,6 +129,13 @@ export interface LoadAiAnalysis {
   created_at: string
 }
 
+export interface LoadRunEvent {
+  id: number
+  type: string
+  payload: Record<string, unknown>
+  created_at?: string
+}
+
 export interface LoadReport {
   run_id: string
   verdict: Exclude<LoadVerdict, null>
@@ -137,9 +144,16 @@ export interface LoadReport {
   load_goal: Record<string, number | string | boolean | null>
   transport: Record<string, number>
   latency: Record<string, number>
+  business?: Record<string, number | string>
+  workflow?: Record<string, number | string>
+  dropped_iterations?: Record<string, number | string>
+  thresholds?: Array<Record<string, unknown>>
+  series?: Array<Record<string, unknown>>
+  comparison?: Record<string, unknown>
   evidence: Record<string, number | string | boolean | null>
   steps: Array<Record<string, unknown>>
-  nodes: Array<Record<string, unknown>>
+  agents?: Array<Record<string, unknown>>
+  nodes?: Array<Record<string, unknown>>
   samples: Array<Record<string, unknown>>
 }
 
