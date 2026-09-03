@@ -195,6 +195,18 @@ def test_compiler_avoids_javascript_syntax_rejected_by_bundled_k6():
     assert 'state[name] === undefined || state[name] === null' in compiled.script
 
 
+def test_compiler_passes_the_persistent_vu_state_to_runtime_steps():
+    compiled = compile_scenario(SEARCH_CHAIN, FIXED_RATE)
+    default_body = compiled.script.split("export default function(data)", 1)[1]
+
+    assert "step_login(vuState, data)" in default_body
+    assert "step_search(vuState, data)" in default_body
+    assert "step_detail(vuState, data)" in default_body
+    assert "step_login(state, data)" not in default_body
+    assert "step_search(state, data)" not in default_body
+    assert "step_detail(state, data)" not in default_body
+
+
 def test_control_setup_is_not_executed_by_agent_and_agent_setup_runs_once_per_shard():
     control_setup = dict(
         SEARCH_CHAIN["steps"][0],

@@ -231,8 +231,14 @@ def compile_scenario(definition, workload):
             for step in parsed["steps"]
             if step["scope"] == scope
         ]
-    run_lines = "\n  ".join(f"iterationOk = {call} && iterationOk;" for call in by_scope["iteration"])
-    vu_lines = "\n      ".join(f"iterationOk = {call} && iterationOk;" for call in by_scope["vu_once"])
+    run_lines = "\n  ".join(
+        f"iterationOk = {call.replace('(state, data)', '(vuState, data)')} && iterationOk;"
+        for call in by_scope["iteration"]
+    )
+    vu_lines = "\n      ".join(
+        f"iterationOk = {call.replace('(state, data)', '(vuState, data)')} && iterationOk;"
+        for call in by_scope["vu_once"]
+    )
     agent_setup_lines = "\n  ".join(
         f"if (!{call}) throw new Error(\"节点初始化步骤失败\");"
         for call in by_scope["agent_setup"]
