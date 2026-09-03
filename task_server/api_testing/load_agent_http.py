@@ -1,7 +1,11 @@
 """Narrow HTTP protocol used only by outbound load Agents."""
 
 import copy
+import hashlib
+import json
 import logging
+from pathlib import Path
+import re
 from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
@@ -10,10 +14,12 @@ from sqlalchemy import case, select
 from .config import ApiTestingSettings
 from .db import _session_factory
 from .http import ApiHttpError, _domain_error, _failure, _read_json_body, _request_id, _success
-from .models.load_testing import ApiLoadRun, ApiLoadRunShard, ApiLoadScenarioVersion
+from .models.load_testing import ApiLoadDataset, ApiLoadRun, ApiLoadRunShard, ApiLoadScenarioVersion
 from .repositories.load_testing_repository import LoadTestingRepository
 from .services.load_agent_service import LoadAgentError, LoadAgentService
+from .services.environment_service import EnvironmentService
 from .services.load_metric_service import LoadMetricError, LoadMetricService
+from .services.load_scenario_compiler import compile_scenario
 
 
 AGENT_API_PREFIX = "/api/api-testing/load-agent/v1"
@@ -21,6 +27,8 @@ MAX_SAMPLES_PER_REQUEST = 100
 MAX_EVENTS_PER_REQUEST = 100
 TERMINAL_SHARD_STATES = frozenset({"finished", "failed", "cancelled"})
 logger = logging.getLogger(__name__)
+_SERVICE_ENV_PART = re.compile(r"[^A-Z0-9]")
+_MAX_DATASET_BYTES = 10 * 1024 * 1024
 
 
 def _factory():
@@ -240,6 +248,7 @@ def _claim_shard(agent_id):
             run.state = "running"
             run.started_at = datetime.now(timezone.utc)
             session.flush()
+        execution = _execution_payload(session, run, shard, version)
         return {
             **_shard_view(shard),
             "run": {"id": run.id, "configuration": copy.deepcopy(run.configuration)},
@@ -249,7 +258,212 @@ def _claim_shard(agent_id):
                 "compiler_version": version.compiler_version,
                 "content_hash": version.content_hash,
             },
+            **execution,
         }
+
+
+def _execution_payload(session, run, shard, version):
+    """Build the private executable handoff from immutable run references."""
+    configuration = run.configuration if isinstance(run.configuration, dict) else {}
+    compiler_snapshot = configuration.get("compiler") if isinstance(configuration.get("compiler"), dict) else {}
+    workload = configuration.get("workload")
+    try:
+        global_compiled = compile_scenario(copy.deepcopy(version.definition), copy.deepcopy(workload))
+    except Exception as error:
+        raise ApiHttpError(409, "shard_configuration_missing", f"分片脚本无法重新编译：{error}") from error
+    expected_hash = str(compiler_snapshot.get("content_hash") or "")
+    if not expected_hash or global_compiled.content_hash != expected_hash:
+        raise ApiHttpError(409, "shard_configuration_changed", "分片脚本与任务创建时的不可变快照不一致")
+    shard_workload = _shard_workload(session, run, shard, workload)
+    compiled = compile_scenario(copy.deepcopy(version.definition), shard_workload)
+
+    try:
+        runtime = EnvironmentService(_factory()).resolve_runtime(run.environment_revision_id, {})
+    except Exception as error:
+        raise ApiHttpError(409, "shard_environment_unavailable", f"压测环境无法解析：{error}") from error
+    if runtime.unresolved_services:
+        raise ApiHttpError(
+            409,
+            "shard_environment_unavailable",
+            "压测环境仍有未解析服务：" + "、".join(runtime.unresolved_services),
+        )
+    steps = version.definition.get("steps", []) if isinstance(version.definition, dict) else []
+    required_services = {
+        str(step.get("request", {}).get("service") or "default")
+        for step in steps
+        if isinstance(step, dict)
+        and step.get("action") == "http_request"
+        and isinstance(step.get("request"), dict)
+    }
+    missing_services = sorted(
+        name for name in required_services if not runtime.base_urls.get(name)
+    )
+    if missing_services:
+        raise ApiHttpError(
+            409,
+            "shard_environment_unavailable",
+            "压测环境缺少场景所需服务地址：" + "、".join(missing_services),
+        )
+
+    environment = {}
+    service_keys = set()
+    for name, base_url in runtime.base_urls.items():
+        if not base_url:
+            continue
+        key = "BASE_URL_" + _SERVICE_ENV_PART.sub("_", str(name).upper())
+        if key in service_keys:
+            raise ApiHttpError(409, "shard_environment_unavailable", "服务名称转换为环境变量后发生冲突")
+        service_keys.add(key)
+        environment[key] = str(base_url)
+        if name == "default":
+            environment["BASE_URL"] = str(base_url)
+    values = {**dict(runtime.public_variables), **dict(runtime.secrets)}
+    for name in compiled.required_environment_variables:
+        if name not in values:
+            raise ApiHttpError(409, "shard_environment_unavailable", f"压测环境缺少变量：{name}")
+        value = values[name]
+        environment[name] = value if isinstance(value, str) else json.dumps(
+            value, ensure_ascii=False, separators=(",", ":")
+        )
+    environment["LOAD_DEFAULT_HEADERS_JSON"] = json.dumps(
+        dict(runtime.headers), ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    )
+    return {
+        "script": compiled.script,
+        "workload": shard_workload,
+        "environment": environment,
+        "dataset_rows": _dataset_rows(session, run, shard),
+    }
+
+
+def _shard_workload(session, run, shard, workload):
+    if not isinstance(workload, dict):
+        raise ApiHttpError(409, "shard_configuration_missing", "任务负载配置无效")
+    allocation = shard.allocation if isinstance(shard.allocation, dict) else {}
+    shards = tuple(
+        session.scalars(
+            select(ApiLoadRunShard)
+            .where(ApiLoadRunShard.run_id == run.id)
+            .order_by(ApiLoadRunShard.sequence, ApiLoadRunShard.id)
+        )
+    )
+    result = copy.deepcopy(workload)
+    executor = result.get("executor")
+    if executor == "constant-vus":
+        result["vus"] = int(allocation.get("vus") or 0)
+    elif executor == "constant-arrival-rate":
+        result["rate"] = int(allocation.get("rate") or 0)
+        result["max_vus"] = int(allocation.get("vus") or 0)
+        allocated_vus = sum(int((item.allocation or {}).get("vus") or 0) for item in shards)
+        result["pre_allocated_vus"] = max(
+            1,
+            _split_total(min(int(workload.get("pre_allocated_vus") or 0), allocated_vus), shards, "vus", shard.id),
+        )
+    elif executor == "ramping-vus":
+        global_peak = max(
+            [int(workload.get("start_vus") or 0)]
+            + [int(item.get("target") or 0) for item in workload.get("stages", [])]
+        )
+        allocated_peak = sum(int((item.allocation or {}).get("vus") or 0) for item in shards)
+        result["start_vus"] = _split_total(
+            _effective_stage(int(workload.get("start_vus") or 0), global_peak, allocated_peak),
+            shards, "vus", shard.id,
+        )
+        result["stages"] = [
+            {
+                **copy.deepcopy(item),
+                "target": _split_total(
+                    _effective_stage(int(item.get("target") or 0), global_peak, allocated_peak),
+                    shards, "vus", shard.id,
+                ),
+            }
+            for item in workload.get("stages", [])
+        ]
+    elif executor == "ramping-arrival-rate":
+        global_peak = max(
+            [int(workload.get("start_rate") or 0)]
+            + [int(item.get("target") or 0) for item in workload.get("stages", [])]
+        )
+        allocated_peak = sum(int((item.allocation or {}).get("rate") or 0) for item in shards)
+        result["start_rate"] = _split_total(
+            _effective_stage(int(workload.get("start_rate") or 0), global_peak, allocated_peak),
+            shards, "rate", shard.id,
+        )
+        result["stages"] = [
+            {
+                **copy.deepcopy(item),
+                "target": _split_total(
+                    _effective_stage(int(item.get("target") or 0), global_peak, allocated_peak),
+                    shards, "rate", shard.id,
+                ),
+            }
+            for item in workload.get("stages", [])
+        ]
+        result["max_vus"] = int(allocation.get("vus") or 0)
+        allocated_vus = sum(int((item.allocation or {}).get("vus") or 0) for item in shards)
+        result["pre_allocated_vus"] = max(
+            1,
+            _split_total(min(int(workload.get("pre_allocated_vus") or 0), allocated_vus), shards, "vus", shard.id),
+        )
+    else:
+        raise ApiHttpError(409, "shard_configuration_missing", "任务负载模型无效")
+    return result
+
+
+def _effective_stage(target, global_peak, allocated_peak):
+    if target <= 0 or global_peak <= 0 or allocated_peak <= 0:
+        return 0
+    return min(allocated_peak, int(round(target * allocated_peak / global_peak)))
+
+
+def _split_total(total, shards, field, shard_id):
+    weights = [max(0, int((item.allocation or {}).get(field) or 0)) for item in shards]
+    weight_total = sum(weights)
+    if total <= 0 or weight_total <= 0:
+        return 0
+    raw = [total * weight / weight_total for weight in weights]
+    assigned = [int(value) for value in raw]
+    remaining = total - sum(assigned)
+    order = sorted(range(len(shards)), key=lambda index: (-(raw[index] - assigned[index]), shards[index].sequence, shards[index].id))
+    for index in order[:remaining]:
+        assigned[index] += 1
+    for index, item in enumerate(shards):
+        if item.id == shard_id:
+            return assigned[index]
+    raise ApiHttpError(409, "shard_configuration_missing", "任务分片不属于当前运行")
+
+
+def _dataset_rows(session, run, shard):
+    configuration = run.configuration if isinstance(run.configuration, dict) else {}
+    snapshot = configuration.get("dataset") if isinstance(configuration.get("dataset"), dict) else {}
+    dataset_id = str(snapshot.get("id") or "")
+    if not dataset_id:
+        return []
+    dataset = session.get(ApiLoadDataset, dataset_id)
+    if dataset is None:
+        raise ApiHttpError(409, "shard_dataset_unavailable", "任务使用的数据集已不存在")
+    path = Path(dataset.storage_ref)
+    try:
+        size = path.stat().st_size
+        if size > _MAX_DATASET_BYTES:
+            raise ValueError("数据集超过10 MB限制")
+        content = path.read_bytes()
+    except (OSError, ValueError) as error:
+        raise ApiHttpError(409, "shard_dataset_unavailable", f"任务数据集无法读取：{error}") from error
+    if hashlib.sha256(content).hexdigest() != str(snapshot.get("content_hash") or ""):
+        raise ApiHttpError(409, "shard_dataset_changed", "任务数据集内容已变化，不能继续执行")
+    try:
+        rows = json.loads(content.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise ApiHttpError(409, "shard_dataset_unavailable", "任务数据集内容无效") from error
+    if not isinstance(rows, list) or any(not isinstance(item, dict) for item in rows):
+        raise ApiHttpError(409, "shard_dataset_unavailable", "任务数据集必须是对象数组")
+    allocation = shard.allocation if isinstance(shard.allocation, dict) else {}
+    start = int(allocation.get("dataset_start") or 0)
+    end = int(allocation.get("dataset_end") or 0)
+    if start < 0 or end < start or end > len(rows):
+        raise ApiHttpError(409, "shard_dataset_unavailable", "任务数据集分片范围无效")
+    return copy.deepcopy(rows[start:end])
 
 
 def _start_shard(agent_id, shard_id, payload):

@@ -78,6 +78,26 @@ const loadReport = {
   comparison: { compatible: false, reason: '最近历史运行使用了不同的负载参数' },
   evidence: { complete: true, bucket_count: 24, missing_windows: 1, finished_shards: 1, total_shards: 1 },
 };
+const loadAgents = [
+  {
+    id: 'load-agent-1', name: '上海专用压测节点', status: 'online', scheduling_tier: 'preferred',
+    node_group: '腾讯云上海', labels: {}, agent_version: '1.0.0', k6_version: 'k6 v0.52.0',
+    hard_limits: { max_processes: 2, max_vus: 500, max_iterations_per_second: 2000, max_duration_seconds: 1800, cpu_cores: 8, memory_mb: 16384 },
+    soft_limits: { max_processes: 2, max_vus: 400, max_iterations_per_second: 1500, max_duration_seconds: 1800, cpu_cores: 6, memory_mb: 12288 },
+    current_usage: { processes: 0, vus: 0, iterations_per_second: 0 },
+    health: { schedulable: true, calibration: { state: 'valid', max_vus: 320, max_iterations_per_second: 1200, valid_until: '2026-09-10T12:00:00+08:00' } },
+    calibration_state: 'valid', egress_ip: '203.0.113.8', last_heartbeat_at: '2026-09-03T12:03:00+08:00', offline_reason: '',
+  },
+  {
+    id: 'load-agent-2', name: '广州备用压测节点', status: 'offline', scheduling_tier: 'fallback',
+    node_group: '备用资源池', labels: {}, agent_version: '1.0.0', k6_version: 'k6 v0.52.0',
+    hard_limits: { max_processes: 1, max_vus: 100, max_iterations_per_second: 300, max_duration_seconds: 900, cpu_cores: 2, memory_mb: 2048 },
+    soft_limits: { max_processes: 1, max_vus: 80, max_iterations_per_second: 200, max_duration_seconds: 900, cpu_cores: 2, memory_mb: 2048 },
+    current_usage: { processes: 0, vus: 0, iterations_per_second: 0 },
+    health: { schedulable: false, calibration: { state: 'expired', max_vus: 60, max_iterations_per_second: 150, valid_until: '2026-09-01T12:00:00+08:00' } },
+    calibration_state: 'expired', egress_ip: '', last_heartbeat_at: '2026-09-03T10:03:00+08:00', offline_reason: 'heartbeat_timeout',
+  },
+];
 
 function sendJson(res, data, status = 200) {
   res.writeHead(status, { 'content-type': 'application/json; charset=utf-8' });
@@ -188,6 +208,7 @@ function createServer() {
     }] });
     if (url.pathname === '/api/api-testing/v1/executions' && req.method === 'GET') return sendJson(res, { executions: [] });
     if (url.pathname === '/api/api-testing/v1/load-runs' && req.method === 'GET') return sendJson(res, { runs: [loadRun] });
+    if (url.pathname === '/api/api-testing/v1/load-agents' && req.method === 'GET') return sendJson(res, { agents: loadAgents });
     if (url.pathname === '/api/api-testing/v1/load-runs/load-run-1' && req.method === 'GET') return sendJson(res, { run: loadRun, shards: [] });
     if (url.pathname === '/api/api-testing/v1/load-runs/load-run-1/report') return sendJson(res, { report: loadReport });
     if (url.pathname === '/api/api-testing/v1/load-runs/load-run-1/ai-analysis') return sendJson(res, { analysis: {
@@ -275,6 +296,21 @@ async function assertLoadReportResponsive(page, url) {
     await page.getByText('低置信度：缺失一个指标窗口').waitFor();
     await assertNoHorizontalOverflow(page, `load report ${label}`);
     await page.screenshot({ path: path.join(ARTIFACTS, `load-report-${label}.png`), fullPage: true });
+  }
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto(url, { waitUntil: 'networkidle' });
+}
+
+async function assertLoadAgentsResponsive(page, url) {
+  for (const [label, viewport] of [['desktop', { width: 1440, height: 900 }], ['mobile', { width: 390, height: 844 }], ['short', { width: 700, height: 420 }]]) {
+    await page.setViewportSize(viewport);
+    await page.goto(`${url}#/load-agents`, { waitUntil: 'networkidle' });
+    if (viewport.width <= 920) await page.waitForFunction(() => document.querySelector('.side-rail')?.getBoundingClientRect().right <= 0);
+    await page.getByRole('heading', { name: '压测节点', exact: true }).waitFor();
+    await page.getByText('心跳正常', { exact: true }).first().waitFor();
+    await page.getByText('心跳中断', { exact: true }).waitFor();
+    await assertNoHorizontalOverflow(page, `load agents ${label}`);
+    await page.screenshot({ path: path.join(ARTIFACTS, `load-agents-${label}.png`), fullPage: true });
   }
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto(url, { waitUntil: 'networkidle' });
@@ -596,6 +632,7 @@ async function assertAssetSyncClarity(page, url) {
     if (!JSON.stringify(taskAppsPayload).includes('校园版')) throw new Error(`business-line configuration response is incomplete: ${JSON.stringify(taskAppsPayload)}`);
     await assertLargeExecutionDrawer(page, url);
     await assertLoadReportResponsive(page, url);
+    await assertLoadAgentsResponsive(page, url);
     await page.getByRole('heading', { name: '接口测试工作台' }).waitFor();
     await page.goto(`${url}#/?newTask=1`, { waitUntil: 'networkidle' });
     await page.getByText('从一个接口开始', { exact: true }).waitFor();
@@ -711,7 +748,7 @@ async function assertAssetSyncClarity(page, url) {
     await assertScheduledServerBlocks(page);
     await assertAssetSyncClarity(page, url);
     if (errors.length) throw new Error(`browser errors: ${errors.join(' | ')}`);
-    console.log(JSON.stringify({ ok: true, url, screenshots: ['load-report-desktop.png', 'load-report-tablet.png', 'load-report-mobile.png', 'load-report-short.png', 'execution-report-focus-desktop.png', 'execution-report-focus-mobile.png', 'execution-report-focus-short-mobile.png', 'execution-report-focus-tiny-mobile.png', 'execution-drawer-desktop.png', 'execution-drawer-mobile.png', 'execution-drawer-short-mobile.png', 'execution-drawer-tiny-mobile.png', 'workbench-start-desktop.png', 'workbench-start-mobile.png', 'workflow-preview-desktop.png', 'workflow-preview-mobile.png', 'workbench-desktop.png', 'workbench-compact-desktop.png', 'workbench-tablet.png', 'workbench-mobile.png', 'baselines-mobile.png', 'settings-mobile.png', 'baselines-desktop.png', 'scheduled-blocked-desktop.png', 'scheduled-blocked-mobile.png', 'assets-saved-desktop.png', 'assets-preview-desktop.png', 'assets-preview-compact.png', 'assets-preview-mobile.png'] }));
+    console.log(JSON.stringify({ ok: true, url, screenshots: ['load-agents-desktop.png', 'load-agents-mobile.png', 'load-agents-short.png', 'load-report-desktop.png', 'load-report-tablet.png', 'load-report-mobile.png', 'load-report-short.png', 'execution-report-focus-desktop.png', 'execution-report-focus-mobile.png', 'execution-report-focus-short-mobile.png', 'execution-report-focus-tiny-mobile.png', 'execution-drawer-desktop.png', 'execution-drawer-mobile.png', 'execution-drawer-short-mobile.png', 'execution-drawer-tiny-mobile.png', 'workbench-start-desktop.png', 'workbench-start-mobile.png', 'workflow-preview-desktop.png', 'workflow-preview-mobile.png', 'workbench-desktop.png', 'workbench-compact-desktop.png', 'workbench-tablet.png', 'workbench-mobile.png', 'baselines-mobile.png', 'settings-mobile.png', 'baselines-desktop.png', 'scheduled-blocked-desktop.png', 'scheduled-blocked-mobile.png', 'assets-saved-desktop.png', 'assets-preview-desktop.png', 'assets-preview-compact.png', 'assets-preview-mobile.png'] }));
   } finally {
     await browser.close();
     await new Promise(resolve => server.close(resolve));

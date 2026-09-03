@@ -128,6 +128,36 @@ def test_vu_workload_splits_exactly_across_nodes():
     assert [(item.agent_id, item.vus) for item in allocations] == [("a", 4), ("b", 3)]
 
 
+def test_five_nodes_split_non_uniform_capacity_without_changing_global_target():
+    workload = {
+        "executor": "constant-vus",
+        "vus": 137,
+        "duration_seconds": 30,
+        "dataset_mode": "fixed_per_vu",
+        "dataset_row_count": 137,
+    }
+    agents = [
+        _agent("node-a", vus=10),
+        _agent("node-b", vus=20),
+        _agent("node-c", vus=30),
+        _agent("node-d", vus=40),
+        _agent("node-e", vus=50),
+    ]
+
+    allocations = allocate_run(workload, agents, False)
+
+    assert len(allocations) == 5
+    assert sum(item.vus for item in allocations) == 137
+    assert [(item.dataset_start, item.dataset_end) for item in allocations] == [
+        (0, 9),
+        (9, 27),
+        (27, 54),
+        (54, 91),
+        (91, 137),
+    ]
+    assert allocations[-1].dataset_end == 137
+
+
 def test_fixed_per_vu_requires_one_row_for_every_allocated_vu():
     workload = {
         "executor": "constant-vus",

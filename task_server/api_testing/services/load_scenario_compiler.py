@@ -190,7 +190,7 @@ function step_{safe_identifier}(state, data) {{
   const pathVariables = Object.assign({{}}, state, request.path_params || {{}});
   const url = baseUrl + resolveTemplate(request.path, pathVariables, true) + encodeQuery(request.query);
   const body = request.body === null ? null : JSON.stringify(request.body);
-  const params = {{ headers: request.headers, cookies: request.cookies, tags: {{ name: {_json(request_name)}, step_id: {_json(step['id'])} }} }};
+  const params = {{ headers: Object.assign({{}}, defaultHeaders, request.headers), cookies: request.cookies, tags: {{ name: {_json(request_name)}, step_id: {_json(step['id'])} }} }};
   const response = http.request(request.method, url, body, params);
   const stepOk = check(response, {{{checks}}});
   applyExtractions(step.extractions, response, state);
@@ -245,6 +245,7 @@ import exec from \"k6/execution\";
 export const options = {_json(options)};
 const workflowIterationSuccess = new Rate(\"workflow_iteration_success\");
 const datasetRows = JSON.parse(open(__ENV[\"LOAD_DATASET_FILE\"]));
+const defaultHeaders = JSON.parse(__ENV[\"LOAD_DEFAULT_HEADERS_JSON\"] || \"{{}}\");
 const requiredSecrets = {{}};
 {secret_bindings}
 const datasetMode = {_json(parsed['dataset_contract']['usage_mode'])};

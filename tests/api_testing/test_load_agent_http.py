@@ -3,14 +3,17 @@
 import io
 import json
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import delete, select
 
 from task_server.api_testing import access
+from task_server.api_testing.models.environment import ApiEnvironmentService
 from task_server.api_testing.models.load_testing import ApiLoadMetricBucket, ApiLoadRun, ApiLoadRunShard
 from task_server.api_testing.repositories.load_testing_repository import LoadTestingRepository
 from task_server.api_testing.services.load_agent_service import LoadAgentService
+from task_server.api_testing.services.load_scenario_compiler import compile_scenario
 from task_server.api_testing import load_agent_http
 from tests.api_testing.test_http_contract import http_client
 from tests.api_testing.test_load_testing_repository import load_factory, load_records
@@ -77,6 +80,53 @@ def _begin_start(repository, run):
     repository.transition_run(run.id, ("draft",), "preflighting")
     repository.transition_run(run.id, ("preflighting",), "queued")
     repository.transition_run(run.id, ("queued",), "starting")
+
+
+def _definition(step_id, path):
+    return {
+        "name": "HTTP协议场景",
+        "description": "Agent协议集成测试",
+        "mode": "single_interface",
+        "steps": [{
+            "id": step_id,
+            "name": step_id,
+            "scope": "iteration",
+            "action": "http_request",
+            "request": {"method": "GET", "path": path, "service": "default", "path_params": {}, "query": {}, "headers": {}, "cookies": {}, "body": None},
+            "assertions": [{"type": "status_code", "operator": "equals", "expected": 200, "enabled": True}],
+            "extractions": [],
+            "sleep_ms": 0,
+            "side_effect": "readonly",
+        }],
+        "dataset_contract": {"dataset_id": None, "usage_mode": "cycle", "variables": []},
+        "risk": {"level": "low", "ownership_variable": None, "notes": ""},
+        "source_snapshot": {"type": "manual", "version_ids": [], "items": []},
+    }
+
+
+def _executable_run(repository, factory, records, scenario_name, step_id, path, workload):
+    definition = _definition(step_id, path)
+    compiled = compile_scenario(definition, workload)
+    with factory.begin() as session:
+        session.add(ApiEnvironmentService(
+            revision_id=records["environment_revision"].id,
+            service_name="default",
+            module_name="test",
+            base_url="https://api.example.test",
+            metadata_json={},
+            owner_id="load-owner",
+            created_by="load-owner",
+            updated_by="load-owner",
+        ))
+    scenario = repository.create_scenario(records["project"].id, scenario_name, "single_interface", "load-owner")
+    version = repository.create_scenario_version(scenario.id, definition, "k6-safe-v1", "load-owner")
+    run = repository.create_run(
+        version.id,
+        records["environment_revision"].id,
+        {"workload": workload, "compiler": {"content_hash": compiled.content_hash}, "dataset": {}},
+        "load-owner",
+    )
+    return run
 
 
 def _metric_batch(batch_id, started_at, requests):
@@ -186,20 +236,10 @@ def test_agent_can_claim_and_update_only_its_own_shard(
     first = _register(http_client, agent_http_context, "HTTP分片节点一")
     second = _register(http_client, agent_http_context, "HTTP分片节点二")
     repository = LoadTestingRepository.from_factory(agent_http_context["factory"])
-    scenario = repository.create_scenario(
-        load_records["project"].id, "HTTP协议场景", "single_interface", "load-owner"
-    )
-    version = repository.create_scenario_version(
-        scenario.id,
-        {"steps": [{"id": "detail", "request": {"method": "GET", "path": "/detail"}}]},
-        "compiler-v1",
-        "load-owner",
-    )
-    run = repository.create_run(
-        version.id,
-        load_records["environment_revision"].id,
-        {"executor": "constant-vus", "vus": 2},
-        "load-owner",
+    run = _executable_run(
+        repository, agent_http_context["factory"], load_records,
+        "HTTP协议场景", "detail", "/detail",
+        {"executor": "constant-vus", "vus": 2, "duration_seconds": 10},
     )
     shard = repository.create_shard(
         run.id, first["agent"]["id"], 0, {"vus": 2}, "load-owner"
@@ -291,6 +331,40 @@ def test_agent_can_claim_and_update_only_its_own_shard(
         assert persisted.last_heartbeat_at > previous_heartbeat
 
 
+def test_claim_rejects_environment_without_the_scenario_service(
+    http_client, agent_http_context, load_records
+):
+    registered = _register(http_client, agent_http_context, "HTTP缺失服务节点")
+    repository = LoadTestingRepository.from_factory(agent_http_context["factory"])
+    run = _executable_run(
+        repository,
+        agent_http_context["factory"],
+        load_records,
+        "HTTP缺失服务场景",
+        "detail",
+        "/detail",
+        {"executor": "constant-vus", "vus": 1, "duration_seconds": 10},
+    )
+    repository.create_shard(
+        run.id, registered["agent"]["id"], 0, {"vus": 1}, "load-owner"
+    )
+    with agent_http_context["factory"].begin() as session:
+        session.execute(
+            delete(ApiEnvironmentService).where(
+                ApiEnvironmentService.revision_id == load_records["environment_revision"].id
+            )
+        )
+    _begin_start(repository, run)
+
+    response = http_client.post(
+        AGENT_PREFIX + "/claim", {}, _agent_auth(registered["secret"])
+    )
+
+    assert response.status == 409
+    assert response.body["error"]["code"] == "shard_environment_unavailable"
+    assert "default" in response.body["error"]["message"]
+
+
 def test_duplicate_metrics_replace_the_bucket_and_finish_is_idempotent(
     http_client, agent_http_context, load_records, monkeypatch
 ):
@@ -301,20 +375,10 @@ def test_duplicate_metrics_replace_the_bucket_and_finish_is_idempotent(
     )
     registered = _register(http_client, agent_http_context, "HTTP指标节点")
     repository = LoadTestingRepository.from_factory(agent_http_context["factory"])
-    scenario = repository.create_scenario(
-        load_records["project"].id, "HTTP指标场景", "single_interface", "load-owner"
-    )
-    version = repository.create_scenario_version(
-        scenario.id,
-        {"steps": [{"id": "search", "request": {"method": "GET", "path": "/search"}}]},
-        "compiler-v1",
-        "load-owner",
-    )
-    run = repository.create_run(
-        version.id,
-        load_records["environment_revision"].id,
-        {"executor": "constant-vus", "vus": 1},
-        "load-owner",
+    run = _executable_run(
+        repository, agent_http_context["factory"], load_records,
+        "HTTP指标场景", "search", "/search",
+        {"executor": "constant-vus", "vus": 1, "duration_seconds": 10},
     )
     shard = repository.create_shard(
         run.id, registered["agent"]["id"], 0, {"vus": 1}, "load-owner"
@@ -378,3 +442,118 @@ def test_unknown_agent_route_and_method_fail_closed(http_client, agent_http_cont
     wrong_method = http_client.get(AGENT_PREFIX + "/heartbeat", auth)
     assert missing.status == 404
     assert wrong_method.status == 405
+
+
+@pytest.mark.parametrize(
+    ("workload", "allocations", "expected"),
+    [
+        (
+            {"executor": "constant-vus", "vus": 10, "duration_seconds": 30},
+            [{"vus": 4}, {"vus": 6}],
+            [{"vus": 4}, {"vus": 6}],
+        ),
+        (
+            {
+                "executor": "constant-arrival-rate",
+                "rate": 100,
+                "pre_allocated_vus": 20,
+                "max_vus": 50,
+                "duration_seconds": 30,
+            },
+            [{"rate": 40, "vus": 20}, {"rate": 60, "vus": 30}],
+            [
+                {"rate": 40, "pre_allocated_vus": 8, "max_vus": 20},
+                {"rate": 60, "pre_allocated_vus": 12, "max_vus": 30},
+            ],
+        ),
+        (
+            {
+                "executor": "constant-arrival-rate",
+                "rate": 100,
+                "pre_allocated_vus": 20,
+                "max_vus": 50,
+                "duration_seconds": 30,
+            },
+            [
+                {"rate": 7, "vus": 4},
+                {"rate": 13, "vus": 6},
+                {"rate": 20, "vus": 10},
+                {"rate": 25, "vus": 12},
+                {"rate": 35, "vus": 18},
+            ],
+            [
+                {"rate": 7, "pre_allocated_vus": 2, "max_vus": 4},
+                {"rate": 13, "pre_allocated_vus": 2, "max_vus": 6},
+                {"rate": 20, "pre_allocated_vus": 4, "max_vus": 10},
+                {"rate": 25, "pre_allocated_vus": 5, "max_vus": 12},
+                {"rate": 35, "pre_allocated_vus": 7, "max_vus": 18},
+            ],
+        ),
+        (
+            {
+                "executor": "ramping-vus",
+                "start_vus": 2,
+                "stages": [
+                    {"duration_seconds": 10, "target": 6},
+                    {"duration_seconds": 20, "target": 10},
+                ],
+            },
+            [{"vus": 4}, {"vus": 6}],
+            [
+                {"start_vus": 1, "stage_targets": [2, 4]},
+                {"start_vus": 1, "stage_targets": [4, 6]},
+            ],
+        ),
+        (
+            {
+                "executor": "ramping-arrival-rate",
+                "start_rate": 20,
+                "pre_allocated_vus": 20,
+                "max_vus": 50,
+                "stages": [
+                    {"duration_seconds": 10, "target": 50},
+                    {"duration_seconds": 20, "target": 100},
+                ],
+            },
+            [{"rate": 40, "vus": 20}, {"rate": 60, "vus": 30}],
+            [
+                {
+                    "start_rate": 8,
+                    "stage_targets": [20, 40],
+                    "pre_allocated_vus": 8,
+                    "max_vus": 20,
+                },
+                {
+                    "start_rate": 12,
+                    "stage_targets": [30, 60],
+                    "pre_allocated_vus": 12,
+                    "max_vus": 30,
+                },
+            ],
+        ),
+    ],
+)
+def test_shard_workload_preserves_global_load_across_agents(
+    workload, allocations, expected
+):
+    shards = [
+        SimpleNamespace(id=f"shard-{index}", sequence=index, allocation=allocation)
+        for index, allocation in enumerate(allocations)
+    ]
+
+    class Session:
+        def scalars(self, _query):
+            return shards
+
+    run = SimpleNamespace(id="run-one")
+    actual = [
+        load_agent_http._shard_workload(Session(), run, shard, workload)
+        for shard in shards
+    ]
+
+    for item, item_expected in zip(actual, expected):
+        for key, value in item_expected.items():
+            if key == "stage_targets":
+                assert [stage["target"] for stage in item["stages"]] == value
+            else:
+                assert item[key] == value

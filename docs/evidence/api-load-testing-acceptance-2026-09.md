@@ -1,0 +1,58 @@
+# API 性能测试验收证据（2026-09）
+
+## 当前结论
+
+本地受控环境已完成性能场景、分布式调度、Agent 私有执行交接、指标汇总、确定性报告、AI 失败隔离、中文页面和部署包的集成门禁。真实服务器 Agent、真实 k6 负载、飞书送达和多服务器资源峰值仍需在本提交部署后复验；本文不把本地受控结果当作生产容量结论。
+
+## 受控目标与集成缺口
+
+受控目标提供四种可重复行为：约 20 ms 成功、约 200 ms 延迟、HTTP 503，以及 HTTP 200 但业务 `code=1001`。首轮端到端测试发现 Agent 领取分片时只有元数据，没有可运行的 k6 脚本、环境或数据集；补齐交接后，第二轮又发现每个分片仍使用全局负载，会让多节点总压力成倍增加。
+
+修复后平台在领取阶段执行以下检查和交接：
+
+- 重新编译不可变场景并核对创建任务时的内容哈希。
+- 确认环境包含场景引用的全部服务地址，缺失时直接返回中文阻断原因。
+- 下发服务地址、环境变量和默认请求头，不输出到平台报告或日志。
+- 按分片下发私有数据行，并核对文件哈希、大小和边界。
+- 对固定并发、固定到达率、阶梯并发和阶梯到达率分别拆分负载；N 个分片之和保持为任务目标。
+
+双节点受控链路验证了数据范围无重叠、重复指标批次不放大总数、HTTP 失败与业务失败分开统计、工作流失败独立汇总，以及 AI 超时后确定性报告仍可读取。五节点非均匀容量用例进一步验证 137 VU 和 137 行固定数据可完整拆分到五个节点，目标和数据总数均不变化。
+
+## 页面与视觉
+
+压测节点页增加节点总数、心跳正常数、可调度数和全部可调度节点剩余容量汇总。在线节点显示带中文“心跳正常”的脉冲绿灯，离线节点显示“心跳中断”的红灯，停用节点使用灰色状态；状态不只依赖颜色。节点卡仍显示最后心跳时间、校准状态、硬上限、软上限、校准容量和当前占用。
+
+真实 Chromium 视觉脚本已生成并检查以下截图，均无横向溢出：
+
+- `tests/artifacts/api-testing/load-agents-desktop.png`
+- `tests/artifacts/api-testing/load-agents-mobile.png`
+- `tests/artifacts/api-testing/load-agents-short.png`
+- `tests/artifacts/api-testing/load-report-desktop.png`
+- `tests/artifacts/api-testing/load-report-mobile.png`
+- `tests/artifacts/api-testing/load-report-short.png`
+
+这些截图使用受控数据验证排版，不替代部署后的真实登录、按钮点击和任务状态验收。
+
+## 本地门禁
+
+- `bash tests/run_load_testing_gate.sh`：94 项性能后端与 Agent 测试通过；部署脚本语法、前端静态 84 项和差异检查通过。
+- `npm --prefix api-testing-ui test -- --run src/views/LoadAgentsView.spec.ts`：4 项节点页操作、中文输入、状态和注册命令测试通过。
+- `npm --prefix api-testing-ui run build`：TypeScript 检查和生产构建通过。
+- `node tests/api_testing_ui_visual_check.js`：节点页桌面、手机、矮屏及既有 API 页面视觉检查通过。
+- `bash tests/run_api_testing_gate.sh`：845 项 PostgreSQL 后端测试、75 个 Vue 文件共 532 项测试、TypeScript 和生产构建、32 张响应式截图，以及 1 条 Chromium 导入→AI 设计→调试→基线→报告业务闭环通过。
+
+## Docker 构建边界
+
+本机真实 Docker 构建在拉取 `python:3.12.5-slim-bookworm` 和 `grafana/k6:0.52.0` 基础镜像前被 Docker Desktop 强制镜像源 `docker.mirrors.ustc.edu.cn` 的 EOF 阻断，尚未进入 Dockerfile 构建阶段。部署脚本已允许为 Python 和 k6 分别提供多个固定版本候选镜像源；该结果只能记录为本机镜像源阻断，不能写成镜像构建成功或 Dockerfile 失败。
+
+## 部署后待验收
+
+1. 在平台节点页生成每台机器独立的一次性令牌，按 `docs/api-load-agent-operations.md` 安装；不得复制其他机器的凭据卷。
+2. 记录平台 `release_revision`、Agent ID、Agent/k6 版本、校准 ID、校准有效期和实测容量。
+3. 先用一台 Agent 执行固定 VU 和固定到达率受控任务，核对 k6 原始汇总、平台请求数、错误率、P95 和容器 CPU/内存峰值。
+4. 再增加多个同级 Agent，核对所有分片的 VU/吞吐之和等于任务目标、数据范围不重叠，停止操作到达全部节点。
+5. 分别执行延迟、HTTP 503、HTTP 200 业务失败和容量不足场景，确认确定性分类、AI 引用及 AI 不可用时的报告降级。
+6. 点击性能测试四个入口中的全部可操作控件，覆盖刷新、搜索、注册、复制、级别调整、校准、场景创建/版本/归档、运行创建/连通性/预检/启动/停止、报告筛选/下钻/对比/AI 重诊断/飞书发送和临时数据清理。
+7. 飞书消息需核对场景名称、环境、负载目标、错误率、时延、阈值结论和证据完整性；不得包含密钥或原始样本。
+
+公网 HTTP 风险仍未解决。真实 Agent 凭据和环境密钥跨公网传输前必须配置 HTTPS；当前 HTTP 只能在受控私网或 VPN 内显式允许。

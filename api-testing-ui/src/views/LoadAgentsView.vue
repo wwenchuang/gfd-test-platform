@@ -23,6 +23,19 @@ const filteredAgents = computed(() => {
     .some(value => String(value || '').toLocaleLowerCase('zh-CN').includes(keyword)))
 })
 
+const agentSummary = computed(() => {
+  const online = store.agents.filter(item => item.status === 'online')
+  const schedulable = online.filter(item => item.scheduling_tier !== 'disabled'
+    && item.calibration_state === 'valid' && item.health.schedulable !== false)
+  return {
+    total: store.agents.length,
+    online: online.length,
+    schedulable: schedulable.length,
+    vus: schedulable.reduce((sum, item) => sum + availableCapacity(item, 'max_vus'), 0),
+    rate: schedulable.reduce((sum, item) => sum + availableCapacity(item, 'max_iterations_per_second'), 0),
+  }
+})
+
 onMounted(() => { void store.loadAgents() })
 
 function tier(value: LoadSchedulingTier): { label: string; help: string } {
@@ -43,6 +56,23 @@ function calibration(value: LoadCalibrationState): { label: string; help: string
     invalidated: { label: '配置变化后失效', help: 'Agent、k6 或硬件变化，请重新校准。' },
     failed: { label: '校准失败', help: '检查 k6、CPU/内存限制和 Agent 日志后重试。' },
   }[value]
+}
+
+function heartbeat(item: LoadAgent): { label: string; state: string } {
+  if (item.scheduling_tier === 'disabled') return { label: '节点已停用', state: 'disabled' }
+  if (item.status === 'online') return { label: '心跳正常', state: 'online' }
+  return { label: '心跳中断', state: 'offline' }
+}
+
+function availableCapacity(item: LoadAgent, field: 'max_vus' | 'max_iterations_per_second'): number {
+  const limits = [item.hard_limits[field], item.soft_limits[field], item.health.calibration?.[field]]
+    .map(value => Number(value || 0))
+    .filter(value => value > 0)
+  const measured = limits.length ? Math.min(...limits) : 0
+  const used = field === 'max_vus'
+    ? Number(item.current_usage.vus || 0)
+    : Number(item.current_usage.iterations_per_second || 0)
+  return Math.max(0, measured - used)
 }
 
 function calibrationDisabledReason(item: LoadAgent): string {
@@ -138,6 +168,12 @@ function dateTime(value?: string | null): string {
       <Server :size="18" />
       <div><strong>节点怎么选</strong><span>专用服务器设为“首选”；共享服务器设为“普通”；平台本机设为“备用”，只有任务明确允许后才参与。</span></div>
     </div>
+    <div v-if="store.agents.length" data-testid="load-agent-summary" class="load-agent-summary" aria-label="压测节点实时汇总">
+      <div><span>节点总数</span><strong>{{ agentSummary.total }}</strong><small>已注册的全部执行节点</small></div>
+      <div><span><i class="load-status-dot online pulse" />心跳正常</span><strong>{{ agentSummary.online }}</strong><small>正在持续连接平台</small></div>
+      <div><span>可调度</span><strong>{{ agentSummary.schedulable }}</strong><small>在线且校准有效</small></div>
+      <div><span>可用容量</span><strong>{{ agentSummary.vus }} VU</strong><small>{{ agentSummary.rate }} 次/秒，由全部可调度节点汇总</small></div>
+    </div>
     <label class="search-box load-agent-search"><span class="sr-only">搜索压测节点</span><input v-model="query" data-testid="load-agent-search" type="search" placeholder="搜索节点名称、分组或出口 IP" /></label>
 
     <p v-if="store.agentError" role="alert" class="state-message state-error">{{ store.agentError }}</p>
@@ -149,7 +185,7 @@ function dateTime(value?: string | null): string {
     <div v-else class="load-agent-grid">
       <article v-for="item in filteredAgents" :key="item.id" :data-testid="`load-agent-card-${item.id}`" class="load-agent-card">
         <header>
-          <div><span :class="['load-status-dot', item.status]" /><div><h2>{{ item.name }}</h2><small>{{ item.node_group || '未分组' }} · {{ item.egress_ip || '未上报出口 IP' }}</small></div></div>
+          <div class="load-agent-identity"><div><h2>{{ item.name }}</h2><small>{{ item.node_group || '未分组' }} · {{ item.egress_ip || '未上报出口 IP' }}</small></div><span :data-testid="`load-agent-heartbeat-${item.id}`" :class="['load-heartbeat', heartbeat(item).state]"><i :class="['load-status-dot', heartbeat(item).state, { pulse: heartbeat(item).state === 'online' }]" />{{ heartbeat(item).label }}</span></div>
           <b :class="`calibration-${item.calibration_state}`">{{ calibration(item.calibration_state).label }}</b>
         </header>
         <p class="agent-help">{{ calibration(item.calibration_state).help }}</p>

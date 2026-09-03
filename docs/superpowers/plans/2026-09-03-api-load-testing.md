@@ -836,11 +836,11 @@ git commit -m "feat(load): package Docker load agents"
 - Gate provisions a controlled local target exposing fast, delayed, HTTP-error and HTTP-200/business-error endpoints.
 - Browser acceptance covers every new actionable control and post-action evidence.
 
-- [ ] **Step 1: Add an end-to-end controlled target and failing gate**
+- [x] **Step 1: Add an end-to-end controlled target and failing gate**
 
 The target produces deterministic 20 ms/200 ms latency, 503 errors and `HTTP 200 + code=1001`. The test registers two isolated Agents and asserts correct sharding, counts and diagnosis categories.
 
-- [ ] **Step 2: Run the gate and fix only observed integration gaps**
+- [x] **Step 2: Run the gate and fix only observed integration gaps**
 
 ```bash
 bash tests/run_load_testing_gate.sh
@@ -848,7 +848,7 @@ bash tests/run_load_testing_gate.sh
 
 Expected before final fixes: at least one real integration assertion fails for a concrete missing handoff; record and repair via TDD rather than weakening expectations.
 
-- [ ] **Step 3: Run complete repository gates**
+- [x] **Step 3: Run complete repository gates**
 
 ```bash
 bash tests/run_api_testing_gate.sh
