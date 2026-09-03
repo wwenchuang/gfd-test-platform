@@ -10,6 +10,7 @@ const emit = defineEmits<{ submit: [payload: Record<string, unknown>]; cancel: [
 const environmentId = ref(props.environments[0]?.id || '')
 const executor = ref<Executor>('constant-vus')
 const vus = ref(20)
+const maxVus = ref(20)
 const rate = ref(50)
 const duration = ref(60)
 const p95 = ref(500)
@@ -42,8 +43,9 @@ const selectedCapacity = computed(() => selected.value.reduce((total, agent) => 
   vus: total.vus + availableCapacity(agent, 'max_vus'),
   rate: total.rate + availableCapacity(agent, 'max_iterations_per_second'),
 }), { vus: 0, rate: 0 }))
+const requestedMaxVus = computed(() => arrivalModel.value ? Math.max(vus.value, maxVus.value) : vus.value)
 const capacityEnough = computed(() => arrivalModel.value
-  ? selectedCapacity.value.rate >= rate.value && selectedCapacity.value.vus >= vus.value
+  ? selectedCapacity.value.rate >= rate.value && selectedCapacity.value.vus >= requestedMaxVus.value
   : selectedCapacity.value.vus >= vus.value)
 const productionReady = computed(() => !production.value || (hasProductionPermission.value && productionConfirmed.value))
 const canSubmit = computed(() => Boolean(
@@ -60,11 +62,11 @@ function workload(): Record<string, unknown> {
   if (executor.value === 'ramping-vus') return { executor: executor.value, start_vus: 1, stages: [{ duration_seconds: duration.value, target: vus.value }] }
   if (executor.value === 'constant-arrival-rate') return {
     executor: executor.value, rate: rate.value, time_unit: '1s', duration_seconds: duration.value,
-    pre_allocated_vus: Math.max(1, vus.value), max_vus: Math.max(vus.value, 100),
+    pre_allocated_vus: Math.max(1, vus.value), max_vus: requestedMaxVus.value,
   }
   return {
     executor: executor.value, start_rate: 1, time_unit: '1s',
-    pre_allocated_vus: Math.max(1, vus.value), max_vus: Math.max(vus.value, 100),
+    pre_allocated_vus: Math.max(1, vus.value), max_vus: requestedMaxVus.value,
     stages: [{ duration_seconds: duration.value, target: rate.value }],
   }
 }
@@ -99,7 +101,7 @@ function submit(): void {
       <p class="load-model-guide"><strong>第一次怎么选：</strong>只想确认流程时，使用安全的只读接口和“固定吞吐”，先从 1 次/秒、10 秒开始；“固定并发”用于模拟同时在线用户，不会把请求速度限制为 VU 数。</p>
       <div class="load-field-grid">
         <label v-if="!arrivalModel">并发用户（VU）<input v-model.number="vus" data-testid="load-vus" type="number" min="1" /></label>
-        <template v-else><label>目标吞吐（次/秒）<input v-model.number="rate" data-testid="load-rate" type="number" min="1" /></label><label>预分配并发（VU）<input v-model.number="vus" data-testid="load-vus" type="number" min="1" /></label></template>
+        <template v-else><label>目标吞吐（次/秒）<input v-model.number="rate" data-testid="load-rate" type="number" min="1" /></label><label>预分配并发（VU）<input v-model.number="vus" data-testid="load-vus" type="number" min="1" /></label><label>最大并发（VU）<input v-model.number="maxVus" data-testid="load-max-vus" type="number" min="1" /><small>响应变慢时，k6 最多扩到该并发维持目标吞吐；不得超过节点可用容量。</small></label></template>
         <label>持续时间（秒）<input v-model.number="duration" data-testid="load-duration" type="number" min="1" /></label>
         <label>P95 响应上限（毫秒）<input v-model.number="p95" data-testid="load-p95" type="number" min="1" /></label>
         <label>排队优先级<select v-model="priority"><option value="urgent">紧急（优先排队，不抢占运行任务）</option><option value="high">高</option><option value="normal">普通（日常默认）</option><option value="low">低</option></select></label>
@@ -109,7 +111,7 @@ function submit(): void {
       <p v-if="!validAgents.length" class="load-warning">没有可用的已校准节点。请先到“压测节点”完成校准。</p>
       <div class="load-agent-options"><label v-for="item in agents" :key="item.id"><input :data-testid="`load-agent-${item.id}`" type="checkbox" :disabled="item.status !== 'online' || item.calibration_state !== 'valid' || (item.scheduling_tier === 'fallback' && !allowFallback)" :checked="selectedIds.includes(item.id)" @change="toggleAgent(item.id, ($event.target as HTMLInputElement).checked)" /><span><strong>{{ item.name }}</strong><small v-if="item.calibration_state !== 'valid'">{{ item.calibration_state === 'expired' ? '校准过期，不能选择' : '未完成有效校准，不能选择' }}</small><small v-else>当前可用 {{ availableCapacity(item, 'max_vus') }} VU / {{ availableCapacity(item, 'max_iterations_per_second') }} 次/秒</small></span></label></div>
       <label class="load-check"><input v-model="allowFallback" type="checkbox" />允许备用节点参与（本机备用节点默认不参与）</label>
-      <p v-if="selected.length && !capacityEnough" class="load-warning" data-testid="capacity-shortfall">所选节点容量不足：合计可用 {{ selectedCapacity.vus }} VU / {{ selectedCapacity.rate }} 次/秒。请降低目标或增加节点。</p>
+      <p v-if="selected.length && !capacityEnough" class="load-warning" data-testid="capacity-shortfall">所选节点容量不足：{{ arrivalModel ? `最大并发需要 ${requestedMaxVus} VU、目标吞吐需要 ${rate} 次/秒；` : `并发需要 ${vus} VU；` }}合计可用 {{ selectedCapacity.vus }} VU / {{ selectedCapacity.rate }} 次/秒。请降低目标或增加节点。</p>
       <label class="load-check"><input v-model="allowRunAnyway" data-testid="allow-run-anyway" type="checkbox" />容量不足时仍创建任务（报告固定标记为证据不足）</label>
       <label v-if="production && hasProductionPermission" class="load-check"><input v-model="productionConfirmed" type="checkbox" />我确认本次会向生产环境持续发送真实请求</label>
       <div class="load-review-box"><strong>执行前预估</strong><p>{{ iterationEstimate }} 持续 {{ duration }} 秒；选择 {{ selected.length }} 台节点；当前可用 {{ selectedCapacity.vus }} VU / {{ selectedCapacity.rate }} 次/秒。创建后还需依次完成目标连通性检查、单用户预检和开始执行。</p></div>

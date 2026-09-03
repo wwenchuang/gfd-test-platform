@@ -176,9 +176,15 @@ export const useLoadTestingStore = defineStore('api-load-testing', {
       if (reset) this.runConnectionState = 'idle'
     },
     async createRun(input: Record<string, unknown>): Promise<LoadRun> {
-      const response = await apiClient.post<{ run: LoadRun }>('/api/api-testing/v1/load-runs', input)
-      this.replaceRun(response.data.run)
-      return response.data.run
+      this.runError = ''
+      try {
+        const response = await apiClient.post<{ run: LoadRun }>('/api/api-testing/v1/load-runs', input)
+        this.replaceRun(response.data.run)
+        return response.data.run
+      } catch (error) {
+        this.runError = message(error, '压测草稿创建失败')
+        throw error
+      }
     },
     async preflightRun(runId: string): Promise<LoadRun> { return this.runAction(runId, 'preflight') },
     async prepareConnectivity(runId: string): Promise<LoadAgent[]> {

@@ -35,4 +35,11 @@ describe('loadTesting live events', () => {
     expect(events).toHaveBeenCalledWith('/api/api-testing/v1/load-runs/run-1/events?after=7')
     store.disconnectRunEvents()
   })
+
+  it('shows the server reason when creating a load draft fails', async () => {
+    vi.spyOn(apiClient, 'post').mockRejectedValue(new Error('压测节点没有剩余容量'))
+    const store = useLoadTestingStore()
+    await expect(store.createRun({})).rejects.toThrow('压测节点没有剩余容量')
+    expect(store.runError).toBe('压测节点没有剩余容量')
+  })
 })

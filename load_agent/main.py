@@ -10,7 +10,7 @@ import time
 
 from . import __version__
 from .calibration import CalibrationRunner, calibration_state, hardware_signature
-from .client import AgentClient
+from .client import AgentClient, AgentClientError
 from .config import AgentConfig
 from .connectivity import run_connectivity_command
 from .runtime import K6Runtime
@@ -147,6 +147,14 @@ def _run_requested_connectivity(commands, current):
     return {**current, environment_revision_id: run_connectivity_command(command)}
 
 
+def _claim_or_none(client):
+    try:
+        return client.claim()
+    except AgentClientError as error:
+        logger.warning("领取压测分片失败，本轮稍后重试：%s", error)
+        return None
+
+
 def main():
     config = AgentConfig.from_env()
     config.data_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -207,7 +215,7 @@ def main():
         target_connectivity = _run_requested_connectivity(
             commands if isinstance(commands, list) else [], target_connectivity,
         )
-        shard = client.claim()
+        shard = _claim_or_none(client)
         if shard:
             shard_id = shard["id"]
             commands = _CommandSource(

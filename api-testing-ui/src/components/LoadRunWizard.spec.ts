@@ -26,6 +26,7 @@ describe('LoadRunWizard', () => {
     expect(wrapper.text()).toContain('阶梯吞吐')
     await wrapper.get('[data-testid="load-model-constant-arrival-rate"]').trigger('click')
     await wrapper.get('[data-testid="load-rate"]').setValue('100')
+    await wrapper.get('[data-testid="load-max-vus"]').setValue('40')
     await wrapper.get('[data-testid="load-duration"]').setValue('60')
     await wrapper.get('[data-testid="load-p95"]').setValue('500')
     await wrapper.get('[data-testid="load-agent-a1"]').setValue(true)
@@ -34,7 +35,7 @@ describe('LoadRunWizard', () => {
     await wrapper.get('[data-testid="load-run-submit"]').trigger('click')
     expect(wrapper.emitted('submit')?.[0]?.[0]).toMatchObject({
       scenario_version_id: 'v1', environment_revision_id: 'env-v1',
-      workload: { executor: 'constant-arrival-rate', rate: 100, time_unit: '1s', duration_seconds: 60, pre_allocated_vus: 20, max_vus: 100 },
+      workload: { executor: 'constant-arrival-rate', rate: 100, time_unit: '1s', duration_seconds: 60, pre_allocated_vus: 20, max_vus: 40 },
       thresholds: { p95_ms: { operator: 'less_than_or_equal', value: 500, required: true } },
       priority: 'normal', allocation_policy: { agent_ids: ['a1'], allow_fallback: false },
     })
@@ -43,7 +44,7 @@ describe('LoadRunWizard', () => {
   it.each([
     ['constant-vus', { executor: 'constant-vus', vus: 20, duration_seconds: 60 }],
     ['ramping-vus', { executor: 'ramping-vus', start_vus: 1, stages: [{ duration_seconds: 60, target: 20 }] }],
-    ['ramping-arrival-rate', { executor: 'ramping-arrival-rate', start_rate: 1, time_unit: '1s', pre_allocated_vus: 20, max_vus: 100, stages: [{ duration_seconds: 60, target: 50 }] }],
+    ['ramping-arrival-rate', { executor: 'ramping-arrival-rate', start_rate: 1, time_unit: '1s', pre_allocated_vus: 20, max_vus: 20, stages: [{ duration_seconds: 60, target: 50 }] }],
   ])('emits the exact backend workload contract for %s', async (model, workload) => {
     const wrapper = mount(LoadRunWizard, { props: { scenario, environments, agents } })
     await wrapper.get(`[data-testid="load-model-${model}"]`).trigger('click')
@@ -61,6 +62,17 @@ describe('LoadRunWizard', () => {
     expect(wrapper.get('[data-testid="load-run-submit"]').attributes('disabled')).toBeDefined()
     await wrapper.get('[data-testid="allow-run-anyway"]').setValue(true)
     expect(wrapper.get('[data-testid="load-run-submit"]').attributes('disabled')).toBeUndefined()
+  })
+
+  it('checks arrival-rate capacity against the visible maximum VU instead of a hidden 100 VU floor', async () => {
+    const wrapper = mount(LoadRunWizard, { props: { scenario, environments, agents } })
+    await wrapper.get('[data-testid="load-model-constant-arrival-rate"]').trigger('click')
+    await wrapper.get('[data-testid="load-rate"]').setValue('1')
+    await wrapper.get('[data-testid="load-vus"]').setValue('1')
+    await wrapper.get('[data-testid="load-max-vus"]').setValue('400')
+    await wrapper.get('[data-testid="load-agent-a1"]').setValue(true)
+    expect(wrapper.get('[data-testid="capacity-shortfall"]').text()).toContain('最大并发需要 400 VU')
+    expect(wrapper.get('[data-testid="load-run-submit"]').attributes('disabled')).toBeDefined()
   })
 
   it('blocks uncalibrated selection and requires production confirmation', async () => {

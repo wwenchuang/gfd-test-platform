@@ -365,6 +365,46 @@ def test_claim_rejects_environment_without_the_scenario_service(
     assert "default" in response.body["error"]["message"]
 
 
+def test_claim_ignores_unresolved_services_not_used_by_the_scenario(
+    http_client, agent_http_context, load_records
+):
+    registered = _register(http_client, agent_http_context, "HTTP无关服务节点")
+    repository = LoadTestingRepository.from_factory(agent_http_context["factory"])
+    run = _executable_run(
+        repository,
+        agent_http_context["factory"],
+        load_records,
+        "HTTP只使用默认服务场景",
+        "detail",
+        "/detail",
+        {"executor": "constant-vus", "vus": 1, "duration_seconds": 10},
+    )
+    repository.create_shard(
+        run.id, registered["agent"]["id"], 0, {"vus": 1}, "load-owner"
+    )
+    with agent_http_context["factory"].begin() as session:
+        session.add(
+            ApiEnvironmentService(
+                revision_id=load_records["environment_revision"].id,
+                service_name="unused-apifox-service",
+                module_name="unused",
+                base_url="{{UNUSED_APIFOX_BASE_URL}}",
+                metadata_json={"unresolved": True},
+                owner_id="load-owner",
+                created_by="load-owner",
+                updated_by="load-owner",
+            )
+        )
+    _begin_start(repository, run)
+
+    response = http_client.post(
+        AGENT_PREFIX + "/claim", {}, _agent_auth(registered["secret"])
+    )
+
+    assert response.status == 200
+    assert response.body["data"]["shard"]["id"]
+
+
 def test_duplicate_metrics_replace_the_bucket_and_finish_is_idempotent(
     http_client, agent_http_context, load_records, monkeypatch
 ):

@@ -281,12 +281,6 @@ def _execution_payload(session, run, shard, version):
         runtime = EnvironmentService(_factory()).resolve_runtime(run.environment_revision_id, {})
     except Exception as error:
         raise ApiHttpError(409, "shard_environment_unavailable", f"压测环境无法解析：{error}") from error
-    if runtime.unresolved_services:
-        raise ApiHttpError(
-            409,
-            "shard_environment_unavailable",
-            "压测环境仍有未解析服务：" + "、".join(runtime.unresolved_services),
-        )
     steps = version.definition.get("steps", []) if isinstance(version.definition, dict) else []
     required_services = {
         str(step.get("request", {}).get("service") or "default")
