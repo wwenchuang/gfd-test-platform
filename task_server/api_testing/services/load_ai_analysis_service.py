@@ -4,6 +4,7 @@ import copy
 import hashlib
 import json
 import os
+import re
 
 from sqlalchemy import select
 
@@ -15,7 +16,7 @@ from ..models.load_testing import ApiLoadAiAnalysis, ApiLoadRun
 from .load_report_service import LoadReportService
 
 
-PROMPT_VERSION = "api-load-analysis.v1"
+PROMPT_VERSION = "api-load-analysis.v2"
 CATEGORIES = frozenset({"no_bottleneck", "target_service", "network", "load_agent", "test_data", "mixed", "insufficient_evidence"})
 CONFIDENCE_LEVELS = frozenset({"high", "medium", "low"})
 
@@ -102,6 +103,9 @@ def _text(value, field, maximum=2000):
 def _validate_result(value, evidence):
     if not isinstance(value, dict) or set(value) != {"conclusion", "bottleneck_category", "evidence", "recommendations", "next_run", "confidence"}:
         raise LoadAiAnalysisError("AI诊断返回结构不完整")
+    conclusion = _text(value.get("conclusion"), "conclusion")
+    if re.search(r"\d", conclusion):
+        raise LoadAiAnalysisError("AI诊断结论不能复述数值，请以确定性报告为准")
     category = value.get("bottleneck_category")
     if category not in CATEGORIES:
         raise LoadAiAnalysisError("AI诊断瓶颈分类无效")
@@ -145,7 +149,7 @@ def _validate_result(value, evidence):
     if not isinstance(confidence, dict) or confidence.get("level") not in CONFIDENCE_LEVELS:
         raise LoadAiAnalysisError("AI诊断置信度无效")
     return redact({
-        "conclusion": _text(value.get("conclusion"), "conclusion"),
+        "conclusion": conclusion,
         "bottleneck_category": category,
         "evidence": list(citations),
         "recommendations": normalized_recommendations,
@@ -224,7 +228,7 @@ def _default_analyzer(evidence):
     return run_ai_skill(
         "api-load-analysis",
         payload=evidence,
-        version="v1",
+        version="v2",
         temperature=0,
         timeout=60,
         respect_global_timeout=False,
@@ -300,7 +304,7 @@ class LoadAiAnalysisService:
             try:
                 result = _validate_result(candidate, evidence)
             except LoadAiAnalysisError as error:
-                if "引用了不存在的证据" not in str(error):
+                if not any(marker in str(error) for marker in ("引用了不存在的证据", "结论不能复述数值")):
                     raise
                 result = _citation_safe_fallback(evidence, error)
         except Exception as error:

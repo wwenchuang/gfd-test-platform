@@ -76,7 +76,7 @@ def _finish(load_factory, run, shard):
 
 def _analysis():
     return {
-        "conclusion": "负载达到，但搜索步骤业务失败率为10%。",
+        "conclusion": "负载达到，但搜索步骤业务失败率明显偏高。",
         "bottleneck_category": "target_service",
         "evidence": ["step.search", "business.summary"],
         "recommendations": [{"priority": "high", "action": "检查搜索服务业务码", "verification": "相同负载重跑"}],
@@ -205,3 +205,23 @@ def test_passing_run_with_invalid_model_citations_gets_safe_no_bottleneck_advice
     assert completed.result["bottleneck_category"] == "no_bottleneck"
     assert "未发现明确瓶颈" in completed.result["conclusion"]
     assert completed.result["evidence"] == ["load.goal"]
+
+
+def test_model_cannot_restate_unverified_numbers_in_free_form_conclusion(
+    load_factory, load_run_with_shard
+):
+    _repository, run, shard = load_run_with_shard
+    _finish(load_factory, run, shard)
+    invented = {**_analysis(), "conclusion": "实际吞吐达到 10.7 次每秒。"}
+    service = LoadAiAnalysisService(
+        load_factory,
+        report_service=_Report(_report()),
+        analyzer=lambda _evidence: invented,
+    )
+    record = service.request(run.id, "load-owner")
+
+    completed = service.process(record.id)
+
+    assert completed.state == "completed"
+    assert completed.result["confidence"]["level"] == "low"
+    assert "结论不能复述数值" in completed.result["confidence"]["reason"]

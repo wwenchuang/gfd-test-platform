@@ -8,7 +8,7 @@ import { useLoadTestingStore } from '../stores/loadTesting'
 import LoadReportsView from './LoadReportsView.vue'
 
 const run = { id: 'r1', project_id: 'p1', scenario_version_id: 'v1', environment_revision_id: 'e1', load_model: 'constant-arrival-rate' as const, queue_priority: 'normal' as const, configuration: { scenario: { name: '登录到模型详情' }, agents: [{ id: 'a1' }] }, state: 'finished' as const, verdict: 'failed' as const, stop_reason: '', ai_analysis_state: 'completed', summary: {}, created_at: '', started_at: '', finished_at: '', updated_at: '' }
-const report = { run_id: 'r1', verdict: 'failed' as const, verdict_label: '未通过', verdict_explanation: '目标负载已达到，但有必选性能阈值未通过。', load_goal: { reached: true }, transport: { requests: 1000, requests_per_second: 99.8, http_error_rate: 0.01 }, business: { failure_rate: 0.02 }, workflow: { failure_rate: 0.03 }, latency: { p50_ms: 80, p90_ms: 120, p95_ms: 240, p99_ms: 600, max_ms: 1000 }, evidence: { complete: true, finished_shards: 1, total_shards: 1, missing_windows: 0 }, thresholds: [{ key: 'p95_ms', label: 'P95响应时间', operator_label: '小于等于', expected: 200, actual: 240, passed: false }], series: [{ started_at: '08:00:00', requests: 100, p95_ms: 240 }], steps: [], agents: [{ id: 'a1', name: '专用节点', state: 'finished', state_label: '已完成', allocation: { vus: 8, rate: 100, scheduling_tier: 'preferred', vu_shortfall: 0 }, summary: { exit_code: 0, metric_bucket_count: 12 }, error: null }], samples: [], comparison: { compatible: false, reason: '最近历史运行使用了不同的负载参数' } }
+const report = { run_id: 'r1', verdict: 'failed' as const, verdict_label: '未通过', verdict_explanation: '目标负载已达到，但有必选性能阈值未通过。', load_goal: { reached: true }, transport: { requests: 1000, requests_per_second: 99.8, http_error_rate: 0.01 }, business: { failure_rate: 0.02 }, workflow: { failure_rate: 0.03 }, latency: { p50_ms: 80, p90_ms: 120, p95_ms: 240, p99_ms: 600, max_ms: 1000 }, evidence: { complete: true, finished_shards: 1, total_shards: 1, missing_windows: 0 }, thresholds: [{ key: 'p95_ms', label: 'P95响应时间', operator_label: '小于等于', expected: 200, actual: 240, passed: false }], series: [{ started_at: '08:00:00', requests: 100, p95_ms: 240 }], steps: [], agents: [{ id: 'a1', name: '专用节点', state: 'finished', state_label: '已完成', allocation: { vus: 8, rate: 100, scheduling_tier: 'preferred', vu_shortfall: 0 }, summary: { exit_code: 0, metric_bucket_count: 12 }, error: {} }], samples: [], comparison: { compatible: false, reason: '最近历史运行使用了不同的负载参数' } }
 
 describe('LoadReportsView', () => {
   beforeEach(() => { setActivePinia(createPinia()); vi.restoreAllMocks() })
@@ -32,6 +32,7 @@ describe('LoadReportsView', () => {
     expect(wrapper.text()).toContain('8 VU · 100 次/秒')
     expect(wrapper.text()).toContain('指标窗口')
     expect(wrapper.text()).toContain('12')
+    expect(wrapper.text()).not.toContain('节点执行失败')
     expect(wrapper.find('[aria-label="AI性能诊断"]').exists()).toBe(true)
     expect(wrapper.element.compareDocumentPosition(wrapper.get('[aria-label="AI性能诊断"]').element) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
   })
