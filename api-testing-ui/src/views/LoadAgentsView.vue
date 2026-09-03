@@ -100,7 +100,7 @@ const enrollmentCommand = computed(() => {
   if (!enrollment.value) return ''
   const platformUrl = window.location.origin
   const privateTransport = window.location.protocol === 'http:' ? " ALLOW_INSECURE_PRIVATE_AGENT_TRANSPORT='1'" : ''
-  return `PLATFORM_URL=${shellQuote(platformUrl)} ENROLL_TOKEN=${shellQuote(enrollment.value.token)}${privateTransport} docker compose -f deploy/load-agent-compose.yml up -d`
+  return `PLATFORM_URL=${shellQuote(platformUrl)} ENROLL_TOKEN=${shellQuote(enrollment.value.token)}${privateTransport} bash deploy/load-agent/install.sh`
 })
 
 async function copyCommand(): Promise<void> {

@@ -60,6 +60,9 @@ cp -R "${SRC_DIR}/ai_skills" "${pkg_dir}/"
 if [ -d "${SRC_DIR}/task_server" ]; then
   cp -R "${SRC_DIR}/task_server" "${pkg_dir}/"
 fi
+if [ -d "${SRC_DIR}/load_agent" ]; then
+  cp -R "${SRC_DIR}/load_agent" "${pkg_dir}/"
+fi
 if [ -d "${SRC_DIR}/legacy" ]; then
   mkdir -p "${pkg_dir}/legacy"
   if [ -f "${SRC_DIR}/legacy/midscene-upload.legacy.py" ]; then
@@ -100,6 +103,8 @@ find "${pkg_dir}" -name "logs" -type d -prune -exec rm -rf {} +
 find "${pkg_dir}" -name "*.tar.gz" -delete
 find "${pkg_dir}" -name "*.zip" -delete
 find "${pkg_dir}" -name "*.log" -delete
+find "${pkg_dir}" -type f \( -name ".env" -o -name "credential.json" -o -name "identity.sqlite3" \) -delete
+find "${pkg_dir}" -type d \( -name "load-agent-data" -o -name "datasets" \) -prune -exec rm -rf {} +
 tar -C "${tmp_dir}" -czf "${OUT_DIR}/${PACKAGE_NAME}" "midscene-task-platform"
 
 if [ "${KEEP_PACKAGES}" -gt 0 ] 2>/dev/null; then

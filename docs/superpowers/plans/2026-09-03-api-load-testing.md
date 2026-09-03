@@ -791,21 +791,21 @@ git commit -m "feat(load): show real-time metrics and AI diagnosis"
 - Upgrade changes only the pinned image and preserves credential/data volume.
 - Uninstall requires an explicit purge flag before deleting registered credentials.
 
-- [ ] **Step 1: Write failing deployment-script tests**
+- [x] **Step 1: Write failing deployment-script tests**
 
 Test shell syntax, Compose rendering, required variables, `0600` env file, CPU/memory limits, fallback defaults, token omission from process arguments after enrollment, idempotent install and non-destructive uninstall.
 
-- [ ] **Step 2: Run tests and observe missing files**
+- [x] **Step 2: Run tests and observe missing files**
 
-- [ ] **Step 3: Implement Compose and scripts**
+- [x] **Step 3: Implement Compose and scripts**
 
 The Compose service has `restart: unless-stopped`, read-only root filesystem where possible, bounded tmpfs/work volume, healthcheck and explicit CPU/memory limits. Do not mount Docker socket.
 
-- [ ] **Step 4: Write operations guide**
+- [x] **Step 4: Write operations guide**
 
 Include exact first-node and second-node commands, registration check, upgrade, log tail, stop, uninstall, HTTPS/private-network requirement and capacity examples.
 
-- [ ] **Step 5: Build package and inspect contents**
+- [x] **Step 5: Build package and inspect contents**
 
 ```bash
 bash -n deploy/load-agent/*.sh deploy/install-server.sh deploy/package-server.sh
@@ -815,7 +815,7 @@ bash deploy/package-server.sh
 
 Expected: archive contains load Agent image/build context, Compose/scripts and operations guide; it contains no `.env`, Agent credential, dataset or identity database.
 
-- [ ] **Step 6: Commit deployment tooling**
+- [x] **Step 6: Commit deployment tooling**
 
 ```bash
 git add deploy/load-agent deploy/package-server.sh deploy/install-server.sh \

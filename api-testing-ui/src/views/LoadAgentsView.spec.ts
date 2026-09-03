@@ -119,10 +119,13 @@ describe('LoadAgentsView', () => {
 
     expect(wrapper.text()).toContain('令牌只显示这一次')
     expect(wrapper.text()).toContain('ENROLL_TOKEN=')
+    expect(wrapper.text()).toContain('bash deploy/load-agent/install.sh')
+    expect(wrapper.text()).not.toContain('load-agent-compose.yml')
     expect(wrapper.text()).toContain('当前平台仍是 HTTP')
     await wrapper.get('[data-testid="enrollment-copy"]').trigger('click')
     await flushPromises()
     expect(navigator.clipboard.writeText).toHaveBeenCalledWith(expect.stringContaining("ENROLL_TOKEN='one-time-token'"))
+    expect(navigator.clipboard.writeText).toHaveBeenCalledWith(expect.stringContaining('bash deploy/load-agent/install.sh'))
     expect(wrapper.text()).toContain('启动命令已复制')
     await wrapper.get('[data-testid="enrollment-close"]').trigger('click')
     expect(wrapper.find('[data-testid="enrollment-result"]').exists()).toBe(false)

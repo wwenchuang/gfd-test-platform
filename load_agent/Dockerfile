@@ -1,6 +1,8 @@
-FROM grafana/k6:0.52.0 AS k6
+ARG K6_IMAGE=grafana/k6:0.52.0
+ARG PYTHON_IMAGE=python:3.12.5-slim-bookworm
+FROM ${K6_IMAGE} AS k6
 
-FROM python:3.12.5-slim-bookworm
+FROM ${PYTHON_IMAGE}
 COPY --from=k6 /usr/bin/k6 /usr/local/bin/k6
 WORKDIR /app
 COPY load_agent /app/load_agent

@@ -109,6 +109,25 @@ fi
 
 install -d -m 0755 -o "${USER_NAME}" -g "${GROUP_NAME}" "${APP_DIR}"
 install -d -m 0755 -o "${USER_NAME}" -g "${GROUP_NAME}" "${APP_DIR}/deploy"
+if [ -d "${SCRIPT_DIR}/load-agent" ]; then
+  load_agent_env_backup=""
+  if [ -f "${APP_DIR}/deploy/load-agent/.env" ]; then
+    load_agent_env_backup="$(mktemp)"
+    cp "${APP_DIR}/deploy/load-agent/.env" "${load_agent_env_backup}"
+    chmod 0600 "${load_agent_env_backup}"
+  fi
+  rm -rf "${APP_DIR}/deploy/load-agent"
+  cp -R "${SCRIPT_DIR}/load-agent" "${APP_DIR}/deploy/load-agent"
+  rm -f "${APP_DIR}/deploy/load-agent/.env"
+  if [ -n "${load_agent_env_backup}" ]; then
+    install -m 0600 "${load_agent_env_backup}" "${APP_DIR}/deploy/load-agent/.env"
+    rm -f "${load_agent_env_backup}"
+  fi
+  find "${APP_DIR}/deploy/load-agent" -type d -exec chmod 0755 {} \;
+  find "${APP_DIR}/deploy/load-agent" -type f -name "*.sh" -exec chmod 0755 {} \;
+  find "${APP_DIR}/deploy/load-agent" -type f ! -name "*.sh" -exec chmod 0644 {} \;
+  chown -R "${USER_NAME}:${GROUP_NAME}" "${APP_DIR}/deploy/load-agent"
+fi
 install -m 0755 -o "${USER_NAME}" -g "${GROUP_NAME}" "${SRC_DIR}/midscene-upload.py" "${APP_DIR}/midscene-upload.py"
 install -m 0644 -o "${USER_NAME}" -g "${GROUP_NAME}" "${SRC_DIR}/midscene_upload_compat.py" "${APP_DIR}/midscene_upload_compat.py"
 install -m 0644 -o "${USER_NAME}" -g "${GROUP_NAME}" "${SRC_DIR}/task-manager.html" "${APP_DIR}/task-manager.html"
@@ -291,6 +310,19 @@ if [ -d "${SRC_DIR}/task_server" ]; then
   chown -R "${USER_NAME}:${GROUP_NAME}" "${APP_DIR}/task_server"
   find "${APP_DIR}/task_server" -type d -exec chmod 0755 {} \;
   find "${APP_DIR}/task_server" -type f -exec chmod 0644 {} \;
+fi
+
+# Keep the standalone Docker load Agent build context in the release directory.
+if [ -d "${SRC_DIR}/load_agent" ]; then
+  rm -rf "${APP_DIR}/load_agent"
+  cp -R "${SRC_DIR}/load_agent" "${APP_DIR}/load_agent"
+  find "${APP_DIR}/load_agent" -name "._*" -delete
+  find "${APP_DIR}/load_agent" -name ".DS_Store" -delete
+  find "${APP_DIR}/load_agent" -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
+  find "${APP_DIR}/load_agent" -type f \( -name "credential.json" -o -name ".env" \) -delete
+  chown -R "${USER_NAME}:${GROUP_NAME}" "${APP_DIR}/load_agent"
+  find "${APP_DIR}/load_agent" -type d -exec chmod 0755 {} \;
+  find "${APP_DIR}/load_agent" -type f -exec chmod 0644 {} \;
 fi
 
 if [ ! -x "${VENV_DIR}/bin/python" ]; then
