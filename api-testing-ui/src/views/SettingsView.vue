@@ -9,7 +9,9 @@ import EnvironmentAssetList from '../components/EnvironmentAssetList.vue'
 import { useContextStore } from '../stores/context'
 import { useNotificationsStore } from '../stores/notifications'
 import { type EnvironmentPayload, useSetupStore } from '../stores/setup'
+import { apiTestingHasPermission } from '../utils/authRedirect'
 import { environmentServicePresentation } from '../utils/environmentPresentation'
+import { isProductionLikeEnvironment } from '../utils/executionConfirmation'
 
 type Pair = { key: string; value: string }
 type ServiceRow = { key: string; name: string; module: string; base_url: string }
@@ -70,6 +72,10 @@ const serviceSummary = computed(() => {
     ? `${base}；${presentation.unconfiguredKeyCount} 个服务键未配置地址。`
     : `${base}。`
 })
+const environmentPermissionReason = computed(() => environmentMutationIssue(selectedAsset.value?.name || name.value))
+const canCreateEnvironment = computed(() => apiTestingHasPermission('api.environment'))
+const canManageNotification = computed(() => apiTestingHasPermission('platform.notify') && apiTestingHasPermission('platform.configure'))
+const canTestNotification = computed(() => apiTestingHasPermission('platform.notify'))
 
 onMounted(async () => {
   await Promise.all([context.loadSavedContext(), context.loadOptions()])
@@ -148,7 +154,7 @@ async function selectEnvironment(environmentAssetId: string): Promise<void> {
 }
 
 function startEdit(): void {
-  if (!environmentDetail.value) return
+  if (!environmentDetail.value || environmentPermissionReason.value) return
   applyEnvironment(environmentDetail.value)
   editing.value = true
   creating.value = false
@@ -156,7 +162,7 @@ function startEdit(): void {
 }
 
 async function startCreate(): Promise<void> {
-  if (loadingAssets.value || loadingDetail.value) return
+  if (loadingAssets.value || loadingDetail.value || !canCreateEnvironment.value) return
   clearEditor()
   selectedEnvironmentId.value = ''
   sourceRevisionId.value = sourceOptions.value.at(-1)?.id || ''
@@ -175,6 +181,11 @@ function cancelEdit(): void {
 
 async function save(): Promise<void> {
   localError.value = ''
+  const permissionIssue = environmentMutationIssue(name.value)
+  if (permissionIssue) {
+    localError.value = permissionIssue
+    return
+  }
   if (!projectId.value || !name.value.trim()) {
     localError.value = '请选择项目并填写环境名称'
     return
@@ -226,6 +237,11 @@ async function save(): Promise<void> {
 async function archiveEnvironment(id: string): Promise<void> {
   const asset = setup.environmentAssets.find(item => item.id === id)
   if (!asset) return
+  const permissionIssue = environmentMutationIssue(asset.name, true)
+  if (permissionIssue) {
+    localError.value = permissionIssue
+    return
+  }
   if (!window.confirm(`确认归档环境“${asset.name}”？归档后不会出现在工作台选择项中，历史版本和执行记录仍会保留。`)) return
   try {
     await setup.archiveEnvironment(id)
@@ -237,6 +253,12 @@ async function archiveEnvironment(id: string): Promise<void> {
 }
 
 async function restoreEnvironment(id: string): Promise<void> {
+  const asset = setup.environmentAssets.find(item => item.id === id)
+  const permissionIssue = environmentMutationIssue(asset?.name || '')
+  if (permissionIssue) {
+    localError.value = permissionIssue
+    return
+  }
   try {
     await setup.restoreEnvironment(id)
     await refreshProjectEnvironmentStats([projectId.value])
@@ -249,6 +271,11 @@ async function restoreEnvironment(id: string): Promise<void> {
 async function restoreEnvironmentRevision(revisionId: string): Promise<void> {
   const revision = setup.environmentHistory.find(item => item.id === revisionId)
   if (!revision || !selectedAsset.value) return
+  const permissionIssue = environmentMutationIssue(selectedAsset.value.name)
+  if (permissionIssue) {
+    localError.value = permissionIssue
+    return
+  }
   if (!window.confirm(`确认将环境“${selectedAsset.value.name}”的历史版本 v${revision.revision} 恢复为新的当前版本吗？旧版本仍会保留。`)) return
   loadingDetail.value = true
   localError.value = ''
@@ -364,6 +391,10 @@ async function loadFeishu(): Promise<void> {
 
 async function saveFeishu(): Promise<void> {
   localError.value = ''
+  if (!canManageNotification.value) {
+    localError.value = '当前账号没有平台通知配置权限，可读取现有配置，但不能修改。请联系管理员授权。'
+    return
+  }
   if (!projectId.value) {
     localError.value = '请先选择项目'
     return
@@ -382,6 +413,10 @@ async function saveFeishu(): Promise<void> {
 
 async function testFeishu(): Promise<void> {
   localError.value = ''
+  if (!canTestNotification.value) {
+    localError.value = '当前账号没有发送平台通知权限，请联系管理员授权。'
+    return
+  }
   if (!projectId.value) {
     localError.value = '请先选择项目'
     return
@@ -459,6 +494,14 @@ function isOpaqueId(value: string): boolean { return /^[0-9a-f]{8}-[0-9a-f-]{27,
 function textQuery(value: unknown): string { return typeof value === 'string' ? value : '' }
 function messageOf(error: unknown, fallback: string): string { return error instanceof Error ? error.message : fallback }
 function formatDate(value: string): string { return value ? new Date(value).toLocaleString('zh-CN', { hour12: false }) : '未知时间' }
+function environmentMutationIssue(environmentName: string, requiresDelete = false): string {
+  if (!apiTestingHasPermission('api.environment')) return '当前账号没有环境配置权限，可查看环境，但不能新建、编辑、归档或恢复。请联系管理员授权。'
+  if (requiresDelete && !apiTestingHasPermission('api.delete')) return '当前账号没有删除或归档权限，请联系管理员授权。'
+  if (isProductionLikeEnvironment(environmentName) && !apiTestingHasPermission('api.production')) {
+    return `当前环境“${environmentName}”属于生产环境，当前账号没有 api.production 权限，只能查看。请联系管理员授权。`
+  }
+  return ''
+}
 </script>
 
 <template>
@@ -471,7 +514,7 @@ function formatDate(value: string): string { return value ? new Date(value).toLo
       </div>
       <div class="toolbar-actions">
         <button class="secondary-command" type="button" :disabled="!projectId" data-action="sync" @click="openSync">前往同步</button>
-        <button class="primary-command" type="button" :disabled="!projectId || loadingAssets || loadingDetail" data-action="create" @click="startCreate"><Plus :size="15" />新建环境</button>
+        <button class="primary-command" type="button" :disabled="!projectId || loadingAssets || loadingDetail || !canCreateEnvironment" :title="!canCreateEnvironment ? '当前账号没有环境配置权限，请联系管理员' : ''" data-action="create" @click="startCreate"><Plus :size="15" />新建环境</button>
       </div>
     </header>
 
@@ -483,6 +526,8 @@ function formatDate(value: string): string { return value ? new Date(value).toLo
         :selected-environment-id="selectedEnvironmentId"
         :status="environmentStatus"
         :project-stats="projectEnvironmentStats"
+        :can-mutate-environment="(asset, action) => !environmentMutationIssue(asset.name, action === 'archive')"
+        :mutation-disabled-reason="'当前账号没有修改、归档或生产环境权限，请联系管理员'"
         @select-project="changeProject"
         @select-environment="selectEnvironment"
         @update:status="changeStatus"
@@ -527,8 +572,9 @@ function formatDate(value: string): string { return value ? new Date(value).toLo
         <template v-else-if="selectedAsset && environmentDetail">
           <header class="environment-detail-header">
             <div><p class="eyebrow">环境详情</p><h2>{{ selectedAsset.name }}</h2><p>{{ selectedAsset.description || '暂无说明' }}</p></div>
-            <div class="toolbar-actions"><button class="secondary-command" type="button" data-action="edit" @click="startEdit"><Pencil :size="15" />编辑</button><button class="primary-command" type="button" data-action="workbench" :disabled="selectedAsset.status === 'archived'" @click="openWorkbench">进入工作台<ArrowRight :size="15" /></button></div>
+            <div class="toolbar-actions"><button class="secondary-command" type="button" data-action="edit" :disabled="Boolean(environmentPermissionReason)" :title="environmentPermissionReason" @click="startEdit"><Pencil :size="15" />编辑</button><button class="primary-command" type="button" data-action="workbench" :disabled="selectedAsset.status === 'archived'" @click="openWorkbench">进入工作台<ArrowRight :size="15" /></button></div>
           </header>
+          <p v-if="environmentPermissionReason" data-testid="environment-permission-message" class="compact-empty" role="status">{{ environmentPermissionReason }}</p>
           <p v-if="selectedAsset.status === 'archived'" class="compact-empty" role="status">该环境已归档，请先在左侧恢复环境，再进入工作台</p>
 
           <div class="environment-overview-strip">
@@ -584,7 +630,7 @@ function formatDate(value: string): string { return value ? new Date(value).toLo
 
           <section v-else class="environment-read-section environment-history">
             <header><div><h3>版本历史</h3><p>编辑环境会新增版本，历史不会被覆盖。</p></div><span>{{ setup.environmentHistory.length }} 个版本</span></header>
-            <ol><li v-for="revision in setup.environmentHistory" :key="revision.id"><span class="history-version">v{{ revision.revision }}</span><div><strong>{{ revision.name }}</strong><small>{{ sourceLabel(revision.source_revision_id) }} · {{ formatDate(revision.updated_at) }}</small></div><span v-if="revision.id === selectedAsset.active_revision_id" class="current-version">当前</span><button v-else class="environment-history-action" type="button" :data-revision-id="revision.id" data-action="restore-revision" @click="restoreEnvironmentRevision(revision.id)"><RotateCcw :size="14" />恢复</button></li></ol>
+            <ol><li v-for="revision in setup.environmentHistory" :key="revision.id"><span class="history-version">v{{ revision.revision }}</span><div><strong>{{ revision.name }}</strong><small>{{ sourceLabel(revision.source_revision_id) }} · {{ formatDate(revision.updated_at) }}</small></div><span v-if="revision.id === selectedAsset.active_revision_id" class="current-version">当前</span><button v-else class="environment-history-action" type="button" :data-revision-id="revision.id" data-action="restore-revision" :disabled="Boolean(environmentMutationIssue(selectedAsset.name))" :title="environmentMutationIssue(selectedAsset.name)" @click="restoreEnvironmentRevision(revision.id)"><RotateCcw :size="14" />恢复</button></li></ol>
           </section>
         </template>
 
@@ -594,8 +640,9 @@ function formatDate(value: string): string { return value ? new Date(value).toLo
 
     <section v-if="projectId" class="setup-section notification-section project-notification-card">
       <header><div><p class="eyebrow">项目通知</p><h2>项目飞书通知</h2><p>机器人绑定到 {{ selectedProject?.name }}；后续定时任务只保存“是否通知”，不重复保存 Webhook。</p></div><span v-if="notifications.feishu?.configured" class="configured-state"><Check :size="14" />已配置 {{ notifications.feishu.fingerprint }}</span></header>
-      <div class="setup-grid three"><label>通知名称<input v-model="feishuName" placeholder="例如：API 基线报告" /></label><label class="grow">飞书群机器人 Webhook<input v-model="feishuWebhook" type="password" autocomplete="new-password" placeholder="已配置时留空表示保持不变" /></label><label class="toggle-card"><input v-model="feishuEnabled" type="checkbox" />启用报告发送</label></div>
-      <footer class="notification-actions"><span><Bell :size="14" />通知属于当前项目；测试发送只验证机器人，不关联测试执行。</span><button class="secondary-command" type="button" :disabled="notifications.loading" @click="loadFeishu">{{ notifications.loading ? '读取中' : '读取配置' }}</button><button data-testid="feishu-test" class="secondary-command" type="button" :disabled="notifications.sending || !notifications.feishu?.configured || !notifications.feishu?.enabled" @click="testFeishu">{{ notifications.sending ? '发送中' : '发送测试通知' }}</button><button class="primary-command" type="button" :disabled="notifications.saving" @click="saveFeishu">{{ notifications.saving ? '保存中' : '保存项目通知' }}</button></footer>
+      <fieldset class="setup-grid three" data-testid="feishu-fields" :disabled="!canManageNotification"><label>通知名称<input v-model="feishuName" placeholder="例如：API 基线报告" /></label><label class="grow">飞书群机器人 Webhook<input v-model="feishuWebhook" type="password" autocomplete="new-password" placeholder="已配置时留空表示保持不变" /></label><label class="toggle-card"><input v-model="feishuEnabled" type="checkbox" />启用报告发送</label></fieldset>
+      <p v-if="!canManageNotification" data-testid="notification-permission-message" class="compact-empty" role="status">当前账号可读取现有通知配置，但没有平台通知配置权限；修改、测试发送和保存均已禁用。</p>
+      <footer class="notification-actions"><span><Bell :size="14" />通知属于当前项目；测试发送只验证机器人，不关联测试执行。</span><button class="secondary-command" type="button" :disabled="notifications.loading" @click="loadFeishu">{{ notifications.loading ? '读取中' : '读取配置' }}</button><button data-testid="feishu-test" class="secondary-command" type="button" :disabled="notifications.sending || !notifications.feishu?.configured || !notifications.feishu?.enabled || !canTestNotification" @click="testFeishu">{{ notifications.sending ? '发送中' : '发送测试通知' }}</button><button data-testid="feishu-save" class="primary-command" type="button" :disabled="notifications.saving || !canManageNotification" @click="saveFeishu">{{ notifications.saving ? '保存中' : '保存项目通知' }}</button></footer>
     </section>
 
     <p v-if="localError || setup.error || context.error || notifications.error" class="inline-error" role="alert">{{ localError || setup.error || context.error || notifications.error }}</p>

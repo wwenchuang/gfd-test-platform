@@ -18,6 +18,8 @@ const props = defineProps<{
   selectedEnvironmentId: string
   status: 'active' | 'archived'
   projectStats?: Record<string, ProjectEnvironmentStats>
+  canMutateEnvironment?: (environment: EnvironmentAsset, action: 'archive' | 'restore') => boolean
+  mutationDisabledReason?: string
 }>()
 
 const emit = defineEmits<{
@@ -129,7 +131,8 @@ function projectEnvironmentLabel(projectId: string): string {
             type="button"
             class="environment-row-action"
             data-action="archive"
-            title="归档环境"
+            :disabled="canMutateEnvironment ? !canMutateEnvironment(environment, 'archive') : false"
+            :title="canMutateEnvironment && !canMutateEnvironment(environment, 'archive') ? mutationDisabledReason : '归档环境'"
             @click.stop="emit('archive', environment.id)"
           ><Archive :size="14" />归档</button>
           <button
@@ -137,7 +140,8 @@ function projectEnvironmentLabel(projectId: string): string {
             type="button"
             class="environment-row-action"
             data-action="restore"
-            title="恢复环境"
+            :disabled="canMutateEnvironment ? !canMutateEnvironment(environment, 'restore') : false"
+            :title="canMutateEnvironment && !canMutateEnvironment(environment, 'restore') ? mutationDisabledReason : '恢复环境'"
             @click.stop="emit('restore', environment.id)"
           ><RotateCcw :size="14" />恢复</button>
         </article>

@@ -9,8 +9,9 @@ import { useCasesStore } from '../stores/cases'
 import { useContextStore } from '../stores/context'
 import { type ScheduledJobInput, useScheduledJobsStore } from '../stores/scheduledJobs'
 import { useTasksStore } from '../stores/tasks'
+import { apiTestingHasPermission } from '../utils/authRedirect'
 import { hasExplicitOneTimeMarker } from '../utils/caseClassification'
-import { confirmApiExecution } from '../utils/executionConfirmation'
+import { confirmApiExecution, isProductionLikeEnvironment } from '../utils/executionConfirmation'
 import { formatPassRate, statusLabel } from '../utils/executionPresentation'
 import { taskStateLabel } from '../utils/taskPresentation'
 import { applicationBusinessLabel, applicationBusinessSelection } from '../utils/testApplications'
@@ -174,6 +175,8 @@ const scheduleDescription = computed(() => {
   if (form.scheduleType === 'cron') return cronValidation.value.valid ? cronValidation.value.message : '按 Cron 表达式执行'
   return scheduleTimeDescriptions[form.scheduleType]
 })
+const editorBasePermissionIssue = computed(() => scheduleWritePermissionIssue(false, false, ''))
+const editorPermissionIssue = computed(() => scheduleWritePermissionIssue(form.enabled, form.notifyFeishu, environmentNameForEditor()))
 
 onMounted(() => refreshAll(false))
 
@@ -214,6 +217,10 @@ async function saveJob(): Promise<void> {
   if (busy.value) return
   scheduledJobs.error = ''
   actionMessage.value = ''
+  if (editorPermissionIssue.value) {
+    scheduledJobs.error = editorPermissionIssue.value
+    return
+  }
   if (!form.name.trim()) {
     scheduledJobs.error = '请输入任务名称'
     focusEditor()
@@ -298,6 +305,11 @@ function buildJobInput(ids: string[]): ScheduledJobInput {
 async function runJob(job: ScheduledJob): Promise<void> {
   if (busy.value || targetsLoading.value) return
   actionMessage.value = ''
+  const permissionIssue = jobRunPermissionIssue(job)
+  if (permissionIssue) {
+    scheduledJobs.error = permissionIssue
+    return
+  }
   const targetIssue = jobTargetIssue(job)
   if (targetIssue) {
     scheduledJobs.error = `定时任务“${job.name}”执行已阻断：${targetIssue}。请编辑任务并重新选择有效目标。`
@@ -558,7 +570,7 @@ async function openLatestExecution(job: ScheduledJob): Promise<void> {
 }
 
 function editJob(job: ScheduledJob): void {
-  if (busy.value || targetsLoading.value) return
+  if (busy.value || targetsLoading.value || editorBasePermissionIssue.value) return
   scheduledJobs.error = ''
   actionMessage.value = ''
   const oldSource = sourceRevisionId.value
@@ -614,7 +626,12 @@ function resetEditor(): void {
 }
 
 async function toggleJobFlag(job: ScheduledJob, flag: 'enabled' | 'notify_feishu'): Promise<void> {
-  if (busy.value) return
+  const next = { ...job, [flag]: !job[flag] }
+  const permissionIssue = scheduleWritePermissionIssue(next.enabled, next.notify_feishu, environmentNameForJob(job))
+  if (busy.value || permissionIssue) {
+    if (permissionIssue) scheduledJobs.error = permissionIssue
+    return
+  }
   actionMessage.value = ''
   if (flag === 'enabled' && !job.enabled && jobTargetIssue(job)) {
     scheduledJobs.error = `无法启用定时任务“${job.name}”：${jobTargetIssue(job)}。请先编辑并重新选择有效目标。`
@@ -631,7 +648,11 @@ async function toggleJobFlag(job: ScheduledJob, flag: 'enabled' | 'notify_feishu
 }
 
 async function deleteJob(job: ScheduledJob): Promise<void> {
-  if (busy.value) return
+  const permissionIssue = deleteJobPermissionIssue()
+  if (busy.value || permissionIssue) {
+    if (permissionIssue) scheduledJobs.error = permissionIssue
+    return
+  }
   actionMessage.value = ''
   const confirmed = window.confirm(`删除定时任务“${job.name}”？该操作不可恢复。`)
   if (!confirmed) return
@@ -660,6 +681,51 @@ function jobInputFromJob(job: ScheduledJob): ScheduledJobInput {
     retry_count: job.retry_count,
     timeout_seconds: job.timeout_seconds,
   }
+}
+
+function environmentNameForEditor(): string {
+  return context.environmentRevisions.find(item => item.id === environmentRevisionId.value)?.name
+    || context.environmentRevisions.find(item => item.environment_id === environmentId.value)?.name
+    || ''
+}
+
+function environmentNameForJob(job: ScheduledJob): string {
+  const revisionId = job.environment_strategy === 'latest_environment'
+    ? context.environmentRevisions.find(item => item.environment_id === job.environment_id)?.id
+    : job.environment_revision_id
+  return context.environmentRevisions.find(item => item.id === revisionId)?.name
+    || context.environmentRevisions.find(item => item.environment_id === job.environment_id)?.name
+    || ''
+}
+
+function productionPermissionIssue(environmentName: string): string {
+  if (!environmentName || !isProductionLikeEnvironment(environmentName) || apiTestingHasPermission('api.production')) return ''
+  return `当前任务使用生产环境“${environmentName}”，当前账号没有 api.production 权限。可查看任务和历史执行；启用或执行前请联系管理员授权。`
+}
+
+function scheduleWritePermissionIssue(enabled: boolean, notifyFeishu: boolean, environmentName: string): string {
+  if (!apiTestingHasPermission('api.execute')) return '当前账号没有接口执行权限，可查看任务和历史执行，但不能新建或修改定时任务。请联系管理员授权。'
+  if (!apiTestingHasPermission('api.edit')) return '当前账号没有接口编辑权限，可查看任务和历史执行，但不能新建或修改定时任务。请联系管理员授权。'
+  const productionIssue = enabled ? productionPermissionIssue(environmentName) : ''
+  if (productionIssue) return productionIssue
+  if (notifyFeishu && !apiTestingHasPermission('platform.notify')) return '当前账号没有发送平台通知权限。请关闭飞书通知后保存，或联系管理员授权。'
+  return ''
+}
+
+function jobRunPermissionIssue(job: ScheduledJob): string {
+  if (!apiTestingHasPermission('api.execute')) return '当前账号没有接口执行权限，可查看任务和历史执行，但不能手动执行。请联系管理员授权。'
+  const productionIssue = productionPermissionIssue(environmentNameForJob(job))
+  if (productionIssue) return productionIssue
+  if (job.notify_feishu && !apiTestingHasPermission('platform.notify')) return '当前任务会发送飞书通知，但当前账号没有发送平台通知权限。请联系管理员授权。'
+  return ''
+}
+
+function deleteJobPermissionIssue(): string {
+  return apiTestingHasPermission('api.delete') ? '' : '当前账号没有接口删除权限，可查看任务和历史执行，但不能删除定时任务。请联系管理员授权。'
+}
+
+function jobPermissionSummary(job: ScheduledJob): string {
+  return scheduleWritePermissionIssue(job.enabled, job.notify_feishu, environmentNameForJob(job)) || jobRunPermissionIssue(job)
 }
 
 function baselineGroupOptions(): TargetOption[] {
@@ -908,19 +974,20 @@ function weekDayName(value: number): string {
               <b v-else>尚无执行记录</b>
             </span>
             <p v-if="scheduledBlockMessage(job)" class="inline-error" role="status">执行已阻断 · {{ scheduledBlockMessage(job) }}</p>
+            <p v-if="jobPermissionSummary(job)" class="compact-empty" role="status">{{ jobPermissionSummary(job) }}</p>
             <small :data-testid="`scheduled-current-target-${job.id}`">当前目标：{{ jobTargetSummary(job) }}</small>
           </div>
           <div class="scheduled-row-actions">
-            <button :data-testid="`scheduled-list-enabled-${job.id}`" type="button" class="mini-switch" :disabled="busy || targetsLoading" :class="{ active: job.enabled }" role="switch" :aria-checked="job.enabled" :aria-label="job.enabled ? '停用定时任务' : '启用定时任务'" :title="job.enabled ? '停用定时任务' : '启用定时任务'" @click="toggleJobFlag(job, 'enabled')">
+            <button :data-testid="`scheduled-list-enabled-${job.id}`" type="button" class="mini-switch" :disabled="busy || targetsLoading || Boolean(scheduleWritePermissionIssue(!job.enabled, job.notify_feishu, environmentNameForJob(job)))" :class="{ active: job.enabled }" role="switch" :aria-checked="job.enabled" :aria-label="job.enabled ? '停用定时任务' : '启用定时任务'" :title="scheduleWritePermissionIssue(!job.enabled, job.notify_feishu, environmentNameForJob(job)) || (job.enabled ? '停用定时任务' : '启用定时任务')" @click="toggleJobFlag(job, 'enabled')">
               <span class="mini-switch-text">启用</span><span class="mini-switch-track"><span class="mini-switch-dot" /></span>
             </button>
-            <button :data-testid="`scheduled-list-notify-${job.id}`" type="button" class="mini-switch" :disabled="busy || targetsLoading" :class="{ active: job.notify_feishu }" role="switch" :aria-checked="job.notify_feishu" :aria-label="job.notify_feishu ? '关闭飞书通知' : '开启飞书通知'" :title="job.notify_feishu ? '关闭飞书通知' : '开启飞书通知'" @click="toggleJobFlag(job, 'notify_feishu')">
+            <button :data-testid="`scheduled-list-notify-${job.id}`" type="button" class="mini-switch" :disabled="busy || targetsLoading || Boolean(scheduleWritePermissionIssue(job.enabled, !job.notify_feishu, environmentNameForJob(job)))" :class="{ active: job.notify_feishu }" role="switch" :aria-checked="job.notify_feishu" :aria-label="job.notify_feishu ? '关闭飞书通知' : '开启飞书通知'" :title="scheduleWritePermissionIssue(job.enabled, !job.notify_feishu, environmentNameForJob(job)) || (job.notify_feishu ? '关闭飞书通知' : '开启飞书通知')" @click="toggleJobFlag(job, 'notify_feishu')">
               <span class="mini-switch-text">飞书</span><span class="mini-switch-track"><span class="mini-switch-dot" /></span>
             </button>
-            <button :data-testid="`scheduled-edit-${job.id}`" type="button" class="mini-icon" :disabled="busy || targetsLoading" title="编辑" @click="editJob(job)"><Pencil :size="14" /></button>
-            <button :data-testid="`scheduled-delete-${job.id}`" type="button" class="mini-icon danger" :disabled="busy" title="删除" @click="deleteJob(job)"><Trash2 :size="14" /></button>
+            <button :data-testid="`scheduled-edit-${job.id}`" type="button" class="mini-icon" :disabled="busy || targetsLoading || Boolean(editorBasePermissionIssue)" :title="editorBasePermissionIssue || '编辑'" @click="editJob(job)"><Pencil :size="14" /></button>
+            <button :data-testid="`scheduled-delete-${job.id}`" type="button" class="mini-icon danger" :disabled="busy || Boolean(deleteJobPermissionIssue())" :title="deleteJobPermissionIssue() || '删除'" @click="deleteJob(job)"><Trash2 :size="14" /></button>
             <button v-if="job.latest_execution_id" :data-testid="`scheduled-latest-execution-${job.id}`" type="button" class="mini-icon" title="查看最近执行" @click="openLatestExecution(job)"><ExternalLink :size="14" /></button>
-            <button :data-testid="`scheduled-run-${job.id}`" type="button" class="secondary-command" :disabled="busy || Boolean(jobTargetIssue(job))" :title="jobTargetIssue(job) || '立即执行已保存配置，不受启用开关影响'" @click="runJob(job)">
+            <button :data-testid="`scheduled-run-${job.id}`" type="button" class="secondary-command" :disabled="busy || Boolean(jobTargetIssue(job)) || Boolean(jobRunPermissionIssue(job))" :title="jobRunPermissionIssue(job) || jobTargetIssue(job) || '立即执行已保存配置，不受启用开关影响'" @click="runJob(job)">
               <Play :size="14" />{{ scheduledJobs.runningId === job.id ? '投递中' : '手动执行一次' }}
             </button>
           </div>
@@ -936,7 +1003,8 @@ function weekDayName(value: number): string {
         </header>
         <p v-if="editingBlockMessage" data-testid="scheduled-editor-blocked" class="inline-error" role="status">执行已阻断 · {{ editingBlockMessage }}</p>
         <p class="scheduled-scope" data-testid="scheduled-scope">{{ editingJobId ? '保留任务原范围' : '新任务使用当前范围' }}：{{ scopeLabel }}。<router-link v-if="!editingJobId" to="/">去工作台调整范围</router-link></p>
-        <fieldset class="setup-grid two scheduled-form" :disabled="busy">
+        <p v-if="editorPermissionIssue" data-testid="scheduled-production-permission" class="inline-error" role="status">{{ editorPermissionIssue }}</p>
+        <fieldset class="setup-grid two scheduled-form" data-testid="scheduled-fieldset" :disabled="busy || Boolean(editorBasePermissionIssue)">
 
           <label>任务名称<input ref="nameInput" v-model="form.name" data-testid="scheduled-name" placeholder="例如：每日发版回归" /></label>
           <label>目标类型
@@ -1076,7 +1144,7 @@ function weekDayName(value: number): string {
         <p v-if="scheduledJobs.error || actionMessage" data-testid="scheduled-editor-feedback" :class="scheduledJobs.error ? 'inline-error' : 'scheduled-feedback'" :role="scheduledJobs.error ? 'alert' : 'status'">{{ scheduledJobs.error || actionMessage }}</p>
         <footer class="notification-actions">
           <span>当前项目：{{ context.projects.find(item => item.id === projectId)?.name || '未选择' }}</span>
-          <button data-testid="scheduled-save" type="button" class="primary-command" :disabled="busy || targetsLoading" @click="saveJob"><Save :size="14" />{{ saveLabel }}</button>
+          <button data-testid="scheduled-save" type="button" class="primary-command" :disabled="busy || targetsLoading || Boolean(editorPermissionIssue)" :title="editorPermissionIssue" @click="saveJob"><Save :size="14" />{{ saveLabel }}</button>
         </footer>
       </section>
     </div>

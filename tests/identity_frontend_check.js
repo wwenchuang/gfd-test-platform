@@ -451,6 +451,26 @@ async function run() {
       assert.equal(await page.getByText(/POST平台操作|PUT平台操作/).count(), 0);
       await context.close();
     });
+    await check('API workflow preview and task execution have readable audit labels', async () => {
+      const { page, context, state } = await fixture(browser, base);
+      const paths = [
+        ['POST', '/api/api-testing/v1/workflow-steps/preview', '预览 API 用例工作流'],
+        ['POST', '/api/api-testing/v1/tasks/task-1/run', '执行 API 任务'],
+        ['POST', '/api/api-testing/v1/baselines/bulk-group', '批量更新 API 基线分组'],
+        ['PUT', '/api/api-testing/v1/case-versions/version-1/group', '更新 API 用例分组'],
+      ];
+      state.hooks.set('GET /api/auth/audit', route => route.fulfill({json: {
+        ok: true,
+        events: paths.map(([method, target]) => ({
+          created_at: '2026-09-03T10:00:00', actor: 'admin', action: 'operation.result', target,
+          details: {method, status: 200, ok: true},
+        })),
+      }}));
+      await page.getByRole('tab', {name: '操作记录', exact: true}).click();
+      for (const [, , label] of paths) await page.getByRole('cell', {name: label, exact: true}).waitFor();
+      assert.equal(await page.getByText(/POST平台操作/).count(), 0);
+      await context.close();
+    });
     await check('pending scope save cannot close a newer dialog', async () => {
       const { page, context, state } = await fixture(browser, base);
       await page.getByRole('tab', { name: '数据授权', exact: true }).click();

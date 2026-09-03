@@ -7,6 +7,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { apiClient } from '../api/client'
 import { useContextStore } from '../stores/context'
+import { setApiTestingAccessProfile } from '../utils/authRedirect'
 import { replaceTestApplications } from '../utils/testApplications'
 import ScheduledJobsView from './ScheduledJobsView.vue'
 
@@ -14,6 +15,7 @@ describe('ScheduledJobsView', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     vi.restoreAllMocks()
+    setApiTestingAccessProfile(null)
     replaceTestApplications([{
       package: 'com.example.school', name: '校园应用', enabled: true,
       business_lines: [{ id: 'shared', name: '校园共享', enabled: true }],
@@ -623,6 +625,45 @@ describe('ScheduledJobsView', () => {
     expect(row.text()).toContain('收藏列表正向用例 · v3')
     expect(row.text()).toContain('收藏回归')
     expect(row.text()).not.toContain('baseline-uuid-1')
+  })
+
+  it('blocks production schedule changes before a member edits the full form', async () => {
+    setApiTestingAccessProfile({ status: 'active', permissions: ['api.view', 'api.edit', 'api.execute'] })
+    const wrapper = await mountScheduledState(() => scheduledJobFixture({ latest_execution_id: 'execution-latest' }))
+    const row = wrapper.get('[data-testid="scheduled-row-job-1"]')
+
+    expect(row.text()).toContain('当前账号没有 api.production 权限')
+    expect(wrapper.get('[data-testid="scheduled-edit-job-1"]').attributes('disabled')).toBeUndefined()
+    expect(wrapper.get('[data-testid="scheduled-list-enabled-job-1"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.get('[data-testid="scheduled-list-notify-job-1"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.get('[data-testid="scheduled-run-job-1"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.get('[data-testid="scheduled-latest-execution-job-1"]').attributes('disabled')).toBeUndefined()
+    expect(wrapper.get('[data-testid="scheduled-production-permission"]').text()).toContain('启用或执行前请联系管理员授权')
+    expect(wrapper.get('[data-testid="scheduled-fieldset"]').attributes('disabled')).toBeUndefined()
+    expect(wrapper.get('[data-testid="scheduled-save"]').attributes('disabled')).toBeDefined()
+
+    await wrapper.get('[data-testid="scheduled-edit-job-1"]').trigger('click')
+    await wrapper.get('[data-testid="scheduled-enabled-toggle"]').trigger('click')
+    await wrapper.get('[data-testid="scheduled-notify-toggle"]').trigger('click')
+    expect(wrapper.find('[data-testid="scheduled-production-permission"]').exists()).toBe(false)
+    expect(wrapper.get('[data-testid="scheduled-save"]').attributes('disabled')).toBeUndefined()
+  })
+
+  it('keeps non-production schedules readable while disabling every unsupported readonly action', async () => {
+    useContextStore().environmentRevisions[0].name = '测试环境'
+    setApiTestingAccessProfile({ status: 'active', permissions: ['api.view'] })
+    const wrapper = await mountScheduledState(() => scheduledJobFixture({ latest_execution_id: 'execution-latest', notify_feishu: false }))
+    const row = wrapper.get('[data-testid="scheduled-row-job-1"]')
+
+    expect(row.text()).toContain('没有接口执行权限')
+    expect(wrapper.get('[data-testid="scheduled-edit-job-1"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.get('[data-testid="scheduled-list-enabled-job-1"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.get('[data-testid="scheduled-list-notify-job-1"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.get('[data-testid="scheduled-delete-job-1"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.get('[data-testid="scheduled-run-job-1"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.get('[data-testid="scheduled-latest-execution-job-1"]').attributes('disabled')).toBeUndefined()
+    expect(wrapper.get('[data-testid="scheduled-fieldset"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.get('[data-testid="scheduled-save"]').attributes('disabled')).toBeDefined()
   })
 
   it('shows disabled historical targets but prevents adding them to a new scheduled job', async () => {

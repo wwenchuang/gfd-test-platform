@@ -10,6 +10,7 @@ import { apiClient } from '../api/client'
 import { useContextStore } from '../stores/context'
 import { useNotificationsStore } from '../stores/notifications'
 import { useSetupStore } from '../stores/setup'
+import { setApiTestingAccessProfile } from '../utils/authRedirect'
 import SettingsView from './SettingsView.vue'
 
 const environment: EnvironmentAsset = {
@@ -46,6 +47,7 @@ describe('SettingsView environment asset center', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     vi.restoreAllMocks()
+    setApiTestingAccessProfile(null)
 
     const context = useContextStore()
     context.projects = [
@@ -318,6 +320,21 @@ describe('SettingsView environment asset center', () => {
     await flushPromises()
 
     expect(testFeishu).toHaveBeenCalledWith('project-1')
+  })
+
+  it('keeps environment and notification data readable while disabling readonly mutations up front', async () => {
+    setApiTestingAccessProfile({ status: 'active', permissions: ['api.view'] })
+    const { wrapper } = await mountView()
+
+    expect(wrapper.text()).toContain('生产环境（新）-腾讯云')
+    expect(wrapper.get('[data-action="create"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.get('[data-action="edit"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.get('[data-action="archive"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.get('[data-testid="environment-permission-message"]').text()).toContain('可查看环境')
+    expect(wrapper.get('[data-testid="feishu-fields"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.get('[data-testid="feishu-test"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.get('[data-testid="feishu-save"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.get('[data-testid="notification-permission-message"]').text()).toContain('修改、测试发送和保存均已禁用')
   })
 })
 

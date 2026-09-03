@@ -36,6 +36,9 @@ test('failed and timed-out reports without an analysis remain discoverable as un
   assert.match(source, /<span class="report-overview-label">未通过<\/span>/);
   assert.match(source, />未通过（失败\/超时\/取消）<\/option>/);
   assert.match(source, />待确认\/未归因<\/option>/);
+  assert.match(source, /!AppState\.loaded\.jobs.*AppState\.loading\.jobs/);
+  assert.match(source, /正在读取历史执行报告/);
+  assert.match(source, /完成后可搜索和筛选/);
 });
 
 test('report cleanup rejects unsafe policy values and keeps a direct return path', t => {

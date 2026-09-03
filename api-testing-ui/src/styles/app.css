@@ -908,6 +908,7 @@ h1, h2, p { margin-top: 0; } h1 { margin-bottom: 0; font-size: 21px; font-weight
 .environment-history-action:hover { border-color: var(--blue); background: #f0f6fb; }
 .project-notification-card { max-width: 1480px; margin: 12px auto 0; }
 .project-notification-card > header { align-items: flex-start; }
+.project-notification-card fieldset.setup-grid { min-width: 0; margin: 0; padding: 0; border: 0; }
 .project-notification-card .setup-grid.three { grid-template-columns: minmax(170px, .55fr) minmax(320px, 1.45fr) minmax(150px, .45fr); }
 
 @media (max-width: 1120px) {

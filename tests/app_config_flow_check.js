@@ -65,6 +65,7 @@ function fixture(t, { workflow = 'app_config', deleteWait, catalogLoaded = true,
     confirm: () => true,
     showToast: (message, type) => toasts.push({ message, type }),
     hideToast: () => { feedbackClears += 1; },
+    closeModal: id => dom.window.document.getElementById(id)?.classList.remove('show'),
     loadModules: async () => {
       catalogReloads += 1;
       context.AppState.loaded.taskApps = true;
@@ -330,6 +331,19 @@ test('notification configuration still opens its visible target step without sen
   assert.doesNotMatch(f.field('editor-area').textContent, /应用乙/);
   assert.match(f.field('editor-area').textContent, /应用甲/);
   f.expectCalls([`DELETE /task-app?package=${APP_B}`]);
+});
+
+test('successful application save closes the editor and returns to its management page', async t => {
+  const f = fixture(t, { workflow: 'feishu_config' });
+  f.run(`openTaskAppEditor('${APP_A}', 2)`);
+  assert.equal(f.field('modal-task-apps').classList.contains('show'), true);
+
+  await f.run('saveTaskApp()');
+
+  assert.equal(f.field('modal-task-apps').classList.contains('show'), false);
+  assert.match(f.field('editor-area').textContent, /群通知/);
+  assert.match(f.toasts.at(-1).message, /应用已保存/);
+  f.expectCalls(['POST /task-app']);
 });
 
 test('notification readiness uses server evidence instead of package-name guesses', t => {

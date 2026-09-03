@@ -6,6 +6,7 @@ describe('local identity integration', () => {
   const values = new Map<string, string>()
   const assign = vi.fn()
   beforeEach(() => {
+    auth.setApiTestingAccessProfile(null)
     values.clear()
     values.set('sessionToken', 'fixture-token')
     assign.mockReset()
@@ -22,6 +23,18 @@ describe('local identity integration', () => {
     expect(await verify()).toBe(false)
     expect(assign).toHaveBeenCalledWith('/task-manager.html?return_to=%2Fapi-test%2F%23%2Freports%3FprojectId%3Dp1')
     expect(values.get('sessionToken')).toBe('fixture-token')
+  })
+
+  it('retains the verified profile for early production permission feedback', async () => {
+    vi.mocked(fetch).mockResolvedValue(new Response(JSON.stringify({
+      ok: true,
+      user: 'tester',
+      profile: { status: 'active', permissions: ['api.view', 'api.execute'] },
+    })))
+
+    expect(await auth.verifyApiTestingSession()).toBe(true)
+    expect(auth.apiTestingHasPermission('api.execute')).toBe(true)
+    expect(auth.apiTestingHasPermission('api.production')).toBe(false)
   })
 
   it('ordinary 403 keeps login and offers a remedy', async () => {

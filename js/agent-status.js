@@ -4677,6 +4677,7 @@ async function saveTaskApp() {
     if (activeWorkflow === 'app_config') showAppConfigCenter();
     if (activeWorkflow === 'feishu_config') showFeishuConfigCenter();
     refreshBusinessLineControls();
+    closeModal('modal-task-apps');
     showToast(`应用已保存${data.app.sonic_suite_id ? '，Sonic 测试套已绑定' : ''}`, 'success');
   } catch(e) {
     showToast(e.message || '保存应用分组失败', 'error');

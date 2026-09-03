@@ -72,6 +72,33 @@ describe('EnvironmentAssetList', () => {
     expect(wrapper.emitted('restore')?.[0]).toEqual(['environment-1'])
   })
 
+  it('checks archive and restore permissions independently', async () => {
+    const checkedActions: string[] = []
+    const wrapper = mount(EnvironmentAssetList, {
+      props: {
+        projects,
+        environments,
+        selectedProjectId: 'project-1',
+        selectedEnvironmentId: 'environment-1',
+        status: 'active',
+        canMutateEnvironment: (_environment, action) => {
+          checkedActions.push(action)
+          return action === 'restore'
+        },
+        mutationDisabledReason: '权限不足',
+      },
+    })
+
+    expect(wrapper.get('[data-action="archive"]').attributes('disabled')).toBeDefined()
+    await wrapper.setProps({
+      status: 'archived',
+      environments: [{ ...environments[0], status: 'archived' }],
+    })
+    expect(wrapper.get('[data-action="restore"]').attributes('disabled')).toBeUndefined()
+    expect(checkedActions).toContain('archive')
+    expect(checkedActions).toContain('restore')
+  })
+
   it('shows project environment counts and filters saved environments by search', async () => {
     const wrapper = mount(EnvironmentAssetList, {
       props: {

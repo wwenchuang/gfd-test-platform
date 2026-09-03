@@ -92,6 +92,7 @@ function showReportsCenter() {
   const area = document.getElementById('editor-area');
   if (!area) return;
   activeWorkspaceMode = 'reports';
+  const initialLoading = !AppState.loaded.jobs && Boolean(AppState.loading.jobs?.promise);
   const ov = reportsOverview();
   const filteredJobs = filterReportsForCenter();
   const totalPages = Math.max(1, Math.ceil(filteredJobs.length / REPORT_PAGE_SIZE));
@@ -116,43 +117,43 @@ function showReportsCenter() {
       <div class="report-overview">
         <div class="report-overview-card">
           <span class="report-overview-label">总任务数</span>
-          <strong class="report-overview-value">${ov.total}</strong>
+          <strong class="report-overview-value">${initialLoading ? '—' : ov.total}</strong>
         </div>
         <div class="report-overview-card success">
           <span class="report-overview-label">成功</span>
-          <strong class="report-overview-value">${ov.success}</strong>
+          <strong class="report-overview-value">${initialLoading ? '—' : ov.success}</strong>
         </div>
         <div class="report-overview-card danger">
           <span class="report-overview-label">未通过</span>
-          <strong class="report-overview-value">${ov.failed}</strong>
+          <strong class="report-overview-value">${initialLoading ? '—' : ov.failed}</strong>
         </div>
         <div class="report-overview-card warn">
           <span class="report-overview-label">未通过率</span>
-          <strong class="report-overview-value">${ov.failRate}%</strong>
+          <strong class="report-overview-value">${initialLoading ? '—' : `${ov.failRate}%`}</strong>
         </div>
         <div class="report-overview-card">
           <span class="report-overview-label">最近运行</span>
-          <strong class="report-overview-value report-overview-time">${escapeHtml(ov.lastRunAt || '—')}</strong>
+          <strong class="report-overview-value report-overview-time">${initialLoading ? '正在读取' : escapeHtml(ov.lastRunAt || '—')}</strong>
         </div>
       </div>
 
       <div class="management-filter-bar">
-        <input id="report-center-search" type="search" value="${escapeHtml(reportFilters.query)}" placeholder="搜索任务、应用或报告" oninput="setReportCenterFilter('query', this.value)">
-        <select onchange="setReportCenterFilter('status', this.value)">
+        <input id="report-center-search" type="search" value="${escapeHtml(reportFilters.query)}" placeholder="搜索任务、应用或报告" oninput="setReportCenterFilter('query', this.value)" ${initialLoading ? 'disabled' : ''}>
+        <select onchange="setReportCenterFilter('status', this.value)" ${initialLoading ? 'disabled' : ''}>
           <option value="all" ${reportFilters.status === 'all' ? 'selected' : ''}>全部状态</option>
           <option value="success" ${reportFilters.status === 'success' ? 'selected' : ''}>成功</option>
           <option value="failed" ${reportFilters.status === 'failed' ? 'selected' : ''}>未通过（失败/超时/取消）</option>
           <option value="running" ${reportFilters.status === 'running' ? 'selected' : ''}>进行中</option>
         </select>
-        <select onchange="setReportCenterFilter('failureType', this.value)">
+        <select onchange="setReportCenterFilter('failureType', this.value)" ${initialLoading ? 'disabled' : ''}>
           <option value="all" ${reportFilters.failureType === 'all' ? 'selected' : ''}>全部归因</option>
           <option value="PRODUCT_BUG" ${reportFilters.failureType === 'PRODUCT_BUG' ? 'selected' : ''}>产品缺陷</option>
           <option value="SCRIPT_ISSUE" ${reportFilters.failureType === 'SCRIPT_ISSUE' ? 'selected' : ''}>脚本问题</option>
           <option value="ENV_ISSUE" ${reportFilters.failureType === 'ENV_ISSUE' ? 'selected' : ''}>环境问题</option>
           <option value="UNKNOWN" ${reportFilters.failureType === 'UNKNOWN' ? 'selected' : ''}>待确认/未归因</option>
         </select>
-        <span class="management-filter-count">显示 ${jobs.length}/${filteredJobs.length} 条</span>
-        <span class="management-filter-scope">${escapeHtml(jobHistoryScopeText())}</span>
+        <span class="management-filter-count">${initialLoading ? '正在读取报告' : `显示 ${jobs.length}/${filteredJobs.length} 条`}</span>
+        <span class="management-filter-scope">${initialLoading ? '完成后可搜索和筛选' : escapeHtml(jobHistoryScopeText())}</span>
       </div>
 
       <div class="report-list-wrap">
@@ -169,7 +170,9 @@ function showReportsCenter() {
             </tr>
           </thead>
           <tbody>
-            ${jobs.length ? jobs.map(job => renderReportRow(job)).join('') : `<tr><td colspan="7">${renderEmptyState('reports')}</td></tr>`}
+            ${initialLoading
+              ? '<tr><td colspan="7"><div class="empty-state"><div class="empty-icon">⏳</div><h3>正在读取历史执行报告</h3><p>完成后会显示任务、状态、失败归因和报告入口。</p></div></td></tr>'
+              : jobs.length ? jobs.map(job => renderReportRow(job)).join('') : `<tr><td colspan="7">${renderEmptyState('reports')}</td></tr>`}
           </tbody>
         </table>
       </div>

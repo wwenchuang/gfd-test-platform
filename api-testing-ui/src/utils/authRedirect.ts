@@ -5,6 +5,28 @@ type BrowserLocation = Pick<Location, 'pathname' | 'search' | 'hash'> & {
   assign: (url: string) => void
 }
 
+interface ApiTestingAccessProfile {
+  is_superuser?: boolean
+  must_change_password?: boolean
+  status?: string
+  permissions?: string[]
+}
+
+let currentApiTestingProfile: ApiTestingAccessProfile | null = null
+
+export function setApiTestingAccessProfile(profile: ApiTestingAccessProfile | null): void {
+  currentApiTestingProfile = profile
+}
+
+export function apiTestingHasPermission(permission: string): boolean {
+  // Visual fixtures and standalone builds may not provide an identity profile.
+  // The server remains authoritative for every request in that compatibility mode.
+  if (currentApiTestingProfile === null) return true
+  if (currentApiTestingProfile.must_change_password || currentApiTestingProfile.status === 'disabled') return false
+  return currentApiTestingProfile.is_superuser === true
+    || (currentApiTestingProfile.permissions || []).includes(permission)
+}
+
 function currentApiTestingRoute(location: BrowserLocation = window.location): string {
   const hash = location.hash.startsWith('#/') ? location.hash : '#/'
   const search = String(location.search || '')
@@ -43,6 +65,7 @@ export async function verifyApiTestingSession(location: BrowserLocation = window
     if (response.status === 401) {
       sessionStorage.removeItem('sessionToken')
       sessionStorage.removeItem('user')
+      setApiTestingAccessProfile(null)
       redirectToApiTestingLogin(location)
       return false
     }
@@ -53,6 +76,7 @@ export async function verifyApiTestingSession(location: BrowserLocation = window
     }
     if (response.status === 403) throw new Error('无权访问当前资源，请联系管理员确认角色和数据授权。')
     if (!response.ok || payload.ok === false) throw new Error('无法验证当前会话，请重试。')
+    setApiTestingAccessProfile(Object.prototype.hasOwnProperty.call(payload, 'profile') ? payload.profile || {} : null)
     return true
   } finally { globalThis.clearTimeout(timeout) }
 }
