@@ -120,6 +120,28 @@ def test_agent_management_separates_view_and_enrollment_secret(load_factory, use
     assert "token" not in listing["enrollments"][0]
 
 
+def test_agent_calibration_action_requires_management_permission(load_factory, users, monkeypatch):
+    agent_id = str(uuid4())
+    requested = SimpleNamespace(
+        id=agent_id, name="专用节点", status="online", scheduling_tier="preferred",
+        node_group="腾讯云", labels={}, agent_version="1.0.0", k6_version="0.52.0",
+        hard_limits={}, soft_limits={}, current_usage={},
+        health={"calibration": {"state": "calibrating"}, "pending_command": {"type": "calibrate", "id": "command-1"}},
+        egress_ip="", last_heartbeat_at=None, offline_reason="",
+    )
+    monkeypatch.setattr(
+        "task_server.api_testing.load_testing_http.LoadAgentService.request_calibration",
+        lambda _self, requested_id, actor: requested if requested_id == agent_id and actor == "manager" else None,
+    )
+
+    with pytest.raises(access.AccessDeniedError):
+        _call(load_factory, "POST", f"/load-agents/{agent_id}/calibrate", "viewer")
+    result, status = _call(load_factory, "POST", f"/load-agents/{agent_id}/calibrate", "manager")
+
+    assert status == 202
+    assert result["agent"]["calibration_state"] == "calibrating"
+
+
 def test_run_read_events_report_ai_and_actions_use_separate_permissions(load_factory, catalog, users, monkeypatch):
     now = datetime(2026, 9, 3, 16, 0, tzinfo=timezone.utc)
     with load_factory.begin() as session:

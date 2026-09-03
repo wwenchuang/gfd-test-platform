@@ -3,7 +3,7 @@ import os
 
 from load_agent.client import AgentClient
 from load_agent.config import AgentConfig
-from load_agent.main import _CommandSource
+from load_agent.main import _CommandSource, _run_requested_calibration
 
 
 class _Transport:
@@ -98,3 +98,42 @@ def test_running_command_source_rate_limits_control_calls_and_reuses_known_k6_ve
     source()
     assert len(client.heartbeats) == 2
     assert len(client.command_calls) == 2
+
+
+def test_idle_agent_executes_requested_calibration_and_correlates_the_result(tmp_path):
+    class Runner:
+        def run(self):
+            return {"state": "valid", "max_vus": 300, "max_iterations_per_second": 900}
+
+    saved = []
+    result = _run_requested_calibration(
+        [{"type": "calibrate", "id": "calibration-command-1"}],
+        {"state": "valid", "command_id": "old"},
+        runner=Runner(),
+        save=lambda value: saved.append(value),
+    )
+
+    assert result["state"] == "valid"
+    assert result["command_id"] == "calibration-command-1"
+    assert saved == [result]
+
+
+def test_failed_requested_calibration_is_reported_without_stopping_the_agent(tmp_path):
+    class Runner:
+        def run(self):
+            raise RuntimeError("k6 unavailable")
+
+    saved = []
+    result = _run_requested_calibration(
+        [{"type": "calibrate", "id": "calibration-command-2"}],
+        {"state": "missing"},
+        runner=Runner(),
+        save=lambda value: saved.append(value),
+    )
+
+    assert result == {
+        "state": "failed",
+        "command_id": "calibration-command-2",
+        "message": "本地k6校准失败，请检查k6版本、CPU/内存限制和Agent日志",
+    }
+    assert saved == [result]

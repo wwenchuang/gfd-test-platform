@@ -3,6 +3,7 @@
 import copy
 import hashlib
 import secrets
+import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
@@ -242,6 +243,22 @@ class LoadAgentService:
         health = _plain_dict(payload.get("health", {}), "健康状态")
         with self.session_factory.begin() as session:
             agent = self._authenticated(session, secret, for_update=True)
+            previous_health = agent.health if isinstance(agent.health, dict) else {}
+            pending_command = previous_health.get("pending_command")
+            calibration = health.get("calibration") if isinstance(health.get("calibration"), dict) else {}
+            command_completed = (
+                isinstance(pending_command, dict)
+                and calibration.get("command_id") == pending_command.get("id")
+                and calibration.get("state") in {"valid", "failed"}
+            )
+            if isinstance(pending_command, dict) and not command_completed:
+                health["pending_command"] = copy.deepcopy(pending_command)
+                health["schedulable"] = False
+                health["calibration"] = {
+                    **copy.deepcopy(calibration),
+                    "state": "calibrating",
+                    "requested_at": pending_command.get("requested_at"),
+                }
             _soft_limits(agent.soft_limits, hard_limits)
             agent.hard_limits = hard_limits
             agent.current_usage = current_usage
@@ -252,6 +269,49 @@ class LoadAgentService:
             agent.last_heartbeat_at = _now_utc(self.now())
             agent.status = "online"
             agent.offline_reason = ""
+            session.flush()
+            return agent
+
+    def request_calibration(self, agent_id, actor_id):
+        """Queue one durable local calibration command for an idle online Agent."""
+        access.require_permission(actor_id, "api.loadtest.manage_agents")
+        with self.session_factory.begin() as session:
+            agent = session.scalar(
+                select(ApiLoadAgent).where(ApiLoadAgent.id == agent_id).with_for_update()
+            )
+            if agent is None:
+                raise LoadAgentError("压测节点不存在", status=404, code="agent_not_found")
+            if agent.status != "online":
+                raise LoadAgentError(
+                    "节点当前离线，请先启动Agent并等待心跳恢复后再校准",
+                    status=409,
+                    code="agent_offline",
+                )
+            usage = agent.current_usage if isinstance(agent.current_usage, dict) else {}
+            if float(usage.get("processes") or 0) > 0:
+                raise LoadAgentError(
+                    "节点正在执行压测，请等待任务结束后再校准",
+                    status=409,
+                    code="agent_busy",
+                )
+            health = copy.deepcopy(agent.health if isinstance(agent.health, dict) else {})
+            pending = health.get("pending_command")
+            if not isinstance(pending, dict) or pending.get("type") != "calibrate":
+                requested_at = _now_utc(self.now()).isoformat()
+                pending = {
+                    "type": "calibrate",
+                    "id": str(uuid.uuid4()),
+                    "requested_at": requested_at,
+                }
+            health["pending_command"] = pending
+            health["schedulable"] = False
+            health["calibration"] = {
+                **copy.deepcopy(health.get("calibration") if isinstance(health.get("calibration"), dict) else {}),
+                "state": "calibrating",
+                "requested_at": pending["requested_at"],
+            }
+            agent.health = health
+            agent.updated_by = actor_id
             session.flush()
             return agent
 

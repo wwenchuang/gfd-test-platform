@@ -117,6 +117,24 @@ class _CommandSource:
         return self.cached_commands
 
 
+def _run_requested_calibration(commands, current, *, runner, save):
+    """Execute an idle calibration command once and preserve a correlated result."""
+    command = next((item for item in commands if item.get("type") == "calibrate"), None)
+    if not command or not command.get("id") or current.get("command_id") == command.get("id"):
+        return current
+    try:
+        result = {**runner.run(), "command_id": command["id"]}
+    except Exception:
+        logger.exception("节点本地k6校准失败")
+        result = {
+            "state": "failed",
+            "command_id": command["id"],
+            "message": "本地k6校准失败，请检查k6版本、CPU/内存限制和Agent日志",
+        }
+    save(result)
+    return result
+
+
 def main():
     config = AgentConfig.from_env()
     config.data_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -135,18 +153,19 @@ def main():
     credential = client.ensure_registered(
         {"agent_version": __version__, "k6_version": k6_version, "hard_limits": hard_limits, "labels": {}}
     )
+    calibration_runner = CalibrationRunner(
+        k6_binary=config.k6_binary,
+        data_dir=config.data_dir,
+        agent_version=__version__,
+        k6_version=k6_version,
+        hard_max_vus=config.max_vus,
+        hard_max_iterations_per_second=config.max_iterations_per_second,
+    )
     calibration = _read_json(config.calibration_file)
     now = datetime.now(timezone.utc)
     if calibration_state(calibration, now, __version__, k6_version, signature) != "valid":
         logger.info("节点开始本地k6校准，不访问业务环境 agent_id=%s", credential.agent_id)
-        calibration = CalibrationRunner(
-            k6_binary=config.k6_binary,
-            data_dir=config.data_dir,
-            agent_version=__version__,
-            k6_version=k6_version,
-            hard_max_vus=config.max_vus,
-            hard_max_iterations_per_second=config.max_iterations_per_second,
-        ).run()
+        calibration = calibration_runner.run()
         _write_private_json(config.calibration_file, calibration)
     runtime = K6Runtime(
         config.data_dir,
@@ -154,7 +173,7 @@ def main():
         stop_grace_seconds=config.stop_grace_seconds,
     )
     while True:
-        client.heartbeat(
+        heartbeat_response = client.heartbeat(
             {
                 "agent_version": __version__,
                 "k6_version": k6_version,
@@ -163,6 +182,14 @@ def main():
                 "health": {"schedulable": calibration.get("state") == "valid", "calibration": calibration},
                 "egress_ip": "",
             }
+        )
+        response_data = heartbeat_response.get("data") if isinstance(heartbeat_response, dict) else {}
+        commands = response_data.get("commands") if isinstance(response_data, dict) else []
+        calibration = _run_requested_calibration(
+            commands if isinstance(commands, list) else [],
+            calibration,
+            runner=calibration_runner,
+            save=lambda value: _write_private_json(config.calibration_file, value),
         )
         shard = client.claim()
         if shard:

@@ -4,6 +4,145 @@ export interface WorkspaceContext {
   environment_revision_id: string | null
 }
 
+export type LoadSchedulingTier = 'preferred' | 'normal' | 'fallback' | 'disabled'
+export type LoadCalibrationState = 'uncalibrated' | 'calibrating' | 'valid' | 'expired' | 'invalidated' | 'failed'
+export type LoadRunState = 'draft' | 'preflight' | 'queued' | 'starting' | 'running' | 'stopping' | 'finished' | 'failed' | 'cancelled'
+export type LoadVerdict = 'passed' | 'failed' | 'inconclusive' | null
+
+export interface LoadCapacityLimits {
+  max_processes: number
+  max_vus: number
+  max_iterations_per_second: number
+  max_duration_seconds: number
+  cpu_cores: number
+  memory_mb: number
+}
+
+export interface LoadCalibration {
+  state?: string
+  calibrated_at?: string
+  valid_until?: string
+  max_vus?: number
+  max_iterations_per_second?: number
+  message?: string
+  requested_at?: string
+}
+
+export interface LoadAgent {
+  id: string
+  name: string
+  status: string
+  scheduling_tier: LoadSchedulingTier
+  node_group: string
+  labels: Record<string, unknown>
+  agent_version: string
+  k6_version: string
+  hard_limits: LoadCapacityLimits
+  soft_limits: LoadCapacityLimits
+  current_usage: Record<string, number>
+  health: { schedulable?: boolean; calibration?: LoadCalibration; [key: string]: unknown }
+  calibration_state: LoadCalibrationState
+  egress_ip: string
+  last_heartbeat_at: string | null
+  offline_reason: string
+}
+
+export interface LoadAgentEnrollmentResult {
+  id: string
+  token: string
+  expires_at: string
+  credential_notice: string
+}
+
+export interface LoadScenario {
+  id: string
+  project_id: string
+  name: string
+  description: string
+  scenario_type: 'single_interface' | 'workflow'
+  active_version_id: string | null
+  status: string
+  created_at: string
+  updated_at: string
+}
+
+export interface LoadScenarioDefinition {
+  name: string
+  description: string
+  mode: 'single_interface' | 'workflow'
+  steps: Array<{
+    id: string
+    name: string
+    scope: 'setup' | 'iteration' | 'cleanup'
+    action: 'http_request' | 'sleep'
+    request?: CaseRequest
+    assertions: Array<Record<string, unknown>>
+    extractions: Array<Record<string, unknown>>
+    sleep_ms: number
+    side_effect: 'readonly' | 'write' | 'destructive'
+  }>
+  dataset_contract: { dataset_id: string | null; usage_mode: 'cycle' | 'unique' | 'per_vu'; variables: string[] }
+  risk: { level: 'low' | 'medium' | 'high'; ownership_variable: string | null; notes: string }
+  source_snapshot: Record<string, unknown>
+}
+
+export interface LoadScenarioVersion {
+  id: string
+  scenario_id: string
+  version_number: number
+  definition?: LoadScenarioDefinition
+  validation_summary: { accepted?: boolean; issues?: Array<Record<string, unknown>> }
+  preflight_summary: Record<string, unknown>
+  compiler_version: string
+  content_hash: string
+  created_at: string
+}
+
+export interface LoadRun {
+  id: string
+  project_id: string
+  scenario_version_id: string
+  environment_revision_id: string
+  load_model: 'constant-vus' | 'ramping-vus' | 'constant-arrival-rate' | 'ramping-arrival-rate'
+  queue_priority: 'urgent' | 'high' | 'normal' | 'low'
+  configuration: Record<string, unknown>
+  state: LoadRunState
+  verdict: LoadVerdict
+  stop_reason: string
+  ai_analysis_state: string
+  summary: Record<string, unknown>
+  created_at: string
+  started_at: string | null
+  finished_at: string | null
+  updated_at: string
+}
+
+export interface LoadAiAnalysis {
+  id: string
+  run_id: string
+  model: string
+  prompt_version: string
+  evidence_hash: string
+  state: string
+  result: Record<string, unknown>
+  error: string
+  created_at: string
+}
+
+export interface LoadReport {
+  run_id: string
+  verdict: Exclude<LoadVerdict, null>
+  verdict_label: string
+  verdict_explanation: string
+  load_goal: Record<string, number | string | boolean | null>
+  transport: Record<string, number>
+  latency: Record<string, number>
+  evidence: Record<string, number | string | boolean | null>
+  steps: Array<Record<string, unknown>>
+  nodes: Array<Record<string, unknown>>
+  samples: Array<Record<string, unknown>>
+}
+
 export interface ApiEnvelope<T> {
   data: T
   request_id?: string

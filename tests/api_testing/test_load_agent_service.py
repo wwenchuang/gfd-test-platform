@@ -206,3 +206,66 @@ def test_disabled_agent_credentials_are_revoked(load_factory, agent_permissions)
     with pytest.raises(LoadAgentError) as revoked:
         service.authenticate(registration.secret)
     assert revoked.value.code == "agent_disabled"
+
+
+def test_online_agent_receives_one_durable_calibration_command_until_result_is_reported(
+    load_factory, agent_permissions
+):
+    service = _service(load_factory)
+    enrollment = service.create_enrollment(
+        {"name": "校准节点", "scheduling_tier": "normal"}, "admin"
+    )
+    registration = service.register(enrollment.token, CAPABILITIES)
+    heartbeat = {
+        "agent_version": "1.0.0",
+        "k6_version": "0.52.0",
+        "hard_limits": HARD_LIMITS,
+        "current_usage": {"processes": 0, "vus": 0},
+        "health": {"schedulable": False, "calibration": {"state": "missing"}},
+        "egress_ip": "203.0.113.10",
+    }
+    service.heartbeat(registration.secret, heartbeat)
+
+    requested = service.request_calibration(registration.agent.id, "admin")
+    repeated = service.request_calibration(registration.agent.id, "admin")
+    command = requested.health["pending_command"]
+
+    assert command["type"] == "calibrate"
+    assert repeated.health["pending_command"]["id"] == command["id"]
+    waiting = service.heartbeat(registration.secret, heartbeat)
+    assert waiting.health["pending_command"]["id"] == command["id"]
+    assert waiting.health["calibration"]["state"] == "calibrating"
+
+    completed = service.heartbeat(registration.secret, {
+        **heartbeat,
+        "health": {
+            "schedulable": True,
+            "calibration": {
+                "state": "valid",
+                "command_id": command["id"],
+                "calibrated_at": "2026-09-03T12:00:20+00:00",
+                "valid_until": "2026-09-10T12:00:20+00:00",
+                "agent_version": "1.0.0",
+                "k6_version": "0.52.0",
+                "hardware_signature": "machine",
+                "max_vus": 320,
+                "max_iterations_per_second": 1200,
+            },
+        },
+    })
+    assert "pending_command" not in completed.health
+    assert completed.health["calibration"]["state"] == "valid"
+
+
+def test_offline_agent_calibration_request_explains_how_to_recover(load_factory, agent_permissions):
+    service = _service(load_factory)
+    enrollment = service.create_enrollment(
+        {"name": "离线节点", "scheduling_tier": "normal"}, "admin"
+    )
+    registration = service.register(enrollment.token, CAPABILITIES)
+
+    with pytest.raises(LoadAgentError) as offline:
+        service.request_calibration(registration.agent.id, "admin")
+
+    assert offline.value.code == "agent_offline"
+    assert "启动Agent" in str(offline.value)

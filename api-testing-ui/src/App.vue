@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { computed, nextTick, ref } from 'vue'
 import { useRoute } from 'vue-router'
-import { Boxes, CalendarClock, ClipboardList, FileCode2, FlaskConical, History, ListChecks, Menu, Settings2, ShieldCheck, X } from 'lucide-vue-next'
+import { Activity, Boxes, CalendarClock, ChartLine, ClipboardList, FileCode2, FlaskConical, Gauge, History, ListChecks, Menu, Server, Settings2, ShieldCheck, X } from 'lucide-vue-next'
+import { apiTestingHasPermission } from './utils/authRedirect'
 
-const navigationSections = [
+const navigationSections = computed(() => [
   {
     id: 'design',
     label: '设计准备',
@@ -13,6 +14,16 @@ const navigationSections = [
       { to: '/cases', label: '用例管理', icon: ClipboardList, testId: 'nav-cases' },
     ],
   },
+  ...(apiTestingHasPermission('api.loadtest.view') ? [{
+    id: 'load-testing',
+    label: '性能测试',
+    items: [
+      { to: '/load-scenarios', label: '性能场景', icon: Gauge },
+      { to: '/load-runs', label: '压测执行', icon: Activity },
+      { to: '/load-reports', label: '性能报告', icon: ChartLine },
+      { to: '/load-agents', label: '压测节点', icon: Server },
+    ],
+  }] : []),
   {
     id: 'regression',
     label: '回归编排',
@@ -37,13 +48,14 @@ const navigationSections = [
       { to: '/settings', label: '环境配置', icon: Settings2 },
     ],
   },
-]
+])
 
 const route = useRoute()
 const mobileNavigationOpen = ref(false)
 const navigationToggle = ref<HTMLButtonElement | null>(null)
 const navigationClose = ref<HTMLButtonElement | null>(null)
 const currentPageLabel = computed(() => navigationSections
+  .value
   .flatMap(section => section.items)
   .find(item => item.to === route.path)?.label || 'API 测试')
 

@@ -3,15 +3,17 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import { nextTick } from 'vue'
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it } from 'vitest'
 
 import App from './App.vue'
 import { router as appRouter } from './router'
 import CasesView from './views/CasesView.vue'
 import TasksView from './views/TasksView.vue'
 import WorkbenchView from './views/WorkbenchView.vue'
+import { setApiTestingAccessProfile } from './utils/authRedirect'
 
 describe('App navigation', () => {
+  beforeEach(() => setApiTestingAccessProfile(null))
   it('groups management pages by the API testing workflow', async () => {
     const StubView = { template: '<div />' }
     const router = createRouter({
@@ -36,6 +38,7 @@ describe('App navigation', () => {
 
     expect(sections.map(section => section.get('.rail-section-label').text())).toEqual([
       '设计准备',
+      '性能测试',
       '回归编排',
       '结果分析',
       '项目配置',
@@ -82,6 +85,35 @@ describe('App navigation', () => {
       expect.objectContaining({ path: '/tasks', name: 'tasks', components: expect.objectContaining({ default: TasksView }) }),
       expect.objectContaining({ path: '/cases', name: 'cases', components: expect.objectContaining({ default: CasesView }) }),
     ]))
+  })
+
+  it('shows the performance group only with load-test permission and registers lazy routes', async () => {
+    const StubView = { template: '<div />' }
+    const router = createRouter({ history: createMemoryHistory(), routes: [
+      { path: '/', component: StubView },
+      { path: '/load-scenarios', component: StubView },
+      { path: '/load-runs', component: StubView },
+      { path: '/load-reports', component: StubView },
+      { path: '/load-agents', component: StubView },
+    ] })
+    await router.push('/')
+    await router.isReady()
+    setApiTestingAccessProfile({ status: 'active', permissions: ['api.view'] })
+    const hidden = mount(App, { global: { plugins: [router], stubs: { RouterView: true } } })
+    expect(hidden.find('[data-testid="nav-section-load-testing"]').exists()).toBe(false)
+    hidden.unmount()
+
+    setApiTestingAccessProfile({ status: 'active', permissions: ['api.view', 'api.loadtest.view'] })
+    const visible = mount(App, { global: { plugins: [router], stubs: { RouterView: true } } })
+    const section = visible.get('[data-testid="nav-section-load-testing"]')
+    expect(section.text()).toContain('性能场景')
+    expect(section.text()).toContain('压测执行')
+    expect(section.text()).toContain('性能报告')
+    expect(section.text()).toContain('压测节点')
+    visible.unmount()
+
+    const paths = appRouter.getRoutes().map(route => route.path)
+    expect(paths).toEqual(expect.arrayContaining(['/load-scenarios', '/load-runs', '/load-reports', '/load-agents']))
   })
 
   it('opens a labeled navigation drawer on narrow screens and closes it after navigation', async () => {

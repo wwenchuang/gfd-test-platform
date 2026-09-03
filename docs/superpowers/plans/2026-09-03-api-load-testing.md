@@ -637,27 +637,27 @@ git commit -m "feat(load): expose performance workflows and notifications"
 - Adds lazy routes `/load-scenarios`, `/load-runs`, `/load-reports`, `/load-agents` under a “性能测试” navigation group.
 - Store exposes `loadAgents`, `createEnrollment`, `updateAgent`, `loadScenarios`, `loadRuns`, `startRun`, `stopRun`, and report/AI reads.
 
-- [ ] **Step 1: Write failing navigation and node-page tests**
+- [x] **Step 1: Write failing navigation and node-page tests**
 
 Assert permission-aware navigation, loading/error/empty states, Chinese search composition, enrollment token shown once, copy feedback, preferred/normal/fallback/disabled controls, local hard versus soft versus calibrated capacity, calibration action and the five Chinese calibration states, disabled action reasons and responsive layout. Every Agent tier, capacity field and status must have a visible Chinese name or explanation.
 
-- [ ] **Step 2: Run the targeted Vitest file and observe failures**
+- [x] **Step 2: Run the targeted Vitest file and observe failures**
 
 ```bash
 npm --prefix api-testing-ui test -- --run src/views/LoadAgentsView.spec.ts src/App.spec.ts
 ```
 
-- [ ] **Step 3: Add typed contracts and Pinia operations**
+- [x] **Step 3: Add typed contracts and Pinia operations**
 
 Do not use `any` for load definitions, run states, metric buckets or AI output. Store mutations update from server responses rather than optimistic assumptions.
 
-- [ ] **Step 4: Add lazy navigation and Agent page**
+- [x] **Step 4: Add lazy navigation and Agent page**
 
 Show “本机备用节点不会自动参与” beside fallback nodes. Enrollment dialog contains platform URL, expiration and exact Docker command, with explicit HTTPS/private-network warning. Newly registered nodes show “先校准，再执行压测”; calibration state, last time, validity, measured capacity and failure remedy remain visible after refresh.
 
-- [ ] **Step 5: Run tests and responsive component checks**
+- [x] **Step 5: Run tests and responsive component checks**
 
-- [ ] **Step 6: Commit frontend foundation**
+- [x] **Step 6: Commit frontend foundation**
 
 ```bash
 git add api-testing-ui/src/api/contracts.ts api-testing-ui/src/router.ts api-testing-ui/src/App.vue \

@@ -118,7 +118,10 @@ def _register(payload):
 
 def _post(service, agent, secret, segments, payload):
     if segments == ("heartbeat",):
-        return {"agent": _agent_view(service.heartbeat(secret, payload))}
+        updated = service.heartbeat(secret, payload)
+        pending = (updated.health or {}).get("pending_command") if isinstance(updated.health, dict) else None
+        commands = [copy.deepcopy(pending)] if isinstance(pending, dict) else []
+        return {"agent": _agent_view(updated), "commands": commands}
     if segments == ("claim",):
         return {"shard": _claim_shard(agent.id)}
     if len(segments) == 3 and segments[0] == "shards":

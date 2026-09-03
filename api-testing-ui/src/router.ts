@@ -21,6 +21,10 @@ export const router = createRouter({
     { path: '/scheduled-jobs', name: 'scheduled-jobs', component: ScheduledJobsView },
     { path: '/runs', name: 'runs', component: RunsView },
     { path: '/reports', name: 'reports', component: ReportsView },
+    { path: '/load-scenarios', name: 'load-scenarios', component: () => import('./views/LoadPlaceholderView.vue'), meta: { title: '性能场景' } },
+    { path: '/load-runs', name: 'load-runs', component: () => import('./views/LoadPlaceholderView.vue'), meta: { title: '压测执行' } },
+    { path: '/load-reports', name: 'load-reports', component: () => import('./views/LoadPlaceholderView.vue'), meta: { title: '性能报告' } },
+    { path: '/load-agents', name: 'load-agents', component: () => import('./views/LoadAgentsView.vue') },
     { path: '/settings', name: 'settings', component: SettingsView },
   ],
 })

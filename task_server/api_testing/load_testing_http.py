@@ -247,6 +247,9 @@ def _post(factory, segments, payload, actor):
         from .tasks import dispatch_load_analysis
         record = LoadAiAnalysisService(factory, dispatcher=dispatch_load_analysis).request(segments[1], actor, force=force)
         return {"analysis": _analysis_view(record)}, 202
+    if len(segments) == 3 and segments[0] == "load-agents" and segments[2] == "calibrate":
+        record = LoadAgentService(factory).request_calibration(segments[1], actor)
+        return {"agent": _agent_view(record)}, 202
     if segments == ("load-agent-enrollments",):
         result = LoadAgentService(factory).create_enrollment(payload, actor)
         return {"enrollment": {
