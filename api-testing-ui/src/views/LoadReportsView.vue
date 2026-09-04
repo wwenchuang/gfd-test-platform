@@ -108,9 +108,12 @@ function agentExitLabel(agent: Record<string, unknown>): string {
 function agentBucketCount(agent: Record<string, unknown>): number { return Number(objectValue(agent.summary).metric_bucket_count || 0) }
 function agentErrorText(agent: Record<string, unknown>): string {
   const error = objectValue(agent.error)
-  return String(error.message || error.code || '节点执行失败')
+  return String(error.message || error.code || '节点执行失败').trim()
 }
-function hasAgentError(agent: Record<string, unknown>): boolean { return Object.keys(objectValue(agent.error)).length > 0 }
+function hasAgentError(agent: Record<string, unknown>): boolean {
+  const error = objectValue(agent.error)
+  return Boolean(String(error.message || error.code || '').trim())
+}
 </script>
 
 <template>
