@@ -10,6 +10,12 @@ require_docker_compose
 echo "配置文件权限：$(stat -c '%a' "${agent_env_file}" 2>/dev/null || stat -f '%Lp' "${agent_env_file}")（应为 600）"
 echo "容器状态："
 compose ps
-echo "最近 80 行日志（不会打印 .env 或注册令牌）："
+echo "当前运行版本："
+if ! compose exec -T load-agent python -c 'import load_agent; print("Agent", load_agent.__version__)'; then
+  echo "Agent 容器尚未就绪，无法读取内部版本。"
+fi
+if ! compose exec -T load-agent k6 version; then
+  echo "k6 尚未就绪，无法读取版本。"
+fi
+echo "最近 80 行历史排障信息（旧错误不代表当前仍失败；请以容器状态、版本和平台心跳为准）："
 compose logs --tail 80 load-agent
-

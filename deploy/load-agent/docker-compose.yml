@@ -1,6 +1,6 @@
 services:
   load-agent:
-    image: ${LOAD_AGENT_IMAGE:-midscene-load-agent:0.1.0}
+    image: ${LOAD_AGENT_IMAGE:-midscene-load-agent:0.1.1}
     build:
       context: ../..
       dockerfile: load_agent/Dockerfile
@@ -31,4 +31,3 @@ services:
 
 volumes:
   load-agent-data:
-

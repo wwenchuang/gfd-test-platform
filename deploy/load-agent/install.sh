@@ -53,7 +53,7 @@ AGENT_MAX_DURATION_SECONDS=$(value_or_saved AGENT_MAX_DURATION_SECONDS 1800)
 LOAD_AGENT_CPU_LIMIT=$(value_or_saved LOAD_AGENT_CPU_LIMIT 2.0)
 LOAD_AGENT_MEMORY_LIMIT=$(value_or_saved LOAD_AGENT_MEMORY_LIMIT 2g)
 LOAD_AGENT_PIDS_LIMIT=$(value_or_saved LOAD_AGENT_PIDS_LIMIT 256)
-LOAD_AGENT_IMAGE=$(value_or_saved LOAD_AGENT_IMAGE midscene-load-agent:0.1.0)
+LOAD_AGENT_IMAGE=$(value_or_saved LOAD_AGENT_IMAGE midscene-load-agent:0.1.1)
 K6_IMAGE=$(value_or_saved K6_IMAGE grafana/k6:0.52.0)
 PYTHON_IMAGE=$(value_or_saved PYTHON_IMAGE python:3.12.5-slim-bookworm)
 K6_IMAGE_CANDIDATES=$(value_or_saved K6_IMAGE_CANDIDATES grafana/k6:0.52.0)
@@ -88,4 +88,3 @@ compose up -d --force-recreate --remove-orphans
 trap - EXIT
 echo "压测 Agent 已注册并启动；一次性令牌已从长期配置和容器环境中清除。"
 echo "下一步：回到平台“压测节点”页刷新，等待节点在线并点击“校准节点”。"
-

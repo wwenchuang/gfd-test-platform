@@ -61,6 +61,11 @@ def test_shell_scripts_have_valid_syntax_and_expected_files():
     assert 'cp "${APP_DIR}/deploy/load-agent/.env" "${load_agent_env_backup}"' in installer
     assert 'install -m 0600 "${load_agent_env_backup}" "${APP_DIR}/deploy/load-agent/.env"' in installer
     assert 'rm -f "${APP_DIR}/deploy/load-agent/.env"' in installer
+    assert "midscene-load-agent:0.1.1" in (DEPLOY / "docker-compose.yml").read_text(encoding="utf-8")
+    assert "midscene-load-agent:0.1.1" in (DEPLOY / ".env.example").read_text(encoding="utf-8")
+    check = (DEPLOY / "check.sh").read_text(encoding="utf-8")
+    assert "当前运行版本" in check
+    assert "历史排障信息" in check
 
 
 def test_compose_bounds_the_agent_without_privileged_mounts():
