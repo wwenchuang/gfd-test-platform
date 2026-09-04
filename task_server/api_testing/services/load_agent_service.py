@@ -94,6 +94,12 @@ def _soft_limits(value, hard_limits):
     return result
 
 
+def _clamp_soft_limits(value, hard_limits):
+    """Keep a recovering Agent reachable when its reported container limit shrinks."""
+    current = _positive_limits(value, code="invalid_soft_limits")
+    return {field: min(current[field], hard_limits[field]) for field in POSITIVE_LIMIT_FIELDS}
+
+
 def _plain_dict(value, field):
     if not isinstance(value, dict):
         raise LoadAgentError(f"{field} 必须是对象", code="invalid_agent_payload")
@@ -274,7 +280,7 @@ class LoadAgentService:
                         "state": "calibrating",
                         "requested_at": pending_command.get("requested_at"),
                     }
-            _soft_limits(agent.soft_limits, hard_limits)
+            agent.soft_limits = _clamp_soft_limits(agent.soft_limits, hard_limits)
             agent.hard_limits = hard_limits
             agent.current_usage = current_usage
             agent.health = health

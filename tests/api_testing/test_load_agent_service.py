@@ -158,6 +158,29 @@ def test_soft_limits_never_exceed_agent_hard_limits(load_factory, agent_permissi
     assert exceeded.value.code == "soft_limit_exceeds_hard_limit"
 
 
+def test_heartbeat_clamps_saved_soft_limits_when_container_capacity_shrinks(
+    load_factory, agent_permissions
+):
+    service = _service(load_factory)
+    enrollment = service.create_enrollment(
+        {"name": "容器缩容节点", "scheduling_tier": "preferred"}, "admin"
+    )
+    registration = service.register(enrollment.token, CAPABILITIES)
+    smaller = {**HARD_LIMITS, "cpu_cores": 2, "memory_mb": 2048}
+
+    updated = service.heartbeat(registration.secret, {
+        "agent_version": "1.0.1", "k6_version": "0.52.0", "hard_limits": smaller,
+        "current_usage": {"processes": 0, "vus": 0},
+        "health": {"schedulable": False, "calibration": {"state": "invalidated"}},
+        "egress_ip": "",
+    })
+
+    assert updated.hard_limits == smaller
+    assert updated.soft_limits["cpu_cores"] == 2
+    assert updated.soft_limits["memory_mb"] == 2048
+    assert updated.soft_limits["max_vus"] == HARD_LIMITS["max_vus"]
+
+
 @pytest.mark.parametrize("tier", ["fast", "primary", "", None])
 def test_unknown_scheduling_tier_is_rejected(load_factory, agent_permissions, tier):
     with pytest.raises(LoadAgentError) as invalid:
