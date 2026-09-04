@@ -298,6 +298,53 @@ def _summary_yaml_refs(summary: Dict[str, Any]) -> Dict[str, Dict[str, str]]:
     return refs
 
 
+def _generation_audit(sources: List[Dict[str, Any]]) -> Dict[str, Any]:
+    def nonnegative_int(value: Any) -> int:
+        try:
+            return max(0, int(value or 0))
+        except (TypeError, ValueError):
+            return 0
+
+    automation_count = 0
+    manual_count = 0
+    deduplicated_count = 0
+    target_plan_cases = 0
+    mindmap_only = False
+    for source in sources:
+        summary = source.get("summary") if isinstance(source.get("summary"), dict) else {}
+        automation_count += len([row for row in source.get("cases") or [] if row.get("source_type") == "automation"])
+        manual_count += len([row for row in source.get("cases") or [] if row.get("source_type") == "manual"])
+        review = summary.get("review") if isinstance(summary.get("review"), dict) else {}
+        for key in ("case_dedup", "manual_case_dedup"):
+            audit = review.get(key) if isinstance(review.get(key), dict) else {}
+            deduplicated_count += nonnegative_int(audit.get("duplicate_case_count") or audit.get("duplicate_count"))
+            deduplicated_count += nonnegative_int(audit.get("trimmed_case_count") or audit.get("trimmed_count"))
+        generation_targets = review.get("generation_targets") if isinstance(review.get("generation_targets"), dict) else {}
+        target_plan_cases += nonnegative_int(generation_targets.get("target_plan_cases"))
+        yaml_check = summary.get("yaml_check") if isinstance(summary.get("yaml_check"), dict) else {}
+        mindmap_only = mindmap_only or yaml_check.get("mode") == "mindmap_only" or summary.get("mindmap_only") is True
+    design_total = automation_count + manual_count
+    shortfall_count = max(0, target_plan_cases - design_total)
+    if deduplicated_count:
+        suffix = f"生成阶段合并或裁剪了 {deduplicated_count} 条重复/超限候选，详情以生成分析为准。"
+    else:
+        suffix = "去重 0 条，没有因数量上限删除用例。"
+    target_suffix = ""
+    if target_plan_cases:
+        target_suffix = f"计划目标 {target_plan_cases} 条，实际 {design_total} 条"
+        target_suffix += f"，仍差 {shortfall_count} 条。" if shortfall_count else "，已达到目标。"
+    return {
+        "design_total": design_total,
+        "automation_count": automation_count,
+        "manual_count": manual_count,
+        "deduplicated_count": deduplicated_count,
+        "target_plan_cases": target_plan_cases,
+        "shortfall_count": shortfall_count,
+        "mindmap_only": mindmap_only,
+        "message": f"本批共生成 {design_total} 条测试设计：{automation_count} 条自动化、{manual_count} 条人工；{suffix}{target_suffix}",
+    }
+
+
 def _group_cases(cases: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]]:
     groups: List[Dict[str, Any]] = []
     group_map: Dict[str, Dict[str, Any]] = {}
@@ -323,7 +370,10 @@ def load_reportable_cases(case_set_id: str = "", case_set_ids: Optional[List[str
     ids = _case_set_ids(case_set_ids) if case_set_ids is not None else _case_set_ids(case_set_id)
     sources = _load_sources(ids)
     cases = [case for source in sources for case in source.get("cases") or []]
-    automation_count = len([case for case in cases if case.get("source_type") == "automation"])
+    automation_cases = [case for case in cases if case.get("source_type") == "automation"]
+    indexed_execution = _indexed_execution_map(automation_cases)
+    cases = [_case_with_status(case, indexed_execution) for case in cases]
+    automation_count = len(automation_cases)
     manual_count = len([case for case in cases if case.get("source_type") == "manual"])
     primary = sources[0]
     source_metas = [source["meta"] for source in sources]
@@ -344,6 +394,8 @@ def load_reportable_cases(case_set_id: str = "", case_set_ids: Optional[List[str
         },
         "groups": _group_cases(cases),
         "cases": cases,
+        "execution_readiness": _execution_readiness(automation_cases, indexed_execution),
+        "generation_audit": _generation_audit(sources),
         "templates": list_test_report_templates(),
         "reports": list_test_reports(case_set_id=primary["case_set_id"], limit=20),
     }
@@ -450,10 +502,55 @@ def _indexed_execution_map(cases: List[Dict[str, Any]]) -> Dict[str, Dict[str, A
 def _case_with_status(case: Dict[str, Any], execution: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
     result = dict(case)
     evidence = execution.get(str(case.get("selection_id") or "")) or execution.get(str(case.get("case_id") or "")) or {}
-    result["status"] = _normalize_status(evidence.get("status"))
+    status = _normalize_status(evidence.get("status"))
+    source = _text(evidence.get("source"))
+    result["status"] = status
     result["report_url"] = _text(evidence.get("report_url") or evidence.get("reportUrl") or evidence.get("sonic_report_url"))
     result["failure_reason"] = _text(evidence.get("failure_reason") or evidence.get("failureReason") or evidence.get("error"))
+    result["execution_source"] = source
+    result["execution_job_id"] = _text(evidence.get("job_id") or evidence.get("jobId"))
+    result["execution_report_id"] = _text(evidence.get("report_id") or evidence.get("reportId"))
+    if status != "not_executed":
+        result["execution_evidence_state"] = "recorded"
+        prefix = "Runner 自动关联" if source == "midscene_report_index" else "人工记录"
+        result["execution_evidence_label"] = f"{prefix} · {REPORT_STATUS_TEXT.get(status, status)}"
+    elif case.get("source_type") == "manual":
+        result["execution_evidence_state"] = "manual_pending"
+        result["execution_evidence_label"] = "待人工确认"
+    elif not _text(case.get("yaml_file")):
+        result["execution_evidence_state"] = "missing_script"
+        result["execution_evidence_label"] = "未生成可执行 YAML"
+    else:
+        result["execution_evidence_state"] = "missing_record"
+        result["execution_evidence_label"] = "未关联 Runner 执行记录"
     return result
+
+
+def _execution_readiness(cases: List[Dict[str, Any]], execution: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
+    decorated = [_case_with_status(case, execution) for case in cases if case.get("source_type") == "automation"]
+    matched = len([case for case in decorated if case.get("execution_evidence_state") == "recorded"])
+    missing_script = len([case for case in decorated if case.get("execution_evidence_state") == "missing_script"])
+    missing_record = len([case for case in decorated if case.get("execution_evidence_state") == "missing_record"])
+    total = len(decorated)
+    if missing_script or missing_record:
+        parts = []
+        if missing_script:
+            parts.append(f"{missing_script} 条尚未生成可执行 YAML")
+        if missing_record:
+            parts.append(f"{missing_record} 条已有 YAML 但未找到 Runner 执行记录")
+        message = "；".join(parts) + "，因此无法自动形成执行结论。"
+    elif total:
+        message = f"已关联 {matched}/{total} 条自动化用例的执行证据。"
+    else:
+        message = "当前没有自动化用例，正式报告需先选择并记录人工用例结论。"
+    return {
+        "automation_total": total,
+        "evidence_matched": matched,
+        "missing_script": missing_script,
+        "missing_record": missing_record,
+        "can_generate_execution_report": bool(total and matched == total),
+        "message": message,
+    }
 
 
 def _defect_statistics(payload: Dict[str, Any]) -> Dict[str, int]:
@@ -490,8 +587,9 @@ def _statistics(
         status: len([case for case in cases if case.get("status") == status])
         for status in REPORT_STATUS_TEXT
     }
-    manual_confirmed = len([case for case in manual_cases if case.get("status") == "passed"])
+    manual_confirmed = len([case for case in manual_cases if case.get("status") in {"passed", "failed", "blocked"}])
     manual_pending = max(0, len(manual_cases) - manual_confirmed)
+    all_cases = list(cases) + list(manual_cases)
     return {
         "total": total,
         "passed": status_counts["passed"],
@@ -501,6 +599,12 @@ def _statistics(
         "manual_total": len(manual_cases),
         "manual_confirmed": manual_confirmed,
         "manual_pending": manual_pending,
+        "manual_failed": len([case for case in manual_cases if case.get("status") == "failed"]),
+        "manual_blocked": len([case for case in manual_cases if case.get("status") == "blocked"]),
+        "evidence_matched": len([case for case in cases if case.get("execution_evidence_state") == "recorded"]),
+        "missing_script": len([case for case in cases if case.get("execution_evidence_state") == "missing_script"]),
+        "missing_evidence": len([case for case in cases if case.get("execution_evidence_state") == "missing_record"]),
+        "manually_recorded": len([case for case in all_cases if case.get("execution_source") == "manual_record"]),
         "pass_rate": round(status_counts["passed"] / total * 100) if total else 0,
         "defect_total": int(defects.get("total") or 0),
     }
@@ -513,6 +617,8 @@ def _quality(statistics: Dict[str, Any], cases: List[Dict[str, Any]]) -> Dict[st
     blocked = int(statistics.get("blocked") or 0)
     not_executed = int(statistics.get("not_executed") or 0)
     manual_pending = int(statistics.get("manual_pending") or 0)
+    manual_failed = int(statistics.get("manual_failed") or 0)
+    manual_blocked = int(statistics.get("manual_blocked") or 0)
     if failed:
         return {
             "result": "未通过",
@@ -523,11 +629,28 @@ def _quality(statistics: Dict[str, Any], cases: List[Dict[str, Any]]) -> Dict[st
             "result": "阻塞",
             "text": f"核心测试范围内有 {blocked} 条自动化用例阻塞；请先处理环境、设备或前置数据问题，当前不能形成发布结论。",
         }
-    if not_executed:
-        result = "未执行" if passed == 0 else "未完成"
+    if manual_failed:
         return {
-            "result": result,
-            "text": f"核心测试范围内的自动化用例尚有 {not_executed}/{total} 条未执行；当前证据不足，不能形成发布结论。",
+            "result": "未通过",
+            "text": f"已确认的人工用例中有 {manual_failed} 条失败；请先修复问题并复验，当前不能形成发布结论。",
+        }
+    if manual_blocked:
+        return {
+            "result": "阻塞",
+            "text": f"已确认的人工用例中有 {manual_blocked} 条阻塞；请处理环境、设备或前置数据后复验。",
+        }
+    if not_executed:
+        missing_script = len([case for case in cases if case.get("execution_evidence_state") == "missing_script"])
+        missing_record = len([case for case in cases if case.get("execution_evidence_state") == "missing_record"])
+        if missing_script:
+            detail = f"其中 {missing_script} 条未生成可执行 YAML"
+        elif missing_record:
+            detail = f"其中 {missing_record} 条未关联 Runner 执行记录"
+        else:
+            detail = f"尚有 {not_executed} 条未记录执行结论"
+        return {
+            "result": "缺少执行证据",
+            "text": f"核心测试范围内有 {not_executed}/{total} 条自动化用例缺少执行证据，{detail}；不能据此判断用例没有实际执行，也不能形成发布结论，请关联 Runner 记录或补录人工执行结论。",
         }
     if manual_pending:
         return {
@@ -541,7 +664,7 @@ def _quality(statistics: Dict[str, Any], cases: List[Dict[str, Any]]) -> Dict[st
         }
     if not total:
         return {
-            "result": "未执行",
+            "result": "缺少执行证据",
             "text": "当前没有可核对的自动化执行结果，不能形成发布结论。",
         }
     return {
@@ -683,7 +806,7 @@ def _markdown_table(headers: List[str], rows: List[List[Any]]) -> str:
 
 def _summary_table(statistics: Dict[str, Any]) -> str:
     return _markdown_table(
-        ["总计", "通过", "失败", "阻塞", "未执行", "待人工确认", "通过率", "缺陷总数"],
+        ["总计", "通过", "失败", "阻塞", "缺少执行证据", "待人工确认", "通过率", "缺陷总数"],
         [[
             statistics.get("total", 0),
             statistics.get("passed", 0),
@@ -721,7 +844,7 @@ def _conclusion_summary(data: Dict[str, Any]) -> str:
             ["准入结论", f"{quality.get('result') or '通过'}，{release.get('suggestion') or '建议发布'}"],
             [
                 "执行情况",
-                f"自动化用例共 {statistics.get('total', 0)} 条，通过 {statistics.get('passed', 0)} 条，失败 {statistics.get('failed', 0)} 条，阻塞 {statistics.get('blocked', 0)} 条，未执行 {statistics.get('not_executed', 0)} 条；待人工确认 {statistics.get('manual_pending', 0)} 条。",
+                f"自动化用例共 {statistics.get('total', 0)} 条，通过 {statistics.get('passed', 0)} 条，失败 {statistics.get('failed', 0)} 条，阻塞 {statistics.get('blocked', 0)} 条，缺少执行证据 {statistics.get('not_executed', 0)} 条；待人工确认 {statistics.get('manual_pending', 0)} 条。",
             ],
             [
                 "缺陷情况",
@@ -742,7 +865,7 @@ def _case_table(cases: List[Dict[str, Any]]) -> str:
                 "人工" if case.get("source_type") == "manual" else "自动化",
                 case.get("scenario"),
                 case.get("title"),
-                REPORT_STATUS_TEXT.get(case.get("status"), "未执行"),
+                case.get("execution_evidence_label") if case.get("status") == "not_executed" else REPORT_STATUS_TEXT.get(case.get("status"), "未记录"),
             ]
             for case in cases
         ],
@@ -777,7 +900,7 @@ def _manual_case_table(cases: List[Dict[str, Any]]) -> str:
             case.get("display_id") or case.get("case_id"),
             case.get("scenario"),
             case.get("title"),
-            "已确认" if case.get("status") == "passed" else "待人工确认",
+            REPORT_STATUS_TEXT.get(case.get("status"), "待人工确认") if case.get("status") != "not_executed" else "待人工确认",
             case.get("risk") or "需要人工确认",
         ] for case in manual],
     )
@@ -816,6 +939,20 @@ def _overview(meta: Dict[str, str], scope: str) -> str:
     ])
 
 
+def _evidence_summary(data: Dict[str, Any]) -> str:
+    generation = data.get("generation_audit") or {}
+    execution = data.get("execution_readiness") or {}
+    rows = [
+        f"用例构成： {generation.get('message') or '-'}",
+        f"执行证据： {execution.get('message') or '-'}",
+    ]
+    if generation.get("mindmap_only"):
+        rows.append("生成方式： 本批只生成脑图，未生成 Runner YAML；外部或真机执行结果必须在报告页补录依据。")
+    if data.get("execution_note"):
+        rows.append(f"人工执行依据： {data['execution_note']}")
+    return "\n".join(rows)
+
+
 def _default_markdown(data: Dict[str, Any]) -> str:
     meta = data["meta"]
     quality_icon = "✅" if data["quality"]["result"] == "通过" else "⚠️"
@@ -825,7 +962,7 @@ def _default_markdown(data: Dict[str, Any]) -> str:
         f"## 1. 基本信息\n\n{_basic_info(meta)}",
         f"## 2. 测试概要\n\n{_overview(meta, data['scope_markdown'])}",
         f"## 3. 主要测试点\n\n{data['test_points_markdown']}",
-        f"## 4. 测试数据\n\n用例统计：\n\n{data['summary_table']}\n\n缺陷统计：\n\n{data['defect_table']}",
+        f"## 4. 测试数据\n\n{_evidence_summary(data)}\n\n用例统计：\n\n{data['summary_table']}\n\n缺陷统计：\n\n{data['defect_table']}",
         f"## 5. 质量评估\n\n测试结果： {quality_icon} {data['quality']['result']}\n\n{data['quality']['text']}",
         f"## 6. 发布建议\n\n{release_icon} {data['release']['suggestion']}：{data['release']['text']}",
     ]) + "\n"
@@ -872,7 +1009,7 @@ def _render_template(template: str, data: Dict[str, Any]) -> str:
         "## 1. 基本信息": "## 1. 基本信息\n\n" + _basic_info(data["meta"]),
         "## 2. 测试概要": "## 2. 测试概要\n\n" + _overview(data["meta"], data["scope_markdown"]),
         "## 3. 主要测试点": "## 3. 主要测试点\n\n" + data["test_points_markdown"],
-        "## 4. 测试数据": "## 4. 测试数据\n\n用例统计：\n\n" + data["summary_table"] + "\n\n缺陷统计：\n\n" + data["defect_table"],
+        "## 4. 测试数据": "## 4. 测试数据\n\n" + _evidence_summary(data) + "\n\n用例统计：\n\n" + data["summary_table"] + "\n\n缺陷统计：\n\n" + data["defect_table"],
         "## 5. 质量评估": "## 5. 质量评估\n\n测试结果： " + values["quality_assessment"],
         "## 6. 发布建议": "## 6. 发布建议\n\n" + values["release_suggestion"],
     }
@@ -1004,6 +1141,7 @@ def _build_report_data(payload: Dict[str, Any]) -> Dict[str, Any]:
     manual_cases_with_status = [case for case in cases if case.get("source_type") == "manual"]
     defects = _defect_statistics(payload)
     statistics = _statistics(report_cases_with_status, defects, manual_cases_with_status)
+    execution_readiness = _execution_readiness(report_cases, execution)
     quality = _quality(statistics, report_cases_with_status)
     release = _release(quality, statistics)
     meta = _meta(sources, payload)
@@ -1024,6 +1162,9 @@ def _build_report_data(payload: Dict[str, Any]) -> Dict[str, Any]:
         "test_points_markdown": _test_points_markdown(cases),
         "mindmap_list": _mindmap_list_markdown(sources),
         "statistics": statistics,
+        "execution_readiness": execution_readiness,
+        "generation_audit": _generation_audit(sources),
+        "execution_note": _text(payload.get("execution_note") or payload.get("executionNote")),
         "defects": defects,
         "quality": quality,
         "release": release,
@@ -1062,7 +1203,16 @@ def _save_index(data: Dict[str, Any]) -> None:
 
 
 def create_test_report(payload: Dict[str, Any]) -> Dict[str, Any]:
-    data = _build_report_data(payload if isinstance(payload, dict) else {})
+    payload = payload if isinstance(payload, dict) else {}
+    data = _build_report_data(payload)
+    report_mode = _text(payload.get("report_mode") or payload.get("reportMode"))
+    if report_mode == "execution" and int(data["statistics"].get("not_executed") or 0) > 0:
+        readiness = data.get("execution_readiness") or {}
+        raise TestReportError(f"不能生成正式执行报告：{readiness.get('message') or '自动化执行证据尚未闭环'}")
+    if report_mode == "execution" and int(data["statistics"].get("manual_pending") or 0) > 0:
+        raise TestReportError(f"不能生成正式执行报告：仍有 {data['statistics']['manual_pending']} 条已选人工用例待确认。")
+    if report_mode == "execution" and int(data["statistics"].get("manually_recorded") or 0) > 0 and not data.get("execution_note"):
+        raise TestReportError("不能生成正式执行报告：手工补录结果后必须填写执行时间、设备或外部用例记录等可复核依据。")
     report_id = unique_millis_id("tpr")
     report_dir = _report_dir(data["case_set_id"], report_id) if len(data.get("case_set_ids") or []) <= 1 else _merged_report_dir(report_id)
     os.makedirs(report_dir, exist_ok=True)
@@ -1084,6 +1234,9 @@ def create_test_report(payload: Dict[str, Any]) -> Dict[str, Any]:
         "module": data.get("module") or "",
         "created_at": data["generated_at"],
         "statistics": data["statistics"],
+        "execution_readiness": data.get("execution_readiness") or {},
+        "generation_audit": data.get("generation_audit") or {},
+        "execution_note": data.get("execution_note") or "",
         "quality": data["quality"],
         "release": data["release"],
         "files": {"markdown": md_path, "html": html_path, "word": word_path, "json": json_path},

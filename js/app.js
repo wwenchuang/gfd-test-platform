@@ -4336,6 +4336,99 @@ function mindmapReportDefectsPayload() {
   };
 }
 
+function mindmapReportExecutionStatus(item = {}) {
+  const id = mindmapReportCaseSelectionId(item);
+  const recorded = mindmapReportExecutionResults[id];
+  if (recorded?.status) return recorded.status;
+  return item.execution_evidence_state === 'recorded' ? (item.status || '') : '';
+}
+
+function mindmapReportExecutionPayload() {
+  const note = document.getElementById('mindmap-report-execution-note')?.value.trim() || '';
+  return Object.fromEntries(Object.entries(mindmapReportExecutionResults)
+    .filter(([, item]) => item?.status)
+    .map(([id, item]) => [id, {
+      status: item.status,
+      source: 'manual_record',
+      failure_reason: note,
+    }]));
+}
+
+function mindmapReportEvidenceSummaryHtml(data = mindmapReportData || {}) {
+  const audit = data.generation_audit || {};
+  const readiness = data.execution_readiness || {};
+  const tone = readiness.can_generate_execution_report ? 'success' : 'warn';
+  const modeHint = audit.mindmap_only
+    ? '<strong>本批是“只生成脑图”任务，没有生成 YAML；在其他入口完成的人工执行不会自动关联，请在下方补录实际结论。</strong>'
+    : '';
+  return `
+    <div class="mindmap-report-evidence ${tone}">
+      <span>${escapeHtml(audit.message || '')}</span>
+      <span>${escapeHtml(readiness.message || '')}</span>
+      ${modeHint}
+      <span>正式报告的自动化统计按本批全部自动化用例计算；勾选范围只控制报告正文和人工用例范围。</span>
+    </div>
+  `;
+}
+
+function mindmapReportManualResultCount() {
+  return Object.values(mindmapReportExecutionResults || {}).filter(item => item?.status).length;
+}
+
+function mindmapReportUnresolvedMessage() {
+  const cases = flattenMindmapReportCases();
+  const unresolvedAutomation = cases.filter(item => item.source_type !== 'manual' && !mindmapReportExecutionStatus(item));
+  const unresolvedManual = cases.filter(item => item.source_type === 'manual'
+    && mindmapReportSelection.has(mindmapReportCaseSelectionId(item))
+    && !mindmapReportExecutionStatus(item));
+  if (unresolvedAutomation.length) return `还有 ${unresolvedAutomation.length} 条自动化用例未关联或未补录执行结论。`;
+  if (unresolvedManual.length) return `还有 ${unresolvedManual.length} 条已选人工用例未确认结论。`;
+  if (mindmapReportManualResultCount() && !(document.getElementById('mindmap-report-execution-note')?.value.trim())) {
+    return '已手工补录执行结果，请填写执行依据（执行时间、设备或用例平台记录）。';
+  }
+  return '';
+}
+
+function syncMindmapReportGenerateButtons() {
+  const reason = mindmapReportUnresolvedMessage();
+  document.querySelectorAll('[data-mindmap-report-create]').forEach(button => {
+    button.disabled = Boolean(reason);
+    button.title = reason || '执行证据已闭环，可以生成正式执行报告';
+  });
+}
+
+function updateMindmapReportExecutionStatus(select, selectionId) {
+  const id = String(selectionId || '').trim();
+  if (!id) return;
+  const status = select?.value || '';
+  if (status) mindmapReportExecutionResults[id] = {status};
+  else delete mindmapReportExecutionResults[id];
+  mindmapReportPreview = null;
+  const preview = document.getElementById('mindmap-report-preview');
+  if (preview) preview.innerHTML = mindmapReportPreviewHtml();
+  const row = select?.closest('.mindmap-report-case');
+  const label = row?.querySelector('[data-execution-label]');
+  if (label) label.textContent = status ? `人工记录 · ${{passed: '通过', failed: '失败', blocked: '阻塞'}[status] || status}` : (select.dataset.defaultLabel || '未记录结论');
+  syncMindmapReportGenerateButtons();
+}
+
+function applyMindmapReportBulkResult() {
+  const status = document.getElementById('mindmap-report-bulk-status')?.value || '';
+  if (!status) {
+    setMindmapReportStatus('请先选择要批量记录的执行结果。', 'error');
+    return;
+  }
+  flattenMindmapReportCases().forEach(item => {
+    const id = mindmapReportCaseSelectionId(item);
+    if (!mindmapReportSelection.has(id) || item.execution_source === 'midscene_report_index') return;
+    mindmapReportExecutionResults[id] = {status};
+  });
+  mindmapReportPreview = null;
+  renderMindmapReportCaseTree();
+  syncMindmapReportGenerateButtons();
+  setMindmapReportStatus('已把结果应用到当前选中的、尚未由 Runner 自动关联的用例。', 'success');
+}
+
 function mindmapReportCaseVisible(item = {}) {
   const keyword = (document.getElementById('mindmap-report-search')?.value || '').trim().toLowerCase();
   const priority = document.getElementById('mindmap-report-priority')?.value || 'all';
@@ -4387,6 +4480,9 @@ function mindmapReportPayload() {
     case_set_id: caseSetIds[0] || '',
     case_set_ids: caseSetIds,
     selected_case_ids: mindmapReportSelectedIds(),
+    report_mode: 'execution',
+    execution_results: mindmapReportExecutionPayload(),
+    execution_note: document.getElementById('mindmap-report-execution-note')?.value.trim() || '',
     defects: mindmapReportDefectsPayload(),
     template_id: document.getElementById('mindmap-report-template')?.value || '',
     meta: mindmapReportMetaPayload()
@@ -4403,7 +4499,7 @@ function mindmapReportStatsHtml(data = {}) {
       <div><strong>${escapeHtml(stats.passed ?? '-')}</strong><span>通过</span></div>
       <div><strong>${escapeHtml(stats.failed ?? '-')}</strong><span>失败</span></div>
       <div><strong>${escapeHtml(stats.blocked ?? '-')}</strong><span>阻塞</span></div>
-      <div><strong>${escapeHtml(stats.not_executed ?? '-')}</strong><span>未执行</span></div>
+      <div><strong>${escapeHtml(stats.not_executed ?? '-')}</strong><span>缺少执行证据</span></div>
       <div><strong>${escapeHtml(stats.manual_pending ?? 0)}</strong><span>待人工确认</span></div>
       <div><strong>${escapeHtml(stats.pass_rate ?? 0)}%</strong><span>通过率</span></div>
       <div><strong>${escapeHtml(stats.defect_total ?? 0)}</strong><span>缺陷总数</span></div>
@@ -4411,6 +4507,7 @@ function mindmapReportStatsHtml(data = {}) {
     <div class="mindmap-report-decision">
       <span>质量评估：${escapeHtml(quality.result || '-')}</span>
       <span>发布建议：${escapeHtml(release.suggestion || '-')}</span>
+      ${quality.text ? `<span>${escapeHtml(quality.text)}</span>` : ''}
     </div>
   `;
 }
@@ -4438,12 +4535,27 @@ function mindmapReportCaseRow(item = {}) {
   const typeLabel = item.source_type === 'manual' ? '人工' : '自动化';
   const idLabel = item.display_id || item.case_id || '';
   const metaItems = [item.source_title && mindmapReportData?.source_count > 1 ? item.source_title : '', item.priority, typeLabel, item.smoke ? '冒烟' : '', item.scenario].filter(Boolean);
+  const executionStatus = mindmapReportExecutionStatus(item);
+  const runnerLinked = item.execution_source === 'midscene_report_index';
+  const evidenceLabel = executionStatus && !runnerLinked
+    ? `人工记录 · ${{passed: '通过', failed: '失败', blocked: '阻塞'}[executionStatus] || executionStatus}`
+    : (item.execution_evidence_label || (item.source_type === 'manual' ? '待人工确认' : '未记录结论'));
   return `
     <label class="mindmap-report-case">
       <input type="checkbox" class="mindmap-report-check" value="${escapeHtml(selectionId)}" ${checked} onchange="toggleMindmapReportCase(this)">
       <span class="mindmap-report-case-main">
         <strong>${escapeHtml(idLabel)} · ${escapeHtml(item.title || '未命名用例')}</strong>
         <em>${escapeHtml(metaItems.join(' · '))}</em>
+        ${item.risk ? `<em class="mindmap-report-case-reason">${escapeHtml(item.source_type === 'manual' ? `转人工原因：${item.risk}` : item.risk)}</em>` : ''}
+        <span class="mindmap-report-case-result">
+          <em data-execution-label>${escapeHtml(evidenceLabel)}</em>
+          <select data-default-label="${escapeHtml(item.execution_evidence_label || '未记录结论')}" aria-label="记录 ${escapeHtml(idLabel)} 的执行结果" onchange="updateMindmapReportExecutionStatus(this, ${jsArg(selectionId)})" onclick="event.stopPropagation()" ${runnerLinked ? 'disabled title="Runner 执行结果已自动关联"' : ''}>
+            <option value="" ${executionStatus ? '' : 'selected'}>未记录</option>
+            <option value="passed" ${executionStatus === 'passed' ? 'selected' : ''}>通过</option>
+            <option value="failed" ${executionStatus === 'failed' ? 'selected' : ''}>失败</option>
+            <option value="blocked" ${executionStatus === 'blocked' ? 'selected' : ''}>阻塞</option>
+          </select>
+        </span>
       </span>
     </label>
   `;
@@ -4485,6 +4597,7 @@ function renderMindmapReportCaseTree() {
   if (target) target.innerHTML = mindmapReportCaseTreeHtml();
   const count = document.getElementById('mindmap-report-selected-count');
   if (count) count.textContent = `${mindmapReportSelection.size} 条已选择`;
+  syncMindmapReportGenerateButtons();
 }
 
 function toggleMindmapReportCase(input) {
@@ -4590,10 +4703,11 @@ function renderMindmapReportBuilder(data) {
         <div class="generation-record-actions">
           <button class="btn-sm" onclick="showMindmapCenter()">返回脑图中心</button>
           <button class="btn-sm primary" onclick="previewMindmapTestReport()">预览报告</button>
-          <button class="btn-sm success" onclick="createMindmapTestReport()">生成报告</button>
+          <button class="btn-sm success" data-mindmap-report-create onclick="createMindmapTestReport()">生成正式执行报告</button>
         </div>
       </div>
       <div id="mindmap-report-status" class="generate-status show">选择需求用例并填写报告信息后生成正式测试报告。</div>
+      ${mindmapReportEvidenceSummaryHtml(mindmapReportData)}
       <div class="mindmap-report-layout">
         <section class="mindmap-report-panel">
           <div class="section-head">
@@ -4623,6 +4737,16 @@ function renderMindmapReportBuilder(data) {
             <button class="btn-sm" onclick="selectMindmapReportSmokeCases()">仅选冒烟</button>
             <button class="btn-sm" onclick="includeMindmapReportManualCases()">包含人工用例</button>
             <button class="btn-sm danger" onclick="clearMindmapReportSelection()">清空选择</button>
+          </div>
+          <div class="mindmap-report-bulk-result">
+            <span>已完成线下或真机执行时，可批量补录当前已选用例：</span>
+            <select id="mindmap-report-bulk-status">
+              <option value="">选择结果</option>
+              <option value="passed">通过</option>
+              <option value="failed">失败</option>
+              <option value="blocked">阻塞</option>
+            </select>
+            <button class="btn-sm" type="button" onclick="applyMindmapReportBulkResult()">应用到已选</button>
           </div>
           <div id="mindmap-report-case-tree" class="mindmap-report-case-tree">${mindmapReportCaseTreeHtml()}</div>
         </section>
@@ -4659,6 +4783,7 @@ function renderMindmapReportBuilder(data) {
             </label>
             <label class="wide">测试目标<textarea id="mindmap-report-goal" rows="2">${escapeHtml(DEFAULT_MINDMAP_REPORT_GOAL)}</textarea></label>
             <label class="wide">备注<textarea id="mindmap-report-remark" rows="2" placeholder="补充风险、数据准备或结论说明"></textarea></label>
+            <label class="wide">执行依据<textarea id="mindmap-report-execution-note" rows="2" placeholder="手工补录结果时必填，例如：2026-09-04 Safari 真机执行，设备 Mac/SN，用例平台记录 3552" oninput="syncMindmapReportGenerateButtons()"></textarea><em>Runner 自动关联的结果无需填写；人工或外部平台执行必须留下可复核依据。</em></label>
             <label class="wide">缺陷统计
               <span class="mindmap-report-defect-grid">
                 <span class="mindmap-report-defect-field"><em>致命</em><input id="mindmap-report-defect-fatal" type="number" min="0" step="1" value="0"></span>
@@ -4677,7 +4802,7 @@ function renderMindmapReportBuilder(data) {
           </div>
           <div class="mindmap-report-actions">
             <button class="btn-sm primary" onclick="previewMindmapTestReport()">预览报告</button>
-            <button class="btn-sm success" onclick="createMindmapTestReport()">生成报告</button>
+            <button class="btn-sm success" data-mindmap-report-create onclick="createMindmapTestReport()">生成正式执行报告</button>
           </div>
           <div id="mindmap-report-preview" class="mindmap-report-preview">${mindmapReportPreviewHtml()}</div>
         </section>
@@ -4688,6 +4813,7 @@ function renderMindmapReportBuilder(data) {
   document.getElementById('toolbar-help').textContent = '从脑图用例选择范围，生成精简测试范围和正式测试报告。';
   document.getElementById('file-info').textContent = '脑图测试报告';
   updateToolbarState('脑图测试报告');
+  syncMindmapReportGenerateButtons();
 }
 
 async function openMindmapReportBuilder(caseSetId) {
@@ -4712,6 +4838,7 @@ async function openMindmapReportBuilder(caseSetId) {
       : `case_set_id=${encodeURIComponent(caseSetIds[0])}`;
     const data = await apiRequest(`/test-reports/cases?${query}`);
     mindmapReportSelection = new Set((data.cases || []).filter(item => item.default_selected).map(mindmapReportCaseSelectionId));
+    mindmapReportExecutionResults = {};
     mindmapReportPreview = null;
     renderMindmapReportBuilder(data);
   } catch(e) {
@@ -4790,6 +4917,11 @@ async function createMindmapTestReport() {
   if (mindmapReportBusy) return;
   if (!mindmapReportSelection.size) {
     setMindmapReportStatus('请至少选择一条用例。', 'error');
+    return;
+  }
+  const unresolved = mindmapReportUnresolvedMessage();
+  if (unresolved) {
+    setMindmapReportStatus(`暂不能生成正式执行报告：${unresolved}`, 'error');
     return;
   }
   mindmapReportBusy = true;

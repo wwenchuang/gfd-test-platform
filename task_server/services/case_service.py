@@ -536,7 +536,15 @@ def generation_volume_targets(analysis, mode="full"):
     point_count = len(point_keys)
     acceptance_unit_count = len(acceptance_units)
     requirement_unit_count = max(1, point_count, branch_count, acceptance_unit_count)
-    target_plan_cases = requirement_unit_count
+    # Mind-map output is the human test design as well as the source for a
+    # report.  For a medium/large requirement, one happy-path case per point
+    # hides the boundary and state-consistency work the reviewer still has to
+    # perform.  Expand only from risks already extracted from the document;
+    # do not invent unrelated cases and do not change the full YAML flow.
+    risk_extension_count = 0
+    if mode in {"mindmap", "compact_mindmap"} and requirement_unit_count >= 4 and risks:
+        risk_extension_count = min(3, len(risks), max(1, (requirement_unit_count + 1) // 2))
+    target_plan_cases = requirement_unit_count + risk_extension_count
     plan_review_slack = max(2, (target_plan_cases + 1) // 2)
     max_plan_cases = target_plan_cases + plan_review_slack
     min_plan_cases = target_plan_cases
@@ -565,6 +573,7 @@ def generation_volume_targets(analysis, mode="full"):
         "acceptance_unit_count": acceptance_unit_count,
         "business_branch_count": branch_count,
         "requirement_unit_count": requirement_unit_count,
+        "risk_extension_count": risk_extension_count,
         "effective_requirement_point_count": requirement_unit_count,
         "min_plan_cases": min_plan_cases,
         "target_plan_cases": target_plan_cases,
@@ -582,6 +591,7 @@ def generation_volume_targets(analysis, mode="full"):
         "manual_cases_not_counted": True,
         "guidance": (
             "测试计划数量按需求文档中的独立业务分支、前置状态、业务规则和可观察结果动态计算；"
+            "只生成脑图时，中大型需求还会从文档已识别风险中补充最多 3 条异常、边界或状态一致性场景；"
             "同一路径上的可见性、文案、位置和可达性应合并验证，不要机械拆成多条。"
             "3/5/8 只作为 Runner 自动化候选容量，不是测试设计硬上限，也不能用于补齐不存在的场景。"
             "冒烟候选可多于首批，但 Runner 首批自动下发最多 3 条。"

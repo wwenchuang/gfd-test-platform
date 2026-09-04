@@ -4,6 +4,151 @@ from pathlib import Path
 import pytest
 
 
+def test_mindmap_generation_expands_risk_and_boundary_coverage_within_plan_limit():
+    from task_server.services.case_service import generation_volume_targets
+
+    analysis = {
+        "requirement_points": [
+            "自动合盘入口",
+            "按颜色分盘显隐",
+            "打印记录聚合",
+            "设备详情聚合",
+            "模型打印状态同步",
+        ],
+        "risks": [
+            "多色与单色识别错误",
+            "合盘任务中断",
+            "打印记录与设备详情状态不一致",
+            "状态同步延迟",
+        ],
+    }
+
+    targets = generation_volume_targets(analysis, mode="mindmap")
+
+    assert targets["requirement_unit_count"] == 5
+    assert targets["risk_extension_count"] == 3
+    assert targets["target_plan_cases"] == 8
+    assert targets["max_plan_cases"] >= 8
+    assert targets["target_automation_cases"] == 5
+
+
+def test_full_generation_keeps_document_units_without_adding_risk_only_cases():
+    from task_server.services.case_service import generation_volume_targets
+
+    targets = generation_volume_targets({
+        "requirement_points": ["入口", "列表", "详情", "状态", "通知"],
+        "risks": ["网络", "权限", "数据"],
+    }, mode="full")
+
+    assert targets["risk_extension_count"] == 0
+    assert targets["target_plan_cases"] == 5
+
+
+def test_mindmap_scenario_designer_fills_document_risks_to_plan_target(monkeypatch):
+    from task_server.services import ai_skill_service
+
+    analysis = {
+        "requirement_points": ["入口", "分盘", "打印记录", "设备详情", "状态同步"],
+        "risks": ["单色模型误显示按颜色分盘", "合盘任务中断", "记录与设备状态不一致", "打印标签未同步"],
+    }
+    targets = ai_skill_service.generation_volume_targets(analysis, mode="mindmap")
+    model_scenarios = [
+        {
+            "feature": point,
+            "scenario": f"{point}正常流程",
+            "requirement_point": point,
+            "business_path": f"进入{point} -> 完成操作 -> 查看结果",
+        }
+        for point in analysis["requirement_points"]
+    ]
+    monkeypatch.setattr(
+        ai_skill_service,
+        "run_ai_skill",
+        lambda *args, **kwargs: {"scenarios": model_scenarios},
+    )
+
+    runtime_trace = {}
+    scenarios = ai_skill_service.call_skill_scenario_designer(
+        "合盘打印流程方案",
+        "合盘打印",
+        analysis,
+        mode="mindmap",
+        targets=targets,
+        runtime_trace=runtime_trace,
+    )
+
+    assert len(scenarios) == 8
+    extensions = [row for row in scenarios if row.get("source") == "platform_risk_extension"]
+    assert len(extensions) == 3
+    assert {row["risk"] for row in extensions}.issubset(set(analysis["risks"]))
+    assert all(row["type"] == "异常/边界/状态" for row in extensions)
+    assert runtime_trace["mindmap_risk_extension"]["added_count"] == 3
+    assert runtime_trace["mindmap_risk_extension"]["shortfall_count"] == 0
+
+
+def test_compact_mindmap_uses_same_risk_coverage_target():
+    from task_server.services.case_service import generation_volume_targets
+
+    targets = generation_volume_targets({
+        "requirement_points": ["入口", "列表", "详情", "状态"],
+        "risks": ["空态", "状态延迟"],
+    }, mode="compact_mindmap")
+
+    assert targets["risk_extension_count"] == 2
+    assert targets["target_plan_cases"] == 6
+
+
+def test_mindmap_automation_filter_preserves_scenarios_the_model_did_not_classify(monkeypatch):
+    from task_server.services import ai_skill_service
+
+    scenarios = [
+        {
+            "feature": "合盘打印",
+            "scenario": f"场景-{index}",
+            "requirement_point": f"需求-{index}",
+            "business_path": f"进入页面 -> 执行场景-{index} -> 查看结果",
+            "expected": f"场景-{index}结果正确",
+            "risk": f"风险-{index}" if index > 5 else "",
+            "source": "platform_risk_extension" if index > 5 else "ai",
+        }
+        for index in range(1, 9)
+    ]
+    monkeypatch.setattr(
+        ai_skill_service,
+        "run_ai_skill",
+        lambda *args, **kwargs: {
+            "cases": [
+                {"case_id": f"TC-{index:03d}", "title": f"场景-{index}", "scenario": f"场景-{index}", "coverage": f"需求-{index}"}
+                for index in range(1, 6)
+            ],
+            "manual_cases": [],
+            "review": {},
+        },
+    )
+
+    result = ai_skill_service.call_skill_automation_filter(
+        "合盘打印流程方案",
+        "合盘打印",
+        {"requirement_points": [f"需求-{index}" for index in range(1, 9)]},
+        scenarios,
+        mode="mindmap",
+        targets={"target_plan_cases": 8, "target_automation_cases": 5, "max_cases": 5},
+    )
+
+    assert len(result["cases"]) == 5
+    assert len(result["manual_cases"]) == 3
+    assert {row["risk"] for row in result["manual_cases"]} == {"风险-6", "风险-7", "风险-8"}
+    assert all(row["source"] == "platform_preserved_unclassified_scenario" for row in result["manual_cases"])
+    assert result["review"]["scenario_classification_audit"]["preserved_count"] == 3
+    ai_skill_service.validate_ai_skill_output("cases_payload", {
+        "title": "合盘打印流程方案",
+        "module": "合盘打印",
+        "analysis": {"requirement_points": [f"需求-{index}" for index in range(1, 9)]},
+        "scenarios": scenarios,
+        **result,
+    })
+
+
 def _write_summary(
     root: Path,
     case_set_id: str = "case-a",
@@ -196,7 +341,7 @@ def test_preview_uses_full_automation_statistics_and_unexecuted_quality(report_w
     assert result["statistics"]["passed"] == 0
     assert result["statistics"]["not_executed"] == 4
     assert result["statistics"]["pass_rate"] == 0
-    assert result["quality"]["result"] == "未执行"
+    assert result["quality"]["result"] == "缺少执行证据"
     assert "核心测试范围" in result["quality"]["text"]
     assert "不能形成发布结论" in result["quality"]["text"]
     assert result["release"]["suggestion"] == "暂不建议发布"
@@ -233,7 +378,7 @@ def test_preview_uses_manual_defect_severity_statistics(report_workspace):
     }
     assert "| 致命 | 严重 | 一般 | 轻微 | 总计 |" in result["defect_table"]
     assert "| 1 | 2 | 3 | 4 | 10 |" in result["defect_table"]
-    assert "测试结果： ⚠️ 未执行" in result["markdown"]
+    assert "测试结果： ⚠️ 缺少执行证据" in result["markdown"]
     assert "⚠️ 暂不建议发布：" in result["markdown"]
     assert "完成执行和人工确认" in result["markdown"]
 
@@ -321,7 +466,7 @@ def test_create_report_persists_markdown_html_and_index(report_workspace):
     assert "## 2. 测试概要" in markdown
     assert "测试范围" in markdown
     assert "完成执行和人工确认" in markdown
-    assert "测试结果： ⚠️ 未执行" in markdown
+    assert "测试结果： ⚠️ 缺少执行证据" in markdown
     assert "⚠️ 暂不建议发布：" in markdown
     assert "| 4 | 0 | 0 | 0 | 4 | 0 | 0% | 0 |" in markdown
     assert "共享打印V1.2.2-测试报告" in html
@@ -421,6 +566,94 @@ def test_preview_enriches_execution_result_from_midscene_report_index(report_wor
     assert result["statistics"]["not_executed"] == 3
 
 
+def test_mindmap_only_cases_explain_missing_script_instead_of_claiming_not_run(report_workspace):
+    from task_server.services import test_report_service
+
+    summary_path = report_workspace / "cases" / "case-a" / "summary.json"
+    summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    summary.pop("generatedCaseGroups", None)
+    summary["yaml_file"] = ""
+    summary["yaml_files"] = []
+    summary["yaml_file_count"] = 0
+    summary["yaml_check"] = {"ok": True, "mode": "mindmap_only", "message": "只生成脑图任务未生成 YAML"}
+    summary.setdefault("review", {})["case_dedup"] = {
+        "input_case_count": 4,
+        "output_case_count": 4,
+        "duplicate_case_count": 0,
+        "trimmed_case_count": 0,
+    }
+    summary_path.write_text(json.dumps(summary, ensure_ascii=False), encoding="utf-8")
+
+    cases = test_report_service.load_reportable_cases("case-a")
+    assert cases["execution_readiness"] == {
+        "automation_total": 4,
+        "evidence_matched": 0,
+        "missing_script": 4,
+        "missing_record": 0,
+        "can_generate_execution_report": False,
+        "message": "4 条尚未生成可执行 YAML，因此无法自动形成执行结论。",
+    }
+    assert cases["generation_audit"]["design_total"] == 5
+    assert cases["generation_audit"]["deduplicated_count"] == 0
+    assert cases["generation_audit"]["message"] == "本批共生成 5 条测试设计：4 条自动化、1 条人工；去重 0 条，没有因数量上限删除用例。"
+    automation = [case for case in cases["cases"] if case["source_type"] == "automation"]
+    assert {case["execution_evidence_state"] for case in automation} == {"missing_script"}
+    assert {case["execution_evidence_label"] for case in automation} == {"未生成可执行 YAML"}
+
+    preview = test_report_service.preview_test_report({
+        "case_set_id": "case-a",
+        "selected_case_ids": ["TC-001"],
+        "meta": {"report_title": "共享打印V1.2.2-测试报告"},
+    })
+    assert preview["quality"]["result"] == "缺少执行证据"
+    assert preview["statistics"]["missing_script"] == 4
+    assert "未生成可执行 YAML" in preview["quality"]["text"]
+
+
+def test_explicit_recorded_results_complete_execution_report_without_runner_yaml(report_workspace):
+    from task_server.services import test_report_service
+
+    summary_path = report_workspace / "cases" / "case-a" / "summary.json"
+    summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    summary.pop("generatedCaseGroups", None)
+    summary_path.write_text(json.dumps(summary, ensure_ascii=False), encoding="utf-8")
+
+    result = test_report_service.preview_test_report({
+        "case_set_id": "case-a",
+        "selected_case_ids": ["TC-001"],
+        "execution_results": {
+            case_id: {
+                "status": "passed",
+                "source": "manual_record",
+                "failure_reason": "2026-09-04 Safari 真机执行，记录见 AgileTC 3088",
+            }
+            for case_id in ("TC-001", "TC-002", "TC-003", "TC-004")
+        },
+        "execution_note": "2026-09-04 Safari 真机执行，记录见 AgileTC 3088",
+        "meta": {"report_title": "共享打印V1.2.2-测试报告"},
+    })
+
+    assert result["statistics"]["passed"] == 4
+    assert result["statistics"]["not_executed"] == 0
+    assert result["statistics"]["manually_recorded"] == 4
+    assert result["execution_readiness"]["can_generate_execution_report"] is True
+    assert result["quality"]["result"] == "通过"
+    assert result["report_cases"][0]["execution_evidence_state"] == "recorded"
+    assert result["report_cases"][0]["execution_evidence_label"] == "人工记录 · 通过"
+
+
+def test_formal_execution_report_rejects_unclosed_execution_evidence(report_workspace):
+    from task_server.services import test_report_service
+
+    with pytest.raises(test_report_service.TestReportError, match="不能生成正式执行报告"):
+        test_report_service.create_test_report({
+            "case_set_id": "case-a",
+            "selected_case_ids": ["TC-001"],
+            "report_mode": "execution",
+            "meta": {"report_title": "共享打印V1.2.2-测试报告"},
+        })
+
+
 def test_preview_counts_selected_manual_cases_as_pending_and_blocks_release(report_workspace):
     from task_server.services import test_report_service
 
@@ -443,6 +676,27 @@ def test_preview_counts_selected_manual_cases_as_pending_and_blocks_release(repo
     assert "| 待人工确认 |" in result["summary_table"]
     assert "| 4 | 4 | 0 | 0 | 0 | 1 | 100% | 0 |" in result["summary_table"]
     assert "待人工确认" in result["manual_case_table"]
+
+
+def test_recorded_manual_failure_is_a_failure_not_pending_confirmation(report_workspace):
+    from task_server.services import test_report_service
+
+    result = test_report_service.preview_test_report({
+        "case_set_id": "case-a",
+        "selected_case_ids": ["TC-001", "MT-001"],
+        "execution_results": {
+            **{case_id: {"status": "passed"} for case_id in ("TC-001", "TC-002", "TC-003", "TC-004")},
+            "MT-001": {"status": "failed", "source": "manual_record", "failure_reason": "账单金额不一致"},
+        },
+        "execution_note": "2026-09-04 财务后台人工复核",
+        "meta": {"report_title": "共享打印V1.2.2-测试报告"},
+    })
+
+    assert result["statistics"]["manual_pending"] == 0
+    assert result["statistics"]["manual_failed"] == 1
+    assert result["quality"]["result"] == "未通过"
+    assert result["release"]["suggestion"] == "暂不建议发布"
+    assert "| 失败 |" in result["manual_case_table"]
 
 
 def test_preview_does_not_recommend_release_when_recorded_defects_remain(report_workspace):

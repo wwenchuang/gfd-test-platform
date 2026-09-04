@@ -3092,7 +3092,182 @@ def call_skill_scenario_designer(
         runtime_trace["scenario_dedup"] = dedup_review
     if not scenarios:
         return _fallback_scenarios_from_analysis(title, module, analysis, targets=targets, error="scenario_designer 仅产出无效或重复场景")
+    scenarios, extension_review = _complete_mindmap_scenarios_from_risks(
+        scenarios,
+        analysis,
+        targets,
+        mode=mode,
+        module=module,
+    )
+    if isinstance(runtime_trace, dict):
+        runtime_trace["mindmap_risk_extension"] = extension_review
     return scenarios
+
+
+def _mindmap_risk_match_point(risk, points, offset=0):
+    risk_chars = set(re.sub(r"[^0-9a-z\u4e00-\u9fff]+", "", str(risk or "").lower()))
+    scored = []
+    for index, point in enumerate(points or []):
+        point_chars = set(re.sub(r"[^0-9a-z\u4e00-\u9fff]+", "", str(point or "").lower()))
+        scored.append((len(risk_chars.intersection(point_chars)), -abs(index - offset), index, point))
+    if not scored:
+        return ""
+    scored.sort(reverse=True)
+    if scored[0][0] <= 0:
+        return points[offset % len(points)]
+    return scored[0][3]
+
+
+def _complete_mindmap_scenarios_from_risks(scenarios, analysis, targets, *, mode="full", module=""):
+    """Fill an under-sized mind-map plan only from risks already extracted by AI."""
+    rows = [copy.deepcopy(item) for item in (scenarios or []) if isinstance(item, dict)]
+    normalized_mode = str(mode or "").strip().lower()
+    target = max(0, safe_int((targets or {}).get("target_plan_cases"), len(rows)))
+    risk_limit = max(0, safe_int((targets or {}).get("risk_extension_count"), 0))
+    review = {
+        "target_plan_cases": target,
+        "before_count": len(rows),
+        "added_count": 0,
+        "after_count": len(rows),
+        "source": "analysis.risks",
+    }
+    if normalized_mode not in {"mindmap", "compact_mindmap"} or len(rows) >= target or risk_limit <= 0:
+        return rows, review
+
+    points = normalize_text_list((analysis or {}).get("requirement_points"))
+    existing_text = re.sub(
+        r"[^0-9a-z\u4e00-\u9fff]+",
+        "",
+        json.dumps(rows, ensure_ascii=False).lower(),
+    )
+    added = 0
+    for risk in normalize_text_list((analysis or {}).get("risks")):
+        if len(rows) >= target or added >= risk_limit:
+            break
+        risk_key = re.sub(r"[^0-9a-z\u4e00-\u9fff]+", "", str(risk).lower())
+        if risk_key and risk_key in existing_text:
+            continue
+        point = _mindmap_risk_match_point(risk, points, offset=added) or module or "核心流程"
+        feature = _fallback_feature_from_point(point) or module or "核心流程"
+        rows.append({
+            "feature": feature,
+            "scenario": f"{feature}风险场景：{risk}",
+            "type": "异常/边界/状态",
+            "requirement_point": point,
+            "business_path": f"准备“{risk}”对应的数据或状态 -> 执行{feature}相关流程 -> 检查反馈与最终状态",
+            "expected": f"“{risk}”条件下有明确、可复核的业务结果，相关页面与记录状态保持一致",
+            "priority": "P1" if added == 0 else "P2",
+            "risk": risk,
+            "necessity": f"该场景直接覆盖需求分析识别的风险“{risk}”，与正常主流程的数据态或结果不同，需独立验证。",
+            "data_requirements": [f"准备能够触发“{risk}”的测试数据或状态；无法稳定准备时转人工执行"],
+            "tags": ["风险", "边界或状态"],
+            "source": "platform_risk_extension",
+        })
+        existing_text += risk_key
+        added += 1
+    review["added_count"] = added
+    review["after_count"] = len(rows)
+    review["shortfall_count"] = max(0, target - len(rows))
+    return rows, review
+
+
+def _scenario_classification_text(item):
+    item = item if isinstance(item, dict) else {}
+    values = [
+        item.get("title"), item.get("scenario"), item.get("coverage"),
+        item.get("requirement_point"), item.get("requirementPoint"),
+        item.get("requirementRefs"), item.get("requirement_refs"), item.get("risk"),
+    ]
+    return re.sub(r"[^0-9a-z\u4e00-\u9fff]+", "", json.dumps(values, ensure_ascii=False).lower())
+
+
+def _mindmap_scenario_is_classified(scenario, classified_rows):
+    scenario = scenario if isinstance(scenario, dict) else {}
+    classified_texts = [_scenario_classification_text(item) for item in classified_rows or []]
+    risk_key = re.sub(r"[^0-9a-z\u4e00-\u9fff]+", "", str(scenario.get("risk") or "").lower())
+    if risk_key:
+        return any(risk_key in text for text in classified_texts)
+    scenario_key = re.sub(r"[^0-9a-z\u4e00-\u9fff]+", "", str(scenario.get("scenario") or "").lower())
+    point_key = re.sub(
+        r"[^0-9a-z\u4e00-\u9fff]+",
+        "",
+        str(scenario_requirement_point(scenario) or "").lower(),
+    )
+    return any(
+        (scenario_key and scenario_key in text) or (point_key and point_key in text)
+        for text in classified_texts
+    )
+
+
+def _manual_case_from_unclassified_scenario(scenario, index, used_ids):
+    scenario = scenario if isinstance(scenario, dict) else {}
+    case_id = f"MT-PRESERVED-{index:03d}"
+    while case_id in used_ids:
+        index += 1
+        case_id = f"MT-PRESERVED-{index:03d}"
+    used_ids.add(case_id)
+    scenario_name = first_non_empty(scenario.get("scenario"), scenario.get("feature"), f"待评估场景 {index}")
+    point = scenario_requirement_point(scenario) or scenario_name
+    risk = first_non_empty(scenario.get("risk"), scenario.get("reason"))
+    path = first_non_empty(scenario.get("business_path"), scenario.get("businessPath"))
+    path_steps = [part.strip() for part in re.split(r"\s*(?:->|→)\s*", str(path or "")) if part.strip()]
+    expected = first_non_empty(scenario.get("expected"), scenario.get("expected_result"), scenario.get("expectedResult"))
+    setup_values = normalize_text_list(scenario.get("data_requirements") or scenario.get("dataRequirements"))
+    steps = normalize_text_list(scenario.get("steps")) or path_steps
+    if len(steps) < 3:
+        steps = [
+            f"准备“{risk or point}”需要的账号、数据或页面状态",
+            f"按“{path or scenario_name}”完成业务操作",
+            f"检查“{expected or '页面反馈、业务结果和状态记录一致'}”",
+        ]
+    return {
+        "case_id": case_id,
+        "title": scenario_name,
+        "priority": first_non_empty(scenario.get("priority"), "P2"),
+        "scenario": scenario_name,
+        "coverage": point,
+        "requirement_point": point,
+        "risk": risk,
+        "reason": "自动化筛选未返回该设计场景；平台为防止覆盖丢失，先保留为待人工评估。补齐稳定入口、数据和可见断言后可重新生成自动化用例。",
+        "suggested_setup": "；".join(setup_values) if setup_values else f"按场景准备“{risk or point}”对应的数据或状态",
+        "steps": steps[:8],
+        "assertions": normalize_text_list(scenario.get("assertions")) or [expected or "页面反馈、业务结果和状态记录符合需求"],
+        "expected_result": expected or "页面反馈、业务结果和状态记录符合需求",
+        "executionLevel": "manual",
+        "source": "platform_preserved_unclassified_scenario",
+    }
+
+
+def _preserve_unclassified_mindmap_scenarios(scenarios, cases, manual_cases, *, mode="full"):
+    automation_rows = [item for item in (cases or []) if isinstance(item, dict)]
+    manual_rows = [copy.deepcopy(item) for item in (manual_cases or []) if isinstance(item, dict)]
+    normalized_mode = str(mode or "").strip().lower()
+    audit = {
+        "scenario_count": len([item for item in (scenarios or []) if isinstance(item, dict)]),
+        "classified_count_before": 0,
+        "preserved_count": 0,
+        "final_case_count": len(automation_rows) + len(manual_rows),
+    }
+    if normalized_mode not in {"mindmap", "compact_mindmap"}:
+        return manual_rows, audit
+    classified_rows = automation_rows + manual_rows
+    used_ids = {
+        str(item.get("case_id") or item.get("caseId") or item.get("id") or "").strip()
+        for item in classified_rows
+    }
+    missing = []
+    for scenario in scenarios or []:
+        if not isinstance(scenario, dict):
+            continue
+        if _mindmap_scenario_is_classified(scenario, classified_rows):
+            audit["classified_count_before"] += 1
+            continue
+        missing.append(scenario)
+    for index, scenario in enumerate(missing, start=1):
+        manual_rows.append(_manual_case_from_unclassified_scenario(scenario, index, used_ids))
+    audit["preserved_count"] = len(missing)
+    audit["final_case_count"] = len(automation_rows) + len(manual_rows)
+    return manual_rows, audit
 
 
 def call_skill_automation_filter(
@@ -3179,13 +3354,19 @@ def call_skill_automation_filter(
         return fallback(exc)
     raw_manual_cases = result.get("manual_cases") or []
     manual_cases, manual_dedup_review = deduplicate_generated_cases(raw_manual_cases)
-    manual_design = str(mode).strip().lower() == "mindmap" and bool(manual_cases)
+    manual_design = str(mode).strip().lower() in {"mindmap", "compact_mindmap"} and bool(manual_cases)
     if not isinstance(cases, list) or (not cases and not manual_design):
         return fallback("automation_filter 未产出自动化用例")
     raw_case_count = len(cases)
     cases, case_dedup_review = deduplicate_generated_cases(cases)
     if not cases and not manual_design:
         return fallback("automation_filter 仅产出无效或重复用例")
+    manual_cases, classification_audit = _preserve_unclassified_mindmap_scenarios(
+        scenarios,
+        cases,
+        manual_cases,
+        mode=mode,
+    )
     review = result.get("review") or {}
     review["automation_filter_skill"] = "automation_filter.v1"
     review["automation_filter_input"] = input_review
@@ -3199,6 +3380,7 @@ def call_skill_automation_filter(
         "duplicate_count": manual_dedup_review.get("duplicate_case_count", 0),
         "rule": "人工用例也只删除语义重复项，不按固定数量裁剪。",
     }
+    review["scenario_classification_audit"] = classification_audit
     return {
         "cases": cases,
         "manual_cases": manual_cases,
@@ -3842,6 +4024,8 @@ def _model_config_trace(model_config, runtime_trace=None):
         trace["jsonRepair"] = copy.deepcopy(runtime_trace.get("jsonRepair"))
     if isinstance(runtime_trace.get("scenario_dedup"), dict):
         trace["scenarioDedup"] = copy.deepcopy(runtime_trace.get("scenario_dedup"))
+    if isinstance(runtime_trace.get("mindmap_risk_extension"), dict):
+        trace["mindmapRiskExtension"] = copy.deepcopy(runtime_trace.get("mindmap_risk_extension"))
     return trace
 
 

@@ -60,6 +60,7 @@ let mindmapCenterFileRows = [];
 let mindmapReportSelectedCaseSetIds = new Set();
 let mindmapReportData = null;
 let mindmapReportSelection = new Set();
+let mindmapReportExecutionResults = {};
 let mindmapReportPreview = null;
 let mindmapReportCasePlatformResults = [];
 let mindmapReportBusy = false;

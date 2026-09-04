@@ -200,7 +200,82 @@ test('mindmap report preview distinguishes automation totals from pending manual
   });
 
   assert.match(html, /自动化总计/);
+  assert.match(html, /缺少执行证据/);
   assert.match(html, /<strong>1<\/strong><span>待人工确认<\/span>/);
+});
+
+test('mindmap report explains generation count and execution evidence before formal export', t => {
+  const source = fs.readFileSync('js/app.js', 'utf8');
+  const dom = new JSDOM('<body></body>', {runScripts: 'dangerously'});
+  t.after(() => dom.window.close());
+  const win = dom.window;
+  win.escapeHtml = value => String(value ?? '');
+  loadFunction(win, source, 'mindmapReportEvidenceSummaryHtml');
+
+  const html = win.mindmapReportEvidenceSummaryHtml({
+    generation_audit: {
+      mindmap_only: true,
+      message: '本批共生成 5 条测试设计：2 条自动化、3 条人工；去重 0 条，没有因数量上限删除用例。',
+    },
+    execution_readiness: {
+      can_generate_execution_report: false,
+      message: '2 条自动化用例尚未生成可执行 YAML，无法自动关联 Runner 执行结果。',
+    },
+  });
+
+  assert.match(html, /没有因数量上限删除用例/);
+  assert.match(html, /尚未生成可执行 YAML/);
+  assert.match(html, /只生成脑图/);
+  assert.match(html, /自动化统计按本批全部自动化用例计算/);
+});
+
+test('mindmap formal report submits explicit execution mode and manual evidence payload', () => {
+  const source = fs.readFileSync('js/app.js', 'utf8');
+  assert.match(source, /report_mode: 'execution'/);
+  assert.match(source, /execution_results: mindmapReportExecutionPayload\(\)/);
+  assert.match(source, /mindmap-report-execution-note/);
+  assert.match(source, /生成正式执行报告/);
+  assert.match(source, /applyMindmapReportBulkResult/);
+});
+
+test('mindmap formal report stays disabled until every automation result has evidence and a note', t => {
+  const source = fs.readFileSync('js/app.js', 'utf8');
+  const dom = new JSDOM(`
+    <body>
+      <textarea id="mindmap-report-execution-note"></textarea>
+      <button data-mindmap-report-create></button>
+    </body>
+  `, {runScripts: 'dangerously'});
+  t.after(() => dom.window.close());
+  const win = dom.window;
+  win.eval(`
+    var mindmapReportData = {groups: [{scenarios: [{cases: [
+      {selection_id: 'auto-1', source_type: 'automation', execution_evidence_state: 'missing_script'},
+      {selection_id: 'manual-1', source_type: 'manual', execution_evidence_state: 'manual_pending'}
+    ]}]}]};
+    var mindmapReportSelection = new Set(['auto-1']);
+    var mindmapReportExecutionResults = {};
+  `);
+  loadFunction(win, source, 'flattenMindmapReportCases');
+  loadFunction(win, source, 'mindmapReportCaseSelectionId');
+  loadFunction(win, source, 'mindmapReportExecutionStatus');
+  loadFunction(win, source, 'mindmapReportManualResultCount');
+  loadFunction(win, source, 'mindmapReportUnresolvedMessage');
+  loadFunction(win, source, 'syncMindmapReportGenerateButtons');
+
+  win.syncMindmapReportGenerateButtons();
+  const button = win.document.querySelector('[data-mindmap-report-create]');
+  assert.equal(button.disabled, true);
+  assert.match(button.title, /1 条自动化用例/);
+
+  win.mindmapReportExecutionResults['auto-1'] = {status: 'passed'};
+  win.syncMindmapReportGenerateButtons();
+  assert.equal(button.disabled, true);
+  assert.match(button.title, /填写执行依据/);
+
+  win.document.getElementById('mindmap-report-execution-note').value = '2026-09-04 Safari 真机执行，记录 3552';
+  win.syncMindmapReportGenerateButtons();
+  assert.equal(button.disabled, false);
 });
 
 test('mindmap report history controls explain and disable an empty history', t => {
