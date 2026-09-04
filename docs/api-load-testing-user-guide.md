@@ -183,7 +183,7 @@ bash deploy/load-agent/check.sh
 8. 只与同场景版本、兼容环境和相同负载模型的历史运行比较。
 9. 最后读 AI 诊断，核对它引用的证据是否真的支持结论。
 
-页面按“管理层摘要 → 确定性结论 → RED 指标 → 时延分布 → 阈值 → 趋势 → 节点证据 → 历史对比 → AI 诊断”组织。报告选择区使用可搜索、可按中文状态筛选的历史执行卡片，避免在原生下拉框中辨认重复名称和英文状态。管理层摘要只回答三件事：是否施加到目标负载、质量阈值是否通过、证据是否完整；详细指标留在下方供排查。
+页面按“性能决策简报 → RED 指标 → 时延分布 → 阈值 → 趋势 → 节点证据 → 历史对比 → AI 诊断”组织。历史执行默认收起，不会因记录过多把当前报告推到首屏以下；需要切换时再展开，可按应用、中文状态和关键字筛选，首批只显示 8 条。决策简报先回答三件事：是否施加到目标负载、性能门禁是否通过、证据是否完整；然后给出对上线的风险结论，详细数据和 AI 建议留在下方供排查。
 
 ## 11. AI 能否给出合理建议
 
@@ -287,7 +287,7 @@ AI 可以基于平台已经计算好的确定性证据做归纳和下一轮建�
 
 报告吞吐按配置的施压窗口计算，不把排队、节点就绪和收尾时间混入分母；同一 5 秒内的步骤指标与链路指标合并为一个时间点。历史运行会用当前报告规则重新计算，不会被旧版保存的“证据不足”永久锁住。节点明细默认展示分配压力、调度级别、进程结果和指标窗口，原始 JSON 仅在“查看技术明细”中展开。
 
-性能场景列表按当前应用/API 项目展示，并显示接口资产数量。编辑场景会创建不可变新版本，旧执行仍引用原版本；归档场景不会删除历史执行和报告。执行列表同时展示应用/API 项目、环境版本、中文负载模型和四步证据，运行中自动刷新，终态运行可以删除；删除会同时删除该次运行的报告和节点证据，因此正式报告应先保留。
+性能场景列表按当前应用/API 项目展示，并显示接口资产数量。编辑场景会创建不可变新版本，旧执行仍引用原版本；归档场景不会删除历史执行和报告。执行列表同时展示应用/API 项目、环境版本、中文负载模型和四步证据，默认只看当前应用的前 8 条，可切换应用、状态或继续加载。运行中每 3 秒静默刷新，终态运行可以删除；删除会同时删除该次运行的报告和节点证据，因此正式报告应先保留。
 
 ## 参考资料
 
@@ -298,4 +298,7 @@ AI 可以基于平台已经计算好的确定性证据做归纳和下一轮建�
 - Grafana k6 Options reference：https://grafana.com/docs/k6/latest/using-k6/k6-options/reference/
 - Grafana dashboard best practices：https://grafana.com/docs/grafana/latest/visualizations/dashboards/build-dashboards/best-practices/
 - Grafana k6 Thresholds：https://grafana.com/docs/k6/latest/using-k6/thresholds/
+- Azure Load Testing 结果看板：https://learn.microsoft.com/en-us/azure/app-testing/load-testing/how-to-understand-test-run-results-dashboard
+- BlazeMeter 性能报告：https://help.blazemeter.com/docs/guide/performance-intro-to-reporting.html
+- Gatling Enterprise 报告：https://docs.gatling.io/guides/analysis/enterprise-reports/
 - Grafana k6 Analyze results：https://grafana.com/docs/grafana-cloud/observe-and-act/testing/k6/analyze-results/

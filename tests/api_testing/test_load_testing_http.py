@@ -238,6 +238,10 @@ def test_run_read_events_report_ai_and_actions_use_separate_permissions(load_fac
         lambda factory, requested_id, actor: [connectivity_agent] if requested_id == run_id and actor == "runner" else [],
     )
 
+    listing, _ = _call(load_factory, "GET", "/load-runs", "viewer")
+    assert run_id in {item["id"] for item in listing["runs"]}
+    restricted_listing, _ = _call(load_factory, "GET", "/load-runs", "other")
+    assert restricted_listing["runs"] == []
     detail, _ = _call(load_factory, "GET", f"/load-runs/{run_id}", "viewer")
     assert detail["run"]["id"] == run_id
     events, _ = _call(load_factory, "GET", f"/load-runs/{run_id}/events", "viewer", query={"after": "0"})

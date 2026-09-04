@@ -13,7 +13,7 @@ const report = { run_id: 'r1', verdict: 'failed' as const, verdict_label: '未�
 describe('LoadReportsView', () => {
   beforeEach(() => { setActivePinia(createPinia()); vi.restoreAllMocks() })
   it('puts deterministic evidence before AI and keeps target attainment separate from thresholds', async () => {
-    const context = useContextStore(); Object.assign(context, { projectId: 'p1' }); vi.spyOn(context, 'loadSavedContext').mockResolvedValue()
+    const context = useContextStore(); Object.assign(context, { projectId: 'p1', projects: [{ id: 'p1', name: '3D家用' }] }); vi.spyOn(context, 'loadSavedContext').mockResolvedValue(); vi.spyOn(context, 'loadOptions').mockResolvedValue()
     const store = useLoadTestingStore(); store.runs = [run]
     vi.spyOn(store, 'loadRuns').mockResolvedValue(store.runs); vi.spyOn(store, 'loadRun').mockResolvedValue(run)
     vi.spyOn(store, 'loadReport').mockResolvedValue(report); vi.spyOn(store, 'loadAiAnalysis').mockResolvedValue(null)
@@ -33,6 +33,7 @@ describe('LoadReportsView', () => {
     expect(wrapper.text()).toContain('指标窗口')
     expect(wrapper.text()).toContain('12')
     expect(wrapper.text()).toContain('管理层摘要')
+    await wrapper.get('[data-testid="load-report-history-toggle"]').trigger('click')
     expect(wrapper.get('[data-testid="report-run-r1"]').text()).toContain('已完成')
     expect(wrapper.get('[data-testid="report-run-r1"]').text()).not.toContain('finished')
     expect(wrapper.text()).not.toContain('节点执行失败')
@@ -42,12 +43,36 @@ describe('LoadReportsView', () => {
 
   it('shows the live console for a running task and opens the SSE workflow', async () => {
     const active = { ...run, state: 'running' as const, verdict: null }
-    const context = useContextStore(); Object.assign(context, { projectId: 'p1' }); vi.spyOn(context, 'loadSavedContext').mockResolvedValue()
+    const context = useContextStore(); Object.assign(context, { projectId: 'p1', projects: [{ id: 'p1', name: '3D家用' }] }); vi.spyOn(context, 'loadSavedContext').mockResolvedValue(); vi.spyOn(context, 'loadOptions').mockResolvedValue()
     const store = useLoadTestingStore(); store.runs = [active]
     vi.spyOn(store, 'loadRuns').mockResolvedValue(store.runs); vi.spyOn(store, 'loadRun').mockResolvedValue(active); vi.spyOn(store, 'connectRunEvents').mockResolvedValue()
     const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/', component: LoadReportsView }] }); await router.push('/?run_id=r1'); await router.isReady()
     const wrapper = mount(LoadReportsView, { global: { plugins: [router] } }); await flushPromises()
     expect(wrapper.find('[aria-label="压测实时控制台"]').exists()).toBe(true)
     expect(store.connectRunEvents).toHaveBeenCalledWith('r1')
+  })
+
+  it('keeps history collapsed above the report and filters it by application on demand', async () => {
+    const otherRun = { ...run, id: 'r2', project_id: 'p2', configuration: { scenario: { name: '共享商城搜索' }, agents: [] } }
+    const context = useContextStore(); Object.assign(context, { projectId: 'p1', projects: [{ id: 'p1', name: '3D家用' }, { id: 'p2', name: '共享商城' }] })
+    vi.spyOn(context, 'loadSavedContext').mockResolvedValue(); vi.spyOn(context, 'loadOptions').mockResolvedValue()
+    const store = useLoadTestingStore(); store.runs = [run, otherRun]
+    const loadRuns = vi.spyOn(store, 'loadRuns').mockResolvedValue(store.runs)
+    vi.spyOn(store, 'loadRun').mockImplementation(async id => id === 'r2' ? otherRun : run)
+    vi.spyOn(store, 'loadReport').mockResolvedValue(report); vi.spyOn(store, 'loadAiAnalysis').mockResolvedValue(null)
+    const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/', component: LoadReportsView }] }); await router.push('/?run_id=r1'); await router.isReady()
+    const wrapper = mount(LoadReportsView, { global: { plugins: [router] } }); await flushPromises()
+
+    expect(loadRuns).toHaveBeenCalledWith(undefined)
+    expect(wrapper.find('[data-testid="load-report-history-list"]').exists()).toBe(false)
+    expect(wrapper.get('[data-testid="load-report-decision-hero"]').text()).toContain('性能决策简报')
+    await wrapper.get('[data-testid="load-report-history-toggle"]').trigger('click')
+    expect(wrapper.find('[data-testid="load-report-history-list"]').exists()).toBe(true)
+    expect((wrapper.get('[data-testid="load-report-application"]').element as HTMLSelectElement).value).toBe('p1')
+    expect(wrapper.find('[data-testid="report-run-r1"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="report-run-r2"]').exists()).toBe(false)
+    await wrapper.get('[data-testid="load-report-application"]').setValue('p2')
+    expect(wrapper.find('[data-testid="report-run-r1"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="report-run-r2"]').exists()).toBe(true)
   })
 })

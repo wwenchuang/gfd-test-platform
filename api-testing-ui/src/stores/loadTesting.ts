@@ -115,11 +115,12 @@ export const useLoadTestingStore = defineStore('api-load-testing', {
       await apiClient.delete(`/api/api-testing/v1/load-scenarios/${encodeURIComponent(scenarioId)}`)
       this.scenarios = this.scenarios.filter(item => item.id !== scenarioId)
     },
-    async loadRuns(projectId: string, silent = false): Promise<LoadRun[]> {
+    async loadRuns(projectId?: string, silent = false): Promise<LoadRun[]> {
       if (!silent) this.loadingRuns = true
       this.runError = ''
       try {
-        const response = await apiClient.get<{ runs: LoadRun[] }>(`/api/api-testing/v1/load-runs?project_id=${encodeURIComponent(projectId)}`)
+        const scope = projectId ? `project_id=${encodeURIComponent(projectId)}&` : ''
+        const response = await apiClient.get<{ runs: LoadRun[] }>(`/api/api-testing/v1/load-runs?${scope}limit=200`)
         this.runs = response.data.runs
         return this.runs
       } catch (error) {

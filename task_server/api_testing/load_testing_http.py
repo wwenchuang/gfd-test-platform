@@ -126,13 +126,17 @@ def _get(factory, segments, query, actor):
             ).order_by(ApiLoadDataset.updated_at.desc(), ApiLoadDataset.id)))
         return {"datasets": [_dataset_view(item) for item in rows]}
     if segments == ("load-runs",):
-        project_id = _required(query, "project_id", "请选择接口项目")
-        _project(factory, project_id, actor, "api.loadtest.view")
+        project_id = str(query.get("project_id") or "").strip()
+        if project_id:
+            _project(factory, project_id, actor, "api.loadtest.view")
+        else:
+            access.require_permission(actor, "api.loadtest.view")
         with factory() as session:
-            rows = tuple(session.scalars(select(ApiLoadRun).where(
-                ApiLoadRun.project_id == project_id,
-                access.resource_predicate(actor, ApiLoadRun),
-            ).order_by(ApiLoadRun.created_at.desc(), ApiLoadRun.id).limit(_limit(query))))
+            filters = [access.resource_predicate(actor, ApiLoadRun)]
+            if project_id:
+                filters.append(ApiLoadRun.project_id == project_id)
+            rows = tuple(session.scalars(select(ApiLoadRun).where(*filters)
+                .order_by(ApiLoadRun.created_at.desc(), ApiLoadRun.id).limit(_limit(query))))
         return {"runs": [_run_view(item) for item in rows]}
     if len(segments) == 2 and segments[0] == "load-runs":
         run = _run(factory, segments[1], actor)

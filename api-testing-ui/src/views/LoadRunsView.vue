@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { Activity, ChartLine, Plus, RefreshCw, RotateCcw, Trash2 } from 'lucide-vue-next'
 import { useRouter } from 'vue-router'
 import type { LoadAgent, LoadRun } from '../api/contracts'
@@ -18,18 +18,25 @@ const busyId = ref('')
 const runMessages = ref<Record<string, string>>({})
 const query = ref('')
 const stateFilter = ref('all')
+const applicationFilter = ref('')
+const displayLimit = ref(8)
 const canExecute = apiTestingHasPermission('api.loadtest.execute')
 let refreshTimer: ReturnType<typeof setTimeout> | null = null
 const selectedScenario = computed(() => store.scenarios.find(item => item.id === selectedScenarioId.value) || store.scenarios.find(item => item.active_version_id) || null)
 const projectName = computed(() => context.projects.find(item => item.id === context.projectId)?.name || '当前接口项目')
-const filteredRuns = computed(() => {
+const applicationOptions = computed(() => context.projects.filter(project => project.id === context.projectId || store.runs.some(run => run.project_id === project.id)))
+const matchingRuns = computed(() => {
   const keyword = query.value.trim().toLocaleLowerCase('zh-CN')
-  return store.runs.filter(run => (stateFilter.value === 'all' || run.state === stateFilter.value)
+  return store.runs.filter(run => (!applicationFilter.value || run.project_id === applicationFilter.value)
+    && (stateFilter.value === 'all' || run.state === stateFilter.value)
     && (!keyword || `${scenarioName(run)} ${run.id} ${environmentName(run)}`.toLocaleLowerCase('zh-CN').includes(keyword)))
 })
+const filteredRuns = computed(() => matchingRuns.value.slice(0, displayLimit.value))
+watch([query, stateFilter, applicationFilter], () => { displayLimit.value = 8 })
 
 onMounted(async () => {
   await Promise.all([context.loadSavedContext(), context.loadOptions()])
+  applicationFilter.value = context.projectId || ''
   await refresh()
   scheduleRefresh()
 })
@@ -38,13 +45,13 @@ function scheduleRefresh(): void {
   if (refreshTimer) clearTimeout(refreshTimer)
   refreshTimer = setTimeout(async () => {
     refreshTimer = null
-    if (context.projectId) await store.loadRuns(context.projectId, true)
+    if (context.projectId) await store.loadRuns(undefined, true)
     scheduleRefresh()
   }, 3000)
 }
 async function refresh(): Promise<void> {
   if (!context.projectId) return
-  await Promise.all([store.loadScenarios(context.projectId), store.loadRuns(context.projectId), store.loadAgents()])
+  await Promise.all([store.loadScenarios(context.projectId), store.loadRuns(undefined), store.loadAgents()])
   if (!selectedScenarioId.value) selectedScenarioId.value = store.scenarios.find(item => item.active_version_id)?.id || ''
 }
 async function create(payload: Record<string, unknown>): Promise<void> {
@@ -217,17 +224,18 @@ function canDelete(run: LoadRun): boolean {
       <p v-else class="load-warning">没有可执行场景，请先到“性能场景”保存通过校验的版本。</p>
     </template>
     <template v-else>
-      <div class="load-list-toolbar"><label class="search-box"><span class="sr-only">搜索压测执行</span><input v-model="query" type="search" placeholder="搜索场景、执行编号或环境" /></label><label>状态<select v-model="stateFilter"><option value="all">全部状态</option><option value="running">运行中</option><option value="draft">等待检查</option><option value="finished">已完成</option><option value="failed">失败</option><option value="cancelled">已取消</option></select></label></div>
+      <div class="load-list-toolbar"><label class="search-box"><span class="sr-only">搜索压测执行</span><input v-model="query" type="search" placeholder="搜索场景、执行编号或环境" /></label><label>应用<select v-model="applicationFilter" data-testid="load-run-application"><option v-for="project in applicationOptions" :key="project.id" :value="project.id">{{ project.name }}</option></select></label><label>状态<select v-model="stateFilter"><option value="all">全部状态</option><option value="running">运行中</option><option value="draft">等待检查</option><option value="finished">已完成</option><option value="failed">失败</option><option value="cancelled">已取消</option></select></label></div>
       <div v-if="!store.runs.length" class="management-empty"><Activity :size="28" /><h2>还没有压测执行</h2><p>先准备已校准节点和性能场景，再创建压测草稿。</p></div>
       <p v-else-if="!filteredRuns.length" class="section-empty">没有匹配的执行记录。</p>
       <div v-else class="load-run-list">
-        <article v-for="run in filteredRuns" :key="run.id" :class="`run-${run.state}`">
+        <article v-for="run in filteredRuns" :key="run.id" :data-testid="`load-run-card-${run.id}`" :class="`run-${run.state}`">
           <header><div><span class="load-project-tag">{{ applicationName(run) }}</span><strong>{{ scenarioName(run) }}</strong><small>{{ environmentName(run) }} · {{ workloadText(run) }} · 创建于 {{ dateTime(run.created_at) }}</small></div><span :class="['load-status-chip', run.state]">{{ stateLabel(run.state) }}</span></header>
           <div class="load-run-progress"><span v-for="(stage, index) in runStages" :key="stage.key" :data-testid="`run-stage-${run.id}-${stage.key}`" :class="stageState(run, stage.key)"><b>{{ stageMarker(run, stage.key, index) }}</b>{{ stage.label }}</span></div>
           <div v-if="run.state === 'draft'" class="load-connectivity-list"><p v-for="agent in runAgents(run)" :key="agent.id" :data-testid="`connectivity-${run.id}-${agent.id}`"><strong>{{ agent.name }}</strong><span>{{ connectivityLabel(run, agent) }}</span></p><p v-if="!runAgents(run).length">节点信息尚未加载，请点击立即刷新。</p></div>
           <p v-if="runMessages[run.id]" :class="['load-run-message', { busy: busyId === run.id }]" aria-live="polite">{{ runMessages[run.id] }}</p>
           <div class="load-run-actions"><button v-if="run.state === 'draft' && !connectivityReady(run)" :data-testid="`run-connectivity-${run.id}`" class="primary-command" type="button" :disabled="busyId === run.id" @click="action(run, 'connectivity')">{{ busyId === run.id ? '正在检查…' : '检查目标连通性' }}</button><button v-if="run.state === 'draft' && connectivityReady(run)" :data-testid="`run-preflight-${run.id}`" class="primary-command" type="button" :disabled="busyId === run.id" @click="action(run, 'preflight')">{{ busyId === run.id ? '正在预检…' : '运行单用户预检' }}</button><button v-if="run.state === 'queued'" :data-testid="`run-start-${run.id}`" class="primary-command" type="button" :disabled="busyId === run.id" @click="action(run, 'start')">开始压测</button><button v-if="['preflighting','starting','running','stopping'].includes(run.state)" :data-testid="`run-stop-${run.id}`" class="danger-command" type="button" :disabled="busyId === run.id" @click="action(run, 'stop')">{{ busyId === run.id ? '正在停止…' : '停止并保存证据' }}</button><button v-if="['finished','failed','cancelled'].includes(run.state) && canExecute" :data-testid="`run-rerun-${run.id}`" class="secondary-command" type="button" @click="rerun(run)"><RotateCcw :size="14" />使用当前场景再次压测</button><button class="secondary-command" type="button" @click="router.push({ name: 'load-reports', query: { run_id: run.id } })"><ChartLine :size="14" />{{ ['starting','running','stopping'].includes(run.state) ? '查看实时报告' : '查看报告' }}</button><button v-if="canExecute && canDelete(run)" :data-testid="`run-delete-${run.id}`" class="text-command danger-text" type="button" :disabled="busyId === run.id" @click="remove(run)"><Trash2 :size="14" />删除</button></div>
         </article>
+        <footer v-if="matchingRuns.length" class="load-run-list-footer"><span>当前显示 {{ filteredRuns.length }} / {{ matchingRuns.length }} 条</span><button v-if="filteredRuns.length < matchingRuns.length" data-testid="load-run-more" class="secondary-command" type="button" @click="displayLimit += 8">显示更多</button></footer>
       </div>
     </template>
     <p v-if="feedback" class="load-feedback">{{ feedback }}</p>

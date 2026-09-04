@@ -82,6 +82,23 @@ const loadRun = {
   finished_at: '2026-09-03T08:03:00Z', updated_at: '2026-09-03T08:03:00Z', summary: {},
   configuration: { scenario: { name: '登录到模型详情核心链路' }, agents: [{ id: 'load-agent-1', name: '上海专用压测节点' }] },
 };
+const loadRuns = [
+  loadRun,
+  ...Array.from({ length: 12 }, (_, index) => ({
+    ...loadRun,
+    id: `load-run-history-${index + 1}`,
+    state: index % 4 === 0 ? 'failed' : 'finished',
+    verdict: index % 4 === 0 ? 'failed' : 'passed',
+    created_at: `2026-09-0${3 - (index % 2)}T0${7 - (index % 6)}:00:00Z`,
+    configuration: { ...loadRun.configuration, scenario: { name: `3D 核心读链路压测 ${index + 1}` } },
+  })),
+  {
+    ...loadRun,
+    id: 'load-run-campus-1',
+    project_id: 'project-2',
+    configuration: { ...loadRun.configuration, scenario: { name: '校园应用登录压测' } },
+  },
+];
 const loadReport = {
   run_id: loadRun.id, state: 'finished', verdict: 'failed', verdict_label: '未通过',
   verdict_explanation: '目标负载已达到，但有必选性能阈值未通过。',
@@ -193,7 +210,7 @@ function createServer() {
     }
     if (url.pathname === '/api/api-testing/v1/context-options') {
       return sendJson(res, {
-        projects: [{ id: 'project-1', name: '3D 项目' }],
+        projects: [{ id: 'project-1', name: '3D 项目' }, { id: 'project-2', name: '校园应用' }],
         source_revisions: [{ id: 'source-revision-1', source_id: 'source-1', project_id: 'project-1', name: 'Apifox 接口', revision_number: 3, endpoint_count: 3 }],
         environment_revisions: [{ id: 'environment-revision-1', environment_id: 'environment-1', project_id: 'project-1', name: '生产环境（新）- 腾讯云', revision: 2 }],
       });
@@ -226,7 +243,7 @@ function createServer() {
       created_at: '2026-08-25T08:00:00Z', updated_at: '2026-08-26T08:30:00Z',
     }] });
     if (url.pathname === '/api/api-testing/v1/executions' && req.method === 'GET') return sendJson(res, { executions: [] });
-    if (url.pathname === '/api/api-testing/v1/load-runs' && req.method === 'GET') return sendJson(res, { runs: [loadRun] });
+    if (url.pathname === '/api/api-testing/v1/load-runs' && req.method === 'GET') return sendJson(res, { runs: loadRuns });
     if (url.pathname === '/api/api-testing/v1/load-agents' && req.method === 'GET') return sendJson(res, { agents: loadAgents });
     if (url.pathname === '/api/api-testing/v1/load-scenarios' && req.method === 'GET') return sendJson(res, { scenarios: [loadScenario] });
     if (url.pathname === '/api/api-testing/v1/load-scenario-versions/load-version-1' && req.method === 'GET') return sendJson(res, { version: {
@@ -239,6 +256,14 @@ function createServer() {
       id: 'analysis-1', run_id: loadRun.id, model: 'qwen-plus', prompt_version: 'api-load-analysis.v1', evidence_hash: 'abcdef1234567890', state: 'completed', error: '', created_at: '2026-09-03T08:03:10Z',
       result: { conclusion: '主要瓶颈位于目标服务响应时间。', bottleneck_category: 'target_service', evidence: ['latency.summary', 'threshold.p95_ms'], recommendations: [{ priority: 'high', action: '检查模型详情查询慢 SQL', verification: '使用相同负载和环境版本重新执行' }], next_run: { load_model: 'constant-arrival-rate', target: 100, duration_seconds: 120, agent_suggestion: '保持节点不变' }, confidence: { level: 'low', reason: '缺失一个指标窗口' } },
     } });
+    if (url.pathname === '/api/api-testing/v1/load-runs/load-run-campus-1' && req.method === 'GET') {
+      const run = loadRuns.find(item => item.id === 'load-run-campus-1');
+      return sendJson(res, { run, shards: [] });
+    }
+    if (url.pathname === '/api/api-testing/v1/load-runs/load-run-campus-1/report') {
+      return sendJson(res, { report: { ...loadReport, run_id: 'load-run-campus-1' } });
+    }
+    if (url.pathname === '/api/api-testing/v1/load-runs/load-run-campus-1/ai-analysis') return sendJson(res, { analysis: null });
     if (url.pathname === '/api/api-testing/v1/providers/apifox/credential' && req.method === 'GET') {
       return sendJson(res, { credential: { provider: 'apifox', configured: true, fingerprint: 'visual-check', updated_at: null } });
     }
@@ -328,12 +353,23 @@ async function assertLoadReportResponsive(page, url) {
     await page.goto(`${url}#/load-reports?run_id=load-run-1`, { waitUntil: 'networkidle' });
     if (viewport.width <= 920) await page.waitForFunction(() => document.querySelector('.side-rail')?.getBoundingClientRect().right <= 0);
     await page.getByRole('heading', { name: '性能报告', exact: true }).waitFor();
+    await expect(page.getByTestId('load-report-history-list')).toHaveCount(0);
+    await expect(page.getByTestId('load-report-decision-hero')).toBeVisible();
     await page.getByText('目标负载已达到，但有必选性能阈值未通过。').waitFor();
     await page.getByText('低置信度：缺失一个指标窗口').waitFor();
     await assertNoHorizontalOverflow(page, `load report ${label}`);
     await page.screenshot({ path: path.join(ARTIFACTS, `load-report-${label}.png`), fullPage: true });
   }
   await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto(`${url}#/load-reports?run_id=load-run-1`, { waitUntil: 'networkidle' });
+  await page.getByTestId('load-report-history-toggle').click();
+  await expect(page.getByTestId('load-report-history-list')).toBeVisible();
+  await expect(page.locator('.load-report-run-list > button')).toHaveCount(8);
+  await expect(page.getByTestId('load-report-application')).toHaveValue('project-1');
+  await page.screenshot({ path: path.join(ARTIFACTS, 'load-report-history-desktop.png'), fullPage: true });
+  await page.getByTestId('load-report-application').selectOption('project-2');
+  await expect(page.locator('.load-report-run-list > button')).toHaveCount(1);
+  await expect(page.getByText('校园应用登录压测', { exact: true })).toBeVisible();
   await page.goto(url, { waitUntil: 'networkidle' });
 }
 
@@ -389,18 +425,26 @@ async function assertLoadRunsResponsive(page, url) {
     if (viewport.width <= 920) await page.waitForFunction(() => document.querySelector('.side-rail')?.getBoundingClientRect().right <= 0);
     await page.getByRole('heading', { name: '压测执行', exact: true }).waitFor();
     await page.getByText('自动刷新', { exact: true }).waitFor();
-    await page.getByText(loadScenario.name, { exact: true }).waitFor();
+    await page.getByText(loadScenario.name, { exact: true }).first().waitFor();
+    await expect(page.locator('[data-testid^="load-run-card-"]')).toHaveCount(8);
+    await expect(page.getByTestId('load-run-application')).toHaveValue('project-1');
     await assertNoHorizontalOverflow(page, `load runs ${label}`);
     await page.screenshot({ path: path.join(ARTIFACTS, `load-runs-${label}.png`), fullPage: true });
   }
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto(`${url}#/load-runs`, { waitUntil: 'networkidle' });
+  await page.getByTestId('load-run-more').click();
+  await expect(page.locator('[data-testid^="load-run-card-"]')).toHaveCount(13);
+  await page.getByTestId('load-run-application').selectOption('project-2');
+  await expect(page.locator('[data-testid^="load-run-card-"]')).toHaveCount(1);
+  await expect(page.getByText('校园应用登录压测', { exact: true })).toBeVisible();
   await page.getByTestId('load-run-new').click();
   await page.getByText('所属应用 / API 项目', { exact: true }).waitFor();
   await page.getByTestId('load-run-environment').waitFor();
   await page.getByText('目标环境（可切换）').waitFor();
   await page.getByRole('button', { name: '返回执行列表' }).first().click();
-  await page.getByText(loadScenario.name, { exact: true }).waitFor();
+  await expect(page.getByTestId('load-run-application')).toHaveValue('project-2');
+  await page.getByText('校园应用登录压测', { exact: true }).waitFor();
   await page.goto(url, { waitUntil: 'networkidle' });
 }
 

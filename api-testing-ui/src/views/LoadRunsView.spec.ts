@@ -71,7 +71,7 @@ describe('LoadRunsView', () => {
     expect(wrapper.find('[data-testid="run-preflight-r1"]').exists()).toBe(false)
     expect(wrapper.get('[data-testid="run-rerun-r1"]').text()).toContain('再次压测')
     await vi.advanceTimersByTimeAsync(3000)
-    expect(loadRuns).toHaveBeenLastCalledWith('p1', true)
+    expect(loadRuns).toHaveBeenLastCalledWith(undefined, true)
     await wrapper.get('[data-testid="run-delete-r1"]').trigger('click')
     expect(remove).toHaveBeenCalledWith('r1')
     wrapper.unmount()
@@ -96,6 +96,43 @@ describe('LoadRunsView', () => {
     await wrapper.get('[data-testid="run-preflight-r1"]').trigger('click')
     expect(wrapper.text()).toContain('预检未通过：业务断言失败')
     expect(wrapper.text()).not.toContain('✅ 业务断言失败')
+    wrapper.unmount()
+  })
+
+  it('defaults to the current application, filters other applications and limits the first history batch', async () => {
+    const context = useContextStore(); Object.assign(context, {
+      projectId: 'p1',
+      projects: [{ id: 'p1', name: '3D家用' }, { id: 'p2', name: '共享商城' }],
+      environmentRevisions: [],
+    })
+    vi.spyOn(context, 'loadSavedContext').mockResolvedValue(); vi.spyOn(context, 'loadOptions').mockResolvedValue()
+    const store = useLoadTestingStore()
+    store.scenarios = []
+    const makeRun = (index: number, projectId = 'p1') => ({
+      id: `r${index}`, project_id: projectId, scenario_version_id: 'v1', environment_revision_id: 'env1',
+      load_model: 'constant-vus' as const, queue_priority: 'normal' as const,
+      configuration: { scenario: { name: `${projectId === 'p1' ? '3D家用' : '共享商城'}链路 ${index}` }, agents: [] },
+      state: 'finished' as const, verdict: 'passed' as const, stop_reason: '', ai_analysis_state: 'pending', summary: {},
+      created_at: `2026-09-04T12:${String(index).padStart(2, '0')}:00Z`, started_at: null, finished_at: null, updated_at: '',
+    })
+    store.runs = [...Array.from({ length: 13 }, (_, index) => makeRun(index + 1)), makeRun(20, 'p2')]
+    vi.spyOn(store, 'loadScenarios').mockResolvedValue([]); vi.spyOn(store, 'loadAgents').mockResolvedValue([])
+    const loadRuns = vi.spyOn(store, 'loadRuns').mockResolvedValue(store.runs)
+    const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/', name: 'load-runs', component: LoadRunsView }, { path: '/reports', name: 'load-reports', component: { template: '<div />' } }] })
+    const wrapper = mount(LoadRunsView, { global: { plugins: [router] } })
+    await flushPromises()
+
+    expect(loadRuns).toHaveBeenCalledWith(undefined)
+    expect((wrapper.get('[data-testid="load-run-application"]').element as HTMLSelectElement).value).toBe('p1')
+    expect(wrapper.findAll('[data-testid^="load-run-card-"]')).toHaveLength(8)
+    expect(wrapper.text()).toContain('当前显示 8 / 13 条')
+    await wrapper.get('[data-testid="load-run-more"]').trigger('click')
+    expect(wrapper.findAll('[data-testid^="load-run-card-"]')).toHaveLength(13)
+
+    await wrapper.get('[data-testid="load-run-application"]').setValue('p2')
+    expect(wrapper.findAll('[data-testid^="load-run-card-"]')).toHaveLength(1)
+    expect(wrapper.text()).toContain('共享商城链路 20')
+    expect(wrapper.text()).not.toContain('3D家用链路 1')
     wrapper.unmount()
   })
 })
