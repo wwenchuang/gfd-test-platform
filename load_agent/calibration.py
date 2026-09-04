@@ -11,6 +11,8 @@ import tempfile
 import time
 import uuid
 
+from .resource_limits import cpu_limit_cores
+
 
 CALIBRATION_SCRIPT = """import { Counter } from 'k6/metrics';
 export const options = { scenarios: { local_capacity: {
@@ -37,7 +39,7 @@ def hardware_signature():
             platform.system(),
             platform.machine(),
             platform.release(),
-            str(os.cpu_count() or 0),
+            str(cpu_limit_cores()),
             _memory_limit_marker(),
         ]
     )

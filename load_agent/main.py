@@ -13,6 +13,7 @@ from .calibration import CalibrationRunner, calibration_state, hardware_signatur
 from .client import AgentClient, AgentClientError
 from .config import AgentConfig
 from .connectivity import run_connectivity_command
+from .resource_limits import cpu_limit_cores
 from .runtime import K6Runtime
 
 
@@ -166,7 +167,7 @@ def main():
         "max_vus": config.max_vus,
         "max_iterations_per_second": config.max_iterations_per_second,
         "max_duration_seconds": config.max_duration_seconds,
-        "cpu_cores": max(1, os.cpu_count() or 1),
+        "cpu_cores": cpu_limit_cores(),
         "memory_mb": _memory_limit_mb(),
     }
     client = AgentClient(config)

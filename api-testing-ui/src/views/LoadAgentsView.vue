@@ -183,7 +183,7 @@ function dateTime(value?: string | null): string {
 
     <div class="load-agent-guide">
       <Server :size="18" />
-      <div><strong>节点怎么选</strong><span>专用服务器设为“首选”；共享服务器设为“普通”；平台本机设为“备用”。心跳、校准结果和容量每 3 秒自动更新。</span></div>
+      <div><strong>节点怎么选</strong><span>专用服务器设为“首选”；资源充足且压测期间没有其他重任务的服务器可设为“普通”；需要优先保护平台服务时设为“备用”。心跳、校准结果和容量每 3 秒自动更新。</span></div>
     </div>
     <div v-if="store.agents.length" data-testid="load-agent-summary" class="load-agent-summary" aria-label="压测节点实时汇总">
       <div><span>节点总数</span><strong>{{ agentSummary.total }}</strong><small>已注册的全部执行节点</small></div>
