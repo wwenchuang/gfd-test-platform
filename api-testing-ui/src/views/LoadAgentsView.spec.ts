@@ -124,6 +124,29 @@ describe('LoadAgentsView', () => {
     expect(wrapper.text()).toContain('失败原因：校准结果缺少迭代率或虚拟用户数')
   })
 
+  it('automatically replaces calibrating with the returned result without manual refresh', async () => {
+    vi.useFakeTimers()
+    const store = useLoadTestingStore()
+    let calls = 0
+    const load = vi.spyOn(store, 'loadAgents').mockImplementation(async () => {
+      calls += 1
+      store.agents = [agent(calls === 1
+        ? { calibration_state: 'calibrating', health: { schedulable: false, calibration: { state: 'calibrating' } } }
+        : { calibration_state: 'valid' })]
+      return store.agents
+    })
+    const wrapper = mount(LoadAgentsView)
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('校准中')
+    await vi.advanceTimersByTimeAsync(3000)
+    await flushPromises()
+    expect(load).toHaveBeenLastCalledWith(true)
+    expect(wrapper.text()).toContain('校准有效')
+    wrapper.unmount()
+    vi.useRealTimers()
+  })
+
   it('creates a one-time enrollment, copies its command and warns about HTTP transport', async () => {
     Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: vi.fn().mockResolvedValue(undefined) } })
     const store = useLoadTestingStore()

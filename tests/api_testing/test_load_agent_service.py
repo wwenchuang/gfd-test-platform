@@ -271,6 +271,27 @@ def test_offline_agent_calibration_request_explains_how_to_recover(load_factory,
     assert "启动Agent" in str(offline.value)
 
 
+def test_stale_heartbeat_cannot_accept_a_calibration_command(load_factory, agent_permissions):
+    service = _service(load_factory)
+    enrollment = service.create_enrollment(
+        {"name": "心跳超时节点", "scheduling_tier": "preferred"}, "admin"
+    )
+    registration = service.register(enrollment.token, CAPABILITIES)
+    service.heartbeat(registration.secret, {
+        "agent_version": "1.0.0", "k6_version": "0.52.0", "hard_limits": HARD_LIMITS,
+        "current_usage": {"processes": 0, "vus": 0},
+        "health": {"schedulable": False, "calibration": {"state": "missing"}}, "egress_ip": "",
+    })
+
+    with pytest.raises(LoadAgentError) as stale:
+        _service(load_factory, FIXED_NOW + timedelta(seconds=46)).request_calibration(
+            registration.agent.id, "admin"
+        )
+
+    assert stale.value.code == "agent_offline"
+    assert "心跳超时" in str(stale.value)
+
+
 def test_target_connectivity_command_survives_heartbeat_until_matching_result(load_factory, agent_permissions):
     service = _service(load_factory)
     enrollment = service.create_enrollment({"name": "连通性节点", "scheduling_tier": "normal"}, "admin")

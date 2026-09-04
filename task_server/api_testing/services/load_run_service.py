@@ -18,6 +18,7 @@ from ..models.load_testing import (
     ApiLoadScenarioVersion,
 )
 from .load_allocator import LoadAllocationError, allocate_run, calibration_state
+from .load_agent_service import agent_heartbeat_is_fresh
 from .load_scenario_compiler import LoadScenarioCompileError, compile_scenario
 
 
@@ -497,6 +498,7 @@ class LoadRunService:
         if policy.get("node_group"):
             query = query.where(ApiLoadAgent.node_group == policy["node_group"])
         agents = tuple(session.scalars(query.order_by(ApiLoadAgent.scheduling_tier, ApiLoadAgent.id)))
+        agents = tuple(item for item in agents if agent_heartbeat_is_fresh(item, now=self.now()))
         if policy["agent_ids"] and {item.id for item in agents} != set(policy["agent_ids"]):
             raise LoadRunError("指定节点不存在或当前不在线", status=409, code="agent_unavailable")
         if not agents:

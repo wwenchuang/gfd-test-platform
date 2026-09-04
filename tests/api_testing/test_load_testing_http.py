@@ -1,6 +1,6 @@
 """User-facing HTTP contracts for performance scenarios, runs, reports and Agents."""
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -8,7 +8,7 @@ import pytest
 from sqlalchemy import select
 
 from task_server.api_testing import access
-from task_server.api_testing.load_testing_http import _prepare_run_connectivity, handle_load_testing_request
+from task_server.api_testing.load_testing_http import _agent_view, _prepare_run_connectivity, handle_load_testing_request
 from task_server.api_testing.models.environment import ApiEnvironment, ApiEnvironmentRevision, ApiEnvironmentService
 from task_server.api_testing.models.load_testing import (
     ApiLoadAgent,
@@ -141,6 +141,23 @@ def test_agent_calibration_action_requires_management_permission(load_factory, u
 
     assert status == 202
     assert result["agent"]["calibration_state"] == "calibrating"
+
+
+def test_stale_agent_view_ends_false_online_and_calibrating_states():
+    item = SimpleNamespace(
+        id="stale-agent", name="离线专用节点", status="online", scheduling_tier="preferred",
+        node_group="腾讯云", labels={}, agent_version="0.1.1", k6_version="0.52.0",
+        hard_limits={}, soft_limits={}, current_usage={}, egress_ip="",
+        last_heartbeat_at=datetime.now(timezone.utc) - timedelta(seconds=60), offline_reason="",
+        health={"schedulable": False, "calibration": {"state": "calibrating"}, "pending_command": {"type": "calibrate"}},
+    )
+
+    view = _agent_view(item)
+
+    assert view["status"] == "offline"
+    assert view["offline_reason"] == "heartbeat_timeout"
+    assert view["calibration_state"] == "failed"
+    assert "心跳超时" in view["health"]["calibration"]["message"]
 
 
 def test_run_connectivity_uses_selected_shards_and_environment_service_targets(load_factory, catalog, users, monkeypatch):

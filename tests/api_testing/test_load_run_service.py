@@ -108,6 +108,7 @@ def run_records(load_factory, monkeypatch):
                 soft_limits={"max_processes": 2, "max_vus": 80, "max_iterations_per_second": 120},
                 current_usage={"processes": 0, "vus": 0, "iterations_per_second": 0},
                 health={"schedulable": True, "calibration": _calibration()},
+                last_heartbeat_at=NOW,
                 **_audit("admin"),
             )
             session.add(agent)

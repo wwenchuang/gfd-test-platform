@@ -26,7 +26,7 @@ from .models.environment import ApiEnvironmentService
 from .repositories.load_testing_repository import LoadTestingRepository
 from .services.case_service import CaseService
 from .services.environment_service import EnvironmentService
-from .services.load_agent_service import LoadAgentError, LoadAgentService
+from .services.load_agent_service import LoadAgentError, LoadAgentService, agent_heartbeat_is_fresh
 from .services.load_ai_analysis_service import LoadAiAnalysisError, LoadAiAnalysisService
 from .services.load_allocator import calibration_state
 from .services.load_dataset_service import LoadDatasetError, LoadDatasetService
@@ -467,15 +467,30 @@ def _event_view(item):
 
 
 def _agent_view(item):
+    health = copy.deepcopy(item.health)
+    status = item.status
+    offline_reason = item.offline_reason
+    state = calibration_state(item)
+    if status == "online" and not agent_heartbeat_is_fresh(item):
+        status = "offline"
+        offline_reason = "heartbeat_timeout"
+        if state == "calibrating":
+            calibration = copy.deepcopy(health.get("calibration") if isinstance(health, dict) else {})
+            calibration.update(
+                state="failed",
+                message="节点心跳超时，校准未完成；恢复 Agent 后平台会自动接收新的校准结果",
+            )
+            health = {**(health if isinstance(health, dict) else {}), "schedulable": False, "calibration": calibration}
+            state = "failed"
     return {
-        "id": item.id, "name": item.name, "status": item.status,
+        "id": item.id, "name": item.name, "status": status,
         "scheduling_tier": item.scheduling_tier, "node_group": item.node_group,
         "labels": copy.deepcopy(item.labels), "agent_version": item.agent_version,
         "k6_version": item.k6_version, "hard_limits": copy.deepcopy(item.hard_limits),
         "soft_limits": copy.deepcopy(item.soft_limits), "current_usage": copy.deepcopy(item.current_usage),
-        "health": copy.deepcopy(item.health), "calibration_state": calibration_state(item),
+        "health": health, "calibration_state": state,
         "egress_ip": item.egress_ip, "last_heartbeat_at": _json_time(vars(item).get("last_heartbeat_at")),
-        "offline_reason": item.offline_reason,
+        "offline_reason": offline_reason,
     }
 
 

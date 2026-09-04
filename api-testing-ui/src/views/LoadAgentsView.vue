@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { Copy, Plus, RefreshCw, Server, SlidersHorizontal } from 'lucide-vue-next'
 
 import type { LoadAgent, LoadAgentEnrollmentResult, LoadCalibrationState, LoadSchedulingTier } from '../api/contracts'
@@ -15,6 +15,7 @@ const enrollmentGroup = ref('')
 const enrollmentTier = ref<LoadSchedulingTier>('preferred')
 const feedback = ref('')
 const canManage = apiTestingHasPermission('api.loadtest.manage_agents')
+let refreshTimer: ReturnType<typeof setTimeout> | null = null
 
 const filteredAgents = computed(() => {
   const keyword = query.value.trim().toLocaleLowerCase('zh-CN')
@@ -36,7 +37,23 @@ const agentSummary = computed(() => {
   }
 })
 
-onMounted(() => { void store.loadAgents() })
+function scheduleRefresh(): void {
+  if (refreshTimer) clearTimeout(refreshTimer)
+  refreshTimer = setTimeout(async () => {
+    refreshTimer = null
+    await store.loadAgents(true)
+    scheduleRefresh()
+  }, 3000)
+}
+
+onMounted(async () => {
+  await store.loadAgents()
+  scheduleRefresh()
+})
+onBeforeUnmount(() => {
+  if (refreshTimer) clearTimeout(refreshTimer)
+  refreshTimer = null
+})
 
 function tier(value: LoadSchedulingTier): { label: string; help: string } {
   return {
@@ -159,14 +176,14 @@ function dateTime(value?: string | null): string {
     <header class="page-toolbar load-page-toolbar">
       <div><p class="eyebrow">性能测试</p><h1>压测节点</h1><p class="page-subtitle">先校准节点容量，再创建压测。平台按调度级别和实测容量选择节点。</p></div>
       <div class="load-toolbar-actions">
-        <button data-testid="load-agents-refresh" class="secondary-command" type="button" :disabled="store.loadingAgents" @click="store.loadAgents"><RefreshCw :size="15" />刷新</button>
+        <button data-testid="load-agents-refresh" class="secondary-command" type="button" :disabled="store.loadingAgents" @click="store.loadAgents()"><RefreshCw :size="15" />刷新</button>
         <button v-if="canManage" data-testid="load-agent-enroll-open" class="primary-command" type="button" @click="openEnrollment"><Plus :size="15" />注册节点</button>
       </div>
     </header>
 
     <div class="load-agent-guide">
       <Server :size="18" />
-      <div><strong>节点怎么选</strong><span>专用服务器设为“首选”；共享服务器设为“普通”；平台本机设为“备用”，只有任务明确允许后才参与。</span></div>
+      <div><strong>节点怎么选</strong><span>专用服务器设为“首选”；共享服务器设为“普通”；平台本机设为“备用”。心跳、校准结果和容量每 3 秒自动更新。</span></div>
     </div>
     <div v-if="store.agents.length" data-testid="load-agent-summary" class="load-agent-summary" aria-label="压测节点实时汇总">
       <div><span>节点总数</span><strong>{{ agentSummary.total }}</strong><small>已注册的全部执行节点</small></div>

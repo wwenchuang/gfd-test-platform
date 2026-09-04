@@ -25,8 +25,8 @@ export const useLoadTestingStore = defineStore('api-load-testing', {
     runPollTimer: null as ReturnType<typeof setTimeout> | null,
   }),
   actions: {
-    async loadAgents(): Promise<LoadAgent[]> {
-      this.loadingAgents = true
+    async loadAgents(silent = false): Promise<LoadAgent[]> {
+      if (!silent) this.loadingAgents = true
       this.agentError = ''
       try {
         const response = await apiClient.get<{ agents: LoadAgent[] }>('/api/api-testing/v1/load-agents')
@@ -36,7 +36,7 @@ export const useLoadTestingStore = defineStore('api-load-testing', {
         this.agentError = message(error, '无法读取压测节点')
         return []
       } finally {
-        this.loadingAgents = false
+        if (!silent) this.loadingAgents = false
       }
     },
     async createEnrollment(input: { name: string; node_group: string; scheduling_tier: string; expires_in_seconds: number }): Promise<LoadAgentEnrollmentResult> {

@@ -15,6 +15,7 @@ from ..models.load_testing import ApiLoadAgent, ApiLoadAgentEnrollment
 
 
 SCHEDULING_TIERS = frozenset({"preferred", "normal", "fallback", "disabled"})
+AGENT_HEARTBEAT_TIMEOUT_SECONDS = 45
 POSITIVE_LIMIT_FIELDS = (
     "max_processes",
     "max_vus",
@@ -97,6 +98,17 @@ def _plain_dict(value, field):
     if not isinstance(value, dict):
         raise LoadAgentError(f"{field} 必须是对象", code="invalid_agent_payload")
     return copy.deepcopy(value)
+
+
+def agent_heartbeat_is_fresh(agent, *, now=None):
+    """Treat the persisted online flag as a hint; fresh heartbeats are authoritative."""
+    if getattr(agent, "status", None) != "online":
+        return False
+    last_heartbeat = getattr(agent, "last_heartbeat_at", None)
+    if last_heartbeat is None:
+        return False
+    current = _now_utc(now or datetime.now(timezone.utc))
+    return _now_utc(last_heartbeat) >= current - timedelta(seconds=AGENT_HEARTBEAT_TIMEOUT_SECONDS)
 
 
 class LoadAgentService:
@@ -284,9 +296,9 @@ class LoadAgentService:
             )
             if agent is None:
                 raise LoadAgentError("压测节点不存在", status=404, code="agent_not_found")
-            if agent.status != "online":
+            if not agent_heartbeat_is_fresh(agent, now=self.now()):
                 raise LoadAgentError(
-                    "节点当前离线，请先启动Agent并等待心跳恢复后再校准",
+                    "节点心跳超时，请先启动Agent并等待心跳恢复后再校准",
                     status=409,
                     code="agent_offline",
                 )
@@ -326,7 +338,7 @@ class LoadAgentService:
             raise LoadAgentError("目标环境没有可检查的服务地址", code="target_missing")
         with self.session_factory.begin() as session:
             agent = session.scalar(select(ApiLoadAgent).where(ApiLoadAgent.id == agent_id).with_for_update())
-            if agent is None or agent.status != "online":
+            if agent is None or not agent_heartbeat_is_fresh(agent, now=self.now()):
                 raise LoadAgentError("压测节点离线，无法检查目标环境", status=409, code="agent_offline")
             usage = agent.current_usage if isinstance(agent.current_usage, dict) else {}
             if float(usage.get("processes") or 0) > 0:
