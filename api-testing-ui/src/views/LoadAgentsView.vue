@@ -209,6 +209,7 @@ function dateTime(value?: string | null): string {
       <section class="load-dialog" role="dialog" aria-modal="true" aria-labelledby="enrollment-title">
         <header><div><p class="eyebrow">一次性注册</p><h2 id="enrollment-title">连接新的压测节点</h2></div><button data-testid="enrollment-close" class="text-command" type="button" @click="closeEnrollment">关闭</button></header>
         <template v-if="!enrollment">
+          <p class="agent-help">服务器不需要安装 Git 或拉取整个平台。先上传并解压最小 Agent 包，再生成令牌。</p>
           <label>节点名称<input v-model="enrollmentName" data-testid="enrollment-name" placeholder="例如：腾讯云压测节点 1" /></label>
           <label>节点分组<input v-model="enrollmentGroup" data-testid="enrollment-group" placeholder="例如：腾讯云上海" /></label>
           <label>初始调度级别<select v-model="enrollmentTier" data-testid="enrollment-tier"><option value="preferred">首选节点（专用服务器）</option><option value="normal">普通节点（共享服务器）</option><option value="fallback">备用节点（需任务明确允许）</option></select></label>
@@ -216,7 +217,7 @@ function dateTime(value?: string | null): string {
         </template>
         <div v-else data-testid="enrollment-result" class="enrollment-result">
           <strong>令牌只显示这一次</strong>
-          <p>有效至 {{ dateTime(enrollment.expires_at) }}。在目标服务器的项目目录执行：</p>
+          <p>有效至 {{ dateTime(enrollment.expires_at) }}。在目标服务器解压后的 Agent 包根目录执行：</p>
           <pre>{{ enrollmentCommand }}</pre>
           <p class="transport-warning">当前平台仍是 HTTP。只有受控私网/VPN可设置允许不安全传输；跨公网部署前必须配置 HTTPS。</p>
           <button data-testid="enrollment-copy" class="primary-command" type="button" @click="copyCommand"><Copy :size="15" />复制启动命令</button>
