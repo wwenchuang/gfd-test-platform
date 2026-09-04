@@ -77,6 +77,12 @@ function dateTime(value: string): string {
   const date = new Date(value)
   return Number.isNaN(date.getTime()) ? value || '暂无' : date.toLocaleString('zh-CN', { hour12: false })
 }
+function scenarioSummary(item: LoadScenario): string {
+  const value = String(item.description || '').trim()
+  if (!value) return '未填写说明'
+  if (value.includes('```')) return '场景说明待补充：请写清压测目标、压力范围和风险边界。'
+  return value.replace(/\s+/g, ' ')
+}
 </script>
 
 <template>
@@ -90,7 +96,7 @@ function dateTime(value: string): string {
     <div v-else class="load-scenario-list">
       <article v-for="item in store.scenarios" :key="item.id">
         <header><div><strong>{{ item.name }}</strong><small>{{ item.scenario_type === 'workflow' ? '业务链路压测' : '单接口压测' }} · {{ item.active_version_id ? '已有可用版本' : '等待保存版本' }}</small></div><span class="load-status-chip ready">可用</span></header>
-        <p>{{ item.description || '未填写说明' }}</p>
+        <p>{{ scenarioSummary(item) }}</p>
         <footer><div class="load-card-actions"><button :data-testid="`scenario-run-${item.id}`" class="primary-command" type="button" @click="startRun(item)"><Activity :size="14" />创建压测</button><button v-if="canEdit" :data-testid="`scenario-edit-${item.id}`" class="secondary-command" type="button" @click="edit(item)"><Pencil :size="14" />编辑并创建新版本</button><button v-if="canEdit" :data-testid="`scenario-archive-${item.id}`" class="danger-command" type="button" @click="archive(item)"><Archive :size="14" />归档</button></div><small>更新于 {{ dateTime(item.updated_at) }}</small></footer>
       </article>
     </div>

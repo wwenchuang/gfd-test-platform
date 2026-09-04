@@ -67,4 +67,18 @@ describe('LoadScenariosView', () => {
     expect(router.currentRoute.value.name).toBe('load-runs')
     expect(router.currentRoute.value.query.scenario_id).toBe('s1')
   })
+
+  it('does not expose legacy markdown fences as the scenario summary', async () => {
+    const context = useContextStore(); Object.assign(context, { projectId: 'p1', sourceRevisionId: 'src1', projects: [{ id: 'p1', name: '智小白3D家用' }] })
+    vi.spyOn(context, 'loadSavedContext').mockResolvedValue(); vi.spyOn(context, 'loadOptions').mockResolvedValue()
+    const assets = useAssetsStore(); assets.endpoints = []; vi.spyOn(assets, 'load').mockResolvedValue()
+    const store = useLoadTestingStore(); store.scenarios = [{ id: 's1', project_id: 'p1', name: '历史压测', description: '``` AI; 1 VU,。', scenario_type: 'single_interface', active_version_id: 'v1', status: 'active', created_at: '', updated_at: '' }]
+    vi.spyOn(store, 'loadScenarios').mockResolvedValue(store.scenarios)
+    const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/', name: 'load-scenarios', component: LoadScenariosView }, { path: '/runs', name: 'load-runs', component: { template: '<div />' } }] }); await router.push('/'); await router.isReady()
+    const wrapper = mount(LoadScenariosView, { global: { plugins: [router] } })
+    await flushPromises()
+
+    expect(wrapper.text()).not.toContain('```')
+    expect(wrapper.text()).toContain('场景说明待补充')
+  })
 })

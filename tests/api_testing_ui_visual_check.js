@@ -80,7 +80,7 @@ const loadScenarios = [
     ...loadScenario,
     id: 'load-scenario-2',
     name: '模型列表到详情只读链路',
-    description: '验证模型列表、详情和状态查询在目标压力下保持稳定。',
+    description: '``` AI; 1 VU,。',
     scenario_type: 'workflow',
     updated_at: '2026-09-03T09:00:00Z',
   },
@@ -420,9 +420,10 @@ async function assertLoadScenariosResponsive(page, url) {
     await page.getByRole('heading', { name: '性能场景', exact: true }).waitFor();
     await page.getByText('所属应用 / API 项目', { exact: true }).waitFor();
     await page.getByText(loadScenario.name, { exact: true }).waitFor();
+    await page.getByText(/场景说明待补充/).waitFor();
     if (label === 'wide') {
       const boxes = await page.locator('.load-scenario-list > article').evaluateAll(items => items.map(item => item.getBoundingClientRect()).map(box => ({ x: box.x, width: box.width })));
-      if (boxes.length < 2 || boxes[0].x === boxes[1].x || boxes.some(box => box.width > 561)) throw new Error(`load scenario cards are not compact on wide screens: ${JSON.stringify(boxes)}`);
+      if (boxes.length < 2 || boxes[0].x === boxes[1].x || boxes.some(box => box.width > 481)) throw new Error(`load scenario cards are not compact on wide screens: ${JSON.stringify(boxes)}`);
     }
     await assertNoHorizontalOverflow(page, `load scenarios ${label}`);
     await page.screenshot({ path: path.join(ARTIFACTS, `load-scenarios-${label}.png`), fullPage: true });
