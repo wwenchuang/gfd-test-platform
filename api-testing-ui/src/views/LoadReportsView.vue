@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { Bell, ChevronDown, History, RefreshCw } from 'lucide-vue-next'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import LoadAiAnalysis from '../components/LoadAiAnalysis.vue'
 import LoadMetricChart from '../components/LoadMetricChart.vue'
 import LoadRunConsole from '../components/LoadRunConsole.vue'
@@ -11,6 +11,7 @@ import { useLoadTestingStore } from '../stores/loadTesting'
 import { apiTestingHasPermission } from '../utils/authRedirect'
 
 const route = useRoute()
+const router = useRouter()
 const context = useContextStore()
 const store = useLoadTestingStore()
 const runId = ref('')
@@ -60,7 +61,11 @@ watch(runId, async (next, previous) => { if (next !== previous) await openRun() 
 watch([runQuery, runState], () => { historyLimit.value = 8 })
 watch(applicationFilter, next => {
   historyLimit.value = 8
-  if (next && selectedRun.value?.project_id !== next) runId.value = matchingRuns.value[0]?.id || ''
+  if (next && selectedRun.value?.project_id !== next) selectRun(matchingRuns.value[0]?.id || '', false)
+})
+watch(() => route.query.run_id, next => {
+  const requested = String(next || '')
+  if (requested && requested !== runId.value && store.runs.some(item => item.id === requested)) runId.value = requested
 })
 watch(() => selectedRun.value?.state, async state => {
   if (state && ['finished', 'failed', 'cancelled'].includes(state) && !report.value) {
@@ -82,6 +87,14 @@ async function openRun(): Promise<void> {
     if (['finished', 'failed', 'cancelled'].includes(run.state)) await loadReport()
     else await store.connectRunEvents(run.id)
   } finally { loading.value = false }
+}
+function selectRun(nextRunId: string, closeHistory = true): void {
+  if (!nextRunId) return
+  runId.value = nextRunId
+  if (closeHistory) historyOpen.value = false
+  if (String(route.query.run_id || '') !== nextRunId) {
+    router.replace({ query: { ...route.query, run_id: nextRunId } })
+  }
 }
 function scheduleLiveRefresh(): void {
   if (liveTimer) clearTimeout(liveTimer)
@@ -169,7 +182,7 @@ function hasAgentError(agent: Record<string, unknown>): boolean {
       <button data-testid="load-report-history-toggle" class="load-report-switcher-trigger" type="button" :aria-expanded="historyOpen" @click="historyOpen = !historyOpen"><span><History :size="16" /><b>历史执行</b><small>{{ selectedApplicationName }} · {{ scenarioName || '选择一次执行' }}</small></span><span>{{ matchingRuns.length }} 条<ChevronDown :size="15" :class="{ rotated: historyOpen }" /></span></button>
       <div v-if="historyOpen" class="load-report-browser" data-testid="load-report-history-list">
         <div class="load-report-filters"><input v-model="runQuery" type="search" placeholder="搜索场景或执行编号" /><label><span>应用</span><select v-model="applicationFilter" data-testid="load-report-application"><option v-for="project in applicationOptions" :key="project.id" :value="project.id">{{ project.name }}</option></select></label><label><span>状态</span><select v-model="runState"><option value="all">全部状态</option><option value="running">运行中</option><option value="finished">已完成</option><option value="failed">失败</option><option value="cancelled">已取消</option></select></label></div>
-        <div class="load-report-run-list"><button v-for="run in visibleRuns" :key="run.id" :data-testid="`report-run-${run.id}`" :class="{ active: run.id === runId }" type="button" @click="runId = run.id; historyOpen = false"><span><em>{{ applicationName(run.project_id) }}</em><strong>{{ runName(run) }}</strong><small>{{ runDate(run.created_at) }} · {{ loadModelLabel(run.load_model) }}</small></span><b :class="`state-${run.state}`">{{ stateLabel(run.state) }}</b></button><p v-if="!visibleRuns.length" class="compact-empty">没有匹配的执行记录。</p></div>
+        <div class="load-report-run-list"><button v-for="run in visibleRuns" :key="run.id" :data-testid="`report-run-${run.id}`" :class="{ active: run.id === runId }" type="button" @click="selectRun(run.id)"><span><em>{{ applicationName(run.project_id) }}</em><strong>{{ runName(run) }}</strong><small>{{ runDate(run.created_at) }} · {{ loadModelLabel(run.load_model) }}</small></span><b :class="`state-${run.state}`">{{ stateLabel(run.state) }}</b></button><p v-if="!visibleRuns.length" class="compact-empty">没有匹配的执行记录。</p></div>
         <footer v-if="matchingRuns.length" class="load-report-history-footer"><span>当前显示 {{ visibleRuns.length }} / {{ matchingRuns.length }} 条</span><button v-if="visibleRuns.length < matchingRuns.length" class="secondary-command" type="button" @click="historyLimit += 8">显示更多</button></footer>
       </div>
     </section>

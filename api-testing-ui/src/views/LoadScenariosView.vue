@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { Archive, Pencil, Plus, RefreshCw } from 'lucide-vue-next'
+import { Activity, Archive, Pencil, Plus, RefreshCw } from 'lucide-vue-next'
+import { useRouter } from 'vue-router'
 import type { LoadScenario, LoadScenarioDefinition } from '../api/contracts'
 import LoadScenarioWizard from '../components/LoadScenarioWizard.vue'
 import { useAssetsStore } from '../stores/assets'
@@ -9,6 +10,7 @@ import { useLoadTestingStore } from '../stores/loadTesting'
 import { apiTestingHasPermission } from '../utils/authRedirect'
 
 const context = useContextStore(); const assets = useAssetsStore(); const store = useLoadTestingStore()
+const router = useRouter()
 const creating = ref(false); const saving = ref(false); const localError = ref('')
 const editingScenario = ref<LoadScenario | null>(null)
 const initialDefinition = ref<LoadScenarioDefinition | null>(null)
@@ -44,6 +46,9 @@ function closeWizard(): void {
   creating.value = false
   editingScenario.value = null
   initialDefinition.value = null
+}
+function startRun(item: LoadScenario): void {
+  router.push({ name: 'load-runs', query: { scenario_id: item.id } })
 }
 async function save(definition: LoadScenarioDefinition): Promise<void> {
   if (!context.projectId) { localError.value = '请先在工作台选择接口项目'; return }
@@ -86,7 +91,7 @@ function dateTime(value: string): string {
       <article v-for="item in store.scenarios" :key="item.id">
         <header><div><strong>{{ item.name }}</strong><small>{{ item.scenario_type === 'workflow' ? '业务链路压测' : '单接口压测' }} · {{ item.active_version_id ? '已有可用版本' : '等待保存版本' }}</small></div><span class="load-status-chip ready">可用</span></header>
         <p>{{ item.description || '未填写说明' }}</p>
-        <footer><small>更新于 {{ dateTime(item.updated_at) }}</small><div class="load-card-actions"><button v-if="canEdit" :data-testid="`scenario-edit-${item.id}`" class="secondary-command" type="button" @click="edit(item)"><Pencil :size="14" />编辑并创建新版本</button><button v-if="canEdit" :data-testid="`scenario-archive-${item.id}`" class="danger-command" type="button" @click="archive(item)"><Archive :size="14" />归档</button></div></footer>
+        <footer><div class="load-card-actions"><button :data-testid="`scenario-run-${item.id}`" class="primary-command" type="button" @click="startRun(item)"><Activity :size="14" />创建压测</button><button v-if="canEdit" :data-testid="`scenario-edit-${item.id}`" class="secondary-command" type="button" @click="edit(item)"><Pencil :size="14" />编辑并创建新版本</button><button v-if="canEdit" :data-testid="`scenario-archive-${item.id}`" class="danger-command" type="button" @click="archive(item)"><Archive :size="14" />归档</button></div><small>更新于 {{ dateTime(item.updated_at) }}</small></footer>
       </article>
     </div>
     <p v-if="saving" class="load-feedback">正在由服务端校验并保存不可变版本…</p>

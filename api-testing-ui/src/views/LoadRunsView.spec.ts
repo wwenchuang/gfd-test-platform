@@ -70,11 +70,34 @@ describe('LoadRunsView', () => {
     expect(wrapper.find('[data-testid="run-connectivity-r1"]').exists()).toBe(false)
     expect(wrapper.find('[data-testid="run-preflight-r1"]').exists()).toBe(false)
     expect(wrapper.get('[data-testid="run-rerun-r1"]').text()).toContain('再次压测')
+    await wrapper.get('[data-testid="run-rerun-r1"]').trigger('click')
+    expect(wrapper.text()).toContain('请核对目标环境和负载')
+    await wrapper.get('[data-testid="load-run-back"]').trigger('click')
+    expect(wrapper.text()).not.toContain('请核对目标环境和负载')
     await vi.advanceTimersByTimeAsync(3000)
     expect(loadRuns).toHaveBeenLastCalledWith(undefined, true)
     await wrapper.get('[data-testid="run-delete-r1"]').trigger('click')
     expect(remove).toHaveBeenCalledWith('r1')
     wrapper.unmount()
+  })
+
+  it('opens a scenario deep link and clears it when returning to the execution list', async () => {
+    const context = useContextStore(); Object.assign(context, { projectId: 'p1', projects: [{ id: 'p1', name: '3D家用' }], environmentRevisions: [] })
+    vi.spyOn(context, 'loadSavedContext').mockResolvedValue(); vi.spyOn(context, 'loadOptions').mockResolvedValue()
+    const store = useLoadTestingStore()
+    const scenario = { id: 's1', project_id: 'p1', name: '核心链路', description: '', scenario_type: 'workflow' as const, active_version_id: 'v1', status: 'active', created_at: '', updated_at: '' }
+    store.scenarios = [scenario]
+    vi.spyOn(store, 'loadScenarios').mockResolvedValue([scenario]); vi.spyOn(store, 'loadAgents').mockResolvedValue([]); vi.spyOn(store, 'loadRuns').mockResolvedValue([])
+    const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/', name: 'load-runs', component: LoadRunsView }, { path: '/reports', name: 'load-reports', component: { template: '<div />' } }] })
+    await router.push('/?scenario_id=s1'); await router.isReady()
+    const wrapper = mount(LoadRunsView, { global: { plugins: [router] } })
+    await flushPromises()
+
+    expect(wrapper.findComponent({ name: 'LoadRunWizard' }).exists()).toBe(true)
+    await wrapper.get('[data-testid="load-run-back"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.findComponent({ name: 'LoadRunWizard' }).exists()).toBe(false)
+    expect(router.currentRoute.value.query.scenario_id).toBeUndefined()
   })
 
   it('does not show a success check when the preflight returns a failed run', async () => {

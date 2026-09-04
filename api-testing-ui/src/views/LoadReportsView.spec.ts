@@ -75,4 +75,22 @@ describe('LoadReportsView', () => {
     expect(wrapper.find('[data-testid="report-run-r1"]').exists()).toBe(false)
     expect(wrapper.find('[data-testid="report-run-r2"]').exists()).toBe(true)
   })
+
+  it('keeps the selected report in the URL so refresh, copy and browser history open the same evidence', async () => {
+    const otherRun = { ...run, id: 'r2', configuration: { scenario: { name: '模型详情二次验证' }, agents: [] } }
+    const context = useContextStore(); Object.assign(context, { projectId: 'p1', projects: [{ id: 'p1', name: '3D家用' }] })
+    vi.spyOn(context, 'loadSavedContext').mockResolvedValue(); vi.spyOn(context, 'loadOptions').mockResolvedValue()
+    const store = useLoadTestingStore(); store.runs = [run, otherRun]
+    vi.spyOn(store, 'loadRuns').mockResolvedValue(store.runs)
+    vi.spyOn(store, 'loadRun').mockImplementation(async id => id === 'r2' ? otherRun : run)
+    vi.spyOn(store, 'loadReport').mockResolvedValue(report); vi.spyOn(store, 'loadAiAnalysis').mockResolvedValue(null)
+    const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/', component: LoadReportsView }] }); await router.push('/?run_id=r1'); await router.isReady()
+    const wrapper = mount(LoadReportsView, { global: { plugins: [router] } }); await flushPromises()
+
+    await wrapper.get('[data-testid="load-report-history-toggle"]').trigger('click')
+    await wrapper.get('[data-testid="report-run-r2"]').trigger('click')
+    await flushPromises()
+    expect(router.currentRoute.value.query.run_id).toBe('r2')
+    expect(wrapper.text()).toContain('模型详情二次验证')
+  })
 })

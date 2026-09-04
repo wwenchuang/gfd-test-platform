@@ -74,6 +74,17 @@ const loadScenario = {
   description: loadScenarioDefinition.description, scenario_type: 'workflow', status: 'active',
   active_version_id: 'load-version-1', created_at: '2026-09-03T07:50:00Z', updated_at: '2026-09-03T08:00:00Z',
 };
+const loadScenarios = [
+  loadScenario,
+  {
+    ...loadScenario,
+    id: 'load-scenario-2',
+    name: '模型列表到详情只读链路',
+    description: '验证模型列表、详情和状态查询在目标压力下保持稳定。',
+    scenario_type: 'workflow',
+    updated_at: '2026-09-03T09:00:00Z',
+  },
+];
 const loadRun = {
   id: 'load-run-1', project_id: 'project-1', scenario_version_id: 'load-version-1',
   environment_revision_id: 'environment-revision-1', load_model: 'constant-arrival-rate',
@@ -245,7 +256,7 @@ function createServer() {
     if (url.pathname === '/api/api-testing/v1/executions' && req.method === 'GET') return sendJson(res, { executions: [] });
     if (url.pathname === '/api/api-testing/v1/load-runs' && req.method === 'GET') return sendJson(res, { runs: loadRuns });
     if (url.pathname === '/api/api-testing/v1/load-agents' && req.method === 'GET') return sendJson(res, { agents: loadAgents });
-    if (url.pathname === '/api/api-testing/v1/load-scenarios' && req.method === 'GET') return sendJson(res, { scenarios: [loadScenario] });
+    if (url.pathname === '/api/api-testing/v1/load-scenarios' && req.method === 'GET') return sendJson(res, { scenarios: loadScenarios });
     if (url.pathname === '/api/api-testing/v1/load-scenario-versions/load-version-1' && req.method === 'GET') return sendJson(res, { version: {
       id: 'load-version-1', scenario_id: loadScenario.id, version: 1, state: 'ready', definition: loadScenarioDefinition,
       validation: { ok: true }, created_at: '2026-09-03T08:00:00Z',
@@ -370,6 +381,8 @@ async function assertLoadReportResponsive(page, url) {
   await page.getByTestId('load-report-application').selectOption('project-2');
   await expect(page.locator('.load-report-run-list > button')).toHaveCount(1);
   await expect(page.getByText('校园应用登录压测', { exact: true })).toBeVisible();
+  await page.getByTestId('report-run-load-run-campus-1').click();
+  await page.waitForURL(/run_id=load-run-campus-1/);
   await page.goto(url, { waitUntil: 'networkidle' });
 }
 
@@ -384,7 +397,7 @@ async function assertLoadAgentsResponsive(page, url) {
     await assertNoHorizontalOverflow(page, `load agents ${label}`);
     await page.screenshot({ path: path.join(ARTIFACTS, `load-agents-${label}.png`), fullPage: true });
   }
-  for (const [label, viewport] of [['desktop', { width: 1440, height: 900 }], ['mobile', { width: 390, height: 844 }]]) {
+  for (const [label, viewport] of [['wide', { width: 2560, height: 1200 }], ['desktop', { width: 1440, height: 900 }], ['mobile', { width: 390, height: 844 }]]) {
     await page.setViewportSize(viewport);
     await page.goto(`${url}#/load-agents`, { waitUntil: 'networkidle' });
     if (viewport.width <= 920) await page.waitForFunction(() => document.querySelector('.side-rail')?.getBoundingClientRect().right <= 0);
@@ -400,13 +413,17 @@ async function assertLoadAgentsResponsive(page, url) {
 }
 
 async function assertLoadScenariosResponsive(page, url) {
-  for (const [label, viewport] of [['desktop', { width: 1440, height: 900 }], ['mobile', { width: 390, height: 844 }]]) {
+  for (const [label, viewport] of [['wide', { width: 2560, height: 1200 }], ['desktop', { width: 1440, height: 900 }], ['mobile', { width: 390, height: 844 }]]) {
     await page.setViewportSize(viewport);
     await page.goto(`${url}#/load-scenarios`, { waitUntil: 'networkidle' });
     if (viewport.width <= 920) await page.waitForFunction(() => document.querySelector('.side-rail')?.getBoundingClientRect().right <= 0);
     await page.getByRole('heading', { name: '性能场景', exact: true }).waitFor();
     await page.getByText('所属应用 / API 项目', { exact: true }).waitFor();
     await page.getByText(loadScenario.name, { exact: true }).waitFor();
+    if (label === 'wide') {
+      const boxes = await page.locator('.load-scenario-list > article').evaluateAll(items => items.map(item => item.getBoundingClientRect()).map(box => ({ x: box.x, width: box.width })));
+      if (boxes.length < 2 || boxes[0].x === boxes[1].x || boxes.some(box => box.width > 561)) throw new Error(`load scenario cards are not compact on wide screens: ${JSON.stringify(boxes)}`);
+    }
     await assertNoHorizontalOverflow(page, `load scenarios ${label}`);
     await page.screenshot({ path: path.join(ARTIFACTS, `load-scenarios-${label}.png`), fullPage: true });
   }
@@ -419,7 +436,7 @@ async function assertLoadScenariosResponsive(page, url) {
 }
 
 async function assertLoadRunsResponsive(page, url) {
-  for (const [label, viewport] of [['desktop', { width: 1440, height: 900 }], ['mobile', { width: 390, height: 844 }]]) {
+  for (const [label, viewport] of [['wide', { width: 2560, height: 1200 }], ['desktop', { width: 1440, height: 900 }], ['mobile', { width: 390, height: 844 }]]) {
     await page.setViewportSize(viewport);
     await page.goto(`${url}#/load-runs`, { waitUntil: 'networkidle' });
     if (viewport.width <= 920) await page.waitForFunction(() => document.querySelector('.side-rail')?.getBoundingClientRect().right <= 0);
@@ -428,6 +445,11 @@ async function assertLoadRunsResponsive(page, url) {
     await page.getByText(loadScenario.name, { exact: true }).first().waitFor();
     await expect(page.locator('[data-testid^="load-run-card-"]')).toHaveCount(8);
     await expect(page.getByTestId('load-run-application')).toHaveValue('project-1');
+    if (label === 'wide') {
+      const boxes = await page.locator('[data-testid^="load-run-card-"]').evaluateAll(items => items.slice(0, 3).map(item => item.getBoundingClientRect()).map(box => ({ x: box.x, width: box.width })));
+      const searchWidth = await page.locator('.load-list-toolbar .search-box').evaluate(element => element.getBoundingClientRect().width);
+      if (boxes.length < 3 || new Set(boxes.map(box => Math.round(box.x))).size < 3 || boxes.some(box => box.width > 521) || searchWidth > 721) throw new Error(`load run cards or filters are not compact on wide screens: ${JSON.stringify({ boxes, searchWidth })}`);
+    }
     await assertNoHorizontalOverflow(page, `load runs ${label}`);
     await page.screenshot({ path: path.join(ARTIFACTS, `load-runs-${label}.png`), fullPage: true });
   }
@@ -882,7 +904,7 @@ async function assertAssetSyncClarity(page, url) {
     await assertScheduledServerBlocks(page);
     await assertAssetSyncClarity(page, url);
     if (errors.length) throw new Error(`browser errors: ${errors.join(' | ')}`);
-    console.log(JSON.stringify({ ok: true, url, screenshots: ['load-agents-desktop.png', 'load-agents-mobile.png', 'load-agents-short.png', 'load-capacity-dialog-desktop.png', 'load-capacity-dialog-mobile.png', 'load-scenarios-desktop.png', 'load-scenarios-mobile.png', 'load-runs-desktop.png', 'load-runs-mobile.png', 'load-report-desktop.png', 'load-report-tablet.png', 'load-report-mobile.png', 'load-report-short.png', 'execution-report-focus-desktop.png', 'execution-report-focus-mobile.png', 'execution-report-focus-short-mobile.png', 'execution-report-focus-tiny-mobile.png', 'execution-drawer-desktop.png', 'execution-drawer-mobile.png', 'execution-drawer-short-mobile.png', 'execution-drawer-tiny-mobile.png', 'workbench-start-desktop.png', 'workbench-start-mobile.png', 'workflow-preview-desktop.png', 'workflow-preview-mobile.png', 'workbench-desktop.png', 'workbench-compact-desktop.png', 'workbench-tablet.png', 'workbench-mobile.png', 'baselines-mobile.png', 'settings-mobile.png', 'baselines-desktop.png', 'scheduled-blocked-desktop.png', 'scheduled-blocked-mobile.png', 'assets-saved-desktop.png', 'assets-preview-desktop.png', 'assets-preview-compact.png', 'assets-preview-mobile.png'] }));
+    console.log(JSON.stringify({ ok: true, url, screenshots: ['load-agents-desktop.png', 'load-agents-mobile.png', 'load-agents-short.png', 'load-capacity-dialog-wide.png', 'load-capacity-dialog-desktop.png', 'load-capacity-dialog-mobile.png', 'load-scenarios-wide.png', 'load-scenarios-desktop.png', 'load-scenarios-mobile.png', 'load-runs-wide.png', 'load-runs-desktop.png', 'load-runs-mobile.png', 'load-report-desktop.png', 'load-report-tablet.png', 'load-report-mobile.png', 'load-report-short.png', 'load-report-history-desktop.png', 'execution-report-focus-desktop.png', 'execution-report-focus-mobile.png', 'execution-report-focus-short-mobile.png', 'execution-report-focus-tiny-mobile.png', 'execution-drawer-desktop.png', 'execution-drawer-mobile.png', 'execution-drawer-short-mobile.png', 'execution-drawer-tiny-mobile.png', 'workbench-start-desktop.png', 'workbench-start-mobile.png', 'workflow-preview-desktop.png', 'workflow-preview-mobile.png', 'workbench-desktop.png', 'workbench-compact-desktop.png', 'workbench-tablet.png', 'workbench-mobile.png', 'baselines-mobile.png', 'settings-mobile.png', 'baselines-desktop.png', 'scheduled-blocked-desktop.png', 'scheduled-blocked-mobile.png', 'assets-saved-desktop.png', 'assets-preview-desktop.png', 'assets-preview-compact.png', 'assets-preview-mobile.png'] }));
   } finally {
     await browser.close();
     await new Promise(resolve => server.close(resolve));

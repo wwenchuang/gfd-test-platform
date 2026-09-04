@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { Activity, ChartLine, Plus, RefreshCw, RotateCcw, Trash2 } from 'lucide-vue-next'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import type { LoadAgent, LoadRun } from '../api/contracts'
 import LoadRunWizard from '../components/LoadRunWizard.vue'
 import { useContextStore } from '../stores/context'
@@ -11,6 +11,7 @@ import { apiTestingHasPermission } from '../utils/authRedirect'
 const context = useContextStore()
 const store = useLoadTestingStore()
 const router = useRouter()
+const route = useRoute()
 const creating = ref(false)
 const selectedScenarioId = ref('')
 const feedback = ref('')
@@ -38,6 +39,11 @@ onMounted(async () => {
   await Promise.all([context.loadSavedContext(), context.loadOptions()])
   applicationFilter.value = context.projectId || ''
   await refresh()
+  const requestedScenarioId = String(route.query.scenario_id || '')
+  if (requestedScenarioId && store.scenarios.some(item => item.id === requestedScenarioId && item.active_version_id)) {
+    selectedScenarioId.value = requestedScenarioId
+    creating.value = true
+  }
   scheduleRefresh()
 })
 onBeforeUnmount(() => { if (refreshTimer) clearTimeout(refreshTimer) })
@@ -54,10 +60,23 @@ async function refresh(): Promise<void> {
   await Promise.all([store.loadScenarios(context.projectId), store.loadRuns(undefined), store.loadAgents()])
   if (!selectedScenarioId.value) selectedScenarioId.value = store.scenarios.find(item => item.active_version_id)?.id || ''
 }
+function openWizard(): void {
+  feedback.value = ''
+  creating.value = true
+}
+async function closeWizard(): Promise<void> {
+  creating.value = false
+  feedback.value = ''
+  if (route.query.scenario_id) {
+    const query = { ...route.query }
+    delete query.scenario_id
+    await router.replace({ query })
+  }
+}
 async function create(payload: Record<string, unknown>): Promise<void> {
   try {
     await store.createRun(payload)
-    creating.value = false
+    await closeWizard()
     feedback.value = '压测草稿已创建。下一步：检查所有所选节点到目标环境的连通性。'
   } catch { /* store exposes the server message */ }
 }
@@ -216,11 +235,11 @@ function canDelete(run: LoadRun): boolean {
 
 <template>
   <section class="workspace" data-testid="load-runs-page">
-    <header class="page-toolbar load-page-toolbar"><div><p class="eyebrow">性能测试</p><h1>压测执行</h1><p class="page-subtitle">创建草稿后按“目标连通性 → 单用户预检 → 开始压测”执行；列表每 3 秒自动刷新。</p></div><div class="load-toolbar-actions"><span class="load-live-indicator"><i class="load-status-dot online pulse" />自动刷新</span><button class="secondary-command" type="button" @click="refresh"><RefreshCw :size="15" />立即刷新</button><button v-if="canExecute" data-testid="load-run-new" class="primary-command" type="button" @click="creating = true"><Plus :size="15" />新建压测</button></div></header>
+    <header class="page-toolbar load-page-toolbar"><div><p class="eyebrow">性能测试</p><h1>压测执行</h1><p class="page-subtitle">创建草稿后按“目标连通性 → 单用户预检 → 开始压测”执行；列表每 3 秒自动刷新。</p></div><div class="load-toolbar-actions"><span class="load-live-indicator"><i class="load-status-dot online pulse" />自动刷新</span><button class="secondary-command" type="button" @click="refresh"><RefreshCw :size="15" />立即刷新</button><button v-if="canExecute" data-testid="load-run-new" class="primary-command" type="button" @click="openWizard"><Plus :size="15" />新建压测</button></div></header>
     <p v-if="store.runError" role="alert" class="state-message state-error">{{ store.runError }}</p>
     <template v-if="creating">
       <label class="load-scenario-selector">第 1 步：选择性能场景<select v-model="selectedScenarioId"><option v-for="item in store.scenarios.filter(row => row.active_version_id)" :key="item.id" :value="item.id">{{ item.name }}</option></select></label>
-      <LoadRunWizard v-if="selectedScenario" :scenario="selectedScenario" :project-name="projectName" :initial-environment-id="context.environmentRevisionId || undefined" :environments="context.environmentRevisions.filter(item => item.project_id === context.projectId)" :agents="store.agents" @submit="create" @cancel="creating = false" />
+      <LoadRunWizard v-if="selectedScenario" :scenario="selectedScenario" :project-name="projectName" :initial-environment-id="context.environmentRevisionId || undefined" :environments="context.environmentRevisions.filter(item => item.project_id === context.projectId)" :agents="store.agents" @submit="create" @cancel="closeWizard" />
       <p v-else class="load-warning">没有可执行场景，请先到“性能场景”保存通过校验的版本。</p>
     </template>
     <template v-else>
