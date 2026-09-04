@@ -2,7 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { Copy, Plus, RefreshCw, Server, SlidersHorizontal } from 'lucide-vue-next'
 
-import type { LoadAgent, LoadAgentEnrollmentResult, LoadCalibrationState, LoadSchedulingTier } from '../api/contracts'
+import type { LoadAgent, LoadAgentEnrollmentResult, LoadCalibrationState, LoadCapacityLimits, LoadSchedulingTier } from '../api/contracts'
 import { useLoadTestingStore } from '../stores/loadTesting'
 import { apiTestingHasPermission } from '../utils/authRedirect'
 
@@ -14,6 +14,8 @@ const enrollmentName = ref('')
 const enrollmentGroup = ref('')
 const enrollmentTier = ref<LoadSchedulingTier>('preferred')
 const feedback = ref('')
+const capacityAgent = ref<LoadAgent | null>(null)
+const capacityDraft = ref<LoadCapacityLimits | null>(null)
 const canManage = apiTestingHasPermission('api.loadtest.manage_agents')
 let refreshTimer: ReturnType<typeof setTimeout> | null = null
 
@@ -32,6 +34,8 @@ const agentSummary = computed(() => {
     total: store.agents.length,
     online: online.length,
     schedulable: schedulable.length,
+    calibratedVus: schedulable.reduce((sum, item) => sum + Number(item.health.calibration?.max_vus || 0), 0),
+    calibratedRate: schedulable.reduce((sum, item) => sum + Number(item.health.calibration?.max_iterations_per_second || 0), 0),
     vus: schedulable.reduce((sum, item) => sum + availableCapacity(item, 'max_vus'), 0),
     rate: schedulable.reduce((sum, item) => sum + availableCapacity(item, 'max_iterations_per_second'), 0),
   }
@@ -44,6 +48,21 @@ function scheduleRefresh(): void {
     await store.loadAgents(true)
     scheduleRefresh()
   }, 3000)
+}
+
+function capacityCeiling(item: LoadAgent, field: 'max_vus' | 'max_iterations_per_second'): number {
+  return Math.min(
+    Number(item.hard_limits[field] || 0),
+    Number(item.soft_limits[field] || 0),
+    Number(item.health.calibration?.[field] || 0),
+  )
+}
+
+function capacityLimiter(item: LoadAgent, field: 'max_vus' | 'max_iterations_per_second'): string {
+  const value = capacityCeiling(item, field)
+  if (value === Number(item.soft_limits[field] || 0)) return '平台容量策略'
+  if (value === Number(item.health.calibration?.[field] || 0)) return '校准达到值'
+  return '本机硬上限'
 }
 
 onMounted(async () => {
@@ -82,14 +101,50 @@ function heartbeat(item: LoadAgent): { label: string; state: string } {
 }
 
 function availableCapacity(item: LoadAgent, field: 'max_vus' | 'max_iterations_per_second'): number {
-  const limits = [item.hard_limits[field], item.soft_limits[field], item.health.calibration?.[field]]
-    .map(value => Number(value || 0))
-    .filter(value => value > 0)
-  const measured = limits.length ? Math.min(...limits) : 0
+  const measured = capacityCeiling(item, field)
   const used = field === 'max_vus'
     ? Number(item.current_usage.vus || 0)
     : Number(item.current_usage.iterations_per_second || 0)
   return Math.max(0, measured - used)
+}
+
+function openCapacity(item: LoadAgent): void {
+  capacityAgent.value = item
+  capacityDraft.value = { ...item.soft_limits }
+  feedback.value = ''
+}
+
+function applyCapacityPreset(ratio: number): void {
+  if (!capacityAgent.value) return
+  const hard = capacityAgent.value.hard_limits
+  capacityDraft.value = {
+    max_processes: Math.max(1, Math.floor(hard.max_processes * ratio)),
+    max_vus: Math.max(1, Math.floor(hard.max_vus * ratio)),
+    max_iterations_per_second: Math.max(1, Math.floor(hard.max_iterations_per_second * ratio)),
+    max_duration_seconds: hard.max_duration_seconds,
+    cpu_cores: Math.max(1, Math.floor(hard.cpu_cores * ratio)),
+    memory_mb: Math.max(256, Math.floor(hard.memory_mb * ratio)),
+  }
+}
+
+async function saveCapacity(): Promise<void> {
+  if (!capacityAgent.value || !capacityDraft.value) return
+  const hard = capacityAgent.value.hard_limits
+  const invalid = (Object.keys(hard) as Array<keyof LoadCapacityLimits>).find(key => {
+    const value = Number(capacityDraft.value?.[key] || 0)
+    return !Number.isFinite(value) || value <= 0 || value > Number(hard[key])
+  })
+  if (invalid) {
+    feedback.value = '平台容量策略必须为正数，且不能超过页面显示的本机硬上限。'
+    return
+  }
+  const name = capacityAgent.value.name
+  try {
+    await store.updateAgent(capacityAgent.value.id, { soft_limits: { ...capacityDraft.value } })
+    capacityAgent.value = null
+    capacityDraft.value = null
+    feedback.value = `“${name}”的平台容量策略已保存，无需登录服务器。`
+  } catch { /* store keeps the server explanation */ }
 }
 
 function calibrationDisabledReason(item: LoadAgent): string {
@@ -189,7 +244,8 @@ function dateTime(value?: string | null): string {
       <div><span>节点总数</span><strong>{{ agentSummary.total }}</strong><small>已注册的全部执行节点</small></div>
       <div><span><i class="load-status-dot online pulse" />心跳正常</span><strong>{{ agentSummary.online }}</strong><small>正在持续连接平台</small></div>
       <div><span>可调度</span><strong>{{ agentSummary.schedulable }}</strong><small>在线且校准有效</small></div>
-      <div><span>可用容量</span><strong>{{ agentSummary.vus }} VU</strong><small>{{ agentSummary.rate }} 次/秒，由全部可调度节点汇总</small></div>
+      <div><span>校准达到</span><strong>{{ agentSummary.calibratedVus }} VU</strong><small>{{ agentSummary.calibratedRate }} 次/秒，本地校准达到值汇总</small></div>
+      <div class="capacity-primary"><span>当前可分配</span><strong>{{ agentSummary.vus }} VU</strong><small>{{ agentSummary.rate }} 次/秒，三项取最小值后减当前占用</small></div>
     </div>
     <label class="search-box load-agent-search"><span class="sr-only">搜索压测节点</span><input v-model="query" data-testid="load-agent-search" type="search" placeholder="搜索节点名称、分组或出口 IP" /></label>
 
@@ -209,18 +265,37 @@ function dateTime(value?: string | null): string {
         <p v-if="item.calibration_state === 'failed' && item.health.calibration?.message" class="agent-calibration-error" role="alert">失败原因：{{ item.health.calibration.message }}</p>
         <div class="load-capacity-grid">
           <div><span>本机硬上限</span><strong>{{ item.hard_limits.max_vus }} VU · {{ item.hard_limits.max_iterations_per_second }} 次/秒</strong><small>进程 {{ item.hard_limits.max_processes }} · 最长 {{ item.hard_limits.max_duration_seconds }} 秒 · CPU {{ item.hard_limits.cpu_cores }} 核 · 内存 {{ item.hard_limits.memory_mb }} MB。Agent按容器资源上报，平台不能调高。</small></div>
-          <div><span>平台软上限</span><strong>{{ item.soft_limits.max_vus }} VU · {{ item.soft_limits.max_iterations_per_second }} 次/秒</strong><small>进程 {{ item.soft_limits.max_processes }} · 最长 {{ item.soft_limits.max_duration_seconds }} 秒 · CPU {{ item.soft_limits.cpu_cores }} 核 · 内存 {{ item.soft_limits.memory_mb }} MB。任务实际分配不会超过这个保护值。</small></div>
-          <div><span>校准容量</span><strong>{{ item.health.calibration?.max_vus || 0 }} VU · {{ item.health.calibration?.max_iterations_per_second || 0 }} 次/秒</strong><small>有效至 {{ dateTime(item.health.calibration?.valid_until) }}</small></div>
+          <div><span>平台容量策略（页面可配）</span><strong>{{ item.soft_limits.max_vus }} VU · {{ item.soft_limits.max_iterations_per_second }} 次/秒</strong><small>任务不会超过此保护值；管理员可直接在本页修改。</small></div>
+          <div><span>校准达到值</span><strong>{{ item.health.calibration?.max_vus || 0 }} VU · {{ item.health.calibration?.max_iterations_per_second || 0 }} 次/秒</strong><small>本地校准端点达到的档位，不代表业务接口容量。有效至 {{ dateTime(item.health.calibration?.valid_until) }}</small></div>
+          <div class="capacity-primary"><span>当前可分配</span><strong>{{ availableCapacity(item, 'max_vus') }} VU · {{ availableCapacity(item, 'max_iterations_per_second') }} 次/秒</strong><small>VU 受{{ capacityLimiter(item, 'max_vus') }}限制，吞吐受{{ capacityLimiter(item, 'max_iterations_per_second') }}限制；三项取最小值后减占用。</small></div>
           <div><span>当前占用</span><strong>{{ item.current_usage.processes || 0 }} 进程 · {{ item.current_usage.vus || 0 }} VU</strong><small>最后心跳 {{ dateTime(item.last_heartbeat_at) }}</small></div>
         </div>
         <div class="load-agent-controls">
           <label><span>调度级别（节点参与顺序）</span><select :data-testid="`agent-tier-${item.id}`" :value="item.scheduling_tier" :disabled="!canManage || item.scheduling_tier === 'disabled' || store.mutating" @change="changeTier(item, $event)"><option value="preferred">首选节点</option><option value="normal">普通节点</option><option value="fallback">备用节点</option><option value="disabled">停用节点</option></select><small>{{ tier(item.scheduling_tier).help }}</small></label>
-          <button :data-testid="`agent-calibrate-${item.id}`" class="secondary-command" type="button" :disabled="Boolean(calibrationDisabledReason(item)) || store.mutating" :title="calibrationDisabledReason(item) || '重新测量本机k6容量'" @click="requestCalibration(item)"><SlidersHorizontal :size="15" />{{ item.calibration_state === 'calibrating' ? '正在校准' : '校准节点' }}</button>
+          <div class="load-agent-buttons"><button v-if="canManage" :data-testid="`agent-capacity-open-${item.id}`" class="secondary-command" type="button" :disabled="store.mutating" @click="openCapacity(item)"><SlidersHorizontal :size="15" />配置容量策略</button><button :data-testid="`agent-calibrate-${item.id}`" class="secondary-command" type="button" :disabled="Boolean(calibrationDisabledReason(item)) || store.mutating" :title="calibrationDisabledReason(item) || '重新测量本机k6容量'" @click="requestCalibration(item)"><SlidersHorizontal :size="15" />{{ item.calibration_state === 'calibrating' ? '正在校准' : '校准节点' }}</button></div>
         </div>
         <p v-if="calibrationDisabledReason(item)" class="agent-disabled-reason">{{ calibrationDisabledReason(item) }}</p>
       </article>
     </div>
     <p v-if="feedback" class="load-feedback" aria-live="polite">{{ feedback }}</p>
+
+    <div v-if="capacityAgent && capacityDraft" class="load-dialog-backdrop" @click.self="capacityAgent = null">
+      <section class="load-dialog" role="dialog" aria-modal="true" aria-labelledby="capacity-title">
+        <header><div><p class="eyebrow">页面配置</p><h2 id="capacity-title">配置平台容量策略</h2></div><button class="text-command" type="button" @click="capacityAgent = null">关闭</button></header>
+        <p class="agent-help">{{ capacityAgent.name }} · 无需登录服务器。策略值只能降低 Agent 上报的本机硬上限，不会篡改校准结果。</p>
+        <div class="capacity-presets"><button data-testid="capacity-preset-protected" type="button" @click="applyCapacityPreset(.25)">保守 25%</button><button data-testid="capacity-preset-standard" type="button" @click="applyCapacityPreset(.6)">标准 60%</button><button data-testid="capacity-preset-dedicated" type="button" @click="applyCapacityPreset(.8)">专用 80%</button></div>
+        <div class="capacity-form-grid">
+          <label>最大进程<input v-model.number="capacityDraft.max_processes" type="number" min="1" :max="capacityAgent.hard_limits.max_processes" /></label>
+          <label>最大 VU<input v-model.number="capacityDraft.max_vus" data-testid="capacity-soft-vus" type="number" min="1" :max="capacityAgent.hard_limits.max_vus" /></label>
+          <label>最大吞吐（次/秒）<input v-model.number="capacityDraft.max_iterations_per_second" type="number" min="1" :max="capacityAgent.hard_limits.max_iterations_per_second" /></label>
+          <label>最长任务（秒）<input v-model.number="capacityDraft.max_duration_seconds" type="number" min="1" :max="capacityAgent.hard_limits.max_duration_seconds" /></label>
+          <label>最多 CPU（核）<input v-model.number="capacityDraft.cpu_cores" type="number" min="1" :max="capacityAgent.hard_limits.cpu_cores" /></label>
+          <label>最多内存（MB）<input v-model.number="capacityDraft.memory_mb" type="number" min="256" :max="capacityAgent.hard_limits.memory_mb" /></label>
+        </div>
+        <p class="load-warning">修改的是平台调度保护值。提高到现有校准值以内无需重新校准；Agent 硬件、容器 CPU/内存或 k6 版本变化后才需要重新校准。</p>
+        <button data-testid="capacity-soft-save" class="primary-command" type="button" :disabled="store.mutating" @click="saveCapacity">保存容量策略</button>
+      </section>
+    </div>
 
     <div v-if="enrollmentOpen" class="load-dialog-backdrop" @click.self="closeEnrollment">
       <section class="load-dialog" role="dialog" aria-modal="true" aria-labelledby="enrollment-title">

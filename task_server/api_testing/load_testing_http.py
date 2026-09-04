@@ -311,6 +311,20 @@ def _delete(factory, segments, payload, actor):
             record.updated_by = actor
             session.flush()
             return {"dataset": _dataset_view(record)}
+    if len(segments) == 2 and segments[0] == "load-runs":
+        access.require_permission(actor, "api.loadtest.execute")
+        with factory.begin() as session:
+            record = session.get(ApiLoadRun, segments[1])
+            access.require_resource(session, record, actor, "api.loadtest.execute")
+            if record.state in {"preflighting", "queued", "starting", "running", "stopping"}:
+                raise LoadRunError(
+                    "执行中的压测不能删除，请先停止并等待节点保存证据",
+                    status=409,
+                    code="load_run_active",
+                )
+            run_id = record.id
+            session.delete(record)
+            return {"deleted": True, "id": run_id}
     raise ApiHttpError(404, "not_found", "Resource was not found")
 
 

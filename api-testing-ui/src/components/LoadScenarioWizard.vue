@@ -3,14 +3,15 @@ import { computed, ref } from 'vue'
 import type { ApiEndpoint, LoadScenarioDefinition } from '../api/contracts'
 
 defineOptions({ name: 'LoadScenarioWizard' })
-const props = defineProps<{ endpoints: ApiEndpoint[] }>()
+const props = defineProps<{ endpoints: ApiEndpoint[]; initialDefinition?: LoadScenarioDefinition | null; projectName?: string }>()
 const emit = defineEmits<{ save: [definition: LoadScenarioDefinition]; cancel: [] }>()
 const step = ref(1)
-const name = ref('')
-const description = ref('')
-const mode = ref<'single_interface' | 'workflow'>('single_interface')
-const selectedIds = ref<string[]>([])
-const datasetMode = ref<'cycle' | 'fixed_per_vu' | 'exclusive_per_iteration'>('cycle')
+const name = ref(props.initialDefinition?.name || '')
+const description = ref(props.initialDefinition?.description || '')
+const mode = ref<'single_interface' | 'workflow'>(props.initialDefinition?.mode || 'single_interface')
+const sourceItems = Array.isArray(props.initialDefinition?.source_snapshot?.items) ? props.initialDefinition?.source_snapshot.items as Array<{ id?: string }> : []
+const selectedIds = ref<string[]>(sourceItems.flatMap(item => item.id ? [String(item.id)] : []))
+const datasetMode = ref<'cycle' | 'fixed_per_vu' | 'exclusive_per_iteration'>(props.initialDefinition?.dataset_contract?.usage_mode || 'cycle')
 const query = ref('')
 
 const selected = computed(() => selectedIds.value.map(id => props.endpoints.find(item => item.id === id)).filter((item): item is ApiEndpoint => Boolean(item)))
@@ -45,9 +46,10 @@ function save(): void {
 
 <template>
   <section class="load-wizard" aria-label="创建性能场景">
-    <header><div><p class="eyebrow">第 {{ step }} 步，共 3 步</p><h2>创建性能场景</h2></div><button data-testid="scenario-cancel" class="text-command" type="button" @click="emit('cancel')">取消</button></header>
+    <header><div><p class="eyebrow">第 {{ step }} 步，共 3 步</p><h2>{{ initialDefinition ? '创建新版本' : '创建性能场景' }}</h2></div><button data-testid="scenario-cancel" class="text-command" type="button" @click="emit('cancel')">← 返回场景列表</button></header>
     <ol class="load-stepper"><li :class="{ active: step === 1 }">1 选择接口</li><li :class="{ active: step === 2 }">2 数据与断言</li><li :class="{ active: step === 3 }">3 确认保存</li></ol>
     <div v-if="step === 1" class="load-wizard-body">
+      <section class="load-context-banner"><div><span>所属应用 / API 项目</span><strong>{{ projectName || '当前接口项目' }}</strong><small>场景只使用该项目已同步的接口；需要换应用时请先回工作台切换。</small></div><div><span>版本策略</span><strong>{{ initialDefinition ? '保留旧版本并新建版本' : '首次创建' }}</strong><small>历史执行继续引用原版本，不会被本次编辑覆盖。</small></div></section>
       <label>场景名称<input v-model="name" data-testid="load-scenario-name" placeholder="例如：模型搜索容量验证" /></label>
       <label>场景说明<textarea v-model="description" rows="2" placeholder="说明要验证的业务目标" /></label>
       <div class="load-option-grid"><button data-testid="scenario-mode-single" :class="{ active: mode === 'single_interface' }" type="button" @click="setMode('single_interface')"><strong>单接口压测</strong><span>每轮只请求一个接口，适合测接口容量。</span></button><button data-testid="scenario-mode-workflow" :class="{ active: mode === 'workflow' }" type="button" @click="setMode('workflow')"><strong>业务链路压测</strong><span>按顺序执行多个接口，吞吐指完整链路次数。</span></button></div>

@@ -102,12 +102,21 @@ export const useLoadTestingStore = defineStore('api-load-testing', {
       await this.loadScenarios(this.scenarios.find(item => item.id === scenarioId)?.project_id || '')
       return response.data.version
     },
+    async loadScenarioVersion(versionId: string): Promise<LoadScenarioVersion> {
+      const response = await apiClient.get<{ version: LoadScenarioVersion }>(`/api/api-testing/v1/load-scenario-versions/${encodeURIComponent(versionId)}`)
+      return response.data.version
+    },
+    async updateScenario(scenarioId: string, input: { name?: string; description?: string }): Promise<LoadScenario> {
+      const response = await apiClient.put<{ scenario: LoadScenario }>(`/api/api-testing/v1/load-scenarios/${encodeURIComponent(scenarioId)}`, input)
+      this.scenarios = this.scenarios.map(item => item.id === scenarioId ? response.data.scenario : item)
+      return response.data.scenario
+    },
     async archiveScenario(scenarioId: string): Promise<void> {
       await apiClient.delete(`/api/api-testing/v1/load-scenarios/${encodeURIComponent(scenarioId)}`)
       this.scenarios = this.scenarios.filter(item => item.id !== scenarioId)
     },
-    async loadRuns(projectId: string): Promise<LoadRun[]> {
-      this.loadingRuns = true
+    async loadRuns(projectId: string, silent = false): Promise<LoadRun[]> {
+      if (!silent) this.loadingRuns = true
       this.runError = ''
       try {
         const response = await apiClient.get<{ runs: LoadRun[] }>(`/api/api-testing/v1/load-runs?project_id=${encodeURIComponent(projectId)}`)
@@ -116,7 +125,7 @@ export const useLoadTestingStore = defineStore('api-load-testing', {
       } catch (error) {
         this.runError = message(error, '无法读取压测执行')
         return []
-      } finally { this.loadingRuns = false }
+      } finally { if (!silent) this.loadingRuns = false }
     },
     async loadRun(runId: string): Promise<LoadRun> {
       const response = await apiClient.get<{ run: LoadRun }>(`/api/api-testing/v1/load-runs/${encodeURIComponent(runId)}`)
@@ -188,12 +197,28 @@ export const useLoadTestingStore = defineStore('api-load-testing', {
     },
     async preflightRun(runId: string): Promise<LoadRun> { return this.runAction(runId, 'preflight') },
     async prepareConnectivity(runId: string): Promise<LoadAgent[]> {
-      const response = await apiClient.post<{ agents: LoadAgent[] }>(`/api/api-testing/v1/load-runs/${encodeURIComponent(runId)}/connectivity`, {})
-      for (const agent of response.data.agents) this.replaceAgent(agent)
-      return response.data.agents
+      this.runError = ''
+      try {
+        const response = await apiClient.post<{ agents: LoadAgent[] }>(`/api/api-testing/v1/load-runs/${encodeURIComponent(runId)}/connectivity`, {})
+        for (const agent of response.data.agents) this.replaceAgent(agent)
+        return response.data.agents
+      } catch (error) {
+        this.runError = message(error, '目标连通性检查启动失败')
+        throw error
+      }
     },
     async startRun(runId: string): Promise<LoadRun> { return this.runAction(runId, 'start') },
     async stopRun(runId: string, reason = '用户在页面停止'): Promise<LoadRun> { return this.runAction(runId, 'stop', { reason }) },
+    async deleteRun(runId: string): Promise<void> {
+      this.runError = ''
+      try {
+        await apiClient.delete(`/api/api-testing/v1/load-runs/${encodeURIComponent(runId)}`)
+        this.runs = this.runs.filter(item => item.id !== runId)
+      } catch (error) {
+        this.runError = message(error, '执行记录删除失败')
+        throw error
+      }
+    },
     async loadReport(runId: string): Promise<LoadReport> {
       return (await apiClient.get<{ report: LoadReport }>(`/api/api-testing/v1/load-runs/${encodeURIComponent(runId)}/report`)).data.report
     },
@@ -216,9 +241,16 @@ export const useLoadTestingStore = defineStore('api-load-testing', {
         ? this.runs.map(item => item.id === run.id ? run : item) : [run, ...this.runs]
     },
     async runAction(runId: string, action: 'preflight' | 'start' | 'stop', body: Record<string, unknown> = {}): Promise<LoadRun> {
-      const response = await apiClient.post<{ run: LoadRun }>(`/api/api-testing/v1/load-runs/${encodeURIComponent(runId)}/${action}`, body)
-      this.replaceRun(response.data.run)
-      return response.data.run
+      this.runError = ''
+      try {
+        const response = await apiClient.post<{ run: LoadRun }>(`/api/api-testing/v1/load-runs/${encodeURIComponent(runId)}/${action}`, body)
+        this.replaceRun(response.data.run)
+        return response.data.run
+      } catch (error) {
+        const fallback = action === 'preflight' ? '单用户预检失败' : action === 'start' ? '压测启动失败' : '压测停止失败'
+        this.runError = message(error, fallback)
+        throw error
+      }
     },
   },
 })

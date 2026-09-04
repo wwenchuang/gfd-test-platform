@@ -55,6 +55,25 @@ const baselines = Array.from({ length: 51 }, (_, index) => {
   };
   return baseline;
 });
+const loadScenarioDefinition = {
+  name: '登录到模型详情核心链路',
+  description: '登录后查询模型列表并打开模型详情，验证核心读取链路。',
+  mode: 'workflow',
+  steps: [{
+    id: 'step-1', name: '查询我的收藏', scope: 'iteration', action: 'http_request',
+    request: { method: 'GET', path: endpoint.path, service: 'default', headers: {}, query: {}, path_params: {}, cookies: {}, body: null },
+    assertions: [{ type: 'status_code', operator: 'equals', expected: 200, enabled: true }],
+    extractions: [], sleep_ms: 0, side_effect: 'readonly',
+  }],
+  dataset_contract: { dataset_id: null, usage_mode: 'cycle', variables: [] },
+  risk: { level: 'low', ownership_variable: null, notes: '' },
+  source_snapshot: { type: 'endpoint', version_ids: [], items: [{ id: endpoint.id, name: endpoint.summary, tags: endpoint.tags, request: { method: endpoint.method, path: endpoint.path } }] },
+};
+const loadScenario = {
+  id: 'load-scenario-1', project_id: 'project-1', name: loadScenarioDefinition.name,
+  description: loadScenarioDefinition.description, scenario_type: 'workflow', status: 'active',
+  active_version_id: 'load-version-1', created_at: '2026-09-03T07:50:00Z', updated_at: '2026-09-03T08:00:00Z',
+};
 const loadRun = {
   id: 'load-run-1', project_id: 'project-1', scenario_version_id: 'load-version-1',
   environment_revision_id: 'environment-revision-1', load_model: 'constant-arrival-rate',
@@ -209,6 +228,11 @@ function createServer() {
     if (url.pathname === '/api/api-testing/v1/executions' && req.method === 'GET') return sendJson(res, { executions: [] });
     if (url.pathname === '/api/api-testing/v1/load-runs' && req.method === 'GET') return sendJson(res, { runs: [loadRun] });
     if (url.pathname === '/api/api-testing/v1/load-agents' && req.method === 'GET') return sendJson(res, { agents: loadAgents });
+    if (url.pathname === '/api/api-testing/v1/load-scenarios' && req.method === 'GET') return sendJson(res, { scenarios: [loadScenario] });
+    if (url.pathname === '/api/api-testing/v1/load-scenario-versions/load-version-1' && req.method === 'GET') return sendJson(res, { version: {
+      id: 'load-version-1', scenario_id: loadScenario.id, version: 1, state: 'ready', definition: loadScenarioDefinition,
+      validation: { ok: true }, created_at: '2026-09-03T08:00:00Z',
+    } });
     if (url.pathname === '/api/api-testing/v1/load-runs/load-run-1' && req.method === 'GET') return sendJson(res, { run: loadRun, shards: [] });
     if (url.pathname === '/api/api-testing/v1/load-runs/load-run-1/report') return sendJson(res, { report: loadReport });
     if (url.pathname === '/api/api-testing/v1/load-runs/load-run-1/ai-analysis') return sendJson(res, { analysis: {
@@ -282,7 +306,19 @@ function createServer() {
 }
 
 async function assertNoHorizontalOverflow(page, label) {
-  const metrics = await page.evaluate(() => ({ width: document.documentElement.clientWidth, scrollWidth: document.documentElement.scrollWidth }));
+  const metrics = await page.evaluate(() => ({
+    width: document.documentElement.clientWidth,
+    scrollWidth: document.documentElement.scrollWidth,
+    offenders: [...document.querySelectorAll('body *')]
+      .map(element => ({
+        selector: `${element.tagName.toLowerCase()}${element.id ? `#${element.id}` : ''}${element.classList.length ? `.${[...element.classList].join('.')}` : ''}`,
+        left: Math.round(element.getBoundingClientRect().left),
+        right: Math.round(element.getBoundingClientRect().right),
+        width: Math.round(element.getBoundingClientRect().width),
+      }))
+      .filter(item => item.right > document.documentElement.clientWidth + 1 || item.left < -1)
+      .slice(0, 12),
+  }));
   if (metrics.scrollWidth > metrics.width + 1) throw new Error(`${label} horizontal overflow: ${JSON.stringify(metrics)}`);
 }
 
@@ -312,7 +348,59 @@ async function assertLoadAgentsResponsive(page, url) {
     await assertNoHorizontalOverflow(page, `load agents ${label}`);
     await page.screenshot({ path: path.join(ARTIFACTS, `load-agents-${label}.png`), fullPage: true });
   }
+  for (const [label, viewport] of [['desktop', { width: 1440, height: 900 }], ['mobile', { width: 390, height: 844 }]]) {
+    await page.setViewportSize(viewport);
+    await page.goto(`${url}#/load-agents`, { waitUntil: 'networkidle' });
+    if (viewport.width <= 920) await page.waitForFunction(() => document.querySelector('.side-rail')?.getBoundingClientRect().right <= 0);
+    await page.getByTestId('agent-capacity-open-load-agent-1').click();
+    await page.getByRole('heading', { name: '配置平台容量策略' }).waitFor();
+    await page.getByTestId('capacity-preset-dedicated').click();
+    await assertNoHorizontalOverflow(page, `load capacity dialog ${label}`);
+    await page.screenshot({ path: path.join(ARTIFACTS, `load-capacity-dialog-${label}.png`), fullPage: true });
+    await page.getByRole('button', { name: '关闭' }).click();
+  }
   await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto(url, { waitUntil: 'networkidle' });
+}
+
+async function assertLoadScenariosResponsive(page, url) {
+  for (const [label, viewport] of [['desktop', { width: 1440, height: 900 }], ['mobile', { width: 390, height: 844 }]]) {
+    await page.setViewportSize(viewport);
+    await page.goto(`${url}#/load-scenarios`, { waitUntil: 'networkidle' });
+    if (viewport.width <= 920) await page.waitForFunction(() => document.querySelector('.side-rail')?.getBoundingClientRect().right <= 0);
+    await page.getByRole('heading', { name: '性能场景', exact: true }).waitFor();
+    await page.getByText('所属应用 / API 项目', { exact: true }).waitFor();
+    await page.getByText(loadScenario.name, { exact: true }).waitFor();
+    await assertNoHorizontalOverflow(page, `load scenarios ${label}`);
+    await page.screenshot({ path: path.join(ARTIFACTS, `load-scenarios-${label}.png`), fullPage: true });
+  }
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto(`${url}#/load-scenarios`, { waitUntil: 'networkidle' });
+  await page.getByTestId('scenario-edit-load-scenario-1').click();
+  await page.getByText('创建新版本', { exact: true }).waitFor();
+  await page.getByRole('button', { name: '返回场景列表' }).first().click();
+  await page.getByText(loadScenario.name, { exact: true }).waitFor();
+}
+
+async function assertLoadRunsResponsive(page, url) {
+  for (const [label, viewport] of [['desktop', { width: 1440, height: 900 }], ['mobile', { width: 390, height: 844 }]]) {
+    await page.setViewportSize(viewport);
+    await page.goto(`${url}#/load-runs`, { waitUntil: 'networkidle' });
+    if (viewport.width <= 920) await page.waitForFunction(() => document.querySelector('.side-rail')?.getBoundingClientRect().right <= 0);
+    await page.getByRole('heading', { name: '压测执行', exact: true }).waitFor();
+    await page.getByText('自动刷新', { exact: true }).waitFor();
+    await page.getByText(loadScenario.name, { exact: true }).waitFor();
+    await assertNoHorizontalOverflow(page, `load runs ${label}`);
+    await page.screenshot({ path: path.join(ARTIFACTS, `load-runs-${label}.png`), fullPage: true });
+  }
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto(`${url}#/load-runs`, { waitUntil: 'networkidle' });
+  await page.getByTestId('load-run-new').click();
+  await page.getByText('所属应用 / API 项目', { exact: true }).waitFor();
+  await page.getByTestId('load-run-environment').waitFor();
+  await page.getByText('目标环境（可切换）').waitFor();
+  await page.getByRole('button', { name: '返回执行列表' }).first().click();
+  await page.getByText(loadScenario.name, { exact: true }).waitFor();
   await page.goto(url, { waitUntil: 'networkidle' });
 }
 
@@ -633,6 +721,8 @@ async function assertAssetSyncClarity(page, url) {
     await assertLargeExecutionDrawer(page, url);
     await assertLoadReportResponsive(page, url);
     await assertLoadAgentsResponsive(page, url);
+    await assertLoadScenariosResponsive(page, url);
+    await assertLoadRunsResponsive(page, url);
     await page.getByRole('heading', { name: '接口测试工作台' }).waitFor();
     await page.goto(`${url}#/?newTask=1`, { waitUntil: 'networkidle' });
     await page.getByText('从一个接口开始', { exact: true }).waitFor();
@@ -748,7 +838,7 @@ async function assertAssetSyncClarity(page, url) {
     await assertScheduledServerBlocks(page);
     await assertAssetSyncClarity(page, url);
     if (errors.length) throw new Error(`browser errors: ${errors.join(' | ')}`);
-    console.log(JSON.stringify({ ok: true, url, screenshots: ['load-agents-desktop.png', 'load-agents-mobile.png', 'load-agents-short.png', 'load-report-desktop.png', 'load-report-tablet.png', 'load-report-mobile.png', 'load-report-short.png', 'execution-report-focus-desktop.png', 'execution-report-focus-mobile.png', 'execution-report-focus-short-mobile.png', 'execution-report-focus-tiny-mobile.png', 'execution-drawer-desktop.png', 'execution-drawer-mobile.png', 'execution-drawer-short-mobile.png', 'execution-drawer-tiny-mobile.png', 'workbench-start-desktop.png', 'workbench-start-mobile.png', 'workflow-preview-desktop.png', 'workflow-preview-mobile.png', 'workbench-desktop.png', 'workbench-compact-desktop.png', 'workbench-tablet.png', 'workbench-mobile.png', 'baselines-mobile.png', 'settings-mobile.png', 'baselines-desktop.png', 'scheduled-blocked-desktop.png', 'scheduled-blocked-mobile.png', 'assets-saved-desktop.png', 'assets-preview-desktop.png', 'assets-preview-compact.png', 'assets-preview-mobile.png'] }));
+    console.log(JSON.stringify({ ok: true, url, screenshots: ['load-agents-desktop.png', 'load-agents-mobile.png', 'load-agents-short.png', 'load-capacity-dialog-desktop.png', 'load-capacity-dialog-mobile.png', 'load-scenarios-desktop.png', 'load-scenarios-mobile.png', 'load-runs-desktop.png', 'load-runs-mobile.png', 'load-report-desktop.png', 'load-report-tablet.png', 'load-report-mobile.png', 'load-report-short.png', 'execution-report-focus-desktop.png', 'execution-report-focus-mobile.png', 'execution-report-focus-short-mobile.png', 'execution-report-focus-tiny-mobile.png', 'execution-drawer-desktop.png', 'execution-drawer-mobile.png', 'execution-drawer-short-mobile.png', 'execution-drawer-tiny-mobile.png', 'workbench-start-desktop.png', 'workbench-start-mobile.png', 'workflow-preview-desktop.png', 'workflow-preview-mobile.png', 'workbench-desktop.png', 'workbench-compact-desktop.png', 'workbench-tablet.png', 'workbench-mobile.png', 'baselines-mobile.png', 'settings-mobile.png', 'baselines-desktop.png', 'scheduled-blocked-desktop.png', 'scheduled-blocked-mobile.png', 'assets-saved-desktop.png', 'assets-preview-desktop.png', 'assets-preview-compact.png', 'assets-preview-mobile.png'] }));
   } finally {
     await browser.close();
     await new Promise(resolve => server.close(resolve));

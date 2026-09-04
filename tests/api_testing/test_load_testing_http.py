@@ -128,7 +128,7 @@ def test_agent_calibration_action_requires_management_permission(load_factory, u
         node_group="腾讯云", labels={}, agent_version="1.0.0", k6_version="0.52.0",
         hard_limits={}, soft_limits={}, current_usage={},
         health={"calibration": {"state": "calibrating"}, "pending_command": {"type": "calibrate", "id": "command-1"}},
-        egress_ip="", last_heartbeat_at=None, offline_reason="",
+        egress_ip="", last_heartbeat_at=datetime.now(timezone.utc), offline_reason="",
     )
     monkeypatch.setattr(
         "task_server.api_testing.load_testing_http.LoadAgentService.request_calibration",
@@ -317,3 +317,28 @@ def test_repeated_http_start_returns_the_existing_running_task(load_factory, cat
     result, status = _call(load_factory, "POST", f"/load-runs/{run_id}/start", "runner")
     assert status == 200
     assert result["run"]["state"] == "running"
+
+
+def test_run_delete_cleans_terminal_history_but_blocks_active_execution(load_factory, catalog, users):
+    with load_factory.begin() as session:
+        scenario = ApiLoadScenario(project_id=catalog["project"].id, name="可清理链路", scenario_type="single_interface", **_audit())
+        session.add(scenario)
+        session.flush()
+        version = ApiLoadScenarioVersion(scenario_id=scenario.id, version_number=1, definition=_definition(), source_snapshot={}, validation_summary={"accepted": True}, compiler_version="k6-safe-v1", content_hash="d" * 64, **_audit())
+        session.add(version)
+        session.flush()
+        terminal = ApiLoadRun(project_id=catalog["project"].id, scenario_version_id=version.id, environment_revision_id=catalog["revision"].id, load_model="constant-vus", queue_priority="normal", configuration={}, state="failed", **_audit())
+        active = ApiLoadRun(project_id=catalog["project"].id, scenario_version_id=version.id, environment_revision_id=catalog["revision"].id, load_model="constant-vus", queue_priority="normal", configuration={}, state="running", **_audit())
+        session.add_all([terminal, active])
+        session.flush()
+        terminal_id, active_id = terminal.id, active.id
+
+    deleted, status = _call(load_factory, "DELETE", f"/load-runs/{terminal_id}", "runner")
+    assert status == 200
+    assert deleted == {"deleted": True, "id": terminal_id}
+    with load_factory() as session:
+        assert session.get(ApiLoadRun, terminal_id) is None
+
+    with pytest.raises(LoadRunError, match="执行中的压测不能删除") as caught:
+        _call(load_factory, "DELETE", f"/load-runs/{active_id}", "runner")
+    assert caught.value.code == "load_run_active"

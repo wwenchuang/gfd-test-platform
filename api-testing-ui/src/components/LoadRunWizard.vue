@@ -5,9 +5,9 @@ import { apiTestingHasPermission } from '../utils/authRedirect'
 
 type Executor = 'constant-vus' | 'ramping-vus' | 'constant-arrival-rate' | 'ramping-arrival-rate'
 
-const props = defineProps<{ scenario: LoadScenario; environments: EnvironmentRevisionOption[]; agents: LoadAgent[] }>()
+const props = defineProps<{ scenario: LoadScenario; environments: EnvironmentRevisionOption[]; agents: LoadAgent[]; projectName?: string; initialEnvironmentId?: string }>()
 const emit = defineEmits<{ submit: [payload: Record<string, unknown>]; cancel: [] }>()
-const environmentId = ref(props.environments[0]?.id || '')
+const environmentId = ref(props.environments.some(item => item.id === props.initialEnvironmentId) ? props.initialEnvironmentId! : props.environments[0]?.id || '')
 const executor = ref<Executor>('constant-vus')
 const vus = ref(20)
 const maxVus = ref(20)
@@ -57,6 +57,20 @@ function selectExecutor(value: string): void { executor.value = value as Executo
 function toggleAgent(id: string, checked: boolean): void {
   selectedIds.value = checked ? [...new Set([...selectedIds.value, id])] : selectedIds.value.filter(item => item !== id)
 }
+function recommendAgents(): void {
+  const order = { preferred: 0, normal: 1, fallback: 2, disabled: 3 }
+  const candidates = validAgents.value.slice().sort((a, b) => order[a.scheduling_tier] - order[b.scheduling_tier])
+  const next: string[] = []
+  let selectedVus = 0
+  let selectedRate = 0
+  for (const agent of candidates) {
+    next.push(agent.id)
+    selectedVus += availableCapacity(agent, 'max_vus')
+    selectedRate += availableCapacity(agent, 'max_iterations_per_second')
+    if (selectedVus >= requestedMaxVus.value && (!arrivalModel.value || selectedRate >= rate.value)) break
+  }
+  selectedIds.value = next
+}
 function workload(): Record<string, unknown> {
   if (executor.value === 'constant-vus') return { executor: executor.value, vus: vus.value, duration_seconds: duration.value }
   if (executor.value === 'ramping-vus') return { executor: executor.value, start_vus: 1, stages: [{ duration_seconds: duration.value, target: vus.value }] }
@@ -88,9 +102,11 @@ function submit(): void {
 
 <template>
   <section class="load-wizard" aria-label="创建压测执行">
-    <header><div><p class="eyebrow">压测配置</p><h2>{{ scenario.name }}</h2></div><button class="text-command" type="button" @click="emit('cancel')">取消</button></header>
+    <header><div><p class="eyebrow">压测配置</p><h2>{{ scenario.name }}</h2></div><button data-testid="load-run-back" class="text-command" type="button" @click="emit('cancel')">← 返回执行列表</button></header>
     <div class="load-wizard-body">
-      <label>目标环境<select v-model="environmentId"><option v-for="item in environments" :key="item.id" :value="item.id">{{ item.name }} · v{{ item.revision }}</option></select></label>
+      <section class="load-context-banner"><div><span>所属应用 / API 项目</span><strong>{{ projectName || '当前接口项目' }}</strong><small>场景、环境和报告都归入这个项目；需要换应用时请先回工作台切换。</small></div><div><span>场景版本</span><strong>{{ scenario.name }}</strong><small>本次执行固定使用当前生效版本，历史结果可重复核对。</small></div></section>
+      <label>目标环境（可切换）<select v-model="environmentId" data-testid="load-run-environment"><option value="" disabled>请选择目标环境</option><option v-for="item in environments" :key="item.id" :value="item.id">{{ item.name }} · v{{ item.revision }}</option></select><small v-if="environments.length === 1">当前项目只有 1 个可用环境；可到“环境配置”新增独立压测环境。</small><small v-else>请选择本次真实接收流量的环境，环境不是写死的。</small></label>
+      <p v-if="!environments.length" class="load-warning">当前项目没有可用环境，请先到“环境配置”创建并验证服务地址。</p>
       <p v-if="production && !hasProductionPermission" class="load-warning">当前账号没有 api.production 权限，不能创建生产环境压测。请联系管理员授权。</p>
       <p v-else-if="production" class="load-warning">生产环境会持续收到真实请求，请确认范围、数据和停止条件。</p>
 
@@ -107,15 +123,16 @@ function submit(): void {
         <label>排队优先级<select v-model="priority"><option value="urgent">紧急（优先排队，不抢占运行任务）</option><option value="high">高</option><option value="normal">普通（日常默认）</option><option value="low">低</option></select></label>
       </div>
 
-      <h3>选择压测节点</h3>
+      <div class="load-section-heading"><div><h3>按负载目标选择压测节点</h3><small>先填写上面的并发/吞吐，再让平台按“首选 → 普通 → 备用”推荐足够容量。</small></div><button data-testid="load-agent-recommend" class="secondary-command" type="button" :disabled="!validAgents.length" @click="recommendAgents">选择推荐节点</button></div>
       <p v-if="!validAgents.length" class="load-warning">没有可用的已校准节点。请先到“压测节点”完成校准。</p>
-      <div class="load-agent-options"><label v-for="item in agents" :key="item.id"><input :data-testid="`load-agent-${item.id}`" type="checkbox" :disabled="item.status !== 'online' || item.calibration_state !== 'valid' || (item.scheduling_tier === 'fallback' && !allowFallback)" :checked="selectedIds.includes(item.id)" @change="toggleAgent(item.id, ($event.target as HTMLInputElement).checked)" /><span><strong>{{ item.name }}</strong><small v-if="item.calibration_state !== 'valid'">{{ item.calibration_state === 'expired' ? '校准过期，不能选择' : '未完成有效校准，不能选择' }}</small><small v-else>当前可用 {{ availableCapacity(item, 'max_vus') }} VU / {{ availableCapacity(item, 'max_iterations_per_second') }} 次/秒</small></span></label></div>
+      <div class="load-agent-options"><label v-for="item in agents" :key="item.id" :class="{ selected: selectedIds.includes(item.id), disabled: item.status !== 'online' || item.calibration_state !== 'valid' }"><input :data-testid="`load-agent-${item.id}`" type="checkbox" :disabled="item.status !== 'online' || item.calibration_state !== 'valid' || (item.scheduling_tier === 'fallback' && !allowFallback)" :checked="selectedIds.includes(item.id)" @change="toggleAgent(item.id, ($event.target as HTMLInputElement).checked)" /><span><strong>{{ item.name }}</strong><small>{{ item.scheduling_tier === 'preferred' ? '首选节点' : item.scheduling_tier === 'normal' ? '普通节点' : '备用节点' }}</small><small v-if="item.calibration_state !== 'valid'">{{ item.calibration_state === 'expired' ? '校准过期，不能选择' : '未完成有效校准，不能选择' }}</small><small v-else>可分配 {{ availableCapacity(item, 'max_vus') }} VU / {{ availableCapacity(item, 'max_iterations_per_second') }} 次/秒</small></span></label></div>
+      <p class="load-capacity-note"><strong>选择依据：</strong>任务容量按每台节点的“本机硬上限、平台容量策略、校准达到值”取最小值，再减当前占用；校准值不会直接全部分配。</p>
       <label class="load-check"><input v-model="allowFallback" type="checkbox" />允许备用节点参与（本机备用节点默认不参与）</label>
       <p v-if="selected.length && !capacityEnough" class="load-warning" data-testid="capacity-shortfall">所选节点容量不足：{{ arrivalModel ? `最大并发需要 ${requestedMaxVus} VU、目标吞吐需要 ${rate} 次/秒；` : `并发需要 ${vus} VU；` }}合计可用 {{ selectedCapacity.vus }} VU / {{ selectedCapacity.rate }} 次/秒。请降低目标或增加节点。</p>
       <label class="load-check"><input v-model="allowRunAnyway" data-testid="allow-run-anyway" type="checkbox" />容量不足时仍创建任务（报告固定标记为证据不足）</label>
       <label v-if="production && hasProductionPermission" class="load-check"><input v-model="productionConfirmed" type="checkbox" />我确认本次会向生产环境持续发送真实请求</label>
       <div class="load-review-box"><strong>执行前预估</strong><p>{{ iterationEstimate }} 持续 {{ duration }} 秒；选择 {{ selected.length }} 台节点；当前可用 {{ selectedCapacity.vus }} VU / {{ selectedCapacity.rate }} 次/秒。创建后还需依次完成目标连通性检查、单用户预检和开始执行。</p></div>
     </div>
-    <footer><button class="secondary-command" type="button" @click="emit('cancel')">取消</button><span /><button data-testid="load-run-submit" class="primary-command" type="button" :disabled="!canSubmit" @click="submit">创建压测草稿</button></footer>
+    <footer><button class="secondary-command" type="button" @click="emit('cancel')">返回执行列表</button><span /><button data-testid="load-run-submit" class="primary-command" type="button" :disabled="!canSubmit" @click="submit">创建压测草稿</button></footer>
   </section>
 </template>

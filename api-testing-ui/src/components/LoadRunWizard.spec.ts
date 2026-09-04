@@ -12,10 +12,22 @@ const agents = [{ id: 'a1', name: '专用节点', status: 'online', scheduling_t
 describe('LoadRunWizard', () => {
   afterEach(() => setApiTestingAccessProfile(null))
   it('does not pretend VU multiplied by seconds is an exact iteration count', () => {
-    const wrapper = mount(LoadRunWizard, { props: { scenario, environments, agents } })
+    const wrapper = mount(LoadRunWizard, { props: { scenario, environments, agents, projectName: '智小白3D家用', initialEnvironmentId: 'env-v1' } })
+    expect(wrapper.text()).toContain('所属应用 / API 项目')
+    expect(wrapper.text()).toContain('智小白3D家用')
+    expect(wrapper.text()).toContain('可切换')
     expect(wrapper.text()).toContain('固定并发会在时长内持续循环')
     expect(wrapper.text()).toContain('实际次数取决于接口响应时间')
     expect(wrapper.text()).not.toContain('预计约 1200 次完整链路')
+  })
+
+  it('offers a clear return action and recommends enough nodes after workload is known', async () => {
+    const wrapper = mount(LoadRunWizard, { props: { scenario, environments, agents, projectName: '智小白3D家用' } })
+    expect(wrapper.get('[data-testid="load-run-back"]').text()).toContain('返回执行列表')
+    await wrapper.get('[data-testid="load-model-constant-arrival-rate"]').trigger('click')
+    await wrapper.get('[data-testid="load-agent-recommend"]').trigger('click')
+    expect((wrapper.get('[data-testid="load-agent-a1"]').element as HTMLInputElement).checked).toBe(true)
+    expect(wrapper.text()).toContain('选择依据')
   })
 
   it('explains all four load models and emits target, thresholds, allocation and priority', async () => {

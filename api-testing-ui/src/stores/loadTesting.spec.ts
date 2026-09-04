@@ -42,4 +42,17 @@ describe('loadTesting live events', () => {
     await expect(store.createRun({})).rejects.toThrow('压测节点没有剩余容量')
     expect(store.runError).toBe('压测节点没有剩余容量')
   })
+
+  it('keeps action failures visible and removes a deleted terminal run', async () => {
+    const post = vi.spyOn(apiClient, 'post').mockRejectedValueOnce(new Error('单用户预检业务断言失败'))
+    const remove = vi.spyOn(apiClient, 'delete').mockResolvedValue({ data: { deleted: true } } as never)
+    const store = useLoadTestingStore()
+    store.runs = [{ id: 'run-1' } as never]
+    await expect(store.preflightRun('run-1')).rejects.toThrow('单用户预检业务断言失败')
+    expect(store.runError).toBe('单用户预检业务断言失败')
+    expect(post).toHaveBeenCalledWith('/api/api-testing/v1/load-runs/run-1/preflight', {})
+    await store.deleteRun('run-1')
+    expect(remove).toHaveBeenCalledWith('/api/api-testing/v1/load-runs/run-1')
+    expect(store.runs).toEqual([])
+  })
 })
