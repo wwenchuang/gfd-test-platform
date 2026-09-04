@@ -223,7 +223,7 @@ function serve() {
       return;
     }
     if (url.pathname === '/api/cases/mindmaps') {
-      json(res, {ok: true, mindmaps: [
+      const mindmaps = [
         {
           case_set_id: 'agent-newest',
           title: '最新 AI 建模脑图',
@@ -258,7 +258,16 @@ function serve() {
           mindmap_updated_at: '2026-06-23 15:16:03',
           mindmap_sort_ts: 1782198963,
         }
-      ]});
+      ];
+      for (let index = 0; index < 35; index += 1) {
+        mindmaps.push({
+          ...mindmaps[1],
+          case_set_id: `agent-history-${index + 1}`,
+          title: `历史脑图 ${index + 1}`,
+          mindmap_sort_ts: 1782198962 - index,
+        });
+      }
+      json(res, {ok: true, mindmaps});
       return;
     }
     if (url.pathname === '/api/runners') {
@@ -585,6 +594,10 @@ async function anyVisible(locator) {
     await page.evaluate(() => showMindmapCenter());
     await page.waitForSelector('text=脑图中心');
     await page.waitForSelector('.mindmap-compact-list .mindmap-row.file');
+    const mindmapCreateButton = page.locator('.generation-record-head button:has-text("新建脑图")');
+    if (!await mindmapCreateButton.isVisible()) throw new Error('mindmap create action is clipped after records load');
+    const mindmapHeadBox = await page.locator('.generation-record-head').boundingBox();
+    if (!mindmapHeadBox || mindmapHeadBox.height < 150) throw new Error(`mindmap header collapsed after records load: ${JSON.stringify(mindmapHeadBox)}`);
     const firstMindmapTitle = await page.locator('.mindmap-row.file .mindmap-row-title strong').first().innerText();
     if (!/最新 AI 建模脑图/.test(firstMindmapTitle)) throw new Error(`mindmap list is not latest-first: ${firstMindmapTitle}`);
     const mindmapRows = await page.locator('.mindmap-row.file').count();

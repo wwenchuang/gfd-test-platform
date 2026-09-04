@@ -4371,10 +4371,6 @@ function mindmapReportEvidenceSummaryHtml(data = mindmapReportData || {}) {
   `;
 }
 
-function mindmapReportManualResultCount() {
-  return Object.values(mindmapReportExecutionResults || {}).filter(item => item?.status).length;
-}
-
 function mindmapReportUnresolvedMessage() {
   const cases = flattenMindmapReportCases();
   const unresolvedAutomation = cases.filter(item => item.source_type !== 'manual' && !mindmapReportExecutionStatus(item));
@@ -4383,9 +4379,6 @@ function mindmapReportUnresolvedMessage() {
     && !mindmapReportExecutionStatus(item));
   if (unresolvedAutomation.length) return `还有 ${unresolvedAutomation.length} 条自动化用例未关联或未补录执行结论。`;
   if (unresolvedManual.length) return `还有 ${unresolvedManual.length} 条已选人工用例未确认结论。`;
-  if (mindmapReportManualResultCount() && !(document.getElementById('mindmap-report-execution-note')?.value.trim())) {
-    return '已手工补录执行结果，请填写执行依据（执行时间、设备或用例平台记录）。';
-  }
   return '';
 }
 
@@ -4426,7 +4419,13 @@ function applyMindmapReportBulkResult() {
   mindmapReportPreview = null;
   renderMindmapReportCaseTree();
   syncMindmapReportGenerateButtons();
-  setMindmapReportStatus('已把结果应用到当前选中的、尚未由 Runner 自动关联的用例。', 'success');
+  const unresolved = mindmapReportUnresolvedMessage();
+  setMindmapReportStatus(
+    unresolved
+      ? `已把结果应用到当前选中用例。${unresolved}`
+      : '✅ 已应用执行结果，现在可以生成正式测试报告。',
+    unresolved ? '' : 'success',
+  );
 }
 
 function mindmapReportCaseVisible(item = {}) {
@@ -4783,7 +4782,7 @@ function renderMindmapReportBuilder(data) {
             </label>
             <label class="wide">测试目标<textarea id="mindmap-report-goal" rows="2">${escapeHtml(DEFAULT_MINDMAP_REPORT_GOAL)}</textarea></label>
             <label class="wide">备注<textarea id="mindmap-report-remark" rows="2" placeholder="补充风险、数据准备或结论说明"></textarea></label>
-            <label class="wide">执行依据<textarea id="mindmap-report-execution-note" rows="2" placeholder="手工补录结果时必填，例如：2026-09-04 Safari 真机执行，设备 Mac/SN，用例平台记录 3552" oninput="syncMindmapReportGenerateButtons()"></textarea><em>Runner 自动关联的结果无需填写；人工或外部平台执行必须留下可复核依据。</em></label>
+            <label class="wide">执行依据（选填）<textarea id="mindmap-report-execution-note" rows="2" placeholder="可补充执行设备或外部记录，例如：Safari 真机执行，设备 Mac/SN，用例平台记录 3552"></textarea><em>在平台标记通过、失败或阻塞后即可生成报告；未填写时，报告会自动记录为“平台人工标记”并保存生成时间。</em></label>
             <label class="wide">缺陷统计
               <span class="mindmap-report-defect-grid">
                 <span class="mindmap-report-defect-field"><em>致命</em><input id="mindmap-report-defect-fatal" type="number" min="0" step="1" value="0"></span>

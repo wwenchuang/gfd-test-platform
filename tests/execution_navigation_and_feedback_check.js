@@ -238,7 +238,7 @@ test('mindmap formal report submits explicit execution mode and manual evidence 
   assert.match(source, /applyMindmapReportBulkResult/);
 });
 
-test('mindmap formal report stays disabled until every automation result has evidence and a note', t => {
+test('mindmap formal report becomes available after every selected case is manually marked', t => {
   const source = fs.readFileSync('js/app.js', 'utf8');
   const dom = new JSDOM(`
     <body>
@@ -259,7 +259,6 @@ test('mindmap formal report stays disabled until every automation result has evi
   loadFunction(win, source, 'flattenMindmapReportCases');
   loadFunction(win, source, 'mindmapReportCaseSelectionId');
   loadFunction(win, source, 'mindmapReportExecutionStatus');
-  loadFunction(win, source, 'mindmapReportManualResultCount');
   loadFunction(win, source, 'mindmapReportUnresolvedMessage');
   loadFunction(win, source, 'syncMindmapReportGenerateButtons');
 
@@ -270,12 +269,9 @@ test('mindmap formal report stays disabled until every automation result has evi
 
   win.mindmapReportExecutionResults['auto-1'] = {status: 'passed'};
   win.syncMindmapReportGenerateButtons();
-  assert.equal(button.disabled, true);
-  assert.match(button.title, /填写执行依据/);
-
-  win.document.getElementById('mindmap-report-execution-note').value = '2026-09-04 Safari 真机执行，记录 3552';
-  win.syncMindmapReportGenerateButtons();
   assert.equal(button.disabled, false);
+  assert.match(button.title, /可以生成正式执行报告/);
+  assert.match(source, /✅ 已应用执行结果，现在可以生成正式测试报告/);
 });
 
 test('mindmap report history controls explain and disable an empty history', t => {

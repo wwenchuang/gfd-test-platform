@@ -642,6 +642,30 @@ def test_explicit_recorded_results_complete_execution_report_without_runner_yaml
     assert result["report_cases"][0]["execution_evidence_label"] == "人工记录 · 通过"
 
 
+def test_formal_report_accepts_platform_manual_pass_without_extra_note(report_workspace):
+    from task_server.services import test_report_service
+
+    summary_path = report_workspace / "cases" / "case-a" / "summary.json"
+    summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    summary.pop("generatedCaseGroups", None)
+    summary_path.write_text(json.dumps(summary, ensure_ascii=False), encoding="utf-8")
+
+    result = test_report_service.create_test_report({
+        "case_set_id": "case-a",
+        "selected_case_ids": ["TC-001"],
+        "report_mode": "execution",
+        "execution_results": {
+            case_id: {"status": "passed", "source": "manual_record"}
+            for case_id in ("TC-001", "TC-002", "TC-003", "TC-004")
+        },
+        "meta": {"report_title": "平台人工标记通过-测试报告"},
+    })
+
+    assert result["statistics"]["passed"] == 4
+    assert result["quality"]["result"] == "通过"
+    assert "平台人工标记" in result["execution_note"]
+
+
 def test_formal_execution_report_rejects_unclosed_execution_evidence(report_workspace):
     from task_server.services import test_report_service
 

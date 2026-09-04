@@ -1147,6 +1147,10 @@ def _build_report_data(payload: Dict[str, Any]) -> Dict[str, Any]:
     meta = _meta(sources, payload)
     scope = _scope_markdown(cases)
     source_metas = [source["meta"] for source in sources]
+    generated_at = _now_text()
+    execution_note = _text(payload.get("execution_note") or payload.get("executionNote"))
+    if not execution_note and int(statistics.get("manually_recorded") or 0) > 0:
+        execution_note = f"执行结果由用户在平台人工标记；报告生成时间 {generated_at}。"
     data = {
         "case_set_id": case_set_ids[0],
         "case_set_ids": case_set_ids,
@@ -1164,11 +1168,11 @@ def _build_report_data(payload: Dict[str, Any]) -> Dict[str, Any]:
         "statistics": statistics,
         "execution_readiness": execution_readiness,
         "generation_audit": _generation_audit(sources),
-        "execution_note": _text(payload.get("execution_note") or payload.get("executionNote")),
+        "execution_note": execution_note,
         "defects": defects,
         "quality": quality,
         "release": release,
-        "generated_at": _now_text(),
+        "generated_at": generated_at,
     }
     data["summary_table"] = _summary_table(statistics)
     data["defect_table"] = _defect_table(defects)
@@ -1211,8 +1215,6 @@ def create_test_report(payload: Dict[str, Any]) -> Dict[str, Any]:
         raise TestReportError(f"不能生成正式执行报告：{readiness.get('message') or '自动化执行证据尚未闭环'}")
     if report_mode == "execution" and int(data["statistics"].get("manual_pending") or 0) > 0:
         raise TestReportError(f"不能生成正式执行报告：仍有 {data['statistics']['manual_pending']} 条已选人工用例待确认。")
-    if report_mode == "execution" and int(data["statistics"].get("manually_recorded") or 0) > 0 and not data.get("execution_note"):
-        raise TestReportError("不能生成正式执行报告：手工补录结果后必须填写执行时间、设备或外部用例记录等可复核依据。")
     report_id = unique_millis_id("tpr")
     report_dir = _report_dir(data["case_set_id"], report_id) if len(data.get("case_set_ids") or []) <= 1 else _merged_report_dir(report_id)
     os.makedirs(report_dir, exist_ok=True)

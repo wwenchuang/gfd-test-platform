@@ -2651,6 +2651,7 @@
     overflow: auto;
     padding: 24px;
     display: grid;
+    grid-auto-rows: max-content;
     gap: 14px;
     align-content: start;
   }
