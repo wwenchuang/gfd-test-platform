@@ -80,7 +80,12 @@ function dateTime(value: string): string {
 function scenarioSummary(item: LoadScenario): string {
   const value = String(item.description || '').trim()
   if (!value) return '未填写说明'
-  if (value.includes('```')) return '场景说明待补充：请写清压测目标、压力范围和风险边界。'
+  const compact = value.replace(/[^\p{L}\p{N}]+/gu, '').toLowerCase()
+  const malformedPrefix = /^[`'´＇，。、；;:：\s]{3,}/u.test(value)
+  const technicalFragment = compact === 'ai' || /^(?:ai)?\d*vu$/i.test(compact)
+  if (value.includes('```') || malformedPrefix || technicalFragment) {
+    return '场景说明待补充：请写清压测目标、压力范围和风险边界。'
+  }
   return value.replace(/\s+/g, ' ')
 }
 </script>

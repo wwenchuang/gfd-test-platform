@@ -80,7 +80,7 @@ const loadScenarios = [
     ...loadScenario,
     id: 'load-scenario-2',
     name: '模型列表到详情只读链路',
-    description: '``` AI; 1 VU,。',
+    description: '、、、AI；，1 VU，。',
     scenario_type: 'workflow',
     updated_at: '2026-09-03T09:00:00Z',
   },
