@@ -1,7 +1,7 @@
 """Validate Agent metric evidence before durable, idempotent ingestion."""
 
 import copy
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import logging
 import math
 import re
@@ -203,7 +203,7 @@ class LoadMetricService:
         metrics = value.get("metrics")
         if not isinstance(metrics, dict):
             raise LoadMetricError("指标内容必须是对象")
-        unknown = set(metrics) - set(COUNTER_FIELDS) - {"latency_ms", "latency_histogram"}
+        unknown = set(metrics) - set(COUNTER_FIELDS) - {"latency_ms", "latency_histogram", "vu_gauge"}
         if unknown:
             raise LoadMetricError("指标包含不支持字段：" + "、".join(sorted(unknown)))
         normalized = {
@@ -219,7 +219,46 @@ class LoadMetricService:
                 key: _number(latency.get(key, 0), f"latency_ms.{key}", integer=(key == "count"))
                 for key in ("count", "p50", "p90", "p95", "p99", "max")
             }
-        return {"step_id": step_id, "started_at": _timestamp(value.get("started_at")), "metrics": normalized}
+        started_at = _timestamp(value.get("started_at"))
+        if "vu_gauge" in metrics:
+            if step_id != "all":
+                raise LoadMetricError("实际VU采样仅允许在all窗口上报")
+            normalized["vu_gauge"] = cls._vu_gauge(metrics["vu_gauge"], started_at)
+        return {"step_id": step_id, "started_at": started_at, "metrics": normalized}
+
+    @staticmethod
+    def _vu_gauge(value, started_at):
+        fields = {"count", "min", "max", "sum", "first_at", "last_at"}
+        if (not isinstance(value, dict) or not fields <= set(value)
+                or set(value) - fields - {"max_gap_seconds"}):
+            raise LoadMetricError("实际VU采样字段不完整或包含不支持字段")
+        gauge = {key: _number(value[key], f"vu_gauge.{key}", integer=True)
+                 for key in ("count", "min", "max", "sum")}
+        if (gauge["count"] < 1 or gauge["min"] > gauge["max"]
+                or not gauge["count"] * gauge["min"] <= gauge["sum"] <= gauge["count"] * gauge["max"]):
+            raise LoadMetricError("实际VU采样数量、范围或合计不一致")
+        timestamps = []
+        for key in ("first_at", "last_at"):
+            try:
+                raw = value[key]
+                parsed = datetime.fromisoformat(raw.replace("Z", "+00:00")) if isinstance(raw, str) else None
+                if parsed is None or parsed.tzinfo is None:
+                    raise ValueError("timezone required")
+                parsed = parsed.astimezone(timezone.utc)
+            except ValueError as error:
+                raise LoadMetricError("实际VU采样时间必须是带时区的ISO时间") from error
+            if not started_at <= parsed < started_at + timedelta(seconds=BUCKET_SECONDS):
+                raise LoadMetricError("实际VU采样时间必须位于所属5秒窗口内")
+            timestamps.append(parsed)
+            gauge[key] = parsed.isoformat()
+        if timestamps[0] > timestamps[1]:
+            raise LoadMetricError("实际VU采样首末时间顺序无效")
+        if "max_gap_seconds" in value:
+            gap = _number(value["max_gap_seconds"], "vu_gauge.max_gap_seconds")
+            if gap > BUCKET_SECONDS:
+                raise LoadMetricError("实际VU最大采样间隔不能超过5秒窗口")
+            gauge["max_gap_seconds"] = gap
+        return gauge
 
     @staticmethod
     def _histogram(value):

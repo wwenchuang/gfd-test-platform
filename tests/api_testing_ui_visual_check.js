@@ -373,6 +373,12 @@ async function assertLoadReportResponsive(page, url) {
     await page.getByText('低置信度：缺失一个指标窗口').waitFor();
     await assertNoHorizontalOverflow(page, `load report ${label}`);
     await page.screenshot({ path: path.join(ARTIFACTS, `load-report-${label}.png`), fullPage: true });
+    await page.locator('.guide-toggle').click();
+    await page.locator('.guide-search input').fill('VU');
+    await expect(page.locator('.load-metric-guide')).toContainText('虚拟用户');
+    await assertNoHorizontalOverflow(page, `load glossary ${label}`);
+    await page.screenshot({ path: path.join(ARTIFACTS, `load-glossary-${label}.png`), fullPage: true });
+    await page.locator('.guide-toggle').click();
   }
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto(`${url}#/load-reports?run_id=load-run-1`, { waitUntil: 'networkidle' });

@@ -12,6 +12,9 @@ COUNTERS = {
     "data_sent": "bytes_sent",
     "data_received": "bytes_received",
 }
+SUPPORTED_METRICS = frozenset(COUNTERS) | {
+    "http_req_duration", "http_req_failed", "checks", "workflow_iteration_success", "vus",
+}
 LATENCY_BOUNDS_MS = (10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000)
 
 
@@ -48,9 +51,28 @@ class _Bucket:
         self.latency_max = 0.0
         self.latency_histogram = [0 for _ in range(len(LATENCY_BOUNDS_MS) + 1)]
         self.samples = []
+        self.vu_gauge = None
 
-    def accept(self, metric, value, tags):
-        if metric in COUNTERS:
+    def accept(self, metric, value, tags, timestamp):
+        if metric == "vus" and self.step_id == "all":
+            vus = int(value)
+            if self.vu_gauge is None:
+                self.vu_gauge = {"count": 1, "min": vus, "max": vus, "sum": vus,
+                                 "first_at": timestamp, "last_at": timestamp, "max_gap_seconds": 0.0}
+            else:
+                gauge = self.vu_gauge
+                gauge["count"] += 1
+                gauge["min"] = min(gauge["min"], vus)
+                gauge["max"] = max(gauge["max"], vus)
+                gauge["sum"] += vus
+                # Keep a conservative upper bound when points arrive late: a
+                # later sample must never erase a previously observed gap.
+                gauge["max_gap_seconds"] = max(
+                    gauge["max_gap_seconds"], abs((timestamp - gauge["last_at"]).total_seconds())
+                )
+                gauge["first_at"] = min(gauge["first_at"], timestamp)
+                gauge["last_at"] = max(gauge["last_at"], timestamp)
+        elif metric in COUNTERS:
             self.counters[COUNTERS[metric]] += float(value)
         elif metric == "http_req_duration":
             latency = float(value)
@@ -116,6 +138,12 @@ class _Bucket:
                 },
             }
         )
+        if self.vu_gauge is not None:
+            metrics["vu_gauge"] = {
+                **self.vu_gauge,
+                "first_at": self.vu_gauge["first_at"].isoformat(),
+                "last_at": self.vu_gauge["last_at"].isoformat(),
+            }
         return {
             "step_id": self.step_id,
             "started_at": self.started_at.isoformat(),
@@ -137,6 +165,8 @@ class MetricAggregator:
         self.max_latency_samples = max_latency_samples
         self.max_samples = max_samples
         self._buckets = {}
+        self._high_water_window = None
+        self._finalized_before = None
 
     @property
     def retained_latency_values(self):
@@ -149,12 +179,33 @@ class MetricAggregator:
         try:
             timestamp = _utc(data.get("time"))
             value = float(data.get("value"))
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
+            return ()
+        if not math.isfinite(value) or isinstance(data.get("value"), bool):
+            return ()
+        metric = str(point.get("metric") or "")
+        if metric not in SUPPORTED_METRICS:
+            return ()
+        if metric == "vus" and (value < 0 or not value.is_integer()):
             return ()
         tags = data.get("tags") if isinstance(data.get("tags"), dict) else {}
         step_id = str(tags.get("step_id") or "all")[:120]
+        if metric == "vus" and step_id != "all":
+            return ()
         epoch = int(timestamp.timestamp())
         window_epoch = epoch - epoch % self.window_seconds
+        if self._finalized_before is not None and window_epoch < self._finalized_before:
+            raise ValueError("已完成的指标窗口收到超出缓冲范围的乱序点，统计证据不完整")
+        self._high_water_window = max(
+            self._high_water_window if self._high_water_window is not None else window_epoch,
+            window_epoch,
+        )
+        # Retain current and previous windows so boundary-adjacent points can
+        # merge before upload. One scalar watermark prevents partial re-uploads.
+        cutoff = self._high_water_window - self.window_seconds
+        self._finalized_before = max(
+            self._finalized_before if self._finalized_before is not None else cutoff, cutoff,
+        )
         key = (window_epoch, step_id)
         bucket = self._buckets.get(key)
         if bucket is None:
@@ -165,11 +216,13 @@ class MetricAggregator:
                 self.max_samples,
             )
             self._buckets[key] = bucket
-        bucket.accept(str(point.get("metric") or ""), value, tags)
-        ready_keys = [item for item in self._buckets if item[0] < window_epoch]
+        bucket.accept(metric, value, tags, timestamp)
+        ready_keys = [item for item in self._buckets if item[0] < self._finalized_before]
         return self._flush_keys(ready_keys)
 
     def flush_all(self):
+        if self._high_water_window is not None:
+            self._finalized_before = self._high_water_window + self.window_seconds
         return self._flush_keys(list(self._buckets))
 
     def _flush_keys(self, keys):

@@ -155,3 +155,17 @@ def test_runtime_tolerates_non_utf8_k6_console_bytes_and_keeps_valid_metrics(tmp
     assert result.exit_code == 0
     assert sink.metrics[0][1]["buckets"][0]["metrics"]["requests"] == 1
     assert not list(tmp_path.glob("run-*"))
+
+
+def test_excessively_late_metrics_fail_shard_without_overwriting_sent_bucket(tmp_path):
+    from tests.load_agent.test_k6_metrics import _point
+    process = _Process([json.dumps(_point("http_reqs", 1, second)) + "\n" for second in (0, 10, 0)])
+    runtime = K6Runtime(tmp_path, popen=lambda *_args, **_kwargs: process, poll_interval=0)
+    sink = _Sink()
+    result = runtime.run(_shard(), lambda: [], sink)
+    assert result.state == "failed"
+    assert "乱序" in result.error_message
+    assert signal.SIGKILL in process.signals
+    assert len(sink.metrics) == 1
+    assert sink.metrics[0][1]["buckets"][0]["metrics"]["requests"] == 1
+    assert not list(tmp_path.glob("run-*"))

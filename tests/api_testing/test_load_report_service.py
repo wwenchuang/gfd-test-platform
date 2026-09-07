@@ -282,3 +282,29 @@ def test_incompatible_history_explains_why_no_regression_claim_is_made(load_fact
     assert report["comparison"]["compatible"] is False
     assert report["comparison"]["previous_run_id"] == previous_id
     assert report["comparison"]["reason"] == "最近历史运行使用了不同的负载模型"
+
+
+@pytest.mark.parametrize('with_gauges', [False, True])
+def test_constant_vus_requires_persisted_sustained_actual_samples(load_factory, load_run_with_shard, with_gauges):
+    run, shard, _ = _prepare(load_factory, load_run_with_shard)
+    with load_factory.begin() as session:
+        row = session.get(ApiLoadRun, run.id)
+        row.configuration = {**row.configuration, 'workload': {'executor': 'constant-vus', 'vus': 5, 'duration_seconds': 10}}
+        session.get(ApiLoadRunShard, shard.id).allocation = {'vus': 5}
+    service = LoadMetricService(load_factory)
+    service.ingest(shard.agent_id, shard.id, _metric_payload('requests', requests=50, iterations=50))
+    if with_gauges:
+        for seconds in (0, 5):
+            start = START + timedelta(seconds=seconds)
+            payload = _metric_payload('vu-' + str(seconds), requests=0, iterations=0, start=start)
+            bucket = payload['buckets'][0]
+            bucket['step_id'] = 'all'
+            bucket['metrics']['vu_gauge'] = {'count': 5, 'min': 5, 'max': 5, 'sum': 25,
+                'first_at': start.isoformat(), 'last_at': (start + timedelta(seconds=4)).isoformat(), 'max_gap_seconds': 1}
+            service.ingest(shard.agent_id, shard.id, payload)
+    _finish(load_factory, run, shard)
+    report = LoadReportService(load_factory).build(run.id, 'load-owner')
+    assert report['load_goal']['reached'] is with_gauges
+    assert report['verdict'] == ('passed' if with_gauges else 'inconclusive')
+    assert report['transport']['requests'] == 50
+    assert report['statistics_schema_version'] == 2

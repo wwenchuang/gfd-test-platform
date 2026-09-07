@@ -141,7 +141,9 @@ export interface LoadReport {
   verdict: Exclude<LoadVerdict, null>
   verdict_label: string
   verdict_explanation: string
-  load_goal: Record<string, number | string | boolean | null>
+  statistics_schema_version?: number
+  statistical_basis?: Record<string, unknown>
+  load_goal: Record<string, unknown>
   transport: Record<string, number>
   latency: Record<string, number>
   business?: Record<string, number | string>

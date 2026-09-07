@@ -7,6 +7,7 @@ import math
 from sqlalchemy import select
 
 from .. import access
+from .load_statistics import measured_vus
 from ..models.load_testing import (
     ApiLoadAgent,
     ApiLoadMetricBucket,
@@ -176,20 +177,26 @@ class LoadReportService:
             and bool(buckets)
             and missing_windows == 0
         )
+        workload = run.configuration.get("workload") or run.configuration
+        if workload.get("executor") == "constant-vus":
+            aggregate["vu_evidence"] = measured_vus(buckets, shards, int(workload.get("vus") or 0), _configured_load_duration(run.configuration))
         load_goal = self._load_goal(run.configuration, aggregate)
         sections = self._sections(aggregate)
         report_basis = {"load_goal": load_goal, **sections}
         thresholds = self._thresholds(run.configuration.get("thresholds") or {}, report_basis)
         required_failures = [item for item in thresholds if item["required"] and not item["passed"]]
+        missing_threshold_evidence = any(item["required"] and item["actual"] is None for item in thresholds)
         # The stored verdict is a dispatch-time/finalization snapshot. Rebuild
         # the report from durable metrics so a reporting fix cannot leave an
         # otherwise complete historical run permanently marked inconclusive.
-        forced_inconclusive = not evidence_complete or not load_goal["reached"]
+        forced_inconclusive = not evidence_complete or not load_goal["reached"] or missing_threshold_evidence
         verdict = "inconclusive" if forced_inconclusive else "failed" if required_failures else "passed"
         if not evidence_complete:
             explanation = "运行证据不完整：至少一个压测节点未正常完成。"
         elif not load_goal["reached"]:
             explanation = "未达到目标负载，当前数据不能证明系统满足性能要求。"
+        elif missing_threshold_evidence:
+            explanation = "必选性能标准缺少对应样本，不能把无采样当成通过。"
         elif required_failures:
             explanation = "目标负载已达到，但有必选性能阈值未通过。"
         else:
@@ -202,6 +209,15 @@ class LoadReportService:
             "verdict": verdict,
             "verdict_label": {"passed": "通过", "failed": "未通过", "inconclusive": "证据不足"}[verdict],
             "verdict_explanation": explanation,
+            "statistics_schema_version": 2,
+            "statistical_basis": {
+                "rate_duration_seconds": aggregate["duration_seconds"],
+                "planned_duration_seconds": _configured_load_duration(run.configuration),
+                "observed_wall_seconds": _duration(run, buckets),
+                "rate_duration_basis": "配置负载时长" if _configured_load_duration(run.configuration) else "观测时间范围",
+                "percentile_method": "合并耗时分桶后取累计分位数，不平均节点或时段分位数。",
+                "request_rate_label": "请求吞吐 RPS，不等同于成功业务事务 TPS",
+            },
             "labels": {
                 "load_goal": "负载目标",
                 "thresholds": "性能阈值",
@@ -302,6 +318,7 @@ class LoadReportService:
             },
             "latency": {
                 "label": "响应时间",
+                "sample_count": histogram["count"],
                 "average_ms": round(histogram["sum_ms"] / histogram["count"], 3) if histogram["count"] else 0,
                 "p50_ms": _percentile(histogram, 0.50),
                 "p90_ms": _percentile(histogram, 0.90),
@@ -316,20 +333,39 @@ class LoadReportService:
         workload = configuration.get("workload") or configuration
         executor = workload.get("executor") or ""
         actual_rate = round(aggregate["totals"]["iterations"] / aggregate["duration_seconds"], 3) if aggregate["duration_seconds"] else 0
-        if executor in {"constant-arrival-rate", "ramping-arrival-rate"}:
-            target = float(workload.get("rate") or workload.get("start_rate") or 0)
-            if workload.get("time_unit") not in {None, "1s"}:
+        if executor == "ramping-arrival-rate":
+            unit_seconds = 60 if workload.get("time_unit") == "1m" else 1
+            previous = float(workload.get("start_rate") or 0) / unit_seconds
+            stages = []
+            expected = 0.0
+            elapsed = 0.0
+            for index, stage in enumerate(workload.get("stages") or []):
+                duration = float(stage.get("duration_seconds") or 0)
+                target = float(stage.get("target") or 0) / unit_seconds
+                count = (previous + target) / 2 * duration
+                stages.append({"index": index + 1, "start_seconds": elapsed, "duration_seconds": duration,
+                               "start_rate": previous, "target_rate": target, "expected_iterations": count})
+                elapsed += duration
+                expected += count
+                previous = target
+            target_rate = expected / elapsed if elapsed else 0
+            return {"label": "负载目标", "model": executor, "model_label": "阶梯到达率",
+                    "target_iterations_per_second": target_rate, "actual_iterations_per_second": actual_rate,
+                    "expected_iterations": expected, "stages": stages, "requires_stage_evidence": True,
+                    "attainment_rate": round(aggregate["totals"]["iterations"] / expected, 4) if expected else None,
+                    "reached": False,
+                    "explanation": "已按各阶段起止到达率计算计划迭代量；缺少与阶段起点对齐的实际发起证据，不能用全程平均判定阶梯达标。"}
+        if executor == "constant-arrival-rate":
+            target = float(workload.get("rate") or 0) / (60 if workload.get("time_unit") == "1m" else 1)
+            if workload.get("time_unit") not in {None, "1s", "1m"}:
                 target = 0
             reached = target > 0 and actual_rate >= target * 0.99
             return {
-                "label": "负载目标",
-                "model": executor,
-                "model_label": "固定到达率" if executor == "constant-arrival-rate" else "阶梯到达率",
-                "target_iterations_per_second": target,
-                "actual_iterations_per_second": actual_rate,
+                "label": "负载目标", "model": executor, "model_label": "固定到达率",
+                "target_iterations_per_second": target, "actual_iterations_per_second": actual_rate,
                 "attainment_rate": round(actual_rate / target, 4) if target else 0,
                 "reached": reached,
-                "explanation": "实际稳定迭代率达到目标的99%即视为达到负载。",
+                "explanation": "按配置负载时长计算的完成迭代率达到目标99%；完整节点证据另行校验。",
             }
         target_vus = int(workload.get("vus") or max((item.get("target", 0) for item in workload.get("stages", [])), default=0))
         return {
@@ -338,8 +374,9 @@ class LoadReportService:
             "model_label": "固定并发用户" if executor == "constant-vus" else "阶梯并发用户",
             "target_vus": target_vus,
             "actual_iterations_per_second": actual_rate,
-            "reached": target_vus > 0 and aggregate["totals"]["iterations"] > 0,
-            "explanation": "并发模型需有完整节点证据且产生有效迭代；节点完整性另行校验。",
+            "reached": executor == "constant-vus" and bool((aggregate.get("vu_evidence") or {}).get("reached")) and aggregate["totals"]["iterations"] > 0,
+            "vu_evidence": aggregate.get("vu_evidence") or {},
+            "explanation": (aggregate.get("vu_evidence") or {}).get("reason") or "缺少实际并发与阶段对齐采样，不能仅凭配置并发或完成迭代认定达标。",
         }
 
     @staticmethod
@@ -354,8 +391,15 @@ class LoadReportService:
             operator_label, predicate = OPERATORS.get(operator, (operator or "未知比较", lambda _a, _b: False))
             expected = rule.get("value")
             actual = _path(report, path) if path else 0
+            sample_paths = {
+                "http_error_rate": "transport.requests", "business_failure_rate": "business.assertions",
+                "workflow_failure_rate": "workflow.iterations", "p95_ms": "latency.sample_count",
+                "p99_ms": "latency.sample_count", "max_latency_ms": "latency.sample_count",
+            }
+            if key in sample_paths and _path(report, sample_paths[key]) <= 0:
+                actual = None
             valid_expected = isinstance(expected, (int, float)) and not isinstance(expected, bool) and math.isfinite(float(expected))
-            passed = bool(path and valid_expected and predicate(float(actual), float(expected)))
+            passed = bool(path and actual is not None and valid_expected and predicate(float(actual), float(expected)))
             result.append({
                 "key": key,
                 "label": label,
@@ -365,6 +409,7 @@ class LoadReportService:
                 "actual": actual,
                 "required": rule.get("required") is not False,
                 "passed": passed,
+                "status_label": "无样本，无法判断" if actual is None else "通过" if passed else "未通过",
             })
         return result
 
