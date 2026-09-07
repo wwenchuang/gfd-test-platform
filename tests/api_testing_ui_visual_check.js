@@ -421,6 +421,16 @@ async function assertLoadScenariosResponsive(page, url) {
     await page.getByText('所属应用 / API 项目', { exact: true }).waitFor();
     await page.getByText(loadScenario.name, { exact: true }).waitFor();
     await page.getByText(/场景说明待补充/).waitFor();
+    const actionLayouts = await page.locator('.load-card-actions button').evaluateAll(buttons => buttons.map(button => ({
+      display: getComputedStyle(button).display,
+      direction: getComputedStyle(button).flexDirection,
+      iconTop: button.querySelector('svg')?.getBoundingClientRect().top,
+      buttonTop: button.getBoundingClientRect().top,
+      buttonHeight: button.getBoundingClientRect().height,
+    })));
+    if (!actionLayouts.length || actionLayouts.some(item => !['flex', 'inline-flex'].includes(item.display) || item.direction !== 'row' || item.buttonHeight > 36 || Math.abs((item.iconTop ?? item.buttonTop) - item.buttonTop) > 11)) {
+      throw new Error(`load scenario action icons and labels are not aligned on one compact row: ${JSON.stringify(actionLayouts)}`);
+    }
     if (label === 'wide') {
       const boxes = await page.locator('.load-scenario-list > article').evaluateAll(items => items.map(item => item.getBoundingClientRect()).map(box => ({ x: box.x, width: box.width })));
       if (boxes.length < 2 || boxes[0].x === boxes[1].x || boxes.some(box => box.width > 481)) throw new Error(`load scenario cards are not compact on wide screens: ${JSON.stringify(boxes)}`);
