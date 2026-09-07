@@ -119,7 +119,7 @@ const loadReport = {
   workflow: { iterations: 5988, failures: 8, failure_rate: 0.001336 },
   dropped_iterations: { count: 24, rate: 0.004 },
   latency: { average_ms: 110, p50_ms: 82, p90_ms: 180, p95_ms: 245, p99_ms: 680, max_ms: 1320 },
-  thresholds: [{ key: 'p95_ms', label: 'P95响应时间', operator_label: '小于等于', expected: 200, actual: 245, required: true, passed: false }],
+  thresholds: [{ key: 'p95_ms', label: 'P95响应时间', operator: 'less_than_or_equal', operator_label: '小于等于', expected: 200, actual: 245, required: true, passed: false }],
   series: Array.from({ length: 12 }, (_, i) => ({ started_at: `08:01:${String(i * 5).padStart(2, '0')}`, requests: 500, p95_ms: 120 + i * 12 })),
   steps: [], agents: [{ id: 'load-agent-1', name: '上海专用压测节点', state: 'finished', state_label: '已完成', summary: { cpu_peak_percent: 68, memory_peak_mb: 812 } }], samples: [],
   comparison: { compatible: false, reason: '最近历史运行使用了不同的负载参数' },
@@ -366,6 +366,9 @@ async function assertLoadReportResponsive(page, url) {
     await page.getByRole('heading', { name: '性能报告', exact: true }).waitFor();
     await expect(page.getByTestId('load-report-history-list')).toHaveCount(0);
     await expect(page.getByTestId('load-report-decision-hero')).toBeVisible();
+    await expect(page.locator('.chart-reference-label')).toContainText('200 毫秒');
+    await page.locator('.load-chart circle').first().focus();
+    await expect(page.locator('.chart-readout')).toContainText('次请求');
     await page.getByText('目标负载已达到，但有必选性能阈值未通过。').waitFor();
     await page.getByText('低置信度：缺失一个指标窗口').waitFor();
     await assertNoHorizontalOverflow(page, `load report ${label}`);

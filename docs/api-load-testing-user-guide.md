@@ -302,3 +302,16 @@ AI 可以基于平台已经计算好的确定性证据做归纳和下一轮建�
 - BlazeMeter 性能报告：https://help.blazemeter.com/docs/guide/performance-intro-to-reporting.html
 - Gatling Enterprise 报告：https://docs.gatling.io/guides/analysis/enterprise-reports/
 - Grafana k6 Analyze results：https://grafana.com/docs/grafana-cloud/observe-and-act/testing/k6/analyze-results/
+
+### 性能报告怎么读（2026-09-07 更新）
+
+报告参考 JMeter 的汇总/分位数/趋势分区，以及 Locust 的统计明细组织方式，按以下顺序阅读：
+
+1. **管理层摘要**：先确认目标压力达到、性能标准通过、执行数据完整。这三项不能互相替代，结论只适用于本次场景和压力条件。
+2. **核心指标**：每秒请求数反映吞吐量；HTTP 错误率反映请求异常；业务失败率反映断言不符合预期；完整链路失败率反映业务链路未全部完成。没有采集相应样本时显示“—”，不能视为零错误。
+3. **响应速度**：P50 是中位耗时；P95 = 200 毫秒表示约 95% 的请求在该耗时内完成；P99 用来关注少量慢请求。P95 不是通过率，1,000 毫秒为 1 秒。平台按耗时分桶估算分位数，不意味着折线平台上的每个请求耗时都相同。
+4. **趋势图**：横轴为采样时间（浏览器本地时区），纵轴为毫秒；悬停、点击或键盘选中点可查看该时段请求数与 P95。无采样数据不画为零，缺失时段不跨越连线。仅配置“全程 P95 小于等于”标准时显示橙色参考线；单个时段越线不等于全程判定失败，时段 P95 也不能直接平均。
+5. **接口与步骤统计**：按 P95 从高到低定位慢步骤，结合 HTTP 与业务错误率排查。没有接口明细时明确提示，不能推断具体接口正常。
+6. **节点与 AI 分析**：节点数据用于检查是否真正完成压测；AI 建议需结合接口日志、服务端监控验证，不能把推测当成根因。
+
+设计参考：[JMeter Dashboard](https://jmeter.apache.org/usermanual/generating-dashboard)、[Locust 统计实现与分位数配置](https://docs.locust.io/en/stable/_modules/locust/stats.html)。当前改动针对平台内的性能报告页面，不等同于修改飞书通知卡片或主平台功能测试 Word 报告。

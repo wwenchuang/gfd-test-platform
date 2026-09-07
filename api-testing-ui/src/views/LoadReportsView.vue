@@ -28,7 +28,23 @@ const historyLimit = ref(8)
 const canNotify = apiTestingHasPermission('platform.notify')
 const selectedRun = computed(() => store.runs.find(item => item.id === runId.value) || null)
 const terminal = computed(() => selectedRun.value ? ['finished', 'failed', 'cancelled'].includes(selectedRun.value.state) : false)
+const hasRequests = computed(() => Number(report.value?.transport.requests || 0) > 0)
+const percentileLabels = [
+  { key: 'p50_ms', name: 'P50 · 中位耗时', description: '50% 的请求不超过此值' },
+  { key: 'p90_ms', name: 'P90 · 九成请求', description: '90% 的请求不超过此值' },
+  { key: 'p95_ms', name: 'P95 · 重点关注', description: '95% 的请求不超过此值' },
+  { key: 'p99_ms', name: 'P99 · 尾部慢请求', description: '99% 的请求不超过此值' },
+  { key: 'max_ms', name: '最大耗时', description: '本次最慢的一次请求' },
+]
+function latency(key: string): string {
+  const value = report.value?.latency[key]
+  return !hasRequests.value || value == null || !Number.isFinite(Number(value)) ? '—' : Number(value).toLocaleString('zh-CN', { maximumFractionDigits: 2 })
+}
 const thresholds = computed(() => report.value?.thresholds || [])
+const p95Reference = computed(() => {
+  const item = thresholds.value.find(item => item.key === 'p95_ms' && item.operator === 'less_than_or_equal')
+  return item && Number.isFinite(Number(item.expected)) && Number(item.expected) >= 0 ? Number(item.expected) : undefined
+})
 const agents = computed(() => report.value?.agents || report.value?.nodes || [])
 const scenarioName = computed(() => {
   const value = selectedRun.value?.configuration.scenario
@@ -126,8 +142,15 @@ async function stop(): Promise<void> {
   feedback.value = '停止请求已提交，正在等待节点保存已完成证据。'
 }
 function number(section: Record<string, unknown> | undefined, key: string): number { return Number(section?.[key] || 0) }
-function percent(value: unknown): string { return `${(Number(value || 0) * 100).toFixed(2)}%` }
-function thresholdText(item: Record<string, unknown>): string { return `${item.operator_label || item.operator} ${item.expected}` }
+function percent(value: unknown): string { return value == null || !Number.isFinite(Number(value)) || !hasRequests.value ? '—' : `${(Number(value) * 100).toFixed(2)}%` }
+function thresholdText(item: Record<string, unknown>): string { return `${item.operator_label || item.operator} ${thresholdValue(item, item.expected)}` }
+function thresholdValue(item: Record<string, unknown>, value: unknown): string {
+  if (value == null) return '—'
+  const key = String(item.key || '')
+  if (key.endsWith('_ms')) return `${value} 毫秒`
+  if (key.endsWith('_rate')) return `${(Number(value) * 100).toFixed(2)}%`
+  return `${value}${key.endsWith('_per_second') ? ' 次/秒' : ''}`
+}
 function runName(run: { id: string; configuration: Record<string, unknown> }): string {
   const value = run.configuration.scenario
   return value && typeof value === 'object' && 'name' in value ? String(value.name || run.id) : run.id
@@ -176,8 +199,8 @@ function hasAgentError(agent: Record<string, unknown>): boolean {
 </script>
 
 <template>
-  <section class="workspace" data-testid="load-reports-page">
-    <header class="page-toolbar load-page-toolbar"><div><p class="eyebrow">性能测试</p><h1>性能报告</h1><p class="page-subtitle">先看确定性指标和证据完整性，再参考 AI 诊断。</p></div><div class="load-toolbar-actions"><button class="secondary-command" type="button" :disabled="!runId" @click="openRun"><RefreshCw :size="15" />刷新</button><button v-if="canNotify && report" data-testid="load-notify" class="secondary-command" type="button" @click="notify"><Bell :size="15" />发送飞书报告</button></div></header>
+  <section class="workspace load-readable-report" data-testid="load-reports-page">
+    <header class="page-toolbar load-page-toolbar"><div><p class="eyebrow">性能测试</p><h1>性能报告</h1><p class="page-subtitle">先看是否达标，再看响应速度、失败原因和改进建议。</p></div><div class="load-toolbar-actions"><button class="secondary-command" type="button" :disabled="!runId" @click="openRun"><RefreshCw :size="15" />刷新</button><button v-if="canNotify && report" data-testid="load-notify" class="secondary-command" type="button" @click="notify"><Bell :size="15" />发送飞书报告</button></div></header>
     <section class="load-report-switcher" aria-label="选择压测执行">
       <button data-testid="load-report-history-toggle" class="load-report-switcher-trigger" type="button" :aria-expanded="historyOpen" @click="historyOpen = !historyOpen"><span><History :size="16" /><b>历史执行</b><small>{{ selectedApplicationName }} · {{ scenarioName || '选择一次执行' }}</small></span><span>{{ matchingRuns.length }} 条<ChevronDown :size="15" :class="{ rotated: historyOpen }" /></span></button>
       <div v-if="historyOpen" class="load-report-browser" data-testid="load-report-history-list">
@@ -191,11 +214,12 @@ function hasAgentError(agent: Record<string, unknown>): boolean {
     <template v-else>
       <LoadRunConsole v-if="!terminal" :run="selectedRun" :events="store.runEvents" :connection-state="store.runConnectionState" @stop="stop" />
       <template v-if="report">
-        <section data-testid="load-report-decision-hero" :class="['load-decision-hero', `tone-${report.verdict}`]"><i class="load-decision-orbit" aria-hidden="true" /><header><div><span>管理层摘要 · PERFORMANCE INTELLIGENCE</span><h2>性能决策简报</h2><p>{{ selectedApplicationName }} / {{ scenarioName || '未命名场景' }} · {{ runDate(selectedRun?.created_at || '') }}</p></div><b><i />{{ report.verdict_label }}</b></header><div class="load-decision-message"><strong>{{ report.verdict === 'passed' ? '本次性能目标已达成' : report.verdict === 'failed' ? '存在影响上线的性能风险' : '当前证据不足，暂不建议下结论' }}</strong><span>{{ report.verdict_explanation }}</span></div><div class="load-decision-grid"><p><span>目标压力</span><strong>{{ report.load_goal.reached ? '已达到' : '未达到' }}</strong><small>{{ report.load_goal.reached ? '结果可用于判定' : '结果不代表目标容量' }}</small></p><p><span>性能门禁</span><strong>{{ thresholds.filter(item => item.passed).length }}/{{ thresholds.length }}</strong><small>阈值通过 · P95 {{ number(report.latency, 'p95_ms') }} ms</small></p><p><span>证据完整度</span><strong>{{ report.evidence.finished_shards }}/{{ report.evidence.total_shards }}</strong><small>{{ report.evidence.complete ? '全部节点已完成' : `${number(report.evidence, 'missing_windows')} 个窗口缺失` }}</small></p></div></section>
-        <section class="load-metric-grid"><article><span>请求吞吐</span><strong>{{ number(report.transport, 'requests_per_second') }}</strong><small>次/秒 · 总请求 {{ number(report.transport, 'requests') }}</small></article><article><span>HTTP 错误率</span><strong>{{ percent(report.transport.http_error_rate) }}</strong><small>网络和 HTTP 层</small></article><article><span>业务失败率</span><strong>{{ percent(report.business?.failure_rate) }}</strong><small>业务断言单独统计</small></article><article><span>完整链路失败率</span><strong>{{ percent(report.workflow?.failure_rate) }}</strong><small>任一步失败即链路失败</small></article></section>
-        <section class="load-latency"><h2>响应时间分布</h2><div><span>P50<strong>{{ number(report.latency, 'p50_ms') }} ms</strong></span><span>P90<strong>{{ number(report.latency, 'p90_ms') }} ms</strong></span><span>P95<strong>{{ number(report.latency, 'p95_ms') }} ms</strong></span><span>P99<strong>{{ number(report.latency, 'p99_ms') }} ms</strong></span><span>最大<strong>{{ number(report.latency, 'max_ms') }} ms</strong></span></div></section>
-        <section class="load-thresholds"><header><div><h2>性能阈值</h2><p>达到负载目标和阈值通过是两项独立结论。</p></div></header><div><article v-for="item in thresholds" :key="String(item.key)" :class="{ failed: !item.passed }"><strong>{{ item.label }}</strong><span>要求 {{ thresholdText(item) }}</span><span>实际 {{ item.actual }}</span><b>{{ item.passed ? '通过' : '未通过' }}</b></article><p v-if="!thresholds.length" class="compact-empty">本次未配置性能阈值。</p></div></section>
-        <LoadMetricChart :series="report.series || []" :missing-windows="number(report.evidence, 'missing_windows')" />
+        <section data-testid="load-report-decision-hero" :class="['load-decision-hero', `tone-${report.verdict}`]"><i class="load-decision-orbit" aria-hidden="true" /><header><div><span>管理层摘要 · 性能测试结果</span><h2>性能决策简报</h2><p>{{ selectedApplicationName }} / {{ scenarioName || '未命名场景' }} · {{ runDate(selectedRun?.created_at || '') }}</p></div><b><i />{{ report.verdict_label }}</b></header><div class="load-decision-message"><strong>{{ report.verdict === 'passed' ? '本次性能目标已达成' : report.verdict === 'failed' ? '本次未达到设定的性能标准' : '当前证据不足，暂不建议下结论' }}</strong><span>{{ report.verdict_explanation }}</span></div><div class="load-decision-grid"><p><span>目标压力</span><strong>{{ report.load_goal.reached ? '已达到' : '未达到' }}</strong><small>{{ report.load_goal.reached ? '结果可用于判定' : '结果不代表目标容量' }}</small></p><p><span>性能标准</span><strong>{{ thresholds.filter(item => item.passed).length }}/{{ thresholds.length }}</strong><small>阈值通过 · P95 {{ latency('p95_ms') }} 毫秒</small></p><p><span>执行数据完整度</span><strong>{{ report.evidence.finished_shards }}/{{ report.evidence.total_shards }}</strong><small>{{ report.evidence.complete ? '全部节点已完成，采样完整' : `${number(report.evidence, 'missing_windows')} 个时段缺失 · 请查看节点明细` }}</small></p></div></section>
+        <section class="load-metric-grid"><article><span>每秒请求数（吞吐量）</span><strong>{{ number(report.transport, 'requests_per_second') }}</strong><small>次/秒 · 总请求 {{ number(report.transport, 'requests') }}</small></article><article><span>HTTP 错误率</span><strong>{{ percent(report.transport.http_error_rate) }}</strong><small>请求超时、连接失败或 HTTP 状态异常</small></article><article><span>业务失败率</span><strong>{{ report.business?.assertions === 0 ? '—' : percent(report.business?.failure_rate) }}</strong><small>{{ report.business?.assertions === 0 ? '未采集业务断言，不能判断' : '接口返回结果不符合业务预期' }}</small></article><article><span>完整链路失败率</span><strong>{{ report.workflow?.iterations === 0 ? '—' : percent(report.workflow?.failure_rate) }}</strong><small>{{ report.workflow?.iterations === 0 ? '未采集完整链路，不能判断' : '业务链路中任一步失败，即记为失败' }}</small></article></section>
+        <section class="load-latency"><h2>响应速度 · 多数请求有多快？</h2><p class="report-explainer">P95 不是通过率：例如 P95 = 200 毫秒，表示约 95% 的请求在 200 毫秒内完成。耗时越低越好。</p><div><span v-for="item in percentileLabels" :key="item.key">{{ item.name }}<strong>{{ latency(item.key) }} <small>毫秒</small></strong><small>{{ item.description }}</small></span></div><p v-if="!hasRequests" class="report-explainer">本次没有请求样本，“—”表示无法计算，不代表零耗时或零错误。</p></section>
+        <section class="load-thresholds"><header><div><h2>性能阈值</h2><p>先确认目标负载已达到，再检查以下标准；全部通过也只代表本次场景和压力条件。</p></div></header><div><article v-for="item in thresholds" :key="String(item.key)" :class="{ failed: !item.passed }"><strong>{{ item.label }}</strong><span>要求 {{ thresholdText(item) }}</span><span>实际 {{ thresholdValue(item, item.actual) }}</span><b>{{ item.passed ? '通过' : '未通过' }}</b></article><p v-if="!thresholds.length" class="compact-empty">本次未配置性能阈值。</p></div></section>
+        <LoadMetricChart :series="report.series || []" :reference-p95="p95Reference" :missing-windows="number(report.evidence, 'missing_windows')" />
+        <section class="load-step-statistics"><h2>接口与步骤统计</h2><p class="report-explainer">按 P95 耗时从高到低排列，优先排查慢请求。错误率用于区分请求异常和业务结果异常。</p><div class="report-table-scroll"><table><thead><tr><th>接口 / 步骤</th><th>请求数</th><th>P95（毫秒）</th><th>HTTP 错误率</th><th>业务失败率</th></tr></thead><tbody><tr v-for="step in report.steps || []" :key="String(step.id)"><th>{{ step.name || step.id }}</th><td>{{ step.requests }}</td><td>{{ Number(step.requests) > 0 ? step.p95_ms : '—' }}</td><td>{{ Number(step.requests) > 0 ? percent(step.http_error_rate) : '—' }}</td><td>{{ Number(step.requests) > 0 ? percent(step.business_failure_rate) : '—' }}</td></tr></tbody></table></div><p v-if="!report.steps?.length" class="compact-empty">本次没有接口明细，无法定位到具体慢接口。</p></section>
         <section class="load-agent-report"><h2>节点明细</h2><details v-for="agent in agents" :key="String(agent.id)"><summary>{{ agent.name || agent.id }} · {{ agent.state_label || agent.state }}</summary><dl class="load-agent-facts"><dt>分配压力</dt><dd>{{ allocationText(agent) }}</dd><dt>调度级别</dt><dd>{{ agentTier(agent) }}</dd><dt>进程结果</dt><dd>{{ agentExitLabel(agent) }}</dd><dt>指标窗口</dt><dd>{{ agentBucketCount(agent) }} 个</dd></dl><p v-if="hasAgentError(agent)" class="state-message state-error">{{ agentErrorText(agent) }}</p><details class="load-agent-technical"><summary>查看技术明细（JSON）</summary><pre>{{ JSON.stringify(agent, null, 2) }}</pre></details></details><p v-if="!agents.length" class="compact-empty">没有节点证据。</p></section>
         <p v-if="report.comparison?.compatible === false" class="load-warning">历史运行不可直接对比：{{ report.comparison.reason }}</p>
         <LoadAiAnalysis :analysis="analysis" :loading="analyzing" @reanalyze="reanalyze" />
@@ -205,3 +229,33 @@ function hasAgentError(agent: Record<string, unknown>): boolean {
     <p v-if="feedback" class="load-feedback">{{ feedback }}</p>
   </section>
 </template>
+
+<style scoped>
+.load-readable-report { max-width: 1560px; margin-inline: auto; line-height: 1.6; color: #223249; }
+.load-readable-report h1 { font-size: 28px; letter-spacing: -.5px; }
+.load-readable-report h2, .load-readable-report :deep(.load-chart h3) { font-size: 18px; font-weight: 700; line-height: 1.4; }
+.load-readable-report .page-subtitle, .report-explainer { font-size: 13px; color: #52647b; line-height: 1.7; margin: 6px 0 16px; }
+.load-readable-report .load-decision-hero { padding: 24px; border-radius: 12px; }
+.load-readable-report .load-decision-hero header h2 { font-size: 26px; }
+.load-readable-report .load-decision-hero header p, .load-readable-report .load-decision-hero header span, .load-readable-report .load-decision-message span { font-size: 13px; line-height: 1.7; }
+.load-readable-report .load-decision-hero header h2 { color: #f5fbff; }.load-readable-report .load-decision-message strong { font-size: 22px; color: #f5fbff; }.load-readable-report .tone-failed .load-decision-message strong { color: #ffcf91; }
+.load-readable-report .load-decision-grid p > span, .load-readable-report .load-decision-grid small { font-size: 12px; }
+.load-readable-report .load-metric-grid { gap: 12px; border: 0; background: transparent; margin: 18px 0; }
+.load-readable-report .load-metric-grid article { border: 1px solid #dae3ed; border-radius: 9px; padding: 18px; background: white; }
+.load-readable-report .load-metric-grid article > span { font-size: 13px; font-weight: 600; color: #465a74; }
+.load-readable-report .load-metric-grid strong { font-size: 30px; line-height: 1.5; font-variant-numeric: tabular-nums; }
+.load-readable-report .load-metric-grid small { font-size: 12px; line-height: 1.6; }
+.load-readable-report .load-latency, .load-readable-report .load-thresholds, .load-readable-report :deep(.load-chart), .load-step-statistics, .load-readable-report .load-agent-report, .load-readable-report :deep(.load-ai-panel) { padding: 20px; border: 1px solid #dae3ed; border-radius: 10px; background: white; margin-bottom: 18px; }
+.load-readable-report .load-latency > div { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); }
+.load-readable-report .load-latency span { font-size: 13px; padding: 12px; }
+.load-readable-report .load-latency strong { font-size: 24px; font-variant-numeric: tabular-nums; }
+.load-readable-report .load-latency small { font-size: 12px; font-weight: 400; color: #52647b; }
+.load-readable-report .load-thresholds header p { font-size: 13px; line-height: 1.7; }
+.load-readable-report .load-thresholds article { padding: 12px; font-size: 13px; align-items: center; }
+.report-table-scroll { overflow: auto; } .report-table-scroll table { width: 100%; border-collapse: collapse; font-size: 13px; text-align: right; font-variant-numeric: tabular-nums; }
+.report-table-scroll th, .report-table-scroll td { padding: 12px; border-bottom: 1px solid #e2e9f1; white-space: nowrap; }
+.report-table-scroll th:first-child { text-align: left; white-space: normal; min-width: 160px; }.report-table-scroll thead { background: #f1f6fb; color: #4a5f78; }
+.load-readable-report .load-agent-report summary, .load-readable-report .load-agent-facts dt, .load-readable-report .load-agent-facts dd, .load-readable-report :deep(.load-ai-panel p), .load-readable-report :deep(.load-recommendations span) { font-size: 13px; line-height: 1.7; }
+@media(max-width: 1000px) { .load-readable-report .load-latency > div { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media(max-width: 620px) { .load-readable-report .load-latency > div { grid-template-columns: repeat(2, minmax(0, 1fr)); }.load-readable-report .load-thresholds article { grid-template-columns: 1fr 1fr; }.load-readable-report .load-decision-hero { padding: 16px; }.load-readable-report .load-metric-grid { grid-template-columns: 1fr 1fr; }.load-readable-report .load-metric-grid article { padding: 12px; }.load-readable-report .load-metric-grid strong { font-size: 25px; } }
+</style>
