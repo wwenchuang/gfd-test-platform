@@ -150,3 +150,33 @@ it('never recommends disabled nodes and invalidates a selected node when its sta
   expect(wrapper.text()).toContain('已停用')
   expect(wrapper.get('[data-testid="load-agent-recommend"]').attributes('disabled')).toBeDefined()
 })
+
+it('requires enough total rate and VU for every selected node without raising them silently', async () => {
+  const wrapper=mount(LoadRunWizard,{props:{scenario,environments,agents:[...agents,{...agents[0],id:'a2',scheduling_tier:'normal' as const}]}})
+  await wrapper.get('[data-testid="load-agent-a1"]').setValue(true)
+  await wrapper.get('[data-testid="load-agent-a2"]').setValue(true)
+  await wrapper.get('[data-testid="load-distribution-all"]').setValue(true)
+  expect(wrapper.get('[data-testid="load-run-submit"]').attributes('disabled')).toBeDefined()
+  await wrapper.get('[data-testid="load-rate"]').setValue(2)
+  await wrapper.get('[data-testid="load-vus"]').setValue(2)
+  await wrapper.get('[data-testid="load-max-vus"]').setValue(2)
+  await wrapper.get('[data-testid="load-run-submit"]').trigger('click')
+  expect(wrapper.emitted('submit')?.[0]?.[0]).toMatchObject({workload:{rate:2,max_vus:2},allocation_policy:{distribution:'all_selected',agent_ids:['a1','a2']}})
+})
+
+it('prefills next run without dropping original thresholds or monitoring and never auto submits', async () => {
+  const preset = {sourceId:'r',scenarioId:'s1',scenarioVersionId:'old-v',environmentId:'env-v1',executor:'constant-arrival-rate' as const,target:2,timeUnit:'1s' as const,duration:60,maxVus:3,thresholds:{p99_ms:{operator:'less_than',value:777,required:false}},monitoring:{services:[{revision_id:'old-monitor',required:true}],before_seconds:30,after_seconds:90},previous:'1 次/分钟 · 20 秒',stopPolicy:{http_error_rate:.1,grace_seconds:10}}
+  const wrapper=mount(LoadRunWizard,{props:{scenario,environments,agents,preset}})
+  await flushPromises()
+  expect(wrapper.emitted('submit')).toBeUndefined()
+  expect(wrapper.get('[data-testid="load-next-review"]').text()).toContain('1 次/分钟')
+  expect(wrapper.get('[data-testid="load-run-environment"]').attributes('disabled')).toBeDefined()
+  await wrapper.get('[data-testid="load-agent-a1"]').setValue(true)
+  await wrapper.get('[data-testid="load-run-submit"]').trigger('click')
+  const payload=wrapper.emitted('submit')![0][0] as Record<string,unknown>
+  expect(payload.scenario_version_id).toBe('old-v')
+  expect(payload.thresholds).toEqual(preset.thresholds)
+  expect(payload.monitoring).toEqual(preset.monitoring)
+  expect(payload.stop_policy).toEqual(preset.stopPolicy)
+  expect(payload.workload).toMatchObject({rate:2,time_unit:'1s',duration_seconds:60})
+})

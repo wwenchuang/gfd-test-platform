@@ -33,3 +33,14 @@ it('explains fallback advice and translates evidence without losing technical tr
   expect(wrapper.text()).toContain('目标压力达成情况')
   expect(wrapper.get('details').text()).toContain('模型引用无效')
 })
+
+it('offers a separate configuration action only for authorized viewers', async () => {
+  const analysis = {id:'a',run_id:'r',model:'m',prompt_version:'v5',evidence_hash:'h',state:'completed',result:{next_run:{load_model:'constant-arrival-rate',target:2,duration_seconds:60}},error:'',created_at:''}
+  const wrapper=mount(LoadAiAnalysis,{props:{analysis}})
+  expect(wrapper.find('[data-testid="load-next-run"]').exists()).toBe(false)
+  await wrapper.setProps({canCreateNext:true})
+  await wrapper.get('[data-testid="load-next-run"]').trigger('click')
+  expect(wrapper.emitted('createNext')).toHaveLength(1)
+  expect(wrapper.emitted('reanalyze')).toBeUndefined()
+  expect(wrapper.text()).toContain('不会立即发压')
+})

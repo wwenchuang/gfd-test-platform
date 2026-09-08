@@ -261,3 +261,26 @@ def test_uncalibrated_or_expired_agents_cannot_run_and_calibration_caps_capacity
     allocations = allocate_run(workload, [calibrated], False)
     assert [(item.rate, item.vus) for item in allocations] == [(20, 20)]
     assert allocations[0].capacity_shortfall == 30
+
+
+def test_all_selected_splits_small_rate_across_tiers_without_multiplication():
+    workload = {**_rate_workload(rate=2), 'max_vus': 2, 'pre_allocated_vus': 2}
+    result = allocate_run(workload, [_agent('a'), _agent('b', tier='normal')], False, distribution='all_selected')
+    assert [(x.agent_id, x.rate, x.vus) for x in result] == [('a', 1, 1), ('b', 1, 1)]
+
+
+@pytest.mark.parametrize('rate,vus', [(1, 2), (2, 1)])
+def test_all_selected_rejects_insufficient_global_target(rate, vus):
+    with pytest.raises(LoadAllocationError, match='每台'):
+        allocate_run({**_rate_workload(rate), 'max_vus': vus}, [_agent('a'), _agent('b')], False, distribution='all_selected')
+
+
+def test_all_selected_must_not_silently_drop_unavailable_node():
+    with pytest.raises(LoadAllocationError, match='全部'):
+        allocate_run({**_rate_workload(2), 'max_vus': 2}, [_agent('a'), _agent('b', schedulable=False)], False, distribution='all_selected')
+
+
+def test_all_selected_allows_uneven_rate_without_rounding_away_capacity():
+    result = allocate_run({**_rate_workload(3), 'max_vus':4}, [_agent('a', vus=2, rate=100), _agent('b', vus=2, rate=100)], False, distribution='all_selected')
+    assert sorted(item.rate for item in result) == [1,2]
+    assert [item.vus for item in result] == [2,2]

@@ -2,8 +2,8 @@
 import { computed } from 'vue'
 import type { LoadAiAnalysis } from '../api/contracts'
 
-const props = defineProps<{ analysis: LoadAiAnalysis | null; loading?: boolean }>()
-const emit = defineEmits<{ reanalyze: [] }>()
+const props = defineProps<{ analysis: LoadAiAnalysis | null; loading?: boolean; canCreateNext?: boolean }>()
+const emit = defineEmits<{ reanalyze: []; createNext: [] }>()
 const result = computed(() => props.analysis?.result || {})
 const confidence = computed(() => {
   const value = result.value.confidence
@@ -46,7 +46,7 @@ function modelLabel(value: unknown): string {
         <h3>{{ fallbackAdvice ? '平台建议结论' : '诊断结论' }}</h3><p><strong>{{ categoryLabel(result.bottleneck_category) }}</strong>：{{ result.conclusion }}</p>
         <h3>证据引用</h3><div class="load-evidence-tags"><code v-for="item in citations" :key="item" :title="item">{{ evidenceLabel(item) }}<small v-if="evidenceLabel(item) !== item">（{{ item }}）</small></code></div>
         <h3>处理建议</h3><ol class="load-recommendations"><li v-for="(item, index) in recommendations" :key="index"><b>{{ priorityLabel(item.priority) }}</b><strong>{{ item.action }}</strong><span>验证方式：{{ item.verification }}</span></li></ol>
-        <template v-if="nextRun"><h3>下一轮怎么验证</h3><p class="load-next-run"><strong>{{ modelLabel(nextRun.load_model) }}</strong> · 目标 {{ nextRun.target }} · {{ nextRun.duration_seconds }} 秒<br />{{ nextRun.agent_suggestion }}</p></template>
+        <template v-if="nextRun"><h3>下一轮怎么验证</h3><p class="load-next-run"><strong>{{ modelLabel(nextRun.load_model) }}</strong> · 目标 {{ nextRun.target }} · {{ nextRun.duration_seconds }} 秒<br />{{ nextRun.agent_suggestion }}</p><button v-if="canCreateNext" data-testid="load-next-run" class="primary-command" type="button" @click="emit('createNext')">按建议配置下一轮 →</button><p v-if="canCreateNext" class="load-capacity-note">先查看配置差异、确认节点，再创建草稿。此操作不会立即发压。</p></template>
       </template>
     </template>
   </section>

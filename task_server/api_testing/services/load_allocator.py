@@ -270,7 +270,7 @@ def _estimated_iterations(workload):
     return _integer(value, "预计迭代数", minimum=1)
 
 
-def allocate_run(workload, agents, allow_fallback):
+def allocate_run(workload, agents, allow_fallback, *, distribution="priority"):
     """Return stable, bounded shard allocations without exceeding any Agent."""
     if not isinstance(allow_fallback, bool):
         raise LoadAllocationError("是否允许备用节点必须是布尔值")
@@ -281,7 +281,24 @@ def allocate_run(workload, agents, allow_fallback):
             "没有可调度的压测节点；请检查节点心跳、校准状态、级别和容量"
         )
 
-    if kind == "vus":
+    if distribution not in {"priority", "all_selected"}:
+        raise LoadAllocationError("节点分配模式无效")
+    if distribution == "all_selected":
+        if workload.get("executor") != "constant-arrival-rate":
+            raise LoadAllocationError("全部节点参与仅支持固定吞吐")
+        if len(candidates) != len(agents) or any(item.vu_capacity <= 0 or item.rate_capacity <= 0 for item in candidates):
+            raise LoadAllocationError("全部选中节点必须可调度且有剩余容量")
+        if target < len(candidates) or requested_vus < len(candidates):
+            raise LoadAllocationError("每台节点至少需要分配1次目标吞吐和1VU，请提高总目标或减少节点")
+        multiplier = 60 if workload.get("time_unit") == "1m" else 1
+        rate_amounts, shortfall = _weighted_flat(target, candidates,
+            lambda item: item.rate_capacity * multiplier,
+            lambda item: 1, minimum_one=True)
+        vu_amounts, vu_shortfall = _weighted_flat(requested_vus, candidates,
+            lambda item: item.vu_capacity, lambda item: rate_amounts[str(item.agent.id)], minimum_one=True)
+        if shortfall or vu_shortfall or any(rate_amounts[str(item.agent.id)] <= 0 for item in candidates):
+            raise LoadAllocationError("全部节点分配容量不足，请降低总目标或调整节点")
+    elif kind == "vus":
         primary, shortfall = _weighted_amount(target, candidates, lambda item: item.vu_capacity)
         vu_amounts = primary
         rate_amounts = {identifier: 0 for identifier in primary}

@@ -356,3 +356,18 @@ def test_start_barrier_timeout_recovers_even_when_an_agent_never_claimed(load_fa
             )
         )
     assert states == ("lost", "lost")
+
+
+def test_all_selected_creates_two_real_shards_without_multiplying_total(load_factory, run_records):
+    service = LoadRunService(load_factory, preflight_service=_Preflight(), now=lambda: NOW)
+    run = service.create(_payload(run_records,
+        workload={"executor":"constant-arrival-rate","rate":2,"time_unit":"1s","duration_seconds":20,"pre_allocated_vus":2,"max_vus":2},
+        allocation_policy={"agent_ids":[a.id for a in run_records["agents"]],"distribution":"all_selected"}), "owner")
+    with load_factory() as session:
+        shards = list(session.scalars(select(ApiLoadRunShard).where(ApiLoadRunShard.run_id == run.id)))
+        assert len(shards) == 2
+    assert run.configuration["allocation_policy"]["distribution"] == "all_selected"
+    allocations = [a["allocation"] for a in run.configuration["agents"]]
+    assert sum(a["rate"] for a in allocations) == 2
+    assert sum(a["vus"] for a in allocations) == 2
+    assert all(a["rate"] == 1 and a["vus"] == 1 for a in allocations)

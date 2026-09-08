@@ -160,6 +160,7 @@ class LoadRunService:
                     allocation_workload,
                     selected_agents,
                     parsed["allocation_policy"]["allow_fallback"],
+                    distribution=parsed["allocation_policy"]["distribution"],
                 )
             except LoadAllocationError as error:
                 raise LoadRunError(str(error), status=409, code="capacity_unavailable") from error
@@ -517,7 +518,7 @@ class LoadRunService:
         if priority not in PRIORITIES:
             raise LoadRunError("任务优先级必须是紧急、高、普通或低")
         policy = _json_object(payload.get("allocation_policy", {}), "节点策略")
-        unknown_policy = sorted(set(policy) - {"allow_fallback", "allow_run_anyway", "agent_ids", "node_group"})
+        unknown_policy = sorted(set(policy) - {"allow_fallback", "allow_run_anyway", "agent_ids", "node_group", "distribution"})
         if unknown_policy:
             raise LoadRunError(f"节点策略包含不支持字段：{unknown_policy[0]}")
         for field in ("allow_fallback", "allow_run_anyway"):
@@ -530,6 +531,12 @@ class LoadRunService:
         if len(agent_ids) != len(set(agent_ids)):
             raise LoadRunError("指定节点不能重复")
         policy["agent_ids"] = agent_ids
+        distribution = policy.get("distribution", "priority")
+        if distribution not in {"priority", "all_selected"}:
+            raise LoadRunError("节点分配模式无效")
+        if distribution == "all_selected" and not agent_ids:
+            raise LoadRunError("全部节点参与需要明确选择节点")
+        policy["distribution"] = distribution
         node_group = policy.get("node_group")
         if node_group is not None and (not isinstance(node_group, str) or not node_group.strip()):
             raise LoadRunError("节点组名称无效")

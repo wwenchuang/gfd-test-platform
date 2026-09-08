@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { Activity, ChartLine, Plus, RefreshCw, RotateCcw, Trash2 } from 'lucide-vue-next'
 import { useRoute, useRouter } from 'vue-router'
 import type { LoadAgent, LoadRun } from '../api/contracts'
+import { nextRunPreset, type NextRunPreset } from '../utils/loadNextRun'
 import LoadRunWizard from '../components/LoadRunWizard.vue'
 import { monitoringApi } from '../api/monitoring'
 import { useContextStore } from '../stores/context'
@@ -14,6 +15,7 @@ const store = useLoadTestingStore()
 const router = useRouter()
 const route = useRoute()
 const creating = ref(false)
+const nextPreset = ref<NextRunPreset | null>(null)
 const selectedScenarioId = ref('')
 const feedback = ref('')
 const busyId = ref('')
@@ -45,6 +47,20 @@ onMounted(async () => {
     selectedScenarioId.value = requestedScenarioId
     creating.value = true
   }
+  if (route.query.next_from && canExecute) {
+    try {
+      const run = await store.loadRun(String(route.query.next_from))
+      const analysis = await store.loadAiAnalysis(run.id)
+      if (!analysis || analysis.id !== String(route.query.analysis_id)) throw new Error('诊断已更新或不可用，请回原报告重新选择建议。')
+      if (run.project_id !== context.projectId) throw new Error('请先在工作台切换到原报告所属应用，再从报告进入下一轮。')
+      const preset = nextRunPreset(run, analysis)
+      if (!store.scenarios.some(item => item.id === preset.scenarioId && item.status === 'active')) throw new Error('原场景已归档或不可用，不能替换为其他场景执行。')
+      if (!context.environmentRevisions.some(item => item.id === preset.environmentId && item.project_id === run.project_id)) throw new Error('原环境版本不可用，不能自动替换目标环境。')
+      nextPreset.value = preset
+      selectedScenarioId.value = preset.scenarioId
+      creating.value = true
+    } catch (error) { feedback.value = error instanceof Error ? error.message : '建议配置加载失败' }
+  }
   scheduleRefresh()
 })
 onBeforeUnmount(() => { if (refreshTimer) clearTimeout(refreshTimer) })
@@ -62,15 +78,19 @@ async function refresh(): Promise<void> {
   if (!selectedScenarioId.value) selectedScenarioId.value = store.scenarios.find(item => item.active_version_id)?.id || ''
 }
 function openWizard(): void {
+  nextPreset.value = null
   feedback.value = ''
   creating.value = true
 }
 async function closeWizard(): Promise<void> {
   creating.value = false
+  nextPreset.value = null
   feedback.value = ''
-  if (route.query.scenario_id) {
+  if (route.query.scenario_id || route.query.next_from) {
     const query = { ...route.query }
     delete query.scenario_id
+    delete query.next_from
+    delete query.analysis_id
     await router.replace({ query })
   }
 }
@@ -255,8 +275,8 @@ function canDelete(run: LoadRun): boolean {
     <header class="page-toolbar load-page-toolbar"><div><p class="eyebrow">性能测试</p><h1>压测执行</h1><p class="page-subtitle">创建草稿后按“目标连通性 → 单用户预检 → 开始压测”执行；列表每 3 秒自动刷新。</p></div><div class="load-toolbar-actions"><span class="load-live-indicator"><i class="load-status-dot online pulse" />自动刷新</span><button class="secondary-command" type="button" @click="refresh"><RefreshCw :size="15" />立即刷新</button><button v-if="canExecute" data-testid="load-run-new" class="primary-command" type="button" @click="openWizard"><Plus :size="15" />新建压测</button></div></header>
     <p v-if="store.runError" role="alert" class="state-message state-error">{{ store.runError }}</p>
     <template v-if="creating">
-      <label class="load-scenario-selector">第 1 步：选择性能场景<select v-model="selectedScenarioId"><option v-for="item in store.scenarios.filter(row => row.active_version_id)" :key="item.id" :value="item.id">{{ item.name }}</option></select></label>
-      <LoadRunWizard v-if="selectedScenario" :scenario="selectedScenario" :project-name="projectName" :initial-environment-id="context.environmentRevisionId || undefined" :environments="context.environmentRevisions.filter(item => item.project_id === context.projectId)" :agents="store.agents" @submit="create" @cancel="closeWizard" />
+      <label class="load-scenario-selector">第 1 步：选择性能场景<select v-model="selectedScenarioId" :disabled="Boolean(nextPreset)"><option v-for="item in store.scenarios.filter(row => row.active_version_id)" :key="item.id" :value="item.id">{{ item.name }}</option></select></label>
+      <LoadRunWizard v-if="selectedScenario" :scenario="selectedScenario" :preset="nextPreset || undefined" :project-name="projectName" :initial-environment-id="context.environmentRevisionId || undefined" :environments="context.environmentRevisions.filter(item => item.project_id === context.projectId)" :agents="store.agents" @submit="create" @cancel="closeWizard" />
       <p v-else class="load-warning">没有可执行场景，请先到“性能场景”保存通过校验的版本。</p>
     </template>
     <template v-else>

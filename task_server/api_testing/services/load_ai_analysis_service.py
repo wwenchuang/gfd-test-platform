@@ -3,6 +3,7 @@
 import copy
 import hashlib
 import json
+import math
 import os
 import re
 
@@ -16,7 +17,7 @@ from ..models.load_testing import ApiLoadAiAnalysis, ApiLoadRun
 from .load_report_service import LoadReportService
 
 
-PROMPT_VERSION = "api-load-analysis.v4"
+PROMPT_VERSION = "api-load-analysis.v5"
 CATEGORIES = frozenset({"no_bottleneck", "target_service", "network", "load_agent", "test_data", "mixed", "insufficient_evidence"})
 CONFIDENCE_LEVELS = frozenset({"high", "medium", "low"})
 
@@ -181,7 +182,7 @@ def _validate_result(value, evidence):
         raise LoadAiAnalysisError("AI诊断下一轮负载模型无效")
     target = next_run.get("target")
     duration = next_run.get("duration_seconds")
-    if isinstance(target, bool) or not isinstance(target, (int, float)) or target <= 0:
+    if isinstance(target, bool) or not isinstance(target, (int, float)) or not math.isfinite(target) or target <= 0:
         raise LoadAiAnalysisError("AI诊断下一轮目标负载无效")
     if isinstance(duration, bool) or not isinstance(duration, int) or not 10 <= duration <= 86400:
         raise LoadAiAnalysisError("AI诊断下一轮时长无效")
@@ -208,7 +209,7 @@ def _citation_safe_fallback(evidence, error):
     verdict = str(evidence.get("verdict") or "inconclusive")
     load_goal = evidence.get("load_goal") if isinstance(evidence.get("load_goal"), dict) else {}
     target = load_goal.get("target_iterations_per_second") or load_goal.get("target_vus") or 1
-    if isinstance(target, bool) or not isinstance(target, (int, float)) or target <= 0:
+    if isinstance(target, bool) or not isinstance(target, (int, float)) or not math.isfinite(target) or target <= 0:
         target = 1
     load_model = load_goal.get("model")
     if load_model not in {"constant-vus", "ramping-vus", "constant-arrival-rate", "ramping-arrival-rate"}:
@@ -246,7 +247,7 @@ def _default_analyzer(evidence):
     if load_model not in {"constant-vus", "ramping-vus", "constant-arrival-rate", "ramping-arrival-rate"}:
         load_model = "constant-arrival-rate"
     target = load_goal.get("target_iterations_per_second") or load_goal.get("target_vus") or 1
-    if isinstance(target, bool) or not isinstance(target, (int, float)) or target <= 0:
+    if isinstance(target, bool) or not isinstance(target, (int, float)) or not math.isfinite(target) or target <= 0:
         target = 1
     output_defaults = {
         "conclusion": "AI 未返回完整诊断字段，请先依据平台确定性指标判断并使用小流量复验。",
@@ -268,7 +269,7 @@ def _default_analyzer(evidence):
     return run_ai_skill(
         "api-load-analysis",
         payload=evidence,
-        version="v3",
+        version="v5",
         temperature=0,
         timeout=60,
         respect_global_timeout=False,
@@ -347,7 +348,15 @@ class LoadAiAnalysisService:
             except LoadAiAnalysisError as error:
                 if not any(marker in str(error) for marker in ("引用了不存在的证据", "结论不能复述数值", "结论与确定性证据冲突")):
                     raise
-                result = _citation_safe_fallback(evidence, error)
+                correction = copy.deepcopy(evidence)
+                correction["output_correction"] = {
+                    "validation_error": str(error),
+                    "instruction": "请重新输出完整诊断JSON。结论仅用定性描述，只引用原始证据中存在的ID，不得改变确定性结论。",
+                }
+                try:
+                    result = _validate_result(self.analyzer(correction), evidence)
+                except Exception as retry_error:
+                    result = _citation_safe_fallback(evidence, retry_error)
         except Exception as error:
             message = "AI诊断超时，请稍后重试" if isinstance(error, TimeoutError) else f"AI诊断失败：{error}"
             with self.session_factory.begin() as session:

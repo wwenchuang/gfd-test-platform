@@ -188,7 +188,7 @@ def test_default_analyzer_supplies_schema_complete_low_confidence_defaults(monke
     assert result["evidence"] == ["load.goal"]
     assert result["confidence"]["level"] == "low"
     assert captured["repair_invalid_json"] is True
-    assert captured["version"] == "v3"
+    assert captured["version"] == "v5"
 
 
 def test_model_cannot_cite_nonexistent_evidence(load_factory, load_run_with_shard):
@@ -276,3 +276,36 @@ def test_ai_generator_evidence_keeps_runtime_scope_and_missing_values():
     assert runtime['role'] == 'load_generator' and runtime['scopes'] == ['k6_process']
     assert runtime['cpu_used_cores_peak'] == .8 and runtime['memory_percent_peak'] is None
     assert runtime['cpu_denominators'] == ['visible_cpus']
+
+
+def test_invalid_conclusion_gets_one_correction_without_changing_evidence(load_factory, load_run_with_shard):
+    _repository, run, shard = load_run_with_shard
+    _finish(load_factory, run, shard)
+    calls = []
+    def analyzer(evidence):
+        calls.append(evidence)
+        return {**_analysis(), 'conclusion': '耗时123秒'} if len(calls) == 1 else _analysis()
+    service = LoadAiAnalysisService(load_factory, report_service=_Report(_report()), analyzer=analyzer)
+    queued = service.request(run.id, 'load-owner')
+    completed = service.process(queued.id)
+    assert len(calls) == 2
+    assert 'output_correction' not in calls[0]
+    assert '结论不能复述数值' in calls[1]['output_correction']['validation_error']
+    assert completed.result['conclusion'] == _analysis()['conclusion']
+
+
+@pytest.mark.parametrize("timeout", [False, True])
+def test_correction_is_bounded_and_retry_failure_preserves_report(load_factory, load_run_with_shard, timeout):
+    _repository, run, shard = load_run_with_shard
+    _finish(load_factory, run, shard)
+    calls = []
+    def analyzer(evidence):
+        calls.append(evidence)
+        if timeout and len(calls) == 2:
+            raise TimeoutError("retry timed out")
+        return {**_analysis(), "conclusion": "耗时123秒"}
+    service = LoadAiAnalysisService(load_factory, report_service=_Report(_report()), analyzer=analyzer)
+    completed = service.process(service.request(run.id, "load-owner").id)
+    assert len(calls) == 2
+    assert completed.state == "completed"
+    assert completed.result["confidence"]["level"] == "low"
