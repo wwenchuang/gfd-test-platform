@@ -94,6 +94,21 @@ def test_unreached_rate_is_inconclusive_even_when_all_requests_pass(load_factory
     assert "未达到目标负载" in report["verdict_explanation"]
 
 
+@pytest.mark.parametrize("requests,verdict,complete", [(21,"passed",True),(22,"inconclusive",False)])
+def test_missing_latency_points_respect_count_tolerance(load_factory, load_run_with_shard, requests, verdict, complete):
+    run, shard, _ = _prepare(load_factory, load_run_with_shard, target_rate=1)
+    payload = _metric_payload("partial-stream", requests=19, iterations=20)
+    payload["buckets"][0]["metrics"]["requests"] = requests
+    LoadMetricService(load_factory).ingest(shard.agent_id, shard.id, payload)
+    _finish(load_factory, run, shard)
+    report = LoadReportService(load_factory).build(run.id, "load-owner")
+    assert report["verdict"] == verdict
+    assert report["evidence"]["complete"] is complete
+    assert report["transport"]["requests"] == requests
+    assert report["latency"]["sample_count"] == 19
+    assert "采样计数" in report["verdict_explanation"]
+
+
 def test_rate_uses_configured_load_window_instead_of_orchestration_wall_clock(
     load_factory, load_run_with_shard
 ):

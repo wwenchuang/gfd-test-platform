@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import type { EnvironmentRevisionOption, LoadAgent, LoadScenario } from '../api/contracts'
+import LoadMonitoringSelector from './LoadMonitoringSelector.vue'
+import type { MonitoringSelection } from '../api/monitoring'
 import { apiTestingHasPermission } from '../utils/authRedirect'
 
 type Executor = 'constant-vus' | 'ramping-vus' | 'constant-arrival-rate' | 'ramping-arrival-rate'
@@ -19,6 +21,8 @@ const allowFallback = ref(false)
 const allowRunAnyway = ref(false)
 const priority = ref('normal')
 const productionConfirmed = ref(false)
+const monitoring = ref<MonitoringSelection>({ services: [], before_seconds: 60, after_seconds: 60 })
+const monitoringValid = computed(() => !monitoring.value.services.length || [monitoring.value.before_seconds, monitoring.value.after_seconds].every(value => Number.isInteger(value) && value >= 0 && value <= 600))
 
 const validAgents = computed(() => props.agents.filter(item => item.status === 'online' && item.calibration_state === 'valid' && (allowFallback.value || item.scheduling_tier !== 'fallback')))
 const selected = computed(() => props.agents.filter(item => selectedIds.value.includes(item.id)))
@@ -50,7 +54,7 @@ const capacityEnough = computed(() => arrivalModel.value
 const productionReady = computed(() => !production.value || (hasProductionPermission.value && productionConfirmed.value))
 const canSubmit = computed(() => Boolean(
   environmentId.value && props.scenario.active_version_id && selected.value.length
-  && productionReady.value && (capacityEnough.value || allowRunAnyway.value),
+  && monitoringValid.value && productionReady.value && (capacityEnough.value || allowRunAnyway.value),
 ))
 
 function selectExecutor(value: string): void { executor.value = value as Executor }
@@ -85,12 +89,14 @@ function workload(): Record<string, unknown> {
   }
 }
 function submit(): void {
+  if (!canSubmit.value) return
   emit('submit', {
     scenario_version_id: props.scenario.active_version_id,
     environment_revision_id: environmentId.value,
     workload: workload(),
     thresholds: { p95_ms: { operator: 'less_than_or_equal', value: p95.value, required: true } },
     priority: priority.value,
+    ...(monitoring.value.services.length ? { monitoring: monitoring.value } : {}),
     allocation_policy: {
       allow_fallback: allowFallback.value,
       allow_run_anyway: allowRunAnyway.value,
@@ -131,6 +137,7 @@ function submit(): void {
       <p v-if="selected.length && !capacityEnough" class="load-warning" data-testid="capacity-shortfall">所选节点容量不足：{{ arrivalModel ? `最大并发需要 ${requestedMaxVus} VU、目标吞吐需要 ${rate} 次/秒；` : `并发需要 ${vus} VU；` }}合计可用 {{ selectedCapacity.vus }} VU / {{ selectedCapacity.rate }} 次/秒。请降低目标或增加节点。</p>
       <label class="load-check"><input v-model="allowRunAnyway" data-testid="allow-run-anyway" type="checkbox" />容量不足时仍创建任务（报告固定标记为证据不足）</label>
       <label v-if="production && hasProductionPermission" class="load-check"><input v-model="productionConfirmed" type="checkbox" />我确认本次会向生产环境持续发送真实请求</label>
+      <LoadMonitoringSelector v-model="monitoring" :environment-revision-id="environmentId" />
       <div class="load-review-box"><strong>执行前预估</strong><p>{{ iterationEstimate }} 持续 {{ duration }} 秒；选择 {{ selected.length }} 台节点；当前可用 {{ selectedCapacity.vus }} VU / {{ selectedCapacity.rate }} 次/秒。创建后还需依次完成目标连通性检查、单用户预检和开始执行。</p></div>
     </div>
     <footer><button class="secondary-command" type="button" @click="emit('cancel')">返回执行列表</button><span /><button data-testid="load-run-submit" class="primary-command" type="button" :disabled="!canSubmit" @click="submit">创建压测草稿</button></footer>

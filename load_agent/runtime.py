@@ -15,6 +15,41 @@ import uuid
 from .k6_metrics import MetricAggregator
 
 
+class _MetricLineReader:
+    """Read pipe bytes without hiding prefetched lines behind select()."""
+
+    def __init__(self, stream):
+        self.stream = stream
+        self.pending = bytearray()
+        self.eof = stream is None
+        try:
+            self.descriptor = stream.fileno()
+        except (AttributeError, OSError):
+            self.descriptor = None
+
+    def readline(self, timeout):
+        if self.descriptor is None:
+            line = self.stream.readline() if self.stream is not None else ""
+            self.eof = not line
+            return line
+        if b"\n" not in self.pending and not self.eof:
+            readable, _, _ = select.select([self.descriptor], [], [], max(0.0, timeout))
+            if readable:
+                chunk = os.read(self.descriptor, 65536)
+                self.pending.extend(chunk)
+                self.eof = not chunk
+        boundary = self.pending.find(b"\n")
+        if boundary >= 0:
+            boundary += 1
+        elif self.eof:
+            boundary = len(self.pending)
+        else:
+            return ""
+        line = bytes(self.pending[:boundary])
+        del self.pending[:boundary]
+        return line.decode("utf-8", errors="replace")
+
+
 @dataclass(frozen=True, repr=False)
 class ShardResult:
     state: str
@@ -84,7 +119,7 @@ class K6Runtime:
         stderr_stream = stderr_path.open("w", encoding="utf-8")
         try:
             process = self.popen(
-                [self.k6_binary, "run", "--out", "json=-", str(script)],
+                [self.k6_binary, "run", "--quiet", "--no-summary", "--out", "json=-", str(script)],
                 stdout=subprocess.PIPE,
                 stderr=stderr_stream,
                 text=True,
@@ -94,6 +129,7 @@ class K6Runtime:
                 env=process_env,
                 cwd=work,
             )
+            reader = _MetricLineReader(process.stdout)
             while True:
                 commands = command_source() or []
                 stop = next((item for item in commands if item.get("type") == "stop"), None)
@@ -106,18 +142,23 @@ class K6Runtime:
                     except (subprocess.TimeoutExpired, TimeoutError):
                         process.kill()
                         process.wait()
-                line = self._readline(process.stdout, self.poll_interval)
+                line = reader.readline(self.poll_interval)
                 if line:
                     try:
                         ready = aggregator.accept(json.loads(line))
                     except json.JSONDecodeError:
+                        # k6 console progress used to interleave with JSON on
+                        # stdout. Never claim complete evidence after losing a
+                        # recognizable metric record; do not echo its contents.
+                        if line.lstrip().startswith("{") or '"metric":' in line:
+                            raise ValueError("k6 指标输出损坏，统计证据不完整") from None
                         ready = ()
                     if ready:
                         bucket_count += self._send_buckets(metric_sink, ready)
                 exit_code = process.poll()
-                if exit_code is not None and not line:
+                if exit_code is not None and reader.eof and not line:
                     break
-                if not line:
+                if reader.eof and not line:
                     try:
                         exit_code = process.wait(timeout=0)
                         break
@@ -149,17 +190,6 @@ class K6Runtime:
         finally:
             stderr_stream.close()
             self._secure_remove(work)
-
-    @staticmethod
-    def _readline(stream, timeout):
-        if stream is None:
-            return ""
-        try:
-            descriptor = stream.fileno()
-        except (AttributeError, OSError):
-            return stream.readline()
-        readable, _, _ = select.select([descriptor], [], [], max(0.0, timeout))
-        return stream.readline() if readable else ""
 
     @staticmethod
     def _send_buckets(sink, buckets):

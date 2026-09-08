@@ -2,6 +2,8 @@
 
 import logging
 import copy
+import time
+import uuid
 
 from sqlalchemy import select
 
@@ -48,11 +50,54 @@ def publish_worker_heartbeat(sender=None, **kwargs):
             "1",
             ex=settings.worker_heartbeat_ttl_seconds,
         )
+        _resume_load_monitoring()
     except Exception:
         logger.warning(
             "Unable to publish API testing worker heartbeat",
             exc_info=True,
         )
+
+
+_monitoring_resume_at = 0.0
+
+
+def _resume_load_monitoring():
+    """Recover dropped scheduling after worker/platform restarts; no business rerun."""
+    global _monitoring_resume_at
+    if time.monotonic() < _monitoring_resume_at:
+        return
+    _monitoring_resume_at = time.monotonic() + 30
+    factory = _session_factory()
+    with factory() as session:
+        rows = session.scalars(select(ApiLoadRun).where(
+            ApiLoadRun.state.in_(["starting", "running", "stopping", "finished", "failed", "cancelled"]),
+            ApiLoadRun.configuration["monitoring"].is_not(None),
+            ApiLoadRun.configuration.has_key("monitoring"),
+            ApiLoadRun.summary["monitoring"]["terminal"].as_boolean().is_not(True),
+        ).order_by(ApiLoadRun.created_at.asc()).limit(100)).all()
+        pending = [r.id for r in rows if not ((r.summary or {}).get("monitoring") or {}).get("terminal")]
+    for run_id in pending:
+        collect_load_monitoring.delay(run_id)
+
+
+@celery_app.task(name="api_testing.collect_load_monitoring", bind=True, acks_late=True, soft_time_limit=150, time_limit=180)
+def collect_load_monitoring(self, run_id):
+    from .services.load_monitoring_config_service import LoadMonitoringConfigService
+    from .services.load_monitoring_collection_service import LoadMonitoringCollectionService
+    redis = _heartbeat_redis()
+    key, token = "api-testing:monitoring:" + str(run_id), uuid.uuid4().hex
+    if not redis.set(key, token, nx=True, ex=190):
+        return "busy"
+    try:
+        factory = _session_factory()
+        result = LoadMonitoringCollectionService(factory, monitoring_service=LoadMonitoringConfigService(factory)).collect(run_id)
+        if result.get("terminal"):
+            finalize_load_run.delay(run_id)
+        else:
+            collect_load_monitoring.apply_async(args=[run_id], countdown=15)
+        return result.get("state")
+    finally:
+        redis.eval("if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end", 1, key, token)
 
 
 def _dispatch_failure_analysis(execution_id, child_id, attempt_id, evidence):
@@ -179,6 +224,9 @@ def finalize_load_run(self, run_id):
         if run is None or run.state not in {"finished", "failed", "cancelled"}:
             return "ignored"
         actor_id = run.created_by
+        if (run.configuration or {}).get("monitoring", {}).get("services") and not ((run.summary or {}).get("monitoring") or {}).get("terminal"):
+            collect_load_monitoring.delay(run_id)
+            return "monitoring_pending"
     report = LoadReportService(factory).build(run_id, actor_id)
     with factory.begin() as session:
         run = session.scalar(select(ApiLoadRun).where(ApiLoadRun.id == run_id).with_for_update())

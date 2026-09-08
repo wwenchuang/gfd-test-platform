@@ -170,7 +170,7 @@ def _dispatch(handler, method, qs, path):
             return _success(handler, {"ticket": _issue_sse_ticket(settings, actor, run_id, session_digest=handler._api_session_digest)}, request_id, 200)
         if segments and segments[0] in {
             "load-scenarios", "load-scenario-versions", "load-datasets",
-            "load-runs", "load-agents", "load-agent-enrollments",
+            "load-runs", "load-agents", "load-agent-enrollments", "load-monitoring-services",
         }:
             from .load_testing_http import dispatch_load_testing_request
             if dispatch_load_testing_request(handler, method, path, qs, actor):

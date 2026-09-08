@@ -95,6 +95,31 @@ def _missing_windows(buckets):
     return missing
 
 
+def _http_sample_integrity(buckets):
+    """Reconcile full-stream HTTP counters, never unlike workflow counters.
+
+    k6 emits one http_req_duration point for each http_reqs sample. Compare
+    whole-run step/shard totals: points may straddle individual bucket edges.
+    Keeping groups separate prevents two nodes' opposite errors cancelling out.
+    """
+    groups = {}
+    for bucket in buckets:
+        key = (bucket.shard_id, bucket.scenario_step_id)
+        item = groups.setdefault(key, {"shard_id": key[0], "step_id": key[1], "requests": 0, "latency_samples": 0})
+        metrics = bucket.metrics or {}
+        item["requests"] += int(metrics.get("requests") or 0)
+        item["latency_samples"] += int((metrics.get("latency_histogram") or {}).get("count") or 0)
+    mismatches = [item for item in groups.values() if item["requests"] != item["latency_samples"]]
+    acceptable = all(
+        abs(item["requests"] - item["latency_samples"]) <= 2
+        and abs(item["requests"] - item["latency_samples"]) * 10 <= max(item["requests"], item["latency_samples"])
+        for item in mismatches
+    )
+    return {"consistent": not mismatches, "acceptable": acceptable,
+            "tolerance": {"max_count": 2, "max_ratio": 0.1}, "mismatches": mismatches,
+            "scope": "同一节点、同一步骤、完整运行的 HTTP 请求数与耗时采样数"}
+
+
 def _percentile(histogram, percentile):
     total = histogram["count"]
     if total <= 0:
@@ -117,6 +142,20 @@ def _path(value, dotted):
     for part in dotted.split("."):
         current = current.get(part, {}) if isinstance(current, dict) else {}
     return current if isinstance(current, (int, float)) and not isinstance(current, bool) else 0
+
+
+def _monitoring_evidence(run):
+    selected = ((run.configuration or {}).get("monitoring") or {}).get("services", [])
+    if not selected:
+        return {"state": "not_selected", "terminal": True, "services": []}, True
+    result = copy.deepcopy((run.summary or {}).get("monitoring") or {
+        "state": "collecting", "terminal": False, "services": [
+            {"revision_id": s["revision_id"], "name": s["name"], "required": s["required"], "state": "collecting", "metrics": []}
+            for s in selected]})
+    by_revision = {s.get("revision_id"): s for s in result.get("services", [])}
+    required_ok = all(result.get("terminal") and by_revision.get(s["revision_id"], {}).get("state") == "completed"
+                      for s in selected if s.get("required"))
+    return result, required_ok
 
 
 class LoadReportService:
@@ -172,12 +211,14 @@ class LoadReportService:
             duration_seconds=_configured_load_duration(run.configuration),
         )
         missing_windows = _missing_windows(buckets)
+        sample_integrity = _http_sample_integrity(buckets)
         evidence_complete = (
             run.state == "finished"
             and bool(shards)
             and all(item.state == "finished" for item in shards)
             and bool(buckets)
             and missing_windows == 0
+            and sample_integrity["acceptable"]
         )
         workload = run.configuration.get("workload") or run.configuration
         if workload.get("executor") == "constant-vus":
@@ -191,18 +232,26 @@ class LoadReportService:
         # The stored verdict is a dispatch-time/finalization snapshot. Rebuild
         # the report from durable metrics so a reporting fix cannot leave an
         # otherwise complete historical run permanently marked inconclusive.
-        forced_inconclusive = not evidence_complete or not load_goal["reached"] or missing_threshold_evidence
+        monitoring, monitoring_ok = _monitoring_evidence(run)
+        forced_inconclusive = not evidence_complete or not load_goal["reached"] or missing_threshold_evidence or not monitoring_ok
         verdict = "inconclusive" if forced_inconclusive else "failed" if required_failures else "passed"
-        if not evidence_complete:
-            explanation = "运行证据不完整：至少一个压测节点未正常完成。"
+        if not sample_integrity["acceptable"]:
+            explanation = "HTTP 请求与耗时采样计数不一致，指标证据不完整；请检查采集链路，不能据此判定性能通过。"
+        elif not evidence_complete:
+            explanation = "运行证据不完整：指标窗口缺失、没有有效采样或节点未正常完成，请查看证据明细。"
         elif not load_goal["reached"]:
             explanation = "未达到目标负载，当前数据不能证明系统满足性能要求。"
         elif missing_threshold_evidence:
             explanation = "必选性能标准缺少对应样本，不能把无采样当成通过。"
+        elif not monitoring_ok:
+            explanation = "必选资源监控尚未收齐或存在采样缺失，暂不能形成完整性能结论。"
         elif required_failures:
             explanation = "目标负载已达到，但有必选性能阈值未通过。"
         else:
             explanation = "目标负载和全部必选性能阈值均已通过。"
+
+        if sample_integrity["acceptable"] and not sample_integrity["consistent"]:
+            explanation += " 存在容差内采样计数偏差；耗时指标仅基于已收到的样本，尾部耗时可能受影响。"
 
         comparison = self._comparison(previous, previous_buckets, aggregate, comparison_reason)
         return {
@@ -242,9 +291,12 @@ class LoadReportService:
             "agents": self._agents(shards, agents),
             "samples": self._samples(samples),
             "comparison": comparison,
+            "monitoring": monitoring,
             "evidence": {
+                "monitoring_required_complete": monitoring_ok,
                 "label": "证据完整性",
                 "complete": evidence_complete,
+                "sample_integrity": sample_integrity,
                 "bucket_count": len(buckets),
                 "missing_windows": missing_windows,
                 "finished_shards": sum(item.state == "finished" for item in shards),
@@ -470,6 +522,7 @@ class LoadReportService:
         return [
             {
                 "id": item.agent_id,
+                "shard_id": item.id,
                 "name": agents[item.agent_id].name if item.agent_id in agents else "节点已删除",
                 "state": item.state,
                 "state_label": {

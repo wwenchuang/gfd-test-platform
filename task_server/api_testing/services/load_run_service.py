@@ -64,6 +64,30 @@ def _json_object(value, field):
     return copy.deepcopy(value)
 
 
+def _parse_monitoring(value):
+    if value is None:
+        return None
+    if not isinstance(value, dict) or set(value) - {"services", "before_seconds", "after_seconds"}:
+        raise LoadRunError("监控配置包含不支持字段")
+    services = value.get("services", [])
+    if not isinstance(services, list) or len(services) > 10:
+        raise LoadRunError("每次最多选择十个监控服务")
+    seen = set()
+    for item in services:
+        if (not isinstance(item, dict) or set(item) != {"revision_id", "required"}
+                or not isinstance(item.get("revision_id"), str) or not item["revision_id"]
+                or not isinstance(item.get("required"), bool) or item["revision_id"] in seen):
+            raise LoadRunError("监控服务版本和必选性无效或重复")
+        seen.add(item["revision_id"])
+    result = {"services": copy.deepcopy(services)}
+    for key in ("before_seconds", "after_seconds"):
+        seconds = value.get(key, 60)
+        if isinstance(seconds, bool) or not isinstance(seconds, int) or not 0 <= seconds <= 600:
+            raise LoadRunError("监控前后观察窗口应为零至六百秒")
+        result[key] = seconds
+    return result
+
+
 class LoadRunService:
     def __init__(self, session_factory, *, preflight_service, now=None):
         self.session_factory = session_factory
@@ -85,6 +109,16 @@ class LoadRunService:
             if revision is None or environment is None or environment.project_id != scenario.project_id:
                 raise LoadRunError("环境版本不存在或不属于当前项目", status=404, code="environment_not_found")
             access.require_execution_environment(session, revision.id, actor_id, scenario.project_id)
+
+            monitoring = parsed["monitoring"]
+            if monitoring and monitoring["services"]:
+                from .load_monitoring_config_service import LoadMonitoringConfigService
+                config_service = LoadMonitoringConfigService(self.session_factory)
+                monitoring = {**monitoring, "services": [
+                    {**config_service.get_snapshot(item["revision_id"], actor=actor_id,
+                        environment_revision_id=revision.id, project_id=scenario.project_id), "required": item["required"]}
+                    for item in monitoring["services"]
+                ]}
 
             selected_agents = self._selected_agents(session, parsed["allocation_policy"])
             explicitly_selected = bool(
@@ -181,6 +215,8 @@ class LoadRunService:
                 "agents": agent_snapshots,
                 "created_at": now.isoformat(),
             }
+            if monitoring and monitoring["services"]:
+                snapshot["monitoring"] = monitoring
             run = ApiLoadRun(
                 project_id=scenario.project_id,
                 scenario_version_id=version.id,
@@ -285,6 +321,14 @@ class LoadRunService:
             run = self._owned_run(session, run_id, actor_id, for_update=True)
             shards = self._run_shards(session, run.id)
             if run.state == "queued":
+                from .load_monitoring_config_service import LoadMonitoringConfigService
+                monitor = LoadMonitoringConfigService(self.session_factory)
+                for item in ((run.configuration or {}).get("monitoring") or {}).get("services", []):
+                    if item.get("required"):
+                        try:
+                            monitor.require_ready(item["revision_id"], actor=actor_id)
+                        except ValueError as error:
+                            raise LoadRunError(str(error), status=409, code="monitoring_not_ready") from error
                 run.state = "starting"
             elif run.state == "starting":
                 if shards and all(item.state == "ready" for item in shards):
@@ -450,7 +494,7 @@ class LoadRunService:
     def _parse_create(self, payload):
         if not isinstance(payload, dict):
             raise LoadRunError("压测任务必须是对象")
-        allowed = {"scenario_version_id", "environment_revision_id", "workload", "thresholds", "priority", "allocation_policy"}
+        allowed = {"scenario_version_id", "environment_revision_id", "workload", "thresholds", "priority", "allocation_policy", "monitoring"}
         unknown = sorted(set(payload) - allowed)
         if unknown:
             raise LoadRunError(f"压测任务包含不支持字段：{unknown[0]}")
@@ -484,6 +528,7 @@ class LoadRunService:
             "thresholds": _json_object(payload.get("thresholds", {}), "性能阈值"),
             "priority": priority,
             "allocation_policy": policy,
+            "monitoring": _parse_monitoring(payload.get("monitoring")),
         }
 
     def _selected_agents(self, session, policy):

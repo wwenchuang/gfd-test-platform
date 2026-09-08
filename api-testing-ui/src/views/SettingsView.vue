@@ -5,6 +5,7 @@ import { ArrowRight, Bell, Check, KeyRound, Pencil, Plus, RotateCcw, Save, Trash
 
 import type { EnvironmentAsset, EnvironmentRevisionSummary, EnvironmentView } from '../api/contracts'
 import { apiClient } from '../api/client'
+import EnvironmentMonitoringPanel from '../components/EnvironmentMonitoringPanel.vue'
 import EnvironmentAssetList from '../components/EnvironmentAssetList.vue'
 import { useContextStore } from '../stores/context'
 import { useNotificationsStore } from '../stores/notifications'
@@ -18,7 +19,7 @@ type ServiceRow = { key: string; name: string; module: string; base_url: string 
 type DetailTab = 'overview' | 'services' | 'variables' | 'history'
 const detailTabs: Array<{ id: DetailTab; label: string }> = [
   { id: 'overview', label: '概览' },
-  { id: 'services', label: '服务地址' },
+  { id: 'services', label: '服务与监控' },
   { id: 'variables', label: '变量与凭证' },
   { id: 'history', label: '版本历史' },
 ]
@@ -620,6 +621,7 @@ function environmentMutationIssue(environmentName: string, requiresDelete = fals
               <h4 v-if="unconfiguredServiceGroups.length">未配置服务（{{ servicePresentation.unconfiguredKeyCount }}）</h4>
               <article v-for="group in unconfiguredServiceGroups" :key="group.id" data-testid="environment-service-group"><div><strong>{{ group.labels.join('、') }}</strong><small>{{ group.serviceKeys.length }} 个服务键等待配置</small></div><code>未配置地址</code></article>
             </div>
+            <EnvironmentMonitoringPanel :environment-revision-id="environmentDetail.revision_id" :readonly="Boolean(environmentPermissionReason) || selectedAsset.status === 'archived'" />
           </section>
 
           <section v-else-if="detailTab === 'variables'" class="environment-read-grid">

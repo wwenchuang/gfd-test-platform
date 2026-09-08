@@ -211,7 +211,11 @@ def authorize_http(actor, method, segments):
         if method == "PUT":
             require_permission(actor, "platform.configure")
         return
-    if head in {"environments", "environment-revisions"}:
+    if head == "load-monitoring-services" and tail == "check":
+        # The monitoring service accepts configuration or execution permission,
+        # and applies environment/production scope before network access.
+        return
+    if head in {"environments", "environment-revisions", "load-monitoring-services"}:
         require_permission(actor, "api.environment")
         if method == "DELETE":
             require_permission(actor, "api.delete")

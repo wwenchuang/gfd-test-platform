@@ -1,3 +1,5 @@
+import pytest
+
 """Load attainment must be supported by measured, sustained pressure."""
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
@@ -54,6 +56,26 @@ def test_high_ramp_total_without_stage_evidence_stays_inconclusive():
 from task_server.api_testing.services.load_statistics import measured_vus
 
 
+def test_http_integrity_does_not_confuse_multi_request_workflows_or_window_boundaries():
+    from task_server.api_testing.services.load_report_service import _http_sample_integrity
+    rows = [SimpleNamespace(shard_id='a', scenario_step_id='search', metrics={
+        'requests': 3, 'iterations': 1, 'latency_histogram': {'count': 2}}),
+        SimpleNamespace(shard_id='a', scenario_step_id='search', metrics={
+            'requests': 1, 'iterations': 1, 'latency_histogram': {'count': 2}})]
+    assert _http_sample_integrity(rows)['consistent']
+
+
+def test_opposite_sampling_errors_on_two_nodes_do_not_cancel_out():
+    from task_server.api_testing.services.load_report_service import _http_sample_integrity
+    rows = [SimpleNamespace(shard_id='a', scenario_step_id='search', metrics={
+        'requests': 21, 'latency_histogram': {'count': 19}}),
+        SimpleNamespace(shard_id='b', scenario_step_id='search', metrics={
+            'requests': 19, 'latency_histogram': {'count': 21}})]
+    result = _http_sample_integrity(rows)
+    assert not result['consistent']
+    assert len(result['mismatches']) == 2
+
+
 def gauge(shard, offset, minimum=5, maximum=5, count=5):
     start = START + timedelta(seconds=offset)
     return SimpleNamespace(shard_id=shard, scenario_step_id='all', bucket_started_at=start,
@@ -102,3 +124,11 @@ def test_gauges_with_internal_sampling_gaps_cannot_pass():
     for row in rows:
         row.metrics['vu_gauge']['max_gap_seconds'] = 3.99
     assert not measured_vus(rows, shards, 5, 10)['reached']
+
+@pytest.mark.parametrize('requests,samples,accepted', [(21,19,True),(19,21,True),(1000,999,True),(1000,997,False),(5,3,False),(1,0,False),(20,20,True)])
+def test_http_sample_count_tolerance(requests, samples, accepted):
+    from task_server.api_testing.services.load_report_service import _http_sample_integrity
+    row = SimpleNamespace(shard_id='a', scenario_step_id='s', metrics={'requests': requests, 'latency_histogram': {'count': samples}})
+    result = _http_sample_integrity([row])
+    assert result['acceptable'] is accepted
+    assert result['consistent'] is (requests == samples)

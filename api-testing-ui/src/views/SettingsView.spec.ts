@@ -13,6 +13,8 @@ import { useSetupStore } from '../stores/setup'
 import { setApiTestingAccessProfile } from '../utils/authRedirect'
 import SettingsView from './SettingsView.vue'
 
+vi.mock('../api/monitoring', () => ({ monitoringApi: { list: async () => [] } }))
+
 const environment: EnvironmentAsset = {
   id: 'environment-1', project_id: 'project-1', source_id: 'source-1',
   active_revision_id: 'environment-revision-2', source_revision_id: 'source-revision-2',

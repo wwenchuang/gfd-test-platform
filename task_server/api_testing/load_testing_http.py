@@ -33,13 +33,15 @@ from .services.load_dataset_service import LoadDatasetError, LoadDatasetService
 from .services.load_preflight_service import FunctionalLoadStepRunner, LoadPreflightService
 from .services.load_report_service import LoadReportError, LoadReportService
 from .services.load_run_service import LoadRunError, LoadRunService
+from .services.load_monitoring_config_service import LoadMonitoringConfigError
+from .services.load_monitoring_prometheus import MonitoringQueryError
 from .services.load_scenario_compiler import COMPILER_VERSION
 from .services.load_scenario_service import LoadScenarioService
 from .services.notification_service import NotificationNotConfiguredError, NotificationService
 
 
 LOAD_ROUTE_HEADS = frozenset({
-    "load-scenarios", "load-scenario-versions", "load-datasets", "load-runs", "load-agents", "load-agent-enrollments",
+    "load-scenarios", "load-scenario-versions", "load-datasets", "load-runs", "load-agents", "load-agent-enrollments", "load-monitoring-services",
 })
 logger = logging.getLogger(__name__)
 
@@ -64,7 +66,7 @@ def dispatch_load_testing_request(handler, method, path, query, actor_id):
     except ApiHttpError as error:
         _failure(handler, error, request_id)
     except Exception as error:
-        mapped = _load_error(error)
+        mapped = (ApiHttpError(422, "monitoring_invalid", str(error)) if segments[0] == "load-monitoring-services" and isinstance(error, (LoadMonitoringConfigError, MonitoringQueryError)) else ApiHttpError(404, "monitoring_not_found", "监控配置或环境不存在") if segments[0] == "load-monitoring-services" and isinstance(error, LookupError) else _load_error(error))
         logger.error(
             "Load testing user request failed request_id=%s method=%s route=%s error_code=%s exception_type=%s",
             request_id, method, path, mapped.code, type(error).__name__,
@@ -91,7 +93,14 @@ def handle_load_testing_request(method, segments, query, payload, actor_id, fact
     raise ApiHttpError(405, "method_not_allowed", "Method is not allowed")
 
 
+def _monitoring_service(factory):
+    from .services.load_monitoring_config_service import LoadMonitoringConfigService
+    return LoadMonitoringConfigService(factory)
+
+
 def _get(factory, segments, query, actor):
+    if segments == ("load-monitoring-services",):
+        return _monitoring_service(factory).list(_required(query, "environment_revision_id", "请选择目标环境"), actor=actor)
     if segments == ("load-scenarios",):
         project_id = _required(query, "project_id", "请选择接口项目")
         _project(factory, project_id, actor, "api.loadtest.view")
@@ -180,6 +189,14 @@ def _get(factory, segments, query, actor):
 
 
 def _post(factory, segments, payload, actor):
+    if segments == ("load-monitoring-services",):
+        return {"service": _monitoring_service(factory).create(
+            _required(payload, "environment_revision_id", "请选择目标环境"), payload, actor=actor)}, 201
+    if len(segments) == 3 and segments[0] == "load-monitoring-services":
+        if segments[2] == "check":
+            return _monitoring_service(factory).test_connection(segments[1], actor=actor, revision_id=payload.get("revision_id")), 200
+        if segments[2] == "disable":
+            return {"service": _monitoring_service(factory).disable(segments[1], actor=actor)}, 200
     if segments == ("load-scenarios",):
         access.require_permission(actor, "api.loadtest.edit")
         project_id = _required(payload, "project_id", "请选择接口项目")
@@ -245,6 +262,12 @@ def _post(factory, segments, payload, actor):
             if error.code != "duplicate_start":
                 raise
             run = _run(factory, segments[1], actor)
+        if (run.configuration or {}).get("monitoring", {}).get("services"):
+            try:
+                from .tasks import collect_load_monitoring
+                collect_load_monitoring.delay(run.id)
+            except Exception:
+                logger.warning("Monitoring dispatch delayed; worker recovery will retry run_id=%s", run.id)
         return {"run": _run_view(run)}, 200
     if len(segments) == 3 and segments[0] == "load-runs" and segments[2] == "stop":
         run = _run_service(factory).stop(segments[1], payload.get("reason"), actor)
@@ -279,6 +302,8 @@ def _post(factory, segments, payload, actor):
 
 
 def _put(factory, segments, payload, actor):
+    if len(segments) == 2 and segments[0] == "load-monitoring-services":
+        return {"service": _monitoring_service(factory).update(segments[1], payload, actor=actor)}
     if len(segments) == 2 and segments[0] == "load-scenarios":
         scenario = _scenario(factory, segments[1], actor, "api.loadtest.edit")
         allowed = {"name", "description", "status"}

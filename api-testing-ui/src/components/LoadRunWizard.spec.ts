@@ -1,9 +1,11 @@
 // @vitest-environment jsdom
 
-import { mount } from '@vue/test-utils'
-import { afterEach, describe, expect, it } from 'vitest'
+import { mount, flushPromises } from '@vue/test-utils'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import LoadRunWizard from './LoadRunWizard.vue'
 import { setApiTestingAccessProfile } from '../utils/authRedirect'
+
+vi.mock('../api/monitoring', () => ({ monitoringApi: { list: vi.fn().mockResolvedValue([{ id: 'monitor', revision_id: 'monitor-v1', status: 'active', name: '目标主机', labels: { instance: 'host:9100' }, metrics: ['cpu_percent'] }]) } }))
 
 const scenario = { id: 's1', project_id: 'p1', name: '搜索链路', description: '', scenario_type: 'single_interface' as const, active_version_id: 'v1', status: 'active', created_at: '', updated_at: '' }
 const environments = [{ id: 'env-v1', environment_id: 'env', project_id: 'p1', name: '性能测试环境', revision: 1 }]
@@ -11,6 +13,19 @@ const agents = [{ id: 'a1', name: '专用节点', status: 'online', scheduling_t
 
 describe('LoadRunWizard', () => {
   afterEach(() => setApiTestingAccessProfile(null))
+  it('submits frozen monitoring revisions and validates observation windows', async () => {
+    const wrapper = mount(LoadRunWizard, { props: { scenario, environments, agents } })
+    await flushPromises()
+    await wrapper.get('[data-testid="load-agent-a1"]').setValue(true)
+    await wrapper.get('[data-testid="monitor-select-monitor"]').setValue(true)
+    await wrapper.get('[data-testid="monitor-required-monitor"]').setValue(true)
+    await wrapper.get('[data-testid="monitor-after"]').setValue('-1')
+    expect(wrapper.get('[data-testid="load-run-submit"]').attributes('disabled')).toBeDefined()
+    await wrapper.get('[data-testid="monitor-after"]').setValue('0')
+    await wrapper.get('[data-testid="load-run-submit"]').trigger('click')
+    expect(wrapper.emitted('submit')?.[0]?.[0]).toMatchObject({ monitoring: { services: [{ revision_id: 'monitor-v1', required: true }], before_seconds: 60, after_seconds: 0 } })
+  })
+
   it('does not pretend VU multiplied by seconds is an exact iteration count', () => {
     const wrapper = mount(LoadRunWizard, { props: { scenario, environments, agents, projectName: '智小白3D家用', initialEnvironmentId: 'env-v1' } })
     expect(wrapper.text()).toContain('所属应用 / API 项目')

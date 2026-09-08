@@ -41,6 +41,7 @@ from .load_testing import (
     ApiLoadScenario,
     ApiLoadScenarioVersion,
 )
+from .load_monitoring import ApiLoadMonitoringService, ApiLoadMonitoringRevision
 from .project import ApiProject, ApiProjectMember, ApiWorkspace
 from .provider import ApiProviderCredential
 from .scheduled_job import ApiScheduledJob, ApiScheduledJobRun, ApiScheduledJobTarget

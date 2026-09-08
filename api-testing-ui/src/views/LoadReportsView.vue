@@ -4,6 +4,7 @@ import { Bell, ChevronDown, History, RefreshCw } from 'lucide-vue-next'
 import { useRoute, useRouter } from 'vue-router'
 import LoadAiAnalysis from '../components/LoadAiAnalysis.vue'
 import LoadMetricChart from '../components/LoadMetricChart.vue'
+import LoadResourceMonitoring from '../components/LoadResourceMonitoring.vue'
 import LoadRunConsole from '../components/LoadRunConsole.vue'
 import type { LoadAiAnalysis as Analysis, LoadReport } from '../api/contracts'
 import { useContextStore } from '../stores/context'
@@ -27,6 +28,7 @@ const historyOpen = ref(false)
 const historyLimit = ref(8)
 const canNotify = apiTestingHasPermission('platform.notify')
 const selectedRun = computed(() => store.runs.find(item => item.id === runId.value) || null)
+const monitoring = computed(() => report.value?.monitoring || selectedRun.value?.summary?.monitoring as Record<string, unknown> | undefined)
 const terminal = computed(() => selectedRun.value ? ['finished', 'failed', 'cancelled'].includes(selectedRun.value.state) : false)
 const hasRequests = computed(() => Number(report.value?.transport.requests || 0) > 0)
 const percentileLabels = [
@@ -39,6 +41,23 @@ const percentileLabels = [
 function latency(key: string): string {
   const value = report.value?.latency[key]
   return !hasRequests.value || value == null || !Number.isFinite(Number(value)) ? '—' : Number(value).toLocaleString('zh-CN', { maximumFractionDigits: 2 })
+}
+const sampleIntegrity = computed(() => report.value?.evidence.sample_integrity)
+const evidenceDescription = computed(() => {
+  const evidence = report.value?.evidence
+  if (!evidence) return '尚未收到完整性检查结果'
+  const reasons: string[] = []
+  if (sampleIntegrity.value?.consistent === false) reasons.push(sampleIntegrity.value.acceptable ? '少量采样偏差（容差内）' : '采样计数不一致')
+  if (Number(evidence.missing_windows || 0) > 0) reasons.push(`${evidence.missing_windows} 个时段缺失`)
+  if (Number(evidence.finished_shards || 0) < Number(evidence.total_shards || 0)) reasons.push('部分节点未正常完成')
+  if (reasons.length) return reasons.join(' · ')
+  if (evidence.complete === true) return sampleIntegrity.value?.consistent === true ? '全部节点已完成，采样计数一致' : '全部节点已完成；历史报告未记录采样计数校验'
+  return evidence.complete === false ? '证据未通过完整性检查 · 请查看原因和节点明细' : '历史报告未记录完整性检查结果'
+})
+function integrityLocation(shardId: string, stepId: string): string {
+  const agent = report.value?.agents?.find(item => item.shard_id === shardId) || report.value?.agents?.find(item => item.id === shardId)
+  const step = report.value?.steps.find(item => item.id === stepId)
+  return `${agent?.name || shardId} / ${step?.name || (stepId === 'all' ? '全部步骤汇总' : stepId)}`
 }
 const thresholds = computed(() => report.value?.thresholds || [])
 const p95Reference = computed(() => {
@@ -116,7 +135,10 @@ function scheduleLiveRefresh(): void {
   if (liveTimer) clearTimeout(liveTimer)
   liveTimer = setTimeout(async () => {
     liveTimer = null
-    if (runId.value && selectedRun.value && !terminal.value) await store.loadRun(runId.value).catch(() => undefined)
+    if (runId.value && selectedRun.value && (!terminal.value || monitoring.value?.terminal === false || (!monitoring.value && selectedRun.value.configuration.monitoring))) {
+      await store.loadRun(runId.value).catch(() => undefined)
+      if (terminal.value) await loadReport().catch(() => undefined)
+    }
     scheduleLiveRefresh()
   }, 3000)
 }
@@ -213,12 +235,19 @@ function hasAgentError(agent: Record<string, unknown>): boolean {
     <p v-else-if="!selectedRun" class="management-empty">当前项目还没有压测执行。</p>
     <template v-else>
       <LoadRunConsole v-if="!terminal" :run="selectedRun" :events="store.runEvents" :connection-state="store.runConnectionState" @stop="stop" />
+      <LoadResourceMonitoring v-if="!terminal && monitoring" :monitoring="monitoring" />
       <template v-if="report">
-        <section data-testid="load-report-decision-hero" :class="['load-decision-hero', `tone-${report.verdict}`]"><i class="load-decision-orbit" aria-hidden="true" /><header><div><span>管理层摘要 · 性能测试结果</span><h2>性能决策简报</h2><p>{{ selectedApplicationName }} / {{ scenarioName || '未命名场景' }} · {{ runDate(selectedRun?.created_at || '') }}</p></div><b><i />{{ report.verdict_label }}</b></header><div class="load-decision-message"><strong>{{ report.verdict === 'passed' ? '本次性能目标已达成' : report.verdict === 'failed' ? '本次未达到设定的性能标准' : '当前证据不足，暂不建议下结论' }}</strong><span>{{ report.verdict_explanation }}</span></div><div class="load-decision-grid"><p><span>目标压力</span><strong>{{ report.load_goal.reached ? '已达到' : '未达到' }}</strong><small>{{ report.load_goal.reached ? '结果可用于判定' : '结果不代表目标容量' }}</small></p><p><span>性能标准</span><strong>{{ thresholds.filter(item => item.passed).length }}/{{ thresholds.length }}</strong><small>阈值通过 · P95 {{ latency('p95_ms') }} 毫秒</small></p><p><span>执行数据完整度</span><strong>{{ report.evidence.finished_shards }}/{{ report.evidence.total_shards }}</strong><small>{{ report.evidence.complete ? '全部节点已完成，采样完整' : `${number(report.evidence, 'missing_windows')} 个时段缺失 · 请查看节点明细` }}</small></p></div></section>
+        <section data-testid="load-report-decision-hero" :class="['load-decision-hero', `tone-${report.verdict}`]"><i class="load-decision-orbit" aria-hidden="true" /><header><div><span>管理层摘要 · 性能测试结果</span><h2>性能决策简报</h2><p>{{ selectedApplicationName }} / {{ scenarioName || '未命名场景' }} · {{ runDate(selectedRun?.created_at || '') }}</p></div><b><i />{{ report.verdict_label }}</b></header><div class="load-decision-message"><strong>{{ report.verdict === 'passed' ? '本次性能目标已达成' : report.verdict === 'failed' ? '本次未达到设定的性能标准' : '当前证据不足，暂不建议下结论' }}</strong><span>{{ report.verdict_explanation }}</span></div><div class="load-decision-grid"><p><span>目标压力</span><strong>{{ report.load_goal.reached ? '已达到' : '未达到' }}</strong><small>{{ report.load_goal.reached ? '仍需结合采样完整性与性能标准' : '结果不代表目标容量' }}</small></p><p><span>性能标准</span><strong>{{ thresholds.filter(item => item.passed).length }}/{{ thresholds.length }}</strong><small>阈值通过 · P95 {{ latency('p95_ms') }} 毫秒</small></p><p><span>执行数据完整度</span><strong>{{ report.evidence.finished_shards }}/{{ report.evidence.total_shards }}</strong><small>{{ evidenceDescription }}</small></p></div></section>
+        <section v-if="terminal && sampleIntegrity?.consistent === false" :class="sampleIntegrity?.acceptable ? 'state-message' : 'state-message state-error'" data-testid="load-report-sample-integrity" aria-label="采样完整性检查">
+          <strong>{{ sampleIntegrity.acceptable ? '少量计数偏差，允许继续判定，耗时指标仅基于已收到的样本' : '采样计数不一致，当前报告不能用于性能达标判断' }}</strong>
+          <p>同一节点、同一步骤的请求数与耗时样本数不一致。以下数据需要核对，不能将缺少的样本视为成功或零耗时。</p>
+          <p v-if="sampleIntegrity.tolerance">容差：每个节点和步骤最多相差 {{ sampleIntegrity.tolerance.max_count }} 条，且不超过较大计数的 {{ sampleIntegrity.tolerance.max_ratio * 100 }}%。原始数量不作修补。</p><details><summary>查看计数差异（{{ sampleIntegrity.mismatches.length }} 项）</summary><ul><li v-for="item in sampleIntegrity.mismatches" :key="`${item.shard_id}:${item.step_id}`">{{ integrityLocation(item.shard_id, item.step_id) }}：请求 {{ item.requests }} 次 / 耗时样本 {{ item.latency_samples }} 条</li></ul></details>
+        </section>
         <section class="load-statistical-basis"><h2>实际压力与统计口径</h2><p>{{ report.load_goal.explanation || '此历史报告未记录负载判定说明。' }}</p><p v-if="report.load_goal.vu_evidence">实际并发达标持续时间：{{ objectValue(report.load_goal.vu_evidence).sustained_seconds ?? '—' }} 秒；没有采样不能用配置值代替。</p><p v-if="report.statistical_basis">吞吐分母：{{ objectValue(report.statistical_basis).rate_duration_seconds }} 秒（{{ objectValue(report.statistical_basis).rate_duration_basis }}）。调度及收尾在内的观测时间：{{ objectValue(report.statistical_basis).observed_wall_seconds }} 秒。</p><p v-if="report.load_goal.requires_stage_evidence" class="state-message state-error">阶梯各阶段尚缺实际发起量的对齐证据，本次不作负载达标结论。</p></section>
         <section class="load-metric-grid"><article><span>每秒请求数（吞吐量）</span><strong>{{ number(report.transport, 'requests_per_second') }}</strong><small>次/秒 · 总请求 {{ number(report.transport, 'requests') }}</small></article><article><span>HTTP 错误率</span><strong>{{ percent(report.transport.http_error_rate) }}</strong><small>请求超时、连接失败或 HTTP 状态异常</small></article><article><span>业务失败率</span><strong>{{ report.business?.assertions === 0 ? '—' : percent(report.business?.failure_rate) }}</strong><small>{{ report.business?.assertions === 0 ? '未采集业务断言，不能判断' : '接口返回结果不符合业务预期' }}</small></article><article><span>完整链路失败率</span><strong>{{ report.workflow?.iterations === 0 ? '—' : percent(report.workflow?.failure_rate) }}</strong><small>{{ report.workflow?.iterations === 0 ? '未采集完整链路，不能判断' : '业务链路中任一步失败，即记为失败' }}</small></article></section>
         <section class="load-latency"><h2>响应速度 · 多数请求有多快？</h2><p class="report-explainer">P95 不是通过率：例如 P95 = 200 毫秒，表示约 95% 的请求在 200 毫秒内完成。耗时越低越好。</p><div><span v-for="item in percentileLabels" :key="item.key">{{ item.name }}<strong>{{ latency(item.key) }} <small>毫秒</small></strong><small>{{ item.description }}</small></span></div><p v-if="!hasRequests" class="report-explainer">本次没有请求样本，“—”表示无法计算，不代表零耗时或零错误。</p></section>
         <section class="load-thresholds"><header><div><h2>性能阈值</h2><p>先确认目标负载已达到，再检查以下标准；全部通过也只代表本次场景和压力条件。</p></div></header><div><article v-for="item in thresholds" :key="String(item.key)" :class="{ failed: !item.passed }"><strong>{{ item.label }}</strong><span>要求 {{ thresholdText(item) }}</span><span>实际 {{ thresholdValue(item, item.actual) }}</span><b>{{ item.status_label || (item.passed ? '通过' : '未通过') }}</b></article><p v-if="!thresholds.length" class="compact-empty">本次未配置性能阈值。</p></div></section>
+        <LoadResourceMonitoring :monitoring="monitoring" />
         <LoadMetricChart :series="report.series || []" :reference-p95="p95Reference" :missing-windows="number(report.evidence, 'missing_windows')" />
         <section class="load-step-statistics"><h2>接口与步骤统计</h2><p class="report-explainer">按 P95 耗时从高到低排列，优先排查慢请求。错误率用于区分请求异常和业务结果异常。</p><div class="report-table-scroll"><table><thead><tr><th>接口 / 步骤</th><th>请求数</th><th>P95（毫秒）</th><th>HTTP 错误率</th><th>业务失败率</th></tr></thead><tbody><tr v-for="step in report.steps || []" :key="String(step.id)"><th>{{ step.name || step.id }}</th><td>{{ step.requests }}</td><td>{{ Number(step.requests) > 0 ? step.p95_ms : '—' }}</td><td>{{ Number(step.requests) > 0 ? percent(step.http_error_rate) : '—' }}</td><td>{{ Number(step.requests) > 0 ? percent(step.business_failure_rate) : '—' }}</td></tr></tbody></table></div><p v-if="!report.steps?.length" class="compact-empty">本次没有接口明细，无法定位到具体慢接口。</p></section>
         <section class="load-agent-report"><h2>节点明细</h2><details v-for="agent in agents" :key="String(agent.id)"><summary>{{ agent.name || agent.id }} · {{ agent.state_label || agent.state }}</summary><dl class="load-agent-facts"><dt>分配压力</dt><dd>{{ allocationText(agent) }}</dd><dt>调度级别</dt><dd>{{ agentTier(agent) }}</dd><dt>进程结果</dt><dd>{{ agentExitLabel(agent) }}</dd><dt>指标窗口</dt><dd>{{ agentBucketCount(agent) }} 个</dd></dl><p v-if="hasAgentError(agent)" class="state-message state-error">{{ agentErrorText(agent) }}</p><details class="load-agent-technical"><summary>查看技术明细（JSON）</summary><pre>{{ JSON.stringify(agent, null, 2) }}</pre></details></details><p v-if="!agents.length" class="compact-empty">没有节点证据。</p></section>

@@ -152,7 +152,21 @@ export interface LoadReport {
   thresholds?: Array<Record<string, unknown>>
   series?: Array<Record<string, unknown>>
   comparison?: Record<string, unknown>
-  evidence: Record<string, number | string | boolean | null>
+  monitoring?: Record<string, unknown>
+  evidence: {
+    complete?: boolean
+    finished_shards?: number
+    total_shards?: number
+    missing_windows?: number
+    sample_integrity?: {
+      consistent: boolean
+      acceptable?: boolean
+      tolerance?: { max_count: number; max_ratio: number }
+      scope: string
+      mismatches: Array<{ shard_id: string; step_id: string; requests: number; latency_samples: number }>
+    }
+    [key: string]: unknown
+  }
   steps: Array<Record<string, unknown>>
   agents?: Array<Record<string, unknown>>
   nodes?: Array<Record<string, unknown>>

@@ -330,3 +330,26 @@ def test_ai_worker_refreshes_linked_task_after_generation(monkeypatch):
 
     assert tasks.generate_api_cases.run("job-1") == "completed"
     assert calls == [("process", "job-1"), ("refresh", "job-1")]
+
+
+def test_monitoring_worker_schedules_followup_and_releases_owned_lock(monkeypatch):
+    fake_redis = Mock()
+    fake_redis.set.return_value = True
+    monkeypatch.setattr(tasks, '_heartbeat_redis', lambda: fake_redis)
+    monkeypatch.setattr(tasks, '_session_factory', lambda: object())
+    from task_server.api_testing.services.load_monitoring_collection_service import LoadMonitoringCollectionService
+    monkeypatch.setattr(LoadMonitoringCollectionService, 'collect', lambda *_: {'terminal': False, 'state':'collecting'})
+    queued=Mock()
+    monkeypatch.setattr(tasks.collect_load_monitoring,'apply_async',queued)
+    assert tasks.collect_load_monitoring.run('fixture-run')=='collecting'
+    queued.assert_called_once_with(args=['fixture-run'],countdown=15)
+    assert fake_redis.eval.call_count==1
+
+
+def test_monitoring_worker_duplicate_does_not_collect(monkeypatch):
+    fake_redis=Mock();fake_redis.set.return_value=False
+    monkeypatch.setattr(tasks,'_heartbeat_redis',lambda:fake_redis)
+    from task_server.api_testing.services.load_monitoring_collection_service import LoadMonitoringCollectionService
+    collect=Mock();monkeypatch.setattr(LoadMonitoringCollectionService,'collect',collect)
+    assert tasks.collect_load_monitoring.run('fixture-run')=='busy'
+    collect.assert_not_called()

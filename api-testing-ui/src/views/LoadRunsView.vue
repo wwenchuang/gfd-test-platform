@@ -4,6 +4,7 @@ import { Activity, ChartLine, Plus, RefreshCw, RotateCcw, Trash2 } from 'lucide-
 import { useRoute, useRouter } from 'vue-router'
 import type { LoadAgent, LoadRun } from '../api/contracts'
 import LoadRunWizard from '../components/LoadRunWizard.vue'
+import { monitoringApi } from '../api/monitoring'
 import { useContextStore } from '../stores/context'
 import { useLoadTestingStore } from '../stores/loadTesting'
 import { apiTestingHasPermission } from '../utils/authRedirect'
@@ -146,6 +147,22 @@ async function action(run: LoadRun, name: 'connectivity' | 'preflight' | 'start'
   }
   finally { busyId.value = '' }
 }
+function monitoringServices(run: LoadRun): Array<{id: string; revision_id: string; name: string; required: boolean}> {
+  return ((run.configuration.monitoring as { services?: Array<{id: string; revision_id: string; name: string; required: boolean}> } | undefined)?.services || [])
+}
+async function checkMonitoring(run: LoadRun): Promise<void> {
+  busyId.value = run.id
+  runMessages.value[run.id] = '正在从平台检查监控连接与最新采样…'
+  try {
+    const messages: string[] = []
+    for (const service of monitoringServices(run)) {
+      const result = await monitoringApi.check(service.id, service.revision_id)
+      messages.push(`${service.name}：${result.state === 'ready' ? '✅ 检查通过' : result.message}`)
+    }
+    runMessages.value[run.id] = messages.join('；')
+  } catch (error) { runMessages.value[run.id] = error instanceof Error ? error.message : '监控检查失败，请核对配置' }
+  finally { busyId.value = '' }
+}
 function rerun(run: LoadRun): void {
   const snapshot = run.configuration.scenario as Record<string, unknown> | undefined
   const scenario = store.scenarios.find(item => item.id === String(snapshot?.id || ''))
@@ -252,7 +269,7 @@ function canDelete(run: LoadRun): boolean {
           <div class="load-run-progress"><span v-for="(stage, index) in runStages" :key="stage.key" :data-testid="`run-stage-${run.id}-${stage.key}`" :class="stageState(run, stage.key)"><b>{{ stageMarker(run, stage.key, index) }}</b>{{ stage.label }}</span></div>
           <div v-if="run.state === 'draft'" class="load-connectivity-list"><p v-for="agent in runAgents(run)" :key="agent.id" :data-testid="`connectivity-${run.id}-${agent.id}`"><strong>{{ agent.name }}</strong><span>{{ connectivityLabel(run, agent) }}</span></p><p v-if="!runAgents(run).length">节点信息尚未加载，请点击立即刷新。</p></div>
           <p v-if="runMessages[run.id]" :class="['load-run-message', { busy: busyId === run.id }]" aria-live="polite">{{ runMessages[run.id] }}</p>
-          <div class="load-run-actions"><button v-if="run.state === 'draft' && !connectivityReady(run)" :data-testid="`run-connectivity-${run.id}`" class="primary-command" type="button" :disabled="busyId === run.id" @click="action(run, 'connectivity')">{{ busyId === run.id ? '正在检查…' : '检查目标连通性' }}</button><button v-if="run.state === 'draft' && connectivityReady(run)" :data-testid="`run-preflight-${run.id}`" class="primary-command" type="button" :disabled="busyId === run.id" @click="action(run, 'preflight')">{{ busyId === run.id ? '正在预检…' : '运行单用户预检' }}</button><button v-if="run.state === 'queued'" :data-testid="`run-start-${run.id}`" class="primary-command" type="button" :disabled="busyId === run.id" @click="action(run, 'start')">开始压测</button><button v-if="['preflighting','starting','running','stopping'].includes(run.state)" :data-testid="`run-stop-${run.id}`" class="danger-command" type="button" :disabled="busyId === run.id" @click="action(run, 'stop')">{{ busyId === run.id ? '正在停止…' : '停止并保存证据' }}</button><button v-if="['finished','failed','cancelled'].includes(run.state) && canExecute" :data-testid="`run-rerun-${run.id}`" class="secondary-command" type="button" @click="rerun(run)"><RotateCcw :size="14" />使用当前场景再次压测</button><button class="secondary-command" type="button" @click="router.push({ name: 'load-reports', query: { run_id: run.id } })"><ChartLine :size="14" />{{ ['starting','running','stopping'].includes(run.state) ? '查看实时报告' : '查看报告' }}</button><button v-if="canExecute && canDelete(run)" :data-testid="`run-delete-${run.id}`" class="text-command danger-text" type="button" :disabled="busyId === run.id" @click="remove(run)"><Trash2 :size="14" />删除</button></div>
+          <div class="load-run-actions"><button v-if="canExecute && ['draft','queued'].includes(run.state) && monitoringServices(run).length" class="secondary-command" type="button" :disabled="busyId === run.id" @click="checkMonitoring(run)">检查监控采样</button><button v-if="run.state === 'draft' && !connectivityReady(run)" :data-testid="`run-connectivity-${run.id}`" class="primary-command" type="button" :disabled="busyId === run.id" @click="action(run, 'connectivity')">{{ busyId === run.id ? '正在检查…' : '检查目标连通性' }}</button><button v-if="run.state === 'draft' && connectivityReady(run)" :data-testid="`run-preflight-${run.id}`" class="primary-command" type="button" :disabled="busyId === run.id" @click="action(run, 'preflight')">{{ busyId === run.id ? '正在预检…' : '运行单用户预检' }}</button><button v-if="run.state === 'queued'" :data-testid="`run-start-${run.id}`" class="primary-command" type="button" :disabled="busyId === run.id" @click="action(run, 'start')">开始压测</button><button v-if="['preflighting','starting','running','stopping'].includes(run.state)" :data-testid="`run-stop-${run.id}`" class="danger-command" type="button" :disabled="busyId === run.id" @click="action(run, 'stop')">{{ busyId === run.id ? '正在停止…' : '停止并保存证据' }}</button><button v-if="['finished','failed','cancelled'].includes(run.state) && canExecute" :data-testid="`run-rerun-${run.id}`" class="secondary-command" type="button" @click="rerun(run)"><RotateCcw :size="14" />使用当前场景再次压测</button><button class="secondary-command" type="button" @click="router.push({ name: 'load-reports', query: { run_id: run.id } })"><ChartLine :size="14" />{{ ['starting','running','stopping'].includes(run.state) ? '查看实时报告' : '查看报告' }}</button><button v-if="canExecute && canDelete(run)" :data-testid="`run-delete-${run.id}`" class="text-command danger-text" type="button" :disabled="busyId === run.id" @click="remove(run)"><Trash2 :size="14" />删除</button></div>
         </article>
         <footer v-if="matchingRuns.length" class="load-run-list-footer"><span>当前显示 {{ filteredRuns.length }} / {{ matchingRuns.length }} 条</span><button v-if="filteredRuns.length < matchingRuns.length" data-testid="load-run-more" class="secondary-command" type="button" @click="displayLimit += 8">显示更多</button></footer>
       </div>

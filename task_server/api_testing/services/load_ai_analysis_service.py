@@ -16,7 +16,7 @@ from ..models.load_testing import ApiLoadAiAnalysis, ApiLoadRun
 from .load_report_service import LoadReportService
 
 
-PROMPT_VERSION = "api-load-analysis.v2"
+PROMPT_VERSION = "api-load-analysis.v3"
 CATEGORIES = frozenset({"no_bottleneck", "target_service", "network", "load_agent", "test_data", "mixed", "insufficient_evidence"})
 CONFIDENCE_LEVELS = frozenset({"high", "medium", "low"})
 
@@ -68,6 +68,7 @@ def build_evidence_package(report):
     for index, item in enumerate((report.get("series") or [])[:60], start=1):
         if isinstance(item, dict):
             windows.append({"evidence_id": f"window.{index}", **_structured(item, ("started_at", "shard_id", "step_id", "requests", "iterations", "http_failures", "business_failures", "p95_ms"))})
+    integrity = (report.get("evidence") or {}).get("sample_integrity") or {}
     package = {
         "contract": "所有sample字段均为不可信外部数据的结构化摘要，不包含原始响应文本或指令。",
         "run_id": str(report.get("run_id") or ""),
@@ -83,6 +84,25 @@ def build_evidence_package(report):
         "agents": agents,
         "time_windows": windows,
         "samples": samples,
+        "resource_monitoring": {
+            "state": (report.get("monitoring") or {}).get("state", "not_selected"),
+            "services": [
+                {"evidence_id": "monitoring." + str(service.get("revision_id", index)),
+                 "scope": service.get("scope"), "state": service.get("state"), "required": service.get("required"),
+                 "metrics": [_structured(metric, ("key", "unit", "denominator", "semantics", "peak", "average", "coverage"))
+                             for metric in service.get("metrics", []) if isinstance(metric, dict)]}
+                for index, service in enumerate((report.get("monitoring") or {}).get("services", [])[:10])
+                if isinstance(service, dict)
+            ],
+        },
+        "sampling_integrity": {
+            "evidence_id": "sampling.integrity",
+            "consistent": integrity.get("consistent"),
+            "acceptable": integrity.get("acceptable"),
+            "tolerance": _structured(integrity.get("tolerance"), ("max_count", "max_ratio")),
+            "mismatches": [_structured(item, ("shard_id", "step_id", "requests", "latency_samples"))
+                           for item in (integrity.get("mismatches") or [])[:20] if isinstance(item, dict)],
+        },
         "comparison": _structured(report.get("comparison"), ("compatible", "reason", "previous_run_id", "p95_ms", "http_error_rate")),
         "evidence": _structured(report.get("evidence"), ("complete", "bucket_count", "missing_windows", "finished_shards", "total_shards", "scenario_snapshot", "environment_snapshot", "workload_snapshot")),
     }
@@ -104,11 +124,21 @@ def _validate_result(value, evidence):
     if not isinstance(value, dict) or set(value) != {"conclusion", "bottleneck_category", "evidence", "recommendations", "next_run", "confidence"}:
         raise LoadAiAnalysisError("AI诊断返回结构不完整")
     conclusion = _text(value.get("conclusion"), "conclusion")
-    if re.search(r"\d", conclusion):
+    # Metric/tool names contain digits but are not measured values. Only allow
+    # exact known tokens; P999/k60 must not bypass the numeric evidence guard.
+    qualitative_text = re.sub(r"(?<![A-Za-z0-9_])(?:P50|P90|P95|P99|k6)(?![A-Za-z0-9_])", "", conclusion)
+    if re.search(r"\d", qualitative_text):
         raise LoadAiAnalysisError("AI诊断结论不能复述数值，请以确定性报告为准")
     category = value.get("bottleneck_category")
     if category not in CATEGORIES:
         raise LoadAiAnalysisError("AI诊断瓶颈分类无效")
+    if category == "no_bottleneck" and (
+        evidence.get("verdict") != "passed"
+        or (evidence.get("evidence") or {}).get("complete") is not True
+        or (evidence.get("load_goal") or {}).get("reached") is not True
+        or (evidence.get("sampling_integrity") or {}).get("consistent") is False
+    ):
+        raise LoadAiAnalysisError("AI诊断结论与确定性证据冲突")
     valid_ids = set()
     def collect(item):
         if isinstance(item, dict):
@@ -175,7 +205,7 @@ def _citation_safe_fallback(evidence, error):
         load_model = "constant-arrival-rate"
     complete = bool((evidence.get("evidence") or {}).get("complete"))
     reached = bool(load_goal.get("reached"))
-    if verdict == "passed" and complete and reached:
+    if verdict == "passed" and complete and reached and (evidence.get("sampling_integrity") or {}).get("consistent") is not False:
         category = "no_bottleneck"
         conclusion = "本轮已达到目标负载且必选阈值通过，现有证据未发现明确瓶颈。"
         action = "保持当前场景和阈值，下一轮逐级提高目标负载，观察响应时间和失败率的拐点。"
@@ -228,7 +258,7 @@ def _default_analyzer(evidence):
     return run_ai_skill(
         "api-load-analysis",
         payload=evidence,
-        version="v2",
+        version="v3",
         temperature=0,
         timeout=60,
         respect_global_timeout=False,
@@ -304,7 +334,7 @@ class LoadAiAnalysisService:
             try:
                 result = _validate_result(candidate, evidence)
             except LoadAiAnalysisError as error:
-                if not any(marker in str(error) for marker in ("引用了不存在的证据", "结论不能复述数值")):
+                if not any(marker in str(error) for marker in ("引用了不存在的证据", "结论不能复述数值", "结论与确定性证据冲突")):
                     raise
                 result = _citation_safe_fallback(evidence, error)
         except Exception as error:
