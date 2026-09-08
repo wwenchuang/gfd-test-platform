@@ -19,6 +19,7 @@ const nextRun = computed(() => {
   const value = result.value.next_run
   return value && typeof value === 'object' ? value as Record<string, unknown> : null
 })
+const policy = computed(() => result.value.next_run_strategy as {source?: string; reason?: string; objective?: string; can_prefill?: boolean; limitations?: string[]; stop_conditions?: string[]; strategy_basis?: string} | undefined)
 const stateLabel = computed(() => ({ queued: '等待诊断', running: '诊断中', completed: '诊断完成', failed: '诊断失败' } as Record<string, string>)[props.analysis?.state || ''] || '尚未诊断')
 function categoryLabel(value: unknown): string {
   return ({
@@ -46,8 +47,12 @@ function modelLabel(value: unknown): string {
         <h3>{{ fallbackAdvice ? '平台建议结论' : '诊断结论' }}</h3><p><strong>{{ categoryLabel(result.bottleneck_category) }}</strong>：{{ result.conclusion }}</p>
         <h3>证据引用</h3><div class="load-evidence-tags"><code v-for="item in citations" :key="item" :title="item">{{ evidenceLabel(item) }}<small v-if="evidenceLabel(item) !== item">（{{ item }}）</small></code></div>
         <h3>处理建议</h3><ol class="load-recommendations"><li v-for="(item, index) in recommendations" :key="index"><b>{{ priorityLabel(item.priority) }}</b><strong>{{ item.action }}</strong><span>验证方式：{{ item.verification }}</span></li></ol>
-        <template v-if="nextRun"><h3>下一轮怎么验证</h3><p class="load-next-run"><strong>{{ modelLabel(nextRun.load_model) }}</strong> · 目标 {{ nextRun.target }} · {{ nextRun.duration_seconds }} 秒<br />{{ nextRun.agent_suggestion }}</p><button v-if="canCreateNext" data-testid="load-next-run" class="primary-command" type="button" @click="emit('createNext')">按建议配置下一轮 →</button><p v-if="canCreateNext" class="load-capacity-note">先查看配置差异、确认节点，再创建草稿。此操作不会立即发压。</p></template>
+        <template v-if="nextRun"><h3>下一轮怎么验证</h3><div v-if="policy" class="load-next-policy"><p><strong>{{ policy.source }}</strong></p><p><b>为什么这样建议：</b>{{ policy.reason }}</p><p><b>要验证什么：</b>{{ policy.objective }}</p><ul v-if="policy.limitations?.length"><li v-for="item in policy.limitations" :key="item">{{ item }}</li></ul><details><summary>停止条件与策略口径</summary><ul><li v-for="item in policy.stop_conditions" :key="item">{{ item }}</li></ul><p>{{ policy.strategy_basis }}</p><p>置信度表示当前诊断证据，不代表下一轮容量或安全保证。</p></details></div><p v-else class="load-warning">历史建议尚未按场景和服务监控策略校验，请重新诊断后使用。</p><p v-if="policy?.can_prefill" class="load-next-run"><strong>{{ modelLabel(nextRun.load_model) }}</strong> · 目标 {{ nextRun.target }} · {{ nextRun.duration_seconds }} 秒<br />{{ nextRun.agent_suggestion }}</p><button v-if="canCreateNext && policy?.can_prefill" data-testid="load-next-run" class="primary-command" type="button" @click="emit('createNext')">按建议配置下一轮 →</button><p v-if="canCreateNext && policy?.can_prefill" class="load-capacity-note">先查看配置差异、确认节点，再创建草稿。此操作不会立即发压。</p></template>
       </template>
     </template>
   </section>
 </template>
+
+<style scoped>
+.load-next-policy{padding:14px 16px;border:1px solid #c9dedf;border-left:4px solid #128b83;border-radius:8px;background:#f4faf9;font-size:14px;line-height:1.7}.load-next-policy p{margin:4px 0 10px}.load-next-policy details{font-size:13px;color:#536778}.load-next-policy summary{cursor:pointer}.load-next-policy ul{padding-left:20px}
+</style>

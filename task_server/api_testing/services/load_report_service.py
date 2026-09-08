@@ -169,6 +169,9 @@ class LoadReportService:
             if run is None:
                 raise LoadReportError("压测任务不存在")
             access.require_resource(session, run, actor_id, "api.loadtest.view")
+            scenario_version = session.get(ApiLoadScenarioVersion, run.scenario_version_id)
+            scenario_steps = ((scenario_version.definition if scenario_version else {}) or {}).get('steps', [])
+            scenario_safety = {'readonly': bool(scenario_steps) and all(s.get('side_effect') == 'readonly' for s in scenario_steps), 'steps': [{'name': s.get('name'), 'scope': s.get('scope'), 'side_effect': s.get('side_effect')} for s in scenario_steps]}
             buckets = tuple(
                 session.scalars(
                     select(ApiLoadMetricBucket)
@@ -276,6 +279,7 @@ class LoadReportService:
 
         comparison = self._comparison(previous, previous_buckets, aggregate, comparison_reason)
         return {
+            "scenario_safety": scenario_safety,
             "test_context": copy.deepcopy((run.configuration or {}).get("test_context") or {}),
             "stop_policy": copy.deepcopy((run.configuration or {}).get("stop_policy")),
             "run_id": run.id,

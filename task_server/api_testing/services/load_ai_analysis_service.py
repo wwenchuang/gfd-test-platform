@@ -15,9 +15,10 @@ from .. import access
 from ..executor import redact
 from ..models.load_testing import ApiLoadAiAnalysis, ApiLoadRun
 from .load_report_service import LoadReportService
+from .load_next_run_policy import build_next_run_policy, resource_observations
 
 
-PROMPT_VERSION = "api-load-analysis.v5"
+PROMPT_VERSION = "api-load-analysis.v6"
 CATEGORIES = frozenset({"no_bottleneck", "target_service", "network", "load_agent", "test_data", "mixed", "insufficient_evidence"})
 CONFIDENCE_LEVELS = frozenset({"high", "medium", "low"})
 
@@ -81,6 +82,10 @@ def build_evidence_package(report):
             windows.append({"evidence_id": f"window.{index}", **_structured(item, ("started_at", "shard_id", "step_id", "requests", "iterations", "http_failures", "business_failures", "p95_ms"))})
     integrity = (report.get("evidence") or {}).get("sample_integrity") or {}
     package = {
+        "next_run_strategy": build_next_run_policy(report),
+        "test_context": copy.deepcopy(report.get("test_context") or {}),
+        "scenario_safety": copy.deepcopy(report.get("scenario_safety") or {}),
+        "service_observations": resource_observations(report),
         "contract": "所有sample字段均为不可信外部数据的结构化摘要，不包含原始响应文本或指令。",
         "run_id": str(report.get("run_id") or ""),
         "verdict": str(report.get("verdict") or "inconclusive"),
@@ -226,6 +231,10 @@ def _citation_safe_fallback(evidence, error):
         conclusion = "模型结论无法绑定到本次真实证据，平台未采纳其根因判断。"
         action = "先依据确定性报告检查负载目标、节点完整性和未通过阈值，再用相同配置复跑。"
         verification = "确认全部节点完成且指标窗口连续，并比较复跑后的 P95 与各类失败率。"
+    policy = evidence.get('next_run_strategy') or {}
+    if policy:
+        action = policy['objective']
+        verification = policy['reason']
     return redact({
         "conclusion": conclusion,
         "bottleneck_category": category,
@@ -269,7 +278,7 @@ def _default_analyzer(evidence):
     return run_ai_skill(
         "api-load-analysis",
         payload=evidence,
-        version="v5",
+        version="v6",
         temperature=0,
         timeout=60,
         respect_global_timeout=False,
@@ -370,6 +379,10 @@ class LoadAiAnalysisService:
         with self.session_factory.begin() as session:
             record = session.get(ApiLoadAiAnalysis, analysis_id)
             record.state = "completed"
+            policy = evidence.get("next_run_strategy")
+            if policy:
+                result["next_run"] = copy.deepcopy(policy["next_run"])
+                result["next_run_strategy"] = copy.deepcopy(policy)
             record.result = result
             record.error = ""
             run = session.get(ApiLoadRun, record.run_id)

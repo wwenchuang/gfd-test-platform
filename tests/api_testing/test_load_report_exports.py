@@ -53,3 +53,10 @@ def test_word_and_excel_include_runtime_and_draw_real_numeric_resource_times():
 def test_pod_state_export_label_keeps_scope_distinct_from_container_usage():
     from task_server.api_testing.services.load_report_export_service import label
     assert label('pod_state') == '指定 Pod 状态'
+
+def test_export_keeps_platform_strategy_separate_from_ai_prose():
+    from task_server.api_testing.services.load_report_export_service import report_sections
+    data={**REPORT,'ai_diagnosis':{'next_run_strategy':{'source':'平台证据策略','reason':'缺少业务监控','objective':'同压力补充采样','can_prefill':False}}}
+    sections=dict(report_sections(data)); rows=dict(sections['AI 诊断与建议'])
+    assert rows['推荐依据']=='缺少业务监控'
+    assert rows['配置可预填'].startswith('否')

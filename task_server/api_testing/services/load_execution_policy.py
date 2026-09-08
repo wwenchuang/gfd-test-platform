@@ -7,17 +7,25 @@ PURPOSES = {'smoke': '流程冒烟', 'load': '日常负载', 'stress': '逐步�
 def parse_test_context(value):
     if value is None:
         return None
-    allowed = {'purpose', 'release', 'data_profile', 'cache_state', 'notes'}
+    allowed = {'purpose', 'release', 'data_profile', 'cache_state', 'notes', 'recommendation_goal', 'max_step_percent', 'observation_seconds'}
     if not isinstance(value, dict) or set(value) - allowed:
         raise ValueError('测试条件包含不支持字段')
     if value.get('purpose') not in PURPOSES:
         raise ValueError('请选择有效的测试目的')
     result = {'purpose': value['purpose']}
-    for key in allowed - {'purpose'}:
+    for key in allowed - {'purpose', 'recommendation_goal', 'max_step_percent', 'observation_seconds'}:
         text = value.get(key, '')
         if not isinstance(text, str) or len(text) > 1000 or any(ord(c) < 32 and c not in '\n\t' for c in text):
             raise ValueError('测试条件必须为不超过1000字的说明')
         result[key] = text.strip()
+    for key, maximum in [('recommendation_goal', 1000000), ('max_step_percent', 50), ('observation_seconds', 86400)]:
+        if value.get(key) is None: continue
+        n = value[key]
+        if isinstance(n, bool) or not isinstance(n, (int, float)) or not 0 < n <= maximum or not math.isfinite(n):
+            raise ValueError('建议策略目标、步长或观察时长无效')
+        if key == 'observation_seconds' and (not isinstance(n, int) or n < 60):
+            raise ValueError('观察时长应为60至86400秒的整数')
+        result[key] = n
     return result
 
 

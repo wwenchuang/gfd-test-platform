@@ -111,6 +111,9 @@ def report_sections(report):
     advice = [('诊断状态', '基于同一证据生成，仅作辅助判断' if diagnosis else '尚无匹配当前证据的已完成诊断，不影响基础报告'), ('观察与可能原因', diagnosis.get('conclusion') or '未提供')]
     for index, item in enumerate(diagnosis.get('recommendations') or []):
         advice.extend([(f'建议 {index+1}', item.get('action')), (f'验证方法 {index+1}', item.get('verification'))])
+    strategy = diagnosis.get('next_run_strategy') or {}
+    if strategy:
+        advice.extend([('下一轮配置来源', strategy.get('source')), ('推荐依据', strategy.get('reason')), ('下一轮验证目标', strategy.get('objective')), ('配置可预填', '是，仍需预检和启动确认' if strategy.get('can_prefill') else '否，先完成前置条件'), ('限制', '；'.join(strategy.get('limitations') or [])), ('停止条件', '；'.join(strategy.get('stop_conditions') or []))])
     sections.append(('AI 诊断与建议', advice))
     return sections
 

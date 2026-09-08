@@ -4,12 +4,15 @@ import type { MonitoringSelection } from '../api/monitoring'
 export interface NextRunPreset {
   sourceId: string; scenarioId: string; scenarioVersionId: string; environmentId: string
   executor: LoadRun['load_model']; target: number; timeUnit: '1s' | '1m'; duration: number; maxVus: number
-  testContext?: TestContext; stopPolicy?: StopPolicy
+  reason?: string; objective?: string; testContext?: TestContext; stopPolicy?: StopPolicy
   thresholds: Record<string, unknown>; monitoring: MonitoringSelection; previous: string
 }
 export function nextRunPreset(run: LoadRun, analysis: LoadAiAnalysis): NextRunPreset {
   if (analysis.run_id !== run.id || analysis.state !== 'completed' || !['finished','failed','cancelled'].includes(run.state)) throw new Error('诊断与当前已结束执行不匹配，请刷新报告。')
-  const next = analysis.result.next_run as Record<string, unknown> | undefined
+  const policy = analysis.result.next_run_strategy as Record<string, unknown> | undefined
+  if (!policy) throw new Error('此历史建议尚未按场景与服务监控策略校验，请先重新诊断。')
+  if (policy.can_prefill !== true) throw new Error(String(policy.objective || '请先补齐建议所需条件。'))
+  const next = policy.next_run as Record<string, unknown> | undefined
   if (!next) throw new Error('没有可用的下一轮建议。')
   if (!['constant-vus','constant-arrival-rate','ramping-vus','ramping-arrival-rate'].includes(String(next.load_model))) throw new Error('建议负载模型不支持。')
   let target = Number(next.target)
@@ -24,6 +27,7 @@ export function nextRunPreset(run: LoadRun, analysis: LoadAiAnalysis): NextRunPr
   const previous = config.workload as Record<string, unknown> || {}
   const monitoring = config.monitoring as MonitoringSelection | undefined
   return {
+    reason:String(policy.reason || ''), objective:String(policy.objective || ''),
     sourceId:run.id, scenarioId:String((config.scenario as Record<string,unknown>)?.id || ''), scenarioVersionId:run.scenario_version_id, environmentId:run.environment_revision_id,
     executor:next.load_model as NextRunPreset['executor'],target,timeUnit,duration,
     maxVus:Math.max(1, Number(previous.max_vus || previous.vus || 1)),

@@ -29,7 +29,7 @@ describe('LoadRunsView', () => {
     const wrapper = mount(LoadRunsView, { global: { plugins: [router] } })
     await flushPromises()
     await wrapper.get('[data-testid="load-run-new"]').trigger('click')
-    expect(wrapper.text()).toContain('没有可用的已校准节点')
+    expect(wrapper.text()).toContain('当前没有符合调度条件的节点')
     await wrapper.get('[data-testid="load-run-back"]').trigger('click')
     store.agents = []
     store.runs = [run]
@@ -168,7 +168,7 @@ it.each(['valid','wrong-app','wrong-analysis','missing-environment'])('opens nex
   store.scenarios=[{id:'s',project_id:'p1',name:'原场景',description:'',scenario_type:'single_interface',active_version_id:'new-v',status:'active',created_at:'',updated_at:''}]
   vi.spyOn(store,'loadScenarios').mockResolvedValue(store.scenarios);vi.spyOn(store,'loadAgents').mockResolvedValue([]);vi.spyOn(store,'loadRuns').mockResolvedValue([])
   vi.spyOn(store,'loadRun').mockResolvedValue({id:'r',project_id:mode==='wrong-app'?'p2':'p1',state:'finished',scenario_version_id:'old-v',environment_revision_id:'e',configuration:{scenario:{id:'s'},thresholds:{},workload:{}}} as never)
-  vi.spyOn(store,'loadAiAnalysis').mockResolvedValue({id:mode==='wrong-analysis'?'changed':'a',run_id:'r',state:'completed',result:{next_run:{load_model:'constant-vus',target:2,duration_seconds:60}}} as never)
+  vi.spyOn(store,'loadAiAnalysis').mockResolvedValue({id:mode==='wrong-analysis'?'changed':'a',run_id:'r',state:'completed',result:{next_run_strategy:{can_prefill:true,next_run:{load_model:'constant-vus',target:2,duration_seconds:60}}}} as never)
   const create=vi.spyOn(store,'createRun');const start=vi.spyOn(store,'startRun')
   const router=createRouter({history:createMemoryHistory(),routes:[{path:'/load-runs',component:LoadRunsView}]})
   await router.push('/load-runs?next_from=r&analysis_id=a');await router.isReady()

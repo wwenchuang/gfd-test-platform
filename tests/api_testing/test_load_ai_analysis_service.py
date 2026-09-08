@@ -140,6 +140,8 @@ def test_processing_persists_valid_evidence_citations_and_does_not_start_load(lo
 
     assert completed.state == "completed"
     assert completed.result["bottleneck_category"] == "target_service"
+    assert completed.result["next_run_strategy"]["can_prefill"] is False
+    assert completed.result["next_run"] == completed.result["next_run_strategy"]["next_run"]
     with load_factory() as session:
         persisted_run = session.get(ApiLoadRun, run.id)
         assert persisted_run.state == "finished"
@@ -188,7 +190,7 @@ def test_default_analyzer_supplies_schema_complete_low_confidence_defaults(monke
     assert result["evidence"] == ["load.goal"]
     assert result["confidence"]["level"] == "low"
     assert captured["repair_invalid_json"] is True
-    assert captured["version"] == "v5"
+    assert captured["version"] == "v6"
 
 
 def test_model_cannot_cite_nonexistent_evidence(load_factory, load_run_with_shard):
