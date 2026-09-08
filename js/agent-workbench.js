@@ -414,7 +414,8 @@ function isGenerateBackgroundJob(job) {
     result.module,
     result.summary?.case_set_id
   ].filter(Boolean).join(' ');
-  return job.type === 'generate'
+  // Persisted task type survives restart/error messages and missing result artifacts.
+  return ['generate', 'mindmap_only', 'agent_mindmap_plan'].includes(job.type)
     || !!result.case_set_id
     || /生成|YAML|用例|case_set/i.test(text);
 }
