@@ -13,7 +13,7 @@ def build(destination):
             if p.is_symlink() or not p.is_file():raise ValueError('非法包文件:'+name)
             data=p.read_bytes();item=tarfile.TarInfo(name);item.mode=0o644;item.size=len(data);item.mtime=0
             archive.addfile(item,io.BytesIO(data))
-    target=out/'midscene-load-demo-1.0.0.tar.gz'
+    target=out/'midscene-load-demo-1.0.1.tar.gz'
     target.write_bytes(gzip.compress(buffer.getvalue(),mtime=0))
     target.with_suffix('.gz.sha256').write_text(hashlib.sha256(target.read_bytes()).hexdigest()+'  '+target.name+'\n')
     return target

@@ -1,4 +1,4 @@
-# 独立压测演示服务 1.0.0
+# 独立压测演示服务 1.0.1
 
 用途：验收压测平台报告和诊断流程，不代表真实业务或AI模型容量。服务不访问任何上游，不修改FRP，不含API模型调用。普通进程/Pod/GPU/数据库未部署，不能在报告中假装已监控。
 
@@ -8,13 +8,15 @@
 
 ```bash
 mkdir -p /opt/midscene-load-demo
-tar -xzf /opt/midscene-load-demo-1.0.0.tar.gz -C /opt/midscene-load-demo
+tar -xzf /opt/midscene-load-demo-1.0.1.tar.gz -C /opt/midscene-load-demo
 cd /opt/midscene-load-demo
 python3 prepare.py
 docker compose -f compose.yml --profile monitoring up -d --build
 python3 check.py
 docker compose -f compose.yml --profile monitoring ps
 ```
+
+`check.py` 最长等待20秒处理容器刚启动时的连接拒绝、连接重置或超时；HTTP错误仍立即失败，不会被当成“尚未就绪”。
 
 默认演示接口127.0.0.1:18080，Prometheus127.0.0.1:19090。不会占80或7000端口。Python镜像3.12.5-slim-bookworm、Prometheus2.54.1为固定演示版本，升级须按组织安全要求复核。
 

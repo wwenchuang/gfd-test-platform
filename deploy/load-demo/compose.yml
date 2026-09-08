@@ -1,7 +1,7 @@
 name: midscene-load-demo
 services:
   demo:
-    image: midscene-load-demo:1.0.0
+    image: midscene-load-demo:1.0.1
     build:
       context: .
       args:
