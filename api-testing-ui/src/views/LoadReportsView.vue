@@ -80,6 +80,92 @@ const matchingRuns = computed(() => {
 })
 const visibleRuns = computed(() => matchingRuns.value.slice(0, historyLimit.value))
 const selectedApplicationName = computed(() => selectedRun.value ? applicationName(selectedRun.value.project_id) : '未选择应用')
+const runConfiguration = computed(() => objectValue(selectedRun.value?.configuration))
+const workload = computed(() => objectValue(runConfiguration.value.workload))
+const testContext = computed(() => objectValue(report.value?.test_context || runConfiguration.value.test_context))
+const monitoringServices = computed(() => {
+  const services = monitoring.value?.services
+  return Array.isArray(services) ? services.map(objectValue) : []
+})
+const hasServiceResourceSamples = computed(() => monitoringServices.value.some(service => {
+  const metrics = service.metrics
+  return Array.isArray(metrics) && metrics.some(metric => {
+    const series = objectValue(metric).series
+    return Array.isArray(series) && series.some(item => Array.isArray(objectValue(item).points) && (objectValue(item).points as unknown[]).length > 0)
+  })
+}))
+const failedThresholds = computed(() => thresholds.value.filter(item => item.passed !== true))
+const slowestStep = computed(() => [...(report.value?.steps || [])]
+  .filter(item => Number(item.requests || 0) > 0 && Number.isFinite(Number(item.p95_ms)))
+  .sort((left, right) => Number(right.p95_ms) - Number(left.p95_ms))[0])
+const executiveSubject = computed(() => {
+  const serviceNames = monitoringServices.value.map(service => String(service.name || '')).filter(Boolean)
+  const version = String(testContext.value.release || '未记录')
+  const environment = objectValue(runConfiguration.value.environment)
+  const environmentName = String(environment.name || runConfiguration.value.environment_name || '')
+  return {
+    primary: `${selectedApplicationName.value} · ${scenarioName.value || '未命名场景'}`,
+    detail: `版本 ${version} · ${environmentName || '环境名称未记录'} · ${serviceNames.length ? `被测服务 ${serviceNames.join('、')}` : '被测服务未记录'}`,
+  }
+})
+const configuredDuration = computed(() => {
+  if (Number(workload.value.duration_seconds || 0) > 0) return Number(workload.value.duration_seconds)
+  const stages = workload.value.stages
+  return Array.isArray(stages) ? stages.reduce((total, stage) => total + Number(objectValue(stage).duration_seconds || 0), 0) : 0
+})
+const configuredPressure = computed(() => {
+  const model = selectedRun.value?.load_model || ''
+  const stages = Array.isArray(workload.value.stages) ? workload.value.stages.map(objectValue) : []
+  if (model.includes('arrival-rate')) {
+    const targets = stages.length ? stages.map(stage => Number(stage.target || 0)) : [Number(workload.value.rate || 0)]
+    const target = Math.max(...targets)
+    const unit = workload.value.time_unit === '1m' ? '次/分钟' : workload.value.time_unit === '1s' || !workload.value.time_unit ? '次/秒' : `次/${workload.value.time_unit}`
+    return target > 0 ? `${stages.length ? '峰值 ' : ''}${target} ${unit}` : '未记录'
+  }
+  const targets = stages.length ? stages.map(stage => Number(stage.target || 0)) : [Number(workload.value.vus || 0)]
+  const target = Math.max(...targets)
+  return target > 0 ? `${stages.length ? '峰值 ' : ''}${target} VU` : '未记录'
+})
+const executivePressure = computed(() => {
+  const duration = configuredDuration.value > 0 ? `${configuredDuration.value} 秒` : '时长未记录'
+  const arrival = selectedRun.value?.load_model.includes('arrival-rate')
+  const actual = arrival
+    ? `实际 ${number(report.value?.transport, 'requests_per_second')} 次/秒，共 ${number(report.value?.transport, 'requests')} 次请求`
+    : String(report.value?.load_goal.explanation || '实际并发以节点采样为准')
+  return { primary: `${loadModelLabel(selectedRun.value?.load_model || '')} · 目标 ${configuredPressure.value} · ${duration}`, detail: actual }
+})
+const executiveResult = computed(() => ({
+  primary: report.value?.verdict_label || '尚无结论',
+  detail: `目标压力${report.value?.load_goal.reached ? '已达到' : '未达到'} · 阈值 ${thresholds.value.filter(item => item.passed).length}/${thresholds.value.length} 通过 · 数据：${evidenceDescription.value}`,
+}))
+const executiveRisk = computed(() => {
+  const risks: string[] = []
+  if (report.value?.evidence.complete === false || (sampleIntegrity.value?.consistent === false && !sampleIntegrity.value.acceptable)) risks.push(`执行证据不完整：${evidenceDescription.value}`)
+  else if (!report.value?.load_goal.reached) risks.push('目标压力未达到，本轮结果不能代表目标容量')
+  if (failedThresholds.value.length) {
+    const item = failedThresholds.value[0]
+    risks.push(`${item.label || item.key}未通过（实际 ${thresholdValue(item, item.actual)}，要求 ${thresholdText(item)}）`)
+  } else if (Number(report.value?.transport.http_error_rate || 0) > 0 || Number(report.value?.business?.failure_rate || 0) > 0 || Number(report.value?.workflow?.failure_rate || 0) > 0) {
+    risks.push(`仍有失败：HTTP ${percent(report.value?.transport.http_error_rate)}、业务 ${percent(report.value?.business?.failure_rate)}、链路 ${percent(report.value?.workflow?.failure_rate)}`)
+  }
+  if (slowestStep.value && Number(slowestStep.value.p95_ms) > 0) risks.push(`最慢步骤 ${slowestStep.value.name || slowestStep.value.id}，P95 ${thresholdValue({ key: 'p95_ms' }, slowestStep.value.p95_ms)}`)
+  if (!hasServiceResourceSamples.value) risks.push('未采集被测服务资源，无法判断 CPU 或内存瓶颈')
+  if (!risks.length) risks.push('本轮未发现已配置阈值异常；结论只适用于本次场景和压力')
+  return { primary: risks[0], detail: risks.slice(1).join('；') || '继续结合历史基线和业务容量目标观察' }
+})
+const executiveNext = computed(() => {
+  const result = objectValue(analysis.value?.result)
+  const policy = objectValue(result.next_run_strategy)
+  const nextRun = objectValue(result.next_run)
+  if (policy.can_prefill === true && nextRun.load_model) {
+    return { primary: `按已校验建议配置${loadModelLabel(String(nextRun.load_model))}`, detail: `目标 ${nextRun.target ?? '待确认'} · ${nextRun.duration_seconds ?? '待确认'} 秒；先核对配置和节点，再创建草稿` }
+  }
+  if (report.value?.evidence.complete === false || (sampleIntegrity.value?.consistent === false && !sampleIntegrity.value.acceptable)) return { primary: '先补齐执行和采样证据', detail: '证据完整后再判断是否调整压力' }
+  if (!report.value?.load_goal.reached) return { primary: '保持场景不变，先达到目标压力', detail: '确认节点容量和调度后复验' }
+  if (failedThresholds.value.length) return { primary: '修复未通过项后保持相同条件复验', detail: '先证明问题消失，再考虑提高压力' }
+  if (!hasServiceResourceSamples.value) return { primary: '保持当前压力复验并接入服务监控', detail: '至少采集被测服务 CPU、内存与资源配额' }
+  return { primary: '按当前条件建立基线', detail: '再结合业务目标分阶段小幅升压，每轮重新检查停止条件' }
+})
 let liveTimer: ReturnType<typeof setTimeout> | null = null
 
 onMounted(async () => {
@@ -240,7 +326,7 @@ function hasAgentError(agent: Record<string, unknown>): boolean {
       <LoadResourceMonitoring v-if="!terminal && monitoring" :monitoring="monitoring" />
       <template v-if="report">
         <LoadReportExports :run-id="runId" :ready="terminal && (!monitoring || monitoring.terminal === true)" />
-        <section data-testid="load-report-decision-hero" :class="['load-decision-hero', `tone-${report.verdict}`]"><i class="load-decision-orbit" aria-hidden="true" /><header><div><span>管理层摘要 · 性能测试结果</span><h2>性能决策简报</h2><p>{{ selectedApplicationName }} / {{ scenarioName || '未命名场景' }} · {{ runDate(selectedRun?.created_at || '') }}</p></div><b><i />{{ report.verdict_label }}</b></header><div class="load-decision-message"><strong>{{ report.verdict === 'passed' ? '本次性能目标已达成' : report.verdict === 'failed' ? '本次未达到设定的性能标准' : '当前证据不足，暂不建议下结论' }}</strong><span>{{ report.verdict_explanation }}</span></div><div class="load-decision-grid"><p><span>目标压力</span><strong>{{ report.load_goal.reached ? '已达到' : '未达到' }}</strong><small>{{ report.load_goal.reached ? '仍需结合采样完整性与性能标准' : '结果不代表目标容量' }}</small></p><p><span>性能标准</span><strong>{{ thresholds.filter(item => item.passed).length }}/{{ thresholds.length }}</strong><small>阈值通过 · P95 {{ latency('p95_ms') }} 毫秒</small></p><p><span>执行数据完整度</span><strong>{{ report.evidence.finished_shards }}/{{ report.evidence.total_shards }}</strong><small>{{ evidenceDescription }}</small></p></div></section>
+        <section data-testid="load-report-decision-hero" :class="['load-decision-hero', `tone-${report.verdict}`]"><i class="load-decision-orbit" aria-hidden="true" /><header><div><span>管理层摘要 · 性能测试结果</span><h2>性能决策简报</h2><p>{{ selectedApplicationName }} / {{ scenarioName || '未命名场景' }} · {{ runDate(selectedRun?.created_at || '') }}</p></div><b><i />{{ report.verdict_label }}</b></header><div class="load-decision-message"><strong>{{ report.verdict === 'passed' ? '本次性能目标已达成' : report.verdict === 'failed' ? '本次未达到设定的性能标准' : '当前证据不足，暂不建议下结论' }}</strong><span>{{ report.verdict_explanation }}</span></div><div class="load-executive-grid" data-testid="load-report-executive-grid"><article><span><b>01</b>测了什么</span><strong>{{ executiveSubject.primary }}</strong><small>{{ executiveSubject.detail }}</small></article><article><span><b>02</b>怎么测的</span><strong>{{ executivePressure.primary }}</strong><small>{{ executivePressure.detail }}</small></article><article class="result"><span><b>03</b>结果怎么样</span><strong>{{ executiveResult.primary }}</strong><small>{{ executiveResult.detail }}</small></article><article class="risk"><span><b>04</b>主要风险</span><strong>{{ executiveRisk.primary }}</strong><small>{{ executiveRisk.detail }}</small></article><article class="next"><span><b>05</b>下一步做什么</span><strong>{{ executiveNext.primary }}</strong><small>{{ executiveNext.detail }}</small></article></div></section>
         <section v-if="terminal && sampleIntegrity?.consistent === false" :class="sampleIntegrity?.acceptable ? 'state-message' : 'state-message state-error'" data-testid="load-report-sample-integrity" aria-label="采样完整性检查">
           <strong>{{ sampleIntegrity.acceptable ? '少量计数偏差，允许继续判定，耗时指标仅基于已收到的样本' : '采样计数不一致，当前报告不能用于性能达标判断' }}</strong>
           <p>同一节点、同一步骤的请求数与耗时样本数不一致。以下数据需要核对，不能将缺少的样本视为成功或零耗时。</p>
@@ -275,7 +361,13 @@ function hasAgentError(agent: Record<string, unknown>): boolean {
 .load-readable-report .load-decision-hero header h2 { font-size: 26px; }
 .load-readable-report .load-decision-hero header p, .load-readable-report .load-decision-hero header span, .load-readable-report .load-decision-message span { font-size: 13px; line-height: 1.7; }
 .load-readable-report .load-decision-hero header h2 { color: #f5fbff; }.load-readable-report .load-decision-message strong { font-size: 22px; color: #f5fbff; }.load-readable-report .tone-failed .load-decision-message strong { color: #ffcf91; }
-.load-readable-report .load-decision-grid p > span, .load-readable-report .load-decision-grid small { font-size: 12px; }
+.load-executive-grid { display: grid; grid-template-columns: 1.1fr 1.1fr .8fr 1.2fr 1.2fr; gap: 1px; overflow: hidden; border: 1px solid rgb(130 215 220 / 18%); border-radius: 9px; background: rgb(130 215 220 / 18%); }
+.load-executive-grid article { display: grid; align-content: start; gap: 7px; min-width: 0; min-height: 132px; padding: 14px; background: rgb(5 30 43 / 76%); }
+.load-executive-grid article > span { display: flex; align-items: center; gap: 7px; color: #a8c7d1; font-size: 12px; font-weight: 800; }
+.load-executive-grid article > span b { display: inline-grid; place-items: center; width: 25px; height: 25px; border: 1px solid rgb(116 225 216 / 30%); border-radius: 50%; color: #7de2d7; font-size: 10px; }
+.load-executive-grid article > strong { color: #f6fbff; font-size: 15px; line-height: 1.5; }
+.load-executive-grid article > small { color: #a9c0ca; font-size: 12px; line-height: 1.6; }
+.load-executive-grid article.result > strong { color: #8af1d6; }.tone-failed .load-executive-grid article.result > strong, .load-executive-grid article.risk > strong { color: #ffd095; }.load-executive-grid article.next { box-shadow: inset 0 2px 0 rgb(73 203 211 / 65%); }
 .load-readable-report .load-metric-grid { gap: 12px; border: 0; background: transparent; margin: 18px 0; }
 .load-readable-report .load-metric-grid article { border: 1px solid #dae3ed; border-radius: 9px; padding: 18px; background: white; }
 .load-readable-report .load-metric-grid article > span { font-size: 13px; font-weight: 600; color: #465a74; }
@@ -292,6 +384,7 @@ function hasAgentError(agent: Record<string, unknown>): boolean {
 .report-table-scroll th, .report-table-scroll td { padding: 12px; border-bottom: 1px solid #e2e9f1; white-space: nowrap; }
 .report-table-scroll th:first-child { text-align: left; white-space: normal; min-width: 160px; }.report-table-scroll thead { background: #f1f6fb; color: #4a5f78; }
 .load-readable-report .load-agent-report summary, .load-readable-report .load-agent-facts dt, .load-readable-report .load-agent-facts dd, .load-readable-report :deep(.load-ai-panel p), .load-readable-report :deep(.load-recommendations span) { font-size: 13px; line-height: 1.7; }
+@media(max-width: 1100px) { .load-executive-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }.load-executive-grid article.next { grid-column: 1 / -1; }.load-executive-grid article { min-height: 116px; } }
 @media(max-width: 1000px) { .load-readable-report .load-latency > div { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
-@media(max-width: 620px) { .load-readable-report .load-latency > div { grid-template-columns: repeat(2, minmax(0, 1fr)); }.load-readable-report .load-thresholds article { grid-template-columns: 1fr 1fr; }.load-readable-report .load-decision-hero { padding: 16px; }.load-readable-report .load-metric-grid { grid-template-columns: 1fr 1fr; }.load-readable-report .load-metric-grid article { padding: 12px; }.load-readable-report .load-metric-grid strong { font-size: 25px; } }
+@media(max-width: 620px) { .load-readable-report .load-latency > div { grid-template-columns: repeat(2, minmax(0, 1fr)); }.load-readable-report .load-thresholds article { grid-template-columns: 1fr 1fr; }.load-readable-report .load-decision-hero { padding: 16px; }.load-readable-report .load-metric-grid { grid-template-columns: 1fr 1fr; }.load-readable-report .load-metric-grid article { padding: 12px; }.load-readable-report .load-metric-grid strong { font-size: 25px; }.load-executive-grid { grid-template-columns: 1fr; }.load-executive-grid article.next { grid-column: auto; }.load-executive-grid article { min-height: auto; } }
 </style>
