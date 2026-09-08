@@ -249,6 +249,9 @@ def finalize_load_run(self, run_id):
 
 
 def _notify_load_run_if_enabled(factory, run_id, report=None):
+    from .services.load_schedule_service import notify_schedule_run
+    if notify_schedule_run(factory, run_id, report=report):
+        return
     with factory() as session:
         run = session.get(ApiLoadRun, run_id)
         if run is None:
@@ -260,3 +263,20 @@ def _notify_load_run_if_enabled(factory, run_id, report=None):
         return
     except Exception:
         logger.warning("Unable to send performance-test Feishu report", exc_info=True)
+
+
+@celery_app.task(name="api_testing.advance_load_schedule", soft_time_limit=80, time_limit=90)
+def advance_load_schedule(schedule_id):
+    from .services.load_schedule_service import LoadScheduleService
+    LoadScheduleService(_session_factory()).advance(schedule_id)
+
+
+@celery_app.task(name="api_testing.finalize_scheduled_load_run", soft_time_limit=150, time_limit=180)
+def finalize_scheduled_load_run(run_id):
+    from .models.load_schedule import ApiLoadScheduleOccurrence
+    result = finalize_load_run.run(run_id)
+    with _session_factory().begin() as session:
+        occurrence = session.scalar(select(ApiLoadScheduleOccurrence).where(ApiLoadScheduleOccurrence.run_id == run_id).with_for_update())
+        if occurrence is not None:
+            occurrence.finalize_state = "pending" if result == "monitoring_pending" else "done"
+    return result

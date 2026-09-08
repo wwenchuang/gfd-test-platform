@@ -110,3 +110,21 @@ describe('environment monitoring', () => {
   })
 
 })
+
+it('configures kube-state-metrics Pod status independently of cAdvisor', async () => {
+  vi.mocked(monitoringApi.save).mockResolvedValue(service)
+  const w = mount(EnvironmentMonitoringPanel, {props:{environmentRevisionId:'e1'}})
+  await flushPromises()
+  await w.get('[data-testid="monitoring-create"]').trigger('click')
+  await w.get('[data-testid="monitoring-deployment"]').setValue('pod_state')
+  await w.get('[data-testid="monitoring-name"]').setValue('API 状态')
+  await w.get('[data-testid="monitoring-url"]').setValue('https://metrics.example')
+  await w.get('[data-testid="monitoring-instance"]').setValue('ksm:8080')
+  expect((w.get('[data-testid="monitoring-save"]').element as HTMLButtonElement).disabled).toBe(true)
+  await w.get('[data-testid="monitoring-namespace"]').setValue('qa')
+  await w.get('[data-testid="monitoring-pod"]').setValue('api-1')
+  expect(w.text()).toContain('kube-state-metrics 的采集目标')
+  expect(w.text()).toContain('不是本轮重启总数')
+  await w.get('form').trigger('submit'); await flushPromises()
+  expect(monitoringApi.save).toHaveBeenCalledWith(undefined,expect.objectContaining({deployment:'pod_state',labels:{instance:'ksm:8080',namespace:'qa',pod:'api-1'},metrics:['pod_ready','pod_restarts_increase_2m']}))
+})

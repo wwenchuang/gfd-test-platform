@@ -49,6 +49,13 @@ def _queries(metric, definition):
     query = build_query(metric, definition['deployment'], definition['labels'])
     selector = metric_selector(definition['deployment'], definition['labels'])
     max_age = max(60, definition['step_seconds'] * 3)
+    if metric in ('pod_ready', 'pod_restarts_increase_2m'):
+        raw = ('kube_pod_status_ready{' + selector + ',condition="true"}' if metric == 'pod_ready' else
+               'kube_pod_container_status_restarts_total{' + selector + '}')
+        freshness = 'timestamp(' + raw + ')'
+        if metric == 'pod_restarts_increase_2m':
+            freshness += ' and (timestamp(' + raw + ' offset 2m) >= time() - 120 - ' + str(max_age) + ')'
+        return query, freshness, None
     if metric.startswith('filesystem_used_') or metric in DISK_LATENCIES:
         if metric in DISK_LATENCIES:
             left, right = (name + '{' + selector + '}' for name in DISK_LATENCIES[metric])
@@ -117,6 +124,14 @@ def _queries(metric, definition):
 def _metadata(key, deployment):
     if key in ('cpu_percent', 'memory_percent'):
         return {}
+    if key in ('pod_ready', 'pod_restarts_increase_2m'):
+        ready = key == 'pod_ready'
+        return {'label': 'Pod 就绪状态' if ready else '容器重启增量（前2分钟）',
+                'unit': 'state' if ready else '次', 'scope': 'pod_state',
+                'denominator': 'not_applicable', 'denominator_unit': '', 'used_unit': 'state' if ready else '次',
+                'window_seconds': None if ready else 120,
+                'semantics': ('kube-state-metrics 的 Pod Ready 条件：1 已就绪，0 未确认就绪（含 false / unknown）；缺失为未知，不是就绪率或可用率' if ready else
+                              '各普通容器前2分钟 increase 估计增量，自动处理计数器重置，可能为小数；窗口含执行前历史且相邻窗口重叠，不可相加，不是本轮重启总数；保留 Pod UID，不跨 Pod 聚合，不含 init 容器')}
     if key in HOST_RATES:
         return {'label': HOST_RATES[key][1], 'unit': HOST_RATES[key][2], 'scope': 'host',
                 'denominator': 'not_applicable', 'denominator_unit': '', 'used_unit': HOST_RATES[key][2],
@@ -172,7 +187,10 @@ class LoadMonitoringCollectionService:
                 source = fresh_map.get(identity, {}).get(t)
                 denominator = cap_map.get(identity, {}).get(t)
                 valid = (_finite(source) and 0 <= t - source <= max_age
-                         and _finite(p['value']) and (not percentage or (_finite(denominator) and denominator > 0)))
+                         and _finite(p['value'])
+                         and (key != 'pod_ready' or p['value'] in (0, 1))
+                         and (key != 'pod_restarts_increase_2m' or p['value'] >= 0)
+                         and (not percentage or (_finite(denominator) and denominator > 0)))
                 p['source_timestamp'] = source if _finite(source) else None
                 p['denominator_value'] = denominator if _finite(denominator) and denominator > 0 else None
                 p['missing_reason'] = ('no_operations' if key in DISK_LATENCIES and denominator == 0 and _finite(source) and 0 <= t - source <= max_age else None)
@@ -254,8 +272,10 @@ class LoadMonitoringCollectionService:
                     item['metrics'].append(metric)
                 valid = bool(item['metrics']) and all(m['coverage']['valid_ratio'] >= 1 for m in item['metrics'])
                 item['instance_count'] = len({(s['labels'].get('instance'), s['labels'].get('namespace'), s['labels'].get('pod'), s['labels'].get('id'), s['labels'].get('container'), s['labels'].get('datname')) for m in item['metrics'] for s in m['series']})
+                if definition['deployment'] == 'pod_state':
+                    item['instance_count'] = len({tuple(s['labels'].get(k) for k in ('instance', 'namespace', 'pod', 'uid')) for m in item['metrics'] for s in m['series']})
                 item['state'] = ('completed' if terminal else 'collecting') if valid else 'missing'
-                item['message'] = (('主机维度监控；不能据此判断单个服务进程资源' if definition['deployment'] == 'host' else 'PostgreSQL 指定数据库指标；事务速率不等于业务链路吞吐' if definition['deployment'] == 'postgres' else '容器实际资源；Pod 按容器分列，未聚合为整个服务；额度未知时不计算百分比') if valid
+                item['message'] = (('主机维度监控；不能据此判断单个服务进程资源' if definition['deployment'] == 'host' else 'PostgreSQL 指定数据库指标；事务速率不等于业务链路吞吐' if definition['deployment'] == 'postgres' else 'kube-state-metrics 指定 Pod 状态；就绪为0/1，重启仅为前2分钟滚动估计增量，不是本轮总数' if definition['deployment'] == 'pod_state' else '容器实际资源；Pod 按容器分列，未聚合为整个服务；额度未知时不计算百分比') if valid
                                    else '部分指标缺失、无活动样本、样本过期或覆盖不完整，不能按零值判断')
             except OverflowError:
                 item.update(state='failed', message='监控采集总点数超过上限，未保存超限数据')

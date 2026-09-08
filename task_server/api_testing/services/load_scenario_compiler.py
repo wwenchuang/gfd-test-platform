@@ -10,7 +10,7 @@ from ..contracts.load_testing import LoadScenarioPayloadError, parse_load_scenar
 from .load_scenario_service import LoadScenarioService
 
 
-COMPILER_VERSION = "k6-safe-v2"
+COMPILER_VERSION = "k6-safe-v3"
 EXECUTORS = frozenset(
     {"constant-vus", "ramping-vus", "constant-arrival-rate", "ramping-arrival-rate"}
 )
@@ -171,8 +171,16 @@ def _assertion_expression(assertion):
     return label, expression
 
 
-def _step_function(step):
+def _step_function(step, ownership_variable=None):
     step_json = _json(step)
+    ownership_capture = ''
+    if step['side_effect'] == 'creates_owned_resource':
+        extraction = next(e for e in step['extractions'] if e['target'] == ownership_variable)
+        ownership_capture = (f'if (response.status < 200 || response.status >= 300) throw new Error("创建请求未确认成功，不重发创建或猜测资源ID");\n'
+            f'  applyExtractions({_json([extraction])}, response, state);\n'
+            f'  if (!validOwnedId(state[{_json(ownership_variable)}])) {{ delete state[{_json(ownership_variable)}]; throw new Error("创建资源ID无效，需人工核对"); }}')
+    timeout = ', timeout: "10s", redirects: 0' if step['side_effect'] != 'readonly' else ''
+    response_guard = ' && response.status >= 200 && response.status < 300' if step['side_effect'] != 'readonly' else ''
     assertion_parts = []
     for assertion in step["assertions"]:
         if not assertion.get("enabled", True):
@@ -188,19 +196,26 @@ function step_{safe_identifier}(state, data) {{
   const request = resolveValue(step.request, state, data);
   const baseUrl = serviceBaseUrl(request.service);
   const pathVariables = Object.assign({{}}, state, request.path_params || {{}});
-  const url = baseUrl + resolveTemplate(request.path, pathVariables, true) + encodeQuery(request.query);
+  const url = baseUrl + resolveTemplate(step.request.path, pathVariables, true) + encodeQuery(request.query);
   const body = request.body === null ? null : JSON.stringify(request.body);
-  const params = {{ headers: Object.assign({{}}, defaultHeaders, request.headers), cookies: request.cookies, tags: {{ name: {_json(request_name)}, step_id: {_json(step['id'])} }} }};
+  const params = {{ headers: Object.assign({{}}, defaultHeaders, request.headers), cookies: request.cookies, tags: {{ name: {_json(request_name)}, step_id: {_json(step['id'])} }}{timeout} }};
   const response = http.request(request.method, url, body, params);
   const stepOk = check(response, {{{checks}}});
+  {ownership_capture}
   applyExtractions(step.extractions, response, state);
   if (step.sleep_ms > 0) sleep(step.sleep_ms / 1000);
-  return stepOk;
+  return stepOk{response_guard};
 }}
 """.strip()
 
 
 def compile_scenario(definition, workload, *, stop_policy=None, compiler_version=COMPILER_VERSION):
+    if compiler_version == "k6-safe-v2":
+        from .load_scenario_compiler_v2 import compile_scenario as compile_v2, LoadScenarioCompileError as V2CompileError
+        try:
+            return compile_v2(definition, workload, stop_policy=stop_policy)
+        except V2CompileError as error:
+            raise LoadScenarioCompileError(str(error)) from error
     if compiler_version == "k6-safe-v1":
         if stop_policy is not None:
             raise LoadScenarioCompileError("旧版冻结执行不支持新增停止策略，请创建新版执行")
@@ -219,6 +234,11 @@ def compile_scenario(definition, workload, *, stop_policy=None, compiler_version
     if not admission.accepted:
         issue = admission.issues[0]
         raise LoadScenarioCompileError(f"{issue.message}；{issue.remedy}")
+    from .load_lifecycle_policy import require_lifecycle
+    try:
+        lifecycle = require_lifecycle(parsed)
+    except ValueError as error:
+        raise LoadScenarioCompileError(str(error)) from error
     options = _parse_workload(workload)
     from .load_execution_policy import safety_thresholds
     stop_thresholds = safety_thresholds(stop_policy)
@@ -235,9 +255,9 @@ def compile_scenario(definition, workload, *, stop_policy=None, compiler_version
     agent_steps = [
         step
         for step in parsed["steps"]
-        if step["scope"] in {"agent_setup", "vu_once", "iteration"}
+        if step["scope"] in {"agent_setup", "vu_once", "iteration", "cleanup_once"}
     ]
-    functions = "\n\n".join(_step_function(step) for step in agent_steps)
+    functions = "\n\n".join(_step_function(step, lifecycle["owner"] if lifecycle else None) for step in agent_steps)
     by_scope = {}
     for scope in ("setup_once", "agent_setup", "vu_once", "iteration", "cleanup_once"):
         by_scope[scope] = [
@@ -246,17 +266,27 @@ def compile_scenario(definition, workload, *, stop_policy=None, compiler_version
             if step["scope"] == scope
         ]
     run_lines = "\n  ".join(
-        f"iterationOk = {call.replace('(state, data)', '(vuState, data)')} && iterationOk;"
+        f"if (!{call.replace('(state, data)', '(vuState, data)')}) throw new Error(\"业务步骤断言失败\");"
         for call in by_scope["iteration"]
     )
     vu_lines = "\n      ".join(
-        f"iterationOk = {call.replace('(state, data)', '(vuState, data)')} && iterationOk;"
+        f"if (!{call.replace('(state, data)', '(vuState, data)')}) throw new Error(\"业务步骤断言失败\");"
         for call in by_scope["vu_once"]
     )
     agent_setup_lines = "\n  ".join(
         f"if (!{call}) throw new Error(\"节点初始化步骤失败\");"
         for call in by_scope["agent_setup"]
     )
+    clear_owner = f'delete vuState[{_json(lifecycle["owner"])}];' if lifecycle else ''
+    cleanup_lines = ''
+    if lifecycle:
+        owner_key = _json(lifecycle['owner'])
+        cleanup_call = by_scope['cleanup_once'][0].replace('(state, data)', '(vuState, data)')
+        cleanup_lines = f'''if (validOwnedId(vuState[{owner_key}])) {{
+      try {{ if (!{cleanup_call}) iterationOk = false; }}
+      catch (_) {{ iterationOk = false; }}
+      delete vuState[{owner_key}];
+    }}'''
     script = f"""import http from \"k6/http\";
 import {{ check, sleep }} from \"k6\";
 import {{ Rate, Counter }} from \"k6/metrics\";
@@ -328,6 +358,7 @@ function jsonPath(value, path) {{
   if (path === \"$\") return value;
   return String(path).replace(/^\\$\\.?/, \"\").split(\".\").filter(Boolean).reduce((current, key) => current == null ? undefined : current[key], value);
 }}
+function validOwnedId(value) {{ return (typeof value === "string" && /^[A-Za-z0-9_-]{{1,256}}$/.test(value)) || (typeof value === "number" && Number.isSafeInteger(value) && value >= 0); }}
 function containsValue(actual, expected) {{ return Array.isArray(actual) ? actual.includes(expected) : String(actual === undefined || actual === null ? \"\" : actual).includes(String(expected)); }}
 function applyExtractions(extractions, response, state) {{
   for (const item of extractions) {{
@@ -364,6 +395,7 @@ export default function(data) {{
   }}
   if (loadStageDurations.length) workflowIterationStarted.add(1, {{ step_id: phase }});
   Object.assign(vuState, data && data.state ? data.state : {{}});
+  {clear_owner}
   let iterationOk = true;
   try {{
     if (!vuInitialized) {{
@@ -375,6 +407,7 @@ export default function(data) {{
     iterationOk = false;
     throw error;
   }} finally {{
+    {cleanup_lines}
     workflowIterationSuccess.add(iterationOk);
   }}
 }}

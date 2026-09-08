@@ -41,7 +41,7 @@ from .services.notification_service import NotificationNotConfiguredError, Notif
 
 
 LOAD_ROUTE_HEADS = frozenset({
-    "load-scenarios", "load-scenario-versions", "load-datasets", "load-runs", "load-agents", "load-agent-enrollments", "load-monitoring-services",
+    "load-scenarios", "load-scenario-versions", "load-datasets", "load-runs", "load-agents", "load-agent-enrollments", "load-monitoring-services", "load-schedules",
 })
 logger = logging.getLogger(__name__)
 
@@ -82,6 +82,19 @@ def handle_load_testing_request(method, segments, query, payload, actor_id, fact
         raise ApiHttpError(404, "not_found", "Resource was not found")
     access.authorize_http(actor_id, method, segments)
 
+    if head == "load-schedules":
+        from .services.load_schedule_service import LoadScheduleService
+        service = LoadScheduleService(factory)
+        try:
+            if method == "GET" and len(segments) == 1:
+                return service.list(actor_id), 200
+            if method == "POST" and len(segments) == 1:
+                return {"schedule": service.create(payload, actor_id)}, 201
+            if method == "PUT" and len(segments) == 2:
+                return {"schedule": service.update(segments[1], payload, actor_id)}, 200
+        except ValueError as error:
+            raise ApiHttpError(422, "load_schedule_invalid", str(error)) from error
+        raise ApiHttpError(405, "method_not_allowed", "计划操作不支持")
     if method == "GET":
         return _get(factory, segments, query, actor_id), 200
     if method == "POST":
@@ -240,7 +253,7 @@ def _post(factory, segments, payload, actor):
     if len(segments) == 3 and segments[0] == "load-scenarios" and segments[2] == "versions":
         scenario = _scenario(factory, segments[1], actor, "api.loadtest.edit")
         definition = payload.get("definition")
-        admission = LoadScenarioService.validate_definition(definition)
+        admission = LoadScenarioService.validate_executable_definition(definition)
         if not admission.accepted:
             raise ApiHttpError(422, "load_scenario_rejected", "场景未通过压测安全校验", {
                 "issues": [_issue_view(item) for item in admission.issues],

@@ -187,3 +187,23 @@ def test_postgres_requires_exact_database_and_rejects_unrelated_metrics():
         assert 'pg_stat_database_' in query and 'datname="app"' in query
     for metric, labels in [('postgres_connections', {'instance':'postgres:9187'}), ('cpu_percent', {'instance':'postgres:9187','datname':'app'})]:
         with pytest.raises(m.MonitoringQueryError): m.build_query(metric, 'postgres', labels)
+
+
+def test_pod_state_queries_use_ksm_scope_and_reset_aware_window():
+    labels = {'instance': 'ksm:8080', 'namespace': 'qa', 'pod': 'api-1'}
+    ready = m.build_query('pod_ready', 'pod_state', labels)
+    assert ready == 'kube_pod_status_ready{instance="ksm:8080",namespace="qa",pod="api-1",condition="true"}'
+    restarts = m.build_query('pod_restarts_increase_2m', 'pod_state', labels)
+    assert restarts == 'increase(kube_pod_container_status_restarts_total{instance="ksm:8080",namespace="qa",pod="api-1"}[2m])'
+    assert 'sum' not in restarts and 'id=' not in restarts
+    assert m.template_version('pod_state') == 'kube-state-metrics-pod-v1'
+
+
+@pytest.mark.parametrize('labels', [
+    {'instance': 'ksm:8080', 'namespace': 'qa'},
+    {'instance': 'ksm:8080', 'namespace': 'qa', 'pod': 'api-1', 'condition': 'false'},
+    {'instance': 'ksm:8080', 'namespace': 'qa', 'pod': 'api-1', 'container': 'api'},
+])
+def test_pod_state_rejects_missing_scope_and_metric_specific_filters(labels):
+    with pytest.raises(m.MonitoringQueryError):
+        m.build_query('pod_ready', 'pod_state', labels)

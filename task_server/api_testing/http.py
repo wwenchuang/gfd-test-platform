@@ -178,7 +178,7 @@ def _dispatch(handler, method, qs, path):
                 return
         if segments and segments[0] in {
             "load-scenarios", "load-scenario-versions", "load-datasets",
-            "load-runs", "load-agents", "load-agent-enrollments", "load-monitoring-services",
+            "load-runs", "load-agents", "load-agent-enrollments", "load-monitoring-services", "load-schedules",
         }:
             from .load_testing_http import dispatch_load_testing_request
             if dispatch_load_testing_request(handler, method, path, qs, actor):

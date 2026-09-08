@@ -290,3 +290,35 @@ def test_postgres_series_retains_database_scope_without_resource_percentage():
     assert result['complete'] and result['services'][0]['scope'] == 'postgres'
     assert result['services'][0]['metrics'][0]['unit'] == 'connections'
     assert result['services'][0]['metrics'][1]['unit'] == 'transactions/s'
+
+
+@pytest.mark.parametrize('ready,restarts,stale', [(0, 0, False), (1, 2.5, False), (1, 0, True), (2, -1, False)])
+def test_pod_state_preserves_zero_and_rejects_stale_or_invalid_values(ready, restarts, stale):
+    class PodSource:
+        def query_range(self, query, start, end, step):
+            is_ready = 'kube_pod_status_ready' in query
+            labels = {'instance': 'ksm:8080', 'namespace': 'qa', 'pod': 'api-1', 'uid': 'uid-1'}
+            labels.update({'condition':'true'} if is_ready else {'container':'api'})
+            value = (start - (1000 if stale else 2)) if 'timestamp(' in query else ready if is_ready else restarts
+            return [{'labels': labels, 'points': [{'timestamp':start,'value':value}]}]
+    config = Config(PodSource())
+    config._definition_for_revision = lambda _: {'name':'Pod 状态', 'deployment':'pod_state', 'source_url':'https://approved.invalid', 'labels':{'instance':'ksm:8080','namespace':'qa','pod':'api-1'}, 'metrics':['pod_ready','pod_restarts_increase_2m'], 'step_seconds':15}
+    result = LoadMonitoringCollectionService(None, monitoring_service=config).collect_window([{'revision_id':'r'}], start=1000,end=1000,terminal=True,now=1000)
+    metrics = result['services'][0]['metrics']
+    assert result['services'][0]['instance_count'] == 1
+    assert len(metrics) == 2
+    valid = not stale and ready in (0, 1) and restarts >= 0
+    assert result['complete'] is valid
+    assert metrics[0]['peak'] == (ready if valid else None)
+    assert metrics[1]['peak'] == (restarts if valid else None)
+    assert metrics[1]['window_seconds'] == 120
+    assert '不可相加' in metrics[1]['semantics']
+    assert metrics[0]['series'][0]['labels']['uid'] == 'uid-1'
+
+
+def test_pod_restart_freshness_requires_counter_history():
+    from task_server.api_testing.services.load_monitoring_collection_service import _queries
+    definition = {'deployment':'pod_state','labels':{'instance':'ksm','namespace':'qa','pod':'api'},'step_seconds':15}
+    _, freshness, capacity = _queries('pod_restarts_increase_2m', definition)
+    assert 'offset 2m' in freshness and 'time() - 120 - 60' in freshness
+    assert capacity is None

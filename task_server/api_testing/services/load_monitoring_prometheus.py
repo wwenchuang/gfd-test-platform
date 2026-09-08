@@ -200,11 +200,12 @@ DISK_LATENCIES = {'disk_read_latency_ms': ('node_disk_read_time_seconds_total', 
 SUPPORTED_METRICS = {'host': ('cpu_percent', 'memory_percent', *HOST_RATES, 'filesystem_used_bytes', 'filesystem_used_percent', *DISK_LATENCIES),
                      'postgres': tuple(POSTGRES_METRICS),
                      'container': ('cpu_cores', 'memory_working_set_bytes'),
-                     'pod': ('cpu_cores', 'memory_working_set_bytes')}
+                     'pod': ('cpu_cores', 'memory_working_set_bytes'),
+                     'pod_state': ('pod_ready', 'pod_restarts_increase_2m')}
 
 
 def template_version(deployment):
-    return {'host': 'node-exporter-host-v1', 'postgres': 'postgres-exporter-database-v1'}.get(deployment, 'cadvisor-container-v1')
+    return {'host': 'node-exporter-host-v1', 'postgres': 'postgres-exporter-database-v1', 'pod_state': 'kube-state-metrics-pod-v1'}.get(deployment, 'cadvisor-container-v1')
 
 
 def metric_selector(deployment, labels):
@@ -218,6 +219,8 @@ def metric_selector(deployment, labels):
         raise MonitoringQueryError('容器模板需要精确的非根 cgroup id，不能填写宿主机根组')
     if deployment == 'pod' and (not labels.get('namespace') or not labels.get('pod') or labels.get('container') == 'POD'):
         raise MonitoringQueryError('Pod 模板需要精确 namespace、pod 和采集实例')
+    if deployment == 'pod_state' and (not labels.get('namespace') or not labels.get('pod') or any(k in labels for k in ('condition', 'container', 'id'))):
+        raise MonitoringQueryError('Pod 状态需要精确 namespace、pod 和 kube-state-metrics instance；不能限定 condition、container 或 cgroup id')
     selector = ','.join(k + '=' + json.dumps(v, ensure_ascii=False) for k, v in sorted(labels.items()))
     if deployment == 'pod':
         selector += ',container!="",container!="POD",id!="/"'
@@ -233,6 +236,10 @@ def build_query(metric, deployment, labels):
     selector = metric_selector(deployment, labels)
     if metric not in SUPPORTED_METRICS[deployment]:
         raise MonitoringQueryError('该部署类型不支持所选指标')
+    if metric == 'pod_ready':
+        return 'kube_pod_status_ready{' + selector + ',condition="true"}'
+    if metric == 'pod_restarts_increase_2m':
+        return 'increase(kube_pod_container_status_restarts_total{' + selector + '}[2m])'
     if metric in POSTGRES_METRICS:
         raw = POSTGRES_METRICS[metric][0] + '{' + selector + '}'
         return raw if metric == 'postgres_connections' else 'rate(' + raw + '[2m])'

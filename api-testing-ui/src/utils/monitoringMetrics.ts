@@ -9,7 +9,8 @@ export const monitoringMetricOptions: Record<MonitoringDeployment, Array<{ key: 
     {key:'disk_read_latency_ms',label:'磁盘平均读取延迟'},{key:'disk_write_latency_ms',label:'磁盘平均写入延迟'}],
   postgres: [{key:'postgres_connections',label:'数据库连接数'},{key:'postgres_commits_per_second',label:'数据库提交事务速率'},{key:'postgres_rollbacks_per_second',label:'数据库回滚事务速率'}],
   container: [{key:'cpu_cores',label:'容器 CPU 核数与可用配额'},{key:'memory_working_set_bytes',label:'容器内存 working set'}],
+  pod_state: [{key:'pod_ready',label:'Pod 就绪状态（0 / 1）'},{key:'pod_restarts_increase_2m',label:'各容器重启增量（前2分钟估计）'}],
   pod: [{key:'cpu_cores',label:'Pod 内各容器 CPU 核数与可用配额'},{key:'memory_working_set_bytes',label:'Pod 内各容器内存 working set'}],
 }
 export function monitoringMetricLabel(key: string): string { return Object.values(monitoringMetricOptions).flat().find(item => item.key === key)?.label || key }
-export function monitoringScopeLabel(scope?: string): string { return ({host:'整机',postgres:'PostgreSQL 指定数据库',container:'指定容器',pod:'指定 Pod 内各容器'} as Record<string,string>)[scope || 'host'] || scope || '整机' }
+export function monitoringScopeLabel(scope?: string): string { return ({host:'整机',postgres:'PostgreSQL 指定数据库',container:'指定容器',pod:'指定 Pod 内各容器',pod_state:'指定 Pod 状态'} as Record<string,string>)[scope || 'host'] || scope || '整机' }

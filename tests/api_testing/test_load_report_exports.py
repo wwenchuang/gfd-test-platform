@@ -48,3 +48,8 @@ def test_word_and_excel_include_runtime_and_draw_real_numeric_resource_times():
     excel,_=export_report(report,'xlsx');wb=load_workbook(BytesIO(excel))
     assert wb['压力机采样']['D2'].value==.5
     assert wb['资源采样']['F3'].value=='未采集'
+
+
+def test_pod_state_export_label_keeps_scope_distinct_from_container_usage():
+    from task_server.api_testing.services.load_report_export_service import label
+    assert label('pod_state') == '指定 Pod 状态'

@@ -190,6 +190,9 @@ def authorize_http(actor, method, segments):
         return
     head = segments[0] if segments else ""
     tail = segments[-1] if segments else ""
+    if head == "load-schedules":
+        require_permission(actor, "api.loadtest.view" if method == "GET" else "api.loadtest.execute")
+        return
     if head == "load-performance-baselines":
         require_permission(actor, "api.baseline")
         require_permission(actor, "api.loadtest.view")

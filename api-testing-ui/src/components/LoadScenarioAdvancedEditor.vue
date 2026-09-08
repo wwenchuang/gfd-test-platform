@@ -95,7 +95,8 @@ async function importDataset(): Promise<void> {
     <details><summary>配置字段说明</summary><dl>
       <dt>请求与业务结果</dt><dd><code>request</code> 配置服务、路径、参数和请求体；<code>assertions</code> 校验业务码或结果字段，<code>extractions</code> 保存后续步骤所需变量。</dd>
       <dt>数据字段绑定</dt><dd>在 <code>dataset_contract.variables</code> 声明列名，请求参数可使用 <code>{ "$data": "keyword" }</code> 取该列；提取变量引用使用 <code>{ "$extract": "model_id" }</code>。</dd>
-      <dt>执行时机与清理</dt><dd><code>scope</code> 区分每轮 iteration、每用户 vu_once、节点 agent_setup 与结束清理 cleanup_once。写操作必须有资源归属及匹配的清理步骤。</dd>
+      <dt>执行时机与清理</dt><dd><code>scope</code> 区分每轮 iteration、每用户 vu_once 与节点 agent_setup。当前写入仅支持每轮创建一个临时资源，绑定一个 cleanup_once；清理在每轮结束时执行，包括业务断言失败。资源 ID 必须从本轮创建响应提取，不能使用默认值。每用户和节点初始化仅支持只读，全局 setup_once 不支持。</dd>
+      <dt>异步与中断边界</dt><dd>尚不支持自动轮询、更新已有资源或多资源补偿。创建超时不重发，没有本轮 ID 不执行删除；断电、失联或强制停止后需要人工核对清理。清理失败计入业务链路失败。</dd>
     </dl></details>
     <label>完整场景 JSON<textarea v-model="draft" data-testid="scenario-definition-json" rows="18" spellcheck="false" @input="edit" /></label>
     <p v-if="error" role="alert" class="load-warning">{{ error }}</p>

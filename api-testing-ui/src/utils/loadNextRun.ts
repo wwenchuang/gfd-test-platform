@@ -3,7 +3,7 @@ import type { TestContext, StopPolicy } from '../components/LoadTestIntent.vue'
 import type { MonitoringSelection } from '../api/monitoring'
 export interface NextRunPreset {
   sourceId: string; scenarioId: string; scenarioVersionId: string; environmentId: string
-  executor: 'constant-vus' | 'constant-arrival-rate'; target: number; timeUnit: '1s' | '1m'; duration: number; maxVus: number
+  executor: LoadRun['load_model']; target: number; timeUnit: '1s' | '1m'; duration: number; maxVus: number
   testContext?: TestContext; stopPolicy?: StopPolicy
   thresholds: Record<string, unknown>; monitoring: MonitoringSelection; previous: string
 }
@@ -11,11 +11,11 @@ export function nextRunPreset(run: LoadRun, analysis: LoadAiAnalysis): NextRunPr
   if (analysis.run_id !== run.id || analysis.state !== 'completed' || !['finished','failed','cancelled'].includes(run.state)) throw new Error('诊断与当前已结束执行不匹配，请刷新报告。')
   const next = analysis.result.next_run as Record<string, unknown> | undefined
   if (!next) throw new Error('没有可用的下一轮建议。')
-  if (!['constant-vus','constant-arrival-rate'].includes(String(next.load_model))) throw new Error('阶梯建议缺少各阶段目标和时长，请在新建压测中明确配置阶段后执行。')
+  if (!['constant-vus','constant-arrival-rate','ramping-vus','ramping-arrival-rate'].includes(String(next.load_model))) throw new Error('建议负载模型不支持。')
   let target = Number(next.target)
   let timeUnit: '1s' | '1m' = '1s'
   const duration = Number(next.duration_seconds)
-  if (next.load_model === 'constant-arrival-rate' && Number.isFinite(target) && target > 0 && !Number.isInteger(target)) {
+  if (String(next.load_model).includes('arrival-rate') && Number.isFinite(target) && target > 0 && !Number.isInteger(target)) {
     const perMinute = target * 60
     if (Math.abs(perMinute - Math.round(perMinute)) < 1e-8) { target = Math.round(perMinute); timeUnit = '1m' }
   }

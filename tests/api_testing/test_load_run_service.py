@@ -165,7 +165,7 @@ def test_create_freezes_versions_compiler_allocation_and_agent_calibration(load_
     assert snapshot["scenario"]["version_id"] == run_records["version"].id
     assert snapshot["scenario"]["content_hash"] == "scenario-content-hash"
     assert snapshot["environment"] == {"revision_id": run_records["revision"].id, "name": "性能环境 v3"}
-    assert snapshot["compiler"]["version"] == "k6-safe-v2"
+    assert snapshot["compiler"]["version"] == "k6-safe-v3"
     assert len(snapshot["agents"]) == 2
     assert snapshot["agents"][0]["calibration"]["id"] == "calibration-20260903"
     assert sum(item["allocation"]["vus"] for item in snapshot["agents"]) == 120
@@ -371,3 +371,18 @@ def test_all_selected_creates_two_real_shards_without_multiplying_total(load_fac
     assert sum(a["rate"] for a in allocations) == 2
     assert sum(a["vus"] for a in allocations) == 2
     assert all(a["rate"] == 1 and a["vus"] == 1 for a in allocations)
+
+
+@pytest.mark.parametrize('boundary', ['start','claim'])
+def test_old_write_execution_is_blocked_before_start_or_claim(load_factory, run_records, boundary):
+    from tests.api_testing.test_load_lifecycle_v3 import owned_definition
+    service = _service(load_factory)
+    run = service.preflight(service.create(_payload(run_records), 'owner').id, 'owner')
+    with load_factory.begin() as session:
+        record=session.get(ApiLoadRun,run.id)
+        record.configuration={**record.configuration,'compiler':{'version':'k6-safe-v2'}}
+        session.get(ApiLoadScenarioVersion,record.scenario_version_id).definition=owned_definition()
+        if boundary=='claim': record.state='starting'
+    with pytest.raises(LoadRunError) as blocked:
+        service.start(run.id,'owner') if boundary=='start' else service.claim_shard(run_records['agents'][0].id)
+    assert blocked.value.code=='unsupported_lifecycle'

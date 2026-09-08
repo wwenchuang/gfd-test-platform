@@ -31,7 +31,7 @@ def test_frozen_v1_http_handoff_keeps_its_original_compiler(load_factory, load_r
     assert payload['script'] == compile_scenario(version.definition, payload['workload'], compiler_version='k6-safe-v1').script
 
 
-@pytest.mark.parametrize('compiler_version', ['k6-safe-v1', 'k6-safe-v2'])
+@pytest.mark.parametrize('compiler_version', ['k6-safe-v1', 'k6-safe-v2', 'k6-safe-v3'])
 def test_actual_k6_stage_counters_reach_database_without_losing_http_metrics(tmp_path, load_factory, load_run_with_shard, compiler_version):
     import threading
     from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -78,7 +78,7 @@ def test_actual_k6_stage_counters_reach_database_without_losing_http_metrics(tmp
         assert sum(row.metrics['latency_histogram']['count'] for row in rows) == Handler.requests
         assert sum(row.metrics['iterations'] for row in rows) == Handler.requests
         stages = {stage: sum(row.metrics['workflow_starts'] for row in rows if row.scenario_step_id == f'__load_stage_{stage}') for stage in (0, 1)}
-        if compiler_version == 'k6-safe-v2':
+        if compiler_version in {'k6-safe-v2', 'k6-safe-v3'}:
             outside = sum(row.metrics['workflow_starts'] for row in rows if row.scenario_step_id == '__load_stage_outside')
             assert sum(stages.values()) + outside == Handler.requests
             assert outside <= 1  # Last scheduled iteration can begin just after the final boundary.
@@ -95,7 +95,7 @@ def test_frozen_v1_preserves_original_script_hash_and_version():
     compiled = compile_scenario(SEARCH_CHAIN, FIXED_RATE, compiler_version='k6-safe-v1')
     assert compiled.content_hash == '395c07db057a1238336de833550cd7462fda4c44f6da64a461b86d80658a6fe7'
     assert compiled.compiler_version == 'k6-safe-v1'
-    assert compile_scenario(SEARCH_CHAIN, FIXED_RATE).compiler_version == 'k6-safe-v2'
+    assert compile_scenario(SEARCH_CHAIN, FIXED_RATE).compiler_version == 'k6-safe-v3'
     with pytest.raises(LoadScenarioCompileError):
         compile_scenario(SEARCH_CHAIN, FIXED_RATE, compiler_version='untrusted-version')
     with pytest.raises(LoadScenarioCompileError):

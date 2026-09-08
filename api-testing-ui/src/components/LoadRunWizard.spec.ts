@@ -180,3 +180,13 @@ it('prefills next run without dropping original thresholds or monitoring and nev
   expect(payload.stop_policy).toEqual(preset.stopPolicy)
   expect(payload.workload).toMatchObject({rate:2,time_unit:'1s',duration_seconds:60})
 })
+
+it('requires explicit stages when an AI recommendation provides only a ramping target',async()=>{
+ const preset={sourceId:'r',scenarioId:'s1',scenarioVersionId:'v1',environmentId:'env-v1',executor:'ramping-arrival-rate' as const,target:5,timeUnit:'1s' as const,duration:120,maxVus:10,thresholds:{},monitoring:{services:[],before_seconds:60,after_seconds:60},previous:'2 次/秒'}
+ const wrapper=mount(LoadRunWizard,{props:{scenario,environments,agents,preset}})
+ await wrapper.get('[data-testid="load-agent-a1"]').setValue(true)
+ expect(wrapper.get('[data-testid="load-run-submit"]').attributes('disabled')).toBeDefined()
+ await wrapper.get('[data-testid="load-stage-add"]').trigger('click')
+ await wrapper.get('[data-testid="load-run-submit"]').trigger('click')
+ expect(wrapper.emitted('submit')?.[0]?.[0]).toMatchObject({workload:{executor:'ramping-arrival-rate',stages:[{duration_seconds:120,target:5}]}})
+})

@@ -1,0 +1,68 @@
+// @vitest-environment jsdom
+import { mount, flushPromises } from '@vue/test-utils'
+import { afterEach, expect, it, vi } from 'vitest'
+import { apiClient } from '../api/client'
+import LoadSchedulesView from './LoadSchedulesView.vue'
+afterEach(() => { vi.restoreAllMocks(); sessionStorage.clear(); vi.useRealTimers() })
+it('creates only disabled schedules with explicit notification choice', async () => {
+  vi.spyOn(apiClient, 'get').mockImplementation(async (path) => ({ data: path.endsWith('load-schedules') ? { schedules: [] } : { runs: [{ id: 'r1', configuration: { scenario: { name: '只读查询' }, preflight: { passed: true }, workload: { vus: 1 } } }] } }) as never)
+  const post = vi.spyOn(apiClient, 'post').mockResolvedValue({ data: {} } as never)
+  const wrapper = mount(LoadSchedulesView, { global: { stubs: { RouterLink: true } } })
+  await flushPromises()
+  await wrapper.get('input[name="name"]').setValue('每日检查')
+  await wrapper.get('select[name="source"]').setValue('r1')
+  expect(wrapper.text()).toContain('默认停用')
+  await wrapper.get('form').trigger('submit')
+  await flushPromises()
+  expect(post).toHaveBeenCalledWith('/api/api-testing/v1/load-schedules', expect.objectContaining({ source_run_id: 'r1', notification_enabled: false }))
+  expect(wrapper.text()).toContain('计划已保存并保持停用')
+})
+it('requires the explicit pressure acknowledgement before enabling', async () => {
+  vi.spyOn(apiClient, 'get').mockImplementation(async (path) => ({ data: path.endsWith('load-schedules') ? { schedules: [{ id: 'p1', name: '每日检查', enabled: false, daily_time: '09:00', next_run_at: '2026-09-09T01:00:00Z', snapshot: { workload: { executor: 'constant-arrival-rate', rate: 30, time_unit: '1m', duration_seconds: 20 } }, last_status: 'idle' }] } : { runs: [] } }) as never)
+  const put = vi.spyOn(apiClient, 'put').mockResolvedValue({ data: {} } as never)
+  const wrapper = mount(LoadSchedulesView, { global: { stubs: { RouterLink: true } } })
+  await flushPromises()
+  expect(wrapper.text()).toContain('30 次/分钟')
+  await wrapper.findAll('button').find(button => button.text() === '核对并启用')!.trigger('click')
+  const dialog = wrapper.get('[role="dialog"]')
+  const submit = dialog.findAll('button').find(button => button.text() === '确认启用')!
+  expect(submit.attributes('disabled')).toBeDefined()
+  expect(put).not.toHaveBeenCalled()
+  await dialog.get('input[type="checkbox"]').setValue(true)
+  await submit.trigger('click'); await flushPromises()
+  expect(put).toHaveBeenCalledWith('/api/api-testing/v1/load-schedules/p1', { enabled: true, confirmed: true })
+})
+it('keeps application and unfinished edits while polling and stops polling on unmount', async () => {
+  vi.useFakeTimers()
+  const get = vi.spyOn(apiClient, 'get').mockImplementation(async (path) => ({ data: path.endsWith('load-schedules') ? { schedules: [{ id: 'a', project_id: 'p1', name: '应用一计划', enabled: true, daily_time: '09:00', next_run_at: '2026-09-09T01:00:00Z', snapshot: {}, last_status: 'running' }, { id: 'b', project_id: 'p2', name: '应用二计划', enabled: false, daily_time: '09:00', next_run_at: '2026-09-09T01:00:00Z', snapshot: {}, last_status: 'idle' }] } : path.endsWith('context-options') ? { projects: [{ id: 'p1', name: '应用一' }, { id: 'p2', name: '应用二' }] } : { runs: [] } }) as never)
+  const wrapper = mount(LoadSchedulesView, { global: { stubs: { RouterLink: true } } })
+  await flushPromises()
+  await wrapper.get('select[name="project-filter"]').setValue('p1')
+  await wrapper.get('input[name="name"]').setValue('未保存名称')
+  await vi.advanceTimersByTimeAsync(5000); await flushPromises()
+  expect(wrapper.text()).not.toContain('应用二计划')
+  expect((wrapper.get('input[name="name"]').element as HTMLInputElement).value).toBe('未保存名称')
+  expect((wrapper.get('select[name="project-filter"]').element as HTMLSelectElement).value).toBe('p1')
+  wrapper.unmount(); const count = get.mock.calls.length
+  await vi.advanceTimersByTimeAsync(10000)
+  expect(get.mock.calls.length).toBe(count)
+  vi.useRealTimers()
+})
+
+it('edits disabled metadata and archives only after a reviewable confirmation', async () => {
+  vi.spyOn(apiClient, 'get').mockImplementation(async (path) => ({ data: path.endsWith('load-schedules') ? { schedules: [{ id: 'p1', name: '停用计划', enabled: false, daily_time: '09:00', next_run_at: '2026-09-09T01:00:00Z', snapshot: {}, last_status: 'idle' }] } : { runs: [] } }) as never)
+  const put = vi.spyOn(apiClient, 'put').mockResolvedValue({ data: {} } as never)
+  const wrapper = mount(LoadSchedulesView, { global: { stubs: { RouterLink: true } } })
+  await flushPromises()
+  await wrapper.findAll('button').find(button => button.text() === '调整名称与时间')!.trigger('click')
+  await wrapper.get('input[name="edit-name"]').setValue('午间检查')
+  await wrapper.get('input[name="edit-time"]').setValue('12:30')
+  await wrapper.get('[role="dialog"] form').trigger('submit'); await flushPromises()
+  expect(put).toHaveBeenCalledWith('/api/api-testing/v1/load-schedules/p1', { name: '午间检查', daily_time: '12:30' })
+  await wrapper.findAll('button').find(button => button.text() === '归档')!.trigger('click')
+  expect(wrapper.get('[role="dialog"]').text()).toContain('历史执行、通知记录仍保留')
+  expect(put).toHaveBeenCalledTimes(1)
+  await wrapper.get('[role="dialog"]').findAll('button').find(button => button.text() === '确认归档')!.trigger('click'); await flushPromises()
+  expect(put).toHaveBeenLastCalledWith('/api/api-testing/v1/load-schedules/p1', { archived: true })
+  wrapper.unmount()
+})

@@ -15,7 +15,7 @@ const form = reactive({ name: '', description: '', source_url: '', instance: '',
 const canCheck = computed(() => apiTestingHasPermission('api.environment') || apiTestingHasPermission('api.loadtest.execute'))
 const canManage = computed(() => !props.readonly && apiTestingHasPermission('api.environment'))
 const canAuthorize = computed(() => apiTestingHasPermission('platform.configure'))
-const valid = computed(() => form.name.trim() && /^https?:\/\//.test(form.source_url) && form.instance.trim() && Number.isInteger(form.step_seconds) && form.step_seconds >= 5 && form.step_seconds <= 300 && form.metrics.length > 0 && (form.deployment !== 'container' || (form.id.startsWith('/') && form.id !== '/')) && (form.deployment !== 'pod' || (form.namespace.trim() && form.pod.trim())) && (form.deployment !== 'postgres' || form.datname.trim()))
+const valid = computed(() => form.name.trim() && /^https?:\/\//.test(form.source_url) && form.instance.trim() && Number.isInteger(form.step_seconds) && form.step_seconds >= 5 && form.step_seconds <= 300 && form.metrics.length > 0 && (form.deployment !== 'container' || (form.id.startsWith('/') && form.id !== '/')) && (!['pod', 'pod_state'].includes(form.deployment) || (form.namespace.trim() && form.pod.trim())) && (form.deployment !== 'postgres' || form.datname.trim()))
 let request = 0
 async function refresh(): Promise<void> {
   const seq = ++request
@@ -35,7 +35,7 @@ async function save(): Promise<void> {
   busy.value = true; error.value = ''
   const scope = props.environmentRevisionId
   try {
-    const service = await monitoringApi.save(current.value?.id, { environment_revision_id: scope, name: form.name.trim(), description: form.description.trim(), deployment: form.deployment, source_url: form.source_url.trim(), labels: { ...(current.value?.deployment === form.deployment || (!current.value?.deployment && form.deployment === 'host') ? current.value?.labels : {}), instance: form.instance.trim(), ...(form.deployment === 'container' ? { id: form.id.trim() } : {}), ...(form.deployment === 'pod' ? { namespace: form.namespace.trim(), pod: form.pod.trim() } : {}), ...(form.deployment === 'postgres' ? { datname: form.datname.trim() } : {}) }, metrics: [...form.metrics], step_seconds: form.step_seconds, ...(form.token ? { token: form.token } : {}), ...(canAuthorize.value && form.authorize_host ? { authorize_host: true } : {}) })
+    const service = await monitoringApi.save(current.value?.id, { environment_revision_id: scope, name: form.name.trim(), description: form.description.trim(), deployment: form.deployment, source_url: form.source_url.trim(), labels: { ...(current.value?.deployment === form.deployment || (!current.value?.deployment && form.deployment === 'host') ? current.value?.labels : {}), instance: form.instance.trim(), ...(form.deployment === 'container' ? { id: form.id.trim() } : {}), ...(['pod', 'pod_state'].includes(form.deployment) ? { namespace: form.namespace.trim(), pod: form.pod.trim() } : {}), ...(form.deployment === 'postgres' ? { datname: form.datname.trim() } : {}) }, metrics: [...form.metrics], step_seconds: form.step_seconds, ...(form.token ? { token: form.token } : {}), ...(canAuthorize.value && form.authorize_host ? { authorize_host: true } : {}) })
     form.token = ''
     if (scope !== props.environmentRevisionId) return
     editing.value = false; await refresh(); emit('saved', service); emit('changed')
@@ -59,7 +59,7 @@ async function disable(item: MonitoringService): Promise<void> {
 </script>
 <template>
   <section class="monitoring-panel" aria-label="环境服务与监控">
-    <header><div><h3>服务与监控</h3><p>支持整机 CPU、内存、网络与磁盘，以及 cAdvisor 容器 / 指定 Pod 内各容器和 PostgreSQL 指定数据库指标。当前不采集单个服务进程或其他数据库类型。</p></div><button v-if="canManage" type="button" class="secondary-command" data-testid="monitoring-create" :disabled="busy || loading" @click="edit()">新增监控服务</button></header>
+    <header><div><h3>服务与监控</h3><p>支持整机 CPU、内存、网络与磁盘，以及 cAdvisor 容器 / 指定 Pod 内各容器、kube-state-metrics Pod 就绪 / 重启和 PostgreSQL 指定数据库指标。当前不采集单个服务进程或其他数据库类型。</p></div><button v-if="canManage" type="button" class="secondary-command" data-testid="monitoring-create" :disabled="busy || loading" @click="edit()">新增监控服务</button></header>
     <p v-if="error" role="alert">{{ error }}</p>
     <p v-if="loading" role="status">正在读取监控配置…</p>
     <p v-else-if="!items.length">当前环境暂无监控服务。</p>
@@ -70,10 +70,10 @@ async function disable(item: MonitoringService): Promise<void> {
     <form v-if="editing" class="monitoring-form" @submit.prevent="save">
       <h4>{{ current ? '编辑监控服务（保存为新版本）' : '新增资源监控' }}</h4>
       <label>服务名称<input v-model="form.name" data-testid="monitoring-name" required maxlength="120" /></label>
-      <label>资源范围<select v-model="form.deployment" data-testid="monitoring-deployment" @change="form.metrics = monitoringMetricOptions[form.deployment].slice(0, 2).map(item => item.key)"><option value="host">整机（node_exporter）</option><option value="container">指定容器（cAdvisor）</option><option value="pod">指定 Pod 内各容器（cAdvisor）</option><option value="postgres">PostgreSQL 指定数据库（postgres_exporter）</option></select></label>
+      <label>资源范围<select v-model="form.deployment" data-testid="monitoring-deployment" @change="form.metrics = monitoringMetricOptions[form.deployment].slice(0, 2).map(item => item.key)"><option value="host">整机（node_exporter）</option><option value="container">指定容器（cAdvisor）</option><option value="pod">指定 Pod 内各容器（cAdvisor）</option><option value="pod_state">指定 Pod 状态（kube-state-metrics）</option><option value="postgres">PostgreSQL 指定数据库（postgres_exporter）</option></select></label>
       <label v-if="form.deployment === 'container'">容器 cgroup id（精确，不能为 /）<input v-model="form.id" data-testid="monitoring-container-id" required placeholder="/docker/实际容器ID" /></label>
-      <label v-if="form.deployment === 'pod'">命名空间（namespace）<input v-model="form.namespace" data-testid="monitoring-namespace" required /></label>
-      <label v-if="form.deployment === 'pod'">Pod 名称（精确匹配）<input v-model="form.pod" data-testid="monitoring-pod" required /></label>
+      <label v-if="form.deployment === 'pod' || form.deployment === 'pod_state'">命名空间（namespace）<input v-model="form.namespace" data-testid="monitoring-namespace" required /></label>
+      <label v-if="form.deployment === 'pod' || form.deployment === 'pod_state'">Pod 名称（精确匹配）<input v-model="form.pod" data-testid="monitoring-pod" required /></label>
       <label v-if="form.deployment === 'postgres'">数据库名称（datname，精确匹配）<input v-model="form.datname" data-testid="monitoring-datname" required /></label>
       <label>业务用途<input v-model="form.description" /></label>
       <label>Prometheus 只读地址<input v-model="form.source_url" data-testid="monitoring-url" type="url" required placeholder="https://monitoring.example.com" /></label>
@@ -81,7 +81,8 @@ async function disable(item: MonitoringService): Promise<void> {
       <label>只读令牌<input v-model="form.token" data-testid="monitoring-token" type="password" autocomplete="new-password" :placeholder="current?.has_token ? '已配置；留空保留现有凭据' : '数据源无需认证时可留空'" /></label>
       <label>采样间隔（秒）<input v-model.number="form.step_seconds" type="number" min="5" max="300" required /></label>
       <fieldset class="monitoring-metrics"><legend>采集指标</legend><label v-for="metric in monitoringMetricOptions[form.deployment]" :key="metric.key" class="monitoring-check"><input v-model="form.metrics" :value="metric.key" type="checkbox" /><span>{{ metric.label }}</span></label></fieldset>
-      <p v-if="form.deployment === 'container' || form.deployment === 'pod'">需已接入 cAdvisor 指标。Pod 按真实容器分列，排除基础设施容器；无 CPU 配额时占比未知。未接入工作负载聚合、重启、容器网络和磁盘。</p>
+      <p v-if="form.deployment === 'container' || form.deployment === 'pod'">需已接入 cAdvisor 指标。Pod 按真实容器分列，排除基础设施容器；无 CPU 配额时占比未知。重启与就绪请另外新增 Pod 状态配置。未接入工作负载聚合、容器网络和磁盘。</p>
+      <p v-else-if="form.deployment === 'pod_state'">需 Prometheus 已采集 kube-state-metrics 的 Pod 状态指标。instance 填 kube-state-metrics 的采集目标，不是 Pod 业务端口或 kubelet。按精确 namespace / pod 保留 UID 和容器；就绪是 0 / 1 状态，重启是前2分钟滚动估计，不是本轮重启总数，窗口不可相加。至少需要两分钟前的新鲜历史；新建 Pod 或缺失指标会显示采样缺失，不补零。多个 Pod 请分别配置。</p>
       <p v-else-if="form.deployment === 'postgres'">需已接入 postgres_exporter 的 pg_stat_database 指标。连接数包含空闲连接；数据库提交/回滚不等于业务链路成功/失败。未接入最大连接额度、慢查询和锁等待，不支持其他数据库类型。</p>
       <p v-else>网络、磁盘逐设备展示，不将虚拟网卡、磁盘、分区和重复挂载相加。空间按 size-free 统计；平均 I/O 延迟在零操作时未知，建议按需选为可选监控。没有监控源时，请由管理员按仓库 deploy/load-monitoring/README.md 部署标准主机采集包。</p>
       <p>后台从此地址只读采集；采样间隔不会提高数据源本身的精度。保存后请测试连接并确认有新鲜样本。</p>

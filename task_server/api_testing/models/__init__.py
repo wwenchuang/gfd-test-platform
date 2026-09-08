@@ -41,6 +41,7 @@ from .load_testing import (
     ApiLoadScenario,
     ApiLoadScenarioVersion,
 )
+from .load_schedule import ApiLoadSchedule, ApiLoadScheduleOccurrence
 from .load_performance_baseline import ApiLoadPerformanceBaseline
 from .load_monitoring import ApiLoadMonitoringService, ApiLoadMonitoringRevision
 from .project import ApiProject, ApiProjectMember, ApiWorkspace

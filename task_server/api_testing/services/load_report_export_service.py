@@ -80,7 +80,7 @@ def trend_png(points, unit):
 
 
 def label(value):
-    return {'host':'整台主机','container':'独立容器','pod':'Pod 内各容器','postgres':'PostgreSQL 指定数据库','completed':'采集完成','partial':'部分缺失','failed':'失败','missing':'采样缺失','not_selected':'未选择监控','collecting':'采集中','host_cpu_cores':'整机逻辑 CPU 核数','host_memory_total_bytes':'主机总内存','container_cpu_quota_cores':'同一容器 CPU quota / period','filesystem_size_bytes':'该文件系统总空间','disk_operations_per_second':'同一设备完成 I/O 速率','not_applicable':'绝对用量或速率，无百分比分母','not_available':'限制未知，不计算百分比','k6_process':'仅 k6 进程','cgroup_v1':'容器/控制组 v1','cgroup_v2':'容器/控制组 v2','visible_cpus':'可见 CPU 核数（非独享配额）','cgroup_quota':'控制组 CPU 配额','unavailable':'未采集'}.get(value, value)
+    return {'host':'整台主机','container':'独立容器','pod':'Pod 内各容器','pod_state':'指定 Pod 状态','postgres':'PostgreSQL 指定数据库','completed':'采集完成','partial':'部分缺失','failed':'失败','missing':'采样缺失','not_selected':'未选择监控','collecting':'采集中','host_cpu_cores':'整机逻辑 CPU 核数','host_memory_total_bytes':'主机总内存','container_cpu_quota_cores':'同一容器 CPU quota / period','filesystem_size_bytes':'该文件系统总空间','disk_operations_per_second':'同一设备完成 I/O 速率','not_applicable':'绝对用量或速率，无百分比分母','not_available':'限制未知，不计算百分比','k6_process':'仅 k6 进程','cgroup_v1':'容器/控制组 v1','cgroup_v2':'容器/控制组 v2','visible_cpus':'可见 CPU 核数（非独享配额）','cgroup_quota':'控制组 CPU 配额','unavailable':'未采集'}.get(value, value)
 
 
 def threshold_rows(report):

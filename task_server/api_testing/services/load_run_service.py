@@ -320,11 +320,25 @@ class LoadRunService:
             session.flush()
             return run
 
+    @staticmethod
+    def _require_run_lifecycle(session, run):
+        from .load_lifecycle_policy import require_lifecycle
+        version = session.get(ApiLoadScenarioVersion, run.scenario_version_id)
+        if version is None:
+            raise LoadRunError('场景快照缺失', status=409, code='unsupported_lifecycle')
+        compiler = ((run.configuration or {}).get('compiler') or {}).get('version') or 'k6-safe-v1'
+        try:
+            require_lifecycle(version.definition, compiler_version=compiler)
+        except ValueError as error:
+            raise LoadRunError(str(error), status=409, code='unsupported_lifecycle') from error
+
     def start(self, run_id, actor_id):
         access.require_permission(actor_id, "api.loadtest.execute")
         with self.session_factory.begin() as session:
             run = self._owned_run(session, run_id, actor_id, for_update=True)
             shards = self._run_shards(session, run.id)
+            if run.state in {"queued", "starting"}:
+                self._require_run_lifecycle(session, run)
             if run.state == "queued":
                 from .load_monitoring_config_service import LoadMonitoringConfigService
                 monitor = LoadMonitoringConfigService(self.session_factory)
@@ -402,6 +416,7 @@ class LoadRunService:
             )
             if run is None:
                 return None
+            self._require_run_lifecycle(session, run)
             shard = session.scalar(
                 select(ApiLoadRunShard)
                 .where(
@@ -460,7 +475,7 @@ class LoadRunService:
                     run.state = "finished"
             return shard
 
-    def recover_stale_runs(self, *, stale_after_seconds=120):
+    def recover_stale_runs(self, *, stale_after_seconds=120, run_id=None):
         if not isinstance(stale_after_seconds, int) or isinstance(stale_after_seconds, bool) or not 15 <= stale_after_seconds <= 3600:
             raise LoadRunError("分片失联判定时间必须在15到3600秒之间")
         cutoff = _utc(self.now()).timestamp() - stale_after_seconds
@@ -470,6 +485,7 @@ class LoadRunService:
                 session.scalars(
                     select(ApiLoadRun)
                     .where(ApiLoadRun.state.in_(("starting", "running", "stopping")))
+                    .where(ApiLoadRun.id == run_id if run_id else True)
                     .order_by(ApiLoadRun.created_at)
                     .with_for_update(skip_locked=True)
                 )
@@ -481,11 +497,19 @@ class LoadRunService:
                     and run.updated_at is not None
                     and _utc(run.updated_at).timestamp() < cutoff
                 )
+                workload = (run.configuration or {}).get("workload") or {}
+                duration = float(workload.get("duration_seconds") or 0)
+                if not duration:
+                    duration = sum(float(stage.get("duration_seconds") or 0) for stage in workload.get("stages", []))
+                duration_expired = bool(
+                    run.state in {"running", "stopping"} and run.started_at is not None and duration > 0
+                    and (_utc(self.now()) - _utc(run.started_at)).total_seconds() > duration + 180
+                )
                 stale = [
                     item for item in shards
                     if item.state not in TERMINAL_SHARD_STATES
                     and (
-                        barrier_expired
+                        barrier_expired or duration_expired
                         or (
                             item.last_heartbeat_at is not None
                             and _utc(item.last_heartbeat_at).timestamp() < cutoff
@@ -496,7 +520,9 @@ class LoadRunService:
                     continue
                 for shard in stale:
                     shard.state = "lost"
-                    shard.error = {"code": "agent_lost", "message": "压测节点心跳超时，未自动迁移剩余压力"}
+                    shard.error = ({"code": "execution_deadline_exceeded", "message": "执行超过冻结时长及180秒收尾宽限，已停止本轮，不迁移剩余压力"}
+                                   if duration_expired else {"code": "agent_lost", "message": "压测节点心跳或启动屏障超时，未自动迁移剩余压力"})
+                run.stop_reason = "执行超过冻结时长及收尾宽限" if duration_expired else "压测节点心跳或启动屏障超时"
                 run.state = "cancelled" if run.state == "stopping" and not (run.summary or {}).get("automatic_stop") else "failed"
                 run.verdict = "inconclusive"
                 run.finished_at = _utc(self.now())

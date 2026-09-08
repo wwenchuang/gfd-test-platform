@@ -1,12 +1,14 @@
 """One-user functional and per-Agent connectivity checks before load starts."""
 
 import copy
-from dataclasses import asdict, dataclass, is_dataclass
+from dataclasses import asdict, dataclass, is_dataclass, replace
 import math
 import time
 from typing import Mapping, Tuple
+from types import SimpleNamespace
 
 from ..contracts.load_testing import parse_load_scenario_definition
+from .load_lifecycle_policy import require_lifecycle, valid_owned_id
 
 
 @dataclass(frozen=True)
@@ -52,10 +54,15 @@ class FunctionalLoadStepRunner:
         self.http_executor = http_executor
 
     def execute(self, step, environment_revision_id, variables):
-        outcome = self.http_executor._execute_http_step(  # noqa: SLF001
+        executor = self.http_executor
+        if step.get('side_effect') != 'readonly':
+            executor = copy.copy(executor)
+            executor.limits = replace(executor.limits, max_redirects=0, timeout_seconds=min(10, executor.limits.timeout_seconds))
+        captures_owned_resource = step.get('side_effect') == 'creates_owned_resource'
+        outcome = executor._execute_http_step(  # noqa: SLF001
             step["request"],
             step.get("assertions", ()),
-            step.get("extractions", ()),
+            () if captures_owned_resource else step.get("extractions", ()),
             environment_revision_id,
             variables,
             lambda _phase: False,
@@ -63,6 +70,22 @@ class FunctionalLoadStepRunner:
             [],
             record_main_phases=False,
         )
+        extracted = copy.deepcopy(outcome.extracted)
+        status, category, error = outcome.status, outcome.failure_category, outcome.error
+        # Extract each field independently from this one response. The generic
+        # executor loses all extracted values when a later required field fails.
+        # Never repeat the creation request to recover an ownership ID.
+        raw = getattr(outcome, 'raw_response', None)
+        if captures_owned_resource and raw:
+            from ..assertions import extract_values
+            response = SimpleNamespace(json_body=raw.get('body'), headers=raw.get('headers') or {},
+                                       cookies=raw.get('cookies') or {}, status_code=raw.get('status_code'))
+            for item in step.get('extractions', ()):
+                view = SimpleNamespace(**{'required': True, 'default': None, 'path': '', 'name': '', **item})
+                try:
+                    extracted.update(extract_values((view,), response))
+                except Exception:
+                    status, category, error = 'BROKEN', 'extraction', '必需变量提取失败；已保留本次响应中其他可提取变量'
         assertions = [
             asdict(item) if is_dataclass(item) else copy.deepcopy(item)
             for item in outcome.assertions
@@ -70,11 +93,12 @@ class FunctionalLoadStepRunner:
         from ..executor import redact
 
         return {
-            "status": outcome.status,
+            "status": status,
             "duration_ms": int((outcome.response or {}).get("duration_ms") or 0),
-            "failure_category": outcome.failure_category,
-            "error_message": redact(outcome.error, outcome.secrets),
-            "extracted_variables": copy.deepcopy(outcome.extracted),
+            "status_code": (outcome.response or {}).get("status_code"),
+            "failure_category": category,
+            "error_message": redact(error, outcome.secrets),
+            "extracted_variables": extracted,
             "assertions": assertions,
         }
 
@@ -89,6 +113,10 @@ class LoadPreflightService:
 
     def run_once(self, definition, environment_revision_id, agents):
         definition = parse_load_scenario_definition(definition)
+        try:
+            lifecycle = require_lifecycle(definition)
+        except ValueError as error:
+            return PreflightResult(False, 'unsupported_lifecycle', str(error), 0, 0, 'not_needed', (), ())
         connectivity = self._probe_agents(agents, environment_revision_id)
         unreachable = next((item for item in connectivity if not item["reachable"]), None)
         if unreachable:
@@ -111,6 +139,8 @@ class LoadPreflightService:
         body_failed = False
         cleanup_failed = False
         cleanup_attempted = False
+        owned_id = None
+        ownership_unknown = False
         observed_duration_ms = 0
         body_scopes = {"setup_once", "agent_setup", "vu_once", "iteration"}
 
@@ -119,7 +149,19 @@ class LoadPreflightService:
                 continue
             if step["scope"] not in body_scopes or body_failed:
                 continue
+            if lifecycle and step['id'] == lifecycle['create_id']:
+                variables.pop(lifecycle['owner'], None)
             outcome = self._execute(step, environment_revision_id, variables)
+            if lifecycle and step['id'] == lifecycle['create_id']:
+                candidate = outcome['extracted_variables'].get(lifecycle['owner'])
+                code = outcome.get('status_code')
+                if isinstance(code, int) and 200 <= code < 300 and valid_owned_id(candidate):
+                    owned_id = candidate if isinstance(candidate, str) else str(int(candidate))
+                    outcome['extracted_variables'][lifecycle['owner']] = owned_id
+                else:
+                    outcome['extracted_variables'].pop(lifecycle['owner'], None)
+                    outcome.update(status='BROKEN', error_message='创建结果或资源ID未知；不重发创建、不清理未知归属资源，请人工核对')
+                    ownership_unknown = True
             results.append(outcome)
             observed_duration_ms += outcome["duration_ms"]
             variables.update(copy.deepcopy(outcome["extracted_variables"]))
@@ -134,17 +176,30 @@ class LoadPreflightService:
         for step in definition["steps"]:
             if step["scope"] != "cleanup_once":
                 continue
+            if lifecycle and not valid_owned_id(owned_id):
+                continue
+            if lifecycle:
+                variables[lifecycle['owner']] = owned_id
             cleanup_attempted = True
             outcome = self._execute(step, environment_revision_id, variables)
             results.append(outcome)
+            observed_duration_ms += outcome["duration_ms"]
+            code = outcome.get('status_code')
+            if not isinstance(code, int) or not 200 <= code < 300:
+                outcome.update(status='BROKEN', error_message='清理请求未返回成功状态；请人工核对资源')
             cleanup_failed = cleanup_failed or outcome["status"] != "PASSED"
             if outcome["status"] == "PASSED":
+                self._sleep(step)
+                observed_duration_ms += int(step.get("sleep_ms") or 0)
                 variables.update(copy.deepcopy(outcome["extracted_variables"]))
 
         passed = not body_failed and not cleanup_failed
         failure_code = ""
         message = "预检通过：已完成一轮业务请求、断言和清理"
-        if cleanup_failed:
+        if ownership_unknown:
+            failure_code = 'preflight_ownership_unknown'
+            message = '创建结果或本轮资源ID未知；未自动清理，不重发创建，请人工核对'
+        elif cleanup_failed:
             failure_code = "preflight_cleanup_failed"
             message = "预检清理失败，已阻止压测；请先确认本轮临时资源已清理"
         elif body_failed:
@@ -157,7 +212,7 @@ class LoadPreflightService:
             message=message,
             iteration_count=1,
             observed_duration_ms=observed_duration_ms,
-            cleanup_status=("failed" if cleanup_failed else "passed" if cleanup_attempted else "not_needed"),
+            cleanup_status=("unknown_ownership" if ownership_unknown else "failed" if cleanup_failed else "passed" if cleanup_attempted else "not_needed"),
             steps=tuple(results),
             connectivity=connectivity,
         )
@@ -181,6 +236,7 @@ class LoadPreflightService:
             "scope": step["scope"],
             "status": str(raw.get("status") or "BROKEN").upper(),
             "duration_ms": max(0, int(raw.get("duration_ms") or 0)),
+            "status_code": raw.get("status_code"),
             "failure_category": str(raw.get("failure_category") or ""),
             "error_message": str(raw.get("error_message") or ""),
             "extracted_variables": copy.deepcopy(raw.get("extracted_variables") or {}),

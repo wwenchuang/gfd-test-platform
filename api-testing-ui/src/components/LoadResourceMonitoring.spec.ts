@@ -32,3 +32,33 @@ describe('resource monitoring evidence', () => {
   })
 
 })
+
+it('shows Pod readiness latest state and rolling restart estimates, not uptime or total restarts', () => {
+  const w = mount(LoadResourceMonitoring, {props:{monitoring:{state:'partial',services:[{name:'API 状态',scope:'pod_state',state:'missing',source_url:'https://metrics.example',metrics:[
+    {key:'pod_ready',label:'Pod 就绪状态',unit:'state',series:[{labels:{instance:'ksm:8080',namespace:'qa',pod:'api-1',uid:'u1'},points:[{timestamp:100,value:1},{timestamp:115,value:0}]}]},
+    {key:'pod_restarts_increase_2m',label:'容器重启增量（前2分钟）',unit:'次',series:[{labels:{container:'api',uid:'u1'},points:[{timestamp:100,value:2.5},{timestamp:115,value:null}]}]},
+  ]}]}}})
+  expect(w.text()).toContain('指定 Pod 状态')
+  expect(w.text()).toContain('最后观测状态')
+  expect(w.text()).toContain('未确认就绪')
+  expect(w.text()).toContain('滚动窗口峰值')
+  expect(w.text()).toContain('2.5 次')
+  expect(w.text()).toContain('采样缺失')
+  expect(w.text()).not.toContain('保留真实容器标识')
+})
+
+it('does not reuse a previous ready state when the final sample is missing', () => {
+  const w = mount(LoadResourceMonitoring, {props:{monitoring:{state:'partial',services:[{name:'Pod',scope:'pod_state',state:'missing',metrics:[{key:'pod_ready',unit:'state',series:[{labels:{pod:'api'},points:[{timestamp:100,value:1},{timestamp:115,value:null}]}]}]}]}}})
+  const latest = w.findAll('p').find(p => p.text().includes('最后观测状态'))!
+  expect(latest.text()).toContain('最后观测状态 —')
+  expect(latest.text()).not.toContain('已就绪')
+  expect(w.text()).toContain('地址未上报')
+})
+
+it('labels an omitted tail as a historical observation rather than current health', () => {
+  const w = mount(LoadResourceMonitoring, {props:{monitoring:{state:'partial',services:[{name:'Pod',scope:'pod_state',state:'missing',metrics:[{key:'pod_ready',unit:'state',series:[{labels:{pod:'api'},points:[{timestamp:100,value:1}]}]}]}]}}})
+  expect(w.text()).toContain('最后观测状态 已就绪')
+  expect(w.text()).toContain('观测于')
+  expect(w.text()).toContain('仅代表该采样时刻')
+  expect(w.text()).not.toContain('最新状态')
+})

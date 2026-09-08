@@ -223,7 +223,7 @@ def test_control_setup_is_not_executed_by_agent_and_agent_setup_runs_once_per_sh
         ],
     }
 
-    compiled = compile_scenario(definition, FIXED_RATE)
+    compiled = compile_scenario(definition, FIXED_RATE, compiler_version="k6-safe-v2")
 
     setup_body = compiled.script.split("export function setup()", 1)[1].split(
         "export default function", 1

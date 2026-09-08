@@ -48,6 +48,19 @@ class LoadScenarioService:
         return LoadScenarioAdmission(not issues, definition, tuple(issues))
 
     @classmethod
+    def validate_executable_definition(cls, payload):
+        admission = cls.validate_definition(payload)
+        if not admission.accepted:
+            return admission
+        from .load_lifecycle_policy import require_lifecycle
+        try:
+            require_lifecycle(admission.definition)
+        except ValueError as error:
+            issue = LoadScenarioIssue('error', 'unsupported_lifecycle', '', str(error), '使用受支持的当轮临时资源创建和清理；通用异步轮询与断线补偿尚未接入。')
+            return LoadScenarioAdmission(False, admission.definition, (issue,))
+        return admission
+
+    @classmethod
     def copy_from_case_versions(cls, *, name, description, cases):
         snapshots = [cls._case_snapshot(item) for item in cases]
         steps = []

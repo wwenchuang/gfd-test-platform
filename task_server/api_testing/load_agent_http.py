@@ -268,6 +268,11 @@ def _execution_payload(session, run, shard, version):
     configuration = run.configuration if isinstance(run.configuration, dict) else {}
     compiler_snapshot = configuration.get("compiler") if isinstance(configuration.get("compiler"), dict) else {}
     compiler_version = compiler_snapshot.get("version") or "k6-safe-v1"
+    from .services.load_lifecycle_policy import require_lifecycle
+    try:
+        require_lifecycle(version.definition, compiler_version=compiler_version)
+    except ValueError as error:
+        raise ApiHttpError(409, "unsupported_lifecycle", str(error)) from error
     workload = configuration.get("workload")
     try:
         global_compiled = compile_scenario(copy.deepcopy(version.definition), copy.deepcopy(workload), stop_policy=(run.configuration or {}).get("stop_policy"), compiler_version=compiler_version)

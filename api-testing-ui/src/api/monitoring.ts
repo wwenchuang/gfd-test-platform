@@ -1,6 +1,6 @@
 import { apiClient } from './client'
 
-export type MonitoringDeployment = 'host' | 'container' | 'pod' | 'postgres'
+export type MonitoringDeployment = 'host' | 'container' | 'pod' | 'pod_state' | 'postgres'
 export type MonitoringCheck = { state: 'ready' | 'missing' | 'failed'; message: string; checked_at?: string }
 export type MonitoringService = {
   id: string; revision_id: string; environment_id: string; name: string; description: string

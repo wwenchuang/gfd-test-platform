@@ -14,7 +14,7 @@ const props = defineProps<{ scenario: LoadScenario; environments: EnvironmentRev
 const emit = defineEmits<{ submit: [payload: Record<string, unknown>]; cancel: [] }>()
 const environmentId = ref(props.preset?.environmentId || (props.environments.some(item => item.id === props.initialEnvironmentId) ? props.initialEnvironmentId! : props.environments[0]?.id || ''))
 const executor = ref<Executor>(props.preset?.executor || 'constant-arrival-rate')
-const vus = ref(props.preset?.executor === 'constant-vus' ? props.preset.target : 1)
+const vus = ref(props.preset && !props.preset.executor.includes('arrival-rate') ? props.preset.target : 1)
 const maxVus = ref(props.preset?.maxVus || 1)
 const rate = ref(props.preset?.target || 1)
 const timeUnit = props.preset?.timeUnit || '1s'
@@ -74,7 +74,7 @@ const capacityEnough = computed(() => arrivalModel.value
 const productionReady = computed(() => !production.value || (hasProductionPermission.value && productionConfirmed.value))
 const canSubmit = computed(() => Boolean(
   environmentId.value && props.scenario.active_version_id && selected.value.length
-  && distributionValid.value && !invalidSelection.value && numericValid.value && criteriaValid.value && monitoringValid.value && productionReady.value && (capacityEnough.value || allowRunAnyway.value),
+  && (!props.preset || !ramping.value || stages.value.length > 0) && distributionValid.value && !invalidSelection.value && numericValid.value && criteriaValid.value && monitoringValid.value && productionReady.value && (capacityEnough.value || allowRunAnyway.value),
 ))
 
 function thresholdText(key: string, raw: unknown): string {
@@ -141,7 +141,7 @@ function submit(): void {
     <header><div><p class="eyebrow">压测配置</p><h2>{{ scenario.name }}</h2></div><button data-testid="load-run-back" class="text-command" type="button" @click="emit('cancel')">← 返回执行列表</button></header>
     <div class="load-wizard-body">
       <LoadTestIntent v-model="testContext" v-model:stop-policy="stopPolicy" />
-      <section v-if="preset" class="load-review-box" data-testid="load-next-review"><strong>下一轮验证 · 配置核对</strong><p>来源执行：{{ preset.sourceId }}</p><p>上一轮：{{ preset.previous }} → 建议：{{ preset.target }} {{ preset.executor === 'constant-vus' ? 'VU' : timeUnit === '1m' ? '次/分钟' : '次/秒' }} · {{ preset.duration }} 秒</p><p>固定保留原场景版本和环境、全部验收阈值及 {{ preset.monitoring.services.length }} 项监控。压力可调整，节点请重新选择。创建后仍需连通性检查、预检和启动确认。</p><ul><li v-for="(value, key) in preset.thresholds" :key="key">{{ thresholdText(String(key), value) }}</li></ul></section>
+      <section v-if="preset" class="load-review-box" data-testid="load-next-review"><strong>下一轮验证 · 配置核对</strong><p>来源执行：{{ preset.sourceId }}</p><p>上一轮：{{ preset.previous }} → 建议：{{ preset.target }} {{ !preset.executor.includes('arrival-rate') ? 'VU' : timeUnit === '1m' ? '次/分钟' : '次/秒' }} · {{ preset.duration }} 秒</p><p>固定保留原场景版本和环境、全部验收阈值及 {{ preset.monitoring.services.length }} 项监控。压力可调整，节点请重新选择。创建后仍需连通性检查、预检和启动确认。</p><ul><li v-for="(value, key) in preset.thresholds" :key="key">{{ thresholdText(String(key), value) }}</li></ul></section>
       <LoadThresholdEditor v-else v-model="errorCriteria" />
       <section class="load-context-banner"><div><span>所属应用 / API 项目</span><strong>{{ projectName || '当前接口项目' }}</strong><small>场景、环境和报告都归入这个项目；需要换应用时请先回工作台切换。</small></div><div><span>场景版本</span><strong>{{ scenario.name }}</strong><small>版本：{{ preset?.scenarioVersionId || scenario.active_version_id }}；历史结果可重复核对。</small></div></section>
       <label>{{ preset ? '目标环境（沿用原版本）' : '目标环境（可切换）' }}<select v-model="environmentId" :disabled="Boolean(preset)" data-testid="load-run-environment"><option value="" disabled>请选择目标环境</option><option v-for="item in environments" :key="item.id" :value="item.id">{{ item.name }} · v{{ item.revision }}</option></select><small v-if="preset">本次沿用原环境；如需更换，请从新建压测入口配置。</small><small v-else-if="environments.length === 1">当前项目只有 1 个可用环境；可到“环境配置”新增独立压测环境。</small><small v-else>请选择本次真实接收流量的环境，环境不是写死的。</small></label>
@@ -162,6 +162,13 @@ function submit(): void {
         <label>排队优先级<select v-model="priority"><option value="urgent">紧急（优先排队，不抢占运行任务）</option><option value="high">高</option><option value="normal">普通（日常默认）</option><option value="low">低</option></select></label>
       </div>
 
+      <section v-if="ramping" class="load-stage-editor" data-testid="load-stage-editor">
+        <h3>明确每个压力阶段</h3>
+        <p v-if="preset && !stages.length" class="load-warning">AI 只提供目标与总时长，未提供阶段明细。请添加并核对每段时长和目标后创建；平台不会自动编造阶段。</p>
+        <p>各阶段逐步变化到填写的目标；总时长为阶段时长之和。吞吐单位：{{ timeUnit === '1m' ? '次/分钟' : '次/秒' }}，并发单位：VU。</p>
+        <div v-for="(stage,index) in stages" :key="index" class="load-stage-row"><strong>阶段 {{ index+1 }}</strong><label>时长（秒）<input v-model.number="stage.duration_seconds" :data-testid="`load-stage-duration-${index}`" type="number" min="1" /></label><label>阶段目标<input v-model.number="stage.target" :data-testid="`load-stage-target-${index}`" type="number" min="0" /></label><button type="button" class="secondary-command" @click="stages.splice(index,1)">删除</button></div>
+        <button type="button" data-testid="load-stage-add" class="secondary-command" @click="stages.push({duration_seconds: duration,target:arrivalModel?rate:vus})">＋ 添加阶段（请核对目标和时长）</button>
+      </section>
       <div class="load-section-heading"><div><h3>按负载目标选择压测节点</h3><small>先填写上面的并发/吞吐，再让平台按“首选 → 普通 → 备用”推荐足够容量。</small></div><button data-testid="load-agent-recommend" class="secondary-command" type="button" :disabled="!validAgents.length" @click="recommendAgents">选择推荐节点</button></div>
       <p v-if="!validAgents.length" class="load-warning">没有可用的已校准节点。请先到“压测节点”完成校准。</p>
       <div class="load-agent-options"><label v-for="item in agents" :key="item.id" :class="{ selected: selectedIds.includes(item.id), disabled: !agentSelectable(item) }"><input :data-testid="`load-agent-${item.id}`" type="checkbox" :disabled="!agentSelectable(item)" :checked="selectedIds.includes(item.id)" @change="toggleAgent(item.id, ($event.target as HTMLInputElement).checked)" /><span><strong>{{ item.name }}</strong><small>{{ item.scheduling_tier === 'preferred' ? '首选节点' : item.scheduling_tier === 'normal' ? '普通节点' : item.scheduling_tier === 'disabled' ? '已停用' : '备用节点' }}</small><small v-if="item.calibration_state !== 'valid'">{{ item.calibration_state === 'expired' ? '校准过期，不能选择' : '未完成有效校准，不能选择' }}</small><small v-else>可分配 {{ availableCapacity(item, 'max_vus') }} VU / {{ availableCapacity(item, 'max_iterations_per_second') }} 次/秒</small></span></label></div>

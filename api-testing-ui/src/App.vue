@@ -21,6 +21,7 @@ const navigationSections = computed(() => [
       { to: '/load-scenarios', label: '性能场景', icon: Gauge },
       { to: '/load-runs', label: '压测执行', icon: Activity },
       { to: '/load-reports', label: '性能报告', icon: ChartLine },
+      { to: '/load-schedules', label: '性能定时计划', icon: CalendarClock },
       { to: '/load-analysis', label: '性能分析', icon: ChartLine },
       { to: '/load-agents', label: '压测节点', icon: Server },
     ],

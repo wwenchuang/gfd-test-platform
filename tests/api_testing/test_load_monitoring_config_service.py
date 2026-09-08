@@ -168,3 +168,18 @@ def test_postgres_config_freezes_database_and_only_supported_metrics(catalog):
     assert snapshot['template_version'] == 'postgres-exporter-database-v1'
     assert 'datname="app"' in snapshot['queries']['postgres_connections']
     with pytest.raises(ValueError): svc.update(created['id'], {'metrics':['memory_percent']}, actor='load-owner')
+
+
+def test_pod_state_config_freezes_ksm_source_and_rejects_cadvisor_metrics(catalog):
+    svc, records, _ = catalog
+    data = payload(deployment='pod_state', metrics=['pod_ready','pod_restarts_increase_2m'])
+    data['labels'] = {'instance':'ksm:8080','namespace':'qa','pod':'api-1'}
+    created = svc.create(env_id(records), data, actor='load-owner')
+    snapshot = svc.get_snapshot(created['revision_id'], actor='load-owner', environment_revision_id=env_id(records))
+    assert snapshot['metric_scope'] == 'pod_state'
+    assert snapshot['template_version'] == 'kube-state-metrics-pod-v1'
+    assert 'condition="true"' in snapshot['queries']['pod_ready']
+    with pytest.raises(ValueError):
+        svc.update(created['id'], {'metrics':['cpu_cores']}, actor='load-owner')
+    svc.update(created['id'], {'labels':{'instance':'ksm:8080','namespace':'qa','pod':'api-2'}}, actor='load-owner')
+    assert snapshot == svc.get_snapshot(created['revision_id'], actor='load-owner', environment_revision_id=env_id(records))

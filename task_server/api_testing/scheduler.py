@@ -34,6 +34,10 @@ def run_forever(interval_seconds=None):
 
 def _scan_once():
     factory = _session_factory()
+    from .services.load_schedule_service import LoadScheduleService
+    from .tasks import advance_load_schedule
+    for schedule_id in LoadScheduleService(factory).dispatch_due():
+        advance_load_schedule.delay(schedule_id)
     dispatched = ScheduledJobService(factory, enqueue=_enqueue_execution).dispatch_due()
     if dispatched:
         logger.info("API testing scheduler dispatched due jobs count=%s", len(dispatched))

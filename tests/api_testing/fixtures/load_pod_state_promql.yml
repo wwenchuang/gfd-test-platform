@@ -1,0 +1,39 @@
+# Synthetic KSM samples, verified with Prometheus promtool; not business evidence.
+rule_files: []
+evaluation_interval: 30s
+tests:
+- interval: 30s
+  input_series:
+  - series: kube_pod_status_ready{instance="ksm:8080",namespace="qa",pod="api-1",uid="u1",condition="true"}
+    values: 1 1 1 1 0 0 0
+  - series: kube_pod_status_ready{instance="ksm:8080",namespace="qa",pod="api-1",uid="u1",condition="false"}
+    values: 0 0 0 0 1 1 1
+  - series: kube_pod_container_status_restarts_total{instance="ksm:8080",namespace="qa",pod="api-1",uid="u1",container="api"}
+    values: 7 7 7 7 0 1 2
+  - series: kube_pod_container_status_restarts_total{instance="ksm:8080",namespace="qa",pod="api-1",uid="u1",container="sidecar"}
+    values: 0 0 0 0 0 0 0
+  - series: kube_pod_container_status_restarts_total{instance="ksm:8080",namespace="other",pod="api-1",uid="u2",container="api"}
+    values: 0 100 200 300 400 500 600
+  promql_expr_test:
+  - expr: kube_pod_status_ready{instance="ksm:8080",namespace="qa",pod="api-1",condition="true"}
+    eval_time: 3m
+    exp_samples:
+    - labels: kube_pod_status_ready{instance="ksm:8080",namespace="qa",pod="api-1",uid="u1",condition="true"}
+      value: 0
+  - expr: increase(kube_pod_container_status_restarts_total{instance="ksm:8080",namespace="qa",pod="api-1"}[2m])
+    eval_time: 3m
+    exp_samples:
+    - labels: '{instance="ksm:8080",namespace="qa",pod="api-1",uid="u1",container="api"}'
+      value: 2
+    - labels: '{instance="ksm:8080",namespace="qa",pod="api-1",uid="u1",container="sidecar"}'
+      value: 0
+  - expr: timestamp(kube_pod_container_status_restarts_total{instance="ksm:8080",namespace="qa",pod="api-1"}) and (timestamp(kube_pod_container_status_restarts_total{instance="ksm:8080",namespace="qa",pod="api-1"} offset 2m) >= time() - 120 - 60)
+    eval_time: 1m
+    exp_samples: []
+  - expr: timestamp(kube_pod_container_status_restarts_total{instance="ksm:8080",namespace="qa",pod="api-1"}) and (timestamp(kube_pod_container_status_restarts_total{instance="ksm:8080",namespace="qa",pod="api-1"} offset 2m) >= time() - 120 - 60)
+    eval_time: 3m
+    exp_samples:
+    - labels: '{instance="ksm:8080",namespace="qa",pod="api-1",uid="u1",container="api"}'
+      value: 180
+    - labels: '{instance="ksm:8080",namespace="qa",pod="api-1",uid="u1",container="sidecar"}'
+      value: 180

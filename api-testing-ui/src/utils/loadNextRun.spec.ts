@@ -15,7 +15,7 @@ describe('next run configuration',()=>{
  it('rejects wrong source, nonfinite targets and unspecified ramp stages',()=>{
   expect(()=>nextRunPreset(run,{...ai,run_id:'other'})).toThrow()
   for(const target of [0,1.5,Infinity,NaN]) expect(()=>nextRunPreset(run,{...ai,result:{next_run:{load_model:'constant-vus',target,duration_seconds:60}}})).toThrow()
-  expect(()=>nextRunPreset(run,{...ai,result:{next_run:{load_model:'ramping-vus',target:2,duration_seconds:60}}})).toThrow('阶段')
+  expect(nextRunPreset(run,{...ai,result:{next_run:{load_model:'ramping-vus',target:2,duration_seconds:60}}}).executor).toBe('ramping-vus')
  })
 })
 
