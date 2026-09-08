@@ -1,0 +1,7 @@
+ARG PYTHON_IMAGE=python:3.12.5-slim-bookworm
+FROM ${PYTHON_IMAGE}
+WORKDIR /app
+COPY server.py /app/server.py
+USER 65534:65534
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
+CMD ["python", "/app/server.py"]

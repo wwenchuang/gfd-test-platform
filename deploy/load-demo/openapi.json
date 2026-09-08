@@ -1,0 +1,156 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "独立压测演示（非业务）",
+    "version": "1.0.0"
+  },
+  "security": [
+    {
+      "bearerAuth": []
+    }
+  ],
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer"
+      }
+    }
+  },
+  "paths": {
+    "/demo/ok": {
+      "get": {
+        "summary": "正常响应",
+        "operationId": "demo_ok",
+        "responses": {
+          "200": {
+            "description": "成功响应；必须额外断言code=0才代表业务成功"
+          },
+          "401": {
+            "description": "未授权"
+          },
+          "429": {
+            "description": "演示并发保护"
+          },
+          "500": {
+            "description": "HTTP故障演示"
+          }
+        }
+      }
+    },
+    "/demo/slow": {
+      "get": {
+        "summary": "延迟600毫秒",
+        "operationId": "demo_slow",
+        "responses": {
+          "200": {
+            "description": "成功响应；必须额外断言code=0才代表业务成功"
+          },
+          "401": {
+            "description": "未授权"
+          },
+          "429": {
+            "description": "演示并发保护"
+          },
+          "500": {
+            "description": "HTTP故障演示"
+          }
+        }
+      }
+    },
+    "/demo/http-error": {
+      "get": {
+        "summary": "固定HTTP500（用于预检失败）",
+        "operationId": "demo_http_error",
+        "responses": {
+          "200": {
+            "description": "成功响应；必须额外断言code=0才代表业务成功"
+          },
+          "401": {
+            "description": "未授权"
+          },
+          "429": {
+            "description": "演示并发保护"
+          },
+          "500": {
+            "description": "HTTP故障演示"
+          }
+        }
+      }
+    },
+    "/demo/business-error": {
+      "get": {
+        "summary": "HTTP200业务code1001（用于预检失败）",
+        "operationId": "demo_business_error",
+        "responses": {
+          "200": {
+            "description": "成功响应；必须额外断言code=0才代表业务成功"
+          },
+          "401": {
+            "description": "未授权"
+          },
+          "429": {
+            "description": "演示并发保护"
+          },
+          "500": {
+            "description": "HTTP故障演示"
+          }
+        }
+      }
+    },
+    "/demo/cpu": {
+      "get": {
+        "summary": "有界CPU工作",
+        "operationId": "demo_cpu",
+        "responses": {
+          "200": {
+            "description": "成功响应；必须额外断言code=0才代表业务成功"
+          },
+          "401": {
+            "description": "未授权"
+          },
+          "429": {
+            "description": "演示并发保护"
+          },
+          "500": {
+            "description": "HTTP故障演示"
+          }
+        }
+      }
+    },
+    "/demo/memory": {
+      "get": {
+        "summary": "共享64MiB内存30秒TTL",
+        "operationId": "demo_memory",
+        "responses": {
+          "200": {
+            "description": "成功响应；必须额外断言code=0才代表业务成功"
+          },
+          "401": {
+            "description": "未授权"
+          },
+          "429": {
+            "description": "演示并发保护"
+          },
+          "500": {
+            "description": "HTTP故障演示"
+          }
+        }
+      }
+    },
+    "/demo/switchable": {
+      "get": {
+        "summary": "运行中故障切换（默认正常，仅管理员可切换）",
+        "operationId": "demo_switchable",
+        "responses": {
+          "200": {
+            "description": "需断言code=0"
+          },
+          "500": {
+            "description": "管理员临时故障"
+          }
+        }
+      }
+    }
+  }
+}

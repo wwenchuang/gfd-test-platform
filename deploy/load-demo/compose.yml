@@ -1,0 +1,51 @@
+name: midscene-load-demo
+services:
+  demo:
+    image: midscene-load-demo:1.0.0
+    build:
+      context: .
+      args:
+        PYTHON_IMAGE: ${PYTHON_IMAGE:-python:3.12.5-slim-bookworm}
+    ports:
+      - "${DEMO_BIND_IP:-127.0.0.1}:${DEMO_PORT:-18080}:8080"
+    restart: unless-stopped
+    cgroup: private
+    mem_limit: 256m
+    memswap_limit: 256m
+    cpus: 0.5
+    pids_limit: 48
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs: ["/tmp:size=8m,mode=1777"]
+    secrets: [api_token, metrics_token, admin_token]
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health',timeout=2).read()"]
+      interval: 15s
+      timeout: 3s
+      retries: 3
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    profiles: [monitoring]
+    command: ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.path=/prometheus", "--storage.tsdb.retention.time=1d", "--storage.tsdb.retention.size=256MB"]
+    ports: ["127.0.0.1:${PROMETHEUS_PORT:-19090}:9090"]
+    restart: unless-stopped
+    mem_limit: 384m
+    cpus: 0.25
+    pids_limit: 64
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - metrics-data:/prometheus
+    secrets: [metrics_token]
+secrets:
+  api_token:
+    file: ./secrets/api_token
+  metrics_token:
+    file: ./secrets/metrics_token
+  admin_token:
+    file: ./secrets/admin_token
+volumes:
+  metrics-data:

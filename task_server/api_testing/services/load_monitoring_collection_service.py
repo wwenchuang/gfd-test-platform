@@ -95,6 +95,10 @@ def _queries(metric, definition):
             capacity = ('(' + quota + ' > 0) / (' + period + ' > 0) and '
                         '(timestamp(' + quota + ') >= time() - ' + str(max_age) + ') and '
                         '(timestamp(' + period + ') >= time() - ' + str(max_age) + ')')
+        if metric == 'memory_working_set_bytes':
+            limit = 'container_spec_memory_limit_bytes{' + selector + '}'
+            # cAdvisor unlimited sentinel is near 2**63; never call it a real quota.
+            capacity = ('((' + limit + ' > 0) < 1e18) and (timestamp(' + limit + ') >= time() - ' + str(max_age) + ')')
         return query, freshness, capacity
     if metric == 'cpu_percent':
         raw = 'node_cpu_seconds_total{' + selector + ',mode="idle"}'
@@ -153,10 +157,10 @@ def _metadata(key, deployment):
     cpu = key == 'cpu_cores'
     return {'label': '容器 CPU 使用核数' if cpu else '容器内存 working set',
             'unit': 'cores' if cpu else 'bytes', 'scope': deployment,
-            'denominator': 'container_cpu_quota_cores' if cpu else 'not_available',
-            'denominator_unit': 'cores' if cpu else '', 'used_unit': 'cores' if cpu else 'bytes',
+            'denominator': 'container_cpu_quota_cores' if cpu else 'container_memory_limit_bytes',
+            'denominator_unit': 'cores' if cpu else 'bytes', 'used_unit': 'cores' if cpu else 'bytes',
             'semantics': ('两分钟 rate；CPU 占比只使用同一容器新鲜的正 quota / period，无额度时仍显示实际核数' if cpu else
-                          'cAdvisor working set，不是 RSS；未验证容器硬限制，不计算内存百分比')}
+                          '容器 working set，不是 RSS；占比只使用同一容器新鲜有限的memory limit，未知或无限额时仅显示字节数')}
 
 
 class LoadMonitoringCollectionService:
@@ -202,7 +206,7 @@ class LoadMonitoringCollectionService:
                     instance_times.append(t)
                     instance_sources.add(source)
                     p['used_value'] = p['value'] * denominator / 100 if percentage else p['value']
-                    p['utilization_percent'] = (100 * p['value'] / denominator if key == 'cpu_cores' and _finite(denominator) and denominator > 0 else None)
+                    p['utilization_percent'] = (100 * p['value'] / denominator if key in ('cpu_cores', 'memory_working_set_bytes') and _finite(denominator) and denominator > 0 else None)
                 else:
                     p['value'] = None
                     p['used_value'] = None

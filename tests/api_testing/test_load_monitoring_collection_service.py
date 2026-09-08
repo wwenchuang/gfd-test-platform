@@ -254,7 +254,7 @@ def test_host_device_rates_are_absolute_scoped_and_fresh(key):
 def test_container_without_quota_preserves_actual_usage_and_marks_percentage_unknown():
     class ContainerSource(Source):
         def query_range(self, query, *args):
-            if 'container_spec_cpu_' in query: return []
+            if 'container_spec_' in query: return []
             return super().query_range(query, *args)
     source = ContainerSource()
     config = Config(source)
@@ -266,6 +266,7 @@ def test_container_without_quota_preserves_actual_usage_and_marks_percentage_unk
     assert service['metrics'][0]['series'][0]['points'][0]['value'] == 25
     assert service['metrics'][0]['series'][0]['points'][0]['utilization_percent'] is None
     assert service['metrics'][1]['unit'] == 'bytes'
+    assert service['metrics'][1]['series'][0]['points'][0]['utilization_percent'] is None
 
 
 def test_idle_disk_latency_is_null_with_explicit_reason_not_zero_or_stale():
@@ -322,3 +323,14 @@ def test_pod_restart_freshness_requires_counter_history():
     _, freshness, capacity = _queries('pod_restarts_increase_2m', definition)
     assert 'offset 2m' in freshness and 'time() - 120 - 60' in freshness
     assert capacity is None
+
+def test_container_memory_percentage_requires_fresh_finite_limit():
+    class MemorySource(Source):
+        def query_range(self, query, start, end, step):
+            value=start-2 if query.startswith('timestamp(') else 100 if 'container_spec_memory_limit_bytes' in query else 25
+            return [{'labels':{'instance':'a','id':'/demo'},'points':[{'timestamp':start,'value':value}]}]
+    config=Config(MemorySource())
+    config._definition_for_revision=lambda _: {'name':'demo','deployment':'container','source_url':'https://approved.invalid','labels':{'instance':'a','id':'/demo'},'metrics':['memory_working_set_bytes'],'step_seconds':15}
+    metric=LoadMonitoringCollectionService(None,monitoring_service=config).probe([{'revision_id':'r'}])['services'][0]['metrics'][0]
+    assert metric['series'][0]['points'][0]['utilization_percent']==25
+    assert metric['denominator']=='container_memory_limit_bytes'
