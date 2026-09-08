@@ -4,6 +4,7 @@ import { AlertTriangle, ListTree, PencilLine, RefreshCw, Sparkles } from 'lucide
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 
 import AiAssistant from '../components/AiAssistant.vue'
+import LoadMetricGuide from '../components/LoadMetricGuide.vue'
 import CaseEditor from '../components/CaseEditor.vue'
 import ContextBar from '../components/ContextBar.vue'
 import DebugDrawer from '../components/DebugDrawer.vue'
@@ -619,8 +620,18 @@ function sourceRevisionLabel(revisionId: string | null): string {
 </script>
 
 <template>
-  <section class="workspace workbench-page">
-    <header class="page-toolbar"><div><p class="eyebrow">接口测试</p><h1>接口测试工作台</h1><p class="page-subtitle">选接口，AI 设计，保存草稿后直接调试。</p></div><button class="icon-command" type="button" title="重新读取已保存接口" :disabled="!context.sourceRevisionId || assets.state === 'loading'" @click="context.sourceRevisionId && assets.load(context.sourceRevisionId)"><RefreshCw :size="18" /></button></header>
+  <section v-if="route.query.help === 'load-metrics'" class="workspace" data-testid="load-metric-help-page">
+    <header class="page-toolbar">
+      <div><p class="eyebrow">工作台 · 使用帮助</p><h1>压测使用帮助</h1><p class="page-subtitle">了解指标含义、计算方式和使用边界；正式结果请查看性能报告。</p></div>
+      <div class="load-toolbar-actions">
+        <RouterLink v-if="typeof route.query.run_id === 'string'" data-testid="return-load-report" class="secondary-command" :to="{ path: '/load-reports', query: { run_id: route.query.run_id } }">返回原报告</RouterLink>
+        <RouterLink class="secondary-command" :to="{ path: '/' }">返回工作台</RouterLink>
+      </div>
+    </header>
+    <LoadMetricGuide initially-expanded />
+  </section>
+  <section v-else class="workspace workbench-page">
+    <header class="page-toolbar"><div><p class="eyebrow">接口测试</p><h1>接口测试工作台</h1><p class="page-subtitle">选接口，AI 设计，保存草稿后直接调试。</p></div><div class="load-toolbar-actions"><RouterLink class="secondary-command" :to="{ path: '/', query: { help: 'load-metrics' } }">压测使用帮助</RouterLink><button class="icon-command" type="button" title="重新读取已保存接口" :disabled="!context.sourceRevisionId || assets.state === 'loading'" @click="context.sourceRevisionId && assets.load(context.sourceRevisionId)"><RefreshCw :size="18" /></button></div></header>
     <div v-if="workspaceRestoring" class="state-message workspace-restoring" data-testid="workspace-restoring">
       <RefreshCw class="spinning" :size="18" />
       <div><strong>正在恢复上次工作区</strong><small>正在读取任务、接口版本和执行环境…</small></div>

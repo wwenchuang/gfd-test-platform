@@ -4,7 +4,6 @@ import { Bell, ChevronDown, History, RefreshCw } from 'lucide-vue-next'
 import { useRoute, useRouter } from 'vue-router'
 import LoadAiAnalysis from '../components/LoadAiAnalysis.vue'
 import LoadMetricChart from '../components/LoadMetricChart.vue'
-import LoadMetricGuide from '../components/LoadMetricGuide.vue'
 import LoadRunConsole from '../components/LoadRunConsole.vue'
 import type { LoadAiAnalysis as Analysis, LoadReport } from '../api/contracts'
 import { useContextStore } from '../stores/context'
@@ -202,7 +201,6 @@ function hasAgentError(agent: Record<string, unknown>): boolean {
 <template>
   <section class="workspace load-readable-report" data-testid="load-reports-page">
     <header class="page-toolbar load-page-toolbar"><div><p class="eyebrow">性能测试</p><h1>性能报告</h1><p class="page-subtitle">先看是否达标，再看响应速度、失败原因和改进建议。</p></div><div class="load-toolbar-actions"><button class="secondary-command" type="button" :disabled="!runId" @click="openRun"><RefreshCw :size="15" />刷新</button><button v-if="canNotify && report" data-testid="load-notify" class="secondary-command" type="button" @click="notify"><Bell :size="15" />发送飞书报告</button></div></header>
-    <LoadMetricGuide />
     <section class="load-report-switcher" aria-label="选择压测执行">
       <button data-testid="load-report-history-toggle" class="load-report-switcher-trigger" type="button" :aria-expanded="historyOpen" @click="historyOpen = !historyOpen"><span><History :size="16" /><b>历史执行</b><small>{{ selectedApplicationName }} · {{ scenarioName || '选择一次执行' }}</small></span><span>{{ matchingRuns.length }} 条<ChevronDown :size="15" :class="{ rotated: historyOpen }" /></span></button>
       <div v-if="historyOpen" class="load-report-browser" data-testid="load-report-history-list">

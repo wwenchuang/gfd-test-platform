@@ -19,6 +19,22 @@ const ENDPOINT = {
 } as ApiEndpoint
 
 describe('WorkbenchView debug workflow', () => {
+  it('opens the searchable pressure help separately and retains a return-to-report link', async () => {
+    setActivePinia(createPinia())
+    vi.spyOn(useContextStore(), 'loadSavedContext').mockResolvedValue()
+    vi.spyOn(useContextStore(), 'loadOptions').mockResolvedValue()
+    vi.spyOn(useCasesStore(), 'restoreLatestAiJob').mockResolvedValue()
+    const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/', component: WorkbenchView }, { path: '/load-reports', component: { template: '<div />' } }] })
+    await router.push('/?help=load-metrics&run_id=r1')
+    await router.isReady()
+    const wrapper = mount(WorkbenchView, { global: { plugins: [router] } })
+    await flushPromises()
+    expect(wrapper.text()).toContain('压测使用帮助')
+    expect(wrapper.find('.design-workspace').exists()).toBe(false)
+    expect(wrapper.find('.guide-search input').exists()).toBe(true)
+    expect(wrapper.get('[data-testid="return-load-report"]').attributes('href')).toContain('run_id=r1')
+    wrapper.unmount()
+  })
   beforeEach(() => {
     setActivePinia(createPinia())
     vi.restoreAllMocks()

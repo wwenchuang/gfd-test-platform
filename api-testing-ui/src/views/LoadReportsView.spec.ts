@@ -38,6 +38,8 @@ describe('LoadReportsView', () => {
     expect(wrapper.text()).toContain('指标窗口')
     expect(wrapper.text()).toContain('12')
     expect(wrapper.text()).toContain('管理层摘要')
+    expect(wrapper.find('.load-metric-guide').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('压测使用帮助')
     await wrapper.get('[data-testid="load-report-history-toggle"]').trigger('click')
     expect(wrapper.get('[data-testid="report-run-r1"]').text()).toContain('已完成')
     expect(wrapper.get('[data-testid="report-run-r1"]').text()).not.toContain('finished')

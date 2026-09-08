@@ -105,7 +105,9 @@ def _percentile(histogram, percentile):
         cumulative += count
         if cumulative >= rank:
             if index < len(histogram["bounds_ms"]):
-                return float(histogram["bounds_ms"][index])
+                # A bucket upper bound is conservative, but the observed maximum
+                # is a tighter bound and must also bound every percentile.
+                return min(float(histogram["bounds_ms"][index]), float(histogram["max_ms"]))
             return float(histogram["max_ms"])
     return float(histogram["max_ms"])
 
@@ -365,7 +367,11 @@ class LoadReportService:
                 "target_iterations_per_second": target, "actual_iterations_per_second": actual_rate,
                 "attainment_rate": round(actual_rate / target, 4) if target else 0,
                 "reached": reached,
-                "explanation": "按配置负载时长计算的完成迭代率达到目标99%；完整节点证据另行校验。",
+                "explanation": (
+                    f"按配置负载时长计算，实际完成迭代率 {actual_rate:g} 次/秒，"
+                    f"目标 {target:g} 次/秒，完成比例 {actual_rate / target * 100 if target else 0:.2f}%；"
+                    f"{'已达到' if reached else '未达到'} 99% 的达标门槛。完整节点证据另行校验。"
+                ),
             }
         target_vus = int(workload.get("vus") or max((item.get("target", 0) for item in workload.get("stages", [])), default=0))
         return {

@@ -214,7 +214,7 @@ def test_two_shards_sum_counts_and_merge_histograms_without_averaging_percentile
     report = LoadReportService(load_factory).build(run.id, "load-owner")
 
     assert report["transport"]["requests"] == 100
-    assert report["latency"]["p95_ms"] == 500.0
+    assert report["latency"]["p95_ms"] == 499.0
     assert report["verdict"] == "passed"
 
 

@@ -7,6 +7,23 @@ from task_server.api_testing.services.load_report_service import LoadReportServi
 START = datetime(2026, 9, 7, tzinfo=timezone.utc)
 
 
+def test_bucket_percentiles_never_exceed_observed_maximum():
+    from task_server.api_testing.services.load_report_service import _percentile
+    histogram = {'count': 19, 'bounds_ms': [10, 250, 500],
+                 'counts': [18, 0, 1, 0], 'max_ms': 292.47}
+    assert _percentile(histogram, .95) == 292.47
+    assert _percentile(histogram, .50) == 10
+
+
+def test_shortfall_explanation_does_not_claim_attainment():
+    result = LoadReportService._load_goal(
+        {'workload': {'executor': 'constant-arrival-rate', 'rate': 1}},
+        {'totals': {'iterations': 19}, 'duration_seconds': 20})
+    assert not result['reached']
+    assert '未达到' in result['explanation']
+    assert '95.00%' in result['explanation']
+
+
 def test_configured_vus_and_one_iteration_do_not_prove_attainment():
     result = LoadReportService._load_goal(
         {"workload": {"executor": "constant-vus", "vus": 100, "duration_seconds": 60}},

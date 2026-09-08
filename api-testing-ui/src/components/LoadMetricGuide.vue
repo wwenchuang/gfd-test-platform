@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, ref, useId } from 'vue'
 
-const expanded = ref(false)
+const props = defineProps<{ initiallyExpanded?: boolean }>()
+const expanded = ref(Boolean(props.initiallyExpanded))
 const query = ref('')
 const composing = ref(false)
 const contentId = useId()
