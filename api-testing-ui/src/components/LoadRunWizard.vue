@@ -44,6 +44,9 @@ const monitoringValid = computed(() => !monitoring.value.services.length || [mon
 
 function agentSelectable(item: LoadAgent): boolean { return item.status === 'online' && item.calibration_state === 'valid' && item.health.schedulable !== false && item.scheduling_tier !== 'disabled' && (allowFallback.value || item.scheduling_tier !== 'fallback') }
 const validAgents = computed(() => props.agents.filter(agentSelectable))
+const unavailableHint = computed(() => props.agents.some(a => a.status === 'online' && a.calibration_state === 'valid' && (a.current_usage.processes || 0) > 0)
+  ? '已校准节点正在执行其他任务，当前没有空闲执行进程。请等待任务结束后刷新节点状态，无需重复校准。'
+  : '当前没有符合调度条件的节点。请在压测节点页检查在线状态、校准有效期及调度级别。')
 const selected = computed(() => validAgents.value.filter(item => selectedIds.value.includes(item.id)))
 const invalidSelection = computed(() => selected.value.length !== selectedIds.value.length)
 const environment = computed(() => props.environments.find(item => item.id === environmentId.value))
@@ -170,7 +173,7 @@ function submit(): void {
         <button type="button" data-testid="load-stage-add" class="secondary-command" @click="stages.push({duration_seconds: duration,target:arrivalModel?rate:vus})">＋ 添加阶段（请核对目标和时长）</button>
       </section>
       <div class="load-section-heading"><div><h3>按负载目标选择压测节点</h3><small>先填写上面的并发/吞吐，再让平台按“首选 → 普通 → 备用”推荐足够容量。</small></div><button data-testid="load-agent-recommend" class="secondary-command" type="button" :disabled="!validAgents.length" @click="recommendAgents">选择推荐节点</button></div>
-      <p v-if="!validAgents.length" class="load-warning">没有可用的已校准节点。请先到“压测节点”完成校准。</p>
+      <p v-if="!validAgents.length" class="load-warning">{{ unavailableHint }}</p>
       <div class="load-agent-options"><label v-for="item in agents" :key="item.id" :class="{ selected: selectedIds.includes(item.id), disabled: !agentSelectable(item) }"><input :data-testid="`load-agent-${item.id}`" type="checkbox" :disabled="!agentSelectable(item)" :checked="selectedIds.includes(item.id)" @change="toggleAgent(item.id, ($event.target as HTMLInputElement).checked)" /><span><strong>{{ item.name }}</strong><small>{{ item.scheduling_tier === 'preferred' ? '首选节点' : item.scheduling_tier === 'normal' ? '普通节点' : item.scheduling_tier === 'disabled' ? '已停用' : '备用节点' }}</small><small v-if="item.calibration_state !== 'valid'">{{ item.calibration_state === 'expired' ? '校准过期，不能选择' : '未完成有效校准，不能选择' }}</small><small v-else>可分配 {{ availableCapacity(item, 'max_vus') }} VU / {{ availableCapacity(item, 'max_iterations_per_second') }} 次/秒</small></span></label></div>
       <p v-if="invalidSelection" class="load-warning">所选节点状态已变化，不能继续使用。<button type="button" class="secondary-command" @click="selectedIds = selected.map(item => item.id)">清除不可用选择</button>也可以重新选择推荐节点。</p>
       <p class="load-capacity-note"><strong>选择依据：</strong>任务容量按每台节点的“本机硬上限、平台容量策略、校准达到值”取最小值，再减当前占用；校准值不会直接全部分配。默认勾选的是候选节点池，平台优先使用首选节点；开启“所有选中节点共同参与”后会拆分总压力给每台节点。</p>
