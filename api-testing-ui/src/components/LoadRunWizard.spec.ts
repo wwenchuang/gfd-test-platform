@@ -26,8 +26,9 @@ describe('LoadRunWizard', () => {
     expect(wrapper.emitted('submit')?.[0]?.[0]).toMatchObject({ monitoring: { services: [{ revision_id: 'monitor-v1', required: true }], before_seconds: 60, after_seconds: 0 } })
   })
 
-  it('does not pretend VU multiplied by seconds is an exact iteration count', () => {
+  it('does not pretend VU multiplied by seconds is an exact iteration count', async () => {
     const wrapper = mount(LoadRunWizard, { props: { scenario, environments, agents, projectName: '智小白3D家用', initialEnvironmentId: 'env-v1' } })
+    await wrapper.get('[data-testid="load-model-constant-vus"]').trigger('click')
     expect(wrapper.text()).toContain('所属应用 / API 项目')
     expect(wrapper.text()).toContain('智小白3D家用')
     expect(wrapper.text()).toContain('可切换')
@@ -62,16 +63,16 @@ describe('LoadRunWizard', () => {
     await wrapper.get('[data-testid="load-run-submit"]').trigger('click')
     expect(wrapper.emitted('submit')?.[0]?.[0]).toMatchObject({
       scenario_version_id: 'v1', environment_revision_id: 'env-v1',
-      workload: { executor: 'constant-arrival-rate', rate: 100, time_unit: '1s', duration_seconds: 60, pre_allocated_vus: 20, max_vus: 40 },
+      workload: { executor: 'constant-arrival-rate', rate: 100, time_unit: '1s', duration_seconds: 60, pre_allocated_vus: 1, max_vus: 40 },
       thresholds: { p95_ms: { operator: 'less_than_or_equal', value: 500, required: true } },
       priority: 'normal', allocation_policy: { agent_ids: ['a1'], allow_fallback: false },
     })
   })
 
   it.each([
-    ['constant-vus', { executor: 'constant-vus', vus: 20, duration_seconds: 60 }],
-    ['ramping-vus', { executor: 'ramping-vus', start_vus: 1, stages: [{ duration_seconds: 60, target: 20 }] }],
-    ['ramping-arrival-rate', { executor: 'ramping-arrival-rate', start_rate: 1, time_unit: '1s', pre_allocated_vus: 20, max_vus: 20, stages: [{ duration_seconds: 60, target: 50 }] }],
+    ['constant-vus', { executor: 'constant-vus', vus: 1, duration_seconds: 10 }],
+    ['ramping-vus', { executor: 'ramping-vus', start_vus: 1, stages: [{ duration_seconds: 10, target: 1 }] }],
+    ['ramping-arrival-rate', { executor: 'ramping-arrival-rate', start_rate: 1, time_unit: '1s', pre_allocated_vus: 1, max_vus: 1, stages: [{ duration_seconds: 10, target: 1 }] }],
   ])('emits the exact backend workload contract for %s', async (model, workload) => {
     const wrapper = mount(LoadRunWizard, { props: { scenario, environments, agents } })
     await wrapper.get(`[data-testid="load-model-${model}"]`).trigger('click')
@@ -131,4 +132,21 @@ it('applies editable business acceptance criteria and blocks invalid percentages
  await wrapper.get('[data-testid="threshold-http"]').setValue('0.5')
  await wrapper.get('[data-testid="load-run-submit"]').trigger('click')
  expect(wrapper.emitted('submit')?.[0]?.[0]).toMatchObject({test_context:{purpose:'smoke'},thresholds:{http_error_rate:{value:.005},workflow_failure_rate:{value:0},business_failure_rate:{value:.02}}})
+})
+
+it('starts smoke runs with a bounded low arrival rate', async () => {
+  const wrapper = mount(LoadRunWizard, { props: { scenario, environments, agents } })
+  await wrapper.get('[data-testid="load-agent-a1"]').setValue(true)
+  await wrapper.get('[data-testid="load-run-submit"]').trigger('click')
+  expect(wrapper.emitted('submit')?.[0]?.[0]).toMatchObject({ workload: { executor: 'constant-arrival-rate', rate: 1, duration_seconds: 10, pre_allocated_vus: 1, max_vus: 1 } })
+})
+
+it('never recommends disabled nodes and invalidates a selected node when its state changes', async () => {
+  const wrapper = mount(LoadRunWizard, { props: { scenario, environments, agents } })
+  await wrapper.get('[data-testid="load-agent-a1"]').setValue(true)
+  await wrapper.setProps({ agents: [{ ...agents[0], scheduling_tier: 'disabled' as const }] })
+  expect(wrapper.get('[data-testid="load-agent-a1"]').attributes('disabled')).toBeDefined()
+  expect(wrapper.get('[data-testid="load-run-submit"]').attributes('disabled')).toBeDefined()
+  expect(wrapper.text()).toContain('已停用')
+  expect(wrapper.get('[data-testid="load-agent-recommend"]').attributes('disabled')).toBeDefined()
 })

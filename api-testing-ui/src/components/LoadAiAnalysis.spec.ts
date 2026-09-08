@@ -26,3 +26,10 @@ describe('LoadAiAnalysis', () => {
     expect(wrapper.text()).toContain('AI诊断超时')
   })
 })
+
+it('explains fallback advice and translates evidence without losing technical traceability', () => {
+  const wrapper = mount(LoadAiAnalysis, { props: { analysis: { id:'a',run_id:'r',model:'平台自动路由',prompt_version:'v4',evidence_hash:'hash',state:'completed',error:'',created_at:'',result:{confidence:{level:'low',reason:'模型引用无效，已回退为平台安全建议：AI诊断结论不能复述数值'},evidence:['load.goal']} } } })
+  expect(wrapper.text()).toContain('当前展示平台规则建议，不是 AI 诊断结论')
+  expect(wrapper.text()).toContain('目标压力达成情况')
+  expect(wrapper.get('details').text()).toContain('模型引用无效')
+})

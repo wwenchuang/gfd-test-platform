@@ -170,7 +170,7 @@ async function requestCalibration(item: LoadAgent): Promise<void> {
   feedback.value = ''
   try {
     await store.calibrateAgent(item.id)
-    feedback.value = `已通知“${item.name}”开始校准，页面刷新后可查看结果。`
+    feedback.value = `已通知“${item.name}”开始校准，结果将自动更新到节点卡片，无需刷新页面。`
   } catch { /* store keeps the server explanation */ }
 }
 
@@ -261,6 +261,7 @@ function dateTime(value?: string | null): string {
           <div class="load-agent-identity"><div><h2>{{ item.name }}</h2><small>{{ item.node_group || '未分组' }} · {{ item.egress_ip || '未上报出口 IP' }}</small></div><span :data-testid="`load-agent-heartbeat-${item.id}`" :class="['load-heartbeat', heartbeat(item).state]"><i :class="['load-status-dot', heartbeat(item).state, { pulse: heartbeat(item).state === 'online' }]" />{{ heartbeat(item).label }}</span></div>
           <b :class="`calibration-${item.calibration_state}`">{{ calibration(item.calibration_state).label }}</b>
         </header>
+        <p class="agent-help">Agent {{ item.agent_version || '未上报版本' }} · {{ item.k6_version || 'k6 版本未上报' }}</p>
         <p class="agent-help">{{ calibration(item.calibration_state).help }}</p>
         <p v-if="item.calibration_state === 'failed' && item.health.calibration?.message" class="agent-calibration-error" role="alert">失败原因：{{ item.health.calibration.message }}</p>
         <div class="load-capacity-grid">

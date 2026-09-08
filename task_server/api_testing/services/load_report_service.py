@@ -535,6 +535,9 @@ class LoadReportService:
             selected = [item for item in buckets if item.scenario_step_id == step_id]
             aggregate = cls._aggregate(type("RunWindow", (), {"started_at": None, "finished_at": None})(), selected)
             sections = cls._sections(aggregate)
+            # k6 global iteration counters are not an HTTP interface row.
+            if step_id == "all" and step_id not in names and sections["transport"]["requests"] == 0:
+                continue
             result.append({
                 "id": step_id,
                 "name": names.get(step_id, "全部步骤" if step_id == "all" else step_id),

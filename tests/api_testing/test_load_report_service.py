@@ -344,3 +344,15 @@ def test_one_shard_extra_stage_requests_cannot_hide_other_shard_missing(load_fac
     with load_factory.begin() as session:
         session.add(ApiLoadMetricBucket(run_id=run.id,shard_id=other_id,scenario_step_id='__load_stage_0',bucket_started_at=START,bucket_seconds=5,metrics={'workflow_starts':50},**_audit()))
     assert LoadReportService(load_factory).build(run.id,'load-owner')['load_goal']['reached']
+
+
+def test_step_rows_omit_global_iteration_only_bucket_but_keep_real_zero_steps():
+    from types import SimpleNamespace
+    def bucket(step, requests):
+        return SimpleNamespace(scenario_step_id=step, metrics={"requests": requests, "iterations": 1}, bucket_started_at=START, bucket_seconds=5)
+    version = SimpleNamespace(definition={"steps": [{"id": "read", "name": "读取配置"}, {"id": "cleanup", "name": "清理"}]})
+    buckets = [bucket("all", 0), bucket("read", 2), bucket("cleanup", 0)]
+    rows = LoadReportService._steps(buckets, version)
+    assert {row["id"] for row in rows} == {"read", "cleanup"}
+    # Legacy agents may place real HTTP evidence in the global bucket.
+    assert LoadReportService._steps([bucket("all", 2)], version)[0]["requests"] == 2

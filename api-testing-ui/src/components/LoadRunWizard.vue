@@ -12,11 +12,11 @@ type Executor = 'constant-vus' | 'ramping-vus' | 'constant-arrival-rate' | 'ramp
 const props = defineProps<{ scenario: LoadScenario; environments: EnvironmentRevisionOption[]; agents: LoadAgent[]; projectName?: string; initialEnvironmentId?: string }>()
 const emit = defineEmits<{ submit: [payload: Record<string, unknown>]; cancel: [] }>()
 const environmentId = ref(props.environments.some(item => item.id === props.initialEnvironmentId) ? props.initialEnvironmentId! : props.environments[0]?.id || '')
-const executor = ref<Executor>('constant-vus')
-const vus = ref(20)
-const maxVus = ref(20)
-const rate = ref(50)
-const duration = ref(60)
+const executor = ref<Executor>('constant-arrival-rate')
+const vus = ref(1)
+const maxVus = ref(1)
+const rate = ref(1)
+const duration = ref(10)
 const p95 = ref(500)
 const selectedIds = ref<string[]>([])
 const allowFallback = ref(false)
@@ -37,8 +37,10 @@ function stageTemplate() { const target = arrivalModel.value ? rate.value : vus.
 const monitoring = ref<MonitoringSelection>({ services: [], before_seconds: 60, after_seconds: 60 })
 const monitoringValid = computed(() => !monitoring.value.services.length || [monitoring.value.before_seconds, monitoring.value.after_seconds].every(value => Number.isInteger(value) && value >= 0 && value <= 600))
 
-const validAgents = computed(() => props.agents.filter(item => item.status === 'online' && item.calibration_state === 'valid' && (allowFallback.value || item.scheduling_tier !== 'fallback')))
-const selected = computed(() => props.agents.filter(item => selectedIds.value.includes(item.id)))
+function agentSelectable(item: LoadAgent): boolean { return item.status === 'online' && item.calibration_state === 'valid' && item.health.schedulable !== false && item.scheduling_tier !== 'disabled' && (allowFallback.value || item.scheduling_tier !== 'fallback') }
+const validAgents = computed(() => props.agents.filter(agentSelectable))
+const selected = computed(() => validAgents.value.filter(item => selectedIds.value.includes(item.id)))
+const invalidSelection = computed(() => selected.value.length !== selectedIds.value.length)
 const environment = computed(() => props.environments.find(item => item.id === environmentId.value))
 const production = computed(() => /生产|正式|prod(uction)?/i.test(environment.value?.name || ''))
 const hasProductionPermission = computed(() => apiTestingHasPermission('api.production'))
@@ -67,7 +69,7 @@ const capacityEnough = computed(() => arrivalModel.value
 const productionReady = computed(() => !production.value || (hasProductionPermission.value && productionConfirmed.value))
 const canSubmit = computed(() => Boolean(
   environmentId.value && props.scenario.active_version_id && selected.value.length
-  && numericValid.value && criteriaValid.value && monitoringValid.value && productionReady.value && (capacityEnough.value || allowRunAnyway.value),
+  && !invalidSelection.value && numericValid.value && criteriaValid.value && monitoringValid.value && productionReady.value && (capacityEnough.value || allowRunAnyway.value),
 ))
 
 function selectExecutor(value: string): void { executor.value = value as Executor }
@@ -148,10 +150,11 @@ function submit(): void {
 
       <div class="load-section-heading"><div><h3>按负载目标选择压测节点</h3><small>先填写上面的并发/吞吐，再让平台按“首选 → 普通 → 备用”推荐足够容量。</small></div><button data-testid="load-agent-recommend" class="secondary-command" type="button" :disabled="!validAgents.length" @click="recommendAgents">选择推荐节点</button></div>
       <p v-if="!validAgents.length" class="load-warning">没有可用的已校准节点。请先到“压测节点”完成校准。</p>
-      <div class="load-agent-options"><label v-for="item in agents" :key="item.id" :class="{ selected: selectedIds.includes(item.id), disabled: item.status !== 'online' || item.calibration_state !== 'valid' }"><input :data-testid="`load-agent-${item.id}`" type="checkbox" :disabled="item.status !== 'online' || item.calibration_state !== 'valid' || (item.scheduling_tier === 'fallback' && !allowFallback)" :checked="selectedIds.includes(item.id)" @change="toggleAgent(item.id, ($event.target as HTMLInputElement).checked)" /><span><strong>{{ item.name }}</strong><small>{{ item.scheduling_tier === 'preferred' ? '首选节点' : item.scheduling_tier === 'normal' ? '普通节点' : '备用节点' }}</small><small v-if="item.calibration_state !== 'valid'">{{ item.calibration_state === 'expired' ? '校准过期，不能选择' : '未完成有效校准，不能选择' }}</small><small v-else>可分配 {{ availableCapacity(item, 'max_vus') }} VU / {{ availableCapacity(item, 'max_iterations_per_second') }} 次/秒</small></span></label></div>
-      <p class="load-capacity-note"><strong>选择依据：</strong>任务容量按每台节点的“本机硬上限、平台容量策略、校准达到值”取最小值，再减当前占用；校准值不会直接全部分配。</p>
-      <label class="load-check"><input v-model="allowFallback" type="checkbox" />允许备用节点参与（本机备用节点默认不参与）</label>
-      <p v-if="selected.length && !capacityEnough" class="load-warning" data-testid="capacity-shortfall">所选节点容量不足：{{ arrivalModel ? `最大并发需要 ${requestedMaxVus} VU、目标吞吐需要 ${rate} 次/秒；` : `并发需要 ${vus} VU；` }}合计可用 {{ selectedCapacity.vus }} VU / {{ selectedCapacity.rate }} 次/秒。请降低目标或增加节点。</p>
+      <div class="load-agent-options"><label v-for="item in agents" :key="item.id" :class="{ selected: selectedIds.includes(item.id), disabled: !agentSelectable(item) }"><input :data-testid="`load-agent-${item.id}`" type="checkbox" :disabled="!agentSelectable(item)" :checked="selectedIds.includes(item.id)" @change="toggleAgent(item.id, ($event.target as HTMLInputElement).checked)" /><span><strong>{{ item.name }}</strong><small>{{ item.scheduling_tier === 'preferred' ? '首选节点' : item.scheduling_tier === 'normal' ? '普通节点' : item.scheduling_tier === 'disabled' ? '已停用' : '备用节点' }}</small><small v-if="item.calibration_state !== 'valid'">{{ item.calibration_state === 'expired' ? '校准过期，不能选择' : '未完成有效校准，不能选择' }}</small><small v-else>可分配 {{ availableCapacity(item, 'max_vus') }} VU / {{ availableCapacity(item, 'max_iterations_per_second') }} 次/秒</small></span></label></div>
+      <p v-if="invalidSelection" class="load-warning">所选节点状态已变化，不能继续使用。<button type="button" class="secondary-command" @click="selectedIds = selected.map(item => item.id)">清除不可用选择</button>也可以重新选择推荐节点。</p>
+      <p class="load-capacity-note"><strong>选择依据：</strong>任务容量按每台节点的“本机硬上限、平台容量策略、校准达到值”取最小值，再减当前占用；校准值不会直接全部分配。勾选的是候选节点池，平台优先使用首选节点；容量足够时不会让每台勾选节点都参与。</p>
+      <label class="load-check"><input v-model="allowFallback" type="checkbox" />允许调度级别为“备用”的节点参与（与节点名称无关）</label>
+      <p v-if="selected.length && !capacityEnough" class="load-warning" data-testid="capacity-shortfall">所选节点容量不足：{{ arrivalModel ? `最大并发需要 ${requestedMaxVus} VU、目标吞吐需要 ${ramping ? stagePeak : rate} 次/秒；` : `并发需要 ${requestedMaxVus} VU；` }}合计可用 {{ selectedCapacity.vus }} VU / {{ selectedCapacity.rate }} 次/秒。请降低目标或增加节点。</p>
       <label class="load-check"><input v-model="allowRunAnyway" data-testid="allow-run-anyway" type="checkbox" />容量不足时仍创建任务（报告固定标记为证据不足）</label>
       <label v-if="production && hasProductionPermission" class="load-check"><input v-model="productionConfirmed" type="checkbox" />我确认本次会向生产环境持续发送真实请求</label>
       <LoadMonitoringSelector v-model="monitoring" :environment-revision-id="environmentId" />
