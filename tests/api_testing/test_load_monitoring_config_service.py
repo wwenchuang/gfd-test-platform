@@ -143,3 +143,28 @@ def test_edit_during_old_revision_check_does_not_restore_stale_readiness(catalog
     svc.test_connection(created['id'], actor='load-owner', revision_id=created['revision_id'])
     with pytest.raises(ValueError):
         svc.require_ready(created['revision_id'], actor='load-owner')
+
+@pytest.mark.parametrize('deployment,labels', [('container', {'instance':'cadvisor:8080','id':'/docker/abc'}), ('pod', {'instance':'node:10250','namespace':'qa','pod':'api-abc'})])
+def test_container_definition_freezes_scope_and_exact_queries(catalog, deployment, labels):
+    svc, records, _ = catalog
+    data = payload(deployment=deployment, metrics=['cpu_cores','memory_working_set_bytes'])
+    data['labels'] = labels
+    created = svc.create(env_id(records), data, actor='load-owner')
+    snapshot = svc.get_snapshot(created['revision_id'], actor='load-owner', environment_revision_id=env_id(records))
+    assert snapshot['metric_scope'] == deployment
+    assert snapshot['template_version'] == 'cadvisor-container-v1'
+    assert 'container_cpu_usage_seconds_total' in snapshot['queries']['cpu_cores']
+    svc.update(created['id'], {'deployment':'host','labels':{'instance':'host:9100'},'metrics':['network_receive_bytes_per_second','disk_read_iops']}, actor='load-owner')
+    assert snapshot == svc.get_snapshot(created['revision_id'], actor='load-owner', environment_revision_id=env_id(records))
+
+
+def test_postgres_config_freezes_database_and_only_supported_metrics(catalog):
+    svc, records, _ = catalog
+    data = payload(deployment='postgres', metrics=['postgres_connections','postgres_commits_per_second','postgres_rollbacks_per_second'])
+    data['labels'] = {'instance':'pg:9187','datname':'app'}
+    created = svc.create(env_id(records), data, actor='load-owner')
+    snapshot = svc.get_snapshot(created['revision_id'], actor='load-owner', environment_revision_id=env_id(records))
+    assert snapshot['metric_scope'] == 'postgres'
+    assert snapshot['template_version'] == 'postgres-exporter-database-v1'
+    assert 'datname="app"' in snapshot['queries']['postgres_connections']
+    with pytest.raises(ValueError): svc.update(created['id'], {'metrics':['memory_percent']}, actor='load-owner')

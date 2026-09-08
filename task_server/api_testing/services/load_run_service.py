@@ -17,6 +17,7 @@ from ..models.load_testing import (
     ApiLoadScenario,
     ApiLoadScenarioVersion,
 )
+from .load_execution_policy import parse_test_context, parse_stop_policy
 from .load_allocator import LoadAllocationError, allocate_run, calibration_state
 from .load_agent_service import agent_heartbeat_is_fresh
 from .load_scenario_compiler import LoadScenarioCompileError, compile_scenario
@@ -143,7 +144,7 @@ class LoadRunService:
 
             definition = copy.deepcopy(version.definition)
             try:
-                compiled = compile_scenario(definition, parsed["workload"])
+                compiled = compile_scenario(definition, parsed["workload"], stop_policy=parsed["stop_policy"])
             except LoadScenarioCompileError as error:
                 raise LoadRunError(str(error), code="scenario_compile_failed") from error
 
@@ -215,6 +216,9 @@ class LoadRunService:
                 "agents": agent_snapshots,
                 "created_at": now.isoformat(),
             }
+            for key in ("test_context", "stop_policy"):
+                if parsed[key] is not None:
+                    snapshot[key] = parsed[key]
             if monitoring and monitoring["services"]:
                 snapshot["monitoring"] = monitoring
             run = ApiLoadRun(
@@ -422,6 +426,12 @@ class LoadRunService:
         if state not in {"finished", "failed", "cancelled"}:
             raise LoadRunError("分片结束状态无效")
         with self.session_factory.begin() as session:
+            snapshot = session.execute(select(ApiLoadRunShard.agent_id, ApiLoadRunShard.run_id).where(ApiLoadRunShard.id == shard_id)).one_or_none()
+            if snapshot is None or snapshot.agent_id != agent_id:
+                raise LoadRunError("分片不存在或不属于当前节点", status=404, code="shard_not_found")
+            run = session.scalar(select(ApiLoadRun).where(ApiLoadRun.id == snapshot.run_id).with_for_update())
+            if run is None:
+                raise LoadRunError("分片所属执行不存在", status=404, code="run_not_found")
             shard = session.scalar(select(ApiLoadRunShard).where(ApiLoadRunShard.id == shard_id).with_for_update())
             if shard is None or shard.agent_id != agent_id:
                 raise LoadRunError("分片不存在或不属于当前节点", status=404, code="shard_not_found")
@@ -433,12 +443,14 @@ class LoadRunService:
             shard.summary = _json_object(summary or {}, "分片汇总")
             shard.error = _json_object(error or {}, "分片错误")
             shard.last_heartbeat_at = _utc(self.now())
-            run = session.scalar(select(ApiLoadRun).where(ApiLoadRun.id == shard.run_id).with_for_update())
             shards = self._run_shards(session, run.id, for_update=True)
+            if state == "failed":
+                from .load_execution_policy import stop_peers_after_failure
+                stop_peers_after_failure(run, shards, shard.id)
             if all(item.state in TERMINAL_SHARD_STATES for item in shards):
                 run.finished_at = _utc(self.now())
                 if run.state == "stopping":
-                    run.state = "cancelled"
+                    run.state = "failed" if (run.summary or {}).get("automatic_stop") else "cancelled"
                     run.verdict = "inconclusive"
                 elif any(item.state in {"failed", "lost"} for item in shards):
                     run.state = "failed"
@@ -484,7 +496,7 @@ class LoadRunService:
                 for shard in stale:
                     shard.state = "lost"
                     shard.error = {"code": "agent_lost", "message": "压测节点心跳超时，未自动迁移剩余压力"}
-                run.state = "cancelled" if run.state == "stopping" else "failed"
+                run.state = "cancelled" if run.state == "stopping" and not (run.summary or {}).get("automatic_stop") else "failed"
                 run.verdict = "inconclusive"
                 run.finished_at = _utc(self.now())
                 run.summary = {**copy.deepcopy(run.summary or {}), "recovery": {"lost_shard_ids": [item.id for item in stale]}}
@@ -494,7 +506,7 @@ class LoadRunService:
     def _parse_create(self, payload):
         if not isinstance(payload, dict):
             raise LoadRunError("压测任务必须是对象")
-        allowed = {"scenario_version_id", "environment_revision_id", "workload", "thresholds", "priority", "allocation_policy", "monitoring"}
+        allowed = {"scenario_version_id", "environment_revision_id", "workload", "thresholds", "priority", "allocation_policy", "monitoring", "test_context", "stop_policy"}
         unknown = sorted(set(payload) - allowed)
         if unknown:
             raise LoadRunError(f"压测任务包含不支持字段：{unknown[0]}")
@@ -521,7 +533,13 @@ class LoadRunService:
         node_group = policy.get("node_group")
         if node_group is not None and (not isinstance(node_group, str) or not node_group.strip()):
             raise LoadRunError("节点组名称无效")
+        try:
+            context = parse_test_context(payload.get("test_context"))
+            stop_policy = parse_stop_policy(payload.get("stop_policy"))
+        except ValueError as error:
+            raise LoadRunError(str(error)) from error
         return {
+            "test_context": context, "stop_policy": stop_policy,
             "scenario_version_id": payload["scenario_version_id"],
             "environment_revision_id": payload["environment_revision_id"],
             "workload": _json_object(payload.get("workload"), "负载配置"),

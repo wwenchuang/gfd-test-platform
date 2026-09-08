@@ -163,14 +163,38 @@ def _get(factory, segments, query, actor):
                 ApiLoadEvent.sequence > after,
             ).order_by(ApiLoadEvent.sequence).limit(200)))
         return {"events": [_event_view(item) for item in rows], "terminal": run.state in {"finished", "failed", "cancelled"}}
+    if len(segments) == 3 and segments[0] == "load-runs" and segments[2] == "report-export":
+        access.require_permission(actor, "api.loadtest.view")
+        format = str(query.get("format") or "")
+        if format not in {"docx", "xlsx"}:
+            raise ApiHttpError(422, "invalid_export_format", "请选择 Word 或 Excel")
+        report = LoadReportService(factory).build(segments[1], actor)
+        if report["state"] not in {"finished", "failed", "cancelled"} or not report.get("monitoring", {}).get("terminal", True):
+            raise ApiHttpError(409, "report_not_final", "执行或监控尚未结束，请等待最终报告")
+        from .services.load_ai_analysis_service import build_evidence_package, _hash, PROMPT_VERSION
+        with factory() as session:
+            diagnosis = session.scalar(select(ApiLoadAiAnalysis).where(
+                ApiLoadAiAnalysis.run_id == segments[1], ApiLoadAiAnalysis.state == "completed",
+                ApiLoadAiAnalysis.prompt_version == PROMPT_VERSION,
+                ApiLoadAiAnalysis.evidence_hash == _hash(build_evidence_package(report)),
+            ).order_by(ApiLoadAiAnalysis.created_at.desc()).limit(1))
+            report["ai_diagnosis"] = copy.deepcopy(diagnosis.result) if diagnosis else None
+        from .services.load_report_export_service import export_report
+        content, mime = export_report(report, format)
+        return {"filename": f"performance-{segments[1]}.{format}", "mime_type": mime, "content_base64": base64.b64encode(content).decode("ascii")}
     if len(segments) == 3 and segments[0] == "load-runs" and segments[2] == "report":
         _run(factory, segments[1], actor)
         return {"report": LoadReportService(factory).build(segments[1], actor)}
     if len(segments) == 3 and segments[0] == "load-runs" and segments[2] == "ai-analysis":
         run = _run(factory, segments[1], actor)
+        from .services.load_ai_analysis_service import build_evidence_package, _hash, PROMPT_VERSION
+        report = LoadReportService(factory).build(run.id, actor)
+        evidence_hash = _hash(build_evidence_package(report))
         with factory() as session:
             record = session.scalar(select(ApiLoadAiAnalysis).where(
                 ApiLoadAiAnalysis.run_id == run.id,
+                ApiLoadAiAnalysis.prompt_version == PROMPT_VERSION,
+                ApiLoadAiAnalysis.evidence_hash == evidence_hash,
             ).order_by(ApiLoadAiAnalysis.created_at.desc()).limit(1))
         return {"analysis": _analysis_view(record) if record else None}
     if segments == ("load-agents",):

@@ -267,3 +267,12 @@ def test_no_bottleneck_cannot_override_incomplete_sampling():
     candidate = {**_analysis(), "bottleneck_category": "no_bottleneck"}
     with pytest.raises(LoadAiAnalysisError, match="结论与确定性证据冲突"):
         _validate_result(candidate, build_evidence_package(report))
+
+
+def test_ai_generator_evidence_keeps_runtime_scope_and_missing_values():
+    report = _report()
+    report['agents'][0]['load_generator_resources'] = {'samples':[{'cpu_scope':'k6_process','cpu_limit_source':'visible_cpus','memory_scope':'k6_process','cpu_used_cores':.8,'cpu_percent':10,'memory_used_bytes':100,'memory_percent':None}], 'interval_seconds':5, 'dropped_samples':0}
+    runtime = build_evidence_package(report)['agents'][0]['resource_summary']['runtime']
+    assert runtime['role'] == 'load_generator' and runtime['scopes'] == ['k6_process']
+    assert runtime['cpu_used_cores_peak'] == .8 and runtime['memory_percent_peak'] is None
+    assert runtime['cpu_denominators'] == ['visible_cpus']

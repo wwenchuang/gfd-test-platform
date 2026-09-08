@@ -95,7 +95,7 @@ function scenarioSummary(item: LoadScenario): string {
     <header class="page-toolbar load-page-toolbar"><div><p class="eyebrow">性能测试</p><h1>性能场景</h1><p class="page-subtitle">按应用组织可重复执行的单接口或业务链路；修改会创建新版本，历史结果不受影响。</p></div><div class="load-toolbar-actions"><button class="secondary-command" type="button" @click="refresh"><RefreshCw :size="15" />刷新</button><button v-if="canEdit" data-testid="load-scenario-new" class="primary-command" type="button" @click="openNew"><Plus :size="15" />新建场景</button></div></header>
     <section class="load-context-banner load-page-context"><div><span>所属应用 / API 项目</span><strong>{{ projectName }}</strong><small>接口来源：当前工作区已选择版本；切换应用或接口版本请回到工作台。</small></div><div><span>当前接口资产</span><strong>{{ assets.endpoints.length }} 个接口</strong><small>创建场景时只能选择当前项目和接口版本中的资产。</small></div></section>
     <p v-if="localError || store.scenarioError" role="alert" class="state-message state-error">{{ localError || store.scenarioError }}</p>
-    <LoadScenarioWizard v-if="creating" :endpoints="assets.endpoints" :project-name="projectName" :initial-definition="initialDefinition" @save="save" @cancel="closeWizard" />
+    <LoadScenarioWizard v-if="creating" :endpoints="assets.endpoints" :project-name="projectName" :project-id="context.projectId || undefined" :initial-definition="initialDefinition" @save="save" @cancel="closeWizard" />
     <p v-else-if="store.loadingScenarios" class="state-message">正在读取性能场景…</p>
     <div v-else-if="!store.scenarios.length" class="management-empty"><h2>还没有性能场景</h2><p>先确认上方应用和接口版本，再从安全的只读接口创建第一个场景。</p></div>
     <div v-else class="load-scenario-list">

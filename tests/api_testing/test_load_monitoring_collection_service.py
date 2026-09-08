@@ -235,3 +235,58 @@ def test_cpu_denominator_requires_fresh_history_for_each_current_core():
     assert 'offset 2m' in capacity
     assert 'time() - 120 - 60' in capacity
     assert 'node_cpu_seconds_total{instance="fixture-host",mode="idle"} and ' in capacity
+
+@pytest.mark.parametrize('key', ['network_receive_bytes_per_second', 'network_transmit_bytes_per_second', 'disk_read_bytes_per_second', 'disk_write_bytes_per_second', 'disk_read_iops', 'disk_write_iops'])
+def test_host_device_rates_are_absolute_scoped_and_fresh(key):
+    source = Source()
+    config = Config(source)
+    original = config._definition_for_revision
+    config._definition_for_revision = lambda revision: dict(original(revision), metrics=[key])
+    svc = LoadMonitoringCollectionService(None, monitoring_service=config)
+    result = svc.probe([{'revision_id': 'r1'}])
+    assert result['complete']
+    metric = result['services'][0]['metrics'][0]
+    assert metric['unit'] in ('bytes/s', 'IOPS')
+    assert metric['series'][0]['points'][0]['denominator_value'] is None
+    assert metric['series'][0]['points'][0]['used_value'] == 25
+
+
+def test_container_without_quota_preserves_actual_usage_and_marks_percentage_unknown():
+    class ContainerSource(Source):
+        def query_range(self, query, *args):
+            if 'container_spec_cpu_' in query: return []
+            return super().query_range(query, *args)
+    source = ContainerSource()
+    config = Config(source)
+    config._definition_for_revision = lambda _: {'name':'worker', 'deployment':'container', 'source_url':'https://approved.invalid', 'metrics':['cpu_cores','memory_working_set_bytes'], 'labels':{'instance':'a','id':'/docker/abc'}, 'step_seconds':15}
+    result = LoadMonitoringCollectionService(None, monitoring_service=config).probe([{'revision_id':'r'}])
+    assert result['complete']
+    service = result['services'][0]
+    assert service['scope'] == 'container'
+    assert service['metrics'][0]['series'][0]['points'][0]['value'] == 25
+    assert service['metrics'][0]['series'][0]['points'][0]['utilization_percent'] is None
+    assert service['metrics'][1]['unit'] == 'bytes'
+
+
+def test_idle_disk_latency_is_null_with_explicit_reason_not_zero_or_stale():
+    class IdleSource(Source):
+        def query_range(self, query, start, end, step):
+            if 'timestamp(' in query: value = start - 2
+            elif query.startswith('1000 *'): value = None
+            else: value = 0
+            return [{'labels':{'instance':'node','device':'sda'},'points':[{'timestamp':start,'value':value}]}]
+    config = Config(IdleSource())
+    config._definition_for_revision = lambda _: {'name':'host','deployment':'host','source_url':'https://approved.invalid','labels':{'instance':'node'},'metrics':['disk_read_latency_ms'],'step_seconds':15}
+    result = LoadMonitoringCollectionService(None, monitoring_service=config).probe([{'revision_id':'r'}])
+    point = result['services'][0]['metrics'][0]['series'][0]['points'][0]
+    assert point['value'] is None and point['missing_reason'] == 'no_operations'
+    assert result['services'][0]['metrics'][0]['peak'] is None
+
+
+def test_postgres_series_retains_database_scope_without_resource_percentage():
+    config = Config(Source())
+    config._definition_for_revision = lambda _: {'name':'db','deployment':'postgres','source_url':'https://approved.invalid','labels':{'instance':'pg:9187','datname':'app'},'metrics':['postgres_connections','postgres_commits_per_second'],'step_seconds':15}
+    result = LoadMonitoringCollectionService(None, monitoring_service=config).probe([{'revision_id':'r'}])
+    assert result['complete'] and result['services'][0]['scope'] == 'postgres'
+    assert result['services'][0]['metrics'][0]['unit'] == 'connections'
+    assert result['services'][0]['metrics'][1]['unit'] == 'transactions/s'

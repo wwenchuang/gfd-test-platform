@@ -104,9 +104,9 @@ def _definition(step_id, path):
     }
 
 
-def _executable_run(repository, factory, records, scenario_name, step_id, path, workload):
+def _executable_run(repository, factory, records, scenario_name, step_id, path, workload, *, compiler_version=None):
     definition = _definition(step_id, path)
-    compiled = compile_scenario(definition, workload)
+    compiled = compile_scenario(definition, workload, **({"compiler_version": compiler_version} if compiler_version else {}))
     with factory.begin() as session:
         session.add(ApiEnvironmentService(
             revision_id=records["environment_revision"].id,
@@ -119,11 +119,11 @@ def _executable_run(repository, factory, records, scenario_name, step_id, path, 
             updated_by="load-owner",
         ))
     scenario = repository.create_scenario(records["project"].id, scenario_name, "single_interface", "load-owner")
-    version = repository.create_scenario_version(scenario.id, definition, "k6-safe-v1", "load-owner")
+    version = repository.create_scenario_version(scenario.id, definition, compiled.compiler_version, "load-owner")
     run = repository.create_run(
         version.id,
         records["environment_revision"].id,
-        {"workload": workload, "compiler": {"content_hash": compiled.content_hash}, "dataset": {}},
+        {"workload": workload, "compiler": {"content_hash": compiled.content_hash, "version": compiled.compiler_version}, "dataset": {}},
         "load-owner",
     )
     return run

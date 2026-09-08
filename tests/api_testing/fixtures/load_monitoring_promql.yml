@@ -1,0 +1,331 @@
+rule_files: []
+evaluation_interval: 15s
+tests:
+- interval: 15s
+  input_series:
+  - series: node_network_receive_bytes_total{instance="node",device="eth0"}
+    values: 0+15000x20
+  - series: node_network_transmit_bytes_total{instance="node",device="eth0"}
+    values: 0+15000x20
+  - series: node_disk_read_bytes_total{instance="node",device="eth0"}
+    values: 0+15000x20
+  - series: node_disk_written_bytes_total{instance="node",device="eth0"}
+    values: 0+15000x20
+  - series: node_disk_reads_completed_total{instance="node",device="eth0"}
+    values: 0+15000x20
+  - series: node_disk_writes_completed_total{instance="node",device="eth0"}
+    values: 0+15000x20
+  - series: container_cpu_usage_seconds_total{instance="node",id="/docker/abc",cpu="total"}
+    values: 0+7.5x20
+  - series: container_spec_cpu_quota{instance="node",id="/docker/abc"}
+    values: 100000+0x20
+  - series: container_spec_cpu_period{instance="node",id="/docker/abc"}
+    values: 100000+0x20
+  - series: container_memory_working_set_bytes{instance="node",id="/docker/abc"}
+    values: 67108864+0x20
+  - series: container_cpu_usage_seconds_total{instance="kubelet",namespace="qa",pod="api-1",container="api",id="/pod/api",cpu="total"}
+    values: 0+7.5x20
+  - series: container_cpu_usage_seconds_total{instance="kubelet",namespace="qa",pod="api-1",container="sidecar",id="/pod/sidecar",cpu="total"}
+    values: 0+7.5x20
+  - series: container_cpu_usage_seconds_total{instance="kubelet",namespace="qa",pod="api-1",container="POD",id="/pod/POD",cpu="total"}
+    values: 0+7.5x20
+  - series: container_cpu_usage_seconds_total{instance="kubelet",namespace="qa",pod="api-1",container="",id="/pod/parent",cpu="total"}
+    values: 0+7.5x20
+  - series: container_cpu_usage_seconds_total{instance="node",id="/docker/unlimited",cpu="total"}
+    values: 0+7.5x20
+  - series: container_spec_cpu_quota{instance="node",id="/docker/unlimited"}
+    values: -1+0x20
+  - series: container_spec_cpu_period{instance="node",id="/docker/unlimited"}
+    values: 100000+0x20
+  - series: container_cpu_usage_seconds_total{instance="node",id="/docker/stale-quota",cpu="total"}
+    values: 0+7.5x20
+  - series: container_spec_cpu_quota{instance="node",id="/docker/stale-quota"}
+    values: 100000+0x1 _x19
+  - series: container_spec_cpu_period{instance="node",id="/docker/stale-quota"}
+    values: 100000+0x20
+  - series: node_filesystem_size_bytes{instance="node",device="/dev/sda",mountpoint="/",fstype="ext4"}
+    values: 5368709120+0x20
+  - series: node_filesystem_free_bytes{instance="node",device="/dev/sda",mountpoint="/",fstype="ext4"}
+    values: 2147483648+0x20
+  - series: node_disk_read_time_seconds_total{instance="node",device="eth0"}
+    values: 0+15x20
+  - series: node_disk_read_time_seconds_total{instance="idle-node",device="sda"}
+    values: 0+0x20
+  - series: node_disk_reads_completed_total{instance="idle-node",device="sda"}
+    values: 0+0x20
+  - series: node_disk_write_time_seconds_total{instance="node",device="eth0"}
+    values: 0+15x20
+  - series: node_disk_write_time_seconds_total{instance="idle-node",device="sda"}
+    values: 0+0x20
+  - series: node_disk_writes_completed_total{instance="idle-node",device="sda"}
+    values: 0+0x20
+  - series: pg_stat_database_numbackends{instance="pg:9187",datname="app",datid="1234"}
+    values: 12+0x20
+  - series: pg_stat_database_xact_commit{instance="pg:9187",datname="app",datid="1234"}
+    values: 0+150x20
+  - series: pg_stat_database_xact_rollback{instance="pg:9187",datname="app",datid="1234"}
+    values: 0+15x20
+  promql_expr_test:
+  - expr: rate(node_network_receive_bytes_total{instance="node"}[2m])
+    eval_time: 3m
+    exp_samples:
+    - labels: '{instance="node",device="eth0"}'
+      value: 1000
+  - expr: timestamp(node_network_receive_bytes_total{instance="node"}) and (timestamp(node_network_receive_bytes_total{instance="node"}
+      offset 2m) >= time() - 120 - 60)
+    eval_time: 3m
+    exp_samples:
+    - labels: '{instance="node",device="eth0"}'
+      value: 180
+  - expr: rate(node_network_transmit_bytes_total{instance="node"}[2m])
+    eval_time: 3m
+    exp_samples:
+    - labels: '{instance="node",device="eth0"}'
+      value: 1000
+  - expr: timestamp(node_network_transmit_bytes_total{instance="node"}) and (timestamp(node_network_transmit_bytes_total{instance="node"}
+      offset 2m) >= time() - 120 - 60)
+    eval_time: 3m
+    exp_samples:
+    - labels: '{instance="node",device="eth0"}'
+      value: 180
+  - expr: rate(node_disk_read_bytes_total{instance="node"}[2m])
+    eval_time: 3m
+    exp_samples:
+    - labels: '{instance="node",device="eth0"}'
+      value: 1000
+  - expr: timestamp(node_disk_read_bytes_total{instance="node"}) and (timestamp(node_disk_read_bytes_total{instance="node"}
+      offset 2m) >= time() - 120 - 60)
+    eval_time: 3m
+    exp_samples:
+    - labels: '{instance="node",device="eth0"}'
+      value: 180
+  - expr: rate(node_disk_written_bytes_total{instance="node"}[2m])
+    eval_time: 3m
+    exp_samples:
+    - labels: '{instance="node",device="eth0"}'
+      value: 1000
+  - expr: timestamp(node_disk_written_bytes_total{instance="node"}) and (timestamp(node_disk_written_bytes_total{instance="node"}
+      offset 2m) >= time() - 120 - 60)
+    eval_time: 3m
+    exp_samples:
+    - labels: '{instance="node",device="eth0"}'
+      value: 180
+  - expr: rate(node_disk_reads_completed_total{instance="node"}[2m])
+    eval_time: 3m
+    exp_samples:
+    - labels: '{instance="node",device="eth0"}'
+      value: 1000
+  - expr: timestamp(node_disk_reads_completed_total{instance="node"}) and (timestamp(node_disk_reads_completed_total{instance="node"}
+      offset 2m) >= time() - 120 - 60)
+    eval_time: 3m
+    exp_samples:
+    - labels: '{instance="node",device="eth0"}'
+      value: 180
+  - expr: rate(node_disk_writes_completed_total{instance="node"}[2m])
+    eval_time: 3m
+    exp_samples:
+    - labels: '{instance="node",device="eth0"}'
+      value: 1000
+  - expr: timestamp(node_disk_writes_completed_total{instance="node"}) and (timestamp(node_disk_writes_completed_total{instance="node"}
+      offset 2m) >= time() - 120 - 60)
+    eval_time: 3m
+    exp_samples:
+    - labels: '{instance="node",device="eth0"}'
+      value: 180
+  - expr: sum without (cpu) (rate(container_cpu_usage_seconds_total{id="/docker/abc",instance="node"}[2m]))
+    eval_time: 3m
+    exp_samples:
+    - labels: '{instance="node",id="/docker/abc"}'
+      value: 0.5
+  - expr: min without (cpu) (timestamp(container_cpu_usage_seconds_total{id="/docker/abc",instance="node"}))
+      and (count without (cpu) (container_cpu_usage_seconds_total{id="/docker/abc",instance="node"}
+      and (timestamp(container_cpu_usage_seconds_total{id="/docker/abc",instance="node"}
+      offset 2m) >= time() - 120 - 60)) == count without (cpu) (container_cpu_usage_seconds_total{id="/docker/abc",instance="node"}))
+    eval_time: 3m
+    exp_samples:
+    - labels: '{instance="node",id="/docker/abc"}'
+      value: 180
+  - expr: (container_spec_cpu_quota{id="/docker/abc",instance="node"} > 0) / (container_spec_cpu_period{id="/docker/abc",instance="node"}
+      > 0) and (timestamp(container_spec_cpu_quota{id="/docker/abc",instance="node"})
+      >= time() - 60) and (timestamp(container_spec_cpu_period{id="/docker/abc",instance="node"})
+      >= time() - 60)
+    eval_time: 3m
+    exp_samples:
+    - labels: '{instance="node",id="/docker/abc"}'
+      value: 1
+  - expr: container_memory_working_set_bytes{id="/docker/abc",instance="node"}
+    eval_time: 3m
+    exp_samples:
+    - labels: container_memory_working_set_bytes{instance="node",id="/docker/abc"}
+      value: 67108864
+  - expr: timestamp(container_memory_working_set_bytes{id="/docker/abc",instance="node"})
+    eval_time: 3m
+    exp_samples:
+    - labels: '{instance="node",id="/docker/abc"}'
+      value: 180
+  - expr: sum without (cpu) (rate(container_cpu_usage_seconds_total{instance="kubelet",namespace="qa",pod="api-1",container!="",container!="POD",id!="/"}[2m]))
+    eval_time: 3m
+    exp_samples:
+    - labels: '{instance="kubelet",namespace="qa",pod="api-1",container="api",id="/pod/api"}'
+      value: 0.5
+    - labels: '{instance="kubelet",namespace="qa",pod="api-1",container="sidecar",id="/pod/sidecar"}'
+      value: 0.5
+  - expr: min without (cpu) (timestamp(container_cpu_usage_seconds_total{id="/docker/abc",instance="node"}))
+      and (count without (cpu) (container_cpu_usage_seconds_total{id="/docker/abc",instance="node"}
+      and (timestamp(container_cpu_usage_seconds_total{id="/docker/abc",instance="node"}
+      offset 2m) >= time() - 120 - 60)) == count without (cpu) (container_cpu_usage_seconds_total{id="/docker/abc",instance="node"}))
+    eval_time: 1m
+    exp_samples: []
+  - expr: sum without (cpu) (rate(container_cpu_usage_seconds_total{id="/docker/unlimited",instance="node"}[2m]))
+    eval_time: 3m
+    exp_samples:
+    - labels: '{instance="node",id="/docker/unlimited"}'
+      value: 0.5
+  - expr: (container_spec_cpu_quota{id="/docker/unlimited",instance="node"} > 0) /
+      (container_spec_cpu_period{id="/docker/unlimited",instance="node"} > 0) and
+      (timestamp(container_spec_cpu_quota{id="/docker/unlimited",instance="node"})
+      >= time() - 60) and (timestamp(container_spec_cpu_period{id="/docker/unlimited",instance="node"})
+      >= time() - 60)
+    eval_time: 3m
+    exp_samples: []
+  - expr: sum without (cpu) (rate(container_cpu_usage_seconds_total{id="/docker/stale-quota",instance="node"}[2m]))
+    eval_time: 3m
+    exp_samples:
+    - labels: '{instance="node",id="/docker/stale-quota"}'
+      value: 0.5
+  - expr: (container_spec_cpu_quota{id="/docker/stale-quota",instance="node"} > 0)
+      / (container_spec_cpu_period{id="/docker/stale-quota",instance="node"} > 0)
+      and (timestamp(container_spec_cpu_quota{id="/docker/stale-quota",instance="node"})
+      >= time() - 60) and (timestamp(container_spec_cpu_period{id="/docker/stale-quota",instance="node"})
+      >= time() - 60)
+    eval_time: 3m
+    exp_samples: []
+  - expr: (node_filesystem_size_bytes{instance="node"} - node_filesystem_free_bytes{instance="node"})
+      and (node_filesystem_size_bytes{instance="node"} > 0)
+    eval_time: 3m
+    exp_samples:
+    - labels: '{instance="node",device="/dev/sda",mountpoint="/",fstype="ext4"}'
+      value: 3221225472
+  - expr: (timestamp(node_filesystem_size_bytes{instance="node"}) + timestamp(node_filesystem_free_bytes{instance="node"})
+      - abs(timestamp(node_filesystem_size_bytes{instance="node"}) - timestamp(node_filesystem_free_bytes{instance="node"})))
+      / 2
+    eval_time: 3m
+    exp_samples:
+    - labels: '{instance="node",device="/dev/sda",mountpoint="/",fstype="ext4"}'
+      value: 180
+  - expr: node_filesystem_size_bytes{instance="node"}
+    eval_time: 3m
+    exp_samples:
+    - labels: node_filesystem_size_bytes{instance="node",device="/dev/sda",mountpoint="/",fstype="ext4"}
+      value: 5368709120
+  - expr: 100 * (node_filesystem_size_bytes{instance="node"} - node_filesystem_free_bytes{instance="node"})
+      / node_filesystem_size_bytes{instance="node"} and (node_filesystem_size_bytes{instance="node"}
+      > 0)
+    eval_time: 3m
+    exp_samples:
+    - labels: '{instance="node",device="/dev/sda",mountpoint="/",fstype="ext4"}'
+      value: 60
+  - expr: (timestamp(node_filesystem_size_bytes{instance="node"}) + timestamp(node_filesystem_free_bytes{instance="node"})
+      - abs(timestamp(node_filesystem_size_bytes{instance="node"}) - timestamp(node_filesystem_free_bytes{instance="node"})))
+      / 2
+    eval_time: 3m
+    exp_samples:
+    - labels: '{instance="node",device="/dev/sda",mountpoint="/",fstype="ext4"}'
+      value: 180
+  - expr: node_filesystem_size_bytes{instance="node"}
+    eval_time: 3m
+    exp_samples:
+    - labels: node_filesystem_size_bytes{instance="node",device="/dev/sda",mountpoint="/",fstype="ext4"}
+      value: 5368709120
+  - expr: 1000 * rate(node_disk_read_time_seconds_total{instance="node"}[2m]) / rate(node_disk_reads_completed_total{instance="node"}[2m])
+    eval_time: 3m
+    exp_samples:
+    - labels: '{instance="node",device="eth0"}'
+      value: 1
+  - expr: (timestamp(node_disk_read_time_seconds_total{instance="node"}) + timestamp(node_disk_reads_completed_total{instance="node"})
+      - abs(timestamp(node_disk_read_time_seconds_total{instance="node"}) - timestamp(node_disk_reads_completed_total{instance="node"})))
+      / 2 and (timestamp(node_disk_read_time_seconds_total{instance="node"} offset
+      2m) >= time() - 120 - 60) and (timestamp(node_disk_reads_completed_total{instance="node"}
+      offset 2m) >= time() - 120 - 60)
+    eval_time: 3m
+    exp_samples:
+    - labels: '{instance="node",device="eth0"}'
+      value: 180
+  - expr: rate(node_disk_reads_completed_total{instance="node"}[2m])
+    eval_time: 3m
+    exp_samples:
+    - labels: '{instance="node",device="eth0"}'
+      value: 1000
+  - expr: (1000 * rate(node_disk_read_time_seconds_total{instance="idle-node"}[2m])
+      / rate(node_disk_reads_completed_total{instance="idle-node"}[2m])) == (1000
+      * rate(node_disk_read_time_seconds_total{instance="idle-node"}[2m]) / rate(node_disk_reads_completed_total{instance="idle-node"}[2m]))
+    eval_time: 3m
+    exp_samples: []
+  - expr: rate(node_disk_reads_completed_total{instance="idle-node"}[2m])
+    eval_time: 3m
+    exp_samples:
+    - labels: '{instance="idle-node",device="sda"}'
+      value: 0
+  - expr: 1000 * rate(node_disk_write_time_seconds_total{instance="node"}[2m]) / rate(node_disk_writes_completed_total{instance="node"}[2m])
+    eval_time: 3m
+    exp_samples:
+    - labels: '{instance="node",device="eth0"}'
+      value: 1
+  - expr: (timestamp(node_disk_write_time_seconds_total{instance="node"}) + timestamp(node_disk_writes_completed_total{instance="node"})
+      - abs(timestamp(node_disk_write_time_seconds_total{instance="node"}) - timestamp(node_disk_writes_completed_total{instance="node"})))
+      / 2 and (timestamp(node_disk_write_time_seconds_total{instance="node"} offset
+      2m) >= time() - 120 - 60) and (timestamp(node_disk_writes_completed_total{instance="node"}
+      offset 2m) >= time() - 120 - 60)
+    eval_time: 3m
+    exp_samples:
+    - labels: '{instance="node",device="eth0"}'
+      value: 180
+  - expr: rate(node_disk_writes_completed_total{instance="node"}[2m])
+    eval_time: 3m
+    exp_samples:
+    - labels: '{instance="node",device="eth0"}'
+      value: 1000
+  - expr: (1000 * rate(node_disk_write_time_seconds_total{instance="idle-node"}[2m])
+      / rate(node_disk_writes_completed_total{instance="idle-node"}[2m])) == (1000
+      * rate(node_disk_write_time_seconds_total{instance="idle-node"}[2m]) / rate(node_disk_writes_completed_total{instance="idle-node"}[2m]))
+    eval_time: 3m
+    exp_samples: []
+  - expr: rate(node_disk_writes_completed_total{instance="idle-node"}[2m])
+    eval_time: 3m
+    exp_samples:
+    - labels: '{instance="idle-node",device="sda"}'
+      value: 0
+  - expr: pg_stat_database_numbackends{datname="app",instance="pg:9187"}
+    eval_time: 3m
+    exp_samples:
+    - labels: pg_stat_database_numbackends{instance="pg:9187",datname="app",datid="1234"}
+      value: 12
+  - expr: timestamp(pg_stat_database_numbackends{datname="app",instance="pg:9187"})
+    eval_time: 3m
+    exp_samples:
+    - labels: '{instance="pg:9187",datname="app",datid="1234"}'
+      value: 180
+  - expr: rate(pg_stat_database_xact_commit{datname="app",instance="pg:9187"}[2m])
+    eval_time: 3m
+    exp_samples:
+    - labels: '{instance="pg:9187",datname="app",datid="1234"}'
+      value: 10
+  - expr: timestamp(pg_stat_database_xact_commit{datname="app",instance="pg:9187"})
+      and (timestamp(pg_stat_database_xact_commit{datname="app",instance="pg:9187"}
+      offset 2m) >= time() - 120 - 60)
+    eval_time: 3m
+    exp_samples:
+    - labels: '{instance="pg:9187",datname="app",datid="1234"}'
+      value: 180
+  - expr: rate(pg_stat_database_xact_rollback{datname="app",instance="pg:9187"}[2m])
+    eval_time: 3m
+    exp_samples:
+    - labels: '{instance="pg:9187",datname="app",datid="1234"}'
+      value: 1
+  - expr: timestamp(pg_stat_database_xact_rollback{datname="app",instance="pg:9187"})
+      and (timestamp(pg_stat_database_xact_rollback{datname="app",instance="pg:9187"}
+      offset 2m) >= time() - 120 - 60)
+    eval_time: 3m
+    exp_samples:
+    - labels: '{instance="pg:9187",datname="app",datid="1234"}'
+      value: 180

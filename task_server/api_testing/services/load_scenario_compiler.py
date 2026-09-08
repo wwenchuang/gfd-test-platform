@@ -10,7 +10,7 @@ from ..contracts.load_testing import LoadScenarioPayloadError, parse_load_scenar
 from .load_scenario_service import LoadScenarioService
 
 
-COMPILER_VERSION = "k6-safe-v1"
+COMPILER_VERSION = "k6-safe-v2"
 EXECUTORS = frozenset(
     {"constant-vus", "ramping-vus", "constant-arrival-rate", "ramping-arrival-rate"}
 )
@@ -200,7 +200,17 @@ function step_{safe_identifier}(state, data) {{
 """.strip()
 
 
-def compile_scenario(definition, workload):
+def compile_scenario(definition, workload, *, stop_policy=None, compiler_version=COMPILER_VERSION):
+    if compiler_version == "k6-safe-v1":
+        if stop_policy is not None:
+            raise LoadScenarioCompileError("旧版冻结执行不支持新增停止策略，请创建新版执行")
+        from .load_scenario_compiler_v1 import compile_scenario as compile_v1, LoadScenarioCompileError as V1CompileError
+        try:
+            return compile_v1(definition, workload)
+        except V1CompileError as error:
+            raise LoadScenarioCompileError(str(error)) from error
+    if compiler_version != COMPILER_VERSION:
+        raise LoadScenarioCompileError("不支持的冻结编译器版本，请创建新版执行")
     try:
         parsed = parse_load_scenario_definition(definition)
     except LoadScenarioPayloadError as exc:
@@ -210,6 +220,10 @@ def compile_scenario(definition, workload):
         issue = admission.issues[0]
         raise LoadScenarioCompileError(f"{issue.message}；{issue.remedy}")
     options = _parse_workload(workload)
+    from .load_execution_policy import safety_thresholds
+    stop_thresholds = safety_thresholds(stop_policy)
+    if stop_thresholds:
+        options["thresholds"] = stop_thresholds
     env_names = _environment_variables(parsed)
     dataset_variables = parsed["dataset_contract"]["variables"]
     secret_bindings = "\n".join(
@@ -245,10 +259,12 @@ def compile_scenario(definition, workload):
     )
     script = f"""import http from \"k6/http\";
 import {{ check, sleep }} from \"k6\";
-import {{ Rate }} from \"k6/metrics\";
+import {{ Rate, Counter }} from \"k6/metrics\";
 import exec from \"k6/execution\";
 
 export const options = {_json(options)};
+const workflowIterationStarted = new Counter("workflow_iteration_started");
+const loadStageDurations = {_json([stage["duration_seconds"] for stage in workload.get("stages", [])])};
 const workflowIterationSuccess = new Rate(\"workflow_iteration_success\");
 const datasetRows = JSON.parse(open(__ENV[\"LOAD_DATASET_FILE\"]));
 const defaultHeaders = JSON.parse(__ENV[\"LOAD_DEFAULT_HEADERS_JSON\"] || \"{{}}\");
@@ -339,6 +355,14 @@ export function setup() {{
 }}
 
 export default function(data) {{
+  const elapsedSeconds = (Date.now() - exec.scenario.startTime) / 1000;
+  let phaseEnd = 0;
+  let phase = "__load_stage_outside";
+  for (let i = 0; i < loadStageDurations.length; i++) {{
+    phaseEnd += loadStageDurations[i];
+    if (elapsedSeconds < phaseEnd) {{ phase = "__load_stage_" + i; break; }}
+  }}
+  if (loadStageDurations.length) workflowIterationStarted.add(1, {{ step_id: phase }});
   Object.assign(vuState, data && data.state ? data.state : {{}});
   let iterationOk = true;
   try {{

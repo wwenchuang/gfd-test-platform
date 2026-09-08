@@ -254,9 +254,12 @@ function createServer() {
       created_at: '2026-08-25T08:00:00Z', updated_at: '2026-08-26T08:30:00Z',
     }] });
     if (url.pathname === '/api/api-testing/v1/executions' && req.method === 'GET') return sendJson(res, { executions: [] });
+    if (url.pathname === '/api/api-testing/v1/load-monitoring-services' && req.method === 'GET') return sendJson(res, { items: [] });
     if (url.pathname === '/api/api-testing/v1/load-runs' && req.method === 'GET') return sendJson(res, { runs: loadRuns });
     if (url.pathname === '/api/api-testing/v1/load-agents' && req.method === 'GET') return sendJson(res, { agents: loadAgents });
     if (url.pathname === '/api/api-testing/v1/load-scenarios' && req.method === 'GET') return sendJson(res, { scenarios: loadScenarios });
+    if (url.pathname === '/api/api-testing/v1/load-datasets' && req.method === 'GET') return sendJson(res, { datasets: [{ id: 'visual-dataset', name: '浏览器验收关键词', row_count: 2, field_schema: { fields: [{ name: 'keyword' }] } }] });
+    if (url.pathname === '/api/api-testing/v1/load-datasets' && req.method === 'POST') return sendJson(res, { dataset: { id: 'visual-imported-dataset', name: '本地导入夹具', row_count: 1, fields: ['keyword'], preview_rows: [{ keyword: 'PRIVATE_PREVIEW_SENTINEL' }] } });
     if (url.pathname === '/api/api-testing/v1/load-scenario-versions/load-version-1' && req.method === 'GET') return sendJson(res, { version: {
       id: 'load-version-1', scenario_id: loadScenario.id, version: 1, state: 'ready', definition: loadScenarioDefinition,
       validation: { ok: true }, created_at: '2026-09-03T08:00:00Z',
@@ -373,12 +376,8 @@ async function assertLoadReportResponsive(page, url) {
     await page.getByText('低置信度：缺失一个指标窗口').waitFor();
     await assertNoHorizontalOverflow(page, `load report ${label}`);
     await page.screenshot({ path: path.join(ARTIFACTS, `load-report-${label}.png`), fullPage: true });
-    await page.locator('.guide-toggle').click();
-    await page.locator('.guide-search input').fill('VU');
-    await expect(page.locator('.load-metric-guide')).toContainText('虚拟用户');
-    await assertNoHorizontalOverflow(page, `load glossary ${label}`);
-    await page.screenshot({ path: path.join(ARTIFACTS, `load-glossary-${label}.png`), fullPage: true });
-    await page.locator('.guide-toggle').click();
+    await expect(page.locator('.guide-toggle')).toHaveCount(0);
+    await expect(page.locator('.load-metric-guide')).toHaveCount(0);
   }
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto(`${url}#/load-reports?run_id=load-run-1`, { waitUntil: 'networkidle' });
@@ -451,6 +450,33 @@ async function assertLoadScenariosResponsive(page, url) {
   await page.goto(`${url}#/load-scenarios`, { waitUntil: 'networkidle' });
   await page.getByTestId('scenario-edit-load-scenario-1').click();
   await page.getByText('创建新版本', { exact: true }).waitFor();
+  await page.getByTestId('scenario-next').click();
+  const editor = page.getByTestId('scenario-definition-json');
+  await expect(editor).toBeVisible();
+  const retained = await editor.inputValue();
+  await editor.fill('{ invalid');
+  await page.getByTestId('scenario-definition-apply').click();
+  await expect(page.getByTestId('scenario-next')).toBeDisabled();
+  await page.getByTestId('scenario-back').click();
+  await page.getByTestId('scenario-next').click();
+  await expect(editor).toHaveValue('{ invalid');
+  await editor.fill(retained);
+  await page.getByTestId('scenario-definition-apply').click();
+  await page.getByTestId('scenario-dataset-select').selectOption('visual-dataset');
+  await expect.poll(async () => JSON.parse(await editor.inputValue()).dataset_contract.dataset_id).toBe('visual-dataset');
+  await page.getByText('导入新数据集', { exact: true }).click();
+  await page.getByTestId('scenario-dataset-file').setInputFiles({ name: '本地导入夹具.json', mimeType: 'application/json', buffer: Buffer.from('[{"keyword":"模型"}]') });
+  await page.getByTestId('scenario-dataset-import').click();
+  await expect(page.getByTestId('scenario-dataset-select')).toHaveValue('visual-imported-dataset');
+  await expect(page.locator('body')).not.toContainText('PRIVATE_PREVIEW_SENTINEL');
+  for (const [label, viewport] of [['desktop', { width: 1440, height: 900 }], ['mobile', { width: 390, height: 844 }]]) {
+    await page.setViewportSize(viewport);
+    await assertNoHorizontalOverflow(page, `load scenario advanced ${label}`);
+    if (viewport.width <= 920) await page.waitForFunction(() => document.querySelector('.side-rail')?.getBoundingClientRect().right <= 0);
+    await page.screenshot({ path: path.join(ARTIFACTS, `load-scenario-advanced-${label}.png`), fullPage: true });
+  }
+  await page.getByTestId('scenario-next').click();
+  await expect(page.getByTestId('scenario-save')).toBeEnabled();
   await page.getByRole('button', { name: '返回场景列表' }).first().click();
   await page.getByText(loadScenario.name, { exact: true }).waitFor();
 }
@@ -804,6 +830,21 @@ async function assertAssetSyncClarity(page, url) {
     await page.goto(url, { waitUntil: 'networkidle' });
     const taskAppsPayload = await (await taskAppsResponsePromise).json();
     if (!JSON.stringify(taskAppsPayload).includes('校园版')) throw new Error(`business-line configuration response is incomplete: ${JSON.stringify(taskAppsPayload)}`);
+    if (process.env.VISUAL_SCOPE === 'load-scenarios') {
+      await assertLoadScenariosResponsive(page, url);
+      if (errors.length) throw new Error(`browser errors: ${errors.join(' | ')}`);
+      console.log(JSON.stringify({ ok: true, scope: 'load-scenarios', artifacts: ARTIFACTS }));
+      return;
+    }
+    if (process.env.VISUAL_SCOPE === 'load-performance') {
+      await assertLoadReportResponsive(page, url);
+      await assertLoadAgentsResponsive(page, url);
+      await assertLoadScenariosResponsive(page, url);
+      await assertLoadRunsResponsive(page, url);
+      if (errors.length) throw new Error(`browser errors: ${errors.join(' | ')}`);
+      console.log(JSON.stringify({ ok: true, scope: 'load-performance', artifacts: ARTIFACTS }));
+      return;
+    }
     await assertLargeExecutionDrawer(page, url);
     await assertLoadReportResponsive(page, url);
     await assertLoadAgentsResponsive(page, url);

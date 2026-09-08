@@ -160,3 +160,30 @@ def test_fractional_query_is_normalized_to_prometheus_milliseconds(resolver):
         return 200, payload([[1000.123, '2']])
     result = client(transport).query_range('up', 1000.123456, 1000.123456, 5)
     assert result[0]['points'][0]['value'] == 2
+
+
+def test_pod_template_excludes_pause_and_parent_groups_with_exact_namespace_and_pod():
+    query = m.build_query('cpu_cores', 'pod', {'instance':'node:10250','namespace':'qa','pod':'api-abc'})
+    assert 'namespace="qa"' in query and 'pod="api-abc"' in query
+    assert 'container!=""' in query and 'container!="POD"' in query
+    with pytest.raises(m.MonitoringQueryError):
+        m.build_query('cpu_cores', 'pod', {'instance':'node:10250','namespace':'qa'})
+
+
+def test_container_root_id_and_host_percentage_are_rejected():
+    for key, labels in [('cpu_cores', {'instance':'a','id':'/'}), ('cpu_percent', {'instance':'a','id':'/docker/abc'})]:
+        with pytest.raises(m.MonitoringQueryError):
+            m.build_query(key, 'container', labels)
+
+@pytest.mark.parametrize('metric', ['filesystem_used_bytes','filesystem_used_percent','disk_read_latency_ms','disk_write_latency_ms'])
+def test_extended_host_storage_templates_are_supported_without_service_scope(metric):
+    query = m.build_query(metric, 'host', {'instance':'node:9100'})
+    assert 'node_' in query and 'instance="node:9100"' in query
+
+
+def test_postgres_requires_exact_database_and_rejects_unrelated_metrics():
+    for metric in ('postgres_connections','postgres_commits_per_second','postgres_rollbacks_per_second'):
+        query = m.build_query(metric, 'postgres', {'instance':'postgres:9187','datname':'app'})
+        assert 'pg_stat_database_' in query and 'datname="app"' in query
+    for metric, labels in [('postgres_connections', {'instance':'postgres:9187'}), ('cpu_percent', {'instance':'postgres:9187','datname':'app'})]:
+        with pytest.raises(m.MonitoringQueryError): m.build_query(metric, 'postgres', labels)

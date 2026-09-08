@@ -246,7 +246,8 @@ def main():
             client.finish(
                 shard_id,
                 result.state,
-                {"metric_bucket_count": result.metric_bucket_count, "exit_code": result.exit_code},
+                {"metric_bucket_count": result.metric_bucket_count, "exit_code": result.exit_code,
+                 **({"load_generator_resources": result.load_generator_resources} if result.load_generator_resources else {})},
                 {"message": result.error_message} if result.error_message else {},
             )
         time.sleep(config.poll_interval_seconds)

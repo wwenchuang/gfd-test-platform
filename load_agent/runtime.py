@@ -1,6 +1,6 @@
 """Private work-directory and k6 subprocess lifecycle."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import json
 import os
 from pathlib import Path
@@ -13,6 +13,7 @@ import time
 import uuid
 
 from .k6_metrics import MetricAggregator
+from .runtime_resources import RuntimeResourceSampler, resource_interval
 
 
 class _MetricLineReader:
@@ -57,6 +58,7 @@ class ShardResult:
     stop_reason: str
     error_message: str
     metric_bucket_count: int
+    load_generator_resources: dict = field(default_factory=dict)
 
     def __repr__(self):
         return (
@@ -76,6 +78,8 @@ class K6Runtime:
         stop_grace_seconds=10,
         poll_interval=0.2,
         sleeper=None,
+        resource_sampler_factory=None,
+        monotonic=None,
     ):
         self.data_dir = Path(data_dir)
         self.k6_binary = k6_binary
@@ -83,6 +87,8 @@ class K6Runtime:
         self.stop_grace_seconds = max(0, float(stop_grace_seconds))
         self.poll_interval = max(0, float(poll_interval))
         self.sleeper = sleeper or time.sleep
+        self.resource_sampler_factory = resource_sampler_factory or RuntimeResourceSampler
+        self.monotonic = monotonic or time.monotonic
 
     def run(self, shard, command_source, metric_sink):
         shard_id = str(shard.get("id") or "")
@@ -113,6 +119,7 @@ class K6Runtime:
         stopped = False
         stop_reason = ""
         process = None
+        resources = None
         error_message = ""
         stderr_path = work / "k6-stderr.log"
         stderr_path.touch(mode=0o600)
@@ -130,7 +137,14 @@ class K6Runtime:
                 cwd=work,
             )
             reader = _MetricLineReader(process.stdout)
+            resources = self.resource_sampler_factory(getattr(process, "pid", None), interval_seconds=resource_interval(shard))
+            next_resource_upload = self.monotonic() + 30
             while True:
+                now = self.monotonic()
+                if process.poll() is None and resources.sample(now=now) and now >= next_resource_upload:
+                    metric_sink.post_metrics({"buckets": [], "load_generator_resources": resources.snapshot(tail=12)},
+                                             batch_id=str(uuid.uuid4()))
+                    next_resource_upload = now + 30
                 commands = command_source() or []
                 stop = next((item for item in commands if item.get("type") == "stop"), None)
                 if stop and not stopped:
@@ -177,7 +191,8 @@ class K6Runtime:
             )
             error_message = self._redact(stderr, secret_values)[:2000]
             state = "cancelled" if stopped else "finished" if exit_code == 0 else "failed"
-            return ShardResult(state, int(exit_code or 0), stop_reason, error_message, bucket_count)
+            return ShardResult(state, int(exit_code or 0), stop_reason, error_message, bucket_count,
+                               resources.snapshot())
         except Exception as error:
             if process is not None and process.poll() is None:
                 process.kill()
@@ -186,7 +201,8 @@ class K6Runtime:
                 except Exception:
                     pass
             error_message = self._redact(str(error), secret_values)[:2000]
-            return ShardResult("cancelled" if stopped else "failed", -1, stop_reason, error_message, bucket_count)
+            return ShardResult("cancelled" if stopped else "failed", -1, stop_reason, error_message, bucket_count,
+                               resources.snapshot() if resources else {})
         finally:
             stderr_stream.close()
             self._secure_remove(work)

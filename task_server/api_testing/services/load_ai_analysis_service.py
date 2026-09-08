@@ -16,7 +16,7 @@ from ..models.load_testing import ApiLoadAiAnalysis, ApiLoadRun
 from .load_report_service import LoadReportService
 
 
-PROMPT_VERSION = "api-load-analysis.v3"
+PROMPT_VERSION = "api-load-analysis.v4"
 CATEGORIES = frozenset({"no_bottleneck", "target_service", "network", "load_agent", "test_data", "mixed", "insufficient_evidence"})
 CONFIDENCE_LEVELS = frozenset({"high", "medium", "low"})
 
@@ -57,6 +57,16 @@ def build_evidence_package(report):
             continue
         agent_id = str(item.get("id") or "unknown")[:120]
         summary = _structured(item.get("summary"), ("cpu_peak_percent", "memory_peak_mb", "disk_peak_percent", "requests", "iterations"))
+        resources = item.get("load_generator_resources") or {}
+        rows = resources.get("samples") or []
+        runtime = {"role": "load_generator", "retained_samples": len(rows), "dropped_samples": resources.get("dropped_samples"), "interval_seconds": resources.get("interval_seconds"),
+                   "scopes": sorted({str(row.get("cpu_scope")) for row in rows}),
+                   "cpu_denominators": sorted({str(row.get("cpu_limit_source")) for row in rows}),
+                   "memory_scopes": sorted({str(row.get("memory_scope")) for row in rows})}
+        for key in ("cpu_used_cores", "cpu_percent", "memory_used_bytes", "memory_percent"):
+            values = [row[key] for row in rows if isinstance(row.get(key), (int, float))]
+            runtime[key + "_peak"] = max(values) if values else None
+        summary["runtime"] = runtime
         agents.append({"evidence_id": f"agent.{agent_id}", **_structured(item, ("id", "name", "state", "state_label", "allocation")), "resource_summary": summary})
     thresholds = []
     for item in (report.get("thresholds") or [])[:30]:
@@ -288,7 +298,8 @@ class LoadAiAnalysisService:
             if not force:
                 existing = session.scalar(
                     select(ApiLoadAiAnalysis)
-                    .where(ApiLoadAiAnalysis.run_id == run.id, ApiLoadAiAnalysis.evidence_hash == evidence_hash)
+                    .where(ApiLoadAiAnalysis.run_id == run.id, ApiLoadAiAnalysis.evidence_hash == evidence_hash,
+                           ApiLoadAiAnalysis.prompt_version == PROMPT_VERSION)
                     .order_by(ApiLoadAiAnalysis.created_at.desc())
                     .limit(1)
                 )

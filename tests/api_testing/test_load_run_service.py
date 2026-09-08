@@ -165,7 +165,7 @@ def test_create_freezes_versions_compiler_allocation_and_agent_calibration(load_
     assert snapshot["scenario"]["version_id"] == run_records["version"].id
     assert snapshot["scenario"]["content_hash"] == "scenario-content-hash"
     assert snapshot["environment"] == {"revision_id": run_records["revision"].id, "name": "性能环境 v3"}
-    assert snapshot["compiler"]["version"] == "k6-safe-v1"
+    assert snapshot["compiler"]["version"] == "k6-safe-v2"
     assert len(snapshot["agents"]) == 2
     assert snapshot["agents"][0]["calibration"]["id"] == "calibration-20260903"
     assert sum(item["allocation"]["vus"] for item in snapshot["agents"]) == 120

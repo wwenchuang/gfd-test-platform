@@ -8,6 +8,7 @@ import math
 COUNTERS = {
     "http_reqs": "requests",
     "iterations": "iterations",
+    "workflow_iteration_started": "workflow_starts",
     "dropped_iterations": "dropped_iterations",
     "data_sent": "bytes_sent",
     "data_received": "bytes_received",

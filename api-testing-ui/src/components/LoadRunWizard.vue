@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
+import LoadThresholdEditor, {type ErrorCriteria} from './LoadThresholdEditor.vue'
+import LoadTestIntent, { type TestContext, type StopPolicy } from './LoadTestIntent.vue'
 import type { EnvironmentRevisionOption, LoadAgent, LoadScenario } from '../api/contracts'
 import LoadMonitoringSelector from './LoadMonitoringSelector.vue'
 import type { MonitoringSelection } from '../api/monitoring'
@@ -21,6 +23,17 @@ const allowFallback = ref(false)
 const allowRunAnyway = ref(false)
 const priority = ref('normal')
 const productionConfirmed = ref(false)
+const testContext = ref<TestContext>({purpose: 'smoke', release: '', data_profile: '', cache_state: '', notes: ''})
+const stopPolicy = ref<StopPolicy>(null)
+const errorCriteria = ref<ErrorCriteria>({httpPercent:1, workflowPercent:0, businessEnabled:false, businessPercent:0})
+const criteriaValid = computed(() => [errorCriteria.value.httpPercent,errorCriteria.value.workflowPercent,...(errorCriteria.value.businessEnabled?[errorCriteria.value.businessPercent]:[])].every(value=>Number.isFinite(value)&&value>=0&&value<=100))
+const stages = ref<Array<{duration_seconds: number; target: number}>>([])
+const ramping = computed(() => executor.value.startsWith('ramping'))
+const activeStages = computed(() => stages.value.length ? stages.value : [{duration_seconds: duration.value, target: arrivalModel.value ? rate.value : vus.value}])
+const stagePeak = computed(() => Math.max(1, ...activeStages.value.map(item => item.target)))
+const totalDuration = computed(() => ramping.value ? activeStages.value.reduce((n, item) => n + item.duration_seconds, 0) : duration.value)
+const numericValid = computed(() => [vus.value, maxVus.value, rate.value, duration.value, p95.value].every(v => Number.isInteger(v) && v > 0) && (!ramping.value || activeStages.value.every(s => Number.isInteger(s.target) && s.target >= 0 && Number.isInteger(s.duration_seconds) && s.duration_seconds > 0)) && (!stopPolicy.value || (stopPolicy.value.http_error_rate > 0 && stopPolicy.value.http_error_rate <= 1 && Number.isInteger(stopPolicy.value.grace_seconds) && stopPolicy.value.grace_seconds >= 10 && stopPolicy.value.grace_seconds <= 600)))
+function stageTemplate() { const target = arrivalModel.value ? rate.value : vus.value; stages.value = [{duration_seconds: 60, target}, {duration_seconds: duration.value, target}, {duration_seconds: 60, target: 0}] }
 const monitoring = ref<MonitoringSelection>({ services: [], before_seconds: 60, after_seconds: 60 })
 const monitoringValid = computed(() => !monitoring.value.services.length || [monitoring.value.before_seconds, monitoring.value.after_seconds].every(value => Number.isInteger(value) && value >= 0 && value <= 600))
 
@@ -30,14 +43,14 @@ const environment = computed(() => props.environments.find(item => item.id === e
 const production = computed(() => /生产|正式|prod(uction)?/i.test(environment.value?.name || ''))
 const hasProductionPermission = computed(() => apiTestingHasPermission('api.production'))
 const arrivalModel = computed(() => executor.value.includes('arrival-rate'))
-const targetIterations = computed(() => rate.value * duration.value)
+const targetIterations = computed(() => { if (!ramping.value) return rate.value * duration.value; let previous = 1; return Math.round(activeStages.value.reduce((total, s) => { const amount = (previous + s.target) / 2 * s.duration_seconds; previous = s.target; return total + amount }, 0)) })
 const iterationEstimate = computed(() => arrivalModel.value
   ? `按目标吞吐预计约 ${targetIterations.value} 次完整链路。`
   : `${executor.value === 'constant-vus' ? '固定并发' : '阶梯并发'}会在时长内持续循环；实际次数取决于接口响应时间，不能按 VU × 秒数推算。`)
 
 function availableCapacity(agent: LoadAgent, field: 'max_vus' | 'max_iterations_per_second'): number {
   const candidates = [agent.hard_limits[field], agent.soft_limits[field], agent.health.calibration?.[field]]
-    .map(value => Number(value || 0)).filter(value => value > 0)
+    .map(value => Number(value || 0))
   const limit = candidates.length ? Math.min(...candidates) : 0
   const usageKey = field === 'max_vus' ? 'vus' : 'iterations_per_second'
   return Math.max(0, Math.floor(limit - Number(agent.current_usage[usageKey] || 0)))
@@ -47,14 +60,14 @@ const selectedCapacity = computed(() => selected.value.reduce((total, agent) => 
   vus: total.vus + availableCapacity(agent, 'max_vus'),
   rate: total.rate + availableCapacity(agent, 'max_iterations_per_second'),
 }), { vus: 0, rate: 0 }))
-const requestedMaxVus = computed(() => arrivalModel.value ? Math.max(vus.value, maxVus.value) : vus.value)
+const requestedMaxVus = computed(() => arrivalModel.value ? Math.max(vus.value, maxVus.value) : ramping.value ? stagePeak.value : vus.value)
 const capacityEnough = computed(() => arrivalModel.value
-  ? selectedCapacity.value.rate >= rate.value && selectedCapacity.value.vus >= requestedMaxVus.value
-  : selectedCapacity.value.vus >= vus.value)
+  ? selectedCapacity.value.rate >= (ramping.value ? stagePeak.value : rate.value) && selectedCapacity.value.vus >= requestedMaxVus.value
+  : selectedCapacity.value.vus >= requestedMaxVus.value)
 const productionReady = computed(() => !production.value || (hasProductionPermission.value && productionConfirmed.value))
 const canSubmit = computed(() => Boolean(
   environmentId.value && props.scenario.active_version_id && selected.value.length
-  && monitoringValid.value && productionReady.value && (capacityEnough.value || allowRunAnyway.value),
+  && numericValid.value && criteriaValid.value && monitoringValid.value && productionReady.value && (capacityEnough.value || allowRunAnyway.value),
 ))
 
 function selectExecutor(value: string): void { executor.value = value as Executor }
@@ -71,13 +84,13 @@ function recommendAgents(): void {
     next.push(agent.id)
     selectedVus += availableCapacity(agent, 'max_vus')
     selectedRate += availableCapacity(agent, 'max_iterations_per_second')
-    if (selectedVus >= requestedMaxVus.value && (!arrivalModel.value || selectedRate >= rate.value)) break
+    if (selectedVus >= requestedMaxVus.value && (!arrivalModel.value || selectedRate >= (ramping.value ? stagePeak.value : rate.value))) break
   }
   selectedIds.value = next
 }
 function workload(): Record<string, unknown> {
   if (executor.value === 'constant-vus') return { executor: executor.value, vus: vus.value, duration_seconds: duration.value }
-  if (executor.value === 'ramping-vus') return { executor: executor.value, start_vus: 1, stages: [{ duration_seconds: duration.value, target: vus.value }] }
+  if (executor.value === 'ramping-vus') return { executor: executor.value, start_vus: 1, stages: activeStages.value.map(s => ({...s})) }
   if (executor.value === 'constant-arrival-rate') return {
     executor: executor.value, rate: rate.value, time_unit: '1s', duration_seconds: duration.value,
     pre_allocated_vus: Math.max(1, vus.value), max_vus: requestedMaxVus.value,
@@ -85,7 +98,7 @@ function workload(): Record<string, unknown> {
   return {
     executor: executor.value, start_rate: 1, time_unit: '1s',
     pre_allocated_vus: Math.max(1, vus.value), max_vus: requestedMaxVus.value,
-    stages: [{ duration_seconds: duration.value, target: rate.value }],
+    stages: activeStages.value.map(s => ({...s})),
   }
 }
 function submit(): void {
@@ -94,8 +107,10 @@ function submit(): void {
     scenario_version_id: props.scenario.active_version_id,
     environment_revision_id: environmentId.value,
     workload: workload(),
-    thresholds: { p95_ms: { operator: 'less_than_or_equal', value: p95.value, required: true } },
+    thresholds: { http_error_rate: {operator: 'less_than_or_equal', value:errorCriteria.value.httpPercent/100, required:true}, workflow_failure_rate:{operator:'less_than_or_equal',value:errorCriteria.value.workflowPercent/100,required:true}, ...(errorCriteria.value.businessEnabled?{business_failure_rate:{operator:'less_than_or_equal',value:errorCriteria.value.businessPercent/100,required:true}}:{}), p95_ms: { operator: 'less_than_or_equal', value: p95.value, required: true } },
     priority: priority.value,
+    test_context: testContext.value,
+    ...(stopPolicy.value ? {stop_policy: stopPolicy.value} : {}),
     ...(monitoring.value.services.length ? { monitoring: monitoring.value } : {}),
     allocation_policy: {
       allow_fallback: allowFallback.value,
@@ -110,6 +125,8 @@ function submit(): void {
   <section class="load-wizard" aria-label="创建压测执行">
     <header><div><p class="eyebrow">压测配置</p><h2>{{ scenario.name }}</h2></div><button data-testid="load-run-back" class="text-command" type="button" @click="emit('cancel')">← 返回执行列表</button></header>
     <div class="load-wizard-body">
+      <LoadTestIntent v-model="testContext" v-model:stop-policy="stopPolicy" />
+      <LoadThresholdEditor v-model="errorCriteria" />
       <section class="load-context-banner"><div><span>所属应用 / API 项目</span><strong>{{ projectName || '当前接口项目' }}</strong><small>场景、环境和报告都归入这个项目；需要换应用时请先回工作台切换。</small></div><div><span>场景版本</span><strong>{{ scenario.name }}</strong><small>本次执行固定使用当前生效版本，历史结果可重复核对。</small></div></section>
       <label>目标环境（可切换）<select v-model="environmentId" data-testid="load-run-environment"><option value="" disabled>请选择目标环境</option><option v-for="item in environments" :key="item.id" :value="item.id">{{ item.name }} · v{{ item.revision }}</option></select><small v-if="environments.length === 1">当前项目只有 1 个可用环境；可到“环境配置”新增独立压测环境。</small><small v-else>请选择本次真实接收流量的环境，环境不是写死的。</small></label>
       <p v-if="!environments.length" class="load-warning">当前项目没有可用环境，请先到“环境配置”创建并验证服务地址。</p>
@@ -138,8 +155,12 @@ function submit(): void {
       <label class="load-check"><input v-model="allowRunAnyway" data-testid="allow-run-anyway" type="checkbox" />容量不足时仍创建任务（报告固定标记为证据不足）</label>
       <label v-if="production && hasProductionPermission" class="load-check"><input v-model="productionConfirmed" type="checkbox" />我确认本次会向生产环境持续发送真实请求</label>
       <LoadMonitoringSelector v-model="monitoring" :environment-revision-id="environmentId" />
-      <div class="load-review-box"><strong>执行前预估</strong><p>{{ iterationEstimate }} 持续 {{ duration }} 秒；选择 {{ selected.length }} 台节点；当前可用 {{ selectedCapacity.vus }} VU / {{ selectedCapacity.rate }} 次/秒。创建后还需依次完成目标连通性检查、单用户预检和开始执行。</p></div>
+      <div class="load-review-box"><strong>执行前预估</strong><p>{{ iterationEstimate }} 持续 {{ totalDuration }} 秒；选择 {{ selected.length }} 台节点；当前可用 {{ selectedCapacity.vus }} VU / {{ selectedCapacity.rate }} 次/秒。创建后还需依次完成目标连通性检查、单用户预检和开始执行。</p></div>
     </div>
     <footer><button class="secondary-command" type="button" @click="emit('cancel')">返回执行列表</button><span /><button data-testid="load-run-submit" class="primary-command" type="button" :disabled="!canSubmit" @click="submit">创建压测草稿</button></footer>
   </section>
 </template>
+
+<style scoped>
+.load-stage-editor{display:grid;gap:10px;border:1px solid #dce5ee;padding:12px;border-radius:8px}.load-stage-row{display:grid;grid-template-columns:auto minmax(70px,1fr) minmax(70px,1fr) auto;gap:10px;align-items:center}.load-stage-row label{display:grid;gap:4px}.load-stage-row input{min-width:0;padding:8px;box-sizing:border-box}.load-stage-editor p{margin:0;font-size:13px;color:#617086}
+</style>

@@ -19,6 +19,7 @@ from .repositories.load_testing_repository import LoadTestingRepository
 from .services.load_agent_service import LoadAgentError, LoadAgentService
 from .services.environment_service import EnvironmentService
 from .services.load_metric_service import LoadMetricError, LoadMetricService
+from .services.load_resource_service import validate_generator_resources
 from .services.load_scenario_compiler import compile_scenario
 
 
@@ -188,7 +189,7 @@ def _get(agent, segments, query):
 def _owned_shard(session, agent_id, shard_id, *, for_update=False):
     query = select(ApiLoadRunShard).where(ApiLoadRunShard.id == shard_id)
     if for_update:
-        query = query.with_for_update()
+        query = query.with_for_update().execution_options(populate_existing=True)
     shard = session.scalar(query)
     if shard is None:
         raise ApiHttpError(404, "shard_not_found", "分片不存在")
@@ -266,16 +267,17 @@ def _execution_payload(session, run, shard, version):
     """Build the private executable handoff from immutable run references."""
     configuration = run.configuration if isinstance(run.configuration, dict) else {}
     compiler_snapshot = configuration.get("compiler") if isinstance(configuration.get("compiler"), dict) else {}
+    compiler_version = compiler_snapshot.get("version") or "k6-safe-v1"
     workload = configuration.get("workload")
     try:
-        global_compiled = compile_scenario(copy.deepcopy(version.definition), copy.deepcopy(workload))
+        global_compiled = compile_scenario(copy.deepcopy(version.definition), copy.deepcopy(workload), stop_policy=(run.configuration or {}).get("stop_policy"), compiler_version=compiler_version)
     except Exception as error:
         raise ApiHttpError(409, "shard_configuration_missing", f"分片脚本无法重新编译：{error}") from error
     expected_hash = str(compiler_snapshot.get("content_hash") or "")
     if not expected_hash or global_compiled.content_hash != expected_hash:
         raise ApiHttpError(409, "shard_configuration_changed", "分片脚本与任务创建时的不可变快照不一致")
     shard_workload = _shard_workload(session, run, shard, workload)
-    compiled = compile_scenario(copy.deepcopy(version.definition), shard_workload)
+    compiled = compile_scenario(copy.deepcopy(version.definition), shard_workload, stop_policy=(run.configuration or {}).get("stop_policy"), compiler_version=compiler_version)
 
     try:
         runtime = EnvironmentService(_factory()).resolve_runtime(run.environment_revision_id, {})
@@ -565,6 +567,11 @@ def _finish_shard(agent_id, shard_id, payload):
         raise ApiHttpError(422, "invalid_request", "分片结束状态无效")
     if not isinstance(summary, dict) or not isinstance(error, dict):
         raise ApiHttpError(422, "invalid_request", "summary and error must be objects")
+    if "load_generator_resources" in summary:
+        try:
+            summary = {**summary, "load_generator_resources": validate_generator_resources(summary["load_generator_resources"])}
+        except ValueError as validation_error:
+            raise ApiHttpError(422, "invalid_request", str(validation_error)) from validation_error
     factory = _factory()
     completed_run_id = None
     with factory.begin() as session:
@@ -585,6 +592,10 @@ def _finish_shard(agent_id, shard_id, payload):
         shard.summary = copy.deepcopy(summary)
         shard.error = copy.deepcopy(error)
         shard.last_heartbeat_at = datetime.now(timezone.utc)
+        if state == "failed":
+            from .services.load_execution_policy import stop_peers_after_failure
+            peers = tuple(session.scalars(select(ApiLoadRunShard).where(ApiLoadRunShard.run_id == run.id).with_for_update()))
+            stop_peers_after_failure(run, peers, shard.id)
         session.flush()
         states = tuple(
             session.scalars(
@@ -594,7 +605,7 @@ def _finish_shard(agent_id, shard_id, payload):
         if states and all(item in TERMINAL_SHARD_STATES for item in states):
             run.finished_at = datetime.now(timezone.utc)
             if run.state == "stopping":
-                run.state = "cancelled"
+                run.state = "failed" if (run.summary or {}).get("automatic_stop") else "cancelled"
                 run.verdict = "inconclusive"
             elif any(item == "failed" for item in states):
                 run.state = "failed"

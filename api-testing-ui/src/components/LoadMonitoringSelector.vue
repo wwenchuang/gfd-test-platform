@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { monitoringMetricLabel, monitoringScopeLabel } from '../utils/monitoringMetrics'
 import { computed, ref, watch } from 'vue'
 import EnvironmentMonitoringPanel from './EnvironmentMonitoringPanel.vue'
 import { monitoringApi, type MonitoringSelection, type MonitoringService } from '../api/monitoring'
@@ -53,13 +54,13 @@ const selected = (id: string) => props.modelValue.services.find(item => item.rev
 </script>
 <template>
   <section class="monitoring-selection" aria-label="本次服务监控">
-    <header><div><h3>服务监控（可选）</h3><p>选择本次观测的整机 CPU / 内存；不代表单个服务或容器的资源使用。</p></div><button v-if="canManage" type="button" class="secondary-command" :disabled="!environmentRevisionId" @click="configuring = !configuring">{{ configuring ? '收起配置' : '新增 / 配置监控服务' }}</button></header>
+    <header><div><h3>服务监控（可选）</h3><p>选择本次观测的资源范围与指标；整机、容器与 Pod 内各容器按配置分别展示。</p></div><button v-if="canManage" type="button" class="secondary-command" :disabled="!environmentRevisionId" @click="configuring = !configuring">{{ configuring ? '收起配置' : '新增 / 配置监控服务' }}</button></header>
     <p v-if="cleared" role="status">环境已切换，已清除上个环境的监控选择。</p>
     <p v-if="loading" role="status">正在读取当前环境监控…</p>
     <p v-else-if="error" role="alert">{{ error }} <button type="button" class="secondary-command" @click="refresh">重试</button></p>
     <p v-else-if="!items.length">当前环境暂无可用监控；可新增配置，或不附加资源监控继续创建草稿。</p>
     <article v-for="item in items" :key="item.id" class="monitoring-choice">
-      <label><input :data-testid="`monitor-select-${item.id}`" type="checkbox" :checked="Boolean(selected(item.revision_id))" @change="toggle(item, ($event.target as HTMLInputElement).checked)" /><span><strong>{{ item.name }}</strong><small>{{ item.labels.instance }} · 整机 · {{ item.metrics.includes('cpu_percent') ? 'CPU' : '' }} {{ item.metrics.includes('memory_percent') ? '内存' : '' }}</small><small>{{ item.last_check?.message || '尚未检查；启动前将由后台验证' }}</small></span></label>
+      <label><input :data-testid="`monitor-select-${item.id}`" type="checkbox" :checked="Boolean(selected(item.revision_id))" @change="toggle(item, ($event.target as HTMLInputElement).checked)" /><span><strong>{{ item.name }}</strong><small>{{ Object.values(item.labels).join(' / ') }} · {{ monitoringScopeLabel(item.deployment) }} · {{ item.metrics.map(monitoringMetricLabel).join('、') }}</small><small>{{ item.last_check?.message || '尚未检查；启动前将由后台验证' }}</small></span></label>
       <button v-if="canCheck" type="button" class="secondary-command" :disabled="Boolean(checking)" @click="check(item)">{{ checking === item.id ? '检查中…' : '测试连接' }}</button>
       <label v-if="selected(item.revision_id)"><input :data-testid="`monitor-required-${item.id}`" type="checkbox" :checked="selected(item.revision_id)?.required" @change="required(item.revision_id, ($event.target as HTMLInputElement).checked)" />本次必选</label>
     </article>

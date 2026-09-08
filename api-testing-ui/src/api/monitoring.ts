@@ -1,13 +1,14 @@
 import { apiClient } from './client'
 
+export type MonitoringDeployment = 'host' | 'container' | 'pod' | 'postgres'
 export type MonitoringCheck = { state: 'ready' | 'missing' | 'failed'; message: string; checked_at?: string }
 export type MonitoringService = {
   id: string; revision_id: string; environment_id: string; name: string; description: string
-  status: string; source_url: string; labels: Record<string, string>; metrics: string[]
+  deployment?: MonitoringDeployment; status: string; source_url: string; labels: Record<string, string>; metrics: string[]
   step_seconds: number; has_token: boolean; last_check?: MonitoringCheck | null
 }
 export type MonitoringPayload = {
-  environment_revision_id: string; name: string; description: string; deployment: 'host'
+  environment_revision_id: string; name: string; description: string; deployment: MonitoringDeployment
   source_url: string; labels: Record<string, string>; metrics: string[]; step_seconds: number
   token?: string; authorize_host?: boolean
 }

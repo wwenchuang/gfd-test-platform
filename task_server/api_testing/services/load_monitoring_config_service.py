@@ -7,7 +7,7 @@ from .. import access
 from ..crypto import encrypt_secret, decrypt_secret, secret_fingerprint
 from ..models.environment import ApiEnvironment, ApiEnvironmentRevision, ApiSecretValue
 from ..models.load_monitoring import ApiLoadMonitoringService, ApiLoadMonitoringRevision
-from .load_monitoring_prometheus import PrometheusMonitoringClient, build_query
+from .load_monitoring_prometheus import PrometheusMonitoringClient, build_query, SUPPORTED_METRICS, template_version
 
 
 class LoadMonitoringConfigError(ValueError):
@@ -71,9 +71,11 @@ class LoadMonitoringConfigService:
         step = definition['step_seconds']
         if isinstance(step, bool) or not isinstance(step, int) or not 5 <= step <= 300:
             raise LoadMonitoringConfigError('监控采样间隔应为 5 至 300 秒')
+        if not isinstance(definition['deployment'], str) or definition['deployment'] not in SUPPORTED_METRICS:
+            raise LoadMonitoringConfigError('不支持该资源范围')
         metrics = definition['metrics']
-        if not isinstance(metrics, list) or not metrics or len(metrics) > 2 or any(m not in ('cpu_percent', 'memory_percent') for m in metrics) or len(set(metrics)) != len(metrics):
-            raise LoadMonitoringConfigError('请选择支持的 CPU 或内存指标')
+        if not isinstance(metrics, list) or not metrics or len(metrics) > 16 or any(not isinstance(m, str) or m not in SUPPORTED_METRICS.get(definition['deployment'], ()) for m in metrics) or len(set(metrics)) != len(metrics):
+            raise LoadMonitoringConfigError('请选择该资源范围支持的监控指标')
         for metric in metrics:
             build_query(metric, definition['deployment'], definition.get('labels'))
         source_changed = previous is None or previous.definition['source_url'] != definition['source_url']
@@ -155,8 +157,8 @@ class LoadMonitoringConfigService:
             result.pop('last_check', None)
             result['credential_ref'] = revision.secret_value_id
             result['queries'] = {m: build_query(m, result['deployment'], result['labels']) for m in result['metrics']}
-            result['metric_scope'] = 'host'
-            result['template_version'] = 'node-exporter-host-v1'
+            result['metric_scope'] = result['deployment']
+            result['template_version'] = template_version(result['deployment'])
             return result
 
     def _definition_for_revision(self, revision_id):
@@ -165,7 +167,7 @@ class LoadMonitoringConfigService:
             if revision is None:
                 raise LookupError('监控配置版本不存在')
             return dict(copy.deepcopy(revision.definition), revision_id=revision.id,
-                        id=revision.service_id, template_version='node-exporter-host-v1', metric_scope='host')
+                        id=revision.service_id, template_version=template_version(revision.definition['deployment']), metric_scope=revision.definition['deployment'])
 
     def require_ready(self, revision_id, *, actor, max_age_seconds=300):
         with self._session_factory() as session:

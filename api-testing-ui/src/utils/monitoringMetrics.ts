@@ -1,0 +1,15 @@
+import type { MonitoringDeployment } from '../api/monitoring'
+
+export const monitoringMetricOptions: Record<MonitoringDeployment, Array<{ key: string; label: string }>> = {
+  host: [{key:'cpu_percent',label:'整机 CPU 使用率'},{key:'memory_percent',label:'整机内存使用率'},
+    {key:'network_receive_bytes_per_second',label:'网络接收速率'},{key:'network_transmit_bytes_per_second',label:'网络发送速率'},
+    {key:'disk_read_bytes_per_second',label:'磁盘读取吞吐'},{key:'disk_write_bytes_per_second',label:'磁盘写入吞吐'},
+    {key:'disk_read_iops',label:'磁盘读取 IOPS'},{key:'disk_write_iops',label:'磁盘写入 IOPS'},
+    {key:'filesystem_used_bytes',label:'文件系统已用空间'},{key:'filesystem_used_percent',label:'文件系统空间使用率'},
+    {key:'disk_read_latency_ms',label:'磁盘平均读取延迟'},{key:'disk_write_latency_ms',label:'磁盘平均写入延迟'}],
+  postgres: [{key:'postgres_connections',label:'数据库连接数'},{key:'postgres_commits_per_second',label:'数据库提交事务速率'},{key:'postgres_rollbacks_per_second',label:'数据库回滚事务速率'}],
+  container: [{key:'cpu_cores',label:'容器 CPU 核数与可用配额'},{key:'memory_working_set_bytes',label:'容器内存 working set'}],
+  pod: [{key:'cpu_cores',label:'Pod 内各容器 CPU 核数与可用配额'},{key:'memory_working_set_bytes',label:'Pod 内各容器内存 working set'}],
+}
+export function monitoringMetricLabel(key: string): string { return Object.values(monitoringMetricOptions).flat().find(item => item.key === key)?.label || key }
+export function monitoringScopeLabel(scope?: string): string { return ({host:'整机',postgres:'PostgreSQL 指定数据库',container:'指定容器',pod:'指定 Pod 内各容器'} as Record<string,string>)[scope || 'host'] || scope || '整机' }

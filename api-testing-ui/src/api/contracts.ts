@@ -137,6 +137,8 @@ export interface LoadRunEvent {
 }
 
 export interface LoadReport {
+  test_context?: Record<string, string>
+  stop_policy?: Record<string, number> | null
   run_id: string
   verdict: Exclude<LoadVerdict, null>
   verdict_label: string

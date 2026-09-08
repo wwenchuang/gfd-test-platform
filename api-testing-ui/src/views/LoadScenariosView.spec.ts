@@ -8,9 +8,10 @@ import { useAssetsStore } from '../stores/assets'
 import { useContextStore } from '../stores/context'
 import { useLoadTestingStore } from '../stores/loadTesting'
 import LoadScenariosView from './LoadScenariosView.vue'
+import { apiClient } from '../api/client'
 
 describe('LoadScenariosView', () => {
-  beforeEach(() => { setActivePinia(createPinia()); vi.restoreAllMocks() })
+  beforeEach(() => { setActivePinia(createPinia()); vi.restoreAllMocks(); vi.spyOn(apiClient, 'get').mockResolvedValue({ data: { datasets: [] }, request_id: 'test' }) })
   it('opens, cancels and saves the scenario wizard while showing backend rejection', async () => {
     const context = useContextStore(); Object.assign(context, { projectId: 'p1', sourceRevisionId: 'src1', projects: [{ id: 'p1', name: '3D家用' }] })
     vi.spyOn(context, 'loadSavedContext').mockResolvedValue(); vi.spyOn(context, 'loadOptions').mockResolvedValue()

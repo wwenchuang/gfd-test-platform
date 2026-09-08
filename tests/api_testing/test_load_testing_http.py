@@ -346,3 +346,29 @@ def test_run_delete_cleans_terminal_history_but_blocks_active_execution(load_fac
     with pytest.raises(LoadRunError, match="执行中的压测不能删除") as caught:
         _call(load_factory, "DELETE", f"/load-runs/{active_id}", "runner")
     assert caught.value.code == "load_run_active"
+
+
+def test_report_export_is_scoped_authenticated_and_final_only(load_factory, catalog, users):
+    from base64 import b64decode
+    from io import BytesIO
+    from openpyxl import load_workbook
+    from task_server.api_testing.http import ApiHttpError
+    with load_factory.begin() as session:
+        scenario = ApiLoadScenario(project_id=catalog['project'].id, name='导出场景', scenario_type='single_interface', **_audit())
+        session.add(scenario); session.flush()
+        version = ApiLoadScenarioVersion(scenario_id=scenario.id, version_number=1, definition=_definition(), source_snapshot={}, validation_summary={}, compiler_version='k6-safe-v1', content_hash='e'*64, **_audit())
+        session.add(version); session.flush()
+        run = ApiLoadRun(project_id=catalog['project'].id, scenario_version_id=version.id, environment_revision_id=catalog['revision'].id, load_model='constant-vus', queue_priority='normal', configuration={}, state='running', **_audit())
+        session.add(run); session.flush(); run_id = run.id
+    path = f'/load-runs/{run_id}/report-export'
+    with pytest.raises(ApiHttpError) as error:
+        _call(load_factory, 'GET', path, 'viewer', query={'format':'xlsx'})
+    assert error.value.status == 409
+    with load_factory.begin() as session: session.get(ApiLoadRun, run_id).state = 'finished'
+    with pytest.raises(access.AccessDeniedError):
+        _call(load_factory, 'GET', path, 'other', query={'format':'xlsx'})
+    result, status = _call(load_factory, 'GET', path, 'viewer', query={'format':'xlsx'})
+    assert status == 200 and result['filename'].endswith('.xlsx')
+    workbook = load_workbook(BytesIO(b64decode(result['content_base64'])))
+    assert '证据不足' in [c.value for row in workbook['测试概述'] for c in row]
+    with pytest.raises(ApiHttpError): _call(load_factory, 'GET', path, 'viewer', query={'format':'x'})

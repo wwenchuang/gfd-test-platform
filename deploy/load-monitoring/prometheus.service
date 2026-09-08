@@ -1,0 +1,27 @@
+[Unit]
+Description=Load monitoring bounded local Prometheus
+After=network.target node-exporter.service
+
+[Service]
+DynamicUser=yes
+StateDirectory=load-monitoring-prometheus
+ExecStart=/usr/local/bin/prometheus --config.file=/etc/load-monitoring/prometheus.yml --storage.tsdb.path=/var/lib/load-monitoring-prometheus --storage.tsdb.retention.time=7d --storage.tsdb.retention.size=2GB --web.listen-address=127.0.0.1:9090 --query.timeout=8s --query.max-concurrency=4 --query.max-samples=500000
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+MemoryMax=512M
+CPUQuota=50%
+TasksMax=128
+
+[Install]
+WantedBy=multi-user.target

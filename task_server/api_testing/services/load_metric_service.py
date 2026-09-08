@@ -10,6 +10,7 @@ from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert
 
 from ..events import LoadEventStream
+from .load_resource_service import merge_generator_resources, validate_generator_resources
 from ..models.load_testing import (
     ApiLoadEvent,
     ApiLoadMetricBucket,
@@ -24,6 +25,7 @@ BUCKET_SECONDS = 5
 MAX_BUCKETS = 200
 LATENCY_BOUNDS_MS = (10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000)
 COUNTER_FIELDS = (
+    "workflow_starts",
     "requests",
     "iterations",
     "dropped_iterations",
@@ -84,26 +86,30 @@ class LoadMetricService:
         if not isinstance(batch_id, str) or not _BATCH_ID.fullmatch(batch_id):
             raise LoadMetricError("指标批次ID格式无效")
         buckets = payload.get("buckets")
-        if not isinstance(buckets, list) or not 1 <= len(buckets) <= MAX_BUCKETS:
+        resources = None
+        if "load_generator_resources" in payload:
+            try:
+                resources = validate_generator_resources(payload["load_generator_resources"])
+            except ValueError as error:
+                raise LoadMetricError(str(error)) from error
+        if not isinstance(buckets, list) or not 0 <= len(buckets) <= MAX_BUCKETS or not buckets and not resources:
             raise LoadMetricError(f"每批指标必须包含1到{MAX_BUCKETS}个窗口")
 
         with self.session_factory.begin() as session:
-            shard = session.scalar(
-                select(ApiLoadRunShard)
-                .where(ApiLoadRunShard.id == shard_id)
-                .with_for_update()
-            )
-            if shard is None:
+            snapshot = session.execute(select(ApiLoadRunShard.agent_id, ApiLoadRunShard.run_id).where(ApiLoadRunShard.id == shard_id)).one_or_none()
+            if snapshot is None:
                 raise LoadMetricError("压测分片不存在", status=404, code="shard_not_found")
-            if shard.agent_id != agent_id:
+            if snapshot.agent_id != agent_id:
                 raise LoadMetricError("该分片不属于当前压测节点", status=403, code="shard_not_owned")
-            if shard.state in {"finished", "failed", "cancelled"}:
+            # All lifecycle mutations acquire the run before its shards.
+            run = session.scalar(select(ApiLoadRun).where(ApiLoadRun.id == snapshot.run_id).with_for_update())
+            shard = session.scalar(select(ApiLoadRunShard).where(ApiLoadRunShard.id == shard_id).with_for_update())
+            if shard is None or shard.agent_id != agent_id:
+                raise LoadMetricError("该分片不存在或不属于当前压测节点", status=403, code="shard_not_owned")
+            if shard.state in {"finished", "failed", "cancelled", "lost"}:
                 raise LoadMetricError("压测分片已经结束，不能继续上报指标", status=409, code="shard_finished")
-            if shard.state != "running":
+            if shard.state not in {"running", "stopping"}:
                 raise LoadMetricError("压测分片尚未开始，不能上报指标", status=409, code="shard_not_running")
-            run = session.scalar(
-                select(ApiLoadRun).where(ApiLoadRun.id == shard.run_id).with_for_update()
-            )
             if run is None or run.state not in {"running", "stopping"}:
                 raise LoadMetricError("压测任务当前状态不接受指标", status=409, code="run_not_running")
             duplicate = session.scalar(
@@ -125,7 +131,18 @@ class LoadMetricService:
                 if isinstance(item, dict) and item.get("id")
             }
             known_steps.add("all")
+            workload = (run.configuration or {}).get("workload") or {}
+            if workload.get("executor") in {"ramping-arrival-rate", "ramping-vus"}:
+                known_steps.update(f"__load_stage_{index}" for index in range(len(workload.get("stages") or [])))
+                known_steps.add("__load_stage_outside")
             normalized = [self._bucket(item, known_steps) for item in buckets]
+            if resources is not None:
+                previous_resources = (shard.summary or {}).get("load_generator_resources") or {}
+                try:
+                    resources = merge_generator_resources(previous_resources, resources)
+                except ValueError as error:
+                    raise LoadMetricError(str(error)) from error
+                shard.summary = {**(shard.summary or {}), "load_generator_resources": resources}
             keys = [(item["step_id"], item["started_at"]) for item in normalized]
             if len(keys) != len(set(keys)):
                 raise LoadMetricError("同一批指标不能重复包含相同步骤和时间窗口")
@@ -224,6 +241,13 @@ class LoadMetricService:
             if step_id != "all":
                 raise LoadMetricError("实际VU采样仅允许在all窗口上报")
             normalized["vu_gauge"] = cls._vu_gauge(metrics["vu_gauge"], started_at)
+        if step_id.startswith("__load_stage_"):
+            if any(normalized[name] for name in COUNTER_FIELDS if name != "workflow_starts") or any(normalized["latency_histogram"][name] for name in ("count", "sum_ms", "max_ms")):
+                raise LoadMetricError("阶段发起窗口不能混入请求、业务或耗时样本")
+            if any((normalized.get("latency_ms") or {}).values()):
+                raise LoadMetricError("阶段发起窗口不能填充响应时间")
+        elif normalized["workflow_starts"]:
+            raise LoadMetricError("阶段发起计数只能归属已配置的阶段窗口")
         return {"step_id": step_id, "started_at": started_at, "metrics": normalized}
 
     @staticmethod

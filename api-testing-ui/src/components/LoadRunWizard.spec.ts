@@ -120,3 +120,15 @@ describe('LoadRunWizard', () => {
     expect(wrapper.get('[data-testid="load-run-submit"]').attributes('disabled')).toBeDefined()
   })
 })
+
+it('applies editable business acceptance criteria and blocks invalid percentages', async()=>{
+ const wrapper=mount(LoadRunWizard,{props:{scenario,environments,agents}})
+ await flushPromises();await wrapper.get('[data-testid="load-agent-a1"]').setValue(true)
+ await wrapper.get('[data-testid="threshold-business-enabled"]').setValue(true)
+ await wrapper.get('[data-testid="threshold-business"]').setValue('2')
+ await wrapper.get('[data-testid="threshold-http"]').setValue('101')
+ expect(wrapper.get('[data-testid="load-run-submit"]').attributes('disabled')).toBeDefined()
+ await wrapper.get('[data-testid="threshold-http"]').setValue('0.5')
+ await wrapper.get('[data-testid="load-run-submit"]').trigger('click')
+ expect(wrapper.emitted('submit')?.[0]?.[0]).toMatchObject({test_context:{purpose:'smoke'},thresholds:{http_error_rate:{value:.005},workflow_failure_rate:{value:0},business_failure_rate:{value:.02}}})
+})

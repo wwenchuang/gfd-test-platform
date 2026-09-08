@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 
 from sqlalchemy import select
 from ..models.load_testing import ApiLoadRun
-from .load_monitoring_prometheus import build_query
+from .load_monitoring_prometheus import build_query, metric_selector, HOST_RATES, POSTGRES_METRICS, DISK_LATENCIES, template_version
 
 MAX_SERVICES = 10
 MAX_OUTPUT_POINTS = 40000
@@ -37,7 +37,7 @@ def _finite(value):
 
 def _unavailable_services(snapshots, message, state='failed'):
     return [{'revision_id': item.get('revision_id'), 'required': bool(item.get('required')),
-             'name': item.get('name', '监控服务'), 'scope': 'host', 'metrics': [],
+             'name': item.get('name', '监控服务'), 'scope': item.get('metric_scope', item.get('deployment', 'host')), 'metrics': [],
              'state': state, 'message': message} for item in snapshots]
 
 
@@ -47,7 +47,48 @@ def _identity(labels):
 
 def _queries(metric, definition):
     query = build_query(metric, definition['deployment'], definition['labels'])
-    selector = ','.join(k + '=' + json.dumps(v, ensure_ascii=False) for k, v in sorted(definition['labels'].items()))
+    selector = metric_selector(definition['deployment'], definition['labels'])
+    max_age = max(60, definition['step_seconds'] * 3)
+    if metric.startswith('filesystem_used_') or metric in DISK_LATENCIES:
+        if metric in DISK_LATENCIES:
+            left, right = (name + '{' + selector + '}' for name in DISK_LATENCIES[metric])
+            capacity = 'rate(' + right + '[2m])'
+        else:
+            left, right = ('node_filesystem_' + name + '_bytes{' + selector + '}' for name in ('size', 'free'))
+            capacity = left
+        a, b = 'timestamp(' + left + ')', 'timestamp(' + right + ')'
+        freshness = '(' + a + ' + ' + b + ' - abs(' + a + ' - ' + b + ')) / 2'
+        if metric in DISK_LATENCIES:
+            for raw in (left, right):
+                freshness += ' and (timestamp(' + raw + ' offset 2m) >= time() - 120 - ' + str(max_age) + ')'
+        return query, freshness, capacity
+    if metric in POSTGRES_METRICS:
+        raw = POSTGRES_METRICS[metric][0] + '{' + selector + '}'
+        freshness = 'timestamp(' + raw + ')'
+        if metric != 'postgres_connections':
+            freshness += ' and (timestamp(' + raw + ' offset 2m) >= time() - 120 - ' + str(max_age) + ')'
+        return query, freshness, None
+    if metric in HOST_RATES or metric in ('cpu_cores', 'memory_working_set_bytes'):
+        raw = ((HOST_RATES[metric][0] if metric in HOST_RATES else
+                'container_cpu_usage_seconds_total' if metric == 'cpu_cores' else
+                'container_memory_working_set_bytes') + '{' + selector + '}')
+        freshness = 'timestamp(' + raw + ')'
+        if metric != 'memory_working_set_bytes':
+            history = '(timestamp(' + raw + ' offset 2m) >= time() - 120 - ' + str(max_age) + ')'
+            fresh_raw = raw + ' and ' + history
+            freshness = 'timestamp(' + raw + ') and ' + history
+            if metric == 'cpu_cores':
+                # Every current CPU series must have history; partial cores cannot qualify.
+                freshness = ('min without (cpu) (timestamp(' + raw + ')) and '
+                             '(count without (cpu) (' + fresh_raw + ') == count without (cpu) (' + raw + '))')
+        capacity = None
+        if metric == 'cpu_cores':
+            quota = 'container_spec_cpu_quota{' + selector + '}'
+            period = 'container_spec_cpu_period{' + selector + '}'
+            capacity = ('(' + quota + ' > 0) / (' + period + ' > 0) and '
+                        '(timestamp(' + quota + ') >= time() - ' + str(max_age) + ') and '
+                        '(timestamp(' + period + ') >= time() - ' + str(max_age) + ')')
+        return query, freshness, capacity
     if metric == 'cpu_percent':
         raw = 'node_cpu_seconds_total{' + selector + ',mode="idle"}'
         freshness = 'min without (cpu, mode) (timestamp(' + raw + '))'
@@ -73,6 +114,36 @@ def _queries(metric, definition):
     return query, freshness, capacity
 
 
+def _metadata(key, deployment):
+    if key in ('cpu_percent', 'memory_percent'):
+        return {}
+    if key in HOST_RATES:
+        return {'label': HOST_RATES[key][1], 'unit': HOST_RATES[key][2], 'scope': 'host',
+                'denominator': 'not_applicable', 'denominator_unit': '', 'used_unit': HOST_RATES[key][2],
+                'semantics': '主机逐设备两分钟平均速率；保留设备标签，不相加物理盘/分区或虚拟网卡；不是空间占用或单服务资源'}
+    if key in POSTGRES_METRICS:
+        return {'label': POSTGRES_METRICS[key][1], 'unit': POSTGRES_METRICS[key][2], 'scope': 'postgres',
+                'denominator': 'not_applicable', 'denominator_unit': '', 'used_unit': POSTGRES_METRICS[key][2],
+                'semantics': 'postgres_exporter pg_stat_database，精确实例和数据库；连接包含空闲连接，提交/回滚使用两分钟 rate，不等于业务链路成功/失败'}
+    if key in DISK_LATENCIES:
+        return {'label': '磁盘平均读取延迟' if key == 'disk_read_latency_ms' else '磁盘平均写入延迟',
+                'unit': 'ms', 'scope': 'host', 'denominator': 'disk_operations_per_second',
+                'denominator_unit': 'IOPS', 'used_unit': 'ms',
+                'semantics': '逐设备两分钟 rate(累计 I/O 耗时) / rate(完成操作数)；平均延迟不是 P95，零操作时延迟未知，不填零'}
+    if key.startswith('filesystem_used_'):
+        return {'label': '文件系统空间使用率' if key.endswith('percent') else '文件系统已用空间',
+                'unit': '%' if key.endswith('percent') else 'bytes', 'scope': 'host',
+                'denominator': 'filesystem_size_bytes', 'denominator_unit': 'bytes', 'used_unit': 'bytes',
+                'semantics': '逐文件系统 (size - free) / size，保留设备、挂载点和类型；含保留空间口径差异，空间占用不是 I/O 压力，不合并重复挂载'}
+    cpu = key == 'cpu_cores'
+    return {'label': '容器 CPU 使用核数' if cpu else '容器内存 working set',
+            'unit': 'cores' if cpu else 'bytes', 'scope': deployment,
+            'denominator': 'container_cpu_quota_cores' if cpu else 'not_available',
+            'denominator_unit': 'cores' if cpu else '', 'used_unit': 'cores' if cpu else 'bytes',
+            'semantics': ('两分钟 rate；CPU 占比只使用同一容器新鲜的正 quota / period，无额度时仍显示实际核数' if cpu else
+                          'cAdvisor working set，不是 RSS；未验证容器硬限制，不计算内存百分比')}
+
+
 class LoadMonitoringCollectionService:
     def __init__(self, session_factory, *, monitoring_service, now=None):
         self.session_factory = session_factory
@@ -84,7 +155,8 @@ class LoadMonitoringCollectionService:
         query, freshness_query, capacity_query = _queries(key, definition)
         series = client.query_range(query, start, end, step)
         freshness = client.query_range(freshness_query, start, end, step)
-        capacity = client.query_range(capacity_query, start, end, step)
+        capacity = client.query_range(capacity_query, start, end, step) if capacity_query else []
+        percentage = key in ('cpu_percent', 'memory_percent', 'filesystem_used_percent')
         fresh_map = {_identity(s['labels']): {p['timestamp']: p['value'] for p in s['points']} for s in freshness}
         cap_map = {_identity(s['labels']): {p['timestamp']: p['value'] for p in s['points']} for s in capacity}
         max_age = max(60, step * 3)
@@ -100,9 +172,10 @@ class LoadMonitoringCollectionService:
                 source = fresh_map.get(identity, {}).get(t)
                 denominator = cap_map.get(identity, {}).get(t)
                 valid = (_finite(source) and 0 <= t - source <= max_age
-                         and _finite(p['value']) and _finite(denominator) and denominator > 0)
+                         and _finite(p['value']) and (not percentage or (_finite(denominator) and denominator > 0)))
                 p['source_timestamp'] = source if _finite(source) else None
                 p['denominator_value'] = denominator if _finite(denominator) and denominator > 0 else None
+                p['missing_reason'] = ('no_operations' if key in DISK_LATENCIES and denominator == 0 and _finite(source) and 0 <= t - source <= max_age else None)
                 if valid:
                     good += 1
                     values.append(p['value'])
@@ -110,16 +183,19 @@ class LoadMonitoringCollectionService:
                     source_times.add(source)
                     instance_times.append(t)
                     instance_sources.add(source)
-                    p['used_value'] = p['value'] * denominator / 100
+                    p['used_value'] = p['value'] * denominator / 100 if percentage else p['value']
+                    p['utilization_percent'] = (100 * p['value'] / denominator if key == 'cpu_cores' and _finite(denominator) and denominator > 0 else None)
                 else:
                     p['value'] = None
                     p['used_value'] = None
+                    p['utilization_percent'] = None
             boundaries = [start] + sorted(set(instance_times)) + [end]
             gaps.extend(b - a for a, b in zip(boundaries, boundaries[1:]))
             scrapes = sorted(instance_sources)
             scrape_gaps.extend(b - a for a, b in zip(scrapes, scrapes[1:]))
         # Coverage counts evaluation positions only; source cadence is separately visible.
-        return {'key': key, 'label': '主机 CPU 使用率' if key == 'cpu_percent' else '主机内存使用率',
+        metadata = _metadata(key, definition['deployment'])
+        return dict({'key': key, 'label': '主机 CPU 使用率' if key == 'cpu_percent' else '主机内存使用率',
                 'unit': '%', 'scope': 'host', 'denominator': 'host_cpu_cores' if key == 'cpu_percent' else 'host_memory_total_bytes',
                 'denominator_unit': 'cores' if key == 'cpu_percent' else 'bytes',
                 'used_unit': 'cores' if key == 'cpu_percent' else 'bytes',
@@ -135,7 +211,7 @@ class LoadMonitoringCollectionService:
                              'max_observed_scrape_gap_seconds': max(scrape_gaps) if scrape_gaps else None,
                              'freshness_limit_seconds': max_age},
                 'query_step_seconds': step, 'timestamp_kind': 'promql_evaluation',
-                'template_version': 'node-exporter-host-v1'}
+                'template_version': template_version(definition['deployment'])}, **metadata)
 
     def collect_window(self, snapshots, *, start, end, terminal, now):
         # Prometheus stores millisecond timestamps; a whole-second grid is stable
@@ -153,7 +229,7 @@ class LoadMonitoringCollectionService:
         point_budget_exhausted = False
         for snapshot in snapshots:
             item = {'revision_id': snapshot.get('revision_id'), 'required': bool(snapshot.get('required')),
-                    'name': snapshot.get('name', '监控服务'), 'scope': 'host', 'metrics': [], 'state': 'failed'}
+                    'name': snapshot.get('name', '监控服务'), 'scope': snapshot.get('metric_scope', snapshot.get('deployment', 'host')), 'metrics': [], 'state': 'failed'}
             result['services'].append(item)
             try:
                 if point_budget_exhausted:
@@ -164,7 +240,7 @@ class LoadMonitoringCollectionService:
                     continue
                 definition = self.monitoring_service._definition_for_revision(snapshot['revision_id'])
                 item.update(name=definition['name'], source_url=definition['source_url'],
-                            labels=copy.deepcopy(definition['labels']), step_seconds=definition['step_seconds'])
+                            labels=copy.deepcopy(definition['labels']), step_seconds=definition['step_seconds'], scope=definition['deployment'])
                 client = self.monitoring_service._client_for_revision(snapshot['revision_id'])
                 for key in definition['metrics']:
                     if time.monotonic() >= deadline:
@@ -177,10 +253,10 @@ class LoadMonitoringCollectionService:
                     output_points += points
                     item['metrics'].append(metric)
                 valid = bool(item['metrics']) and all(m['coverage']['valid_ratio'] >= 1 for m in item['metrics'])
-                item['instance_count'] = len({_identity(s['labels']) for m in item['metrics'] for s in m['series']})
+                item['instance_count'] = len({(s['labels'].get('instance'), s['labels'].get('namespace'), s['labels'].get('pod'), s['labels'].get('id'), s['labels'].get('container'), s['labels'].get('datname')) for m in item['metrics'] for s in m['series']})
                 item['state'] = ('completed' if terminal else 'collecting') if valid else 'missing'
-                item['message'] = ('主机维度监控；不能据此判断单个服务进程资源' if valid
-                                   else '部分指标缺失、样本过期或覆盖不完整，不能按零值判断')
+                item['message'] = (('主机维度监控；不能据此判断单个服务进程资源' if definition['deployment'] == 'host' else 'PostgreSQL 指定数据库指标；事务速率不等于业务链路吞吐' if definition['deployment'] == 'postgres' else '容器实际资源；Pod 按容器分列，未聚合为整个服务；额度未知时不计算百分比') if valid
+                                   else '部分指标缺失、无活动样本、样本过期或覆盖不完整，不能按零值判断')
             except OverflowError:
                 item.update(state='failed', message='监控采集总点数超过上限，未保存超限数据')
             except Exception:

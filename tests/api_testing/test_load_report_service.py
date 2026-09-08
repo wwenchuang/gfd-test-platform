@@ -323,3 +323,24 @@ def test_constant_vus_requires_persisted_sustained_actual_samples(load_factory, 
     assert report['verdict'] == ('passed' if with_gauges else 'inconclusive')
     assert report['transport']['requests'] == 50
     assert report['statistics_schema_version'] == 2
+
+
+def test_one_shard_extra_stage_requests_cannot_hide_other_shard_missing(load_factory, load_run_with_shard):
+    from task_server.api_testing.models.load_testing import ApiLoadMetricBucket
+    from tests.api_testing.test_load_testing_repository import _audit
+    run, shard, _ = _prepare(load_factory, load_run_with_shard)
+    with load_factory.begin() as session:
+        saved = session.get(ApiLoadRun,run.id)
+        workload={'executor':'ramping-arrival-rate','start_rate':10,'time_unit':'1s','max_vus':20,'pre_allocated_vus':10,'stages':[{'duration_seconds':10,'target':10}]}
+        saved.configuration={**saved.configuration,'workload':workload};saved.state='finished'
+        first=session.get(ApiLoadRunShard,shard.id);first.state='finished';first.allocation={'rate':5,'vus':10}
+        other=ApiLoadRunShard(run_id=run.id,agent_id=shard.agent_id,sequence=shard.sequence+1,global_sequence=shard.global_sequence+1,allocation={'rate':5,'vus':10},state='finished',**_audit())
+        session.add(other);session.flush();other_id=other.id
+        session.add(ApiLoadMetricBucket(run_id=run.id,shard_id=shard.id,scenario_step_id='__load_stage_0',bucket_started_at=START,bucket_seconds=5,metrics={'workflow_starts':100},**_audit()))
+    report=LoadReportService(load_factory).build(run.id,'load-owner')
+    assert report['load_goal']['stages'][0]['reached']
+    assert not report['load_goal']['reached'] and report['load_goal']['requires_stage_evidence']
+    assert next(s for s in report['load_goal']['shards'] if s['shard_id']==other_id)['requires_stage_evidence']
+    with load_factory.begin() as session:
+        session.add(ApiLoadMetricBucket(run_id=run.id,shard_id=other_id,scenario_step_id='__load_stage_0',bucket_started_at=START,bucket_seconds=5,metrics={'workflow_starts':50},**_audit()))
+    assert LoadReportService(load_factory).build(run.id,'load-owner')['load_goal']['reached']

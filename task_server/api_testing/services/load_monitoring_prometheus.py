@@ -182,24 +182,74 @@ class PrometheusMonitoringClient:
             raise MonitoringQueryError('监控查询失败，请检查连接、权限与数据格式') from None
 
 
-def build_query(metric, deployment, labels):
-    """Host-only node_exporter templates: CPU busy%, memory used/total%.
+HOST_RATES = {
+    'network_receive_bytes_per_second': ('node_network_receive_bytes_total', '网络接收速率', 'bytes/s'),
+    'network_transmit_bytes_per_second': ('node_network_transmit_bytes_total', '网络发送速率', 'bytes/s'),
+    'disk_read_bytes_per_second': ('node_disk_read_bytes_total', '磁盘读取吞吐', 'bytes/s'),
+    'disk_write_bytes_per_second': ('node_disk_written_bytes_total', '磁盘写入吞吐', 'bytes/s'),
+    'disk_read_iops': ('node_disk_reads_completed_total', '磁盘读取 IOPS', 'IOPS'),
+    'disk_write_iops': ('node_disk_writes_completed_total', '磁盘写入 IOPS', 'IOPS'),
+}
+POSTGRES_METRICS = {
+    'postgres_connections': ('pg_stat_database_numbackends', '数据库连接数', 'connections'),
+    'postgres_commits_per_second': ('pg_stat_database_xact_commit', '数据库提交事务速率', 'transactions/s'),
+    'postgres_rollbacks_per_second': ('pg_stat_database_xact_rollback', '数据库回滚事务速率', 'transactions/s'),
+}
+DISK_LATENCIES = {'disk_read_latency_ms': ('node_disk_read_time_seconds_total', 'node_disk_reads_completed_total'),
+                  'disk_write_latency_ms': ('node_disk_write_time_seconds_total', 'node_disk_writes_completed_total')}
+SUPPORTED_METRICS = {'host': ('cpu_percent', 'memory_percent', *HOST_RATES, 'filesystem_used_bytes', 'filesystem_used_percent', *DISK_LATENCIES),
+                     'postgres': tuple(POSTGRES_METRICS),
+                     'container': ('cpu_cores', 'memory_working_set_bytes'),
+                     'pod': ('cpu_cores', 'memory_working_set_bytes')}
 
-    CPU excludes idle (iowait remains busy); memory uses MemAvailable, not MemFree.
-    CPU is a trailing two-minute rate, not an instantaneous reading. It includes
-    pre-run history at the start of a test and smooths short tests; ensure exporter
-    samples exist before the run. Increasing query step does not change this rate
-    window. Neither template proves scrape freshness: report it separately using
-    source health/timestamp evidence, not query evaluation timestamps.
-    Container/service metrics require a separate explicit denominator definition.
-    """
-    if deployment != 'host' or not isinstance(labels, dict) or not labels.get('instance') or len(labels) > 10:
-        raise MonitoringQueryError('请选择主机维度并指定实例，不能替代容器指标')
-    if any(not isinstance(k, str) or not re.fullmatch(r'[a-zA-Z_][a-zA-Z0-9_]*', k) or k in {'mode', 'cpu', '__name__'} or not isinstance(v, str) or len(v) > 512 for k, v in labels.items()):
+
+def template_version(deployment):
+    return {'host': 'node-exporter-host-v1', 'postgres': 'postgres-exporter-database-v1'}.get(deployment, 'cadvisor-container-v1')
+
+
+def metric_selector(deployment, labels):
+    if deployment not in SUPPORTED_METRICS or not isinstance(labels, dict) or not labels.get('instance') or len(labels) > 10:
+        raise MonitoringQueryError('请选择支持的资源范围并指定精确实例')
+    if any(not isinstance(k, str) or not re.fullmatch(r'[a-zA-Z_][a-zA-Z0-9_]*', k) or k in {'mode', 'cpu', '__name__'} or not isinstance(v, str) or not v.strip() or len(v) > 512 for k, v in labels.items()):
         raise MonitoringQueryError('监控标签无效')
+    if deployment == 'postgres' and not labels.get('datname'):
+        raise MonitoringQueryError('PostgreSQL 模板需要精确 instance 与数据库 datname')
+    if deployment == 'container' and (not labels.get('id', '').startswith('/') or labels['id'] == '/'):
+        raise MonitoringQueryError('容器模板需要精确的非根 cgroup id，不能填写宿主机根组')
+    if deployment == 'pod' and (not labels.get('namespace') or not labels.get('pod') or labels.get('container') == 'POD'):
+        raise MonitoringQueryError('Pod 模板需要精确 namespace、pod 和采集实例')
     selector = ','.join(k + '=' + json.dumps(v, ensure_ascii=False) for k, v in sorted(labels.items()))
+    if deployment == 'pod':
+        selector += ',container!="",container!="POD",id!="/"'
+    return selector
+
+
+def build_query(metric, deployment, labels):
+    """Exact scopes only. Host rates retain device; Pod rates retain real container IDs.
+
+    Rate windows include pre-run history. Actual usage is independent of optional
+    container quota: an unlimited container must never acquire a host denominator.
+    """
+    selector = metric_selector(deployment, labels)
+    if metric not in SUPPORTED_METRICS[deployment]:
+        raise MonitoringQueryError('该部署类型不支持所选指标')
+    if metric in POSTGRES_METRICS:
+        raw = POSTGRES_METRICS[metric][0] + '{' + selector + '}'
+        return raw if metric == 'postgres_connections' else 'rate(' + raw + '[2m])'
+    if metric in DISK_LATENCIES:
+        elapsed, operations = (name + '{' + selector + '}' for name in DISK_LATENCIES[metric])
+        return '1000 * rate(' + elapsed + '[2m]) / rate(' + operations + '[2m])'
+    if metric.startswith('filesystem_used_'):
+        size, free = ('node_filesystem_' + name + '_bytes{' + selector + '}' for name in ('size', 'free'))
+        used = '(' + size + ' - ' + free + ')'
+        return ('100 * ' + used + ' / ' + size if metric.endswith('percent') else used) + ' and (' + size + ' > 0)'
     if metric == 'cpu_percent':
         return '100 * (1 - avg without (cpu, mode) (rate(node_cpu_seconds_total{' + selector + ',mode="idle"}[2m])))'
     if metric == 'memory_percent':
         return '100 * (1 - node_memory_MemAvailable_bytes{' + selector + '} / node_memory_MemTotal_bytes{' + selector + '})'
-    raise MonitoringQueryError('监控指标模板不受支持')
+    if metric in HOST_RATES:
+        raw = HOST_RATES[metric][0] + '{' + selector + '}'
+        return 'rate(' + raw + '[2m])'
+    if metric == 'cpu_cores':
+        return 'sum without (cpu) (rate(container_cpu_usage_seconds_total{' + selector + '}[2m]))'
+    return 'container_memory_working_set_bytes{' + selector + '}'

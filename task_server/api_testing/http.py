@@ -168,6 +168,14 @@ def _dispatch(handler, method, qs, path):
             run_id = _uuid(segments[1])
             _scope_load_run(_factory(), run_id, actor)
             return _success(handler, {"ticket": _issue_sse_ticket(settings, actor, run_id, session_digest=handler._api_session_digest)}, request_id, 200)
+        if segments and segments[0] == "load-performance-baselines":
+            from .load_performance_baseline_http import dispatch_load_performance_baseline_request
+            if dispatch_load_performance_baseline_request(handler, method, path, qs, actor):
+                return
+        if segments == ("load-run-comparisons",):
+            from .load_run_comparison_http import dispatch_load_run_comparison_request
+            if dispatch_load_run_comparison_request(handler, method, path, qs, actor):
+                return
         if segments and segments[0] in {
             "load-scenarios", "load-scenario-versions", "load-datasets",
             "load-runs", "load-agents", "load-agent-enrollments", "load-monitoring-services",

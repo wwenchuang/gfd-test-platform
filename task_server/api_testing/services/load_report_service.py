@@ -195,6 +195,10 @@ class LoadReportService:
                     .order_by(ApiLoadSample.created_at, ApiLoadSample.id)
                 )
             )
+            shard_workloads = {}
+            if (run.configuration.get("workload") or {}).get("executor") == "ramping-arrival-rate":
+                from ..load_agent_http import _shard_workload
+                shard_workloads = {shard.id: _shard_workload(session, run, shard, run.configuration["workload"]) for shard in shards}
             version = session.get(ApiLoadScenarioVersion, run.scenario_version_id)
             previous, comparison_reason = self._previous_run(session, run)
             previous_buckets = ()
@@ -223,7 +227,24 @@ class LoadReportService:
         workload = run.configuration.get("workload") or run.configuration
         if workload.get("executor") == "constant-vus":
             aggregate["vu_evidence"] = measured_vus(buckets, shards, int(workload.get("vus") or 0), _configured_load_duration(run.configuration))
+        aggregate["stage_starts"] = {
+            str(index): sum((bucket.metrics or {}).get("workflow_starts", 0) for bucket in buckets if bucket.scenario_step_id == f"__load_stage_{index}")
+            for index in range(len(workload.get("stages") or []))
+        } if any((bucket.metrics or {}).get("workflow_starts", 0) for bucket in buckets) else None
         load_goal = self._load_goal(run.configuration, aggregate)
+        if shard_workloads:
+            shard_goals = []
+            for shard in shards:
+                observed = [bucket for bucket in buckets if bucket.shard_id == shard.id and bucket.scenario_step_id.startswith("__load_stage_") and "workflow_starts" in (bucket.metrics or {})]
+                starts = {str(i): sum((bucket.metrics or {}).get("workflow_starts", 0) for bucket in observed if bucket.scenario_step_id == f"__load_stage_{i}") for i in range(len(shard_workloads[shard.id].get("stages") or []))} if observed else None
+                goal = self._load_goal(shard_workloads[shard.id], {**aggregate, "stage_starts": starts})
+                shard_goals.append({"shard_id": shard.id, "reached": goal["reached"], "requires_stage_evidence": goal["requires_stage_evidence"], "stages": goal["stages"]})
+            load_goal["outside_stage_starts"] = sum((b.metrics or {}).get("workflow_starts", 0) for b in buckets if b.scenario_step_id == "__load_stage_outside")
+            load_goal["shards"] = shard_goals
+            load_goal["requires_stage_evidence"] = any(goal["requires_stage_evidence"] for goal in shard_goals)
+            load_goal["reached"] = load_goal["reached"] and all(goal["reached"] for goal in shard_goals)
+            load_goal["explanation"] += " 每个节点也必须逐阶段达到其分配目标，不能用一个节点的多发请求抵消另一个节点的缺失。"
+
         sections = self._sections(aggregate)
         report_basis = {"load_goal": load_goal, **sections}
         thresholds = self._thresholds(run.configuration.get("thresholds") or {}, report_basis)
@@ -255,6 +276,8 @@ class LoadReportService:
 
         comparison = self._comparison(previous, previous_buckets, aggregate, comparison_reason)
         return {
+            "test_context": copy.deepcopy((run.configuration or {}).get("test_context") or {}),
+            "stop_policy": copy.deepcopy((run.configuration or {}).get("stop_policy")),
             "run_id": run.id,
             "state": run.state,
             "verdict": verdict,
@@ -403,12 +426,17 @@ class LoadReportService:
                 expected += count
                 previous = target
             target_rate = expected / elapsed if elapsed else 0
+            actual_stages = aggregate.get("stage_starts")
+            if actual_stages is not None:
+                for stage in stages:
+                    stage["actual_started_iterations"] = actual_stages.get(str(stage["index"] - 1), 0)
+                    stage["reached"] = stage["actual_started_iterations"] >= stage["expected_iterations"] * .99
             return {"label": "负载目标", "model": executor, "model_label": "阶梯到达率",
                     "target_iterations_per_second": target_rate, "actual_iterations_per_second": actual_rate,
-                    "expected_iterations": expected, "stages": stages, "requires_stage_evidence": True,
+                    "expected_iterations": expected, "stages": stages, "requires_stage_evidence": actual_stages is None,
                     "attainment_rate": round(aggregate["totals"]["iterations"] / expected, 4) if expected else None,
-                    "reached": False,
-                    "explanation": "已按各阶段起止到达率计算计划迭代量；缺少与阶段起点对齐的实际发起证据，不能用全程平均判定阶梯达标。"}
+                    "reached": actual_stages is not None and all(s.get("reached") for s in stages),
+                    "explanation": "按各节点 k6 场景自身起点标记实际发起阶段，逐阶段对照计划迭代量的99%；业务完成和采样完整性另行判断。" if actual_stages is not None else "已按各阶段起止到达率计算计划迭代量；缺少与阶段起点对齐的实际发起证据，不能用全程平均判定阶梯达标。"}
         if executor == "constant-arrival-rate":
             target = float(workload.get("rate") or 0) / (60 if workload.get("time_unit") == "1m" else 1)
             if workload.get("time_unit") not in {None, "1s", "1m"}:
@@ -503,7 +531,7 @@ class LoadReportService:
             if isinstance(item, dict) and item.get("id")
         }
         result = []
-        for step_id in sorted({item.scenario_step_id for item in buckets}):
+        for step_id in sorted({item.scenario_step_id for item in buckets if not item.scenario_step_id.startswith("__load_stage_")}):
             selected = [item for item in buckets if item.scenario_step_id == step_id]
             aggregate = cls._aggregate(type("RunWindow", (), {"started_at": None, "finished_at": None})(), selected)
             sections = cls._sections(aggregate)
@@ -523,6 +551,7 @@ class LoadReportService:
             {
                 "id": item.agent_id,
                 "shard_id": item.id,
+                "load_generator_resources": copy.deepcopy((item.summary or {}).get("load_generator_resources")),
                 "name": agents[item.agent_id].name if item.agent_id in agents else "节点已删除",
                 "state": item.state,
                 "state_label": {
@@ -574,6 +603,9 @@ class LoadReportService:
                 item.environment_revision_id == run.environment_revision_id
                 and item.load_model == run.load_model
                 and ((item.configuration or {}).get("workload") or {}) == workload
+                and ((item.configuration or {}).get("test_context") or {}) == ((run.configuration or {}).get("test_context") or {})
+                and ((item.configuration or {}).get("monitoring") or {}) == ((run.configuration or {}).get("monitoring") or {})
+                and ((item.configuration or {}).get("dataset") or {}) == ((run.configuration or {}).get("dataset") or {})
             ):
                 return item, ""
         latest = candidates[0]
@@ -581,8 +613,10 @@ class LoadReportService:
             reason = "最近历史运行使用了不同的环境版本"
         elif latest.load_model != run.load_model:
             reason = "最近历史运行使用了不同的负载模型"
-        else:
+        elif ((latest.configuration or {}).get("workload") or {}) != workload:
             reason = "最近历史运行使用了不同的负载参数"
+        else:
+            reason = "测试条件、数据快照或监控配置不同，不能直接比较性能改善"
         return latest, reason
 
     @classmethod
