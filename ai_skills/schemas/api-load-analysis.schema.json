@@ -28,7 +28,8 @@
         "load_model": {"type": "string", "enum": ["constant-vus", "ramping-vus", "constant-arrival-rate", "ramping-arrival-rate"]},
         "target": {"type": "number"},
         "duration_seconds": {"type": "integer"},
-        "agent_suggestion": {"type": "string"}
+        "agent_suggestion": {"type": "string"},
+        "workload": {"type": "object", "description": "完整负载配置，遵循平台四种模型编译器契约；阶梯包含起始压力和全部阶段。"}
       }
     },
     "confidence": {

@@ -4,6 +4,7 @@ import { Bell, ChevronDown, History, RefreshCw } from 'lucide-vue-next'
 import { useRoute, useRouter } from 'vue-router'
 import LoadAiAnalysis from '../components/LoadAiAnalysis.vue'
 import LoadMetricChart from '../components/LoadMetricChart.vue'
+import LoadBottleneckEvidence from '../components/LoadBottleneckEvidence.vue'
 import LoadResourceMonitoring from '../components/LoadResourceMonitoring.vue'
 import LoadGeneratorResources from '../components/LoadGeneratorResources.vue'
 import LoadReportExports from '../components/LoadReportExports.vue'
@@ -118,12 +119,12 @@ const configuredPressure = computed(() => {
   const model = selectedRun.value?.load_model || ''
   const stages = Array.isArray(workload.value.stages) ? workload.value.stages.map(objectValue) : []
   if (model.includes('arrival-rate')) {
-    const targets = stages.length ? stages.map(stage => Number(stage.target || 0)) : [Number(workload.value.rate || 0)]
+    const targets = stages.length ? [Number(workload.value.start_rate || 0), ...stages.map(stage => Number(stage.target || 0))] : [Number(workload.value.rate || 0)]
     const target = Math.max(...targets)
     const unit = workload.value.time_unit === '1m' ? '次/分钟' : workload.value.time_unit === '1s' || !workload.value.time_unit ? '次/秒' : `次/${workload.value.time_unit}`
     return target > 0 ? `${stages.length ? '峰值 ' : ''}${target} ${unit}` : '未记录'
   }
-  const targets = stages.length ? stages.map(stage => Number(stage.target || 0)) : [Number(workload.value.vus || 0)]
+  const targets = stages.length ? [Number(workload.value.start_vus || 0), ...stages.map(stage => Number(stage.target || 0))] : [Number(workload.value.vus || 0)]
   const target = Math.max(...targets)
   return target > 0 ? `${stages.length ? '峰值 ' : ''}${target} VU` : '未记录'
 })
@@ -158,12 +159,13 @@ const executiveNext = computed(() => {
   const result = objectValue(analysis.value?.result)
   const policy = objectValue(result.next_run_strategy)
   const nextRun = objectValue(result.next_run)
-  if (policy.can_prefill === true && nextRun.load_model) {
-    return { primary: `按已校验建议配置${loadModelLabel(String(nextRun.load_model))}`, detail: `目标 ${nextRun.target ?? '待确认'} · ${nextRun.duration_seconds ?? '待确认'} 秒；先核对配置和节点，再创建草稿` }
+  if (policy.objective) {
+    return { primary: String(policy.objective), detail: `${String(policy.reason || nextRun.reason || '')}${policy.can_prefill === true ? '；可查看完整参数与曲线差异，核对后创建草稿' : '；补齐下方计划列出的条件后继续验证'}` }
   }
   if (report.value?.evidence.complete === false || (sampleIntegrity.value?.consistent === false && !sampleIntegrity.value.acceptable)) return { primary: '先补齐执行和采样证据', detail: '证据完整后再判断是否调整压力' }
-  if (!report.value?.load_goal.reached) return { primary: '保持场景不变，先达到目标压力', detail: '确认节点容量和调度后复验' }
   if (failedThresholds.value.length) return { primary: '修复未通过项后保持相同条件复验', detail: '先证明问题消失，再考虑提高压力' }
+  if (Number(report.value?.transport.http_error_rate || 0) > 0 || Number(report.value?.business?.failure_rate || 0) > 0 || Number(report.value?.workflow?.failure_rate || 0) > 0) return { primary: '先定位失败步骤，保持原条件复验', detail: '区分预期错误与业务异常，必要时保留依赖拆分验证' }
+  if (!report.value?.load_goal.reached) return { primary: '保留原曲线，核对实际压力与达成计算', detail: '确认各阶段采样和节点容量后复验，不因资源利用率低直接升压' }
   if (!hasServiceResourceSamples.value) return { primary: '保持当前压力复验并接入服务监控', detail: '至少采集被测服务 CPU、内存与资源配额' }
   return { primary: '按当前条件建立基线', detail: '再结合业务目标分阶段小幅升压，每轮重新检查停止条件' }
 })
@@ -338,6 +340,7 @@ function hasAgentError(agent: Record<string, unknown>): boolean {
         <section class="load-latency"><h2>响应速度 · 多数请求有多快？</h2><p class="report-explainer">P95 不是通过率：例如 P95 = 200 毫秒，表示约 95% 的请求在 200 毫秒内完成。耗时越低越好。</p><div><span v-for="item in percentileLabels" :key="item.key">{{ item.name }}<strong>{{ latency(item.key) }} <small>毫秒</small></strong><small>{{ item.description }}</small></span></div><p v-if="!hasRequests" class="report-explainer">本次没有请求样本，“—”表示无法计算，不代表零耗时或零错误。</p></section>
         <section class="load-thresholds"><header><div><h2>性能阈值</h2><p>先确认目标负载已达到，再检查以下标准；全部通过也只代表本次场景和压力条件。</p></div></header><div><article v-for="item in thresholds" :key="String(item.key)" :class="{ failed: !item.passed }"><strong>{{ item.label }}</strong><span>要求 {{ thresholdText(item) }}</span><span>实际 {{ thresholdValue(item, item.actual) }}</span><b>{{ item.status_label || (item.passed ? '通过' : '未通过') }}</b></article><p v-if="!thresholds.length" class="compact-empty">本次未配置性能阈值。</p></div></section>
         <LoadResourceMonitoring :monitoring="monitoring" />
+        <LoadBottleneckEvidence v-if="report.bottleneck_evidence" :rows="report.bottleneck_evidence" />
         <section v-if="report.test_context?.purpose" class="load-statistical-basis"><h2>测试条件</h2><p>测试目的：{{ ({smoke:'流程冒烟',load:'日常负载',stress:'逐步加压',spike:'突发流量',soak:'长时稳定性'} as Record<string,string>)[report.test_context.purpose] || report.test_context.purpose }} · 业务版本：{{ report.test_context.release || '未记录' }}</p><p>数据与账号：{{ report.test_context.data_profile || '未记录' }} · 缓存：{{ ({warm:'已预热',cold:'冷缓存',mixed:'混合状态'} as Record<string,string>)[report.test_context.cache_state || ''] || '未记录' }}</p><p>边界与清理：{{ report.test_context.notes || '未记录' }}</p></section>
         <section v-if="Array.isArray(report.load_goal.stages)" class="load-statistical-basis" data-testid="load-report-stages">
           <template v-if="isRampingVuReport">

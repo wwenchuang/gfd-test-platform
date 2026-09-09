@@ -42,6 +42,8 @@ def test_evidence_package_removes_instructions_and_secrets_but_keeps_diagnosis_f
 
     assert "忽略系统指令" not in encoded
     assert "Bearer abcdef" not in encoded
+    assert len(evidence['bottleneck_evidence']) == 9
+    assert next(row for row in evidence['bottleneck_evidence'] if row['domain'] == 'database')['status'] == 'missing'
     assert evidence["business"]["failure_rate"] == 0.1
     assert evidence["samples"][0] == {
         "evidence_id": "sample.search.business_assertion.1",
@@ -160,8 +162,9 @@ def test_timeout_is_recorded_without_breaking_deterministic_report(load_factory,
 
     failed = service.process(record.id)
 
-    assert failed.state == "failed"
-    assert "超时" in failed.error
+    assert failed.state == "completed"
+    assert failed.result['next_run_strategy']['validation_status'] == 'rule_fallback'
+    assert "超时" in failed.result['confidence']['reason']
     assert service.report_service.build(run.id, "load-owner")["business"]["failure_rate"] == 0.1
 
 
@@ -177,20 +180,24 @@ def test_default_analyzer_supplies_schema_complete_low_confidence_defaults(monke
         fake_run_ai_skill,
     )
 
-    result = _default_analyzer(build_evidence_package(_report()))
-
-    assert set(result) == {
-        "conclusion",
-        "bottleneck_category",
-        "evidence",
-        "recommendations",
-        "next_run",
-        "confidence",
-    }
-    assert result["evidence"] == ["load.goal"]
-    assert result["confidence"]["level"] == "low"
+    with pytest.raises(ValueError, match='规则备用'):
+        _default_analyzer(build_evidence_package(_report()))
     assert captured["repair_invalid_json"] is True
-    assert captured["version"] == "v6"
+    assert captured["version"] == "v7"
+
+
+def test_incomplete_model_output_is_corrected_once_then_uses_rule_plan(load_factory, load_run_with_shard):
+    _repository, run, shard = load_run_with_shard
+    _finish(load_factory, run, shard)
+    calls = []
+    def incomplete(evidence):
+        calls.append(evidence)
+        return {'conclusion':'字段缺少'}
+    service = LoadAiAnalysisService(load_factory, report_service=_Report(_report()), analyzer=incomplete)
+    completed = service.process(service.request(run.id, 'load-owner').id)
+    assert len(calls) == 2 and 'output_correction' in calls[1]
+    assert completed.state == 'completed'
+    assert completed.result['next_run_strategy']['validation_status'] == 'rule_fallback'
 
 
 def test_model_cannot_cite_nonexistent_evidence(load_factory, load_run_with_shard):
@@ -294,6 +301,27 @@ def test_invalid_conclusion_gets_one_correction_without_changing_evidence(load_f
     assert 'output_correction' not in calls[0]
     assert '结论不能复述数值' in calls[1]['output_correction']['validation_error']
     assert completed.result['conclusion'] == _analysis()['conclusion']
+
+
+@pytest.mark.parametrize('invalid_workload', [None, {'executor': 'ramping-vus', 'start_vus': 1, 'stages': [{'duration_seconds': 0, 'target': 2}]}])
+def test_malformed_curve_gets_one_correction(load_factory, load_run_with_shard, invalid_workload):
+    _repository, run, shard = load_run_with_shard
+    _finish(load_factory, run, shard)
+    calls = []
+    workload = {'executor': 'ramping-vus', 'start_vus': 1, 'stages': [{'duration_seconds': 60, 'target': 2}, {'duration_seconds': 60, 'target': 1}]}
+    def analyzer(evidence):
+        calls.append(evidence)
+        proposed = {'load_model': 'ramping-vus', 'target': 2, 'duration_seconds': 120, 'agent_suggestion': '保持当前节点'}
+        if len(calls) > 1:
+            proposed['workload'] = workload
+        elif invalid_workload is not None:
+            proposed['workload'] = invalid_workload
+        return {**_analysis(), 'next_run': proposed}
+    service = LoadAiAnalysisService(load_factory, report_service=_Report(_report()), analyzer=analyzer)
+    completed = service.process(service.request(run.id, 'load-owner').id)
+    assert len(calls) == 2
+    assert 'output_correction' in calls[1]
+    assert completed.result['analysis_status'] == 'completed'
 
 
 @pytest.mark.parametrize("timeout", [False, True])

@@ -165,7 +165,7 @@ it('requires enough total rate and VU for every selected node without raising th
 })
 
 it('prefills next run without dropping original thresholds or monitoring and never auto submits', async () => {
-  const preset = {sourceId:'r',scenarioId:'s1',scenarioVersionId:'old-v',environmentId:'env-v1',executor:'constant-arrival-rate' as const,target:2,timeUnit:'1s' as const,duration:60,maxVus:3,thresholds:{p99_ms:{operator:'less_than',value:777,required:false}},monitoring:{services:[{revision_id:'old-monitor',required:true}],before_seconds:30,after_seconds:90},previous:'1 次/分钟 · 20 秒',stopPolicy:{http_error_rate:.1,grace_seconds:10}}
+  const preset = {sourceId:'r',sourceAnalysisId:'a',scenarioId:'s1',scenarioVersionId:'old-v',environmentId:'env-v1',executor:'constant-arrival-rate' as const,target:2,timeUnit:'1s' as const,duration:60,maxVus:3,thresholds:{p99_ms:{operator:'less_than',value:777,required:false}},monitoring:{services:[{revision_id:'old-monitor',required:true}],before_seconds:30,after_seconds:90},previous:'1 次/分钟 · 20 秒',stopPolicy:{http_error_rate:.1,grace_seconds:10}}
   const wrapper=mount(LoadRunWizard,{props:{scenario,environments,agents,preset}})
   await flushPromises()
   expect(wrapper.emitted('submit')).toBeUndefined()
@@ -182,11 +182,36 @@ it('prefills next run without dropping original thresholds or monitoring and nev
 })
 
 it('requires explicit stages when an AI recommendation provides only a ramping target',async()=>{
- const preset={sourceId:'r',scenarioId:'s1',scenarioVersionId:'v1',environmentId:'env-v1',executor:'ramping-arrival-rate' as const,target:5,timeUnit:'1s' as const,duration:120,maxVus:10,thresholds:{},monitoring:{services:[],before_seconds:60,after_seconds:60},previous:'2 次/秒'}
+ const preset={sourceId:'r',sourceAnalysisId:'a',scenarioId:'s1',scenarioVersionId:'v1',environmentId:'env-v1',executor:'ramping-arrival-rate' as const,target:5,timeUnit:'1s' as const,duration:120,maxVus:10,thresholds:{},monitoring:{services:[],before_seconds:60,after_seconds:60},previous:'2 次/秒'}
  const wrapper=mount(LoadRunWizard,{props:{scenario,environments,agents,preset}})
  await wrapper.get('[data-testid="load-agent-a1"]').setValue(true)
  expect(wrapper.get('[data-testid="load-run-submit"]').attributes('disabled')).toBeDefined()
  await wrapper.get('[data-testid="load-stage-add"]').trigger('click')
  await wrapper.get('[data-testid="load-run-submit"]').trigger('click')
  expect(wrapper.emitted('submit')?.[0]?.[0]).toMatchObject({workload:{executor:'ramping-arrival-rate',stages:[{duration_seconds:120,target:5}]}})
+})
+
+it('emits the complete frozen minute curve and trace source without changing stop conditions',async()=>{
+ const stopPolicy={http_error_rate:.1,grace_seconds:10}
+ const preset={sourceId:'r',sourceAnalysisId:'analysis-1',scenarioId:'s1',scenarioVersionId:'v1',environmentId:'env-v1',executor:'ramping-arrival-rate' as const,target:60,timeUnit:'1m' as const,duration:120,startTarget:0,preAllocatedVus:2,maxVus:4,stages:[{duration_seconds:30,target:60},{duration_seconds:60,target:60},{duration_seconds:30,target:0}],thresholds:{},monitoring:{services:[],before_seconds:60,after_seconds:60},previous:'30 次/分钟',stopPolicy,testContext:{purpose:'capacity' as const,release:'v1',data_profile:'fixed',cache_state:'warm',notes:'recovery'}}
+ const wrapper=mount(LoadRunWizard,{props:{scenario,environments,agents,preset}})
+ await wrapper.get('[data-testid="load-agent-a1"]').setValue(true)
+ await wrapper.get('[data-testid="load-run-submit"]').trigger('click')
+ expect(wrapper.emitted('submit')?.[0]?.[0]).toMatchObject({
+  workload:{executor:'ramping-arrival-rate',start_rate:0,time_unit:'1m',pre_allocated_vus:2,max_vus:4,stages:preset.stages},
+  stop_policy:stopPolicy,test_context:preset.testContext,recommendation_source:{run_id:'r',analysis_id:'analysis-1'},
+ })
+ expect(wrapper.text()).toContain('次/分钟')
+ expect(wrapper.text()).toContain('降压恢复观察')
+})
+
+it('does not fabricate test context or stop policy when the source run omitted both',async()=>{
+ const preset={sourceId:'r',sourceAnalysisId:'analysis-legacy',scenarioId:'s1',scenarioVersionId:'v1',environmentId:'env-v1',executor:'constant-vus' as const,target:2,timeUnit:'1s' as const,duration:60,maxVus:2,thresholds:{},monitoring:{services:[],before_seconds:60,after_seconds:60},previous:'2 VU · 60 秒'}
+ const wrapper=mount(LoadRunWizard,{props:{scenario,environments,agents,preset}})
+ await wrapper.get('[data-testid="load-agent-a1"]').setValue(true)
+ await wrapper.get('[data-testid="load-run-submit"]').trigger('click')
+ const payload=wrapper.emitted('submit')?.[0]?.[0] as Record<string,unknown>
+ expect(payload).toMatchObject({recommendation_source:{run_id:'r',analysis_id:'analysis-legacy'},workload:{executor:'constant-vus',vus:2,duration_seconds:60}})
+ expect(payload).not.toHaveProperty('test_context')
+ expect(payload).not.toHaveProperty('stop_policy')
 })

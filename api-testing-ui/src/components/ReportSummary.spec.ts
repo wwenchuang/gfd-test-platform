@@ -24,7 +24,8 @@ describe('ReportSummary', () => {
     expect(wrapper.get('[data-testid="failed-count"]').text()).toBe('1')
     expect(wrapper.get('[data-testid="broken-count"]').text()).toBe('1')
     expect(wrapper.text()).toContain('生产环境（腾讯云）')
-    expect(wrapper.text()).toContain('1.28 秒')
+    expect(wrapper.text()).toContain('执行历时 未记录')
+    expect(wrapper.text()).toContain('用例累计耗时 1.28 秒')
   })
 
   it('renders a compact scan row without repeating the five statistic tiles', () => {
@@ -44,5 +45,19 @@ describe('ReportSummary', () => {
     expect(wrapper.text()).toContain('3 通过')
     expect(wrapper.text()).toContain('1 失败')
     expect(wrapper.text()).toContain('1.28 秒')
+  })
+
+  it('labels both duration meanings and preserves missing timing evidence', () => {
+    const wrapper = mount(ReportSummary, {
+      props: {
+        summary: { total: 2, passed: 2 },
+        elapsedDurationMs: null,
+        caseDurationMs: 3500,
+        environmentName: '并行环境',
+      },
+    })
+
+    expect(wrapper.text()).toContain('执行历时 未记录')
+    expect(wrapper.text()).toContain('用例累计耗时 3.50 秒')
   })
 })

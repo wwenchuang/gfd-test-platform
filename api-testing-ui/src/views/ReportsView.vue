@@ -70,7 +70,7 @@ const dashboard = computed(() => {
     skipped: 0,
     cancelled: 0,
     issueReports: 0,
-    durationMs: 0,
+    caseDurationMs: 0 as number | null,
   }
   for (const report of sourceScopedReports.value) {
     const metrics = executionMetrics(report)
@@ -81,12 +81,15 @@ const dashboard = computed(() => {
     aggregate.broken += metrics.broken
     aggregate.skipped += metrics.skipped
     aggregate.cancelled += metrics.cancelled
-    aggregate.durationMs += metrics.durationMs
+    aggregate.caseDurationMs = aggregate.caseDurationMs === null || metrics.caseDurationMs === null
+      ? null
+      : aggregate.caseDurationMs + metrics.caseDurationMs
     if (conclusion.tone !== 'passed') aggregate.issueReports += 1
   }
   const issueCases = aggregate.failed + aggregate.broken + aggregate.skipped + aggregate.cancelled
   return {
     ...aggregate,
+    caseDurationMs: sourceScopedReports.value.length ? aggregate.caseDurationMs : null,
     issueCases,
     passRate: formatPassRate(aggregate.passed, aggregate.totalCases),
   }
@@ -438,7 +441,7 @@ async function restoreArchivedReports(): Promise<void> {
           <div><ListChecks :size="16" /><span>执行次数</span><strong data-testid="report-dashboard-total">{{ dashboard.totalReports }} 次执行</strong></div>
           <div><CheckCircle2 :size="16" /><span>通过用例</span><strong>{{ dashboard.passed }}</strong></div>
           <div><AlertTriangle :size="16" /><span>问题用例</span><strong>{{ dashboard.issueCases }} 个问题</strong></div>
-          <div><Clock3 :size="16" /><span>累计耗时</span><strong>{{ formatDuration(dashboard.durationMs) }}</strong></div>
+          <div><Clock3 :size="16" /><span>用例累计耗时</span><strong>{{ formatDuration(dashboard.caseDurationMs) }}</strong></div>
         </div>
         <div class="report-bucket-bar">
           <span :style="{ flexGrow: Math.max(dashboard.passed, 1) }" class="bucket-passed">通过 {{ dashboard.passed }}</span>
@@ -550,7 +553,8 @@ async function restoreArchivedReports(): Promise<void> {
                 <div><span>通过</span><strong class="tone-passed">{{ currentMetrics.passed }}</strong></div>
                 <div><span>失败</span><strong class="tone-failed">{{ currentMetrics.failed }}</strong></div>
                 <div><span>异常</span><strong class="tone-broken">{{ currentMetrics.broken }}</strong></div>
-                <div><span>耗时</span><strong>{{ formatDuration(currentMetrics.durationMs) }}</strong></div>
+                <div><span>执行历时</span><strong>{{ formatDuration(currentMetrics.elapsedDurationMs) }}</strong></div>
+                <div><span>用例累计耗时</span><strong>{{ formatDuration(currentMetrics.caseDurationMs) }}</strong></div>
               </div>
               <section class="report-detail-buckets">
                 <div><strong>产品失败 {{ currentBuckets.product }}</strong><span>后端业务码、响应字段或产品断言不符合预期</span></div>

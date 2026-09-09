@@ -348,12 +348,14 @@ def test_two_agent_handoff_metrics_report_and_ai_failure_isolation(
         report_service=report_service,
         analyzer=lambda _evidence: (_ for _ in ()).throw(TimeoutError("controlled timeout")),
     ).process(analysis.id)
-    assert failed_analysis.state == "failed"
-    assert "超时" in failed_analysis.error
+    assert failed_analysis.state == "completed"
+    assert failed_analysis.result['analysis_status'] == 'rule_fallback'
+    assert failed_analysis.result['next_run_strategy']['validation_status'] == 'rule_fallback'
+    assert '超时' in failed_analysis.result['confidence']['reason']
     assert report_service.build(run.id, "load-e2e")["transport"]["requests"] == 20
     with load_factory() as session:
         persisted = session.get(ApiLoadRun, run.id)
         shards = tuple(session.scalars(select(ApiLoadRunShard).where(ApiLoadRunShard.run_id == run.id)))
     assert persisted.state == "finished"
-    assert persisted.ai_analysis_state == "failed"
+    assert persisted.ai_analysis_state == "completed"
     assert len(shards) == 2

@@ -114,7 +114,18 @@ def report_sections(report):
     strategy = diagnosis.get('next_run_strategy') or {}
     if strategy:
         advice.extend([('下一轮配置来源', strategy.get('source')), ('推荐依据', strategy.get('reason')), ('下一轮验证目标', strategy.get('objective')), ('配置可预填', '是，仍需预检和启动确认' if strategy.get('can_prefill') else '否，先完成前置条件'), ('限制', '；'.join(strategy.get('limitations') or [])), ('停止条件', '；'.join(strategy.get('stop_conditions') or []))])
+        advice.extend([('行动状态', strategy.get('continuation_status')), ('调整原因', '；'.join(strategy.get('adjustment_reasons') or [])),
+                       ('原完整曲线', workload_label(strategy.get('original_workload') or {})),
+                       ('下一轮完整曲线', workload_label((strategy.get('next_run') or {}).get('workload') or {})),
+                       ('建议引用证据', '、'.join(strategy.get('evidence_ids') or []))])
+    origin = report.get('recommendation_source') or {}
+    if origin:
+        advice.extend([('来源执行', origin.get('run_id')), ('来源诊断', origin.get('analysis_id')), ('来源证据', origin.get('evidence_hash')),
+                       ('创建前是否手改曲线', '是，实际参数以本报告冻结配置为准' if origin.get('user_modified_workload') else '否')])
     sections.append(('AI 诊断与建议', advice))
+    coverage = report.get('bottleneck_evidence') or []
+    if coverage:
+        sections.append(('瓶颈证据覆盖', [(row.get('label'), '；'.join(row.get('limitations') or []) + ' 下一步：' + str(row.get('next_verification') or '')) for row in coverage]))
     return sections
 
 

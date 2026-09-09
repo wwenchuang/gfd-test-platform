@@ -54,6 +54,8 @@ describe('ReportsView', () => {
     expect(wrapper.get('[data-testid="report-history-row"]').text()).toContain('校园助手 · 校园业务')
     expect(wrapper.text()).toContain('断言失败')
     expect(wrapper.text()).toContain('50%')
+    expect(wrapper.text()).toContain('用例累计耗时200 ms')
+    expect(wrapper.text()).toContain('执行历时未记录')
     expect(wrapper.find('.report-dashboard').exists()).toBe(true)
     expect(wrapper.find('.summary-grid').exists()).toBe(false)
     await wrapper.get('[data-testid="report-history-row"]').trigger('click')

@@ -174,6 +174,26 @@ def test_create_freezes_versions_compiler_allocation_and_agent_calibration(load_
     assert len(shards) == 2
 
 
+def test_recommended_draft_verifies_source_and_freezes_provenance(load_factory, run_records):
+    from task_server.api_testing.models.load_testing import ApiLoadAiAnalysis
+    service = _service(load_factory)
+    source = service.create(_payload(run_records), 'owner')
+    with load_factory.begin() as session:
+        session.get(ApiLoadRun, source.id).state = 'finished'
+        analysis = ApiLoadAiAnalysis(run_id=source.id, state='completed', model='test', prompt_version='api-load-analysis.v7', evidence_hash='hash', result={'next_run_strategy':{'can_prefill':True,'validation_status':'ai_validated','next_run':{'workload':source.configuration['workload']}}}, **_audit())
+        session.add(analysis); session.flush(); analysis_id = analysis.id
+    payload = _payload(run_records, recommendation_source={'run_id':source.id,'analysis_id':analysis_id})
+    created = service.create(payload, 'owner')
+    assert created.configuration['recommendation_source']['analysis_id'] == analysis_id
+    assert created.configuration['recommendation_source']['user_modified_workload'] is False
+    payload['thresholds'] = {}
+    with pytest.raises(LoadRunError, match='阈值'):
+        service.create(payload, 'owner')
+    payload = _payload(run_records, recommendation_source={'run_id':source.id,'analysis_id':'missing'})
+    with pytest.raises(LoadRunError, match='诊断'):
+        service.create(payload, 'owner')
+
+
 @pytest.mark.parametrize("mutation,code", [
     (lambda agent: setattr(agent, "health", {**agent.health, "calibration": {"state": "missing"}}), "agent_calibration_invalid"),
     (lambda agent: setattr(agent, "health", {**agent.health, "calibration": _calibration(valid_until="2026-09-02T00:00:00+00:00")}), "agent_calibration_invalid"),

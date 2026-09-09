@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import LoadCurveComparison from './LoadCurveComparison.vue'
 import type { NextRunPreset } from '../utils/loadNextRun'
 import { computed, ref } from 'vue'
 import LoadThresholdEditor, {type ErrorCriteria} from './LoadThresholdEditor.vue'
@@ -14,7 +15,8 @@ const props = defineProps<{ scenario: LoadScenario; environments: EnvironmentRev
 const emit = defineEmits<{ submit: [payload: Record<string, unknown>]; cancel: [] }>()
 const environmentId = ref(props.preset?.environmentId || (props.environments.some(item => item.id === props.initialEnvironmentId) ? props.initialEnvironmentId! : props.environments[0]?.id || ''))
 const executor = ref<Executor>(props.preset?.executor || 'constant-arrival-rate')
-const vus = ref(props.preset && !props.preset.executor.includes('arrival-rate') ? props.preset.target : 1)
+const vus = ref(props.preset && !props.preset.executor.includes('arrival-rate') ? props.preset.target : props.preset?.preAllocatedVus || 1)
+const startTarget = ref(props.preset?.startTarget ?? 1)
 const maxVus = ref(props.preset?.maxVus || 1)
 const rate = ref(props.preset?.target || 1)
 const timeUnit = props.preset?.timeUnit || '1s'
@@ -32,12 +34,12 @@ const testContext = ref<TestContext>(props.preset?.testContext || {purpose: 'smo
 const stopPolicy = ref<StopPolicy>(props.preset?.stopPolicy || null)
 const errorCriteria = ref<ErrorCriteria>({httpPercent:1, workflowPercent:0, businessEnabled:false, businessPercent:0})
 const criteriaValid = computed(() => [errorCriteria.value.httpPercent,errorCriteria.value.workflowPercent,...(errorCriteria.value.businessEnabled?[errorCriteria.value.businessPercent]:[])].every(value=>Number.isFinite(value)&&value>=0&&value<=100))
-const stages = ref<Array<{duration_seconds: number; target: number}>>([])
+const stages = ref<Array<{duration_seconds: number; target: number}>>(props.preset?.stages?.map(s=>({...s})) || [])
 const ramping = computed(() => executor.value.startsWith('ramping'))
 const activeStages = computed(() => stages.value.length ? stages.value : [{duration_seconds: duration.value, target: arrivalModel.value ? rate.value : vus.value}])
-const stagePeak = computed(() => Math.max(1, ...activeStages.value.map(item => item.target)))
+const stagePeak = computed(() => Math.max(1, startTarget.value, ...activeStages.value.map(item => item.target)))
 const totalDuration = computed(() => ramping.value ? activeStages.value.reduce((n, item) => n + item.duration_seconds, 0) : duration.value)
-const numericValid = computed(() => [vus.value, maxVus.value, rate.value, duration.value, p95.value].every(v => Number.isInteger(v) && v > 0) && (!ramping.value || activeStages.value.every(s => Number.isInteger(s.target) && s.target >= 0 && Number.isInteger(s.duration_seconds) && s.duration_seconds > 0)) && (!stopPolicy.value || (stopPolicy.value.http_error_rate > 0 && stopPolicy.value.http_error_rate <= 1 && Number.isInteger(stopPolicy.value.grace_seconds) && stopPolicy.value.grace_seconds >= 10 && stopPolicy.value.grace_seconds <= 600)))
+const numericValid = computed(() => [vus.value, maxVus.value, rate.value, duration.value, p95.value].every(v => Number.isInteger(v) && v > 0) && (!ramping.value || Number.isInteger(startTarget.value) && startTarget.value >= 0 && activeStages.value.every(s => Number.isInteger(s.target) && s.target >= 0 && Number.isInteger(s.duration_seconds) && s.duration_seconds > 0)) && (!stopPolicy.value || (stopPolicy.value.http_error_rate > 0 && stopPolicy.value.http_error_rate <= 1 && Number.isInteger(stopPolicy.value.grace_seconds) && stopPolicy.value.grace_seconds >= 10 && stopPolicy.value.grace_seconds <= 600)))
 function stageTemplate() { const target = arrivalModel.value ? rate.value : vus.value; stages.value = [{duration_seconds: 60, target}, {duration_seconds: duration.value, target}, {duration_seconds: 60, target: 0}] }
 const monitoring = ref<MonitoringSelection>({ services: [], before_seconds: 60, after_seconds: 60 })
 const monitoringValid = computed(() => !monitoring.value.services.length || [monitoring.value.before_seconds, monitoring.value.after_seconds].every(value => Number.isInteger(value) && value >= 0 && value <= 600))
@@ -53,7 +55,7 @@ const environment = computed(() => props.environments.find(item => item.id === e
 const production = computed(() => /生产|正式|prod(uction)?/i.test(environment.value?.name || ''))
 const hasProductionPermission = computed(() => apiTestingHasPermission('api.production'))
 const arrivalModel = computed(() => executor.value.includes('arrival-rate'))
-const targetIterations = computed(() => { if (!ramping.value) return rate.value * duration.value / rateDivisor; let previous = 1; return Math.round(activeStages.value.reduce((total, s) => { const amount = (previous + s.target) / 2 * s.duration_seconds; previous = s.target; return total + amount }, 0) / rateDivisor) })
+const targetIterations = computed(() => { if (!ramping.value) return rate.value * duration.value / rateDivisor; let previous = startTarget.value; return Math.round(activeStages.value.reduce((total, s) => { const amount = (previous + s.target) / 2 * s.duration_seconds; previous = s.target; return total + amount }, 0) / rateDivisor) })
 const iterationEstimate = computed(() => arrivalModel.value
   ? `按目标吞吐预计约 ${targetIterations.value} 次完整链路。`
   : `${executor.value === 'constant-vus' ? '固定并发' : '阶梯并发'}会在时长内持续循环；实际次数取决于接口响应时间，不能按 VU × 秒数推算。`)
@@ -77,7 +79,7 @@ const capacityEnough = computed(() => arrivalModel.value
 const productionReady = computed(() => !production.value || (hasProductionPermission.value && productionConfirmed.value))
 const canSubmit = computed(() => Boolean(
   environmentId.value && props.scenario.active_version_id && selected.value.length
-  && (!props.preset || !ramping.value || stages.value.length > 0) && distributionValid.value && !invalidSelection.value && numericValid.value && criteriaValid.value && monitoringValid.value && productionReady.value && (capacityEnough.value || allowRunAnyway.value),
+  && (!props.preset || !ramping.value || stages.value.length > 0) && (!arrivalModel.value || vus.value <= maxVus.value) && distributionValid.value && !invalidSelection.value && numericValid.value && criteriaValid.value && monitoringValid.value && productionReady.value && (capacityEnough.value || allowRunAnyway.value),
 ))
 
 function thresholdText(key: string, raw: unknown): string {
@@ -107,13 +109,13 @@ function recommendAgents(): void {
 }
 function workload(): Record<string, unknown> {
   if (executor.value === 'constant-vus') return { executor: executor.value, vus: vus.value, duration_seconds: duration.value }
-  if (executor.value === 'ramping-vus') return { executor: executor.value, start_vus: 1, stages: activeStages.value.map(s => ({...s})) }
+  if (executor.value === 'ramping-vus') return { executor: executor.value, start_vus: startTarget.value, stages: activeStages.value.map(s => ({...s})) }
   if (executor.value === 'constant-arrival-rate') return {
     executor: executor.value, rate: rate.value, time_unit: timeUnit, duration_seconds: duration.value,
     pre_allocated_vus: Math.max(1, vus.value), max_vus: requestedMaxVus.value,
   }
   return {
-    executor: executor.value, start_rate: 1, time_unit: timeUnit,
+    executor: executor.value, start_rate: startTarget.value, time_unit: timeUnit,
     pre_allocated_vus: Math.max(1, vus.value), max_vus: requestedMaxVus.value,
     stages: activeStages.value.map(s => ({...s})),
   }
@@ -126,8 +128,9 @@ function submit(): void {
     workload: workload(),
     thresholds: props.preset?.thresholds || { http_error_rate: {operator: 'less_than_or_equal', value:errorCriteria.value.httpPercent/100, required:true}, workflow_failure_rate:{operator:'less_than_or_equal',value:errorCriteria.value.workflowPercent/100,required:true}, ...(errorCriteria.value.businessEnabled?{business_failure_rate:{operator:'less_than_or_equal',value:errorCriteria.value.businessPercent/100,required:true}}:{}), p95_ms: { operator: 'less_than_or_equal', value: p95.value, required: true } },
     priority: priority.value,
-    test_context: testContext.value,
-    ...(stopPolicy.value ? {stop_policy: stopPolicy.value} : {}),
+    ...(!props.preset ? {test_context:testContext.value} : props.preset.testContext ? {test_context:props.preset.testContext} : {}),
+    ...(props.preset?.stopPolicy ? {stop_policy: props.preset.stopPolicy} : stopPolicy.value ? {stop_policy: stopPolicy.value} : {}),
+    ...(props.preset ? {recommendation_source:{run_id:props.preset.sourceId,analysis_id:props.preset.sourceAnalysisId}} : {}),
     ...(props.preset?.monitoring.services.length ? {monitoring: props.preset.monitoring} : monitoring.value.services.length ? { monitoring: monitoring.value } : {}),
     allocation_policy: {
       allow_fallback: allowFallback.value,
@@ -143,9 +146,11 @@ function submit(): void {
   <section class="load-wizard" aria-label="创建压测执行">
     <header><div><p class="eyebrow">压测配置</p><h2>{{ scenario.name }}</h2></div><button data-testid="load-run-back" class="text-command" type="button" @click="emit('cancel')">← 返回执行列表</button></header>
     <div class="load-wizard-body">
-      <LoadTestIntent v-model="testContext" v-model:stop-policy="stopPolicy" />
+      <LoadTestIntent v-if="!preset" v-model="testContext" v-model:stop-policy="stopPolicy" />
+      <section v-else class="load-review-box"><strong>冻结的测试条件与停止策略</strong><p>下一轮必须沿用原执行的测试条件和停止策略；如需修改，请从普通“新建压测”入口重新配置。</p></section>
       <section v-if="preset" class="load-review-box" data-testid="load-next-review"><strong>下一轮验证 · 配置核对</strong><p v-if="preset.reason">建议依据：{{ preset.reason }}</p><p v-if="preset.objective">本轮要验证：{{ preset.objective }}</p><p>来源执行：{{ preset.sourceId }}</p><p>上一轮：{{ preset.previous }} → 建议：{{ preset.target }} {{ !preset.executor.includes('arrival-rate') ? 'VU' : timeUnit === '1m' ? '次/分钟' : '次/秒' }} · {{ preset.duration }} 秒</p><p>固定保留原场景版本和环境、全部验收阈值及 {{ preset.monitoring.services.length }} 项监控。压力可调整，节点请重新选择。创建后仍需连通性检查、预检和启动确认。</p><ul><li v-for="(value, key) in preset.thresholds" :key="key">{{ thresholdText(String(key), value) }}</li></ul></section>
-      <LoadThresholdEditor v-else v-model="errorCriteria" />
+      <LoadCurveComparison v-if="preset?.stages" :before="preset.originalWorkload" :after="workload()" />
+      <LoadThresholdEditor v-if="!preset" v-model="errorCriteria" />
       <section class="load-context-banner"><div><span>所属应用 / API 项目</span><strong>{{ projectName || '当前接口项目' }}</strong><small>场景、环境和报告都归入这个项目；需要换应用时请先回工作台切换。</small></div><div><span>场景版本</span><strong>{{ scenario.name }}</strong><small>版本：{{ preset?.scenarioVersionId || scenario.active_version_id }}；历史结果可重复核对。</small></div></section>
       <label>{{ preset ? '目标环境（沿用原版本）' : '目标环境（可切换）' }}<select v-model="environmentId" :disabled="Boolean(preset)" data-testid="load-run-environment"><option value="" disabled>请选择目标环境</option><option v-for="item in environments" :key="item.id" :value="item.id">{{ item.name }} · v{{ item.revision }}</option></select><small v-if="preset">本次沿用原环境；如需更换，请从新建压测入口配置。</small><small v-else-if="environments.length === 1">当前项目只有 1 个可用环境；可到“环境配置”新增独立压测环境。</small><small v-else>请选择本次真实接收流量的环境，环境不是写死的。</small></label>
       <p v-if="!environments.length" class="load-warning">当前项目没有可用环境，请先到“环境配置”创建并验证服务地址。</p>
@@ -167,6 +172,7 @@ function submit(): void {
 
       <section v-if="ramping" class="load-stage-editor" data-testid="load-stage-editor">
         <h3>明确每个压力阶段</h3>
+        <label>起始压力<input v-model.number="startTarget" data-testid="load-start-target" type="number" min="0" /></label>
         <p v-if="preset && !stages.length" class="load-warning">AI 只提供目标与总时长，未提供阶段明细。请添加并核对每段时长和目标后创建；平台不会自动编造阶段。</p>
         <p>各阶段逐步变化到填写的目标；总时长为阶段时长之和。吞吐单位：{{ timeUnit === '1m' ? '次/分钟' : '次/秒' }}，并发单位：VU。</p>
         <div v-for="(stage,index) in stages" :key="index" class="load-stage-row"><strong>阶段 {{ index+1 }}</strong><label>时长（秒）<input v-model.number="stage.duration_seconds" :data-testid="`load-stage-duration-${index}`" type="number" min="1" /></label><label>阶段目标<input v-model.number="stage.target" :data-testid="`load-stage-target-${index}`" type="number" min="0" /></label><button type="button" class="secondary-command" @click="stages.splice(index,1)">删除</button></div>

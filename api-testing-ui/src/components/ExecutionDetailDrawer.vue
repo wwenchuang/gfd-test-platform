@@ -3,7 +3,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { X } from 'lucide-vue-next'
 
 import type { ExecutionCaseResult, ExecutionView } from '../api/contracts'
-import { executionTypeLabel, hasLoadedCaseEvidence } from '../utils/executionPresentation'
+import { executionMetrics, executionTypeLabel, hasLoadedCaseEvidence } from '../utils/executionPresentation'
 import CaseResultList from './CaseResultList.vue'
 import ReportSummary from './ReportSummary.vue'
 import CaseEvidence from './CaseEvidence.vue'
@@ -11,7 +11,7 @@ import CaseEvidence from './CaseEvidence.vue'
 const props = defineProps<{ execution: ExecutionView; initialCaseId?: string; loadingCaseKeys?: string[]; caseEvidenceErrors?: Record<string, string> }>()
 const emit = defineEmits<{ close: []; edit: [result: ExecutionCaseResult, execution: ExecutionView]; rerunCase: [result: ExecutionCaseResult, execution: ExecutionView]; loadEvidence: [result: ExecutionCaseResult] }>()
 const active = ref<ExecutionCaseResult | null>(props.execution.case_results.find(item => item.execution_case_id === props.initialCaseId) || props.execution.case_results[0] || null)
-const duration = computed(() => props.execution.case_results.reduce((total, item) => total + item.duration_ms, 0))
+const metrics = computed(() => executionMetrics(props.execution))
 const drawer = ref<HTMLElement | null>(null)
 const listPane = ref<HTMLElement | null>(null)
 const evidencePane = ref<HTMLElement | null>(null)
@@ -95,7 +95,7 @@ function handleKeydown(event: KeyboardEvent): void {
 <template>
   <aside ref="drawer" class="execution-detail-drawer" role="dialog" aria-modal="true" aria-label="执行详情" tabindex="-1" @keydown="handleKeydown">
     <header><div><h2>执行详情</h2><span>{{ executionTypeLabel(execution) }}</span></div><button class="mini-icon" type="button" title="关闭详情" @click="emit('close')"><X :size="17" /></button></header>
-    <ReportSummary :summary="execution.summary" :duration-ms="duration" :environment-name="execution.environment_name" />
+    <ReportSummary :summary="execution.summary" :elapsed-duration-ms="metrics.elapsedDurationMs" :case-duration-ms="metrics.caseDurationMs" :environment-name="execution.environment_name" />
     <div class="execution-detail-grid">
       <div ref="listPane" class="execution-detail-list" role="region" aria-label="用例结果列表" tabindex="0">
         <CaseResultList :results="execution.case_results" :active-id="active?.execution_case_id" @select="active = $event" />

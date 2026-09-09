@@ -11,6 +11,7 @@ from .. import access
 from ..models.environment import ApiEnvironment, ApiEnvironmentRevision
 from ..models.load_testing import (
     ApiLoadAgent,
+    ApiLoadAiAnalysis,
     ApiLoadDataset,
     ApiLoadRun,
     ApiLoadRunShard,
@@ -110,6 +111,8 @@ class LoadRunService:
             if revision is None or environment is None or environment.project_id != scenario.project_id:
                 raise LoadRunError("环境版本不存在或不属于当前项目", status=404, code="environment_not_found")
             access.require_execution_environment(session, revision.id, actor_id, scenario.project_id)
+
+            recommendation = self._recommendation_origin(session, parsed, actor_id, scenario.project_id)
 
             monitoring = parsed["monitoring"]
             if monitoring and monitoring["services"]:
@@ -222,6 +225,8 @@ class LoadRunService:
                     snapshot[key] = parsed[key]
             if monitoring and monitoring["services"]:
                 snapshot["monitoring"] = monitoring
+            if recommendation:
+                snapshot['recommendation_source'] = recommendation
             run = ApiLoadRun(
                 project_id=scenario.project_id,
                 scenario_version_id=version.id,
@@ -533,7 +538,7 @@ class LoadRunService:
     def _parse_create(self, payload):
         if not isinstance(payload, dict):
             raise LoadRunError("压测任务必须是对象")
-        allowed = {"scenario_version_id", "environment_revision_id", "workload", "thresholds", "priority", "allocation_policy", "monitoring", "test_context", "stop_policy"}
+        allowed = {"scenario_version_id", "environment_revision_id", "workload", "thresholds", "priority", "allocation_policy", "monitoring", "test_context", "stop_policy", "recommendation_source"}
         unknown = sorted(set(payload) - allowed)
         if unknown:
             raise LoadRunError(f"压测任务包含不支持字段：{unknown[0]}")
@@ -572,6 +577,7 @@ class LoadRunService:
         except ValueError as error:
             raise LoadRunError(str(error)) from error
         return {
+            "recommendation_source": payload.get('recommendation_source'),
             "test_context": context, "stop_policy": stop_policy,
             "scenario_version_id": payload["scenario_version_id"],
             "environment_revision_id": payload["environment_revision_id"],
@@ -581,6 +587,42 @@ class LoadRunService:
             "allocation_policy": policy,
             "monitoring": _parse_monitoring(payload.get("monitoring")),
         }
+
+    def _recommendation_origin(self, session, parsed, actor_id, project_id):
+        source = parsed.get('recommendation_source')
+        if source is None:
+            return None
+        if not isinstance(source, dict) or set(source) != {'run_id', 'analysis_id'} or any(not isinstance(v, str) or not v or len(v) > 100 for v in source.values()):
+            raise LoadRunError('建议来源必须包含原执行和诊断编号')
+        run = session.get(ApiLoadRun, source['run_id'])
+        analysis = session.get(ApiLoadAiAnalysis, source['analysis_id'])
+        if run is None or run.project_id != project_id:
+            raise LoadRunError('建议来源执行不存在或不属于当前应用', status=404)
+        access.require_resource(session, run, actor_id, 'api.loadtest.execute')
+        if run.state not in TERMINAL_RUN_STATES or analysis is None or analysis.run_id != run.id or analysis.state != 'completed':
+            raise LoadRunError('来源诊断与已结束执行不匹配，请回报告重新选择建议', status=409)
+        latest = session.scalar(select(ApiLoadAiAnalysis).where(ApiLoadAiAnalysis.run_id == run.id).order_by(ApiLoadAiAnalysis.created_at.desc()).limit(1))
+        if latest.id != analysis.id:
+            raise LoadRunError('来源诊断已更新，请回报告重新选择建议', status=409)
+        policy = (analysis.result or {}).get('next_run_strategy') or {}
+        if policy.get('can_prefill') is not True:
+            raise LoadRunError('请先完成诊断方案的前置条件，再创建复验', status=409)
+        original = run.configuration or {}
+        if parsed['scenario_version_id'] != run.scenario_version_id or parsed['environment_revision_id'] != run.environment_revision_id:
+            raise LoadRunError('按建议复验必须保留原场景和环境版本')
+        for field, label in [('thresholds', '验收阈值'), ('stop_policy', '停止策略'), ('test_context', '测试条件')]:
+            if (parsed.get(field) or {}) != (original.get(field) or {}):
+                raise LoadRunError(f'按建议复验必须保留原{label}；变更请单独配置并记录实验目的')
+        def monitor_identity(value):
+            value = value or {}
+            return {'services': sorted([(s['revision_id'], s['required']) for s in value.get('services', [])]), 'before_seconds': value.get('before_seconds', 60), 'after_seconds': value.get('after_seconds', 60)}
+        if monitor_identity(parsed.get('monitoring')) != monitor_identity(original.get('monitoring')):
+            raise LoadRunError('按建议复验必须保留原监控版本和观察窗口；补监控请单独配置')
+        accepted = (policy.get('next_run') or {}).get('workload')
+        return {**source, 'evidence_hash': analysis.evidence_hash, 'prompt_version': analysis.prompt_version,
+                'validation_status': policy.get('validation_status'), 'ai_proposal': copy.deepcopy(policy.get('ai_proposal')),
+                'validated_workload': copy.deepcopy(accepted), 'submitted_workload': copy.deepcopy(parsed['workload']),
+                'user_modified_workload': accepted != parsed['workload']}
 
     def _selected_agents(self, session, policy):
         query = select(ApiLoadAgent).where(

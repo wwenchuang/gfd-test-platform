@@ -49,3 +49,31 @@ it('shows policy blockers and hides the configuration action',()=>{
  const wrapper=mount(LoadAiAnalysis,{props:{canCreateNext:true,analysis:{id:'a',run_id:'r',state:'completed',model:'m',prompt_version:'v6',evidence_hash:'h',created_at:'',error:'',result:{next_run_strategy:{can_prefill:false,reason:'缺少服务监控',objective:'先补监控同压力复验',limitations:['整机不等于服务']},next_run:{target:999}}}}})
  expect(wrapper.text()).toContain('先补监控同压力复验');expect(wrapper.text()).toContain('整机不等于服务');expect(wrapper.find('[data-testid=load-next-run]').exists()).toBe(false);expect(wrapper.text()).not.toContain('目标 999')
 })
+
+it.each([
+ ['completed','ai_validated','AI 建议已通过校验'],
+ ['completed','ai_adjusted','AI 建议已由平台调整'],
+ ['rule_fallback','rule_fallback','平台规则备用建议'],
+])('shows recommendation source independently from action state for %s/%s',(analysisStatus,validationStatus,label)=>{
+ const wrapper=mount(LoadAiAnalysis,{props:{canCreateNext:true,analysis:{id:'a',run_id:'r',state:'completed',model:'m',prompt_version:'v7',evidence_hash:'h',created_at:'',error:'',result:{analysis_status:analysisStatus,next_run_strategy:{source:validationStatus,validation_status:validationStatus,can_prefill:false,continuation_status:'需补证据',reason:'缺少服务监控',objective:'补齐监控后按原曲线复验',adjustment_reasons:['最大 VU 收敛到原预算'],original_workload:{executor:'constant-vus',vus:2,duration_seconds:60}},next_run:{load_model:'constant-vus',target:2,duration_seconds:60,workload:{executor:'constant-vus',vus:2,duration_seconds:60}}}}}})
+ expect(wrapper.text()).toContain(label)
+ expect(wrapper.text()).toContain('行动状态：需补证据')
+ expect(wrapper.text()).toContain('最大 VU 收敛到原预算')
+ expect(wrapper.text()).toContain('前往“监控配置”接入目标服务')
+ expect(wrapper.find('[data-testid=load-next-run]').exists()).toBe(false)
+})
+
+it('uses explicit rule fallback status even when confidence has no legacy fallback wording',()=>{
+ const wrapper=mount(LoadAiAnalysis,{props:{analysis:{id:'a',run_id:'r',state:'completed',model:'m',prompt_version:'v7',evidence_hash:'h',created_at:'',error:'',result:{analysis_status:'rule_fallback',confidence:{level:'low',reason:'AI 服务超时'},conclusion:'按原曲线复验'}}}})
+ expect(wrapper.text()).toContain('平台规则建议')
+ expect(wrapper.text()).toContain('当前展示平台规则建议，不是 AI 诊断结论')
+ expect(wrapper.text()).toContain('平台建议结论')
+})
+
+it('does not mislabel explicit completed analysis from legacy words in confidence reason',()=>{
+ const wrapper=mount(LoadAiAnalysis,{props:{analysis:{id:'a',run_id:'r',state:'completed',model:'m',prompt_version:'v7',evidence_hash:'h',created_at:'',error:'',result:{analysis_status:'completed',confidence:{level:'low',reason:'回退条件已排除'},conclusion:'证据仍需复验'}}}})
+ expect(wrapper.text()).toContain('诊断完成')
+ expect(wrapper.text()).toContain('低置信度：回退条件已排除')
+ expect(wrapper.text()).not.toContain('当前展示平台规则建议')
+ expect(wrapper.text()).not.toContain('平台建议结论')
+})

@@ -44,9 +44,66 @@ describe('execution presentation', () => {
   it('keeps deterministic child states and pass rate truthful', () => {
     expect(executionMetrics(execution)).toEqual({
       total: 5, passed: 2, failed: 1, broken: 1, skipped: 1, cancelled: 0,
-      running: 0, queued: 0, durationMs: 1000, passRate: 40,
+      running: 0, queued: 0, durationMs: 1000, elapsedDurationMs: 1000,
+      caseDurationMs: 320, passRate: 40,
     })
     expect(executionConclusion(execution)).toEqual({ label: '未通过', tone: 'failed' })
+  })
+
+  it('separates parallel case cumulative duration from wall elapsed time', () => {
+    const parallel = {
+      ...execution,
+      started_at: '2026-08-12T07:09:00Z',
+      finished_at: '2026-08-12T07:09:02Z',
+      case_results: [result('PASSED', '', 1800), result('PASSED', '', 1700)],
+      summary: { total: 2, passed: 2 },
+    }
+
+    expect(executionMetrics(parallel)).toMatchObject({
+      durationMs: 2000,
+      elapsedDurationMs: 2000,
+      caseDurationMs: 3500,
+    })
+  })
+
+  it('does not substitute case duration when wall timestamps are missing', () => {
+    const missingWallTime = { ...execution, started_at: null, finished_at: null }
+
+    expect(executionMetrics(missingWallTime)).toMatchObject({
+      durationMs: null,
+      elapsedDurationMs: null,
+      caseDurationMs: 320,
+    })
+    expect(formatDuration(executionMetrics(missingWallTime).elapsedDurationMs)).toBe('未记录')
+  })
+
+  it('uses the current time only for a running execution', () => {
+    const now = Date.parse('2026-08-12T07:09:04Z')
+    const running = { ...execution, state: 'RUNNING', finished_at: null }
+    const terminalWithoutFinished = { ...execution, state: 'DONE', finished_at: null }
+
+    expect(executionMetrics(running, now).elapsedDurationMs).toBe(3000)
+    expect(executionMetrics(terminalWithoutFinished, now).elapsedDurationMs).toBeNull()
+  })
+
+  it('uses an explicit server case-duration aggregate when results are not loaded', () => {
+    const summarized = {
+      ...execution,
+      case_results: [],
+      summary: { total: 288, passed: 288, case_duration_ms: 187110 },
+    }
+
+    expect(executionMetrics(summarized).caseDurationMs).toBe(187110)
+    expect(executionMetrics({ ...summarized, summary: { total: 288, passed: 288 } }).caseDurationMs).toBeNull()
+  })
+
+  it('does not turn a missing loaded case duration into a recorded zero', () => {
+    const missingCaseTime = {
+      ...execution,
+      case_results: [{ ...result('PASSED'), duration_ms: undefined }],
+    } as unknown as ExecutionView
+
+    expect(executionMetrics(missingCaseTime).caseDurationMs).toBeNull()
   })
 
   it('keeps the parent execution running while completed children already contain failures', () => {

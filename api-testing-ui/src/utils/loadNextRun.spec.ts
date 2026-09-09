@@ -28,3 +28,22 @@ it('rejects historical and blocked advice instead of trusting AI numbers',()=>{
  expect(()=>nextRunPreset(run,{...ai,result:{next_run:{target:999}}})).toThrow('历史建议')
  expect(()=>nextRunPreset(run,{...ai,result:{next_run_strategy:{can_prefill:false,objective:'先补监控'}}})).toThrow('先补监控')
 })
+
+it('carries exact ramp start, minute units, all stages and VU budget to the wizard',()=>{
+ const workload={executor:'ramping-arrival-rate',start_rate:30,time_unit:'1m',pre_allocated_vus:2,max_vus:4,stages:[{duration_seconds:30,target:60},{duration_seconds:60,target:60},{duration_seconds:30,target:0}]}
+ const preset=nextRunPreset(run,{...ai,result:{next_run_strategy:{can_prefill:true,next_run:{load_model:'ramping-arrival-rate',target:1,duration_seconds:120,workload}}}})
+ expect(preset.stages).toEqual(workload.stages)
+ expect(preset.startTarget).toBe(30)
+ expect(preset.timeUnit).toBe('1m')
+ expect(preset.preAllocatedVus).toBe(2)
+ expect(preset.maxVus).toBe(4)
+ expect(preset.sourceAnalysisId).toBe('a')
+})
+
+it('rejects malformed numeric workload fields and workloads beyond the frozen VU budget',()=>{
+ const base={executor:'ramping-arrival-rate',start_rate:0,time_unit:'1s',pre_allocated_vus:2,max_vus:4,stages:[{duration_seconds:60,target:2},{duration_seconds:60,target:0}]}
+ for(const workload of [
+  {...base,start_rate:'0'}, {...base,start_rate:-1}, {...base,pre_allocated_vus:5,max_vus:4},
+  {...base,stages:[{duration_seconds:60,target:NaN},{duration_seconds:60,target:0}]},
+ ]) expect(()=>nextRunPreset(run,{...ai,result:{next_run_strategy:{can_prefill:true,next_run:{load_model:'ramping-arrival-rate',target:2,duration_seconds:120,workload}}}})).toThrow()
+})

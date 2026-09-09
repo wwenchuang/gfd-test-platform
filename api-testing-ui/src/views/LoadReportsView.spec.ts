@@ -12,6 +12,18 @@ const report = { run_id: 'r1', verdict: 'failed' as const, verdict_label: '未�
 
 describe('LoadReportsView', () => {
   beforeEach(() => { setActivePinia(createPinia()); vi.restoreAllMocks() })
+  it('prioritizes failure investigation over an unmet ramp target and includes starting pressure in peak', async () => {
+    const rampRun = { ...run, load_model: 'ramping-vus' as const, configuration: { ...run.configuration, workload: { executor: 'ramping-vus', start_vus: 8, stages: [{ duration_seconds: 15, target: 2 }] } } }
+    const context = useContextStore(); Object.assign(context, { projectId: 'p1', projects: [{ id: 'p1', name: '演示服务' }] }); vi.spyOn(context, 'loadSavedContext').mockResolvedValue(); vi.spyOn(context, 'loadOptions').mockResolvedValue()
+    const store = useLoadTestingStore(); store.runs = [rampRun]
+    vi.spyOn(store, 'loadRuns').mockResolvedValue(store.runs); vi.spyOn(store, 'loadRun').mockResolvedValue(rampRun)
+    vi.spyOn(store, 'loadReport').mockResolvedValue({ ...report, load_goal: { ...report.load_goal, reached: false } }); vi.spyOn(store, 'loadAiAnalysis').mockResolvedValue(null)
+    const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/', component: LoadReportsView }] }); await router.push('/?run_id=r1'); await router.isReady()
+    const wrapper = mount(LoadReportsView, { global: { plugins: [router] } }); await flushPromises()
+    expect(wrapper.get('.load-executive-grid .next').text()).toContain('修复未通过项后保持相同条件复验')
+    expect(wrapper.get('.load-executive-grid').text()).toContain('目标 峰值 8 VU')
+    wrapper.unmount()
+  })
   it('puts deterministic evidence before AI and keeps target attainment separate from thresholds', async () => {
     const context = useContextStore(); Object.assign(context, { projectId: 'p1', projects: [{ id: 'p1', name: '3D家用' }] }); vi.spyOn(context, 'loadSavedContext').mockResolvedValue(); vi.spyOn(context, 'loadOptions').mockResolvedValue()
     const store = useLoadTestingStore(); store.runs = [run]

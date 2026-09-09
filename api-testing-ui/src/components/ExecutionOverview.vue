@@ -26,6 +26,7 @@ const conclusion = computed(() => executionConclusion(props.execution))
     <div class="overview-metric" data-testid="overview-broken"><span>异常</span><strong class="status-broken">{{ metrics.broken }}</strong></div>
     <div class="overview-metric" data-testid="overview-skipped"><span>跳过</span><strong>{{ metrics.skipped }}</strong></div>
     <div class="overview-metric" data-testid="overview-rate"><span>通过率</span><strong>{{ metrics.passRate }}%</strong></div>
-    <div class="overview-metric" data-testid="overview-duration"><span>总耗时</span><strong>{{ formatDuration(metrics.durationMs) }}</strong></div>
+    <div class="overview-metric" data-testid="overview-duration"><span>执行历时</span><strong>{{ formatDuration(metrics.elapsedDurationMs) }}</strong></div>
+    <div class="overview-metric" data-testid="overview-case-duration"><span>用例累计耗时</span><strong>{{ formatDuration(metrics.caseDurationMs) }}</strong></div>
   </section>
 </template>

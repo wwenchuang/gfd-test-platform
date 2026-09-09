@@ -137,6 +137,8 @@ export interface LoadRunEvent {
 }
 
 export interface LoadReport {
+  bottleneck_evidence?: Array<{domain:string;label:string;status:string;evidence_ids:string[];limitations:string[];next_verification:string}>
+  recommendation_source?: Record<string,unknown> | null
   test_context?: Record<string, string>
   stop_policy?: Record<string, number> | null
   run_id: string

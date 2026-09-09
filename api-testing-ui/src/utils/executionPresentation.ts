@@ -12,7 +12,10 @@ export interface ExecutionMetrics {
   cancelled: number
   running: number
   queued: number
-  durationMs: number
+  /** @deprecated Use elapsedDurationMs so the wall-clock meaning stays explicit. */
+  durationMs: number | null
+  elapsedDurationMs: number | null
+  caseDurationMs: number | null
   passRate: number
 }
 
@@ -103,7 +106,8 @@ export function executionScopeLabel(execution: ExecutionView): string {
   return `${application} · ${business}`
 }
 
-export function formatDuration(durationMs: number): string {
+export function formatDuration(durationMs: number | null | undefined): string {
+  if (durationMs === null || durationMs === undefined || !Number.isFinite(durationMs)) return '未记录'
   const safe = Number.isFinite(durationMs) ? Math.max(0, durationMs) : 0
   return safe >= 1000 ? `${(safe / 1000).toFixed(2)} 秒` : `${safe} ms`
 }
@@ -113,7 +117,7 @@ export function formatPassRate(passed: number, total: number): string {
   return `${Number.isInteger(rate) ? rate.toFixed(0) : rate.toFixed(1)}%`
 }
 
-export function executionMetrics(execution: ExecutionView): ExecutionMetrics {
+export function executionMetrics(execution: ExecutionView, nowMs = Date.now()): ExecutionMetrics {
   const counts = {
     passed: 0, failed: 0, broken: 0, skipped: 0, cancelled: 0, running: 0, queued: 0,
   }
@@ -129,18 +133,31 @@ export function executionMetrics(execution: ExecutionView): ExecutionMetrics {
   }
   const startedAt = execution.started_at ? Date.parse(execution.started_at) : Number.NaN
   const finishedAt = execution.finished_at ? Date.parse(execution.finished_at) : Number.NaN
-  const wallDuration = Number.isFinite(startedAt)
-    ? Math.max(0, (Number.isFinite(finishedAt) ? finishedAt : Date.now()) - startedAt)
-    : Number.NaN
-  const durationMs = Number.isFinite(wallDuration)
-    ? wallDuration
-    : execution.case_results.reduce((sum, result) => sum + Math.max(0, result.duration_ms || 0), 0)
+  const isRunning = String(execution.state || '').toUpperCase() === 'RUNNING'
+  const elapsedDurationMs = Number.isFinite(startedAt) && (Number.isFinite(finishedAt) || isRunning)
+    ? Math.max(0, (Number.isFinite(finishedAt) ? finishedAt : nowMs) - startedAt)
+    : null
+  const summaryCaseDuration = optionalNumberValue(execution.summary.case_duration_ms)
+  const loadedDurations = execution.case_results.map(result => optionalNumberValue(result.duration_ms))
+  const caseDurationMs = loadedDurations.length
+    ? loadedDurations.every((value): value is number => value !== null)
+      ? loadedDurations.reduce((sum, value) => sum + value, 0)
+      : null
+    : summaryCaseDuration
   return {
     total,
     ...counts,
-    durationMs,
+    durationMs: elapsedDurationMs,
+    elapsedDurationMs,
+    caseDurationMs,
     passRate: passRateValue(counts.passed, total),
   }
+}
+
+function optionalNumberValue(value: unknown): number | null {
+  if (value === null || value === undefined || value === '') return null
+  const number = Number(value)
+  return Number.isFinite(number) ? Math.max(0, number) : null
 }
 
 export function executionConclusion(execution: ExecutionView): { label: string; tone: ExecutionTone } {

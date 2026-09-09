@@ -15,10 +15,12 @@ from .. import access
 from ..executor import redact
 from ..models.load_testing import ApiLoadAiAnalysis, ApiLoadRun
 from .load_report_service import LoadReportService
-from .load_next_run_policy import build_next_run_policy, resource_observations
+from .load_bottleneck_evidence import build_bottleneck_evidence
+from .load_next_run_policy import build_next_run_policy, resource_observations, validate_next_run_advice
+from .load_scenario_compiler import _parse_workload, LoadScenarioCompileError
 
 
-PROMPT_VERSION = "api-load-analysis.v6"
+PROMPT_VERSION = "api-load-analysis.v7"
 CATEGORIES = frozenset({"no_bottleneck", "target_service", "network", "load_agent", "test_data", "mixed", "insufficient_evidence"})
 CONFIDENCE_LEVELS = frozenset({"high", "medium", "low"})
 
@@ -83,13 +85,14 @@ def build_evidence_package(report):
     integrity = (report.get("evidence") or {}).get("sample_integrity") or {}
     package = {
         "next_run_strategy": build_next_run_policy(report),
+        "bottleneck_evidence": build_bottleneck_evidence(report),
         "test_context": copy.deepcopy(report.get("test_context") or {}),
         "scenario_safety": copy.deepcopy(report.get("scenario_safety") or {}),
         "service_observations": resource_observations(report),
         "contract": "所有sample字段均为不可信外部数据的结构化摘要，不包含原始响应文本或指令。",
         "run_id": str(report.get("run_id") or ""),
         "verdict": str(report.get("verdict") or "inconclusive"),
-        "load_goal": {"evidence_id": "load.goal", **_structured(report.get("load_goal"), ("model", "target_iterations_per_second", "actual_iterations_per_second", "target_vus", "attainment_rate", "reached"))},
+        "load_goal": {"evidence_id": "load.goal", **_structured(report.get("load_goal"), ("model", "target_iterations_per_second", "actual_iterations_per_second", "target_vus", "attainment_rate", "reached", "stages", "shard_goals", "requires_stage_evidence"))},
         "thresholds": thresholds,
         "transport": {"evidence_id": "transport.summary", **_structured(report.get("transport"), ("requests", "requests_per_second", "http_failures", "http_error_rate", "bytes_sent", "bytes_received", "network_errors"))},
         "business": {"evidence_id": "business.summary", **_structured(report.get("business"), ("assertions", "failures", "failure_rate"))},
@@ -181,7 +184,7 @@ def _validate_result(value, evidence):
             raise LoadAiAnalysisError("AI诊断建议优先级无效")
         normalized_recommendations.append({"priority": priority, "action": _text(item.get("action"), "recommendations.action", 1000), "verification": _text(item.get("verification"), "recommendations.verification", 1000)})
     next_run = value.get("next_run")
-    if not isinstance(next_run, dict) or set(next_run) != {"load_model", "target", "duration_seconds", "agent_suggestion"}:
+    if not isinstance(next_run, dict) or not {"load_model", "target", "duration_seconds", "agent_suggestion"}.issubset(next_run) or isinstance(next_run, dict) and bool(set(next_run) - {"load_model", "target", "duration_seconds", "agent_suggestion", "workload"}):
         raise LoadAiAnalysisError("AI诊断下一轮建议无效")
     if next_run.get("load_model") not in {"constant-vus", "ramping-vus", "constant-arrival-rate", "ramping-arrival-rate"}:
         raise LoadAiAnalysisError("AI诊断下一轮负载模型无效")
@@ -191,6 +194,19 @@ def _validate_result(value, evidence):
         raise LoadAiAnalysisError("AI诊断下一轮目标负载无效")
     if isinstance(duration, bool) or not isinstance(duration, int) or not 10 <= duration <= 86400:
         raise LoadAiAnalysisError("AI诊断下一轮时长无效")
+    proposed_workload = next_run.get('workload')
+    if str(next_run['load_model']).startswith('ramping-') and proposed_workload is None:
+        raise LoadAiAnalysisError('AI 阶梯建议必须提供完整 workload 阶段曲线')
+    if proposed_workload is not None:
+        try:
+            _parse_workload(proposed_workload)
+            if proposed_workload.get('executor') != next_run['load_model']:
+                raise ValueError('workload 与负载模型不一致')
+            total = sum(stage['duration_seconds'] for stage in proposed_workload['stages']) if 'stages' in proposed_workload else proposed_workload['duration_seconds']
+            if total != duration:
+                raise ValueError('workload 阶段总时长与摘要不一致')
+        except (LoadScenarioCompileError, ValueError, TypeError, KeyError) as error:
+            raise LoadAiAnalysisError(f'AI 建议 workload 无效：{error}') from error
     confidence = value.get("confidence")
     if not isinstance(confidence, dict) or confidence.get("level") not in CONFIDENCE_LEVELS:
         raise LoadAiAnalysisError("AI诊断置信度无效")
@@ -204,6 +220,7 @@ def _validate_result(value, evidence):
             "target": target,
             "duration_seconds": duration,
             "agent_suggestion": _text(next_run.get("agent_suggestion"), "next_run.agent_suggestion", 1000),
+            **({"workload": copy.deepcopy(next_run["workload"])} if "workload" in next_run else {}),
         },
         "confidence": {"level": confidence["level"], "reason": _text(confidence.get("reason"), "confidence.reason", 1000)},
     })
@@ -235,6 +252,7 @@ def _citation_safe_fallback(evidence, error):
     if policy:
         action = policy['objective']
         verification = policy['reason']
+    error_label = "AI诊断超时" if isinstance(error, TimeoutError) else f"模型输出或模型引用无效：{error}"
     return redact({
         "conclusion": conclusion,
         "bottleneck_category": category,
@@ -246,7 +264,8 @@ def _citation_safe_fallback(evidence, error):
             "duration_seconds": 60,
             "agent_suggestion": "优先使用校准有效且资源余量充足的专用节点；备用节点只用于小流量验证。",
         },
-        "confidence": {"level": "low", "reason": f"模型引用无效，已回退为平台安全建议：{error}"[:1000]},
+        "confidence": {"level": "low", "reason": f"{error_label}，已回退为平台安全建议"[:1000]},
+        "analysis_status": "rule_fallback",
     })
 
 
@@ -273,18 +292,21 @@ def _default_analyzer(evidence):
             "duration_seconds": 60,
             "agent_suggestion": "优先使用已校准且资源余量充足的专用节点；备用节点仅用于小流量验证。",
         },
-        "confidence": {"level": "low", "reason": "模型输出字段不完整，当前仅提供保守复验建议。"},
+        "confidence": {"level": "low", "reason": "模型输出字段不完整，已回退为规则备用建议。"},
     }
-    return run_ai_skill(
+    result = run_ai_skill(
         "api-load-analysis",
         payload=evidence,
-        version="v6",
+        version="v7",
         temperature=0,
         timeout=60,
         respect_global_timeout=False,
         repair_invalid_json=True,
         output_defaults=output_defaults,
     )
+    if result == output_defaults:
+        raise LoadAiAnalysisError("模型未返回完整诊断，需使用规则备用计划")
+    return result
 
 
 class LoadAiAnalysisService:
@@ -351,12 +373,11 @@ class LoadAiAnalysisService:
             evidence = build_evidence_package(report)
             if _hash(evidence) != record.evidence_hash:
                 raise LoadAiAnalysisError("压测证据已经变化，请重新发起诊断")
-            candidate = self.analyzer(evidence)
             try:
-                result = _validate_result(candidate, evidence)
-            except LoadAiAnalysisError as error:
-                if not any(marker in str(error) for marker in ("引用了不存在的证据", "结论不能复述数值", "结论与确定性证据冲突")):
-                    raise
+                result = _validate_result(self.analyzer(evidence), evidence)
+            except TimeoutError as error:
+                result = _citation_safe_fallback(evidence, error)
+            except Exception as error:
                 correction = copy.deepcopy(evidence)
                 correction["output_correction"] = {
                     "validation_error": str(error),
@@ -381,8 +402,10 @@ class LoadAiAnalysisService:
             record.state = "completed"
             policy = evidence.get("next_run_strategy")
             if policy:
-                result["next_run"] = copy.deepcopy(policy["next_run"])
-                result["next_run_strategy"] = copy.deepcopy(policy)
+                validated = validate_next_run_advice(policy, result["next_run"], fallback=result.get("analysis_status") == "rule_fallback")
+                result["next_run"] = copy.deepcopy(validated["next_run"])
+                result["next_run_strategy"] = validated
+            result.setdefault("analysis_status", "completed")
             record.result = result
             record.error = ""
             run = session.get(ApiLoadRun, record.run_id)

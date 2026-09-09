@@ -7,6 +7,7 @@ import math
 from sqlalchemy import select
 
 from .. import access
+from .load_bottleneck_evidence import build_bottleneck_evidence
 from .load_statistics import measured_vu_stages, measured_vus
 from ..models.load_testing import (
     ApiLoadAgent,
@@ -281,8 +282,9 @@ class LoadReportService:
             explanation += " 存在容差内采样计数偏差；耗时指标仅基于已收到的样本，尾部耗时可能受影响。"
 
         comparison = self._comparison(previous, previous_buckets, aggregate, comparison_reason)
-        return {
+        report = {
             "scenario_safety": scenario_safety,
+            "recommendation_source": copy.deepcopy((run.configuration or {}).get('recommendation_source')),
             "test_context": copy.deepcopy((run.configuration or {}).get("test_context") or {}),
             "stop_policy": copy.deepcopy((run.configuration or {}).get("stop_policy")),
             "run_id": run.id,
@@ -337,6 +339,9 @@ class LoadReportService:
                 "agent_snapshot": copy.deepcopy(run.configuration.get("agents") or []),
             },
         }
+
+        report['bottleneck_evidence'] = build_bottleneck_evidence(report)
+        return report
 
     @staticmethod
     def _aggregate(run, buckets, *, duration_seconds=0.0):

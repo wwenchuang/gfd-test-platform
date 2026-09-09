@@ -21,7 +21,7 @@ const execution: ExecutionView = {
 }
 
 describe('ExecutionOverview', () => {
-  it('shows environment, conclusion, truthful counts, rate and duration', () => {
+  it('shows wall elapsed and cumulative case duration as separate metrics', () => {
     const wrapper = mount(ExecutionOverview, { props: { execution } })
 
     expect(wrapper.text()).toContain('生产环境（新）- 腾讯云 · v6')
@@ -32,7 +32,8 @@ describe('ExecutionOverview', () => {
     expect(wrapper.get('[data-testid="overview-failed"]').text()).toContain('1')
     expect(wrapper.get('[data-testid="overview-skipped"]').text()).toContain('1')
     expect(wrapper.get('[data-testid="overview-rate"]').text()).toContain('33.3%')
-    expect(wrapper.get('[data-testid="overview-duration"]').text()).toContain('1.00 秒')
+    expect(wrapper.get('[data-testid="overview-duration"]').text()).toBe('执行历时1.00 秒')
+    expect(wrapper.get('[data-testid="overview-case-duration"]').text()).toBe('用例累计耗时200 ms')
     expect(wrapper.text()).toContain('execution-123456789')
   })
 })

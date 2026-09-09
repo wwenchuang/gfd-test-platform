@@ -60,3 +60,12 @@ def test_export_keeps_platform_strategy_separate_from_ai_prose():
     sections=dict(report_sections(data)); rows=dict(sections['AI 诊断与建议'])
     assert rows['推荐依据']=='缺少业务监控'
     assert rows['配置可预填'].startswith('否')
+
+def test_export_preserves_curve_and_adjustment_audit():
+    from task_server.api_testing.services.load_report_export_service import report_sections
+    curve={'executor':'ramping-arrival-rate','start_rate':30,'time_unit':'1m','stages':[{'duration_seconds':60,'target':60},{'duration_seconds':30,'target':0}]}
+    data={**REPORT,'ai_diagnosis':{'next_run_strategy':{'source':'AI 建议被调整','adjustment_reasons':['保留恢复段'],'original_workload':curve,'next_run':{'workload':curve}}}}
+    rows=dict(dict(report_sections(data))['AI 诊断与建议'])
+    assert '30 次 / 1 分钟' in rows['原完整曲线']
+    assert '60 次 / 1 分钟' in rows['下一轮完整曲线']
+    assert rows['调整原因']=='保留恢复段'
