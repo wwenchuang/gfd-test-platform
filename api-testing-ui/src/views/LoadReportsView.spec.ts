@@ -8,7 +8,7 @@ import { useLoadTestingStore } from '../stores/loadTesting'
 import LoadReportsView from './LoadReportsView.vue'
 
 const run = { id: 'r1', project_id: 'p1', scenario_version_id: 'v1', environment_revision_id: 'e1', load_model: 'constant-arrival-rate' as const, queue_priority: 'normal' as const, configuration: { scenario: { name: '登录到模型详情' }, workload: { rate: 100, time_unit: '1s', duration_seconds: 120 }, test_context: { release: 'v30' }, agents: [{ id: 'a1' }] }, state: 'finished' as const, verdict: 'failed' as const, stop_reason: '', ai_analysis_state: 'completed', summary: {}, created_at: '', started_at: '', finished_at: '', updated_at: '' }
-const report = { run_id: 'r1', verdict: 'failed' as const, verdict_label: '未通过', verdict_explanation: '目标负载已达到，但有必选性能阈值未通过。', load_goal: { reached: true }, transport: { requests: 1000, requests_per_second: 99.8, http_error_rate: 0.01 }, business: { failure_rate: 0.02 }, workflow: { failure_rate: 0.03 }, latency: { p50_ms: 80, p90_ms: 120, p95_ms: 240, p99_ms: 600, max_ms: 1000 }, evidence: { complete: true, finished_shards: 1, total_shards: 1, missing_windows: 0 }, thresholds: [{ key: 'p95_ms', label: 'P95响应时间', operator: 'less_than_or_equal', operator_label: '小于等于', expected: 200, actual: 240, passed: false }], series: [{ started_at: '08:00:00', requests: 100, p95_ms: 240 }], steps: [{ id: 'step-1', name: '查询模型详情', requests: 1000, p95_ms: 240, http_error_rate: .01, business_failure_rate: .02 }], agents: [{ id: 'a1', shard_id: 'shard-1', name: '专用节点', state: 'finished', state_label: '已完成', allocation: { vus: 8, rate: 100, scheduling_tier: 'preferred', vu_shortfall: 0 }, summary: { exit_code: 0, metric_bucket_count: 12 }, error: { message: '' } }], samples: [], comparison: { compatible: false, reason: '最近历史运行使用了不同的负载参数' } }
+const report = { run_id: 'r1', verdict: 'failed' as const, verdict_label: '未通过', verdict_explanation: '目标负载已达到，但有必选性能阈值未通过。', load_goal: { reached: true, actual_iterations_per_second: 82.5 }, transport: { requests: 1000, requests_per_second: 99.8, http_error_rate: 0.01 }, business: { failure_rate: 0.02 }, workflow: { iterations: 990, failure_rate: 0.03 }, latency: { p50_ms: 80, p90_ms: 120, p95_ms: 240, p99_ms: 600, max_ms: 1000 }, evidence: { complete: true, finished_shards: 1, total_shards: 1, missing_windows: 0 }, thresholds: [{ key: 'p95_ms', label: 'P95响应时间', operator: 'less_than_or_equal', operator_label: '小于等于', expected: 200, actual: 240, passed: false }], series: [{ started_at: '08:00:00', requests: 100, p95_ms: 240 }], steps: [{ id: 'step-1', name: '查询模型详情', requests: 1000, p95_ms: 240, http_error_rate: .01, business_failure_rate: .02 }], agents: [{ id: 'a1', shard_id: 'shard-1', name: '专用节点', state: 'finished', state_label: '已完成', allocation: { vus: 8, rate: 100, scheduling_tier: 'preferred', vu_shortfall: 0 }, summary: { exit_code: 0, metric_bucket_count: 12 }, error: { message: '' } }], samples: [], comparison: { compatible: false, reason: '最近历史运行使用了不同的负载参数' } }
 
 describe('LoadReportsView', () => {
   beforeEach(() => { setActivePinia(createPinia()); vi.restoreAllMocks() })
@@ -53,7 +53,8 @@ describe('LoadReportsView', () => {
     expect(executive.text()).not.toContain('环境版本 e1')
     expect(executive.text()).toContain('怎么测的')
     expect(executive.text()).toContain('固定吞吐 · 目标 100 次/秒 · 120 秒')
-    expect(executive.text()).toContain('实际 99.8 次/秒')
+    expect(executive.text()).toContain('实际完整链路 82.5 次/秒')
+    expect(executive.text()).toContain('HTTP 99.8 RPS · 1000 次请求')
     expect(executive.text()).toContain('结果怎么样')
     expect(executive.text()).toContain('主要风险')
     expect(executive.text()).toContain('P95响应时间')
@@ -75,6 +76,50 @@ describe('LoadReportsView', () => {
     expect(store.connectRunEvents).toHaveBeenCalledWith('r1')
     expect(wrapper.find('[data-testid="load-report-sample-integrity"]').exists()).toBe(false)
     expect(wrapper.text()).not.toContain('采样计数不一致')
+  })
+
+  it('labels ramping VU evidence as concurrency instead of request starts', async () => {
+    const rampRun = {
+      ...run,
+      load_model: 'ramping-vus' as const,
+      configuration: {
+        ...run.configuration,
+        workload: { executor: 'ramping-vus', start_vus: 1, stages: [{ duration_seconds: 15, target: 2 }] },
+      },
+    }
+    const rampReport = {
+      ...report,
+      load_goal: {
+        model: 'ramping-vus',
+        reached: true,
+        explanation: '实际并发已覆盖完整阶梯。',
+        vu_evidence: { sustained_seconds: null },
+        stages: [{
+          index: 1,
+          duration_seconds: 15,
+          start_vus: 1,
+          target_vus: 2,
+          planned_average_vus: 1.5,
+          actual_average_vus: 1.6,
+          reached: true,
+        }],
+      },
+    }
+    const context = useContextStore(); Object.assign(context, { projectId: 'p1', projects: [{ id: 'p1', name: '3D家用' }] })
+    vi.spyOn(context, 'loadSavedContext').mockResolvedValue(); vi.spyOn(context, 'loadOptions').mockResolvedValue()
+    const store = useLoadTestingStore(); store.runs = [rampRun]
+    vi.spyOn(store, 'loadRuns').mockResolvedValue(store.runs); vi.spyOn(store, 'loadRun').mockResolvedValue(rampRun)
+    vi.spyOn(store, 'loadReport').mockResolvedValue(rampReport); vi.spyOn(store, 'loadAiAnalysis').mockResolvedValue(null)
+    const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/', component: LoadReportsView }] }); await router.push('/?run_id=r1'); await router.isReady()
+
+    const wrapper = mount(LoadReportsView, { global: { plugins: [router] } }); await flushPromises()
+
+    const stages = wrapper.get('[data-testid="load-report-stages"]')
+    expect(stages.text()).toContain('阶梯并发阶段证据')
+    expect(stages.text()).toContain('1 → 2 VU')
+    expect(stages.text()).toContain('1.6 VU')
+    expect(stages.text()).not.toContain('计划迭代')
+    expect(wrapper.text()).not.toContain('实际并发达标持续时间：—')
   })
 
   it.each([

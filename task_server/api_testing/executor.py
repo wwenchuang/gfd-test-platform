@@ -94,6 +94,10 @@ class RequestTimeoutError(TimeoutError):
     pass
 
 
+class HeaderEncodingError(ValueError):
+    pass
+
+
 class CancelledExecution(Exception):
     pass
 
@@ -1045,7 +1049,23 @@ class HttpExecutor:
             return "BROKEN", "parser", str(exc)
         if isinstance(exc, AssertionDefinitionError):
             return "BROKEN", "assertion_definition", str(exc)
+        if isinstance(exc, HeaderEncodingError):
+            return "BROKEN", "environment", str(exc)
         return "BROKEN", "environment", str(exc)
+
+    @staticmethod
+    def _validate_request_headers(headers):
+        for raw_name, raw_value in headers.items():
+            name = str(raw_name)
+            value = str(raw_value)
+            display_name = name if name.isascii() and name else "未知请求头"
+            try:
+                name.encode("ascii")
+                value.encode("latin-1")
+            except UnicodeEncodeError as exc:
+                raise HeaderEncodingError(
+                    f"请求头 {display_name!r} 包含 HTTP 不支持的字符。请改为 ASCII/Latin-1 值；中文凭据请先按服务约定编码。"
+                ) from exc
 
     def _request(
         self,
@@ -1061,6 +1081,7 @@ class HttpExecutor:
         deadline = network_started + self.limits.timeout_seconds
         url = initial_url
         headers = dict(headers)
+        self._validate_request_headers(headers)
         authorized_base = authorized_base or urlunsplit((*urlsplit(initial_url)[:2], "/", "", ""))
         for redirect_count in range(self.limits.max_redirects + 1):
             self._authorize_destination(url, authorized_base)

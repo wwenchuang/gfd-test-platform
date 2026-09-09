@@ -53,7 +53,7 @@ def test_high_ramp_total_without_stage_evidence_stays_inconclusive():
     assert not result["reached"]
     assert result["requires_stage_evidence"]
 
-from task_server.api_testing.services.load_statistics import measured_vus
+from task_server.api_testing.services.load_statistics import measured_vu_stages, measured_vus
 
 
 def test_http_integrity_does_not_confuse_multi_request_workflows_or_window_boundaries():
@@ -83,6 +83,12 @@ def gauge(shard, offset, minimum=5, maximum=5, count=5):
                              'first_at': start.isoformat(), 'last_at': (start + timedelta(seconds=4)).isoformat()}})
 
 
+def varying_gauge(shard, offset, values):
+    row = gauge(shard, offset, minimum=min(values), maximum=max(values), count=len(values))
+    row.metrics['vu_gauge']['sum'] = sum(values)
+    return row
+
+
 def test_measured_vus_require_simultaneous_sustained_pressure_on_every_node():
     shards = [SimpleNamespace(id='a', allocation={'vus': 5}), SimpleNamespace(id='b', allocation={'vus': 5})]
     good = [gauge(s, t) for s in ('a', 'b') for t in (0, 5)]
@@ -90,6 +96,69 @@ def test_measured_vus_require_simultaneous_sustained_pressure_on_every_node():
     shifted = [gauge('a', t) for t in (0, 5)] + [gauge('b', t) for t in (10, 15)]
     assert not measured_vus(shifted, shards, 10, 10)['reached']
     assert not measured_vus(good[:2], shards, 10, 10)['reached']
+
+
+def test_constant_vus_allows_one_outer_five_second_bucket_at_run_boundary():
+    shards = [SimpleNamespace(id='a', allocation={'vus': 4})]
+    rows = [gauge('a', offset, minimum=4, maximum=4) for offset in (0, 5, 10, 15, 20)]
+
+    result = measured_vus(rows, shards, 4, 30)
+
+    assert result['reached']
+    assert result['sustained_seconds'] == 24
+    assert result['sampling_tolerance_seconds'] == 6
+
+
+def test_constant_vus_does_not_hide_more_than_one_missing_boundary_bucket():
+    shards = [SimpleNamespace(id='a', allocation={'vus': 4})]
+    rows = [gauge('a', offset, minimum=4, maximum=4) for offset in (0, 5, 10, 15)]
+
+    result = measured_vus(rows, shards, 4, 30)
+
+    assert not result['reached']
+
+
+def test_ramping_vus_require_each_continuous_stage_to_follow_its_trajectory():
+    shards = [SimpleNamespace(id='a', allocation={'vus': 4})]
+    workload = {'executor': 'ramping-vus', 'start_vus': 1, 'stages': [
+        {'duration_seconds': 15, 'target': 2},
+        {'duration_seconds': 15, 'target': 4},
+        {'duration_seconds': 15, 'target': 1},
+    ]}
+    rows = [
+        varying_gauge('a', 0, [1, 1, 1, 1, 1]),
+        varying_gauge('a', 5, [1, 1, 2, 2, 2]),
+        varying_gauge('a', 10, [2, 2, 2, 2, 2]),
+        varying_gauge('a', 15, [2, 2, 2, 3, 3]),
+        varying_gauge('a', 20, [3, 3, 3, 3, 4]),
+        varying_gauge('a', 25, [4, 4, 4, 4, 4]),
+        varying_gauge('a', 30, [4, 4, 3, 3, 3]),
+        varying_gauge('a', 35, [3, 2, 2, 2, 2]),
+        varying_gauge('a', 40, [2, 1, 1, 1, 1]),
+    ]
+
+    result = measured_vu_stages(rows, shards, {'a': workload})
+
+    assert result['available']
+    assert result['reached']
+    assert [stage['reached'] for stage in result['shards'][0]['stages']] == [True, True, True]
+
+
+def test_ramping_vus_rejects_a_peak_that_does_not_follow_the_middle_stage():
+    shards = [SimpleNamespace(id='a', allocation={'vus': 4})]
+    workload = {'executor': 'ramping-vus', 'start_vus': 1, 'stages': [
+        {'duration_seconds': 15, 'target': 2},
+        {'duration_seconds': 15, 'target': 4},
+        {'duration_seconds': 15, 'target': 1},
+    ]}
+    rows = [varying_gauge('a', offset, [1, 1, 1, 1, 1]) for offset in range(0, 45, 5)]
+    rows[5] = varying_gauge('a', 25, [1, 1, 1, 1, 4])
+
+    result = measured_vu_stages(rows, shards, {'a': workload})
+
+    assert result['available']
+    assert not result['reached']
+    assert not result['shards'][0]['stages'][1]['reached']
 
 
 def test_gauge_peak_and_sparse_samples_cannot_prove_sustained_load():

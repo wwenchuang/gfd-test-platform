@@ -1,0 +1,1 @@
+function t(n){return n.includes("生产")||/\bprod(?:uction)?\b/i.test(n)}function r(n){const e=n.targetName?`“${n.targetName}”`:"",o=n.caseCount==null?"":`（${n.caseCount} 条用例）`;return t(n.environmentName)?window.confirm(`当前目标是生产环境“${n.environmentName}”。确认${n.action}${e}${o}？请求将真实发送到该环境。`):window.confirm(`确认在“${n.environmentName}”${n.action}${e}${o}？`)}export{r as c,t as i};

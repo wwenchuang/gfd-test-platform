@@ -22,6 +22,17 @@ describe('cases store', () => {
     vi.restoreAllMocks()
   })
 
+  it('clears stale server validation feedback when the draft changes', () => {
+    const store = useCasesStore()
+    store.validationErrors = { 'request.query.pageNum': '查询参数 pageNum 的类型与接口定义不一致' }
+    store.validationWarnings = { 'request.query.optional': '可选查询参数未填写' }
+
+    store.updateDraft('endpoint-1', { ...VERSION, request: { ...VERSION.request, query: { pageNum: 1 } } })
+
+    expect(store.validationErrors).toEqual({})
+    expect(store.validationWarnings).toEqual({})
+  })
+
   it('starts a new draft with the direct OpenAPI JSON body example', () => {
     const store = useCasesStore()
     const endpoint = {

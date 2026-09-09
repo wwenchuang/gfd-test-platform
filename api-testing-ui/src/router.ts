@@ -1,32 +1,22 @@
 import { createRouter, createWebHashHistory } from 'vue-router'
 
-import AssetsView from './views/AssetsView.vue'
-import BaselinesView from './views/BaselinesView.vue'
-import CasesView from './views/CasesView.vue'
-import ReportsView from './views/ReportsView.vue'
-import RunsView from './views/RunsView.vue'
-import ScheduledJobsView from './views/ScheduledJobsView.vue'
-import SettingsView from './views/SettingsView.vue'
-import TasksView from './views/TasksView.vue'
-import WorkbenchView from './views/WorkbenchView.vue'
-
 export const router = createRouter({
   history: createWebHashHistory(import.meta.env.BASE_URL),
   routes: [
-    { path: '/', name: 'workbench', component: WorkbenchView },
-    { path: '/tasks', name: 'tasks', component: TasksView },
-    { path: '/cases', name: 'cases', component: CasesView },
-    { path: '/assets', name: 'assets', component: AssetsView },
-    { path: '/baselines', name: 'baselines', component: BaselinesView },
-    { path: '/scheduled-jobs', name: 'scheduled-jobs', component: ScheduledJobsView },
-    { path: '/runs', name: 'runs', component: RunsView },
-    { path: '/reports', name: 'reports', component: ReportsView },
+    { path: '/', name: 'workbench', component: () => import('./views/WorkbenchView.vue') },
+    { path: '/tasks', name: 'tasks', component: () => import('./views/TasksView.vue') },
+    { path: '/cases', name: 'cases', component: () => import('./views/CasesView.vue') },
+    { path: '/assets', name: 'assets', component: () => import('./views/AssetsView.vue') },
+    { path: '/baselines', name: 'baselines', component: () => import('./views/BaselinesView.vue') },
+    { path: '/scheduled-jobs', name: 'scheduled-jobs', component: () => import('./views/ScheduledJobsView.vue') },
+    { path: '/runs', name: 'runs', component: () => import('./views/RunsView.vue') },
+    { path: '/reports', name: 'reports', component: () => import('./views/ReportsView.vue') },
     { path: '/load-scenarios', name: 'load-scenarios', component: () => import('./views/LoadScenariosView.vue'), meta: { title: '性能场景' } },
     { path: '/load-runs', name: 'load-runs', component: () => import('./views/LoadRunsView.vue'), meta: { title: '压测执行' } },
     { path: '/load-schedules', name: 'load-schedules', component: () => import('./views/LoadSchedulesView.vue'), meta: { title: '性能定时计划' } },
     { path: '/load-analysis', name: 'load-analysis', component: () => import('./views/LoadAnalysisView.vue'), meta: { title: '性能分析' } },
     { path: '/load-reports', name: 'load-reports', component: () => import('./views/LoadReportsView.vue'), meta: { title: '性能报告' } },
     { path: '/load-agents', name: 'load-agents', component: () => import('./views/LoadAgentsView.vue') },
-    { path: '/settings', name: 'settings', component: SettingsView },
+    { path: '/settings', name: 'settings', component: () => import('./views/SettingsView.vue') },
   ],
 })

@@ -1116,6 +1116,23 @@ def test_blank_case_header_does_not_override_environment_default(target_server):
     assert handler.captured_authorization == "Bearer environment-token"
 
 
+def test_non_latin1_header_is_rejected_with_safe_chinese_guidance(target_server):
+    _, handler = target_server
+    before = handler.request_count
+
+    result = _executor(
+        target_server,
+        _case(headers={"Authorization": "Bearer 中文占位令牌"}),
+    ).execute_case("case-version-1", "environment-revision-1", {})
+
+    assert result.status == "BROKEN"
+    assert result.failure_category == "environment"
+    assert "Authorization" in result.error_message
+    assert "HTTP" in result.error_message
+    assert "中文占位令牌" not in result.error_message
+    assert handler.request_count == before
+
+
 @pytest.mark.parametrize(
     "path, limits, category",
     [

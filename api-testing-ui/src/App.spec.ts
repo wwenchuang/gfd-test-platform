@@ -80,10 +80,10 @@ describe('App navigation', () => {
     expect(link.attributes('href')).toBe('/cases')
   })
 
-  it('registers dedicated management routes with independent view components', () => {
+  it('registers dedicated management routes as independent lazy chunks', () => {
     expect(appRouter.getRoutes()).toEqual(expect.arrayContaining([
-      expect.objectContaining({ path: '/tasks', name: 'tasks', components: expect.objectContaining({ default: TasksView }) }),
-      expect.objectContaining({ path: '/cases', name: 'cases', components: expect.objectContaining({ default: CasesView }) }),
+      expect.objectContaining({ path: '/tasks', name: 'tasks', components: expect.objectContaining({ default: expect.any(Function) }) }),
+      expect.objectContaining({ path: '/cases', name: 'cases', components: expect.objectContaining({ default: expect.any(Function) }) }),
     ]))
   })
 

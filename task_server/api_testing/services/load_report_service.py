@@ -7,7 +7,7 @@ import math
 from sqlalchemy import select
 
 from .. import access
-from .load_statistics import measured_vus
+from .load_statistics import measured_vu_stages, measured_vus
 from ..models.load_testing import (
     ApiLoadAgent,
     ApiLoadMetricBucket,
@@ -199,7 +199,8 @@ class LoadReportService:
                 )
             )
             shard_workloads = {}
-            if (run.configuration.get("workload") or {}).get("executor") == "ramping-arrival-rate":
+            workload_executor = (run.configuration.get("workload") or {}).get("executor")
+            if workload_executor in {"ramping-arrival-rate", "ramping-vus"}:
                 from ..load_agent_http import _shard_workload
                 shard_workloads = {shard.id: _shard_workload(session, run, shard, run.configuration["workload"]) for shard in shards}
             version = session.get(ApiLoadScenarioVersion, run.scenario_version_id)
@@ -230,12 +231,14 @@ class LoadReportService:
         workload = run.configuration.get("workload") or run.configuration
         if workload.get("executor") == "constant-vus":
             aggregate["vu_evidence"] = measured_vus(buckets, shards, int(workload.get("vus") or 0), _configured_load_duration(run.configuration))
+        elif workload.get("executor") == "ramping-vus":
+            aggregate["vu_stage_evidence"] = measured_vu_stages(buckets, shards, shard_workloads)
         aggregate["stage_starts"] = {
             str(index): sum((bucket.metrics or {}).get("workflow_starts", 0) for bucket in buckets if bucket.scenario_step_id == f"__load_stage_{index}")
             for index in range(len(workload.get("stages") or []))
         } if any((bucket.metrics or {}).get("workflow_starts", 0) for bucket in buckets) else None
         load_goal = self._load_goal(run.configuration, aggregate)
-        if shard_workloads:
+        if workload.get("executor") == "ramping-arrival-rate" and shard_workloads:
             shard_goals = []
             for shard in shards:
                 observed = [bucket for bucket in buckets if bucket.shard_id == shard.id and bucket.scenario_step_id.startswith("__load_stage_") and "workflow_starts" in (bucket.metrics or {})]
@@ -458,6 +461,42 @@ class LoadReportService:
                 ),
             }
         target_vus = int(workload.get("vus") or max((item.get("target", 0) for item in workload.get("stages", [])), default=0))
+        if executor == "ramping-vus":
+            evidence = aggregate.get("vu_stage_evidence") or {}
+            shard_stages = [item.get("stages") or [] for item in evidence.get("shards", [])]
+            stages = []
+            elapsed = 0.0
+            for index, stage in enumerate(workload.get("stages") or []):
+                duration = float(stage.get("duration_seconds") or 0)
+                matching = [items[index] for items in shard_stages if len(items) > index]
+                actual_averages = [item.get("actual_average_vus") for item in matching]
+                stages.append({
+                    "index": index + 1,
+                    "start_seconds": elapsed,
+                    "duration_seconds": duration,
+                    "target_vus": int(stage.get("target") or 0),
+                    "start_vus": sum(int(item.get("start_vus") or 0) for item in matching),
+                    "planned_average_vus": round(sum(float(item.get("planned_average_vus") or 0) for item in matching), 3),
+                    "actual_average_vus": (
+                        round(sum(float(value) for value in actual_averages), 3)
+                        if matching and all(value is not None for value in actual_averages)
+                        else None
+                    ),
+                    "reached": bool(matching) and all(item.get("reached") for item in matching),
+                })
+                elapsed += duration
+            return {
+                "label": "负载目标",
+                "model": executor,
+                "model_label": "阶梯并发用户",
+                "target_vus": target_vus,
+                "actual_iterations_per_second": actual_rate,
+                "stages": stages,
+                "requires_stage_evidence": evidence.get("requires_stage_evidence", True),
+                "reached": bool(evidence.get("reached")) and aggregate["totals"]["iterations"] > 0,
+                "vu_evidence": evidence,
+                "explanation": evidence.get("reason") or "缺少实际并发与阶段对齐采样，不能仅凭配置并发或完成迭代认定达标。",
+            }
         return {
             "label": "负载目标",
             "model": executor,

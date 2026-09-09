@@ -69,6 +69,8 @@ export const useCasesStore = defineStore('api-cases', {
       this.aiRestoreGeneration += 1
       this.drafts[endpointId] = structuredClone(draft)
       this.savedMessage = ''
+      this.validationErrors = {}
+      this.validationWarnings = {}
     },
     setActiveVersion(endpointId: string, versionId: string): void {
       if (!this.versionIdsByEndpoint[endpointId]?.includes(versionId)) return
