@@ -249,6 +249,32 @@ describe('SettingsView environment asset center', () => {
     expect(serviceNames).not.toContain('097168f8-348d-4138-b876-123456789abc')
   })
 
+  it('saves private network authorization on the selected environment service only', async () => {
+    const { wrapper } = await mountView()
+    const setup = useSetupStore()
+    const saveEnvironment = vi.spyOn(setup, 'saveEnvironment').mockResolvedValue(environmentView)
+
+    await wrapper.get('[data-action="edit"]').trigger('click')
+    const controls = wrapper.findAll('input[data-private-network]')
+    expect(controls).toHaveLength(2)
+    expect(wrapper.text()).toContain('仅对已确认的企业内网服务开启')
+
+    await controls[0].setValue(true)
+    await wrapper.get('[data-action="save"]').trigger('click')
+    await flushPromises()
+
+    expect(saveEnvironment).toHaveBeenCalledWith('environment-1', expect.objectContaining({
+      services: expect.objectContaining({
+        default: expect.objectContaining({
+          metadata: { allow_private_network: true },
+        }),
+        '097168f8-348d-4138-b876-123456789abc': expect.objectContaining({
+          name: '097168f8-348d-4138-b876-123456789abc',
+        }),
+      }),
+    }))
+  })
+
   it('persists deleted default request headers when saving a new environment revision', async () => {
     const { wrapper } = await mountView()
     const setup = useSetupStore()

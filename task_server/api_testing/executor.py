@@ -1,6 +1,7 @@
 """Deterministic HTTP case execution with bounded network and secret handling."""
 
 import copy
+from collections.abc import Mapping
 from dataclasses import asdict, dataclass, is_dataclass
 import http.client
 import ipaddress
@@ -34,7 +35,15 @@ _SENSITIVE_NAME = re.compile(
 _BEARER = re.compile(r"(?i)(bearer\s+)[^\s,;]+")
 _PATH_PARAMETER = re.compile(r"{([A-Za-z_][A-Za-z0-9_.-]*)}")
 _REDacted = "***"
+_CONTROLLED_PRIVATE_NETWORKS = tuple(
+    ipaddress.ip_network(value)
+    for value in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "fc00::/7")
+)
 _DESTINATION_POLICY_MESSAGES = {
+    "host resolves to a non-public address": (
+        "目标服务解析为内网地址。请确认该地址属于受控测试网络，并在环境配置中仅为对应服务开启“允许访问受控内网地址”；"
+        "本机、链路本地和云元数据地址始终禁止访问。"
+    ),
     "Host header must match the configured service": (
         "Host 请求头与当前服务地址不一致。请删除自定义 Host 请求头，或改为当前服务地址中的主机和端口。"
     ),
@@ -105,7 +114,7 @@ class HostPolicy:
         )
         return cls(test_only_allowed_hosts=hosts)
 
-    def resolve(self, url):
+    def resolve(self, url, *, allow_private_network=False):
         parsed = urlsplit(url)
         if parsed.scheme not in {"http", "https"} or not parsed.hostname:
             raise HostPolicyError("only absolute HTTP and HTTPS URLs are allowed")
@@ -124,7 +133,20 @@ class HostPolicy:
         for record in records:
             address = record[4][0]
             ip = ipaddress.ip_address(address)
-            if hostname not in self.test_only_allowed_hosts and not ip.is_global:
+            explicitly_allowed_private = (
+                allow_private_network
+                and any(ip in network for network in _CONTROLLED_PRIVATE_NETWORKS)
+                and not ip.is_loopback
+                and not ip.is_link_local
+                and not ip.is_unspecified
+                and not ip.is_multicast
+                and not ip.is_reserved
+            )
+            if (
+                hostname not in self.test_only_allowed_hosts
+                and not ip.is_global
+                and not explicitly_allowed_private
+            ):
                 raise HostPolicyError("host resolves to a non-public address")
             addresses.append(address)
         if not addresses:
@@ -651,7 +673,18 @@ class HttpExecutor:
             path = self._render_path(
                 rendered["path"], rendered.get("path_params", {})
             )
-            base_url = runtime.base_url_for(rendered.get("service", "default"))
+            service_name = rendered.get("service", "default")
+            base_url = runtime.base_url_for(service_name)
+            service_metadata = getattr(runtime, "service_metadata", {})
+            selected_metadata = (
+                service_metadata.get(service_name, {})
+                if isinstance(service_metadata, Mapping)
+                else {}
+            )
+            allow_private_network = (
+                isinstance(selected_metadata, Mapping)
+                and selected_metadata.get("allow_private_network") is True
+            )
             url = urljoin(base_url.rstrip("/") + "/", path.lstrip("/"))
             self._authorize_destination(url, base_url)
             query = rendered.get("query") or {}
@@ -701,7 +734,14 @@ class HttpExecutor:
                 self._emit_phase(
                     callback, trace, "request", {"request": request_view}
                 )
-            response = self._request(rendered["method"], url, headers, body_bytes, authorized_base=base_url)
+            response = self._request(
+                rendered["method"],
+                url,
+                headers,
+                body_bytes,
+                authorized_base=base_url,
+                allow_private_network=allow_private_network,
+            )
             response_secrets = tuple(
                 dict.fromkeys(
                     secrets
@@ -1007,7 +1047,16 @@ class HttpExecutor:
             return "BROKEN", "assertion_definition", str(exc)
         return "BROKEN", "environment", str(exc)
 
-    def _request(self, method, initial_url, headers, body, *, authorized_base=None):
+    def _request(
+        self,
+        method,
+        initial_url,
+        headers,
+        body,
+        *,
+        authorized_base=None,
+        allow_private_network=False,
+    ):
         network_started = time.monotonic()
         deadline = network_started + self.limits.timeout_seconds
         url = initial_url
@@ -1020,7 +1069,10 @@ class HttpExecutor:
                 if name.lower() == "host" and str(value).lower() != parsed.netloc.lower():
                     raise HostPolicyError("Host header must match the configured service")
             self._remaining(deadline)
-            parsed, port, addresses = self.host_policy.resolve(url)
+            parsed, port, addresses = self.host_policy.resolve(
+                url,
+                allow_private_network=allow_private_network,
+            )
             self._remaining(deadline)
             connection_class = _PinnedHttpsConnection if parsed.scheme == "https" else _PinnedHttpConnection
             connection = None

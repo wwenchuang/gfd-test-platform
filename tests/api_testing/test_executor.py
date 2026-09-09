@@ -1,4 +1,5 @@
 import json
+import socket
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -1309,7 +1310,78 @@ def test_default_host_policy_rejects_loopback_before_request(target_server):
     result = executor.execute_case("case-version-1", "environment-revision-1", {})
     assert result.status == "BROKEN"
     assert result.failure_category == "host_policy"
+    assert "环境配置" in result.error_message
+    assert "云元数据地址" in result.error_message
     assert handler.request_count == before
+
+
+def test_host_policy_allows_only_rfc1918_when_service_explicitly_authorizes_private_network(monkeypatch):
+    def resolve(host, port, *, type):  # noqa: A002 - mirrors socket API
+        addresses = {
+            "service.internal": "10.9.0.2",
+            "metadata.internal": "169.254.169.254",
+            "loopback.internal": "127.0.0.1",
+            "benchmark.internal": "198.18.0.1",
+        }
+        address = addresses[host]
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (address, port))]
+
+    monkeypatch.setattr(socket, "getaddrinfo", resolve)
+    parsed, port, addresses = HostPolicy().resolve(
+        "http://service.internal:8080/health",
+        allow_private_network=True,
+    )
+    assert parsed.hostname == "service.internal"
+    assert port == 8080
+    assert addresses == ("10.9.0.2",)
+
+    with pytest.raises(HostPolicyError, match="non-public"):
+        HostPolicy().resolve(
+            "http://metadata.internal/latest",
+            allow_private_network=True,
+        )
+    with pytest.raises(HostPolicyError, match="non-public"):
+        HostPolicy().resolve(
+            "http://loopback.internal/admin",
+            allow_private_network=True,
+        )
+    with pytest.raises(HostPolicyError, match="non-public"):
+        HostPolicy().resolve(
+            "http://benchmark.internal/test",
+            allow_private_network=True,
+        )
+
+
+def test_executor_scopes_private_network_authorization_to_selected_environment_service(target_server):
+    base_url, _ = target_server
+
+    class Environment:
+        def resolve_runtime(self, _revision, _values, service_name=None):
+            runtime = _Runtime(base_url, {})
+            runtime.service_metadata = {
+                "default": {"allow_private_network": service_name == "default"},
+            }
+            return runtime
+
+    class RecordingPolicy:
+        def __init__(self):
+            self.allow_private_network = None
+
+        def resolve(self, url, *, allow_private_network=False):
+            self.allow_private_network = allow_private_network
+            return HostPolicy(
+                test_only_allowed_hosts=frozenset({"127.0.0.1"})
+            ).resolve(url)
+
+    policy = RecordingPolicy()
+    result = HttpExecutor(
+        _CaseService(_case()),
+        Environment(),
+        host_policy=policy,
+    ).execute_case("case-version-1", "environment-revision-1", {})
+
+    assert result.status == "PASSED"
+    assert policy.allow_private_network is True
 
 
 def test_url_credentials_are_rejected_before_request(target_server):

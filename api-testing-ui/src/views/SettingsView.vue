@@ -15,7 +15,14 @@ import { environmentServicePresentation } from '../utils/environmentPresentation
 import { isProductionLikeEnvironment } from '../utils/executionConfirmation'
 
 type Pair = { key: string; value: string }
-type ServiceRow = { key: string; name: string; module: string; base_url: string }
+type ServiceRow = {
+  key: string
+  name: string
+  module: string
+  base_url: string
+  metadata: Record<string, unknown>
+  allow_private_network: boolean
+}
 type DetailTab = 'overview' | 'services' | 'variables' | 'history'
 const detailTabs: Array<{ id: DetailTab; label: string }> = [
   { id: 'overview', label: '概览' },
@@ -206,14 +213,20 @@ async function save(): Promise<void> {
     source_revision_id: sourceRevisionId.value || null,
     name: name.value.trim(),
     description: description.value.trim(),
-    services: Object.fromEntries(usableServices.map((item, index) => [
-      item.key || item.name.trim() || `service-${index + 1}`,
-      {
-        name: item.key || item.name.trim() || `service-${index + 1}`,
-        module_name: item.module.trim() || item.name.trim() || `服务 ${index + 1}`,
-        base_url: item.base_url.trim() || null,
-      },
-    ])),
+    services: Object.fromEntries(usableServices.map((item, index) => {
+      const metadata = { ...item.metadata }
+      if (item.allow_private_network) metadata.allow_private_network = true
+      else delete metadata.allow_private_network
+      return [
+        item.key || item.name.trim() || `service-${index + 1}`,
+        {
+          name: item.key || item.name.trim() || `service-${index + 1}`,
+          module_name: item.module.trim() || item.name.trim() || `服务 ${index + 1}`,
+          base_url: item.base_url.trim() || null,
+          ...(Object.keys(metadata).length ? { metadata } : {}),
+        },
+      ]
+    })),
     variables: objectFromPairs(variables.value),
     default_headers: objectFromPairs(headers.value) as Record<string, string>,
   }
@@ -349,6 +362,8 @@ function applyEnvironment(value: EnvironmentView): void {
     name: serviceLabel(item, index),
     module: item.module_name && !isOpaqueId(item.module_name) ? item.module_name : '',
     base_url: item.base_url || '',
+    metadata: { ...(item.metadata || {}) },
+    allow_private_network: item.metadata?.allow_private_network === true,
   }))
   if (!services.value.length) services.value = [emptyService('default')]
   variables.value = []
@@ -481,7 +496,18 @@ function revisionSummaryFromView(value: EnvironmentView): EnvironmentRevisionSum
 }
 
 function emptyService(key: string): ServiceRow {
-  return { key, name: key === 'default' ? '默认服务' : '', module: key === 'default' ? '默认服务' : '', base_url: '' }
+  return {
+    key,
+    name: key === 'default' ? '默认服务' : '',
+    module: key === 'default' ? '默认服务' : '',
+    base_url: '',
+    metadata: {},
+    allow_private_network: false,
+  }
+}
+
+function groupAllowsPrivateNetwork(serviceKeys: string[]): boolean {
+  return serviceKeys.some(key => environmentDetail.value?.services[key]?.metadata?.allow_private_network === true)
 }
 
 function addPair(rows: Pair[]): void { rows.push({ key: '', value: '' }) }
@@ -556,8 +582,8 @@ function environmentMutationIssue(environmentName: string, requiresDelete = fals
           </section>
 
           <section class="environment-editor-section">
-            <header><div><h3>服务地址</h3><p>内部服务键只用于执行匹配；页面、工作台和报告展示业务名称或模块。</p></div><button class="mini-icon" type="button" title="添加服务" @click="services.push(emptyService(`service-${services.length + 1}`))"><Plus :size="15" /></button></header>
-            <div class="editable-table"><div class="table-head"><span>服务名称</span><span>模块</span><span>服务地址</span><span></span></div><div v-for="(item, index) in services" :key="item.key || index" class="table-row service-row"><input v-model="item.name" aria-label="服务名" /><input v-model="item.module" aria-label="服务模块" /><input v-model="item.base_url" aria-label="服务地址" placeholder="https://api.example.com" /><button class="mini-icon danger" type="button" title="删除服务" @click="services.splice(index, 1)"><Trash2 :size="14" /></button></div></div>
+            <header><div><h3>服务地址</h3><p>内部服务键只用于执行匹配；页面、工作台和报告展示业务名称或模块。内网授权仅对已确认的企业内网服务开启。</p></div><button class="mini-icon" type="button" title="添加服务" @click="services.push(emptyService(`service-${services.length + 1}`))"><Plus :size="15" /></button></header>
+            <div class="editable-table"><div class="table-head"><span>服务名称</span><span>模块</span><span>服务地址与网络范围</span><span></span></div><div v-for="(item, index) in services" :key="item.key || index" class="table-row service-row"><input v-model="item.name" aria-label="服务名" /><input v-model="item.module" aria-label="服务模块" /><div class="service-address-field"><input v-model="item.base_url" aria-label="服务地址" placeholder="https://api.example.com" /><label class="private-network-toggle"><input v-model="item.allow_private_network" type="checkbox" data-private-network :aria-label="`允许${item.name || item.key}访问受控内网地址`" /><span>允许访问受控内网地址</span><small>仍禁止本机、链路本地和云元数据地址</small></label></div><button class="mini-icon danger" type="button" title="删除服务" @click="services.splice(index, 1)"><Trash2 :size="14" /></button></div></div>
           </section>
 
           <section class="environment-editor-section split-section">
@@ -617,7 +643,7 @@ function environmentMutationIssue(environmentName: string, requiresDelete = fals
             <header><div><h3>服务地址</h3><p>{{ serviceSummary }}</p></div></header>
             <div class="environment-service-list">
               <h4 v-if="configuredServiceGroups.length">已配置服务（{{ configuredServiceCount }}）</h4>
-              <article v-for="group in configuredServiceGroups" :key="group.id" data-testid="environment-service-group"><div><strong>{{ group.labels.join('、') }}</strong><small>{{ group.serviceKeys.length }} 个服务键共享此地址</small></div><code>{{ group.baseUrl }}</code></article>
+              <article v-for="group in configuredServiceGroups" :key="group.id" data-testid="environment-service-group"><div><strong>{{ group.labels.join('、') }}</strong><small>{{ group.serviceKeys.length }} 个服务键共享此地址</small><small v-if="groupAllowsPrivateNetwork(group.serviceKeys)" class="private-network-badge">已允许受控内网访问</small></div><code>{{ group.baseUrl }}</code></article>
               <h4 v-if="unconfiguredServiceGroups.length">未配置服务（{{ servicePresentation.unconfiguredKeyCount }}）</h4>
               <article v-for="group in unconfiguredServiceGroups" :key="group.id" data-testid="environment-service-group"><div><strong>{{ group.labels.join('、') }}</strong><small>{{ group.serviceKeys.length }} 个服务键等待配置</small></div><code>未配置地址</code></article>
             </div>
