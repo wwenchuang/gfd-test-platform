@@ -52,6 +52,15 @@ def test_load_orchestration_timeouts_have_safe_bounded_defaults(monkeypatch):
     assert settings.load_preflight_timeout_seconds == 30
 
 
+def test_execution_recovery_has_safe_bounded_default(monkeypatch):
+    monkeypatch.setenv("API_TESTING_ENABLED", "0")
+    monkeypatch.delenv("API_TESTING_EXECUTION_STALE_SECONDS", raising=False)
+
+    settings = ApiTestingSettings.from_env()
+
+    assert settings.execution_stale_seconds == 300
+
+
 @pytest.mark.parametrize(
     "name,value",
     [
@@ -65,6 +74,15 @@ def test_load_orchestration_rejects_unsafe_timeouts(monkeypatch, name, value):
     monkeypatch.setenv(name, value)
 
     with pytest.raises(ValueError, match=name):
+        ApiTestingSettings.from_env()
+
+
+@pytest.mark.parametrize("value", ["119", "3601", "invalid"])
+def test_execution_recovery_rejects_unsafe_timeout(monkeypatch, value):
+    monkeypatch.setenv("API_TESTING_ENABLED", "0")
+    monkeypatch.setenv("API_TESTING_EXECUTION_STALE_SECONDS", value)
+
+    with pytest.raises(ValueError, match="API_TESTING_EXECUTION_STALE_SECONDS"):
         ApiTestingSettings.from_env()
 
 

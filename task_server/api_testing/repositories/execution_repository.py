@@ -207,6 +207,53 @@ class ExecutionRepository:
             query = query.with_for_update()
         return self.session.scalar(query)
 
+    def stale_running_execution_ids(self, stale_before, *, limit=100):
+        latest_case_update = (
+            select(func.max(ApiExecutionCase.updated_at))
+            .where(ApiExecutionCase.execution_id == ApiExecution.id)
+            .correlate(ApiExecution)
+            .scalar_subquery()
+        )
+        latest_event_update = (
+            select(func.max(ApiExecutionEvent.created_at))
+            .where(ApiExecutionEvent.execution_id == ApiExecution.id)
+            .correlate(ApiExecution)
+            .scalar_subquery()
+        )
+        latest_progress = func.greatest(
+            ApiExecution.updated_at,
+            func.coalesce(latest_case_update, ApiExecution.updated_at),
+            func.coalesce(latest_event_update, ApiExecution.updated_at),
+        )
+        return tuple(
+            self.session.scalars(
+                select(ApiExecution.id)
+                .where(
+                    ApiExecution.state == "RUNNING",
+                    latest_progress < stale_before,
+                )
+                .order_by(latest_progress, ApiExecution.id)
+                .limit(limit)
+            )
+        )
+
+    def execution_progress_at(self, execution_id):
+        latest_case_update = select(func.max(ApiExecutionCase.updated_at)).where(
+            ApiExecutionCase.execution_id == execution_id
+        ).scalar_subquery()
+        latest_event_update = select(func.max(ApiExecutionEvent.created_at)).where(
+            ApiExecutionEvent.execution_id == execution_id
+        ).scalar_subquery()
+        return self.session.scalar(
+            select(
+                func.greatest(
+                    ApiExecution.updated_at,
+                    func.coalesce(latest_case_update, ApiExecution.updated_at),
+                    func.coalesce(latest_event_update, ApiExecution.updated_at),
+                )
+            ).where(ApiExecution.id == execution_id)
+        )
+
     def list_executions(self, project_id, owner_id, limit=50):
         return tuple(
             self.session.scalars(

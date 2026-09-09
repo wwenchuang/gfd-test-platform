@@ -2,6 +2,7 @@
 
 import copy
 from dataclasses import dataclass
+from datetime import datetime
 import hashlib
 import json
 from types import MappingProxyType
@@ -26,6 +27,9 @@ from .test_scope_service import InactiveTestScopeError, ensure_active_case_versi
 MAX_FAILURE_ANALYSIS_EVIDENCE_BYTES = 128 * 1024
 MAX_FAILURE_ANALYSIS_DISPATCH_CASES = 50
 MAX_EXECUTION_CASES = 500
+INTERRUPTED_EXECUTION_MESSAGE = (
+    "执行 Worker 中断；已完成结果已保留，未完成用例未自动重放"
+)
 
 
 class ExecutionConflictError(ValueError):
@@ -441,6 +445,68 @@ class ExecutionService:
         self.event_stream.append(execution_id, "cancellation_requested", {})
         return view
 
+    def stale_running_execution_ids(self, stale_before, *, limit=100):
+        if not isinstance(stale_before, datetime) or stale_before.tzinfo is None:
+            raise ValueError("stale_before must be a timezone-aware datetime")
+        if not isinstance(limit, int) or isinstance(limit, bool) or not 1 <= limit <= 500:
+            raise ValueError("recovery scan limit must be between 1 and 500")
+        with self.session_factory() as session:
+            return ExecutionRepository(session).stale_running_execution_ids(
+                stale_before,
+                limit=limit,
+            )
+
+    def recover_interrupted(self, execution_id, stale_before):
+        if not isinstance(stale_before, datetime) or stale_before.tzinfo is None:
+            raise ValueError("stale_before must be a timezone-aware datetime")
+        cancelled = False
+        with self.session_factory.begin() as session:
+            repository = ExecutionRepository(session)
+            execution = repository.get_execution(execution_id, for_update=True)
+            if execution is None or execution.state != "RUNNING":
+                return False
+            children = repository.get_execution_cases(
+                execution_id,
+                for_update=True,
+                include_evidence=False,
+            )
+            latest_progress = repository.execution_progress_at(execution_id)
+            if latest_progress is None or latest_progress >= stale_before:
+                return False
+            cancelled = execution.cancellation_requested_at is not None
+            result = self._interrupted_result()
+            for child in children:
+                if child.status not in {"QUEUED", "RUNNING"}:
+                    continue
+                if cancelled:
+                    child.status = "CANCELLED"
+                    child.failure_category = "cancelled"
+                    child.updated_by = "worker-recovery"
+                else:
+                    repository.create_attempt(child, result, "worker-recovery")
+            finalized = repository.finalize_execution(
+                execution_id,
+                "worker-recovery",
+            )
+            state = finalized.state
+            summary = copy.deepcopy(finalized.summary)
+        if not cancelled:
+            self._safe_event(
+                execution_id,
+                "failure",
+                {
+                    "status": "BROKEN",
+                    "failure_category": "worker",
+                    "error_message": INTERRUPTED_EXECUTION_MESSAGE,
+                },
+            )
+        self._safe_event(
+            execution_id,
+            "execution_finished",
+            {"state": state, "summary": summary},
+        )
+        return True
+
     def archive(self, execution_id, actor_id):
         access.require_permission(actor_id, "api.delete")
         with self.session_factory.begin() as session:
@@ -811,6 +877,26 @@ class ExecutionService:
             assertion_results=(),
             extracted_variables={},
             error_message=cls._safe_worker_error(error),
+            trace=(
+                {
+                    "phase": "failure",
+                    "status": "BROKEN",
+                    "failure_category": "worker",
+                },
+            ),
+        )
+
+    @staticmethod
+    def _interrupted_result():
+        return CaseExecutionResult(
+            status="BROKEN",
+            failure_category="worker",
+            duration_ms=0,
+            sanitized_request={},
+            sanitized_response={},
+            assertion_results=(),
+            extracted_variables={},
+            error_message=INTERRUPTED_EXECUTION_MESSAGE,
             trace=(
                 {
                     "phase": "failure",

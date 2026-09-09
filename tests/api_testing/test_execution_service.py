@@ -1,5 +1,6 @@
 import copy
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timedelta, timezone
 import json
 import os
 from types import SimpleNamespace
@@ -1854,6 +1855,149 @@ def test_worker_exception_creates_broken_attempt_and_converges_all_children(
         assert "plain-worker-secret" not in json.dumps(
             failure_events[0].payload
         )
+
+
+def test_recover_interrupted_execution_keeps_finished_evidence_and_converges_once(
+    session_factory, redis_client, execution_context
+):
+    first_id = execution_context["case"].id
+    second_id = _create_case_version(session_factory, first_id)
+    third_id = _create_case_version(session_factory, first_id)
+    service = ExecutionService(
+        session_factory,
+        event_stream=EventStream(session_factory, redis_client),
+    )
+    execution = service.submit(
+        _request(
+            execution_context,
+            case_version_ids=[first_id, second_id, third_id],
+            execution_type="scheduled",
+        ),
+        "admin",
+        "recover-worker-interruption",
+    )
+    stale_at = datetime.now(timezone.utc) - timedelta(minutes=20)
+    stale_before = datetime.now(timezone.utc) - timedelta(minutes=5)
+    with session_factory.begin() as session:
+        repository = ExecutionRepository(session)
+        assert repository.compare_and_set_execution(
+            execution.id, {"QUEUED"}, "RUNNING"
+        )
+        children = repository.get_execution_cases(execution.id, for_update=True)
+        repository.create_attempt(children[0], _Result("PASSED"), "worker")
+        assert repository.compare_and_set_case(
+            children[1].id, {"QUEUED"}, "RUNNING"
+        )
+        current = repository.get_execution(execution.id, for_update=True)
+        current.updated_at = stale_at
+        for child in repository.get_execution_cases(execution.id, for_update=True):
+            child.updated_at = stale_at
+        for execution_event in session.scalars(
+            select(ApiExecutionEvent).where(
+                ApiExecutionEvent.execution_id == execution.id
+            )
+        ):
+            execution_event.created_at = stale_at
+            execution_event.updated_at = stale_at
+
+    assert service.stale_running_execution_ids(stale_before) == (execution.id,)
+    assert service.recover_interrupted(execution.id, stale_before) is True
+    assert service.recover_interrupted(execution.id, stale_before) is False
+
+    terminal = service.get(execution.id)
+    assert terminal.state == "DONE"
+    assert terminal.case_statuses == ("PASSED", "BROKEN", "BROKEN")
+    assert terminal.summary == {
+        "total": 3,
+        "passed": 1,
+        "failed": 0,
+        "broken": 2,
+        "skipped": 0,
+        "cancelled": 0,
+    }
+    events = service.event_stream.read(execution.id, 0, 0)
+    assert [item.type for item in events][-2:] == ["failure", "execution_finished"]
+    assert events[-2].payload == {
+        "status": "BROKEN",
+        "failure_category": "worker",
+        "error_message": "执行 Worker 中断；已完成结果已保留，未完成用例未自动重放",
+    }
+    with session_factory() as session:
+        attempts = tuple(
+            session.scalars(
+                select(ApiExecutionAttempt)
+                .join(
+                    ApiExecutionCase,
+                    ApiExecutionCase.id == ApiExecutionAttempt.execution_case_id,
+                )
+                .where(ApiExecutionCase.execution_id == execution.id)
+                .order_by(ApiExecutionAttempt.created_at, ApiExecutionAttempt.id)
+            )
+        )
+        assert len(attempts) == 3
+        assert [item.status for item in attempts].count("PASSED") == 1
+        assert [item.status for item in attempts].count("BROKEN") == 2
+        assert {
+            item.error_message for item in attempts if item.status == "BROKEN"
+        } == {"执行 Worker 中断；已完成结果已保留，未完成用例未自动重放"}
+
+
+def test_recover_interrupted_execution_ignores_recent_progress(
+    session_factory, redis_client, execution_context
+):
+    service = ExecutionService(
+        session_factory,
+        event_stream=EventStream(session_factory, redis_client),
+    )
+    execution = service.submit(
+        _request(execution_context),
+        "admin",
+        "do-not-recover-live-worker",
+    )
+    with session_factory.begin() as session:
+        repository = ExecutionRepository(session)
+        assert repository.compare_and_set_execution(
+            execution.id, {"QUEUED"}, "RUNNING"
+        )
+        child = repository.get_execution_cases(execution.id, for_update=True)[0]
+        assert repository.compare_and_set_case(child.id, {"QUEUED"}, "RUNNING")
+
+    stale_before = datetime.now(timezone.utc) - timedelta(minutes=5)
+    assert execution.id not in service.stale_running_execution_ids(stale_before)
+    assert service.recover_interrupted(execution.id, stale_before) is False
+    live = service.get(execution.id)
+    assert live.state == "RUNNING"
+    assert live.case_statuses == ("RUNNING",)
+
+
+def test_recover_interrupted_execution_counts_recent_event_as_progress(
+    session_factory, redis_client, execution_context
+):
+    service = ExecutionService(
+        session_factory,
+        event_stream=EventStream(session_factory, redis_client),
+    )
+    execution = service.submit(
+        _request(execution_context),
+        "admin",
+        "event-progress-keeps-worker-live",
+    )
+    stale_at = datetime.now(timezone.utc) - timedelta(minutes=20)
+    with session_factory.begin() as session:
+        repository = ExecutionRepository(session)
+        assert repository.compare_and_set_execution(
+            execution.id, {"QUEUED"}, "RUNNING"
+        )
+        child = repository.get_execution_cases(execution.id, for_update=True)[0]
+        assert repository.compare_and_set_case(child.id, {"QUEUED"}, "RUNNING")
+        current = repository.get_execution(execution.id, for_update=True)
+        current.updated_at = stale_at
+        child.updated_at = stale_at
+    service.event_stream.append(execution.id, "request_started", {})
+
+    stale_before = datetime.now(timezone.utc) - timedelta(minutes=5)
+    assert execution.id not in service.stale_running_execution_ids(stale_before)
+    assert service.recover_interrupted(execution.id, stale_before) is False
 
 
 def test_cancel_intent_is_persistent_and_prevents_request(

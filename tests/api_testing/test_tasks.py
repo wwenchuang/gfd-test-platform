@@ -303,6 +303,72 @@ def test_execution_worker_does_not_auto_notify_debug_runs(monkeypatch):
     assert calls == [("run", "execution-1"), ("refresh", "execution-1"), ("load-execution", "execution-1")]
 
 
+def test_recovery_worker_refreshes_and_notifies_only_after_recovery(monkeypatch):
+    calls = []
+
+    class FakeExecutionService:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def recover_interrupted(self, execution_id, stale_before):
+            calls.append(("recover", execution_id, stale_before.isoformat()))
+            return True
+
+    class FakeTaskService:
+        def __init__(self, factory):
+            pass
+
+        def refresh_for_execution(self, execution_id):
+            calls.append(("refresh", execution_id))
+
+    monkeypatch.setattr(tasks, "ExecutionService", FakeExecutionService)
+    monkeypatch.setattr(tasks, "TestTaskService", FakeTaskService)
+    monkeypatch.setattr(tasks, "_session_factory", lambda: object())
+    monkeypatch.setattr(tasks, "EventStream", lambda *_args: object())
+    monkeypatch.setattr(tasks, "_heartbeat_redis", lambda: object())
+    monkeypatch.setattr(
+        tasks,
+        "_notify_execution_if_enabled",
+        lambda _factory, _stream, execution_id: calls.append(("notify", execution_id)),
+    )
+
+    cutoff = "2026-09-09T14:30:00+00:00"
+    assert tasks.recover_interrupted_execution.run("execution-1", cutoff) is True
+    assert calls == [
+        ("recover", "execution-1", cutoff),
+        ("refresh", "execution-1"),
+        ("notify", "execution-1"),
+    ]
+
+
+def test_recovery_worker_does_not_refresh_when_execution_progressed(monkeypatch):
+    calls = []
+
+    class FakeExecutionService:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def recover_interrupted(self, _execution_id, _stale_before):
+            return False
+
+    monkeypatch.setattr(tasks, "ExecutionService", FakeExecutionService)
+    monkeypatch.setattr(tasks, "_session_factory", lambda: object())
+    monkeypatch.setattr(tasks, "EventStream", lambda *_args: object())
+    monkeypatch.setattr(tasks, "_heartbeat_redis", lambda: object())
+    monkeypatch.setattr(
+        tasks,
+        "TestTaskService",
+        lambda _factory: (_ for _ in ()).throw(AssertionError("must not refresh")),
+    )
+
+    assert (
+        tasks.recover_interrupted_execution.run(
+            "execution-1", "2026-09-09T14:30:00+00:00"
+        )
+        is False
+    )
+
+
 def test_ai_worker_refreshes_linked_task_after_generation(monkeypatch):
     calls = []
 

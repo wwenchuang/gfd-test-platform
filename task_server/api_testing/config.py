@@ -13,6 +13,7 @@ _DEFAULT_WORKER_HEARTBEAT_TTL_SECONDS = 45
 _DEFAULT_LOAD_START_BARRIER_TIMEOUT_SECONDS = 60
 _DEFAULT_LOAD_SHARD_STALE_SECONDS = 120
 _DEFAULT_LOAD_PREFLIGHT_TIMEOUT_SECONDS = 30
+_DEFAULT_EXECUTION_STALE_SECONDS = 300
 _KNOWN_PLACEHOLDER_SECRETS = frozenset({
     "change-me",
     "change-this-long-random-secret",
@@ -51,6 +52,7 @@ class ApiTestingSettings:
     load_start_barrier_timeout_seconds: int
     load_shard_stale_seconds: int
     load_preflight_timeout_seconds: int
+    execution_stale_seconds: int
 
     @classmethod
     def from_env(cls):
@@ -102,6 +104,12 @@ class ApiTestingSettings:
             1,
             60,
         )
+        execution_stale_seconds = bounded_seconds(
+            "API_TESTING_EXECUTION_STALE_SECONDS",
+            _DEFAULT_EXECUTION_STALE_SECONDS,
+            120,
+            3600,
+        )
 
         if enabled and len(secret_key) < _MIN_SECRET_LENGTH:
             raise ValueError("API_TESTING_SECRET_KEY must be at least 32 characters when API testing is enabled")
@@ -123,4 +131,5 @@ class ApiTestingSettings:
             load_start_barrier_timeout_seconds=load_start_barrier_timeout_seconds,
             load_shard_stale_seconds=load_shard_stale_seconds,
             load_preflight_timeout_seconds=load_preflight_timeout_seconds,
+            execution_stale_seconds=execution_stale_seconds,
         )

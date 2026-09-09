@@ -2,6 +2,7 @@
 
 import logging
 import copy
+from datetime import datetime
 import time
 import uuid
 
@@ -128,6 +129,29 @@ def execute_api_testing(self, execution_id):
     if result:
         _notify_execution_if_enabled(factory, event_stream, execution_id)
     return result
+
+
+@celery_app.task(
+    name="api_testing.recover_interrupted_execution",
+    bind=True,
+    acks_late=True,
+)
+def recover_interrupted_execution(self, execution_id, stale_before):
+    factory = _session_factory()
+    try:
+        redis_client = _heartbeat_redis()
+    except Exception:
+        redis_client = None
+    event_stream = EventStream(factory, redis_client)
+    recovered = ExecutionService(
+        factory,
+        event_stream=event_stream,
+    ).recover_interrupted(execution_id, datetime.fromisoformat(stale_before))
+    if not recovered:
+        return False
+    TestTaskService(factory).refresh_for_execution(execution_id)
+    _notify_execution_if_enabled(factory, event_stream, execution_id)
+    return True
 
 
 def _notify_execution_if_enabled(factory, event_stream, execution_id):
