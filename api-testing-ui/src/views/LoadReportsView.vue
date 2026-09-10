@@ -380,7 +380,7 @@ function hasAgentError(agent: Record<string, unknown>): boolean {
             <p>多节点时先逐节点判断，再汇总展示；一个节点的富余不能抵消另一个节点未达到分配目标。</p>
           </template>
           <template v-else>
-            <h2>各阶段实际发起量</h2><p>按每个节点自身启动时间归入阶段；阶段之外另计 {{ report.load_goal.outside_stage_starts ?? '未记录' }} 次，不补算进计划阶段。</p><div style="overflow:auto"><table><thead><tr><th>阶段</th><th>持续（秒）</th><th>计划迭代</th><th>实际发起</th><th>全局数量</th></tr></thead><tbody><tr v-for="stage in report.load_goal.stages" :key="stage.index"><td>{{ stage.index }}</td><td>{{ stage.duration_seconds }}</td><td>{{ stage.expected_iterations }}</td><td>{{ stage.actual_started_iterations ?? '缺少证据' }}</td><td>{{ stage.reached ? '达到' : '未证明达到' }}</td></tr></tbody></table></div><p>最终判断还检查每个节点的分配目标与证据；不能用一个节点多发来抵消其他节点缺失。</p>
+            <h2>各阶段实际发起量</h2><p>按每个节点自身启动时间归入阶段；阶段之外另计 {{ report.load_goal.outside_stage_starts ?? '未记录' }} 次，不补算进计划阶段。</p><div style="overflow:auto"><table><thead><tr><th>阶段</th><th>持续（秒）</th><th>连续曲线积分</th><th>整数计划发起</th><th>实际发起</th><th>全局数量</th></tr></thead><tbody><tr v-for="stage in report.load_goal.stages" :key="stage.index"><td>{{ stage.index }}</td><td>{{ stage.duration_seconds }}</td><td>{{ stage.expected_iterations }}</td><td>{{ stage.scheduled_iterations ?? '未记录' }}</td><td>{{ stage.actual_started_iterations ?? '缺少证据' }}</td><td>{{ stage.reached ? '达到' : '未证明达到' }}</td></tr></tbody></table></div><p>最终判断还检查每个节点的分配目标与证据；不能用一个节点多发来抵消其他节点缺失。</p>
           </template>
         </section>
         <LoadGeneratorResources :agents="report.agents || []" />

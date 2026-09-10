@@ -346,6 +346,31 @@ def test_one_shard_extra_stage_requests_cannot_hide_other_shard_missing(load_fac
     assert LoadReportService(load_factory).build(run.id,'load-owner')['load_goal']['reached']
 
 
+@pytest.mark.parametrize('starts,reached', [((1, 1), True), ((2, 0), False)])
+def test_independent_shards_sum_integer_schedules_without_cross_node_compensation(load_factory, load_run_with_shard, starts, reached):
+    from task_server.api_testing.models.load_testing import ApiLoadMetricBucket
+    from tests.api_testing.test_load_testing_repository import _audit
+    run, shard, _ = _prepare(load_factory, load_run_with_shard)
+    with load_factory.begin() as session:
+        saved = session.get(ApiLoadRun, run.id)
+        saved.configuration = {**saved.configuration, 'workload': {
+            'executor': 'ramping-arrival-rate', 'start_rate': 2, 'time_unit': '1s',
+            'max_vus': 20, 'pre_allocated_vus': 10, 'stages': [{'duration_seconds': 1, 'target': 4}]}}
+        saved.state = 'finished'
+        first = session.get(ApiLoadRunShard, shard.id)
+        first.state = 'finished'; first.allocation = {'rate': 2, 'vus': 10}
+        second = ApiLoadRunShard(run_id=run.id, agent_id=shard.agent_id, sequence=shard.sequence+1,
+            global_sequence=shard.global_sequence+1, allocation={'rate': 2, 'vus': 10}, state='finished', **_audit())
+        session.add(second); session.flush()
+        for item, count in zip((first, second), starts):
+            session.add(ApiLoadMetricBucket(run_id=run.id, shard_id=item.id, scenario_step_id='__load_stage_0',
+                bucket_started_at=START, bucket_seconds=5, metrics={'workflow_starts': count}, **_audit()))
+    goal = LoadReportService(load_factory).build(run.id, 'load-owner')['load_goal']
+    assert goal['expected_iterations'] == 3
+    assert goal['scheduled_iterations'] == 2
+    assert goal['reached'] is reached
+
+
 def test_step_rows_omit_global_iteration_only_bucket_but_keep_real_zero_steps():
     from types import SimpleNamespace
     def bucket(step, requests):

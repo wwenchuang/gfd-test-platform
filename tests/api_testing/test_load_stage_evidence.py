@@ -1,5 +1,48 @@
 from task_server.api_testing.services.load_report_service import LoadReportService
 
+def test_ramp_integer_schedule_matches_real_k6_without_hiding_live_drop():
+    config = {'executor': 'ramping-arrival-rate', 'start_rate': 1,
+              'stages': [{'duration_seconds': 15, 'target': target} for target in (2, 4, 2)]}
+    aggregate = {'totals': {'iterations': 112}, 'duration_seconds': 45,
+                 'stage_starts': {'0': 22, '1': 45, '2': 45}}
+    result = LoadReportService._load_goal(config, aggregate)
+    assert result['reached']
+    assert [s['expected_iterations'] for s in result['stages']] == [22.5, 45, 45]
+    assert [s['scheduled_iterations'] for s in result['stages']] == [22, 45, 45]
+    aggregate['totals']['iterations'] = 111
+    aggregate['stage_starts']['2'] = 44
+    result = LoadReportService._load_goal(config, aggregate)
+    assert result['stages'][0]['reached']
+    assert not result['stages'][2]['reached'] and not result['reached']
+
+
+def test_ramp_carries_fractional_iterations_between_stages_and_keeps_zero_recovery():
+    config = {'executor': 'ramping-arrival-rate', 'start_rate': 30, 'time_unit': '1m',
+              'stages': [{'duration_seconds': 1, 'target': target} for target in (30, 30, 0, 0)]}
+    aggregate = {'totals': {'iterations': 1}, 'duration_seconds': 4,
+                 'stage_starts': {'0': 0, '1': 1, '2': 0, '3': 0}}
+    result = LoadReportService._load_goal(config, aggregate)
+    assert [s['scheduled_iterations'] for s in result['stages']] == [0, 1, 0, 0]
+    assert result['reached']
+    aggregate['stage_starts']['1'] = 0
+    assert not LoadReportService._load_goal(config, aggregate)['reached']
+
+
+def test_ramp_with_no_complete_scheduled_iteration_cannot_prove_load():
+    result = LoadReportService._load_goal(
+        {'executor': 'ramping-arrival-rate', 'start_rate': 1, 'time_unit': '1m',
+         'stages': [{'duration_seconds': 1, 'target': 1}]},
+        {'totals': {'iterations': 0}, 'duration_seconds': 1, 'stage_starts': {'0': 0}})
+    assert not result['reached']
+
+
+def test_integer_boundary_missing_start_is_not_silently_forgiven():
+    result = LoadReportService._load_goal(
+        {'executor': 'ramping-arrival-rate', 'start_rate': 2,
+         'stages': [{'duration_seconds': 10, 'target': 2}]},
+        {'totals': {'iterations': 19}, 'duration_seconds': 10, 'stage_starts': {'0': 19}})
+    assert not result['reached']
+
 def test_stage_count_uses_actual_starts_and_does_not_hide_bad_stage_with_total():
     config={'executor':'ramping-arrival-rate','start_rate':1,'time_unit':'1s','stages':[{'duration_seconds':10,'target':9},{'duration_seconds':10,'target':1}]}
     aggregate={'totals':{'iterations':100},'duration_seconds':20,'stage_starts':{'0':30,'1':70}}

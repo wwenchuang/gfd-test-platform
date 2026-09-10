@@ -96,3 +96,5 @@ python3 scripts/audit_api_device_references.py --project-id 01c72b31-a9be-4aab-8
 有效数299→298→297→296，页面逐条确认已移出。第三方API名称不能代替语义，固件信息GET不应被描述为这次发送固件升级命令；本次没有执行这些接口。两条定时仍为家用DISABLED且目标解析阻断、共享ENABLED。
 
 清单还含30处旧设备字面引用、777处动态引用、750个设备字段待审标记、543个提取待审标记、29个秘密值未读取。它们含历史、重复路径及静态候选，不能把标记数量当独立用例数，也不能把隔离3条active解释为全部动态设备选择已受平台运行门禁约束。审计后完整清单复核继续保留为待办，设备相关执行不恢复。
+
+第二次生产只读盘点已执行，另存 `/tmp/home-device-reference-audit-20260910-after.jsonl`，保留原文件。Safari终端汇总实读：`active_baselines 296`、`active_blocked []`、`pending=0`、`pending_cases=0`。这关闭的是静态关联旧设备的有效基线遗漏；动态选择、秘密变量、直接运行历史版本等边界仍如上，家用定时不恢复。

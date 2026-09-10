@@ -2,6 +2,7 @@
 
 import copy
 from datetime import timezone
+from fractions import Fraction
 import math
 
 from sqlalchemy import select
@@ -249,6 +250,13 @@ class LoadReportService:
             load_goal["outside_stage_starts"] = sum((b.metrics or {}).get("workflow_starts", 0) for b in buckets if b.scenario_step_id == "__load_stage_outside")
             load_goal["shards"] = shard_goals
             load_goal["requires_stage_evidence"] = any(goal["requires_stage_evidence"] for goal in shard_goals)
+            # Each Agent runs its own k6 scheduler, so fractional arrivals carry
+            # within a shard, never between independent nodes.
+            for index, stage in enumerate(load_goal["stages"]):
+                stage["scheduled_iterations"] = sum(goal["stages"][index]["scheduled_iterations"] for goal in shard_goals)
+                stage["reached"] = stage.get("actual_started_iterations", 0) >= stage["scheduled_iterations"] * .99
+            load_goal["scheduled_iterations"] = sum(stage["scheduled_iterations"] for stage in load_goal["stages"])
+            load_goal["reached"] = load_goal["scheduled_iterations"] > 0 and all(stage["reached"] for stage in load_goal["stages"])
             load_goal["reached"] = load_goal["reached"] and all(goal["reached"] for goal in shard_goals)
             load_goal["explanation"] += " 每个节点也必须逐阶段达到其分配目标，不能用一个节点的多发请求抵消另一个节点的缺失。"
 
@@ -424,31 +432,34 @@ class LoadReportService:
         actual_rate = round(aggregate["totals"]["iterations"] / aggregate["duration_seconds"], 3) if aggregate["duration_seconds"] else 0
         if executor == "ramping-arrival-rate":
             unit_seconds = 60 if workload.get("time_unit") == "1m" else 1
-            previous = float(workload.get("start_rate") or 0) / unit_seconds
+            previous = Fraction(str(workload.get("start_rate") or 0)) / unit_seconds
             stages = []
-            expected = 0.0
+            expected = Fraction(0)
             elapsed = 0.0
             for index, stage in enumerate(workload.get("stages") or []):
-                duration = float(stage.get("duration_seconds") or 0)
-                target = float(stage.get("target") or 0) / unit_seconds
+                duration = Fraction(str(stage.get("duration_seconds") or 0))
+                target = Fraction(str(stage.get("target") or 0)) / unit_seconds
                 count = (previous + target) / 2 * duration
-                stages.append({"index": index + 1, "start_seconds": elapsed, "duration_seconds": duration,
-                               "start_rate": previous, "target_rate": target, "expected_iterations": count})
-                elapsed += duration
+                scheduled = math.floor(expected + count) - math.floor(expected)
+                stages.append({"index": index + 1, "start_seconds": elapsed, "duration_seconds": float(duration),
+                               "start_rate": float(previous), "target_rate": float(target),
+                               "expected_iterations": float(count), "scheduled_iterations": scheduled})
+                elapsed += float(duration)
                 expected += count
                 previous = target
-            target_rate = expected / elapsed if elapsed else 0
+            target_rate = float(expected) / elapsed if elapsed else 0
             actual_stages = aggregate.get("stage_starts")
             if actual_stages is not None:
                 for stage in stages:
                     stage["actual_started_iterations"] = actual_stages.get(str(stage["index"] - 1), 0)
-                    stage["reached"] = stage["actual_started_iterations"] >= stage["expected_iterations"] * .99
+                    stage["reached"] = stage["actual_started_iterations"] >= stage["scheduled_iterations"] * .99
             return {"label": "负载目标", "model": executor, "model_label": "阶梯到达率",
                     "target_iterations_per_second": target_rate, "actual_iterations_per_second": actual_rate,
-                    "expected_iterations": expected, "stages": stages, "requires_stage_evidence": actual_stages is None,
-                    "attainment_rate": round(aggregate["totals"]["iterations"] / expected, 4) if expected else None,
-                    "reached": actual_stages is not None and all(s.get("reached") for s in stages),
-                    "explanation": "按各节点 k6 场景自身起点标记实际发起阶段，逐阶段对照计划迭代量的99%；业务完成和采样完整性另行判断。" if actual_stages is not None else "已按各阶段起止到达率计算计划迭代量；缺少与阶段起点对齐的实际发起证据，不能用全程平均判定阶梯达标。"}
+                    "expected_iterations": float(expected), "scheduled_iterations": math.floor(expected),
+                    "stages": stages, "requires_stage_evidence": actual_stages is None,
+                    "attainment_rate": round(aggregate["totals"]["iterations"] / float(expected), 4) if expected else None,
+                    "reached": actual_stages is not None and math.floor(expected) > 0 and all(s.get("reached") for s in stages),
+                    "explanation": "按各节点 k6 场景自身起点标记实际发起阶段；连续曲线积分保留用于对照，达标使用每节点累计取整后相减的整数计划发起数的99%。恰在阶段终点的事件仍保守核对，不自动减免一次；丢弃迭代、业务完成和采样完整性另行判断。" if actual_stages is not None else "已按各阶段起止到达率计算计划迭代量；缺少与阶段起点对齐的实际发起证据，不能用全程平均判定阶梯达标。"}
         if executor == "constant-arrival-rate":
             target = float(workload.get("rate") or 0) / (60 if workload.get("time_unit") == "1m" else 1)
             if workload.get("time_unit") not in {None, "1s", "1m"}:
