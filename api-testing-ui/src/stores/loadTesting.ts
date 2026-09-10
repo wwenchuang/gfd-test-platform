@@ -23,6 +23,8 @@ export const useLoadTestingStore = defineStore('api-load-testing', {
     runConnectionState: 'idle' as 'idle' | 'connecting' | 'open' | 'polling' | 'complete' | 'failed',
     runEventSource: null as EventSource | null,
     runPollTimer: null as ReturnType<typeof setTimeout> | null,
+    runStreamTimer: null as ReturnType<typeof setTimeout> | null,
+    runEventGeneration: 0,
   }),
   actions: {
     async loadAgents(silent = false): Promise<LoadAgent[]> {
@@ -134,37 +136,56 @@ export const useLoadTestingStore = defineStore('api-load-testing', {
       return response.data.run
     },
     async loadRunEvents(runId: string): Promise<LoadRunEvent[]> {
+      const generation = this.runEventGeneration
       const after = this.runEvents.at(-1)?.id || 0
-      const response = await apiClient.get<{ events: LoadRunEvent[]; terminal: boolean }>(`/api/api-testing/v1/load-runs/${encodeURIComponent(runId)}/events?after=${after}`)
-      for (const event of response.data.events) this.appendRunEvent(event)
-      if (response.data.terminal) this.runConnectionState = 'complete'
-      return response.data.events
+      const response = await apiClient.get<{ events: Array<Omit<LoadRunEvent, 'id'> & { id: string | number; sequence?: number }>; terminal: boolean; has_more?: boolean }>(`/api/api-testing/v1/load-runs/${encodeURIComponent(runId)}/events?after=${after}`)
+      if (generation !== this.runEventGeneration) return []
+      const events = response.data.events.map(event => ({ ...event, id: Number(event.sequence ?? event.id) }))
+      for (const event of events) this.appendRunEvent(event)
+      if (response.data.terminal && !response.data.has_more) this.runConnectionState = 'complete'
+      return events
     },
     async connectRunEvents(runId: string): Promise<void> {
       this.disconnectRunEvents(false)
       this.runEvents = []
       this.runConnectionState = 'connecting'
+      const generation = this.runEventGeneration
+      let usingPolling = false
+      const fallback = () => {
+        if (generation !== this.runEventGeneration || usingPolling) return
+        usingPolling = true
+        this.runEventSource?.close(); this.runEventSource = null
+        if (this.runStreamTimer) clearTimeout(this.runStreamTimer)
+        this.runStreamTimer = null
+        this.runConnectionState = 'polling'
+        this.scheduleRunPoll(runId)
+      }
+      const watchStream = () => {
+        if (this.runStreamTimer) clearTimeout(this.runStreamTimer)
+        this.runStreamTimer = setTimeout(fallback, 10000)
+      }
+      watchStream()
       try {
         const response = await apiClient.post<{ ticket: string }>(`/api/api-testing/v1/load-runs/${encodeURIComponent(runId)}/sse-ticket`, {})
+        if (generation !== this.runEventGeneration || this.runConnectionState !== 'connecting') return
         const after = this.runEvents.at(-1)?.id || 0
         const source = markRaw(new EventSource(`/api/api-testing/v1/load-runs/${encodeURIComponent(runId)}/events?ticket=${encodeURIComponent(response.data.ticket)}${after ? `&after=${after}` : ''}`))
         this.runEventSource = source
-        source.onopen = () => { this.runConnectionState = 'open' }
+        source.onopen = () => { if (this.runEventSource === source) this.runConnectionState = 'open' }
         source.addEventListener('load_event', event => {
+          if (this.runEventSource !== source) return
           const message = event as MessageEvent
           try {
             const data = JSON.parse(String(message.data || '{}')) as { type?: string; payload?: Record<string, unknown>; _event_created_at?: string }
+            watchStream()
             this.appendRunEvent({ id: Number(message.lastEventId), type: String(data.type || 'unknown'), payload: data.payload || {}, created_at: data._event_created_at })
           } catch { /* malformed event is ignored; durable polling can recover it */ }
         })
         source.onerror = () => {
           if (this.runEventSource !== source) return
-          source.close(); this.runEventSource = null; this.runConnectionState = 'polling'; this.scheduleRunPoll(runId)
+          fallback()
         }
-      } catch {
-        this.runConnectionState = 'polling'
-        this.scheduleRunPoll(runId)
-      }
+      } catch { fallback() }
     },
     appendRunEvent(event: LoadRunEvent): void {
       if (!Number.isInteger(event.id) || event.id <= (this.runEvents.at(-1)?.id || 0)) return
@@ -172,14 +193,19 @@ export const useLoadTestingStore = defineStore('api-load-testing', {
     },
     scheduleRunPoll(runId: string): void {
       if (this.runPollTimer || this.runConnectionState === 'complete') return
+      const generation = this.runEventGeneration
       this.runPollTimer = setTimeout(async () => {
         this.runPollTimer = null
         try { await Promise.all([this.loadRunEvents(runId), this.loadRun(runId)]) }
-        catch { this.runConnectionState = 'failed' }
+        catch { if (generation === this.runEventGeneration) this.runConnectionState = 'failed' }
+        if (generation !== this.runEventGeneration) return
         if (this.runConnectionState !== 'complete') this.scheduleRunPoll(runId)
       }, 3000)
     },
     disconnectRunEvents(reset = true): void {
+      this.runEventGeneration += 1
+      if (this.runStreamTimer) clearTimeout(this.runStreamTimer)
+      this.runStreamTimer = null
       this.runEventSource?.close(); this.runEventSource = null
       if (this.runPollTimer) clearTimeout(this.runPollTimer)
       this.runPollTimer = null

@@ -261,6 +261,15 @@ def test_run_read_events_report_ai_and_actions_use_separate_permissions(load_fac
     assert started["run"]["state"] == "starting"
     stopped, _ = _call(load_factory, "POST", f"/load-runs/{run_id}/stop", "runner", {"reason": "人工停止"})
     assert stopped["run"]["state"] == "cancelled"
+    with load_factory.begin() as session:
+        session.add_all(ApiLoadEvent(run_id=run_id, sequence=i, event_type="agent.progress", payload={}, **_audit()) for i in range(2, 202))
+    first, _ = _call(load_factory, "GET", f"/load-runs/{run_id}/events", "viewer", query={"after": "0"})
+    assert first["terminal"] is True and first["has_more"] is True
+    assert len(first["events"]) == 200
+    last, _ = _call(load_factory, "GET", f"/load-runs/{run_id}/events", "viewer", query={"after": "200"})
+    assert last["terminal"] is True and last["has_more"] is False
+    assert [event["sequence"] for event in last["events"]] == [201]
+
 
 
 def test_load_route_is_mounted_once_before_generic_not_found():

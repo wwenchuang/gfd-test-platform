@@ -170,19 +170,21 @@ const executiveNext = computed(() => {
   return { primary: '按当前条件建立基线', detail: '再结合业务目标分阶段小幅升压，每轮重新检查停止条件' }
 })
 let liveTimer: ReturnType<typeof setTimeout> | null = null
+let openGeneration = 0
+let disposed = false
 
 onMounted(async () => {
   await Promise.all([context.loadSavedContext(), context.loadOptions()])
-  if (!context.projectId) return
+  if (disposed || !context.projectId) return
   await store.loadRuns(undefined)
+  if (disposed) return
   const requestedRunId = String(route.query.run_id || '')
   const requestedRun = store.runs.find(item => item.id === requestedRunId)
   applicationFilter.value = requestedRun?.project_id || context.projectId
   runId.value = requestedRunId || matchingRuns.value[0]?.id || ''
-  await openRun()
   scheduleLiveRefresh()
 })
-onBeforeUnmount(() => { store.disconnectRunEvents(); if (liveTimer) clearTimeout(liveTimer) })
+onBeforeUnmount(() => { disposed = true; openGeneration += 1; store.disconnectRunEvents(); if (liveTimer) clearTimeout(liveTimer) })
 watch(runId, async (next, previous) => { if (next !== previous) await openRun() })
 watch([runQuery, runState], () => { historyLimit.value = 8 })
 watch(applicationFilter, next => {
@@ -195,12 +197,13 @@ watch(() => route.query.run_id, next => {
 })
 watch(() => selectedRun.value?.state, async state => {
   if (state && ['finished', 'failed', 'cancelled'].includes(state) && !report.value) {
-    store.disconnectRunEvents(false)
+    // Show the report immediately; the event connection drains its terminal pages.
     await loadReport()
   }
 })
 
 async function openRun(): Promise<void> {
+  const generation = ++openGeneration
   store.disconnectRunEvents()
   store.runEvents = []
   report.value = null
@@ -210,9 +213,10 @@ async function openRun(): Promise<void> {
   loading.value = true
   try {
     const run = await store.loadRun(runId.value)
+    if (generation !== openGeneration) return
     if (['finished', 'failed', 'cancelled'].includes(run.state)) await loadReport()
     else await store.connectRunEvents(run.id)
-  } finally { loading.value = false }
+  } finally { if (generation === openGeneration) loading.value = false }
 }
 function selectRun(nextRunId: string, closeHistory = true): void {
   if (!nextRunId) return
@@ -223,11 +227,13 @@ function selectRun(nextRunId: string, closeHistory = true): void {
   }
 }
 function scheduleLiveRefresh(): void {
+  if (disposed) return
   if (liveTimer) clearTimeout(liveTimer)
   liveTimer = setTimeout(async () => {
     liveTimer = null
     if (runId.value && selectedRun.value && (!terminal.value || monitoring.value?.terminal === false || (!monitoring.value && selectedRun.value.configuration.monitoring))) {
       await store.loadRun(runId.value).catch(() => undefined)
+      if (disposed) return
       if (terminal.value) await loadReport().catch(() => undefined)
     }
     scheduleLiveRefresh()
@@ -235,7 +241,10 @@ function scheduleLiveRefresh(): void {
 }
 async function loadReport(): Promise<void> {
   if (!runId.value) return
-  const [nextReport, nextAnalysis] = await Promise.all([store.loadReport(runId.value), store.loadAiAnalysis(runId.value)])
+  const selectedId = runId.value
+  const generation = openGeneration
+  const [nextReport, nextAnalysis] = await Promise.all([store.loadReport(selectedId), store.loadAiAnalysis(selectedId)])
+  if (selectedId !== runId.value || generation !== openGeneration) return
   report.value = nextReport
   analysis.value = nextAnalysis
 }

@@ -32,6 +32,44 @@ from tests.api_testing.test_migrations import (
 )
 
 
+@pytest.mark.parametrize("headers,query,wants_stream", [
+    ({}, {"after": "7"}, False),
+    ({"Accept": "application/json"}, {"after": "7"}, False),
+    ({"Accept": "text/event-stream"}, {}, True),
+    ({}, {"ticket": "opaque-ticket"}, True),
+])
+def test_load_events_outer_dispatch_keeps_json_polling_reachable(monkeypatch, headers, query, wants_stream):
+    from task_server.api_testing import load_testing_http
+    calls = []
+    handler = SimpleNamespace(headers=headers)
+    monkeypatch.setattr(http, "_authenticate", lambda *args: "owner")
+    monkeypatch.setattr(http.ApiTestingSettings, "from_env", lambda: SimpleNamespace(enabled=True))
+    monkeypatch.setattr(http.access, "get_access_profile", lambda actor: None)
+    monkeypatch.setattr(http.access, "authorize_http", lambda *args: None)
+    monkeypatch.setattr(http, "_stream_load_events", lambda *args, **kwargs: calls.append("sse"))
+    monkeypatch.setattr(load_testing_http, "dispatch_load_testing_request", lambda *args: calls.append("json") or True)
+    http._dispatch(handler, "GET", query, f"/api/api-testing/v1/load-runs/{uuid4()}/events")
+    assert calls == (["sse"] if wants_stream else ["json"])
+
+
+def test_load_sse_flushes_durable_events_without_proxy_buffering(monkeypatch):
+    sent = {}
+    handler = SimpleNamespace(headers={}, wfile=io.BytesIO(),
+        send_response=lambda status: None, _cors=lambda: None,
+        send_header=lambda name, value: sent.update({name: value}), end_headers=lambda: None)
+    monkeypatch.setattr(http.access, "get_access_profile", lambda actor: None)
+    monkeypatch.setattr(http.access, "require_permission", lambda *args: None)
+    monkeypatch.setattr(http, "_require_stream_session", lambda *args: None)
+    monkeypatch.setattr(http, "_factory", lambda: None)
+    monkeypatch.setattr(http, "_scope_load_run", lambda *args: SimpleNamespace(state="finished"))
+    event = SimpleNamespace(sequence=201, type="run.finished", payload={"state":"finished"}, created_at=None)
+    monkeypatch.setattr(http, "_load_event_stream", lambda factory: SimpleNamespace(read=lambda *args: [event]))
+    http._stream_load_events(handler, str(uuid4()), "request", "owner")
+    assert sent["Content-Type"].startswith("text/event-stream")
+    assert sent.get("X-Accel-Buffering") == "no"
+    assert b'id: 201\nevent: load_event\n' in handler.wfile.getvalue()
+
+
 def test_sse_event_timestamp_is_included_without_mutating_payload():
     class Handler:
         def __init__(self):

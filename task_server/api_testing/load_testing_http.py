@@ -174,8 +174,8 @@ def _get(factory, segments, query, actor):
             rows = tuple(session.scalars(select(ApiLoadEvent).where(
                 ApiLoadEvent.run_id == run.id,
                 ApiLoadEvent.sequence > after,
-            ).order_by(ApiLoadEvent.sequence).limit(200)))
-        return {"events": [_event_view(item) for item in rows], "terminal": run.state in {"finished", "failed", "cancelled"}}
+            ).order_by(ApiLoadEvent.sequence).limit(201)))
+        return {"events": [_event_view(item) for item in rows[:200]], "has_more": len(rows) > 200, "terminal": run.state in {"finished", "failed", "cancelled"}}
     if len(segments) == 3 and segments[0] == "load-runs" and segments[2] == "report-export":
         access.require_permission(actor, "api.loadtest.view")
         format = str(query.get("format") or "")

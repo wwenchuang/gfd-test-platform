@@ -81,6 +81,23 @@ describe('LoadRunsView', () => {
     wrapper.unmount()
   })
 
+  it('summarizes complete ramp curves, zero starts and minute throughput units', async () => {
+    const context = useContextStore(); context.projectId = 'p1'
+    vi.spyOn(context, 'loadSavedContext').mockResolvedValue(); vi.spyOn(context, 'loadOptions').mockResolvedValue()
+    const store = useLoadTestingStore()
+    store.runs = [
+      { id: 'r1', project_id: 'p1', load_model: 'ramping-vus', configuration: {workload: {start_vus: 1, stages: [{target:2,duration_seconds:15},{target:4,duration_seconds:15},{target:1,duration_seconds:15}]}}, state:'finished' },
+      { id: 'r2', project_id: 'p1', load_model: 'ramping-arrival-rate', configuration: {workload: {start_rate: 0, time_unit:'1m', stages: [{target:60,duration_seconds:60},{target:0,duration_seconds:30}]}}, state:'finished' },
+    ] as never
+    vi.spyOn(store, 'loadScenarios').mockResolvedValue([]); vi.spyOn(store, 'loadAgents').mockResolvedValue([]); vi.spyOn(store, 'loadRuns').mockResolvedValue(store.runs)
+    const router = createRouter({ history: createMemoryHistory(), routes: [{path:'/', component:LoadRunsView}] })
+    const wrapper = mount(LoadRunsView, {global:{plugins:[router]}})
+    await flushPromises()
+    expect(wrapper.text()).toContain('阶梯并发 · 1 → 2 → 4 → 1 VU · 45 秒')
+    expect(wrapper.text()).toContain('阶梯吞吐 · 0 → 60 → 0 次/分钟 · 90 秒')
+    wrapper.unmount()
+  })
+
   it('opens a scenario deep link and clears it when returning to the execution list', async () => {
     const context = useContextStore(); Object.assign(context, { projectId: 'p1', projects: [{ id: 'p1', name: '3D家用' }], environmentRevisions: [] })
     vi.spyOn(context, 'loadSavedContext').mockResolvedValue(); vi.spyOn(context, 'loadOptions').mockResolvedValue()

@@ -2,7 +2,8 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { createMemoryHistory, createRouter } from 'vue-router'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { apiClient } from '../api/client'
 import { useContextStore } from '../stores/context'
 import { useLoadTestingStore } from '../stores/loadTesting'
 import LoadReportsView from './LoadReportsView.vue'
@@ -12,6 +13,7 @@ const report = { run_id: 'r1', verdict: 'failed' as const, verdict_label: '未�
 
 describe('LoadReportsView', () => {
   beforeEach(() => { setActivePinia(createPinia()); vi.restoreAllMocks() })
+  afterEach(() => vi.useRealTimers())
   it('prioritizes failure investigation over an unmet ramp target and includes starting pressure in peak', async () => {
     const rampRun = { ...run, load_model: 'ramping-vus' as const, configuration: { ...run.configuration, workload: { executor: 'ramping-vus', start_vus: 8, stages: [{ duration_seconds: 15, target: 2 }] } } }
     const context = useContextStore(); Object.assign(context, { projectId: 'p1', projects: [{ id: 'p1', name: '演示服务' }] }); vi.spyOn(context, 'loadSavedContext').mockResolvedValue(); vi.spyOn(context, 'loadOptions').mockResolvedValue()
@@ -86,8 +88,57 @@ describe('LoadReportsView', () => {
     const wrapper = mount(LoadReportsView, { global: { plugins: [router] } }); await flushPromises()
     expect(wrapper.find('[aria-label="压测实时控制台"]').exists()).toBe(true)
     expect(store.connectRunEvents).toHaveBeenCalledWith('r1')
+    expect(store.connectRunEvents).toHaveBeenCalledTimes(1)
     expect(wrapper.find('[data-testid="load-report-sample-integrity"]').exists()).toBe(false)
     expect(wrapper.text()).not.toContain('采样计数不一致')
+  })
+
+  it.each(['initializing', 'refreshing'])('does not restart polling after unmount while %s', async phase => {
+    vi.useFakeTimers()
+    const active = {...run, state:'running' as const, verdict:null}
+    const context = useContextStore(); context.projectId = 'p1'
+    let resume!: () => void
+    vi.spyOn(context, 'loadSavedContext').mockImplementation(() => phase === 'initializing' ? new Promise(resolve => {resume = resolve}) : Promise.resolve())
+    vi.spyOn(context, 'loadOptions').mockResolvedValue()
+    const store = useLoadTestingStore(); store.runs = [active]
+    vi.spyOn(store, 'loadRuns').mockResolvedValue(store.runs)
+    const load = vi.spyOn(store, 'loadRun').mockResolvedValue(active)
+    vi.spyOn(store, 'connectRunEvents').mockResolvedValue()
+    const router = createRouter({history:createMemoryHistory(),routes:[{path:'/',component:LoadReportsView}]})
+    await router.push('/?run_id=r1'); await router.isReady()
+    const wrapper = mount(LoadReportsView,{global:{plugins:[router]}})
+    await flushPromises()
+    if (phase === 'refreshing') {
+      load.mockImplementationOnce(() => new Promise(resolve => {resume = () => resolve(active)}))
+      await vi.advanceTimersByTimeAsync(3000)
+    }
+    wrapper.unmount(); resume(); await flushPromises()
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('keeps draining terminal event pages while the final report becomes visible', async () => {
+    vi.useFakeTimers()
+    const active = {...run,state:'running' as const,verdict:null}
+    const context = useContextStore(); context.projectId = 'p1'
+    vi.spyOn(context,'loadSavedContext').mockResolvedValue(); vi.spyOn(context,'loadOptions').mockResolvedValue()
+    const store = useLoadTestingStore(); store.runs = [active]
+    vi.spyOn(store,'loadRuns').mockResolvedValue(store.runs)
+    const load = vi.spyOn(store,'loadRun').mockResolvedValue(active)
+    vi.spyOn(store,'connectRunEvents').mockResolvedValue()
+    vi.spyOn(store,'loadReport').mockResolvedValue(report); vi.spyOn(store,'loadAiAnalysis').mockResolvedValue(null)
+    const get = vi.spyOn(apiClient,'get').mockResolvedValueOnce({data:{events:[{id:'uuid-200',sequence:200,type:'progress',payload:{}}],terminal:true,has_more:true}} as never)
+      .mockResolvedValueOnce({data:{events:[{id:'uuid-201',sequence:201,type:'run.finished',payload:{}}],terminal:true,has_more:false}} as never)
+    const router = createRouter({history:createMemoryHistory(),routes:[{path:'/',component:LoadReportsView}]})
+    await router.push('/?run_id=r1'); await router.isReady()
+    const wrapper = mount(LoadReportsView,{global:{plugins:[router]}}); await flushPromises()
+    load.mockImplementation(async () => {store.runs=[run]; return run})
+    store.runConnectionState='polling'; store.scheduleRunPoll('r1')
+    await vi.advanceTimersByTimeAsync(6000)
+    expect(get).toHaveBeenLastCalledWith('/api/api-testing/v1/load-runs/r1/events?after=200')
+    expect(store.runEvents.at(-1)?.id).toBe(201)
+    expect(store.runConnectionState).toBe('complete')
+    expect(wrapper.find('[data-testid="load-report-executive-grid"]').exists()).toBe(true)
+    wrapper.unmount()
   })
 
   it('labels ramping VU evidence as concurrency instead of request starts', async () => {

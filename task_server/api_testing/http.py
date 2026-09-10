@@ -162,7 +162,7 @@ def _dispatch(handler, method, qs, path):
                 actor,
                 after=qs.get("after"),
             )
-        if method == "GET" and _is_load_run_events(segments):
+        if method == "GET" and _is_load_run_events(segments) and (ticket or "text/event-stream" in handler.headers.get("Accept", "").lower()):
             return _stream_load_events(handler, _uuid(segments[1]), request_id, actor, after=qs.get("after"))
         if method == "POST" and _is_load_run_sse_ticket(segments):
             run_id = _uuid(segments[1])
@@ -1431,6 +1431,7 @@ def _stream_load_events(handler, run_id, request_id, actor, *, after=None):
     handler._cors()
     handler.send_header("Content-Type", "text/event-stream; charset=utf-8")
     handler.send_header("Cache-Control", "no-cache")
+    handler.send_header("X-Accel-Buffering", "no")
     handler.send_header("X-Request-Id", request_id)
     handler.end_headers()
     stream = _load_event_stream(factory)

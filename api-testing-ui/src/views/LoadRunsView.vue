@@ -225,8 +225,16 @@ function workloadText(run: LoadRun): string {
     'ramping-arrival-rate': '阶梯吞吐',
   } as Record<string, string>)[run.load_model] || run.load_model
   if (!workload) return label
-  if (run.load_model.includes('arrival-rate')) return `${label} · ${Number(workload.rate || workload.start_rate || 0)} 次/秒 · ${Number(workload.duration_seconds || 0)} 秒`
-  return `${label} · ${Number(workload.vus || workload.start_vus || 0)} VU · ${Number(workload.duration_seconds || 0)} 秒`
+  const arrival = run.load_model.includes('arrival-rate')
+  const unit = arrival ? `次/${workload.time_unit === '1m' ? '分钟' : '秒'}` : 'VU'
+  if (run.load_model.startsWith('ramping-')) {
+    const stages = Array.isArray(workload.stages) ? workload.stages as Array<Record<string, unknown>> : []
+    if (!stages.length) return `${label} · 阶段配置缺失`
+    const curve = [arrival ? workload.start_rate : workload.start_vus, ...stages.map(stage => stage.target)]
+    const duration = stages.reduce((total, stage) => total + Number(stage.duration_seconds || 0), 0)
+    return `${label} · ${curve.map(value => value ?? '未知').join(' → ')} ${unit} · ${duration} 秒`
+  }
+  return `${label} · ${(arrival ? workload.rate : workload.vus) ?? '未知'} ${unit} · ${workload.duration_seconds ?? '未知'} 秒`
 }
 function dateTime(value: string | null): string {
   if (!value) return '暂无'
