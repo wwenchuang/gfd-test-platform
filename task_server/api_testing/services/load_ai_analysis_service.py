@@ -139,6 +139,24 @@ def _text(value, field, maximum=2000):
     return value.strip()
 
 
+def _diagnosis_evidence_complete(evidence):
+    execution_evidence = evidence.get("evidence") or {}
+    sampling = evidence.get("sampling_integrity") or {}
+    finished_shards = execution_evidence.get("finished_shards")
+    total_shards = execution_evidence.get("total_shards")
+    # Missing historical fields are unknown, not proof of complete execution.
+    # An acceptable count tolerance still does not establish consistent sampling.
+    return (
+        execution_evidence.get("complete") is True
+        and (evidence.get("load_goal") or {}).get("reached") is True
+        and sampling.get("consistent") is True
+        and sampling.get("acceptable") is not False
+        and type(finished_shards) is int and type(total_shards) is int
+        and total_shards > 0 and finished_shards == total_shards
+        and all(agent.get("state") == "finished" for agent in evidence.get("agents") or [])
+    )
+
+
 def _validate_result(value, evidence):
     if not isinstance(value, dict) or set(value) != {"conclusion", "bottleneck_category", "evidence", "recommendations", "next_run", "confidence"}:
         raise LoadAiAnalysisError("AI诊断返回结构不完整")
@@ -210,6 +228,14 @@ def _validate_result(value, evidence):
     confidence = value.get("confidence")
     if not isinstance(confidence, dict) or confidence.get("level") not in CONFIDENCE_LEVELS:
         raise LoadAiAnalysisError("AI诊断置信度无效")
+    if not _diagnosis_evidence_complete(evidence) and (
+        category not in {"insufficient_evidence", "mixed"}
+        or confidence["level"] == "high"
+    ):
+        raise LoadAiAnalysisError(
+            "AI诊断证据不足：执行完整性、达压、采样一致性或节点完成证据不足，"
+            "瓶颈分类必须为 insufficient_evidence 或 mixed，置信度只能为 low 或 medium"
+        )
     return redact({
         "conclusion": conclusion,
         "bottleneck_category": category,
@@ -236,9 +262,7 @@ def _citation_safe_fallback(evidence, error):
     load_model = load_goal.get("model")
     if load_model not in {"constant-vus", "ramping-vus", "constant-arrival-rate", "ramping-arrival-rate"}:
         load_model = "constant-arrival-rate"
-    complete = bool((evidence.get("evidence") or {}).get("complete"))
-    reached = bool(load_goal.get("reached"))
-    if verdict == "passed" and complete and reached and (evidence.get("sampling_integrity") or {}).get("consistent") is not False:
+    if verdict == "passed" and _diagnosis_evidence_complete(evidence):
         category = "no_bottleneck"
         conclusion = "本轮已达到目标负载且必选阈值通过，现有证据未发现明确瓶颈。"
         action = "保持当前场景和阈值，下一轮逐级提高目标负载，观察响应时间和失败率的拐点。"
