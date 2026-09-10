@@ -171,6 +171,7 @@ const executiveNext = computed(() => {
 })
 let liveTimer: ReturnType<typeof setTimeout> | null = null
 let openGeneration = 0
+let analysisGeneration = 0
 let disposed = false
 
 onMounted(async () => {
@@ -204,6 +205,8 @@ watch(() => selectedRun.value?.state, async state => {
 
 async function openRun(): Promise<void> {
   const generation = ++openGeneration
+  analysisGeneration += 1
+  analyzing.value = false
   store.disconnectRunEvents()
   store.runEvents = []
   report.value = null
@@ -235,6 +238,13 @@ function scheduleLiveRefresh(): void {
       await store.loadRun(runId.value).catch(() => undefined)
       if (disposed) return
       if (terminal.value) await loadReport().catch(() => undefined)
+    } else if (runId.value && ['queued', 'running'].includes(analysis.value?.state || selectedRun.value?.ai_analysis_state || '')) {
+      const selectedId = runId.value
+      const generation = openGeneration
+      const diagnosisGeneration = analysisGeneration
+      const nextAnalysis = await store.loadAiAnalysis(selectedId).catch(() => undefined)
+      if (disposed) return
+      if (nextAnalysis !== undefined && selectedId === runId.value && generation === openGeneration && diagnosisGeneration === analysisGeneration) analysis.value = nextAnalysis
     }
     scheduleLiveRefresh()
   }, 3000)
@@ -243,16 +253,27 @@ async function loadReport(): Promise<void> {
   if (!runId.value) return
   const selectedId = runId.value
   const generation = openGeneration
+  const diagnosisGeneration = analysisGeneration
   const [nextReport, nextAnalysis] = await Promise.all([store.loadReport(selectedId), store.loadAiAnalysis(selectedId)])
   if (selectedId !== runId.value || generation !== openGeneration) return
   report.value = nextReport
-  analysis.value = nextAnalysis
+  if (diagnosisGeneration === analysisGeneration) analysis.value = nextAnalysis
 }
 async function reanalyze(): Promise<void> {
   if (!runId.value) return
+  const selectedId = runId.value
+  const generation = openGeneration
+  const diagnosisGeneration = ++analysisGeneration
   analyzing.value = true
-  try { analysis.value = await store.requestAiAnalysis(runId.value, true); feedback.value = 'AI重新诊断已排队，不会重新执行压测。' }
-  finally { analyzing.value = false }
+  try {
+    const nextAnalysis = await store.requestAiAnalysis(selectedId, true)
+    if (disposed || selectedId !== runId.value || generation !== openGeneration || diagnosisGeneration !== analysisGeneration) return
+    // Polls begun while the POST was pending could still contain the old task.
+    analysisGeneration += 1
+    analyzing.value = false
+    analysis.value = nextAnalysis
+    feedback.value = 'AI重新诊断已排队，不会重新执行压测。'
+  } finally { if (generation === openGeneration && diagnosisGeneration === analysisGeneration) analyzing.value = false }
 }
 async function notify(): Promise<void> {
   if (!runId.value) return

@@ -28,6 +28,27 @@ def test_bounded_growth_requires_goal_and_real_resources():
 def test_non_growth_branches(change,action):
     r=report();r.update(change);assert build_next_run_policy(r)['action']==action
 
+@pytest.mark.parametrize('ramping', [False, True])
+def test_missing_growth_goal_keeps_original_retest_available_without_allowing_growth(ramping):
+    r = ramp_report() if ramping else report()
+    r['test_context'] = {'purpose': 'stress'}
+    original = deepcopy(r['evidence']['workload_snapshot'])
+    policy = build_next_run_policy(r)
+    assert policy['can_prefill'] is True
+    assert policy['next_run']['workload'] == original
+    assert '原' in policy['objective']
+    advice = deepcopy(policy['next_run'])
+    accepted = validate_next_run_advice(policy, advice)
+    assert accepted['validation_status'] == 'ai_validated'
+    assert accepted['can_prefill'] is True
+    if ramping:
+        advice['workload']['stages'][0]['target'] += 1
+    else:
+        advice['workload']['rate'] += 1
+    adjusted = validate_next_run_advice(policy, advice)
+    assert adjusted['validation_status'] == 'ai_adjusted'
+    assert adjusted['next_run']['workload'] == original
+
 def test_no_false_rejection_within_user_sample_tolerance():
     r=report();r['evidence']['sample_integrity']={'consistent':False,'acceptable':True}
     assert build_next_run_policy(r)['action']=='increase_bounded'

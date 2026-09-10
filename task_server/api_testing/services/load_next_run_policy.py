@@ -3,7 +3,7 @@ import math
 from copy import deepcopy
 from .load_scenario_compiler import _parse_workload, LoadScenarioCompileError
 
-VERSION = 'next-run-policy.v2'
+VERSION = 'next-run-policy.v3'
 
 def number(value):
     try:
@@ -147,7 +147,7 @@ def build_next_run_policy(report):
     observe = context.get('observation_seconds')
     step = number(context.get('max_step_percent'))
     if goal is None or goal <= 0 or isinstance(observe, bool) or not isinstance(observe, int) or not 60 <= observe <= 86400 or step is None or not 0 < step <= 50:
-        return decide('set_goal', '没有完整的业务目标、观察时长和加压步长，平台不自由猜测下一轮数值。', '在测试条件填写目标（同负载单位）、单轮最大增长比例和观察时长。')
+        return decide('set_goal', '加压目标、增长上限或观察时长尚未完整填写；可以保持原配置复验，调整压力或延长执行前需补齐边界。', '保留原曲线、原时长、阈值和监控条件复验，核对慢步骤与恢复表现；需要调整时再填写业务目标、单轮增长上限和观察时长。', True)
     if duration < observe:
         if ramping:
             policy['can_adjust_curve'] = True
