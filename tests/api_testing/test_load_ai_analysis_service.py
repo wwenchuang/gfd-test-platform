@@ -1,6 +1,8 @@
 """Evidence-grounded AI diagnosis for performance reports."""
 
 from datetime import datetime, timezone
+import json
+from pathlib import Path
 
 import pytest
 
@@ -10,6 +12,8 @@ from task_server.api_testing.services.load_ai_analysis_service import (
     LoadAiAnalysisError,
     LoadAiAnalysisService,
     _default_analyzer,
+    _validate_result,
+    PROMPT_VERSION,
     build_evidence_package,
 )
 from tests.api_testing.test_load_testing_repository import load_factory, load_records, load_run_with_shard
@@ -183,7 +187,19 @@ def test_default_analyzer_supplies_schema_complete_low_confidence_defaults(monke
     with pytest.raises(ValueError, match='规则备用'):
         _default_analyzer(build_evidence_package(_report()))
     assert captured["repair_invalid_json"] is True
-    assert captured["version"] == "v7"
+    assert captured["version"] == "v8"
+
+
+def test_active_prompt_json_example_includes_a_valid_complete_ramp_curve():
+    prompt = (Path(__file__).resolve().parents[2] / 'ai_skills' / 'prompts' / f'{PROMPT_VERSION}.md').read_text()
+    example, _ = json.JSONDecoder().raw_decode(prompt[prompt.index('{'):])
+    # The first example is the contract the model imitates, so it must be
+    # accepted by the same validator as real model output (including stages).
+    example['evidence'] = ['load.goal']
+    result = _validate_result(example, build_evidence_package(_report()))
+    workload = result['next_run']['workload']
+    assert workload['executor'] == 'ramping-vus'
+    assert workload['stages'][-1]['target'] < workload['stages'][-2]['target']
 
 
 def test_incomplete_model_output_is_corrected_once_then_uses_rule_plan(load_factory, load_run_with_shard):

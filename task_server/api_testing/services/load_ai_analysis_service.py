@@ -20,7 +20,7 @@ from .load_next_run_policy import build_next_run_policy, resource_observations, 
 from .load_scenario_compiler import _parse_workload, LoadScenarioCompileError
 
 
-PROMPT_VERSION = "api-load-analysis.v7"
+PROMPT_VERSION = "api-load-analysis.v8"
 CATEGORIES = frozenset({"no_bottleneck", "target_service", "network", "load_agent", "test_data", "mixed", "insufficient_evidence"})
 CONFIDENCE_LEVELS = frozenset({"high", "medium", "low"})
 
@@ -297,7 +297,7 @@ def _default_analyzer(evidence):
     result = run_ai_skill(
         "api-load-analysis",
         payload=evidence,
-        version="v7",
+        version="v8",
         temperature=0,
         timeout=60,
         respect_global_timeout=False,
