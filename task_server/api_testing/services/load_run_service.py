@@ -8,7 +8,8 @@ import json
 from sqlalchemy import case, select
 
 from .. import access
-from ..models.environment import ApiEnvironment, ApiEnvironmentRevision
+from ..models.environment import ApiEnvironment, ApiEnvironmentRevision, ApiEnvironmentService
+from .load_service_facts import snapshot_service_facts
 from ..models.load_testing import (
     ApiLoadAgent,
     ApiLoadAiAnalysis,
@@ -202,7 +203,10 @@ class LoadRunService:
                     "version_number": version.version_number,
                     "content_hash": version.content_hash,
                 },
-                "environment": {"revision_id": revision.id, "name": revision.name},
+                "environment": {"revision_id": revision.id, "name": revision.name,
+                    "service_facts": snapshot_service_facts(
+                        {item.service_name: item.metadata_json for item in session.scalars(
+                            select(ApiEnvironmentService).where(ApiEnvironmentService.revision_id == revision.id))}, definition)},
                 "workload": parsed["workload"],
                 "thresholds": parsed["thresholds"],
                 "priority": parsed["priority"],

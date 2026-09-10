@@ -2,6 +2,7 @@
 import LoadCurveComparison from './LoadCurveComparison.vue'
 import { computed } from 'vue'
 import type { LoadAiAnalysis } from '../api/contracts'
+import { factDefinitions, sourceLabels, stateLabels } from '../utils/loadServiceFacts'
 
 const props = defineProps<{ analysis: LoadAiAnalysis | null; loading?: boolean; canCreateNext?: boolean }>()
 const emit = defineEmits<{ reanalyze: []; createNext: [] }>()
@@ -26,7 +27,7 @@ const nextRun = computed(() => {
 const policy = computed(() => result.value.next_run_strategy as {source?: string; validation_status?:string; continuation_status?:string; adjustment_reasons?:string[]; original_workload?:Record<string,unknown>; evidence_ids?:string[]; reason?: string; objective?: string; can_prefill?: boolean; limitations?: string[]; stop_conditions?: string[]; strategy_basis?: string} | undefined)
 const recommendationSource = computed(() => {
   const status = analysisStatus.value === 'rule_fallback' ? 'rule_fallback' : String(policy.value?.validation_status || policy.value?.source || '')
-  return ({ai_validated:'AI 建议已通过校验',ai_adjusted:'AI 建议已由平台调整',rule_fallback:'平台规则备用建议'} as Record<string,string>)[status] || policy.value?.source || '建议来源未记录'
+  return ({ai_validated:'AI 提出的下一轮参数已通过校验',ai_adjusted:'AI 建议已由平台调整',rule_fallback:'平台规则备用建议'} as Record<string,string>)[status] || policy.value?.source || '建议来源未记录'
 })
 const missingMonitoring = computed(() => /监控|采样/.test(`${policy.value?.reason || ''} ${policy.value?.objective || ''} ${(policy.value?.limitations || []).join(' ')}`))
 const stateLabel = computed(() => ({ queued: '等待诊断', running: '诊断中', completed: '诊断完成', failed: '诊断失败' } as Record<string, string>)[props.analysis?.state || ''] || '尚未诊断')
@@ -36,6 +37,17 @@ function categoryLabel(value: unknown): string {
     test_data: '疑似测试数据问题', mixed: '多因素混合', insufficient_evidence: '证据不足',
   } as Record<string, string>)[String(value || '')] || '尚未分类'
 }
+function evidenceReference(id:string):string { const label=evidenceLabel(id); return label===id ? id : `${label}（${id}）` }
+function factDescription(id: string): string {
+  const facts = Array.isArray(result.value.service_facts) ? result.value.service_facts as Array<Record<string,unknown>> : []
+  const fact = facts.find(item=>item.evidence_id === id)
+  if (!fact) return '事实来源未记录'
+  const label = factDefinitions.find(item=>item.key === fact.component)?.label || String(fact.component || '服务事实')
+  const source = fact.source as {kind?:string;reference?:string} | undefined
+  return `${label} · ${stateLabels[String(fact.state)] || '未知'} · ${source ? `人工记录来源：${sourceLabels[source.kind || ''] || '未记录'} · ${source.reference || '未记录'}` : '来源未记录'}`
+}
+function references(value: unknown): string[] { return Array.isArray(value) ? value.map(String) : [] }
+function domainLabel(value: unknown): string { return ({cpu:'CPU',memory:'内存',database:'数据库',downstream:'下游依赖',gc_runtime:'垃圾回收运行时',network:'网络',load_generator:'压力机',thread_pool:'工作槽位',connection_pool:'连接槽位',application_pool:'应用槽位',disk:'磁盘',load_agent:'压力机',test_data:'测试数据'} as Record<string,string>)[String(value)] || String(value || '未记录') }
 function priorityLabel(value: unknown): string { return ({ high: '高优先级', medium: '中优先级', low: '低优先级' } as Record<string, string>)[String(value || '')] || '建议' }
 function modelLabel(value: unknown): string {
   return ({ 'constant-vus': '固定并发', 'ramping-vus': '阶梯并发', 'constant-arrival-rate': '固定吞吐', 'ramping-arrival-rate': '阶梯吞吐' } as Record<string, string>)[String(value || '')] || String(value || '')
@@ -53,9 +65,10 @@ function modelLabel(value: unknown): string {
         <p v-if="fallbackAdvice" class="load-warning">当前展示平台规则建议，不是 AI 诊断结论。AI 回答未通过证据校验；上方压测结果和原始数据仍然有效。</p>
         <details v-if="fallbackAdvice"><summary>查看 AI 校验原因</summary>{{ confidence?.reason }}</details>
         <p v-else-if="confidence?.level === 'low'" class="load-warning">低置信度：{{ confidence.reason || '当前证据不足，请先补齐运行证据。' }}</p>
-        <h3>{{ fallbackAdvice ? '平台建议结论' : '诊断结论' }}</h3><p><strong>{{ categoryLabel(result.bottleneck_category) }}</strong>：{{ result.conclusion }}</p>
+        <h3>{{ fallbackAdvice ? '平台建议结论' : 'AI 解释（根因待验证）' }}</h3><p><strong>{{ categoryLabel(result.bottleneck_category) }}</strong>：{{ result.conclusion }}</p>
+        <p v-if="!fallbackAdvice && result.recommendation_contract_version === 1" class="load-capacity-note">已校验处理动作和引用范围；AI 解释仍需结合原始证据与对照实验复核。</p>
         <h3>证据引用</h3><div class="load-evidence-tags"><code v-for="item in citations" :key="item" :title="item">{{ evidenceLabel(item) }}<small v-if="evidenceLabel(item) !== item">（{{ item }}）</small></code></div>
-        <h3>处理建议</h3><ol class="load-recommendations"><li v-for="(item, index) in recommendations" :key="index"><b>{{ priorityLabel(item.priority) }}</b><strong>{{ item.action }}</strong><span>验证方式：{{ item.verification }}</span></li></ol>
+        <h3>处理建议</h3><ol class="load-recommendations"><li v-for="(item, index) in recommendations" :key="index"><b>{{ priorityLabel(item.priority) }}</b><strong>{{ item.action }}</strong><span>验证方式：{{ item.verification }}</span><template v-if="result.recommendation_contract_version === 1"><small>范围：{{ domainLabel(item.domain) }} · 服务：{{ item.service_key || '环境级' }}</small><small v-for="id in references(item.fact_ids)" :key="id">事实引用：{{ factDescription(id) }}（{{ id }}）</small><small v-if="!references(item.fact_ids).length">未引用服务事实</small><small>证据引用：{{ references(item.evidence_ids).map(evidenceReference).join('、') || '未引用运行证据' }}</small></template><small v-else class="load-warning">历史建议：未逐条验证服务事实与证据；请重新诊断后使用。</small></li></ol>
         <template v-if="nextRun"><h3>下一轮怎么验证</h3><div v-if="policy" class="load-next-policy"><p><strong>建议来源：{{ recommendationSource }}</strong></p><p v-if="policy.continuation_status"><b>行动状态：</b>{{ policy.continuation_status }}</p><ul v-if="policy.adjustment_reasons?.length"><li v-for="item in policy.adjustment_reasons" :key="item">调整原因：{{ item }}</li></ul><p v-if="policy.evidence_ids?.length">建议引用：{{ policy.evidence_ids.map(evidenceLabel).join('、') }}</p><p><b>为什么这样建议：</b>{{ policy.reason }}</p><p><b>要验证什么：</b>{{ policy.objective }}</p><ul v-if="policy.limitations?.length"><li v-for="item in policy.limitations" :key="item">{{ item }}</li></ul><details><summary>停止条件与策略口径</summary><ul><li v-for="item in policy.stop_conditions" :key="item">{{ item }}</li></ul><p>{{ policy.strategy_basis }}</p><p>置信度表示当前诊断证据，不代表下一轮容量或安全保证。</p></details><p v-if="!policy.can_prefill && missingMonitoring" class="load-warning">前往“监控配置”接入目标服务，并到“压测节点”检查采样连通性；补齐后回到本报告重新诊断。当前方案仅供审阅，不能直接创建草稿。</p><p v-else-if="!policy.can_prefill" class="load-warning">请按上述前置步骤处理，完成后回到本报告重新诊断。当前方案仅供审阅，不能直接创建草稿。</p></div><p v-else class="load-warning">历史建议尚未按场景和服务监控策略校验，请重新诊断后使用。</p><LoadCurveComparison v-if="nextRun.workload" :before="policy?.original_workload" :after="nextRun.workload as Record<string, unknown>" /><p v-if="policy?.can_prefill" class="load-next-run"><strong>{{ modelLabel(nextRun.load_model) }}</strong> · 目标 {{ nextRun.target }} · {{ nextRun.duration_seconds }} 秒<br />{{ nextRun.agent_suggestion }}</p><button v-if="canCreateNext && policy?.can_prefill" data-testid="load-next-run" class="primary-command" type="button" @click="emit('createNext')">按建议配置下一轮 →</button><p v-if="canCreateNext && policy?.can_prefill" class="load-capacity-note">先查看配置差异、确认节点，再创建草稿。此操作不会立即发压。</p></template>
       </template>
     </template>
@@ -63,5 +76,6 @@ function modelLabel(value: unknown): string {
 </template>
 
 <style scoped>
+.load-recommendations small{display:block;margin-top:5px;font-size:12px;line-height:1.6;overflow-wrap:anywhere;color:#536778}
 .load-next-policy{padding:14px 16px;border:1px solid #c9dedf;border-left:4px solid #128b83;border-radius:8px;background:#f4faf9;font-size:14px;line-height:1.7}.load-next-policy p{margin:4px 0 10px}.load-next-policy details{font-size:13px;color:#536778}.load-next-policy summary{cursor:pointer}.load-next-policy ul{padding-left:20px}
 </style>

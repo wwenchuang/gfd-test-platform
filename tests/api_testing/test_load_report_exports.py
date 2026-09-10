@@ -37,6 +37,21 @@ def test_export_rejects_unknown_format():
     with pytest.raises(ValueError): export_report(REPORT,'html')
 
 
+def test_export_preserves_per_action_citations_and_operator_fact_provenance():
+    from task_server.api_testing.services.load_report_export_service import report_sections
+    from tests.api_testing.test_load_recommendation_contract import demo_report, recommendation
+    from task_server.api_testing.services.load_ai_analysis_service import build_evidence_package, _validate_result
+    from tests.api_testing.test_load_ai_analysis_service import _analysis
+    report = demo_report()
+    evidence = build_evidence_package(report)
+    option = next(x for x in evidence['recommendation_options'] if x['action_code'] == 'observe_work_slot_rejections')
+    report['ai_diagnosis'] = _validate_result({**_analysis(), 'recommendations': [recommendation(option)]}, evidence)
+    text = str(report_sections(report))
+    assert 'step.search' in text and option['fact_ids'][0] in text
+    assert '人工记录' in text and 'deploy/load-demo/server.py' in text
+    assert '逐条能力与证据校验' in text
+
+
 def test_word_and_excel_include_runtime_and_draw_real_numeric_resource_times():
     report = {**REPORT, 'ai_diagnosis':{'conclusion':'需要核对来源','recommendations':[{'action':'检查资源限制','verification':'同条件复验'}]},
               'monitoring': {'state':'completed','services':[{'name':'主机','scope':'host','state':'completed','metrics':[{'key':'cpu_percent','unit':'%','series':[{'labels':{'instance':'local:9100'},'points':[{'timestamp':1788825600,'value':30},{'timestamp':1788825615,'value':None},{'timestamp':1788825630,'value':50}]}]}]}]},

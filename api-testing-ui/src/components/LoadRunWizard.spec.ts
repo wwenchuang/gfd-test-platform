@@ -4,12 +4,46 @@ import { mount, flushPromises } from '@vue/test-utils'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import LoadRunWizard from './LoadRunWizard.vue'
 import { setApiTestingAccessProfile } from '../utils/authRedirect'
+import { nextRunPreset } from '../utils/loadNextRun'
+import type { LoadRun, LoadAiAnalysis } from '../api/contracts'
 
 vi.mock('../api/monitoring', () => ({ monitoringApi: { list: vi.fn().mockResolvedValue([{ id: 'monitor', revision_id: 'monitor-v1', status: 'active', name: '目标主机', labels: { instance: 'host:9100' }, metrics: ['cpu_percent'] }]) } }))
 
 const scenario = { id: 's1', project_id: 'p1', name: '搜索链路', description: '', scenario_type: 'single_interface' as const, active_version_id: 'v1', status: 'active', created_at: '', updated_at: '' }
 const environments = [{ id: 'env-v1', environment_id: 'env', project_id: 'p1', name: '性能测试环境', revision: 1 }]
 const agents = [{ id: 'a1', name: '专用节点', status: 'online', scheduling_tier: 'preferred' as const, node_group: '上海', labels: {}, agent_version: '1', k6_version: 'k6', hard_limits: { max_processes: 1, max_vus: 500, max_iterations_per_second: 2000, max_duration_seconds: 1800, cpu_cores: 8, memory_mb: 16384 }, soft_limits: { max_processes: 1, max_vus: 400, max_iterations_per_second: 1500, max_duration_seconds: 1200, cpu_cores: 8, memory_mb: 12000 }, current_usage: { processes: 0, vus: 0 }, health: { calibration: { state: 'valid', max_vus: 320, max_iterations_per_second: 1200, valid_until: '2099-01-01' } }, calibration_state: 'valid' as const, egress_ip: '', last_heartbeat_at: '', offline_reason: '' }]
+
+it.each([
+  ['ramping-vus', { start_vus: 1 }, 'VU'],
+  ['ramping-arrival-rate', { start_rate: 1, time_unit: '1s', pre_allocated_vus: 1, max_vus: 4 }, '次/秒'],
+  ['ramping-arrival-rate', { start_rate: 1, time_unit: '1m', pre_allocated_vus: 1, max_vus: 4 }, '次/分钟'],
+])('summarizes the original and recommended complete %s curve in %s', async (executor, fields, unit) => {
+  const original = { executor, ...fields, stages: [2, 4, 1].map(target => ({ target, duration_seconds: 15 })) }
+  const recommended = { ...original, stages: [2, 4, 1].map(target => ({ target, duration_seconds: 20 })) }
+  const run = { id: 'r', state: 'finished', scenario_version_id: 'v1', environment_revision_id: 'env-v1', configuration: { scenario: { id: 's1' }, workload: original } } as unknown as LoadRun
+  const analysis = { id: 'a', run_id: 'r', state: 'completed', result: { next_run_strategy: { can_prefill: true, next_run: { load_model: executor, target: 4, duration_seconds: 60, workload: recommended } } } } as unknown as LoadAiAnalysis
+  const preset = nextRunPreset(run, analysis)
+  const wrapper = mount(LoadRunWizard, { props: { scenario, environments, agents, preset } })
+  await flushPromises()
+  expect(wrapper.get('[data-testid="load-next-review"]').text()).toContain(`上一轮：1 → 2 → 4 → 1 ${unit} · 45 秒 → 建议：1 → 2 → 4 → 1 ${unit} · 60 秒`)
+  expect(wrapper.emitted('submit')).toBeUndefined()
+  // The recommendation remains frozen when the user edits the next draft.
+  await wrapper.get('[data-testid="load-model-constant-vus"]').trigger('click')
+  expect(wrapper.get('[data-testid="load-next-review"]').text()).toContain(`建议：1 → 2 → 4 → 1 ${unit} · 60 秒`)
+})
+
+it.each([
+  ['constant-vus', { vus: 2 }, 'VU'],
+  ['constant-arrival-rate', { rate: 2, time_unit: '1s', pre_allocated_vus: 1, max_vus: 4 }, '次/秒'],
+  ['constant-arrival-rate', { rate: 2, time_unit: '1m', pre_allocated_vus: 1, max_vus: 4 }, '次/分钟'],
+])('retains constant %s recommendation values and units', async (executor, fields, unit) => {
+  const workload = { executor, ...fields, duration_seconds: 60 }
+  const run = { id: 'r', state: 'finished', scenario_version_id: 'v1', environment_revision_id: 'env-v1', configuration: { scenario: { id: 's1' }, workload } } as unknown as LoadRun
+  const analysis = { id: 'a', run_id: 'r', state: 'completed', result: { next_run_strategy: { can_prefill: true, next_run: { load_model: executor, target: 2, duration_seconds: 60, workload } } } } as unknown as LoadAiAnalysis
+  const wrapper = mount(LoadRunWizard, { props: { scenario, environments, agents, preset: nextRunPreset(run, analysis) } })
+  await flushPromises()
+  expect(wrapper.get('[data-testid="load-next-review"]').text()).toContain(`上一轮：2 ${unit} · 60 秒 → 建议：2 ${unit} · 60 秒`)
+})
 
 describe('LoadRunWizard', () => {
   afterEach(() => setApiTestingAccessProfile(null))

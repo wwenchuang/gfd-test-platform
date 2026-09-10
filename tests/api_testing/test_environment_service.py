@@ -366,6 +366,23 @@ def test_import_preserves_services_public_variables_and_headers(
     assert imported.default_headers["X-Biz"] == "{{Biz}}"
 
 
+def test_service_facts_roundtrip_as_new_revision_without_rewriting_history(environment_service, production_environment):
+    from tests.api_testing.test_load_service_facts import facts
+    imported = environment_service.import_from_source(production_environment, 'admin')
+    services = copy.deepcopy(production_environment['services'])
+    services[0]['metadata']['load_service_facts'] = facts()
+    changed = environment_service.create_revision(imported.id, {'services': services}, {}, 'admin')
+    assert changed.revision > imported.revision
+    assert changed.services['default'].metadata['load_service_facts']['components'][0]['source']['recorded_by_operator'] is True
+    assert 'load_service_facts' not in environment_service.get_revision(imported.revision_id).services['default'].metadata
+    assert 'load_service_facts' not in changed.services['share'].metadata
+    copied = environment_service.create_revision(imported.id, {'description': 'retain facts'}, {}, 'admin')
+    assert copied.services['default'].metadata == changed.services['default'].metadata
+    restored = environment_service.restore_revision(imported.revision_id, 'admin')
+    assert 'load_service_facts' not in restored.services['default'].metadata
+    assert environment_service.get_revision(changed.revision_id).services['default'].metadata == changed.services['default'].metadata
+
+
 def test_source_refresh_keeps_platform_runtime_configuration_when_provider_omits_it(
     environment_service, production_environment, session_factory
 ):

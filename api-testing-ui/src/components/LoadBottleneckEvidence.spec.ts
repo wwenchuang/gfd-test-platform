@@ -9,6 +9,10 @@ const rows = [
   {domain:'load_generator',label:'压力机',status:'available',evidence_ids:['agent.a1'],limitations:['采样覆盖不等于根因确认'],next_verification:'保持全局目标，只调整节点'},
 ]
 describe('LoadBottleneckEvidence', () => {
+  it('counts declared inapplicable domains separately from missing evidence', () => {
+    const wrapper=mount(LoadBottleneckEvidence,{props:{rows:[...rows,{domain:'downstream',label:'下游依赖',status:'not_applicable',evidence_ids:['service.fact.demo.downstream'],limitations:['操作人声明不存在下游'],next_verification:'变更后重新核对'}]}})
+    expect(wrapper.get('summary').text()).toContain('待采集 1 · 明确不适用 1')
+  })
   it('summarizes neutral coverage and keeps details collapsed', () => {
     const wrapper=mount(LoadBottleneckEvidence,{props:{rows}})
     expect(wrapper.text()).toContain('证据覆盖')

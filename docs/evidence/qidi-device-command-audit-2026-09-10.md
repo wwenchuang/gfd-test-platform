@@ -80,3 +80,19 @@ python3 scripts/audit_api_device_references.py --project-id 01c72b31-a9be-4aab-8
 覆盖所有case与环境版本（含历史）、数据行、脚本、提取、断言、依赖闭包、基线、任务、定时和QUEUED/RUNNING执行。输出路径及关联ID供人工追踪；动态设备选择与秘密变量明确标记待审，不宣称静态分析证明运行安全。不覆盖终态历史执行的全量溯源或性能场景/性能定时。
 
 本地8项测试通过，包括实际ORM模型的PostgreSQL语句编译、SQL层秘密值置空、归档baseline与直接case版本引用差异、递归依赖、未知项目和零数量。生产数据库尚未执行，不能据此宣布旧设备所有入口已清零。
+
+## 后续生产只读盘点与三条遗漏基线隔离
+
+在Safari平台机10.130.4.31终端，以已配置应用环境实际执行脚本，生成 `/tmp/home-device-reference-audit-20260910.jsonl`（只读事务，不输出秘密）。本节覆盖上方“生产尚未执行”。清单：1116个case、2671个version、89个data row、1个script、51个extraction、6503个assertion、548个baseline、2个environment、33个environment revision、178个variable、303个service、2个schedule/298个target、14个task；QUEUED/RUNNING执行与其用例均为0。
+
+7条baseline有旧设备结构关联，其中3条active。Safari按精确名称核对后逐条移出，保留case/version和历史：
+
+| baseline ID | case version ID | 用例 | 页面接口 |
+| --- | --- | --- | --- |
+| aeb6c26d-37cd-432b-b69a-4d2578b322df | 76c4c02c-9e00-42de-8cb4-b620b3395642 | 固件更新接口 - 基础正向流程 - 响应数据驱动 | GET /pmc/api/v1/iot/ota/upgrade-info |
+| 6a7726ef-29d8-4f92-a0e3-d9bf22503293 | b0dedbf0-aecd-408e-b25c-2bb52839fb19 | 设备默认用户信息 - 基础正向流程 | GET /print3d/api/v1/qidi/user |
+| 61fbb02b-3486-49a0-9b19-3d9181bb7d4a | 1618b1e5-a0ea-4731-ab2e-a4717c21c842 | 我的模型收藏 - 基础正向流程 - 响应数据驱动2 - 真实响应数据联动补跑 | POST /print3d/api/v1/qidi/collection/page |
+
+有效数299→298→297→296，页面逐条确认已移出。第三方API名称不能代替语义，固件信息GET不应被描述为这次发送固件升级命令；本次没有执行这些接口。两条定时仍为家用DISABLED且目标解析阻断、共享ENABLED。
+
+清单还含30处旧设备字面引用、777处动态引用、750个设备字段待审标记、543个提取待审标记、29个秘密值未读取。它们含历史、重复路径及静态候选，不能把标记数量当独立用例数，也不能把隔离3条active解释为全部动态设备选择已受平台运行门禁约束。审计后完整清单复核继续保留为待办，设备相关执行不恢复。

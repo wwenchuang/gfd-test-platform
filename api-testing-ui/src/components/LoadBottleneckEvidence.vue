@@ -1,12 +1,12 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 
-type CoverageRow = {domain:string; label:string; status:string; evidence_ids:string[]; limitations:string[]; next_verification:string}
+type CoverageRow = {domain:string; label:string; status:string; evidence_ids:string[]; fact_ids?:string[]; limitations:string[]; next_verification:string}
 const props = defineProps<{rows: CoverageRow[]}>()
 const visibleRows = computed(() => props.rows.slice(0, 9))
 const counts = computed(() => {
   const rows = visibleRows.value
-  return {available:rows.filter(r=>r.status==='available').length, partial:rows.filter(r=>r.status==='partial').length, missing:rows.filter(r=>r.status==='missing').length}
+  return {available:rows.filter(r=>r.status==='available').length, partial:rows.filter(r=>r.status==='partial').length, missing:rows.filter(r=>r.status==='missing').length, notApplicable:rows.filter(r=>r.status==='not_applicable').length}
 })
 function statusLabel(status:string):string {
   return ({available:'证据可用',partial:'部分证据',missing:'待采集',not_applicable:'明确不适用'} as Record<string,string>)[status] || '待核对'
@@ -19,13 +19,13 @@ function statusLabel(status:string):string {
     <p class="coverage-note">覆盖状态说明本轮能观察到什么，不代表故障或根因已经确认。</p>
     <p v-if="!visibleRows.length" class="coverage-note">暂无证据覆盖清单，请在新报告中核对采集结果。</p>
     <details v-else>
-      <summary>可用 {{ counts.available }} · 部分 {{ counts.partial }} · 待采集 {{ counts.missing }} <span>查看范围与下一步验证</span></summary>
+      <summary>可用 {{ counts.available }} · 部分 {{ counts.partial }} · 待采集 {{ counts.missing }} · 明确不适用 {{ counts.notApplicable }} <span>查看范围与下一步验证</span></summary>
       <div class="coverage-items">
         <article v-for="row in visibleRows" :key="row.domain">
           <header><strong>{{ row.label }}</strong><span>{{ statusLabel(row.status) }}</span></header>
           <ul><li v-for="(limitation,index) in row.limitations" :key="index">{{ limitation }}</li></ul>
           <p><b>下一步验证：</b>{{ row.next_verification }}</p>
-          <small v-if="row.evidence_ids.length">证据引用：{{ row.evidence_ids.join('、') }}</small>
+          <small v-if="row.fact_ids?.length">事实引用：{{ row.fact_ids.join('、') }}</small><br v-if="row.fact_ids?.length" /><small v-if="row.evidence_ids.length">证据引用：{{ row.evidence_ids.join('、') }}</small>
         </article>
       </div>
     </details>

@@ -109,8 +109,18 @@ def report_sections(report):
     ]
     diagnosis = report.get('ai_diagnosis') or {}
     advice = [('诊断状态', '基于同一证据生成，仅作辅助判断' if diagnosis else '尚无匹配当前证据的已完成诊断，不影响基础报告'), ('观察与可能原因', diagnosis.get('conclusion') or '未提供')]
+    if diagnosis:
+        advice.append(('建议契约', '逐条能力与证据校验；动作由平台生成，尚未证明根因' if diagnosis.get('recommendation_contract_version') == 1 else '历史建议，未经过逐条能力与证据校验'))
+    facts = {row.get('evidence_id'): row for row in diagnosis.get('service_facts') or [] if isinstance(row, dict)}
     for index, item in enumerate(diagnosis.get('recommendations') or []):
         advice.extend([(f'建议 {index+1}', item.get('action')), (f'验证方法 {index+1}', item.get('verification'))])
+        if diagnosis.get('recommendation_contract_version') == 1:
+            advice.extend([(f'建议证据 {index+1}', '、'.join(item.get('evidence_ids') or [])),
+                           (f'能力事实 {index+1}', '、'.join(item.get('fact_ids') or []))])
+            for ref in item.get('fact_ids') or []:
+                fact = facts.get(ref) or {}
+                source = fact.get('source') or {}
+                advice.append((f'事实来源 {index+1}', '人工记录 / ' + str(source.get('kind') or '未记录') + ' / ' + str(source.get('reference') or '未知；不代表不存在')))
     strategy = diagnosis.get('next_run_strategy') or {}
     if strategy:
         advice.extend([('下一轮配置来源', strategy.get('source')), ('推荐依据', strategy.get('reason')), ('下一轮验证目标', strategy.get('objective')), ('配置可预填', '是，仍需预检和启动确认' if strategy.get('can_prefill') else '否，先完成前置条件'), ('限制', '；'.join(strategy.get('limitations') or [])), ('停止条件', '；'.join(strategy.get('stop_conditions') or []))])

@@ -1,6 +1,7 @@
 import type { LoadRun, LoadAiAnalysis } from '../api/contracts'
 import type { TestContext, StopPolicy } from '../components/LoadTestIntent.vue'
 import type { MonitoringSelection } from '../api/monitoring'
+import { loadWorkloadSummary } from './loadWorkloadSummary'
 export interface NextRunPreset {
   sourceId: string; sourceAnalysisId: string; scenarioId: string; scenarioVersionId: string; environmentId: string
   executor: LoadRun['load_model']; target: number; timeUnit: '1s' | '1m'; duration: number; maxVus: number
@@ -57,6 +58,6 @@ export function nextRunPreset(run: LoadRun, analysis: LoadAiAnalysis): NextRunPr
     stopPolicy:config.stop_policy ? JSON.parse(JSON.stringify(config.stop_policy)) : undefined,
     thresholds:JSON.parse(JSON.stringify(config.thresholds || {})),
     monitoring:{services:(monitoring?.services || []).map(item=>({revision_id:item.revision_id,required:item.required})),before_seconds:monitoring?.before_seconds ?? 60,after_seconds:monitoring?.after_seconds ?? 60},
-    previous:previous.executor?.toString().includes('arrival-rate') ? `${previous.rate ?? previous.start_rate} 次/${previous.time_unit === '1m' ? '分钟' : '秒'} · ${previous.duration_seconds ?? '阶梯'} 秒` : `${previous.vus ?? previous.start_vus} VU · ${previous.duration_seconds ?? '阶梯'} 秒`,
+    previous:loadWorkloadSummary({...previous, executor:previous.executor || run.load_model}),
   }
 }

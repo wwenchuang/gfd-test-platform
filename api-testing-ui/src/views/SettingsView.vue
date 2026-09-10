@@ -6,6 +6,8 @@ import { ArrowRight, Bell, Check, KeyRound, Pencil, Plus, RotateCcw, Save, Trash
 import type { EnvironmentAsset, EnvironmentRevisionSummary, EnvironmentView } from '../api/contracts'
 import { apiClient } from '../api/client'
 import EnvironmentMonitoringPanel from '../components/EnvironmentMonitoringPanel.vue'
+import LoadServiceFacts from '../components/LoadServiceFacts.vue'
+import { serviceFactsIssue } from '../utils/loadServiceFacts'
 import EnvironmentAssetList from '../components/EnvironmentAssetList.vue'
 import { useContextStore } from '../stores/context'
 import { useNotificationsStore } from '../stores/notifications'
@@ -202,6 +204,10 @@ async function save(): Promise<void> {
   if (!usableServices.length || usableServices.every(item => !item.base_url.trim())) {
     localError.value = '至少配置一个可用服务地址'
     return
+  }
+  for (const item of usableServices) {
+    const issue = serviceFactsIssue(item.metadata)
+    if (issue) { localError.value = `${item.name || item.key}：${issue}`; return }
   }
   const updatedSecretKeys = new Set(secretRows.value.filter(item => item.key.trim() && item.value).map(item => item.key.trim()))
   setup.secretUpdates = Object.fromEntries(
@@ -586,6 +592,8 @@ function environmentMutationIssue(environmentName: string, requiresDelete = fals
             <div class="editable-table"><div class="table-head"><span>服务名称</span><span>模块</span><span>服务地址与网络范围</span><span></span></div><div v-for="(item, index) in services" :key="item.key || index" class="table-row service-row"><input v-model="item.name" aria-label="服务名" /><input v-model="item.module" aria-label="服务模块" /><div class="service-address-field"><input v-model="item.base_url" aria-label="服务地址" placeholder="https://api.example.com" /><label class="private-network-toggle"><input v-model="item.allow_private_network" type="checkbox" data-private-network :aria-label="`允许${item.name || item.key}访问受控内网地址`" /><span>允许访问受控内网地址</span><small>仍禁止本机、链路本地和云元数据地址</small></label></div><button class="mini-icon danger" type="button" title="删除服务" @click="services.splice(index, 1)"><Trash2 :size="14" /></button></div></div>
           </section>
 
+          <section class="environment-editor-section"><LoadServiceFacts v-for="(item, index) in services" :key="item.key || index" v-model="item.metadata" :service-name="item.name || item.key" /></section>
+
           <section class="environment-editor-section split-section">
             <div><header><div><h3>公共变量</h3><p>普通值可回显和编辑。</p></div><button class="mini-icon" type="button" title="添加变量" @click="addPair(variables)"><Plus :size="15" /></button></header><div class="pair-list"><div v-for="(item, index) in variables" :key="index" class="pair-row"><input v-model="item.key" aria-label="变量名" placeholder="变量名" /><input v-model="item.value" aria-label="变量值" placeholder="变量值" /><button class="mini-icon danger" type="button" title="删除变量" @click="variables.splice(index, 1)"><Trash2 :size="14" /></button></div><p v-if="!variables.length" class="compact-empty">暂无公共变量</p></div></div>
             <div><header><div><h3>敏感变量</h3><p>只显示配置状态，新值提交后立即清空。</p></div><button class="mini-icon" type="button" title="添加敏感变量" @click="secretRows.push({ key: '', value: '', configured: false })"><Plus :size="15" /></button></header><div class="pair-list"><div v-for="(item, index) in secretRows" :key="index" class="pair-row secret-row"><input v-model="item.key" aria-label="敏感变量名" placeholder="例如 ZXBToken" /><input v-model="item.value" type="password" autocomplete="new-password" aria-label="敏感变量值" :placeholder="item.configured ? '已配置，留空则保持不变' : '输入后仅发送一次'" /><KeyRound :size="15" :class="item.configured ? 'secret-configured' : 'secret-empty'" /></div></div></div>
@@ -647,6 +655,7 @@ function environmentMutationIssue(environmentName: string, requiresDelete = fals
               <h4 v-if="unconfiguredServiceGroups.length">未配置服务（{{ servicePresentation.unconfiguredKeyCount }}）</h4>
               <article v-for="group in unconfiguredServiceGroups" :key="group.id" data-testid="environment-service-group"><div><strong>{{ group.labels.join('、') }}</strong><small>{{ group.serviceKeys.length }} 个服务键等待配置</small></div><code>未配置地址</code></article>
             </div>
+            <LoadServiceFacts v-for="(item, key) in environmentDetail.services" :key="key" :model-value="item.metadata || {}" :service-name="item.module_name || item.name" read-only />
             <EnvironmentMonitoringPanel :environment-revision-id="environmentDetail.revision_id" :readonly="Boolean(environmentPermissionReason) || selectedAsset.status === 'archived'" />
           </section>
 

@@ -87,7 +87,8 @@ def _analysis():
         "conclusion": "负载达到，但搜索步骤业务失败率明显偏高。",
         "bottleneck_category": "target_service",
         "evidence": ["step.search", "business.summary"],
-        "recommendations": [{"priority": "high", "action": "检查搜索服务业务码", "verification": "相同负载重跑"}],
+        "recommendations": [{"priority": "high", "domain": "test_data", "service_key": None, "intent": "inspect",
+                             "action_code": "inspect_step_assertions", "fact_ids": [], "evidence_ids": ["step.search"]}],
         "next_run": {"load_model": "constant-arrival-rate", "target": 10, "duration_seconds": 120, "agent_suggestion": "保持当前节点"},
         "confidence": {"level": "high", "reason": "目标负载已达到且业务失败稳定出现"},
     }
@@ -189,7 +190,8 @@ def test_default_analyzer_supplies_schema_complete_low_confidence_defaults(monke
     with pytest.raises(ValueError, match='规则备用'):
         _default_analyzer(build_evidence_package(_report()))
     assert captured["repair_invalid_json"] is True
-    assert captured["version"] == "v8"
+    assert captured["version"] == "v9"
+    assert set(captured['output_defaults']['recommendations'][0]) == {'priority', 'domain', 'service_key', 'intent', 'action_code', 'fact_ids', 'evidence_ids'}
 
 
 def test_active_prompt_json_example_includes_a_valid_complete_ramp_curve():

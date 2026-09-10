@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import LoadCurveComparison from './LoadCurveComparison.vue'
 import type { NextRunPreset } from '../utils/loadNextRun'
+import { loadWorkloadSummary } from '../utils/loadWorkloadSummary'
 import { computed, ref } from 'vue'
 import LoadThresholdEditor, {type ErrorCriteria} from './LoadThresholdEditor.vue'
 import LoadTestIntent, { type TestContext, type StopPolicy } from './LoadTestIntent.vue'
@@ -21,6 +22,11 @@ const maxVus = ref(props.preset?.maxVus || 1)
 const rate = ref(props.preset?.target || 1)
 const timeUnit = props.preset?.timeUnit || '1s'
 const rateDivisor = timeUnit === '1m' ? 60 : 1
+const recommendedSummary = computed(() => props.preset ? loadWorkloadSummary({
+  executor: props.preset.executor, vus: props.preset.target, rate: props.preset.target,
+  time_unit: props.preset.timeUnit, duration_seconds: props.preset.duration,
+  start_vus: props.preset.startTarget, start_rate: props.preset.startTarget, stages: props.preset.stages,
+}) : '')
 const duration = ref(props.preset?.duration || 10)
 const p95 = ref(500)
 const selectedIds = ref<string[]>([])
@@ -148,7 +154,7 @@ function submit(): void {
     <div class="load-wizard-body">
       <LoadTestIntent v-if="!preset" v-model="testContext" v-model:stop-policy="stopPolicy" />
       <section v-else class="load-review-box"><strong>冻结的测试条件与停止策略</strong><p>下一轮必须沿用原执行的测试条件和停止策略；如需修改，请从普通“新建压测”入口重新配置。</p></section>
-      <section v-if="preset" class="load-review-box" data-testid="load-next-review"><strong>下一轮验证 · 配置核对</strong><p v-if="preset.reason">建议依据：{{ preset.reason }}</p><p v-if="preset.objective">本轮要验证：{{ preset.objective }}</p><p>来源执行：{{ preset.sourceId }}</p><p>上一轮：{{ preset.previous }} → 建议：{{ preset.target }} {{ !preset.executor.includes('arrival-rate') ? 'VU' : timeUnit === '1m' ? '次/分钟' : '次/秒' }} · {{ preset.duration }} 秒</p><p>固定保留原场景版本和环境、全部验收阈值及 {{ preset.monitoring.services.length }} 项监控。压力可调整，节点请重新选择。创建后仍需连通性检查、预检和启动确认。</p><ul><li v-for="(value, key) in preset.thresholds" :key="key">{{ thresholdText(String(key), value) }}</li></ul></section>
+      <section v-if="preset" class="load-review-box" data-testid="load-next-review"><strong>下一轮验证 · 配置核对</strong><p v-if="preset.reason">建议依据：{{ preset.reason }}</p><p v-if="preset.objective">本轮要验证：{{ preset.objective }}</p><p>来源执行：{{ preset.sourceId }}</p><p>上一轮：{{ preset.previous }} → 建议：{{ recommendedSummary }}</p><p>固定保留原场景版本和环境、全部验收阈值及 {{ preset.monitoring.services.length }} 项监控。压力可调整，节点请重新选择。创建后仍需连通性检查、预检和启动确认。</p><ul><li v-for="(value, key) in preset.thresholds" :key="key">{{ thresholdText(String(key), value) }}</li></ul></section>
       <LoadCurveComparison v-if="preset?.stages" :before="preset.originalWorkload" :after="workload()" />
       <LoadThresholdEditor v-if="!preset" v-model="errorCriteria" />
       <section class="load-context-banner"><div><span>所属应用 / API 项目</span><strong>{{ projectName || '当前接口项目' }}</strong><small>场景、环境和报告都归入这个项目；需要换应用时请先回工作台切换。</small></div><div><span>场景版本</span><strong>{{ scenario.name }}</strong><small>版本：{{ preset?.scenarioVersionId || scenario.active_version_id }}；历史结果可重复核对。</small></div></section>

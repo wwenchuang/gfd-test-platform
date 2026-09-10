@@ -11,12 +11,16 @@
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["priority", "action", "verification"],
+        "required": ["priority", "domain", "service_key", "intent", "action_code", "fact_ids", "evidence_ids"],
         "additionalProperties": false,
         "properties": {
           "priority": {"type": "string", "enum": ["high", "medium", "low"]},
-          "action": {"type": "string"},
-          "verification": {"type": "string"}
+          "domain": {"type": "string"},
+          "service_key": {"type": ["string", "null"]},
+          "intent": {"type": "string", "enum": ["confirm_component", "collect_evidence", "inspect"]},
+          "action_code": {"type": "string"},
+          "fact_ids": {"type": "array", "items": {"type": "string"}},
+          "evidence_ids": {"type": "array", "minItems": 1, "items": {"type": "string"}}
         }
       }
     },

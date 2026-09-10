@@ -4,6 +4,20 @@ import { describe, expect, it } from 'vitest'
 import LoadAiAnalysis from './LoadAiAnalysis.vue'
 
 describe('LoadAiAnalysis', () => {
+  it('shows platform recommendation facts and evidence per action while distinguishing historical results', async () => {
+    const analysis = { id:'a',run_id:'r',model:'m',prompt_version:'v9',evidence_hash:'h',state:'completed',error:'',created_at:'',result:{recommendation_contract_version:1,service_facts:[{evidence_id:'service.fact.demo.work_slots',component:'bounded_work_slots',state:'present',source:{kind:'source_review',reference:'worker.py @ abc123',recorded_by_operator:true}}],recommendations:[{priority:'high',action:'核对工作槽位',verification:'保持其他条件复验',domain:'cpu',service_key:'demo',intent:'verify',action_code:'verify_work_slots',fact_ids:['service.fact.demo.work_slots'],evidence_ids:['latency.summary']}]}}
+    const wrapper=mount(LoadAiAnalysis,{props:{analysis}})
+    const row=wrapper.get('.load-recommendations li')
+    expect(row.text()).toContain('服务：demo')
+    expect(row.text()).toContain('service.fact.demo.work_slots')
+    expect(row.text()).toContain('工作槽位上限 · 存在 · 人工记录来源：代码核查记录 · worker.py @ abc123')
+    expect(row.text()).toContain('响应时间统计')
+    expect(row.text()).toContain('latency.summary')
+    expect(row.text()).not.toContain('未逐条验证')
+    await wrapper.setProps({analysis:{...analysis,result:{recommendations:analysis.result.recommendations}}})
+    expect(wrapper.get('.load-recommendations li').text()).toContain('历史建议：未逐条验证服务事实与证据')
+    expect(wrapper.text()).toContain('核对工作槽位')
+  })
   it('shows evidence citations, low confidence and explains reanalysis does not rerun load', async () => {
     const analysis = { id: 'a1', run_id: 'r1', model: 'qwen-plus', prompt_version: 'v1', evidence_hash: 'abcdef1234567890', state: 'completed', error: '', created_at: '', result: { next_run_strategy: {can_prefill:true,reason:'本轮监控证据完整',objective:'验证增长后的延迟'}, conclusion: '瓶颈在目标服务', bottleneck_category: 'target_service', evidence: ['latency.summary', 'agent.a1'], confidence: { level: 'low', reason: '窗口较少' }, recommendations: [{ priority: 'high', action: '检查慢查询', verification: '复跑相同负载' }], next_run: { load_model: 'constant-arrival-rate', target: 20, duration_seconds: 120, agent_suggestion: '继续使用专用节点' } } }
     const wrapper = mount(LoadAiAnalysis, { props: { analysis } })
@@ -51,7 +65,7 @@ it('shows policy blockers and hides the configuration action',()=>{
 })
 
 it.each([
- ['completed','ai_validated','AI 建议已通过校验'],
+ ['completed','ai_validated','AI 提出的下一轮参数已通过校验'],
  ['completed','ai_adjusted','AI 建议已由平台调整'],
  ['rule_fallback','rule_fallback','平台规则备用建议'],
 ])('shows recommendation source independently from action state for %s/%s',(analysisStatus,validationStatus,label)=>{
@@ -76,4 +90,11 @@ it('does not mislabel explicit completed analysis from legacy words in confidenc
  expect(wrapper.text()).toContain('低置信度：回退条件已排除')
  expect(wrapper.text()).not.toContain('当前展示平台规则建议')
  expect(wrapper.text()).not.toContain('平台建议结论')
+})
+
+it('separates validated actions from unverified AI root-cause prose',()=>{
+ const wrapper=mount(LoadAiAnalysis,{props:{analysis:{id:'a',run_id:'r',state:'completed',model:'m',prompt_version:'v9',evidence_hash:'h',created_at:'',error:'',result:{analysis_status:'completed',recommendation_contract_version:1,confidence:{level:'high',reason:'模型判断'},conclusion:'数据库锁竞争已确认',recommendations:[]}}}})
+ expect(wrapper.findAll('h3').map(x=>x.text())).toContain('AI 解释（根因待验证）')
+ expect(wrapper.text()).toContain('已校验处理动作和引用范围；AI 解释仍需结合原始证据与对照实验复核。')
+ expect(wrapper.findAll('h3').map(x=>x.text())).not.toContain('诊断结论')
 })

@@ -7,7 +7,7 @@ import pytest
 from sqlalchemy import select
 
 from task_server.api_testing import access
-from task_server.api_testing.models.environment import ApiEnvironment, ApiEnvironmentRevision
+from task_server.api_testing.models.environment import ApiEnvironment, ApiEnvironmentRevision, ApiEnvironmentService
 from task_server.api_testing.models.load_testing import (
     ApiLoadAgent,
     ApiLoadRun,
@@ -136,6 +136,23 @@ class _Preflight:
         )
 
 
+def test_run_freezes_only_selected_revision_service_facts(load_factory, run_records):
+    from tests.api_testing.test_load_service_facts import facts
+    with load_factory.begin() as session:
+        session.add(ApiEnvironmentService(revision_id=run_records['revision'].id, service_name='default',
+                    base_url='https://example.com', metadata_json={'load_service_facts': facts(), 'token': 'private-token'}, **_audit()))
+    run = LoadRunService(load_factory, preflight_service=_Preflight(), now=lambda: NOW).create(_payload(run_records), 'owner')
+    frozen = run.configuration['environment']['service_facts']
+    assert frozen['services']['default']['step_ids'] == ['search']
+    assert frozen['services']['default']['components'][0]['state'] == 'absent'
+    assert 'private-token' not in str(frozen)
+    with load_factory.begin() as session:
+        service = session.scalar(select(ApiEnvironmentService).where(ApiEnvironmentService.revision_id == run_records['revision'].id))
+        service.metadata_json = {'load_service_facts': facts('present')}
+    with load_factory() as session:
+        assert session.get(ApiLoadRun, run.id).configuration['environment']['service_facts'] == frozen
+
+
 def _payload(records, **overrides):
     payload = {
         "scenario_version_id": records["version"].id,
@@ -164,7 +181,9 @@ def test_create_freezes_versions_compiler_allocation_and_agent_calibration(load_
     snapshot = run.configuration
     assert snapshot["scenario"]["version_id"] == run_records["version"].id
     assert snapshot["scenario"]["content_hash"] == "scenario-content-hash"
-    assert snapshot["environment"] == {"revision_id": run_records["revision"].id, "name": "性能环境 v3"}
+    assert snapshot["environment"]["revision_id"] == run_records["revision"].id
+    assert snapshot["environment"]["name"] == "性能环境 v3"
+    assert snapshot["environment"]["service_facts"]["version"] == 1
     assert snapshot["compiler"]["version"] == "k6-safe-v3"
     assert len(snapshot["agents"]) == 2
     assert snapshot["agents"][0]["calibration"]["id"] == "calibration-20260903"

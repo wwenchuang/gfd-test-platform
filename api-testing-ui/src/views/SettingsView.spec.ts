@@ -275,6 +275,30 @@ describe('SettingsView environment asset center', () => {
     }))
   })
 
+  it('records optional service facts in a new revision without losing other metadata or mutating history', async () => {
+    const source = { ...environmentView, services: { ...environmentView.services, default: { ...environmentView.services.default!, metadata: { allow_private_network: true, custom_tag: 'retain' } } } }
+    const setup = useSetupStore()
+    vi.mocked(setup.loadEnvironmentRevision).mockImplementation(async () => { setup.environment = source; return source })
+    const { wrapper } = await mountView()
+    const saveEnvironment = vi.spyOn(setup, 'saveEnvironment').mockResolvedValue(source)
+    await wrapper.get('[data-tab="services"]').trigger('click')
+    expect(wrapper.text()).toContain('服务事实（可选）')
+    expect(wrapper.text()).toContain('未记录')
+    await wrapper.get('[data-action="edit"]').trigger('click')
+    const facts = wrapper.findAll('[data-testid="load-service-facts"]')[0]!
+    expect(facts.attributes('open')).toBeUndefined()
+    await facts.get('[data-fact="database"] select[data-field="state"]').setValue('absent')
+    await wrapper.get('[data-action="save"]').trigger('click')
+    expect(saveEnvironment).not.toHaveBeenCalled()
+    expect(wrapper.text()).toContain('请填写来源与引用')
+    await facts.get('[data-fact="database"] select[data-field="source-kind"]').setValue('source_review')
+    await facts.get('[data-fact="database"] input[data-field="reference"]').setValue('demo/app.py @ abc123')
+    await wrapper.get('[data-action="save"]').trigger('click')
+    await flushPromises()
+    expect(saveEnvironment).toHaveBeenCalledWith('environment-1', expect.objectContaining({ services: expect.objectContaining({ default: expect.objectContaining({ metadata: { allow_private_network: true, custom_tag: 'retain', load_service_facts: {version:1,components:[{key:'database',state:'absent',source:{kind:'source_review',reference:'demo/app.py @ abc123'}}],behaviors:[]} } }) }) }))
+    expect(source.services.default.metadata).toEqual({allow_private_network:true,custom_tag:'retain'})
+  })
+
   it('persists deleted default request headers when saving a new environment revision', async () => {
     const { wrapper } = await mountView()
     const setup = useSetupStore()

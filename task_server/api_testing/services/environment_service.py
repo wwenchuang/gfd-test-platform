@@ -174,6 +174,12 @@ def _normalize_services(value):
             ),
             "metadata": _mapping(item.get("metadata", {}), "service metadata"),
         }
+        if 'load_service_facts' in normalized[name]['metadata']:
+            from .load_service_facts import normalize_service_facts
+            try:
+                normalized[name]['metadata']['load_service_facts'] = normalize_service_facts(normalized[name]['metadata']['load_service_facts'])
+            except ValueError as error:
+                raise EnvironmentInputError(str(error)) from error
     if not normalized:
         raise EnvironmentInputError("environment must define at least one service URL")
     return normalized

@@ -16,11 +16,13 @@ from ..executor import redact
 from ..models.load_testing import ApiLoadAiAnalysis, ApiLoadRun
 from .load_report_service import LoadReportService
 from .load_bottleneck_evidence import build_bottleneck_evidence
+from .load_service_facts import fact_catalog
+from .load_recommendation_contract import recommendation_options, validate_recommendations, fallback_recommendations
 from .load_next_run_policy import build_next_run_policy, resource_observations, validate_next_run_advice
 from .load_scenario_compiler import _parse_workload, LoadScenarioCompileError
 
 
-PROMPT_VERSION = "api-load-analysis.v8"
+PROMPT_VERSION = "api-load-analysis.v9"
 CATEGORIES = frozenset({"no_bottleneck", "target_service", "network", "load_agent", "test_data", "mixed", "insufficient_evidence"})
 CONFIDENCE_LEVELS = frozenset({"high", "medium", "low"})
 
@@ -84,6 +86,7 @@ def build_evidence_package(report):
             windows.append({"evidence_id": f"window.{index}", **_structured(item, ("started_at", "shard_id", "step_id", "requests", "iterations", "http_failures", "business_failures", "p95_ms"))})
     integrity = (report.get("evidence") or {}).get("sample_integrity") or {}
     package = {
+        "service_facts": fact_catalog(report),
         "next_run_strategy": build_next_run_policy(report),
         "bottleneck_evidence": build_bottleneck_evidence(report),
         "test_context": copy.deepcopy(report.get("test_context") or {}),
@@ -108,7 +111,9 @@ def build_evidence_package(report):
             "services": [
                 {"evidence_id": "monitoring." + str(service.get("revision_id", index)),
                  "scope": service.get("scope"), "state": service.get("state"), "required": service.get("required"),
-                 "metrics": [_structured(metric, ("key", "unit", "denominator", "semantics", "peak", "average", "coverage"))
+                 "metrics": [{"evidence_id": "monitoring." + str(service.get("revision_id", index)) + "." + str(metric.get("key")),
+                              "service_key": None,
+                              **_structured(metric, ("key", "unit", "denominator", "semantics", "peak", "average", "coverage"))}
                              for metric in service.get("metrics", []) if isinstance(metric, dict)]}
                 for index, service in enumerate((report.get("monitoring") or {}).get("services", [])[:10])
                 if isinstance(service, dict)
@@ -125,6 +130,7 @@ def build_evidence_package(report):
         "comparison": _structured(report.get("comparison"), ("compatible", "reason", "previous_run_id", "p95_ms", "http_error_rate")),
         "evidence": _structured(report.get("evidence"), ("complete", "bucket_count", "missing_windows", "finished_shards", "total_shards", "scenario_snapshot", "environment_snapshot", "workload_snapshot")),
     }
+    package['recommendation_options'] = recommendation_options(package)
     return redact(package)
 
 
@@ -190,17 +196,10 @@ def _validate_result(value, evidence):
     citations = value.get("evidence")
     if not isinstance(citations, list) or not 1 <= len(citations) <= 20 or any(item not in valid_ids for item in citations):
         raise LoadAiAnalysisError("AI诊断引用了不存在的证据")
-    recommendations = value.get("recommendations")
-    if not isinstance(recommendations, list) or not 1 <= len(recommendations) <= 10:
-        raise LoadAiAnalysisError("AI诊断建议数量无效")
-    normalized_recommendations = []
-    for item in recommendations:
-        if not isinstance(item, dict) or set(item) != {"priority", "action", "verification"}:
-            raise LoadAiAnalysisError("AI诊断建议结构无效")
-        priority = item.get("priority")
-        if priority not in {"high", "medium", "low"}:
-            raise LoadAiAnalysisError("AI诊断建议优先级无效")
-        normalized_recommendations.append({"priority": priority, "action": _text(item.get("action"), "recommendations.action", 1000), "verification": _text(item.get("verification"), "recommendations.verification", 1000)})
+    try:
+        normalized_recommendations = validate_recommendations(value.get('recommendations'), evidence)
+    except ValueError as error:
+        raise LoadAiAnalysisError(str(error)) from error
     next_run = value.get("next_run")
     if not isinstance(next_run, dict) or not {"load_model", "target", "duration_seconds", "agent_suggestion"}.issubset(next_run) or isinstance(next_run, dict) and bool(set(next_run) - {"load_model", "target", "duration_seconds", "agent_suggestion", "workload"}):
         raise LoadAiAnalysisError("AI诊断下一轮建议无效")
@@ -241,6 +240,8 @@ def _validate_result(value, evidence):
         "bottleneck_category": category,
         "evidence": list(citations),
         "recommendations": normalized_recommendations,
+        "recommendation_contract_version": 1,
+        "service_facts": copy.deepcopy(evidence.get('service_facts') or []),
         "next_run": {
             "load_model": next_run["load_model"],
             "target": target,
@@ -265,23 +266,17 @@ def _citation_safe_fallback(evidence, error):
     if verdict == "passed" and _diagnosis_evidence_complete(evidence):
         category = "no_bottleneck"
         conclusion = "本轮已达到目标负载且必选阈值通过，现有证据未发现明确瓶颈。"
-        action = "保持当前场景和阈值，下一轮逐级提高目标负载，观察响应时间和失败率的拐点。"
-        verification = "每级保持相同时长，对比 P95、HTTP 错误率、业务失败率和丢弃迭代率。"
     else:
         category = "insufficient_evidence"
         conclusion = "模型结论无法绑定到本次真实证据，平台未采纳其根因判断。"
-        action = "先依据确定性报告检查负载目标、节点完整性和未通过阈值，再用相同配置复跑。"
-        verification = "确认全部节点完成且指标窗口连续，并比较复跑后的 P95 与各类失败率。"
-    policy = evidence.get('next_run_strategy') or {}
-    if policy:
-        action = policy['objective']
-        verification = policy['reason']
     error_label = "AI诊断超时" if isinstance(error, TimeoutError) else f"模型输出或模型引用无效：{error}"
     return redact({
         "conclusion": conclusion,
         "bottleneck_category": category,
         "evidence": ["load.goal"],
-        "recommendations": [{"priority": "medium", "action": action, "verification": verification}],
+        "recommendations": fallback_recommendations(evidence),
+        "recommendation_contract_version": 1,
+        "service_facts": copy.deepcopy(evidence.get('service_facts') or []),
         "next_run": {
             "load_model": load_model,
             "target": target,
@@ -305,11 +300,7 @@ def _default_analyzer(evidence):
         "conclusion": "AI 未返回完整诊断字段，请先依据平台确定性指标判断并使用小流量复验。",
         "bottleneck_category": "insufficient_evidence",
         "evidence": ["load.goal"],
-        "recommendations": [{
-            "priority": "high",
-            "action": "先检查节点证据完整性、负载目标和失败率，再以相同小流量重跑。",
-            "verification": "确认全部节点完成、存在指标窗口，并对比重跑后的 P95 与失败率。",
-        }],
+        "recommendations": [{k: v for k, v in fallback_recommendations(evidence)[0].items() if k not in {'action', 'verification'}}],
         "next_run": {
             "load_model": load_model,
             "target": target,
@@ -321,7 +312,7 @@ def _default_analyzer(evidence):
     result = run_ai_skill(
         "api-load-analysis",
         payload=evidence,
-        version="v8",
+        version="v9",
         temperature=0,
         timeout=60,
         respect_global_timeout=False,
