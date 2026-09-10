@@ -9,6 +9,7 @@ import LoadResourceMonitoring from '../components/LoadResourceMonitoring.vue'
 import LoadGeneratorResources from '../components/LoadGeneratorResources.vue'
 import LoadReportExports from '../components/LoadReportExports.vue'
 import LoadRunConsole from '../components/LoadRunConsole.vue'
+import LoadRunReplayPanel from '../components/LoadRunReplayPanel.vue'
 import type { LoadAiAnalysis as Analysis, LoadReport } from '../api/contracts'
 import { useContextStore } from '../stores/context'
 import { useLoadTestingStore } from '../stores/loadTesting'
@@ -359,6 +360,7 @@ function hasAgentError(agent: Record<string, unknown>): boolean {
       <LoadResourceMonitoring v-if="!terminal && monitoring" :monitoring="monitoring" />
       <template v-if="report">
         <LoadReportExports :run-id="runId" :ready="terminal && (!monitoring || monitoring.terminal === true)" />
+        <LoadRunReplayPanel v-if="selectedRun" :run="selectedRun" :report="report" />
         <section data-testid="load-report-decision-hero" :class="['load-decision-hero', `tone-${report.verdict}`]"><i class="load-decision-orbit" aria-hidden="true" /><header><div><span>管理层摘要 · 性能测试结果</span><h2>性能决策简报</h2><p>{{ selectedApplicationName }} / {{ scenarioName || '未命名场景' }} · {{ runDate(selectedRun?.created_at || '') }}</p></div><b><i />{{ report.verdict_label }}</b></header><div class="load-decision-message"><strong>{{ report.verdict === 'passed' ? '本次性能目标已达成' : report.verdict === 'failed' ? '本次未达到设定的性能标准' : '当前证据不足，暂不建议下结论' }}</strong><span>{{ report.verdict_explanation }}</span></div><div class="load-executive-grid" data-testid="load-report-executive-grid"><article><span><b>01</b>测了什么</span><strong>{{ executiveSubject.primary }}</strong><small>{{ executiveSubject.detail }}</small></article><article><span><b>02</b>怎么测的</span><strong>{{ executivePressure.primary }}</strong><small>{{ executivePressure.detail }}</small></article><article class="result"><span><b>03</b>结果怎么样</span><strong>{{ executiveResult.primary }}</strong><small>{{ executiveResult.detail }}</small></article><article class="risk"><span><b>04</b>主要风险</span><strong>{{ executiveRisk.primary }}</strong><small>{{ executiveRisk.detail }}</small></article><article class="next"><span><b>05</b>下一步做什么</span><strong>{{ executiveNext.primary }}</strong><small>{{ executiveNext.detail }}</small></article></div></section>
         <section v-if="terminal && sampleIntegrity?.consistent === false" :class="sampleIntegrity?.acceptable ? 'state-message' : 'state-message state-error'" data-testid="load-report-sample-integrity" aria-label="采样完整性检查">
           <strong>{{ sampleIntegrity.acceptable ? '少量计数偏差，允许继续判定，耗时指标仅基于已收到的样本' : '采样计数不一致，当前报告不能用于性能达标判断' }}</strong>
