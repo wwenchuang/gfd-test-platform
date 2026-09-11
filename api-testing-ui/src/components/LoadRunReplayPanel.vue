@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { LoadReport, LoadRun } from '../api/contracts'
 
 type UnknownRecord = Record<string, unknown>
@@ -44,6 +44,17 @@ const playing = ref(false)
 const cursor = ref(0)
 const timer = ref<ReturnType<typeof setInterval> | null>(null)
 const now = ref(Date.now() / 1000)
+const reducedMotion = ref(false)
+const mediaQuery = ref<MediaQueryList | null>(null)
+const reducedMotionChangeHandler = (event: MediaQueryListEvent): void => {
+  reducedMotion.value = event.matches
+  if (event.matches && playing.value) stop()
+}
+
+const keyboardHint = computed(() => reducedMotion.value
+  ? '已开启减少动态偏好：Space=播放/暂停，←/→=跳窗，Home/End=首尾，鼠标拖动窗口更稳。'
+  : 'Space=播放/暂停，←/→=跳窗，Home/End=首尾，1/2/5/0=速度。'
+)
 
 const available = computed(() => replayWindows.value.length >= 1 && replayWindows.value.some(item => item.requests > 0 || item.p95 !== null))
 
@@ -85,6 +96,31 @@ const workload = computed(() => toRecord(runConfig.value.workload) || (toRecord(
 const loadModel = computed(() => String(props.run?.load_model || props.report.load_goal?.model || ''))
 const runStarted = computed(() => parseTime(props.run?.started_at) || parseTime(props.report.evidence?.scenario_snapshot?.started_at) || parseTime((props.report.series || [])[0]?.started_at))
 const runFinished = computed(() => parseTime(props.run?.finished_at) || parseTime(props.report.evidence?.workload_snapshot?.finished_at))
+
+const replayStages = computed(() => {
+  const source = toRecord(props.report.load_goal).stages
+  const stages = Array.isArray(source) ? source as UnknownRecord[] : Array.isArray(workload.value.stages) ? workload.value.stages as UnknownRecord[] : []
+  let offset = 0
+  return stages
+    .map((stage, index) => {
+      const duration = Math.max(0, toFiniteNumber(stage.duration_seconds) || 0)
+      const declaredStart = toFiniteNumber(stage.start_seconds)
+      const start = declaredStart == null ? offset : declaredStart
+      const target = toFiniteNumber(stage.target_vus) || toFiniteNumber(stage.target_rate) || toFiniteNumber(stage.target) || null
+      const startVus = toFiniteNumber(stage.start_vus)
+      const startRate = toFiniteNumber(stage.start_rate)
+      const startPressure = loadModel.value.includes('vus') ? (startVus || startRate) : (startRate || startVus)
+      if (Number.isFinite(start) && Number.isFinite(duration)) offset = start + duration
+      return {
+        index: index + 1,
+        start,
+        duration,
+        target,
+        startPressure,
+      }
+    })
+    .filter(item => Number.isFinite(item.start))
+})
 
 const p95Reference = computed(() => {
   const threshold = (props.report.thresholds || []).find(item => item.key === 'p95_ms')
@@ -134,7 +170,7 @@ const cursorWindowIndex = computed(() => {
   const max = Math.max(1, replayWindows.value.length)
   if (!Number.isFinite(cursor.value)) return 0
   const normalized = Math.min(Math.max(0, cursor.value), max - 1)
-  return Math.round(normalized)
+  return Math.floor(normalized)
 })
 
 const currentWindow = computed(() => replayWindows.value[cursorWindowIndex.value] || null)
@@ -196,7 +232,12 @@ const planPressureSeries = computed(() => {
 })
 
 const chartLines = computed<Record<string, LineSeries[]>>(() => {
-  const actualWindowPoints = replayWindows.value.map(window => ({ time: window.start, value: window.duration > 0 ? window.requests / window.duration : 0 }))
+  const actualWindowPoints = replayWindows.value.map(window => ({
+    time: window.start,
+    value: window.duration > 0
+      ? (window.iterations > 0 ? window.iterations / window.duration : window.requests / window.duration)
+      : 0,
+  }))
   const p95Points = replayWindows.value
     .filter(window => window.p95 !== null)
     .map(window => ({ time: window.start, value: window.p95 as number }))
@@ -333,41 +374,44 @@ const replayEvents = computed<ReplayEvent[]>(() => {
     })
   }
 
-  const stageLines = toRecord(props.report.load_goal).stages as UnknownRecord[] | undefined
-  const stages = Array.isArray(stageLines) ? stageLines : Array.isArray(workload.value.stages) ? workload.value.stages as UnknownRecord[] : []
-  if (stages.length) {
-    for (let index = 0; index < stages.length; index++) {
-      const stage = stages[index] as UnknownRecord
-      const seconds = Number(stage.start_seconds || 0)
-      const target = toFiniteNumber(stage.target_vus) || toFiniteNumber(stage.target_rate) || toFiniteNumber(stage.target) || null
-      if (!Number.isFinite(seconds) || seconds <= 0 || !start) continue
+  const stages = replayStages.value
+  if (stages.length && Number.isFinite(start)) {
+    for (const stage of stages) {
+      const unit = loadModel.value.includes('vus') ? 'VU' : '次/秒'
+      const startTargetText = stage.startPressure == null ? '未完整记录' : `${stage.startPressure} ${unit}`
+      const targetText = stage.target == null ? '未完整记录' : `${stage.target} ${unit}`
       events.push({
-        id: `stage-${index + 1}`,
-        time: start + seconds,
-        label: `阶段 ${index + 1} 开始`,
-        summary: `进入阶段 ${index + 1}`,
+        id: `stage-${stage.index}`,
+        time: start + stage.start,
+        label: `阶段 ${stage.index} 开始`,
+        summary: `阶段 ${stage.index} 已定义，按时间窗口生效`,
         details: [
-          `计划目标 ${target == null ? '未完整记录' : `${target} ${loadModel.value.includes('vus') ? 'VU' : '次/秒'}`}`,
-          stage.duration_seconds == null ? '缺少阶段时长' : `阶段时长 ${formatDuration(Number(stage.duration_seconds))}`,
+          `计划起始 ${startTargetText}`,
+          `阶段目标 ${targetText}`,
+          stage.duration ? `阶段时长 ${formatDuration(stage.duration)}` : '阶段时长未记录',
+          stage.duration
+            ? `阶段结束时刻 T+${formatDuration(stage.start + stage.duration)}`
+            : '暂不支持精确阶段结束时刻，以上为当前可见定义。',
         ],
-        evidence: ['来自 report.load_goal.stages'],
+        evidence: ['来自 report.load_goal.stages / workload.stages'],
       })
     }
 
     for (let index = 1; index < stages.length; index++) {
-      const previous = Number(stages[index - 1]?.target || 0)
-      const current = Number(stages[index]?.target || 0)
-      const seconds = Number(stages[index]?.start_seconds || 0)
-      if (Number.isFinite(seconds) && seconds > 0 && previous > current) {
-        events.push({
-          id: `ramp-down-${index}`,
-          time: start + seconds,
-          label: `降压阶段（降幅 ${Math.max(0, previous - current)}）`,
-          summary: '压力轨迹出现降压意图',
-          details: ['该节点仅按配置阶段边界判断，不能自动推断已生效。'],
-          evidence: ['来自 report.load_goal.stages 的 target 数据'],
-        })
-      }
+      const previous = stages[index - 1]?.target || 0
+      const current = stages[index]?.target || 0
+      const previousTarget = Number(previous)
+      const currentTarget = Number(current)
+      const seconds = stages[index].start
+      if (!Number.isFinite(seconds) || Number.isNaN(previousTarget) || Number.isNaN(currentTarget) || previousTarget <= currentTarget) continue
+      events.push({
+        id: `ramp-down-${index}`,
+        time: start + seconds,
+        label: `降压阶段（降幅 ${Math.max(0, previousTarget - currentTarget)}）`,
+        summary: '压力轨迹出现降压意图',
+        details: [`阶段目标从 ${previousTarget} ${loadModel.value.includes('vus') ? 'VU' : '次/秒'} 降到 ${currentTarget} ${loadModel.value.includes('vus') ? 'VU' : '次/秒'}。`, '该节点仅按配置阶段边界判断，不能自动推断降压已生效。'],
+        evidence: ['来自 report.load_goal.stages 的 target 与阶段起点'],
+      })
     }
   }
 
@@ -422,15 +466,23 @@ const replayEvents = computed<ReplayEvent[]>(() => {
     }
   }
 
-  if (props.run?.finished_at || replayWindows.value.length) {
-    const finished = props.run?.finished_at ? parseTime(props.run.finished_at) : endTime.value
+  const isTerminalState = typeof props.run?.state === 'string' && ['finished', 'failed', 'cancelled'].includes(props.run.state)
+  if ((props.run?.finished_at && isTerminalState) || (runFinished.value && isTerminalState) || (isTerminalState && replayWindows.value.length)) {
+    const finished = props.run?.finished_at ? parseTime(props.run.finished_at) : runFinished.value || endTime.value
     if (finished != null) {
       const state = props.run?.state || '未知'
       const reason = typeof props.run?.stop_reason === 'string' && props.run.stop_reason ? props.run.stop_reason : ''
+      const stopLabel = state.includes('cancel') || reason.includes('cancel') || reason.includes('stop')
+        ? '人工停止'
+        : reason.includes('保护') || reason.includes('保护停止')
+          ? '保护停止'
+          : state === 'finished'
+            ? '完成'
+            : state
       events.push({
         id: 'finish',
         time: finished,
-        label: state.includes('cancel') ? '人工停止' : state === 'finished' ? '完成' : state,
+        label: stopLabel,
         summary: '执行进入结束状态',
         details: [
           `运行状态：${state}`,
@@ -463,11 +515,16 @@ const progressPercent = computed(() => {
   return Math.min(100, Math.max(0, ((cursorWindowTime.value - startTime.value) / timelineSpan.value) * 100))
 })
 
+function throughputInWindow(window: ReplayWindow | null): string {
+  if (!window) return '—'
+  if (!window.duration || !Number.isFinite(window.duration) || window.duration <= 0) return '—'
+  const throughput = window.iterations > 0 ? window.iterations / window.duration : window.requests / window.duration
+  return `${throughput.toLocaleString('zh-CN', { maximumFractionDigits: 2 })} 次/秒`
+}
+
 const currentPressureValue = computed(() => {
   const time = cursorWindowTime.value
-  const actual = replayWindows.value[cursorWindowIndex.value]?.duration
-    ? `${(replayWindows.value[cursorWindowIndex.value].requests / Math.max(1e-9, replayWindows.value[cursorWindowIndex.value].duration)).toLocaleString('zh-CN', { maximumFractionDigits: 2 })} 次/秒`
-    : '—'
+  const actual = throughputInWindow(currentWindow.value)
   const planValue = planToTime.value?.(time)
   return [
     `计划 ${planValue == null ? '—' : `${planValue.toLocaleString('zh-CN')} ${loadModel.value.includes('vus') ? 'VU' : '次/秒'}`}`,
@@ -601,8 +658,11 @@ const chartStateText = computed(() => {
   if (!window) return '尚未有窗口采样。'
   const hasP95 = window.p95 != null
   const highP95 = hasP95 && p95Reference.value != null && window.p95 != null && window.p95 > p95Reference.value
+  const throughputValue = window.duration > 0
+    ? window.iterations > 0 ? window.iterations / window.duration : window.requests / window.duration
+    : null
   const facts: string[] = []
-  facts.push(`窗口请求 ${window.requests}；吞吐 ${window.duration > 0 ? (window.requests / window.duration).toLocaleString('zh-CN', { maximumFractionDigits: 2 }) : '—'} 次/秒`)
+  facts.push(`窗口请求 ${window.requests}；吞吐 ${throughputValue == null ? '—' : `${throughputValue.toLocaleString('zh-CN', { maximumFractionDigits: 2 })} 次/秒`}`)
   facts.push(`HTTP 失败率 ${window.requests > 0 ? ((window.http_failures / window.requests) * 100).toLocaleString('zh-CN', { maximumFractionDigits: 2 }) : 0}%`)
   facts.push(`业务失败率 ${window.iterations > 0 ? ((window.business_failures / window.iterations) * 100).toLocaleString('zh-CN', { maximumFractionDigits: 2 }) : 0}%`)
   if (hasP95) facts.push(`P95 ${window.p95?.toLocaleString('zh-CN', { maximumFractionDigits: 2 })} ms`)
@@ -612,8 +672,13 @@ const chartStateText = computed(() => {
 
 function tick(): void {
   const max = Math.max(0, replayWindows.value.length - 1)
-  if (!max || !playing.value) return
-  const next = cursor.value + speed.value * 0.2
+  if (!playing.value) return
+  if (!max) {
+    stop()
+    return
+  }
+  const step = reducedMotion.value ? 1 : speed.value * 0.2
+  const next = cursor.value + step
   if (next >= max) {
     cursor.value = max
     stop()
@@ -626,9 +691,10 @@ function play(): void {
   if (playing.value) return
   playing.value = true
   if (timer.value) clearInterval(timer.value)
+  const interval = reducedMotion.value ? 500 : 250
   timer.value = setInterval(() => {
     tick()
-  }, 250)
+  }, interval)
 }
 function stop(): void {
   playing.value = false
@@ -644,6 +710,11 @@ function reset(): void {
 function seekTo(time: number): void {
   stop()
   cursor.value = clampWindowIndexByTime(time)
+}
+function moveWindow(steps: number): void {
+  stop()
+  const max = Math.max(0, replayWindows.value.length - 1)
+  cursor.value = Math.min(max, Math.max(0, cursor.value + steps))
 }
 function clampWindowIndexByTime(time: number): number {
   const windows = replayWindows.value
@@ -670,10 +741,85 @@ function jumpToRecovery(): void {
 }
 function jumpToEvent(event: ReplayEvent): void { seekTo(event.time) }
 
+function handleReplayKeydown(event: KeyboardEvent): void {
+  const target = event.target as HTMLElement | null
+  if (!event.key || (target && /^(INPUT|TEXTAREA|SELECT|OPTION|BUTTON|A)$/.test(target.tagName))) return
+  if (event.code === 'Space') {
+    event.preventDefault()
+    if (playing.value) stop()
+    else play()
+    return
+  }
+  if (event.key === 'ArrowLeft') {
+    event.preventDefault()
+    moveWindow(-1)
+    return
+  }
+  if (event.key === 'ArrowRight') {
+    event.preventDefault()
+    moveWindow(1)
+    return
+  }
+  if (event.key === 'Home') {
+    event.preventDefault()
+    jumpToStart()
+    return
+  }
+  if (event.key === 'End') {
+    event.preventDefault()
+    seekTo(endTime.value)
+    return
+  }
+  if (event.key === '1') {
+    setSpeed(1)
+    return
+  }
+  if (event.key === '2') {
+    setSpeed(2)
+    return
+  }
+  if (event.key === '5') {
+    setSpeed(5)
+    return
+  }
+  if (event.key === '0') {
+    setSpeed(10)
+  }
+}
+
+function setupMotionPreference(): void {
+  if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return
+  mediaQuery.value = window.matchMedia('(prefers-reduced-motion: reduce)')
+  reducedMotion.value = mediaQuery.value.matches
+  if (mediaQuery.value.addEventListener) {
+    mediaQuery.value.addEventListener('change', reducedMotionChangeHandler)
+  } else {
+    mediaQuery.value.addListener(reducedMotionChangeHandler)
+  }
+}
+
+function cleanupMotionPreference(): void {
+  const query = mediaQuery.value
+  if (!query || (!query.removeEventListener && !query.removeListener)) return
+  if (query.removeEventListener) {
+    query.removeEventListener('change', reducedMotionChangeHandler)
+  } else {
+    query.removeListener(reducedMotionChangeHandler)
+  }
+}
+
 function formatEventLabel(value: number): string { return `T+${formatDuration(Math.max(0, value - startTime.value))}` }
 
 watch(() => props.report, () => { reset() })
-onBeforeUnmount(() => stop())
+onMounted(() => {
+  setupMotionPreference()
+  window.addEventListener('keydown', handleReplayKeydown)
+})
+onBeforeUnmount(() => {
+  stop()
+  cleanupMotionPreference()
+  window.removeEventListener('keydown', handleReplayKeydown)
+})
 
 const visibleEvents = computed(() => replayEvents.value.filter(event => Number.isFinite(event.time)).slice(0, 10))
 </script>
@@ -684,6 +830,7 @@ const visibleEvents = computed(() => replayEvents.value.filter(event => Number.i
       <div>
         <h2>压测过程回放（仅使用已存储证据）</h2>
         <p>时间轴按真实采样窗口同步推进。播放不发起任何新请求。</p>
+        <p class="replay-hint">{{ keyboardHint }}</p>
       </div>
       <small>{{ available ? `已有 ${replayWindows.length} 个窗口` : '暂无可回放窗口' }}</small>
     </header>
@@ -875,6 +1022,7 @@ const visibleEvents = computed(() => replayEvents.value.filter(event => Number.i
 <style scoped>
 .load-run-replay{padding:18px;border:1px solid #d8e3ed;border-radius:12px;background:#fff;color:#0f172a;margin:16px 0;}
 .load-run-replay h2{margin:0;font-size:20px}.load-run-replay header{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}.load-run-replay p{font-size:13px;line-height:1.6;color:#52627e}
+.replay-hint{font-size:12px;color:#64748b;margin-top:6px}
 .replay-controls{display:flex;gap:10px;flex-wrap:wrap;align-items:center;justify-content:space-between}
 .replay-buttons{display:flex;gap:8px;flex-wrap:wrap}.replay-speed label{display:grid;gap:4px;font-size:12px;color:#475569}.replay-speed select{height:33px;min-width:74px}
 .replay-time{display:flex;justify-content:space-between;font-size:13px;color:#475569;margin:12px 0}.replay-slider{width:100%;accent-color:#0ea5e9}
