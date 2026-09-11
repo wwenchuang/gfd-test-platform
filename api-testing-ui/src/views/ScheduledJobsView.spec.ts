@@ -710,6 +710,135 @@ describe('ScheduledJobsView', () => {
     expect((wrapper.get('[data-testid="scheduled-name"]').element as HTMLInputElement).value).toBe('每日发版回归')
   })
 
+  it('auto-repairs retired baselines when enabling a missing-baseline job', async () => {
+    const original = scheduledJobFixture({
+      id: 'job-auto-enable',
+      target_type: 'baselines',
+      enabled: false,
+      target_ids: ['baseline-retired'],
+    })
+    const repaired = scheduledJobFixture({
+      ...original,
+      target_ids: ['baseline-current'],
+      enabled: true,
+    })
+    vi.spyOn(apiClient, 'get').mockImplementation(async url => {
+      const path = String(url)
+      if (path.startsWith('/api/api-testing/v1/scheduled-jobs')) return { data: { scheduled_jobs: [original] } }
+      if (path.startsWith('/api/api-testing/v1/baselines')) return { data: { baselines: [
+        baselineFixture({
+          id: 'baseline-retired',
+          case_id: 'case-upgraded',
+          case_version: 10,
+          source_revision_id: 'source-1',
+          status: 'superseded',
+        }),
+        baselineFixture({
+          id: 'baseline-current',
+          case_id: 'case-upgraded',
+          source_revision_id: 'source-1',
+          status: 'active',
+          case_version: 11,
+        }),
+      ] } }
+      if (path.startsWith('/api/api-testing/v1/cases')) return { data: { case_versions: [] } }
+      if (path.startsWith('/api/api-testing/v1/tasks')) return { data: { tasks: [] } }
+      return { data: {} }
+    })
+    const put = vi.spyOn(apiClient, 'put').mockResolvedValue({ data: { scheduled_job: repaired } })
+    const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/', name: 'scheduled-jobs', component: ScheduledJobsView }] })
+    const wrapper = mount(ScheduledJobsView, { global: { plugins: [router] } })
+    await flushPromises()
+
+    expect(wrapper.get('[data-testid="scheduled-list-enabled-job-auto-enable"]').attributes('disabled')).toBeUndefined()
+    await wrapper.get('[data-testid="scheduled-list-enabled-job-auto-enable"]').trigger('click')
+    await flushPromises()
+    expect(put).toHaveBeenCalledWith('/api/api-testing/v1/scheduled-jobs/job-auto-enable', expect.objectContaining({
+      target_ids: ['baseline-current'],
+      enabled: true,
+    }))
+  })
+
+  it('auto-repairs missing baselines and still allows manual run', async () => {
+    const original = scheduledJobFixture({
+      id: 'job-auto-run',
+      target_type: 'baselines',
+      target_ids: ['baseline-retired'],
+      latest_execution_id: null,
+    })
+    vi.spyOn(apiClient, 'get').mockImplementation(async url => {
+      const path = String(url)
+      if (path.startsWith('/api/api-testing/v1/scheduled-jobs')) return { data: { scheduled_jobs: [original] } }
+      if (path.startsWith('/api/api-testing/v1/baselines')) return { data: { baselines: [
+        baselineFixture({
+          id: 'baseline-retired',
+          case_id: 'case-upgraded',
+          case_version: 10,
+          source_revision_id: 'source-1',
+          status: 'superseded',
+        }),
+        baselineFixture({
+          id: 'baseline-current',
+          case_id: 'case-upgraded',
+          source_revision_id: 'source-1',
+          status: 'active',
+          case_version: 11,
+        }),
+      ] } }
+      if (path.startsWith('/api/api-testing/v1/cases')) return { data: { case_versions: [] } }
+      if (path.startsWith('/api/api-testing/v1/tasks')) return { data: { tasks: [] } }
+      return { data: {} }
+    })
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    const put = vi.spyOn(apiClient, 'put')
+      .mockResolvedValueOnce({ data: { scheduled_job: { ...original, target_ids: ['baseline-current'] } } })
+    const post = vi.spyOn(apiClient, 'post')
+      .mockResolvedValueOnce({
+        data: {
+          execution: {
+            id: 'execution-auto',
+            project_id: 'project-1',
+            task_id: 'job-auto-run',
+            task_name: '每日发版回归',
+            task_type: 'scheduled_job',
+            execution_source: 'scheduled_job',
+            state: 'QUEUED',
+            execution_type: 'baseline_regression',
+            source_revision_id: 'source-1',
+            environment_revision_id: 'env-revision-1',
+            environment_name: '生产环境',
+            case_statuses: [],
+            case_results: [],
+            summary: { total: 0 },
+            notifications: {},
+            cancellation_requested: false,
+            created_at: '2026-08-14T10:01:00Z',
+            started_at: null,
+            finished_at: null,
+          },
+        },
+      })
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [
+        { path: '/', name: 'scheduled-jobs', component: ScheduledJobsView },
+        { path: '/runs', name: 'runs', component: { template: '<div />' } },
+      ],
+    })
+    const wrapper = mount(ScheduledJobsView, { global: { plugins: [router] } })
+    await flushPromises()
+
+    expect(wrapper.get('[data-testid="scheduled-run-job-auto-run"]').attributes('disabled')).toBeUndefined()
+    await wrapper.get('[data-testid="scheduled-run-job-auto-run"]').trigger('click')
+    await flushPromises()
+    expect(put).toHaveBeenCalledWith('/api/api-testing/v1/scheduled-jobs/job-auto-run', expect.objectContaining({
+      target_ids: ['baseline-current'],
+    }))
+    expect(post).toHaveBeenCalledWith('/api/api-testing/v1/scheduled-jobs/job-auto-run/run', expect.any(Object))
+    expect(router.currentRoute.value.name).toBe('runs')
+    expect(router.currentRoute.value.query.executionId).toBe('execution-auto')
+  })
+
   it.each([
     ['blocked: permission or scope revoked', '保存任务配置的成员的执行权限或数据范围已撤销', '请联系管理员恢复保存任务配置的成员对项目、环境及执行操作的授权'],
     ['blocked: scheduled target unavailable or outside current scope', '定时任务目标不可用，或已超出当前数据范围', '请检查目标及环境是否有效，并编辑任务重新选择；若授权已撤销，请联系管理员恢复'],

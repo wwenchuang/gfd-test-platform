@@ -305,6 +305,7 @@ function buildJobInput(ids: string[]): ScheduledJobInput {
 async function runJob(job: ScheduledJob): Promise<void> {
   if (busy.value || targetsLoading.value) return
   actionMessage.value = ''
+  let executableJob = job
   const permissionIssue = jobRunPermissionIssue(job)
   if (permissionIssue) {
     scheduledJobs.error = permissionIssue
@@ -312,18 +313,27 @@ async function runJob(job: ScheduledJob): Promise<void> {
   }
   const targetIssue = jobTargetIssue(job)
   if (targetIssue) {
-    scheduledJobs.error = `定时任务“${job.name}”执行已阻断：${targetIssue}。请编辑任务并重新选择有效目标。`
-    return
+    const repaired = autoRepairBaselinesForJob(job)
+    if (!repaired) {
+      scheduledJobs.error = `定时任务“${job.name}”执行已阻断：${targetIssue}。请编辑任务并重新选择有效目标。`
+      return
+    }
+    try {
+      executableJob = await scheduledJobs.update(job.id, jobInputFromJob({ ...job, target_ids: repaired.target_ids }))
+      actionMessage.value = `已为“${job.name}”自动修复 ${repaired.replacedCount} 个失效基线，继续执行。`
+    } catch {
+      return
+    }
   }
-  const revisionId = job.environment_strategy === 'latest_environment'
-    ? context.environmentRevisions.find(item => item.environment_id === job.environment_id)?.id
-    : job.environment_revision_id
+  const revisionId = executableJob.environment_strategy === 'latest_environment'
+    ? context.environmentRevisions.find(item => item.environment_id === executableJob.environment_id)?.id
+    : executableJob.environment_revision_id
   const environmentName = context.environmentRevisions.find(item => item.id === revisionId)?.name || '任务配置环境'
   if (!confirmApiExecution({
     action: '手动执行定时任务',
     environmentName,
-    targetName: job.name,
-    caseCount: job.target_ids.length,
+    targetName: executableJob.name,
+    caseCount: executableJob.target_ids.length,
   })) return
   try {
     const execution = await scheduledJobs.runOnce(job.id)
@@ -495,10 +505,11 @@ function jobTargetIssue(job: ScheduledJob): string {
 }
 
 function runBlockMessage(job: ScheduledJob): string {
-  const issue = jobTargetIssue(job)
-  if (issue) return `手动执行已阻断：${issue}`
   const runPermissionIssue = jobRunPermissionIssue(job)
   if (runPermissionIssue) return `手动执行已阻断：${runPermissionIssue}`
+  const issue = jobTargetIssue(job)
+  const repaired = autoRepairBaselinesForJob(job)
+  if (issue) return repaired ? `检测到 ${repaired.replacedCount} 个失效基线，执行前将自动修复后继续。` : `手动执行已阻断：${issue}`
   return ''
 }
 
@@ -514,6 +525,35 @@ function scheduledBlockMessage(job: ScheduledJob): string {
     default:
       return '服务端阻断原因尚未识别。请联系管理员检查任务权限、目标和环境后重试。'
   }
+}
+
+function autoRepairBaselinesForJob(job: ScheduledJob): { target_ids: string[]; replacedCount: number } | null {
+  if (job.target_type !== 'baselines') return null
+  const knownIds = new Set(availableBaselines.value.map(item => item.id))
+  const missingIds = job.target_ids.filter(id => !knownIds.has(id))
+  if (!missingIds.length) return null
+  const replacements = new Map<string, string>()
+  for (const missingId of missingIds) {
+    const retired = baselines.items.find(item => item.id === missingId)
+    if (!retired) return null
+    const current = availableBaselines.value
+      .filter(item => item.case_id === retired.case_id && item.source_revision_id === retired.source_revision_id && baselineOption(item).selectable)
+      .sort((left, right) => right.case_version - left.case_version)[0]
+    if (!current) return null
+    replacements.set(missingId, current.id)
+  }
+  if (!replacements.size) return null
+  return {
+    target_ids: [...new Set(job.target_ids.map(item => replacements.get(item) || item))],
+    replacedCount: replacements.size,
+  }
+}
+
+function runActionBlocked(job: ScheduledJob): boolean {
+  if (targetsLoading.value) return true
+  const targetIssue = jobTargetIssue(job)
+  const repaired = autoRepairBaselinesForJob(job)
+  return Boolean(targetIssue && !repaired) || Boolean(jobRunPermissionIssue(job))
 }
 
 const editingBlockMessage = computed(() => {
@@ -642,6 +682,16 @@ async function toggleJobFlag(job: ScheduledJob, flag: 'enabled' | 'notify_feishu
   }
   actionMessage.value = ''
   if (flag === 'enabled' && !job.enabled && jobTargetIssue(job)) {
+    const repaired = autoRepairBaselinesForJob(job)
+    if (repaired) {
+      try {
+        await scheduledJobs.update(job.id, jobInputFromJob({ ...job, target_ids: repaired.target_ids, [flag]: !job[flag] }))
+        actionMessage.value = `已为“${job.name}”自动修复 ${repaired.replacedCount} 个失效基线，并切换启用状态。`
+        if (editingJobId.value === job.id) form.enabled = !job.enabled
+        return
+      } catch { /* Store exposes the request failure. */ }
+      return
+    }
     scheduledJobs.error = `无法启用定时任务“${job.name}”：${jobTargetIssue(job)}。请先编辑并重新选择有效目标。`
     return
   }
@@ -995,13 +1045,13 @@ function weekDayName(value: number): string {
             <button :data-testid="`scheduled-edit-${job.id}`" type="button" class="mini-icon" :disabled="busy || targetsLoading || Boolean(editorBasePermissionIssue)" :title="editorBasePermissionIssue || '编辑'" @click="editJob(job)"><Pencil :size="14" /></button>
             <button :data-testid="`scheduled-delete-${job.id}`" type="button" class="mini-icon danger" :disabled="busy || Boolean(deleteJobPermissionIssue())" :title="deleteJobPermissionIssue() || '删除'" @click="deleteJob(job)"><Trash2 :size="14" /></button>
             <button v-if="job.latest_execution_id" :data-testid="`scheduled-latest-execution-${job.id}`" type="button" class="mini-icon" title="查看最近执行" @click="openLatestExecution(job)"><ExternalLink :size="14" /></button>
-            <button :data-testid="`scheduled-run-${job.id}`" type="button" class="secondary-command" :disabled="busy || Boolean(jobTargetIssue(job)) || Boolean(jobRunPermissionIssue(job))" :title="jobRunPermissionIssue(job) || jobTargetIssue(job) || '立即执行已保存配置，不受启用开关影响'" @click="runJob(job)">
+            <button :data-testid="`scheduled-run-${job.id}`" type="button" class="secondary-command" :disabled="busy || runActionBlocked(job)" :title="runActionBlocked(job) ? runBlockMessage(job) : '立即执行已保存配置，不受启用开关影响'" @click="runJob(job)">
               <Play :size="14" />{{ scheduledJobs.runningId === job.id ? '投递中' : '手动执行一次' }}
             </button>
             <p v-if="runBlockMessage(job) && !scheduledBlockMessage(job) && !targetsLoading" class="compact-empty" :data-testid="`scheduled-run-block-hint-${job.id}`">
               {{ runBlockMessage(job) }}
               <button
-                v-if="jobTargetIssue(job)"
+                v-if="jobTargetIssue(job) && !autoRepairBaselinesForJob(job)"
                 type="button"
                 class="text-command"
                 :disabled="busy || targetsLoading || Boolean(editorBasePermissionIssue)"
