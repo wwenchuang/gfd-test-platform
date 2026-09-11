@@ -320,7 +320,7 @@ async function runJob(job: ScheduledJob): Promise<void> {
     }
     try {
       executableJob = await scheduledJobs.update(job.id, jobInputFromJob({ ...job, target_ids: repaired.target_ids }))
-      actionMessage.value = `已为“${job.name}”自动修复 ${repaired.replacedCount} 个失效基线，继续执行。`
+      actionMessage.value = `已为“${job.name}”自动移除 ${repaired.replacedCount} 个失效目标，继续执行。`
     } catch {
       return
     }
@@ -509,7 +509,7 @@ function runBlockMessage(job: ScheduledJob): string {
   if (runPermissionIssue) return `手动执行已阻断：${runPermissionIssue}`
   const issue = jobTargetIssue(job)
   const repaired = autoRepairBaselinesForJob(job)
-  if (issue) return repaired ? `检测到 ${repaired.replacedCount} 个失效基线，执行前将自动修复后继续。` : `手动执行已阻断：${issue}`
+  if (issue) return repaired ? `检测到 ${repaired.replacedCount} 个失效目标，执行前将自动修复后继续。` : `手动执行已阻断：${issue}`
   return ''
 }
 
@@ -528,24 +528,41 @@ function scheduledBlockMessage(job: ScheduledJob): string {
 }
 
 function autoRepairBaselinesForJob(job: ScheduledJob): { target_ids: string[]; replacedCount: number } | null {
+  if (job.target_type === 'baseline_group') {
+    const knownIds = new Set(targetOptionsForType(job.target_type).map(item => item.id))
+    const replacedIds = job.target_ids.filter(id => knownIds.has(id))
+    const replacedCount = job.target_ids.length - replacedIds.length
+    if (!replacedCount) return null
+    if (!replacedIds.length) return null
+    return { target_ids: replacedIds, replacedCount }
+  }
   if (job.target_type !== 'baselines') return null
   const knownIds = new Set(availableBaselines.value.map(item => item.id))
   const missingIds = job.target_ids.filter(id => !knownIds.has(id))
   if (!missingIds.length) return null
   const replacements = new Map<string, string>()
+  const droppedIds = new Set<string>()
   for (const missingId of missingIds) {
     const retired = baselines.items.find(item => item.id === missingId)
-    if (!retired) return null
+    if (!retired) {
+      droppedIds.add(missingId)
+      continue
+    }
     const current = availableBaselines.value
       .filter(item => item.case_id === retired.case_id && item.source_revision_id === retired.source_revision_id && baselineOption(item).selectable)
       .sort((left, right) => right.case_version - left.case_version)[0]
-    if (!current) return null
+    if (!current) {
+      droppedIds.add(missingId)
+      continue
+    }
     replacements.set(missingId, current.id)
   }
-  if (!replacements.size) return null
+  const targetIds = [...new Set(job.target_ids.map(item => replacements.get(item) || (knownIds.has(item) ? item : undefined)).filter((item): item is string => Boolean(item)))]
+  if (!targetIds.length) return null
+  if (!replacements.size && !droppedIds.size) return null
   return {
-    target_ids: [...new Set(job.target_ids.map(item => replacements.get(item) || item))],
-    replacedCount: replacements.size,
+    target_ids: targetIds,
+    replacedCount: new Set(missingIds).size,
   }
 }
 
@@ -686,7 +703,7 @@ async function toggleJobFlag(job: ScheduledJob, flag: 'enabled' | 'notify_feishu
     if (repaired) {
       try {
         await scheduledJobs.update(job.id, jobInputFromJob({ ...job, target_ids: repaired.target_ids, [flag]: !job[flag] }))
-        actionMessage.value = `已为“${job.name}”自动修复 ${repaired.replacedCount} 个失效基线，并切换启用状态。`
+        actionMessage.value = `已为“${job.name}”自动移除 ${repaired.replacedCount} 个失效目标，并切换启用状态。`
         if (editingJobId.value === job.id) form.enabled = !job.enabled
         return
       } catch { /* Store exposes the request failure. */ }
