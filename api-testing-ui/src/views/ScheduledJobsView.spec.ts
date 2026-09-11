@@ -703,6 +703,11 @@ describe('ScheduledJobsView', () => {
     expect(row.text()).toContain('应用未配置或已移除')
     expect(row.text()).not.toContain('下次执行')
     expect(wrapper.get('[data-testid="scheduled-run-job-blocked"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.get('[data-testid="scheduled-run-block-hint-job-blocked"]').text()).toContain('手动执行已阻断')
+    expect(wrapper.get('[data-testid="scheduled-run-block-hint-job-blocked"]').text()).toContain('去编辑修复')
+    const runHint = wrapper.get('[data-testid="scheduled-run-block-hint-job-blocked"]')
+    await runHint.get('button').trigger('click')
+    expect((wrapper.get('[data-testid="scheduled-name"]').element as HTMLInputElement).value).toBe('每日发版回归')
   })
 
   it.each([

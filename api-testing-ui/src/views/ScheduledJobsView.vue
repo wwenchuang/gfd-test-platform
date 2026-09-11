@@ -494,6 +494,14 @@ function jobTargetIssue(job: ScheduledJob): string {
   return ''
 }
 
+function runBlockMessage(job: ScheduledJob): string {
+  const issue = jobTargetIssue(job)
+  if (issue) return `手动执行已阻断：${issue}`
+  const runPermissionIssue = jobRunPermissionIssue(job)
+  if (runPermissionIssue) return `手动执行已阻断：${runPermissionIssue}`
+  return ''
+}
+
 function scheduledBlockMessage(job: ScheduledJob): string {
   switch (job.blocked_reason) {
     case undefined:
@@ -990,6 +998,18 @@ function weekDayName(value: number): string {
             <button :data-testid="`scheduled-run-${job.id}`" type="button" class="secondary-command" :disabled="busy || Boolean(jobTargetIssue(job)) || Boolean(jobRunPermissionIssue(job))" :title="jobRunPermissionIssue(job) || jobTargetIssue(job) || '立即执行已保存配置，不受启用开关影响'" @click="runJob(job)">
               <Play :size="14" />{{ scheduledJobs.runningId === job.id ? '投递中' : '手动执行一次' }}
             </button>
+            <p v-if="runBlockMessage(job) && !scheduledBlockMessage(job) && !targetsLoading" class="compact-empty" :data-testid="`scheduled-run-block-hint-${job.id}`">
+              {{ runBlockMessage(job) }}
+              <button
+                v-if="jobTargetIssue(job)"
+                type="button"
+                class="text-command"
+                :disabled="busy || targetsLoading || Boolean(editorBasePermissionIssue)"
+                @click="editJob(job)"
+              >
+                去编辑修复
+              </button>
+            </p>
           </div>
         </article>
         <p v-if="!scheduledJobs.items.length && !refreshing && !scheduledJobs.error" class="section-empty">暂无定时任务。</p>
