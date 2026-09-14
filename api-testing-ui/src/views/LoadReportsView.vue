@@ -97,7 +97,8 @@ function testContextText(field: 'release' | 'data_profile' | 'notes'): string {
       isolated_demo_token_no_business_accounts: '隔离演示令牌，不使用业务账号',
       fixed: '固定测试数据',
     }
-    return profiles[value.toLocaleLowerCase('en-US')] || value
+    const profileKey = value.toLocaleLowerCase('en-US').replace(/[\s-]+/g, '_')
+    return profiles[profileKey] || value
   }
   const retest = value.match(/^Retest\s+([^\s.]+)\s+original curve and thresholds\./i)
   if (retest && /Isolated demo only/i.test(value)) {

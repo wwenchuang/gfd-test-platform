@@ -140,7 +140,7 @@ describe('LoadReportsView', () => {
       test_context: {
         purpose: 'stress',
         release: 'demo-1.0.1',
-        data_profile: 'isolated_demo_token_no_business_accounts',
+        data_profile: 'isolated demo token no business accounts',
         cache_state: 'warm',
         notes: 'Retest 183d044c original curve and thresholds. Isolated demo only, no business APIs, AI calls or device commands. Environment v5 adds source-reviewed service facts; live source hash pending.',
       },
