@@ -60,6 +60,7 @@ const available = computed(() => replayWindows.value.length >= 1 && replayWindow
 
 function toRecord(value: unknown): UnknownRecord { return value && typeof value === 'object' ? value as UnknownRecord : {} }
 function toFiniteNumber(value: unknown): number | null {
+  if (value == null || value === '') return null
   const numeric = Number(value)
   return Number.isFinite(numeric) ? numeric : null
 }
@@ -92,10 +93,13 @@ function inferWindowGap(points: ReplayWindow[]): number {
 }
 
 const runConfig = computed(() => toRecord(props.run?.configuration))
-const workload = computed(() => toRecord(runConfig.value.workload) || (toRecord(props.report.evidence?.workload_snapshot)))
+const workload = computed(() => {
+  const configured = toRecord(runConfig.value.workload)
+  return Object.keys(configured).length ? configured : toRecord(props.report.evidence?.workload_snapshot)
+})
 const loadModel = computed(() => String(props.run?.load_model || props.report.load_goal?.model || ''))
-const runStarted = computed(() => parseTime(props.run?.started_at) || parseTime(props.report.evidence?.scenario_snapshot?.started_at) || parseTime((props.report.series || [])[0]?.started_at))
-const runFinished = computed(() => parseTime(props.run?.finished_at) || parseTime(props.report.evidence?.workload_snapshot?.finished_at))
+const runStarted = computed(() => parseTime(props.run?.started_at) || parseTime(toRecord(props.report.evidence?.scenario_snapshot).started_at) || parseTime((props.report.series || [])[0]?.started_at))
+const runFinished = computed(() => parseTime(props.run?.finished_at) || parseTime(toRecord(props.report.evidence?.workload_snapshot).finished_at))
 
 const replayStages = computed(() => {
   const source = toRecord(props.report.load_goal).stages
@@ -106,10 +110,10 @@ const replayStages = computed(() => {
       const duration = Math.max(0, toFiniteNumber(stage.duration_seconds) || 0)
       const declaredStart = toFiniteNumber(stage.start_seconds)
       const start = declaredStart == null ? offset : declaredStart
-      const target = toFiniteNumber(stage.target_vus) || toFiniteNumber(stage.target_rate) || toFiniteNumber(stage.target) || null
+      const target = toFiniteNumber(stage.target_vus) ?? toFiniteNumber(stage.target_rate) ?? toFiniteNumber(stage.target)
       const startVus = toFiniteNumber(stage.start_vus)
       const startRate = toFiniteNumber(stage.start_rate)
-      const startPressure = loadModel.value.includes('vus') ? (startVus || startRate) : (startRate || startVus)
+      const startPressure = loadModel.value.includes('vus') ? (startVus ?? startRate) : (startRate ?? startVus)
       if (Number.isFinite(start) && Number.isFinite(duration)) offset = start + duration
       return {
         index: index + 1,
@@ -309,16 +313,20 @@ const resourceFlags = computed(() => {
     const cpuWindow = cpuLines.flatMap(line => line.points.filter(point => point.time >= window.start && point.time <= window.end).map(point => point.value)).filter(Number.isFinite)
     const memWindow = memLines.flatMap(line => line.points.filter(point => point.time >= window.start && point.time <= window.end).map(point => point.value)).filter(Number.isFinite)
 
-    const cpuHigh = cpuWindow.some(value => value >= 85)
-    const memoryHigh = memWindow.some(value => value >= 85)
+    const cpuComparableWindow = cpuLines.filter(line => line.unit === '%').flatMap(line => line.points.filter(point => point.time >= window.start && point.time <= window.end).map(point => point.value)).filter(Number.isFinite)
+    const memoryComparableWindow = memLines.filter(line => line.unit === '%').flatMap(line => line.points.filter(point => point.time >= window.start && point.time <= window.end).map(point => point.value)).filter(Number.isFinite)
+    const cpuHigh = cpuComparableWindow.some(value => value >= 85)
+    const memoryHigh = memoryComparableWindow.some(value => value >= 85)
     const cpuData = cpuWindow.length > 0
     const memoryData = memWindow.length > 0
 
     return {
       cpuHigh,
       cpuData,
+      cpuComparable: cpuComparableWindow.length > 0,
       memHigh: memoryHigh,
       memData: memoryData,
+      memComparable: memoryComparableWindow.length > 0,
     }
   })
 })
@@ -347,10 +355,16 @@ const anomalyRecover = computed(() => {
   const first = anomalySegments.value[0]
   if (!first) return null
   const windows = replayWindows.value
+  const threshold = p95Reference.value
+  if (threshold == null) return null
   let streak = 0
   for (let index = first.end; index < windows.length; index++) {
-    const inAnomaly = anomalyWindows.value[index]
-    if (!inAnomaly) {
+    const p95 = windows[index]?.p95
+    if (p95 == null) {
+      streak = 0
+      continue
+    }
+    if (p95 <= threshold) {
       streak += 1
       if (streak >= 3) return { start: index - 2, end: index + 1 }
       continue
@@ -422,7 +436,11 @@ const replayEvents = computed<ReplayEvent[]>(() => {
     const resource = resourceFlags.value
     const cpuHigh = anomaly.start < resource.length ? resource.slice(anomaly.start, anomaly.end).some(item => item.cpuHigh) : false
     const memHigh = anomaly.start < resource.length ? resource.slice(anomaly.start, anomaly.end).some(item => item.memHigh) : false
-    const resourceMissing = anomaly.start < resource.length ? !resource.slice(anomaly.start, anomaly.end).some(item => item.cpuData || item.memData) : true
+    const resourceWindow = anomaly.start < resource.length ? resource.slice(anomaly.start, anomaly.end) : []
+    const cpuData = resourceWindow.some(item => item.cpuData)
+    const memData = resourceWindow.some(item => item.memData)
+    const cpuComparable = resourceWindow.some(item => item.cpuComparable)
+    const memComparable = resourceWindow.some(item => item.memComparable)
 
     events.push({
       id: 'anomaly-start',
@@ -431,8 +449,8 @@ const replayEvents = computed<ReplayEvent[]>(() => {
       summary: `P95 连续 ${anomaly.end - anomaly.start} 个窗口超过阈值`,
       details: [
         `运行中 P95 已连续偏离参考线（${formatNumber(p95Reference.value, 'ms')}）`,
-        cpuHigh ? 'CPU 指标窗口内出现高值，存在资源争用候选' : (resourceMissing ? '当前窗口缺少 CPU/内存 95% 样本证据，不能断言瓶颈' : 'CPU 证据未见连续高值'),
-        memHigh ? '内存指标窗口内出现高值，存在资源争用候选' : (resourceMissing ? '当前窗口缺少内存 95% 样本证据，不能断言瓶颈' : '内存证据未见连续高值'),
+        cpuHigh ? 'CPU 指标窗口内出现高值，存在资源争用候选' : (!cpuData ? '当前窗口缺少 CPU 样本证据，不能判断 CPU 瓶颈' : !cpuComparable ? 'CPU 有绝对用量，但缺少百分比或配额，不能判断高占用' : 'CPU 百分比证据未见连续高值'),
+        memHigh ? '内存指标窗口内出现高值，存在资源争用候选' : (!memData ? '当前窗口缺少内存样本证据，不能判断内存瓶颈' : !memComparable ? '内存有绝对用量，但缺少百分比或配额，不能判断高占用' : '内存百分比证据未见连续高值'),
       ],
       evidence: ['根据 report.series 的窗口 P95 与监控采样窗口对齐'],
     })
@@ -446,8 +464,8 @@ const replayEvents = computed<ReplayEvent[]>(() => {
         label: '开始恢复观察',
         summary: '恢复窗口连续 3 个窗口回到阈值内',
         details: [
-          `从 T+${formatDuration((recoveryStart?.start ?? 0) - (start || 0)} 起，P95 未持续超阈值 3 窗口`,
-          `恢复覆盖区间至 ${formatDuration((recoveryEnd?.end ?? (recoveryEnd?.start ?? 0)) - (start || 0)}`,
+          `从 T+${formatDuration((recoveryStart?.start ?? 0) - (start || 0))} 起，P95 未持续超阈值 3 窗口`,
+          `恢复覆盖区间至 ${formatDuration((recoveryEnd?.end ?? (recoveryEnd?.start ?? 0)) - (start || 0))}`,
         ],
         evidence: ['按窗口序列的连续 3 次未超阈值判断'],
       })
@@ -553,7 +571,9 @@ const currentResourceText = computed(() => {
   const memText = memory.length ? valueAtCursor(memory, cursorWindowTime.value) : '内存：—'
   const missing = [] as string[]
   if (!flags.cpuData) missing.push('CPU 证据缺失')
+  else if (!flags.cpuComparable) missing.push('缺少 CPU 百分比或配额，不能判断高占用')
   if (!flags.memData) missing.push('内存证据缺失')
+  else if (!flags.memComparable) missing.push('缺少内存百分比或配额，不能判断高占用')
   return `${cpuText} · ${memText}${missing.length ? ` · ${missing.join('；')}` : ''}`
 })
 
@@ -588,32 +608,37 @@ function extractMonitoringLines(metricFilter: string[]): LineSeries[] {
     for (const metric of serviceMetrics as UnknownRecord[]) {
       const key = String(metric.key || '').trim()
       if (!metricFilter.includes(key)) continue
-      const labels = metric.labels && typeof metric.labels === 'object' ? metric.labels as UnknownRecord : undefined
-      const meta = Object.entries(labels || {}).filter(([label]) => label !== '__name__').map(([label, value]) => `${label}=${value}`).join(' / ')
-      const rawPoints = Array.isArray(metric.points) ? metric.points : []
-      const points = rawPoints
-        .map((item: UnknownRecord): LinePoint | null => {
-          const time = toFiniteNumber(item.timestamp)
-          if (!Number.isFinite(time)) return null
-          const value = toFiniteNumber(item.value)
-          if (value == null || !Number.isFinite(value)) return null
-          if (key === 'memory_working_set_bytes') return { time, value: value / 1048576 }
-          return { time, value }
+      const storedSeries = Array.isArray(metric.series) ? metric.series as UnknownRecord[] : [metric]
+      for (const series of storedSeries) {
+        const labels = series.labels && typeof series.labels === 'object' ? series.labels as UnknownRecord : undefined
+        const meta = Object.entries(labels || {}).filter(([label]) => label !== '__name__').map(([label, value]) => `${label}=${value}`).join(' / ')
+        const rawPoints = Array.isArray(series.points) ? series.points : []
+        const hasUtilization = rawPoints.some((item: UnknownRecord) => toFiniteNumber(item.utilization_percent) != null)
+        const unit = hasUtilization || key.includes('percent') ? '%' : key === 'memory_working_set_bytes' ? 'MiB' : 'cores'
+        const points = rawPoints
+          .map((item: UnknownRecord): LinePoint | null => {
+            const time = toFiniteNumber(item.timestamp)
+            if (time == null) return null
+            const rawValue = hasUtilization ? toFiniteNumber(item.utilization_percent) : toFiniteNumber(item.value)
+            if (rawValue == null) return null
+            const value = key === 'memory_working_set_bytes' && unit !== '%' ? rawValue / 1048576 : rawValue
+            return { time, value }
+          })
+          .filter((point): point is LinePoint => point != null && point.time >= startTime.value - 0.5 && point.time <= endTime.value + 0.5)
+          .sort((left, right) => left.time - right.time)
+
+        if (!points.length) continue
+
+        const name = `${serviceName}${meta ? `（${meta}）` : ''} · ${metric.label || key}`
+        metrics.push({
+          id: `${service.revision_id || service.id || serviceName}-${metric.key}-${index}`,
+          name,
+          color: palette[index % palette.length],
+          unit,
+          points,
         })
-        .filter((point): point is LinePoint => point != null && point.time >= startTime.value - 0.5 && point.time <= endTime.value + 0.5)
-        .sort((left, right) => left.time - right.time)
-
-      if (!points.length) continue
-
-      const unit = key === 'memory_working_set_bytes' ? 'MiB' : key.includes('percent') || key === 'memory_percent' || key === 'cpu_percent' ? '%' : 'cores'
-      const name = `${serviceName}${meta ? `（${meta}）` : ''} · ${metric.label || key}`
-      metrics.push({
-        id: `${service.revision_id || service.id || serviceName}-${metric.key}-${index++}`,
-        name,
-        color: palette[index % palette.length],
-        unit,
-        points,
-      })
+        index += 1
+      }
     }
   }
 
@@ -696,6 +721,10 @@ function play(): void {
     tick()
   }, interval)
 }
+function togglePlay(): void {
+  if (playing.value) stop()
+  else play()
+}
 function stop(): void {
   playing.value = false
   if (timer.value) {
@@ -746,8 +775,7 @@ function handleReplayKeydown(event: KeyboardEvent): void {
   if (!event.key || (target && /^(INPUT|TEXTAREA|SELECT|OPTION|BUTTON|A)$/.test(target.tagName))) return
   if (event.code === 'Space') {
     event.preventDefault()
-    if (playing.value) stop()
-    else play()
+    togglePlay()
     return
   }
   if (event.key === 'ArrowLeft') {
@@ -787,6 +815,10 @@ function handleReplayKeydown(event: KeyboardEvent): void {
   }
 }
 
+function handleVisibilityChange(): void {
+  if (document.hidden) stop()
+}
+
 function setupMotionPreference(): void {
   if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return
   mediaQuery.value = window.matchMedia('(prefers-reduced-motion: reduce)')
@@ -814,11 +846,13 @@ watch(() => props.report, () => { reset() })
 onMounted(() => {
   setupMotionPreference()
   window.addEventListener('keydown', handleReplayKeydown)
+  document.addEventListener('visibilitychange', handleVisibilityChange)
 })
 onBeforeUnmount(() => {
   stop()
   cleanupMotionPreference()
   window.removeEventListener('keydown', handleReplayKeydown)
+  document.removeEventListener('visibilitychange', handleVisibilityChange)
 })
 
 const visibleEvents = computed(() => replayEvents.value.filter(event => Number.isFinite(event.time)).slice(0, 10))
@@ -843,7 +877,7 @@ const visibleEvents = computed(() => replayEvents.value.filter(event => Number.i
           <button type="button" class="secondary-command" @click="jumpToStart">跳到开始</button>
           <button type="button" class="secondary-command" @click="jumpToFirstAnomaly">跳到首次异常</button>
           <button type="button" class="secondary-command" @click="jumpToRecovery">跳到恢复观察</button>
-          <button class="secondary-command" type="button" @click="play">{{ playing ? '暂停中' : '播放' }}</button>
+          <button class="secondary-command" type="button" data-testid="replay-toggle" @click="togglePlay">{{ playing ? '暂停' : '播放' }}</button>
           <button class="secondary-command" type="button" @click="stop">停止</button>
           <button class="secondary-command" type="button" @click="reset">重播</button>
         </div>
@@ -961,9 +995,9 @@ const visibleEvents = computed(() => replayEvents.value.filter(event => Number.i
         </article>
 
         <article>
-          <h3>CPU 证据曲线（%）</h3>
+          <h3>CPU 证据曲线（cores / %）</h3>
           <div class="replay-chart" role="img" aria-label="CPU 证据曲线">
-            <div class="chart-axis" aria-hidden="true">单位：%</div>
+            <div class="chart-axis" aria-hidden="true">单位：按监控指标显示</div>
             <svg viewBox="0 0 100 100" preserveAspectRatio="none">
               <line x1="2" x2="98" y1="96" y2="96" stroke="#cbd5e1" />
               <line x1="2" x2="2" y1="10" y2="96" stroke="#cbd5e1" />
