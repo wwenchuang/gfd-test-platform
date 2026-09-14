@@ -181,11 +181,17 @@ const currentWindow = computed(() => replayWindows.value[cursorWindowIndex.value
 const cursorWindowTime = computed(() => currentWindow.value?.start ?? startTime.value)
 const cursorOffsetText = computed(() => formatDuration(Math.max(0, cursorWindowTime.value - (runStarted.value ?? cursorWindowTime.value))))
 const cursorClockText = computed(() => new Date(cursorWindowTime.value * 1000).toLocaleTimeString('zh-CN', { hour12: false }))
+const planBaseTime = computed(() => {
+  const configuredStart = runStarted.value ?? startTime.value
+  const firstWindow = replayWindows.value[0]
+  if (firstWindow && configuredStart >= firstWindow.start && configuredStart < firstWindow.end) return firstWindow.start
+  return configuredStart
+})
 
 const planPressureSeries = computed(() => {
   const points: LinePoint[] = []
   const model = loadModel.value
-  const baseTime = runStarted.value ?? startTime.value
+  const baseTime = planBaseTime.value
   if (!Number.isFinite(baseTime)) return points
   const stages = Array.isArray(workload.value.stages) ? workload.value.stages as UnknownRecord[] : []
   const unit = Number(String(workload.value.time_unit || '1s') === '1m' ? 60 : 1)

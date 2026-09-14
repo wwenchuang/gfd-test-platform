@@ -85,6 +85,26 @@ const selectedApplicationName = computed(() => selectedRun.value ? applicationNa
 const runConfiguration = computed(() => objectValue(selectedRun.value?.configuration))
 const workload = computed(() => objectValue(runConfiguration.value.workload))
 const testContext = computed(() => objectValue(report.value?.test_context || runConfiguration.value.test_context))
+function testContextText(field: 'release' | 'data_profile' | 'notes'): string {
+  const value = String(testContext.value[field] || '').trim()
+  if (!value) return '未记录'
+  if (field === 'release') {
+    const demoVersion = value.match(/^demo[-_\s]?(.+)$/i)
+    return demoVersion ? `演示服务 ${demoVersion[1]}` : value
+  }
+  if (field === 'data_profile') {
+    const profiles: Record<string, string> = {
+      isolated_demo_token_no_business_accounts: '隔离演示令牌，不使用业务账号',
+      fixed: '固定测试数据',
+    }
+    return profiles[value.toLocaleLowerCase('en-US')] || value
+  }
+  const retest = value.match(/^Retest\s+([^\s.]+)\s+original curve and thresholds\./i)
+  if (retest && /Isolated demo only/i.test(value)) {
+    return `复验 ${retest[1]}，沿用原曲线和阈值。仅使用隔离演示服务，不调用业务接口、人工智能服务或设备命令。环境第 5 版已补充经源码核实的服务事实；线上源码版本尚待核对。`
+  }
+  return value === 'recovery' ? '验证降压或故障后的恢复情况' : value
+}
 const monitoringServices = computed(() => {
   const services = monitoring.value?.services
   return Array.isArray(services) ? services.map(objectValue) : []
@@ -102,7 +122,7 @@ const slowestStep = computed(() => [...(report.value?.steps || [])]
   .sort((left, right) => Number(right.p95_ms) - Number(left.p95_ms))[0])
 const executiveSubject = computed(() => {
   const serviceNames = monitoringServices.value.map(service => String(service.name || '')).filter(Boolean)
-  const version = String(testContext.value.release || '未记录')
+  const version = testContextText('release')
   const environment = objectValue(runConfiguration.value.environment)
   const environmentName = String(environment.name || runConfiguration.value.environment_name || '')
   return {
@@ -373,7 +393,7 @@ function hasAgentError(agent: Record<string, unknown>): boolean {
         <section class="load-thresholds"><header><div><h2>性能阈值</h2><p>先确认目标负载已达到，再检查以下标准；全部通过也只代表本次场景和压力条件。</p></div></header><div><article v-for="item in thresholds" :key="String(item.key)" :class="{ failed: !item.passed }"><strong>{{ item.label }}</strong><span>要求 {{ thresholdText(item) }}</span><span>实际 {{ thresholdValue(item, item.actual) }}</span><b>{{ item.status_label || (item.passed ? '通过' : '未通过') }}</b></article><p v-if="!thresholds.length" class="compact-empty">本次未配置性能阈值。</p></div></section>
         <LoadResourceMonitoring :monitoring="monitoring" />
         <LoadBottleneckEvidence v-if="report.bottleneck_evidence" :rows="report.bottleneck_evidence" />
-        <section v-if="report.test_context?.purpose" class="load-statistical-basis"><h2>测试条件</h2><p>测试目的：{{ ({smoke:'流程冒烟',load:'日常负载',stress:'逐步加压',spike:'突发流量',soak:'长时稳定性'} as Record<string,string>)[report.test_context.purpose] || report.test_context.purpose }} · 业务版本：{{ report.test_context.release || '未记录' }}</p><p>数据与账号：{{ report.test_context.data_profile || '未记录' }} · 缓存：{{ ({warm:'已预热',cold:'冷缓存',mixed:'混合状态'} as Record<string,string>)[report.test_context.cache_state || ''] || '未记录' }}</p><p>边界与清理：{{ report.test_context.notes || '未记录' }}</p></section>
+        <section v-if="report.test_context?.purpose" class="load-statistical-basis" data-testid="load-report-test-context"><h2>测试条件</h2><p>测试目的：{{ ({smoke:'流程冒烟',load:'日常负载',stress:'逐步加压',spike:'突发流量',soak:'长时稳定性'} as Record<string,string>)[report.test_context.purpose] || report.test_context.purpose }} · 业务版本：{{ testContextText('release') }}</p><p>数据与账号：{{ testContextText('data_profile') }} · 缓存：{{ ({warm:'已预热',cold:'冷缓存',mixed:'混合状态'} as Record<string,string>)[report.test_context.cache_state || ''] || '未记录' }}</p><p>边界与清理：{{ testContextText('notes') }}</p></section>
         <section v-if="Array.isArray(report.load_goal.stages)" class="load-statistical-basis" data-testid="load-report-stages">
           <template v-if="isRampingVuReport">
             <h2>阶梯并发阶段证据</h2>

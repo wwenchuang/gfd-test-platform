@@ -62,6 +62,16 @@ describe('LoadRunReplayPanel', () => {
     expect(wrapper.text()).toContain('阶段 3 开始')
   })
 
+  it('aligns the plan with a sampling bucket that begins just before the run', () => {
+    const wrapper = mount(LoadRunReplayPanel, {
+      props: {
+        run: run({ started_at: '2026-09-10T04:20:54Z' }),
+        report: report({ evidence: {} }),
+      },
+    })
+    expect(wrapper.text()).toContain('计划 1 次/秒')
+  })
+
   it('reads monitored resource points from every stored metric series', () => {
     const monitoring = {
       services: [{

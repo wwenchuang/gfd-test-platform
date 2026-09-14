@@ -131,6 +131,32 @@ describe('LoadReportsView', () => {
     expect(wrapper.element.compareDocumentPosition(wrapper.get('[aria-label="AI性能诊断"]').element) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
   })
 
+  it('renders frozen English demo conditions as readable Chinese in historical reports', async () => {
+    const context = useContextStore(); Object.assign(context, { projectId: 'p1', projects: [{ id: 'p1', name: '压测演示（非业务）' }] }); vi.spyOn(context, 'loadSavedContext').mockResolvedValue(); vi.spyOn(context, 'loadOptions').mockResolvedValue()
+    const store = useLoadTestingStore(); store.runs = [run]
+    vi.spyOn(store, 'loadRuns').mockResolvedValue(store.runs); vi.spyOn(store, 'loadRun').mockResolvedValue(run)
+    vi.spyOn(store, 'loadReport').mockResolvedValue({
+      ...report,
+      test_context: {
+        purpose: 'stress',
+        release: 'demo-1.0.1',
+        data_profile: 'isolated_demo_token_no_business_accounts',
+        cache_state: 'warm',
+        notes: 'Retest 183d044c original curve and thresholds. Isolated demo only, no business APIs, AI calls or device commands. Environment v5 adds source-reviewed service facts; live source hash pending.',
+      },
+    }); vi.spyOn(store, 'loadAiAnalysis').mockResolvedValue(null)
+    const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/', component: LoadReportsView }] }); await router.push('/?run_id=r1'); await router.isReady()
+    const wrapper = mount(LoadReportsView, { global: { plugins: [router] } }); await flushPromises()
+
+    const conditions = wrapper.get('[data-testid="load-report-test-context"]')
+    expect(conditions.text()).toContain('业务版本：演示服务 1.0.1')
+    expect(conditions.text()).toContain('数据与账号：隔离演示令牌，不使用业务账号')
+    expect(conditions.text()).toContain('复验 183d044c，沿用原曲线和阈值')
+    expect(conditions.text()).toContain('不调用业务接口、人工智能服务或设备命令')
+    expect(conditions.text()).toContain('线上源码版本尚待核对')
+    expect(conditions.text()).not.toMatch(/\b(?:demo|token|Retest|business|APIs|calls|commands|Environment|source|facts|hash|pending)\b/i)
+  })
+
   it('shows the live console for a running task and opens the SSE workflow', async () => {
     const active = { ...run, state: 'running' as const, verdict: null }
     const context = useContextStore(); Object.assign(context, { projectId: 'p1', projects: [{ id: 'p1', name: '3D家用' }] }); vi.spyOn(context, 'loadSavedContext').mockResolvedValue(); vi.spyOn(context, 'loadOptions').mockResolvedValue()
