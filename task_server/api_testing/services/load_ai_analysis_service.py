@@ -22,7 +22,7 @@ from .load_next_run_policy import build_next_run_policy, resource_observations, 
 from .load_scenario_compiler import _parse_workload, LoadScenarioCompileError
 
 
-PROMPT_VERSION = "api-load-analysis.v9"
+PROMPT_VERSION = "api-load-analysis.v10"
 CATEGORIES = frozenset({"no_bottleneck", "target_service", "network", "load_agent", "test_data", "mixed", "insufficient_evidence"})
 CONFIDENCE_LEVELS = frozenset({"high", "medium", "low"})
 
@@ -227,6 +227,13 @@ def _validate_result(value, evidence):
     confidence = value.get("confidence")
     if not isinstance(confidence, dict) or confidence.get("level") not in CONFIDENCE_LEVELS:
         raise LoadAiAnalysisError("AI诊断置信度无效")
+    confidence_reason = _text(confidence.get("reason"), "confidence.reason", 1000)
+    safe_qualifiers = ("不能说明资源充足", "无法证明资源充足", "不能证明资源充足", "不足以说明资源充足")
+    capacity_claim_text = " ".join((conclusion, confidence_reason))
+    for qualifier in safe_qualifiers:
+        capacity_claim_text = capacity_claim_text.replace(qualifier, "")
+    if any(claim in capacity_claim_text for claim in ("资源充足", "资源余量充足", "资源正常", "不存在资源瓶颈", "不是资源瓶颈")):
+        raise LoadAiAnalysisError("AI诊断不能把资源观测扩大为容量充足或排除资源瓶颈")
     if not _diagnosis_evidence_complete(evidence) and (
         category not in {"insufficient_evidence", "mixed"}
         or confidence["level"] == "high"
@@ -249,7 +256,7 @@ def _validate_result(value, evidence):
             "agent_suggestion": _text(next_run.get("agent_suggestion"), "next_run.agent_suggestion", 1000),
             **({"workload": copy.deepcopy(next_run["workload"])} if "workload" in next_run else {}),
         },
-        "confidence": {"level": confidence["level"], "reason": _text(confidence.get("reason"), "confidence.reason", 1000)},
+        "confidence": {"level": confidence["level"], "reason": confidence_reason},
     })
 
 
@@ -281,7 +288,7 @@ def _citation_safe_fallback(evidence, error):
             "load_model": load_model,
             "target": target,
             "duration_seconds": 60,
-            "agent_suggestion": "优先使用校准有效且资源余量充足的专用节点；备用节点只用于小流量验证。",
+            "agent_suggestion": "优先使用校准有效且运行资源证据完整的专用节点；备用节点只用于小流量验证。",
         },
         "confidence": {"level": "low", "reason": f"{error_label}，已回退为平台安全建议"[:1000]},
         "analysis_status": "rule_fallback",
@@ -305,14 +312,14 @@ def _default_analyzer(evidence):
             "load_model": load_model,
             "target": target,
             "duration_seconds": 60,
-            "agent_suggestion": "优先使用已校准且资源余量充足的专用节点；备用节点仅用于小流量验证。",
+            "agent_suggestion": "优先使用已校准且运行资源证据完整的专用节点；备用节点仅用于小流量验证。",
         },
         "confidence": {"level": "low", "reason": "模型输出字段不完整，已回退为规则备用建议。"},
     }
     result = run_ai_skill(
         "api-load-analysis",
         payload=evidence,
-        version="v9",
+        version="v10",
         temperature=0,
         timeout=60,
         respect_global_timeout=False,

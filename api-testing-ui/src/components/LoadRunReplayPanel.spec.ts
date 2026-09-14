@@ -57,7 +57,7 @@ afterEach(() => {
 
 describe('LoadRunReplayPanel', () => {
   it('uses the frozen workload when the run configuration has no workload', () => {
-    const wrapper = mount(LoadRunReplayPanel, { props: { run: run(), report: report() } })
+    const wrapper = mount(LoadRunReplayPanel, { props: { run: run(), report: report({ evidence: {} }) } })
     expect(wrapper.text()).toContain('计划 1 次/秒')
     expect(wrapper.text()).toContain('阶段 3 开始')
   })

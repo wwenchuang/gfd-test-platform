@@ -226,6 +226,15 @@ const planPressureSeries = computed(() => {
       return points
     }
 
+    if (replayStages.value.length) {
+      const first = replayStages.value[0]
+      add(baseTime + first.start, first.startPressure ?? first.target)
+      for (const stage of replayStages.value) {
+        add(baseTime + stage.start + stage.duration, stage.target)
+      }
+      return points
+    }
+
     if (model === 'ramping-vus') {
       const target = toFiniteNumber(workload.value.vus)
       if (target != null) add(baseTime, target)

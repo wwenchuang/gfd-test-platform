@@ -101,6 +101,21 @@ def test_qualitative_conclusion_can_name_metrics_without_repeating_measurements(
     assert _validate_result(result, evidence)["conclusion"] == result["conclusion"]
 
 
+@pytest.mark.parametrize(("field", "text"), [
+    ("conclusion", "本轮服务资源充足，延迟应由其他原因导致。"),
+    ("confidence", "CPU和内存监控显示资源充足，但仍缺少调用栈。"),
+])
+def test_ai_cannot_expand_resource_observations_into_capacity_headroom(field, text):
+    evidence = build_evidence_package(_report())
+    candidate = _analysis()
+    if field == "conclusion":
+        candidate["conclusion"] = text
+    else:
+        candidate["confidence"] = {"level": "high", "reason": text}
+    with pytest.raises(LoadAiAnalysisError, match="资源观测扩大为容量充足"):
+        _validate_result(candidate, evidence)
+
+
 def test_ai_receives_http_sampling_mismatch_as_citable_evidence():
     report = _report()
     report['evidence']['sample_integrity'] = {
@@ -190,7 +205,7 @@ def test_default_analyzer_supplies_schema_complete_low_confidence_defaults(monke
     with pytest.raises(ValueError, match='规则备用'):
         _default_analyzer(build_evidence_package(_report()))
     assert captured["repair_invalid_json"] is True
-    assert captured["version"] == "v9"
+    assert captured["version"] == PROMPT_VERSION.rsplit(".", 1)[-1]
     assert set(captured['output_defaults']['recommendations'][0]) == {'priority', 'domain', 'service_key', 'intent', 'action_code', 'fact_ids', 'evidence_ids'}
 
 
