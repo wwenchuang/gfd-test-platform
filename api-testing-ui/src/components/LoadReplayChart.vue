@@ -88,7 +88,8 @@ function keydown(event: KeyboardEvent): void {
       <strong>{{ hover == null ? '已选窗口' : '预览窗口' }} {{ elapsed(displayTime) }}–{{ elapsed(Math.min(end,displayTime+5)) }}</strong>
       <span v-for="line in lines" :key="line.id"><i :style="{background:line.color}" />{{ line.name }}：<b>{{ valueAt(line,displayTime) ? `${number(valueAt(line,displayTime)!.value)} ${unit}` : '无采样' }}</b></span>
     </div>
-    <p class="chart-help">圆点是采样值；悬停查看，点击联动全部图表。虚线为选中时间，断线表示缺少采样。</p>
+    <p class="chart-help">实测圆点是采样值，计划线来自配置。悬停查看，点击联动；蓝色竖线是选中时间，断线表示缺少采样。</p>
+    <p v-if="reference != null" class="chart-help">橙色横线是验收上限，供各窗口对照；最终是否达标以全程统计为准。</p>
     <p v-if="!lines.some(line=>line.points.length)">暂无可用监控采样</p>
     <details v-if="lines.some(line=>line.source)"><summary>查看监控来源</summary><p v-for="line in lines" :key="line.id">{{ line.name }}：{{ line.source }}</p></details>
   </article>
