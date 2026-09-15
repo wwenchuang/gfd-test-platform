@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import LoadReplayChart from './LoadReplayChart.vue'
 import type { LoadReport, LoadRun } from '../api/contracts'
 
 type UnknownRecord = Record<string, unknown>
@@ -27,6 +28,7 @@ interface LineSeries {
   unit: string
   color: string
   points: LinePoint[]
+  source?: string
 }
 
 interface ReplayEvent {
@@ -282,24 +284,17 @@ const chartLines = computed<Record<string, LineSeries[]>>(() => {
   }
 })
 
-const lineRanges = computed<Record<string, { min: number; max: number }>>(() => {
-  const toRange = (points: LinePoint[]): { min: number; max: number } => {
-    const values = points.map(item => item.value).filter(Number.isFinite)
-    if (!values.length) return { min: 0, max: 1 }
-    const min = Math.min(...values)
-    const max = Math.max(...values)
-    if (min === max) return { min: Math.max(0, min * 0.95), max: Math.max(min * 1.2, 1) }
-    return { min: min < 0 ? min : 0, max }
+const readableCharts = computed(() => {
+  const charts = [
+    { id: 'pressure', title: '压力曲线（计划与实际）', unit: loadModel.value.includes('vus') ? '并发用户数' : '次/秒', lines: chartLines.value.pressure, reference: null as number | null, maxGap: 5 },
+    { id: 'p95', title: '响应时间（95%的请求在此时间内完成）', unit: '毫秒', lines: chartLines.value.p95, reference: p95Reference.value, maxGap: 5 },
+    { id: 'error', title: '错误率（请求与业务断言）', unit: '%', lines: chartLines.value.error.map(line => ({...line, points: line.points.map(p => ({...p, value:p.value*100}))})), reference: null, maxGap: 5 },
+  ]
+  for (const key of ['cpu','memory']) {
+    const units = [...new Set(chartLines.value[key].map(line => line.unit))]
+    for (const unit of units.length ? units : ['%']) charts.push({id:`${key}-${unit}`,title:key==='cpu'?'处理器使用情况':'内存使用情况',unit:unit==='cores'?'核':unit,lines:chartLines.value[key].filter(line=>line.unit===unit),reference:null,maxGap:inferWindowGap(replayWindows.value)*2})
   }
-  const ranges: Record<string, { min: number; max: number }> = {}
-  for (const [key, lines] of Object.entries(chartLines.value)) {
-    const merged = lines.flatMap(line => line.points.map(item => item.value))
-    ranges[key] = toRange(merged.map(item => ({ value: item }) as LinePoint))
-    for (const line of lines) {
-      ranges[`${key}:${line.id}`] = toRange(line.points.map(item => ({ value: item.value }) as LinePoint))
-    }
-  }
-  return ranges
+  return charts
 })
 
 const planToTime = computed(() => {
@@ -645,10 +640,12 @@ function extractMonitoringLines(metricFilter: string[]): LineSeries[] {
 
         if (!points.length) continue
 
-        const name = `${serviceName}${meta ? `（${meta}）` : ''} · ${metric.label || key}`
+        const metricName = key.startsWith('cpu') ? (unit === '%' ? '处理器使用率' : '处理器使用核数') : (unit === '%' ? '内存使用率' : '内存用量')
+        const name = `${serviceName} · ${metricName}`
         metrics.push({
           id: `${service.revision_id || service.id || serviceName}-${metric.key}-${index}`,
           name,
+          source: `${meta}；原始指标：${metric.label || key}`,
           color: palette[index % palette.length],
           unit,
           points,
@@ -659,39 +656,6 @@ function extractMonitoringLines(metricFilter: string[]): LineSeries[] {
   }
 
   return metrics
-}
-
-const xAxis = (timestamp: number) => ((timestamp - startTime.value) / timelineSpan.value) * 100
-
-function yAxis(value: number, min: number, max: number): number {
-  const safeMax = Math.max(1, max)
-  const safeMin = min
-  const normalized = (value - safeMin) / (safeMax - safeMin)
-  return 96 - normalized * 86
-}
-
-function lineSegmentsFor(chartKey: string, line: LineSeries): string[] {
-  const merged = line.points
-    .filter(point => point.time >= startTime.value && point.time <= endTime.value)
-    .filter(point => Number.isFinite(point.value))
-  if (!merged.length) return []
-  const gap = line.id === 'plan' ? Number.POSITIVE_INFINITY : ['pressure', 'p95', 'error'].includes(chartKey) ? 5 : inferWindowGap(replayWindows.value) * 2
-  const segments: string[] = []
-  let current: string[] = []
-
-  const range = lineRanges.value[`${chartKey}:${line.id}`] ?? lineRanges.value[chartKey] ?? { min: 0, max: 1 }
-
-  for (let index = 0; index < merged.length; index++) {
-    const point = merged[index]
-    const previousPoint = index > 0 ? merged[index - 1] : null
-    if (previousPoint && point.time - previousPoint.time > gap) {
-      if (current.length) segments.push(current.join(' '))
-      current = []
-    }
-    current.push(`${xAxis(point.time)},${yAxis(point.value, range.min, range.max)}`)
-  }
-  if (current.length) segments.push(current.join(' '))
-  return segments
 }
 
 const chartStateText = computed(() => {
@@ -928,123 +892,7 @@ const visibleEvents = computed(() => replayEvents.value.filter(event => Number.i
       </section>
 
       <section class="replay-grid">
-        <article>
-          <h3>压力曲线（计划 & 实际）</h3>
-          <div class="replay-chart" role="img" aria-label="压力曲线">
-            <div class="chart-axis" aria-hidden="true">{{ loadModel.includes('arrival') ? '单位：次/秒' : loadModel.includes('vus') ? '单位：VU（计划）/ 次/秒（实际）' : '单位：次/秒' }}</div>
-            <svg viewBox="0 0 100 100" preserveAspectRatio="none">
-              <line x1="2" x2="98" y1="96" y2="96" stroke="#cbd5e1" />
-              <line x1="2" x2="2" y1="10" y2="96" stroke="#cbd5e1" />
-              <template v-for="line in chartLines.pressure" :key="line.id">
-                <template v-for="segment in lineSegmentsFor('pressure', line)" :key="`${line.id}-${segment}`">
-                  <polyline :points="segment" :stroke="line.color" fill="none" stroke-width="1.4" vector-effect="non-scaling-stroke" />
-                </template>
-                <circle
-                  v-for="point in line.points.filter(item => item.time <= cursorWindowTime && item.time >= startTime)"
-                  :key="`p-${line.id}-${point.time}`"
-                  :cx="xAxis(point.time)"
-                  :cy="yAxis(point.value, lineRanges.pressure?.min || 0, lineRanges.pressure?.max || 1)"
-                  r="1.3"
-                  :fill="line.color"
-                  stroke="white"
-                  stroke-width="0.5">
-                  <title>{{ line.name }}：{{ formatNumber(point.value, line.unit) }}</title>
-                </circle>
-              </template>
-              <line
-                :x1="xAxis(cursorWindowTime)"
-                y1="8"
-                y2="96"
-                stroke="rgba(37,99,235,0.6)"
-                stroke-width="1"
-                stroke-dasharray="4 3" />
-            </svg>
-          </div>
-          <p class="replay-plot-legend">{{ currentPressureValue.join(' ｜ ') }}</p>
-        </article>
-
-        <article>
-          <h3>P95 随时间变化</h3>
-          <div class="replay-chart" role="img" aria-label="P95 曲线">
-            <div class="chart-axis" aria-hidden="true">单位：ms</div>
-            <svg viewBox="0 0 100 100" preserveAspectRatio="none">
-              <line x1="2" x2="98" y1="96" y2="96" stroke="#cbd5e1" />
-              <line x1="2" x2="2" y1="10" y2="96" stroke="#cbd5e1" />
-              <template v-for="line in chartLines.p95" :key="line.id">
-                <template v-for="segment in lineSegmentsFor('p95', line)" :key="`${line.id}-${segment}`">
-                  <polyline :points="segment" :stroke="line.color" fill="none" stroke-width="1.5" vector-effect="non-scaling-stroke" />
-                </template>
-                <circle
-                  v-for="point in line.points.filter(item => item.time <= cursorWindowTime && item.time >= startTime)"
-                  :key="`p-${line.id}-${point.time}`"
-                  :cx="xAxis(point.time)"
-                  :cy="yAxis(point.value, lineRanges.p95?.min || 0, lineRanges.p95?.max || 1)"
-                  r="1.3"
-                  fill="#7c3aed"
-                  stroke="white"
-                  stroke-width="0.5">
-                  <title>{{ formatNumber(point.value, 'ms') }}</title>
-                </circle>
-              </template>
-              <line :x1="xAxis(cursorWindowTime)" y1="8" y2="96" stroke="rgba(37,99,235,0.6)" stroke-width="1" stroke-dasharray="4 3" />
-            </svg>
-          </div>
-          <p class="replay-plot-legend">{{ currentLatencyText }}<span v-if="p95Reference != null"> · 参考线 {{ formatNumber(p95Reference, 'ms') }}</span></p>
-        </article>
-
-        <article>
-          <h3>错误率（HTTP / 业务）</h3>
-          <div class="replay-chart" role="img" aria-label="错误率曲线">
-            <div class="chart-axis" aria-hidden="true">单位：%</div>
-            <svg viewBox="0 0 100 100" preserveAspectRatio="none">
-              <line x1="2" x2="98" y1="96" y2="96" stroke="#cbd5e1" />
-              <line x1="2" x2="2" y1="10" y2="96" stroke="#cbd5e1" />
-              <template v-for="line in chartLines.error" :key="line.id">
-                <template v-for="segment in lineSegmentsFor('error', line)" :key="`${line.id}-${segment}`">
-                  <polyline :points="segment" :stroke="line.color" fill="none" stroke-width="1.4" vector-effect="non-scaling-stroke" />
-                </template>
-              </template>
-              <line :x1="xAxis(cursorWindowTime)" y1="8" y2="96" stroke="rgba(37,99,235,0.6)" stroke-width="1" stroke-dasharray="4 3" />
-            </svg>
-          </div>
-          <p class="replay-plot-legend">{{ currentErrorText }}</p>
-        </article>
-
-        <article>
-          <h3>CPU 证据曲线（cores / %）</h3>
-          <div class="replay-chart" role="img" aria-label="CPU 证据曲线">
-            <div class="chart-axis" aria-hidden="true">单位：按监控指标显示</div>
-            <svg viewBox="0 0 100 100" preserveAspectRatio="none">
-              <line x1="2" x2="98" y1="96" y2="96" stroke="#cbd5e1" />
-              <line x1="2" x2="2" y1="10" y2="96" stroke="#cbd5e1" />
-              <template v-for="line in chartLines.cpu" :key="line.id">
-                <template v-for="segment in lineSegmentsFor('cpu', line)" :key="`${line.id}-${segment}`">
-                  <polyline :points="segment" :stroke="line.color" fill="none" stroke-width="1.3" vector-effect="non-scaling-stroke" />
-                </template>
-              </template>
-              <line :x1="xAxis(cursorWindowTime)" y1="8" y2="96" stroke="rgba(37,99,235,0.6)" stroke-width="1" stroke-dasharray="4 3" />
-            </svg>
-          </div>
-          <p class="replay-plot-legend">{{ valueAtCursor(chartLines.cpu, cursorWindowTime) }}</p>
-        </article>
-
-        <article>
-          <h3>内存 证据曲线（MiB / %）</h3>
-          <div class="replay-chart" role="img" aria-label="内存证据曲线">
-            <div class="chart-axis" aria-hidden="true">单位：多指标可混用</div>
-            <svg viewBox="0 0 100 100" preserveAspectRatio="none">
-              <line x1="2" x2="98" y1="96" y2="96" stroke="#cbd5e1" />
-              <line x1="2" x2="2" y1="10" y2="96" stroke="#cbd5e1" />
-              <template v-for="line in chartLines.memory" :key="line.id">
-                <template v-for="segment in lineSegmentsFor('memory', line)" :key="`${line.id}-${segment}`">
-                  <polyline :points="segment" :stroke="line.color" fill="none" stroke-width="1.3" vector-effect="non-scaling-stroke" />
-                </template>
-              </template>
-              <line :x1="xAxis(cursorWindowTime)" y1="8" y2="96" stroke="rgba(37,99,235,0.6)" stroke-width="1" stroke-dasharray="4 3" />
-            </svg>
-          </div>
-          <p class="replay-plot-legend">{{ valueAtCursor(chartLines.memory, cursorWindowTime) }}</p>
-        </article>
+        <LoadReplayChart v-for="chart in readableCharts" :key="chart.id" :title="chart.title" :unit="chart.unit" :lines="chart.lines" :start="startTime" :end="endTime" :cursor="cursorWindowTime" :windows="replayWindows.map(w => w.start)" :reference="chart.reference" :max-gap="chart.maxGap" @seek="seekTo" />
       </section>
 
       <section class="replay-events" v-if="visibleEvents.length">
@@ -1078,10 +926,8 @@ const visibleEvents = computed(() => replayEvents.value.filter(event => Number.i
 .replay-time{display:flex;justify-content:space-between;font-size:13px;color:#475569;margin:12px 0}.replay-slider{width:100%;accent-color:#0ea5e9}
 .replay-readout{margin:10px 0;padding:10px 12px;border:1px solid #dce6f3;border-radius:8px;background:#f8fbff}
 .replay-readout article{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.replay-readout h3{margin:0 0 4px}.replay-readout p{margin:0;color:#1e293b;font-size:13px}
-.replay-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin-top:12px}.replay-grid>article{padding:12px;border:1px solid #dce6ef;border-radius:10px;background:#fbfdff}
-.replay-grid h3{margin:0 0 8px;font-size:15px}.chart-axis{font-size:11px;color:#64748b;margin-bottom:4px}.replay-chart{border:1px solid #e5ecf3;border-radius:6px;padding:8px;background:#fff}
-.replay-chart svg{width:100%;height:190px}.replay-chart polyline,.replay-chart line{vector-effect:non-scaling-stroke}
-.replay-plot-legend{margin:8px 0 0;font-size:12px;color:#475569}.replay-events{margin-top:14px;padding:10px;border:1px solid #d9e2ef;border-radius:10px;background:#f8fcff}.replay-events h3{margin:0 0 8px}.replay-events .event-note{margin:6px 0 0;color:#64748b;font-size:12px}
+.replay-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,440px),1fr));gap:12px;margin-top:12px}
+.replay-events{margin-top:14px;padding:10px;border:1px solid #d9e2ef;border-radius:10px;background:#f8fcff}.replay-events h3{margin:0 0 8px}.replay-events .event-note{margin:6px 0 0;color:#64748b;font-size:12px}
 .replay-event-tags{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:8px}.event-tag{font-size:12px;border:1px solid #bfdbfe;background:#f0f9ff;color:#0f4c81;padding:6px 9px;border-radius:999px;white-space:nowrap}
 .replay-event-card{padding:10px;border:1px solid #dbe8f6;border-radius:8px;background:white}.replay-event-card strong{display:block;margin-bottom:4px}.replay-event-card p{margin:0 0 6px}.replay-event-card ul{margin:0;padding-left:18px}.replay-event-card summary{cursor:pointer;color:#0f4c81;font-size:13px}
 @media (max-width: 900px){.replay-grid{grid-template-columns:1fr}.replay-readout article{grid-template-columns:1fr}.load-run-replay{padding:14px}}

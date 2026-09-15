@@ -56,6 +56,17 @@ afterEach(() => {
 })
 
 describe('LoadRunReplayPanel', () => {
+  it('links a chart click to every chart and keeps unlike resource units separate', async () => {
+    const wrapper = mount(LoadRunReplayPanel, {props:{run:run(),report:report({monitoring:{services:[{name:'演示服务',metrics:[
+      {key:'cpu_cores',series:[{points:[{timestamp:Date.parse('2026-09-10T04:20:50Z')/1000,value:0.1}]}]},
+      {key:'cpu_percent',series:[{points:[{timestamp:Date.parse('2026-09-10T04:20:50Z')/1000,value:20}]}]},
+    ]}]}})}})
+    const charts = wrapper.findAllComponents({name:'LoadReplayChart'})
+    expect(charts.filter(c=>c.props('title')==='处理器使用情况').map(c=>c.props('unit'))).toEqual(['核','%'])
+    await charts[0].findAll('[data-time]')[1].trigger('click')
+    for (const chart of charts) expect(chart.get('[role="status"]').text()).toContain('00:05')
+  })
+
   it('uses the frozen workload when the run configuration has no workload', () => {
     const wrapper = mount(LoadRunReplayPanel, { props: { run: run(), report: report({ evidence: {} }) } })
     expect(wrapper.text()).toContain('计划 1 次/秒')
@@ -84,8 +95,8 @@ describe('LoadRunReplayPanel', () => {
       }],
     }
     const wrapper = mount(LoadRunReplayPanel, { props: { run: run(), report: report({ monitoring }) } })
-    expect(wrapper.text()).toContain('演示服务容器（id=/demo） · CPU 使用量 0.11 cores')
-    expect(wrapper.text()).toContain('演示服务容器（id=/demo） · 工作集内存')
+    expect(wrapper.text()).toContain('演示服务容器 · 处理器使用核数：0.11 核')
+    expect(wrapper.text()).toContain('演示服务容器 · 内存用量')
     expect(wrapper.text()).not.toContain('CPU 证据缺失')
     expect(wrapper.text()).not.toContain('内存证据缺失')
     expect(wrapper.text()).toContain('缺少 CPU 百分比或配额，不能判断高占用')
