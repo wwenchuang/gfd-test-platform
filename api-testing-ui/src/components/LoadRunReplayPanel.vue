@@ -212,7 +212,7 @@ const planPressureSeries = computed(() => {
 
     if (stages.length) {
       let cumulativeSeconds = 0
-      const startRate = toFiniteNumber(workload.value.start_rate)
+      const startRate = toFiniteNumber(loadModel.value.includes('vus') ? workload.value.start_vus : workload.value.start_rate)
       if (startRate != null) add(baseTime, startRate / unit)
       else {
         const firstTarget = toFiniteNumber(stages[0]?.target)
@@ -306,12 +306,16 @@ const planToTime = computed(() => {
   const points = planPressureSeries.value
   if (!points.length) return null
   return (timestamp: number): number | null => {
-    let value: number | null = null
-    for (const item of points) {
-      if (item.time <= timestamp) value = item.value
-      else if (item.time > timestamp) break
+    if (timestamp < points[0].time) return null
+    for (let index = 1; index < points.length; index++) {
+      const previous = points[index - 1]
+      const next = points[index]
+      if (timestamp < next.time && next.time > previous.time) {
+        // Planned k6 ramps are linear. This does not interpolate observations.
+        return previous.value + (next.value - previous.value) * (timestamp - previous.time) / (next.time - previous.time)
+      }
     }
-    return value
+    return points[points.length - 1].value
   }
 })
 

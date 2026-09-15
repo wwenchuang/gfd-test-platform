@@ -135,6 +135,13 @@ describe('LoadRunReplayPanel', () => {
     expect(wrapper.text()).not.toContain('实际完整链路吞吐：')
   })
 
+  it('interpolates the planned pressure inside a descending ramp', () => {
+    const wrapper = mount(LoadRunReplayPanel, { props: { run: run(), report: report({ series: [
+      { started_at: '2026-09-10T04:21:25Z', requests: 15, iterations: 5, p95_ms: 900 },
+    ] }) } })
+    expect(wrapper.text()).toContain('计划 3.333 次/秒')
+  })
+
   it('keeps zero completed chains separate from HTTP throughput', () => {
     const wrapper = mount(LoadRunReplayPanel, { props: { run: run(), report: report({ series: [
       { started_at: '2026-09-10T04:20:50Z', requests: 15, iterations: 0, p95_ms: 900 },
