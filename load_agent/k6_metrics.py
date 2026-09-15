@@ -90,26 +90,33 @@ class _Bucket:
                 self.latencies[position] = latency
         elif metric == "http_req_failed" and float(value) > 0:
             self.http_failures += 1
-            self._sample("http_error", tags)
+            self._sample("http_error", tags, timestamp)
         elif metric == "checks":
             self.business_assertions += 1
             if float(value) <= 0:
                 self.business_failures += 1
-                self._sample("business_assertion", tags)
+                self._sample("business_assertion", tags, timestamp)
         elif metric == "workflow_iteration_success":
             self.workflow_iterations += 1
             if float(value) <= 0:
                 self.workflow_failures += 1
-                self._sample("workflow_failure", tags)
+                self._sample("workflow_failure", tags, timestamp)
 
-    def _sample(self, kind, tags):
+    def _sample(self, kind, tags, timestamp):
         if len(self.samples) >= self.max_samples:
             return
+        payload = {"check": str(tags.get("check") or "")[:300], "observed_at": timestamp.isoformat()}
+        # Retain only bounded numeric diagnostic tags, never URLs, headers or
+        # free-form network errors that can contain credentials.
+        for source, target, maximum in (("status", "status_code", 599), ("error_code", "error_code", 9999)):
+            raw = str(tags.get(source, ""))
+            if raw.isascii() and raw.isdigit() and len(raw) <= 4 and 0 <= int(raw) <= maximum:
+                payload[target] = int(raw)
         self.samples.append(
             {
                 "step_id": self.step_id,
                 "kind": kind,
-                "payload": {"check": str(tags.get("check") or "")[:300]},
+                "payload": payload,
             }
         )
 

@@ -578,6 +578,7 @@ class LoadReportService:
                 "iterations": totals["iterations"],
                 "http_failures": totals["http_failures"],
                 "business_failures": totals["business_failures"],
+                "business_assertions": totals["business_assertions"],
                 "p95_ms": sections["latency"]["p95_ms"],
             })
         return rows
@@ -637,6 +638,8 @@ class LoadReportService:
                 "status_code": item.status_code,
                 "business_code": item.business_code,
                 "occurrence_count": item.occurrence_count,
+                "observed_at": (item.payload or {}).get("observed_at"),
+                "error_code": (item.payload or {}).get("error_code"),
                 "summary": str((item.payload or {}).get("check") or (item.payload or {}).get("summary") or "")[:300],
             }
             for item in samples

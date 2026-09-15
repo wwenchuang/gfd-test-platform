@@ -48,6 +48,7 @@ def build_evidence_package(report):
             "evidence_id": f"sample.{step_id}.{kind}.{index}",
             "step_id": step_id,
             "kind": kind,
+            **_structured(item, ("status_code", "error_code", "observed_at")),
             "business_code": str(item.get("business_code") or "")[:120],
             "occurrence_count": int(item.get("occurrence_count") or 1),
         })

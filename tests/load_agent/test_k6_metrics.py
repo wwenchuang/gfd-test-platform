@@ -175,3 +175,21 @@ def test_final_flush_watermark_cannot_move_backward_if_collection_resumes():
     aggregator.accept(_point("http_reqs", 1, 5))
     with pytest.raises(ValueError, match="乱序"):
         aggregator.accept(_point("http_reqs", 1, 0))
+
+
+def test_error_sample_keeps_safe_status_code_and_time_without_arbitrary_tags():
+    aggregator = MetricAggregator(window_seconds=5)
+    aggregator.accept(_point("http_req_failed", 1, 4, tags={"status": "0", "error_code": "1211", "url": "https://secret.invalid/?token=private", "error": "private detail"}))
+    sample = aggregator.flush_all()[0]["samples"][0]["payload"]
+    assert sample["status_code"] == 0
+    assert sample["error_code"] == 1211
+    assert sample["observed_at"] == "2026-09-03T08:00:04+00:00"
+    assert "private" not in str(sample)
+
+
+def test_invalid_error_tags_are_unknown_not_fabricated_response_status():
+    aggregator = MetricAggregator(window_seconds=5)
+    aggregator.accept(_point("http_req_failed", 1, 4, tags={"status": "invalid", "error_code": "secret"}))
+    sample = aggregator.flush_all()[0]["samples"][0]["payload"]
+    assert sample.get("status_code") is None
+    assert sample.get("error_code") is None

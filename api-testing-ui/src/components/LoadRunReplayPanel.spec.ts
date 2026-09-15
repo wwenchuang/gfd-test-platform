@@ -45,7 +45,7 @@ function run(overrides: Record<string, unknown> = {}) {
     state: 'finished',
     load_model: 'ramping-arrival-rate',
     started_at: '2026-09-10T04:20:50Z',
-    finished_at: '2026-09-10T04:21:10Z',
+    finished_at: '2026-09-10T04:21:35Z',
     configuration: {},
     ...overrides,
   } as any
@@ -100,6 +100,55 @@ describe('LoadRunReplayPanel', () => {
     expect(control.text()).toBe('暂停')
     await control.trigger('click')
     expect(control.text()).toBe('播放')
+  })
+
+  it('keeps five-second throughput buckets and breaks anomalies across missing buckets', () => {
+    const series = [0, 10, 20].map(seconds => ({
+      started_at: new Date(Date.parse('2026-09-10T04:20:50Z') + seconds * 1000).toISOString(),
+      requests: 30, iterations: 10, p95_ms: 1400,
+    }))
+    const wrapper = mount(LoadRunReplayPanel, { props: { run: run(), report: report({ series }) } })
+    expect(wrapper.text()).toContain('实际 2 次/秒')
+    expect(wrapper.text()).not.toContain('首次持续异常')
+  })
+
+  it('does not confirm recovery across absent sampling buckets', () => {
+    const series = [0, 5, 10, 15, 25, 35].map((seconds, index) => ({
+      started_at: new Date(Date.parse('2026-09-10T04:20:50Z') + seconds * 1000).toISOString(),
+      requests: 10, iterations: 10, p95_ms: index < 3 ? 1400 : 900,
+    }))
+    const wrapper = mount(LoadRunReplayPanel, { props: { run: run(), report: report({ series }) } })
+    expect(wrapper.text()).toContain('恢复观察不足')
+    expect(wrapper.text()).not.toContain('开始恢复观察')
+  })
+
+  it('does not show planned stages after a stopped run as completed events', () => {
+    const wrapper = mount(LoadRunReplayPanel, { props: { run: run({ state: 'cancelled', finished_at: '2026-09-10T04:21:00Z' }), report: report() } })
+    expect(wrapper.text()).not.toContain('阶段 2 开始')
+    expect(wrapper.text()).not.toContain('阶段 3 开始')
+  })
+
+  it('does not compare observed throughput with planned virtual users', () => {
+    const wrapper = mount(LoadRunReplayPanel, { props: { run: run({ load_model: 'constant-vus', configuration: { workload: { vus: 2 } } }), report: report() } })
+    expect(wrapper.text()).toContain('计划 2 VU')
+    expect(wrapper.text()).toContain('实际并发未接入回放')
+    expect(wrapper.text()).not.toContain('实际完整链路吞吐：')
+  })
+
+  it('keeps zero completed chains separate from HTTP throughput', () => {
+    const wrapper = mount(LoadRunReplayPanel, { props: { run: run(), report: report({ series: [
+      { started_at: '2026-09-10T04:20:50Z', requests: 15, iterations: 0, p95_ms: 900 },
+    ] }) } })
+    expect(wrapper.text()).toContain('实际 0 次/秒')
+    expect(wrapper.text()).toContain('业务失败率 —')
+  })
+
+  it('uses business assertion count instead of completed chains for business failure rate', () => {
+    const wrapper = mount(LoadRunReplayPanel, { props: { run: run(), report: report({ series: [
+      { started_at: '2026-09-10T04:20:50Z', requests: 15, iterations: 5, business_assertions: 30, business_failures: 3, p95_ms: 900 },
+    ] }) } })
+    expect(wrapper.text()).toContain('业务 10%')
+    expect(wrapper.text()).toContain('业务失败率 10%')
   })
 
   it('does not count a missing P95 window as recovery evidence', () => {

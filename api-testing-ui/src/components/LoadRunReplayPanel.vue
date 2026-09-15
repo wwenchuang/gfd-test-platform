@@ -12,6 +12,7 @@ interface ReplayWindow {
   iterations: number
   http_failures: number
   business_failures: number
+  business_assertions: number | null
   p95: number | null
 }
 
@@ -146,6 +147,7 @@ const replayWindows = computed<ReplayWindow[]>(() => {
         requests: Math.max(0, toFiniteNumber(item.requests) || 0),
         iterations: Math.max(0, toFiniteNumber(item.iterations) || 0),
         http_failures: Math.max(0, toFiniteNumber(item.http_failures) || 0),
+        business_assertions: toFiniteNumber(item.business_assertions),
         business_failures: Math.max(0, toFiniteNumber(item.business_failures) || 0),
         p95: toFiniteNumber(item.p95_ms),
       }
@@ -155,16 +157,9 @@ const replayWindows = computed<ReplayWindow[]>(() => {
 
   if (!parsed.length) return []
 
-  const gap = inferWindowGap(parsed)
-  return parsed.map((item, index) => {
-    const next = parsed[index + 1]
-    const duration = (next?.start || item.start + gap) - item.start
-    return {
-      ...item,
-      duration: duration > 0 ? duration : gap,
-      end: item.start + (duration > 0 ? duration : gap),
-    }
-  })
+  // The metric service emits fixed five-second buckets. A missing bucket is
+  // a gap in evidence, not extra time over which to dilute the previous count.
+  return parsed.map(item => ({ ...item, duration: 5, end: item.start + 5 }))
 })
 
 const startTime = computed(() => runStarted.value ?? replayWindows.value[0]?.start ?? now.value)
@@ -254,7 +249,7 @@ const chartLines = computed<Record<string, LineSeries[]>>(() => {
   const actualWindowPoints = replayWindows.value.map(window => ({
     time: window.start,
     value: window.duration > 0
-      ? (window.iterations > 0 ? window.iterations / window.duration : window.requests / window.duration)
+      ? (window.iterations / window.duration)
       : 0,
   }))
   const p95Points = replayWindows.value
@@ -264,8 +259,8 @@ const chartLines = computed<Record<string, LineSeries[]>>(() => {
     .filter(window => window.requests > 0)
     .map(window => ({ time: window.start, value: window.http_failures / Math.max(1, window.requests) }))
   const businessFailPoints = replayWindows.value
-    .filter(window => window.iterations > 0)
-    .map(window => ({ time: window.start, value: window.business_failures / Math.max(1, window.iterations) }))
+    .filter(window => window.business_assertions != null && window.business_assertions > 0)
+    .map(window => ({ time: window.start, value: window.business_failures / window.business_assertions! }))
 
   const cpu = extractMonitoringLines(['cpu_percent', 'cpu_cores'])
   const mem = extractMonitoringLines(['memory_percent', 'memory_working_set_bytes'])
@@ -273,9 +268,9 @@ const chartLines = computed<Record<string, LineSeries[]>>(() => {
   return {
     pressure: [
       ...planPressureSeries.value.length
-        ? [{ id: 'plan', name: '计划压力', color: '#0b6e9f', unit: planPressureSeries.value.some(item => item.value > 20) ? (loadModel.value.includes('vus') ? 'VU' : '次/秒') : '次/秒', points: planPressureSeries.value }]
+        ? [{ id: 'plan', name: '计划压力', color: '#0b6e9f', unit: loadModel.value.includes('vus') ? 'VU' : '次/秒', points: planPressureSeries.value }]
         : [],
-      { id: 'actual', name: '实际吞吐（近似）', color: '#0f766e', unit: '次/秒', points: actualWindowPoints },
+      ...(!loadModel.value.includes('vus') ? [{ id: 'actual', name: '实际完整链路吞吐', color: '#0f766e', unit: '次/秒', points: actualWindowPoints }] : []),
     ],
     p95: [{ id: 'p95', name: 'P95', color: '#7c3aed', unit: 'ms', points: p95Points }],
     error: [
@@ -357,6 +352,7 @@ const anomalySegments = computed(() => {
   const segments: Array<{ start: number; end: number }> = []
   let streak = 0
   for (let index = 0; index < mask.length; index++) {
+    if (index > 0 && replayWindows.value[index].start !== replayWindows.value[index - 1].end) streak = 0
     if (mask[index]) {
       streak += 1
       if (streak === 3) segments.push({ start: index - 2, end: index + 1 })
@@ -374,6 +370,7 @@ const anomalyRecover = computed(() => {
   if (threshold == null) return null
   let streak = 0
   for (let index = first.end; index < windows.length; index++) {
+    if (index > 0 && windows[index].start !== windows[index - 1].end) streak = 0
     const p95 = windows[index]?.p95
     if (p95 == null) {
       streak = 0
@@ -527,7 +524,7 @@ const replayEvents = computed<ReplayEvent[]>(() => {
   }
 
   return events
-    .filter(item => Number.isFinite(item.time))
+    .filter(item => Number.isFinite(item.time) && (runFinished.value == null || item.time <= runFinished.value))
     .filter((item, index, self) => self.findIndex(each => each.time === item.time && each.label === item.label) === index)
     .sort((left, right) => left.time - right.time)
 })
@@ -551,7 +548,7 @@ const progressPercent = computed(() => {
 function throughputInWindow(window: ReplayWindow | null): string {
   if (!window) return '—'
   if (!window.duration || !Number.isFinite(window.duration) || window.duration <= 0) return '—'
-  const throughput = window.iterations > 0 ? window.iterations / window.duration : window.requests / window.duration
+  const throughput = window.iterations / window.duration
   return `${throughput.toLocaleString('zh-CN', { maximumFractionDigits: 2 })} 次/秒`
 }
 
@@ -561,14 +558,14 @@ const currentPressureValue = computed(() => {
   const planValue = planToTime.value?.(time)
   return [
     `计划 ${planValue == null ? '—' : `${planValue.toLocaleString('zh-CN')} ${loadModel.value.includes('vus') ? 'VU' : '次/秒'}`}`,
-    `实际 ${actual}`,
+    loadModel.value.includes('vus') ? `实际并发未接入回放；完整链路吞吐 ${actual}` : `实际 ${actual}`,
   ]
 })
 
 const currentErrorText = computed(() => {
   const window = currentWindow.value
   const http = window && window.requests > 0 ? `${(window.http_failures / Math.max(1, window.requests) * 100).toLocaleString('zh-CN', { maximumFractionDigits: 2 })}%` : '—'
-  const biz = window && window.iterations > 0 ? `${(window.business_failures / Math.max(1, window.iterations) * 100).toLocaleString('zh-CN', { maximumFractionDigits: 2 })}%` : '—'
+  const biz = window && window.business_assertions != null && window.business_assertions > 0 ? `${(window.business_failures / window.business_assertions * 100).toLocaleString('zh-CN', { maximumFractionDigits: 2 })}%` : '—'
   return `HTTP ${http} · 业务 ${biz}`
 })
 
@@ -674,7 +671,7 @@ function lineSegmentsFor(chartKey: string, line: LineSeries): string[] {
     .filter(point => point.time >= startTime.value && point.time <= endTime.value)
     .filter(point => Number.isFinite(point.value))
   if (!merged.length) return []
-  const gap = inferWindowGap(replayWindows.value) * 2
+  const gap = line.id === 'plan' ? Number.POSITIVE_INFINITY : ['pressure', 'p95', 'error'].includes(chartKey) ? 5 : inferWindowGap(replayWindows.value) * 2
   const segments: string[] = []
   let current: string[] = []
 
@@ -699,12 +696,12 @@ const chartStateText = computed(() => {
   const hasP95 = window.p95 != null
   const highP95 = hasP95 && p95Reference.value != null && window.p95 != null && window.p95 > p95Reference.value
   const throughputValue = window.duration > 0
-    ? window.iterations > 0 ? window.iterations / window.duration : window.requests / window.duration
+    ? window.iterations / window.duration
     : null
   const facts: string[] = []
   facts.push(`窗口请求 ${window.requests}；吞吐 ${throughputValue == null ? '—' : `${throughputValue.toLocaleString('zh-CN', { maximumFractionDigits: 2 })} 次/秒`}`)
   facts.push(`HTTP 失败率 ${window.requests > 0 ? ((window.http_failures / window.requests) * 100).toLocaleString('zh-CN', { maximumFractionDigits: 2 }) : 0}%`)
-  facts.push(`业务失败率 ${window.iterations > 0 ? ((window.business_failures / window.iterations) * 100).toLocaleString('zh-CN', { maximumFractionDigits: 2 }) : 0}%`)
+  facts.push(`业务失败率 ${window.business_assertions != null && window.business_assertions > 0 ? `${((window.business_failures / window.business_assertions) * 100).toLocaleString('zh-CN', { maximumFractionDigits: 2 })}%` : '—'}`)
   if (hasP95) facts.push(`P95 ${window.p95?.toLocaleString('zh-CN', { maximumFractionDigits: 2 })} ms`)
   if (p95Reference.value != null) facts.push(`参考线 ${p95Reference.value.toLocaleString('zh-CN', { maximumFractionDigits: 2 })} ms，当前${highP95 ? '偏高' : '未偏离'}。`)
   return facts.join('；')

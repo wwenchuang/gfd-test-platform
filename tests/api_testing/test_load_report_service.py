@@ -167,6 +167,7 @@ def test_series_combines_step_and_workflow_metrics_in_the_same_five_second_windo
     assert len(report["series"]) == 1
     assert report["series"][0]["requests"] == 3
     assert report["series"][0]["iterations"] == 3
+    assert report["series"][0]["business_assertions"] == 3
 
 
 def test_http_200_business_failure_is_not_transport_success_verdict(load_factory, load_run_with_shard):
