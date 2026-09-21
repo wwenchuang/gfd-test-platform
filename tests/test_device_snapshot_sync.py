@@ -35,11 +35,13 @@ class DeviceSnapshotSyncTest(unittest.TestCase):
     def test_active_platform_job_marks_device_busy_and_skips_capture(self):
         runner_service.write_json_file(str(self.jobs), [{
             "job_id": "j1", "status": "running", "target_runner_id": "r1",
-            "device_id": "p1", "task_name": "登录回归",
+            "device_id": "p1", "task_name": "登录回归", "created_by": "wangwc",
         }])
         devices = runner_service.all_online_devices()
         self.assertEqual(devices[0]["usage_status"], "busy")
         self.assertEqual(devices[0]["active_job_name"], "登录回归")
+        self.assertEqual(devices[0]["active_job_operator"], "wangwc")
+        self.assertEqual(devices[0]["usage_label"], "wangwc · 平台任务执行中")
         self.assertEqual(runner_service.request_device_snapshots()["requested"], 0)
         self.assertIn("执行平台任务", runner_service.load_runners()["r1"]["devices"][0]["snapshot_error"])
 

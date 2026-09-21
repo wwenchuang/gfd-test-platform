@@ -2074,7 +2074,10 @@ def _get_runners(handler, qs):
         for key in ("battery_level", "battery_temperature_c"):
             if sonic.get(key) is not None:
                 device[key] = sonic[key]
-        if not platform_busy and capture_failed:
+        if platform_busy and not device.get("active_job_operator") and sonic.get("sonic_user"):
+            device["active_job_operator"] = sonic["sonic_user"]
+            device["usage_label"] = f"{sonic['sonic_user']} · 平台任务执行中"
+        elif not platform_busy and capture_failed:
             device["usage_status"] = "unknown"
             device["usage_label"] = "设备状态采集失败"
         elif not platform_busy:
@@ -2250,6 +2253,7 @@ def _post_app_install_request(handler, qs):
         "apk_url": apk_url,
         "apk_size": apk_size,
         "app_package": (d.get("app_package") or d.get("appPackage") or "").strip(),
+        "created_by": _authenticated_user(handler),
     })
     handler._json({"ok": True, "job": job})
 
@@ -4119,6 +4123,7 @@ def _post_run_request(handler, qs):
         device_strategy=device_strategy,
         run_mode=run_mode,
         target_task_name=target_task_name,
+        created_by=_authenticated_user(handler),
     )
     handler._json({"ok": True, "job": job})
 

@@ -728,6 +728,7 @@ def create_pending_job(
     run_mode: str = "test",
     target_task_name: str = "",
     parent_run_id: str = "",
+    created_by: str = "",
 ) -> Dict[str, Any]:
     """创建一个 pending 状态的 Job，并读取 YAML 解析 task_names。
 
@@ -773,6 +774,7 @@ def create_pending_job(
         "max_attempt": max_attempt,
         "parent_job_id": parent_job_id,
         "parent_run_id": parent_run_id,
+        "created_by": str(created_by or "").strip(),
         "device_id": device_id,
         "target_runner_id": runner_id,
         "device_strategy": normalize_device_strategy(device_strategy, device_id=device_id, runner_id=runner_id),

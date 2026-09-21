@@ -433,10 +433,12 @@ def all_online_devices() -> List[Dict[str, Any]]:
             row["hostname"] = runner.get("hostname", "")
             active_job = active_jobs.get((runner_id, str(row.get("device_id") or "")))
             row["usage_status"] = "busy" if active_job else "idle"
-            row["usage_label"] = "平台任务执行中" if active_job else "空闲可选"
+            operator = str((active_job or {}).get("created_by") or (active_job or {}).get("requested_by") or (active_job or {}).get("operator") or "").strip()
+            row["usage_label"] = (f"{operator} · 平台任务执行中" if operator else "平台任务执行中") if active_job else "空闲可选"
             if active_job:
                 row["active_job_id"] = active_job.get("job_id") or ""
                 row["active_job_name"] = active_job.get("task_name") or active_job.get("file") or active_job.get("job_id") or "平台任务"
+                row["active_job_operator"] = operator
             devices.append(row)
     return devices
 
