@@ -18,6 +18,7 @@ function createWindow() {
       <input id="task-search">
       <select id="asset-app-filter"><option value=""></option></select>
       <select id="app-filter"><option value=""></option></select>
+      <select id="new-task-app"></select>
       <select id="new-task-module"></select>
       <div id="module-list"></div>
     </body>
@@ -97,9 +98,31 @@ test('new and uploaded YAML cannot be assigned to generated repair history', t =
   loadFunction(win, source, 'isAssetHistoryModule');
   loadFunction(win, source, 'fillModuleSelect');
 
-  win.fillModuleSelect(win.document.getElementById('new-task-module'), '选择所属模块');
+  win.taskApps = [
+    {package: 'com.print', name: '智小白3D', enabled: true, modules: ['3D打印基线']},
+    {package: 'com.shared', name: '共享应用', enabled: true, modules: ['共享业务基线']},
+  ];
+  win.fillModuleSelect(win.document.getElementById('new-task-module'), '选择所属模块', '', 'com.print');
   const labels = Array.from(win.document.querySelectorAll('#new-task-module option'), option => option.textContent);
-  assert.deepEqual(labels, ['选择所属模块', '3D打印基线', '共享业务基线']);
+  assert.deepEqual(labels, ['选择所属模块', '3D打印基线']);
+  assert.equal(win.document.getElementById('new-task-module').value, '3D打印基线');
+});
+
+test('YAML application picker hides disabled apps and defaults to the current module owner', t => {
+  const source = fs.readFileSync('js/agent-status.js', 'utf8');
+  const {dom, win} = createWindow();
+  t.after(() => dom.window.close());
+  win.taskApps = [
+    {package: 'com.print', name: '智小白3D', enabled: true, modules: ['3D打印基线']},
+    {package: 'com.disabled', name: '停用应用', enabled: false, modules: ['共享业务基线']},
+  ];
+  win.currentModule = '3D打印基线';
+  win.moduleApp = mod => win.taskApps.find(app => (app.modules || []).includes(mod));
+  for (const name of ['preferredYamlAppPackage', 'fillYamlAppSelect']) loadFunction(win, source, name);
+  const selected = win.fillYamlAppSelect(win.document.getElementById('new-task-app'));
+  assert.equal(selected, 'com.print');
+  assert.equal(win.document.getElementById('new-task-app').value, 'com.print');
+  assert.doesNotMatch(win.document.getElementById('new-task-app').textContent, /停用应用/);
 });
 
 test('left YAML directory keeps generated files in one history group', t => {

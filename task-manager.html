@@ -904,9 +904,15 @@
 <div class="modal-overlay" id="modal-task">
   <div class="modal">
     <h3>新建 YAML 用例</h3>
+    <label class="modal-label" for="new-task-app">所属应用</label>
+    <select id="new-task-app" onchange="updateYamlModuleSelect('new-task')">
+      <option value="">选择所属应用</option>
+    </select>
+    <label class="modal-label" for="new-task-module">所属模块</label>
     <select id="new-task-module">
       <option value="">选择所属模块</option>
     </select>
+    <button type="button" class="btn-sm" onclick="manageYamlPickerModules('modal-task')">管理当前应用模块</button>
     <input type="text" id="new-task-name" placeholder="文件名，如：文字速印（无需.yaml后缀）">
     <div class="modal-btns">
       <button class="btn-cancel" onclick="closeModal('modal-task')">取消</button>
@@ -919,9 +925,15 @@
 <div class="modal-overlay" id="modal-upload">
   <div class="modal">
     <h3>上传 YAML 文件</h3>
+    <label class="modal-label" for="upload-app">所属应用</label>
+    <select id="upload-app" onchange="updateYamlModuleSelect('upload')">
+      <option value="">选择所属应用</option>
+    </select>
+    <label class="modal-label" for="upload-module">目标模块</label>
     <select id="upload-module">
       <option value="">选择目标模块</option>
     </select>
+    <button type="button" class="btn-sm" onclick="manageYamlPickerModules('modal-upload')">管理当前应用模块</button>
     <div class="upload-zone" role="button" aria-label="选择 YAML 文件" onclick="document.getElementById('file-input').click()" onkeydown="activateUploadZoneFromKeyboard(event, 'file-input')" tabindex="0">
       📄 点击选择 .yaml 文件
       <input type="file" id="file-input" accept=".yaml,.yml" style="display:none" onchange="handleFileSelect(this)">
@@ -975,7 +987,7 @@
 <div class="toast" id="toast"></div>
 
 
-<script src="js/utils.js?v=20260828-full-platform-ux-20260902-a104-review-controls-device-recorder-v1"></script>
+<script src="js/utils.js?v=20260828-full-platform-ux-20260902-a104-review-controls-device-recorder-v1-app-module-picker-v1"></script>
 <script src="js/error-handler.js?v=20260828-full-platform-ux"></script>
 <script src="js/empty-states.js?v=20260828-full-platform-ux-20260902-a105-agent-scopes"></script>
 <script src="js/loading-manager.js?v=20260828-full-platform-ux"></script>
@@ -985,7 +997,7 @@
 <script src="js/identity-management.js?v=20260902-a108-workflow-clarity"></script>
 <script src="js/navigation.js?v=20260828-full-platform-ux-20260902-a112-history-save"></script>
 <script src="js/agent-workbench.js?v=20260828-full-platform-ux-20260902-a107-agent-terminal-20260908-mindmap-restart-20260921-phone-cards-live"></script>
-<script src="js/agent-status.js?v=20260828-full-platform-ux-20260902-a110-knowledge-filtering-a112-history-save-app-module-create-device-recorder-v1"></script>
+<script src="js/agent-status.js?v=20260828-full-platform-ux-20260902-a110-knowledge-filtering-a112-history-save-app-module-create-device-recorder-v1-app-module-picker-v1"></script>
 <script src="js/device-recorder.js?v=20260921-sonic-native-recorder-v3"></script>
 <script src="js/cases.js?v=20260828-full-platform-ux-20260901-a73-flow-clarity"></script>
 <script src="js/execution.js?v=20260828-full-platform-ux-20260902-a106-execution-actions-a112-history-save-20260921-editor-wheel"></script>

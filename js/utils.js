@@ -641,14 +641,15 @@ async function addModule() {
 }
 
 // ===== ADD YAML CASE =====
-function showAddTask() { if (requireUiEditPermission()) document.getElementById('modal-task').classList.add('show'); }
+function showAddTask() { if (requireUiEditPermission()) { renderModuleSelects(); document.getElementById('modal-task').classList.add('show'); } }
 async function addTask() {
   if (!requireUiEditPermission()) return;
+  const appPackage = document.getElementById('new-task-app')?.value || '';
   const mod = document.getElementById('new-task-module').value;
   const name = document.getElementById('new-task-name').value.trim();
   if (!mod || !name) { showToast('请填写完整信息', 'error'); return; }
   const app = moduleApp(mod);
-  if (!app?.package || app.enabled === false || app.historical_only === true) {
+  if (!appPackage || app?.package !== appPackage || app.enabled === false || app.historical_only === true) {
     showToast('请先在应用配置中将当前模块绑定到启用的应用，再新建 YAML', 'error');
     return;
   }
@@ -657,7 +658,7 @@ async function addTask() {
   try {
     await apiRequest('/file', {
       method: 'POST',
-      body: JSON.stringify({ module: mod, file: filename, content: defaultContent })
+      body: JSON.stringify({ module: mod, file: filename, content: defaultContent, app_package: appPackage })
     });
   } catch(e) {
     showToast(`YAML 用例创建失败：${e.message || e}`, 'error');
@@ -673,7 +674,7 @@ async function addTask() {
 }
 
 // ===== UPLOAD =====
-function showUpload() { if (requireUiEditPermission()) document.getElementById('modal-upload').classList.add('show'); }
+function showUpload() { if (requireUiEditPermission()) { renderModuleSelects(); document.getElementById('modal-upload').classList.add('show'); } }
 function handleFileSelect(input) {
   const file = input.files[0];
   if (!file) return;
@@ -685,12 +686,14 @@ function handleFileSelect(input) {
 }
 async function uploadFile() {
   if (!requireUiEditPermission()) return;
+  const appPackage = document.getElementById('upload-app')?.value || '';
   const mod = document.getElementById('upload-module').value;
-  if (!mod || !uploadFileName) { showToast('请选择模块和文件', 'error'); return; }
+  const app = moduleApp(mod);
+  if (!appPackage || app?.package !== appPackage || !mod || !uploadFileName) { showToast('请选择对应应用下的模块和文件', 'error'); return; }
   try {
     await apiRequest('/file', {
       method: 'POST',
-      body: JSON.stringify({ module: mod, file: uploadFileName, content: uploadFileContent })
+      body: JSON.stringify({ module: mod, file: uploadFileName, content: uploadFileContent, app_package: appPackage })
     });
   } catch(e) {
     showToast(`文件上传失败：${e.message || e}`, 'error');

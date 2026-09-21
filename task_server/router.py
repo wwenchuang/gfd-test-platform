@@ -5445,6 +5445,20 @@ def _post_file_restore(handler, qs):
 
 # ── 文件保存 ────────────────────────────────────────────────────────
 
+def validate_file_app_module(app_package, module, apps):
+    app_package = str(app_package or "").strip()
+    module = str(module or "").strip()
+    if not app_package:
+        raise ValueError("新建或上传 YAML 时必须明确选择所属应用")
+    app = next((item for item in apps if isinstance(item, dict) and str(item.get("package") or "").strip() == app_package), None)
+    if not app:
+        raise ValueError("所选应用不存在")
+    if app.get("enabled") is False or app.get("historical_only") is True:
+        raise ValueError("所选应用未启用")
+    if module not in [str(value or "").strip() for value in app.get("modules") or []]:
+        raise ValueError("所选模块不属于所选应用")
+    return app
+
 @route_post("/api/file")
 def _post_file_save(handler, qs):
     from task_server.storage import file_mutation_lock
@@ -5453,6 +5467,12 @@ def _post_file_save(handler, qs):
     file = clean_filename(d.get("file", ""))
     content = d.get("content", "")
     unchanged = False
+    if d.get("app_package") or d.get("appPackage"):
+        try:
+            validate_file_app_module(d.get("app_package") or d.get("appPackage"), mod, load_task_apps().get("apps", []))
+        except ValueError as exc:
+            handler._json({"ok": False, "error": str(exc)}, 400)
+            return
     try:
         module_dir = safe_join(TASK_DIR, mod)
         os.makedirs(module_dir, exist_ok=True)

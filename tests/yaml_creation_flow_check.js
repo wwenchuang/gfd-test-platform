@@ -8,6 +8,8 @@ function fixture(t, apps) {
   const dom = new JSDOM(fs.readFileSync('task-manager.html', 'utf8'));
   t.after(() => dom.window.close());
   const document = dom.window.document;
+  document.getElementById('new-task-app').add(new dom.window.Option('校园应用', 'com.fixture.school'));
+  document.getElementById('new-task-app').value = 'com.fixture.school';
   document.getElementById('new-task-module').add(new dom.window.Option('校园模块', '校园模块'));
   document.getElementById('new-task-module').value = '校园模块';
   document.getElementById('new-task-name').value = '只读首页点检';
@@ -34,6 +36,7 @@ test('manual YAML uses the selected module application from configuration in a R
   const f = fixture(t, [{package: 'com.fixture.school', enabled: true, modules: ['校园模块']}]);
   await f.run();
   assert.equal(f.writes.length, 1);
+  assert.equal(f.writes[0].app_package, 'com.fixture.school');
   assert.match(f.writes[0].content, /flow:\n      - launch: "com\.fixture\.school"\n/);
   assert.doesNotMatch(f.writes[0].content, /com\.kfb\.model/);
   assert.match(f.writes[0].content, /请描述需要验证的页面结果/);

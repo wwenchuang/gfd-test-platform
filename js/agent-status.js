@@ -3858,24 +3858,58 @@ function yamlDisplayName(file) {
   return base || '未命名 YAML';
 }
 
-function fillModuleSelect(select, placeholder, selectedValue='') {
+function fillModuleSelect(select, placeholder, selectedValue='', appPackage='') {
   if (!select) return;
   const previous = selectedValue || select.value || '';
   select.innerHTML = `<option value="">${placeholder}</option>`;
-  Object.keys(modules).filter(mod => !isAssetHistoryModule(mod)).sort((a, b) => a.localeCompare(b, 'zh-CN')).forEach(mod => {
+  const app = appPackage ? taskApps.find(item => item.package === appPackage && item.enabled !== false && item.historical_only !== true) : null;
+  const allowed = appPackage ? new Set(app?.modules || []) : null;
+  const available = Object.keys(modules).filter(mod => !isAssetHistoryModule(mod) && (!allowed || allowed.has(mod))).sort((a, b) => a.localeCompare(b, 'zh-CN'));
+  available.forEach(mod => {
     const opt = document.createElement('option');
     opt.value = mod;
-    opt.textContent = moduleApp(mod) ? `${mod} / ${moduleApp(mod).name || moduleApp(mod).package}` : mod;
+    opt.textContent = appPackage ? mod : (moduleApp(mod) ? `${mod} / ${moduleApp(mod).name || moduleApp(mod).package}` : mod);
     select.appendChild(opt);
   });
-  if (previous && Object.prototype.hasOwnProperty.call(modules, previous) && !isAssetHistoryModule(previous)) {
+  if (previous && available.includes(previous)) {
     select.value = previous;
+  } else if (available.length === 1) {
+    select.value = available[0];
   }
 }
 
+function preferredYamlAppPackage() {
+  const current = moduleApp(currentModule)?.package || '';
+  const filtered = document.getElementById('asset-app-filter')?.value || document.getElementById('app-filter')?.value || '';
+  const enabled = taskApps.filter(app => app.package && app.enabled !== false && app.historical_only !== true);
+  return enabled.some(app => app.package === current) ? current : (enabled.some(app => app.package === filtered) ? filtered : (enabled[0]?.package || ''));
+}
+
+function fillYamlAppSelect(select, selectedPackage='') {
+  if (!select) return '';
+  const enabled = taskApps.filter(app => app.package && app.enabled !== false && app.historical_only !== true);
+  const selected = enabled.some(app => app.package === selectedPackage) ? selectedPackage : preferredYamlAppPackage();
+  select.innerHTML = '<option value="">选择所属应用</option>' + enabled.map(app => `<option value="${escapeHtml(app.package)}">${escapeHtml(app.name || app.package)} / ${escapeHtml(app.package)}</option>`).join('');
+  select.value = selected;
+  return selected;
+}
+
+function updateYamlModuleSelect(kind) {
+  const appPackage = document.getElementById(`${kind}-app`)?.value || '';
+  fillModuleSelect(document.getElementById(`${kind}-module`), kind === 'upload' ? '选择目标模块' : '选择所属模块', '', appPackage);
+}
+
+function manageYamlPickerModules(modalId) {
+  closeModal(modalId);
+  showTaskApps();
+}
+
 function renderModuleSelects() {
-  fillModuleSelect(document.getElementById('new-task-module'), '选择所属模块', currentModule || '');
-  fillModuleSelect(document.getElementById('upload-module'), '选择目标模块', currentModule || '');
+  const preferredApp = preferredYamlAppPackage();
+  const newApp = fillYamlAppSelect(document.getElementById('new-task-app'), preferredApp);
+  const uploadApp = fillYamlAppSelect(document.getElementById('upload-app'), preferredApp);
+  fillModuleSelect(document.getElementById('new-task-module'), '选择所属模块', currentModule || '', newApp);
+  fillModuleSelect(document.getElementById('upload-module'), '选择目标模块', currentModule || '', uploadApp);
   fillModuleSelect(document.getElementById('generate-module'), '选择目标模块', currentModule || '');
 }
 
