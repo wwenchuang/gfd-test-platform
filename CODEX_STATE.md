@@ -8,6 +8,7 @@
 - Windows Runner 启动时强制核对 Node.js 与 Midscene 版本：Node 必须为 20.19+、22.12+ 或 24+，Midscene 必须为 1.13.0+；心跳能力上报实际两项版本和 `legacy-compatible-1.13` 契约，避免升级后仍以旧版本身份接任务。
 - TDD 先得到4项失败，修正后 Midscene 1.13契约与Runner相关22项通过；后端静态63项、YAML回归脚本、Python语法、diff检查通过。隔离安装的官方CLI返回1.13.0；五种代表性动作经官方 `compileLegacyFlowItem` 编译为正确节点，完整CLI读取测试YAML并进入ADB连接阶段。本机无Android ADB设备，故未把该次失败描述为真机执行通过；Windows Runner替换/重启及真实手机用例仍需发布后验收。
 - `tests/test_sonic_integration.py` 单独直接运行出现68项历史入口兼容失败（测试仍从精简 `midscene_upload` 包装导入已迁移函数），与本次改动无调用栈关系；必跑 `backend_static_checks.py` 已覆盖这些迁移后的服务入口并通过。用户Word与 `docs/career/` 保留未动。
+- `d48841d` 已提交并推送 main。公网 8091/8088 健康接口仍为 `a3b3baf`；Safari Runner 状态显示 `win-runner-01` 在线、三台手机可执行，但 Runner 仍上报 `2026.07.26-qwen3.7-result-retry-v1` 且能力中没有实际 Node/Midscene 版本，证明 Windows 只升级了 npm 包、尚未替换本次 Python Runner。华为堡垒机停在登录页且密码未保存，平台发布、Windows Runner 替换重启及真机执行尚未完成。
 
 
 ## 2026-09-21 新建与上传 YAML 的应用模块级联
