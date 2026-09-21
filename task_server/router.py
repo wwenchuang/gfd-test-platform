@@ -2050,6 +2050,18 @@ def _get_jobs(handler, qs):
 
 # ── Runners 列表 ────────────────────────────────────────────────────
 
+def _is_snapshot_capture_failure(error: object) -> bool:
+    message = str(error or "").strip()
+    return bool(message) and not message.startswith("设备正在执行平台任务")
+
+
+def _visible_snapshot_error(error: object, *, platform_busy: bool) -> str:
+    message = str(error or "").strip()
+    if not platform_busy and message.startswith("设备正在执行平台任务"):
+        return ""
+    return message
+
+
 @route_get("/api/runners")
 def _get_runners(handler, qs):
     if _require_user_auth(handler):
@@ -2063,7 +2075,8 @@ def _get_runners(handler, qs):
     for device in devices:
         sonic = sonic_statuses.get(str(device.get("device_id") or ""))
         platform_busy = device.get("usage_status") == "busy"
-        capture_failed = bool(str(device.get("snapshot_error") or "").strip())
+        device["snapshot_error"] = _visible_snapshot_error(device.get("snapshot_error"), platform_busy=platform_busy)
+        capture_failed = _is_snapshot_capture_failure(device.get("snapshot_error"))
         if not sonic:
             if not platform_busy:
                 device["usage_status"] = "unknown"
