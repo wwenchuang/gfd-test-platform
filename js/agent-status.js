@@ -2448,6 +2448,7 @@ function renderActiveWorkflowPage(options = {}) {
   if (activeWorkflow === 'feishu_config') return showFeishuConfigCenter() || true;
   if (activeWorkflow === 'sonic_config') return showSonicConfigCenter() || true;
   if (activeWorkflow === 'system_config') return showPreflightDashboard() || true;
+  if (activeWorkflow === 'device_recorder' && typeof showDeviceRecorder === 'function') return showDeviceRecorder() || true;
   showWorkflowGuide(activeWorkflow);
   return false;
 }
@@ -2580,6 +2581,11 @@ async function activateWorkflow(sectionKey) {
     toggleLibrary(false);
     return;
   }
+  if (activeWorkflow === 'device_recorder') {
+    await showDeviceRecorder();
+    toggleLibrary(false);
+    return;
+  }
   if (activeWorkflow === 'knowledge') {
     showKnowledgeManager();
     toggleLibrary(false);
@@ -2642,7 +2648,7 @@ async function activateWorkflow(sectionKey) {
 // round 4: 集中处理“进入页面才拉数据 + 离开页面停轮询”
 function applyLazyLoadForSection(sectionKey) {
   const NEEDS_MODULES = new Set([
-    'assets', 'generate', 'execute', 'baseline', 'repair', 'yaml_edit', 'app_config', 'feishu_config', 'sonic_config'
+    'assets', 'generate', 'device_recorder', 'execute', 'baseline', 'repair', 'yaml_edit', 'app_config', 'feishu_config', 'sonic_config'
   ]);
   const NEEDS_JOBS_POLLING = new Set([
     'execute', 'baseline', 'repair'

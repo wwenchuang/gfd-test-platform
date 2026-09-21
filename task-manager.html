@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>功夫豆测试平台</title>
 <link rel="icon" href="assets/brand/kongfudou-icon.png">
-<link rel="stylesheet" href="css/app.css?v=20260831-identity-20260904-report-evidence-20260921-phone-cards-live-nav-counts-editor-wheel-app-module-create">
+<link rel="stylesheet" href="css/app.css?v=20260831-identity-20260904-report-evidence-20260921-phone-cards-live-nav-counts-editor-wheel-app-module-create-device-recorder-v1">
   <link rel="stylesheet" href="css/round5.css?v=20260828-full-platform-ux-20260902-a94-cache-policy-app-module-create">
 </head>
 <body>
@@ -91,6 +91,10 @@
           <button class="workflow-step" data-workflow="generate" onclick="activateWorkflow('generate')">
             <span class="workflow-index">🤖</span>
             <span class="workflow-main"><span class="workflow-name">AI 生成用例</span></span>
+          </button>
+          <button class="workflow-step" data-workflow="device_recorder" onclick="activateWorkflow('device_recorder')">
+            <span class="workflow-index">⏺</span>
+            <span class="workflow-main"><span class="workflow-name">操作录制</span></span>
           </button>
           <button class="workflow-step" data-workflow="yaml_edit" onclick="activateWorkflow('yaml_edit')">
             <span class="workflow-index">✏️</span>
@@ -971,17 +975,18 @@
 <div class="toast" id="toast"></div>
 
 
-<script src="js/utils.js?v=20260828-full-platform-ux-20260902-a104-review-controls"></script>
+<script src="js/utils.js?v=20260828-full-platform-ux-20260902-a104-review-controls-device-recorder-v1"></script>
 <script src="js/error-handler.js?v=20260828-full-platform-ux"></script>
 <script src="js/empty-states.js?v=20260828-full-platform-ux-20260902-a105-agent-scopes"></script>
 <script src="js/loading-manager.js?v=20260828-full-platform-ux"></script>
 <script src="js/form-steps.js?v=20260828-full-platform-ux"></script>
 <script src="js/state.js?v=20260828-full-platform-ux-20260904-report-evidence-20260921-device-auto-status"></script>
-<script src="js/auth.js?v=20260828-full-platform-ux-20260831-identity-sonic-readonly-20260921-device-auto-status"></script>
+<script src="js/auth.js?v=20260828-full-platform-ux-20260831-identity-sonic-readonly-20260921-device-auto-status-device-recorder-v1"></script>
 <script src="js/identity-management.js?v=20260902-a108-workflow-clarity"></script>
 <script src="js/navigation.js?v=20260828-full-platform-ux-20260902-a112-history-save"></script>
 <script src="js/agent-workbench.js?v=20260828-full-platform-ux-20260902-a107-agent-terminal-20260908-mindmap-restart-20260921-phone-cards-live"></script>
-<script src="js/agent-status.js?v=20260828-full-platform-ux-20260902-a110-knowledge-filtering-a112-history-save-app-module-create"></script>
+<script src="js/agent-status.js?v=20260828-full-platform-ux-20260902-a110-knowledge-filtering-a112-history-save-app-module-create-device-recorder-v1"></script>
+<script src="js/device-recorder.js?v=20260921-sonic-native-recorder-v1"></script>
 <script src="js/cases.js?v=20260828-full-platform-ux-20260901-a73-flow-clarity"></script>
 <script src="js/execution.js?v=20260828-full-platform-ux-20260902-a106-execution-actions-a112-history-save-20260921-editor-wheel"></script>
 <script src="js/reports.js?v=20260828-full-platform-ux-20260901-a68-flow-audit"></script>

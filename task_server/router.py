@@ -3896,6 +3896,7 @@ def _post_runner_heartbeat(handler, qs):
         return
     d = handler._body()
     record = register_runner(d)
+    from task_server.services.device_recording_service import pending_recording_evidence_requests
     handler._json({
         "ok": True,
         "runner_id": record.get("runner_id"),
@@ -3905,6 +3906,7 @@ def _post_runner_heartbeat(handler, qs):
         "started_at": record.get("started_at") or "",
         "last_seen": record.get("last_seen") or "",
         "snapshot_requests": record.get("snapshot_requests") or [],
+        "recording_evidence_requests": pending_recording_evidence_requests(record.get("runner_id") or ""),
     })
 
 
@@ -3927,6 +3929,163 @@ def _post_runner_device_snapshot(handler, qs):
         handler._json({"ok": False, "error": str(exc)}, 400)
         return
     handler._json({"ok": True, "device": result.get("device") or {}})
+
+
+@route_post("/api/runner/recording-evidence")
+def _post_runner_recording_evidence(handler, qs):
+    if _require_runner_auth(handler):
+        return
+    from task_server.services.device_recording_service import save_recording_evidence
+    payload = handler._body()
+    try:
+        session = save_recording_evidence(str(payload.get("runner_id") or "").strip(), payload)
+    except ValueError as exc:
+        handler._json({"ok": False, "error": str(exc)}, 400)
+        return
+    handler._json({"ok": True, "session_id": session.get("id")})
+
+
+# ── Sonic 操作旁路录制 ─────────────────────────────────────────────
+
+@route_post("/api/device-recordings")
+def _post_device_recordings(handler, qs):
+    if _require_user_auth(handler):
+        return
+    from task_server.services.device_recording_service import create_recording_session
+    payload = handler._body()
+    try:
+        session = create_recording_session(
+            user=_authenticated_user(handler),
+            runner_id=payload.get("runner_id") or payload.get("runnerId"),
+            device_id=payload.get("device_id") or payload.get("deviceId"),
+            app_package=payload.get("app_package") or payload.get("appPackage"),
+        )
+    except (ValueError, PermissionError) as exc:
+        handler._json({"ok": False, "error": str(exc)}, 400)
+        return
+    from task_server.services.sonic_service import sonic_base_url
+    handler._json({"ok": True, "session": session, "sonic_url": sonic_base_url().rstrip("/") + "/Index/Devices"})
+
+
+@route_get("/api/device-recordings")
+def _get_device_recordings(handler, qs):
+    if _require_user_auth(handler):
+        return
+    from task_server.services.device_recording_service import get_recording_session
+    try:
+        session = get_recording_session(qs.get("id") or qs.get("session_id") or "")
+        if session.get("created_by") != _authenticated_user(handler):
+            raise PermissionError("只有录制发起人可以查看该会话")
+    except PermissionError as exc:
+        handler._json({"ok": False, "error": str(exc)}, 403)
+        return
+    except ValueError as exc:
+        handler._json({"ok": False, "error": str(exc)}, 404)
+        return
+    handler._json({"ok": True, "session": session})
+
+
+@route_post("/api/device-recordings/action")
+def _post_device_recording_action(handler, qs):
+    """Accept a mirrored Sonic action; this endpoint never executes it."""
+    from task_server.services.device_recording_service import append_recorded_action
+    payload = handler._body()
+    try:
+        step = append_recorded_action(
+            payload.get("session_id") or payload.get("sessionId") or "",
+            payload.get("recording_token") or payload.get("recordingToken") or "",
+            payload.get("action") or {},
+        )
+    except PermissionError as exc:
+        handler._json({"ok": False, "error": str(exc)}, 401)
+        return
+    except ValueError as exc:
+        handler._json({"ok": False, "error": str(exc)}, 400)
+        return
+    handler._json({"ok": True, "step": step})
+
+
+@route_post("/api/device-recordings/heartbeat")
+def _post_device_recording_heartbeat(handler, qs):
+    if _require_user_auth(handler):
+        return
+    from task_server.services.device_recording_service import touch_recording_session
+    payload = handler._body()
+    try:
+        session = touch_recording_session(
+            payload.get("session_id") or payload.get("sessionId") or "",
+            _authenticated_user(handler),
+        )
+    except PermissionError as exc:
+        handler._json({"ok": False, "error": str(exc)}, 403)
+        return
+    except ValueError as exc:
+        handler._json({"ok": False, "error": str(exc)}, 409)
+        return
+    handler._json({"ok": True, "session": session})
+
+
+@route_post("/api/device-recordings/finish")
+def _post_device_recording_finish(handler, qs):
+    if _require_user_auth(handler):
+        return
+    from task_server.services.device_recording_service import finish_recording_session
+    payload = handler._body()
+    try:
+        session = finish_recording_session(
+            payload.get("session_id") or payload.get("sessionId") or "",
+            _authenticated_user(handler),
+        )
+    except PermissionError as exc:
+        handler._json({"ok": False, "error": str(exc)}, 403)
+        return
+    except ValueError as exc:
+        handler._json({"ok": False, "error": str(exc)}, 409)
+        return
+    handler._json({"ok": True, "session": session})
+
+
+@route_post("/api/device-recordings/step")
+def _post_device_recording_step(handler, qs):
+    if _require_user_auth(handler):
+        return
+    from task_server.services.device_recording_service import update_recorded_step
+    payload = handler._body()
+    try:
+        session = update_recorded_step(
+            payload.get("session_id") or payload.get("sessionId") or "",
+            _authenticated_user(handler),
+            payload.get("step_id") or payload.get("stepId") or "",
+            payload.get("semantic_description") or payload.get("semanticDescription") or "",
+        )
+    except PermissionError as exc:
+        handler._json({"ok": False, "error": str(exc)}, 403)
+        return
+    except ValueError as exc:
+        handler._json({"ok": False, "error": str(exc)}, 400)
+        return
+    handler._json({"ok": True, "session": session})
+
+
+@route_post("/api/device-recordings/generate")
+def _post_device_recording_generate(handler, qs):
+    if _require_user_auth(handler):
+        return
+    from task_server.services.device_recording_service import get_recording_session
+    from task_server.services.device_recording_yaml_service import generate_recording_yaml
+    payload = handler._body()
+    try:
+        session = get_recording_session(payload.get("session_id") or payload.get("sessionId") or "")
+        if session.get("created_by") != _authenticated_user(handler):
+            raise PermissionError("只有录制发起人可以生成该会话的 YAML")
+        result = generate_recording_yaml(session, task_name=payload.get("task_name") or payload.get("taskName") or "录制生成用例")
+    except PermissionError as exc:
+        handler._json({"ok": False, "error": str(exc)}, 403)
+        return
+    except ValueError as exc:
+        handler._json({"ok": False, "error": str(exc)}, 400)
+        return
+    handler._json({"ok": True, "result": result})
 
 
 # ── 生成批次冒烟重跑 ───────────────────────────────────────────────

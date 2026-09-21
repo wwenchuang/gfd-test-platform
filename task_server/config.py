@@ -11,6 +11,7 @@ value, and configuration function has been extracted into this single module.
 import os
 import re
 import threading
+import urllib.parse
 
 # ---------------------------------------------------------------------------
 # Environment file loading
@@ -201,6 +202,11 @@ TASK_ALLOWED_ORIGINS = [
     for item in os.getenv("TASK_ALLOWED_ORIGINS", "http://101.34.197.12:8088,http://localhost:8088,http://127.0.0.1:8088").split(",")
     if item.strip()
 ]
+_configured_sonic_origin = urllib.parse.urlsplit(os.getenv("SONIC_BASE_URL", "").strip())
+if _configured_sonic_origin.scheme in ("http", "https") and _configured_sonic_origin.netloc:
+    _sonic_origin = f"{_configured_sonic_origin.scheme}://{_configured_sonic_origin.netloc}"
+    if _sonic_origin not in TASK_ALLOWED_ORIGINS:
+        TASK_ALLOWED_ORIGINS.append(_sonic_origin)
 MAX_BODY_SIZE = env_int("TASK_MAX_BODY_SIZE", 64 * 1024 * 1024)
 MAX_UPLOAD_BODY_SIZE = env_int("TASK_MAX_UPLOAD_BODY_SIZE", 300 * 1024 * 1024)
 MAX_CONCURRENT_REQUESTS = max(8, env_int("TASK_MAX_CONCURRENT_REQUESTS", 64))
@@ -291,6 +297,9 @@ REPAIR_DRAFTS_FILE = os.path.join(LEARNING_DIR, "repair-drafts.json")
 RUNNERS_FILE = os.path.join(LEARNING_DIR, "runners.json")
 TASK_APPS_FILE = os.path.join(LEARNING_DIR, "task-apps.json")
 TASK_META_FILE = os.path.join(LEARNING_DIR, "task-meta.json")
+DEVICE_RECORDINGS_FILE = os.path.join(LEARNING_DIR, "device-recordings.json")
+DEVICE_RECORDING_EVIDENCE_DIR = os.path.join(LEARNING_DIR, "device-recording-evidence")
+DEVICE_RECORDING_STALE_SECONDS = max(30, env_int("MIDSCENE_DEVICE_RECORDING_STALE_SECONDS", 90))
 BASELINE_REFS_FILE = os.path.join(LEARNING_DIR, "baseline-page-refs.json")
 SONIC_SYNC_FILE = os.path.join(LEARNING_DIR, "sonic-sync.json")
 SONIC_NOTIFY_LOG_FILE = os.path.join(LEARNING_DIR, "sonic-notify.log")

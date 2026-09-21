@@ -3991,6 +3991,42 @@
   @media (max-width: 720px) {
     .task-app-module-create { grid-template-columns: minmax(0, 1fr); }
   }
+  .device-recorder-page { padding: 20px; }
+  .device-recorder-grid {
+    display: grid;
+    grid-template-columns: minmax(280px, .75fr) minmax(420px, 1.25fr);
+    gap: 16px;
+  }
+  .device-recorder-page select { width: 100%; min-height: 40px; }
+  .device-recorder-device {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    padding: 14px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--bg);
+  }
+  .device-recorder-device.online { border-color: rgba(52, 211, 153, .55); }
+  .device-recorder-device.offline { border-color: rgba(248, 113, 113, .45); }
+  .device-recorder-device span { color: var(--text2); font-size: 12px; }
+  .device-recorder-timeline { display: grid; gap: 8px; max-height: 430px; overflow: auto; }
+.device-recorder-timeline article {
+    display: grid;
+    grid-template-columns: 30px minmax(0, 1fr) auto;
+    gap: 10px;
+    align-items: center;
+    padding: 10px;
+    border: 1px solid var(--border);
+    border-radius: 9px;
+  }
+  .device-recorder-timeline article > span { color: var(--accent); font-family: var(--mono); }
+  .device-recorder-timeline article div { display: grid; gap: 3px; min-width: 0; }
+  .device-recorder-timeline article small,
+  .device-recorder-timeline article em { color: var(--text2); font-size: 11px; font-style: normal; }
+  @media (max-width: 900px) {
+    .device-recorder-grid { grid-template-columns: minmax(0, 1fr); }
+  }
   .task-app-business-head {
     display: flex;
     align-items: center;
@@ -6384,6 +6420,10 @@
   background: linear-gradient(135deg, rgba(16,22,34,.3), rgba(8,11,18,.5));
   border: 1px dashed var(--border); border-radius: 10px; margin: 20px 0;
 }
+.device-recorder-timeline article.needs-confirmation { border-color: #f59e0b; background: rgba(245, 158, 11, .08); }
+.device-recorder-semantic { display: flex; gap: 8px; margin-top: 8px; }
+.device-recorder-semantic input { min-width: 0; flex: 1; }
+.device-recorder-save { display: grid; gap: 8px; margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--border); }
 .empty-state-icon { font-size: 52px; margin-bottom: 12px; opacity: .8; }
 .empty-state-title { font-size: 18px; font-weight: 700; color: var(--text); margin: 0 0 8px; }
 .empty-state-desc { font-size: 14px; color: var(--text2); max-width: 400px; margin: 0 0 18px; line-height: 1.6; }

@@ -169,6 +169,14 @@ const WORKFLOW_SECTIONS = {
     ],
     checklist: ['需求文档和临时截图从“新建自动化测试”上传', '长期复用页面沉淀到页面知识库', '生成后先看分析和脑图，再进入调试']
   },
+  device_recorder: {
+    index: '1',
+    title: '操作录制',
+    subtitle: '在 Sonic 原生远控中操作手机并生成 Midscene YAML',
+    help: '平台只记录 Sonic 已执行的操作和关键证据，不转发画面、不重复执行点击。结束后先确认语义，再生成 YAML。',
+    cards: [],
+    checklist: ['固定使用测试设备 9888E0094F2A', '在 Sonic 原生页面操作以保持流畅度', '有歧义的坐标步骤必须确认后才能调试']
+  },
   agent: {
     index: '2',
     title: 'AI Agent',

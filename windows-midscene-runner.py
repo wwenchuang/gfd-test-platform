@@ -21,7 +21,9 @@ RUNNER_ID = os.getenv("RUNNER_ID", "win-runner-01")
 TOKEN = os.getenv("MIDSCENE_RUNNER_TOKEN", "").strip()
 WORKSPACE = Path(os.getenv("MIDSCENE_RUNNER_WORKSPACE", r"D:\sonic\midscene_run"))
 CALLBACK_OUTBOX_DIR = WORKSPACE / "callback_outbox"
-RUNNER_VERSION = os.getenv("MIDSCENE_RUNNER_VERSION", "2026.09.21-qwen3.7-result-retry-v1-live-device-snapshot-v1")
+RUNNER_VERSION = os.getenv("MIDSCENE_RUNNER_VERSION", "2026.09.21-qwen3.7-result-retry-v1-recording-evidence-v1")
+FIXED_RECORDING_DEVICE_ID = "9888E0094F2A"
+COMPLETED_RECORDING_EVIDENCE = set()
 RUNNER_STARTED_AT = time.strftime("%Y-%m-%d %H:%M:%S")
 POLL_INTERVAL = int(os.getenv("POLL_INTERVAL", "3"))
 MIDSCENE_BIN = os.getenv("MIDSCENE_BIN", "midscene")
@@ -654,6 +656,48 @@ def capture_device_snapshot(adb_bin, device_id):
         "foreground_package": foreground,
         "content_base64": base64.b64encode(capture_screen_png(adb_bin, device_id)).decode("ascii"),
     }
+
+
+def capture_ui_xml(adb_bin, device_id, run=subprocess.run, max_bytes=2 * 1024 * 1024):
+    remote = "/sdcard/midscene-recording-window.xml"
+    dumped = run([adb_bin, "-s", device_id, "shell", "uiautomator", "dump", remote], capture_output=True, timeout=15)
+    if getattr(dumped, "returncode", 0) != 0:
+        raise RuntimeError("ADB 页面结构采集失败")
+    pulled = run([adb_bin, "-s", device_id, "exec-out", "cat", remote], capture_output=True, timeout=10)
+    content = pulled.stdout or b""
+    if getattr(pulled, "returncode", 0) != 0 or b"<hierarchy" not in content:
+        raise RuntimeError("ADB 未返回有效页面结构")
+    if len(content) > max_bytes:
+        raise RuntimeError("页面结构超过 2MB 限制")
+    return content.decode("utf-8", errors="replace")
+
+
+def upload_recording_evidence_requests(response, devices):
+    requests = response.get("recording_evidence_requests") if isinstance(response, dict) else []
+    if not isinstance(requests, list) or not requests:
+        return
+    available = {str(item.get("device_id")): item for item in devices or []}
+    adb_bin, _ = resolve_adb_with_devices(require_devices=False)
+    for request in requests:
+        request_id = str(request.get("request_id") or "")
+        if not request_id or request_id in COMPLETED_RECORDING_EVIDENCE:
+            continue
+        device_id = str(request.get("device_id") or "")
+        payload = {
+            "runner_id": RUNNER_ID, "device_id": device_id, "request_id": request_id,
+            "session_id": str(request.get("session_id") or ""), "step_id": str(request.get("step_id") or ""),
+        }
+        try:
+            if device_id != FIXED_RECORDING_DEVICE_ID:
+                raise RuntimeError(f"录制证据只允许固定设备 {FIXED_RECORDING_DEVICE_ID}")
+            if device_id not in available:
+                raise RuntimeError("录制设备已离线，无法采集证据")
+            payload["content_base64"] = base64.b64encode(capture_screen_png(adb_bin, device_id)).decode("ascii")
+            payload["ui_xml"] = capture_ui_xml(adb_bin, device_id)
+        except Exception as exc:
+            payload["error"] = str(exc)[:500]
+        http_json("POST", "/api/runner/recording-evidence", payload, timeout=35)
+        COMPLETED_RECORDING_EVIDENCE.add(request_id)
 
 
 def upload_snapshot_requests(response, devices):
@@ -1733,6 +1777,7 @@ def main():
             try:
                 heartbeat_response = heartbeat(devices)
                 upload_snapshot_requests(heartbeat_response, devices)
+                upload_recording_evidence_requests(heartbeat_response, devices)
                 log_runner_recovered("Heartbeat", error_state)
                 replay_pending_result_callbacks()
             except Exception as e:

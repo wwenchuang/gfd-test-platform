@@ -89,7 +89,7 @@ const WORKFLOW_PERMISSIONS = {
   identity: 'auth.manage', config: 'platform.configure', app_config: 'platform.configure',
   sonic_config: 'platform.configure', system_config: 'platform.configure', feishu_config: 'platform.notify',
   dashboard: 'ui.execute', agent: 'ui.execute', agent_confirm: 'ui.execute', agent_history: 'ui.view',
-  assets: 'ui.view', generate: 'ui.edit', yaml_edit: 'ui.edit', execute: 'ui.execute',
+  assets: 'ui.view', generate: 'ui.edit', device_recorder: 'ui.edit', yaml_edit: 'ui.edit', execute: 'ui.execute',
   baseline: 'ui.baseline', repair: 'ui.edit', failure_analysis: 'ui.view',
   reports: 'ui.view', bug_drafts: 'ui.view', knowledge: 'ui.view'
 };

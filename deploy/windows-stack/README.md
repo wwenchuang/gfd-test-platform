@@ -8,6 +8,8 @@
 
 - Sonic：`D:\sonic\sonic-agent-v2.7.2-windows_x86_64\sonic-agent-windows-x86_64.jar`
 - Runner：`D:\sonic\midscene_run\windows-midscene-runner.py`
+
+录制功能要求 Windows Runner 使用仓库内带 `recording-evidence-v1` 版本标识的脚本。它只在收到平台心跳中的录制证据请求后，对固定设备 `9888E0094F2A` 采集一张截图和一次页面结构；不会重放 Sonic 已执行的点击、滑动或输入。替换脚本后需重启 `MidsceneWindowsRunner` 服务，并在平台“执行环境”确认版本号已更新。
 - FRP：`C:\frp\frpc.exe` 和 `C:\frp\frpc.toml`
 
 需要选择时依次确认：
