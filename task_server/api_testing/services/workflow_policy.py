@@ -1,6 +1,7 @@
 """Deterministic lifecycle policies for generated API case workflows."""
 
 from typing import Mapping
+import re
 
 
 PRINT_TASK_VARIABLE_NAMES = frozenset(
@@ -277,7 +278,13 @@ def print_task_extraction_targets(extractions):
 def is_print_cancel_step(step, task_targets):
     if not _value(step, "enabled", True):
         return False
+    condition = _value(step, "only_if_variable", None)
+    required = set(_value(step, "required_variables", []) or [])
+    if condition and condition not in (set(task_targets) & required):
+        return False
     request = _value(step, "request", {})
+    if condition and not _request_uses_variable(request, condition):
+        return False
     path = str(_value(request, "path", "") or "").lower()
     name = str(_value(step, "name", "") or "").lower()
     has_cancel_semantics = any(
@@ -289,3 +296,13 @@ def is_print_cancel_step(step, task_targets):
     )
     required = set(_value(step, "required_variables", []) or [])
     return has_cancel_semantics and bool(required & set(task_targets))
+
+
+def _request_uses_variable(value, name):
+    if isinstance(value, str):
+        return bool(re.search(r"\{\{\s*" + re.escape(name) + r"\s*\}\}", value))
+    if isinstance(value, Mapping):
+        return any(_request_uses_variable(item, name) for item in value.values())
+    if isinstance(value, (list, tuple)):
+        return any(_request_uses_variable(item, name) for item in value)
+    return False

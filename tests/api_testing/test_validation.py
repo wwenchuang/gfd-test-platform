@@ -249,3 +249,15 @@ def test_print_dispatch_with_dynamic_task_id_and_cancel_step_is_baseline_ready()
         "print_cleanup_required",
         "undefined_variable",
     } & {item.code for item in result.errors}
+
+
+@pytest.mark.parametrize('source', ['unknown', 'environment', 'extracted'])
+def test_condition_variable_requires_current_workflow_source(source):
+    endpoint = _endpoint()
+    query = _step('查询任务', _request('/query'), extractions=[_extraction('task', '$.data')] if source == 'extracted' else [])
+    cancel = _step('有任务才取消', _request('/cancel'))
+    cancel['only_if_variable'] = 'task'
+    case = _case(endpoint, processing={'setup_steps': [query, cancel]})
+    result = validate_case(case, endpoint, {'variables': {'task': 'stale'} if source == 'environment' else {}})
+    condition_errors = [error for error in result.errors if error.field.endswith('only_if_variable')]
+    assert bool(condition_errors) == (source != 'extracted')

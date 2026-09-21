@@ -42,3 +42,12 @@ describe('WorkflowStepPreviewPanel', () => {
     expect(wrapper.get('[data-testid="workflow-preview-apply"]').attributes('disabled')).toBeDefined()
   })
 })
+
+it('shows a conditional skip as no request instead of failure', () => {
+  const wrapper = mount(WorkflowStepPreviewPanel, { props: {
+    preview: { ...PREVIEW, status: 'SKIPPED', fields: [], error_message: '执行条件未满足：本轮变量无值，未发送请求' },
+    extractions: [], stepName: '取消切片',
+  } })
+  expect(wrapper.text()).toContain('条件未满足，已跳过')
+  expect(wrapper.text()).not.toContain('试运行未通过')
+})

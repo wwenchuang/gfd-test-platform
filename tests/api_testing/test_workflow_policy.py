@@ -147,3 +147,19 @@ def test_classifies_device_settings_as_restore_required():
     assert result["requires_setup"] is True
     assert result["requires_cleanup"] is True
     assert "恢复" in result["reason"]
+
+
+def test_cancel_condition_must_refer_to_created_print_task():
+    from task_server.api_testing.services.workflow_policy import is_print_cancel_step
+    step = {'name': '取消本轮打印', 'request': {'path': '/printJob/cancel', 'body': {'printSn': '{{printSn}}'}}, 'required_variables': ['printSn'], 'only_if_variable': 'unrelated'}
+    assert not is_print_cancel_step(step, {'printSn'})
+    step['only_if_variable'] = 'printSn'
+    assert is_print_cancel_step(step, {'printSn'})
+
+
+def test_cancel_condition_cannot_use_another_extracted_task_field():
+    from task_server.api_testing.services.workflow_policy import is_print_cancel_step
+    step = {'name': '取消本轮打印', 'request': {'path': '/printJob/cancel', 'body': {'printSn': '{{printSn}}'}}, 'required_variables': ['printSn'], 'only_if_variable': 'taskId'}
+    assert not is_print_cancel_step(step, {'printSn', 'taskId'})
+    step['required_variables'].append('taskId')
+    assert not is_print_cancel_step(step, {'printSn', 'taskId'})

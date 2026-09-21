@@ -54,6 +54,7 @@ const extractionCount = computed(() => props.step.extractions.length)
           <i>断言 {{ assertionCount }}</i>
           <i>提取 {{ extractionCount }}</i>
           <i v-if="step.polling">轮询</i>
+          <i v-if="step.only_if_variable">仅当 {{ step.only_if_variable }} 有值</i>
           <i v-if="issueCount" class="workflow-step-issues">错误 {{ issueCount }}</i>
         </span>
       </button>

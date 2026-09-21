@@ -43,7 +43,7 @@ class WorkflowStepPreviewService:
         )
         selectable = (
             flatten_response_fields(result.get("response") or {})
-            if result.get("target_reached")
+            if result.get("target_reached") and result.get("status") != "SKIPPED"
             else {"fields": [], "truncated": False}
         )
         return {**result, **selectable}

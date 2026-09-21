@@ -381,3 +381,18 @@ def test_case_contract_rejects_polling_for_mutating_steps():
                 }
             )
         )
+
+
+def test_inline_step_condition_round_trips():
+    step = _step('有任务才取消', '/cancel')
+    step['only_if_variable'] = 'sliceTask'
+    parsed = parse_case_payload(_payload({'setup_steps': [step]}))
+    assert parsed['processing']['setup_steps'][0]['only_if_variable'] == 'sliceTask'
+
+
+@pytest.mark.parametrize('value', ['', 'bad name', '{{task}}', True, {}, None])
+def test_inline_step_rejects_invalid_condition_variable(value):
+    step = _step('有任务才取消', '/cancel')
+    step['only_if_variable'] = value
+    with pytest.raises(CasePayloadError, match='only_if_variable'):
+        parse_case_payload(_payload({'setup_steps': [step]}))

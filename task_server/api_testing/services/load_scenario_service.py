@@ -63,6 +63,16 @@ class LoadScenarioService:
     @classmethod
     def copy_from_case_versions(cls, *, name, description, cases):
         snapshots = [cls._case_snapshot(item) for item in cases]
+        for case in snapshots:
+            processing = case.get("processing") or {}
+            for stage in ("setup_steps", "cleanup_steps"):
+                for step in processing.get(stage) or []:
+                    if step.get("only_if_variable"):
+                        return LoadScenarioAdmission(False, None, (LoadScenarioIssue(
+                            "error", "conditional_workflow_unsupported", "",
+                            "当前压测不支持功能用例的条件步骤，不能丢弃条件后执行",
+                            "保留为功能回归，或独立设计经过验证的压测场景。",
+                        ),))
         steps = []
         for case_index, case in enumerate(snapshots):
             processing = case.get("processing") if isinstance(case.get("processing"), Mapping) else {}

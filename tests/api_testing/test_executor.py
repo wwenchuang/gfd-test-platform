@@ -495,8 +495,9 @@ def _json_extraction(target, path):
     }
 
 
+@pytest.mark.parametrize("conditional", [False, True])
 def test_inline_setup_feeds_print_request_and_print_result_feeds_cancel_cleanup(
-    target_server,
+    target_server, conditional,
 ):
     _, handler = target_server
     handler.workflow_calls = []
@@ -532,6 +533,9 @@ def test_inline_setup_feeds_print_request_and_print_result_feeds_cancel_cleanup(
             ],
         ),
     )
+
+    if conditional:
+        case.processing["cleanup_steps"][0]["only_if_variable"] = "printTaskSn"
 
     result = _executor(target_server, case).execute_case(
         "case-version-1", "environment-revision-1", {}
@@ -1601,3 +1605,42 @@ def test_secrets_are_redacted_from_result_trace_errors_and_repr(target_server):
     assert secret not in repr(result)
     assert "Bearer ***" not in rendered
     assert "***" in rendered
+
+
+@pytest.mark.parametrize('stage', ['setup_steps', 'cleanup_steps'])
+@pytest.mark.parametrize('value', [None, '', [], {}])
+def test_empty_condition_skips_request_without_failing_case(target_server, stage, value):
+    step = _workflow_step('有任务才取消', 'GET', '/workflow/setup-fail', required_variables=['missing'])
+    step['only_if_variable'] = 'task'
+    case = _case(processing=_workflow_processing(**{stage: [step]}))
+    target_server[1].workflow_calls = []
+    result = _executor(target_server, case).execute_case('v', 'env', {'task': value})
+    assert result.status == 'PASSED'
+    assert [call[1] for call in target_server[1].workflow_calls] == ['/ok']
+    assert any(event.get('failure_category') == 'condition_not_met' for event in result.trace)
+
+
+@pytest.mark.parametrize('value', ['task-1', 0, False])
+def test_nonempty_condition_preserves_failure_and_blocks_main(target_server, value):
+    step = _workflow_step('有任务才取消', 'GET', '/workflow/setup-fail', assertions=[_code_assertion()])
+    step['only_if_variable'] = 'task'
+    case = _case(processing=_workflow_processing(setup_steps=[step]))
+    target_server[1].workflow_calls = []
+    result = _executor(target_server, case).execute_case('v', 'env', {'task': value})
+    assert result.status == 'FAILED'
+    assert [call[1] for call in target_server[1].workflow_calls] == ['/workflow/setup-fail']
+
+
+def test_preview_conditional_target_skipped_and_later_target_runs(target_server):
+    step = _workflow_step('有任务才取消', 'GET', '/workflow/setup-fail')
+    step['only_if_variable'] = 'task'
+    executor = _executor(target_server, _case())
+    target_server[1].workflow_calls = []
+    result = executor.preview_setup_steps('env', [step], 0)
+    assert result['status'] == 'SKIPPED'
+    assert result['target_reached'] is True
+    assert target_server[1].workflow_calls == []
+    result = executor.preview_setup_steps('env', [step, _workflow_step('验证恢复', 'GET', '/ok')], 1)
+    assert result['status'] == 'PASSED'
+    assert result['target_reached'] is True
+    assert [call[1] for call in target_server[1].workflow_calls] == ['/ok']

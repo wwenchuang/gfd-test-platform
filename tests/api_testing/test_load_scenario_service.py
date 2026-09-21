@@ -310,3 +310,12 @@ def test_all_load_options_have_chinese_name_usage_and_risk_help():
             assert any("\u4e00" <= character <= "\u9fff" for character in item["name"])
             assert item["description"]
             assert item["risk_tip"]
+
+
+@pytest.mark.parametrize('enabled', [True, False])
+def test_copy_rejects_conditional_steps_instead_of_losing_guard(enabled):
+    case = {'id': 'case-v1', 'name': '查询', 'request': _request(), 'assertions': [], 'extractions': [],
+            'processing': {'setup_steps': [{'name': '条件查询', 'request': _request(), 'only_if_variable': 'task', 'enabled': enabled}]}}
+    result = LoadScenarioService.copy_from_case_versions(name='条件场景', description='', cases=[case])
+    assert not result.accepted
+    assert result.issues[0].code == 'conditional_workflow_unsupported'

@@ -184,3 +184,17 @@ describe('InlineWorkflowStepEditor', () => {
     expect(JSON.stringify(emitted)).not.toContain('replacement-token')
   })
 })
+
+it('edits and clears the current-run variable condition without changing the request', async () => {
+  const wrapper = mount(InlineWorkflowStepEditor, { props: { modelValue: [STEP], stage: 'setup' } })
+  const input = wrapper.get('[data-testid="setup-condition-0"]')
+  await input.setValue('sliceTask')
+  const steps = wrapper.emitted('update:modelValue')?.at(-1)?.[0] as InlineWorkflowStep[]
+  expect(steps[0]).toMatchObject({ only_if_variable: 'sliceTask', request: STEP.request })
+  await wrapper.setProps({ modelValue: steps })
+  expect(wrapper.text()).toContain('仅当 sliceTask 有值')
+  await wrapper.get('[data-testid="setup-condition-0"]').setValue('')
+  const cleared = wrapper.emitted('update:modelValue')?.at(-1)?.[0] as InlineWorkflowStep[]
+  expect(cleared[0].only_if_variable).toBeUndefined()
+  expect(wrapper.text()).toContain('不替代设备身份和恢复状态校验')
+})

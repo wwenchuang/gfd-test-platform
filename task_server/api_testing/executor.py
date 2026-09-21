@@ -355,6 +355,8 @@ class HttpExecutor:
             for index, step in enumerate(setup_steps):
                 if not step.get("enabled", True):
                     continue
+                if self._skip_conditional_step(callback, trace, "setup", index, step, variables):
+                    continue
                 missing = self._missing_step_variables(step, variables)
                 if missing:
                     self._emit_skipped_step(
@@ -421,6 +423,8 @@ class HttpExecutor:
             cleanup_problem = None
             for index, step in enumerate(cleanup_steps):
                 if not step.get("enabled", True):
+                    continue
+                if self._skip_conditional_step(callback, trace, "cleanup", index, step, variables):
                     continue
                 missing = self._missing_step_variables(step, variables)
                 if missing:
@@ -526,6 +530,11 @@ class HttpExecutor:
 
         for index, step in enumerate(steps[: target_index + 1]):
             if not step.get("enabled", True):
+                continue
+            skipped = self._skip_conditional_step(None, trace, "setup", index, step, variables)
+            if skipped:
+                executed_index = index
+                target_outcome = skipped
                 continue
             missing = self._missing_step_variables(step, variables)
             if missing:
@@ -970,6 +979,21 @@ class HttpExecutor:
             for name in step.get("required_variables", [])
             if name not in variables
         )
+
+    @classmethod
+    def _skip_conditional_step(cls, callback, trace, stage, index, step, variables):
+        name = step.get("only_if_variable")
+        if not name:
+            return None
+        value = variables.get(name)
+        if value is not None and value != "" and value != [] and value != {}:
+            return None
+        outcome = _HttpStepOutcome(
+            "SKIPPED", "condition_not_met", {}, {}, (), {},
+            "执行条件未满足：本轮变量无值，未发送请求", (),
+        )
+        cls._emit_workflow_step(callback, trace, stage, index, step, outcome)
+        return outcome
 
     @classmethod
     def _emit_workflow_step(

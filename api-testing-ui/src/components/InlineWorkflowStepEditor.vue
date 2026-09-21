@@ -41,7 +41,7 @@ const previewOverrides = ref<Record<string, unknown>>({})
 const stageLabel = computed(() => props.stage === 'setup' ? '前置步骤' : '清理步骤')
 const stageHint = computed(() => props.stage === 'setup'
   ? '按顺序获取主体请求需要的真实业务数据。'
-  : '主体结束后始终执行，只回收本次运行产生或修改的数据。')
+  : '主体结束后依次检查条件并清理，只回收本次运行产生或修改的数据。')
 
 function clone<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T
@@ -385,6 +385,11 @@ watch(() => props.validationErrors, errors => {
             </div>
           </div>
           <div class="workflow-required-variables"><span>必需变量</span><VariablePicker :model-value="step.required_variables" :options="availableVariables(index)" :test-id-prefix="`${stage}-${index}`" @update:model-value="patchStep(index, { required_variables: $event })" /></div>
+          <label class="workflow-condition">执行条件（可选）
+            <input :data-testid="`${stage}-condition-${index}`" :value="step.only_if_variable || ''" placeholder="本轮变量名；留空则每次执行" @input="patchStep(index, { only_if_variable: ($event.target as HTMLInputElement).value.trim() || undefined })" />
+            <small>仅当本轮变量有值才执行；未产生任务或查询为空时跳过并记录原因。不替代设备身份和恢复状态校验。</small>
+            <p v-if="validationErrors?.[`${stepPrefix(index)}.only_if_variable`]" class="inline-error">{{ validationErrors[`${stepPrefix(index)}.only_if_variable`] }}</p>
+          </label>
         </div>
         <div v-if="stage === 'setup'" class="workflow-step-preview-actions">
           <div>
@@ -426,3 +431,9 @@ watch(() => props.validationErrors, errors => {
     </WorkflowStepCard>
   </section>
 </template>
+
+<style scoped>
+.workflow-condition { grid-column: 1 / -1; }
+.workflow-condition input { max-width: 420px; }
+.workflow-condition small { font-weight: normal; }
+</style>

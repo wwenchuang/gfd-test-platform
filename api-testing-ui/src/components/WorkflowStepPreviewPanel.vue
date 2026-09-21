@@ -122,11 +122,11 @@ function apply(): void {
     <header>
       <div>
         <strong>{{ stepName }} · 响应取值</strong>
-        <span :class="['status-text', preview.status.toLowerCase()]">{{ preview.status === 'PASSED' ? '试运行通过' : '试运行未通过' }}</span>
+        <span :class="['status-text', preview.status.toLowerCase()]">{{ preview.status === 'SKIPPED' ? '条件未满足，已跳过' : preview.status === 'PASSED' ? '试运行通过' : '试运行未通过' }}</span>
       </div>
       <button class="mini-icon" type="button" title="关闭响应选择" @click="emit('close')"><X :size="15" /></button>
     </header>
-    <p v-if="preview.error_message" class="inline-error">{{ preview.error_message }}</p>
+    <p v-if="preview.error_message" :class="preview.status === 'SKIPPED' ? 'field-hint' : 'inline-error'">{{ preview.error_message }}</p>
     <p v-if="preview.missing_variables.length" class="field-error">缺少变量：{{ preview.missing_variables.join('、') }}</p>
     <div class="workflow-preview-summary">
       <span>已执行 {{ preview.trace.length }} 个步骤</span>

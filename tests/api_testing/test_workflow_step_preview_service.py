@@ -154,3 +154,18 @@ def test_preview_service_does_not_offer_fields_from_a_failed_prefix_step():
     )
 
     assert preview["fields"] == []
+
+
+def test_preview_rejects_undeclared_condition_before_http():
+    step = _step()
+    step['only_if_variable'] = 'typo'
+    with pytest.raises(CasePayloadError, match='only_if_variable'):
+        case_contract.parse_workflow_step_preview_payload({'setup_steps': [step], 'target_index': 0})
+
+
+def test_skipped_preview_has_no_selectable_response_fields():
+    class Executor:
+        def preview_setup_steps(self, *args, **kwargs):
+            return {'status': 'SKIPPED', 'target_reached': True, 'response': {}}
+    result = WorkflowStepPreviewService(None, executor=Executor()).preview({'setup_steps': [_step()], 'target_index': 0})
+    assert result['fields'] == []

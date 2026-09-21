@@ -174,7 +174,11 @@ def _validate_response_rules(assertions, extractions, field, errors):
             )
 
 
-def _validate_inline_step(step, field, available, errors):
+def _validate_inline_step(step, field, available, errors, condition_available):
+    condition = step.get("only_if_variable")
+    if condition and condition not in condition_available:
+        _issue(errors, "undefined_condition_variable", f"{field}.only_if_variable",
+               "执行条件必须引用本轮已声明的前置、数据行、依赖或响应提取变量")
     request = step.get("request", {})
     if _unsafe_absolute_path(request.get("path")):
         _issue(
@@ -371,11 +375,13 @@ def validate_case(
         _validate_value(body, body_schema, operation, "request.body", errors)
 
     available = _available_environment_variables(environment_metadata)
+    condition_available = set()
     dependency_metadata = dependency_metadata or {}
     for dependency in case_version.dependencies:
         identifier = dependency.get("case_version_id", "")
         metadata = dependency_metadata.get(identifier, {})
         if metadata.get("status") == "trusted":
+            condition_available.update(set(dependency.get("exports", [])) & set(metadata.get("exports", [])))
             available.update(
                 set(dependency.get("exports", []))
                 & set(metadata.get("exports", []))
@@ -383,18 +389,19 @@ def validate_case(
     for action in case_version.processing.get("pre", []):
         if action.get("action") == "set_variable" and isinstance(action.get("name"), str):
             available.add(action["name"])
+            condition_available.add(action["name"])
+    enabled_rows = [row for row in case_version.data_rows if row.enabled]
+    if enabled_rows:
+        condition_available.update(set.intersection(*(set(row.values) for row in enabled_rows)))
     setup_steps = case_version.processing.get("setup_steps", [])
     for index, step in enumerate(setup_steps):
         if not step.get("enabled", True):
             continue
-        available.update(
-            _validate_inline_step(
-                step,
-                f"processing.setup_steps[{index}]",
-                available,
-                errors,
-            )
+        exported = _validate_inline_step(
+            step, f"processing.setup_steps[{index}]", available, errors, condition_available,
         )
+        available.update(exported)
+        condition_available.update(exported)
 
     request_variables = _variables_in(request)
     enabled_rows = [row for row in case_version.data_rows if row.enabled]
@@ -421,17 +428,15 @@ def validate_case(
         )
     )
     cleanup_steps = case_version.processing.get("cleanup_steps", [])
+    condition_available.update(_item_value(item, "target") for item in case_version.extractions)
     for index, step in enumerate(cleanup_steps):
         if not step.get("enabled", True):
             continue
-        cleanup_available.update(
-            _validate_inline_step(
-                step,
-                f"processing.cleanup_steps[{index}]",
-                cleanup_available,
-                errors,
-            )
+        exported = _validate_inline_step(
+            step, f"processing.cleanup_steps[{index}]", cleanup_available, errors, condition_available,
         )
+        cleanup_available.update(exported)
+        condition_available.update(exported)
 
     if is_print_dispatch_endpoint(endpoint):
         task_targets = print_task_extraction_targets(case_version.extractions)

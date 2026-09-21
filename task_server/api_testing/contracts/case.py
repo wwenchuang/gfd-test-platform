@@ -439,6 +439,7 @@ def _parse_inline_steps(value, field):
         "extractions",
         "required_variables",
         "polling",
+        "only_if_variable",
     }
     for index, item in enumerate(value):
         item = _require_mapping(item, f"{field}[{index}]")
@@ -489,6 +490,11 @@ def _parse_inline_steps(value, field):
             parsed_step["polling"] = _parse_step_polling(
                 item["polling"], f"{field}[{index}].polling", request["method"]
             )
+        if "only_if_variable" in item:
+            condition = _text(item["only_if_variable"], f"{field}[{index}].only_if_variable", maximum=200)
+            if not VARIABLE_NAME_PATTERN.fullmatch(condition):
+                raise CasePayloadError(f"{field}[{index}].only_if_variable must be a valid variable name")
+            parsed_step["only_if_variable"] = condition
         steps.append(parsed_step)
     return steps
 
@@ -547,6 +553,14 @@ def parse_workflow_step_preview_payload(payload):
     initial_variables = _named_mapping(
         payload.get("initial_variables", {}), "initial_variables"
     )
+    available = set(initial_variables)
+    available.update(action["name"] for action in processing_pre if action.get("action") == "set_variable")
+    for index, step in enumerate(steps[: target_index + 1]):
+        if not step["enabled"]:
+            continue
+        if step.get("only_if_variable") and step["only_if_variable"] not in available:
+            raise CasePayloadError(f"setup_steps[{index}].only_if_variable must refer to a declared current-run variable")
+        available.update(item["target"] for item in step["extractions"])
     extraction_overrides = _named_mapping(
         payload.get("extraction_overrides", {}), "extraction_overrides"
     )
