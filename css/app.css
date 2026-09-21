@@ -473,7 +473,7 @@
     width: 100%;
     min-height: 52px;
     display: grid;
-    grid-template-columns: 40px 1fr;
+    grid-template-columns: 40px minmax(0, 1fr) auto;
     gap: 12px;
     align-items: center;
     padding: 8px 10px;
@@ -520,6 +520,37 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+  .workflow-badge {
+    min-width: 24px;
+    height: 22px;
+    padding: 0 7px;
+    border: 1px solid rgba(103, 232, 249, .34);
+    border-radius: 999px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    justify-self: end;
+    background: rgba(34, 211, 238, .08);
+    color: var(--text2);
+    font: 700 11px/1 var(--mono);
+    letter-spacing: 0;
+    white-space: nowrap;
+  }
+  .workflow-badge.attention {
+    border-color: rgba(251, 191, 36, .42);
+    background: rgba(251, 191, 36, .1);
+    color: #fcd34d;
+  }
+  .workflow-step.active .workflow-badge {
+    border-color: rgba(103, 232, 249, .56);
+    background: rgba(34, 211, 238, .14);
+    color: var(--text);
+  }
+  .workflow-step.active .workflow-badge.attention {
+    border-color: rgba(251, 191, 36, .58);
+    background: rgba(251, 191, 36, .14);
+    color: #fde68a;
   }
   .workflow-desc {
     display: none;
