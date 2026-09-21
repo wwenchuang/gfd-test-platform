@@ -603,6 +603,33 @@ async function loadRunnerDevices(options = {}) {
   if (!quiet && activeWorkflow === 'dashboard' && !hasOpenEditor()) showWorkflowGuide('dashboard');
 }
 
+function shouldAutoRefreshRunnerDevices(workflow, hidden) {
+  return !hidden && ['dashboard', 'agent', 'execute'].includes(workflow);
+}
+
+async function refreshVisibleRunnerDeviceStatus() {
+  if (!shouldAutoRefreshRunnerDevices(activeWorkflow, document.hidden)) return;
+  if (AppState.loading.runnerStatus) return AppState.loading.runnerStatus;
+  const request = loadRunnerDevices({force: true, quiet: true})
+    .catch(error => console.warn('设备状态自动同步失败', error))
+    .finally(() => {
+      if (AppState.loading.runnerStatus === request) delete AppState.loading.runnerStatus;
+    });
+  AppState.loading.runnerStatus = request;
+  return request;
+}
+
+function startRunnerStatusAutoRefresh() {
+  if (runnerStatusRefreshTimer) clearInterval(runnerStatusRefreshTimer);
+  runnerStatusRefreshTimer = setInterval(refreshVisibleRunnerDeviceStatus, 10000);
+}
+
+function stopRunnerStatusAutoRefresh() {
+  if (runnerStatusRefreshTimer) clearInterval(runnerStatusRefreshTimer);
+  runnerStatusRefreshTimer = null;
+  delete AppState.loading.runnerStatus;
+}
+
 async function refreshAgentRunnerDevices() {
   const button = document.getElementById('agent-refresh-devices');
   if (button) {
@@ -5889,6 +5916,10 @@ document.addEventListener('paste', async e => {
   if (activeWorkflow === 'agent' && document.getElementById('agent-source-panel')) {
     await handleAgentSourcePaste(e);
   }
+});
+
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) refreshVisibleRunnerDeviceStatus();
 });
 
 ['generate-upload-zone', 'knowledge-upload-zone'].forEach(id => {

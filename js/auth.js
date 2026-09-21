@@ -120,6 +120,7 @@ function clearAuthSession() {
   currentAccessProfile = null;
   if (typeof closeIdentityDialog === 'function') closeIdentityDialog();
   if (typeof stopJobsAutoRefresh === 'function') stopJobsAutoRefresh();
+  if (typeof stopRunnerStatusAutoRefresh === 'function') stopRunnerStatusAutoRefresh();
   const gate = document.getElementById('password-gate');
   if (gate) { gate.replaceChildren(); gate.hidden = true; }
   document.getElementById('app').style.display = 'none';
@@ -162,6 +163,7 @@ function showAuthedApp() {
   } else if (typeof renderActiveWorkflowPage === 'function') renderActiveWorkflowPage();
   else showWorkflowGuide(activeWorkflow);
   if (typeof applyLazyLoadForSection === 'function') applyLazyLoadForSection(activeWorkflow);
+  if (typeof startRunnerStatusAutoRefresh === 'function') startRunnerStatusAutoRefresh();
   applyAccessNavigation();
 }
 

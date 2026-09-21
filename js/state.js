@@ -53,6 +53,7 @@ let generateProgressTimer = null;
 let generateProgressDelayTimer = null;
 let generateAppInputTimer = null;
 let jobsRefreshTimer = null;
+let runnerStatusRefreshTimer = null;
 let mindmapCenterRefreshTimer = null;
 let mindmapCenterRecordCaseSetIds = new Set();
 let mindmapCenterTaskJobs = [];

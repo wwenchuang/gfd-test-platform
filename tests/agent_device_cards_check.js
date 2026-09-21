@@ -8,7 +8,7 @@ function fixture(t) {
   const w=dom.window;
   Object.assign(w,{runnerDevices:[{runner_id:'r1',device_id:'p1',model:'Phone A',android_version:'12',resolution:'1200x2640'},{runner_id:'r1',device_id:'p2',model:'Phone B'}],selectedAgentAppPackage:()=> 'app.test',runnerDeviceDisplayName:d=>d.model,runnerDeviceOptionLabel:d=>d.model,runnerDeviceVersionLabel:()=> 'app.test 1.2 (3)',appDisplayLabel:()=> '测试应用',escapeHtml:v=>String(v??'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('"','&quot;').replaceAll("'",'&#39;')});
   const src=fs.readFileSync('js/app.js','utf8');
-  for(const name of ['renderAgentRunnerDeviceOptions','loadAgentDeviceSnapshotImages','renderAgentRunnerDeviceCards','updateAgentRunnerDeviceHint','selectedRunnerDevice']) {
+  for(const name of ['renderAgentRunnerDeviceOptions','loadAgentDeviceSnapshotImages','renderAgentRunnerDeviceCards','updateAgentRunnerDeviceHint','selectedRunnerDevice','shouldAutoRefreshRunnerDevices']) {
     const start=src.search(new RegExp(`^(?:async )?function ${name}\\(`,'m')); assert.notEqual(start,-1,name);
     const rest=src.slice(start), next=rest.slice(1).search(/^(?:async )?function [\w$]+\(/m);
     w.eval(next<0?rest:rest.slice(0,next+1));
@@ -66,4 +66,12 @@ test('unknown phone state cannot be selected or automatically assigned',t=>{
   w.renderAgentRunnerDeviceOptions();
   assert.equal(w.document.querySelector('input[value="__AUTO_DEVICE__"]').disabled,true);
   assert.equal(w.document.querySelectorAll('.agent-phone-card input:disabled').length,2);
+});
+test('automatic status refresh only runs on visible device workflows',t=>{
+  const w=fixture(t);
+  assert.equal(w.shouldAutoRefreshRunnerDevices('dashboard',false),true);
+  assert.equal(w.shouldAutoRefreshRunnerDevices('agent',false),true);
+  assert.equal(w.shouldAutoRefreshRunnerDevices('execute',false),true);
+  assert.equal(w.shouldAutoRefreshRunnerDevices('reports',false),false);
+  assert.equal(w.shouldAutoRefreshRunnerDevices('agent',true),false);
 });
