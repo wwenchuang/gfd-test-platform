@@ -1282,6 +1282,7 @@
     display: grid;
     grid-template-columns: var(--case-nav-width) 6px auto minmax(0, 1fr);
     grid-template-rows: auto minmax(0, 1fr);
+    overscroll-behavior: contain;
   }
   .editor-wrap.case-nav-collapsed {
     grid-template-columns: auto minmax(0, 1fr);
@@ -1545,6 +1546,7 @@
     line-height: 1.7;
     resize: none;
     overflow-y: auto;
+    overscroll-behavior: contain;
     tab-size: 2;
     white-space: pre;
   }

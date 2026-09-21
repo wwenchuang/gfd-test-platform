@@ -1111,6 +1111,7 @@ function showEditor(content) {
   `;
   updateLines();
   const editor = document.getElementById('editor');
+  enableEditorPanelScrolling(document.querySelector('.editor-wrap'), editor, document.getElementById('line-nums'));
   editor.addEventListener('keydown', handleTab);
   ['keyup', 'click', 'input'].forEach(eventName => editor.addEventListener(eventName, () => {
     scheduleBaselinePreviewRefresh();
@@ -1149,6 +1150,23 @@ async function saveEditorBeforeNavigation(successMessage = '已自动保存当�
 }
 
 function escHtml(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+function enableEditorPanelScrolling(container, editor, lineNumbers) {
+  if (!container || !editor) return;
+  const syncLineNumbers = () => {
+    if (lineNumbers) lineNumbers.scrollTop = editor.scrollTop;
+  };
+  editor.addEventListener('scroll', syncLineNumbers, {passive: true});
+  container.addEventListener('wheel', event => {
+    if (!event.deltaY || editor.scrollHeight <= editor.clientHeight) return;
+    const maximum = Math.max(0, editor.scrollHeight - editor.clientHeight);
+    const next = Math.max(0, Math.min(maximum, editor.scrollTop + event.deltaY));
+    if (next === editor.scrollTop) return;
+    editor.scrollTop = next;
+    syncLineNumbers();
+    event.preventDefault();
+  }, {passive: false});
+}
 
 function updateLines() {
   const ta = document.getElementById('editor');
