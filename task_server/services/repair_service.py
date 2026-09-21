@@ -1319,7 +1319,7 @@ def call_dashscope_repair_yaml_task(module, file, task_name, yaml_text, task_blo
 2. JSON 必须包含 analysis、changes、task。
 3. task 必须是字符串类型，内容是一条 YAML task block，必须从 "- name:" 开始；不要输出 JSON 对象、数组或 android/tasks 外层。
 4. 只修复名为「{task_name}」的用例，不要新增其他用例。
-5. 按 Midscene 1.7.20 YAML 语法生成：优先使用 ai、aiTap、aiInput + value、aiWaitFor、aiAssert、sleep、launch、runAdbShell；aiAction 仅作为旧脚本兼容，不要在新增步骤里优先使用；修复时不要新增 recordToReport。
+5. 按 Midscene 1.13 YAML 语法生成：优先使用 ai、aiTap、aiInput + value、aiWaitFor、aiAssert、sleep、launch、runAdbShell；aiAction 仅作为旧脚本兼容，不要在新增步骤里优先使用；修复时不要新增 recordToReport。
 5.1 flowItem 名称大小写必须严格正确，例如 aiTap、aiInput、aiWaitFor、aiAssert、runAdbShell；禁止输出 aitap、aiinput、aiwaitfor、runadbshell 这类小写变体。
 6. 不要生成坐标点击。
 7. 如果是断言过严，优先改成更贴近页面可见状态的 aiAssert 或 aiWaitFor 验证。
@@ -1334,7 +1334,7 @@ def call_dashscope_repair_yaml_task(module, file, task_name, yaml_text, task_blo
 16. 如果当前 task 缺少 baseline 注释，请根据用例名、步骤、页面知识和截图补齐；不要把这些说明改成执行步骤。
 17. 不要滥用固定长等待。普通页面切换用短 sleep；如果网络、接口、资源加载可能较慢，要用 aiWaitFor + timeout 等待"页面标题/按钮/列表/空态/目标入口可见"，不要用 sleep: 5000 这类无条件等待；timeout 上限 300000ms，不能越修越长。
 18. 如果失败更像产品 Bug、环境问题、模型配置问题、设备问题，不要为了通过而篡改业务断言；analysis 中说明原因，task 尽量只做安全的稳定性补充。
-19. 华为/系统文件管理器、相册、文件选择器里的搜索框输入必须优先使用 Midscene 1.7.20 标准写法：先 aiTap 搜索输入框，再 aiInput: "当前页面的搜索输入框或文本输入框" 并在同级写 value: "实际输入内容"、autoDismissKeyboard: false、mode: "replace"；不要默认再补 runAdbShell: "input text xxx"，只有失败日志明确证明 aiInput 没有实际输入、输入框为空或无法输入时，才允许增加 adb input text 兜底，避免重复输入。
+19. 华为/系统文件管理器、相册、文件选择器里的搜索框输入必须优先使用 Midscene 1.13 标准写法：先 aiTap 搜索输入框，再 aiInput: "当前页面的搜索输入框或文本输入框" 并在同级写 value: "实际输入内容"、autoDismissKeyboard: false、mode: "replace"；不要默认再补 runAdbShell: "input text xxx"，只有失败日志明确证明 aiInput 没有实际输入、输入框为空或无法输入时，才允许增加 adb input text 兜底，避免重复输入。
 20. 必须先按业务链路上下文理解原 YAML：goal 是测试目的，business_path 是核心路径，expected_result 是业务预期，current_actions/current_assertions 是现有执行链路。修复只能围绕这些内容做最小改动，不能替换成另一个业务流程。
 21. 保存、下载、导出、生成、转换类结果操作如果失败原因是"没看到成功/已保存/完成提示"，要先看原业务链路，不要模板化批量插入校验。只允许围绕失败点做最小改动，例如调整一个等待条件或补一个失败态断言；不要把中间"完成/确认/PNG"等步骤误判成最终保存结果。
 22. 如果报错说明点击"完成/确认/下一步"后下一个目标按钮或格式选项尚未渲染，例如 PNG/PDF/Word/导出/确认按钮未出现，修复应只在该失败点附近补等待，不要顺手改其它步骤。
@@ -1430,7 +1430,7 @@ def call_dashscope_repair_yaml(module, file, yaml_text, stdout, stderr, summary,
 2. JSON 必须包含 analysis、changes、content。
 3. content 必须是字符串类型，内容是完整 YAML，不是片段；不要输出 JSON 对象或数组。
 4. 只修改和失败原因相关的步骤，不要重写无关用例。
-5. 按 Midscene 1.7.20 YAML 语法生成：优先使用 ai、aiTap、aiInput + value、aiWaitFor、aiAssert、sleep、launch、runAdbShell；aiAction 仅作为旧脚本兼容，不要在新增步骤里优先使用；修复时不要新增 recordToReport。
+5. 按 Midscene 1.13 YAML 语法生成：优先使用 ai、aiTap、aiInput + value、aiWaitFor、aiAssert、sleep、launch、runAdbShell；aiAction 仅作为旧脚本兼容，不要在新增步骤里优先使用；修复时不要新增 recordToReport。
 5.1 flowItem 名称大小写必须严格正确，例如 aiTap、aiInput、aiWaitFor、aiAssert、runAdbShell；禁止输出 aitap、aiinput、aiwaitfor、runadbshell 这类小写变体。
 6. 不要生成坐标点击。
 7. 如果是断言过严，优先把断言改成更贴近页面可见状态的 aiAssert 或 aiWaitFor 验证。
@@ -1445,7 +1445,7 @@ def call_dashscope_repair_yaml(module, file, yaml_text, stdout, stderr, summary,
 16. 如果某条 task 缺少 baseline 注释，请根据用例名、步骤、页面知识和截图补齐；不要把这些说明改成执行步骤。
 17. 不要滥用固定长等待。普通页面切换用短 sleep；如果网络、接口、资源加载可能较慢，要用 aiWaitFor + timeout 等待"页面标题/按钮/列表/空态/目标入口可见"，不要用 sleep: 5000 这类无条件等待；timeout 上限 300000ms，不能越修越长。
 18. 如果失败更像产品 Bug、环境问题、模型配置问题、设备问题，不要为了通过而篡改业务断言；analysis 中说明原因，content 尽量只做安全的稳定性补充。
-19. 华为/系统文件管理器、相册、文件选择器里的搜索框输入必须优先使用 Midscene 1.7.20 标准写法：先 aiTap 搜索输入框，再 aiInput: "当前页面的搜索输入框或文本输入框" 并在同级写 value: "实际输入内容"、autoDismissKeyboard: false、mode: "replace"；不要默认再补 runAdbShell: "input text xxx"，只有失败日志明确证明 aiInput 没有实际输入、输入框为空或无法输入时，才允许增加 adb input text 兜底，避免重复输入。
+19. 华为/系统文件管理器、相册、文件选择器里的搜索框输入必须优先使用 Midscene 1.13 标准写法：先 aiTap 搜索输入框，再 aiInput: "当前页面的搜索输入框或文本输入框" 并在同级写 value: "实际输入内容"、autoDismissKeyboard: false、mode: "replace"；不要默认再补 runAdbShell: "input text xxx"，只有失败日志明确证明 aiInput 没有实际输入、输入框为空或无法输入时，才允许增加 adb input text 兜底，避免重复输入。
 20. 必须先按业务链路上下文理解原 YAML：goal 是测试目的，business_path 是核心路径，expected_result 是业务预期，current_actions/current_assertions 是现有执行链路。修复只能围绕这些内容做最小改动，不能替换成另一个业务流程。
 21. 保存、下载、导出、生成、转换类结果操作如果失败原因是"没看到成功/已保存/完成提示"，要先看原业务链路，不要模板化批量插入校验。只允许围绕失败点做最小改动，例如调整一个等待条件或补一个失败态断言；不要把中间"完成/确认/PNG"等步骤误判成最终保存结果。
 22. 如果报错说明点击"完成/确认/下一步"后下一个目标按钮或格式选项尚未渲染，例如 PNG/PDF/Word/导出/确认按钮未出现，修复应只在该失败点附近补等待，不要顺手改其它步骤。

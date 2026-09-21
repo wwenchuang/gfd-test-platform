@@ -36,7 +36,13 @@ COMMON_STEP_ATTRS = {
 }
 STEP_ATTR_KEYS: Set[str] = set(FLOW_CHILD_KEYS) | COMMON_STEP_ATTRS
 AI_SCROLL_DIRECTIONS = {"down", "up", "right", "left"}
-AI_SCROLL_TYPES = {"singleAction"}
+AI_SCROLL_TYPES = {
+    "singleAction",
+    "scrollToBottom",
+    "scrollToTop",
+    "scrollToRight",
+    "scrollToLeft",
+}
 
 
 def load_yaml_action_contract(path: str = CONTRACT_PATH) -> dict:
@@ -94,13 +100,31 @@ def _step_text(step: dict) -> str:
 
 
 def validate_midscene_action_parameters(action: str, step: dict, path: str = "flow") -> List[str]:
-    """Validate child parameters that Midscene checks at runtime."""
-    if not isinstance(step, dict) or action != "aiScroll":
+    """Validate the Midscene 1.13 legacy-YAML action parameter contract."""
+    if not isinstance(step, dict):
         return []
     issues: List[str] = []
+    if action == "aiKeyboardPress":
+        if _value_blank(step.get("aiKeyboardPress")):
+            issues.append(f"{path} aiKeyboardPress 必须包含按键名，或同时提供定位描述和 keyName")
+        return issues
+    if action == "runAdbShell":
+        command = step.get("runAdbShell")
+        if not isinstance(command, str) or not command.strip():
+            issues.append(f"{path} runAdbShell 必须是非空命令标量，不能嵌套 command")
+        elif re.match(r"^\s*adb\s+shell(?:\s|$)", command, flags=re.I):
+            issues.append(f"{path} runAdbShell 只填写 shell 命令，不能包含 adb shell 前缀")
+        return issues
+    if action in ("launch", "terminate"):
+        value = step.get(action)
+        if not isinstance(value, str) or not value.strip():
+            issues.append(f"{path} {action} 必须是非空应用包名或 URL 标量")
+        return issues
+    if action != "aiScroll":
+        return issues
     scroll_target = step.get("aiScroll")
-    if not isinstance(scroll_target, str) or not scroll_target.strip():
-        issues.append(f"{path} aiScroll 描述必须是非空字符串")
+    if scroll_target is not None and not isinstance(scroll_target, str):
+        issues.append(f"{path} aiScroll 描述必须是非空字符串或留空；locate 应与动作同级")
     direction = step.get("direction")
     if direction not in (None, "") and str(direction).strip() not in AI_SCROLL_DIRECTIONS:
         issues.append(
@@ -115,8 +139,13 @@ def validate_midscene_action_parameters(action: str, step: dict, path: str = "fl
     scroll_type = step.get("scrollType")
     if scroll_type not in (None, "") and str(scroll_type).strip() not in AI_SCROLL_TYPES:
         issues.append(
-            f"{path} aiScroll.scrollType 仅支持 singleAction，当前为 {scroll_type!r}"
+            f"{path} aiScroll.scrollType 必须是 singleAction/scrollToBottom/scrollToTop/scrollToRight/scrollToLeft，当前为 {scroll_type!r}"
         )
+    if scroll_type not in (None, "", "singleAction"):
+        if direction not in (None, ""):
+            issues.append(f"{path} aiScroll.direction 仅在 scrollType=singleAction 时有效")
+        if distance not in (None, ""):
+            issues.append(f"{path} aiScroll.distance 仅在 scrollType=singleAction 时有效")
     return issues
 
 

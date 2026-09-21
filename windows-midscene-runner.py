@@ -21,7 +21,8 @@ RUNNER_ID = os.getenv("RUNNER_ID", "win-runner-01")
 TOKEN = os.getenv("MIDSCENE_RUNNER_TOKEN", "").strip()
 WORKSPACE = Path(os.getenv("MIDSCENE_RUNNER_WORKSPACE", r"D:\sonic\midscene_run"))
 CALLBACK_OUTBOX_DIR = WORKSPACE / "callback_outbox"
-RUNNER_VERSION = os.getenv("MIDSCENE_RUNNER_VERSION", "2026.09.21-qwen3.7-result-retry-v1-recording-evidence-v1")
+RUNNER_VERSION = os.getenv("MIDSCENE_RUNNER_VERSION", "2026.09.21-midscene1.13-qwen3.7-result-retry-v1-recording-evidence-v1")
+MIDSCENE_REQUIRED_VERSION = "1.13.0"
 COMPLETED_RECORDING_EVIDENCE = set()
 RUNNER_STARTED_AT = time.strftime("%Y-%m-%d %H:%M:%S")
 POLL_INTERVAL = int(os.getenv("POLL_INTERVAL", "3"))
@@ -44,6 +45,59 @@ RUNNER_CAPABILITIES = {
     "yaml_dry_run": True,
     "apk_install": True,
 }
+
+
+def _semantic_version(value):
+    match = re.search(r"(?:^|\D)(\d+)\.(\d+)\.(\d+)", str(value or ""))
+    return tuple(int(item) for item in match.groups()) if match else None
+
+
+def node_version_supported(value):
+    """Midscene 1.13 supports Node 20.19+, 22.12+, and 24+."""
+    version = _semantic_version(value)
+    if not version:
+        return False
+    major, minor, _patch = version
+    return (
+        (major == 20 and minor >= 19)
+        or (major == 22 and minor >= 12)
+        or major >= 24
+    )
+
+
+def command_version(command, label):
+    resolved = resolve_command(command, label)
+    result = subprocess.run(
+        [resolved, "--version"],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        timeout=20,
+        check=False,
+    )
+    output = str(result.stdout or "").strip()
+    if result.returncode != 0 or not output:
+        raise RuntimeError(f"{label} 版本检查失败：{output or '无输出'}")
+    return output.splitlines()[-1].strip()
+
+
+def validate_midscene_113_runtime():
+    node_version = command_version("node", "Node.js")
+    if not node_version_supported(node_version):
+        raise RuntimeError(
+            f"Midscene 1.13 要求 Node.js 20.19+、22.12+ 或 24+，当前为 {node_version}"
+        )
+    midscene_version = command_version(MIDSCENE_BIN, "Midscene")
+    parsed = _semantic_version(midscene_version)
+    required = _semantic_version(MIDSCENE_REQUIRED_VERSION)
+    if not parsed or not required or parsed < required:
+        raise RuntimeError(
+            f"Runner 要求 Midscene {MIDSCENE_REQUIRED_VERSION}+，当前为 {midscene_version}"
+        )
+    RUNNER_CAPABILITIES["node_version"] = node_version
+    RUNNER_CAPABILITIES["midscene_version"] = midscene_version
+    RUNNER_CAPABILITIES["midscene_yaml_contract"] = "legacy-compatible-1.13"
+    return {"node_version": node_version, "midscene_version": midscene_version}
 DEVICE_MARKET_NAME_BY_MODEL = {
     "ELS-AN00": "HUAWEI P40 Pro",
     "PHM110": "OPPO Reno9",
@@ -1761,6 +1815,7 @@ def preflight_server():
 def main():
     validate_runner_config()
     WORKSPACE.mkdir(parents=True, exist_ok=True)
+    validate_midscene_113_runtime()
     print_startup()
     preflight_server()
     error_state = {}

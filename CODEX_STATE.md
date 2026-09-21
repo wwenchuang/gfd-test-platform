@@ -1,3 +1,15 @@
+# CODEX_STATE.md
+
+## 2026-09-21 Midscene 1.13 YAML 与 Windows Runner 兼容升级
+
+- 以官方 `@midscene/cli@1.13.0`、1.13 发布说明和最新 YAML 文档为准重新核对。1.13 仍兼容既有 `tasks / flow` 和 `midscene` 命令，并通过统一 Test 内核生成报告；现有资产不批量迁移到原生 `cases / steps`，同一文件禁止混用两种格式。
+- 修正平台静态契约：`aiScroll.scrollType` 接受 1.13 官方五种值，允许全局滚动省略定位描述，并限制 `direction/distance` 只用于 `singleAction`；补 `deepLocate`、`fileChooserAccept`、图片提示字段；`runAdbShell` 必须为不含 `adb shell` 前缀的标量，`launch/terminate` 必须为标量。`aiKeyboardPress: Enter` 与“定位描述 + keyName”两种官方兼容形式均保留。
+- 生成和修复说明从 1.7 更新到 1.13，继续优先使用官方 `ai`、`aiInput + value` 等写法；平台针对横向入口的受控修复仍限定一次 `singleAction`，这是风险约束而非误判官方能力。
+- Windows Runner 启动时强制核对 Node.js 与 Midscene 版本：Node 必须为 20.19+、22.12+ 或 24+，Midscene 必须为 1.13.0+；心跳能力上报实际两项版本和 `legacy-compatible-1.13` 契约，避免升级后仍以旧版本身份接任务。
+- TDD 先得到4项失败，修正后 Midscene 1.13契约与Runner相关22项通过；后端静态63项、YAML回归脚本、Python语法、diff检查通过。隔离安装的官方CLI返回1.13.0；五种代表性动作经官方 `compileLegacyFlowItem` 编译为正确节点，完整CLI读取测试YAML并进入ADB连接阶段。本机无Android ADB设备，故未把该次失败描述为真机执行通过；Windows Runner替换/重启及真实手机用例仍需发布后验收。
+- `tests/test_sonic_integration.py` 单独直接运行出现68项历史入口兼容失败（测试仍从精简 `midscene_upload` 包装导入已迁移函数），与本次改动无调用栈关系；必跑 `backend_static_checks.py` 已覆盖这些迁移后的服务入口并通过。用户Word与 `docs/career/` 保留未动。
+
+
 ## 2026-09-21 新建与上传 YAML 的应用模块级联
 
 - 新建 YAML 与上传 YAML 改为“所属应用 → 该应用已关联模块”两级选择；默认使用当前模块所属应用，其次使用当前应用筛选，最后使用第一个启用应用。停用、历史应用不出现，未归属及其他应用模块不出现，只有一个可选模块时自动选中。
@@ -72,8 +84,6 @@
 - 35项前端组件回归通过（含刻度/共同尺度/阈值/缺口/键盘/点击联动/资源分单位），类型检查和生产构建通过；前端静态84项通过。未重新发压，未触碰基线、定时任务或设备；用户Word及career资料保留。
 - dc74260已推送main。Safari本地组件验收使用明确标记的模拟数据：点击25秒窗口后三图读数同时更新，右方向键切至30秒，坐标/圆点比例/水平阈值及监控来源正常。随后补充区分计划节点与实测圆点、蓝色时间线与橙色阈值线的文案。
 - 线上尚未发布：15:34检查Safari平台终端显示“用户已退出登录，会话已结束”，堡垒机管理标签在登录页；已异步请求恢复平台机10.130.4.31终端。恢复后执行标准update-main-server.sh，再在已有7ee84c53报告验收；无需重发压。不能把本地Safari验收表述为线上通过。
-
-# CODEX_STATE.md
 
 ## 2026-09-15 压测续验：原曲线失败复现、链路证据与回放口径修复
 

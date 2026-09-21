@@ -1,7 +1,14 @@
-# Midscene Executable YAML Guide
+# Midscene 1.13 Executable YAML Guide
 
 This guide turns requirement-derived cases into YAML that is more likely to run
 stably in Midscene and Sonic. It complements `yaml_style_guide.md`.
+
+The platform keeps the official legacy `tasks` / `flow` format for existing
+assets. Midscene 1.13 executes this format through the shared Test kernel; do
+not mix native `cases` / `steps` syntax into the same file. New action
+parameters must follow the 1.13 YAML contract: sibling parameters for
+`aiInput`, `aiKeyboardPress`, `aiScroll`, and `runAdbShell`, and no `adb shell`
+prefix inside `runAdbShell`.
 
 ## Sources
 

@@ -702,7 +702,8 @@ FLOW_CHILD_KEYS = {
     "locate", "prompt", "value", "timeout", "errorMessage", "name", "keyName",
     "direction", "scrollType", "distance", "deepThink", "xpath", "cacheable",
     "autoDismissKeyboard", "mode", "method", "endpoint", "data", "content",
-    "title", "duration", "target", "query", "schema",
+    "title", "duration", "target", "query", "schema", "deepLocate",
+    "fileChooserAccept", "images", "convertHttpImage2Base64",
 }
 
 FLOW_ACTION_PREFIX_RE = re.compile(r"^\s*([A-Za-z][A-Za-z0-9_]*)\s*:\s*(.*)$", re.S)
@@ -4442,7 +4443,7 @@ def normalize_flowitem_syntax_in_task_block(block):
         key = FLOW_ITEM_ALIASES.get(raw_key, raw_key)
         if key == "aiAction":
             key = "ai"
-            changes.append("将旧式 aiAction 规范为 Midscene 1.7 推荐的 ai")
+            changes.append("将旧式 aiAction 规范为 Midscene 1.13 推荐的 ai")
         if key not in SUPPORTED_FLOW_ITEMS:
             normalized.append(line)
             idx += 1
@@ -4530,7 +4531,7 @@ def normalize_flowitem_syntax_in_task_block(block):
 # ---------------------------------------------------------------------------
 
 def normalize_input_actions_in_task_block(block):
-    """将旧式 aiAction/ai 输入动作改为 Midscene 1.7 标准 aiInput + value。"""
+    """将旧式 aiAction/ai 输入动作改为 Midscene 1.13 标准 aiInput + value。"""
     lines = (block or "").splitlines()
     if not lines:
         return block, []
@@ -4549,7 +4550,7 @@ def normalize_input_actions_in_task_block(block):
                 if input_action_requires_search_entry(value):
                     changes.append(f"将搜索入口输入动作「{value}」拆为点击搜索入口、aiInput 输入并提交，保留入口步骤")
                 else:
-                    changes.append(f"将泛化输入动作「{value}」改为 Midscene 1.7 标准 aiInput + value")
+                    changes.append(f"将泛化输入动作「{value}」改为 Midscene 1.13 标准 aiInput + value")
                 idx += 1
                 continue
 
@@ -4562,7 +4563,7 @@ def normalize_input_actions_in_task_block(block):
             if not has_value and re.match(r"^[A-Za-z0-9._@%+\-\u4e00-\u9fff]+$", value):
                 result.append(indent + "- aiInput: " + yaml_text("当前页面的搜索输入框或文本输入框"))
                 result.append(indent + "  value: " + yaml_text(value))
-                changes.append(f"将旧式 aiInput 标量「{value}」改为 Midscene 1.7 标准 aiInput + value")
+                changes.append(f"将旧式 aiInput 标量「{value}」改为 Midscene 1.13 标准 aiInput + value")
                 idx += 1
                 continue
 

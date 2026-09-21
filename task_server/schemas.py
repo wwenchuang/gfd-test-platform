@@ -85,7 +85,8 @@ FLOW_CHILD_KEYS = {
     "locate", "prompt", "value", "timeout", "errorMessage", "name", "keyName",
     "direction", "scrollType", "distance", "deepThink", "xpath", "cacheable",
     "autoDismissKeyboard", "mode", "method", "endpoint", "data", "content",
-    "title", "duration", "target", "query", "schema",
+    "title", "duration", "target", "query", "schema", "deepLocate",
+    "fileChooserAccept", "images", "convertHttpImage2Base64",
 }
 
 # 源自 midscene-upload.py PROMPT_STYLE_FLOW_ITEMS
