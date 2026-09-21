@@ -44,6 +44,11 @@ class DeviceRecordingServiceTest(unittest.TestCase):
         session = self.create()
         with self.assertRaisesRegex(PermissionError, "发起人"):
             recording.finish_recording_session(session["id"], "another", store_path=self.store)
+        recording.append_recorded_action(
+            session["id"], session["recording_token"],
+            {"event_id": "evt-finish", "type": "key", "key": "BACK", "device_id": "ecbfd645"},
+            store_path=self.store,
+        )
         finished = recording.finish_recording_session(session["id"], "admin", store_path=self.store)
         self.assertEqual(finished["status"], "finished")
         with open(self.store, encoding="utf-8") as fh:
@@ -139,6 +144,43 @@ class DeviceRecordingServiceTest(unittest.TestCase):
             recording.update_recorded_step(session["id"], "another", step["id"], "提交按钮", store_path=self.store)
         updated = recording.update_recorded_step(session["id"], "admin", step["id"], "提交按钮", store_path=self.store)
         self.assertEqual(updated["steps"][0]["semantic_description"], "提交按钮")
+
+    def test_owner_can_edit_description_and_delete_recorded_step(self):
+        session = self.create()
+        step = recording.append_recorded_action(
+            session["id"], session["recording_token"],
+            {"event_id": "evt-1", "type": "key", "key": "BACK", "device_id": "ecbfd645"},
+            store_path=self.store,
+        )
+        updated = recording.update_recorded_step(
+            session["id"], "admin", step["id"], "返回上一页", store_path=self.store
+        )
+        self.assertEqual(updated["steps"][0]["semantic_description"], "返回上一页")
+        with self.assertRaisesRegex(PermissionError, "发起人"):
+            recording.delete_recorded_step(session["id"], "another", step["id"], store_path=self.store)
+        deleted = recording.delete_recorded_step(session["id"], "admin", step["id"], store_path=self.store)
+        self.assertEqual(deleted["steps"], [])
+
+    def test_empty_recording_cannot_be_finished_as_success(self):
+        session = self.create()
+        with self.assertRaisesRegex(ValueError, "没有记录到手机操作"):
+            recording.finish_recording_session(session["id"], "admin", store_path=self.store)
+        cancelled = recording.cancel_recording_session(session["id"], "admin", store_path=self.store)
+        self.assertEqual(cancelled["status"], "cancelled")
+
+    def test_unbound_session_uses_the_phone_actually_opened_in_sonic(self):
+        session = self.create(runner_id="", device_id="")
+        second = self.create(user="another", runner_id="", device_id="")
+        self.assertNotEqual(session["id"], second["id"])
+        self.assertEqual(session["device_id"], "")
+        bound = recording.bind_recording_device(
+            session["id"], "admin", "win-runner-01", "ecbfd645", store_path=self.store
+        )
+        self.assertEqual((bound["runner_id"], bound["device_id"]), ("win-runner-01", "ecbfd645"))
+        with self.assertRaisesRegex(ValueError, "已经绑定"):
+            recording.bind_recording_device(
+                session["id"], "admin", "win-runner-01", "other-phone", store_path=self.store
+            )
 
 
 if __name__ == "__main__":

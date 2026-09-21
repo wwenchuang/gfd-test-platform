@@ -75,6 +75,10 @@ def normalize_recorded_step(step: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def generate_recording_yaml(session: Dict[str, Any], task_name: str = "录制生成用例") -> Dict[str, Any]:
+    if str(session.get("status") or "") != "finished":
+        raise ValueError("请先结束录制，再生成 YAML")
+    if not any(step.get("type") != "checkpoint" for step in session.get("steps") or []):
+        raise ValueError("没有记录到手机操作，不能生成空 YAML")
     flow: List[Dict[str, Any]] = []
     issues: List[Dict[str, Any]] = []
     for index, step in enumerate(session.get("steps") or [], 1):

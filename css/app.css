@@ -4013,9 +4013,13 @@
   .device-recorder-phone-grid { display: grid; gap: 10px; }
   .device-recorder-phone { display: flex; gap: 12px; align-items: flex-start; padding: 12px; border: 1px solid var(--border); border-radius: 10px; cursor: pointer; }
   .device-recorder-phone:has(input:checked) { border-color: var(--accent); box-shadow: inset 3px 0 var(--accent); }
+  .device-recorder-phone.selected { border-color: var(--accent); box-shadow: inset 3px 0 var(--accent); }
   .device-recorder-phone.busy { opacity: .65; cursor: not-allowed; }
   .device-recorder-phone span { display: grid; gap: 4px; }
   .device-recorder-phone small { color: var(--text2); }
+  .device-recorder-phone-status { width: 10px; height: 10px; margin-top: 4px; border-radius: 50%; flex: 0 0 auto; box-shadow: 0 0 0 3px rgba(148, 163, 184, .12); }
+  .device-recorder-phone-status.idle { background: #34d399; box-shadow: 0 0 0 3px rgba(52, 211, 153, .15); }
+  .device-recorder-phone-status.busy { background: #f87171; box-shadow: 0 0 0 3px rgba(248, 113, 113, .15); }
   .device-recorder-timeline { display: grid; gap: 8px; max-height: 430px; overflow: auto; }
 .device-recorder-timeline article {
     display: grid;
@@ -6429,6 +6433,9 @@
 .device-recorder-timeline article.needs-confirmation { border-color: #f59e0b; background: rgba(245, 158, 11, .08); }
 .device-recorder-semantic { display: flex; gap: 8px; margin-top: 8px; }
 .device-recorder-semantic input { min-width: 0; flex: 1; }
+.device-recorder-step-tools { margin-top: 5px; color: var(--text2); font-size: 11px; }
+.device-recorder-step-tools summary { cursor: pointer; width: max-content; }
+.device-recorder-step-tools > div { display: grid; grid-template-columns: minmax(120px, 1fr) auto auto; gap: 6px; margin-top: 6px; }
 .device-recorder-save { display: grid; gap: 8px; margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--border); }
 .empty-state-icon { font-size: 52px; margin-bottom: 12px; opacity: .8; }
 .empty-state-title { font-size: 18px; font-weight: 700; color: var(--text); margin: 0 0 8px; }

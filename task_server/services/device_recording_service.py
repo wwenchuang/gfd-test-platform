@@ -94,10 +94,10 @@ def create_recording_session(
     runner_id = str(runner_id or "").strip()
     device_id = str(device_id or "").strip()
     app_package = str(app_package or "").strip()
-    if not user or not runner_id or not app_package:
-        raise ValueError("用户、Runner 和应用包名不能为空")
-    if not device_id:
-        raise ValueError("必须选择一台在线 Android 手机")
+    if not user or not app_package:
+        raise ValueError("用户和应用包名不能为空")
+    if bool(runner_id) != bool(device_id):
+        raise ValueError("Runner 和手机必须同时指定，或都由 Sonic 实际连接后绑定")
     if device_id.upper() in NON_MOBILE_DEVICE_IDS:
         raise ValueError("操作录制只能选择 Sonic Android 手机，不能使用业务打印机编号")
     timestamp = float(time.time() if now is None else now)
@@ -108,6 +108,7 @@ def create_recording_session(
         existing = next(
             (
                 item for item in data["sessions"]
+                if device_id
                 if item.get("status") in ACTIVE_STATUSES
                 and str(item.get("runner_id")) == runner_id
                 and str(item.get("device_id")) == device_id
@@ -137,6 +138,45 @@ def create_recording_session(
         data["sessions"].append(row)
         write_json_file(path, data)
         return {**_public(row), "recording_token": recording_token}
+
+
+def bind_recording_device(
+    session_id: str,
+    user: str,
+    runner_id: str,
+    device_id: str,
+    *,
+    store_path: Optional[str] = None,
+    now: Optional[float] = None,
+) -> Dict[str, Any]:
+    runner_id = str(runner_id or "").strip()
+    device_id = str(device_id or "").strip()
+    if not runner_id or not device_id:
+        raise ValueError("Runner 和手机不能为空")
+    if device_id.upper() in NON_MOBILE_DEVICE_IDS:
+        raise ValueError("操作录制只能绑定 Sonic Android 手机")
+    timestamp = float(time.time() if now is None else now)
+    path = _path(store_path)
+    with _LOCK, file_mutation_lock(path):
+        data = _load(path)
+        row = _find(data, session_id)
+        _owner(row, user)
+        if row.get("status") != "recording":
+            raise ValueError("录制会话当前不能绑定手机")
+        if row.get("device_id"):
+            if row.get("runner_id") == runner_id and row.get("device_id") == device_id:
+                return _public(row)
+            raise ValueError("录制会话已经绑定另一台手机")
+        conflict = next((item for item in data["sessions"] if item.get("id") != row.get("id") and item.get("status") in ACTIVE_STATUSES and item.get("runner_id") == runner_id and item.get("device_id") == device_id), None)
+        if conflict:
+            raise ValueError(f"设备正在录制，会话发起人：{conflict.get('created_by') or '未知'}")
+        row["runner_id"] = runner_id
+        row["device_id"] = device_id
+        row["bound_at"] = _stamp(timestamp)
+        row["updated_at"] = _stamp(timestamp)
+        row["updated_ts"] = timestamp
+        write_json_file(path, data)
+        return _public(row)
 
 
 def get_recording_session(
@@ -231,12 +271,37 @@ def finish_recording_session(
         _owner(row, user)
         if row.get("status") == "cancelled":
             raise ValueError("已取消的录制不能完成")
+        if not any(step.get("type") != "checkpoint" for step in row.get("steps") or []):
+            raise ValueError("还没有记录到手机操作，不能结束为有效录制；可以取消本次录制")
         if row.get("status") != "finished":
             row["status"] = "finished"
             row["finished_at"] = _stamp(timestamp)
             row["updated_at"] = _stamp(timestamp)
             row["updated_ts"] = timestamp
             write_json_file(path, data)
+        return _public(row)
+
+
+def cancel_recording_session(
+    session_id: str,
+    user: str,
+    *,
+    store_path: Optional[str] = None,
+    now: Optional[float] = None,
+) -> Dict[str, Any]:
+    timestamp = float(time.time() if now is None else now)
+    path = _path(store_path)
+    with _LOCK, file_mutation_lock(path):
+        data = _load(path)
+        row = _find(data, session_id)
+        _owner(row, user)
+        if row.get("status") == "finished":
+            raise ValueError("已结束的录制不能取消")
+        row["status"] = "cancelled"
+        row["cancelled_at"] = _stamp(timestamp)
+        row["updated_at"] = _stamp(timestamp)
+        row["updated_ts"] = timestamp
+        write_json_file(path, data)
         return _public(row)
 
 
@@ -249,7 +314,7 @@ def update_recorded_step(
     store_path: Optional[str] = None,
     now: Optional[float] = None,
 ) -> Dict[str, Any]:
-    """Attach a human-reviewed semantic target without changing the recorded action."""
+    """Attach a human-reviewed description without changing the recorded action."""
     description = str(semantic_description or "").strip()
     if not description:
         raise ValueError("控件说明不能为空")
@@ -264,11 +329,35 @@ def update_recorded_step(
         step = next((item for item in row.get("steps") or [] if item.get("id") == str(step_id)), None)
         if not step:
             raise ValueError("录制步骤不存在")
-        if step.get("type") not in {"tap", "text"}:
-            raise ValueError("该步骤不需要补充控件说明")
         step["semantic_description"] = description
         step["semantic_confirmed_by"] = user
         step["semantic_confirmed_at"] = _stamp(timestamp)
+        row["updated_ts"] = timestamp
+        row["updated_at"] = _stamp(timestamp)
+        write_json_file(path, data)
+        return _public(row)
+
+
+def delete_recorded_step(
+    session_id: str,
+    user: str,
+    step_id: str,
+    *,
+    store_path: Optional[str] = None,
+    now: Optional[float] = None,
+) -> Dict[str, Any]:
+    timestamp = float(time.time() if now is None else now)
+    path = _path(store_path)
+    with _LOCK, file_mutation_lock(path):
+        data = _load(path)
+        row = _find(data, session_id)
+        _owner(row, user)
+        steps = list(row.get("steps") or [])
+        if not any(item.get("id") == str(step_id) for item in steps):
+            raise ValueError("录制步骤不存在")
+        row["steps"] = [item for item in steps if item.get("id") != str(step_id)]
+        for sequence, item in enumerate(row["steps"], 1):
+            item["sequence"] = sequence
         row["updated_ts"] = timestamp
         row["updated_at"] = _stamp(timestamp)
         write_json_file(path, data)

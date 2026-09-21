@@ -8,6 +8,7 @@
 
   let recording = null;
   let touch = null;
+  let activeDeviceSocket = null;
   const NativeWebSocket = window.WebSocket;
 
   function id() {
@@ -19,8 +20,13 @@
     return parts.length === 2 && parts.every(Number.isFinite) ? {x: parts[0], y: parts[1]} : null;
   }
 
+  function socketDeviceId(url) {
+    const match = String(url || '').match(/\/websockets\/android\/[^/]+\/([^/?#]+)/i);
+    return match ? decodeURIComponent(match[1]) : '';
+  }
+
   function mirror(action) {
-    if (!recording || !action) return;
+    if (!recording || !recording.bound || !action) return;
     const body = JSON.stringify({
       session_id: recording.sessionId,
       recording_token: recording.recordingToken,
@@ -66,12 +72,19 @@
 
   window.WebSocket = function (url, protocols) {
     const socket = protocols === undefined ? new NativeWebSocket(url) : new NativeWebSocket(url, protocols);
+    const target = String(url || '');
+    const connectedDeviceId = socketDeviceId(target);
+    const isSelectedDevice = Boolean(recording && connectedDeviceId && (!recording.deviceId || connectedDeviceId === recording.deviceId));
+    if (isSelectedDevice && !/\/screen\/|\/terminal\//.test(target)) {
+      recording.deviceId = connectedDeviceId;
+      activeDeviceSocket = socket;
+      if (window.opener) window.opener.postMessage({type: 'MIDSCENE_RECORDING_READY', sessionId: recording.sessionId, deviceId: recording.deviceId}, recording.platformOrigin);
+    }
     const nativeSend = socket.send;
     socket.send = function (data) {
       nativeSend.call(socket, data);
       try {
-        const target = String(url || '');
-        if (recording && /\/websockets\/android\//.test(target) && !/\/screen\/|\/terminal\//.test(target) && typeof data === 'string') {
+        if (recording && socket === activeDeviceSocket && typeof data === 'string') {
           mirror(mirroredAction(JSON.parse(data)));
         }
       } catch (_) {}
@@ -83,15 +96,19 @@
 
   window.addEventListener('message', event => {
     const data = event.data || {};
-    if (event.source !== window.opener || data.type !== 'MIDSCENE_RECORDING_START') return;
+    if (event.source !== window.opener) return;
+    if (data.type === 'MIDSCENE_RECORDING_BOUND' && recording && data.sessionId === recording.sessionId && data.deviceId === recording.deviceId) {
+      recording.bound = true;
+      return;
+    }
+    if (data.type !== 'MIDSCENE_RECORDING_START') return;
     try {
       const endpoint = new URL(data.endpoint);
       recording = {
         sessionId: String(data.sessionId || ''), recordingToken: String(data.recordingToken || ''),
-        deviceId: String(data.deviceId || ''), endpoint: endpoint.href, platformOrigin: endpoint.origin,
+        deviceId: String(data.deviceId || ''), endpoint: endpoint.href, platformOrigin: endpoint.origin, bound: Boolean(data.deviceId),
       };
-      if (!recording.sessionId || !recording.recordingToken || !recording.deviceId) recording = null;
-      if (recording && window.opener) window.opener.postMessage({type: 'MIDSCENE_RECORDING_READY', sessionId: recording.sessionId}, recording.platformOrigin);
+      if (!recording.sessionId || !recording.recordingToken) recording = null;
     } catch (_) { recording = null; }
   });
 })();

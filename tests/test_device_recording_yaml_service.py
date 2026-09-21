@@ -40,7 +40,7 @@ class DeviceRecordingYamlServiceTest(unittest.TestCase):
 
     def test_generates_validated_draft_and_blocks_ambiguous_steps(self):
         session = {
-            "id": "session-1", "app_package": "com.demo", "steps": [
+            "id": "session-1", "status": "finished", "app_package": "com.demo", "steps": [
                 {"type": "launch", "package": "com.demo"},
                 {"type": "tap", "ui_node": {"text": "我的"}},
                 {"type": "checkpoint", "checkpoint_kind": "assert", "description": "页面显示个人中心"},
@@ -56,6 +56,12 @@ class DeviceRecordingYamlServiceTest(unittest.TestCase):
         blocked = generate_recording_yaml({**session, "steps": [{"type": "tap", "point": {"x": 1, "y": 2}}]})
         self.assertTrue(blocked["requires_confirmation"])
         self.assertTrue(blocked["issues"])
+
+    def test_rejects_empty_or_active_recording_instead_of_inventing_launch_only_yaml(self):
+        with self.assertRaisesRegex(ValueError, "结束录制"):
+            generate_recording_yaml({"status": "recording", "app_package": "com.demo", "steps": [{"type": "tap", "ui_node": {"text": "我的"}}]})
+        with self.assertRaisesRegex(ValueError, "没有记录到手机操作"):
+            generate_recording_yaml({"status": "finished", "app_package": "com.demo", "steps": []})
 
 
 if __name__ == "__main__":

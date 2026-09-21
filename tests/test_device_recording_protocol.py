@@ -86,6 +86,19 @@ class DeviceRecordingProtocolTest(unittest.TestCase):
         self.assertEqual(handler.responses[0][0], 400)
         self.assertIn("未由该 Runner 在线上报", handler.responses[0][1]["error"])
 
+    def test_sonic_actual_phone_binds_an_unbound_session_before_actions(self):
+        create = Handler({"app_package": "com.tencent.mm"})
+        router._post_device_recordings(create, {})
+        self.assertEqual(create.responses[0][0], 200)
+        session = create.responses[0][1]["session"]
+        self.assertEqual(session["device_id"], "")
+
+        bind = Handler({"session_id": session["id"], "device_id": "ecbfd645"})
+        router._post_device_recording_bind(bind, {})
+        self.assertEqual(bind.responses[0][0], 200)
+        self.assertEqual(bind.responses[0][1]["session"]["runner_id"], "win-runner-01")
+        self.assertEqual(bind.responses[0][1]["session"]["device_id"], "ecbfd645")
+
 
 if __name__ == "__main__":
     unittest.main()

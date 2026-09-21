@@ -3956,15 +3956,16 @@ def _post_device_recordings(handler, qs):
     try:
         runner_id = str(payload.get("runner_id") or payload.get("runnerId") or "").strip()
         device_id = str(payload.get("device_id") or payload.get("deviceId") or "").strip()
-        online = any(
-            str(item.get("runner_id") or "") == runner_id
-            and str(item.get("device_id") or "") == device_id
-            and item.get("runner_online")
-            and item.get("status") in ("online", "device")
-            for item in all_online_devices()
-        )
-        if not online:
-            raise ValueError("所选 Android 手机未由该 Runner 在线上报，请刷新设备后重试")
+        if runner_id or device_id:
+            online = any(
+                str(item.get("runner_id") or "") == runner_id
+                and str(item.get("device_id") or "") == device_id
+                and item.get("runner_online")
+                and item.get("status") in ("online", "device")
+                for item in all_online_devices()
+            )
+            if not online:
+                raise ValueError("所选 Android 手机未由该 Runner 在线上报，请刷新设备后重试")
         session = create_recording_session(
             user=_authenticated_user(handler),
             runner_id=runner_id,
@@ -3976,6 +3977,33 @@ def _post_device_recordings(handler, qs):
         return
     from task_server.services.sonic_service import sonic_base_url
     handler._json({"ok": True, "session": session, "sonic_url": sonic_base_url().rstrip("/") + "/Index/Devices"})
+
+
+@route_post("/api/device-recordings/bind")
+def _post_device_recording_bind(handler, qs):
+    if _require_user_auth(handler):
+        return
+    from task_server.services.device_recording_service import bind_recording_device
+    payload = handler._body()
+    device_id = str(payload.get("device_id") or payload.get("deviceId") or "").strip()
+    matched = next((item for item in all_online_devices() if str(item.get("device_id") or "") == device_id and item.get("runner_online") and item.get("status") in ("online", "device")), None)
+    if not matched:
+        handler._json({"ok": False, "error": "Sonic 实际打开的手机当前不在线或不可用"}, 409)
+        return
+    try:
+        session = bind_recording_device(
+            payload.get("session_id") or payload.get("sessionId") or "",
+            _authenticated_user(handler),
+            str(matched.get("runner_id") or ""),
+            device_id,
+        )
+    except PermissionError as exc:
+        handler._json({"ok": False, "error": str(exc)}, 403)
+        return
+    except ValueError as exc:
+        handler._json({"ok": False, "error": str(exc)}, 409)
+        return
+    handler._json({"ok": True, "session": session})
 
 
 @route_get("/api/device-recordings")
@@ -4056,6 +4084,26 @@ def _post_device_recording_finish(handler, qs):
     handler._json({"ok": True, "session": session})
 
 
+@route_post("/api/device-recordings/cancel")
+def _post_device_recording_cancel(handler, qs):
+    if _require_user_auth(handler):
+        return
+    from task_server.services.device_recording_service import cancel_recording_session
+    payload = handler._body()
+    try:
+        session = cancel_recording_session(
+            payload.get("session_id") or payload.get("sessionId") or "",
+            _authenticated_user(handler),
+        )
+    except PermissionError as exc:
+        handler._json({"ok": False, "error": str(exc)}, 403)
+        return
+    except ValueError as exc:
+        handler._json({"ok": False, "error": str(exc)}, 409)
+        return
+    handler._json({"ok": True, "session": session})
+
+
 @route_post("/api/device-recordings/step")
 def _post_device_recording_step(handler, qs):
     if _require_user_auth(handler):
@@ -4068,6 +4116,27 @@ def _post_device_recording_step(handler, qs):
             _authenticated_user(handler),
             payload.get("step_id") or payload.get("stepId") or "",
             payload.get("semantic_description") or payload.get("semanticDescription") or "",
+        )
+    except PermissionError as exc:
+        handler._json({"ok": False, "error": str(exc)}, 403)
+        return
+    except ValueError as exc:
+        handler._json({"ok": False, "error": str(exc)}, 400)
+        return
+    handler._json({"ok": True, "session": session})
+
+
+@route_post("/api/device-recordings/step/delete")
+def _post_device_recording_step_delete(handler, qs):
+    if _require_user_auth(handler):
+        return
+    from task_server.services.device_recording_service import delete_recorded_step
+    payload = handler._body()
+    try:
+        session = delete_recorded_step(
+            payload.get("session_id") or payload.get("sessionId") or "",
+            _authenticated_user(handler),
+            payload.get("step_id") or payload.get("stepId") or "",
         )
     except PermissionError as exc:
         handler._json({"ok": False, "error": str(exc)}, 403)
