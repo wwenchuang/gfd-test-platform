@@ -308,6 +308,11 @@ def _build_runner_record(runner_id: str, payload: Dict[str, Any]) -> Dict[str, A
                 if str(device.get("device_id") or "") == device_id:
                     device["snapshot_error"] = "设备正在执行平台任务，本次未采集新画面"
                     break
+        elif device_id in online_device_ids and not fresh:
+            for device in devices:
+                if str(device.get("device_id") or "") == device_id:
+                    device["snapshot_error"] = "设备状态采集超时，已保留上次画面"
+                    break
     return {
         "runner_id": runner_id,
         "devices": devices,

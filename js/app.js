@@ -621,6 +621,15 @@ async function refreshAgentRunnerDevices() {
       if (!remaining.length) break;
     } while (Date.now() - started < 60000);
     if (remaining.length) {
+      const timedOutIds = new Set((requested.requests || []).filter(item => requestIds.has(item.request_id)).map(item => `${item.runner_id}::${item.device_id}`));
+      runnerDevices.forEach(device => {
+        if (timedOutIds.has(`${device.runner_id}::${device.device_id}`)) {
+          device.usage_status = 'unknown';
+          device.usage_label = '状态采集超时';
+          device.snapshot_error = '设备状态采集超时，已保留上次画面';
+        }
+      });
+      renderAgentRunnerDeviceOptions(document.getElementById('agent-runner-device')?.value || '');
       const hint = document.getElementById('agent-runner-device-hint');
       if (hint) {
         hint.className = 'form-hint agent-device-hint warn';

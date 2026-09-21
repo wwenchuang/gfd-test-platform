@@ -113,6 +113,7 @@ class DeviceSnapshotSyncTest(unittest.TestCase):
         runner_service.save_runners({"r1": {"runner_id": "r1", "last_seen_ts": runner_service.time.time(), "devices": [{"device_id": "p1", "status": "online"}], "snapshot_requests": [{**request, "requested_ts": 1}]}})
         expired = runner_service.register_runner({"runner_id": "r1", "devices": [{"device_id": "p1", "status": "online"}]})
         self.assertEqual(expired["snapshot_requests"], [])
+        self.assertIn("采集超时", expired["devices"][0]["snapshot_error"])
 
     def test_refresh_reuses_request_for_entire_ttl(self):
         request = runner_service.request_device_snapshots()["requests"][0]
