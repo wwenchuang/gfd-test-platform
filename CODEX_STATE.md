@@ -12141,3 +12141,11 @@ git diff --check
 - 前端最长等待 60 秒，轮询失败保留既有卡片；截图 Blob 按设备复用并在新图替换或设备离开时释放，避免重复下载和内存累积。
 - Windows Runner 版本 `2026.09.21-qwen3.7-result-retry-v1-live-device-snapshot-v1` 新增 ADB 二进制截图与状态采集。服务端发布后仍需将该脚本更新到 Windows 并重启 Runner，截图链路才会真正生效。
 - 专项验证：Python 14 项、卡片 DOM 6 项、主访问控制 53 项通过；前端静态 84 项通过。最终全量静态检查及线上 Safari 验收以本节后续提交部署记录为准。
+
+### 2026-09-21 实时手机卡片线上验收
+
+- main 已推送 `eed7d87` 并部署；其前序功能提交为 `b6bda55`、超时状态修复为 `1050361`。部署后修复 Sonic 设备查询重复 `/controller` 路径。
+- Safari 在线点击“刷新设备”后，两台手机都以真实当前屏幕替换默认图：HUAWEI P40 Pro 与 OPPO Reno9 的采集时间均为 2026-09-21 15:02:33；同时显示电量 75%/80%、温度 32℃/32.9℃、亮屏/息屏状态和应用版本。
+- 本次刷新时 Sonic 返回两台均为空闲，页面显示“空闲可选”并允许勾选；DEBUGGING/TESTING 状态会显示 Sonic 返回的具体账号，平台任务则显示任务占用。状态源失败、采集失败或超时统一禁选并保留上一张画面。
+- Windows 最新 Runner 已实际回传截图，证明 Runner 更新与服务端协议均已生效。一键包位于 `dist/windows-stack-launcher.zip`，包含最新 `windows-midscene-runner.py`。
+- 线上验收未启动 Agent、未执行手机操作，仅做设备状态和只读截图采集。用户 Word 文档和 `docs/career/` 未修改。
