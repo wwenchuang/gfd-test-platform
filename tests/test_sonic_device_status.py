@@ -1,9 +1,13 @@
 import unittest
+from unittest.mock import patch
 
 from task_server.services import sonic_service
 
 
 class SonicDeviceStatusTest(unittest.TestCase):
+    def setUp(self):
+        sonic_service._MEM_CACHE.clear()
+
     def test_status_keeps_trusted_occupant_and_converts_temperature(self):
         row = sonic_service.normalize_sonic_device_status({
             "udId": "p1", "status": "DEBUGGING", "user": "zhang@example.com",
@@ -26,6 +30,12 @@ class SonicDeviceStatusTest(unittest.TestCase):
         self.assertEqual(online["sonic_user"], "")
         self.assertEqual(offline["usage_status"], "unknown")
         self.assertEqual(offline["usage_label"], "状态待确认")
+
+    def test_device_list_uses_controller_prefix_only_once(self):
+        with patch.object(sonic_service, "sonic_request", return_value={"data": {"records": []}}) as request:
+            result = sonic_service.sonic_list_device_statuses()
+        self.assertTrue(result["__source__"]["available"])
+        request.assert_called_once_with("GET", "/devices/list", params={"page": 1, "pageSize": 500}, timeout=8)
 
 
 if __name__ == "__main__":

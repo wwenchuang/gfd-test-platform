@@ -146,7 +146,7 @@ def sonic_list_device_statuses() -> Dict[str, Dict[str, Any]]:
     if isinstance(cached, dict):
         return cached
     try:
-        response = sonic_request("GET", "/controller/devices/list", params={"page": 1, "pageSize": 500}, timeout=8)
+        response = sonic_request("GET", "/devices/list", params={"page": 1, "pageSize": 500}, timeout=8)
         rows = _extract_page_items(_sonic_response_data(response))
     except Exception:
         unavailable = {"__source__": {"available": False}}
