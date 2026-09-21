@@ -9,7 +9,31 @@
   let recording = null;
   let touch = null;
   let activeDeviceSocket = null;
+  let pendingActions = [];
   const NativeWebSocket = window.WebSocket;
+  const STORAGE_KEY = 'midsceneSonicRecording';
+
+  function platformWindow() {
+    if (!window.opener) return null;
+    try { return window.opener.opener || window.opener; } catch (_) { return window.opener; }
+  }
+
+  function notifyPlatform(message) {
+    const target = platformWindow();
+    if (target && recording?.platformOrigin) target.postMessage(message, recording.platformOrigin);
+  }
+
+  function saveRecording() {
+    try {
+      if (recording) window.sessionStorage?.setItem(STORAGE_KEY, JSON.stringify(recording));
+      else window.sessionStorage?.removeItem(STORAGE_KEY);
+    } catch (_) {}
+  }
+
+  try {
+    const inherited = window.sessionStorage?.getItem(STORAGE_KEY);
+    if (inherited) recording = JSON.parse(inherited);
+  } catch (_) { recording = null; }
 
   function id() {
     return `sonic-${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -26,7 +50,12 @@
   }
 
   function mirror(action) {
-    if (!recording || !recording.bound || !action) return;
+    if (!recording || !action) return;
+    if (!recording.bound) {
+      pendingActions.push(action);
+      pendingActions = pendingActions.slice(-20);
+      return;
+    }
     const body = JSON.stringify({
       session_id: recording.sessionId,
       recording_token: recording.recordingToken,
@@ -38,7 +67,7 @@
     }).then(response => {
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
     }).catch(error => {
-      if (window.opener) window.opener.postMessage({type: 'MIDSCENE_RECORDING_ERROR', message: String(error.message || error)}, recording.platformOrigin);
+      notifyPlatform({type: 'MIDSCENE_RECORDING_ERROR', message: String(error.message || error)});
     });
   }
 
@@ -78,7 +107,8 @@
     if (isSelectedDevice && !/\/screen\/|\/terminal\//.test(target)) {
       recording.deviceId = connectedDeviceId;
       activeDeviceSocket = socket;
-      if (window.opener) window.opener.postMessage({type: 'MIDSCENE_RECORDING_READY', sessionId: recording.sessionId, deviceId: recording.deviceId}, recording.platformOrigin);
+      saveRecording();
+      notifyPlatform({type: 'MIDSCENE_RECORDING_READY', sessionId: recording.sessionId, deviceId: recording.deviceId});
     }
     const nativeSend = socket.send;
     socket.send = function (data) {
@@ -96,9 +126,13 @@
 
   window.addEventListener('message', event => {
     const data = event.data || {};
-    if (event.source !== window.opener) return;
+    if (event.source !== window.opener && event.source !== platformWindow()) return;
     if (data.type === 'MIDSCENE_RECORDING_BOUND' && recording && data.sessionId === recording.sessionId && data.deviceId === recording.deviceId) {
       recording.bound = true;
+      saveRecording();
+      const queued = pendingActions;
+      pendingActions = [];
+      queued.forEach(mirror);
       return;
     }
     if (data.type !== 'MIDSCENE_RECORDING_START') return;
@@ -109,6 +143,8 @@
         deviceId: String(data.deviceId || ''), endpoint: endpoint.href, platformOrigin: endpoint.origin, bound: Boolean(data.deviceId),
       };
       if (!recording.sessionId || !recording.recordingToken) recording = null;
-    } catch (_) { recording = null; }
+      pendingActions = [];
+      saveRecording();
+    } catch (_) { recording = null; saveRecording(); }
   });
 })();

@@ -82,3 +82,17 @@ test('timeline exposes unobtrusive edit and delete controls', () => {
   assert.match(details.textContent, /编辑或删除/);
   assert.ok(details.querySelector('[data-action="delete-recording-step"]'));
 });
+
+test('accepts the ready message from the Sonic remote child tab and binds back to that tab', async () => {
+  const f = fixture();
+  f.run('renderDeviceRecorder()');
+  await f.run('startDeviceRecording()');
+  const replies = [];
+  const remoteTab = {postMessage(message, origin) { replies.push({message, origin}); }};
+  f.context.remoteTab = remoteTab;
+  await f.run("handleDeviceRecorderMessage({origin:'http://sonic.example',source:remoteTab,data:{type:'MIDSCENE_RECORDING_READY',sessionId:'session-1',deviceId:'ecbfd645'}})");
+  const bind = f.calls.find(call => call.url === '/device-recordings/bind');
+  assert.deepEqual(bind.body, {session_id: 'session-1', device_id: 'ecbfd645'});
+  assert.equal(replies[0].message.type, 'MIDSCENE_RECORDING_BOUND');
+  assert.equal(replies[0].origin, 'http://sonic.example');
+});

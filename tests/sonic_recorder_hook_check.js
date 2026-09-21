@@ -31,3 +31,39 @@ test('Sonic hook only becomes ready and mirrors the platform-selected phone', as
   assert.equal(order[1][0], 'mirror');
   assert.deepEqual(order[1][1].action.point, {x: 10, y: 20});
 });
+
+test('remote phone tab restores the recording handed to its Sonic opener and queues the first action until binding', async () => {
+  const listeners = {};
+  const sent = [];
+  const platform = {postMessage(message) { sent.push(['platform', message]); }};
+  const sonicCenter = {opener: platform};
+  const stored = JSON.stringify({
+    sessionId: 's-child', recordingToken: 'token-child', deviceId: '',
+    endpoint: 'http://platform.example/api/device-recordings/action',
+    platformOrigin: 'http://platform.example', bound: false,
+  });
+  const window = {
+    opener: sonicCenter,
+    sessionStorage: {getItem(key) { return key === 'midsceneSonicRecording' ? stored : null; }, setItem() {}, removeItem() {}},
+    addEventListener(type, fn) { listeners[type] = fn; },
+  };
+  class FakeWebSocket {
+    constructor(url) { this.url = url; }
+    send(data) { sent.push(['sonic', data]); }
+  }
+  window.WebSocket = FakeWebSocket;
+  const context = vm.createContext({window, URL, fetch: async (url, options) => { sent.push(['mirror', JSON.parse(options.body)]); return {ok: true}; }, Date, Math, JSON, String, Number, Object, RegExp, Error, setTimeout});
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'deploy/sonic-recorder-hook.js'), 'utf8'), context);
+
+  const socket = new window.WebSocket('ws://agent/websockets/android/secret/ecbfd645/token');
+  assert.equal(sent.at(-1)[0], 'platform');
+  assert.equal(sent.at(-1)[1].type, 'MIDSCENE_RECORDING_READY');
+  assert.equal(sent.at(-1)[1].deviceId, 'ecbfd645');
+
+  socket.send(JSON.stringify({type: 'debug', detail: 'tap', point: '12,34'}));
+  assert.equal(sent.filter(item => item[0] === 'mirror').length, 0);
+  listeners.message({source: platform, data: {type: 'MIDSCENE_RECORDING_BOUND', sessionId: 's-child', deviceId: 'ecbfd645'}});
+  await Promise.resolve();
+  assert.equal(sent.filter(item => item[0] === 'mirror').length, 1);
+  assert.deepEqual(sent.filter(item => item[0] === 'mirror')[0][1].action.point, {x: 12, y: 34});
+});

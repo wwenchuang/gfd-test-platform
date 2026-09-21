@@ -148,14 +148,14 @@ async function refreshDeviceRecording() {
   } catch (_) {}
 }
 
-window.addEventListener('message', async event => {
+async function handleDeviceRecorderMessage(event) {
   const sonicUrl = sessionStorage.getItem('deviceRecorderSonicUrl') || '';
-  if (!sonicUrl || event.origin !== new URL(sonicUrl).origin || event.source !== deviceRecorderWindow) return;
+  if (!sonicUrl || event.origin !== new URL(sonicUrl).origin) return;
   if (event.data?.type === 'MIDSCENE_RECORDING_READY' && event.data.sessionId === deviceRecorderSession?.id) {
     try {
       const data = await apiRequest('/device-recordings/bind', {method: 'POST', body: JSON.stringify({session_id: deviceRecorderSession.id, device_id: event.data.deviceId})});
       deviceRecorderSession = data.session;
-      deviceRecorderWindow?.postMessage({type: 'MIDSCENE_RECORDING_BOUND', sessionId: deviceRecorderSession.id, deviceId: deviceRecorderSession.device_id}, event.origin);
+      event.source?.postMessage({type: 'MIDSCENE_RECORDING_BOUND', sessionId: deviceRecorderSession.id, deviceId: deviceRecorderSession.device_id}, event.origin);
       deviceRecorderBridgeState = `Sonic 已进入手机 ${deviceRecorderSession.device_id}，正在记录操作`;
       renderDeviceRecorder();
     } catch (error) {
@@ -166,7 +166,9 @@ window.addEventListener('message', async event => {
     deviceRecorderBridgeState = `动作记录失败：${String(event.data.message || '未知错误')}`;
     renderDeviceRecorder();
   }
-});
+}
+
+window.addEventListener('message', handleDeviceRecorderMessage);
 
 async function addRecorderCheckpoint() {
   const description = prompt('输入需要验证的页面结果');
