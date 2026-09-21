@@ -1,3 +1,12 @@
+## 2026-09-21 Sonic 远控断点与 Windows 三组件一键启动
+
+- Safari 实现象：Sonic 登录正常，两手机所属 Windows _agent 在线，远控页停留“准备图像中”；该 Agent 登记入口为 101.34.197.12:17789。公网 TCP 17789 被拒绝。
+- 用户恢复平台机 10.130.4.31 堡垒机终端后，只读查询确认 Sonic 容器连续运行约两周；frps 自 09-04 10:47:52 运行，7000 在监听，但无 ESTABLISHED 客户端、无 17789 监听。服务端配置文件 mtime=07-27。历史 09-02 17:46:10 sonic-agent-remote 映射关闭；09-08 18:55 两次 Windows FRP 0.48.0 登录被 token mismatch 拒绝。历史认证失败不能直接推定为今天全部根因；当前断点为客户端未建立远控隧道。未改服务器配置、认证、端口或重启 Sonic。
+- 用户在 Windows 查询未找到 frpc 进程/同名服务，随后找到 C:\frp 的 frpc.exe/frpc.toml；双击命令行程序只显示需在终端运行。用户要求合并启动 Sonic、Windows Runner 和 FRP，已发截图确认 Sonic JAR 目录 D:\sonic\sonic-agent-v2.7.2-windows_x86_64，Runner 最终指定 D:\sonic\midscene_run\windows-midscene-runner.py（不是最初推测的 winRunner.bat）。
+- 新增 deploy/windows-stack：start/status/configure 三个 CMD 入口、Python 标准库启动器和中文说明。截图路径预填且存在时自动采用，否则文件选择；支持 Sonic JAR / Runner Python / 原批处理，复用现有 MidsceneWindowsRunner 服务。保留原配置及密钥，直接 Python 启动要求有效既有环境令牌；不从其他配置提取秘密、不调用领取任务接口。全输入预检、全局启动互斥锁、读取进程失败阻断、重复实例/不同 FRP 配置阻断、服务停用但有手动 Runner 时不重复启动；新进程连续观察避免瞬时存在误报。
+- 直接启动三组件独立持久日志，批处理保留原窗口方式；TCP 检查与进程状态分开，均不等同远控画面验收。未自动安装开机自启或修改执行策略；用户关闭启动结果窗口不会主动终止后台进程。
+- 13 项专项逻辑检查与 Python 语法检查、后端静态 63 项、diff 检查通过。当前在 macOS 验证逻辑并验证非 Windows 平台拒绝运行；没有目标 Windows 会话，Windows 实机启动、FRP 认证修复及 Safari 真实画面恢复仍待验收，不能标为已恢复。交付包 dist/windows-stack-launcher.zip 仅含工具和说明，不含机器配置/日志/密钥。先前手机卡片 d96f7cf 尚未部署，Word 与晋升资料保留。
+
 ## 2026-09-21 Agent执行手机卡片
 
 - 用户截图的设备下拉框改为手机卡片网格：手机轮廓、名称、在线状态、安卓版本、分辨率、当前应用版本与设备号；执行机器和执行器长版本折叠到连接详情。自动分配独立展示，增加刷新设备按钮。

@@ -27,3 +27,7 @@ output/
 
 *.log
 *.rtf
+
+# Machine-local launcher paths; credentials remain in original component configs.
+deploy/windows-stack/stack.local.json
+deploy/windows-stack/stack.local.tmp
