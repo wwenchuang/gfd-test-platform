@@ -10,7 +10,7 @@
 
 ## Global Constraints
 
-- Production device is exactly `9888E0094F2A`; never select `18CEDF5BA7B2` or fall back to another device.
+- The user explicitly selects one Android phone currently reported by its Runner; refresh never switches phones automatically. Business printer IDs `9888E0094F2A` and `18CEDF5BA7B2` are invalid recording targets.
 - Coordinates are evidence only and never the default final YAML locator.
 - Support only existing Midscene actions: `launch`, `aiTap`, `aiInput`, `aiScroll`, `aiWaitFor`, `aiAssert`, `sleep`, `runAdbShell`, and other actions already accepted by the current whitelist.
 - A recording draft cannot execute until every ambiguous step is confirmed and existing static validation passes.
@@ -60,7 +60,7 @@
 - Consumes: heartbeat `recording_evidence_requests[]` created after Sonic has already sent an action.
 - Produces: bounded keyframe PNG, bounded UI XML, timestamps, and matched device ID; it never repeats the phone action.
 
-- [x] Test screenshot/XML collection and wrong-device rejection with an injected ADB runner.
+- [x] Test screenshot/XML collection and rejection when the selected phone is absent from the Runner ADB list.
 - [x] Implement read-only screenshot and UI XML collection; reject other devices and never accept action commands.
 - [x] Suppress duplicate uploads in process; server uploads are idempotent across Runner restarts.
 - [ ] Run Runner syntax and focused tests, rebuild `dist/windows-stack-launcher.zip`, and deploy the updated Runner.
@@ -97,7 +97,7 @@
 
 - [x] Add DOM/protocol tests for fixed-device gating, token-safe Sonic opening and original-control-first mirroring.
 - [x] Implement the recorder without continuous capture; collect one keyframe and UI tree for each mirrored action.
-- [x] Render Chinese labels and errors, fixed device, timeline, ambiguity confirmation, YAML preview and asset save.
+- [x] Render Chinese labels and errors, explicit selectable phone cards, timeline, ambiguity confirmation, YAML preview and asset save.
 - [ ] Run DOM tests, frontend static checks, responsive visual smoke, and diff checks; commit.
 
 ### Task 6: End-to-end verification and deployment
@@ -109,5 +109,5 @@
 - [ ] Run all focused Python and Node suites plus required backend/frontend/Runner checks.
 - [ ] Push `main`, deploy with `deploy/update-main-server.sh`, and confirm `/api/health` reports the exact commit.
 - [ ] Update the Windows package and restart Runner only because Task 3 changes the Runner protocol.
-- [ ] In Safari, record one safe read-only flow on `9888E0094F2A`, verify evidence and semantic YAML, run static validation and a single debug, then end the session and confirm device release.
+- [ ] In Safari, explicitly select one idle Sonic Android phone, record one safe read-only flow, verify evidence and semantic YAML, run static validation and a single debug, then end the session and confirm device release.
 - [ ] Record exact session ID, generated asset, debug job, result, and remaining limitations in `CODEX_STATE.md`; commit and push the handoff.

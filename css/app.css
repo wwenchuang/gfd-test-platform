@@ -4010,6 +4010,12 @@
   .device-recorder-device.online { border-color: rgba(52, 211, 153, .55); }
   .device-recorder-device.offline { border-color: rgba(248, 113, 113, .45); }
   .device-recorder-device span { color: var(--text2); font-size: 12px; }
+  .device-recorder-phone-grid { display: grid; gap: 10px; }
+  .device-recorder-phone { display: flex; gap: 12px; align-items: flex-start; padding: 12px; border: 1px solid var(--border); border-radius: 10px; cursor: pointer; }
+  .device-recorder-phone:has(input:checked) { border-color: var(--accent); box-shadow: inset 3px 0 var(--accent); }
+  .device-recorder-phone.busy { opacity: .65; cursor: not-allowed; }
+  .device-recorder-phone span { display: grid; gap: 4px; }
+  .device-recorder-phone small { color: var(--text2); }
   .device-recorder-timeline { display: grid; gap: 8px; max-height: 430px; overflow: auto; }
 .device-recorder-timeline article {
     display: grid;

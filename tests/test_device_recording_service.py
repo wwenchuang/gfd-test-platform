@@ -18,23 +18,25 @@ class DeviceRecordingServiceTest(unittest.TestCase):
         values = dict(
             user="admin",
             runner_id="win-runner-01",
-            device_id=recording.FIXED_RECORDING_DEVICE_ID,
+            device_id="ecbfd645",
             app_package="com.tencent.mm",
             store_path=self.store,
         )
         values.update(overrides)
         return recording.create_recording_session(**values)
 
-    def test_rejects_non_fixed_device(self):
-        with self.assertRaisesRegex(ValueError, recording.FIXED_RECORDING_DEVICE_ID):
+    def test_rejects_business_printer_identifier(self):
+        with self.assertRaisesRegex(ValueError, "打印机"):
             self.create(device_id="18CEDF5BA7B2")
+        with self.assertRaisesRegex(ValueError, "打印机"):
+            self.create(device_id="9888E0094F2A")
 
     def test_only_one_active_session_per_device(self):
         first = self.create()
         with self.assertRaisesRegex(ValueError, "正在录制"):
             self.create(user="another")
         self.assertEqual(
-            recording.active_recording_for_device("win-runner-01", recording.FIXED_RECORDING_DEVICE_ID, store_path=self.store)["id"],
+            recording.active_recording_for_device("win-runner-01", "ecbfd645", store_path=self.store)["id"],
             first["id"],
         )
 
@@ -74,18 +76,18 @@ class DeviceRecordingServiceTest(unittest.TestCase):
         token = session["recording_token"]
         first = recording.append_recorded_action(
             session["id"], token,
-            {"event_id": "evt-1", "type": "tap", "point": {"x": 120, "y": 240}, "device_id": recording.FIXED_RECORDING_DEVICE_ID},
+            {"event_id": "evt-1", "type": "tap", "point": {"x": 120, "y": 240}, "device_id": "ecbfd645"},
             store_path=self.store,
         )
         second = recording.append_recorded_action(
             session["id"], token,
-            {"event_id": "evt-2", "type": "key", "key": "BACK", "device_id": recording.FIXED_RECORDING_DEVICE_ID},
+            {"event_id": "evt-2", "type": "key", "key": "BACK", "device_id": "ecbfd645"},
             store_path=self.store,
         )
         self.assertEqual((first["sequence"], second["sequence"]), (1, 2))
         replay = recording.append_recorded_action(
             session["id"], token,
-            {"event_id": "evt-1", "type": "tap", "point": {"x": 120, "y": 240}, "device_id": recording.FIXED_RECORDING_DEVICE_ID},
+            {"event_id": "evt-1", "type": "tap", "point": {"x": 120, "y": 240}, "device_id": "ecbfd645"},
             store_path=self.store,
         )
         self.assertTrue(replay["duplicate"])
@@ -94,7 +96,7 @@ class DeviceRecordingServiceTest(unittest.TestCase):
     def test_action_rejects_wrong_token_device_type_and_large_text(self):
         session = self.create()
         token = session["recording_token"]
-        base = {"event_id": "evt", "type": "tap", "point": {"x": 1, "y": 2}, "device_id": recording.FIXED_RECORDING_DEVICE_ID}
+        base = {"event_id": "evt", "type": "tap", "point": {"x": 1, "y": 2}, "device_id": "ecbfd645"}
         with self.assertRaisesRegex(PermissionError, "令牌"):
             recording.append_recorded_action(session["id"], "wrong", base, store_path=self.store)
         with self.assertRaisesRegex(ValueError, "设备"):
@@ -108,7 +110,7 @@ class DeviceRecordingServiceTest(unittest.TestCase):
         session = self.create()
         step = recording.append_recorded_action(
             session["id"], session["recording_token"],
-            {"event_id": "evt-1", "type": "tap", "point": {"x": 50, "y": 60}, "device_id": recording.FIXED_RECORDING_DEVICE_ID},
+            {"event_id": "evt-1", "type": "tap", "point": {"x": 50, "y": 60}, "device_id": "ecbfd645"},
             store_path=self.store,
         )
         pending = recording.pending_recording_evidence_requests("win-runner-01", store_path=self.store)
@@ -116,13 +118,13 @@ class DeviceRecordingServiceTest(unittest.TestCase):
         xml = '<hierarchy><node text="外层" bounds="[0,0][200,200]"><node text="确定" resource-id="com.demo:id/ok" bounds="[20,30][100,90]" /></node></hierarchy>'
         evidence_dir = os.path.join(self.tempdir.name, "evidence")
         saved = recording.save_recording_evidence("win-runner-01", {
-            "session_id": session["id"], "step_id": step["id"], "device_id": recording.FIXED_RECORDING_DEVICE_ID,
+            "session_id": session["id"], "step_id": step["id"], "device_id": "ecbfd645",
             "content_base64": base64.b64encode(b"\x89PNG\r\n\x1a\nfixture").decode(), "ui_xml": xml,
         }, store_path=self.store, evidence_dir=evidence_dir)
         self.assertEqual(saved["steps"][0]["ui_node"]["text"], "确定")
         self.assertEqual(recording.pending_recording_evidence_requests("win-runner-01", store_path=self.store), [])
         again = recording.save_recording_evidence("win-runner-01", {
-            "session_id": session["id"], "step_id": step["id"], "device_id": recording.FIXED_RECORDING_DEVICE_ID,
+            "session_id": session["id"], "step_id": step["id"], "device_id": "ecbfd645",
         }, store_path=self.store, evidence_dir=evidence_dir)
         self.assertEqual(again["steps"][0]["evidence_status"], "captured")
 
@@ -130,7 +132,7 @@ class DeviceRecordingServiceTest(unittest.TestCase):
         session = self.create()
         step = recording.append_recorded_action(
             session["id"], session["recording_token"],
-            {"event_id": "evt-1", "type": "tap", "point": {"x": 1, "y": 2}, "device_id": recording.FIXED_RECORDING_DEVICE_ID},
+            {"event_id": "evt-1", "type": "tap", "point": {"x": 1, "y": 2}, "device_id": "ecbfd645"},
             store_path=self.store,
         )
         with self.assertRaisesRegex(PermissionError, "发起人"):

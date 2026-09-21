@@ -3954,10 +3954,21 @@ def _post_device_recordings(handler, qs):
     from task_server.services.device_recording_service import create_recording_session
     payload = handler._body()
     try:
+        runner_id = str(payload.get("runner_id") or payload.get("runnerId") or "").strip()
+        device_id = str(payload.get("device_id") or payload.get("deviceId") or "").strip()
+        online = any(
+            str(item.get("runner_id") or "") == runner_id
+            and str(item.get("device_id") or "") == device_id
+            and item.get("runner_online")
+            and item.get("status") in ("online", "device")
+            for item in all_online_devices()
+        )
+        if not online:
+            raise ValueError("所选 Android 手机未由该 Runner 在线上报，请刷新设备后重试")
         session = create_recording_session(
             user=_authenticated_user(handler),
-            runner_id=payload.get("runner_id") or payload.get("runnerId"),
-            device_id=payload.get("device_id") or payload.get("deviceId"),
+            runner_id=runner_id,
+            device_id=device_id,
             app_package=payload.get("app_package") or payload.get("appPackage"),
         )
     except (ValueError, PermissionError) as exc:

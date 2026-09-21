@@ -1,4 +1,3 @@
-const DEVICE_RECORDER_FIXED_DEVICE = '9888E0094F2A';
 let deviceRecorderSession = null;
 let deviceRecorderWindow = null;
 let deviceRecorderPollTimer = null;
@@ -11,8 +10,21 @@ function deviceRecorderAppOptions() {
   ).join('');
 }
 
-function fixedRecorderDevice() {
-  return (runnerDevices || []).find(device => String(device.device_id || device.id || '') === DEVICE_RECORDER_FIXED_DEVICE) || null;
+function selectedRecorderDevice() {
+  const input = document.querySelector('input[name="device-recorder-device"]:checked');
+  if (!input) return null;
+  return (runnerDevices || []).find(device => `${device.runner_id}::${device.device_id}` === input.value) || null;
+}
+
+function recorderDeviceCards(session) {
+  const devices = (runnerDevices || []).filter(device => !['9888E0094F2A', '18CEDF5BA7B2'].includes(String(device.device_id || '').toUpperCase()));
+  if (!devices.length) return '<div class="job-empty">暂无在线 Android 手机。请启动 Windows Runner 并在 Sonic 确认手机在线后刷新。</div>';
+  return `<div class="device-recorder-phone-grid">${devices.map(device => {
+    const value = `${device.runner_id}::${device.device_id}`;
+    const busy = device.usage_status && device.usage_status !== 'idle';
+    const checked = session?.runner_id === device.runner_id && session?.device_id === device.device_id;
+    return `<label class="device-recorder-phone ${busy ? 'busy' : ''}"><input type="radio" name="device-recorder-device" value="${escapeHtml(value)}" ${checked ? 'checked' : ''} ${session || busy ? 'disabled' : ''}><span><strong>${escapeHtml(device.model || device.name || 'Android 手机')}</strong><small>${escapeHtml(device.device_id || '')}</small><small>${escapeHtml(device.usage_label || (busy ? '当前不可用' : '空闲'))} · ${escapeHtml(device.runner_id || '')}</small></span></label>`;
+  }).join('')}</div>`;
 }
 
 function recorderStatusText(session) {
@@ -44,7 +56,6 @@ function recorderTimelineItem(step) {
 function renderDeviceRecorder() {
   const area = document.getElementById('editor-area');
   if (!area) return;
-  const device = fixedRecorderDevice();
   const session = deviceRecorderSession;
   const steps = session?.steps || [];
   area.className = 'editor-area';
@@ -53,13 +64,13 @@ function renderDeviceRecorder() {
     <div class="device-recorder-grid">
       <section class="review-panel"><h3>录制设置</h3>
         <label class="modal-label">应用</label><select id="device-recorder-app" ${session ? 'disabled' : ''}>${deviceRecorderAppOptions()}</select>
-        <label class="modal-label">固定测试设备</label>
-        <div class="device-recorder-device ${device ? 'online' : 'offline'}"><strong>${DEVICE_RECORDER_FIXED_DEVICE}</strong><span>${device ? `${escapeHtml(device.runner_id || '')} · 在线` : '当前 Runner 未上报在线，不能开始录制'}</span></div>
+        <label class="modal-label">选择录制手机</label>
+        ${recorderDeviceCards(session)}
         <div class="review-actions">
-          ${!session ? `<button class="btn-sm primary" ${device ? '' : 'disabled'} onclick="startDeviceRecording()">开始录制并打开 Sonic</button>` : ''}
+          ${!session ? '<button class="btn-sm primary" onclick="startDeviceRecording()">使用已选手机开始录制</button>' : ''}
           ${session?.status === 'recording' ? '<button class="btn-sm" onclick="openRecorderSonic()">打开 Sonic</button><button class="btn-sm danger" onclick="finishDeviceRecording()">结束录制</button>' : ''}
           ${session?.status === 'finished' ? '<button class="btn-sm ai" onclick="generateDeviceRecordingYaml()">生成并校验 YAML</button>' : ''}
-        </div><div id="device-recorder-message" class="generate-hint">${session ? `会话：${escapeHtml(session.id)} · ${escapeHtml(deviceRecorderBridgeState)}` : '开始前请确认设备空闲。录制令牌不会写入网址。'}</div>
+        </div><div id="device-recorder-message" class="generate-hint">${session ? `手机：${escapeHtml(session.device_id)} · 会话：${escapeHtml(session.id)} · ${escapeHtml(deviceRecorderBridgeState)}` : '请明确勾选一台空闲手机。平台不会自动切换设备，录制令牌也不会写入网址。'}</div>
         ${session?.status === 'finished' ? `<div class="device-recorder-save"><label class="modal-label">用例名称</label><input id="device-recorder-task-name" value="录制生成用例"><label class="modal-label">保存到模块</label><select id="device-recorder-module">${recorderModuleOptions(session)}</select><label class="modal-label">YAML 文件名</label><input id="device-recorder-file" value="录制生成用例.yaml"><button class="btn-sm success" ${deviceRecorderGenerated ? '' : 'disabled'} onclick="saveDeviceRecordingYaml()">保存到用例资产</button></div>` : ''}
       </section>
       <section class="review-panel"><div class="review-head compact"><div><h3>步骤时间线</h3><p>${steps.length} 个动作</p></div>${session?.status === 'recording' ? '<button class="btn-sm" onclick="addRecorderCheckpoint()">添加检查点</button>' : ''}</div>
@@ -77,11 +88,11 @@ async function showDeviceRecorder() {
 }
 
 async function startDeviceRecording() {
-  const device = fixedRecorderDevice();
+  const device = selectedRecorderDevice();
   const appPackage = document.getElementById('device-recorder-app')?.value || '';
-  if (!device || !appPackage) return showToast(!device ? '固定测试设备当前不在线' : '请选择应用', 'error');
+  if (!device || !appPackage) return showToast(!device ? '请先勾选一台空闲 Android 手机' : '请选择应用', 'error');
   try {
-    const data = await apiRequest('/device-recordings', {method: 'POST', body: JSON.stringify({runner_id: device.runner_id, device_id: DEVICE_RECORDER_FIXED_DEVICE, app_package: appPackage})});
+    const data = await apiRequest('/device-recordings', {method: 'POST', body: JSON.stringify({runner_id: device.runner_id, device_id: device.device_id, app_package: appPackage})});
     deviceRecorderSession = data.session;
     deviceRecorderGenerated = null;
     sessionStorage.setItem('deviceRecorderToken', data.session.recording_token || '');
@@ -96,7 +107,7 @@ function recorderHandshake() {
   if (!deviceRecorderWindow || deviceRecorderWindow.closed || !deviceRecorderSession) return;
   const sonicUrl = sessionStorage.getItem('deviceRecorderSonicUrl') || '';
   const origin = sonicUrl ? new URL(sonicUrl).origin : '*';
-  deviceRecorderWindow.postMessage({type: 'MIDSCENE_RECORDING_START', sessionId: deviceRecorderSession.id, recordingToken: sessionStorage.getItem('deviceRecorderToken'), deviceId: DEVICE_RECORDER_FIXED_DEVICE, endpoint: `${location.origin}/api/device-recordings/action`}, origin);
+  deviceRecorderWindow.postMessage({type: 'MIDSCENE_RECORDING_START', sessionId: deviceRecorderSession.id, recordingToken: sessionStorage.getItem('deviceRecorderToken'), deviceId: deviceRecorderSession.device_id, endpoint: `${location.origin}/api/device-recordings/action`}, origin);
 }
 
 function openRecorderSonic() {
@@ -139,7 +150,7 @@ async function addRecorderCheckpoint() {
   const description = prompt('输入需要验证的页面结果');
   if (!description) return;
   const token = sessionStorage.getItem('deviceRecorderToken');
-  await apiRequest('/device-recordings/action', {method: 'POST', body: JSON.stringify({session_id: deviceRecorderSession.id, recording_token: token, action: {event_id: `checkpoint-${Date.now()}`, type: 'checkpoint', checkpoint_kind: 'assert', description, device_id: DEVICE_RECORDER_FIXED_DEVICE}})});
+  await apiRequest('/device-recordings/action', {method: 'POST', body: JSON.stringify({session_id: deviceRecorderSession.id, recording_token: token, action: {event_id: `checkpoint-${Date.now()}`, type: 'checkpoint', checkpoint_kind: 'assert', description, device_id: deviceRecorderSession.device_id}})});
   await refreshDeviceRecording();
 }
 

@@ -17,7 +17,7 @@ from typing import Any, Dict, Optional
 from ..config import DEVICE_RECORDINGS_FILE, DEVICE_RECORDING_STALE_SECONDS, DEVICE_RECORDING_EVIDENCE_DIR
 from ..storage import file_mutation_lock, read_json_file, write_json_file, write_bytes_file, write_text_file
 
-FIXED_RECORDING_DEVICE_ID = "9888E0094F2A"
+NON_MOBILE_DEVICE_IDS = {"9888E0094F2A", "18CEDF5BA7B2"}
 RECORDING_STALE_SECONDS = DEVICE_RECORDING_STALE_SECONDS
 ACTIVE_STATUSES = {"recording"}
 FINAL_STATUSES = {"finished", "cancelled"}
@@ -96,8 +96,10 @@ def create_recording_session(
     app_package = str(app_package or "").strip()
     if not user or not runner_id or not app_package:
         raise ValueError("用户、Runner 和应用包名不能为空")
-    if device_id != FIXED_RECORDING_DEVICE_ID:
-        raise ValueError(f"录制只允许固定设备 {FIXED_RECORDING_DEVICE_ID}")
+    if not device_id:
+        raise ValueError("必须选择一台在线 Android 手机")
+    if device_id.upper() in NON_MOBILE_DEVICE_IDS:
+        raise ValueError("操作录制只能选择 Sonic Android 手机，不能使用业务打印机编号")
     timestamp = float(time.time() if now is None else now)
     path = _path(store_path)
     with _LOCK, file_mutation_lock(path):
@@ -304,7 +306,7 @@ def append_recorded_action(
             raise PermissionError("录制令牌已过期")
         if row.get("status") != "recording":
             raise ValueError("录制会话当前不可接收动作")
-        if device_id != row.get("device_id") or device_id != FIXED_RECORDING_DEVICE_ID:
+        if device_id != row.get("device_id"):
             raise ValueError("动作设备与录制设备不一致")
         existing = next((step for step in row.get("steps") or [] if step.get("event_id") == event_id), None)
         if existing:

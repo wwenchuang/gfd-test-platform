@@ -22,7 +22,6 @@ TOKEN = os.getenv("MIDSCENE_RUNNER_TOKEN", "").strip()
 WORKSPACE = Path(os.getenv("MIDSCENE_RUNNER_WORKSPACE", r"D:\sonic\midscene_run"))
 CALLBACK_OUTBOX_DIR = WORKSPACE / "callback_outbox"
 RUNNER_VERSION = os.getenv("MIDSCENE_RUNNER_VERSION", "2026.09.21-qwen3.7-result-retry-v1-recording-evidence-v1")
-FIXED_RECORDING_DEVICE_ID = "9888E0094F2A"
 COMPLETED_RECORDING_EVIDENCE = set()
 RUNNER_STARTED_AT = time.strftime("%Y-%m-%d %H:%M:%S")
 POLL_INTERVAL = int(os.getenv("POLL_INTERVAL", "3"))
@@ -688,8 +687,6 @@ def upload_recording_evidence_requests(response, devices):
             "session_id": str(request.get("session_id") or ""), "step_id": str(request.get("step_id") or ""),
         }
         try:
-            if device_id != FIXED_RECORDING_DEVICE_ID:
-                raise RuntimeError(f"录制证据只允许固定设备 {FIXED_RECORDING_DEVICE_ID}")
             if device_id not in available:
                 raise RuntimeError("录制设备已离线，无法采集证据")
             payload["content_base64"] = base64.b64encode(capture_screen_png(adb_bin, device_id)).decode("ascii")

@@ -23,21 +23,21 @@ class WindowsRecordingEvidenceTest(unittest.TestCase):
             if "cat" in command:
                 return Result(b'<hierarchy><node text="ok" bounds="[0,0][1,1]" /></hierarchy>')
             return Result()
-        value = runner.capture_ui_xml("adb", runner.FIXED_RECORDING_DEVICE_ID, run=fake_run)
+        value = runner.capture_ui_xml("adb", "ecbfd645", run=fake_run)
         self.assertIn("<hierarchy", value)
         self.assertEqual(calls[0][-3:], ["uiautomator", "dump", "/sdcard/midscene-recording-window.xml"])
         self.assertIn("cat", calls[1])
 
-    def test_uploader_rejects_other_device_without_adb_capture(self):
+    def test_uploader_rejects_device_not_present_in_runner_adb_list(self):
         runner.COMPLETED_RECORDING_EVIDENCE.clear()
         response = {"recording_evidence_requests": [{"request_id": "r1", "session_id": "s1", "step_id": "p1", "device_id": "other"}]}
         posted = []
         with mock.patch.object(runner, "resolve_adb_with_devices", return_value=("adb", [])), \
              mock.patch.object(runner, "http_json", side_effect=lambda method, path, payload, timeout=0: posted.append(payload) or {"ok": True}), \
              mock.patch.object(runner, "capture_screen_png") as capture:
-            runner.upload_recording_evidence_requests(response, [{"device_id": "other"}])
+            runner.upload_recording_evidence_requests(response, [])
         capture.assert_not_called()
-        self.assertIn(runner.FIXED_RECORDING_DEVICE_ID, posted[0]["error"])
+        self.assertIn("离线", posted[0]["error"])
 
 
 if __name__ == "__main__":

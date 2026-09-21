@@ -202,7 +202,9 @@ TASK_ALLOWED_ORIGINS = [
     for item in os.getenv("TASK_ALLOWED_ORIGINS", "http://101.34.197.12:8088,http://localhost:8088,http://127.0.0.1:8088").split(",")
     if item.strip()
 ]
-_configured_sonic_origin = urllib.parse.urlsplit(os.getenv("SONIC_BASE_URL", "").strip())
+_configured_sonic_origin = urllib.parse.urlsplit(
+    (os.getenv("SONIC_BASE_URL") or os.getenv("SONIC_URL") or "http://101.34.197.12:3000").strip()
+)
 if _configured_sonic_origin.scheme in ("http", "https") and _configured_sonic_origin.netloc:
     _sonic_origin = f"{_configured_sonic_origin.scheme}://{_configured_sonic_origin.netloc}"
     if _sonic_origin not in TASK_ALLOWED_ORIGINS:
