@@ -113,6 +113,54 @@ def _extract_page_items(data: Any) -> list:
     return []
 
 
+def normalize_sonic_device_status(item: Dict[str, Any]) -> Dict[str, Any]:
+    """Normalize only status facts returned by Sonic; never infer an occupant."""
+    item = item if isinstance(item, dict) else {}
+    device_id = str(item.get("udId") or item.get("udid") or item.get("deviceId") or "").strip()
+    status = str(item.get("status") or "").strip().upper()
+    user = item.get("user")
+    if isinstance(user, dict):
+        user = user.get("email") or user.get("username") or user.get("name") or ""
+    user = str(user or "").strip()
+    busy = status in ("DEBUGGING", "TESTING")
+    temperature = item.get("temperature")
+    try:
+        temperature_c = round(float(temperature) / 10.0, 1) if temperature not in (None, "") else None
+    except (TypeError, ValueError):
+        temperature_c = None
+    usage_status = "busy" if busy else ("idle" if status == "ONLINE" else "unknown")
+    usage_label = (f"{user} 占用中" if user else "Sonic 占用中") if busy else ("空闲可选" if status == "ONLINE" else "状态待确认")
+    return {
+        "device_id": device_id,
+        "sonic_status": status,
+        "sonic_user": user if busy else "",
+        "usage_status": usage_status,
+        "usage_label": usage_label,
+        "battery_level": item.get("level"),
+        "battery_temperature_c": temperature_c,
+    }
+
+
+def sonic_list_device_statuses() -> Dict[str, Dict[str, Any]]:
+    cached = _cache_get("device-statuses", 5)
+    if isinstance(cached, dict):
+        return cached
+    try:
+        response = sonic_request("GET", "/controller/devices/list", params={"page": 1, "pageSize": 500}, timeout=8)
+        rows = _extract_page_items(_sonic_response_data(response))
+    except Exception:
+        unavailable = {"__source__": {"available": False}}
+        _cache_set("device-statuses", unavailable)
+        return unavailable
+    result = {"__source__": {"available": True}}
+    for item in rows:
+        row = normalize_sonic_device_status(item)
+        if row["device_id"]:
+            result[row["device_id"]] = row
+    _cache_set("device-statuses", result)
+    return result
+
+
 def _env_key_for_package(prefix: str, package: str) -> str:
     return prefix + re.sub(r"[^A-Z0-9]", "_", (package or "").upper())
 

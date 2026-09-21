@@ -595,11 +595,47 @@ async function loadRunnerDevices(options = {}) {
     runnerDevices = (data.devices || []).filter(device => device.runner_online && device.status === 'online');
     AppState.loaded.runners = true;
   } catch(e) {
+    if (force) throw e;
     AppState.runners = {};
     runnerDevices = [];
   }
   renderRunnerDevices();
   if (!quiet && activeWorkflow === 'dashboard' && !hasOpenEditor()) showWorkflowGuide('dashboard');
+}
+
+async function refreshAgentRunnerDevices() {
+  const button = document.getElementById('agent-refresh-devices');
+  if (button) {
+    button.disabled = true;
+    button.textContent = '正在同步画面…';
+  }
+  try {
+    const requested = await apiRequest('/runners/refresh', {method: 'POST', body: {}});
+    const started = Date.now();
+    const requestIds = new Set((requested.requests || []).map(item => item.request_id));
+    let remaining = [];
+    do {
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      await loadRunnerDevices({force: true, quiet: true});
+      remaining = Object.values(AppState.runners || {}).flatMap(item => item.snapshot_requests || []).filter(item => requestIds.has(item.request_id));
+      if (!remaining.length) break;
+    } while (Date.now() - started < 60000);
+    if (remaining.length) {
+      const hint = document.getElementById('agent-runner-device-hint');
+      if (hint) {
+        hint.className = 'form-hint agent-device-hint warn';
+        hint.textContent = '设备状态已刷新，但执行器未在 60 秒内回传实时画面；可能正在忙碌、网络异常或版本暂不支持。已有截图仍保留。';
+      }
+    }
+  } catch (error) {
+    showToast(error?.message || '设备实时状态同步失败', 'error');
+    await loadRunnerDevices({force: true, quiet: true});
+  } finally {
+    if (button) {
+      button.disabled = false;
+      button.textContent = '刷新设备';
+    }
+  }
 }
 
 function ensureRunnersLoaded(options = {}) {
@@ -745,6 +781,7 @@ function renderDeviceOptions(selectId) {
     opt.value = `${device.runner_id}::${device.device_id}`;
     opt.textContent = runnerDeviceOptionLabel(device);
     opt.title = opt.textContent;
+    opt.disabled = device.usage_status && device.usage_status !== 'idle';
     select.appendChild(opt);
   });
   if (runnerDevices.length === 0) {
@@ -770,6 +807,7 @@ function renderAgentRunnerDeviceOptions(preferredValue) {
     opt.value = `${device.runner_id}::${device.device_id}`;
     opt.textContent = runnerDeviceOptionLabel(device, appPackage);
     opt.title = opt.textContent;
+    opt.disabled = device.usage_status && device.usage_status !== 'idle';
     select.appendChild(opt);
   });
   if (runnerDevices.length === 0) {
@@ -788,7 +826,7 @@ function renderAgentRunnerDeviceOptions(preferredValue) {
     select.appendChild(unavailable);
     select.value = previous;
   }
-  select.options[0].disabled = !runnerDevices.length;
+  select.options[0].disabled = !runnerDevices.some(device => !device.usage_status || device.usage_status === 'idle');
   renderAgentRunnerDeviceCards();
   updateAgentRunnerDeviceHint();
 }
@@ -811,6 +849,53 @@ function refreshAgentRunnerDeviceByApp() {
   renderAgentRunnerDeviceOptions(selectedValue);
 }
 
+async function loadAgentDeviceSnapshotImages(host) {
+  const cache = window.agentDeviceSnapshotCache instanceof Map ? window.agentDeviceSnapshotCache : new Map();
+  window.agentDeviceSnapshotCache = cache;
+  if (!host || typeof nativeFetch !== 'function') return;
+  const images = Array.from(host.querySelectorAll('img[data-snapshot-url]'));
+  const activeDevices = new Set(images.map(image => {
+    const source = new URL(image.dataset.snapshotUrl, window.location.href);
+    return `${source.searchParams.get('runner_id') || ''}::${source.searchParams.get('device_id') || ''}`;
+  }));
+  cache.forEach((entry, deviceKey) => {
+    if (!activeDevices.has(deviceKey)) {
+      URL.revokeObjectURL(entry.objectUrl);
+      cache.delete(deviceKey);
+    }
+  });
+  await Promise.allSettled(images.map(async image => {
+    const fallback = image.nextElementSibling;
+    try {
+      const source = new URL(image.dataset.snapshotUrl, window.location.href);
+      if (source.origin !== window.location.origin || source.pathname !== '/api/runner/device-snapshot') throw new Error('截图地址不可信');
+      const key = source.pathname + source.search;
+      const deviceKey = `${source.searchParams.get('runner_id') || ''}::${source.searchParams.get('device_id') || ''}`;
+      let cached = cache.get(deviceKey);
+      let objectUrl = cached?.source === key ? cached.objectUrl : '';
+      if (!objectUrl) {
+        const response = await nativeFetch(key, {headers: authHeaders()});
+        if (!response.ok) throw new Error(`截图读取失败 HTTP ${response.status}`);
+        const blob = await response.blob();
+        if (!String(blob.type || '').startsWith('image/png')) throw new Error('截图格式不是 PNG');
+        objectUrl = URL.createObjectURL(blob);
+        if (cached?.objectUrl) URL.revokeObjectURL(cached.objectUrl);
+        cache.set(deviceKey, {source: key, objectUrl});
+      }
+      if (!image.isConnected) return;
+      image.src = objectUrl;
+      image.hidden = false;
+      if (fallback) fallback.hidden = true;
+    } catch (_) {
+      image.hidden = true;
+      if (fallback) {
+        fallback.hidden = false;
+        fallback.textContent = '画面加载失败';
+      }
+    }
+  }));
+}
+
 function renderAgentRunnerDeviceCards() {
   const host = document.getElementById('agent-runner-device-cards');
   const select = document.getElementById('agent-runner-device');
@@ -819,20 +904,33 @@ function renderAgentRunnerDeviceCards() {
   const app = typeof agentApplicationByPackage === 'function' ? agentApplicationByPackage(appPackage) : null;
   const appLabel = app?.name || appDisplayLabel(appPackage) || '当前应用';
   const e = escapeHtml;
-  host.innerHTML = `<label class="agent-device-auto"><input type="radio" name="agent-device-choice" value="__AUTO_DEVICE__" ${runnerDevices.length ? '' : 'disabled'}><span><strong>自动分配在线手机</strong><small>由平台从下方在线手机中选择一台执行</small></span></label>
+  host.innerHTML = `<label class="agent-device-auto"><input type="radio" name="agent-device-choice" value="__AUTO_DEVICE__" ${runnerDevices.some(device => !device.usage_status || device.usage_status === 'idle') ? '' : 'disabled'}><span><strong>自动分配在线手机</strong><small>由平台从下方空闲手机中选择一台执行</small></span></label>
     <div class="agent-phone-grid">${runnerDevices.map(device => {
       const value = `${device.runner_id}::${device.device_id}`;
       const version = runnerDeviceVersionLabel(device, appPackage);
       const readableVersion = appPackage && version.startsWith(appPackage) ? version.slice(appPackage.length).trim() : version;
+      const busy = Boolean(device.usage_status && device.usage_status !== 'idle');
+      const picture = device.snapshot_url
+        ? `<img data-snapshot-url="${e(device.snapshot_url)}&v=${encodeURIComponent(device.snapshot_captured_at || '')}" alt="${e(runnerDeviceDisplayName(device))} 最近一次手机画面" hidden><span>正在读取画面…</span>`
+        : '<span>等待画面</span>';
+      const state = device.usage_label || (busy ? '平台任务执行中' : '空闲可选');
+      const metrics = [
+        device.battery_level != null ? `电量 ${device.battery_level}%` : '',
+        device.battery_temperature_c != null ? `温度 ${device.battery_temperature_c}℃` : '',
+        device.screen_on === true ? '亮屏' : (device.screen_on === false ? '息屏' : ''),
+      ].filter(Boolean).join(' · ');
       return `<div class="agent-phone-item"><label class="agent-phone-card">
-        <input type="radio" name="agent-device-choice" value="${e(value)}">
-        <span class="agent-phone-art" aria-hidden="true"><span>手机</span></span>
-        <span class="agent-phone-copy"><strong>${e(runnerDeviceDisplayName(device))}</strong><span class="agent-phone-status">在线</span>
+        <input type="radio" name="agent-device-choice" value="${e(value)}" ${busy ? 'disabled' : ''}>
+        <span class="agent-phone-art">${picture}</span>
+        <span class="agent-phone-copy"><strong>${e(runnerDeviceDisplayName(device))}</strong><span class="agent-phone-status ${busy ? 'busy' : ''}">${e(state)}</span>
           <span>安卓 ${e(device.android_version || device.androidVersion || '版本未上报')} · ${e(device.resolution || '分辨率未上报')}</span>
           <span class="agent-phone-app">${e(appLabel)} <b>${e(readableVersion || '版本未上报')}</b></span>
+          ${metrics ? `<span>${e(metrics)}</span>` : ''}
+          ${device.foreground_package ? `<small>前台应用：${e(device.foreground_package)}</small>` : ''}
+          <small>${device.snapshot_captured_at ? `画面采集：${e(device.snapshot_captured_at)}` : '尚未采集实时画面'}${device.snapshot_error ? ` · ${e(device.snapshot_error)}` : ''}</small>
           <small>设备编号：${e(device.device_id)}</small></span>
         <span class="agent-phone-check" aria-hidden="true">✓</span>
-      </label><details class="agent-phone-details"><summary>连接详情</summary><div>执行机器：${e(device.runner_id)}<br>执行器版本：${e(device.runner_version || '未上报')}</div></details></div>`;
+      </label><details class="agent-phone-details"><summary>连接详情</summary><div>执行机器：${e(device.runner_id)}<br>执行器版本：${e(device.runner_version || '未上报')}${device.active_job_name ? `<br>当前任务：${e(device.active_job_name)}` : ''}</div></details></div>`;
     }).join('')}</div>${runnerDevices.length ? '' : '<p class="agent-phone-empty">暂无在线手机，请连接手机并启动执行器后刷新。</p>'}`;
   host.querySelectorAll('input[name="agent-device-choice"]').forEach(input => {
     input.checked = input.value === select.value;
@@ -843,6 +941,7 @@ function renderAgentRunnerDeviceCards() {
       if (typeof captureAgentFormDraft === 'function') captureAgentFormDraft();
     });
   });
+  loadAgentDeviceSnapshotImages(host);
 }
 
 function updateAgentRunnerDeviceHint() {

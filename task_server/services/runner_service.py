@@ -14,7 +14,9 @@
 
 from __future__ import annotations
 
+import base64
 import os
+import uuid
 import time
 import urllib.parse
 from typing import Any, Dict, Iterable, List, Optional, Set
@@ -26,6 +28,7 @@ from ..config import (
     DEFAULT_VL_MODEL,
     JOB_LOCK,
     JOBS_FILE,
+    LEARNING_DIR,
     PORT,
     RUNNER_LOCK,
     RUNNERS_FILE,
@@ -45,6 +48,13 @@ DEVICE_MARKET_NAME_BY_MODEL = {
     "ELS-AN00": "HUAWEI P40 Pro",
     "PHM110": "OPPO Reno9",
 }
+DEVICE_SNAPSHOT_DIR = os.path.join(LEARNING_DIR, "device-snapshots")
+DEVICE_SNAPSHOT_MAX_BYTES = 12 * 1024 * 1024
+DEVICE_SNAPSHOT_REQUEST_TTL_SECONDS = 75
+DEVICE_SNAPSHOT_FIELDS = (
+    "snapshot_url", "snapshot_captured_at", "snapshot_error", "battery_level",
+    "battery_temperature_c", "foreground_package", "screen_on",
+)
 
 
 def normalize_device_model(value: Any) -> str:
@@ -84,6 +94,119 @@ def load_runners() -> Dict[str, Dict[str, Any]]:
 def save_runners(runners: Dict[str, Dict[str, Any]]) -> None:
     """原子化保存 runner 注册表到磁盘。"""
     write_json_file(RUNNERS_FILE, runners)
+
+
+def _merge_device_snapshot(previous: Dict[str, Any], current: Dict[str, Any]) -> Dict[str, Any]:
+    row = dict(current)
+    for key in DEVICE_SNAPSHOT_FIELDS:
+        if key in previous and key not in row:
+            row[key] = previous[key]
+    return row
+
+
+def request_device_snapshots() -> Dict[str, Any]:
+    """Queue one coalesced, read-only snapshot request for each online device."""
+    now = time.time()
+    requests = []
+    busy = {
+        (str(job.get("target_runner_id") or job.get("runner_id") or ""), str(job.get("device_id") or ""))
+        for job in _load_jobs()
+        if job.get("status") in ("pending", "running")
+    }
+    with RUNNER_LOCK:
+        runners = load_runners()
+        for runner_id, runner in runners.items():
+            if not _is_runner_online(runner, now=now):
+                continue
+            pending = {str(item.get("device_id")): item for item in runner.get("snapshot_requests") or [] if isinstance(item, dict)}
+            for device in runner.get("devices") or []:
+                if device.get("status") not in ("online", "device") or not device.get("device_id"):
+                    continue
+                device_id = str(device["device_id"])
+                if (runner_id, device_id) in busy:
+                    device["snapshot_error"] = "设备正在执行平台任务，本次未采集新画面"
+                    pending.pop(device_id, None)
+                    continue
+                request = pending.get(device_id)
+                if not request or now - float(request.get("requested_ts") or 0) > DEVICE_SNAPSHOT_REQUEST_TTL_SECONDS:
+                    request = {
+                        "request_id": uuid.uuid4().hex,
+                        "device_id": device_id,
+                        "requested_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+                        "requested_ts": now,
+                    }
+                pending[device_id] = request
+                requests.append({**request, "runner_id": runner_id})
+            runner["snapshot_requests"] = list(pending.values())
+        save_runners(runners)
+    return {"requested": len(requests), "requests": requests}
+
+
+def save_device_snapshot(runner_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Validate and persist the latest successful device picture and status."""
+    device_id = str(payload.get("device_id") or payload.get("deviceId") or "").strip()
+    request_id = str(payload.get("request_id") or payload.get("requestId") or "").strip()
+    if not runner_id or not device_id or not request_id:
+        raise ValueError("runner_id、device_id 和 request_id 不能为空")
+    with RUNNER_LOCK:
+        runners = load_runners()
+        runner = runners.get(runner_id)
+        if not runner:
+            raise ValueError("Runner 不存在")
+        device = next((item for item in runner.get("devices") or [] if str(item.get("device_id")) == device_id), None)
+        pending = next((item for item in runner.get("snapshot_requests") or [] if item.get("request_id") == request_id and str(item.get("device_id")) == device_id), None)
+        if not device or not pending:
+            raise ValueError("截图请求不属于该 Runner 或设备")
+        busy = any(
+            job.get("status") in ("pending", "running")
+            and str(job.get("target_runner_id") or job.get("runner_id") or "") == runner_id
+            and str(job.get("device_id") or "") == device_id
+            for job in _load_jobs()
+        )
+        if busy:
+            device["snapshot_error"] = "设备正在执行平台任务，本次未采集新画面"
+            runner["snapshot_requests"] = [item for item in runner.get("snapshot_requests") or [] if item.get("request_id") != request_id]
+            save_runners(runners)
+            return {"ok": True, "snapshot_path": "", "device": dict(device)}
+        error = str(payload.get("error") or "").strip()[:500]
+        snapshot_path = ""
+        if not error:
+            encoded = payload.get("content_base64") or payload.get("contentBase64") or ""
+            if not isinstance(encoded, str) or len(encoded) > ((DEVICE_SNAPSHOT_MAX_BYTES + 2) // 3) * 4:
+                raise ValueError("截图超过大小限制")
+            try:
+                content = base64.b64decode(encoded, validate=True)
+            except Exception as exc:
+                raise ValueError("截图编码无效") from exc
+            if not content.startswith(b"\x89PNG\r\n\x1a\n"):
+                raise ValueError("截图不是 PNG 文件")
+            if len(content) > DEVICE_SNAPSHOT_MAX_BYTES:
+                raise ValueError("截图超过大小限制")
+            os.makedirs(DEVICE_SNAPSHOT_DIR, exist_ok=True)
+            filename = uuid.uuid5(uuid.NAMESPACE_URL, runner_id + ":" + device_id).hex + ".png"
+            snapshot_path = os.path.join(DEVICE_SNAPSHOT_DIR, filename)
+            temporary = snapshot_path + ".tmp"
+            with open(temporary, "wb") as stream:
+                stream.write(content)
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(temporary, snapshot_path)
+            device["snapshot_url"] = "/api/runner/device-snapshot?" + urllib.parse.urlencode({"runner_id": runner_id, "device_id": device_id})
+            device["snapshot_captured_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
+            device["snapshot_error"] = ""
+        else:
+            device["snapshot_error"] = error
+        for key in ("battery_level", "battery_temperature_c", "foreground_package", "screen_on"):
+            if key in payload:
+                device[key] = payload[key]
+        runner["snapshot_requests"] = [item for item in runner.get("snapshot_requests") or [] if item.get("request_id") != request_id]
+        save_runners(runners)
+        return {"ok": True, "snapshot_path": snapshot_path, "device": dict(device)}
+
+
+def device_snapshot_path(runner_id: str, device_id: str) -> str:
+    filename = uuid.uuid5(uuid.NAMESPACE_URL, str(runner_id) + ":" + str(device_id)).hex + ".png"
+    return os.path.join(DEVICE_SNAPSHOT_DIR, filename)
 
 
 # ---------------------------------------------------------------------------
@@ -126,6 +249,7 @@ def normalize_device_list(devices: Optional[Iterable[Any]]) -> List[Dict[str, An
             "resolution", "density", "installed_apps", "installedApps",
             "app_versions", "appVersions", "preflight", "preflight_status",
             "preflightStatus",
+            "battery_level", "battery_temperature_c", "foreground_package", "screen_on",
         ):
             if isinstance(meta, dict) and key in meta:
                 row[key] = meta.get(key)
@@ -161,6 +285,29 @@ def _build_runner_record(runner_id: str, payload: Dict[str, Any]) -> Dict[str, A
     devices = normalize_device_list(payload.get("devices") or [])
     now = time.time()
     runner_version = payload.get("runner_version") or payload.get("runnerVersion") or payload.get("version") or ""
+    previous = load_runners().get(runner_id) or {}
+    previous_devices = {str(item.get("device_id")): item for item in previous.get("devices") or []}
+    devices = [_merge_device_snapshot(previous_devices.get(str(item.get("device_id")), {}), item) for item in devices]
+    online_device_ids = {str(item.get("device_id")) for item in devices if item.get("status") in ("online", "device")}
+    busy_device_ids = {
+        str(job.get("device_id") or "") for job in _load_jobs()
+        if job.get("status") in ("pending", "running")
+        and str(job.get("target_runner_id") or job.get("runner_id") or "") == runner_id
+    }
+    snapshot_requests = []
+    for request in previous.get("snapshot_requests") or []:
+        device_id = str(request.get("device_id") or "")
+        try:
+            fresh = now - float(request.get("requested_ts") or 0) <= DEVICE_SNAPSHOT_REQUEST_TTL_SECONDS
+        except (TypeError, ValueError):
+            fresh = False
+        if fresh and device_id in online_device_ids and device_id not in busy_device_ids:
+            snapshot_requests.append(request)
+        elif device_id in busy_device_ids:
+            for device in devices:
+                if str(device.get("device_id") or "") == device_id:
+                    device["snapshot_error"] = "设备正在执行平台任务，本次未采集新画面"
+                    break
     return {
         "runner_id": runner_id,
         "devices": devices,
@@ -172,6 +319,7 @@ def _build_runner_record(runner_id: str, payload: Dict[str, Any]) -> Dict[str, A
         "started_at": payload.get("started_at") or payload.get("startedAt") or "",
         "last_seen": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(now)),
         "last_seen_ts": now,
+        "snapshot_requests": snapshot_requests,
     }
 
 
@@ -186,8 +334,8 @@ def register_runner(payload: Dict[str, Any]) -> Dict[str, Any]:
         持久化后的 runner 记录。
     """
     runner_id = payload.get("runner_id") or payload.get("runnerId") or "runner"
-    record = _build_runner_record(runner_id, payload)
     with RUNNER_LOCK:
+        record = _build_runner_record(runner_id, payload)
         runners = load_runners()
         runners[runner_id] = record
         save_runners(runners)
@@ -251,6 +399,14 @@ def all_online_devices() -> List[Dict[str, Any]]:
     with RUNNER_LOCK:
         runners = load_runners()
     devices: List[Dict[str, Any]] = []
+    active_jobs = {}
+    for job in _load_jobs():
+        if job.get("status") not in ("pending", "running"):
+            continue
+        runner_id = str(job.get("target_runner_id") or job.get("runner_id") or "")
+        device_id = str(job.get("device_id") or "")
+        if runner_id and device_id:
+            active_jobs[(runner_id, device_id)] = job
     now = time.time()
     for runner_id, runner in runners.items():
         online = _is_runner_online(runner, now=now)
@@ -270,6 +426,12 @@ def all_online_devices() -> List[Dict[str, Any]]:
             row["runner_capabilities"] = runner.get("capabilities") or {}
             row["workspace"] = runner.get("workspace", "")
             row["hostname"] = runner.get("hostname", "")
+            active_job = active_jobs.get((runner_id, str(row.get("device_id") or "")))
+            row["usage_status"] = "busy" if active_job else "idle"
+            row["usage_label"] = "平台任务执行中" if active_job else "空闲可选"
+            if active_job:
+                row["active_job_id"] = active_job.get("job_id") or ""
+                row["active_job_name"] = active_job.get("task_name") or active_job.get("file") or active_job.get("job_id") or "平台任务"
             devices.append(row)
     return devices
 
@@ -320,6 +482,17 @@ def assign_job(
         runners = load_runners()
         runner_info = runners.get(runner_id, {})
     available_devices = runner_device_ids(runner_info) | extra
+    try:
+        from .sonic_service import sonic_list_device_statuses
+        sonic_statuses = sonic_list_device_statuses()
+        source_available = bool((sonic_statuses.get("__source__") or {}).get("available"))
+        available_devices = {
+            device_id for device_id in available_devices
+            if source_available and (sonic_statuses.get(device_id) or {}).get("usage_status") == "idle"
+        }
+    except Exception:
+        # Sonic 查询不可用时保持旧调度能力；平台界面会明确显示其状态证据缺失。
+        pass
 
     selected: Optional[Dict[str, Any]] = None
     with JOB_LOCK:
@@ -348,6 +521,16 @@ def assign_job(
                 selected["device_id"] = sorted(available_devices)[0]
             selected["started_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
             _save_jobs(jobs)
+            selected_device = str(selected.get("device_id") or "")
+            if selected_device:
+                with RUNNER_LOCK:
+                    current_runners = load_runners()
+                    current_runner = current_runners.get(runner_id) or {}
+                    current_runner["snapshot_requests"] = [
+                        request for request in current_runner.get("snapshot_requests") or []
+                        if str(request.get("device_id") or "") != selected_device
+                    ]
+                    save_runners(current_runners)
             return dict(selected)
     return None
 
@@ -426,15 +609,18 @@ __all__ = [
     "all_online_devices",
     "annotate_job_queue_state",
     "assign_job",
+    "device_snapshot_path",
     "get_available_runner",
     "get_online_runners",
     "list_runners",
     "load_runners",
     "normalize_device_list",
     "register_runner",
+    "request_device_snapshots",
     "runner_device_ids",
     "runner_heartbeat",
     "runner_summary",
+    "save_device_snapshot",
     "save_runners",
     "update_runner_result",
 ]

@@ -143,7 +143,9 @@ from task_server.services.repair_service import (
 )
 from task_server.services.runner_service import (
     all_online_devices,
+    assign_job,
     annotate_job_queue_state,
+    device_snapshot_path,
     list_runners,
     load_runners,
     midscene_runtime_env,
@@ -151,8 +153,10 @@ from task_server.services.runner_service import (
     platform_preflight_dashboard,
     public_report_url,
     register_runner,
+    request_device_snapshots,
     runner_device_ids,
     runtime_env_preview,
+    save_device_snapshot,
     save_runners,
 )
 from task_server.services.sonic_service import (
@@ -169,6 +173,7 @@ from task_server.services.sonic_service import (
     sonic_auth_preview,
     sonic_base_url,
     sonic_list_projects,
+    sonic_list_device_statuses,
     sonic_live_case_status,
     sonic_migrate_midscene_cases,
     sonic_notify_clean_text,
@@ -2050,8 +2055,65 @@ def _get_runners(handler, qs):
     if _require_user_auth(handler):
         return
     devices = all_online_devices()
+    try:
+        sonic_statuses = sonic_list_device_statuses()
+    except Exception:
+        sonic_statuses = {}
+    source_available = bool((sonic_statuses.get("__source__") or {}).get("available"))
+    for device in devices:
+        sonic = sonic_statuses.get(str(device.get("device_id") or ""))
+        platform_busy = device.get("usage_status") == "busy"
+        capture_failed = bool(str(device.get("snapshot_error") or "").strip())
+        if not sonic:
+            if not platform_busy:
+                device["usage_status"] = "unknown"
+                device["usage_label"] = "状态待确认" if source_available else "Sonic 状态同步失败"
+            continue
+        for key in ("sonic_status", "sonic_user"):
+            device[key] = sonic.get(key)
+        for key in ("battery_level", "battery_temperature_c"):
+            if sonic.get(key) is not None:
+                device[key] = sonic[key]
+        if not platform_busy and capture_failed:
+            device["usage_status"] = "unknown"
+            device["usage_label"] = "设备状态采集失败"
+        elif not platform_busy:
+            device["usage_status"] = sonic["usage_status"]
+            device["usage_label"] = sonic["usage_label"]
     runners = list_runners()
     handler._json({"ok": True, "runners": runners, "devices": devices})
+
+
+@route_post("/api/runners/refresh")
+def _post_runners_refresh(handler, qs):
+    if _require_user_auth(handler):
+        return
+    result = request_device_snapshots()
+    handler._json({"ok": True, **result})
+
+
+@route_get("/api/runner/device-snapshot")
+def _get_runner_device_snapshot(handler, qs):
+    if _require_user_auth(handler):
+        return
+    runner_id = str(qs.get("runner_id") or "").strip()
+    device_id = str(qs.get("device_id") or "").strip()
+    runners = load_runners()
+    if not runner_id or not device_id or not any(str(item.get("device_id")) == device_id for item in (runners.get(runner_id) or {}).get("devices") or []):
+        handler._json({"ok": False, "error": "设备不存在"}, 404)
+        return
+    path = device_snapshot_path(runner_id, device_id)
+    if not os.path.isfile(path):
+        handler._json({"ok": False, "error": "设备截图尚未生成"}, 404)
+        return
+    handler.send_response(200)
+    handler._cors()
+    handler.send_header("Content-Type", "image/png")
+    handler.send_header("Cache-Control", "private, no-store")
+    handler.send_header("Content-Length", str(os.path.getsize(path)))
+    handler.end_headers()
+    with open(path, "rb") as stream:
+        shutil.copyfileobj(stream, handler.wfile)
 
 
 # ── 安装包更新任务 ──────────────────────────────────────────────────
@@ -2201,45 +2263,16 @@ def _get_runner_jobs_next(handler, qs):
         return
     runner_id = qs.get("runner_id", "runner")
     runner_device_ids_qs = set(filter(None, (qs.get("devices") or "").split(",")))
-    with RUNNER_LOCK:
-        runners = load_runners()
-        runner_info = runners.get(runner_id, {})
-    available_devices = runner_device_ids(runner_info) | runner_device_ids_qs
-    with JOB_LOCK:
-        jobs = load_jobs()
-        selected = None
-        for job in jobs:
-            if job.get("status") != "pending":
-                continue
-            target_runner = job.get("target_runner_id") or ""
-            target_device = job.get("device_id") or ""
-            auto_device = job_allows_auto_device(job)
-            if target_runner and target_runner != runner_id:
-                continue
-            if target_device and target_device not in available_devices:
-                continue
-            if not target_device and not auto_device:
-                continue
-            if not target_device and auto_device and not available_devices:
-                continue
-            if job.get("status") == "pending":
-                selected = job
-                break
-        if selected:
-            selected["status"] = "running"
-            selected["runner_id"] = runner_id
-            if not selected.get("device_id") and job_allows_auto_device(selected) and available_devices:
-                selected["device_id"] = sorted(available_devices)[0]
-            selected["started_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
-            save_jobs(jobs)
-            selected_is_yaml_dry_run = str(selected.get("job_type") or selected.get("type") or "").strip().lower() == "yaml_dry_run"
-            if not is_app_install_job(selected) and not selected_is_yaml_dry_run and selected.get("module") and selected.get("file"):
-                update_task_meta(selected["module"], selected["file"], {
-                    "last_job_id": selected["job_id"],
-                    "last_status": "running",
-                    "last_target_task_name": selected.get("target_task_name", ""),
-                    "last_run_at": selected["started_at"]
-                })
+    selected = assign_job(runner_id, runner_device_ids_qs)
+    if selected:
+        selected_is_yaml_dry_run = str(selected.get("job_type") or selected.get("type") or "").strip().lower() == "yaml_dry_run"
+        if not is_app_install_job(selected) and not selected_is_yaml_dry_run and selected.get("module") and selected.get("file"):
+            update_task_meta(selected["module"], selected["file"], {
+                "last_job_id": selected["job_id"],
+                "last_status": "running",
+                "last_target_task_name": selected.get("target_task_name", ""),
+                "last_run_at": selected["started_at"]
+            })
 
     if not selected:
         handler._json({"ok": True, "job": None})
@@ -3854,7 +3887,29 @@ def _post_runner_heartbeat(handler, qs):
         "runner_version": record.get("runner_version") or record.get("version") or "",
         "started_at": record.get("started_at") or "",
         "last_seen": record.get("last_seen") or "",
+        "snapshot_requests": record.get("snapshot_requests") or [],
     })
+
+
+@route_post("/api/runner/device-snapshot")
+def _post_runner_device_snapshot(handler, qs):
+    if _require_runner_auth(handler):
+        return
+    try:
+        content_length = int(handler.headers.get("Content-Length") or 0)
+    except (TypeError, ValueError):
+        content_length = 0
+    if content_length > 17 * 1024 * 1024:
+        handler._json({"ok": False, "error": "截图上传超过大小限制"}, 413)
+        return
+    payload = handler._body()
+    runner_id = str(payload.get("runner_id") or payload.get("runnerId") or "").strip()
+    try:
+        result = save_device_snapshot(runner_id, payload)
+    except ValueError as exc:
+        handler._json({"ok": False, "error": str(exc)}, 400)
+        return
+    handler._json({"ok": True, "device": result.get("device") or {}})
 
 
 # ── 生成批次冒烟重跑 ───────────────────────────────────────────────

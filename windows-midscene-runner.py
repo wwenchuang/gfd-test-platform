@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import base64
+import concurrent.futures
 import json
 import http.cookiejar
 import os
@@ -20,7 +21,7 @@ RUNNER_ID = os.getenv("RUNNER_ID", "win-runner-01")
 TOKEN = os.getenv("MIDSCENE_RUNNER_TOKEN", "").strip()
 WORKSPACE = Path(os.getenv("MIDSCENE_RUNNER_WORKSPACE", r"D:\sonic\midscene_run"))
 CALLBACK_OUTBOX_DIR = WORKSPACE / "callback_outbox"
-RUNNER_VERSION = os.getenv("MIDSCENE_RUNNER_VERSION", "2026.08.31-qwen3.7-result-retry-v1-tls")
+RUNNER_VERSION = os.getenv("MIDSCENE_RUNNER_VERSION", "2026.09.21-qwen3.7-result-retry-v1-live-device-snapshot-v1")
 RUNNER_STARTED_AT = time.strftime("%Y-%m-%d %H:%M:%S")
 POLL_INTERVAL = int(os.getenv("POLL_INTERVAL", "3"))
 MIDSCENE_BIN = os.getenv("MIDSCENE_BIN", "midscene")
@@ -603,6 +604,82 @@ def runner_app_packages():
 def adb_shell_text(adb_bin, device_id, *args, timeout=10):
     result = run_cmd([adb_bin, "-s", device_id, "shell", *args], timeout=timeout)
     return (result.stdout or "").strip().replace("\r", "")
+
+
+def parse_battery_state(text):
+    def number(name):
+        match = re.search(rf"(?m)^\s*{re.escape(name)}:\s*(-?\d+)", text or "")
+        return int(match.group(1)) if match else None
+    level = number("level")
+    temperature = number("temperature")
+    return {
+        "battery_level": level,
+        "battery_temperature_c": round(temperature / 10.0, 1) if temperature is not None else None,
+    }
+
+
+def parse_screen_on(text):
+    value = str(text or "").upper()
+    if re.search(r"(?:STATE|SCREEN_STATE)\s*=\s*OFF", value):
+        return False
+    if re.search(r"(?:STATE|SCREEN_STATE)\s*=\s*ON", value):
+        return True
+    return None
+
+
+def capture_screen_png(adb_bin, device_id, run=subprocess.run, max_bytes=12 * 1024 * 1024):
+    result = run([adb_bin, "-s", device_id, "exec-out", "screencap", "-p"],
+                 capture_output=True, timeout=15)
+    content = result.stdout or b""
+    if getattr(result, "returncode", 0) != 0:
+        raise RuntimeError("ADB 截图失败")
+    if not content.startswith(b"\x89PNG\r\n\x1a\n"):
+        raise RuntimeError("ADB 未返回有效 PNG 截图")
+    if len(content) > max_bytes:
+        raise RuntimeError("手机截图超过 12MB 限制")
+    return content
+
+
+def capture_device_snapshot(adb_bin, device_id):
+    battery = parse_battery_state(adb_shell_text(adb_bin, device_id, "dumpsys", "battery", timeout=5))
+    display = adb_shell_text(adb_bin, device_id, "dumpsys", "display", timeout=5)
+    activity = adb_shell_text(adb_bin, device_id, "dumpsys", "window", "windows", timeout=6)
+    foreground = ""
+    match = re.search(r"mCurrentFocus=.*?\s([A-Za-z0-9._]+)/(?:[A-Za-z0-9._$]+)", activity)
+    if match:
+        foreground = match.group(1)
+    return {
+        **battery,
+        "screen_on": parse_screen_on(display),
+        "foreground_package": foreground,
+        "content_base64": base64.b64encode(capture_screen_png(adb_bin, device_id)).decode("ascii"),
+    }
+
+
+def upload_snapshot_requests(response, devices):
+    requests = response.get("snapshot_requests") if isinstance(response, dict) else []
+    if not isinstance(requests, list) or not requests:
+        return
+    available = {str(item.get("device_id")): item for item in devices or []}
+    adb_bin, _ = resolve_adb_with_devices(require_devices=False)
+    def capture_and_upload(request):
+        device_id = str(request.get("device_id") or "")
+        payload = {
+            "runner_id": RUNNER_ID,
+            "device_id": device_id,
+            "request_id": str(request.get("request_id") or ""),
+        }
+        try:
+            if device_id not in available:
+                raise RuntimeError("设备已离线，无法采集实时画面")
+            payload.update(capture_device_snapshot(adb_bin, device_id))
+        except Exception as exc:
+            payload["error"] = str(exc)[:500]
+        http_json("POST", "/api/runner/device-snapshot", payload, timeout=30)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=min(3, len(requests))) as executor:
+        futures = [executor.submit(capture_and_upload, request) for request in requests]
+        for future in futures:
+            future.result()
 
 
 def detect_package_info(adb_bin, device_id, package_name):
@@ -1654,7 +1731,8 @@ def main():
                 time.sleep(ADB_DEVICE_CHECK_INTERVAL)
                 continue
             try:
-                heartbeat(devices)
+                heartbeat_response = heartbeat(devices)
+                upload_snapshot_requests(heartbeat_response, devices)
                 log_runner_recovered("Heartbeat", error_state)
                 replay_pending_result_callbacks()
             except Exception as e:

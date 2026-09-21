@@ -794,7 +794,7 @@ async function showAgentWorkbench() {
                 <div class="form-hint">默认使用平台模型策略；仅需指定具体模型时再加载完整目录。</div>
               </div>
               <div class="agent-field agent-wide-field" id="agent-runner-field">
-                <div class="agent-device-heading"><span id="agent-device-label">执行手机</span><button type="button" class="btn-sm" onclick="loadRunnerDevices({force: true, quiet: true})">刷新设备</button></div>
+                <div class="agent-device-heading"><span id="agent-device-label">执行手机</span><button type="button" class="btn-sm" id="agent-refresh-devices" onclick="refreshAgentRunnerDevices()">刷新设备</button></div>
                 <select id="agent-runner-device" hidden aria-hidden="true" tabindex="-1" onchange="updateAgentRunnerDeviceHint()">
                   <option value="__AUTO_DEVICE__">自动选择在线设备（推荐）</option>
                 </select>
