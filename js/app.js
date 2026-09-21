@@ -761,7 +761,8 @@ function renderDeviceOptions(selectId) {
 function renderAgentRunnerDeviceOptions(preferredValue) {
   const select = document.getElementById('agent-runner-device');
   if (!select) return;
-  const previous = preferredValue || select.value || '__AUTO_DEVICE__';
+  const previous = preferredValue ?? (select.value || '__AUTO_DEVICE__');
+  const previousLabel = select.selectedOptions[0]?.textContent || previous;
   const appPackage = selectedAgentAppPackage();
   select.innerHTML = '<option value="__AUTO_DEVICE__">自动选择在线设备（推荐）</option>';
   runnerDevices.forEach(device => {
@@ -780,8 +781,15 @@ function renderAgentRunnerDeviceOptions(preferredValue) {
   if (Array.from(select.options).some(opt => opt.value === previous)) {
     select.value = previous;
   } else {
-    select.value = runnerDevices.length ? '__AUTO_DEVICE__' : '';
+    const unavailable = document.createElement('option');
+    unavailable.value = previous;
+    unavailable.textContent = previousLabel;
+    unavailable.disabled = true;
+    select.appendChild(unavailable);
+    select.value = previous;
   }
+  select.options[0].disabled = !runnerDevices.length;
+  renderAgentRunnerDeviceCards();
   updateAgentRunnerDeviceHint();
 }
 
@@ -803,27 +811,59 @@ function refreshAgentRunnerDeviceByApp() {
   renderAgentRunnerDeviceOptions(selectedValue);
 }
 
+function renderAgentRunnerDeviceCards() {
+  const host = document.getElementById('agent-runner-device-cards');
+  const select = document.getElementById('agent-runner-device');
+  if (!host || !select) return;
+  const appPackage = selectedAgentAppPackage();
+  const app = typeof agentApplicationByPackage === 'function' ? agentApplicationByPackage(appPackage) : null;
+  const appLabel = app?.name || appDisplayLabel(appPackage) || '当前应用';
+  const e = escapeHtml;
+  host.innerHTML = `<label class="agent-device-auto"><input type="radio" name="agent-device-choice" value="__AUTO_DEVICE__" ${runnerDevices.length ? '' : 'disabled'}><span><strong>自动分配在线手机</strong><small>由平台从下方在线手机中选择一台执行</small></span></label>
+    <div class="agent-phone-grid">${runnerDevices.map(device => {
+      const value = `${device.runner_id}::${device.device_id}`;
+      const version = runnerDeviceVersionLabel(device, appPackage);
+      const readableVersion = appPackage && version.startsWith(appPackage) ? version.slice(appPackage.length).trim() : version;
+      return `<div class="agent-phone-item"><label class="agent-phone-card">
+        <input type="radio" name="agent-device-choice" value="${e(value)}">
+        <span class="agent-phone-art" aria-hidden="true"><span>手机</span></span>
+        <span class="agent-phone-copy"><strong>${e(runnerDeviceDisplayName(device))}</strong><span class="agent-phone-status">在线</span>
+          <span>安卓 ${e(device.android_version || device.androidVersion || '版本未上报')} · ${e(device.resolution || '分辨率未上报')}</span>
+          <span class="agent-phone-app">${e(appLabel)} <b>${e(readableVersion || '版本未上报')}</b></span>
+          <small>设备编号：${e(device.device_id)}</small></span>
+        <span class="agent-phone-check" aria-hidden="true">✓</span>
+      </label><details class="agent-phone-details"><summary>连接详情</summary><div>执行机器：${e(device.runner_id)}<br>执行器版本：${e(device.runner_version || '未上报')}</div></details></div>`;
+    }).join('')}</div>${runnerDevices.length ? '' : '<p class="agent-phone-empty">暂无在线手机，请连接手机并启动执行器后刷新。</p>'}`;
+  host.querySelectorAll('input[name="agent-device-choice"]').forEach(input => {
+    input.checked = input.value === select.value;
+    input.addEventListener('change', () => {
+      select.value = input.value;
+      updateAgentRunnerDeviceHint();
+      select.dispatchEvent(new Event('change', {bubbles: true}));
+      if (typeof captureAgentFormDraft === 'function') captureAgentFormDraft();
+    });
+  });
+}
+
 function updateAgentRunnerDeviceHint() {
   const hint = document.getElementById('agent-runner-device-hint');
-  if (!hint) return;
+  const select = document.getElementById('agent-runner-device');
+  if (!hint || !select) return;
+  document.querySelectorAll('input[name="agent-device-choice"]').forEach(input => {
+    input.checked = input.value === select.value;
+  });
   const selected = selectedRunnerDevice('agent-runner-device');
-  const appPackage = selectedAgentAppPackage();
+  hint.className = 'form-hint agent-device-hint';
   if (selected.device_strategy === 'manual_required') {
-    hint.textContent = '暂无在线设备。请先启动 Mac/Windows Runner，或刷新 Runner 列表。';
-    hint.className = 'form-hint agent-device-hint warn';
+    hint.textContent = select.value && select.value !== '__AUTO_DEVICE__'
+      ? '已选手机已离线或不可用，请重新选择；不会自动分配到其他手机。'
+      : '暂无可用手机，请连接设备后刷新。';
+    hint.classList.add('warn');
   } else if (selected.device_strategy === 'auto') {
-    const app = typeof agentApplicationByPackage === 'function' ? agentApplicationByPackage(appPackage) : null;
-    const appLabel = app?.name && app.name !== appPackage ? `${app.name} / ${appPackage}` : appDisplayLabel(appPackage);
-    const appText = appPackage ? `当前应用：${appLabel}。` : '';
-    const versionText = agentRunnerVersionSummary(appPackage);
-    hint.textContent = `自动分配：当前 ${runnerDevices.length} 台在线设备可接任务。${appText}${versionText ? `版本：${versionText}` : ''}`;
-    hint.className = 'form-hint agent-device-hint';
+    hint.textContent = `当前 ${runnerDevices.length} 台在线手机，由平台选择一台；也可直接勾选下方手机固定执行。`;
   } else {
     const device = runnerDevices.find(item => item.runner_id === selected.runner_id && item.device_id === selected.device_id);
-    const version = device ? runnerDeviceVersionLabel(device, appPackage) : '';
-    const appStatus = appPackage ? (version || `${appPackage} 未上报版本`) : '';
-    hint.textContent = `固定执行：${device ? runnerDeviceOptionLabel(device) : selected.device_id}${appStatus ? `；${appStatus}` : ''}`;
-    hint.className = 'form-hint agent-device-hint';
+    hint.textContent = `已选择：${device ? runnerDeviceDisplayName(device) : selected.device_id}。本次任务只在这台手机执行。`;
   }
 }
 
@@ -836,7 +876,9 @@ function renderRunnerDevices() {
 }
 
 function selectedRunnerDevice(selectId='generate-device') {
-  const value = document.getElementById(selectId)?.value || '';
+  const select = document.getElementById(selectId);
+  const value = select?.value || '';
+  if (select?.selectedOptions?.[0]?.disabled) return { runner_id: '', device_id: '', device_strategy: 'manual_required' };
   if (!value) return { runner_id: '', device_id: '', device_strategy: 'manual_required' };
   if (value === '__AUTO_DEVICE__') return { runner_id: '', device_id: '', device_strategy: 'auto' };
   const [runner_id, device_id] = value.split('::');
