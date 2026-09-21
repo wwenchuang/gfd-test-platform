@@ -2578,10 +2578,24 @@
   background: rgba(12, 19, 32, .96);
   box-shadow: 0 10px 22px rgba(0, 0, 0, .2);
 }
-.management-filter-bar input,
+.management-filter-bar input:not([type="checkbox"]),
 .management-filter-bar select {
   width: 100%;
   min-height: 38px;
+}
+.management-filter-bar .filter-checkbox {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 38px;
+  white-space: nowrap;
+}
+.management-filter-bar .filter-checkbox input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  min-height: 0;
+  margin: 0;
+  flex: 0 0 auto;
 }
 .management-filter-count {
   color: var(--text2);

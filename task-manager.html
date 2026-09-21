@@ -5,8 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>功夫豆测试平台</title>
 <link rel="icon" href="assets/brand/kongfudou-icon.png">
-<link rel="stylesheet" href="css/app.css?v=20260831-identity-20260904-report-evidence-20260921-phone-cards-live-nav-counts-editor-wheel">
-  <link rel="stylesheet" href="css/round5.css?v=20260828-full-platform-ux-20260902-a94-cache-policy">
+<link rel="stylesheet" href="css/app.css?v=20260831-identity-20260904-report-evidence-20260921-phone-cards-live-nav-counts-editor-wheel-app-module-create">
+  <link rel="stylesheet" href="css/round5.css?v=20260828-full-platform-ux-20260902-a94-cache-policy-app-module-create">
 </head>
 <body>
 
@@ -479,6 +479,11 @@
     <!-- Step 4：关联模块 -->
     <div class="form-step-content" style="display:none">
       <label class="modal-label">关联模块</label>
+      <div class="task-app-module-create">
+        <input id="task-app-new-module" type="text" maxlength="60" placeholder="输入新模块名称，如：文档打印" onkeydown="if(event.key === 'Enter'){ event.preventDefault(); createTaskAppModule(); }">
+        <button type="button" class="btn-confirm" onclick="createTaskAppModule()">在当前应用下新增模块</button>
+      </div>
+      <div class="generate-hint">创建后会自动勾选；点击“保存分组”后只关联到当前应用。</div>
       <div class="management-filter-bar" style="margin-bottom:8px;">
         <input id="task-app-module-search" type="search" placeholder="搜索模块名称" oninput="filterTaskAppModules(this.value)">
         <label class="filter-checkbox"><input id="task-app-module-unassigned" type="checkbox" onchange="filterTaskAppModules(document.getElementById('task-app-module-search')?.value || '', this.checked)"> 只看未归属模块</label>
@@ -976,7 +981,7 @@
 <script src="js/identity-management.js?v=20260902-a108-workflow-clarity"></script>
 <script src="js/navigation.js?v=20260828-full-platform-ux-20260902-a112-history-save"></script>
 <script src="js/agent-workbench.js?v=20260828-full-platform-ux-20260902-a107-agent-terminal-20260908-mindmap-restart-20260921-phone-cards-live"></script>
-<script src="js/agent-status.js?v=20260828-full-platform-ux-20260902-a110-knowledge-filtering-a112-history-save"></script>
+<script src="js/agent-status.js?v=20260828-full-platform-ux-20260902-a110-knowledge-filtering-a112-history-save-app-module-create"></script>
 <script src="js/cases.js?v=20260828-full-platform-ux-20260901-a73-flow-clarity"></script>
 <script src="js/execution.js?v=20260828-full-platform-ux-20260902-a106-execution-actions-a112-history-save-20260921-editor-wheel"></script>
 <script src="js/reports.js?v=20260828-full-platform-ux-20260901-a68-flow-audit"></script>

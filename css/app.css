@@ -3979,6 +3979,18 @@
     min-width: 0;
   }
   .module-check-list input { width: auto; margin: 0; }
+  .task-app-module-create {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 8px;
+    align-items: center;
+    margin-bottom: 6px;
+  }
+  .task-app-module-create input { width: 100%; margin: 0; }
+  .task-app-module-create .btn-confirm { min-height: 38px; white-space: nowrap; }
+  @media (max-width: 720px) {
+    .task-app-module-create { grid-template-columns: minmax(0, 1fr); }
+  }
   .task-app-business-head {
     display: flex;
     align-items: center;

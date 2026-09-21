@@ -86,6 +86,7 @@ function fixture(t, { workflow = 'app_config', deleteWait, catalogLoaded = true,
         return { ok: true };
       }
       if (call.method === 'POST' && url === '/task-app') return { ok: true, app: call.body };
+      if (call.method === 'POST' && url === '/module') return { ok: true };
       throw new Error(`Unexpected API request: ${call.method} ${url}`);
     },
   });
@@ -102,7 +103,7 @@ function fixture(t, { workflow = 'app_config', deleteWait, catalogLoaded = true,
     'openUnassignedTaskAppModules', 'selectTaskAppModuleOwner', 'renderTaskAppModuleOwnerGuide',
     'isTemporaryAgentModule', 'taskAppBusinessModuleNames',
     'renderTaskAppModal', 'renderTaskAppBusinessLineEditor', 'readTaskAppBusinessLines',
-    'addTaskAppBusinessLine', 'removeTaskAppBusinessLine', 'filterTaskAppModules', 'clearTaskAppForm',
+    'addTaskAppBusinessLine', 'removeTaskAppBusinessLine', 'createTaskAppModule', 'filterTaskAppModules', 'clearTaskAppForm',
     'editTaskApp', 'taskAppFeishuReady', 'taskAppFeishuLabel', 'setSonicMigrationAvailability',
     'renderTaskAppList', 'saveTaskApp', 'deleteTaskApp',
   ]);
@@ -131,6 +132,20 @@ test('opening or switching the application editor clears stale operation feedbac
   f.run('openTaskAppEditor()');
   f.run(`editTaskApp('${APP_A}')`);
   assert.equal(f.feedbackClears(), 2);
+});
+
+test('creates a module inside the current application and selects it for saving', async t => {
+  const f = fixture(t);
+  f.run(`openTaskAppEditor('${APP_A}', 3)`);
+  f.field('task-app-new-module').value = '新增模块';
+
+  await f.run('createTaskAppModule()');
+
+  f.expectCalls(['POST /module']);
+  assert.deepEqual(f.calls[0].body, {name: '新增模块'});
+  assert.deepEqual(f.selectedModules(), ['新增模块', '模块甲']);
+  assert.equal(f.field('task-app-new-module').value, '');
+  assert.match(f.toasts.at(-1).message, /已创建并勾选/);
 });
 
 test('new application entry clears the previously edited application draft', t => {

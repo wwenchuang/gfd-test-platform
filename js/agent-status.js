@@ -4529,6 +4529,40 @@ function readTaskAppBusinessLines(options = {}) {
   return rows;
 }
 
+async function createTaskAppModule() {
+  const input = document.getElementById('task-app-new-module');
+  const name = String(input?.value || '').trim();
+  if (!name) {
+    showToast('请先输入模块名称', 'error');
+    input?.focus();
+    return;
+  }
+  if (isTemporaryAgentModule(name)) {
+    showToast('该名称属于平台临时目录，请换一个模块名称', 'error');
+    input?.focus();
+    return;
+  }
+  const selected = new Set(Array.from(document.querySelectorAll('.task-app-module-check:checked')).map(item => item.value));
+  if (!Object.prototype.hasOwnProperty.call(modules, name)) {
+    try {
+      await apiRequest('/module', {method: 'POST', body: JSON.stringify({name})});
+      modules[name] = [];
+    } catch (error) {
+      showToast(`模块创建失败：${error.message || error}`, 'error');
+      return;
+    }
+  }
+  selected.add(name);
+  renderTaskAppModal();
+  document.querySelectorAll('.task-app-module-check').forEach(item => {
+    item.checked = selected.has(item.value);
+  });
+  filterTaskAppModules('', false);
+  if (input) input.value = '';
+  document.getElementById('task-app-module-search')?.focus();
+  showToast(`模块“${name}”已创建并勾选，保存分组后归入当前应用`, 'success');
+}
+
 function filterTaskAppModules(query = '', onlyUnassigned = null) {
   const normalized = String(query || '').trim().toLowerCase();
   const only = onlyUnassigned === null
