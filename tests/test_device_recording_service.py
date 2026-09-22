@@ -193,6 +193,21 @@ class DeviceRecordingServiceTest(unittest.TestCase):
         updated = recording.update_recorded_step(session["id"], "admin", step["id"], "提交按钮", store_path=self.store)
         self.assertEqual(updated["steps"][0]["semantic_description"], "提交按钮")
 
+    def test_owner_history_and_generated_yaml_are_persisted(self):
+        session = self.create()
+        recording.append_recorded_action(
+            session["id"], session["recording_token"],
+            {"event_id": "evt-history", "type": "key", "key": "BACK", "device_id": "ecbfd645"},
+            store_path=self.store,
+        )
+        recording.finish_recording_session(session["id"], "admin", store_path=self.store)
+        saved = recording.save_generated_recording_result(
+            session["id"], "admin", {"yaml": "tasks: []", "can_debug": True}, store_path=self.store,
+        )
+        self.assertEqual(saved["generated_result"]["yaml"], "tasks: []")
+        self.assertEqual(recording.list_recording_sessions("admin", store_path=self.store)[0]["id"], session["id"])
+        self.assertEqual(recording.list_recording_sessions("another", store_path=self.store), [])
+
     def test_owner_can_edit_description_and_delete_recorded_step(self):
         session = self.create()
         step = recording.append_recorded_action(

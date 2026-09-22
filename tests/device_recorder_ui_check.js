@@ -9,7 +9,7 @@ const ROOT = path.resolve(__dirname, '..');
 
 test('task manager uses a new cache key for the ready-handshake recorder script', () => {
   const html = fs.readFileSync(path.join(ROOT, 'task-manager.html'), 'utf8');
-  assert.match(html, /device-recorder\.js\?v=20260922-sonic-native-recorder-v7/);
+  assert.match(html, /device-recorder\.js\?v=20260922-sonic-native-recorder-v8/);
 });
 
 function fixture() {
@@ -72,6 +72,15 @@ test('keeps the recorded application selected after the session starts', () => {
   const f = fixture();
   f.run("taskApps.push({name:'智小白3D',package:'com.kfb.model',enabled:true,modules:['3D打印基线']}); deviceRecorderSession={id:'s1',status:'recording',app_package:'com.kfb.model',device_id:'ecbfd645',steps:[]}; renderDeviceRecorder()");
   assert.equal(f.dom.window.document.getElementById('device-recorder-app').value, 'com.kfb.model');
+});
+
+test('history can reopen a persisted generated YAML and start a new recording', () => {
+  const f = fixture();
+  f.run("deviceRecorderHistory=[{id:'old',status:'finished',device_id:'phone',finished_at:'2026-09-22 12:00:00',steps:[{id:'x'}],generated_result:{yaml:'tasks: []'}}]; deviceRecorderSession=deviceRecorderHistory[0]; deviceRecorderGenerated=deviceRecorderHistory[0].generated_result; renderDeviceRecorder()");
+  assert.match(f.dom.window.document.body.textContent, /录制记录（1）/);
+  assert.match(f.dom.window.document.getElementById('device-recorder-yaml').textContent, /tasks: \[\]/);
+  f.run('newDeviceRecording()');
+  assert.match(f.dom.window.document.body.textContent, /尚未开始/);
 });
 
 test('blocks empty generation and keeps case name linked to YAML filename', () => {

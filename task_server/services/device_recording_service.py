@@ -194,6 +194,30 @@ def get_recording_session(
         return _public(row)
 
 
+def list_recording_sessions(user: str, *, store_path: Optional[str] = None, limit: int = 30) -> list[Dict[str, Any]]:
+    path = _path(store_path)
+    with _LOCK, file_mutation_lock(path):
+        data = _load(path)
+        rows = [
+            _public(row) for row in data["sessions"]
+            if str(row.get("created_by") or "") == str(user or "") and row.get("status") != "cancelled"
+        ]
+        rows.sort(key=lambda row: float(row.get("updated_ts") or 0), reverse=True)
+        return rows[:max(1, min(int(limit or 30), 100))]
+
+
+def save_generated_recording_result(session_id: str, user: str, result: Dict[str, Any], *, store_path: Optional[str] = None) -> Dict[str, Any]:
+    path = _path(store_path)
+    with _LOCK, file_mutation_lock(path):
+        data = _load(path)
+        row = _find(data, session_id)
+        _owner(row, user)
+        row["generated_result"] = copy.deepcopy(result)
+        row["generated_at"] = _stamp(time.time())
+        write_json_file(path, data)
+        return _public(row)
+
+
 def active_recording_for_device(
     runner_id: str,
     device_id: str,

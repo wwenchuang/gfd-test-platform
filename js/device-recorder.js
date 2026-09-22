@@ -5,6 +5,7 @@ let deviceRecorderBridgeState = '等待 Sonic 接收录制会话';
 let deviceRecorderGenerated = null;
 let deviceRecorderFileNameEdited = false;
 let deviceRecorderRecognitionInFlight = false;
+let deviceRecorderHistory = [];
 
 function deviceRecorderAppOptions(selectedPackage = '') {
   return (taskApps || []).filter(app => app.enabled !== false).map(app =>
@@ -83,7 +84,8 @@ function renderDeviceRecorder() {
   const steps = session?.steps || [];
   area.className = 'editor-area';
   area.innerHTML = `<div class="review-page device-recorder-page">
-    <div class="review-head"><div><div class="workflow-kicker">SONIC 原生远控 · 操作旁路记录</div><h2>操作录制</h2><p>手机画面和触控继续由 Sonic 处理；平台只记录你在所选手机上的真实操作。应用用于生成启动步骤，与手机分配互不绑定。</p></div><div class="review-actions"><button class="btn-sm" onclick="leaveDeviceRecorder()">返回用例资产</button><span class="status-pill ${session?.status === 'recording' ? 'success' : ''}">${escapeHtml(recorderStatusText(session))}</span></div></div>
+    <div class="review-head"><div><div class="workflow-kicker">SONIC 原生远控 · 操作旁路记录</div><h2>操作录制</h2><p>手机画面和触控继续由 Sonic 处理；平台只记录你在所选手机上的真实操作。应用用于生成启动步骤，与手机分配互不绑定。</p></div><div class="review-actions"><button class="btn-sm" onclick="leaveDeviceRecorder()">返回用例资产</button>${session?.status === 'finished' ? '<button class="btn-sm primary" onclick="newDeviceRecording()">开始新的录制</button>' : ''}<span class="status-pill ${session?.status === 'recording' ? 'success' : ''}">${escapeHtml(recorderStatusText(session))}</span></div></div>
+    ${deviceRecorderHistory.length ? `<details class="review-panel device-recorder-history"><summary>录制记录（${deviceRecorderHistory.length}）</summary><div>${deviceRecorderHistory.map(item => `<button class="btn-sm" onclick="openDeviceRecordingHistory('${escapeHtml(item.id)}')">${escapeHtml(item.finished_at || item.updated_at || '')} · ${escapeHtml(item.device_id || '未绑定手机')} · ${(item.steps || []).length} 步${item.generated_result?.yaml ? ' · 已生成 YAML' : ''}</button>`).join('')}</div></details>` : ''}
     <div class="device-recorder-grid">
       <section class="review-panel"><h3>录制设置</h3>
         <label class="modal-label">应用</label><select id="device-recorder-app" ${session ? 'disabled' : ''}>${deviceRecorderAppOptions(session?.app_package || '')}</select>
@@ -99,7 +101,7 @@ function renderDeviceRecorder() {
       </section>
       <section class="review-panel"><div class="review-head compact"><div><h3>步骤时间线</h3><p>${steps.length} 个动作</p></div>${session?.status === 'recording' ? '<button class="btn-sm" onclick="addRecorderCheckpoint()">添加检查点</button>' : ''}</div>
         <div class="device-recorder-timeline">${steps.length ? steps.map(recorderTimelineItem).join('') : '<div class="job-empty">还没有记录到操作。请在打开的 Sonic 页面中操作手机。</div>'}</div>
-        <pre id="device-recorder-yaml" class="agent-artifact-box" hidden></pre>
+        <pre id="device-recorder-yaml" class="agent-artifact-box" ${deviceRecorderGenerated?.yaml ? '' : 'hidden'}>${escapeHtml(deviceRecorderGenerated?.yaml || '')}</pre>
       </section>
     </div></div>`;
 }
@@ -121,7 +123,26 @@ async function showDeviceRecorder() {
   resetYamlToolbarForManager();
   if (typeof loadModules === 'function') await loadModules();
   if (typeof loadRunnerDevices === 'function') await loadRunnerDevices({force: true, quiet: true});
+  try { deviceRecorderHistory = (await apiRequest('/device-recordings')).sessions || []; } catch (_) { deviceRecorderHistory = []; }
+  if (deviceRecorderSession?.status === 'finished') deviceRecorderSession = null;
+  deviceRecorderGenerated = null;
   renderDeviceRecorder();
+}
+
+function newDeviceRecording() {
+  deviceRecorderSession = null;
+  deviceRecorderGenerated = null;
+  deviceRecorderBridgeState = '等待 Sonic 接收录制会话';
+  renderDeviceRecorder();
+}
+
+async function openDeviceRecordingHistory(sessionId) {
+  try {
+    const data = await apiRequest(`/device-recordings?id=${encodeURIComponent(sessionId)}`);
+    deviceRecorderSession = data.session;
+    deviceRecorderGenerated = data.session.generated_result || null;
+    renderDeviceRecorder();
+  } catch (error) { showToast(error.message || '读取录制记录失败', 'error'); }
 }
 
 async function startDeviceRecording() {
@@ -302,6 +323,7 @@ async function generateDeviceRecordingYaml() {
     return showToast(error.message || 'YAML 生成失败', 'error');
   }
   deviceRecorderGenerated = data.result;
+  deviceRecorderSession = data.session || deviceRecorderSession;
   const box = document.getElementById('device-recorder-yaml');
   box.hidden = false;
   box.textContent = data.result.yaml;

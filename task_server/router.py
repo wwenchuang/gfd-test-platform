@@ -4010,9 +4010,13 @@ def _post_device_recording_bind(handler, qs):
 def _get_device_recordings(handler, qs):
     if _require_user_auth(handler):
         return
-    from task_server.services.device_recording_service import get_recording_session
+    from task_server.services.device_recording_service import get_recording_session, list_recording_sessions
     try:
-        session = get_recording_session(qs.get("id") or qs.get("session_id") or "")
+        session_id = qs.get("id") or qs.get("session_id") or ""
+        if not session_id:
+            handler._json({"ok": True, "sessions": list_recording_sessions(_authenticated_user(handler))})
+            return
+        session = get_recording_session(session_id)
         if session.get("created_by") != _authenticated_user(handler):
             raise PermissionError("只有录制发起人可以查看该会话")
     except PermissionError as exc:
@@ -4171,7 +4175,7 @@ def _post_device_recording_recognize(handler, qs):
 def _post_device_recording_generate(handler, qs):
     if _require_user_auth(handler):
         return
-    from task_server.services.device_recording_service import get_recording_session
+    from task_server.services.device_recording_service import get_recording_session, save_generated_recording_result
     from task_server.services.device_recording_yaml_service import generate_recording_yaml
     payload = handler._body()
     try:
@@ -4179,13 +4183,14 @@ def _post_device_recording_generate(handler, qs):
         if session.get("created_by") != _authenticated_user(handler):
             raise PermissionError("只有录制发起人可以生成该会话的 YAML")
         result = generate_recording_yaml(session, task_name=payload.get("task_name") or payload.get("taskName") or "录制生成用例")
+        session = save_generated_recording_result(session.get("id") or "", _authenticated_user(handler), result)
     except PermissionError as exc:
         handler._json({"ok": False, "error": str(exc)}, 403)
         return
     except ValueError as exc:
         handler._json({"ok": False, "error": str(exc)}, 400)
         return
-    handler._json({"ok": True, "result": result})
+    handler._json({"ok": True, "result": result, "session": session})
 
 
 # ── 生成批次冒烟重跑 ───────────────────────────────────────────────
