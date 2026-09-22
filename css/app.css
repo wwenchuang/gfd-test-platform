@@ -4021,6 +4021,17 @@
   .device-recorder-phone-status.idle { background: #34d399; box-shadow: 0 0 0 3px rgba(52, 211, 153, .15); }
   .device-recorder-phone-status.busy { background: #f87171; box-shadow: 0 0 0 3px rgba(248, 113, 113, .15); }
   .device-recorder-timeline { display: grid; gap: 8px; max-height: 430px; overflow: auto; }
+.device-recorder-track { display:flex; gap:8px; overflow-x:auto; padding:8px 2px 12px; }
+.device-recorder-track button { min-width:120px; max-width:180px; text-align:left; border:1px solid var(--border); background:var(--panel2); color:var(--text); border-radius:10px; padding:9px; cursor:pointer; }
+.device-recorder-track button.active { border-color:var(--accent); box-shadow:0 0 0 1px var(--accent); }
+.device-recorder-track button span { color:var(--accent); margin-right:8px; }
+.device-recorder-track button small { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--text2); margin-top:4px; }
+.device-recorder-shot img { display:block; max-width:320px; max-height:520px; object-fit:contain; border:1px solid var(--border); border-radius:12px; background:#050914; }
+.device-recorder-shot-frame { position:relative; display:inline-block; line-height:0; }
+.device-recorder-shot-frame i { position:absolute; display:block; width:22px; height:22px; transform:translate(-50%,-50%); border:3px solid #fff; border-radius:50%; background:#ef4444; box-shadow:0 0 0 3px rgba(239,68,68,.35),0 2px 8px #000; pointer-events:none; }
+.device-recorder-shot-frame i::before,.device-recorder-shot-frame i::after { content:""; position:absolute; background:#fff; left:50%; top:50%; transform:translate(-50%,-50%); }
+.device-recorder-shot-frame i::before { width:30px; height:2px; }
+.device-recorder-shot-frame i::after { width:2px; height:30px; }
 .device-recorder-timeline article {
     display: grid;
     grid-template-columns: 30px minmax(0, 1fr) auto;

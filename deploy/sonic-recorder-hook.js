@@ -110,7 +110,7 @@
       action: {...action, event_id: id(), device_id: recording.deviceId},
     });
     fetch(recording.endpoint, {
-      method: 'POST', mode: 'cors', keepalive: true,
+      method: 'POST', mode: 'cors', keepalive: !action.evidence_content_base64,
       headers: {'Content-Type': 'application/json'}, body,
     }).then(response => {
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -118,6 +118,15 @@
       showRecorderStatus(`第 ${mirroredCount} 步同步失败`, 'error');
       notifyPlatform({type: 'MIDSCENE_RECORDING_ERROR', message: String(error.message || error)});
     });
+  }
+
+  function capturePhoneFrame() {
+    try {
+      const canvases = [...document.querySelectorAll('canvas')].filter(item => item.width > 100 && item.height > 100);
+      const canvas = canvases.sort((a, b) => (b.width * b.height) - (a.width * a.height))[0];
+      if (!canvas) return '';
+      return String(canvas.toDataURL('image/png') || '').replace(/^data:image\/png;base64,/, '');
+    } catch (_) { return ''; }
   }
 
   function mirroredAction(message) {
@@ -162,12 +171,15 @@
     }
     const nativeSend = socket.send;
     socket.send = function (data) {
-      nativeSend.call(socket, data);
+      let action = null;
       try {
         if (recording && socket === activeDeviceSocket && typeof data === 'string') {
-          mirror(mirroredAction(JSON.parse(data)));
+          action = mirroredAction(JSON.parse(data));
+          if (action && ['tap', 'swipe', 'text'].includes(action.type)) action.evidence_content_base64 = capturePhoneFrame();
         }
       } catch (_) {}
+      nativeSend.call(socket, data);
+      mirror(action);
     };
     return socket;
   };

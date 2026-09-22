@@ -7,6 +7,7 @@ let deviceRecorderFileNameEdited = false;
 let deviceRecorderRecognitionInFlight = false;
 let deviceRecorderHistory = [];
 let deviceRecorderConfirmedSequence = 0;
+let deviceRecorderSelectedStepId = '';
 
 function deviceRecorderAppOptions(selectedPackage = '') {
   return (taskApps || []).filter(app => app.enabled !== false).map(app =>
@@ -47,7 +48,9 @@ function recorderTimelineItem(step) {
   const editor = recorderStepNeedsMeaning(step)
     ? `<div class="device-recorder-semantic"><input id="recorder-step-${escapeHtml(step.id)}" maxlength="200" placeholder="例如：提交按钮、搜索输入框"><button class="btn-sm" onclick="confirmRecorderStep('${escapeHtml(step.id)}')">确认控件</button></div>`
     : `<small>${escapeHtml(recorderStepDescription(step) || '等待语义证据')}</small>`;
-  const evidencePreview = step.screenshot_path ? `${step.evidence_warning ? `<div class="agent-risk show">${escapeHtml(step.evidence_warning)}</div>` : ''}<details class="device-recorder-evidence"><summary>查看点击截图与位置</summary><div class="device-recorder-shot"><img src="/api/device-recordings/evidence?id=${encodeURIComponent(deviceRecorderSession.id)}&step_id=${encodeURIComponent(step.id)}" alt="第 ${step.sequence} 步点击截图"><span>点击位置：${escapeHtml(step.point?.x ?? step.end?.x ?? '-')}，${escapeHtml(step.point?.y ?? step.end?.y ?? '-')}</span></div><button class="btn-sm" onclick="retryRecorderRecognition('${escapeHtml(step.id)}')">用这张截图重新识别</button></details>` : '';
+  const pointX = step.point?.x ?? step.end?.x ?? '';
+  const pointY = step.point?.y ?? step.end?.y ?? '';
+  const evidencePreview = step.screenshot_path ? `${step.evidence_warning ? `<div class="agent-risk show">${escapeHtml(step.evidence_warning)}</div>` : ''}<div class="device-recorder-evidence"><div class="device-recorder-shot"><div class="device-recorder-shot-frame"><img data-recorder-evidence="${escapeHtml(step.id)}" data-point-x="${escapeHtml(pointX)}" data-point-y="${escapeHtml(pointY)}" alt="第 ${step.sequence} 步点击截图"><i hidden aria-label="实际点击位置"></i></div><span>实际点击坐标：${escapeHtml(pointX || '-')}，${escapeHtml(pointY || '-')}；红色圆点为点击位置</span></div><button class="btn-sm" onclick="retryRecorderRecognition('${escapeHtml(step.id)}')">用这张截图重新识别</button></div>` : '<div class="agent-risk show">该步骤没有截图证据，请手工标记后再生成。</div>';
   const evidence = step.evidence_status === 'pending' ? '证据待采集'
     : step.evidence_status === 'failed' ? '证据采集失败'
     : step.semantic_recognition_status === 'running' ? '正在自动识别'
@@ -91,6 +94,8 @@ function renderDeviceRecorder() {
   if (!area) return;
   const session = deviceRecorderSession;
   const steps = session?.steps || [];
+  if (steps.length && !steps.some(step => step.id === deviceRecorderSelectedStepId)) deviceRecorderSelectedStepId = steps[0].id;
+  const selectedStep = steps.find(step => step.id === deviceRecorderSelectedStepId) || steps[0];
   area.className = 'editor-area';
   area.innerHTML = `<div class="review-page device-recorder-page">
     <div class="review-head"><div><div class="workflow-kicker">SONIC 原生远控 · 操作旁路记录</div><h2>操作录制</h2><p>手机画面和触控继续由 Sonic 处理；平台只记录你在所选手机上的真实操作。应用用于生成启动步骤，与手机分配互不绑定。</p><div class="generate-hint">操作提示：每次点击后，请等待 Sonic 显示“本步记录成功，可以继续操作”，再执行下一步；页面跳转后需等待画面稳定。</div></div><div class="review-actions"><button class="btn-sm" onclick="leaveDeviceRecorder()">返回用例资产</button>${session?.status === 'finished' ? '<button class="btn-sm primary" onclick="newDeviceRecording()">开始新的录制</button>' : ''}<span class="status-pill ${session?.status === 'recording' ? 'success' : ''}">${escapeHtml(recorderStatusText(session))}</span></div></div>
@@ -109,10 +114,32 @@ function renderDeviceRecorder() {
         ${session?.status === 'finished' ? `<div class="device-recorder-save"><label class="modal-label">用例名称</label><input id="device-recorder-task-name" value="录制生成用例" oninput="syncRecorderFileName(this.value)"><label class="modal-label">保存到模块</label><select id="device-recorder-module">${recorderModuleOptions(session)}</select>${recorderModuleOptions(session) ? '' : '<div class="agent-risk show">当前应用没有已关联模块，请先到应用配置关联模块。</div>'}<label class="modal-label">YAML 文件名</label><input id="device-recorder-file" value="录制生成用例.yaml" oninput="deviceRecorderFileNameEdited=true"><button class="btn-sm success" ${deviceRecorderGenerated && recorderModuleOptions(session) ? '' : 'disabled'} onclick="saveDeviceRecordingYaml()">保存到用例资产</button></div>` : ''}
       </section>
       <section class="review-panel"><div class="review-head compact"><div><h3>步骤时间线</h3><p>${steps.length} 个动作</p></div>${session?.status === 'recording' ? '<button class="btn-sm" onclick="addRecorderCheckpoint()">添加检查点</button>' : ''}</div>
-        <div class="device-recorder-timeline">${steps.length ? steps.map(recorderTimelineItem).join('') : '<div class="job-empty">还没有记录到操作。请在打开的 Sonic 页面中操作手机。</div>'}</div>
+        <div class="device-recorder-track">${steps.map(step => `<button class="${step.id === selectedStep?.id ? 'active' : ''}" onclick="selectRecorderStep('${escapeHtml(step.id)}')"><span>${step.sequence}</span><small>${escapeHtml(recorderStepDescription(step) || '待识别')}</small></button>`).join('')}</div>
+        <div class="device-recorder-timeline">${selectedStep ? recorderTimelineItem(selectedStep) : '<div class="job-empty">还没有记录到操作。请在打开的 Sonic 页面中操作手机。</div>'}</div>
         <pre id="device-recorder-yaml" class="agent-artifact-box" ${deviceRecorderGenerated?.yaml ? '' : 'hidden'}>${escapeHtml(deviceRecorderGenerated?.yaml || '')}</pre>
       </section>
     </div></div>`;
+  if (selectedStep?.screenshot_path) setTimeout(() => loadRecorderEvidence(selectedStep.id), 0);
+}
+
+function selectRecorderStep(stepId) { deviceRecorderSelectedStepId = stepId; renderDeviceRecorder(); }
+
+async function loadRecorderEvidence(stepId) {
+  const image = document.querySelector(`[data-recorder-evidence="${CSS.escape(stepId)}"]`);
+  if (!image) return;
+  try {
+    const response = await fetch(`/api/device-recordings/evidence?id=${encodeURIComponent(deviceRecorderSession.id)}&step_id=${encodeURIComponent(stepId)}`, {headers: authHeaders()});
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    image.src = URL.createObjectURL(await response.blob());
+    image.onload = () => {
+      const marker = image.parentElement?.querySelector('i');
+      const x = Number(image.dataset.pointX), y = Number(image.dataset.pointY);
+      if (!marker || !image.naturalWidth || !image.naturalHeight || !Number.isFinite(x) || !Number.isFinite(y)) return;
+      marker.style.left = `${Math.max(0, Math.min(100, x / image.naturalWidth * 100))}%`;
+      marker.style.top = `${Math.max(0, Math.min(100, y / image.naturalHeight * 100))}%`;
+      marker.hidden = false;
+    };
+  } catch (_) { image.alt = '截图加载失败，请刷新后重试'; }
 }
 
 function leaveDeviceRecorder() {
