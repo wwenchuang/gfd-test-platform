@@ -87,8 +87,8 @@ def generate_recording_yaml(session: Dict[str, Any], task_name: str = "录制生
         if normalized["requires_confirmation"]:
             issues.append({"step": index, "message": normalized["issue"]})
     package = str(session.get("app_package") or "").strip()
-    if not flow or (package and not any("launch" in item for item in flow)):
-        flow.insert(0, {"launch": package})
+    if package:
+        flow = [{"launch": package}] + [item for item in flow if "launch" not in item]
     document = {"android": {}, "tasks": [{"name": str(task_name or "录制生成用例").strip(), "flow": flow}]}
     yaml_text = yaml.safe_dump(document, allow_unicode=True, sort_keys=False, width=120)
     validation = validate_midscene_yaml(yaml_text)

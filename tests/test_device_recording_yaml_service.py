@@ -57,6 +57,21 @@ class DeviceRecordingYamlServiceTest(unittest.TestCase):
         self.assertTrue(blocked["requires_confirmation"])
         self.assertTrue(blocked["issues"])
 
+    def test_selected_application_is_the_only_launch_and_is_always_first(self):
+        session = {
+            "status": "finished", "app_package": "com.kfb.model", "steps": [
+                {"type": "tap", "semantic_description": "我的"},
+                {"type": "launch", "package": "com.wrong.app"},
+                {"type": "launch", "package": "com.kfb.model"},
+            ],
+        }
+        result = generate_recording_yaml(session, task_name="查看我的")
+        import yaml
+        flow = yaml.safe_load(result["yaml"])["tasks"][0]["flow"]
+        self.assertEqual(flow[0], {"launch": "com.kfb.model"})
+        self.assertEqual([item for item in flow if "launch" in item], [{"launch": "com.kfb.model"}])
+        self.assertEqual(flow[1], {"aiTap": "我的"})
+
     def test_rejects_empty_or_active_recording_instead_of_inventing_launch_only_yaml(self):
         with self.assertRaisesRegex(ValueError, "结束录制"):
             generate_recording_yaml({"status": "recording", "app_package": "com.demo", "steps": [{"type": "tap", "ui_node": {"text": "我的"}}]})

@@ -108,6 +108,25 @@ test('Sonic never records a second action while the prior step is still being ve
   assert.ok(notices.some(item=>item.type==='MIDSCENE_RECORDING_ERROR' && /未记录/.test(item.message)));
 });
 
+test('a failed recognition is retained but releases the recorder for the next action', async () => {
+  const listeners = {};
+  const sent = [];
+  const opener = {postMessage(){}};
+  class FakeWebSocket { constructor(url){this.url=url} send(data){sent.push(['sonic',JSON.parse(data).detail])} }
+  const document = {body:{appendChild(){}},getElementById(){return {style:{}}},createElement(){return {style:{}}}};
+  const window = {opener,WebSocket:FakeWebSocket,document,addEventListener(type,fn){listeners[type]=fn;}};
+  const context = vm.createContext({window,document,URL,fetch:async(url,options)=>{sent.push(['platform',JSON.parse(options.body).action]);return {ok:true}},Date,Math,JSON,String,Number,Object,RegExp,Error,Set,setTimeout});
+  vm.runInContext(fs.readFileSync(path.join(__dirname,'..','deploy/sonic-recorder-hook.js'),'utf8'),context);
+  listeners.message({source:opener,origin:'http://platform.example',data:{type:'MIDSCENE_RECORDING_START',sessionId:'failed',recordingToken:'t',endpoint:'http://platform.example/api/device-recordings/action'}});
+  const socket = new window.WebSocket('ws://agent/websockets/android/key/phone/token');
+  listeners.message({source:opener,data:{type:'MIDSCENE_RECORDING_BOUND',sessionId:'failed',deviceId:'phone'}});
+  socket.send(JSON.stringify({type:'debug',detail:'tap',point:'10,10'}));
+  listeners.message({source:opener,data:{type:'MIDSCENE_RECORDING_STEP_CONFIRMED',sessionId:'failed',sequence:1,success:false}});
+  socket.send(JSON.stringify({type:'debug',detail:'tap',point:'20,20'}));
+  await Promise.resolve();
+  assert.equal(sent.filter(item=>item[0]==='platform').length,2);
+});
+
 test('Sonic hook announces that it can receive a recording session after page load', () => {
   const messages = [];
   const opener = {postMessage(message, origin) { messages.push({message, origin}); }};

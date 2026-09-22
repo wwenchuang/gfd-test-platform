@@ -7,9 +7,9 @@ const {JSDOM} = require('../api-testing-ui/node_modules/jsdom');
 
 const ROOT = path.resolve(__dirname, '..');
 
-test('task manager uses a new cache key for the ready-handshake recorder script', () => {
+test('task manager uses a new cache key for the automatic-launch recorder script', () => {
   const html = fs.readFileSync(path.join(ROOT, 'task-manager.html'), 'utf8');
-  assert.match(html, /device-recorder\.js\?v=20260922-sonic-native-recorder-v16/);
+  assert.match(html, /device-recorder\.js\?v=20260922-sonic-native-recorder-v18/);
 });
 
 function fixture() {
@@ -18,8 +18,8 @@ function fixture() {
   const opened = [];
   const context = vm.createContext({
     window: dom.window, document: dom.window.document, location: dom.window.location,
-    sessionStorage: dom.window.sessionStorage, URL, taskApps: [{name: '微信', package: 'com.tencent.mm', enabled: true, modules: ['微信登录']}],
-    modules: {'微信登录': []},
+    sessionStorage: dom.window.sessionStorage, URL, taskApps: [{name: '微信', package: 'com.tencent.mm', enabled: true, modules: ['微信登录']},{name:'智小白3D',package:'com.kfb.model',enabled:true,modules:['3D打印基线']}],
+    modules: {'微信登录': [], '3D打印基线': []},
     runnerDevices: [{runner_id: 'win-runner-01', device_id: 'ecbfd645', model: 'OPPO Reno9', status: 'online', usage_status: 'idle'}],
     escapeHtml: value => String(value ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;'),
     resetYamlToolbarForManager() {}, loadModules: async () => {}, loadRunnerDevices: async () => {},
@@ -40,9 +40,20 @@ test('opens Sonic for the only phone selection and does not put token in its URL
   assert.match(f.dom.window.document.getElementById('editor-area').textContent, /OPPO Reno9/);
   await f.run('startDeviceRecording()');
   assert.equal(f.calls[0].body.device_id, undefined);
-  assert.equal(f.calls[0].body.app_package, 'com.tencent.mm');
+  assert.equal(f.calls[0].body.app_package, 'com.kfb.model');
   assert.equal(f.opened[0].url, 'http://sonic.example/Index/Devices');
   assert.doesNotMatch(f.opened[0].url, /secret|session-1/);
+});
+
+test('defaults recording to 智小白3D and shows its automatic launch as the first step', () => {
+  const f = fixture();
+  f.run('renderDeviceRecorder()');
+  assert.equal(f.dom.window.document.getElementById('device-recorder-app').value, 'com.kfb.model');
+  f.run("deviceRecorderSession={id:'s1',status:'recording',app_package:'com.kfb.model',steps:[{id:'tap-1',sequence:1,type:'tap',semantic_description:'我的',evidence_status:'captured'}]}; renderDeviceRecorder()");
+  const automatic = f.dom.window.document.querySelector('[data-recorder-auto-launch]');
+  assert.ok(automatic);
+  assert.match(automatic.textContent, /1.*启动应用.*智小白3D.*com\.kfb\.model/s);
+  assert.match(f.dom.window.document.querySelector('.device-recorder-timeline').textContent, /2.*点击.*我的/s);
 });
 
 test('shows an empty state when no Android phone is online', async () => {
@@ -87,6 +98,35 @@ test('history can reopen a persisted generated YAML and start a new recording', 
   assert.match(f.dom.window.document.body.textContent, /已生成 YAML/);
   f.run('newDeviceRecording()');
   assert.match(f.dom.window.document.body.textContent, /尚未开始/);
+});
+
+test('cancelled history has a direct new recording action', () => {
+  const f = fixture();
+  f.run("deviceRecorderSession={id:'cancelled',status:'cancelled',app_package:'com.kfb.model',steps:[]}; renderDeviceRecorder()");
+  const button = f.dom.window.document.querySelector('[data-action="new-device-recording"]');
+  assert.ok(button);
+  assert.match(button.textContent, /新建录制/);
+  f.run('newDeviceRecording()');
+  assert.equal(f.run('deviceRecorderSession'), null);
+  assert.equal(f.dom.window.document.getElementById('device-recorder-app').value, 'com.kfb.model');
+});
+
+test('timeline explains scaled coordinates while retaining the raw Sonic point', () => {
+  const f = fixture();
+  f.run("deviceRecorderSession={id:'s1',status:'finished',app_package:'com.kfb.model',steps:[{id:'tap',sequence:1,type:'tap',point:{x:976,y:2331},raw_point:{x:1084,y:2564},coordinate_transform:'1200x2640->1080x2400',semantic_description:'我的',evidence_status:'captured',screenshot_path:'/tmp/x.png'}]}; renderDeviceRecorder()");
+  assert.match(f.dom.window.document.querySelector('.device-recorder-timeline').textContent, /截图坐标：976，2331/);
+  assert.match(f.dom.window.document.querySelector('.device-recorder-timeline').textContent, /Sonic 原始坐标：1084，2564/);
+  assert.match(f.dom.window.document.querySelector('.device-recorder-timeline').textContent, /拖动红点可校正/);
+  assert.match(f.dom.window.document.querySelector('.device-recorder-timeline').textContent, /重置点击位置/);
+  assert.match(f.dom.window.document.querySelector('.device-recorder-timeline').textContent, /用当前红点重新识别/);
+});
+
+test('history offers deletion for a whole completed or cancelled recording', () => {
+  const f = fixture();
+  f.run("deviceRecorderHistory=[{id:'done',status:'cancelled',app_package:'com.kfb.model',steps:[]}]; showDeviceRecordingHistory()");
+  assert.ok(f.dom.window.document.querySelector('[data-action="delete-recording-history"]'));
+  f.run("deviceRecorderSession={id:'done',status:'cancelled',app_package:'com.kfb.model',steps:[]}; renderDeviceRecorder()");
+  assert.ok(f.dom.window.document.querySelector('[data-action="delete-current-recording"]'));
 });
 
 test('recording history entry remains visible for an empty or failed history request', () => {
@@ -169,18 +209,18 @@ test('does not confirm a recorded step until the next pre-action frame is ready'
   assert.equal(replies[0].success, true);
 });
 
-test('a failed recognition stays blocked until manual correction then reports success', () => {
+test('a failed recognition is reported once and lets later steps be confirmed', () => {
   const f = fixture();
   const replies = [];
   f.context.remoteTab = {closed:false,postMessage(message){replies.push(message)}};
   f.run("deviceRecorderWindow=remoteTab; deviceRecorderSession={id:'session-1',status:'recording',pre_action_frame_status:'ready',steps:[{id:'s1',sequence:1,type:'tap',evidence_status:'captured',semantic_recognition_status:'failed'}]}; notifyRecorderStepResult(); notifyRecorderStepResult()");
   assert.equal(replies.length, 1);
   assert.equal(replies[0].success, false);
-  assert.equal(f.run('deviceRecorderConfirmedSequence'), 0);
-  f.run("deviceRecorderSession.steps[0].semantic_description='左上角返回'; deviceRecorderSession.steps[0].semantic_recognition_status='recognized'; notifyRecorderStepResult()");
+  assert.equal(f.run('deviceRecorderConfirmedSequence'), 1);
+  f.run("deviceRecorderSession.steps.push({id:'s2',sequence:2,type:'tap',semantic_description:'打印记录',evidence_status:'captured',semantic_recognition_status:'recognized'}); notifyRecorderStepResult()");
   assert.equal(replies.length, 2);
   assert.equal(replies[1].success, true);
-  assert.equal(f.run('deviceRecorderConfirmedSequence'), 1);
+  assert.equal(f.run('deviceRecorderConfirmedSequence'), 2);
 });
 
 test('resends the recording session when a freshly loaded Sonic page announces its hook', async () => {

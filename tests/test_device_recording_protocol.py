@@ -1,3 +1,4 @@
+import base64
 import os
 import tempfile
 import unittest
@@ -25,8 +26,10 @@ class DeviceRecordingProtocolTest(unittest.TestCase):
         self.tempdir = tempfile.TemporaryDirectory()
         self.addCleanup(self.tempdir.cleanup)
         self.store = os.path.join(self.tempdir.name, "recordings.json")
+        self.evidence_dir = os.path.join(self.tempdir.name, "evidence")
         self.patches = [
             mock.patch.object(recording, "DEVICE_RECORDINGS_FILE", self.store),
+            mock.patch.object(recording, "DEVICE_RECORDING_EVIDENCE_DIR", self.evidence_dir),
             mock.patch.object(router, "_require_user_auth", return_value=False),
             mock.patch.object(router, "_authenticated_user", return_value="admin"),
             mock.patch.object(router, "all_online_devices", return_value=[{
@@ -50,6 +53,12 @@ class DeviceRecordingProtocolTest(unittest.TestCase):
     def test_create_read_action_finish_flow(self):
         session = self.create()
         self.assertIn("recording_token", session)
+        request = recording.pending_recording_evidence_requests("win-runner-01")[0]
+        recording.save_recording_evidence("win-runner-01", {
+            "request_id": request["request_id"], "session_id": session["id"], "step_id": "",
+            "device_id": "ecbfd645", "content_base64": base64.b64encode(b"\x89PNG\r\n\x1a\nfixture").decode(),
+            "ui_xml": "<hierarchy />",
+        })
         action = Handler({
             "session_id": session["id"],
             "recording_token": session["recording_token"],

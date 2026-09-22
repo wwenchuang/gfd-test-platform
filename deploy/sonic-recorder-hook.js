@@ -206,11 +206,11 @@
     }
     if (data.type === 'MIDSCENE_RECORDING_STEP_CONFIRMED' && recording && data.sessionId === recording.sessionId) {
       const sequence = Number(data.sequence || 0);
+      awaitingRecognition = 0;
       if (data.success) {
-        awaitingRecognition = 0;
         showRecorderStatus(`第 ${sequence} 步记录成功，可以继续操作`, 'active');
       } else {
-        showRecorderStatus(`第 ${sequence} 步识别失败，请在平台手工标记`, 'error');
+        showRecorderStatus(`第 ${sequence} 步识别失败，已保留；可以继续操作并稍后在平台修正`, 'error');
       }
       return;
     }

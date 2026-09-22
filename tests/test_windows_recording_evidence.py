@@ -63,10 +63,20 @@ class WindowsRecordingEvidenceTest(unittest.TestCase):
              mock.patch.object(runner, "capture_screen_png", return_value=b"\x89PNG\r\n\x1a\npre"), \
              mock.patch.object(runner, "capture_ui_xml", return_value="<hierarchy />"), \
              mock.patch.object(runner, "http_json", side_effect=lambda method, path, payload, timeout=0: posted.append(payload) or {"ok": True}):
-            runner.upload_recording_evidence_requests(response, [{"device_id": "phone"}])
+            runner.upload_recording_evidence_requests(response, [{"device_id": "phone", "resolution": "Physical size: 1200x2640\nOverride size: 1080x2400"}])
         self.assertEqual(posted[0]["request_id"], "pre-1")
         self.assertEqual(posted[0]["step_id"], "")
         self.assertTrue(posted[0]["content_base64"])
+        self.assertEqual((posted[0]["coordinate_width"], posted[0]["coordinate_height"]), (1200, 2640))
+
+    def test_enables_android_touch_and_pointer_overlays_for_recording(self):
+        calls = []
+        errors = runner.enable_recording_touch_indicators(
+            "adb", "phone", run=lambda command, **kwargs: calls.append(command) or Result()
+        )
+        self.assertEqual(errors, [])
+        self.assertEqual(calls[0][-5:], ["settings", "put", "system", "show_touches", "1"])
+        self.assertEqual(calls[1][-5:], ["settings", "put", "system", "pointer_location", "1"])
 
 
 if __name__ == "__main__":

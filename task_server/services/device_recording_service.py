@@ -11,6 +11,7 @@ import time
 import uuid
 import os
 import re
+import shutil
 import xml.etree.ElementTree as ET
 from typing import Any, Dict, Optional
 
@@ -90,6 +91,29 @@ def _public(row: Dict[str, Any]) -> Dict[str, Any]:
     value = copy.deepcopy(row)
     value.pop("recording_token_hash", None)
     return value
+
+
+def _png_dimensions(content: bytes) -> tuple[int, int]:
+    """Read PNG dimensions from IHDR without adding an image dependency."""
+    if len(content) >= 24 and content.startswith(b"\x89PNG\r\n\x1a\n") and content[12:16] == b"IHDR":
+        return int.from_bytes(content[16:20], "big"), int.from_bytes(content[20:24], "big")
+    return 0, 0
+
+
+def _scaled_point(point: Dict[str, Any], row: Dict[str, Any]) -> tuple[Dict[str, int], Optional[Dict[str, int]], str]:
+    raw = {"x": int(point.get("x") or 0), "y": int(point.get("y") or 0)}
+    source_width = int(row.get("pre_action_frame_coordinate_width") or 0)
+    source_height = int(row.get("pre_action_frame_coordinate_height") or 0)
+    image_width = int(row.get("pre_action_frame_image_width") or 0)
+    image_height = int(row.get("pre_action_frame_image_height") or 0)
+    if not all((source_width, source_height, image_width, image_height)):
+        return raw, None, ""
+    mapped = {
+        "x": max(0, min(image_width - 1, round(raw["x"] * image_width / source_width))),
+        "y": max(0, min(image_height - 1, round(raw["y"] * image_height / source_height))),
+    }
+    transform = f"{source_width}x{source_height}->{image_width}x{image_height}"
+    return mapped, raw if mapped != raw else None, transform
 
 
 def create_recording_session(
@@ -220,6 +244,30 @@ def list_recording_sessions(user: str, *, store_path: Optional[str] = None, limi
         ]
         rows.sort(key=lambda row: float(row.get("updated_ts") or 0), reverse=True)
         return rows[:max(1, min(int(limit or 30), 100))]
+
+
+def delete_recording_session(
+    session_id: str,
+    user: str,
+    *,
+    store_path: Optional[str] = None,
+    evidence_dir: Optional[str] = None,
+) -> Dict[str, Any]:
+    path = _path(store_path)
+    with _LOCK, file_mutation_lock(path):
+        data = _load(path)
+        row = _find(data, session_id)
+        _owner(row, user)
+        if row.get("status") in {"recording", "generating"}:
+            raise ValueError("录制仍在进行，请先取消后再删除")
+        deleted = _public(row)
+        data["sessions"] = [item for item in data["sessions"] if item is not row]
+        write_json_file(path, data)
+        root = os.path.abspath(os.path.join(evidence_dir or DEVICE_RECORDING_EVIDENCE_DIR, str(session_id)))
+        parent = os.path.abspath(evidence_dir or DEVICE_RECORDING_EVIDENCE_DIR)
+        if os.path.dirname(root) == parent and os.path.isdir(root):
+            shutil.rmtree(root)
+        return deleted
 
 
 def save_generated_recording_result(session_id: str, user: str, result: Dict[str, Any], *, store_path: Optional[str] = None) -> Dict[str, Any]:
@@ -385,6 +433,62 @@ def update_recorded_step(
         return _public(row)
 
 
+def update_recorded_step_point(
+    session_id: str,
+    user: str,
+    step_id: str,
+    point: Optional[Dict[str, Any]] = None,
+    *,
+    reset: bool = False,
+    store_path: Optional[str] = None,
+    now: Optional[float] = None,
+) -> Dict[str, Any]:
+    timestamp = float(time.time() if now is None else now)
+    path = _path(store_path)
+    with _LOCK, file_mutation_lock(path):
+        data = _load(path)
+        row = _find(data, session_id)
+        _owner(row, user)
+        step = next((item for item in row.get("steps") or [] if item.get("id") == str(step_id)), None)
+        if not step or step.get("type") != "tap":
+            raise ValueError("只能校正点击步骤的位置")
+        original = step.get("recorded_point") if isinstance(step.get("recorded_point"), dict) else step.get("point")
+        if reset:
+            target = copy.deepcopy(original or {})
+        elif isinstance(point, dict):
+            target = {"x": int(point.get("x") or 0), "y": int(point.get("y") or 0)}
+        else:
+            raise ValueError("点击坐标不能为空")
+        screenshot = str(step.get("screenshot_path") or "")
+        if not screenshot or not os.path.isfile(screenshot):
+            raise ValueError("该步骤没有可校正的截图证据")
+        with open(screenshot, "rb") as handle:
+            image_width, image_height = _png_dimensions(handle.read(32))
+        if not image_width or not image_height:
+            raise ValueError("无法读取截图尺寸")
+        target["x"] = max(0, min(image_width - 1, target["x"]))
+        target["y"] = max(0, min(image_height - 1, target["y"]))
+        step["point"] = target
+        step["point_manually_adjusted"] = target != original
+        xml_path = str(step.get("ui_xml_path") or "")
+        xml_text = ""
+        if xml_path and os.path.isfile(xml_path):
+            with open(xml_path, encoding="utf-8", errors="replace") as handle:
+                xml_text = handle.read()
+        step["ui_node"] = _node_at_point(xml_text, target)
+        for key in (
+            "semantic_description", "semantic_source", "semantic_confidence",
+            "semantic_confirmed_by", "semantic_confirmed_at", "semantic_recognition_error",
+        ):
+            step.pop(key, None)
+        step["semantic_recognition_status"] = "pending"
+        row.pop("generated_result", None)
+        row["updated_ts"] = timestamp
+        row["updated_at"] = _stamp(timestamp)
+        write_json_file(path, data)
+        return _public(row)
+
+
 def delete_recorded_step(
     session_id: str,
     user: str,
@@ -463,10 +567,18 @@ def append_recorded_action(
         }
         if action_type == "tap":
             point = action.get("point") if isinstance(action.get("point"), dict) else {}
-            normalized["point"] = {"x": int(point.get("x") or 0), "y": int(point.get("y") or 0)}
+            normalized["point"], raw_point, transform = _scaled_point(point, row)
+            normalized["recorded_point"] = copy.deepcopy(normalized["point"])
+            if raw_point:
+                normalized["raw_point"] = raw_point
+                normalized["coordinate_transform"] = transform
         elif action_type == "swipe":
-            normalized["start"] = copy.deepcopy(action.get("start") or {})
-            normalized["end"] = copy.deepcopy(action.get("end") or {})
+            normalized["start"], raw_start, transform = _scaled_point(action.get("start") or {}, row)
+            normalized["end"], raw_end, _ = _scaled_point(action.get("end") or {}, row)
+            if raw_start or raw_end:
+                normalized["raw_start"] = raw_start or copy.deepcopy(normalized["start"])
+                normalized["raw_end"] = raw_end or copy.deepcopy(normalized["end"])
+                normalized["coordinate_transform"] = transform
             normalized["duration_ms"] = min(5000, max(0, int(action.get("duration_ms") or action.get("durationMs") or 0)))
         elif action_type == "text":
             normalized["text"] = str(action.get("text") or "")
@@ -607,6 +719,11 @@ def save_recording_evidence(runner_id: str, payload: Dict[str, Any], *, store_pa
                 row["pre_action_frame_path"] = png_path
                 row["pre_action_frame_xml_path"] = xml_path
                 row["pre_action_frame_sha256"] = hashlib.sha256(png).hexdigest()
+                image_width, image_height = _png_dimensions(png)
+                row["pre_action_frame_image_width"] = image_width
+                row["pre_action_frame_image_height"] = image_height
+                row["pre_action_frame_coordinate_width"] = max(0, int(payload.get("coordinate_width") or payload.get("coordinateWidth") or 0))
+                row["pre_action_frame_coordinate_height"] = max(0, int(payload.get("coordinate_height") or payload.get("coordinateHeight") or 0))
                 ui_xml_error = str(payload.get("ui_xml_error") or payload.get("uiXmlError") or "").strip()[:500]
                 if ui_xml_error:
                     row["pre_action_frame_ui_xml_error"] = ui_xml_error

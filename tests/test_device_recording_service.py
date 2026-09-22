@@ -4,6 +4,7 @@ import tempfile
 import time
 import unittest
 import base64
+import struct
 
 from task_server.services import device_recording_service as recording
 
@@ -349,6 +350,68 @@ class DeviceRecordingServiceTest(unittest.TestCase):
             ))
         self.assertNotEqual(steps[0]["screenshot_sha256"], steps[1]["screenshot_sha256"])
         self.assertEqual([step["ui_node"]["text"] for step in steps], ["我的", "打印记录"])
+
+    def test_sonic_physical_coordinates_are_scaled_to_the_adb_screenshot(self):
+        session = self.create(runner_id="", device_id="")
+        recording.bind_recording_device(session["id"], "admin", "win-runner-01", "ecbfd645", store_path=self.store)
+        request = recording.pending_recording_evidence_requests("win-runner-01", store_path=self.store)[0]
+        png = b"\x89PNG\r\n\x1a\n" + b"\x00\x00\x00\rIHDR" + struct.pack(">II", 1080, 2400)
+        evidence_dir = os.path.join(self.tempdir.name, "evidence")
+        recording.save_recording_evidence("win-runner-01", {
+            "request_id": request["request_id"], "session_id": session["id"], "step_id": "",
+            "device_id": "ecbfd645", "content_base64": base64.b64encode(png).decode(),
+            "coordinate_width": 1200, "coordinate_height": 2640, "ui_xml": "<hierarchy />",
+        }, store_path=self.store, evidence_dir=evidence_dir)
+        step = recording.append_recorded_action(
+            session["id"], session["recording_token"],
+            {"event_id":"evt-scale","type":"tap","point":{"x":1084,"y":2564},"device_id":"ecbfd645"},
+            store_path=self.store, evidence_dir=evidence_dir,
+        )
+        self.assertEqual(step["raw_point"], {"x": 1084, "y": 2564})
+        self.assertEqual(step["point"], {"x": 976, "y": 2331})
+        self.assertEqual(step["coordinate_transform"], "1200x2640->1080x2400")
+
+    def test_owner_can_adjust_and_reset_the_click_point_on_the_same_evidence(self):
+        session = self.create(runner_id="", device_id="")
+        recording.bind_recording_device(session["id"], "admin", "win-runner-01", "ecbfd645", store_path=self.store)
+        request = recording.pending_recording_evidence_requests("win-runner-01", store_path=self.store)[0]
+        png = b"\x89PNG\r\n\x1a\n" + b"\x00\x00\x00\rIHDR" + struct.pack(">II", 1080, 2400)
+        evidence_dir = os.path.join(self.tempdir.name, "evidence")
+        recording.save_recording_evidence("win-runner-01", {
+            "request_id": request["request_id"], "session_id": session["id"], "step_id": "",
+            "device_id": "ecbfd645", "content_base64": base64.b64encode(png).decode(), "ui_xml": "<hierarchy />",
+        }, store_path=self.store, evidence_dir=evidence_dir)
+        step = recording.append_recorded_action(
+            session["id"], session["recording_token"],
+            {"event_id":"evt-adjust","type":"tap","point":{"x":100,"y":200},"device_id":"ecbfd645"},
+            store_path=self.store, evidence_dir=evidence_dir,
+        )
+        adjusted = recording.update_recorded_step_point(
+            session["id"], "admin", step["id"], {"x": 250, "y": 350}, store_path=self.store,
+        )
+        self.assertEqual(adjusted["steps"][0]["point"], {"x": 250, "y": 350})
+        self.assertTrue(adjusted["steps"][0]["point_manually_adjusted"])
+        reset = recording.update_recorded_step_point(
+            session["id"], "admin", step["id"], reset=True, store_path=self.store,
+        )
+        self.assertEqual(reset["steps"][0]["point"], {"x": 100, "y": 200})
+        self.assertFalse(reset["steps"][0]["point_manually_adjusted"])
+
+    def test_cancelled_or_finished_session_can_be_deleted_with_its_evidence(self):
+        session = self.create()
+        evidence_dir = os.path.join(self.tempdir.name, "evidence")
+        os.makedirs(os.path.join(evidence_dir, session["id"]), exist_ok=True)
+        with open(os.path.join(evidence_dir, session["id"], "proof.png"), "wb") as handle:
+            handle.write(b"proof")
+        with self.assertRaisesRegex(ValueError, "先取消"):
+            recording.delete_recording_session(session["id"], "admin", store_path=self.store, evidence_dir=evidence_dir)
+        recording.cancel_recording_session(session["id"], "admin", store_path=self.store)
+        with self.assertRaises(PermissionError):
+            recording.delete_recording_session(session["id"], "other", store_path=self.store, evidence_dir=evidence_dir)
+        deleted = recording.delete_recording_session(session["id"], "admin", store_path=self.store, evidence_dir=evidence_dir)
+        self.assertEqual(deleted["status"], "cancelled")
+        self.assertFalse(os.path.exists(os.path.join(evidence_dir, session["id"])))
+        self.assertEqual(recording.list_recording_sessions("admin", store_path=self.store), [])
 
 
 if __name__ == "__main__":

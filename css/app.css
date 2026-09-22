@@ -3999,6 +3999,7 @@
   }
   .device-recorder-page select { width: 100%; min-height: 40px; }
   .device-recorder-history-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; }
+  .device-recorder-history-entry { display:grid; gap:8px; align-content:start; }
   .device-recorder-history-card { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 6px 10px; align-items: center; width: 100%; padding: 14px; border: 1px solid var(--border); border-radius: 12px; background: var(--panel2); color: var(--text); text-align: left; cursor: pointer; }
   .device-recorder-history-card:hover { border-color: var(--accent); transform: translateY(-1px); }
   .device-recorder-history-card strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -4034,11 +4035,13 @@
 .device-recorder-track button span { color:var(--accent); margin-right:8px; }
 .device-recorder-track button small { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--text2); margin-top:4px; }
 .device-recorder-shot img { display:block; max-width:320px; max-height:520px; object-fit:contain; border:1px solid var(--border); border-radius:12px; background:#050914; }
-.device-recorder-shot-frame { position:relative; display:inline-block; line-height:0; }
-.device-recorder-shot-frame i { position:absolute; display:block; width:22px; height:22px; transform:translate(-50%,-50%); border:3px solid #fff; border-radius:50%; background:#ef4444; box-shadow:0 0 0 3px rgba(239,68,68,.35),0 2px 8px #000; pointer-events:none; }
+.device-recorder-timeline article .device-recorder-shot-frame { position:relative; display:inline-block; width:fit-content; justify-self:start; line-height:0; }
+.device-recorder-shot-frame i { position:absolute; display:block; width:22px; height:22px; transform:translate(-50%,-50%); border:3px solid #fff; border-radius:50%; background:#ef4444; box-shadow:0 0 0 3px rgba(239,68,68,.35),0 2px 8px #000; cursor:grab; touch-action:none; }
+.device-recorder-shot-frame i:active { cursor:grabbing; }
 .device-recorder-shot-frame i::before,.device-recorder-shot-frame i::after { content:""; position:absolute; background:#fff; left:50%; top:50%; transform:translate(-50%,-50%); }
 .device-recorder-shot-frame i::before { width:30px; height:2px; }
 .device-recorder-shot-frame i::after { width:2px; height:30px; }
+.device-recorder-point-actions { display:flex !important; grid-template-columns:none !important; flex-wrap:wrap; gap:8px !important; margin-top:8px; }
 .device-recorder-timeline article {
     display: grid;
     grid-template-columns: 30px minmax(0, 1fr) auto;

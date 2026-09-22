@@ -21,7 +21,7 @@ RUNNER_ID = os.getenv("RUNNER_ID", "win-runner-01")
 TOKEN = os.getenv("MIDSCENE_RUNNER_TOKEN", "").strip()
 WORKSPACE = Path(os.getenv("MIDSCENE_RUNNER_WORKSPACE", r"D:\sonic\midscene_run"))
 CALLBACK_OUTBOX_DIR = WORKSPACE / "callback_outbox"
-RUNNER_VERSION = os.getenv("MIDSCENE_RUNNER_VERSION", "2026.09.22-midscene1.13-qwen3.7-result-retry-v1-recording-evidence-v2")
+RUNNER_VERSION = os.getenv("MIDSCENE_RUNNER_VERSION", "2026.09.22-midscene1.13-qwen3.7-result-retry-v1-recording-evidence-v3")
 MIDSCENE_REQUIRED_VERSION = "1.13.0"
 COMPLETED_RECORDING_EVIDENCE = set()
 RUNNER_STARTED_AT = time.strftime("%Y-%m-%d %H:%M:%S")
@@ -725,6 +725,29 @@ def capture_ui_xml(adb_bin, device_id, run=subprocess.run, max_bytes=2 * 1024 * 
     return content.decode("utf-8", errors="replace")
 
 
+def recording_coordinate_size(resolution):
+    value = str(resolution or "")
+    match = re.search(r"Physical size:\s*(\d+)x(\d+)", value, re.I) or re.search(r"(\d+)x(\d+)", value)
+    return (int(match.group(1)), int(match.group(2))) if match else (0, 0)
+
+
+def enable_recording_touch_indicators(adb_bin, device_id, run=subprocess.run):
+    """Keep Android's native touch and pointer overlays enabled for recording review."""
+    errors = []
+    for setting in ("show_touches", "pointer_location"):
+        try:
+            result = run(
+                [adb_bin, "-s", device_id, "shell", "settings", "put", "system", setting, "1"],
+                capture_output=True,
+                timeout=6,
+            )
+            if getattr(result, "returncode", 0) != 0:
+                errors.append(setting)
+        except Exception:
+            errors.append(setting)
+    return errors
+
+
 def upload_recording_evidence_requests(response, devices):
     requests = response.get("recording_evidence_requests") if isinstance(response, dict) else []
     if not isinstance(requests, list) or not requests:
@@ -743,6 +766,11 @@ def upload_recording_evidence_requests(response, devices):
         try:
             if device_id not in available:
                 raise RuntimeError("录制设备已离线，无法采集证据")
+            enable_recording_touch_indicators(adb_bin, device_id)
+            coordinate_width, coordinate_height = recording_coordinate_size(available[device_id].get("resolution"))
+            if coordinate_width and coordinate_height:
+                payload["coordinate_width"] = coordinate_width
+                payload["coordinate_height"] = coordinate_height
             payload["content_base64"] = base64.b64encode(capture_screen_png(adb_bin, device_id)).decode("ascii")
             try:
                 payload["ui_xml"] = capture_ui_xml(adb_bin, device_id)

@@ -4028,6 +4028,25 @@ def _get_device_recordings(handler, qs):
     handler._json({"ok": True, "session": session})
 
 
+@route_delete("/api/device-recordings")
+def _delete_device_recordings(handler, qs):
+    if _require_user_auth(handler):
+        return
+    from task_server.services.device_recording_service import delete_recording_session
+    try:
+        session = delete_recording_session(
+            qs.get("id") or qs.get("session_id") or "",
+            _authenticated_user(handler),
+        )
+    except PermissionError as exc:
+        handler._json({"ok": False, "error": str(exc)}, 403)
+        return
+    except ValueError as exc:
+        handler._json({"ok": False, "error": str(exc)}, 409)
+        return
+    handler._json({"ok": True, "session": session})
+
+
 @route_post("/api/device-recordings/action")
 def _post_device_recording_action(handler, qs):
     """Accept a mirrored Sonic action; this endpoint never executes it."""
@@ -4141,6 +4160,29 @@ def _post_device_recording_step_delete(handler, qs):
             payload.get("session_id") or payload.get("sessionId") or "",
             _authenticated_user(handler),
             payload.get("step_id") or payload.get("stepId") or "",
+        )
+    except PermissionError as exc:
+        handler._json({"ok": False, "error": str(exc)}, 403)
+        return
+    except ValueError as exc:
+        handler._json({"ok": False, "error": str(exc)}, 400)
+        return
+    handler._json({"ok": True, "session": session})
+
+
+@route_post("/api/device-recordings/step/point")
+def _post_device_recording_step_point(handler, qs):
+    if _require_user_auth(handler):
+        return
+    from task_server.services.device_recording_service import update_recorded_step_point
+    payload = handler._body()
+    try:
+        session = update_recorded_step_point(
+            payload.get("session_id") or payload.get("sessionId") or "",
+            _authenticated_user(handler),
+            payload.get("step_id") or payload.get("stepId") or "",
+            payload.get("point"),
+            reset=bool(payload.get("reset")),
         )
     except PermissionError as exc:
         handler._json({"ok": False, "error": str(exc)}, 403)
