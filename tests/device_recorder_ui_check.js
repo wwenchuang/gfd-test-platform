@@ -7,6 +7,11 @@ const {JSDOM} = require('../api-testing-ui/node_modules/jsdom');
 
 const ROOT = path.resolve(__dirname, '..');
 
+test('task manager uses a new cache key for the ready-handshake recorder script', () => {
+  const html = fs.readFileSync(path.join(ROOT, 'task-manager.html'), 'utf8');
+  assert.match(html, /device-recorder\.js\?v=20260922-sonic-native-recorder-v4/);
+});
+
 function fixture() {
   const dom = new JSDOM('<div id="editor-area"></div>', {url: 'http://platform.example/task-manager.html'});
   const calls = [];

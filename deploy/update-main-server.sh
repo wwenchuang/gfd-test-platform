@@ -25,6 +25,7 @@ Environment:
   BUILD_API_TEST      Set to 1 to run npm install/build before install. Default: 0
   SONIC_CONTAINER_PREFIX  Sonic Docker container name prefix observed before/after deploy. Default: sonic-server-272-
   CONFIGURE_SONIC_RESTART Set to 1 to configure existing Sonic containers with restart=unless-stopped. Default: 1
+  SYNC_SONIC_RECORDER_HOOK Set to 1 to install and verify the Sonic browser recording hook. Default: 1
 USAGE
 }
 
@@ -58,6 +59,7 @@ ALLOW_DIRTY="${ALLOW_DIRTY:-0}"
 BUILD_API_TEST="${BUILD_API_TEST:-0}"
 SONIC_CONTAINER_PREFIX="${SONIC_CONTAINER_PREFIX:-sonic-server-272-}"
 CONFIGURE_SONIC_RESTART="${CONFIGURE_SONIC_RESTART:-1}"
+SYNC_SONIC_RECORDER_HOOK="${SYNC_SONIC_RECORDER_HOOK:-1}"
 
 if [ ! -d "${SOURCE_DIR}/.git" ]; then
   cat >&2 <<EOF
@@ -219,6 +221,53 @@ warn_sonic_restart_policies() {
   else
     echo "Sonic 容器均已配置退出后自动恢复"
   fi
+}
+
+sync_sonic_recorder_hook() {
+  [ "${SYNC_SONIC_RECORDER_HOOK}" = "1" ] || {
+    echo "已按配置跳过 Sonic 录制钩子同步"
+    return 0
+  }
+  command -v docker >/dev/null 2>&1 || {
+    echo "未检测到 Docker，跳过 Sonic 录制钩子同步"
+    return 0
+  }
+
+  local hook_source="${SOURCE_DIR}/deploy/sonic-recorder-hook.js"
+  [ -f "${hook_source}" ] || {
+    echo "缺少 Sonic 录制钩子：${hook_source}" >&2
+    return 1
+  }
+
+  local containers container index_path expected_hash actual_hash
+  containers="$(sonic_container_names 0 | grep -- '-sonic-client-web-' || true)"
+  if [ -z "${containers}" ]; then
+    echo "未发现运行中的 Sonic Web 容器，跳过录制钩子同步"
+    return 0
+  fi
+  expected_hash="$(sha256sum "${hook_source}" | awk '{print $1}')"
+  while IFS= read -r container; do
+    [ -n "${container}" ] || continue
+    index_path="$(run_as_root docker exec "${container}" sh -lc "find /usr/share/nginx/html -maxdepth 2 -name index.html -type f | head -n 1")"
+    [ -n "${index_path}" ] || {
+      echo "Sonic Web 容器未找到 index.html：${container}" >&2
+      return 1
+    }
+    run_as_root docker cp "${hook_source}" "${container}:/usr/share/nginx/html/sonic-recorder-hook.js"
+    if ! run_as_root docker exec "${container}" sh -lc "grep -q '/sonic-recorder-hook.js' '${index_path}'"; then
+      run_as_root docker exec "${container}" sh -lc "sed -i 's#</head>#  <script src=\"/sonic-recorder-hook.js?v=${DEPLOY_REVISION}\"></script>\\n</head>#' '${index_path}'"
+    fi
+    actual_hash="$(run_as_root docker exec "${container}" sha256sum /usr/share/nginx/html/sonic-recorder-hook.js | awk '{print $1}')"
+    [ "${actual_hash}" = "${expected_hash}" ] || {
+      echo "Sonic 录制钩子内容校验失败：${container}" >&2
+      return 1
+    }
+    if ! run_as_root docker exec "${container}" grep -q 'MIDSCENE_RECORDER_HOOK_READY' /usr/share/nginx/html/sonic-recorder-hook.js; then
+      echo "Sonic 录制钩子就绪握手校验失败：${container}" >&2
+      return 1
+    fi
+    echo "Sonic 录制钩子已同步并校验：${container} ${expected_hash}"
+  done <<< "${containers}"
 }
 
 disable_legacy_systemd_units() {
@@ -502,6 +551,7 @@ TASK_SERVICE_NEEDS_RESTORE=0
 restart_task_service_cleanly
 restart_service_if_present midscene-api-worker
 restart_service_if_present midscene-api-scheduler
+sync_sonic_recorder_hook
 verify_sonic_container_state
 warn_sonic_restart_policies
 

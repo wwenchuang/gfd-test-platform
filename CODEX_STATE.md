@@ -12217,3 +12217,6 @@ git diff --check
 - Chrome 实际创建录制会话后，平台持续显示“等待 Sonic 接收录制会话”、时间线 0 个动作。根因是平台只在打开 Sonic 后按 0.8/1.8/3.5 秒固定补发三次会话；Sonic 页面或远控子页晚于该窗口加载时，旁路钩子收不到会话，真实操作不会进入平台。
 - Sonic 钩子加载后现主动发送 `MIDSCENE_RECORDER_HOOK_READY`；平台校验 Sonic 来源后立即向消息来源补发当前录制会话。修复覆盖新开设备中心、复用旧标签页及远控子页晚加载场景，不把令牌写入 URL。
 - 本地专项验证：录制页面与 Sonic hook Node 11 项全部通过，前端静态检查 84 项和 `git diff --check` 通过。线上发布、钩子更新及 Chrome 点击/滑动/返回→时间线→YAML→保存重开仍以本节后续现场证据为准。
+- `4031a5c` 发布后现场继续复验，确认线上钩子文件已更新，但 `task-manager.html` 仍使用旧的 `device-recorder-v3` 查询串，Chrome 命中旧平台脚本，导致新版就绪消息无人处理。缓存键已升级为 `20260922-sonic-native-recorder-v4`。
+- `update-main-server.sh` 现自动发现运行中的 `*-sonic-client-web-*` 容器，复制录制钩子、在缺少标签时注入到主 bundle 之前，并以 SHA-256 和 `MIDSCENE_RECORDER_HOOK_READY` 标记双重校验。以后常规平台发布会一并更新；Sonic Web 容器重建后再次运行部署脚本也会自动恢复，无需人工 `docker cp`。
+- 第二批本地验证：录制与钩子 Node 12 项、部署脚本专项 1 项、Shell 语法、前端静态 84 项和差异检查通过。仍需发布本批缓存键/自动同步提交后重建 Chrome 会话做最终实录。
