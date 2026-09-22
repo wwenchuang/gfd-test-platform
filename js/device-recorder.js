@@ -371,6 +371,11 @@ function openRecorderSonic() {
   // consumes and clears it before the application bundle runs. This survives
   // browsers that isolate cross-site openers and clear window.name.
   const target = new URL(url);
+  // Sonic's service worker/browser cache may otherwise reuse an older
+  // index.html which does not contain the current recorder hook.  Make each
+  // recording start a real document navigation while keeping credentials in
+  // the fragment only.
+  target.searchParams.set('midsceneRecorder', String(Date.now()));
   target.hash = `__MIDSCENE_RECORDING_HANDOFF__${handoff}`;
   deviceRecorderWindow = window.open(target.href, `midscene-sonic-recorder-${deviceRecorderSession?.id || Date.now()}`);
   [800, 1800, 3500].forEach(delay => setTimeout(recorderHandshake, delay));
