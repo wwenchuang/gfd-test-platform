@@ -96,3 +96,18 @@ test('accepts the ready message from the Sonic remote child tab and binds back t
   assert.equal(replies[0].message.type, 'MIDSCENE_RECORDING_BOUND');
   assert.equal(replies[0].origin, 'http://sonic.example');
 });
+
+test('resends the recording session when a freshly loaded Sonic page announces its hook', async () => {
+  const f = fixture();
+  f.run('renderDeviceRecorder()');
+  await f.run('startDeviceRecording()');
+  const messages = [];
+  const sonicTab = {closed: false, postMessage(message, origin) { messages.push({message, origin}); }};
+  f.context.sonicTab = sonicTab;
+
+  await f.run("handleDeviceRecorderMessage({origin:'http://sonic.example',source:sonicTab,data:{type:'MIDSCENE_RECORDER_HOOK_READY'}})");
+
+  assert.equal(messages[0].message.type, 'MIDSCENE_RECORDING_START');
+  assert.equal(messages[0].message.sessionId, 'session-1');
+  assert.equal(messages[0].origin, 'http://sonic.example');
+});

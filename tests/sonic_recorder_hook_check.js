@@ -19,6 +19,8 @@ test('Sonic hook only becomes ready and mirrors the platform-selected phone', as
   };
   const context = vm.createContext({window, URL, fetch: async (url, options) => { order.push(['mirror', JSON.parse(options.body)]); return {ok: true}; }, Date, Math, JSON, String, Number, Object, RegExp, Error, setTimeout});
   vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'deploy/sonic-recorder-hook.js'), 'utf8'), context);
+  assert.equal(ready[0].type, 'MIDSCENE_RECORDER_HOOK_READY');
+  ready.length = 0;
   listeners.message({source: opener, data: {type: 'MIDSCENE_RECORDING_START', sessionId: 's1', recordingToken: 't1', deviceId: '', endpoint: 'http://platform.example/api/device-recordings/action'}});
   assert.equal(ready.length, 0);
   const socket = new window.WebSocket('ws://agent/websockets/android/key/phone-a/token');
@@ -30,6 +32,19 @@ test('Sonic hook only becomes ready and mirrors the platform-selected phone', as
   assert.equal(order[0][0], 'sonic');
   assert.equal(order[1][0], 'mirror');
   assert.deepEqual(order[1][1].action.point, {x: 10, y: 20});
+});
+
+test('Sonic hook announces that it can receive a recording session after page load', () => {
+  const messages = [];
+  const opener = {postMessage(message, origin) { messages.push({message, origin}); }};
+  class FakeWebSocket {}
+  const window = {opener, WebSocket: FakeWebSocket, addEventListener() {}};
+  const context = vm.createContext({window, URL, fetch: async () => ({ok: true}), Date, Math, JSON, String, Number, Object, RegExp, Error, setTimeout});
+
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'deploy/sonic-recorder-hook.js'), 'utf8'), context);
+
+  assert.equal(messages[0].message.type, 'MIDSCENE_RECORDER_HOOK_READY');
+  assert.equal(messages[0].origin, '*');
 });
 
 test('remote phone tab restores the recording handed to its Sonic opener and queues the first action until binding', async () => {

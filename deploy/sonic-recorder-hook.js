@@ -124,6 +124,9 @@
   window.WebSocket.prototype = NativeWebSocket.prototype;
   Object.assign(window.WebSocket, {CONNECTING: 0, OPEN: 1, CLOSING: 2, CLOSED: 3});
 
+  const readyTarget = platformWindow();
+  if (readyTarget) readyTarget.postMessage({type: 'MIDSCENE_RECORDER_HOOK_READY'}, '*');
+
   window.addEventListener('message', event => {
     const data = event.data || {};
     if (event.source !== window.opener && event.source !== platformWindow()) return;

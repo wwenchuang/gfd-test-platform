@@ -117,11 +117,11 @@ async function startDeviceRecording() {
   } catch (error) { showToast(error.message || '开始录制失败', 'error'); }
 }
 
-function recorderHandshake() {
-  if (!deviceRecorderWindow || deviceRecorderWindow.closed || !deviceRecorderSession) return;
+function recorderHandshake(target = deviceRecorderWindow) {
+  if (!target || target.closed || !deviceRecorderSession) return;
   const sonicUrl = sessionStorage.getItem('deviceRecorderSonicUrl') || '';
   const origin = sonicUrl ? new URL(sonicUrl).origin : '*';
-  deviceRecorderWindow.postMessage({type: 'MIDSCENE_RECORDING_START', sessionId: deviceRecorderSession.id, recordingToken: sessionStorage.getItem('deviceRecorderToken'), deviceId: deviceRecorderSession.device_id || '', endpoint: `${location.origin}/api/device-recordings/action`}, origin);
+  target.postMessage({type: 'MIDSCENE_RECORDING_START', sessionId: deviceRecorderSession.id, recordingToken: sessionStorage.getItem('deviceRecorderToken'), deviceId: deviceRecorderSession.device_id || '', endpoint: `${location.origin}/api/device-recordings/action`}, origin);
 }
 
 function openRecorderSonic() {
@@ -151,7 +151,10 @@ async function refreshDeviceRecording() {
 async function handleDeviceRecorderMessage(event) {
   const sonicUrl = sessionStorage.getItem('deviceRecorderSonicUrl') || '';
   if (!sonicUrl || event.origin !== new URL(sonicUrl).origin) return;
-  if (event.data?.type === 'MIDSCENE_RECORDING_READY' && event.data.sessionId === deviceRecorderSession?.id) {
+  if (event.data?.type === 'MIDSCENE_RECORDER_HOOK_READY') {
+    deviceRecorderWindow = event.source || deviceRecorderWindow;
+    recorderHandshake(deviceRecorderWindow);
+  } else if (event.data?.type === 'MIDSCENE_RECORDING_READY' && event.data.sessionId === deviceRecorderSession?.id) {
     try {
       const data = await apiRequest('/device-recordings/bind', {method: 'POST', body: JSON.stringify({session_id: deviceRecorderSession.id, device_id: event.data.deviceId})});
       deviceRecorderSession = data.session;
