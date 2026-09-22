@@ -187,6 +187,34 @@ test('an already-open Sonic page consumes a later fragment handoff without reloa
   assert.ok(stored.some(([, value]) => value.includes('later-token')));
 });
 
+test('Sonic carries the recorder handoff into the newly opened remote phone tab', () => {
+  const opened = [];
+  const handoff = encodeURIComponent(JSON.stringify({
+    sessionId: 'session-1', recordingToken: 'secret', endpoint: 'http://platform.example/api/device-recordings/action',
+  }));
+  class FakeWebSocket {}
+  const window = {
+    opener: null, WebSocket: FakeWebSocket,
+    location: {href:'http://sonic.example/Index/Devices',origin:'http://sonic.example',hash:`#__MIDSCENE_RECORDING_HANDOFF__${handoff}`,pathname:'/Index/Devices',search:''},
+    history: {replaceState(){window.location.hash='';}},
+    sessionStorage: {getItem(){return null},setItem(){},removeItem(){}},
+    localStorage: {getItem(){return null},setItem(){},removeItem(){}},
+    addEventListener(){},
+    open(url, target, features) { opened.push({url, target, features}); return {}; },
+  };
+  const context = vm.createContext({window,URL,fetch:async()=>({ok:true}),Date,Math,JSON,String,Number,Object,RegExp,Error,Set,setTimeout,decodeURIComponent});
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'deploy/sonic-recorder-hook.js'), 'utf8'), context);
+
+  window.open('/AndroidRemote/35', '_blank');
+
+  assert.equal(opened.length, 1);
+  const target = new URL(opened[0].url);
+  assert.equal(`${target.origin}${target.pathname}`, 'http://sonic.example/AndroidRemote/35');
+  assert.match(target.searchParams.get('midsceneRecorder') || '', /^\d+$/);
+  assert.match(target.hash, /^#__MIDSCENE_RECORDING_HANDOFF__/);
+  assert.doesNotMatch(target.search, /secret|session-1/);
+});
+
 test('Sonic hook notifies the direct opener when that opener also has an opener', () => {
   const directMessages = [];
   const parentMessages = [];

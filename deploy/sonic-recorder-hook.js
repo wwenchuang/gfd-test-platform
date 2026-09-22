@@ -18,6 +18,7 @@
   const HASH_HANDOFF_PREFIX = '#__MIDSCENE_RECORDING_HANDOFF__';
   const HANDOFF_MAX_AGE_MS = 5 * 60 * 1000;
   let bridgePollTimer = null;
+  const NativeWindowOpen = typeof window.open === 'function' ? window.open.bind(window) : null;
 
   function showRecorderStatus(message, state = 'waiting') {
     if (typeof document === 'undefined') return;
@@ -95,6 +96,34 @@
       saveRecording();
       return false;
     }
+  }
+
+  function recordingHandoffFragment() {
+    if (!recording) return '';
+    return `${HASH_HANDOFF_PREFIX}${encodeURIComponent(JSON.stringify({
+      sessionId: recording.sessionId,
+      recordingToken: recording.recordingToken,
+      deviceId: recording.deviceId || '',
+      endpoint: recording.endpoint,
+    }))}`;
+  }
+
+  // Sonic opens the selected phone in a new tab.  Add a cache-busting query
+  // and the short-lived fragment to that same-origin tab so an older cached
+  // application shell cannot silently drop the recorder hook.
+  if (NativeWindowOpen) {
+    window.open = function recorderAwareOpen(url, target, features) {
+      if (!recording || !url) return NativeWindowOpen(url, target, features);
+      try {
+        const next = new URL(String(url), window.location.href);
+        if (next.origin === window.location.origin) {
+          next.searchParams.set('midsceneRecorder', String(Date.now()));
+          next.hash = recordingHandoffFragment();
+          return NativeWindowOpen(next.href, target, features);
+        }
+      } catch (_) {}
+      return NativeWindowOpen(url, target, features);
+    };
   }
 
   try {
