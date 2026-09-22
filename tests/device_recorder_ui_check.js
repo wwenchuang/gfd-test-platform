@@ -9,7 +9,7 @@ const ROOT = path.resolve(__dirname, '..');
 
 test('task manager uses a new cache key for the ready-handshake recorder script', () => {
   const html = fs.readFileSync(path.join(ROOT, 'task-manager.html'), 'utf8');
-  assert.match(html, /device-recorder\.js\?v=20260922-sonic-native-recorder-v13/);
+  assert.match(html, /device-recorder\.js\?v=20260922-sonic-native-recorder-v14/);
 });
 
 function fixture() {

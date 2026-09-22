@@ -35,6 +35,44 @@ test('Sonic hook only becomes ready and mirrors the platform-selected phone', as
   assert.deepEqual(order[1][1].action.point, {x: 10, y: 20});
 });
 
+test('Sonic always sends the real touch before recording evidence work', async () => {
+  const listeners = {};
+  const order = [];
+  const opener = {postMessage() {}};
+  class FakeWebSocket { constructor(url) { this.url=url; } send(data) { order.push(['sonic', JSON.parse(data).detail]); } }
+  let releaseCapture;
+  const canvas = {
+    width:1080,height:2400,
+    toDataURL() { throw new Error('synchronous canvas encoding must never run in the touch send stack'); },
+    toBlob(callback) {
+      order.push(['capture-start']);
+      releaseCapture = () => callback({});
+    },
+  };
+  class FakeFileReader {
+    readAsDataURL() {
+      order.push(['capture-read']);
+      this.result = 'data:image/png;base64,iVBORw0KGgo=';
+      this.onloadend();
+    }
+  }
+  const document = {querySelectorAll() { return [canvas]; }, body:{appendChild(){}}, getElementById(){return {style:{}}}, createElement(){return {style:{}}}};
+  const window = {opener,WebSocket:FakeWebSocket,document,addEventListener(type,fn){listeners[type]=fn;}};
+  const context = vm.createContext({window,document,URL,fetch:async()=>{order.push(['platform']);return {ok:true}},FileReader:FakeFileReader,Date,Math,JSON,String,Number,Object,RegExp,Error,Set,setTimeout});
+  vm.runInContext(fs.readFileSync(path.join(__dirname,'..','deploy/sonic-recorder-hook.js'),'utf8'),context);
+  listeners.message({source:opener,origin:'http://platform.example',data:{type:'MIDSCENE_RECORDING_START',sessionId:'s',recordingToken:'t',deviceId:'',endpoint:'http://platform.example/api/device-recordings/action'}});
+  const socket = new window.WebSocket('ws://agent/websockets/android/key/phone/token');
+  listeners.message({source:opener,data:{type:'MIDSCENE_RECORDING_BOUND',sessionId:'s',deviceId:'phone'}});
+  socket.send(JSON.stringify({type:'touch',detail:'down 10 20'}));
+  socket.send(JSON.stringify({type:'touch',detail:'up 10 20'}));
+  assert.deepEqual(order.map(item=>item[0]), ['sonic','capture-start','sonic']);
+  assert.equal(order.some(item=>item[0]==='platform'), false);
+  releaseCapture();
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.ok(order.find(item=>item[0]==='platform'));
+});
+
 test('Sonic hook announces that it can receive a recording session after page load', () => {
   const messages = [];
   const opener = {postMessage(message, origin) { messages.push({message, origin}); }};

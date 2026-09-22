@@ -13,6 +13,7 @@
   let mirroredCount = 0;
   let platformTarget = null;
   let awaitingRecognition = 0;
+  let preActionFramePromise = null;
   const NativeWebSocket = window.WebSocket;
   const STORAGE_KEY = 'midsceneSonicRecording';
   const HANDOFF_MAX_AGE_MS = 5 * 60 * 1000;
@@ -120,13 +121,36 @@
     });
   }
 
-  function capturePhoneFrame() {
-    try {
-      const canvases = [...document.querySelectorAll('canvas')].filter(item => item.width > 100 && item.height > 100);
-      const canvas = canvases.sort((a, b) => (b.width * b.height) - (a.width * a.height))[0];
-      if (!canvas) return '';
-      return String(canvas.toDataURL('image/png') || '').replace(/^data:image\/png;base64,/, '');
-    } catch (_) { return ''; }
+  function capturePhoneFrameAsync() {
+    return new Promise(resolve => {
+      try {
+        const canvases = [...document.querySelectorAll('canvas')].filter(item => item.width > 100 && item.height > 100);
+        const canvas = canvases.sort((a, b) => (b.width * b.height) - (a.width * a.height))[0];
+        if (!canvas || typeof canvas.toBlob !== 'function' || typeof FileReader !== 'function') {
+          resolve('');
+          return;
+        }
+        canvas.toBlob(blob => {
+          if (!blob) {
+            resolve('');
+            return;
+          }
+          try {
+            const reader = new FileReader();
+            reader.onloadend = () => resolve(String(reader.result || '').replace(/^data:image\/png;base64,/, ''));
+            reader.onerror = () => resolve('');
+            reader.readAsDataURL(blob);
+          } catch (_) { resolve(''); }
+        }, 'image/png');
+      } catch (_) { resolve(''); }
+    });
+  }
+
+  function mirrorWithEvidence(action, evidencePromise) {
+    Promise.resolve(evidencePromise).then(frame => {
+      if (frame) action.evidence_content_base64 = frame;
+      mirror(action);
+    }).catch(() => mirror(action));
   }
 
   function mirroredAction(message) {
@@ -172,14 +196,26 @@
     const nativeSend = socket.send;
     socket.send = function (data) {
       let action = null;
+      let parsed = null;
+      let touchDown = false;
       try {
         if (recording && socket === activeDeviceSocket && typeof data === 'string') {
-          action = mirroredAction(JSON.parse(data));
-          if (action && ['tap', 'swipe', 'text'].includes(action.type)) action.evidence_content_base64 = capturePhoneFrame();
+          parsed = JSON.parse(data);
+          touchDown = parsed?.type === 'touch' && /^down\s/.test(String(parsed?.detail || ''));
+          action = mirroredAction(parsed);
         }
       } catch (_) {}
+      // Deliver the real phone command first. Screenshot encoding stays on the
+      // asynchronous evidence branch and can never delay the next touch event.
       nativeSend.call(socket, data);
-      mirror(action);
+      if (touchDown) preActionFramePromise = capturePhoneFrameAsync();
+      if (action && ['tap', 'swipe', 'text'].includes(action.type)) {
+        const evidencePromise = preActionFramePromise || capturePhoneFrameAsync();
+        preActionFramePromise = null;
+        mirrorWithEvidence(action, evidencePromise);
+      } else {
+        mirror(action);
+      }
     };
     return socket;
   };
@@ -227,6 +263,7 @@
       if (!recording.sessionId || !recording.recordingToken) recording = null;
       pendingActions = [];
       mirroredCount = 0;
+      preActionFramePromise = null;
       saveRecording();
       if (recording) showRecorderStatus('已接收任务，请在 Sonic 选择手机');
     } catch (_) { recording = null; saveRecording(); }
