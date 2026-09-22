@@ -9,7 +9,7 @@ const ROOT = path.resolve(__dirname, '..');
 
 test('task manager uses a new cache key for the ready-handshake recorder script', () => {
   const html = fs.readFileSync(path.join(ROOT, 'task-manager.html'), 'utf8');
-  assert.match(html, /device-recorder\.js\?v=20260922-sonic-native-recorder-v6/);
+  assert.match(html, /device-recorder\.js\?v=20260922-sonic-native-recorder-v7/);
 });
 
 function fixture() {
@@ -66,6 +66,12 @@ test('shows device health colors and explains that app and phone are independent
   assert.ok(f.dom.window.document.querySelector('.device-recorder-phone-status.idle'));
   assert.match(f.dom.window.document.getElementById('editor-area').textContent, /应用用于生成启动步骤，与手机分配互不绑定/);
   assert.equal(f.dom.window.document.querySelectorAll('input[name="device-recorder-device"]').length, 0);
+});
+
+test('keeps the recorded application selected after the session starts', () => {
+  const f = fixture();
+  f.run("taskApps.push({name:'智小白3D',package:'com.kfb.model',enabled:true,modules:['3D打印基线']}); deviceRecorderSession={id:'s1',status:'recording',app_package:'com.kfb.model',device_id:'ecbfd645',steps:[]}; renderDeviceRecorder()");
+  assert.equal(f.dom.window.document.getElementById('device-recorder-app').value, 'com.kfb.model');
 });
 
 test('blocks empty generation and keeps case name linked to YAML filename', () => {

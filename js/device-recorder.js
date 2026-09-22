@@ -6,9 +6,9 @@ let deviceRecorderGenerated = null;
 let deviceRecorderFileNameEdited = false;
 let deviceRecorderRecognitionInFlight = false;
 
-function deviceRecorderAppOptions() {
+function deviceRecorderAppOptions(selectedPackage = '') {
   return (taskApps || []).filter(app => app.enabled !== false).map(app =>
-    `<option value="${escapeHtml(app.package || '')}">${escapeHtml(app.name || app.package || '')}</option>`
+    `<option value="${escapeHtml(app.package || '')}" ${selectedPackage === app.package ? 'selected' : ''}>${escapeHtml(app.name || app.package || '')}</option>`
   ).join('');
 }
 
@@ -86,7 +86,7 @@ function renderDeviceRecorder() {
     <div class="review-head"><div><div class="workflow-kicker">SONIC 原生远控 · 操作旁路记录</div><h2>操作录制</h2><p>手机画面和触控继续由 Sonic 处理；平台只记录你在所选手机上的真实操作。应用用于生成启动步骤，与手机分配互不绑定。</p></div><div class="review-actions"><button class="btn-sm" onclick="leaveDeviceRecorder()">返回用例资产</button><span class="status-pill ${session?.status === 'recording' ? 'success' : ''}">${escapeHtml(recorderStatusText(session))}</span></div></div>
     <div class="device-recorder-grid">
       <section class="review-panel"><h3>录制设置</h3>
-        <label class="modal-label">应用</label><select id="device-recorder-app" ${session ? 'disabled' : ''}>${deviceRecorderAppOptions()}</select>
+        <label class="modal-label">应用</label><select id="device-recorder-app" ${session ? 'disabled' : ''}>${deviceRecorderAppOptions(session?.app_package || '')}</select>
         <label class="modal-label">手机在线状态</label>
         ${recorderDeviceCards(session)}
         <div class="generate-hint">这里只展示状态，不再重复选择。点击开始后，在 Sonic 中选择一次你要操作的手机；平台以 Sonic 实际打开的手机作为录制对象。</div>
@@ -132,6 +132,7 @@ async function startDeviceRecording() {
     const data = await apiRequest('/device-recordings', {method: 'POST', body: JSON.stringify({app_package: appPackage})});
     deviceRecorderSession = data.session;
     deviceRecorderGenerated = null;
+    deviceRecorderBridgeState = `手机 ${deviceRecorderSession.device_id || ''} 录制已结束`;
     deviceRecorderFileNameEdited = false;
     sessionStorage.setItem('deviceRecorderToken', data.session.recording_token || '');
     sessionStorage.setItem('deviceRecorderSonicUrl', data.sonic_url || '');
