@@ -10,18 +10,40 @@
   let touch = null;
   let activeDeviceSocket = null;
   let pendingActions = [];
+  let mirroredCount = 0;
   const NativeWebSocket = window.WebSocket;
   const STORAGE_KEY = 'midsceneSonicRecording';
   const HANDOFF_MAX_AGE_MS = 5 * 60 * 1000;
 
-  function platformWindow() {
-    if (!window.opener) return null;
-    try { return window.opener.opener || window.opener; } catch (_) { return window.opener; }
+  function showRecorderStatus(message, state = 'waiting') {
+    if (typeof document === 'undefined') return;
+    const mount = () => {
+      if (!document.body) return;
+      let badge = document.getElementById('midscene-recorder-status');
+      if (!badge) {
+        badge = document.createElement('div');
+        badge.id = 'midscene-recorder-status';
+        badge.style.cssText = 'position:fixed;right:20px;bottom:20px;z-index:2147483647;padding:10px 14px;border-radius:10px;color:#fff;font:14px/1.4 sans-serif;box-shadow:0 4px 16px #0005;pointer-events:none';
+        document.body.appendChild(badge);
+      }
+      badge.style.background = state === 'error' ? '#b42318' : state === 'active' ? '#067647' : '#344054';
+      badge.textContent = `平台录制：${message}`;
+    };
+    if (document.body) mount(); else document.addEventListener('DOMContentLoaded', mount, {once: true});
+  }
+
+  function platformWindows() {
+    if (!window.opener) return [];
+    const targets = [window.opener];
+    try {
+      if (window.opener.opener && window.opener.opener !== window.opener) targets.push(window.opener.opener);
+    } catch (_) {}
+    return targets.filter(target => typeof target?.postMessage === 'function');
   }
 
   function notifyPlatform(message) {
-    const target = platformWindow();
-    if (target && recording?.platformOrigin) target.postMessage(message, recording.platformOrigin);
+    if (!recording?.platformOrigin) return;
+    platformWindows().forEach(target => target.postMessage(message, recording.platformOrigin));
   }
 
   function saveRecording() {
@@ -72,8 +94,11 @@
     if (!recording.bound) {
       pendingActions.push(action);
       pendingActions = pendingActions.slice(-20);
+      showRecorderStatus(`已连接手机，等待平台确认（暂存 ${pendingActions.length} 步）`);
       return;
     }
+    mirroredCount += 1;
+    showRecorderStatus(`录制中，已同步 ${mirroredCount} 步`, 'active');
     const body = JSON.stringify({
       session_id: recording.sessionId,
       recording_token: recording.recordingToken,
@@ -85,6 +110,7 @@
     }).then(response => {
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
     }).catch(error => {
+      showRecorderStatus(`第 ${mirroredCount} 步同步失败`, 'error');
       notifyPlatform({type: 'MIDSCENE_RECORDING_ERROR', message: String(error.message || error)});
     });
   }
@@ -126,6 +152,7 @@
       recording.deviceId = connectedDeviceId;
       activeDeviceSocket = socket;
       saveRecording();
+      showRecorderStatus(`已进入手机 ${recording.deviceId}，等待平台确认`);
       notifyPlatform({type: 'MIDSCENE_RECORDING_READY', sessionId: recording.sessionId, deviceId: recording.deviceId});
     }
     const nativeSend = socket.send;
@@ -142,16 +169,16 @@
   window.WebSocket.prototype = NativeWebSocket.prototype;
   Object.assign(window.WebSocket, {CONNECTING: 0, OPEN: 1, CLOSING: 2, CLOSED: 3});
 
-  const readyTarget = platformWindow();
-  if (readyTarget) readyTarget.postMessage({type: 'MIDSCENE_RECORDER_HOOK_READY'}, '*');
+  platformWindows().forEach(target => target.postMessage({type: 'MIDSCENE_RECORDER_HOOK_READY'}, '*'));
 
   window.addEventListener('message', event => {
     const data = event.data || {};
-    if (event.source !== window.opener && event.source !== platformWindow()) return;
+    if (!platformWindows().includes(event.source)) return;
     if (data.type === 'MIDSCENE_RECORDING_BOUND' && recording && data.sessionId === recording.sessionId && data.deviceId === recording.deviceId) {
       recording.bound = true;
       saveRecording();
       clearSharedHandoff();
+      showRecorderStatus(`录制中，已同步 ${mirroredCount} 步`, 'active');
       const queued = pendingActions;
       pendingActions = [];
       queued.forEach(mirror);
@@ -167,7 +194,9 @@
       };
       if (!recording.sessionId || !recording.recordingToken) recording = null;
       pendingActions = [];
+      mirroredCount = 0;
       saveRecording();
+      if (recording) showRecorderStatus('已接收任务，请在 Sonic 选择手机');
     } catch (_) { recording = null; saveRecording(); }
   });
 })();

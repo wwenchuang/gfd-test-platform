@@ -16,8 +16,9 @@ test('Sonic hook only becomes ready and mirrors the platform-selected phone', as
   const window = {
     opener, WebSocket: FakeWebSocket,
     addEventListener(type, fn) { listeners[type] = fn; },
+    document: {body: {appendChild() {}}, getElementById() { return {style: {}}; }, createElement() { return {style: {}}; }},
   };
-  const context = vm.createContext({window, URL, fetch: async (url, options) => { order.push(['mirror', JSON.parse(options.body)]); return {ok: true}; }, Date, Math, JSON, String, Number, Object, RegExp, Error, setTimeout});
+  const context = vm.createContext({window, document: window.document, URL, fetch: async (url, options) => { order.push(['mirror', JSON.parse(options.body)]); return {ok: true}; }, Date, Math, JSON, String, Number, Object, RegExp, Error, setTimeout});
   vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'deploy/sonic-recorder-hook.js'), 'utf8'), context);
   assert.equal(ready[0].type, 'MIDSCENE_RECORDER_HOOK_READY');
   ready.length = 0;
@@ -45,6 +46,21 @@ test('Sonic hook announces that it can receive a recording session after page lo
 
   assert.equal(messages[0].message.type, 'MIDSCENE_RECORDER_HOOK_READY');
   assert.equal(messages[0].origin, '*');
+});
+
+test('Sonic hook notifies the direct opener when that opener also has an opener', () => {
+  const directMessages = [];
+  const parentMessages = [];
+  const parent = {postMessage(message) { parentMessages.push(message); }};
+  const opener = {opener: parent, postMessage(message) { directMessages.push(message); }};
+  class FakeWebSocket {}
+  const window = {opener, WebSocket: FakeWebSocket, addEventListener() {}};
+  const context = vm.createContext({window, URL, fetch: async () => ({ok: true}), Date, Math, JSON, String, Number, Object, RegExp, Error, setTimeout});
+
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'deploy/sonic-recorder-hook.js'), 'utf8'), context);
+
+  assert.equal(directMessages[0].type, 'MIDSCENE_RECORDER_HOOK_READY');
+  assert.equal(parentMessages[0].type, 'MIDSCENE_RECORDER_HOOK_READY');
 });
 
 test('remote phone tab restores the recording handed to its Sonic opener and queues the first action until binding', async () => {
