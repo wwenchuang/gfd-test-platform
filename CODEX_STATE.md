@@ -1,5 +1,12 @@
 # CODEX_STATE.md
 
+## 2026-09-22 Sonic 跨站录制握手时序修复
+
+- `f9c8a1d` 已通过华为云堡垒机部署到 `qa.test.sonic-00.txsh`；8091/8088 健康接口均返回完整 revision `f9c8a1d540f5a62e2b5e53d8e04440e59b5fbba0`，线上快速体检确认 Task、`qwen3.7-plus`、Sonic、录制桥接和 Runner 连接正常。
+- Chrome 真实验收确认默认“智小白3D”、录制历史/新建/整条删除、自动启动步骤、截图红点拖动/重识别/重置控件均已上线。随后新建录制并进入 OPPO 真机，发现平台会话没有绑定手机；线上钩子文件和 hash 正确，根因是跨站新窗口加载太快时首次 `postMessage` 握手可能丢失。
+- 初次录制会话新增一次性 `window.name` 交接：会话 ID、录制令牌和回调地址不会进入 URL，Sonic 钩子在应用创建 WebSocket 前读取并立即清空窗口名；原 `postMessage` 继续负责页面刷新和重连。新增两项回归覆盖平台交接内容与 Sonic 消费/清空/绑定手机，录制前端与钩子共 31 项通过。
+- 线上 `win-runner-01` 当前仍上报旧版 `2026.07.26-qwen3.7-result-retry-v1`，而本次坐标转换、触摸指示和点击前证据需要 `2026.09.22-midscene1.13-qwen3.7-result-retry-v1-recording-evidence-v3`。主服务器部署不会替换 Windows 本地 `D:\sonic\midscene_run\windows-midscene-runner.py`；在实际心跳切换到 v3 前，不能把手机绑定后的截图采集、语义识别和 YAML 生成宣称为真机通过。
+
 ## 2026-09-22 操作录制收口：坐标校正、会话治理与自动启动
 
 - 操作录制页在未开始会话时默认选择启用应用中的“智小白3D”（优先包名 `com.kfb.model`，其次同名应用）；如果该应用不存在或停用，则回退到第一个启用应用。

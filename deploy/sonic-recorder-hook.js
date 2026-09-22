@@ -14,6 +14,7 @@
   let awaitingRecognition = 0;
   const NativeWebSocket = window.WebSocket;
   const STORAGE_KEY = 'midsceneSonicRecording';
+  const WINDOW_HANDOFF_PREFIX = '__MIDSCENE_RECORDING_HANDOFF__';
   const HANDOFF_MAX_AGE_MS = 5 * 60 * 1000;
 
   function showRecorderStatus(message, state = 'waiting') {
@@ -80,6 +81,32 @@
       }
     }
   } catch (_) { recording = null; }
+
+  // The platform opens Sonic cross-origin. postMessage remains the reconnect
+  // channel, while window.name provides a race-free first handoff that is
+  // available before Sonic creates its device WebSockets. Clear it at once so
+  // the recording token is not retained by later navigation.
+  try {
+    if (String(window.name || '').startsWith(WINDOW_HANDOFF_PREFIX)) {
+      const raw = String(window.name).slice(WINDOW_HANDOFF_PREFIX.length);
+      const data = JSON.parse(decodeURIComponent(raw));
+      const endpoint = new URL(data.endpoint);
+      recording = {
+        sessionId: String(data.sessionId || ''), recordingToken: String(data.recordingToken || ''),
+        deviceId: String(data.deviceId || ''), endpoint: endpoint.href, platformOrigin: endpoint.origin,
+        bound: false, createdAt: Date.now(),
+      };
+      if (!recording.sessionId || !recording.recordingToken || !/^https?:$/.test(endpoint.protocol)) recording = null;
+      platformTarget = window.opener || null;
+      window.name = 'midscene-sonic-recorder';
+      saveRecording();
+      if (recording) showRecorderStatus('已接收任务，请在 Sonic 选择手机');
+    }
+  } catch (_) {
+    recording = null;
+    window.name = 'midscene-sonic-recorder';
+    saveRecording();
+  }
 
   function id() {
     return `sonic-${Date.now()}-${Math.random().toString(16).slice(2)}`;

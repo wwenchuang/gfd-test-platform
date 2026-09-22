@@ -361,7 +361,16 @@ function recorderHandshake(target = deviceRecorderWindow) {
 function openRecorderSonic() {
   const url = sessionStorage.getItem('deviceRecorderSonicUrl');
   if (!url) return showToast('Sonic 地址未配置', 'error');
-  deviceRecorderWindow = window.open(url, 'midscene-sonic-recorder');
+  const handoff = encodeURIComponent(JSON.stringify({
+    sessionId: deviceRecorderSession?.id || '',
+    recordingToken: sessionStorage.getItem('deviceRecorderToken') || '',
+    deviceId: deviceRecorderSession?.device_id || '',
+    endpoint: `${location.origin}/api/device-recordings/action`,
+  }));
+  // window.name is assigned before Sonic executes its first script, so the
+  // hook cannot miss the one-time handoff during a fast cross-origin load.
+  // The hook consumes and clears it immediately; no token enters the URL.
+  deviceRecorderWindow = window.open(url, `__MIDSCENE_RECORDING_HANDOFF__${handoff}`);
   [800, 1800, 3500].forEach(delay => setTimeout(recorderHandshake, delay));
 }
 

@@ -140,6 +140,32 @@ test('Sonic hook announces that it can receive a recording session after page lo
   assert.equal(messages[0].origin, '*');
 });
 
+test('Sonic consumes a one-time window-name handoff before the app opens its device socket', () => {
+  const listeners = {};
+  const sent = [];
+  const opener = {postMessage(message) { sent.push(message); }};
+  const handoff = encodeURIComponent(JSON.stringify({
+    sessionId: 's-window', recordingToken: 't-window', deviceId: '',
+    endpoint: 'http://platform.example/api/device-recordings/action',
+  }));
+  class FakeWebSocket { constructor(url) { this.url = url; } send() {} }
+  const window = {
+    name: `__MIDSCENE_RECORDING_HANDOFF__${handoff}`,
+    opener, WebSocket: FakeWebSocket,
+    sessionStorage: {getItem() { return null; }, setItem() {}, removeItem() {}},
+    localStorage: {getItem() { return null; }, setItem() {}, removeItem() {}},
+    addEventListener(type, fn) { listeners[type] = fn; },
+  };
+  const context = vm.createContext({window, URL, fetch: async () => ({ok: true}), Date, Math, JSON, String, Number, Object, RegExp, Error, Set, setTimeout, decodeURIComponent});
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'deploy/sonic-recorder-hook.js'), 'utf8'), context);
+
+  assert.equal(window.name, 'midscene-sonic-recorder');
+  new window.WebSocket('ws://agent/websockets/android/secret/phone-window/token');
+  assert.equal(sent.at(-1).type, 'MIDSCENE_RECORDING_READY');
+  assert.equal(sent.at(-1).sessionId, 's-window');
+  assert.equal(sent.at(-1).deviceId, 'phone-window');
+});
+
 test('Sonic hook notifies the direct opener when that opener also has an opener', () => {
   const directMessages = [];
   const parentMessages = [];

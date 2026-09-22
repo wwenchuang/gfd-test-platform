@@ -9,7 +9,7 @@ const ROOT = path.resolve(__dirname, '..');
 
 test('task manager uses a new cache key for the automatic-launch recorder script', () => {
   const html = fs.readFileSync(path.join(ROOT, 'task-manager.html'), 'utf8');
-  assert.match(html, /device-recorder\.js\?v=20260922-sonic-native-recorder-v18/);
+  assert.match(html, /device-recorder\.js\?v=20260922-sonic-native-recorder-v19/);
 });
 
 function fixture() {
@@ -29,7 +29,7 @@ function fixture() {
       return {session: {id: 'session-1', status: 'recording', recording_token: 'secret', runner_id: '', device_id: '', steps: []}, sonic_url: 'http://sonic.example/Index/Devices'};
     },
   });
-  context.window.open = url => { const ref = {url, closed: false, postMessage() {}}; opened.push(ref); return ref; };
+  context.window.open = (url, name) => { const ref = {url, name, closed: false, postMessage() {}}; opened.push(ref); return ref; };
   vm.runInContext(fs.readFileSync(path.join(ROOT, 'js/device-recorder.js'), 'utf8'), context);
   return {context, dom, calls, opened, run: code => vm.runInContext(code, context)};
 }
@@ -43,6 +43,11 @@ test('opens Sonic for the only phone selection and does not put token in its URL
   assert.equal(f.calls[0].body.app_package, 'com.kfb.model');
   assert.equal(f.opened[0].url, 'http://sonic.example/Index/Devices');
   assert.doesNotMatch(f.opened[0].url, /secret|session-1/);
+  assert.match(f.opened[0].name, /^__MIDSCENE_RECORDING_HANDOFF__/);
+  const handoff = JSON.parse(decodeURIComponent(f.opened[0].name.replace(/^__MIDSCENE_RECORDING_HANDOFF__/, '')));
+  assert.equal(handoff.sessionId, 'session-1');
+  assert.equal(handoff.recordingToken, 'secret');
+  assert.equal(handoff.endpoint, 'http://platform.example/api/device-recordings/action');
 });
 
 test('defaults recording to 智小白3D and shows its automatic launch as the first step', () => {
