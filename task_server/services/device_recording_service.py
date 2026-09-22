@@ -551,6 +551,9 @@ def save_recording_evidence(runner_id: str, payload: Dict[str, Any], *, store_pa
             write_text_file(xml_path, xml_text)
             step["evidence_status"] = "captured"
             step["screenshot_path"] = png_path
+            step["screenshot_sha256"] = hashlib.sha256(png).hexdigest()
+            if any(item is not step and item.get("screenshot_sha256") == step["screenshot_sha256"] for item in row.get("steps") or []):
+                step["evidence_warning"] = "该截图与前一步骤重复，可能因连续点击过快导致证据滞后，请核对或手工标记"
             step["ui_xml_path"] = xml_path
             ui_xml_error = str(payload.get("ui_xml_error") or payload.get("uiXmlError") or "").strip()[:500]
             if ui_xml_error:
