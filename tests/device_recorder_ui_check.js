@@ -9,7 +9,7 @@ const ROOT = path.resolve(__dirname, '..');
 
 test('task manager uses a new cache key for the server-bridged recorder script', () => {
   const html = fs.readFileSync(path.join(ROOT, 'task-manager.html'), 'utf8');
-  assert.match(html, /device-recorder\.js\?v=20260922-sonic-native-recorder-v20/);
+  assert.match(html, /device-recorder\.js\?v=20260922-sonic-native-recorder-v21/);
 });
 
 function fixture() {
@@ -45,7 +45,7 @@ test('opens Sonic with a fragment handoff that is never sent in the HTTP request
   assert.equal(`${openedUrl.origin}${openedUrl.pathname}${openedUrl.search}`, 'http://sonic.example/Index/Devices');
   assert.doesNotMatch(`${openedUrl.origin}${openedUrl.pathname}${openedUrl.search}`, /secret|session-1/);
   assert.match(openedUrl.hash, /^#__MIDSCENE_RECORDING_HANDOFF__/);
-  assert.equal(f.opened[0].name, 'midscene-sonic-recorder');
+  assert.equal(f.opened[0].name, 'midscene-sonic-recorder-session-1');
   const handoff = JSON.parse(decodeURIComponent(openedUrl.hash.replace(/^#__MIDSCENE_RECORDING_HANDOFF__/, '')));
   assert.equal(handoff.sessionId, 'session-1');
   assert.equal(handoff.recordingToken, 'secret');

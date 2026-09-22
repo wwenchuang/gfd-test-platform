@@ -166,6 +166,27 @@ test('Sonic consumes and clears a fragment handoff even when cross-site isolatio
   assert.deepEqual(requests[0].body, {session_id:'s-fragment',recording_token:'t-fragment',device_id:'phone-fragment'});
 });
 
+test('an already-open Sonic page consumes a later fragment handoff without reloading', () => {
+  const listeners = {};
+  const stored = [];
+  class FakeWebSocket {}
+  const window = {
+    name: '', opener: null, WebSocket: FakeWebSocket,
+    location: {hash: '', pathname: '/Index/Devices', search: ''},
+    history: {replaceState() { window.location.hash = ''; }},
+    sessionStorage: {getItem() { return null; }, setItem(key, value) { stored.push([key, value]); }, removeItem() {}},
+    localStorage: {getItem() { return null; }, setItem() {}, removeItem() {}},
+    addEventListener(type, fn) { listeners[type] = fn; },
+  };
+  const context = vm.createContext({window,URL,fetch:async()=>({ok:true}),Date,Math,JSON,String,Number,Object,RegExp,Error,Set,setTimeout,decodeURIComponent});
+  vm.runInContext(fs.readFileSync(path.join(__dirname,'..','deploy/sonic-recorder-hook.js'),'utf8'),context);
+  const handoff = encodeURIComponent(JSON.stringify({sessionId:'later',recordingToken:'later-token',endpoint:'http://platform.example/api/device-recordings/action'}));
+  window.location.hash = `#__MIDSCENE_RECORDING_HANDOFF__${handoff}`;
+  listeners.hashchange();
+  assert.equal(window.location.hash, '');
+  assert.ok(stored.some(([, value]) => value.includes('later-token')));
+});
+
 test('Sonic hook notifies the direct opener when that opener also has an opener', () => {
   const directMessages = [];
   const parentMessages = [];

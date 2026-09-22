@@ -83,6 +83,20 @@
     return true;
   }
 
+  function consumeHashHandoff() {
+    if (!String(window.location?.hash || '').startsWith(HASH_HANDOFF_PREFIX)) return false;
+    try {
+      const raw = String(window.location.hash).slice(HASH_HANDOFF_PREFIX.length);
+      const accepted = acceptHandoff(JSON.parse(decodeURIComponent(raw)), window.opener || null);
+      window.history?.replaceState?.(null, '', `${window.location.pathname || '/'}${window.location.search || ''}`);
+      return accepted;
+    } catch (_) {
+      recording = null;
+      saveRecording();
+      return false;
+    }
+  }
+
   try {
     const inherited = window.sessionStorage?.getItem(STORAGE_KEY) || window.localStorage?.getItem(STORAGE_KEY);
     if (inherited) {
@@ -100,16 +114,8 @@
 
   // A URL fragment is not sent to nginx and is consumed before Sonic's module
   // bundle runs. Unlike window.name/opener it survives cross-site isolation.
-  try {
-    if (String(window.location?.hash || '').startsWith(HASH_HANDOFF_PREFIX)) {
-      const raw = String(window.location.hash).slice(HASH_HANDOFF_PREFIX.length);
-      acceptHandoff(JSON.parse(decodeURIComponent(raw)), window.opener || null);
-      window.history?.replaceState?.(null, '', `${window.location.pathname || '/'}${window.location.search || ''}`);
-    }
-  } catch (_) {
-    recording = null;
-    saveRecording();
-  }
+  consumeHashHandoff();
+  window.addEventListener('hashchange', consumeHashHandoff);
 
   // Retain window.name support for already-issued pages during a rolling
   // deployment, but new pages use the fragment handoff above.
