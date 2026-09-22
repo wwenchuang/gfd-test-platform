@@ -10,7 +10,9 @@ let deviceRecorderHistoryState = 'ready';
 let deviceRecorderHistoryError = '';
 let deviceRecorderView = 'record';
 let deviceRecorderConfirmedSequence = 0;
+const deviceRecorderFailedSequenceNotified = new Set();
 let deviceRecorderSelectedStepId = '';
+let deviceRecorderHookBoundSessionId = '';
 
 function deviceRecorderAppOptions(selectedPackage = '') {
   return (taskApps || []).filter(app => app.enabled !== false).map(app =>
@@ -219,6 +221,8 @@ function newDeviceRecording() {
   deviceRecorderSession = null;
   deviceRecorderGenerated = null;
   deviceRecorderBridgeState = '等待 Sonic 接收录制会话';
+  deviceRecorderHookBoundSessionId = '';
+  deviceRecorderFailedSequenceNotified.clear();
   renderDeviceRecorder();
 }
 
@@ -243,6 +247,8 @@ async function startDeviceRecording() {
     deviceRecorderBridgeState = '等待 Sonic 选择手机并接收录制会话';
     deviceRecorderFileNameEdited = false;
     deviceRecorderConfirmedSequence = 0;
+    deviceRecorderHookBoundSessionId = '';
+    deviceRecorderFailedSequenceNotified.clear();
     sessionStorage.setItem('deviceRecorderToken', data.session.recording_token || '');
     sessionStorage.setItem('deviceRecorderSonicUrl', data.sonic_url || '');
     renderDeviceRecorder();
@@ -277,6 +283,7 @@ async function refreshDeviceRecording() {
       ? await apiRequest('/device-recordings/heartbeat', {method: 'POST', body: JSON.stringify({session_id: deviceRecorderSession.id})})
       : await apiRequest(`/device-recordings?id=${encodeURIComponent(deviceRecorderSession.id)}`);
     deviceRecorderSession = data.session;
+    confirmRecorderSonicBinding();
     renderDeviceRecorder();
     await maybeRecognizeDeviceRecording();
     notifyRecorderStepResult();
@@ -290,10 +297,36 @@ function notifyRecorderStepResult() {
   if (!deviceRecorderWindow || deviceRecorderWindow.closed || !deviceRecorderSession) return;
   const step = (deviceRecorderSession.steps || []).filter(item => Number(item.sequence || 0) > deviceRecorderConfirmedSequence).sort((a,b) => Number(a.sequence || 0) - Number(b.sequence || 0))[0];
   if (!step || step.evidence_status === 'pending' || step.semantic_recognition_status === 'running') return;
-  const success = !recorderStepNeedsMeaning(step) && step.evidence_status !== 'failed';
+  if (deviceRecorderSession.pre_action_frame_status === 'pending') return;
+  const success = !recorderStepNeedsMeaning(step)
+    && step.evidence_status !== 'failed'
+    && deviceRecorderSession.pre_action_frame_status === 'ready';
+  const sequence = Number(step.sequence || 0);
+  if (!success && deviceRecorderFailedSequenceNotified.has(sequence)) return;
   const sonicUrl = sessionStorage.getItem('deviceRecorderSonicUrl') || '';
   deviceRecorderWindow.postMessage({type:'MIDSCENE_RECORDING_STEP_CONFIRMED', sessionId:deviceRecorderSession.id, sequence:step.sequence, success}, sonicUrl ? new URL(sonicUrl).origin : '*');
-  deviceRecorderConfirmedSequence = Number(step.sequence || 0);
+  if (success) {
+    deviceRecorderConfirmedSequence = sequence;
+    deviceRecorderFailedSequenceNotified.delete(sequence);
+  } else {
+    deviceRecorderFailedSequenceNotified.add(sequence);
+  }
+}
+
+function confirmRecorderSonicBinding(target = deviceRecorderWindow) {
+  if (!target || target.closed || !deviceRecorderSession?.id || !deviceRecorderSession.device_id) return false;
+  if (deviceRecorderHookBoundSessionId === deviceRecorderSession.id) return true;
+  if (deviceRecorderSession.pre_action_frame_status !== 'ready') {
+    deviceRecorderBridgeState = deviceRecorderSession.pre_action_frame_status === 'failed'
+      ? `Runner 点击前画面采集失败：${deviceRecorderSession.pre_action_frame_error || '请检查 ADB'}`
+      : 'Runner 正在准备真实点击前画面，准备好后才开始记录';
+    return false;
+  }
+  const sonicUrl = sessionStorage.getItem('deviceRecorderSonicUrl') || '';
+  target.postMessage({type: 'MIDSCENE_RECORDING_BOUND', sessionId: deviceRecorderSession.id, deviceId: deviceRecorderSession.device_id}, sonicUrl ? new URL(sonicUrl).origin : '*');
+  deviceRecorderHookBoundSessionId = deviceRecorderSession.id;
+  deviceRecorderBridgeState = `Sonic 已进入手机 ${deviceRecorderSession.device_id}，真实点击前画面已准备，可以开始操作`;
+  return true;
 }
 
 async function maybeRecognizeDeviceRecording() {
@@ -320,9 +353,10 @@ async function handleDeviceRecorderMessage(event) {
     try {
       const data = await apiRequest('/device-recordings/bind', {method: 'POST', body: JSON.stringify({session_id: deviceRecorderSession.id, device_id: event.data.deviceId})});
       deviceRecorderSession = data.session;
-      event.source?.postMessage({type: 'MIDSCENE_RECORDING_BOUND', sessionId: deviceRecorderSession.id, deviceId: deviceRecorderSession.device_id}, event.origin);
-      deviceRecorderBridgeState = `Sonic 已进入手机 ${deviceRecorderSession.device_id}，正在记录操作`;
+      deviceRecorderWindow = event.source || deviceRecorderWindow;
+      confirmRecorderSonicBinding(deviceRecorderWindow);
       renderDeviceRecorder();
+      startDeviceRecorderPolling();
     } catch (error) {
       deviceRecorderBridgeState = `手机绑定失败：${String(error.message || error)}`;
       renderDeviceRecorder();
@@ -380,6 +414,7 @@ async function confirmRecorderStep(stepId) {
     deviceRecorderSession = data.session;
     deviceRecorderGenerated = null;
     renderDeviceRecorder();
+    notifyRecorderStepResult();
     showToast('控件说明已确认', 'success');
   } catch (error) { showToast(error.message || '确认控件失败', 'error'); }
 }
@@ -395,6 +430,7 @@ async function editRecorderStep(stepId) {
     deviceRecorderSession = data.session;
     deviceRecorderGenerated = null;
     renderDeviceRecorder();
+    notifyRecorderStepResult();
     showToast('操作说明已更新', 'success');
   } catch (error) { showToast(error.message || '更新操作失败', 'error'); }
 }

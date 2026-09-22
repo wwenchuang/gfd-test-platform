@@ -4039,14 +4039,6 @@ def _post_device_recording_action(handler, qs):
             payload.get("recording_token") or payload.get("recordingToken") or "",
             payload.get("action") or {},
         )
-        inline_evidence = str((payload.get("action") or {}).get("evidence_content_base64") or "")
-        if inline_evidence and not step.get("duplicate"):
-            from task_server.services.device_recording_service import get_recording_session, save_recording_evidence
-            session = get_recording_session(payload.get("session_id") or payload.get("sessionId") or "")
-            save_recording_evidence(str(session.get("runner_id") or ""), {
-                "session_id": session.get("id"), "step_id": step.get("id"), "device_id": session.get("device_id"),
-                "content_base64": inline_evidence, "ui_xml_error": "Sonic 点击前画面；页面结构由后续采集补充",
-            })
     except PermissionError as exc:
         handler._json({"ok": False, "error": str(exc)}, 401)
         return

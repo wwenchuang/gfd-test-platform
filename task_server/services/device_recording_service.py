@@ -26,6 +26,8 @@ ALLOWED_ACTION_TYPES = {"tap", "swipe", "text", "key", "launch", "checkpoint"}
 MAX_INPUT_TEXT_LENGTH = 500
 RECORDING_TOKEN_TTL_SECONDS = 2 * 60 * 60
 FINISHED_EVIDENCE_GRACE_SECONDS = 2 * 60
+PRE_ACTION_FRAME_RETRY_SECONDS = 3
+MAX_PRE_ACTION_FRAME_ATTEMPTS = 3
 _LOCK = threading.RLock()
 
 
@@ -74,6 +76,14 @@ def _owner(row: Dict[str, Any], user: str) -> None:
 
 def _token_hash(token: str) -> str:
     return hashlib.sha256(str(token or "").encode("utf-8")).hexdigest()
+
+
+def _request_pre_action_frame(row: Dict[str, Any], timestamp: Optional[float] = None, *, retry: bool = False) -> None:
+    row["pre_action_frame_status"] = "pending"
+    row["pre_action_frame_request_id"] = uuid.uuid4().hex
+    row["pre_action_frame_requested_ts"] = float(time.time() if timestamp is None else timestamp)
+    row["pre_action_frame_attempts"] = int(row.get("pre_action_frame_attempts") or 0) + 1 if retry else 1
+    row.pop("pre_action_frame_error", None)
 
 
 def _public(row: Dict[str, Any]) -> Dict[str, Any]:
@@ -136,6 +146,8 @@ def create_recording_session(
             "recording_token_expires_ts": timestamp + RECORDING_TOKEN_TTL_SECONDS,
             "steps": [],
         }
+        if runner_id and device_id:
+            _request_pre_action_frame(row, timestamp)
         data["sessions"].append(row)
         write_json_file(path, data)
         return {**_public(row), "recording_token": recording_token}
@@ -166,6 +178,9 @@ def bind_recording_device(
             raise ValueError("录制会话当前不能绑定手机")
         if row.get("device_id"):
             if row.get("runner_id") == runner_id and row.get("device_id") == device_id:
+                if not row.get("pre_action_frame_status"):
+                    _request_pre_action_frame(row, timestamp)
+                    write_json_file(path, data)
                 return _public(row)
             raise ValueError("录制会话已经绑定另一台手机")
         conflict = next((item for item in data["sessions"] if item.get("id") != row.get("id") and item.get("status") in ACTIVE_STATUSES and item.get("runner_id") == runner_id and item.get("device_id") == device_id), None)
@@ -176,6 +191,7 @@ def bind_recording_device(
         row["bound_at"] = _stamp(timestamp)
         row["updated_at"] = _stamp(timestamp)
         row["updated_ts"] = timestamp
+        _request_pre_action_frame(row, timestamp)
         write_json_file(path, data)
         return _public(row)
 
@@ -277,6 +293,12 @@ def touch_recording_session(
         row["updated_ts"] = timestamp
         row["updated_at"] = _stamp(timestamp)
         row.pop("pause_reason", None)
+        if (
+            row.get("pre_action_frame_status") == "failed"
+            and int(row.get("pre_action_frame_attempts") or 0) < MAX_PRE_ACTION_FRAME_ATTEMPTS
+            and timestamp - float(row.get("pre_action_frame_requested_ts") or 0) >= PRE_ACTION_FRAME_RETRY_SECONDS
+        ):
+            _request_pre_action_frame(row, timestamp, retry=True)
         write_json_file(path, data)
         return _public(row)
 
@@ -395,6 +417,7 @@ def append_recorded_action(
     action: Dict[str, Any],
     *,
     store_path: Optional[str] = None,
+    evidence_dir: Optional[str] = None,
     now: Optional[float] = None,
 ) -> Dict[str, Any]:
     if not isinstance(action, dict):
@@ -425,6 +448,8 @@ def append_recorded_action(
         existing = next((step for step in row.get("steps") or [] if step.get("event_id") == event_id), None)
         if existing:
             return {**copy.deepcopy(existing), "duplicate": True}
+        if action_type != "checkpoint" and row.get("pre_action_frame_status") != "ready":
+            raise ValueError("真实点击前画面尚未准备，当前操作未记录；请等待平台提示后重试")
         sequence = max([int(step.get("sequence") or 0) for step in row.get("steps") or []] or [0]) + 1
         normalized = {
             "id": uuid.uuid4().hex,
@@ -455,7 +480,32 @@ def append_recorded_action(
         elif action_type == "checkpoint":
             normalized["description"] = str(action.get("description") or "").strip()[:500]
             normalized["checkpoint_kind"] = "assert" if action.get("checkpoint_kind") == "assert" else "wait"
+        if action_type != "checkpoint" and row.get("pre_action_frame_status") == "ready":
+            source_png = str(row.get("pre_action_frame_path") or "")
+            source_xml = str(row.get("pre_action_frame_xml_path") or "")
+            if os.path.isfile(source_png):
+                root = os.path.join(evidence_dir or DEVICE_RECORDING_EVIDENCE_DIR, session_id)
+                png_path = os.path.join(root, f"{normalized['id']}.png")
+                xml_path = os.path.join(root, f"{normalized['id']}.xml")
+                with open(source_png, "rb") as handle:
+                    png = handle.read()
+                xml_text = ""
+                if source_xml and os.path.isfile(source_xml):
+                    with open(source_xml, encoding="utf-8", errors="replace") as handle:
+                        xml_text = handle.read()
+                write_bytes_file(png_path, png)
+                write_text_file(xml_path, xml_text)
+                normalized["evidence_status"] = "captured"
+                normalized["screenshot_path"] = png_path
+                normalized["screenshot_sha256"] = hashlib.sha256(png).hexdigest()
+                normalized["ui_xml_path"] = xml_path
+                if row.get("pre_action_frame_ui_xml_error"):
+                    normalized["ui_xml_error"] = row["pre_action_frame_ui_xml_error"]
+                target_point = normalized.get("point") or normalized.get("end") or {}
+                normalized["ui_node"] = _node_at_point(xml_text, target_point)
         row.setdefault("steps", []).append(normalized)
+        if action_type != "checkpoint":
+            _request_pre_action_frame(row, timestamp)
         row["heartbeat_ts"] = timestamp
         row["updated_ts"] = timestamp
         row["updated_at"] = _stamp(timestamp)
@@ -481,6 +531,11 @@ def pending_recording_evidence_requests(
             )
             if (row.get("status") != "recording" and not within_finished_grace) or row.get("runner_id") != runner_id:
                 continue
+            if row.get("status") == "recording" and row.get("pre_action_frame_status") == "pending":
+                requests.append({
+                    "request_id": row.get("pre_action_frame_request_id"), "kind": "pre_action_frame",
+                    "session_id": row["id"], "step_id": "", "device_id": row["device_id"], "sequence": 0,
+                })
             for step in row.get("steps") or []:
                 if step.get("evidence_status") == "pending":
                     requests.append({
@@ -517,6 +572,7 @@ def _node_at_point(xml_text: str, point_value: Dict[str, Any]) -> Dict[str, Any]
 def save_recording_evidence(runner_id: str, payload: Dict[str, Any], *, store_path: Optional[str] = None, evidence_dir: Optional[str] = None) -> Dict[str, Any]:
     session_id = str(payload.get("session_id") or payload.get("sessionId") or "")
     step_id = str(payload.get("step_id") or payload.get("stepId") or "")
+    request_id = str(payload.get("request_id") or payload.get("requestId") or "")
     device_id = str(payload.get("device_id") or payload.get("deviceId") or "")
     path = _path(store_path)
     with _LOCK, file_mutation_lock(path):
@@ -524,6 +580,40 @@ def save_recording_evidence(runner_id: str, payload: Dict[str, Any], *, store_pa
         row = _find(data, session_id)
         if row.get("runner_id") != runner_id or row.get("device_id") != device_id:
             raise ValueError("证据不属于该 Runner 或设备")
+        if not step_id:
+            if request_id != str(row.get("pre_action_frame_request_id") or ""):
+                return _public(row)
+            error = str(payload.get("error") or "").strip()[:500]
+            if error:
+                row["pre_action_frame_status"] = "failed"
+                row["pre_action_frame_error"] = error
+            else:
+                xml_text = str(payload.get("ui_xml") or payload.get("uiXml") or "")
+                encoded = str(payload.get("content_base64") or payload.get("contentBase64") or "")
+                if len(xml_text.encode("utf-8")) > 2 * 1024 * 1024:
+                    raise ValueError("页面结构超过大小限制")
+                try:
+                    png = base64.b64decode(encoded, validate=True)
+                except Exception as exc:
+                    raise ValueError("证据截图编码无效") from exc
+                if len(png) > 12 * 1024 * 1024 or not png.startswith(b"\x89PNG\r\n\x1a\n"):
+                    raise ValueError("证据截图无效或超过大小限制")
+                root = os.path.join(evidence_dir or DEVICE_RECORDING_EVIDENCE_DIR, session_id)
+                png_path = os.path.join(root, "_pre_action.png")
+                xml_path = os.path.join(root, "_pre_action.xml")
+                write_bytes_file(png_path, png)
+                write_text_file(xml_path, xml_text)
+                row["pre_action_frame_status"] = "ready"
+                row["pre_action_frame_path"] = png_path
+                row["pre_action_frame_xml_path"] = xml_path
+                row["pre_action_frame_sha256"] = hashlib.sha256(png).hexdigest()
+                ui_xml_error = str(payload.get("ui_xml_error") or payload.get("uiXmlError") or "").strip()[:500]
+                if ui_xml_error:
+                    row["pre_action_frame_ui_xml_error"] = ui_xml_error
+                else:
+                    row.pop("pre_action_frame_ui_xml_error", None)
+            write_json_file(path, data)
+            return _public(row)
         step = next((item for item in row.get("steps") or [] if item.get("id") == step_id), None)
         if not step:
             raise ValueError("录制步骤不存在")

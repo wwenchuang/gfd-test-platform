@@ -9,7 +9,7 @@ const ROOT = path.resolve(__dirname, '..');
 
 test('task manager uses a new cache key for the ready-handshake recorder script', () => {
   const html = fs.readFileSync(path.join(ROOT, 'task-manager.html'), 'utf8');
-  assert.match(html, /device-recorder\.js\?v=20260922-sonic-native-recorder-v15/);
+  assert.match(html, /device-recorder\.js\?v=20260922-sonic-native-recorder-v16/);
 });
 
 function fixture() {
@@ -138,18 +138,49 @@ test('timeline exposes unobtrusive edit and delete controls', () => {
   assert.ok(details.querySelector('[data-action="delete-recording-step"]'));
 });
 
-test('accepts the ready message from the Sonic remote child tab and binds back to that tab', async () => {
+test('binds Sonic only after the Runner has cached a real pre-action frame', async () => {
   const f = fixture();
   f.run('renderDeviceRecorder()');
   await f.run('startDeviceRecording()');
   const replies = [];
   const remoteTab = {postMessage(message, origin) { replies.push({message, origin}); }};
   f.context.remoteTab = remoteTab;
+  f.context.apiRequest = async (url, options = {}) => {
+    f.calls.push({url, body: options.body ? JSON.parse(options.body) : null});
+    return {session:{id:'session-1',status:'recording',runner_id:'win-runner-01',device_id:'ecbfd645',app_package:'com.tencent.mm',pre_action_frame_status:'pending',steps:[]}};
+  };
   await f.run("handleDeviceRecorderMessage({origin:'http://sonic.example',source:remoteTab,data:{type:'MIDSCENE_RECORDING_READY',sessionId:'session-1',deviceId:'ecbfd645'}})");
   const bind = f.calls.find(call => call.url === '/device-recordings/bind');
   assert.deepEqual(bind.body, {session_id: 'session-1', device_id: 'ecbfd645'});
+  assert.equal(replies.length, 0);
+  f.run("deviceRecorderSession.pre_action_frame_status='ready'; confirmRecorderSonicBinding()");
   assert.equal(replies[0].message.type, 'MIDSCENE_RECORDING_BOUND');
   assert.equal(replies[0].origin, 'http://sonic.example');
+});
+
+test('does not confirm a recorded step until the next pre-action frame is ready', () => {
+  const f = fixture();
+  const replies = [];
+  f.context.remoteTab = {closed:false,postMessage(message){replies.push(message)}};
+  f.run("deviceRecorderWindow=remoteTab; deviceRecorderSession={id:'session-1',status:'recording',pre_action_frame_status:'pending',steps:[{id:'s1',sequence:1,type:'tap',semantic_description:'返回',evidence_status:'captured'}]}; notifyRecorderStepResult()");
+  assert.equal(replies.length, 0);
+  f.run("deviceRecorderSession.pre_action_frame_status='ready'; notifyRecorderStepResult()");
+  assert.equal(replies[0].type, 'MIDSCENE_RECORDING_STEP_CONFIRMED');
+  assert.equal(replies[0].success, true);
+});
+
+test('a failed recognition stays blocked until manual correction then reports success', () => {
+  const f = fixture();
+  const replies = [];
+  f.context.remoteTab = {closed:false,postMessage(message){replies.push(message)}};
+  f.run("deviceRecorderWindow=remoteTab; deviceRecorderSession={id:'session-1',status:'recording',pre_action_frame_status:'ready',steps:[{id:'s1',sequence:1,type:'tap',evidence_status:'captured',semantic_recognition_status:'failed'}]}; notifyRecorderStepResult(); notifyRecorderStepResult()");
+  assert.equal(replies.length, 1);
+  assert.equal(replies[0].success, false);
+  assert.equal(f.run('deviceRecorderConfirmedSequence'), 0);
+  f.run("deviceRecorderSession.steps[0].semantic_description='左上角返回'; deviceRecorderSession.steps[0].semantic_recognition_status='recognized'; notifyRecorderStepResult()");
+  assert.equal(replies.length, 2);
+  assert.equal(replies[1].success, true);
+  assert.equal(f.run('deviceRecorderConfirmedSequence'), 1);
 });
 
 test('resends the recording session when a freshly loaded Sonic page announces its hook', async () => {

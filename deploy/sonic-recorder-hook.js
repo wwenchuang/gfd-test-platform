@@ -9,11 +9,9 @@
   let recording = null;
   let touch = null;
   let activeDeviceSocket = null;
-  let pendingActions = [];
   let mirroredCount = 0;
   let platformTarget = null;
   let awaitingRecognition = 0;
-  let preActionFramePromise = null;
   const NativeWebSocket = window.WebSocket;
   const STORAGE_KEY = 'midsceneSonicRecording';
   const HANDOFF_MAX_AGE_MS = 5 * 60 * 1000;
@@ -72,6 +70,9 @@
     const inherited = window.sessionStorage?.getItem(STORAGE_KEY) || window.localStorage?.getItem(STORAGE_KEY);
     if (inherited) {
       recording = JSON.parse(inherited);
+      // A refreshed Sonic page must complete a fresh platform/Runner handshake
+      // before it may forward actions from this new browser context.
+      if (recording) recording.bound = false;
       const createdAt = Number(recording?.createdAt || 0);
       if (!createdAt || Date.now() - createdAt > HANDOFF_MAX_AGE_MS) {
         recording = null;
@@ -97,9 +98,15 @@
   function mirror(action) {
     if (!recording || !action) return;
     if (!recording.bound) {
-      pendingActions.push(action);
-      pendingActions = pendingActions.slice(-20);
-      showRecorderStatus(`已连接手机，等待平台确认（暂存 ${pendingActions.length} 步）`);
+      const message = '录制证据尚未准备，本次操作已在手机执行但未记录；请等待“可以开始操作”后重试';
+      showRecorderStatus(message, 'error');
+      notifyPlatform({type: 'MIDSCENE_RECORDING_ERROR', message});
+      return;
+    }
+    if (awaitingRecognition) {
+      const message = `上一操作仍在确认，本次操作已在手机执行但未记录；请等待“记录成功”后重试`;
+      showRecorderStatus(message, 'error');
+      notifyPlatform({type: 'MIDSCENE_RECORDING_ERROR', message});
       return;
     }
     mirroredCount += 1;
@@ -116,41 +123,10 @@
     }).then(response => {
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
     }).catch(error => {
+      awaitingRecognition = 0;
       showRecorderStatus(`第 ${mirroredCount} 步同步失败`, 'error');
       notifyPlatform({type: 'MIDSCENE_RECORDING_ERROR', message: String(error.message || error)});
     });
-  }
-
-  function capturePhoneFrameAsync() {
-    return new Promise(resolve => {
-      try {
-        const canvases = [...document.querySelectorAll('canvas')].filter(item => item.width > 100 && item.height > 100);
-        const canvas = canvases.sort((a, b) => (b.width * b.height) - (a.width * a.height))[0];
-        if (!canvas || typeof canvas.toBlob !== 'function' || typeof FileReader !== 'function') {
-          resolve('');
-          return;
-        }
-        canvas.toBlob(blob => {
-          if (!blob) {
-            resolve('');
-            return;
-          }
-          try {
-            const reader = new FileReader();
-            reader.onloadend = () => resolve(String(reader.result || '').replace(/^data:image\/png;base64,/, ''));
-            reader.onerror = () => resolve('');
-            reader.readAsDataURL(blob);
-          } catch (_) { resolve(''); }
-        }, 'image/png');
-      } catch (_) { resolve(''); }
-    });
-  }
-
-  function mirrorWithEvidence(action, evidencePromise) {
-    Promise.resolve(evidencePromise).then(frame => {
-      if (frame) action.evidence_content_base64 = frame;
-      mirror(action);
-    }).catch(() => mirror(action));
   }
 
   function mirroredAction(message) {
@@ -196,26 +172,15 @@
     const nativeSend = socket.send;
     socket.send = function (data) {
       let action = null;
-      let parsed = null;
-      let touchDown = false;
       try {
         if (recording && socket === activeDeviceSocket && typeof data === 'string') {
-          parsed = JSON.parse(data);
-          touchDown = parsed?.type === 'touch' && /^down\s/.test(String(parsed?.detail || ''));
-          action = mirroredAction(parsed);
+          action = mirroredAction(JSON.parse(data));
         }
       } catch (_) {}
-      // Deliver the real phone command first. Screenshot encoding stays on the
-      // asynchronous evidence branch and can never delay the next touch event.
+      // Sonic owns phone rendering and touch delivery. The platform mirrors only
+      // action metadata; the Windows Runner supplies stable pre-action evidence.
       nativeSend.call(socket, data);
-      if (touchDown) preActionFramePromise = capturePhoneFrameAsync();
-      if (action && ['tap', 'swipe', 'text'].includes(action.type)) {
-        const evidencePromise = preActionFramePromise || capturePhoneFrameAsync();
-        preActionFramePromise = null;
-        mirrorWithEvidence(action, evidencePromise);
-      } else {
-        mirror(action);
-      }
+      mirror(action);
     };
     return socket;
   };
@@ -237,9 +202,6 @@
       saveRecording();
       clearSharedHandoff();
       showRecorderStatus(`录制中，已同步 ${mirroredCount} 步`, 'active');
-      const queued = pendingActions;
-      pendingActions = [];
-      queued.forEach(mirror);
       return;
     }
     if (data.type === 'MIDSCENE_RECORDING_STEP_CONFIRMED' && recording && data.sessionId === recording.sessionId) {
@@ -257,13 +219,11 @@
       const endpoint = new URL(data.endpoint);
       recording = {
         sessionId: String(data.sessionId || ''), recordingToken: String(data.recordingToken || ''),
-        deviceId: String(data.deviceId || ''), endpoint: endpoint.href, platformOrigin: endpoint.origin, bound: Boolean(data.deviceId),
+        deviceId: String(data.deviceId || ''), endpoint: endpoint.href, platformOrigin: endpoint.origin, bound: false,
         createdAt: Date.now(),
       };
       if (!recording.sessionId || !recording.recordingToken) recording = null;
-      pendingActions = [];
       mirroredCount = 0;
-      preActionFramePromise = null;
       saveRecording();
       if (recording) showRecorderStatus('已接收任务，请在 Sonic 选择手机');
     } catch (_) { recording = null; saveRecording(); }
