@@ -6,6 +6,9 @@ let deviceRecorderGenerated = null;
 let deviceRecorderFileNameEdited = false;
 let deviceRecorderRecognitionInFlight = false;
 let deviceRecorderHistory = [];
+let deviceRecorderHistoryState = 'ready';
+let deviceRecorderHistoryError = '';
+let deviceRecorderView = 'record';
 let deviceRecorderConfirmedSequence = 0;
 let deviceRecorderSelectedStepId = '';
 
@@ -28,6 +31,32 @@ function recorderDeviceCards(session) {
 
 function recorderStatusText(session) {
   return ({recording: '录制中', paused: '已暂停', finished: '已结束', generating: '正在生成', cancelled: '已取消'})[session?.status] || '尚未开始';
+}
+
+function recorderHistoryButton() {
+  const count = deviceRecorderHistory.length ? ` ${deviceRecorderHistory.length}` : '';
+  return `<button class="btn-sm" data-action="open-recording-history" onclick="showDeviceRecordingHistory()">录制记录${count}</button>`;
+}
+
+function recorderHistoryAppName(session) {
+  return (taskApps || []).find(app => app.package === session?.app_package)?.name || session?.app_package || '未指定应用';
+}
+
+function renderDeviceRecorderHistory() {
+  const area = document.getElementById('editor-area');
+  if (!area) return;
+  area.className = 'editor-area';
+  const content = deviceRecorderHistoryState === 'loading'
+    ? '<div class="job-empty">正在读取录制记录…</div>'
+    : deviceRecorderHistoryState === 'error'
+      ? `<div class="job-empty"><strong>录制记录读取失败</strong><span>${escapeHtml(deviceRecorderHistoryError || '请稍后重试')}</span><button class="btn-sm" data-action="retry-recording-history" onclick="loadDeviceRecordingHistory()">重新读取</button></div>`
+      : deviceRecorderHistory.length
+        ? `<div class="device-recorder-history-list">${deviceRecorderHistory.map(item => `<button class="device-recorder-history-card" onclick="openDeviceRecordingHistory('${escapeHtml(item.id)}')"><span class="status-pill ${item.status === 'recording' ? 'success' : ''}">${escapeHtml(recorderStatusText(item))}</span><strong>${escapeHtml(recorderHistoryAppName(item))}</strong><small>${escapeHtml(item.finished_at || item.updated_at || item.created_at || '')}</small><small>${escapeHtml(item.device_id || '未绑定手机')} · ${(item.steps || []).length} 步${item.generated_result?.yaml ? ' · 已生成 YAML' : ''}</small><em>查看步骤、截图和 YAML</em></button>`).join('')}</div>`
+        : '<div class="job-empty"><strong>暂无录制记录</strong><span>完成、暂停或取消的录制都会保留在这里。</span></div>';
+  area.innerHTML = `<div class="review-page device-recorder-page device-recorder-history-page">
+    <div class="review-head"><div><div class="workflow-kicker">SONIC 原生远控 · 历史记录</div><h2>录制记录</h2><p>查看本人历次录制的步骤、点击截图、识别结果和已生成 YAML。</p></div><div class="review-actions"><button class="btn-sm primary" onclick="newDeviceRecording()">新建录制</button><button class="btn-sm" onclick="showDeviceRecorder()">返回录制页</button></div></div>
+    <section class="review-panel">${content}</section>
+  </div>`;
 }
 
 function recorderModuleOptions(session) {
@@ -98,8 +127,7 @@ function renderDeviceRecorder() {
   const selectedStep = steps.find(step => step.id === deviceRecorderSelectedStepId) || steps[0];
   area.className = 'editor-area';
   area.innerHTML = `<div class="review-page device-recorder-page">
-    <div class="review-head"><div><div class="workflow-kicker">SONIC 原生远控 · 操作旁路记录</div><h2>操作录制</h2><p>手机画面和触控继续由 Sonic 处理；平台只记录你在所选手机上的真实操作。应用用于生成启动步骤，与手机分配互不绑定。</p><div class="generate-hint">操作提示：每次点击后，请等待 Sonic 显示“本步记录成功，可以继续操作”，再执行下一步；页面跳转后需等待画面稳定。</div></div><div class="review-actions"><button class="btn-sm" onclick="leaveDeviceRecorder()">返回用例资产</button>${session?.status === 'finished' ? '<button class="btn-sm primary" onclick="newDeviceRecording()">开始新的录制</button>' : ''}<span class="status-pill ${session?.status === 'recording' ? 'success' : ''}">${escapeHtml(recorderStatusText(session))}</span></div></div>
-    ${deviceRecorderHistory.length ? `<details class="review-panel device-recorder-history"><summary>录制记录（${deviceRecorderHistory.length}）</summary><div>${deviceRecorderHistory.map(item => `<button class="btn-sm" onclick="openDeviceRecordingHistory('${escapeHtml(item.id)}')">${escapeHtml(item.finished_at || item.updated_at || '')} · ${escapeHtml(item.device_id || '未绑定手机')} · ${(item.steps || []).length} 步${item.generated_result?.yaml ? ' · 已生成 YAML' : ''}</button>`).join('')}</div></details>` : ''}
+    <div class="review-head"><div><div class="workflow-kicker">SONIC 原生远控 · 操作旁路记录</div><h2>操作录制</h2><p>手机画面和触控继续由 Sonic 处理；平台只记录你在所选手机上的真实操作。应用用于生成启动步骤，与手机分配互不绑定。</p><div class="generate-hint">操作提示：每次点击后，请等待 Sonic 显示“本步记录成功，可以继续操作”，再执行下一步；页面跳转后需等待画面稳定。</div></div><div class="review-actions">${recorderHistoryButton()}<button class="btn-sm" onclick="leaveDeviceRecorder()">返回用例资产</button>${session?.status === 'finished' ? '<button class="btn-sm primary" onclick="newDeviceRecording()">开始新的录制</button>' : ''}<span class="status-pill ${session?.status === 'recording' ? 'success' : ''}">${escapeHtml(recorderStatusText(session))}</span></div></div>
     <div class="device-recorder-grid">
       <section class="review-panel"><h3>录制设置</h3>
         <label class="modal-label">应用</label><select id="device-recorder-app" ${session ? 'disabled' : ''}>${deviceRecorderAppOptions(session?.app_package || '')}</select>
@@ -156,16 +184,38 @@ function syncRecorderFileName(taskName) {
 }
 
 async function showDeviceRecorder() {
+  deviceRecorderView = 'record';
   resetYamlToolbarForManager();
   if (typeof loadModules === 'function') await loadModules();
   if (typeof loadRunnerDevices === 'function') await loadRunnerDevices({force: true, quiet: true});
-  try { deviceRecorderHistory = (await apiRequest('/device-recordings')).sessions || []; } catch (_) { deviceRecorderHistory = []; }
+  await loadDeviceRecordingHistory(false);
   if (deviceRecorderSession?.status === 'finished') deviceRecorderSession = null;
   deviceRecorderGenerated = null;
   renderDeviceRecorder();
 }
 
+async function loadDeviceRecordingHistory(render = true) {
+  deviceRecorderHistoryState = 'loading';
+  deviceRecorderHistoryError = '';
+  if (render && deviceRecorderView === 'history') renderDeviceRecorderHistory();
+  try {
+    deviceRecorderHistory = (await apiRequest('/device-recordings')).sessions || [];
+    deviceRecorderHistoryState = 'ready';
+  } catch (error) {
+    deviceRecorderHistory = [];
+    deviceRecorderHistoryState = 'error';
+    deviceRecorderHistoryError = String(error.message || error || '读取失败');
+  }
+  if (render) deviceRecorderView === 'history' ? renderDeviceRecorderHistory() : renderDeviceRecorder();
+}
+
+function showDeviceRecordingHistory() {
+  deviceRecorderView = 'history';
+  renderDeviceRecorderHistory();
+}
+
 function newDeviceRecording() {
+  deviceRecorderView = 'record';
   deviceRecorderSession = null;
   deviceRecorderGenerated = null;
   deviceRecorderBridgeState = '等待 Sonic 接收录制会话';
@@ -177,6 +227,7 @@ async function openDeviceRecordingHistory(sessionId) {
     const data = await apiRequest(`/device-recordings?id=${encodeURIComponent(sessionId)}`);
     deviceRecorderSession = data.session;
     deviceRecorderGenerated = data.session.generated_result || null;
+    deviceRecorderView = 'record';
     renderDeviceRecorder();
   } catch (error) { showToast(error.message || '读取录制记录失败', 'error'); }
 }

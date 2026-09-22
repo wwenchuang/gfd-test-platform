@@ -9,7 +9,7 @@ const ROOT = path.resolve(__dirname, '..');
 
 test('task manager uses a new cache key for the ready-handshake recorder script', () => {
   const html = fs.readFileSync(path.join(ROOT, 'task-manager.html'), 'utf8');
-  assert.match(html, /device-recorder\.js\?v=20260922-sonic-native-recorder-v14/);
+  assert.match(html, /device-recorder\.js\?v=20260922-sonic-native-recorder-v15/);
 });
 
 function fixture() {
@@ -77,10 +77,37 @@ test('keeps the recorded application selected after the session starts', () => {
 test('history can reopen a persisted generated YAML and start a new recording', () => {
   const f = fixture();
   f.run("deviceRecorderHistory=[{id:'old',status:'finished',device_id:'phone',finished_at:'2026-09-22 12:00:00',steps:[{id:'x'}],generated_result:{yaml:'tasks: []'}}]; deviceRecorderSession=deviceRecorderHistory[0]; deviceRecorderGenerated=deviceRecorderHistory[0].generated_result; renderDeviceRecorder()");
-  assert.match(f.dom.window.document.body.textContent, /录制记录（1）/);
+  const historyButton = f.dom.window.document.querySelector('[data-action="open-recording-history"]');
+  assert.ok(historyButton);
+  assert.match(historyButton.textContent, /录制记录 1/);
   assert.match(f.dom.window.document.getElementById('device-recorder-yaml').textContent, /tasks: \[\]/);
+  f.run('showDeviceRecordingHistory()');
+  assert.ok(f.dom.window.document.querySelector('.device-recorder-history-page'));
+  assert.match(f.dom.window.document.body.textContent, /2026-09-22 12:00:00/);
+  assert.match(f.dom.window.document.body.textContent, /已生成 YAML/);
   f.run('newDeviceRecording()');
   assert.match(f.dom.window.document.body.textContent, /尚未开始/);
+});
+
+test('recording history entry remains visible for an empty or failed history request', () => {
+  const f = fixture();
+  f.run("deviceRecorderHistory=[]; deviceRecorderHistoryState='error'; deviceRecorderHistoryError='读取失败'; renderDeviceRecorder()");
+  assert.ok(f.dom.window.document.querySelector('[data-action="open-recording-history"]'));
+  f.run('showDeviceRecordingHistory()');
+  assert.match(f.dom.window.document.body.textContent, /录制记录/);
+  assert.match(f.dom.window.document.body.textContent, /读取失败/);
+  assert.ok(f.dom.window.document.querySelector('[data-action="retry-recording-history"]'));
+});
+
+test('selecting a recording history card restores its steps and generated YAML', async () => {
+  const f = fixture();
+  f.context.apiRequest = async url => {
+    assert.match(url, /\/device-recordings\?id=old/);
+    return {session:{id:'old',status:'finished',app_package:'com.tencent.mm',device_id:'phone',steps:[{id:'step-1',sequence:1,type:'key',key:'BACK',semantic_description:'返回上一页'}],generated_result:{yaml:'tasks:\n  - name: 历史用例'}}};
+  };
+  await f.run("openDeviceRecordingHistory('old')");
+  assert.match(f.dom.window.document.body.textContent, /返回上一页/);
+  assert.match(f.dom.window.document.getElementById('device-recorder-yaml').textContent, /历史用例/);
 });
 
 test('blocks empty generation and keeps case name linked to YAML filename', () => {

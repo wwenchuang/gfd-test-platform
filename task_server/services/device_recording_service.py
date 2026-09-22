@@ -200,7 +200,7 @@ def list_recording_sessions(user: str, *, store_path: Optional[str] = None, limi
         data = _load(path)
         rows = [
             _public(row) for row in data["sessions"]
-            if str(row.get("created_by") or "") == str(user or "") and row.get("status") != "cancelled"
+            if str(row.get("created_by") or "") == str(user or "")
         ]
         rows.sort(key=lambda row: float(row.get("updated_ts") or 0), reverse=True)
         return rows[:max(1, min(int(limit or 30), 100))]

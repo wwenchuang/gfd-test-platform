@@ -230,6 +230,9 @@ class DeviceRecordingServiceTest(unittest.TestCase):
             recording.finish_recording_session(session["id"], "admin", store_path=self.store)
         cancelled = recording.cancel_recording_session(session["id"], "admin", store_path=self.store)
         self.assertEqual(cancelled["status"], "cancelled")
+        history = recording.list_recording_sessions("admin", store_path=self.store)
+        self.assertEqual(history[0]["id"], session["id"])
+        self.assertEqual(history[0]["status"], "cancelled")
 
     def test_unbound_session_uses_the_phone_actually_opened_in_sonic(self):
         session = self.create(runner_id="", device_id="")
