@@ -55,7 +55,7 @@ test('remote phone tab restores the recording handed to its Sonic opener and que
   const stored = JSON.stringify({
     sessionId: 's-child', recordingToken: 'token-child', deviceId: '',
     endpoint: 'http://platform.example/api/device-recordings/action',
-    platformOrigin: 'http://platform.example', bound: false,
+    platformOrigin: 'http://platform.example', bound: false, createdAt: Date.now(),
   });
   const window = {
     opener: sonicCenter,
@@ -81,4 +81,32 @@ test('remote phone tab restores the recording handed to its Sonic opener and que
   await Promise.resolve();
   assert.equal(sent.filter(item => item[0] === 'mirror').length, 1);
   assert.deepEqual(sent.filter(item => item[0] === 'mirror')[0][1].action.point, {x: 12, y: 34});
+});
+
+test('remote phone tab restores a short-lived recording handoff from Sonic local storage', () => {
+  const listeners = {};
+  const sent = [];
+  const platform = {postMessage(message) { sent.push(message); }};
+  const sonicCenter = {opener: platform};
+  const stored = JSON.stringify({
+    sessionId: 's-shared', recordingToken: 'token-shared', deviceId: '',
+    endpoint: 'http://platform.example/api/device-recordings/action',
+    platformOrigin: 'http://platform.example', bound: false, createdAt: Date.now(),
+  });
+  const removed = [];
+  const window = {
+    opener: sonicCenter,
+    sessionStorage: {getItem() { return null; }, setItem() {}, removeItem() {}},
+    localStorage: {getItem(key) { return key === 'midsceneSonicRecording' ? stored : null; }, setItem() {}, removeItem(key) { removed.push(key); }},
+    addEventListener(type, fn) { listeners[type] = fn; },
+  };
+  class FakeWebSocket { constructor(url) { this.url = url; } send() {} }
+  window.WebSocket = FakeWebSocket;
+  const context = vm.createContext({window, URL, fetch: async () => ({ok: true}), Date, Math, JSON, String, Number, Object, RegExp, Error, setTimeout});
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'deploy/sonic-recorder-hook.js'), 'utf8'), context);
+
+  new window.WebSocket('ws://agent/websockets/android/secret/phone-shared/token');
+  assert.equal(sent.at(-1).type, 'MIDSCENE_RECORDING_READY');
+  listeners.message({source: platform, data: {type: 'MIDSCENE_RECORDING_BOUND', sessionId: 's-shared', deviceId: 'phone-shared'}});
+  assert.ok(removed.includes('midsceneSonicRecording'));
 });

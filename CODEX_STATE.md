@@ -12220,3 +12220,4 @@ git diff --check
 - `4031a5c` 发布后现场继续复验，确认线上钩子文件已更新，但 `task-manager.html` 仍使用旧的 `device-recorder-v3` 查询串，Chrome 命中旧平台脚本，导致新版就绪消息无人处理。缓存键已升级为 `20260922-sonic-native-recorder-v4`。
 - `update-main-server.sh` 现自动发现运行中的 `*-sonic-client-web-*` 容器，复制录制钩子、在缺少标签时注入到主 bundle 之前，并以 SHA-256 和 `MIDSCENE_RECORDER_HOOK_READY` 标记双重校验。以后常规平台发布会一并更新；Sonic Web 容器重建后再次运行部署脚本也会自动恢复，无需人工 `docker cp`。
 - 第二批本地验证：录制与钩子 Node 12 项、部署脚本专项 1 项、Shell 语法、前端静态 84 项和差异检查通过。仍需发布本批缓存键/自动同步提交后重建 Chrome 会话做最终实录。
+- `44c221e` 发布后使用全新缓存键和新会话复验，Sonic 设备中心可以收到平台会话，但远控页仍未绑定。根因进一步收敛为 Sonic 用新标签打开远控页时不会继承设备中心标签的 `sessionStorage`。钩子现使用 Sonic 同源 `localStorage` 做最长 5 分钟的一次性交接；远控页读取并完成平台绑定后立即删除共享副本，当前页仅在内存/会话内继续记录。专项 Node 13 项和前端静态 84 项通过，待发布后完成最终实录。

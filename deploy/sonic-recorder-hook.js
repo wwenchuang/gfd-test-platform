@@ -12,6 +12,7 @@
   let pendingActions = [];
   const NativeWebSocket = window.WebSocket;
   const STORAGE_KEY = 'midsceneSonicRecording';
+  const HANDOFF_MAX_AGE_MS = 5 * 60 * 1000;
 
   function platformWindow() {
     if (!window.opener) return null;
@@ -25,14 +26,31 @@
 
   function saveRecording() {
     try {
-      if (recording) window.sessionStorage?.setItem(STORAGE_KEY, JSON.stringify(recording));
-      else window.sessionStorage?.removeItem(STORAGE_KEY);
+      if (recording) {
+        const value = JSON.stringify(recording);
+        window.sessionStorage?.setItem(STORAGE_KEY, value);
+        window.localStorage?.setItem(STORAGE_KEY, value);
+      } else {
+        window.sessionStorage?.removeItem(STORAGE_KEY);
+        window.localStorage?.removeItem(STORAGE_KEY);
+      }
     } catch (_) {}
   }
 
+  function clearSharedHandoff() {
+    try { window.localStorage?.removeItem(STORAGE_KEY); } catch (_) {}
+  }
+
   try {
-    const inherited = window.sessionStorage?.getItem(STORAGE_KEY);
-    if (inherited) recording = JSON.parse(inherited);
+    const inherited = window.sessionStorage?.getItem(STORAGE_KEY) || window.localStorage?.getItem(STORAGE_KEY);
+    if (inherited) {
+      recording = JSON.parse(inherited);
+      const createdAt = Number(recording?.createdAt || 0);
+      if (!createdAt || Date.now() - createdAt > HANDOFF_MAX_AGE_MS) {
+        recording = null;
+        saveRecording();
+      }
+    }
   } catch (_) { recording = null; }
 
   function id() {
@@ -133,6 +151,7 @@
     if (data.type === 'MIDSCENE_RECORDING_BOUND' && recording && data.sessionId === recording.sessionId && data.deviceId === recording.deviceId) {
       recording.bound = true;
       saveRecording();
+      clearSharedHandoff();
       const queued = pendingActions;
       pendingActions = [];
       queued.forEach(mirror);
@@ -144,6 +163,7 @@
       recording = {
         sessionId: String(data.sessionId || ''), recordingToken: String(data.recordingToken || ''),
         deviceId: String(data.deviceId || ''), endpoint: endpoint.href, platformOrigin: endpoint.origin, bound: Boolean(data.deviceId),
+        createdAt: Date.now(),
       };
       if (!recording.sessionId || !recording.recordingToken) recording = null;
       pendingActions = [];
