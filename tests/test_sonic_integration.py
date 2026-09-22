@@ -2894,6 +2894,7 @@ def test_server_main_update_script_pulls_installs_restarts_and_checks_assets():
     assert "verify_sonic_container_state" in update_script
     assert "sync_sonic_recorder_hook" in update_script
     assert "sonic-recorder-hook.js" in update_script
+    assert "?v=${DEPLOY_REVISION}" in update_script
     assert "MIDSCENE_RECORDER_HOOK_READY" in update_script
     assert "Sonic 容器在部署期间停止" in update_script
     assert update_script.rindex("capture_sonic_container_state") < update_script.rindex("migrate_legacy_task_launchers")

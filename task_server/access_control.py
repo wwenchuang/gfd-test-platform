@@ -381,6 +381,11 @@ def prepare_request_access(handler, method, path, qs):
         return False
     if path == "/api/health" or (not path.startswith("/api/") and path != "/report"):
         return False
+    # Sonic posts a short-lived, session-scoped recording token in the request
+    # body. The route validates that token itself and must remain reachable from
+    # the separate Sonic origin without a human bearer session.
+    if method == "POST" and path == "/api/device-recordings/action":
+        return False
     machine_only = (method, path) in MACHINE_ROUTES or (method == "POST" and path.startswith("/api/runner/jobs/"))
     if machine_only or (method in {"GET", "HEAD"} and path in MACHINE_READ_ROUTES):
         # Strip browser credentials: legacy callbacks also accept a user session,

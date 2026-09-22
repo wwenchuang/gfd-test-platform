@@ -301,6 +301,20 @@ def test_machine_token_does_not_open_human_management(monkeypatch):
     assert handler.code == 401
 
 
+def test_recording_action_uses_its_scoped_token_without_human_session(monkeypatch):
+    from task_server import access_control as ac, auth, identity_http
+    monkeypatch.setattr(identity_http, "handle_auth_request", lambda *_args: False)
+    monkeypatch.setattr(auth, "verify_session_token", lambda _token: None)
+
+    class Handler:
+        headers = {}
+
+        def _json(self, payload, code=200):
+            self.payload, self.code = payload, code
+
+    assert ac.prepare_request_access(Handler(), "POST", "/api/device-recordings/action", {}) is False
+
+
 @pytest.mark.parametrize("action", ["retry", "repair"])
 def test_job_actions_check_inherited_baseline_mode(monkeypatch, action):
     from task_server import access_control as ac

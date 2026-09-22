@@ -256,6 +256,8 @@ sync_sonic_recorder_hook() {
     run_as_root docker cp "${hook_source}" "${container}:/usr/share/nginx/html/sonic-recorder-hook.js"
     if ! run_as_root docker exec "${container}" sh -lc "grep -q '/sonic-recorder-hook.js' '${index_path}'"; then
       run_as_root docker exec "${container}" sh -lc "sed -i 's#</head>#  <script src=\"/sonic-recorder-hook.js?v=${DEPLOY_REVISION}\"></script>\\n</head>#' '${index_path}'"
+    else
+      run_as_root docker exec "${container}" sh -lc "sed -i -E 's#(/sonic-recorder-hook\\.js)(\\?v=[^\" ]*)?#\\1?v=${DEPLOY_REVISION}#g' '${index_path}'"
     fi
     actual_hash="$(run_as_root docker exec "${container}" sha256sum /usr/share/nginx/html/sonic-recorder-hook.js | awk '{print $1}')"
     [ "${actual_hash}" = "${expected_hash}" ] || {
