@@ -11,6 +11,7 @@
   let activeDeviceSocket = null;
   let pendingActions = [];
   let mirroredCount = 0;
+  let platformTarget = null;
   const NativeWebSocket = window.WebSocket;
   const STORAGE_KEY = 'midsceneSonicRecording';
   const HANDOFF_MAX_AGE_MS = 5 * 60 * 1000;
@@ -33,12 +34,14 @@
   }
 
   function platformWindows() {
-    if (!window.opener) return [];
-    const targets = [window.opener];
-    try {
-      if (window.opener.opener && window.opener.opener !== window.opener) targets.push(window.opener.opener);
-    } catch (_) {}
-    return targets.filter(target => typeof target?.postMessage === 'function');
+    const targets = platformTarget ? [platformTarget] : [];
+    if (window.opener) {
+      targets.push(window.opener);
+      try {
+        if (window.opener.opener && window.opener.opener !== window.opener) targets.push(window.opener.opener);
+      } catch (_) {}
+    }
+    return [...new Set(targets)].filter(target => typeof target?.postMessage === 'function');
   }
 
   function notifyPlatform(message) {
@@ -173,7 +176,12 @@
 
   window.addEventListener('message', event => {
     const data = event.data || {};
-    if (!platformWindows().includes(event.source)) return;
+    if (data.type === 'MIDSCENE_RECORDING_START') {
+      try {
+        if (new URL(data.endpoint).origin !== event.origin) return;
+        platformTarget = event.source;
+      } catch (_) { return; }
+    } else if (!platformWindows().includes(event.source)) return;
     if (data.type === 'MIDSCENE_RECORDING_BOUND' && recording && data.sessionId === recording.sessionId && data.deviceId === recording.deviceId) {
       recording.bound = true;
       saveRecording();

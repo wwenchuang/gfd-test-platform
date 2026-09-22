@@ -22,7 +22,7 @@ test('Sonic hook only becomes ready and mirrors the platform-selected phone', as
   vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'deploy/sonic-recorder-hook.js'), 'utf8'), context);
   assert.equal(ready[0].type, 'MIDSCENE_RECORDER_HOOK_READY');
   ready.length = 0;
-  listeners.message({source: opener, data: {type: 'MIDSCENE_RECORDING_START', sessionId: 's1', recordingToken: 't1', deviceId: '', endpoint: 'http://platform.example/api/device-recordings/action'}});
+  listeners.message({source: opener, origin: 'http://platform.example', data: {type: 'MIDSCENE_RECORDING_START', sessionId: 's1', recordingToken: 't1', deviceId: '', endpoint: 'http://platform.example/api/device-recordings/action'}});
   assert.equal(ready.length, 0);
   const socket = new window.WebSocket('ws://agent/websockets/android/key/phone-a/token');
   assert.equal(ready.at(-1).type, 'MIDSCENE_RECORDING_READY');
@@ -61,6 +61,26 @@ test('Sonic hook notifies the direct opener when that opener also has an opener'
 
   assert.equal(directMessages[0].type, 'MIDSCENE_RECORDER_HOOK_READY');
   assert.equal(parentMessages[0].type, 'MIDSCENE_RECORDER_HOOK_READY');
+});
+
+test('an already-open Sonic device-center tab accepts a same-origin platform handoff without an opener', () => {
+  const listeners = {};
+  const sent = [];
+  const platform = {postMessage(message) { sent.push(message); }};
+  class FakeWebSocket { constructor(url) { this.url = url; } send() {} }
+  const window = {opener: null, WebSocket: FakeWebSocket, addEventListener(type, fn) { listeners[type] = fn; }};
+  const context = vm.createContext({window, URL, fetch: async () => ({ok: true}), Date, Math, JSON, String, Number, Object, RegExp, Error, Set, setTimeout});
+
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'deploy/sonic-recorder-hook.js'), 'utf8'), context);
+  listeners.message({
+    source: platform,
+    origin: 'http://platform.example',
+    data: {type: 'MIDSCENE_RECORDING_START', sessionId: 's-existing', recordingToken: 't-existing', deviceId: '', endpoint: 'http://platform.example/api/device-recordings/action'},
+  });
+
+  const socket = new window.WebSocket('ws://agent/websockets/android/key/phone-existing/token');
+  assert.equal(socket.url.includes('phone-existing'), true);
+  assert.equal(sent.at(-1).type, 'MIDSCENE_RECORDING_READY');
 });
 
 test('remote phone tab restores the recording handed to its Sonic opener and queues the first action until binding', async () => {
