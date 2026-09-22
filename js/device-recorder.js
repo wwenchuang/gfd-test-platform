@@ -6,6 +6,7 @@ let deviceRecorderGenerated = null;
 let deviceRecorderFileNameEdited = false;
 let deviceRecorderRecognitionInFlight = false;
 let deviceRecorderHistory = [];
+let deviceRecorderConfirmedSequence = 0;
 
 function deviceRecorderAppOptions(selectedPackage = '') {
   return (taskApps || []).filter(app => app.enabled !== false).map(app =>
@@ -92,7 +93,7 @@ function renderDeviceRecorder() {
   const steps = session?.steps || [];
   area.className = 'editor-area';
   area.innerHTML = `<div class="review-page device-recorder-page">
-    <div class="review-head"><div><div class="workflow-kicker">SONIC 原生远控 · 操作旁路记录</div><h2>操作录制</h2><p>手机画面和触控继续由 Sonic 处理；平台只记录你在所选手机上的真实操作。应用用于生成启动步骤，与手机分配互不绑定。</p></div><div class="review-actions"><button class="btn-sm" onclick="leaveDeviceRecorder()">返回用例资产</button>${session?.status === 'finished' ? '<button class="btn-sm primary" onclick="newDeviceRecording()">开始新的录制</button>' : ''}<span class="status-pill ${session?.status === 'recording' ? 'success' : ''}">${escapeHtml(recorderStatusText(session))}</span></div></div>
+    <div class="review-head"><div><div class="workflow-kicker">SONIC 原生远控 · 操作旁路记录</div><h2>操作录制</h2><p>手机画面和触控继续由 Sonic 处理；平台只记录你在所选手机上的真实操作。应用用于生成启动步骤，与手机分配互不绑定。</p><div class="generate-hint">操作提示：每次点击后，请等待 Sonic 显示“本步记录成功，可以继续操作”，再执行下一步；页面跳转后需等待画面稳定。</div></div><div class="review-actions"><button class="btn-sm" onclick="leaveDeviceRecorder()">返回用例资产</button>${session?.status === 'finished' ? '<button class="btn-sm primary" onclick="newDeviceRecording()">开始新的录制</button>' : ''}<span class="status-pill ${session?.status === 'recording' ? 'success' : ''}">${escapeHtml(recorderStatusText(session))}</span></div></div>
     ${deviceRecorderHistory.length ? `<details class="review-panel device-recorder-history"><summary>录制记录（${deviceRecorderHistory.length}）</summary><div>${deviceRecorderHistory.map(item => `<button class="btn-sm" onclick="openDeviceRecordingHistory('${escapeHtml(item.id)}')">${escapeHtml(item.finished_at || item.updated_at || '')} · ${escapeHtml(item.device_id || '未绑定手机')} · ${(item.steps || []).length} 步${item.generated_result?.yaml ? ' · 已生成 YAML' : ''}</button>`).join('')}</div></details>` : ''}
     <div class="device-recorder-grid">
       <section class="review-panel"><h3>录制设置</h3>
@@ -161,8 +162,9 @@ async function startDeviceRecording() {
     const data = await apiRequest('/device-recordings', {method: 'POST', body: JSON.stringify({app_package: appPackage})});
     deviceRecorderSession = data.session;
     deviceRecorderGenerated = null;
-    deviceRecorderBridgeState = `手机 ${deviceRecorderSession.device_id || ''} 录制已结束`;
+    deviceRecorderBridgeState = '等待 Sonic 选择手机并接收录制会话';
     deviceRecorderFileNameEdited = false;
+    deviceRecorderConfirmedSequence = 0;
     sessionStorage.setItem('deviceRecorderToken', data.session.recording_token || '');
     sessionStorage.setItem('deviceRecorderSonicUrl', data.sonic_url || '');
     renderDeviceRecorder();
@@ -199,10 +201,21 @@ async function refreshDeviceRecording() {
     deviceRecorderSession = data.session;
     renderDeviceRecorder();
     await maybeRecognizeDeviceRecording();
+    notifyRecorderStepResult();
     if (deviceRecorderSession.status !== 'recording' && !recorderEvidencePending(deviceRecorderSession) && !recorderRecognitionPending(deviceRecorderSession)) {
       clearInterval(deviceRecorderPollTimer);
     }
   } catch (_) {}
+}
+
+function notifyRecorderStepResult() {
+  if (!deviceRecorderWindow || deviceRecorderWindow.closed || !deviceRecorderSession) return;
+  const step = (deviceRecorderSession.steps || []).filter(item => Number(item.sequence || 0) > deviceRecorderConfirmedSequence).sort((a,b) => Number(a.sequence || 0) - Number(b.sequence || 0))[0];
+  if (!step || step.evidence_status === 'pending' || step.semantic_recognition_status === 'running') return;
+  const success = !recorderStepNeedsMeaning(step) && step.evidence_status !== 'failed';
+  const sonicUrl = sessionStorage.getItem('deviceRecorderSonicUrl') || '';
+  deviceRecorderWindow.postMessage({type:'MIDSCENE_RECORDING_STEP_CONFIRMED', sessionId:deviceRecorderSession.id, sequence:step.sequence, success}, sonicUrl ? new URL(sonicUrl).origin : '*');
+  deviceRecorderConfirmedSequence = Number(step.sequence || 0);
 }
 
 async function maybeRecognizeDeviceRecording() {

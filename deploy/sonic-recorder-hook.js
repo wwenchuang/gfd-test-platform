@@ -12,6 +12,7 @@
   let pendingActions = [];
   let mirroredCount = 0;
   let platformTarget = null;
+  let awaitingRecognition = 0;
   const NativeWebSocket = window.WebSocket;
   const STORAGE_KEY = 'midsceneSonicRecording';
   const HANDOFF_MAX_AGE_MS = 5 * 60 * 1000;
@@ -101,7 +102,8 @@
       return;
     }
     mirroredCount += 1;
-    showRecorderStatus(`录制中，已同步 ${mirroredCount} 步`, 'active');
+    awaitingRecognition = mirroredCount;
+    showRecorderStatus(`第 ${mirroredCount} 步已收到，正在采集截图并识别，请暂缓下一步`, 'waiting');
     const body = JSON.stringify({
       session_id: recording.sessionId,
       recording_token: recording.recordingToken,
@@ -190,6 +192,16 @@
       const queued = pendingActions;
       pendingActions = [];
       queued.forEach(mirror);
+      return;
+    }
+    if (data.type === 'MIDSCENE_RECORDING_STEP_CONFIRMED' && recording && data.sessionId === recording.sessionId) {
+      const sequence = Number(data.sequence || 0);
+      if (data.success) {
+        awaitingRecognition = 0;
+        showRecorderStatus(`第 ${sequence} 步记录成功，可以继续操作`, 'active');
+      } else {
+        showRecorderStatus(`第 ${sequence} 步识别失败，请在平台手工标记`, 'error');
+      }
       return;
     }
     if (data.type !== 'MIDSCENE_RECORDING_START') return;
