@@ -19,6 +19,8 @@
   const HANDOFF_MAX_AGE_MS = 5 * 60 * 1000;
   let bridgePollTimer = null;
   const NativeWindowOpen = typeof window.open === 'function' ? window.open.bind(window) : null;
+  const NativeHistoryPush = typeof window.history?.pushState === 'function' ? window.history.pushState.bind(window.history) : null;
+  const NativeHistoryReplace = typeof window.history?.replaceState === 'function' ? window.history.replaceState.bind(window.history) : null;
 
   function showRecorderStatus(message, state = 'waiting') {
     if (typeof document === 'undefined') return;
@@ -89,7 +91,7 @@
     try {
       const raw = String(window.location.hash).slice(HASH_HANDOFF_PREFIX.length);
       const accepted = acceptHandoff(JSON.parse(decodeURIComponent(raw)), window.opener || null);
-      window.history?.replaceState?.(null, '', `${window.location.pathname || '/'}${window.location.search || ''}`);
+      (NativeHistoryReplace || window.history?.replaceState)?.(null, '', `${window.location.pathname || '/'}${window.location.search || ''}`);
       return accepted;
     } catch (_) {
       recording = null;
@@ -106,6 +108,33 @@
       deviceId: recording.deviceId || '',
       endpoint: recording.endpoint,
     }))}`;
+  }
+
+  function recordingSafeUrl(url) {
+    if (!recording || !url) return url;
+    try {
+      const next = new URL(String(url), window.location.href);
+      if (next.origin === window.location.origin) {
+        next.searchParams.set('midsceneRecorder', String(Date.now()));
+        return next.href;
+      }
+    } catch (_) {}
+    return url;
+  }
+
+  // Sonic also enters a phone through its client-side router, including after
+  // a refreshed remote page falls back to the device center. Keep that route
+  // cache-busted as well so it cannot reload an older HTML shell without this
+  // hook. Session storage carries the already-accepted recorder handoff.
+  if (NativeHistoryPush) {
+    window.history.pushState = function recorderAwarePushState(state, title, url) {
+      return NativeHistoryPush(state, title, recordingSafeUrl(url));
+    };
+  }
+  if (NativeHistoryReplace) {
+    window.history.replaceState = function recorderAwareReplaceState(state, title, url) {
+      return NativeHistoryReplace(state, title, recordingSafeUrl(url));
+    };
   }
 
   // Sonic opens the selected phone in a new tab.  Add a cache-busting query

@@ -215,6 +215,34 @@ test('Sonic carries the recorder handoff into the newly opened remote phone tab'
   assert.doesNotMatch(target.search, /secret|session-1/);
 });
 
+test('Sonic keeps a cache-busting URL when its router enters the remote phone in the same tab', () => {
+  const navigations = [];
+  const handoff = encodeURIComponent(JSON.stringify({
+    sessionId: 'session-router', recordingToken: 'secret-router', endpoint: 'http://platform.example/api/device-recordings/action',
+  }));
+  class FakeWebSocket {}
+  const window = {
+    opener: null, WebSocket: FakeWebSocket,
+    location: {href:'http://sonic.example/Index/Devices',origin:'http://sonic.example',hash:`#__MIDSCENE_RECORDING_HANDOFF__${handoff}`,pathname:'/Index/Devices',search:''},
+    history: {
+      replaceState(_state, _title, url) { navigations.push(['replace', url]); window.location.hash=''; },
+      pushState(_state, _title, url) { navigations.push(['push', url]); },
+    },
+    sessionStorage: {getItem(){return null},setItem(){},removeItem(){}},
+    localStorage: {getItem(){return null},setItem(){},removeItem(){}},
+    addEventListener(){},
+  };
+  const context = vm.createContext({window,URL,fetch:async()=>({ok:true}),Date,Math,JSON,String,Number,Object,RegExp,Error,Set,setTimeout,decodeURIComponent});
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'deploy/sonic-recorder-hook.js'), 'utf8'), context);
+
+  window.history.pushState({}, '', '/AndroidRemote/35');
+
+  const target = new URL(navigations.at(-1)[1]);
+  assert.equal(`${target.origin}${target.pathname}`, 'http://sonic.example/AndroidRemote/35');
+  assert.match(target.searchParams.get('midsceneRecorder') || '', /^\d+$/);
+  assert.doesNotMatch(target.href, /secret-router|session-router/);
+});
+
 test('Sonic hook notifies the direct opener when that opener also has an opener', () => {
   const directMessages = [];
   const parentMessages = [];
