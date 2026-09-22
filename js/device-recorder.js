@@ -46,13 +46,21 @@ function recorderTimelineItem(step) {
   const editor = recorderStepNeedsMeaning(step)
     ? `<div class="device-recorder-semantic"><input id="recorder-step-${escapeHtml(step.id)}" maxlength="200" placeholder="例如：提交按钮、搜索输入框"><button class="btn-sm" onclick="confirmRecorderStep('${escapeHtml(step.id)}')">确认控件</button></div>`
     : `<small>${escapeHtml(recorderStepDescription(step) || '等待语义证据')}</small>`;
+  const evidencePreview = step.screenshot_path ? `<details class="device-recorder-evidence"><summary>查看点击截图与位置</summary><div class="device-recorder-shot"><img src="/api/device-recordings/evidence?id=${encodeURIComponent(deviceRecorderSession.id)}&step_id=${encodeURIComponent(step.id)}" alt="第 ${step.sequence} 步点击截图"><span>点击位置：${escapeHtml(step.point?.x ?? step.end?.x ?? '-')}，${escapeHtml(step.point?.y ?? step.end?.y ?? '-')}</span></div><button class="btn-sm" onclick="retryRecorderRecognition('${escapeHtml(step.id)}')">用这张截图重新识别</button></details>` : '';
   const evidence = step.evidence_status === 'pending' ? '证据待采集'
     : step.evidence_status === 'failed' ? '证据采集失败'
     : step.semantic_recognition_status === 'running' ? '正在自动识别'
     : step.semantic_recognition_status === 'failed' ? '自动识别失败，可手工补充'
     : step.semantic_source === 'ai_visual' ? `视觉识别 ${Math.round((step.semantic_confidence || 0) * 100)}%`
     : step.semantic_description ? '已人工确认' : step.evidence_status || '';
-  return `<article class="${recorderStepNeedsMeaning(step) ? 'needs-confirmation' : ''}"><span>${step.sequence}</span><div><strong>${escapeHtml(actionName)}</strong>${editor}<details class="device-recorder-step-tools"><summary>编辑或删除</summary><div><input id="recorder-edit-${escapeHtml(step.id)}" maxlength="200" value="${escapeHtml(recorderStepDescription(step))}" placeholder="补充操作说明"><button class="btn-sm" onclick="editRecorderStep('${escapeHtml(step.id)}')">保存说明</button><button class="btn-sm danger" data-action="delete-recording-step" onclick="deleteRecorderStep('${escapeHtml(step.id)}')">删除</button></div></details></div><em>${escapeHtml(evidence)}</em></article>`;
+  return `<article class="${recorderStepNeedsMeaning(step) ? 'needs-confirmation' : ''}"><span>${step.sequence}</span><div><strong>${escapeHtml(actionName)}</strong>${editor}${evidencePreview}<details class="device-recorder-step-tools"><summary>手动标记、编辑或删除</summary><div><input id="recorder-edit-${escapeHtml(step.id)}" maxlength="200" value="${escapeHtml(recorderStepDescription(step))}" placeholder="输入正确控件名称，如：左上角返回"><button class="btn-sm" onclick="editRecorderStep('${escapeHtml(step.id)}')">保存人工标记</button><button class="btn-sm danger" data-action="delete-recording-step" onclick="deleteRecorderStep('${escapeHtml(step.id)}')">删除</button></div></details></div><em>${escapeHtml(evidence)}</em></article>`;
+}
+
+async function retryRecorderRecognition(stepId) {
+  try {
+    const data = await apiRequest('/device-recordings/recognize', {method:'POST', body:JSON.stringify({session_id:deviceRecorderSession.id, step_id:stepId, force:true})});
+    deviceRecorderSession = data.session; deviceRecorderGenerated = null; renderDeviceRecorder();
+  } catch (error) { showToast(error.message || '重新识别失败', 'error'); }
 }
 
 function recorderCanGenerate(session) {

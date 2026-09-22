@@ -4161,6 +4161,8 @@ def _post_device_recording_recognize(handler, qs):
         session = recognize_recording_semantics(
             payload.get("session_id") or payload.get("sessionId") or "",
             _authenticated_user(handler),
+            step_id=payload.get("step_id") or payload.get("stepId") or "",
+            force=bool(payload.get("force")),
         )
     except PermissionError as exc:
         handler._json({"ok": False, "error": str(exc)}, 403)
@@ -4169,6 +4171,29 @@ def _post_device_recording_recognize(handler, qs):
         handler._json({"ok": False, "error": str(exc)}, 400)
         return
     handler._json({"ok": True, "session": session})
+
+
+@route_get("/api/device-recordings/evidence")
+def _get_device_recording_evidence(handler, qs):
+    if _require_user_auth(handler):
+        return
+    from task_server.services.device_recording_service import recording_evidence_path
+    try:
+        path = recording_evidence_path(qs.get("id") or "", qs.get("step_id") or "", _authenticated_user(handler))
+    except PermissionError as exc:
+        handler._json({"ok": False, "error": str(exc)}, 403)
+        return
+    except ValueError as exc:
+        handler._json({"ok": False, "error": str(exc)}, 404)
+        return
+    with open(path, "rb") as handle:
+        body = handle.read()
+    handler.send_response(200)
+    handler.send_header("Content-Type", "image/png")
+    handler.send_header("Cache-Control", "private, no-store")
+    handler.send_header("Content-Length", str(len(body)))
+    handler.end_headers()
+    handler.wfile.write(body)
 
 
 @route_post("/api/device-recordings/generate")

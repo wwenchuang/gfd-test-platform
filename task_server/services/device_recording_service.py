@@ -567,6 +567,8 @@ def recognize_recording_semantics(
     *,
     store_path: Optional[str] = None,
     model_call=None,
+    step_id: str = "",
+    force: bool = False,
 ) -> Dict[str, Any]:
     """Name ambiguous tap/input targets from their captured phone screenshot."""
     path = _path(store_path)
@@ -576,14 +578,16 @@ def recognize_recording_semantics(
         _owner(row, user)
         candidates = []
         for step in row.get("steps") or []:
+            if step_id and str(step.get("id") or "") != str(step_id):
+                continue
             node = step.get("ui_node") if isinstance(step.get("ui_node"), dict) else {}
             node_text = next((str(node.get(key) or "").strip() for key in ("text", "content_desc", "resource_id") if str(node.get(key) or "").strip()), "")
             if (
                 step.get("type") in {"tap", "text"}
                 and step.get("evidence_status") == "captured"
-                and not str(step.get("semantic_description") or "").strip()
+                and (force or not str(step.get("semantic_description") or "").strip())
                 and not node_text
-                and step.get("semantic_recognition_status") not in {"running", "failed"}
+                and (force or step.get("semantic_recognition_status") not in {"running", "failed"})
                 and os.path.isfile(str(step.get("screenshot_path") or ""))
             ):
                 step["semantic_recognition_status"] = "running"
@@ -596,6 +600,7 @@ def recognize_recording_semantics(
             write_json_file(path, data)
     if not candidates:
         return _public(row)
+
 
     if model_call is None:
         from .ai_skill_service import dashscope_chat_content
@@ -646,3 +651,15 @@ def recognize_recording_semantics(
         row["updated_at"] = _stamp(row["updated_ts"])
         write_json_file(path, data)
         return _public(row)
+
+
+def recording_evidence_path(session_id: str, step_id: str, user: str, *, store_path: Optional[str] = None) -> str:
+    path = _path(store_path)
+    with _LOCK, file_mutation_lock(path):
+        row = _find(_load(path), session_id)
+        _owner(row, user)
+        step = next((item for item in row.get("steps") or [] if str(item.get("id")) == str(step_id)), None)
+        screenshot = str((step or {}).get("screenshot_path") or "")
+        if not screenshot or not os.path.isfile(screenshot):
+            raise ValueError("该步骤没有可查看的截图证据")
+        return screenshot
