@@ -7,9 +7,9 @@ const {JSDOM} = require('../api-testing-ui/node_modules/jsdom');
 
 const ROOT = path.resolve(__dirname, '..');
 
-test('task manager uses a new cache key for the automatic-launch recorder script', () => {
+test('task manager uses a new cache key for the server-bridged recorder script', () => {
   const html = fs.readFileSync(path.join(ROOT, 'task-manager.html'), 'utf8');
-  assert.match(html, /device-recorder\.js\?v=20260922-sonic-native-recorder-v19/);
+  assert.match(html, /device-recorder\.js\?v=20260922-sonic-native-recorder-v20/);
 });
 
 function fixture() {
@@ -34,17 +34,19 @@ function fixture() {
   return {context, dom, calls, opened, run: code => vm.runInContext(code, context)};
 }
 
-test('opens Sonic for the only phone selection and does not put token in its URL', async () => {
+test('opens Sonic with a fragment handoff that is never sent in the HTTP request', async () => {
   const f = fixture();
   f.run('renderDeviceRecorder()');
   assert.match(f.dom.window.document.getElementById('editor-area').textContent, /OPPO Reno9/);
   await f.run('startDeviceRecording()');
   assert.equal(f.calls[0].body.device_id, undefined);
   assert.equal(f.calls[0].body.app_package, 'com.kfb.model');
-  assert.equal(f.opened[0].url, 'http://sonic.example/Index/Devices');
-  assert.doesNotMatch(f.opened[0].url, /secret|session-1/);
-  assert.match(f.opened[0].name, /^__MIDSCENE_RECORDING_HANDOFF__/);
-  const handoff = JSON.parse(decodeURIComponent(f.opened[0].name.replace(/^__MIDSCENE_RECORDING_HANDOFF__/, '')));
+  const openedUrl = new URL(f.opened[0].url);
+  assert.equal(`${openedUrl.origin}${openedUrl.pathname}${openedUrl.search}`, 'http://sonic.example/Index/Devices');
+  assert.doesNotMatch(`${openedUrl.origin}${openedUrl.pathname}${openedUrl.search}`, /secret|session-1/);
+  assert.match(openedUrl.hash, /^#__MIDSCENE_RECORDING_HANDOFF__/);
+  assert.equal(f.opened[0].name, 'midscene-sonic-recorder');
+  const handoff = JSON.parse(decodeURIComponent(openedUrl.hash.replace(/^#__MIDSCENE_RECORDING_HANDOFF__/, '')));
   assert.equal(handoff.sessionId, 'session-1');
   assert.equal(handoff.recordingToken, 'secret');
   assert.equal(handoff.endpoint, 'http://platform.example/api/device-recordings/action');

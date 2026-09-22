@@ -18,7 +18,7 @@ test('Sonic hook only becomes ready and mirrors the platform-selected phone', as
     addEventListener(type, fn) { listeners[type] = fn; },
     document: {body: {appendChild() {}}, getElementById() { return {style: {}}; }, createElement() { return {style: {}}; }},
   };
-  const context = vm.createContext({window, document: window.document, URL, fetch: async (url, options) => { order.push(['mirror', JSON.parse(options.body)]); return {ok: true}; }, Date, Math, JSON, String, Number, Object, RegExp, Error, setTimeout});
+  const context = vm.createContext({window, document: window.document, URL, fetch: async (url, options) => { order.push([url.endsWith('/bridge') ? 'bridge' : 'mirror', JSON.parse(options.body)]); return {ok: true}; }, Date, Math, JSON, String, Number, Object, RegExp, Error, setTimeout});
   vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'deploy/sonic-recorder-hook.js'), 'utf8'), context);
   assert.equal(ready[0].type, 'MIDSCENE_RECORDER_HOOK_READY');
   ready.length = 0;
@@ -30,9 +30,8 @@ test('Sonic hook only becomes ready and mirrors the platform-selected phone', as
   listeners.message({source: opener, data: {type: 'MIDSCENE_RECORDING_BOUND', sessionId: 's1', deviceId: 'phone-a'}});
   socket.send(JSON.stringify({type: 'debug', detail: 'tap', point: '10,20'}));
   await Promise.resolve();
-  assert.equal(order[0][0], 'sonic');
-  assert.equal(order[1][0], 'mirror');
-  assert.deepEqual(order[1][1].action.point, {x: 10, y: 20});
+  assert.deepEqual(order.filter(item => item[0] !== 'bridge').map(item => item[0]), ['sonic', 'mirror']);
+  assert.deepEqual(order.find(item => item[0] === 'mirror')[1].action.point, {x: 10, y: 20});
 });
 
 test('Sonic mirrors touch coordinates without reading its video canvas', async () => {
@@ -48,7 +47,7 @@ test('Sonic mirrors touch coordinates without reading its video canvas', async (
   };
   const document = {querySelectorAll() { inspectedCanvases += 1; return [canvas]; }, body:{appendChild(){}}, getElementById(){return {style:{}}}, createElement(){return {style:{}}}};
   const window = {opener,WebSocket:FakeWebSocket,document,addEventListener(type,fn){listeners[type]=fn;}};
-  const context = vm.createContext({window,document,URL,fetch:async()=>{order.push(['platform']);return {ok:true}},Date,Math,JSON,String,Number,Object,RegExp,Error,Set,setTimeout});
+  const context = vm.createContext({window,document,URL,fetch:async(url)=>{order.push([url.endsWith('/bridge') ? 'bridge' : 'platform']);return {ok:true}},Date,Math,JSON,String,Number,Object,RegExp,Error,Set,setTimeout});
   vm.runInContext(fs.readFileSync(path.join(__dirname,'..','deploy/sonic-recorder-hook.js'),'utf8'),context);
   listeners.message({source:opener,origin:'http://platform.example',data:{type:'MIDSCENE_RECORDING_START',sessionId:'s',recordingToken:'t',deviceId:'',endpoint:'http://platform.example/api/device-recordings/action'}});
   const socket = new window.WebSocket('ws://agent/websockets/android/key/phone/token');
@@ -56,7 +55,7 @@ test('Sonic mirrors touch coordinates without reading its video canvas', async (
   socket.send(JSON.stringify({type:'touch',detail:'down 10 20'}));
   socket.send(JSON.stringify({type:'touch',detail:'up 10 20'}));
   await Promise.resolve();
-  assert.deepEqual(order.slice(0,2).map(item=>item[0]), ['sonic','sonic']);
+  assert.deepEqual(order.filter(item=>item[0]!=='bridge').slice(0,2).map(item=>item[0]), ['sonic','sonic']);
   assert.equal(inspectedCanvases, 0);
   assert.ok(order.find(item=>item[0]==='platform'));
 });
@@ -69,7 +68,7 @@ test('Sonic can mirror twenty confirmed taps without touching the video canvas o
   class FakeWebSocket { constructor(url){this.url=url} send(data){sent.push(['sonic',JSON.parse(data).detail])} }
   const document = {querySelectorAll(){canvasReads += 1;return []},body:{appendChild(){}},getElementById(){return {style:{}}},createElement(){return {style:{}}}};
   const window = {opener,WebSocket:FakeWebSocket,document,addEventListener(type,fn){listeners[type]=fn;}};
-  const context = vm.createContext({window,document,URL,fetch:async(url,options)=>{sent.push(['platform',JSON.parse(options.body).action]);return {ok:true}},Date,Math,JSON,String,Number,Object,RegExp,Error,Set,setTimeout});
+  const context = vm.createContext({window,document,URL,fetch:async(url,options)=>{sent.push([url.endsWith('/bridge')?'bridge':'platform',JSON.parse(options.body).action]);return {ok:true}},Date,Math,JSON,String,Number,Object,RegExp,Error,Set,setTimeout});
   vm.runInContext(fs.readFileSync(path.join(__dirname,'..','deploy/sonic-recorder-hook.js'),'utf8'),context);
   listeners.message({source:opener,origin:'http://platform.example',data:{type:'MIDSCENE_RECORDING_START',sessionId:'stress',recordingToken:'t',endpoint:'http://platform.example/api/device-recordings/action'}});
   const socket = new window.WebSocket('ws://agent/websockets/android/key/phone/token');
@@ -93,7 +92,7 @@ test('Sonic never records a second action while the prior step is still being ve
   class FakeWebSocket { constructor(url){this.url=url} send(data){sent.push(['sonic',JSON.parse(data).detail])} }
   const document = {querySelectorAll(){throw new Error('must not read canvas')},body:{appendChild(){}},getElementById(){return {style:{}}},createElement(){return {style:{}}}};
   const window = {opener,WebSocket:FakeWebSocket,document,addEventListener(type,fn){listeners[type]=fn;}};
-  const context = vm.createContext({window,document,URL,fetch:async(url,options)=>{sent.push(['platform',JSON.parse(options.body).action]);return {ok:true}},Date,Math,JSON,String,Number,Object,RegExp,Error,Set,setTimeout});
+  const context = vm.createContext({window,document,URL,fetch:async(url,options)=>{sent.push([url.endsWith('/bridge')?'bridge':'platform',JSON.parse(options.body).action]);return {ok:true}},Date,Math,JSON,String,Number,Object,RegExp,Error,Set,setTimeout});
   vm.runInContext(fs.readFileSync(path.join(__dirname,'..','deploy/sonic-recorder-hook.js'),'utf8'),context);
   listeners.message({source:opener,origin:'http://platform.example',data:{type:'MIDSCENE_RECORDING_START',sessionId:'guard',recordingToken:'t',endpoint:'http://platform.example/api/device-recordings/action'}});
   const socket = new window.WebSocket('ws://agent/websockets/android/key/phone/token');
@@ -115,7 +114,7 @@ test('a failed recognition is retained but releases the recorder for the next ac
   class FakeWebSocket { constructor(url){this.url=url} send(data){sent.push(['sonic',JSON.parse(data).detail])} }
   const document = {body:{appendChild(){}},getElementById(){return {style:{}}},createElement(){return {style:{}}}};
   const window = {opener,WebSocket:FakeWebSocket,document,addEventListener(type,fn){listeners[type]=fn;}};
-  const context = vm.createContext({window,document,URL,fetch:async(url,options)=>{sent.push(['platform',JSON.parse(options.body).action]);return {ok:true}},Date,Math,JSON,String,Number,Object,RegExp,Error,Set,setTimeout});
+  const context = vm.createContext({window,document,URL,fetch:async(url,options)=>{sent.push([url.endsWith('/bridge')?'bridge':'platform',JSON.parse(options.body).action]);return {ok:true}},Date,Math,JSON,String,Number,Object,RegExp,Error,Set,setTimeout});
   vm.runInContext(fs.readFileSync(path.join(__dirname,'..','deploy/sonic-recorder-hook.js'),'utf8'),context);
   listeners.message({source:opener,origin:'http://platform.example',data:{type:'MIDSCENE_RECORDING_START',sessionId:'failed',recordingToken:'t',endpoint:'http://platform.example/api/device-recordings/action'}});
   const socket = new window.WebSocket('ws://agent/websockets/android/key/phone/token');
@@ -140,30 +139,31 @@ test('Sonic hook announces that it can receive a recording session after page lo
   assert.equal(messages[0].origin, '*');
 });
 
-test('Sonic consumes a one-time window-name handoff before the app opens its device socket', () => {
+test('Sonic consumes and clears a fragment handoff even when cross-site isolation removes the opener', async () => {
   const listeners = {};
-  const sent = [];
-  const opener = {postMessage(message) { sent.push(message); }};
+  const requests = [];
   const handoff = encodeURIComponent(JSON.stringify({
-    sessionId: 's-window', recordingToken: 't-window', deviceId: '',
+    sessionId: 's-fragment', recordingToken: 't-fragment', deviceId: '',
     endpoint: 'http://platform.example/api/device-recordings/action',
   }));
   class FakeWebSocket { constructor(url) { this.url = url; } send() {} }
   const window = {
-    name: `__MIDSCENE_RECORDING_HANDOFF__${handoff}`,
-    opener, WebSocket: FakeWebSocket,
+    name: '', opener: null, WebSocket: FakeWebSocket,
+    location: {hash: `#__MIDSCENE_RECORDING_HANDOFF__${handoff}`, pathname: '/Index/Devices', search: ''},
+    history: {replaceState(_state, _title, url) { this.url = url; window.location.hash = ''; }},
     sessionStorage: {getItem() { return null; }, setItem() {}, removeItem() {}},
     localStorage: {getItem() { return null; }, setItem() {}, removeItem() {}},
     addEventListener(type, fn) { listeners[type] = fn; },
   };
-  const context = vm.createContext({window, URL, fetch: async () => ({ok: true}), Date, Math, JSON, String, Number, Object, RegExp, Error, Set, setTimeout, decodeURIComponent});
+  const context = vm.createContext({window, URL, fetch: async (url, options) => { requests.push({url, body: JSON.parse(options.body)}); return {ok: true, json: async () => ({session:{id:'s-fragment',status:'recording',device_id:'phone-fragment',pre_action_frame_status:'ready',steps:[]}})}; }, Date, Math, JSON, String, Number, Object, RegExp, Error, Set, setTimeout, clearTimeout, decodeURIComponent});
   vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'deploy/sonic-recorder-hook.js'), 'utf8'), context);
 
-  assert.equal(window.name, 'midscene-sonic-recorder');
-  new window.WebSocket('ws://agent/websockets/android/secret/phone-window/token');
-  assert.equal(sent.at(-1).type, 'MIDSCENE_RECORDING_READY');
-  assert.equal(sent.at(-1).sessionId, 's-window');
-  assert.equal(sent.at(-1).deviceId, 'phone-window');
+  assert.equal(window.location.hash, '');
+  assert.equal(window.history.url, '/Index/Devices');
+  new window.WebSocket('ws://agent/websockets/android/secret/phone-fragment/token');
+  await Promise.resolve(); await Promise.resolve();
+  assert.equal(requests[0].url, 'http://platform.example/api/device-recordings/bridge');
+  assert.deepEqual(requests[0].body, {session_id:'s-fragment',recording_token:'t-fragment',device_id:'phone-fragment'});
 });
 
 test('Sonic hook notifies the direct opener when that opener also has an opener', () => {
@@ -221,13 +221,12 @@ test('remote phone tab never replays an action performed before the evidence han
     send(data) { sent.push(['sonic', data]); }
   }
   window.WebSocket = FakeWebSocket;
-  const context = vm.createContext({window, URL, fetch: async (url, options) => { sent.push(['mirror', JSON.parse(options.body)]); return {ok: true}; }, Date, Math, JSON, String, Number, Object, RegExp, Error, setTimeout});
+  const context = vm.createContext({window, URL, fetch: async (url, options) => { sent.push([url.endsWith('/bridge') ? 'bridge' : 'mirror', JSON.parse(options.body)]); return {ok: true}; }, Date, Math, JSON, String, Number, Object, RegExp, Error, setTimeout});
   vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'deploy/sonic-recorder-hook.js'), 'utf8'), context);
 
   const socket = new window.WebSocket('ws://agent/websockets/android/secret/ecbfd645/token');
-  assert.equal(sent.at(-1)[0], 'platform');
-  assert.equal(sent.at(-1)[1].type, 'MIDSCENE_RECORDING_READY');
-  assert.equal(sent.at(-1)[1].deviceId, 'ecbfd645');
+  const ready = sent.findLast(item => item[0] === 'platform' && item[1].type === 'MIDSCENE_RECORDING_READY');
+  assert.equal(ready[1].deviceId, 'ecbfd645');
 
   socket.send(JSON.stringify({type: 'debug', detail: 'tap', point: '12,34'}));
   assert.equal(sent.filter(item => item[0] === 'mirror').length, 0);

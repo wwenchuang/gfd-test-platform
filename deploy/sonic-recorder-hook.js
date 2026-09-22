@@ -15,7 +15,9 @@
   const NativeWebSocket = window.WebSocket;
   const STORAGE_KEY = 'midsceneSonicRecording';
   const WINDOW_HANDOFF_PREFIX = '__MIDSCENE_RECORDING_HANDOFF__';
+  const HASH_HANDOFF_PREFIX = '#__MIDSCENE_RECORDING_HANDOFF__';
   const HANDOFF_MAX_AGE_MS = 5 * 60 * 1000;
+  let bridgePollTimer = null;
 
   function showRecorderStatus(message, state = 'waiting') {
     if (typeof document === 'undefined') return;
@@ -67,6 +69,20 @@
     try { window.localStorage?.removeItem(STORAGE_KEY); } catch (_) {}
   }
 
+  function acceptHandoff(data, target) {
+    const endpoint = new URL(data.endpoint);
+    if (!String(data.sessionId || '') || !String(data.recordingToken || '') || !/^https?:$/.test(endpoint.protocol)) return false;
+    recording = {
+      sessionId: String(data.sessionId), recordingToken: String(data.recordingToken),
+      deviceId: String(data.deviceId || ''), endpoint: endpoint.href, platformOrigin: endpoint.origin,
+      bound: false, createdAt: Date.now(),
+    };
+    platformTarget = target || null;
+    saveRecording();
+    showRecorderStatus('已接收任务，请在 Sonic 选择手机');
+    return true;
+  }
+
   try {
     const inherited = window.sessionStorage?.getItem(STORAGE_KEY) || window.localStorage?.getItem(STORAGE_KEY);
     if (inherited) {
@@ -82,25 +98,26 @@
     }
   } catch (_) { recording = null; }
 
-  // The platform opens Sonic cross-origin. postMessage remains the reconnect
-  // channel, while window.name provides a race-free first handoff that is
-  // available before Sonic creates its device WebSockets. Clear it at once so
-  // the recording token is not retained by later navigation.
+  // A URL fragment is not sent to nginx and is consumed before Sonic's module
+  // bundle runs. Unlike window.name/opener it survives cross-site isolation.
+  try {
+    if (String(window.location?.hash || '').startsWith(HASH_HANDOFF_PREFIX)) {
+      const raw = String(window.location.hash).slice(HASH_HANDOFF_PREFIX.length);
+      acceptHandoff(JSON.parse(decodeURIComponent(raw)), window.opener || null);
+      window.history?.replaceState?.(null, '', `${window.location.pathname || '/'}${window.location.search || ''}`);
+    }
+  } catch (_) {
+    recording = null;
+    saveRecording();
+  }
+
+  // Retain window.name support for already-issued pages during a rolling
+  // deployment, but new pages use the fragment handoff above.
   try {
     if (String(window.name || '').startsWith(WINDOW_HANDOFF_PREFIX)) {
       const raw = String(window.name).slice(WINDOW_HANDOFF_PREFIX.length);
-      const data = JSON.parse(decodeURIComponent(raw));
-      const endpoint = new URL(data.endpoint);
-      recording = {
-        sessionId: String(data.sessionId || ''), recordingToken: String(data.recordingToken || ''),
-        deviceId: String(data.deviceId || ''), endpoint: endpoint.href, platformOrigin: endpoint.origin,
-        bound: false, createdAt: Date.now(),
-      };
-      if (!recording.sessionId || !recording.recordingToken || !/^https?:$/.test(endpoint.protocol)) recording = null;
-      platformTarget = window.opener || null;
+      acceptHandoff(JSON.parse(decodeURIComponent(raw)), window.opener || null);
       window.name = 'midscene-sonic-recorder';
-      saveRecording();
-      if (recording) showRecorderStatus('已接收任务，请在 Sonic 选择手机');
     }
   } catch (_) {
     recording = null;
@@ -120,6 +137,65 @@
   function socketDeviceId(url) {
     const match = String(url || '').match(/\/websockets\/android\/[^/]+\/([^/?#]+)/i);
     return match ? decodeURIComponent(match[1]) : '';
+  }
+
+  function bridgeUrl() {
+    return String(recording?.endpoint || '').replace(/\/action(?:\?.*)?$/, '/bridge');
+  }
+
+  function bridgeStepState(session) {
+    const steps = Array.isArray(session?.steps) ? session.steps : [];
+    const step = steps.find(item => Number(item.sequence || 0) === Number(awaitingRecognition || 0));
+    if (!step) return awaitingRecognition ? 'pending' : 'ready';
+    if (step.evidence_status === 'pending' || step.semantic_recognition_status === 'running' || session.pre_action_frame_status === 'pending') return 'pending';
+    if (step.evidence_status === 'failed' || step.semantic_recognition_status === 'failed') return 'failed';
+    if (step.type === 'tap' && !String(step.semantic_description || '').trim()) return 'failed';
+    return session.pre_action_frame_status === 'ready' ? 'ready' : 'pending';
+  }
+
+  function scheduleBridgePoll() {
+    if (bridgePollTimer || !recording?.deviceId) return;
+    bridgePollTimer = setTimeout(() => { bridgePollTimer = null; syncBridge(); }, 1000);
+  }
+
+  function syncBridge(deviceId = recording?.deviceId) {
+    if (!recording || !deviceId || !bridgeUrl()) return Promise.resolve();
+    recording.deviceId = String(deviceId);
+    saveRecording();
+    return fetch(bridgeUrl(), {
+      method: 'POST', mode: 'cors',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({session_id: recording.sessionId, recording_token: recording.recordingToken, device_id: recording.deviceId}),
+    }).then(async response => {
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      if (typeof response.json !== 'function') return null;
+      const payload = await response.json();
+      const session = payload?.session;
+      if (!session) return null;
+      mirroredCount = Math.max(mirroredCount, ...(session.steps || []).map(item => Number(item.sequence || 0)), 0);
+      const state = bridgeStepState(session);
+      if (state === 'ready') {
+        recording.bound = session.pre_action_frame_status === 'ready';
+        if (awaitingRecognition) showRecorderStatus(`第 ${awaitingRecognition} 步记录成功，可以继续操作`, 'active');
+        else if (recording.bound) showRecorderStatus(`录制中，已同步 ${mirroredCount} 步，可以开始操作`, 'active');
+        awaitingRecognition = 0;
+        saveRecording();
+      } else if (state === 'failed') {
+        showRecorderStatus(`第 ${awaitingRecognition} 步识别失败，已保留；可继续操作并稍后在平台修正`, 'error');
+        awaitingRecognition = 0;
+      } else {
+        recording.bound = false;
+        showRecorderStatus(awaitingRecognition ? `第 ${awaitingRecognition} 步正在采集截图并识别，请暂缓下一步` : 'Runner 正在准备真实点击前画面', 'waiting');
+        scheduleBridgePoll();
+      }
+      return session;
+    }).catch(error => {
+      recording.bound = false;
+      showRecorderStatus(`录制桥接失败：${String(error.message || error)}`, 'error');
+      notifyPlatform({type: 'MIDSCENE_RECORDING_ERROR', message: String(error.message || error)});
+      scheduleBridgePoll();
+      return null;
+    });
   }
 
   function mirror(action) {
@@ -147,8 +223,13 @@
     fetch(recording.endpoint, {
       method: 'POST', mode: 'cors', keepalive: !action.evidence_content_base64,
       headers: {'Content-Type': 'application/json'}, body,
-    }).then(response => {
+    }).then(async response => {
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      if (typeof response.json === 'function') {
+        const payload = await response.json();
+        awaitingRecognition = Number(payload?.step?.sequence || awaitingRecognition);
+      }
+      scheduleBridgePoll();
     }).catch(error => {
       awaitingRecognition = 0;
       showRecorderStatus(`第 ${mirroredCount} 步同步失败`, 'error');
@@ -195,6 +276,7 @@
       saveRecording();
       showRecorderStatus(`已进入手机 ${recording.deviceId}，等待平台确认`);
       notifyPlatform({type: 'MIDSCENE_RECORDING_READY', sessionId: recording.sessionId, deviceId: recording.deviceId});
+      syncBridge(recording.deviceId);
     }
     const nativeSend = socket.send;
     socket.send = function (data) {
@@ -244,15 +326,19 @@
     if (data.type !== 'MIDSCENE_RECORDING_START') return;
     try {
       const endpoint = new URL(data.endpoint);
+      const sameSession = recording?.sessionId === String(data.sessionId || '');
       recording = {
         sessionId: String(data.sessionId || ''), recordingToken: String(data.recordingToken || ''),
-        deviceId: String(data.deviceId || ''), endpoint: endpoint.href, platformOrigin: endpoint.origin, bound: false,
-        createdAt: Date.now(),
+        deviceId: String(data.deviceId || recording?.deviceId || ''), endpoint: endpoint.href, platformOrigin: endpoint.origin,
+        bound: sameSession ? Boolean(recording?.bound) : false, createdAt: sameSession ? Number(recording?.createdAt || Date.now()) : Date.now(),
       };
       if (!recording.sessionId || !recording.recordingToken) recording = null;
       mirroredCount = 0;
       saveRecording();
-      if (recording) showRecorderStatus('已接收任务，请在 Sonic 选择手机');
+      if (recording) {
+        showRecorderStatus(recording.deviceId ? '已恢复录制任务，正在确认手机状态' : '已接收任务，请在 Sonic 选择手机');
+        if (recording.deviceId) syncBridge();
+      }
     } catch (_) { recording = null; saveRecording(); }
   });
 })();

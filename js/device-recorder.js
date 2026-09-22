@@ -367,10 +367,12 @@ function openRecorderSonic() {
     deviceId: deviceRecorderSession?.device_id || '',
     endpoint: `${location.origin}/api/device-recordings/action`,
   }));
-  // window.name is assigned before Sonic executes its first script, so the
-  // hook cannot miss the one-time handoff during a fast cross-origin load.
-  // The hook consumes and clears it immediately; no token enters the URL.
-  deviceRecorderWindow = window.open(url, `__MIDSCENE_RECORDING_HANDOFF__${handoff}`);
+  // The fragment is never sent in the HTTP request. Sonic's first script
+  // consumes and clears it before the application bundle runs. This survives
+  // browsers that isolate cross-site openers and clear window.name.
+  const target = new URL(url);
+  target.hash = `__MIDSCENE_RECORDING_HANDOFF__${handoff}`;
+  deviceRecorderWindow = window.open(target.href, 'midscene-sonic-recorder');
   [800, 1800, 3500].forEach(delay => setTimeout(recorderHandshake, delay));
 }
 

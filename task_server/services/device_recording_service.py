@@ -79,6 +79,13 @@ def _token_hash(token: str) -> str:
     return hashlib.sha256(str(token or "").encode("utf-8")).hexdigest()
 
 
+def _recording_token(row: Dict[str, Any], recording_token: str, timestamp: float) -> None:
+    if not secrets.compare_digest(str(row.get("recording_token_hash") or ""), _token_hash(recording_token)):
+        raise PermissionError("录制令牌无效")
+    if timestamp > float(row.get("recording_token_expires_ts") or 0):
+        raise PermissionError("录制令牌已过期")
+
+
 def _request_pre_action_frame(row: Dict[str, Any], timestamp: Optional[float] = None, *, retry: bool = False) -> None:
     row["pre_action_frame_status"] = "pending"
     row["pre_action_frame_request_id"] = uuid.uuid4().hex
@@ -207,6 +214,51 @@ def bind_recording_device(
                     write_json_file(path, data)
                 return _public(row)
             raise ValueError("录制会话已经绑定另一台手机")
+        conflict = next((item for item in data["sessions"] if item.get("id") != row.get("id") and item.get("status") in ACTIVE_STATUSES and item.get("runner_id") == runner_id and item.get("device_id") == device_id), None)
+        if conflict:
+            raise ValueError(f"设备正在录制，会话发起人：{conflict.get('created_by') or '未知'}")
+        row["runner_id"] = runner_id
+        row["device_id"] = device_id
+        row["bound_at"] = _stamp(timestamp)
+        row["updated_at"] = _stamp(timestamp)
+        row["updated_ts"] = timestamp
+        _request_pre_action_frame(row, timestamp)
+        write_json_file(path, data)
+        return _public(row)
+
+
+def bridge_recording_device(
+    session_id: str,
+    recording_token: str,
+    runner_id: str,
+    device_id: str,
+    *,
+    store_path: Optional[str] = None,
+    now: Optional[float] = None,
+) -> Dict[str, Any]:
+    """Bind/poll a Sonic phone using only the short-lived recording capability."""
+    runner_id = str(runner_id or "").strip()
+    device_id = str(device_id or "").strip()
+    if not runner_id or not device_id:
+        raise ValueError("Runner 和手机不能为空")
+    if device_id.upper() in NON_MOBILE_DEVICE_IDS:
+        raise ValueError("操作录制只能绑定 Sonic Android 手机")
+    timestamp = float(time.time() if now is None else now)
+    path = _path(store_path)
+    with _LOCK, file_mutation_lock(path):
+        data = _load(path)
+        _pause_stale(data, timestamp)
+        row = _find(data, session_id)
+        _recording_token(row, recording_token, timestamp)
+        if row.get("status") != "recording":
+            raise ValueError("录制会话当前不能绑定手机")
+        if row.get("device_id"):
+            if row.get("runner_id") != runner_id or row.get("device_id") != device_id:
+                raise ValueError("录制会话已经绑定另一台手机")
+            if not row.get("pre_action_frame_status"):
+                _request_pre_action_frame(row, timestamp)
+                write_json_file(path, data)
+            return _public(row)
         conflict = next((item for item in data["sessions"] if item.get("id") != row.get("id") and item.get("status") in ACTIVE_STATUSES and item.get("runner_id") == runner_id and item.get("device_id") == device_id), None)
         if conflict:
             raise ValueError(f"设备正在录制，会话发起人：{conflict.get('created_by') or '未知'}")
@@ -541,10 +593,7 @@ def append_recorded_action(
         data = _load(path)
         _pause_stale(data, timestamp)
         row = _find(data, session_id)
-        if not secrets.compare_digest(str(row.get("recording_token_hash") or ""), _token_hash(recording_token)):
-            raise PermissionError("录制令牌无效")
-        if timestamp > float(row.get("recording_token_expires_ts") or 0):
-            raise PermissionError("录制令牌已过期")
+        _recording_token(row, recording_token, timestamp)
         if row.get("status") != "recording":
             raise ValueError("录制会话当前不可接收动作")
         if device_id != row.get("device_id"):

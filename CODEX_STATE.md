@@ -1,5 +1,13 @@
 # CODEX_STATE.md
 
+## 2026-09-22 Sonic 跨站隔离下的服务端录制桥接
+
+- 真实 Chrome 验收发现首次 `window.name` 交接仍会被跨站导航清空，Sonic 设备中心没有收到录制任务；该现象与钩子部署、缓存或用户点击速度无关。
+- 新建录制改用仅存在于浏览器 fragment 的一次性交接信息：fragment 不会随 HTTP 请求发送给 Sonic/nginx，页面首个钩子在应用 bundle 执行前读取并立即从地址栏清除；保留旧 `window.name` 和 `postMessage` 作为滚动发布兼容与同窗口快速确认通道。
+- 新增录制令牌范围内的 `/api/device-recordings/bridge`：Sonic 用短期令牌和实际打开的手机 ID 直接完成 Runner 绑定并轮询会话状态，不再依赖跨站 opener。服务端继续核对手机在线、Runner 归属、会话状态、令牌有效期、设备冲突和业务打印机排除规则。
+- Sonic 在手机连接、页面刷新和每步动作后通过桥接读取真实状态；只有该步截图/语义完成且下一张点击前画面就绪才显示“记录成功，可以继续操作”，识别失败会释放动作门禁并保留人工修正入口，Runner/网络失败显示明确错误并自动重试桥接。
+- 专项 31 项前端/Sonic 协议与 23 项录制服务测试通过。仍需完成仓库静态检查、提交发布、Chrome 中的首次交接/刷新恢复，以及 Windows Runner 更新后的真实点击、截图、识别、YAML 生成保存闭环。
+
 ## 2026-09-22 Sonic 跨站录制握手时序修复
 
 - `f9c8a1d` 已通过华为云堡垒机部署到 `qa.test.sonic-00.txsh`；8091/8088 健康接口均返回完整 revision `f9c8a1d540f5a62e2b5e53d8e04440e59b5fbba0`，线上快速体检确认 Task、`qwen3.7-plus`、Sonic、录制桥接和 Runner 连接正常。

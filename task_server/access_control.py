@@ -385,7 +385,7 @@ def prepare_request_access(handler, method, path, qs):
     # Sonic posts a short-lived, session-scoped recording token in the request
     # body. The route validates that token itself and must remain reachable from
     # the separate Sonic origin without a human bearer session.
-    if method == "POST" and path == "/api/device-recordings/action":
+    if method == "POST" and path in {"/api/device-recordings/action", "/api/device-recordings/bridge"}:
         return False
     machine_only = (method, path) in MACHINE_ROUTES or (method == "POST" and path.startswith("/api/runner/jobs/"))
     if machine_only or (method in {"GET", "HEAD"} and path in MACHINE_READ_ROUTES):

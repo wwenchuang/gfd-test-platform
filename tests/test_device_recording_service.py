@@ -51,6 +51,20 @@ class DeviceRecordingServiceTest(unittest.TestCase):
             first["id"],
         )
 
+    def test_short_lived_recording_token_can_bind_and_poll_the_actual_sonic_phone(self):
+        session = self.create(runner_id="", device_id="")
+        with self.assertRaisesRegex(PermissionError, "令牌"):
+            recording.bridge_recording_device(session["id"], "wrong", "win-runner-01", "ecbfd645", store_path=self.store)
+        bound = recording.bridge_recording_device(
+            session["id"], session["recording_token"], "win-runner-01", "ecbfd645", store_path=self.store
+        )
+        self.assertEqual((bound["runner_id"], bound["device_id"]), ("win-runner-01", "ecbfd645"))
+        self.assertEqual(bound["pre_action_frame_status"], "pending")
+        polled = recording.bridge_recording_device(
+            session["id"], session["recording_token"], "win-runner-01", "ecbfd645", store_path=self.store
+        )
+        self.assertEqual(polled["pre_action_frame_request_id"], bound["pre_action_frame_request_id"])
+
     def test_owner_controls_finish_and_state_is_persisted_atomically(self):
         session = self.create()
         with self.assertRaisesRegex(PermissionError, "发起人"):

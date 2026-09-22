@@ -4006,6 +4006,32 @@ def _post_device_recording_bind(handler, qs):
     handler._json({"ok": True, "session": session})
 
 
+@route_post("/api/device-recordings/bridge")
+def _post_device_recording_bridge(handler, qs):
+    """Bind or poll the selected Sonic phone without relying on cross-site windows."""
+    from task_server.services.device_recording_service import bridge_recording_device
+    payload = handler._body()
+    device_id = str(payload.get("device_id") or payload.get("deviceId") or "").strip()
+    matched = next((item for item in all_online_devices() if str(item.get("device_id") or "") == device_id and item.get("runner_online") and item.get("status") in ("online", "device")), None)
+    if not matched:
+        handler._json({"ok": False, "error": "Sonic 实际打开的手机当前不在线或不可用"}, 409)
+        return
+    try:
+        session = bridge_recording_device(
+            payload.get("session_id") or payload.get("sessionId") or "",
+            payload.get("recording_token") or payload.get("recordingToken") or "",
+            str(matched.get("runner_id") or ""),
+            device_id,
+        )
+    except PermissionError as exc:
+        handler._json({"ok": False, "error": str(exc)}, 401)
+        return
+    except ValueError as exc:
+        handler._json({"ok": False, "error": str(exc)}, 409)
+        return
+    handler._json({"ok": True, "session": session})
+
+
 @route_get("/api/device-recordings")
 def _get_device_recordings(handler, qs):
     if _require_user_auth(handler):
