@@ -133,6 +133,25 @@ class DeviceRecordingServiceTest(unittest.TestCase):
         }, store_path=self.store, evidence_dir=evidence_dir)
         self.assertEqual(again["steps"][0]["evidence_status"], "captured")
 
+    def test_finished_recording_keeps_pending_evidence_available_during_grace_period(self):
+        session = self.create(now=1000)
+        step = recording.append_recorded_action(
+            session["id"], session["recording_token"],
+            {"event_id": "evt-last", "type": "tap", "point": {"x": 50, "y": 60}, "device_id": "ecbfd645"},
+            store_path=self.store, now=1001,
+        )
+        recording.finish_recording_session(session["id"], "admin", store_path=self.store, now=1002)
+        pending = recording.pending_recording_evidence_requests(
+            "win-runner-01", store_path=self.store, now=1003,
+        )
+        self.assertEqual(pending[0]["step_id"], step["id"])
+        self.assertEqual(
+            recording.pending_recording_evidence_requests(
+                "win-runner-01", store_path=self.store, now=1002 + recording.FINISHED_EVIDENCE_GRACE_SECONDS + 1,
+            ),
+            [],
+        )
+
     def test_owner_can_confirm_semantic_target_for_ambiguous_step(self):
         session = self.create()
         step = recording.append_recorded_action(

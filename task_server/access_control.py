@@ -47,7 +47,8 @@ FILE_REPAIR_ROUTES = {
 }
 MACHINE_ROUTES = {
     ("GET", "/api/runner/jobs/next"), ("GET", "/api/app-install/package"),
-    ("POST", "/api/runner/heartbeat"), ("POST", "/api/runner/device-snapshot"), ("POST", "/report"),
+    ("POST", "/api/runner/heartbeat"), ("POST", "/api/runner/device-snapshot"),
+    ("POST", "/api/runner/recording-evidence"), ("POST", "/report"),
     ("POST", "/api/report/chunk"), ("POST", "/api/report/chunk-finish"),
     ("POST", "/api/sonic/suite-complete"), ("POST", "/api/sonic/suite-report"),
     ("POST", "/api/sonic/report-ready"), ("POST", "/api/sonic/result"),

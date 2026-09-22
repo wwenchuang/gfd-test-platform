@@ -25,6 +25,7 @@ ALL_STATUSES = ACTIVE_STATUSES | {"paused", "generating"} | FINAL_STATUSES
 ALLOWED_ACTION_TYPES = {"tap", "swipe", "text", "key", "launch", "checkpoint"}
 MAX_INPUT_TEXT_LENGTH = 500
 RECORDING_TOKEN_TTL_SECONDS = 2 * 60 * 60
+FINISHED_EVIDENCE_GRACE_SECONDS = 2 * 60
 _LOCK = threading.RLock()
 
 
@@ -438,13 +439,23 @@ def append_recorded_action(
         return {**copy.deepcopy(normalized), "duplicate": False}
 
 
-def pending_recording_evidence_requests(runner_id: str, *, store_path: Optional[str] = None) -> list:
+def pending_recording_evidence_requests(
+    runner_id: str,
+    *,
+    store_path: Optional[str] = None,
+    now: Optional[float] = None,
+) -> list:
     path = _path(store_path)
+    timestamp = float(time.time() if now is None else now)
     with _LOCK, file_mutation_lock(path):
         data = _load(path)
         requests = []
         for row in data["sessions"]:
-            if row.get("status") != "recording" or row.get("runner_id") != runner_id:
+            within_finished_grace = (
+                row.get("status") == "finished"
+                and timestamp - float(row.get("updated_ts") or 0) <= FINISHED_EVIDENCE_GRACE_SECONDS
+            )
+            if (row.get("status") != "recording" and not within_finished_grace) or row.get("runner_id") != runner_id:
                 continue
             for step in row.get("steps") or []:
                 if step.get("evidence_status") == "pending":

@@ -9,7 +9,7 @@ const ROOT = path.resolve(__dirname, '..');
 
 test('task manager uses a new cache key for the ready-handshake recorder script', () => {
   const html = fs.readFileSync(path.join(ROOT, 'task-manager.html'), 'utf8');
-  assert.match(html, /device-recorder\.js\?v=20260922-sonic-native-recorder-v4/);
+  assert.match(html, /device-recorder\.js\?v=20260922-sonic-native-recorder-v5/);
 });
 
 function fixture() {
@@ -77,6 +77,14 @@ test('blocks empty generation and keeps case name linked to YAML filename', () =
   f.run("syncRecorderFileName('微信登录')");
   assert.equal(f.dom.window.document.getElementById('device-recorder-file').value, '微信登录.yaml');
   assert.equal(f.dom.window.document.getElementById('device-recorder-module').value, '微信登录');
+});
+
+test('waits for automatic evidence recognition before enabling YAML generation', () => {
+  const f = fixture();
+  f.run("deviceRecorderSession = {id:'session-1',status:'finished',runner_id:'win-runner-01',device_id:'ecbfd645',app_package:'com.tencent.mm',steps:[{id:'s1',sequence:1,type:'tap',point:{x:1,y:2},evidence_status:'pending'}]}; renderDeviceRecorder()");
+  const button = f.dom.window.document.querySelector('[data-action="generate-recording-yaml"]');
+  assert.equal(button.disabled, true);
+  assert.match(button.textContent, /等待自动识别/);
 });
 
 test('timeline exposes unobtrusive edit and delete controls', () => {

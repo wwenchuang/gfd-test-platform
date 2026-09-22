@@ -49,7 +49,17 @@ function recorderTimelineItem(step) {
 }
 
 function recorderCanGenerate(session) {
-  return session?.status === 'finished' && (session.steps || []).length > 0;
+  return session?.status === 'finished'
+    && (session.steps || []).length > 0
+    && !(session.steps || []).some(step => step.evidence_status === 'pending');
+}
+
+function recorderEvidencePending(session) {
+  return (session?.steps || []).some(step => step.evidence_status === 'pending');
+}
+
+function recorderGenerateLabel(session) {
+  return (session?.steps || []).some(step => step.evidence_status === 'pending') ? '等待自动识别' : '生成并校验 YAML';
 }
 
 function renderDeviceRecorder() {
@@ -69,7 +79,7 @@ function renderDeviceRecorder() {
         <div class="review-actions">
           ${!session ? `<button class="btn-sm primary" data-action="start-recording" ${(runnerDevices || []).some(device => !device.usage_status || device.usage_status === 'idle') ? '' : 'disabled'} onclick="startDeviceRecording()">前往 Sonic 选择手机并开始</button>` : ''}
           ${session?.status === 'recording' ? '<button class="btn-sm" onclick="openRecorderSonic()">打开所选手机</button><button class="btn-sm" onclick="finishDeviceRecording()">结束录制</button><button class="btn-sm danger" onclick="cancelDeviceRecording()">取消本次录制</button>' : ''}
-          ${session?.status === 'finished' ? `<button class="btn-sm ai" data-action="generate-recording-yaml" ${recorderCanGenerate(session) ? '' : 'disabled'} onclick="generateDeviceRecordingYaml()">生成并校验 YAML</button>` : ''}
+          ${session?.status === 'finished' ? `<button class="btn-sm ai" data-action="generate-recording-yaml" ${recorderCanGenerate(session) ? '' : 'disabled'} onclick="generateDeviceRecordingYaml()">${recorderGenerateLabel(session)}</button>` : ''}
         </div><div id="device-recorder-message" class="generate-hint">${session ? `手机：${escapeHtml(session.device_id || '等待在 Sonic 选择')} · 会话：${escapeHtml(session.id)} · ${escapeHtml(deviceRecorderBridgeState)}` : '录制手机只在 Sonic 选择一次；录制令牌不会写入网址。'}</div>
         ${session?.status === 'finished' ? `<div class="device-recorder-save"><label class="modal-label">用例名称</label><input id="device-recorder-task-name" value="录制生成用例" oninput="syncRecorderFileName(this.value)"><label class="modal-label">保存到模块</label><select id="device-recorder-module">${recorderModuleOptions(session)}</select>${recorderModuleOptions(session) ? '' : '<div class="agent-risk show">当前应用没有已关联模块，请先到应用配置关联模块。</div>'}<label class="modal-label">YAML 文件名</label><input id="device-recorder-file" value="录制生成用例.yaml" oninput="deviceRecorderFileNameEdited=true"><button class="btn-sm success" ${deviceRecorderGenerated && recorderModuleOptions(session) ? '' : 'disabled'} onclick="saveDeviceRecordingYaml()">保存到用例资产</button></div>` : ''}
       </section>
@@ -144,7 +154,9 @@ async function refreshDeviceRecording() {
       : await apiRequest(`/device-recordings?id=${encodeURIComponent(deviceRecorderSession.id)}`);
     deviceRecorderSession = data.session;
     renderDeviceRecorder();
-    if (deviceRecorderSession.status !== 'recording') clearInterval(deviceRecorderPollTimer);
+    if (deviceRecorderSession.status !== 'recording' && !recorderEvidencePending(deviceRecorderSession)) {
+      clearInterval(deviceRecorderPollTimer);
+    }
   } catch (_) {}
 }
 
@@ -186,7 +198,8 @@ async function finishDeviceRecording() {
     const data = await apiRequest('/device-recordings/finish', {method: 'POST', body: JSON.stringify({session_id: deviceRecorderSession.id})});
     deviceRecorderSession = data.session;
     deviceRecorderGenerated = null;
-    clearInterval(deviceRecorderPollTimer);
+    if (recorderEvidencePending(deviceRecorderSession)) startDeviceRecorderPolling();
+    else clearInterval(deviceRecorderPollTimer);
     sessionStorage.removeItem('deviceRecorderToken');
     renderDeviceRecorder();
   } catch (error) { showToast(error.message || '结束录制失败', 'error'); }

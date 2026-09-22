@@ -6,6 +6,11 @@ def test_runner_snapshot_upload_is_a_machine_route():
     assert ("POST", "/api/runner/device-snapshot") in MACHINE_ROUTES
 
 
+def test_runner_recording_evidence_upload_is_a_machine_route():
+    from task_server.access_control import MACHINE_ROUTES
+    assert ("POST", "/api/runner/recording-evidence") in MACHINE_ROUTES
+
+
 @pytest.fixture
 def policy():
     from task_server.access_control import MainAccess
