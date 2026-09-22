@@ -21,7 +21,7 @@ RUNNER_ID = os.getenv("RUNNER_ID", "win-runner-01")
 TOKEN = os.getenv("MIDSCENE_RUNNER_TOKEN", "").strip()
 WORKSPACE = Path(os.getenv("MIDSCENE_RUNNER_WORKSPACE", r"D:\sonic\midscene_run"))
 CALLBACK_OUTBOX_DIR = WORKSPACE / "callback_outbox"
-RUNNER_VERSION = os.getenv("MIDSCENE_RUNNER_VERSION", "2026.09.21-midscene1.13-qwen3.7-result-retry-v1-recording-evidence-v1")
+RUNNER_VERSION = os.getenv("MIDSCENE_RUNNER_VERSION", "2026.09.22-midscene1.13-qwen3.7-result-retry-v1-recording-evidence-v2")
 MIDSCENE_REQUIRED_VERSION = "1.13.0"
 COMPLETED_RECORDING_EVIDENCE = set()
 RUNNER_STARTED_AT = time.strftime("%Y-%m-%d %H:%M:%S")
@@ -744,7 +744,10 @@ def upload_recording_evidence_requests(response, devices):
             if device_id not in available:
                 raise RuntimeError("录制设备已离线，无法采集证据")
             payload["content_base64"] = base64.b64encode(capture_screen_png(adb_bin, device_id)).decode("ascii")
-            payload["ui_xml"] = capture_ui_xml(adb_bin, device_id)
+            try:
+                payload["ui_xml"] = capture_ui_xml(adb_bin, device_id)
+            except Exception as exc:
+                payload["ui_xml_error"] = str(exc)[:500]
         except Exception as exc:
             payload["error"] = str(exc)[:500]
         http_json("POST", "/api/runner/recording-evidence", payload, timeout=35)

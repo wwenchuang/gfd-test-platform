@@ -39,6 +39,19 @@ class WindowsRecordingEvidenceTest(unittest.TestCase):
         capture.assert_not_called()
         self.assertIn("离线", posted[0]["error"])
 
+    def test_uploader_keeps_screenshot_when_ui_xml_is_unavailable(self):
+        runner.COMPLETED_RECORDING_EVIDENCE.clear()
+        response = {"recording_evidence_requests": [{"request_id": "r2", "session_id": "s1", "step_id": "p2", "device_id": "phone"}]}
+        posted = []
+        with mock.patch.object(runner, "resolve_adb_with_devices", return_value=("adb", ["phone"])), \
+             mock.patch.object(runner, "capture_screen_png", return_value=b"\x89PNG\r\n\x1a\nfixture"), \
+             mock.patch.object(runner, "capture_ui_xml", side_effect=RuntimeError("ADB 页面结构采集失败")), \
+             mock.patch.object(runner, "http_json", side_effect=lambda method, path, payload, timeout=0: posted.append(payload) or {"ok": True}):
+            runner.upload_recording_evidence_requests(response, [{"device_id": "phone"}])
+        self.assertTrue(posted[0]["content_base64"])
+        self.assertEqual(posted[0]["ui_xml_error"], "ADB 页面结构采集失败")
+        self.assertNotIn("error", posted[0])
+
 
 if __name__ == "__main__":
     unittest.main()

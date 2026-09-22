@@ -4,6 +4,7 @@ let deviceRecorderPollTimer = null;
 let deviceRecorderBridgeState = '等待 Sonic 接收录制会话';
 let deviceRecorderGenerated = null;
 let deviceRecorderFileNameEdited = false;
+let deviceRecorderRecognitionInFlight = false;
 
 function deviceRecorderAppOptions() {
   return (taskApps || []).filter(app => app.enabled !== false).map(app =>
@@ -44,22 +45,35 @@ function recorderTimelineItem(step) {
   const editor = recorderStepNeedsMeaning(step)
     ? `<div class="device-recorder-semantic"><input id="recorder-step-${escapeHtml(step.id)}" maxlength="200" placeholder="例如：提交按钮、搜索输入框"><button class="btn-sm" onclick="confirmRecorderStep('${escapeHtml(step.id)}')">确认控件</button></div>`
     : `<small>${escapeHtml(recorderStepDescription(step) || '等待语义证据')}</small>`;
-  const evidence = step.evidence_status === 'pending' ? '证据待采集' : step.evidence_status === 'failed' ? '证据采集失败' : step.semantic_description ? '已人工确认' : step.evidence_status || '';
+  const evidence = step.evidence_status === 'pending' ? '证据待采集'
+    : step.evidence_status === 'failed' ? '证据采集失败'
+    : step.semantic_recognition_status === 'running' ? '正在自动识别'
+    : step.semantic_recognition_status === 'failed' ? '自动识别失败，可手工补充'
+    : step.semantic_source === 'ai_visual' ? `视觉识别 ${Math.round((step.semantic_confidence || 0) * 100)}%`
+    : step.semantic_description ? '已人工确认' : step.evidence_status || '';
   return `<article class="${recorderStepNeedsMeaning(step) ? 'needs-confirmation' : ''}"><span>${step.sequence}</span><div><strong>${escapeHtml(actionName)}</strong>${editor}<details class="device-recorder-step-tools"><summary>编辑或删除</summary><div><input id="recorder-edit-${escapeHtml(step.id)}" maxlength="200" value="${escapeHtml(recorderStepDescription(step))}" placeholder="补充操作说明"><button class="btn-sm" onclick="editRecorderStep('${escapeHtml(step.id)}')">保存说明</button><button class="btn-sm danger" data-action="delete-recording-step" onclick="deleteRecorderStep('${escapeHtml(step.id)}')">删除</button></div></details></div><em>${escapeHtml(evidence)}</em></article>`;
 }
 
 function recorderCanGenerate(session) {
   return session?.status === 'finished'
     && (session.steps || []).length > 0
-    && !(session.steps || []).some(step => step.evidence_status === 'pending');
+    && !(session.steps || []).some(step => step.evidence_status === 'pending' || recorderStepNeedsMeaning(step));
 }
 
 function recorderEvidencePending(session) {
   return (session?.steps || []).some(step => step.evidence_status === 'pending');
 }
 
+function recorderRecognitionPending(session) {
+  return (session?.steps || []).some(step => step.evidence_status === 'captured'
+    && recorderStepNeedsMeaning(step)
+    && step.semantic_recognition_status !== 'failed');
+}
+
 function recorderGenerateLabel(session) {
-  return (session?.steps || []).some(step => step.evidence_status === 'pending') ? '等待自动识别' : '生成并校验 YAML';
+  if (recorderEvidencePending(session) || recorderRecognitionPending(session)) return '等待自动识别';
+  if ((session?.steps || []).some(recorderStepNeedsMeaning)) return '请补充未识别步骤';
+  return '生成并校验 YAML';
 }
 
 function renderDeviceRecorder() {
@@ -154,10 +168,25 @@ async function refreshDeviceRecording() {
       : await apiRequest(`/device-recordings?id=${encodeURIComponent(deviceRecorderSession.id)}`);
     deviceRecorderSession = data.session;
     renderDeviceRecorder();
-    if (deviceRecorderSession.status !== 'recording' && !recorderEvidencePending(deviceRecorderSession)) {
+    await maybeRecognizeDeviceRecording();
+    if (deviceRecorderSession.status !== 'recording' && !recorderEvidencePending(deviceRecorderSession) && !recorderRecognitionPending(deviceRecorderSession)) {
       clearInterval(deviceRecorderPollTimer);
     }
   } catch (_) {}
+}
+
+async function maybeRecognizeDeviceRecording() {
+  if (deviceRecorderRecognitionInFlight || !deviceRecorderSession?.id || !recorderRecognitionPending(deviceRecorderSession)) return;
+  deviceRecorderRecognitionInFlight = true;
+  try {
+    const data = await apiRequest('/device-recordings/recognize', {method: 'POST', body: JSON.stringify({session_id: deviceRecorderSession.id})});
+    deviceRecorderSession = data.session;
+    renderDeviceRecorder();
+  } catch (error) {
+    showToast(error.message || '自动识别手机控件失败，可手工补充', 'warn');
+  } finally {
+    deviceRecorderRecognitionInFlight = false;
+  }
 }
 
 async function handleDeviceRecorderMessage(event) {
@@ -198,7 +227,7 @@ async function finishDeviceRecording() {
     const data = await apiRequest('/device-recordings/finish', {method: 'POST', body: JSON.stringify({session_id: deviceRecorderSession.id})});
     deviceRecorderSession = data.session;
     deviceRecorderGenerated = null;
-    if (recorderEvidencePending(deviceRecorderSession)) startDeviceRecorderPolling();
+    if (recorderEvidencePending(deviceRecorderSession) || recorderRecognitionPending(deviceRecorderSession)) startDeviceRecorderPolling();
     else clearInterval(deviceRecorderPollTimer);
     sessionStorage.removeItem('deviceRecorderToken');
     renderDeviceRecorder();

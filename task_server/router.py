@@ -4147,6 +4147,26 @@ def _post_device_recording_step_delete(handler, qs):
     handler._json({"ok": True, "session": session})
 
 
+@route_post("/api/device-recordings/recognize")
+def _post_device_recording_recognize(handler, qs):
+    if _require_user_auth(handler):
+        return
+    from task_server.services.device_recording_service import recognize_recording_semantics
+    payload = handler._body()
+    try:
+        session = recognize_recording_semantics(
+            payload.get("session_id") or payload.get("sessionId") or "",
+            _authenticated_user(handler),
+        )
+    except PermissionError as exc:
+        handler._json({"ok": False, "error": str(exc)}, 403)
+        return
+    except ValueError as exc:
+        handler._json({"ok": False, "error": str(exc)}, 400)
+        return
+    handler._json({"ok": True, "session": session})
+
+
 @route_post("/api/device-recordings/generate")
 def _post_device_recording_generate(handler, qs):
     if _require_user_auth(handler):

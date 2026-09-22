@@ -528,7 +528,97 @@ def save_recording_evidence(runner_id: str, payload: Dict[str, Any], *, store_pa
             step["evidence_status"] = "captured"
             step["screenshot_path"] = png_path
             step["ui_xml_path"] = xml_path
+            ui_xml_error = str(payload.get("ui_xml_error") or payload.get("uiXmlError") or "").strip()[:500]
+            if ui_xml_error:
+                step["ui_xml_error"] = ui_xml_error
             target_point = step.get("point") or step.get("end") or {}
             step["ui_node"] = _node_at_point(xml_text, target_point)
+        write_json_file(path, data)
+        return _public(row)
+
+
+def recognize_recording_semantics(
+    session_id: str,
+    user: str,
+    *,
+    store_path: Optional[str] = None,
+    model_call=None,
+) -> Dict[str, Any]:
+    """Name ambiguous tap/input targets from their captured phone screenshot."""
+    path = _path(store_path)
+    with _LOCK, file_mutation_lock(path):
+        data = _load(path)
+        row = _find(data, session_id)
+        _owner(row, user)
+        candidates = []
+        for step in row.get("steps") or []:
+            node = step.get("ui_node") if isinstance(step.get("ui_node"), dict) else {}
+            node_text = next((str(node.get(key) or "").strip() for key in ("text", "content_desc", "resource_id") if str(node.get(key) or "").strip()), "")
+            if (
+                step.get("type") in {"tap", "text"}
+                and step.get("evidence_status") == "captured"
+                and not str(step.get("semantic_description") or "").strip()
+                and not node_text
+                and step.get("semantic_recognition_status") not in {"running", "failed"}
+                and os.path.isfile(str(step.get("screenshot_path") or ""))
+            ):
+                step["semantic_recognition_status"] = "running"
+                candidates.append({
+                    "id": step["id"], "type": step.get("type"),
+                    "point": copy.deepcopy(step.get("point") or step.get("end") or {}),
+                    "screenshot_path": step["screenshot_path"],
+                })
+        if candidates:
+            write_json_file(path, data)
+    if not candidates:
+        return _public(row)
+
+    if model_call is None:
+        from .ai_skill_service import dashscope_chat_content
+        model_call = dashscope_chat_content
+    results = {}
+    for item in candidates:
+        try:
+            with open(item["screenshot_path"], "rb") as handle:
+                image_b64 = base64.b64encode(handle.read()).decode("ascii")
+            point = item["point"]
+            prompt = f"""你是手机操作录制的控件识别器。截图来自真实 Android 手机，操作类型是{item['type']}，点击坐标为 x={int(point.get('x') or 0)}, y={int(point.get('y') or 0)}（坐标基于原始整张手机截图）。
+只识别该坐标实际命中的可见控件，用适合 Midscene aiTap/aiInput 的简短中文名称回答。不要描述整页，不要猜测不可见功能。
+只输出 JSON：{{"semantic_description":"底部导航「我的」","confidence":0.95}}。无法确认时 semantic_description 为空字符串。"""
+            raw = model_call(
+                prompt,
+                image_assets=[{"name": os.path.basename(item["screenshot_path"]), "mime": "image/png", "base64": image_b64}],
+                temperature=0.0,
+                timeout=90,
+                image_limit=1,
+                retry_count=0,
+                max_tokens=300,
+            )
+            from .yaml_service import normalize_model_json
+            parsed = normalize_model_json(raw)
+            description = str(parsed.get("semantic_description") or parsed.get("semanticDescription") or "").strip()[:200]
+            confidence = max(0.0, min(1.0, float(parsed.get("confidence") or 0)))
+            results[item["id"]] = {"description": description, "confidence": confidence}
+        except Exception as exc:
+            results[item["id"]] = {"error": str(exc)[:500]}
+
+    with _LOCK, file_mutation_lock(path):
+        data = _load(path)
+        row = _find(data, session_id)
+        _owner(row, user)
+        for step in row.get("steps") or []:
+            result = results.get(step.get("id"))
+            if not result:
+                continue
+            if result.get("description") and result.get("confidence", 0) >= 0.6:
+                step["semantic_description"] = result["description"]
+                step["semantic_source"] = "ai_visual"
+                step["semantic_confidence"] = result["confidence"]
+                step["semantic_recognition_status"] = "recognized"
+            else:
+                step["semantic_recognition_status"] = "failed"
+                step["semantic_recognition_error"] = result.get("error") or "视觉模型无法确认点击控件"
+        row["updated_ts"] = time.time()
+        row["updated_at"] = _stamp(row["updated_ts"])
         write_json_file(path, data)
         return _public(row)

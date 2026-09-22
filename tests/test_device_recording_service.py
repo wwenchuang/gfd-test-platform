@@ -133,6 +133,35 @@ class DeviceRecordingServiceTest(unittest.TestCase):
         }, store_path=self.store, evidence_dir=evidence_dir)
         self.assertEqual(again["steps"][0]["evidence_status"], "captured")
 
+    def test_screenshot_is_kept_and_visually_named_when_ui_xml_is_unavailable(self):
+        session = self.create()
+        step = recording.append_recorded_action(
+            session["id"], session["recording_token"],
+            {"event_id": "evt-visual", "type": "tap", "point": {"x": 80, "y": 120}, "device_id": "ecbfd645"},
+            store_path=self.store,
+        )
+        evidence_dir = os.path.join(self.tempdir.name, "evidence")
+        captured = recording.save_recording_evidence("win-runner-01", {
+            "session_id": session["id"], "step_id": step["id"], "device_id": "ecbfd645",
+            "content_base64": base64.b64encode(b"\x89PNG\r\n\x1a\nfixture").decode(),
+            "ui_xml_error": "ADB 页面结构采集失败",
+        }, store_path=self.store, evidence_dir=evidence_dir)
+        self.assertEqual(captured["steps"][0]["evidence_status"], "captured")
+        self.assertEqual(captured["steps"][0]["ui_xml_error"], "ADB 页面结构采集失败")
+
+        def model_call(prompt, **kwargs):
+            self.assertIn("x=80, y=120", prompt)
+            self.assertTrue(kwargs["image_assets"][0]["base64"])
+            return '{"semantic_description":"底部导航「我的」","confidence":0.95}'
+
+        recognized = recording.recognize_recording_semantics(
+            session["id"], "admin", store_path=self.store, model_call=model_call,
+        )
+        saved = recognized["steps"][0]
+        self.assertEqual(saved["semantic_description"], "底部导航「我的」")
+        self.assertEqual(saved["semantic_source"], "ai_visual")
+        self.assertEqual(saved["semantic_recognition_status"], "recognized")
+
     def test_finished_recording_keeps_pending_evidence_available_during_grace_period(self):
         session = self.create(now=1000)
         step = recording.append_recorded_action(
