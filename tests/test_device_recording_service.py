@@ -65,6 +65,32 @@ class DeviceRecordingServiceTest(unittest.TestCase):
         )
         self.assertEqual(polled["pre_action_frame_request_id"], bound["pre_action_frame_request_id"])
 
+    def test_bridge_refresh_discards_stale_frame_after_sonic_reconnect(self):
+        session = self.create(runner_id="", device_id="")
+        bound = recording.bridge_recording_device(
+            session["id"], session["recording_token"], "win-runner-01", "ecbfd645", store_path=self.store
+        )
+        self.prepare_frame(session, xml='<hierarchy><node text="我的" bounds="[0,0][200,200]" /></hierarchy>')
+        refreshed = recording.bridge_recording_device(
+            session["id"], session["recording_token"], "win-runner-01", "ecbfd645",
+            refresh_evidence=True, store_path=self.store,
+        )
+        self.assertEqual(refreshed["pre_action_frame_status"], "pending")
+        self.assertNotEqual(refreshed["pre_action_frame_request_id"], bound["pre_action_frame_request_id"])
+        with self.assertRaisesRegex(ValueError, "尚未准备"):
+            recording.append_recorded_action(
+                session["id"], session["recording_token"],
+                {"event_id": "evt-stale", "type": "tap", "point": {"x": 50, "y": 60}, "device_id": "ecbfd645"},
+                store_path=self.store,
+            )
+        self.prepare_frame(session, xml='<hierarchy><node text="删除" bounds="[0,0][200,200]" /></hierarchy>')
+        step = recording.append_recorded_action(
+            session["id"], session["recording_token"],
+            {"event_id": "evt-fresh", "type": "tap", "point": {"x": 50, "y": 60}, "device_id": "ecbfd645"},
+            store_path=self.store, evidence_dir=os.path.join(self.tempdir.name, "evidence"),
+        )
+        self.assertEqual(step["ui_node"]["text"], "删除")
+
     def test_owner_controls_finish_and_state_is_persisted_atomically(self):
         session = self.create()
         with self.assertRaisesRegex(PermissionError, "发起人"):
@@ -193,6 +219,7 @@ class DeviceRecordingServiceTest(unittest.TestCase):
 
         def model_call(prompt, **kwargs):
             self.assertIn("x=80, y=120", prompt)
+            self.assertNotIn('"semantic_description":"底部导航「我的」"', prompt)
             self.assertTrue(kwargs["image_assets"][0]["base64"])
             return '{"semantic_description":"底部导航「我的」","confidence":0.95}'
 

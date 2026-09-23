@@ -233,7 +233,7 @@ test('Sonic consumes and clears a fragment handoff even when cross-site isolatio
   new window.WebSocket('ws://agent/websockets/android/secret/phone-fragment/token');
   await Promise.resolve(); await Promise.resolve();
   assert.equal(requests[0].url, 'http://platform.example/api/device-recordings/bridge');
-  assert.deepEqual(requests[0].body, {session_id:'s-fragment',recording_token:'t-fragment',device_id:'phone-fragment'});
+  assert.deepEqual(requests[0].body, {session_id:'s-fragment',recording_token:'t-fragment',device_id:'phone-fragment',refresh_evidence:true});
 });
 
 test('an already-open Sonic page consumes a later fragment handoff without reloading', () => {
@@ -351,6 +351,7 @@ test('an already-open Sonic device-center tab accepts a same-origin platform han
 test('remote phone tab never replays an action performed before the evidence handshake', async () => {
   const listeners = {};
   const sent = [];
+  const timers = [];
   const platform = {postMessage(message) { sent.push(['platform', message]); }};
   const sonicCenter = {opener: platform};
   const stored = JSON.stringify({
@@ -368,7 +369,7 @@ test('remote phone tab never replays an action performed before the evidence han
     send(data) { sent.push(['sonic', data]); }
   }
   window.WebSocket = FakeWebSocket;
-  const context = vm.createContext({window, URL, fetch: async (url, options) => { sent.push([url.endsWith('/bridge') ? 'bridge' : 'mirror', JSON.parse(options.body)]); return {ok: true}; }, Date, Math, JSON, String, Number, Object, RegExp, Error, setTimeout});
+  const context = vm.createContext({window, URL, fetch: async (url, options) => { sent.push([url.endsWith('/bridge') ? 'bridge' : 'mirror', JSON.parse(options.body)]); return {ok: true}; }, Date, Math, JSON, String, Number, Object, RegExp, Error, setTimeout(fn) { timers.push(fn); return timers.length; }, clearTimeout() {}});
   vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'deploy/sonic-recorder-hook.js'), 'utf8'), context);
 
   const socket = new window.WebSocket('ws://agent/websockets/android/secret/ecbfd645/token');
@@ -378,6 +379,8 @@ test('remote phone tab never replays an action performed before the evidence han
   socket.send(JSON.stringify({type: 'debug', detail: 'tap', point: '12,34'}));
   assert.equal(sent.filter(item => item[0] === 'mirror').length, 0);
   assert.ok(sent.some(item => item[0] === 'platform' && item[1].type === 'MIDSCENE_RECORDING_ERROR' && /未记录/.test(item[1].message)));
+  timers.shift()();
+  assert.ok(sent.some(item => item[0] === 'bridge' && item[1].refresh_evidence === true));
   listeners.message({source: platform, data: {type: 'MIDSCENE_RECORDING_BOUND', sessionId: 's-child', deviceId: 'ecbfd645'}});
   await Promise.resolve();
   assert.equal(sent.filter(item => item[0] === 'mirror').length, 0);
@@ -409,4 +412,29 @@ test('remote phone tab restores a short-lived recording handoff from Sonic local
   assert.equal(sent.at(-1).type, 'MIDSCENE_RECORDING_READY');
   listeners.message({source: platform, data: {type: 'MIDSCENE_RECORDING_BOUND', sessionId: 's-shared', deviceId: 'phone-shared'}});
   assert.ok(removed.includes('midsceneSonicRecording'));
+});
+
+test('an active remote tab older than the handoff window refreshes evidence on reconnect', async () => {
+  const listeners = {};
+  const requests = [];
+  let stored = JSON.stringify({
+    sessionId: 's-active', recordingToken: 't-active', deviceId: 'ecbfd645',
+    endpoint: 'http://platform.example/api/device-recordings/action',
+    platformOrigin: 'http://platform.example', bound: true, createdAt: Date.now() - 6 * 60 * 1000,
+  });
+  class FakeWebSocket { constructor(url) { this.url = url; } send() {} }
+  const window = {
+    WebSocket: FakeWebSocket, opener: null,
+    sessionStorage: {getItem() { return stored; }, setItem(_key, value) { stored = value; }, removeItem() { stored = null; }},
+    addEventListener(type, fn) { listeners[type] = fn; },
+  };
+  const context = vm.createContext({window, URL, fetch: async (url, options) => {
+    requests.push({url, body: JSON.parse(options.body)});
+    return {ok: true, json: async () => ({session: {pre_action_frame_status: 'pending', steps: []}})};
+  }, Date, Math, JSON, String, Number, Object, RegExp, Error, Set, setTimeout, clearTimeout});
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'deploy/sonic-recorder-hook.js'), 'utf8'), context);
+  new window.WebSocket('ws://agent/websockets/android/key/ecbfd645/token');
+  await new Promise(setImmediate);
+  assert.equal(requests[0].body.refresh_evidence, true);
+  assert.equal(requests[0].body.device_id, 'ecbfd645');
 });

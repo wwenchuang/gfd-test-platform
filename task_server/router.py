@@ -4022,6 +4022,7 @@ def _post_device_recording_bridge(handler, qs):
             payload.get("recording_token") or payload.get("recordingToken") or "",
             str(matched.get("runner_id") or ""),
             device_id,
+            refresh_evidence=payload.get("refresh_evidence") is True,
         )
     except PermissionError as exc:
         handler._json({"ok": False, "error": str(exc)}, 401)

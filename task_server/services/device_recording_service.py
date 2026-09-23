@@ -233,6 +233,7 @@ def bridge_recording_device(
     runner_id: str,
     device_id: str,
     *,
+    refresh_evidence: bool = False,
     store_path: Optional[str] = None,
     now: Optional[float] = None,
 ) -> Dict[str, Any]:
@@ -255,7 +256,7 @@ def bridge_recording_device(
         if row.get("device_id"):
             if row.get("runner_id") != runner_id or row.get("device_id") != device_id:
                 raise ValueError("录制会话已经绑定另一台手机")
-            if not row.get("pre_action_frame_status"):
+            if refresh_evidence or not row.get("pre_action_frame_status"):
                 _request_pre_action_frame(row, timestamp)
                 write_json_file(path, data)
             return _public(row)
@@ -882,8 +883,8 @@ def recognize_recording_semantics(
                 image_b64 = base64.b64encode(handle.read()).decode("ascii")
             point = item["point"]
             prompt = f"""你是手机操作录制的控件识别器。截图来自真实 Android 手机，操作类型是{item['type']}，点击坐标为 x={int(point.get('x') or 0)}, y={int(point.get('y') or 0)}（坐标基于原始整张手机截图）。
-只识别该坐标实际命中的可见控件，用适合 Midscene aiTap/aiInput 的简短中文名称回答。不要描述整页，不要猜测不可见功能。
-只输出 JSON：{{"semantic_description":"底部导航「我的」","confidence":0.95}}。无法确认时 semantic_description 为空字符串。"""
+只识别该坐标实际命中的可见控件，用适合 Midscene aiTap/aiInput 的简短中文名称回答。不要描述整页，不要猜测不可见功能，也不要沿用之前步骤的控件名称。
+只输出包含 semantic_description（控件短名称或空字符串）与 confidence（0 到 1 数值）的 JSON。无法确认时 semantic_description 为空字符串。"""
             raw = model_call(
                 prompt,
                 image_assets=[{"name": os.path.basename(item["screenshot_path"]), "mime": "image/png", "base64": image_b64}],

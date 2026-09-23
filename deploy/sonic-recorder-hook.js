@@ -17,7 +17,10 @@
   const WINDOW_HANDOFF_PREFIX = '__MIDSCENE_RECORDING_HANDOFF__';
   const HASH_HANDOFF_PREFIX = '#__MIDSCENE_RECORDING_HANDOFF__';
   const HANDOFF_MAX_AGE_MS = 5 * 60 * 1000;
+  const ACTIVE_MAX_AGE_MS = 2 * 60 * 60 * 1000;
   let bridgePollTimer = null;
+  let evidenceRefreshTimer = null;
+  let bridgeEpoch = 0;
   const NativeWindowOpen = typeof window.open === 'function' ? window.open.bind(window) : null;
   const NativeHistoryPush = typeof window.history?.pushState === 'function' ? window.history.pushState.bind(window.history) : null;
   const NativeHistoryReplace = typeof window.history?.replaceState === 'function' ? window.history.replaceState.bind(window.history) : null;
@@ -159,11 +162,12 @@
     const inherited = window.sessionStorage?.getItem(STORAGE_KEY) || window.localStorage?.getItem(STORAGE_KEY);
     if (inherited) {
       recording = JSON.parse(inherited);
+      const activeDevice = Boolean(recording?.deviceId);
       // A refreshed Sonic page must complete a fresh platform/Runner handshake
       // before it may forward actions from this new browser context.
       if (recording) recording.bound = false;
       const createdAt = Number(recording?.createdAt || 0);
-      if (!createdAt || Date.now() - createdAt > HANDOFF_MAX_AGE_MS) {
+      if (!createdAt || Date.now() - createdAt > (activeDevice ? ACTIVE_MAX_AGE_MS : HANDOFF_MAX_AGE_MS)) {
         recording = null;
         saveRecording();
       }
@@ -223,20 +227,39 @@
     bridgePollTimer = setTimeout(() => { bridgePollTimer = null; syncBridge(); }, 1000);
   }
 
-  function syncBridge(deviceId = recording?.deviceId) {
+  function scheduleEvidenceRefresh() {
+    if (!recording?.deviceId) return;
+    bridgeEpoch += 1;
+    recording.bound = false;
+    saveRecording();
+    if (evidenceRefreshTimer) clearTimeout(evidenceRefreshTimer);
+    evidenceRefreshTimer = setTimeout(() => {
+      evidenceRefreshTimer = null;
+      syncBridge(recording?.deviceId, true);
+    }, 1000);
+  }
+
+  function syncBridge(deviceId = recording?.deviceId, refreshEvidence = false) {
     if (!recording || !deviceId || !bridgeUrl()) return Promise.resolve();
     recording.deviceId = String(deviceId);
+    if (refreshEvidence) {
+      bridgeEpoch += 1;
+      recording.bound = false;
+    }
+    const epoch = bridgeEpoch;
     saveRecording();
     return fetch(bridgeUrl(), {
       method: 'POST', mode: 'cors',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({session_id: recording.sessionId, recording_token: recording.recordingToken, device_id: recording.deviceId}),
+      body: JSON.stringify({session_id: recording.sessionId, recording_token: recording.recordingToken,
+        device_id: recording.deviceId, refresh_evidence: refreshEvidence}),
     }).then(async response => {
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       if (typeof response.json !== 'function') return null;
       const payload = await response.json();
       const session = payload?.session;
       if (!session) return null;
+      if (epoch !== bridgeEpoch || evidenceRefreshTimer) return session;
       mirroredCount = Math.max(mirroredCount, ...(session.steps || []).map(item => Number(item.sequence || 0)), 0);
       const state = bridgeStepState(session);
       if (state === 'ready') {
@@ -265,6 +288,7 @@
       }
       return session;
     }).catch(error => {
+      if (epoch !== bridgeEpoch || evidenceRefreshTimer) return null;
       recording.bound = false;
       showRecorderStatus(`录制桥接失败：${String(error.message || error)}`, 'error');
       notifyPlatform({type: 'MIDSCENE_RECORDING_ERROR', message: String(error.message || error)});
@@ -279,12 +303,14 @@
       const message = '录制证据尚未准备，本次操作已在手机执行但未记录；请等待“可以开始操作”后重试';
       showRecorderStatus(message, 'error');
       notifyPlatform({type: 'MIDSCENE_RECORDING_ERROR', message});
+      scheduleEvidenceRefresh();
       return;
     }
     if (awaitingRecognition) {
       const message = `上一操作仍在确认，本次操作已在手机执行但未记录；请等待“记录成功”后重试`;
       showRecorderStatus(message, 'error');
       notifyPlatform({type: 'MIDSCENE_RECORDING_ERROR', message});
+      scheduleEvidenceRefresh();
       return;
     }
     mirroredCount += 1;
@@ -351,7 +377,7 @@
       saveRecording();
       showRecorderStatus(`已进入手机 ${recording.deviceId}，等待平台确认`);
       notifyPlatform({type: 'MIDSCENE_RECORDING_READY', sessionId: recording.sessionId, deviceId: recording.deviceId});
-      syncBridge(recording.deviceId);
+      syncBridge(recording.deviceId, true);
     }
     const nativeSend = socket.send;
     socket.send = function (data) {
