@@ -4,6 +4,7 @@ import tempfile
 import time
 import unittest
 import base64
+import io
 import struct
 
 from task_server.services import device_recording_service as recording
@@ -27,6 +28,8 @@ class DeviceRecordingServiceTest(unittest.TestCase):
         return recording.create_recording_session(**values)
 
     def prepare_frame(self, session, *, xml='<hierarchy />', ui_xml_error='', now=None):
+        if now is None:
+            now = time.time() + 3
         request = recording.pending_recording_evidence_requests(
             "win-runner-01", store_path=self.store, now=now
         )[0]
@@ -231,6 +234,50 @@ class DeviceRecordingServiceTest(unittest.TestCase):
         self.assertEqual(saved["semantic_source"], "ai_visual")
         self.assertEqual(saved["semantic_recognition_status"], "recognized")
 
+    def test_base64_image_node_is_not_used_as_a_control_name(self):
+        session = self.create()
+        self.prepare_frame(session, xml='<hierarchy><node text="Fn+i0op0v4AAAAAElFTkSuQmCC" class="android.widget.Image" bounds="[0,0][200,200]" /></hierarchy>')
+        step = recording.append_recorded_action(
+            session["id"], session["recording_token"],
+            {"event_id": "evt-image", "type": "tap", "point": {"x": 72, "y": 176}, "device_id": "ecbfd645"},
+            store_path=self.store, evidence_dir=os.path.join(self.tempdir.name, "evidence"),
+        )
+        self.assertEqual(step["ui_node"]["text"], "")
+
+    def test_visual_recognition_receives_marked_click_closeup(self):
+        try:
+            from PIL import Image
+        except ImportError:
+            self.skipTest("Pillow is not installed in this local Python environment")
+        session = self.create()
+        request = recording.pending_recording_evidence_requests("win-runner-01", store_path=self.store)[0]
+        image = Image.new("RGB", (1080, 2400), "white")
+        output = io.BytesIO()
+        image.save(output, format="PNG")
+        recording.save_recording_evidence("win-runner-01", {
+            "request_id": request["request_id"], "session_id": session["id"], "step_id": "",
+            "device_id": "ecbfd645", "content_base64": base64.b64encode(output.getvalue()).decode(),
+            "ui_xml_error": "ADB 页面结构采集失败",
+        }, store_path=self.store, evidence_dir=os.path.join(self.tempdir.name, "evidence"))
+        recording.append_recorded_action(
+            session["id"], session["recording_token"],
+            {"event_id": "evt-home", "type": "tap", "point": {"x": 115, "y": 2318}, "device_id": "ecbfd645"},
+            store_path=self.store, evidence_dir=os.path.join(self.tempdir.name, "evidence"),
+        )
+
+        def model_call(prompt, **kwargs):
+            self.assertIn("红色圆圈", prompt)
+            self.assertEqual(len(kwargs["image_assets"]), 2)
+            closeup = Image.open(io.BytesIO(base64.b64decode(kwargs["image_assets"][1]["base64"])))
+            self.assertEqual(closeup.size, (600, 600))
+            self.assertNotEqual(closeup.getpixel((115, 518)), (255, 255, 255))
+            return '{"semantic_description":"底部导航首页","confidence":0.9}'
+
+        recognized = recording.recognize_recording_semantics(
+            session["id"], "admin", store_path=self.store, model_call=model_call,
+        )
+        self.assertEqual(recognized["steps"][0]["semantic_description"], "底部导航首页")
+
     def test_finished_recording_keeps_pending_evidence_available_during_grace_period(self):
         session = self.create(now=1000)
         self.prepare_frame(session, now=1000)
@@ -347,7 +394,8 @@ class DeviceRecordingServiceTest(unittest.TestCase):
         self.assertEqual(step["ui_node"]["text"], "返回")
         current = recording.get_recording_session(session["id"], store_path=self.store)
         self.assertEqual(current["pre_action_frame_status"], "pending")
-        next_request = recording.pending_recording_evidence_requests("win-runner-01", store_path=self.store)[0]
+        self.assertEqual(recording.pending_recording_evidence_requests("win-runner-01", store_path=self.store), [])
+        next_request = recording.pending_recording_evidence_requests("win-runner-01", store_path=self.store, now=time.time() + 3)[0]
         self.assertEqual(next_request["kind"], "pre_action_frame")
         self.assertNotEqual(next_request["request_id"], request["request_id"])
 
@@ -404,7 +452,7 @@ class DeviceRecordingServiceTest(unittest.TestCase):
         evidence_dir = os.path.join(self.tempdir.name, "evidence")
         steps = []
         for index, label in enumerate(("我的", "打印记录"), 1):
-            request = recording.pending_recording_evidence_requests("win-runner-01", store_path=self.store)[0]
+            request = recording.pending_recording_evidence_requests("win-runner-01", store_path=self.store, now=time.time() + 3)[0]
             recording.save_recording_evidence("win-runner-01", {
                 "request_id": request["request_id"], "session_id": session["id"], "step_id": "", "device_id": "ecbfd645",
                 "content_base64": base64.b64encode(b"\x89PNG\r\n\x1a\n" + label.encode()).decode(),

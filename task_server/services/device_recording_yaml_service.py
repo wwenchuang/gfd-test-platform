@@ -8,6 +8,7 @@ import yaml
 
 from .yaml_executable_scorer import score_midscene_yaml_executable
 from .yaml_service import validate_midscene_yaml
+from .device_recording_service import _control_label
 
 
 def _node_description(step: Dict[str, Any]) -> str:
@@ -16,7 +17,7 @@ def _node_description(step: Dict[str, Any]) -> str:
         return reviewed[:200]
     node = step.get("ui_node") if isinstance(step.get("ui_node"), dict) else {}
     for key in ("text", "content_desc", "contentDescription", "resource_id", "resourceId"):
-        value = str(node.get(key) or "").strip()
+        value = _control_label(node.get(key))
         if value:
             if key in {"resource_id", "resourceId"}:
                 value = value.rsplit("/", 1)[-1].replace("_", " ")

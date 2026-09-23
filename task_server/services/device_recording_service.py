@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import base64
+import io
 import hashlib
 import secrets
 import threading
@@ -29,6 +30,7 @@ RECORDING_TOKEN_TTL_SECONDS = 2 * 60 * 60
 FINISHED_EVIDENCE_GRACE_SECONDS = 2 * 60
 PRE_ACTION_FRAME_RETRY_SECONDS = 3
 MAX_PRE_ACTION_FRAME_ATTEMPTS = 3
+POST_ACTION_FRAME_SETTLE_SECONDS = 1.5
 _LOCK = threading.RLock()
 
 
@@ -693,7 +695,12 @@ def pending_recording_evidence_requests(
             )
             if (row.get("status") != "recording" and not within_finished_grace) or row.get("runner_id") != runner_id:
                 continue
-            if row.get("status") == "recording" and row.get("pre_action_frame_status") == "pending":
+            # Sonic sends the action while the touch is still being dispatched. Capturing
+            # the next frame immediately can freeze a page-transition animation and then
+            # mistakenly mark that mixed frame as ready for the following tap.
+            last_action_ts = max((float(step.get("recorded_ts") or 0) for step in row.get("steps") or []), default=0)
+            frame_settled = not last_action_ts or timestamp - last_action_ts >= POST_ACTION_FRAME_SETTLE_SECONDS
+            if row.get("status") == "recording" and row.get("pre_action_frame_status") == "pending" and frame_settled:
                 requests.append({
                     "request_id": row.get("pre_action_frame_request_id"), "kind": "pre_action_frame",
                     "session_id": row["id"], "step_id": "", "device_id": row["device_id"], "sequence": 0,
@@ -705,6 +712,38 @@ def pending_recording_evidence_requests(
                         "device_id": row["device_id"], "sequence": step["sequence"],
                     })
         return requests[:10]
+
+
+def _control_label(value: Any) -> str:
+    label = str(value or "").strip()
+    if len(label) > 200 or (len(label) >= 24 and re.fullmatch(r"[A-Za-z0-9+/=]+", label)):
+        return ""
+    return label
+
+
+def _visual_image_assets(screenshot_path: str, point: Dict[str, Any]) -> list[Dict[str, str]]:
+    with open(screenshot_path, "rb") as handle:
+        png = handle.read()
+    assets = [{"name": os.path.basename(screenshot_path), "mime": "image/png", "base64": base64.b64encode(png).decode("ascii")}]
+    try:
+        from PIL import Image, ImageDraw
+        image = Image.open(io.BytesIO(png)).convert("RGB")
+        x, y = int(point.get("x") or 0), int(point.get("y") or 0)
+        side = min(600, image.width, image.height)
+        left = max(0, min(image.width - side, x - side // 2))
+        top = max(0, min(image.height - side, y - side // 2))
+        crop = image.crop((left, top, left + side, top + side))
+        cx, cy = x - left, y - top
+        draw = ImageDraw.Draw(crop)
+        draw.ellipse((cx - 20, cy - 20, cx + 20, cy + 20), outline="#ff2929", width=6)
+        draw.line((cx - 10, cy, cx + 10, cy), fill="#ff2929", width=3)
+        draw.line((cx, cy - 10, cx, cy + 10), fill="#ff2929", width=3)
+        output = io.BytesIO()
+        crop.save(output, format="PNG")
+        assets.append({"name": "tap-target-closeup.png", "mime": "image/png", "base64": base64.b64encode(output.getvalue()).decode("ascii")})
+    except (ImportError, OSError, ValueError):
+        pass
+    return assets
 
 
 def _node_at_point(xml_text: str, point_value: Dict[str, Any]) -> Dict[str, Any]:
@@ -725,8 +764,8 @@ def _node_at_point(xml_text: str, point_value: Dict[str, Any]) -> Dict[str, Any]
         return {}
     attrs = min(candidates, key=lambda item: item[0])[1]
     return {
-        "text": attrs.get("text", ""), "content_desc": attrs.get("content-desc", ""),
-        "resource_id": attrs.get("resource-id", ""), "class": attrs.get("class", ""),
+        "text": _control_label(attrs.get("text")), "content_desc": _control_label(attrs.get("content-desc")),
+        "resource_id": _control_label(attrs.get("resource-id")), "class": attrs.get("class", ""),
         "bounds": attrs.get("bounds", ""),
     }
 
@@ -852,7 +891,7 @@ def recognize_recording_semantics(
             if step_id and str(step.get("id") or "") != str(step_id):
                 continue
             node = step.get("ui_node") if isinstance(step.get("ui_node"), dict) else {}
-            node_text = next((str(node.get(key) or "").strip() for key in ("text", "content_desc", "resource_id") if str(node.get(key) or "").strip()), "")
+            node_text = next((_control_label(node.get(key)) for key in ("text", "content_desc", "resource_id") if _control_label(node.get(key))), "")
             if (
                 step.get("type") in {"tap", "text"}
                 and step.get("evidence_status") == "captured"
@@ -879,18 +918,18 @@ def recognize_recording_semantics(
     results = {}
     for item in candidates:
         try:
-            with open(item["screenshot_path"], "rb") as handle:
-                image_b64 = base64.b64encode(handle.read()).decode("ascii")
             point = item["point"]
+            image_assets = _visual_image_assets(item["screenshot_path"], point)
             prompt = f"""你是手机操作录制的控件识别器。截图来自真实 Android 手机，操作类型是{item['type']}，点击坐标为 x={int(point.get('x') or 0)}, y={int(point.get('y') or 0)}（坐标基于原始整张手机截图）。
+第一张图是整张手机截图；如果有第二张图，它是点击点附近的放大图，红色圆圈和十字标出实际点击点。优先根据第二张图识别红点命中的控件，同时用整屏图确认上下文。不要把附近但未被点击的控件当作目标。
 只识别该坐标实际命中的可见控件，用适合 Midscene aiTap/aiInput 的简短中文名称回答。不要描述整页，不要猜测不可见功能，也不要沿用之前步骤的控件名称。
 只输出包含 semantic_description（控件短名称或空字符串）与 confidence（0 到 1 数值）的 JSON。无法确认时 semantic_description 为空字符串。"""
             raw = model_call(
                 prompt,
-                image_assets=[{"name": os.path.basename(item["screenshot_path"]), "mime": "image/png", "base64": image_b64}],
+                image_assets=image_assets,
                 temperature=0.0,
                 timeout=90,
-                image_limit=1,
+                image_limit=2,
                 retry_count=0,
                 max_tokens=300,
             )

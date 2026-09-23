@@ -18,6 +18,11 @@ class DeviceRecordingYamlServiceTest(unittest.TestCase):
         self.assertTrue(result["requires_confirmation"])
         self.assertEqual(result["flow"], [])
 
+    def test_legacy_image_base64_is_not_generated_as_a_tap_name(self):
+        result = normalize_recorded_step({"type": "tap", "ui_node": {"text": "Fn+i0op0v4AAAAAElFTkSuQmCC"}})
+        self.assertEqual(result["flow"], [])
+        self.assertTrue(result["requires_confirmation"])
+
     def test_human_reviewed_semantics_resolves_ambiguous_tap(self):
         result = normalize_recorded_step({
             "type": "tap", "point": {"x": 10, "y": 20}, "semantic_description": "提交订单按钮",

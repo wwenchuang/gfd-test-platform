@@ -14,6 +14,8 @@ const deviceRecorderFailedSequenceNotified = new Set();
 let deviceRecorderSelectedStepId = '';
 let deviceRecorderHookBoundSessionId = '';
 let deviceRecorderPointDrag = null;
+const deviceRecorderEvidenceUrls = new Map();
+const deviceRecorderEvidenceLoads = new Map();
 
 function recorderDefaultAppPackage() {
   const apps = (taskApps || []).filter(app => app.enabled !== false);
@@ -76,8 +78,13 @@ function recorderModuleOptions(session) {
   return (app?.modules || []).map(name => `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`).join('');
 }
 
+function recorderNodeLabel(value) {
+  const label = String(value || '').trim();
+  return label.length > 200 || (label.length >= 24 && /^[A-Za-z0-9+/=]+$/.test(label)) ? '' : label;
+}
+
 function recorderStepDescription(step) {
-  return step.semantic_description || step.ui_node?.text || step.ui_node?.content_desc || step.ui_node?.resource_id || step.description || step.key || step.text || '';
+  return step.semantic_description || recorderNodeLabel(step.ui_node?.text) || recorderNodeLabel(step.ui_node?.content_desc) || recorderNodeLabel(step.ui_node?.resource_id) || step.description || step.key || step.text || '';
 }
 
 function recorderStepNeedsMeaning(step) {
@@ -179,13 +186,16 @@ function renderDeviceRecorder() {
 function selectRecorderStep(stepId) { deviceRecorderSelectedStepId = stepId; renderDeviceRecorder(); }
 
 async function loadRecorderEvidence(stepId) {
-  const image = document.querySelector(`[data-recorder-evidence="${CSS.escape(stepId)}"]`);
-  if (!image) return;
-  try {
-    const response = await fetch(`/api/device-recordings/evidence?id=${encodeURIComponent(deviceRecorderSession.id)}&step_id=${encodeURIComponent(stepId)}`, {headers: authHeaders()});
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    image.src = URL.createObjectURL(await response.blob());
-    image.onload = () => {
+  const sessionId = deviceRecorderSession?.id;
+  if (!sessionId) return;
+  const key = `${sessionId}:${stepId}`;
+  const showImage = url => {
+    // Polling replaces the timeline DOM while a screenshot fetch is in flight.
+    // Always attach the result to the current element, not the removed one.
+    if (deviceRecorderSession?.id !== sessionId) return;
+    const image = document.querySelector(`[data-recorder-evidence="${CSS.escape(stepId)}"]`);
+    if (!image) return;
+    const showMarker = () => {
       const marker = image.parentElement?.querySelector('i');
       const x = Number(image.dataset.pointX), y = Number(image.dataset.pointY);
       if (!marker || !image.naturalWidth || !image.naturalHeight || !Number.isFinite(x) || !Number.isFinite(y)) return;
@@ -193,7 +203,31 @@ async function loadRecorderEvidence(stepId) {
       marker.style.top = `${Math.max(0, Math.min(100, y / image.naturalHeight * 100))}%`;
       marker.hidden = false;
     };
-  } catch (_) { image.alt = '截图加载失败，请刷新后重试'; }
+    image.onload = showMarker;
+    image.src = url;
+    if (image.complete) showMarker();
+  };
+  if (deviceRecorderEvidenceUrls.has(key)) { showImage(deviceRecorderEvidenceUrls.get(key)); return; }
+  try {
+    if (!deviceRecorderEvidenceLoads.has(key)) {
+      deviceRecorderEvidenceLoads.set(key, (async () => {
+        const response = await fetch(`/api/device-recordings/evidence?id=${encodeURIComponent(sessionId)}&step_id=${encodeURIComponent(stepId)}`, {headers: authHeaders()});
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const url = URL.createObjectURL(await response.blob());
+        deviceRecorderEvidenceUrls.set(key, url);
+        if (deviceRecorderEvidenceUrls.size > 40) {
+          const oldest = deviceRecorderEvidenceUrls.keys().next().value;
+          URL.revokeObjectURL?.(deviceRecorderEvidenceUrls.get(oldest));
+          deviceRecorderEvidenceUrls.delete(oldest);
+        }
+        return url;
+      })());
+    }
+    showImage(await deviceRecorderEvidenceLoads.get(key));
+  } catch (_) {
+    const image = document.querySelector(`[data-recorder-evidence="${CSS.escape(stepId)}"]`);
+    if (image) image.alt = '截图加载失败，请刷新后重试';
+  } finally { deviceRecorderEvidenceLoads.delete(key); }
 }
 
 function recorderPointFromPointer(event, image) {

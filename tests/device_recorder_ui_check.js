@@ -9,7 +9,29 @@ const ROOT = path.resolve(__dirname, '..');
 
 test('task manager uses a new cache key for the server-bridged recorder script', () => {
   const html = fs.readFileSync(path.join(ROOT, 'task-manager.html'), 'utf8');
-  assert.match(html, /device-recorder\.js\?v=20260923-sonic-recorded-effect-v23/);
+  assert.match(html, /device-recorder\.js\?v=20260923-evidence-stability-v24/);
+});
+
+test('step screenshot survives timeline rerenders without repeated downloads', async () => {
+  const f = fixture();
+  let downloads = 0;
+  f.context.authHeaders = () => ({Authorization: 'Bearer test'});
+  f.context.CSS = {escape: value => value};
+  f.context.fetch = async () => { downloads += 1; return {ok: true, blob: async () => new Blob(['png'])}; };
+  f.context.URL = class extends URL { static createObjectURL() { return 'blob:recording-frame'; } };
+  f.run("deviceRecorderSession={id:'s1',status:'recording',app_package:'com.kfb.model',steps:[{id:'tap-1',sequence:1,type:'tap',point:{x:10,y:20},screenshot_path:'/tmp/one.png',evidence_status:'captured'}]}; renderDeviceRecorder()");
+  await f.run("loadRecorderEvidence('tap-1')");
+  f.run('renderDeviceRecorder()');
+  await f.run("loadRecorderEvidence('tap-1')");
+  assert.equal(downloads, 1);
+  assert.equal(f.dom.window.document.querySelector('[data-recorder-evidence="tap-1"]').src, 'blob:recording-frame');
+});
+
+test('legacy image bytes are shown as unrecognized instead of a control name', () => {
+  const f = fixture();
+  f.run("deviceRecorderSession={id:'s1',status:'finished',app_package:'com.kfb.model',steps:[{id:'tap-1',sequence:1,type:'tap',ui_node:{text:'Fn+i0op0v4AAAAAElFTkSuQmCC'},evidence_status:'captured'}]}; renderDeviceRecorder()");
+  assert.match(f.dom.window.document.querySelector('.device-recorder-timeline').textContent, /确认控件/);
+  assert.doesNotMatch(f.dom.window.document.querySelector('.device-recorder-timeline').textContent, /Fn\+i0op0v4/);
 });
 
 function fixture() {
