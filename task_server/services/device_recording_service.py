@@ -778,6 +778,17 @@ def save_recording_evidence(runner_id: str, payload: Dict[str, Any], *, store_pa
                     row["pre_action_frame_ui_xml_error"] = ui_xml_error
                 else:
                     row.pop("pre_action_frame_ui_xml_error", None)
+                previous_step = next((item for item in reversed(row.get("steps") or []) if item.get("type") != "checkpoint"), None)
+                if previous_step and previous_step.get("evidence_status") == "captured":
+                    previous_xml_path = str(previous_step.get("ui_xml_path") or "")
+                    if previous_xml_path and os.path.isfile(previous_xml_path) and xml_text.strip():
+                        with open(previous_xml_path, encoding="utf-8", errors="replace") as handle:
+                            previous_xml = handle.read()
+                        if previous_xml.strip():
+                            unchanged = previous_xml.strip() == xml_text.strip()
+                            previous_step["screen_change_status"] = "unchanged" if unchanged else "changed"
+                            if unchanged and previous_step.get("type") == "tap":
+                                previous_step["evidence_warning"] = "点击前后页面结构未变化；控件虽已识别，手机是否执行点击仍需核对，可重试或删除该步"
             write_json_file(path, data)
             return _public(row)
         step = next((item for item in row.get("steps") or [] if item.get("id") == step_id), None)

@@ -154,6 +154,32 @@ class DeviceRecordingServiceTest(unittest.TestCase):
         }, store_path=self.store, evidence_dir=os.path.join(self.tempdir.name, "evidence"))
         self.assertEqual(again["steps"][0]["evidence_status"], "captured")
 
+    def test_next_phone_frame_marks_tap_without_page_change_for_review(self):
+        session = self.create()
+        xml = '<hierarchy><node text="打印记录" bounds="[0,0][200,200]" /></hierarchy>'
+        self.prepare_frame(session, xml=xml)
+        step = recording.append_recorded_action(
+            session["id"], session["recording_token"],
+            {"event_id": "evt-print-history", "type": "tap", "point": {"x": 50, "y": 60}, "device_id": "ecbfd645"},
+            store_path=self.store, evidence_dir=os.path.join(self.tempdir.name, "evidence"),
+        )
+        after = self.prepare_frame(session, xml=xml)
+        saved = after["steps"][0]
+        self.assertEqual(saved["id"], step["id"])
+        self.assertEqual(saved["screen_change_status"], "unchanged")
+        self.assertIn("页面结构未变化", saved["evidence_warning"])
+
+    def test_next_phone_frame_marks_observed_change_without_claiming_navigation(self):
+        session = self.create()
+        self.prepare_frame(session, xml='<hierarchy><node text="我的" bounds="[0,0][200,200]" /></hierarchy>')
+        recording.append_recorded_action(
+            session["id"], session["recording_token"],
+            {"event_id": "evt-open", "type": "tap", "point": {"x": 50, "y": 60}, "device_id": "ecbfd645"},
+            store_path=self.store, evidence_dir=os.path.join(self.tempdir.name, "evidence"),
+        )
+        after = self.prepare_frame(session, xml='<hierarchy><node text="打印记录页" bounds="[0,0][200,200]" /></hierarchy>')
+        self.assertEqual(after["steps"][0]["screen_change_status"], "changed")
+
     def test_screenshot_is_kept_and_visually_named_when_ui_xml_is_unavailable(self):
         session = self.create()
         self.prepare_frame(session, ui_xml_error="ADB 页面结构采集失败")

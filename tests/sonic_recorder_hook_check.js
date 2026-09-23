@@ -170,6 +170,32 @@ test('bridge recognition failure with a ready next frame still permits the next 
   assert.equal(sent.filter(item => item[0] === 'platform').length, 2);
 });
 
+test('bridge accepts UI-node naming and warns when a recorded tap did not change the phone screen', async () => {
+  const listeners = {};
+  const badge = {style: {}, textContent: ''};
+  const opener = {postMessage() {}};
+  class FakeWebSocket { constructor(url) { this.url = url; } send() {} }
+  const document = {body: {appendChild() {}}, getElementById() { return badge; }, createElement() { return badge; }};
+  const window = {opener, WebSocket: FakeWebSocket, document, addEventListener(type, fn) { listeners[type] = fn; }};
+  let poll;
+  const context = vm.createContext({window, document, URL, fetch: async url => url.endsWith('/bridge')
+    ? {ok: true, json: async () => ({session: {pre_action_frame_status: 'ready', steps: poll
+      ? [{sequence: 1, type: 'tap', evidence_status: 'captured', ui_node: {text: '打印记录'}, screen_change_status: 'unchanged'}]
+      : []}})}
+    : {ok: true, json: async () => ({step: {sequence: 1}})}, Date, Math, JSON, String, Number, Object, RegExp, Error, Set,
+  setTimeout(fn) {poll = fn; return 1;}, clearTimeout() {}});
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'deploy/sonic-recorder-hook.js'), 'utf8'), context);
+  listeners.message({source: opener, origin: 'http://platform.example', data: {type: 'MIDSCENE_RECORDING_START', sessionId: 's', recordingToken: 't', endpoint: 'http://platform.example/api/device-recordings/action'}});
+  const socket = new window.WebSocket('ws://agent/websockets/android/key/phone/token');
+  await new Promise(setImmediate);
+  socket.send(JSON.stringify({type: 'debug', detail: 'tap', point: '10,20'}));
+  await new Promise(setImmediate);
+  poll();
+  await new Promise(setImmediate);
+  assert.match(badge.textContent, /页面结构未变化/);
+  assert.doesNotMatch(badge.textContent, /识别失败|记录成功/);
+});
+
 test('Sonic hook announces that it can receive a recording session after page load', () => {
   const messages = [];
   const opener = {postMessage(message, origin) { messages.push({message, origin}); }};

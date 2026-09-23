@@ -9,7 +9,7 @@ const ROOT = path.resolve(__dirname, '..');
 
 test('task manager uses a new cache key for the server-bridged recorder script', () => {
   const html = fs.readFileSync(path.join(ROOT, 'task-manager.html'), 'utf8');
-  assert.match(html, /device-recorder\.js\?v=20260922-sonic-native-recorder-v22/);
+  assert.match(html, /device-recorder\.js\?v=20260923-sonic-recorded-effect-v23/);
 });
 
 function fixture() {
@@ -215,6 +215,20 @@ test('does not confirm a recorded step until the next pre-action frame is ready'
   f.run("deviceRecorderSession.pre_action_frame_status='ready'; notifyRecorderStepResult()");
   assert.equal(replies[0].type, 'MIDSCENE_RECORDING_STEP_CONFIRMED');
   assert.equal(replies[0].success, true);
+});
+
+test('a recognized tap with an unchanged phone screen is not reported as a successful navigation', () => {
+  const f = fixture();
+  const replies = [];
+  f.context.remoteTab = {closed:false,postMessage(message){replies.push(message)}};
+  f.run("deviceRecorderWindow=remoteTab; deviceRecorderSession={id:'session-1',status:'recording',pre_action_frame_status:'ready',steps:[{id:'s1',sequence:1,type:'tap',ui_node:{text:'打印记录'},screen_change_status:'unchanged',evidence_status:'captured'}]}; notifyRecorderStepResult()");
+  assert.equal(replies.length, 1);
+  assert.equal(replies[0].success, true);
+  assert.equal(replies[0].screenUnchanged, true);
+  f.run('renderDeviceRecorder()');
+  const html = f.run("document.getElementById('editor-area').innerHTML");
+  assert.match(html, /页面结构未变化/);
+  assert.match(html, /请核对手机是否响应/);
 });
 
 test('a failed recognition is reported once and lets later steps be confirmed', () => {

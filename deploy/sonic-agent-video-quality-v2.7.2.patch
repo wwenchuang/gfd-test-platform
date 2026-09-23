@@ -1,0 +1,10 @@
+diff --git a/src/main/java/org/cloud/sonic/agent/tests/android/scrcpy/ScrcpyLocalThread.java b/src/main/java/org/cloud/sonic/agent/tests/android/scrcpy/ScrcpyLocalThread.java
+--- a/src/main/java/org/cloud/sonic/agent/tests/android/scrcpy/ScrcpyLocalThread.java
++++ b/src/main/java/org/cloud/sonic/agent/tests/android/scrcpy/ScrcpyLocalThread.java
+@@ -98,5 +98,5 @@ public class ScrcpyLocalThread extends Thread {
+         }
+         AtomicBoolean isRetry = new AtomicBoolean(false);
+         try {
+-            iDevice.executeShellCommand("CLASSPATH=/data/local/tmp/sonic-android-scrcpy.jar app_process / com.genymobile.scrcpy.Server 1.23 log_level=info max_size=0 max_fps=60 tunnel_forward=true send_frame_meta=false control=false show_touches=false stay_awake=false power_off_on_close=false clipboard_autosync=false",
++            iDevice.executeShellCommand("CLASSPATH=/data/local/tmp/sonic-android-scrcpy.jar app_process / com.genymobile.scrcpy.Server 1.23 log_level=info max_size=0 max_fps=60 bit_rate=16000000 tunnel_forward=true send_frame_meta=false control=false show_touches=false stay_awake=false power_off_on_close=false clipboard_autosync=false",
+                     new IShellOutputReceiver() {

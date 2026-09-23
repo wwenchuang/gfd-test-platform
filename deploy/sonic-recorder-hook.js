@@ -213,7 +213,8 @@
     if (!step) return awaitingRecognition ? 'pending' : 'ready';
     if (step.evidence_status === 'pending' || step.semantic_recognition_status === 'running' || session.pre_action_frame_status === 'pending') return 'pending';
     if (step.evidence_status === 'failed' || step.semantic_recognition_status === 'failed') return 'failed';
-    if (step.type === 'tap' && !String(step.semantic_description || '').trim()) return 'failed';
+    if (step.type === 'tap' && !String(step.semantic_description || step.ui_node?.text || step.ui_node?.content_desc || step.ui_node?.resource_id || '').trim()) return 'failed';
+    if (step.screen_change_status === 'unchanged' && session.pre_action_frame_status === 'ready') return 'unchanged';
     return session.pre_action_frame_status === 'ready' ? 'ready' : 'pending';
   }
 
@@ -240,8 +241,13 @@
       const state = bridgeStepState(session);
       if (state === 'ready') {
         recording.bound = session.pre_action_frame_status === 'ready';
-        if (awaitingRecognition) showRecorderStatus(`第 ${awaitingRecognition} 步记录成功，可以继续操作`, 'active');
+        if (awaitingRecognition) showRecorderStatus(`第 ${awaitingRecognition} 步控件已记录；页面结果请核对，可继续操作`, 'active');
         else if (recording.bound) showRecorderStatus(`录制中，已同步 ${mirroredCount} 步，可以开始操作`, 'active');
+        awaitingRecognition = 0;
+        saveRecording();
+      } else if (state === 'unchanged') {
+        recording.bound = true;
+        showRecorderStatus(`第 ${awaitingRecognition} 步控件已记录，但页面结构未变化；请核对手机是否响应，可重试`, 'error');
         awaitingRecognition = 0;
         saveRecording();
       } else if (state === 'failed') {
@@ -388,7 +394,9 @@
         awaitingRecognition = 0;
         recording.bound = true;
         saveRecording();
-        showRecorderStatus(`第 ${sequence} 步记录成功，可以继续操作`, 'active');
+        showRecorderStatus(data.screenUnchanged
+          ? `第 ${sequence} 步控件已记录，但页面结构未变化；请核对手机是否响应，可重试`
+          : `第 ${sequence} 步控件已记录；页面结果请核对，可继续操作`, data.screenUnchanged ? 'error' : 'active');
       } else {
         awaitingRecognition = sequence;
         recording.bound = false;
