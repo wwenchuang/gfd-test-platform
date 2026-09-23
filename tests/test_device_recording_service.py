@@ -469,14 +469,13 @@ class DeviceRecordingServiceTest(unittest.TestCase):
     def test_stale_runner_frame_cannot_name_a_later_tap(self):
         session = self.create()
         self.prepare_frame(session, xml='<hierarchy><node text="版本号" bounds="[0,0][100,100]" /></hierarchy>')
-        step = recording.append_recorded_action(
-            session["id"], session["recording_token"],
-            {"event_id": "evt-stale", "type": "tap", "point": {"x": 50, "y": 50}, "device_id": "ecbfd645"},
-            store_path=self.store, evidence_dir=os.path.join(self.tempdir.name, "evidence"), now=time.time() + 70,
-        )
-        self.assertEqual(step["evidence_status"], "failed")
-        self.assertEqual(step["ui_node"], {})
-        self.assertIn("过期", step["evidence_warning"])
+        with self.assertRaisesRegex(ValueError, "过期"):
+            recording.append_recorded_action(
+                session["id"], session["recording_token"],
+                {"event_id": "evt-stale", "type": "tap", "point": {"x": 50, "y": 50}, "device_id": "ecbfd645"},
+                store_path=self.store, evidence_dir=os.path.join(self.tempdir.name, "evidence"), now=time.time() + 70,
+            )
+        self.assertEqual(recording.get_recording_session(session["id"], store_path=self.store)["steps"], [])
 
     def test_runner_frame_remains_valid_while_user_switches_to_sonic_tab(self):
         session = self.create()
@@ -492,14 +491,59 @@ class DeviceRecordingServiceTest(unittest.TestCase):
 
     def test_idle_bridge_refreshes_runner_frame_before_it_expires(self):
         session = self.create()
-        self.prepare_frame(session)
+        self.prepare_frame(session, xml='<hierarchy><node text="打印记录" bounds="[0,0][100,100]" /></hierarchy>')
         before = recording.get_recording_session(session["id"], store_path=self.store)
         refreshed = recording.bridge_recording_device(
             session["id"], session["recording_token"], "win-runner-01", "ecbfd645",
             store_path=self.store, now=time.time() + 50,
         )
-        self.assertEqual(refreshed["pre_action_frame_status"], "pending")
+        self.assertEqual(refreshed["pre_action_frame_status"], "ready")
         self.assertNotEqual(refreshed["pre_action_frame_request_id"], before["pre_action_frame_request_id"])
+        requests = recording.pending_recording_evidence_requests("win-runner-01", store_path=self.store)
+        self.assertEqual(requests[0]["request_id"], refreshed["pre_action_frame_request_id"])
+        step = recording.append_recorded_action(
+            session["id"], session["recording_token"],
+            {"event_id": "evt-during-refresh", "type": "tap", "point": {"x": 50, "y": 50}, "device_id": "ecbfd645"},
+            store_path=self.store, evidence_dir=os.path.join(self.tempdir.name, "evidence"), now=time.time() + 51,
+        )
+        self.assertEqual(step["ui_node"]["text"], "打印记录")
+        self.assertEqual(step["evidence_status"], "captured")
+
+    def test_idle_frame_expiry_waits_for_refresh_without_reusing_old_evidence(self):
+        session = self.create()
+        self.prepare_frame(session)
+        refreshing = recording.bridge_recording_device(
+            session["id"], session["recording_token"], "win-runner-01", "ecbfd645",
+            store_path=self.store, now=time.time() + 50,
+        )
+        expired = recording.bridge_recording_device(
+            session["id"], session["recording_token"], "win-runner-01", "ecbfd645",
+            store_path=self.store, now=time.time() + 61,
+        )
+        self.assertEqual(expired["pre_action_frame_status"], "pending")
+        self.assertEqual(expired["pre_action_frame_request_id"], refreshing["pre_action_frame_request_id"])
+        with self.assertRaisesRegex(ValueError, "尚未准备"):
+            recording.append_recorded_action(
+                session["id"], session["recording_token"],
+                {"event_id": "evt-expired", "type": "tap", "point": {"x": 50, "y": 50}, "device_id": "ecbfd645"},
+                store_path=self.store, now=time.time() + 61,
+            )
+        self.prepare_frame(session)
+        self.assertEqual(recording.get_recording_session(session["id"], store_path=self.store)["pre_action_frame_status"], "ready")
+
+    def test_failed_idle_refresh_does_not_keep_claiming_ready(self):
+        session = self.create()
+        self.prepare_frame(session)
+        refreshing = recording.bridge_recording_device(
+            session["id"], session["recording_token"], "win-runner-01", "ecbfd645",
+            store_path=self.store, now=time.time() + 50,
+        )
+        failed = recording.save_recording_evidence("win-runner-01", {
+            "request_id": refreshing["pre_action_frame_request_id"], "session_id": session["id"],
+            "step_id": "", "device_id": "ecbfd645", "error": "ADB 截图超时",
+        }, store_path=self.store)
+        self.assertEqual(failed["pre_action_frame_status"], "failed")
+        self.assertFalse(failed["pre_action_frame_refresh_pending"])
 
     def test_action_is_rejected_until_the_real_pre_action_frame_is_ready(self):
         session = self.create(runner_id="", device_id="")

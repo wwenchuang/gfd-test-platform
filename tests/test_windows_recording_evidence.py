@@ -78,6 +78,21 @@ class WindowsRecordingEvidenceTest(unittest.TestCase):
         self.assertEqual(calls[0][-5:], ["settings", "put", "system", "show_touches", "1"])
         self.assertEqual(calls[1][-5:], ["settings", "put", "system", "pointer_location", "1"])
 
+    def test_uploader_enables_touch_indicators_only_once_per_device(self):
+        runner.COMPLETED_RECORDING_EVIDENCE.clear()
+        runner.ENABLED_RECORDING_TOUCH_INDICATORS.clear()
+        device = [{"device_id": "phone"}]
+        def batch(request_id):
+            return {"recording_evidence_requests": [{"request_id": request_id, "session_id": "s1", "step_id": "", "device_id": "phone"}]}
+        with mock.patch.object(runner, "resolve_adb_with_devices", return_value=("adb", ["phone"])), \
+             mock.patch.object(runner, "enable_recording_touch_indicators", return_value=[]) as indicators, \
+             mock.patch.object(runner, "capture_screen_png", return_value=b"\x89PNG\r\n\x1a\nfixture"), \
+             mock.patch.object(runner, "capture_ui_xml", return_value="<hierarchy />"), \
+             mock.patch.object(runner, "http_json", return_value={"ok": True}):
+            runner.upload_recording_evidence_requests(batch("r-first"), device)
+            runner.upload_recording_evidence_requests(batch("r-second"), device)
+        self.assertEqual(indicators.call_count, 1)
+
 
 if __name__ == "__main__":
     unittest.main()

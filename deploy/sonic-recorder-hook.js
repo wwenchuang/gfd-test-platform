@@ -18,6 +18,7 @@
   const HASH_HANDOFF_PREFIX = '#__MIDSCENE_RECORDING_HANDOFF__';
   const HANDOFF_MAX_AGE_MS = 5 * 60 * 1000;
   const ACTIVE_MAX_AGE_MS = 2 * 60 * 60 * 1000;
+  const FRAME_MAX_AGE_MS = 60 * 1000;
   let bridgePollTimer = null;
   let missedActionNeedsFrame = false;
   let bridgeEpoch = 0;
@@ -225,15 +226,21 @@
   function bridgeStepState(session) {
     const steps = Array.isArray(session?.steps) ? session.steps : [];
     const step = steps.find(item => Number(item.sequence || 0) === Number(awaitingRecognition || 0));
-    if (!step) return session?.pre_action_frame_status === 'ready' && !awaitingRecognition ? 'ready' : 'pending';
+    if (!step) return frameReady(session) && !awaitingRecognition ? 'ready' : 'pending';
     if (step.evidence_status === 'pending' || session.pre_action_frame_status === 'pending') return 'pending';
     if (step.evidence_status === 'failed' || step.semantic_recognition_status === 'failed') return 'failed';
-    if (step.semantic_recognition_status === 'running' && session.pre_action_frame_status === 'ready') return 'recognizing';
+    if (step.semantic_recognition_status === 'running' && frameReady(session)) return 'recognizing';
     if (step.type === 'tap' && !String(step.semantic_description || step.ui_node?.text || step.ui_node?.content_desc || step.ui_node?.resource_id || '').trim()) {
       return step.semantic_recognition_status === 'failed' ? 'failed' : 'recognizing';
     }
-    if (step.screen_change_status === 'unchanged' && session.pre_action_frame_status === 'ready') return 'unchanged';
-    return session.pre_action_frame_status === 'ready' ? 'ready' : 'pending';
+    if (step.screen_change_status === 'unchanged' && frameReady(session)) return 'unchanged';
+    return frameReady(session) ? 'ready' : 'pending';
+  }
+
+  function frameReady(session) {
+    if (session?.pre_action_frame_status !== 'ready') return false;
+    const captured = Number(session.pre_action_frame_captured_ts || 0);
+    return !captured || Date.now() - captured * 1000 < FRAME_MAX_AGE_MS;
   }
 
   function scheduleBridgePoll(delay = 1000) {
@@ -281,6 +288,8 @@
       const session = payload?.session;
       if (!session) return null;
       if (epoch !== bridgeEpoch) return session;
+      recording.frameExpiresAt = Number(session.pre_action_frame_captured_ts || 0)
+        ? Number(session.pre_action_frame_captured_ts) * 1000 + FRAME_MAX_AGE_MS : 0;
       mirroredCount = Math.max(mirroredCount, ...(session.steps || []).map(item => Number(item.sequence || 0)), 0);
       if (missedActionNeedsFrame && session.pre_action_frame_status !== 'pending') {
         missedActionNeedsFrame = false;
@@ -293,28 +302,28 @@
         awaitingRecognition = 0;
         saveRecording();
         showRecorderStatus(`第 ${mirroredCount} 步点击与截图已记录，控件仍在识别；下一步截图已准备，可继续操作`, 'waiting');
-        scheduleBridgePoll(15000);
+        scheduleBridgePoll(3000);
       } else if (state === 'ready') {
-        recording.bound = session.pre_action_frame_status === 'ready';
+        recording.bound = frameReady(session);
         if (awaitingRecognition) showRecorderStatus(`第 ${awaitingRecognition} 步控件已记录；页面结果请核对，可继续操作`, 'active');
         else if (recording.bound) showRecorderStatus(`录制中，已同步 ${mirroredCount} 步，可以开始操作`, 'active');
         awaitingRecognition = 0;
         saveRecording();
-        if (recording.bound) scheduleBridgePoll(15000);
+        if (recording.bound) scheduleBridgePoll(3000);
       } else if (state === 'unchanged') {
-        recording.bound = true;
+        recording.bound = frameReady(session);
         showRecorderStatus(`第 ${awaitingRecognition} 步控件已记录，但页面结构未变化；请核对手机是否响应，可重试`, 'error');
         awaitingRecognition = 0;
         saveRecording();
-        scheduleBridgePoll(15000);
+        scheduleBridgePoll(3000);
       } else if (state === 'failed') {
-        recording.bound = session.pre_action_frame_status === 'ready';
+        recording.bound = frameReady(session);
         showRecorderStatus(recording.bound
           ? `第 ${awaitingRecognition} 步识别失败，已保留；可以继续操作并稍后在平台修正`
           : `第 ${awaitingRecognition} 步识别失败，已保留；正在准备下一步截图，请暂缓操作`, 'error');
         awaitingRecognition = 0;
         saveRecording();
-        scheduleBridgePoll(recording.bound ? 15000 : 1000);
+        scheduleBridgePoll(recording.bound ? 3000 : 1000);
       } else {
         recording.bound = false;
         showRecorderStatus(awaitingRecognition ? `第 ${awaitingRecognition} 步正在采集截图并识别，请暂缓下一步` : 'Runner 正在准备真实点击前画面', 'waiting');
@@ -333,7 +342,8 @@
 
   function mirror(action) {
     if (!recording || !action) return;
-    if (!recording.bound) {
+    if (!recording.bound || (recording.frameExpiresAt && Date.now() >= recording.frameExpiresAt)) {
+      recording.bound = false;
       const message = '录制证据尚未准备，本次操作已在手机执行但未记录；请等待“可以开始操作”后重试';
       showRecorderStatus(message, 'error');
       notifyPlatform({type: 'MIDSCENE_RECORDING_ERROR', message});

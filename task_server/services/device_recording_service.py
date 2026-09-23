@@ -92,9 +92,18 @@ def _recording_token(row: Dict[str, Any], recording_token: str, timestamp: float
 
 def _request_pre_action_frame(row: Dict[str, Any], timestamp: Optional[float] = None, *, retry: bool = False) -> None:
     row["pre_action_frame_status"] = "pending"
+    row["pre_action_frame_refresh_pending"] = False
     row["pre_action_frame_request_id"] = uuid.uuid4().hex
     row["pre_action_frame_requested_ts"] = float(time.time() if timestamp is None else timestamp)
     row["pre_action_frame_attempts"] = int(row.get("pre_action_frame_attempts") or 0) + 1 if retry else 1
+    row.pop("pre_action_frame_error", None)
+
+
+def _refresh_pre_action_frame(row: Dict[str, Any], timestamp: float) -> None:
+    """Refresh an idle frame without discarding it while it is still valid."""
+    row["pre_action_frame_request_id"] = uuid.uuid4().hex
+    row["pre_action_frame_requested_ts"] = timestamp
+    row["pre_action_frame_refresh_pending"] = True
     row.pop("pre_action_frame_error", None)
 
 
@@ -261,9 +270,20 @@ def bridge_recording_device(
             if row.get("runner_id") != runner_id or row.get("device_id") != device_id:
                 raise ValueError("录制会话已经绑定另一台手机")
             frame_age = timestamp - float(row.get("pre_action_frame_captured_ts") or timestamp)
-            if (refresh_evidence or not row.get("pre_action_frame_status")
-                    or (row.get("pre_action_frame_status") == "ready" and frame_age >= PRE_ACTION_FRAME_IDLE_REFRESH_SECONDS)):
+            if refresh_evidence or not row.get("pre_action_frame_status"):
                 _request_pre_action_frame(row, timestamp)
+                write_json_file(path, data)
+            elif row.get("pre_action_frame_status") == "ready" and frame_age >= PRE_ACTION_FRAME_MAX_AGE_SECONDS:
+                if not row.get("pre_action_frame_refresh_pending"):
+                    _request_pre_action_frame(row, timestamp)
+                else:
+                    row["pre_action_frame_status"] = "pending"
+                    row["pre_action_frame_refresh_pending"] = False
+                write_json_file(path, data)
+            elif (row.get("pre_action_frame_status") == "ready"
+                  and frame_age >= PRE_ACTION_FRAME_IDLE_REFRESH_SECONDS
+                  and not row.get("pre_action_frame_refresh_pending")):
+                _refresh_pre_action_frame(row, timestamp)
                 write_json_file(path, data)
             return _public(row)
         conflict = next((item for item in data["sessions"] if item.get("id") != row.get("id") and item.get("status") in ACTIVE_STATUSES and item.get("runner_id") == runner_id and item.get("device_id") == device_id), None)
@@ -610,6 +630,9 @@ def append_recorded_action(
             return {**copy.deepcopy(existing), "duplicate": True}
         if action_type != "checkpoint" and row.get("pre_action_frame_status") != "ready":
             raise ValueError("真实点击前画面尚未准备，当前操作未记录；请等待平台提示后重试")
+        if (action_type != "checkpoint" and not action.get("evidence_content_base64")
+                and timestamp - float(row.get("pre_action_frame_captured_ts") or 0) > PRE_ACTION_FRAME_MAX_AGE_SECONDS):
+            raise ValueError("真实点击前画面已过期，当前操作未记录；请等待 Runner 更新截图")
         browser_png = None
         browser_frame_error = ""
         encoded_frame = str(action.get("evidence_content_base64") or "")
@@ -735,7 +758,9 @@ def pending_recording_evidence_requests(
             # mistakenly mark that mixed frame as ready for the following tap.
             last_action_ts = max((float(step.get("recorded_ts") or 0) for step in row.get("steps") or []), default=0)
             frame_settled = not last_action_ts or timestamp - last_action_ts >= POST_ACTION_FRAME_SETTLE_SECONDS
-            if row.get("status") == "recording" and row.get("pre_action_frame_status") == "pending" and frame_settled:
+            if (row.get("status") == "recording"
+                    and (row.get("pre_action_frame_status") == "pending" or row.get("pre_action_frame_refresh_pending"))
+                    and frame_settled):
                 requests.append({
                     "request_id": row.get("pre_action_frame_request_id"), "kind": "pre_action_frame",
                     "session_id": row["id"], "step_id": "", "device_id": row["device_id"], "sequence": 0,
@@ -841,6 +866,7 @@ def save_recording_evidence(runner_id: str, payload: Dict[str, Any], *, store_pa
             if error:
                 row["pre_action_frame_status"] = "failed"
                 row["pre_action_frame_error"] = error
+                row["pre_action_frame_refresh_pending"] = False
             else:
                 xml_text = str(payload.get("ui_xml") or payload.get("uiXml") or "")
                 encoded = str(payload.get("content_base64") or payload.get("contentBase64") or "")
@@ -858,6 +884,7 @@ def save_recording_evidence(runner_id: str, payload: Dict[str, Any], *, store_pa
                 write_bytes_file(png_path, png)
                 write_text_file(xml_path, xml_text)
                 row["pre_action_frame_status"] = "ready"
+                row["pre_action_frame_refresh_pending"] = False
                 row["pre_action_frame_captured_ts"] = time.time()
                 row["pre_action_frame_path"] = png_path
                 row["pre_action_frame_xml_path"] = xml_path

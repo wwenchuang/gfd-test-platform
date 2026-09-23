@@ -24,6 +24,7 @@ CALLBACK_OUTBOX_DIR = WORKSPACE / "callback_outbox"
 RUNNER_VERSION = os.getenv("MIDSCENE_RUNNER_VERSION", "2026.09.22-midscene1.13-qwen3.7-result-retry-v1-recording-evidence-v3")
 MIDSCENE_REQUIRED_VERSION = "1.13.0"
 COMPLETED_RECORDING_EVIDENCE = set()
+ENABLED_RECORDING_TOUCH_INDICATORS = set()
 RUNNER_STARTED_AT = time.strftime("%Y-%m-%d %H:%M:%S")
 POLL_INTERVAL = int(os.getenv("POLL_INTERVAL", "3"))
 MIDSCENE_BIN = os.getenv("MIDSCENE_BIN", "midscene")
@@ -766,7 +767,9 @@ def upload_recording_evidence_requests(response, devices):
         try:
             if device_id not in available:
                 raise RuntimeError("录制设备已离线，无法采集证据")
-            enable_recording_touch_indicators(adb_bin, device_id)
+            if device_id not in ENABLED_RECORDING_TOUCH_INDICATORS:
+                if not enable_recording_touch_indicators(adb_bin, device_id):
+                    ENABLED_RECORDING_TOUCH_INDICATORS.add(device_id)
             coordinate_width, coordinate_height = recording_coordinate_size(available[device_id].get("resolution"))
             if coordinate_width and coordinate_height:
                 payload["coordinate_width"] = coordinate_width

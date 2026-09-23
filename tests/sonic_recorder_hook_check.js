@@ -47,7 +47,7 @@ test('Sonic rechecks ready evidence while the user pauses between actions', asyn
   listeners.message({source: opener, origin: 'http://platform.example', data: {type: 'MIDSCENE_RECORDING_START', sessionId: 'pause', recordingToken: 't', endpoint: 'http://platform.example/api/device-recordings/action'}});
   new window.WebSocket('ws://agent/websockets/android/key/phone/token');
   await new Promise(setImmediate);
-  assert.ok(scheduled.some(item => item.delay === 15000));
+  assert.ok(scheduled.some(item => item.delay === 3000));
 });
 
 test('Sonic footer keyEvent back and home are mirrored with the native command', async () => {
@@ -392,6 +392,33 @@ test('early touches wait for an in-flight frame before requesting one replacemen
   await new Promise(setImmediate);
   assert.deepEqual(bridgeCalls.map(call=>call.refresh_evidence), [true,false,false,true]);
   assert.equal(sent.length,2);
+});
+
+test('an expired Runner frame cannot leave Sonic claiming that recording is ready', async () => {
+  const listeners = {};
+  const sent = [];
+  const pending = [];
+  const badge = {style:{}, textContent:''};
+  const opener = {postMessage(){}};
+  class FakeWebSocket { constructor(url){this.url=url} send(data){sent.push(JSON.parse(data).detail)} }
+  const document = {body:{appendChild(){}},getElementById(){return badge},createElement(){return badge}};
+  const window = {opener,WebSocket:FakeWebSocket,document,addEventListener(type,fn){listeners[type]=fn;}};
+  const requests = [];
+  const context = vm.createContext({window,document,URL,fetch:async(url,options)=>{
+    requests.push(url);
+    return {ok:true,json:async()=>({session:{pre_action_frame_status:'ready',
+      pre_action_frame_captured_ts:(Date.now()-70000)/1000,steps:[]}})};
+  },Date,Math,JSON,String,Number,Object,RegExp,Error,Set,
+  setTimeout(fn){pending.push(fn);return pending.length},clearTimeout(){}});
+  vm.runInContext(fs.readFileSync(path.join(__dirname,'..','deploy/sonic-recorder-hook.js'),'utf8'),context);
+  listeners.message({source:opener,origin:'http://platform.example',data:{type:'MIDSCENE_RECORDING_START',sessionId:'expired',recordingToken:'t',endpoint:'http://platform.example/api/device-recordings/action'}});
+  const socket = new window.WebSocket('ws://agent/websockets/android/key/phone/token');
+  await new Promise(setImmediate);
+  assert.doesNotMatch(badge.textContent, /可以开始操作/);
+  socket.send(JSON.stringify({type:'debug',detail:'tap',point:'10,10'}));
+  await new Promise(setImmediate);
+  assert.equal(sent.length,1);
+  assert.equal(requests.filter(url=>url.endsWith('/action')).length,0);
 });
 
 test('a rejected action resynchronizes evidence and an expired token stops the session', async () => {
