@@ -606,6 +606,24 @@ def append_recorded_action(
             return {**copy.deepcopy(existing), "duplicate": True}
         if action_type != "checkpoint" and row.get("pre_action_frame_status") != "ready":
             raise ValueError("真实点击前画面尚未准备，当前操作未记录；请等待平台提示后重试")
+        browser_png = None
+        browser_frame_error = ""
+        encoded_frame = str(action.get("evidence_content_base64") or "")
+        if action_type != "checkpoint" and encoded_frame:
+            try:
+                if len(encoded_frame) > 17 * 1024 * 1024:
+                    raise ValueError("画面过大")
+                browser_png = base64.b64decode(encoded_frame, validate=True)
+                width, height = _png_dimensions(browser_png)
+                if len(browser_png) > 12 * 1024 * 1024 or not (100 <= width <= 4096 and 100 <= height <= 8192):
+                    raise ValueError("画面尺寸或格式无效")
+            except (ValueError, base64.binascii.Error) as exc:
+                browser_png = None
+                browser_frame_error = f"Sonic 当前画面采集失败：{exc}"
+        scale_row = row
+        if browser_png:
+            scale_row = dict(row)
+            scale_row["pre_action_frame_image_width"], scale_row["pre_action_frame_image_height"] = _png_dimensions(browser_png)
         sequence = max([int(step.get("sequence") or 0) for step in row.get("steps") or []] or [0]) + 1
         normalized = {
             "id": uuid.uuid4().hex,
@@ -619,14 +637,14 @@ def append_recorded_action(
         }
         if action_type == "tap":
             point = action.get("point") if isinstance(action.get("point"), dict) else {}
-            normalized["point"], raw_point, transform = _scaled_point(point, row)
+            normalized["point"], raw_point, transform = _scaled_point(point, scale_row)
             normalized["recorded_point"] = copy.deepcopy(normalized["point"])
             if raw_point:
                 normalized["raw_point"] = raw_point
                 normalized["coordinate_transform"] = transform
         elif action_type == "swipe":
-            normalized["start"], raw_start, transform = _scaled_point(action.get("start") or {}, row)
-            normalized["end"], raw_end, _ = _scaled_point(action.get("end") or {}, row)
+            normalized["start"], raw_start, transform = _scaled_point(action.get("start") or {}, scale_row)
+            normalized["end"], raw_end, _ = _scaled_point(action.get("end") or {}, scale_row)
             if raw_start or raw_end:
                 normalized["raw_start"] = raw_start or copy.deepcopy(normalized["start"])
                 normalized["raw_end"] = raw_end or copy.deepcopy(normalized["end"])
@@ -647,14 +665,20 @@ def append_recorded_action(
         if action_type != "checkpoint" and row.get("pre_action_frame_status") == "ready":
             source_png = str(row.get("pre_action_frame_path") or "")
             source_xml = str(row.get("pre_action_frame_xml_path") or "")
-            if os.path.isfile(source_png):
+            cached_frame_age = timestamp - float(row.get("pre_action_frame_captured_ts") or timestamp)
+            if browser_png or os.path.isfile(source_png):
                 root = os.path.join(evidence_dir or DEVICE_RECORDING_EVIDENCE_DIR, session_id)
                 png_path = os.path.join(root, f"{normalized['id']}.png")
                 xml_path = os.path.join(root, f"{normalized['id']}.xml")
-                with open(source_png, "rb") as handle:
-                    png = handle.read()
+                if browser_png:
+                    png = browser_png
+                    normalized["evidence_source"] = "sonic_live_frame"
+                else:
+                    with open(source_png, "rb") as handle:
+                        png = handle.read()
+                    normalized["evidence_source"] = "runner_cached_frame"
                 xml_text = ""
-                if source_xml and os.path.isfile(source_xml):
+                if not browser_png and source_xml and os.path.isfile(source_xml):
                     with open(source_xml, encoding="utf-8", errors="replace") as handle:
                         xml_text = handle.read()
                 write_bytes_file(png_path, png)
@@ -667,6 +691,10 @@ def append_recorded_action(
                     normalized["ui_xml_error"] = row["pre_action_frame_ui_xml_error"]
                 target_point = normalized.get("point") or normalized.get("end") or {}
                 normalized["ui_node"] = _node_at_point(xml_text, target_point)
+                if browser_frame_error or (not browser_png and cached_frame_age > 5):
+                    normalized["evidence_status"] = "failed"
+                    normalized["evidence_warning"] = browser_frame_error or "点击前截图已过期，不能据此识别控件；请人工核对"
+                    normalized["ui_node"] = {}
         row.setdefault("steps", []).append(normalized)
         if action_type != "checkpoint":
             _request_pre_action_frame(row, timestamp)
@@ -805,6 +833,7 @@ def save_recording_evidence(runner_id: str, payload: Dict[str, Any], *, store_pa
                 write_bytes_file(png_path, png)
                 write_text_file(xml_path, xml_text)
                 row["pre_action_frame_status"] = "ready"
+                row["pre_action_frame_captured_ts"] = time.time()
                 row["pre_action_frame_path"] = png_path
                 row["pre_action_frame_xml_path"] = xml_path
                 row["pre_action_frame_sha256"] = hashlib.sha256(png).hexdigest()

@@ -399,6 +399,34 @@ class DeviceRecordingServiceTest(unittest.TestCase):
         self.assertEqual(next_request["kind"], "pre_action_frame")
         self.assertNotEqual(next_request["request_id"], request["request_id"])
 
+    def test_action_prefers_current_sonic_frame_over_stale_runner_frame(self):
+        session = self.create()
+        self.prepare_frame(session, xml='<hierarchy><node text="版本号" bounds="[0,0][100,100]" /></hierarchy>')
+        current_frame = b"\x89PNG\r\n\x1a\n" + b"\x00\x00\x00\rIHDR" + struct.pack(">II", 200, 400) + b"current frame"
+        step = recording.append_recorded_action(
+            session["id"], session["recording_token"],
+            {"event_id": "evt-current", "type": "tap", "point": {"x": 50, "y": 100},
+             "device_id": "ecbfd645", "evidence_content_base64": base64.b64encode(current_frame).decode()},
+            store_path=self.store, evidence_dir=os.path.join(self.tempdir.name, "evidence"),
+        )
+        with open(step["screenshot_path"], "rb") as handle:
+            self.assertEqual(handle.read(), current_frame)
+        self.assertEqual(step["evidence_source"], "sonic_live_frame")
+        self.assertEqual(step["point"], {"x": 50, "y": 100})
+        self.assertEqual(step["ui_node"], {})
+
+    def test_stale_runner_frame_cannot_name_a_later_tap(self):
+        session = self.create()
+        self.prepare_frame(session, xml='<hierarchy><node text="版本号" bounds="[0,0][100,100]" /></hierarchy>')
+        step = recording.append_recorded_action(
+            session["id"], session["recording_token"],
+            {"event_id": "evt-stale", "type": "tap", "point": {"x": 50, "y": 50}, "device_id": "ecbfd645"},
+            store_path=self.store, evidence_dir=os.path.join(self.tempdir.name, "evidence"), now=time.time() + 10,
+        )
+        self.assertEqual(step["evidence_status"], "failed")
+        self.assertEqual(step["ui_node"], {})
+        self.assertIn("过期", step["evidence_warning"])
+
     def test_action_is_rejected_until_the_real_pre_action_frame_is_ready(self):
         session = self.create(runner_id="", device_id="")
         recording.bind_recording_device(

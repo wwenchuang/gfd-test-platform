@@ -229,7 +229,9 @@
     if (step.evidence_status === 'pending' || session.pre_action_frame_status === 'pending') return 'pending';
     if (step.evidence_status === 'failed' || step.semantic_recognition_status === 'failed') return 'failed';
     if (step.semantic_recognition_status === 'running' && session.pre_action_frame_status === 'ready') return 'recognizing';
-    if (step.type === 'tap' && !String(step.semantic_description || step.ui_node?.text || step.ui_node?.content_desc || step.ui_node?.resource_id || '').trim()) return 'failed';
+    if (step.type === 'tap' && !String(step.semantic_description || step.ui_node?.text || step.ui_node?.content_desc || step.ui_node?.resource_id || '').trim()) {
+      return step.semantic_recognition_status === 'failed' ? 'failed' : 'recognizing';
+    }
     if (step.screen_change_status === 'unchanged' && session.pre_action_frame_status === 'ready') return 'unchanged';
     return session.pre_action_frame_status === 'ready' ? 'ready' : 'pending';
   }
@@ -348,13 +350,14 @@
     recording.bound = false;
     saveRecording();
     showRecorderStatus(`第 ${mirroredCount} 步已收到，正在采集截图并识别，请暂缓下一步`, 'waiting');
+    const frame = captureRenderedFrame();
     const body = JSON.stringify({
       session_id: recording.sessionId,
       recording_token: recording.recordingToken,
-      action: {...action, event_id: id(), device_id: recording.deviceId},
+      action: {...action, ...frame, event_id: id(), device_id: recording.deviceId},
     });
     fetch(recording.endpoint, {
-      method: 'POST', mode: 'cors', keepalive: !action.evidence_content_base64,
+      method: 'POST', mode: 'cors', keepalive: !frame.evidence_content_base64,
       headers: {'Content-Type': 'application/json'}, body,
     }).then(async response => {
       if (recording?.sessionId !== actionSessionId) return;
@@ -381,6 +384,25 @@
       notifyPlatform({type: 'MIDSCENE_RECORDING_ERROR', message: String(error.message || error)});
       scheduleEvidenceRefresh();
     });
+  }
+
+  function captureRenderedFrame() {
+    try {
+      const video = document.getElementById('scrcpy-video');
+      let canvas;
+      if (video && video.readyState >= 2 && video.videoWidth > 1 && video.videoHeight > 1) {
+        canvas = document.createElement('canvas');
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
+      } else {
+        canvas = document.getElementById('canvas');
+      }
+      if (!canvas || canvas.width < 2 || canvas.height < 2 || typeof canvas.toDataURL !== 'function') return {};
+      const encoded = canvas.toDataURL('image/png');
+      if (!encoded.startsWith('data:image/png;base64,') || encoded.length > 17 * 1024 * 1024) return {};
+      return {evidence_content_base64: encoded.slice('data:image/png;base64,'.length), evidence_width: canvas.width, evidence_height: canvas.height};
+    } catch (_) { return {}; }
   }
 
   function mirroredAction(message) {
@@ -437,8 +459,8 @@
           action = mirroredAction(JSON.parse(data));
         }
       } catch (_) {}
-      // Sonic owns phone rendering and touch delivery. The platform mirrors only
-      // action metadata; the Windows Runner supplies stable pre-action evidence.
+      // Sonic owns phone rendering and touch delivery. Capture its current frame
+      // after dispatch; the browser cannot paint a later frame until this call returns.
       nativeSend.call(socket, data);
       mirror(action);
     };

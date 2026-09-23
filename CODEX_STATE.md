@@ -12340,3 +12340,15 @@ git diff --check
 - 临时 YAML 保存于 `3D打印基线/录制验收-我的打印记录返回首页-20260923.yaml` 后提交单用例调试，任务 `job_1790178464176_00001` 在执行第一条 YAML 动作之前失败，Windows Runner 报 `Cannot find module './db.json'`，加载栈指向全局 `@midscene/cli/node_modules/mime-db/index.js`。报告的“缺少后置关闭 App”是错误归因，不是这次运行的根因；不能宣称 YAML 回放通过。
 - 平台后端已新增 `runtime_dependency` 环境分类，优先于 YAML 结构审查，并禁止对这类故障生成 YAML 修复。专项 3 项测试、后端静态 63 项、主链 Python 语法与 `git diff --check` 通过。线上 Windows Runner 当前上报 `win-runner-01`、主机 `DESKTOP-QFK9QPK`、Midscene CLI `1.13.0`、版本 `recording-evidence-v2`；华为堡垒机仅列出其他三台主机，未提供该 Runner 的直连入口，因此 npm 依赖仍需在这台 Windows 主机上修复并重跑原 YAML。
 - 临时 YAML 经 API 删除，复查返回 404；调试任务保留作为失败证据。正式闭环仍须在 Windows Runner 依赖恢复后重跑，核对每一步手机目标页及报告。若需要包含“删除一条打印记录”，先建立明确可删除的测试记录再录制及回放，避免误删真实数据。
+
+## 2026-09-24 QA 部署与 Windows Runner 复验
+
+- QA 服务器因 GitHub `git pull` TLS 断连未自动更新，改用已核验的 Git bundle 调用原 `deploy/update-main-server.sh` 完成部署；公网 `/api/health` 返回 `release_revision=baea06e5fa2c3ae951f0f2544b6064b1c5a6221a`，Sonic hook 同步校验通过。
+- Chrome 平台显示 `win-runner-01` 在线，PHM110/OPPO Reno9 `ecbfd645` 在线。新建仅含 `launch: com.kfb.model` 的临时 YAML，提交单用例任务 `job_1790181890310_00001`。任务在任何 YAML 操作前失败，原始日志仍为 `Cannot find module './db.json'`，加载栈为 `C:\Users\gfd\AppData\Roaming\npm\node_modules\@midscene\cli\node_modules\mime-db\index.js`。新版失败分类正确显示 `env_issue / runtime_dependency / 0.99`，未误判成业务脚本问题。
+- 临时文件 `3D打印基线/Runner依赖冒烟-20260924.yaml` 已经 API 删除，GET 核验 404；失败任务保留证据。Windows 主机 `DESKTOP-QFK9QPK` 的 Midscene CLI 依赖仍需修复；在最小启动冒烟通过前，不能宣称录制 YAML 回放通过，也不执行包含删除打印记录的脚本。
+
+## 2026-09-24 Chrome 录制证据时序复查
+
+- QA 已部署 `d4a37e8` 后，Chrome 真机录制 PHM110 `ecbfd645` 复现两处时序缺陷：第一步点击“我的”时保存了旧的 Sonic 启动画面并误识别为版本号；第二步点击“打印记录”确实进入该页，但 Sonic 先提示识别失败，平台随后才显示正确的“打印记录”。第二张截图稍后成功加载，不是持久的截图读取故障。失真测试会话 `44995aceb88f4de19a7c8b3f305f00b3` 已取消。
+- 当前修改让 Sonic 在发送触控后、浏览器绘制下一帧前读取正在显示的手机画面，作为该动作的首选点击前证据；服务端不混用旧 Runner UI XML，按实际图片尺寸映射坐标。Runner 缓存超过 5 秒时只保留为待人工核对证据，不再据旧画面自动命名控件。录制页及 Sonic 桥接不再把尚未完成的视觉识别提前报为失败。
+- 本地录制服务 30 项（1 skip）、Sonic 钩子 25 项、录制页 26 项、后端静态 63 项、前端静态 84 项及主链编译/JS 语法/差异检查通过。仍需部署 QA，Chrome 实测当前帧准确性、“我的 → 打印记录 → 返回”、YAML 生成保存及 Runner 回放；Windows Midscene CLI `mime-db/db.json` 缺失阻断回放时要明确报告。

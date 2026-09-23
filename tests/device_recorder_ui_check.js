@@ -9,7 +9,7 @@ const ROOT = path.resolve(__dirname, '..');
 
 test('task manager uses a new cache key for the server-bridged recorder script', () => {
   const html = fs.readFileSync(path.join(ROOT, 'task-manager.html'), 'utf8');
-  assert.match(html, /device-recorder\.js\?v=20260924-recorder-poll-v26/);
+  assert.match(html, /device-recorder\.js\?v=20260924-recorder-live-frame-v27/);
 });
 
 test('step screenshot survives timeline rerenders without repeated downloads', async () => {
@@ -251,6 +251,19 @@ test('does not confirm a recorded step until the next pre-action frame is ready'
   assert.equal(replies.length, 0);
   f.run("deviceRecorderSession.pre_action_frame_status='ready'; notifyRecorderStepResult()");
   assert.equal(replies[0].type, 'MIDSCENE_RECORDING_STEP_CONFIRMED');
+  assert.equal(replies[0].success, true);
+});
+
+test('does not announce recognition failure while visual identification is still pending', () => {
+  const f = fixture();
+  const replies = [];
+  f.context.remoteTab = {closed:false,postMessage(message){replies.push(message)}};
+  f.run("deviceRecorderWindow=remoteTab; deviceRecorderSession={id:'session-1',status:'recording',pre_action_frame_status:'ready',steps:[{id:'s1',sequence:1,type:'tap',evidence_status:'captured'}]}; notifyRecorderStepResult()");
+  assert.equal(replies.length, 0);
+  f.run("deviceRecorderSession.steps[0].semantic_recognition_status='running'; notifyRecorderStepResult()");
+  assert.equal(replies.length, 0);
+  f.run("deviceRecorderSession.steps[0].semantic_recognition_status='recognized'; deviceRecorderSession.steps[0].semantic_description='打印记录'; notifyRecorderStepResult()");
+  assert.equal(replies.length, 1);
   assert.equal(replies[0].success, true);
 });
 

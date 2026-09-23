@@ -458,6 +458,7 @@ function notifyRecorderStepResult() {
   if (!deviceRecorderWindow || deviceRecorderWindow.closed || !deviceRecorderSession) return;
   const step = (deviceRecorderSession.steps || []).filter(item => Number(item.sequence || 0) > deviceRecorderConfirmedSequence).sort((a,b) => Number(a.sequence || 0) - Number(b.sequence || 0))[0];
   if (!step || step.evidence_status === 'pending' || step.semantic_recognition_status === 'running') return;
+  if (recorderStepNeedsMeaning(step) && step.evidence_status !== 'failed' && step.semantic_recognition_status !== 'failed') return;
   if (deviceRecorderSession.pre_action_frame_status === 'pending') return;
   const success = !recorderStepNeedsMeaning(step)
     && step.evidence_status !== 'failed'
