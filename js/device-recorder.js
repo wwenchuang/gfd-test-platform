@@ -173,7 +173,7 @@ function renderDeviceRecorder() {
           ${['paused','generating'].includes(session?.status) ? '<button class="btn-sm danger" data-action="cancel-recording" onclick="cancelDeviceRecording()">取消录制</button>' : ''}
           ${session?.status === 'finished' ? `<button class="btn-sm ai" data-action="generate-recording-yaml" ${recorderCanGenerate(session) ? '' : 'disabled'} onclick="generateDeviceRecordingYaml()">${recorderGenerateLabel(session)}</button>` : ''}
         </div><div id="device-recorder-message" class="generate-hint">${session ? `手机：${escapeHtml(session.device_id || '等待在 Sonic 选择')} · 会话：${escapeHtml(session.id)} · ${escapeHtml(deviceRecorderBridgeState)}` : '录制手机只在 Sonic 选择一次；短期交接信息只放在浏览器片段中，不会发送给 Sonic 服务器，并会在页面加载时立即清除。'}</div>
-        ${session?.status === 'finished' ? `<div class="device-recorder-save"><label class="modal-label">用例名称</label><input id="device-recorder-task-name" value="录制生成用例" oninput="syncRecorderFileName(this.value)"><label class="modal-label">保存到模块</label><select id="device-recorder-module">${recorderModuleOptions(session)}</select>${recorderModuleOptions(session) ? '' : '<div class="agent-risk show">当前应用没有已关联模块，请先到应用配置关联模块。</div>'}<label class="modal-label">YAML 文件名</label><input id="device-recorder-file" value="录制生成用例.yaml" oninput="deviceRecorderFileNameEdited=true"><button class="btn-sm success" ${deviceRecorderGenerated && recorderModuleOptions(session) ? '' : 'disabled'} onclick="saveDeviceRecordingYaml()">保存到用例资产</button></div>` : ''}
+        ${session?.status === 'finished' ? `<div class="device-recorder-save"><label class="modal-label">用例名称</label><input id="device-recorder-task-name" value="${escapeHtml(deviceRecorderGenerated?.task_name || '录制生成用例')}" oninput="syncRecorderFileName(this.value)"><div id="device-recorder-name-note" class="generate-hint" hidden>名称已修改；保存时会按新名称重新生成 YAML。</div><label class="modal-label">保存到模块</label><select id="device-recorder-module">${recorderModuleOptions(session)}</select>${recorderModuleOptions(session) ? '' : '<div class="agent-risk show">当前应用没有已关联模块，请先到应用配置关联模块。</div>'}<label class="modal-label">YAML 文件名</label><input id="device-recorder-file" value="${escapeHtml(deviceRecorderGenerated?.task_name || '录制生成用例')}.yaml" oninput="deviceRecorderFileNameEdited=true"><button class="btn-sm success" ${deviceRecorderGenerated && recorderModuleOptions(session) ? '' : 'disabled'} onclick="saveDeviceRecordingYaml()">保存到用例资产</button></div>` : ''}
       </section>
       <section class="review-panel"><div class="review-head compact"><div><h3>步骤时间线</h3><p>${steps.length + (hasAutomaticLaunch ? 1 : 0)} 个步骤${hasAutomaticLaunch ? '（含自动启动）' : ''}</p></div>${session?.status === 'recording' ? '<button class="btn-sm" onclick="addRecorderCheckpoint()">添加检查点</button>' : ''}</div>
         <div class="device-recorder-track">${steps.map(step => `<button class="${step.id === selectedStep?.id ? 'active' : ''}" onclick="selectRecorderStep('${escapeHtml(step.id)}')"><span>${Number(step.sequence || 0) + (hasAutomaticLaunch ? 1 : 0)}</span><small>${step.screen_change_status === 'unchanged' ? '⚠ ' : ''}${escapeHtml(recorderStepDescription(step) || '待识别')}</small></button>`).join('')}</div>
@@ -295,6 +295,8 @@ function leaveDeviceRecorder() {
 }
 
 function syncRecorderFileName(taskName) {
+  const note = document.getElementById('device-recorder-name-note');
+  if (note) note.hidden = !deviceRecorderGenerated?.yaml || String(taskName || '').trim() === deviceRecorderGenerated.task_name;
   if (deviceRecorderFileNameEdited) return;
   const file = document.getElementById('device-recorder-file');
   if (!file) return;
@@ -633,18 +635,28 @@ async function generateDeviceRecordingYaml() {
   const box = document.getElementById('device-recorder-yaml');
   box.hidden = false;
   box.textContent = data.result.yaml;
-  showToast(data.result.can_debug ? 'YAML 已生成并通过基础校验' : `YAML 已生成，但还有 ${data.result.issues?.length || 1} 个问题需要处理`, data.result.can_debug ? 'success' : 'warn');
+  showToast(data.result.can_debug ? 'YAML 静态校验通过；仍需 Runner 真机回放验证' : `YAML 已生成，但还有 ${data.result.issues?.length || 1} 个问题需要处理`, data.result.can_debug ? 'success' : 'warn');
   const save = document.querySelector('.device-recorder-save button');
   if (save) save.disabled = false;
 }
 
 async function saveDeviceRecordingYaml() {
   if (!deviceRecorderGenerated?.yaml) return showToast('请先生成 YAML', 'error');
+  const taskName = document.getElementById('device-recorder-task-name')?.value.trim() || '录制生成用例';
   const moduleName = document.getElementById('device-recorder-module')?.value || '';
   let fileName = document.getElementById('device-recorder-file')?.value.trim() || '';
   if (!moduleName || !fileName) return showToast('请选择模块并填写文件名', 'error');
   if (!/\.ya?ml$/i.test(fileName)) fileName += '.yaml';
-  await apiRequest('/file', {method: 'POST', body: JSON.stringify({module: moduleName, file: fileName, content: deviceRecorderGenerated.yaml})});
+  try {
+    if (deviceRecorderGenerated.task_name !== taskName) {
+      const data = await apiRequest('/device-recordings/generate', {method: 'POST', body: JSON.stringify({session_id: deviceRecorderSession.id, task_name: taskName})});
+      deviceRecorderGenerated = data.result;
+      deviceRecorderSession = data.session || deviceRecorderSession;
+      const box = document.getElementById('device-recorder-yaml');
+      if (box) box.textContent = data.result.yaml;
+    }
+    await apiRequest('/file', {method: 'POST', body: JSON.stringify({module: moduleName, file: fileName, content: deviceRecorderGenerated.yaml})});
+  } catch (error) { return showToast(error.message || '保存录制 YAML 失败', 'error'); }
   if (!modules[moduleName]) modules[moduleName] = [];
   if (!modules[moduleName].includes(fileName)) modules[moduleName].push(fileName);
   showToast(deviceRecorderGenerated.requires_confirmation ? '草稿已保存；确认有歧义步骤后再调试' : 'YAML 已保存到用例资产', deviceRecorderGenerated.requires_confirmation ? 'warn' : 'success');

@@ -209,6 +209,35 @@ class DeviceRecordingServiceTest(unittest.TestCase):
         after = self.prepare_frame(session, xml='<hierarchy><node text="打印记录页" bounds="[0,0][200,200]" /></hierarchy>')
         self.assertEqual(after["steps"][0]["screen_change_status"], "changed")
 
+    def test_next_phone_image_warns_when_webview_has_no_ui_xml_and_screen_is_unchanged(self):
+        from PIL import Image
+
+        def frame(color):
+            output = io.BytesIO()
+            Image.new("RGB", (108, 241), color).save(output, format="PNG")
+            return base64.b64encode(output.getvalue()).decode()
+
+        session = self.create()
+        request = recording.pending_recording_evidence_requests("win-runner-01", store_path=self.store)[0]
+        recording.save_recording_evidence("win-runner-01", {
+            "request_id": request["request_id"], "session_id": session["id"],
+            "device_id": "ecbfd645", "content_base64": frame("white"),
+            "ui_xml_error": "WebView UI XML unavailable",
+        }, store_path=self.store, evidence_dir=os.path.join(self.tempdir.name, "evidence"))
+        recording.append_recorded_action(
+            session["id"], session["recording_token"],
+            {"event_id": "evt-visual-unchanged", "type": "tap", "point": {"x": 50, "y": 60}, "device_id": "ecbfd645"},
+            store_path=self.store, evidence_dir=os.path.join(self.tempdir.name, "evidence"),
+        )
+        request = recording.pending_recording_evidence_requests("win-runner-01", store_path=self.store, now=time.time() + 3)[0]
+        after = recording.save_recording_evidence("win-runner-01", {
+            "request_id": request["request_id"], "session_id": session["id"],
+            "device_id": "ecbfd645", "content_base64": frame("white"),
+            "ui_xml_error": "WebView UI XML unavailable",
+        }, store_path=self.store, evidence_dir=os.path.join(self.tempdir.name, "evidence"))
+        self.assertEqual(after["steps"][0]["screen_change_status"], "unchanged")
+        self.assertIn("画面几乎未变化", after["steps"][0]["evidence_warning"])
+
     def test_screenshot_is_kept_and_visually_named_when_ui_xml_is_unavailable(self):
         session = self.create()
         self.prepare_frame(session, ui_xml_error="ADB 页面结构采集失败")

@@ -52,6 +52,7 @@ class DeviceRecordingYamlServiceTest(unittest.TestCase):
             ],
         }
         result = generate_recording_yaml(session, task_name="打开个人中心")
+        self.assertEqual(result["task_name"], "打开个人中心")
         self.assertIn("launch: com.demo", result["yaml"])
         self.assertIn('aiTap: 我的', result["yaml"])
         self.assertFalse(result["requires_confirmation"])

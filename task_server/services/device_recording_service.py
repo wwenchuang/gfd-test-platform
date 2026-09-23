@@ -777,6 +777,24 @@ def _visual_image_assets(screenshot_path: str, point: Dict[str, Any]) -> list[Di
     return assets
 
 
+def _screen_visually_unchanged(before_path: str, after_png: bytes) -> bool:
+    """Flag only near-identical frames; a visual difference cannot prove navigation."""
+    try:
+        from PIL import Image, ImageChops
+        with Image.open(before_path) as before, Image.open(io.BytesIO(after_png)) as after:
+            before_ratio = before.width / before.height
+            after_ratio = after.width / after.height
+            if abs(before_ratio - after_ratio) > 0.08:
+                return False
+            size = (72, 144)
+            previous = before.convert("L").resize(size, Image.Resampling.BILINEAR)
+            current = after.convert("L").resize(size, Image.Resampling.BILINEAR)
+            pixels = ImageChops.difference(previous, current).tobytes()
+            return sum(pixels) / len(pixels) < 4 and sum(value > 20 for value in pixels) / len(pixels) < 0.06
+    except (ImportError, OSError, ValueError, ZeroDivisionError):
+        return False
+
+
 def _node_at_point(xml_text: str, point_value: Dict[str, Any]) -> Dict[str, Any]:
     x, y = int(point_value.get("x") or 0), int(point_value.get("y") or 0)
     candidates = []
@@ -853,14 +871,21 @@ def save_recording_evidence(runner_id: str, payload: Dict[str, Any], *, store_pa
                 previous_step = next((item for item in reversed(row.get("steps") or []) if item.get("type") != "checkpoint"), None)
                 if previous_step and previous_step.get("evidence_status") == "captured":
                     previous_xml_path = str(previous_step.get("ui_xml_path") or "")
+                    compared_xml = False
                     if previous_xml_path and os.path.isfile(previous_xml_path) and xml_text.strip():
                         with open(previous_xml_path, encoding="utf-8", errors="replace") as handle:
                             previous_xml = handle.read()
                         if previous_xml.strip():
+                            compared_xml = True
                             unchanged = previous_xml.strip() == xml_text.strip()
                             previous_step["screen_change_status"] = "unchanged" if unchanged else "changed"
                             if unchanged and previous_step.get("type") == "tap":
                                 previous_step["evidence_warning"] = "点击前后页面结构未变化；控件虽已识别，手机是否执行点击仍需核对，可重试或删除该步"
+                    if not compared_xml and previous_step.get("type") == "tap" and _screen_visually_unchanged(
+                        str(previous_step.get("screenshot_path") or ""), png
+                    ):
+                        previous_step["screen_change_status"] = "unchanged"
+                        previous_step["evidence_warning"] = "点击前后手机画面几乎未变化；控件虽已识别，手机是否执行点击仍需核对，可重试或删除该步"
             write_json_file(path, data)
             return _public(row)
         step = next((item for item in row.get("steps") or [] if item.get("id") == step_id), None)

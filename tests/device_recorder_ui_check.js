@@ -9,7 +9,7 @@ const ROOT = path.resolve(__dirname, '..');
 
 test('task manager uses a new cache key for the server-bridged recorder script', () => {
   const html = fs.readFileSync(path.join(ROOT, 'task-manager.html'), 'utf8');
-  assert.match(html, /device-recorder\.js\?v=20260924-recorder-live-frame-v27/);
+  assert.match(html, /device-recorder\.js\?v=20260924-recorder-outcome-v28/);
 });
 
 test('step screenshot survives timeline rerenders without repeated downloads', async () => {
@@ -40,6 +40,28 @@ test('an unchanged recorder heartbeat does not replace an in-progress form or ti
   assert.equal(f.dom.window.document.getElementById('device-recorder-task-name'), input);
   assert.equal(input.value, '正在编辑的用例');
   assert.equal(f.dom.window.document.querySelector('.device-recorder-timeline'), timeline);
+});
+
+test('saving after renaming a generated case regenerates YAML with the new task name', async () => {
+  const f = fixture();
+  const requests = [];
+  f.context.apiRequest = async (url, options = {}) => {
+    const body = options.body ? JSON.parse(options.body) : null;
+    requests.push({url, body});
+    if (url === '/device-recordings/generate') return {
+      result: {yaml: `android: {}\ntasks:\n- name: ${body.task_name}\n  flow:\n  - aiTap: 我的\n`, task_name: body.task_name, can_debug: true},
+      session: {id:'s1',status:'finished',app_package:'com.kfb.model',steps:[{id:'tap',sequence:1,type:'tap',semantic_description:'我的',evidence_status:'captured'}]},
+    };
+    return {};
+  };
+  f.run("deviceRecorderSession={id:'s1',status:'finished',app_package:'com.kfb.model',steps:[{id:'tap',sequence:1,type:'tap',semantic_description:'我的',evidence_status:'captured'}]}; renderDeviceRecorder()");
+  await f.run('generateDeviceRecordingYaml()');
+  f.dom.window.document.getElementById('device-recorder-task-name').value = '新的用例名称';
+  f.run("syncRecorderFileName('新的用例名称')");
+  await f.run('saveDeviceRecordingYaml()');
+  assert.equal(requests.filter(item => item.url === '/device-recordings/generate').length, 2);
+  assert.equal(requests.at(-1).body.file, '新的用例名称.yaml');
+  assert.match(requests.at(-1).body.content, /- name: 新的用例名称/);
 });
 
 test('legacy image bytes are shown as unrecognized instead of a control name', () => {

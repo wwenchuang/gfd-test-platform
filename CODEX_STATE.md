@@ -1,5 +1,13 @@
 # CODEX_STATE.md
 
+## 2026-09-24 Chrome 录制与回放复核：导航确认、名称同步和 Windows 依赖
+
+- Chrome 在 PHM110（手机序列号 `ecbfd645`）新会话 `bccf93a5745d46449a268d10a575c74d` 从智小白3D 首页录制“我的 → 打印记录 → 左上角返回 → 首页”。平台保存的四个控件名称正确，YAML 含 `launch: com.kfb.model` 与四个 `aiTap`；前 3 次手机页面跳转已核对。第 4 次“首页”被识别并写入 YAML 后，远控画面仍停在“我的”，再次点击才进入首页。识别到控件不等于触控生效，不能把基础 YAML 校验称为回放通过。
+- 生成后修改用例名为 `录制回放验证_20260924`，保存的文件名随之变化，但原 YAML 内部 `tasks[].name` 仍是“录制生成用例”。已修复为保存时按最新名称重新生成并校验 YAML，并将提示改为“静态校验通过，仍需 Runner 真机回放验证”。
+- WebView 取不到 UI XML 时，原流程无法提示点击前后画面未变化。现对前后两张手机截图做保守的低分辨率差异检查；仅在几乎相同时标记“页面未变化，需核对”，画面不同不推断目标页正确，也不重复手机点击。新增真实 PNG 回归。
+- 临时用例 `3D打印基线/录制回放验证_20260924.yaml` 已提交 OPPO Reno9 单条调试；Runner 在任何 YAML 动作之前失败，原始错误仍是 `C:\Users\gfd\AppData\Roaming\npm\node_modules\@midscene\cli\node_modules\mime-db\index.js` 的 `Cannot find module './db.json'`。这属于 Windows CLI 安装损坏，不能归因于录制 YAML。堡垒机目前只列出 QA Linux、3D 自动化 Linux 与 prod-tools RDP 三台资产，没有 `DESKTOP-QFK9QPK` 这台 Runner 的直接入口；服务端部署不能修复该机的全局 npm 包。
+- 本地录制服务及 YAML 专项 40 项、前端录制专项 27 项、后端静态 63 项、前端静态 84 项、主链 Python 编译、JS 语法及 `git diff --check` 已通过。线上发布与修复 Windows CLI 后的实际 YAML 回放仍是验收条件；临时 YAML/录制测试数据待验收后清理。
+
 ## 2026-09-24 Chrome 真机录制坐标错位复验
 
 - QA 已部署 `bbcc09bf79630c9b49816aba738558fbfd7f28aa`，健康接口和 Sonic 录制钩子哈希核对一致。Chrome 在 PHM110（手机序列号 `ecbfd645`）新建会话 `f280fdae5c4742cda1444d499c3b15d2`，两次点击打印记录页左上角返回：第一次手机未跳转，却被标成“打印记录列表项”；第二次手机返回“我的”，却被标成“打印时间”。点击记录成功与导航、语义成功必须分别验收。

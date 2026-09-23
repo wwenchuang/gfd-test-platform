@@ -90,7 +90,8 @@ def generate_recording_yaml(session: Dict[str, Any], task_name: str = "录制生
     package = str(session.get("app_package") or "").strip()
     if package:
         flow = [{"launch": package}] + [item for item in flow if "launch" not in item]
-    document = {"android": {}, "tasks": [{"name": str(task_name or "录制生成用例").strip(), "flow": flow}]}
+    normalized_task_name = str(task_name or "录制生成用例").strip()
+    document = {"android": {}, "tasks": [{"name": normalized_task_name, "flow": flow}]}
     yaml_text = yaml.safe_dump(document, allow_unicode=True, sort_keys=False, width=120)
     validation = validate_midscene_yaml(yaml_text)
     score = score_midscene_yaml_executable(yaml_text, generated=True)
@@ -98,6 +99,7 @@ def generate_recording_yaml(session: Dict[str, Any], task_name: str = "录制生
         issues.append({"step": 0, "message": str(warning)})
     return {
         "yaml": yaml_text,
+        "task_name": normalized_task_name,
         "issues": issues,
         "requires_confirmation": any(item.get("step") for item in issues),
         "validation": validation,
