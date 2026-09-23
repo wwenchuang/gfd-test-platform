@@ -1,5 +1,13 @@
 # CODEX_STATE.md
 
+## 2026-09-23 Sonic 识别失败后录制状态修复（待部署验收）
+
+- Chrome 真机录制 PHM110（手机序列号 `ecbfd645`）的会话 `bfa2bf72284e43269e2cbb02ca19d0b9` 已取得 1080×2412 的 ADB 原始截图；第 1 步实际保存并识别为底部导航「我的」。业务打印机 MAC `9888E0094F2A` 不是手机序列号。
+- 复现 Sonic 页面先提示“识别失败、可继续”，随后再点提示“录制证据尚未准备、本次未记录”。原因是桥接轮询在下一张截图 `pending` 时把 `recording.bound` 清为 false，之后语义失败且截图 `ready` 的分支只更新提示文案，没有恢复 `bound`。平台主动发送的失败确认也会提前提示可继续，未向桥接重查截图状态。
+- `deploy/sonic-recorder-hook.js` 现在只在下一张截图 `ready` 时放行后续录制；识别失败时保留步骤供人工修正，截图未就绪则继续轮询并提示等待。平台失败确认触发桥接核对，不再直接宣称可继续。新增按“ready → pending → failed+ready → 下一次点击”复现的回归，修复前 1/2，修复后 2/2 镜像动作。
+- 专项 Sonic 钩子 15 项、后端静态 63 项、前端静态 84 项、核心 Python 编译和 `git diff --check` 已通过。仍需发布、线上 Sonic 钩子哈希核对和 Chrome 真机闭环；不能将单元测试当作实际录制完成。
+- 官方 Sonic Agent v2.7.2 的 `ScrcpyLocalThread` 用 `max_size=0 max_fps=60` 启动投屏，未显式设定 `bit_rate`；手机录制证据 1080×2412 清晰，远控视频清晰度属于独立链路。若要提高码率，修改位置是 Windows Sonic Agent 的 scrcpy 启动参数，不是 Task 平台的截图代码或 Sonic 中心服务器。
+
 ## 2026-09-22 Sonic 跨站隔离下的服务端录制桥接
 
 - 真实 Chrome 验收发现首次 `window.name` 交接仍会被跨站导航清空，Sonic 设备中心没有收到录制任务；该现象与钩子部署、缓存或用户点击速度无关。

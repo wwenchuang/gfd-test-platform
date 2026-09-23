@@ -245,8 +245,13 @@
         awaitingRecognition = 0;
         saveRecording();
       } else if (state === 'failed') {
-        showRecorderStatus(`第 ${awaitingRecognition} 步识别失败，已保留；可继续操作并稍后在平台修正`, 'error');
+        recording.bound = session.pre_action_frame_status === 'ready';
+        showRecorderStatus(recording.bound
+          ? `第 ${awaitingRecognition} 步识别失败，已保留；可以继续操作并稍后在平台修正`
+          : `第 ${awaitingRecognition} 步识别失败，已保留；正在准备下一步截图，请暂缓操作`, 'error');
         awaitingRecognition = 0;
+        saveRecording();
+        if (!recording.bound) scheduleBridgePoll();
       } else {
         recording.bound = false;
         showRecorderStatus(awaitingRecognition ? `第 ${awaitingRecognition} 步正在采集截图并识别，请暂缓下一步` : 'Runner 正在准备真实点击前画面', 'waiting');
@@ -379,11 +384,16 @@
     }
     if (data.type === 'MIDSCENE_RECORDING_STEP_CONFIRMED' && recording && data.sessionId === recording.sessionId) {
       const sequence = Number(data.sequence || 0);
-      awaitingRecognition = 0;
       if (data.success) {
+        awaitingRecognition = 0;
+        recording.bound = true;
+        saveRecording();
         showRecorderStatus(`第 ${sequence} 步记录成功，可以继续操作`, 'active');
       } else {
-        showRecorderStatus(`第 ${sequence} 步识别失败，已保留；可以继续操作并稍后在平台修正`, 'error');
+        awaitingRecognition = sequence;
+        recording.bound = false;
+        showRecorderStatus(`第 ${sequence} 步识别失败，已保留；正在确认下一步截图`, 'error');
+        syncBridge();
       }
       return;
     }

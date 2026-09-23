@@ -114,16 +114,60 @@ test('a failed recognition is retained but releases the recorder for the next ac
   class FakeWebSocket { constructor(url){this.url=url} send(data){sent.push(['sonic',JSON.parse(data).detail])} }
   const document = {body:{appendChild(){}},getElementById(){return {style:{}}},createElement(){return {style:{}}}};
   const window = {opener,WebSocket:FakeWebSocket,document,addEventListener(type,fn){listeners[type]=fn;}};
-  const context = vm.createContext({window,document,URL,fetch:async(url,options)=>{sent.push([url.endsWith('/bridge')?'bridge':'platform',JSON.parse(options.body).action]);return {ok:true}},Date,Math,JSON,String,Number,Object,RegExp,Error,Set,setTimeout});
+  const context = vm.createContext({window,document,URL,fetch:async(url,options)=>{
+    if (url.endsWith('/bridge')) return {ok:true,json:async()=>({session:{pre_action_frame_status:'ready',steps:sent.filter(item=>item[0]==='platform').length > 1
+      ? [{sequence:2,type:'tap',evidence_status:'captured',semantic_recognition_status:'recognized',semantic_description:'下一按钮'}]
+      : [{sequence:1,type:'tap',evidence_status:'captured',semantic_recognition_status:'failed'}]}})};
+    sent.push(['platform',JSON.parse(options.body).action]);
+    return {ok:true};
+  },Date,Math,JSON,String,Number,Object,RegExp,Error,Set,setTimeout});
   vm.runInContext(fs.readFileSync(path.join(__dirname,'..','deploy/sonic-recorder-hook.js'),'utf8'),context);
   listeners.message({source:opener,origin:'http://platform.example',data:{type:'MIDSCENE_RECORDING_START',sessionId:'failed',recordingToken:'t',endpoint:'http://platform.example/api/device-recordings/action'}});
   const socket = new window.WebSocket('ws://agent/websockets/android/key/phone/token');
   listeners.message({source:opener,data:{type:'MIDSCENE_RECORDING_BOUND',sessionId:'failed',deviceId:'phone'}});
   socket.send(JSON.stringify({type:'debug',detail:'tap',point:'10,10'}));
   listeners.message({source:opener,data:{type:'MIDSCENE_RECORDING_STEP_CONFIRMED',sessionId:'failed',sequence:1,success:false}});
+  await new Promise(setImmediate);
   socket.send(JSON.stringify({type:'debug',detail:'tap',point:'20,20'}));
   await Promise.resolve();
   assert.equal(sent.filter(item=>item[0]==='platform').length,2);
+});
+
+test('bridge recognition failure with a ready next frame still permits the next recorded tap', async () => {
+  const listeners = {};
+  const sent = [];
+  const opener = {postMessage() {}};
+  class FakeWebSocket { constructor(url) { this.url = url; } send(data) { sent.push(['sonic', JSON.parse(data).detail]); } }
+  const document = {body:{appendChild(){}},getElementById(){return {style:{}}},createElement(){return {style:{}}}};
+  let bridgeCount = 0;
+  const fetch = async (url, options) => {
+    if (url.endsWith('/bridge')) {
+      bridgeCount += 1;
+      return {ok: true, json: async () => ({session: bridgeCount === 1
+        ? {pre_action_frame_status: 'ready', steps: []}
+        : bridgeCount === 2
+          ? {pre_action_frame_status: 'pending', steps: [{sequence: 1, type: 'tap', evidence_status: 'captured', semantic_recognition_status: 'running'}]}
+          : {pre_action_frame_status: 'ready', steps: [{sequence: 1, type: 'tap', evidence_status: 'captured', semantic_recognition_status: 'failed'}]}})};
+    }
+    sent.push(['platform', JSON.parse(options.body).action]);
+    return {ok: true, json: async () => ({step: {sequence: sent.filter(item => item[0] === 'platform').length}})};
+  };
+  let poll;
+  const window = {opener,WebSocket:FakeWebSocket,document,addEventListener(type,fn){listeners[type]=fn;}};
+  const context = vm.createContext({window,document,URL,fetch,Date,Math,JSON,String,Number,Object,RegExp,Error,Set,setTimeout(fn){poll=fn;return 1;},clearTimeout(){}});
+  vm.runInContext(fs.readFileSync(path.join(__dirname,'..','deploy/sonic-recorder-hook.js'),'utf8'),context);
+  listeners.message({source:opener,origin:'http://platform.example',data:{type:'MIDSCENE_RECORDING_START',sessionId:'failed-bridge',recordingToken:'t',endpoint:'http://platform.example/api/device-recordings/action'}});
+  const socket = new window.WebSocket('ws://agent/websockets/android/key/phone/token');
+  await new Promise(setImmediate);
+  socket.send(JSON.stringify({type:'debug',detail:'tap',point:'10,10'}));
+  await new Promise(setImmediate);
+  poll();
+  await new Promise(setImmediate);
+  poll();
+  await new Promise(setImmediate);
+  socket.send(JSON.stringify({type:'debug',detail:'tap',point:'20,20'}));
+  await new Promise(setImmediate);
+  assert.equal(sent.filter(item => item[0] === 'platform').length, 2);
 });
 
 test('Sonic hook announces that it can receive a recording session after page load', () => {
