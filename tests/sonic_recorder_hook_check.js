@@ -46,7 +46,7 @@ test('Sonic footer keyEvent back and home are mirrored with the native command',
   const window = {opener, WebSocket: FakeWebSocket, document, addEventListener(type, fn) { listeners[type] = fn; }};
   const context = vm.createContext({window, document, URL, fetch: async (url, options) => {
     if (!url.endsWith('/bridge')) sent.push(['platform', JSON.parse(options.body).action]);
-    return {ok: true};
+    return {ok: true, json: async () => ({session: {pre_action_frame_status:'ready',steps: sent.filter(item=>item[0]==='platform').map((_,index)=>({sequence:index+1,type:'key',evidence_status:'captured',semantic_description:'返回'}))}})};
   }, Date, Math, JSON, String, Number, Object, RegExp, Error, Set, setTimeout});
   vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'deploy/sonic-recorder-hook.js'), 'utf8'), context);
   listeners.message({source: opener, origin: 'http://platform.example', data: {type: 'MIDSCENE_RECORDING_START', sessionId: 'keys', recordingToken: 't', endpoint: 'http://platform.example/api/device-recordings/action'}});
@@ -54,6 +54,7 @@ test('Sonic footer keyEvent back and home are mirrored with the native command',
   listeners.message({source: opener, data: {type: 'MIDSCENE_RECORDING_BOUND', sessionId: 'keys', deviceId: 'phone'}});
   socket.send(JSON.stringify({type: 'keyEvent', detail: 4}));
   listeners.message({source: opener, data: {type: 'MIDSCENE_RECORDING_STEP_CONFIRMED', sessionId: 'keys', sequence: 1, success: true}});
+  await new Promise(setImmediate);
   socket.send(JSON.stringify({type: 'keyEvent', detail: 3}));
   await Promise.resolve();
   assert.deepEqual(sent.filter(item => item[0] === 'platform').map(item => item[1].key), ['BACK', 'HOME']);
@@ -147,7 +148,11 @@ test('Sonic can mirror twenty confirmed taps without touching the video canvas o
   class FakeWebSocket { constructor(url){this.url=url} send(data){sent.push(['sonic',JSON.parse(data).detail])} }
   const document = {querySelectorAll(){canvasReads += 1;return []},body:{appendChild(){}},getElementById(){return {style:{}}},createElement(){return {style:{}}}};
   const window = {opener,WebSocket:FakeWebSocket,document,addEventListener(type,fn){listeners[type]=fn;}};
-  const context = vm.createContext({window,document,URL,fetch:async(url,options)=>{sent.push([url.endsWith('/bridge')?'bridge':'platform',JSON.parse(options.body).action]);return {ok:true}},Date,Math,JSON,String,Number,Object,RegExp,Error,Set,setTimeout});
+  const context = vm.createContext({window,document,URL,fetch:async(url,options)=>{
+    if(url.endsWith('/bridge')) return {ok:true,json:async()=>({session:{pre_action_frame_status:'ready',steps:sent.filter(item=>item[0]==='platform').map((_,index)=>({sequence:index+1,type:'tap',evidence_status:'captured',semantic_description:'按钮'}))}})};
+    sent.push(['platform',JSON.parse(options.body).action]);
+    return {ok:true,json:async()=>({step:{sequence:sent.filter(item=>item[0]==='platform').length}})};
+  },Date,Math,JSON,String,Number,Object,RegExp,Error,Set,setTimeout,clearTimeout});
   vm.runInContext(fs.readFileSync(path.join(__dirname,'..','deploy/sonic-recorder-hook.js'),'utf8'),context);
   listeners.message({source:opener,origin:'http://platform.example',data:{type:'MIDSCENE_RECORDING_START',sessionId:'stress',recordingToken:'t',endpoint:'http://platform.example/api/device-recordings/action'}});
   const socket = new window.WebSocket('ws://agent/websockets/android/key/phone/token');
@@ -156,6 +161,7 @@ test('Sonic can mirror twenty confirmed taps without touching the video canvas o
     socket.send(JSON.stringify({type:'touch',detail:`down ${index} ${index}`}));
     socket.send(JSON.stringify({type:'touch',detail:`up ${index} ${index}`}));
     listeners.message({source:opener,data:{type:'MIDSCENE_RECORDING_STEP_CONFIRMED',sessionId:'stress',sequence:index+1,success:true}});
+    await new Promise(setImmediate);
   }
   await Promise.resolve();
   assert.equal(canvasReads,0);
@@ -247,6 +253,131 @@ test('bridge recognition failure with a ready next frame still permits the next 
   socket.send(JSON.stringify({type:'debug',detail:'tap',point:'20,20'}));
   await new Promise(setImmediate);
   assert.equal(sent.filter(item => item[0] === 'platform').length, 2);
+});
+
+test('a ready next frame permits another tap while prior visual naming is still running', async () => {
+  const listeners = {};
+  const sent = [];
+  const notices = [];
+  let bridgeCount = 0;
+  let poll;
+  const opener = {postMessage(message) { notices.push(message); }};
+  class FakeWebSocket { constructor(url) { this.url = url; } send(data) { sent.push(['sonic', JSON.parse(data).detail]); } }
+  const document = {body:{appendChild(){}},getElementById(){return {style:{},textContent:''}},createElement(){return {style:{},textContent:''}}};
+  const window = {opener,WebSocket:FakeWebSocket,document,addEventListener(type,fn){listeners[type]=fn;}};
+  const context = vm.createContext({window,document,URL,fetch:async(url,options)=>{
+    if (url.endsWith('/bridge')) {
+      bridgeCount += 1;
+      return {ok:true,json:async()=>({session: bridgeCount === 1
+        ? {pre_action_frame_status:'ready',steps:[]}
+        : {pre_action_frame_status:'ready',steps:[{sequence:1,type:'tap',evidence_status:'captured',semantic_recognition_status:'running'}]}})};
+    }
+    sent.push(['platform',JSON.parse(options.body).action]);
+    return {ok:true,json:async()=>({step:{sequence:sent.filter(item=>item[0]==='platform').length}})};
+  },Date,Math,JSON,String,Number,Object,RegExp,Error,Set,setTimeout(fn){poll=fn;return 1;},clearTimeout(){}});
+  vm.runInContext(fs.readFileSync(path.join(__dirname,'..','deploy/sonic-recorder-hook.js'),'utf8'),context);
+  listeners.message({source:opener,origin:'http://platform.example',data:{type:'MIDSCENE_RECORDING_START',sessionId:'slow-ai',recordingToken:'t',endpoint:'http://platform.example/api/device-recordings/action'}});
+  const socket = new window.WebSocket('ws://agent/websockets/android/key/phone/token');
+  await new Promise(setImmediate);
+  socket.send(JSON.stringify({type:'debug',detail:'tap',point:'10,10'}));
+  await new Promise(setImmediate);
+  poll();
+  await new Promise(setImmediate);
+  socket.send(JSON.stringify({type:'debug',detail:'tap',point:'20,20'}));
+  await new Promise(setImmediate);
+  assert.equal(sent.filter(item=>item[0]==='platform').length, 2);
+  assert.equal(notices.filter(item=>item.type==='MIDSCENE_RECORDING_ERROR').length, 0);
+});
+
+test('a delayed platform success does not unlock a pending next screenshot', async () => {
+  const listeners = {};
+  const sent = [];
+  const opener = {postMessage() {}};
+  class FakeWebSocket { constructor(url) { this.url=url; } send(data) { sent.push(['sonic',JSON.parse(data).detail]); } }
+  const document = {body:{appendChild(){}},getElementById(){return {style:{}}},createElement(){return {style:{}}}};
+  const window = {opener,WebSocket:FakeWebSocket,document,addEventListener(type,fn){listeners[type]=fn;}};
+  const context = vm.createContext({window,document,URL,fetch:async(url,options)=>{
+    if (url.endsWith('/bridge')) return {ok:true,json:async()=>({session:{pre_action_frame_status:'pending',steps:[{sequence:1,type:'tap',evidence_status:'captured',semantic_recognition_status:'recognized'}]}})};
+    sent.push(['platform',JSON.parse(options.body).action]);
+    return {ok:true,json:async()=>({step:{sequence:1}})};
+  },Date,Math,JSON,String,Number,Object,RegExp,Error,Set,setTimeout(){return 1;},clearTimeout(){}});
+  vm.runInContext(fs.readFileSync(path.join(__dirname,'..','deploy/sonic-recorder-hook.js'),'utf8'),context);
+  listeners.message({source:opener,origin:'http://platform.example',data:{type:'MIDSCENE_RECORDING_START',sessionId:'stale-ack',recordingToken:'t',endpoint:'http://platform.example/api/device-recordings/action'}});
+  const socket = new window.WebSocket('ws://agent/websockets/android/key/phone/token');
+  listeners.message({source:opener,data:{type:'MIDSCENE_RECORDING_BOUND',sessionId:'stale-ack',deviceId:'phone'}});
+  socket.send(JSON.stringify({type:'debug',detail:'tap',point:'10,10'}));
+  listeners.message({source:opener,data:{type:'MIDSCENE_RECORDING_STEP_CONFIRMED',sessionId:'stale-ack',sequence:1,success:true}});
+  socket.send(JSON.stringify({type:'debug',detail:'tap',point:'20,20'}));
+  await new Promise(setImmediate);
+  assert.equal(sent.filter(item=>item[0]==='platform').length, 1);
+});
+
+test('early touches wait for an in-flight frame before requesting one replacement frame', async () => {
+  const listeners = {};
+  const sent = [];
+  const pending = [];
+  const bridgeCalls = [];
+  const opener = {postMessage() {}};
+  class FakeWebSocket { constructor(url) { this.url=url; } send(data) { sent.push(JSON.parse(data).detail); } }
+  const document = {body:{appendChild(){}},getElementById(){return {style:{}}},createElement(){return {style:{}}}};
+  const window = {opener,WebSocket:FakeWebSocket,document,addEventListener(type,fn){listeners[type]=fn;}};
+  const responses = ['pending','pending','ready','pending'];
+  const context = vm.createContext({window,document,URL,fetch:async(url,options)=>{
+    if (url.endsWith('/bridge')) {
+      const body = JSON.parse(options.body);
+      bridgeCalls.push(body);
+      return {ok:true,json:async()=>({session:{pre_action_frame_status:responses.shift() || 'pending',steps:[]}})};
+    }
+    throw new Error('early action must not be claimed as recorded');
+  },Date,Math,JSON,String,Number,Object,RegExp,Error,Set,
+  setTimeout(fn){pending.push(fn);return pending.length;},clearTimeout(){}});
+  vm.runInContext(fs.readFileSync(path.join(__dirname,'..','deploy/sonic-recorder-hook.js'),'utf8'),context);
+  listeners.message({source:opener,origin:'http://platform.example',data:{type:'MIDSCENE_RECORDING_START',sessionId:'early',recordingToken:'t',endpoint:'http://platform.example/api/device-recordings/action'}});
+  const socket = new window.WebSocket('ws://agent/websockets/android/key/phone/token');
+  await new Promise(setImmediate);
+  socket.send(JSON.stringify({type:'debug',detail:'tap',point:'10,10'}));
+  socket.send(JSON.stringify({type:'debug',detail:'tap',point:'20,20'}));
+  pending.shift()();
+  await new Promise(setImmediate);
+  pending.shift()();
+  await new Promise(setImmediate);
+  assert.deepEqual(bridgeCalls.map(call=>call.refresh_evidence), [true,false,false,true]);
+  assert.equal(sent.length,2);
+});
+
+test('a rejected action resynchronizes evidence and an expired token stops the session', async () => {
+  const listeners = {};
+  const bridgeCalls = [];
+  const notices = [];
+  const pending = [];
+  let actionStatus = 409;
+  const opener = {postMessage(message){notices.push(message)}};
+  class FakeWebSocket { constructor(url){this.url=url} send(){} }
+  const document = {body:{appendChild(){}},getElementById(){return {style:{}}},createElement(){return {style:{}}}};
+  const window = {opener,WebSocket:FakeWebSocket,document,addEventListener(type,fn){listeners[type]=fn;}};
+  const context = vm.createContext({window,document,URL,fetch:async(url,options)=>{
+    if (url.endsWith('/bridge')) {
+      bridgeCalls.push(JSON.parse(options.body));
+      return {ok:true,json:async()=>({session:{pre_action_frame_status:'ready',steps:[]}})};
+    }
+    return {ok:false,status:actionStatus};
+  },Date,Math,JSON,String,Number,Object,RegExp,Error,Set,
+  setTimeout(fn){pending.push(fn);return pending.length;},clearTimeout(){}});
+  vm.runInContext(fs.readFileSync(path.join(__dirname,'..','deploy/sonic-recorder-hook.js'),'utf8'),context);
+  listeners.message({source:opener,origin:'http://platform.example',data:{type:'MIDSCENE_RECORDING_START',sessionId:'reject',recordingToken:'t',endpoint:'http://platform.example/api/device-recordings/action'}});
+  const socket = new window.WebSocket('ws://agent/websockets/android/key/phone/token');
+  await new Promise(setImmediate);
+  socket.send(JSON.stringify({type:'debug',detail:'tap',point:'10,10'}));
+  await new Promise(setImmediate);
+  pending.shift()();
+  await new Promise(setImmediate);
+  assert.deepEqual(bridgeCalls.map(call=>call.refresh_evidence),[true,false,true]);
+  actionStatus = 401;
+  listeners.message({source:opener,origin:'http://platform.example',data:{type:'MIDSCENE_RECORDING_START',sessionId:'reject2',recordingToken:'t2',endpoint:'http://platform.example/api/device-recordings/action'}});
+  await new Promise(setImmediate);
+  socket.send(JSON.stringify({type:'debug',detail:'tap',point:'20,20'}));
+  await new Promise(setImmediate);
+  assert.ok(notices.some(item=>item.type==='MIDSCENE_RECORDING_ERROR' && /认证/.test(item.message)));
 });
 
 test('bridge accepts UI-node naming and warns when a recorded tap did not change the phone screen', async () => {
@@ -510,7 +641,7 @@ test('an active remote tab older than the handoff window refreshes evidence on r
   const context = vm.createContext({window, URL, fetch: async (url, options) => {
     requests.push({url, body: JSON.parse(options.body)});
     return {ok: true, json: async () => ({session: {pre_action_frame_status: 'pending', steps: []}})};
-  }, Date, Math, JSON, String, Number, Object, RegExp, Error, Set, setTimeout, clearTimeout});
+  }, Date, Math, JSON, String, Number, Object, RegExp, Error, Set, setTimeout(){return 1;}, clearTimeout});
   vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'deploy/sonic-recorder-hook.js'), 'utf8'), context);
   new window.WebSocket('ws://agent/websockets/android/key/ecbfd645/token');
   await new Promise(setImmediate);

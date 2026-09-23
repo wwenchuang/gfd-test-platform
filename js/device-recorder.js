@@ -1,6 +1,7 @@
 let deviceRecorderSession = null;
 let deviceRecorderWindow = null;
 let deviceRecorderPollTimer = null;
+let deviceRecorderPollInFlight = false;
 let deviceRecorderBridgeState = '等待 Sonic 接收录制会话';
 let deviceRecorderGenerated = null;
 let deviceRecorderFileNameEdited = false;
@@ -423,21 +424,34 @@ function startDeviceRecorderPolling() {
   deviceRecorderPollTimer = setInterval(refreshDeviceRecording, 2000);
 }
 
+function recorderDisplaySnapshot(session) {
+  if (!session) return '';
+  const {heartbeat_ts, updated_ts, updated_at, ...display} = session;
+  return JSON.stringify(display);
+}
+
 async function refreshDeviceRecording() {
-  if (!deviceRecorderSession?.id) return;
+  if (!deviceRecorderSession?.id || deviceRecorderPollInFlight) return;
+  deviceRecorderPollInFlight = true;
   try {
+    const previousDisplay = recorderDisplaySnapshot(deviceRecorderSession);
     const data = deviceRecorderSession.status === 'recording'
       ? await apiRequest('/device-recordings/heartbeat', {method: 'POST', body: JSON.stringify({session_id: deviceRecorderSession.id})})
       : await apiRequest(`/device-recordings?id=${encodeURIComponent(deviceRecorderSession.id)}`);
     deviceRecorderSession = data.session;
     confirmRecorderSonicBinding();
-    renderDeviceRecorder();
-    await maybeRecognizeDeviceRecording();
+    if (recorderDisplaySnapshot(deviceRecorderSession) !== previousDisplay) renderDeviceRecorder();
+    else {
+      const message = document.getElementById('device-recorder-message');
+      if (message) message.textContent = `手机：${deviceRecorderSession.device_id || '等待在 Sonic 选择'} · 会话：${deviceRecorderSession.id} · ${deviceRecorderBridgeState}`;
+    }
     notifyRecorderStepResult();
+    void maybeRecognizeDeviceRecording();
     if (deviceRecorderSession.status !== 'recording' && !recorderEvidencePending(deviceRecorderSession) && !recorderRecognitionPending(deviceRecorderSession)) {
       clearInterval(deviceRecorderPollTimer);
     }
   } catch (_) {}
+  finally { deviceRecorderPollInFlight = false; }
 }
 
 function notifyRecorderStepResult() {

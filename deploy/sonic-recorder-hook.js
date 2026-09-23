@@ -19,7 +19,7 @@
   const HANDOFF_MAX_AGE_MS = 5 * 60 * 1000;
   const ACTIVE_MAX_AGE_MS = 2 * 60 * 60 * 1000;
   let bridgePollTimer = null;
-  let evidenceRefreshTimer = null;
+  let missedActionNeedsFrame = false;
   let bridgeEpoch = 0;
   const NativeWindowOpen = typeof window.open === 'function' ? window.open.bind(window) : null;
   const NativeHistoryPush = typeof window.history?.pushState === 'function' ? window.history.pushState.bind(window.history) : null;
@@ -78,9 +78,8 @@
   function stopRecording(message = '录制已结束，可继续使用 Sonic', state = 'active') {
     bridgeEpoch += 1;
     if (bridgePollTimer) clearTimeout(bridgePollTimer);
-    if (evidenceRefreshTimer) clearTimeout(evidenceRefreshTimer);
     bridgePollTimer = null;
-    evidenceRefreshTimer = null;
+    missedActionNeedsFrame = false;
     awaitingRecognition = 0;
     recording = null;
     saveRecording();
@@ -226,9 +225,10 @@
   function bridgeStepState(session) {
     const steps = Array.isArray(session?.steps) ? session.steps : [];
     const step = steps.find(item => Number(item.sequence || 0) === Number(awaitingRecognition || 0));
-    if (!step) return awaitingRecognition ? 'pending' : 'ready';
-    if (step.evidence_status === 'pending' || step.semantic_recognition_status === 'running' || session.pre_action_frame_status === 'pending') return 'pending';
+    if (!step) return session?.pre_action_frame_status === 'ready' && !awaitingRecognition ? 'ready' : 'pending';
+    if (step.evidence_status === 'pending' || session.pre_action_frame_status === 'pending') return 'pending';
     if (step.evidence_status === 'failed' || step.semantic_recognition_status === 'failed') return 'failed';
+    if (step.semantic_recognition_status === 'running' && session.pre_action_frame_status === 'ready') return 'recognizing';
     if (step.type === 'tap' && !String(step.semantic_description || step.ui_node?.text || step.ui_node?.content_desc || step.ui_node?.resource_id || '').trim()) return 'failed';
     if (step.screen_change_status === 'unchanged' && session.pre_action_frame_status === 'ready') return 'unchanged';
     return session.pre_action_frame_status === 'ready' ? 'ready' : 'pending';
@@ -241,14 +241,12 @@
 
   function scheduleEvidenceRefresh() {
     if (!recording?.deviceId) return;
-    bridgeEpoch += 1;
+    // An in-flight ADB capture may already be returning. Do not invalidate it
+    // on every early touch; replace it once after it finishes instead.
+    missedActionNeedsFrame = true;
     recording.bound = false;
     saveRecording();
-    if (evidenceRefreshTimer) clearTimeout(evidenceRefreshTimer);
-    evidenceRefreshTimer = setTimeout(() => {
-      evidenceRefreshTimer = null;
-      syncBridge(recording?.deviceId, true);
-    }, 1000);
+    scheduleBridgePoll();
   }
 
   function syncBridge(deviceId = recording?.deviceId, refreshEvidence = false) {
@@ -279,10 +277,20 @@
       const payload = await response.json();
       const session = payload?.session;
       if (!session) return null;
-      if (epoch !== bridgeEpoch || evidenceRefreshTimer) return session;
+      if (epoch !== bridgeEpoch) return session;
       mirroredCount = Math.max(mirroredCount, ...(session.steps || []).map(item => Number(item.sequence || 0)), 0);
+      if (missedActionNeedsFrame && session.pre_action_frame_status !== 'pending') {
+        missedActionNeedsFrame = false;
+        showRecorderStatus('手机已执行未记录的操作，正在重新采集当前画面', 'waiting');
+        return syncBridge(recording.deviceId, true);
+      }
       const state = bridgeStepState(session);
-      if (state === 'ready') {
+      if (state === 'recognizing') {
+        recording.bound = true;
+        awaitingRecognition = 0;
+        saveRecording();
+        showRecorderStatus(`第 ${mirroredCount} 步点击与截图已记录，控件仍在识别；下一步截图已准备，可继续操作`, 'waiting');
+      } else if (state === 'ready') {
         recording.bound = session.pre_action_frame_status === 'ready';
         if (awaitingRecognition) showRecorderStatus(`第 ${awaitingRecognition} 步控件已记录；页面结果请核对，可继续操作`, 'active');
         else if (recording.bound) showRecorderStatus(`录制中，已同步 ${mirroredCount} 步，可以开始操作`, 'active');
@@ -308,7 +316,7 @@
       }
       return session;
     }).catch(error => {
-      if (epoch !== bridgeEpoch || evidenceRefreshTimer) return null;
+      if (epoch !== bridgeEpoch) return null;
       recording.bound = false;
       showRecorderStatus(`录制桥接失败：${String(error.message || error)}`, 'error');
       notifyPlatform({type: 'MIDSCENE_RECORDING_ERROR', message: String(error.message || error)});
@@ -335,6 +343,10 @@
     }
     mirroredCount += 1;
     awaitingRecognition = mirroredCount;
+    const actionSessionId = recording.sessionId;
+    const actionSequence = mirroredCount;
+    recording.bound = false;
+    saveRecording();
     showRecorderStatus(`第 ${mirroredCount} 步已收到，正在采集截图并识别，请暂缓下一步`, 'waiting');
     const body = JSON.stringify({
       session_id: recording.sessionId,
@@ -345,16 +357,29 @@
       method: 'POST', mode: 'cors', keepalive: !action.evidence_content_base64,
       headers: {'Content-Type': 'application/json'}, body,
     }).then(async response => {
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      if (recording?.sessionId !== actionSessionId) return;
+      if (!response.ok) {
+        const error = new Error(`HTTP ${response.status}`);
+        error.status = response.status;
+        throw error;
+      }
       if (typeof response.json === 'function') {
         const payload = await response.json();
         awaitingRecognition = Number(payload?.step?.sequence || awaitingRecognition);
       }
       scheduleBridgePoll();
     }).catch(error => {
+      if (recording?.sessionId !== actionSessionId) return;
       awaitingRecognition = 0;
-      showRecorderStatus(`第 ${mirroredCount} 步同步失败`, 'error');
+      mirroredCount = Math.min(mirroredCount, actionSequence - 1);
+      if (error.status === 401) {
+        notifyPlatform({type: 'MIDSCENE_RECORDING_ERROR', message: '录制认证已失效，请重新开始录制'});
+        stopRecording('录制认证已失效，请重新开始录制', 'error');
+        return;
+      }
+      showRecorderStatus(`第 ${actionSequence} 步同步失败，正在重新准备截图`, 'error');
       notifyPlatform({type: 'MIDSCENE_RECORDING_ERROR', message: String(error.message || error)});
+      scheduleEvidenceRefresh();
     });
   }
 
@@ -445,19 +470,16 @@
     }
     if (data.type === 'MIDSCENE_RECORDING_STEP_CONFIRMED' && recording && data.sessionId === recording.sessionId) {
       const sequence = Number(data.sequence || 0);
+      if (sequence !== mirroredCount) return;
       if (data.success) {
-        awaitingRecognition = 0;
-        recording.bound = true;
-        saveRecording();
         showRecorderStatus(data.screenUnchanged
-          ? `第 ${sequence} 步控件已记录，但页面结构未变化；请核对手机是否响应，可重试`
-          : `第 ${sequence} 步控件已记录；页面结果请核对，可继续操作`, data.screenUnchanged ? 'error' : 'active');
+          ? `第 ${sequence} 步控件已识别，但页面结构未变化；请核对手机是否响应`
+          : `第 ${sequence} 步控件已识别；正在核对下一步截图`, data.screenUnchanged ? 'error' : 'waiting');
       } else {
         awaitingRecognition = sequence;
-        recording.bound = false;
         showRecorderStatus(`第 ${sequence} 步识别失败，已保留；正在确认下一步截图`, 'error');
-        syncBridge();
       }
+      syncBridge();
       return;
     }
     if (data.type !== 'MIDSCENE_RECORDING_START') return;
@@ -471,6 +493,7 @@
       };
       if (!recording.sessionId || !recording.recordingToken) recording = null;
       mirroredCount = 0;
+      missedActionNeedsFrame = false;
       saveRecording();
       if (recording) {
         showRecorderStatus(recording.deviceId ? '已恢复录制任务，正在确认手机状态' : '已接收任务，请在 Sonic 选择手机');

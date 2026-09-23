@@ -9,7 +9,7 @@ const ROOT = path.resolve(__dirname, '..');
 
 test('task manager uses a new cache key for the server-bridged recorder script', () => {
   const html = fs.readFileSync(path.join(ROOT, 'task-manager.html'), 'utf8');
-  assert.match(html, /device-recorder\.js\?v=20260923-recorder-stop-v25/);
+  assert.match(html, /device-recorder\.js\?v=20260924-recorder-poll-v26/);
 });
 
 test('step screenshot survives timeline rerenders without repeated downloads', async () => {
@@ -25,6 +25,21 @@ test('step screenshot survives timeline rerenders without repeated downloads', a
   await f.run("loadRecorderEvidence('tap-1')");
   assert.equal(downloads, 1);
   assert.equal(f.dom.window.document.querySelector('[data-recorder-evidence="tap-1"]').src, 'blob:recording-frame');
+});
+
+test('an unchanged recorder heartbeat does not replace an in-progress form or timeline', async () => {
+  const f = fixture();
+  const session = {id:'same',status:'finished',app_package:'com.kfb.model',heartbeat_ts:1,updated_ts:1,updated_at:'before',steps:[{id:'one',sequence:1,type:'key',key:'BACK'}]};
+  f.context.apiRequest = async () => ({session:{...session,heartbeat_ts:2,updated_ts:2,updated_at:'after'}});
+  f.context.sessionFixture = session;
+  f.run('deviceRecorderSession=sessionFixture;renderDeviceRecorder()');
+  const input = f.dom.window.document.getElementById('device-recorder-task-name');
+  const timeline = f.dom.window.document.querySelector('.device-recorder-timeline');
+  input.value = '正在编辑的用例';
+  await f.run('refreshDeviceRecording()');
+  assert.equal(f.dom.window.document.getElementById('device-recorder-task-name'), input);
+  assert.equal(input.value, '正在编辑的用例');
+  assert.equal(f.dom.window.document.querySelector('.device-recorder-timeline'), timeline);
 });
 
 test('legacy image bytes are shown as unrecognized instead of a control name', () => {
