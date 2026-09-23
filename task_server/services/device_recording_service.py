@@ -624,6 +624,9 @@ def append_recorded_action(
         if browser_png:
             scale_row = dict(row)
             scale_row["pre_action_frame_image_width"], scale_row["pre_action_frame_image_height"] = _png_dimensions(browser_png)
+            if not scale_row.get("pre_action_frame_coordinate_width") or not scale_row.get("pre_action_frame_coordinate_height"):
+                scale_row["pre_action_frame_coordinate_width"] = row.get("pre_action_frame_image_width")
+                scale_row["pre_action_frame_coordinate_height"] = row.get("pre_action_frame_image_height")
         sequence = max([int(step.get("sequence") or 0) for step in row.get("steps") or []] or [0]) + 1
         normalized = {
             "id": uuid.uuid4().hex,

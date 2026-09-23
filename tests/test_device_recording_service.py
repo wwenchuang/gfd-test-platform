@@ -415,6 +415,28 @@ class DeviceRecordingServiceTest(unittest.TestCase):
         self.assertEqual(step["point"], {"x": 50, "y": 100})
         self.assertEqual(step["ui_node"], {})
 
+    def test_sonic_touch_coordinates_scale_to_live_video_frame(self):
+        session = self.create()
+        request = recording.pending_recording_evidence_requests(
+            "win-runner-01", store_path=self.store, now=time.time() + 3
+        )[0]
+        def png(width, height):
+            return b"\x89PNG\r\n\x1a\n" + b"\x00\x00\x00\rIHDR" + struct.pack(">II", width, height) + b"frame"
+        evidence_dir = os.path.join(self.tempdir.name, "evidence")
+        recording.save_recording_evidence("win-runner-01", {
+            "request_id": request["request_id"], "session_id": session["id"], "step_id": "",
+            "device_id": "ecbfd645", "content_base64": base64.b64encode(png(1080, 2412)).decode(),
+        }, store_path=self.store, evidence_dir=evidence_dir)
+        step = recording.append_recorded_action(
+            session["id"], session["recording_token"],
+            {"event_id": "evt-scaled", "type": "tap", "point": {"x": 65, "y": 154},
+             "device_id": "ecbfd645", "evidence_content_base64": base64.b64encode(png(358, 800)).decode()},
+            store_path=self.store, evidence_dir=evidence_dir,
+        )
+        self.assertEqual(step["point"], {"x": 22, "y": 51})
+        self.assertEqual(step["raw_point"], {"x": 65, "y": 154})
+        self.assertEqual(step["coordinate_transform"], "1080x2412->358x800")
+
     def test_stale_runner_frame_cannot_name_a_later_tap(self):
         session = self.create()
         self.prepare_frame(session, xml='<hierarchy><node text="版本号" bounds="[0,0][100,100]" /></hierarchy>')
