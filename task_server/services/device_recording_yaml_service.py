@@ -38,6 +38,8 @@ def normalize_recorded_step(step: Dict[str, Any]) -> Dict[str, Any]:
         target = _node_description(step)
         if target:
             result["flow"] = [{"aiTap": target}]
+            if step.get("screen_change_status") == "unchanged":
+                result.update(requires_confirmation=True, issue="点击后手机画面未变化，请核对触摸是否生效并重录或删除该步")
         else:
             result.update(requires_confirmation=True, issue="点击步骤只有坐标，缺少可读控件证据")
     elif action_type == "text":

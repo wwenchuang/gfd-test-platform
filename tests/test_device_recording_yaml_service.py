@@ -30,6 +30,16 @@ class DeviceRecordingYamlServiceTest(unittest.TestCase):
         self.assertEqual(result["flow"], [{"aiTap": "提交订单按钮"}])
         self.assertFalse(result["requires_confirmation"])
 
+    def test_unchanged_phone_screen_cannot_be_treated_as_replay_ready(self):
+        session = {"status": "finished", "app_package": "com.kfb.model", "steps": [
+            {"type": "tap", "semantic_description": "首页", "screen_change_status": "unchanged"},
+        ]}
+        result = generate_recording_yaml(session)
+        self.assertIn("aiTap: 首页", result["yaml"])
+        self.assertTrue(result["requires_confirmation"])
+        self.assertFalse(result["can_debug"])
+        self.assertIn("画面未变化", result["issues"][0]["message"])
+
     def test_input_scroll_key_and_checkpoint_use_supported_actions(self):
         steps = [
             {"type": "text", "text": "测试内容", "ui_node": {"content_desc": "搜索输入框"}},

@@ -34,6 +34,22 @@ test('Sonic hook only becomes ready and mirrors the platform-selected phone', as
   assert.deepEqual(order.find(item => item[0] === 'mirror')[1].action.point, {x: 10, y: 20});
 });
 
+test('Sonic rechecks ready evidence while the user pauses between actions', async () => {
+  const listeners = {};
+  const scheduled = [];
+  const opener = {postMessage() {}};
+  class FakeWebSocket { constructor(url) { this.url = url; } send() {} }
+  const document = {body: {appendChild() {}}, getElementById() { return {style: {}}; }, createElement() { return {style: {}}; }};
+  const window = {opener, WebSocket: FakeWebSocket, document, addEventListener(type, fn) { listeners[type] = fn; }};
+  const context = vm.createContext({window, document, URL, fetch: async () => ({ok: true, json: async () => ({session: {pre_action_frame_status: 'ready', steps: []}})}), Date, Math, JSON, String, Number, Object, RegExp, Error, Set,
+    setTimeout(fn, delay) { scheduled.push({fn, delay}); return scheduled.length; }, clearTimeout() {}});
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'deploy/sonic-recorder-hook.js'), 'utf8'), context);
+  listeners.message({source: opener, origin: 'http://platform.example', data: {type: 'MIDSCENE_RECORDING_START', sessionId: 'pause', recordingToken: 't', endpoint: 'http://platform.example/api/device-recordings/action'}});
+  new window.WebSocket('ws://agent/websockets/android/key/phone/token');
+  await new Promise(setImmediate);
+  assert.ok(scheduled.some(item => item.delay === 15000));
+});
+
 test('Sonic footer keyEvent back and home are mirrored with the native command', async () => {
   const listeners = {};
   const sent = [];
@@ -140,7 +156,7 @@ test('Sonic mirrors touch coordinates without reading its video canvas', async (
   assert.ok(order.find(item=>item[0]==='platform'));
 });
 
-test('Sonic attaches its current rendered phone frame to the tap without delaying touch delivery', async () => {
+test('Sonic forwards touch before mirroring and leaves screenshot capture to the Runner', async () => {
   const listeners = {};
   const sent = [];
   const opener = {postMessage() {}};
@@ -164,11 +180,13 @@ test('Sonic attaches its current rendered phone frame to the tap without delayin
   socket.send(JSON.stringify({type: 'touch', detail: 'up 50 100'}));
   await Promise.resolve();
   const order = sent.map(item => item[0]);
-  assert.deepEqual(order.slice(0, 4), ['sonic', 'sonic', 'draw', 'encode']);
+  assert.deepEqual(order.slice(0, 2), ['sonic', 'sonic']);
+  assert.ok(!order.includes('draw'));
+  assert.ok(!order.includes('encode'));
   const action = sent.find(item => item[0] === 'platform')[1];
-  assert.equal(action.evidence_content_base64, 'iVBORw0KGgo=');
-  assert.equal(action.evidence_width, 200);
-  assert.equal(action.evidence_height, 400);
+  assert.equal(action.evidence_content_base64, undefined);
+  assert.equal(action.evidence_width, undefined);
+  assert.equal(action.evidence_height, undefined);
 });
 
 test('Sonic can mirror twenty confirmed taps without touching the video canvas or dropping phone commands', async () => {

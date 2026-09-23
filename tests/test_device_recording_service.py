@@ -472,11 +472,34 @@ class DeviceRecordingServiceTest(unittest.TestCase):
         step = recording.append_recorded_action(
             session["id"], session["recording_token"],
             {"event_id": "evt-stale", "type": "tap", "point": {"x": 50, "y": 50}, "device_id": "ecbfd645"},
-            store_path=self.store, evidence_dir=os.path.join(self.tempdir.name, "evidence"), now=time.time() + 10,
+            store_path=self.store, evidence_dir=os.path.join(self.tempdir.name, "evidence"), now=time.time() + 70,
         )
         self.assertEqual(step["evidence_status"], "failed")
         self.assertEqual(step["ui_node"], {})
         self.assertIn("过期", step["evidence_warning"])
+
+    def test_runner_frame_remains_valid_while_user_switches_to_sonic_tab(self):
+        session = self.create()
+        self.prepare_frame(session, xml='<hierarchy><node text="我的" bounds="[0,0][100,100]" /></hierarchy>')
+        step = recording.append_recorded_action(
+            session["id"], session["recording_token"],
+            {"event_id": "evt-after-tab-switch", "type": "tap", "point": {"x": 50, "y": 50}, "device_id": "ecbfd645"},
+            store_path=self.store, evidence_dir=os.path.join(self.tempdir.name, "evidence"), now=time.time() + 10,
+        )
+        self.assertEqual(step["evidence_status"], "captured")
+        self.assertEqual(step["evidence_source"], "runner_cached_frame")
+        self.assertEqual(step["ui_node"]["text"], "我的")
+
+    def test_idle_bridge_refreshes_runner_frame_before_it_expires(self):
+        session = self.create()
+        self.prepare_frame(session)
+        before = recording.get_recording_session(session["id"], store_path=self.store)
+        refreshed = recording.bridge_recording_device(
+            session["id"], session["recording_token"], "win-runner-01", "ecbfd645",
+            store_path=self.store, now=time.time() + 50,
+        )
+        self.assertEqual(refreshed["pre_action_frame_status"], "pending")
+        self.assertNotEqual(refreshed["pre_action_frame_request_id"], before["pre_action_frame_request_id"])
 
     def test_action_is_rejected_until_the_real_pre_action_frame_is_ready(self):
         session = self.create(runner_id="", device_id="")

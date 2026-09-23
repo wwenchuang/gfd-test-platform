@@ -236,9 +236,10 @@
     return session.pre_action_frame_status === 'ready' ? 'ready' : 'pending';
   }
 
-  function scheduleBridgePoll() {
+  function scheduleBridgePoll(delay = 1000) {
     if (bridgePollTimer || !recording?.deviceId) return;
-    bridgePollTimer = setTimeout(() => { bridgePollTimer = null; syncBridge(); }, 1000);
+    bridgePollTimer = setTimeout(() => { bridgePollTimer = null; syncBridge(); }, delay);
+    bridgePollTimer?.unref?.();
   }
 
   function scheduleEvidenceRefresh() {
@@ -292,17 +293,20 @@
         awaitingRecognition = 0;
         saveRecording();
         showRecorderStatus(`第 ${mirroredCount} 步点击与截图已记录，控件仍在识别；下一步截图已准备，可继续操作`, 'waiting');
+        scheduleBridgePoll(15000);
       } else if (state === 'ready') {
         recording.bound = session.pre_action_frame_status === 'ready';
         if (awaitingRecognition) showRecorderStatus(`第 ${awaitingRecognition} 步控件已记录；页面结果请核对，可继续操作`, 'active');
         else if (recording.bound) showRecorderStatus(`录制中，已同步 ${mirroredCount} 步，可以开始操作`, 'active');
         awaitingRecognition = 0;
         saveRecording();
+        if (recording.bound) scheduleBridgePoll(15000);
       } else if (state === 'unchanged') {
         recording.bound = true;
         showRecorderStatus(`第 ${awaitingRecognition} 步控件已记录，但页面结构未变化；请核对手机是否响应，可重试`, 'error');
         awaitingRecognition = 0;
         saveRecording();
+        scheduleBridgePoll(15000);
       } else if (state === 'failed') {
         recording.bound = session.pre_action_frame_status === 'ready';
         showRecorderStatus(recording.bound
@@ -310,7 +314,7 @@
           : `第 ${awaitingRecognition} 步识别失败，已保留；正在准备下一步截图，请暂缓操作`, 'error');
         awaitingRecognition = 0;
         saveRecording();
-        if (!recording.bound) scheduleBridgePoll();
+        scheduleBridgePoll(recording.bound ? 15000 : 1000);
       } else {
         recording.bound = false;
         showRecorderStatus(awaitingRecognition ? `第 ${awaitingRecognition} 步正在采集截图并识别，请暂缓下一步` : 'Runner 正在准备真实点击前画面', 'waiting');
@@ -350,14 +354,13 @@
     recording.bound = false;
     saveRecording();
     showRecorderStatus(`第 ${mirroredCount} 步已收到，正在采集截图并识别，请暂缓下一步`, 'waiting');
-    const frame = captureRenderedFrame();
     const body = JSON.stringify({
       session_id: recording.sessionId,
       recording_token: recording.recordingToken,
-      action: {...action, ...frame, event_id: id(), device_id: recording.deviceId},
+      action: {...action, event_id: id(), device_id: recording.deviceId},
     });
     fetch(recording.endpoint, {
-      method: 'POST', mode: 'cors', keepalive: !frame.evidence_content_base64,
+      method: 'POST', mode: 'cors', keepalive: true,
       headers: {'Content-Type': 'application/json'}, body,
     }).then(async response => {
       if (recording?.sessionId !== actionSessionId) return;
@@ -384,25 +387,6 @@
       notifyPlatform({type: 'MIDSCENE_RECORDING_ERROR', message: String(error.message || error)});
       scheduleEvidenceRefresh();
     });
-  }
-
-  function captureRenderedFrame() {
-    try {
-      const video = document.getElementById('scrcpy-video');
-      let canvas;
-      if (video && video.readyState >= 2 && video.videoWidth > 1 && video.videoHeight > 1) {
-        canvas = document.createElement('canvas');
-        canvas.width = video.videoWidth;
-        canvas.height = video.videoHeight;
-        canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
-      } else {
-        canvas = document.getElementById('canvas');
-      }
-      if (!canvas || canvas.width < 2 || canvas.height < 2 || typeof canvas.toDataURL !== 'function') return {};
-      const encoded = canvas.toDataURL('image/png');
-      if (!encoded.startsWith('data:image/png;base64,') || encoded.length > 17 * 1024 * 1024) return {};
-      return {evidence_content_base64: encoded.slice('data:image/png;base64,'.length), evidence_width: canvas.width, evidence_height: canvas.height};
-    } catch (_) { return {}; }
   }
 
   function mirroredAction(message) {
@@ -459,8 +443,8 @@
           action = mirroredAction(JSON.parse(data));
         }
       } catch (_) {}
-      // Sonic owns phone rendering and touch delivery. Capture its current frame
-      // after dispatch; the browser cannot paint a later frame until this call returns.
+      // Sonic owns phone rendering and touch delivery. The Windows Runner
+      // already captured the pre-action screen and UI tree for recognition.
       nativeSend.call(socket, data);
       mirror(action);
     };

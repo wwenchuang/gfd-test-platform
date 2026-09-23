@@ -31,6 +31,8 @@ FINISHED_EVIDENCE_GRACE_SECONDS = 2 * 60
 PRE_ACTION_FRAME_RETRY_SECONDS = 3
 MAX_PRE_ACTION_FRAME_ATTEMPTS = 3
 POST_ACTION_FRAME_SETTLE_SECONDS = 1.5
+PRE_ACTION_FRAME_MAX_AGE_SECONDS = 60
+PRE_ACTION_FRAME_IDLE_REFRESH_SECONDS = 45
 _LOCK = threading.RLock()
 
 
@@ -258,7 +260,9 @@ def bridge_recording_device(
         if row.get("device_id"):
             if row.get("runner_id") != runner_id or row.get("device_id") != device_id:
                 raise ValueError("录制会话已经绑定另一台手机")
-            if refresh_evidence or not row.get("pre_action_frame_status"):
+            frame_age = timestamp - float(row.get("pre_action_frame_captured_ts") or timestamp)
+            if (refresh_evidence or not row.get("pre_action_frame_status")
+                    or (row.get("pre_action_frame_status") == "ready" and frame_age >= PRE_ACTION_FRAME_IDLE_REFRESH_SECONDS)):
                 _request_pre_action_frame(row, timestamp)
                 write_json_file(path, data)
             return _public(row)
@@ -694,7 +698,7 @@ def append_recorded_action(
                     normalized["ui_xml_error"] = row["pre_action_frame_ui_xml_error"]
                 target_point = normalized.get("point") or normalized.get("end") or {}
                 normalized["ui_node"] = _node_at_point(xml_text, target_point)
-                if browser_frame_error or (not browser_png and cached_frame_age > 5):
+                if browser_frame_error or (not browser_png and cached_frame_age > PRE_ACTION_FRAME_MAX_AGE_SECONDS):
                     normalized["evidence_status"] = "failed"
                     normalized["evidence_warning"] = browser_frame_error or "点击前截图已过期，不能据此识别控件；请人工核对"
                     normalized["ui_node"] = {}
