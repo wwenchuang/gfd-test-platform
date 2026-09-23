@@ -1499,6 +1499,17 @@ def call_dashscope_failure_review(job, stdout, stderr, summary):
     if os.path.exists(yaml_path):
         with open(yaml_path, encoding="utf-8") as f:
             yaml_text = f.read()
+    failure_brief = extract_failure_brief(stdout, stderr, summary)
+    if failure_brief.get("failure_type") == "runtime_dependency":
+        return {
+            "category": "env_issue",
+            "failure_type": "runtime_dependency",
+            "confidence": 0.99,
+            "reason": "Midscene CLI 的 Node.js 依赖加载失败（如 mime-db/db.json 缺失），YAML 操作尚未开始",
+            "evidence": failure_brief.get("signals", [])[:8],
+            "suggested_action": "修复 Windows Runner 上损坏的 Midscene CLI 依赖，确认模块可加载后重跑原 YAML",
+            "can_auto_repair": False,
+        }
     deterministic_issues = []
     if "launch:" not in yaml_text:
         deterministic_issues.append("缺少 launch 前置启动 App")
@@ -1653,7 +1664,7 @@ def repair_job_and_create_next(job, create_next=True, force=False):
     stderr = read_text(Path(run_dir) / "stderr.log") if run_dir else job.get("stderr_tail", "")
     summary = read_json(Path(run_dir) / "summary.json") if run_dir else None
     failure_brief = extract_failure_brief(stdout, stderr, summary)
-    if failure_brief.get("failure_type") in ("model_config", "device_env"):
+    if failure_brief.get("failure_type") in ("model_config", "device_env", "runtime_dependency"):
         raise ValueError("当前失败属于环境/配置问题，不应修改 YAML：" + "；".join(failure_brief.get("signals", [])[:3]))
     blocked = None if force else should_block_manual_repair(job, stdout, stderr, summary)
     if blocked:
@@ -1825,7 +1836,7 @@ def repair_job_task_and_create_next(job, task_name, create_next=True, force=Fals
     stderr = read_text(Path(run_dir) / "stderr.log") if run_dir else job.get("stderr_tail", "")
     summary = read_json(Path(run_dir) / "summary.json") if run_dir else None
     failure_brief = extract_failure_brief(stdout, stderr, summary)
-    if failure_brief.get("failure_type") in ("model_config", "device_env"):
+    if failure_brief.get("failure_type") in ("model_config", "device_env", "runtime_dependency"):
         raise ValueError("当前失败属于环境/配置问题，不应修改 YAML：" + "；".join(failure_brief.get("signals", [])[:3]))
     blocked = None if force else should_block_manual_repair(job, stdout, stderr, summary)
     if blocked:

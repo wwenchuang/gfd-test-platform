@@ -3310,6 +3310,8 @@ def _agent_job_failure_type(text):
         "service unavailable", "gateway timeout", "econnreset", "etimedout",
     )):
         return "ENV_ISSUE"
+    if "cannot find module" in lowered and ("require stack:" in lowered or "module_not_found" in lowered):
+        return "ENV_ISSUE"
     if (
         any(term in blob for term in ("实际文案", "实际文本", "实际显示", "实际展示"))
         and any(term in lowered for term in (

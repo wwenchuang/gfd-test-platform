@@ -1094,7 +1094,15 @@ def extract_failure_brief(stdout="", stderr="", summary=None):
         "focus": [],
         "avoid": []
     }
-    if any(word in lower for word in ("ai call error", "failed to call ai model service", "request was aborted", "model-provider.html")):
+    if "cannot find module" in lower and ("require stack:" in lower or "module_not_found" in lower):
+        failure_type = "runtime_dependency"
+        repair_plan = {
+            "priority": "environment_first",
+            "can_repair_yaml": False,
+            "focus": ["修复 Windows Runner 上 Midscene CLI 的 Node.js 依赖，再重跑原 YAML"],
+            "avoid": ["不要将模块加载失败归因为页面元素未找到", "不要修改 YAML 业务步骤"],
+        }
+    elif any(word in lower for word in ("ai call error", "failed to call ai model service", "request was aborted", "model-provider.html")):
         failure_type = "model_service"
         repair_plan = {
             "priority": "environment_first",
@@ -1448,7 +1456,17 @@ def classify_failure_by_context(ctx):
             "can_auto_repair": False
         }
     brief = ctx.get("failure_brief") or {}
-    if brief.get("failure_type") in ("model_config", "model_service", "device_env"):
+    if brief.get("failure_type") in ("model_config", "model_service", "device_env", "runtime_dependency"):
+        if brief.get("failure_type") == "runtime_dependency":
+            return {
+                "category": "env_issue",
+                "failure_type": "runtime_dependency",
+                "confidence": 0.99,
+                "reason": "Midscene CLI 的 Node.js 依赖加载失败，YAML 操作尚未开始；应修复 Windows Runner 依赖后重跑",
+                "evidence": brief.get("signals", [])[:8],
+                "suggested_action": "在 Windows Runner 上修复或重新安装损坏的 Midscene CLI 依赖，确认模块可加载后重跑原 YAML",
+                "can_auto_repair": False,
+            }
         return {
             "category": "env_issue",
             "failure_type": brief.get("failure_type"),
@@ -1501,7 +1519,7 @@ def classify_failure_by_context(ctx):
             "suggested_action": "保留原始断言与失败关键帧，生成产品缺陷草稿；产品修正后再按原契约验证",
             "can_auto_repair": False,
         }
-    if brief.get("failure_type") in ("model_config", "model_service", "device_env"):
+    if brief.get("failure_type") in ("model_config", "model_service", "device_env", "runtime_dependency"):
         return {
             "category": "env_issue",
             "failure_type": brief.get("failure_type"),
