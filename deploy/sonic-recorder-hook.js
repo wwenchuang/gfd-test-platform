@@ -340,6 +340,11 @@
 
   function mirroredAction(message) {
     if (!message || typeof message !== 'object') return null;
+    if (message.type === 'keyEvent') {
+      const keys = {3: 'HOME', 4: 'BACK', 66: 'ENTER'};
+      const key = keys[Number(message.detail)];
+      return key ? {type: 'key', key} : null;
+    }
     if (message.type === 'debug' && message.detail === 'tap') {
       const value = point(message.point); return value ? {type: 'tap', point: value} : null;
     }

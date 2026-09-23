@@ -34,6 +34,32 @@ test('Sonic hook only becomes ready and mirrors the platform-selected phone', as
   assert.deepEqual(order.find(item => item[0] === 'mirror')[1].action.point, {x: 10, y: 20});
 });
 
+test('Sonic footer keyEvent back and home are mirrored with the native command', async () => {
+  const listeners = {};
+  const sent = [];
+  const opener = {postMessage() {}};
+  class FakeWebSocket {
+    constructor(url) { this.url = url; }
+    send(data) { sent.push(['sonic', JSON.parse(data)]); }
+  }
+  const document = {body: {appendChild() {}}, getElementById() { return {style: {}}; }, createElement() { return {style: {}}; }};
+  const window = {opener, WebSocket: FakeWebSocket, document, addEventListener(type, fn) { listeners[type] = fn; }};
+  const context = vm.createContext({window, document, URL, fetch: async (url, options) => {
+    if (!url.endsWith('/bridge')) sent.push(['platform', JSON.parse(options.body).action]);
+    return {ok: true};
+  }, Date, Math, JSON, String, Number, Object, RegExp, Error, Set, setTimeout});
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'deploy/sonic-recorder-hook.js'), 'utf8'), context);
+  listeners.message({source: opener, origin: 'http://platform.example', data: {type: 'MIDSCENE_RECORDING_START', sessionId: 'keys', recordingToken: 't', endpoint: 'http://platform.example/api/device-recordings/action'}});
+  const socket = new window.WebSocket('ws://agent/websockets/android/key/phone/token');
+  listeners.message({source: opener, data: {type: 'MIDSCENE_RECORDING_BOUND', sessionId: 'keys', deviceId: 'phone'}});
+  socket.send(JSON.stringify({type: 'keyEvent', detail: 4}));
+  listeners.message({source: opener, data: {type: 'MIDSCENE_RECORDING_STEP_CONFIRMED', sessionId: 'keys', sequence: 1, success: true}});
+  socket.send(JSON.stringify({type: 'keyEvent', detail: 3}));
+  await Promise.resolve();
+  assert.deepEqual(sent.filter(item => item[0] === 'platform').map(item => item[1].key), ['BACK', 'HOME']);
+  assert.deepEqual(sent.filter(item => item[0] === 'sonic').map(item => item[1].detail), [4, 3]);
+});
+
 test('Sonic mirrors touch coordinates without reading its video canvas', async () => {
   const listeners = {};
   const order = [];
