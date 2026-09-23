@@ -9,7 +9,7 @@ const ROOT = path.resolve(__dirname, '..');
 
 test('task manager uses a new cache key for the server-bridged recorder script', () => {
   const html = fs.readFileSync(path.join(ROOT, 'task-manager.html'), 'utf8');
-  assert.match(html, /device-recorder\.js\?v=20260923-evidence-stability-v24/);
+  assert.match(html, /device-recorder\.js\?v=20260923-recorder-stop-v25/);
 });
 
 test('step screenshot survives timeline rerenders without repeated downloads', async () => {
@@ -237,6 +237,18 @@ test('does not confirm a recorded step until the next pre-action frame is ready'
   f.run("deviceRecorderSession.pre_action_frame_status='ready'; notifyRecorderStepResult()");
   assert.equal(replies[0].type, 'MIDSCENE_RECORDING_STEP_CONFIRMED');
   assert.equal(replies[0].success, true);
+});
+
+test('finishing a recording tells the Sonic tab to stop mirroring later phone actions', async () => {
+  const f = fixture();
+  const replies = [];
+  f.context.remoteTab = {closed: false, postMessage(message, origin) { replies.push({message, origin}); }};
+  f.context.apiRequest = async () => ({session: {id: 'session-1', status: 'finished', steps: []}});
+  f.run("deviceRecorderWindow=remoteTab; deviceRecorderSession={id:'session-1',status:'recording',steps:[{id:'tap',sequence:1,type:'tap',semantic_description:'我的'}]}; sessionStorage.setItem('deviceRecorderSonicUrl','http://sonic.example/Index/Devices')");
+  await f.run('finishDeviceRecording()');
+  assert.equal(replies.at(-1)?.message.type, 'MIDSCENE_RECORDING_STOP');
+  assert.equal(replies.at(-1)?.message.sessionId, 'session-1');
+  assert.equal(replies.at(-1)?.origin, 'http://sonic.example');
 });
 
 test('a recognized tap with an unchanged phone screen is not reported as a successful navigation', () => {

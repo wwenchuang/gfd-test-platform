@@ -75,6 +75,18 @@
     try { window.localStorage?.removeItem(STORAGE_KEY); } catch (_) {}
   }
 
+  function stopRecording(message = '录制已结束，可继续使用 Sonic', state = 'active') {
+    bridgeEpoch += 1;
+    if (bridgePollTimer) clearTimeout(bridgePollTimer);
+    if (evidenceRefreshTimer) clearTimeout(evidenceRefreshTimer);
+    bridgePollTimer = null;
+    evidenceRefreshTimer = null;
+    awaitingRecognition = 0;
+    recording = null;
+    saveRecording();
+    showRecorderStatus(message, state);
+  }
+
   function acceptHandoff(data, target) {
     const endpoint = new URL(data.endpoint);
     if (!String(data.sessionId || '') || !String(data.recordingToken || '') || !/^https?:$/.test(endpoint.protocol)) return false;
@@ -254,7 +266,15 @@
       body: JSON.stringify({session_id: recording.sessionId, recording_token: recording.recordingToken,
         device_id: recording.deviceId, refresh_evidence: refreshEvidence}),
     }).then(async response => {
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      if (!response.ok) {
+        let error = '';
+        try { error = String((await response.json())?.error || ''); } catch (_) {}
+        if (response.status === 401 || (response.status === 409 && error.includes('录制会话当前不能绑定手机'))) {
+          stopRecording(response.status === 401 ? '录制认证已失效，请重新开始录制' : undefined, response.status === 401 ? 'error' : 'active');
+          return null;
+        }
+        throw new Error(`HTTP ${response.status}${error ? `: ${error}` : ''}`);
+      }
       if (typeof response.json !== 'function') return null;
       const payload = await response.json();
       const session = payload?.session;
@@ -417,6 +437,10 @@
       saveRecording();
       clearSharedHandoff();
       showRecorderStatus(`录制中，已同步 ${mirroredCount} 步`, 'active');
+      return;
+    }
+    if (data.type === 'MIDSCENE_RECORDING_STOP' && recording && data.sessionId === recording.sessionId) {
+      stopRecording();
       return;
     }
     if (data.type === 'MIDSCENE_RECORDING_STEP_CONFIRMED' && recording && data.sessionId === recording.sessionId) {

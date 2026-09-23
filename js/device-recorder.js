@@ -476,6 +476,12 @@ function confirmRecorderSonicBinding(target = deviceRecorderWindow) {
   return true;
 }
 
+function stopRecorderSonicMirroring(sessionId) {
+  if (!deviceRecorderWindow || deviceRecorderWindow.closed || !sessionId) return;
+  const sonicUrl = sessionStorage.getItem('deviceRecorderSonicUrl') || '';
+  deviceRecorderWindow.postMessage({type: 'MIDSCENE_RECORDING_STOP', sessionId}, sonicUrl ? new URL(sonicUrl).origin : '*');
+}
+
 async function maybeRecognizeDeviceRecording() {
   if (deviceRecorderRecognitionInFlight || !deviceRecorderSession?.id || !recorderRecognitionPending(deviceRecorderSession)) return;
   deviceRecorderRecognitionInFlight = true;
@@ -528,6 +534,7 @@ async function finishDeviceRecording() {
   try {
     const data = await apiRequest('/device-recordings/finish', {method: 'POST', body: JSON.stringify({session_id: deviceRecorderSession.id})});
     deviceRecorderSession = data.session;
+    stopRecorderSonicMirroring(deviceRecorderSession.id);
     deviceRecorderGenerated = null;
     if (recorderEvidencePending(deviceRecorderSession) || recorderRecognitionPending(deviceRecorderSession)) startDeviceRecorderPolling();
     else clearInterval(deviceRecorderPollTimer);
@@ -541,6 +548,7 @@ async function cancelDeviceRecording() {
   try {
     const data = await apiRequest('/device-recordings/cancel', {method: 'POST', body: JSON.stringify({session_id: deviceRecorderSession.id})});
     deviceRecorderSession = data.session;
+    stopRecorderSonicMirroring(deviceRecorderSession.id);
     deviceRecorderGenerated = null;
     deviceRecorderBridgeState = '等待 Sonic 进入所选手机';
     clearInterval(deviceRecorderPollTimer);
