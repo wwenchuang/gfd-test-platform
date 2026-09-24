@@ -26,7 +26,7 @@ _RESULTS = frozenset({"success", "failed", "denied", "partial", "accepted", "int
 _METHODS = frozenset({"GET", "HEAD", "POST", "PUT", "DELETE", "PATCH"})
 _KINDS = frozenset({"user", "runner", "sonic", "system", "unknown", "anonymous"})
 _SAFE_FIELD = re.compile(r"^[A-Za-z0-9_.:-]{1,128}$")
-_SAFE_CHANGE_FIELD = frozenset({"name", "title", "status", "scope", "role_ids", "description", "module", "project", "environment", "version", "trigger", "schedule"})
+_SAFE_CHANGE_FIELD = frozenset({"name", "title", "status", "scope", "role_ids", "description", "module", "project", "environment", "version", "trigger", "schedule", "package", "display_name", "permissions"})
 MAX_BATCH_ITEMS = 10000
 MAX_SPOOL_BYTES = 4 * 1024 * 1024
 
@@ -159,6 +159,7 @@ def _sanitize(event):
         "actor": {"kind": kind, "user_id": user_id, "username": _short(actor.get("username"), 64),
                   "display_name": _short(actor.get("display_name"), 96)},
         "action": _identifier(event.get("action")),
+        "route_key": _identifier(event.get("route_key")) or "unknown",
         "method": event.get("method") if event.get("method") in _METHODS else "",
         "resource_type": _identifier(event.get("resource_type")),
         "resource_id": _identifier(event.get("resource_id")),

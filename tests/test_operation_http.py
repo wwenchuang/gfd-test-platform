@@ -50,6 +50,143 @@ def events(store, at_least=0):
         time.sleep(0.01)
 
 
+def test_registered_route_keys_distinguish_config_and_denials(operation_server):
+    server, store = operation_server
+    token = auth.create_session_token()
+    assert request(server, "GET", "/api/task-apps", token)[0] == 200
+    assert request(server, "GET", "/api/sonic/config", token)[0] == 200
+    assert request(server, "GET", "/api/auth/roles", token)[0] == 200
+    assert request(server, "GET", "/api/operations", token)[0] == 200
+    rows = events(store, 4)
+    assert {row["route_key"] for row in rows} >= {
+        "GET.api.task_apps", "GET.api.sonic.config", "GET.auth.roles", "GET.api.operations"
+    }
+    assert request(server, "GET", "/api/auth/roles?secret=QUERY_SENTINEL", "bad-token")[0] == 401
+    assert request(server, "GET", "/api/not-a-route/BODY_SENTINEL?password=QUERY_SENTINEL", token)[0] == 404
+    denied, unknown = events(store, 6)[:2]
+    assert denied["route_key"] == "unknown"
+    assert unknown["route_key"] == "GET.auth.roles"
+    assert unknown["result"] == "denied"
+    assert "SENTINEL" not in json.dumps(events(store, 6))
+
+
+def test_registry_coverage_and_prefix_action_keys():
+    import re
+    from task_server import identity_http, operation_http, router
+    keys = []
+    for method, table in (("GET", router.GET_ROUTES), ("POST", router.POST_ROUTES),
+                          ("PUT", router.PUT_ROUTES), ("DELETE", router.DELETE_ROUTES)):
+        for path in table:
+            if path == "/api/health":
+                continue
+            key = operation_http.route_key(method, path)
+            assert key != "unknown", (method, path)
+            keys.append(key)
+    for method, entries in (("GET", router._GET_PREFIX_ROUTES), ("POST", router._POST_PREFIX_ROUTES),
+                            ("POST", router._POST_PREFIX_BEFORE_BODY_ROUTES), ("PUT", router._PUT_PREFIX_ROUTES),
+                            ("DELETE", router._DELETE_PREFIX_ROUTES)):
+        for prefix, _ in entries:
+            suffix = "job_1/retry" if prefix == "/api/ui/generate-jobs/" and method == "POST" else "job_1/progress" if prefix == "/api/runner/jobs/" else "sample"
+            path = prefix + ("/" if not prefix.endswith("/") else "") + suffix
+            assert operation_http.route_key(method, path) != "unknown", (method, prefix)
+    for method, entries in (("GET", router._GET_REGEX_ROUTES), ("POST", router._POST_REGEX_ROUTES),
+                            ("DELETE", router._DELETE_REGEX_ROUTES)):
+        for pattern, _ in entries:
+            path = re.sub(r"\(\[\^/\]\+\)", "sample", pattern.pattern.strip("^$"))
+            assert operation_http.route_key(method, path) != "unknown", (method, pattern.pattern)
+    assert len(keys) == len(set(keys))
+    for tail, methods in identity_http._ROUTES.items():
+        for method in methods:
+            assert operation_http.route_key(method, "/api/auth" + tail) != "unknown"
+    assert operation_http.route_key("POST", "/api/ui/generate-jobs/job_1/retry") != operation_http.route_key("POST", "/api/ui/generate-jobs/job_1/cancel")
+    assert operation_http.route_key("POST", "/api/runner/jobs/job_1/progress") != operation_http.route_key("POST", "/api/runner/jobs/job_1/result")
+    assert operation_http.route_key("POST", "/api/ui/generate-jobs/job_1/SENTINEL") == "unknown"
+    assert operation_http.route_key("GET", "/api/operations/abc/items") == "GET.api.operations.items"
+
+
+def test_identity_targets_are_trusted_and_distinct_from_actor(operation_server, identity_db):
+    server, store = operation_server
+    token = auth.create_session_token()
+    admin_id = identity_db[1].get_access_profile("admin")["user_id"]
+    status, raw = request(server, "POST", "/api/auth/users", token,
+                          {"username": "audit_member", "display_name": "Audit Member", "role_ids": ["tester"]})
+    assert status == 200
+    member_id = json.loads(raw)["user"]["user_id"]
+    assert member_id != admin_id
+    assert request(server, "PUT", "/api/auth/users/audit_member", token, {"display_name": "Updated"})[0] == 200
+    assert request(server, "POST", "/api/auth/users/audit_member/revoke-sessions", token, {})[0] == 200
+    assert request(server, "PUT", "/api/auth/users/FAKE_TARGET", token, {"display_name": "No"})[0] == 404
+    assert request(server, "POST", "/api/auth/logout", token, {})[0] == 200
+    rows = events(store, 5)
+    by_key = {row["route_key"]: row for row in rows if row["result"] == "success"}
+    assert by_key["POST.auth.users"]["resource_id"] == member_id
+    assert by_key["PUT.auth.users.target"]["resource_id"] == member_id
+    assert by_key["PUT.auth.users.target"]["actor"]["user_id"] == admin_id
+    assert by_key["POST.auth.users.target.revoke_sessions"]["resource_id"] == member_id
+    assert by_key["POST.auth.logout"]["resource_id"] == admin_id
+    assert next(row for row in rows if row["result"] == "failed")["resource_id"] == ""
+
+
+def test_role_and_session_targets_follow_validated_operations(operation_server):
+    server, store = operation_server
+    token = auth.create_session_token()
+    status, raw = request(server, "POST", "/api/auth/roles", token,
+                          {"name": "Audit role", "permissions": ["ui.view"]})
+    assert status == 200
+    role_id = json.loads(raw)["role"]["id"]
+    status, raw = request(server, "GET", "/api/auth/sessions", token)
+    assert status == 200
+    current_session = next(row for row in json.loads(raw)["sessions"] if row["is_current"])["id"]
+    assert request(server, "PUT", "/api/auth/roles/" + role_id, token,
+                   {"name": "Updated role"})[0] == 200
+    assert request(server, "POST", "/api/auth/sessions/revoke", token,
+                   {"session_id": "FAKE_SESSION"})[0] == 400
+    rows = events(store, 4)
+    assert next(row for row in rows if row["route_key"] == "POST.auth.roles")["resource_id"] == role_id
+    assert next(row for row in rows if row["route_key"] == "PUT.auth.roles.target")["resource_id"] == role_id
+    assert next(row for row in rows if row["route_key"] == "GET.auth.sessions")["resource_id"] == json.loads(request(server, "GET", "/api/auth/me", token)[1])["profile"]["user_id"]
+    assert next(row for row in rows if row["route_key"] == "POST.auth.sessions.revoke")["resource_id"] == ""
+    assert request(server, "POST", "/api/auth/sessions/revoke", token,
+                   {"session_id": current_session})[0] == 200
+    assert events(store, 6)[0]["resource_id"] == current_session
+
+
+def test_config_singleton_and_bounded_fields(operation_server, identity_db, tmp_path, monkeypatch):
+    from task_server import router
+    server, store = operation_server
+    token = auth.create_session_token()
+    monkeypatch.setattr(router, "load_task_apps", lambda: {"apps": []})
+    monkeypatch.setattr(router, "save_task_apps", lambda data: None)
+    monkeypatch.setattr(router, "normalize_task_app", lambda data, existing_app=None: {"package": "com.example.safe", "name": data["name"]})
+    monkeypatch.setattr(router, "resolve_task_app_sonic_binding", lambda app: app)
+    monkeypatch.setattr(router, "task_app_feishu_delivery_status", lambda app: {})
+    status, _ = request(server, "POST", "/api/task-app", token,
+                        {"name": "New", "secret": "BODY_SENTINEL", "token": "BODY_SENTINEL", "package": "com.example.safe"})
+    assert status == 200
+    row = events(store, 1)[0]
+    assert row["resource_id"] == "com.example.safe"
+    assert row["summary"]["changed_fields"] == ["name", "package"]
+    assert "BODY_SENTINEL" not in json.dumps(row)
+    assert request(server, "GET", "/api/sonic/config", token)[0] == 200
+    sonic = events(store, 2)[0]
+    assert (sonic["resource_type"], sonic["resource_id"]) == ("config", "sonic_config")
+    create_member(identity_db[1])
+    activate(identity_db[1])
+    member_token = auth.create_session_token("member")
+    assert request(server, "POST", "/api/task-app", member_token, {"name": "Denied"})[0] == 403
+    denied = events(store, 3)[0]
+    assert denied["route_key"] == "POST.api.task_app"
+    assert denied["actor"]["user_id"] == identity_db[1].get_access_profile("member")["user_id"]
+    assert denied["result"] == "denied"
+    monkeypatch.setattr(router, "TASK_DIR", str(tmp_path / "modules"))
+    assert request(server, "POST", "/api/module", token, {"name": "safe_module"})[0] == 200
+    assert request(server, "DELETE", "/api/module?module=safe_module", token)[0] == 200
+    assert [row["resource_id"] for row in events(store, 5)[:2]] == ["safe_module", "safe_module"]
+    monkeypatch.setattr(router, "load_task_apps", lambda: {"apps": [{"package": "com.example.safe"}]})
+    assert request(server, "DELETE", "/api/task-app?package=com.example.safe", token)[0] == 200
+    assert events(store, 6)[0]["resource_id"] == "com.example.safe"
+
+
 def test_http_get_denied_and_login_logout_have_distinct_actors(operation_server):
     server, store = operation_server
     assert request(server, "GET", "/api/tasks")[0] == 401

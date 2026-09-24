@@ -33,6 +33,65 @@ _FIXED_ACTIONS = {
 }
 
 
+def _key(method, path):
+    # Only call with a server-owned route literal, never a request path.
+    return method + "." + ".".join(part.replace("-", "_") for part in path.strip("/").split("/"))
+
+
+def route_key(method, path):
+    """Resolve a safe registration identifier before auth/body handling."""
+    if method not in {"GET", "HEAD", "POST", "PUT", "DELETE", "PATCH"}:
+        return "unknown"
+    from . import router
+    from . import identity_http
+    if path == "/api/operations":
+        return _key(method, path)
+    if method == "GET" and re.fullmatch(r"/api/operations/[A-Za-z0-9_.:-]{1,128}/items", path):
+        return "GET.api.operations.items"
+    if path == "/api/auth/scope-options":
+        return _key(method, path)
+    if path.startswith("/api/auth/"):
+        tail = path[len("/api/auth"):]
+        if tail in identity_http._ROUTES:
+            return _key(method, "/auth" + tail)
+        if re.fullmatch(r"/users/[^/]+/(reset-password|revoke-sessions)", tail):
+            action = tail.rsplit("/", 1)[1]
+            return _key(method, "/auth/users/target/" + action)
+        if re.fullmatch(r"/users/[^/]+", tail):
+            return _key(method, "/auth/users/target")
+        if re.fullmatch(r"/roles/[^/]+", tail):
+            return _key(method, "/auth/roles/target")
+        return "unknown"
+    tables = {"GET": router.GET_ROUTES, "POST": router.POST_ROUTES,
+              "PUT": router.PUT_ROUTES, "DELETE": router.DELETE_ROUTES}
+    if path in tables.get(method, {}):
+        return _key(method, path)
+    if method == "POST" and path.startswith("/api/ui/generate-jobs/"):
+        match = re.fullmatch(r"/api/ui/generate-jobs/[^/]+/(retry|cancel)", path)
+        return _key(method, "/api/ui/generate-jobs/" + match[1]) if match else "unknown"
+    if method == "POST" and path.startswith("/api/runner/jobs/"):
+        match = re.fullmatch(r"/api/runner/jobs/[^/]+/(progress|report-ready|result)", path)
+        return _key(method, "/api/runner/jobs/" + match[1]) if match else "unknown"
+    families = (("GET", router._GET_PREFIX_ROUTES), ("POST", router._POST_PREFIX_ROUTES),
+                ("POST", router._POST_PREFIX_BEFORE_BODY_ROUTES), ("PUT", router._PUT_PREFIX_ROUTES),
+                ("DELETE", router._DELETE_PREFIX_ROUTES))
+    for family_method, entries in families:
+        if method == family_method:
+            for prefix, fn in entries:
+                if path.startswith(prefix):
+                    if prefix in {"/api/assets/", "/api/cases/", "/api/ui/generate-jobs/"} and not re.fullmatch(re.escape(prefix) + r"[^/]+", path):
+                        return "unknown"
+                    return _key(method, prefix.rstrip("/") + "/target")
+    for family_method, entries in (("GET", router._GET_REGEX_ROUTES),
+                                   ("POST", router._POST_REGEX_ROUTES),
+                                   ("DELETE", router._DELETE_REGEX_ROUTES)):
+        if method == family_method:
+            for pattern, fn in entries:
+                if pattern.fullmatch(path):
+                    return method + "." + fn.__name__.lstrip("_")
+    return "unknown"
+
+
 def _store():
     from .services.operation_attribution import OperationStore, default_db_path
     path = str(default_db_path())
@@ -84,6 +143,7 @@ def start_request(handler):
     handler._operation_initiator = ""
     handler._operation_resource_id = ""
     handler._operation_resource_type = ""
+    handler._operation_changed_fields = []
 
 
 def parsed_request(handler):
@@ -131,6 +191,13 @@ def mark_resource(handler, resource_type, resource_id):
     if hasattr(handler, "_operation_id"):
         handler._operation_resource_type = _safe_id(resource_type)
         handler._operation_resource_id = safe_resource_ref(resource_id)
+
+
+def mark_changed_fields(handler, fields):
+    """Record only server-approved field names after a successful mutation."""
+    allowed = {"name", "package", "display_name", "status", "scope", "role_ids", "permissions", "version"}
+    if hasattr(handler, "_operation_id"):
+        handler._operation_changed_fields = [name for name in fields if name in allowed][:25]
 
 
 def observed_json(handler, payload):
@@ -230,8 +297,13 @@ def finish_request(handler):
         qs = dict(urllib.parse.parse_qsl(urllib.parse.urlsplit(handler.path).query, keep_blank_values=False))
         kind, resource_id, action = _resource(path, method, payload, qs, status,
                                                getattr(handler, "_parsed_body", None))
+        registered_key = route_key(method, path)
+        if registered_key == "unknown":
+            kind, resource_id, action = "unknown", "", "unknown.request"
         kind = getattr(handler, "_operation_resource_type", "") or kind
         resource_id = getattr(handler, "_operation_resource_id", "") or resource_id
+        if registered_key == "GET.api.sonic.config":
+            kind, resource_id = "config", "sonic_config"
         if not kind:
             return
         result = _result(status, payload, getattr(handler, "_operation_interrupted", False))
@@ -261,6 +333,8 @@ def finish_request(handler):
                 successes = sum(item["result"] == "success" for item in items)
                 result = "success" if successes == len(items) else "failed" if successes == 0 else "partial"
         event = {"request_id": handler._operation_id, "batch_id": handler._operation_id if item_total else "", "actor": handler._operation_actor or {"kind": "anonymous"},
+                 "route_key": registered_key,
+                 "summary": {"changed_fields": getattr(handler, "_operation_changed_fields", [])},
                  "action": action, "method": method, "resource_type": kind, "resource_id": resource_id, "result": result,
                  "status_code": status, "duration_ms": int((time.monotonic() - handler._operation_started) * 1000),
                  "item_outcomes": items, "item_total": item_total, "items_complete": item_total <= MAX_BATCH_ITEMS,

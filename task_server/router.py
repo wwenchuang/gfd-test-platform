@@ -5274,6 +5274,8 @@ def _post_module(handler, qs):
     except ValueError:
         handler._json({"ok": False, "error": "非法路径"}, 400)
         return
+    from task_server.operation_http import mark_resource
+    mark_resource(handler, "module", name)
     handler._json({"ok": True})
 
 
@@ -5296,6 +5298,9 @@ def _post_task_app(handler, qs):
         return
     response_app = dict(app)
     response_app.update(task_app_feishu_delivery_status(response_app))
+    from task_server.operation_http import mark_resource, mark_changed_fields
+    mark_resource(handler, "app", app["package"])
+    mark_changed_fields(handler, (name for name in ("name", "package") if name in d))
     handler._json({"ok": True, "app": response_app})
 
 
@@ -5875,6 +5880,8 @@ def _delete_module(handler, qs):
     except ValueError:
         handler._json({"ok": False, "error": "非法路径"}, 400)
         return
+    from task_server.operation_http import mark_resource
+    mark_resource(handler, "module", qs.get("module", ""))
     handler._json({"ok": True})
 
 
@@ -5889,8 +5896,12 @@ def _delete_task_app(handler, qs):
         handler._json({"ok": False, "error": "包名不能为空"}, 400)
         return
     data = load_task_apps()
+    existing_app = next((item for item in data.get("apps", []) if item.get("package") == package), None)
     data["apps"] = [item for item in data.get("apps", []) if item.get("package") != package]
     save_task_apps(data)
+    if existing_app:
+        from task_server.operation_http import mark_resource
+        mark_resource(handler, "app", existing_app["package"])
     handler._json({"ok": True})
 
 

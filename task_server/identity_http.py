@@ -131,6 +131,7 @@ def handle_auth_request(handler, method, path, qs):
                 result = store.reset_password(username, target, data.get("password"))
             elif action == "revoke-sessions":
                 _fields(data, {})
+                target_profile = identity.get_access_profile(target)
                 store.revoke_sessions(username, target)
             else:
                 result = {"user": store.update_user(username, target, data)}
@@ -151,6 +152,26 @@ def handle_auth_request(handler, method, path, qs):
             except (TypeError, ValueError):
                 raise identity.IdentityError("记录条数必须是整数") from None
             result = {"events": store.list_audit(username, limit)}
+        from .operation_http import mark_resource, mark_changed_fields
+        if route == "/login":
+            mark_resource(handler, "user", result["profile"]["user_id"])
+        elif route in {"/me", "/logout", "/sessions", "/revoke-sessions", "/change-password"}:
+            mark_resource(handler, "user", profile["user_id"])
+        elif route == "/sessions/revoke":
+            mark_resource(handler, "session", data["session_id"])
+        elif (route == "/users" and method == "POST") or (user_match and user_match[2] != "revoke-sessions"):
+            mark_resource(handler, "user", result["user"]["user_id"])
+            if method == "PUT":
+                mark_changed_fields(handler, data)
+        elif user_match and user_match[2] == "revoke-sessions":
+            if target_profile:
+                mark_resource(handler, "user", target_profile["user_id"])
+        elif (route == "/roles" and method == "POST") or (role_match and method == "PUT"):
+            mark_resource(handler, "role", result["role"]["id"])
+            if method == "PUT":
+                mark_changed_fields(handler, data)
+        elif role_match and method == "DELETE":
+            mark_resource(handler, "role", target)
         handler._json({"ok": True, **result})
     except identity.IdentityError as exc:
         if exc.status == 413:
