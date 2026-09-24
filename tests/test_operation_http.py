@@ -189,7 +189,26 @@ def test_real_batch_shape_keeps_successes_and_errors_separate(operation_server, 
 
 def test_api_testing_resource_and_action_are_specific():
     from task_server.operation_http import _resource
-    assert _resource("/api/api-testing/v1/projects/p1/collections/c1/run", "POST", {}, {}, 200)[::2] == ("api_collection", "api_collection.run")
+    assert _resource("/api/api-testing/v1/projects/p1/collections/c1/run", "POST", {}, {}, 200) == ("api_collection", "c1", "api_collection.run")
+    assert _resource("/api/api-testing/v1/projects/p1/collections", "GET", {"ok": True}, {}, 200) == ("api_collection", "", "api_collection.view")
+    assert _resource("/api/api-testing/v1/projects/p1/collections", "POST", {"ok": True, "data": {"id": "created_collection"}}, {}, 200) == ("api_collection", "created_collection", "api_collection.create")
+    assert _resource("/api/api-testing/v1/projects/p1", "GET", {"ok": True}, {}, 200) == ("api_project", "p1", "api_project.view")
+
+
+def test_unvalidated_query_or_body_identifier_is_not_a_resource(operation_server, monkeypatch):
+    from task_server.operation_http import _resource
+    marker = "UNVALIDATED_SECRET_SENTINEL"
+    assert _resource("/api/jobs", "GET", {"ok": True}, {"id": marker}, 200)[1] == ""
+    assert _resource("/api/auth/login", "POST", {"ok": True}, {}, 200)[1] == ""
+    assert _resource("/api/file/op", "POST", {"ok": True}, {}, 200, {"name": marker})[1] == ""
+    assert _resource("/api/agent-runs/" + marker, "GET", None, {}, 404)[1] == ""
+    server, store = operation_server
+    token = auth.create_session_token()
+    assert request(server, "GET", "/api/operations?id=" + marker, token)[0] == 200
+    assert marker not in json.dumps(events(store, 1))
+    monkeypatch.setattr(app, "dispatch_get", lambda handler: handler._text("Not Found", 404))
+    assert request(server, "GET", "/api/agent-runs/" + marker, token)[0] == 404
+    assert marker not in json.dumps(events(store, 2))
 
 
 def test_keepalive_eof_does_not_repeat_previous_request(operation_server, monkeypatch):

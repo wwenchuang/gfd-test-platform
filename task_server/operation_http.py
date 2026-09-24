@@ -20,6 +20,7 @@ _AUDIT = {"storage": "unknown", "stored": True, "last_replay": 0.0, "last_failur
 _ID = re.compile(r"^[A-Za-z0-9_.:-]{1,128}$")
 _RESOURCE_KEYS = ("id", "job_id", "run_id", "session_id", "recording_id", "version_id", "file_id", "project_id", "environment_id")
 _ALIASES = {"auth": "account", "api-testing": "api", "device-recordings": "recording", "test-reports": "report", "reports": "report", "assets": "asset", "cases": "case", "jobs": "job", "runner": "runner", "sonic": "sonic", "agent-runs": "agent_run", "file": "file", "files": "file", "modules": "module", "apps": "app", "tasks": "task", "knowledge": "knowledge", "repair-drafts": "repair_draft", "runners": "runner", "ui": "ui", "figma": "figma", "yaml": "yaml", "model-config": "model_config", "preflight": "preflight", "run-request": "job", "test-runs": "test_run"}
+_ROUTE_VERBS = {"cancel", "retry", "run", "execute", "start", "stop", "upload", "download", "preview", "finish", "replay", "generate", "approve", "reject", "apply", "refresh", "submit", "save", "delete", "reset", "rename"}
 _FIXED_ACTIONS = {
     ("POST", "/api/ui/generate-yaml"): "yaml.generate",
     ("POST", "/api/figma/parse-async"): "figma.parse_async",
@@ -163,36 +164,36 @@ def _resource(path, method, payload, qs, status, parsed_body=None):
         for index, part in enumerate(tail):
             if part in api_nouns:
                 kind = "api_" + api_nouns[part]
+                resource_id = ""
                 if status < 400 and index + 1 < len(tail):
                     candidate = safe_resource_ref(urllib.parse.unquote(tail[index + 1]))
-                    if candidate and tail[index + 1] not in api_nouns:
+                    if candidate and tail[index + 1] not in api_nouns and tail[index + 1] not in _ROUTE_VERBS:
                         resource_id = candidate
-    # Only a known identifier position is read from URL paths. Arbitrary path
-    # text is never preserved in the event or action label.
-    if status < 400 and len(tail) == 1 and kind in {"account", "case", "asset", "job", "agent_run", "recording"}:
-        resource_id = safe_resource_ref(urllib.parse.unquote(tail[0]))
+    # Only the known API-testing noun positions carry path IDs. Other routes
+    # can bind a validated ID with mark_resource rather than assuming a suffix.
     if status < 400:
-        for key in _RESOURCE_KEYS:
-            resource_id = resource_id or safe_resource_ref(qs.get(key))
         if isinstance(payload, dict):
-            for key in _RESOURCE_KEYS:
-                resource_id = resource_id or safe_resource_ref(payload.get(key))
+            if kind.startswith("api_") and method == "POST" and not resource_id:
+                data = payload.get("data")
+                if isinstance(data, dict):
+                    resource_id = safe_resource_ref(data.get("id"))
             if kind in {"job", "agent_run", "test_run", "api_execution", "api_load_run"}:
                 for nested_key in ("job", "run", "execution"):
                     nested = payload.get(nested_key)
                     if isinstance(nested, dict):
                         resource_id = resource_id or safe_resource_ref(nested.get("id") or nested.get("job_id") or nested.get("run_id"))
-        if kind in {"file", "module", "asset"}:
-            for source in (qs, parsed_body if isinstance(parsed_body, dict) else {}):
-                for key in ("filename", "file", "module", "name"):
-                    resource_id = resource_id or safe_resource_ref(source.get(key))
+        if kind == "file" and method == "GET" and path in {"/api/file", "/api/file/history", "/api/file/version"}:
+            resource_id = safe_resource_ref(qs.get("file"))
+        elif path == "/api/file" and method == "POST" and isinstance(parsed_body, dict):
+            resource_id = safe_resource_ref(parsed_body.get("file"))
+        elif path == "/api/file/op" and method == "POST" and isinstance(payload, dict):
+            resource_id = safe_resource_ref(payload.get("file"))
     if kind == "account" and tail:
         verb = "login" if tail[0] == "login" else "logout" if tail[0] == "logout" else "manage"
     else:
         verb = {"GET": "view", "HEAD": "inspect", "POST": "create", "PUT": "update", "DELETE": "delete", "PATCH": "update"}.get(method, "request")
-        known = {"cancel", "retry", "run", "execute", "start", "stop", "upload", "download", "preview", "finish", "replay", "generate", "approve", "reject", "apply", "refresh", "submit", "save", "delete", "reset", "rename"}
         for part in reversed(tail):
-            if part in known:
+            if part in _ROUTE_VERBS:
                 verb = part
                 break
     if kind == "file" and method == "POST" and isinstance(parsed_body, dict) and parsed_body.get("op") in {"copy", "move", "rename"}:
