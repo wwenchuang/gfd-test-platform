@@ -92,6 +92,21 @@ def generate_recording_yaml(session: Dict[str, Any], task_name: str = "录制生
     package = str(session.get("app_package") or "").strip()
     if package:
         flow = [{"launch": package}] + [item for item in flow if "launch" not in item]
+    ready_flow: List[Dict[str, Any]] = []
+    for item in flow:
+        target = str(item.get("aiTap") or "").strip()
+        ready_condition = f"页面中已出现可点击的“{target}”入口" if target else ""
+        if target and not (
+            ready_flow
+            and "aiWaitFor" in ready_flow[-1]
+            and ready_condition == str(ready_flow[-1]["aiWaitFor"])
+        ):
+            ready_flow.append({
+                "aiWaitFor": ready_condition,
+                "timeout": 12000,
+            })
+        ready_flow.append(item)
+    flow = ready_flow
     normalized_task_name = str(task_name or "录制生成用例").strip()
     document = {"android": {}, "tasks": [{"name": normalized_task_name, "flow": flow}]}
     yaml_text = yaml.safe_dump(document, allow_unicode=True, sort_keys=False, width=120)

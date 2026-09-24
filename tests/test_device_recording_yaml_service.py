@@ -86,7 +86,29 @@ class DeviceRecordingYamlServiceTest(unittest.TestCase):
         flow = yaml.safe_load(result["yaml"])["tasks"][0]["flow"]
         self.assertEqual(flow[0], {"launch": "com.kfb.model"})
         self.assertEqual([item for item in flow if "launch" in item], [{"launch": "com.kfb.model"}])
-        self.assertEqual(flow[1], {"aiTap": "我的"})
+        self.assertEqual(flow[1], {"aiWaitFor": "页面中已出现可点击的“我的”入口", "timeout": 12000})
+        self.assertEqual(flow[2], {"aiTap": "我的"})
+
+    def test_waits_for_each_next_click_target_without_fixed_sleep(self):
+        session = {"status": "finished", "app_package": "com.kfb.model", "steps": [
+            {"type": "tap", "semantic_description": "我的"},
+            {"type": "tap", "semantic_description": "打印记录"},
+            {"type": "tap", "semantic_description": "返回按钮"},
+        ]}
+        import yaml
+        result = generate_recording_yaml(session)
+        flow = yaml.safe_load(result["yaml"])["tasks"][0]["flow"]
+        self.assertEqual(flow, [
+            {"launch": "com.kfb.model"},
+            {"aiWaitFor": "页面中已出现可点击的“我的”入口", "timeout": 12000},
+            {"aiTap": "我的"},
+            {"aiWaitFor": "页面中已出现可点击的“打印记录”入口", "timeout": 12000},
+            {"aiTap": "打印记录"},
+            {"aiWaitFor": "页面中已出现可点击的“返回按钮”入口", "timeout": 12000},
+            {"aiTap": "返回按钮"},
+        ])
+        self.assertTrue(result["validation"]["ok"])
+        self.assertNotIn("sleep:", result["yaml"])
 
     def test_rejects_empty_or_active_recording_instead_of_inventing_launch_only_yaml(self):
         with self.assertRaisesRegex(ValueError, "结束录制"):
