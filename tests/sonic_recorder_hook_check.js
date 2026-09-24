@@ -495,6 +495,31 @@ test('Sonic hook announces that it can receive a recording session after page lo
   assert.equal(messages[0].origin, '*');
 });
 
+test('Sonic reports bridge recovery after a transient fetch failure', async () => {
+  const listeners = {};
+  const messages = [];
+  const opener = {postMessage(message) { messages.push(message); }};
+  const badge = {style: {}, textContent: ''};
+  let retry;
+  let attempts = 0;
+  class FakeWebSocket { constructor(url) { this.url = url; } send() {} }
+  const document = {body: {appendChild() {}}, getElementById() { return badge; }, createElement() { return badge; }};
+  const window = {opener, WebSocket: FakeWebSocket, document, addEventListener(type, fn) { listeners[type] = fn; }};
+  const context = vm.createContext({window, document, URL, fetch: async () => {
+    attempts += 1;
+    if (attempts === 1) throw new Error('Failed to fetch');
+    return {ok: true, json: async () => ({session: {pre_action_frame_status: 'ready', steps: []}})};
+  }, Date, Math, JSON, String, Number, Object, RegExp, Error, Set, setTimeout(fn) { retry = fn; return 1; }, clearTimeout() {}});
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'deploy/sonic-recorder-hook.js'), 'utf8'), context);
+  listeners.message({source: opener, origin: 'http://platform.example', data: {type: 'MIDSCENE_RECORDING_START', sessionId: 'recover', recordingToken: 't', endpoint: 'http://platform.example/api/device-recordings/action'}});
+  new window.WebSocket('ws://agent/websockets/android/key/phone/token');
+  await new Promise(setImmediate);
+  assert.ok(messages.some(item => item.type === 'MIDSCENE_RECORDING_ERROR' && item.source === 'bridge'));
+  retry();
+  await new Promise(setImmediate);
+  assert.ok(messages.some(item => item.type === 'MIDSCENE_RECORDING_BRIDGE_RECOVERED' && item.sessionId === 'recover'));
+});
+
 test('Sonic consumes and clears a fragment handoff even when cross-site isolation removes the opener', async () => {
   const listeners = {};
   const requests = [];

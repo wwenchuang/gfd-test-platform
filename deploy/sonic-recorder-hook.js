@@ -22,6 +22,7 @@
   let bridgePollTimer = null;
   let missedActionNeedsFrame = false;
   let bridgeEpoch = 0;
+  let bridgeErrorActive = false;
   const NativeWindowOpen = typeof window.open === 'function' ? window.open.bind(window) : null;
   const NativeHistoryPush = typeof window.history?.pushState === 'function' ? window.history.pushState.bind(window.history) : null;
   const NativeHistoryReplace = typeof window.history?.replaceState === 'function' ? window.history.replaceState.bind(window.history) : null;
@@ -81,6 +82,7 @@
     if (bridgePollTimer) clearTimeout(bridgePollTimer);
     bridgePollTimer = null;
     missedActionNeedsFrame = false;
+    bridgeErrorActive = false;
     awaitingRecognition = 0;
     recording = null;
     saveRecording();
@@ -96,6 +98,7 @@
       bound: false, createdAt: Date.now(),
     };
     platformTarget = target || null;
+    bridgeErrorActive = false;
     saveRecording();
     showRecorderStatus('已接收任务，请在 Sonic 选择手机');
     return true;
@@ -288,6 +291,10 @@
       const session = payload?.session;
       if (!session) return null;
       if (epoch !== bridgeEpoch) return session;
+      if (bridgeErrorActive) {
+        bridgeErrorActive = false;
+        notifyPlatform({type: 'MIDSCENE_RECORDING_BRIDGE_RECOVERED', sessionId: recording.sessionId});
+      }
       recording.frameExpiresAt = Number(session.pre_action_frame_captured_ts || 0)
         ? Number(session.pre_action_frame_captured_ts) * 1000 + FRAME_MAX_AGE_MS : 0;
       mirroredCount = Math.max(mirroredCount, ...(session.steps || []).map(item => Number(item.sequence || 0)), 0);
@@ -332,9 +339,10 @@
       return session;
     }).catch(error => {
       if (epoch !== bridgeEpoch) return null;
+      bridgeErrorActive = true;
       recording.bound = false;
       showRecorderStatus(`录制桥接失败：${String(error.message || error)}`, 'error');
-      notifyPlatform({type: 'MIDSCENE_RECORDING_ERROR', message: String(error.message || error)});
+      notifyPlatform({type: 'MIDSCENE_RECORDING_ERROR', source: 'bridge', sessionId: recording.sessionId, message: String(error.message || error)});
       scheduleBridgePoll();
       return null;
     });
@@ -502,6 +510,7 @@
     try {
       const endpoint = new URL(data.endpoint);
       const sameSession = recording?.sessionId === String(data.sessionId || '');
+      if (!sameSession) bridgeErrorActive = false;
       recording = {
         sessionId: String(data.sessionId || ''), recordingToken: String(data.recordingToken || ''),
         deviceId: String(data.deviceId || recording?.deviceId || ''), endpoint: endpoint.href, platformOrigin: endpoint.origin,

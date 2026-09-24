@@ -9,7 +9,7 @@ const ROOT = path.resolve(__dirname, '..');
 
 test('task manager uses a new cache key for the server-bridged recorder script', () => {
   const html = fs.readFileSync(path.join(ROOT, 'task-manager.html'), 'utf8');
-  assert.match(html, /device-recorder\.js\?v=20260924-recorder-point-v29/);
+  assert.match(html, /device-recorder\.js\?v=20260924-recorder-point-v30/);
 });
 
 test('manual re-recognition reports the actual result and prevents duplicate requests', async () => {
@@ -31,6 +31,18 @@ test('manual re-recognition reports the actual result and prevents duplicate req
   await Promise.all([pending, duplicate]);
   assert.match(notices.at(-1).message, /我的/);
   assert.equal(notices.at(-1).kind, 'success');
+});
+
+test('a recovered Sonic bridge clears only its own stale error for the active session', async () => {
+  const f = fixture();
+  f.run("deviceRecorderSession={id:'s1',status:'recording',device_id:'ecbfd645',app_package:'com.kfb.model',steps:[]}; sessionStorage.setItem('deviceRecorderSonicUrl','http://sonic.example/Index/Devices'); renderDeviceRecorder()");
+  await f.run("handleDeviceRecorderMessage({origin:'http://sonic.example',data:{type:'MIDSCENE_RECORDING_ERROR',sessionId:'s1',source:'bridge',message:'Failed to fetch'}})");
+  assert.match(f.dom.window.document.getElementById('device-recorder-message').textContent, /Failed to fetch/);
+  await f.run("handleDeviceRecorderMessage({origin:'http://sonic.example',data:{type:'MIDSCENE_RECORDING_BRIDGE_RECOVERED',sessionId:'old'}})");
+  assert.match(f.dom.window.document.getElementById('device-recorder-message').textContent, /Failed to fetch/);
+  await f.run("handleDeviceRecorderMessage({origin:'http://sonic.example',data:{type:'MIDSCENE_RECORDING_BRIDGE_RECOVERED',sessionId:'s1'}})");
+  assert.doesNotMatch(f.dom.window.document.getElementById('device-recorder-message').textContent, /Failed to fetch/);
+  assert.match(f.dom.window.document.getElementById('device-recorder-message').textContent, /已恢复/);
 });
 
 test('step screenshot survives timeline rerenders without repeated downloads', async () => {

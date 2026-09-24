@@ -3,6 +3,7 @@ let deviceRecorderWindow = null;
 let deviceRecorderPollTimer = null;
 let deviceRecorderPollInFlight = false;
 let deviceRecorderBridgeState = '等待 Sonic 接收录制会话';
+let deviceRecorderBridgeErrorActive = false;
 let deviceRecorderGenerated = null;
 let deviceRecorderFileNameEdited = false;
 let deviceRecorderRecognitionInFlight = false;
@@ -367,6 +368,7 @@ function newDeviceRecording() {
   deviceRecorderSession = null;
   deviceRecorderGenerated = null;
   deviceRecorderBridgeState = '等待 Sonic 接收录制会话';
+  deviceRecorderBridgeErrorActive = false;
   deviceRecorderHookBoundSessionId = '';
   deviceRecorderFailedSequenceNotified.clear();
   renderDeviceRecorder();
@@ -391,6 +393,7 @@ async function startDeviceRecording() {
     deviceRecorderSession = data.session;
     deviceRecorderGenerated = null;
     deviceRecorderBridgeState = '等待 Sonic 选择手机并接收录制会话';
+    deviceRecorderBridgeErrorActive = false;
     deviceRecorderFileNameEdited = false;
     deviceRecorderConfirmedSequence = 0;
     deviceRecorderHookBoundSessionId = '';
@@ -543,9 +546,15 @@ async function handleDeviceRecorderMessage(event) {
       deviceRecorderBridgeState = `手机绑定失败：${String(error.message || error)}`;
       renderDeviceRecorder();
     }
-  } else if (event.data?.type === 'MIDSCENE_RECORDING_ERROR') {
+  } else if (event.data?.type === 'MIDSCENE_RECORDING_ERROR' && (!event.data.sessionId || event.data.sessionId === deviceRecorderSession?.id)) {
+    deviceRecorderBridgeErrorActive = event.data.source === 'bridge';
     deviceRecorderBridgeState = `动作记录失败：${String(event.data.message || '未知错误')}`;
     renderDeviceRecorder();
+  } else if (event.data?.type === 'MIDSCENE_RECORDING_BRIDGE_RECOVERED' && event.data.sessionId === deviceRecorderSession?.id && deviceRecorderBridgeErrorActive) {
+    deviceRecorderBridgeErrorActive = false;
+    deviceRecorderBridgeState = 'Sonic 与平台已重新连接，录制已恢复';
+    const message = document.getElementById('device-recorder-message');
+    if (message) message.textContent = `手机：${deviceRecorderSession.device_id || '等待在 Sonic 选择'} · 会话：${deviceRecorderSession.id} · ${deviceRecorderBridgeState}`;
   }
 }
 
