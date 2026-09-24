@@ -50,7 +50,16 @@ let recorderDeviceUpdatedAt = 0;
 let recorderDeviceError = false;
 
 function recorderVisibleDevices() {
-  return (recorderDevices || runnerDevices || []).filter(device => !['9888E0094F2A', '18CEDF5BA7B2'].includes(String(device.device_id || '').toUpperCase()));
+  const phones = new Map();
+  const connected = device => Number(device.runner_online !== false) * 2 + Number(['online', 'device'].includes(device.status));
+  for (const device of recorderDevices || runnerDevices || []) {
+    const serial = String(device.device_id || '').trim();
+    if (!serial || ['9888E0094F2A', '18CEDF5BA7B2'].includes(serial.toUpperCase())) continue;
+    const previous = phones.get(serial);
+    // A phone can leave a cached row behind when moved to another Runner.
+    if (!previous || connected(device) > connected(previous)) phones.set(serial, device);
+  }
+  return [...phones.values()];
 }
 
 function recorderPhoneState(device) {

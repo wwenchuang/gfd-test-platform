@@ -9,7 +9,7 @@ const ROOT = path.resolve(__dirname, '..');
 
 test('task manager uses a new cache key for the server-bridged recorder script', () => {
   const html = fs.readFileSync(path.join(ROOT, 'task-manager.html'), 'utf8');
-  assert.match(html, /device-recorder\.js\?v=20260924-recorder-live-v32/);
+  assert.match(html, /device-recorder\.js\?v=20260924-recorder-live-v33/);
 });
 
 test('history groups by app and module and filter changes clear hidden selections', () => {
@@ -506,6 +506,15 @@ test('offline and unknown phones are never green or offered as ready', () => {
   assert.ok(f.dom.window.document.querySelector('.device-recorder-phone-status.unknown'));
   assert.equal(f.dom.window.document.querySelector('.device-recorder-phone-status.idle'),null);
   assert.equal(f.dom.window.document.querySelector('[data-action="start-recording"]').disabled,true);
+});
+
+test('one phone moved between runners displays the live connection once', () => {
+  const f=fixture();
+  f.run("recorderDevices=[{device_id:'same',model:'ELS',runner_id:'old',runner_online:false,status:'online'},{device_id:'same',model:'ELS',runner_id:'new',runner_online:true,status:'online',usage_status:'idle'}];renderDeviceRecorder()");
+  assert.equal(f.dom.window.document.querySelectorAll('.device-recorder-phone').length,1);
+  assert.match(f.dom.window.document.querySelector('.device-recorder-phone').textContent,/new/);
+  f.run('recorderDevices.reverse();renderDeviceRecorder()');
+  assert.match(f.dom.window.document.querySelector('.device-recorder-phone').textContent,/new/);
 });
 
 
