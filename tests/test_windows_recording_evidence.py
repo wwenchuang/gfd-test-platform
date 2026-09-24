@@ -66,8 +66,39 @@ class WindowsRecordingEvidenceTest(unittest.TestCase):
             runner.upload_recording_evidence_requests(response, [{"device_id": "phone", "resolution": "Physical size: 1200x2640\nOverride size: 1080x2400"}])
         self.assertEqual(posted[0]["request_id"], "pre-1")
         self.assertEqual(posted[0]["step_id"], "")
-        self.assertTrue(posted[0]["content_base64"])
-        self.assertEqual((posted[0]["coordinate_width"], posted[0]["coordinate_height"]), (1200, 2640))
+        self.assertEqual(posted[0]["phase"], "capturing")
+        self.assertTrue(posted[1]["content_base64"])
+        self.assertEqual((posted[1]["coordinate_width"], posted[1]["coordinate_height"]), (1200, 2640))
+
+    def test_recording_capture_is_processed_before_ordinary_snapshot(self):
+        order = []
+        with mock.patch.object(runner, "upload_recording_evidence_requests", side_effect=lambda *_: order.append("recording")), \
+             mock.patch.object(runner, "upload_snapshot_requests", side_effect=lambda *_: order.append("snapshot")):
+            runner.process_heartbeat_requests({}, [])
+        self.assertEqual(order, ["recording", "snapshot"])
+
+    def test_device_details_are_cached_but_online_ids_are_checked_each_round(self):
+        runner._DEVICE_DETAILS_CACHE.clear()
+        with mock.patch.object(runner, "detect_device_ids", side_effect=[["phone"], ["phone"], []]) as online, \
+             mock.patch.object(runner, "resolve_adb_with_devices", return_value=("adb", ["phone"])), \
+             mock.patch.object(runner, "adb_shell_text", return_value="example") as details, \
+             mock.patch.object(runner, "detect_package_info", return_value={"installed": True}), \
+             mock.patch.object(runner, "device_market_name", return_value="Phone"), \
+             mock.patch.object(runner.time, "time", side_effect=[100, 101, 102]):
+            first = runner.detect_devices()
+            count = details.call_count
+            second = runner.detect_devices()
+            third = runner.detect_devices()
+        self.assertEqual(online.call_count, 3)
+        self.assertEqual(details.call_count, count)
+        self.assertEqual(first[0]["device_id"], second[0]["device_id"])
+        self.assertEqual(third, [])
+
+    def test_configured_phone_still_requires_live_adb_presence_without_fallback(self):
+        with mock.patch.dict(runner.os.environ, {"DEVICE_ID": "phone", "ANDROID_DEVICE_ID": "", "ANDROID_SERIAL": ""}), \
+             mock.patch.object(runner, "resolve_adb_with_devices", return_value=("adb", ["other-phone"])):
+            with self.assertRaisesRegex(RuntimeError, "phone"):
+                runner.detect_device_ids()
 
     def test_enables_android_touch_and_pointer_overlays_for_recording(self):
         calls = []

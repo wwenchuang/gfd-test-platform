@@ -9047,6 +9047,14 @@ def list_generate_jobs(limit=80):
         names = [name for name in os.listdir(GENERATE_JOB_DIR) if name.endswith(".json")]
     except Exception:
         return []
+    generation_urls = None
+
+    def cached_generation_urls():
+        nonlocal generation_urls
+        if generation_urls is None:
+            generation_urls = _generation_figma_url_index()
+        return generation_urls
+
     rows = []
     for name in sorted(names, reverse=True)[:limit * 2]:
         try:
@@ -9055,7 +9063,7 @@ def list_generate_jobs(limit=80):
             job = None
         if isinstance(job, dict):
             job = expire_generate_job_if_stale(job, persist=True)
-            rows.append(sanitize_generate_job_for_client(job))
+            rows.append(sanitize_generate_job_for_client(job, generation_urls=cached_generation_urls))
     rows.sort(key=lambda item: item.get("updated_at") or item.get("created_at") or "", reverse=True)
     return rows[:limit]
 
@@ -9106,7 +9114,7 @@ def generate_job_id():
 
 
 
-def generate_retry_request_from_job(job):
+def generate_retry_request_from_job(job, generation_urls=None):
     def normalize_retry_mode(request):
         if job.get("type") == "mindmap_only":
             request["mindmap_mode"] = "cases"
@@ -9122,7 +9130,7 @@ def generate_retry_request_from_job(job):
         if case_set_id and not (next_request.get("figma_url") or next_request.get("figmaUrl")):
             summary = read_json_file(generation_summary_path(case_set_id), default={}) or {}
             meta = read_json_file(asset_meta_path(case_set_id), default={}) or {}
-            figma_url = find_figma_url_for_case_set(case_set_id, summary=summary, meta=meta)
+            figma_url = find_figma_url_for_case_set(case_set_id, summary=summary, meta=meta, generation_urls=generation_urls)
             if figma_url:
                 next_request["figma_url"] = figma_url
                 next_request.setdefault("figma_mode", meta.get("figma_mode") or meta.get("figmaMode") or "smart")
@@ -9132,7 +9140,7 @@ def generate_retry_request_from_job(job):
     if case_set_id:
         summary = read_json_file(generation_summary_path(case_set_id), default={}) or {}
         meta = read_json_file(asset_meta_path(case_set_id), default={}) or {}
-        figma_url = find_figma_url_for_case_set(case_set_id, summary=summary, meta=meta)
+        figma_url = find_figma_url_for_case_set(case_set_id, summary=summary, meta=meta, generation_urls=generation_urls)
         if meta.get("files"):
             return normalize_retry_mode({
                 "case_set_id": case_set_id,
@@ -9388,12 +9396,12 @@ def list_generation_mindmaps(limit=100):
 
 
 
-def sanitize_generate_job_for_client(job):
+def sanitize_generate_job_for_client(job, generation_urls=None):
     if not isinstance(job, dict):
         return job
     safe = dict(job)
     request = safe.pop("request_data", None) or safe.pop("requestData", None)
-    safe["can_retry"] = job.get("type") in ("generate", "mindmap_only") and bool(generate_retry_request_from_job(job))
+    safe["can_retry"] = job.get("type") in ("generate", "mindmap_only") and bool(generate_retry_request_from_job(job, generation_urls=generation_urls))
     if request:
         safe["request_summary"] = summarize_generate_request(request)
     if safe.get("error_trace"):
@@ -11461,28 +11469,52 @@ def run_figma_parse_job(job_id, request_data):
 
 
 
-def find_figma_url_for_case_set(case_set_id, summary=None, meta=None):
+def _generation_figma_url_index():
+    urls = {}
+    for job in iter_raw_generate_jobs():
+        request = job.get("request_data") or job.get("requestData") or {}
+        if not isinstance(request, dict):
+            continue
+        case_set_id = (
+            request.get("case_set_id")
+            or request.get("caseSetId")
+            or job.get("case_set_id")
+            or (job.get("result") or {}).get("case_set_id")
+        )
+        url = (request.get("figma_url") or request.get("figmaUrl") or "").strip()
+        if case_set_id and url and case_set_id not in urls:
+            urls[case_set_id] = url
+    return urls
+
+
+def find_figma_url_for_case_set(case_set_id, summary=None, meta=None, generation_urls=None):
     summary = summary or {}
     meta = meta or {}
     for source in (meta, summary):
         url = (source.get("figma_url") or source.get("figmaUrl") or "").strip()
         if url:
             return url
-    for job in iter_raw_generate_jobs():
-        request = job.get("request_data") or job.get("requestData") or {}
-        if not isinstance(request, dict):
-            continue
-        job_case_set = (
-            request.get("case_set_id")
-            or request.get("caseSetId")
-            or job.get("case_set_id")
-            or (job.get("result") or {}).get("case_set_id")
-        )
-        if job_case_set != case_set_id:
-            continue
-        url = (request.get("figma_url") or request.get("figmaUrl") or "").strip()
+    if generation_urls is not None:
+        urls = generation_urls() if callable(generation_urls) else generation_urls
+        url = urls.get(case_set_id, "")
         if url:
             return url
+    else:
+        for job in iter_raw_generate_jobs():
+            request = job.get("request_data") or job.get("requestData") or {}
+            if not isinstance(request, dict):
+                continue
+            job_case_set = (
+                request.get("case_set_id")
+                or request.get("caseSetId")
+                or job.get("case_set_id")
+                or (job.get("result") or {}).get("case_set_id")
+            )
+            if job_case_set != case_set_id:
+                continue
+            url = (request.get("figma_url") or request.get("figmaUrl") or "").strip()
+            if url:
+                return url
     ui_meta = load_case_ui_design_meta(case_set_id)
     for item in ui_meta.get("designs") or []:
         if not isinstance(item, dict) or item.get("source") != "figma":

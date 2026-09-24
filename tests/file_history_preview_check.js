@@ -30,7 +30,7 @@ function deferred() {
   return { promise, resolve, reject };
 }
 
-function fixture(t, { dirty = true, response, confirmResult = false, restoreWait, canEdit = true, fileRead, readStarted } = {}) {
+function fixture(t, { dirty = true, response, confirmResult = false, restoreWait, saveWait, canEdit = true, fileRead, readStarted } = {}) {
   // Default jsdom does not load external resources or execute page scripts.
   const dom = new JSDOM(fs.readFileSync(path.join(ROOT, 'task-manager.html'), 'utf8'));
   t.after(() => dom.window.close());
@@ -44,7 +44,7 @@ function fixture(t, { dirty = true, response, confirmResult = false, restoreWait
   const context = vm.createContext({
     window: dom.window, document: dom.window.document, navigator: dom.window.navigator,
     fetch: blockNetwork, XMLHttpRequest: blockNetwork, WebSocket: blockNetwork,
-    currentModule: '历史测试', currentFile: '当前.yaml', editorDirty: false, editorInitialContent: '', pendingBatchBusy: false,
+    currentModule: '历史测试', currentFile: '当前.yaml', editorDirty: false, editorInitialContent: '', pendingBatchBusy: false, fileOpenRequest: 0,
     currentAccessProfile: { permissions: canEdit ? ['ui.view', 'ui.edit'] : ['ui.view'], scope: {ui_apps: '*'} },
     activeWorkflow: 'yaml_edit', activeWorkspaceMode: '', sonicStatusData: null,
     isPanelCollapsed: () => false, fileMeta: () => ({}), yamlDisplayName: file => file,
@@ -57,7 +57,7 @@ function fixture(t, { dirty = true, response, confirmResult = false, restoreWait
     apiTextRequest: async url => {
       calls.push({ url, method: 'GET' });
       if (readStarted) readStarted.resolve();
-      return fileRead ? fileRead() : OLD;
+      return fileRead ? fileRead(url) : OLD;
     },
     apiRequest: async (url, options = {}) => {
       const call = { url, method: options.method || 'GET' };
@@ -69,6 +69,10 @@ function fixture(t, { dirty = true, response, confirmResult = false, restoreWait
         if (restoreWait) await restoreWait;
         return { ok: true, version: { id: call.body.version } };
       }
+      if (url === '/file' && call.method === 'POST') {
+        if (saveWait) await saveWait;
+        return { ok: true };
+      }
       throw new Error(`Unexpected request: ${call.method} ${url}`);
     },
   });
@@ -76,7 +80,7 @@ function fixture(t, { dirty = true, response, confirmResult = false, restoreWait
   loadFunctions(context, 'js/utils.js', ['closeModal']);
   loadFunctions(context, 'js/navigation.js', ['hasOpenEditor']);
   loadFunctions(context, 'js/auth.js', ['hasPermission', 'requireUiEditPermission', 'applyRestrictedActionControls', 'canOperateAgent', 'agentAccessReason', 'canAccessGlobalSonic', 'sonicAccessReason', 'canUseSharedUiAi', 'uiAiAccessReason']);
-  loadFunctions(context, 'js/execution.js', ['openFile', 'showEditor', 'escHtml', 'updateLines', 'markEditorDirty', 'canLeaveEditor', 'saveFile']);
+  loadFunctions(context, 'js/execution.js', ['openFile', 'showEditor', 'escHtml', 'enableEditorPanelScrolling', 'updateLines', 'markEditorDirty', 'canLeaveEditor', 'saveFile']);
   const openFile = context.openFile;
   context.openFile = async (module, file) => { opened.push({module, file}); await openFile(module, file); };
   const execution = fs.readFileSync(path.join(ROOT, 'js/execution.js'), 'utf8');
@@ -136,6 +140,33 @@ test('saving an unchanged editor is a visible no-op without creating history', a
   assert.equal(await f.run('saveFile()'), true);
   assert.equal(f.calls.length, 0);
   assert.deepEqual(f.toasts.at(-1), { message: '当前内容没有修改，无需保存', type: 'info' });
+});
+
+test('typing while save is pending remains unsaved after the earlier content is stored', async t => {
+  const finish = deferred();
+  const f = fixture(t, { saveWait: finish.promise });
+  const saving = f.run('saveFile()');
+  f.editor.value = DRAFT + '# typed during save\n';
+  f.run('markEditorDirty()');
+  finish.resolve();
+  assert.equal(await saving, true);
+  assert.equal(f.calls.find(call => call.method === 'POST').body.content, DRAFT);
+  assert.equal(f.run('editorDirty'), true);
+  assert.equal(f.field('btn-save').disabled, false);
+  assert.equal(f.run('canLeaveEditor()'), false);
+});
+
+test('an older file response cannot replace the file selected most recently', async t => {
+  const first = deferred(), second = deferred();
+  const f = fixture(t, { dirty: false, fileRead: url => url.includes('file=A.yaml') ? first.promise : second.promise });
+  const openingA = f.run('openFile("历史测试", "A.yaml")');
+  const openingB = f.run('openFile("历史测试", "B.yaml")');
+  second.resolve(SAVED.replace('当前已保存版本', 'B content'));
+  await openingB;
+  first.resolve(SAVED.replace('当前已保存版本', 'A content'));
+  await openingA;
+  assert.equal(f.run('currentFile'), 'B.yaml');
+  assert.match(f.field('editor').value, /B content/);
 });
 
 test('toolbar disables save until the editor content changes', t => {

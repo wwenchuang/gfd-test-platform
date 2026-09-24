@@ -1510,22 +1510,11 @@ def call_dashscope_failure_review(job, stdout, stderr, summary):
             "suggested_action": "修复 Windows Runner 上损坏的 Midscene CLI 依赖，确认模块可加载后重跑原 YAML",
             "can_auto_repair": False,
         }
-    deterministic_issues = []
-    if "launch:" not in yaml_text:
-        deterministic_issues.append("缺少 launch 前置启动 App")
-    if "terminate:" not in yaml_text and "am force-stop" not in yaml_text:
-        deterministic_issues.append("缺少后置关闭 App")
-    if deterministic_issues:
-        return {
-            "category": "script_issue",
-            "confidence": 0.95,
-            "reason": "；".join(deterministic_issues),
-            "evidence": deterministic_issues,
-            "suggested_action": "优先执行规则修复，补齐启动/关闭等运行时守卫后再重跑",
-            "can_auto_repair": True
-        }
     ctx = build_failure_context(job, yaml_text, stdout, stderr, summary)
     review_images = (execution_screenshot_context(job, limit=4) + report_image_context(job, limit=4))[:6]
+    attempts = job.get("attempts") if isinstance(job.get("attempts"), list) else []
+    last_attempt = attempts[-1] if attempts and isinstance(attempts[-1], dict) else {}
+    teardown = last_attempt.get("teardown") if isinstance(last_attempt.get("teardown"), dict) else {}
     log_text = "\n".join([
         "STDOUT:",
         (stdout or "")[-6000:],
@@ -1534,7 +1523,9 @@ def call_dashscope_failure_review(job, stdout, stderr, summary):
         "SUMMARY:",
         json.dumps(summary, ensure_ascii=False)[:4000] if summary is not None else "",
         "REPORT_TEXT:",
-        (ctx.get("report_text") or "")[-6000:]
+        (ctx.get("report_text") or "")[-6000:],
+        "RUNNER_TEARDOWN:",
+        json.dumps(teardown, ensure_ascii=False),
     ])
     deterministic_review = classify_failure_by_context(ctx)
     if deterministic_review:
@@ -1547,6 +1538,23 @@ def call_dashscope_failure_review(job, stdout, stderr, summary):
     horizontal_scroll_issue = detect_horizontal_scroll_script_issue(yaml_text, log_text)
     if horizontal_scroll_issue:
         return sanitize_failure_review_against_sources(horizontal_scroll_issue, yaml_text, stdout, stderr, summary, ctx)
+    # YAML guard hints are useful only when no execution evidence identifies the
+    # failure. The Windows Runner tears down the app independently of YAML.
+    if not any((stdout, stderr, summary, ctx.get("report_text"))):
+        deterministic_issues = []
+        if "launch:" not in yaml_text:
+            deterministic_issues.append("缺少 launch 前置启动 App")
+        if "terminate:" not in yaml_text and "am force-stop" not in yaml_text and not teardown.get("ok"):
+            deterministic_issues.append("缺少后置关闭 App")
+        if deterministic_issues:
+            return {
+                "category": "script_issue",
+                "confidence": 0.95,
+                "reason": "；".join(deterministic_issues),
+                "evidence": deterministic_issues,
+                "suggested_action": "优先执行规则修复，补齐启动/关闭等运行时守卫后再重跑",
+                "can_auto_repair": True
+            }
     yaml_syntax_signals = ("unknown flowitem", "failed to load", "property \"tasks\" is required", "cannot use 'in' operator", "yaml格式", "yaml语法")
     if any(signal in log_text.lower() for signal in yaml_syntax_signals):
         return {

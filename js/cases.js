@@ -43,22 +43,17 @@ async function loadModules(options = {}) {
       }
       modulesLoaded = true;
       AppState.loaded.modules = true;
+      AppState.errors.modules = null;
       renderModules();
       warmupYamlStats().catch(() => {});
       if (activeWorkflow === 'dashboard' && !hasOpenEditor()) showWorkflowGuide('dashboard');
     } catch(e) {
-      // 离线演示模式
-      modules = {
-        '文档打印': ['文字速印.yaml', '图片打印.yaml'],
-        '首页': ['首页导航.yaml', '首页弹窗.yaml'],
-        '用户中心': ['登录.yaml']
-      };
-      modulesLoaded = true;
-      AppState.loaded.modules = true;
+      modulesLoaded = false;
+      AppState.loaded.modules = false;
+      AppState.errors.modules = e;
       renderModules();
-      warmupYamlStats().catch(() => {});
       if (activeWorkflow === 'dashboard' && !hasOpenEditor()) showWorkflowGuide('dashboard');
-      showToast(`⚠ 模块接口不可用，已切换演示数据：${e.message || e}`, 'error');
+      showToast(`模块读取失败，请重试：${e.message || e}`, 'error');
     }
   })();
   AppState.loading.modules = task;

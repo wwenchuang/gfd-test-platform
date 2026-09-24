@@ -50,6 +50,59 @@ test('Sonic rechecks ready evidence while the user pauses between actions', asyn
   assert.ok(scheduled.some(item => item.delay === 3000));
 });
 
+test('Sonic shows real preparation stage and retries only when user clicks failed status', async () => {
+  const listeners = {};
+  const requests = [];
+  const badge = {style: {}, setAttribute() {}};
+  const opener = {postMessage() {}};
+  class FakeWebSocket { constructor(url) { this.url = url; } send() {} }
+  const document = {body: {appendChild() {}}, getElementById() { return badge; }, createElement() { return badge; }};
+  const window = {opener, WebSocket: FakeWebSocket, document, addEventListener(type, fn) { listeners[type] = fn; }};
+  const context = vm.createContext({window, document, URL, fetch: async (_url, options) => {
+    const request = JSON.parse(options.body);
+    requests.push(request);
+    return {ok: true, json: async () => ({session: {pre_action_frame_status: requests.length === 1 ? 'failed' : 'pending',
+      pre_action_frame_stage: requests.length === 1 ? 'failed' : 'waiting_runner',
+      pre_action_frame_requested_ts: Math.floor(Date.now() / 1000) - 12, pre_action_frame_error: '准备超过 120 秒', steps: []}})};
+  }, Date, Math, JSON, String, Number, Object, RegExp, Error, Set,
+    setTimeout() { return 1; }, clearTimeout() {}});
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'deploy/sonic-recorder-hook.js'), 'utf8'), context);
+  listeners.message({source: opener, origin: 'http://platform.example', data: {type: 'MIDSCENE_RECORDING_START', sessionId: 'retry', recordingToken: 't', endpoint: 'http://platform.example/api/device-recordings/action'}});
+  new window.WebSocket('ws://agent/websockets/android/key/phone/token');
+  await new Promise(setImmediate);
+  assert.match(badge.textContent, /准备超过 120 秒/);
+  assert.match(badge.textContent, /点击重试/);
+  assert.equal(typeof badge.onclick, 'function');
+  badge.onclick();
+  await new Promise(setImmediate);
+  assert.equal(requests[1].refresh_evidence, true);
+  assert.match(badge.textContent, /等待 Runner 领取/);
+  assert.match(badge.textContent, /已等 12 秒/);
+});
+
+test('Sonic bridge times out even when response headers arrive but JSON never finishes', async () => {
+  const listeners = {};
+  let timeoutCallback;
+  const badge = {style: {}, setAttribute() {}};
+  const opener = {postMessage() {}};
+  class FakeWebSocket { constructor(url) { this.url = url; } send() {} }
+  const document = {body: {appendChild() {}}, getElementById() { return badge; }, createElement() { return badge; }};
+  const window = {opener, WebSocket: FakeWebSocket, document,
+    setTimeout(fn, delay) { if (delay === 8000) timeoutCallback = fn; return 1; }, clearTimeout() {},
+    addEventListener(type, fn) { listeners[type] = fn; }};
+  const context = vm.createContext({window, document, URL,
+    fetch: async () => ({ok: true, json: () => new Promise(() => {})}),
+    Date, Math, JSON, String, Number, Object, RegExp, Error, Set, setTimeout() { return 1; }, clearTimeout() {}});
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'deploy/sonic-recorder-hook.js'), 'utf8'), context);
+  listeners.message({source: opener, origin: 'http://platform.example', data: {type: 'MIDSCENE_RECORDING_START', sessionId: 'slow', recordingToken: 't', endpoint: 'http://platform.example/api/device-recordings/action'}});
+  new window.WebSocket('ws://agent/websockets/android/key/phone/token');
+  await new Promise(setImmediate);
+  assert.equal(typeof timeoutCallback, 'function');
+  timeoutCallback();
+  await new Promise(setImmediate);
+  assert.match(badge.textContent, /录制桥接超过 8 秒未响应/);
+});
+
 test('Sonic footer keyEvent back and home are mirrored with the native command', async () => {
   const listeners = {};
   const sent = [];

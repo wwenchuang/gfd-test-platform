@@ -604,11 +604,12 @@ async function loadRunnerDevices(options = {}) {
 }
 
 function shouldAutoRefreshRunnerDevices(workflow, hidden) {
-  return !hidden && ['dashboard', 'agent', 'execute'].includes(workflow);
+  return !hidden && ['dashboard', 'agent', 'execute', 'sonic_config'].includes(workflow);
 }
 
 async function refreshVisibleRunnerDeviceStatus() {
   if (!shouldAutoRefreshRunnerDevices(activeWorkflow, document.hidden)) return;
+  if (activeWorkflow === 'sonic_config') return refreshSonicRunnerDevices();
   if (AppState.loading.runnerStatus) return AppState.loading.runnerStatus;
   const request = loadRunnerDevices({force: true, quiet: true})
     .catch(error => console.warn('设备状态自动同步失败', error))

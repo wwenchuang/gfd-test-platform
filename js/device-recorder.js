@@ -149,6 +149,54 @@ function recorderStatusText(session) {
   return ({recording: '录制中', paused: '已暂停', finished: '已结束', generating: '正在生成', cancelled: '已取消'})[session?.status] || '尚未开始';
 }
 
+let recorderPreparationRetryInFlight = false;
+
+function recorderPreparationMessage(session) {
+  if (session?.status !== 'recording' || !session.device_id || !session.pre_action_frame_status) return '';
+  const status = session.pre_action_frame_status;
+  if (status === 'ready') return '点击前画面已就绪，可以开始操作';
+  if (status === 'failed') return `准备失败：${session.pre_action_frame_error || '请检查 Runner 和手机连接后重试'}`;
+  const started = Number(session.pre_action_frame_requested_ts || 0);
+  const elapsed = started > 0 ? ` · 已等待 ${Math.max(0, Math.floor(Date.now() / 1000 - started))} 秒` : '';
+  const stage = session.pre_action_frame_stage === 'capturing' ? '正在采集手机画面和控件信息' : '等待 Runner 接单';
+  return `${stage}${elapsed}。本次准备最长 120 秒，超时后可重试；这是超时上限，不是预计完成时间。`;
+}
+
+function recorderPreparationPanel(session) {
+  const message = recorderPreparationMessage(session);
+  if (!message) return '';
+  return `<div class="generate-hint" role="status" aria-live="polite">${escapeHtml(message)}</div>${session.pre_action_frame_status === 'failed' ? `<button class="btn-sm" data-action="retry-preparation" ${recorderPreparationRetryInFlight ? 'disabled' : ''} onclick="retryRecorderPreparation()">重新准备画面</button>` : ''}`;
+}
+
+async function retryRecorderPreparation() {
+  if (recorderPreparationRetryInFlight || deviceRecorderSession?.status !== 'recording' || deviceRecorderSession.pre_action_frame_status !== 'failed') return;
+  const sessionId = deviceRecorderSession.id;
+  const token = sessionStorage.getItem('deviceRecorderToken');
+  if (!token) { showToast('请在本次 Sonic 远控页点击重新准备画面，或重新开始录制', 'warn'); return; }
+  recorderPreparationRetryInFlight = true;
+  const panel = document.getElementById('device-recorder-preparation');
+  if (panel) panel.innerHTML = recorderPreparationPanel(deviceRecorderSession);
+  try {
+    const data = await apiRequest('/device-recordings/bridge', {method:'POST',timeoutMs:8000,body:JSON.stringify({session_id:sessionId,device_id:deviceRecorderSession.device_id,recording_token:token,refresh_evidence:true})});
+    if (deviceRecorderSession?.id !== sessionId || deviceRecorderSession.status !== 'recording') return;
+    deviceRecorderSession = data.session;
+    if (deviceRecorderView === 'record' && document.getElementById('device-recorder-devices')) renderDeviceRecorder(true);
+    startDeviceRecorderPolling();
+  } catch (error) {
+    if (deviceRecorderSession?.id === sessionId) showToast(error.message || '重新准备失败，请重试', 'error');
+  } finally {
+    recorderPreparationRetryInFlight = false;
+    const current = document.getElementById('device-recorder-preparation');
+    if (current) current.innerHTML = recorderPreparationPanel(deviceRecorderSession);
+  }
+}
+
+function recorderSessionMessage(session) {
+  if (!session) return '';
+  if (session.status !== 'recording') return `${recorderStatusText(session)} · 可查看和编辑历史步骤`;
+  return deviceRecorderBridgeState;
+}
+
 function recorderHistoryButton() {
   const count = deviceRecorderHistory.length ? ` ${deviceRecorderHistory.length}` : '';
   return `<button class="btn-sm" data-action="open-recording-history" onclick="showDeviceRecordingHistory()">录制记录${count}</button>`;
@@ -339,9 +387,17 @@ function recorderGenerateLabel(session) {
   return '生成并校验 YAML';
 }
 
-function renderDeviceRecorder() {
+function renderDeviceRecorder(preserveDraft = false) {
   const area = document.getElementById('editor-area');
   if (!area) return;
+  const previous = area.querySelector('[data-recorder-session]');
+  const draft = preserveDraft && previous?.dataset.recorderSession === (deviceRecorderSession?.id || '') ? {
+    values: [...previous.querySelectorAll('input[id],textarea[id],select[id]')].filter(input => input.tagName === 'SELECT' || input.value !== input.defaultValue).map(input => [input.id,input.value]),
+    expanded: previous.querySelector('.device-recorder-step-tools')?.open,
+    selected: deviceRecorderSelectedStepId,
+    focus: document.activeElement?.id,
+    scroll: previous.scrollTop,
+  } : null;
   const session = deviceRecorderSession;
   const steps = session?.steps || [];
   const launchApp = (taskApps || []).find(app => app.package === session?.app_package);
@@ -352,7 +408,7 @@ function renderDeviceRecorder() {
   if (steps.length && !steps.some(step => step.id === deviceRecorderSelectedStepId)) deviceRecorderSelectedStepId = steps[0].id;
   const selectedStep = steps.find(step => step.id === deviceRecorderSelectedStepId) || steps[0];
   area.className = 'editor-area';
-  area.innerHTML = `<div class="review-page device-recorder-page">
+  area.innerHTML = `<div class="review-page device-recorder-page" data-recorder-session="${escapeHtml(session?.id || '')}">
     <div class="review-head"><div><div class="workflow-kicker">SONIC 原生远控 · 操作旁路记录</div><h2>操作录制</h2><p>手机画面和触控继续由 Sonic 处理；平台只记录你在所选手机上的真实操作。应用用于生成启动步骤，与手机分配互不绑定。</p><div class="generate-hint">操作提示：每次点击后，请等待 Sonic 显示“控件已记录”，并核对手机页面；页面结构未变化时先确认触控是否生效，再继续操作。</div></div><div class="review-actions">${recorderHistoryButton()}<button class="btn-sm" onclick="leaveDeviceRecorder()">返回用例资产</button>${session && session.status !== 'recording' && session.status !== 'generating' ? '<button class="btn-sm primary" data-action="new-device-recording" onclick="newDeviceRecording()">新建录制</button>' : ''}${session && !['recording','generating'].includes(session.status) ? `<button class="btn-sm danger" data-action="delete-current-recording" onclick="deleteDeviceRecording('${escapeHtml(session.id)}')">删除记录</button>` : ''}<span class="status-pill ${session?.status === 'recording' ? 'success' : ''}">${escapeHtml(recorderStatusText(session))}</span></div></div>
     <div class="device-recorder-grid">
       <section class="review-panel"><h3>录制设置</h3>
@@ -365,7 +421,8 @@ function renderDeviceRecorder() {
           ${session?.status === 'recording' ? '<button class="btn-sm" onclick="openRecorderSonic()">打开所选手机</button><button class="btn-sm" onclick="finishDeviceRecording()">结束录制</button><button class="btn-sm danger" onclick="cancelDeviceRecording()">取消本次录制</button>' : ''}
           ${['paused','generating'].includes(session?.status) ? '<button class="btn-sm danger" data-action="cancel-recording" onclick="cancelDeviceRecording()">取消录制</button>' : ''}
           ${session?.status === 'finished' ? `<button class="btn-sm ai" data-action="generate-recording-yaml" ${recorderCanGenerate(session) ? '' : 'disabled'} onclick="generateDeviceRecordingYaml()">${recorderGenerateLabel(session)}</button>` : ''}
-        </div><div id="device-recorder-message" class="generate-hint">${session ? `手机：${escapeHtml(session.device_id || '等待在 Sonic 选择')} · 会话：${escapeHtml(session.id)} · ${escapeHtml(deviceRecorderBridgeState)}` : '录制手机只在 Sonic 选择一次；短期交接信息只放在浏览器片段中，不会发送给 Sonic 服务器，并会在页面加载时立即清除。'}</div>
+        </div><div id="device-recorder-message" class="generate-hint">${session ? `手机：${escapeHtml(session.device_id || '等待在 Sonic 选择')} · 会话：${escapeHtml(session.id)} · ${escapeHtml(recorderSessionMessage(session))}` : '选择应用后开始录制，再在 Sonic 中选择要操作的手机。'}</div>
+        <div id="device-recorder-preparation">${recorderPreparationPanel(session)}</div>
         ${session?.status === 'finished' ? `<div class="device-recorder-save"><label class="modal-label">用例名称</label><input id="device-recorder-task-name" value="${escapeHtml(deviceRecorderGenerated?.task_name || '录制生成用例')}" oninput="syncRecorderFileName(this.value)"><div id="device-recorder-name-note" class="generate-hint" hidden>名称已修改；保存时会按新名称重新生成 YAML。</div><label class="modal-label">保存到模块</label><select id="device-recorder-module">${recorderModuleOptions(session)}</select>${recorderModuleOptions(session) ? '' : '<div class="agent-risk show">当前应用没有已关联模块，请先到应用配置关联模块。</div>'}<label class="modal-label">YAML 文件名</label><input id="device-recorder-file" value="${escapeHtml(deviceRecorderGenerated?.task_name || '录制生成用例')}.yaml" oninput="deviceRecorderFileNameEdited=true"><button class="btn-sm success" ${deviceRecorderGenerated && recorderModuleOptions(session) ? '' : 'disabled'} onclick="saveDeviceRecordingYaml()">保存到用例资产</button></div>` : ''}
       </section>
       <section class="review-panel"><div class="review-head compact"><div><h3>步骤时间线</h3><p>${steps.length + (hasAutomaticLaunch ? 1 : 0)} 个步骤${hasAutomaticLaunch ? '（含自动启动）' : ''}</p></div>${session?.status === 'recording' ? '<button class="btn-sm" onclick="addRecorderCheckpoint()">添加检查点</button>' : ''}</div>
@@ -374,6 +431,14 @@ function renderDeviceRecorder() {
         <pre id="device-recorder-yaml" class="agent-artifact-box" ${deviceRecorderGenerated?.yaml ? '' : 'hidden'}>${escapeHtml(deviceRecorderGenerated?.yaml || '')}</pre>
       </section>
     </div></div>`;
+  if (draft) {
+    for (const [id,value] of draft.values) { const input=document.getElementById(id); if(input) input.value=value; }
+    if (draft.selected === deviceRecorderSelectedStepId) {
+      const tools=area.querySelector('.device-recorder-step-tools'); if(tools) tools.open=Boolean(draft.expanded);
+    }
+    const page=area.querySelector('[data-recorder-session]'); if(page) page.scrollTop=draft.scroll;
+    if(draft.focus) document.getElementById(draft.focus)?.focus({preventScroll:true});
+  }
   startRecorderDevicePolling();
   if (selectedStep?.screenshot_path) setTimeout(() => loadRecorderEvidence(selectedStep.id), 0);
 }
@@ -587,6 +652,7 @@ async function deleteDeviceRecording(sessionId) {
 }
 
 function newDeviceRecording() {
+  clearInterval(deviceRecorderPollTimer);
   deviceRecorderView = 'record';
   deviceRecorderSession = null;
   deviceRecorderGenerated = null;
@@ -677,25 +743,36 @@ function recorderDisplaySnapshot(session) {
 
 async function refreshDeviceRecording() {
   if (!deviceRecorderSession?.id || deviceRecorderPollInFlight) return;
+  if (!document.querySelector('.device-recorder-page')) { clearInterval(deviceRecorderPollTimer); return; }
+  const sessionId = deviceRecorderSession.id;
   deviceRecorderPollInFlight = true;
   try {
     const previousDisplay = recorderDisplaySnapshot(deviceRecorderSession);
     const data = deviceRecorderSession.status === 'recording'
-      ? await apiRequest('/device-recordings/heartbeat', {method: 'POST', body: JSON.stringify({session_id: deviceRecorderSession.id})})
-      : await apiRequest(`/device-recordings?id=${encodeURIComponent(deviceRecorderSession.id)}`);
+      ? await apiRequest('/device-recordings/heartbeat', {method: 'POST', timeoutMs:8000, body: JSON.stringify({session_id: deviceRecorderSession.id})})
+      : await apiRequest(`/device-recordings?id=${encodeURIComponent(deviceRecorderSession.id)}`, {timeoutMs:8000});
+    if (deviceRecorderSession?.id !== sessionId) return;
     deviceRecorderSession = data.session;
-    confirmRecorderSonicBinding();
-    if (recorderDisplaySnapshot(deviceRecorderSession) !== previousDisplay) renderDeviceRecorder();
-    else {
-      const message = document.getElementById('device-recorder-message');
-      if (message) message.textContent = `手机：${deviceRecorderSession.device_id || '等待在 Sonic 选择'} · 会话：${deviceRecorderSession.id} · ${deviceRecorderBridgeState}`;
-    }
-    notifyRecorderStepResult();
-    void maybeRecognizeDeviceRecording();
     if (deviceRecorderSession.status !== 'recording' && !recorderEvidencePending(deviceRecorderSession) && !recorderRecognitionPending(deviceRecorderSession)) {
       clearInterval(deviceRecorderPollTimer);
     }
-  } catch (_) {}
+    if (deviceRecorderView !== 'record' || !document.getElementById('device-recorder-devices')) return;
+    confirmRecorderSonicBinding();
+    if (recorderDisplaySnapshot(deviceRecorderSession) !== previousDisplay) renderDeviceRecorder(true);
+    else {
+      const message = document.getElementById('device-recorder-message');
+      if (message) message.textContent = `手机：${deviceRecorderSession.device_id || '等待在 Sonic 选择'} · 会话：${deviceRecorderSession.id} · ${recorderSessionMessage(deviceRecorderSession)}`;
+    }
+    const preparation = document.getElementById('device-recorder-preparation');
+    if (preparation) preparation.innerHTML = recorderPreparationPanel(deviceRecorderSession);
+    notifyRecorderStepResult();
+    void maybeRecognizeDeviceRecording();
+  } catch (error) {
+    if (deviceRecorderSession?.id === sessionId && deviceRecorderView === 'record') {
+      const preparation = document.getElementById('device-recorder-preparation');
+      if (preparation) preparation.textContent = `无法获取最新录制进度：${error.message || '连接超时'}，正在重试连接。`;
+    }
+  }
   finally { deviceRecorderPollInFlight = false; }
 }
 
@@ -745,10 +822,12 @@ function stopRecorderSonicMirroring(sessionId) {
 async function maybeRecognizeDeviceRecording() {
   if (deviceRecorderRecognitionInFlight || !deviceRecorderSession?.id || !recorderRecognitionPending(deviceRecorderSession)) return;
   deviceRecorderRecognitionInFlight = true;
+  const sessionId = deviceRecorderSession.id;
   try {
     const data = await apiRequest('/device-recordings/recognize', {method: 'POST', body: JSON.stringify({session_id: deviceRecorderSession.id})});
+    if (deviceRecorderSession?.id !== sessionId) return;
     deviceRecorderSession = data.session;
-    renderDeviceRecorder();
+    if (deviceRecorderView === 'record' && document.getElementById('device-recorder-devices')) renderDeviceRecorder(true);
   } catch (error) {
     showToast(error.message || '自动识别手机控件失败，可手工补充', 'warn');
   } finally {

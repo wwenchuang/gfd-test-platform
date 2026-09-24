@@ -19,6 +19,7 @@
   const HANDOFF_MAX_AGE_MS = 5 * 60 * 1000;
   const ACTIVE_MAX_AGE_MS = 2 * 60 * 60 * 1000;
   const FRAME_MAX_AGE_MS = 60 * 1000;
+  const BRIDGE_TIMEOUT_MS = 8000;
   let bridgePollTimer = null;
   let missedActionNeedsFrame = false;
   let bridgeEpoch = 0;
@@ -27,7 +28,7 @@
   const NativeHistoryPush = typeof window.history?.pushState === 'function' ? window.history.pushState.bind(window.history) : null;
   const NativeHistoryReplace = typeof window.history?.replaceState === 'function' ? window.history.replaceState.bind(window.history) : null;
 
-  function showRecorderStatus(message, state = 'waiting') {
+  function showRecorderStatus(message, state = 'waiting', retry = false) {
     if (typeof document === 'undefined') return;
     const mount = () => {
       if (!document.body) return;
@@ -39,7 +40,15 @@
         document.body.appendChild(badge);
       }
       badge.style.background = state === 'error' ? '#b42318' : state === 'active' ? '#067647' : '#344054';
-      badge.textContent = `平台录制：${message}`;
+      badge.style.pointerEvents = retry ? 'auto' : 'none';
+      badge.style.cursor = retry ? 'pointer' : 'default';
+      badge.onclick = retry ? () => syncBridge(recording?.deviceId, true) : null;
+      badge.onkeydown = retry ? event => {
+        if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); syncBridge(recording?.deviceId, true); }
+      } : null;
+      badge.setAttribute?.('role', retry ? 'button' : 'status');
+      badge.setAttribute?.('tabindex', retry ? '0' : '-1');
+      badge.textContent = `平台录制：${message}${retry ? '；点击重试' : ''}`;
     };
     if (document.body) mount(); else document.addEventListener('DOMContentLoaded', mount, {once: true});
   }
@@ -229,6 +238,7 @@
   function bridgeStepState(session) {
     const steps = Array.isArray(session?.steps) ? session.steps : [];
     const step = steps.find(item => Number(item.sequence || 0) === Number(awaitingRecognition || 0));
+    if (session?.pre_action_frame_status === 'failed') return 'frame_failed';
     if (!step) return frameReady(session) && !awaitingRecognition ? 'ready' : 'pending';
     if (step.evidence_status === 'pending' || session.pre_action_frame_status === 'pending') return 'pending';
     if (step.evidence_status === 'failed' || step.semantic_recognition_status === 'failed') return 'failed';
@@ -262,6 +272,31 @@
     scheduleBridgePoll();
   }
 
+  function fetchBridgeWithTimeout(url, options) {
+    if (typeof window.setTimeout !== 'function') return fetch(url, options);
+    const controller = typeof AbortController === 'function' ? new AbortController() : null;
+    let timer;
+    const timeout = new Promise((_, reject) => {
+      timer = window.setTimeout(() => {
+        controller?.abort();
+        reject(new Error('录制桥接超过 8 秒未响应'));
+      }, BRIDGE_TIMEOUT_MS);
+      timer?.unref?.();
+    });
+    const request = fetch(url, {...options, ...(controller ? {signal: controller.signal} : {})})
+      .then(async response => {
+        if (typeof response.json !== 'function') return response;
+        try {
+          const body = await response.json();
+          return {ok: response.ok, status: response.status, json: async () => body};
+        } catch (error) {
+          return {ok: response.ok, status: response.status, json: async () => { throw error; }};
+        }
+      });
+    return Promise.race([request, timeout])
+      .finally(() => { if (typeof window.clearTimeout === 'function') window.clearTimeout(timer); });
+  }
+
   function syncBridge(deviceId = recording?.deviceId, refreshEvidence = false) {
     if (!recording || !deviceId || !bridgeUrl()) return Promise.resolve();
     recording.deviceId = String(deviceId);
@@ -271,7 +306,7 @@
     }
     const epoch = bridgeEpoch;
     saveRecording();
-    return fetch(bridgeUrl(), {
+    return fetchBridgeWithTimeout(bridgeUrl(), {
       method: 'POST', mode: 'cors',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({session_id: recording.sessionId, recording_token: recording.recordingToken,
@@ -304,7 +339,12 @@
         return syncBridge(recording.deviceId, true);
       }
       const state = bridgeStepState(session);
-      if (state === 'recognizing') {
+      if (state === 'frame_failed') {
+        recording.bound = false;
+        const reason = String(session.pre_action_frame_error || 'Runner/ADB 未能准备截图');
+        showRecorderStatus(`真实点击前画面准备失败：${reason}`, 'error', true);
+        scheduleBridgePoll(3000);
+      } else if (state === 'recognizing') {
         recording.bound = true;
         awaitingRecognition = 0;
         saveRecording();
@@ -333,7 +373,12 @@
         scheduleBridgePoll(recording.bound ? 3000 : 1000);
       } else {
         recording.bound = false;
-        showRecorderStatus(awaitingRecognition ? `第 ${awaitingRecognition} 步正在采集截图并识别，请暂缓下一步` : 'Runner 正在准备真实点击前画面', 'waiting');
+        const elapsed = session.pre_action_frame_requested_ts
+          ? Math.max(0, Math.floor(Date.now() / 1000 - Number(session.pre_action_frame_requested_ts))) : 0;
+        const phase = session.pre_action_frame_stage === 'capturing' ? 'Runner 正在采集真实点击前画面' : '等待 Runner 领取截图请求';
+        showRecorderStatus(awaitingRecognition
+          ? `第 ${awaitingRecognition} 步正在准备下一张截图；${phase}，已等 ${elapsed} 秒（上限 120 秒）`
+          : `${phase}，已等 ${elapsed} 秒（上限 120 秒）`, 'waiting');
         scheduleBridgePoll();
       }
       return session;

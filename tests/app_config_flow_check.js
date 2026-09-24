@@ -30,6 +30,7 @@ function fixture(t, { workflow = 'app_config', deleteWait, catalogLoaded = true,
   const toasts = [];
   let catalogReloads = 0;
   let feedbackClears = 0;
+  let runnersResponse = {runners: {}, devices: []};
   const forbiddenNetwork = [];
   const blockNetwork = () => {
     forbiddenNetwork.push('unexpected real network request');
@@ -58,7 +59,7 @@ function fixture(t, { workflow = 'app_config', deleteWait, catalogLoaded = true,
       { package: APP_B, name: '应用乙', enabled: false, modules: ['模块乙'], business_lines: [{ id: 'home', name: '家用', enabled: true }], feishu_ready: false, feishu_source: 'missing' },
     ],
     modules: { '模块甲': {}, '模块乙': {}, '模块丙': {} },
-    AppState: {loaded: {taskApps: catalogLoaded}, errors: {taskApps: catalogError}},
+    AppState: {loaded: {taskApps: catalogLoaded, runners: true}, loading: {}, errors: {taskApps: catalogError}},
     activeWorkflow: workflow,
     feishuDrafts: [],
     runnerDevices: [{id: 'fixture-device', online: true}],
@@ -73,6 +74,7 @@ function fixture(t, { workflow = 'app_config', deleteWait, catalogLoaded = true,
     },
     // Unrelated sidebar and YAML controls are outside this form regression.
     renderModules() {},
+    renderRunnerDevices() {},
     refreshBusinessLineControls() {},
     setFileContextVisible() {},
     updateToolbarState() {},
@@ -81,6 +83,7 @@ function fixture(t, { workflow = 'app_config', deleteWait, catalogLoaded = true,
       const call = { url, method: options.method || 'GET' };
       if (options.body) call.body = JSON.parse(options.body);
       calls.push(call);
+      if (url === '/runners') return await runnersResponse;
       if (call.method === 'DELETE' && url.startsWith('/task-app?package=')) {
         if (deleteWait) await deleteWait;
         return { ok: true };
@@ -95,10 +98,12 @@ function fixture(t, { workflow = 'app_config', deleteWait, catalogLoaded = true,
   loadFunctions(context, 'js/utils.js', ['defaultBusinessLines', 'taskAppBusinessLines']);
   loadFunctions(context, 'js/app.js', [
     'selectedGenerateApplication', 'enabledGenerateApplications', 'renderGenerateBusinessOptions',
+    'loadRunnerDevices',
   ]);
   loadFunctions(context, 'js/agent-status.js', [
     'resetYamlToolbarForManager', 'setManagementToolbar', 'taskAppCatalogPageState', 'taskAppCatalogNoticeHtml',
-    'showAppConfigCenter', 'reloadTaskAppCatalog', 'showFeishuConfigCenter', 'showSonicConfigCenter',
+    'showAppConfigCenter', 'reloadTaskAppCatalog', 'showFeishuConfigCenter', 'showSonicConfigCenter', 'refreshSonicRunnerDevices',
+    'applyLazyLoadForSection',
     'showTaskApps', 'setTaskAppEditorContext', 'openTaskAppEditor', 'nextTaskAppStep', 'validateTaskAppBasicInfo', 'goToTaskAppStep',
     'openUnassignedTaskAppModules', 'selectTaskAppModuleOwner', 'renderTaskAppModuleOwnerGuide',
     'isTemporaryAgentModule', 'taskAppBusinessModuleNames',
@@ -122,6 +127,7 @@ function fixture(t, { workflow = 'app_config', deleteWait, catalogLoaded = true,
   t.after(() => assert.deepEqual(forbiddenNetwork, []));
   return {
     run, field, calls, toasts, selectedModules, selectModule, expectCalls,
+    setRunnersResponse: response => { runnersResponse = response; },
     catalogReloads: () => catalogReloads,
     feedbackClears: () => feedbackClears,
   };
@@ -231,6 +237,51 @@ test('execution environment does not publish false Sonic binding counts while ap
   assert.match(text, /正在加载应用配置/);
   assert.match(text, /1在线设备/);
   assert.doesNotMatch(text, /1\/2已绑定 Sonic 应用/);
+});
+
+test('execution environment fetches fresh runners and distinguishes loading from zero online', async t => {
+  const f = fixture(t, {workflow: 'sonic_config'});
+  let resolveRunners;
+  f.setRunnersResponse(new Promise(resolve => { resolveRunners = resolve; }));
+  f.run('AppState.loaded.runners = false; runnerDevices = []');
+
+  f.run("applyLazyLoadForSection('sonic_config')");
+  assert.deepEqual(f.calls.map(call => call.url), ['/runners']);
+  assert.match(f.field('editor-area').textContent, /正在加载在线设备/);
+  assert.doesNotMatch(f.field('editor-area').textContent, /0在线设备/);
+
+  resolveRunners({runners: {}, devices: [
+    {runner_id: 'r1', device_id: 'phone-1', runner_online: true, status: 'online'},
+    {runner_id: 'r1', device_id: 'phone-2', runner_online: true, status: 'online'},
+  ]});
+  await f.run('AppState.loading.sonicRunners');
+  assert.match(f.field('editor-area').textContent, /2在线设备/);
+});
+
+test('execution environment shows runner read failure without a false zero', async t => {
+  const f = fixture(t, {workflow: 'sonic_config'});
+  f.setRunnersResponse(Promise.reject(new Error('network failed')));
+  f.run('AppState.loaded.runners = false; runnerDevices = []');
+
+  f.run("applyLazyLoadForSection('sonic_config')");
+  await f.run('AppState.loading.sonicRunners');
+
+  assert.match(f.field('editor-area').textContent, /设备读取失败/);
+  assert.doesNotMatch(f.field('editor-area').textContent, /0在线设备/);
+});
+
+test('late runner response does not replace the page after leaving execution environment', async t => {
+  const f = fixture(t, {workflow: 'sonic_config'});
+  let resolveRunners;
+  f.setRunnersResponse(new Promise(resolve => { resolveRunners = resolve; }));
+
+  f.run("applyLazyLoadForSection('sonic_config')");
+  const pending = f.run('AppState.loading.sonicRunners');
+  f.run("activeWorkflow = 'app_config'; document.getElementById('editor-area').innerHTML = '<p>新页面</p>'");
+  resolveRunners({runners: {}, devices: [{runner_id: 'r1', device_id: 'phone-1', runner_online: true, status: 'online'}]});
+  await pending;
+
+  assert.equal(f.field('editor-area').textContent, '新页面');
 });
 
 test('execution environment edit binding opens the Sonic step directly', t => {

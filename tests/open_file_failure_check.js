@@ -19,6 +19,7 @@ test('a stale YAML link stays on the current page instead of opening a fake save
   win.activeWorkspaceMode = 'agent';
   win.currentModule = '当前模块';
   win.currentFile = '当前文件.yaml';
+  win.fileOpenRequest = 0;
   win.sonicStatusData = {loaded: true};
   win.activeWorkflow = 'agent';
   win.apiTextRequest = async () => {

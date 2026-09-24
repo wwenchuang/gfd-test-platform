@@ -33,6 +33,7 @@ MAX_PRE_ACTION_FRAME_ATTEMPTS = 3
 POST_ACTION_FRAME_SETTLE_SECONDS = 1.5
 PRE_ACTION_FRAME_MAX_AGE_SECONDS = 60
 PRE_ACTION_FRAME_IDLE_REFRESH_SECONDS = 45
+PRE_ACTION_FRAME_TIMEOUT_SECONDS = 120
 _LOCK = threading.RLock()
 
 
@@ -92,6 +93,9 @@ def _recording_token(row: Dict[str, Any], recording_token: str, timestamp: float
 
 def _request_pre_action_frame(row: Dict[str, Any], timestamp: Optional[float] = None, *, retry: bool = False) -> None:
     row["pre_action_frame_status"] = "pending"
+    row["pre_action_frame_stage"] = "waiting_runner"
+    row.pop("pre_action_frame_picked_up_ts", None)
+    row.pop("pre_action_frame_timed_out", None)
     row["pre_action_frame_refresh_pending"] = False
     row["pre_action_frame_request_id"] = uuid.uuid4().hex
     row["pre_action_frame_requested_ts"] = float(time.time() if timestamp is None else timestamp)
@@ -104,7 +108,25 @@ def _refresh_pre_action_frame(row: Dict[str, Any], timestamp: float) -> None:
     row["pre_action_frame_request_id"] = uuid.uuid4().hex
     row["pre_action_frame_requested_ts"] = timestamp
     row["pre_action_frame_refresh_pending"] = True
+    row["pre_action_frame_stage"] = "waiting_runner"
+    row.pop("pre_action_frame_picked_up_ts", None)
     row.pop("pre_action_frame_error", None)
+
+
+def _expire_pre_action_frame(row: Dict[str, Any], timestamp: float) -> bool:
+    if row.get("status") != "recording":
+        return False
+    if row.get("pre_action_frame_status") != "pending" and not row.get("pre_action_frame_refresh_pending"):
+        return False
+    requested = float(row.get("pre_action_frame_requested_ts") or 0)
+    if not requested or timestamp - requested < PRE_ACTION_FRAME_TIMEOUT_SECONDS:
+        return False
+    row["pre_action_frame_status"] = "failed"
+    row["pre_action_frame_stage"] = "failed"
+    row["pre_action_frame_timed_out"] = True
+    row["pre_action_frame_refresh_pending"] = False
+    row["pre_action_frame_error"] = "真实点击前画面准备超过 120 秒，请检查 Runner/ADB 后手动重试"
+    return True
 
 
 def _public(row: Dict[str, Any]) -> Dict[str, Any]:
@@ -281,6 +303,8 @@ def bridge_recording_device(
         _pause_stale(data, timestamp)
         row = _find(data, session_id)
         _recording_token(row, recording_token, timestamp)
+        if _expire_pre_action_frame(row, timestamp):
+            write_json_file(path, data)
         if row.get("status") != "recording":
             raise ValueError("录制会话当前不能绑定手机")
         if row.get("device_id"):
@@ -325,6 +349,7 @@ def get_recording_session(
         data = _load(path)
         changed = _pause_stale(data, timestamp)
         row = _find(data, session_id)
+        changed = _expire_pre_action_frame(row, timestamp) or changed
         if changed:
             write_json_file(path, data)
         return _public(row)
@@ -461,12 +486,14 @@ def touch_recording_session(
         if conflicting:
             raise ValueError("设备已经被其他录制会话占用")
         row["status"] = "recording"
+        _expire_pre_action_frame(row, timestamp)
         row["heartbeat_ts"] = timestamp
         row["updated_ts"] = timestamp
         row["updated_at"] = _stamp(timestamp)
         row.pop("pause_reason", None)
         if (
             row.get("pre_action_frame_status") == "failed"
+            and not row.get("pre_action_frame_timed_out")
             and int(row.get("pre_action_frame_attempts") or 0) < MAX_PRE_ACTION_FRAME_ATTEMPTS
             and timestamp - float(row.get("pre_action_frame_requested_ts") or 0) >= PRE_ACTION_FRAME_RETRY_SECONDS
         ):
@@ -551,6 +578,12 @@ def update_recorded_step(
         step["semantic_description"] = description
         step["semantic_confirmed_by"] = user
         step["semantic_confirmed_at"] = _stamp(timestamp)
+        step["semantic_source"] = "manual"
+        step.pop("semantic_recognition_request_id", None)
+        step["semantic_recognition_status"] = "recognized"
+        step.pop("semantic_recognition_error", None)
+        step.pop("semantic_confidence", None)
+        row.pop("generated_result", None)
         row["updated_ts"] = timestamp
         row["updated_at"] = _stamp(timestamp)
         write_json_file(path, data)
@@ -602,7 +635,7 @@ def update_recorded_step_point(
         step["ui_node"] = _node_at_point(xml_text, _point_in_ui_xml(step, target))
         for key in (
             "semantic_description", "semantic_source", "semantic_confidence",
-            "semantic_confirmed_by", "semantic_confirmed_at", "semantic_recognition_error",
+            "semantic_confirmed_by", "semantic_confirmed_at", "semantic_recognition_error", "semantic_recognition_request_id",
         ):
             step.pop(key, None)
         step["semantic_recognition_status"] = "pending"
@@ -631,6 +664,7 @@ def delete_recorded_step(
         if not any(item.get("id") == str(step_id) for item in steps):
             raise ValueError("录制步骤不存在")
         row["steps"] = [item for item in steps if item.get("id") != str(step_id)]
+        row.pop("generated_result", None)
         for sequence, item in enumerate(row["steps"], 1):
             item["sequence"] = sequence
         row["updated_ts"] = timestamp
@@ -791,7 +825,9 @@ def pending_recording_evidence_requests(
     with _LOCK, file_mutation_lock(path):
         data = _load(path)
         requests = []
+        changed = False
         for row in data["sessions"]:
+            changed = _expire_pre_action_frame(row, timestamp) or changed
             within_finished_grace = (
                 row.get("status") == "finished"
                 and timestamp - float(row.get("updated_ts") or 0) <= FINISHED_EVIDENCE_GRACE_SECONDS
@@ -805,6 +841,7 @@ def pending_recording_evidence_requests(
             frame_settled = not last_action_ts or timestamp - last_action_ts >= POST_ACTION_FRAME_SETTLE_SECONDS
             if (row.get("status") == "recording"
                     and (row.get("pre_action_frame_status") == "pending" or row.get("pre_action_frame_refresh_pending"))
+                    and row.get("pre_action_frame_stage") != "capturing"
                     and frame_settled):
                 requests.append({
                     "request_id": row.get("pre_action_frame_request_id"), "kind": "pre_action_frame",
@@ -816,6 +853,8 @@ def pending_recording_evidence_requests(
                         "request_id": step["id"], "session_id": row["id"], "step_id": step["id"],
                         "device_id": row["device_id"], "sequence": step["sequence"],
                     })
+        if changed:
+            write_json_file(path, data)
         return requests[:10]
 
 
@@ -895,11 +934,12 @@ def _node_at_point(xml_text: str, point_value: Dict[str, Any]) -> Dict[str, Any]
     }
 
 
-def save_recording_evidence(runner_id: str, payload: Dict[str, Any], *, store_path: Optional[str] = None, evidence_dir: Optional[str] = None) -> Dict[str, Any]:
+def save_recording_evidence(runner_id: str, payload: Dict[str, Any], *, store_path: Optional[str] = None, evidence_dir: Optional[str] = None, now: Optional[float] = None) -> Dict[str, Any]:
     session_id = str(payload.get("session_id") or payload.get("sessionId") or "")
     step_id = str(payload.get("step_id") or payload.get("stepId") or "")
     request_id = str(payload.get("request_id") or payload.get("requestId") or "")
     device_id = str(payload.get("device_id") or payload.get("deviceId") or "")
+    timestamp = float(time.time() if now is None else now)
     path = _path(store_path)
     with _LOCK, file_mutation_lock(path):
         data = _load(path)
@@ -907,11 +947,23 @@ def save_recording_evidence(runner_id: str, payload: Dict[str, Any], *, store_pa
         if row.get("runner_id") != runner_id or row.get("device_id") != device_id:
             raise ValueError("证据不属于该 Runner 或设备")
         if not step_id:
-            if request_id != str(row.get("pre_action_frame_request_id") or ""):
+            if _expire_pre_action_frame(row, timestamp):
+                write_json_file(path, data)
+            if (row.get("status") in FINAL_STATUSES
+                    or request_id != str(row.get("pre_action_frame_request_id") or "")
+                    or (row.get("pre_action_frame_status") == "failed" and row.get("pre_action_frame_timed_out"))
+                    or (row.get("pre_action_frame_status") == "ready" and not row.get("pre_action_frame_refresh_pending"))):
+                return _public(row)
+            if payload.get("phase") == "capturing":
+                if (row.get("pre_action_frame_status") == "pending" or row.get("pre_action_frame_refresh_pending")) and row.get("pre_action_frame_stage") != "capturing":
+                    row["pre_action_frame_stage"] = "capturing"
+                    row["pre_action_frame_picked_up_ts"] = timestamp
+                    write_json_file(path, data)
                 return _public(row)
             error = str(payload.get("error") or "").strip()[:500]
             if error:
                 row["pre_action_frame_status"] = "failed"
+                row["pre_action_frame_stage"] = "failed"
                 row["pre_action_frame_error"] = error
                 row["pre_action_frame_refresh_pending"] = False
             else:
@@ -931,8 +983,9 @@ def save_recording_evidence(runner_id: str, payload: Dict[str, Any], *, store_pa
                 write_bytes_file(png_path, png)
                 write_text_file(xml_path, xml_text)
                 row["pre_action_frame_status"] = "ready"
+                row["pre_action_frame_stage"] = "ready"
                 row["pre_action_frame_refresh_pending"] = False
-                row["pre_action_frame_captured_ts"] = time.time()
+                row["pre_action_frame_captured_ts"] = timestamp
                 row["pre_action_frame_path"] = png_path
                 row["pre_action_frame_xml_path"] = xml_path
                 row["pre_action_frame_sha256"] = hashlib.sha256(png).hexdigest()
@@ -1042,6 +1095,7 @@ def recognize_recording_semantics(
             if force and xml_rechecked and node_text and step.get("evidence_status") == "captured":
                 step["semantic_description"] = node_text
                 step["semantic_source"] = "ui_xml"
+                step.pop("semantic_recognition_request_id", None)
                 step["semantic_confidence"] = 1.0
                 step["semantic_recognition_status"] = "recognized"
                 step.pop("semantic_recognition_error", None)
@@ -1059,13 +1113,16 @@ def recognize_recording_semantics(
                     for key in ("semantic_description", "semantic_source", "semantic_confidence"):
                         step.pop(key, None)
                 step["semantic_recognition_status"] = "running"
+                step["semantic_recognition_request_id"] = uuid.uuid4().hex
                 changed = True
                 candidates.append({
                     "id": step["id"], "type": step.get("type"),
+                    "recognition_request_id": step["semantic_recognition_request_id"],
                     "point": copy.deepcopy(step.get("point") or step.get("end") or {}),
                     "screenshot_path": step["screenshot_path"],
                 })
         if changed:
+            row.pop("generated_result", None)
             write_json_file(path, data)
     if not candidates:
         return _public(row)
@@ -1104,14 +1161,17 @@ def recognize_recording_semantics(
         except Exception as exc:
             results[item["id"]] = {"error": str(exc)[:500]}
 
+    request_ids = {item["id"]: item["recognition_request_id"] for item in candidates}
     with _LOCK, file_mutation_lock(path):
         data = _load(path)
         row = _find(data, session_id)
         _owner(row, user)
         for step in row.get("steps") or []:
             result = results.get(step.get("id"))
-            if not result:
+            if not result or step.get("semantic_recognition_request_id") != request_ids.get(step.get("id")):
                 continue
+            step.pop("semantic_recognition_request_id", None)
+            step.pop("semantic_recognition_error", None)
             if result.get("description") and result.get("confidence", 0) >= 0.6:
                 step["semantic_description"] = result["description"]
                 step["semantic_source"] = "ai_visual"

@@ -192,7 +192,15 @@ function renderModelConfigCenter(loading=false, errorText='') {
   `;
 }
 
+let modelRouterSaveInFlight = false;
+
+function modelRouterDraftChangedSince(router) {
+  return [...document.querySelectorAll('[data-model-router]')].some(select =>
+    select.value !== String(router[select.dataset.modelRouter] || ''));
+}
+
 function applyRecommendedStrategy() {
+  if (modelRouterSaveInFlight) return showToast('模型策略正在保存，请等待结果', 'info');
   if (!confirm('确认应用推荐策略？应用后会立即保存，并影响后续 AI 生成、分析和修复任务。')) return;
   const recommended = {
     generate_case: 'qwen_plus',
@@ -208,15 +216,19 @@ function applyRecommendedStrategy() {
     if (recommended[key]) select.value = recommended[key];
   });
   // Save directly
-  aiGatewayPost('/ai/model-router', recommended).then(data => {
+  const viewRoot = document.getElementById('editor-area')?.firstElementChild;
+  modelRouterSaveInFlight = true;
+  return aiGatewayPost('/ai/model-router', recommended).then(data => {
     aiModelRouter = data.router || recommended;
-    showToast('✓ 推荐策略已应用并保存', 'success');
-    showModelConfigCenter();
+    const current = activeWorkflow === 'config' && document.getElementById('editor-area')?.firstElementChild === viewRoot;
+    const hasDraft = current && modelRouterDraftChangedSince(recommended);
+    showToast(hasDraft ? '推荐策略已保存；后续修改尚未保存' : '✓ 推荐策略已应用并保存', hasDraft ? 'warning' : 'success');
+    if (current && !hasDraft) renderModelConfigCenter(false);
   }).catch(e => {
-    // Even if save fails, update local state so user sees the change
-    Object.assign(aiModelRouter, recommended);
-    showToast('推荐策略已填入，保存失败：' + (e.message || ''), 'warn');
-    showModelConfigCenter();
+    // Keep confirmed server state separate from the visible, unsaved draft.
+    showToast('推荐策略尚未保存，可点击保存模型策略重试：' + (e.message || ''), 'error');
+  }).finally(() => {
+    modelRouterSaveInFlight = false;
   });
 }
 
@@ -228,16 +240,21 @@ async function showModelConfigCenter() {
   document.getElementById('toolbar-help').textContent = '服务端统一保存 API Key；页面只配置能力到模型的路由。';
   document.getElementById('file-info').textContent = '模型配置';
   renderModelConfigCenter(true);
+  const viewRoot = document.getElementById('editor-area')?.firstElementChild;
+  const isCurrent = () => activeWorkflow === 'config' && document.getElementById('editor-area')?.firstElementChild === viewRoot;
   try {
     await loadAiModelConfig();
-    renderModelConfigCenter(false);
+    if (isCurrent()) renderModelConfigCenter(false);
   } catch(e) {
+    if (!isCurrent()) return;
     renderModelConfigCenter(false, e.message || '模型配置加载失败');
     showToast(e.message || '模型配置加载失败', 'error');
   }
 }
 
 async function saveModelRouterConfig() {
+  if (modelRouterSaveInFlight) return showToast('模型策略正在保存，请等待结果', 'info');
+  const viewRoot = document.getElementById('editor-area')?.firstElementChild;
   const router = {};
   document.querySelectorAll('[data-model-router]').forEach(select => {
     router[select.dataset.modelRouter] = select.value;
@@ -248,14 +265,19 @@ async function saveModelRouterConfig() {
     return;
   }
   if (!confirm(`确认保存模型策略？本次将修改 ${changed.length} 项能力路由，并影响后续 AI 生成、分析和修复任务。`)) return;
+  modelRouterSaveInFlight = true;
   try {
     const data = await aiGatewayPost('/ai/model-router', router);
     aiModelRouter = data.router || router;
-    showToast('✓ 模型配置已保存', 'success');
-    await showModelConfigCenter();
+    const current = activeWorkflow === 'config' && document.getElementById('editor-area')?.firstElementChild === viewRoot;
+    const hasDraft = current && modelRouterDraftChangedSince(router);
+    showToast(hasDraft ? '模型配置已保存；后续修改尚未保存' : '✓ 模型配置已保存', hasDraft ? 'warning' : 'success');
+    if (current && !hasDraft) renderModelConfigCenter(false);
   } catch(e) {
     showToast(e.message || '模型配置保存失败', 'error');
     alert(`模型配置保存失败：${e.message || e}`);
+  } finally {
+    modelRouterSaveInFlight = false;
   }
 }
 

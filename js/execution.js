@@ -2,6 +2,7 @@
 // Extracted from task-manager.html (no logic changes).
 
 // ===== FILE OPS =====
+let fileOpenRequest = 0;
 function setFileContextVisible(visible) {
   document.querySelectorAll('.action-group.file-only').forEach(group => {
     group.dataset.fileContext = visible ? '1' : '0';
@@ -1002,13 +1003,17 @@ async function diffSelectedTraceSnapshots() {
 
 async function openFile(mod, file) {
   if (!canLeaveEditor()) return;
+  const request = ++fileOpenRequest;
+  const workflow = activeWorkflow;
   let content = '';
   try {
     content = await apiTextRequest(`/file?module=${encodeURIComponent(mod)}&file=${encodeURIComponent(file)}`);
+    if (request !== fileOpenRequest || activeWorkflow !== workflow) return false;
     if (/^\s*</.test(content) || !content.includes('tasks:')) {
       throw new Error('服务器返回内容不是有效 YAML');
     }
   } catch(e) {
+    if (request !== fileOpenRequest || activeWorkflow !== workflow) return false;
     const reason = String(e.message || '读取 YAML 失败').replace(/[。.]+$/, '');
     showToast(`无法打开 ${mod}/${file}：${reason}。文件可能已被清理，请从原运行记录查看历史结果。`, 'error');
     return false;
@@ -1483,7 +1488,8 @@ async function saveFile(options = {}) {
     return false;
   }
   const showSuccess = options.showSuccess !== false;
-  const content = document.getElementById('editor')?.value;
+  const editor = document.getElementById('editor');
+  const content = editor?.value;
   if (!content || !currentFile) return false;
   if (content === editorInitialContent) {
     editorDirty = false;
@@ -1491,15 +1497,19 @@ async function saveFile(options = {}) {
     if (showSuccess) showToast('当前内容没有修改，无需保存', 'info');
     return true;
   }
+  const module = currentModule;
+  const file = currentFile;
   try {
     const data = await apiRequest('/file', {
       method: 'POST',
-      body: JSON.stringify({ module: currentModule, file: currentFile, content })
+      body: JSON.stringify({ module, file, content })
     });
     if (showSuccess) showToast('✓ 保存成功', 'success');
-    editorInitialContent = content;
-    editorDirty = false;
-    updateToolbarState();
+    if (currentModule === module && currentFile === file && document.getElementById('editor') === editor) {
+      editorInitialContent = content;
+      editorDirty = editor.value !== content;
+      updateToolbarState();
+    }
     return true;
   } catch(e) {
     if (showSuccess) showToast(e.message || '保存失败', 'error');
@@ -1591,7 +1601,7 @@ async function submitFileOp() {
       })
     });
     closeModal('modal-file-op');
-    await loadModules();
+    await loadModules({force:true});
     await openFile(data.module, data.file);
     const actionText = op === 'copy' ? '复制' : op === 'rename' ? '重命名' : '移动';
     showToast(`✓ 已${actionText}到 ${data.module}/${data.file}`, 'success');
@@ -1654,7 +1664,7 @@ async function submitBatchMove() {
     });
     selectedFiles.clear();
     closeModal('modal-batch-move');
-    await loadModules();
+    await loadModules({force:true});
     showToast(`✓ 已移动 ${data.results?.length || 0} 个文件`, 'success');
   } catch(e) {
     showToast(e.message || '批量移动失败', 'error');

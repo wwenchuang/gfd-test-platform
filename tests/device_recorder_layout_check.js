@@ -54,6 +54,13 @@ const ROOT = path.resolve(__dirname, '..');
       assert.ok(record.buttons.every(bottom=>bottom<=record.bottom),`record header clipped at ${width}`);
       assert.ok(record.scrollWidth<=record.width+1,`record horizontal overflow at ${width}`);
       await page.evaluate(() => {
+        deviceRecorderSession={id:'prep-layout',status:'recording',device_id:'ecbfd645',steps:[],pre_action_frame_status:'failed',pre_action_frame_error:'真实点击前画面准备超过 120 秒，请检查 Runner/ADB 后手动重试'};
+        renderDeviceRecorder();
+      });
+      await page.locator('[data-action="retry-preparation"]').scrollIntoViewIfNeeded();
+      assert.ok(await page.locator('[data-action="retry-preparation"]').isVisible());
+      assert.ok(await page.locator('.device-recorder-page').evaluate(el=>el.scrollWidth<=el.clientWidth+1),`preparation overflow at ${width}`);
+      await page.evaluate(() => {
         loadRecorderEvidence=async()=>{};
         deviceRecorderSession={id:'layout-session',status:'finished',app_package:'com.kfb.model',steps:Array.from({length:4},(_,i)=>({id:'step-'+i,sequence:i+1,type:'tap',semantic_description:['我的','打印记录','返回按钮','首页'][i],screenshot_path:'fixture.png',evidence_status:'ready'}))};
         renderDeviceRecorder();

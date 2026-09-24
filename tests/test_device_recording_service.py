@@ -28,6 +28,7 @@ class DeviceRecordingServiceTest(unittest.TestCase):
         return recording.create_recording_session(**values)
 
     def prepare_frame(self, session, *, xml='<hierarchy />', ui_xml_error='', now=None):
+        captured_at = time.time() if now is None else now
         if now is None:
             now = time.time() + 3
         request = recording.pending_recording_evidence_requests(
@@ -37,7 +38,7 @@ class DeviceRecordingServiceTest(unittest.TestCase):
             "request_id": request["request_id"], "session_id": session["id"], "step_id": "",
             "device_id": "ecbfd645", "content_base64": base64.b64encode(b"\x89PNG\r\n\x1a\nfixture").decode(),
             "ui_xml": xml, "ui_xml_error": ui_xml_error,
-        }, store_path=self.store, evidence_dir=os.path.join(self.tempdir.name, "evidence"))
+        }, store_path=self.store, evidence_dir=os.path.join(self.tempdir.name, "evidence"), now=captured_at)
 
     def test_rejects_business_printer_identifier(self):
         with self.assertRaisesRegex(ValueError, "打印机"):
@@ -355,6 +356,37 @@ class DeviceRecordingServiceTest(unittest.TestCase):
         updated = recording.update_recorded_step(session["id"], "admin", step["id"], "提交按钮", store_path=self.store)
         self.assertEqual(updated["steps"][0]["semantic_description"], "提交按钮")
 
+    def test_late_visual_result_cannot_overwrite_manual_label_or_corrected_point(self):
+        for correction in ('label', 'point', 'newer_recognition'):
+            with self.subTest(correction=correction):
+                session = self.create(device_id='ecbfd645', user=correction)
+                self.prepare_frame(session)
+                step = recording.append_recorded_action(
+                    session['id'], session['recording_token'],
+                    {'event_id':'race', 'type':'tap', 'point':{'x':1,'y':2}, 'device_id':'ecbfd645'},
+                    store_path=self.store, evidence_dir=os.path.join(self.tempdir.name,'evidence'))
+                # Valid dimensions for coordinate correction; image rendering is not under test.
+                with open(step['screenshot_path'], 'wb') as handle:
+                    handle.write(b'\x89PNG\r\n\x1a\n' + b'\x00\x00\x00\rIHDR' + struct.pack('>II',1080,2400))
+                def late_model(*args, **kwargs):
+                    if correction == 'label':
+                        recording.update_recorded_step(session['id'], correction, step['id'], '左上角返回', store_path=self.store)
+                    elif correction == 'point':
+                        recording.update_recorded_step_point(session['id'], correction, step['id'], {'x':20,'y':30}, store_path=self.store)
+                    else:
+                        recording.recognize_recording_semantics(session['id'], correction, store_path=self.store,
+                            force=True, model_call=lambda *a, **k: '{"semantic_description":"新的识别","confidence":0.9}')
+                    return '{"semantic_description":"过期的我的","confidence":0.95}'
+                result = recording.recognize_recording_semantics(session['id'], correction, store_path=self.store, model_call=late_model)
+                actual=result['steps'][0]
+                if correction == 'point':
+                    self.assertEqual(actual['point'], {'x':20,'y':30})
+                    self.assertNotIn('semantic_description', actual)
+                    self.assertEqual(actual['semantic_recognition_status'], 'pending')
+                else:
+                    self.assertEqual(actual['semantic_description'], '左上角返回' if correction == 'label' else '新的识别')
+                recording.cancel_recording_session(session['id'], correction, store_path=self.store)
+
     def test_owner_history_and_generated_yaml_are_persisted(self):
         session = self.create()
         self.prepare_frame(session)
@@ -379,14 +411,19 @@ class DeviceRecordingServiceTest(unittest.TestCase):
             {"event_id": "evt-1", "type": "key", "key": "BACK", "device_id": "ecbfd645"},
             store_path=self.store, evidence_dir=os.path.join(self.tempdir.name, "evidence"),
         )
+        recording.save_generated_recording_result(session['id'], 'admin', {'yaml':'old'}, store_path=self.store)
         updated = recording.update_recorded_step(
             session["id"], "admin", step["id"], "返回上一页", store_path=self.store
         )
         self.assertEqual(updated["steps"][0]["semantic_description"], "返回上一页")
+        self.assertNotIn('generated_result', updated)
+        self.assertEqual(updated['steps'][0]['semantic_source'], 'manual')
+        recording.save_generated_recording_result(session['id'], 'admin', {'yaml':'old'}, store_path=self.store)
         with self.assertRaisesRegex(PermissionError, "发起人"):
             recording.delete_recorded_step(session["id"], "another", step["id"], store_path=self.store)
         deleted = recording.delete_recorded_step(session["id"], "admin", step["id"], store_path=self.store)
         self.assertEqual(deleted["steps"], [])
+        self.assertNotIn('generated_result', deleted)
 
     def test_empty_recording_cannot_be_finished_as_success(self):
         session = self.create()
@@ -586,7 +623,7 @@ class DeviceRecordingServiceTest(unittest.TestCase):
             failed = recording.save_recording_evidence("win-runner-01", {
                 "request_id": request["request_id"], "session_id": session["id"], "step_id": "",
                 "device_id": "ecbfd645", "error": "ADB screenshot failed",
-            }, store_path=self.store, evidence_dir=os.path.join(self.tempdir.name, "evidence"))
+            }, store_path=self.store, evidence_dir=os.path.join(self.tempdir.name, "evidence"), now=100 + (attempt - 1) * 4)
             self.assertEqual(failed["pre_action_frame_status"], "failed")
             self.assertEqual(failed["pre_action_frame_attempts"], attempt)
             recording.touch_recording_session(
@@ -606,6 +643,84 @@ class DeviceRecordingServiceTest(unittest.TestCase):
         self.assertEqual(
             recording.pending_recording_evidence_requests("win-runner-01", store_path=self.store, now=120), []
         )
+
+    def test_pre_action_request_times_out_at_120_seconds_and_rejects_late_capture(self):
+        session = self.create(runner_id="", device_id="")
+        bound = recording.bind_recording_device(
+            session["id"], "admin", "win-runner-01", "ecbfd645", store_path=self.store, now=100,
+        )
+        self.assertEqual(bound["pre_action_frame_stage"], "waiting_runner")
+        self.assertEqual(recording.pending_recording_evidence_requests(
+            "win-runner-01", store_path=self.store, now=219,
+        )[0]["request_id"], bound["pre_action_frame_request_id"])
+        self.assertEqual(recording.pending_recording_evidence_requests(
+            "win-runner-01", store_path=self.store, now=220,
+        ), [])
+        timed_out = recording.get_recording_session(session["id"], store_path=self.store, now=220)
+        self.assertEqual((timed_out["pre_action_frame_status"], timed_out["pre_action_frame_stage"]), ("failed", "failed"))
+        self.assertIn("120", timed_out["pre_action_frame_error"])
+        late = recording.save_recording_evidence("win-runner-01", {
+            "request_id": bound["pre_action_frame_request_id"], "session_id": session["id"],
+            "step_id": "", "device_id": "ecbfd645",
+            "content_base64": base64.b64encode(b"\x89PNG\r\n\x1a\nlate").decode(),
+        }, store_path=self.store, evidence_dir=os.path.join(self.tempdir.name, "evidence"), now=221)
+        self.assertEqual(late["pre_action_frame_status"], "failed")
+        retry = recording.bridge_recording_device(
+            session["id"], session["recording_token"], "win-runner-01", "ecbfd645",
+            refresh_evidence=True, store_path=self.store, now=222,
+        )
+        self.assertEqual(retry["pre_action_frame_status"], "pending")
+        self.assertNotEqual(retry["pre_action_frame_request_id"], bound["pre_action_frame_request_id"])
+
+    def test_runner_capture_ack_sets_real_stage_without_replacing_request(self):
+        session = self.create()
+        request = recording.pending_recording_evidence_requests("win-runner-01", store_path=self.store)[0]
+        ack = recording.save_recording_evidence("win-runner-01", {
+            "request_id": request["request_id"], "session_id": session["id"],
+            "step_id": "", "device_id": "ecbfd645", "phase": "capturing",
+        }, store_path=self.store)
+        self.assertEqual(ack["pre_action_frame_stage"], "capturing")
+        self.assertGreater(ack["pre_action_frame_picked_up_ts"], ack["pre_action_frame_requested_ts"])
+        self.assertEqual(recording.pending_recording_evidence_requests("win-runner-01", store_path=self.store), [])
+        ready = recording.save_recording_evidence("win-runner-01", {
+            "request_id": request["request_id"], "session_id": session["id"],
+            "step_id": "", "device_id": "ecbfd645",
+            "content_base64": base64.b64encode(b"\x89PNG\r\n\x1a\nready").decode(),
+        }, store_path=self.store, evidence_dir=os.path.join(self.tempdir.name, "evidence"))
+        self.assertEqual((ready["pre_action_frame_status"], ready["pre_action_frame_stage"]), ("ready", "ready"))
+
+    def test_idle_refresh_ack_updates_stage_without_discarding_valid_frame(self):
+        session = self.create()
+        ready = self.prepare_frame(session)
+        refreshed_at = ready["pre_action_frame_captured_ts"] + 50
+        refreshing = recording.bridge_recording_device(
+            session["id"], session["recording_token"], "win-runner-01", "ecbfd645",
+            store_path=self.store, now=refreshed_at,
+        )
+        self.assertEqual(refreshing["pre_action_frame_status"], "ready")
+        ack = recording.save_recording_evidence("win-runner-01", {
+            "request_id": refreshing["pre_action_frame_request_id"], "session_id": session["id"],
+            "step_id": "", "device_id": "ecbfd645", "phase": "capturing",
+        }, store_path=self.store, now=refreshed_at + 1)
+        self.assertEqual(ack["pre_action_frame_status"], "ready")
+        self.assertEqual(ack["pre_action_frame_stage"], "capturing")
+        self.assertEqual(recording.pending_recording_evidence_requests(
+            "win-runner-01", store_path=self.store, now=refreshed_at + 1,
+        ), [])
+
+    def test_finished_session_ignores_late_pre_action_frame(self):
+        session = self.create(runner_id="", device_id="")
+        bound = recording.bind_recording_device(
+            session["id"], "admin", "win-runner-01", "ecbfd645", store_path=self.store,
+        )
+        recording.cancel_recording_session(session["id"], "admin", store_path=self.store)
+        late = recording.save_recording_evidence("win-runner-01", {
+            "request_id": bound["pre_action_frame_request_id"], "session_id": session["id"],
+            "step_id": "", "device_id": "ecbfd645",
+            "content_base64": base64.b64encode(b"\x89PNG\r\n\x1a\nlate").decode(),
+        }, store_path=self.store, evidence_dir=os.path.join(self.tempdir.name, "evidence"))
+        self.assertEqual(late["status"], "cancelled")
+        self.assertEqual(late["pre_action_frame_status"], "pending")
 
     def test_consecutive_actions_never_reuse_the_previous_pre_action_frame(self):
         session = self.create(runner_id="", device_id="")

@@ -2473,9 +2473,9 @@ const CONTEXT_TOOLBAR_MAP = {
   agent_history:    { module: 'agent',    icon: '⌂', title: 'Agent 控制', refreshLabel: '刷新状态', refreshFn: 'loadAgentRunsHistory()' },
   agent_confirm:    { module: 'agent',    icon: '⌂', title: 'Agent 控制', refreshLabel: '刷新状态', refreshFn: 'renderAgentConfirmPage()' },
   // 用例 模块
-  assets:           { module: 'cases',    icon: '📁', title: '用例操作', refreshLabel: '刷新用例', refreshFn: 'loadModules()' },
-  generate:         { module: 'cases',    icon: '✦', title: '用例操作', refreshLabel: '刷新用例', refreshFn: 'loadModules()' },
-  yaml_edit:        { module: 'cases',    icon: '✎', title: '用例操作', refreshLabel: '刷新用例', refreshFn: 'loadModules()' },
+  assets:           { module: 'cases',    icon: '📁', title: '用例操作', refreshLabel: '刷新用例', refreshFn: 'loadModules({force:true})' },
+  generate:         { module: 'cases',    icon: '✦', title: '用例操作', refreshLabel: '刷新用例', refreshFn: 'loadModules({force:true})' },
+  yaml_edit:        { module: 'cases',    icon: '✎', title: '用例操作', refreshLabel: '刷新用例', refreshFn: 'loadModules({force:true})' },
   // 执行 模块
   execute:          { module: 'run',      icon: '▶', title: '执行操作', refreshLabel: '刷新任务', refreshFn: 'loadJobs(true)' },
   baseline:         { module: 'run',      icon: '⇄', title: '执行操作', refreshLabel: '刷新任务', refreshFn: 'loadJobs(true)' },
@@ -2487,7 +2487,7 @@ const CONTEXT_TOOLBAR_MAP = {
   // 配置 模块
   config:           { module: 'settings', icon: '⚙', title: '配置', refreshLabel: '刷新配置', refreshFn: 'showModelConfigCenter()' },
   app_config:       { module: 'settings', icon: '⚙', title: '配置', refreshLabel: '刷新配置', refreshFn: 'showAppConfigCenter()' },
-  sonic_config:     { module: 'settings', icon: '⚙', title: '配置', refreshLabel: '刷新状态', refreshFn: 'showSonicConfigCenter()' },
+  sonic_config:     { module: 'settings', icon: '⚙', title: '配置', refreshLabel: '刷新状态', refreshFn: 'refreshSonicRunnerDevices()' },
   feishu_config:    { module: 'settings', icon: '⚙', title: '配置', refreshLabel: '刷新配置', refreshFn: 'showFeishuConfigCenter()' },
   system_config:    { module: 'settings', icon: '⚙', title: '配置', refreshLabel: '刷新配置', refreshFn: 'showPreflightDashboard()' }
 };
@@ -2678,12 +2678,13 @@ function applyLazyLoadForSection(sectionKey) {
     }).catch(() => {});
   }
 
-  if (NEEDS_RUNNERS.has(sectionKey) && typeof ensureRunnersLoaded === 'function') {
+  if (sectionKey === 'sonic_config') {
+    refreshSonicRunnerDevices();
+  } else if (NEEDS_RUNNERS.has(sectionKey) && typeof ensureRunnersLoaded === 'function') {
     ensureRunnersLoaded().then(() => {
       if (sectionKey === 'execute' && activeWorkflow === 'execute' && !hasOpenEditor() && typeof showExecutionCenter === 'function') {
         showExecutionCenter();
       }
-      if (sectionKey === 'sonic_config' && activeWorkflow === 'sonic_config') showSonicConfigCenter();
     }).catch(() => {});
   }
 
@@ -3915,6 +3916,10 @@ function renderModuleSelects() {
 
 function renderModules() {
   const list = document.getElementById('module-list');
+  const moduleLoadError = AppState.errors.modules;
+  const emptyMessage = moduleLoadError
+    ? '<div style="padding:16px;color:var(--text2);font-family:var(--mono);font-size:12px;">模块读取失败。<button class="btn-sm" onclick="loadModules({force:true})">重试</button></div>'
+    : '<div style="padding:16px;color:var(--text2);font-family:var(--mono);font-size:12px;">没有匹配的 YAML 文件</div>';
   const keyword = (document.getElementById('task-search')?.value || '').trim().toLowerCase();
   const appFilter = document.getElementById('app-filter')?.value || '';
   const selectedApp = taskApps.find(app => app.package === appFilter);
@@ -3936,7 +3941,7 @@ function renderModules() {
       rows = rows.filter(row => `${row.mod}/${row.file}/${lifecycleText(row.meta.status)}`.toLowerCase().includes(keyword));
     }
     if (!rows.length) {
-      list.innerHTML = '<div style="padding:16px;color:var(--text2);font-family:var(--mono);font-size:12px;">没有匹配的 YAML 文件</div>';
+      list.innerHTML = emptyMessage;
       if (activeWorkflow === 'assets' && !hasOpenEditor() && !document.querySelector('.knowledge-manager')) showAssetsCenter();
       return;
     }
@@ -4022,7 +4027,7 @@ function renderModules() {
     list.appendChild(div);
   }
   if (!list.innerHTML) {
-    list.innerHTML = '<div style="padding:16px;color:var(--text2);font-family:var(--mono);font-size:12px;">没有匹配的 YAML 文件</div>';
+    list.innerHTML = emptyMessage;
   }
   if (activeWorkflow === 'assets' && !hasOpenEditor() && !document.querySelector('.knowledge-manager')) showAssetsCenter();
 }
@@ -4301,6 +4306,22 @@ function showFeishuConfigCenter() {
   </div>`;
 }
 
+function refreshSonicRunnerDevices() {
+  if (AppState.loading.sonicRunners) return AppState.loading.sonicRunners;
+  AppState.errors.sonicRunners = null;
+  const request = loadRunnerDevices({force: true, quiet: true})
+    .catch(error => {
+      AppState.errors.sonicRunners = error?.message || '设备读取失败';
+    })
+    .finally(() => {
+      if (AppState.loading.sonicRunners === request) delete AppState.loading.sonicRunners;
+      if (activeWorkflow === 'sonic_config') showSonicConfigCenter();
+    });
+  AppState.loading.sonicRunners = request;
+  if (activeWorkflow === 'sonic_config') showSonicConfigCenter();
+  return request;
+}
+
 function showSonicConfigCenter() {
   const area = document.getElementById('editor-area');
   if (!area) return;
@@ -4308,11 +4329,18 @@ function showSonicConfigCenter() {
   setManagementToolbar('执行环境', '查看 Runner、设备和 Sonic 绑定；深度扫描只在手工点击时执行。', '🔗');
   const catalog = taskAppCatalogPageState();
   const onlineDevices = Array.isArray(runnerDevices) ? runnerDevices.filter(device => device.online !== false) : [];
+  const runnerStatus = AppState.loading.sonicRunners
+    ? {count: '…', label: '正在加载在线设备'}
+    : AppState.errors.sonicRunners
+      ? {count: '—', label: '设备读取失败，请刷新状态'}
+      : AppState.loaded.runners
+        ? {count: onlineDevices.length, label: '在线设备'}
+        : {count: '—', label: '在线设备尚未加载'};
   const sonicBound = catalog.loaded ? taskApps.filter(app => app.sonic_project_id || app.sonic_project_name || app.sonic_suite_id || app.sonic_suite_name) : [];
   area.className = 'editor-area';
   area.innerHTML = `<div class="review-page config-management-page">
     <div class="review-head"><div><div class="workflow-kicker">执行环境 · Runner / 设备 / Sonic</div><h2>执行环境</h2><p>先确认设备在线和应用绑定，再执行用例。进入本页不会自动扫描或修改 Sonic 数据。</p></div><div class="review-actions"><button class="btn-sm" onclick="showPreflightDashboard()">快速体检</button><button class="btn-sm" onclick="showPreflightDashboard(true)">深度体检</button><button class="btn-sm primary" onclick="scanLegacySonicCases('all')">扫描旧/重复步骤</button></div></div>
-    <div class="review-stats"><div class="review-stat"><strong>${onlineDevices.length}</strong><span>在线设备</span></div><div class="review-stat"><strong>${catalog.unavailable ? '—' : `${sonicBound.length}/${taskApps.length}`}</strong><span>已绑定 Sonic 应用</span></div></div>
+    <div class="review-stats"><div class="review-stat"><strong>${runnerStatus.count}</strong><span>${runnerStatus.label}</span></div><div class="review-stat"><strong>${catalog.unavailable ? '—' : `${sonicBound.length}/${taskApps.length}`}</strong><span>已绑定 Sonic 应用</span></div></div>
     <div class="management-list">
       ${catalog.unavailable ? taskAppCatalogNoticeHtml(catalog) : `${taskAppCatalogNoticeHtml(catalog)}${taskApps.length ? taskApps.map(app => `<div class="management-row"><div class="management-row-main"><strong>${escapeHtml(app.name || app.package)}</strong><span>${escapeHtml(app.package || '-')}</span><small>${escapeHtml([app.sonic_project_name || app.sonic_project_id || '项目未绑定', app.sonic_suite_name || app.sonic_suite_id || '测试套未绑定'].join(' · '))}</small></div><button class="btn-sm" onclick="openTaskAppEditor(${jsArg(app.package || '')}, 1)">编辑绑定</button></div>`).join('') : '<div class="job-empty">暂无应用绑定信息。</div>'}`}
     </div>

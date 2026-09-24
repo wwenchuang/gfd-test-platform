@@ -156,6 +156,37 @@ test('an unchanged recorder heartbeat does not replace an in-progress form or ti
   assert.equal(f.dom.window.document.querySelector('.device-recorder-timeline'), timeline);
 });
 
+test('late recording heartbeat cannot restore a session after new recording', async()=>{
+  const f=fixture(); let release;
+  f.run("deviceRecorderSession={id:'old',status:'finished',steps:[]};renderDeviceRecorder()");
+  f.context.apiRequest=()=>new Promise(resolve=>release=resolve);
+  const pending=f.run('refreshDeviceRecording()');
+  f.run('newDeviceRecording()');
+  release({session:{id:'old',status:'finished',steps:[]}}); await pending;
+  assert.equal(f.run('deviceRecorderSession'),null);
+});
+
+test('recording update cannot repaint another workflow',async()=>{
+  const f=fixture(); let release;
+  f.run("deviceRecorderSession={id:'old',status:'recording',steps:[]};renderDeviceRecorder()");
+  f.context.apiRequest=()=>new Promise(resolve=>release=resolve);
+  const pending=f.run('refreshDeviceRecording()');
+  f.dom.window.document.getElementById('editor-area').innerHTML='<p>reports page</p>';
+  release({session:{id:'old',status:'recording',steps:[{id:'new',type:'key',key:'BACK'}]}}); await pending;
+  assert.equal(f.dom.window.document.getElementById('editor-area').textContent,'reports page');
+});
+
+test('changed heartbeat retains manual draft and expanded editor',async()=>{
+  const f=fixture();
+  f.run("deviceRecorderSession={id:'s',status:'finished',app_package:'com.kfb.model',steps:[{id:'one',type:'tap',semantic_description:'old',sequence:1}]};renderDeviceRecorder()");
+  const input=f.dom.window.document.getElementById('recorder-edit-one');input.value='my unsaved label';
+  f.dom.window.document.querySelector('.device-recorder-step-tools').open=true;
+  f.context.apiRequest=async()=>({session:{id:'s',status:'finished',app_package:'com.kfb.model',steps:[{id:'one',type:'tap',semantic_description:'recognized',sequence:1}]}});
+  await f.run('refreshDeviceRecording()');
+  assert.equal(f.dom.window.document.getElementById('recorder-edit-one').value,'my unsaved label');
+  assert.equal(f.dom.window.document.querySelector('.device-recorder-step-tools').open,true);
+});
+
 test('saving after renaming a generated case regenerates YAML with the new task name', async () => {
   const f = fixture();
   const requests = [];
@@ -550,4 +581,39 @@ test('hidden pages pause status traffic and focus resumes with one five second t
   f.dom.window.document.dispatchEvent(new f.dom.window.Event('visibilitychange'));await new Promise(resolve=>setImmediate(resolve));assert.equal(count,1);
   f.dom.window.document.getElementById('editor-area').innerHTML='<p>其他页面</p>';
   await polls[0].fn();assert.equal(count,1);assert.equal(f.run('deviceRecorderDeviceTimer'),null);
+});
+
+test('preparation reports actual stage and elapsed time, exposes failure retry', () => {
+  const f=fixture();
+  f.context.nowSeconds=Date.now()/1000;
+  f.run(`deviceRecorderSession={id:'prep',status:'recording',device_id:'ecbfd645',steps:[],pre_action_frame_status:'pending',pre_action_frame_stage:'waiting_runner',pre_action_frame_requested_ts:nowSeconds-12};renderDeviceRecorder()`);
+  let text=f.dom.window.document.querySelector('#device-recorder-preparation')?.textContent||'';
+  assert.match(text,/等待 Runner 接单/); assert.match(text,/已等待 1[23] 秒/);
+  assert.match(text,/120 秒/);
+  f.run(`deviceRecorderSession.pre_action_frame_stage='capturing';renderDeviceRecorder(true)`);
+  assert.match(f.dom.window.document.querySelector('#device-recorder-preparation').textContent,/正在采集手机画面/);
+  f.run(`deviceRecorderSession.pre_action_frame_status='failed';deviceRecorderSession.pre_action_frame_error='ADB 超时';renderDeviceRecorder(true)`);
+  assert.match(f.dom.window.document.querySelector('#device-recorder-preparation').textContent,/ADB 超时/);
+  assert.ok(f.dom.window.document.querySelector('[data-action="retry-preparation"]'));
+  f.run(`deviceRecorderSession.status='cancelled';renderDeviceRecorder()`);
+  assert.equal(f.dom.window.document.querySelector('[data-action="retry-preparation"]'),null);
+});
+
+test('preparation retry creates only one request and ignores late response after leaving session', async () => {
+  const f=fixture(); let resolve; let count=0;
+  f.run(`deviceRecorderSession={id:'prep',status:'recording',device_id:'ecbfd645',steps:[],pre_action_frame_status:'failed'};sessionStorage.setItem('deviceRecorderToken','scoped-token');renderDeviceRecorder()`);
+  f.context.apiRequest=(url,options)=>{count++;assert.equal(url,'/device-recordings/bridge');assert.equal(JSON.parse(options.body).refresh_evidence,true);return new Promise(r=>resolve=r);};
+  const pending=f.run('retryRecorderPreparation()');
+  await f.run('retryRecorderPreparation()'); assert.equal(count,1);
+  f.run('deviceRecorderSession=null'); resolve({session:{id:'prep',status:'recording',steps:[]}}); await pending;
+  assert.equal(f.run('deviceRecorderSession'),null);
+});
+
+test('a terminal session stops heartbeat polling even while viewing history', async () => {
+  const f=fixture(); const cleared=[]; f.context.clearInterval=id=>cleared.push(id);
+  f.run(`deviceRecorderSession={id:'old',status:'recording',steps:[]};deviceRecorderView='history';deviceRecorderPollTimer=77;showDeviceRecordingHistory()`);
+  f.context.apiRequest=async()=>({session:{id:'old',status:'cancelled',steps:[]}});
+  await f.run('refreshDeviceRecording()');
+  assert.ok(cleared.includes(77));
+  assert.equal(f.run('deviceRecorderView'),'history');
 });

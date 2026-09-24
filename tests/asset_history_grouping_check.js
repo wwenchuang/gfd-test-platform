@@ -32,6 +32,7 @@ function createWindow() {
       'AI_Agent_草稿_agent-456': [],
       cache: [],
     },
+    AppState: {errors: {modules: null}},
     taskApps: [],
     currentModule: null,
     currentFile: null,

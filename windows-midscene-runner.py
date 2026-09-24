@@ -21,10 +21,12 @@ RUNNER_ID = os.getenv("RUNNER_ID", "win-runner-01")
 TOKEN = os.getenv("MIDSCENE_RUNNER_TOKEN", "").strip()
 WORKSPACE = Path(os.getenv("MIDSCENE_RUNNER_WORKSPACE", r"D:\sonic\midscene_run"))
 CALLBACK_OUTBOX_DIR = WORKSPACE / "callback_outbox"
-RUNNER_VERSION = os.getenv("MIDSCENE_RUNNER_VERSION", "2026.09.22-midscene1.13-qwen3.7-result-retry-v1-recording-evidence-v3")
+RUNNER_VERSION = os.getenv("MIDSCENE_RUNNER_VERSION", "2026.09.24-midscene1.13-qwen3.7-result-retry-v1-recording-preparation-v4")
 MIDSCENE_REQUIRED_VERSION = "1.13.0"
 COMPLETED_RECORDING_EVIDENCE = set()
 ENABLED_RECORDING_TOUCH_INDICATORS = set()
+DEVICE_DETAILS_TTL_SECONDS = 30
+_DEVICE_DETAILS_CACHE = {}
 RUNNER_STARTED_AT = time.strftime("%Y-%m-%d %H:%M:%S")
 POLL_INTERVAL = int(os.getenv("POLL_INTERVAL", "3"))
 MIDSCENE_BIN = os.getenv("MIDSCENE_BIN", "midscene")
@@ -767,6 +769,8 @@ def upload_recording_evidence_requests(response, devices):
         try:
             if device_id not in available:
                 raise RuntimeError("录制设备已离线，无法采集证据")
+            if not payload["step_id"]:
+                http_json("POST", "/api/runner/recording-evidence", {**payload, "phase": "capturing"}, timeout=10)
             if device_id not in ENABLED_RECORDING_TOUCH_INDICATORS:
                 if not enable_recording_touch_indicators(adb_bin, device_id):
                     ENABLED_RECORDING_TOUCH_INDICATORS.add(device_id)
@@ -783,6 +787,11 @@ def upload_recording_evidence_requests(response, devices):
             payload["error"] = str(exc)[:500]
         http_json("POST", "/api/runner/recording-evidence", payload, timeout=35)
         COMPLETED_RECORDING_EVIDENCE.add(request_id)
+
+
+def process_heartbeat_requests(response, devices):
+    upload_recording_evidence_requests(response, devices)
+    upload_snapshot_requests(response, devices)
 
 
 def upload_snapshot_requests(response, devices):
@@ -876,6 +885,9 @@ def resolve_adb_with_devices(require_devices=True):
 def detect_device_ids():
     configured = clean_command(os.getenv("DEVICE_ID") or os.getenv("ANDROID_DEVICE_ID") or os.getenv("ANDROID_SERIAL"))
     if configured:
+        _, online = resolve_adb_with_devices(require_devices=True)
+        if configured not in online:
+            raise RuntimeError(f"指定 Android 设备 {configured} 未在 adb devices 在线列表中")
         return [configured]
 
     _, devices = resolve_adb_with_devices(require_devices=True)
@@ -898,7 +910,12 @@ def detect_devices():
 
     devices = []
     adb_bin, _ = resolve_adb_with_devices(require_devices=False)
+    sampled_at = time.time()
     for device_id in device_ids:
+        cached = _DEVICE_DETAILS_CACHE.get(device_id)
+        if cached and sampled_at - cached["sampled_at"] < DEVICE_DETAILS_TTL_SECONDS and cached["device"].get("adb_path") == adb_bin:
+            devices.append(dict(cached["device"]))
+            continue
         brand = ""
         model = ""
         android_version = ""
@@ -919,7 +936,7 @@ def detect_devices():
         raw_label = " ".join([part for part in [brand, model] if part]).strip() or device_id
         display_name = device_market_name(adb_bin, device_id, brand, model) or raw_label
         preflight_ok = bool(adb_bin and device_id)
-        devices.append({
+        device = {
             "device_id": device_id,
             "status": "online",
             "brand": brand,
@@ -935,7 +952,9 @@ def detect_devices():
             "density": density,
             "installed_apps": installed_apps,
             "preflight_status": "ready" if preflight_ok else "unknown",
-        })
+        }
+        devices.append(device)
+        _DEVICE_DETAILS_CACHE[device_id] = {"sampled_at": sampled_at, "device": device}
     return devices
 
 
@@ -1862,8 +1881,7 @@ def main():
                 continue
             try:
                 heartbeat_response = heartbeat(devices)
-                upload_snapshot_requests(heartbeat_response, devices)
-                upload_recording_evidence_requests(heartbeat_response, devices)
+                process_heartbeat_requests(heartbeat_response, devices)
                 log_runner_recovered("Heartbeat", error_state)
                 replay_pending_result_callbacks()
             except Exception as e:
