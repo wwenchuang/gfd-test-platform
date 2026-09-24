@@ -237,13 +237,15 @@
 
   function bridgeStepState(session) {
     const steps = Array.isArray(session?.steps) ? session.steps : [];
-    const step = steps.find(item => Number(item.sequence || 0) === Number(awaitingRecognition || 0));
+    const step = awaitingRecognition
+      ? steps.find(item => Number(item.sequence || 0) === Number(awaitingRecognition))
+      : steps[steps.length - 1];
     if (session?.pre_action_frame_status === 'failed') return 'frame_failed';
     if (!step) return frameReady(session) && !awaitingRecognition ? 'ready' : 'pending';
     if (step.evidence_status === 'pending' || session.pre_action_frame_status === 'pending') return 'pending';
     if (step.evidence_status === 'failed' || step.semantic_recognition_status === 'failed') return 'failed';
     if (step.semantic_recognition_status === 'running' && frameReady(session)) return 'recognizing';
-    if (step.type === 'tap' && !String(step.semantic_description || step.ui_node?.text || step.ui_node?.content_desc || step.ui_node?.resource_id || '').trim()) {
+    if (['tap', 'text'].includes(step.type) && (step.semantic_source === 'ui_xml' || ['pending', 'running'].includes(step.semantic_recognition_status) || !String(step.semantic_description || '').trim())) {
       return step.semantic_recognition_status === 'failed' ? 'failed' : 'recognizing';
     }
     if (step.screen_change_status === 'unchanged' && frameReady(session)) return 'unchanged';
@@ -359,15 +361,15 @@
         if (recording.bound) scheduleBridgePoll(3000);
       } else if (state === 'unchanged') {
         recording.bound = frameReady(session);
-        showRecorderStatus(`第 ${awaitingRecognition} 步控件已记录，但页面结构未变化；请核对手机是否响应，可重试`, 'error');
+        showRecorderStatus(`第 ${awaitingRecognition || mirroredCount} 步控件已记录，但页面结构未变化；请核对手机是否响应，可重试`, 'error');
         awaitingRecognition = 0;
         saveRecording();
         scheduleBridgePoll(3000);
       } else if (state === 'failed') {
         recording.bound = frameReady(session);
         showRecorderStatus(recording.bound
-          ? `第 ${awaitingRecognition} 步识别失败，已保留；可以继续操作并稍后在平台修正`
-          : `第 ${awaitingRecognition} 步识别失败，已保留；正在准备下一步截图，请暂缓操作`, 'error');
+          ? `第 ${awaitingRecognition || mirroredCount} 步识别失败，已保留；可以继续操作并稍后在平台修正`
+          : `第 ${awaitingRecognition || mirroredCount} 步识别失败，已保留；正在准备下一步截图，请暂缓操作`, 'error');
         awaitingRecognition = 0;
         saveRecording();
         scheduleBridgePoll(recording.bound ? 3000 : 1000);

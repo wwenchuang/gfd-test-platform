@@ -509,7 +509,7 @@ test('a rejected action resynchronizes evidence and an expired token stops the s
   assert.ok(notices.some(item=>item.type==='MIDSCENE_RECORDING_ERROR' && /认证/.test(item.message)));
 });
 
-test('bridge accepts UI-node naming and warns when a recorded tap did not change the phone screen', async () => {
+test('bridge accepts visually confirmed naming and warns when a recorded tap did not change the phone screen', async () => {
   const listeners = {};
   const badge = {style: {}, textContent: ''};
   const opener = {postMessage() {}};
@@ -519,7 +519,7 @@ test('bridge accepts UI-node naming and warns when a recorded tap did not change
   let poll;
   const context = vm.createContext({window, document, URL, fetch: async url => url.endsWith('/bridge')
     ? {ok: true, json: async () => ({session: {pre_action_frame_status: 'ready', steps: poll
-      ? [{sequence: 1, type: 'tap', evidence_status: 'captured', ui_node: {text: '打印记录'}, screen_change_status: 'unchanged'}]
+      ? [{sequence: 1, type: 'tap', evidence_status: 'captured', semantic_description: '打印记录', semantic_source: 'ai_visual', semantic_recognition_status: 'recognized', screen_change_status: 'unchanged'}]
       : []}})}
     : {ok: true, json: async () => ({step: {sequence: 1}})}, Date, Math, JSON, String, Number, Object, RegExp, Error, Set,
   setTimeout(fn) {poll = fn; return 1;}, clearTimeout() {}});
@@ -801,4 +801,31 @@ test('an active remote tab older than the handoff window refreshes evidence on r
   await new Promise(setImmediate);
   assert.equal(requests[0].body.refresh_evidence, true);
   assert.equal(requests[0].body.device_id, 'ecbfd645');
+});
+
+test('recognition pending and failure survive subsequent bridge polls without false green success', async () => {
+  const listeners = {}, badge = {style: {}};
+  const opener = {postMessage() {}};
+  let step, poll;
+  class FakeWebSocket {constructor(url) {this.url=url;} send() {}}
+  const document = {body:{appendChild(){}},getElementById(){return badge;},createElement(){return badge;}};
+  const window = {opener,WebSocket:FakeWebSocket,document,addEventListener(t,f){listeners[t]=f;}};
+  const context = vm.createContext({window,document,URL,Date,Math,JSON,String,Number,Object,RegExp,Error,Set,
+    fetch: async url => url.endsWith('/bridge')
+      ? {ok:true,json:async()=>({session:{pre_action_frame_status:'ready',steps:step?[step]:[]}})}
+      : {ok:true,json:async()=>({step:{sequence:1}})},
+    setTimeout(fn){poll=fn;return 1;},clearTimeout(){}});
+  vm.runInContext(fs.readFileSync(path.join(__dirname,'..','deploy/sonic-recorder-hook.js'),'utf8'),context);
+  listeners.message({source:opener,origin:'http://platform.example',data:{type:'MIDSCENE_RECORDING_START',sessionId:'s',recordingToken:'t',endpoint:'http://platform.example/api/device-recordings/action'}});
+  const socket = new window.WebSocket('ws://agent/websockets/android/key/phone/token');
+  await new Promise(setImmediate);
+  socket.send(JSON.stringify({type:'debug',detail:'tap',point:'10,20'}));
+  await new Promise(setImmediate);
+  step={sequence:1,type:'tap',evidence_status:'captured',ui_node:{text:'背景日期'}};
+  for(let i=0;i<2;i++){poll();await new Promise(setImmediate);assert.match(badge.textContent,/仍在识别/);assert.notEqual(badge.style.background,'#067647');}
+  step.semantic_recognition_status='failed';
+  for(let i=0;i<2;i++){poll();await new Promise(setImmediate);assert.match(badge.textContent,/识别失败/);assert.equal(badge.style.background,'#b42318');}
+  step.semantic_recognition_status='recognized';step.semantic_description='确认';step.semantic_source='ai_visual';
+  poll();await new Promise(setImmediate);
+  assert.equal(badge.style.background,'#067647');
 });

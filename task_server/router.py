@@ -4014,7 +4014,7 @@ def _post_device_recording_bind(handler, qs):
 @route_post("/api/device-recordings/bridge")
 def _post_device_recording_bridge(handler, qs):
     """Bind or poll the selected Sonic phone without relying on cross-site windows."""
-    from task_server.services.device_recording_service import bridge_recording_device
+    from task_server.services.device_recording_service import bridge_recording_device, schedule_recording_recognition
     payload = handler._body()
     device_id = str(payload.get("device_id") or payload.get("deviceId") or "").strip()
     matched = next((item for item in all_online_devices() if str(item.get("device_id") or "") == device_id and item.get("runner_online") and item.get("status") in ("online", "device")), None)
@@ -4035,6 +4035,7 @@ def _post_device_recording_bridge(handler, qs):
     except ValueError as exc:
         handler._json({"ok": False, "error": str(exc)}, 409)
         return
+    schedule_recording_recognition(session)
     handler._json({"ok": True, "session": session})
 
 

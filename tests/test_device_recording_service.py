@@ -40,6 +40,31 @@ class DeviceRecordingServiceTest(unittest.TestCase):
             "ui_xml": xml, "ui_xml_error": ui_xml_error,
         }, store_path=self.store, evidence_dir=os.path.join(self.tempdir.name, "evidence"), now=captured_at)
 
+    def test_background_recognition_is_nonblocking_deduplicated_and_releases_slot(self):
+        import threading
+        from unittest.mock import patch
+        entered, release = threading.Event(), threading.Event()
+        session = self.create()
+        self.prepare_frame(session)
+        recording.append_recorded_action(session["id"], session["recording_token"], {
+            "event_id": "background", "type": "tap", "device_id": "ecbfd645", "point": {"x": 10, "y": 10}
+        }, store_path=self.store, evidence_dir=os.path.join(self.tempdir.name, "evidence"))
+        snapshot = recording.get_recording_session(session["id"], store_path=self.store)
+        def slow_model(*args, **kwargs):
+            entered.set()
+            release.wait(2)
+        with patch.object(recording, "recognize_recording_semantics", side_effect=slow_model) as recognize:
+            worker = recording.schedule_recording_recognition(snapshot, store_path=self.store)
+            self.assertIsNotNone(worker)
+            self.assertTrue(entered.wait(1))
+            self.assertIsNone(recording.schedule_recording_recognition(snapshot, store_path=self.store))
+            release.set()
+            worker.join(2)
+            self.assertFalse(worker.is_alive())
+            self.assertEqual(recognize.call_count, 1)
+        snapshot["status"] = "cancelled"
+        self.assertIsNone(recording.schedule_recording_recognition(snapshot, store_path=self.store))
+
     def test_rejects_business_printer_identifier(self):
         with self.assertRaisesRegex(ValueError, "打印机"):
             self.create(device_id="18CEDF5BA7B2")

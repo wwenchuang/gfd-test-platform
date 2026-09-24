@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import logging
 import base64
 import io
 import hashlib
@@ -35,6 +36,8 @@ PRE_ACTION_FRAME_MAX_AGE_SECONDS = 60
 PRE_ACTION_FRAME_IDLE_REFRESH_SECONDS = 45
 PRE_ACTION_FRAME_TIMEOUT_SECONDS = 120
 _LOCK = threading.RLock()
+_RECOGNITION_SLOTS = threading.BoundedSemaphore(4)
+_RECOGNITION_WORKERS = set()
 
 
 def _path(store_path: Optional[str]) -> str:
@@ -1067,6 +1070,47 @@ def confirmed_recording_description(step: Dict[str, Any]) -> str:
     if step.get("semantic_source") == "ui_xml" or step.get("semantic_recognition_status") in {"pending", "running", "failed"}:
         return ""
     return _control_label(step.get("semantic_description"))[:200]
+
+
+def schedule_recording_recognition(session: Dict[str, Any], *, store_path: Optional[str] = None):
+    """Recognize from authenticated Sonic polls even when the platform tab sleeps.
+
+    At most four sessions run concurrently; busy sessions retry on their next poll.
+    The existing recognition request IDs prevent stale or duplicate publication.
+    """
+    if session.get("status") != "recording" or not any(
+        step.get("type") in {"tap", "text"} and step.get("evidence_status") == "captured"
+        and step.get("semantic_recognition_status") not in {"running", "failed"}
+        and not confirmed_recording_description(step) for step in session.get("steps", [])
+    ):
+        return None
+    key = (_path(store_path), session["id"])
+    with _LOCK:
+        if key in _RECOGNITION_WORKERS or not _RECOGNITION_SLOTS.acquire(blocking=False):
+            return None
+        _RECOGNITION_WORKERS.add(key)
+
+    def work():
+        try:
+            current = get_recording_session(session["id"], store_path=store_path)
+            if current.get("status") == "recording":
+                recognize_recording_semantics(session["id"], session["created_by"], store_path=store_path)
+        except Exception:
+            logging.getLogger(__name__).exception("Background recording recognition failed: %s", session["id"])
+        finally:
+            with _LOCK:
+                _RECOGNITION_WORKERS.discard(key)
+                _RECOGNITION_SLOTS.release()
+
+    worker = threading.Thread(target=work, name="recording-recognition", daemon=True)
+    try:
+        worker.start()
+    except Exception:
+        with _LOCK:
+            _RECOGNITION_WORKERS.discard(key)
+            _RECOGNITION_SLOTS.release()
+        raise
+    return worker
 
 
 def recognize_recording_semantics(
