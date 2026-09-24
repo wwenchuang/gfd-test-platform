@@ -158,7 +158,7 @@ def _sanitize(event):
         "timestamp": float(event.get("timestamp") or time.time()),
         "duration_ms": max(0, min(86400000, int(event.get("duration_ms") or 0))),
         "summary": safe_summary, "item_outcomes": safe_items,
-        "truncated": len(items) > 25 or len(original_changed) > 25,
+        "truncated": bool(event.get("truncated")) or len(items) > 25 or len(original_changed) > 25,
         "initiator_user_id": _identifier(event.get("initiator_user_id")),
         "source_job_id": _identifier(event.get("source_job_id")),
         "source_run_id": _identifier(event.get("source_run_id")),
@@ -273,7 +273,7 @@ class OperationStore:
             raise PermissionError("active authenticated profile required")
         # Recheck current identity; stale caller snapshots cannot widen access.
         live = identity.get_access_profile(profile.get("username"))
-        if not live or live["user_id"] != user_id or live["status"] != "active":
+        if not live or live["user_id"] != user_id or live["status"] != "active" or live["must_change_password"]:
             raise PermissionError("profile is no longer active")
         unrestricted = bool(all_actors and live.get("is_superuser"))
         filters = filters or {}

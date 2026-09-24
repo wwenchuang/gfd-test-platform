@@ -147,3 +147,29 @@ def test_startup_sqlite_outage_still_spools_and_recovers(identities, monkeypatch
     monkeypatch.setattr(sqlite3, "connect", original)
     assert store.replay_spool()["replayed"] == 1
     assert store.list_events(identity.get_access_profile("alice"))["total"] == 1
+
+
+def test_spooled_truncated_batch_stays_truncated_after_replay(identities, monkeypatch):
+    store = oa.OperationStore()
+    original_insert = store._insert
+    monkeypatch.setattr(store, "_insert", lambda event: (_ for _ in ()).throw(sqlite3.OperationalError("locked")))
+    event = {"event_id": "large-batch", "actor": oa.actor_from_trusted_username("alice"),
+             "action": "case.move", "resource_type": "case", "result": "partial",
+             "item_outcomes": [{"resource_id": str(index), "result": "success"} for index in range(30)]}
+    assert store.append(event)["storage"] == "spool"
+    monkeypatch.setattr(store, "_insert", original_insert)
+    assert store.replay_spool()["replayed"] == 1
+    saved = store.list_events(identity.get_access_profile("alice"))["events"][0]
+    assert len(saved["item_outcomes"]) == 25
+    assert saved["truncated"] is True
+
+
+def test_stale_profile_cannot_read_after_password_reset(identities):
+    store = oa.OperationStore()
+    old_profile = identity.get_access_profile("alice")
+    store.append({"event_id": "before-reset", "actor": oa.actor_from_trusted_username("alice"),
+                  "action": "case.save", "resource_type": "case", "result": "success"})
+    identities.reset_password("admin", "alice", "another-password-12345")
+    assert identity.get_access_profile("alice")["must_change_password"] is True
+    with pytest.raises(PermissionError):
+        store.list_events(old_profile)
