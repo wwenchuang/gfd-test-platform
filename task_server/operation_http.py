@@ -184,8 +184,6 @@ def _resource(path, method, payload, qs, status, parsed_body=None):
                         resource_id = resource_id or safe_resource_ref(nested.get("id") or nested.get("job_id") or nested.get("run_id"))
         if kind == "file" and method == "GET" and path in {"/api/file", "/api/file/history", "/api/file/version"}:
             resource_id = safe_resource_ref(qs.get("file"))
-        elif path == "/api/file" and method == "POST" and isinstance(parsed_body, dict):
-            resource_id = safe_resource_ref(parsed_body.get("file"))
         elif path == "/api/file/op" and method == "POST" and isinstance(payload, dict):
             resource_id = safe_resource_ref(payload.get("file"))
     if kind == "account" and tail:

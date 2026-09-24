@@ -211,6 +211,21 @@ def test_unvalidated_query_or_body_identifier_is_not_a_resource(operation_server
     assert marker not in json.dumps(events(store, 2))
 
 
+def test_file_save_uses_normalized_persisted_filename(operation_server, tmp_path, monkeypatch):
+    from task_server import router
+    server, store = operation_server
+    root = tmp_path / "tasks"
+    monkeypatch.setattr(router, "TASK_DIR", str(root))
+    token = auth.create_session_token()
+    assert request(server, "POST", "/api/file", token, {"module": "sample", "file": "case", "content": "a"})[0] == 200
+    assert request(server, "POST", "/api/file", token, {"module": "sample", "content": "b"})[0] == 200
+    assert (root / "sample" / "case.yaml").read_text() == "a"
+    assert (root / "sample" / "task.yaml").read_text() == "b"
+    rows = events(store, 2)
+    assert [row["resource_id"] for row in rows] == ["task.yaml", "case.yaml"]
+    assert all(row["resource_type"] == "file" for row in rows)
+
+
 def test_keepalive_eof_does_not_repeat_previous_request(operation_server, monkeypatch):
     _, store = operation_server
     class KeepAlive(app.TaskHTTPHandler):

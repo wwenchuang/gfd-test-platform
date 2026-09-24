@@ -5675,6 +5675,8 @@ def _post_file_save(handler, qs):
     except ValueError:
         handler._json({"ok": False, "error": "非法路径"}, 400)
         return
+    from task_server.operation_http import mark_resource
+    mark_resource(handler, "file", file)
     handler._json({"ok": True, **({"unchanged": True} if unchanged else {})})
 
 
