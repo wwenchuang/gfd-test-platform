@@ -104,6 +104,57 @@ def test_registry_coverage_and_prefix_action_keys():
     assert operation_http.route_key("GET", "/api/operations/abc/items") == "GET.api.operations.items"
 
 
+def test_prefix_keys_match_accepted_handler_path_variants(operation_server, monkeypatch):
+    from task_server import router
+    server, store = operation_server
+    token = auth.create_session_token()
+    monkeypatch.setattr(router, "_handle_generate_job_retry", lambda handler, unused, job_id: handler._json({"ok": True, "job_id": job_id}))
+    monkeypatch.setattr(router, "delete_generate_job", lambda job_id: {"ok": True, "job_id": job_id})
+    monkeypatch.setattr(router, "normalize_cases_payload", lambda payload: {"cases": []})
+    monkeypatch.setattr(router, "write_json_file", lambda path, payload: None)
+    monkeypatch.setattr(router, "cases_path", lambda case_id: case_id)
+    assert request(server, "POST", "/api/ui/generate-jobs/job_1/retry/", token, {})[0] == 200
+    assert request(server, "DELETE", "/api/ui/generate-jobs/job_1/extra", token)[0] == 200
+    assert request(server, "POST", "/api/cases/extra/case_1", token, {"cases": []})[0] == 200
+    keys = [row["route_key"] for row in events(store, 3)]
+    assert keys == ["POST.api.cases.target", "DELETE.api.ui.generate_jobs.target", "POST.api.ui.generate_jobs.retry"]
+    assert request(server, "POST", "/api/ui/generate-jobs/job_1/unknown", token, {})[0] == 404
+    assert events(store, 4)[0]["route_key"] == "unknown"
+
+
+def test_task_app_real_normalization_reports_canonical_changed_fields(operation_server, monkeypatch):
+    from task_server import router
+    server, store = operation_server
+    token = auth.create_session_token()
+    existing = {"package": "com.example.audit", "name": "测试应用", "enabled": True,
+                "modules": ["old"], "business_lines": [{"id": "line1", "name": "测试线", "enabled": True}]}
+    monkeypatch.setattr(router, "load_task_apps", lambda: {"apps": [existing]})
+    saved = []
+    monkeypatch.setattr(router, "save_task_apps", lambda data: saved.append(data))
+    monkeypatch.setattr(router, "task_app_feishu_delivery_status", lambda app: {})
+    status, _ = request(server, "POST", "/api/task-app", token,
+                        {"appPackage": "com.example.audit", "appName": "测试应用", "enabled": False,
+                         "modules": "new, other", "businessLines": existing["business_lines"],
+                         "feishuBot": "https://example.invalid/SECRET_WEBHOOK"})
+    assert status == 200
+    assert saved[0]["apps"][0]["modules"] == ["new", "other"]
+    row = events(store, 1)[0]
+    assert row["resource_id"] == "com.example.audit"
+    assert row["summary"]["changed_fields"] == ["enabled", "modules", "feishu_webhook"]
+    assert "SECRET_WEBHOOK" not in json.dumps(row)
+    monkeypatch.setattr(router, "load_task_apps", lambda: saved[-1])
+    monkeypatch.setattr(router, "resolve_task_app_sonic_binding", lambda app: app)
+    status, _ = request(server, "POST", "/api/task-app", token,
+                        {"app_package": "com.example.audit", "app_name": "测试应用", "enabled": False,
+                         "modules": ["new", "other"], "businessLines": existing["business_lines"],
+                         "feishuWebhook": "https://example.invalid/SECRET_WEBHOOK",
+                         "sonicProjectId": "12", "sonicSuiteName": "suite"})
+    assert status == 200
+    second = events(store, 2)[0]
+    assert second["summary"]["changed_fields"] == ["sonic_project_id", "sonic_suite_name"]
+    assert "SECRET_WEBHOOK" not in json.dumps(second)
+
+
 def test_identity_targets_are_trusted_and_distinct_from_actor(operation_server, identity_db):
     server, store = operation_server
     token = auth.create_session_token()

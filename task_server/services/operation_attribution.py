@@ -26,7 +26,7 @@ _RESULTS = frozenset({"success", "failed", "denied", "partial", "accepted", "int
 _METHODS = frozenset({"GET", "HEAD", "POST", "PUT", "DELETE", "PATCH"})
 _KINDS = frozenset({"user", "runner", "sonic", "system", "unknown", "anonymous"})
 _SAFE_FIELD = re.compile(r"^[A-Za-z0-9_.:-]{1,128}$")
-_SAFE_CHANGE_FIELD = frozenset({"name", "title", "status", "scope", "role_ids", "description", "module", "project", "environment", "version", "trigger", "schedule", "package", "display_name", "permissions"})
+_SAFE_CHANGE_FIELD = frozenset({"name", "title", "status", "scope", "role_ids", "description", "module", "project", "environment", "version", "trigger", "schedule", "package", "display_name", "permissions", "enabled", "modules", "business_lines", "sonic_project_id", "sonic_project_name", "sonic_suite_id", "sonic_suite_name", "feishu_webhook"})
 MAX_BATCH_ITEMS = 10000
 MAX_SPOOL_BYTES = 4 * 1024 * 1024
 

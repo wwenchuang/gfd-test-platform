@@ -5300,7 +5300,11 @@ def _post_task_app(handler, qs):
     response_app.update(task_app_feishu_delivery_status(response_app))
     from task_server.operation_http import mark_resource, mark_changed_fields
     mark_resource(handler, "app", app["package"])
-    mark_changed_fields(handler, (name for name in ("name", "package") if name in d))
+    previous = existing_app or {}
+    fields = ("name", "package", "enabled", "modules", "business_lines",
+              "sonic_project_id", "sonic_project_name", "sonic_suite_id", "sonic_suite_name",
+              "feishu_webhook")
+    mark_changed_fields(handler, (name for name in fields if previous.get(name) != app.get(name)))
     handler._json({"ok": True, "app": response_app})
 
 

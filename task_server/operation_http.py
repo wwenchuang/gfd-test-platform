@@ -67,11 +67,11 @@ def route_key(method, path):
     if path in tables.get(method, {}):
         return _key(method, path)
     if method == "POST" and path.startswith("/api/ui/generate-jobs/"):
-        match = re.fullmatch(r"/api/ui/generate-jobs/[^/]+/(retry|cancel)", path)
-        return _key(method, "/api/ui/generate-jobs/" + match[1]) if match else "unknown"
+        parts = [part for part in path[len("/api/ui/generate-jobs/"):].split("/") if part]
+        return _key(method, "/api/ui/generate-jobs/" + parts[1]) if len(parts) > 1 and parts[1] in {"retry", "cancel"} else "unknown"
     if method == "POST" and path.startswith("/api/runner/jobs/"):
-        match = re.fullmatch(r"/api/runner/jobs/[^/]+/(progress|report-ready|result)", path)
-        return _key(method, "/api/runner/jobs/" + match[1]) if match else "unknown"
+        parts = [part for part in path[len("/api/runner/jobs/"):].split("/") if part]
+        return _key(method, "/api/runner/jobs/" + parts[1]) if len(parts) > 1 and parts[1] in {"progress", "report-ready", "result"} else "unknown"
     families = (("GET", router._GET_PREFIX_ROUTES), ("POST", router._POST_PREFIX_ROUTES),
                 ("POST", router._POST_PREFIX_BEFORE_BODY_ROUTES), ("PUT", router._PUT_PREFIX_ROUTES),
                 ("DELETE", router._DELETE_PREFIX_ROUTES))
@@ -79,7 +79,9 @@ def route_key(method, path):
         if method == family_method:
             for prefix, fn in entries:
                 if path.startswith(prefix):
-                    if prefix in {"/api/assets/", "/api/cases/", "/api/ui/generate-jobs/"} and not re.fullmatch(re.escape(prefix) + r"[^/]+", path):
+                    if prefix in {"/api/assets/", "/api/cases/"} and not path.split("/")[-1]:
+                        return "unknown"
+                    if prefix == "/api/ui/generate-jobs/" and not any(path[len(prefix):].split("/")):
                         return "unknown"
                     return _key(method, prefix.rstrip("/") + "/target")
     for family_method, entries in (("GET", router._GET_REGEX_ROUTES),
@@ -195,7 +197,9 @@ def mark_resource(handler, resource_type, resource_id):
 
 def mark_changed_fields(handler, fields):
     """Record only server-approved field names after a successful mutation."""
-    allowed = {"name", "package", "display_name", "status", "scope", "role_ids", "permissions", "version"}
+    allowed = {"name", "package", "display_name", "status", "scope", "role_ids", "permissions", "version",
+               "enabled", "modules", "business_lines", "sonic_project_id", "sonic_project_name",
+               "sonic_suite_id", "sonic_suite_name", "feishu_webhook"}
     if hasattr(handler, "_operation_id"):
         handler._operation_changed_fields = [name for name in fields if name in allowed][:25]
 
