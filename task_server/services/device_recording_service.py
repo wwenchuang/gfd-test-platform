@@ -157,6 +157,7 @@ def create_recording_session(
     device_id: str,
     app_package: str,
     *,
+    module_name: str = "",
     store_path: Optional[str] = None,
     now: Optional[float] = None,
 ) -> Dict[str, Any]:
@@ -196,6 +197,7 @@ def create_recording_session(
             "runner_id": runner_id,
             "device_id": device_id,
             "app_package": app_package,
+            "module_name": str(module_name or "").strip(),
             "created_at": _stamp(timestamp),
             "created_ts": timestamp,
             "updated_at": _stamp(timestamp),
@@ -328,16 +330,44 @@ def get_recording_session(
         return _public(row)
 
 
-def list_recording_sessions(user: str, *, store_path: Optional[str] = None, limit: int = 30) -> list[Dict[str, Any]]:
+def list_recording_sessions(user: str, *, store_path: Optional[str] = None, limit: int = 30,
+                            offset: int = 0, summary: bool = False) -> list[Dict[str, Any]]:
     path = _path(store_path)
     with _LOCK, file_mutation_lock(path):
         data = _load(path)
+        if _pause_stale(data, time.time()):
+            write_json_file(path, data)
         rows = [
-            _public(row) for row in data["sessions"]
+            row for row in data["sessions"]
             if str(row.get("created_by") or "") == str(user or "")
         ]
         rows.sort(key=lambda row: float(row.get("updated_ts") or 0), reverse=True)
-        return rows[:max(1, min(int(limit or 30), 100))]
+        offset = max(0, int(offset))
+        rows = rows[offset:offset + max(1, min(int(limit or 30), 100))]
+        if summary:
+            return [{
+                **{key: row.get(key, "") for key in (
+                    "id", "status", "app_package", "module_name", "device_id", "created_at", "updated_at", "finished_at")},
+                "step_count": len(row.get("steps") or []),
+                "has_generated_yaml": bool((row.get("generated_result") or {}).get("yaml")),
+                "task_name": (row.get("generated_result") or {}).get("task_name", ""),
+            } for row in rows]
+        return [_public(row) for row in rows]
+
+
+def set_recording_module(session_id: str, user: str, module_name: str, *,
+                         store_path: Optional[str] = None) -> Dict[str, Any]:
+    """Persist a module already validated against the app by the API boundary."""
+    path = _path(store_path)
+    with _LOCK, file_mutation_lock(path):
+        data = _load(path)
+        row = _find(data, session_id)
+        _owner(row, user)
+        row["module_name"] = str(module_name or "").strip()
+        row["updated_ts"] = time.time()
+        row["updated_at"] = _stamp(row["updated_ts"])
+        write_json_file(path, data)
+        return _public(row)
 
 
 def delete_recording_session(

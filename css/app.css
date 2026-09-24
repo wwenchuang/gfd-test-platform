@@ -3991,21 +3991,43 @@
   @media (max-width: 720px) {
     .task-app-module-create { grid-template-columns: minmax(0, 1fr); }
   }
-  .device-recorder-page { padding: 20px; }
+  .device-recorder-page { padding: 20px; display: flex; flex-direction: column; min-height: 0; }
+  .device-recorder-page > * { flex: 0 0 auto; min-width: 0; }
+  .device-recorder-page .review-head { overflow: visible; min-width: 0; }
+  .device-recorder-page .review-head p, .device-recorder-page .generate-hint { overflow-wrap: anywhere; }
+  .device-recorder-page .review-actions > * { max-width: 100%; white-space: normal; }
   .device-recorder-grid {
     display: grid;
     grid-template-columns: minmax(280px, .75fr) minmax(420px, 1.25fr);
     gap: 16px;
   }
-  .device-recorder-page select { width: 100%; min-height: 40px; }
-  .device-recorder-history-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; }
-  .device-recorder-history-entry { display:grid; gap:8px; align-content:start; }
+  .device-recorder-page select { width: 100%; min-height: 40px; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 8px; }
+  .device-recorder-page input[type="checkbox"] { accent-color: var(--accent); }
+  .device-recorder-history-filters { display: flex; flex-wrap: wrap; gap: 12px; align-items: end; }
+  .device-recorder-history-filters label { display: grid; gap: 6px; flex: 1 1 180px; min-width: 0; }
+  .device-recorder-history-bulk { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin: 14px 0 8px; }
+  .device-recorder-history-bulk label { display: inline-flex; align-items: center; gap: 8px; }
+  .device-recorder-history-bulk input, .device-recorder-history-check input { width: 18px; height: 18px; margin: 0; flex-shrink: 0; }
+  .device-recorder-history-app { margin-top: 20px; min-width: 0; }
+  .device-recorder-history-group { margin-top: 10px; }
+  .device-recorder-history-group summary { cursor: pointer; padding: 10px 0; overflow-wrap: anywhere; }
+  .device-recorder-history-group summary span { color: var(--text2); margin-left: 10px; }
+  .device-recorder-history-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 340px), 1fr)); gap: 12px; }
+  .device-recorder-history-entry { display:grid; grid-template-columns: auto minmax(0, 1fr); gap:8px; align-content:start; align-items: start; }
+  .device-recorder-history-entry > .btn-sm { grid-column: 2; justify-self: start; }
+  .device-recorder-history-check { padding-top: 16px; }
+  .device-recorder-history-error { grid-column: 2; color: var(--danger, #f87171); overflow-wrap: anywhere; }
   .device-recorder-history-card { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 6px 10px; align-items: center; width: 100%; padding: 14px; border: 1px solid var(--border); border-radius: 12px; background: var(--panel2); color: var(--text); text-align: left; cursor: pointer; }
   .device-recorder-history-card:hover { border-color: var(--accent); transform: translateY(-1px); }
   .device-recorder-history-card strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .device-recorder-history-card small { grid-column: 1 / -1; color: var(--text2); }
+  .device-recorder-history-card small { grid-column: 1 / -1; color: var(--text2); overflow-wrap: anywhere; }
   .device-recorder-history-card em { grid-column: 1 / -1; color: var(--accent); font-size: 12px; font-style: normal; }
   .device-recorder-history-page .job-empty { display: grid; justify-items: start; gap: 8px; min-height: 120px; align-content: center; }
+  @media (max-width: 1100px) { .device-recorder-grid { grid-template-columns: minmax(0, 1fr); } }
+  @media (max-width: 600px) {
+    .device-recorder-page { padding: 10px; gap: 10px; }
+    .device-recorder-page .review-head, .device-recorder-page .review-panel { padding: 12px; }
+  }
   .device-recorder-device {
     display: flex;
     flex-direction: column;

@@ -9,7 +9,88 @@ const ROOT = path.resolve(__dirname, '..');
 
 test('task manager uses a new cache key for the server-bridged recorder script', () => {
   const html = fs.readFileSync(path.join(ROOT, 'task-manager.html'), 'utf8');
-  assert.match(html, /device-recorder\.js\?v=20260924-recorder-point-v30/);
+  assert.match(html, /device-recorder\.js\?v=20260924-recorder-history-v31/);
+});
+
+test('history groups by app and module and filter changes clear hidden selections', () => {
+  const f = fixture();
+  f.run(`deviceRecorderHistory=[
+    {id:'a',status:'finished',app_package:'com.kfb.model',module_name:'3D打印基线',step_count:3},
+    {id:'b',status:'cancelled',app_package:'com.kfb.model',step_count:1},
+    {id:'c',status:'recording',app_package:'com.tencent.mm',module_name:'微信登录',step_count:2}
+  ]; showDeviceRecordingHistory()`);
+  assert.equal(f.dom.window.document.querySelectorAll('[data-history-app-group]').length, 2);
+  assert.match(f.dom.window.document.body.textContent, /未分组/);
+  f.run("setRecorderHistoryFilter('app','com.kfb.model'); toggleRecorderHistoryAll(true)");
+  assert.deepEqual(Array.from(f.run('deviceRecorderHistorySelected')), ['a','b']);
+  f.run("setRecorderHistoryFilter('module','3D打印基线')");
+  assert.equal(f.run('deviceRecorderHistorySelected.size'), 0);
+  assert.equal(f.dom.window.document.querySelectorAll('.device-recorder-history-entry').length, 1);
+  assert.match(f.dom.window.document.body.textContent, /4 步/);
+});
+
+test('batch deletion retains failures and excludes active and hidden records', async () => {
+  const f = fixture();
+  const deleted = [];
+  const notices = [];
+  f.context.confirm = () => true;
+  f.context.showToast = (message,kind) => notices.push({message,kind});
+  f.run(`deviceRecorderHistory=[{id:'a',status:'finished',app_package:'com.kfb.model'},
+    {id:'b',status:'cancelled',app_package:'com.kfb.model'},
+    {id:'live',status:'recording',app_package:'com.kfb.model'},
+    {id:'other',status:'finished',app_package:'com.tencent.mm'}]; showDeviceRecordingHistory();
+    setRecorderHistoryFilter('app','com.kfb.model'); toggleRecorderHistoryAll(true)`);
+  f.context.apiRequest = async (url, options={}) => {
+    if (options.method === 'DELETE') {
+      const id = new URL(url, 'http://test').searchParams.get('id'); deleted.push(id);
+      if (id === 'b') throw new Error('删除失败，请重试');
+      return {ok:true};
+    }
+    return {sessions:Array.from(f.run('deviceRecorderHistory')).filter(x => x.id !== 'a')};
+  };
+  await f.run('deleteSelectedDeviceRecordings()');
+  assert.deepEqual(deleted,['a','b']);
+  assert.deepEqual(Array.from(f.run('deviceRecorderHistorySelected')),['b']);
+  assert.match(notices.at(-1).message,/已删除 1.*失败 1/);
+  assert.ok(f.dom.window.document.querySelector('[data-recording-select="live"]').disabled);
+});
+
+test('canceling bulk confirmation does not send delete requests', async () => {
+  const f = fixture(); f.context.confirm=()=>false;
+  f.run("deviceRecorderHistory=[{id:'a',status:'finished'}];showDeviceRecordingHistory();toggleRecorderHistoryAll(true)");
+  await f.run('deleteSelectedDeviceRecordings()');
+  assert.equal(f.calls.length,0);
+});
+
+test('history loads later summary pages instead of silently limiting to thirty', async () => {
+  const f = fixture(); const urls=[];
+  f.context.apiRequest = async url => {
+    urls.push(url);
+    return url.includes('offset=100') ? {sessions:[{id:'last'}],next_offset:null}
+      : {sessions:[{id:'first'}],next_offset:100};
+  };
+  await f.run('loadDeviceRecordingHistory(false)');
+  assert.equal(urls.length,2);
+  assert.deepEqual(Array.from(f.run('deviceRecorderHistory'),x=>x.id),['first','last']);
+});
+
+test('old records can persist a module and new recordings submit their selected module', async () => {
+  const f = fixture();
+  f.run("deviceRecorderSession={id:'old',status:'cancelled',app_package:'com.kfb.model',steps:[]};renderDeviceRecorder()");
+  assert.ok(f.dom.window.document.getElementById('device-recorder-group-module'));
+  f.context.apiRequest = async (url, options) => {
+    assert.equal(url, '/device-recordings/module');
+    assert.equal(JSON.parse(options.body).module_name,'3D打印基线');
+    return {session:{id:'old',status:'cancelled',app_package:'com.kfb.model',module_name:'3D打印基线',steps:[]}};
+  };
+  await f.run("updateRecorderModule('3D打印基线')");
+  assert.equal(f.run('deviceRecorderSession.module_name'),'3D打印基线');
+  assert.equal(f.dom.window.document.getElementById('device-recorder-group-module').value,'3D打印基线');
+  const fresh = fixture();
+  fresh.run('renderDeviceRecorder()');
+  fresh.dom.window.document.getElementById('device-recorder-group-module').value = '3D打印基线';
+  await fresh.run('startDeviceRecording()');
+  assert.equal(fresh.calls[0].body.module_name,'3D打印基线');
 });
 
 test('manual re-recognition reports the actual result and prevents duplicate requests', async () => {

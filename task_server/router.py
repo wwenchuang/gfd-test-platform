@@ -3954,6 +3954,10 @@ def _post_device_recordings(handler, qs):
     from task_server.services.device_recording_service import create_recording_session
     payload = handler._body()
     try:
+        app_package = payload.get("app_package") or payload.get("appPackage")
+        module_name = str(payload.get("module_name") or "").strip()
+        if module_name:
+            validate_file_app_module(app_package, module_name, load_task_apps().get("apps", []))
         runner_id = str(payload.get("runner_id") or payload.get("runnerId") or "").strip()
         device_id = str(payload.get("device_id") or payload.get("deviceId") or "").strip()
         if runner_id or device_id:
@@ -3970,7 +3974,8 @@ def _post_device_recordings(handler, qs):
             user=_authenticated_user(handler),
             runner_id=runner_id,
             device_id=device_id,
-            app_package=payload.get("app_package") or payload.get("appPackage"),
+            app_package=app_package,
+            module_name=module_name,
         )
     except (ValueError, PermissionError) as exc:
         handler._json({"ok": False, "error": str(exc)}, 400)
@@ -4041,7 +4046,10 @@ def _get_device_recordings(handler, qs):
     try:
         session_id = qs.get("id") or qs.get("session_id") or ""
         if not session_id:
-            handler._json({"ok": True, "sessions": list_recording_sessions(_authenticated_user(handler))})
+            limit = max(1, min(int(qs.get("limit") or 100), 100))
+            offset = max(0, int(qs.get("offset") or 0))
+            sessions = list_recording_sessions(_authenticated_user(handler), limit=limit, offset=offset, summary=True)
+            handler._json({"ok": True, "sessions": sessions, "next_offset": offset + limit if len(sessions) == limit else None})
             return
         session = get_recording_session(session_id)
         if session.get("created_by") != _authenticated_user(handler):
@@ -4051,6 +4059,31 @@ def _get_device_recordings(handler, qs):
         return
     except ValueError as exc:
         handler._json({"ok": False, "error": str(exc)}, 404)
+        return
+    handler._json({"ok": True, "session": session})
+
+
+@route_post("/api/device-recordings/module")
+def _post_device_recording_module(handler, qs):
+    if _require_user_auth(handler):
+        return
+    from task_server.services.device_recording_service import get_recording_session, set_recording_module
+    payload = handler._body()
+    try:
+        session_id = str(payload.get("session_id") or "")
+        user = _authenticated_user(handler)
+        session = get_recording_session(session_id)
+        if session.get("created_by") != user:
+            raise PermissionError("只有录制发起人可以操作该会话")
+        module_name = str(payload.get("module_name") or "").strip()
+        if module_name:
+            validate_file_app_module(session.get("app_package"), module_name, load_task_apps().get("apps", []))
+        session = set_recording_module(session_id, user, module_name)
+    except PermissionError as exc:
+        handler._json({"ok": False, "error": str(exc)}, 403)
+        return
+    except ValueError as exc:
+        handler._json({"ok": False, "error": str(exc)}, 400)
         return
     handler._json({"ok": True, "session": session})
 

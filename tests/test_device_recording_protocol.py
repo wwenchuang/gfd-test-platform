@@ -95,6 +95,47 @@ class DeviceRecordingProtocolTest(unittest.TestCase):
         self.assertEqual(handler.responses[0][0], 400)
         self.assertIn("未由该 Runner 在线上报", handler.responses[0][1]["error"])
 
+    def test_recording_module_is_validated_and_persisted_for_history(self):
+        apps = {"apps": [{"package": "com.tencent.mm", "enabled": True, "modules": ["微信登录"]}]}
+        with mock.patch.object(router, "load_task_apps", return_value=apps):
+            bad = Handler({"app_package": "com.tencent.mm", "module_name": "3D打印基线"})
+            router._post_device_recordings(bad, {})
+            self.assertEqual(bad.responses[0][0], 400)
+            good = Handler({"app_package": "com.tencent.mm", "module_name": "微信登录"})
+            router._post_device_recordings(good, {})
+            session = good.responses[0][1]["session"]
+            self.assertEqual(session["module_name"], "微信登录")
+            wrong_module = Handler({"session_id": session["id"], "module_name": "3D打印基线"})
+            router._post_device_recording_module(wrong_module, {})
+            self.assertEqual(wrong_module.responses[0][0], 400)
+            self.assertEqual(recording.get_recording_session(session["id"])["module_name"], "微信登录")
+            update = Handler({"session_id": session["id"], "module_name": ""})
+            router._post_device_recording_module(update, {})
+            self.assertEqual(update.responses[0][1]["session"]["module_name"], "")
+            with mock.patch.object(router, "_authenticated_user", return_value="other"):
+                denied = Handler({"session_id": session["id"], "module_name": "微信登录"})
+                router._post_device_recording_module(denied, {})
+                self.assertEqual(denied.responses[0][0], 403)
+
+    def test_history_pages_are_owner_scoped_summaries_and_details_remain_available(self):
+        for i in range(32):
+            recording.create_recording_session("admin", "", "", "com.tencent.mm", now=100+i)
+        recording.create_recording_session("other", "", "", "com.tencent.mm", now=200)
+        page = Handler()
+        router._get_device_recordings(page, {"limit": "20", "offset": "0"})
+        rows = page.responses[0][1]["sessions"]
+        self.assertEqual(len(rows), 20)
+        self.assertEqual(page.responses[0][1]["next_offset"], 20)
+        self.assertNotIn("steps", rows[0])
+        self.assertEqual(rows[0]["step_count"], 0)
+        next_page = Handler()
+        router._get_device_recordings(next_page, {"limit": "20", "offset": "20"})
+        self.assertEqual(len(next_page.responses[0][1]["sessions"]), 12)
+        self.assertIsNone(next_page.responses[0][1]["next_offset"])
+        detail = Handler()
+        router._get_device_recordings(detail, {"id": rows[0]["id"]})
+        self.assertIn("steps", detail.responses[0][1]["session"])
+
     def test_sonic_actual_phone_binds_an_unbound_session_before_actions(self):
         create = Handler({"app_package": "com.tencent.mm"})
         router._post_device_recordings(create, {})
