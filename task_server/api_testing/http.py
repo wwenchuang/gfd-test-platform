@@ -151,6 +151,8 @@ def _dispatch(handler, method, qs, path):
             raise ApiHttpError(503, "api_testing_disabled", "API testing is unavailable")
         if ticket:
             actor = _authenticate(handler, qs, segments, settings)
+        from task_server.operation_http import mark_authenticated_username
+        mark_authenticated_username(handler, actor)
         if access.get_access_profile(actor) is not None:
             handler._api_audit_context = (actor, method, path.split("?", 1)[0][:128])
         access.authorize_http(actor, method, segments)
@@ -188,9 +190,16 @@ def _dispatch(handler, method, qs, path):
         return _success(handler, result, request_id, status)
     except ApiHttpError as error:
         return _failure(handler, error, request_id)
+    except (BrokenPipeError, ConnectionResetError):
+        handler._operation_interrupted = True
+        return
     except Exception as error:
         mapped_error = _domain_error(error)
         _log_dispatch_error(error, mapped_error, request_id, method, path, actor)
+        if getattr(handler, "_operation_headers_sent", False):
+            handler._operation_interrupted = True
+            handler.close_connection = True
+            return
         return _failure(handler, mapped_error, request_id)
     finally:
         handler._api_audit_context = None
@@ -1398,6 +1407,7 @@ def _stream_events(handler, execution_id, request_id, actor, *, after=None):
             execution = _scope_execution(factory, execution_id, actor)
         except (access.AccessDeniedError, ApiHttpError):
             # Headers have already been sent: close instead of mixing JSON into SSE.
+            handler._operation_interrupted = True
             return
         if events:
             for event in events:
@@ -1443,6 +1453,7 @@ def _stream_load_events(handler, run_id, request_id, actor, *, after=None):
             access.require_permission(actor, "api.loadtest.view")
             run = _scope_load_run(factory, run_id, actor)
         except (access.AccessDeniedError, ApiHttpError):
+            handler._operation_interrupted = True
             return
         if events:
             for event in events:
@@ -1514,6 +1525,8 @@ def _failure(handler, error, request_id):
 
 
 def _send_json(handler, status, payload, request_id):
+    from task_server.operation_http import observed_json
+    observed_json(handler, payload)
     body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
     _audit_api_result(handler, status)
     handler.send_response(status)
@@ -1526,6 +1539,7 @@ def _send_json(handler, status, payload, request_id):
     try:
         handler.wfile.write(body)
     except (BrokenPipeError, ConnectionResetError):
+        handler._operation_interrupted = True
         pass
 
 

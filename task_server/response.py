@@ -4,7 +4,6 @@ import json
 import os
 import threading
 import time
-import traceback
 import urllib.parse
 from pathlib import Path
 
@@ -45,19 +44,32 @@ class ResponseMixin:
         try:
             return fn()
         except (BrokenPipeError, ConnectionResetError):
+            self._operation_interrupted = True
             return
         except BodyTooLarge as e:
+            if getattr(self, "_operation_headers_sent", False):
+                self._operation_interrupted = True
+                self.close_connection = True
+                return
             try:
                 self._json({"ok": False, "error": str(e) or "请求体过大"}, 413)
             except Exception:
                 pass
         except InvalidBodyLength as e:
+            if getattr(self, "_operation_headers_sent", False):
+                self._operation_interrupted = True
+                self.close_connection = True
+                return
             try:
                 self._json({"ok": False, "error": str(e) or "Content-Length 格式无效"}, 400)
             except Exception:
                 pass
         except Exception as e:
-            print(f"{fn.__name__} failed: {e}\n{traceback.format_exc()}", flush=True)
+            print(f"{fn.__name__} failed: {type(e).__name__}", flush=True)
+            if getattr(self, "_operation_headers_sent", False):
+                self._operation_interrupted = True
+                self.close_connection = True
+                return
             try:
                 self._json({"ok": False, "error": f"服务端异常：{e}"}, 500)
             except Exception:
@@ -91,6 +103,7 @@ class ResponseMixin:
         try:
             self.wfile.write(body)
         except (BrokenPipeError, ConnectionResetError):
+            self._operation_interrupted = True
             pass
 
     def _text(self, text, code=200):
@@ -103,6 +116,7 @@ class ResponseMixin:
         try:
             self.wfile.write(body)
         except (BrokenPipeError, ConnectionResetError):
+            self._operation_interrupted = True
             pass
 
     def _html(self, text, code=200):
@@ -116,6 +130,7 @@ class ResponseMixin:
         try:
             self.wfile.write(body)
         except (BrokenPipeError, ConnectionResetError):
+            self._operation_interrupted = True
             pass
 
     # ── 请求体读取 ────────────────────────────────────────────────

@@ -4035,6 +4035,9 @@ def _post_device_recording_bridge(handler, qs):
     except ValueError as exc:
         handler._json({"ok": False, "error": str(exc)}, 409)
         return
+    from task_server.operation_http import mark_authenticated_actor
+    mark_authenticated_actor(handler, {"kind": "sonic", "username": "sonic", "display_name": "Sonic"},
+                             initiator_username=session.get("created_by", ""), resource_id=session.get("id", ""))
     schedule_recording_recognition(session)
     handler._json({"ok": True, "session": session})
 
@@ -4125,6 +4128,14 @@ def _post_device_recording_action(handler, qs):
     except ValueError as exc:
         handler._json({"ok": False, "error": str(exc)}, 400)
         return
+    from task_server.services.device_recording_service import get_recording_session
+    from task_server.operation_http import mark_authenticated_actor
+    try:
+        session = get_recording_session(payload.get("session_id") or payload.get("sessionId") or "")
+    except (OSError, ValueError):
+        session = {}
+    mark_authenticated_actor(handler, {"kind": "sonic", "username": "sonic", "display_name": "Sonic"},
+                             initiator_username=session.get("created_by", ""), resource_id=session.get("id", ""))
     handler._json({"ok": True, "step": step})
 
 

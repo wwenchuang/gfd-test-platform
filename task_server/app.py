@@ -34,6 +34,7 @@ from .auth import (
     is_authorized_with_query, REVOKED_SESSION_TOKENS,
 )
 from .response import ResponseMixin, BodyTooLarge
+from . import operation_http
 from .storage import (
     safe_join, read_json_file, write_json_file, read_text_file,
     write_text_file, write_bytes_file, runtime_path_status,
@@ -162,24 +163,62 @@ class TaskHTTPHandler(ResponseMixin, BaseHTTPRequestHandler):
     def log_message(self, format, *args):
         pass  # 静默日志
 
+    def handle_one_request(self):
+        operation_http.start_request(self)
+        try:
+            return super().handle_one_request()
+        except (BrokenPipeError, ConnectionResetError):
+            self._operation_interrupted = True
+        finally:
+            operation_http.finish_request(self)
+
+    def parse_request(self):
+        parsed = super().parse_request()
+        if parsed:
+            operation_http.parsed_request(self)
+        return parsed
+
+    def send_response(self, code, message=None):
+        self._operation_status = code
+        return super().send_response(code, message)
+
+    def end_headers(self):
+        result = super().end_headers()
+        self._operation_headers_sent = True
+        return result
+
+    def _json(self, data, code=200):
+        operation_http.observed_json(self, data)
+        return super()._json(data, code)
+
     def do_OPTIONS(self):
         self.send_response(200)
         self._cors()
         self.end_headers()
 
     def do_HEAD(self):
+        if operation_http.handle_operations(self):
+            return
         return self._safe_call(lambda: dispatch_head(self))
 
     def do_GET(self):
+        if operation_http.handle_operations(self):
+            return
         return self._safe_call(lambda: dispatch_get(self))
 
     def do_POST(self):
+        if operation_http.handle_operations(self):
+            return
         return self._safe_write_call(lambda: dispatch_post(self))
 
     def do_PUT(self):
+        if operation_http.handle_operations(self):
+            return
         return self._safe_write_call(lambda: dispatch_put(self))
 
     def do_DELETE(self):
+        if operation_http.handle_operations(self):
+            return
         return self._safe_call(lambda: dispatch_delete(self))
 
     def _safe_write_call(self, fn):

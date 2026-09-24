@@ -55,10 +55,16 @@ def dispatch_load_agent_request(handler, method, path, query):
         if method == "POST" and segments == ("register",):
             payload = _read_json_body(handler)
             result = _register(payload)
+            from task_server.operation_http import mark_authenticated_actor
+            mark_authenticated_actor(handler, {"kind": "system", "username": "load-agent", "display_name": "Load Agent"},
+                                     resource_id=(result.get("agent") or {}).get("id", ""))
             return _success(handler, result, request_id, 201)
         secret = _agent_secret(handler)
         service = LoadAgentService(_factory())
         agent = service.authenticate(secret)
+        from task_server.operation_http import mark_authenticated_actor
+        mark_authenticated_actor(handler, {"kind": "system", "username": "load-agent", "display_name": "Load Agent"},
+                                 resource_id=getattr(agent, "id", ""))
         if method == "POST":
             payload = _read_json_body(handler)
             result = _post(service, agent, secret, segments, payload)

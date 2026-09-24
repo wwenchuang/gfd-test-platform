@@ -6,6 +6,7 @@ access; the existing route policy remains authoritative.
 """
 
 import json
+import itertools
 import os
 import re
 import sqlite3
@@ -22,6 +23,7 @@ from task_server import auth, identity
 _ACTOR = ContextVar("operation_actor", default=None)
 _REQUEST_ID = ContextVar("operation_request_id", default=None)
 _RESULTS = frozenset({"success", "failed", "denied", "partial", "accepted", "interrupted"})
+_METHODS = frozenset({"GET", "HEAD", "POST", "PUT", "DELETE", "PATCH"})
 _KINDS = frozenset({"user", "runner", "sonic", "system", "unknown", "anonymous"})
 _SAFE_FIELD = re.compile(r"^[A-Za-z0-9_.:-]{1,128}$")
 _SAFE_CHANGE_FIELD = frozenset({"name", "title", "status", "scope", "role_ids", "description", "module", "project", "environment", "version", "trigger", "schedule"})
@@ -151,6 +153,7 @@ def _sanitize(event):
         "actor": {"kind": kind, "user_id": user_id, "username": _short(actor.get("username"), 64),
                   "display_name": _short(actor.get("display_name"), 96)},
         "action": _identifier(event.get("action")),
+        "method": event.get("method") if event.get("method") in _METHODS else "",
         "resource_type": _identifier(event.get("resource_type")),
         "resource_id": _identifier(event.get("resource_id")),
         "scope_refs": safe_scope, "result": result,
@@ -189,13 +192,23 @@ class OperationStore:
                 CREATE TABLE IF NOT EXISTS events (
                     seq INTEGER PRIMARY KEY AUTOINCREMENT, event_id TEXT NOT NULL UNIQUE,
                     timestamp REAL NOT NULL, actor_kind TEXT NOT NULL, actor_id TEXT NOT NULL,
+                    initiator_id TEXT NOT NULL DEFAULT '', method TEXT NOT NULL DEFAULT '',
                     action TEXT NOT NULL, resource_type TEXT NOT NULL, resource_id TEXT NOT NULL,
                     result TEXT NOT NULL, data TEXT NOT NULL);
                 CREATE INDEX IF NOT EXISTS events_actor_seq ON events(actor_id, seq DESC);
                 CREATE INDEX IF NOT EXISTS events_action_seq ON events(action, seq DESC);
                 CREATE INDEX IF NOT EXISTS events_resource_seq ON events(resource_type, resource_id, seq DESC);
                 CREATE INDEX IF NOT EXISTS events_result_seq ON events(result, seq DESC);
+                CREATE INDEX IF NOT EXISTS events_timestamp_seq ON events(timestamp, seq DESC);
             """)
+            if "initiator_id" not in {row[1] for row in db.execute("PRAGMA table_info(events)")}:
+                db.execute("ALTER TABLE events ADD COLUMN initiator_id TEXT NOT NULL DEFAULT ''")
+                db.execute("UPDATE events SET initiator_id=COALESCE(json_extract(data, '$.initiator_user_id'),'')")
+            if "method" not in {row[1] for row in db.execute("PRAGMA table_info(events)")}:
+                db.execute("ALTER TABLE events ADD COLUMN method TEXT NOT NULL DEFAULT ''")
+                db.execute("UPDATE events SET method=COALESCE(json_extract(data, '$.method'),'')")
+            db.execute("CREATE INDEX IF NOT EXISTS events_initiator_seq ON events(initiator_id, seq DESC)")
+            db.execute("CREATE INDEX IF NOT EXISTS events_method_seq ON events(method, seq DESC)")
         self._schema_ready = True
 
     @contextmanager
@@ -211,9 +224,9 @@ class OperationStore:
         if not self._schema_ready:
             self._ensure_schema()
         with self._connect() as db:
-            cursor = db.execute("INSERT OR IGNORE INTO events(event_id,timestamp,actor_kind,actor_id,action,resource_type,resource_id,result,data) VALUES (?,?,?,?,?,?,?,?,?)",
+            cursor = db.execute("INSERT OR IGNORE INTO events(event_id,timestamp,actor_kind,actor_id,initiator_id,method,action,resource_type,resource_id,result,data) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
                 (event["event_id"], event["timestamp"], event["actor"]["kind"], event["actor"]["user_id"],
-                 event["action"], event["resource_type"], event["resource_id"], event["result"],
+                 event["initiator_user_id"], event["method"], event["action"], event["resource_type"], event["resource_id"], event["result"],
                  json.dumps(event, ensure_ascii=False, separators=(",", ":"))))
             return cursor.rowcount == 0
 
@@ -253,7 +266,7 @@ class OperationStore:
     def replay_spool(self, limit=100):
         replayed = 0
         remaining = 0
-        for path in sorted(self.spool_dir.glob("*.json"))[:max(1, min(int(limit), 1000))]:
+        for path in itertools.islice(self.spool_dir.glob("*.json"), max(1, min(int(limit), 1000))):
             try:
                 event = json.loads(path.read_text(encoding="utf-8"))
                 if path.stem != event.get("event_id"):
@@ -277,14 +290,18 @@ class OperationStore:
             raise PermissionError("profile is no longer active")
         unrestricted = bool(all_actors and live.get("is_superuser"))
         filters = filters or {}
-        predicates = [] if unrestricted else ["actor_id=?"]
-        values = [] if unrestricted else [user_id]
-        for name, column in (("actor_id", "actor_id"), ("action", "action"),
+        predicates = [] if unrestricted else ["(actor_id=? OR initiator_id=?)"]
+        values = [] if unrestricted else [user_id, user_id]
+        for name, column in (("actor_id", "actor_id"), ("method", "method"), ("action", "action"),
                              ("resource_type", "resource_type"), ("resource_id", "resource_id"), ("result", "result")):
             value = _identifier(filters.get(name))
             if value:
                 predicates.append(f"{column}=?")
                 values.append(value)
+        for name, operator in (("from_ts", ">="), ("to_ts", "<=")):
+            if filters.get(name) is not None:
+                predicates.append("timestamp" + operator + "?")
+                values.append(float(filters[name]))
         where = " WHERE " + " AND ".join(predicates) if predicates else ""
         limit = max(1, min(int(limit), 100))
         with self._connect() as db:
