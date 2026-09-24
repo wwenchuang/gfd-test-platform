@@ -685,3 +685,22 @@ test('older refresh cannot resurrect a deleted step',async()=>{
   const pending=f.run('refreshDeviceRecording()');await f.run("deleteRecorderStep('a')");
   release();await pending;assert.equal(f.run('deviceRecorderSession.steps.length'),0);
 });
+
+test('cancelling deletion keeps the step and generated YAML',async()=>{
+  const f=fixture();f.context.confirm=()=>false;
+  f.run("deviceRecorderSession={id:'s',status:'finished',steps:[{id:'a',type:'key'}]};deviceRecorderGenerated={yaml:'old'};renderDeviceRecorder()");
+  await f.run("deleteRecorderStep('a')");
+  assert.equal(f.calls.length,0);assert.equal(f.run('deviceRecorderSession.steps.length'),1);
+  assert.equal(f.run('deviceRecorderGenerated.yaml'),'old');
+});
+
+test('failed deletion keeps the step and permits retry',async()=>{
+  const f=fixture();f.context.confirm=()=>true;const notices=[];
+  f.context.showToast=(message)=>notices.push(message);
+  f.run("deviceRecorderSession={id:'s',status:'finished',steps:[{id:'a',type:'key'}]};renderDeviceRecorder()");
+  f.context.apiRequest=async()=>{throw new Error('删除失败，请稍后重试')};
+  await f.run("deleteRecorderStep('a')");
+  assert.equal(f.run('deviceRecorderSession.steps.length'),1);
+  assert.equal(f.dom.window.document.querySelector('[data-action="delete-recording-step"]').disabled,false);
+  assert.match(notices.at(-1),/删除失败/);
+});
