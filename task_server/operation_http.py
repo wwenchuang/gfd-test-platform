@@ -1,6 +1,7 @@
 """Safe HTTP operation snapshots and bearer-scoped history."""
 
 import hashlib
+import itertools
 import logging
 import math
 import re
@@ -16,7 +17,8 @@ _LOG = logging.getLogger(__name__)
 _LOCK = threading.Lock()
 _STORES = {}
 _LAST_REPLAY = {}
-_AUDIT = {"storage": "unknown", "stored": True, "last_replay": 0.0, "last_failure": 0.0, "unresolved": 0}
+_AUDIT = {"storage": "unknown", "stored": True, "last_replay": 0.0, "last_failure": 0.0,
+          "unresolved": 0, "capture_degraded": False}
 _ID = re.compile(r"^[A-Za-z0-9_.:-]{1,128}$")
 _RESOURCE_KEYS = ("id", "job_id", "run_id", "session_id", "recording_id", "version_id", "file_id", "project_id", "environment_id")
 _ALIASES = {"auth": "account", "api-testing": "api", "device-recordings": "recording", "test-reports": "report", "reports": "report", "assets": "asset", "cases": "case", "jobs": "job", "runner": "runner", "sonic": "sonic", "agent-runs": "agent_run", "file": "file", "files": "file", "modules": "module", "apps": "app", "tasks": "task", "knowledge": "knowledge", "repair-drafts": "repair_draft", "runners": "runner", "ui": "ui", "figma": "figma", "yaml": "yaml", "model-config": "model_config", "preflight": "preflight", "run-request": "job", "test-runs": "test_run"}
@@ -41,7 +43,7 @@ def _store():
 
 
 def _safe_id(value):
-    return value if isinstance(value, str) and _ID.fullmatch(value) else ""
+    return value if isinstance(value, str) and len(value) <= 128 and _ID.fullmatch(value) else ""
 
 
 def safe_resource_ref(value):
@@ -237,10 +239,14 @@ def finish_request(handler):
         body = payload.get("data") if isinstance(payload, dict) and isinstance(payload.get("data"), dict) else payload
         raw_items = body.get("results") if isinstance(body, dict) else None
         raw_errors = body.get("errors") if isinstance(body, dict) else None
+        from .services.operation_attribution import MAX_BATCH_ITEMS
+        item_total = 0
         if isinstance(raw_items, list) or isinstance(raw_errors, list):
-            entries = [(item, False) for item in (raw_items if isinstance(raw_items, list) else [])]
-            entries += [(item, True) for item in (raw_errors if isinstance(raw_errors, list) else [])]
-            for item, is_error in entries:
+            successes = raw_items if isinstance(raw_items, list) else []
+            errors = raw_errors if isinstance(raw_errors, list) else []
+            item_total = len(successes) + len(errors)
+            for item, is_error in itertools.islice(itertools.chain(((item, False) for item in successes),
+                                                                   ((item, True) for item in errors)), MAX_BATCH_ITEMS):
                 if isinstance(item, dict):
                     code = _safe_id(item.get("code") or item.get("reason_code")) or ("operation_failed" if is_error else "")
                     item_result = "failed" if is_error or item.get("ok") is False else "success"
@@ -251,19 +257,23 @@ def finish_request(handler):
                                   "result": item_result, "reason_code": code})
                 else:
                     items.append({"resource_id": "", "result": "failed", "reason_code": "invalid_item"})
-            if items and result not in {"accepted", "denied", "interrupted"}:
+            if items and item_total <= MAX_BATCH_ITEMS and result not in {"accepted", "denied", "interrupted"}:
                 successes = sum(item["result"] == "success" for item in items)
                 result = "success" if successes == len(items) else "failed" if successes == 0 else "partial"
-        event = {"request_id": handler._operation_id, "batch_id": handler._operation_id if items else "", "actor": handler._operation_actor or {"kind": "anonymous"},
+        event = {"request_id": handler._operation_id, "batch_id": handler._operation_id if item_total else "", "actor": handler._operation_actor or {"kind": "anonymous"},
                  "action": action, "method": method, "resource_type": kind, "resource_id": resource_id, "result": result,
                  "status_code": status, "duration_ms": int((time.monotonic() - handler._operation_started) * 1000),
-                 "item_outcomes": items, "items_complete": True, "truncated": len(items) > 25,
+                 "item_outcomes": items, "item_total": item_total, "items_complete": item_total <= MAX_BATCH_ITEMS,
+                 "truncated": item_total > 25,
                  "initiator_user_id": getattr(handler, "_operation_initiator", "")}
         store = _store()
         stored = store.append(event)
         now = time.monotonic()
         with _LOCK:
             _AUDIT.update(storage=stored["storage"], stored=stored["stored"])
+            if item_total > MAX_BATCH_ITEMS:
+                _AUDIT["capture_degraded"] = True
+                _AUDIT["last_failure"] = time.time()
             if not stored["stored"]:
                 _AUDIT["last_failure"] = time.time()
             replay_due = stored["storage"] == "sqlite" and now - _LAST_REPLAY.get(str(store.path), 0) >= 60

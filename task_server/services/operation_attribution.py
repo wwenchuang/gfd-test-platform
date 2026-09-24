@@ -27,12 +27,14 @@ _METHODS = frozenset({"GET", "HEAD", "POST", "PUT", "DELETE", "PATCH"})
 _KINDS = frozenset({"user", "runner", "sonic", "system", "unknown", "anonymous"})
 _SAFE_FIELD = re.compile(r"^[A-Za-z0-9_.:-]{1,128}$")
 _SAFE_CHANGE_FIELD = frozenset({"name", "title", "status", "scope", "role_ids", "description", "module", "project", "environment", "version", "trigger", "schedule"})
+MAX_BATCH_ITEMS = 10000
+MAX_SPOOL_BYTES = 4 * 1024 * 1024
 
 
 def _short(value, limit=128):
     if not isinstance(value, str):
         return ""
-    value = "".join(ch for ch in value.strip() if ch.isprintable())
+    value = "".join(ch for ch in value[:limit * 4].strip() if ch.isprintable())
     return value[:limit]
 
 
@@ -136,12 +138,15 @@ def _sanitize(event):
     detailed = event.get("item_details")
     items = detailed if isinstance(detailed, list) else event.get("item_outcomes") if isinstance(event.get("item_outcomes"), list) else []
     safe_items = []
-    for item in items:
+    for item in itertools.islice(items, MAX_BATCH_ITEMS):
         item = item if isinstance(item, dict) else {}
         safe_items.append({"resource_id": _identifier(item.get("resource_id")),
                            "result": item.get("result") if item.get("result") in _RESULTS else "failed",
                            "reason_code": _identifier(item.get("reason_code"), 64)})
-    items_complete = bool(event.get("items_complete")) if "items_complete" in event else not bool(event.get("truncated"))
+    declared_total = int(event.get("item_total") or len(items))
+    item_total = max(len(items), declared_total)
+    items_complete = (bool(event.get("items_complete")) if "items_complete" in event else not bool(event.get("truncated"))) and item_total == len(safe_items)
+    capture_status = "complete" if items_complete else "limit_exceeded" if item_total > len(safe_items) else "legacy_incomplete"
     scope = event.get("scope_refs") if isinstance(event.get("scope_refs"), dict) else {}
     safe_scope = {key: _identifier(scope.get(key)) for key in ("ui_app", "api_project", "api_environment") if _identifier(scope.get(key))}
     result = event.get("result")
@@ -162,7 +167,8 @@ def _sanitize(event):
         "timestamp": float(event.get("timestamp") or time.time()),
         "duration_ms": max(0, min(86400000, int(event.get("duration_ms") or 0))),
         "summary": safe_summary, "item_outcomes": safe_items[:25],
-        "item_details": safe_items, "item_total": len(safe_items), "items_complete": items_complete,
+        "item_details": safe_items, "item_total": item_total, "item_captured": len(safe_items),
+        "items_complete": items_complete, "capture_status": capture_status,
         "truncated": bool(event.get("truncated")) or len(items) > 25 or len(original_changed) > 25,
         "initiator_user_id": _identifier(event.get("initiator_user_id")),
         "source_job_id": _identifier(event.get("source_job_id")),
@@ -248,6 +254,8 @@ class OperationStore:
             with os.fdopen(fd, "w", encoding="utf-8") as stream:
                 json.dump(event, stream, ensure_ascii=False, separators=(",", ":"))
                 stream.flush()
+                if os.fstat(stream.fileno()).st_size > MAX_SPOOL_BYTES:
+                    raise OSError("operation spool size limit")
                 os.fsync(stream.fileno())
             try:
                 os.link(temporary, target)
@@ -276,10 +284,19 @@ class OperationStore:
     def replay_spool(self, limit=100):
         replayed = 0
         remaining = 0
+        pending = False
         degraded_marker = self.spool_dir / ".recovery-degraded"
-        for path in itertools.islice(self.spool_dir.glob("*.json"), max(1, min(int(limit), 1000))):
+        replay_limit = max(1, min(int(limit), 1000))
+        for index, path in enumerate(itertools.islice(self.spool_dir.glob("*.json"), replay_limit + 1)):
+            if index == replay_limit:
+                pending = True
+                break
             try:
-                event = json.loads(path.read_text(encoding="utf-8"))
+                with path.open("rb") as stream:
+                    raw = stream.read(MAX_SPOOL_BYTES + 1)
+                if len(raw) > MAX_SPOOL_BYTES:
+                    raise ValueError("oversized spool event")
+                event = json.loads(raw.decode("utf-8"))
                 if not isinstance(event, dict) or path.stem != event.get("event_id"):
                     raise ValueError("invalid spool event")
                 self._insert(_sanitize(event))
@@ -301,7 +318,8 @@ class OperationStore:
             except (OSError, sqlite3.Error):
                 remaining += 1
         unresolved = int(degraded_marker.exists())
-        return {"replayed": replayed, "remaining": remaining + unresolved, "quarantined": bool(unresolved)}
+        return {"replayed": replayed, "remaining": remaining + unresolved + int(pending),
+                "quarantined": bool(unresolved), "pending": pending}
 
     @staticmethod
     def _live_profile(profile):
@@ -320,6 +338,8 @@ class OperationStore:
         event.pop("item_details", None)
         event.setdefault("item_total", len(event.get("item_outcomes", [])))
         event.setdefault("items_complete", not event.get("truncated", False))
+        event.setdefault("item_captured", len(event.get("item_outcomes", [])))
+        event.setdefault("capture_status", "complete" if event["items_complete"] else "legacy_incomplete")
         return event
 
     def list_items(self, profile, event_id, *, limit=50, cursor=None, all_actors=False):
@@ -339,6 +359,7 @@ class OperationStore:
                 return {"items": [], "total": 0, "next_cursor": None, "items_complete": False}
             event = self._public_event(row[0])
             total = int(event.get("item_total", len(event.get("item_outcomes", []))))
+            captured = int(event.get("item_captured", len(event.get("item_outcomes", []))))
             complete = bool(event.get("items_complete", not event.get("truncated", False)))
             rows = db.execute("SELECT data FROM event_items WHERE event_id=? AND ordinal>=? ORDER BY ordinal LIMIT ?",
                               (event_id, offset, limit + 1)).fetchall()
@@ -346,8 +367,10 @@ class OperationStore:
             items = [json.loads(item[0]) for item in rows[:limit]]
         else:
             items = event.get("item_outcomes", [])[offset:offset + limit]
-        next_cursor = offset + len(items) if offset + len(items) < total else None
-        return {"items": items, "total": total, "next_cursor": next_cursor, "items_complete": complete}
+        next_cursor = offset + len(items) if offset + len(items) < captured else None
+        return {"items": items, "total": total, "item_captured": captured,
+                "next_cursor": next_cursor, "items_complete": complete,
+                "capture_status": event["capture_status"]}
 
     def list_events(self, profile, *, limit=50, cursor=None, filters=None, all_actors=False):
         """Own events by default; only a live superuser can request all actors."""

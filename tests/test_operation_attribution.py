@@ -230,7 +230,7 @@ def test_invalid_spool_file_cannot_starve_later_valid_file(identities, monkeypat
                           "action": "case.save", "result": "success"})
     (store.spool_dir / "valid.json").write_text(json.dumps(event))
     first = store.replay_spool(limit=1)
-    assert first["remaining"] == first["quarantined"] == 1
+    assert first["quarantined"] is True and first["pending"] is True and first["remaining"] >= 2
     original_glob = type(store.spool_dir).glob
     def bounded_glob(path, pattern):
         if pattern == "*.invalid":
@@ -269,3 +269,37 @@ def test_item_insert_failure_rolls_back_event_and_items(identities):
         assert db.execute("SELECT COUNT(*) FROM events WHERE event_id='atomic'").fetchone()[0] == 0
         db.execute("DROP TRIGGER reject_item")
     assert store.replay_spool()["replayed"] == 1
+
+
+def test_replay_reports_queued_files_until_last_page(identities, monkeypatch):
+    store = oa.OperationStore()
+    actor = oa.actor_from_trusted_username("alice")
+    original = store._insert
+    monkeypatch.setattr(store, "_insert", lambda event: (_ for _ in ()).throw(sqlite3.OperationalError("locked")))
+    for i in range(11):
+        assert store.append({"event_id": f"queued-{i}", "actor": actor, "action": "case.save", "result": "success"})["storage"] == "spool"
+    monkeypatch.setattr(store, "_insert", original)
+    first = store.replay_spool(limit=10)
+    assert first["replayed"] == 10 and first["pending"] is True and first["remaining"] >= 1
+    last = store.replay_spool(limit=10)
+    assert last["replayed"] == 1 and last["pending"] is False and last["remaining"] == 0
+
+
+def test_oversized_batch_is_explicitly_incomplete_and_spool_is_bounded(identities, monkeypatch):
+    store = oa.OperationStore()
+    actor = oa.actor_from_trusted_username("alice")
+    count = oa.MAX_BATCH_ITEMS + 1
+    items = [{"resource_id": str(i), "result": "success"} for i in range(count)]
+    original = store._insert
+    monkeypatch.setattr(store, "_insert", lambda event: (_ for _ in ()).throw(sqlite3.OperationalError("locked")))
+    assert store.append({"event_id": "oversized", "actor": actor, "action": "file.copy", "result": "success",
+                         "item_outcomes": items})["storage"] == "spool"
+    assert (store.spool_dir / "oversized.json").stat().st_size <= oa.MAX_SPOOL_BYTES
+    monkeypatch.setattr(store, "_insert", original)
+    assert store.replay_spool()["replayed"] == 1
+    profile = identity.get_access_profile("alice")
+    event = store.list_events(profile)["events"][0]
+    assert event["item_total"] == count and event["item_captured"] == oa.MAX_BATCH_ITEMS
+    assert event["items_complete"] is False and event["capture_status"] == "limit_exceeded"
+    last = store.list_items(profile, "oversized", cursor=oa.MAX_BATCH_ITEMS - 1, limit=10)
+    assert len(last["items"]) == 1 and last["next_cursor"] is None

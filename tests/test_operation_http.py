@@ -220,6 +220,23 @@ def test_large_batch_http_details_are_scoped_complete_and_distinct(operation_ser
     assert identity.get_access_profile("admin")
 
 
+def test_oversized_http_batch_exposes_capture_limit(operation_server, monkeypatch):
+    from task_server.services.operation_attribution import MAX_BATCH_ITEMS
+    server, store = operation_server
+    token = auth.create_session_token()
+    def fake_post(handler):
+        handler._body()
+        handler._json({"ok": True, "results": [{"id": str(i)} for i in range(MAX_BATCH_ITEMS + 1)]})
+    monkeypatch.setattr(app, "dispatch_post", fake_post)
+    assert request(server, "POST", "/api/files/op", token, {"op": "copy"})[0] == 200
+    event = events(store)[0]
+    assert event["item_total"] == MAX_BATCH_ITEMS + 1
+    assert event["item_captured"] == MAX_BATCH_ITEMS
+    assert event["items_complete"] is False and event["capture_status"] == "limit_exceeded"
+    status, raw = request(server, "GET", "/api/operations", token)
+    assert status == 200 and json.loads(raw)["audit"]["capture_degraded"] is True
+
+
 def test_api_testing_resource_and_action_are_specific():
     from task_server.operation_http import _resource
     assert _resource("/api/api-testing/v1/projects/p1/collections/c1/run", "POST", {}, {}, 200) == ("api_collection", "c1", "api_collection.run")
