@@ -338,7 +338,7 @@ class OperationStore:
         event.pop("item_details", None)
         event.setdefault("item_total", len(event.get("item_outcomes", [])))
         event.setdefault("items_complete", not event.get("truncated", False))
-        event.setdefault("item_captured", len(event.get("item_outcomes", [])))
+        event.setdefault("item_captured", event["item_total"] if event["items_complete"] else len(event.get("item_outcomes", [])))
         event.setdefault("capture_status", "complete" if event["items_complete"] else "legacy_incomplete")
         return event
 

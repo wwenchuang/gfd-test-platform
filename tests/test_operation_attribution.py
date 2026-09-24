@@ -259,6 +259,27 @@ def test_legacy_sqlite_summary_marks_unknown_details(identities):
     assert len(page["items"]) == 10 and page["items_complete"] is False
 
 
+def test_prior_complete_child_rows_without_captured_field_page_all_items(identities):
+    store = oa.OperationStore()
+    actor = oa.actor_from_trusted_username("alice")
+    items = [{"resource_id": str(i), "result": "success"} for i in range(80)]
+    assert store.append({"event_id": "prior-full", "actor": actor, "action": "file.copy",
+                         "result": "success", "item_outcomes": items})["stored"]
+    with sqlite3.connect(store.path) as db:
+        row = json.loads(db.execute("SELECT data FROM events WHERE event_id='prior-full'").fetchone()[0])
+        row.pop("item_captured")
+        row.pop("capture_status")
+        db.execute("UPDATE events SET data=? WHERE event_id='prior-full'", (json.dumps(row),))
+    profile = identity.get_access_profile("alice")
+    event = store.list_events(profile)["events"][0]
+    assert event["item_captured"] == 80 and event["items_complete"] is True
+    first = store.list_items(profile, "prior-full", limit=50)
+    second = store.list_items(profile, "prior-full", limit=50, cursor=first["next_cursor"])
+    assert len(first["items"]) == 50 and len(second["items"]) == 30
+    assert second["next_cursor"] is None
+    assert [item["resource_id"] for item in first["items"] + second["items"]] == [str(i) for i in range(80)]
+
+
 def test_item_insert_failure_rolls_back_event_and_items(identities):
     store = oa.OperationStore()
     with sqlite3.connect(store.path) as db:
