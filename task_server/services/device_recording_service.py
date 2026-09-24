@@ -799,28 +799,28 @@ def _control_label(value: Any) -> str:
 def _visual_image_assets(screenshot_path: str, point: Dict[str, Any]) -> list[Dict[str, str]]:
     with open(screenshot_path, "rb") as handle:
         png = handle.read()
-    assets = [{"name": os.path.basename(screenshot_path), "mime": "image/png", "base64": base64.b64encode(png).decode("ascii")}]
     try:
         from PIL import Image, ImageDraw
         image = Image.open(io.BytesIO(png)).convert("RGB")
         x, y = int(point.get("x") or 0), int(point.get("y") or 0)
-        # A low-resolution Sonic frame needs a tight crop; a full-width crop
-        # leaves unrelated bottom-navigation buttons in the model's focus.
-        side = min(600, image.width, image.height, max(180, round(image.width * 0.6)))
+        # Send only the tapped neighborhood. A wider crop or the whole screen
+        # lets vision models name a prominent adjacent navigation button.
+        side = min(image.width, image.height, max(80, round(image.width * 0.28)))
         left = max(0, min(image.width - side, x - side // 2))
         top = max(0, min(image.height - side, y - side // 2))
         crop = image.crop((left, top, left + side, top + side))
         cx, cy = x - left, y - top
         draw = ImageDraw.Draw(crop)
-        draw.ellipse((cx - 20, cy - 20, cx + 20, cy + 20), outline="#ff2929", width=6)
-        draw.line((cx - 10, cy, cx + 10, cy), fill="#ff2929", width=3)
-        draw.line((cx, cy - 10, cx, cy + 10), fill="#ff2929", width=3)
+        radius = max(5, round(side * 0.04))
+        draw.ellipse((cx - radius, cy - radius, cx + radius, cy + radius), outline="#ff2929", width=2)
+        draw.line((cx - radius // 2, cy, cx + radius // 2, cy), fill="#ff2929", width=1)
+        draw.line((cx, cy - radius // 2, cx, cy + radius // 2), fill="#ff2929", width=1)
+        crop = crop.resize((side * 4, side * 4), Image.Resampling.LANCZOS)
         output = io.BytesIO()
         crop.save(output, format="PNG")
-        assets.insert(0, {"name": "tap-target-closeup.png", "mime": "image/png", "base64": base64.b64encode(output.getvalue()).decode("ascii")})
+        return [{"name": "tap-target-closeup.png", "mime": "image/png", "base64": base64.b64encode(output.getvalue()).decode("ascii")}]
     except (ImportError, OSError, ValueError):
-        pass
-    return assets
+        return [{"name": os.path.basename(screenshot_path), "mime": "image/png", "base64": base64.b64encode(png).decode("ascii")}]
 
 
 def _screen_visually_unchanged(before_path: str, after_png: bytes) -> bool:
@@ -1050,11 +1050,11 @@ def recognize_recording_semantics(
             point = item["point"]
             image_assets = _visual_image_assets(item["screenshot_path"], point)
             image_guide = (
-                "第一张图是点击点附近的局部图，红色圆圈和十字标出实际点击点；第二张图才是整屏，仅用于确认上下文。"
-                if len(image_assets) > 1 else "这张图是整张手机截图，请严格根据点击坐标判断目标。"
+                "这张图只截取点击点附近，红色圆圈和十字标出实际点击点。仅根据红点处可见的文字或图标命名。"
+                if image_assets[0]["name"] == "tap-target-closeup.png" else "这张图是整张手机截图，请严格根据点击坐标判断目标。"
             )
             prompt = f"""你是手机操作录制的控件识别器。截图来自真实 Android 手机，操作类型是{item['type']}，点击坐标为 x={int(point.get('x') or 0)}, y={int(point.get('y') or 0)}（坐标基于整张手机截图）。
-{image_guide}必须识别点击点命中的控件，不能因为整屏里另一个图标更显眼就回答它。
+{image_guide}必须识别红点命中的控件，不能因为局部图里另一个图标更显眼就回答它。
 只识别该坐标实际命中的可见控件，用适合 Midscene aiTap/aiInput 的简短中文名称回答。不要描述整页，不要猜测不可见功能，也不要沿用之前步骤的控件名称。
 只输出包含 semantic_description（控件短名称或空字符串）与 confidence（0 到 1 数值）的 JSON。无法确认时 semantic_description 为空字符串。"""
             raw = model_call(

@@ -296,10 +296,10 @@ class DeviceRecordingServiceTest(unittest.TestCase):
 
         def model_call(prompt, **kwargs):
             self.assertIn("红色圆圈", prompt)
-            self.assertEqual(len(kwargs["image_assets"]), 2)
+            self.assertEqual(len(kwargs["image_assets"]), 1)
             closeup = Image.open(io.BytesIO(base64.b64decode(kwargs["image_assets"][0]["base64"])))
-            self.assertEqual(closeup.size, (600, 600))
-            self.assertNotEqual(closeup.getpixel((115, 518)), (255, 255, 255))
+            self.assertEqual(closeup.size, (1208, 1208))
+            self.assertNotEqual(closeup.getpixel((460, 880)), (255, 255, 255))
             return '{"semantic_description":"底部导航首页","confidence":0.9}'
 
         recognized = recording.recognize_recording_semantics(
@@ -307,7 +307,7 @@ class DeviceRecordingServiceTest(unittest.TestCase):
         )
         self.assertEqual(recognized["steps"][0]["semantic_description"], "底部导航首页")
 
-    def test_small_video_frame_sends_click_crop_before_full_screen(self):
+    def test_small_video_frame_only_sends_target_neighborhood(self):
         from PIL import Image
         image = Image.new("RGB", (358, 800), "white")
         output = io.BytesIO()
@@ -316,11 +316,11 @@ class DeviceRecordingServiceTest(unittest.TestCase):
             file.write(output.getvalue())
             file.flush()
             assets = recording._visual_image_assets(file.name, {"x": 323, "y": 764})
-        self.assertEqual(len(assets), 2)
+        self.assertEqual(len(assets), 1)
         self.assertEqual(assets[0]["name"], "tap-target-closeup.png")
         closeup = Image.open(io.BytesIO(base64.b64decode(assets[0]["base64"])))
-        self.assertLess(closeup.width, 358)
-        self.assertNotEqual(closeup.getpixel((closeup.width - 35, closeup.height - 35)), (255, 255, 255))
+        self.assertEqual(closeup.size, (400, 400))
+        self.assertNotEqual(closeup.getpixel((260, 256)), (255, 255, 255))
 
     def test_finished_recording_keeps_pending_evidence_available_during_grace_period(self):
         session = self.create(now=1000)
