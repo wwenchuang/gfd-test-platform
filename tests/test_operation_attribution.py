@@ -173,3 +173,99 @@ def test_stale_profile_cannot_read_after_password_reset(identities):
     assert identity.get_access_profile("alice")["must_change_password"] is True
     with pytest.raises(PermissionError):
         store.list_events(old_profile)
+
+
+def test_full_batch_details_survive_restart_and_scope(identities):
+    store = oa.OperationStore()
+    items = [{"resource_id": str(i), "result": "success" if i < 70 else "failed",
+              "reason_code": "bad_item" if i >= 70 else ""} for i in range(80)]
+    assert store.append({"event_id": "batch-80", "actor": oa.actor_from_trusted_username("alice"),
+                         "action": "file.move", "resource_type": "file", "result": "partial",
+                         "item_outcomes": items})["stored"]
+    reopened = oa.OperationStore(store.path)
+    event = reopened.list_events(identity.get_access_profile("alice"))["events"][0]
+    assert len(event["item_outcomes"]) == 25
+    assert event["item_total"] == 80 and event["items_complete"] is True
+    cursor = None
+    collected = []
+    while True:
+        page = reopened.list_items(identity.get_access_profile("alice"), "batch-80", limit=17, cursor=cursor)
+        collected.extend(page["items"])
+        cursor = page["next_cursor"]
+        if cursor is None:
+            break
+    assert collected == [{"resource_id": str(i), "result": "success" if i < 70 else "failed",
+                          "reason_code": "bad_item" if i >= 70 else ""} for i in range(80)]
+    assert reopened.list_items(identity.get_access_profile("bob"), "batch-80")["items"] == []
+    assert reopened.append({"event_id": "batch-80", "actor": oa.actor_from_trusted_username("alice"),
+                            "action": "file.move", "result": "partial", "item_outcomes": items})["duplicate"]
+    assert reopened.list_items(identity.get_access_profile("alice"), "batch-80")["total"] == 80
+
+
+def test_batch_spool_replay_atomic_and_legacy_incomplete(identities, monkeypatch):
+    store = oa.OperationStore()
+    actor = oa.actor_from_trusted_username("alice")
+    original = store._insert
+    monkeypatch.setattr(store, "_insert", lambda event: (_ for _ in ()).throw(sqlite3.OperationalError("locked")))
+    items = [{"resource_id": str(i), "result": "success", "error": "spool-private-secret"} for i in range(80)]
+    assert store.append({"event_id": "spool-80", "actor": actor, "action": "file.copy",
+                         "result": "success", "item_outcomes": items})["storage"] == "spool"
+    assert "spool-private-secret" not in (store.spool_dir / "spool-80.json").read_text()
+    monkeypatch.setattr(store, "_insert", original)
+    assert store.replay_spool()["replayed"] == 1
+    assert store.list_items(identity.get_access_profile("alice"), "spool-80")["total"] == 80
+    assert store.replay_spool()["replayed"] == 0
+    legacy = {"event_id": "old-batch", "actor": dict(actor), "action": "file.copy", "result": "success",
+              "item_outcomes": items[:25], "truncated": True}
+    (store.spool_dir / "old-batch.json").write_text(json.dumps(legacy))
+    assert store.replay_spool()["replayed"] == 1
+    old = store.list_events(identity.get_access_profile("alice"), filters={"action": "file.copy"})["events"][0]
+    assert old["items_complete"] is False and old["item_total"] == 25
+
+
+def test_invalid_spool_file_cannot_starve_later_valid_file(identities, monkeypatch):
+    store = oa.OperationStore()
+    (store.spool_dir / "invalid.json").write_text("{")
+    event = oa._sanitize({"event_id": "valid", "actor": oa.actor_from_trusted_username("alice"),
+                          "action": "case.save", "result": "success"})
+    (store.spool_dir / "valid.json").write_text(json.dumps(event))
+    first = store.replay_spool(limit=1)
+    assert first["remaining"] == first["quarantined"] == 1
+    original_glob = type(store.spool_dir).glob
+    def bounded_glob(path, pattern):
+        if pattern == "*.invalid":
+            raise AssertionError("replay scanned the quarantine backlog")
+        return original_glob(path, pattern)
+    monkeypatch.setattr(type(store.spool_dir), "glob", bounded_glob)
+    assert store.replay_spool(limit=1)["replayed"] == 1
+    assert oa.OperationStore(store.path).replay_spool(limit=1)["quarantined"] is True
+
+
+def test_legacy_sqlite_summary_marks_unknown_details(identities):
+    store = oa.OperationStore()
+    old = oa._sanitize({"event_id": "legacy-sqlite", "actor": oa.actor_from_trusted_username("alice"),
+                        "action": "file.copy", "result": "partial", "truncated": True,
+                        "item_outcomes": [{"resource_id": str(i), "result": "success"} for i in range(25)]})
+    old.pop("item_total")
+    old.pop("items_complete")
+    old.pop("item_details")
+    with sqlite3.connect(store.path) as db:
+        db.execute("INSERT INTO events(event_id,timestamp,actor_kind,actor_id,initiator_id,method,action,resource_type,resource_id,result,data) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                   (old["event_id"], old["timestamp"], "user", old["actor"]["user_id"], "", "POST",
+                    old["action"], "file", "", "partial", json.dumps(old)))
+    profile = identity.get_access_profile("alice")
+    assert store.list_events(profile)["events"][0]["items_complete"] is False
+    page = store.list_items(profile, "legacy-sqlite", limit=10)
+    assert len(page["items"]) == 10 and page["items_complete"] is False
+
+
+def test_item_insert_failure_rolls_back_event_and_items(identities):
+    store = oa.OperationStore()
+    with sqlite3.connect(store.path) as db:
+        db.execute("CREATE TRIGGER reject_item BEFORE INSERT ON event_items BEGIN SELECT RAISE(FAIL, 'item insert failed'); END")
+    assert store.append({"event_id": "atomic", "actor": oa.actor_from_trusted_username("alice"),
+                         "action": "file.move", "result": "success", "item_outcomes": [{"resource_id": "1", "result": "success"}]})["storage"] == "spool"
+    with sqlite3.connect(store.path) as db:
+        assert db.execute("SELECT COUNT(*) FROM events WHERE event_id='atomic'").fetchone()[0] == 0
+        db.execute("DROP TRIGGER reject_item")
+    assert store.replay_spool()["replayed"] == 1

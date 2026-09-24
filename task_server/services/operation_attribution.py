@@ -133,14 +133,15 @@ def _sanitize(event):
         value = _identifier(summary.get(key), 64)
         if value:
             safe_summary[key] = value
-    items = event.get("item_outcomes") if isinstance(event.get("item_outcomes"), list) else []
+    detailed = event.get("item_details")
+    items = detailed if isinstance(detailed, list) else event.get("item_outcomes") if isinstance(event.get("item_outcomes"), list) else []
     safe_items = []
-    for item in items[:25]:
-        if not isinstance(item, dict):
-            continue
+    for item in items:
+        item = item if isinstance(item, dict) else {}
         safe_items.append({"resource_id": _identifier(item.get("resource_id")),
                            "result": item.get("result") if item.get("result") in _RESULTS else "failed",
                            "reason_code": _identifier(item.get("reason_code"), 64)})
+    items_complete = bool(event.get("items_complete")) if "items_complete" in event else not bool(event.get("truncated"))
     scope = event.get("scope_refs") if isinstance(event.get("scope_refs"), dict) else {}
     safe_scope = {key: _identifier(scope.get(key)) for key in ("ui_app", "api_project", "api_environment") if _identifier(scope.get(key))}
     result = event.get("result")
@@ -160,7 +161,8 @@ def _sanitize(event):
         "status_code": max(0, min(599, int(event.get("status_code") or 0))),
         "timestamp": float(event.get("timestamp") or time.time()),
         "duration_ms": max(0, min(86400000, int(event.get("duration_ms") or 0))),
-        "summary": safe_summary, "item_outcomes": safe_items,
+        "summary": safe_summary, "item_outcomes": safe_items[:25],
+        "item_details": safe_items, "item_total": len(safe_items), "items_complete": items_complete,
         "truncated": bool(event.get("truncated")) or len(items) > 25 or len(original_changed) > 25,
         "initiator_user_id": _identifier(event.get("initiator_user_id")),
         "source_job_id": _identifier(event.get("source_job_id")),
@@ -200,6 +202,9 @@ class OperationStore:
                 CREATE INDEX IF NOT EXISTS events_resource_seq ON events(resource_type, resource_id, seq DESC);
                 CREATE INDEX IF NOT EXISTS events_result_seq ON events(result, seq DESC);
                 CREATE INDEX IF NOT EXISTS events_timestamp_seq ON events(timestamp, seq DESC);
+                CREATE TABLE IF NOT EXISTS event_items (
+                    event_id TEXT NOT NULL, ordinal INTEGER NOT NULL, data TEXT NOT NULL,
+                    PRIMARY KEY(event_id, ordinal), FOREIGN KEY(event_id) REFERENCES events(event_id));
             """)
             if "initiator_id" not in {row[1] for row in db.execute("PRAGMA table_info(events)")}:
                 db.execute("ALTER TABLE events ADD COLUMN initiator_id TEXT NOT NULL DEFAULT ''")
@@ -224,10 +229,15 @@ class OperationStore:
         if not self._schema_ready:
             self._ensure_schema()
         with self._connect() as db:
+            public = {key: value for key, value in event.items() if key != "item_details"}
             cursor = db.execute("INSERT OR IGNORE INTO events(event_id,timestamp,actor_kind,actor_id,initiator_id,method,action,resource_type,resource_id,result,data) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
                 (event["event_id"], event["timestamp"], event["actor"]["kind"], event["actor"]["user_id"],
                  event["initiator_user_id"], event["method"], event["action"], event["resource_type"], event["resource_id"], event["result"],
-                 json.dumps(event, ensure_ascii=False, separators=(",", ":"))))
+                 json.dumps(public, ensure_ascii=False, separators=(",", ":"))))
+            if cursor.rowcount:
+                db.executemany("INSERT INTO event_items(event_id,ordinal,data) VALUES (?,?,?)",
+                    ((event["event_id"], index, json.dumps(item, separators=(",", ":")))
+                     for index, item in enumerate(event["item_details"])))
             return cursor.rowcount == 0
 
     def _spool(self, event):
@@ -266,28 +276,83 @@ class OperationStore:
     def replay_spool(self, limit=100):
         replayed = 0
         remaining = 0
+        degraded_marker = self.spool_dir / ".recovery-degraded"
         for path in itertools.islice(self.spool_dir.glob("*.json"), max(1, min(int(limit), 1000))):
             try:
                 event = json.loads(path.read_text(encoding="utf-8"))
-                if path.stem != event.get("event_id"):
-                    continue
+                if not isinstance(event, dict) or path.stem != event.get("event_id"):
+                    raise ValueError("invalid spool event")
                 self._insert(_sanitize(event))
                 path.unlink()
                 replayed += 1
-            except (OSError, sqlite3.Error, ValueError, KeyError):
+            except (ValueError, KeyError, TypeError, UnicodeError):
+                # Preserve diagnostic evidence while removing permanently invalid input
+                # from the replay queue so later valid files can progress.
+                try:
+                    path.rename(path.with_name(path.name + "." + uuid.uuid4().hex + ".invalid"))
+                    _private_file(degraded_marker)
+                    directory_fd = os.open(self.spool_dir, os.O_RDONLY)
+                    try:
+                        os.fsync(directory_fd)
+                    finally:
+                        os.close(directory_fd)
+                except OSError:
+                    remaining += 1
+            except (OSError, sqlite3.Error):
                 remaining += 1
-        return {"replayed": replayed, "remaining": remaining}
+        unresolved = int(degraded_marker.exists())
+        return {"replayed": replayed, "remaining": remaining + unresolved, "quarantined": bool(unresolved)}
 
-    def list_events(self, profile, *, limit=50, cursor=None, filters=None, all_actors=False):
-        """Own events by default; only a live superuser can request all actors."""
+    @staticmethod
+    def _live_profile(profile):
         profile = profile or {}
         user_id = _identifier(profile.get("user_id"))
         if not user_id or profile.get("status") != "active" or profile.get("must_change_password"):
             raise PermissionError("active authenticated profile required")
-        # Recheck current identity; stale caller snapshots cannot widen access.
         live = identity.get_access_profile(profile.get("username"))
         if not live or live["user_id"] != user_id or live["status"] != "active" or live["must_change_password"]:
             raise PermissionError("profile is no longer active")
+        return live
+
+    @staticmethod
+    def _public_event(data):
+        event = json.loads(data)
+        event.pop("item_details", None)
+        event.setdefault("item_total", len(event.get("item_outcomes", [])))
+        event.setdefault("items_complete", not event.get("truncated", False))
+        return event
+
+    def list_items(self, profile, event_id, *, limit=50, cursor=None, all_actors=False):
+        """Return ordered sanitized details under the same live scope as history."""
+        event_id = _identifier(event_id)
+        if not event_id:
+            return {"items": [], "total": 0, "next_cursor": None, "items_complete": False}
+        live = self._live_profile(profile)
+        unrestricted = bool(all_actors and live.get("is_superuser"))
+        predicate = "" if unrestricted else " AND (actor_id=? OR initiator_id=?)"
+        values = [event_id] if unrestricted else [event_id, live["user_id"], live["user_id"]]
+        limit = max(1, min(int(limit), 100))
+        offset = max(0, int(cursor or 0))
+        with self._connect() as db:
+            row = db.execute("SELECT data FROM events WHERE event_id=?" + predicate, values).fetchone()
+            if not row:
+                return {"items": [], "total": 0, "next_cursor": None, "items_complete": False}
+            event = self._public_event(row[0])
+            total = int(event.get("item_total", len(event.get("item_outcomes", []))))
+            complete = bool(event.get("items_complete", not event.get("truncated", False)))
+            rows = db.execute("SELECT data FROM event_items WHERE event_id=? AND ordinal>=? ORDER BY ordinal LIMIT ?",
+                              (event_id, offset, limit + 1)).fetchall()
+        if rows:
+            items = [json.loads(item[0]) for item in rows[:limit]]
+        else:
+            items = event.get("item_outcomes", [])[offset:offset + limit]
+        next_cursor = offset + len(items) if offset + len(items) < total else None
+        return {"items": items, "total": total, "next_cursor": next_cursor, "items_complete": complete}
+
+    def list_events(self, profile, *, limit=50, cursor=None, filters=None, all_actors=False):
+        """Own events by default; only a live superuser can request all actors."""
+        live = self._live_profile(profile)
+        user_id = live["user_id"]
         unrestricted = bool(all_actors and live.get("is_superuser"))
         filters = filters or {}
         predicates = [] if unrestricted else ["(actor_id=? OR initiator_id=?)"]
@@ -312,5 +377,5 @@ class OperationStore:
             rows = db.execute("SELECT seq,data FROM events" + page_where + " ORDER BY seq DESC LIMIT ?", page_values + [limit + 1]).fetchall()
         more = len(rows) > limit
         rows = rows[:limit]
-        return {"events": [json.loads(row[1]) for row in rows], "total": total,
+        return {"events": [self._public_event(row[1]) for row in rows], "total": total,
                 "next_cursor": rows[-1][0] if more else None}

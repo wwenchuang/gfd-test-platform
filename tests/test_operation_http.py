@@ -187,6 +187,39 @@ def test_real_batch_shape_keeps_successes_and_errors_separate(operation_server, 
     assert "private" not in json.dumps(row)
 
 
+def test_large_batch_http_details_are_scoped_complete_and_distinct(operation_server, identity_db, monkeypatch):
+    from task_server import identity
+    server, store = operation_server
+    create_member(identity_db[1], "bob")
+    activate(identity_db[1], "bob")
+    admin_token = auth.create_session_token()
+    bob_token = auth.create_session_token("bob")
+    secret = "ultra-secret-batch-error"
+    def fake_post(handler):
+        handler._body()
+        handler._json({"ok": False, "results": [{"module": "module-a" if i % 2 else "module-b", "file": "same.yaml"} for i in range(70)],
+                       "errors": [{"module": "module-a", "file": f"bad-{i}.yaml", "error": secret} for i in range(10)]}, 207)
+    monkeypatch.setattr(app, "dispatch_post", fake_post)
+    assert request(server, "POST", "/api/files/op", admin_token, {"op": "move"})[0] == 207
+    row = events(store)[0]
+    assert row["result"] == "partial"
+    assert len(row["item_outcomes"]) == 25
+    assert row["item_total"] == 80 and row["items_complete"] is True
+    assert row["batch_id"] == row["request_id"]
+    status, raw = request(server, "GET", f"/api/operations/{row['event_id']}/items?limit=31", admin_token)
+    assert status == 200
+    first = json.loads(raw)
+    assert first["total"] == 80 and len(first["items"]) == 31
+    second = json.loads(request(server, "GET", f"/api/operations/{row['event_id']}/items?limit=31&cursor={first['next_cursor']}", admin_token)[1])
+    third = json.loads(request(server, "GET", f"/api/operations/{row['event_id']}/items?limit=31&cursor={second['next_cursor']}", admin_token)[1])
+    items = first["items"] + second["items"] + third["items"]
+    assert len(items) == 80 and [x["result"] for x in items] == ["success"] * 70 + ["failed"] * 10
+    assert items[0]["resource_id"] != items[1]["resource_id"]
+    assert json.loads(request(server, "GET", f"/api/operations/{row['event_id']}/items", bob_token)[1])["items"] == []
+    assert secret not in json.dumps(items) + json.dumps(row)
+    assert identity.get_access_profile("admin")
+
+
 def test_api_testing_resource_and_action_are_specific():
     from task_server.operation_http import _resource
     assert _resource("/api/api-testing/v1/projects/p1/collections/c1/run", "POST", {}, {}, 200) == ("api_collection", "c1", "api_collection.run")

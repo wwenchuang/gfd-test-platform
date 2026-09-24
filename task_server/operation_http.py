@@ -16,7 +16,7 @@ _LOG = logging.getLogger(__name__)
 _LOCK = threading.Lock()
 _STORES = {}
 _LAST_REPLAY = {}
-_AUDIT = {"storage": "unknown", "stored": True, "last_replay": 0.0, "last_failure": 0.0}
+_AUDIT = {"storage": "unknown", "stored": True, "last_replay": 0.0, "last_failure": 0.0, "unresolved": 0}
 _ID = re.compile(r"^[A-Za-z0-9_.:-]{1,128}$")
 _RESOURCE_KEYS = ("id", "job_id", "run_id", "session_id", "recording_id", "version_id", "file_id", "project_id", "environment_id")
 _ALIASES = {"auth": "account", "api-testing": "api", "device-recordings": "recording", "test-reports": "report", "reports": "report", "assets": "asset", "cases": "case", "jobs": "job", "runner": "runner", "sonic": "sonic", "agent-runs": "agent_run", "file": "file", "files": "file", "modules": "module", "apps": "app", "tasks": "task", "knowledge": "knowledge", "repair-drafts": "repair_draft", "runners": "runner", "ui": "ui", "figma": "figma", "yaml": "yaml", "model-config": "model_config", "preflight": "preflight", "run-request": "job", "test-runs": "test_run"}
@@ -61,7 +61,7 @@ def _actor_for_request(handler):
     if not machine_only and not machine_read:
         bearer = {"Authorization": handler.headers.get("Authorization", "")}
         human = resolve_request_actor(bearer)
-        if human["kind"] == "user" or path.startswith("/api/auth/") or path == "/api/operations":
+        if human["kind"] == "user" or path.startswith("/api/auth/") or path == "/api/operations" or path.startswith("/api/operations/"):
             return human
     return resolve_request_actor(handler.headers)
 
@@ -240,18 +240,24 @@ def finish_request(handler):
         if isinstance(raw_items, list) or isinstance(raw_errors, list):
             entries = [(item, False) for item in (raw_items if isinstance(raw_items, list) else [])]
             entries += [(item, True) for item in (raw_errors if isinstance(raw_errors, list) else [])]
-            for item, is_error in entries[:26]:
+            for item, is_error in entries:
                 if isinstance(item, dict):
                     code = _safe_id(item.get("code") or item.get("reason_code")) or ("operation_failed" if is_error else "")
                     item_result = "failed" if is_error or item.get("ok") is False else "success"
-                    items.append({"resource_id": next((safe_resource_ref(item.get(key)) for key in (*_RESOURCE_KEYS, "file", "targetFile") if safe_resource_ref(item.get(key))), ""),
+                    module = item.get("module")
+                    filename = item.get("file") or item.get("targetFile")
+                    file_ref = safe_resource_ref(module + "/" + filename) if isinstance(module, str) and isinstance(filename, str) and module and filename else safe_resource_ref(filename)
+                    items.append({"resource_id": next((safe_resource_ref(item.get(key)) for key in _RESOURCE_KEYS if safe_resource_ref(item.get(key))), "") or file_ref,
                                   "result": item_result, "reason_code": code})
-            if result == "success" and any(item["result"] == "failed" for item in items):
-                result = "partial"
-        event = {"request_id": handler._operation_id, "actor": handler._operation_actor or {"kind": "anonymous"},
+                else:
+                    items.append({"resource_id": "", "result": "failed", "reason_code": "invalid_item"})
+            if items and result not in {"accepted", "denied", "interrupted"}:
+                successes = sum(item["result"] == "success" for item in items)
+                result = "success" if successes == len(items) else "failed" if successes == 0 else "partial"
+        event = {"request_id": handler._operation_id, "batch_id": handler._operation_id if items else "", "actor": handler._operation_actor or {"kind": "anonymous"},
                  "action": action, "method": method, "resource_type": kind, "resource_id": resource_id, "result": result,
                  "status_code": status, "duration_ms": int((time.monotonic() - handler._operation_started) * 1000),
-                 "item_outcomes": items, "truncated": len(entries) > 25 if isinstance(raw_items, list) or isinstance(raw_errors, list) else False,
+                 "item_outcomes": items, "items_complete": True, "truncated": len(items) > 25,
                  "initiator_user_id": getattr(handler, "_operation_initiator", "")}
         store = _store()
         stored = store.append(event)
@@ -269,7 +275,11 @@ def finish_request(handler):
         elif stored["storage"] == "spool":
             _LOG.warning("operation audit spooled request_id=%s", handler._operation_id)
         if replay_due:
-            store.replay_spool(limit=10)
+            recovery = store.replay_spool(limit=10)
+            with _LOCK:
+                _AUDIT["unresolved"] = recovery["remaining"]
+                if recovery["remaining"]:
+                    _AUDIT["last_failure"] = time.time()
     except Exception:
         _LOG.exception("operation audit finalization failed")
         with _LOCK:
@@ -282,7 +292,8 @@ def finish_request(handler):
 def handle_operations(handler):
     from . import identity
     path = urllib.parse.urlsplit(handler.path).path
-    if path != "/api/operations":
+    detail = re.fullmatch(r"/api/operations/([A-Za-z0-9_.:-]{1,128})/items", path)
+    if path != "/api/operations" and not detail:
         return False
     if handler.command != "GET":
         handler._json({"ok": False, "code": "method_not_allowed"}, 405)
@@ -314,7 +325,12 @@ def handle_operations(handler):
                 filters[key] = stamp
         if filters.get("from_ts", 0) > filters.get("to_ts", float("inf")):
             raise ValueError
-        page = _store().list_events(profile, limit=limit, cursor=cursor, filters=filters, all_actors=all_actors)
+        if detail:
+            if cursor is not None and cursor < 1:
+                raise ValueError
+            page = _store().list_items(profile, detail.group(1), limit=limit, cursor=cursor, all_actors=all_actors)
+        else:
+            page = _store().list_events(profile, limit=limit, cursor=cursor, filters=filters, all_actors=all_actors)
     except (ValueError, TypeError):
         handler._json({"ok": False, "code": "invalid_filter"}, 400)
         return True
