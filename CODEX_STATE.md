@@ -1,11 +1,13 @@
 # CODEX_STATE.md
 
-## 2026-09-24 录制 YAML 条件等待（本地通过，待 Chrome 真机回放）
+## 2026-09-24 录制 YAML 条件等待（已部署，Runner 环境阻断回放）
 
 - 录制生成器原先只输出 `launch` 和连续 `aiTap`，页面切换时没有条件等待。现在在每个有控件名称的点击前，输出 Midscene YAML 官方 `aiWaitFor` 与 12 秒 `timeout`，等待目标入口可见后才点击；不为每步增加固定 `sleep`。录制动作、坐标证据和人工检查点本身不改。
 - Chrome 旧录制 `967f4899534d4946886fdff451089555` 已结束并保存为测试资产 `3D打印基线/录制回放验证_20260924_2.yaml`。原录制从手机已在“我的”页开始，旧 YAML 从 `launch` 直接点击“打印记录”，缺少从首页进入“我的”的前置动作；仅加入等待不能补齐该导航，真机回放前需补齐/重新录制完整路径。
 - PHM110 手机 `ecbfd645` 的占用来自本任务遗留的 Chrome Sonic 远控标签；关闭后 Sonic 设备中心显示“空闲中”。测试脚本的静态校验与保存不等于 Runner 回放通过。
 - 本地录制 YAML 10 项、录制协议合计 14 项、后端静态 63 项、前端静态 84 项、主链 Python 编译及 `git diff --check` 通过。待发布后 Chrome 录制完整路径，并验证 Runner 真机执行与目标页；测试资产验收后清理。
+- `0854eb0` 已经通过 Chrome 堡垒机部署，线上 `/api/health` 返回相同 revision。Chrome/PHM110 `ecbfd645` 新录制已实际走通“我的 → 打印记录 → 返回按钮 → 首页”，四次点击的手机目标页分别核对；结束后生成的 `3D打印基线/录制智能等待验证_20260924.yaml` 包含四段 `aiWaitFor` + `timeout: 12000`，静态校验通过并保存。
+- 该用例在 PHM110（平台显示 OPPO Reno9）创建单条调试任务 `job_1790217112343_00001`，2026-09-24 10:32:25 失败；详情日志明确为 `Cannot find module './db.json'`，require stack 指向 Windows `C:\Users\gfd\AppData\Roaming\npm\node_modules\@midscene\cli\node_modules\mime-db\index.js`。Midscene CLI 尚未加载 YAML 动作，因此不能宣称智能等待实机回放通过。需先在 Windows 主机修复该 npm 安装并重跑上述测试资产；测试资产暂留作复验，成功后清理。
 
 ## 2026-09-24 Chrome 录制桥接恢复状态与真机复核（部署待验收）
 
