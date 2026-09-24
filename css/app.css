@@ -6682,3 +6682,7 @@
 .agent-phone-card:has(input:disabled) { opacity: .68; cursor: not-allowed; }
 .agent-field .agent-phone-card, .agent-field .agent-device-auto { width: 100%; font-family: var(--sans); line-height: 1.5; }
 .agent-phone-copy { flex: 1; }
+
+.device-recorder-step-heading { display:flex; flex-wrap:wrap; align-items:center; gap:8px; }
+.device-recorder-step-heading em { margin-left:auto; }
+.device-recorder-step-heading button { flex:0 0 auto; }

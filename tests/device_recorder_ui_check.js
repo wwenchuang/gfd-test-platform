@@ -413,8 +413,8 @@ test('timeline exposes unobtrusive edit and delete controls', () => {
   f.run("deviceRecorderSession = {id:'session-1',status:'finished',runner_id:'win-runner-01',device_id:'ecbfd645',app_package:'com.tencent.mm',steps:[{id:'s1',sequence:1,type:'key',key:'BACK',semantic_description:'返回上一页'}]}; renderDeviceRecorder()");
   const details = f.dom.window.document.querySelector('.device-recorder-step-tools');
   assert.ok(details);
-  assert.match(details.textContent, /编辑或删除/);
-  assert.ok(details.querySelector('[data-action="delete-recording-step"]'));
+  assert.match(details.textContent, /编辑/);
+  assert.ok(f.dom.window.document.querySelector('.device-recorder-step-heading [data-action="delete-recording-step"]'));
 });
 
 test('binds Sonic only after the Runner has cached a real pre-action frame', async () => {
@@ -648,4 +648,40 @@ test('an old generated YAML cannot bypass unconfirmed target checks when saving'
   assert.match(f.dom.window.document.querySelector('.device-recorder-timeline').textContent, /点击.*首页/s);
   f.run("selectRecorderStep('__auto_launch__');renderDeviceRecorder(true)");
   assert.ok(f.dom.window.document.querySelector('[data-recorder-auto-launch]'));
+});
+
+test('delete is visible above screenshot and keeps adjacent step and cleared YAML', async () => {
+  const f=fixture(); f.context.confirm=()=>true;
+  f.run("deviceRecorderSession={id:'s',status:'finished',app_package:'com.kfb.model',steps:[{id:'a',sequence:1,type:'tap',screenshot_path:'a.png'},{id:'b',sequence:2,type:'key',key:'BACK'}]};deviceRecorderSelectedStepId='a';deviceRecorderGenerated={yaml:'old'};renderDeviceRecorder()");
+  const button=f.dom.window.document.querySelector('[data-action="delete-recording-step"]');
+  assert.equal(button.closest('details'),null);
+  assert.ok(button.compareDocumentPosition(f.dom.window.document.querySelector('.device-recorder-evidence')) & 4);
+  let release; let requests=0;
+  f.context.apiRequest=async()=>{requests++;await new Promise(resolve=>release=resolve);return {session:{id:'s',status:'finished',app_package:'com.kfb.model',steps:[{id:'b',sequence:1,type:'key',key:'BACK'}]}};};
+  const first=f.run("deleteRecorderStep('a')");
+  await f.run("deleteRecorderStep('a')"); assert.equal(requests,1);
+  release();await first;
+  assert.equal(f.run('deviceRecorderSelectedStepId'),'b');
+  assert.equal(f.run('deviceRecorderGenerated'),null);
+  assert.equal(f.dom.window.document.querySelectorAll('.device-recorder-track button').length,2);
+});
+
+test('late step deletion cannot replace a newly opened recording', async()=>{
+  const f=fixture();f.context.confirm=()=>true;
+  f.run("deviceRecorderSession={id:'old',status:'finished',steps:[{id:'a',type:'key'}]};renderDeviceRecorder()");
+  let release;f.context.apiRequest=async()=>{await new Promise(resolve=>release=resolve);return{session:{id:'old',status:'finished',steps:[]}}};
+  const pending=f.run("deleteRecorderStep('a')");
+  f.run("deviceRecorderSession={id:'new',status:'finished',steps:[]}");
+  release();await pending;assert.equal(f.run('deviceRecorderSession.id'),'new');
+});
+
+test('older refresh cannot resurrect a deleted step',async()=>{
+  const f=fixture();f.context.confirm=()=>true;
+  f.run("deviceRecorderSession={id:'s',status:'finished',steps:[{id:'a',type:'key'}]};renderDeviceRecorder()");
+  let release;f.context.apiRequest=async(url)=>{
+    if(url.includes('/step/delete'))return{session:{id:'s',status:'finished',steps:[]}};
+    await new Promise(resolve=>release=resolve);return{session:{id:'s',status:'finished',steps:[{id:'a',type:'key'}]}};
+  };
+  const pending=f.run('refreshDeviceRecording()');await f.run("deleteRecorderStep('a')");
+  release();await pending;assert.equal(f.run('deviceRecorderSession.steps.length'),0);
 });

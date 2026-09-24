@@ -1,5 +1,7 @@
 let deviceRecorderSession = null;
 let deviceRecorderStarting = false;
+const deviceRecorderStepDeletions = new Set();
+let deviceRecorderStepRevision = 0;
 let deviceRecorderWindow = null;
 let deviceRecorderPollTimer = null;
 let deviceRecorderPollInFlight = false;
@@ -349,17 +351,18 @@ function recorderTimelineItem(step, displaySequence = step.sequence) {
     : step.semantic_source === 'ai_visual' ? `视觉识别 ${Math.round((step.semantic_confidence || 0) * 100)}%`
     : step.semantic_source === 'ui_xml' ? '旧 UI 结构结果，需重新识别'
     : step.semantic_description ? '已人工确认' : step.evidence_status || '';
-  return `<article class="${recorderStepNeedsMeaning(step) ? 'needs-confirmation' : ''}"><span>${displaySequence}</span><div><strong>${escapeHtml(actionName)}</strong>${editor}${evidencePreview}<details class="device-recorder-step-tools"><summary>手动标记、编辑或删除</summary><div><input id="recorder-edit-${escapeHtml(step.id)}" maxlength="200" value="${escapeHtml(recorderStepDescription(step))}" placeholder="输入正确控件名称，如：左上角返回"><button class="btn-sm" onclick="editRecorderStep('${escapeHtml(step.id)}')">保存人工标记</button><button class="btn-sm danger" data-action="delete-recording-step" onclick="deleteRecorderStep('${escapeHtml(step.id)}')">删除</button></div></details></div><em>${escapeHtml(evidence)}</em></article>`;
+  return `<article class="${recorderStepNeedsMeaning(step) ? 'needs-confirmation' : ''}"><span>${displaySequence}</span><div><header class="device-recorder-step-heading"><strong>${escapeHtml(actionName)}</strong><em>${escapeHtml(evidence)}</em><button class="btn-sm danger" data-action="delete-recording-step" ${deviceRecorderStepDeletions.has(`${deviceRecorderSession?.id}:${step.id}`) ? 'disabled' : ''} onclick="deleteRecorderStep('${escapeHtml(step.id)}')">删除此步骤</button></header>${editor}${evidencePreview}<details class="device-recorder-step-tools"><summary>手动标记、编辑</summary><div><input id="recorder-edit-${escapeHtml(step.id)}" maxlength="200" value="${escapeHtml(recorderStepDescription(step))}" placeholder="输入正确控件名称，如：左上角返回"><button class="btn-sm" onclick="editRecorderStep('${escapeHtml(step.id)}')">保存人工标记</button></div></details></div></article>`;
 }
 
 async function retryRecorderRecognition(stepId) {
   if (!deviceRecorderSession?.id || deviceRecorderRecognitionRequests.has(stepId)) return;
   const sessionId = deviceRecorderSession.id;
+  const stepRevision = deviceRecorderStepRevision;
   deviceRecorderRecognitionRequests.add(stepId);
   showToast('正在根据红点和点击前截图重新识别，请稍候', 'info');
   try {
     const data = await apiRequest('/device-recordings/recognize', {method:'POST', body:JSON.stringify({session_id:sessionId, step_id:stepId, force:true})});
-    if (deviceRecorderSession?.id !== sessionId) return;
+    if (deviceRecorderSession?.id !== sessionId || stepRevision !== deviceRecorderStepRevision) return;
     deviceRecorderSession = data.session; deviceRecorderGenerated = null; renderDeviceRecorder();
     const step = (data.session?.steps || []).find(item => item.id === stepId);
     const label = step?.semantic_description;
@@ -751,13 +754,14 @@ async function refreshDeviceRecording() {
   if (!deviceRecorderSession?.id || deviceRecorderPollInFlight) return;
   if (!document.querySelector('.device-recorder-page')) { clearInterval(deviceRecorderPollTimer); return; }
   const sessionId = deviceRecorderSession.id;
+  const stepRevision = deviceRecorderStepRevision;
   deviceRecorderPollInFlight = true;
   try {
     const previousDisplay = recorderDisplaySnapshot(deviceRecorderSession);
     const data = deviceRecorderSession.status === 'recording'
       ? await apiRequest('/device-recordings/heartbeat', {method: 'POST', timeoutMs:8000, body: JSON.stringify({session_id: deviceRecorderSession.id})})
       : await apiRequest(`/device-recordings?id=${encodeURIComponent(deviceRecorderSession.id)}`, {timeoutMs:8000});
-    if (deviceRecorderSession?.id !== sessionId) return;
+    if (deviceRecorderSession?.id !== sessionId || stepRevision !== deviceRecorderStepRevision) return;
     deviceRecorderSession = data.session;
     if (deviceRecorderSession.status !== 'recording' && !recorderEvidencePending(deviceRecorderSession) && !recorderRecognitionPending(deviceRecorderSession)) {
       clearInterval(deviceRecorderPollTimer);
@@ -829,9 +833,10 @@ async function maybeRecognizeDeviceRecording() {
   if (deviceRecorderRecognitionInFlight || !deviceRecorderSession?.id || !recorderRecognitionPending(deviceRecorderSession)) return;
   deviceRecorderRecognitionInFlight = true;
   const sessionId = deviceRecorderSession.id;
+  const stepRevision = deviceRecorderStepRevision;
   try {
     const data = await apiRequest('/device-recordings/recognize', {method: 'POST', body: JSON.stringify({session_id: deviceRecorderSession.id})});
-    if (deviceRecorderSession?.id !== sessionId) return;
+    if (deviceRecorderSession?.id !== sessionId || stepRevision !== deviceRecorderStepRevision) return;
     deviceRecorderSession = data.session;
     if (deviceRecorderView === 'record' && document.getElementById('device-recorder-devices')) renderDeviceRecorder(true);
   } catch (error) {
@@ -943,16 +948,34 @@ async function editRecorderStep(stepId) {
 }
 
 async function deleteRecorderStep(stepId) {
-  if (!confirm('确认删除这条录制操作？')) return;
+  const sessionId = deviceRecorderSession?.id;
+  const key = `${sessionId}:${stepId}`;
+  const steps = deviceRecorderSession?.steps || [];
+  const index = steps.findIndex(step => step.id === stepId);
+  if (!sessionId || index < 0 || deviceRecorderStepDeletions.has(key)) return;
+  if (!confirm('确认删除这条录制步骤？只移除录制记录，不会操作手机；已生成的 YAML 需要重新生成。')) return;
+  deviceRecorderStepDeletions.add(key);
+  deviceRecorderStepRevision++;
+  renderDeviceRecorder(true);
   try {
     const data = await apiRequest('/device-recordings/step/delete', {method: 'POST', body: JSON.stringify({
-      session_id: deviceRecorderSession.id, step_id: stepId,
+      session_id: sessionId, step_id: stepId,
     })});
+    if (deviceRecorderSession?.id !== sessionId) return;
     deviceRecorderSession = data.session;
     deviceRecorderGenerated = null;
-    renderDeviceRecorder();
-    showToast('操作记录已删除', 'success');
-  } catch (error) { showToast(error.message || '删除操作失败', 'error'); }
+    if (deviceRecorderSelectedStepId === stepId) {
+      deviceRecorderSelectedStepId = data.session.steps[index]?.id || data.session.steps[index - 1]?.id || '';
+    }
+    renderDeviceRecorder(true);
+    showToast('步骤已删除，请重新生成 YAML', 'success');
+  } catch (error) {
+    if (deviceRecorderSession?.id === sessionId) showToast(error.message || '删除步骤失败，请重试', 'error');
+  } finally {
+    deviceRecorderStepDeletions.delete(key);
+    deviceRecorderStepRevision++;
+    if (deviceRecorderSession?.id === sessionId && deviceRecorderView === 'record') renderDeviceRecorder(true);
+  }
 }
 
 async function generateDeviceRecordingYaml() {
