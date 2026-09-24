@@ -9,7 +9,7 @@ const ROOT = path.resolve(__dirname, '..');
 
 test('task manager uses a new cache key for the server-bridged recorder script', () => {
   const html = fs.readFileSync(path.join(ROOT, 'task-manager.html'), 'utf8');
-  assert.match(html, /device-recorder\.js\?v=20260924-recorder-history-v31/);
+  assert.match(html, /device-recorder\.js\?v=20260924-recorder-live-v32/);
 });
 
 test('history groups by app and module and filter changes clear hidden selections', () => {
@@ -456,4 +456,67 @@ test('resends the recording session when a freshly loaded Sonic page announces i
   assert.equal(messages[0].message.type, 'MIDSCENE_RECORDING_START');
   assert.equal(messages[0].message.sessionId, 'session-1');
   assert.equal(messages[0].origin, 'http://sonic.example');
+});
+
+test('live phone refresh changes availability without replacing form or evidence DOM', async () => {
+  const f=fixture(); Object.defineProperty(f.dom.window.document,'hidden',{value:false,configurable:true});
+  f.run('renderDeviceRecorder()');
+  const app=f.dom.window.document.getElementById('device-recorder-app');app.value='com.tencent.mm';
+  const timeline=f.dom.window.document.querySelector('.device-recorder-timeline');
+  let devices=[{device_id:'ecbfd645',model:'PHM110',runner_online:true,status:'online',usage_status:'busy',usage_label:'wangwc 占用中'}];
+  f.context.apiRequest=async()=>({devices});
+  await f.run('refreshRecorderDevices()');
+  assert.equal(f.dom.window.document.getElementById('device-recorder-app'),app);
+  assert.equal(app.value,'com.tencent.mm');
+  assert.equal(f.dom.window.document.querySelector('.device-recorder-timeline'),timeline);
+  assert.match(f.dom.window.document.getElementById('device-recorder-devices').textContent,/wangwc 占用中/);
+  assert.equal(f.dom.window.document.querySelector('[data-action="start-recording"]').disabled,true);
+  devices=[{device_id:'ecbfd645',model:'PHM110',runner_online:true,status:'online',usage_status:'idle'}];
+  await f.run('refreshRecorderDevices()');
+  assert.equal(f.dom.window.document.querySelector('[data-action="start-recording"]').disabled,false);
+  devices=[]; await f.run('refreshRecorderDevices()');
+  assert.match(f.dom.window.document.getElementById('device-recorder-devices').textContent,/PHM110.*离线/s);
+});
+
+test('refresh failure marks cached devices stale and recovery restores availability', async () => {
+  const f=fixture();Object.defineProperty(f.dom.window.document,'hidden',{value:false,configurable:true});f.run('renderDeviceRecorder()');
+  f.context.apiRequest=async()=>{throw new Error('network down')};await f.run('refreshRecorderDevices()');
+  assert.match(f.dom.window.document.getElementById('device-recorder-devices').textContent,/更新失败.*可能已过期/s);
+  assert.equal(f.dom.window.document.querySelector('[data-action="start-recording"]').disabled,true);
+  assert.equal(f.dom.window.document.querySelector('.device-recorder-phone-status.idle'),null);
+  f.context.apiRequest=async()=>({devices:[{device_id:'ecbfd645',status:'online',runner_online:true,usage_status:'idle'}]});
+  await f.run('refreshRecorderDevices()');
+  assert.equal(f.dom.window.document.querySelector('[data-action="start-recording"]').disabled,false);
+});
+
+test('device polling avoids overlapping calls and ignores late results after leaving', async () => {
+  const f=fixture();Object.defineProperty(f.dom.window.document,'hidden',{value:false,configurable:true});f.run('renderDeviceRecorder()');
+  let count=0,release; f.context.apiRequest=async()=>{count++;return new Promise(r=>release=r)};
+  const a=f.run('refreshRecorderDevices()');await f.run('refreshRecorderDevices()');assert.equal(count,1);
+  f.run('showDeviceRecordingHistory()'); const content=f.dom.window.document.getElementById('editor-area').innerHTML;
+  release({devices:[{device_id:'different',status:'online'}]});await a;
+  assert.equal(f.dom.window.document.getElementById('editor-area').innerHTML,content);
+  await f.run('refreshRecorderDevices()');assert.equal(count,1);
+  assert.equal(f.run('deviceRecorderDeviceTimer'),null);
+});
+
+test('offline and unknown phones are never green or offered as ready', () => {
+  const f=fixture();f.run("recorderDevices=[{device_id:'a',runner_online:false,status:'online',usage_status:'idle'},{device_id:'b',runner_online:true,status:'online',usage_status:'unknown'}];renderDeviceRecorder()");
+  assert.ok(f.dom.window.document.querySelector('.device-recorder-phone-status.offline'));
+  assert.ok(f.dom.window.document.querySelector('.device-recorder-phone-status.unknown'));
+  assert.equal(f.dom.window.document.querySelector('.device-recorder-phone-status.idle'),null);
+  assert.equal(f.dom.window.document.querySelector('[data-action="start-recording"]').disabled,true);
+});
+
+
+test('hidden pages pause status traffic and focus resumes with one five second timer', async () => {
+  const f=fixture(); let polls=[]; f.context.setInterval=(fn,ms)=>{polls.push({fn,ms});return 7};
+  Object.defineProperty(f.dom.window.document,'hidden',{value:true,configurable:true});
+  let count=0;f.context.apiRequest=async()=>{count++;return {devices:[]}};
+  f.run('renderDeviceRecorder();renderDeviceRecorder()');assert.equal(polls.length,1);assert.equal(polls[0].ms,5000);
+  await f.run('refreshRecorderDevices()');assert.equal(count,0);
+  Object.defineProperty(f.dom.window.document,'hidden',{value:false,configurable:true});
+  f.dom.window.document.dispatchEvent(new f.dom.window.Event('visibilitychange'));await new Promise(resolve=>setImmediate(resolve));assert.equal(count,1);
+  f.dom.window.document.getElementById('editor-area').innerHTML='<p>其他页面</p>';
+  await polls[0].fn();assert.equal(count,1);assert.equal(f.run('deviceRecorderDeviceTimer'),null);
 });

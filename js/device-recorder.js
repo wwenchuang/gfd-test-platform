@@ -41,16 +41,99 @@ function deviceRecorderAppOptions(selectedPackage = '') {
   ).join('');
 }
 
+// Device status is independent of the recording heartbeat and its form rendering.
+let recorderDevices = null;
+let deviceRecorderDeviceTimer = null;
+let recorderDeviceRequest = null;
+let recorderDeviceGeneration = 0;
+let recorderDeviceUpdatedAt = 0;
+let recorderDeviceError = false;
+
+function recorderVisibleDevices() {
+  return (recorderDevices || runnerDevices || []).filter(device => !['9888E0094F2A', '18CEDF5BA7B2'].includes(String(device.device_id || '').toUpperCase()));
+}
+
+function recorderPhoneState(device) {
+  if (recorderDeviceError) return 'unknown';
+  if (device.runner_online === false || !['online', 'device'].includes(device.status)) return 'offline';
+  if (device.usage_status === 'unknown') return 'unknown';
+  return device.usage_status && device.usage_status !== 'idle' ? 'busy' : 'idle';
+}
+
+function recorderHasReadyPhone() {
+  return !recorderDeviceError && recorderVisibleDevices().some(device => recorderPhoneState(device) === 'idle');
+}
+
 function recorderDeviceCards(session) {
-  const devices = (runnerDevices || []).filter(device => !['9888E0094F2A', '18CEDF5BA7B2'].includes(String(device.device_id || '').toUpperCase()));
-  if (!devices.length) return '<div class="job-empty">暂无在线 Android 手机。请启动 Windows Runner 并在 Sonic 确认手机在线后刷新。</div>';
+  const devices = recorderVisibleDevices();
+  if (!devices.length) return '<div class="device-recorder-device-empty">暂无在线 Android 手机，连接后会自动更新。</div>';
   return `<div class="device-recorder-phone-grid">${devices.map(device => {
-    const busy = device.usage_status && device.usage_status !== 'idle';
-    const stateClass = busy ? 'busy' : 'idle';
+    const state = recorderPhoneState(device);
     const current = session?.device_id === device.device_id;
-    return `<div class="device-recorder-phone ${busy ? 'busy' : ''} ${current ? 'selected' : ''}"><span class="device-recorder-phone-status ${stateClass}" aria-label="${busy ? '不可用' : '空闲可用'}"></span><span><strong>${escapeHtml(device.model || device.name || 'Android 手机')}</strong><small>${escapeHtml(device.device_id || '')}</small><small>${escapeHtml(device.usage_label || (busy ? '当前不可用' : '空闲'))} · ${escapeHtml(device.runner_id || '')}</small></span></div>`;
+    const label = state === 'offline' ? (device.runner_online === false ? '离线 · Runner 未连接' : '离线 · 手机未连接')
+      : state === 'unknown' ? (recorderDeviceError ? '状态待更新' : device.usage_label || '状态待确认')
+      : device.usage_label || (state === 'busy' ? '占用中' : '空闲可用');
+    return `<div class="device-recorder-phone ${state} ${current ? 'selected' : ''}"><span class="device-recorder-phone-status ${state}" aria-label="${escapeHtml(label)}"></span><div class="device-recorder-phone-info"><div class="device-recorder-phone-title"><strong>${escapeHtml(device.model || device.name || 'Android 手机')}</strong>${current ? '<em>本次录制</em>' : ''}</div><small>${escapeHtml(device.device_id || '')} · ${escapeHtml(device.runner_id || '')}</small></div><span class="device-recorder-phone-label">${escapeHtml(label)}</span></div>`;
   }).join('')}</div>`;
 }
+
+function recorderDevicePanel() {
+  const updated = recorderDeviceUpdatedAt ? new Date(recorderDeviceUpdatedAt).toLocaleTimeString('zh-CN', {hour12:false}) : '';
+  const hint = recorderDeviceError ? `更新失败，上次状态可能已过期${updated ? ' · ' + updated : ''}`
+    : updated ? `每 5 秒更新 · 最近 ${updated}` : '正在同步手机状态…';
+  return `<div class="device-recorder-device-heading"><h4>手机状态</h4><button type="button" class="btn-sm" data-action="refresh-recorder-devices" onclick="refreshRecorderDevices()">刷新</button></div><div class="device-recorder-device-sync ${recorderDeviceError ? 'error' : ''}" role="status">${hint}</div>${recorderDeviceCards(deviceRecorderSession)}`;
+}
+
+function renderRecorderDevicePanel() {
+  const panel = document.getElementById('device-recorder-devices');
+  if (!panel) return;
+  panel.innerHTML = recorderDevicePanel();
+  const start = document.querySelector('[data-action="start-recording"]');
+  if (start) start.disabled = !recorderHasReadyPhone();
+}
+
+function stopRecorderDevicePolling() {
+  clearInterval(deviceRecorderDeviceTimer);
+  deviceRecorderDeviceTimer = null;
+  recorderDeviceGeneration++;
+}
+
+function startRecorderDevicePolling() {
+  if (deviceRecorderDeviceTimer !== null) return;
+  deviceRecorderDeviceTimer = setInterval(refreshRecorderDevices, 5000);
+  setTimeout(refreshRecorderDevices, 0);
+}
+
+async function refreshRecorderDevices() {
+  if (deviceRecorderView !== 'record' || !document.getElementById('device-recorder-devices')) {
+    if (deviceRecorderDeviceTimer !== null) stopRecorderDevicePolling();
+    return;
+  }
+  if (document.hidden || recorderDeviceRequest) return;
+  const generation = recorderDeviceGeneration;
+  const request = {};
+  recorderDeviceRequest = request;
+  try {
+    const data = await apiRequest('/runners', {timeoutMs:8000});
+    if (!Array.isArray(data.devices)) throw new Error('设备状态响应不完整');
+    if (generation !== recorderDeviceGeneration || !document.getElementById('device-recorder-devices')) return;
+    const known = recorderVisibleDevices();
+    const keys = new Set(data.devices.map(device => `${device.runner_id || ''}/${device.device_id}`));
+    recorderDevices = [...data.devices, ...known.filter(device => !keys.has(`${device.runner_id || ''}/${device.device_id}`)).map(device => ({...device,status:'offline',usage_status:'unknown'}))];
+    recorderDeviceUpdatedAt = Date.now();
+    recorderDeviceError = false;
+    renderRecorderDevicePanel();
+  } catch (_) {
+    if (generation !== recorderDeviceGeneration) return;
+    recorderDeviceError = true;
+    renderRecorderDevicePanel();
+  } finally {
+    if (recorderDeviceRequest === request) recorderDeviceRequest = null;
+  }
+}
+
+document.addEventListener('visibilitychange', () => { if (!document.hidden) void refreshRecorderDevices(); });
+window.addEventListener('focus', () => { void refreshRecorderDevices(); });
 
 function recorderStatusText(session) {
   return ({recording: '录制中', paused: '已暂停', finished: '已结束', generating: '正在生成', cancelled: '已取消'})[session?.status] || '尚未开始';
@@ -265,11 +348,10 @@ function renderDeviceRecorder() {
       <section class="review-panel"><h3>录制设置</h3>
         <label class="modal-label">应用</label><select id="device-recorder-app" ${session ? 'disabled' : ''} onchange="refreshRecorderModuleOptions()">${deviceRecorderAppOptions(session?.app_package || '')}</select>
         <label class="modal-label" for="device-recorder-group-module">所属模块</label><select id="device-recorder-group-module" onchange="updateRecorderModule(this.value)"><option value="">未分组</option>${recorderModuleOptions(session || {app_package:recorderDefaultAppPackage()})}</select>
-        <label class="modal-label">手机在线状态</label>
-        ${recorderDeviceCards(session)}
-        <div class="generate-hint">这里只展示状态，不再重复选择。点击开始后，在 Sonic 中选择一次你要操作的手机；平台以 Sonic 实际打开的手机作为录制对象。</div>
+        <section id="device-recorder-devices" class="device-recorder-devices" aria-label="手机实时状态">${recorderDevicePanel()}</section>
+        <div class="generate-hint">在 Sonic 中选择录制手机；此处自动同步手机状态。</div>
         <div class="review-actions">
-          ${!session ? `<button class="btn-sm primary" data-action="start-recording" ${(runnerDevices || []).some(device => !device.usage_status || device.usage_status === 'idle') ? '' : 'disabled'} onclick="startDeviceRecording()">前往 Sonic 选择手机并开始</button>` : ''}
+          ${!session ? `<button class="btn-sm primary" data-action="start-recording" ${recorderHasReadyPhone() ? '' : 'disabled'} onclick="startDeviceRecording()">前往 Sonic 选择手机并开始</button>` : ''}
           ${session?.status === 'recording' ? '<button class="btn-sm" onclick="openRecorderSonic()">打开所选手机</button><button class="btn-sm" onclick="finishDeviceRecording()">结束录制</button><button class="btn-sm danger" onclick="cancelDeviceRecording()">取消本次录制</button>' : ''}
           ${['paused','generating'].includes(session?.status) ? '<button class="btn-sm danger" data-action="cancel-recording" onclick="cancelDeviceRecording()">取消录制</button>' : ''}
           ${session?.status === 'finished' ? `<button class="btn-sm ai" data-action="generate-recording-yaml" ${recorderCanGenerate(session) ? '' : 'disabled'} onclick="generateDeviceRecordingYaml()">${recorderGenerateLabel(session)}</button>` : ''}
@@ -282,6 +364,7 @@ function renderDeviceRecorder() {
         <pre id="device-recorder-yaml" class="agent-artifact-box" ${deviceRecorderGenerated?.yaml ? '' : 'hidden'}>${escapeHtml(deviceRecorderGenerated?.yaml || '')}</pre>
       </section>
     </div></div>`;
+  startRecorderDevicePolling();
   if (selectedStep?.screenshot_path) setTimeout(() => loadRecorderEvidence(selectedStep.id), 0);
 }
 
@@ -391,6 +474,7 @@ async function resetRecorderPoint(stepId) {
 }
 
 function leaveDeviceRecorder() {
+  stopRecorderDevicePolling();
   clearInterval(deviceRecorderPollTimer);
   if (typeof activateWorkflow === 'function') activateWorkflow('assets');
 }
@@ -409,7 +493,6 @@ async function showDeviceRecorder() {
   deviceRecorderView = 'record';
   resetYamlToolbarForManager();
   if (typeof loadModules === 'function') await loadModules();
-  if (typeof loadRunnerDevices === 'function') await loadRunnerDevices({force: true, quiet: true});
   await loadDeviceRecordingHistory(false);
   if (deviceRecorderSession?.status === 'finished') deviceRecorderSession = null;
   deviceRecorderGenerated = null;
@@ -442,6 +525,7 @@ async function loadDeviceRecordingHistory(render = true) {
 }
 
 function showDeviceRecordingHistory() {
+  stopRecorderDevicePolling();
   if (deviceRecorderSession) {
     const current = deviceRecorderSession;
     deviceRecorderHistory = [current, ...deviceRecorderHistory.filter(item => item.id !== current.id)];

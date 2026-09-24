@@ -53,7 +53,27 @@ const ROOT = path.resolve(__dirname, '..');
       });
       assert.ok(record.buttons.every(bottom=>bottom<=record.bottom),`record header clipped at ${width}`);
       assert.ok(record.scrollWidth<=record.width+1,`record horizontal overflow at ${width}`);
-      console.log(`PASS history selection, scrolling, header and recording layout ${width}x${height}`);
+      await page.evaluate(() => {
+        loadRecorderEvidence=async()=>{};
+        deviceRecorderSession={id:'layout-session',status:'finished',app_package:'com.kfb.model',steps:Array.from({length:4},(_,i)=>({id:'step-'+i,sequence:i+1,type:'tap',semantic_description:['我的','打印记录','返回按钮','首页'][i],screenshot_path:'fixture.png',evidence_status:'ready'}))};
+        renderDeviceRecorder();
+        document.querySelector('[data-recorder-evidence]').src='data:image/svg+xml,'+encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="2412"><rect width="1080" height="2412" fill="#e0f2fe"/><text x="100" y="120" font-size="60">Screenshot top</text><text x="100" y="2300" font-size="60">Screenshot bottom</text></svg>');
+      });
+      await page.locator('[data-recorder-evidence]').evaluate(img=>img.decode());
+      const timeline=await page.evaluate(()=>{
+        const head=document.querySelector('.review-head.compact'), timeline=document.querySelector('.device-recorder-timeline'), img=document.querySelector('[data-recorder-evidence]');
+        return {header:head.getBoundingClientRect().height,buttons:[...document.querySelectorAll('.device-recorder-track button')].map(b=>b.getBoundingClientRect().height),clipped:timeline.scrollHeight>timeline.clientHeight+1,imageWidth:img.getBoundingClientRect().width,frameWidth:img.parentElement.parentElement.clientWidth,panelWidth:document.querySelector('.device-recorder-page').clientWidth,scrollWidth:document.querySelector('.device-recorder-page').scrollWidth};
+      });
+      assert.ok(timeline.header<=90,`timeline header too tall: ${JSON.stringify(timeline)}`);
+      assert.ok(timeline.buttons.every(h=>h<=80),`timeline cards stretched: ${JSON.stringify(timeline)}`);
+      assert.equal(timeline.clipped,false,`screenshot has nested clipping at ${width}`);
+      assert.ok(timeline.imageWidth<=timeline.frameWidth+1,`image overflows at ${width}`);
+      assert.ok(timeline.scrollWidth<=timeline.panelWidth+1,`step layout overflows at ${width}`);
+      await page.locator('.device-recorder-step-tools').scrollIntoViewIfNeeded();
+      await page.locator('.device-recorder-step-tools summary').click();
+      assert.ok(await page.locator('#recorder-edit-step-0').isVisible());
+      if (process.env.RECORDER_LAYOUT_ARTIFACTS) await page.screenshot({path:path.join(process.env.RECORDER_LAYOUT_ARTIFACTS,`recording-${width}x${height}.png`)});
+      console.log(`PASS history, live devices, compact timeline, full screenshot and editing ${width}x${height}`);
       await page.close();
     }
     assert.deepEqual(errors,[]);

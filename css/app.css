@@ -3998,7 +3998,7 @@
   .device-recorder-page .review-actions > * { max-width: 100%; white-space: normal; }
   .device-recorder-grid {
     display: grid;
-    grid-template-columns: minmax(280px, .75fr) minmax(420px, 1.25fr);
+    grid-template-columns: minmax(280px, 360px) minmax(0, 1fr);
     gap: 16px;
   }
   .device-recorder-page select { width: 100%; min-height: 40px; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 8px; }
@@ -4040,24 +4040,44 @@
   .device-recorder-device.online { border-color: rgba(52, 211, 153, .55); }
   .device-recorder-device.offline { border-color: rgba(248, 113, 113, .45); }
   .device-recorder-device span { color: var(--text2); font-size: 12px; }
-  .device-recorder-phone-grid { display: grid; gap: 10px; }
-  .device-recorder-phone { display: flex; gap: 12px; align-items: flex-start; padding: 12px; border: 1px solid var(--border); border-radius: 10px; cursor: pointer; }
-  .device-recorder-phone:has(input:checked) { border-color: var(--accent); box-shadow: inset 3px 0 var(--accent); }
-  .device-recorder-phone.selected { border-color: var(--accent); box-shadow: inset 3px 0 var(--accent); }
-  .device-recorder-phone.busy { opacity: .65; cursor: not-allowed; }
-  .device-recorder-phone span { display: grid; gap: 4px; }
-  .device-recorder-phone small { color: var(--text2); }
-  .device-recorder-phone-status { width: 10px; height: 10px; margin-top: 4px; border-radius: 50%; flex: 0 0 auto; box-shadow: 0 0 0 3px rgba(148, 163, 184, .12); }
-  .device-recorder-phone-status.idle { background: #34d399; box-shadow: 0 0 0 3px rgba(52, 211, 153, .15); }
-  .device-recorder-phone-status.busy { background: #f87171; box-shadow: 0 0 0 3px rgba(248, 113, 113, .15); }
-  .device-recorder-timeline { display: grid; gap: 8px; max-height: 430px; overflow: auto; }
-.device-recorder-track { display:flex; gap:8px; overflow-x:auto; padding:8px 2px 12px; }
-.device-recorder-track button { min-width:120px; max-width:180px; text-align:left; border:1px solid var(--border); background:var(--panel2); color:var(--text); border-radius:10px; padding:9px; cursor:pointer; }
+  .device-recorder-page .modal-label { display:block; border:0; border-radius:0; background:none; padding:0; margin:16px 0 6px; color:var(--text2); font-size:12px; font-weight:500; }
+  .device-recorder-page input:not([type="checkbox"]), .device-recorder-page select { box-sizing:border-box; width:100%; min-width:0; min-height:40px; background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:8px; padding:8px 10px; }
+  .device-recorder-page .review-panel { min-width:0; align-content:start; }
+  .device-recorder-grid { align-items:start; }
+  .device-recorder-grid > .review-panel { display:flex; flex-direction:column; gap:10px; }
+  .device-recorder-devices { margin:20px 0 10px; border-top:1px solid var(--border); padding-top:14px; }
+  .device-recorder-device-heading { display:flex; align-items:center; justify-content:space-between; gap:12px; }
+  .device-recorder-device-heading h4 { margin:0; font-size:13px; }
+  .device-recorder-device-heading .btn-sm { padding:4px 9px; font-size:12px; }
+  .device-recorder-device-sync { font-size:11px; color:var(--text2); margin:6px 0 10px; line-height:1.5; overflow-wrap:anywhere; }
+  .device-recorder-device-sync.error { color:#fbbf24; }
+  .device-recorder-device-empty { padding:14px 0; color:var(--text2); font-size:12px; line-height:1.6; }
+  .device-recorder-phone-grid { display:grid; gap:6px; }
+  .device-recorder-phone { display:grid; grid-template-columns:10px minmax(0,1fr); gap:3px 10px; align-items:center; padding:10px; border:1px solid var(--border); border-radius:8px; cursor:default; }
+  .device-recorder-phone.selected { border-color:var(--accent); background:rgba(34,211,238,.04); }
+  .device-recorder-phone-info { min-width:0; }
+  .device-recorder-phone-title { display:flex; align-items:center; flex-wrap:wrap; gap:6px; }
+  .device-recorder-phone-title strong { font-size:13px; overflow-wrap:anywhere; }
+  .device-recorder-phone-title em { font-style:normal; font-size:10px; color:var(--accent); }
+  .device-recorder-phone small { display:block; color:var(--text2); font-size:10px; overflow-wrap:anywhere; line-height:1.5; }
+  .device-recorder-phone-label { grid-column:2; color:var(--text2); font-size:11px; overflow-wrap:anywhere; }
+  .device-recorder-phone-status { width:8px; height:8px; border-radius:50%; background:#94a3b8; box-shadow:0 0 0 3px rgba(148,163,184,.10); }
+  .device-recorder-phone-status.idle { background:#34d399; box-shadow:0 0 0 3px rgba(52,211,153,.12); }
+  .device-recorder-phone-status.busy { background:#fbbf24; box-shadow:0 0 0 3px rgba(251,191,36,.12); }
+  .device-recorder-phone-status.offline { background:#f87171; box-shadow:0 0 0 3px rgba(248,113,113,.12); }
+  .device-recorder-timeline { display:grid; gap:8px; min-width:0; }
+  .device-recorder-page .review-head.compact { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px; padding:0 0 10px; background:none; border:0; border-bottom:1px solid var(--border); border-radius:0; }
+  .device-recorder-page .review-head.compact::before { display:none; }
+  .device-recorder-page .review-head.compact > div { display:flex; align-items:baseline; flex-wrap:wrap; gap:6px 12px; }
+  .device-recorder-page .review-head.compact h3 { font-size:15px; margin:0; }
+  .device-recorder-page .review-head.compact p { font-size:12px; margin:0; }
+.device-recorder-track { display:flex; flex:0 0 auto; align-items:flex-start; gap:8px; overflow-x:auto; padding:8px 2px 12px; }
+.device-recorder-track button { flex:0 0 132px; min-width:0; max-width:180px; min-height:0; height:auto; text-align:left; border:1px solid var(--border); background:var(--panel2); color:var(--text); border-radius:10px; padding:9px; cursor:pointer; }
 .device-recorder-track button.active { border-color:var(--accent); box-shadow:0 0 0 1px var(--accent); }
 .device-recorder-track button span { color:var(--accent); margin-right:8px; }
 .device-recorder-track button small { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--text2); margin-top:4px; }
-.device-recorder-shot img { display:block; max-width:320px; max-height:520px; object-fit:contain; border:1px solid var(--border); border-radius:12px; background:#050914; }
-.device-recorder-timeline article .device-recorder-shot-frame { position:relative; display:inline-block; width:fit-content; justify-self:start; line-height:0; }
+.device-recorder-shot img { display:block; width:auto; height:auto; max-width:min(100%,320px); max-height:520px; object-fit:contain; border:1px solid var(--border); border-radius:12px; background:#050914; }
+.device-recorder-timeline article .device-recorder-shot-frame { position:relative; display:inline-block; width:fit-content; max-width:100%; justify-self:start; line-height:0; }
 .device-recorder-shot-frame i { position:absolute; display:block; width:22px; height:22px; transform:translate(-50%,-50%); border:3px solid #fff; border-radius:50%; background:#ef4444; box-shadow:0 0 0 3px rgba(239,68,68,.35),0 2px 8px #000; cursor:grab; touch-action:none; }
 .device-recorder-shot-frame i:active { cursor:grabbing; }
 .device-recorder-shot-frame i::before,.device-recorder-shot-frame i::after { content:""; position:absolute; background:#fff; left:50%; top:50%; transform:translate(-50%,-50%); }
@@ -4066,13 +4086,16 @@
 .device-recorder-point-actions { display:flex !important; grid-template-columns:none !important; flex-wrap:wrap; gap:8px !important; margin-top:8px; }
 .device-recorder-timeline article {
     display: grid;
-    grid-template-columns: 30px minmax(0, 1fr) auto;
-    gap: 10px;
-    align-items: center;
+    grid-template-columns: 24px minmax(0, 1fr);
+    gap: 8px;
+    align-items: start;
     padding: 10px;
     border: 1px solid var(--border);
     border-radius: 9px;
   }
+  .device-recorder-timeline article > em { grid-column:2; grid-row:1; justify-self:end; max-width:65%; text-align:right; }
+  .device-recorder-timeline article > div { grid-column:2; grid-row:1 / span 2; overflow-wrap:anywhere; }
+  .device-recorder-timeline article > div > strong { padding-right:65%; }
   .device-recorder-timeline article > span { color: var(--accent); font-family: var(--mono); }
   .device-recorder-timeline article div { display: grid; gap: 3px; min-width: 0; }
   .device-recorder-timeline article small,
