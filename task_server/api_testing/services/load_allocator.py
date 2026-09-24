@@ -57,7 +57,7 @@ def _usage(agent, field):
     return max(0, int(value)) if isinstance(value, (int, float)) else 0
 
 
-def _candidates(agents, allow_fallback):
+def _candidates(agents, allow_fallback, *, now=None):
     result = []
     identifiers = [str(getattr(agent, "id", "")) for agent in agents]
     if not all(identifiers) or len(identifiers) != len(set(identifiers)):
@@ -71,7 +71,7 @@ def _candidates(agents, allow_fallback):
             or tier not in TIER_ORDER
             or (tier == "fallback" and not allow_fallback)
             or health.get("schedulable", True) is False
-            or calibration_state(agent) != "valid"
+            or calibration_state(agent, now=now) != "valid"
         ):
             continue
         process_limit = _limit(agent, "max_processes")
@@ -270,12 +270,12 @@ def _estimated_iterations(workload):
     return _integer(value, "预计迭代数", minimum=1)
 
 
-def allocate_run(workload, agents, allow_fallback, *, distribution="priority"):
+def allocate_run(workload, agents, allow_fallback, *, distribution="priority", now=None):
     """Return stable, bounded shard allocations without exceeding any Agent."""
     if not isinstance(allow_fallback, bool):
         raise LoadAllocationError("是否允许备用节点必须是布尔值")
     kind, target, requested_vus = _workload_target(workload)
-    candidates = _candidates(agents, allow_fallback)
+    candidates = _candidates(agents, allow_fallback, now=now)
     if not candidates:
         raise LoadAllocationError(
             "没有可调度的压测节点；请检查节点心跳、校准状态、级别和容量"

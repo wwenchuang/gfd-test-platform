@@ -12,6 +12,8 @@ interface FeishuInput {
 export const useNotificationsStore = defineStore('api-notifications', {
   state: () => ({
     feishu: null as FeishuNotification | null,
+    feishuRequest: 0,
+    feishuSaveRequest: 0,
     loading: false,
     saving: false,
     sending: false,
@@ -20,21 +22,33 @@ export const useNotificationsStore = defineStore('api-notifications', {
     lastSendMessage: '',
   }),
   actions: {
+    clearFeishu(): void {
+      ++this.feishuRequest
+      ++this.feishuSaveRequest
+      this.feishu = null
+      this.error = ''
+      this.loading = false
+      this.saving = false
+      this.message = ''
+    },
     async loadFeishu(projectId: string): Promise<void> {
+      const request = ++this.feishuRequest
       this.loading = true
       this.error = ''
       try {
         const response = await apiClient.get<{ notification: FeishuNotification }>(
           `/api/api-testing/v1/notifications/feishu?project_id=${encodeURIComponent(projectId)}`,
         )
-        this.feishu = response.data.notification
+        if (request === this.feishuRequest) this.feishu = response.data.notification
       } catch (error) {
-        this.error = error instanceof Error ? error.message : '无法读取飞书通知配置'
+        if (request === this.feishuRequest) this.error = error instanceof Error ? error.message : '无法读取飞书通知配置'
       } finally {
-        this.loading = false
+        if (request === this.feishuRequest) this.loading = false
       }
     },
     async saveFeishu(projectId: string, input: FeishuInput): Promise<void> {
+      const request = ++this.feishuRequest
+      const saveRequest = ++this.feishuSaveRequest
       this.saving = true
       this.error = ''
       this.message = ''
@@ -48,13 +62,15 @@ export const useNotificationsStore = defineStore('api-notifications', {
             webhook: input.webhook,
           },
         )
-        this.feishu = response.data.notification
-        this.message = '飞书通知配置已保存'
+        if (request === this.feishuRequest) {
+          this.feishu = response.data.notification
+          this.message = '飞书通知配置已保存'
+        }
       } catch (error) {
-        this.error = error instanceof Error ? error.message : '飞书通知配置保存失败'
+        if (request === this.feishuRequest) this.error = error instanceof Error ? error.message : '飞书通知配置保存失败'
         throw error
       } finally {
-        this.saving = false
+        if (saveRequest === this.feishuSaveRequest) this.saving = false
       }
     },
     async sendExecutionReport(executionId: string): Promise<NotificationSendResult> {

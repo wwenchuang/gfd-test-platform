@@ -29,6 +29,18 @@ from tests.api_testing.test_migrations import (
 BUSINESS_TOKEN = "phase1-secret-fixture-business-token"
 
 
+def test_legacy_environment_import_payload_keeps_empty_secret_updates():
+    from task_server.api_testing.services.environment_service import _source_payload
+
+    source = _source_payload({
+        "project_id": "project-1",
+        "name": "测试环境",
+        "services": {"default": "https://example.test"},
+    })
+    assert source["secret_updates"] == {}
+    assert source["variables"] == {}
+
+
 def _audit(actor="admin"):
     return {"owner_id": actor, "created_by": actor, "updated_by": actor}
 
@@ -158,6 +170,47 @@ def _import_with_token(environment_service, production_environment):
         {"ZXBToken": BUSINESS_TOKEN},
         "admin",
     )
+
+
+def test_import_with_secret_is_atomic_and_does_not_expose_plaintext(
+    environment_service, production_environment, session_factory
+):
+    payload = {**production_environment, "secret_updates": {"ZXBToken": BUSINESS_TOKEN}}
+    view = environment_service.import_from_source(payload, "admin")
+    assert view.revision == 1
+    assert view.variables["ZXBToken"].configured is True
+    assert BUSINESS_TOKEN not in str(view)
+    runtime = environment_service.resolve_runtime(view.revision_id, {})
+    assert runtime.headers["Authorization"] == f"Bearer {BUSINESS_TOKEN}"
+    with session_factory() as session:
+        revisions = session.scalars(
+            select(ApiEnvironmentRevision).where(ApiEnvironmentRevision.environment_id == view.id)
+        ).all()
+        assert len(revisions) == 1
+
+
+def test_import_secret_failure_rolls_back_environment(
+    environment_service, production_environment, session_factory, monkeypatch
+):
+    def fail_encrypt(_value):
+        raise RuntimeError("encryption failure")
+
+    monkeypatch.setattr(
+        "task_server.api_testing.services.environment_service.encrypt_secret",
+        fail_encrypt,
+    )
+    payload = {**production_environment, "secret_updates": {"ZXBToken": BUSINESS_TOKEN}}
+    with pytest.raises(RuntimeError, match="encryption failure"):
+        environment_service.import_from_source(payload, "admin")
+    with session_factory() as session:
+        assert session.scalar(select(ApiEnvironment).where(
+            ApiEnvironment.project_id == production_environment["project_id"],
+            ApiEnvironment.name == production_environment["name"],
+        )) is None
+        assert session.scalar(select(ApiSecretValue).where(
+            ApiSecretValue.project_id == production_environment["project_id"],
+            ApiSecretValue.name == "ZXBToken",
+        )) is None
 
 
 def test_literal_sensitive_headers_are_encrypted_on_write(environment_service, production_environment, session_factory):

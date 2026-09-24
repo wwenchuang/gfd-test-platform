@@ -245,10 +245,10 @@ async function run() {
       const { page, context } = await fixture(browser, base, {
         query: '?return_to=%2Fapi-test%2F%23%2Fruns%3FexecutionId%3De1',
       });
-      assert.equal(
-        await page.evaluate(() => loginReturnToPath()),
-        '/api-test/?from=login#/runs?executionId=e1',
-      );
+      await page.waitForURL('**/api-test/?from=login#/runs?executionId=e1');
+      const redirected = new URL(page.url());
+      assert.equal(redirected.pathname + redirected.search + redirected.hash,
+        '/api-test/?from=login#/runs?executionId=e1');
       await context.close();
     });
     await check('login also gates must-change users and clears the password field', async () => {

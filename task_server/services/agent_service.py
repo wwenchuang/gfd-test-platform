@@ -1302,12 +1302,21 @@ def _agent_cancel_runner_jobs(run_id, reason="用户取消"):
             job_id = str(job.get("job_id") or job.get("jobId") or "").strip()
             if not job_id:
                 continue
-            updated = job_service.update_job(job_id, {
-                "status": "cancelled",
-                "cancel_reason": str(reason or "用户取消"),
-                "cancelled_by": "agent_run",
-            })
-            if updated:
+            with JOB_LOCK:
+                current, jobs = job_service.find_job(job_id)
+                if not current or str(current.get("parent_run_id") or current.get("parentRunId") or "").strip() != run_id:
+                    continue
+                if job_service.normalize_job_status(current.get("status")) in terminal_statuses:
+                    continue
+                now = time.strftime("%Y-%m-%d %H:%M:%S")
+                current.update({
+                    "status": "cancelled",
+                    "cancel_reason": str(reason or "用户取消"),
+                    "cancelled_by": "agent_run",
+                    "finished_at": now,
+                    "updated_at": now,
+                })
+                job_service.save_jobs(jobs)
                 cancelled.append(job_id)
         return cancelled
     except Exception:

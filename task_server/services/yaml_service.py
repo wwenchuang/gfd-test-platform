@@ -59,6 +59,7 @@ import hashlib
 import json
 import os
 import re
+import secrets
 import subprocess
 import time
 import traceback
@@ -4348,7 +4349,7 @@ def save_file_version(module, file, content=None, reason="manual"):
         vdir = version_dir_for(module, file)
         os.makedirs(vdir, exist_ok=True)
         ts = time.strftime("%Y%m%d_%H%M%S")
-        vid = f"{ts}_{clean_id(reason, 'version')}"
+        vid = f"{ts}_{time.time_ns():019d}_{secrets.token_hex(4)}_{clean_id(reason, 'version')[:30]}"
         yaml_name = f"{vid}.yaml"
         meta_name = f"{vid}.json"
         write_text_file(safe_join(vdir, yaml_name), content or "")

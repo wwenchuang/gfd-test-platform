@@ -209,6 +209,10 @@ def _normalize_public_variables(value):
 
 def _source_payload(payload):
     source = _mapping(payload, "source environment")
+    secret_updates = _mapping(source.get("secret_updates", {}), "secret updates")
+    secret_updates = {_variable_name(name): value for name, value in secret_updates.items()}
+    if any(not isinstance(value, str) or not value for value in secret_updates.values()):
+        raise EnvironmentInputError("secret updates must be non-empty strings")
     services_value = source.get("services")
     if services_value is None:
         services_value = source.get("base_urls", source.get("baseUrls"))
@@ -224,6 +228,7 @@ def _source_payload(payload):
         ),
         "services": _normalize_services(services_value),
         "variables": _normalize_public_variables(source.get("variables", {})),
+        "secret_updates": secret_updates,
         "default_headers": _normalize_headers(
             source.get("default_headers", source.get("defaultHeaders", {}))
         ),
@@ -442,8 +447,18 @@ class EnvironmentService:
             source["name"],
             actor,
         )
-        secrets = {}
-        headers = self._protect_headers(repository, environment, source["default_headers"], secrets, source["variables"], actor)
+        public_variables = {
+            name: value for name, value in source["variables"].items()
+            if name not in source["secret_updates"]
+        }
+        secrets = {
+            name: repository.create_secret(
+                environment.project_id, environment.id, name,
+                encrypt_secret(value), secret_fingerprint(value), actor,
+            )
+            for name, value in source["secret_updates"].items()
+        }
+        headers = self._protect_headers(repository, environment, source["default_headers"], secrets, public_variables, actor)
         revision = repository.create_revision(
             environment.id,
             source_revision.id if source_revision else None,
@@ -458,9 +473,9 @@ class EnvironmentService:
             repository,
             revision.id,
             environment.id,
-            source["variables"],
+            public_variables,
             actor,
-            scopes={name: "source" for name in source["variables"]},
+            scopes={name: "source" for name in public_variables},
         )
         for secret_name, secret in sorted(secrets.items()):
             repository.add_secret_variable(revision.id, environment.id, secret_name, secret.id, actor)

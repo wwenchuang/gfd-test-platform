@@ -2314,7 +2314,7 @@ def _get_runner_jobs_next(handler, qs):
         yaml_content = midscene_cli_dispatch_yaml_text(yaml_content, device_id=selected.get("device_id", ""))
     except Exception as e:
         with JOB_LOCK:
-            jobs = load_jobs()
+            jobs = load_jobs(limit=None)
             for job in jobs:
                 if job.get("job_id") == selected.get("job_id"):
                     job["status"] = "failed"
@@ -4585,6 +4585,11 @@ def _post_sonic_result(handler, qs):
     if not mod or not file:
         handler._json({"ok": False, "error": "module 和 file 不能为空"}, 400)
         return
+    with JOB_LOCK:
+        existing, _ = find_job(job_id)
+        if existing and existing.get("status") == "cancelled":
+            handler._json({"ok": True, "job_id": job_id, "status": "cancelled", "ignored": True})
+            return
     if not app_package:
         try:
             yaml_text_for_app = read_text_file(safe_join(TASK_DIR, mod, file), "")
@@ -4667,10 +4672,13 @@ def _post_sonic_result(handler, qs):
     if status not in ("pending", "running"):
         job["finished_at"] = now
     with JOB_LOCK:
-        jobs = load_jobs()
+        jobs = load_jobs(limit=None)
         replaced = False
         for idx, item in enumerate(jobs):
             if item.get("job_id") == job_id:
+                if item.get("status") == "cancelled":
+                    handler._json({"ok": True, "job_id": job_id, "status": "cancelled", "ignored": True})
+                    return
                 jobs[idx].update(job)
                 replaced = True
                 break
@@ -4800,6 +4808,11 @@ def _handle_runner_job_result(handler, job_id):
         return
     d = handler._body()
     status = normalize_job_status(d.get("status", "failed"))
+    with JOB_LOCK:
+        existing, _ = find_job(job_id)
+        if existing and existing.get("status") == "cancelled":
+            handler._json({"ok": True, "job_id": job_id, "status": "cancelled", "ignored": True})
+            return
     run_dir = safe_join(LEARNING_DIR, "runs", job_id)
     os.makedirs(run_dir, exist_ok=True)
     stdout = d.get("stdout", "")
@@ -4847,13 +4860,16 @@ def _handle_runner_job_result(handler, job_id):
         write_text_file(safe_join(REPORT_DIR, report_name), report_html)
         report_url = public_report_url(report_name)
     with JOB_LOCK:
-        jobs = load_jobs()
+        jobs = load_jobs(limit=None)
         found = None
         for job in jobs:
             if job.get("job_id") == job_id:
                 found = job
                 break
         if found:
+            if found.get("status") == "cancelled":
+                handler._json({"ok": True, "job_id": job_id, "status": "cancelled", "ignored": True})
+                return
             found["status"] = status
             found["progress"] = 100 if status == "success" else max(safe_int(found.get("progress"), 0), 0)
             if status == "success":
@@ -4900,7 +4916,7 @@ def _handle_runner_job_result(handler, job_id):
         except Exception as e:
             failure_review = {"category": "unknown", "confidence": 0, "reason": f"复检失败：{e}", "evidence": [], "suggested_action": "人工查看日志", "can_auto_repair": False}
         with JOB_LOCK:
-            jobs = load_jobs()
+            jobs = load_jobs(limit=None)
             for job in jobs:
                 if job.get("job_id") == job_id:
                     job["failure_review"] = failure_review
@@ -4933,7 +4949,7 @@ def _handle_runner_job_result(handler, job_id):
             )
             optimize_result = {"ok": True, "analysis": repaired.get("analysis", ""), "changes": repaired.get("changes", []), "repair_dir": repair_dir, "next_job": next_job}
             with JOB_LOCK:
-                jobs = load_jobs()
+                jobs = load_jobs(limit=None)
                 for job in jobs:
                     if job.get("job_id") == job_id:
                         job["optimize_result"] = optimize_result
@@ -4942,7 +4958,7 @@ def _handle_runner_job_result(handler, job_id):
         except Exception as e:
             optimize_result = {"ok": False, "error": str(e)}
             with JOB_LOCK:
-                jobs = load_jobs()
+                jobs = load_jobs(limit=None)
                 for job in jobs:
                     if job.get("job_id") == job_id:
                         job["optimize_result"] = optimize_result
@@ -5068,7 +5084,7 @@ def _post_job_repair(handler, qs, match):
     job_id = match.group(1)
     d = handler._body()
     with JOB_LOCK:
-        jobs = load_jobs()
+        jobs = load_jobs(limit=None)
         target = None
         for job in jobs:
             if job.get("job_id") == job_id:
@@ -5080,7 +5096,7 @@ def _post_job_repair(handler, qs, match):
     try:
         result = repair_job_and_create_next(target, create_next=True, force=safe_bool(d.get("forceRepair") or d.get("force_repair") or d.get("force")))
         with JOB_LOCK:
-            jobs = load_jobs()
+            jobs = load_jobs(limit=None)
             for job in jobs:
                 if job.get("job_id") == job_id:
                     job["manual_repair_result"] = result
@@ -5103,6 +5119,7 @@ def _post_job_cancel(handler, qs, match):
         if target.get("status") not in ("pending", "running"):
             handler._json({"ok": False, "error": "只有排队中或执行中的任务可以取消"}, 400)
             return
+        was_running = target.get("status") == "running"
         target["status"] = "cancelled"
         target["finished_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
         target["cancel_reason"] = d.get("reason") or "manual"
@@ -5112,7 +5129,14 @@ def _post_job_cancel(handler, qs, match):
         "last_target_task_name": target.get("target_task_name", ""),
         "last_run_at": target.get("finished_at")
     })
-    handler._json({"ok": True, "job": target})
+    handler._json({
+        "ok": True,
+        "job": target,
+        "execution_stop_notice": (
+            "平台已标记取消；正在执行的 Runner 设备动作可能继续至结束。"
+            if was_running else "平台已取消排队任务。"
+        ),
+    })
 
 
 @route_post_regex(r"^/api/jobs/([^/]+)/retry$")
@@ -5747,7 +5771,11 @@ def _post_agent_runs_cancel(handler, qs, match):
     if not run:
         handler._json({"ok": False, "error": "Agent Run 不存在"}, 404)
         return
-    handler._json({"ok": True, "run": run})
+    handler._json({
+        "ok": True,
+        "run": run,
+        "execution_stop_notice": "平台已停止 Agent 后续步骤；若 Runner 已开始执行，设备动作可能继续至结束。",
+    })
 
 
 @route_post_regex(r"^/api/agent-runs/([^/]+)/retry$")

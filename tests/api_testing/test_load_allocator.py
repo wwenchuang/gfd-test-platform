@@ -1,5 +1,6 @@
 """Deterministic capacity and dataset sharding tests."""
 
+from datetime import datetime, timezone
 from types import SimpleNamespace
 
 import pytest
@@ -261,6 +262,18 @@ def test_uncalibrated_or_expired_agents_cannot_run_and_calibration_caps_capacity
     allocations = allocate_run(workload, [calibrated], False)
     assert [(item.rate, item.vus) for item in allocations] == [(20, 20)]
     assert allocations[0].capacity_shortfall == 30
+
+
+def test_allocator_uses_request_clock_for_calibration_expiry():
+    agent = _agent("clocked", vus=1)
+    agent.health["calibration"]["valid_until"] = "2026-09-10T00:00:00+00:00"
+    allocation = allocate_run(
+        {"executor": "constant-vus", "vus": 1, "duration_seconds": 10},
+        [agent],
+        False,
+        now=datetime(2026, 9, 3, tzinfo=timezone.utc),
+    )
+    assert [(item.agent_id, item.vus) for item in allocation] == [("clocked", 1)]
 
 
 def test_all_selected_splits_small_rate_across_tiers_without_multiplication():

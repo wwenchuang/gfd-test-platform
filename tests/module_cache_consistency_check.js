@@ -89,3 +89,35 @@ test('file copy and batch move force the cached module tree to refresh', async (
   await vm.runInContext('submitBatchMove()', context);
   assert.deepEqual(calls.map(options => options.force), [true, true]);
 });
+
+test('partial batch move refreshes modules and keeps only unmoved source files selected', async () => {
+  const selectedFiles = new Set(['old::moved.yaml', 'old::retry.yaml']);
+  const messages = [];
+  const closed = [];
+  const count = { textContent: '2' };
+  const context = vm.createContext({
+    document: { getElementById: id => ({
+      'batch-move-module': { value: 'target' },
+      'batch-move-overwrite': { checked: false },
+      'batch-move-count': count,
+    })[id] },
+    activeWorkflow: 'yaml_edit', selectedFiles,
+    modules: { old: ['moved.yaml', 'retry.yaml'], target: [] },
+    selectedFileItems: () => [...selectedFiles].map(key => ({ module: key.split('::')[0], file: key.split('::')[1] })),
+    apiRequest: async () => { throw Object.assign(new Error('1 个文件操作失败'), { status: 207 }); },
+    loadModules: async options => {
+      assert.equal(options.force, true);
+      context.modules = { old: ['retry.yaml'], target: ['moved.yaml'] };
+    },
+    renderModules() {}, closeModal: id => closed.push(id),
+    showToast: (message, type) => messages.push({ message, type }),
+  });
+  loadFunction(context, executionSource, 'submitBatchMove');
+
+  await vm.runInContext('submitBatchMove()', context);
+
+  assert.deepEqual([...selectedFiles], ['old::retry.yaml']);
+  assert.match(count.textContent, /1 个 YAML 文件/);
+  assert.deepEqual(closed, []);
+  assert.match(messages.at(-1).message, /部分.*移动/);
+});

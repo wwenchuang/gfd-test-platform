@@ -920,7 +920,6 @@
   }
   .btn-save:hover { background: var(--accent-strong); border-color: var(--accent-strong); color: #061016; }
   @media (max-width: 1180px) {
-    .main { --toolbar-height: 150px; }
     .toolbar {
       grid-template-columns: 1fr;
     }
@@ -929,7 +928,6 @@
     }
   }
   @media (max-width: 720px) {
-    .main { --toolbar-height: 246px; }
     .toolbar {
       padding: 10px;
     }

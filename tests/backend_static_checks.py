@@ -14263,30 +14263,32 @@ def check_agent_cancel_cascades_runner_jobs():
         {"job_id": "job-success", "parent_run_id": "agent-cancel", "status": "success"},
         {"job_id": "job-other", "parent_run_id": "agent-other", "status": "running"},
     ]
-    updates = []
+    saved = []
     original_load = job_service.load_jobs
-    original_update = job_service.update_job
+    original_find = job_service.find_job
+    original_save = job_service.save_jobs
 
-    def fake_update(job_id, patch):
-        updates.append((job_id, dict(patch)))
-        source = next(item for item in jobs if item.get("job_id") == job_id)
-        return {**source, **patch}
+    def fake_find(job_id):
+        return next((item for item in jobs if item.get("job_id") == job_id), None), jobs
 
     job_service.load_jobs = lambda limit=None: [dict(item) for item in jobs]
-    job_service.update_job = fake_update
+    job_service.find_job = fake_find
+    job_service.save_jobs = lambda _jobs: saved.append([dict(item) for item in _jobs])
     try:
         cancelled = agent_service._agent_cancel_runner_jobs("agent-cancel", "parent cancelled")
     finally:
         job_service.load_jobs = original_load
-        job_service.update_job = original_update
+        job_service.find_job = original_find
+        job_service.save_jobs = original_save
 
     require(
         cancelled == ["job-pending", "job-dispatched", "job-running"]
-        and [item[0] for item in updates] == cancelled,
+        and len(saved) == 3,
         "Agent cancellation must cancel every active child Runner job and leave terminal or unrelated jobs untouched",
     )
     require(
-        all(patch.get("status") == "cancelled" and patch.get("cancelled_by") == "agent_run" for _, patch in updates),
+        all(item.get("status") == "cancelled" and item.get("cancelled_by") == "agent_run" for item in jobs[:3])
+        and jobs[3]["status"] == "success" and jobs[4]["status"] == "running",
         "Cascaded Runner cancellation must persist a real cancelled status and source",
     )
 

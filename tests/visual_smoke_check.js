@@ -575,8 +575,11 @@ async function anyVisible(locator) {
     await page.waitForSelector('#app', {state: 'visible'});
     await page.getByRole('heading', { name: 'Agent 工作台', exact: true }).waitFor();
     await page.waitForFunction(() => document.querySelector('#agent-app-name')?.selectedOptions[0]?.dataset.package === 'com.kfb.model');
-    const coldDeviceHint = await page.locator('#agent-runner-device-hint').innerText();
-    if (!coldDeviceHint.includes('当前应用：智小白3D / com.kfb.model')) throw new Error(`Cold Agent entry lost its configured application name: ${coldDeviceHint}`);
+    await page.waitForFunction(() => {
+      const app = document.querySelector('#agent-app-name')?.selectedOptions[0];
+      const card = document.querySelector('#agent-runner-device-cards .agent-phone-app');
+      return app?.textContent === '智小白3D' && card?.textContent?.includes('智小白3D') && card.textContent.includes('1.16.0 (38)');
+    });
     await page.screenshot({path: path.join(ARTIFACTS, 'dashboard.png'), fullPage: true});
 
     if (!await page.locator('.header-logo.brand-mark').isVisible()) throw new Error('header brand mark is not visible');
@@ -628,6 +631,18 @@ async function anyVisible(locator) {
       const nav = document.querySelector('.workflow-nav');
       if (nav) nav.scrollTop = nav.scrollHeight;
     });
+    const compactToolbar = await page.locator('.toolbar').evaluate(toolbar => {
+      const context = toolbar.querySelector('.toolbar-context');
+      const actions = toolbar.querySelector('.toolbar-actions');
+      return {
+        height: toolbar.getBoundingClientRect().height,
+        emptySpace: toolbar.getBoundingClientRect().bottom - context.getBoundingClientRect().bottom,
+        actionsHidden: getComputedStyle(actions).display === 'none',
+      };
+    });
+    if (!compactToolbar.actionsHidden || compactToolbar.height > 110 || compactToolbar.emptySpace > 30) {
+      throw new Error(`Retina-sized Agent toolbar wastes content height: ${JSON.stringify(compactToolbar)}`);
+    }
     const compactJobsBox = await page.locator('.jobs-panel').boundingBox();
     const compactCommandBox = await page.locator('.agent-primary-card').boundingBox();
     const compactLastNavBox = await page.locator('.workflow-step[data-workflow="system_config"]').boundingBox();
@@ -654,6 +669,23 @@ async function anyVisible(locator) {
       throw new Error(`Short-height sidebar cannot scroll to its last action: ${JSON.stringify({compactLastNavBox, compactNavState})}`);
     }
     await page.screenshot({path: path.join(ARTIFACTS, 'agent-retina-1110x629.png')});
+    await page.click('.workflow-step[data-workflow="generate"]');
+    await page.waitForFunction(() => !document.querySelector('.toolbar-actions')?.classList.contains('is-empty'));
+    const compactToolbarActions = await page.locator('.toolbar').evaluate(toolbar => {
+      const toolbarBox = toolbar.getBoundingClientRect();
+      const visibleButtons = [...toolbar.querySelectorAll('.toolbar-actions button')]
+        .filter(button => getComputedStyle(button).display !== 'none')
+        .map(button => ({label: button.textContent.trim(), box: button.getBoundingClientRect()}))
+        .filter(({box}) => box.width > 0 && box.height > 0);
+      return {
+        count: visibleButtons.length,
+        overflows: visibleButtons.filter(({box}) => box.left < toolbarBox.left - 1 || box.right > toolbarBox.right + 1 || box.bottom > toolbarBox.bottom + 1)
+          .map(({label, box}) => ({label, right: box.right, bottom: box.bottom, toolbarRight: toolbarBox.right, toolbarBottom: toolbarBox.bottom})),
+      };
+    });
+    if (!compactToolbarActions.count || compactToolbarActions.overflows.length) {
+      throw new Error(`Retina-sized toolbar actions are hidden or clipped: ${JSON.stringify(compactToolbarActions)}`);
+    }
     await page.setViewportSize({width: 1440, height: 900});
 
     await page.locator('details[data-nav-group="run"]').evaluate(el => { el.open = true; });
@@ -891,8 +923,8 @@ async function anyVisible(locator) {
     await page.selectOption('#agent-app-name', {label: '智小白3D'});
     if (await page.locator('#agent-business').inputValue()) throw new Error('Agent application changes must clear an incompatible business selection');
     await page.waitForFunction(() => {
-      const hint = document.querySelector('#agent-runner-device-hint');
-      return hint && hint.innerText.includes('win-runner-01') && hint.innerText.includes('com.kfb.model 1.16.0 (38)');
+      const card = document.querySelector('#agent-runner-device-cards .agent-phone-item');
+      return card?.textContent?.includes('win-runner-01') && card.querySelector('.agent-phone-app')?.textContent?.includes('智小白3D 1.16.0 (38)');
     });
     await page.selectOption('#agent-source-type', 'figma');
     await page.selectOption('#agent-business', 'home');
@@ -980,6 +1012,18 @@ async function anyVisible(locator) {
     await page.locator('.agent-artifact-nav-item[data-tab="plan"]').click();
     await page.setViewportSize({width: 390, height: 844});
     await page.waitForTimeout(100);
+    const mobileToolbar = await page.locator('.toolbar').evaluate(toolbar => {
+      const context = toolbar.querySelector('.toolbar-context');
+      const actions = toolbar.querySelector('.toolbar-actions');
+      return {
+        height: toolbar.getBoundingClientRect().height,
+        emptySpace: toolbar.getBoundingClientRect().bottom - context.getBoundingClientRect().bottom,
+        actionsHidden: getComputedStyle(actions).display === 'none',
+      };
+    });
+    if (!mobileToolbar.actionsHidden || mobileToolbar.height > 150 || mobileToolbar.emptySpace > 30) {
+      throw new Error(`Mobile Agent toolbar wastes content height: ${JSON.stringify(mobileToolbar)}`);
+    }
     const artifactMobileOverflow = await page.locator('#agent-artifacts-card').evaluate(el => el.scrollWidth > el.clientWidth + 1);
     if (artifactMobileOverflow) throw new Error('Agent artifact card overflows horizontally on mobile');
     const mobileNav = await page.locator('.agent-artifact-nav').boundingBox();

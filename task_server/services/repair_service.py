@@ -1655,7 +1655,7 @@ def repair_file_latest_result(d, job_id=None):
     if job_id:
         update_generate_job(job_id, progress=85, step="校验保存", message="修复方案已生成，正在校验 YAML 和保存版本")
     with JOB_LOCK:
-        jobs = load_jobs()
+        jobs = load_jobs(limit=None)
         for item in jobs:
             if item.get("job_id") == job.get("job_id"):
                 item["manual_repair_result"] = result
@@ -1760,7 +1760,7 @@ def repair_task_latest_result(d, job_id=None):
     if job_id:
         update_generate_job(job_id, progress=85, step="校验保存", message="单条修复方案已生成，正在校验 YAML 和保存版本")
     with JOB_LOCK:
-        jobs = load_jobs()
+        jobs = load_jobs(limit=None)
         for item in jobs:
             if item.get("job_id") == job.get("job_id"):
                 item["manual_task_repair_result"] = result

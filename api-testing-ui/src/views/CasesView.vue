@@ -135,6 +135,7 @@ async function loadSource(sourceRevisionId: string): Promise<void> {
   localError.value = ''
   try {
     await Promise.all([assets.load(sourceRevisionId), cases.loadSavedCases(sourceRevisionId)])
+    if (assets.error) throw new Error(assets.error)
     activeEndpoint.value = null
     const available = new Set(assets.endpoints.map(item => item.id))
     selectedIds.value = selectedIds.value.filter(item => available.has(item))

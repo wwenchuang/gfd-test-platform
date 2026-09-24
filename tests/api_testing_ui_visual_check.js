@@ -690,7 +690,28 @@ async function assertCompactWorkbench(page, label, viewport, screenshotName) {
   const drawer = await page.locator('.side-rail.mobile-open').boundingBox();
   if (!drawer || drawer.width < 220) throw new Error(`${label} navigation drawer is too narrow: ${JSON.stringify(drawer)}`);
   if (!await page.getByTestId('nav-cases').getByText('用例管理', { exact: true }).isVisible()) throw new Error(`${label} navigation drawer must show labeled entries`);
-  await page.getByRole('button', { name: '关闭导航' }).first().click();
+  const closeButton = page.locator('.side-rail.mobile-open .mobile-nav-close');
+  if (!await closeButton.isVisible()) throw new Error(`${label} navigation drawer has no visible close button`);
+  await closeButton.click();
+  if (await page.locator('.side-rail.mobile-open').count()) throw new Error(`${label} close button did not close navigation`);
+  await page.getByTestId('mobile-nav-toggle').click();
+  const openDrawer = await page.locator('.side-rail.mobile-open').boundingBox();
+  const backdrop = page.locator('.mobile-nav-backdrop');
+  const backdropBox = await backdrop.boundingBox();
+  if (!openDrawer || !backdropBox || openDrawer.x + openDrawer.width + 20 >= viewport.width) {
+    throw new Error(`${label} navigation has no exposed backdrop to close: ${JSON.stringify({ openDrawer, backdropBox })}`);
+  }
+  const backdropClickX = openDrawer.x + openDrawer.width + 20;
+  const backdropClickY = backdropBox.y + 60;
+  const hit = await page.evaluate(({ x, y }) => {
+    const element = document.elementFromPoint(x, y);
+    return { tag: element?.tagName, className: element?.getAttribute('class') };
+  }, { x: backdropClickX, y: backdropClickY });
+  if (hit.className !== 'mobile-nav-backdrop') {
+    throw new Error(`${label} exposed backdrop is obstructed: ${JSON.stringify({ openDrawer, backdropBox, backdropClickX, backdropClickY, hit, viewport })}`);
+  }
+  await page.mouse.click(backdropClickX, backdropClickY);
+  if (await page.locator('.side-rail.mobile-open').count()) throw new Error(`${label} exposed backdrop did not close navigation`);
   await page.getByTestId('endpoint-search').fill('我的收藏列表');
   await page.getByRole('button', { name: '我的收藏列表' }).click();
   await page.getByTestId('mobile-workbench-editor').waitFor();

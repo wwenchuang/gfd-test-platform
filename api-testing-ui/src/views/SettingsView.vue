@@ -50,6 +50,8 @@ const loadingAssets = ref(false)
 const loadingDetail = ref(false)
 const localError = ref('')
 const detailTab = ref<DetailTab>('overview')
+let scopeRequest = 0
+let detailRequest = 0
 
 const name = ref('')
 const description = ref('')
@@ -66,6 +68,7 @@ const feishuEnabled = ref(false)
 
 const sourceOptions = computed(() => context.sourceRevisions.filter(item => item.project_id === projectId.value))
 const selectedProject = computed(() => context.projects.find(item => item.id === projectId.value) || null)
+const selectedFeishu = computed(() => notifications.feishu?.project_id === projectId.value ? notifications.feishu : null)
 const selectedAsset = computed(() => setup.environmentAssets.find(item => item.id === selectedEnvironmentId.value) || null)
 const environmentDetail = computed(() => setup.environment?.id === selectedEnvironmentId.value ? setup.environment : null)
 const publicVariables = computed(() => Object.entries(environmentDetail.value?.variables || {}).filter(([, value]) => !isSecretDescriptor(value)))
@@ -98,32 +101,39 @@ onMounted(async () => {
 })
 
 async function loadProjectScope(): Promise<void> {
+  const request = ++scopeRequest
+  const requestedProjectId = projectId.value
+  const requestedStatus = environmentStatus.value
   localError.value = ''
-  if (!projectId.value) {
+  if (!requestedProjectId) {
+    ++setup.environmentAssetsRequest
     setup.environmentAssets = []
     clearSelection()
     return
   }
   loadingAssets.value = true
   try {
-    await Promise.all([
-      setup.loadEnvironmentAssets(projectId.value, environmentStatus.value),
-      refreshProjectEnvironmentStats([projectId.value]),
-      loadFeishu(),
+    const [assets] = await Promise.all([
+      setup.loadEnvironmentAssets(requestedProjectId, requestedStatus),
+      refreshProjectEnvironmentStats([requestedProjectId]),
+      loadFeishu(requestedProjectId, request),
     ])
-    const preferredId = setup.environmentAssets.some(item => item.id === selectedEnvironmentId.value)
+    if (request !== scopeRequest || projectId.value !== requestedProjectId || environmentStatus.value !== requestedStatus) return
+    const preferredId = assets.some(item => item.id === selectedEnvironmentId.value)
       ? selectedEnvironmentId.value
-      : setup.environmentAssets[0]?.id || ''
+      : assets[0]?.id || ''
     if (preferredId) await selectEnvironment(preferredId)
     else clearSelection()
   } catch (error) {
-    localError.value = messageOf(error, '环境资产读取失败')
+    if (request === scopeRequest) localError.value = messageOf(error, '环境资产读取失败')
   } finally {
-    loadingAssets.value = false
+    if (request === scopeRequest) loadingAssets.value = false
   }
 }
 
 async function changeProject(nextProjectId: string): Promise<void> {
+  invalidateDetailSelection()
+  notifications.clearFeishu()
   projectId.value = nextProjectId
   environmentStatus.value = 'active'
   selectedEnvironmentId.value = ''
@@ -133,6 +143,7 @@ async function changeProject(nextProjectId: string): Promise<void> {
 }
 
 async function changeStatus(status: 'active' | 'archived'): Promise<void> {
+  invalidateDetailSelection()
   environmentStatus.value = status
   selectedEnvironmentId.value = ''
   editing.value = false
@@ -143,6 +154,8 @@ async function changeStatus(status: 'active' | 'archived'): Promise<void> {
 async function selectEnvironment(environmentAssetId: string): Promise<void> {
   const asset = setup.environmentAssets.find(item => item.id === environmentAssetId)
   if (!asset) return
+  const request = ++detailRequest
+  const requestedProjectId = projectId.value
   selectedEnvironmentId.value = environmentAssetId
   sourceRevisionId.value = asset.source_revision_id || ''
   editing.value = false
@@ -155,11 +168,11 @@ async function selectEnvironment(environmentAssetId: string): Promise<void> {
       setup.loadEnvironmentRevision(asset.active_revision_id),
       setup.loadEnvironmentHistory(asset.id),
     ])
-    applyEnvironment(detail)
+    if (request === detailRequest && projectId.value === requestedProjectId && selectedEnvironmentId.value === environmentAssetId) applyEnvironment(detail)
   } catch (error) {
-    localError.value = messageOf(error, '环境详情读取失败')
+    if (request === detailRequest) localError.value = messageOf(error, '环境详情读取失败')
   } finally {
-    loadingDetail.value = false
+    if (request === detailRequest) loadingDetail.value = false
   }
 }
 
@@ -173,6 +186,7 @@ function startEdit(): void {
 
 async function startCreate(): Promise<void> {
   if (loadingAssets.value || loadingDetail.value || !canCreateEnvironment.value) return
+  invalidateDetailSelection()
   clearEditor()
   selectedEnvironmentId.value = ''
   sourceRevisionId.value = sourceOptions.value.at(-1)?.id || ''
@@ -383,13 +397,18 @@ function applyEnvironment(value: EnvironmentView): void {
 }
 
 function clearSelection(): void {
+  invalidateDetailSelection()
   selectedEnvironmentId.value = ''
-  setup.environment = null
-  setup.environmentHistory = []
   editing.value = false
   creating.value = false
   detailTab.value = 'overview'
   clearEditor()
+}
+
+function invalidateDetailSelection(): void {
+  ++detailRequest
+  setup.clearEnvironmentDetail()
+  loadingDetail.value = false
 }
 
 function clearEditor(): void {
@@ -402,10 +421,10 @@ function clearEditor(): void {
   secretRows.value = [{ key: 'ZXBToken', value: '', configured: false }]
 }
 
-async function loadFeishu(): Promise<void> {
-  if (!projectId.value) return
-  await notifications.loadFeishu(projectId.value)
-  const current = notifications.feishu
+async function loadFeishu(requestedProjectId: string, request: number): Promise<void> {
+  await notifications.loadFeishu(requestedProjectId)
+  if (request !== scopeRequest || projectId.value !== requestedProjectId) return
+  const current = selectedFeishu.value
   feishuName.value = current?.name || 'API 基线报告'
   feishuEnabled.value = current?.enabled === true
   feishuWebhook.value = ''
@@ -421,15 +440,16 @@ async function saveFeishu(): Promise<void> {
     localError.value = '请先选择项目'
     return
   }
+  const requestedProjectId = projectId.value
   try {
-    await notifications.saveFeishu(projectId.value, {
+    await notifications.saveFeishu(requestedProjectId, {
       name: feishuName.value.trim() || 'API 基线报告',
       enabled: feishuEnabled.value,
       webhook: feishuWebhook.value.trim(),
     })
-    feishuWebhook.value = ''
+    if (projectId.value === requestedProjectId) feishuWebhook.value = ''
   } catch (error) {
-    localError.value = messageOf(error, '飞书通知保存失败')
+    if (projectId.value === requestedProjectId) localError.value = messageOf(error, '飞书通知保存失败')
   }
 }
 
@@ -676,10 +696,10 @@ function environmentMutationIssue(environmentName: string, requiresDelete = fals
     </section>
 
     <section v-if="projectId" class="setup-section notification-section project-notification-card">
-      <header><div><p class="eyebrow">项目通知</p><h2>项目飞书通知</h2><p>机器人绑定到 {{ selectedProject?.name }}；后续定时任务只保存“是否通知”，不重复保存 Webhook。</p></div><span v-if="notifications.feishu?.configured" class="configured-state"><Check :size="14" />已配置 {{ notifications.feishu.fingerprint }}</span></header>
+      <header><div><p class="eyebrow">项目通知</p><h2>项目飞书通知</h2><p>机器人绑定到 {{ selectedProject?.name }}；后续定时任务只保存“是否通知”，不重复保存 Webhook。</p></div><span v-if="selectedFeishu?.configured" class="configured-state"><Check :size="14" />已配置 {{ selectedFeishu.fingerprint }}</span></header>
       <fieldset class="setup-grid three" data-testid="feishu-fields" :disabled="!canManageNotification"><label>通知名称<input v-model="feishuName" placeholder="例如：API 基线报告" /></label><label class="grow">飞书群机器人 Webhook<input v-model="feishuWebhook" type="password" autocomplete="new-password" placeholder="已配置时留空表示保持不变" /></label><label class="toggle-card"><input v-model="feishuEnabled" type="checkbox" />启用报告发送</label></fieldset>
       <p v-if="!canManageNotification" data-testid="notification-permission-message" class="compact-empty" role="status">当前账号可读取现有通知配置，但没有平台通知配置权限；修改、测试发送和保存均已禁用。</p>
-      <footer class="notification-actions"><span><Bell :size="14" />通知属于当前项目；测试发送只验证机器人，不关联测试执行。</span><button class="secondary-command" type="button" :disabled="notifications.loading" @click="loadFeishu">{{ notifications.loading ? '读取中' : '读取配置' }}</button><button data-testid="feishu-test" class="secondary-command" type="button" :disabled="notifications.sending || !notifications.feishu?.configured || !notifications.feishu?.enabled || !canTestNotification" @click="testFeishu">{{ notifications.sending ? '发送中' : '发送测试通知' }}</button><button data-testid="feishu-save" class="primary-command" type="button" :disabled="notifications.saving || !canManageNotification" @click="saveFeishu">{{ notifications.saving ? '保存中' : '保存项目通知' }}</button></footer>
+      <footer class="notification-actions"><span><Bell :size="14" />通知属于当前项目；测试发送只验证机器人，不关联测试执行。</span><button class="secondary-command" type="button" :disabled="notifications.loading" @click="loadFeishu(projectId, scopeRequest)">{{ notifications.loading ? '读取中' : '读取配置' }}</button><button data-testid="feishu-test" class="secondary-command" type="button" :disabled="notifications.sending || !selectedFeishu?.configured || !selectedFeishu?.enabled || !canTestNotification" @click="testFeishu">{{ notifications.sending ? '发送中' : '发送测试通知' }}</button><button data-testid="feishu-save" class="primary-command" type="button" :disabled="notifications.saving || !canManageNotification" @click="saveFeishu">{{ notifications.saving ? '保存中' : '保存项目通知' }}</button></footer>
     </section>
 
     <p v-if="localError || setup.error || context.error || notifications.error" class="inline-error" role="alert">{{ localError || setup.error || context.error || notifications.error }}</p>

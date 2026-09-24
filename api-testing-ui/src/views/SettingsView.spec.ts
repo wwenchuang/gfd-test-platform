@@ -122,6 +122,44 @@ describe('SettingsView environment asset center', () => {
     })
   })
 
+  it('does not select a late environment response from a previous project', async () => {
+    const setup = useSetupStore()
+    vi.mocked(setup.loadEnvironmentAssets).mockRestore()
+    let resolvePrevious: ((value: unknown) => void) | undefined
+    const otherEnvironment = { ...environment, id: 'environment-2', project_id: 'project-2', name: '其他项目环境' }
+    vi.spyOn(apiClient, 'get').mockImplementation(path => {
+      if (path.includes('project_id=project-2&status=active')) {
+        return new Promise(resolve => { resolvePrevious = resolve }) as never
+      }
+      return Promise.resolve({ data: { environments: [environment] } }) as never
+    })
+    const { wrapper } = await mountView()
+
+    await wrapper.get('[data-project-id="project-2"]').trigger('click')
+    await wrapper.get('[data-project-id="project-1"]').trigger('click')
+    await flushPromises()
+    resolvePrevious?.({ data: { environments: [otherEnvironment] } })
+    await flushPromises()
+
+    expect(wrapper.get('[data-project-id="project-1"]').classes()).toContain('active')
+    expect(wrapper.text()).toContain(environment.name)
+    expect(wrapper.text()).not.toContain('其他项目环境')
+  })
+
+  it('does not show or test another project’s Feishu configuration', async () => {
+    const { wrapper } = await mountView()
+    const notifications = useNotificationsStore()
+    notifications.feishu = {
+      project_id: 'project-1', channel_type: 'feishu', name: 'A 项目通知',
+      enabled: true, configured: true, fingerprint: 'abc123def456', updated_at: '2026-08-13T10:00:00Z',
+    }
+    await wrapper.get('[data-project-id="project-2"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('.configured-state').exists()).toBe(false)
+    expect(wrapper.get('[data-testid="feishu-test"]').attributes('disabled')).toBeDefined()
+  })
+
   it('switches project scope and supports archiving and restoring environment assets', async () => {
     const { wrapper } = await mountView()
     const setup = useSetupStore()

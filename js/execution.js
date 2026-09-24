@@ -1667,6 +1667,18 @@ async function submitBatchMove() {
     await loadModules({force:true});
     showToast(`✓ 已移动 ${data.results?.length || 0} 个文件`, 'success');
   } catch(e) {
+    if (e.status === 207) {
+      await loadModules({force:true});
+      const remaining = items.filter(item => modules[item.module]?.includes(item.file));
+      for (const item of items) {
+        if (!remaining.includes(item)) selectedFiles.delete(`${item.module}::${item.file}`);
+      }
+      renderModules();
+      document.getElementById('batch-move-count').textContent = `仍需处理 ${remaining.length} 个 YAML 文件`;
+      if (!remaining.length) closeModal('modal-batch-move');
+      showToast(`部分文件已移动，列表已刷新；${remaining.length} 个源文件仍在原模块。${e.message || ''}`, 'error');
+      return;
+    }
     showToast(e.message || '批量移动失败', 'error');
   }
 }

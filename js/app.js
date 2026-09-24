@@ -1700,8 +1700,8 @@ async function postJobAction(jobId, action, payload={}) {
 async function cancelJob(jobId) {
   if (!confirm(`确认取消任务 ${jobId}？`)) return;
   try {
-    await postJobAction(jobId, 'cancel', { reason: 'manual' });
-    showToast('✓ 任务已取消', 'success');
+    const data = await postJobAction(jobId, 'cancel', { reason: 'manual' });
+    showToast(data.execution_stop_notice || '平台已标记取消；若 Runner 已开始执行，设备动作可能继续至结束。', 'success');
   } catch(e) {
     showToast(e.message || '取消失败', 'error');
   }

@@ -57,6 +57,9 @@ export const useSetupStore = defineStore('api-setup', {
     environmentAssets: [] as EnvironmentAsset[],
     environmentProjectStats: {} as Record<string, EnvironmentProjectStats>,
     environmentHistory: [] as EnvironmentRevisionSummary[],
+    environmentAssetsRequest: 0,
+    environmentRevisionRequest: 0,
+    environmentHistoryRequest: 0,
     credential: null as ProviderCredential | null,
     apifoxProjects: [] as ApifoxProject[],
     apifoxContext: null as ApifoxProjectContext | null,
@@ -69,6 +72,12 @@ export const useSetupStore = defineStore('api-setup', {
     message: '',
   }),
   actions: {
+    clearEnvironmentDetail(): void {
+      ++this.environmentRevisionRequest
+      ++this.environmentHistoryRequest
+      this.environment = null
+      this.environmentHistory = []
+    },
     async loadApifoxCredential(): Promise<ProviderCredential> {
       const response = await apiClient.get<{ credential: ProviderCredential }>(
         '/api/api-testing/v1/providers/apifox/credential',
@@ -265,11 +274,12 @@ export const useSetupStore = defineStore('api-setup', {
       }
     },
     async loadEnvironmentRevision(revisionId: string): Promise<EnvironmentView> {
+      const request = ++this.environmentRevisionRequest
       const response = await apiClient.get<{ environment_revision: EnvironmentView }>(
         `/api/api-testing/v1/environment-revisions/${encodeURIComponent(revisionId)}`,
       )
-      this.environment = response.data.environment_revision
-      return this.environment
+      if (request === this.environmentRevisionRequest) this.environment = response.data.environment_revision
+      return response.data.environment_revision
     },
     async restoreEnvironmentRevision(revisionId: string): Promise<EnvironmentView> {
       this.busy = true
@@ -294,11 +304,12 @@ export const useSetupStore = defineStore('api-setup', {
       projectId: string,
       status: 'active' | 'archived' | 'all' = 'active',
     ): Promise<EnvironmentAsset[]> {
+      const request = ++this.environmentAssetsRequest
       const response = await apiClient.get<{ environments: EnvironmentAsset[] }>(
         `/api/api-testing/v1/environments?project_id=${encodeURIComponent(projectId)}&status=${status}`,
       )
-      this.environmentAssets = response.data.environments
-      return this.environmentAssets
+      if (request === this.environmentAssetsRequest) this.environmentAssets = response.data.environments
+      return response.data.environments
     },
     async loadEnvironmentProjectStats(projectIds: string[]): Promise<Record<string, EnvironmentProjectStats>> {
       const uniqueProjectIds = [...new Set(projectIds.filter(Boolean))]
@@ -315,11 +326,12 @@ export const useSetupStore = defineStore('api-setup', {
       return this.environmentProjectStats
     },
     async loadEnvironmentHistory(environmentId: string): Promise<EnvironmentRevisionSummary[]> {
+      const request = ++this.environmentHistoryRequest
       const response = await apiClient.get<{ revisions: EnvironmentRevisionSummary[] }>(
         `/api/api-testing/v1/environments/${encodeURIComponent(environmentId)}/revisions`,
       )
-      this.environmentHistory = response.data.revisions
-      return this.environmentHistory
+      if (request === this.environmentHistoryRequest) this.environmentHistory = response.data.revisions
+      return response.data.revisions
     },
     async archiveEnvironment(environmentId: string): Promise<EnvironmentAsset> {
       const response = await apiClient.delete<{ environment: EnvironmentAsset }>(
@@ -359,16 +371,9 @@ export const useSetupStore = defineStore('api-setup', {
           environment = response.data.environment
         } else {
           const created = await apiClient.post<{ environment: EnvironmentView }>(
-            '/api/api-testing/v1/environments/import', payload,
+            '/api/api-testing/v1/environments/import', { ...payload, secret_updates: secretUpdates },
           )
           environment = created.data.environment
-          if (Object.keys(secretUpdates).length) {
-            const secured = await apiClient.post<{ environment: EnvironmentView }>(
-              `/api/api-testing/v1/environments/${environment.id}/revisions`,
-              { environment: {}, secret_updates: secretUpdates },
-            )
-            environment = secured.data.environment
-          }
         }
         this.environment = environment
         this.message = `环境 ${environment.name} · v${environment.revision} 已保存`

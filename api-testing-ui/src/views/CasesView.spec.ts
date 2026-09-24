@@ -34,6 +34,35 @@ describe('CasesView', () => {
     }])
   })
 
+  it('shows an endpoint fetch failure instead of presenting an empty case list', async () => {
+    const context = useContextStore()
+    context.projectId = 'project-1'
+    context.sourceRevisionId = 'source-1'
+    context.projects = [{ id: 'project-1', name: '3D 家用' }]
+    context.sourceRevisions = [{ id: 'source-1', source_id: 'source-1', project_id: 'project-1', name: '默认模块', revision_number: 1, endpoint_count: 1 }]
+    vi.spyOn(context, 'loadSavedContext').mockResolvedValue()
+    vi.spyOn(context, 'loadOptions').mockResolvedValue()
+    const assets = useAssetsStore()
+    vi.spyOn(assets, 'load').mockImplementation(async () => {
+      assets.state = 'failed'
+      assets.error = '接口服务返回 503'
+      assets.endpoints = []
+    })
+    const cases = useCasesStore()
+    vi.spyOn(cases, 'loadSavedCases').mockResolvedValue()
+    vi.spyOn(cases, 'restoreLatestAiJob').mockResolvedValue()
+    const tasks = useTasksStore()
+    vi.spyOn(tasks, 'list').mockResolvedValue([])
+    vi.spyOn(tasks, 'restore').mockResolvedValue(null)
+    const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/cases', name: 'cases', component: CasesView }] })
+    await router.push('/cases')
+    await router.isReady()
+    const wrapper = mount(CasesView, { global: { plugins: [router], stubs: { ContextBar: true, EndpointDetail: true, DebugDrawer: true } } })
+    await flushPromises()
+
+    expect(wrapper.get('.inline-error').text()).toContain('接口服务返回 503')
+  })
+
   it('shows case management as an independent page and edits a saved case', async () => {
     const context = useContextStore()
     Object.assign(context, {

@@ -40,8 +40,57 @@ describe('setup store', () => {
       variables: { Biz: 'ZXB' }, default_headers: { Authorization: 'Bearer {{ZXBToken}}' },
     })
 
-    expect(post.mock.calls[1][1]).toMatchObject({ secret_updates: { ZXBToken: 'business-secret-token' } })
+    expect(post).toHaveBeenCalledTimes(1)
+    expect(post.mock.calls[0][1]).toMatchObject({ secret_updates: { ZXBToken: 'business-secret-token' } })
     expect(JSON.stringify(store.$state)).not.toContain('business-secret-token')
+  })
+
+  it('does not leave a partly created environment when saving its secret fails', async () => {
+    const post = vi.spyOn(apiClient, 'post').mockRejectedValue(new Error('secret encryption failed'))
+    const store = useSetupStore()
+    store.secretUpdates = { ZXBToken: 'business-secret-token' }
+
+    await expect(store.saveEnvironment(null, {
+      project_id: 'project-1', name: '生产环境', services: { default: { base_url: 'https://example.test' } },
+      variables: {}, default_headers: { Authorization: 'Bearer {{ZXBToken}}' },
+    })).rejects.toThrow('secret encryption failed')
+
+    expect(post).toHaveBeenCalledTimes(1)
+    expect(store.environment).toBeNull()
+    expect(store.secretUpdates).toEqual({})
+  })
+
+  it('ignores an obsolete environment list after switching projects', async () => {
+    const pending = new Map<string, (value: unknown) => void>()
+    vi.spyOn(apiClient, 'get').mockImplementation(path => new Promise(resolve => pending.set(path, resolve)) as never)
+    const store = useSetupStore()
+    const first = store.loadEnvironmentAssets('project-1')
+    const second = store.loadEnvironmentAssets('project-2')
+    pending.get('/api/api-testing/v1/environments?project_id=project-2&status=active')?.({ data: { environments: [{ id: 'env-2', project_id: 'project-2' }] } })
+    await second
+    pending.get('/api/api-testing/v1/environments?project_id=project-1&status=active')?.({ data: { environments: [{ id: 'env-1', project_id: 'project-1' }] } })
+    await first
+
+    expect(store.environmentAssets.map(item => item.id)).toEqual(['env-2'])
+  })
+
+  it('keeps detail empty when an in-flight revision finishes after the selection is cleared', async () => {
+    let finishRevision: ((value: unknown) => void) | undefined
+    let finishHistory: ((value: unknown) => void) | undefined
+    vi.spyOn(apiClient, 'get').mockImplementation(path => new Promise(resolve => {
+      if (path.includes('/environment-revisions/')) finishRevision = resolve
+      else finishHistory = resolve
+    }) as never)
+    const store = useSetupStore()
+    const revision = store.loadEnvironmentRevision('revision-1')
+    const history = store.loadEnvironmentHistory('environment-1')
+    store.clearEnvironmentDetail()
+    finishRevision?.({ data: { environment_revision: { id: 'environment-1', revision_id: 'revision-1' } } })
+    finishHistory?.({ data: { revisions: [{ id: 'revision-1' }] } })
+    await Promise.all([revision, history])
+
+    expect(store.environment).toBeNull()
+    expect(store.environmentHistory).toEqual([])
   })
 
   it('saves the Apifox token then discovers, previews and explicitly activates', async () => {

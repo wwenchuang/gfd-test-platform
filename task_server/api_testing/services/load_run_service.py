@@ -165,6 +165,7 @@ class LoadRunService:
                     selected_agents,
                     parsed["allocation_policy"]["allow_fallback"],
                     distribution=parsed["allocation_policy"]["distribution"],
+                    now=now,
                 )
             except LoadAllocationError as error:
                 raise LoadRunError(str(error), status=409, code="capacity_unavailable") from error

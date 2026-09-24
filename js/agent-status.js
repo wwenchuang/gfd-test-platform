@@ -1575,7 +1575,7 @@ async function cancelAgentRunById(runId) {
         agentCurrentRun = cancelledRun;
         AppState.currentAgentRun = agentCurrentRun;
       }
-      showToast('✓ 已取消', 'success');
+      showToast(data.execution_stop_notice || '平台已停止 Agent 后续步骤；若 Runner 已开始执行，设备动作可能继续至结束。', 'success');
     }
     renderAgentPageAfterRunUpdate();
   } catch(e) {
@@ -1674,7 +1674,7 @@ async function cancelAgentRun() {
     if (agentCurrentRun) {
       mergeAgentRun(agentCurrentRun, 50);
     }
-    showToast('✓ Agent 已取消', 'success');
+    showToast(data.execution_stop_notice || '平台已停止 Agent 后续步骤；若 Runner 已开始执行，设备动作可能继续至结束。', 'success');
     renderAgentPageAfterRunUpdate();
   } catch(e) {
     showToast(e.message || '取消失败', 'error');
