@@ -20,24 +20,46 @@ except ImportError:
 
 _FILE_LOCKS = weakref.WeakValueDictionary()
 _FILE_LOCKS_GUARD = threading.Lock()
+_HELD_FILE_LOCKS = threading.local()
 
 
 @contextmanager
-def file_mutation_lock(path):
-    """Serialize a YAML read/backup/write transaction across threads and processes."""
+def _path_mutation_lock(path):
+    """Reentrant across a thread; flock is acquired once per outer transaction."""
     target = os.path.realpath(path)
     with _FILE_LOCKS_GUARD:
         lock = _FILE_LOCKS.setdefault(target, threading.RLock())
     os.makedirs(os.path.dirname(target), exist_ok=True)
     with lock:
-        with open(f"{target}.lock", "a+", encoding="utf-8") as handle:
-            if fcntl is not None:
-                fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
-            try:
-                yield
-            finally:
+        held = getattr(_HELD_FILE_LOCKS, "paths", set())
+        if target in held:
+            yield
+            return
+        _HELD_FILE_LOCKS.paths = held
+        held.add(target)
+        try:
+            with open(f"{target}.lock", "a+", encoding="utf-8") as handle:
                 if fcntl is not None:
-                    fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+                try:
+                    yield
+                finally:
+                    if fcntl is not None:
+                        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        finally:
+            held.remove(target)
+
+
+@contextmanager
+def file_mutation_lock(path):
+    """Always global asset lock before file lock, including legacy outer callers."""
+    from task_server.services import asset_lineage
+    if asset_lineage.is_asset_path(path):
+        with asset_lineage.mutation_lock(), _path_mutation_lock(path):
+            yield
+    else:
+        with _path_mutation_lock(path):
+            yield
 
 _ID_COUNTER = 0
 _ID_LOCK = threading.Lock()
@@ -198,6 +220,14 @@ def read_text_file(path, default=""):
 
 
 def write_text_file(path, text):
+    """Write task YAML with lineage; other artifacts retain ordinary atomic I/O."""
+    from task_server.services import asset_lineage
+    if asset_lineage.is_asset_path(path):
+        return asset_lineage.write_text(path, text)
+    return _write_text_file(path, text)
+
+
+def _write_text_file(path, text):
     """Atomically write *text* to a file."""
     directory = os.path.dirname(os.path.abspath(path))
     os.makedirs(directory, exist_ok=True)
@@ -218,6 +248,13 @@ def write_text_file(path, text):
 
 
 def write_bytes_file(path, data):
+    from task_server.services import asset_lineage
+    if asset_lineage.is_asset_path(path):
+        return asset_lineage.write_text(path, (data or b"").decode("utf-8"))
+    return _write_bytes_file(path, data)
+
+
+def _write_bytes_file(path, data):
     """Atomically write binary *data* to a file."""
     directory = os.path.dirname(os.path.abspath(path))
     os.makedirs(directory, exist_ok=True)

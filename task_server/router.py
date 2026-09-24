@@ -1369,10 +1369,50 @@ def _get_file(handler, qs):
         handler._text("非法路径", 400)
         return
     if os.path.exists(fpath):
-        with open(fpath, encoding="utf-8") as f:
-            handler._text(f.read())
+        from task_server.services.asset_lineage import snapshot
+        from task_server.operation_http import mark_resource
+        row, content = snapshot(fpath)
+        mark_resource(handler, "file", row["asset_id"])
+        handler._text(content.decode("utf-8"))
     else:
         handler._text("不存在", 404)
+
+
+@route_get("/api/file/attribution")
+def _get_file_attribution(handler, qs):
+    """Existing /api/file/* policy checks module scope before this handler."""
+    from task_server.services.asset_lineage import snapshot, versions
+    from task_server.services.operation_attribution import current_actor
+    from task_server.operation_http import mark_resource
+    try:
+        module, filename = qs.get("module", ""), qs.get("file", "")
+        if not module or any(qs.get(k, "") not in {"", "mine"} for k in ("creator", "editor")):
+            raise ValueError("module required; creator/editor must be mine")
+        directory = safe_join(TASK_DIR, module)
+        if filename and (os.path.basename(filename) != filename or not is_visible_yaml_filename(filename)):
+            raise ValueError("invalid filename")
+        names = [filename] if filename else sorted(os.listdir(directory))
+        assets = []
+        user_id = current_actor().get("user_id")
+        for name in names:
+            if not is_visible_yaml_filename(name):
+                continue
+            path = safe_join(directory, name)
+            row, _ = snapshot(path)
+            if qs.get("creator") == "mine" and (not user_id or row["creator"].get("user_id") != user_id):
+                continue
+            if qs.get("editor") == "mine" and (not user_id or row["version"]["author"].get("user_id") != user_id):
+                continue
+            assets.append({"module": module, "file": name, **row})
+        result = {"ok": True, "assets": assets}
+        if filename and assets:
+            result["versions"] = versions(safe_join(directory, filename))
+            mark_resource(handler, "file", assets[0]["asset_id"])
+        handler._json(result)
+    except FileNotFoundError:
+        handler._json({"ok": False, "error": "不存在"}, 404)
+    except ValueError:
+        handler._json({"ok": False, "error": "非法路径或筛选条件"}, 400)
 
 
 # ── 文件版本历史 ────────────────────────────────────────────────────
@@ -5566,7 +5606,10 @@ def _post_file_op(handler, qs):
         handler._json({"ok": False, "error": "源模块、源文件、目标模块、目标文件不能为空"}, 400)
         return
     try:
-        final_file = copy_or_move_task_file(src_module, src_file, dst_module, dst_file, move=move, overwrite=overwrite)
+        from task_server.services.asset_lineage import mutation_lock, snapshot
+        with mutation_lock():
+            final_file = copy_or_move_task_file(src_module, src_file, dst_module, dst_file, move=move, overwrite=overwrite)
+            attribution = snapshot(safe_join(TASK_DIR, dst_module, final_file))[0]
     except FileNotFoundError as e:
         handler._json({"ok": False, "error": str(e)}, 404)
         return
@@ -5579,7 +5622,9 @@ def _post_file_op(handler, qs):
     except Exception as e:
         handler._json({"ok": False, "error": str(e)}, 500)
         return
-    handler._json({"ok": True, "op": op, "module": dst_module, "file": final_file})
+    from task_server.operation_http import mark_resource
+    mark_resource(handler, "file", attribution["asset_id"])
+    handler._json({"ok": True, "op": op, "module": dst_module, "file": final_file, "attribution": attribution})
 
 
 @route_post("/api/files/op")
@@ -5630,14 +5675,20 @@ def _post_file_restore(handler, qs):
         with file_mutation_lock(fpath):
             if os.path.exists(fpath):
                 save_file_version(mod, file, reason="before_restore")
-            write_text_file(fpath, content)
+            from task_server.services.asset_lineage import source_context
+            with source_context(restored_from_version_id=meta["id"]):
+                write_text_file(fpath, content)
+            from task_server.services.asset_lineage import snapshot
+            attribution = snapshot(fpath)[0]
     except FileNotFoundError:
         handler._json({"ok": False, "error": "版本不存在"}, 404)
         return
     except ValueError:
         handler._json({"ok": False, "error": "非法路径"}, 400)
         return
-    handler._json({"ok": True, "version": meta})
+    from task_server.operation_http import mark_resource
+    mark_resource(handler, "file", attribution["asset_id"])
+    handler._json({"ok": True, "version": meta, "attribution": attribution})
 
 
 # ── 文件保存 ────────────────────────────────────────────────────────
@@ -5663,6 +5714,23 @@ def _post_file_save(handler, qs):
     mod = d.get("module", "")
     file = clean_filename(d.get("file", ""))
     content = d.get("content", "")
+    source_recording_id = None
+    if d.get("sourceRecordingID"):
+        from task_server.services.device_recording_service import get_recording_session
+        try:
+            session = get_recording_session(d["sourceRecordingID"])
+            if session.get("created_by") != _authenticated_user(handler):
+                raise PermissionError("只有录制发起人可以关联录制来源")
+            if (session.get("module_name") != mod
+                    or (session.get("generated_result") or {}).get("yaml") != content):
+                raise ValueError("录制来源与保存内容或模块不一致")
+            source_recording_id = session["id"]
+        except PermissionError as exc:
+            handler._json({"ok": False, "error": str(exc)}, 403)
+            return
+        except (ValueError, KeyError) as exc:
+            handler._json({"ok": False, "error": str(exc)}, 400)
+            return
     unchanged = False
     if d.get("app_package") or d.get("appPackage"):
         try:
@@ -5676,17 +5744,21 @@ def _post_file_save(handler, qs):
         fpath = safe_join(module_dir, file)
         with file_mutation_lock(fpath):
             if os.path.exists(fpath):
-                unchanged = read_text_file(fpath, default=None) == content
+                unchanged = read_text_file(fpath, default=None) == content and not source_recording_id
                 if not unchanged:
                     save_file_version(mod, file, reason=d.get("reason") or "save")
             if not unchanged:
-                write_text_file(fpath, content)
+                from task_server.services.asset_lineage import source_context
+                with source_context(source_recording_id=source_recording_id):
+                    write_text_file(fpath, content)
+            from task_server.services.asset_lineage import snapshot
+            attribution = snapshot(fpath)[0]
     except ValueError:
         handler._json({"ok": False, "error": "非法路径"}, 400)
         return
     from task_server.operation_http import mark_resource
-    mark_resource(handler, "file", file)
-    handler._json({"ok": True, **({"unchanged": True} if unchanged else {})})
+    mark_resource(handler, "file", attribution["asset_id"])
+    handler._json({"ok": True, "attribution": attribution, **({"unchanged": True} if unchanged else {})})
 
 
 # ── Agent Runs ──────────────────────────────────────────────────────
@@ -5863,8 +5935,11 @@ def _delete_file(handler, qs):
         return
     try:
         fpath = safe_join(TASK_DIR, qs.get("module", ""), qs.get("file", ""))
-        if os.path.exists(fpath):
-            os.remove(fpath)
+        from task_server.services.asset_lineage import delete_file
+        from task_server.operation_http import mark_resource
+        deleted = delete_file(fpath)
+        if deleted:
+            mark_resource(handler, "file", deleted["asset_id"])
     except ValueError:
         handler._json({"ok": False, "error": "非法路径"}, 400)
         return
@@ -5878,9 +5953,12 @@ def _delete_module(handler, qs):
     if _require_delete_auth(handler):
         return
     try:
-        mp = safe_join(TASK_DIR, qs.get("module", ""))
-        if os.path.exists(mp):
-            shutil.rmtree(mp)
+        module = qs.get("module", "")
+        if not module or any(part in {".", ".."} for part in module.split("/")):
+            raise ValueError("非法模块")
+        mp = safe_join(TASK_DIR, module)
+        from task_server.services.asset_lineage import delete_module
+        delete_module(mp)
     except ValueError:
         handler._json({"ok": False, "error": "非法路径"}, 400)
         return

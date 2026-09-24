@@ -1473,23 +1473,14 @@ def copy_or_move_task_file(src_module, src_file, dst_module, dst_file, move=Fals
     src_file = clean_filename(src_file)
     dst_file = clean_filename(dst_file or src_file)
     src_path = safe_join(TASK_DIR, src_module, src_file)
-    if not os.path.exists(src_path):
-        raise FileNotFoundError("源 YAML 文件不存在")
-    dst_dir = safe_join(TASK_DIR, dst_module)
-    os.makedirs(dst_dir, exist_ok=True)
-    dst_path = safe_join(dst_dir, dst_file)
-    if os.path.exists(dst_path) and not overwrite:
-        raise FileExistsError("目标文件已存在，如需覆盖请勾选覆盖")
-    if os.path.exists(dst_path):
-        save_file_version(dst_module, dst_file, reason="overwrite")
-    if move:
-        save_file_version(src_module, src_file, reason="before_move")
-    if move:
-        if os.path.abspath(src_path) == os.path.abspath(dst_path):
-            return dst_file
-        shutil.move(src_path, dst_path)
-    else:
-        shutil.copyfile(src_path, dst_path)
+    dst_path = safe_join(TASK_DIR, dst_module, dst_file)
+    from .asset_lineage import copy_or_move
+    def before(target_exists):
+        if target_exists:
+            save_file_version(dst_module, dst_file, reason="overwrite")
+        if move:
+            save_file_version(src_module, src_file, reason="before_move")
+    copy_or_move(src_path, dst_path, move=move, overwrite=overwrite, before=before)
     return dst_file
 
 

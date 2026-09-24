@@ -30,6 +30,8 @@ def repair_store(tmp_path, monkeypatch):
     from task_server.services import repair_service as service
 
     monkeypatch.setattr(service, 'TASK_DIR', str(tmp_path / 'tasks'))
+    monkeypatch.setattr(__import__('task_server.config', fromlist=['TASK_DIR']), 'TASK_DIR', str(tmp_path / 'tasks'))
+    monkeypatch.setenv('TASK_ASSET_DB', str(tmp_path / 'private' / 'assets.sqlite3'))
     monkeypatch.setattr(service, 'VERSION_DIR', str(tmp_path / 'versions'))
     monkeypatch.setattr(service, 'REPAIR_DRAFTS_FILE', str(tmp_path / 'drafts.json'))
     target = tmp_path / 'tasks' / 'audit' / 'sample.yaml'
@@ -149,7 +151,9 @@ def test_file_save_skips_identical_content_without_new_history(repair_store, mon
 
     router._post_file_save(handler, {})
 
-    assert responses == [(200, {'ok': True, 'unchanged': True})]
+    assert responses[0][0] == 200
+    assert responses[0][1]['ok'] and responses[0][1]['unchanged']
+    assert responses[0][1]['attribution']['creator']['kind'] == 'unknown'
     assert backups == []
     assert writes == []
 

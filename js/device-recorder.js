@@ -1015,7 +1015,7 @@ async function saveDeviceRecordingYaml() {
     }
     const grouped = await apiRequest('/device-recordings/module', {method:'POST',body:JSON.stringify({session_id:deviceRecorderSession.id,module_name:moduleName})});
     deviceRecorderSession = grouped.session || deviceRecorderSession;
-    await apiRequest('/file', {method: 'POST', body: JSON.stringify({app_package:deviceRecorderSession.app_package,module: moduleName, file: fileName, content: deviceRecorderGenerated.yaml})});
+    await apiRequest('/file', {method: 'POST', body: JSON.stringify({app_package:deviceRecorderSession.app_package,module: moduleName, file: fileName, content: deviceRecorderGenerated.yaml, sourceRecordingID:deviceRecorderSession.id})});
   } catch (error) { return showToast(error.message || '保存录制 YAML 失败', 'error'); }
   if (!modules[moduleName]) modules[moduleName] = [];
   if (!modules[moduleName].includes(fileName)) modules[moduleName].push(fileName);

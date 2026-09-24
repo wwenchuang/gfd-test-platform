@@ -230,6 +230,7 @@ def test_config_singleton_and_bounded_fields(operation_server, identity_db, tmp_
     assert denied["actor"]["user_id"] == identity_db[1].get_access_profile("member")["user_id"]
     assert denied["result"] == "denied"
     monkeypatch.setattr(router, "TASK_DIR", str(tmp_path / "modules"))
+    monkeypatch.setattr(__import__("task_server.config", fromlist=["TASK_DIR"]), "TASK_DIR", str(tmp_path / "modules"))
     assert request(server, "POST", "/api/module", token, {"name": "safe_module"})[0] == 200
     assert request(server, "DELETE", "/api/module?module=safe_module", token)[0] == 200
     assert [row["resource_id"] for row in events(store, 5)[:2]] == ["safe_module", "safe_module"]
@@ -454,13 +455,20 @@ def test_file_save_uses_normalized_persisted_filename(operation_server, tmp_path
     server, store = operation_server
     root = tmp_path / "tasks"
     monkeypatch.setattr(router, "TASK_DIR", str(root))
+    monkeypatch.setattr(__import__("task_server.config", fromlist=["TASK_DIR"]), "TASK_DIR", str(root))
+    monkeypatch.setenv("TASK_ASSET_DB", str(tmp_path / "private" / "assets.sqlite3"))
     token = auth.create_session_token()
     assert request(server, "POST", "/api/file", token, {"module": "sample", "file": "case", "content": "a"})[0] == 200
     assert request(server, "POST", "/api/file", token, {"module": "sample", "content": "b"})[0] == 200
     assert (root / "sample" / "case.yaml").read_text() == "a"
     assert (root / "sample" / "task.yaml").read_text() == "b"
     rows = events(store, 2)
-    assert [row["resource_id"] for row in rows] == ["task.yaml", "case.yaml"]
+    from task_server.services.asset_lineage import snapshot
+    assert [row["resource_id"] for row in rows] == [
+        snapshot(root / "sample" / name)[0]["asset_id"] for name in ("task.yaml", "case.yaml")]
+    status, body = request(server, "GET", "/api/file/attribution?module=sample&file=case.yaml", token)
+    assert status == 200
+    assert json.loads(body)["assets"][0]["creator"]["username"] == "admin"
     assert all(row["resource_type"] == "file" for row in rows)
 
 
@@ -588,3 +596,37 @@ def test_exception_after_headers_does_not_write_second_response(operation_server
     assert status == 200
     assert b"HTTP/1.0 500" not in body
     assert events(store, 1)[0]["result"] == "interrupted"
+
+
+def test_asset_http_actor_truth_and_scoped_attribution(operation_server, identity_db, tmp_path, monkeypatch):
+    from task_server import router, config, access_control
+    from task_server.services import yaml_service
+    server, _ = operation_server
+    root = tmp_path / "tasks"
+    for module in (router, config, yaml_service):
+        monkeypatch.setattr(module, "TASK_DIR", str(root))
+    monkeypatch.setattr(yaml_service, "VERSION_DIR", str(tmp_path / "versions"))
+    monkeypatch.setenv("TASK_ASSET_DB", str(tmp_path / "private" / "assets.sqlite3"))
+    monkeypatch.setattr(access_control, "application_catalog", lambda: [
+        {"package": "app.a", "modules": ["A"]}, {"package": "app.b", "modules": ["B"]}])
+    create_member(identity_db[1], scope={"ui_apps": ["app.a"], "api_projects": [], "api_environments": []})
+    activate(identity_db[1])
+    admin, member = auth.create_session_token(), auth.create_session_token("member")
+    body = {"module": "A", "file": "x.yaml", "content": "original", "created_by": "member", "user_id": "forged"}
+    status, result = request(server, "POST", "/api/file", admin, body)
+    assert status == 200
+    first = json.loads(result)["attribution"]
+    assert first["creator"]["username"] == "admin"
+    status, result = request(server, "POST", "/api/file", member, {**body, "content": "edited"})
+    assert status == 200
+    edited = json.loads(result)["attribution"]
+    assert edited["asset_id"] == first["asset_id"]
+    assert edited["creator"] == first["creator"]
+    assert edited["version"]["author"]["user_id"] == identity_db[1].get_access_profile("member")["user_id"]
+    status, result = request(server, "GET", "/api/file/attribution?module=A&editor=mine", member)
+    assert status == 200 and len(json.loads(result)["assets"]) == 1
+    status, result = request(server, "GET", "/api/file/attribution?module=A&creator=mine", member)
+    assert status == 200 and json.loads(result)["assets"] == []
+    assert request(server, "GET", "/api/file/attribution?module=B&creator=mine", member)[0] == 403
+    assert request(server, "GET", "/api/file/attribution?module=A&file=../B/x.yaml", member)[0] == 403
+    assert request(server, "GET", "/api/file/attribution?module=A&file=x.yaml")[0] == 401

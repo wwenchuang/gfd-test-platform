@@ -4362,6 +4362,8 @@ def save_file_version(module, file, content=None, reason="manual"):
             "created_at": time.strftime("%Y-%m-%d %H:%M:%S"),
             "size": len((content or "").encode("utf-8"))
         }
+        from .asset_lineage import backup_attribution
+        meta["attribution"] = backup_attribution(fpath, (content or "").encode("utf-8"))
         write_json_file(safe_join(vdir, meta_name), meta)
         return meta
     except Exception as e:

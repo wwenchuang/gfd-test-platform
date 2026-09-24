@@ -206,6 +206,7 @@ test('saving after renaming a generated case regenerates YAML with the new task 
   await f.run('saveDeviceRecordingYaml()');
   assert.equal(requests.filter(item => item.url === '/device-recordings/generate').length, 2);
   assert.equal(requests.at(-1).body.file, '新的用例名称.yaml');
+  assert.equal(requests.at(-1).body.sourceRecordingID, 's1');
   assert.match(requests.at(-1).body.content, /- name: 新的用例名称/);
 });
 

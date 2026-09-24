@@ -446,6 +446,12 @@ def list_file_versions(module, file, limit=30):
             continue
         meta = read_json_file(safe_join(vdir, name), default=None)
         if meta:
+            from .asset_lineage import verified_backup_attribution
+            try:
+                with open(safe_join(vdir, meta.get("yaml") or name[:-5] + ".yaml"), "rb") as handle:
+                    meta["attribution"] = verified_backup_attribution(meta, handle.read())
+            except OSError:
+                meta["attribution"] = {"author": {"kind": "unknown"}, "source": "unavailable"}
             result.append(meta)
     result.sort(key=lambda item: item.get("id", ""), reverse=True)
     return result[:limit]
@@ -460,9 +466,11 @@ def read_file_version(module, file, version_id):
     if not meta:
         raise FileNotFoundError("版本不存在")
     yaml_path = safe_join(vdir, meta.get("yaml") or f"{version_id}.yaml")
-    with open(yaml_path, encoding="utf-8") as f:
-        content = f.read()
-    return meta, content
+    with open(yaml_path, "rb") as f:
+        data = f.read()
+    from .asset_lineage import verified_backup_attribution
+    meta["attribution"] = verified_backup_attribution(meta, data)
+    return meta, data.decode("utf-8")
 
 
 # ---------------------------------------------------------------------------
