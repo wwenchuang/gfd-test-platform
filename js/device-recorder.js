@@ -17,6 +17,7 @@ let deviceRecorderHookBoundSessionId = '';
 let deviceRecorderPointDrag = null;
 const deviceRecorderEvidenceUrls = new Map();
 const deviceRecorderEvidenceLoads = new Map();
+const deviceRecorderRecognitionRequests = new Set();
 
 function recorderDefaultAppPackage() {
   const apps = (taskApps || []).filter(app => app.enabled !== false);
@@ -113,15 +114,26 @@ function recorderTimelineItem(step, displaySequence = step.sequence) {
     : step.semantic_recognition_status === 'failed' ? '自动识别失败，可手工补充'
     : step.screen_change_status === 'unchanged' ? '页面结构未变化，待核对'
     : step.semantic_source === 'ai_visual' ? `视觉识别 ${Math.round((step.semantic_confidence || 0) * 100)}%`
+    : step.semantic_source === 'ui_xml' ? 'UI 结构识别'
     : step.semantic_description ? '已人工确认' : step.evidence_status || '';
   return `<article class="${recorderStepNeedsMeaning(step) ? 'needs-confirmation' : ''}"><span>${displaySequence}</span><div><strong>${escapeHtml(actionName)}</strong>${editor}${evidencePreview}<details class="device-recorder-step-tools"><summary>手动标记、编辑或删除</summary><div><input id="recorder-edit-${escapeHtml(step.id)}" maxlength="200" value="${escapeHtml(recorderStepDescription(step))}" placeholder="输入正确控件名称，如：左上角返回"><button class="btn-sm" onclick="editRecorderStep('${escapeHtml(step.id)}')">保存人工标记</button><button class="btn-sm danger" data-action="delete-recording-step" onclick="deleteRecorderStep('${escapeHtml(step.id)}')">删除</button></div></details></div><em>${escapeHtml(evidence)}</em></article>`;
 }
 
 async function retryRecorderRecognition(stepId) {
+  if (!deviceRecorderSession?.id || deviceRecorderRecognitionRequests.has(stepId)) return;
+  const sessionId = deviceRecorderSession.id;
+  deviceRecorderRecognitionRequests.add(stepId);
+  showToast('正在根据红点和点击前截图重新识别，请稍候', 'info');
   try {
-    const data = await apiRequest('/device-recordings/recognize', {method:'POST', body:JSON.stringify({session_id:deviceRecorderSession.id, step_id:stepId, force:true})});
+    const data = await apiRequest('/device-recordings/recognize', {method:'POST', body:JSON.stringify({session_id:sessionId, step_id:stepId, force:true})});
+    if (deviceRecorderSession?.id !== sessionId) return;
     deviceRecorderSession = data.session; deviceRecorderGenerated = null; renderDeviceRecorder();
+    const step = (data.session?.steps || []).find(item => item.id === stepId);
+    const label = step?.semantic_description;
+    if (label) showToast(`重新识别为「${label}」，请对照红点和手机实际页面核对`, 'success');
+    else showToast(step?.semantic_recognition_error || '未能确定红点对应的控件，请拖动红点或手工标记', 'warn');
   } catch (error) { showToast(error.message || '重新识别失败', 'error'); }
+  finally { deviceRecorderRecognitionRequests.delete(stepId); }
 }
 
 function recorderCanGenerate(session) {

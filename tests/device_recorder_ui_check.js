@@ -9,7 +9,28 @@ const ROOT = path.resolve(__dirname, '..');
 
 test('task manager uses a new cache key for the server-bridged recorder script', () => {
   const html = fs.readFileSync(path.join(ROOT, 'task-manager.html'), 'utf8');
-  assert.match(html, /device-recorder\.js\?v=20260924-recorder-outcome-v28/);
+  assert.match(html, /device-recorder\.js\?v=20260924-recorder-point-v29/);
+});
+
+test('manual re-recognition reports the actual result and prevents duplicate requests', async () => {
+  const f = fixture();
+  const notices = [];
+  let requests = 0;
+  let release;
+  f.context.showToast = (message, kind) => notices.push({message, kind});
+  f.context.apiRequest = async () => {
+    requests += 1;
+    await new Promise(resolve => { release = resolve; });
+    return {session:{id:'s1',status:'finished',app_package:'com.kfb.model',steps:[{id:'tap-1',sequence:1,type:'tap',point:{x:10,y:20},screenshot_path:'/tmp/one.png',semantic_description:'我的',semantic_source:'ui_xml',semantic_recognition_status:'recognized',evidence_status:'captured'}]}};
+  };
+  f.run("deviceRecorderSession={id:'s1',status:'finished',app_package:'com.kfb.model',steps:[{id:'tap-1',sequence:1,type:'tap',point:{x:10,y:20},screenshot_path:'/tmp/one.png',semantic_description:'AI建模',evidence_status:'captured'}]}; renderDeviceRecorder()");
+  const pending = f.run("retryRecorderRecognition('tap-1')");
+  const duplicate = f.run("retryRecorderRecognition('tap-1')");
+  assert.equal(requests, 1);
+  release();
+  await Promise.all([pending, duplicate]);
+  assert.match(notices.at(-1).message, /我的/);
+  assert.equal(notices.at(-1).kind, 'success');
 });
 
 test('step screenshot survives timeline rerenders without repeated downloads', async () => {

@@ -297,7 +297,7 @@ class DeviceRecordingServiceTest(unittest.TestCase):
         def model_call(prompt, **kwargs):
             self.assertIn("红色圆圈", prompt)
             self.assertEqual(len(kwargs["image_assets"]), 2)
-            closeup = Image.open(io.BytesIO(base64.b64decode(kwargs["image_assets"][1]["base64"])))
+            closeup = Image.open(io.BytesIO(base64.b64decode(kwargs["image_assets"][0]["base64"])))
             self.assertEqual(closeup.size, (600, 600))
             self.assertNotEqual(closeup.getpixel((115, 518)), (255, 255, 255))
             return '{"semantic_description":"底部导航首页","confidence":0.9}'
@@ -306,6 +306,21 @@ class DeviceRecordingServiceTest(unittest.TestCase):
             session["id"], "admin", store_path=self.store, model_call=model_call,
         )
         self.assertEqual(recognized["steps"][0]["semantic_description"], "底部导航首页")
+
+    def test_small_video_frame_sends_click_crop_before_full_screen(self):
+        from PIL import Image
+        image = Image.new("RGB", (358, 800), "white")
+        output = io.BytesIO()
+        image.save(output, format="PNG")
+        with tempfile.NamedTemporaryFile(suffix=".png") as file:
+            file.write(output.getvalue())
+            file.flush()
+            assets = recording._visual_image_assets(file.name, {"x": 323, "y": 764})
+        self.assertEqual(len(assets), 2)
+        self.assertEqual(assets[0]["name"], "tap-target-closeup.png")
+        closeup = Image.open(io.BytesIO(base64.b64decode(assets[0]["base64"])))
+        self.assertLess(closeup.width, 358)
+        self.assertNotEqual(closeup.getpixel((closeup.width - 35, closeup.height - 35)), (255, 255, 255))
 
     def test_finished_recording_keeps_pending_evidence_available_during_grace_period(self):
         session = self.create(now=1000)
@@ -631,6 +646,55 @@ class DeviceRecordingServiceTest(unittest.TestCase):
         self.assertEqual(step["raw_point"], {"x": 1084, "y": 2564})
         self.assertEqual(step["point"], {"x": 976, "y": 2331})
         self.assertEqual(step["coordinate_transform"], "1200x2640->1080x2400")
+
+    def test_scaled_screenshot_point_uses_raw_coordinates_for_ui_xml(self):
+        session = self.create()
+        request = recording.pending_recording_evidence_requests("win-runner-01", store_path=self.store)[0]
+        png = b"\x89PNG\r\n\x1a\n" + b"\x00\x00\x00\rIHDR" + struct.pack(">II", 358, 800)
+        evidence_dir = os.path.join(self.tempdir.name, "evidence")
+        xml = ('<hierarchy><node text="AI建模" bounds="[200,600][500,900]" />'
+               '<node text="我的" bounds="[900,2200][1079,2411]" /></hierarchy>')
+        recording.save_recording_evidence("win-runner-01", {
+            "request_id": request["request_id"], "session_id": session["id"], "step_id": "",
+            "device_id": "ecbfd645", "content_base64": base64.b64encode(png).decode(),
+            "coordinate_width": 1080, "coordinate_height": 2412, "ui_xml": xml,
+        }, store_path=self.store, evidence_dir=evidence_dir)
+        step = recording.append_recorded_action(
+            session["id"], session["recording_token"],
+            {"event_id": "evt-my", "type": "tap", "point": {"x": 974, "y": 2304}, "device_id": "ecbfd645"},
+            store_path=self.store, evidence_dir=evidence_dir,
+        )
+        self.assertEqual(step["point"], {"x": 323, "y": 764})
+        self.assertEqual(step["ui_node"]["text"], "我的")
+        adjusted = recording.update_recorded_step_point(
+            session["id"], "admin", step["id"], {"x": 321, "y": 774}, store_path=self.store,
+        )
+        self.assertEqual(adjusted["steps"][0]["ui_node"]["text"], "我的")
+
+    def test_forced_recognition_rechecks_xml_after_click_point_correction(self):
+        session = self.create()
+        request = recording.pending_recording_evidence_requests("win-runner-01", store_path=self.store)[0]
+        png = b"\x89PNG\r\n\x1a\n" + b"\x00\x00\x00\rIHDR" + struct.pack(">II", 358, 800)
+        evidence_dir = os.path.join(self.tempdir.name, "evidence")
+        recording.save_recording_evidence("win-runner-01", {
+            "request_id": request["request_id"], "session_id": session["id"], "step_id": "",
+            "device_id": "ecbfd645", "content_base64": base64.b64encode(png).decode(),
+            "coordinate_width": 1080, "coordinate_height": 2412,
+            "ui_xml": '<hierarchy><node text="我的" bounds="[900,2200][1079,2411]" /></hierarchy>',
+        }, store_path=self.store, evidence_dir=evidence_dir)
+        step = recording.append_recorded_action(
+            session["id"], session["recording_token"],
+            {"event_id": "evt-recheck", "type": "tap", "point": {"x": 974, "y": 2304}, "device_id": "ecbfd645"},
+            store_path=self.store, evidence_dir=evidence_dir,
+        )
+        called = []
+        result = recording.recognize_recording_semantics(
+            session["id"], "admin", store_path=self.store, step_id=step["id"], force=True,
+            model_call=lambda *_args, **_kwargs: called.append(True),
+        )
+        self.assertEqual(result["steps"][0]["semantic_description"], "我的")
+        self.assertEqual(result["steps"][0]["semantic_source"], "ui_xml")
+        self.assertEqual(called, [])
 
     def test_owner_can_adjust_and_reset_the_click_point_on_the_same_evidence(self):
         session = self.create(runner_id="", device_id="")

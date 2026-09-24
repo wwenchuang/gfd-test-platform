@@ -136,6 +136,21 @@ def _scaled_point(point: Dict[str, Any], row: Dict[str, Any]) -> tuple[Dict[str,
     return mapped, raw if mapped != raw else None, transform
 
 
+def _point_in_ui_xml(step: Dict[str, Any], point: Dict[str, Any]) -> Dict[str, int]:
+    """UIAutomator bounds use device pixels; recorded points use screenshot pixels."""
+    transform = str(step.get("coordinate_transform") or "")
+    match = re.fullmatch(r"(\d+)x(\d+)->(\d+)x(\d+)", transform)
+    if not match:
+        return point
+    source_width, source_height, image_width, image_height = map(int, match.groups())
+    if not image_width or not image_height:
+        return point
+    return {
+        "x": max(0, min(source_width - 1, round(int(point.get("x") or 0) * source_width / image_width))),
+        "y": max(0, min(source_height - 1, round(int(point.get("y") or 0) * source_height / image_height))),
+    }
+
+
 def create_recording_session(
     user: str,
     runner_id: str,
@@ -554,7 +569,7 @@ def update_recorded_step_point(
         if xml_path and os.path.isfile(xml_path):
             with open(xml_path, encoding="utf-8", errors="replace") as handle:
                 xml_text = handle.read()
-        step["ui_node"] = _node_at_point(xml_text, target)
+        step["ui_node"] = _node_at_point(xml_text, _point_in_ui_xml(step, target))
         for key in (
             "semantic_description", "semantic_source", "semantic_confidence",
             "semantic_confirmed_by", "semantic_confirmed_at", "semantic_recognition_error",
@@ -720,7 +735,7 @@ def append_recorded_action(
                 if row.get("pre_action_frame_ui_xml_error"):
                     normalized["ui_xml_error"] = row["pre_action_frame_ui_xml_error"]
                 target_point = normalized.get("point") or normalized.get("end") or {}
-                normalized["ui_node"] = _node_at_point(xml_text, target_point)
+                normalized["ui_node"] = _node_at_point(xml_text, _point_in_ui_xml(normalized, target_point))
                 if browser_frame_error or (not browser_png and cached_frame_age > PRE_ACTION_FRAME_MAX_AGE_SECONDS):
                     normalized["evidence_status"] = "failed"
                     normalized["evidence_warning"] = browser_frame_error or "点击前截图已过期，不能据此识别控件；请人工核对"
@@ -789,7 +804,9 @@ def _visual_image_assets(screenshot_path: str, point: Dict[str, Any]) -> list[Di
         from PIL import Image, ImageDraw
         image = Image.open(io.BytesIO(png)).convert("RGB")
         x, y = int(point.get("x") or 0), int(point.get("y") or 0)
-        side = min(600, image.width, image.height)
+        # A low-resolution Sonic frame needs a tight crop; a full-width crop
+        # leaves unrelated bottom-navigation buttons in the model's focus.
+        side = min(600, image.width, image.height, max(180, round(image.width * 0.6)))
         left = max(0, min(image.width - side, x - side // 2))
         top = max(0, min(image.height - side, y - side // 2))
         crop = image.crop((left, top, left + side, top + side))
@@ -800,7 +817,7 @@ def _visual_image_assets(screenshot_path: str, point: Dict[str, Any]) -> list[Di
         draw.line((cx, cy - 10, cx, cy + 10), fill="#ff2929", width=3)
         output = io.BytesIO()
         crop.save(output, format="PNG")
-        assets.append({"name": "tap-target-closeup.png", "mime": "image/png", "base64": base64.b64encode(output.getvalue()).decode("ascii")})
+        assets.insert(0, {"name": "tap-target-closeup.png", "mime": "image/png", "base64": base64.b64encode(output.getvalue()).decode("ascii")})
     except (ImportError, OSError, ValueError):
         pass
     return assets
@@ -954,7 +971,7 @@ def save_recording_evidence(runner_id: str, payload: Dict[str, Any], *, store_pa
             if ui_xml_error:
                 step["ui_xml_error"] = ui_xml_error
             target_point = step.get("point") or step.get("end") or {}
-            step["ui_node"] = _node_at_point(xml_text, target_point)
+            step["ui_node"] = _node_at_point(xml_text, _point_in_ui_xml(step, target_point))
         write_json_file(path, data)
         return _public(row)
 
@@ -975,11 +992,31 @@ def recognize_recording_semantics(
         row = _find(data, session_id)
         _owner(row, user)
         candidates = []
+        changed = False
         for step in row.get("steps") or []:
             if step_id and str(step.get("id") or "") != str(step_id):
                 continue
+            xml_rechecked = False
+            if force and step.get("type") in {"tap", "text"} and step.get("evidence_status") == "captured":
+                xml_path = str(step.get("ui_xml_path") or "")
+                if xml_path and os.path.isfile(xml_path):
+                    with open(xml_path, encoding="utf-8", errors="replace") as handle:
+                        xml_text = handle.read()
+                    point = step.get("point") or step.get("end") or {}
+                    step["ui_node"] = _node_at_point(xml_text, _point_in_ui_xml(step, point))
+                    xml_rechecked = True
             node = step.get("ui_node") if isinstance(step.get("ui_node"), dict) else {}
             node_text = next((_control_label(node.get(key)) for key in ("text", "content_desc", "resource_id") if _control_label(node.get(key))), "")
+            if force and not xml_rechecked:
+                node_text = ""
+            if force and xml_rechecked and node_text and step.get("evidence_status") == "captured":
+                step["semantic_description"] = node_text
+                step["semantic_source"] = "ui_xml"
+                step["semantic_confidence"] = 1.0
+                step["semantic_recognition_status"] = "recognized"
+                step.pop("semantic_recognition_error", None)
+                changed = True
+                continue
             if (
                 step.get("type") in {"tap", "text"}
                 and step.get("evidence_status") == "captured"
@@ -988,13 +1025,17 @@ def recognize_recording_semantics(
                 and (force or step.get("semantic_recognition_status") not in {"running", "failed"})
                 and os.path.isfile(str(step.get("screenshot_path") or ""))
             ):
+                if force:
+                    for key in ("semantic_description", "semantic_source", "semantic_confidence"):
+                        step.pop(key, None)
                 step["semantic_recognition_status"] = "running"
+                changed = True
                 candidates.append({
                     "id": step["id"], "type": step.get("type"),
                     "point": copy.deepcopy(step.get("point") or step.get("end") or {}),
                     "screenshot_path": step["screenshot_path"],
                 })
-        if candidates:
+        if changed:
             write_json_file(path, data)
     if not candidates:
         return _public(row)
@@ -1008,8 +1049,12 @@ def recognize_recording_semantics(
         try:
             point = item["point"]
             image_assets = _visual_image_assets(item["screenshot_path"], point)
-            prompt = f"""你是手机操作录制的控件识别器。截图来自真实 Android 手机，操作类型是{item['type']}，点击坐标为 x={int(point.get('x') or 0)}, y={int(point.get('y') or 0)}（坐标基于原始整张手机截图）。
-第一张图是整张手机截图；如果有第二张图，它是点击点附近的放大图，红色圆圈和十字标出实际点击点。优先根据第二张图识别红点命中的控件，同时用整屏图确认上下文。不要把附近但未被点击的控件当作目标。
+            image_guide = (
+                "第一张图是点击点附近的局部图，红色圆圈和十字标出实际点击点；第二张图才是整屏，仅用于确认上下文。"
+                if len(image_assets) > 1 else "这张图是整张手机截图，请严格根据点击坐标判断目标。"
+            )
+            prompt = f"""你是手机操作录制的控件识别器。截图来自真实 Android 手机，操作类型是{item['type']}，点击坐标为 x={int(point.get('x') or 0)}, y={int(point.get('y') or 0)}（坐标基于整张手机截图）。
+{image_guide}必须识别点击点命中的控件，不能因为整屏里另一个图标更显眼就回答它。
 只识别该坐标实际命中的可见控件，用适合 Midscene aiTap/aiInput 的简短中文名称回答。不要描述整页，不要猜测不可见功能，也不要沿用之前步骤的控件名称。
 只输出包含 semantic_description（控件短名称或空字符串）与 confidence（0 到 1 数值）的 JSON。无法确认时 semantic_description 为空字符串。"""
             raw = model_call(
