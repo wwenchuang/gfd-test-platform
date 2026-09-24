@@ -1,4 +1,5 @@
 let deviceRecorderSession = null;
+let deviceRecorderStarting = false;
 let deviceRecorderWindow = null;
 let deviceRecorderPollTimer = null;
 let deviceRecorderPollInFlight = false;
@@ -98,7 +99,7 @@ function renderRecorderDevicePanel() {
   if (!panel) return;
   panel.innerHTML = recorderDevicePanel();
   const start = document.querySelector('[data-action="start-recording"]');
-  if (start) start.disabled = !recorderHasReadyPhone();
+  if (start) start.disabled = deviceRecorderStarting || !recorderHasReadyPhone();
 }
 
 function stopRecorderDevicePolling() {
@@ -607,9 +608,12 @@ async function openDeviceRecordingHistory(sessionId) {
 }
 
 async function startDeviceRecording() {
+  if (deviceRecorderStarting || deviceRecorderSession?.status === 'recording') return;
   const appPackage = document.getElementById('device-recorder-app')?.value || '';
-  const available = (runnerDevices || []).some(device => !device.usage_status || device.usage_status === 'idle');
+  const available = recorderHasReadyPhone();
   if (!available || !appPackage) return showToast(!available ? '当前没有空闲 Android 手机' : '请选择应用', 'error');
+  deviceRecorderStarting = true;
+  renderRecorderDevicePanel();
   try {
     const moduleName = document.getElementById('device-recorder-group-module')?.value || '';
     const data = await apiRequest('/device-recordings', {method: 'POST', body: JSON.stringify({app_package: appPackage, module_name:moduleName})});
@@ -627,6 +631,7 @@ async function startDeviceRecording() {
     openRecorderSonic();
     startDeviceRecorderPolling();
   } catch (error) { showToast(error.message || '开始录制失败', 'error'); }
+  finally { deviceRecorderStarting = false; renderRecorderDevicePanel(); }
 }
 
 function recorderHandshake(target = deviceRecorderWindow) {

@@ -9,7 +9,7 @@ const ROOT = path.resolve(__dirname, '..');
 
 test('task manager uses a new cache key for the server-bridged recorder script', () => {
   const html = fs.readFileSync(path.join(ROOT, 'task-manager.html'), 'utf8');
-  assert.match(html, /device-recorder\.js\?v=20260924-recorder-live-v33/);
+  assert.match(html, /device-recorder\.js\?v=20260924-recorder-start-v34/);
 });
 
 test('history groups by app and module and filter changes clear hidden selections', () => {
@@ -206,6 +206,28 @@ function fixture() {
   vm.runInContext(fs.readFileSync(path.join(ROOT, 'js/device-recorder.js'), 'utf8'), context);
   return {context, dom, calls, opened, run: code => vm.runInContext(code, context)};
 }
+
+test('start uses the same live snapshot as the displayed phone availability', async () => {
+  const f = fixture();
+  f.run("recorderDevices=runnerDevices;runnerDevices=[];renderDeviceRecorder()");
+  assert.equal(f.dom.window.document.querySelector('[data-action="start-recording"]').disabled, false);
+  await f.run('startDeviceRecording()');
+  assert.equal(f.calls.filter(call => call.url === '/device-recordings').length, 1);
+  const offline = fixture();
+  offline.run("recorderDevices=runnerDevices.map(d=>({...d,status:'offline'}));renderDeviceRecorder()");
+  await offline.run('startDeviceRecording()');
+  assert.equal(offline.calls.length, 0);
+});
+
+test('double click cannot create two recording sessions', async () => {
+  const f = fixture(); let release; let requests=0;
+  f.run('renderDeviceRecorder()');
+  f.context.apiRequest=async()=> { requests++; await new Promise(resolve=>release=resolve); return {session:{id:'s1',status:'recording',steps:[]}}; };
+  const first=f.run('startDeviceRecording()');
+  const second=f.run('startDeviceRecording()');
+  assert.equal(requests,1);
+  release(); await Promise.all([first,second]);
+});
 
 test('opens Sonic with a fragment handoff that is never sent in the HTTP request', async () => {
   const f = fixture();
