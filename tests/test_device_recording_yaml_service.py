@@ -7,11 +7,23 @@ class DeviceRecordingYamlServiceTest(unittest.TestCase):
     def test_tap_prefers_visible_text_and_never_emits_coordinates(self):
         result = normalize_recorded_step({
             "type": "tap", "point": {"x": 10, "y": 20},
-            "ui_node": {"text": "下一步", "resource_id": "com.demo:id/next"},
+            "ui_node": {"text": "错误背景", "resource_id": "com.demo:id/next"}, "semantic_description": "下一步",
         })
         self.assertEqual(result["flow"], [{"aiTap": "下一步"}])
         self.assertNotIn("10", str(result["flow"]))
         self.assertFalse(result["requires_confirmation"])
+
+    def test_unverified_xml_and_failed_recognition_cannot_produce_a_tap(self):
+        for fields in [
+            {'ui_node': {'text': '2026-09-21 18:48:09'}},
+            {'ui_node': {'resource_id': 'com.kfb.model:id/app_home_icon_container'}},
+            {'semantic_description': '日期', 'semantic_source': 'ui_xml'},
+            {'semantic_description': '过期名称', 'semantic_recognition_status': 'failed'},
+        ]:
+            with self.subTest(fields=fields):
+                result = normalize_recorded_step({'type': 'tap', **fields})
+                self.assertEqual(result['flow'], [])
+                self.assertTrue(result['requires_confirmation'])
 
     def test_tap_without_semantics_requires_confirmation(self):
         result = normalize_recorded_step({"type": "tap", "point": {"x": 10, "y": 20}})
@@ -42,7 +54,7 @@ class DeviceRecordingYamlServiceTest(unittest.TestCase):
 
     def test_input_scroll_key_and_checkpoint_use_supported_actions(self):
         steps = [
-            {"type": "text", "text": "测试内容", "ui_node": {"content_desc": "搜索输入框"}},
+            {"type": "text", "text": "测试内容", "semantic_description": "搜索输入框"},
             {"type": "swipe", "start": {"x": 500, "y": 1500}, "end": {"x": 500, "y": 400}},
             {"type": "key", "key": "BACK"},
             {"type": "checkpoint", "checkpoint_kind": "assert", "description": "页面显示提交成功"},
@@ -57,7 +69,7 @@ class DeviceRecordingYamlServiceTest(unittest.TestCase):
         session = {
             "id": "session-1", "status": "finished", "app_package": "com.demo", "steps": [
                 {"type": "launch", "package": "com.demo"},
-                {"type": "tap", "ui_node": {"text": "我的"}},
+                {"type": "tap", "semantic_description": "我的"},
                 {"type": "checkpoint", "checkpoint_kind": "assert", "description": "页面显示个人中心"},
             ],
         }
@@ -112,7 +124,7 @@ class DeviceRecordingYamlServiceTest(unittest.TestCase):
 
     def test_rejects_empty_or_active_recording_instead_of_inventing_launch_only_yaml(self):
         with self.assertRaisesRegex(ValueError, "结束录制"):
-            generate_recording_yaml({"status": "recording", "app_package": "com.demo", "steps": [{"type": "tap", "ui_node": {"text": "我的"}}]})
+            generate_recording_yaml({"status": "recording", "app_package": "com.demo", "steps": [{"type": "tap", "semantic_description": "我的"}]})
         with self.assertRaisesRegex(ValueError, "没有记录到手机操作"):
             generate_recording_yaml({"status": "finished", "app_package": "com.demo", "steps": []})
 

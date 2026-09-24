@@ -102,7 +102,7 @@ test('manual re-recognition reports the actual result and prevents duplicate req
   f.context.apiRequest = async () => {
     requests += 1;
     await new Promise(resolve => { release = resolve; });
-    return {session:{id:'s1',status:'finished',app_package:'com.kfb.model',steps:[{id:'tap-1',sequence:1,type:'tap',point:{x:10,y:20},screenshot_path:'/tmp/one.png',semantic_description:'我的',semantic_source:'ui_xml',semantic_recognition_status:'recognized',evidence_status:'captured'}]}};
+    return {session:{id:'s1',status:'finished',app_package:'com.kfb.model',steps:[{id:'tap-1',sequence:1,type:'tap',point:{x:10,y:20},screenshot_path:'/tmp/one.png',semantic_description:'我的',semantic_source:'ai_visual',semantic_recognition_status:'recognized',evidence_status:'captured'}]}};
   };
   f.run("deviceRecorderSession={id:'s1',status:'finished',app_package:'com.kfb.model',steps:[{id:'tap-1',sequence:1,type:'tap',point:{x:10,y:20},screenshot_path:'/tmp/one.png',semantic_description:'AI建模',evidence_status:'captured'}]}; renderDeviceRecorder()");
   const pending = f.run("retryRecorderRecognition('tap-1')");
@@ -284,10 +284,15 @@ test('defaults recording to 智小白3D and shows its automatic launch as the fi
   f.run('renderDeviceRecorder()');
   assert.equal(f.dom.window.document.getElementById('device-recorder-app').value, 'com.kfb.model');
   f.run("deviceRecorderSession={id:'s1',status:'recording',app_package:'com.kfb.model',steps:[{id:'tap-1',sequence:1,type:'tap',semantic_description:'我的',evidence_status:'captured'}]}; renderDeviceRecorder()");
+  assert.equal(f.dom.window.document.querySelector('[data-recorder-auto-launch]'), null);
+  assert.match(f.dom.window.document.querySelector('.device-recorder-timeline').textContent, /2.*点击.*我的/s);
+  f.run("selectRecorderStep('__auto_launch__')");
   const automatic = f.dom.window.document.querySelector('[data-recorder-auto-launch]');
   assert.ok(automatic);
   assert.match(automatic.textContent, /1.*启动应用.*智小白3D.*com\.kfb\.model/s);
-  assert.match(f.dom.window.document.querySelector('.device-recorder-timeline').textContent, /2.*点击.*我的/s);
+  assert.doesNotMatch(f.dom.window.document.querySelector('.device-recorder-timeline').textContent, /点击/);
+  f.run("selectRecorderStep('tap-1')");
+  assert.equal(f.dom.window.document.querySelector('[data-recorder-auto-launch]'), null);
 });
 
 test('shows an empty state when no Android phone is online', async () => {
@@ -472,7 +477,7 @@ test('a recognized tap with an unchanged phone screen is not reported as a succe
   const f = fixture();
   const replies = [];
   f.context.remoteTab = {closed:false,postMessage(message){replies.push(message)}};
-  f.run("deviceRecorderWindow=remoteTab; deviceRecorderSession={id:'session-1',status:'recording',pre_action_frame_status:'ready',steps:[{id:'s1',sequence:1,type:'tap',ui_node:{text:'打印记录'},screen_change_status:'unchanged',evidence_status:'captured'}]}; notifyRecorderStepResult()");
+  f.run("deviceRecorderWindow=remoteTab; deviceRecorderSession={id:'session-1',status:'recording',pre_action_frame_status:'ready',steps:[{id:'s1',sequence:1,type:'tap',semantic_description:'打印记录',screen_change_status:'unchanged',evidence_status:'captured'}]}; notifyRecorderStepResult()");
   assert.equal(replies.length, 1);
   assert.equal(replies[0].success, true);
   assert.equal(replies[0].screenUnchanged, true);
@@ -616,4 +621,31 @@ test('a terminal session stops heartbeat polling even while viewing history', as
   await f.run('refreshDeviceRecording()');
   assert.ok(cleared.includes(77));
   assert.equal(f.run('deviceRecorderView'),'history');
+});
+
+ test('XML text and IDs cannot be reported as recognized or allow YAML generation', () => {
+  const f = fixture();
+  for (const fields of ["ui_node:{text:'2026-09-21 18:48:09'}", "ui_node:{resource_id:'com.kfb.model:id/app_home_icon_container'}", "semantic_description:'日期',semantic_source:'ui_xml'", "semantic_description:'旧标签',semantic_recognition_status:'failed'"]) {
+    f.run(`deviceRecorderSession={id:'s',status:'finished',steps:[{id:'tap',sequence:1,type:'tap',evidence_status:'captured',${fields}}]};renderDeviceRecorder()`);
+    assert.equal(f.run('recorderCanGenerate(deviceRecorderSession)'), false);
+    assert.equal(f.run('recorderStepDescription(deviceRecorderSession.steps[0])'), '');
+  }
+});
+
+test('an old generated YAML cannot bypass unconfirmed target checks when saving', async () => {
+  const f = fixture();
+  f.run("deviceRecorderSession={id:'s',status:'finished',steps:[{id:'tap',type:'tap',ui_node:{text:'背景日期'}}]};deviceRecorderGenerated={yaml:'old script'};renderDeviceRecorder()");
+  await f.run('saveDeviceRecordingYaml()');
+  assert.equal(f.calls.length, 0);
+});
+
+ test('first incoming tap replaces the automatic empty preview but explicit launch selection persists', () => {
+  const f = fixture();
+  f.run("deviceRecorderSession={id:'s',status:'recording',app_package:'com.kfb.model',steps:[]};renderDeviceRecorder()");
+  assert.ok(f.dom.window.document.querySelector('[data-recorder-auto-launch]'));
+  f.run("deviceRecorderSession.steps.push({id:'home',type:'tap',sequence:1,semantic_description:'首页'});renderDeviceRecorder(true)");
+  assert.equal(f.dom.window.document.querySelector('[data-recorder-auto-launch]'), null);
+  assert.match(f.dom.window.document.querySelector('.device-recorder-timeline').textContent, /点击.*首页/s);
+  f.run("selectRecorderStep('__auto_launch__');renderDeviceRecorder(true)");
+  assert.ok(f.dom.window.document.querySelector('[data-recorder-auto-launch]'));
 });

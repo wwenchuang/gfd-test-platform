@@ -872,8 +872,8 @@ def _visual_image_assets(screenshot_path: str, point: Dict[str, Any]) -> list[Di
         from PIL import Image, ImageDraw
         image = Image.open(io.BytesIO(png)).convert("RGB")
         x, y = int(point.get("x") or 0), int(point.get("y") or 0)
-        # Send only the tapped neighborhood. A wider crop or the whole screen
-        # lets vision models name a prominent adjacent navigation button.
+        # Keep the target closeup first, with an unmarked full frame for modal
+        # context and text that the marker could cover.
         side = min(image.width, image.height, max(80, round(image.width * 0.28)))
         left = max(0, min(image.width - side, x - side // 2))
         top = max(0, min(image.height - side, y - side // 2))
@@ -887,7 +887,10 @@ def _visual_image_assets(screenshot_path: str, point: Dict[str, Any]) -> list[Di
         crop = crop.resize((side * 4, side * 4), Image.Resampling.LANCZOS)
         output = io.BytesIO()
         crop.save(output, format="PNG")
-        return [{"name": "tap-target-closeup.png", "mime": "image/png", "base64": base64.b64encode(output.getvalue()).decode("ascii")}]
+        return [
+            {"name": "tap-target-closeup.png", "mime": "image/png", "base64": base64.b64encode(output.getvalue()).decode("ascii")},
+            {"name": "phone-context.png", "mime": "image/png", "base64": base64.b64encode(png).decode("ascii")},
+        ]
     except (ImportError, OSError, ValueError):
         return [{"name": os.path.basename(screenshot_path), "mime": "image/png", "base64": base64.b64encode(png).decode("ascii")}]
 
@@ -1059,6 +1062,13 @@ def save_recording_evidence(runner_id: str, payload: Dict[str, Any], *, store_pa
         return _public(row)
 
 
+def confirmed_recording_description(step: Dict[str, Any]) -> str:
+    """XML may describe obscured background nodes; it is not visual confirmation."""
+    if step.get("semantic_source") == "ui_xml" or step.get("semantic_recognition_status") in {"pending", "running", "failed"}:
+        return ""
+    return _control_label(step.get("semantic_description"))[:200]
+
+
 def recognize_recording_semantics(
     session_id: str,
     user: str,
@@ -1079,7 +1089,6 @@ def recognize_recording_semantics(
         for step in row.get("steps") or []:
             if step_id and str(step.get("id") or "") != str(step_id):
                 continue
-            xml_rechecked = False
             if force and step.get("type") in {"tap", "text"} and step.get("evidence_status") == "captured":
                 xml_path = str(step.get("ui_xml_path") or "")
                 if xml_path and os.path.isfile(xml_path):
@@ -1087,31 +1096,15 @@ def recognize_recording_semantics(
                         xml_text = handle.read()
                     point = step.get("point") or step.get("end") or {}
                     step["ui_node"] = _node_at_point(xml_text, _point_in_ui_xml(step, point))
-                    xml_rechecked = True
-            node = step.get("ui_node") if isinstance(step.get("ui_node"), dict) else {}
-            node_text = next((_control_label(node.get(key)) for key in ("text", "content_desc", "resource_id") if _control_label(node.get(key))), "")
-            if force and not xml_rechecked:
-                node_text = ""
-            if force and xml_rechecked and node_text and step.get("evidence_status") == "captured":
-                step["semantic_description"] = node_text
-                step["semantic_source"] = "ui_xml"
-                step.pop("semantic_recognition_request_id", None)
-                step["semantic_confidence"] = 1.0
-                step["semantic_recognition_status"] = "recognized"
-                step.pop("semantic_recognition_error", None)
-                changed = True
-                continue
             if (
                 step.get("type") in {"tap", "text"}
                 and step.get("evidence_status") == "captured"
-                and (force or not str(step.get("semantic_description") or "").strip())
-                and not node_text
+                and (force or not confirmed_recording_description(step))
                 and (force or step.get("semantic_recognition_status") not in {"running", "failed"})
                 and os.path.isfile(str(step.get("screenshot_path") or ""))
             ):
-                if force:
-                    for key in ("semantic_description", "semantic_source", "semantic_confidence"):
-                        step.pop(key, None)
+                for key in ("semantic_description", "semantic_source", "semantic_confidence"):
+                    step.pop(key, None)
                 step["semantic_recognition_status"] = "running"
                 step["semantic_recognition_request_id"] = uuid.uuid4().hex
                 changed = True
@@ -1137,12 +1130,12 @@ def recognize_recording_semantics(
             point = item["point"]
             image_assets = _visual_image_assets(item["screenshot_path"], point)
             image_guide = (
-                "这张图只截取点击点附近，红色圆圈和十字标出实际点击点。仅根据红点处可见的文字或图标命名。"
+                "第一张图只截取点击点附近，红色圆圈和十字标出实际点击点；第二张是未标注的完整截图，用于查看被红点遮挡的文字及前景弹窗。仅根据点击点处可见的文字或图标命名。"
                 if image_assets[0]["name"] == "tap-target-closeup.png" else "这张图是整张手机截图，请严格根据点击坐标判断目标。"
             )
             prompt = f"""你是手机操作录制的控件识别器。截图来自真实 Android 手机，操作类型是{item['type']}，点击坐标为 x={int(point.get('x') or 0)}, y={int(point.get('y') or 0)}（坐标基于整张手机截图）。
 {image_guide}必须识别红点命中的控件，不能因为局部图里另一个图标更显眼就回答它。
-只识别该坐标实际命中的可见控件，用适合 Midscene aiTap/aiInput 的简短中文名称回答。不要描述整页，不要猜测不可见功能，也不要沿用之前步骤的控件名称。
+只识别该坐标实际命中的可见控件，用适合 Midscene aiTap/aiInput 的简短中文名称回答。如果存在弹窗，命中弹窗内的点只能识别前景弹窗的按钮，禁止用遮罩下的日期、列表文字或控件代替。不要描述整页，不要猜测不可见功能，也不要沿用之前步骤的控件名称。
 只输出包含 semantic_description（控件短名称或空字符串）与 confidence（0 到 1 数值）的 JSON。无法确认时 semantic_description 为空字符串。"""
             raw = model_call(
                 prompt,

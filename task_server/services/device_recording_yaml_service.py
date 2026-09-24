@@ -8,21 +8,11 @@ import yaml
 
 from .yaml_executable_scorer import score_midscene_yaml_executable
 from .yaml_service import validate_midscene_yaml
-from .device_recording_service import _control_label
+from .device_recording_service import confirmed_recording_description
 
 
 def _node_description(step: Dict[str, Any]) -> str:
-    reviewed = str(step.get("semantic_description") or "").strip()
-    if reviewed:
-        return reviewed[:200]
-    node = step.get("ui_node") if isinstance(step.get("ui_node"), dict) else {}
-    for key in ("text", "content_desc", "contentDescription", "resource_id", "resourceId"):
-        value = _control_label(node.get(key))
-        if value:
-            if key in {"resource_id", "resourceId"}:
-                value = value.rsplit("/", 1)[-1].replace("_", " ")
-            return value[:200]
-    return ""
+    return confirmed_recording_description(step)
 
 
 def normalize_recorded_step(step: Dict[str, Any]) -> Dict[str, Any]:
@@ -41,7 +31,7 @@ def normalize_recorded_step(step: Dict[str, Any]) -> Dict[str, Any]:
             if step.get("screen_change_status") == "unchanged":
                 result.update(requires_confirmation=True, issue="点击后手机画面未变化，请核对触摸是否生效并重录或删除该步")
         else:
-            result.update(requires_confirmation=True, issue="点击步骤只有坐标，缺少可读控件证据")
+            result.update(requires_confirmation=True, issue="点击控件尚未通过截图识别或人工确认，请重新识别或手动标记")
     elif action_type == "text":
         target = _node_description(step)
         if target:

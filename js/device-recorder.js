@@ -315,7 +315,11 @@ function recorderNodeLabel(value) {
 }
 
 function recorderStepDescription(step) {
-  return step.semantic_description || recorderNodeLabel(step.ui_node?.text) || recorderNodeLabel(step.ui_node?.content_desc) || recorderNodeLabel(step.ui_node?.resource_id) || step.description || step.key || step.text || '';
+  if (['tap', 'text'].includes(step.type)) {
+    if (step.semantic_source === 'ui_xml' || ['pending', 'running', 'failed'].includes(step.semantic_recognition_status)) return '';
+    return recorderNodeLabel(step.semantic_description);
+  }
+  return step.semantic_description || step.description || step.key || step.text || '';
 }
 
 function recorderStepNeedsMeaning(step) {
@@ -343,7 +347,7 @@ function recorderTimelineItem(step, displaySequence = step.sequence) {
     : step.semantic_recognition_status === 'failed' ? '自动识别失败，可手工补充'
     : step.screen_change_status === 'unchanged' ? '页面结构未变化，待核对'
     : step.semantic_source === 'ai_visual' ? `视觉识别 ${Math.round((step.semantic_confidence || 0) * 100)}%`
-    : step.semantic_source === 'ui_xml' ? 'UI 结构识别'
+    : step.semantic_source === 'ui_xml' ? '旧 UI 结构结果，需重新识别'
     : step.semantic_description ? '已人工确认' : step.evidence_status || '';
   return `<article class="${recorderStepNeedsMeaning(step) ? 'needs-confirmation' : ''}"><span>${displaySequence}</span><div><strong>${escapeHtml(actionName)}</strong>${editor}${evidencePreview}<details class="device-recorder-step-tools"><summary>手动标记、编辑或删除</summary><div><input id="recorder-edit-${escapeHtml(step.id)}" maxlength="200" value="${escapeHtml(recorderStepDescription(step))}" placeholder="输入正确控件名称，如：左上角返回"><button class="btn-sm" onclick="editRecorderStep('${escapeHtml(step.id)}')">保存人工标记</button><button class="btn-sm danger" data-action="delete-recording-step" onclick="deleteRecorderStep('${escapeHtml(step.id)}')">删除</button></div></details></div><em>${escapeHtml(evidence)}</em></article>`;
 }
@@ -405,8 +409,10 @@ function renderDeviceRecorder(preserveDraft = false) {
   const automaticLaunch = hasAutomaticLaunch
     ? `<article data-recorder-auto-launch><span>1</span><div><strong>启动应用</strong><small>${escapeHtml(launchApp?.name || session.app_package)} · ${escapeHtml(session.app_package)}</small></div><em>自动加入 YAML</em></article>`
     : '';
-  if (steps.length && !steps.some(step => step.id === deviceRecorderSelectedStepId)) deviceRecorderSelectedStepId = steps[0].id;
-  const selectedStep = steps.find(step => step.id === deviceRecorderSelectedStepId) || steps[0];
+  if (!(hasAutomaticLaunch && deviceRecorderSelectedStepId === '__auto_launch__') && !steps.some(step => step.id === deviceRecorderSelectedStepId)) {
+    deviceRecorderSelectedStepId = steps[0]?.id || '';
+  }
+  const selectedStep = steps.find(step => step.id === deviceRecorderSelectedStepId);
   area.className = 'editor-area';
   area.innerHTML = `<div class="review-page device-recorder-page" data-recorder-session="${escapeHtml(session?.id || '')}">
     <div class="review-head"><div><div class="workflow-kicker">SONIC 原生远控 · 操作旁路记录</div><h2>操作录制</h2><p>手机画面和触控继续由 Sonic 处理；平台只记录你在所选手机上的真实操作。应用用于生成启动步骤，与手机分配互不绑定。</p><div class="generate-hint">操作提示：每次点击后，请等待 Sonic 显示“控件已记录”，并核对手机页面；页面结构未变化时先确认触控是否生效，再继续操作。</div></div><div class="review-actions">${recorderHistoryButton()}<button class="btn-sm" onclick="leaveDeviceRecorder()">返回用例资产</button>${session && session.status !== 'recording' && session.status !== 'generating' ? '<button class="btn-sm primary" data-action="new-device-recording" onclick="newDeviceRecording()">新建录制</button>' : ''}${session && !['recording','generating'].includes(session.status) ? `<button class="btn-sm danger" data-action="delete-current-recording" onclick="deleteDeviceRecording('${escapeHtml(session.id)}')">删除记录</button>` : ''}<span class="status-pill ${session?.status === 'recording' ? 'success' : ''}">${escapeHtml(recorderStatusText(session))}</span></div></div>
@@ -426,8 +432,8 @@ function renderDeviceRecorder(preserveDraft = false) {
         ${session?.status === 'finished' ? `<div class="device-recorder-save"><label class="modal-label">用例名称</label><input id="device-recorder-task-name" value="${escapeHtml(deviceRecorderGenerated?.task_name || '录制生成用例')}" oninput="syncRecorderFileName(this.value)"><div id="device-recorder-name-note" class="generate-hint" hidden>名称已修改；保存时会按新名称重新生成 YAML。</div><label class="modal-label">保存到模块</label><select id="device-recorder-module">${recorderModuleOptions(session)}</select>${recorderModuleOptions(session) ? '' : '<div class="agent-risk show">当前应用没有已关联模块，请先到应用配置关联模块。</div>'}<label class="modal-label">YAML 文件名</label><input id="device-recorder-file" value="${escapeHtml(deviceRecorderGenerated?.task_name || '录制生成用例')}.yaml" oninput="deviceRecorderFileNameEdited=true"><button class="btn-sm success" ${deviceRecorderGenerated && recorderModuleOptions(session) ? '' : 'disabled'} onclick="saveDeviceRecordingYaml()">保存到用例资产</button></div>` : ''}
       </section>
       <section class="review-panel"><div class="review-head compact"><div><h3>步骤时间线</h3><p>${steps.length + (hasAutomaticLaunch ? 1 : 0)} 个步骤${hasAutomaticLaunch ? '（含自动启动）' : ''}</p></div>${session?.status === 'recording' ? '<button class="btn-sm" onclick="addRecorderCheckpoint()">添加检查点</button>' : ''}</div>
-        <div class="device-recorder-track">${steps.map(step => `<button class="${step.id === selectedStep?.id ? 'active' : ''}" onclick="selectRecorderStep('${escapeHtml(step.id)}')"><span>${Number(step.sequence || 0) + (hasAutomaticLaunch ? 1 : 0)}</span><small>${step.screen_change_status === 'unchanged' ? '⚠ ' : ''}${escapeHtml(recorderStepDescription(step) || '待识别')}</small></button>`).join('')}</div>
-        <div class="device-recorder-timeline">${automaticLaunch}${selectedStep ? recorderTimelineItem(selectedStep, Number(selectedStep.sequence || 0) + (hasAutomaticLaunch ? 1 : 0)) : '<div class="job-empty">启动应用后，还没有记录到手机操作。请在打开的 Sonic 页面中操作手机。</div>'}</div>
+        <div class="device-recorder-track">${hasAutomaticLaunch ? `<button class="${deviceRecorderSelectedStepId === '__auto_launch__' || !steps.length ? 'active' : ''}" onclick="selectRecorderStep('__auto_launch__')"><span>1</span><small>启动应用（自动）</small></button>` : ''}${steps.map(step => `<button class="${step.id === selectedStep?.id ? 'active' : ''}" onclick="selectRecorderStep('${escapeHtml(step.id)}')"><span>${Number(step.sequence || 0) + (hasAutomaticLaunch ? 1 : 0)}</span><small>${step.screen_change_status === 'unchanged' ? '⚠ ' : ''}${escapeHtml(recorderStepDescription(step) || '待识别')}</small></button>`).join('')}</div>
+        <div class="device-recorder-timeline">${deviceRecorderSelectedStepId === '__auto_launch__' || (!steps.length && hasAutomaticLaunch) ? automaticLaunch : selectedStep ? recorderTimelineItem(selectedStep, Number(selectedStep.sequence || 0) + (hasAutomaticLaunch ? 1 : 0)) : '<div class="job-empty">启动应用后，还没有记录到手机操作。请在打开的 Sonic 页面中操作手机。</div>'}</div>
         <pre id="device-recorder-yaml" class="agent-artifact-box" ${deviceRecorderGenerated?.yaml ? '' : 'hidden'}>${escapeHtml(deviceRecorderGenerated?.yaml || '')}</pre>
       </section>
     </div></div>`;
@@ -970,6 +976,7 @@ async function generateDeviceRecordingYaml() {
 
 async function saveDeviceRecordingYaml() {
   if (!deviceRecorderGenerated?.yaml) return showToast('请先生成 YAML', 'error');
+  if ((deviceRecorderSession?.steps || []).some(recorderStepNeedsMeaning)) return showToast('请先重新识别或手工确认未识别步骤，再重新生成 YAML', 'error');
   const taskName = document.getElementById('device-recorder-task-name')?.value.trim() || '录制生成用例';
   const moduleName = document.getElementById('device-recorder-module')?.value || '';
   let fileName = document.getElementById('device-recorder-file')?.value.trim() || '';

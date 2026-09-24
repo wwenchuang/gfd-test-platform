@@ -297,7 +297,7 @@ class DeviceRecordingServiceTest(unittest.TestCase):
 
         def model_call(prompt, **kwargs):
             self.assertIn("红色圆圈", prompt)
-            self.assertEqual(len(kwargs["image_assets"]), 1)
+            self.assertEqual(len(kwargs["image_assets"]), 2)
             closeup = Image.open(io.BytesIO(base64.b64decode(kwargs["image_assets"][0]["base64"])))
             self.assertEqual(closeup.size, (1208, 1208))
             self.assertNotEqual(closeup.getpixel((460, 880)), (255, 255, 255))
@@ -308,7 +308,7 @@ class DeviceRecordingServiceTest(unittest.TestCase):
         )
         self.assertEqual(recognized["steps"][0]["semantic_description"], "底部导航首页")
 
-    def test_small_video_frame_only_sends_target_neighborhood(self):
+    def test_small_video_frame_includes_unmarked_context_for_foreground_dialogs(self):
         from PIL import Image
         image = Image.new("RGB", (358, 800), "white")
         output = io.BytesIO()
@@ -317,7 +317,7 @@ class DeviceRecordingServiceTest(unittest.TestCase):
             file.write(output.getvalue())
             file.flush()
             assets = recording._visual_image_assets(file.name, {"x": 323, "y": 764})
-        self.assertEqual(len(assets), 1)
+        self.assertEqual(len(assets), 2)
         self.assertEqual(assets[0]["name"], "tap-target-closeup.png")
         closeup = Image.open(io.BytesIO(base64.b64decode(assets[0]["base64"])))
         self.assertEqual(closeup.size, (400, 400))
@@ -786,6 +786,46 @@ class DeviceRecordingServiceTest(unittest.TestCase):
         )
         self.assertEqual(adjusted["steps"][0]["ui_node"]["text"], "我的")
 
+    def test_xml_background_text_and_resource_id_require_visual_confirmation(self):
+        for node, label in [
+            ('text="2026-09-21 18:48:09"', '删除确认弹窗的确定按钮'),
+            ('resource-id="com.kfb.model:id/app_home_icon_container"', '底部导航首页'),
+        ]:
+            with self.subTest(node=node):
+                session = self.create()
+                self.prepare_frame(session, xml=f'<hierarchy><node {node} bounds="[0,0][200,200]" /></hierarchy>')
+                step = recording.append_recorded_action(
+                    session['id'], session['recording_token'],
+                    {'event_id': 'target', 'type': 'tap', 'point': {'x': 50, 'y': 60}, 'device_id': 'ecbfd645'},
+                    store_path=self.store, evidence_dir=os.path.join(self.tempdir.name, 'evidence'))
+                calls = []
+                def recognize(*args, **kwargs):
+                    calls.append(kwargs)
+                    return json.dumps({'semantic_description': label, 'confidence': 0.95})
+                result = recording.recognize_recording_semantics(session['id'], 'admin', store_path=self.store, model_call=recognize)
+                self.assertEqual(len(calls), 1)
+                self.assertEqual(result['steps'][0]['semantic_description'], label)
+                recording.finish_recording_session(session['id'], 'admin', store_path=self.store)
+
+    def test_failed_visual_recognition_does_not_fall_back_to_xml_or_retry_forever(self):
+        session = self.create()
+        self.prepare_frame(session, xml='<hierarchy><node text="背景日期" bounds="[0,0][200,200]" /></hierarchy>')
+        step = recording.append_recorded_action(session['id'], session['recording_token'],
+            {'event_id': 'target', 'type': 'tap', 'point': {'x': 50, 'y': 60}, 'device_id': 'ecbfd645'},
+            store_path=self.store, evidence_dir=os.path.join(self.tempdir.name, 'evidence'))
+        calls = []
+        def unavailable(*args, **kwargs):
+            calls.append(True)
+            raise TimeoutError('model timeout')
+        result = recording.recognize_recording_semantics(session['id'], 'admin', store_path=self.store, model_call=unavailable)
+        self.assertEqual(result['steps'][0]['semantic_recognition_status'], 'failed')
+        self.assertEqual(recording.confirmed_recording_description(result['steps'][0]), '')
+        recording.recognize_recording_semantics(session['id'], 'admin', store_path=self.store, model_call=unavailable)
+        self.assertEqual(len(calls), 1)
+        recording.update_recorded_step(session['id'], 'admin', step['id'], '弹窗确认', store_path=self.store)
+        recording.recognize_recording_semantics(session['id'], 'admin', store_path=self.store, model_call=unavailable)
+        self.assertEqual(len(calls), 1)
+
     def test_forced_recognition_rechecks_xml_after_click_point_correction(self):
         session = self.create()
         request = recording.pending_recording_evidence_requests("win-runner-01", store_path=self.store)[0]
@@ -805,11 +845,11 @@ class DeviceRecordingServiceTest(unittest.TestCase):
         called = []
         result = recording.recognize_recording_semantics(
             session["id"], "admin", store_path=self.store, step_id=step["id"], force=True,
-            model_call=lambda *_args, **_kwargs: called.append(True),
+            model_call=lambda *_args, **_kwargs: (called.append(True) or '{"semantic_description":"我的","confidence":0.95}'),
         )
         self.assertEqual(result["steps"][0]["semantic_description"], "我的")
-        self.assertEqual(result["steps"][0]["semantic_source"], "ui_xml")
-        self.assertEqual(called, [])
+        self.assertEqual(result["steps"][0]["semantic_source"], "ai_visual")
+        self.assertEqual(called, [True])
 
     def test_owner_can_adjust_and_reset_the_click_point_on_the_same_evidence(self):
         session = self.create(runner_id="", device_id="")
