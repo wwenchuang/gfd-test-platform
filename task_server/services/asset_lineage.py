@@ -268,8 +268,6 @@ def copy_or_move(source, target, *, move=False, overwrite=False, before=None):
         if dst and not overwrite:
             raise FileExistsError("目标文件已存在，如需覆盖请勾选覆盖")
         data = _path(skey).read_bytes()
-        if not move and dst and dst["version"]["content_sha256"] == _hash(data):
-            return dst  # no filesystem transition to attest, so no new authored revision
         if _hash(data) != src["version"]["content_sha256"]:
             raise OSError("source changed during copy")
         if before:

@@ -406,3 +406,19 @@ with actor_context({"kind":"user","user_id":"user-b","username":"bob","display_n
     assert recovered["creator"] == before["creator"]
     assert recovered["version"]["author"]["user_id"] == "user-b"
     assert "after crash" not in lineage.db_path().read_bytes().decode('latin1')
+
+
+def test_copy_over_identical_bytes_records_copy_revision(assets):
+    lineage, root = assets
+    p, q = root / "a.yaml", root / "b.yaml"
+    with actor_context(A):
+        storage.write_text_file(p, "same")
+        storage.write_text_file(q, "same")
+    original = lineage.snapshot(q)[0]
+    with actor_context(B):
+        lineage.copy_or_move(p, q, overwrite=True)
+    copied = lineage.snapshot(q)[0]
+    assert copied["asset_id"] == original["asset_id"]
+    assert copied["version"]["version_id"] != original["version"]["version_id"]
+    assert copied["version"]["author"]["user_id"] == "user-b"
+    assert copied["copied_from"]["asset_id"] == lineage.snapshot(p)[0]["asset_id"]
