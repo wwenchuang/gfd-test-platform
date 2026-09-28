@@ -1381,33 +1381,52 @@ def _get_file(handler, qs):
 @route_get("/api/file/attribution")
 def _get_file_attribution(handler, qs):
     """Existing /api/file/* policy checks module scope before this handler."""
-    from task_server.services.asset_lineage import mutation_lock, snapshot, versions
+    from task_server.services.asset_lineage import mutation_lock, snapshot, versions_page
     from task_server.services.operation_attribution import current_actor
     from task_server.operation_http import mark_resource
     try:
         module, filename = qs.get("module", ""), qs.get("file", "")
         if not module or any(qs.get(k, "") not in {"", "mine"} for k in ("creator", "editor")):
             raise ValueError("module required; creator/editor must be mine")
+        limit = int(qs.get("limit", "50"))
+        after = qs.get("after", "")
+        before = int(qs["revisions_before"]) if qs.get("revisions_before") else None
+        if not 1 <= limit <= 100 or (before is not None and not 1 <= before <= 2**63 - 1):
+            raise ValueError("invalid page bounds")
+        if (filename and after) or (not filename and before is not None):
+            raise ValueError("cursor does not match query kind")
+        for name in (filename, after):
+            if name and (os.path.basename(name) != name or not is_visible_yaml_filename(name)):
+                raise ValueError("invalid filename cursor")
         directory = safe_join(TASK_DIR, module)
-        if filename and (os.path.basename(filename) != filename or not is_visible_yaml_filename(filename)):
-            raise ValueError("invalid filename")
-        names = [filename] if filename else sorted(os.listdir(directory))
+        # Enumeration is O(directory entries); only this bounded candidate page
+        # may read/hash bytes or touch lineage. Filtering must not refill a page.
+        names = [filename] if filename else sorted(
+            name for name in os.listdir(directory) if is_visible_yaml_filename(name) and name > after)
+        has_more = len(names) > limit
+        names = names[:limit]
         assets = []
         result = {"ok": True, "assets": assets}
+        if not filename:
+            result["page"] = {"limit": limit, "scanned": len(names), "has_more": has_more,
+                              "next_after": names[-1] if has_more else None}
         user_id = current_actor().get("user_id")
         for name in names:
-            if not is_visible_yaml_filename(name):
-                continue
             path = safe_join(directory, name)
             with mutation_lock():
-                row, _ = snapshot(path)
+                try:
+                    row, _ = snapshot(path)
+                except FileNotFoundError:
+                    if filename:
+                        raise
+                    continue
                 if qs.get("creator") == "mine" and (not user_id or row["creator"].get("user_id") != user_id):
                     continue
                 if qs.get("editor") == "mine" and (not user_id or row["version"]["author"].get("user_id") != user_id):
                     continue
                 assets.append({"module": module, "file": name, **row})
                 if filename:
-                    result["versions"] = versions(path)
+                    result["versions"], result["revisions_page"] = versions_page(path, limit=limit, before=before)
                     mark_resource(handler, "file", row["asset_id"])
         handler._json(result)
     except FileNotFoundError:
@@ -5751,9 +5770,12 @@ def _post_file_save(handler, qs):
             if not unchanged:
                 from task_server.services.asset_lineage import source_context
                 with source_context(source_recording_id=source_recording_id):
-                    write_text_file(fpath, content)
-            from task_server.services.asset_lineage import snapshot
-            attribution = snapshot(fpath)[0]
+                    # The versioned write validates target bytes/inode before
+                    # publishing and returns the exact committed revision.
+                    attribution = write_text_file(fpath, content)
+            if unchanged or attribution is None:
+                from task_server.services.asset_lineage import snapshot
+                attribution = snapshot(fpath)[0]
     except ValueError:
         handler._json({"ok": False, "error": "非法路径"}, 400)
         return

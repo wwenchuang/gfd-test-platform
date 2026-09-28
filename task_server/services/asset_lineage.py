@@ -234,6 +234,36 @@ def versions(path):
         return sorted(result, key=lambda x: x["created_at"], reverse=True)
 
 
+def versions_page(path, *, limit=50, before=None):
+    """Bounded history in reverse commit order, using the asset index's rowid.
+
+    The cursor is an exclusive rowid bound, never a resource selector. Every
+    page resolves the authorized current path/asset again. Call under the same
+    outer mutation lock as snapshot when returning metadata and history together.
+    """
+    if not isinstance(limit, int) or not 1 <= limit <= 100:
+        raise ValueError("invalid history limit")
+    if before is not None and (not isinstance(before, int) or not 1 <= before <= 2**63 - 1):
+        raise ValueError("invalid history cursor")
+    key = _key(path)
+    with mutation_lock(), _database() as conn:
+        row = _sync(conn, key)
+        if not row:
+            raise FileNotFoundError(path)
+        sql = "SELECT rowid,data FROM revisions WHERE asset_id=?"
+        params = [row["asset_id"]]
+        if before is not None:
+            sql += " AND rowid<?"
+            params.append(before)
+        rows = conn.execute(sql + " ORDER BY rowid DESC LIMIT ?", (*params, limit + 1)).fetchall()
+        has_more = len(rows) > limit
+        rows = rows[:limit]
+        return [json.loads(data) for _, data in rows], {
+            "limit": limit, "has_more": has_more,
+            "next_before": str(rows[-1][0]) if has_more else None,
+        }
+
+
 def write_text(path, text):
     from task_server.storage import _write_text_file
     key, data = _key(path), (text or "").encode("utf-8")

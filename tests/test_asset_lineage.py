@@ -231,9 +231,12 @@ def test_recording_source_requires_verified_owner_and_matching_generated_yaml(as
     monkeypatch.setattr(device_recording_service, "get_recording_session", lambda _id: session)
     monkeypatch.setattr(routes, "_authenticated_user", lambda _h: "alice")
     body = {"module": "M", "file": "record.yaml", "content": "recorded", "sourceRecordingID": "recording-1"}
+    h = Handler(body)
     with actor_context(A):
-        routes._post_file_save(Handler(body), {})
+        routes._post_file_save(h, {})
     row = lineage.snapshot(root / "M" / "record.yaml")[0]
+    assert h.result["attribution"] == row
+    assert row["version"]["source_recording_id"] == "recording-1"
     assert row["source_recording_id"] == "recording-1"
     monkeypatch.setattr(routes, "_authenticated_user", lambda _h: "bob")
     h = Handler({**body, "file": "forged.yaml"})
@@ -357,9 +360,10 @@ def test_failed_same_content_restore_cannot_publish_author(assets, monkeypatch):
 def test_save_response_keeps_the_version_written_by_this_request(assets, routes, monkeypatch):
     lineage, root = assets
     p = root / "M" / "a.yaml"
-    original_snapshot = lineage.snapshot
+    original_write = routes.write_text_file
     threads = []
-    def concurrent_snapshot(path):
+    def concurrent_write(path, content):
+        row = original_write(path, content)
         if not threads:
             def competing_save():
                 with actor_context(A):
@@ -368,8 +372,8 @@ def test_save_response_keeps_the_version_written_by_this_request(assets, routes,
             threads.append(t)
             t.start()
             t.join(0.1)
-        return original_snapshot(path)
-    monkeypatch.setattr(lineage, "snapshot", concurrent_snapshot)
+        return row
+    monkeypatch.setattr(routes, "write_text_file", concurrent_write)
     h = Handler({"module": "M", "file": "a.yaml", "content": "mine"})
     with actor_context(B):
         routes._post_file_save(h, {})
@@ -476,3 +480,166 @@ def test_attribution_response_history_matches_asset_during_concurrent_mutation(a
     history = handler.result["versions"]
     assert history and all(version["asset_id"] == row["asset_id"] for version in history)
     assert history[0]["version_id"] == row["version"]["version_id"]
+
+
+def test_attribution_list_bounded_candidates_and_late_owner(assets, routes, monkeypatch):
+    lineage, root = assets
+    module = root / 'M'
+    module.mkdir()
+    for i in range(120):
+        (module / f'{i:03}.yaml').write_text('legacy')
+    with actor_context(A):
+        storage.write_text_file(module / '120.yaml', 'owned')
+    original = lineage.snapshot
+    calls = []
+    def counted(path):
+        calls.append(path)
+        return original(path)
+    monkeypatch.setattr(lineage, 'snapshot', counted)
+    h = Handler()
+    query = {'module': 'M', 'creator': 'mine'}
+    with actor_context(A):
+        routes._get_file_attribution(h, query)
+        assert len(calls) == 50
+        assert h.result['assets'] == []
+        assert h.result['page'] == {'limit': 50, 'scanned': 50, 'has_more': True, 'next_after': '049.yaml'}
+        assert 'total' not in h.result
+        query['after'] = h.result['page']['next_after']
+        routes._get_file_attribution(h, query)
+        assert len(calls) == 100
+        query['after'] = h.result['page']['next_after']
+        routes._get_file_attribution(h, query)
+    assert [x['file'] for x in h.result['assets']] == ['120.yaml']
+    assert h.result['page']['has_more'] is False
+    assert h.result['page']['next_after'] is None
+    assert 'versions' not in h.result
+
+
+def test_attribution_list_skips_deleted_candidate(assets, routes, monkeypatch):
+    lineage, root = assets
+    for name in ('a.yaml', 'b.yaml'):
+        storage.write_text_file(root / 'M' / name, name)
+    original = lineage.snapshot
+    def deleted(path):
+        if str(path).endswith('a.yaml'):
+            (root / 'M' / 'a.yaml').unlink()
+        return original(path)
+    monkeypatch.setattr(lineage, 'snapshot', deleted)
+    h = Handler()
+    routes._get_file_attribution(h, {'module': 'M'})
+    assert h.status == 200
+    assert [x['file'] for x in h.result['assets']] == ['b.yaml']
+
+
+@pytest.mark.parametrize('query', [
+    {'limit': '0'}, {'limit': '101'}, {'limit': '1.5'}, {'limit': '-1'},
+    {'after': '../Other/a.yaml'}, {'after': '.hidden.yaml'},
+    {'file': 'a.yaml', 'revisions_before': '-1'},
+    {'file': 'a.yaml', 'revisions_before': '999999999999999999999999'},
+])
+def test_attribution_rejects_invalid_paging(assets, routes, query):
+    storage.write_text_file(assets[1] / 'M' / 'a.yaml', 'a')
+    h = Handler()
+    routes._get_file_attribution(h, {'module': 'M', **query})
+    assert h.status == 400
+
+
+def test_attribution_revision_pages_are_bounded_and_complete(assets, routes, monkeypatch):
+    lineage, root = assets
+    p = root / 'M' / 'a.yaml'
+    for i in range(7):
+        storage.write_text_file(p, str(i))
+    expected = [v['version_id'] for v in lineage.versions(p)]
+    # HTTP must not materialize the legacy unbounded history method.
+    monkeypatch.setattr(lineage, 'versions', lambda _: pytest.fail('unbounded history read'))
+    h, seen = Handler(), []
+    query = {'module': 'M', 'file': 'a.yaml', 'limit': '3'}
+    while True:
+        routes._get_file_attribution(h, query)
+        assert h.status == 200
+        assert len(h.result['versions']) <= 3
+        assert all(v['asset_id'] == h.result['assets'][0]['asset_id'] for v in h.result['versions'])
+        seen.extend(v['version_id'] for v in h.result['versions'])
+        page = h.result['revisions_page']
+        if not page['has_more']:
+            assert page['next_before'] is None
+            break
+        query['revisions_before'] = page['next_before']
+    assert seen == expected
+
+
+def test_save_reuses_committed_metadata_without_postcommit_snapshot(assets, routes, monkeypatch):
+    lineage, root = assets
+    snapshots = []
+    original_snapshot = lineage.snapshot
+    def counted(path):
+        snapshots.append(path)
+        return original_snapshot(path)
+    monkeypatch.setattr(lineage, 'snapshot', counted)
+    h = Handler({'module': 'M', 'file': 'a.yaml', 'content': 'written'})
+    with actor_context(A):
+        routes._post_file_save(h, {})
+    assert snapshots == []
+    assert h.result['attribution']['version']['content_sha256'] == hashlib.sha256(b'written').hexdigest()
+    assert h.result['attribution']['version']['author'] == A
+    # Unchanged saves still reconcile external writes and return current truth.
+    (root / 'M' / 'a.yaml').write_text('external')
+    h.body['content'] = 'external'
+    with actor_context(B):
+        routes._post_file_save(h, {})
+    assert len(snapshots) == 1
+    assert h.result['unchanged'] is True
+    assert h.result['attribution']['version']['author']['kind'] == 'unknown'
+    assert h.result['attribution']['version']['content_sha256'] == hashlib.sha256(b'external').hexdigest()
+
+
+def test_save_hidden_module_still_rejects_nonasset_path(assets, routes):
+    h = Handler({'module': '.hidden', 'file': 'a.yaml', 'content': 'a'})
+    routes._post_file_save(h, {})
+    assert h.status == 400
+
+
+def test_attribution_max_page_and_revision_decode_budget(assets, routes, monkeypatch):
+    lineage, root = assets
+    directory = root / 'M'
+    directory.mkdir()
+    for i in range(105):
+        (directory / f'{i:03}.yaml').write_text('legacy')
+    calls = []
+    original_snapshot = lineage.snapshot
+    def counted(path):
+        calls.append(path)
+        return original_snapshot(path)
+    monkeypatch.setattr(lineage, 'snapshot', counted)
+    h = Handler()
+    routes._get_file_attribution(h, {'module': 'M', 'limit': '100'})
+    assert len(calls) == len(h.result['assets']) == 100
+    assert h.result['page']['next_after'] == '099.yaml'
+    p = directory / '000.yaml'
+    for i in range(15):
+        storage.write_text_file(p, str(i))
+    original_loads = lineage.json.loads
+    decoded = []
+    def counted_loads(data, *args, **kwargs):
+        row = original_loads(data, *args, **kwargs)
+        if isinstance(row, dict) and 'version_id' in row:
+            decoded.append(row)
+        return row
+    monkeypatch.setattr(lineage.json, 'loads', counted_loads)
+    routes._get_file_attribution(h, {'module': 'M', 'file': '000.yaml', 'limit': '3'})
+    assert len(decoded) == 3
+
+
+def test_save_reuse_still_detects_external_change_before_publish(assets, routes, monkeypatch):
+    lineage, root = assets
+    target = root / 'M' / 'a.yaml'
+    original_finish = lineage._finish
+    def external_change(conn, intent_id, plan):
+        target.write_text('external-race')
+        return original_finish(conn, intent_id, plan)
+    monkeypatch.setattr(lineage, '_finish', external_change)
+    with actor_context(A), pytest.raises(OSError, match='changed during mutation'):
+        routes._post_file_save(Handler({'module': 'M', 'file': 'a.yaml', 'content': 'mine'}), {})
+    row, data = lineage.snapshot(target)
+    assert data == b'external-race'
+    assert row['version']['author']['kind'] == 'unknown'
