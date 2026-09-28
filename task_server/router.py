@@ -1381,7 +1381,7 @@ def _get_file(handler, qs):
 @route_get("/api/file/attribution")
 def _get_file_attribution(handler, qs):
     """Existing /api/file/* policy checks module scope before this handler."""
-    from task_server.services.asset_lineage import snapshot, versions
+    from task_server.services.asset_lineage import mutation_lock, snapshot, versions
     from task_server.services.operation_attribution import current_actor
     from task_server.operation_http import mark_resource
     try:
@@ -1393,21 +1393,22 @@ def _get_file_attribution(handler, qs):
             raise ValueError("invalid filename")
         names = [filename] if filename else sorted(os.listdir(directory))
         assets = []
+        result = {"ok": True, "assets": assets}
         user_id = current_actor().get("user_id")
         for name in names:
             if not is_visible_yaml_filename(name):
                 continue
             path = safe_join(directory, name)
-            row, _ = snapshot(path)
-            if qs.get("creator") == "mine" and (not user_id or row["creator"].get("user_id") != user_id):
-                continue
-            if qs.get("editor") == "mine" and (not user_id or row["version"]["author"].get("user_id") != user_id):
-                continue
-            assets.append({"module": module, "file": name, **row})
-        result = {"ok": True, "assets": assets}
-        if filename and assets:
-            result["versions"] = versions(safe_join(directory, filename))
-            mark_resource(handler, "file", assets[0]["asset_id"])
+            with mutation_lock():
+                row, _ = snapshot(path)
+                if qs.get("creator") == "mine" and (not user_id or row["creator"].get("user_id") != user_id):
+                    continue
+                if qs.get("editor") == "mine" and (not user_id or row["version"]["author"].get("user_id") != user_id):
+                    continue
+                assets.append({"module": module, "file": name, **row})
+                if filename:
+                    result["versions"] = versions(path)
+                    mark_resource(handler, "file", row["asset_id"])
         handler._json(result)
     except FileNotFoundError:
         handler._json({"ok": False, "error": "不存在"}, 404)

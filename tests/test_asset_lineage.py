@@ -422,3 +422,57 @@ def test_copy_over_identical_bytes_records_copy_revision(assets):
     assert copied["version"]["version_id"] != original["version"]["version_id"]
     assert copied["version"]["author"]["user_id"] == "user-b"
     assert copied["copied_from"]["asset_id"] == lineage.snapshot(p)[0]["asset_id"]
+
+
+@pytest.mark.parametrize("mutation", ["recreate", "overwrite_move", "edit"])
+def test_attribution_response_history_matches_asset_during_concurrent_mutation(assets, routes, monkeypatch, mutation):
+    lineage, root = assets
+    target, source = root / "M" / "a.yaml", root / "M" / "source.yaml"
+    storage.write_text_file(target, "original")
+    storage.write_text_file(source, "source")
+    original_snapshot = lineage.snapshot
+    workers, errors = [], []
+    started = threading.Event()
+
+    def mutate():
+        started.set()
+        try:
+            with actor_context(B):
+                if mutation == "recreate":
+                    lineage.delete_file(target)
+                    storage.write_text_file(target, "recreated")
+                elif mutation == "overwrite_move":
+                    lineage.copy_or_move(source, target, move=True, overwrite=True)
+                else:
+                    storage.write_text_file(target, "edited")
+        except Exception as exc:
+            errors.append(exc)
+
+    def interleaved_snapshot(path):
+        row = original_snapshot(path)
+        if not workers:
+            worker = threading.Thread(target=mutate, daemon=True)
+            workers.append(worker)
+            worker.start()
+            assert started.wait(1)
+            worker.join(0.2)
+        return row
+
+    class NetworkHandler(Handler):
+        def _json(self, data, status=200):
+            # A real network send must not retain the asset lock. Let the writer
+            # finish here to catch a fix that incorrectly puts _json in the lock.
+            for worker in workers:
+                worker.join(2)
+                assert not worker.is_alive(), "response send still holds mutation lock"
+            super()._json(data, status)
+
+    monkeypatch.setattr(lineage, "snapshot", interleaved_snapshot)
+    handler = NetworkHandler()
+    bounded_call(routes._get_file_attribution, handler, {"module": "M", "file": "a.yaml"})
+    assert not errors
+    assert handler.status == 200
+    row = handler.result["assets"][0]
+    history = handler.result["versions"]
+    assert history and all(version["asset_id"] == row["asset_id"] for version in history)
+    assert history[0]["version_id"] == row["version"]["version_id"]
