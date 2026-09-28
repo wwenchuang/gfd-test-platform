@@ -217,7 +217,11 @@ def render_ai_skill_prompt(skill_name, payload=None, version="v1", fallback_prom
     if not template:
         return fallback_prompt
     payload_text = json.dumps(payload or {}, ensure_ascii=False, indent=2)
-    return template.replace("{{payload}}", payload_text)
+    rendered = template.replace("{{payload}}", payload_text)
+    if skill_name in {"requirement_analyzer", "scenario_designer", "automation_filter", "visual_grounder"}:
+        from task_server.prompts import get_prompt_center
+        rendered = get_prompt_center().case_design_rules() + "\n\n【当前阶段职责与JSON接口】\n" + rendered
+    return rendered
 
 
 def _merge_missing_output_defaults(value, defaults):
@@ -3048,6 +3052,10 @@ def _compact_analysis_for_automation_filter(analysis, requirement_limit=None):
     for key in ("confidence", "readiness_score", "readiness_level", "source_quality"):
         if key in analysis:
             result[key] = copy.deepcopy(analysis.get(key))
+    for key in ("sources", "questions"):
+        values = normalize_text_list(analysis.get(key))
+        if values:
+            result[key] = values
     return result
 
 
@@ -3064,8 +3072,8 @@ def _compact_scenario_for_automation_filter(scenario):
         value = scenario.get(key)
         if value not in (None, "", []):
             result[key] = copy.deepcopy(value)
-    for key in ("preconditions", "steps", "assertions", "data_requirements", "tags"):
-        values = normalize_text_list(scenario.get(key))[:8]
+    for key in ("preconditions", "steps", "assertions", "data_requirements", "tags", "sources"):
+        values = normalize_text_list(scenario.get(key))
         if values:
             result[key] = values
     return result
@@ -3174,7 +3182,8 @@ def _complete_mindmap_scenarios_from_risks(scenarios, analysis, targets, *, mode
             "requirement_point": point,
             "business_path": f"准备“{risk}”对应的数据或状态 -> 执行{feature}相关流程 -> 检查反馈与最终状态",
             "expected": f"“{risk}”条件下有明确、可复核的业务结果，相关页面与记录状态保持一致",
-            "priority": "P1" if added == 0 else "P2",
+            "priority": "P1",
+            "sources": [f"测试设计补充：需求分析风险“{risk}”"],
             "risk": risk,
             "necessity": f"该场景直接覆盖需求分析识别的风险“{risk}”，与正常主流程的数据态或结果不同，需独立验证。",
             "data_requirements": [f"准备能够触发“{risk}”的测试数据或状态；无法稳定准备时转人工执行"],
@@ -3241,14 +3250,17 @@ def _manual_case_from_unclassified_scenario(scenario, index, used_ids):
     return {
         "case_id": case_id,
         "title": scenario_name,
-        "priority": first_non_empty(scenario.get("priority"), "P2"),
+        "priority": first_non_empty(scenario.get("priority"), "P1"),
+        "preconditions": normalize_text_list(scenario.get("preconditions")),
+        "sources": normalize_text_list(scenario.get("sources")),
+        "execution_status": "未执行",
         "scenario": scenario_name,
         "coverage": point,
         "requirement_point": point,
         "risk": risk,
         "reason": "自动化筛选未返回该设计场景；平台为防止覆盖丢失，先保留为待人工评估。补齐稳定入口、数据和可见断言后可重新生成自动化用例。",
         "suggested_setup": "；".join(setup_values) if setup_values else f"按场景准备“{risk or point}”对应的数据或状态",
-        "steps": steps[:8],
+        "steps": steps,
         "assertions": normalize_text_list(scenario.get("assertions")) or [expected or "页面反馈、业务结果和状态记录符合需求"],
         "expected_result": expected or "页面反馈、业务结果和状态记录符合需求",
         "executionLevel": "manual",
@@ -9880,7 +9892,7 @@ _VISUAL_MANUAL_FIELDS = (
 )
 _VISUAL_MUTABLE_FIELDS = {
     "start_page", "business_path", "preconditions", "steps", "assertions",
-    "expected", "expected_result", "repair_hints", "data_requirements",
+    "expected", "expected_result", "repair_hints", "data_requirements", "sources",
 }
 _VISUAL_EXECUTION_FIELDS = {
     "start_page", "business_path", "preconditions", "steps", "assertions",
@@ -10094,6 +10106,10 @@ def _merge_visual_records(
                     continue
                 if grounded.get(field) not in (None, "", [], {}):
                     value = copy.deepcopy(grounded.get(field))
+                    if field == "sources":
+                        value = list(dict.fromkeys(
+                            normalize_text_list(target.get("sources")) + normalize_text_list(value)
+                        ))
                     if field == "assertions" and kind in ("case", "manual"):
                         value, preserved_check_ids, preserved_values = _merge_visual_assertion_contract(
                             target,
@@ -10396,7 +10412,11 @@ def build_case_coverage_repair_prompt(title, module, payload, audit):
     """构建覆盖度修复 prompt。"""
     payload_json = json.dumps(payload, ensure_ascii=False, indent=2)
     audit_json = json.dumps(audit, ensure_ascii=False, indent=2)
+    from task_server.prompts import get_prompt_center
+    policy = get_prompt_center().case_design_rules()
     return f"""
+{policy}
+
 你是资深测试架构师，现在执行第三阶段：覆盖率审查与补全。
 
 目标：保证需求点都被场景和用例覆盖，并且自动化用例的断言贴合业务意图。
@@ -10407,7 +10427,7 @@ def build_case_coverage_repair_prompt(title, module, payload, audit):
 3. 对 audit.missing_scenario_points 中的每个需求点，必须补充 scenarios。
 4. 对 audit.generic_assertion_cases 中的用例，必须把断言改成业务意图 + UI 可见信号，不要使用"展示正常/跳转成功/结果符合预期"。
 5. 不能删除已有有效 cases；可以去重和合并明显重复用例。
-6. 每条新增 case 必须包含 case_id、title、priority、smoke、scenario、goal、coverage、risk、preconditions、steps、assertions、tags、repair_hints。
+6. 每条新增 case 必须包含 case_id、title、priority、smoke、scenario、goal、coverage、risk、preconditions、steps、assertions、tags、repair_hints、sources、execution_status。
 7. steps 要能在 Midscene 中用自然语言执行；assertions 要允许动态内容，例如"展示列表内容或空态提示"。
 8. 输出只允许合法 JSON，结构仍为 title、module、analysis、scenarios、cases、manual_cases、review。
 9. 必须补齐 analysis.coverage_matrix：每个 requirement_point 都要说明正常/异常/边界场景，以及进入 cases 还是 manual_cases；不能只补 cases 不补场景。

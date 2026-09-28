@@ -30,8 +30,25 @@ class PromptCenter:
         business_ctx = self.build_context(ctx)
         if isinstance(extra, dict):
             business_ctx.update(extra)
+        if prompt_type == "case":
+            # Bind supplied materials as data once; braces inside documents must
+            # never be interpreted as a second round of template placeholders.
+            supplied = {**(ctx or {}), **(extra or {})}
+            aliases = {
+                "requirement_name": business_ctx.get("target"),
+                "requirement_documents": business_ctx.get("requirement_text"),
+                "figma_links_or_data": business_ctx.get("ui_context"),
+            }
+            for name in ("requirement_name", "requirement_documents", "figma_links_or_data",
+                         "videos_or_analysis", "screenshots", "additional_rules",
+                         "version_and_capability_matrix", "out_of_scope"):
+                business_ctx[name] = supplied.get(name) or aliases.get(name) or "未提供或未解析"
         template = self._load_template(prompt_type)
         return self.renderer.render(template, business_ctx)
+
+    def case_design_rules(self) -> str:
+        """Shared policy only; each Skill already supplies its own input JSON."""
+        return self._load_template("case").split("\n【当前任务输入】", 1)[0]
 
     def enrich(self, ctx: Dict[str, Any], prompt_types: list[str] | None = None) -> Dict[str, Any]:
         ctx = dict(ctx or {})

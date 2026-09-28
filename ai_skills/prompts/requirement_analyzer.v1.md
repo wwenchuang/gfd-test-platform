@@ -51,6 +51,7 @@
 - `risks`: array，业务风险、自动化风险、环境风险
 - `requirement_points`: array，可追溯需求点
 - `questions`: array，需要用户补充的问题
+- `sources`: array，已读取材料的章节、REQ编号、图片编号、Figma节点或视频时间段；与需求点关联记录，不得声称读取未提供的材料
 - `confidence`: string，`high` / `medium` / `low`
 - `missing_inputs`: array，缺失资料，例如真实入口、结果页 UI、测试数据、账号状态、接口/后台前置
 - `blockers`: array，阻断自动化生成或执行的事项；没有就输出空数组

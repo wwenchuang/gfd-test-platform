@@ -543,10 +543,13 @@ def case_mindmap_detail_nodes(case, indent=4):
             deduped_expectations.append(item)
 
     children = []
+    preconditions = normalize_text_list(case.get("preconditions") or case.get("precondition"))
+    if preconditions:
+        children.append(mm_node("前置条件", [mm_node(item, indent=indent + 1) for item in preconditions], indent=indent))
     if steps:
         children.append(mm_node(
             "测试步骤",
-            [mm_node(f"{idx}. {item}", indent=indent + 1) for idx, item in enumerate(steps[:12], start=1)],
+            [mm_node(f"{idx}. {item}", indent=indent + 1) for idx, item in enumerate(steps, start=1)],
             indent=indent,
         ))
     else:
@@ -555,7 +558,7 @@ def case_mindmap_detail_nodes(case, indent=4):
     if deduped_expectations:
         children.append(mm_node(
             "预期结果",
-            [mm_node(f"{idx}. {item}", indent=indent + 1) for idx, item in enumerate(deduped_expectations[:10], start=1)],
+            [mm_node(f"{idx}. {item}", indent=indent + 1) for idx, item in enumerate(deduped_expectations, start=1)],
             indent=indent,
         ))
     else:
@@ -564,6 +567,13 @@ def case_mindmap_detail_nodes(case, indent=4):
     data_requirements = first_non_empty(case_value(case, "data_requirements", "dataRequirements", "test_data", "testData"))
     if data_requirements:
         children.append(mm_node(f"测试数据/前置：{data_requirements}", indent=indent))
+    sources = normalize_text_list(case.get("sources"))
+    if sources:
+        children.append(mm_node("材料来源", [mm_node(item, indent=indent + 1) for item in sources], indent=indent))
+    # Only render an explicitly supplied state; historical cases are not
+    # retroactively relabelled as unexecuted by a prompt/template update.
+    if case.get("execution_status"):
+        children.append(mm_node(f"执行状态：{case['execution_status']}", indent=indent))
     return children
 
 
