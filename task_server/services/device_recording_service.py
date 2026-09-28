@@ -1113,6 +1113,17 @@ def schedule_recording_recognition(session: Dict[str, Any], *, store_path: Optio
     return worker
 
 
+def _position_only_target_context(context: str) -> bool:
+    """Reject obvious locations that do not identify a record after reordering."""
+    value = re.sub(r"\s+", "", context).lower()
+    value = re.sub(r"当前|页面|列表|打印记录|记录|按钮|控件|条目|项目|坐标|位置|的", "", value)
+    if re.fullmatch(r"第?[0-9一二三四五六七八九十百千万零两]+[条行个项]?|最?[上下左右前后中][面边侧部间]?", value):
+        return True
+    if re.fullmatch(r"(?:first|second|third|last|top|bottom|left|right)(?:row|record|item|button)?", value):
+        return True
+    return bool(re.fullmatch(r"[（(]?(?:x[=:：])?\d+(?:\.\d+)?[,，](?:y[=:：])?\d+(?:\.\d+)?[）)]?", value))
+
+
 def recognize_recording_semantics(
     session_id: str,
     user: str,
@@ -1179,8 +1190,9 @@ def recognize_recording_semantics(
             )
             prompt = f"""你是手机操作录制的控件识别器。截图来自真实 Android 手机，操作类型是{item['type']}，点击坐标为 x={int(point.get('x') or 0)}, y={int(point.get('y') or 0)}（坐标基于整张手机截图）。
 {image_guide}必须识别红点命中的控件，不能因为局部图里另一个图标更显眼就回答它。
-只识别该坐标实际命中的可见控件，用适合 Midscene aiTap/aiInput 的简短中文名称回答。如果存在弹窗，命中弹窗内的点只能识别前景弹窗的按钮，禁止用遮罩下的日期、列表文字或控件代替。不要描述整页，不要猜测不可见功能，也不要沿用之前步骤的控件名称。
-只输出包含 semantic_description（控件短名称或空字符串）与 confidence（0 到 1 数值）的 JSON。无法确认时 semantic_description 为空字符串。"""
+只识别该坐标实际命中的可见控件，用适合 Midscene aiTap/aiInput 的中文名称回答。如果存在弹窗，命中弹窗内的点只能识别前景弹窗的按钮，禁止用遮罩下的日期、列表文字或控件代替。不要描述整页，不要猜测不可见功能，也不要沿用之前步骤的控件名称。
+检查完整截图中是否存在多个同名或同图标的可操作控件（例如列表每条记录都有删除）。有重复时必须使用目标所在记录的可见编号、名称或时间等信息区分，不能只返回“删除”，也不能只写“第一条/上面的/左边的”。不要用当前截图坐标代替记录身份。仅凭截图无法区分具体记录时必须标为 ambiguous。弹窗按钮只用前景弹窗内的上下文，不能引用背景记录。
+只输出 JSON：semantic_description（命中控件名称），confidence（0 到 1 数值），target_scope（unique 表示控件在前景页面可唯一定位；repeated 表示同名控件需记录身份区分；ambiguous 表示无法确定），target_context（repeated 时必填能唯一识别记录的可见信息，其他情况为空）。semantic_description 与 target_context 合成后不能超过 200 字。无法确认时 semantic_description 为空字符串。"""
             raw = model_call(
                 prompt,
                 image_assets=image_assets,
@@ -1192,7 +1204,20 @@ def recognize_recording_semantics(
             )
             from .yaml_service import normalize_model_json
             parsed = normalize_model_json(raw)
-            description = str(parsed.get("semantic_description") or parsed.get("semanticDescription") or "").strip()[:200]
+            description = parsed.get("semantic_description") or parsed.get("semanticDescription") or ""
+            context = parsed.get("target_context") or ""
+            scope = parsed.get("target_scope")
+            if not isinstance(description, str) or not isinstance(context, str):
+                raise ValueError("视觉识别返回的控件说明格式无效，请重新识别或手动标记")
+            description, context = description.strip(), context.strip()
+            if scope not in ("unique", "repeated") or (scope == "repeated" and not context):
+                raise ValueError("无法唯一定位点击目标，请补充对应记录的编号或名称后手动确认")
+            if scope == "repeated" and _position_only_target_context(context):
+                raise ValueError("目标说明只有顺序或坐标，请补充可见记录编号或名称后手动确认")
+            if scope == "repeated" and description:
+                description = f"{context}中的「{description}」"
+            if len(description) > 200:
+                raise ValueError("点击目标说明超过 200 字，请精简记录身份后手动确认")
             confidence = max(0.0, min(1.0, float(parsed.get("confidence") or 0)))
             results[item["id"]] = {"description": description, "confidence": confidence}
         except Exception as exc:

@@ -1,0 +1,59 @@
+--- a/app/src/main/java/org/cloud/sonic/android/plugin/SonicPluginTouchService.kt
++++ b/app/src/main/java/org/cloud/sonic/android/plugin/SonicPluginTouchService.kt
+@@ -161,28 +161,48 @@
+                     Scanner(cmd).use { scanner ->
+                         scanner.useDelimiter(" ")
+                         val type = scanner.next()
++                        var action = 0
++                        var touchX: Int? = null
++                        var touchY: Int? = null
+                         when (type) {
+                             "up" -> {
+                                 count++
+-                                events[0]!!.action = 1
++                                action = 1
+                             }
+                             "move" -> {
+                                 count++
+-                                events[0]!!.x = scanner.nextInt()
+-                                events[0]!!.y = scanner.nextInt()
+-                                events[0]!!.action = 2
++                                touchX = scanner.nextInt()
++                                touchY = scanner.nextInt()
++                                action = 2
+                             }
+                             "down" -> {
+                                 count++
+-                                events[0]!!.x = scanner.nextInt()
+-                                events[0]!!.y = scanner.nextInt()
+-                                events[0]!!.action = 0
++                                touchX = scanner.nextInt()
++                                touchY = scanner.nextInt()
++                                action = 0
+                             }
+                             "release" -> hasStop = true
+                             else -> println("could not parse: $cmd")
+                         }
+                         if (count == 1) {
+-                            handler?.post { inputManager?.injectInputEvent(getMotionEvent(events[0]!!)!!) }
++                            // Capture each command before the socket reader consumes the next line.
++                            val commandAction = action
++                            val commandX = touchX
++                            val commandY = touchY
++                            handler?.post {
++                                val event = events[0]!!
++                                event.action = commandAction
++                                if (commandX != null && commandY != null) {
++                                    event.x = commandX
++                                    event.y = commandY
++                                }
++                                val motionEvent = getMotionEvent(event)!!
++                                try {
++                                    inputManager?.injectInputEvent(motionEvent)
++                                } finally {
++                                    motionEvent.recycle()
++                                }
++                            }
+                         } else {
+                             println("count not manage events #$count")
+                         }
