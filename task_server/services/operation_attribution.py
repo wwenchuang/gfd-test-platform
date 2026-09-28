@@ -17,7 +17,7 @@ from contextvars import ContextVar
 from pathlib import Path
 from types import MappingProxyType
 
-from task_server import auth, identity
+from task_server import auth
 
 
 _ACTOR = ContextVar("operation_actor", default=None)
@@ -52,6 +52,8 @@ def _actor(kind, user_id="", username="", display_name=""):
 
 def actor_from_trusted_username(username):
     """Resolve a persisted internal initiator; never call with request data."""
+    from task_server import identity
+
     profile = identity.get_access_profile(username) if isinstance(username, str) and username else None
     if not profile:
         return _actor("unknown")
@@ -67,6 +69,8 @@ def resolve_request_actor(headers, body=None):
         return _actor("sonic", username="sonic", display_name="Sonic")
     session = auth.verify_session_token(auth.bearer_token(headers))
     if session:
+        from task_server import identity
+
         profile = identity.get_access_profile(session["user"])
         if profile and profile["user_id"] == session["user_id"] and profile["status"] == "active":
             return _actor("user", profile["user_id"], profile["username"], profile["display_name"])
@@ -97,6 +101,8 @@ def default_db_path():
     configured = os.getenv("TASK_OPERATION_DB")
     if configured:
         return Path(configured).expanduser().absolute()
+    from task_server import identity
+
     return identity.default_db_path().with_name("operations.sqlite3")
 
 
@@ -328,6 +334,8 @@ class OperationStore:
         user_id = _identifier(profile.get("user_id"))
         if not user_id or profile.get("status") != "active" or profile.get("must_change_password"):
             raise PermissionError("active authenticated profile required")
+        from task_server import identity
+
         live = identity.get_access_profile(profile.get("username"))
         if not live or live["user_id"] != user_id or live["status"] != "active" or live["must_change_password"]:
             raise PermissionError("profile is no longer active")
