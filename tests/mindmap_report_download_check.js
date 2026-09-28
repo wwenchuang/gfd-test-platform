@@ -45,7 +45,7 @@ test('report download converts the server URL to an authenticated API path and r
   }]);
   assert.equal(button.disabled, false);
   assert.equal(button.textContent, '下载 Word');
-  assert.deepEqual(win.lastToast, {message: '✓ 已下载：服务端报告.doc', type: 'success'});
+  assert.deepEqual(win.lastToast, {message: '已发起下载：服务端报告.doc，请在浏览器下载记录中确认结果。', type: 'success'});
 });
 
 test('report download leaves a visible Chinese error instead of opening a JSON error tab', async t => {

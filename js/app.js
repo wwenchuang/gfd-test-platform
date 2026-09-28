@@ -5127,7 +5127,7 @@ async function downloadMindmapTestReport(button) {
   try {
     const path = mindmapReportDownloadPath(button.dataset.reportDownload);
     const filename = await downloadAuthenticatedFile(path, button.dataset.reportFilename || '测试报告');
-    showToast(`✓ 已下载：${filename}`, 'success');
+    showToast(`已发起下载：${filename}，请在浏览器下载记录中确认结果。`, 'success');
     return true;
   } catch(e) {
     let message = e?.message || '下载测试报告失败';
