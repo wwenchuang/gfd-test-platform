@@ -6686,3 +6686,22 @@
 .device-recorder-step-heading { display:flex; flex-wrap:wrap; align-items:center; gap:8px; }
 .device-recorder-step-heading em { margin-left:auto; }
 .device-recorder-step-heading button { flex:0 0 auto; }
+
+/* Live Runner progress: scoped to the execution sidebar. */
+.runner-live-progress { display:grid; gap:9px; min-width:0; }
+.runner-progress-summary { display:flex; justify-content:space-between; flex-wrap:wrap; gap:4px; color:var(--text); }
+.runner-progress-summary span, .runner-progress-hint { color:var(--text2); font-size:11px; overflow-wrap:anywhere; }
+.runner-case-nodes, .runner-step-nodes { display:flex; flex-wrap:wrap; gap:5px; }
+.runner-progress-node { display:inline-flex; align-items:center; justify-content:center; flex:0 0 20px; width:20px; height:20px; border:1px solid var(--border); border-radius:50%; font-size:12px; color:var(--text2); background:var(--surface2); }
+.runner-progress-node.passed { color:var(--success); border-color:var(--success); background:rgba(52,211,153,.1); }
+.runner-progress-node.failed { color:var(--danger); border-color:var(--danger); background:rgba(248,113,113,.1); }
+.runner-progress-node.running { color:var(--accent); border-color:var(--accent); box-shadow:0 0 0 3px rgba(0,212,255,.1); }
+.runner-progress-node.interrupted { color:#fbbf24; border-color:#fbbf24; }
+.runner-current-step { display:grid; gap:4px; padding:8px 10px; border-left:2px solid var(--accent); background:rgba(0,212,255,.05); overflow-wrap:anywhere; }
+.runner-current-step span { color:var(--text2); font-size:11px; }
+.runner-step-list summary { color:var(--text2); cursor:pointer; font-size:11px; }
+.runner-step-list ol { list-style:none; margin:8px 0 0; padding:0; display:grid; gap:8px; max-height:260px; overflow:auto; }
+.runner-step-list li { display:flex; align-items:flex-start; gap:7px; min-width:0; }
+.runner-step-list li > span:not(.runner-progress-node) { flex:1; overflow-wrap:anywhere; }
+.runner-step-list small { white-space:nowrap; color:var(--text2); }
+.runner-pending-actions { margin-top:8px; }

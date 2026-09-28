@@ -21,7 +21,7 @@ RUNNER_ID = os.getenv("RUNNER_ID", "win-runner-01")
 TOKEN = os.getenv("MIDSCENE_RUNNER_TOKEN", "").strip()
 WORKSPACE = Path(os.getenv("MIDSCENE_RUNNER_WORKSPACE", r"D:\sonic\midscene_run"))
 CALLBACK_OUTBOX_DIR = WORKSPACE / "callback_outbox"
-RUNNER_VERSION = os.getenv("MIDSCENE_RUNNER_VERSION", "2026.09.24-midscene1.13-qwen3.7-result-retry-v1-recording-preparation-v4")
+RUNNER_VERSION = os.getenv("MIDSCENE_RUNNER_VERSION", "2026.09.24-midscene1.13-qwen3.7-result-retry-v1-recording-preparation-v4-step-progress-v1")
 MIDSCENE_REQUIRED_VERSION = "1.13.0"
 COMPLETED_RECORDING_EVIDENCE = set()
 ENABLED_RECORDING_TOUCH_INDICATORS = set()
@@ -1516,6 +1516,88 @@ def write_text(path, text):
     path.write_text(text or "", encoding="utf-8", errors="ignore")
 
 
+# Kept inline so updating the standalone Windows Runner remains a one-file install.
+# Read-only adapter for the public ScriptPlayer status exposed by Midscene 1.13.
+RUNNER_PROGRESS_OBSERVER = r'''
+(() => {
+  try {
+    const paths = [process.argv[1]];
+    const version = require(require.resolve('@midscene/cli/package.json', {paths})).version;
+    if (!/^1\.13\./.test(version)) return;
+    const { ScriptPlayer } = require(require.resolve('@midscene/core/yaml', {paths}));
+    const original = ScriptPlayer?.prototype?.run;
+    if (typeof original !== 'function') return;
+    const actionNames = {launch:'启动应用',terminate:'关闭应用',aiTap:'点击',aiWaitFor:'等待',aiAssert:'检查',ai:'操作',aiAction:'操作',aiInput:'输入内容',aiScroll:'滚动',sleep:'等待',runAdbShell:'设备操作',aiQuery:'提取信息'};
+    const label = step => {
+      const key = Object.keys(step || {}).find(k => k in actionNames) || Object.keys(step || {})[0] || '操作';
+      const value = step?.[key];
+      const detail = ['aiInput','runAdbShell'].includes(key) ? '' : typeof value === 'string' ? value.replace(/\s+/g,' ').slice(0,120) : '';
+      return `${actionNames[key] || key}${detail ? ` · ${detail}` : ''}`;
+    };
+    ScriptPlayer.prototype.run = function(...args) {
+      let previous = '';
+      const emit = () => {
+        try {
+          if (!Array.isArray(this.taskStatusList)) return;
+          let budget = 1000;
+          let truncated = this.taskStatusList.length > 100;
+          const tasks = this.taskStatusList.slice(0,100).map(t => {
+            const flow = Array.isArray(t.flow) ? t.flow : [];
+            const limit = Math.min(200,budget);
+            const steps = flow.slice(0,limit).map(s => ({label:label(s)}));
+            budget -= steps.length;
+            truncated ||= steps.length < flow.length;
+            return {name:String(t.name || '未命名用例').slice(0,160),status:({init:'pending',running:'running',done:'passed',error:'failed'})[t.status] || 'pending',current_step:Number.isInteger(t.currentStep) ? t.currentStep : null,total_steps:flow.length,steps};
+          });
+          const value = JSON.stringify({version:1,tasks,truncated});
+          if (value !== previous) {
+            previous = value;
+            process.stdout.write(`MIDSCENE_PLATFORM_PROGRESS ${value}\n`);
+          }
+        } catch (_) { /* Progress must never affect device execution. */ }
+      };
+      emit();
+      const timer = setInterval(emit,500);
+      const finish = () => { clearInterval(timer); emit(); };
+      try { return Promise.resolve(original.apply(this,args)).finally(finish); }
+      catch(error) { finish(); throw error; }
+    };
+  } catch (_) { /* Unsupported installation retains legacy progress. */ }
+})();
+'''
+
+
+class RunnerStepProgress:
+    def __init__(self):
+        self.snapshot = None
+
+    def consume(self, line):
+        prefix = "MIDSCENE_PLATFORM_PROGRESS "
+        if not line.startswith(prefix) or len(line) > 500_000:
+            return False
+        try:
+            snapshot = json.loads(line[len(prefix):])
+            if snapshot.get("version") != 1 or not isinstance(snapshot.get("tasks"), list):
+                return False
+        except (ValueError, AttributeError):
+            return False
+        self.snapshot = snapshot
+        return True
+
+
+def progress_observer_env(job_dir, device_id):
+    env = midscene_env(device_id)
+    try:
+        path = (job_dir / "runner-progress-observer.cjs").resolve()
+        path.write_text(RUNNER_PROGRESS_OBSERVER, encoding="utf-8")
+        # NODE_OPTIONS is scoped to this CLI subprocess, not the machine.
+        option = '--require ' + json.dumps(str(path), ensure_ascii=False)
+        env["NODE_OPTIONS"] = (env.get("NODE_OPTIONS", "") + " " + option).strip()
+    except OSError as error:
+        print(f"Step progress unavailable: {error}")
+    return env
+
+
 def execute_midscene(job_id, job_dir, yaml_path, task_names, device_id):
     started = time.time()
     stdout_lines = []
@@ -1525,6 +1607,7 @@ def execute_midscene(job_id, job_dir, yaml_path, task_names, device_id):
     current_index = 0
     current_task = task_names[0] if task_names else ""
     last_progress_at = 0
+    step_progress = RunnerStepProgress()
 
     def emit_progress(force=False, message="执行中"):
         nonlocal last_progress_at
@@ -1543,7 +1626,8 @@ def execute_midscene(job_id, job_dir, yaml_path, task_names, device_id):
             "total_task_count": total,
             "device_id": device_id,
             "message": message,
-            "stdout_tail": "".join(stdout_lines)[-2000:]
+            "stdout_tail": "".join(stdout_lines)[-2000:],
+            **({"execution_progress": step_progress.snapshot} if step_progress.snapshot else {})
         })
 
     try:
@@ -1556,9 +1640,11 @@ def execute_midscene(job_id, job_dir, yaml_path, task_names, device_id):
             midscene_command,
             cwd=str(job_dir),
             text=True,
+            encoding="utf-8",
+            errors="replace",
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
-            env=midscene_env(device_id)
+            env=progress_observer_env(job_dir, device_id)
         )
         line_queue = queue.Queue()
 
@@ -1571,7 +1657,8 @@ def execute_midscene(job_id, job_dir, yaml_path, task_names, device_id):
             except Exception as reader_error:
                 line_queue.put(f"Runner stdout reader error: {reader_error}\n")
 
-        threading.Thread(target=read_stdout, name=f"midscene-stdout-{job_id}", daemon=True).start()
+        reader = threading.Thread(target=read_stdout, name=f"midscene-stdout-{job_id}", daemon=True)
+        reader.start()
         while True:
             line = ""
             try:
@@ -1579,29 +1666,28 @@ def execute_midscene(job_id, job_dir, yaml_path, task_names, device_id):
             except queue.Empty:
                 line = ""
             if line:
-                stdout_lines.append(line)
-                stripped = line.strip()
-                for idx, name in enumerate(task_names):
-                    if name and name in stripped:
-                        current_index = idx
-                        current_task = name
-                        if ("✔" in stripped or "✓" in stripped) and idx + 1 > completed:
-                            completed = idx + 1
-                            current_task = task_names[min(completed, total - 1)] if completed < total else name
-                        if "✘" in stripped or "error:" in stripped:
-                            current_task = name
-                        emit_progress(True, stripped[:160])
-                        break
+                if step_progress.consume(line):
+                    tasks = step_progress.snapshot["tasks"]
+                    completed = sum(t.get("status") == "passed" for t in tasks)
+                    active = next(((i,t) for i,t in enumerate(tasks) if t.get("status") == "running"), None)
+                    if active is None:
+                        active = next(((i,t) for i,t in enumerate(tasks) if t.get("status") == "failed"), None)
+                    if active:
+                        current_index, task = active
+                        current_task = task.get("name", "")
+                    emit_progress(False, "执行步骤已更新")
                 else:
-                    if stripped:
-                        emit_progress(False, stripped[:160])
+                    stdout_lines.append(line)
+                    if line.strip():
+                        emit_progress(False, line.strip()[:160])
             if proc.poll() is not None:
+                reader.join(timeout=2)
                 while True:
                     try:
                         rest_line = line_queue.get_nowait()
                     except queue.Empty:
                         break
-                    if rest_line:
+                    if rest_line and not step_progress.consume(rest_line):
                         stdout_lines.append(rest_line)
                 break
             if time.time() - started > TIMEOUT_SECONDS:
@@ -1614,7 +1700,7 @@ def execute_midscene(job_id, job_dir, yaml_path, task_names, device_id):
         stdout = "".join(stdout_lines)
         if returncode == 0:
             completed = total
-            emit_progress(True, "执行完成")
+        emit_progress(True, "执行完成" if returncode == 0 else "执行失败")
         return {
             "status": "passed" if returncode == 0 else "failed",
             "stdout": stdout,

@@ -1242,6 +1242,65 @@ function jobReportHint(job) {
   return '';
 }
 
+const runnerProgressExpanded = new Set();
+
+function runnerJobOrder(a, b) {
+  const rank = s => s === 'running' ? 0 : s === 'pending' ? 1 : 2;
+  const time = j => Date.parse(String(j.updated_at || j.finished_at || j.started_at || j.created_at || '').replace(' ', 'T')) || 0;
+  return rank(a.status) - rank(b.status) || time(b) - time(a);
+}
+
+function runnerProgressView(job) {
+  const snapshot = job.execution_progress;
+  const known = snapshot?.version === 1 && Array.isArray(snapshot.tasks) && snapshot.tasks.length > 0;
+  const terminal = !['running', 'pending'].includes(job.status);
+  const tasks = known ? snapshot.tasks.map(t => ({...t})) : (job.task_names || []).map((name, index) => ({
+    name, status: ['success', 'passed'].includes(job.status) ? 'passed' : job.status === 'running' && index === Number(job.current_task_index || 0) ? 'running' : 'pending', steps: []
+  }));
+  tasks.forEach(t => { if (terminal && t.status === 'running') t.status = job.status === 'cancelled' ? 'cancelled' : 'interrupted'; });
+  let current = tasks.findIndex(t => t.status === 'running');
+  if (current < 0) current = tasks.findIndex(t => ['failed', 'interrupted', 'cancelled'].includes(t.status));
+  if (current < 0) current = Math.max(0, tasks.findLastIndex(t => t.status === 'passed'));
+  const selected = tasks[current];
+  const stepIndex = Number.isInteger(selected?.current_step) ? selected.current_step : -1;
+  const steps = (selected?.steps || []).map((step, index) => ({...step,
+    status: selected.status === 'passed' || (stepIndex >= 0 && index < stepIndex) ? 'passed'
+      : index === stepIndex ? selected.status : 'pending'
+  }));
+  const completed = tasks.filter(t => ['passed','failed','cancelled','interrupted'].includes(t.status)).length;
+  const passed = tasks.filter(t => t.status === 'passed').length;
+  const failed = tasks.filter(t => t.status === 'failed').length;
+  const completedSteps = steps.filter(s => ['passed','failed','cancelled','interrupted'].includes(s.status)).length;
+  const stepTotal = t => Number(t.total_steps || t.steps?.length || 0);
+  const totalSteps = tasks.reduce((sum,t) => sum + stepTotal(t), 0);
+  const allCompletedSteps = tasks.reduce((sum,t) => sum + (t.status === 'passed' ? stepTotal(t) : Number.isInteger(t.current_step) ? Math.max(0,t.current_step) + (['failed','interrupted','cancelled'].includes(t.status) ? 1 : 0) : 0),0);
+  const percent = totalSteps ? Math.min(100,Math.round(allCompletedSteps/totalSteps*100)) : tasks.length ? Math.round(completed/tasks.length*100) : 0;
+  return {known,tasks,steps,current,stepIndex,completed,passed,failed,completedSteps,percent,
+    currentLabel: steps[stepIndex]?.label || (stepIndex >= steps.length && stepIndex >= 0 ? `第 ${stepIndex+1} 步（明细未展示）` : '') || (job.status === 'pending' ? '等待 Runner 接单' : job.progress_message || '准备执行'),
+    truncated: Boolean(snapshot?.truncated)};
+}
+
+function toggleRunnerProgress(jobId, open) {
+  if (open) runnerProgressExpanded.add(jobId); else runnerProgressExpanded.delete(jobId);
+}
+
+function runnerProgressHtml(job) {
+  const v = runnerProgressView(job);
+  const symbols = {passed:'✓',failed:'×',running:'●',pending:'○',cancelled:'−',interrupted:'!'};
+  const labels = {passed:'已完成',failed:'失败',running:'执行中',pending:'未执行',cancelled:'已取消',interrupted:'已中断'};
+  const node = (item,index) => `<span class="runner-progress-node ${escapeHtml(item.status)}" title="${escapeHtml(`${index+1}. ${item.label || item.name} · ${labels[item.status] || '未执行'}`)}" aria-label="${escapeHtml(`${index+1}. ${item.label || item.name} · ${labels[item.status] || '未执行'}`)}">${symbols[item.status] || '○'}</span>`;
+  return `<section class="runner-live-progress" aria-label="执行进度">
+    <div class="runner-progress-summary"><strong>已结束用例 ${v.completed} / ${v.tasks.length || Number(job.total_task_count || 0)}</strong><span>通过 ${v.passed} · 失败 ${v.failed}</span></div>
+    <div class="runner-case-nodes">${v.tasks.map(node).join('')}</div>
+    ${v.truncated ? '' : `<div class="job-progress-track" role="progressbar" aria-label="已完成步骤比例" aria-valuenow="${v.percent}" aria-valuemin="0" aria-valuemax="100"><div class="job-progress-bar" style="width:${v.percent}%"></div></div>`}
+    ${v.known ? `<div class="runner-progress-hint">当前用例 · ${escapeHtml(v.tasks[v.current]?.name || job.current_task_name || "准备执行")}</div><div class="runner-current-step"><span>${v.steps.length ? `步骤 ${v.stepIndex < 0 ? '—' : v.stepIndex+1} / ${v.tasks[v.current]?.total_steps || v.steps.length}` : '准备执行'}</span><strong>${escapeHtml(v.currentLabel)}</strong></div>
+      <div class="runner-step-nodes">${v.steps.map(node).join('')}</div>
+      <details class="runner-step-list" ${runnerProgressExpanded.has(job.job_id) ? 'open' : ''} ontoggle="toggleRunnerProgress(${escapeHtml(jsArg(job.job_id || ''))},this.open)"><summary>查看步骤明细 · ${v.completedSteps} 项已结束</summary><ol>${v.steps.map((s,i)=>`<li class="${escapeHtml(s.status)}">${node(s,i)}<span>${i+1}. ${escapeHtml(s.label)}</span><small>${labels[s.status] || '未执行'}</small></li>`).join('')}</ol></details>`
+      : `<div class="runner-progress-hint">${escapeHtml(job.current_task_name || job.target_task_name || '')}</div><div class="runner-progress-hint">${job.status === 'pending' ? '等待 Runner 接单' : 'Runner 暂未上报步骤，仅展示已确认的用例状态'}</div>`}
+    ${v.truncated ? '<div class="runner-progress-hint">步骤较多，当前仅展示部分明细；完整结果请查看报告。</div>' : ''}
+  </section>`;
+}
+
 function jobProgressInfo(job) {
   const status = job.status || '';
   const total = Number(job.total_task_count || 0);
@@ -1617,7 +1676,7 @@ function renderJobs() {
   const activeJobs = normalizedJobs
     .filter(isRunnerExecutionJob)
     .filter(job => ['pending', 'running'].includes(job.status))
-    .sort((a, b) => timeValue(b) - timeValue(a));
+    .sort(runnerJobOrder);
   const activeIds = new Set(activeJobs.map(job => job.job_id));
   const recentDoneLimit = activeWorkflow === 'execute' ? 6 : 18;
   let recentDone = normalizedJobs
@@ -1636,17 +1695,13 @@ function renderJobs() {
     return;
   }
   const todoHtml = `
-    <div class="agent-side-card">
-      <div class="agent-side-title">待我处理</div>
+    <div class="agent-side-card runner-pending-actions">
+      <div class="agent-side-title">待我处理 · ${pendingActions.length}</div>
       ${pendingActions.length ? pendingBatchToolbarHtml(pendingActions) + pendingActions.slice(0, pendingActionsVisibleLimit).map(pendingActionCardHtml).join('') : '<div class="job-meta">暂无需要人工处理的失败或确认项。</div>'}
       ${pendingActions.length > pendingActionsVisibleLimit ? `<button class="btn-sm" onclick="showMorePendingActions()">显示更多待处理（${pendingActionsVisibleLimit}/${pendingActions.length}）</button>` : ''}
     </div>
-    <div class="agent-side-card">
-      <div class="agent-side-title">Runner 当前任务</div>
-      ${currentTaskCardHtml(activeJobs)}
-    </div>
   `;
-  list.innerHTML = todoHtml + jobs.map(job => {
+  list.innerHTML = (activeJobs.length ? '<div class="agent-side-title">Runner 当前任务</div>' : '') + jobs.map(job => {
     const status = job.status || 'unknown';
     const targetTask = job.target_task_name || '';
     const device = jobDeviceLabel(job);
@@ -1655,7 +1710,6 @@ function renderJobs() {
     const errorSummary = summarizeJobError(error);
     const reportHint = jobReportHint(job);
     const queueMessage = job.queue_message || job.dispatch_message || '';
-    const progress = jobProgressInfo(job);
     const title = job.kind === 'background'
       ? `${jobKindText(job)} / ${escapeHtml(job.module || job.title || job.step || '')}`
       : `${escapeHtml(job.module || '')}/${escapeHtml(job.file || '')}`;
@@ -1669,14 +1723,8 @@ function renderJobs() {
           <div class="job-file">${title}</div>
           <div class="job-task">${jobModeBadgeHtml(job)} ${targetTask ? `单条：${escapeHtml(targetTask)}` : escapeHtml(job.message || job.step || jobKindText(job))}</div>
         </div>
-        <div class="job-progress">
-          <div class="job-progress-text">
-            <span>${escapeHtml(progress.currentText)}</span>
-            <span>${progress.progress}%</span>
-          </div>
-          <div class="job-progress-track"><div class="job-progress-bar" style="width:${progress.progress}%"></div></div>
-          <div class="job-meta">${job.kind === 'background' ? escapeHtml(job.job_id || '') : `${escapeHtml(progress.detail)} · ${escapeHtml(device)} · ${escapeHtml(runner)}`}</div>
-        </div>
+        ${runnerProgressHtml(job)}
+        <div class="job-meta">${escapeHtml(device)} · ${escapeHtml(runner)}</div>
         ${queueMessage ? `<div class="job-meta">${escapeHtml(queueMessage)}</div>` : ''}
         ${errorSummary ? `<div class="job-meta">${escapeHtml(errorSummary)}</div>` : ''}
         ${reportHint ? `<div class="job-meta job-report-hint">${escapeHtml(reportHint)}</div>` : ''}
@@ -1684,7 +1732,7 @@ function renderJobs() {
         ${jobDetailHtml(job, error, reportHint)}
       </div>
     `;
-  }).join('');
+  }).join('') + todoHtml;
   if (activeWorkflow === 'dashboard' && !hasOpenEditor()) showWorkflowGuide('dashboard');
 }
 

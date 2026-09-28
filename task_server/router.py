@@ -4826,6 +4826,13 @@ def _handle_runner_job_progress(handler, job_id):
         if not target:
             handler._json({"ok": False, "error": "任务不存在"}, 404)
             return
+        if target.get("status") not in ("pending", "running"):
+            handler._json({"ok": True, "ignored": "terminal_job", "job": target})
+            return
+        from .services.runner_progress import normalize_execution_progress
+        snapshot = normalize_execution_progress(d.get("execution_progress"))
+        if snapshot is not None:
+            target["execution_progress"] = snapshot
         if target.get("status") in ("pending", "running"):
             target["status"] = "running"
         if not target.get("started_at"):
