@@ -17,6 +17,7 @@ import os
 import re
 import shutil
 import time
+from datetime import datetime
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from ..config import (
@@ -56,6 +57,7 @@ from .business_line_service import normalize_test_application
 # ---------------------------------------------------------------------------
 
 _TIME_FMT = "%Y-%m-%d %H:%M:%S"
+_CANONICAL_TIME = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}")
 DEVICE_STRATEGY_FIXED = "fixed"
 DEVICE_STRATEGY_AUTO = "auto"
 DEVICE_STRATEGY_MANUAL_REQUIRED = "manual_required"
@@ -111,6 +113,13 @@ def _parse_time(value: Optional[str]) -> float:
     if not value:
         return 0.0
     try:
+        if isinstance(value, str) and _CANONICAL_TIME.fullmatch(value):
+            try:
+                # Keep mktime's local timezone/DST normalization (tm_isdst=-1).
+                # strptime remains the compatibility path, including leap seconds.
+                return time.mktime(datetime.fromisoformat(value).timetuple())
+            except ValueError:
+                pass
         return time.mktime(time.strptime(value, _TIME_FMT))
     except Exception:
         return 0.0
