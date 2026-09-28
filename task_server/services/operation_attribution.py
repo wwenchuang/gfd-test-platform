@@ -288,6 +288,23 @@ class OperationStore:
             except OSError:
                 return {"stored": False, "storage": "failed", "duplicate": False}
 
+    def job_creation_actor_id(self, job_id):
+        """Audit correlation only; never use this result for resource access.
+
+        Query the indexed audit resource, not mutable job metadata or legacy
+        creators. Multiple creation events are ambiguous even for the same user.
+        """
+        job_id = _identifier(job_id)
+        if not job_id:
+            return ""
+        with self._connect() as db:
+            rows = db.execute(
+                "SELECT actor_kind,actor_id FROM events WHERE resource_type='job' "
+                "AND resource_id=? AND action='job.created' AND result='success' LIMIT 2",
+                (job_id,),
+            ).fetchall()
+        return rows[0][1] if len(rows) == 1 and rows[0][0] == "user" else ""
+
     def replay_spool(self, limit=100):
         replayed = 0
         remaining = 0

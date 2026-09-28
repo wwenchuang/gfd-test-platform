@@ -433,12 +433,22 @@ def create_job(payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
             continue
         job[key] = value
 
+    _persist_new_job(job)
+    return normalize_job_record(job)
+
+
+def _persist_new_job(job):
+    # Keep audit ordering with the existing persistence lock: Runner cannot
+    # claim a new job before its creation event has been attempted.
+    from .job_audit import record_created
     with JOB_LOCK:
         jobs = _read_jobs_raw()
+        if any(str(row.get("job_id") or row.get("jobId") or row.get("id") or "").strip()
+               == job["job_id"] for row in jobs):
+            raise ValueError("job_id already exists")
         jobs.append(job)
         save_jobs(jobs)
-
-    return normalize_job_record(job)
+        record_created(job["job_id"])
 
 
 def append_job_event(job_id: str, event: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -795,10 +805,7 @@ def create_pending_job(
         "total_task_count": len(task_names),
         "task_names": task_names[:100],
     }
-    with JOB_LOCK:
-        jobs = _read_jobs_raw()
-        jobs.append(job)
-        save_jobs(jobs)
+    _persist_new_job(job)
 
     # 更新 task-meta 元数据
     try:

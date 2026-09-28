@@ -381,6 +381,7 @@ test('registered backend verbs and API resource domains have readable business l
     const cases = [
       ['file.move', '文件 · 移动'], ['file.copy', '文件 · 复制'], ['file.rename', '文件 · 重命名'],
       ['yaml.inspect', 'YAML · 检查'], ['job.approve', '执行任务 · 批准'], ['job.reject', '执行任务 · 拒绝'],
+      ['job.created', '执行任务 · 已创建'], ['job.dispatch_prepared', '执行任务 · 下发内容已准备'],
       ['repair_draft.apply', '修复草稿 · 应用'], ['account.reset', '账号 · 重置'], ['unknown.request', '未知领域 · 请求'],
       ['figma.parse_async', 'Figma · 异步解析'], ['api_request.view', 'API 请求 · 查看'],
       ['api_collection.create', 'API 集合 · 创建'], ['api_load_run.stop', 'API 压测运行 · 停止'],

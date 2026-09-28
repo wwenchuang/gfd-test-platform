@@ -2386,6 +2386,8 @@ def _get_runner_jobs_next(handler, qs):
         handler._json({"ok": False, "error": str(e)}, 500)
         return
 
+    from .services.job_audit import record_dispatch
+    record_dispatch(selected["job_id"], yaml_content)
     handler._json({
         "ok": True,
         "job": {

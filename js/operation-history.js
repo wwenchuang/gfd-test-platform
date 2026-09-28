@@ -67,6 +67,8 @@
     return ({ runner: 'Runner', system: '系统', anonymous: '未登录', unknown: '归属未知' })[actor.kind] || '归属未知';
   }
   function actionLabel(action) {
+    if (action === 'job.created') return '执行任务 · 已创建';
+    if (action === 'job.dispatch_prepared') return '执行任务 · 下发内容已准备';
     const [domain, ...tail] = String(action || '').split('.');
     const verb = tail.join('.');
     return `${domains[domain] || domain || '未知操作'}${verb ? ' · ' + (verbs[verb] || verb) : ''}`;
