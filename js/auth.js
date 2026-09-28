@@ -7,6 +7,7 @@ function acceptAuthSession(data) {
   sessionStorage.setItem('user', typeof data.user === 'string' ? data.user : data.profile?.username || '');
   // Older visual fixtures omit profile. An explicit empty profile fails closed.
   currentAccessProfile = Object.hasOwn(data, 'profile') ? (data.profile || {}) : null;
+  if (typeof resetOperationHistory === 'function') resetOperationHistory();
   const label = document.getElementById('account-name');
   if (label) label.textContent = currentAccessProfile?.display_name || sessionStorage.getItem('user') || '个人账号';
 }
@@ -118,6 +119,7 @@ function clearAuthSession() {
   sessionStorage.removeItem('user');
   sessionStorage.removeItem('sessionToken');
   currentAccessProfile = null;
+  if (typeof resetOperationHistory === 'function') resetOperationHistory();
   if (typeof closeIdentityDialog === 'function') closeIdentityDialog();
   if (typeof stopJobsAutoRefresh === 'function') stopJobsAutoRefresh();
   if (typeof stopRunnerStatusAutoRefresh === 'function') stopRunnerStatusAutoRefresh();

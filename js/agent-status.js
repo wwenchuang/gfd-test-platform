@@ -2340,6 +2340,7 @@ function normalizeWorkflowKey(sectionKey) {
 function setActiveWorkflow(sectionKey, options = {}) {
   clearManagementSearchTimers();
   const normalizedKey = normalizeWorkflowKey(sectionKey);
+  if (activeWorkflow === 'operation_history' && normalizedKey !== 'operation_history' && typeof leaveOperationHistory === 'function') leaveOperationHistory();
   activeWorkflow = WORKFLOW_SECTIONS[normalizedKey] ? normalizedKey : 'dashboard';
   sessionStorage.setItem('midscene_active_workflow', activeWorkflow);
   resetWorkflowScrollPosition();
@@ -2427,6 +2428,7 @@ function updateNavigationBadges() {
 }
 
 function renderActiveWorkflowPage(options = {}) {
+  if (activeWorkflow === 'operation_history') return showOperationHistory() || true;
   if (activeWorkflow === 'identity') return showIdentityManagement() || true;
   if (activeWorkflow === 'dashboard' || activeWorkflow === 'agent') {
     showAgentWorkbench();
@@ -2466,6 +2468,7 @@ function updateWorkbenchPanelMode() {
 
 // 上下文工具栏：根据当前模块动态展示标题/按钮
 const CONTEXT_TOOLBAR_MAP = {
+  operation_history: { module: 'settings', icon: '', title: '业务操作记录', refreshLabel: '刷新记录', refreshFn: 'showOperationHistory()' },
   identity: { module: 'settings', icon: '', title: '成员与权限', refreshLabel: '刷新', refreshFn: 'showIdentityManagement()' },
   account: { module: 'settings', icon: '', title: '个人账号', refreshLabel: '个人资料与会话', refreshFn: 'showPersonalAccount()' },
   // Agent模块
@@ -2548,6 +2551,11 @@ async function activateWorkflow(sectionKey) {
     document.getElementById('toolbar-help').textContent = '当前 YAML 已保留；编辑后先保存，再选择单条调试或整文件执行。';
     updateWorkflowActionGroups();
     updateToolbarState();
+    return;
+  }
+  if (activeWorkflow === 'operation_history') {
+    showOperationHistory();
+    toggleLibrary(false);
     return;
   }
   if (activeWorkflow === 'identity') {

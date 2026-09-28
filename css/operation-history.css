@@ -1,0 +1,35 @@
+/* Scoped business-history layout: the page owns scrolling at all widths. */
+.operation-history { flex: 1; min-width: 0; width: 100%; padding: 18px; overflow: auto; color: var(--text); }
+.operation-history h2 { margin: 0; font-size: 18px; }
+.operation-history h3 { margin: 0; font-size: 15px; }
+.operation-heading, .operation-detail-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.operation-intro, .operation-count { color: var(--text2); font-size: 12px; line-height: 1.6; margin: 10px 0; }
+.operation-filters { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(175px, 100%), 1fr)); gap: 10px 12px; margin: 12px 0; }
+.operation-filters label { display: grid; gap: 5px; min-width: 0; color: var(--text2); font-size: 12px; }
+.operation-filters label[hidden] { display: none; }
+.operation-filters input, .operation-filters select { box-sizing: border-box; width: 100%; min-width: 0; min-height: 34px; padding: 6px 8px; border: 1px solid var(--border); border-radius: 5px; color: var(--text); background: var(--bg2); font-size: 13px; }
+.operation-table-scroll { max-width: 100%; overflow-x: auto; }
+.operation-history table { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 12px; line-height: 1.65; }
+.operation-history th, .operation-history td { text-align: left; vertical-align: top; padding: 10px 8px; border-bottom: 1px solid var(--border); overflow-wrap: anywhere; }
+.operation-history th { color: var(--text2); font-weight: 500; }
+.operation-history small { display: block; color: var(--text3); font-size: 11px; }
+.operation-history td button { display: block; margin-top: 6px; }
+.operation-paging { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; margin: 14px 0; color: var(--text2); font-size: 12px; }
+.operation-state { margin: 18px 0; font-size: 13px; }
+.operation-state[role="alert"], .operation-warning { color: var(--warning, #f5bf68); font-size: 12px; line-height: 1.7; overflow-wrap: anywhere; }
+.operation-warning:empty, .operation-detail:empty { display: none; }
+.operation-detail { margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--border); font-size: 13px; }
+.operation-metadata { display: flex; gap: 6px 16px; flex-wrap: wrap; margin: 10px 0; font-size: 11px; color: var(--text3); overflow-wrap: anywhere; }
+.operation-metadata span { max-width: 100%; }
+.operation-history button:disabled { opacity: .5; cursor: not-allowed; }
+@media (max-width: 700px) {
+  .operation-history { padding: 12px; }
+  .operation-filters { grid-template-columns: 1fr; }
+  .operation-history table, .operation-history thead, .operation-history tbody, .operation-history tr, .operation-history td { display: block; width: auto; }
+  .operation-history thead { display: none; }
+  .operation-history tr { padding: 8px 0; border-bottom: 1px solid var(--border); }
+  .operation-history td { padding: 3px 0; border: none; }
+  .operation-history small { display: inline; margin-left: 6px; }
+  .operation-history .operation-resource-id { display: block; margin-left: 0; }
+  .operation-history td button { display: inline-block; margin-left: 8px; }
+}

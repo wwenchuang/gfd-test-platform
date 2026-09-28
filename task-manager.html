@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>功夫豆测试平台</title>
 <link rel="icon" href="assets/brand/kongfudou-icon.png">
+<link rel="stylesheet" href="css/operation-history.css?v=20260928-history-v1">
 <link rel="stylesheet" href="css/app.css?v=20260831-identity-20260904-report-evidence-20260921-phone-cards-live-nav-counts-editor-wheel-app-module-create-device-recorder-v4-live-20260924-platform-audit-round2-v36-step-delete-v37">
   <link rel="stylesheet" href="css/round5.css?v=20260828-full-platform-ux-20260902-a94-cache-policy-app-module-create">
 </head>
@@ -50,6 +51,7 @@
         <button class="btn-logout" aria-label="个人账号" aria-expanded="false" id="account-toggle" onclick="toggleAccountMenu()"><span id="account-name">个人账号</span> ▾</button>
         <div id="account-menu" class="account-menu" hidden>
           <button type="button" onclick="showPersonalAccount()">个人资料与会话</button>
+          <button type="button" onclick="activateWorkflow('operation_history')">我的操作记录</button>
           <button type="button" onclick="showChangePassword()">修改密码</button>
           <button type="button" onclick="doLogout()">退出登录</button>
         </div>
@@ -987,17 +989,18 @@
 <div class="toast" id="toast"></div>
 
 
-<script src="js/utils.js?v=20260828-full-platform-ux-20260902-a104-review-controls-device-recorder-v1-app-module-picker-v1"></script>
+<script src="js/utils.js?v=20260828-full-platform-ux-20260902-a104-review-controls-device-recorder-v1-app-module-picker-v1-20260928-history-v1"></script>
 <script src="js/error-handler.js?v=20260828-full-platform-ux"></script>
 <script src="js/empty-states.js?v=20260828-full-platform-ux-20260902-a105-agent-scopes"></script>
 <script src="js/loading-manager.js?v=20260828-full-platform-ux"></script>
 <script src="js/form-steps.js?v=20260828-full-platform-ux"></script>
 <script src="js/state.js?v=20260828-full-platform-ux-20260904-report-evidence-20260921-device-auto-status"></script>
-<script src="js/auth.js?v=20260828-full-platform-ux-20260831-identity-sonic-readonly-20260921-device-auto-status-device-recorder-v1"></script>
-<script src="js/identity-management.js?v=20260902-a108-workflow-clarity"></script>
+<script src="js/auth.js?v=20260828-full-platform-ux-20260831-identity-sonic-readonly-20260921-device-auto-status-device-recorder-v1-20260928-history-v1"></script>
+<script src="js/identity-management.js?v=20260902-a108-workflow-clarity-20260928-history-v1"></script>
+<script src="js/operation-history.js?v=20260928-history-v1"></script>
 <script src="js/navigation.js?v=20260828-full-platform-ux-20260902-a112-history-save"></script>
 <script src="js/agent-workbench.js?v=20260828-full-platform-ux-20260902-a107-agent-terminal-20260908-mindmap-restart-20260921-phone-cards-live"></script>
-<script src="js/agent-status.js?v=20260828-full-platform-ux-20260902-a110-knowledge-filtering-a112-history-save-app-module-create-device-recorder-v1-app-module-picker-v1-20260924-platform-audit-round2-v36-step-delete-v37"></script>
+<script src="js/agent-status.js?v=20260828-full-platform-ux-20260902-a110-knowledge-filtering-a112-history-save-app-module-create-device-recorder-v1-app-module-picker-v1-20260924-platform-audit-round2-v36-step-delete-v37-20260928-history-v1"></script>
 <script src="js/device-recorder.js?v=20260924-recorder-start-v34-visible-target-v36-step-delete-v37-lineage-v38"></script>
 <script src="js/cases.js?v=20260828-full-platform-ux-20260901-a73-flow-clarity-20260924-platform-audit-v35"></script>
 <script src="js/execution.js?v=20260828-full-platform-ux-20260902-a106-execution-actions-a112-history-save-20260921-editor-wheel-20260924-platform-audit-round2-v36-step-delete-v37"></script>

@@ -117,6 +117,7 @@ function authHeaders(headers = {}) {
 
 const WORKFLOW_SECTIONS = {
   identity: { index: '', title: '成员与权限', subtitle: '成员与权限', help: '', cards: [], checklist: [] },
+  operation_history: { index: '', title: '我的操作记录', subtitle: '业务操作记录', help: '', cards: [], checklist: [] },
   account: { index: '', title: '个人账号', subtitle: '个人账号', help: '', cards: [], checklist: [] },
   dashboard: {
     index: '0',

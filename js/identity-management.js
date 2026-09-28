@@ -122,6 +122,12 @@
     center.querySelector('[data-refresh]').onclick = () => showIdentityManagement();
     center.querySelectorAll('[data-tab]').forEach(node => node.onclick = () => { closeDialog(); showIdentityManagement(node.dataset.tab); });
     const panel = center.querySelector('#identity-panel');
+    if (selectedTab === 'audit') {
+      const link = document.createElement('button');
+      link.type = 'button'; link.className = 'btn-sm'; link.textContent = '查看业务操作记录';
+      link.onclick = () => activateWorkflow('operation_history');
+      center.querySelector('.identity-tabs').after(link);
+    }
     try {
       if (selectedTab === 'audit') {
         const data = await request('/audit');
