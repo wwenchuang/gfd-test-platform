@@ -426,3 +426,73 @@ test('a current history 401 still clears the expired session', async () => {
     assert.equal(await f.page.locator('.operation-history').count(), 0);
   } finally { await f.context.close(); }
 });
+
+for (const obsolete of ['success', 'error', 'unauthorized']) {
+  test(`A to B to A detail reselection discards obsolete ${obsolete} replies for the same event`, async () => {
+    const f = await fixture({ ignoreAbort: true }); let firstA, secondB; let aCalls = 0;
+    try {
+      f.state.handler = async (route, url) => {
+        if (!url.pathname.endsWith('/items')) return release(route, { ok: true, events: [event('A', { item_total: 2 }), event('B', { item_total: 2 })], total: 2 });
+        if (url.pathname.includes('/A/items') && ++aCalls === 1) { firstA = route; return; }
+        if (url.pathname.includes('/B/items')) { secondB = route; return; }
+        await release(route, { ok: true, items: [{ resource_id: 'latest-A-detail', result: 'success' }], total: 2, item_captured: 2, items_complete: true });
+      };
+      await open(f);
+      const batches = f.page.getByRole('button', { name: '批量明细', exact: true });
+      await batches.nth(0).click(); await until(() => firstA);
+      await batches.nth(1).click(); await until(() => secondB);
+      await batches.nth(0).click(); await waitText(f.page, 'latest-A-detail');
+      if (obsolete === 'success') await release(firstA, { ok: true, items: [{ resource_id: 'obsolete-A-detail', result: 'failed' }], total: 2, item_captured: 2, items_complete: true });
+      else await firstA.fulfill({ status: obsolete === 'unauthorized' ? 401 : 503, json: { ok: false, code: obsolete === 'unauthorized' ? 'unauthorized' : 'audit_unavailable' } });
+      await f.page.waitForTimeout(100);
+      assert.equal(await f.page.locator('#app').isVisible(), true, 'obsolete same-event401 must not log out');
+      const content = await f.page.locator('[data-history-detail]').textContent();
+      assert.ok(content.includes('latest-A-detail'), 'latest response must remain visible');
+      assert.equal(content.includes('obsolete-A-detail'), false);
+      assert.equal(await f.page.locator('[data-history-detail] [role="alert"]').count(), 0);
+      assert.equal(await f.page.evaluate(() => sessionStorage.getItem('sessionToken')), 'fixture-secret-token');
+      await release(secondB, { ok: true, items: [], total: 2, item_captured: 2, items_complete: true });
+      await f.page.waitForTimeout(40);
+      assert.ok((await f.page.locator('[data-history-detail]').textContent()).includes('latest-A-detail'));
+    } finally { await f.context.close(); }
+  });
+}
+
+test('a late Agent response preserves mounted history and open details without another GET', async () => {
+  const f = await fixture({ profile: ADMIN }); let agentReply;
+  try {
+    await f.page.route('**/api/agent-runs/review-run', async route => { agentReply = route; });
+    await f.page.evaluate(() => { refreshAgentRun('review-run'); });
+    await until(() => agentReply);
+    f.state.handler = async (route, url) => {
+      if (!url.pathname.endsWith('/items')) return release(route, { ok: true, events: [event('A', { item_total: 2 })], total: 1 });
+      await release(route, { ok: true, items: [{ resource_id: 'visible-detail', result: 'success' }], total: 2, item_captured: 2, items_complete: true });
+    };
+    await open(f);
+    await change(f.page, 'action', 'file.move'); await waitText(f.page, 'A');
+    await f.page.getByRole('button', { name: '批量明细', exact: true }).click(); await waitText(f.page, 'visible-detail');
+    const count = f.state.calls.length;
+    await release(agentReply, { ok: true, run: { runId: 'review-run', status: 'DONE' } });
+    await f.page.waitForTimeout(100);
+    assert.equal(f.state.calls.length, count, 'unrelated Agent response must not fetch operations');
+    await waitText(f.page, 'visible-detail');
+    assert.equal(await f.page.locator('[name="action"]').inputValue(), 'file.move');
+    await f.page.locator('[data-history-refresh]').click(); await waitText(f.page, 'A');
+    assert.equal(f.state.calls.length, count + 1, 'explicit refresh still issues one GET');
+    assert.equal(await f.page.locator('[data-history-detail]').textContent(), '');
+  } finally { await f.context.close(); }
+});
+
+test('refresh false mounts an absent history page but leaves an existing page unchanged', async () => {
+  const f = await fixture();
+  try {
+    await f.page.evaluate(() => { setActiveWorkflow('operation_history'); renderActiveWorkflowPage({ refresh: false }); });
+    await waitText(f.page, 'first');
+    assert.equal(f.state.calls.length, 1);
+    await f.page.evaluate(() => renderActiveWorkflowPage({ refresh: false }));
+    await f.page.waitForTimeout(100); assert.equal(f.state.calls.length, 1);
+    await f.page.evaluate(() => refreshActiveWorkflow());
+    await f.page.waitForFunction(() => !document.querySelector('[data-history-refresh]').disabled);
+    assert.equal(f.state.calls.length, 2);
+  } finally { await f.context.close(); }
+});

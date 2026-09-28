@@ -2428,7 +2428,7 @@ function updateNavigationBadges() {
 }
 
 function renderActiveWorkflowPage(options = {}) {
-  if (activeWorkflow === 'operation_history') return showOperationHistory() || true;
+  if (activeWorkflow === 'operation_history') return showOperationHistory(options) || true;
   if (activeWorkflow === 'identity') return showIdentityManagement() || true;
   if (activeWorkflow === 'dashboard' || activeWorkflow === 'agent') {
     showAgentWorkbench();

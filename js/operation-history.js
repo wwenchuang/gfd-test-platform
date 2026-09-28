@@ -140,7 +140,7 @@
       const q = new URLSearchParams({ limit: '50', scope: filters.scope === 'all' && superuser() ? 'all' : 'own' });
       if (detailCursor != null) q.set('cursor', detailCursor);
       const data = await request(`/operations/${encodeURIComponent(item.event_id)}/items?${q}`, controller);
-      if (!current(node, version, actor) || detailEvent !== item) return;
+      if (!current(node, version, actor) || detailEvent !== item || pendingDetail !== controller) return;
       detailNext = data.next_cursor ?? null;
       const items = Array.isArray(data.items) ? data.items : [];
       const complete = data.items_complete === true;
@@ -149,7 +149,7 @@
       panel.querySelector('[data-detail-prev]').onclick = () => { if (pendingDetail || !detailPrevious.length) return; detailCursor = detailPrevious.pop(); loadDetail(); };
       panel.querySelector('[data-detail-next]').onclick = () => { if (pendingDetail || detailNext == null) return; detailPrevious.push(detailCursor); detailCursor = detailNext; loadDetail(); };
     } catch (error) {
-      if (!current(node, version, actor) || detailEvent !== item) return;
+      if (!current(node, version, actor) || detailEvent !== item || pendingDetail !== controller) return;
       if (error.status === 401) { clearAuthSession(); return; }
       panel.innerHTML = '<p class="operation-state" role="alert">批量明细加载失败，请重试。</p><button type="button" class="btn-sm" data-detail-retry>重试明细</button><button type="button" class="btn-sm" data-detail-close>关闭明细</button>';
       panel.querySelector('[data-detail-retry]').onclick = loadDetail;
@@ -166,7 +166,9 @@
     root.querySelector('[name="actor_id"]').disabled = values.scope !== 'all';
     invalidate(); loadList();
   }
-  window.showOperationHistory = () => {
+  window.showOperationHistory = (options = {}) => {
+    // Background updates for other workflows must leave the mounted page and its details intact.
+    if (options.refresh === false && root?.isConnected && activeWorkflow === 'operation_history') return;
     document.getElementById('account-menu').hidden = true;
     document.getElementById('account-toggle').setAttribute('aria-expanded', 'false');
     if (root?.isConnected && activeWorkflow === 'operation_history') { loadList(); return; }
