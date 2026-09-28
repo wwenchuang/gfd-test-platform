@@ -3,6 +3,7 @@
 import http.client
 import json
 import sqlite3
+import socket
 import threading
 import time
 
@@ -40,7 +41,8 @@ def request(server, method, path, token=None, body=None, extra=None):
     return result
 
 
-def events(store, at_least=0):
+def events(store, at_least=1):
+    # Framed responses can finish reading before the server audit finalizer.
     profile = __import__("task_server.identity", fromlist=["get_access_profile"]).get_access_profile("admin")
     until = time.monotonic() + 2
     while True:
@@ -120,6 +122,66 @@ def test_prefix_keys_match_accepted_handler_path_variants(operation_server, monk
     assert keys == ["POST.api.cases.target", "DELETE.api.ui.generate_jobs.target", "POST.api.ui.generate_jobs.retry"]
     assert request(server, "POST", "/api/ui/generate-jobs/job_1/unknown", token, {})[0] == 404
     assert events(store, 4)[0]["route_key"] == "unknown"
+
+
+@pytest.mark.parametrize("token_kind, status", [("admin", 404), ("invalid", 401)])
+def test_early_json_response_is_readable_with_body_left_in_socket(operation_server, monkeypatch, token_kind, status):
+    """Force the request body to arrive after parsing, without consuming it.
+
+    A close with unread kernel bytes can reset TCP. A complete HTTP response
+    must be delimited independently of that close.
+    """
+    server, store = operation_server
+    original = app.TaskHTTPHandler._json
+    pending_body = []
+
+    def reply_then_wait_for_body(handler, data, code=200):
+        original(handler, data, code)
+        handler.connection.settimeout(2)
+        pending_body.append(handler.connection.recv(2, socket.MSG_PEEK))
+
+    monkeypatch.setattr(app.TaskHTTPHandler, "_json", reply_then_wait_for_body)
+    token = auth.create_session_token() if token_kind == "admin" else "bad-token"
+    conn = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=5)
+    try:
+        conn.putrequest("POST", "/api/ui/generate-jobs/job_1/unknown")
+        conn.putheader("Authorization", "Bearer " + token)
+        conn.putheader("Content-Type", "application/json")
+        conn.putheader("Content-Length", "2")
+        conn.endheaders()
+        # HTTP/1.0 getresponse() detaches conn.sock; retain the same transport.
+        transport = conn.sock
+        response = conn.getresponse()
+        # Headers are already parsed; these bytes remain in the server socket.
+        transport.sendall(b"{}")
+        raw = response.read()
+        assert response.status == status
+        assert json.loads(raw)["ok"] is False
+        assert int(response.getheader("Content-Length")) == len(raw)
+    finally:
+        conn.close()
+    row = events(store, 1)[0]
+    assert pending_body == [b"{}"]
+    assert row["result"] == ("denied" if status == 401 else "failed")
+
+
+@pytest.mark.parametrize("method, text, content_type", [
+    ("_text", "响应正文", "text/plain"),
+    ("_html", "<p>响应正文</p>", "text/html"),
+])
+def test_encoded_response_length_matches_http_body(operation_server, monkeypatch, method, text, content_type):
+    server, _ = operation_server
+    monkeypatch.setattr(app, "dispatch_get", lambda handler: getattr(handler, method)(text))
+    conn = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=5)
+    try:
+        conn.request("GET", "/api/jobs", headers={"Authorization": "Bearer " + auth.create_session_token()})
+        response = conn.getresponse()
+        raw = response.read()
+        assert response.getheader("Content-Type").startswith(content_type)
+        assert raw == text.encode()
+        assert response.getheader("Content-Length") == str(len(raw))
+    finally:
+        conn.close()
 
 
 def test_task_app_real_normalization_reports_canonical_changed_fields(operation_server, monkeypatch):
@@ -268,7 +330,7 @@ def test_http_records_semantic_and_binary_outcomes_without_secret(operation_serv
     token = auth.create_session_token()
     assert request(server, "GET", "/api/reports/download", token)[0] == 200
     assert request(server, "POST", "/api/cases", token, {"password": "body-secret"})[0] == 200
-    rows = events(store)
+    rows = events(store, 2)
     assert [row["result"] for row in rows] == ["failed", "success"]
     assert "secret" not in json.dumps(rows)
 
@@ -291,8 +353,10 @@ def test_invalid_machine_header_does_not_impersonate_and_human_route_prefers_bea
     monkeypatch.setattr(auth, "TOKEN", "valid-machine")
     token = auth.create_session_token()
     request(server, "GET", "/api/auth/me", token, extra={"x-token": "valid-machine"})
+    assert events(store, 1)[0]["actor"]["kind"] == "user"
     request(server, "GET", "/api/tasks", extra={"x-token": "invalid-machine"})
-    rows = events(store)
+    rows = events(store, 2)
+    assert len(rows) == 2
     assert rows[1]["actor"]["kind"] == "user"
     assert rows[0]["actor"]["kind"] == "anonymous"
 
@@ -340,7 +404,7 @@ def test_api_testing_direct_json_partial_items_and_accepted_are_recorded(operati
 def test_malformed_body_and_head_are_recorded(operation_server):
     server, store = operation_server
     token = auth.create_session_token()
-    assert request(server, "HEAD", "/api/auth/me", token)[0] == 405
+    assert request(server, "HEAD", "/api/auth/me", token) == (405, b"")
     conn = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=5)
     conn.request("POST", "/api/auth/login", body=b"{bad", headers={"Content-Type": "application/json"})
     response = conn.getresponse()
@@ -476,10 +540,10 @@ def test_keepalive_eof_does_not_repeat_previous_request(operation_server, monkey
     _, store = operation_server
     class KeepAlive(app.TaskHTTPHandler):
         protocol_version = "HTTP/1.1"
+    replies = iter([("_json", {"ok": True, "text": "正文"}), ("_text", "正文"), ("_html", "<p>正文</p>")])
     def fake_get(handler):
-        handler.send_response(200)
-        handler.send_header("Content-Length", "0")
-        handler.end_headers()
+        method, body = next(replies)
+        getattr(handler, method)(body)
     monkeypatch.setattr(app, "dispatch_get", fake_get)
     server = app.ThreadingHTTPServer(("127.0.0.1", 0), KeepAlive)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -487,16 +551,17 @@ def test_keepalive_eof_does_not_repeat_previous_request(operation_server, monkey
     try:
         conn = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=5)
         token = auth.create_session_token()
-        for _ in range(2):
+        for expected in (json.dumps({"ok": True, "text": "正文"}, ensure_ascii=False).encode(), "正文".encode(), "<p>正文</p>".encode()):
             conn.request("GET", "/api/jobs", headers={"Authorization": "Bearer " + token})
             response = conn.getresponse()
             assert response.status == 200
-            response.read()
+            assert response.read() == expected
+            assert response.getheader("Content-Length") == str(len(expected))
         conn.close()
         server.shutdown()
         server.server_close()
         thread.join(timeout=2)
-        assert len([row for row in events(store) if row["action"] == "job.view"]) == 2
+        assert len([row for row in events(store, 3) if row["action"] == "job.view"]) == 3
     finally:
         server.server_close()
 
@@ -520,9 +585,17 @@ def test_spool_fallback_is_exposed_and_replayed_on_recovery(operation_server, mo
     from task_server.operation_http import _store
     live_store = _store()
     original = live_store._insert
+    from task_server import operation_http
+    original_finish = operation_http.finish_request
+    finalized = threading.Event()
+    def observed_finish(handler):
+        original_finish(handler)
+        finalized.set()
+    monkeypatch.setattr(operation_http, "finish_request", observed_finish)
     monkeypatch.setattr(live_store, "_insert", lambda event: (_ for _ in ()).throw(sqlite3.OperationalError("offline")))
     token = auth.create_session_token()
     assert request(server, "GET", "/api/auth/me", token)[0] == 200
+    assert finalized.wait(2), "request audit finalization did not complete"
     assert list(live_store.spool_dir.glob("*.json"))
     monkeypatch.setattr(live_store, "_insert", original)
     status, raw = request(server, "GET", "/api/operations", token)
@@ -531,8 +604,8 @@ def test_spool_fallback_is_exposed_and_replayed_on_recovery(operation_server, mo
     # The ordinary request finalizer invokes bounded replay on recovery.
     for _ in range(2):
         request(server, "GET", "/api/auth/me", token)
+    assert len(events(store, 4)) == 4
     assert not list(live_store.spool_dir.glob("*.json"))
-    assert len(events(store)) >= 2
 
 
 def test_history_method_filter_and_member_scope(operation_server, identity_db):
