@@ -13,7 +13,6 @@ import shutil
 import urllib.parse
 import threading
 import traceback
-import hashlib
 
 from task_server.core.http_client import http_client
 from task_server.execution import ExecutionFacade
@@ -2336,9 +2335,9 @@ def _post_app_install_request(handler, qs):
 
 @route_get("/api/runner/jobs/next")
 def _get_runner_jobs_next(handler, qs):
+    recover_timed_out_jobs()
     if _require_runner_auth(handler):
         return
-    recover_timed_out_jobs()
     runner_id = qs.get("runner_id", "runner")
     runner_device_ids_qs = set(filter(None, (qs.get("devices") or "").split(",")))
     selected = assign_job(runner_id, runner_device_ids_qs)
@@ -2365,21 +2364,14 @@ def _get_runner_jobs_next(handler, qs):
         return
 
     try:
-        from task_server.services import job_service
-        from task_server.services.execution_provenance import read_job_input
-        yaml_content = read_job_input(selected, task_dir=TASK_DIR, jobs_file=job_service.JOBS_FILE).decode("utf-8")
+        yaml_path = safe_join(TASK_DIR, selected["module"], selected["file"])
+        with open(yaml_path, encoding="utf-8") as f:
+            yaml_content = f.read()
         target_task_name = selected.get("target_task_name", "")
         if target_task_name:
             app_package = resolve_app_package(selected["module"], selected["file"], yaml_content)
             yaml_content = yaml_with_single_task(yaml_content, target_task_name, app_package=app_package)
         yaml_content = midscene_cli_dispatch_yaml_text(yaml_content, device_id=selected.get("device_id", ""))
-        dispatch_sha256 = hashlib.sha256(yaml_content.encode("utf-8")).hexdigest()
-        dispatch_version = "midscene_cli_dispatch_yaml_text_v1"
-        input_source = selected.get("input_snapshot") or "legacy"
-        job_service.update_job(selected["job_id"], {
-            "dispatch_sha256": dispatch_sha256, "dispatch_version": dispatch_version,
-            "input_source": input_source,
-        })
     except Exception as e:
         with JOB_LOCK:
             jobs = load_jobs(limit=None)
@@ -2408,12 +2400,7 @@ def _get_runner_jobs_next(handler, qs):
             "job_type": selected.get("job_type") or selected.get("type") or "",
             "type": selected.get("type") or selected.get("job_type") or "",
             "run_mode": selected.get("run_mode") or "",
-            "yaml_content": yaml_content,
-            "input_artifact": selected.get("input_artifact") or {},
-            "input_source": input_source,
-            "initiator": selected.get("initiator") or {},
-            "dispatch_sha256": dispatch_sha256,
-            "dispatch_version": dispatch_version,
+            "yaml_content": yaml_content
         }
     })
 

@@ -140,11 +140,6 @@ class MainAccess:
     def record_apps(self, record):
         if not isinstance(record, dict):
             return set()
-        pinned = record.get("execution_scope")
-        from task_server.services.execution_provenance import ExecutionJobRecord
-        if isinstance(record, ExecutionJobRecord) and record.get("input_snapshot") in {"pinned", "unavailable"} and isinstance(pinned, dict):
-            apps = pinned.get("ui_apps")
-            return set(apps) if isinstance(apps, list) and apps else {None}
         result = set()
         module = record.get("module")
         if module:

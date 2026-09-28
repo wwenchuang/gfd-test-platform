@@ -51,7 +51,6 @@ from ..storage import (
 )
 from .feishu_service import validate_feishu_webhook
 from .business_line_service import normalize_test_application
-from .execution_provenance import ExecutionJobRecord, prepare_job_input, reserved_field
 
 # ---------------------------------------------------------------------------
 # 内部工具
@@ -276,7 +275,7 @@ def normalize_job_record(job: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         "device_strategy": device_strategy,
         "deviceStrategy": device_strategy,
     })
-    return ExecutionJobRecord(job) if job.get("provenance_version") == 1 else job
+    return job
 
 
 # ---------------------------------------------------------------------------
@@ -430,17 +429,14 @@ def create_job(payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
 
     # 透传调用方提供的额外字段（如 trace_id/run_id/extra metadata）
     for key, value in payload.items():
-        if key in job or value is None or reserved_field(key):
+        if key in job or value is None:
             continue
         job[key] = value
 
-    with prepare_job_input(job, task_dir=TASK_DIR, jobs_file=JOBS_FILE):
-        with JOB_LOCK:
-            jobs = _read_jobs_raw()
-            if any(row.get("job_id") == job_id for row in jobs):
-                raise ValueError("job identifier already exists")
-            jobs.append(job)
-            save_jobs(jobs)
+    with JOB_LOCK:
+        jobs = _read_jobs_raw()
+        jobs.append(job)
+        save_jobs(jobs)
 
     return normalize_job_record(job)
 
@@ -766,6 +762,14 @@ def create_pending_job(
         新创建的 job 字典。
     """
     task_names: List[str] = []
+    try:
+        yaml_path = safe_join(TASK_DIR, module, file)
+        with open(yaml_path, encoding="utf-8") as f:
+            task_names = _yaml_task_names_local(f.read())
+    except Exception:
+        task_names = []
+    if target_task_name:
+        task_names = [target_task_name]
 
     job: Dict[str, Any] = {
         "job_id": _new_job_id(),
@@ -791,18 +795,10 @@ def create_pending_job(
         "total_task_count": len(task_names),
         "task_names": task_names[:100],
     }
-    with prepare_job_input(job, task_dir=TASK_DIR, jobs_file=JOBS_FILE) as content:
-        task_names = _yaml_task_names_local(content.decode("utf-8")) if content is not None else []
-        if target_task_name:
-            task_names = [target_task_name]
-        job.update(task_names=task_names[:100], total_task_count=len(task_names),
-                   current_task_name=task_names[0] if task_names else "")
-        with JOB_LOCK:
-            jobs = _read_jobs_raw()
-            if any(row.get("job_id") == job["job_id"] for row in jobs):
-                raise ValueError("job identifier already exists")
-            jobs.append(job)
-            save_jobs(jobs)
+    with JOB_LOCK:
+        jobs = _read_jobs_raw()
+        jobs.append(job)
+        save_jobs(jobs)
 
     # 更新 task-meta 元数据
     try:
@@ -815,7 +811,7 @@ def create_pending_job(
     except Exception:
         pass  # task-meta 更新失败不影响主流程
 
-    return normalize_job_record(job)
+    return job
 
 
 # ---------------------------------------------------------------------------
