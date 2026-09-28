@@ -506,10 +506,17 @@ def test_create_report_persists_word_export(report_workspace):
     })
 
     assert Path(result["files"]["word"]).exists()
-    word = Path(result["files"]["word"]).read_text(encoding="utf-8")
-    assert "共享打印V1.2.2-测试报告" in word
-    assert "report-cover" in word
-    assert result["download"]["word"].endswith("&format=doc")
+    from docx import Document
+    from zipfile import ZipFile
+    path = Path(result["files"]["word"])
+    assert path.suffix == ".docx"
+    with ZipFile(path) as archive:
+        assert archive.testzip() is None
+        assert "word/document.xml" in archive.namelist()
+    document = Document(path)
+    assert "共享打印V1.2.2-测试报告" in "\n".join(p.text for p in document.paragraphs)
+    assert document.tables
+    assert result["download"]["word"].endswith("&format=docx")
 
 
 def test_template_missing_sections_gets_default_fallback(report_workspace):
@@ -739,3 +746,94 @@ def test_preview_does_not_recommend_release_when_recorded_defects_remain(report_
 
     assert result["quality"]["result"] == "存在缺陷"
     assert result["release"]["suggestion"] == "暂不建议发布"
+
+
+@pytest.mark.parametrize("format_name", ["docx", "doc", "word"])
+def test_word_download_is_binary_docx_including_existing_reports(report_workspace, monkeypatch, format_name):
+    import io
+    from docx import Document
+    from task_server import router
+    from task_server.services import test_report_service as service
+    report = service.preview_test_report({"case_set_id": "case-a", "meta": {"report_title": "中文报告"}})
+    legacy = Path(service.LEARNING_DIR) / "report.doc"
+    legacy.write_text(report["html"], encoding="utf-8")
+    report["files"] = {"word": str(legacy)}
+    monkeypatch.setattr(router, "read_test_report", lambda _: report)
+    sent = []
+    monkeypatch.setattr(router, "send_attachment", lambda handler, body, filename, mime: sent.append((body, filename, mime)))
+    class Handler:
+        def _json(self, body, status=200):
+            pytest.fail(f"Download failed {status}: {body}")
+    router._get_test_report_download(Handler(), {"report_id": "saved", "format": format_name})
+    body, filename, mime = sent[0]
+    assert filename.endswith(".docx")
+    assert mime == "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    document = Document(io.BytesIO(body))
+    assert "中文报告" in "\n".join(p.text for p in document.paragraphs)
+    assert legacy.read_text(encoding="utf-8") == report["html"]
+
+
+def test_docx_export_preserves_all_sections_tables_and_xml_sensitive_text():
+    import io
+    from docx import Document
+    from task_server.services.test_report_service import render_test_report_docx
+    markdown = '# 中文 & <报告>\n\n## 1. 基本信息\n测试人：王某\n\n| 指标 | 数值 |\n| --- | --- |\n| 通过 | 4 |\n| 缺陷 | 5 |\n\n## 6. 发布建议\n暂不建议发布\n'
+    document = Document(io.BytesIO(render_test_report_docx({"markdown": markdown})))
+    assert document.paragraphs[0].text == "中文 & <报告>"
+    assert any("暂不建议发布" in p.text for p in document.paragraphs)
+    assert [c.text for c in document.tables[0].rows[-1].cells] == ["缺陷", "5"]
+    assert 'tblHeader' in document.tables[0].rows[0]._tr.xml
+
+@pytest.mark.parametrize('extension', ['html', 'md', 'docx'])
+@pytest.mark.parametrize('title,expected', [('掐丝珐琅需求-测试报告', '掐丝珐琅需求-测试报告'), ('掐丝珐琅需求', '掐丝珐琅需求_测试报告')])
+def test_report_download_name_does_not_duplicate_suffix(title, expected, extension):
+    from task_server.services.test_report_service import test_report_download_filename
+    assert test_report_download_filename(title, 'tpr_1', extension) == f'{expected}.{extension}'
+
+
+def test_docx_keeps_escaped_pipes_and_independent_numbered_sections():
+    import io
+    from docx import Document
+    from task_server.services.test_report_service import render_test_report_docx
+    markdown = '## 范围\n1. 范围甲\n2. 范围乙\n## 测试点\n1. 测试点甲\n\n| 编号 | 内容 | 结果 |\n| --- | --- | --- |\n| 1 | 输入A\\|B | 通过 |'
+    doc = Document(io.BytesIO(render_test_report_docx({'markdown': markdown})))
+    assert [cell.text for cell in doc.tables[0].rows[-1].cells] == ['1', '输入A|B', '通过']
+    assert '1. 测试点甲' in [p.text for p in doc.paragraphs]
+
+
+def test_word_download_over_real_http_preserves_bytes_and_chinese_filename(report_workspace, monkeypatch):
+    import io
+    import threading
+    import urllib.parse
+    import urllib.request
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    from docx import Document
+    from task_server import router
+    from task_server.services import test_report_service as service
+    record = service.create_test_report({'case_set_id': 'case-a', 'meta': {'report_title': '中文报告-测试报告'}})
+    monkeypatch.setattr(router, 'read_test_report', service.read_test_report)
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            qs = dict(urllib.parse.parse_qsl(urllib.parse.urlsplit(self.path).query))
+            router._get_test_report_download(self, qs)
+        def _cors(self):
+            pass
+        def log_message(self, *args):
+            pass
+    server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        with urllib.request.urlopen(f'http://127.0.0.1:{server.server_port}/api/test-reports/download?report_id={record["report_id"]}&format=docx') as response:
+            body = response.read()
+            assert body == Path(record['files']['word']).read_bytes()
+            assert response.headers['Content-Type'].endswith('wordprocessingml.document')
+            disposition = urllib.parse.unquote(response.headers['Content-Disposition'])
+            assert '中文报告-测试报告.docx' in disposition
+            assert '_测试报告' not in disposition
+            assert int(response.headers['Content-Length']) == len(body)
+            assert Document(io.BytesIO(body)).tables
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)

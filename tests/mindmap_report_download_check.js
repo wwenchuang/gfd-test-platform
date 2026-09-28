@@ -64,3 +64,14 @@ test('report download leaves a visible Chinese error instead of opening a JSON e
   assert.equal(button.textContent, '下载 Markdown');
   assert.deepEqual(win.lastToast, {message: '测试报告文件不存在，请重新生成', type: 'error'});
 });
+
+test('report filenames keep one test-report suffix and use real docx extension', () => {
+  const source = fs.readFileSync('js/app.js', 'utf8');
+  const dom = new JSDOM('', {runScripts: 'dangerously'});
+  try {
+    loadFunction(dom.window, source, 'mindmapReportFilename');
+    assert.equal(dom.window.mindmapReportFilename('掐丝珐琅-测试报告', 'docx'), '掐丝珐琅-测试报告.docx');
+    assert.equal(dom.window.mindmapReportFilename('掐丝珐琅', 'html'), '掐丝珐琅_测试报告.html');
+    assert.match(source, /mindmapReportFilename\(reportTitle, 'docx'\)/);
+  } finally { dom.window.close(); }
+});

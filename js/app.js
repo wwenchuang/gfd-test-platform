@@ -5051,6 +5051,11 @@ async function previewMindmapTestReport() {
   }
 }
 
+function mindmapReportFilename(title, extension) {
+  const stem = String(title || '测试报告').trim();
+  return `${stem.endsWith('测试报告') ? stem : `${stem}_测试报告`}.${extension}`;
+}
+
 function mindmapReportDownloadPath(rawUrl) {
   const value = String(rawUrl || '').trim();
   if (!value) throw new Error('报告下载地址缺失，请重新生成报告');
@@ -5116,7 +5121,7 @@ async function createMindmapTestReport() {
     if (preview) {
       const reportTitle = String(data.title || data.report_id || '测试报告').trim();
       const htmlUrl = data.download?.html || (data.report_id ? `/api/test-reports/download?report_id=${encodeURIComponent(data.report_id)}&format=html` : '');
-      const wordUrl = data.download?.word || (data.report_id ? `/api/test-reports/download?report_id=${encodeURIComponent(data.report_id)}&format=doc` : '');
+      const wordUrl = data.download?.word || (data.report_id ? `/api/test-reports/download?report_id=${encodeURIComponent(data.report_id)}&format=docx` : '');
       const markdownUrl = data.download?.markdown || (data.report_id ? `/api/test-reports/download?report_id=${encodeURIComponent(data.report_id)}&format=md` : '');
       preview.innerHTML = `
         ${mindmapReportStatsHtml(data)}
@@ -5124,9 +5129,9 @@ async function createMindmapTestReport() {
           <strong>${escapeHtml(reportTitle)}</strong>
           <span>${escapeHtml(data.report_id || '')}</span>
           <div class="mindmap-report-actions">
-            <button class="btn-sm primary" data-report-download="${escapeHtml(htmlUrl)}" data-report-filename="${escapeHtml(`${reportTitle}_测试报告.html`)}" onclick="downloadMindmapTestReport(this)" ${htmlUrl ? '' : 'disabled'}>下载 HTML</button>
-            <button class="btn-sm success" data-report-download="${escapeHtml(wordUrl)}" data-report-filename="${escapeHtml(`${reportTitle}_测试报告.doc`)}" onclick="downloadMindmapTestReport(this)" ${wordUrl ? '' : 'disabled'}>下载 Word</button>
-            <button class="btn-sm" data-report-download="${escapeHtml(markdownUrl)}" data-report-filename="${escapeHtml(`${reportTitle}_测试报告.md`)}" onclick="downloadMindmapTestReport(this)" ${markdownUrl ? '' : 'disabled'}>下载 Markdown</button>
+            <button class="btn-sm primary" data-report-download="${escapeHtml(htmlUrl)}" data-report-filename="${escapeHtml(mindmapReportFilename(reportTitle, 'html'))}" onclick="downloadMindmapTestReport(this)" ${htmlUrl ? '' : 'disabled'}>下载 HTML</button>
+            <button class="btn-sm success" data-report-download="${escapeHtml(wordUrl)}" data-report-filename="${escapeHtml(mindmapReportFilename(reportTitle, 'docx'))}" onclick="downloadMindmapTestReport(this)" ${wordUrl ? '' : 'disabled'}>下载 Word</button>
+            <button class="btn-sm" data-report-download="${escapeHtml(markdownUrl)}" data-report-filename="${escapeHtml(mindmapReportFilename(reportTitle, 'md'))}" onclick="downloadMindmapTestReport(this)" ${markdownUrl ? '' : 'disabled'}>下载 Markdown</button>
             <button class="btn-sm" onclick="showMindmapCenter()">回到脑图中心</button>
           </div>
         </div>

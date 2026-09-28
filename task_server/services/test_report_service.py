@@ -1220,11 +1220,11 @@ def create_test_report(payload: Dict[str, Any]) -> Dict[str, Any]:
     os.makedirs(report_dir, exist_ok=True)
     md_path = os.path.join(report_dir, "report.md")
     html_path = os.path.join(report_dir, "report.html")
-    word_path = os.path.join(report_dir, "report.doc")
+    word_path = os.path.join(report_dir, "report.docx")
     json_path = os.path.join(report_dir, "report.json")
     write_text_file(md_path, data["markdown"])
     write_text_file(html_path, data["html"])
-    write_text_file(word_path, data["html"])
+    Path(word_path).write_bytes(render_test_report_docx(data))
     record = {
         "ok": True,
         "report_id": report_id,
@@ -1245,7 +1245,7 @@ def create_test_report(payload: Dict[str, Any]) -> Dict[str, Any]:
         "download": {
             "markdown": f"/api/test-reports/download?report_id={report_id}&format=md",
             "html": f"/api/test-reports/download?report_id={report_id}&format=html",
-            "word": f"/api/test-reports/download?report_id={report_id}&format=doc",
+            "word": f"/api/test-reports/download?report_id={report_id}&format=docx",
         },
     }
     write_json_file(json_path, {**data, **record})
@@ -1255,6 +1255,24 @@ def create_test_report(payload: Dict[str, Any]) -> Dict[str, Any]:
     index["reports"] = reports[:1000]
     _save_index(index)
     return record
+
+
+def test_report_download_filename(title: str, report_id: str, extension: str) -> str:
+    stem = str(title or report_id or "测试报告").strip()
+    if not stem.endswith("测试报告"):
+        stem += "_测试报告"
+    return clean_asset_filename(f"{stem}.{extension}", default=f"{report_id}_测试报告.{extension}")
+
+
+def render_test_report_docx(data: Dict[str, Any]) -> bytes:
+    from .report_word_service import render_report_docx
+    markdown = data.get("markdown")
+    if not markdown:
+        path = (data.get("files") or {}).get("markdown")
+        markdown = Path(path).read_text(encoding="utf-8") if path and os.path.isfile(path) else ""
+    if not markdown:
+        raise TestReportError("报告正文缺失，请重新生成报告后下载 Word")
+    return render_report_docx(markdown)
 
 
 def list_test_reports(case_set_id: str = "", limit: int = 100) -> List[Dict[str, Any]]:

@@ -1,3 +1,10 @@
+## 2026-09-28 Word 下载与重复文件名修复（待部署）
+
+- 实际 Chrome 下载确认旧 Word 是 HTML 改成 .doc，前后端重复追加“测试报告”。现生成真实 DOCX、二进制下载，兼容旧 doc/word 链接；历史报告仅使用已保存 Markdown 转换，不改业务结果。
+- 文件名“掐丝珐琅需求-测试报告.docx”只保留一次后缀；HTML/Markdown 同步修复。中文字体、表格转义竖线和跨节编号已核对。
+- 34 项 Python、9 项 Node 专项通过；真实本地 HTTP 核对 MIME、中文文件名、长度和二进制一致。实际报告经捆绑 LibreOffice 渲染全部 3 页，逐页可读；不等于 Microsoft Word/WPS 或生产新版按钮验收。
+- 当前 Chrome 遗留 Playwright 临时下载设置导致 UUID 文件名，仍需在正常下载环境复验；检测到用户正在操作共享页面后停止浏览器交互，本版未部署。计划与证据：docs/superpowers/plans/2026-09-28-report-word-download.md、docs/evidence/report-word-download-2026-09-28.md。
+
 ## 2026-09-28 用户提供的测试设计 Prompt 已接入（待部署）
 
 - 用户要求替换测试平台生成用例Prompt。原始固定提示词、逐次输入模板完整保存在ai_skills/references/test_design_policy.v1.md与test_design_input.v1.md；运行时适配现有JSON接口，由平台导出MM。
