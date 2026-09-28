@@ -11,6 +11,65 @@ from task_server.services import device_recording_service as recording
 
 
 class DeviceRecordingServiceTest(unittest.TestCase):
+    def test_repeated_control_preserves_record_identity_in_one_model_call(self):
+        from task_server.services.device_recording_yaml_service import generate_recording_yaml
+        session = self.create()
+        self.prepare_frame(session)
+        recording.append_recorded_action(session['id'], session['recording_token'], {
+            'event_id': 'repeated-delete', 'type': 'tap', 'device_id': 'ecbfd645',
+            'point': {'x': 100, 'y': 200},
+        }, store_path=self.store, evidence_dir=os.path.join(self.tempdir.name, 'evidence'))
+        calls = []
+        def model_call(prompt, **kwargs):
+            calls.append(kwargs)
+            return json.dumps({'semantic_description': '删除', 'confidence': 0.99,
+                               'target_scope': 'repeated', 'target_context': '打印编号123456的记录'})
+        result = recording.recognize_recording_semantics(
+            session['id'], 'admin', store_path=self.store, model_call=model_call)
+        target = '打印编号123456的记录中的「删除」'
+        self.assertEqual(result['steps'][0]['semantic_description'], target)
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0]['retry_count'], 0)
+        draft = generate_recording_yaml({**result, 'status': 'finished'})
+        self.assertIn('aiTap: ' + target, draft['yaml'])
+        self.assertIn('“' + target + '”', draft['yaml'])
+
+    def test_unqualified_repeated_or_unknown_target_cannot_be_replay_ready(self):
+        from task_server.services.device_recording_yaml_service import generate_recording_yaml
+        session = self.create()
+        self.prepare_frame(session)
+        recording.append_recorded_action(session['id'], session['recording_token'], {
+            'event_id': 'ambiguous-delete', 'type': 'tap', 'device_id': 'ecbfd645',
+            'point': {'x': 100, 'y': 200},
+        }, store_path=self.store, evidence_dir=os.path.join(self.tempdir.name, 'evidence'))
+        invalid_results = [
+            {'target_scope': scope} for scope in [None, 'ambiguous', 'repeated', True]
+        ] + [
+            {'target_scope': 'repeated', 'target_context': context} for context in [
+                '第一条', '列表的第一条打印记录', '最上面的记录', '左边按钮',
+                'first row', 'x=100, y=200', '坐标（100，200）',
+            ]
+        ] + [
+            {'target_scope': 'repeated', 'target_context': ['记录123']},
+            {'target_scope': 'repeated', 'target_context': '记录123' * 50},
+            {'target_scope': 'unique', 'semantic_description': {'label': '删除'}},
+        ]
+        for fields in invalid_results:
+            with self.subTest(fields=fields):
+                result = recording.recognize_recording_semantics(
+                    session['id'], 'admin', store_path=self.store, force=True,
+                    model_call=lambda *a, **k: json.dumps({
+                        'semantic_description': '删除', 'confidence': 1, **fields,
+                    }))
+                self.assertEqual(result['steps'][0]['semantic_recognition_status'], 'failed')
+                self.assertEqual(recording.confirmed_recording_description(result['steps'][0]), '')
+                self.assertFalse(generate_recording_yaml({**result, 'status': 'finished'})['can_debug'])
+        step = result['steps'][0]
+        corrected = recording.update_recorded_step(session['id'], 'admin', step['id'],
+            '打印编号123456的记录中的删除', store_path=self.store)
+        self.assertEqual(recording.confirmed_recording_description(corrected['steps'][0]),
+                         '打印编号123456的记录中的删除')
+
     def setUp(self):
         self.tempdir = tempfile.TemporaryDirectory()
         self.addCleanup(self.tempdir.cleanup)
@@ -279,7 +338,7 @@ class DeviceRecordingServiceTest(unittest.TestCase):
             self.assertIn("x=80, y=120", prompt)
             self.assertNotIn('"semantic_description":"底部导航「我的」"', prompt)
             self.assertTrue(kwargs["image_assets"][0]["base64"])
-            return '{"semantic_description":"底部导航「我的」","confidence":0.95}'
+            return '{"semantic_description":"底部导航「我的」","confidence":0.95,"target_scope":"unique"}'
 
         recognized = recording.recognize_recording_semantics(
             session["id"], "admin", store_path=self.store, model_call=model_call,
@@ -326,7 +385,7 @@ class DeviceRecordingServiceTest(unittest.TestCase):
             closeup = Image.open(io.BytesIO(base64.b64decode(kwargs["image_assets"][0]["base64"])))
             self.assertEqual(closeup.size, (1208, 1208))
             self.assertNotEqual(closeup.getpixel((460, 880)), (255, 255, 255))
-            return '{"semantic_description":"底部导航首页","confidence":0.9}'
+            return '{"semantic_description":"底部导航首页","confidence":0.9,"target_scope":"unique"}'
 
         recognized = recording.recognize_recording_semantics(
             session["id"], "admin", store_path=self.store, model_call=model_call,
@@ -400,8 +459,8 @@ class DeviceRecordingServiceTest(unittest.TestCase):
                         recording.update_recorded_step_point(session['id'], correction, step['id'], {'x':20,'y':30}, store_path=self.store)
                     else:
                         recording.recognize_recording_semantics(session['id'], correction, store_path=self.store,
-                            force=True, model_call=lambda *a, **k: '{"semantic_description":"新的识别","confidence":0.9}')
-                    return '{"semantic_description":"过期的我的","confidence":0.95}'
+                            force=True, model_call=lambda *a, **k: '{"semantic_description":"新的识别","confidence":0.9,"target_scope":"unique"}')
+                    return '{"semantic_description":"过期的我的","confidence":0.95,"target_scope":"unique"}'
                 result = recording.recognize_recording_semantics(session['id'], correction, store_path=self.store, model_call=late_model)
                 actual=result['steps'][0]
                 if correction == 'point':
@@ -826,7 +885,8 @@ class DeviceRecordingServiceTest(unittest.TestCase):
                 calls = []
                 def recognize(*args, **kwargs):
                     calls.append(kwargs)
-                    return json.dumps({'semantic_description': label, 'confidence': 0.95})
+                    return json.dumps({'semantic_description': label, 'confidence': 0.95,
+                                       'target_scope': 'unique', 'target_context': '背景日期不能加入弹窗按钮'})
                 result = recording.recognize_recording_semantics(session['id'], 'admin', store_path=self.store, model_call=recognize)
                 self.assertEqual(len(calls), 1)
                 self.assertEqual(result['steps'][0]['semantic_description'], label)
@@ -870,7 +930,7 @@ class DeviceRecordingServiceTest(unittest.TestCase):
         called = []
         result = recording.recognize_recording_semantics(
             session["id"], "admin", store_path=self.store, step_id=step["id"], force=True,
-            model_call=lambda *_args, **_kwargs: (called.append(True) or '{"semantic_description":"我的","confidence":0.95}'),
+            model_call=lambda *_args, **_kwargs: (called.append(True) or '{"semantic_description":"我的","confidence":0.95,"target_scope":"unique"}'),
         )
         self.assertEqual(result["steps"][0]["semantic_description"], "我的")
         self.assertEqual(result["steps"][0]["semantic_source"], "ai_visual")
