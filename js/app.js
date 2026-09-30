@@ -4727,7 +4727,7 @@ function mindmapReportStatsHtml(data = {}) {
       <div><strong>${escapeHtml(stats.not_executed ?? '-')}</strong><span>缺少执行证据</span></div>
       <div><strong>${escapeHtml(stats.manual_pending ?? 0)}</strong><span>待人工确认</span></div>
       <div><strong>${escapeHtml(stats.pass_rate ?? 0)}%</strong><span>通过率</span></div>
-      <div><strong>${escapeHtml(stats.defect_total ?? 0)}</strong><span>缺陷总数</span></div>
+      <div><strong>${escapeHtml(stats.defect_total ?? 0)}</strong><span>测试环境累计缺陷</span></div>
     </div>
     <div class="mindmap-report-decision">
       <span>质量评估：${escapeHtml(quality.result || '-')}</span>
@@ -5009,13 +5009,14 @@ function renderMindmapReportBuilder(data) {
             <label class="wide">测试目标<textarea id="mindmap-report-goal" rows="2">${escapeHtml(DEFAULT_MINDMAP_REPORT_GOAL)}</textarea></label>
             <label class="wide">备注<textarea id="mindmap-report-remark" rows="2" placeholder="补充风险、数据准备或结论说明"></textarea></label>
             <label class="wide">执行依据（选填）<textarea id="mindmap-report-execution-note" rows="2" placeholder="可补充执行设备或外部记录，例如：Safari 真机执行，设备 Mac/SN，用例平台记录 3552"></textarea><em>在平台标记通过、失败或阻塞后即可生成报告；未填写时，报告会自动记录为“平台人工标记”并保存生成时间。</em></label>
-            <label class="wide">缺陷统计
+            <label class="wide">测试环境累计发现缺陷
               <span class="mindmap-report-defect-grid">
                 <span class="mindmap-report-defect-field"><em>致命</em><input id="mindmap-report-defect-fatal" type="number" min="0" step="1" value="0"></span>
                 <span class="mindmap-report-defect-field"><em>严重</em><input id="mindmap-report-defect-serious" type="number" min="0" step="1" value="0"></span>
                 <span class="mindmap-report-defect-field"><em>一般</em><input id="mindmap-report-defect-normal" type="number" min="0" step="1" value="0"></span>
                 <span class="mindmap-report-defect-field"><em>轻微</em><input id="mindmap-report-defect-minor" type="number" min="0" step="1" value="0"></span>
               </span>
+              <em>填写测试过程中累计发现的 Bug 数量，不代表当前未解决缺陷数量；报告结论依据最终执行结果与人工确认状态。</em>
             </label>
             <label class="wide">报告模板
               <span class="mindmap-report-template-row">

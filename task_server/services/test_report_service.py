@@ -29,6 +29,8 @@ REPORT_STATUS_TEXT = {
     "not_executed": "未执行",
 }
 
+DEFECT_STATISTICS_NOTE = "统计口径：测试环境累计发现的缺陷，包含测试过程中发现的问题，不代表当前未解决缺陷数量；测试结论依据本轮最终执行结果及人工确认状态。"
+
 TEMPLATE_PLACEHOLDERS = (
     "report_title",
     "title",
@@ -657,11 +659,6 @@ def _quality(statistics: Dict[str, Any], cases: List[Dict[str, Any]]) -> Dict[st
             "result": "待人工确认",
             "text": f"自动化用例已执行通过，但仍有 {manual_pending} 条人工用例待确认；人工结论补齐前不能形成发布结论。",
         }
-    if int(statistics.get("defect_total") or 0) > 0:
-        return {
-            "result": "存在缺陷",
-            "text": f"自动化用例已执行完成，但仍记录有 {statistics.get('defect_total')} 个缺陷；缺陷处理结论闭环前不能形成发布结论。",
-        }
     if not total:
         return {
             "result": "缺少执行证据",
@@ -669,19 +666,19 @@ def _quality(statistics: Dict[str, Any], cases: List[Dict[str, Any]]) -> Dict[st
         }
     return {
         "result": "通过",
-        "text": "本轮测试已覆盖核心测试范围内的自动化用例，全部用例执行完成且结果通过；关键业务流程、主要功能点及回归风险点验证符合预期，测试结果满足发布准入要求。",
+        "text": "本报告统计范围内的用例最终执行结果均为通过，所选人工用例已确认，测试通过。测试环境累计发现的缺陷数量用于过程统计，不作为当前遗留缺陷数量。",
     }
 
 
 def _release(quality: Dict[str, Any], statistics: Dict[str, Any]) -> Dict[str, str]:
-    if quality.get("result") != "通过" or int(statistics.get("defect_total") or 0) > 0:
+    if quality.get("result") != "通过":
         return {
             "suggestion": "暂不建议发布",
-            "text": "当前执行证据、人工确认或缺陷结论尚未闭环；请完成执行和人工确认，处理失败、阻塞及已记录缺陷后再评估发布。",
+            "text": "当前执行证据或人工确认尚未闭环；请完成执行和人工确认，处理失败、阻塞后再评估发布。测试环境累计缺陷数量不单独影响本结论。",
         }
     return {
         "suggestion": "建议发布",
-        "text": "本轮测试结论为通过，未发现影响发布的阻断问题，版本质量满足发布要求；建议按既定发布流程推进上线，并在发布后持续关注核心业务指标、异常告警及用户反馈。",
+        "text": "本轮测试范围内的最终执行结果全部通过，建议按既定发布流程推进上线。测试环境累计缺陷数不等于当前未解决缺陷数量；发布后持续关注核心业务指标、异常告警及用户反馈。",
     }
 
 
@@ -806,7 +803,7 @@ def _markdown_table(headers: List[str], rows: List[List[Any]]) -> str:
 
 def _summary_table(statistics: Dict[str, Any]) -> str:
     return _markdown_table(
-        ["总计", "通过", "失败", "阻塞", "缺少执行证据", "待人工确认", "通过率", "缺陷总数"],
+        ["总计", "通过", "失败", "阻塞", "缺少执行证据", "待人工确认", "通过率", "测试环境累计缺陷"],
         [[
             statistics.get("total", 0),
             statistics.get("passed", 0),
@@ -821,7 +818,7 @@ def _summary_table(statistics: Dict[str, Any]) -> str:
 
 
 def _defect_table(defects: Dict[str, int]) -> str:
-    return _markdown_table(
+    return DEFECT_STATISTICS_NOTE + "\n\n" + _markdown_table(
         ["致命", "严重", "一般", "轻微", "总计"],
         [[
             defects.get("fatal", 0),
@@ -847,8 +844,8 @@ def _conclusion_summary(data: Dict[str, Any]) -> str:
                 f"自动化用例共 {statistics.get('total', 0)} 条，通过 {statistics.get('passed', 0)} 条，失败 {statistics.get('failed', 0)} 条，阻塞 {statistics.get('blocked', 0)} 条，缺少执行证据 {statistics.get('not_executed', 0)} 条；待人工确认 {statistics.get('manual_pending', 0)} 条。",
             ],
             [
-                "缺陷情况",
-                f"致命 {defects.get('fatal', 0)} 个，严重 {defects.get('serious', 0)} 个，一般 {defects.get('normal', 0)} 个，轻微 {defects.get('minor', 0)} 个，缺陷总数 {defects.get('total', 0)} 个。",
+                "测试环境累计发现缺陷",
+                f"致命 {defects.get('fatal', 0)} 个，严重 {defects.get('serious', 0)} 个，一般 {defects.get('normal', 0)} 个，轻微 {defects.get('minor', 0)} 个，累计 {defects.get('total', 0)} 个；不代表当前未解决缺陷数量。",
             ],
             ["发布意见", release.get("text") or "-"],
         ],

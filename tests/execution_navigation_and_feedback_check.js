@@ -202,6 +202,7 @@ test('mindmap report preview distinguishes automation totals from pending manual
   assert.match(html, /自动化总计/);
   assert.match(html, /缺少执行证据/);
   assert.match(html, /<strong>1<\/strong><span>待人工确认<\/span>/);
+  assert.match(html, /测试环境累计缺陷/);
 });
 
 test('mindmap report explains generation count and execution evidence before formal export', t => {

@@ -730,7 +730,8 @@ def test_recorded_manual_failure_is_a_failure_not_pending_confirmation(report_wo
     assert "| 失败 |" in result["manual_case_table"]
 
 
-def test_preview_does_not_recommend_release_when_recorded_defects_remain(report_workspace):
+@pytest.mark.parametrize("severity", ["fatal", "serious", "normal", "minor"])
+def test_testing_defect_totals_do_not_block_passed_report(report_workspace, severity):
     from task_server.services import test_report_service
 
     result = test_report_service.preview_test_report({
@@ -740,12 +741,61 @@ def test_preview_does_not_recommend_release_when_recorded_defects_remain(report_
             case_id: {"status": "passed"}
             for case_id in ("TC-001", "TC-002", "TC-003", "TC-004")
         },
-        "defects": {"normal": 1},
+        "defects": {severity: 3},
         "meta": {"report_title": "共享打印V1.2.2-测试报告"},
     })
 
-    assert result["quality"]["result"] == "存在缺陷"
+    assert result["statistics"]["defect_total"] == 3
+    assert result["quality"]["result"] == "通过"
+    assert result["release"]["suggestion"] == "建议发布"
+    assert "测试环境累计发现" in result["defect_table"]
+    assert "未解决缺陷数量" in result["markdown"]
+    assert "测试环境累计发现" in result["conclusion_summary"]
+    assert "暂不建议发布" not in result["html"]
+
+
+@pytest.mark.parametrize("case_id,status,expected", [
+    ("TC-001", "failed", "未通过"),
+    ("TC-001", "blocked", "阻塞"),
+    ("TC-001", "not_executed", "缺少执行证据"),
+    ("MT-001", "failed", "未通过"),
+    ("MT-001", "blocked", "阻塞"),
+    ("MT-001", "not_executed", "待人工确认"),
+])
+def test_testing_defects_do_not_hide_incomplete_or_failed_results(report_workspace, case_id, status, expected):
+    from task_server.services import test_report_service as service
+    execution = {key: {"status": "passed"} for key in ("TC-001", "TC-002", "TC-003", "TC-004", "MT-001")}
+    execution[case_id] = {"status": status}
+    result = service.preview_test_report({
+        "case_set_id": "case-a", "selected_case_ids": ["TC-001", "MT-001"],
+        "execution_results": execution, "defects": {"normal": 3},
+    })
+    assert result["quality"]["result"] == expected
     assert result["release"]["suggestion"] == "暂不建议发布"
+
+
+@pytest.mark.parametrize("custom_template", [False, True])
+def test_passed_defect_report_persists_consistent_export_conclusions(report_workspace, custom_template):
+    from docx import Document
+    from task_server.services import test_report_service as service
+    payload = {
+        "case_set_id": "case-a", "selected_case_ids": ["TC-001"], "report_mode": "execution",
+        "execution_results": {key: {"status": "passed"} for key in ("TC-001", "TC-002", "TC-003", "TC-004")},
+        "defects": {"normal": 3},
+    }
+    if custom_template:
+        template = service.save_test_report_template({"name": "累计缺陷", "content": "# 报告\n{{conclusion_summary}}\n{{defect_table}}\n{{quality_assessment}}\n{{release_suggestion}}"})
+        payload["template_id"] = template["template_id"]
+    result = service.create_test_report(payload)
+    assert result["quality"]["result"] == "通过"
+    assert result["release"]["suggestion"] == "建议发布"
+    document = Document(result["files"]["word"])
+    word_text = "\n".join([p.text for p in document.paragraphs] + [cell.text for table in document.tables for row in table.rows for cell in row.cells])
+    for text in (word_text, Path(result["files"]["markdown"]).read_text(), Path(result["files"]["html"]).read_text()):
+        assert "建议发布" in text
+        assert "暂不建议发布" not in text
+        assert "测试环境累计发现" in text
+        assert "未解决缺陷数量" in text
 
 
 @pytest.mark.parametrize("format_name", ["docx", "doc", "word"])
