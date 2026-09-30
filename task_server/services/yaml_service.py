@@ -9215,6 +9215,7 @@ def build_generation_summary(case_set_id, title, module, yaml_file, converted_pa
         "case_set_id": case_set_id,
         "title": title,
         "module": module,
+        "app_package": generation_mindmap_app_package(case_set_id),
         "business": converted_payload.get("business") or "",
         "yaml_file": yaml_file,
         "yaml_files": [yaml_file] if yaml_file else [],
@@ -10834,6 +10835,16 @@ def build_generation_mindmap_full(summary):
 
 
 
+def generation_mindmap_app_package(case_set_id, summary=None):
+    summary = summary or {}
+    # Only explicit saved request metadata establishes ownership; module names
+    # and model-generated text are not reliable application identifiers.
+    if "app_package" in summary:
+        return str(summary.get("app_package") or "").strip()
+    meta = read_json_file(asset_meta_path(case_set_id), default={}) or {}
+    return str(meta.get("app_package") or meta.get("appPackage") or "").strip() if isinstance(meta, dict) else ""
+
+
 def generation_mindmap_record(case_set_id):
     summary = read_json_file(generation_summary_path(case_set_id), default=None)
     if not isinstance(summary, dict):
@@ -10861,6 +10872,7 @@ def generation_mindmap_record(case_set_id):
         "case_set_id": case_set_id,
         "title": summary.get("title") or case_set_id,
         "module": summary.get("module") or "",
+        "app_package": generation_mindmap_app_package(case_set_id, summary),
         "yaml_file": summary.get("yaml_file") or "",
         "generated_at": generated_at,
         "scenario_count": safe_int(counts.get("scenario_count"), 0),

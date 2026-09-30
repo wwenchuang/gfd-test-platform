@@ -6705,3 +6705,39 @@
 .runner-step-list li > span:not(.runner-progress-node) { flex:1; overflow-wrap:anywhere; }
 .runner-step-list small { white-space:nowrap; color:var(--text2); }
 .runner-pending-actions { margin-top:8px; }
+
+/* Mindmap library: application previews, searchable compact file rows. */
+.mindmap-file-section { container-type: inline-size; }
+.mindmap-file-section .section-head { flex-wrap: wrap; min-height: 0; }
+.mindmap-library-filters { display: flex; flex-wrap: wrap; gap: 10px; align-items: end; }
+.mindmap-library-filters label { display: grid; gap: 5px; flex: 1 1 130px; min-width: 0; font-size: 12px; color: var(--text2); }
+.mindmap-library-filters .mindmap-library-search { flex: 2 1 260px; }
+.mindmap-library-filters input, .mindmap-library-filters select { width: 100%; min-width: 0; height: 36px; padding: 6px 9px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text); font: inherit; }
+.mindmap-file-section .mindmap-file-toolbar { justify-content: flex-start; min-width: 0; padding: 8px 0; border-bottom: 1px solid var(--border); }
+.mindmap-selected-only { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--text2); }
+.mindmap-selected-only input { width: 15px; height: 15px; accent-color: var(--accent); }
+#mindmap-file-results { display: grid; gap: 10px; min-width: 0; }
+.mindmap-library-result-summary { font-size: 12px; color: var(--text2); }
+.mindmap-library-group { display: grid; gap: 6px; min-width: 0; }
+.mindmap-library-group-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
+.mindmap-library-group h4 { font-size: 13px; margin: 8px 0 4px; color: var(--text); overflow-wrap: anywhere; }
+.mindmap-library-group h4 small { color: var(--text2); margin-left: 8px; font-weight: normal; }
+.mindmap-library-row { grid-template-columns: minmax(0, 1fr) auto; grid-template-rows: auto auto; align-content: start; padding: 10px 12px; gap: 6px 12px; }
+.mindmap-library-row .mindmap-row-main { grid-column: 1 / -1; }
+.mindmap-library-row .mindmap-row-title strong { -webkit-line-clamp: 2; overflow-wrap: anywhere; }
+.mindmap-library-row .mindmap-row-foot { grid-column: 1; align-self: center; }
+.mindmap-library-row .mindmap-row-actions { grid-column: 2; overflow: visible; flex-wrap: wrap; align-items: center; }
+.mindmap-library-row .job-badge { padding: 2px 7px; min-width: 0; font-size: 11px; }
+.mindmap-file-more { position: relative; font-size: 12px; }
+.mindmap-file-more summary { cursor: pointer; padding: 5px 8px; color: var(--text2); border: 1px solid var(--border); border-radius: 5px; }
+.mindmap-file-more-content { position: absolute; z-index: 10; right: 0; top: 100%; display: grid; gap: 7px; width: 210px; padding: 12px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg2, #111b2b); box-shadow: 0 10px 28px #0008; }
+.mindmap-file-more-content span { overflow-wrap: anywhere; color: var(--text2); font-size: 11px; }
+.mindmap-library-pagination { display: flex; align-items: center; justify-content: center; gap: 12px; padding: 8px 0; color: var(--text2); font-size: 12px; }
+@container (max-width: 680px) {
+  .mindmap-row.file.mindmap-library-row .mindmap-row-main { grid-template-columns: auto auto minmax(0,1fr); }
+  .mindmap-library-row .mindmap-row-time { grid-column: 3; white-space: normal; }
+  .mindmap-library-row { grid-template-columns: minmax(0,1fr); }
+  .mindmap-library-row .mindmap-row-actions { grid-column: 1; }
+  .mindmap-library-filters .mindmap-library-search { flex-basis: 100%; }
+  .mindmap-library-row .mindmap-row-foot span { -webkit-line-clamp: 2; }
+}

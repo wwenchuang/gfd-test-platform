@@ -3921,7 +3921,7 @@ function updateMindmapFileSection(rows = []) {
 }
 
 async function loadMindmapFileRows() {
-  const data = await apiRequest('/cases/mindmaps?limit=120');
+  const data = await apiRequest('/cases/mindmaps?limit=500');
   return sortMindmapRecordsByTime(data.mindmaps || []);
 }
 
@@ -4035,29 +4035,136 @@ function mindmapTaskSectionHtml(jobs = []) {
   `;
 }
 
+function mindmapModuleName(item) {
+  return String(item.module || '').trim() || '未分类模块';
+}
+
+function mindmapFileApp(item) {
+  const key = String(item.app_package || '').trim();
+  const info = key && typeof appInfoByPackage === 'function' ? appInfoByPackage(key) : null;
+  return {key: key || '__unassigned__', name: key ? (info?.name && info.name !== '未标注应用' ? info.name : key) : '未关联应用'};
+}
+
+function mindmapFilePage(rows = mindmapCenterFileRows) {
+  const view = mindmapFileView;
+  const words = String(view.query || '').trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
+  const filtered = sortMindmapRecordsByTime(rows).filter(item => {
+    const app = mindmapFileApp(item);
+    const status = item.mindmap_deleted ? 'deleted' : item.mindmap_exists ? 'ready' : 'pending';
+    const text = [item.title, item.case_set_id, item.yaml_file, mindmapModuleName(item), app.name, item.app_package].join(' ').toLocaleLowerCase();
+    return (!view.app || view.app === app.key) && (!view.module || view.module === mindmapModuleName(item))
+      && (!view.status || view.status === status) && (!view.selectedOnly || mindmapReportSelectedCaseSetIds.has(item.case_set_id))
+      && words.every(word => text.includes(word));
+  });
+  const overview = view.sort === 'module' && !view.app && !view.module && !view.status && !words.length && !view.selectedOnly;
+  const compare = (a,b) => a.localeCompare(b, 'zh-CN', {numeric:true});
+  if (view.sort === 'title') filtered.sort((a,b) => compare(String(a.title || a.case_set_id), String(b.title || b.case_set_id)));
+  if (view.sort === 'module' && !overview) filtered.sort((a,b) => compare(mindmapFileApp(a).name,mindmapFileApp(b).name) || compare(mindmapFileApp(a).key,mindmapFileApp(b).key) || compare(mindmapModuleName(a),mindmapModuleName(b)) || mindmapRecordTimeValue(b)-mindmapRecordTimeValue(a));
+  const groups = new Map();
+  if (overview) filtered.forEach(item => {
+    const app = mindmapFileApp(item);
+    if (!groups.has(app.key)) groups.set(app.key,{...app,rows:[]});
+    groups.get(app.key).rows.push(item);
+  });
+  const size = overview ? 4 : 12;
+  const entries = overview ? Array.from(groups.values()) : filtered;
+  const pages = Math.max(1,Math.ceil(entries.length/size));
+  const page = Math.max(1,Math.min(pages,Number(view.page)||1));
+  const pageEntries = entries.slice((page-1)*size,page*size);
+  const visible = overview ? pageEntries.flatMap(group=>group.rows.slice(0,3)) : pageEntries;
+  return {filtered, visible, groups:overview?pageEntries:[], overview, page, pages};
+}
+
+function mindmapFileResultsHtml(rows = mindmapCenterFileRows) {
+  const result = mindmapFilePage(rows);
+  mindmapFileView.page = result.page;
+  let contents = '';
+  if (result.overview) {
+    contents = result.groups.map(group => `<section class="mindmap-library-group">
+      <div class="mindmap-library-group-head"><h4>${escapeHtml(group.name)} <small>${group.rows.length} 条</small>${group.key !== '__unassigned__' && group.key !== group.name ? `<small>${escapeHtml(group.key)}</small>` : ''}</h4>
+      <button class="btn-sm" onclick="setMindmapFileFilter('app',${jsArg(group.key)})">查看全部 ${group.rows.length} 条</button></div>
+      ${group.rows.slice(0,3).map(mindmapRecordCard).join('')}</section>`).join('');
+  } else if (mindmapFileView.sort === 'module') {
+    const groups = new Map();
+    result.visible.forEach(item => {
+      const app=mindmapFileApp(item), module=mindmapModuleName(item), key=JSON.stringify([app.key,module]);
+      if(!groups.has(key)) groups.set(key,{label:`${app.name} / ${module}`,rows:[]});
+      groups.get(key).rows.push(item);
+    });
+    contents=Array.from(groups.values()).map(group=>`<section class="mindmap-library-group"><h4>${escapeHtml(group.label)}</h4>${group.rows.map(mindmapRecordCard).join('')}</section>`).join('');
+  } else contents=result.visible.map(mindmapRecordCard).join('');
+  return `<div class="mindmap-library-result-summary" role="status">找到 ${result.filtered.length} 条，本页展示 ${result.visible.length} 条${result.overview ? ' · 每个应用先展示最近 3 条' : ''}</div>
+    ${contents || '<div class="generation-record-empty">没有匹配的脑图。请调整搜索、筛选条件，或清空筛选。</div>'}
+    <div class="mindmap-library-pagination"><button class="btn-sm" ${result.page<=1?'disabled':''} onclick="changeMindmapFilePage(-1)">上一页</button>
+    <span>第 ${result.page} / ${result.pages} 页</span><button class="btn-sm" ${result.page>=result.pages?'disabled':''} onclick="changeMindmapFilePage(1)">下一页</button></div>`;
+}
+
+function renderMindmapFileResults() {
+  const target = document.getElementById('mindmap-file-results');
+  if (target) target.innerHTML = mindmapFileResultsHtml();
+  updateMindmapReportSourceSelectionText();
+}
+
+function setMindmapFileFilter(key, value) {
+  if (!['query','app','module','status','sort','selectedOnly'].includes(key)) return;
+  mindmapFileView[key] = value;
+  mindmapFileView.page = 1;
+  if (key === 'app') {
+    mindmapFileView.module = '';
+    const section = document.getElementById('mindmap-file-section');
+    if (section) section.outerHTML = mindmapFilesSectionHtml(mindmapCenterFileRows);
+    return;
+  }
+  renderMindmapFileResults();
+}
+
+function changeMindmapFilePage(delta) {
+  mindmapFileView.page += delta;
+  renderMindmapFileResults();
+  document.getElementById('mindmap-file-results')?.scrollIntoView?.({block:'nearest'});
+}
+
+function resetMindmapFileFilters() {
+  mindmapFileView = {query:'',app:'',module:'',status:'',sort:'module',page:1,selectedOnly:false};
+  const section = document.getElementById('mindmap-file-section');
+  if (section) section.outerHTML = mindmapFilesSectionHtml(mindmapCenterFileRows);
+}
+
 function mindmapFilesSectionHtml(rows = []) {
-  const sortedRows = sortMindmapRecordsByTime(rows);
-  syncMindmapReportSelectedCaseSetIds(sortedRows);
-  return `
-    <section id="mindmap-file-section" class="generation-record-section mindmap-file-section">
-      <div class="section-head">
-        <div>
-          <h3>脑图文件</h3>
-          <p>${sortedRows.length ? `按最近更新时间排序，当前显示 ${sortedRows.length} 条。` : '还没有可下载脑图。生成完成后会出现在这里。'}</p>
-        </div>
-        <div class="mindmap-file-toolbar">
-          <span id="mindmap-report-source-count">${escapeHtml(mindmapReportSelectedCaseSetIds.size)} 个已选</span>
-          <button class="btn-sm" onclick="selectVisibleMindmapReportCaseSets()">选择当前列表</button>
-          <button class="btn-sm" onclick="clearMindmapReportCaseSets()">清空选择</button>
-          <button class="btn-sm success" onclick="openSelectedMindmapReportBuilder()">生成合并报告</button>
-          <button class="btn-sm" onclick="refreshMindmapFiles(this)">刷新文件</button>
-        </div>
-      </div>
-      ${sortedRows.length
-        ? `<div class="mindmap-compact-list">${sortedRows.map(mindmapRecordCard).join('')}</div>`
-        : '<div class="generation-record-empty">暂无脑图。先点击「新建脑图」，任务提交后会在上方任务区显示进度。</div>'}
-    </section>
-  `;
+  syncMindmapReportSelectedCaseSetIds(rows);
+  const apps = new Map();
+  rows.forEach(item=>{const app=mindmapFileApp(item); apps.set(app.key,app.name);});
+  if (mindmapFileView.app && !apps.has(mindmapFileView.app)) {
+    mindmapFileView.app = '';
+    mindmapFileView.module = '';
+    mindmapFileView.page = 1;
+  }
+  const modules = [...new Set(rows.filter(item=>!mindmapFileView.app || mindmapFileApp(item).key===mindmapFileView.app).map(mindmapModuleName))].sort((a,b)=>a.localeCompare(b,'zh-CN'));
+  if (mindmapFileView.module && !modules.includes(mindmapFileView.module)) {
+    mindmapFileView.module = '';
+    mindmapFileView.page = 1;
+  }
+  const options = (entries,value) => entries.map(([key,label])=>`<option value="${escapeHtml(key)}" ${value===key?'selected':''}>${escapeHtml(label)}</option>`).join('');
+  const page = mindmapFilePage(rows);
+  const hidden = [...mindmapReportSelectedCaseSetIds].filter(id=>!page.visible.some(row=>row.case_set_id===id)).length;
+  return `<section id="mindmap-file-section" class="generation-record-section mindmap-file-section">
+    <div class="section-head"><div><h3>脑图文件</h3><p>已加载 ${rows.length} 条 · 按应用和模块整理${rows.length>=500?' · 仅搜索最近 500 条记录':''}</p></div>
+    <button class="btn-sm" onclick="refreshMindmapFiles(this)">刷新文件</button></div>
+    <div class="mindmap-library-filters">
+      <label class="mindmap-library-search">搜索脑图<input id="mindmap-file-search" type="search" placeholder="标题、应用、模块、文件名或编号" value="${escapeHtml(mindmapFileView.query)}" oninput="if(!event.isComposing)setMindmapFileFilter('query',this.value)" oncompositionend="setMindmapFileFilter('query',this.value)"></label>
+      <label>应用<select aria-label="筛选应用" onchange="setMindmapFileFilter('app',this.value)"><option value="">全部应用</option>${options([...apps].sort((a,b)=>a[1].localeCompare(b[1],'zh-CN')).map(([key,name])=>[key,key !== '__unassigned__' && key !== name ? `${name} · ${key}` : name]),mindmapFileView.app)}</select></label>
+      <label>模块<select aria-label="筛选模块" onchange="setMindmapFileFilter('module',this.value)"><option value="">全部模块</option>${options(modules.map(m=>[m,m]),mindmapFileView.module)}</select></label>
+      <label>文件状态<select aria-label="文件状态" onchange="setMindmapFileFilter('status',this.value)">${options([['','全部状态'],['ready','可下载'],['pending','待生成'],['deleted','文件已删除']],mindmapFileView.status)}</select></label>
+      <label>排列<select aria-label="排列方式" onchange="setMindmapFileFilter('sort',this.value)">${options([['module','应用 / 模块分组'],['recent','最近更新'],['title','标题顺序']],mindmapFileView.sort)}</select></label>
+    </div>
+    <div class="mindmap-file-toolbar">
+      <span id="mindmap-report-source-count">${mindmapReportSelectedCaseSetIds.size} 个已选${hidden?`（${hidden} 个不在当前页）`:''}</span>
+      <label class="mindmap-selected-only"><input type="checkbox" ${mindmapFileView.selectedOnly?'checked':''} onchange="setMindmapFileFilter('selectedOnly',this.checked)">只看已选</label>
+      <button class="btn-sm" onclick="selectVisibleMindmapReportCaseSets()">选择本页</button>
+      <button class="btn-sm" onclick="clearMindmapReportCaseSets()">清空选择</button>
+      <button class="btn-sm success" onclick="openSelectedMindmapReportBuilder()">生成合并报告</button>
+      <button class="btn-sm" onclick="resetMindmapFileFilters()">清空筛选</button>
+    </div><div id="mindmap-file-results">${mindmapFileResultsHtml(rows)}</div></section>`;
 }
 
 function syncMindmapReportSelectedCaseSetIds(rows = mindmapCenterFileRows) {
@@ -4067,7 +4174,9 @@ function syncMindmapReportSelectedCaseSetIds(rows = mindmapCenterFileRows) {
 
 function updateMindmapReportSourceSelectionText() {
   const count = document.getElementById('mindmap-report-source-count');
-  if (count) count.textContent = `${mindmapReportSelectedCaseSetIds.size} 个已选`;
+  const visible = new Set(mindmapFilePage().visible.map(item => item.case_set_id));
+  const hidden = [...mindmapReportSelectedCaseSetIds].filter(id => !visible.has(id)).length;
+  if (count) count.textContent = `${mindmapReportSelectedCaseSetIds.size} 个已选${hidden ? `（${hidden} 个不在当前页）` : ''}`;
 }
 
 function toggleMindmapReportCaseSet(input) {
@@ -4075,11 +4184,12 @@ function toggleMindmapReportCaseSet(input) {
   if (!id) return;
   if (input.checked) mindmapReportSelectedCaseSetIds.add(id);
   else mindmapReportSelectedCaseSetIds.delete(id);
-  updateMindmapReportSourceSelectionText();
+  if (mindmapFileView.selectedOnly) renderMindmapFileResults();
+  else updateMindmapReportSourceSelectionText();
 }
 
 function selectVisibleMindmapReportCaseSets() {
-  (mindmapCenterFileRows || []).forEach(item => {
+  mindmapFilePage().visible.forEach(item => {
     if (item.case_set_id) mindmapReportSelectedCaseSetIds.add(item.case_set_id);
   });
   document.querySelectorAll('.mindmap-record-check').forEach(input => {
@@ -4090,8 +4200,7 @@ function selectVisibleMindmapReportCaseSets() {
 
 function clearMindmapReportCaseSets() {
   mindmapReportSelectedCaseSetIds = new Set();
-  document.querySelectorAll('.mindmap-record-check').forEach(input => { input.checked = false; });
-  updateMindmapReportSourceSelectionText();
+  renderMindmapFileResults();
 }
 
 function openSelectedMindmapReportBuilder() {
@@ -4160,32 +4269,35 @@ function mindmapRecordCard(item={}) {
     .join(' · ');
   const primaryTime = updatedAt || generatedAt || '';
   const coverageText = `${item.automation_case_count || 0} 自动化 · ${item.manual_case_count || 0} 人工 · ${item.scenario_count || 0} 场景`;
-  const metaText = [item.module, item.yaml_file].filter(Boolean).join(' / ') || caseSetId;
+  const metaText = [mindmapFileApp(item).name, item.module].filter(Boolean).join(' / ') || caseSetId;
   const detailText = [priorityText, item.smoke_count ? `冒烟 ${item.smoke_count}` : '', item.mindmap_size ? formatBytes(item.mindmap_size) : ''].filter(Boolean).join(' · ');
   return `
-    <div class="mindmap-row file ${mindmapStatusClass(item)}">
+    <div class="mindmap-row file mindmap-library-row ${mindmapStatusClass(item)}">
       <div class="mindmap-row-main">
         <label class="mindmap-record-select" title="选择后可与其他脑图合并生成测试报告">
-          <input type="checkbox" class="mindmap-record-check" value="${escapeHtml(caseSetId)}" ${checked} onchange="toggleMindmapReportCaseSet(this)">
+          <input type="checkbox" class="mindmap-record-check" aria-label="选择 ${escapeHtml(item.title || caseSetId)}" value="${escapeHtml(caseSetId)}" ${checked} onchange="toggleMindmapReportCaseSet(this)">
         </label>
         <span class="job-badge ${mindmapStatusClass(item)}">${mindmapStatusText(item)}</span>
         <div class="mindmap-row-title">
-          <strong>${escapeHtml(item.title || caseSetId || '测试用例脑图')}</strong>
+          <strong title="${escapeHtml(item.title || caseSetId)}">${escapeHtml(item.title || caseSetId || '测试用例脑图')}</strong>
           <span>${escapeHtml(metaText)}</span>
         </div>
         <span class="mindmap-row-time">${escapeHtml(primaryTime ? `更新 ${primaryTime}` : '-')}</span>
       </div>
       <div class="mindmap-row-foot">
         <span>${escapeHtml(coverageText)}</span>
-        <span>${escapeHtml(detailText || (generatedAt ? `生成 ${generatedAt}` : '脑图用于人工评审覆盖结构和测试点'))}</span>
+
       </div>
       <div class="mindmap-row-actions">
-        <button class="btn-sm" onclick="showGenerationReviewByCaseSet(${jsArg(caseSetId)})">生成分析</button>
         ${item.mindmap_downloadable ? `<button class="btn-sm" type="button" onclick="downloadMindmap(${jsArg(caseSetId)})">下载</button>` : ''}
         <button class="btn-sm success" onclick="openMindmapReportBuilder(${jsArg(caseSetId)})">生成报告</button>
-        <button class="btn-sm primary" onclick="regenerateGenerationMindmap(${jsArg(caseSetId)}, this)" title="只按现有生成分析重建脑图文件（FreeMind .mm）；不调用千问，不改用例，不覆盖 YAML">刷新脑图文件</button>
+        <details class="mindmap-file-more"><summary>更多操作</summary><div class="mindmap-file-more-content">
+        <span>${escapeHtml(detailText)} · ${escapeHtml(caseSetId)}</span>
+        <button class="btn-sm" onclick="showGenerationReviewByCaseSet(${jsArg(caseSetId)})">生成分析</button>
+        <button class="btn-sm" onclick="regenerateGenerationMindmap(${jsArg(caseSetId)}, this)" title="只按现有生成分析重建脑图文件（FreeMind .mm）；不调用千问，不改用例，不覆盖 YAML">重建脑图文件</button>
         <button class="btn-sm danger" onclick="deleteGenerationMindmap(${jsArg(caseSetId)})">删除文件</button>
         <button class="btn-sm danger" onclick="deleteGenerationMindmapRecord(${jsArg(caseSetId)})" title="从脑图中心隐藏这条记录，同时删除对应 .mm 文件；不删除 YAML 和生成分析">删除记录</button>
+        </div></details>
       </div>
     </div>
   `;

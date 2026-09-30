@@ -58,6 +58,7 @@ let mindmapCenterRefreshTimer = null;
 let mindmapCenterRecordCaseSetIds = new Set();
 let mindmapCenterTaskJobs = [];
 let mindmapCenterFileRows = [];
+let mindmapFileView = {query: '', app: '', module: '', status: '', sort: 'module', page: 1, selectedOnly: false};
 let mindmapReportSelectedCaseSetIds = new Set();
 let mindmapReportData = null;
 let mindmapReportSelection = new Set();
