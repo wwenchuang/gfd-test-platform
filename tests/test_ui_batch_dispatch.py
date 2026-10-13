@@ -15,6 +15,7 @@ def dispatch_env(environment, tmp_path, monkeypatch):
     monkeypatch.setattr(job_audit, 'record_created', lambda *_: None)
     runners = copy.deepcopy(runner_service.list_runners())
     runners['mac']['capabilities']['ui_attempt_events'] = 1
+    runners['mac']['capabilities']['ui_private_reports'] = 1
     runners['mac']['devices'][0]['installed_apps'] = [{'package': 'com.kfb.3d', 'installed': True, 'version_name': '1', 'version_code': '2'}]
     runners['mac']['devices'].append({**runners['mac']['devices'][0], 'device_id': 'phone2'})
     monkeypatch.setattr(runner_service, 'list_runners', lambda: runners)
@@ -253,3 +254,12 @@ def test_slow_sonic_does_not_block_events_and_cancel_wins_before_mutation(dispat
     if operation == 'claim': assert result is None
     b_job = job_service.get_job(b['case_attempts'][0]['dispatch_key'])
     assert b_job is None or b_job['status'] == 'cancelled'
+
+
+def test_runner_without_private_report_upload_is_blocked(dispatch_env):
+    from task_server.services import ui_batch_dispatch as dispatch, job_service
+    dispatch_env[0]['mac']['capabilities'].pop('ui_private_reports',None)
+    batch=create()
+    result=dispatch.dispatch_ui_batch(batch['ui_batch_id'])
+    assert result['case_attempts'][0]['block_code'] == 'runner_upgrade_required'
+    assert job_service.get_job(batch['case_attempts'][0]['dispatch_key']) is None

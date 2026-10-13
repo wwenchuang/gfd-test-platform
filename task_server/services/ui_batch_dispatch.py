@@ -55,7 +55,8 @@ def _target_check(batch, attempt, occupancy=None, fresh=False):
     if not resolved['ok']:
         return resolved['block_code']
     runner = runner_service.list_runners().get(attempt['runner_id'], {})
-    if (runner.get('capabilities') or {}).get('ui_attempt_events') != 1:
+    if ((runner.get('capabilities') or {}).get('ui_attempt_events') != 1 or
+            (runner.get('capabilities') or {}).get('ui_private_reports') != 1):
         return 'runner_upgrade_required'
     frozen = attempt['target_resolution']
     if resolved['target_package'] != frozen['target_package'] or resolved['platform_mappings'] != frozen['platform_mappings']:
@@ -216,6 +217,8 @@ def claim_ui_job(job, prepared=None):
 @serialized
 def record_ui_attempt_event(job_id, sequence, event):
     store = UiExecutionStore()
+    from .ui_batch_report_upload import private_callback_event
+    event = private_callback_event(job_id,sequence,event)
     result = store.record_attempt_event(job_id,sequence,event)
     attempt = store.attempt_for_job(job_id)
     _sync_job(store, attempt)
@@ -226,11 +229,11 @@ def _sync_job(store, attempt):
     # SQLite is authoritative; this idempotent write is replayed after a crash.
     status = {'passed':'success','interrupted':'failed' if attempt['stop_confirmed'] else 'running',
               'cancelling':'cancelled','queued':'pending','blocked':'pending'}.get(attempt['status'],attempt['status'])
-    patch = {'status':status, 'execution_progress':attempt['execution_progress']}
+    patch = {'status':status, 'execution_progress':{}}
     if attempt['finished_ns']:
         patch['finished_at'] = time.strftime('%Y-%m-%d %H:%M:%S',time.localtime(attempt['finished_ns'] / 10**9))
-    evidence = attempt['result']
-    patch.update({key + '_tail':evidence[key][-2000:] for key in ('stdout','stderr') if key in evidence})
+    # Raw UI evidence is private; legacy Job JSON is shared historical storage.
+    patch.update(stdout_tail='', stderr_tail='')
     if job_service.update_job(attempt['job_id'],patch):
         store.mark_job_synced(attempt)
 
@@ -312,6 +315,8 @@ def start_ui_batch_reconciler():
         while enabled():
             try:
                 reconcile_ui_batches()
+                from .ui_batch_report_service import tick_ui_report_worker
+                tick_ui_report_worker()
             except Exception:
                 logging.getLogger(__name__).exception('UI batch reconciliation failed')
             time.sleep(5)

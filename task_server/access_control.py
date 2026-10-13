@@ -157,6 +157,8 @@ class MainAccess:
         return result
 
     def visible(self, record):
+        if isinstance(record, dict) and (record.get("ui_batch_id") or str(record.get("job_id", "")).startswith("uib_")):
+            return False
         if self.profile.get("is_superuser") or self.all_apps:
             return True
         apps = self.record_apps(record)
@@ -207,6 +209,8 @@ class MainAccess:
         self._require_record(record)
 
     def check(self, method, path, qs=None, body=None):
+        if re.match(r"^/api/jobs/uib_[^/]+(?:/|$)", unquote(path)):
+            raise AccessDenied("请通过本人执行批次查看或操作此任务")
         if self.profile.get("must_change_password"):
             raise AccessDenied("请先修改密码，再使用平台功能")
         if self.profile.get("is_superuser"):
@@ -215,7 +219,7 @@ class MainAccess:
         method = method.upper()
         permission = self.permission_for(method, path, qs, body)
         self.require(permission)
-        if ((method == "POST" and (path in {"/api/ui-executions", "/api/ui-executions/preflight"} or re.fullmatch(r"/api/ui-executions/[^/]+/(cancel|rerun)", path))) or
+        if ((method == "POST" and (path in {"/api/ui-executions", "/api/ui-executions/preflight"} or re.fullmatch(r"/api/ui-executions/[^/]+/(cancel|rerun|report)", path))) or
                 (method in {"GET", "HEAD"} and (path == "/api/ui-executions" or path.startswith("/api/ui-executions/")))):
             # The batch service checks persisted owner and current app scope.
             return
@@ -311,7 +315,9 @@ class MainAccess:
         from task_server.config import safe_bool
         if method in {"GET", "HEAD"} and (path == "/api/ui-executions" or path.startswith("/api/ui-executions/")):
             return "ui.view"
-        if method == "POST" and (path in {"/api/ui-executions", "/api/ui-executions/preflight"} or re.fullmatch(r"/api/ui-executions/[^/]+/(cancel|rerun)", path)):
+        if method == "POST" and re.fullmatch(r"/api/ui-executions/[^/]+/report", path):
+            return "ui.view"
+        if method == "POST" and (path in {"/api/ui-executions", "/api/ui-executions/preflight"} or re.fullmatch(r"/api/ui-executions/[^/]+/(cancel|rerun|report)", path)):
             return "ui.execute"
         if method in {"GET", "HEAD"}:
             if path == "/api/yaml/baseline-cache/status" or path.startswith(("/api/debug/", "/api/preflight/", "/api/platform/")):
@@ -345,9 +351,17 @@ class MainAccess:
         return "platform.configure"
 
     def filter(self, path, payload):
-        if not isinstance(payload, dict) or self.profile.get("is_superuser"):
+        if not isinstance(payload, dict):
             return payload
         result = dict(payload)
+        for key in ("jobs", "background_jobs", "runs", "reports"):
+            if isinstance(result.get(key), list):
+                result[key] = [r for r in result[key] if not (isinstance(r, dict) and
+                    (r.get("ui_batch_id") or str(r.get("job_id", "")).startswith("uib_")))]
+                if "total" in result and len(result[key]) != len(payload[key]):
+                    result["total"] = len(result[key])
+        if self.profile.get("is_superuser"):
+            return result
         if path in {"/api/apps", "/api/task-apps"}:
             result["apps"] = [dict(app) for app in result.get("apps", []) if self.visible(app)]
             if "platform.configure" not in self.permissions:

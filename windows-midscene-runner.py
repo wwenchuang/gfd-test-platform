@@ -58,6 +58,7 @@ RUNNER_CAPABILITIES = {
 
 
 RUNNER_CAPABILITIES["ui_attempt_events"] = 1
+RUNNER_CAPABILITIES["ui_private_reports"] = 1
 
 
 def _semantic_version(value):
@@ -355,7 +356,17 @@ def http_error_text(error, limit=1200):
     return body[:limit] if body else str(error)
 
 
-def http_upload_report(path, filename):
+def ui_report_upload_context(job_id):
+    if not str(job_id).startswith("uib_"):
+        return {}
+    context = _UI_DELIVERIES.get(job_id)
+    if not context or not context.get("ui_claim_token"):
+        raise ValueError("Private UI report requires delivery credentials")
+    return {"job_id": job_id, **{key: context[key] for key in ("runner_id", "device_id", "ui_claim_token")}}
+
+
+def http_upload_report(path, filename, job_id=""):
+    context = ui_report_upload_context(job_id)
     if not path or not path.exists():
         return ""
     url = SERVER.rstrip("/") + "/report"
@@ -366,6 +377,8 @@ def http_upload_report(path, filename):
         data=data,
         headers={
             "x-token": TOKEN,
+            **({"x-ui-job-id": job_id, "x-ui-claim-token": context["ui_claim_token"],
+                "x-ui-runner-id": context["runner_id"], "x-ui-device-id": context["device_id"]} if context else {}),
             "x-filename": safe_name,
             "Content-Type": "text/html; charset=utf-8"
         },
@@ -378,16 +391,18 @@ def http_upload_report(path, filename):
         if e.code not in (413, 502, 504):
             raise
         print(f"Report direct upload HTTP {e.code}, switching to chunk upload")
-        return http_upload_report_chunked(path, filename)
+        return http_upload_report_chunked(path, filename, job_id=job_id)
 
 
-def http_upload_report_chunked(path, filename, chunk_size=256 * 1024):
+def http_upload_report_chunked(path, filename, chunk_size=256 * 1024, job_id=""):
+    context = ui_report_upload_context(job_id)
     data = path.read_bytes()
-    upload_id = f"{RUNNER_ID}-{int(time.time())}-{safe_filename(filename)}"
+    upload_id = f"{job_id}-{time.time_ns()}" if context else f"{RUNNER_ID}-{int(time.time())}-{safe_filename(filename)}"
     total = max(1, (len(data) + chunk_size - 1) // chunk_size)
     for index in range(total):
         chunk = data[index * chunk_size:(index + 1) * chunk_size]
         http_json("POST", "/api/report/chunk", {
+            **context,
             "upload_id": upload_id,
             "filename": filename,
             "index": index,
@@ -395,6 +410,7 @@ def http_upload_report_chunked(path, filename, chunk_size=256 * 1024):
             "contentBase64": base64.b64encode(chunk).decode("ascii")
         }, timeout=180)
     result = http_json("POST", "/api/report/chunk-finish", {
+        **context,
         "upload_id": upload_id,
         "total": total
     }, timeout=180)
@@ -490,7 +506,7 @@ def upload_report_before_result(job_id, report_path, report_name):
     if not report_path or not report_name:
         return "", ""
     try:
-        report_url = http_upload_report(Path(report_path), report_name)
+        report_url = http_upload_report(Path(report_path), report_name, job_id=job_id)
         print(f"Uploaded report before result callback: {report_url}")
         try:
             post_job_report_ready(job_id, report_url, str(report_path), "")
@@ -561,7 +577,7 @@ def report_upload_worker():
             report_url = ""
             upload_error = ""
             try:
-                report_url = http_upload_report(Path(report_path), report_name)
+                report_url = http_upload_report(Path(report_path), report_name, job_id=job_id)
                 print(f"Uploaded report in background: {report_url}")
             except Exception as e:
                 upload_error = str(e)
@@ -1950,7 +1966,7 @@ def _run_job(job):
     report_uploaded = False
     if report_path:
         report_name = f"{safe_filename(job.get('file', 'task')).replace('.yaml', '').replace('.yml', '')}-{job_id}.html"
-        report_url = SERVER.rstrip("/") + "/reports/" + urllib.parse.quote(report_name)
+        report_url = "" if job.get("ui_batch_id") else SERVER.rstrip("/") + "/reports/" + urllib.parse.quote(report_name)
         print(f"Report reserved for background upload: {report_url}")
         uploaded_report_url, immediate_upload_error = upload_report_before_result(job_id, report_path, report_name)
         if uploaded_report_url:

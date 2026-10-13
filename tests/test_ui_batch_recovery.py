@@ -138,11 +138,13 @@ def test_terminal_result_is_immutable_but_report_ready_updates_evidence(dispatch
     batch, job, payload = claimed()
     dispatch.record_ui_attempt_event(job['job_id'],1,event(payload,type='result',status='failed',execution_stopped=True,stderr='original'))
     dispatch.record_ui_attempt_event(job['job_id'],2,event(payload,type='result',status='success',execution_stopped=True))
+    from task_server.services.ui_batch_report_service import save_ui_artifact
+    artifact = save_ui_artifact(job['job_id'],event(payload),b'private report','html')
     dispatch.record_ui_attempt_event(job['job_id'],3,event(payload,type='report_ready',report_url='/report/final.html'))
     attempt = dispatch.dispatch_ui_batch(batch['ui_batch_id'])['case_attempts'][0]
     assert attempt['status'] == 'failed'
     assert attempt['result']['stderr'] == 'original'
-    assert attempt['result']['report_url'] == '/report/final.html'
+    assert attempt['result']['report_url'] == artifact['url']
 
 
 def test_ui_action_routes_enforce_owner_and_replay_idempotency(dispatch_env):

@@ -136,6 +136,8 @@ class UiExecutionLifecycle:
             if event['type'] == 'report_ready':
                 evidence = json.loads(row['result_json'] or '{}')
                 evidence.update({k:str(event[k])[:4000] for k in ('report_url','local_report_path','report_upload_error') if k in event})
+                if evidence != json.loads(row['result_json'] or '{}'):
+                    db.execute("UPDATE batches SET report_status='pending' WHERE ui_batch_id=?",(row['ui_batch_id'],))
                 db.execute('UPDATE case_attempts SET result_json=? WHERE attempt_id=?', (json.dumps(evidence,ensure_ascii=False),row['attempt_id']))
                 self._rollup(db,row['ui_batch_id'])
                 return {'ok':True,'status':row['status']}
@@ -150,6 +152,8 @@ class UiExecutionLifecycle:
                 for key in ('stdout','stderr','report_url','local_report_path','report_missing_reason','report_upload_error'):
                     if key in event and key not in evidence:
                         evidence[key] = str(event[key])[:32000]
+                if evidence != json.loads(row['result_json'] or '{}'):
+                    db.execute("UPDATE batches SET report_status='pending' WHERE ui_batch_id=?",(row['ui_batch_id'],))
                 db.execute('UPDATE case_attempts SET result_json=? WHERE attempt_id=?', (json.dumps(evidence,ensure_ascii=False),row['attempt_id']))
             if row['status'] in {'cancelling','interrupted'}:
                 if stopped:

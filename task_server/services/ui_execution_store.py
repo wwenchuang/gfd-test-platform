@@ -321,6 +321,8 @@ class UiExecutionStore(UiExecutionLifecycle):
                        (uuid.uuid4().hex, batch_id, row["snapshot_id"], row["case_id"], case_revision,
                         row["runner_id"], row["device_id"], row["platform"], attempt_no, dispatch_key,
                         row["target_resolution_json"], row["compiled_case_json"], "queued"))
+            self._rollup(db, batch_id)
+            db.execute("UPDATE batches SET report_status='pending' WHERE ui_batch_id=?", (batch_id,))
             result = self._attempt(db.execute("SELECT * FROM case_attempts WHERE dispatch_key=?", (dispatch_key,)).fetchone())
             db.execute("COMMIT")
             return result

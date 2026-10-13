@@ -3033,6 +3033,9 @@ def _post_report(handler, qs):
     if handler.headers.get("x-token", "") != TOKEN:
         handler._text("Unauthorized", 401)
         return
+    from .services.ui_batch_report_upload import handle_direct_upload
+    if handle_direct_upload(handler):
+        return
     filename = urllib.parse.unquote(handler.headers.get("x-filename", "report.html"))
     filename = filename.replace("/", "_").replace("\\", "_")
     os.makedirs(REPORT_DIR, exist_ok=True)
@@ -3062,6 +3065,9 @@ def _post_report_chunk(handler, qs):
         return
     try:
         d = handler._body()
+        from .services.ui_batch_report_upload import handle_chunk_upload
+        if handle_chunk_upload(handler, d, finish=False):
+            return
         upload_id = clean_id(d.get("upload_id") or d.get("uploadId") or "", "report")
         filename = urllib.parse.unquote(d.get("filename") or "report.html").replace("/", "_").replace("\\", "_")
         index = safe_int(d.get("index"), -1)
@@ -3117,6 +3123,9 @@ def _post_report_chunk_finish(handler, qs):
         return
     try:
         d = handler._body()
+        from .services.ui_batch_report_upload import handle_chunk_upload
+        if handle_chunk_upload(handler, d, finish=True):
+            return
         upload_id = clean_id(d.get("upload_id") or d.get("uploadId") or "", "report")
         total = safe_int(d.get("total"), 0)
         _validate_report_chunk_shape(total)
@@ -4635,6 +4644,8 @@ def _post_sonic_report_ready(handler, qs):
     if _require_user_auth(handler):
         return
     d = handler._body()
+    if _handle_ui_attempt_callback(handler, str(d.get("job_id") or d.get("jobId") or ""), d, "report_ready"):
+        return
     try:
         job = attach_sonic_background_report(
             d.get("job_id") or d.get("jobId") or "",
@@ -4655,6 +4666,8 @@ def _post_sonic_result(handler, qs):
     if _require_user_auth(handler):
         return
     d = handler._body()
+    if _handle_ui_attempt_callback(handler, str(d.get("job_id") or d.get("jobId") or ""), d, "result"):
+        return
     mod = d.get("module") or d.get("taskModule") or ""
     file = clean_filename(d.get("file") or d.get("taskName") or "")
     job_id = d.get("job_id") or d.get("jobId") or new_job_id()
@@ -6355,3 +6368,56 @@ def _post_ui_execution_action(handler, qs, match):
 
 
 register_api_testing_routes(route_get_prefix, route_post_prefix_before_body, route_delete_prefix, route_put_prefix)
+
+
+# Private UI batch reports share the batch's current owner/application boundary.
+def _ui_report_response(handler, operation, binary=False, status=200):
+    if not _ui_batch_enabled():
+        handler._json({"ok": False, "code": "feature_disabled"}, 404)
+        return
+    from .services.ui_execution_contract import AccessDenied
+    from .services.ui_batch_report_http import send_private_file
+    try:
+        result = operation()
+        if binary:
+            send_private_file(handler, result)
+        else:
+            handler._json({"ok": True, **result}, status)
+    except FileNotFoundError:
+        handler._json({"ok": False, "code": "report_not_found"}, 404)
+    except AccessDenied as error:
+        _ui_batch_error(handler, error)
+    except ValueError as error:
+        handler._json({"ok": False, "code": str(error)}, 409)
+    except (sqlite3.Error, OSError) as error:
+        _ui_batch_error(handler, error)
+
+
+@route_get_regex(r"^/api/ui-executions/([^/]+)/report$")
+def _get_ui_batch_report(handler, qs, match):
+    from .services.ui_batch_report_service import get_ui_batch_report
+    _ui_report_response(handler, lambda: {"report": get_ui_batch_report(None, match.group(1), qs.get("revision"))})
+
+
+@route_post_regex(r"^/api/ui-executions/([^/]+)/report$")
+def _post_ui_batch_report(handler, qs, match):
+    from .services.ui_batch_report_service import request_ui_batch_report
+    _ui_report_response(handler, lambda: {"report": request_ui_batch_report(None, match.group(1))}, status=202)
+
+
+@route_get_regex(r"^/api/ui-executions/([^/]+)/report/download$")
+def _get_ui_batch_report_download(handler, qs, match):
+    from .services.ui_batch_report_service import download_ui_batch_report
+    _ui_report_response(handler, lambda: download_ui_batch_report(None, match.group(1), qs.get("format", "html"), qs.get("revision")), binary=True)
+
+
+@route_get_regex(r"^/api/ui-executions/([^/]+)/summary$")
+def _get_ui_batch_summary(handler, qs, match):
+    from .services.ui_batch_report_service import get_ui_batch_summary
+    _ui_report_response(handler, lambda: get_ui_batch_summary(None, match.group(1)))
+
+
+@route_get_regex(r"^/api/ui-executions/([^/]+)/artifacts/([0-9a-f]{64})$")
+def _get_ui_batch_artifact(handler, qs, match):
+    from .services.ui_batch_report_service import read_ui_artifact
+    _ui_report_response(handler, lambda: read_ui_artifact(None, match.group(1), match.group(2)), binary=True)
