@@ -10,6 +10,7 @@ import time
 import json
 import base64
 import shutil
+import sqlite3
 import urllib.parse
 import threading
 import traceback
@@ -6152,6 +6153,80 @@ def _delete_knowledge_app(handler, qs):
         handler._json({"ok": False, "error": "非法路径"}, 400)
         return
     handler._json({"ok": True})
+
+
+def _ui_batch_enabled():
+    return os.getenv("UI_SIMPLE_FLOW_ENABLED", "").strip().lower() in {"1", "true", "yes"}
+
+
+def _ui_batch_error(handler, error):
+    from task_server.services.ui_execution_contract import AccessDenied
+    from task_server.services.ui_execution_service import BatchValidationError
+    from task_server.services.ui_execution_store import BatchConflict
+
+    if isinstance(error, AccessDenied):
+        handler._json({"ok": False, "code": error.code, "error": "没有访问该批次的权限"}, 403)
+    elif isinstance(error, BatchConflict):
+        handler._json({"ok": False, "code": "idempotency_conflict", "error": "同一开始请求的内容已变更"}, 409)
+    elif isinstance(error, (BatchValidationError, ValueError)):
+        code = error.code if isinstance(error, BatchValidationError) else "invalid_request"
+        handler._json({"ok": False, "code": code, "error": "执行批次请求无效"}, 400)
+    elif isinstance(error, (sqlite3.Error, OSError)):
+        handler._json({"ok": False, "code": "batch_store_unavailable", "error": "执行批次暂时不可用"}, 503)
+
+
+@route_post("/api/ui-executions")
+def _post_ui_execution_batch(handler, qs):
+    if not _ui_batch_enabled():
+        handler._json({"ok": False, "code": "feature_disabled"}, 404)
+        return
+    from task_server.services.ui_execution_service import create_ui_batch
+    from task_server.services.ui_execution_contract import AccessDenied
+    from task_server.services.ui_execution_service import BatchValidationError
+    from task_server.services.ui_execution_store import BatchConflict
+
+    try:
+        batch = create_ui_batch(None, handler._body(), handler.headers.get("Idempotency-Key", ""))
+    except (AccessDenied, BatchValidationError, BatchConflict, ValueError, sqlite3.Error, OSError) as error:
+        _ui_batch_error(handler, error)
+        return
+    handler._json({"ok": True, "batch": batch}, 201)
+
+
+@route_get("/api/ui-executions")
+def _get_ui_execution_batches(handler, qs):
+    if not _ui_batch_enabled():
+        handler._json({"ok": False, "code": "feature_disabled"}, 404)
+        return
+    from task_server.services.ui_execution_service import BatchValidationError, list_ui_batches
+    from task_server.services.ui_execution_contract import AccessDenied
+
+    try:
+        result = list_ui_batches(None, {"app_id": qs["app_id"]} if qs.get("app_id") else {},
+                                 qs.get("cursor", ""), int(qs.get("limit", 20)))
+    except (AccessDenied, BatchValidationError, ValueError, sqlite3.Error, OSError) as error:
+        _ui_batch_error(handler, error)
+        return
+    handler._json({"ok": True, **result})
+
+
+@route_get_regex(r"^/api/ui-executions/([^/]+)$")
+def _get_ui_execution_batch(handler, qs, match):
+    if not _ui_batch_enabled():
+        handler._json({"ok": False, "code": "feature_disabled"}, 404)
+        return
+    from task_server.services.ui_execution_service import get_ui_batch
+    from task_server.services.ui_execution_contract import AccessDenied
+
+    try:
+        batch = get_ui_batch(None, match.group(1))
+    except (AccessDenied, sqlite3.Error, OSError) as error:
+        _ui_batch_error(handler, error)
+        return
+    if batch is None:
+        handler._json({"ok": False, "code": "batch_not_found"}, 404)
+        return
+    handler._json({"ok": True, "batch": batch})
 
 
 register_api_testing_routes(route_get_prefix, route_post_prefix_before_body, route_delete_prefix, route_put_prefix)

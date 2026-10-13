@@ -1,0 +1,287 @@
+"""Private, durable UI batch snapshots and dispatch intents.
+
+This store records intent only. Job creation and device leases belong to the
+dispatcher; a dispatch_key can be used as its deterministic job_id on retry.
+"""
+
+import json
+import os
+import sqlite3
+import time
+import uuid
+from pathlib import Path
+
+from task_server import identity
+
+
+class BatchConflict(ValueError):
+    pass
+
+
+def default_db_path():
+    configured = os.getenv("TASK_UI_EXECUTION_DB")
+    return Path(configured).expanduser().absolute() if configured else identity.default_db_path().with_name("ui-executions.sqlite3")
+
+
+def _json(value):
+    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
+def _decoded(value):
+    return json.loads(value) if value else {}
+
+
+class UiExecutionStore:
+    def __init__(self, path=None):
+        self.path = Path(path).expanduser().absolute() if path else default_db_path()
+
+    def _connect(self):
+        directory = self.path.parent
+        directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+        info = directory.lstat()
+        if directory.is_symlink() or (hasattr(os, "geteuid") and info.st_uid != os.geteuid()):
+            raise PermissionError("UI execution directory must be owned by service account")
+        os.chmod(directory, 0o700)
+        fd = os.open(self.path, os.O_CREAT | os.O_WRONLY | getattr(os, "O_NOFOLLOW", 0), 0o600)
+        try:
+            if hasattr(os, "geteuid") and os.fstat(fd).st_uid != os.geteuid():
+                raise PermissionError("UI execution database must be owned by service account")
+            os.fchmod(fd, 0o600)
+        finally:
+            os.close(fd)
+        db = sqlite3.connect(self.path, timeout=10, isolation_level=None)
+        db.row_factory = sqlite3.Row
+        db.execute("PRAGMA busy_timeout=10000")
+        db.execute("PRAGMA foreign_keys=ON")
+        version = db.execute("PRAGMA user_version").fetchone()[0]
+        if version not in (0, 1):
+            db.close()
+            raise RuntimeError("Unsupported UI execution schema version")
+        if version == 0:
+            db.execute("PRAGMA journal_mode=WAL")
+            db.executescript("""
+            CREATE TABLE IF NOT EXISTS batches (
+                ui_batch_id TEXT PRIMARY KEY, owner_user_id TEXT NOT NULL,
+                owner_username TEXT NOT NULL, owner_display_name TEXT NOT NULL,
+                app_id TEXT NOT NULL, suite_id TEXT, suite_revision TEXT,
+                idempotency_key TEXT NOT NULL, request_hash TEXT NOT NULL,
+                selection_json TEXT NOT NULL, status TEXT NOT NULL,
+                report_status TEXT NOT NULL DEFAULT 'pending',
+                delivery_status TEXT NOT NULL DEFAULT 'pending',
+                created_ns INTEGER NOT NULL,
+                UNIQUE(owner_user_id, idempotency_key)
+            );
+            CREATE INDEX IF NOT EXISTS batches_actor_time ON batches(owner_user_id, created_ns DESC, ui_batch_id DESC);
+            CREATE INDEX IF NOT EXISTS batches_actor_app_time ON batches(owner_user_id, app_id, created_ns DESC, ui_batch_id DESC);
+            CREATE INDEX IF NOT EXISTS batches_app_time ON batches(app_id, created_ns DESC, ui_batch_id DESC);
+            CREATE TABLE IF NOT EXISTS snapshots (
+                snapshot_id TEXT PRIMARY KEY, ui_batch_id TEXT NOT NULL REFERENCES batches(ui_batch_id),
+                case_id TEXT NOT NULL, case_revision TEXT NOT NULL,
+                source_hash TEXT NOT NULL, source_yaml TEXT NOT NULL, metadata_json TEXT NOT NULL,
+                UNIQUE(ui_batch_id, case_id, case_revision)
+            );
+            CREATE TABLE IF NOT EXISTS case_attempts (
+                attempt_id TEXT PRIMARY KEY, ui_batch_id TEXT NOT NULL REFERENCES batches(ui_batch_id),
+                snapshot_id TEXT NOT NULL REFERENCES snapshots(snapshot_id),
+                case_id TEXT NOT NULL, case_revision TEXT NOT NULL,
+                runner_id TEXT NOT NULL, device_id TEXT NOT NULL, platform TEXT NOT NULL,
+                attempt_no INTEGER NOT NULL, dispatch_key TEXT NOT NULL UNIQUE,
+                target_resolution_json TEXT NOT NULL, compiled_case_json TEXT NOT NULL,
+                job_id TEXT UNIQUE, agent_run_id TEXT, sonic_result_id TEXT,
+                status TEXT NOT NULL,
+                UNIQUE(ui_batch_id, case_id, runner_id, device_id, attempt_no)
+            );
+            CREATE INDEX IF NOT EXISTS attempts_batch_case_device ON case_attempts(ui_batch_id, case_id, device_id, attempt_no);
+            CREATE INDEX IF NOT EXISTS attempts_job_id ON case_attempts(job_id);
+            CREATE TABLE IF NOT EXISTS device_leases (
+                platform TEXT NOT NULL, runner_id TEXT NOT NULL, device_id TEXT NOT NULL,
+                ui_batch_id TEXT NOT NULL REFERENCES batches(ui_batch_id),
+                attempt_id TEXT NOT NULL REFERENCES case_attempts(attempt_id),
+                state TEXT NOT NULL, acquired_ns INTEGER NOT NULL,
+                PRIMARY KEY(platform, runner_id, device_id)
+            );
+            CREATE TABLE IF NOT EXISTS delivery_outbox (
+                delivery_key TEXT PRIMARY KEY, ui_batch_id TEXT NOT NULL REFERENCES batches(ui_batch_id),
+                channel_id TEXT NOT NULL, report_revision TEXT NOT NULL,
+                status TEXT NOT NULL, due_ns INTEGER NOT NULL, attempts INTEGER NOT NULL DEFAULT 0
+            );
+            CREATE INDEX IF NOT EXISTS outbox_status_due ON delivery_outbox(status, due_ns);
+            PRAGMA user_version=1;
+            """)
+        return db
+
+    def create_batch(self, prepared):
+        db = self._connect()
+        try:
+            db.execute("BEGIN IMMEDIATE")
+            existing = db.execute("SELECT ui_batch_id, request_hash FROM batches WHERE owner_user_id=? AND idempotency_key=?",
+                                  (prepared["owner_user_id"], prepared["idempotency_key"])).fetchone()
+            if existing:
+                if existing["request_hash"] != prepared["request_hash"]:
+                    raise BatchConflict("idempotency_conflict")
+                batch_id = existing["ui_batch_id"]
+            else:
+                batch_id = "uib_" + uuid.uuid4().hex
+                db.execute("""INSERT INTO batches(ui_batch_id, owner_user_id, owner_username, owner_display_name,
+                           app_id, suite_id, suite_revision, idempotency_key, request_hash, selection_json,
+                           status, delivery_status, created_ns) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                           (batch_id, prepared["owner_user_id"], prepared["owner_username"], prepared["owner_display_name"],
+                            prepared["app_id"], prepared.get("suite_id"), prepared.get("suite_revision"),
+                            prepared["idempotency_key"], prepared["request_hash"], _json(prepared["selection"]),
+                            "queued", "pending" if (prepared["selection"].get("notifications") or {}).get("enabled") else "not_requested",
+                            time.time_ns()))
+                snapshots = {}
+                for snapshot in prepared["snapshots"]:
+                    snapshot_id = uuid.uuid4().hex
+                    snapshots[(snapshot["case_id"], snapshot["case_revision"])] = snapshot_id
+                    db.execute("""INSERT INTO snapshots(snapshot_id, ui_batch_id, case_id, case_revision,
+                               source_hash, source_yaml, metadata_json) VALUES(?,?,?,?,?,?,?)""",
+                               (snapshot_id, batch_id, snapshot["case_id"], snapshot["case_revision"],
+                                snapshot["source_hash"], snapshot["source_yaml"], _json(snapshot["metadata"])))
+                for index, attempt in enumerate(prepared["attempts"], 1):
+                    target = attempt["target"]
+                    dispatch_key = f"{batch_id}_{index}_1"
+                    db.execute("""INSERT INTO case_attempts(attempt_id, ui_batch_id, snapshot_id, case_id,
+                               case_revision, runner_id, device_id, platform, attempt_no, dispatch_key,
+                               target_resolution_json, compiled_case_json, status)
+                               VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                               (uuid.uuid4().hex, batch_id, snapshots[(attempt["case_id"], attempt["case_revision"])],
+                                attempt["case_id"], attempt["case_revision"], target["runner_id"], target["device_id"],
+                                target["platform"], 1, dispatch_key, _json(attempt["target_resolution"]),
+                                _json(attempt["compiled_case"]), "queued"))
+            db.execute("COMMIT")
+        except Exception:
+            db.execute("ROLLBACK")
+            raise
+        finally:
+            db.close()
+        return self.get_batch(batch_id)
+
+    def find_idempotent(self, owner_user_id, key):
+        db = self._connect()
+        try:
+            row = db.execute("SELECT ui_batch_id, request_hash FROM batches WHERE owner_user_id=? AND idempotency_key=?",
+                             (owner_user_id, key)).fetchone()
+            return dict(row) if row else None
+        finally:
+            db.close()
+
+    def get_batch(self, batch_id):
+        db = self._connect()
+        try:
+            row = db.execute("SELECT * FROM batches WHERE ui_batch_id=?", (batch_id,)).fetchone()
+            if not row:
+                return None
+            result = dict(row)
+            result["selection"] = _decoded(result.pop("selection_json"))
+            result["snapshots"] = []
+            for item in db.execute("SELECT * FROM snapshots WHERE ui_batch_id=? ORDER BY rowid", (batch_id,)):
+                snapshot = dict(item)
+                snapshot["metadata"] = _decoded(snapshot.pop("metadata_json"))
+                result["snapshots"].append(snapshot)
+            result["case_attempts"] = [self._attempt(item) for item in db.execute(
+                "SELECT * FROM case_attempts WHERE ui_batch_id=? ORDER BY rowid", (batch_id,))]
+            return result
+        finally:
+            db.close()
+
+    @staticmethod
+    def _attempt(row):
+        result = dict(row)
+        result["target_resolution"] = _decoded(result.pop("target_resolution_json"))
+        result["compiled_case"] = _decoded(result.pop("compiled_case_json"))
+        return result
+
+    def list_batches(self, owner_user_id=None, app_id=None, cursor="", limit=20, app_ids=None):
+        limit = max(1, min(int(limit), 100))
+        if app_ids is not None and not app_ids:
+            return {"items": [], "next_cursor": ""}
+        where, params = [], []
+        if owner_user_id is not None:
+            where.append("owner_user_id=?")
+            params.append(owner_user_id)
+        if app_id:
+            where.append("app_id=?")
+            params.append(app_id)
+        if app_ids is not None:
+            where.append("app_id IN (" + ",".join("?" for _ in app_ids) + ")")
+            params.extend(app_ids)
+        if cursor:
+            try:
+                timestamp, batch_id = cursor.split(":", 1)
+                timestamp = int(timestamp)
+                if not batch_id.startswith("uib_"):
+                    raise ValueError
+            except (ValueError, AttributeError):
+                raise ValueError("invalid_cursor") from None
+            where.append("(created_ns, ui_batch_id) < (?, ?)")
+            params.extend([timestamp, batch_id])
+        query = "SELECT ui_batch_id, owner_user_id, owner_display_name, app_id, status, report_status, delivery_status, created_ns FROM batches"
+        if where:
+            query += " WHERE " + " AND ".join(where)
+        query += " ORDER BY created_ns DESC, ui_batch_id DESC LIMIT ?"
+        db = self._connect()
+        try:
+            rows = [dict(row) for row in db.execute(query, (*params, limit + 1))]
+        finally:
+            db.close()
+        items = rows[:limit]
+        next_cursor = f"{items[-1]['created_ns']}:{items[-1]['ui_batch_id']}" if len(rows) > limit else ""
+        return {"items": items, "next_cursor": next_cursor}
+
+    def pending_dispatches(self, limit=100):
+        db = self._connect()
+        try:
+            return [self._attempt(row) for row in db.execute(
+                "SELECT * FROM case_attempts WHERE job_id IS NULL AND status='queued' ORDER BY rowid LIMIT ?",
+                (max(1, min(int(limit), 100)),))]
+        finally:
+            db.close()
+
+    def link_job(self, dispatch_key, job_id):
+        db = self._connect()
+        try:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute("SELECT * FROM case_attempts WHERE dispatch_key=?", (dispatch_key,)).fetchone()
+            if not row:
+                raise KeyError("dispatch_not_found")
+            if job_id != dispatch_key or row["job_id"] not in (None, job_id):
+                raise BatchConflict("dispatch_job_conflict")
+            db.execute("UPDATE case_attempts SET job_id=? WHERE dispatch_key=? AND job_id IS NULL", (job_id, dispatch_key))
+            result = self._attempt(db.execute("SELECT * FROM case_attempts WHERE dispatch_key=?", (dispatch_key,)).fetchone())
+            db.execute("COMMIT")
+            return result
+        except Exception:
+            db.execute("ROLLBACK")
+            raise
+        finally:
+            db.close()
+
+    def append_case_attempt(self, batch_id, case_revision, target, compiled_case):
+        """Append a later attempt for an already frozen case/target pair."""
+        db = self._connect()
+        try:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute("""SELECT a.*, s.snapshot_id FROM case_attempts a JOIN snapshots s
+                                ON s.snapshot_id=a.snapshot_id WHERE a.ui_batch_id=? AND a.case_revision=?
+                                AND a.runner_id=? AND a.device_id=? AND a.platform=?
+                                ORDER BY a.attempt_no DESC LIMIT 1""",
+                             (batch_id, case_revision, target["runner_id"], target["device_id"], target["platform"])).fetchone()
+            if not row or _decoded(row["compiled_case_json"]) != compiled_case:
+                raise BatchConflict("frozen_attempt_mismatch")
+            attempt_no = row["attempt_no"] + 1
+            dispatch_key = row["dispatch_key"].rsplit("_", 1)[0] + f"_{attempt_no}"
+            db.execute("""INSERT INTO case_attempts(attempt_id, ui_batch_id, snapshot_id, case_id, case_revision,
+                       runner_id, device_id, platform, attempt_no, dispatch_key, target_resolution_json,
+                       compiled_case_json, status) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                       (uuid.uuid4().hex, batch_id, row["snapshot_id"], row["case_id"], case_revision,
+                        row["runner_id"], row["device_id"], row["platform"], attempt_no, dispatch_key,
+                        row["target_resolution_json"], row["compiled_case_json"], "queued"))
+            result = self._attempt(db.execute("SELECT * FROM case_attempts WHERE dispatch_key=?", (dispatch_key,)).fetchone())
+            db.execute("COMMIT")
+            return result
+        except Exception:
+            db.execute("ROLLBACK")
+            raise
+        finally:
+            db.close()

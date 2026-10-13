@@ -214,6 +214,10 @@ class MainAccess:
         method = method.upper()
         permission = self.permission_for(method, path, qs, body)
         self.require(permission)
+        if ((method == "POST" and path == "/api/ui-executions") or
+                (method in {"GET", "HEAD"} and (path == "/api/ui-executions" or path.startswith("/api/ui-executions/")))):
+            # The batch service checks persisted owner and current app scope.
+            return
         parts = path.strip("/").split("/")
         saved_job = None
         if method == "POST" and len(parts) == 4 and parts[1] == "jobs" and parts[3] in {"retry", "repair"}:
@@ -304,6 +308,10 @@ class MainAccess:
 
     def permission_for(self, method, path, qs, body):
         from task_server.config import safe_bool
+        if method in {"GET", "HEAD"} and (path == "/api/ui-executions" or path.startswith("/api/ui-executions/")):
+            return "ui.view"
+        if method == "POST" and path == "/api/ui-executions":
+            return "ui.execute"
         if method in {"GET", "HEAD"}:
             if path == "/api/yaml/baseline-cache/status" or path.startswith(("/api/debug/", "/api/preflight/", "/api/platform/")):
                 return "platform.configure"
