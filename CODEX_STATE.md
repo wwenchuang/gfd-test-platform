@@ -1,3 +1,10 @@
+## 2026-10-13 iPhone13 WDA 中断恢复
+
+- 14:03:37原WDA Xcode会话报CoreDeviceError 3 / Mercury 1001 connection invalidated，14:03:55退出；USB仍识别iPhone13，Mac Runner持续心跳，Midscene二进制可用。14:14实时/status报ConnectionResetError，明确为WDA控制链中断；初始断连诱因（USB/手机服务）尚无足够证据。
+- 首次重新启动WDA，XCTest在60秒后报Timed out while enabling automation mode；用户确认解锁并保持亮屏后重启成功，新xcodebuild PID64430，日志在本机Applications/MidsceneIOS/validation/wda-recovery-unlocked-20261013.log。
+- 实测/status ready=true，当前截图1170x2532采集成功；平台14:18:45心跳preflight_status=ready，Chrome卡片显示iPhone13空闲可选、截图14:18:20及两款应用版本。本次只恢复本机服务，未重新跑业务UI，未改平台代码或额外部署。
+- 当前WDA进程退出后尚无自动恢复机制，本次恢复不代表长期稳定性已解决。
+
 ## 2026-10-13 统一 Android / iOS 设备卡片名称与版本排版
 
 - 1af62a1已由线上health确认部署，但Chrome验收暴露安卓名称仍是包名：Agent独立加载agentApplicationCatalog，旧名称函数依赖尚未加载的taskApps/knowledgeAppDetails。此前测试仅stub名称函数，未覆盖真实页面数据源。
