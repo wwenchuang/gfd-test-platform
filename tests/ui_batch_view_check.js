@@ -95,3 +95,41 @@ test('switching batches clears previous identities and action state', t=>{
   assert.doesNotMatch(f.node.textContent,/执行者乙/);assert.equal(f.node.querySelectorAll('[data-attempt-id]').length,0);
   assert.equal(f.node.querySelector('[data-batch-action="cancel"]').hidden,true);
 });
+function recoverable(){const b=batch();b.status='interrupted';b.stop_pending=true;b.execution_settled=false;Object.assign(b.case_attempts[0],{status:'interrupted',job_id:'job1',event_sequence:3,manual_stop_recovery_version:'f'.repeat(64),manual_stop_recovery_eligible:true});return b;}
+test('manual recovery requires unchecked confirmation and cancel or Escape sends no action',async t=>{
+ const f=fixture(t),b=recoverable(),calls=[];f.view.update(f.node,b,{recover:(...args)=>calls.push(args)});
+ const button=f.node.querySelector('[data-attempt-recover]');assert.ok(button);button.click();
+ let form=f.node.querySelector('[data-stop-confirmation]');assert.ok(form);assert.match(form.textContent,/iPhone 13/);assert.match(form.textContent,/com.fixture.app/);assert.match(form.textContent,/关闭浏览器/);
+ assert.equal(form.querySelector('input').checked,false);form.querySelector('[data-stop-submit]').click();assert.equal(calls.length,0);
+ form.querySelector('[data-stop-dismiss]').click();assert.equal(calls.length,0);assert.equal(f.node.ownerDocument.activeElement,button);
+ button.click();form=f.node.querySelector('[data-stop-confirmation]');form.dispatchEvent(new f.node.ownerDocument.defaultView.KeyboardEvent('keydown',{key:'Escape',bubbles:true}));assert.equal(calls.length,0);assert.equal(form.hidden,true);
+});
+test('confirmed recovery sends frozen exact attempt and discards changed state',async t=>{
+ const f=fixture(t),b=recoverable(),calls=[];f.view.update(f.node,b,{recover:(...args)=>calls.push(args)});
+ f.node.querySelector('[data-attempt-recover]').click();let form=f.node.querySelector('[data-stop-confirmation]');form.querySelector('input').click();form.querySelector('[data-stop-submit]').click();await new Promise(setImmediate);
+ assert.equal(calls.length,1);assert.equal(calls[0][0],'uib_fixture');assert.deepEqual(JSON.parse(JSON.stringify(calls[0][1])),{attempt_id:'a1',expected_status:'interrupted',expected_event_sequence:3,expected_recovery_version:'f'.repeat(64),confirmed_stopped:true,reason:'已在执行机确认该任务及其子进程已结束'});
+ f.node.querySelector('[data-attempt-recover]').click();b.case_attempts[0].event_sequence++;f.view.update(f.node,b,{recover:(...args)=>calls.push(args)});assert.equal(f.node.querySelector('[data-stop-confirmation]').hidden,true);assert.equal(calls.length,1);
+});
+test('viewers have no recovery action and manual provenance is labelled',t=>{
+ const f=fixture(t),b=recoverable();f.view.update(f.node,b);assert.equal(f.node.querySelector('[data-attempt-recover]').hidden,true);
+ b.case_attempts[0].manual_stop_recovery={actor_display_name:'核对者',confirmed_ns:123,reason:'已核对'};f.view.update(f.node,b);assert.match(f.node.textContent,/人工确认停止/);assert.match(f.node.textContent,/核对者/);
+});
+test('recovery confirmation retains focus under unchanged polling and blocks account changes',async t=>{
+ const f=fixture(t),b=recoverable(),calls=[];let current=true;const actions={isCurrent:()=>current,recover:(...args)=>calls.push(args)};
+ f.view.update(f.node,b,actions);f.node.querySelector('[data-attempt-recover]').click();const panel=f.node.querySelector('[data-stop-confirmation]'),input=panel.querySelector('input');input.click();
+ f.view.update(f.node,b,actions);assert.equal(panel.hidden,false);assert.equal(f.node.ownerDocument.activeElement,input);assert.equal(input.checked,true);
+ current=false;panel.querySelector('[data-stop-submit]').click();await new Promise(setImmediate);assert.equal(calls.length,0);
+ f.view.update(f.node,b,actions);assert.equal(panel.hidden,true);assert.equal(f.node.querySelector('[data-attempt-recover]').hidden,true);
+});
+test('recovery busy guard sends one request and discards an old view error',async t=>{
+ const f=fixture(t),b=recoverable(),calls=[];let reject;
+ f.view.update(f.node,b,{recover:(...args)=>{calls.push(args);return new Promise((_,r)=>reject=r);}});
+ f.node.querySelector('[data-attempt-recover]').click();const panel=f.node.querySelector('[data-stop-confirmation]');panel.querySelector('input').click();panel.querySelector('[data-stop-submit]').click();panel.querySelector('[data-stop-submit]').click();
+ assert.equal(calls.length,1);assert.equal(panel.querySelector('[data-stop-submit]').disabled,true);
+ f.view.update(f.node,{...batch(),ui_batch_id:'uib_other'});reject(new Error('旧账号私密错误'));await new Promise(setImmediate);assert.doesNotMatch(f.node.textContent,/旧账号私密错误/);
+});
+test('polling invalidates confirmation without taking focus from another control',t=>{
+ const f=fixture(t),b=recoverable();f.view.update(f.node,b,{recover:()=>{}});f.node.querySelector('[data-attempt-recover]').click();
+ const other=f.node.querySelector('[data-batch-action="cancel"]');other.hidden=false;other.focus();b.case_attempts[0].event_sequence++;
+ f.view.update(f.node,b,{recover:()=>{},cancel:()=>{}});assert.equal(f.node.ownerDocument.activeElement,other);
+});

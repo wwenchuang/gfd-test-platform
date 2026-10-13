@@ -6,7 +6,7 @@ import tempfile
 import time
 import urllib.parse
 
-from .ui_batch_report_service import _connect, save_ui_artifact, validate_ui_upload
+from .ui_batch_report_service import _connect, save_ui_artifact, validate_ui_upload, _validate_ui_upload_in_db
 from .ui_execution_store import UiExecutionStore
 
 
@@ -52,6 +52,7 @@ def handle_chunk_upload(handler,body,finish=False):
         from task_server.config import MAX_UPLOAD_BODY_SIZE
         db = _connect()
         db.execute('BEGIN IMMEDIATE')
+        _validate_ui_upload_in_db(db,job_id,body)
         existing = db.execute('SELECT total FROM ui_report_chunks WHERE job_id=? AND upload_id=? LIMIT 1',(job_id,upload_id)).fetchone()
         if existing and existing[0] != total: raise ValueError('chunk_conflict')
         if finish:

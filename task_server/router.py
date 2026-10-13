@@ -6372,6 +6372,32 @@ def _post_ui_execution_action(handler, qs, match):
         handler._json({"ok": True, "batch": batch}, 200 if match.group(2) == "cancel" else 201)
 
 
+@route_post_regex(r"^/api/ui-executions/([^/]+)/confirm-stop$")
+def _post_ui_execution_confirm_stop(handler, qs, match):
+    if not _ui_batch_enabled():
+        handler._json({"ok": False, "code": "feature_disabled"}, 404)
+        return
+    from .services.ui_batch_dispatch import confirm_ui_attempt_stopped
+    from .services.ui_execution_contract import AccessDenied
+    from .services.ui_execution_store import BatchConflict
+    from .services.ui_execution_service import BatchValidationError
+    try:
+        batch = confirm_ui_attempt_stopped(None, match.group(1), handler._body())
+    except BatchConflict:
+        handler._json({"ok": False, "code": "recovery_state_changed", "error": "任务状态已变化，请刷新后重新核对"}, 409)
+        return
+    except BatchValidationError:
+        handler._json({"ok": False, "code": "recovery_confirmation_required", "error": "请先在执行机核对任务及子进程已结束"}, 400)
+        return
+    except (AccessDenied, ValueError, sqlite3.Error, OSError) as error:
+        _ui_batch_error(handler, error)
+        return
+    if batch is None:
+        handler._json({"ok": False, "code": "batch_not_found"}, 404)
+    else:
+        handler._json({"ok": True, "batch": batch})
+
+
 register_api_testing_routes(route_get_prefix, route_post_prefix_before_body, route_delete_prefix, route_put_prefix)
 
 

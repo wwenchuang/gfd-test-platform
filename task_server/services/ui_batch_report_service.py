@@ -66,16 +66,20 @@ def _batch(actor, batch_id):
     return batch
 
 
+def _validate_ui_upload_in_db(db, job_id, credentials):
+    row = db.execute('SELECT * FROM case_attempts WHERE job_id=?',(job_id,)).fetchone()
+    if (not row or not row['claim_token'] or
+            not hmac.compare_digest(row['claim_token'],str(credentials.get('ui_claim_token') or '')) or
+            credentials.get('runner_id') != row['runner_id'] or credentials.get('device_id') != row['device_id']):
+        raise PermissionError('claim_mismatch')
+    return dict(row)
+
+
 def validate_ui_upload(job_id, credentials):
     """The machine token alone cannot assign evidence to a user's batch."""
     db = _connect()
     try:
-        row = db.execute('SELECT * FROM case_attempts WHERE job_id=?',(job_id,)).fetchone()
-        if (not row or not row['claim_token'] or
-                not hmac.compare_digest(row['claim_token'],str(credentials.get('ui_claim_token') or '')) or
-                credentials.get('runner_id') != row['runner_id'] or credentials.get('device_id') != row['device_id']):
-            raise PermissionError('claim_mismatch')
-        return dict(row)
+        return _validate_ui_upload_in_db(db,job_id,credentials)
     finally:
         db.close()
 
@@ -95,6 +99,7 @@ def save_ui_artifact(job_id, credentials, content, kind):
     db = _connect()
     try:
         db.execute('BEGIN IMMEDIATE')
+        row = _validate_ui_upload_in_db(db,job_id,credentials)
         db.execute('INSERT OR IGNORE INTO ui_report_artifacts VALUES(?,?,?,?)',
                    (row['ui_batch_id'],artifact_id,kind,content))
         inserted = db.execute('INSERT OR IGNORE INTO ui_report_evidence VALUES(?,?,?,?)',
@@ -156,7 +161,7 @@ def _snapshot(batch,db):
         source = snapshots[attempt['snapshot_id']]
         attempts.append({**{k:attempt[k] for k in ('attempt_id','case_id','case_revision','attempt_no','job_id',
             'platform','runner_id','device_id','status','started_ns','finished_ns','block_code','block_message',
-            'execution_progress','steps','result') if k in attempt},
+            'execution_progress','steps','result','manual_stop_recovery') if k in attempt},
             'source_hash':source['source_hash'],'metadata':source['metadata'],
             'device_snapshot':attempt['target_resolution'].get('device_snapshot',{}),
             'expectations':_expectations(source['source_yaml'])})

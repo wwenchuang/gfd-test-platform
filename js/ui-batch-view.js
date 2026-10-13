@@ -44,6 +44,7 @@
     const available={cancel:!settled(b)&&b.status!=='cancelling',
       rerun:settled(b)&&attempts.some(a=>!['passed','success'].includes(a.status)),
       report:settled(b)&&['pending','generating','ready','failed'].includes(b.report_status),copy:b.report_status==='ready'};
+    node.querySelectorAll('[data-attempt-recover]').forEach(button=>{button.disabled=state.busy.has('recover');});
     node.querySelectorAll('[data-batch-action]').forEach(button=>{
       const key=button.dataset.batchAction;
       button.hidden=!available[key] || typeof state.actions[key]!=='function';
@@ -54,16 +55,63 @@
     let row=state.rows.get(attempt.attempt_id);
     if (!row) {
       row=make('details','ui-batch-attempt');row.dataset.attemptId=attempt.attempt_id;
-      row.innerHTML='<summary><span data-attempt-icon></span><span class="ui-attempt-name"><strong data-attempt-title></strong><small data-attempt-device></small></span><span data-attempt-state></span></summary><div class="ui-attempt-body"><p data-attempt-hint></p><ol class="ui-batch-steps"></ol></div>';
+      row.innerHTML='<summary><span data-attempt-icon></span><span class="ui-attempt-name"><strong data-attempt-title></strong><small data-attempt-device></small></span><span data-attempt-state></span></summary><div class="ui-attempt-body"><p data-attempt-hint></p><p data-attempt-recovery-note hidden></p><button type="button" class="btn-sm" data-attempt-recover hidden>核对停止状态</button><ol class="ui-batch-steps"></ol></div>';
       state.rows.set(attempt.attempt_id,row);
     }
     return row;
+  }
+  function recoveryIdentity(attempt) {
+    return JSON.stringify([attempt.attempt_id,attempt.status,attempt.event_sequence,attempt.manual_stop_recovery_version]);
+  }
+  function recoveryCurrent(node,state) {
+    return views.get(node)===state && state.actions.isCurrent?.()!==false && typeof state.actions.recover==='function';
+  }
+  function closeRecovery(node,state,restore=true) {
+    const panel=node.querySelector('[data-stop-confirmation]');
+    const focusedInside=panel?.contains(node.ownerDocument.activeElement);if(panel)panel.hidden=true;
+    const button=state.confirmation?.button;state.confirmation=null;
+    if(restore&&focusedInside&&button?.isConnected){
+      const attempt=state.batch.case_attempts?.find(a=>a.attempt_id===button.closest('[data-attempt-id]').dataset.attemptId);
+      const target=attempt?.manual_stop_recovery_eligible&&!button.hidden?button:button.closest('details').querySelector('summary');target?.focus({preventScroll:true});
+    }
+  }
+  function openRecovery(node,state,attempt,button) {
+    if(!recoveryCurrent(node,state)||!attempt.manual_stop_recovery_eligible||state.busy.has('recover'))return;
+    let panel=node.querySelector('[data-stop-confirmation]');
+    if(!panel){
+      panel=make('form','ui-stop-confirmation');panel.dataset.stopConfirmation='';panel.hidden=true;
+      panel.innerHTML='<p data-stop-target></p><p>关闭浏览器不会停止执行。请到执行机核对该任务及其子进程已结束，再确认释放此手机。</p><label><input type="checkbox" required> 已在执行机确认该任务及其子进程已结束</label><div><button type="submit" class="btn-sm" data-stop-submit disabled>确认已停止</button><button type="button" class="btn-sm" data-stop-dismiss>取消</button></div>';
+      panel.querySelector('[data-stop-dismiss]').onclick=()=>closeRecovery(node,state);
+      panel.onkeydown=e=>{if(e.key==='Escape'){e.preventDefault();closeRecovery(node,state);}};
+      panel.querySelector('input').onchange=()=>{panel.querySelector('[data-stop-submit]').disabled=!panel.querySelector('input').checked||state.busy.has('recover');};
+      panel.onsubmit=async e=>{
+        e.preventDefault();const c=state.confirmation;
+        if(!c||!recoveryCurrent(node,state)||!panel.querySelector('input').checked||state.busy.has('recover'))return;
+        const current=state.batch.case_attempts.find(a=>a.attempt_id===c.payload.attempt_id);
+        if(!current?.manual_stop_recovery_eligible||recoveryIdentity(current)!==c.signature){closeRecovery(node,state);return;}
+        state.busy.add('recover');updateActions(node,state);panel.querySelector('[data-stop-submit]').disabled=true;
+        const error=node.querySelector('[data-batch-action-error]');error.hidden=true;
+        try{await state.actions.recover(state.batchId,c.payload);if(recoveryCurrent(node,state))closeRecovery(node,state);}
+        catch(e){if(recoveryCurrent(node,state)){closeRecovery(node,state);error.textContent=e?.message||'确认未完成，请刷新后重新核对';error.hidden=false;}}
+        finally{if(views.get(node)===state){state.busy.delete('recover');updateActions(node,state);}}
+      };
+      node.querySelector('.ui-batch-actions').after(panel);
+    }
+    state.confirmation={button,signature:recoveryIdentity(attempt),payload:{attempt_id:attempt.attempt_id,
+      expected_status:attempt.status,expected_event_sequence:attempt.event_sequence,expected_recovery_version:attempt.manual_stop_recovery_version,
+      confirmed_stopped:true,reason:'已在执行机确认该任务及其子进程已结束'}};
+    const device=attempt.target_resolution?.device_snapshot||{};
+    text(panel,'[data-stop-target]',`${device.label||device.model||attempt.device_id} · ${state.batch.app_name||state.batch.app_id||'应用'} · ${attempt.target_resolution?.target_package||'所选应用'}`);
+    panel.querySelector('input').checked=false;panel.querySelector('[data-stop-submit]').disabled=true;panel.hidden=false;panel.querySelector('input').focus();
   }
   function update(node,batch,actions={}) {
     if (!node || !batch?.ui_batch_id) return;
     let state=views.get(node);
     if(!state || state.batchId!==batch.ui_batch_id) state=init(node,batch.ui_batch_id);
     state.batch=batch;state.actions=actions;
+    if(state.confirmation){const current=(batch.case_attempts||[]).find(a=>a.attempt_id===state.confirmation.payload.attempt_id);
+      if(!recoveryCurrent(node,state)||!current?.manual_stop_recovery_eligible||recoveryIdentity(current)!==state.confirmation.signature)closeRecovery(node,state);
+    }
     const attempts=Array.isArray(batch.case_attempts)?batch.case_attempts:[];
     const done=attempts.filter(settled).length;
     const passed=attempts.filter(a=>['passed','success'].includes(a.status)).length;
@@ -95,6 +143,11 @@
       text(row,'[data-attempt-device]',`${device.label || device.model || a.device_id || '所选手机'} · ${platform} · 第 ${a.attempt_no || 1} 次`);
       text(row,'[data-attempt-state]',label(a.status));
       row.querySelector('[data-attempt-icon]').replaceChildren(badge(a.status));
+      const recoveryButton=row.querySelector('[data-attempt-recover]');
+      recoveryButton.hidden=!a.manual_stop_recovery_eligible||!recoveryCurrent(node,state);
+      recoveryButton.disabled=state.busy.has('recover');recoveryButton.onclick=()=>openRecovery(node,state,a,recoveryButton);
+      const recoveryNote=row.querySelector('[data-attempt-recovery-note]');recoveryNote.hidden=!a.manual_stop_recovery;
+      if(a.manual_stop_recovery)recoveryNote.textContent=`人工确认停止 · ${a.manual_stop_recovery.actor_display_name||a.manual_stop_recovery.actor_username||'操作人'} · ${new Date(a.manual_stop_recovery.confirmed_ns/1e6).toLocaleString()} · ${a.manual_stop_recovery.reason}。测试结果仍按中断或取消保留。`;
       const known=a.step_progress_known===true && Array.isArray(a.steps);
       text(row,'[data-attempt-hint]',a.block_message || a.message || (known?(a.step_progress_truncated?'当前仅展示部分步骤，完整结果请查看报告。':'步骤状态来自本次手机执行。'):'尚无步骤证据，仅用例级进度。'));
       const signature=JSON.stringify(known?a.steps:[]);

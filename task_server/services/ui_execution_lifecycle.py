@@ -1,12 +1,30 @@
 """Short SQLite transitions for UI dispatch; no job/file/network work in transactions."""
 from contextlib import contextmanager
 from .ui_execution_messages import blocker_message
+import hashlib
 import hmac
 import json
 import secrets
 import time
 
 TERMINAL = {'passed', 'failed', 'cancelled'}
+ACK_LOST_NS = 120 * 10**9
+
+
+def manual_stop_eligible(attempt, lease, now):
+    return bool(attempt.get('stop_pending') and attempt.get('job_id') and lease
+        and all(lease[k] == attempt[k] for k in ('attempt_id','ui_batch_id','runner_id','device_id','platform'))
+        and lease['state'] in {'running','interrupted'}
+        and (attempt['status'] == 'interrupted' or (attempt['status'] == 'cancelling'
+            and now - (attempt.get('last_event_ns') or now) > ACK_LOST_NS)))
+
+
+def manual_stop_version(attempt, lease):
+    # Opaque binding preserves nanosecond precision in browsers and never reveals a claim.
+    value = [attempt[k] for k in ('attempt_id','ui_batch_id','job_id','runner_id','device_id','platform',
+                                  'claim_token','status','event_sequence','last_event_ns','stop_confirmed')]
+    value.append([lease[k] for k in ('attempt_id','ui_batch_id','runner_id','device_id','platform','state','acquired_ns')] if lease else None)
+    return hashlib.sha256(json.dumps(value,separators=(',',':')).encode()).hexdigest()
 
 
 class UiExecutionLifecycle:
@@ -120,6 +138,42 @@ class UiExecutionLifecycle:
                 db.execute("UPDATE case_attempts SET status='interrupted',block_code=?,block_message=? WHERE attempt_id=?", (code,blocker_message(code),attempt_id))
                 db.execute("UPDATE device_leases SET state='interrupted' WHERE attempt_id=?", (attempt_id,))
                 self._rollup(db,row[0])
+
+    def confirm_attempt_stopped(self, batch_id, request, actor):
+        from .ui_execution_store import BatchConflict
+        with self._transaction() as db:
+            row = db.execute('SELECT * FROM case_attempts WHERE ui_batch_id=? AND attempt_id=?',
+                             (batch_id,request['attempt_id'])).fetchone()
+            if not row:
+                raise BatchConflict('recovery_state_changed')
+            previous = db.execute('SELECT * FROM ui_manual_stop_recoveries WHERE attempt_id=?', (row['attempt_id'],)).fetchone()
+            expected = ('status','event_sequence','recovery_version')
+            if previous:
+                if all(previous['expected_'+k] == request['expected_'+k] for k in expected) and previous['reason'] == request['reason']:
+                    return  # A retry returns the same durable recovery, never another release.
+                raise BatchConflict('recovery_state_changed')
+            lease = db.execute('SELECT * FROM device_leases WHERE platform=? AND device_id=?',
+                               (row['platform'],row['device_id'])).fetchone()
+            now = time.time_ns()
+            if (row['status'] != request['expected_status'] or row['event_sequence'] != request['expected_event_sequence']
+                    or manual_stop_version(row, lease) != request['expected_recovery_version']
+                    or not manual_stop_eligible({**dict(row),'stop_pending':bool(row['claim_token'] and not row['stop_confirmed'])}, dict(lease) if lease else None, now)):
+                raise BatchConflict('recovery_state_changed')
+            db.execute("""INSERT INTO ui_manual_stop_recoveries (
+                       attempt_id,ui_batch_id,job_id,runner_id,device_id,platform,
+                       actor_user_id,actor_username,actor_display_name,confirmed_ns,reason,
+                       expected_status,expected_event_sequence,expected_last_event_ns,lease_acquired_ns,expected_recovery_version)
+                       VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                       (row['attempt_id'],batch_id,row['job_id'],row['runner_id'],row['device_id'],row['platform'],
+                        actor['user_id'],actor['username'],actor['display_name'],now,request['reason'],
+                        row['status'],row['event_sequence'],row['last_event_ns'],lease['acquired_ns'],request['expected_recovery_version']))
+            db.execute("""UPDATE case_attempts SET claim_token='',stop_confirmed=1,finished_ns=?,
+                       status=?,job_sync_pending=1 WHERE attempt_id=?""",
+                       (now,'cancelled' if row['status']=='cancelling' else 'interrupted',row['attempt_id']))
+            db.execute('DELETE FROM device_leases WHERE platform=? AND runner_id=? AND device_id=? AND ui_batch_id=? AND attempt_id=? AND acquired_ns=?',
+                       (row['platform'],row['runner_id'],row['device_id'],batch_id,row['attempt_id'],lease['acquired_ns']))
+            db.execute("UPDATE batches SET report_status='pending' WHERE ui_batch_id=?", (batch_id,))
+            self._rollup(db,batch_id)
 
     def record_attempt_event(self, job_id, sequence, event):
         from .runner_progress import normalize_execution_progress

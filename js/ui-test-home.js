@@ -181,9 +181,13 @@
   }
   function showBatch(s,batch){
     const host=s.node.querySelector('[data-ui-batch]');host.hidden=false;
-    const actions={cancel:async id=>{const data=await request(s,'action',`/ui-executions/${encodeURIComponent(id)}/cancel`,{method:'POST',body:{}});if(data)showBatch(s,data.batch);},
+    const actions={isCurrent:()=>valid(s)&&s.options.canExecute(),recover:async(id,body)=>{
+      if(!valid(s)||!s.options.canExecute()||s.batchId!==id)return;
+      try{const data=await request(s,'action',`/ui-executions/${encodeURIComponent(id)}/confirm-stop`,{method:'POST',body});if(data&&s.batchId===id)showBatch(s,data.batch);}
+      catch(error){if(valid(s)&&s.batchId===id){await loadBatch(s);throw error;}}
+    },cancel:async id=>{const data=await request(s,'action',`/ui-executions/${encodeURIComponent(id)}/cancel`,{method:'POST',body:{}});if(data)showBatch(s,data.batch);},
       rerun:async id=>{s.rerunKeys[id] ||= crypto.randomUUID();const data=await request(s,'action',`/ui-executions/${encodeURIComponent(id)}/rerun`,{method:'POST',headers:{'Idempotency-Key':s.rerunKeys[id]},body:{scope:'failed'}});if(data){delete s.rerunKeys[id];s.batchId=data.batch.ui_batch_id;store(s,'lastBatch',s.batchId);showBatch(s,data.batch);}}};
-    if(!s.options.canExecute()){delete actions.cancel;delete actions.rerun;}
+    if(!s.options.canExecute()){delete actions.cancel;delete actions.rerun;delete actions.recover;}
     if(s.options.download&&window.UiBatchReport)actions.report=id=>openReport(s,id);
     if(s.options.copy)actions.copy=async id=>{const data=await request(s,'summary',`/ui-executions/${encodeURIComponent(id)}/summary`);if(data&&data.status==='ready')await s.options.copy(data.summary);else if(data)throw new Error('报告尚未就绪');};
     window.UiBatchView.update(host,batch,actions);

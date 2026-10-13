@@ -1,5 +1,6 @@
 """UI batches adapt to the existing Job/Runner queue; no alternate execution queue."""
 import os
+import re
 import threading
 import time
 from functools import wraps
@@ -7,7 +8,7 @@ from functools import wraps
 from . import job_service, runner_service, sonic_service
 from .operation_attribution import actor_context
 from .ui_execution_contract import require_ui_actor, resolve_ui_target
-from .ui_execution_lifecycle import TERMINAL
+from .ui_execution_lifecycle import TERMINAL, ACK_LOST_NS
 from .ui_execution_store import UiExecutionStore
 from .ui_execution_messages import blocker_message
 
@@ -254,6 +255,28 @@ def cancel_ui_batch(actor, batch_id):
     return store.get_batch(batch_id)
 
 
+@serialized
+def confirm_ui_attempt_stopped(actor, batch_id, request):
+    from .ui_execution_service import get_ui_batch, BatchValidationError
+    from .operation_attribution import current_actor
+    keys = {'attempt_id','expected_status','expected_event_sequence','expected_recovery_version','confirmed_stopped','reason'}
+    if (not isinstance(request,dict) or set(request) != keys or request.get('confirmed_stopped') is not True
+            or not isinstance(request.get('attempt_id'),str)
+            or request.get('expected_status') not in {'interrupted','cancelling'}
+            or type(request.get('expected_event_sequence')) is not int or not 0 <= request['expected_event_sequence'] < 2**63
+            or not isinstance(request.get('expected_recovery_version'),str) or not re.fullmatch(r'[0-9a-f]{64}',request['expected_recovery_version'])
+            or not isinstance(request.get('reason'),str) or not 1 <= len(request['reason'].strip()) <= 500):
+        raise BatchValidationError('recovery_confirmation_required')
+    batch = get_ui_batch(actor,batch_id)
+    if not batch:
+        return None
+    require_ui_actor(actor,app_id=batch['app_id'])
+    store = UiExecutionStore()
+    store.confirm_attempt_stopped(batch_id,request,current_actor())
+    # Reconciler replays job synchronization after commit; recovery needs no file I/O.
+    return store.get_batch(batch_id)
+
+
 def rerun_ui_batch(actor, batch_id, scope, idempotency_key):
     from .ui_execution_service import get_ui_batch, _identifier, _request_hash
     batch = get_ui_batch(actor,batch_id)
@@ -303,7 +326,7 @@ def _reconcile_ui_batch(batch_id):
         device = next((d for d in runner.get('devices',[]) if d.get('device_id') == attempt['device_id']), {})
         if not runner.get('online') or device.get('status') not in {'online','device'}:
             store.interrupt_attempt(attempt['attempt_id'],'execution_connection_lost')
-        elif time.time_ns() - (attempt['last_event_ns'] or 0) > 120 * 10**9:
+        elif time.time_ns() - (attempt['last_event_ns'] or 0) > ACK_LOST_NS:
             store.interrupt_attempt(attempt['attempt_id'],'execution_ack_lost')
 
 

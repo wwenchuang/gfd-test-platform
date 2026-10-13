@@ -132,3 +132,5 @@
 .ui-report-coverage th:nth-child(1){width:28%;}.ui-report-coverage th:nth-child(3){width:15%;}
 .ui-batch-report details{margin-top:20px;color:var(--text-muted);}.ui-batch-report details button{margin:10px 8px 0 0;}
 @media(max-width:640px){.ui-batch-report{padding:16px;}.ui-batch-report h2{font-size:21px;}.ui-report-coverage th,.ui-report-coverage td{padding:8px;}.ui-report-coverage table{font-size:13px;}.ui-report-coverage th:nth-child(3){width:19%;}}
+
+.ui-stop-confirmation{border:1px solid #536677;border-radius:8px;padding:16px;margin:14px 0;overflow-wrap:anywhere;min-width:0}.ui-stop-confirmation p{line-height:1.6}.ui-stop-confirmation label{display:flex;gap:8px;align-items:flex-start;line-height:1.6}.ui-stop-confirmation>div{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}.ui-stop-confirmation button{min-height:40px;padding:8px 14px}.ui-stop-confirmation input{flex:none;margin-top:5px}.ui-stop-confirmation :focus-visible{outline:2px solid #41ccdc;outline-offset:2px}

@@ -277,7 +277,7 @@ def test_schema_v2_upgrade_preserves_snapshots_leases_and_delivery_rows(notify_e
     assert before['snapshots']==batch['snapshots'] and before['selection']==batch['selection']
     db=UiExecutionStore()._connect()
     try:
-        assert db.execute('PRAGMA user_version').fetchone()[0]==3
+        assert db.execute('PRAGMA user_version').fetchone()[0]==4
         assert db.execute('SELECT count(*) FROM delivery_outbox').fetchone()[0]==1
         assert db.execute('SELECT manual_retries FROM delivery_outbox').fetchone()[0]==0
     finally:db.close()

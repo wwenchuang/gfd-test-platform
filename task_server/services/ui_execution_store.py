@@ -13,7 +13,7 @@ import uuid
 from pathlib import Path
 
 from task_server import identity
-from .ui_execution_lifecycle import UiExecutionLifecycle
+from .ui_execution_lifecycle import UiExecutionLifecycle, manual_stop_eligible, manual_stop_version
 
 
 class BatchConflict(ValueError):
@@ -63,7 +63,7 @@ class UiExecutionStore(UiExecutionLifecycle):
         db.execute("PRAGMA busy_timeout=10000")
         db.execute("PRAGMA foreign_keys=ON")
         version = db.execute("PRAGMA user_version").fetchone()[0]
-        if version not in (0, 1, 2, 3):
+        if version not in (0, 1, 2, 3, 4):
             db.close()
             raise RuntimeError("Unsupported UI execution schema version")
         if version == 0:
@@ -165,6 +165,25 @@ class UiExecutionStore(UiExecutionLifecycle):
                 db.execute("ROLLBACK")
                 db.close()
                 raise
+        if version < 4:
+            db.execute("BEGIN IMMEDIATE")
+            try:
+                db.execute("""CREATE TABLE IF NOT EXISTS ui_manual_stop_recoveries (
+                    attempt_id TEXT PRIMARY KEY REFERENCES case_attempts(attempt_id),
+                    ui_batch_id TEXT NOT NULL REFERENCES batches(ui_batch_id), job_id TEXT NOT NULL,
+                    runner_id TEXT NOT NULL, device_id TEXT NOT NULL, platform TEXT NOT NULL,
+                    actor_user_id TEXT NOT NULL, actor_username TEXT NOT NULL, actor_display_name TEXT NOT NULL,
+                    confirmed_ns INTEGER NOT NULL, reason TEXT NOT NULL,
+                    expected_status TEXT NOT NULL, expected_event_sequence INTEGER NOT NULL,
+                    expected_last_event_ns INTEGER NOT NULL, lease_acquired_ns INTEGER NOT NULL, expected_recovery_version TEXT NOT NULL)""")
+                db.execute("CREATE INDEX IF NOT EXISTS ui_leases_batch ON device_leases(ui_batch_id)")
+                db.execute("CREATE INDEX IF NOT EXISTS ui_recoveries_batch ON ui_manual_stop_recoveries(ui_batch_id)")
+                db.execute("PRAGMA user_version=4")
+                db.execute("COMMIT")
+            except Exception:
+                db.execute("ROLLBACK")
+                db.close()
+                raise
         return db
 
     def create_batch(self, prepared):
@@ -236,8 +255,17 @@ class UiExecutionStore(UiExecutionLifecycle):
                 snapshot = dict(item)
                 snapshot["metadata"] = _decoded(snapshot.pop("metadata_json"))
                 result["snapshots"].append(snapshot)
-            result["case_attempts"] = [self._attempt(item) for item in db.execute(
-                "SELECT * FROM case_attempts WHERE ui_batch_id=? ORDER BY rowid", (batch_id,))]
+            attempt_rows = list(db.execute("SELECT * FROM case_attempts WHERE ui_batch_id=? ORDER BY rowid", (batch_id,)))
+            result["case_attempts"] = [self._attempt(item) for item in attempt_rows]
+            recoveries = {r['attempt_id']:dict(r) for r in db.execute(
+                'SELECT * FROM ui_manual_stop_recoveries WHERE ui_batch_id=?', (batch_id,))}
+            leases = {r['attempt_id']:dict(r) for r in db.execute(
+                'SELECT * FROM device_leases WHERE ui_batch_id=?', (batch_id,))}
+            now = time.time_ns()
+            for raw, attempt in zip(attempt_rows, result['case_attempts']):
+                attempt['manual_stop_recovery_version'] = manual_stop_version(raw, leases.get(attempt['attempt_id']))
+                attempt['manual_stop_recovery'] = recoveries.get(attempt['attempt_id'])
+                attempt['manual_stop_recovery_eligible'] = manual_stop_eligible(attempt, leases.get(attempt['attempt_id']), now)
             from collections import Counter
             result["execution_settled"] = bool(result["execution_settled"])
             result["stop_pending"] = any(a["stop_pending"] for a in result["case_attempts"])

@@ -156,3 +156,22 @@ test('execution card keeps polling until final notification status arrives',asyn
  const before=f.calls.filter(c=>c.path==='/ui-executions/uib_new').length;await f.w.UiSimpleFlow.refresh();assert.equal(f.calls.filter(c=>c.path==='/ui-executions/uib_new').length,before+1);
  delivery='sent';await f.w.UiSimpleFlow.refresh();const done=f.calls.filter(c=>c.path==='/ui-executions/uib_new').length;await f.w.UiSimpleFlow.refresh();assert.equal(f.calls.filter(c=>c.path==='/ui-executions/uib_new').length,done);
 });
+test('manual recovery uses exact payload, refreshes conflict, and suppresses account-switched responses',async t=>{
+ let recoverAction,resolveRecovery,conflict=false;
+ const interrupted={ui_batch_id:'uib_recover',status:'interrupted',execution_settled:false,report_status:'pending',case_attempts:[]};
+ const f=fixture(t,(path,o)=>{
+  if(path==='/ui-executions/uib_recover/confirm-stop')return conflict?Promise.reject(Object.assign(new Error('任务状态已变化'),{status:409})):new Promise(r=>resolveRecovery=r);
+  if(path==='/ui-executions/uib_recover')return {ok:true,batch:interrupted};
+ });
+ f.w.sessionStorage.setItem('ui-simple:user-a:lastBatch',JSON.stringify('uib_recover'));
+ f.w.UiBatchView={update:(node,b,actions)=>{node.textContent=b.owner_display_name||b.status;recoverAction=actions.recover;}};
+ f.mount();await wait();assert.equal(typeof recoverAction,'function');
+ const payload={attempt_id:'a1',expected_status:'interrupted',expected_event_sequence:3,expected_recovery_version:'f'.repeat(64),confirmed_stopped:true,reason:'已核对'};
+ const pending=recoverAction('uib_recover',payload);await wait();
+ const post=f.calls.find(c=>c.path.endsWith('/confirm-stop'));assert.deepEqual(post.options.body,payload);
+ f.setIdentity('user-b');f.w.UiSimpleFlow.reset();resolveRecovery({ok:true,batch:{...interrupted,owner_display_name:'旧账号私密资料'}});await pending;
+ assert.doesNotMatch(f.node.textContent,/旧账号私密资料/);
+ f.setIdentity('user-a');f.mount();await wait();conflict=true;const before=f.calls.filter(c=>c.path==='/ui-executions/uib_recover').length;
+ await assert.rejects(()=>recoverAction('uib_recover',payload),/任务状态已变化/);
+ assert.equal(f.calls.filter(c=>c.path==='/ui-executions/uib_recover').length,before+1);
+});

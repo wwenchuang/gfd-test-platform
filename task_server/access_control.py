@@ -220,7 +220,7 @@ class MainAccess:
         permission = self.permission_for(method, path, qs, body)
         self.require(permission)
         if ((method == "POST" and re.fullmatch(r"/api/ui-executions/[^/]+/deliveries/[0-9a-f]{64}/retry", path)) or
-                (method == "POST" and (path in {"/api/ui-executions", "/api/ui-executions/preflight"} or re.fullmatch(r"/api/ui-executions/[^/]+/(cancel|rerun|report)", path))) or
+                (method == "POST" and (path in {"/api/ui-executions", "/api/ui-executions/preflight"} or re.fullmatch(r"/api/ui-executions/[^/]+/(cancel|rerun|report|confirm-stop)", path))) or
                 (method in {"GET", "HEAD"} and (path == "/api/ui-executions" or path.startswith("/api/ui-executions/")))):
             # The batch service checks persisted owner and current app scope.
             return
@@ -320,7 +320,7 @@ class MainAccess:
             return "ui.view"
         if method == "POST" and re.fullmatch(r"/api/ui-executions/[^/]+/report", path):
             return "ui.view"
-        if method == "POST" and (path in {"/api/ui-executions", "/api/ui-executions/preflight"} or re.fullmatch(r"/api/ui-executions/[^/]+/(cancel|rerun|report)", path)):
+        if method == "POST" and (path in {"/api/ui-executions", "/api/ui-executions/preflight"} or re.fullmatch(r"/api/ui-executions/[^/]+/(cancel|rerun|report|confirm-stop)", path)):
             return "ui.execute"
         if method in {"GET", "HEAD"}:
             if path == "/api/yaml/baseline-cache/status" or path.startswith(("/api/debug/", "/api/preflight/", "/api/platform/")):
