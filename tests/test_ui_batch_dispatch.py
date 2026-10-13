@@ -199,3 +199,57 @@ def test_claim_forces_fresh_sonic_occupancy_after_reservation(dispatch_env, monk
     job = job_service.get_job(batch['case_attempts'][0]['dispatch_key'])
     assert dispatch.claim_ui_job(job) is None
     assert calls == [True]
+
+
+@pytest.mark.parametrize('missing', [('', ''), ('1.2', ''), (' ', '2'), (None, '2')])
+@pytest.mark.parametrize('evidence', ['frozen', 'current', 'both'])
+def test_incomplete_installed_version_evidence_blocks_dispatch(dispatch_env, missing, evidence):
+    from task_server.services import ui_batch_dispatch as dispatch
+    app = dispatch_env[0]['mac']['devices'][0]['installed_apps'][0]
+    original = app.copy()
+    if evidence in {'frozen','both'}:
+        app.update(version_name=missing[0], version_code=missing[1])
+    batch = create()
+    if evidence == 'frozen': app.update(original)
+    if evidence == 'current': app.update(version_name=missing[0], version_code=missing[1])
+    result = dispatch.dispatch_ui_batch(batch['ui_batch_id'])
+    assert result['case_attempts'][0]['block_code'] == 'app_version_unavailable'
+
+
+@pytest.mark.parametrize('operation', ['claim','dispatch','reconcile'])
+def test_slow_sonic_does_not_block_events_and_cancel_wins_before_mutation(dispatch_env, monkeypatch, operation):
+    import concurrent.futures
+    import threading
+    from task_server.services import ui_batch_dispatch as dispatch, runner_service, job_service, sonic_service
+    a = create()
+    dispatch.dispatch_ui_batch(a['ui_batch_id'])
+    claimed_job = runner_service.assign_job('mac',['iphone'])
+    payload = claimed_job['_ui_delivery']
+    b = create('b','other',[{**TARGET,'device_id':'phone2'}])
+    if operation != 'dispatch': dispatch.dispatch_ui_batch(b['ui_batch_id'])
+    entered, release = threading.Event(), threading.Event()
+    def slow_statuses(**kwargs):
+        entered.set()
+        assert release.wait(5)
+        return dispatch_env[1]
+    monkeypatch.setattr(sonic_service,'sonic_list_device_statuses',slow_statuses)
+    def cancel():
+        with actor_context(ACTORS['b']):
+            return dispatch.cancel_ui_batch(ACTORS['b'],b['ui_batch_id'])
+    operations = {'claim':lambda:runner_service.assign_job('mac',['phone2']),
+                  'dispatch':lambda:dispatch.dispatch_ui_batch(b['ui_batch_id']),
+                  'reconcile':lambda:dispatch.reconcile_ui_batches()}
+    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
+        waiting = pool.submit(operations[operation])
+        try:
+            assert entered.wait(2)
+            callback = pool.submit(dispatch.record_ui_attempt_event,claimed_job['job_id'],1,
+                                  {'runner_id':'mac','device_id':'iphone','ui_claim_token':payload['ui_claim_token'],'type':'progress'})
+            assert callback.result(timeout=1)['ok']
+            assert pool.submit(cancel).result(timeout=1)['status'] == 'cancelled'
+        finally:
+            release.set()
+        result = waiting.result(timeout=3)
+    if operation == 'claim': assert result is None
+    b_job = job_service.get_job(b['case_attempts'][0]['dispatch_key'])
+    assert b_job is None or b_job['status'] == 'cancelled'

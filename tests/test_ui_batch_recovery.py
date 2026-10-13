@@ -237,3 +237,16 @@ def test_restart_replays_job_terminal_write_after_sqlite_commit(dispatch_env, mo
     b = create('b')
     dispatch.dispatch_ui_batch(b['ui_batch_id'])
     assert job_service.get_job(b['case_attempts'][0]['dispatch_key'])
+
+
+def test_unconfirmed_result_has_no_attempt_finish_time(dispatch_env):
+    from task_server.services import ui_batch_dispatch as dispatch
+    batch, job, payload = claimed()
+    dispatch.record_ui_attempt_event(job['job_id'],1,event(payload,type='result',status='failed',execution_stopped=False))
+    result = dispatch.dispatch_ui_batch(batch['ui_batch_id'])
+    attempt = result['case_attempts'][0]
+    assert attempt['status'] == 'interrupted' and attempt['stop_pending']
+    assert attempt['finished_ns'] is None
+    assert not attempt['execution_settled']
+    dispatch.record_ui_attempt_event(job['job_id'],2,event(payload,type='result',status='failed',execution_stopped=True))
+    assert dispatch.dispatch_ui_batch(batch['ui_batch_id'])['case_attempts'][0]['finished_ns']

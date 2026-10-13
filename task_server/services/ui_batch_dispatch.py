@@ -61,9 +61,13 @@ def _target_check(batch, attempt, occupancy=None, fresh=False):
     if resolved['target_package'] != frozen['target_package'] or resolved['platform_mappings'] != frozen['platform_mappings']:
         return 'app_mapping_changed'
     versions = resolved['device_snapshot'].get('app_versions') or []
-    if not versions or versions[0].get('installed') is not True:
-        return 'app_version_unavailable'
-    if versions != frozen['device_snapshot'].get('app_versions'):
+    frozen_versions = frozen['device_snapshot'].get('app_versions') or []
+    for evidence in (versions, frozen_versions):
+        if (len(evidence) != 1 or evidence[0].get('installed') is not True or
+                any(type(evidence[0].get(key)) not in (str, int) or
+                    not str(evidence[0][key]).strip() for key in ('version_name','version_code'))):
+            return 'app_version_unavailable'
+    if versions != frozen_versions:
         return 'app_version_changed'
     if not set(attempt['compiled_case']['required_actions']) <= set(resolved['capabilities'].get('ui_actions') or []):
         return 'runner_capability_missing'
@@ -107,8 +111,26 @@ def preflight_ui_batch(actor, request):
             'dry_run':{'status':'not_performed','reason':'native_ios_dry_run_unavailable' if any(t['platform'] == 'ios' for t in normalized['targets']) else 'baseline_execution'}}
 
 
-@serialized
+def _read_occupancy(fresh=False):
+    # External I/O must never hold DISPATCH_LOCK: stop acknowledgements need it.
+    try:
+        return sonic_service.sonic_list_device_statuses(force=fresh)
+    except Exception:
+        return {'__source__': {'available': False}}
+
+
 def dispatch_ui_batch(batch_id):
+    batch = UiExecutionStore().get_batch(batch_id)
+    if not batch or not enabled() or not any(a['status'] in {'queued','blocked'} for a in batch['case_attempts']):
+        return batch
+    occupancy = _read_occupancy()
+    return _dispatch_ui_batch(batch_id, occupancy)
+
+
+@serialized
+def _dispatch_ui_batch(batch_id, occupancy):
+    # Re-read mutable state after the unlocked network wait. SQLite reservation
+    # and claim compare-and-update still arbitrate other processes.
     store = UiExecutionStore()
     batch = store.get_batch(batch_id)
     if not batch or not enabled() or batch['status'] in TERMINAL:
@@ -117,7 +139,7 @@ def dispatch_ui_batch(batch_id):
     for attempt in batch['case_attempts']:
         if attempt['status'] not in {'queued','blocked'}:
             continue
-        code = _target_check(batch, attempt)
+        code = _target_check(batch, attempt, occupancy=occupancy)
         if code:
             store.block_attempt(attempt['attempt_id'], code)
             continue
@@ -154,8 +176,13 @@ def dispatch_ui_batch(batch_id):
     return store.get_batch(batch_id)
 
 
-@serialized
 def prepare_ui_claim(job, occupancy=None):
+    evidence = occupancy if occupancy is not None else _read_occupancy(fresh=True)
+    return _prepare_ui_claim(job, evidence)
+
+
+@serialized
+def _prepare_ui_claim(job, occupancy):
     """Called inside the ordinary Job claim path, once; returns frozen delivery."""
     if not enabled():
         return None
@@ -177,13 +204,13 @@ def prepare_ui_claim(job, occupancy=None):
             'target_package':attempt['target_resolution']['target_package'],'platform':attempt['platform']}
 
 
-@serialized
 def claim_ui_job(job, prepared=None):
     prepared = prepared if prepared is not None else prepare_ui_claim(job)
     if prepared is None:
         return None
-    token = UiExecutionStore().claim_attempt(job['job_id'])
-    return {**prepared, 'ui_claim_token':token} if token else None
+    with DISPATCH_LOCK:
+        token = UiExecutionStore().claim_attempt(job['job_id'])
+        return {**prepared, 'ui_claim_token':token} if token else None
 
 
 @serialized
@@ -248,27 +275,32 @@ def rerun_ui_batch(actor, batch_id, scope, idempotency_key):
     return UiExecutionStore().create_batch(prepared)
 
 
-@serialized
 def reconcile_ui_batches(limit=50):
     if not enabled():
         return
     store = UiExecutionStore()
-    runners = runner_service.list_runners()
     for batch_id in store.recoverable_batch_ids(limit):
-        store.mark_reconciled(batch_id)
-        batch = store.get_batch(batch_id)
-        for attempt in batch['case_attempts']:
-            if attempt['job_sync_pending'] and attempt['job_id']:
-                _sync_job(store,attempt)
-            if attempt['status'] != 'running':
-                continue
-            runner = runners.get(attempt['runner_id']) or {}
-            device = next((d for d in runner.get('devices',[]) if d.get('device_id') == attempt['device_id']), {})
-            if not runner.get('online') or device.get('status') not in {'online','device'}:
-                store.interrupt_attempt(attempt['attempt_id'],'execution_connection_lost')
-            elif time.time_ns() - (attempt['last_event_ns'] or 0) > 120 * 10**9:
-                store.interrupt_attempt(attempt['attempt_id'],'execution_ack_lost')
-        dispatch_ui_batch(batch_id)
+        _reconcile_ui_batch(batch_id)
+        dispatch_ui_batch(batch_id)  # May wait on Sonic, outside the global lock.
+
+
+@serialized
+def _reconcile_ui_batch(batch_id):
+    store = UiExecutionStore()
+    store.mark_reconciled(batch_id)
+    runners = runner_service.list_runners()
+    batch = store.get_batch(batch_id)
+    for attempt in batch['case_attempts']:
+        if attempt['job_sync_pending'] and attempt['job_id']:
+            _sync_job(store,attempt)
+        if attempt['status'] != 'running':
+            continue
+        runner = runners.get(attempt['runner_id']) or {}
+        device = next((d for d in runner.get('devices',[]) if d.get('device_id') == attempt['device_id']), {})
+        if not runner.get('online') or device.get('status') not in {'online','device'}:
+            store.interrupt_attempt(attempt['attempt_id'],'execution_connection_lost')
+        elif time.time_ns() - (attempt['last_event_ns'] or 0) > 120 * 10**9:
+            store.interrupt_attempt(attempt['attempt_id'],'execution_ack_lost')
 
 
 def start_ui_batch_reconciler():

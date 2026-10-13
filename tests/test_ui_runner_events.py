@@ -102,6 +102,41 @@ def test_mac_ui_android_stop_uses_owned_process_group(monkeypatch):
     proc.poll.return_value = None
     proc._ui_process_group = True
     sent = []
-    monkeypatch.setattr(mac.os,'killpg',lambda pid,sig:sent.append((pid,sig)))
-    mac.stop_midscene_process(proc)
+    def killpg(pid,sig):
+        if sig == 0: raise ProcessLookupError
+        sent.append((pid,sig))
+    monkeypatch.setattr(mac.os,'killpg',killpg)
+    assert mac.stop_midscene_process(proc) is True
     assert sent == [(99999,signal.SIGTERM)]
+
+
+@pytest.mark.parametrize('parent_exits_first', [False, True])
+def test_mac_stop_confirms_entire_group_including_term_ignoring_child(tmp_path,parent_exits_first):
+    import os
+    import signal
+    import subprocess
+    import sys
+    import time
+    path = Path(__file__).parents[1] / 'mac-midscene-runner.py'
+    spec = importlib.util.spec_from_file_location('mac_group_stop_proof',path)
+    mac = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mac)
+    ready = tmp_path/'child-ready'
+    child_code = ('import os,signal,time,pathlib; signal.signal(signal.SIGTERM,signal.SIG_IGN); '
+                  f'pathlib.Path({str(ready)!r}).write_text(str(os.getpid())); time.sleep(60)')
+    parent_code = (f'import subprocess,sys,time,pathlib; subprocess.Popen([sys.executable,"-c",{child_code!r}]); '
+                   f'p=pathlib.Path({str(ready)!r});\nwhile not p.exists(): time.sleep(.01)\n'
+                   + ('sys.exit(0)\n' if parent_exits_first else 'time.sleep(60)\n'))
+    parent = subprocess.Popen([sys.executable,'-c',parent_code],start_new_session=True)
+    parent._ui_process_group = True
+    try:
+        deadline = time.monotonic()+3
+        while not ready.exists() and time.monotonic()<deadline: time.sleep(.01)
+        assert ready.exists()
+        if parent_exits_first: parent.wait(timeout=3)
+        assert mac.stop_midscene_process(parent) is True
+        with pytest.raises(ProcessLookupError): os.killpg(parent.pid,0)
+    finally:
+        try: os.killpg(parent.pid,signal.SIGKILL)
+        except ProcessLookupError: pass
+        parent.wait(timeout=3)

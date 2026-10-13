@@ -169,6 +169,6 @@ class UiExecutionLifecycle:
                 if not stopped:
                     status = 'interrupted'
                 db.execute('UPDATE case_attempts SET status=?,finished_ns=?,result_json=?,block_code=?,block_message=? WHERE attempt_id=?',
-                           (status,now,json.dumps(evidence,ensure_ascii=False),'' if stopped else 'stop_unconfirmed','' if stopped else '执行停止尚未确认',row['attempt_id']))
+                           (status,now if stopped else None,json.dumps(evidence,ensure_ascii=False),'' if stopped else 'stop_unconfirmed','' if stopped else '执行停止尚未确认',row['attempt_id']))
             self._rollup(db,row['ui_batch_id'])
             return {'ok':True,'status':status if event['type'] == 'result' else row['status']}

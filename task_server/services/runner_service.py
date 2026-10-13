@@ -495,32 +495,34 @@ def runner_accepts_explicit_job(runner_info, job, runner_id):
 
 
 def assign_job(runner_id, extra_device_ids=None):
-    from .ui_batch_dispatch import DISPATCH_LOCK, prepare_ui_claim
+    from .ui_batch_dispatch import DISPATCH_LOCK, prepare_ui_claim, enabled
     from .ui_execution_store import UiExecutionStore, default_db_path
-    from .ui_batch_dispatch import enabled
+    # Only the external occupancy read uses this optimistic snapshot. All Job,
+    # actor/target and lease checks below are refreshed after taking the lock.
+    needs_fresh = enabled() and any(job.get('ui_batch_id') and job.get('status') == 'pending'
+        and job.get('target_runner_id') == runner_id for job in _load_jobs())
+    try:
+        from .sonic_service import sonic_list_device_statuses
+        occupancy = sonic_list_device_statuses(force=True) if needs_fresh else sonic_list_device_statuses()
+    except Exception:
+        occupancy = None  # Preserve only the legacy exception fallback.
     with DISPATCH_LOCK:
         candidates = {}
-        occupancy = None
-        if enabled():
+        if enabled() and needs_fresh:
             for job in _load_jobs():
                 if job.get('ui_batch_id') and job.get('status') == 'pending' and job.get('target_runner_id') == runner_id:
-                    if occupancy is None:
-                        try:
-                            from .sonic_service import sonic_list_device_statuses
-                            occupancy = sonic_list_device_statuses(force=True)
-                        except Exception:
-                            occupancy = {'__source__': {'available': False}}
-                    prepared = prepare_ui_claim(job, occupancy=occupancy)
+                    prepared = prepare_ui_claim(job, occupancy=occupancy if occupancy is not None else {'__source__': {'available': False}})
                     if prepared:
                         candidates[job['job_id']] = prepared
                         break
-        return _assign_job(runner_id, extra_device_ids, candidates, UiExecutionStore() if enabled() or default_db_path().exists() else None)
+        return _assign_job(runner_id, extra_device_ids, candidates,
+                           UiExecutionStore() if enabled() or default_db_path().exists() else None, occupancy)
 
 
 def _assign_job(
     runner_id: str,
     extra_device_ids: Optional[Iterable[str]] = None,
-    ui_candidates=None, ui_store=None,
+    ui_candidates=None, ui_store=None, sonic_statuses=None,
 ) -> Optional[Dict[str, Any]]:
     """为指定 runner 选取并占用下一个待执行 job。
 
@@ -548,17 +550,12 @@ def _assign_job(
     if (runner_info.get("capabilities") or {}).get("ios_case_reuse"):
         available_devices &= {d.get("device_id") for d in runner_info.get("devices", [])
                               if d.get("platform") == "ios" and d.get("preflight_status") == "ready"}
-    try:
-        from .sonic_service import sonic_list_device_statuses
-        sonic_statuses = sonic_list_device_statuses()
+    if sonic_statuses is not None:
         source_available = bool((sonic_statuses.get("__source__") or {}).get("available"))
         available_devices = {
             device_id for device_id in available_devices
             if source_available and (sonic_statuses.get(device_id) or {}).get("usage_status") == "idle"
         }
-    except Exception:
-        # Sonic 查询不可用时保持旧调度能力；平台界面会明确显示其状态证据缺失。
-        pass
 
     selected: Optional[Dict[str, Any]] = None
     ui_delivery = None

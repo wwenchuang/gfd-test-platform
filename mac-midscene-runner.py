@@ -1817,23 +1817,52 @@ def write_text(path, text):
     path.write_text(text or "", encoding="utf-8", errors="ignore")
 
 
+def _wait_for_owned_group_exit(proc, timeout):
+    deadline = time.monotonic() + timeout
+    while True:
+        proc.poll()  # Reap the direct child, but do not confuse its exit with group exit.
+        try:
+            os.killpg(proc.pid, 0)
+        except ProcessLookupError:
+            return True
+        except PermissionError:
+            return False
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(0.05)
+
+
 def stop_midscene_process(proc):
+    owned_group = RUNNER_PLATFORM == "ios" or getattr(proc, "_ui_process_group", False) is True
+    if owned_group:
+        if getattr(proc, "_ui_group_stop_confirmed", False) is True:
+            return True
+        # A descendant can outlive an already-exited parent. Probe/escalate the
+        # private group independently, and acknowledge only its disappearance.
+        for sig in (signal.SIGTERM, signal.SIGKILL):
+            try:
+                os.killpg(proc.pid, sig)
+            except ProcessLookupError:
+                proc.poll()
+                proc._ui_group_stop_confirmed = True
+                return True
+            except PermissionError:
+                return False
+            if _wait_for_owned_group_exit(proc, 3):
+                proc._ui_group_stop_confirmed = True
+                return True
+        return False
     if proc.poll() is not None:
-        return
+        return True
     try:
-        if RUNNER_PLATFORM == "ios" or getattr(proc, "_ui_process_group", False) is True:
-            os.killpg(proc.pid, signal.SIGTERM)
-        else:
-            proc.terminate()
+        proc.terminate()
         proc.wait(timeout=3)
     except subprocess.TimeoutExpired:
-        if RUNNER_PLATFORM == "ios" or getattr(proc, "_ui_process_group", False) is True:
-            os.killpg(proc.pid, signal.SIGKILL)
-        else:
-            proc.kill()
+        proc.kill()
         proc.wait(timeout=3)
     except ProcessLookupError:
         proc.wait(timeout=3)
+    return proc.poll() is not None
 
 
 # Kept inline so updating the standalone Mac Runner remains a one-file install.
@@ -2050,10 +2079,10 @@ def execute_midscene(job_id, job_dir, yaml_path, task_names, device_id):
         }
     finally:
         try:
-            if proc is not None and proc.poll() is None:
-                stop_midscene_process(proc)
             if job_id in _UI_DELIVERIES:
-                _UI_DELIVERIES[job_id]["stopped"] = proc is None or proc.poll() is not None
+                _UI_DELIVERIES[job_id]["stopped"] = proc is None or stop_midscene_process(proc) is True
+            elif proc is not None and proc.poll() is None:
+                stop_midscene_process(proc)
         except Exception:
             if job_id in _UI_DELIVERIES:
                 _UI_DELIVERIES[job_id]["stopped"] = False
