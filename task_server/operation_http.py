@@ -33,6 +33,23 @@ _FIXED_ACTIONS = {
 }
 
 
+# These keys come from registered server handlers/literals, never request fragments.
+_UI_BATCH_ACTIONS = {
+    "POST.api.ui_executions": "create", "GET.api.ui_executions": "list",
+    "POST.api.ui_executions.preflight": "preflight",
+    "GET.api.ui_executions.availability": "availability",
+    "GET.api.ui_executions.catalog": "catalog", "GET.api.ui_executions.devices": "devices",
+    "GET.get_ui_execution_batch": "view",
+    "POST.post_ui_execution_action.cancel": "cancel",
+    "POST.post_ui_execution_action.rerun": "rerun",
+    "POST.post_ui_execution_confirm_stop": "confirm_stop",
+    "GET.get_ui_batch_report": "report_view", "POST.post_ui_batch_report": "report_generate",
+    "GET.get_ui_batch_report_download": "report_download", "GET.get_ui_batch_summary": "summary",
+    "GET.get_ui_batch_artifact": "artifact_download", "GET.get_ui_batch_deliveries": "notification_status",
+    "POST.retry_ui_batch_delivery": "notification_retry",
+}
+
+
 def _key(method, path):
     # Only call with a server-owned route literal, never a request path.
     return method + "." + ".".join(part.replace("-", "_") for part in path.strip("/").split("/"))
@@ -89,8 +106,12 @@ def route_key(method, path):
                                    ("DELETE", router._DELETE_REGEX_ROUTES)):
         if method == family_method:
             for pattern, fn in entries:
-                if pattern.fullmatch(path):
-                    return method + "." + fn.__name__.lstrip("_")
+                match = pattern.fullmatch(path)
+                if match:
+                    key = method + "." + fn.__name__.lstrip("_")
+                    if key == "POST.post_ui_execution_action" and match.group(2) in {"cancel", "rerun"}:
+                        return key + "." + match.group(2)
+                    return key
     return "unknown"
 
 
@@ -218,6 +239,9 @@ def observed_json(handler, payload):
 
 
 def _resource(path, method, payload, qs, status, parsed_body=None):
+    if path == "/api/ui-executions" or path.startswith("/api/ui-executions/"):
+        verb = _UI_BATCH_ACTIONS.get(route_key(method, path))
+        return ("ui_batch", "", "ui_batch." + verb) if verb else ("unknown", "", "unknown.request")
     parts = [part for part in path.split("/") if part]
     if not parts:
         return "", "", ""
@@ -272,7 +296,7 @@ def _resource(path, method, payload, qs, status, parsed_body=None):
     return kind, resource_id, _FIXED_ACTIONS.get((method, path), f"{kind}.{verb}")
 
 
-def _result(status, payload, interrupted):
+def _result(status, payload, interrupted, *, ui_batch=False):
     if interrupted:
         return "interrupted"
     if status in (401, 403):
@@ -282,6 +306,13 @@ def _result(status, payload, interrupted):
     if status >= 400 or status == 0 or isinstance(payload, dict) and payload.get("ok") is False:
         return "failed"
     state = payload.get("data") if isinstance(payload, dict) and isinstance(payload.get("data"), dict) else payload
+    batch_state = state.get("batch") if ui_batch and isinstance(state, dict) else None
+    if isinstance(batch_state, dict) and (batch_state.get("status") in {"queued", "blocked", "running", "cancelling"}
+                                         or batch_state.get("execution_settled") is False):
+        return "accepted"
+    ui_report = state.get("report") if ui_batch and isinstance(state, dict) else None
+    if isinstance(ui_report, dict) and ui_report.get("status") in {"pending", "building"}:
+        return "accepted"
     nested_states = [state.get(key, {}).get("status") for key in ("job", "run", "execution")
                      if isinstance(state, dict) and isinstance(state.get(key), dict)]
     if status == 202 or isinstance(state, dict) and state.get("status") in {"queued", "accepted", "pending"} or any(value in {"queued", "accepted", "pending", "running"} for value in nested_states):
@@ -310,7 +341,8 @@ def finish_request(handler):
             kind, resource_id = "config", "sonic_config"
         if not kind:
             return
-        result = _result(status, payload, getattr(handler, "_operation_interrupted", False))
+        result = _result(status, payload, getattr(handler, "_operation_interrupted", False),
+                         ui_batch=registered_key in _UI_BATCH_ACTIONS)
         items = []
         body = payload.get("data") if isinstance(payload, dict) and isinstance(payload.get("data"), dict) else payload
         raw_items = body.get("results") if isinstance(body, dict) else None

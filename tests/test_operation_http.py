@@ -95,6 +95,8 @@ def test_registry_coverage_and_prefix_action_keys():
                             ("DELETE", router._DELETE_REGEX_ROUTES)):
         for pattern, _ in entries:
             path = re.sub(r"\(\[\^/\]\+\)", "sample", pattern.pattern.strip("^$"))
+            path = path.replace("([0-9a-f]{64})", "a" * 64).replace("(cancel|rerun)", "cancel")
+            assert pattern.fullmatch(path), (method, pattern.pattern, path)
             assert operation_http.route_key(method, path) != "unknown", (method, pattern.pattern)
     assert len(keys) == len(set(keys))
     for tail, methods in identity_http._ROUTES.items():

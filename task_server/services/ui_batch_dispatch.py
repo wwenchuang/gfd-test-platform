@@ -163,14 +163,15 @@ def _dispatch_ui_batch(batch_id, occupancy):
         snapshot = next(s for s in batch['snapshots'] if s['snapshot_id'] == attempt['snapshot_id'])
         if not existing:
             try:
-                existing = job_service.create_job({'job_id':job_id,'module':snapshot['metadata']['module'],
-                    'file':snapshot['metadata']['file'],'target_task_name':snapshot['metadata'].get('task_name',''),
-                    'device_id':attempt['device_id'],'target_runner_id':attempt['runner_id'],
-                    'platform':attempt['platform'],'device_strategy':'fixed','run_mode':'baseline',
-                    'auto_optimize':False,'max_attempt':1,'ui_batch_id':batch_id,
-                    'ui_execution_contract':'ui-v1','ui_required_actions':attempt['compiled_case']['required_actions'],
-                    'app_id':batch['app_id'],'app_package':batch['app_id'],
-                    'target_package':attempt['target_resolution']['target_package']})
+                with actor_context(_owner(batch)):
+                    existing = job_service.create_job({'job_id':job_id,'module':snapshot['metadata']['module'],
+                        'file':snapshot['metadata']['file'],'target_task_name':snapshot['metadata'].get('task_name',''),
+                        'device_id':attempt['device_id'],'target_runner_id':attempt['runner_id'],
+                        'platform':attempt['platform'],'device_strategy':'fixed','run_mode':'baseline',
+                        'auto_optimize':False,'max_attempt':1,'ui_batch_id':batch_id,
+                        'ui_execution_contract':'ui-v1','ui_required_actions':attempt['compiled_case']['required_actions'],
+                        'app_id':batch['app_id'],'app_package':batch['app_id'],
+                        'target_package':attempt['target_resolution']['target_package']})
             except ValueError:
                 with job_service.JOB_LOCK:
                     jobs_by_id, _ = job_service.load_ui_dispatch_jobs([job_id])

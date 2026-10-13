@@ -3,6 +3,7 @@ import copy
 import pytest
 from test_ui_execution_service import environment, ACTORS, APP, TARGET, request, SOURCE
 from task_server.services.operation_attribution import actor_context
+from task_server.services.job_audit import record_created as record_job_created
 
 
 @pytest.fixture
@@ -276,3 +277,50 @@ def test_runner_without_private_report_upload_is_blocked(dispatch_env):
     result=dispatch.dispatch_ui_batch(batch['ui_batch_id'])
     assert result['case_attempts'][0]['block_code'] == 'runner_upgrade_required'
     assert job_service.get_job(batch['case_attempts'][0]['dispatch_key']) is None
+
+
+def test_background_job_creation_and_runner_dispatch_keep_frozen_owner(dispatch_env, tmp_path, monkeypatch):
+    from task_server.services import ui_batch_dispatch as dispatch, job_service, job_audit
+    from task_server.services.operation_attribution import OperationStore
+    from task_server import identity
+    operation_path = tmp_path / 'audit.sqlite3'
+    monkeypatch.setenv('TASK_OPERATION_DB', str(operation_path))
+    # dispatch_env suppresses old job audit; restore its real public entry point.
+    monkeypatch.setattr(job_audit, 'record_created', record_job_created)
+    batch = create()
+    with actor_context(ACTORS['b']):
+        dispatch.dispatch_ui_batch(batch['ui_batch_id'])
+    job = job_service.get_job(batch['case_attempts'][0]['dispatch_key'])
+    with actor_context({'kind':'runner','username':'runner','display_name':'Runner'}):
+        job_audit.record_dispatch(job['job_id'], batch['case_attempts'][0]['compiled_case']['yaml_content'])
+    rows = OperationStore(operation_path).list_events(identity.get_access_profile('admin'), all_actors=True)['events']
+    creation = next(row for row in rows if row['action'] == 'job.created')
+    delivery = next(row for row in rows if row['action'] == 'job.dispatch_prepared')
+    assert creation['actor'] == ACTORS['a']
+    assert delivery['actor']['kind'] == 'runner'
+    assert delivery['initiator_user_id'] == ACTORS['a']['user_id']
+    assert len(OperationStore(operation_path).list_events(identity.get_access_profile('a'))['events']) == 2
+    assert not OperationStore(operation_path).list_events(identity.get_access_profile('b'))['events']
+
+
+@pytest.mark.parametrize('profile_change', ['disabled', 'deleted', 'replaced'])
+def test_unavailable_owner_cannot_create_attributed_background_job(dispatch_env, tmp_path, monkeypatch, profile_change):
+    from task_server import identity
+    from task_server.services import ui_batch_dispatch as dispatch, job_service, job_audit
+    from task_server.services.operation_attribution import OperationStore
+    operation_path = tmp_path / 'audit.sqlite3'
+    monkeypatch.setenv('TASK_OPERATION_DB', str(operation_path))
+    monkeypatch.setattr(job_audit, 'record_created', record_job_created)
+    batch = create()
+    original = identity.get_access_profile
+    def changed(name):
+        profile = original(name)
+        if name != 'a': return profile
+        if profile_change == 'deleted': return None
+        return {**profile, **({'status':'disabled'} if profile_change == 'disabled' else {'user_id':'new-owner'})}
+    monkeypatch.setattr(identity, 'get_access_profile', changed)
+    with actor_context(ACTORS['b']):
+        result = dispatch.dispatch_ui_batch(batch['ui_batch_id'])
+    assert result['case_attempts'][0]['block_code'] == 'account_unavailable'
+    assert job_service.get_job(batch['case_attempts'][0]['dispatch_key']) is None
+    assert not OperationStore(operation_path).list_events(original('admin'), all_actors=True)['events']

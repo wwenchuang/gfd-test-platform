@@ -6250,6 +6250,8 @@ def _post_ui_execution_batch(handler, qs):
     except (AccessDenied, BatchValidationError, BatchConflict, ValueError, sqlite3.Error, OSError) as error:
         _ui_batch_error(handler, error)
         return
+    from task_server.operation_http import mark_resource
+    mark_resource(handler, "ui_batch", batch["ui_batch_id"])
     handler._json({"ok": True, "batch": batch}, 201)
 
 
@@ -6286,6 +6288,8 @@ def _get_ui_execution_batch(handler, qs, match):
     if batch is None:
         handler._json({"ok": False, "code": "batch_not_found"}, 404)
         return
+    from task_server.operation_http import mark_resource
+    mark_resource(handler, "ui_batch", batch["ui_batch_id"])
     handler._json({"ok": True, "batch": batch})
 
 
@@ -6369,6 +6373,8 @@ def _post_ui_execution_action(handler, qs, match):
     if batch is None:
         handler._json({"ok": False, "code": "batch_not_found"}, 404)
     else:
+        from task_server.operation_http import mark_resource
+        mark_resource(handler, "ui_batch", batch["ui_batch_id"])
         handler._json({"ok": True, "batch": batch}, 200 if match.group(2) == "cancel" else 201)
 
 
@@ -6395,6 +6401,8 @@ def _post_ui_execution_confirm_stop(handler, qs, match):
     if batch is None:
         handler._json({"ok": False, "code": "batch_not_found"}, 404)
     else:
+        from task_server.operation_http import mark_resource
+        mark_resource(handler, "ui_batch", batch["ui_batch_id"])
         handler._json({"ok": True, "batch": batch})
 
 
@@ -6402,7 +6410,7 @@ register_api_testing_routes(route_get_prefix, route_post_prefix_before_body, rou
 
 
 # Private UI batch reports share the batch's current owner/application boundary.
-def _ui_report_response(handler, operation, binary=False, status=200):
+def _ui_report_response(handler, operation, batch_id, binary=False, status=200):
     if not _ui_batch_enabled():
         handler._json({"ok": False, "code": "feature_disabled"}, 404)
         return
@@ -6410,6 +6418,10 @@ def _ui_report_response(handler, operation, binary=False, status=200):
     from .services.ui_batch_report_http import send_private_file
     try:
         result = operation()
+        # Every operation authorizes this exact persisted batch before returning,
+        # including the private binary tuple APIs. Never bind on denied/missing results.
+        from task_server.operation_http import mark_resource
+        mark_resource(handler, "ui_batch", batch_id)
         if binary:
             send_private_file(handler, result)
         else:
@@ -6427,37 +6439,37 @@ def _ui_report_response(handler, operation, binary=False, status=200):
 @route_get_regex(r"^/api/ui-executions/([^/]+)/report$")
 def _get_ui_batch_report(handler, qs, match):
     from .services.ui_batch_report_service import get_ui_batch_report
-    _ui_report_response(handler, lambda: {"report": get_ui_batch_report(None, match.group(1), qs.get("revision"))})
+    _ui_report_response(handler, lambda: {"report": get_ui_batch_report(None, match.group(1), qs.get("revision"))}, match.group(1))
 
 
 @route_post_regex(r"^/api/ui-executions/([^/]+)/report$")
 def _post_ui_batch_report(handler, qs, match):
     from .services.ui_batch_report_service import request_ui_batch_report
-    _ui_report_response(handler, lambda: {"report": request_ui_batch_report(None, match.group(1))}, status=202)
+    _ui_report_response(handler, lambda: {"report": request_ui_batch_report(None, match.group(1))}, match.group(1), status=202)
 
 
 @route_get_regex(r"^/api/ui-executions/([^/]+)/report/download$")
 def _get_ui_batch_report_download(handler, qs, match):
     from .services.ui_batch_report_service import download_ui_batch_report
-    _ui_report_response(handler, lambda: download_ui_batch_report(None, match.group(1), qs.get("format", "html"), qs.get("revision")), binary=True)
+    _ui_report_response(handler, lambda: download_ui_batch_report(None, match.group(1), qs.get("format", "html"), qs.get("revision")), match.group(1), binary=True)
 
 
 @route_get_regex(r"^/api/ui-executions/([^/]+)/summary$")
 def _get_ui_batch_summary(handler, qs, match):
     from .services.ui_batch_report_service import get_ui_batch_summary
-    _ui_report_response(handler, lambda: get_ui_batch_summary(None, match.group(1)))
+    _ui_report_response(handler, lambda: get_ui_batch_summary(None, match.group(1)), match.group(1))
 
 
 @route_get_regex(r"^/api/ui-executions/([^/]+)/artifacts/([0-9a-f]{64})$")
 def _get_ui_batch_artifact(handler, qs, match):
     from .services.ui_batch_report_service import read_ui_artifact
-    _ui_report_response(handler, lambda: read_ui_artifact(None, match.group(1), match.group(2)), binary=True)
+    _ui_report_response(handler, lambda: read_ui_artifact(None, match.group(1), match.group(2)), match.group(1), binary=True)
 
 
 @route_get_regex(r"^/api/ui-executions/([^/]+)/deliveries$")
 def _get_ui_batch_deliveries(handler, qs, match):
     from .services.ui_batch_notification_service import get_batch_deliveries
-    _ui_report_response(handler, lambda: get_batch_deliveries(None, match.group(1), qs.get("revision")))
+    _ui_report_response(handler, lambda: get_batch_deliveries(None, match.group(1), qs.get("revision")), match.group(1))
 
 
 @route_post_regex(r"^/api/ui-executions/([^/]+)/deliveries/([0-9a-f]{64})/retry$")
@@ -6478,4 +6490,4 @@ def _retry_ui_batch_delivery(handler, qs, match):
         if not isinstance(body, dict) or set(body) != {'confirmed_not_received'} or type(body['confirmed_not_received']) is not bool:
             raise ValueError('receipt_check_invalid')
         return {'delivery': retry_batch_delivery(None, match.group(2), body['confirmed_not_received'])}
-    _ui_report_response(handler, retry, status=202)
+    _ui_report_response(handler, retry, match.group(1), status=202)
