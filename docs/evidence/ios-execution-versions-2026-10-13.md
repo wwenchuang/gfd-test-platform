@@ -17,3 +17,7 @@
 - 私有runner.env需MIDSCENE_BIN指向现有node_modules/.bin/midscene，IOS_EXECUTION_ENABLED=1；平台需更新explicit-target-v1握手后才会拉取任务。使用start-preview.command启动同一互斥入口，先停之前PID避免重复心跳。Mac重启后WDA仍需启动，不假定自启。
 - 服务端命令：cd /opt/midscene-task-platform-src && bash deploy/update-main-server.sh。
 - 堡垒机终端会话已结束，用户登录恢复待完成。平台创建任务→Runner领取→报告回传尚未验收，不把本机CLI成功当作平台闭环。
+
+## 平台派发补充
+
+42a0e66线上双应用版本和ready已核实。两条平台任务在领取后响应超时：创建人审计查询误用result索引，4GB历史扫描导致派发准备约94/97秒。新增2万无关成功事件回归验证VM指令数，强制既有resource索引后通过。补丁待部署复验；没有三轮平台成功结论。

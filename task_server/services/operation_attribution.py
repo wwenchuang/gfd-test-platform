@@ -299,7 +299,9 @@ class OperationStore:
             return ""
         with self._connect() as db:
             rows = db.execute(
-                "SELECT actor_kind,actor_id FROM events WHERE resource_type='job' "
+                # Without statistics SQLite can prefer the low-selectivity
+                # result index, scanning years of successful requests at dispatch.
+                "SELECT actor_kind,actor_id FROM events INDEXED BY events_resource_seq WHERE resource_type='job' "
                 "AND resource_id=? AND action='job.created' AND result='success' LIMIT 2",
                 (job_id,),
             ).fetchall()
