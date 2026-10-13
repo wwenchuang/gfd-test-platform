@@ -61,11 +61,27 @@ IOS_EXECUTION_ENABLED = os.getenv("IOS_EXECUTION_ENABLED", "0") == "1"
 if RUNNER_PLATFORM == "ios":
     RUNNER_CAPABILITIES.update(yaml_dry_run=False, apk_install=False, device_preview=True, job_execution=IOS_EXECUTION_ENABLED, explicit_target_only=True, ios_case_reuse=IOS_EXECUTION_ENABLED)
     RUNNER_VERSION = "2026.10.13-ios-execution-v1-step-progress-v1-wda-recovery-v1"
+RUNNER_CAPABILITIES.update(ui_execution_contract="ui-v1", ui_platforms=[RUNNER_PLATFORM],
+                           ui_actions=["launch", "aiTap", "aiWaitFor", "aiAssert"],
+                           android_baseline=RUNNER_PLATFORM == "android")
 
 
 
 def ios_job_matches(job, runner_id, device_id):
     return bool(device_id and job.get("device_id") == device_id and job.get("target_runner_id") == runner_id)
+
+
+def ios_job_mapping(job, launches):
+    if job.get("ui_execution_contract") == "ui-v1":
+        source_app, bundle_id = job.get("app_id"), job.get("target_package")
+        if job.get("platform") != "ios" or not source_app or not bundle_id or not launches or any(item != bundle_id for item in launches):
+            raise ValueError("iOS 编译副本与任务应用映射不一致")
+        return source_app, bundle_id
+    mappings = ios_app_mappings()
+    source_app = next((key for key, value in mappings.items() if launches and launches[0] in (key, value)), "")
+    if not source_app:
+        raise ValueError("用例缺少已配置映射的启动应用步骤")
+    return source_app, mappings[source_app]
 
 
 def prepare_ios_yaml(text, *, source_app, bundle_id, wda_port):
@@ -2000,9 +2016,9 @@ def execution_command(midscene_bin, yaml_path, device_id):
     return command
 
 
-def reset_ios_foreground_app(port, bundle_id):
+def reset_ios_foreground_app(port, bundle_id, allowed_bundle_id=None):
     """Close only the mapped app, matching Android's existing cold-start guard."""
-    if bundle_id not in ios_app_mappings().values():
+    if bundle_id != allowed_bundle_id and bundle_id not in ios_app_mappings().values():
         raise ValueError("应用没有配置 iOS 映射")
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
     def request(method, path, payload=None):
@@ -2041,21 +2057,18 @@ def run_job(job):
         source = midscene_cli_yaml_text(job.get("yaml_content", ""))
         data = yaml.safe_load(source)
         launches = [step["launch"] for task in (data or {}).get("tasks", []) for step in task.get("flow", []) if "launch" in step]
-        mappings = ios_app_mappings()
-        source_app = next((key for key, value in mappings.items() if launches and launches[0] in (key, value)), "")
-        if not source_app:
-            raise ValueError("用例缺少已配置映射的启动应用步骤")
+        source_app, bundle_id = ios_job_mapping(job, launches)
         job_dir = WORKSPACE / job["job_id"]
         write_text(job_dir / "source.yaml", source)
         with ios_usb_forward(device_id) as port:
             # Validate again on the exact forward used by this task.
             if ios_wda_request(port, "/status").get("ready") is not True:
                 raise RuntimeError("所选 iPhone WDA 尚未就绪")
-            compiled = prepare_ios_yaml(source, source_app=source_app, bundle_id=mappings[source_app], wda_port=port)
+            compiled = prepare_ios_yaml(source, source_app=source_app, bundle_id=bundle_id, wda_port=port)
             write_text(job_dir / "reuse-manifest.json", json.dumps({
                 "source_sha256": hashlib.sha256(source.encode()).hexdigest(), "device_id": device_id,
-                "platform": "ios", "bundle_id": mappings[source_app], "source_file": job.get("file")}, ensure_ascii=False))
-            reset_ios_foreground_app(port, mappings[source_app])
+                "platform": "ios", "bundle_id": bundle_id, "source_file": job.get("file")}, ensure_ascii=False))
+            reset_ios_foreground_app(port, bundle_id, allowed_bundle_id=bundle_id if job.get("ui_execution_contract") == "ui-v1" else None)
             return run_standard_job({**job, "yaml_content": compiled})
     except Exception as exc:
         return {"status": "failed", "device_id": device_id, "duration": 0, "stdout": "",

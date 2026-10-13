@@ -47,6 +47,10 @@ DEFAULT_APP_PACKAGES = "com.kfb.model,com.xbxxhz.box"
 RUNNER_CAPABILITIES = {
     "yaml_dry_run": True,
     "apk_install": True,
+    "ui_execution_contract": "ui-v1",
+    "ui_platforms": ["android"],
+    "ui_actions": ["launch", "aiTap", "aiWaitFor", "aiAssert"],
+    "android_baseline": True,
 }
 
 

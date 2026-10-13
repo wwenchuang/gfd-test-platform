@@ -470,6 +470,20 @@ def _save_jobs(jobs: List[Dict[str, Any]]) -> None:
 
 
 def runner_accepts_explicit_job(runner_info, job, runner_id):
+    if job.get("ui_execution_contract"):
+        capabilities = runner_info.get("capabilities") or {}
+        if job.get("ui_execution_contract") != "ui-v1" or capabilities.get("ui_execution_contract") != "ui-v1":
+            return False
+        platform = job.get("platform")
+        device_id = job.get("device_id")
+        if not device_id or job.get("target_runner_id") != runner_id or platform not in (capabilities.get("ui_platforms") or []):
+            return False
+        baseline = platform == "android" and capabilities.get("android_baseline") is True
+        if capabilities.get("job_execution") is False or (not baseline and not set(job.get("ui_required_actions") or []).issubset(set(capabilities.get("ui_actions") or []))):
+            return False
+        return any(device.get("device_id") == device_id and device.get("platform") == platform
+                   and device.get("status") in ("online", "device") and device.get("preflight_status") == "ready"
+                   for device in runner_info.get("devices") or [])
     if (runner_info.get("capabilities") or {}).get("explicit_target_only"):
         return bool(job.get("device_id") and job.get("target_runner_id") == runner_id)
     return True

@@ -1433,6 +1433,8 @@ def normalize_task_app(payload, existing_app=None):
     }
     if "business_lines" in catalog_app:
         app["business_lines"] = catalog_app["business_lines"]
+    if "platform_mappings" in catalog_app:
+        app["platform_mappings"] = catalog_app["platform_mappings"]
     for src, dst in (
         ("sonic_project_id", "sonic_project_id"),
         ("sonicProjectId", "sonic_project_id"),

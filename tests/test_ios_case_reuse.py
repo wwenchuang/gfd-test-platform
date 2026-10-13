@@ -82,6 +82,14 @@ def test_android_command_unchanged(monkeypatch):
     assert runner.execution_command("midscene", Path("test.yaml"), "android-phone") == ["midscene", "test.yaml", "--android.deviceId", "android-phone"]
 
 
+def test_new_contract_uses_platform_mapping_for_compiled_ios_copy():
+    job = {"ui_execution_contract": "ui-v1", "platform": "ios", "app_id": "com.kfb.model",
+           "target_package": "com.example.newbundle"}
+    assert runner.ios_job_mapping(job, ["com.example.newbundle"]) == ("com.kfb.model", "com.example.newbundle")
+    with pytest.raises(ValueError):
+        runner.ios_job_mapping(job, ["com.other.app"])
+
+
 def test_ios_runtime_has_no_android_serial(monkeypatch):
     monkeypatch.setenv("MIDSCENE_RUNNER_PLATFORM", "ios")
     monkeypatch.setenv("ANDROID_SERIAL", "wrong-phone")

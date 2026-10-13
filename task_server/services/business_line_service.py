@@ -27,6 +27,7 @@ _DEFAULT_TEST_APPLICATIONS = (
 _LEGACY_NAME_TO_ID = {"家用": "home", "共享": "shared"}
 _CHINESE_RE = re.compile(r"[\u3400-\u9fff]")
 _ID_RE = re.compile(r"^[A-Za-z0-9_.:-]{1,80}$")
+_APP_IDENTIFIER_RE = re.compile(r"^[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)+$")
 
 
 def default_business_lines() -> list:
@@ -116,6 +117,15 @@ def normalize_test_application(value, existing=None, require_business_lines=Fals
         raise ValueError("应用名称必须包含中文")
 
     app = {"package": package, "name": name, "enabled": _enabled(value.get("enabled", existing.get("enabled", True)))}
+    mappings = value.get("platform_mappings", existing.get("platform_mappings"))
+    if mappings is not None:
+        if not isinstance(mappings, dict) or not mappings or set(mappings) - {"android", "ios"}:
+            raise ValueError("平台应用映射格式不正确")
+        if any(not isinstance(bundle, str) or not _APP_IDENTIFIER_RE.fullmatch(bundle) for bundle in mappings.values()):
+            raise ValueError("平台应用标识格式不正确")
+        if mappings.get("android", package) != package:
+            raise ValueError("Android 映射必须与应用权限包名一致")
+        app["platform_mappings"] = dict(mappings)
     lines_provided = "business_lines" in value or "businessLines" in value
     raw_lines = value.get("business_lines", value.get("businessLines")) if lines_provided else existing.get("business_lines")
     if raw_lines is not None:
