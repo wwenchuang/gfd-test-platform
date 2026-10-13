@@ -713,7 +713,7 @@ function runnerDeviceInstalledApp(device = {}, packageName = '') {
     : (Array.isArray(device.installedApps) ? device.installedApps : []);
   const pkg = String(packageName || '').trim();
   if (!pkg) return packages.find(item => item && item.installed) || packages[0] || null;
-  return packages.find(item => item && item.package === pkg) || null;
+  return packages.find(item => item && (item.package === pkg || (device.platform === 'ios' && item.source_package === pkg))) || null;
 }
 
 function runnerDeviceVersionLabel(device = {}, packageName = '') {
@@ -798,7 +798,7 @@ function selectedAgentAppPackage() {
 function runnerDeviceOptionLabel(device = {}, packageName = '') {
   const bits = [
     runnerDeviceDisplayName(device),
-    device.android_version || device.androidVersion ? `Android ${device.android_version || device.androidVersion}` : '',
+    device.platform === 'ios' ? `iOS ${device.ios_version || '版本未上报'}` : (device.android_version || device.androidVersion ? `Android ${device.android_version || device.androidVersion}` : ''),
     device.resolution || '',
     device.runner_id || '',
     device.runner_version ? `Runner ${device.runner_version}` : '',
@@ -960,7 +960,7 @@ function renderAgentRunnerDeviceCards() {
         <input type="radio" name="agent-device-choice" value="${e(value)}" ${busy ? 'disabled' : ''}>
         <span class="agent-phone-art">${picture}</span>
         <span class="agent-phone-copy"><strong>${e(runnerDeviceDisplayName(device))}</strong><span class="agent-phone-status ${busy ? 'busy' : ''}">${e(state)}</span>
-          <span>安卓 ${e(device.android_version || device.androidVersion || '版本未上报')} · ${e(device.resolution || '分辨率未上报')}</span>
+          <span>${device.platform === 'ios' ? 'iOS' : '安卓'} ${e((device.platform === 'ios' ? device.ios_version : device.android_version || device.androidVersion) || '版本未上报')} · ${e(device.resolution || '分辨率未上报')}</span>
           <span class="agent-phone-app">${e(appLabel)} <b>${e(readableVersion || '版本未上报')}</b></span>
           ${metrics ? `<span>${e(metrics)}</span>` : ''}
           ${device.foreground_package ? `<small>前台应用：${e(device.foreground_package)}</small>` : ''}

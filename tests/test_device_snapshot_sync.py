@@ -128,3 +128,21 @@ class DeviceSnapshotSyncTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+class IosPreviewDispatchTest(DeviceSnapshotSyncTest):
+    def test_preview_device_cannot_claim_jobs(self):
+        runner_service.register_runner({'runner_id':'r1','capabilities':{'job_execution':False},
+            'devices':[{'device_id':'p1','platform':'ios','ios_version':'26.6','display_name':'iPhone 13'}]})
+        runner_service.write_json_file(str(self.jobs), [{'job_id':'ios-j','status':'pending','target_runner_id':'r1','device_id':'p1'}])
+        with patch('task_server.services.sonic_service.sonic_list_device_statuses',return_value={'__source__':{'available':True},'p1':{'usage_status':'idle'}}):
+            self.assertIsNone(runner_service.assign_job('r1'))
+        self.assertEqual(runner_service._load_jobs()[0]['status'],'pending')
+
+    def test_preview_device_is_visible_without_claiming_execution_readiness(self):
+        runner_service.register_runner({'runner_id':'r1','capabilities':{'job_execution':False},
+            'devices':[{'device_id':'p1','platform':'ios','ios_version':'26.6','display_name':'iPhone 13'}]})
+        row=runner_service.all_online_devices()[0]
+        self.assertEqual(row['platform'],'ios')
+        self.assertEqual(row['label'],'iPhone 13')
+        self.assertEqual(row['usage_status'],'preview')
+        self.assertEqual(runner_service.request_device_snapshots()['requested'],1)

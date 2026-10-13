@@ -4,6 +4,8 @@ import json
 import http.cookiejar
 import os
 import platform
+import plistlib
+import tempfile
 import queue
 import re
 import shutil
@@ -48,6 +50,14 @@ DEVICE_MARKET_NAME_BY_MODEL = {
     "ELS-AN00": "HUAWEI P40 Pro",
     "PHM110": "OPPO Reno9",
 }
+
+RUNNER_PLATFORM = os.getenv("MIDSCENE_RUNNER_PLATFORM", "android").lower().strip()
+IOS_BUNDLE_ID = os.getenv("IOS_APP_BUNDLE_ID", "").strip()
+IOS_SOURCE_APP = os.getenv("IOS_SOURCE_APP_PACKAGE", "").strip()
+if RUNNER_PLATFORM == "ios":
+    RUNNER_CAPABILITIES.update(yaml_dry_run=False, apk_install=False, device_preview=True, job_execution=False)
+    RUNNER_VERSION = "2026.10.13-ios-device-preview-v1"
+
 
 
 def validate_runner_config():
@@ -637,8 +647,173 @@ def detect_device_ids():
     return devices
 
 
+def ios_info(device_id, key, domain=None):
+    args = ["ideviceinfo", "-u", device_id]
+    if domain:
+        args += ["-q", domain]
+    return subprocess.check_output(args + ["-k", key], text=True, timeout=5, stderr=subprocess.DEVNULL).strip()
+
+
+def ios_battery_level(device_id):
+    try:
+        level = int(ios_info(device_id, "BatteryCurrentCapacity", "com.apple.mobile.battery"))
+        return level if 0 <= level <= 100 else None
+    except (ValueError, OSError, subprocess.SubprocessError):
+        return None
+
+
+def ios_connected_device_ids():
+    return subprocess.check_output(["idevice_id", "-l"], text=True, timeout=5).splitlines()
+
+
+def ios_marketing_name(device_id):
+    try:
+        with tempfile.TemporaryDirectory(prefix="midscene-ios-info-") as directory:
+            output = Path(directory) / "device.json"
+            subprocess.run(["xcrun", "devicectl", "device", "info", "details", "--device", device_id,
+                            "--json-output", str(output)], check=True, timeout=8,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            return str(json.loads(output.read_text()).get("result", {}).get("hardwareProperties", {}).get("marketingName") or "")
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return ""
+
+
+_IOS_METADATA_CACHE = {}
+
+
+def ios_device_metadata(device_id):
+    cached = _IOS_METADATA_CACHE.get(device_id)
+    if cached and time.monotonic() - cached[0] < 60:
+        return dict(cached[1])
+    # Read-only, selected UDID only; retain a small allowlist, not the full plist.
+    row = {"device_id": device_id, "status": "online", "platform": "ios",
+           "brand": "Apple", "model": "iPhone", "label": "iPhone (iOS)",
+           "preflight_status": "unknown"}
+    try:
+        raw = subprocess.check_output(["ideviceinfo", "-u", device_id, "-x"], timeout=5, stderr=subprocess.DEVNULL)
+        info = plistlib.loads(raw)
+        row.update(model=info.get("ProductType") or "iPhone", ios_version=info.get("ProductVersion") or "")
+        row["label"] = ios_marketing_name(device_id) or info.get("DeviceName") or row["model"]
+        row["display_name"] = row["label"]
+    except (ValueError, OSError, subprocess.SubprocessError, plistlib.InvalidFileException):
+        pass
+    row["battery_level"] = ios_battery_level(device_id)
+    try:
+        raw = subprocess.check_output(["ideviceinstaller", "-u", device_id, "list", "-b", IOS_BUNDLE_ID, "--xml"], timeout=8, stderr=subprocess.DEVNULL)
+        apps = plistlib.loads(raw)
+        app = next((a for a in apps if a.get("CFBundleIdentifier") == IOS_BUNDLE_ID), None)
+        row["installed_apps"] = [{"package": IOS_BUNDLE_ID, "source_package": IOS_SOURCE_APP,
+                                  "installed": app is not None,
+                                  "version_name": (app or {}).get("CFBundleShortVersionString", ""),
+                                  "version_code": (app or {}).get("CFBundleVersion", "")}]
+    except (ValueError, OSError, subprocess.SubprocessError, plistlib.InvalidFileException):
+        pass
+    _IOS_METADATA_CACHE[device_id] = (time.monotonic(), dict(row))
+    return row
+
+
+def ios_wda_read(device_id, path):
+    """Use a short-lived USB forward bound to the exact UDID, never a shared port."""
+    if not device_id or device_id not in ios_connected_device_ids():
+        raise ValueError("截图设备不在当前 USB 连接列表中")
+    if path not in ("/screenshot", "/wda/activeAppInfo"):
+        raise ValueError("不支持的 WDA 读取路径")
+    with socket.socket() as reservation:
+        reservation.bind(("127.0.0.1", 0))
+        port = reservation.getsockname()[1]
+    proxy = subprocess.Popen(["iproxy", "-u", device_id, f"{port}:8100", "-s", "127.0.0.1"],
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        deadline = time.monotonic() + 3
+        while True:
+            if proxy.poll() is not None:
+                raise RuntimeError("iPhone USB 转发启动失败")
+            try:
+                with socket.create_connection(("127.0.0.1", port), timeout=0.2):
+                    break
+            except OSError:
+                if time.monotonic() >= deadline:
+                    raise RuntimeError("iPhone USB 转发未就绪")
+                time.sleep(0.1)
+        # Recheck ownership after connect so a port race cannot reuse another WDA.
+        time.sleep(0.05)
+        if proxy.poll() is not None:
+            raise RuntimeError("iPhone USB 转发端口被占用")
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        with opener.open(f"http://127.0.0.1:{port}{path}", timeout=12) as response:
+            raw = response.read(17 * 1024 * 1024 + 1)
+        if len(raw) > 17 * 1024 * 1024:
+            raise RuntimeError("WDA 响应超过大小限制")
+        value = json.loads(raw).get("value")
+        if isinstance(value, dict) and value.get("error"):
+            raise RuntimeError("WDA 未能读取当前画面信息")
+        return value
+    finally:
+        if proxy.poll() is None:
+            proxy.terminate()
+            try:
+                proxy.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                proxy.kill()
+                proxy.wait(timeout=2)
+
+
+def capture_ios_device_snapshot(device_id):
+    if not device_id or device_id not in ios_connected_device_ids():
+        raise ValueError("截图设备不在当前 USB 连接列表中")
+    encoded = ios_wda_read(device_id, "/screenshot")
+    if not isinstance(encoded, str) or len(encoded) > 16 * 1024 * 1024:
+        raise RuntimeError("WDA 未返回有效截图")
+    content = base64.b64decode(encoded, validate=True)
+    if not content.startswith(b"\x89PNG\r\n\x1a\n") or len(content) < 24:
+        raise RuntimeError("WDA 截图不是有效 PNG")
+    width, height = int.from_bytes(content[16:20], "big"), int.from_bytes(content[20:24], "big")
+    result = {"content_base64": encoded, "resolution": f"{width}x{height}",
+              "battery_level": ios_battery_level(device_id)}
+    try:
+        app = ios_wda_read(device_id, "/wda/activeAppInfo")
+        result["foreground_package"] = str(app.get("bundleId") or "")
+    except Exception:
+        # A successful picture remains useful if active-app metadata is unavailable.
+        pass
+    return result
+
+
+def upload_snapshot_requests(response, devices):
+    if RUNNER_PLATFORM != "ios":
+        return
+    requests = response.get("snapshot_requests", []) if isinstance(response, dict) else []
+    if not isinstance(requests, list):
+        return
+    available = {item.get("device_id") for item in devices if item.get("status", "online") == "online"}
+    seen = set()
+    for request in requests:
+        if not isinstance(request, dict) or not request.get("request_id"):
+            continue
+        device_id = str(request.get("device_id") or "")
+        if device_id in seen:
+            continue
+        seen.add(device_id)
+        payload = {"runner_id": RUNNER_ID, "device_id": device_id, "request_id": request["request_id"]}
+        try:
+            if device_id not in available:
+                raise RuntimeError("所选 iPhone 已离线或不属于此 Runner")
+            payload.update(capture_ios_device_snapshot(device_id))
+        except Exception:
+            payload["error"] = "iOS 当前画面采集失败，请检查 USB 连接、手机解锁及 WDA 服务"
+        http_json("POST", "/api/runner/device-snapshot", payload, timeout=15)
+
+
 def detect_devices():
     global _LAST_NO_DEVICE_LOG_AT
+    if RUNNER_PLATFORM == "ios":
+        try:
+            connected = ios_connected_device_ids()
+            for previous in set(_IOS_METADATA_CACHE) - set(connected):
+                _IOS_METADATA_CACHE.pop(previous, None)
+            return [ios_device_metadata(device_id) for device_id in connected]
+        except (OSError, subprocess.SubprocessError):
+            return []
     try:
         device_ids = detect_device_ids()
     except Exception as e:
@@ -890,7 +1065,7 @@ def install_apk_job(job):
 
 
 def heartbeat(devices):
-    runtime = midscene_env()
+    runtime = {} if RUNNER_PLATFORM == "ios" else midscene_env()
     payload = {
         "runner_id": RUNNER_ID,
         "hostname": socket.gethostname(),
@@ -1538,7 +1713,25 @@ def print_startup():
         print(f"Command resolve error: {e}")
 
 
+def run_ios_device_monitor():
+    """Device preview only until the iOS execution adapter passes acceptance."""
+    validate_runner_config()
+    print("iOS device preview started; task execution is disabled")
+    while True:
+        try:
+            devices = detect_devices()
+            response = heartbeat(devices)
+            upload_snapshot_requests(response, devices)
+        except KeyboardInterrupt:
+            break
+        except Exception as exc:
+            print("iOS device preview update failed: " + type(exc).__name__)
+        time.sleep(max(POLL_INTERVAL, 5))
+
+
 def main():
+    if RUNNER_PLATFORM == "ios":
+        return run_ios_device_monitor()
     validate_runner_config()
     WORKSPACE.mkdir(parents=True, exist_ok=True)
     print_startup()

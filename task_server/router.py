@@ -2151,6 +2151,8 @@ def _get_runners(handler, qs):
         if platform_busy and not device.get("active_job_operator") and sonic.get("sonic_user"):
             device["active_job_operator"] = sonic["sonic_user"]
             device["usage_label"] = f"{sonic['sonic_user']} · 平台任务执行中"
+        elif device.get("usage_status") == "preview":
+            continue
         elif not platform_busy and capture_failed:
             device["usage_status"] = "unknown"
             device["usage_label"] = "设备状态采集失败"

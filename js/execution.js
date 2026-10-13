@@ -474,7 +474,7 @@ function renderRunnerDevicePreflightCards(devices = [], appPackage = '') {
               <div><dt>Runner 能力</dt><dd>${escapeHtml(capabilityText || '未上报')}</dd></div>
               <div><dt>最近心跳</dt><dd>${escapeHtml(heartbeatText)}</dd></div>
               <div><dt>设备号</dt><dd>${escapeHtml(device.device_id || '-')}</dd></div>
-              <div><dt>系统</dt><dd>${escapeHtml(device.android_version || device.androidVersion ? `Android ${device.android_version || device.androidVersion}` : '未上报')}</dd></div>
+              <div><dt>系统</dt><dd>${escapeHtml(device.platform === 'ios' ? `iOS ${device.ios_version || '版本未上报'}` : (device.android_version || device.androidVersion ? `Android ${device.android_version || device.androidVersion}` : '未上报'))}</dd></div>
               <div><dt>分辨率</dt><dd>${escapeHtml(device.resolution || '未上报')}</dd></div>
               <div><dt>ADB</dt><dd>${escapeHtml(device.adb_path || device.adbPath || '未上报')}</dd></div>
               <div><dt>App</dt><dd>${escapeHtml(appText || (appPackage ? '未上报版本' : '未选择包名'))}</dd></div>
@@ -826,7 +826,7 @@ function renderExecutionTabRunners() {
               <td>${escapeHtml(d.runner_id || '-')}</td>
               <td><span class="status-pill ${isOnline ? 'success' : 'warn'}">${isOnline ? '在线' : !d.runner_online ? 'Runner 离线' : escapeHtml(({offline: '设备离线', unauthorized: 'ADB 未授权', disconnected: '设备已断开'})[d.status] || '设备不可用')}</span></td>
               <td>${escapeHtml(d.runner_version || '未上报')}<div class="report-muted">${escapeHtml(capabilityText || '未上报')}</div></td>
-              <td>${escapeHtml(d.android_version || d.androidVersion ? `Android ${d.android_version || d.androidVersion}` : '-')}${d.resolution ? `<div class="report-muted">${escapeHtml(d.resolution)}</div>` : ''}</td>
+              <td>${escapeHtml(d.platform === 'ios' ? `iOS ${d.ios_version || '版本未上报'}` : (d.android_version || d.androidVersion ? `Android ${d.android_version || d.androidVersion}` : '-'))}${d.resolution ? `<div class="report-muted">${escapeHtml(d.resolution)}</div>` : ''}</td>
               <td>${escapeHtml(appLabel || '未上报')}</td>
               <td class="report-cell-time">${escapeHtml(heartbeatText || '-')}</td>
             </tr>

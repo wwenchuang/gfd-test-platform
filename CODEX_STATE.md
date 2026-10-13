@@ -1,3 +1,10 @@
+## 2026-10-13 iOS 两台手机卡片与截图（代码待部署）
+
+- 修复Mac设备发现、按需截图上报、服务端platform/ios_version/resolution保留、前端iOS系统标识与应用版本映射。机型名取Xcode marketingName，显示iPhone 13和iPhone 15 Pro Max，保留内部model字段。
+- 元数据60秒缓存，截图仅按平台请求采集；每次USB转发明确UDID并回收。iOS预览模式不请求任务，不请求AI模型配置；服务端也拒绝向job_execution=false的Runner派发任务，卡片明确“仅预览”。既有Android执行流程不变。
+- iPhone13真实截图已从平台刷新请求返回，在Chrome生产页面实际加载。生产旧版仍把它写成安卓；iPhone15ProMax首次WDA启用自动化模式超时，用户解锁后重试已取到截图。完整结果见docs/evidence/ios-device-preview-2026-10-13.md。
+- 与本机尚未验收的跨端执行适配分开发布；此工作树基于最新origin/main，不包含旧工作区的历史未提交文档与iOS执行草稿。平台iOS端到端回放仍未完成。
+
 ## 2026-09-28 Chrome 随机下载文件名已恢复并实测
 
 - 用户反馈下载列表仍为 UUID。核对同一生产报告 tpr_1790588705162_00003：临时 playwright-artifacts 目录内 UUID 文件已是真实 DOCX（38936 字节、ZIP 完整、标题一致），剩余问题为浏览器遗留下载接管。

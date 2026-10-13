@@ -53,7 +53,7 @@ DEVICE_SNAPSHOT_MAX_BYTES = 12 * 1024 * 1024
 DEVICE_SNAPSHOT_REQUEST_TTL_SECONDS = 75
 DEVICE_SNAPSHOT_FIELDS = (
     "snapshot_url", "snapshot_captured_at", "snapshot_error", "battery_level",
-    "battery_temperature_c", "foreground_package", "screen_on",
+    "battery_temperature_c", "foreground_package", "screen_on", "resolution",
 )
 
 
@@ -196,7 +196,7 @@ def save_device_snapshot(runner_id: str, payload: Dict[str, Any]) -> Dict[str, A
             device["snapshot_error"] = ""
         else:
             device["snapshot_error"] = error
-        for key in ("battery_level", "battery_temperature_c", "foreground_package", "screen_on"):
+        for key in ("battery_level", "battery_temperature_c", "foreground_package", "screen_on", "resolution"):
             if key in payload:
                 device[key] = payload[key]
         runner["snapshot_requests"] = [item for item in runner.get("snapshot_requests") or [] if item.get("request_id") != request_id]
@@ -248,7 +248,7 @@ def normalize_device_list(devices: Optional[Iterable[Any]]) -> List[Dict[str, An
             "adb_path", "adbPath", "android_version", "androidVersion", "sdk",
             "resolution", "density", "installed_apps", "installedApps",
             "app_versions", "appVersions", "preflight", "preflight_status",
-            "preflightStatus",
+            "preflightStatus", "platform", "ios_version",
             "battery_level", "battery_temperature_c", "foreground_package", "screen_on",
         ):
             if isinstance(meta, dict) and key in meta:
@@ -435,6 +435,9 @@ def all_online_devices() -> List[Dict[str, Any]]:
             row["usage_status"] = "busy" if active_job else "idle"
             operator = str((active_job or {}).get("created_by") or (active_job or {}).get("requested_by") or (active_job or {}).get("operator") or "").strip()
             row["usage_label"] = (f"{operator} · 平台任务执行中" if operator else "平台任务执行中") if active_job else "空闲可选"
+            if (runner.get("capabilities") or {}).get("job_execution") is False and not active_job:
+                row["usage_status"] = "preview"
+                row["usage_label"] = "仅预览 · iOS 执行尚未就绪"
             if active_job:
                 row["active_job_id"] = active_job.get("job_id") or ""
                 row["active_job_name"] = active_job.get("task_name") or active_job.get("file") or active_job.get("job_id") or "平台任务"
@@ -460,6 +463,7 @@ def _load_jobs() -> List[Dict[str, Any]]:
 
 def _save_jobs(jobs: List[Dict[str, Any]]) -> None:
     write_json_file(JOBS_FILE, jobs)
+
 
 
 def assign_job(
@@ -506,6 +510,8 @@ def assign_job(
         jobs = _load_jobs()
         for job in jobs:
             if job.get("status") != "pending":
+                continue
+            if (runner_info.get("capabilities") or {}).get("job_execution") is False:
                 continue
             target_runner = job.get("target_runner_id") or ""
             target_device = job.get("device_id") or ""

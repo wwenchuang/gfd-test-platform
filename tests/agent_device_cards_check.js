@@ -75,3 +75,12 @@ test('automatic status refresh only runs on visible device workflows',t=>{
   assert.equal(w.shouldAutoRefreshRunnerDevices('reports',false),false);
   assert.equal(w.shouldAutoRefreshRunnerDevices('agent',true),false);
 });
+
+test('iOS cards show iOS version and never label the phone Android',t=>{
+  const w=fixture(t);
+  w.runnerDevices=[{runner_id:'mac-ios',device_id:'iphone',model:'iPhone 13',platform:'ios',ios_version:'26.6',resolution:'1170x2532'}];
+  w.renderAgentRunnerDeviceOptions();
+  const text=w.document.querySelector('.agent-phone-card').textContent;
+  assert.match(text,/iOS 26.6/);
+  assert.doesNotMatch(text,/安卓|Android/);
+});
