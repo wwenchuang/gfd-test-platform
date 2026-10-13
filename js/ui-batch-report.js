@@ -100,7 +100,7 @@
       finally{clearTimeout(timeout);busy=false;nextRefreshAt=Date.now()+(status==='ready'||status==='unavailable'?15000:5000);}
     }
     function dispose(){active=false;controller?.abort();node.replaceChildren();}
-    node.querySelector('[data-report-close]').onclick=()=>{dispose();node.hidden=true;};
+    node.querySelector('[data-report-close]').onclick=()=>{if(!valid())return;options.onClose?.();dispose();node.hidden=true;};
     node.querySelector('[data-report-retry]').onclick=event=>action(event.currentTarget,()=>refresh(true,'POST'));
     node.querySelectorAll('[data-report-download]').forEach(button=>{button.onclick=()=>action(button,async()=>{
       const filename=await options.download(base+'/report/download?'+new URLSearchParams({format:button.dataset.reportDownload,revision}));

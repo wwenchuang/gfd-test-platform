@@ -2340,7 +2340,7 @@ function normalizeWorkflowKey(sectionKey) {
 function setActiveWorkflow(sectionKey, options = {}) {
   clearManagementSearchTimers();
   const normalizedKey = normalizeWorkflowKey(sectionKey);
-  if (typeof isUiSimpleWorkflow === 'function' && isUiSimpleWorkflow(activeWorkflow) && typeof leaveUiSimpleWorkflow === 'function') leaveUiSimpleWorkflow();
+  if (typeof isUiSimpleWorkflow === 'function' && isUiSimpleWorkflow(activeWorkflow) && typeof leaveUiSimpleWorkflow === 'function') leaveUiSimpleWorkflow({discardReportIntent: normalizedKey !== activeWorkflow});
   if (activeWorkflow === 'operation_history' && normalizedKey !== 'operation_history' && typeof leaveOperationHistory === 'function') leaveOperationHistory();
   activeWorkflow = WORKFLOW_SECTIONS[normalizedKey] ? normalizedKey : 'dashboard';
   sessionStorage.setItem('midscene_active_workflow', activeWorkflow);

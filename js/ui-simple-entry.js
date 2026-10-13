@@ -7,7 +7,8 @@ const uiSimpleDownloads=new Set();
 function isUiSimpleWorkflow(key){return ['ui_start','ui_library','ui_reports'].includes(key);}
 function isUiSimpleAvailable(){return uiSimpleEnabled;}
 function uiSimpleIdentity(){return String(currentAccessProfile?.user_id||'');}
-function leaveUiSimpleWorkflow(){
+function leaveUiSimpleWorkflow({discardReportIntent=false}={}){
+  if(discardReportIntent)clearUiSimpleReportIntent();
   window.UiSimpleFlow?.leave();
   document.getElementById('app')?.classList.remove('ui-simple-active');
   for(const controller of uiSimplePictureRequests)controller.abort();
@@ -70,6 +71,12 @@ function uiSimpleReportIntent(){
   const batchId=query.get('ui_batch'),revision=query.get('report_revision');
   return /^uib_[a-f0-9]{32}$/.test(batchId||'')&&/^[a-f0-9]{64}$/.test(revision||'')?{batchId,revision}:null;
 }
+function clearUiSimpleReportIntent(expected){
+  const current=uiSimpleReportIntent();
+  if(!current||(expected&&(expected.batchId!==current.batchId||expected.revision!==current.revision)))return;
+  const url=new URL(window.location.href);url.searchParams.delete('ui_batch');url.searchParams.delete('report_revision');
+  window.history.replaceState(window.history.state,'',url.pathname+url.search+url.hash);
+}
 function preferUiSimpleReport(){
   if(!uiSimpleEnabled||!hasPermission('ui.view')||!uiSimpleReportIntent())return false;
   activeWorkflow='ui_reports';return true;
@@ -80,16 +87,15 @@ function showUiSimpleWorkflow(){
   document.getElementById('app')?.classList.add('ui-simple-active');
   const area=document.getElementById('editor-area');area.classList.remove('editor-open');area.replaceChildren();
   const page=document.createElement('div');page.className='ui-simple-page';area.append(page);toggleLibrary(false);
-  const reportIntent=activeWorkflow==='ui_reports'?uiSimpleReportIntent():null;
+  const reportIntent=activeWorkflow==='ui_reports'?uiSimpleReportIntent():null,identity=uiSimpleIdentity();
   window.UiSimpleFlow.mount(page,{
     mode:{ui_start:'start',ui_library:'library',ui_reports:'reports'}[activeWorkflow],
     request:apiRequest,identity:uiSimpleIdentity,canExecute:()=>hasPermission('ui.execute'),canNotify:()=>hasPermission('platform.notify'),reportIntent,loadPicture:loadUiSimplePicture,
+    onReportClose:intent=>{if(uiSimpleIdentity()===identity)clearUiSimpleReportIntent(intent);},
     download:downloadUiBatchFile,copy:async text=>{if(!await copyText(text))throw new Error('复制未完成，请重试');}
   });
-  if(reportIntent){
-    const url=new URL(window.location.href);url.searchParams.delete('ui_batch');url.searchParams.delete('report_revision');
-    window.history.replaceState(window.history.state,'',url.pathname+url.search+url.hash);
-  }
+  // Keep the exact internal link through loading, errors, refresh and reauthentication.
+  // Only an explicit close or workflow departure abandons it.
   return true;
 }
 async function downloadUiBatchFile(path){
