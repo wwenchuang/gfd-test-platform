@@ -78,7 +78,7 @@
     const progress=node.querySelector('[data-batch-progress]');progress.max=Math.max(1,attempts.length);progress.value=done;
     text(node,'[data-batch-hint]',batch.message || (batch.stop_pending?'正在等待手机确认停止；确认前不会释放设备。':batch.status==='queued'?'等待所选手机接单；可取消本次测试。':batch.status==='cancelling'?'已请求取消，正在等待手机确认停止。':batch.status==='running'?'按手机真实上报更新步骤。':label(batch.status)));
     const reportLabels={pending:'报告等待生成',generating:'报告生成中',ready:'本次报告已就绪',failed:'报告生成失败，可补生成'};
-    const deliveryLabels={not_requested:'未启用飞书通知',pending:'飞书通知待发送',sending:'飞书通知发送中',sent:'飞书通知已发送',failed:'飞书通知发送失败',unknown:'飞书送达待核对'};
+    const deliveryLabels={not_requested:'未启用飞书通知',pending:'飞书通知待发送',queued:'飞书通知已入队',retry_wait:'飞书通知等待重试',sending:'飞书通知发送中',sent:'飞书通知已发送',failed:'飞书通知发送失败',unknown:'飞书送达待核对'};
     text(node,'[data-batch-report]',reportLabels[batch.report_status] || '报告状态待确认');
     text(node,'[data-batch-delivery]',deliveryLabels[batch.delivery_status] || '通知状态待确认');
     text(node,'[data-batch-id]',batch.ui_batch_id);

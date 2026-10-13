@@ -155,6 +155,7 @@ async function showAuthedApp() {
   if (typeof initUiSimpleAvailability === 'function') await initUiSimpleAvailability({navigate:false});
   if(identity!==currentAccessProfile?.user_id)return;
   if (typeof restoreWorkflowPreference === 'function') restoreWorkflowPreference();
+  if (typeof preferUiSimpleReport === 'function') preferUiSimpleReport();
   if (typeof isUiSimpleAvailable === 'function' && isUiSimpleAvailable() && activeWorkflow==='dashboard') activeWorkflow='ui_start';
   if (!canAccessWorkflow(activeWorkflow)) {
     activeWorkflow = ['dashboard', 'assets', 'identity', 'config', 'feishu_config'].find(canAccessWorkflow) || 'account';

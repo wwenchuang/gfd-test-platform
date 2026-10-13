@@ -317,6 +317,8 @@ def start_ui_batch_reconciler():
                 reconcile_ui_batches()
                 from .ui_batch_report_service import tick_ui_report_worker
                 tick_ui_report_worker()
+                from .ui_batch_notification_service import tick_batch_notification_worker
+                tick_batch_notification_worker()
             except Exception:
                 logging.getLogger(__name__).exception('UI batch reconciliation failed')
             time.sleep(5)

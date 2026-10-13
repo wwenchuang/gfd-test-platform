@@ -144,11 +144,15 @@ def _prepare_ui_batch(actor, normalized, profile, key, request_hash):
                 raise BatchValidationError(compiled["block_code"])
             attempts.append({"case_id": case["case_id"], "case_revision": case["revision"],
                              "target": target, "target_resolution": resolution, "compiled_case": compiled})
+    from .feishu_service import task_app_feishu_channel
+    channel = task_app_feishu_channel(application)
+    selection = {**normalized, "notifications": {**normalized["notifications"],
+        "channel_id": channel["channel_id"], "target_label": channel["target_label"], "source": channel["source"]}}
     trusted = current_actor()
     prepared = {"owner_user_id": profile["user_id"], "owner_username": profile["username"],
                 "owner_display_name": trusted["display_name"], "app_id": normalized["app_id"],
                 "suite_id": normalized["suite_id"], "suite_revision": normalized["suite_revision"],
-                "idempotency_key": key, "request_hash": request_hash, "selection": normalized,
+                "idempotency_key": key, "request_hash": request_hash, "selection": selection,
                 "snapshots": snapshots, "attempts": attempts}
     return prepared
 

@@ -6426,3 +6426,30 @@ def _get_ui_batch_summary(handler, qs, match):
 def _get_ui_batch_artifact(handler, qs, match):
     from .services.ui_batch_report_service import read_ui_artifact
     _ui_report_response(handler, lambda: read_ui_artifact(None, match.group(1), match.group(2)), binary=True)
+
+
+@route_get_regex(r"^/api/ui-executions/([^/]+)/deliveries$")
+def _get_ui_batch_deliveries(handler, qs, match):
+    from .services.ui_batch_notification_service import get_batch_deliveries
+    _ui_report_response(handler, lambda: get_batch_deliveries(None, match.group(1), qs.get("revision")))
+
+
+@route_post_regex(r"^/api/ui-executions/([^/]+)/deliveries/([0-9a-f]{64})/retry$")
+def _retry_ui_batch_delivery(handler, qs, match):
+    from .services.ui_batch_notification_service import retry_batch_delivery
+    def retry():
+        # Check the batch in the URL as well as the delivery's owner/application.
+        from .services.ui_execution_service import get_ui_batch
+        from .services.ui_execution_store import UiExecutionStore
+        if not get_ui_batch(None, match.group(1)): raise FileNotFoundError('batch_not_found')
+        db = UiExecutionStore()._connect()
+        try:
+            row = db.execute('SELECT ui_batch_id FROM delivery_outbox WHERE delivery_key=?', (match.group(2),)).fetchone()
+        finally:
+            db.close()
+        if not row or row[0] != match.group(1): raise FileNotFoundError('delivery_not_found')
+        body = handler._body()
+        if not isinstance(body, dict) or set(body) != {'confirmed_not_received'} or type(body['confirmed_not_received']) is not bool:
+            raise ValueError('receipt_check_invalid')
+        return {'delivery': retry_batch_delivery(None, match.group(2), body['confirmed_not_received'])}
+    _ui_report_response(handler, retry, status=202)

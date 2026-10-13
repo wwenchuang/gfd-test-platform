@@ -87,6 +87,7 @@
       const app=s.node.querySelector('[name="ui-app"]'),module=s.node.querySelector('[name="ui-module"]');
       options(app,(data.apps||[]).map(a=>[a.app_id,a.name]),'全部应用');app.value=s.app;
       options(module,(data.modules||[]).map(v=>[v,v]),'全部模块');module.value=s.module;
+      renderNotificationPolicy(s,data.apps||[]);
       renderCases(s,data);
     }catch(error){
       if(s.app&&['app_forbidden','app_unavailable'].includes(error.code)&&!s.uncertain){changeApp(s,'');notice(s,'之前选择的应用已不可用，请重新选择。',true);}
@@ -95,7 +96,8 @@
   }
   function changeApp(s,app){
     if(s.busy||s.uncertain)return;
-    s.app=app;s.module='';s.cursor='';s.previous=[];s.selected.clear();s.devices=[];s.target='';
+    s.app=app;s.module='';s.cursor='';s.previous=[];s.selected.clear();s.devices=[];s.target='';s.notifyEnabled=false;s.notificationPolicyKey='';
+    renderNotificationPolicy(s,[]);
     s.node.querySelector('[name="ui-app"]').value=app;
     s.pending.get('devices')?.abort();s.pending.delete('devices');s.deviceNodes.clear();
     s.node.querySelector('[data-ui-devices]').replaceChildren();invalidateStart(s);remember(s);loadCatalog(s);loadDevices(s);
@@ -146,7 +148,16 @@
     try{const data=await request(s,'devices','/ui-executions/devices?'+new URLSearchParams({app_id:app}));if(!data||s.app!==app)return;s.devices=data.devices||[];renderDevices(s);}
     catch(error){notice(s,'手机状态刷新失败：'+error.message,true);s.devices=s.devices.map(d=>({...d,connection_status:'unknown',snapshot_url:''}));renderDevices(s);}
   }
-  function payload(s){return {app_id:s.app,cases:[...s.selected.values()].map(({case_id,revision})=>({case_id,revision})),targets:[s.devices.find(d=>keyOf(d.target)===s.target).target],notifications:{enabled:false}};}
+  function renderNotificationPolicy(s,apps){
+    const toggle=s.node.querySelector('[data-ui-notify]');if(!toggle)return;
+    const channel=apps.find(a=>a.app_id===s.app)?.notification_channel;
+    const ready=channel?.ready===true,key=s.app+'|'+ready+'|'+(channel?.channel_id||'');
+    // Device polling never resets an explicit opt-out. An app/channel change creates a fresh default.
+    if(s.notificationPolicyKey!==key){s.notifyEnabled=ready;s.notificationPolicyKey=key;}
+    toggle.checked=ready&&s.notifyEnabled;toggle.disabled=!ready;
+    s.node.querySelector('[data-ui-notify-target]').textContent=s.app?('飞书通知：'+(channel?.target_label||'未配置')+(ready?' · 本次报告完成后自动发送':' · 可在应用配置中设置')):'先选择应用以查看通知目标';
+  }
+  function payload(s){return {app_id:s.app,cases:[...s.selected.values()].map(({case_id,revision})=>({case_id,revision})),targets:[s.devices.find(d=>keyOf(d.target)===s.target).target],notifications:{enabled:s.notifyEnabled===true}};}
   async function start(s,retry=false){
     if(!valid(s)||s.busy||!s.options.canExecute())return;
     if(!retry&&s.node.querySelector('[data-ui-start]').disabled)return;
@@ -176,13 +187,13 @@
     if(s.options.download&&window.UiBatchReport)actions.report=id=>openReport(s,id);
     if(s.options.copy)actions.copy=async id=>{const data=await request(s,'summary',`/ui-executions/${encodeURIComponent(id)}/summary`);if(data&&data.status==='ready')await s.options.copy(data.summary);else if(data)throw new Error('报告尚未就绪');};
     window.UiBatchView.update(host,batch,actions);
-    s.batchSettled=batch.execution_settled===true&&['ready','failed'].includes(batch.report_status);
+    s.batchSettled=batch.execution_settled===true&&['ready','failed'].includes(batch.report_status)&&!['pending','queued','retry_wait','sending'].includes(batch.delivery_status);
     if(s.reportId===batch.ui_batch_id)s.reportView?.refresh(batch.report_status==='pending');
   }
-  function openReport(s,id){
+  function openReport(s,id,revision){
     if(!valid(s))return;s.reportView?.dispose();s.reportId=id;
     let host=s.node.querySelector('[data-ui-report-preview]');if(!host){host=document.createElement('section');host.dataset.uiReportPreview='';s.node.append(host);}
-    host.hidden=false;s.reportView=window.UiBatchReport.mount(host,{batchId:id,identity:s.options.identity,request:s.options.request,download:s.options.download,copy:s.options.copy});
+    host.hidden=false;s.reportView=window.UiBatchReport.mount(host,{batchId:id,revision,identity:s.options.identity,canNotify:s.options.canNotify,request:s.options.request,download:s.options.download,copy:s.options.copy});
     host.scrollIntoView?.({block:'start',behavior:'smooth'});
   }
   async function loadBatch(s){
@@ -224,10 +235,10 @@
   }
   function mount(node,options){
     leave();const mode=modes[options.mode]?options.mode:'start';
-    const s={node,options:{canExecute:()=>false,...options,mode},identity:options.identity(),pending:new Map(),deviceNodes:new Map(),reportNodes:new Map(),devices:[],selected:new Map(),app:'',module:'',query:'',cursor:'',previous:[],next:'',target:'',batchId:'',batchSettled:false,busy:false,startIntent:null,uncertain:false,rerunKeys:{}};
+    const s={node,options:{canExecute:()=>false,canNotify:()=>false,...options,mode},identity:options.identity(),pending:new Map(),deviceNodes:new Map(),reportNodes:new Map(),devices:[],selected:new Map(),app:'',module:'',query:'',cursor:'',previous:[],next:'',target:'',batchId:'',batchSettled:false,busy:false,startIntent:null,uncertain:false,rerunKeys:{},notifyEnabled:false,notificationPolicyKey:''};
     state=s;const saved=read(s,'selection');if(saved&&typeof saved.app==='string'){s.app=saved.app;s.module=typeof saved.module==='string'?saved.module:'';s.target=typeof saved.target==='string'?saved.target:'';}
     s.startIntent=read(s,'pending');s.uncertain=!!s.startIntent;
-    node.classList.add('ui-simple');node.innerHTML=`<header class="ui-simple-heading"><div><p>UI 自动化</p><h1>${modes[mode]}</h1></div><button type="button" class="btn-sm" data-ui-refresh>刷新</button></header><p class="ui-simple-intro">${mode==='reports'?'这里记录你发起的每次测试，报告保留当次用例、手机和结果。':'选好用例和手机，开始后自动记录本次执行结果。'}</p><p data-ui-notice role="status"></p><button type="button" class="btn-sm" data-ui-recover hidden>核对上次提交</button><fieldset data-ui-form><div class="ui-simple-filters"><label>应用<select name="ui-app"><option value="">全部应用</option></select></label>${mode!=='reports'?'<label>模块<select name="ui-module"><option value="">全部模块</option></select></label><label>搜索用例<input type="search" name="ui-query" maxlength="200" placeholder="名称或操作步骤"></label>':''}</div><div class="ui-simple-selection" data-ui-selected aria-label="已选择的用例"></div><div class="ui-simple-content"><section class="ui-simple-case-panel" aria-label="用例">${mode!=='reports'?'<p data-ui-case-count></p><div data-ui-cases></div>':'<div data-ui-reports></div>'}<div class="ui-simple-pages"><button type="button" class="btn-sm" data-ui-prev disabled>上一页</button><button type="button" class="btn-sm" data-ui-next disabled>下一页</button></div></section>${mode!=='reports'?'<section class="ui-simple-device-panel"><h2>选择手机</h2><p data-ui-device-hint></p><div class="ui-simple-devices" data-ui-devices></div></section>':''}</div></fieldset>${mode!=='reports'?'<div class="ui-simple-submit"><span data-ui-selection-count></span><button type="button" class="btn-primary" data-ui-start disabled>开始测试</button></div>':''}<section data-ui-batch hidden aria-label="本次测试"></section>`;
+    node.classList.add('ui-simple');node.innerHTML=`<header class="ui-simple-heading"><div><p>UI 自动化</p><h1>${modes[mode]}</h1></div><button type="button" class="btn-sm" data-ui-refresh>刷新</button></header><p class="ui-simple-intro">${mode==='reports'?'这里记录你发起的每次测试，报告保留当次用例、手机和结果。':'选好用例和手机，开始后自动记录本次执行结果。'}</p><p data-ui-notice role="status"></p><button type="button" class="btn-sm" data-ui-recover hidden>核对上次提交</button><fieldset data-ui-form><div class="ui-simple-filters"><label>应用<select name="ui-app"><option value="">全部应用</option></select></label>${mode!=='reports'?'<label>模块<select name="ui-module"><option value="">全部模块</option></select></label><label>搜索用例<input type="search" name="ui-query" maxlength="200" placeholder="名称或操作步骤"></label>':''}</div><div class="ui-simple-selection" data-ui-selected aria-label="已选择的用例"></div><div class="ui-simple-content"><section class="ui-simple-case-panel" aria-label="用例">${mode!=='reports'?'<p data-ui-case-count></p><div data-ui-cases></div>':'<div data-ui-reports></div>'}<div class="ui-simple-pages"><button type="button" class="btn-sm" data-ui-prev disabled>上一页</button><button type="button" class="btn-sm" data-ui-next disabled>下一页</button></div></section>${mode!=='reports'?'<section class="ui-simple-device-panel"><h2>选择手机</h2><p data-ui-notify-target></p><label><input type="checkbox" data-ui-notify disabled> 自动发送本次报告到已配置飞书群</label><p data-ui-device-hint></p><div class="ui-simple-devices" data-ui-devices></div></section>':''}</div></fieldset>${mode!=='reports'?'<div class="ui-simple-submit"><span data-ui-selection-count></span><button type="button" class="btn-primary" data-ui-start disabled>开始测试</button></div>':''}<section data-ui-batch hidden aria-label="本次测试"></section>`;
     s.node.querySelector('[data-ui-recover]').hidden=!s.uncertain;
     s.node.querySelector('[data-ui-recover]').onclick=()=>start(s,true);
     if(s.uncertain)notice(s,'上次提交结果待确认，请先核对，避免重复执行。',true);
@@ -238,6 +249,7 @@
     s.node.querySelector('[data-ui-next]').onclick=()=>{if(!s.next)return;s.previous.push(s.cursor);s.cursor=s.next;load();};
     if(mode!=='reports'){
       s.node.querySelector('[data-ui-start]').onclick=()=>start(s);
+      s.node.querySelector('[data-ui-notify]').onchange=event=>{s.notifyEnabled=event.target.checked;invalidateStart(s);};
       s.node.querySelector('[name="ui-module"]').onchange=event=>{s.module=event.target.value;s.cursor='';s.previous=[];remember(s);loadCatalog(s);};
       s.node.querySelector('[name="ui-query"]').oninput=event=>{s.query=event.target.value;s.cursor='';s.previous=[];clearTimeout(s.searchTimer);s.searchTimer=setTimeout(()=>loadCatalog(s),300);};
       loadCatalog(s);if(s.app)loadDevices(s);else renderDevices(s);
@@ -245,6 +257,7 @@
     }else{
       request(s,'apps','/ui-executions/catalog').then(data=>{if(data){const values=(data.apps||[]).map(a=>[a.app_id,a.name]);app.replaceChildren(new Option('全部应用',''));for(const[v,l]of values)app.add(new Option(l,v));app.value=s.app;}}).catch(error=>notice(s,error.message,true));loadReports(s);
     }
+    if(mode==='reports'&&options.reportIntent)openReport(s,options.reportIntent.batchId,options.reportIntent.revision);
     s.timer=setInterval(refresh,5000);
     return s;
   }

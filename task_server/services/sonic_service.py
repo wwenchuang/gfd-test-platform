@@ -4098,7 +4098,7 @@ def sonic_suite_can_wait_for_running_jobs(suite: dict, now_ts: Optional[int] = N
 
 def register_sonic_suite_result(job: dict) -> str:
     """注册 Sonic 用例回调结果到套件。"""
-    if not job or job.get("source") != "sonic" or job.get("status") in ("pending", "running"):
+    if not job or job.get("ui_batch_id") or job.get("source") != "sonic" or job.get("status") in ("pending", "running"):
         return ""
     now_ts = int(time.time())
     updated_suite_for_summary_refresh = None

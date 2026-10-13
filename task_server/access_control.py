@@ -219,7 +219,8 @@ class MainAccess:
         method = method.upper()
         permission = self.permission_for(method, path, qs, body)
         self.require(permission)
-        if ((method == "POST" and (path in {"/api/ui-executions", "/api/ui-executions/preflight"} or re.fullmatch(r"/api/ui-executions/[^/]+/(cancel|rerun|report)", path))) or
+        if ((method == "POST" and re.fullmatch(r"/api/ui-executions/[^/]+/deliveries/[0-9a-f]{64}/retry", path)) or
+                (method == "POST" and (path in {"/api/ui-executions", "/api/ui-executions/preflight"} or re.fullmatch(r"/api/ui-executions/[^/]+/(cancel|rerun|report)", path))) or
                 (method in {"GET", "HEAD"} and (path == "/api/ui-executions" or path.startswith("/api/ui-executions/")))):
             # The batch service checks persisted owner and current app scope.
             return
@@ -313,6 +314,8 @@ class MainAccess:
 
     def permission_for(self, method, path, qs, body):
         from task_server.config import safe_bool
+        if method == "POST" and re.fullmatch(r"/api/ui-executions/[^/]+/deliveries/[0-9a-f]{64}/retry", path):
+            return "platform.notify"
         if method in {"GET", "HEAD"} and (path == "/api/ui-executions" or path.startswith("/api/ui-executions/")):
             return "ui.view"
         if method == "POST" and re.fullmatch(r"/api/ui-executions/[^/]+/report", path):

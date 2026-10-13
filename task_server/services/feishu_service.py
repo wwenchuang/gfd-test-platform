@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import threading
 import time
@@ -92,6 +93,36 @@ def task_app_feishu_delivery_status(app: Optional[Dict[str, Any]]) -> Dict[str, 
             "feishu_config_error": str(exc),
         }
     return {"feishu_ready": ready, "feishu_source": source, "feishu_target_label": label}
+
+
+def resolve_task_app_feishu_channel(app):
+    """Resolve once, returning public identity and private target from the same values."""
+    app = app or {}
+    package = str(app.get('package') or '')
+    explicit = app.get('feishu_webhook') or app.get('feishuWebhook') or ''
+    package_default = os.getenv(_env_key_for_package('FEISHU_WEBHOOK_', package), '') if package else ''
+    platform_default = os.getenv('FEISHU_WEBHOOK_DEFAULT', '')
+    if explicit:
+        source, value, label = 'app', explicit, '专属群'
+    elif package_default:
+        source, value, label = 'package_default', package_default, '应用默认群'
+    elif platform_default:
+        source, value, label = 'platform_default', platform_default, '平台默认群'
+    else:
+        source, value, label = 'missing', '', '未配置'
+    try:
+        target = validate_feishu_webhook(value)
+    except ValueError:
+        source, target, label = 'invalid', '', '配置无效'
+    channel = {'ready': bool(target), 'source': source, 'target_label': label, 'channel_id': 'unconfigured'}
+    if target:
+        channel['channel_id'] = 'feishu:' + hashlib.sha256((package+'\n'+source+'\n'+target).encode()).hexdigest()
+    return channel, target
+
+
+def task_app_feishu_channel(app):
+    """Opaque configured target identity; never expose the resolved webhook."""
+    return resolve_task_app_feishu_channel(app)[0]
 
 
 # ---------------------------------------------------------------------------

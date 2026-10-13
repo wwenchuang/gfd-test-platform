@@ -129,3 +129,24 @@ def canonical_test_scope_summary(items: Any, *fallback_values: Any, fallback_pac
             canonical_test_business_name(*fallback_values, app_package=default_package)
         )
     return "、".join(application_labels), "、".join(business_labels)
+
+
+def ui_batch_report_card(batch_id, report_revision, snapshot, report_url):
+    """Only the cited immutable Chinese presentation supplies card contents."""
+    from .ui_report_presentation import safe_text
+    view = snapshot['presentation']
+    lines = ['**UI 测试批次**：' + safe_text(batch_id),
+             '**执行人**：' + safe_text(view['owner']),
+             '**测试版本**：' + safe_text('；'.join(view['test_versions']) or '未获取'),
+             '**测试时间**：' + safe_text(view['time_range']),
+             safe_text(view['conclusion'])]
+    lines.extend('**测试环境**：' + safe_text(item) for item in view['environments'])
+    lines.extend(safe_text(row['case_name'] + '（' + row['target_label'] + '）：' + row['result'])
+                 for row in view['coverage'])
+    # Link contains batch/revision only. Private exports still require shell authentication.
+    return {'msg_type': 'interactive', 'card': {'config': {'wide_screen_mode': True},
+        'header': {'template': 'green' if view['conclusion_status'] == 'passed' else 'orange',
+                   'title': {'tag': 'plain_text', 'content': 'UI 测试批次 · ' + view['title']}},
+        'elements': [{'tag': 'div', 'text': {'tag': 'lark_md', 'content': '\n'.join(lines)}},
+            {'tag': 'action', 'actions': [{'tag': 'button', 'type': 'primary',
+                'text': {'tag': 'plain_text', 'content': '登录查看本次报告 / 下载 Word'}, 'url': report_url}]}]}}

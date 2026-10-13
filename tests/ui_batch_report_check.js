@@ -7,7 +7,7 @@ function setup(t,request){
  const dom=new JSDOM('<main></main>',{url:'http://localhost',runScripts:'dangerously',pretendToBeVisual:true});t.after(()=>dom.window.close());const w=dom.window;
  w.eval(fs.readFileSync('js/ui-batch-report.js','utf8'));const calls=[];let identity='a';
  const node=w.document.querySelector('main');
- const view=w.UiBatchReport.mount(node,{batchId:'uib_example',identity:()=>identity,request,download:async(path)=>{calls.push(path);return '本人测试报告.docx';},copy:async text=>calls.push(text)});
+ const view=w.UiBatchReport.mount(node,{batchId:'uib_example',identity:()=>identity,request:(path,o)=>path.split('?')[0].endsWith('/deliveries')?Promise.resolve({ok:true,policy:{enabled:false},items:[]}):request(path,o),download:async(path)=>{calls.push(path);return '本人测试报告.docx';},copy:async text=>calls.push(text)});
  return {w,node,view,calls,setIdentity:value=>identity=value};
 }
 const SNAP={presentation:{title:'应用甲 发布测试报告',owner:'执行者乙',time_range:'2026年10月13日 10:00 至 10:02',conclusion:'本次未通过，失败 1 项。',conclusion_status:'failed',case_count:1,executed_cases:1,passed_count:0,failed_count:1,incomplete_count:0,coverage:[{case_name:'首页导航',scenario:'个人中心与首页切换',expected:'首页正常显示',result:'未通过',attempt_no:1}],environments:['苹果 13，应用版本 1.19.7'],concerns:[]},app_name:'应用甲',owner_display_name:'执行者乙',status:'failed',summary:'本次通过 1，失败 1。',counts:{passed:1,failed:1},attempts:[],artifacts:[]};
@@ -128,4 +128,39 @@ test('evidence summary keyboard focus survives revision and pending updates with
  assert.equal(f.w.document.activeElement,f.node.querySelector('details summary'));
  report={status:'pending',snapshot:null};await f.view.refresh(true);const copy=f.node.querySelector('[data-report-close]');copy.focus();
  report={status:'ready',report_revision:'4',snapshot};await f.view.refresh(true);assert.equal(f.w.document.activeElement,copy);
+});
+
+test('notification-pinned report cannot drift to current head and exports cited revision',async t=>{
+ const paths=[],dom=new JSDOM('<main></main>',{url:'http://localhost',runScripts:'dangerously',pretendToBeVisual:true});t.after(()=>dom.window.close());const w=dom.window;w.eval(fs.readFileSync('js/ui-batch-report.js','utf8'));
+ const revision='a'.repeat(64),node=w.document.querySelector('main');const view=w.UiBatchReport.mount(node,{batchId:'uib_link',revision,identity:()=> 'a',request:async(path)=>{paths.push(path);return {ok:true,report:{status:'ready',report_revision:revision,snapshot:SNAP}};},download:async p=>paths.push(p),copy:()=>{},canNotify:()=>false});await tick();
+ assert.ok(paths.includes('/ui-executions/uib_link/report?revision='+revision));node.querySelector('[data-report-download="docx"]').click();await tick();assert.ok(paths.includes('/ui-executions/uib_link/report/download?format=docx&revision='+revision));view.dispose();
+});
+test('notification retry is permission gated and unknown requires explicit receipt confirmation',async t=>{
+ const dom=new JSDOM('<main></main>',{url:'http://localhost',runScripts:'dangerously',pretendToBeVisual:true});t.after(()=>dom.window.close());const w=dom.window;w.eval(fs.readFileSync('js/ui-batch-report.js','utf8'));const node=w.document.querySelector('main'),calls=[];let permission=false,confirmed=false;
+ w.confirm=()=>confirmed;
+ const view=w.UiBatchReport.mount(node,{batchId:'uib_link',identity:()=> 'a',canNotify:()=>permission,request:async(path,options={})=>{calls.push({path,options});return path.split('?')[0].endsWith('/deliveries')?{ok:true,policy:{enabled:true,target_label:'专属群'},items:[{delivery_key:'d1',report_revision:'1',status:'unknown',message:'送达未知，请核对'}]}:{ok:true,report:{status:'ready',report_revision:'1',snapshot:SNAP}};},download:()=>{},copy:()=>{}});await tick();await tick();
+ assert.equal(node.querySelector('[data-delivery-retry]'),null);permission=true;await view.refresh(true);await tick();
+ node.querySelector('[data-delivery-retry]').click();await tick();assert.equal(calls.filter(c=>c.options.method==='POST').length,0);
+ confirmed=true;node.querySelector('[data-delivery-retry]').click();await tick();assert.equal(calls.filter(c=>c.options.method==='POST')[0].options.body.confirmed_not_received,true);view.dispose();
+});
+
+test('notification view refuses a mismatched server revision',async t=>{
+ const dom=new JSDOM('<main></main>',{url:'http://localhost',runScripts:'dangerously',pretendToBeVisual:true});t.after(()=>dom.window.close());const w=dom.window;w.eval(fs.readFileSync('js/ui-batch-report.js','utf8'));const node=w.document.querySelector('main');
+ const view=w.UiBatchReport.mount(node,{batchId:'uib_link',revision:'a'.repeat(64),identity:()=> 'a',request:async()=>({ok:true,report:{status:'ready',report_revision:'b'.repeat(64),snapshot:SNAP}}),download:()=>{},copy:()=>{}});await tick();
+ assert.doesNotMatch(node.textContent,/执行者乙/);assert.match(node.textContent,/版本/);view.dispose();
+});
+
+test('old pinned report shows and resends only its own revision notification',async t=>{
+ const dom=new JSDOM('<main></main>',{url:'http://localhost',runScripts:'dangerously',pretendToBeVisual:true});t.after(()=>dom.window.close());const w=dom.window;w.eval(fs.readFileSync('js/ui-batch-report.js','utf8'));const node=w.document.querySelector('main'),calls=[],old='a'.repeat(64),latest='b'.repeat(64);
+ const view=w.UiBatchReport.mount(node,{batchId:'uib_link',revision:old,identity:()=> 'a',canNotify:()=>true,request:async(path,options={})=>{calls.push({path,options});return path.includes('/deliveries')?{ok:true,policy:{enabled:true,target_label:'专属群'},items:[{delivery_key:'old',report_revision:old,status:'failed',message:'历史报告发送失败'},{delivery_key:'latest',report_revision:latest,status:'sent',message:'新版已发送'}]}:{ok:true,report:{status:'ready',report_revision:old,snapshot:SNAP}};},download:()=>{},copy:()=>{}});await tick();await tick();
+ assert.ok(calls.some(c=>c.path.endsWith('/deliveries?revision='+old)));assert.doesNotMatch(node.textContent,/新版已发送/);assert.equal(node.querySelectorAll('[data-delivery-retry]').length,1);
+ node.querySelector('[data-delivery-retry]').click();await tick();assert.ok(calls.some(c=>c.path.endsWith('/deliveries/old/retry')));assert.equal(calls.some(c=>c.path.endsWith('/deliveries/latest/retry')),false);view.dispose();
+});
+
+test('successful refresh clears its prior error while preserving action feedback',async t=>{
+ let failed=true;const f=setup(t,async()=>{if(failed)throw new Error('本轮临时读取失败');return {ok:true,report:{status:'ready',report_revision:'1',snapshot:SNAP}};});await tick();
+ assert.equal(f.node.querySelector('[data-report-message]').textContent,'本轮临时读取失败');failed=false;await f.view.refresh(true);
+ assert.equal(f.node.querySelector('[data-report-message]').textContent,'');
+ f.node.querySelector('[data-report-copy]').click();await tick();assert.equal(f.node.querySelector('[data-report-message]').textContent,'测试摘要已复制。');
+ await f.view.refresh(true);assert.equal(f.node.querySelector('[data-report-message]').textContent,'测试摘要已复制。');
 });

@@ -54,3 +54,31 @@ test('private Word export keeps server Chinese filename and real extension',asyn
  assert.equal(await w.downloadUiBatchFile('/ui-executions/uib_example/report/download?format=docx&revision='+'a'.repeat(64)),'智小白3D发布测试报告.docx');
  assert.deepEqual(downloads,['智小白3D发布测试报告.docx']);
 });
+
+test('internal report link survives anonymous availability and opens exact revision after login',async t=>{
+ const {w,calls}=fixture(t),batch='uib_'+'b'.repeat(32),revision='c'.repeat(64);
+ w.history.replaceState({},'',`/task-manager.html?ui_batch=${batch}&report_revision=${revision}`);
+ w.currentAccessProfile=null;await w.initUiSimpleAvailability({navigate:false});assert.equal(w.uiSimpleReportIntent()?.batchId,batch);
+ w.currentAccessProfile={user_id:'u1'};await w.initUiSimpleAvailability({navigate:false});
+ assert.equal(w.preferUiSimpleReport(),true);assert.equal(w.activeWorkflow,'ui_reports');w.showUiSimpleWorkflow();
+ const options=calls.find(x=>x?.reportIntent);assert.equal(options.reportIntent.batchId,batch);assert.equal(options.reportIntent.revision,revision);
+ assert.equal(w.location.search,'');assert.equal(w.uiSimpleReportIntent(),null);
+ assert.equal(options.canNotify(),true);
+});
+test('report return accepts only one exact internal batch revision and never a generic external redirect',async t=>{
+ const {w}=fixture(t);for(const search of ['?ui_batch=https://evil.example&report_revision='+'a'.repeat(64),'?return_to=https://evil.example','?ui_batch=uib_'+'a'.repeat(32)+'&report_revision=latest','?ui_batch=uib_'+'a'.repeat(32)+'&ui_batch=uib_'+'b'.repeat(32)+'&report_revision='+'a'.repeat(64)]){
+  w.history.replaceState({},'','/task-manager.html'+search);assert.equal(w.uiSimpleReportIntent(),null);
+ }
+});
+
+test('authenticated shell prioritizes exact notification report over saved workflow',async t=>{
+ const {w,calls}=fixture(t),batch='uib_'+'b'.repeat(32),revision='c'.repeat(64);
+ w.history.replaceState({},'',`/task-manager.html?ui_batch=${batch}&report_revision=${revision}`);
+ for(const id of ['login-screen','toolbar-help']){const node=w.document.createElement('div');node.id=id;w.document.body.append(node);}
+ w.clearTransientAuthFeedback=()=>{};w.restoreWorkflowPreference=()=>{w.activeWorkflow='config';};w.canAccessWorkflow=()=>true;
+ w.WORKFLOW_SECTIONS={ui_reports:{help:'本人报告'}};w.renderWorkflowNav=()=>{};w.updateContextToolbar=()=>{};
+ w.renderActiveWorkflowPage=()=>w.showUiSimpleWorkflow();
+ const auth=fs.readFileSync('js/auth.js','utf8');w.eval(auth.slice(auth.indexOf('async function showAuthedApp()'),auth.indexOf('function loginReturnToPath()')));
+ await w.showAuthedApp();assert.equal(w.activeWorkflow,'ui_reports');assert.equal(w.document.getElementById('app').style.display,'flex');
+ assert.equal(calls.find(x=>x?.reportIntent).reportIntent.revision,revision);
+});

@@ -161,7 +161,9 @@ def test_notification_preference_is_frozen_without_accepting_channel_override(en
         selected = request()
         selected["notifications"] = {"enabled": True}
         batch = create_ui_batch(ACTORS["b"], selected, "notify-enabled")
-        assert batch["selection"]["notifications"] == {"enabled": True}
+        assert batch["selection"]["notifications"]["enabled"] is True
+        assert "channel_id" in batch["selection"]["notifications"]
+        assert "webhook" not in batch["selection"]["notifications"]
         assert batch["delivery_status"] == "pending"
         selected["notifications"]["channel_id"] = "foreign-channel"
         with pytest.raises(BatchValidationError):

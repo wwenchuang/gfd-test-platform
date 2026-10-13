@@ -63,7 +63,7 @@ class UiExecutionStore(UiExecutionLifecycle):
         db.execute("PRAGMA busy_timeout=10000")
         db.execute("PRAGMA foreign_keys=ON")
         version = db.execute("PRAGMA user_version").fetchone()[0]
-        if version not in (0, 1, 2):
+        if version not in (0, 1, 2, 3):
             db.close()
             raise RuntimeError("Unsupported UI execution schema version")
         if version == 0:
@@ -135,6 +135,31 @@ class UiExecutionStore(UiExecutionLifecycle):
                     db.execute("CREATE INDEX batches_recovery ON batches(last_reconcile_ns,created_ns) WHERE execution_settled=0 OR needs_job_sync=1")
                     db.execute("CREATE INDEX attempts_pending ON case_attempts(status,job_id)")
                     db.execute("PRAGMA user_version=2")
+                db.execute("COMMIT")
+            except Exception:
+                db.execute("ROLLBACK")
+                db.close()
+                raise
+        if version < 3:
+            db.execute("BEGIN IMMEDIATE")
+            try:
+                if db.execute("PRAGMA user_version").fetchone()[0] < 3:
+                    for name, spec in (
+                        ("claim_token", "TEXT NOT NULL DEFAULT ''"), ("claimed_ns", "INTEGER"),
+                        ("error_code", "TEXT NOT NULL DEFAULT ''"), ("finished_ns", "INTEGER"),
+                        ("manual_retries", "INTEGER NOT NULL DEFAULT 0"),
+                        ("cycle_attempts", "INTEGER NOT NULL DEFAULT 0"),
+                        ("retry_actor_id", "TEXT NOT NULL DEFAULT ''")
+                    ):
+                        db.execute(f"ALTER TABLE delivery_outbox ADD COLUMN {name} {spec}")
+                    db.execute("CREATE UNIQUE INDEX delivery_identity ON delivery_outbox(ui_batch_id,report_revision,channel_id)")
+                    db.execute("CREATE INDEX deliveries_batch ON delivery_outbox(ui_batch_id,report_revision)")
+                    # Previous schema had no claim timestamp. Never blindly resend an in-flight request.
+                    db.execute("UPDATE batches SET delivery_status='unknown' WHERE ui_batch_id IN (SELECT ui_batch_id FROM delivery_outbox WHERE status='sending')")
+                    db.execute("UPDATE delivery_outbox SET status='unknown',error_code='worker_interrupted' WHERE status='sending'")
+                    db.execute("UPDATE batches SET delivery_status='queued' WHERE ui_batch_id IN (SELECT ui_batch_id FROM delivery_outbox WHERE status='pending')")
+                    db.execute("CREATE INDEX IF NOT EXISTS batches_notify_ready ON batches(created_ns,ui_batch_id) WHERE execution_settled=1 AND report_status='ready' AND delivery_status='pending'")
+                    db.execute("PRAGMA user_version=3")
                 db.execute("COMMIT")
             except Exception:
                 db.execute("ROLLBACK")

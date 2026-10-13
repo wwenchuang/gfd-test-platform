@@ -137,3 +137,22 @@ test('selected cases stay named and removable when a search hides their rows',as
  const chip=f.node.querySelector('[data-ui-selected] button');assert.ok(chip);assert.match(chip.textContent,/导航用例/);chip.click();
  assert.match(f.node.querySelector('[data-ui-selection-count]').textContent,/已选 0/);assert.equal(f.node.querySelector('[data-ui-start]').disabled,true);
 });
+
+test('configured app destination defaults on and opt out is frozen in start intent',async t=>{
+ const f=fixture(t,path=>path.startsWith('/ui-executions/catalog')?{ok:true,apps:[{app_id:'app.a',name:'应用甲',notification_channel:{ready:true,target_label:'专属群'}}],modules:[],items:[CASE],total:1}:undefined);
+ await select(t,f);const toggle=f.node.querySelector('[data-ui-notify]');assert.equal(toggle.checked,true);assert.match(f.node.textContent,/专属群/);
+ toggle.click();f.node.querySelector('[data-ui-start]').click();await wait();await wait();
+ assert.equal(f.calls.find(c=>c.path==='/ui-executions'&&c.options.method==='POST').options.body.notifications.enabled,false);
+});
+test('notification deep link opens its cited report revision on the reports page',async t=>{
+ const f=fixture(t),calls=[];f.w.UiBatchReport={mount:(node,o)=>{calls.push(o);return {refresh:()=>{},dispose:()=>{}};}};
+ f.mount('reports',{download:()=>{},canNotify:()=>false,reportIntent:{batchId:'uib_link',revision:'f'.repeat(64)}});await wait();
+ assert.equal(calls[0].batchId,'uib_link');assert.equal(calls[0].revision,'f'.repeat(64));assert.equal(calls[0].canNotify(),false);
+});
+
+test('execution card keeps polling until final notification status arrives',async t=>{
+ let delivery='pending';const f=fixture(t,path=>path==='/ui-executions/uib_new'?{ok:true,batch:{ui_batch_id:'uib_new',status:'passed',execution_settled:true,report_status:'ready',delivery_status:delivery,case_attempts:[]}}:undefined);
+ await select(t,f);f.node.querySelector('[data-ui-start]').click();await wait();await wait();await f.w.UiSimpleFlow.refresh();
+ const before=f.calls.filter(c=>c.path==='/ui-executions/uib_new').length;await f.w.UiSimpleFlow.refresh();assert.equal(f.calls.filter(c=>c.path==='/ui-executions/uib_new').length,before+1);
+ delivery='sent';await f.w.UiSimpleFlow.refresh();const done=f.calls.filter(c=>c.path==='/ui-executions/uib_new').length;await f.w.UiSimpleFlow.refresh();assert.equal(f.calls.filter(c=>c.path==='/ui-executions/uib_new').length,done);
+});

@@ -107,7 +107,9 @@ def get_ui_catalog(actor=None, *, app_id='', module='', query='', cursor='', lim
     rows = [r for r in _catalog_rows() if r['app_id'] in allowed
             and (not app_id or r['app_id'] == app_id) and (not module or r['module'] == module)
             and (not query.strip() or query.strip().casefold() in r['_search'])]
+    from .feishu_service import task_app_feishu_channel
     summaries = [{'app_id':app['package'], 'name':app.get('name') or app['package'],
+                  'notification_channel': task_app_feishu_channel(app),
                   'platforms': ['android'] + (['ios'] if (app.get('platform_mappings') or {}).get('ios') else [])}
                  for app in apps]
     modules = sorted({r['module'] for r in _catalog_rows() if r['app_id'] in allowed and (not app_id or r['app_id'] == app_id)})

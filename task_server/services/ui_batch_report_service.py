@@ -195,6 +195,15 @@ def _render_docx(markdown):
         cwd=str(Path(__file__).resolve().parents[2])).stdout
 
 
+def _report_delivery_state(db,batch,revision):
+    """Ready revisions need discovery once; previously queued/sent digests keep their state."""
+    policy=batch['selection'].get('notifications') or {}
+    if not policy.get('enabled'): return 'not_requested'
+    row=db.execute('SELECT status FROM delivery_outbox WHERE ui_batch_id=? AND report_revision=? AND channel_id=?',
+                   (batch['ui_batch_id'],revision,policy.get('channel_id','unconfigured'))).fetchone()
+    return ('queued' if row[0]=='pending' else row[0]) if row else 'pending'
+
+
 def _build(batch_id):
     db = _connect()
     try:
@@ -208,7 +217,7 @@ def _build(batch_id):
         existing = db.execute('SELECT status FROM ui_report_snapshots WHERE ui_batch_id=? AND report_revision=?',(batch_id,revision)).fetchone()
         if existing and existing['status'] == 'ready':
             db.execute('INSERT OR REPLACE INTO ui_report_heads VALUES(?,?)',(batch_id,revision))
-            db.execute("UPDATE batches SET report_status='ready' WHERE ui_batch_id=?",(batch_id,))
+            db.execute("UPDATE batches SET report_status='ready',delivery_status=? WHERE ui_batch_id=?",(_report_delivery_state(db,batch,revision),batch_id))
             db.execute('COMMIT')
             return _report(db,batch_id,revision)
         db.execute("INSERT OR IGNORE INTO ui_report_snapshots(ui_batch_id,report_revision,snapshot_json,created_ns,status) VALUES(?,?,?,?, 'pending')",
@@ -227,7 +236,7 @@ def _build(batch_id):
             # Evidence may have arrived while rendering. Leave pending for next version.
             current = _snapshot(UiExecutionStore().get_batch(batch_id),db)
             state = 'ready' if hashlib.sha256(_json(current).encode()).hexdigest() == revision else 'pending'
-            db.execute('UPDATE batches SET report_status=? WHERE ui_batch_id=?',(state,batch_id))
+            db.execute('UPDATE batches SET report_status=?,delivery_status=? WHERE ui_batch_id=?',(state,_report_delivery_state(db,batch,revision),batch_id))
             db.execute('COMMIT')
         except Exception:
             if db.in_transaction: db.execute('ROLLBACK')

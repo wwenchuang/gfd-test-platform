@@ -64,17 +64,32 @@ async function loadUiSimplePicture(img,device,isCurrent){
   }catch(_){/* Keep an explicit no-picture state; device metadata still renders. */}
   finally{clearTimeout(timeout);uiSimplePictureRequests.delete(controller);}
 }
+function uiSimpleReportIntent(){
+  const query=new URLSearchParams(window.location.search);
+  if(query.getAll('ui_batch').length!==1||query.getAll('report_revision').length!==1)return null;
+  const batchId=query.get('ui_batch'),revision=query.get('report_revision');
+  return /^uib_[a-f0-9]{32}$/.test(batchId||'')&&/^[a-f0-9]{64}$/.test(revision||'')?{batchId,revision}:null;
+}
+function preferUiSimpleReport(){
+  if(!uiSimpleEnabled||!hasPermission('ui.view')||!uiSimpleReportIntent())return false;
+  activeWorkflow='ui_reports';return true;
+}
 function showUiSimpleWorkflow(){
   if(!uiSimpleEnabled||!isUiSimpleWorkflow(activeWorkflow)||!hasPermission('ui.view'))return false;
   leaveUiSimpleWorkflow();
   document.getElementById('app')?.classList.add('ui-simple-active');
   const area=document.getElementById('editor-area');area.classList.remove('editor-open');area.replaceChildren();
   const page=document.createElement('div');page.className='ui-simple-page';area.append(page);toggleLibrary(false);
+  const reportIntent=activeWorkflow==='ui_reports'?uiSimpleReportIntent():null;
   window.UiSimpleFlow.mount(page,{
     mode:{ui_start:'start',ui_library:'library',ui_reports:'reports'}[activeWorkflow],
-    request:apiRequest,identity:uiSimpleIdentity,canExecute:()=>hasPermission('ui.execute'),loadPicture:loadUiSimplePicture,
+    request:apiRequest,identity:uiSimpleIdentity,canExecute:()=>hasPermission('ui.execute'),canNotify:()=>hasPermission('platform.notify'),reportIntent,loadPicture:loadUiSimplePicture,
     download:downloadUiBatchFile,copy:async text=>{if(!await copyText(text))throw new Error('复制未完成，请重试');}
   });
+  if(reportIntent){
+    const url=new URL(window.location.href);url.searchParams.delete('ui_batch');url.searchParams.delete('report_revision');
+    window.history.replaceState(window.history.state,'',url.pathname+url.search+url.hash);
+  }
   return true;
 }
 async function downloadUiBatchFile(path){
