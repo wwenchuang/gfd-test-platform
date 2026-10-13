@@ -25,7 +25,7 @@ def data(monkeypatch):
     calls = {'catalog':0,'source':0,'runner':0}
     def read_catalog(): calls['catalog']+=1;return rows
     def read_source(row): calls['source']+=1;return SOURCE
-    runners={'mac':{'online':True,'workspace':'/private/workspace','token':'never-return','capabilities':{'ui_execution_contract':'ui-v1','ui_attempt_events':1,'job_execution':True,'ui_platforms':['ios'],'ui_actions':['launch','aiTap','aiWaitFor','aiAssert']},
+    runners={'mac':{'online':True,'workspace':'/private/workspace','token':'never-return','capabilities':{'ui_execution_contract':'ui-v1','ui_attempt_events':1,'ui_private_reports':1,'ui_process_stop_proof':1,'job_execution':True,'ui_platforms':['ios'],'ui_actions':['launch','aiTap','aiWaitFor','aiAssert']},
       'devices':[{'device_id':'phone','label':'iPhone 13','platform':'ios','status':'online','preflight_status':'ready','ios_version':'26.6',
                   'installed_apps':[{'package':'com.fixture.ios','version_name':'1.0','version_code':'7','error':'/private/error'}],
                   'snapshot_captured_at':'2026-10-13 17:00:00','snapshot_app_package':'com.fixture.ios','snapshot_url':'https://evil.example/secret','wdaPort':8100}]}}
@@ -75,9 +75,25 @@ def test_device_refresh_reads_one_registry_and_no_case_sources(data):
     assert d['snapshot_url']==''
     assert '整机画面' in d['snapshot_hint']
 
-@pytest.mark.parametrize('field,value',[('ui_platforms',[]),('ui_actions',['launch','aiTap'])])
+@pytest.mark.parametrize('field,value',[
+    ('ui_platforms',[]),
+    ('ui_actions',['launch','aiTap']),
+    ('ui_private_reports','missing'),
+    ('ui_private_reports',None),
+    ('ui_private_reports',False),
+    ('ui_private_reports',2),
+    ('ui_private_reports','1'),
+    ('ui_process_stop_proof','missing'),
+    ('ui_process_stop_proof',None),
+    ('ui_process_stop_proof',False),
+    ('ui_process_stop_proof',2),
+    ('ui_process_stop_proof','1'),
+])
 def test_incomplete_runner_capabilities_block_readiness(data,field,value):
-    data[3]['mac']['capabilities'][field]=value
+    if value == 'missing':
+        data[3]['mac']['capabilities'].pop(field)
+    else:
+        data[3]['mac']['capabilities'][field]=value
     assert catalog.get_ui_devices(None,APP)['devices'][0]['connection_status']=='upgrade_required'
 
 def test_full_scope_snapshot_link_does_not_depend_on_foreground_label(data):

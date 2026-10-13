@@ -144,6 +144,7 @@ def get_ui_devices(actor, app_id):
             if not connected:
                 state = 'offline'
             elif (capabilities.get('ui_execution_contract') != 'ui-v1' or capabilities.get('ui_attempt_events') != 1
+                  or capabilities.get('ui_private_reports') != 1 or capabilities.get('ui_process_stop_proof') != 1
                   or platform not in (capabilities.get('ui_platforms') or [])
                   or not set(CROSS_PLATFORM_ACTIONS).issubset(set(capabilities.get('ui_actions') or []))):
                 state = 'upgrade_required'
