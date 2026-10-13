@@ -141,7 +141,7 @@ def test_ios_does_not_claim_unselected_job(monkeypatch):
     assert '明确' in result['stderr']
 
 
-def test_terminal_progress_cancels_ios_process_group(monkeypatch):
+def test_terminal_progress_cancels_before_starting_ios_process_group(monkeypatch):
     from unittest.mock import Mock
     monkeypatch.setattr(runner,'RUNNER_PLATFORM','ios')
     monkeypatch.setattr(runner,'resolve_command',lambda *a:'midscene')
@@ -155,7 +155,7 @@ def test_terminal_progress_cancels_ios_process_group(monkeypatch):
     monkeypatch.setattr(runner,'stop_midscene_process',lambda p:stopped.append(p),raising=False)
     result=runner.execute_midscene('j',Path('/tmp'),Path('a.yaml'),['case'],'phone')
     assert result['status']=='cancelled'
-    assert stopped == [proc]
+    assert stopped == []  # No process is created after the initial cancellation acknowledgement.
 
 
 def test_dispatch_uses_only_ready_explicit_iphone(monkeypatch):

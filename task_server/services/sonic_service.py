@@ -141,9 +141,9 @@ def normalize_sonic_device_status(item: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def sonic_list_device_statuses() -> Dict[str, Dict[str, Any]]:
+def sonic_list_device_statuses(force: bool = False) -> Dict[str, Dict[str, Any]]:
     cached = _cache_get("device-statuses", 5)
-    if isinstance(cached, dict):
+    if not force and isinstance(cached, dict):
         return cached
     try:
         response = sonic_request("GET", "/devices/list", params={"page": 1, "pageSize": 500}, timeout=8)

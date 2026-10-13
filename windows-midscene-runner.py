@@ -57,6 +57,9 @@ RUNNER_CAPABILITIES = {
 }
 
 
+RUNNER_CAPABILITIES["ui_attempt_events"] = 1
+
+
 def _semantic_version(value):
     match = re.search(r"(?:^|\D)(\d+)\.(\d+)\.(\d+)", str(value or ""))
     return tuple(int(item) for item in match.groups()) if match else None
@@ -431,7 +434,34 @@ def http_json_retry(method, path, payload=None, timeout=60, attempts=3, label="H
     raise RuntimeError(f"{label} 失败：{last_error}") from last_error
 
 
+# UI attempt credentials stay local to the claimed execution and its retry payload.
+_UI_DELIVERIES = {}
+
+
+def initialize_ui_delivery(job):
+    if not job.get("ui_batch_id"):
+        return
+    if (not job.get("device_id") or job.get("target_runner_id") != RUNNER_ID
+            or not job.get("ui_claim_token") or job.get("ui_attempt_events") != 1):
+        raise ValueError("UI batch requires an exact Runner/device and claim credential")
+    _UI_DELIVERIES.setdefault(job["job_id"], {
+        "runner_id": RUNNER_ID, "device_id": job["device_id"],
+        "ui_claim_token": job["ui_claim_token"], "sequence": 0, "stopped": True})
+
+
+def ui_callback_payload(job_id, payload, result=False):
+    context = _UI_DELIVERIES.get(job_id)
+    if context and "ui_event_sequence" not in payload:
+        context["sequence"] += 1
+        payload.update({key: context[key] for key in ("runner_id", "device_id", "ui_claim_token")})
+        payload["ui_event_sequence"] = context["sequence"]
+        if result:
+            payload["execution_stopped"] = context["stopped"]
+    return payload
+
+
 def post_job_result(job_id, payload):
+    ui_callback_payload(job_id, payload, result=True)
     try:
         return http_json_retry("POST", f"/api/runner/jobs/{job_id}/result", payload, timeout=120, attempts=3, label="结果回传")
     except urllib.error.HTTPError as e:
@@ -449,11 +479,11 @@ def post_job_result(job_id, payload):
 
 
 def post_job_report_ready(job_id, report_url="", local_report_path="", report_upload_error=""):
-    return http_json_retry("POST", f"/api/runner/jobs/{job_id}/report-ready", {
+    return http_json_retry("POST", f"/api/runner/jobs/{job_id}/report-ready", ui_callback_payload(job_id, {
         "report_url": report_url,
         "local_report_path": local_report_path,
         "report_upload_error": report_upload_error,
-    }, timeout=60, attempts=3, label="报告回传")
+    }), timeout=60, attempts=3, label="报告回传")
 
 
 def upload_report_before_result(job_id, report_path, report_name):
@@ -508,6 +538,10 @@ def replay_pending_result_callbacks():
             if not isinstance(payload, dict) or not job_id:
                 path.unlink(missing_ok=True)
                 continue
+            if payload.get("ui_claim_token"):
+                _UI_DELIVERIES.setdefault(job_id, {
+                    **{k: payload[k] for k in ("runner_id", "device_id", "ui_claim_token")},
+                    "sequence": payload["ui_event_sequence"], "stopped": payload.get("execution_stopped", False)})
             post_job_result(job_id, payload)
             if payload.get("report_upload_pending"):
                 enqueue_report_upload(job_id, pending_report_path, pending_report_name)
@@ -554,6 +588,7 @@ def enqueue_report_upload(job_id, report_path, report_name):
 
 
 def post_job_progress(job_id, payload):
+    ui_callback_payload(job_id, payload)
     try:
         return http_json_retry("POST", f"/api/runner/jobs/{job_id}/progress", payload, timeout=15, attempts=2, label="进度回传")
     except Exception as e:
@@ -1606,6 +1641,18 @@ def progress_observer_env(job_dir, device_id):
     return env
 
 
+def stop_ui_process(proc):
+    if proc.poll() is not None:
+        return
+    # taskkill /T owns only this Popen process tree, never other device sessions.
+    if os.name == "nt":
+        subprocess.run(["taskkill", "/PID", str(proc.pid), "/T", "/F"], check=True,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10)
+    else:
+        proc.kill()
+    proc.wait(timeout=10)
+
+
 def execute_midscene(job_id, job_dir, yaml_path, task_names, device_id):
     started = time.time()
     stdout_lines = []
@@ -1616,9 +1663,11 @@ def execute_midscene(job_id, job_dir, yaml_path, task_names, device_id):
     current_task = task_names[0] if task_names else ""
     last_progress_at = 0
     step_progress = RunnerStepProgress()
+    cancelled = False
+    proc = None
 
     def emit_progress(force=False, message="执行中"):
-        nonlocal last_progress_at
+        nonlocal last_progress_at, cancelled
         now = time.time()
         if not force and now - last_progress_at < 2:
             return
@@ -1626,7 +1675,7 @@ def execute_midscene(job_id, job_dir, yaml_path, task_names, device_id):
         progress = 5
         if total:
             progress = min(95, max(5, round((completed / total) * 90) + 5))
-        post_job_progress(job_id, {
+        acknowledgement = post_job_progress(job_id, {
             "progress": progress,
             "current_task_name": current_task,
             "current_task_index": current_index,
@@ -1637,10 +1686,14 @@ def execute_midscene(job_id, job_dir, yaml_path, task_names, device_id):
             "stdout_tail": "".join(stdout_lines)[-2000:],
             **({"execution_progress": step_progress.snapshot} if step_progress.snapshot else {})
         })
+        if job_id in _UI_DELIVERIES and acknowledgement and acknowledgement.get("ignored") == "terminal_job":
+            cancelled = True
 
     try:
         midscene_bin = resolve_command(MIDSCENE_BIN, "Midscene")
         emit_progress(True, "Midscene 已启动")
+        if cancelled:
+            return {"status":"cancelled", "stdout":"", "stderr":"平台已取消执行", "returncode":-1, "duration":0}
         midscene_command = [midscene_bin, str(yaml_path)]
         if device_id:
             midscene_command.extend(["--android.deviceId", device_id])
@@ -1654,6 +1707,8 @@ def execute_midscene(job_id, job_dir, yaml_path, task_names, device_id):
             stderr=subprocess.STDOUT,
             env=progress_observer_env(job_dir, device_id)
         )
+        if job_id in _UI_DELIVERIES:
+            _UI_DELIVERIES[job_id]["stopped"] = False
         line_queue = queue.Queue()
 
         def read_stdout():
@@ -1668,6 +1723,10 @@ def execute_midscene(job_id, job_dir, yaml_path, task_names, device_id):
         reader = threading.Thread(target=read_stdout, name=f"midscene-stdout-{job_id}", daemon=True)
         reader.start()
         while True:
+            if cancelled:
+                stop_ui_process(proc)
+                stderr = "平台任务已结束，已停止本机执行进程"
+                break
             line = ""
             try:
                 line = line_queue.get(timeout=2)
@@ -1699,7 +1758,7 @@ def execute_midscene(job_id, job_dir, yaml_path, task_names, device_id):
                         stdout_lines.append(rest_line)
                 break
             if time.time() - started > TIMEOUT_SECONDS:
-                proc.kill()
+                stop_ui_process(proc) if job_id in _UI_DELIVERIES else proc.kill()
                 stderr = f"\nTimeout after {TIMEOUT_SECONDS}s"
                 emit_progress(True, stderr.strip())
                 break
@@ -1710,7 +1769,7 @@ def execute_midscene(job_id, job_dir, yaml_path, task_names, device_id):
             completed = total
         emit_progress(True, "执行完成" if returncode == 0 else "执行失败")
         return {
-            "status": "passed" if returncode == 0 else "failed",
+            "status": "cancelled" if cancelled else ("passed" if returncode == 0 else "failed"),
             "stdout": stdout,
             "stderr": stderr,
             "returncode": returncode,
@@ -1725,8 +1784,35 @@ def execute_midscene(job_id, job_dir, yaml_path, task_names, device_id):
             "duration": round(time.time() - started, 2)
         }
 
+    finally:
+        if job_id in _UI_DELIVERIES:
+            try:
+                if proc is not None and proc.poll() is None:
+                    stop_ui_process(proc)
+                _UI_DELIVERIES[job_id]["stopped"] = proc is None or proc.poll() is not None
+            except Exception:
+                _UI_DELIVERIES[job_id]["stopped"] = False
+
 
 def run_job(job):
+    initialize_ui_delivery(job)
+    if not job.get("ui_batch_id"):
+        return _run_job(job)
+    stopped = threading.Event()
+    def keep_alive():
+        while not stopped.wait(10):
+            try:
+                heartbeat(detect_devices())
+            except Exception:
+                pass
+    threading.Thread(target=keep_alive, name="ui-runner-heartbeat", daemon=True).start()
+    try:
+        return _run_job(job)
+    finally:
+        stopped.set()
+
+
+def _run_job(job):
     if is_apk_install_job(job):
         return install_apk_job(job)
     if is_yaml_dry_run_job(job):
@@ -1749,7 +1835,7 @@ def run_job(job):
         attempt_dir = job_dir / f"attempt-{index}-{safe_filename(device_id)}"
         attempt_dir.mkdir(parents=True, exist_ok=True)
         yaml_path = attempt_dir / yaml_name
-        yaml_content = inject_external_page_escape(midscene_cli_yaml_text(original_yaml))
+        yaml_content = original_yaml if job.get("ui_batch_id") else inject_external_page_escape(midscene_cli_yaml_text(original_yaml))
         yaml_path.write_text(yaml_content, encoding="utf-8")
         task_names = [job.get("target_task_name")] if job.get("target_task_name") else parse_yaml_task_names(yaml_content)
         app_package = parse_app_package(yaml_content)

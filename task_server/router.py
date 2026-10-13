@@ -2350,7 +2350,7 @@ def _get_runner_jobs_next(handler, qs):
     selected = assign_job(runner_id, runner_device_ids_qs)
     if selected:
         selected_is_yaml_dry_run = str(selected.get("job_type") or selected.get("type") or "").strip().lower() == "yaml_dry_run"
-        if not is_app_install_job(selected) and not selected_is_yaml_dry_run and selected.get("module") and selected.get("file"):
+        if not selected.get("ui_batch_id") and not is_app_install_job(selected) and not selected_is_yaml_dry_run and selected.get("module") and selected.get("file"):
             update_task_meta(selected["module"], selected["file"], {
                 "last_job_id": selected["job_id"],
                 "last_status": "running",
@@ -2362,6 +2362,15 @@ def _get_runner_jobs_next(handler, qs):
         handler._json({"ok": True, "job": None})
         return
     selected_is_yaml_dry_run = str(selected.get("job_type") or selected.get("type") or "").strip().lower() == "yaml_dry_run"
+
+    if selected.get("ui_batch_id"):
+        # Frozen compilation and claim credential come only from the batch store.
+        delivery = selected.pop("_ui_delivery")
+        payload = {key: selected.get(key, "") for key in (
+            "job_id", "module", "file", "target_task_name", "device_id", "runner_id",
+            "target_runner_id", "device_strategy", "run_mode")}
+        handler._json({"ok": True, "job": {**payload, **delivery}})
+        return
 
     if is_app_install_job(selected):
         job_payload = dict(selected)
@@ -4823,10 +4832,30 @@ def _post_runner_jobs_action(handler, qs, path):
     handler._json({"ok": False, "error": "未知 Runner 任务操作", "path": path}, 404)
 
 
+def _handle_ui_attempt_callback(handler, job_id, body, kind):
+    from .services.ui_execution_store import UiExecutionStore
+    from .services.ui_batch_dispatch import record_ui_attempt_event
+    if not job_id.startswith("uib_"):
+        return False
+    if not UiExecutionStore().attempt_for_job(job_id):
+        handler._json({"ok": False, "code": "batch_job_not_found"}, 404)
+        return True
+    try:
+        result = record_ui_attempt_event(job_id, body.get("ui_event_sequence"), {**body, "type": kind})
+        handler._json(result)
+    except PermissionError:
+        handler._json({"ok": False, "code": "claim_mismatch"}, 403)
+    except ValueError:
+        handler._json({"ok": False, "code": "event_invalid"}, 400)
+    return True
+
+
 def _handle_runner_job_progress(handler, job_id):
     if _require_user_auth(handler):
         return
     d = handler._body()
+    if _handle_ui_attempt_callback(handler, job_id, d, "progress"):
+        return
     now = time.strftime("%Y-%m-%d %H:%M:%S")
     with JOB_LOCK:
         target, jobs = find_job(job_id)
@@ -4878,6 +4907,8 @@ def _handle_runner_job_report_ready(handler, job_id):
     if _require_user_auth(handler):
         return
     d = handler._body()
+    if _handle_ui_attempt_callback(handler, job_id, d, "report_ready"):
+        return
     try:
         job = attach_sonic_background_report(
             job_id,
@@ -4901,6 +4932,8 @@ def _handle_runner_job_result(handler, job_id):
     if _require_user_auth(handler):
         return
     d = handler._body()
+    if _handle_ui_attempt_callback(handler, job_id, d, "result"):
+        return
     status = normalize_job_status(d.get("status", "failed"))
     with JOB_LOCK:
         existing, _ = find_job(job_id)
@@ -5176,6 +5209,9 @@ def _post_job_analyze_failure(handler, qs, match):
 @route_post_regex(r"^/api/jobs/([^/]+)/repair$")
 def _post_job_repair(handler, qs, match):
     job_id = match.group(1)
+    if job_id.startswith("uib_"):
+        handler._json({"ok": False, "code": "use_ui_batch_action", "error": "请从执行批次取消或重跑"}, 409)
+        return
     d = handler._body()
     with JOB_LOCK:
         jobs = load_jobs(limit=None)
@@ -5204,6 +5240,9 @@ def _post_job_repair(handler, qs, match):
 @route_post_regex(r"^/api/jobs/([^/]+)/cancel$")
 def _post_job_cancel(handler, qs, match):
     job_id = match.group(1)
+    if job_id.startswith("uib_"):
+        handler._json({"ok": False, "code": "use_ui_batch_action", "error": "请从执行批次取消或重跑"}, 409)
+        return
     d = handler._body()
     with JOB_LOCK:
         target, jobs = find_job(job_id)
@@ -5236,6 +5275,9 @@ def _post_job_cancel(handler, qs, match):
 @route_post_regex(r"^/api/jobs/([^/]+)/retry$")
 def _post_job_retry(handler, qs, match):
     job_id = match.group(1)
+    if job_id.startswith("uib_"):
+        handler._json({"ok": False, "code": "use_ui_batch_action", "error": "请从执行批次取消或重跑"}, 409)
+        return
     d = handler._body()
     with JOB_LOCK:
         target, _ = find_job(job_id)
@@ -6227,6 +6269,47 @@ def _get_ui_execution_batch(handler, qs, match):
         handler._json({"ok": False, "code": "batch_not_found"}, 404)
         return
     handler._json({"ok": True, "batch": batch})
+
+
+@route_post("/api/ui-executions/preflight")
+def _post_ui_execution_preflight(handler, qs):
+    if not _ui_batch_enabled():
+        handler._json({"ok": False, "code": "feature_disabled"}, 404)
+        return
+    from .services.ui_execution_service import preflight_ui_batch, BatchValidationError
+    from .services.ui_execution_contract import AccessDenied
+    try:
+        result = preflight_ui_batch(None, handler._body())
+    except (AccessDenied, BatchValidationError, ValueError, sqlite3.Error, OSError) as error:
+        _ui_batch_error(handler, error)
+        return
+    handler._json({"ok": True, **result})
+
+
+@route_post_regex(r"^/api/ui-executions/([^/]+)/(cancel|rerun)$")
+def _post_ui_execution_action(handler, qs, match):
+    if not _ui_batch_enabled():
+        handler._json({"ok": False, "code": "feature_disabled"}, 404)
+        return
+    from .services.ui_batch_dispatch import cancel_ui_batch, rerun_ui_batch
+    from .services.ui_execution_service import BatchValidationError
+    from .services.ui_execution_contract import AccessDenied
+    from .services.ui_execution_store import BatchConflict
+    try:
+        if match.group(2) == "cancel":
+            batch = cancel_ui_batch(None, match.group(1))
+        else:
+            body = handler._body()
+            if not isinstance(body, dict) or set(body) != {"scope"}:
+                raise BatchValidationError("rerun_invalid")
+            batch = rerun_ui_batch(None, match.group(1), body["scope"], handler.headers.get("Idempotency-Key", ""))
+    except (AccessDenied, BatchValidationError, BatchConflict, ValueError, sqlite3.Error, OSError) as error:
+        _ui_batch_error(handler, error)
+        return
+    if batch is None:
+        handler._json({"ok": False, "code": "batch_not_found"}, 404)
+    else:
+        handler._json({"ok": True, "batch": batch}, 200 if match.group(2) == "cancel" else 201)
 
 
 register_api_testing_routes(route_get_prefix, route_post_prefix_before_body, route_delete_prefix, route_put_prefix)

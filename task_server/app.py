@@ -407,6 +407,8 @@ def start_background_jobs():
     restore_pending_sonic_suite_summary_timers()
     start_report_cleanup_scheduler()
     start_runtime_memory_monitor()
+    from .services.ui_batch_dispatch import start_ui_batch_reconciler
+    start_ui_batch_reconciler()
 
 
 # ── 主入口 ──────────────────────────────────────────────────────────

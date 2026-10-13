@@ -102,6 +102,10 @@ def create_ui_batch(actor, request, idempotency_key):
         if prior["request_hash"] != request_hash:
             raise BatchConflict("idempotency_conflict")
         return store.get_batch(prior["ui_batch_id"])
+    return store.create_batch(_prepare_ui_batch(actor, normalized, profile, key, request_hash))
+
+
+def _prepare_ui_batch(actor, normalized, profile, key, request_hash):
     resolved_targets = []
     for target in normalized["targets"]:
         resolved = resolve_ui_target(normalized["app_id"], target, actor)
@@ -131,7 +135,9 @@ def create_ui_batch(actor, request, idempotency_key):
         snapshots.append({"case_id": case["case_id"], "case_revision": case["revision"],
                           "source_yaml": source, "source_hash": case["revision"], "metadata": metadata})
         for target, resolution in zip(normalized["targets"], resolved_targets):
-            compiled = compile_ui_case({"yaml_content": source}, resolution)
+            from .ui_attempt_progress import stable_step_ids
+            compiled = compile_ui_case({"yaml_content": source,
+                "step_ids": stable_step_ids(case["case_id"], case["revision"], source)}, resolution)
             if not compiled["ok"]:
                 raise BatchValidationError(compiled["block_code"])
             attempts.append({"case_id": case["case_id"], "case_revision": case["revision"],
@@ -142,7 +148,7 @@ def create_ui_batch(actor, request, idempotency_key):
                 "suite_id": normalized["suite_id"], "suite_revision": normalized["suite_revision"],
                 "idempotency_key": key, "request_hash": request_hash, "selection": normalized,
                 "snapshots": snapshots, "attempts": attempts}
-    return store.create_batch(prepared)
+    return prepared
 
 
 def get_ui_batch(actor, batch_id):
@@ -181,3 +187,8 @@ def list_ui_batches(actor, filters=None, cursor="", limit=20):
 def append_case_attempt(batch_id, case_id, case_revision, target, compiled_case):
     """Internal T4 retry hook; case, target, and compilation must match a frozen attempt."""
     return _store().append_case_attempt(batch_id, case_id, case_revision, target, compiled_case)
+
+
+def preflight_ui_batch(actor, request):
+    from .ui_batch_dispatch import preflight_ui_batch as preflight
+    return preflight(actor, request)

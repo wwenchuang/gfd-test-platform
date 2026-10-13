@@ -494,9 +494,33 @@ def runner_accepts_explicit_job(runner_info, job, runner_id):
     return True
 
 
-def assign_job(
+def assign_job(runner_id, extra_device_ids=None):
+    from .ui_batch_dispatch import DISPATCH_LOCK, prepare_ui_claim
+    from .ui_execution_store import UiExecutionStore, default_db_path
+    from .ui_batch_dispatch import enabled
+    with DISPATCH_LOCK:
+        candidates = {}
+        occupancy = None
+        if enabled():
+            for job in _load_jobs():
+                if job.get('ui_batch_id') and job.get('status') == 'pending' and job.get('target_runner_id') == runner_id:
+                    if occupancy is None:
+                        try:
+                            from .sonic_service import sonic_list_device_statuses
+                            occupancy = sonic_list_device_statuses(force=True)
+                        except Exception:
+                            occupancy = {'__source__': {'available': False}}
+                    prepared = prepare_ui_claim(job, occupancy=occupancy)
+                    if prepared:
+                        candidates[job['job_id']] = prepared
+                        break
+        return _assign_job(runner_id, extra_device_ids, candidates, UiExecutionStore() if enabled() or default_db_path().exists() else None)
+
+
+def _assign_job(
     runner_id: str,
     extra_device_ids: Optional[Iterable[str]] = None,
+    ui_candidates=None, ui_store=None,
 ) -> Optional[Dict[str, Any]]:
     """为指定 runner 选取并占用下一个待执行 job。
 
@@ -537,6 +561,7 @@ def assign_job(
         pass
 
     selected: Optional[Dict[str, Any]] = None
+    ui_delivery = None
     with JOB_LOCK:
         jobs = _load_jobs()
         for job in jobs:
@@ -557,6 +582,22 @@ def assign_job(
                 continue
             if not target_device and auto_device and not available_devices:
                 continue
+            if job.get('ui_batch_id'):
+                prepared = (ui_candidates or {}).get(job['job_id'])
+                if prepared is None:
+                    continue
+                from .ui_batch_dispatch import claim_ui_job
+                ui_delivery = claim_ui_job(job, prepared)
+                if ui_delivery is None:
+                    continue
+            elif ui_store:
+                free_devices = {d for d in available_devices if not ui_store.device_reserved(d)}
+                if target_device and target_device not in free_devices:
+                    continue
+                if not target_device:
+                    if not free_devices:
+                        continue
+                    job['device_id'] = sorted(free_devices)[0]
             selected = job
             break
 
@@ -577,7 +618,7 @@ def assign_job(
                         if str(request.get("device_id") or "") != selected_device
                     ]
                     save_runners(current_runners)
-            return dict(selected)
+            return {**selected, **({'_ui_delivery':ui_delivery} if ui_delivery else {})}
     return None
 
 

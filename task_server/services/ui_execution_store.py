@@ -8,10 +8,12 @@ import json
 import os
 import sqlite3
 import time
+import threading
 import uuid
 from pathlib import Path
 
 from task_server import identity
+from .ui_execution_lifecycle import UiExecutionLifecycle
 
 
 class BatchConflict(ValueError):
@@ -31,11 +33,18 @@ def _decoded(value):
     return json.loads(value) if value else {}
 
 
-class UiExecutionStore:
+_SCHEMA_LOCK = threading.Lock()
+
+
+class UiExecutionStore(UiExecutionLifecycle):
     def __init__(self, path=None):
         self.path = Path(path).expanduser().absolute() if path else default_db_path()
 
     def _connect(self):
+        with _SCHEMA_LOCK:
+            return self._open_connection()
+
+    def _open_connection(self):
         directory = self.path.parent
         directory.mkdir(mode=0o700, parents=True, exist_ok=True)
         info = directory.lstat()
@@ -54,7 +63,7 @@ class UiExecutionStore:
         db.execute("PRAGMA busy_timeout=10000")
         db.execute("PRAGMA foreign_keys=ON")
         version = db.execute("PRAGMA user_version").fetchone()[0]
-        if version not in (0, 1):
+        if version not in (0, 1, 2):
             db.close()
             raise RuntimeError("Unsupported UI execution schema version")
         if version == 0:
@@ -106,8 +115,31 @@ class UiExecutionStore:
                 status TEXT NOT NULL, due_ns INTEGER NOT NULL, attempts INTEGER NOT NULL DEFAULT 0
             );
             CREATE INDEX IF NOT EXISTS outbox_status_due ON delivery_outbox(status, due_ns);
-            PRAGMA user_version=1;
             """)
+        if version < 2:
+            db.execute("BEGIN IMMEDIATE")
+            try:
+                if db.execute("PRAGMA user_version").fetchone()[0] < 2:
+                    for name, spec in (
+                        ("block_code", "TEXT NOT NULL DEFAULT ''"), ("block_message", "TEXT NOT NULL DEFAULT ''"),
+                        ("claim_token", "TEXT NOT NULL DEFAULT ''"), ("event_sequence", "INTEGER NOT NULL DEFAULT 0"),
+                        ("started_ns", "INTEGER"), ("finished_ns", "INTEGER"), ("last_event_ns", "INTEGER"),
+                        ("stop_confirmed", "INTEGER NOT NULL DEFAULT 0"), ("job_sync_pending", "INTEGER NOT NULL DEFAULT 0"),
+                        ("execution_progress_json", "TEXT"), ("result_json", "TEXT")
+                    ):
+                        db.execute(f"ALTER TABLE case_attempts ADD COLUMN {name} {spec}")
+                    db.execute("CREATE UNIQUE INDEX lease_physical_device ON device_leases(platform,device_id)")
+                    db.execute("ALTER TABLE batches ADD COLUMN last_reconcile_ns INTEGER NOT NULL DEFAULT 0")
+                    db.execute("ALTER TABLE batches ADD COLUMN execution_settled INTEGER NOT NULL DEFAULT 0")
+                    db.execute("ALTER TABLE batches ADD COLUMN needs_job_sync INTEGER NOT NULL DEFAULT 0")
+                    db.execute("CREATE INDEX batches_recovery ON batches(last_reconcile_ns,created_ns) WHERE execution_settled=0 OR needs_job_sync=1")
+                    db.execute("CREATE INDEX attempts_pending ON case_attempts(status,job_id)")
+                    db.execute("PRAGMA user_version=2")
+                db.execute("COMMIT")
+            except Exception:
+                db.execute("ROLLBACK")
+                db.close()
+                raise
         return db
 
     def create_batch(self, prepared):
@@ -181,6 +213,12 @@ class UiExecutionStore:
                 result["snapshots"].append(snapshot)
             result["case_attempts"] = [self._attempt(item) for item in db.execute(
                 "SELECT * FROM case_attempts WHERE ui_batch_id=? ORDER BY rowid", (batch_id,))]
+            from collections import Counter
+            result["execution_settled"] = bool(result["execution_settled"])
+            result["stop_pending"] = any(a["stop_pending"] for a in result["case_attempts"])
+            result["counts"] = dict(Counter(a["status"] for a in result["case_attempts"]))
+            result["started_ns"] = min((a["started_ns"] for a in result["case_attempts"] if a["started_ns"]), default=None)
+            result["finished_ns"] = max((a["finished_ns"] for a in result["case_attempts"] if a["finished_ns"]), default=None) if result["execution_settled"] else None
             return result
         finally:
             db.close()
@@ -190,6 +228,12 @@ class UiExecutionStore:
         result = dict(row)
         result["target_resolution"] = _decoded(result.pop("target_resolution_json"))
         result["compiled_case"] = _decoded(result.pop("compiled_case_json"))
+        result["stop_pending"] = bool(result.pop("claim_token", None) and not result.get("stop_confirmed"))  # Never expose the delivery credential.
+        result["execution_settled"] = result["status"] in {"passed","failed","cancelled"} or (result["status"] == "interrupted" and bool(result.get("stop_confirmed")))
+        result["execution_progress"] = _decoded(result.pop("execution_progress_json", None))
+        result["result"] = _decoded(result.pop("result_json", None))
+        from .ui_attempt_progress import describe_steps
+        result.update(describe_steps(result))
         return result
 
     def list_batches(self, owner_user_id=None, app_id=None, cursor="", limit=20, app_ids=None):

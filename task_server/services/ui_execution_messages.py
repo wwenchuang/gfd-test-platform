@@ -1,0 +1,40 @@
+"""Stable machine codes and concise user-facing blockers for the UI batch workflow."""
+BLOCKER_MESSAGES = {
+    'suite_execution_unavailable': '该套件暂不支持可信的指定设备执行，请使用已验证基线。',
+    'test_data_unavailable': '测试数据引用尚未完成权限校验和解析，不能执行。',
+    'generated_case_gate_required': '生成用例尚未通过平台静态检查、评分和冒烟门禁。',
+    'actor_untrusted': '执行者身份无法确认，请重新登录。',
+    'account_unavailable': '执行账号不可用，请联系管理员。',
+    'app_forbidden': '当前账号已无该应用的执行权限。',
+    'execution_forbidden': '当前账号已无 UI 测试执行权限。',
+    'app_unavailable': '所选应用已停用或不存在。',
+    'app_mapping_missing': '所选平台缺少应用包名配置。',
+    'app_mapping_changed': '应用包名配置已变化，请重新创建批次。',
+    'app_version_unavailable': '未获取到所选应用的已安装版本，请刷新设备状态。',
+    'app_version_changed': '手机应用版本已变化，请重新创建批次。',
+    'runner_not_found': '所选执行器不存在。',
+    'runner_offline': '所选执行器已离线，请恢复连接后重试。',
+    'runner_upgrade_required': '所选执行器需要升级后才能执行此批次。',
+    'runner_execution_disabled': '所选执行器当前仅支持预览，尚未启用执行。',
+    'runner_capability_missing': '所选执行器不支持用例需要的操作。',
+    'target_required': '请选择明确的执行器和手机。',
+    'device_not_found': '所选手机未连接到指定执行器。',
+    'device_not_ready': '所选手机尚未就绪，请检查连接、解锁和控制服务。',
+    'platform_mismatch': '手机平台与所选执行平台不一致。',
+    'occupancy_unavailable': '暂时无法确认手机占用状态，已暂停派发。',
+    'device_busy': '手机正在执行任务或被远程控制，请等待空闲。',
+    'device_queued': '手机已被其他执行批次占用，正在排队。',
+    'case_revision_changed': '用例已更新，请刷新用例列表后重新选择。',
+    'case_unavailable': '所选用例不可用或不属于当前应用。',
+    'source_invalid': '用例 YAML 无法解析，请检查用例内容。',
+    'unsupported_steps': '所选手机或执行器不支持部分用例步骤。',
+    'structure_unsupported': '该用例结构暂不支持此执行方式。',
+    'interface_unsupported': '该用例包含当前执行方式不支持的设备连接配置。',
+    'execution_connection_lost': '执行连接已中断，等待确认旧执行已停止；手机仍被保留。',
+    'execution_ack_lost': '执行进度长时间未回传，等待确认旧执行已停止；手机仍被保留。',
+    'stop_unconfirmed': '尚未确认执行进程已停止，手机仍被保留。',
+}
+
+
+def blocker_message(code):
+    return BLOCKER_MESSAGES.get(code, '执行条件尚未满足，请检查用例和设备状态。')

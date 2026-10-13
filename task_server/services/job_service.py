@@ -837,6 +837,9 @@ def recover_timed_out_jobs() -> None:
     with JOB_LOCK:
         jobs = _read_jobs_raw(use_cache=False)
         for job in jobs:
+            if job.get("ui_batch_id"):
+                # UI dispatcher retains uncertain executions and their durable leases.
+                continue
             if job.get("status") != JOB_STATUS_RUNNING:
                 continue
             started = _parse_time(job.get("started_at")) or _parse_time(job.get("created_at"))

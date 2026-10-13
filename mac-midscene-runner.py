@@ -71,6 +71,9 @@ RUNNER_CAPABILITIES.update(ui_execution_contract="ui-v1", ui_platforms=[RUNNER_P
 
 
 
+RUNNER_CAPABILITIES["ui_attempt_events"] = 1
+
+
 def ios_job_matches(job, runner_id, device_id):
     return bool(device_id and job.get("device_id") == device_id and job.get("target_runner_id") == runner_id)
 
@@ -405,7 +408,34 @@ def http_json_retry(method, path, payload=None, timeout=60, attempts=3, label="H
     raise RuntimeError(f"{label} 失败：{last_error}") from last_error
 
 
+# UI attempt credentials stay local to the claimed execution and its retry payload.
+_UI_DELIVERIES = {}
+
+
+def initialize_ui_delivery(job):
+    if not job.get("ui_batch_id"):
+        return
+    if (not job.get("device_id") or job.get("target_runner_id") != RUNNER_ID
+            or not job.get("ui_claim_token") or job.get("ui_attempt_events") != 1):
+        raise ValueError("UI batch requires an exact Runner/device and claim credential")
+    _UI_DELIVERIES.setdefault(job["job_id"], {
+        "runner_id": RUNNER_ID, "device_id": job["device_id"],
+        "ui_claim_token": job["ui_claim_token"], "sequence": 0, "stopped": True})
+
+
+def ui_callback_payload(job_id, payload, result=False):
+    context = _UI_DELIVERIES.get(job_id)
+    if context and "ui_event_sequence" not in payload:
+        context["sequence"] += 1
+        payload.update({key: context[key] for key in ("runner_id", "device_id", "ui_claim_token")})
+        payload["ui_event_sequence"] = context["sequence"]
+        if result:
+            payload["execution_stopped"] = context["stopped"]
+    return payload
+
+
 def post_job_result(job_id, payload):
+    ui_callback_payload(job_id, payload, result=True)
     try:
         return http_json_retry("POST", f"/api/runner/jobs/{job_id}/result", payload, timeout=120, attempts=3, label="结果回传")
     except urllib.error.HTTPError as e:
@@ -423,11 +453,11 @@ def post_job_result(job_id, payload):
 
 
 def post_job_report_ready(job_id, report_url="", local_report_path="", report_upload_error=""):
-    return http_json_retry("POST", f"/api/runner/jobs/{job_id}/report-ready", {
+    return http_json_retry("POST", f"/api/runner/jobs/{job_id}/report-ready", ui_callback_payload(job_id, {
         "report_url": report_url,
         "local_report_path": local_report_path,
         "report_upload_error": report_upload_error,
-    }, timeout=60, attempts=3, label="报告回传")
+    }), timeout=60, attempts=3, label="报告回传")
 
 
 def upload_report_before_result(job_id, report_path, report_name):
@@ -482,6 +512,10 @@ def replay_pending_result_callbacks():
             if not isinstance(payload, dict) or not job_id:
                 path.unlink(missing_ok=True)
                 continue
+            if payload.get("ui_claim_token"):
+                _UI_DELIVERIES.setdefault(job_id, {
+                    **{k: payload[k] for k in ("runner_id", "device_id", "ui_claim_token")},
+                    "sequence": payload["ui_event_sequence"], "stopped": payload.get("execution_stopped", False)})
             post_job_result(job_id, payload)
             if payload.get("report_upload_pending"):
                 enqueue_report_upload(job_id, pending_report_path, pending_report_name)
@@ -528,6 +562,7 @@ def enqueue_report_upload(job_id, report_path, report_name):
 
 
 def post_job_progress(job_id, payload):
+    ui_callback_payload(job_id, payload)
     try:
         return http_json_retry("POST", f"/api/runner/jobs/{job_id}/progress", payload, timeout=15, attempts=2, label="进度回传")
     except Exception as e:
@@ -1786,13 +1821,13 @@ def stop_midscene_process(proc):
     if proc.poll() is not None:
         return
     try:
-        if RUNNER_PLATFORM == "ios":
+        if RUNNER_PLATFORM == "ios" or getattr(proc, "_ui_process_group", False) is True:
             os.killpg(proc.pid, signal.SIGTERM)
         else:
             proc.terminate()
         proc.wait(timeout=3)
     except subprocess.TimeoutExpired:
-        if RUNNER_PLATFORM == "ios":
+        if RUNNER_PLATFORM == "ios" or getattr(proc, "_ui_process_group", False) is True:
             os.killpg(proc.pid, signal.SIGKILL)
         else:
             proc.kill()
@@ -1917,12 +1952,14 @@ def execute_midscene(job_id, job_dir, yaml_path, task_names, device_id):
             "stdout_tail": "".join(stdout_lines)[-2000:],
             **({"execution_progress": step_progress.snapshot} if step_progress.snapshot else {})
         })
-        if RUNNER_PLATFORM == "ios" and acknowledgement and acknowledgement.get("ignored") == "terminal_job":
+        if (RUNNER_PLATFORM == "ios" or job_id in _UI_DELIVERIES) and acknowledgement and acknowledgement.get("ignored") == "terminal_job":
             cancelled = True
 
     try:
         midscene_bin = resolve_command(MIDSCENE_BIN, "Midscene")
         emit_progress(True, "Midscene 已启动")
+        if cancelled:
+            return {"status":"cancelled", "stdout":"", "stderr":"平台已取消执行", "returncode":-1, "duration":0}
         midscene_command = execution_command(midscene_bin, yaml_path, device_id)
         proc = subprocess.Popen(
             midscene_command,
@@ -1930,9 +1967,12 @@ def execute_midscene(job_id, job_dir, yaml_path, task_names, device_id):
             text=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
-            start_new_session=RUNNER_PLATFORM == "ios",
+            start_new_session=RUNNER_PLATFORM == "ios" or job_id in _UI_DELIVERIES,
             env=progress_observer_env(job_dir, device_id)
         )
+        if job_id in _UI_DELIVERIES:
+            proc._ui_process_group = True
+            _UI_DELIVERIES[job_id]["stopped"] = False
         line_queue = queue.Queue()
 
         def read_stdout():
@@ -2009,8 +2049,16 @@ def execute_midscene(job_id, job_dir, yaml_path, task_names, device_id):
             "duration": round(time.time() - started, 2)
         }
     finally:
-        if proc is not None and not cancelled and proc.poll() is None:
-            stop_midscene_process(proc)
+        try:
+            if proc is not None and proc.poll() is None:
+                stop_midscene_process(proc)
+            if job_id in _UI_DELIVERIES:
+                _UI_DELIVERIES[job_id]["stopped"] = proc is None or proc.poll() is not None
+        except Exception:
+            if job_id in _UI_DELIVERIES:
+                _UI_DELIVERIES[job_id]["stopped"] = False
+            else:
+                raise
 
 
 def execution_command(midscene_bin, yaml_path, device_id):
@@ -2046,6 +2094,7 @@ def reset_ios_foreground_app(port, bundle_id, allowed_bundle_id=None):
 
 
 def run_job(job):
+    initialize_ui_delivery(job)
     if RUNNER_PLATFORM != "ios":
         return run_standard_job(job)
     device_id = str(job.get("device_id") or "")
@@ -2102,7 +2151,7 @@ def run_standard_job(job):
         attempt_dir = job_dir / f"attempt-{index}-{safe_filename(device_id)}"
         attempt_dir.mkdir(parents=True, exist_ok=True)
         yaml_path = attempt_dir / yaml_name
-        yaml_content = original_yaml if RUNNER_PLATFORM == "ios" else inject_external_page_escape(midscene_cli_yaml_text(original_yaml))
+        yaml_content = original_yaml if RUNNER_PLATFORM == "ios" or job.get("ui_batch_id") else inject_external_page_escape(midscene_cli_yaml_text(original_yaml))
         yaml_path.write_text(yaml_content, encoding="utf-8")
         task_names = [job.get("target_task_name")] if job.get("target_task_name") else parse_yaml_task_names(yaml_content)
         app_package = parse_app_package(yaml_content)
@@ -2330,7 +2379,7 @@ def _run_main():
                         heartbeat(devices)
                     except Exception:
                         pass
-            if RUNNER_PLATFORM == "ios":
+            if RUNNER_PLATFORM == "ios" or job.get("ui_batch_id"):
                 threading.Thread(target=keep_alive, daemon=True).start()
             try:
                 with _IOS_RECOVERY_GUARD:
