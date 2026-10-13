@@ -171,13 +171,13 @@ def list_ui_batches(actor, filters=None, cursor="", limit=20):
         raise BatchValidationError("limit_invalid")
     if not isinstance(cursor, str):
         raise BatchValidationError("cursor_invalid")
-    # Non-admin users are owner- and current-app-scoped in the indexed query.
+    # Ownership is admin-sensitive; app scope applies to every actor.
     allowed = (profile.get("scope") or {}).get("ui_apps")
-    app_ids = None if profile.get("is_superuser") or allowed == "*" else tuple(allowed or [])
+    app_ids = None if allowed == "*" else tuple(allowed or [])
     return _store().list_batches(None if profile.get("is_superuser") else profile["user_id"],
                                  app_id, cursor, limit, app_ids)
 
 
-def append_case_attempt(batch_id, case_revision, target, compiled_case):
-    """Internal T4 retry hook; target and compilation must match the frozen attempt."""
-    return _store().append_case_attempt(batch_id, case_revision, target, compiled_case)
+def append_case_attempt(batch_id, case_id, case_revision, target, compiled_case):
+    """Internal T4 retry hook; case, target, and compilation must match a frozen attempt."""
+    return _store().append_case_attempt(batch_id, case_id, case_revision, target, compiled_case)

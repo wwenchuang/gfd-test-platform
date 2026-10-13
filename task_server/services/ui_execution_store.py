@@ -257,16 +257,16 @@ class UiExecutionStore:
         finally:
             db.close()
 
-    def append_case_attempt(self, batch_id, case_revision, target, compiled_case):
+    def append_case_attempt(self, batch_id, case_id, case_revision, target, compiled_case):
         """Append a later attempt for an already frozen case/target pair."""
         db = self._connect()
         try:
             db.execute("BEGIN IMMEDIATE")
-            row = db.execute("""SELECT a.*, s.snapshot_id FROM case_attempts a JOIN snapshots s
-                                ON s.snapshot_id=a.snapshot_id WHERE a.ui_batch_id=? AND a.case_revision=?
+            row = db.execute("""SELECT a.* FROM case_attempts a
+                                WHERE a.ui_batch_id=? AND a.case_id=? AND a.case_revision=?
                                 AND a.runner_id=? AND a.device_id=? AND a.platform=?
                                 ORDER BY a.attempt_no DESC LIMIT 1""",
-                             (batch_id, case_revision, target["runner_id"], target["device_id"], target["platform"])).fetchone()
+                             (batch_id, case_id, case_revision, target["runner_id"], target["device_id"], target["platform"])).fetchone()
             if not row or _decoded(row["compiled_case_json"]) != compiled_case:
                 raise BatchConflict("frozen_attempt_mismatch")
             attempt_no = row["attempt_no"] + 1

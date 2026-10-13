@@ -31,7 +31,7 @@ def require_ui_actor(actor=None, permission="ui.execute", app_id=None):
         raise AccessDenied("account_unavailable")
     if permission not in (profile.get("permissions") or []):
         raise AccessDenied("execution_forbidden" if permission == "ui.execute" else "permission_forbidden")
-    if app_id and not profile.get("is_superuser"):
+    if app_id:
         allowed = (profile.get("scope") or {}).get("ui_apps")
         if allowed != "*" and app_id not in (allowed or []):
             raise AccessDenied("app_forbidden")

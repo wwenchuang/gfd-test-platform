@@ -99,6 +99,7 @@ def test_owner_or_superuser_can_read_only_with_app_scope(environment, monkeypatc
         assert list_ui_batches(ACTORS["a"], {}, "", 20)["items"] == []
     with actor_context(ACTORS["admin"]):
         assert get_ui_batch(ACTORS["admin"], batch["ui_batch_id"])["ui_batch_id"] == batch["ui_batch_id"]
+        assert list_ui_batches(ACTORS["admin"], {}, "", 20)["items"][0]["ui_batch_id"] == batch["ui_batch_id"]
     from task_server import identity
     original = identity.get_access_profile
     monkeypatch.setattr(identity, "get_access_profile", lambda name: {
@@ -108,6 +109,19 @@ def test_owner_or_superuser_can_read_only_with_app_scope(environment, monkeypatc
         with pytest.raises(PermissionError):
             get_ui_batch(ACTORS["b"], batch["ui_batch_id"])
         assert list_ui_batches(ACTORS["b"], {}, "", 20)["items"] == []
+    monkeypatch.setattr(identity, "get_access_profile", lambda name: {
+        **original(name), "scope": {"ui_apps": []}
+    } if name == "admin" else original(name))
+    with actor_context(ACTORS["admin"]):
+        with pytest.raises(PermissionError):
+            get_ui_batch(ACTORS["admin"], batch["ui_batch_id"])
+        assert list_ui_batches(ACTORS["admin"], {}, "", 20)["items"] == []
+    monkeypatch.setattr(identity, "get_access_profile", lambda name: {
+        **original(name), "scope": {"ui_apps": "*"}
+    } if name == "a" else original(name))
+    with actor_context(ACTORS["a"]):
+        assert get_ui_batch(ACTORS["a"], batch["ui_batch_id"]) is None  # wildcard does not grant ownership
+        assert list_ui_batches(ACTORS["a"], {"app_id": APP}, "", 20)["items"] == []
 
 
 def test_same_name_two_users_do_not_share_batch_or_dispatch_key(environment):

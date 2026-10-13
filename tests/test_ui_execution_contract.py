@@ -100,6 +100,20 @@ def test_public_actor_guard_uses_fresh_profile_and_app_scope(registry):
         assert denied.value.code == 'actor_untrusted'
 
 
+def test_superuser_still_requires_ui_app_scope_and_wildcard_is_valid(registry):
+    from task_server.services.ui_execution_contract import AccessDenied, require_ui_actor
+
+    profile = registry[1]
+    profile['is_superuser'] = True
+    profile['scope']['ui_apps'] = []
+    with actor_context(ACTOR):
+        with pytest.raises(AccessDenied) as denied:
+            require_ui_actor(app_id='com.kfb.model')
+        assert denied.value.code == 'app_forbidden'
+        profile['scope']['ui_apps'] = '*'
+        assert require_ui_actor(app_id='com.kfb.model')['user_id'] == 'u1'
+
+
 def test_target_requires_all_explicit_fields(registry):
     for key in TARGET:
         target = {k: v for k, v in TARGET.items() if k != key}

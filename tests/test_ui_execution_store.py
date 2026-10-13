@@ -110,13 +110,39 @@ def test_later_attempt_reuses_frozen_content_and_gets_safe_dispatch_key(tmp_path
     batch = store.create_batch(prepared())
     original = batch["case_attempts"][0]
     target = {"runner_id": "r1", "device_id": "d1", "platform": "android"}
-    second = store.append_case_attempt(batch["ui_batch_id"], original["case_revision"], target, original["compiled_case"])
-    third = store.append_case_attempt(batch["ui_batch_id"], original["case_revision"], target, original["compiled_case"])
+    second = store.append_case_attempt(batch["ui_batch_id"], original["case_id"], original["case_revision"], target, original["compiled_case"])
+    third = store.append_case_attempt(batch["ui_batch_id"], original["case_id"], original["case_revision"], target, original["compiled_case"])
     assert second["attempt_no"] == 2 and third["attempt_no"] == 3
     assert second["dispatch_key"] == original["dispatch_key"].rsplit("_", 1)[0] + "_2"
     assert third["dispatch_key"] == original["dispatch_key"].rsplit("_", 1)[0] + "_3"
     with pytest.raises(BatchConflict):
-        store.append_case_attempt(batch["ui_batch_id"], original["case_revision"], target, {"yaml_content": "edited"})
+        store.append_case_attempt(batch["ui_batch_id"], original["case_id"], original["case_revision"], target, {"yaml_content": "edited"})
+
+
+def test_retry_uses_case_id_when_two_cases_have_identical_source(tmp_path):
+    from task_server.services.ui_execution_store import BatchConflict, UiExecutionStore
+
+    store = UiExecutionStore(tmp_path / "ui.sqlite3")
+    item = prepared()
+    other_snapshot = {**item["snapshots"][0], "case_id": "case-2", "metadata": {"task_name": "相同内容的另一用例"}}
+    other_attempt = {**item["attempts"][0], "case_id": "case-2"}
+    item["snapshots"].append(other_snapshot)
+    item["attempts"].append(other_attempt)
+    batch = store.create_batch(item)
+    by_case = {row["case_id"]: row for row in batch["case_attempts"]}
+    assert by_case["case-1"]["case_revision"] == by_case["case-2"]["case_revision"]
+    target = {"runner_id": "r1", "device_id": "d1", "platform": "android"}
+    second = store.append_case_attempt(batch["ui_batch_id"], "case-2", by_case["case-2"]["case_revision"], target,
+                                       by_case["case-2"]["compiled_case"])
+    first = store.append_case_attempt(batch["ui_batch_id"], "case-1", by_case["case-1"]["case_revision"], target,
+                                      by_case["case-1"]["compiled_case"])
+    assert second["case_id"] == "case-2" and second["snapshot_id"] == by_case["case-2"]["snapshot_id"]
+    assert first["case_id"] == "case-1" and first["snapshot_id"] == by_case["case-1"]["snapshot_id"]
+    assert second["dispatch_key"].rsplit("_", 1)[0] == by_case["case-2"]["dispatch_key"].rsplit("_", 1)[0]
+    assert first["dispatch_key"].rsplit("_", 1)[0] == by_case["case-1"]["dispatch_key"].rsplit("_", 1)[0]
+    with pytest.raises(BatchConflict):
+        store.append_case_attempt(batch["ui_batch_id"], "case-3", by_case["case-1"]["case_revision"], target,
+                                  by_case["case-1"]["compiled_case"])
 
 
 def test_duplicate_attempt_rolls_back_batch_and_all_snapshots(tmp_path):
