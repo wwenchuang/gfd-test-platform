@@ -2145,9 +2145,12 @@ def _get_runners(handler, qs):
             continue
         for key in ("sonic_status", "sonic_user"):
             device[key] = sonic.get(key)
-        for key in ("battery_level", "battery_temperature_c"):
-            if sonic.get(key) is not None:
-                device[key] = sonic[key]
+        # Sonic uses zero defaults when iOS telemetry is unavailable. Keep the
+        # USB Runner's measured battery and omit unsupported temperature data.
+        if str(device.get("platform") or "").lower() != "ios":
+            for key in ("battery_level", "battery_temperature_c"):
+                if sonic.get(key) is not None:
+                    device[key] = sonic[key]
         if platform_busy and not device.get("active_job_operator") and sonic.get("sonic_user"):
             device["active_job_operator"] = sonic["sonic_user"]
             device["usage_label"] = f"{sonic['sonic_user']} · 平台任务执行中"
