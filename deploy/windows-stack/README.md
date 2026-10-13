@@ -47,4 +47,4 @@
 
 本地逻辑和语法检查不等于 Windows 真机验收。首次运行后保留中文结果窗口，核对 FRP 日志，再在 Safari 验证手机画面。
 
-新 UI 批次还要求 `ui_process_stop_proof: 1`：Windows Runner 必须使用私有 Job Object 包含并证明整棵执行进程树停止。服务器和 Windows 单文件 Runner 需同步更新，Mac 副本同步能力标记；已有服务账户和环境继续使用。更新/重启命令、失败保持租约不确定的规则及上线前真实 Windows 验收范围见 [Windows UI 进程停止证明](../../docs/windows-ui-process-stop-proof.md)。本地检查和能力心跳不代表 Windows 实测验收完成。
+新 UI 批次还要求 `ui_process_stop_proof: 1`：Windows Runner 必须使用私有 Job Object 包含并证明整棵执行进程树停止。服务器和 Windows 单文件 Runner 需同步更新，Mac 副本同步完整已审查文件（含能力标记和 EPERM 停止复核修复）；已有服务账户和环境继续使用。更新/重启命令、失败保持租约不确定的规则及上线前真实 Windows 验收范围见 [Windows UI 进程停止证明](../../docs/windows-ui-process-stop-proof.md)。本地检查和能力心跳不代表 Windows 实测验收完成。
