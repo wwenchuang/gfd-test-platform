@@ -73,6 +73,7 @@ RUNNER_CAPABILITIES.update(ui_execution_contract="ui-v1", ui_platforms=[RUNNER_P
 
 RUNNER_CAPABILITIES["ui_attempt_events"] = 1
 RUNNER_CAPABILITIES["ui_private_reports"] = 1
+RUNNER_CAPABILITIES["ui_process_stop_proof"] = 1
 
 
 def ios_job_matches(job, runner_id, device_id):
@@ -1836,13 +1837,18 @@ def write_text(path, text):
 def _wait_for_owned_group_exit(proc, timeout):
     deadline = time.monotonic() + timeout
     while True:
-        proc.poll()  # Reap the direct child, but do not confuse its exit with group exit.
+        parent_exited = proc.poll() is not None  # Reap the child independently of the group probe.
+        group_absent = False
         try:
             os.killpg(proc.pid, 0)
         except ProcessLookupError:
-            return True
+            group_absent = True
         except PermissionError:
-            return False
+            # macOS can briefly return EPERM while a killed group is being reaped.
+            # It is not proof either way; boundedly recheck both conditions.
+            pass
+        if group_absent and parent_exited:
+            return True
         if time.monotonic() >= deadline:
             return False
         time.sleep(0.05)
@@ -1859,11 +1865,9 @@ def stop_midscene_process(proc):
             try:
                 os.killpg(proc.pid, sig)
             except ProcessLookupError:
-                proc.poll()
-                proc._ui_group_stop_confirmed = True
-                return True
+                pass
             except PermissionError:
-                return False
+                pass  # No expanded kill scope; the bounded proof below still has to succeed.
             if _wait_for_owned_group_exit(proc, 3):
                 proc._ui_group_stop_confirmed = True
                 return True

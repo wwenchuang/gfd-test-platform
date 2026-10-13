@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import base64
 import concurrent.futures
+import ctypes
 import json
 import http.cookiejar
 import os
@@ -9,6 +10,7 @@ import re
 import socket
 import shutil
 import subprocess
+import sys
 import threading
 import time
 import urllib.error
@@ -59,6 +61,7 @@ RUNNER_CAPABILITIES = {
 
 RUNNER_CAPABILITIES["ui_attempt_events"] = 1
 RUNNER_CAPABILITIES["ui_private_reports"] = 1
+RUNNER_CAPABILITIES["ui_process_stop_proof"] = 1
 
 
 def _semantic_version(value):
@@ -1657,16 +1660,166 @@ def progress_observer_env(job_dir, device_id):
     return env
 
 
+# Fixed-width Win32 fields also make the ABI testable on a non-Windows host.
+class JOB_BASIC_LIMIT(ctypes.Structure):
+    _fields_ = [("PerProcessUserTimeLimit", ctypes.c_int64), ("PerJobUserTimeLimit", ctypes.c_int64),
+                ("LimitFlags", ctypes.c_uint32), ("MinimumWorkingSetSize", ctypes.c_size_t),
+                ("MaximumWorkingSetSize", ctypes.c_size_t), ("ActiveProcessLimit", ctypes.c_uint32),
+                ("Affinity", ctypes.c_size_t), ("PriorityClass", ctypes.c_uint32),
+                ("SchedulingClass", ctypes.c_uint32)]
+
+
+class JOB_IO_COUNTERS(ctypes.Structure):
+    _fields_ = [(name, ctypes.c_uint64) for name in ("ReadOperationCount", "WriteOperationCount",
+                "OtherOperationCount", "ReadTransferCount", "WriteTransferCount", "OtherTransferCount")]
+
+
+class JOB_EXTENDED_LIMIT(ctypes.Structure):
+    _fields_ = [("BasicLimitInformation", JOB_BASIC_LIMIT), ("IoInfo", JOB_IO_COUNTERS),
+                ("ProcessMemoryLimit", ctypes.c_size_t), ("JobMemoryLimit", ctypes.c_size_t),
+                ("PeakProcessMemoryUsed", ctypes.c_size_t), ("PeakJobMemoryUsed", ctypes.c_size_t)]
+
+
+class JOB_BASIC_ACCOUNTING(ctypes.Structure):
+    _fields_ = [(name, ctypes.c_int64) for name in ("TotalUserTime", "TotalKernelTime",
+                "ThisPeriodTotalUserTime", "ThisPeriodTotalKernelTime")] + [
+                (name, ctypes.c_uint32) for name in ("TotalPageFaultCount", "TotalProcesses",
+                "ActiveProcesses", "TotalTerminatedProcesses")]
+
+
+class WindowsUiJob:
+    """Private, non-inheritable job handle; no PID lookup or name-based kill."""
+    def __init__(self, kernel32=None):
+        self.api = kernel32 if kernel32 is not None else ctypes.WinDLL("kernel32", use_last_error=True)
+        signatures = {
+            "CreateJobObjectW": ([ctypes.c_void_p, ctypes.c_wchar_p], ctypes.c_void_p),
+            "SetInformationJobObject": ([ctypes.c_void_p, ctypes.c_int, ctypes.c_void_p, ctypes.c_uint32], ctypes.c_int),
+            "AssignProcessToJobObject": ([ctypes.c_void_p, ctypes.c_void_p], ctypes.c_int),
+            "QueryInformationJobObject": ([ctypes.c_void_p, ctypes.c_int, ctypes.c_void_p, ctypes.c_uint32, ctypes.c_void_p], ctypes.c_int),
+            "TerminateJobObject": ([ctypes.c_void_p, ctypes.c_uint32], ctypes.c_int),
+            "CloseHandle": ([ctypes.c_void_p], ctypes.c_int),
+        }
+        for name, (args, result) in signatures.items():
+            function = getattr(self.api, name)
+            function.argtypes, function.restype = args, result
+        self.handle = self.api.CreateJobObjectW(None, None)  # NULL security => not inheritable
+        self.stop_confirmed = False
+        self.stop_attempted = False
+        self._check(self.handle, "CreateJobObjectW")
+        limits = JOB_EXTENDED_LIMIT()
+        limits.BasicLimitInformation.LimitFlags = 0x2000  # KILL_ON_JOB_CLOSE; no BREAKAWAY
+        try:
+            self._check(self.api.SetInformationJobObject(self.handle, 9, ctypes.byref(limits),
+                                                       ctypes.sizeof(limits)), "SetInformationJobObject")
+        except Exception:
+            self.close()
+            raise
+
+    @staticmethod
+    def _check(result, operation):
+        if not result:
+            code = ctypes.get_last_error() if hasattr(ctypes, "get_last_error") else 0
+            raise OSError(f"{operation} failed (Win32 {code})")
+
+    def assign(self, proc):
+        # Popen's retained process handle identifies the guard, even after PID reuse.
+        self._check(self.api.AssignProcessToJobObject(self.handle, int(proc._handle)), "AssignProcessToJobObject")
+
+    def active_processes(self):
+        accounting = JOB_BASIC_ACCOUNTING()
+        self._check(self.api.QueryInformationJobObject(self.handle, 1, ctypes.byref(accounting),
+                                                      ctypes.sizeof(accounting), None), "QueryInformationJobObject")
+        return accounting.ActiveProcesses
+
+    def close(self):
+        if self.handle is not None:
+            self._check(self.api.CloseHandle(self.handle), "CloseHandle")
+            self.handle = None
+
+    def stop(self, proc, timeout=10):
+        if self.stop_attempted:
+            return self.stop_confirmed
+        self.stop_attempted = True
+        confirmed = False
+        try:
+            # Parent exit is not sufficient: query the job independently.
+            if self.active_processes():
+                self._check(self.api.TerminateJobObject(self.handle, 1), "TerminateJobObject")
+            deadline = time.monotonic() + timeout
+            while self.active_processes():
+                proc.poll()
+                if time.monotonic() >= deadline:
+                    raise TimeoutError("UI owned processes did not stop within deadline")
+                time.sleep(0.05)
+            proc.wait(timeout=max(0.01, deadline - time.monotonic()))
+            confirmed = True
+        except (OSError, subprocess.TimeoutExpired):
+            confirmed = False
+        finally:
+            try:
+                self.close()  # OS fallback on error is not a confirmed empty-job proof.
+            except OSError:
+                confirmed = False
+        self.stop_confirmed = confirmed
+        return confirmed
+
+
+# Inline guard keeps the Runner a one-file install. Isolated Python startup avoids
+# sitecustomize hooks. CLI argv remains a list; no shell or command concatenation.
+UI_PROCESS_GUARD = r'''
+import json, subprocess, sys
+if sys.stdin.readline() != "start\n":
+    sys.exit(1)
+try:
+    child = subprocess.Popen(json.loads(sys.argv[1]), stdin=subprocess.DEVNULL, close_fds=True)
+    code = child.wait()
+    if sys.platform == "win32":
+        import ctypes
+        api = ctypes.WinDLL("kernel32", use_last_error=True)
+        api.ExitProcess.argtypes = [ctypes.c_uint32]
+        api.ExitProcess.restype = None
+        api.ExitProcess(code)  # Preserve unsigned DWORD statuses, including 0xC0000005.
+    sys.exit(code)
+except Exception as error:
+    print(str(error), file=sys.stderr, flush=True)
+    sys.exit(1)
+'''
+
+
+def start_ui_process(command, **kwargs):
+    boundary = WindowsUiJob()  # Fail closed; never start CLI without containment.
+    proc = None
+    assigned = False
+    try:
+        proc = subprocess.Popen([sys.executable, "-I", "-S", "-c", UI_PROCESS_GUARD, json.dumps(command)],
+                                stdin=subprocess.PIPE, close_fds=True, **kwargs)
+        boundary.assign(proc)
+        assigned = True
+        proc._ui_job = boundary
+        proc.stdin.write("start\n")
+        proc.stdin.flush()
+        proc.stdin.close()
+        return proc
+    except Exception:
+        try:
+            if proc is not None:
+                # Before assignment the guard cannot have children; after it the
+                # job owns all descendants, even if a gate write partially worked.
+                proc.kill()
+                proc.wait(timeout=10)
+        finally:
+            if assigned:
+                boundary.stop(proc)
+            else:
+                boundary.close()
+            if proc is not None and proc.stdin is not None:
+                proc.stdin.close()
+        raise
+
+
 def stop_ui_process(proc):
-    if proc.poll() is not None:
-        return
-    # taskkill /T owns only this Popen process tree, never other device sessions.
-    if os.name == "nt":
-        subprocess.run(["taskkill", "/PID", str(proc.pid), "/T", "/F"], check=True,
-                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10)
-    else:
-        proc.kill()
-    proc.wait(timeout=10)
+    boundary = getattr(proc, "_ui_job", None)
+    return boundary.stop(proc) if boundary is not None else False
 
 
 def execute_midscene(job_id, job_dir, yaml_path, task_names, device_id):
@@ -1680,7 +1833,9 @@ def execute_midscene(job_id, job_dir, yaml_path, task_names, device_id):
     last_progress_at = 0
     step_progress = RunnerStepProgress()
     cancelled = False
+    timed_out = False
     proc = None
+    result = None
 
     def emit_progress(force=False, message="执行中"):
         nonlocal last_progress_at, cancelled
@@ -1713,7 +1868,10 @@ def execute_midscene(job_id, job_dir, yaml_path, task_names, device_id):
         midscene_command = [midscene_bin, str(yaml_path)]
         if device_id:
             midscene_command.extend(["--android.deviceId", device_id])
-        proc = subprocess.Popen(
+        if job_id in _UI_DELIVERIES:
+            _UI_DELIVERIES[job_id]["stopped"] = False
+        launcher = start_ui_process if job_id in _UI_DELIVERIES else subprocess.Popen
+        proc = launcher(
             midscene_command,
             cwd=str(job_dir),
             text=True,
@@ -1723,8 +1881,6 @@ def execute_midscene(job_id, job_dir, yaml_path, task_names, device_id):
             stderr=subprocess.STDOUT,
             env=progress_observer_env(job_dir, device_id)
         )
-        if job_id in _UI_DELIVERIES:
-            _UI_DELIVERIES[job_id]["stopped"] = False
         line_queue = queue.Queue()
 
         def read_stdout():
@@ -1740,8 +1896,9 @@ def execute_midscene(job_id, job_dir, yaml_path, task_names, device_id):
         reader.start()
         while True:
             if cancelled:
-                stop_ui_process(proc)
-                stderr = "平台任务已结束，已停止本机执行进程"
+                confirmed = stop_ui_process(proc) is True
+                stderr = ("平台任务已结束，已停止本机执行进程" if confirmed
+                          else "平台任务已结束，本机执行进程停止尚未确认")
                 break
             line = ""
             try:
@@ -1774,6 +1931,7 @@ def execute_midscene(job_id, job_dir, yaml_path, task_names, device_id):
                         stdout_lines.append(rest_line)
                 break
             if time.time() - started > TIMEOUT_SECONDS:
+                timed_out = job_id in _UI_DELIVERIES
                 stop_ui_process(proc) if job_id in _UI_DELIVERIES else proc.kill()
                 stderr = f"\nTimeout after {TIMEOUT_SECONDS}s"
                 emit_progress(True, stderr.strip())
@@ -1784,30 +1942,35 @@ def execute_midscene(job_id, job_dir, yaml_path, task_names, device_id):
         if returncode == 0:
             completed = total
         emit_progress(True, "执行完成" if returncode == 0 else "执行失败")
-        return {
-            "status": "cancelled" if cancelled else ("passed" if returncode == 0 else "failed"),
+        result = {
+            "status": "cancelled" if cancelled else ("passed" if returncode == 0 and not timed_out else "failed"),
             "stdout": stdout,
             "stderr": stderr,
             "returncode": returncode,
             "duration": round(time.time() - started, 2)
         }
+        return result
     except Exception as e:
-        return {
+        result = {
             "status": "failed",
             "stdout": "".join(stdout_lines),
             "stderr": str(e),
             "returncode": -1,
             "duration": round(time.time() - started, 2)
         }
+        return result
 
     finally:
         if job_id in _UI_DELIVERIES:
             try:
-                if proc is not None and proc.poll() is None:
-                    stop_ui_process(proc)
-                _UI_DELIVERIES[job_id]["stopped"] = proc is None or proc.poll() is not None
+                if proc is not None:
+                    _UI_DELIVERIES[job_id]["stopped"] = stop_ui_process(proc) is True
             except Exception:
                 _UI_DELIVERIES[job_id]["stopped"] = False
+            if not _UI_DELIVERIES[job_id]["stopped"] and result is not None:
+                if result["status"] == "passed":
+                    result["status"] = "failed"
+                result["stderr"] += "\nUI 进程树停止未确认，设备执行租约保持不确定"
 
 
 def run_job(job):

@@ -56,7 +56,8 @@ def _target_check(batch, attempt, occupancy=None, fresh=False):
         return resolved['block_code']
     runner = runner_service.list_runners().get(attempt['runner_id'], {})
     if ((runner.get('capabilities') or {}).get('ui_attempt_events') != 1 or
-            (runner.get('capabilities') or {}).get('ui_private_reports') != 1):
+            (runner.get('capabilities') or {}).get('ui_private_reports') != 1 or
+            (runner.get('capabilities') or {}).get('ui_process_stop_proof') != 1):
         return 'runner_upgrade_required'
     frozen = attempt['target_resolution']
     if resolved['target_package'] != frozen['target_package'] or resolved['platform_mappings'] != frozen['platform_mappings']:

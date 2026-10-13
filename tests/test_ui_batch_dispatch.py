@@ -16,6 +16,7 @@ def dispatch_env(environment, tmp_path, monkeypatch):
     runners = copy.deepcopy(runner_service.list_runners())
     runners['mac']['capabilities']['ui_attempt_events'] = 1
     runners['mac']['capabilities']['ui_private_reports'] = 1
+    runners['mac']['capabilities']['ui_process_stop_proof'] = 1
     runners['mac']['devices'][0]['installed_apps'] = [{'package': 'com.kfb.3d', 'installed': True, 'version_name': '1', 'version_code': '2'}]
     runners['mac']['devices'].append({**runners['mac']['devices'][0], 'device_id': 'phone2'})
     monkeypatch.setattr(runner_service, 'list_runners', lambda: runners)
@@ -49,6 +50,17 @@ def test_dispatch_freezes_yaml_and_stable_step_ids(dispatch_env, monkeypatch):
     assert dispatch.claim_ui_job(job) is None  # no second delivery, even same Runner
 
 
+def test_claim_rechecks_stop_proof_after_job_was_queued(dispatch_env):
+    from task_server.services import ui_batch_dispatch as dispatch, job_service
+    batch = create()
+    dispatch.dispatch_ui_batch(batch['ui_batch_id'])
+    job = job_service.get_job(batch['case_attempts'][0]['dispatch_key'])
+    dispatch_env[0]['mac']['capabilities'].pop('ui_process_stop_proof')
+    assert dispatch.claim_ui_job(job) is None
+    from task_server.services.ui_execution_store import UiExecutionStore
+    assert UiExecutionStore().attempt_for_job(job['job_id'])['block_code'] == 'runner_upgrade_required'
+
+
 def test_same_phone_serializes_but_different_phone_parallel(dispatch_env):
     from task_server.services import ui_batch_dispatch as dispatch, job_service
     a, b = create(), create('b')
@@ -62,7 +74,7 @@ def test_same_phone_serializes_but_different_phone_parallel(dispatch_env):
 
 @pytest.mark.parametrize('mutation,code', [
     ('sonic_missing','occupancy_unavailable'),('remote_control','device_busy'),
-    ('offline','runner_offline'),('old','runner_upgrade_required'),('version','app_version_changed'),
+    ('offline','runner_offline'),('old','runner_upgrade_required'),('unsafe_stop','runner_upgrade_required'),('version','app_version_changed'),
     ('revoked','app_forbidden')])
 def test_dispatch_rechecks_current_evidence(dispatch_env, monkeypatch, mutation, code):
     from task_server.services import ui_batch_dispatch as dispatch, job_service
@@ -73,6 +85,7 @@ def test_dispatch_rechecks_current_evidence(dispatch_env, monkeypatch, mutation,
     if mutation == 'remote_control': sonic['iphone']['usage_status'] = 'debugging'
     if mutation == 'offline': runners['mac']['online'] = False
     if mutation == 'old': runners['mac']['capabilities'].pop('ui_attempt_events')
+    if mutation == 'unsafe_stop': runners['mac']['capabilities'].pop('ui_process_stop_proof')
     if mutation == 'version': runners['mac']['devices'][0]['installed_apps'][0]['version_code'] = '3'
     if mutation == 'revoked':
         original = identity.get_access_profile

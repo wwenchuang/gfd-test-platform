@@ -65,8 +65,24 @@ def test_report_ready_carries_claim_sequence(runner,monkeypatch):
     assert calls[0]['ui_event_sequence'] == 1
 
 
+def test_windows_parent_exit_still_requires_owned_descendant_stop(monkeypatch):
+    from unittest.mock import Mock
+    path = Path(__file__).parents[1] / 'windows-midscene-runner.py'
+    spec = importlib.util.spec_from_file_location('windows_stop_regression', path)
+    windows = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(windows)
+    proc = Mock(returncode=0)
+    proc.poll.return_value = 0
+    proc._ui_job.stop.return_value = True
+    assert windows.stop_ui_process(proc) is True
+    proc._ui_job.stop.assert_called_once_with(proc)
+
+
 def test_running_cli_is_actually_stopped_after_cancel(runner,monkeypatch,tmp_path):
     import sys
+    if hasattr(runner, 'WindowsUiJob') and runner.os.name != 'nt':
+        from test_windows_ui_process_boundary import install_local_job_emulation
+        install_local_job_emulation(runner, monkeypatch)
     runner.initialize_ui_delivery(job(runner))
     script = tmp_path/'fake_cli.py'
     script.write_text('import time\nprint("ready",flush=True)\ntime.sleep(30)\n')
@@ -99,7 +115,7 @@ def test_mac_ui_android_stop_uses_owned_process_group(monkeypatch):
     spec.loader.exec_module(mac)
     monkeypatch.setattr(mac,'RUNNER_PLATFORM','android')
     proc = Mock(pid=99999)
-    proc.poll.return_value = None
+    proc.poll.return_value = -15
     proc._ui_process_group = True
     sent = []
     def killpg(pid,sig):
@@ -108,6 +124,41 @@ def test_mac_ui_android_stop_uses_owned_process_group(monkeypatch):
     monkeypatch.setattr(mac.os,'killpg',killpg)
     assert mac.stop_midscene_process(proc) is True
     assert sent == [(99999,signal.SIGTERM)]
+
+
+@pytest.mark.parametrize('scenario,expected', [('transient_permission',True),('persistent_permission',False),
+                                               ('unreaped_parent',False)])
+def test_mac_stop_requires_group_absence_and_reaped_parent(monkeypatch, scenario, expected):
+    import signal
+    from unittest.mock import Mock
+    path = Path(__file__).parents[1] / 'mac-midscene-runner.py'
+    spec = importlib.util.spec_from_file_location('mac_stop_transition', path)
+    mac = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mac)
+    monkeypatch.setattr(mac,'RUNNER_PLATFORM','android')
+    proc = Mock(pid=99999)
+    proc._ui_process_group = True
+    proc._ui_group_stop_confirmed = False
+    proc.poll.side_effect = [None,-15] if scenario == 'transient_permission' else None
+    proc.poll.return_value = None if scenario == 'unreaped_parent' else -15
+    probes, sent = [], []
+    def killpg(pid,sig):
+        assert pid == proc.pid
+        if sig:
+            sent.append(sig)
+            if scenario == 'unreaped_parent': raise ProcessLookupError()
+            return
+        probes.append(sig)
+        if scenario == 'persistent_permission' or (scenario == 'transient_permission' and len(probes) == 1):
+            raise PermissionError()
+        raise ProcessLookupError()
+    ticks = iter(range(100))
+    monkeypatch.setattr(mac.time,'monotonic',lambda:next(ticks))
+    monkeypatch.setattr(mac.time,'sleep',lambda *_:None)
+    monkeypatch.setattr(mac.os,'killpg',killpg)
+    assert mac.stop_midscene_process(proc) is expected
+    assert proc._ui_group_stop_confirmed is expected
+    assert sent == ([signal.SIGTERM] if expected else [signal.SIGTERM,signal.SIGKILL])
 
 
 @pytest.mark.parametrize('parent_exits_first', [False, True])
