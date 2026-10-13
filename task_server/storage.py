@@ -133,6 +133,7 @@ def clean_id(value, default="page"):
 
 _JSON_CACHE: dict = {}
 _CACHE_LOCK = threading.Lock()
+_CACHE_GENERATION = 0
 
 
 def read_json_cached(path, ttl_seconds=3, default=None):
@@ -143,16 +144,22 @@ def read_json_cached(path, ttl_seconds=3, default=None):
         entry = _JSON_CACHE.get(key)
         if entry and (now - entry[0]) < ttl_seconds:
             return entry[1]
+        generation = _CACHE_GENERATION
     # cache miss
     data = read_json_file(path, default=default)
     with _CACHE_LOCK:
-        _JSON_CACHE[key] = (now, data)
+        # An older in-flight reader can return its snapshot, but cannot publish
+        # it as fresh after a writer (or full clear) invalidated the cache.
+        if generation == _CACHE_GENERATION:
+            _JSON_CACHE[key] = (now, data)
     return data
 
 
 def invalidate_json_cache(path=None):
     """Invalidate cached JSON entries.  *path*=None clears all."""
+    global _CACHE_GENERATION
     with _CACHE_LOCK:
+        _CACHE_GENERATION += 1
         if path is None:
             _JSON_CACHE.clear()
         else:

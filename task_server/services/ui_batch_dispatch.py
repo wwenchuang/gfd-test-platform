@@ -138,7 +138,6 @@ def _dispatch_ui_batch(batch_id, occupancy):
     batch = store.get_batch(batch_id)
     if not batch or not enabled() or batch['status'] in TERMINAL:
         return batch
-    jobs_by_id = {j['job_id']:j for j in job_service.load_jobs(limit=None)}
     for attempt in batch['case_attempts']:
         if attempt['status'] not in {'queued','blocked'}:
             continue
@@ -148,16 +147,20 @@ def _dispatch_ui_batch(batch_id, occupancy):
             continue
         # Other legacy Jobs on this phone are respected too. A reserved UI job
         # never permits legacy auto-selection to steal its device (assign hook).
-        if any(j.get('status') == 'running' and j.get('device_id') == attempt['device_id']
-               and j['job_id'] != attempt['dispatch_key'] for j in jobs_by_id.values()):
-            store.block_attempt(attempt['attempt_id'],'device_busy')
-            continue
-        if not store.reserve_attempt(attempt['attempt_id']):
-            store.block_attempt(attempt['attempt_id'],'device_queued')
-            continue
-        snapshot = next(s for s in batch['snapshots'] if s['snapshot_id'] == attempt['snapshot_id'])
         job_id = attempt['dispatch_key']
-        existing = jobs_by_id.get(job_id)
+        with job_service.JOB_LOCK:
+            # Refresh after target checks, and keep legacy claims from racing the
+            # occupancy decision/reservation. SQLite still validates the current
+            # attempt and lease. No network/file write occurs in this lock span.
+            jobs_by_id, running = job_service.load_ui_dispatch_jobs([job_id])
+            if running.get(attempt['device_id'], set()) - {job_id}:
+                store.block_attempt(attempt['attempt_id'],'device_busy')
+                continue
+            if not store.reserve_attempt(attempt['attempt_id']):
+                store.block_attempt(attempt['attempt_id'],'device_queued')
+                continue
+            existing = jobs_by_id.get(job_id)
+        snapshot = next(s for s in batch['snapshots'] if s['snapshot_id'] == attempt['snapshot_id'])
         if not existing:
             try:
                 existing = job_service.create_job({'job_id':job_id,'module':snapshot['metadata']['module'],
@@ -169,12 +172,13 @@ def _dispatch_ui_batch(batch_id, occupancy):
                     'app_id':batch['app_id'],'app_package':batch['app_id'],
                     'target_package':attempt['target_resolution']['target_package']})
             except ValueError:
-                existing = job_service.get_job(job_id)
+                with job_service.JOB_LOCK:
+                    jobs_by_id, _ = job_service.load_ui_dispatch_jobs([job_id])
+                    existing = jobs_by_id.get(job_id)
                 if not existing:
                     raise
         if existing.get('ui_batch_id') != batch_id or existing.get('device_id') != attempt['device_id']:
             raise ValueError('dispatch_job_conflict')
-        jobs_by_id[job_id] = existing
         store.link_job(job_id, job_id)
     return store.get_batch(batch_id)
 

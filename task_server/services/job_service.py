@@ -17,6 +17,7 @@ import os
 import re
 import shutil
 import time
+from copy import deepcopy
 from datetime import datetime
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
@@ -43,6 +44,7 @@ from ..schemas import (
 )
 from ..storage import (
     clean_filename,
+    invalidate_json_cache,
     read_json_cached,
     read_json_file,
     safe_join,
@@ -61,6 +63,7 @@ _CANONICAL_TIME = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9
 DEVICE_STRATEGY_FIXED = "fixed"
 DEVICE_STRATEGY_AUTO = "auto"
 DEVICE_STRATEGY_MANUAL_REQUIRED = "manual_required"
+_UI_DISPATCH_INDEX = None
 
 
 def _env_int(name: str, default: int) -> int:
@@ -316,6 +319,57 @@ def save_jobs(jobs: Iterable[Dict[str, Any]]) -> None:
     """
     payload = list(jobs or [])
     write_json_file(JOBS_FILE, payload)
+
+
+def load_ui_dispatch_jobs(dispatch_keys=()):
+    """Return exact Job copies and running-phone IDs without sorting history.
+
+    Caller must hold JOB_LOCK through the occupancy check and SQLite reservation
+    (DISPATCH_LOCK first). This is a projection of the existing JSON TTL cache,
+    never a second Job store. Both Job writers invalidate that cache. File
+    signatures detect external replacement/deletion too; same-signature edits
+    retain the existing cache TTL. A retained source reference prevents identity
+    reuse, and returned nested records/sets cannot mutate either cache.
+    """
+    global _UI_DISPATCH_INDEX
+    path = str(JOBS_FILE)
+
+    def signature():
+        try:
+            stat = os.stat(path)
+            return (stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns)
+        except FileNotFoundError:
+            return None
+
+    for _ in range(2):
+        before = signature()
+        index = _UI_DISPATCH_INDEX
+        if not index or index['path'] != path or index['signature'] != before:
+            invalidate_json_cache(path)
+        source = read_json_cached(path, default=[])
+        if signature() == before:
+            break
+        # Do not bless a cached snapshot with a newer on-disk generation.
+        invalidate_json_cache(path)
+    else:
+        raise RuntimeError('jobs_storage_changed')  # no reservation; reconciler retries
+
+    if (not index or index['path'] != path or index['signature'] != before
+            or index['source'] is not source):
+        jobs, running = {}, {}
+        for row in source if isinstance(source, list) else []:
+            if not isinstance(row, dict):
+                continue
+            job_id = str(row.get('job_id') or row.get('jobId') or row.get('id') or '').strip()
+            jobs.setdefault(job_id, row)
+            if normalize_job_status(row.get('status') or row.get('state')) == JOB_STATUS_RUNNING:
+                device = str(row.get('device_id') or row.get('deviceId') or '').strip()
+                running.setdefault(device, set()).add(job_id)
+        index = _UI_DISPATCH_INDEX = {'path': path, 'signature': before, 'source': source,
+                                     'jobs': jobs, 'running': running}
+    selected = {key: normalize_job_record(deepcopy(index['jobs'][key]))
+                for key in set(dispatch_keys) if key in index['jobs']}
+    return selected, {device: set(ids) for device, ids in index['running'].items()}
 
 
 # ---------------------------------------------------------------------------
