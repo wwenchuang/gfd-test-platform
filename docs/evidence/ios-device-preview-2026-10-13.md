@@ -22,3 +22,11 @@
 本批包含服务端字段保留、只预览Runner分发保护及前端系统标签，需要服务端与静态文件同时更新；Windows Runner不用替换。Mac使用更新后的mac-midscene-runner.py，私有环境配置保留现有TASK_SERVER、RUNNER_ID、MIDSCENE_RUNNER_TOKEN，并设置MIDSCENE_RUNNER_PLATFORM=ios、IOS_APP_BUNDLE_ID=com.kfb.3d、IOS_SOURCE_APP_PACKAGE=com.kfb.model。依赖idevice_id/ideviceinfo/ideviceinstaller/iproxy/xcrun可在PATH找到。WDA必须已在对应手机上运行；预览失败不会在心跳中反复构建或启动WDA。
 
 从包含该提交的main更新服务器：`cd /opt/midscene-task-platform-src && bash deploy/update-main-server.sh`。部署前不要把iOS预览Runner作为可执行设备上线。未来iOS回放适配通过独立验收后才能解除job_execution=false，本补丁没有交付iOS回放能力。
+
+## 线上验收（2026-10-13 11:37）
+
+- 用户部署5f0a18b；复验发现Sonic默认0覆盖iOS真实电量，补充52e5fb5并通过Chrome堡垒机执行原update-main-server.sh。公网health返回52e5fb5df29c587f5b16fb328e884f3a2c781a47、ok=true。
+- Chrome三次“刷新设备”均完成：两台iOS时间依次11:27:04/05、11:36:02/03、11:36:41/42。最终界面实际加载iPhone13应用画面和iPhone15ProMax桌面，未串机；系统26.6/26.6.1、分辨率1170x2532/1290x2796、智小白3D版本1.19.7(70)均一致。电量46%/100%，不再用Sonic未采集的0℃显示温度。
+- 本机证据在~/Applications/MidsceneIOS/validation/platform-two-ios-cards.png与production-ios-preview-verified.json；未保存凭据。单独Runner凭据读取截图接口401（预期用户登录保护），实际图片加载通过已登录Chrome验证。
+- 本机预览进程由run-preview.py后台启动（单实例文件锁），手动入口start-preview.command；当前依赖两台已启动的WDA。未设置开机自动构建WDA，不承诺Mac重启/手机断连后自动恢复。三次是卡片与截图刷新，不能计为三次UI自动化回放。
+- 原有Android手机同轮刷新正常；本次没有执行或取消业务用例。iOS真实用例回放仍未完成，卡片明确仅预览且不可选执行。
