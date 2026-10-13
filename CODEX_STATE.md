@@ -1,4 +1,12 @@
-## 2026-10-13 iPhone13 WDA 中断恢复
+## 2026-10-13 WDA 自动恢复部署与实机验收
+
+- Mac Runner补齐按明确UDID的可选恢复状态机：30秒健康采样连续失败才恢复，后台test-without-building，有界启动、退避及三次失败冷却；锁屏/USB/签名/外部XCTest占用明确提示，不抢占业务执行与其他管理者进程。仅回收自己的进程组，退出时清理，防重复进程和短暂ready绕过冷却。
+- 本机脚本及私有runner.env已更新，Runner PID67431；平台心跳版本2026.10.13-ios-execution-v1-step-progress-v1-wda-recovery-v1，运行源文件与已审代码一致。无需重启主服务器或Windows Runner；服务器下载副本随下次常规发布同步。
+- iPhone13实测三轮中断自动恢复96.2/71.3/71.3秒，均blocked→恢复中→ready且真实截图成功。为核对首次触控追加第四轮，71.5秒恢复；当前自有WDA PID69338。iPhone15ProMax未连接，本次不计入实机通过。
+- Chrome平台业务回放首轮job_1791874386963_00004在“我的”点击后未跳转，断言真实失败；相同脚本后续job_1791874763607_00005、job_1791874963388_00006和第四轮恢复后的首次任务job_1791875181485_00007连续通过。六步全部上报、报告在Chrome正常加载。源YAML和断言未更改；首次未跳转原因仍未证实，不能宣称整个UI链路稳定性完全通过。
+- 70项Python专项、Runner/主链语法、后端静态63项、diff检查通过。只读代码审查通过，真实隔离父子进程验证TERM/KILL清理。详见docs/evidence/ios-wda-autorecovery-2026-10-13.md；配置与启动说明docs/ios-wda-recovery.md。
+
+## 2026-10-13 iPhone13 WDA 中断恢复（自动恢复补齐前）
 
 - 14:03:37原WDA Xcode会话报CoreDeviceError 3 / Mercury 1001 connection invalidated，14:03:55退出；USB仍识别iPhone13，Mac Runner持续心跳，Midscene二进制可用。14:14实时/status报ConnectionResetError，明确为WDA控制链中断；初始断连诱因（USB/手机服务）尚无足够证据。
 - 首次重新启动WDA，XCTest在60秒后报Timed out while enabling automation mode；用户确认解锁并保持亮屏后重启成功，新xcodebuild PID64430，日志在本机Applications/MidsceneIOS/validation/wda-recovery-unlocked-20261013.log。

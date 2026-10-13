@@ -60,7 +60,7 @@ IOS_SOURCE_APP = os.getenv("IOS_SOURCE_APP_PACKAGE", "").strip()
 IOS_EXECUTION_ENABLED = os.getenv("IOS_EXECUTION_ENABLED", "0") == "1"
 if RUNNER_PLATFORM == "ios":
     RUNNER_CAPABILITIES.update(yaml_dry_run=False, apk_install=False, device_preview=True, job_execution=IOS_EXECUTION_ENABLED, explicit_target_only=True, ios_case_reuse=IOS_EXECUTION_ENABLED)
-    RUNNER_VERSION = "2026.10.13-ios-execution-v1-step-progress-v1"
+    RUNNER_VERSION = "2026.10.13-ios-execution-v1-step-progress-v1-wda-recovery-v1"
 
 
 
@@ -842,17 +842,265 @@ def ios_wda_read(device_id, path):
 
 _IOS_READINESS_CACHE = {}
 
+# Recovery is opt-in and only operates on explicitly configured USB UDIDs.
+IOS_WDA_AUTORECOVER = os.getenv("IOS_WDA_AUTORECOVER", "0") == "1"
+IOS_WDA_PROJECT = os.getenv("IOS_WDA_PROJECT", "").strip()
+IOS_WDA_DEVICE_IDS = set(filter(None, (v.strip() for v in os.getenv("IOS_WDA_DEVICE_IDS", "").split(","))))
+_IOS_JOB_ACTIVE = threading.Event()
+_IOS_RECOVERY_GUARD = threading.RLock()
+
+
+def ios_wda_other_process(device_id):
+    """Do not interrupt WDA sessions started by Sonic/Xcode/another Runner."""
+    # On macOS a multi-column `comm` is truncated to 16 characters. Use the
+    # executable at the beginning of args, not the truncated display name.
+    rows = subprocess.check_output(["ps", "-axww", "-o", "pid=,args="], text=True, timeout=3)
+    for row in rows.splitlines():
+        parts = row.strip().split(None, 1)
+        if len(parts) == 2 and parts[1].split() and Path(parts[1].split()[0]).name == "xcodebuild":
+            # Other XCTest sessions also own the phone; accept comma-separated
+            # destinations and xctestrun launches, but never partial UDID matches.
+            if re.search(r"(?:^|[\s,\"'])id=" + re.escape(device_id) + r"(?=$|[\s,\"'])", parts[1]):
+                return True
+    return False
+
+
+def ios_wda_launch_blocker(device_id):
+    """Fail closed when USB/lock state cannot be established; never unlock a phone."""
+    if device_id not in ios_connected_device_ids():
+        return "手机 USB 已断开，连接后自动重试"
+    try:
+        with tempfile.TemporaryDirectory(prefix="midscene-wda-lock-") as directory:
+            path = Path(directory) / "state.json"
+            subprocess.run(["xcrun", "devicectl", "device", "info", "lockState", "--device", device_id,
+                            "--timeout", "5", "--json-output", str(path)],
+                           check=True, timeout=7, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            state = json.loads(path.read_text()).get("result", {})
+        if state.get("passcodeRequired") is True:
+            return "手机已锁定，请解锁并保持亮屏，随后自动重试"
+        if state.get("passcodeRequired") is not False or state.get("unlockedSinceBoot") is not True:
+            return "无法确认手机解锁状态，请解锁并检查 USB 信任"
+        return ""
+    except Exception:
+        return "无法确认手机解锁状态，请解锁并检查 USB 信任"
+
+
+class IOSWDARecovery:
+    """Bounded, idle-only recovery. Own only processes and locks created here."""
+    def __init__(self):
+        self.states = {}
+        self.closed = False
+        self.workers = set()
+
+    def state(self, device_id):
+        return self.states.setdefault(device_id, dict(failures=0, sampled=None, attempts=0,
+            next_retry=0, stable_since=None, started=0, process=None, log=None, lock=None,
+            was_ready=False, launching=False, reason=""))
+
+    def stop(self, state):
+        process = state.get("process")
+        if process:
+            # Popen start_new_session creates this group's ownership boundary.
+            try:
+                os.killpg(process.pid, signal.SIGTERM)
+                deadline = time.monotonic() + 2
+                while time.monotonic() < deadline:
+                    process.poll()  # reap the leader, but also check descendants
+                    os.killpg(process.pid, 0)
+                    time.sleep(0.1)
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            process.wait(timeout=2)
+        for field in ("log", "lock"):
+            if state.get(field):
+                state[field].close()
+                state[field] = None
+        state["process"] = None
+
+    def failed(self, state, now, reason):
+        state["stable_since"] = None
+        state["was_ready"] = False
+        state["failures"] = 0
+        delay = 300 if state["attempts"] >= 3 else (15 if state["attempts"] <= 1 else 45)
+        state["next_retry"] = now + delay
+        state["reason"] = reason + ("；连续失败，冷却 5 分钟后重试" if delay == 300 else f"；{delay} 秒后重试")
+        print("WDA recovery: " + state["reason"], flush=True)
+
+    def launch(self, device_id, now):
+        if self.closed:
+            return
+        state = self.state(device_id)
+        try:
+            # Expensive prerequisites run on a background thread, not heartbeat.
+            if ios_wda_other_process(device_id):
+                state.update(next_retry=now + 30, reason="现有 WDA 启动进程尚未退出，等待恢复，不重复启动")
+                return
+            blocker = ios_wda_launch_blocker(device_id)
+            if blocker:
+                state.update(next_retry=now + 30, reason=blocker)
+                return
+            project = Path(IOS_WDA_PROJECT).expanduser()
+            if not IOS_WDA_PROJECT or not project.is_absolute() or not project.is_dir():
+                state.update(next_retry=now + 300, reason="WDA 恢复工程未配置或不存在，请检查 IOS_WDA_PROJECT")
+                return
+            with _IOS_RECOVERY_GUARD:
+                if self.closed or _IOS_JOB_ACTIVE.is_set():
+                    return
+                directory = WORKSPACE / "wda-recovery"
+                directory.mkdir(parents=True, exist_ok=True)
+                safe_id = re.sub(r"[^a-zA-Z0-9_-]", "_", device_id)
+                import fcntl
+                lock = (directory / f"{safe_id}.lock").open("a")
+                try:
+                    fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except BlockingIOError:
+                    lock.close()
+                    state.update(next_retry=now + 30, reason="其他恢复进程正在管理 WDA，等待其完成")
+                    return
+                state["lock"] = lock
+                # Recheck after acquiring the cross-process lock.
+                if ios_wda_other_process(device_id):
+                    self.stop(state)
+                    state.update(next_retry=now + 30, reason="现有 WDA 启动进程正在恢复，不重复启动")
+                    return
+                log_path = directory / f"{safe_id}.log"
+                if log_path.exists() and log_path.stat().st_size > 2 * 1024 * 1024:
+                    log_path.replace(log_path.with_suffix(".previous.log"))
+                state["log"] = log_path.open("ab")
+                state["attempts"] += 1
+                state["started"] = time.monotonic()
+                state["was_ready"] = False
+                state["process"] = subprocess.Popen(["xcodebuild", "-project", str(project),
+                    "-scheme", "WebDriverAgentRunner", "-destination", f"id={device_id}",
+                    "-destination-timeout", "15", "test-without-building"],
+                    stdout=state["log"], stderr=subprocess.STDOUT, start_new_session=True)
+                state["reason"] = f"WDA 正在恢复（第 {state['attempts']} 次，启动最长 90 秒）"
+                print(f"WDA recovery {device_id}: start pid={state['process'].pid} attempt={state['attempts']}", flush=True)
+        except Exception as exc:
+            self.stop(state)
+            self.failed(state, time.monotonic(), "WDA 启动异常：" + type(exc).__name__)
+
+    def schedule(self, device_id, now):
+        with _IOS_RECOVERY_GUARD:
+            if self.closed:
+                return
+            state = self.state(device_id)
+            state["launching"] = True
+            def worker():
+                try:
+                    self.launch(device_id, now)
+                finally:
+                    with _IOS_RECOVERY_GUARD:
+                        state["launching"] = False
+                        self.workers.discard(threading.current_thread())
+            thread = threading.Thread(target=worker, name="ios-wda-recovery", daemon=True)
+            self.workers.add(thread)
+            thread.start()
+
+    def shutdown(self):
+        with _IOS_RECOVERY_GUARD:
+            self.closed = True
+            workers = list(self.workers)
+        deadline = time.monotonic() + 10
+        for worker in workers:
+            worker.join(timeout=max(0, deadline - time.monotonic()))
+        # A late prerequisite worker cannot spawn after closed is set.
+        for state in list(self.states.values()):
+            self.stop(state)
+
+    def prune(self, connected):
+        if _IOS_JOB_ACTIVE.is_set():
+            return
+        for device_id in set(self.states) - set(connected):
+            state = self.states[device_id]
+            if state["launching"]:
+                continue
+            if state["process"]:
+                self.stop(state)
+            del self.states[device_id]
+            _IOS_READINESS_CACHE.pop(device_id, None)
+
+    def tick(self, device_id, readiness, now=None):
+        if self.closed or not IOS_WDA_AUTORECOVER or device_id not in IOS_WDA_DEVICE_IDS or _IOS_JOB_ACTIVE.is_set():
+            return readiness
+        now = time.monotonic() if now is None else now
+        state = self.state(device_id)
+        if state["process"] and state["process"].poll() is not None:
+            _IOS_READINESS_CACHE.pop(device_id, None)
+            readiness = {"ready": False, "code": "wda_unreachable", "reason": "WDA 启动进程退出"}
+        if readiness["ready"]:
+            state["failures"] = 0
+            state["was_ready"] = True
+            state["reason"] = ""
+            if state["stable_since"] is None:
+                state["stable_since"] = now
+                print(f"WDA recovery {device_id}: ready", flush=True)
+            if now - state["stable_since"] >= 60:
+                state["attempts"] = 0
+                state["next_retry"] = 0
+            return readiness
+        state["stable_since"] = None
+        if readiness.get("code") not in ("wda_unreachable", "wda_not_ready"):
+            return readiness
+        process = state.get("process")
+        if process and process.poll() is not None:
+            reason = "WDA 启动进程退出"
+            try:
+                state["log"].flush()
+                with open(state["log"].name, "rb") as log:
+                    log.seek(max(0, log.seek(0, 2) - 6000))
+                    tail = log.read().decode("utf-8", errors="replace")
+                if "enabling automation mode" in tail:
+                    reason = "启用自动化模式超时，请解锁手机并保持亮屏"
+                elif "Testing failed" in tail:
+                    reason = "WDA 测试启动失败，请检查本机恢复日志"
+            except Exception:
+                pass
+            self.stop(state)
+            self.failed(state, now, reason)
+        elif process and not state["was_ready"]:
+            if now - state["started"] < 90:
+                return {**readiness, "reason": f"WDA 正在恢复（第 {state['attempts']} 次，已等待 {int(now-state['started'])} 秒，最长 90 秒）"}
+            self.stop(state)
+            self.failed(state, now, "WDA 恢复超时，请检查手机解锁和开发者信任")
+        if state["launching"]:
+            return {**readiness, "reason": "正在检查 WDA 恢复条件"}
+        if now < state["next_retry"]:
+            return {**readiness, "reason": state["reason"]}
+        if state["sampled"] is None or now - state["sampled"] >= 30:
+            state["sampled"] = now
+            state["failures"] += 1
+            if state["failures"] >= 2:
+                state["failures"] = 0
+                if process and state["process"]:
+                    self.stop(state)
+                    self.failed(state, now, "WDA 再次无响应")
+                    return {**readiness, "reason": state["reason"]}
+                if state["attempts"] >= 3:
+                    state["attempts"] = 0  # cooldown elapsed; a new bounded retry cycle
+                self.schedule(device_id, now)
+        return {**readiness, "reason": state["reason"] or "WDA 连接中断，正在复查，连续失败后自动恢复"}
+
+
+_IOS_WDA_RECOVERY = IOSWDARecovery()
+
+
 def ios_execution_readiness(device_id, force=False):
     cached = _IOS_READINESS_CACHE.get(device_id)
     if cached and not force and time.monotonic() - cached[0] < 30:
         return dict(cached[1])
     try:
         resolve_command(MIDSCENE_BIN, "Midscene")
+    except Exception:
+        return {"ready": False, "code": "midscene_missing", "reason": "Midscene 执行器不存在，请检查 MIDSCENE_BIN"}
+    try:
         value = ios_wda_read(device_id, "/status")
         result = {"ready": isinstance(value, dict) and value.get("ready") is True}
+        result["code"] = "ready" if result["ready"] else "wda_not_ready"
         result["reason"] = "" if result["ready"] else "WDA 尚未就绪，请解锁手机并启动 WDA"
     except Exception:
-        result = {"ready": False, "reason": "WDA 或执行器不可用，请检查 USB、手机解锁及 WDA 服务"}
+        result = {"ready": False, "code": "wda_unreachable", "reason": "WDA 连接不可用，请检查 USB、手机解锁及 WDA 服务"}
     _IOS_READINESS_CACHE[device_id] = (time.monotonic(), result)
     return dict(result)
 
@@ -908,12 +1156,14 @@ def detect_devices():
     if RUNNER_PLATFORM == "ios":
         try:
             connected = ios_connected_device_ids()
+            _IOS_WDA_RECOVERY.prune(connected)
             for previous in set(_IOS_METADATA_CACHE) - set(connected):
                 _IOS_METADATA_CACHE.pop(previous, None)
             rows = [ios_device_metadata(device_id) for device_id in connected]
             if IOS_EXECUTION_ENABLED:
                 for row in rows:
                     state = ios_execution_readiness(row["device_id"])
+                    state = _IOS_WDA_RECOVERY.tick(row["device_id"], state)
                     row.update(preflight_status="ready" if state["ready"] else "blocked", preflight=state)
             return rows
         except (OSError, subprocess.SubprocessError):
@@ -2016,7 +2266,7 @@ def run_ios_device_monitor():
         time.sleep(max(POLL_INTERVAL, 5))
 
 
-def main():
+def _run_main():
     if RUNNER_PLATFORM == "ios" and not IOS_EXECUTION_ENABLED:
         return run_ios_device_monitor()
     validate_runner_config()
@@ -2027,7 +2277,7 @@ def main():
     while True:
         try:
             devices = detect_devices()
-            if not devices:
+            if not devices and RUNNER_PLATFORM != "ios":
                 time.sleep(ADB_DEVICE_CHECK_INTERVAL)
                 continue
             try:
@@ -2042,6 +2292,9 @@ def main():
                 time.sleep(POLL_INTERVAL)
                 continue
 
+            if not devices:
+                time.sleep(ADB_DEVICE_CHECK_INTERVAL)
+                continue
             qs = urllib.parse.urlencode({
                 "runner_id": RUNNER_ID,
                 "devices": ",".join([dev["device_id"] for dev in devices])
@@ -2063,8 +2316,11 @@ def main():
             if RUNNER_PLATFORM == "ios":
                 threading.Thread(target=keep_alive, daemon=True).start()
             try:
+                with _IOS_RECOVERY_GUARD:
+                    _IOS_JOB_ACTIVE.set()
                 result = run_job(job)
             finally:
+                _IOS_JOB_ACTIVE.clear()
                 stopped.set()
             print(f"Finished {job['job_id']} status={result['status']}")
             pending_report_path = result.pop("_pending_report_path", "")
@@ -2086,6 +2342,23 @@ def main():
             print(f"Runner error: {e}")
             diagnose_server_error(e)
             time.sleep(POLL_INTERVAL)
+
+
+def main():
+    previous_term = None
+    if RUNNER_PLATFORM == "ios" and threading.current_thread() is threading.main_thread():
+        def stop_on_term(signum, frame):
+            raise KeyboardInterrupt
+        previous_term = signal.signal(signal.SIGTERM, stop_on_term)
+    try:
+        _run_main()
+    except KeyboardInterrupt:
+        print("\nRunner stopped")
+    finally:
+        if RUNNER_PLATFORM == "ios":
+            _IOS_WDA_RECOVERY.shutdown()
+        if previous_term is not None:
+            signal.signal(signal.SIGTERM, previous_term)
 
 
 if __name__ == "__main__":
