@@ -10,7 +10,7 @@ from urllib.parse import urlencode
 import yaml
 
 from . import business_line_service, case_service, runner_service
-from .ui_execution_contract import require_ui_actor
+from .ui_execution_contract import CROSS_PLATFORM_ACTIONS, require_ui_actor
 
 _CACHE_SECONDS = 30
 _cache_lock = threading.Lock()
@@ -141,7 +141,9 @@ def get_ui_devices(actor, app_id):
             connected = runner.get('online') is True and device.get('status') in ('online','device')
             if not connected:
                 state = 'offline'
-            elif capabilities.get('ui_execution_contract') != 'ui-v1' or capabilities.get('ui_attempt_events') != 1:
+            elif (capabilities.get('ui_execution_contract') != 'ui-v1' or capabilities.get('ui_attempt_events') != 1
+                  or platform not in (capabilities.get('ui_platforms') or [])
+                  or not set(CROSS_PLATFORM_ACTIONS).issubset(set(capabilities.get('ui_actions') or []))):
                 state = 'upgrade_required'
             elif not mappings.get(platform):
                 state = 'mapping_missing'
@@ -154,14 +156,16 @@ def get_ui_devices(actor, app_id):
             version = '未安装' if installed.get('installed') is False else ' '.join(filter(None,[
                 str(installed.get('version_name') or ''),
                 '('+str(installed['version_code'])+')' if installed.get('version_code') is not None else ''])) or '版本未上报'
-            row = {'target':{'runner_id':runner_id,'device_id':device_id,'platform':platform},
+            row = {'app_id':app_id,'target':{'runner_id':runner_id,'device_id':device_id,'platform':platform},
                    'name':device.get('label') or device.get('model') or device_id,
                    'os_version':device.get('ios_version' if platform=='ios' else 'android_version') or '',
                    'resolution':device.get('resolution') or '', 'connection_status':state,
                    'app_version':version, 'snapshot_captured_at':device.get('snapshot_captured_at') or '',
                    'snapshot_url':'', 'last_seen_age_seconds':runner.get('last_seen_age_seconds')}
-            if row['snapshot_captured_at']:
-                row['snapshot_url']='/api/runner/device-snapshot?'+urlencode({'runner_id':runner_id,'device_id':device_id})
+            if (row['snapshot_captured_at'] and
+                    ((profile.get('scope') or {}).get('ui_apps') == '*' or
+                     device.get('snapshot_app_package') == mappings.get(platform))):
+                row['snapshot_url']='/api/runner/device-snapshot?'+urlencode({'runner_id':runner_id,'device_id':device_id,'app_id':app_id})
             result.append(row)
     result.sort(key=lambda r:(r['connection_status']!='ready',r['name'],r['target']['device_id']))
     return {'devices':result}

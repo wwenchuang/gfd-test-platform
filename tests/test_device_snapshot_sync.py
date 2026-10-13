@@ -65,6 +65,8 @@ class DeviceSnapshotSyncTest(unittest.TestCase):
         record = runner_service.register_runner({"runner_id": "r1", "devices": [{"device_id": "p1"}]})
         device = record["devices"][0]
         self.assertEqual(device["battery_level"], 80)
+        self.assertEqual(device["snapshot_app_package"], "com.kfb.model")
+        self.assertTrue(device["snapshot_file"].endswith(".png"))
         self.assertIn("/api/runner/device-snapshot", device["snapshot_url"])
         self.assertEqual(record["snapshot_requests"], [])
 
@@ -89,6 +91,27 @@ class DeviceSnapshotSyncTest(unittest.TestCase):
         runner_service.save_device_snapshot("r1", {"device_id": "p1", "request_id": request["request_id"], "error": "设备正在执行平台任务"})
         self.assertEqual(next(self.snapshots.glob("*.png")).read_bytes(), before)
         self.assertEqual(runner_service.load_runners()["r1"]["devices"][0]["snapshot_error"], "设备正在执行平台任务")
+
+    def test_capture_provenance_only_changes_after_successful_upload(self):
+        request = runner_service.request_device_snapshots()["requests"][0]
+        runner_service.save_device_snapshot("r1", {"device_id":"p1","request_id":request["request_id"],"content_base64":base64.b64encode(PNG).decode(),"foreground_package":"com.first"})
+        first = runner_service.load_runners()["r1"]["devices"][0]
+        old_file = first["snapshot_file"]
+        runner_service.register_runner({"runner_id":"r1","devices":[{"device_id":"p1","foreground_package":"com.other","snapshot_app_package":"com.forged","snapshot_file":"forged.png"}]})
+        after_heartbeat = runner_service.load_runners()["r1"]["devices"][0]
+        self.assertEqual(after_heartbeat["snapshot_app_package"],"com.first")
+        self.assertEqual(after_heartbeat["snapshot_file"],old_file)
+        request = runner_service.request_device_snapshots()["requests"][0]
+        runner_service.save_device_snapshot("r1", {"device_id":"p1","request_id":request["request_id"],"error":"capture failed","foreground_package":"com.other"})
+        after_failure = runner_service.load_runners()["r1"]["devices"][0]
+        self.assertEqual(after_failure["snapshot_app_package"],"com.first")
+        self.assertEqual(after_failure["snapshot_file"],old_file)
+        request = runner_service.request_device_snapshots()["requests"][0]
+        runner_service.save_device_snapshot("r1", {"device_id":"p1","request_id":request["request_id"],"content_base64":base64.b64encode(PNG).decode(),"foreground_package":"com.second"})
+        latest = runner_service.load_runners()["r1"]["devices"][0]
+        self.assertEqual(latest["snapshot_app_package"],"com.second")
+        self.assertNotEqual(latest["snapshot_file"],old_file)
+        self.assertEqual(len(list(self.snapshots.glob("*.png"))),1)
 
     def test_heartbeat_cannot_inject_snapshot_url(self):
         record = runner_service.register_runner({"runner_id": "r1", "devices": [{"device_id": "p1", "snapshot_url": "https://attacker.invalid/collect"}]})

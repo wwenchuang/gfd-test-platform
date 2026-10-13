@@ -146,7 +146,6 @@ from task_server.services.runner_service import (
     all_online_devices,
     assign_job,
     annotate_job_queue_state,
-    device_snapshot_path,
     list_runners,
     load_runners,
     midscene_runtime_env,
@@ -2181,21 +2180,29 @@ def _get_runner_device_snapshot(handler, qs):
         return
     runner_id = str(qs.get("runner_id") or "").strip()
     device_id = str(qs.get("device_id") or "").strip()
-    runners = load_runners()
-    if not runner_id or not device_id or not any(str(item.get("device_id")) == device_id for item in (runners.get(runner_id) or {}).get("devices") or []):
+    app_id = str(qs.get("app_id") or "").strip()
+    if not runner_id or not device_id:
         handler._json({"ok": False, "error": "设备不存在"}, 404)
         return
-    path = device_snapshot_path(runner_id, device_id)
-    if not os.path.isfile(path):
+    from .services.ui_snapshot_service import resolve_ui_snapshot
+    from .services.ui_execution_contract import AccessDenied
+    try:
+        path = resolve_ui_snapshot(runner_id, device_id, app_id)
+        stream = open(path, "rb")
+    except AccessDenied:
+        handler._json({"ok": False, "error": "无权查看设备截图"}, 403)
+        return
+    except (FileNotFoundError, OSError):
         handler._json({"ok": False, "error": "设备截图尚未生成"}, 404)
         return
-    handler.send_response(200)
-    handler._cors()
-    handler.send_header("Content-Type", "image/png")
-    handler.send_header("Cache-Control", "private, no-store")
-    handler.send_header("Content-Length", str(os.path.getsize(path)))
-    handler.end_headers()
-    with open(path, "rb") as stream:
+    with stream:
+        size = os.fstat(stream.fileno()).st_size
+        handler.send_response(200)
+        handler._cors()
+        handler.send_header("Content-Type", "image/png")
+        handler.send_header("Cache-Control", "private, no-store")
+        handler.send_header("Content-Length", str(size))
+        handler.end_headers()
         shutil.copyfileobj(stream, handler.wfile)
 
 

@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import base64
 import os
+import re
 import uuid
 import time
 import urllib.parse
@@ -55,6 +56,7 @@ DEVICE_SNAPSHOT_REQUEST_TTL_SECONDS = 75
 DEVICE_SNAPSHOT_FIELDS = (
     "snapshot_url", "snapshot_captured_at", "snapshot_error", "battery_level",
     "battery_temperature_c", "foreground_package", "screen_on", "resolution",
+    "snapshot_file", "snapshot_app_package",
 )
 
 
@@ -184,7 +186,7 @@ def save_device_snapshot(runner_id: str, payload: Dict[str, Any]) -> Dict[str, A
             if len(content) > DEVICE_SNAPSHOT_MAX_BYTES:
                 raise ValueError("截图超过大小限制")
             os.makedirs(DEVICE_SNAPSHOT_DIR, exist_ok=True)
-            filename = uuid.uuid5(uuid.NAMESPACE_URL, runner_id + ":" + device_id).hex + ".png"
+            filename = uuid.uuid4().hex + ".png"
             snapshot_path = os.path.join(DEVICE_SNAPSHOT_DIR, filename)
             temporary = snapshot_path + ".tmp"
             with open(temporary, "wb") as stream:
@@ -192,6 +194,8 @@ def save_device_snapshot(runner_id: str, payload: Dict[str, Any]) -> Dict[str, A
                 stream.flush()
                 os.fsync(stream.fileno())
             os.replace(temporary, snapshot_path)
+            device["snapshot_file"] = filename
+            device["snapshot_app_package"] = str(payload.get("foreground_package") or "").strip()
             device["snapshot_url"] = "/api/runner/device-snapshot?" + urllib.parse.urlencode({"runner_id": runner_id, "device_id": device_id})
             device["snapshot_captured_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
             device["snapshot_error"] = ""
@@ -202,6 +206,18 @@ def save_device_snapshot(runner_id: str, payload: Dict[str, Any]) -> Dict[str, A
                 device[key] = payload[key]
         runner["snapshot_requests"] = [item for item in runner.get("snapshot_requests") or [] if item.get("request_id") != request_id]
         save_runners(runners)
+        if snapshot_path:
+            # Once the registry points at an immutable capture, prune obsolete files.
+            # A concurrent response retains its open descriptor on POSIX; on Windows an
+            # in-use file is retried by the next successful capture.
+            keep = {item.get("snapshot_file") or uuid.uuid5(uuid.NAMESPACE_URL, rid + ":" + str(item.get("device_id"))).hex + ".png"
+                    for rid, record in runners.items() for item in record.get("devices") or []}
+            for name in os.listdir(DEVICE_SNAPSHOT_DIR):
+                if name not in keep and re.fullmatch(r"[0-9a-f]{32}\.png", name):
+                    try:
+                        os.unlink(os.path.join(DEVICE_SNAPSHOT_DIR, name))
+                    except OSError:
+                        pass
         return {"ok": True, "snapshot_path": snapshot_path, "device": dict(device)}
 
 

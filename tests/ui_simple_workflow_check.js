@@ -33,6 +33,13 @@ test('device refresh retains the explicit offline phone instead of selecting ano
  await f.w.UiSimpleFlow.refresh();assert.equal(f.node.querySelector('[data-device-key]'),input);assert.equal(input.checked,true);assert.equal(input.disabled,true);
  assert.equal(f.node.querySelector('[data-ui-start]').disabled,true);assert.equal(f.w.document.activeElement,input);
 });
+test('device refresh failure hides a previously visible image',async t=>{
+ let fail=false;const f=fixture(t,path=>path.startsWith('/ui-executions/devices')&&fail?Promise.reject(new Error('权限已变化')):undefined);
+ f.setDevices([{...DEVICE,app_id:'app.a',snapshot_url:'/api/runner/device-snapshot?runner_id=mac&device_id=iphone&app_id=app.a',snapshot_captured_at:'1'}]);
+ await select(t,f);const img=f.node.querySelector('[data-ui-devices] img');img.src='blob:previous';img.hidden=false;
+ img.dataset.pictureStamp='/api/runner/device-snapshot?runner_id=mac&device_id=iphone&app_id=app.a|1';
+ fail=true;await f.w.UiSimpleFlow.refresh();assert.equal(img.hidden,true);assert.equal(img.hasAttribute('src'),false);
+});
 test('leaving or changing account drops a stale catalog response',async t=>{
  let resolve;const f=fixture(t,path=>path.startsWith('/ui-executions/catalog')?new Promise(r=>resolve=r):undefined);
  f.mount();f.setIdentity('user-b');f.w.UiSimpleFlow.reset();
@@ -60,6 +67,19 @@ test('uncertain submission survives reload and prevents selection edits',async t
  f.node.querySelector('[data-ui-recover]').click();await wait();await wait();
  const posts=f.calls.filter(c=>c.path==='/ui-executions'&&c.options.method==='POST');assert.equal(posts.length,2);assert.equal(posts[0].options.headers['Idempotency-Key'],posts[1].options.headers['Idempotency-Key']);
 });
+test('definite rejected POST clears pending intent through reload',async t=>{
+ const f=fixture(t,(path,o)=>path==='/ui-executions'&&o.method==='POST'?Promise.reject(Object.assign(new Error('无权执行'),{status:403,code:'execution_forbidden'})):undefined);
+ await select(t,f);f.node.querySelector('[data-ui-start]').click();await wait();await wait();
+ assert.equal(f.node.querySelector('[data-ui-recover]').hidden,true);
+ f.mount();await wait();assert.equal(f.node.querySelector('[data-ui-form]').disabled,false);
+ assert.equal(f.node.querySelector('[data-ui-recover]').hidden,true);
+});
+test('HTTP 408 keeps uncertain submission for safe recovery',async t=>{
+ const f=fixture(t,(path,o)=>path==='/ui-executions'&&o.method==='POST'?Promise.reject(Object.assign(new Error('超时'),{status:408,code:'request_timeout'})):undefined);
+ await select(t,f);f.node.querySelector('[data-ui-start]').click();await wait();await wait();
+ assert.equal(f.node.querySelector('[data-ui-recover]').hidden,false);
+ f.mount();await wait();assert.equal(f.node.querySelector('[data-ui-form]').disabled,true);
+});
 test('changing app does not leave device cards detached from the page',async t=>{
  const f=fixture(t);await select(t,f);const app=f.node.querySelector('[name="ui-app"]');
  app.value='';app.dispatchEvent(new f.w.Event('change'));await wait();app.value='app.a';app.dispatchEvent(new f.w.Event('change'));await wait();
@@ -72,6 +92,15 @@ test('report polling preserves the focused report row',async t=>{
  const f=fixture(t,path=>path.startsWith('/ui-executions?')?{ok:true,items:[{ui_batch_id:'uib_1',app_id:'app.a',status:'running',created_ns:1000000}]}:undefined);
  f.mount('reports');await wait();const button=f.node.querySelector('.ui-simple-report-row');button.focus();await f.w.UiSimpleFlow.refresh();
  assert.equal(f.node.querySelector('.ui-simple-report-row'),button);assert.equal(f.w.document.activeElement,button);
+});
+test('new report order moves existing buttons while keeping focus',async t=>{
+ let newest=false;const f=fixture(t,path=>path.startsWith('/ui-executions?')?{ok:true,items:newest?[
+  {ui_batch_id:'uib_2',app_id:'app.a',status:'failed',report_status:'failed',created_ns:2000000},
+  {ui_batch_id:'uib_1',app_id:'app.a',status:'passed',report_status:'ready',created_ns:1000000}]:[
+  {ui_batch_id:'uib_1',app_id:'app.a',status:'passed',report_status:'ready',created_ns:1000000}]}:undefined);
+ f.mount('reports');await wait();const old=f.node.querySelector('.ui-simple-report-row');old.focus();newest=true;await f.w.UiSimpleFlow.refresh();
+ const rows=[...f.node.querySelectorAll('.ui-simple-report-row')];assert.equal(rows.length,2);assert.equal(rows[1],old);
+ assert.equal(f.w.document.activeElement,old);assert.match(rows[0].textContent,/报告生成失败/);
 });
 test('selected cases stay named and removable when a search hides their rows',async t=>{
  let hidden=false;const f=fixture(t,path=>hidden&&path.startsWith('/ui-executions/catalog')?{ok:true,apps:[{app_id:'app.a',name:'应用甲'}],modules:[],items:[],groups:[],total:0}:undefined);

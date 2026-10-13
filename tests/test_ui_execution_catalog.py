@@ -25,10 +25,10 @@ def data(monkeypatch):
     calls = {'catalog':0,'source':0,'runner':0}
     def read_catalog(): calls['catalog']+=1;return rows
     def read_source(row): calls['source']+=1;return SOURCE
-    runners={'mac':{'online':True,'workspace':'/private/workspace','token':'never-return','capabilities':{'ui_execution_contract':'ui-v1','ui_attempt_events':1,'job_execution':True},
+    runners={'mac':{'online':True,'workspace':'/private/workspace','token':'never-return','capabilities':{'ui_execution_contract':'ui-v1','ui_attempt_events':1,'job_execution':True,'ui_platforms':['ios'],'ui_actions':['launch','aiTap','aiWaitFor','aiAssert']},
       'devices':[{'device_id':'phone','label':'iPhone 13','platform':'ios','status':'online','preflight_status':'ready','ios_version':'26.6',
                   'installed_apps':[{'package':'com.fixture.ios','version_name':'1.0','version_code':'7','error':'/private/error'}],
-                  'snapshot_captured_at':'2026-10-13 17:00:00','snapshot_url':'https://evil.example/secret','wdaPort':8100}]}}
+                  'snapshot_captured_at':'2026-10-13 17:00:00','snapshot_app_package':'com.fixture.ios','snapshot_url':'https://evil.example/secret','wdaPort':8100}]}}
     def read_runners(): calls['runner']+=1;return runners
     monkeypatch.setattr(identity,'get_access_profile',lambda name:profile)
     monkeypatch.setattr(business_line_service,'configured_test_applications',lambda **kw:apps)
@@ -73,6 +73,16 @@ def test_device_refresh_reads_one_registry_and_no_case_sources(data):
     encoded=json.dumps(result)
     assert 'private' not in encoded and 'never-return' not in encoded and 'wdaPort' not in encoded and 'evil' not in encoded
     assert d['snapshot_url'].startswith('/api/runner/device-snapshot?')
+    assert 'app_id='+APP in d['snapshot_url']
+
+@pytest.mark.parametrize('field,value',[('ui_platforms',[]),('ui_actions',['launch','aiTap'])])
+def test_incomplete_runner_capabilities_block_readiness(data,field,value):
+    data[3]['mac']['capabilities'][field]=value
+    assert catalog.get_ui_devices(None,APP)['devices'][0]['connection_status']=='upgrade_required'
+
+def test_snapshot_link_requires_matching_capture_package(data):
+    data[3]['mac']['devices'][0]['snapshot_app_package']='com.other.app'
+    assert catalog.get_ui_devices(None,APP)['devices'][0]['snapshot_url']==''
 
 def test_offline_selection_remains_visible_and_no_replacement_selected(data):
     data[3]['mac']['online']=False

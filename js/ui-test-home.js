@@ -19,7 +19,12 @@
       if(!valid(s)||s.pending.get(slot)!==controller)return null;
       if(data?.ok!==true)throw Object.assign(new Error(data?.error||'请求未完成，请重试'),{code:data?.code,definitive:typeof data?.code==='string'&&data.code!=='batch_store_unavailable'});
       return data;
-    }catch(error){if(!valid(s)||s.pending.get(slot)!==controller)return null;throw error;}
+    }catch(error){if(!valid(s)||s.pending.get(slot)!==controller)return null;
+      const status=Number(error?.status);
+      if(status===408)error.definitive=false;
+      else if([400,401,403,404,409,413,422,429].includes(status)
+        ||(status===200&&typeof error?.code==='string'&&error.code!=='batch_store_unavailable'))error.definitive=true;
+      throw error;}
     finally{clearTimeout(timeout);if(s.pending.get(slot)===controller)s.pending.delete(slot);}
   }
   function options(select,values,placeholder){
@@ -112,6 +117,10 @@
       card.querySelector('[data-phone-captured]').textContent=d.snapshot_captured_at?`截图：${d.snapshot_captured_at}`:'尚未采集截图';
       card.classList.toggle('ui-device-unavailable',d.connection_status!=='ready');
       const img=card.querySelector('img');img.alt=`${d.name} 最近一次手机画面`;
+      if(!d.snapshot_url||img.dataset.pictureStamp!==(d.snapshot_url+'|'+d.snapshot_captured_at)){
+        img.hidden=true;img.removeAttribute('src');card.querySelector('[data-picture-fallback]').hidden=false;
+        if(!d.snapshot_url)delete img.dataset.pictureStamp;
+      }
       if(d.snapshot_url&&s.options.loadPicture){
         const stamp=d.snapshot_url+'|'+d.snapshot_captured_at;
         if(img.dataset.pictureStamp!==stamp){
@@ -134,7 +143,7 @@
     if(!s.app||s.pending.has('devices'))return;
     const app=s.app;
     try{const data=await request(s,'devices','/ui-executions/devices?'+new URLSearchParams({app_id:app}));if(!data||s.app!==app)return;s.devices=data.devices||[];renderDevices(s);}
-    catch(error){notice(s,'手机状态刷新失败：'+error.message,true);s.devices=s.devices.map(d=>({...d,connection_status:'unknown'}));renderDevices(s);}
+    catch(error){notice(s,'手机状态刷新失败：'+error.message,true);s.devices=s.devices.map(d=>({...d,connection_status:'unknown',snapshot_url:''}));renderDevices(s);}
   }
   function payload(s){return {app_id:s.app,cases:[...s.selected.values()].map(({case_id,revision})=>({case_id,revision})),targets:[s.devices.find(d=>keyOf(d.target)===s.target).target],notifications:{enabled:false}};}
   async function start(s,retry=false){
@@ -177,17 +186,21 @@
     if(s.pending.has('reports'))return;
     const query=new URLSearchParams({scope:'own',limit:'20'});if(s.app)query.set('app_id',s.app);if(s.cursor)query.set('cursor',s.cursor);
     try{const data=await request(s,'reports','/ui-executions?'+query);if(!data)return;
-      const list=s.node.querySelector('[data-ui-reports]'),keep=new Set();
+      const list=s.node.querySelector('[data-ui-reports]'),keep=new Set(),focused=document.activeElement,scrollTop=list.scrollTop;
       list.querySelector('[data-ui-empty-reports]')?.remove();
+      let index=0;
       for(const b of data.items||[]){
         keep.add(b.ui_batch_id);let button=s.reportNodes.get(b.ui_batch_id);
-        if(!button){button=document.createElement('button');button.type='button';button.className='ui-simple-report-row';button.innerHTML='<strong></strong><span></span><small></small>';s.reportNodes.set(b.ui_batch_id,button);list.append(button);}
+        if(!button){button=document.createElement('button');button.type='button';button.className='ui-simple-report-row';button.innerHTML='<strong></strong><span></span><small></small>';s.reportNodes.set(b.ui_batch_id,button);}
+        if(list.children[index]!==button)list.insertBefore(button,list.children[index]||null);index++;
         const date=new Date(Number(b.created_ns)/1e6);button.querySelector('strong').textContent=b.app_name||b.app_id;
         button.querySelector('span').textContent=`${b.owner_display_name||''} · ${Number.isFinite(date.getTime())?date.toLocaleString():''}`;
-        button.querySelector('small').textContent=`${({queued:'排队中',blocked:'等待条件满足',running:'执行中',passed:'通过',failed:'失败',cancelled:'已取消',cancelling:'正在停止',interrupted:'已中断'})[b.status]||'状态待确认'} · ${b.report_status==='ready'?'报告已就绪':'报告尚未就绪'}`;
+        button.querySelector('small').textContent=`${({queued:'排队中',blocked:'等待条件满足',running:'执行中',passed:'通过',failed:'失败',cancelled:'已取消',cancelling:'正在停止',interrupted:'已中断'})[b.status]||'状态待确认'} · ${({ready:'报告已就绪',failed:'报告生成失败'})[b.report_status]||'报告尚未就绪'}`;
         button.onclick=()=>{s.batchId=b.ui_batch_id;s.batchSettled=false;loadBatch(s);};
       }
       for(const[id,button]of s.reportNodes)if(!keep.has(id)){button.remove();s.reportNodes.delete(id);}
+      if(focused?.isConnected&&focused.classList?.contains('ui-simple-report-row')&&document.activeElement!==focused)focused.focus({preventScroll:true});
+      list.scrollTop=scrollTop;
       if(!list.childElementCount){const empty=document.createElement('p');empty.dataset.uiEmptyReports='';empty.textContent='还没有你发起的测试。';list.append(empty);}
       s.next=data.next_cursor||'';s.node.querySelector('[data-ui-prev]').disabled=!s.previous.length;s.node.querySelector('[data-ui-next]').disabled=!s.next;
     }catch(error){notice(s,error.message,true);}

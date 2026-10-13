@@ -39,7 +39,8 @@ async function loadUiSimplePicture(img,device,isCurrent){
   const epoch=uiSimpleEpoch,identity=uiSimpleIdentity();
   const url=new URL(device.snapshot_url,window.location.origin);
   if(url.origin!==window.location.origin||url.pathname!=='/api/runner/device-snapshot'
-    ||url.searchParams.get('runner_id')!==device.target.runner_id||url.searchParams.get('device_id')!==device.target.device_id)return;
+    ||url.searchParams.get('runner_id')!==device.target.runner_id||url.searchParams.get('device_id')!==device.target.device_id
+    ||url.searchParams.get('app_id')!==device.app_id)return;
   const key=identity+'|'+url.href+'|'+device.snapshot_captured_at;
   const attach=src=>{
     if(epoch!==uiSimpleEpoch||identity!==uiSimpleIdentity()||!isCurrent())return false;
