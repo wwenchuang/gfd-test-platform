@@ -31,6 +31,20 @@ test('overall success with missing step evidence does not fabricate green steps'
   assert.equal(f.node.querySelectorAll('[data-step-state="passed"]').length,0);
   assert.match(f.node.textContent,/仅用例级进度/);
 });
+test('suite title does not hide the application identity', t=>{
+  const f=fixture(t), b=batch();b.suite_name='导航基线';b.app_name='智小白3D';f.view.update(f.node,b);
+  assert.equal(f.node.querySelector('[data-batch-title]').textContent,'导航基线');
+  assert.equal(f.node.querySelector('[data-batch-app]').textContent,'智小白3D');
+});
+test('unconfirmed interruption is not finished and retains the stop action',t=>{
+  const f=fixture(t), b=batch();b.status='interrupted';b.execution_settled=false;b.stop_pending=true;
+  b.case_attempts[0].status='interrupted';b.case_attempts[0].execution_settled=false;
+  f.view.update(f.node,b,{cancel:()=>{},rerun:()=>{}});
+  assert.match(f.node.querySelector('[data-batch-count]').textContent,/0 \/ 1/);
+  assert.equal(f.node.querySelector('[data-batch-action="cancel"]').hidden,false);
+  assert.equal(f.node.querySelector('[data-batch-action="rerun"]').hidden,true);
+  assert.match(f.node.querySelector('[data-batch-hint]').textContent,/停止/);
+});
 test('refresh preserves details node, expansion and keyboard focus', t=>{
   const f=fixture(t), b=batch();f.view.update(f.node,b);
   const details=f.node.querySelector('details'), summary=details.querySelector('summary');details.open=true;summary.focus();

@@ -8,6 +8,7 @@
   };
   const terminal = new Set(['passed','success','failed','timeout','cancelled','interrupted','skipped']);
   const views = new WeakMap();
+  const settled = value => typeof value.execution_settled === 'boolean' ? value.execution_settled : terminal.has(value.status);
   const status = value => Object.hasOwn(states,value) ? value : 'unknown';
   const label = value => states[status(value)][1];
   const text = (parent, selector, value) => { parent.querySelector(selector).textContent = String(value ?? ''); };
@@ -22,7 +23,7 @@
   }
   function init(node,batchId) {
     node.replaceChildren();node.classList.add('ui-batch-view');
-    node.innerHTML='<header class="ui-batch-head"><div><p class="ui-eyebrow">本次测试</p><h2 data-batch-title></h2><p data-batch-owner></p></div><strong data-batch-state></strong></header><div class="ui-batch-totals"><span data-batch-count></span><span data-batch-results></span></div><progress data-batch-progress aria-label="已结束的用例执行"></progress><p data-batch-hint role="status"></p><div class="ui-batch-actions"></div><p data-batch-action-error role="alert" hidden></p><div class="ui-batch-attempts"></div><footer class="ui-batch-foot"><span data-batch-report></span><span data-batch-delivery></span><small data-batch-id></small></footer>';
+    node.innerHTML='<header class="ui-batch-head"><div><p class="ui-eyebrow">本次测试</p><h2 data-batch-title></h2><p data-batch-app></p><p data-batch-owner></p></div><strong data-batch-state></strong></header><div class="ui-batch-totals"><span data-batch-count></span><span data-batch-results></span></div><progress data-batch-progress aria-label="已结束的用例执行"></progress><p data-batch-hint role="status"></p><div class="ui-batch-actions"></div><p data-batch-action-error role="alert" hidden></p><div class="ui-batch-attempts"></div><footer class="ui-batch-foot"><span data-batch-report></span><span data-batch-delivery></span><small data-batch-id></small></footer>';
     const state={batchId,rows:new Map(),actions:{},busy:new Set(),batch:null};views.set(node,state);
     for (const [key,title] of [['cancel','取消本次测试'],['rerun','重跑未通过项'],['report','查看本次报告'],['copy','复制测试摘要']]) {
       const button=make('button','btn-sm',title);button.type='button';button.dataset.batchAction=key;
@@ -40,8 +41,8 @@
   }
   function updateActions(node,state) {
     const b=state.batch, attempts=b.case_attempts || [];
-    const available={cancel:!terminal.has(b.status)&&b.status!=='cancelling',
-      rerun:terminal.has(b.status)&&attempts.some(a=>!['passed','success'].includes(a.status)),
+    const available={cancel:!settled(b)&&b.status!=='cancelling',
+      rerun:settled(b)&&attempts.some(a=>!['passed','success'].includes(a.status)),
       report:b.report_status==='ready',copy:b.report_status==='ready'};
     node.querySelectorAll('[data-batch-action]').forEach(button=>{
       const key=button.dataset.batchAction;
@@ -64,17 +65,18 @@
     if(!state || state.batchId!==batch.ui_batch_id) state=init(node,batch.ui_batch_id);
     state.batch=batch;state.actions=actions;
     const attempts=Array.isArray(batch.case_attempts)?batch.case_attempts:[];
-    const done=attempts.filter(a=>terminal.has(a.status)).length;
+    const done=attempts.filter(settled).length;
     const passed=attempts.filter(a=>['passed','success'].includes(a.status)).length;
     const failed=attempts.filter(a=>['failed','timeout'].includes(a.status)).length;
     text(node,'[data-batch-title]',batch.suite_name || batch.app_name || batch.app_id || 'UI 测试');
+    text(node,'[data-batch-app]',batch.app_name || batch.app_id || '应用待确认');
     text(node,'[data-batch-owner]',`执行者：${batch.owner_display_name || batch.owner_username || '账号信息待确认'}`);
     text(node,'[data-batch-state]',label(batch.status));
     node.querySelector('[data-batch-state]').className='ui-state-text-'+status(batch.status);
     text(node,'[data-batch-count]',`${done} / ${attempts.length} 项已结束`);
     text(node,'[data-batch-results]',`通过 ${passed} · 失败 ${failed} · 其余 ${attempts.length-passed-failed}`);
     const progress=node.querySelector('[data-batch-progress]');progress.max=Math.max(1,attempts.length);progress.value=done;
-    text(node,'[data-batch-hint]',batch.message || (batch.status==='queued'?'等待所选手机接单；可取消本次测试。':batch.status==='cancelling'?'已请求取消，正在等待手机确认停止。':batch.status==='running'?'按手机真实上报更新步骤。':label(batch.status)));
+    text(node,'[data-batch-hint]',batch.message || (batch.stop_pending?'正在等待手机确认停止；确认前不会释放设备。':batch.status==='queued'?'等待所选手机接单；可取消本次测试。':batch.status==='cancelling'?'已请求取消，正在等待手机确认停止。':batch.status==='running'?'按手机真实上报更新步骤。':label(batch.status)));
     const reportLabels={pending:'报告等待生成',generating:'报告生成中',ready:'本次报告已就绪',failed:'报告生成失败，可补生成'};
     const deliveryLabels={not_requested:'未启用飞书通知',pending:'飞书通知待发送',sending:'飞书通知发送中',sent:'飞书通知已发送',failed:'飞书通知发送失败',unknown:'飞书送达待核对'};
     text(node,'[data-batch-report]',reportLabels[batch.report_status] || '报告状态待确认');
