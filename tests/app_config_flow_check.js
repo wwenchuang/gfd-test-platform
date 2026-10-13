@@ -140,6 +140,37 @@ test('opening or switching the application editor clears stale operation feedbac
   assert.equal(f.feedbackClears(), 2);
 });
 
+test('application editor preserves an explicit iOS mapping when saving other fields', async t => {
+  const f = fixture(t);
+  f.run(`taskApps[0].platform_mappings = {android: '${APP_A}', ios: 'com.fixture.ios.a'}; openTaskAppEditor('${APP_A}')`);
+  assert.equal(f.field('task-app-ios-bundle')?.value, 'com.fixture.ios.a');
+  f.field('task-app-name').value = '改名应用';
+  await f.run('saveTaskApp()');
+  f.expectCalls(['POST /task-app']);
+  assert.deepEqual(f.calls[0].body.platform_mappings, {android: APP_A, ios: 'com.fixture.ios.a'});
+});
+
+test('application editor can remove an iOS mapping and does not leak it into a new app', async t => {
+  const f = fixture(t);
+  f.run(`taskApps[0].platform_mappings = {android: '${APP_A}', ios: 'com.fixture.ios.a'}; openTaskAppEditor('${APP_A}')`);
+  assert.ok(f.field('task-app-ios-bundle'));
+  f.field('task-app-ios-bundle').value = '';
+  await f.run('saveTaskApp()');
+  assert.deepEqual(f.calls[0].body.platform_mappings, {android: APP_A});
+  f.run(`taskApps.find(a=>a.package==='${APP_A}').platform_mappings.ios='com.fixture.ios.a'; openTaskAppEditor('${APP_A}'); openTaskAppEditor()`);
+  assert.equal(f.field('task-app-ios-bundle').value, '');
+});
+
+test('application editor rejects an invalid iOS bundle identifier before saving', async t => {
+  const f = fixture(t);
+  f.run(`openTaskAppEditor('${APP_A}')`);
+  assert.ok(f.field('task-app-ios-bundle'));
+  f.field('task-app-ios-bundle').value = 'not a bundle';
+  await f.run('saveTaskApp()');
+  f.expectCalls([]);
+  assert.match(f.toasts.at(-1).message, /iOS/);
+});
+
 test('creates a module inside the current application and selects it for saving', async t => {
   const f = fixture(t);
   f.run(`openTaskAppEditor('${APP_A}', 3)`);

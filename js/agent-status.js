@@ -4164,6 +4164,12 @@ function validateTaskAppBasicInfo() {
     document.getElementById(!name ? 'task-app-name' : 'task-app-package')?.focus();
     return false;
   }
+  const iosBundle = document.getElementById('task-app-ios-bundle')?.value.trim() || '';
+  if (iosBundle && !/^[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)+$/.test(iosBundle)) {
+    showToast('请填写有效的 iOS Bundle ID，例如 com.example.app', 'error');
+    document.getElementById('task-app-ios-bundle')?.focus();
+    return false;
+  }
   try {
     readTaskAppBusinessLines();
     return true;
@@ -4660,6 +4666,7 @@ function filterTaskAppModules(query = '', onlyUnassigned = null) {
 function clearTaskAppForm() {
   document.getElementById('task-app-name').value = '';
   document.getElementById('task-app-package').value = '';
+  document.getElementById('task-app-ios-bundle').value = '';
   document.getElementById('task-app-enabled').checked = true;
   document.getElementById('task-app-sonic-project-name').value = '';
   document.getElementById('task-app-sonic-project-id').value = '';
@@ -4679,6 +4686,7 @@ function editTaskApp(packageName, step = 0) {
   if (typeof hideToast === 'function') hideToast();
   document.getElementById('task-app-name').value = app.name || '';
   document.getElementById('task-app-package').value = app.package || '';
+  document.getElementById('task-app-ios-bundle').value = app.platform_mappings?.ios || '';
   document.getElementById('task-app-enabled').checked = app.enabled !== false;
   document.getElementById('task-app-sonic-project-name').value = app.sonic_project_name || '';
   document.getElementById('task-app-sonic-project-id').value = app.sonic_project_id || '';
@@ -4737,8 +4745,10 @@ function renderTaskAppList() {
 }
 
 async function saveTaskApp() {
+  if (!validateTaskAppBasicInfo()) return;
   const name = document.getElementById('task-app-name').value.trim();
   const packageName = document.getElementById('task-app-package').value.trim();
+  const iosBundle = document.getElementById('task-app-ios-bundle').value.trim();
   const sonicProjectName = document.getElementById('task-app-sonic-project-name').value.trim();
   const sonicProjectId = document.getElementById('task-app-sonic-project-id').value.trim();
   const sonicSuiteName = document.getElementById('task-app-sonic-suite-name').value.trim();
@@ -4756,16 +4766,13 @@ async function saveTaskApp() {
     ...Array.from(document.querySelectorAll('.task-app-module-check:checked')).map(input => input.value),
     ...retainedTemporaryModules
   ])];
-  if (!name || !packageName) {
-    showToast('请填写应用中文名和包名', 'error');
-    return;
-  }
   try {
     const data = await apiRequest('/task-app', {
       method: 'POST',
       body: JSON.stringify({
         name,
         package: packageName,
+        platform_mappings: {android: packageName, ...(iosBundle ? {ios: iosBundle} : {})},
         enabled: document.getElementById('task-app-enabled').checked,
         business_lines: businessLines,
         modules: selectedModules,
