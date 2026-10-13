@@ -5,6 +5,10 @@ import hashlib
 
 import yaml
 
+from task_server.schemas import MIDSCENE_FLOW_ACTIONS
+
+from .yaml_static_validator import STEP_ATTR_KEYS, validate_midscene_action_parameters
+
 
 PORTABLE_ACTIONS = ("launch", "aiTap", "aiWaitFor", "aiAssert")
 
@@ -74,7 +78,9 @@ def compile_ui_case(case_version, target_resolution):
     step_map = {}
     required_actions = []
     unsupported = []
-    source_package = mappings.get(source_platform, target_resolution.get("source_package"))
+    source_package = mappings.get("android", target_resolution.get("app_id")) if source_platform == "android" else mappings.get("ios")
+    if not source_package:
+        return blocked("app_mapping_missing")
     for task_index, task in enumerate(tasks, 1):
         if not isinstance(task, dict) or set(task) - {"name", "flow"} or not isinstance(task.get("flow"), list) or not task["flow"]:
             return blocked("structure_unsupported")
@@ -91,7 +97,7 @@ def compile_ui_case(case_version, target_resolution):
             if not isinstance(step, dict):
                 unsupported.append(position)
                 continue
-            actions = [key for key in step if key not in ("timeout",)]
+            actions = [key for key in step if key in MIDSCENE_FLOW_ACTIONS]
             if len(actions) != 1:
                 unsupported.append(position)
                 continue
@@ -99,7 +105,10 @@ def compile_ui_case(case_version, target_resolution):
             if action not in required_actions:
                 required_actions.append(action)
             if same_android:
-                if action == "launch" and step[action] != target_package:
+                if (action not in (capabilities.get("ui_actions") or []) or
+                    set(step) - {action} - STEP_ATTR_KEYS or
+                    validate_midscene_action_parameters(action, step) or
+                    (action == "launch" and step[action] != target_package)):
                     unsupported.append(position)
                 continue
             valid = (action in PORTABLE_ACTIONS and

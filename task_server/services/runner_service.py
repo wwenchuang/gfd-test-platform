@@ -37,6 +37,7 @@ from ..config import (
     dashscope_text_model,
 )
 from ..storage import read_json_cached, read_json_file, read_text_file, safe_join, write_json_file
+from ..schemas import MIDSCENE_FLOW_ACTIONS
 from .job_service import job_allows_auto_device, load_task_meta, normalize_device_strategy
 
 # ---------------------------------------------------------------------------
@@ -478,8 +479,12 @@ def runner_accepts_explicit_job(runner_info, job, runner_id):
         device_id = job.get("device_id")
         if not device_id or job.get("target_runner_id") != runner_id or platform not in (capabilities.get("ui_platforms") or []):
             return False
-        baseline = platform == "android" and capabilities.get("android_baseline") is True
-        if capabilities.get("job_execution") is False or (not baseline and not set(job.get("ui_required_actions") or []).issubset(set(capabilities.get("ui_actions") or []))):
+        required_actions = job.get("ui_required_actions")
+        if not isinstance(required_actions, list) or not required_actions or any(
+            not isinstance(action, str) or action not in MIDSCENE_FLOW_ACTIONS for action in required_actions
+        ):
+            return False
+        if capabilities.get("job_execution") is False or not set(required_actions).issubset(set(capabilities.get("ui_actions") or [])):
             return False
         return any(device.get("device_id") == device_id and device.get("platform") == platform
                    and device.get("status") in ("online", "device") and device.get("preflight_status") == "ready"

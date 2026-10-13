@@ -49,7 +49,10 @@ RUNNER_CAPABILITIES = {
     "apk_install": True,
     "ui_execution_contract": "ui-v1",
     "ui_platforms": ["android"],
-    "ui_actions": ["launch", "aiTap", "aiWaitFor", "aiAssert"],
+    "ui_actions": ["launch", "terminate", "sleep", "runAdbShell", "ai", "aiAct", "aiAction",
+                   "aiTap", "aiHover", "aiInput", "aiKeyboardPress", "aiScroll", "aiAssert",
+                   "aiWaitFor", "aiQuery", "aiAsk", "aiBoolean", "aiNumber", "aiString",
+                   "recordToReport"],
     "android_baseline": True,
 }
 
@@ -943,6 +946,7 @@ def detect_devices():
         device = {
             "device_id": device_id,
             "status": "online",
+            "platform": "android",
             "brand": brand,
             "model": model,
             "label": display_name,

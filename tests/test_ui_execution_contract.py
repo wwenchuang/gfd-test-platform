@@ -145,8 +145,43 @@ def test_contract_dispatch_checks_registered_platform_and_capability():
 
 
 def test_android_baseline_dispatch_keeps_existing_actions():
-    info = {'capabilities': {**CAPABILITIES, 'ui_platforms': ['android'], 'android_baseline': True},
+    info = {'capabilities': {**CAPABILITIES, 'ui_platforms': ['android'], 'android_baseline': True,
+                             'ui_actions': ['launch', 'aiTap', 'aiWaitFor', 'aiAssert', 'runAdbShell']},
             'devices': [{'device_id': 'android-phone', 'platform': 'android', 'status': 'online', 'preflight_status': 'ready'}]}
     job = {'ui_execution_contract': 'ui-v1', 'target_runner_id': 'win', 'device_id': 'android-phone',
-           'platform': 'android', 'ui_required_actions': ['launch', 'adbShell']}
+           'platform': 'android', 'ui_required_actions': ['launch', 'runAdbShell']}
     assert runner_service.runner_accepts_explicit_job(info, job, 'win')
+    assert not runner_service.runner_accepts_explicit_job(info, {**job, 'ui_required_actions': ['launch', 'adbShell']}, 'win')
+    assert not runner_service.runner_accepts_explicit_job(info, {**job, 'ui_required_actions': ['launch', 'aiScroll']}, 'win')
+    assert not runner_service.runner_accepts_explicit_job(info, {k: v for k, v in job.items() if k != 'ui_required_actions'}, 'win')
+    assert not runner_service.runner_accepts_explicit_job(info, {**job, 'ui_required_actions': []}, 'win')
+    info['capabilities']['ui_actions'].append('adbShell')
+    assert not runner_service.runner_accepts_explicit_job(info, {**job, 'ui_required_actions': ['adbShell']}, 'win')
+
+
+def test_windows_actual_device_heartbeat_resolves_and_dispatches(monkeypatch, registry):
+    import importlib.util
+    from pathlib import Path
+    spec = importlib.util.spec_from_file_location('windows_ui_runner', Path(__file__).resolve().parents[1] / 'windows-midscene-runner.py')
+    windows = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(windows)
+    monkeypatch.setattr(windows, 'detect_device_ids', lambda: ['android-phone'])
+    monkeypatch.setattr(windows, 'resolve_adb_with_devices', lambda **kwargs: ('adb', ['android-phone']))
+    monkeypatch.setattr(windows, 'adb_shell_text', lambda *args, **kwargs: '')
+    monkeypatch.setattr(windows, 'detect_package_info', lambda *args: {'package': args[-1], 'installed': True})
+    monkeypatch.setattr(windows, 'device_market_name', lambda *args: 'Android Phone')
+    monkeypatch.setattr(windows, '_DEVICE_DETAILS_CACHE', {})
+    devices = windows.detect_devices()
+    captured = {}
+    monkeypatch.setattr(windows, 'midscene_env', lambda: {})
+    monkeypatch.setattr(windows, 'http_json', lambda method, url, payload: captured.update(payload))
+    windows.heartbeat(devices)
+    assert captured['devices'][0]['platform'] == 'android'
+    assert {'runAdbShell', 'aiScroll'} <= set(captured['capabilities']['ui_actions'])
+    normalized = runner_service.normalize_device_list(captured['devices'])
+    registry[2]['win'] = {'online': True, 'capabilities': captured['capabilities'], 'devices': normalized}
+    target = {'runner_id': 'win', 'device_id': 'android-phone', 'platform': 'android'}
+    assert resolve(target)['ok']
+    job = {'ui_execution_contract': 'ui-v1', 'target_runner_id': 'win', 'device_id': 'android-phone',
+           'platform': 'android', 'ui_required_actions': ['launch', 'aiTap']}
+    assert runner_service.runner_accepts_explicit_job(registry[2]['win'], job, 'win')

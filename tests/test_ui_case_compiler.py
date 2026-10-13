@@ -69,12 +69,39 @@ def test_source_connection_device_is_removed_from_cross_platform_copy():
 
 
 def test_android_only_baseline_preserves_existing_actions_and_options():
-    text = SOURCE.replace('android: {}', 'android: {keyboardDismissStrategy: back}') + '  - adbShell: input keyevent 4\n'
+    text = SOURCE.replace('android: {}', 'android: {keyboardDismissStrategy: back}') + '  - runAdbShell: input keyevent 4\n'
     target = {**TARGET, 'platform': 'android', 'target_package': 'com.kfb.model',
-              'capabilities': {**TARGET['capabilities'], 'android_baseline': True}}
+              'capabilities': {**TARGET['capabilities'], 'android_baseline': True,
+                               'ui_actions': TARGET['capabilities']['ui_actions'] + ['runAdbShell']}}
     result = compile_case(text, target)
     assert result['ok'] and yaml.safe_load(result['yaml_content']) == yaml.safe_load(text)
-    assert result['required_actions'] == ['launch', 'aiTap', 'aiWaitFor', 'aiAssert', 'adbShell']
+    assert result['required_actions'] == ['launch', 'aiTap', 'aiWaitFor', 'aiAssert', 'runAdbShell']
+
+
+def test_android_baseline_keeps_official_scroll_options():
+    text = SOURCE + '  - aiScroll: 在横向入口列表向右滑动一次\n    direction: right\n    distance: 400\n    scrollType: singleAction\n'
+    target = {**TARGET, 'platform': 'android', 'target_package': 'com.kfb.model',
+              'capabilities': {**TARGET['capabilities'], 'android_baseline': True,
+                               'ui_actions': TARGET['capabilities']['ui_actions'] + ['aiScroll']}}
+    result = compile_case(text, target)
+    assert result['ok'] and result['required_actions'][-1] == 'aiScroll'
+    assert yaml.safe_load(result['yaml_content'])['tasks'][0]['flow'][-1]['distance'] == 400
+
+
+@pytest.mark.parametrize('step', ['adbShell: input keyevent 4', 'runAdbShell: {command: dumpsys battery}',
+                                 'aiScroll: 在列表滑动\n    direction: diagonal',
+                                 'aiTap: 我的\n    unknownOption: true'])
+def test_android_baseline_rejects_unofficial_action_or_option(step):
+    target = {**TARGET, 'platform': 'android', 'target_package': 'com.kfb.model',
+              'capabilities': {**TARGET['capabilities'], 'android_baseline': True,
+                               'ui_actions': TARGET['capabilities']['ui_actions'] + ['runAdbShell', 'aiScroll']}}
+    assert not compile_case(SOURCE + '  - ' + step + '\n', target)['ok']
+
+
+def test_android_baseline_requires_runner_action_capability():
+    target = {**TARGET, 'platform': 'android', 'target_package': 'com.kfb.model',
+              'capabilities': {**TARGET['capabilities'], 'android_baseline': True}}
+    assert not compile_case(SOURCE + '  - runAdbShell: input keyevent 4\n', target)['ok']
 
 
 def test_android_baseline_device_id_cannot_override_selected_phone():
@@ -88,6 +115,13 @@ def test_ios_to_android_uses_explicit_reverse_mapping():
     text = SOURCE.replace('android: {}', 'ios: {}').replace('com.kfb.model', 'com.kfb.3d')
     result = compile_case(text, {**TARGET, 'platform': 'android', 'target_package': 'com.kfb.model'})
     assert result['ok'] and yaml.safe_load(result['yaml_content'])['tasks'][0]['flow'][0]['launch'] == 'com.kfb.model'
+
+
+def test_ios_to_android_without_source_mapping_fails_closed():
+    text = SOURCE.replace('android: {}', 'ios: {}')
+    target = {**TARGET, 'platform': 'android', 'target_package': 'com.kfb.model',
+              'platform_mappings': {'android': 'com.kfb.model'}}
+    assert not compile_case(text, target)['ok']
 
 
 def test_capability_loss_cannot_compile_even_supported_action():

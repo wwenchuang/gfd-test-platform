@@ -61,8 +61,12 @@ IOS_EXECUTION_ENABLED = os.getenv("IOS_EXECUTION_ENABLED", "0") == "1"
 if RUNNER_PLATFORM == "ios":
     RUNNER_CAPABILITIES.update(yaml_dry_run=False, apk_install=False, device_preview=True, job_execution=IOS_EXECUTION_ENABLED, explicit_target_only=True, ios_case_reuse=IOS_EXECUTION_ENABLED)
     RUNNER_VERSION = "2026.10.13-ios-execution-v1-step-progress-v1-wda-recovery-v1"
+ANDROID_UI_ACTIONS = ["launch", "terminate", "sleep", "runAdbShell", "ai", "aiAct", "aiAction",
+                      "aiTap", "aiHover", "aiInput", "aiKeyboardPress", "aiScroll", "aiAssert",
+                      "aiWaitFor", "aiQuery", "aiAsk", "aiBoolean", "aiNumber", "aiString",
+                      "recordToReport"]
 RUNNER_CAPABILITIES.update(ui_execution_contract="ui-v1", ui_platforms=[RUNNER_PLATFORM],
-                           ui_actions=["launch", "aiTap", "aiWaitFor", "aiAssert"],
+                           ui_actions=["launch", "aiTap", "aiWaitFor", "aiAssert"] if RUNNER_PLATFORM == "ios" else ANDROID_UI_ACTIONS,
                            android_baseline=RUNNER_PLATFORM == "android")
 
 
