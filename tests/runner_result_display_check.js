@@ -33,3 +33,10 @@ test('success with upload warnings preserves the warning without changing execut
   assert.doesNotMatch(html, /失败原因/);
   assert.match(html, /回传告警.*报告上传稍后重试/);
 });
+
+test('running stdout is progress evidence rather than a completed failure diagnosis', () => {
+  const html = detail({status: 'running', stdout_tail: 'aiBoolean result: false', stderr_tail: 'debug: waiting for page'});
+  assert.doesNotMatch(html, /原始错误|失败原因/);
+  assert.match(html, /aiBoolean result: false/);
+  assert.match(html, /debug: waiting for page/);
+});

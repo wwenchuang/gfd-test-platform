@@ -12,7 +12,7 @@
 
 ## Global Constraints
 
-- 任务只包含计划。本次不修改业务代码、Runner、本机服务、生产配置和数据，不发送通知。
+- 2026-10-13 用户已明确批准按整套计划实施；从隔离分支分批开发、验证、发布。飞书只向明确配置且授权的目标发送相应测试报告。
 - 实施从当时最新 main 建隔离分支，重读 AGENTS/CODEX_STATE，保留所有既有用户改动。本次调查基准为 bb7bc93。
 - 不大规模重构 router.py；dag_safe/parallel_dag 保留；不新增虚构模式或非官方 Midscene action/参数。
 - 业务手机选择与打印机数据分开；已选择手机不可用不得回退其他手机。9888E0094F2A 不作为手机标识。
@@ -213,12 +213,12 @@ P0/P1 首先形成可用闭环，再推进视频；不把五批合并成一次�
 
 ## 每批检查、部署与回滚
 
-新增 Python 测试使用仓库现有 unittest 风格，按对应包执行，例如：
+新增 Python 测试沿用所在模块实际测试风格，用 pytest 收集函数式测试，避免 unittest discover 显示 0 tests 被误当通过：
 
 ```bash
-python3 -m unittest discover -s tests -p 'test_ui_*.py'
-python3 -m unittest discover -s tests -p 'test_ios_case_reuse.py'
-python3 -m unittest discover -s tests -p 'test_device_recording_yaml_service.py'
+python3 -m pytest tests/test_ui_*.py -q
+python3 -m pytest tests/test_ios_case_reuse.py -q
+python3 -m pytest tests/test_device_recording_yaml_service.py -q
 python3 -m py_compile task_server/services/agent_service.py task_server/services/yaml_service.py task_server/services/yaml_executable_scorer.py
 python3 tests/backend_static_checks.py
 git diff --check

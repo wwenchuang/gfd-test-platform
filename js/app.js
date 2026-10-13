@@ -812,24 +812,36 @@ function renderDeviceOptions(selectId) {
   const select = document.getElementById(selectId);
   if (!select) return;
   const previous = select.value;
-  select.innerHTML = '<option value="">请选择执行设备（不自动分配）</option><option value="__AUTO_DEVICE__">自动选择在线设备（可选）</option>';
+  const previousLabel = select.selectedOptions[0]?.textContent || previous;
+  const rows = [
+    {value: '', label: runnerDevices.length ? '请选择执行设备（不自动分配）' : '暂无在线 Runner 设备', disabled: false},
+    {value: '__AUTO_DEVICE__', label: '自动选择在线设备（可选）', disabled: !runnerDevices.some(device => !device.usage_status || device.usage_status === 'idle')},
+  ];
   runnerDevices.forEach(device => {
-    const opt = document.createElement('option');
-    opt.value = `${device.runner_id}::${device.device_id}`;
-    opt.textContent = runnerDeviceOptionLabel(device);
-    opt.title = opt.textContent;
-    opt.disabled = device.usage_status && device.usage_status !== 'idle';
-    select.appendChild(opt);
+    rows.push({
+      value: `${device.runner_id}::${device.device_id}`,
+      label: runnerDeviceOptionLabel(device),
+      disabled: Boolean(device.usage_status && device.usage_status !== 'idle'),
+    });
   });
-  if (runnerDevices.length === 0) {
-    const opt = document.createElement('option');
-    opt.value = "";
-    opt.textContent = "暂无在线 Runner 设备";
-    select.appendChild(opt);
+  if (previous && !rows.some(row => row.value === previous)) {
+    rows.push({value: previous, label: `${previousLabel.replace(/（离线或不可用）$/, '')}（离线或不可用）`, disabled: true});
   }
-  if (previous && Array.from(select.options).some(opt => opt.value === previous)) {
-    select.value = previous;
-  }
+  // Keep option nodes stable while background device heartbeats refresh.
+  const existing = new Map(Array.from(select.options, option => [option.value, option]));
+  const wanted = new Set(rows.map(row => row.value));
+  Array.from(select.options).forEach(option => {
+    if (!wanted.has(option.value)) option.remove();
+  });
+  rows.forEach((row, index) => {
+    const option = existing.get(row.value) || document.createElement('option');
+    if (!option.hasAttribute('value') || option.value !== row.value) option.value = row.value;
+    if (option.textContent !== row.label) option.textContent = row.label;
+    if (option.title !== row.label) option.title = row.label;
+    if (option.disabled !== row.disabled) option.disabled = row.disabled;
+    if (select.options[index] !== option) select.insertBefore(option, select.options[index] || null);
+  });
+  select.value = previous;
 }
 
 function renderAgentRunnerDeviceOptions(preferredValue) {
@@ -1178,7 +1190,7 @@ function jobTimingText(job) {
 }
 
 function jobErrorText(job) {
-  if (['success', 'passed', 'done'].includes(String(job.status || '').toLowerCase())) return '';
+  if (['pending', 'running', 'success', 'passed', 'done'].includes(String(job.status || '').toLowerCase())) return '';
   if (job.kind === 'background') {
     const detail = job.error_detail || job.errorDetail || {};
     return explainCallbackHttp000(detail.message || detail.error || job.error || (job.status === 'failed' ? job.message : '') || '');
