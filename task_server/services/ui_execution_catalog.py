@@ -161,10 +161,10 @@ def get_ui_devices(actor, app_id):
                    'os_version':device.get('ios_version' if platform=='ios' else 'android_version') or '',
                    'resolution':device.get('resolution') or '', 'connection_status':state,
                    'app_version':version, 'snapshot_captured_at':device.get('snapshot_captured_at') or '',
-                   'snapshot_url':'', 'last_seen_age_seconds':runner.get('last_seen_age_seconds')}
-            if (row['snapshot_captured_at'] and
-                    ((profile.get('scope') or {}).get('ui_apps') == '*' or
-                     device.get('snapshot_app_package') == mappings.get(platform))):
+                   'snapshot_url':'', 'snapshot_hint':'', 'last_seen_age_seconds':runner.get('last_seen_age_seconds')}
+            if (profile.get('scope') or {}).get('ui_apps') != '*':
+                row['snapshot_hint']='手机预览包含整机画面，仅全应用权限账号可查看。'
+            elif row['snapshot_captured_at']:
                 row['snapshot_url']='/api/runner/device-snapshot?'+urlencode({'runner_id':runner_id,'device_id':device_id,'app_id':app_id})
             result.append(row)
     result.sort(key=lambda r:(r['connection_status']!='ready',r['name'],r['target']['device_id']))

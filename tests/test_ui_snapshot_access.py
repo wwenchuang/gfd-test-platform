@@ -1,6 +1,8 @@
 """Direct screenshot requests obey the current actor and immutable capture scope."""
 import base64
+import builtins
 import io
+import threading
 from pathlib import Path
 
 import pytest
@@ -59,31 +61,34 @@ def env(tmp_path, monkeypatch):
     return profile, get, tmp_path
 
 
-def test_direct_snapshot_allows_current_scoped_app_and_denies_other_app(env):
+def test_direct_snapshot_denies_restricted_scope_even_for_matching_capture(env):
     profile, get, _ = env
-    allowed=get()
-    assert allowed.status==200 and allowed.wfile.getvalue()==PNG
+    assert get().status==403
     assert get('com.secret').status==403
     assert get(None).status==403
     profile['scope']['ui_apps']=[]
     assert get(APP).status==403
 
 
-def test_direct_snapshot_denies_missing_permission_and_unknown_legacy_capture(env):
+def test_direct_snapshot_requires_live_ui_view_and_all_app_scope(env):
     profile, get, _ = env
+    profile['scope']['ui_apps']='*'
+    assert get(APP).status==200 and get(None).wfile.getvalue()==PNG
     profile['permissions']=[]
     assert get(APP).status==403
     profile['permissions']=['ui.view']
     rows=runner_service.load_runners()
     rows['r1']['devices'][0].pop('snapshot_app_package',None)
     runner_service.save_runners(rows)
-    assert get(APP).status==403
-    profile['scope']['ui_apps']='*'
+    assert get(APP).status==200
     assert get(None).status==200
+    profile['scope']['ui_apps']=[APP]
+    assert get(None).status==403
 
 
 def test_snapshot_fd_survives_replacement_after_headers_begin(env, monkeypatch):
-    _, get, tmp = env
+    profile, get, tmp = env
+    profile['scope']['ui_apps']='*'
     # The response must use the opened descriptor, not a second path lookup.
     original=Handler.send_header
     def replace(self,name,value):
@@ -95,3 +100,30 @@ def test_snapshot_fd_survives_replacement_after_headers_begin(env, monkeypatch):
         original(self,name,value)
     monkeypatch.setattr(Handler,'send_header',replace)
     assert get().wfile.getvalue()==PNG
+
+
+def test_snapshot_open_precedes_concurrent_pruning(env, monkeypatch):
+    profile, get, _ = env
+    profile['scope']['ui_apps']='*'
+    pending=runner_service.request_device_snapshots()['requests'][0]
+    started=threading.Event()
+    completed=threading.Event()
+    worker=[]
+    def replace_capture():
+        started.set()
+        runner_service.save_device_snapshot('r1',{'device_id':'p1','request_id':pending['request_id'],
+            'foreground_package':'com.other','content_base64':base64.b64encode(PNG+b'-new').decode()})
+        completed.set()
+    original=builtins.open
+    def observed_open(path, *args, **kwargs):
+        if str(path).endswith('.png') and threading.current_thread() is threading.main_thread():
+            thread=threading.Thread(target=replace_capture)
+            worker.append(thread)
+            thread.start()
+            assert started.wait(1)
+            assert not completed.wait(0.05)
+        return original(path,*args,**kwargs)
+    monkeypatch.setattr(builtins,'open',observed_open)
+    assert get().wfile.getvalue()==PNG
+    worker[0].join(2)
+    assert completed.is_set()

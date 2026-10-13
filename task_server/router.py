@@ -2180,15 +2180,13 @@ def _get_runner_device_snapshot(handler, qs):
         return
     runner_id = str(qs.get("runner_id") or "").strip()
     device_id = str(qs.get("device_id") or "").strip()
-    app_id = str(qs.get("app_id") or "").strip()
     if not runner_id or not device_id:
         handler._json({"ok": False, "error": "设备不存在"}, 404)
         return
-    from .services.ui_snapshot_service import resolve_ui_snapshot
+    from .services.ui_snapshot_service import open_ui_snapshot
     from .services.ui_execution_contract import AccessDenied
     try:
-        path = resolve_ui_snapshot(runner_id, device_id, app_id)
-        stream = open(path, "rb")
+        stream = open_ui_snapshot(runner_id, device_id)
     except AccessDenied:
         handler._json({"ok": False, "error": "无权查看设备截图"}, 403)
         return

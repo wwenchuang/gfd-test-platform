@@ -72,17 +72,21 @@ def test_device_refresh_reads_one_registry_and_no_case_sources(data):
     assert d['app_version']=='1.0 (7)' and d['connection_status']=='ready'
     encoded=json.dumps(result)
     assert 'private' not in encoded and 'never-return' not in encoded and 'wdaPort' not in encoded and 'evil' not in encoded
-    assert d['snapshot_url'].startswith('/api/runner/device-snapshot?')
-    assert 'app_id='+APP in d['snapshot_url']
+    assert d['snapshot_url']==''
+    assert '整机画面' in d['snapshot_hint']
 
 @pytest.mark.parametrize('field,value',[('ui_platforms',[]),('ui_actions',['launch','aiTap'])])
 def test_incomplete_runner_capabilities_block_readiness(data,field,value):
     data[3]['mac']['capabilities'][field]=value
     assert catalog.get_ui_devices(None,APP)['devices'][0]['connection_status']=='upgrade_required'
 
-def test_snapshot_link_requires_matching_capture_package(data):
+def test_full_scope_snapshot_link_does_not_depend_on_foreground_label(data):
+    data[0]['scope']['ui_apps']='*'
     data[3]['mac']['devices'][0]['snapshot_app_package']='com.other.app'
-    assert catalog.get_ui_devices(None,APP)['devices'][0]['snapshot_url']==''
+    row=catalog.get_ui_devices(None,APP)['devices'][0]
+    assert row['snapshot_url'].startswith('/api/runner/device-snapshot?')
+    assert 'app_id='+APP in row['snapshot_url']
+    assert row['snapshot_hint']==''
 
 def test_offline_selection_remains_visible_and_no_replacement_selected(data):
     data[3]['mac']['online']=False
