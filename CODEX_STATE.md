@@ -2,14 +2,14 @@
 
 - 1af62a1已由线上health确认部署，但Chrome验收暴露安卓名称仍是包名：Agent独立加载agentApplicationCatalog，旧名称函数依赖尚未加载的taskApps/knowledgeAppDetails。此前测试仅stub名称函数，未覆盖真实页面数据源。
 - 补充真实Agent应用目录回归和应用异步加载后卡片刷新回归，先失败再修复；使用现有Agent目录映射中文名称，目录加载完成只重绘卡片，不新增设备接口。版本与构建号保持同组换行，手机缩略图改为完整适配、不裁切。
-- 13项卡片测试、前端84项检查、两个JS语法和diff检查通过。补丁待部署与Chrome最终验收；iOS当前上报WDA/执行器不可用和版本读取失败，保留真实异常，不按历史成功值伪装在线。
+- 13项卡片测试、前端84项检查、两个JS语法和diff检查通过。d31cdf1已通过堡垒机标准脚本部署，health与线上JS/CSS均确认版本；Chrome实页和截图确认Android两行中文版本2.0.0(51)/4.46.0(359)，iOS两行1.19.7(70)/4.50.2(424)，构建号不再独立换行。iOS仍上报WDA/执行器不可用，此项未修复，不按版本读取成功宣称执行就绪。
 
 ## 2026-10-13 Android 双应用版本卡片
 
 - 用户要求Android也展示双应用版本。线上win-runner-01心跳已包含com.kfb.model 2.0.0(51)、com.xbxxhz.box 4.46.0(359)，实际包名核对正确；缺失在前端仅对iOS渲染多行，Android只显示当前选择应用。
 - 最小修复移除iOS专属展示条件；Android无name字段时按应用配置映射名称，未知应用回退包名。沿用上报数据，没有新增ADB采集/接口轮询；未安装和未上报状态仍明确区分。
 - 新增Android跨选择应用双版本、未知包/未安装/转义回归，先2失败后11项卡片测试全部通过；前端静态84、JS语法、diff检查通过。
-- 代码待发布及Chrome生产页面验收。当前堡垒机标签已退到登录页，不能声称线上已改好。部署仍cd /opt/midscene-task-platform-src后bash deploy/update-main-server.sh；无需更新Windows Runner。
+- 1af62a1已部署；随后Chrome发现名称源问题，补丁和最终验收见本文件顶部。部署仍cd /opt/midscene-task-platform-src后bash deploy/update-main-server.sh；无需更新Windows Runner。
 
 ## 2026-10-13 iOS 平台回放完成及步骤进度补齐
 
