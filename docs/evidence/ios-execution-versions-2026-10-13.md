@@ -7,6 +7,7 @@
 
 ## 实测
 - iPhone13本机Midscene1.13.0：启动→我的→断言我的设备/我的收藏→首页→断言新手必学/AI建模/模型导入，24.164s通过。这是本机验收，未经过平台任务下发。
+- iPhone13补充冷启动前置后再次执行同一导航断言用例通过，26.80s，报告ios-2026-10-13_12-02-19-85862dd6.html。
 - iPhone15第一次已有勋章详情页，launch只激活旧页面，等待底部我的失败。补充与Android一致的关闭指定应用再启动前置，不清应用数据。
 - iPhone15冷启动：WDA启动成功，但应用退出回桌面；Xcode devicectl独立启动同样退出。保留两份手机崩溃日志11:58:54/12:00:38，XBThree SIGABRT，栈为FlutterBoost warmUpEngine→FlutterViewController initWithEngine→fml::KillProcess。不能把这项当作坐标/等待错误或通过；需应用构建修复或有效构建后复验。
 - 私有证据目录：~/Applications/MidsceneIOS/validation/platform-execution-precheck* 和 iphone15-crashes。未删除手机日志。

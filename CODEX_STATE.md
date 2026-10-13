@@ -1,7 +1,7 @@
 ## 2026-10-13 iOS 本机实跑发现应用启动异常
 
 - 双应用版本已由本机Runner上报；Chrome切换小白学习核对两台4.50.2(424)。同屏两应用卡片和执行调度代码301c546已推送但服务器终端登录失效，已请求用户恢复。
-- iPhone13本机导航断言用例24.164秒通过。iPhone15 launch保留原详情页失败，补充指定应用冷启动前置；冷启动闪退，独立devicectl启动也重现，两份设备SIGABRT日志明确指向FlutterBoost/FlutterViewController初始化。失败与报告保留，不宣称UI稳定通过。
+- iPhone13本机导航断言用例24.164秒通过，补充冷启动前置后同用例26.80秒再次通过。iPhone15 launch保留原详情页失败，补充指定应用冷启动前置；冷启动闪退，独立devicectl启动也重现，两份设备SIGABRT日志明确指向FlutterBoost/FlutterViewController初始化。失败与报告保留，不宣称UI稳定通过。
 - 58项Python专项、前后端静态/编译/差异检查通过；详见docs/evidence/ios-execution-versions-2026-10-13.md。平台创建/领取/回传仍待部署恢复后验收。
 
 ## 2026-10-13 iOS 双应用版本与平台执行适配（待线上验收）
