@@ -6662,7 +6662,7 @@
 .agent-phone-item:has(input:focus-visible), .agent-device-auto:has(input:focus-visible) { outline: 3px solid var(--accent); outline-offset: 3px; }
 .agent-phone-card:hover { background: rgba(34,211,238,.04); }
 .agent-phone-art { position: relative; display: grid; place-items: center; flex: 0 0 64px; height: 112px; border: 2px solid var(--text3); border-radius: 10px; overflow: hidden; background: linear-gradient(150deg,rgba(34,211,238,.2),rgba(167,139,250,.15)); color: var(--text2); font-size: 10px; }
-.agent-phone-art img { width: 100%; height: 100%; object-fit: cover; background: #05080d; }
+.agent-phone-art img { width: 100%; height: 100%; object-fit: contain; background: #05080d; }
 .agent-phone-art::before { content: ''; position: absolute; top: 5px; width: 16px; height: 3px; border-radius: 3px; background: var(--text3); }
 .agent-phone-art::after { content: ''; position: absolute; bottom: 5px; width: 16px; height: 2px; background: var(--text3); }
 .agent-phone-copy { display: grid; gap: 6px; min-width: 0; font-size: 12px; color: var(--text2); overflow-wrap: anywhere; }
@@ -6670,7 +6670,8 @@
 .agent-phone-copy .agent-phone-status { color: var(--success); font-size: 11px; }
 .agent-phone-copy .agent-phone-status.busy { color: var(--warning); }
 .agent-phone-status::before { content: '●'; margin-right: 5px; }
-.agent-phone-app b { color: var(--text); }
+.agent-phone-app { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 6px; }
+.agent-phone-app b { color: var(--text); white-space: nowrap; }
 .agent-phone-copy small { font-size: 10px; color: var(--text3); }
 .agent-phone-check { position: absolute; right: 14px; top: 16px; display: grid; place-items: center; width: 22px; height: 22px; border: 1px solid var(--border2); border-radius: 6px; color: transparent; }
 .agent-phone-card:has(input:checked) .agent-phone-check { background: var(--accent); border-color: var(--accent); color: var(--bg); }

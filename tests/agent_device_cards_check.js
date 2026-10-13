@@ -119,3 +119,33 @@ test('Android missing installation and unknown packages remain explicit and esca
  assert.match(card.textContent,/版本未上报/);
  assert.equal(card.querySelector('img'),null);
 });
+
+test('Agent catalog names work before the lazy case catalog is loaded', t=>{
+ const w=fixture(t);
+ w.appDisplayName=()=> '未标注应用';
+ const src=fs.readFileSync('js/agent-workbench.js','utf8');
+ w.eval('var agentApplicationCatalog = [{package:"com.kfb.model",name:"智小白3D"},{package:"com.xbxxhz.box",name:"小白学习"}];');
+ for (const name of ['agentApplicationPackage','agentApplicationByPackage']) {
+  const start=src.indexOf(`function ${name}(`), rest=src.slice(start);
+  w.eval(rest.slice(0,rest.indexOf('\n}',0)+2));
+ }
+ w.runnerDevices=[{runner_id:'win',device_id:'phone',installed_apps:[
+ {package:'com.kfb.model',version_name:'2.0.0',version_code:'51'},
+ {package:'com.xbxxhz.box',version_name:'4.46.0',version_code:'359'}]}];
+ w.renderAgentRunnerDeviceOptions();
+ const text=w.document.querySelector('.agent-phone-card').textContent;
+ assert.match(text,/智小白3D 2.0.0 \(51\)/);
+ assert.match(text,/小白学习 4.46.0 \(359\)/);
+ assert.doesNotMatch(text,/com\.kfb\.model|com\.xbxxhz\.box/);
+});
+
+test('loading the Agent catalog refreshes existing cards without fetching devices again', async t=>{
+ const w=fixture(t); let renders=0; const requests=[];
+ Object.assign(w,{apiRequest:async path=>{requests.push(path);return {apps:[{package:'com.kfb.model',name:'智小白3D'}]};},agentAppsWithDefault:apps=>apps,renderAgentRunnerDeviceCards:()=>{renders++;}});
+ const src=fs.readFileSync('js/agent-workbench.js','utf8');
+ const start=src.indexOf('async function loadAppList('), rest=src.slice(start);
+ w.eval('let agentAppListRequestSeq=0; let agentApplicationCatalog=[];\n'+rest.slice(0,rest.indexOf('\n}',0)+2));
+ await w.loadAppList();
+ assert.equal(renders,1);
+ assert.deepEqual(requests,['/task-apps']);
+});

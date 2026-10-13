@@ -963,7 +963,9 @@ function renderAgentRunnerDeviceCards() {
           <span>${device.platform === 'ios' ? 'iOS' : '安卓'} ${e((device.platform === 'ios' ? device.ios_version : device.android_version || device.androidVersion) || '版本未上报')} · ${e(device.resolution || '分辨率未上报')}</span>
           ${Array.isArray(device.installed_apps) && device.installed_apps.length
             ? device.installed_apps.map(item => {
-              const configuredName = typeof appDisplayName === 'function' ? appDisplayName(item.source_package || item.package) : '';
+              const packageName = item.source_package || item.package;
+              const agentApp = typeof agentApplicationByPackage === 'function' ? agentApplicationByPackage(packageName) : null;
+              const configuredName = agentApp?.name || (typeof appDisplayName === 'function' ? appDisplayName(packageName) : '');
               const name = item.name || (configuredName && configuredName !== '未标注应用' ? configuredName : item.package);
               return `<span class="agent-phone-app">${e(name)} <b>${e(item.installed === false ? '未安装' : item.error || [item.version_name, item.version_code ? `(${item.version_code})` : ''].filter(Boolean).join(' ') || '版本未上报')}</b></span>`;
             }).join('')

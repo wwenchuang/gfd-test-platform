@@ -1018,6 +1018,7 @@ async function loadAppList(preferredValue, preferredBusiness = '') {
     if (dashboardSelect) {
       appendAgentAppOptions(dashboardSelect, apps, preferredValue);
     }
+    if (typeof renderAgentRunnerDeviceCards === 'function') renderAgentRunnerDeviceCards();
   } catch (e) {
     console.error('加载应用列表失败', e);
   }

@@ -1,3 +1,9 @@
+## 2026-10-13 统一 Android / iOS 设备卡片名称与版本排版
+
+- 1af62a1已由线上health确认部署，但Chrome验收暴露安卓名称仍是包名：Agent独立加载agentApplicationCatalog，旧名称函数依赖尚未加载的taskApps/knowledgeAppDetails。此前测试仅stub名称函数，未覆盖真实页面数据源。
+- 补充真实Agent应用目录回归和应用异步加载后卡片刷新回归，先失败再修复；使用现有Agent目录映射中文名称，目录加载完成只重绘卡片，不新增设备接口。版本与构建号保持同组换行，手机缩略图改为完整适配、不裁切。
+- 13项卡片测试、前端84项检查、两个JS语法和diff检查通过。补丁待部署与Chrome最终验收；iOS当前上报WDA/执行器不可用和版本读取失败，保留真实异常，不按历史成功值伪装在线。
+
 ## 2026-10-13 Android 双应用版本卡片
 
 - 用户要求Android也展示双应用版本。线上win-runner-01心跳已包含com.kfb.model 2.0.0(51)、com.xbxxhz.box 4.46.0(359)，实际包名核对正确；缺失在前端仅对iOS渲染多行，Android只显示当前选择应用。
