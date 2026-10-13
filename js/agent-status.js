@@ -2340,6 +2340,7 @@ function normalizeWorkflowKey(sectionKey) {
 function setActiveWorkflow(sectionKey, options = {}) {
   clearManagementSearchTimers();
   const normalizedKey = normalizeWorkflowKey(sectionKey);
+  if (typeof isUiSimpleWorkflow === 'function' && isUiSimpleWorkflow(activeWorkflow) && typeof leaveUiSimpleWorkflow === 'function') leaveUiSimpleWorkflow();
   if (activeWorkflow === 'operation_history' && normalizedKey !== 'operation_history' && typeof leaveOperationHistory === 'function') leaveOperationHistory();
   activeWorkflow = WORKFLOW_SECTIONS[normalizedKey] ? normalizedKey : 'dashboard';
   sessionStorage.setItem('midscene_active_workflow', activeWorkflow);
@@ -2428,6 +2429,7 @@ function updateNavigationBadges() {
 }
 
 function renderActiveWorkflowPage(options = {}) {
+  if (typeof isUiSimpleWorkflow === 'function' && isUiSimpleWorkflow(activeWorkflow)) return showUiSimpleWorkflow();
   if (activeWorkflow === 'operation_history') return showOperationHistory(options) || true;
   if (activeWorkflow === 'identity') return showIdentityManagement() || true;
   if (activeWorkflow === 'dashboard' || activeWorkflow === 'agent') {
@@ -2468,6 +2470,9 @@ function updateWorkbenchPanelMode() {
 
 // 上下文工具栏：根据当前模块动态展示标题/按钮
 const CONTEXT_TOOLBAR_MAP = {
+  ui_start: { module: 'ui', icon: '', title: '开始测试', refreshLabel: '刷新状态', refreshFn: 'refreshUiSimpleWorkflow()' },
+  ui_library: { module: 'ui', icon: '', title: '用例库', refreshLabel: '刷新状态', refreshFn: 'refreshUiSimpleWorkflow()' },
+  ui_reports: { module: 'ui', icon: '', title: '我的报告', refreshLabel: '刷新状态', refreshFn: 'refreshUiSimpleWorkflow()' },
   operation_history: { module: 'settings', icon: '', title: '业务操作记录', refreshLabel: '刷新记录', refreshFn: 'showOperationHistory()' },
   identity: { module: 'settings', icon: '', title: '成员与权限', refreshLabel: '刷新', refreshFn: 'showIdentityManagement()' },
   account: { module: 'settings', icon: '', title: '个人账号', refreshLabel: '个人资料与会话', refreshFn: 'showPersonalAccount()' },
@@ -2547,6 +2552,7 @@ async function activateWorkflow(sectionKey) {
   if (assetsHeader) assetsHeader.style.display = ['assets', 'generate', 'yaml_edit'].includes(activeWorkflow) ? '' : 'none';
   // round 4: 切换页面前，按目标页面动态决定数据加载与轮询
   applyLazyLoadForSection(activeWorkflow);
+  if (typeof isUiSimpleWorkflow === 'function' && isUiSimpleWorkflow(activeWorkflow)) { showUiSimpleWorkflow(); return; }
   if (keepFileContext) {
     document.getElementById('toolbar-help').textContent = '当前 YAML 已保留；编辑后先保存，再选择单条调试或整文件执行。';
     updateWorkflowActionGroups();

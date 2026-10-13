@@ -7,7 +7,7 @@ import re
 from . import case_service
 from .operation_attribution import current_actor
 from .ui_case_compiler import compile_ui_case
-from .ui_execution_contract import require_ui_actor, resolve_ui_target
+from .ui_execution_contract import AccessDenied, require_ui_actor, resolve_ui_target
 from .ui_execution_store import BatchConflict, UiExecutionStore
 
 
@@ -167,8 +167,13 @@ def get_ui_batch(actor, batch_id):
 def list_ui_batches(actor, filters=None, cursor="", limit=20):
     profile = require_ui_actor(actor, permission="ui.view")
     filters = filters or {}
-    if not isinstance(filters, dict) or set(filters) - {"app_id"}:
+    if not isinstance(filters, dict) or set(filters) - {"app_id", "scope"}:
         raise BatchValidationError("filters_invalid")
+    scope = filters.get("scope", "own")
+    if scope not in {"own", "all"}:
+        raise BatchValidationError("scope_invalid")
+    if scope == "all" and not profile.get("is_superuser"):
+        raise AccessDenied("team_scope_forbidden")
     app_id = filters.get("app_id")
     if app_id:
         app_id = _identifier(app_id, "app_invalid")
@@ -180,7 +185,7 @@ def list_ui_batches(actor, filters=None, cursor="", limit=20):
     # Ownership is admin-sensitive; app scope applies to every actor.
     allowed = (profile.get("scope") or {}).get("ui_apps")
     app_ids = None if allowed == "*" else tuple(allowed or [])
-    return _store().list_batches(None if profile.get("is_superuser") else profile["user_id"],
+    return _store().list_batches(None if scope == "all" else profile["user_id"],
                                  app_id, cursor, limit, app_ids)
 
 

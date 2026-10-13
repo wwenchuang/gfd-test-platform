@@ -6244,7 +6244,7 @@ def _get_ui_execution_batches(handler, qs):
     from task_server.services.ui_execution_contract import AccessDenied
 
     try:
-        result = list_ui_batches(None, {"app_id": qs["app_id"]} if qs.get("app_id") else {},
+        result = list_ui_batches(None, {key: qs[key] for key in ("app_id", "scope") if qs.get(key)},
                                  qs.get("cursor", ""), int(qs.get("limit", 20)))
     except (AccessDenied, BatchValidationError, ValueError, sqlite3.Error, OSError) as error:
         _ui_batch_error(handler, error)
@@ -6269,6 +6269,48 @@ def _get_ui_execution_batch(handler, qs, match):
         handler._json({"ok": False, "code": "batch_not_found"}, 404)
         return
     handler._json({"ok": True, "batch": batch})
+
+
+@route_get("/api/ui-executions/availability")
+def _get_ui_execution_availability(handler, qs):
+    from .services.ui_execution_contract import require_ui_actor, AccessDenied
+    try:
+        require_ui_actor(permission="ui.view")
+    except AccessDenied as error:
+        _ui_batch_error(handler, error)
+        return
+    handler._json({"ok": True, "enabled": _ui_batch_enabled()})
+
+
+@route_get("/api/ui-executions/catalog")
+def _get_ui_execution_catalog(handler, qs):
+    if not _ui_batch_enabled():
+        handler._json({"ok": False, "code": "feature_disabled"}, 404)
+        return
+    from .services.ui_execution_catalog import get_ui_catalog
+    from .services.ui_execution_contract import AccessDenied
+    try:
+        result = get_ui_catalog(None, app_id=qs.get("app_id", ""), module=qs.get("module", ""),
+                                query=qs.get("query", ""), cursor=qs.get("cursor", ""), limit=int(qs.get("limit", 20)))
+    except (AccessDenied, ValueError, OSError) as error:
+        _ui_batch_error(handler, error)
+        return
+    handler._json({"ok": True, **result})
+
+
+@route_get("/api/ui-executions/devices")
+def _get_ui_execution_devices(handler, qs):
+    if not _ui_batch_enabled():
+        handler._json({"ok": False, "code": "feature_disabled"}, 404)
+        return
+    from .services.ui_execution_catalog import get_ui_devices
+    from .services.ui_execution_contract import AccessDenied
+    try:
+        result = get_ui_devices(None, qs.get("app_id", ""))
+    except (AccessDenied, ValueError, OSError) as error:
+        _ui_batch_error(handler, error)
+        return
+    handler._json({"ok": True, **result})
 
 
 @route_post("/api/ui-executions/preflight")

@@ -8,6 +8,7 @@ function acceptAuthSession(data) {
   // Older visual fixtures omit profile. An explicit empty profile fails closed.
   currentAccessProfile = Object.hasOwn(data, 'profile') ? (data.profile || {}) : null;
   if (typeof resetOperationHistory === 'function') resetOperationHistory();
+  if (typeof resetUiSimpleWorkflow === 'function') resetUiSimpleWorkflow();
   const label = document.getElementById('account-name');
   if (label) label.textContent = currentAccessProfile?.display_name || sessionStorage.getItem('user') || '个人账号';
 }
@@ -87,6 +88,7 @@ function applyRestrictedActionControls() {
 }
 
 const WORKFLOW_PERMISSIONS = {
+  ui_start: 'ui.view', ui_library: 'ui.view', ui_reports: 'ui.view',
   identity: 'auth.manage', config: 'platform.configure', app_config: 'platform.configure',
   sonic_config: 'platform.configure', system_config: 'platform.configure', feishu_config: 'platform.notify',
   dashboard: 'ui.execute', agent: 'ui.execute', agent_confirm: 'ui.execute', agent_history: 'ui.view',
@@ -96,6 +98,7 @@ const WORKFLOW_PERMISSIONS = {
 };
 
 function canAccessWorkflow(key) {
+  if (typeof isUiSimpleWorkflow === 'function' && isUiSimpleWorkflow(key)) return isUiSimpleAvailable() && hasPermission('ui.view');
   if (['dashboard', 'agent', 'agent_confirm'].includes(key)) return canOperateAgent();
   if (key === 'generate') return canUseSharedUiAi();
   return !WORKFLOW_PERMISSIONS[key] || hasPermission(WORKFLOW_PERMISSIONS[key]);
@@ -120,6 +123,7 @@ function clearAuthSession() {
   sessionStorage.removeItem('sessionToken');
   currentAccessProfile = null;
   if (typeof resetOperationHistory === 'function') resetOperationHistory();
+  if (typeof resetUiSimpleWorkflow === 'function') resetUiSimpleWorkflow();
   if (typeof closeIdentityDialog === 'function') closeIdentityDialog();
   if (typeof stopJobsAutoRefresh === 'function') stopJobsAutoRefresh();
   if (typeof stopRunnerStatusAutoRefresh === 'function') stopRunnerStatusAutoRefresh();
@@ -145,9 +149,13 @@ function clearTransientAuthFeedback() {
   }
 }
 
-function showAuthedApp() {
+async function showAuthedApp() {
   clearTransientAuthFeedback();
+  const identity=currentAccessProfile?.user_id;
+  if (typeof initUiSimpleAvailability === 'function') await initUiSimpleAvailability({navigate:false});
+  if(identity!==currentAccessProfile?.user_id)return;
   if (typeof restoreWorkflowPreference === 'function') restoreWorkflowPreference();
+  if (typeof isUiSimpleAvailable === 'function' && isUiSimpleAvailable() && activeWorkflow==='dashboard') activeWorkflow='ui_start';
   if (!canAccessWorkflow(activeWorkflow)) {
     activeWorkflow = ['dashboard', 'assets', 'identity', 'config', 'feishu_config'].find(canAccessWorkflow) || 'account';
   }

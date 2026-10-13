@@ -99,7 +99,8 @@ def test_owner_or_superuser_can_read_only_with_app_scope(environment, monkeypatc
         assert list_ui_batches(ACTORS["a"], {}, "", 20)["items"] == []
     with actor_context(ACTORS["admin"]):
         assert get_ui_batch(ACTORS["admin"], batch["ui_batch_id"])["ui_batch_id"] == batch["ui_batch_id"]
-        assert list_ui_batches(ACTORS["admin"], {}, "", 20)["items"][0]["ui_batch_id"] == batch["ui_batch_id"]
+        assert list_ui_batches(ACTORS["admin"], {}, "", 20)["items"] == []
+        assert list_ui_batches(ACTORS["admin"], {"scope":"all"}, "", 20)["items"][0]["ui_batch_id"] == batch["ui_batch_id"]
     from task_server import identity
     original = identity.get_access_profile
     monkeypatch.setattr(identity, "get_access_profile", lambda name: {
@@ -262,3 +263,12 @@ def test_route_hides_database_error(environment, monkeypatch):
         router.POST_ROUTES["/api/ui-executions"](handler, {})
     assert handler.response[1] == 503
     assert "secret" not in str(handler.response) and "private" not in str(handler.response)
+
+
+def test_team_batch_scope_requires_explicit_administrator(environment):
+    from task_server.services.ui_execution_service import list_ui_batches
+    with actor_context(ACTORS["a"]):
+        with pytest.raises(PermissionError):
+            list_ui_batches(None, {"scope":"all"})
+        with pytest.raises(ValueError):
+            list_ui_batches(None, {"scope":"someone_else"})

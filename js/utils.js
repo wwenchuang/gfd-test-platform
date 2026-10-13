@@ -116,6 +116,9 @@ function authHeaders(headers = {}) {
 }
 
 const WORKFLOW_SECTIONS = {
+  ui_start: { index: '', title: '开始测试', help: '选择用例和手机，查看本次测试结果。', cards: [], checklist: [] },
+  ui_library: { index: '', title: '用例库', help: '按应用、模块查找可复用用例。', cards: [], checklist: [] },
+  ui_reports: { index: '', title: '我的报告', help: '查看你发起的测试及当次结果。', cards: [], checklist: [] },
   identity: { index: '', title: '成员与权限', subtitle: '成员与权限', help: '', cards: [], checklist: [] },
   operation_history: { index: '', title: '我的操作记录', subtitle: '业务操作记录', help: '', cards: [], checklist: [] },
   account: { index: '', title: '个人账号', subtitle: '个人账号', help: '', cards: [], checklist: [] },
