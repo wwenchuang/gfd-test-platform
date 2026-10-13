@@ -2154,7 +2154,7 @@ def _get_runners(handler, qs):
         if platform_busy and not device.get("active_job_operator") and sonic.get("sonic_user"):
             device["active_job_operator"] = sonic["sonic_user"]
             device["usage_label"] = f"{sonic['sonic_user']} · 平台任务执行中"
-        elif device.get("usage_status") == "preview":
+        elif device.get("usage_status") == "preview" or (device.get("platform") == "ios" and device.get("preflight_status") == "blocked"):
             continue
         elif not platform_busy and capture_failed:
             device["usage_status"] = "unknown"
@@ -3980,6 +3980,7 @@ def _post_runner_heartbeat(handler, qs):
         "last_seen": record.get("last_seen") or "",
         "snapshot_requests": record.get("snapshot_requests") or [],
         "recording_evidence_requests": pending_recording_evidence_requests(record.get("runner_id") or ""),
+        "dispatch_policy": "explicit-target-v1",
     })
 
 

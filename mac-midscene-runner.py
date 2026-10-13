@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 import base64
+import hashlib
+from contextlib import contextmanager
 import json
 import http.cookiejar
 import os
@@ -10,6 +12,7 @@ import queue
 import re
 import shutil
 import socket
+import signal
 import subprocess
 import threading
 import time
@@ -54,10 +57,62 @@ DEVICE_MARKET_NAME_BY_MODEL = {
 RUNNER_PLATFORM = os.getenv("MIDSCENE_RUNNER_PLATFORM", "android").lower().strip()
 IOS_BUNDLE_ID = os.getenv("IOS_APP_BUNDLE_ID", "").strip()
 IOS_SOURCE_APP = os.getenv("IOS_SOURCE_APP_PACKAGE", "").strip()
+IOS_EXECUTION_ENABLED = os.getenv("IOS_EXECUTION_ENABLED", "0") == "1"
 if RUNNER_PLATFORM == "ios":
-    RUNNER_CAPABILITIES.update(yaml_dry_run=False, apk_install=False, device_preview=True, job_execution=False)
-    RUNNER_VERSION = "2026.10.13-ios-device-preview-v1"
+    RUNNER_CAPABILITIES.update(yaml_dry_run=False, apk_install=False, device_preview=True, job_execution=IOS_EXECUTION_ENABLED, explicit_target_only=True, ios_case_reuse=IOS_EXECUTION_ENABLED)
+    RUNNER_VERSION = "2026.10.13-ios-execution-v1"
 
+
+
+def ios_job_matches(job, runner_id, device_id):
+    return bool(device_id and job.get("device_id") == device_id and job.get("target_runner_id") == runner_id)
+
+
+def prepare_ios_yaml(text, *, source_app, bundle_id, wda_port):
+    """Compile an execution copy; never rewrite the shared source asset.
+
+    This first compatibility gate supports semantic navigation only. Anything
+    outside the verified subset requires an explicit platform adaptation.
+    """
+    import yaml
+    if not source_app or not bundle_id or not 1 <= int(wda_port) <= 65535:
+        raise ValueError("iOS 应用映射或 WDA 端口未配置")
+    data = yaml.safe_load(text)
+    if not isinstance(data, dict) or set(data) - {"android", "ios", "tasks", "agent"}:
+        raise ValueError("当前跨端验证仅支持平台配置、agent 与 tasks")
+    if "agent" in data and not isinstance(data["agent"], dict):
+        raise ValueError("agent 配置无效")
+    if ("android" in data) == ("ios" in data):
+        raise ValueError("必须且只能指定 android 或 ios")
+    source_platform = "android" if "android" in data else "ios"
+    interface = data[source_platform] or {}
+    if not isinstance(interface, dict) or set(interface) - ({"deviceId"} if source_platform == "android" else set()):
+        raise ValueError("平台专用连接/启动配置需先适配，不能静默丢弃")
+    tasks = data.get("tasks")
+    if not isinstance(tasks, list) or not tasks:
+        raise ValueError("缺少可执行 tasks")
+    for task in tasks:
+        if not isinstance(task, dict) or set(task) - {"name", "flow"} or not isinstance(task.get("flow"), list) or not task["flow"]:
+            raise ValueError("用例结构需要人工适配")
+        for index, step in enumerate(task["flow"], 1):
+            if not isinstance(step, dict):
+                raise ValueError(f"第 {index} 步结构无效")
+            actions = set(step) & {"launch", "aiTap", "aiWaitFor", "aiAssert"}
+            if len(actions) != 1:
+                raise ValueError(f"第 {index} 步不是已验证的跨端导航动作")
+            action = next(iter(actions))
+            if set(step) - {action, *(('timeout',) if action == 'aiWaitFor' else ())}:
+                raise ValueError(f"第 {index} 步含待适配参数")
+            if not isinstance(step[action], str) or not step[action].strip():
+                raise ValueError(f"第 {index} 步必须使用语义目标，不能复用坐标")
+            if action == "launch":
+                expected = source_app if source_platform == "android" else bundle_id
+                if step[action] != expected:
+                    raise ValueError(f"第 {index} 步的应用尚未配置跨端映射")
+                step[action] = bundle_id
+    data.pop(source_platform)
+    data["ios"] = {"wdaHost": "127.0.0.1", "wdaPort": int(wda_port)}
+    return yaml.safe_dump(data, allow_unicode=True, sort_keys=False)
 
 
 def validate_runner_config():
@@ -198,8 +253,14 @@ def midscene_env(device_id=""):
     env.setdefault("MIDSCENE_REPLANNING_CYCLE_LIMIT", "8")
     # Use Node's default certificate verification; preserve an explicit operator override.
     # Private CAs should be supplied with NODE_EXTRA_CA_CERTS instead of disabling TLS.
-    ensure_android_sdk_env(env)
-    if device_id:
+    if RUNNER_PLATFORM == "ios" or env.get("MIDSCENE_RUNNER_PLATFORM") == "ios":
+        env.pop("ANDROID_SERIAL", None)
+        env.pop("DEVICE_ID", None)
+        # Loopback WDA must not be sent to an operator's system HTTP proxy.
+        env["NO_PROXY"] = ",".join(filter(None, [env.get("NO_PROXY", ""), "127.0.0.1", "localhost"]))
+    else:
+        ensure_android_sdk_env(env)
+    if device_id and RUNNER_PLATFORM != "ios" and env.get("MIDSCENE_RUNNER_PLATFORM") != "ios":
         env["ANDROID_SERIAL"] = str(device_id)
         env["DEVICE_ID"] = str(device_id)
     return env
@@ -681,6 +742,13 @@ def ios_marketing_name(device_id):
 _IOS_METADATA_CACHE = {}
 
 
+def ios_app_mappings():
+    mappings = {"com.kfb.model": "com.kfb.3d", "com.xbxxhz.box": "com.xbxxhz.box"}
+    if IOS_SOURCE_APP and IOS_BUNDLE_ID:
+        mappings[IOS_SOURCE_APP] = IOS_BUNDLE_ID
+    return mappings
+
+
 def ios_device_metadata(device_id):
     cached = _IOS_METADATA_CACHE.get(device_id)
     if cached and time.monotonic() - cached[0] < 60:
@@ -698,26 +766,29 @@ def ios_device_metadata(device_id):
     except (ValueError, OSError, subprocess.SubprocessError, plistlib.InvalidFileException):
         pass
     row["battery_level"] = ios_battery_level(device_id)
-    try:
-        raw = subprocess.check_output(["ideviceinstaller", "-u", device_id, "list", "-b", IOS_BUNDLE_ID, "--xml"], timeout=8, stderr=subprocess.DEVNULL)
-        apps = plistlib.loads(raw)
-        app = next((a for a in apps if a.get("CFBundleIdentifier") == IOS_BUNDLE_ID), None)
-        row["installed_apps"] = [{"package": IOS_BUNDLE_ID, "source_package": IOS_SOURCE_APP,
-                                  "installed": app is not None,
-                                  "version_name": (app or {}).get("CFBundleShortVersionString", ""),
-                                  "version_code": (app or {}).get("CFBundleVersion", "")}]
-    except (ValueError, OSError, subprocess.SubprocessError, plistlib.InvalidFileException):
-        pass
+    row["installed_apps"] = []
+    for source_package, bundle in ios_app_mappings().items():
+        entry = {"package": bundle, "source_package": source_package,
+                 "name": {"com.kfb.model": "智小白3D", "com.xbxxhz.box": "小白学习"}.get(source_package, bundle)}
+        try:
+            raw = subprocess.check_output(["ideviceinstaller", "-u", device_id, "list", "-b", bundle, "--xml"], timeout=8, stderr=subprocess.DEVNULL)
+            apps = plistlib.loads(raw)
+            app = next((a for a in apps if a.get("CFBundleIdentifier") == bundle), None)
+            entry.update(installed=app is not None,
+                         version_name=(app or {}).get("CFBundleShortVersionString", ""),
+                         version_code=(app or {}).get("CFBundleVersion", ""))
+        except (ValueError, OSError, subprocess.SubprocessError, plistlib.InvalidFileException):
+            entry.update(installed=None, error="版本读取失败")
+        row["installed_apps"].append(entry)
     _IOS_METADATA_CACHE[device_id] = (time.monotonic(), dict(row))
     return row
 
 
-def ios_wda_read(device_id, path):
-    """Use a short-lived USB forward bound to the exact UDID, never a shared port."""
+@contextmanager
+def ios_usb_forward(device_id):
+    """One owned loopback port per exact USB device, cleaned even on failure."""
     if not device_id or device_id not in ios_connected_device_ids():
-        raise ValueError("截图设备不在当前 USB 连接列表中")
-    if path not in ("/screenshot", "/wda/activeAppInfo"):
-        raise ValueError("不支持的 WDA 读取路径")
+        raise ValueError("指定 iPhone 不在当前 USB 连接列表中")
     with socket.socket() as reservation:
         reservation.bind(("127.0.0.1", 0))
         port = reservation.getsockname()[1]
@@ -739,15 +810,7 @@ def ios_wda_read(device_id, path):
         time.sleep(0.05)
         if proxy.poll() is not None:
             raise RuntimeError("iPhone USB 转发端口被占用")
-        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
-        with opener.open(f"http://127.0.0.1:{port}{path}", timeout=12) as response:
-            raw = response.read(17 * 1024 * 1024 + 1)
-        if len(raw) > 17 * 1024 * 1024:
-            raise RuntimeError("WDA 响应超过大小限制")
-        value = json.loads(raw).get("value")
-        if isinstance(value, dict) and value.get("error"):
-            raise RuntimeError("WDA 未能读取当前画面信息")
-        return value
+        yield port
     finally:
         if proxy.poll() is None:
             proxy.terminate()
@@ -756,6 +819,42 @@ def ios_wda_read(device_id, path):
             except subprocess.TimeoutExpired:
                 proxy.kill()
                 proxy.wait(timeout=2)
+
+
+def ios_wda_request(port, path):
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    with opener.open(f"http://127.0.0.1:{port}{path}", timeout=12) as response:
+        raw = response.read(17 * 1024 * 1024 + 1)
+    if len(raw) > 17 * 1024 * 1024:
+        raise RuntimeError("WDA 响应超过大小限制")
+    value = json.loads(raw).get("value")
+    if isinstance(value, dict) and value.get("error"):
+        raise RuntimeError("WDA 未能读取当前画面信息")
+    return value
+
+
+def ios_wda_read(device_id, path):
+    if path not in ("/screenshot", "/wda/activeAppInfo", "/status"):
+        raise ValueError("不支持的 WDA 读取路径")
+    with ios_usb_forward(device_id) as port:
+        return ios_wda_request(port, path)
+
+
+_IOS_READINESS_CACHE = {}
+
+def ios_execution_readiness(device_id, force=False):
+    cached = _IOS_READINESS_CACHE.get(device_id)
+    if cached and not force and time.monotonic() - cached[0] < 30:
+        return dict(cached[1])
+    try:
+        resolve_command(MIDSCENE_BIN, "Midscene")
+        value = ios_wda_read(device_id, "/status")
+        result = {"ready": isinstance(value, dict) and value.get("ready") is True}
+        result["reason"] = "" if result["ready"] else "WDA 尚未就绪，请解锁手机并启动 WDA"
+    except Exception:
+        result = {"ready": False, "reason": "WDA 或执行器不可用，请检查 USB、手机解锁及 WDA 服务"}
+    _IOS_READINESS_CACHE[device_id] = (time.monotonic(), result)
+    return dict(result)
 
 
 def capture_ios_device_snapshot(device_id):
@@ -811,7 +910,12 @@ def detect_devices():
             connected = ios_connected_device_ids()
             for previous in set(_IOS_METADATA_CACHE) - set(connected):
                 _IOS_METADATA_CACHE.pop(previous, None)
-            return [ios_device_metadata(device_id) for device_id in connected]
+            rows = [ios_device_metadata(device_id) for device_id in connected]
+            if IOS_EXECUTION_ENABLED:
+                for row in rows:
+                    state = ios_execution_readiness(row["device_id"])
+                    row.update(preflight_status="ready" if state["ready"] else "blocked", preflight=state)
+            return rows
         except (OSError, subprocess.SubprocessError):
             return []
     try:
@@ -1408,6 +1512,25 @@ def write_text(path, text):
     path.write_text(text or "", encoding="utf-8", errors="ignore")
 
 
+def stop_midscene_process(proc):
+    if proc.poll() is not None:
+        return
+    try:
+        if RUNNER_PLATFORM == "ios":
+            os.killpg(proc.pid, signal.SIGTERM)
+        else:
+            proc.terminate()
+        proc.wait(timeout=3)
+    except subprocess.TimeoutExpired:
+        if RUNNER_PLATFORM == "ios":
+            os.killpg(proc.pid, signal.SIGKILL)
+        else:
+            proc.kill()
+        proc.wait(timeout=3)
+    except ProcessLookupError:
+        proc.wait(timeout=3)
+
+
 def execute_midscene(job_id, job_dir, yaml_path, task_names, device_id):
     started = time.time()
     stdout_lines = []
@@ -1417,9 +1540,11 @@ def execute_midscene(job_id, job_dir, yaml_path, task_names, device_id):
     current_index = 0
     current_task = task_names[0] if task_names else ""
     last_progress_at = 0
+    cancelled = False
+    proc = None
 
     def emit_progress(force=False, message="执行中"):
-        nonlocal last_progress_at
+        nonlocal last_progress_at, cancelled
         now = time.time()
         if not force and now - last_progress_at < 2:
             return
@@ -1428,7 +1553,7 @@ def execute_midscene(job_id, job_dir, yaml_path, task_names, device_id):
         progress = base
         if total:
             progress = min(95, max(base, round((completed / total) * 90) + base))
-        post_job_progress(job_id, {
+        acknowledgement = post_job_progress(job_id, {
             "progress": progress,
             "current_task_name": current_task,
             "current_task_index": current_index,
@@ -1438,19 +1563,20 @@ def execute_midscene(job_id, job_dir, yaml_path, task_names, device_id):
             "message": message,
             "stdout_tail": "".join(stdout_lines)[-2000:]
         })
+        if RUNNER_PLATFORM == "ios" and acknowledgement and acknowledgement.get("ignored") == "terminal_job":
+            cancelled = True
 
     try:
         midscene_bin = resolve_command(MIDSCENE_BIN, "Midscene")
         emit_progress(True, "Midscene 已启动")
-        midscene_command = [midscene_bin, str(yaml_path)]
-        if device_id:
-            midscene_command.extend(["--android.deviceId", device_id])
+        midscene_command = execution_command(midscene_bin, yaml_path, device_id)
         proc = subprocess.Popen(
             midscene_command,
             cwd=str(job_dir),
             text=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
+            start_new_session=RUNNER_PLATFORM == "ios",
             env=midscene_env(device_id)
         )
         line_queue = queue.Queue()
@@ -1466,6 +1592,10 @@ def execute_midscene(job_id, job_dir, yaml_path, task_names, device_id):
 
         threading.Thread(target=read_stdout, name=f"midscene-stdout-{job_id}", daemon=True).start()
         while True:
+            if cancelled:
+                stop_midscene_process(proc)
+                stderr = "平台任务已结束，已停止本机执行进程"
+                break
             line = ""
             try:
                 line = line_queue.get(timeout=2)
@@ -1498,7 +1628,7 @@ def execute_midscene(job_id, job_dir, yaml_path, task_names, device_id):
                         stdout_lines.append(rest_line)
                 break
             if time.time() - started > TIMEOUT_SECONDS:
-                proc.kill()
+                stop_midscene_process(proc)
                 stderr = f"\nTimeout after {TIMEOUT_SECONDS}s"
                 emit_progress(True, stderr.strip())
                 break
@@ -1510,7 +1640,7 @@ def execute_midscene(job_id, job_dir, yaml_path, task_names, device_id):
             completed = total
             emit_progress(True, "执行完成")
         return {
-            "status": "passed" if returncode == 0 else "failed",
+            "status": "cancelled" if cancelled else ("passed" if returncode == 0 else "failed"),
             "stdout": stdout,
             "stderr": stderr,
             "returncode": returncode,
@@ -1524,9 +1654,55 @@ def execute_midscene(job_id, job_dir, yaml_path, task_names, device_id):
             "returncode": -1,
             "duration": round(time.time() - started, 2)
         }
+    finally:
+        if proc is not None and not cancelled and proc.poll() is None:
+            stop_midscene_process(proc)
+
+
+def execution_command(midscene_bin, yaml_path, device_id):
+    command = [midscene_bin, str(yaml_path)]
+    if device_id and RUNNER_PLATFORM != "ios":
+        command.extend(["--android.deviceId", device_id])
+    return command
 
 
 def run_job(job):
+    if RUNNER_PLATFORM != "ios":
+        return run_standard_job(job)
+    device_id = str(job.get("device_id") or "")
+    try:
+        if not IOS_EXECUTION_ENABLED or not ios_job_matches(job, RUNNER_ID, device_id):
+            raise ValueError("iOS 任务必须明确选择当前 Runner 和手机，并启用执行")
+        if is_apk_install_job(job) or is_yaml_dry_run_job(job):
+            raise ValueError("iOS 不支持 APK 安装或 Android dry-run")
+        state = ios_execution_readiness(device_id, force=True)
+        if not state["ready"]:
+            raise RuntimeError(state["reason"])
+        import yaml
+        source = midscene_cli_yaml_text(job.get("yaml_content", ""))
+        data = yaml.safe_load(source)
+        launches = [step["launch"] for task in (data or {}).get("tasks", []) for step in task.get("flow", []) if "launch" in step]
+        mappings = ios_app_mappings()
+        source_app = next((key for key, value in mappings.items() if launches and launches[0] in (key, value)), "")
+        if not source_app:
+            raise ValueError("用例缺少已配置映射的启动应用步骤")
+        job_dir = WORKSPACE / job["job_id"]
+        write_text(job_dir / "source.yaml", source)
+        with ios_usb_forward(device_id) as port:
+            # Validate again on the exact forward used by this task.
+            if ios_wda_request(port, "/status").get("ready") is not True:
+                raise RuntimeError("所选 iPhone WDA 尚未就绪")
+            compiled = prepare_ios_yaml(source, source_app=source_app, bundle_id=mappings[source_app], wda_port=port)
+            write_text(job_dir / "reuse-manifest.json", json.dumps({
+                "source_sha256": hashlib.sha256(source.encode()).hexdigest(), "device_id": device_id,
+                "platform": "ios", "bundle_id": mappings[source_app], "source_file": job.get("file")}, ensure_ascii=False))
+            return run_standard_job({**job, "yaml_content": compiled})
+    except Exception as exc:
+        return {"status": "failed", "device_id": device_id, "duration": 0, "stdout": "",
+                "stderr": f"iOS 执行前检查失败：{exc}", "attempts": []}
+
+
+def run_standard_job(job):
     if is_apk_install_job(job):
         return install_apk_job(job)
     if is_yaml_dry_run_job(job):
@@ -1549,7 +1725,7 @@ def run_job(job):
         attempt_dir = job_dir / f"attempt-{index}-{safe_filename(device_id)}"
         attempt_dir.mkdir(parents=True, exist_ok=True)
         yaml_path = attempt_dir / yaml_name
-        yaml_content = inject_external_page_escape(midscene_cli_yaml_text(original_yaml))
+        yaml_content = original_yaml if RUNNER_PLATFORM == "ios" else inject_external_page_escape(midscene_cli_yaml_text(original_yaml))
         yaml_path.write_text(yaml_content, encoding="utf-8")
         task_names = [job.get("target_task_name")] if job.get("target_task_name") else parse_yaml_task_names(yaml_content)
         app_package = parse_app_package(yaml_content)
@@ -1557,10 +1733,11 @@ def run_job(job):
         target_task = job.get("target_task_name") or ""
         print(f"Trying device {device_id} for {job_id}{f' task={target_task}' if target_task else ''}")
         try:
-            adb_bin, _ = resolve_adb_with_devices(require_devices=False)
-            reset_foreground_app(adb_bin, device_id, app_package)
-            if app_package:
-                print(f"Reset foreground app: {app_package}")
+            if RUNNER_PLATFORM != "ios":
+                adb_bin, _ = resolve_adb_with_devices(require_devices=False)
+                reset_foreground_app(adb_bin, device_id, app_package)
+                if app_package:
+                    print(f"Reset foreground app: {app_package}")
         except Exception as e:
             print(f"Pre-run app reset warning: {e}")
         post_job_progress(job_id, {
@@ -1730,11 +1907,12 @@ def run_ios_device_monitor():
 
 
 def main():
-    if RUNNER_PLATFORM == "ios":
+    if RUNNER_PLATFORM == "ios" and not IOS_EXECUTION_ENABLED:
         return run_ios_device_monitor()
     validate_runner_config()
     WORKSPACE.mkdir(parents=True, exist_ok=True)
-    print_startup()
+    if RUNNER_PLATFORM != "ios":
+        print_startup()
 
     while True:
         try:
@@ -1743,7 +1921,10 @@ def main():
                 time.sleep(ADB_DEVICE_CHECK_INTERVAL)
                 continue
             try:
-                heartbeat(devices)
+                acknowledgement = heartbeat(devices)
+                upload_snapshot_requests(acknowledgement, devices)
+                if RUNNER_PLATFORM == "ios" and acknowledgement.get("dispatch_policy") != "explicit-target-v1":
+                    raise RuntimeError("平台需部署明确设备调度支持后才能执行 iOS")
                 replay_pending_result_callbacks()
             except Exception as e:
                 print(f"Heartbeat error: {e}")
@@ -1762,7 +1943,19 @@ def main():
                 continue
 
             print(f"Running {job['job_id']} {job.get('module')}/{job.get('file')}")
-            result = run_job(job)
+            stopped = threading.Event()
+            def keep_alive():
+                while not stopped.wait(10):
+                    try:
+                        heartbeat(devices)
+                    except Exception:
+                        pass
+            if RUNNER_PLATFORM == "ios":
+                threading.Thread(target=keep_alive, daemon=True).start()
+            try:
+                result = run_job(job)
+            finally:
+                stopped.set()
             print(f"Finished {job['job_id']} status={result['status']}")
             pending_report_path = result.pop("_pending_report_path", "")
             pending_report_name = result.pop("_pending_report_name", "")

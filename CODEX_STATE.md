@@ -1,3 +1,10 @@
+## 2026-10-13 iOS 双应用版本与平台执行适配（待线上验收）
+
+- 实机确认两台手机小白学习com.xbxxhz.box 4.50.2(424)、智小白3D com.kfb.3d 1.19.7(70)。此前只查一个配置包漏报，现缓存读取两包并在卡片同时显示；不采集上传无关应用列表。
+- Mac Runner 增加显式 IOS_EXECUTION_ENABLED 开关、每台 WDA 就绪检查、明确Runner/UDID调度和按任务回收USB转发；语义导航launch/aiTap/aiWaitFor/aiAssert执行副本转换保留源资产，不支持动作明确拒绝。支持平台取消进程组、超时回收、长任务心跳和既有结果/报告重试。
+- 本机已安装CLI1.13.0但原env未指定可执行路径，现填MIDSCENE_BIN；两台WDA9.0.6均ready。57项专项、Node卡片9项、后端静态63、前端静态84、主链/Runner编译和diff通过。
+- 启动：本机私有runner.env设置IOS_EXECUTION_ENABLED=1和MIDSCENE_BIN后使用现有start-preview.command（沿用互斥锁，先停旧预览进程）；服务器需先更新明确设备调度握手。平台真实用例和报告尚未验收，不以本节静态检查代替成功。
+
 ## 2026-10-13 iOS 卡片线上复验与电量合并修复
 
 - 用户已部署5f0a18b，公网health精确版本一致。Mac只读预览进程启动；Chrome刷新两台截图分别在11:27:04/05更新，机型、iOS版本、分辨率、智小白3D 1.19.7(70)均正确。

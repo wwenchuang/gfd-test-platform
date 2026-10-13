@@ -84,3 +84,13 @@ test('iOS cards show iOS version and never label the phone Android',t=>{
   assert.match(text,/iOS 26.6/);
   assert.doesNotMatch(text,/安卓|Android/);
 });
+
+test('iOS card shows both installed business app versions', t=>{
+ const w=fixture(t);
+ w.runnerDevices=[{runner_id:'mac',device_id:'iphone',platform:'ios',installed_apps:[
+ {package:'com.kfb.3d',source_package:'com.kfb.model',name:'智小白3D',installed:true,version_name:'1.19.7',version_code:'70'},
+ {package:'com.xbxxhz.box',source_package:'com.xbxxhz.box',name:'小白学习',installed:true,version_name:'4.50.2',version_code:'424'}]}];
+ w.renderAgentRunnerDeviceOptions();
+ const text=w.document.querySelector('.agent-phone-card').textContent;
+ assert.match(text,/智小白3D.*1.19.7/s); assert.match(text,/小白学习.*4.50.2/s);
+});

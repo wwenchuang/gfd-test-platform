@@ -68,6 +68,7 @@ def test_metadata_is_cached_and_only_selected_app_is_reported(monkeypatch):
     import plistlib
     monkeypatch.setattr(runner,'IOS_BUNDLE_ID','com.kfb.3d')
     monkeypatch.setattr(runner,'IOS_SOURCE_APP','com.kfb.model')
+    monkeypatch.setattr(runner, 'ios_app_mappings', lambda: {'com.kfb.model':'com.kfb.3d'})
     runner._IOS_METADATA_CACHE.clear()
     calls=[]
     def output(args,**kw):
@@ -112,3 +113,18 @@ def test_two_connected_iphones_are_reported_without_changing_execution_target(mo
     monkeypatch.setattr(runner, 'ios_device_metadata', lambda device: {'device_id': device})
     assert [d['device_id'] for d in runner.detect_devices()] == ['iphone','iphone2']
     assert 'jobs/next' not in __import__('inspect').getsource(runner.run_ios_device_monitor)
+
+
+def test_reports_both_supported_apps_and_missing_app_explicitly(monkeypatch):
+    import plistlib
+    runner._IOS_METADATA_CACHE.clear()
+    def output(args, **kw):
+        if args[0] == 'ideviceinfo':
+            return plistlib.dumps({'ProductType':'iPhone14,5','ProductVersion':'26.6'})
+        bundle = args[args.index('-b')+1]
+        return plistlib.dumps([{'CFBundleIdentifier':bundle,'CFBundleShortVersionString': '4.50.2' if bundle == 'com.xbxxhz.box' else '1.19.7','CFBundleVersion': '424' if bundle == 'com.xbxxhz.box' else '70'}])
+    monkeypatch.setattr(runner.subprocess,'check_output',output)
+    monkeypatch.setattr(runner,'ios_battery_level',lambda _:50)
+    apps = runner.ios_device_metadata('iphone')['installed_apps']
+    assert {a['package']:a['version_name'] for a in apps} == {'com.kfb.3d':'1.19.7','com.xbxxhz.box':'4.50.2'}
+    assert apps[0]['source_package'] == 'com.kfb.model'

@@ -961,7 +961,9 @@ function renderAgentRunnerDeviceCards() {
         <span class="agent-phone-art">${picture}</span>
         <span class="agent-phone-copy"><strong>${e(runnerDeviceDisplayName(device))}</strong><span class="agent-phone-status ${busy ? 'busy' : ''}">${e(state)}</span>
           <span>${device.platform === 'ios' ? 'iOS' : '安卓'} ${e((device.platform === 'ios' ? device.ios_version : device.android_version || device.androidVersion) || '版本未上报')} · ${e(device.resolution || '分辨率未上报')}</span>
-          <span class="agent-phone-app">${e(appLabel)} <b>${e(readableVersion || '版本未上报')}</b></span>
+          ${device.platform === 'ios' && Array.isArray(device.installed_apps) && device.installed_apps.length
+            ? device.installed_apps.map(item => `<span class="agent-phone-app">${e(item.name || item.package)} <b>${e(item.installed === false ? '未安装' : item.error || [item.version_name, item.version_code ? `(${item.version_code})` : ''].filter(Boolean).join(' ') || '版本未上报')}</b></span>`).join('')
+            : `<span class="agent-phone-app">${e(appLabel)} <b>${e(readableVersion || '版本未上报')}</b></span>`}
           ${metrics ? `<span>${e(metrics)}</span>` : ''}
           ${device.foreground_package ? `<small>前台应用：${e(device.foreground_package)}</small>` : ''}
           <small>${device.snapshot_captured_at ? `画面采集：${e(device.snapshot_captured_at)}` : '尚未采集实时画面'}${device.snapshot_error ? ` · ${e(device.snapshot_error)}` : ''}</small>

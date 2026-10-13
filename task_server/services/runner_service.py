@@ -438,6 +438,9 @@ def all_online_devices() -> List[Dict[str, Any]]:
             if (runner.get("capabilities") or {}).get("job_execution") is False and not active_job:
                 row["usage_status"] = "preview"
                 row["usage_label"] = "仅预览 · iOS 执行尚未就绪"
+            if row.get("platform") == "ios" and row.get("preflight_status") == "blocked" and not active_job:
+                row["usage_status"] = "unknown"
+                row["usage_label"] = (row.get("preflight") or {}).get("reason") or "iOS 执行检查未通过"
             if active_job:
                 row["active_job_id"] = active_job.get("job_id") or ""
                 row["active_job_name"] = active_job.get("task_name") or active_job.get("file") or active_job.get("job_id") or "平台任务"
@@ -464,6 +467,12 @@ def _load_jobs() -> List[Dict[str, Any]]:
 def _save_jobs(jobs: List[Dict[str, Any]]) -> None:
     write_json_file(JOBS_FILE, jobs)
 
+
+
+def runner_accepts_explicit_job(runner_info, job, runner_id):
+    if (runner_info.get("capabilities") or {}).get("explicit_target_only"):
+        return bool(job.get("device_id") and job.get("target_runner_id") == runner_id)
+    return True
 
 
 def assign_job(
@@ -493,6 +502,9 @@ def assign_job(
         runners = load_runners()
         runner_info = runners.get(runner_id, {})
     available_devices = runner_device_ids(runner_info) | extra
+    if (runner_info.get("capabilities") or {}).get("ios_case_reuse"):
+        available_devices &= {d.get("device_id") for d in runner_info.get("devices", [])
+                              if d.get("platform") == "ios" and d.get("preflight_status") == "ready"}
     try:
         from .sonic_service import sonic_list_device_statuses
         sonic_statuses = sonic_list_device_statuses()
@@ -512,6 +524,8 @@ def assign_job(
             if job.get("status") != "pending":
                 continue
             if (runner_info.get("capabilities") or {}).get("job_execution") is False:
+                continue
+            if not runner_accepts_explicit_job(runner_info, job, runner_id):
                 continue
             target_runner = job.get("target_runner_id") or ""
             target_device = job.get("device_id") or ""
