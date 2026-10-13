@@ -9,7 +9,7 @@
   function store(s,key,value){try{sessionStorage.setItem(`ui-simple:${s.identity}:${key}`,JSON.stringify(value));}catch(_){/* Storage can be disabled; current-page behavior still works. */}}
   function read(s,key){try{return JSON.parse(sessionStorage.getItem(`ui-simple:${s.identity}:${key}`)||'null');}catch(_){return null;}}
   function notice(s,message,error=false){if(!valid(s))return;const n=s.node.querySelector('[data-ui-notice]');n.textContent=message;n.setAttribute('role',error?'alert':'status');n.classList.toggle('ui-simple-error',error);}
-  function leave(){if(!state)return;clearInterval(state.timer);clearTimeout(state.searchTimer);for(const c of state.pending.values())c.abort();state.pending.clear();state=null;}
+  function leave(){if(!state)return;state.reportView?.dispose();clearInterval(state.timer);clearTimeout(state.searchTimer);for(const c of state.pending.values())c.abort();state.pending.clear();state=null;}
   function reset(){const node=state?.node;leave();node?.replaceChildren();}
   async function request(s,slot,path,options={}){
     s.pending.get(slot)?.abort();const controller=new AbortController();s.pending.set(slot,controller);
@@ -117,6 +117,7 @@
       card.querySelector('[data-phone-captured]').textContent=d.snapshot_captured_at?`截图：${d.snapshot_captured_at}`:'尚未采集截图';
       card.classList.toggle('ui-device-unavailable',d.connection_status!=='ready');
       const img=card.querySelector('img');img.alt=`${d.name} 最近一次手机画面`;
+      card.querySelector('[data-picture-fallback]').textContent=d.snapshot_hint||'暂无截图';
       if(!d.snapshot_url||img.dataset.pictureStamp!==(d.snapshot_url+'|'+d.snapshot_captured_at)){
         img.hidden=true;img.removeAttribute('src');card.querySelector('[data-picture-fallback]').hidden=false;
         if(!d.snapshot_url)delete img.dataset.pictureStamp;
@@ -172,10 +173,17 @@
     const actions={cancel:async id=>{const data=await request(s,'action',`/ui-executions/${encodeURIComponent(id)}/cancel`,{method:'POST',body:{}});if(data)showBatch(s,data.batch);},
       rerun:async id=>{s.rerunKeys[id] ||= crypto.randomUUID();const data=await request(s,'action',`/ui-executions/${encodeURIComponent(id)}/rerun`,{method:'POST',headers:{'Idempotency-Key':s.rerunKeys[id]},body:{scope:'failed'}});if(data){delete s.rerunKeys[id];s.batchId=data.batch.ui_batch_id;store(s,'lastBatch',s.batchId);showBatch(s,data.batch);}}};
     if(!s.options.canExecute()){delete actions.cancel;delete actions.rerun;}
-    if(s.options.openReport)actions.report=id=>s.options.openReport(id);
-    if(s.options.copyReport)actions.copy=id=>s.options.copyReport(id);
+    if(s.options.download&&window.UiBatchReport)actions.report=id=>openReport(s,id);
+    if(s.options.copy)actions.copy=async id=>{const data=await request(s,'summary',`/ui-executions/${encodeURIComponent(id)}/summary`);if(data&&data.status==='ready')await s.options.copy(data.summary);else if(data)throw new Error('报告尚未就绪');};
     window.UiBatchView.update(host,batch,actions);
     s.batchSettled=batch.execution_settled===true&&['ready','failed'].includes(batch.report_status);
+    if(s.reportId===batch.ui_batch_id)s.reportView?.refresh(batch.report_status==='pending');
+  }
+  function openReport(s,id){
+    if(!valid(s))return;s.reportView?.dispose();s.reportId=id;
+    let host=s.node.querySelector('[data-ui-report-preview]');if(!host){host=document.createElement('section');host.dataset.uiReportPreview='';s.node.append(host);}
+    host.hidden=false;s.reportView=window.UiBatchReport.mount(host,{batchId:id,identity:s.options.identity,request:s.options.request,download:s.options.download,copy:s.options.copy});
+    host.scrollIntoView?.({block:'start',behavior:'smooth'});
   }
   async function loadBatch(s){
     if(!s.batchId||s.pending.has('batch'))return;
@@ -196,7 +204,8 @@
         const date=new Date(Number(b.created_ns)/1e6);button.querySelector('strong').textContent=b.app_name||b.app_id;
         button.querySelector('span').textContent=`${b.owner_display_name||''} · ${Number.isFinite(date.getTime())?date.toLocaleString():''}`;
         button.querySelector('small').textContent=`${({queued:'排队中',blocked:'等待条件满足',running:'执行中',passed:'通过',failed:'失败',cancelled:'已取消',cancelling:'正在停止',interrupted:'已中断'})[b.status]||'状态待确认'} · ${({ready:'报告已就绪',failed:'报告生成失败'})[b.report_status]||'报告尚未就绪'}`;
-        button.onclick=()=>{s.batchId=b.ui_batch_id;s.batchSettled=false;loadBatch(s);};
+        button.onclick=()=>{s.batchId=b.ui_batch_id;s.batchSettled=['ready','failed'].includes(b.report_status);
+          if(s.batchSettled&&s.options.download&&window.UiBatchReport){s.node.querySelector('[data-ui-batch]').hidden=true;openReport(s,b.ui_batch_id);}else loadBatch(s);};
       }
       for(const[id,button]of s.reportNodes)if(!keep.has(id)){button.remove();s.reportNodes.delete(id);}
       if(focused?.isConnected&&focused.classList?.contains('ui-simple-report-row')&&document.activeElement!==focused)focused.focus({preventScroll:true});
@@ -210,6 +219,7 @@
     const tasks=[];if(s.options.mode!=='reports'&&!s.busy)tasks.push(loadDevices(s));
     if(s.batchId&&!s.batchSettled)tasks.push(loadBatch(s));
     if(s.options.mode==='reports'&&!s.cursor)tasks.push(loadReports(s));
+    if(s.reportView)tasks.push(s.reportView.refresh());
     await Promise.all(tasks);
   }
   function mount(node,options){
@@ -223,7 +233,7 @@
     if(s.uncertain)notice(s,'上次提交结果待确认，请先核对，避免重复执行。',true);
     const app=s.node.querySelector('[name="ui-app"]');app.onchange=()=>mode==='reports'?(s.app=app.value,s.cursor='',s.previous=[],loadReports(s)):changeApp(s,app.value);
     const load=()=>mode==='reports'?loadReports(s):loadCatalog(s);
-    s.node.querySelector('[data-ui-refresh]').onclick=()=>{load();if(mode!=='reports')loadDevices(s);if(s.batchId)loadBatch(s);};
+    s.node.querySelector('[data-ui-refresh]').onclick=()=>{load();if(mode!=='reports')loadDevices(s);if(s.batchId&&!s.batchSettled)loadBatch(s);s.reportView?.refresh(true);};
     s.node.querySelector('[data-ui-prev]').onclick=()=>{if(!s.previous.length)return;s.cursor=s.previous.pop();load();};
     s.node.querySelector('[data-ui-next]').onclick=()=>{if(!s.next)return;s.previous.push(s.cursor);s.cursor=s.next;load();};
     if(mode!=='reports'){

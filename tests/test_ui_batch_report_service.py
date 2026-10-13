@@ -40,7 +40,7 @@ def test_frozen_identity_and_result_are_not_latest_filename(dispatch_env, monkey
         with zipfile.ZipFile(io.BytesIO(body)) as archive:
             assert '[Content_Types].xml' in archive.namelist()
             text = archive.read('word/document.xml').decode()
-            assert '作者A' in text and '失败' in text
+            assert '作者A' in text and '未通过' in text
 
 
 def test_unsettled_and_stop_pending_cannot_build(dispatch_env):
@@ -210,4 +210,5 @@ def test_revisiting_existing_digest_updates_current_report_head(dispatch_env):
         assert reports.build_ui_batch_report(None,batch['ui_batch_id'])['report_revision'] == first['report_revision']
         assert reports.get_ui_batch_report(None,batch['ui_batch_id'])['report_revision'] == first['report_revision']
         assert b'transient error' not in reports.download_ui_batch_report(None,batch['ui_batch_id'],'md')[0]
-        assert b'transient error' in reports.download_ui_batch_report(None,batch['ui_batch_id'],'md',second['report_revision'])[0]
+        assert reports.get_ui_batch_report(None,batch['ui_batch_id'],second['report_revision'])['snapshot']['attempts'][0]['result']['report_upload_error'] == 'transient error'
+        assert b'transient error' not in reports.download_ui_batch_report(None,batch['ui_batch_id'],'md',second['report_revision'])[0]

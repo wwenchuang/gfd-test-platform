@@ -38,3 +38,19 @@ test('phone image URL must carry the selected row app',async t=>{
  await options.loadPicture(img,{app_id:'app.a',target:{runner_id:'r',device_id:'d'},snapshot_url:'/api/runner/device-snapshot?runner_id=r&device_id=d&app_id=app.b',snapshot_captured_at:'1'},()=>true);
  assert.equal(fetched,0);assert.equal(img.hasAttribute('src'),false);
 });
+
+test('report download cannot save a stale account response or fetch outside private batch routes',async t=>{
+ const {w}=fixture(t);w.responseAttachmentFilename=()=> '智小白3D发布测试报告.docx';
+ let resolve;w.nativeFetch=()=>new Promise(r=>resolve=r);const downloads=[];w.HTMLAnchorElement.prototype.click=function(){downloads.push(this.download);};
+ await assert.rejects(()=>w.downloadUiBatchFile('/reports/public.html'),/下载地址/);
+ const pending=w.downloadUiBatchFile('/ui-executions/uib_example/report/download?format=docx&revision='+'a'.repeat(64));
+ w.currentAccessProfile={user_id:'u2'};w.resetUiSimpleWorkflow();resolve({ok:true,status:200,headers:{get:key=>key==='content-type'?'application/vnd.openxmlformats-officedocument.wordprocessingml.document':null},blob:async()=>new w.Blob(['word'])});
+ await assert.rejects(pending,/取消/);assert.deepEqual(downloads,[]);
+});
+
+test('private Word export keeps server Chinese filename and real extension',async t=>{
+ const {w}=fixture(t);w.responseAttachmentFilename=()=> '智小白3D发布测试报告.docx';const downloads=[];w.HTMLAnchorElement.prototype.click=function(){downloads.push(this.download);};
+ w.nativeFetch=async()=>({ok:true,status:200,headers:{get:key=>key==='content-type'?'application/vnd.openxmlformats-officedocument.wordprocessingml.document':null},blob:async()=>new w.Blob(['word'])});
+ assert.equal(await w.downloadUiBatchFile('/ui-executions/uib_example/report/download?format=docx&revision='+'a'.repeat(64)),'智小白3D发布测试报告.docx');
+ assert.deepEqual(downloads,['智小白3D发布测试报告.docx']);
+});

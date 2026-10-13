@@ -3,6 +3,7 @@ let uiSimpleEnabled=false;
 let uiSimpleEpoch=0;
 const uiSimplePictures=new Map();
 const uiSimplePictureRequests=new Set();
+const uiSimpleDownloads=new Set();
 function isUiSimpleWorkflow(key){return ['ui_start','ui_library','ui_reports'].includes(key);}
 function isUiSimpleAvailable(){return uiSimpleEnabled;}
 function uiSimpleIdentity(){return String(currentAccessProfile?.user_id||'');}
@@ -11,6 +12,8 @@ function leaveUiSimpleWorkflow(){
   document.getElementById('app')?.classList.remove('ui-simple-active');
   for(const controller of uiSimplePictureRequests)controller.abort();
   uiSimplePictureRequests.clear();
+  for(const controller of uiSimpleDownloads)controller.abort();
+  uiSimpleDownloads.clear();
   for(const picture of uiSimplePictures.values())URL.revokeObjectURL(picture);
   uiSimplePictures.clear();
 }
@@ -69,8 +72,32 @@ function showUiSimpleWorkflow(){
   const page=document.createElement('div');page.className='ui-simple-page';area.append(page);toggleLibrary(false);
   window.UiSimpleFlow.mount(page,{
     mode:{ui_start:'start',ui_library:'library',ui_reports:'reports'}[activeWorkflow],
-    request:apiRequest,identity:uiSimpleIdentity,canExecute:()=>hasPermission('ui.execute'),loadPicture:loadUiSimplePicture
+    request:apiRequest,identity:uiSimpleIdentity,canExecute:()=>hasPermission('ui.execute'),loadPicture:loadUiSimplePicture,
+    download:downloadUiBatchFile,copy:async text=>{if(!await copyText(text))throw new Error('复制未完成，请重试');}
   });
   return true;
+}
+async function downloadUiBatchFile(path){
+  const epoch=uiSimpleEpoch,identity=uiSimpleIdentity(),url=new URL(path,window.location.origin);
+  const match=url.pathname.match(/^\/ui-executions\/uib_[A-Za-z0-9_]+\/(report\/download|artifacts\/[a-f0-9]{64})$/);
+  const format=url.searchParams.get('format');
+  if(url.origin!==window.location.origin||!match||(match[1]==='report/download'&&(!['docx','html','md'].includes(format)||!/^[a-f0-9]{64}$/.test(url.searchParams.get('revision')||''))))throw new Error('下载地址无效');
+  const controller=new AbortController();uiSimpleDownloads.add(controller);
+  const valid=()=>!controller.signal.aborted&&epoch===uiSimpleEpoch&&identity===uiSimpleIdentity();
+  const timeout=setTimeout(()=>controller.abort(),60000);
+  try{
+    const response=await nativeFetch('/api'+url.pathname+url.search,{headers:authHeaders(),signal:controller.signal});
+    if(!valid())throw new Error('下载已取消');
+    if(!response.ok)throw Object.assign(new Error(response.status===403?'当前账号无权下载这份报告':`下载失败，请重试（${response.status}）`),{status:response.status});
+    const mime=(response.headers.get('content-type')||'').split(';')[0].trim();
+    const expected={docx:'application/vnd.openxmlformats-officedocument.wordprocessingml.document',html:'text/html',md:'text/markdown'};
+    if(match[1]==='report/download'?mime!==expected[format]:!['text/html','image/png','image/jpeg'].includes(mime))throw new Error('下载文件格式异常，请重试');
+    if(Number(response.headers.get('content-length'))>64*1024*1024)throw new Error('文件过大，请联系管理员导出');
+    const blob=await response.blob();if(!valid())throw new Error('下载已取消');
+    if(blob.size>64*1024*1024)throw new Error('文件过大，请联系管理员导出');
+    const filename=responseAttachmentFilename(response,'测试报告.'+(format||({ 'image/png':'png','image/jpeg':'jpg' }[mime]||'html')));
+    const src=URL.createObjectURL(blob),link=document.createElement('a');link.href=src;link.download=filename;document.body.append(link);link.click();link.remove();
+    setTimeout(()=>URL.revokeObjectURL(src),60000);return filename;
+  }finally{clearTimeout(timeout);uiSimpleDownloads.delete(controller);}
 }
 function refreshUiSimpleWorkflow(){return window.UiSimpleFlow?.refresh();}

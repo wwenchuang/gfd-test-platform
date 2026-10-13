@@ -4,7 +4,7 @@ import io
 import re
 
 
-def render_report_docx(markdown):
+def render_report_docx(markdown, release=False):
     # Existing platform dependency; lazy import keeps other downloads independent.
     from docx import Document
     from docx.oxml import OxmlElement
@@ -34,6 +34,21 @@ def render_report_docx(markdown):
     document.styles['Title'].font.color.rgb = RGBColor(0, 0, 0)
     document.styles['Heading 1'].font.size = Pt(15)
     document.styles['Heading 2'].font.size = Pt(12)
+    if release:
+        from docx.enum.text import WD_ALIGN_PARAGRAPH
+        for name in ('Title', 'Heading 1', 'Heading 2'):
+            document.styles[name].font.color.rgb = RGBColor(0, 0, 0)
+        document.styles['Title'].font.size = Pt(21)
+        document.styles['Heading 1'].paragraph_format.space_before = Pt(14)
+        footer = section.footer.paragraphs[0]
+        footer.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+        footer.add_run('第 ')
+        field = OxmlElement('w:fldSimple')
+        field.set(qn('w:instr'), 'PAGE')
+        footer._p.append(field)
+        footer.add_run(' 页')
+        for run in footer.runs:
+            run.font.size = Pt(9)
 
     def safe_text(value):
         # XML 1.0 rejects C0 controls; retain tabs/newlines and all normal Unicode.
@@ -44,8 +59,18 @@ def render_report_docx(markdown):
         table = document.add_table(rows=0, cols=count)
         table.style = 'Table Grid'
         table.autofit = False
+        if release:
+            borders = OxmlElement('w:tblBorders')
+            for side in ('top', 'left', 'bottom', 'right', 'insideH', 'insideV'):
+                border = OxmlElement('w:' + side)
+                for attr, value in (('val', 'single'), ('sz', '4'), ('color', 'D9D9D9')):
+                    border.set(qn('w:' + attr), value)
+                borders.append(border)
+            table._tbl.tblPr.append(borders)
         weights = [min(32, max(5, max(len(row[i]) if i < len(row) else 0 for row in rows))) for i in range(count)]
         widths = [Inches(7 * weight / sum(weights)) for weight in weights]
+        if release and count == 3:
+            widths = [Inches(1.45), Inches(4.65), Inches(0.9)]
         for column, width in zip(table.columns, widths):
             column.width = width
         for index, values in enumerate(rows):
@@ -53,6 +78,9 @@ def render_report_docx(markdown):
             for i, cell in enumerate(row.cells):
                 cell.width = widths[i]
                 cell.text = safe_text(values[i] if i < len(values) else '')
+                if release:
+                    from docx.enum.table import WD_CELL_VERTICAL_ALIGNMENT
+                    cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
                 for paragraph in cell.paragraphs:
                     paragraph.paragraph_format.space_after = Pt(4)
                     paragraph.paragraph_format.space_before = Pt(4)

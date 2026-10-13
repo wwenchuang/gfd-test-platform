@@ -4,7 +4,7 @@ import hashlib
 import json
 import re
 
-from . import case_service
+from . import business_line_service, case_service
 from .operation_attribution import current_actor
 from .ui_case_compiler import compile_ui_case
 from .ui_execution_contract import AccessDenied, require_ui_actor, resolve_ui_target
@@ -106,6 +106,7 @@ def create_ui_batch(actor, request, idempotency_key):
 
 
 def _prepare_ui_batch(actor, normalized, profile, key, request_hash):
+    application = business_line_service.configured_test_application(normalized['app_id']) or {}
     resolved_targets = []
     for target in normalized["targets"]:
         resolved = resolve_ui_target(normalized["app_id"], target, actor)
@@ -131,7 +132,8 @@ def _prepare_ui_batch(actor, normalized, profile, key, request_hash):
             raise BatchValidationError("case_unavailable") from error
         if not isinstance(source, str) or hashlib.sha256(source.encode("utf-8")).hexdigest() != case["revision"]:
             raise BatchValidationError("case_revision_changed")
-        metadata = {key: asset.get(key) for key in ("module", "file", "task_name", "app_package", "app_name", "platform", "business", "status")}
+        metadata = {key: asset.get(key) for key in ("module", "file", "task_name", "app_package", "app_name", "platform", "business", "status", "goal", "expected")}
+        metadata['app_name'] = application.get('name') or asset.get('app_name') or '应用'
         snapshots.append({"case_id": case["case_id"], "case_revision": case["revision"],
                           "source_yaml": source, "source_hash": case["revision"], "metadata": metadata})
         for target, resolution in zip(normalized["targets"], resolved_targets):

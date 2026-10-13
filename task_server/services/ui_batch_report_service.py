@@ -15,6 +15,8 @@ from collections import Counter
 from pathlib import Path
 
 from .ui_execution_store import UiExecutionStore, _json
+from .ui_report_presentation import build_presentation, render_markdown
+import yaml
 
 MIMES = {'md': 'text/markdown; charset=utf-8', 'html': 'text/html; charset=utf-8',
          'docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
@@ -134,6 +136,19 @@ def _evidence(db,batch_id):
         ORDER BY e.attempt_id,e.artifact_id''',(batch_id,))]
 
 
+def _expectations(source):
+    # Read only assertions from the frozen source; never manufacture expected outcomes.
+    data = yaml.safe_load(source) or {}
+    result = []
+    for task in data.get('tasks') or []:
+        for step in task.get('flow') or []:
+            if isinstance(step, dict) and isinstance(step.get('aiAssert'), str):
+                value = step['aiAssert'].strip()
+                if value and value not in result:
+                    result.append(value)
+    return result
+
+
 def _snapshot(batch,db):
     snapshots = {s['snapshot_id']:s for s in batch['snapshots']}
     attempts = []
@@ -143,22 +158,18 @@ def _snapshot(batch,db):
             'platform','runner_id','device_id','status','started_ns','finished_ns','block_code','block_message',
             'execution_progress','steps','result') if k in attempt},
             'source_hash':source['source_hash'],'metadata':source['metadata'],
-            'device_snapshot':attempt['target_resolution'].get('device_snapshot',{})})
+            'device_snapshot':attempt['target_resolution'].get('device_snapshot',{}),
+            'expectations':_expectations(source['source_yaml'])})
     counts = dict(Counter(a['status'] for a in attempts))
     app_name = next((s['metadata'].get('app_name') for s in batch['snapshots'] if s['metadata'].get('app_name')),batch['app_id'])
-    summary = f"{app_name}：{batch['owner_display_name']} 本批 {len(attempts)} 次执行；" + '，'.join(f'{STATUS_LABELS.get(k,k)} {v}' for k,v in sorted(counts.items()))
-    return {**{k:batch[k] for k in ('ui_batch_id','owner_user_id','owner_display_name','app_id','suite_id',
+    snapshot = {**{k:batch[k] for k in ('ui_batch_id','owner_user_id','owner_display_name','app_id','suite_id',
                 'suite_revision','created_ns','started_ns','finished_ns','status')},
             'app_name':app_name,'selection':batch['selection'],'attempts':attempts,'counts':counts,
-            'artifacts':_evidence(db,batch['ui_batch_id']),'summary':summary,
-            'cumulative_bugs':None,'cumulative_bugs_note':'历史累计 Bug 未纳入本批结论；未查询历史最近结果。'}
-
-
-def _text(value):
-    # Prevent Markdown HTML/link/table/heading injection as well as embedded newlines.
-    value = re.sub(r'[\x00-\x1f\x7f]', ' ',str(value if value is not None else '未记录'))
-    return value.translate(str.maketrans({'<':'＜','>':'＞','|':'｜','[':'［',']':'］','(':'（',')':'）',
-                                         '`':'｀','*':'＊','_':'＿','#':'＃','!':'！','\\':'＼'}))
+            'artifacts':_evidence(db,batch['ui_batch_id']),
+            'cumulative_bugs':None,'cumulative_bugs_note':'历史累计缺陷未纳入本批结论。'}
+    snapshot['presentation'] = build_presentation(snapshot)
+    snapshot['summary'] = snapshot['presentation']['summary']
+    return snapshot
 
 
 def _date(value):
@@ -166,48 +177,20 @@ def _date(value):
 
 
 def _filename(snapshot):
-    parts = [snapshot['app_name'],snapshot['suite_id'] or '所选用例',snapshot['owner_display_name'],
-             _date(snapshot['created_ns'])[:10],snapshot['ui_batch_id'][4:12]]
-    value = '_'.join(re.sub(r'[\\/:*?"<>|\x00-\x1f]','_',str(p)).replace('测试报告','')[:60] for p in parts)
-    return value+'_测试报告'
+    title = (snapshot.get('presentation') or build_presentation(snapshot))['title']
+    parts = [title, snapshot['owner_display_name'], _date(snapshot['created_ns']).replace(':','')]
+    return '_'.join(re.sub(r'[\\/:*?"<>|\x00-\x1f]','_',str(p))[:80] for p in parts)
 
 
 def _markdown(snapshot):
-    lines = [f"# {_text(snapshot['app_name']).replace('测试报告','')} 测试报告",'',_text(snapshot['summary']),
-             f"执行者：{_text(snapshot['owner_display_name'])}；批次：{snapshot['ui_batch_id']}",
-             f"开始：{_date(snapshot['started_ns'])}；结束：{_date(snapshot['finished_ns'])}",
-             f"重跑来源：{_text(snapshot['selection'].get('rerun_of') or '首次执行')}",
-             _text(snapshot['cumulative_bugs_note']),
-             '', '## 当次执行明细', '| 用例 | 版本 | 设备 / 系统 | 应用版本 | 次数 | 结果 |', '| --- | --- | --- | --- | --- | --- |']
-    for attempt in snapshot['attempts']:
-        device = attempt['device_snapshot']
-        lines.append('| '+' | '.join(_text(v) for v in (
-            attempt['metadata'].get('task_name') or attempt['case_id'],attempt['case_revision'][:12],
-            f"{attempt['device_id']} / {attempt['platform']} {device.get('os_version') or device.get('ios_version') or device.get('android_version') or '版本未记录'}",
-            '; '.join(f"{app.get('version_name') or '未知'}（构建 {app.get('version_code') or '未知'}）" for app in device.get('app_versions') or []) or '未记录',
-            attempt['attempt_no'],STATUS_LABELS.get(attempt['status'],attempt['status'])))+' |')
-    for attempt in snapshot['attempts']:
-        lines += ['',f"## {_text(attempt['metadata'].get('task_name') or attempt['case_id'])}",
-                  f"用例 ID：{_text(attempt['case_id'])}；版本：{attempt['case_revision']}",
-                  f"Job：{_text(attempt['job_id'])}；结果：{_text(STATUS_LABELS.get(attempt['status'],attempt['status']))}",
-                  f"用例作者：{_text(attempt['metadata'].get('author') or attempt['metadata'].get('created_by') or '未记录')}",
-                  f"阻断说明：{_text(attempt['block_message'] or '无')}"]
-        lines += ['| 步骤 | 状态 |', '| --- | --- |']
-        for step in attempt.get('steps') or []:
-            lines.append('| '+_text(step.get('label'))+' | '+_text(STATUS_LABELS.get(step.get('status'),step.get('status')))+' |')
-        if not attempt['started_ns']:
-            lines.append('此项未开始执行；取消不代表已完成测试。')
-        for key in ('stderr','report_missing_reason','report_upload_error'):
-            if attempt['result'].get(key): lines.append(_text(attempt['result'][key]))
-    lines += ['','## 证据',f"私有证据 {len(snapshot['artifacts'])} 份；请在登录后的本批报告页查看。"]
-    return '\n'.join(lines)
+    return render_markdown(snapshot.get('presentation') or build_presentation(snapshot))
 
 
 def _render_docx(markdown):
     # Process timeout also terminates a wedged parser; no accumulating stuck threads.
     return subprocess.run([sys.executable,'-c',
         'import sys; from task_server.services.report_word_service import render_report_docx; '
-        'sys.stdout.buffer.write(render_report_docx(sys.stdin.buffer.read().decode("utf-8")))'],
+        'sys.stdout.buffer.write(render_report_docx(sys.stdin.buffer.read().decode("utf-8"), release=True))'],
         input=markdown.encode(),stdout=subprocess.PIPE,stderr=subprocess.PIPE,timeout=30,check=True,
         cwd=str(Path(__file__).resolve().parents[2])).stdout
 

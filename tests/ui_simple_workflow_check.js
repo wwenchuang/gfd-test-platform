@@ -88,6 +88,35 @@ test('changing app does not leave device cards detached from the page',async t=>
 test('report list explicitly requests own scope',async t=>{
  const f=fixture(t);f.mount('reports');await wait();assert.ok(f.calls.some(c=>c.path.startsWith('/ui-executions?')&&c.path.includes('scope=own')));
 });
+test('one report-row click opens a ready report without fetching progress',async t=>{
+ const f=fixture(t,path=>path.startsWith('/ui-executions?')?{ok:true,items:[{ui_batch_id:'uib_1',app_id:'app.a',status:'passed',report_status:'ready',created_ns:1000000}]}:undefined);
+ const opened=[];f.w.UiBatchReport={mount:(node,options)=>{opened.push(options.batchId);node.textContent='报告内容';return {dispose(){},refresh(){}};}};
+ f.mount('reports',{download:async()=>{}});await wait();f.node.querySelector('.ui-simple-report-row').click();await wait();
+ assert.deepEqual(opened,['uib_1']);assert.equal(f.calls.some(c=>c.path==='/ui-executions/uib_1'),false);
+ assert.match(f.node.textContent,/报告内容/);
+});
+test('parent refresh discovers a newer ready report while settled progress stays idle',async t=>{
+ let now=100000,revision='rev-1';
+ const f=fixture(t,path=>{
+  if(path.startsWith('/ui-executions?'))return {ok:true,items:[{ui_batch_id:'uib_1',app_id:'app.a',status:'passed',report_status:'ready',created_ns:1000000}]};
+  if(path==='/ui-executions/uib_1/report')return {ok:true,report:{status:'ready',report_revision:revision,snapshot:{summary:revision,artifacts:revision==='rev-2'?[{artifact_id:'a'.repeat(64),kind:'png'}]:[]}}};
+ });
+ f.w.eval(fs.readFileSync('js/ui-batch-report.js','utf8'));f.w.Date.now=()=>now;
+ f.mount('reports',{download:async()=>{}});await wait();f.node.querySelector('.ui-simple-report-row').click();await wait();
+ await f.w.UiSimpleFlow.refresh();assert.equal(f.calls.filter(c=>c.path.endsWith('/report')).length,1);
+ revision='rev-2';now+=16000;await f.w.UiSimpleFlow.refresh();
+ assert.equal(f.calls.filter(c=>c.path.endsWith('/report')).length,2);assert.match(f.node.textContent,/执行证据（1 份）/);
+ assert.equal(f.calls.some(c=>c.path==='/ui-executions/uib_1'),false);
+ Object.defineProperty(f.w.document,'hidden',{value:true,configurable:true});now+=16000;await f.w.UiSimpleFlow.refresh();
+ assert.equal(f.calls.filter(c=>c.path.endsWith('/report')).length,2);
+ Object.defineProperty(f.w.document,'hidden',{value:false,configurable:true});f.node.querySelector('[data-ui-refresh]').click();await wait();
+ assert.equal(f.calls.filter(c=>c.path.endsWith('/report')).length,3);
+});
+test('restricted phone preview explains its permission boundary',async t=>{
+ const f=fixture(t);f.setDevices([{...DEVICE,snapshot_hint:'当前账号不允许查看整机画面'}]);await select(t,f);
+ assert.match(f.node.querySelector('[data-picture-fallback]').textContent,/不允许查看整机画面/);
+ assert.equal(f.node.querySelector('[data-ui-devices] img').hidden,true);
+});
 test('report polling preserves the focused report row',async t=>{
  const f=fixture(t,path=>path.startsWith('/ui-executions?')?{ok:true,items:[{ui_batch_id:'uib_1',app_id:'app.a',status:'running',created_ns:1000000}]}:undefined);
  f.mount('reports');await wait();const button=f.node.querySelector('.ui-simple-report-row');button.focus();await f.w.UiSimpleFlow.refresh();

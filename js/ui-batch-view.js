@@ -43,7 +43,7 @@
     const b=state.batch, attempts=b.case_attempts || [];
     const available={cancel:!settled(b)&&b.status!=='cancelling',
       rerun:settled(b)&&attempts.some(a=>!['passed','success'].includes(a.status)),
-      report:b.report_status==='ready',copy:b.report_status==='ready'};
+      report:settled(b)&&['pending','generating','ready','failed'].includes(b.report_status),copy:b.report_status==='ready'};
     node.querySelectorAll('[data-batch-action]').forEach(button=>{
       const key=button.dataset.batchAction;
       button.hidden=!available[key] || typeof state.actions[key]!=='function';

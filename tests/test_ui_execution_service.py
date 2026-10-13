@@ -272,3 +272,17 @@ def test_team_batch_scope_requires_explicit_administrator(environment):
             list_ui_batches(None, {"scope":"all"})
         with pytest.raises(ValueError):
             list_ui_batches(None, {"scope":"someone_else"})
+
+
+def test_creation_freezes_business_report_labels_and_scope(environment, monkeypatch):
+    from task_server.services import business_line_service, ui_execution_service as service
+    original = business_line_service.configured_test_application
+    monkeypatch.setattr(business_line_service, 'configured_test_application', lambda app: {**original(app), 'name':'智小白3D'})
+    environment.update(goal='个人中心与首页之间切换', expected='两个入口均正常展示')
+    with actor_context(ACTORS['b']):
+        batch=service.create_ui_batch(None,request(),'business-report')
+        environment.update(goal='随后被修改的场景',expected='随后修改的结果')
+        frozen=service.get_ui_batch(None,batch['ui_batch_id'])['snapshots'][0]['metadata']
+    assert frozen['app_name']=='智小白3D'
+    assert frozen['goal']=='个人中心与首页之间切换'
+    assert frozen['expected']=='两个入口均正常展示'
