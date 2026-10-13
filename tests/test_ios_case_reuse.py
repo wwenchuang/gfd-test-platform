@@ -165,3 +165,20 @@ def test_dispatch_uses_only_ready_explicit_iphone(monkeypatch):
     monkeypatch.setattr(sonic_service,'sonic_list_device_statuses',lambda:{'__source__':{'available':True},'ready':{'usage_status':'idle'},'blocked':{'usage_status':'idle'}})
     assert service.assign_job('mac')['job_id']=='chosen'
     assert jobs[0]['status']=='pending' and jobs[1]['status']=='pending'
+
+
+def test_ios_reset_only_terminates_the_mapped_app(monkeypatch):
+    import json
+    from unittest.mock import Mock
+    requests=[]
+    response=Mock()
+    response.__enter__=Mock(return_value=response)
+    response.__exit__=Mock(return_value=False)
+    response.read.side_effect=[json.dumps({'sessionId':'session','value':{}}).encode(),b'{"value":true}',b'{"value":null}']
+    opener=Mock()
+    opener.open.side_effect=lambda request,**kw:(requests.append(request) or response)
+    monkeypatch.setattr(runner.urllib.request,'build_opener',lambda *a:opener)
+    runner.reset_ios_foreground_app(12345,'com.kfb.3d')
+    assert [r.method for r in requests]==['POST','POST','DELETE']
+    assert requests[1].full_url=='http://127.0.0.1:12345/session/session/wda/apps/terminate'
+    assert json.loads(requests[1].data)=={'bundleId':'com.kfb.3d'}

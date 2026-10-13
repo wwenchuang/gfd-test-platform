@@ -1666,6 +1666,31 @@ def execution_command(midscene_bin, yaml_path, device_id):
     return command
 
 
+def reset_ios_foreground_app(port, bundle_id):
+    """Close only the mapped app, matching Android's existing cold-start guard."""
+    if bundle_id not in ios_app_mappings().values():
+        raise ValueError("应用没有配置 iOS 映射")
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    def request(method, path, payload=None):
+        data = json.dumps(payload).encode() if payload is not None else None
+        req = urllib.request.Request(f"http://127.0.0.1:{port}{path}", data=data,
+                                     headers={"Content-Type": "application/json"}, method=method)
+        with opener.open(req, timeout=15) as response:
+            result = json.loads(response.read())
+        if isinstance(result.get("value"), dict) and result["value"].get("error"):
+            raise RuntimeError("WDA 应用启动前清理失败")
+        return result
+    session = request("POST", "/session", {"capabilities": {"alwaysMatch": {}}})
+    session_id = session.get("sessionId") or (session.get("value") or {}).get("sessionId")
+    if not session_id:
+        raise RuntimeError("WDA 未建立应用清理会话")
+    session_path = "/session/" + urllib.parse.quote(str(session_id), safe="")
+    try:
+        request("POST", session_path + "/wda/apps/terminate", {"bundleId": bundle_id})
+    finally:
+        request("DELETE", session_path)
+
+
 def run_job(job):
     if RUNNER_PLATFORM != "ios":
         return run_standard_job(job)
@@ -1696,6 +1721,7 @@ def run_job(job):
             write_text(job_dir / "reuse-manifest.json", json.dumps({
                 "source_sha256": hashlib.sha256(source.encode()).hexdigest(), "device_id": device_id,
                 "platform": "ios", "bundle_id": mappings[source_app], "source_file": job.get("file")}, ensure_ascii=False))
+            reset_ios_foreground_app(port, mappings[source_app])
             return run_standard_job({**job, "yaml_content": compiled})
     except Exception as exc:
         return {"status": "failed", "device_id": device_id, "duration": 0, "stdout": "",
