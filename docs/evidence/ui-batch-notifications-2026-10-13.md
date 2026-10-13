@@ -28,7 +28,7 @@
 
 - `GET /api/ui-executions/{batch}/deliveries?revision={sha256}`：鉴权状态和 frozen policy，省略 revision 可审计该批次最近 50 个 delivery；前端使用精确 revision。
 - `POST /api/ui-executions/{batch}/deliveries/{delivery_key}/retry`，body `{"confirmed_not_received":false}`；unknown 经核对用 true。成功 202，权限 403、非本人/URL 批次不匹配 404、配置变更或非可补发状态 409。
-- 卡片深链 `{配置的public base}/task-manager.html?ui_batch=uib_{32hex}&report_revision={64hex}`。登录后优先打开我的报告及该 revision，挂载后仅移除这两个参数；不接受外部返回地址/泛化 latest。
+- 卡片深链 `{配置的public base}/task-manager.html?ui_batch=uib_{32hex}&report_revision={64hex}`。登录后优先打开我的报告及该 revision；挂载、成功读取、失败和重新登录均保留精确链接，仅明确关闭对应报告或离开工作流时移除这两个参数。不接受外部返回地址/泛化 latest。
 - 常规部署由主任务统一执行：`cd /opt/midscene-task-platform-src && bash deploy/update-main-server.sh`。新后台线程随主服务启动；私有数据库首次打开自动 v3 迁移。无需为此更新 Runner。
 
 ## 主任务 Chrome 本地交互验收（2026-10-13）
@@ -40,4 +40,6 @@
 - 开始测试页关闭自动发送，经过多轮设备刷新仍保持关闭；预检和创建请求均为 `notifications.enabled=false`，目标手机没有变化。
 - 临时错误恢复时残留提示在 Chrome 中发现后补修；以首次错误 revision、第二次正确数据重新验证，报告正常显示且旧错误清除。
 - 390×844 窄屏文档宽390、报告宽357，无横向溢出；截图 `/tmp/codex-ui-simple-20261013/t6-report-mobile.png` 已查看，随后恢复1440×1000。
-- 独立代码审查进行中。本地测试数据不能替代真实飞书渠道、内置浏览器、生产权限与下载验收；未部署或实发。
+- 独立审查发现“挂载时过早消费报告链接”P2，已由 `afd232d` 修复并通过补审。修复专项 Node 57 项、前端静态84项、JS语法与差异检查通过。
+- Chrome 追加账号恢复验收：其他本地账号访问得到403；退出登录后原批次/版本仍在链接中，所属账号重新登录后打开指定报告；刷新仍保持。报告及通知请求均携带同一个旧版本，点击“收起”后仅清理两项报告参数，保留 `guest=1`。
+- 本地测试数据不能替代真实飞书渠道、内置浏览器、生产权限与下载验收；未部署或实发。
