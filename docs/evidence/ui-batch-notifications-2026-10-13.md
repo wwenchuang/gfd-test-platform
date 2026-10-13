@@ -30,3 +30,14 @@
 - `POST /api/ui-executions/{batch}/deliveries/{delivery_key}/retry`，body `{"confirmed_not_received":false}`；unknown 经核对用 true。成功 202，权限 403、非本人/URL 批次不匹配 404、配置变更或非可补发状态 409。
 - 卡片深链 `{配置的public base}/task-manager.html?ui_batch=uib_{32hex}&report_revision={64hex}`。登录后优先打开我的报告及该 revision，挂载后仅移除这两个参数；不接受外部返回地址/泛化 latest。
 - 常规部署由主任务统一执行：`cd /opt/midscene-task-platform-src && bash deploy/update-main-server.sh`。新后台线程随主服务启动；私有数据库首次打开自动 v3 迁移。无需为此更新 Runner。
+
+## 主任务 Chrome 本地交互验收（2026-10-13）
+
+独立 Chrome 验证窗口使用受控本地接口数据，不访问凭据、不下发设备任务、不发送飞书消息。
+
+- 从含指定批次/报告版本的链接进入登录页，在本地测试账号登录后自动打开原报告；报告请求和后续通知请求均带原 `revision`，链接不携带凭据。
+- 同一批次模拟历史版本 unknown、新版本 sent：仅显示历史版本通知。取消核对弹窗时没有补发请求；确认后仅提交历史 delivery key 和 `confirmed_not_received=true`，展示等待发送。
+- 开始测试页关闭自动发送，经过多轮设备刷新仍保持关闭；预检和创建请求均为 `notifications.enabled=false`，目标手机没有变化。
+- 临时错误恢复时残留提示在 Chrome 中发现后补修；以首次错误 revision、第二次正确数据重新验证，报告正常显示且旧错误清除。
+- 390×844 窄屏文档宽390、报告宽357，无横向溢出；截图 `/tmp/codex-ui-simple-20261013/t6-report-mobile.png` 已查看，随后恢复1440×1000。
+- 独立代码审查进行中。本地测试数据不能替代真实飞书渠道、内置浏览器、生产权限与下载验收；未部署或实发。
