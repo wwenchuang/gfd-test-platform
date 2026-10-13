@@ -94,3 +94,28 @@ test('iOS card shows both installed business app versions', t=>{
  const text=w.document.querySelector('.agent-phone-card').textContent;
  assert.match(text,/智小白3D.*1.19.7/s); assert.match(text,/小白学习.*4.50.2/s);
 });
+
+test('Android card shows both package versions regardless of selected application', t=>{
+ const w=fixture(t);
+ w.selectedAgentAppPackage=()=> 'com.xbxxhz.box';
+ w.appDisplayName=p=>({'com.kfb.model':'智小白3D','com.xbxxhz.box':'小白学习'}[p] || '未标注应用');
+ w.runnerDevices=[{runner_id:'win',device_id:'android',installed_apps:[
+ {package:'com.kfb.model',installed:true,version_name:'2.0.0',version_code:'51'},
+ {package:'com.xbxxhz.box',installed:true,version_name:'4.46.0',version_code:'359'}]}];
+ w.renderAgentRunnerDeviceOptions();
+ const rows=[...w.document.querySelectorAll('.agent-phone-app')].map(n=>n.textContent);
+ assert.deepEqual(rows,['智小白3D 2.0.0 (51)','小白学习 4.46.0 (359)']);
+});
+
+test('Android missing installation and unknown packages remain explicit and escaped', t=>{
+ const w=fixture(t);
+ w.appDisplayName=()=> '未标注应用';
+ w.runnerDevices=[{runner_id:'win',device_id:'android',installed_apps:[
+ {package:'unknown.package',installed:false,version_name:'old'},
+ {package:'<img src=x onerror=alert(1)>',installed:true,version_name:''}]}];
+ w.renderAgentRunnerDeviceOptions();
+ const card=w.document.querySelector('.agent-phone-card');
+ assert.match(card.textContent,/unknown.package 未安装/);
+ assert.match(card.textContent,/版本未上报/);
+ assert.equal(card.querySelector('img'),null);
+});
