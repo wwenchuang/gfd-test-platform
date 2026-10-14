@@ -193,3 +193,25 @@ test('rollback reports retain cancel and recovery while removing rerun',async t=
  assert.equal(typeof actions.cancel,'function');assert.equal(typeof actions.recover,'function');assert.equal(actions.rerun,undefined);
  await actions.cancel('uib_recover');assert.equal(f.calls.some(c=>c.path.endsWith('/cancel')),true);
 });
+
+test('rollback reports skip gated catalog and use all-app own scope despite saved selection',async t=>{
+ const f=fixture(t,path=>{
+  if(path.startsWith('/ui-executions/catalog'))return Promise.reject(Object.assign(new Error('feature_disabled'),{status:404,code:'feature_disabled'}));
+  if(path.startsWith('/ui-executions?'))return {ok:true,items:[{ui_batch_id:'uib_saved',app_id:'app.a',status:'failed',report_status:'ready'}]};
+ });
+ const saved=JSON.stringify({app:'app.a',module:'导航',target:'saved-phone'});f.w.sessionStorage.setItem('ui-simple:user-a:selection',saved);
+ f.mount('reports',{canAdmit:()=>false});await wait();await f.w.UiSimpleFlow.refresh();f.node.querySelector('[data-ui-refresh]').click();await wait();
+ assert.equal(f.calls.some(c=>c.path.startsWith('/ui-executions/catalog')),false);
+ const lists=f.calls.filter(c=>c.path.startsWith('/ui-executions?'));assert.ok(lists.length>=2);
+ for(const call of lists){const query=new URLSearchParams(call.path.split('?')[1]);assert.equal(query.get('scope'),'own');assert.equal(query.has('app_id'),false);}
+ assert.equal(f.node.querySelector('[name="ui-app"]').value,'');assert.match(f.node.textContent,/失败/);
+ assert.equal(f.node.querySelector('[data-ui-notice]').textContent,'');assert.doesNotMatch(f.node.textContent,/feature_disabled/);
+ assert.equal(f.w.sessionStorage.getItem('ui-simple:user-a:selection'),saved);
+});
+
+test('rollback reports still surface a genuine list access error',async t=>{
+ const f=fixture(t,path=>path.startsWith('/ui-executions?')?Promise.reject(Object.assign(new Error('当前账号无权读取报告'),{status:403,code:'permission_forbidden'})):undefined);
+ f.mount('reports',{canAdmit:()=>false});await wait();
+ assert.match(f.node.querySelector('[data-ui-notice]').textContent,/当前账号无权读取报告/);
+ assert.equal(f.node.querySelector('[data-ui-notice]').getAttribute('role'),'alert');
+});

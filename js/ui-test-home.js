@@ -261,7 +261,10 @@
       loadCatalog(s);if(s.app)loadDevices(s);else renderDevices(s);
       const last=read(s,'lastBatch');if(typeof last==='string'&&/^uib_[a-zA-Z0-9_]+$/.test(last)){s.batchId=last;loadBatch(s);}
     }else{
-      request(s,'apps','/ui-executions/catalog').then(data=>{if(data){const values=(data.apps||[]).map(a=>[a.app_id,a.name]);app.replaceChildren(new Option('全部应用',''));for(const[v,l]of values)app.add(new Option(l,v));app.value=s.app;}}).catch(error=>notice(s,error.message,true));loadReports(s);
+      // The execution catalog is admission-gated; rollback reads all currently scoped reports.
+      if(s.options.canAdmit())request(s,'apps','/ui-executions/catalog').then(data=>{if(data){const values=(data.apps||[]).map(a=>[a.app_id,a.name]);app.replaceChildren(new Option('全部应用',''));for(const[v,l]of values)app.add(new Option(l,v));app.value=s.app;}}).catch(error=>notice(s,error.message,true));
+      else s.app='';
+      loadReports(s);
     }
     if(mode==='reports'&&options.reportIntent)openReport(s,options.reportIntent.batchId,options.reportIntent.revision);
     s.timer=setInterval(refresh,5000);
