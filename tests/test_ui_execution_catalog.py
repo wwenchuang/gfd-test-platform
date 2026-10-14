@@ -74,12 +74,13 @@ def test_searches_baseline_filename_across_apps_with_scope_and_cached_paging(dat
     assert '不许泄露' not in json.dumps(all_apps, ensure_ascii=False)
     assert '_search' not in json.dumps(exact) and '/private' not in json.dumps(exact)
 
-def test_cached_catalog_still_applies_current_app_scope_and_rejects_forgery(data):
-    catalog.get_ui_catalog(None)
+@pytest.mark.parametrize('scope', ['all', 'published'])
+def test_cached_catalog_still_applies_current_app_scope_and_rejects_forgery(data, scope):
+    catalog.get_ui_catalog(None, scope=scope)
     data[0]['scope']['ui_apps']=[]
-    assert catalog.get_ui_catalog(None)['groups']==[]
-    with pytest.raises(PermissionError): catalog.get_ui_catalog(None,app_id=APP)
-    with pytest.raises(PermissionError): catalog.get_ui_catalog({**ACTOR,'user_id':'other'})
+    assert catalog.get_ui_catalog(None, scope=scope)['groups']==[]
+    with pytest.raises(PermissionError): catalog.get_ui_catalog(None,app_id=APP,scope=scope)
+    with pytest.raises(PermissionError): catalog.get_ui_catalog({**ACTOR,'user_id':'other'},scope=scope)
 
 def test_device_refresh_reads_one_registry_and_no_case_sources(data):
     result=catalog.get_ui_devices(None,APP)
@@ -204,6 +205,98 @@ def test_drafts_visible_but_not_labelled_runnable(data):
     result=catalog.get_ui_catalog(None,app_id=APP)
     row=next(x for x in result['items'] if x['case_id']=='c0')
     assert row['execution_eligible'] is False and row['block_code']=='generated_case_gate_required'
+
+@pytest.fixture
+def lifecycle_data(data, monkeypatch):
+    from task_server.services import business_line_service, case_service
+    statuses = ['draft', 'review', 'active', 'baseline', 'archived', 'active', 'disabled']
+    for row, status in zip(data[1], statuses):
+        row.update(status=status, module='已发布' if status in ('active', 'baseline') else '草稿专用')
+    data[1].extend([
+        {'case_id':'c7', 'app_package':APP, 'task_name':'更多基线', 'module':'发现', 'status':'active'},
+        {'case_id':'other-published', 'app_package':'com.other.app', 'task_name':'其他基线', 'module':'其他模块', 'status':'baseline'},
+        {'case_id':'other-draft', 'app_package':'com.other.app', 'task_name':'其他草稿', 'module':'草稿专用', 'status':'draft'},
+    ])
+    for row in data[1]:
+        row['file'] = '范围基线_' + row['case_id'] + '.yaml'
+    data[1][5]['module'] = '不可用'
+    data[1][7]['status'] = 'active'  # Published assets still require current app permission.
+    data[0]['scope']['ui_apps'].append('com.other.app')
+    apps = business_line_service.configured_test_applications()
+    apps.append({'package':'com.other.app', 'name':'其他应用', 'enabled':True})
+    monkeypatch.setattr(business_line_service, 'configured_test_applications', lambda **kw: apps)
+    read_source = case_service.task_case_yaml
+    def source_with_unavailable_case(row):
+        source = read_source(row)
+        if row['case_id'] == 'c5':
+            raise OSError('source is unavailable')
+        return source
+    monkeypatch.setattr(case_service, 'task_case_yaml', source_with_unavailable_case)
+    return data
+
+def test_published_scope_filters_groups_totals_and_modules_before_preview(lifecycle_data):
+    result = catalog.get_ui_catalog(None, query='范围基线', scope='published')
+    assert result['total'] == 5
+    assert [(g['app_id'], g['total'], g['has_more']) for g in result['groups']] == [
+        (APP, 4, True), ('com.other.app', 1, False)]
+    assert [r['case_id'] for r in result['groups'][0]['items']] == ['c2', 'c3', 'c5']
+    assert result['modules'] == ['不可用', '其他模块', '发现', '已发布']
+    assert '不许泄露' not in json.dumps(result, ensure_ascii=False)
+    assert all(r['status'] in ('active', 'baseline') for g in result['groups'] for r in g['items'])
+
+def test_published_scope_paging_search_and_blocked_rows_share_cache(lifecycle_data):
+    first = catalog.get_ui_catalog(None, app_id=APP, query='范围基线', scope='published', limit=3)
+    second = catalog.get_ui_catalog(None, app_id=APP, query='范围基线', scope='published',
+                                    cursor=first['next_cursor'], limit=3)
+    assert first['total'] == second['total'] == 4
+    assert [r['case_id'] for r in first['items'] + second['items']] == ['c2', 'c3', 'c5', 'c7']
+    assert second['next_cursor'] is None
+    blocked = next(r for r in first['items'] if r['case_id'] == 'c5')
+    assert blocked['status'] == 'active'
+    assert blocked['execution_eligible'] is False and blocked['block_code'] == 'case_unavailable'
+    no_match = catalog.get_ui_catalog(None, app_id=APP, query='范围基线_c0', scope='published')
+    assert no_match['total'] == 0 and no_match['items'] == []
+    assert no_match['modules'] == ['不可用', '发现', '已发布']
+    draft_module = catalog.get_ui_catalog(None, app_id=APP, module='草稿专用', scope='published')
+    assert draft_module['total'] == 0
+    assert lifecycle_data[2]['catalog'] == 1 and lifecycle_data[2]['source'] == 11
+
+def test_all_scope_and_default_retain_unpublished_rows_without_mutating_cache(lifecycle_data):
+    catalog.get_ui_catalog(None, scope='published')
+    default = catalog.get_ui_catalog(None, app_id=APP)
+    explicit_all = catalog.get_ui_catalog(None, app_id=APP, scope='all')
+    assert default == explicit_all
+    assert default['total'] == 8 and '草稿专用' in default['modules']
+    assert {r['status'] for r in default['items']} == {'draft', 'review', 'active', 'baseline', 'archived', 'disabled'}
+    assert all(not r['execution_eligible'] and r['block_code'] == 'generated_case_gate_required'
+               for r in default['items'] if r['status'] not in ('active', 'baseline'))
+    assert lifecycle_data[2]['catalog'] == 1 and lifecycle_data[2]['source'] == 11
+
+@pytest.mark.parametrize('source_scope,target_scope', [('all', 'published'), ('published', 'all')])
+def test_cursor_cannot_cross_publication_scope(lifecycle_data, source_scope, target_scope):
+    first = catalog.get_ui_catalog(None, app_id=APP, scope=source_scope, limit=1)
+    assert first['next_cursor']
+    with pytest.raises(ValueError, match='cursor_invalid'):
+        catalog.get_ui_catalog(None, app_id=APP, scope=target_scope, cursor=first['next_cursor'], limit=1)
+
+@pytest.mark.parametrize('scope', ['', 'draft', 'PUBLISHED', None, [], True])
+def test_invalid_publication_scope_is_rejected_before_catalog_read(data, scope):
+    with pytest.raises(ValueError, match='filters_invalid'):
+        catalog.get_ui_catalog(None, app_id=APP, scope=scope)
+    assert data[2]['catalog'] == data[2]['source'] == 0
+
+def test_catalog_route_forwards_scope_and_rejects_invalid_values(lifecycle_data, monkeypatch):
+    from task_server import router
+    class Handler:
+        def _json(self, body, status=200): self.body, self.status = body, status
+    h = Handler()
+    monkeypatch.setenv('UI_SIMPLE_FLOW_ENABLED', '1')
+    router._get_ui_execution_catalog(h, {'app_id':APP, 'scope':'published'})
+    assert h.status == 200 and h.body['total'] == 4
+    router._get_ui_execution_catalog(h, {'app_id':APP})
+    assert h.status == 200 and h.body['total'] == 8
+    router._get_ui_execution_catalog(h, {'app_id':APP, 'scope':'draft'})
+    assert h.status == 400 and h.body['code'] == 'invalid_request'
 
 def test_catalog_routes_default_off_and_availability_is_readable(data,monkeypatch):
     from task_server import router

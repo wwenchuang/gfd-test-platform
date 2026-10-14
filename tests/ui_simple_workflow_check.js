@@ -5,6 +5,14 @@ const {JSDOM}=require('../api-testing-ui/node_modules/jsdom');
 const wait=()=>new Promise(setImmediate);
 const CASE={case_id:'c1',revision:'a'.repeat(64),task_name:'导航用例',app_id:'app.a',module:'导航',execution_eligible:true};
 const DEVICE={target:{runner_id:'mac',device_id:'iphone',platform:'ios'},name:'iPhone 13',connection_status:'ready',app_version:'1.0',snapshot_url:''};
+const catalogCalls=f=>f.calls.filter(c=>c.path.startsWith('/ui-executions/catalog'));
+const catalogParams=f=>new URL(catalogCalls(f).at(-1).path,'http://test').searchParams;
+function searchClock(f){
+ const timers=new Map(),set=f.w.setTimeout.bind(f.w),clear=f.w.clearTimeout.bind(f.w);let id=-1;
+ f.w.setTimeout=(fn,ms,...args)=>ms===300?(timers.set(--id,()=>fn(...args)),id):set(fn,ms,...args);
+ f.w.clearTimeout=id=>{timers.delete(id);clear(id);};
+ return ()=>{const tasks=[...timers.values()];timers.clear();for(const task of tasks)task();};
+}
 function fixture(t,override){
  const dom=new JSDOM('<main></main>',{url:'http://platform.test',runScripts:'dangerously',pretendToBeVisual:true});t.after(()=>dom.window.close());
  const w=dom.window, calls=[]; let identity='user-a', devices=[DEVICE];
@@ -21,6 +29,64 @@ function fixture(t,override){
  return {w,node:w.document.querySelector('main'),calls,mount,setIdentity:v=>identity=v,setDevices:v=>devices=v};
 }
 async function select(t,f,extra={}){f.mount('start',extra);await wait();const app=f.node.querySelector('[name="ui-app"]');app.value='app.a';app.dispatchEvent(new f.w.Event('change'));await wait();f.node.querySelector('[data-case-id]').click();await wait();f.node.querySelector('[data-device-key]').click();await wait();}
+for(const mode of ['start','library'])test(`${mode} searches published baselines by default`,async t=>{
+ const f=fixture(t);f.mount(mode);await wait();assert.equal(catalogParams(f).get('scope'),'published');
+ const toggle=f.node.querySelector('[data-ui-include-drafts]');
+ if(mode==='start')assert.equal(toggle,null);
+ else{assert.equal(toggle.checked,false);toggle.click();await wait();assert.equal(catalogParams(f).get('scope'),'all');toggle.click();await wait();assert.equal(catalogParams(f).get('scope'),'published');}
+});
+for(const action of ['enter','button'])test(`${action} searches immediately once and never starts execution`,async t=>{
+ const f=fixture(t),tick=searchClock(f);await select(t,f);
+ const query=f.node.querySelector('[name="ui-query"]'),before=catalogCalls(f).length;
+ query.value='基线';query.dispatchEvent(new f.w.Event('input'));
+ if(action==='enter'){const event=new f.w.KeyboardEvent('keydown',{key:'Enter',bubbles:true,cancelable:true});query.dispatchEvent(event);assert.equal(event.defaultPrevented,true);}
+ else f.node.querySelector('[data-ui-search]').click();
+ await wait();assert.equal(catalogCalls(f).length,before+1);assert.equal(catalogParams(f).get('query'),'基线');
+ tick();await wait();assert.equal(catalogCalls(f).length,before+1);assert.equal(f.calls.some(c=>c.path==='/ui-executions/preflight'),false);assert.equal(creationPosts(f).length,0);
+});
+test('Chinese composition waits for completion and Enter does not search unfinished text',async t=>{
+ const f=fixture(t),tick=searchClock(f);f.mount();await wait();const query=f.node.querySelector('[name="ui-query"]'),before=catalogCalls(f).length;
+ query.dispatchEvent(new f.w.CompositionEvent('compositionstart'));query.value='ji';query.dispatchEvent(new f.w.InputEvent('input',{isComposing:true}));
+ query.dispatchEvent(new f.w.KeyboardEvent('keydown',{key:'Enter',isComposing:true}));tick();await wait();assert.equal(catalogCalls(f).length,before);
+ query.value='基线';query.dispatchEvent(new f.w.CompositionEvent('compositionend'));tick();await wait();assert.equal(catalogCalls(f).length,before+1);assert.equal(catalogParams(f).get('query'),'基线');
+});
+test('automatic search, clear and scope changes reset pagination without duplicate requests',async t=>{
+ const f=fixture(t,path=>path.startsWith('/ui-executions/catalog')?{ok:true,apps:[{app_id:'app.a',name:'应用甲'}],modules:['导航'],items:[CASE],total:21,next_cursor:path.includes('cursor=')?null:'page-2'}:undefined),tick=searchClock(f);
+ f.mount('library');await wait();const app=f.node.querySelector('[name="ui-app"]');app.value='app.a';app.dispatchEvent(new f.w.Event('change'));await wait();
+ f.node.querySelector('[data-ui-next]').click();await wait();assert.equal(catalogParams(f).get('cursor'),'page-2');
+ const query=f.node.querySelector('[name="ui-query"]');query.value='导航';query.dispatchEvent(new f.w.Event('input'));tick();await wait();
+ assert.equal(catalogParams(f).has('cursor'),false);assert.equal(f.node.querySelector('[data-ui-prev]').disabled,true);
+ f.node.querySelector('[data-ui-next]').click();await wait();query.value='';query.dispatchEvent(new f.w.Event('input'));await wait();assert.equal(catalogParams(f).get('query'),'');assert.equal(catalogParams(f).has('cursor'),false);
+ query.value='基线';query.dispatchEvent(new f.w.Event('input'));f.node.querySelector('[data-ui-include-drafts]').click();await wait();const count=catalogCalls(f).length;tick();await wait();assert.equal(catalogCalls(f).length,count);assert.equal(catalogParams(f).get('scope'),'all');assert.equal(catalogParams(f).get('query'),'基线');
+});
+test('typing invalidates an older response before the debounce starts a new search',async t=>{
+ let resolve;const f=fixture(t,path=>path.includes('query=old')?new Promise(r=>resolve=r):undefined),tick=searchClock(f);f.mount();await wait();
+ const query=f.node.querySelector('[name="ui-query"]');query.value='old';query.dispatchEvent(new f.w.Event('input'));tick();await wait();const old=catalogCalls(f).at(-1);
+ query.value='new';query.dispatchEvent(new f.w.Event('input'));assert.equal(old.options.signal.aborted,true);
+ resolve({ok:true,apps:[],groups:[{name:'过期搜索结果',items:[CASE]}],total:1});await wait();assert.doesNotMatch(f.node.textContent,/过期搜索结果/);tick();await wait();assert.equal(catalogParams(f).get('query'),'new');
+});
+test('empty published results explain the baseline scope',async t=>{
+ const f=fixture(t,path=>path.startsWith('/ui-executions/catalog')?{ok:true,apps:[{app_id:'app.a',name:'应用甲'}],modules:[],items:[],groups:[],total:0}:undefined);f.mount();await wait();
+ const app=f.node.querySelector('[name="ui-app"]');app.value='app.a';app.dispatchEvent(new f.w.Event('change'));await wait();assert.match(f.node.querySelector('[data-ui-cases]').textContent,/没有匹配的已发布基线/);
+});
+test('hiding drafts clears draft-only module and saved unavailable modules recover to all modules',async t=>{
+ const f=fixture(t,path=>path.startsWith('/ui-executions/catalog')?{ok:true,apps:[{app_id:'app.a',name:'应用甲'}],modules:path.includes('scope=all')?['导航','草稿模块']:['导航'],items:[CASE],total:1}:undefined);
+ f.w.sessionStorage.setItem('ui-simple:user-a:selection',JSON.stringify({app:'app.a',module:'草稿模块'}));f.mount('library');await wait();await wait();
+ assert.equal(catalogParams(f).get('module'),'');const module=f.node.querySelector('[name="ui-module"]');assert.equal(module.value,'');assert.equal(module.selectedIndex,0);
+ f.node.querySelector('[data-ui-include-drafts]').click();await wait();module.value='草稿模块';module.dispatchEvent(new f.w.Event('change'));await wait();assert.equal(catalogParams(f).get('module'),'草稿模块');
+ f.node.querySelector('[data-ui-include-drafts]').click();await wait();assert.equal(catalogParams(f).get('module'),'');assert.equal(module.value,'');assert.equal(module.selectedIndex,0);
+ assert.equal(JSON.parse(f.w.sessionStorage.getItem('ui-simple:user-a:selection')).module,'');
+});
+for(const change of ['scope','query'])test(`${change} invalidates old pagination while new results are pending`,async t=>{
+ let resolve,slow=false;const data={ok:true,apps:[{app_id:'app.a',name:'应用甲'}],modules:['导航'],items:[CASE],total:21,next_cursor:'old-cursor'};
+ const f=fixture(t,path=>path.startsWith('/ui-executions/catalog')?(slow?new Promise(r=>resolve=r):data):undefined),tick=searchClock(f);f.mount('library');await wait();
+ const app=f.node.querySelector('[name="ui-app"]');app.value='app.a';app.dispatchEvent(new f.w.Event('change'));await wait();slow=true;
+ if(change==='scope')f.node.querySelector('[data-ui-include-drafts]').click();
+ else{const q=f.node.querySelector('[name="ui-query"]');q.value='新基线';q.dispatchEvent(new f.w.Event('input'));}
+ const next=f.node.querySelector('[data-ui-next]');assert.equal(next.disabled,true);assert.equal(f.node.querySelector('[data-ui-prev]').disabled,true);next.click();tick();await wait();
+ assert.equal(catalogParams(f).has('cursor'),false);assert.equal(catalogCalls(f).at(-1).options.signal.aborted,false);
+ resolve({...data,next_cursor:null});await wait();assert.equal(next.disabled,true);
+});
 test('explicit app case device produces one idempotent exact-target start',async t=>{
  const f=fixture(t);await select(t,f);const start=f.node.querySelector('[data-ui-start]');start.click();start.click();await wait();await wait();
  const posts=f.calls.filter(c=>c.path==='/ui-executions'&&c.options.method==='POST');assert.equal(posts.length,1);

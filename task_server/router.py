@@ -6308,7 +6308,8 @@ def _get_ui_execution_catalog(handler, qs):
     from .services.ui_execution_contract import AccessDenied
     try:
         result = get_ui_catalog(None, app_id=qs.get("app_id", ""), module=qs.get("module", ""),
-                                query=qs.get("query", ""), cursor=qs.get("cursor", ""), limit=int(qs.get("limit", 20)))
+                                query=qs.get("query", ""), cursor=qs.get("cursor", ""), limit=int(qs.get("limit", 20)),
+                                scope=qs.get("scope", "all"))
     except (AccessDenied, ValueError, OSError) as error:
         _ui_batch_error(handler, error)
         return

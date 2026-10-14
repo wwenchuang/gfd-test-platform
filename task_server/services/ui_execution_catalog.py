@@ -93,26 +93,29 @@ def _page(rows, cursor, fingerprint, limit):
     return [_public(row) for row in selected], next_cursor
 
 
-def get_ui_catalog(actor=None, *, app_id='', module='', query='', cursor='', limit=20):
+def get_ui_catalog(actor=None, *, app_id='', module='', query='', cursor='', limit=20, scope='all'):
     profile = require_ui_actor(actor, permission='ui.view', app_id=app_id or None)
     if (type(limit) is not int or not 1 <= limit <= 100
             or not isinstance(query, str) or len(query) > 200
             or not isinstance(module, str) or len(module) > 128
-            or not isinstance(app_id, str) or len(app_id) > 128):
+            or not isinstance(app_id, str) or len(app_id) > 128
+            or not isinstance(scope, str) or scope not in ('all', 'published')):
         raise ValueError('filters_invalid')
     apps = _applications(profile)
     if app_id and app_id not in {app['package'] for app in apps}:
         raise ValueError('app_unavailable')
     allowed = {app['package'] for app in apps}
-    rows = [r for r in _catalog_rows() if r['app_id'] in allowed
-            and (not app_id or r['app_id'] == app_id) and (not module or r['module'] == module)
+    scoped_rows = [r for r in _catalog_rows() if r['app_id'] in allowed
+                   and (not app_id or r['app_id'] == app_id)
+                   and (scope == 'all' or r['status'] in _EXECUTABLE)]
+    rows = [r for r in scoped_rows if (not module or r['module'] == module)
             and (not query.strip() or query.strip().casefold() in r['_search'])]
     from .feishu_service import task_app_feishu_channel
     summaries = [{'app_id':app['package'], 'name':app.get('name') or app['package'],
                   'notification_channel': task_app_feishu_channel(app),
                   'platforms': ['android'] + (['ios'] if (app.get('platform_mappings') or {}).get('ios') else [])}
                  for app in apps]
-    modules = sorted({r['module'] for r in _catalog_rows() if r['app_id'] in allowed and (not app_id or r['app_id'] == app_id)})
+    modules = sorted({r['module'] for r in scoped_rows})
     if not app_id:
         if cursor:
             raise ValueError('cursor_invalid')
@@ -121,7 +124,7 @@ def get_ui_catalog(actor=None, *, app_id='', module='', query='', cursor='', lim
              'items':[_public(r) for r in group[:3]]}
             for a in summaries for group in [[r for r in rows if r['app_id']==a['app_id']]] if group],
             'total':len(rows), 'items':[], 'next_cursor':None}
-    fingerprint = hashlib.sha256(json.dumps([app_id,module,query],ensure_ascii=False).encode()).hexdigest()[:16]
+    fingerprint = hashlib.sha256(json.dumps([app_id,module,query,scope],ensure_ascii=False).encode()).hexdigest()[:16]
     items, next_cursor = _page(rows,cursor,fingerprint,limit)
     return {'apps':summaries, 'modules':modules, 'groups':[], 'total':len(rows),
             'items':items, 'next_cursor':next_cursor}

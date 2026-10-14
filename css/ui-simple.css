@@ -56,11 +56,19 @@
 .ui-simple>[data-ui-notice]:empty{display:none}
 .ui-simple .ui-simple-error{color:#ffb2bb;padding:10px 14px;border:1px solid #744452;border-radius:8px;background:#2c202b}
 .ui-simple fieldset{min-width:0;border:0;padding:0;margin:22px auto 0;max-width:1200px}
-.ui-simple-filters{display:flex;flex-wrap:wrap;gap:14px;padding:18px;background:#13202e;border:1px solid #2b3d50;border-radius:10px}
+.ui-simple-filters{display:flex;align-items:flex-start;flex-wrap:wrap;gap:14px;padding:18px;background:#13202e;border:1px solid #2b3d50;border-radius:10px}
 .ui-simple-filters label{display:grid;gap:8px;flex:1;min-width:155px;font-size:13px;font-weight:600}
 .ui-simple-selection{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px;max-height:145px;overflow:auto}
 .ui-simple-selection:empty{display:none}
 .ui-simple-selection button{max-width:100%;white-space:normal;text-align:left;overflow-wrap:anywhere;font-size:12px}
+/* Search stays explicit and usable beside the application/module filters. */
+.ui-simple-search{display:grid;gap:8px;flex:1.4;min-width:240px}
+.ui-simple-search-input{display:flex;align-items:center;gap:8px;min-width:0}
+.ui-simple-search-input input{flex:1;width:0}
+.ui-simple-search-input button{flex:none;min-height:42px;padding:8px 16px;white-space:nowrap}
+.ui-simple-search small{font-size:12px;color:#91a5ba;font-weight:400}
+.ui-simple .ui-simple-drafts{display:flex;align-items:center;gap:8px;margin:14px 0 0;font-size:13px;color:#a8b6c7}
+.ui-simple-drafts input{width:16px;height:16px}
 .ui-simple-filters input,.ui-simple-filters select{width:100%;box-sizing:border-box;min-height:42px;min-width:0;background:#0a1420;border:1px solid #40536a;border-radius:6px;color:#e8edf5;padding:8px 11px;font-size:14px}
 .ui-simple :is(button,input,select):focus-visible{outline:2px solid #58d5e6;outline-offset:3px}
 .ui-simple :is(button,input,select):disabled{cursor:not-allowed}
