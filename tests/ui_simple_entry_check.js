@@ -138,3 +138,17 @@ test('explicit workflow departure clears only internal report intent while auth 
  w.setActiveWorkflow('ui_reports');assert.equal(w.uiSimpleReportIntent().revision,revision);
  w.setActiveWorkflow('ui_start');assert.equal(w.uiSimpleReportIntent(),null);assert.equal(w.location.search+w.location.hash,'?keep=1#section');
 });
+
+
+test('rollback keeps exact report links and authenticated My Reports reachable with admission closed',async t=>{
+ const {w,calls}=fixture(t),batch='uib_'+'a'.repeat(32),revision='b'.repeat(64);
+ w.history.replaceState({},'',`/task-manager.html?ui_batch=${batch}&report_revision=${revision}`);
+ w.apiRequest=async()=>({ok:true,enabled:false,evidence_available:true,recovery_available:true});
+ await w.initUiSimpleAvailability({navigate:false});assert.equal(w.isUiSimpleAvailable('ui_reports'),true);
+ assert.equal(w.isUiSimpleAvailable('ui_start'),false);assert.equal(w.preferUiSimpleReport(),true);assert.equal(w.showUiSimpleWorkflow(),true);
+ const options=calls.find(x=>x?.reportIntent);assert.equal(options.reportIntent.revision,revision);assert.equal(options.canAdmit(),false);assert.equal(options.canExecute(),true);
+ w.resetUiSimpleWorkflow();assert.equal(w.uiSimpleReportIntent().revision,revision);
+ const auth=fs.readFileSync('js/auth.js','utf8');w.canOperateAgent=()=>true;w.canUseSharedUiAi=()=>true;
+ w.eval(auth.slice(auth.indexOf('const WORKFLOW_PERMISSIONS'),auth.indexOf('function applyAccessNavigation')));
+ await w.initUiSimpleAvailability({navigate:false});assert.equal(w.canAccessWorkflow('ui_reports'),true);assert.equal(w.canAccessWorkflow('ui_start'),false);
+});

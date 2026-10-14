@@ -603,6 +603,8 @@ def test_spool_fallback_is_exposed_and_replayed_on_recovery(operation_server, mo
     status, raw = request(server, "GET", "/api/operations", token)
     assert status == 200
     assert json.loads(raw)["audit"]["storage"] == "spool"
+    # Arrange this store's explicit eligibility for the production 60-second replay interval.
+    monkeypatch.setitem(operation_http._LAST_REPLAY, str(live_store.path), time.monotonic() - 60)
     # The ordinary request finalizer invokes bounded replay on recovery.
     for _ in range(2):
         request(server, "GET", "/api/auth/me", token)

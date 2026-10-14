@@ -8,7 +8,7 @@ from . import business_line_service, case_service
 from .operation_attribution import current_actor
 from .ui_case_compiler import compile_ui_case
 from .ui_execution_contract import AccessDenied, require_ui_actor, resolve_ui_target
-from .ui_execution_store import BatchConflict, UiExecutionStore
+from .ui_execution_store import BatchConflict, UiExecutionStore, default_db_path
 
 
 _REVISION = re.compile(r"^[0-9a-f]{64}$")
@@ -90,10 +90,23 @@ def _store():
     return UiExecutionStore()
 
 
+def _require_ui_admission():
+    from .ui_batch_dispatch import enabled
+    if not enabled():
+        raise BatchValidationError("feature_disabled")
+
+
+def _authorize_notifications(actor, normalized):
+    if normalized["notifications"]["enabled"]:
+        require_ui_actor(actor, permission="platform.notify", app_id=normalized["app_id"])
+
+
 def create_ui_batch(actor, request, idempotency_key):
     """Freeze selected shared baselines and dispatch intents without creating jobs."""
+    _require_ui_admission()
     normalized = _normalize_request(request)
     profile = require_ui_actor(actor, app_id=normalized["app_id"])
+    _authorize_notifications(actor, normalized)
     key = _identifier(idempotency_key, "idempotency_key_invalid")
     request_hash = _request_hash(normalized)
     store = _store()
@@ -161,6 +174,8 @@ def get_ui_batch(actor, batch_id):
     profile = require_ui_actor(actor, permission="ui.view")
     if not isinstance(batch_id, str) or not re.fullmatch(r"uib_[0-9a-f]{32}", batch_id):
         return None
+    if not default_db_path().exists():
+        return None
     batch = _store().get_batch(batch_id)
     if not batch:
         return None
@@ -191,6 +206,8 @@ def list_ui_batches(actor, filters=None, cursor="", limit=20):
     # Ownership is admin-sensitive; app scope applies to every actor.
     allowed = (profile.get("scope") or {}).get("ui_apps")
     app_ids = None if allowed == "*" else tuple(allowed or [])
+    if not default_db_path().exists():
+        return {"items": [], "next_cursor": ""}
     return _store().list_batches(None if scope == "all" else profile["user_id"],
                                  app_id, cursor, limit, app_ids)
 

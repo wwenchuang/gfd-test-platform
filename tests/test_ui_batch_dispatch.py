@@ -324,3 +324,20 @@ def test_unavailable_owner_cannot_create_attributed_background_job(dispatch_env,
     assert result['case_attempts'][0]['block_code'] == 'account_unavailable'
     assert job_service.get_job(batch['case_attempts'][0]['dispatch_key']) is None
     assert not OperationStore(operation_path).list_events(original('admin'), all_actors=True)['events']
+
+
+def test_flag_off_between_prepare_and_claim_blocks_prepared_delivery(dispatch_env,monkeypatch):
+    from task_server.services import ui_batch_dispatch as dispatch, job_service, runner_service
+    from task_server.services.ui_execution_store import UiExecutionStore
+    batch=create();dispatch.dispatch_ui_batch(batch['ui_batch_id'])
+    job=job_service.get_job(batch['case_attempts'][0]['dispatch_key']);prepared=dispatch.prepare_ui_claim(job)
+    assert prepared
+    queued=create('b');UiExecutionStore().block_attempt(queued['case_attempts'][0]['attempt_id'],'device_busy')
+    monkeypatch.setenv('UI_SIMPLE_FLOW_ENABLED','0')
+    assert dispatch.claim_ui_job(job,prepared=prepared) is None
+    assert runner_service.assign_job('mac',['iphone']) is None
+    dispatch.reconcile_ui_batches();dispatch.dispatch_ui_batch(queued['ui_batch_id'])
+    assert job_service.get_job(queued['case_attempts'][0]['dispatch_key']) is None
+    db=UiExecutionStore()._connect()
+    try: assert db.execute('SELECT claim_token,status FROM case_attempts WHERE job_id=?',(job['job_id'],)).fetchone()[:]==('','queued')
+    finally: db.close()

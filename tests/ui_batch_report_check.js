@@ -141,7 +141,9 @@ test('notification retry is permission gated and unknown requires explicit recei
  const view=w.UiBatchReport.mount(node,{batchId:'uib_link',identity:()=> 'a',canNotify:()=>permission,request:async(path,options={})=>{calls.push({path,options});return path.split('?')[0].endsWith('/deliveries')?{ok:true,policy:{enabled:true,target_label:'专属群'},items:[{delivery_key:'d1',report_revision:'1',status:'unknown',message:'送达未知，请核对'}]}:{ok:true,report:{status:'ready',report_revision:'1',snapshot:SNAP}};},download:()=>{},copy:()=>{}});await tick();await tick();
  assert.equal(node.querySelector('[data-delivery-retry]'),null);permission=true;await view.refresh(true);await tick();
  node.querySelector('[data-delivery-retry]').click();await tick();assert.equal(calls.filter(c=>c.options.method==='POST').length,0);
- confirmed=true;node.querySelector('[data-delivery-retry]').click();await tick();assert.equal(calls.filter(c=>c.options.method==='POST')[0].options.body.confirmed_not_received,true);view.dispose();
+ permission=false;confirmed=true;node.querySelector('[data-delivery-retry]').click();await tick();assert.equal(calls.filter(c=>c.options.method==='POST').length,0);
+ await view.refresh(true);await tick();assert.equal(node.querySelector('[data-delivery-retry]'),null);
+ permission=true;await view.refresh(true);await tick();node.querySelector('[data-delivery-retry]').click();await tick();assert.equal(calls.filter(c=>c.options.method==='POST')[0].options.body.confirmed_not_received,true);view.dispose();
 });
 
 test('notification view refuses a mismatched server revision',async t=>{

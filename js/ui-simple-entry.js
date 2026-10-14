@@ -1,11 +1,12 @@
 // Adapter for the existing authenticated shell; the workflow itself has no legacy job polling.
 let uiSimpleEnabled=false;
+let uiSimpleEvidenceAvailable=false;
 let uiSimpleEpoch=0;
 const uiSimplePictures=new Map();
 const uiSimplePictureRequests=new Set();
 const uiSimpleDownloads=new Set();
 function isUiSimpleWorkflow(key){return ['ui_start','ui_library','ui_reports'].includes(key);}
-function isUiSimpleAvailable(){return uiSimpleEnabled;}
+function isUiSimpleAvailable(key){return key==='ui_reports'?uiSimpleEvidenceAvailable:uiSimpleEnabled;}
 function uiSimpleIdentity(){return String(currentAccessProfile?.user_id||'');}
 function leaveUiSimpleWorkflow({discardReportIntent=false}={}){
   if(discardReportIntent)clearUiSimpleReportIntent();
@@ -19,7 +20,7 @@ function leaveUiSimpleWorkflow({discardReportIntent=false}={}){
   uiSimplePictures.clear();
 }
 function resetUiSimpleWorkflow(){
-  uiSimpleEpoch++;uiSimpleEnabled=false;
+  uiSimpleEpoch++;uiSimpleEnabled=false;uiSimpleEvidenceAvailable=false;
   window.UiSimpleFlow?.reset();leaveUiSimpleWorkflow();
 }
 async function initUiSimpleAvailability({navigate=true}={}){
@@ -29,6 +30,7 @@ async function initUiSimpleAvailability({navigate=true}={}){
     const data=await apiRequest('/ui-executions/availability',{timeoutMs:5000});
     if(epoch!==uiSimpleEpoch||identity!==uiSimpleIdentity())return;
     uiSimpleEnabled=data?.ok===true&&data.enabled===true;
+    uiSimpleEvidenceAvailable=data?.ok===true&&(data.evidence_available===true||uiSimpleEnabled);
     const advanced=document.querySelector('[data-ui-advanced]');
     if(advanced){advanced.classList.toggle('ui-advanced-enabled',uiSimpleEnabled);advanced.open=!uiSimpleEnabled||!isUiSimpleWorkflow(activeWorkflow)&&activeWorkflow!=='dashboard';}
     applyAccessNavigation();
@@ -78,11 +80,11 @@ function clearUiSimpleReportIntent(expected){
   window.history.replaceState(window.history.state,'',url.pathname+url.search+url.hash);
 }
 function preferUiSimpleReport(){
-  if(!uiSimpleEnabled||!hasPermission('ui.view')||!uiSimpleReportIntent())return false;
+  if(!isUiSimpleAvailable('ui_reports')||!hasPermission('ui.view')||!uiSimpleReportIntent())return false;
   activeWorkflow='ui_reports';return true;
 }
 function showUiSimpleWorkflow(){
-  if(!uiSimpleEnabled||!isUiSimpleWorkflow(activeWorkflow)||!hasPermission('ui.view'))return false;
+  if(!isUiSimpleAvailable(activeWorkflow)||!isUiSimpleWorkflow(activeWorkflow)||!hasPermission('ui.view'))return false;
   leaveUiSimpleWorkflow();
   document.getElementById('app')?.classList.add('ui-simple-active');
   const area=document.getElementById('editor-area');area.classList.remove('editor-open');area.replaceChildren();
@@ -90,7 +92,7 @@ function showUiSimpleWorkflow(){
   const reportIntent=activeWorkflow==='ui_reports'?uiSimpleReportIntent():null,identity=uiSimpleIdentity();
   window.UiSimpleFlow.mount(page,{
     mode:{ui_start:'start',ui_library:'library',ui_reports:'reports'}[activeWorkflow],
-    request:apiRequest,identity:uiSimpleIdentity,canExecute:()=>hasPermission('ui.execute'),canNotify:()=>hasPermission('platform.notify'),reportIntent,loadPicture:loadUiSimplePicture,
+    request:apiRequest,identity:uiSimpleIdentity,canAdmit:()=>uiSimpleEnabled,canExecute:()=>hasPermission('ui.execute'),canNotify:()=>hasPermission('platform.notify'),reportIntent,loadPicture:loadUiSimplePicture,
     onReportClose:intent=>{if(uiSimpleIdentity()===identity)clearUiSimpleReportIntent(intent);},
     download:downloadUiBatchFile,copy:async text=>{if(!await copyText(text))throw new Error('复制未完成，请重试');}
   });

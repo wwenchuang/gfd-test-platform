@@ -12,6 +12,9 @@ from task_server.services.operation_attribution import actor_context
 @pytest.fixture
 def notify_env(dispatch_env, monkeypatch):
     from task_server.services import business_line_service, ui_batch_report_service as reports
+    from task_server import identity
+    original=identity.get_access_profile
+    monkeypatch.setattr(identity,'get_access_profile',lambda name:{**original(name),'permissions':['ui.view','ui.execute','platform.notify']})
     app = {'package': APP, 'enabled': True, 'platform_mappings': {'android':APP,'ios':'com.kfb.3d'},
            'feishu_webhook':'https://example.invalid/bot/test-only'}
     monkeypatch.setattr(business_line_service,'configured_test_application',lambda _:app)
@@ -139,9 +142,10 @@ def test_retry_permission_scope_and_unknown_receipt_check(notify_env,monkeypatch
     batch,report,_,_=ready();delivery=enqueue(batch,report)
     monkeypatch.setattr(feishu_service,'send_feishu_card',lambda *a,**k:(_ for _ in ()).throw(TimeoutError()))
     notify.process_due_batch_deliveries(1)
+    original=identity.get_access_profile
+    monkeypatch.setattr(identity,'get_access_profile',lambda name:{**original(name),'permissions':['ui.view','ui.execute']})
     with actor_context(ACTORS['a']):
         with pytest.raises(PermissionError):notify.retry_batch_delivery(None,delivery['delivery_key'])
-    original=identity.get_access_profile
     monkeypatch.setattr(identity,'get_access_profile',lambda name:{**original(name),'permissions':['ui.view','ui.execute','platform.notify']})
     with actor_context(ACTORS['b']):
         with pytest.raises(FileNotFoundError):notify.retry_batch_delivery(None,delivery['delivery_key'])
@@ -365,3 +369,37 @@ def test_normal_enqueue_tick_uses_pending_index_not_all_notified_history(notify_
     try:plan=' '.join(row[3] for row in db.execute('EXPLAIN QUERY PLAN '+query))
     finally:db.close()
     assert 'batches_notify_ready' in plan
+
+
+def test_notify_grant_revoked_after_queue_fails_closed_and_rerun_opts_out(notify_env, monkeypatch):
+    from task_server import identity
+    from task_server.services import ui_batch_notification_service as notify, ui_batch_dispatch as dispatch, feishu_service
+    from task_server.services.ui_execution_store import UiExecutionStore
+    batch, report, _, _=ready(); enqueue(batch,report)
+    original=identity.get_access_profile
+    monkeypatch.setattr(identity,'get_access_profile',lambda name:{**original(name),'permissions':['ui.view','ui.execute']})
+    monkeypatch.setattr(feishu_service,'send_feishu_card',lambda *a,**k:pytest.fail('grant revoked before send'))
+    assert notify.process_due_batch_deliveries(1)==1
+    with actor_context(ACTORS['a']):
+        item=notify.get_batch_deliveries(None,batch['ui_batch_id'])['items'][0]
+        assert item['status']=='failed' and item['error_code']=='owner_access_revoked'
+        rerun=dispatch.rerun_ui_batch(None,batch['ui_batch_id'],'all','revoked-rerun')
+        repeat=dispatch.rerun_ui_batch(None,batch['ui_batch_id'],'all','revoked-rerun')
+    assert rerun['selection']['notifications']['enabled'] is False
+    assert rerun['delivery_status']=='not_requested' and repeat['ui_batch_id']==rerun['ui_batch_id']
+    assert UiExecutionStore().get_batch(batch['ui_batch_id'])['selection']['notifications']['enabled'] is True
+    with actor_context(ACTORS['a']):
+        from task_server.services.ui_batch_report_service import get_ui_batch_report
+        assert get_ui_batch_report(None,batch['ui_batch_id'],report['report_revision'])['report_revision']==report['report_revision']
+
+
+def test_feature_off_notification_worker_is_paused_unless_explicitly_enabled(notify_env, monkeypatch):
+    from task_server.services import ui_batch_notification_service as notify, feishu_service
+    batch,report,_,_=ready();enqueue(batch,report);calls=[]
+    monkeypatch.setattr(feishu_service,'send_feishu_card',lambda *a,**k:calls.append(a) or {'code':0})
+    monkeypatch.setenv('UI_SIMPLE_FLOW_ENABLED','false');monkeypatch.setattr(notify,'_WORKER',None)
+    notify.tick_batch_notification_worker()
+    assert notify._WORKER is None and notify.process_due_batch_deliveries(1)==0 and calls==[]
+    with actor_context(ACTORS['a']): assert notify.get_batch_deliveries(None,batch['ui_batch_id'])['items'][0]['status']=='pending'
+    monkeypatch.setenv('UI_BATCH_NOTIFICATIONS_ENABLED','true')
+    assert notify.process_due_batch_deliveries(1)==1 and len(calls)==1

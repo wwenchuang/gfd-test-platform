@@ -6257,9 +6257,6 @@ def _post_ui_execution_batch(handler, qs):
 
 @route_get("/api/ui-executions")
 def _get_ui_execution_batches(handler, qs):
-    if not _ui_batch_enabled():
-        handler._json({"ok": False, "code": "feature_disabled"}, 404)
-        return
     from task_server.services.ui_execution_service import BatchValidationError, list_ui_batches
     from task_server.services.ui_execution_contract import AccessDenied
 
@@ -6274,9 +6271,6 @@ def _get_ui_execution_batches(handler, qs):
 
 @route_get_regex(r"^/api/ui-executions/([^/]+)$")
 def _get_ui_execution_batch(handler, qs, match):
-    if not _ui_batch_enabled():
-        handler._json({"ok": False, "code": "feature_disabled"}, 404)
-        return
     from task_server.services.ui_execution_service import get_ui_batch
     from task_server.services.ui_execution_contract import AccessDenied
 
@@ -6301,7 +6295,8 @@ def _get_ui_execution_availability(handler, qs):
     except AccessDenied as error:
         _ui_batch_error(handler, error)
         return
-    handler._json({"ok": True, "enabled": _ui_batch_enabled()})
+    handler._json({"ok": True, "enabled": _ui_batch_enabled(),
+                   "evidence_available": True, "recovery_available": True})
 
 
 @route_get("/api/ui-executions/catalog")
@@ -6352,7 +6347,7 @@ def _post_ui_execution_preflight(handler, qs):
 
 @route_post_regex(r"^/api/ui-executions/([^/]+)/(cancel|rerun)$")
 def _post_ui_execution_action(handler, qs, match):
-    if not _ui_batch_enabled():
+    if match.group(2) == "rerun" and not _ui_batch_enabled():
         handler._json({"ok": False, "code": "feature_disabled"}, 404)
         return
     from .services.ui_batch_dispatch import cancel_ui_batch, rerun_ui_batch
@@ -6380,9 +6375,6 @@ def _post_ui_execution_action(handler, qs, match):
 
 @route_post_regex(r"^/api/ui-executions/([^/]+)/confirm-stop$")
 def _post_ui_execution_confirm_stop(handler, qs, match):
-    if not _ui_batch_enabled():
-        handler._json({"ok": False, "code": "feature_disabled"}, 404)
-        return
     from .services.ui_batch_dispatch import confirm_ui_attempt_stopped
     from .services.ui_execution_contract import AccessDenied
     from .services.ui_execution_store import BatchConflict
@@ -6411,9 +6403,6 @@ register_api_testing_routes(route_get_prefix, route_post_prefix_before_body, rou
 
 # Private UI batch reports share the batch's current owner/application boundary.
 def _ui_report_response(handler, operation, batch_id, binary=False, status=200):
-    if not _ui_batch_enabled():
-        handler._json({"ok": False, "code": "feature_disabled"}, 404)
-        return
     from .services.ui_execution_contract import AccessDenied
     from .services.ui_batch_report_http import send_private_file
     try:

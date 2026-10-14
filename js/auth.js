@@ -98,7 +98,7 @@ const WORKFLOW_PERMISSIONS = {
 };
 
 function canAccessWorkflow(key) {
-  if (typeof isUiSimpleWorkflow === 'function' && isUiSimpleWorkflow(key)) return isUiSimpleAvailable() && hasPermission('ui.view');
+  if (typeof isUiSimpleWorkflow === 'function' && isUiSimpleWorkflow(key)) return isUiSimpleAvailable(key) && hasPermission('ui.view');
   if (['dashboard', 'agent', 'agent_confirm'].includes(key)) return canOperateAgent();
   if (key === 'generate') return canUseSharedUiAi();
   return !WORKFLOW_PERMISSIONS[key] || hasPermission(WORKFLOW_PERMISSIONS[key]);

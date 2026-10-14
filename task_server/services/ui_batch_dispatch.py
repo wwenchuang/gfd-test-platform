@@ -9,7 +9,7 @@ from . import job_service, runner_service, sonic_service
 from .operation_attribution import actor_context
 from .ui_execution_contract import require_ui_actor, resolve_ui_target
 from .ui_execution_lifecycle import TERMINAL, ACK_LOST_NS
-from .ui_execution_store import UiExecutionStore
+from .ui_execution_store import UiExecutionStore, default_db_path
 from .ui_execution_messages import blocker_message
 
 # Always acquired before JOB_LOCK. No SQLite transaction spans file or network I/O.
@@ -86,9 +86,11 @@ def _target_check(batch, attempt, occupancy=None, fresh=False):
 
 
 def preflight_ui_batch(actor, request):
-    from .ui_execution_service import _normalize_request, _prepare_ui_batch, BatchValidationError
+    from .ui_execution_service import _normalize_request, _prepare_ui_batch, _authorize_notifications, _require_ui_admission, BatchValidationError
+    _require_ui_admission()
     normalized = _normalize_request(request)
     profile = require_ui_actor(actor, app_id=normalized['app_id'])
+    _authorize_notifications(actor, normalized)
     blockers, compatibility = [], []
     code = _unsupported_selection(normalized)
     if code:
@@ -123,6 +125,8 @@ def _read_occupancy(fresh=False):
 
 
 def dispatch_ui_batch(batch_id):
+    if not enabled() and not default_db_path().exists():
+        return None
     batch = UiExecutionStore().get_batch(batch_id)
     if not batch or not enabled() or not any(a['status'] in {'queued','blocked'} for a in batch['case_attempts']):
         return batch
@@ -217,6 +221,8 @@ def claim_ui_job(job, prepared=None):
     if prepared is None:
         return None
     with DISPATCH_LOCK:
+        if not enabled():
+            return None
         token = UiExecutionStore().claim_attempt(job['job_id'])
         return {**prepared, 'ui_claim_token':token} if token else None
 
@@ -283,7 +289,8 @@ def confirm_ui_attempt_stopped(actor, batch_id, request):
 
 
 def rerun_ui_batch(actor, batch_id, scope, idempotency_key):
-    from .ui_execution_service import get_ui_batch, _identifier, _request_hash
+    from .ui_execution_service import get_ui_batch, _identifier, _request_hash, _require_ui_admission
+    _require_ui_admission()
     batch = get_ui_batch(actor,batch_id)
     if not batch:
         return None
@@ -295,12 +302,15 @@ def rerun_ui_batch(actor, batch_id, scope, idempotency_key):
         raise ValueError('rerun_empty')
     snapshots = [s for s in batch['snapshots'] if any(a['snapshot_id'] == s['snapshot_id'] for a in selected)]
     from .operation_attribution import current_actor
+    notifications = {**(batch['selection'].get('notifications') or {'enabled':False})}
+    if 'platform.notify' not in (profile.get('permissions') or []):
+        notifications['enabled'] = False
     prepared = {'owner_user_id':profile['user_id'],'owner_username':profile['username'],
         'owner_display_name':current_actor()['display_name'],'app_id':batch['app_id'],
         'suite_id':batch['suite_id'],'suite_revision':batch['suite_revision'],
         'idempotency_key':_identifier(idempotency_key,'idempotency_key_invalid'),
         'request_hash':_request_hash({'rerun_of':batch_id,'scope':scope}),
-        'selection':{**batch['selection'],'rerun_of':batch_id,'scope':scope},'snapshots':snapshots,
+        'selection':{**batch['selection'],'notifications':notifications,'rerun_of':batch_id,'scope':scope},'snapshots':snapshots,
         'attempts':[{'case_id':a['case_id'],'case_revision':a['case_revision'],
             'target':{k:a[k] for k in ('runner_id','device_id','platform')},
             'target_resolution':a['target_resolution'],'compiled_case':a['compiled_case']} for a in selected]}
@@ -308,12 +318,13 @@ def rerun_ui_batch(actor, batch_id, scope, idempotency_key):
 
 
 def reconcile_ui_batches(limit=50):
-    if not enabled():
+    if not enabled() and not default_db_path().exists():
         return
     store = UiExecutionStore()
     for batch_id in store.recoverable_batch_ids(limit):
         _reconcile_ui_batch(batch_id)
-        dispatch_ui_batch(batch_id)  # May wait on Sonic, outside the global lock.
+        if enabled():
+            dispatch_ui_batch(batch_id)  # May wait on Sonic, outside the global lock.
 
 
 @serialized
@@ -337,17 +348,18 @@ def _reconcile_ui_batch(batch_id):
 
 def start_ui_batch_reconciler():
     global _WORKER
-    if not enabled() or (_WORKER and _WORKER.is_alive()):
+    if (not enabled() and not default_db_path().exists()) or (_WORKER and _WORKER.is_alive()):
         return
     def loop():
         import logging
-        while enabled():
+        while enabled() or default_db_path().exists():
             try:
                 reconcile_ui_batches()
                 from .ui_batch_report_service import tick_ui_report_worker
                 tick_ui_report_worker()
-                from .ui_batch_notification_service import tick_batch_notification_worker
-                tick_batch_notification_worker()
+                from .ui_batch_notification_service import notifications_enabled, tick_batch_notification_worker
+                if notifications_enabled():
+                    tick_batch_notification_worker()
             except Exception:
                 logging.getLogger(__name__).exception('UI batch reconciliation failed')
             time.sleep(5)

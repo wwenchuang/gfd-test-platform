@@ -24,7 +24,8 @@ def environment(tmp_path, monkeypatch):
     from task_server.services import business_line_service, case_service, runner_service
 
     monkeypatch.setenv("TASK_UI_EXECUTION_DB", str(tmp_path / "private" / "ui.sqlite3"))
-    monkeypatch.delenv("UI_SIMPLE_FLOW_ENABLED", raising=False)
+    monkeypatch.setenv("UI_SIMPLE_FLOW_ENABLED", "1")
+    monkeypatch.delenv("UI_BATCH_NOTIFICATIONS_ENABLED", raising=False)
     monkeypatch.setattr(identity, "get_access_profile", lambda name: {
         "username": name, "user_id": ACTORS[name]["user_id"], "display_name": ACTORS[name]["display_name"],
         "status": "active", "permissions": ["ui.view", "ui.execute"],
@@ -154,9 +155,12 @@ def test_idempotent_retry_reads_frozen_batch_after_source_edit(environment, monk
     assert first == second
 
 
-def test_notification_preference_is_frozen_without_accepting_channel_override(environment):
+def test_notification_preference_is_frozen_without_accepting_channel_override(environment, monkeypatch):
     from task_server.services.ui_execution_service import BatchValidationError, create_ui_batch
 
+    from task_server import identity
+    original = identity.get_access_profile
+    monkeypatch.setattr(identity, "get_access_profile", lambda name: {**original(name), "permissions":["ui.view", "ui.execute", "platform.notify"]})
     with actor_context(ACTORS["b"]):
         selected = request()
         selected["notifications"] = {"enabled": True}
@@ -228,6 +232,7 @@ def test_route_feature_flag_defaults_closed_and_enabled_route_returns_batch(envi
             self.response = payload, status
 
     handler = Handler()
+    monkeypatch.delenv("UI_SIMPLE_FLOW_ENABLED", raising=False)
     with actor_context(ACTORS["b"]):
         router.POST_ROUTES["/api/ui-executions"](handler, {})
         assert handler.response[1] == 404
@@ -288,3 +293,22 @@ def test_creation_freezes_business_report_labels_and_scope(environment, monkeypa
     assert frozen['app_name']=='智小白3D'
     assert frozen['goal']=='个人中心与首页之间切换'
     assert frozen['expected']=='两个入口均正常展示'
+
+
+def test_no_notify_actor_rejected_for_create_preflight_and_repeat_but_can_run_opt_out(environment, monkeypatch):
+    from task_server import identity
+    from task_server.services.ui_execution_service import create_ui_batch, preflight_ui_batch
+    selected=request(); selected['notifications']['enabled']=True
+    original=identity.get_access_profile
+    monkeypatch.setattr(identity,'get_access_profile',lambda name:{**original(name),'permissions':['ui.view','ui.execute','platform.notify']})
+    with actor_context(ACTORS['b']): first=create_ui_batch(None,selected,'repeat-after-revoke')
+    monkeypatch.setattr(identity,'get_access_profile',original)
+    with actor_context(ACTORS['b']):
+        for operation in (lambda: create_ui_batch(None,selected,'denied'),
+                          lambda: create_ui_batch(None,selected,'repeat-after-revoke'),
+                          lambda: preflight_ui_batch(None,selected)):
+            with pytest.raises(PermissionError): operation()
+        omitted=request(); del omitted['notifications']
+        assert create_ui_batch(None,omitted,'omitted')['selection']['notifications']['enabled'] is False
+        assert create_ui_batch(None,request(),'false')['selection']['notifications']['enabled'] is False
+    assert first['selection']['notifications']['enabled'] is True

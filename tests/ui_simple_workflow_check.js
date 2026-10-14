@@ -17,7 +17,7 @@ function fixture(t,override){
  return {ok:true,items:[],next_cursor:null};};
  w.UiBatchView={update:(node,b)=>{node.textContent=b.ui_batch_id;}};
  w.eval(fs.readFileSync('js/ui-test-home.js','utf8'));
- const mount=(mode='start',extra={})=>w.UiSimpleFlow.mount(w.document.querySelector('main'),{mode,request,identity:()=>identity,canExecute:()=>true,...extra});
+ const mount=(mode='start',extra={})=>w.UiSimpleFlow.mount(w.document.querySelector('main'),{mode,request,identity:()=>identity,canExecute:()=>true,canNotify:()=>true,...extra});
  return {w,node:w.document.querySelector('main'),calls,mount,setIdentity:v=>identity=v,setDevices:v=>devices=v};
 }
 async function select(t,f){f.mount();await wait();const app=f.node.querySelector('[name="ui-app"]');app.value='app.a';app.dispatchEvent(new f.w.Event('change'));await wait();f.node.querySelector('[data-case-id]').click();await wait();f.node.querySelector('[data-device-key]').click();await wait();}
@@ -174,4 +174,22 @@ test('manual recovery uses exact payload, refreshes conflict, and suppresses acc
  f.setIdentity('user-a');f.mount();await wait();conflict=true;const before=f.calls.filter(c=>c.path==='/ui-executions/uib_recover').length;
  await assert.rejects(()=>recoverAction('uib_recover',payload),/任务状态已变化/);
  assert.equal(f.calls.filter(c=>c.path==='/ui-executions/uib_recover').length,before+1);
+});
+
+
+test('no notify grant shows disabled unchecked policy while allowing normal opt-out execution',async t=>{
+ const f=fixture(t,path=>path.startsWith('/ui-executions/catalog')?{ok:true,apps:[{app_id:'app.a',name:'应用甲',notification_channel:{ready:true,target_label:'专属群'}}],modules:[],items:[CASE],total:1}:undefined);
+ f.mount('start',{canNotify:()=>false});await wait();const app=f.node.querySelector('[name="ui-app"]');app.value='app.a';app.dispatchEvent(new f.w.Event('change'));await wait();
+ f.node.querySelector('[data-case-id]').click();f.node.querySelector('[data-device-key]').click();await wait();
+ const toggle=f.node.querySelector('[data-ui-notify]');assert.equal(toggle.checked,false);assert.equal(toggle.disabled,true);assert.match(f.node.textContent,/没有.*通知权限/);
+ f.node.querySelector('[data-ui-start]').click();await wait();await wait();
+ assert.equal(f.calls.find(c=>c.path==='/ui-executions'&&c.options.method==='POST').options.body.notifications.enabled,false);
+});
+
+test('rollback reports retain cancel and recovery while removing rerun',async t=>{
+ const f=fixture(t,path=>path.startsWith('/ui-executions?')?{ok:true,items:[{ui_batch_id:'uib_recover',status:'interrupted',report_status:'pending'}]}:undefined);
+ let actions;f.w.UiBatchView={update:(node,b,a)=>{actions=a;}};
+ f.mount('reports',{canAdmit:()=>false});await wait();f.node.querySelector('.ui-simple-report-row').click();await wait();
+ assert.equal(typeof actions.cancel,'function');assert.equal(typeof actions.recover,'function');assert.equal(actions.rerun,undefined);
+ await actions.cancel('uib_recover');assert.equal(f.calls.some(c=>c.path.endsWith('/cancel')),true);
 });

@@ -38,7 +38,7 @@
     s.node.querySelector('[data-ui-form]').disabled=s.busy||s.uncertain;
     const button=s.node.querySelector('[data-ui-start]');if(!button)return;
     const device=s.devices.find(d=>keyOf(d.target)===s.target);
-    button.disabled=s.busy||s.uncertain||!s.options.canExecute()||!s.app||!s.selected.size||!device||device.connection_status!=='ready';
+    button.disabled=s.busy||s.uncertain||!s.options.canAdmit()||!s.options.canExecute()||!s.app||!s.selected.size||!device||device.connection_status!=='ready';
     button.textContent=s.busy?'正在检查并提交…':'开始测试';
     s.node.querySelector('[data-ui-selection-count]').textContent=`已选 ${s.selected.size} 条用例${device?' · '+device.name:''}`;
     const selected=s.node.querySelector('[data-ui-selected]'),signature=JSON.stringify([...s.selected]);
@@ -151,15 +151,16 @@
   function renderNotificationPolicy(s,apps){
     const toggle=s.node.querySelector('[data-ui-notify]');if(!toggle)return;
     const channel=apps.find(a=>a.app_id===s.app)?.notification_channel;
-    const ready=channel?.ready===true,key=s.app+'|'+ready+'|'+(channel?.channel_id||'');
+    const ready=channel?.ready===true,canNotify=s.options.canNotify()===true,key=s.app+'|'+ready+'|'+canNotify+'|'+(channel?.channel_id||'');
     // Device polling never resets an explicit opt-out. An app/channel change creates a fresh default.
-    if(s.notificationPolicyKey!==key){s.notifyEnabled=ready;s.notificationPolicyKey=key;}
-    toggle.checked=ready&&s.notifyEnabled;toggle.disabled=!ready;
-    s.node.querySelector('[data-ui-notify-target]').textContent=s.app?('飞书通知：'+(channel?.target_label||'未配置')+(ready?' · 本次报告完成后自动发送':' · 可在应用配置中设置')):'先选择应用以查看通知目标';
+    if(s.notificationPolicyKey!==key){s.notifyEnabled=ready&&canNotify;s.notificationPolicyKey=key;}
+    if(!canNotify)s.notifyEnabled=false;
+    toggle.checked=ready&&canNotify&&s.notifyEnabled;toggle.disabled=!ready||!canNotify;
+    s.node.querySelector('[data-ui-notify-target]').textContent=s.app?('飞书通知：'+(channel?.target_label||'未配置')+(!canNotify?' · 当前账号没有发送通知权限，可正常执行不通知':ready?' · 本次报告完成后自动发送':' · 可在应用配置中设置')):'先选择应用以查看通知目标';
   }
-  function payload(s){return {app_id:s.app,cases:[...s.selected.values()].map(({case_id,revision})=>({case_id,revision})),targets:[s.devices.find(d=>keyOf(d.target)===s.target).target],notifications:{enabled:s.notifyEnabled===true}};}
+  function payload(s){return {app_id:s.app,cases:[...s.selected.values()].map(({case_id,revision})=>({case_id,revision})),targets:[s.devices.find(d=>keyOf(d.target)===s.target).target],notifications:{enabled:s.options.canNotify()===true&&s.notifyEnabled===true}};}
   async function start(s,retry=false){
-    if(!valid(s)||s.busy||!s.options.canExecute())return;
+    if(!valid(s)||s.busy||!s.options.canAdmit()||!s.options.canExecute())return;
     if(!retry&&s.node.querySelector('[data-ui-start]').disabled)return;
     if(s.uncertain&&!retry){notice(s,'上次提交结果待确认，请先核对上次提交。',true);return;}
     const body=retry?s.startIntent?.body:payload(s);if(!body)return;
@@ -186,7 +187,8 @@
       try{const data=await request(s,'action',`/ui-executions/${encodeURIComponent(id)}/confirm-stop`,{method:'POST',body});if(data&&s.batchId===id)showBatch(s,data.batch);}
       catch(error){if(valid(s)&&s.batchId===id){await loadBatch(s);throw error;}}
     },cancel:async id=>{const data=await request(s,'action',`/ui-executions/${encodeURIComponent(id)}/cancel`,{method:'POST',body:{}});if(data)showBatch(s,data.batch);},
-      rerun:async id=>{s.rerunKeys[id] ||= crypto.randomUUID();const data=await request(s,'action',`/ui-executions/${encodeURIComponent(id)}/rerun`,{method:'POST',headers:{'Idempotency-Key':s.rerunKeys[id]},body:{scope:'failed'}});if(data){delete s.rerunKeys[id];s.batchId=data.batch.ui_batch_id;store(s,'lastBatch',s.batchId);showBatch(s,data.batch);}}};
+      rerun:async id=>{if(!valid(s)||!s.options.canAdmit()||!s.options.canExecute())return;s.rerunKeys[id] ||= crypto.randomUUID();const data=await request(s,'action',`/ui-executions/${encodeURIComponent(id)}/rerun`,{method:'POST',headers:{'Idempotency-Key':s.rerunKeys[id]},body:{scope:'failed'}});if(data){delete s.rerunKeys[id];s.batchId=data.batch.ui_batch_id;store(s,'lastBatch',s.batchId);showBatch(s,data.batch);}}};
+    if(!s.options.canAdmit())delete actions.rerun;
     if(!s.options.canExecute()){delete actions.cancel;delete actions.rerun;delete actions.recover;}
     if(s.options.download&&window.UiBatchReport)actions.report=id=>openReport(s,id);
     if(s.options.copy)actions.copy=async id=>{const data=await request(s,'summary',`/ui-executions/${encodeURIComponent(id)}/summary`);if(data&&data.status==='ready')await s.options.copy(data.summary);else if(data)throw new Error('报告尚未就绪');};
@@ -239,7 +241,7 @@
   }
   function mount(node,options){
     leave();const mode=modes[options.mode]?options.mode:'start';
-    const s={node,options:{canExecute:()=>false,canNotify:()=>false,...options,mode},identity:options.identity(),pending:new Map(),deviceNodes:new Map(),reportNodes:new Map(),devices:[],selected:new Map(),app:'',module:'',query:'',cursor:'',previous:[],next:'',target:'',batchId:'',batchSettled:false,busy:false,startIntent:null,uncertain:false,rerunKeys:{},notifyEnabled:false,notificationPolicyKey:''};
+    const s={node,options:{canExecute:()=>false,canNotify:()=>false,canAdmit:()=>true,...options,mode},identity:options.identity(),pending:new Map(),deviceNodes:new Map(),reportNodes:new Map(),devices:[],selected:new Map(),app:'',module:'',query:'',cursor:'',previous:[],next:'',target:'',batchId:'',batchSettled:false,busy:false,startIntent:null,uncertain:false,rerunKeys:{},notifyEnabled:false,notificationPolicyKey:''};
     state=s;const saved=read(s,'selection');if(saved&&typeof saved.app==='string'){s.app=saved.app;s.module=typeof saved.module==='string'?saved.module:'';s.target=typeof saved.target==='string'?saved.target:'';}
     s.startIntent=read(s,'pending');s.uncertain=!!s.startIntent;
     node.classList.add('ui-simple');node.innerHTML=`<header class="ui-simple-heading"><div><p>UI 自动化</p><h1>${modes[mode]}</h1></div><button type="button" class="btn-sm" data-ui-refresh>刷新</button></header><p class="ui-simple-intro">${mode==='reports'?'这里记录你发起的每次测试，报告保留当次用例、手机和结果。':'选好用例和手机，开始后自动记录本次执行结果。'}</p><p data-ui-notice role="status"></p><button type="button" class="btn-sm" data-ui-recover hidden>核对上次提交</button><fieldset data-ui-form><div class="ui-simple-filters"><label>应用<select name="ui-app"><option value="">全部应用</option></select></label>${mode!=='reports'?'<label>模块<select name="ui-module"><option value="">全部模块</option></select></label><label>搜索用例<input type="search" name="ui-query" maxlength="200" placeholder="名称或操作步骤"></label>':''}</div><div class="ui-simple-selection" data-ui-selected aria-label="已选择的用例"></div><div class="ui-simple-content"><section class="ui-simple-case-panel" aria-label="用例">${mode!=='reports'?'<p data-ui-case-count></p><div data-ui-cases></div>':'<div data-ui-reports></div>'}<div class="ui-simple-pages"><button type="button" class="btn-sm" data-ui-prev disabled>上一页</button><button type="button" class="btn-sm" data-ui-next disabled>下一页</button></div></section>${mode!=='reports'?'<section class="ui-simple-device-panel"><h2>选择手机</h2><p data-ui-notify-target></p><label><input type="checkbox" data-ui-notify disabled> 自动发送本次报告到已配置飞书群</label><p data-ui-device-hint></p><div class="ui-simple-devices" data-ui-devices></div></section>':''}</div></fieldset>${mode!=='reports'?'<div class="ui-simple-submit"><span data-ui-selection-count></span><button type="button" class="btn-primary" data-ui-start disabled>开始测试</button></div>':''}<section data-ui-batch hidden aria-label="本次测试"></section>`;

@@ -32,6 +32,15 @@ _MESSAGES = {
 }
 
 
+def notifications_enabled():
+    """Explicit notification flag; admission rollback pauses delivery by default."""
+    configured = os.getenv('UI_BATCH_NOTIFICATIONS_ENABLED')
+    if configured is None:
+        from .ui_batch_dispatch import enabled
+        return enabled()
+    return configured.strip().lower() in {'1','true','yes'}
+
+
 def _now():
     return time.time_ns()
 
@@ -126,6 +135,7 @@ def _target(batch, channel_id):
     if (not profile or profile.get('user_id')!=batch['owner_user_id'] or profile.get('status')!='active'
             or profile.get('must_change_password') or 'ui.view' not in (profile.get('permissions') or [])
             or 'ui.execute' not in (profile.get('permissions') or [])
+            or 'platform.notify' not in (profile.get('permissions') or [])
             or ((profile.get('scope') or {}).get('ui_apps')!='*' and batch['app_id'] not in ((profile.get('scope') or {}).get('ui_apps') or []))):
         raise ValueError('owner_access_revoked')
     app=business_line_service.configured_test_application(batch['app_id'])
@@ -193,9 +203,12 @@ def _finish(item,status,code):
 
 
 def process_due_batch_deliveries(limit=10):
+    if not notifications_enabled():
+        return 0
     count=0
     for _ in range(max(1,min(int(limit),50))):
         # Claim just before sending: later rows cannot expire while earlier network calls wait.
+        if not notifications_enabled(): break
         items=_claim_due(1)
         if not items: break
         item=items[0]
@@ -250,6 +263,7 @@ def retry_batch_delivery(actor,delivery_id,confirmed_not_received=False):
 def tick_batch_notification_worker():
     """Independent network thread, so notification timeouts cannot block device claims."""
     global _WORKER
+    if not notifications_enabled(): return
     with _WORKER_LOCK:
         if _WORKER and _WORKER.is_alive(): return
         def run():

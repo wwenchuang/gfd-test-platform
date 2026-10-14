@@ -186,7 +186,11 @@ def test_http_route_access_feature_flag_and_conflict(dispatch_env, monkeypatch):
     assert handler.response[1]==404
     monkeypatch.setenv('UI_SIMPLE_FLOW_ENABLED','0')
     with actor_context(ACTORS['a']): router._post_ui_execution_confirm_stop(handler,{},match)
-    assert handler.response[1]==404 and handler.response[0]['code']=='feature_disabled'
+    assert handler.response[1]==409 and handler.response[0]['code']=='recovery_state_changed'
+    batch=UiExecutionStore().get_batch(batch['ui_batch_id'])
+    with actor_context(ACTORS['a']): router._post_ui_execution_confirm_stop(handler,{},match)
+    assert handler.response[1]==200 and handler.response[0]['batch']['status']=='interrupted'
+    assert handler.response[0]['batch']['execution_settled'] is True
 
 
 def test_schema3_upgrade_preserves_artifact_frozen_report_and_outbox(dispatch_env):
