@@ -1,10 +1,11 @@
-## 2026-10-14 Mac安卓接入与重复设备卡片（实机两轮通过，列表修复待部署）
+## 2026-10-14 Mac安卓接入与重复设备卡片（58fcb18已部署，实页两台一致）
 
 - 用户明确把OPPO接入Mac。独立安装于 `/Users/adouceshi/Applications/MidsceneAndroid`，Runner `mac-android-adouceshi`，固定手机ecbfd645；独立workspace/outbox/env/锁/PID/日志，只接收明确target任务，不改iOS配置或进程。保存start/stop/status脚本，stop已实际核对只停止本实例，重复启动被锁拒绝；未配置开机自启。
 - Mac Runner修复Android截图请求被iOS早退忽略，以及Android设备缺platform导致“需要更新”。按请求定向ADB采图、15秒/12MiB/PNG校验；无请求不采集，复用原服务端限频/忙碌跳过；双应用版本原有支持保持。Android副本SHA91f4501c1ad6bf00de218d88467fe463e3ca10b65e8ac98d1452af3bc88dbd15，备份 `MidsceneAndroid/backups/20261014-170115`；iOS副本未更新。
 - Chrome实际选择该Mac上的OPPO执行同一导航基线：普通 `uib_e383b988a9c64c91bd5010b78b2e4747` 6/6通过，正式报告/通知均not_requested，真实1080×2412截图可预览；发版 `uib_3ff2061f8c7b4a5699fe240460ccd4f8` 6/6通过、45.83秒，报告ready，包含安卓2.0.0(51)/管理员/时间/场景，通知未选且not_requested。两轮停止已确认，未修改源YAML或打印/删除数据。
+- 发版Word已从Chrome实际下载为中文标题/执行人/时间的.docx（38294字节），ZIP完整性与文档XML通过，版本/执行人/场景/结论齐全；此轮未单独渲染Word页面，不声称新增视觉排版验收。
 - 用户发现3张卡片：iPhone+旧Windows离线OPPO+新Mac在线OPPO。列表修复按平台+精确设备编号隐藏已有在线连接的离线旧条目，不合并截图/版本、不删除注册/历史；多个在线来源保留并显示执行机器，换连接清空旧选择要求重选，未知提交不换target。对齐Agent工作台优先在线设备的语义。
-- Runner相关197项回归；最终root组合137Python/157Node、后端63/前端84、Python/JS语法/diff通过。去重与home缓存版本待统一提交部署，不将当前线上3张卡片称已修复。两台并行后端可支持，简化页面仍单选，未实现前端一次勾选两台。
+- Runner相关197项回归；最终root组合137Python/157Node、后端63/前端84、Python/JS语法/diff通过。58fcb18已通过标准更新脚本部署，health精确SHA与HTML/home字节一致。Chrome整页刷新后开始测试与Agent工作台均为OPPO+iPhone两台；手动刷新截图后分别17:18:59/17:19:00，图片实际1080×2412/1170×2532加载完成，Mac来源正确，旧Windows重复项隐藏。两台并行后端可支持，简化页面仍单选，未实现前端一次勾选两台。
 
 ## 2026-10-14 发版用途报告与基线搜索（421d718已部署，页面复验通过）
 

@@ -42,3 +42,11 @@
 源基线AI测试/跨端导航验收20261013.yaml revision55aac2e5c87eb76d213b4e5e928f4a007651ed3e5e5a9e08295ffc630f5b0790未修改，动作只启动/我的/首页/断言。普通截图实际Chrome打开1080×2412，/tmp/codex-release-report-20261014/android-ordinary-preview.png可见真实首页。没有把普通原始HTML证据当正式发版报告。
 
 Mac安装/启动/停止/状态说明在 /Users/adouceshi/Applications/MidsceneAndroid/INSTALL.md；独立配置0600，凭据不入仓库。本版Mac安卓预览/平台字段回归197项，root相关最终组合137Python/157Node及静态/语法通过。当前旧Windows离线来源尚需列表去重补丁部署；未删除旧Runner或历史任务。
+
+## 17:20 部署及设备一致性复验
+
+- 58fcb189fedc0b8f61b69b30851fa59125677dee 经原标准脚本部署完成，/api/health 精确版本一致，task-manager.html 与 js/ui-test-home.js 线上字节同本地。
+- Chrome整页刷新，开始测试接口和页面仅两张卡片：mac-android-adouceshi/ecbfd645 与 mac-ios-adouceshi/00008110-000150CC21C2801E，均ready；Agent工作台同两台。
+- 手动截图刷新后OPPO时间17:18:59、iPhone时间17:19:00，实际图像加载尺寸1080×2412及1170×2532。未从旧Windows借用图片或版本。截图证据 /tmp/codex-release-report-20261014/devices-two-live.png。
+- 发版Word实际Chrome下载中文文件名，38294字节，ZIP及XML内容校验正常，含2.0.0构建51、管理员、时间、场景和通过结论；本轮没有另做文档渲染。
+- 本次只修复重复连接展示与Mac安卓接入，不将单选页面称为已支持双设备一键并行。
