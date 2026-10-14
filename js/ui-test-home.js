@@ -4,6 +4,20 @@
   const labels={ready:'连接就绪 · 开始前检查占用',offline:'手机或执行器已离线',upgrade_required:'执行器需要更新',mapping_missing:'尚未配置 iOS 应用',not_ready:'未就绪，请检查手机连接与解锁'};
   const e=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const keyOf=target=>JSON.stringify([target.runner_id,target.device_id,target.platform]);
+  function requestId(){
+    const random=globalThis.crypto;
+    try{
+      if(typeof random?.randomUUID==='function')return random.randomUUID();
+      // randomUUID requires a secure context; getRandomValues also works on the HTTP deployment.
+      if(typeof random?.getRandomValues==='function'){
+        const bytes=new Uint8Array(16);random.getRandomValues(bytes);
+        bytes[6]=(bytes[6]&0x0f)|0x40;bytes[8]=(bytes[8]&0x3f)|0x80;
+        const hex=Array.from(bytes,b=>b.toString(16).padStart(2,'0')).join('');
+        return `${hex.slice(0,8)}-${hex.slice(8,12)}-${hex.slice(12,16)}-${hex.slice(16,20)}-${hex.slice(20)}`;
+      }
+    }catch(_){/* Never replace unavailable secure randomness with a predictable request key. */}
+    throw new Error('当前浏览器无法生成安全的请求标识，请更换浏览器后重试。');
+  }
   let state=null;
   function valid(s){return state===s && s.node.isConnected && s.identity===s.options.identity();}
   function store(s,key,value){try{sessionStorage.setItem(`ui-simple:${s.identity}:${key}`,JSON.stringify(value));}catch(_){/* Storage can be disabled; current-page behavior still works. */}}
@@ -163,11 +177,11 @@
     if(!valid(s)||s.busy||!s.options.canAdmit()||!s.options.canExecute())return;
     if(!retry&&s.node.querySelector('[data-ui-start]').disabled)return;
     if(s.uncertain&&!retry){notice(s,'上次提交结果待确认，请先核对上次提交。',true);return;}
-    const body=retry?s.startIntent?.body:payload(s);if(!body)return;
-    if(!s.startIntent||JSON.stringify(s.startIntent.body)!==JSON.stringify(body))s.startIntent={key:crypto.randomUUID(),body};
     s.busy=true;buttonState(s);notice(s,retry?'正在核对上次提交…':'正在检查所选用例和手机…');
     let submitted=false;
     try{
+      const body=retry?s.startIntent?.body:payload(s);if(!body)return;
+      if(!s.startIntent||JSON.stringify(s.startIntent.body)!==JSON.stringify(body))s.startIntent={key:requestId(),body};
       if(!retry){const preflight=await request(s,'preflight','/ui-executions/preflight',{method:'POST',body});if(!preflight)return;
         if(!preflight.ready && !(preflight.blockers||[]).length)throw new Error('尚未通过执行检查，请刷新后重试');
         const blocking=(preflight.blockers||[]).filter(b=>b.code!=='device_busy');
@@ -187,7 +201,7 @@
       try{const data=await request(s,'action',`/ui-executions/${encodeURIComponent(id)}/confirm-stop`,{method:'POST',body});if(data&&s.batchId===id)showBatch(s,data.batch);}
       catch(error){if(valid(s)&&s.batchId===id){await loadBatch(s);throw error;}}
     },cancel:async id=>{const data=await request(s,'action',`/ui-executions/${encodeURIComponent(id)}/cancel`,{method:'POST',body:{}});if(data)showBatch(s,data.batch);},
-      rerun:async id=>{if(!valid(s)||!s.options.canAdmit()||!s.options.canExecute())return;s.rerunKeys[id] ||= crypto.randomUUID();const data=await request(s,'action',`/ui-executions/${encodeURIComponent(id)}/rerun`,{method:'POST',headers:{'Idempotency-Key':s.rerunKeys[id]},body:{scope:'failed'}});if(data){delete s.rerunKeys[id];s.batchId=data.batch.ui_batch_id;store(s,'lastBatch',s.batchId);showBatch(s,data.batch);}}};
+      rerun:async id=>{if(!valid(s)||!s.options.canAdmit()||!s.options.canExecute())return;s.rerunKeys[id] ||= requestId();const data=await request(s,'action',`/ui-executions/${encodeURIComponent(id)}/rerun`,{method:'POST',headers:{'Idempotency-Key':s.rerunKeys[id]},body:{scope:'failed'}});if(data){delete s.rerunKeys[id];s.batchId=data.batch.ui_batch_id;store(s,'lastBatch',s.batchId);showBatch(s,data.batch);}}};
     if(!s.options.canAdmit())delete actions.rerun;
     if(!s.options.canExecute()){delete actions.cancel;delete actions.rerun;delete actions.recover;}
     if(s.options.download&&window.UiBatchReport)actions.report=id=>openReport(s,id);

@@ -6,7 +6,7 @@ const wait=()=>new Promise(setImmediate);
 const CASE={case_id:'c1',revision:'a'.repeat(64),task_name:'导航用例',app_id:'app.a',module:'导航',execution_eligible:true};
 const DEVICE={target:{runner_id:'mac',device_id:'iphone',platform:'ios'},name:'iPhone 13',connection_status:'ready',app_version:'1.0',snapshot_url:''};
 function fixture(t,override){
- const dom=new JSDOM('<main></main>',{url:'http://localhost',runScripts:'dangerously',pretendToBeVisual:true});t.after(()=>dom.window.close());
+ const dom=new JSDOM('<main></main>',{url:'http://platform.test',runScripts:'dangerously',pretendToBeVisual:true});t.after(()=>dom.window.close());
  const w=dom.window, calls=[]; let identity='user-a', devices=[DEVICE];
  const request=async(path,options={})=>{calls.push({path,options});if(override){const r=override(path,options);if(r!==undefined)return r;}
  if(path.startsWith('/ui-executions/catalog'))return {ok:true,apps:[{app_id:'app.a',name:'应用甲'}],modules:['导航'],items:[CASE],groups:[],total:1,next_cursor:null};
@@ -214,4 +214,76 @@ test('rollback reports still surface a genuine list access error',async t=>{
  f.mount('reports',{canAdmit:()=>false});await wait();
  assert.match(f.node.querySelector('[data-ui-notice]').textContent,/当前账号无权读取报告/);
  assert.equal(f.node.querySelector('[data-ui-notice]').getAttribute('role'),'alert');
+});
+
+// JSDOM exposes randomUUID even on HTTP; explicitly model the production capability boundary.
+function useHttpCrypto(f){
+ const crypto=f.w.crypto,fill=crypto.getRandomValues;let calls=0;
+ Object.defineProperty(crypto,'randomUUID',{value:undefined,configurable:true});
+ crypto.getRandomValues=function(bytes){assert.equal(this,crypto);calls++;return fill.call(this,bytes);};
+ f.w.Math.random=()=>{throw new Error('Insecure randomness must not be used');};
+ return ()=>calls;
+}
+const uuidV4=/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
+const creationPosts=f=>f.calls.filter(c=>c.path==='/ui-executions'&&c.options.method==='POST');
+
+test('HTTP start uses secure UUIDs, suppresses repeat clicks, and renews the key after success',async t=>{
+ const f=fixture(t),entropyCalls=useHttpCrypto(f);await select(t,f);const start=f.node.querySelector('[data-ui-start]');
+ await assert.doesNotReject(async()=>{const first=start.onclick();const second=start.onclick();await Promise.all([first,second]);});
+ assert.equal(creationPosts(f).length,1);assert.equal(entropyCalls(),1);assert.equal(start.disabled,false);
+ await start.onclick();const posts=creationPosts(f);assert.equal(posts.length,2);assert.equal(entropyCalls(),2);
+ for(const post of posts)assert.match(post.options.headers['Idempotency-Key'],uuidV4);
+ assert.notEqual(posts[0].options.headers['Idempotency-Key'],posts[1].options.headers['Idempotency-Key']);
+ assert.deepEqual(JSON.parse(JSON.stringify(posts[0].options.body.targets)),[DEVICE.target]);
+});
+
+test('HTTP uncertain start recovers its frozen key and body after remount without fresh entropy',async t=>{
+ let attempts=0;const f=fixture(t,(path,o)=>path==='/ui-executions'&&o.method==='POST'&&++attempts===1?Promise.reject(new Error('网络断开')):undefined);
+ const entropyCalls=useHttpCrypto(f);await select(t,f);await assert.doesNotReject(()=>f.node.querySelector('[data-ui-start]').onclick());
+ assert.equal(f.node.querySelector('[data-ui-recover]').hidden,false);assert.equal(entropyCalls(),1);
+ const pending=JSON.parse(f.w.sessionStorage.getItem('ui-simple:user-a:pending'));assert.match(pending.key,uuidV4);
+ Object.defineProperty(f.w,'crypto',{value:undefined,configurable:true});f.mount();await wait();
+ assert.equal(f.node.querySelector('[data-ui-form]').disabled,true);
+ await assert.doesNotReject(()=>f.node.querySelector('[data-ui-recover]').onclick());
+ const posts=creationPosts(f);assert.equal(posts.length,2);assert.equal(posts[1].options.headers['Idempotency-Key'],pending.key);
+ assert.deepEqual(JSON.parse(JSON.stringify(posts[1].options.body)),pending.body);
+ assert.equal(f.node.querySelector('[data-ui-recover]').hidden,true);assert.equal(f.w.sessionStorage.getItem('ui-simple:user-a:pending'),'null');
+});
+
+for(const failure of ['missing','throws','absent'])test(`HTTP start catches ${failure} secure entropy and keeps the form retryable`,async t=>{
+ const f=fixture(t);useHttpCrypto(f);
+ if(failure==='absent')Object.defineProperty(f.w,'crypto',{value:undefined,configurable:true});
+ else f.w.crypto.getRandomValues=failure==='missing'?undefined:()=>{throw new Error('entropy unavailable');};
+ await select(t,f);const start=f.node.querySelector('[data-ui-start]');await assert.doesNotReject(()=>start.onclick());
+ assert.equal(f.calls.some(c=>c.path==='/ui-executions/preflight'),false);assert.equal(creationPosts(f).length,0);
+ const notice=f.node.querySelector('[data-ui-notice]');assert.equal(notice.getAttribute('role'),'alert');assert.match(notice.textContent,/无法生成.*请求标识/);
+ assert.equal(start.disabled,false);assert.equal(f.node.querySelector('[data-ui-form]').disabled,false);assert.equal(f.node.querySelector('[data-ui-recover]').hidden,true);
+ assert.equal(f.w.sessionStorage.getItem('ui-simple:user-a:pending'),'null');
+});
+
+function mountFailedBatch(f){
+ f.w.eval(fs.readFileSync('js/ui-batch-view.js','utf8'));
+ f.w.sessionStorage.setItem('ui-simple:user-a:lastBatch',JSON.stringify('uib_failed'));f.mount();
+}
+const failedBatch={ui_batch_id:'uib_failed',status:'failed',execution_settled:true,report_status:'ready',case_attempts:[{attempt_id:'a1',case_id:'c1',status:'failed'}]};
+
+test('HTTP rerun suppresses repeat clicks and preserves its key across an uncertain response',async t=>{
+ let rejectFirst,attempts=0;const f=fixture(t,path=>{
+  if(path.endsWith('/rerun'))return ++attempts===1?new Promise((_,reject)=>rejectFirst=reject):{ok:true,batch:{...failedBatch,ui_batch_id:'uib_rerun'}};
+  if(path==='/ui-executions/uib_failed')return {ok:true,batch:failedBatch};
+ });
+ const entropyCalls=useHttpCrypto(f);mountFailedBatch(f);await wait();const rerun=f.node.querySelector('[data-batch-action="rerun"]');
+ const first=rerun.onclick();await rerun.onclick();assert.equal(attempts,1);assert.equal(rerun.disabled,true);
+ rejectFirst(new Error('网络断开'));await first;assert.match(f.node.querySelector('[data-batch-action-error]').textContent,/网络断开/);assert.equal(rerun.disabled,false);
+ await rerun.onclick();const posts=f.calls.filter(c=>c.path.endsWith('/rerun'));assert.equal(posts.length,2);assert.equal(entropyCalls(),1);
+ assert.match(posts[0].options.headers['Idempotency-Key'],uuidV4);assert.equal(posts[0].options.headers['Idempotency-Key'],posts[1].options.headers['Idempotency-Key']);
+ await f.node.querySelector('[data-batch-action="rerun"]').onclick();const latest=f.calls.filter(c=>c.path.endsWith('/rerun'));assert.equal(latest.length,3);assert.equal(entropyCalls(),2);
+ assert.notEqual(latest[2].options.headers['Idempotency-Key'],posts[0].options.headers['Idempotency-Key']);
+});
+
+test('HTTP rerun shows secure entropy failure without a request and allows retry',async t=>{
+ const f=fixture(t,path=>path==='/ui-executions/uib_failed'?{ok:true,batch:failedBatch}:undefined);useHttpCrypto(f);f.w.crypto.getRandomValues=undefined;
+ mountFailedBatch(f);await wait();const rerun=f.node.querySelector('[data-batch-action="rerun"]');await assert.doesNotReject(()=>rerun.onclick());
+ const error=f.node.querySelector('[data-batch-action-error]');assert.equal(error.hidden,false);assert.match(error.textContent,/无法生成.*请求标识/);
+ assert.equal(f.calls.some(c=>c.path.endsWith('/rerun')),false);assert.equal(rerun.disabled,false);
 });
