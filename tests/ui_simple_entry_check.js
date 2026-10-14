@@ -152,3 +152,16 @@ test('rollback keeps exact report links and authenticated My Reports reachable w
  w.eval(auth.slice(auth.indexOf('const WORKFLOW_PERMISSIONS'),auth.indexOf('function applyAccessNavigation')));
  await w.initUiSimpleAvailability({navigate:false});assert.equal(w.canAccessWorkflow('ui_reports'),true);assert.equal(w.canAccessWorkflow('ui_start'),false);
 });
+
+test('picture refresh permission matches global runner refresh access including superuser rules',async t=>{
+ const {w,calls}=fixture(t);await w.initUiSimpleAvailability();w.activeWorkflow='ui_start';w.showUiSimpleWorkflow();const options=calls.find(x=>x?.loadPicture);
+ assert.equal(typeof options.canRefreshPictures,'function');
+ const auth=fs.readFileSync('js/auth.js','utf8');w.eval(auth.slice(auth.indexOf('function hasPermission('),auth.indexOf('function requireUiEditPermission(')));
+ const allowed={user_id:'u1',permissions:['ui.view','platform.configure'],scope:{ui_apps:'*'}};
+ for(const [profile,expected]of [[allowed,true],[{...allowed,scope:{ui_apps:['app.a']}},false],[{...allowed,scope:{ui_apps:['*']}},false],
+  [{...allowed,permissions:['ui.view']},false],[{...allowed,permissions:['platform.configure']},false],
+  [{...allowed,status:'disabled'},false],[{...allowed,must_change_password:true},false],
+  [{user_id:'admin',is_superuser:true,permissions:[],scope:{ui_apps:[]}},true],[{user_id:'admin',is_superuser:true,must_change_password:true},false],[null,false]]){
+  w.currentAccessProfile=profile;assert.equal(options.canRefreshPictures(),expected,JSON.stringify(profile));
+ }
+});

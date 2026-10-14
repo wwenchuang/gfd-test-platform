@@ -20,7 +20,7 @@ function fixture(t,override){
  const mount=(mode='start',extra={})=>w.UiSimpleFlow.mount(w.document.querySelector('main'),{mode,request,identity:()=>identity,canExecute:()=>true,canNotify:()=>true,...extra});
  return {w,node:w.document.querySelector('main'),calls,mount,setIdentity:v=>identity=v,setDevices:v=>devices=v};
 }
-async function select(t,f){f.mount();await wait();const app=f.node.querySelector('[name="ui-app"]');app.value='app.a';app.dispatchEvent(new f.w.Event('change'));await wait();f.node.querySelector('[data-case-id]').click();await wait();f.node.querySelector('[data-device-key]').click();await wait();}
+async function select(t,f,extra={}){f.mount('start',extra);await wait();const app=f.node.querySelector('[name="ui-app"]');app.value='app.a';app.dispatchEvent(new f.w.Event('change'));await wait();f.node.querySelector('[data-case-id]').click();await wait();f.node.querySelector('[data-device-key]').click();await wait();}
 test('explicit app case device produces one idempotent exact-target start',async t=>{
  const f=fixture(t);await select(t,f);const start=f.node.querySelector('[data-ui-start]');start.click();start.click();await wait();await wait();
  const posts=f.calls.filter(c=>c.path==='/ui-executions'&&c.options.method==='POST');assert.equal(posts.length,1);
@@ -286,4 +286,64 @@ test('HTTP rerun shows secure entropy failure without a request and allows retry
  mountFailedBatch(f);await wait();const rerun=f.node.querySelector('[data-batch-action="rerun"]');await assert.doesNotReject(()=>rerun.onclick());
  const error=f.node.querySelector('[data-batch-action-error]');assert.equal(error.hidden,false);assert.match(error.textContent,/无法生成.*请求标识/);
  assert.equal(f.calls.some(c=>c.path.endsWith('/rerun')),false);assert.equal(rerun.disabled,false);
+});
+
+const picturePosts=f=>f.calls.filter(c=>c.path==='/runners/refresh');
+const pictureButton=f=>f.node.querySelector('[data-ui-pictures-refresh]');
+const pictureNotice=f=>f.node.querySelector('[data-ui-picture-notice]');
+function assertSelected(f){
+ assert.equal(f.node.querySelector('[name="ui-app"]').value,'app.a');
+ assert.equal(f.node.querySelector('[data-case-id]').checked,true);assert.equal(f.node.querySelector('[data-device-key]').checked,true);
+ assert.match(f.node.querySelector('[data-ui-selection-count]').textContent,/已选 1/);
+}
+test('picture refresh is explicit and mounting, polling, or ordinary refresh never queues capture',async t=>{
+ const f=fixture(t);await select(t,f,{canRefreshPictures:()=>true});assert.ok(pictureButton(f));assert.equal(pictureButton(f).hidden,false);
+ await f.w.UiSimpleFlow.refresh();await f.w.UiSimpleFlow.refresh();f.node.querySelector('[data-ui-refresh]').click();await wait();await wait();
+ assert.equal(picturePosts(f).length,0);assert.equal(f.calls.some(c=>c.path==='/runners'),false);assertSelected(f);
+});
+test('picture refresh coalesces clicks, reports queued count, and cools down without changing selections',async t=>{
+ let resolve,now=1000;const f=fixture(t,path=>path==='/runners/refresh'?new Promise(r=>resolve=r):undefined);f.w.Date.now=()=>now;
+ await select(t,f,{canRefreshPictures:()=>true});const button=pictureButton(f);assert.ok(button);const before=f.calls.filter(c=>c.path.startsWith('/ui-executions/devices')).length;
+ const pending=button.onclick();await button.onclick();assert.equal(picturePosts(f).length,1);assert.equal(button.disabled,true);
+ assert.equal(picturePosts(f)[0].options.method,'POST');assert.deepEqual(JSON.parse(JSON.stringify(picturePosts(f)[0].options.body)),{});
+ resolve({ok:true,requested:2,requests:[{request_id:'a'},{request_id:'b'}]});await pending;
+ assert.match(pictureNotice(f).textContent,/2.*排队.*等待/);assert.doesNotMatch(pictureNotice(f).textContent,/截图已更新|采集完成/);
+ assert.equal(f.calls.filter(c=>c.path.startsWith('/ui-executions/devices')).length,before+1);assert.equal(f.calls.some(c=>c.path==='/runners'),false);assertSelected(f);
+ await button.onclick();assert.equal(picturePosts(f).length,1);assert.equal(button.disabled,true);
+ now+=10000;await f.w.UiSimpleFlow.refresh();assert.equal(button.disabled,false);
+ const next=button.onclick();assert.equal(picturePosts(f).length,2);resolve({ok:true,requested:0,requests:[]});await next;
+});
+test('picture refresh is unavailable without permission and absent in reports',async t=>{
+ const f=fixture(t);await select(t,f);assert.ok(pictureButton(f));assert.equal(pictureButton(f).hidden,true);assert.equal(pictureButton(f).disabled,true);
+ await pictureButton(f).onclick();assert.equal(picturePosts(f).length,0);
+ f.mount('reports',{canRefreshPictures:()=>true});await wait();assert.equal(pictureButton(f),null);assert.equal(picturePosts(f).length,0);
+});
+test('picture refresh rechecks revoked permissions and old identity before posting',async t=>{
+ let allowed=true;const f=fixture(t);await select(t,f,{canRefreshPictures:()=>allowed});const button=pictureButton(f);assert.ok(button);
+ allowed=false;await button.onclick();assert.equal(picturePosts(f).length,0);assert.equal(button.hidden,true);assert.equal(button.disabled,true);
+ allowed=true;f.setIdentity('user-b');await button.onclick();assert.equal(picturePosts(f).length,0);
+});
+for(const response of ['success','error'])test(`picture refresh drops a stale ${response} after account replacement`,async t=>{
+ let resolve,reject;const f=fixture(t,path=>path==='/runners/refresh'?new Promise((r,j)=>{resolve=r;reject=j;}):undefined);
+ await select(t,f,{canRefreshPictures:()=>true});assert.ok(pictureButton(f));const pending=pictureButton(f).onclick();const signal=picturePosts(f)[0].options.signal;
+ f.setIdentity('user-b');f.w.UiSimpleFlow.reset();f.mount('start',{canRefreshPictures:()=>true});await wait();assert.equal(signal.aborted,true);
+ const before=f.calls.length;if(response==='success')resolve({ok:true,requested:7});else reject(new Error('旧账号请求失败'));
+ await pending;assert.equal(pictureNotice(f).textContent,'');assert.equal(f.calls.length,before);assert.doesNotMatch(f.node.textContent,/7.*排队|旧账号请求失败/);
+});
+test('picture refresh hides pending feedback if permission is revoked before response',async t=>{
+ let resolve,allowed=true;const f=fixture(t,path=>path==='/runners/refresh'?new Promise(r=>resolve=r):undefined);
+ await select(t,f,{canRefreshPictures:()=>allowed});assert.ok(pictureButton(f));const pending=pictureButton(f).onclick(),before=f.calls.length;
+ allowed=false;resolve({ok:true,requested:7});await pending;
+ assert.equal(pictureButton(f).hidden,true);assert.equal(pictureNotice(f).hidden,true);assert.doesNotMatch(pictureNotice(f).textContent,/7/);assert.equal(f.calls.length,before);
+});
+test('picture refresh errors explain retry and preserve selected app cases and phone',async t=>{
+ const f=fixture(t,path=>path==='/runners/refresh'?Promise.reject(new Error('执行器服务暂不可用')):undefined);
+ await select(t,f,{canRefreshPictures:()=>true});assert.ok(pictureButton(f));await assert.doesNotReject(()=>pictureButton(f).onclick());
+ assert.equal(pictureNotice(f).getAttribute('role'),'alert');assert.match(pictureNotice(f).textContent,/执行器服务暂不可用.*重试/);assertSelected(f);
+ assert.equal(f.node.querySelector('[data-ui-start]').disabled,false);assert.equal(creationPosts(f).length,0);
+});
+test('picture refresh with zero requests does not claim fresh pictures or a captured result',async t=>{
+ const f=fixture(t,path=>path==='/runners/refresh'?{ok:true,requested:0,requests:[]}:undefined);
+ await select(t,f,{canRefreshPictures:()=>true});assert.ok(pictureButton(f));await pictureButton(f).onclick();
+ assert.match(pictureNotice(f).textContent,/没有.*采集请求.*检查.*连接.*任务结束.*重试/);assert.doesNotMatch(pictureNotice(f).textContent,/已更新|已完成|已采集/);assertSelected(f);
 });

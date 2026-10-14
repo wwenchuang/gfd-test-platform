@@ -23,7 +23,7 @@
   function store(s,key,value){try{sessionStorage.setItem(`ui-simple:${s.identity}:${key}`,JSON.stringify(value));}catch(_){/* Storage can be disabled; current-page behavior still works. */}}
   function read(s,key){try{return JSON.parse(sessionStorage.getItem(`ui-simple:${s.identity}:${key}`)||'null');}catch(_){return null;}}
   function notice(s,message,error=false){if(!valid(s))return;const n=s.node.querySelector('[data-ui-notice]');n.textContent=message;n.setAttribute('role',error?'alert':'status');n.classList.toggle('ui-simple-error',error);}
-  function leave(){if(!state)return;state.reportView?.dispose();clearInterval(state.timer);clearTimeout(state.searchTimer);for(const c of state.pending.values())c.abort();state.pending.clear();state=null;}
+  function leave(){if(!state)return;state.reportView?.dispose();clearInterval(state.timer);clearTimeout(state.searchTimer);clearTimeout(state.pictureTimer);for(const c of state.pending.values())c.abort();state.pending.clear();state=null;}
   function reset(){const node=state?.node;leave();node?.replaceChildren();}
   async function request(s,slot,path,options={}){
     s.pending.get(slot)?.abort();const controller=new AbortController();s.pending.set(slot,controller);
@@ -49,6 +49,7 @@
   function filters(s){return {app_id:s.app,module:s.module,query:s.query};}
   function buttonState(s){
     if(!valid(s))return;
+    pictureButtonState(s);
     s.node.querySelector('[data-ui-form]').disabled=s.busy||s.uncertain;
     const button=s.node.querySelector('[data-ui-start]');if(!button)return;
     const device=s.devices.find(d=>keyOf(d.target)===s.target);
@@ -162,6 +163,32 @@
     try{const data=await request(s,'devices','/ui-executions/devices?'+new URLSearchParams({app_id:app}));if(!data||s.app!==app)return;s.devices=data.devices||[];renderDevices(s);}
     catch(error){notice(s,'手机状态刷新失败：'+error.message,true);s.devices=s.devices.map(d=>({...d,connection_status:'unknown',snapshot_url:''}));renderDevices(s);}
   }
+  function canRefreshPictures(s){return valid(s)&&s.options.mode!=='reports'&&s.options.canAdmit()&&s.options.canRefreshPictures()===true;}
+  function pictureButtonState(s){
+    if(!valid(s))return;const button=s.node.querySelector('[data-ui-pictures-refresh]');if(!button)return;
+    const allowed=canRefreshPictures(s),pending=s.pending.has('pictures');button.hidden=!allowed;
+    button.disabled=!allowed||!s.app||s.busy||s.uncertain||pending||Date.now()<s.pictureRefreshAfter;
+    button.textContent=pending?'正在请求截图…':'刷新手机截图';
+    if(!allowed){const hint=s.node.querySelector('[data-ui-picture-notice]');hint.hidden=true;hint.textContent='';}
+  }
+  function pictureNotice(s,message,error=false){
+    if(!canRefreshPictures(s))return;const hint=s.node.querySelector('[data-ui-picture-notice]');
+    hint.hidden=false;hint.textContent=message;hint.setAttribute('role',error?'alert':'status');hint.classList.toggle('ui-simple-error',error);
+  }
+  async function refreshPictures(s){
+    if(!valid(s)||s.options.mode==='reports')return;pictureButtonState(s);
+    if(s.node.querySelector('[data-ui-pictures-refresh]').disabled)return;
+    s.pictureRefreshAfter=Date.now()+10000;pictureNotice(s,'正在请求在线空闲手机采集截图…');
+    try{
+      const pending=request(s,'pictures','/runners/refresh',{method:'POST',body:{}});pictureButtonState(s);
+      const data=await pending;if(!data||!canRefreshPictures(s))return;
+      const count=Number(data.requested);
+      pictureNotice(s,count===0?'本次没有截图采集请求排队；请检查手机连接，或等待正在执行的任务结束后重试。':
+        `${Number.isInteger(count)&&count>0?count+' 台手机的截图采集已排队':'截图采集请求已受理'}，等待手机回传；忙碌手机会跳过，已有截图仍保留。`);
+      await loadDevices(s);
+    }catch(error){pictureNotice(s,'截图刷新请求失败：'+error.message+'；请稍后重试。',true);}
+    finally{if(valid(s)){pictureButtonState(s);clearTimeout(s.pictureTimer);s.pictureTimer=setTimeout(()=>pictureButtonState(s),Math.max(0,s.pictureRefreshAfter-Date.now()));}}
+  }
   function renderNotificationPolicy(s,apps){
     const toggle=s.node.querySelector('[data-ui-notify]');if(!toggle)return;
     const channel=apps.find(a=>a.app_id===s.app)?.notification_channel;
@@ -247,6 +274,7 @@
   }
   async function refresh(){
     const s=state;if(!s||!valid(s)||document.hidden)return;
+    pictureButtonState(s);
     const tasks=[];if(s.options.mode!=='reports'&&!s.busy)tasks.push(loadDevices(s));
     if(s.batchId&&!s.batchSettled)tasks.push(loadBatch(s));
     if(s.options.mode==='reports'&&!s.cursor)tasks.push(loadReports(s));
@@ -255,10 +283,10 @@
   }
   function mount(node,options){
     leave();const mode=modes[options.mode]?options.mode:'start';
-    const s={node,options:{canExecute:()=>false,canNotify:()=>false,canAdmit:()=>true,...options,mode},identity:options.identity(),pending:new Map(),deviceNodes:new Map(),reportNodes:new Map(),devices:[],selected:new Map(),app:'',module:'',query:'',cursor:'',previous:[],next:'',target:'',batchId:'',batchSettled:false,busy:false,startIntent:null,uncertain:false,rerunKeys:{},notifyEnabled:false,notificationPolicyKey:''};
+    const s={node,options:{canExecute:()=>false,canNotify:()=>false,canRefreshPictures:()=>false,canAdmit:()=>true,...options,mode},identity:options.identity(),pending:new Map(),deviceNodes:new Map(),reportNodes:new Map(),devices:[],selected:new Map(),app:'',module:'',query:'',cursor:'',previous:[],next:'',target:'',batchId:'',batchSettled:false,busy:false,startIntent:null,uncertain:false,rerunKeys:{},notifyEnabled:false,notificationPolicyKey:'',pictureRefreshAfter:0};
     state=s;const saved=read(s,'selection');if(saved&&typeof saved.app==='string'){s.app=saved.app;s.module=typeof saved.module==='string'?saved.module:'';s.target=typeof saved.target==='string'?saved.target:'';}
     s.startIntent=read(s,'pending');s.uncertain=!!s.startIntent;
-    node.classList.add('ui-simple');node.innerHTML=`<header class="ui-simple-heading"><div><p>UI 自动化</p><h1>${modes[mode]}</h1></div><button type="button" class="btn-sm" data-ui-refresh>刷新</button></header><p class="ui-simple-intro">${mode==='reports'?'这里记录你发起的每次测试，报告保留当次用例、手机和结果。':'选好用例和手机，开始后自动记录本次执行结果。'}</p><p data-ui-notice role="status"></p><button type="button" class="btn-sm" data-ui-recover hidden>核对上次提交</button><fieldset data-ui-form><div class="ui-simple-filters"><label>应用<select name="ui-app"><option value="">全部应用</option></select></label>${mode!=='reports'?'<label>模块<select name="ui-module"><option value="">全部模块</option></select></label><label>搜索用例<input type="search" name="ui-query" maxlength="200" placeholder="名称或操作步骤"></label>':''}</div><div class="ui-simple-selection" data-ui-selected aria-label="已选择的用例"></div><div class="ui-simple-content"><section class="ui-simple-case-panel" aria-label="用例">${mode!=='reports'?'<p data-ui-case-count></p><div data-ui-cases></div>':'<div data-ui-reports></div>'}<div class="ui-simple-pages"><button type="button" class="btn-sm" data-ui-prev disabled>上一页</button><button type="button" class="btn-sm" data-ui-next disabled>下一页</button></div></section>${mode!=='reports'?'<section class="ui-simple-device-panel"><h2>选择手机</h2><p data-ui-notify-target></p><label><input type="checkbox" data-ui-notify disabled> 自动发送本次报告到已配置飞书群</label><p data-ui-device-hint></p><div class="ui-simple-devices" data-ui-devices></div></section>':''}</div></fieldset>${mode!=='reports'?'<div class="ui-simple-submit"><span data-ui-selection-count></span><button type="button" class="btn-primary" data-ui-start disabled>开始测试</button></div>':''}<section data-ui-batch hidden aria-label="本次测试"></section>`;
+    node.classList.add('ui-simple');node.innerHTML=`<header class="ui-simple-heading"><div><p>UI 自动化</p><h1>${modes[mode]}</h1></div><button type="button" class="btn-sm" data-ui-refresh>刷新</button></header><p class="ui-simple-intro">${mode==='reports'?'这里记录你发起的每次测试，报告保留当次用例、手机和结果。':'选好用例和手机，开始后自动记录本次执行结果。'}</p><p data-ui-notice role="status"></p><button type="button" class="btn-sm" data-ui-recover hidden>核对上次提交</button><fieldset data-ui-form><div class="ui-simple-filters"><label>应用<select name="ui-app"><option value="">全部应用</option></select></label>${mode!=='reports'?'<label>模块<select name="ui-module"><option value="">全部模块</option></select></label><label>搜索用例<input type="search" name="ui-query" maxlength="200" placeholder="名称或操作步骤"></label>':''}</div><div class="ui-simple-selection" data-ui-selected aria-label="已选择的用例"></div><div class="ui-simple-content"><section class="ui-simple-case-panel" aria-label="用例">${mode!=='reports'?'<p data-ui-case-count></p><div data-ui-cases></div>':'<div data-ui-reports></div>'}<div class="ui-simple-pages"><button type="button" class="btn-sm" data-ui-prev disabled>上一页</button><button type="button" class="btn-sm" data-ui-next disabled>下一页</button></div></section>${mode!=='reports'?'<section class="ui-simple-device-panel"><div class="ui-simple-heading"><h2>选择手机</h2><button type="button" class="btn-sm" data-ui-pictures-refresh hidden title="请求在线空闲手机采集截图，忙碌手机会跳过">刷新手机截图</button></div><p data-ui-picture-notice role="status" hidden></p><p data-ui-notify-target></p><label><input type="checkbox" data-ui-notify disabled> 自动发送本次报告到已配置飞书群</label><p data-ui-device-hint></p><div class="ui-simple-devices" data-ui-devices></div></section>':''}</div></fieldset>${mode!=='reports'?'<div class="ui-simple-submit"><span data-ui-selection-count></span><button type="button" class="btn-primary" data-ui-start disabled>开始测试</button></div>':''}<section data-ui-batch hidden aria-label="本次测试"></section>`;
     s.node.querySelector('[data-ui-recover]').hidden=!s.uncertain;
     s.node.querySelector('[data-ui-recover]').onclick=()=>start(s,true);
     if(s.uncertain)notice(s,'上次提交结果待确认，请先核对，避免重复执行。',true);
@@ -269,6 +297,7 @@
     s.node.querySelector('[data-ui-next]').onclick=()=>{if(!s.next)return;s.previous.push(s.cursor);s.cursor=s.next;load();};
     if(mode!=='reports'){
       s.node.querySelector('[data-ui-start]').onclick=()=>start(s);
+      s.node.querySelector('[data-ui-pictures-refresh]').onclick=()=>refreshPictures(s);
       s.node.querySelector('[data-ui-notify]').onchange=event=>{s.notifyEnabled=event.target.checked;invalidateStart(s);};
       s.node.querySelector('[name="ui-module"]').onchange=event=>{s.module=event.target.value;s.cursor='';s.previous=[];remember(s);loadCatalog(s);};
       s.node.querySelector('[name="ui-query"]').oninput=event=>{s.query=event.target.value;s.cursor='';s.previous=[];clearTimeout(s.searchTimer);s.searchTimer=setTimeout(()=>loadCatalog(s),300);};
