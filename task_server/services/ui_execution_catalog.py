@@ -138,12 +138,19 @@ def get_ui_devices(actor, app_id):
         capabilities = runner.get('capabilities') or {}
         for device in runner.get('devices') or []:
             platform, device_id = device.get('platform'), device.get('device_id')
+            # Older Android heartbeats omitted platform. Keep evidenced devices
+            # visible, but only an explicit platform can satisfy the run contract.
+            legacy_android = (platform in (None, '') and not device.get('ios_version') and any(
+                isinstance(device.get(key), str) and device[key].strip()
+                for key in ('android_version','androidVersion','adb_path','adbPath')))
+            if legacy_android:
+                platform = 'android'
             if platform not in ('android','ios') or not device_id:
                 continue
             connected = runner.get('online') is True and device.get('status') in ('online','device')
             if not connected:
                 state = 'offline'
-            elif (capabilities.get('ui_execution_contract') != 'ui-v1' or capabilities.get('ui_attempt_events') != 1
+            elif (legacy_android or capabilities.get('ui_execution_contract') != 'ui-v1' or capabilities.get('ui_attempt_events') != 1
                   or capabilities.get('ui_private_reports') != 1 or capabilities.get('ui_process_stop_proof') != 1
                   or platform not in (capabilities.get('ui_platforms') or [])
                   or not set(CROSS_PLATFORM_ACTIONS).issubset(set(capabilities.get('ui_actions') or []))):

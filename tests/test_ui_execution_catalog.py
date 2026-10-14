@@ -104,6 +104,74 @@ def test_full_scope_snapshot_link_does_not_depend_on_foreground_label(data):
     assert 'app_id='+APP in row['snapshot_url']
     assert row['snapshot_hint']==''
 
+@pytest.mark.parametrize('full_scope',[False,True])
+def test_legacy_windows_device_remains_visible_with_saved_preview(data,monkeypatch,full_scope):
+    from task_server.services import runner_service
+    from urllib.parse import parse_qs, urlsplit
+    # d31cdf1 Windows detect_devices reports Android metadata without platform.
+    device=runner_service.normalize_device_list([{
+        'device_id':'legacy-phone','status':'online','brand':'OPPO','model':'PHM110',
+        'adb_path':r'C:\platform-tools\adb.exe','android_version':'14','sdk':'34',
+        'resolution':'1080x2412','preflight_status':'ready',
+        'installed_apps':[{'package':APP,'installed':True,'version_name':'2.0.0','version_code':'51'}],
+    }])[0]
+    device.update(snapshot_captured_at='2026-10-13 17:00:00',
+                  snapshot_url='/api/runner/device-snapshot?runner_id=win&device_id=legacy-phone')
+    data[3]['win']={'online':True,'capabilities':{'yaml_dry_run':True,'apk_install':True},'devices':[device]}
+    if full_scope:
+        data[0]['scope']['ui_apps']='*'
+    def unexpected_io(*args,**kwargs):
+        pytest.fail('device catalog must only read the existing runner registry')
+    monkeypatch.setattr(runner_service,'request_device_snapshots',unexpected_io)
+    monkeypatch.setattr(runner_service,'_load_jobs',unexpected_io)
+    result=catalog.get_ui_devices(None,APP)
+    row=next(d for d in result['devices'] if d['target']['runner_id']=='win')
+    assert row['target']=={'runner_id':'win','device_id':'legacy-phone','platform':'android'}
+    assert row['connection_status']=='upgrade_required'
+    assert row['name']=='OPPO Reno9' and row['app_version']=='2.0.0 (51)'
+    assert row['os_version']=='14' and row['resolution']=='1080x2412'
+    assert row['snapshot_captured_at']=='2026-10-13 17:00:00'
+    if full_scope:
+        assert parse_qs(urlsplit(row['snapshot_url']).query)=={
+            'runner_id':['win'],'device_id':['legacy-phone'],'app_id':[APP]}
+    else:
+        assert row['snapshot_url']=='' and '整机画面' in row['snapshot_hint']
+    assert data[2]=={'catalog':0,'source':0,'runner':1}
+    assert 'adb_path' not in json.dumps(result)
+    assert 'platform' not in device
+
+@pytest.mark.parametrize('evidence',[
+    {'android_version':'14'}, {'androidVersion':'14'},
+    {'adb_path':'/platform-tools/adb'}, {'adbPath':'/platform-tools/adb'},
+])
+def test_inferred_legacy_android_never_becomes_ready(data,evidence):
+    device=data[3]['mac']['devices'][0]
+    device.pop('platform')
+    device.pop('ios_version')
+    device.update(evidence)
+    data[3]['mac']['capabilities']['ui_platforms']=['android']
+    row=catalog.get_ui_devices(None,APP)['devices'][0]
+    assert row['target']['platform']=='android'
+    assert row['connection_status']=='upgrade_required'
+    assert 'platform' not in device
+
+@pytest.mark.parametrize('metadata',[
+    {}, {'sdk':'34'}, {'android_version':'  ','adb_path':''}, {'android_version':False},
+    {'ios_version':'26.6','adb_path':'/platform-tools/adb'},
+    {'platform':'web','android_version':'14'},
+])
+def test_unknown_platform_is_not_inferred_from_runner_or_ambiguous_metadata(data,metadata):
+    data[3]['mac']['devices']=[{'device_id':'unknown-phone','status':'online',**metadata}]
+    data[3]['mac']['capabilities'].update(ui_platforms=['android'],apk_install=True,yaml_dry_run=True)
+    data[3]['mac']['hostname']='WINDOWS-HOST'
+    assert catalog.get_ui_devices(None,APP)['devices']==[]
+
+def test_missing_saved_snapshot_does_not_invent_preview(data):
+    data[0]['scope']['ui_apps']='*'
+    data[3]['mac']['devices'][0].pop('snapshot_captured_at')
+    row=catalog.get_ui_devices(None,APP)['devices'][0]
+    assert row['snapshot_url']=='' and row['snapshot_captured_at']==''
+
 def test_offline_selection_remains_visible_and_no_replacement_selected(data):
     data[3]['mac']['online']=False
     result=catalog.get_ui_devices(None,APP)
@@ -126,7 +194,8 @@ def test_catalog_routes_default_off_and_availability_is_readable(data,monkeypatc
         def _json(self,body,status=200): self.body,self.status=body,status
     h=Handler();monkeypatch.delenv('UI_SIMPLE_FLOW_ENABLED',raising=False)
     router._get_ui_execution_availability(h,{})
-    assert h.status==200 and h.body=={'ok':True,'enabled':False}
+    assert h.status==200 and h.body=={'ok':True,'enabled':False,
+                                    'evidence_available':True,'recovery_available':True}
     router._get_ui_execution_catalog(h,{})
     assert h.status==404
     monkeypatch.setenv('UI_SIMPLE_FLOW_ENABLED','1')
