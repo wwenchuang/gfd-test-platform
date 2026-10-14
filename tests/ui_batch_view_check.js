@@ -36,6 +36,26 @@ test('suite title does not hide the application identity', t=>{
   assert.equal(f.node.querySelector('[data-batch-title]').textContent,'导航基线');
   assert.equal(f.node.querySelector('[data-batch-app]').textContent,'智小白3D');
 });
+test('batch heading uses frozen business and application names instead of repeated package ids', t=>{
+  const f=fixture(t), b=batch();b.app_id='com.kfb.model';b.app_name='后续修改的名称';
+  b.snapshots[0].metadata={task_name:'智小白3D跨端导航验收',app_name:'智小白3D'};
+  f.view.update(f.node,b);
+  assert.equal(f.node.querySelector('[data-batch-title]').textContent,'智小白3D跨端导航验收');
+  assert.equal(f.node.querySelector('[data-batch-app]').textContent,'智小白3D');
+  assert.doesNotMatch(f.node.querySelector('.ui-batch-head').textContent,/com\.kfb\.model|后续修改的名称/);
+});
+test('multiple cases get a batch heading rather than the first case name', t=>{
+  const f=fixture(t), b=batch();b.snapshots[0].metadata.app_name='智小白3D';
+  b.snapshots.push({case_id:'c2',metadata:{task_name:'第二个用例',app_name:'智小白3D'}});
+  f.view.update(f.node,b);
+  assert.equal(f.node.querySelector('[data-batch-title]').textContent,'UI 测试');
+  assert.equal(f.node.querySelector('[data-batch-app]').textContent,'智小白3D');
+});
+test('missing frozen names keep the package identity only in the subtitle', t=>{
+  const f=fixture(t), b=batch();b.snapshots=[];f.view.update(f.node,b);
+  assert.equal(f.node.querySelector('[data-batch-title]').textContent,'UI 测试');
+  assert.equal(f.node.querySelector('[data-batch-app]').textContent,'com.fixture.app');
+});
 test('unconfirmed interruption is not finished and retains the stop action',t=>{
   const f=fixture(t), b=batch();b.status='interrupted';b.execution_settled=false;b.stop_pending=true;
   b.case_attempts[0].status='interrupted';b.case_attempts[0].execution_settled=false;

@@ -116,8 +116,10 @@
     const done=attempts.filter(settled).length;
     const passed=attempts.filter(a=>['passed','success'].includes(a.status)).length;
     const failed=attempts.filter(a=>['failed','timeout'].includes(a.status)).length;
-    text(node,'[data-batch-title]',batch.suite_name || batch.app_name || batch.app_id || 'UI 测试');
-    text(node,'[data-batch-app]',batch.app_name || batch.app_id || '应用待确认');
+    const snapshots=batch.snapshots || [];
+    const appName=snapshots.find(s=>s.metadata?.app_name)?.metadata.app_name || batch.app_name || batch.app_id || '应用待确认';
+    text(node,'[data-batch-title]',batch.suite_name || (snapshots.length===1 && snapshots[0].metadata?.task_name) || 'UI 测试');
+    text(node,'[data-batch-app]',appName);
     text(node,'[data-batch-owner]',`执行者：${batch.owner_display_name || batch.owner_username || '账号信息待确认'}`);
     text(node,'[data-batch-state]',label(batch.status));
     node.querySelector('[data-batch-state]').className='ui-state-text-'+status(batch.status);

@@ -88,6 +88,12 @@ test('changing app does not leave device cards detached from the page',async t=>
 test('report list explicitly requests own scope',async t=>{
  const f=fixture(t);f.mount('reports');await wait();assert.ok(f.calls.some(c=>c.path.startsWith('/ui-executions?')&&c.path.includes('scope=own')));
 });
+test('report list displays frozen application names even when admission catalog is disabled',async t=>{
+ const f=fixture(t,path=>path.startsWith('/ui-executions?')?{ok:true,items:[{ui_batch_id:'uib_1',app_id:'com.kfb.model',app_name:'智小白3D',status:'passed',report_status:'ready',created_ns:1000000}]}:undefined);
+ f.mount('reports',{canAdmit:()=>false});await wait();
+ assert.equal(f.node.querySelector('.ui-simple-report-row strong').textContent,'智小白3D');
+ assert.equal(f.calls.some(c=>c.path.startsWith('/ui-executions/catalog')),false);
+});
 test('one report-row click opens a ready report without fetching progress',async t=>{
  const f=fixture(t,path=>path.startsWith('/ui-executions?')?{ok:true,items:[{ui_batch_id:'uib_1',app_id:'app.a',status:'passed',report_status:'ready',created_ns:1000000}]}:undefined);
  const opened=[];f.w.UiBatchReport={mount:(node,options)=>{opened.push(options.batchId);node.textContent='报告内容';return {dispose(){},refresh(){}};}};

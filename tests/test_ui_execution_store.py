@@ -103,6 +103,21 @@ def test_list_uses_owner_and_app_index_with_stable_cursor(tmp_path):
     assert store.list_batches("u-a")["items"] == []
 
 
+def test_list_returns_frozen_application_name_without_loading_attempt_details(tmp_path, monkeypatch):
+    from task_server.services.ui_execution_store import UiExecutionStore
+
+    store = UiExecutionStore(tmp_path / "ui.sqlite3")
+    item = prepared()
+    item['snapshots'][0]['metadata']['app_name'] = '智小白3D'
+    created = store.create_batch(item)
+    item['snapshots'][0]['metadata']['app_name'] = '后来修改的名称'
+    monkeypatch.setattr(store, '_attempt', lambda _: pytest.fail('report list parsed execution details'))
+    rows = store.list_batches('u-b')['items']
+    assert rows[0]['ui_batch_id'] == created['ui_batch_id']
+    assert rows[0]['app_name'] == '智小白3D'
+    assert store.list_batches('u-a')['items'] == []
+
+
 def test_later_attempt_reuses_frozen_content_and_gets_safe_dispatch_key(tmp_path):
     from task_server.services.ui_execution_store import BatchConflict, UiExecutionStore
 

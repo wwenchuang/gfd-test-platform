@@ -313,7 +313,10 @@ class UiExecutionStore(UiExecutionLifecycle):
                 raise ValueError("invalid_cursor") from None
             where.append("(created_ns, ui_batch_id) < (?, ?)")
             params.extend([timestamp, batch_id])
-        query = "SELECT ui_batch_id, owner_user_id, owner_display_name, app_id, status, report_status, delivery_status, created_ns FROM batches"
+        query = """SELECT ui_batch_id, owner_user_id, owner_display_name, app_id,
+                   (SELECT json_extract(s.metadata_json, '$.app_name') FROM snapshots s
+                    WHERE s.ui_batch_id=batches.ui_batch_id ORDER BY s.rowid LIMIT 1) AS app_name,
+                   status, report_status, delivery_status, created_ns FROM batches"""
         if where:
             query += " WHERE " + " AND ".join(where)
         query += " ORDER BY created_ns DESC, ui_batch_id DESC LIMIT ?"
