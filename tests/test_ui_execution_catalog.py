@@ -57,6 +57,23 @@ def test_searches_steps_and_pages_without_rescanning_catalog(data):
     assert data[2]['catalog']==1
     assert data[2]['source']==8
 
+def test_searches_baseline_filename_across_apps_with_scope_and_cached_paging(data):
+    for row in data[1]:
+        row['file'] = f"发布基线_20261014_{row['case_id']}.YAML"
+    all_apps = catalog.get_ui_catalog(None, query='发布基线_20261014')
+    assert all_apps['total'] == 7
+    assert [g['app_id'] for g in all_apps['groups']] == [APP]
+    assert len(all_apps['groups'][0]['items']) == 3
+    first = catalog.get_ui_catalog(None, app_id=APP, module='账户', query='发布基线_20261014', limit=3)
+    second = catalog.get_ui_catalog(None, app_id=APP, module='账户', query='发布基线_20261014', cursor=first['next_cursor'], limit=3)
+    assert len(first['items']) == len(second['items']) == 3
+    assert {r['case_id'] for r in first['items']}.isdisjoint(r['case_id'] for r in second['items'])
+    exact = catalog.get_ui_catalog(None, app_id=APP, query='发布基线_20261014_c4.yaml')
+    assert [r['case_id'] for r in exact['items']] == ['c4']
+    assert data[2]['catalog'] == 1 and data[2]['source'] == 8
+    assert '不许泄露' not in json.dumps(all_apps, ensure_ascii=False)
+    assert '_search' not in json.dumps(exact) and '/private' not in json.dumps(exact)
+
 def test_cached_catalog_still_applies_current_app_scope_and_rejects_forgery(data):
     catalog.get_ui_catalog(None)
     data[0]['scope']['ui_apps']=[]

@@ -60,7 +60,7 @@ def _catalog_rows():
             except (OSError, ValueError):
                 row['updated_ns'] = 0
             # Searchable in memory only; never return source, path, configuration or tokens.
-            row['_search'] = '\n'.join([row['task_name'], row['module'], str(asset.get('goal') or ''),
+            row['_search'] = '\n'.join([row['task_name'], str(asset.get('file') or ''), row['module'], str(asset.get('goal') or ''),
                                         str(asset.get('expected') or ''), source]).casefold()
             rows.append(row)
         rows.sort(key=lambda row: (-row['updated_ns'], row['case_id']))
