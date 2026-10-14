@@ -240,7 +240,7 @@
   function openReport(s,id,revision){
     if(!valid(s))return;s.reportView?.dispose();s.reportId=id;
     let host=s.node.querySelector('[data-ui-report-preview]');if(!host){host=document.createElement('section');host.dataset.uiReportPreview='';s.node.append(host);}
-    host.hidden=false;s.reportView=window.UiBatchReport.mount(host,{batchId:id,revision,identity:s.options.identity,canNotify:s.options.canNotify,request:s.options.request,download:s.options.download,copy:s.options.copy,onClose:()=>{if(valid(s)&&revision)s.options.onReportClose?.({batchId:id,revision});}});
+    host.hidden=false;s.reportView=window.UiBatchReport.mount(host,{batchId:id,revision,identity:s.options.identity,canNotify:s.options.canNotify,request:s.options.request,download:s.options.download,loadEvidenceImage:s.options.loadEvidenceImage,copy:s.options.copy,onClose:()=>{if(valid(s)&&revision)s.options.onReportClose?.({batchId:id,revision});}});
     host.scrollIntoView?.({block:'start',behavior:'smooth'});
   }
   async function loadBatch(s){

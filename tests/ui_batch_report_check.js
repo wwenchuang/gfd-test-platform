@@ -3,11 +3,12 @@ const assert=require('node:assert/strict');
 const fs=require('node:fs');
 const {JSDOM}=require('../api-testing-ui/node_modules/jsdom');
 const tick=()=>new Promise(setImmediate);
-function setup(t,request){
+function setup(t,request,extra={}){
  const dom=new JSDOM('<main></main>',{url:'http://localhost',runScripts:'dangerously',pretendToBeVisual:true});t.after(()=>dom.window.close());const w=dom.window;
  w.eval(fs.readFileSync('js/ui-batch-report.js','utf8'));const calls=[];let identity='a';
  const node=w.document.querySelector('main');
- const view=w.UiBatchReport.mount(node,{batchId:'uib_example',identity:()=>identity,request:(path,o)=>path.split('?')[0].endsWith('/deliveries')?Promise.resolve({ok:true,policy:{enabled:false},items:[]}):request(path,o),download:async(path)=>{calls.push(path);return '本人测试报告.docx';},copy:async text=>calls.push(text)});
+ w.HTMLDialogElement.prototype.showModal=function(){this.open=true;};w.HTMLDialogElement.prototype.close=function(){this.open=false;this.dispatchEvent(new w.Event('close'));};
+ const view=w.UiBatchReport.mount(node,{batchId:'uib_example',identity:()=>identity,request:(path,o)=>path.split('?')[0].endsWith('/deliveries')?Promise.resolve({ok:true,policy:{enabled:false},items:[]}):request(path,o),download:async(path)=>{calls.push(path);return '本人测试报告.docx';},copy:async text=>calls.push(text),...extra});
  return {w,node,view,calls,setIdentity:value=>identity=value};
 }
 const SNAP={presentation:{title:'应用甲 发布测试报告',owner:'执行者乙',time_range:'2026年10月13日 10:00 至 10:02',conclusion:'本次未通过，失败 1 项。',conclusion_status:'failed',case_count:1,executed_cases:1,passed_count:0,failed_count:1,incomplete_count:0,coverage:[{case_name:'首页导航',scenario:'个人中心与首页切换',expected:'首页正常显示',result:'未通过',attempt_no:1}],environments:['苹果 13，应用版本 1.19.7'],concerns:[]},app_name:'应用甲',owner_display_name:'执行者乙',status:'failed',summary:'本次通过 1，失败 1。',counts:{passed:1,failed:1},attempts:[],artifacts:[]};
@@ -165,4 +166,53 @@ test('successful refresh clears its prior error while preserving action feedback
  assert.equal(f.node.querySelector('[data-report-message]').textContent,'');
  f.node.querySelector('[data-report-copy]').click();await tick();assert.equal(f.node.querySelector('[data-report-message]').textContent,'测试摘要已复制。');
  await f.view.refresh(true);assert.equal(f.node.querySelector('[data-report-message]').textContent,'测试摘要已复制。');
+});
+
+test('evidence separates images from HTML, loads only clicked preview and releases on close',async t=>{
+ const artifacts=[{artifact_id:'a'.repeat(64),kind:'jpg'},{artifact_id:'b'.repeat(64),kind:'html'}],loads=[],revoked=[];
+ const f=setup(t,async()=>({ok:true,report:{status:'ready',report_revision:'1',snapshot:{...SNAP,artifacts}}}),{loadEvidenceImage:async(...args)=>{loads.push(args);return new Blob(['jpeg'],{type:'image/jpeg'});}});
+ f.w.URL.createObjectURL=()=> 'blob:private-image';f.w.URL.revokeObjectURL=url=>revoked.push(url);await tick();
+ assert.equal(loads.length,0);assert.match(f.node.textContent,/报告附件/);assert.match(f.node.textContent,/网页文件/);
+ assert.equal(f.node.querySelectorAll('[data-evidence-preview]').length,1);
+ const trigger=f.node.querySelector('[data-evidence-preview]');trigger.click();await tick();
+ assert.equal(loads.length,1);assert.equal(loads[0][0],'/ui-executions/uib_example/artifacts/'+'a'.repeat(64));assert.equal(loads[0][1],'jpg');
+ const dialog=f.node.querySelector('dialog'),img=dialog.querySelector('img');assert.equal(dialog.open,true);assert.equal(img.src,'blob:private-image');
+ Object.defineProperty(img,'naturalWidth',{value:1170});Object.defineProperty(img,'naturalHeight',{value:2532});img.dispatchEvent(new f.w.Event('load'));
+ assert.equal(img.hidden,false);assert.match(dialog.textContent,/1170 × 2532/);
+ dialog.querySelector('[data-evidence-zoom]').click();assert.equal(dialog.querySelector('[data-evidence-viewport]').classList.contains('is-zoomed'),true);
+ await f.view.refresh(true);assert.equal(loads.length,1);assert.equal(f.node.querySelector('dialog'),dialog);
+ dialog.querySelector('[data-evidence-close]').click();assert.equal(f.node.querySelector('dialog'),null);assert.deepEqual(revoked,['blob:private-image']);assert.equal(loads[0][2].signal.aborted,true);
+});
+
+for(const leave of ['close','dispose','account','revision'])test(`late private image cannot appear after ${leave}`,async t=>{
+ let resolve,signal,version='1',created=0;
+ const f=setup(t,async()=>({ok:true,report:{status:'ready',report_revision:version,snapshot:{...SNAP,artifacts:[{artifact_id:'a'.repeat(64),kind:'png'}]}}}),{loadEvidenceImage:(path,kind,options)=>{signal=options.signal;return new Promise(r=>resolve=r);}});
+ f.w.URL.createObjectURL=()=>{created++;return 'blob:private';};f.w.URL.revokeObjectURL=()=>{};await tick();f.node.querySelector('[data-evidence-preview]').click();
+ if(leave==='close')f.node.querySelector('[data-evidence-close]').click();
+ if(leave==='dispose')f.view.dispose();
+ if(leave==='account')f.setIdentity('b');
+ if(leave==='revision'){version='2';await f.view.refresh(true);}
+ resolve(new Blob(['png'],{type:'image/png'}));await tick();assert.equal(created,0);assert.equal(f.node.querySelector('img[src]'),null);
+ if(leave!=='account')assert.equal(signal.aborted,true);
+});
+
+test('failed image preview offers retry and never treats an HTML attachment as an image',async t=>{
+ let failed=true;const f=setup(t,async()=>({ok:true,report:{status:'ready',report_revision:'1',snapshot:{...SNAP,artifacts:[{artifact_id:'a'.repeat(64),kind:'png'}]}}}),{loadEvidenceImage:async()=>{if(failed)throw new Error('图片暂时无法读取');return new Blob(['bad png']);}});
+ const revoked=[];f.w.URL.createObjectURL=()=> 'blob:invalid';f.w.URL.revokeObjectURL=url=>revoked.push(url);await tick();f.node.querySelector('[data-evidence-preview]').click();await tick();
+ assert.match(f.node.querySelector('dialog').textContent,/图片暂时无法读取/);failed=false;f.node.querySelector('[data-evidence-retry]').click();await tick();
+ const img=f.node.querySelector('dialog img');img.dispatchEvent(new f.w.Event('error'));assert.equal(img.hidden,true);assert.match(f.node.querySelector('dialog').textContent,/无法解码/);assert.deepEqual(revoked,['blob:invalid']);
+});
+
+test('preview download feedback remains inside the active dialog for success and failure',async t=>{
+ let failed=true;const f=setup(t,async()=>({ok:true,report:{status:'ready',report_revision:'1',snapshot:{...SNAP,artifacts:[{artifact_id:'a'.repeat(64),kind:'png'}]}}}),{loadEvidenceImage:async()=>new Blob(['png']),download:async()=>{if(failed)throw new Error('当前账号无权下载');return '执行截图-123.png';}});
+ f.w.URL.createObjectURL=()=> 'blob:image';f.w.URL.revokeObjectURL=()=>{};await tick();f.node.querySelector('[data-evidence-preview]').click();await tick();
+ const dialog=f.node.querySelector('dialog'),button=[...dialog.querySelectorAll('button')].find(b=>b.textContent==='下载图片');button.click();await tick();
+ assert.equal(dialog.querySelector('[data-evidence-message]').textContent,'当前账号无权下载');assert.equal(button.disabled,false);
+ failed=false;button.click();await tick();assert.match(dialog.querySelector('[data-evidence-message]').textContent,/已发起下载：执行截图-123.png/);assert.equal(f.node.querySelector('[data-report-message]').textContent,'');
+});
+
+test('preview button keyboard focus survives a new report revision for the same image',async t=>{
+ let revision='1';const f=setup(t,async()=>({ok:true,report:{status:'ready',report_revision:revision,snapshot:{...SNAP,artifacts:[{artifact_id:'a'.repeat(64),kind:'jpg'}]}}}));await tick();
+ f.node.querySelector('details').open=true;f.node.querySelector('[data-evidence-preview]').focus();revision='2';await f.view.refresh(true);
+ assert.equal(f.w.document.activeElement,f.node.querySelector('[data-evidence-preview]'));
 });

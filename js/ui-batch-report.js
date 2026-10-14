@@ -3,23 +3,58 @@
   const make=(tag,text)=>{const node=document.createElement(tag);if(text!==undefined)node.textContent=String(text);return node;};
   function mount(node,options){
     const identity=options.identity(),base='/ui-executions/'+encodeURIComponent(options.batchId);
-    let active=true,busy=false,revealed=false,status='',revision='',snapshot=null,controller=null,nextRefreshAt=0,evidenceOpen=false,evidenceFocus=null,reportFocus=null,deliverySignature='',refreshError='';
+    let active=true,busy=false,revealed=false,status='',revision='',snapshot=null,controller=null,nextRefreshAt=0,evidenceOpen=false,evidenceFocus=null,reportFocus=null,deliverySignature='',refreshError='',preview=null;
     const valid=()=>active&&node.isConnected&&options.identity()===identity;
     node.classList.add('ui-batch-report');
     node.innerHTML='<header><div><p>本人本次执行</p><h2 data-report-title>本次报告</h2></div><button type="button" class="btn-sm" data-report-close>收起</button></header><p data-report-owner></p><p data-report-state role="status">正在读取报告…</p><div class="ui-report-actions"><button type="button" class="btn-sm" data-report-retry hidden>重新生成报告</button><button type="button" class="btn-sm" data-report-download="docx" hidden>下载 Word</button><button type="button" class="btn-sm" data-report-download="html" hidden>下载 HTML</button><button type="button" class="btn-sm" data-report-download="md" hidden>下载 Markdown</button><button type="button" class="btn-sm" data-report-copy hidden>复制测试摘要</button></div><div data-report-notifications role="status"></div><pre data-report-summary></pre><div data-report-attempts></div><p data-report-message role="status"></p>';
     const text=(selector,value)=>{node.querySelector(selector).textContent=value;};
-    async function action(button,callback){
-      if(!valid()||button.disabled)return;button.disabled=true;refreshError='';text('[data-report-message]','');
-      try{const message=await callback();if(valid()&&message)text('[data-report-message]',message);}
-      catch(error){if(valid())text('[data-report-message]',error.message||'操作失败，请重试。');}
+    async function action(button,callback,feedback=node.querySelector('[data-report-message]')){
+      if(!valid()||button.disabled)return;button.disabled=true;refreshError='';feedback.textContent='';
+      try{const message=await callback();if(valid()&&feedback.isConnected&&message)feedback.textContent=message;}
+      catch(error){if(valid()&&feedback.isConnected)feedback.textContent=error.message||'操作失败，请重试。';}
       finally{if(valid())button.disabled=false;}
+    }
+    const artifactPath=item=>base+'/artifacts/'+item.artifact_id;
+    async function downloadEvidence(item){
+      const filename=await options.download(artifactPath(item));
+      return `已发起下载：${filename}。请在浏览器下载记录中确认。`;
+    }
+    function closePreview(){
+      const previous=preview;if(!previous)return;preview=null;
+      previous.controller.abort();if(previous.url)URL.revokeObjectURL(previous.url);
+      previous.dialog.close();previous.dialog.remove();
+    }
+    async function previewImage(item,label){
+      if(!valid())return;closePreview();
+      const dialog=make('dialog'),header=make('header'),close=make('button','关闭预览'),message=make('p','正在加载原图…'),viewport=make('div'),img=make('img'),actions=make('div'),download=make('button','下载图片'),zoom=make('button','放大查看'),retry=make('button','重新加载'),feedback=make('p');
+      dialog.className='ui-evidence-dialog';dialog.setAttribute('aria-label',label+'预览');
+      header.append(make('strong',label),close);message.setAttribute('role','status');
+      close.dataset.evidenceClose='';viewport.dataset.evidenceViewport='';zoom.dataset.evidenceZoom='';retry.dataset.evidenceRetry='';
+      for(const button of [close,download,zoom,retry]){button.type='button';button.className='btn-sm';}
+      feedback.dataset.evidenceMessage='';feedback.setAttribute('role','status');
+      img.alt=label;img.hidden=true;zoom.hidden=true;retry.hidden=true;viewport.append(img);actions.className='ui-report-actions';actions.append(zoom,download,retry);dialog.append(header,message,viewport,actions,feedback);node.append(dialog);
+      const current={dialog,controller:new AbortController(),url:''};preview=current;
+      const stillCurrent=()=>valid()&&preview===current&&!current.controller.signal.aborted;
+      close.onclick=closePreview;dialog.onclose=()=>{if(preview===current)closePreview();};
+      dialog.oncancel=event=>{event.preventDefault();closePreview();};dialog.onclick=event=>{if(event.target===dialog)closePreview();};
+      download.onclick=()=>action(download,()=>downloadEvidence(item),feedback);retry.onclick=()=>previewImage(item,label);
+      zoom.onclick=()=>{const enlarged=viewport.classList.toggle('is-zoomed');zoom.textContent=enlarged?'适应窗口':'放大查看';zoom.setAttribute('aria-pressed',String(enlarged));};
+      const fail=error=>{if(!stillCurrent())return;if(current.url){URL.revokeObjectURL(current.url);current.url='';}img.removeAttribute('src');img.hidden=true;zoom.hidden=true;message.textContent=error;retry.hidden=false;};
+      img.onload=()=>{if(!stillCurrent())return;img.hidden=false;zoom.hidden=false;message.textContent=`原图 · ${img.naturalWidth} × ${img.naturalHeight}`;};
+      img.onerror=()=>fail('图片无法解码，请重新加载或联系管理员检查原始截图。');
+      dialog.showModal();
+      try{
+        const blob=await options.loadEvidenceImage(artifactPath(item),item.kind,{signal:current.controller.signal});
+        if(!stillCurrent())return;current.url=URL.createObjectURL(blob);img.src=current.url;
+      }catch(error){fail(error.message||'图片暂时无法读取，请重试。');}
     }
     function render(report){
       if(status==='ready'&&report.status==='ready'&&revision&&revision===String(report.report_revision||''))return;
       const focused=document.activeElement,previousEvidence=node.querySelector('details');
-      if(node.contains(focused)){reportFocus=focused;evidenceFocus=focused===previousEvidence?.querySelector('summary')?'summary':focused.dataset.artifactId||null;}
+      if(node.contains(focused)){reportFocus=focused;evidenceFocus=focused===previousEvidence?.querySelector('summary')?'summary':focused.dataset.evidencePreview?'preview:'+focused.dataset.evidencePreview:focused.dataset.artifactId||null;}
       else if(focused!==document.body){reportFocus=null;evidenceFocus=null;}
       if(previousEvidence)evidenceOpen=previousEvidence.open;
+      closePreview();
       status=report.status;revision=String(report.report_revision||'');snapshot=report.snapshot;
       const ready=status==='ready'&&!!snapshot;
       text('[data-report-state]',ready?'报告已就绪':status==='failed'?'报告生成失败，可以单独重试。':status==='unavailable'?'当前无法访问这份报告。':'报告正在生成，完成后可下载。');
@@ -44,17 +79,25 @@
         host.append(make('h3','🎯 覆盖场景及结果'));container.append(table);host.append(container);
         if(view.concerns?.length){host.append(make('h3','⚠️ 需关注事项'));const list=make('ul');for(const item of view.concerns)list.append(make('li',item));host.append(list);}
       }
-      const count=(snapshot.artifacts||[]).length;
+      const artifacts=(snapshot.artifacts||[]).filter(item=>/^[a-f0-9]{64}$/.test(item.artifact_id)&&['html','jpg','png'].includes(item.kind));
+      const count=artifacts.length;
       if(count){
         const evidence=make('details');evidence.open=evidenceOpen;evidence.append(make('summary',`执行证据（${count} 份）`));
-        for(const [index,item]of (snapshot.artifacts||[]).entries()){
-          if(!/^[a-f0-9]{64}$/.test(item.artifact_id)||!['html','jpg','png'].includes(item.kind))continue;
-          const button=make('button',`下载${item.kind==='html'?'原始报告静态内容':'截图'} ${index+1}`);button.type='button';button.className='btn-sm';button.dataset.artifactId=item.artifact_id;
-          button.onclick=()=>action(button,()=>options.download(base+'/artifacts/'+item.artifact_id));evidence.append(button);
+        for(const [heading,items]of [['执行截图',artifacts.filter(item=>item.kind!=='html')],['报告附件',artifacts.filter(item=>item.kind==='html')]]){
+          if(!items.length)continue;evidence.append(make('h4',heading));
+          const list=make('div');list.className='ui-evidence-list';
+          for(const [index,item]of items.entries()){
+            const isImage=item.kind!=='html',label=isImage?`截图 ${index+1}`:`原始报告 ${index+1}`,row=make('div'),info=make('div'),buttons=make('div'),button=make('button',isImage?'下载图片':'下载网页文件');
+            row.className='ui-evidence-item';info.append(make('strong',label),make('small',isImage?`${item.kind.toUpperCase()} 图片 · 可在线预览`:'HTML 网页文件 · 不是图片'));
+            button.type='button';button.className='btn-sm';button.dataset.artifactId=item.artifact_id;
+            button.onclick=()=>action(button,()=>downloadEvidence(item));buttons.append(button);
+            if(isImage){const open=make('button',`预览截图 ${index+1}`);open.type='button';open.className='btn-sm';open.dataset.evidencePreview=item.artifact_id;open.onclick=()=>previewImage(item,label);buttons.append(open);}
+            row.append(info,buttons);list.append(row);
+          }evidence.append(list);
         }host.append(evidence);
       }
       if(document.activeElement===document.body){
-        const focusTarget=reportFocus?.isConnected?reportFocus:evidenceFocus==='summary'?node.querySelector('details summary'):evidenceFocus?node.querySelector(`[data-artifact-id="${evidenceFocus}"]`):null;
+        const focusTarget=reportFocus?.isConnected?reportFocus:evidenceFocus==='summary'?node.querySelector('details summary'):evidenceFocus?.startsWith('preview:')?node.querySelector(`[data-evidence-preview="${evidenceFocus.slice(8)}"]`):evidenceFocus?node.querySelector(`[data-artifact-id="${evidenceFocus}"]`):null;
         focusTarget?.focus({preventScroll:true});
       }
       if(!revealed){revealed=true;node.scrollIntoView?.({block:'start',behavior:'smooth'});}
@@ -99,7 +142,7 @@
       }catch(error){if(valid()){if([401,403,404].includes(error.status))render({status:'unavailable',snapshot:null});showRefreshError(error.message||'报告读取失败，请重试');}}
       finally{clearTimeout(timeout);busy=false;nextRefreshAt=Date.now()+(status==='ready'||status==='unavailable'?15000:5000);}
     }
-    function dispose(){active=false;controller?.abort();node.replaceChildren();}
+    function dispose(){active=false;controller?.abort();closePreview();node.replaceChildren();}
     node.querySelector('[data-report-close]').onclick=()=>{if(!valid())return;options.onClose?.();dispose();node.hidden=true;};
     node.querySelector('[data-report-retry]').onclick=event=>action(event.currentTarget,()=>refresh(true,'POST'));
     node.querySelectorAll('[data-report-download]').forEach(button=>{button.onclick=()=>action(button,async()=>{

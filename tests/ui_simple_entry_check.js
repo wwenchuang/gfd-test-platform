@@ -165,3 +165,81 @@ test('picture refresh permission matches global runner refresh access including 
   w.currentAccessProfile=profile;assert.equal(options.canRefreshPictures(),expected,JSON.stringify(profile));
  }
 });
+
+const privateImagePath='/ui-executions/uib_example/artifacts/'+'a'.repeat(64);
+function imageResponse(w,{mime='image/png',size=3,length=null,status=200}={}){
+ return {ok:status===200,status,headers:{get:key=>key==='content-type'?mime:key==='content-length'?length:null},blob:async()=>new w.Blob([new Uint8Array(size)],{type:mime})};
+}
+test('report image transport is exposed to the authenticated workflow and returns only a matching image Blob',async t=>{
+ const {w,calls}=fixture(t);await w.initUiSimpleAvailability();w.activeWorkflow='ui_reports';w.showUiSimpleWorkflow();
+ const options=calls.find(x=>x?.mode==='reports');assert.equal(typeof options.loadEvidenceImage,'function');
+ const requests=[];w.authHeaders=()=>({'X-Test-Auth':'test-auth'});w.nativeFetch=async(path,opts)=>{requests.push({path,opts});return imageResponse(w);};
+ const blob=await options.loadEvidenceImage(privateImagePath,'png');assert.equal(blob.type,'image/png');assert.equal(blob.size,3);
+ assert.equal(requests.length,1);assert.equal(requests[0].path,'/api'+privateImagePath);assert.equal(requests[0].opts.headers['X-Test-Auth'],'test-auth');assert.equal(requests[0].opts.redirect,'error');
+});
+test('report image transport rejects external, nonartifact, query and hash paths before requesting',async t=>{
+ const {w}=fixture(t);let requests=0;w.nativeFetch=async()=>{requests++;return imageResponse(w);};
+ for(const path of ['https://outside.example'+privateImagePath,'/reports/a.png',privateImagePath+'?download=1',privateImagePath+'#preview',privateImagePath+'?',privateImagePath+'#',privateImagePath.replace('uib_example','other'),privateImagePath.replace(/a$/,'g')]){
+  await assert.rejects(()=>w.loadUiBatchImage(path,'png'),/截图地址/);
+ }
+ for(const kind of ['html','jpeg','svg','','toString','constructor'])await assert.rejects(()=>w.loadUiBatchImage(privateImagePath,kind),/截图格式/);
+ assert.equal(requests,0);
+});
+test('report image transport requires an authenticated account',async t=>{
+ const {w}=fixture(t);w.currentAccessProfile=null;let requests=0;w.nativeFetch=async()=>{requests++;return imageResponse(w);};
+ await assert.rejects(()=>w.loadUiBatchImage(privateImagePath,'png'),/登录/);assert.equal(requests,0);
+});
+test('report image transport rejects HTML and image MIME that differs from the artifact kind',async t=>{
+ const {w}=fixture(t);
+ for(const [mime,kind]of [['text/html','png'],['image/jpeg','png'],['image/png','jpg'],['image/svg+xml','png'],['image/png-extra','png']]){
+  w.nativeFetch=async()=>imageResponse(w,{mime});await assert.rejects(()=>w.loadUiBatchImage(privateImagePath,kind),/截图格式/);
+ }
+ w.nativeFetch=async()=>imageResponse(w,{mime:'image/jpeg'});assert.equal((await w.loadUiBatchImage(privateImagePath,'jpg')).type,'image/jpeg');
+});
+test('report image transport rejects declared and actual bodies larger than 8 MiB',async t=>{
+ const {w}=fixture(t);let bodyRead=false;
+ w.nativeFetch=async()=>({...imageResponse(w,{length:String(8*1024*1024+1)}),blob:async()=>{bodyRead=true;throw new Error('must not read');}});
+ await assert.rejects(()=>w.loadUiBatchImage(privateImagePath,'png'),/过大/);assert.equal(bodyRead,false);
+ w.nativeFetch=async()=>imageResponse(w,{size:8*1024*1024+1});await assert.rejects(()=>w.loadUiBatchImage(privateImagePath,'png'),/过大/);
+ w.nativeFetch=async()=>imageResponse(w,{size:0});await assert.rejects(()=>w.loadUiBatchImage(privateImagePath,'png'),/为空/);
+});
+test('report image stream is cancelled as soon as the body exceeds the limit',async t=>{
+ const {w}=fixture(t);let reads=0,cancelled=false;
+ w.nativeFetch=async()=>({...imageResponse(w),body:{getReader:()=>({read:async()=>{reads++;return {value:new Uint8Array(5*1024*1024),done:false};},cancel:async()=>{cancelled=true;},releaseLock:()=>{}})}});
+ await assert.rejects(()=>w.loadUiBatchImage(privateImagePath,'png'),/过大/);assert.equal(reads,2);assert.equal(cancelled,true);
+});
+test('report image stream returns the complete bounded Blob and releases its reader',async t=>{
+ const {w}=fixture(t);const chunks=[new Uint8Array([1,2]),new Uint8Array([3])];let released=false;
+ w.nativeFetch=async()=>({...imageResponse(w),body:{getReader:()=>({read:async()=>chunks.length?{value:chunks.shift(),done:false}:{done:true},cancel:async()=>{},releaseLock:()=>{released=true;}})}});
+ const blob=await w.loadUiBatchImage(privateImagePath,'png');assert.equal(blob.size,3);assert.equal(blob.type,'image/png');assert.equal(released,true);
+});
+test('invalid screenshot metadata stops the network body immediately',async t=>{
+ const {w}=fixture(t);let requestSignal;w.nativeFetch=async(path,options)=>{requestSignal=options.signal;return imageResponse(w,{mime:'text/html'});};
+ await assert.rejects(()=>w.loadUiBatchImage(privateImagePath,'png'),/截图格式/);assert.equal(requestSignal.aborted,true);
+});
+test('caller cancellation before loading sends no request',async t=>{
+ const {w}=fixture(t);const controller=new w.AbortController();controller.abort();let requests=0;w.nativeFetch=async()=>{requests++;return imageResponse(w);};
+ await assert.rejects(()=>w.loadUiBatchImage(privateImagePath,'png',{signal:controller.signal}),error=>error.name==='AbortError');assert.equal(requests,0);
+});
+for(const reason of ['caller','leave','logout','account-switch'])test(`report image transport aborts on ${reason} and rejects even a late response`,async t=>{
+ const {w}=fixture(t);let resolve,requestSignal;const controller=new w.AbortController();
+ w.nativeFetch=(path,options)=>{requestSignal=options.signal;return new Promise(r=>resolve=r);};
+ const pending=w.loadUiBatchImage(privateImagePath,'png',{signal:controller.signal});
+ if(reason==='caller')controller.abort();else if(reason==='leave')w.leaveUiSimpleWorkflow();else if(reason==='logout'){w.currentAccessProfile=null;w.resetUiSimpleWorkflow();}else w.currentAccessProfile={user_id:'u2'};
+ if(reason!=='account-switch')assert.equal(requestSignal.aborted,true);
+ resolve(imageResponse(w));await assert.rejects(pending,error=>error.name==='AbortError');
+});
+test('report image transport checks identity again after the image body finishes',async t=>{
+ const {w}=fixture(t);let resolveBody;w.nativeFetch=async()=>({...imageResponse(w),blob:()=>new Promise(r=>resolveBody=r)});
+ const pending=w.loadUiBatchImage(privateImagePath,'png');await wait();w.currentAccessProfile={user_id:'u2'};
+ resolveBody(new w.Blob(['png'],{type:'image/png'}));await assert.rejects(pending,error=>error.name==='AbortError');
+});
+test('report image timeout aborts the network request at 15 seconds and gives a retry message',async t=>{
+ const {w}=fixture(t);let timeout,timeoutMs,requestSignal;w.setTimeout=(callback,ms)=>{timeout=callback;timeoutMs=ms;return 123;};w.clearTimeout=()=>{};
+ w.nativeFetch=(path,options)=>{requestSignal=options.signal;return new Promise((resolve,reject)=>options.signal.addEventListener('abort',()=>reject(new w.DOMException('Aborted','AbortError'))));};
+ const pending=w.loadUiBatchImage(privateImagePath,'png');assert.equal(timeoutMs,15000);timeout();
+ await assert.rejects(pending,/超时/);assert.equal(requestSignal.aborted,true);
+});
+test('private image HTTP errors retain status for the report UI',async t=>{
+ const {w}=fixture(t);for(const status of [401,403,404,500]){w.nativeFetch=async()=>imageResponse(w,{status});await assert.rejects(()=>w.loadUiBatchImage(privateImagePath,'png'),error=>error.status===status);}
+});

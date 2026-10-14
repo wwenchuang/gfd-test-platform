@@ -143,6 +143,53 @@ def test_report_http_download_headers_and_cross_user(dispatch_env):
         assert h.response[1] == 404
 
 
+@pytest.mark.parametrize(('kind', 'mime', 'label'), [
+    ('jpg', 'image/jpeg', '执行截图'),
+    ('png', 'image/png', '执行截图'),
+    ('html', 'text/html; charset=utf-8', '原始报告静态内容'),
+])
+def test_artifact_download_keeps_type_and_uses_readable_filename(dispatch_env, kind, mime, label):
+    import io
+    import re
+    from urllib.parse import unquote
+    from task_server import router
+    from task_server.services import ui_batch_report_service as reports
+    batch, job, event = completed()
+    raw = {'jpg': b'\xff\xd8\xff\xe0image bytes\xff\xd9',
+           'png': b'\x89PNG\r\n\x1a\nimage bytes',
+           'html': b'<p>private evidence</p><script>alert(1)</script>'}[kind]
+    artifact = reports.save_ui_artifact(job['job_id'], event, raw, kind)
+
+    class Download(Handler):
+        def __init__(self):
+            super().__init__(); self.sent = {}; self.wfile = io.BytesIO()
+        def send_response(self, status): self.status = status
+        def send_header(self, key, value): self.sent[key] = value
+        def end_headers(self): pass
+
+    match = re.fullmatch(r'(uib_[0-9a-f]{32})/([0-9a-f]{64})',
+                         batch['ui_batch_id'] + '/' + artifact['artifact_id'])
+    with actor_context(ACTORS['a']):
+        h = Download()
+        router._get_ui_batch_artifact(h, {}, match)
+        expected_name = f"{label}-{artifact['artifact_id'][:12]}.{kind}"
+        assert h.status == 200
+        assert unquote(h.sent['Content-Disposition'].split("filename*=UTF-8''", 1)[1]) == expected_name
+        assert h.sent['Content-Type'] == mime
+        assert h.sent['Cache-Control'] == 'private, no-store'
+        assert h.sent['X-Content-Type-Options'] == 'nosniff'
+        assert 'sandbox' in h.sent['Content-Security-Policy']
+        if kind == 'html':
+            assert b'private evidence' in h.wfile.getvalue() and b'<script' not in h.wfile.getvalue()
+        else:
+            assert h.wfile.getvalue() == raw
+        assert artifact['url'].endswith('/' + artifact['artifact_id'])
+    with actor_context(ACTORS['b']):
+        h = Download()
+        router._get_ui_batch_artifact(h, {}, match)
+        assert h.response[1] == 404 and not h.wfile.getvalue()
+
+
 def test_markdown_and_html_escape_untrusted_case_labels(dispatch_env):
     from task_server.services import ui_batch_report_service as reports
     batch,job,event=completed()

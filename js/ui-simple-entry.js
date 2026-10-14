@@ -92,7 +92,7 @@ function showUiSimpleWorkflow(){
   const reportIntent=activeWorkflow==='ui_reports'?uiSimpleReportIntent():null,identity=uiSimpleIdentity();
   window.UiSimpleFlow.mount(page,{
     mode:{ui_start:'start',ui_library:'library',ui_reports:'reports'}[activeWorkflow],
-    request:apiRequest,identity:uiSimpleIdentity,canAdmit:()=>uiSimpleEnabled,canExecute:()=>hasPermission('ui.execute'),canNotify:()=>hasPermission('platform.notify'),reportIntent,loadPicture:loadUiSimplePicture,
+    request:apiRequest,identity:uiSimpleIdentity,canAdmit:()=>uiSimpleEnabled,canExecute:()=>hasPermission('ui.execute'),canNotify:()=>hasPermission('platform.notify'),reportIntent,loadPicture:loadUiSimplePicture,loadEvidenceImage:loadUiBatchImage,
     canRefreshPictures:()=>!!uiSimpleIdentity()&&hasPermission('ui.view')&&hasPermission('platform.configure')&&(currentAccessProfile.is_superuser===true||currentAccessProfile.scope?.ui_apps==='*'),
     onReportClose:intent=>{if(uiSimpleIdentity()===identity)clearUiSimpleReportIntent(intent);},
     download:downloadUiBatchFile,copy:async text=>{if(!await copyText(text))throw new Error('复制未完成，请重试');}
@@ -100,6 +100,46 @@ function showUiSimpleWorkflow(){
   // Keep the exact internal link through loading, errors, refresh and reauthentication.
   // Only an explicit close or workflow departure abandons it.
   return true;
+}
+async function loadUiBatchImage(path,kind,{signal}={}){
+  const epoch=uiSimpleEpoch,identity=uiSimpleIdentity();
+  if(!identity)throw new Error('请先登录后查看截图');
+  if(!['jpg','png'].includes(kind))throw new Error('截图格式无效');
+  const mime=kind==='jpg'?'image/jpeg':'image/png';
+  let url;try{url=new URL(path,window.location.origin);}catch(_){throw new Error('截图地址无效');}
+  if(url.origin!==window.location.origin||url.href!==url.origin+url.pathname||!/^\/ui-executions\/uib_[A-Za-z0-9_]+\/artifacts\/[a-f0-9]{64}$/.test(url.pathname))throw new Error('截图地址无效');
+  const controller=new AbortController(),abort=()=>controller.abort();
+  const valid=()=>!controller.signal.aborted&&epoch===uiSimpleEpoch&&identity===uiSimpleIdentity();
+  const ensureCurrent=()=>{if(!valid()){abort();throw new DOMException('截图加载已取消','AbortError');}};
+  if(signal?.aborted)abort();
+  ensureCurrent();signal?.addEventListener('abort',abort,{once:true});uiSimplePictureRequests.add(controller);
+  let timedOut=false;const timeout=setTimeout(()=>{timedOut=true;abort();},15000),limit=8*1024*1024;
+  try{
+    const response=await nativeFetch('/api'+url.pathname,{headers:authHeaders(),signal:controller.signal,redirect:'error'});
+    ensureCurrent();
+    if(!response.ok)throw Object.assign(new Error(response.status===403?'当前账号无权查看这张截图':`截图加载失败，请重试（${response.status}）`),{status:response.status});
+    if((response.headers.get('content-type')||'').split(';')[0].trim().toLowerCase()!==mime)throw new Error('截图格式异常，请重试');
+    if(Number(response.headers.get('content-length'))>limit)throw new Error('截图过大，请下载后查看');
+    let blob;
+    if(response.body?.getReader){
+      const reader=response.body.getReader(),chunks=[];let size=0;
+      try{
+        while(true){
+          const {done,value}=await reader.read();ensureCurrent();if(done)break;
+          size+=value.byteLength;if(size>limit)throw new Error('截图过大，请下载后查看');chunks.push(value);
+        }
+        blob=new Blob(chunks,{type:mime});
+      }catch(error){await reader.cancel().catch(()=>{});throw error;}
+      finally{reader.releaseLock();}
+    }else blob=await response.blob();
+    ensureCurrent();
+    if(blob.size>limit)throw new Error('截图过大，请下载后查看');
+    if(!blob.size)throw new Error('截图内容为空，请重试');
+    return blob;
+  }catch(error){
+    if(timedOut)throw new Error('截图加载超时，请重试');
+    ensureCurrent();abort();throw error;
+  }finally{clearTimeout(timeout);signal?.removeEventListener('abort',abort);uiSimplePictureRequests.delete(controller);}
 }
 async function downloadUiBatchFile(path){
   const epoch=uiSimpleEpoch,identity=uiSimpleIdentity(),url=new URL(path,window.location.origin);

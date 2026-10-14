@@ -129,7 +129,8 @@ def read_ui_artifact(actor,batch_id,artifact_id):
         if row['kind'] == 'html':
             from .ui_report_html import inert_evidence_html
             content = inert_evidence_html(content)
-        return content,MIMES[row['kind']],artifact_id+'.'+row['kind']
+        label = '原始报告静态内容' if row['kind'] == 'html' else '执行截图'
+        return content,MIMES[row['kind']],f"{label}-{artifact_id[:12]}.{row['kind']}"
     finally:
         db.close()
 
