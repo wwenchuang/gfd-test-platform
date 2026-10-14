@@ -43,10 +43,11 @@
     const b=state.batch, attempts=b.case_attempts || [];
     const available={cancel:!settled(b)&&b.status!=='cancelling',
       rerun:settled(b)&&attempts.some(a=>!['passed','success'].includes(a.status)),
-      report:settled(b)&&['pending','generating','ready','failed'].includes(b.report_status),copy:b.report_status==='ready'};
+      report:settled(b)&&['not_requested','pending','generating','ready','failed'].includes(b.report_status),copy:b.report_status==='ready'};
     node.querySelectorAll('[data-attempt-recover]').forEach(button=>{button.disabled=state.busy.has('recover');});
     node.querySelectorAll('[data-batch-action]').forEach(button=>{
       const key=button.dataset.batchAction;
+      if(key==='report')button.textContent=b.report_status==='not_requested'?'查看执行截图':'查看本次报告';
       button.hidden=!available[key] || typeof state.actions[key]!=='function';
       button.disabled=state.busy.has(key);
     });
@@ -127,7 +128,7 @@
     text(node,'[data-batch-results]',`通过 ${passed} · 失败 ${failed} · 其余 ${attempts.length-passed-failed}`);
     const progress=node.querySelector('[data-batch-progress]');progress.max=Math.max(1,attempts.length);progress.value=done;
     text(node,'[data-batch-hint]',batch.message || (batch.stop_pending?'正在等待手机确认停止；确认前不会释放设备。':batch.status==='queued'?'等待所选手机接单；可取消本次测试。':batch.status==='cancelling'?'已请求取消，正在等待手机确认停止。':batch.status==='running'?'按手机真实上报更新步骤。':label(batch.status)));
-    const reportLabels={pending:'报告等待生成',generating:'报告生成中',ready:'本次报告已就绪',failed:'报告生成失败，可补生成'};
+    const reportLabels={not_requested:'普通测试，未申请发版报告；结果与截图已保留',pending:'发版报告等待生成',generating:'发版报告生成中',ready:'本次报告已就绪',failed:'报告生成失败，可补生成'};
     const deliveryLabels={not_requested:'未启用飞书通知',pending:'飞书通知待发送',queued:'飞书通知已入队',retry_wait:'飞书通知等待重试',sending:'飞书通知发送中',sent:'飞书通知已发送',failed:'飞书通知发送失败',unknown:'飞书送达待核对'};
     text(node,'[data-batch-report]',reportLabels[batch.report_status] || '报告状态待确认');
     text(node,'[data-batch-delivery]',deliveryLabels[batch.delivery_status] || '通知状态待确认');

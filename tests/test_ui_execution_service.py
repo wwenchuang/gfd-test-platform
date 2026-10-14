@@ -164,6 +164,7 @@ def test_notification_preference_is_frozen_without_accepting_channel_override(en
     with actor_context(ACTORS["b"]):
         selected = request()
         selected["notifications"] = {"enabled": True}
+        selected['release_report'] = {'enabled':True}
         batch = create_ui_batch(ACTORS["b"], selected, "notify-enabled")
         assert batch["selection"]["notifications"]["enabled"] is True
         assert "channel_id" in batch["selection"]["notifications"]
@@ -299,6 +300,7 @@ def test_no_notify_actor_rejected_for_create_preflight_and_repeat_but_can_run_op
     from task_server import identity
     from task_server.services.ui_execution_service import create_ui_batch, preflight_ui_batch
     selected=request(); selected['notifications']['enabled']=True
+    selected['release_report']={'enabled':True}
     original=identity.get_access_profile
     monkeypatch.setattr(identity,'get_access_profile',lambda name:{**original(name),'permissions':['ui.view','ui.execute','platform.notify']})
     with actor_context(ACTORS['b']): first=create_ui_batch(None,selected,'repeat-after-revoke')

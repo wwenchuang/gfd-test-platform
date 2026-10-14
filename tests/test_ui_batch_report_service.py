@@ -145,6 +145,8 @@ def test_worker_is_async_single_build_and_does_not_poll_device(dispatch_env,monk
     import threading
     from task_server.services import ui_batch_report_service as reports
     batch,job,event=completed()
+    with actor_context(ACTORS['a']):
+        reports.request_ui_batch_report(None,batch['ui_batch_id'])
     entered,release=threading.Event(),threading.Event()
     calls=[]
     def render(markdown):

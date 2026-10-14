@@ -172,7 +172,7 @@ class UiExecutionLifecycle:
                        (now,'cancelled' if row['status']=='cancelling' else 'interrupted',row['attempt_id']))
             db.execute('DELETE FROM device_leases WHERE platform=? AND runner_id=? AND device_id=? AND ui_batch_id=? AND attempt_id=? AND acquired_ns=?',
                        (row['platform'],row['runner_id'],row['device_id'],batch_id,row['attempt_id'],lease['acquired_ns']))
-            db.execute("UPDATE batches SET report_status='pending' WHERE ui_batch_id=?", (batch_id,))
+            db.execute("UPDATE batches SET report_status='pending' WHERE ui_batch_id=? AND report_requested_ns IS NOT NULL", (batch_id,))
             self._rollup(db,batch_id)
 
     def record_attempt_event(self, job_id, sequence, event):
@@ -191,7 +191,7 @@ class UiExecutionLifecycle:
                 evidence = json.loads(row['result_json'] or '{}')
                 evidence.update({k:str(event[k])[:4000] for k in ('report_url','local_report_path','report_upload_error') if k in event})
                 if evidence != json.loads(row['result_json'] or '{}'):
-                    db.execute("UPDATE batches SET report_status='pending' WHERE ui_batch_id=?",(row['ui_batch_id'],))
+                    db.execute("UPDATE batches SET report_status='pending' WHERE ui_batch_id=? AND report_requested_ns IS NOT NULL",(row['ui_batch_id'],))
                 db.execute('UPDATE case_attempts SET result_json=? WHERE attempt_id=?', (json.dumps(evidence,ensure_ascii=False),row['attempt_id']))
                 self._rollup(db,row['ui_batch_id'])
                 return {'ok':True,'status':row['status']}
@@ -207,7 +207,7 @@ class UiExecutionLifecycle:
                     if key in event and key not in evidence:
                         evidence[key] = str(event[key])[:32000]
                 if evidence != json.loads(row['result_json'] or '{}'):
-                    db.execute("UPDATE batches SET report_status='pending' WHERE ui_batch_id=?",(row['ui_batch_id'],))
+                    db.execute("UPDATE batches SET report_status='pending' WHERE ui_batch_id=? AND report_requested_ns IS NOT NULL",(row['ui_batch_id'],))
                 db.execute('UPDATE case_attempts SET result_json=? WHERE attempt_id=?', (json.dumps(evidence,ensure_ascii=False),row['attempt_id']))
             if row['status'] in {'cancelling','interrupted'}:
                 if stopped:

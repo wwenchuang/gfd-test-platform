@@ -48,7 +48,7 @@ def _connect():
             created_ns INTEGER NOT NULL, PRIMARY KEY(attempt_id,artifact_id));
         CREATE INDEX IF NOT EXISTS ui_evidence_batch ON ui_report_evidence(ui_batch_id,created_ns);
         CREATE INDEX IF NOT EXISTS ui_reports_pending ON batches(created_ns)
-            WHERE execution_settled=1 AND report_status='pending';
+            WHERE execution_settled=1 AND report_status='pending' AND report_requested_ns IS NOT NULL;
         CREATE TABLE IF NOT EXISTS ui_report_chunks (
             job_id TEXT NOT NULL, upload_id TEXT NOT NULL, part INTEGER NOT NULL,
             total INTEGER NOT NULL, content BLOB NOT NULL, created_ns INTEGER NOT NULL,
@@ -107,7 +107,7 @@ def save_ui_artifact(job_id, credentials, content, kind):
         if kind == 'html':
             db.execute('DELETE FROM ui_report_chunks WHERE job_id=?',(job_id,))
         if inserted:
-            db.execute("UPDATE batches SET report_status='pending' WHERE ui_batch_id=?",(row['ui_batch_id'],))
+            db.execute("UPDATE batches SET report_status='pending' WHERE ui_batch_id=? AND report_requested_ns IS NOT NULL",(row['ui_batch_id'],))
         db.execute('COMMIT')
     except Exception:
         db.execute('ROLLBACK')
@@ -140,6 +140,16 @@ def _evidence(db,batch_id):
         '''SELECT e.artifact_id,e.attempt_id,a.kind FROM ui_report_evidence e JOIN ui_report_artifacts a
         ON a.ui_batch_id=e.ui_batch_id AND a.artifact_id=e.artifact_id WHERE e.ui_batch_id=?
         ORDER BY e.attempt_id,e.artifact_id''',(batch_id,))]
+
+
+def get_ui_batch_evidence(actor,batch_id):
+    """Read the private manifest without rendering a report or reading its blobs."""
+    _batch(actor,batch_id)
+    db = _connect()
+    try:
+        return {'ui_batch_id':batch_id,'artifacts':_evidence(db,batch_id)}
+    finally:
+        db.close()
 
 
 def _expectations(source):
@@ -203,7 +213,7 @@ def _render_docx(markdown):
 
 def _report_delivery_state(db,batch,revision):
     """Ready revisions need discovery once; previously queued/sent digests keep their state."""
-    policy=batch['selection'].get('notifications') or {}
+    policy=(batch.get('report_request') or {}).get('notifications') or {}
     if not policy.get('enabled'): return 'not_requested'
     row=db.execute('SELECT status FROM delivery_outbox WHERE ui_batch_id=? AND report_revision=? AND channel_id=?',
                    (batch['ui_batch_id'],revision,policy.get('channel_id','unconfigured'))).fetchone()
@@ -218,6 +228,8 @@ def _build(batch_id):
         batch = UiExecutionStore().get_batch(batch_id)
         if not batch or not batch['execution_settled'] or batch['stop_pending']:
             raise ValueError('execution_not_settled')
+        if batch['report_requested_ns'] is None:
+            raise ValueError('report_not_requested')
         snapshot = _snapshot(batch,db)
         revision = hashlib.sha256(_json(snapshot).encode()).hexdigest()
         existing = db.execute('SELECT status FROM ui_report_snapshots WHERE ui_batch_id=? AND report_revision=?',(batch_id,revision)).fetchone()
@@ -254,7 +266,9 @@ def _build(batch_id):
 
 
 def build_ui_batch_report(actor,batch_id):
-    _batch(actor,batch_id)
+    # Synchronous callers are explicit requests too; the automatic worker calls
+    # _build directly and can never grant itself report-generation intent.
+    request_ui_batch_report(actor,batch_id)
     with _BUILD_LOCK:
         return _build(batch_id)
 
@@ -268,7 +282,7 @@ def _report(db,batch_id,revision=None):
                      (batch_id,revision)).fetchone()
     if not row:
         if explicit_revision: raise FileNotFoundError('report_not_found')
-        return {'status':'pending','ui_batch_id':batch_id,'report_revision':None,'snapshot':None}
+        return {'status':'not_requested','ui_batch_id':batch_id,'report_revision':None,'snapshot':None}
     return {'ui_batch_id':batch_id,'report_revision':row['report_revision'],'status':row['status'],
             'error':row['error'],'snapshot':json.loads(row['snapshot_json'])}
 
@@ -284,14 +298,46 @@ def get_ui_batch_report(actor,batch_id,revision=None):
         db.close()
 
 
-def request_ui_batch_report(actor,batch_id):
+def request_ui_batch_report(actor,batch_id,request=None):
+    from .ui_execution_contract import require_ui_actor
+    from .operation_attribution import current_actor
+    from .business_line_service import configured_test_application
+    from .feishu_service import task_app_feishu_channel
     batch = _batch(actor,batch_id)
+    request = {} if request is None else request
+    if not isinstance(request,dict) or set(request)-{'notifications'}:
+        raise ValueError('report_request_invalid')
+    notifications = request.get('notifications',{'enabled':False})
+    if (not isinstance(notifications,dict) or set(notifications)!={'enabled'}
+            or type(notifications.get('enabled')) is not bool):
+        raise ValueError('report_request_invalid')
+    if notifications['enabled']:
+        require_ui_actor(actor,permission='platform.notify',app_id=batch['app_id'])
     if not batch['execution_settled'] or batch['stop_pending']:
         raise ValueError('execution_not_settled')
+    channel = task_app_feishu_channel(configured_test_application(batch['app_id']) or {})
+    trusted = current_actor()
+    now = time.time_ns()
+    intent = {'requested_ns':now,'actor':{k:trusted[k] for k in ('user_id','username','display_name')},
+              'notifications':{**notifications,**{k:channel[k] for k in ('channel_id','target_label','source')}}}
     db = _connect()
     try:
-        db.execute("UPDATE batches SET report_status='pending' WHERE ui_batch_id=?",(batch_id,))
+        db.execute('BEGIN IMMEDIATE')
+        current = UiExecutionStore().get_batch(batch_id)
+        if not current['execution_settled'] or current['stop_pending']:
+            raise ValueError('execution_not_settled')
+        if current['report_requested_ns'] is None:
+            # Preserve frozen execution selection, owner and measured versions.
+            # A readable legacy report is reused, never rewritten by migration.
+            db.execute("""UPDATE batches SET report_requested_ns=?,report_request_json=?,
+                report_status=CASE WHEN report_status='ready' THEN 'ready' ELSE 'pending' END,
+                delivery_status=? WHERE ui_batch_id=?""",
+                (now,_json(intent),'pending' if notifications['enabled'] else 'not_requested',batch_id))
+        elif current['report_status'] == 'failed':
+            db.execute("UPDATE batches SET report_status='pending' WHERE ui_batch_id=?",(batch_id,))
+        db.execute('COMMIT')
     finally:
+        if db.in_transaction: db.execute('ROLLBACK')
         db.close()
     return get_ui_batch_report(actor,batch_id)
 
@@ -333,7 +379,7 @@ def tick_ui_report_worker():
     cleanup_ui_report_chunks()
     db = _connect()
     try:
-        row = db.execute("SELECT ui_batch_id FROM batches WHERE execution_settled=1 AND report_status='pending' ORDER BY created_ns LIMIT 1").fetchone()
+        row = db.execute("SELECT ui_batch_id FROM batches WHERE execution_settled=1 AND report_status='pending' AND report_requested_ns IS NOT NULL ORDER BY created_ns LIMIT 1").fetchone()
     finally:
         db.close()
     if row:

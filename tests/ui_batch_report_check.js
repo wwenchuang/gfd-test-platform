@@ -12,6 +12,36 @@ function setup(t,request,extra={}){
  return {w,node,view,calls,setIdentity:value=>identity=value};
 }
 const SNAP={presentation:{title:'应用甲 发布测试报告',owner:'执行者乙',time_range:'2026年10月13日 10:00 至 10:02',conclusion:'本次未通过，失败 1 项。',conclusion_status:'failed',case_count:1,executed_cases:1,passed_count:0,failed_count:1,incomplete_count:0,coverage:[{case_name:'首页导航',scenario:'个人中心与首页切换',expected:'首页正常显示',result:'未通过',attempt_no:1}],environments:['苹果 13，应用版本 1.19.7'],concerns:[]},app_name:'应用甲',owner_display_name:'执行者乙',status:'failed',summary:'本次通过 1，失败 1。',counts:{passed:1,failed:1},attempts:[],artifacts:[]};
+test('ordinary test opens evidence metadata once without report generation or image reads',async t=>{
+ const requests=[];let images=0;const f=setup(t,async(path,o={})=>{requests.push({path,...o});return path.endsWith('/evidence')?{ok:true,artifacts:[{artifact_id:'a'.repeat(64),kind:'png'}]}:{ok:true,report:{status:'not_requested',snapshot:null}};},{loadEvidenceImage:async()=>{images++;}});await tick();
+ assert.match(f.node.textContent,/普通测试，未申请发版报告/);assert.equal(f.node.querySelector('[data-report-generate]'),null);
+ assert.equal(f.node.querySelectorAll('[data-evidence-preview]').length,1);assert.equal(images,0);
+ f.w.Date.now=()=>Date.now()+20000;await f.view.refresh();await f.view.refresh();
+ assert.equal(requests.filter(r=>r.path.endsWith('/evidence')).length,1);assert.equal(requests.filter(r=>r.method==='POST').length,0);
+ assert.equal(f.node.querySelector('[data-report-download="docx"]').hidden,true);
+});
+test('ordinary screenshots reuse private preview and do not reload during parent refresh',async t=>{
+ let imageReads=0,metadataReads=0;const f=setup(t,async path=>{
+  if(path.endsWith('/evidence')){metadataReads++;return {ok:true,artifacts:[{artifact_id:'a'.repeat(64),kind:'jpg'}]};}
+  return {ok:true,report:{status:'not_requested',snapshot:null}};
+ },{loadEvidenceImage:async()=>{imageReads++;return new Blob(['jpeg'],{type:'image/jpeg'});}});
+ f.w.URL.createObjectURL=()=> 'blob:ordinary';f.w.URL.revokeObjectURL=()=>{};await tick();f.node.querySelector('[data-evidence-preview]').click();await tick();
+ const dialog=f.node.querySelector('dialog');assert.equal(dialog.open,true);assert.equal(imageReads,1);
+ f.w.Date.now=()=>Date.now()+20000;await f.view.refresh();await f.view.refresh();assert.equal(f.node.querySelector('dialog'),dialog);assert.equal(metadataReads,1);assert.equal(imageReads,1);
+ dialog.querySelector('[data-evidence-close]').click();f.node.querySelector('[data-report-evidence-refresh]').click();await tick();assert.equal(metadataReads,2);assert.equal(imageReads,1);
+});
+test('ordinary evidence metadata failure is retryable and revoked access removes private artifacts',async t=>{
+ let failure=true,denied=false;const f=setup(t,async path=>{
+  if(path.endsWith('/evidence')){if(denied)throw Object.assign(new Error('无权访问证据'),{status:403});if(failure)throw new Error('证据暂时不可用');return {ok:true,artifacts:[{artifact_id:'a'.repeat(64),kind:'png'}]};}
+  return {ok:true,report:{status:'not_requested',snapshot:null}};
+ });await tick();assert.match(f.node.textContent,/证据暂时不可用/);failure=false;f.node.querySelector('[data-report-evidence-refresh]').click();await tick();assert.equal(f.node.querySelectorAll('[data-evidence-preview]').length,1);
+ denied=true;await f.view.refresh(true);assert.equal(f.node.querySelectorAll('[data-evidence-preview]').length,0);assert.match(f.node.textContent,/无法访问/);
+});
+test('ordinary evidence refresh retains expanded section and focused retained preview',async t=>{
+ let artifacts=[{artifact_id:'a'.repeat(64),kind:'png'}];const f=setup(t,async path=>path.endsWith('/evidence')?{ok:true,artifacts}:{ok:true,report:{status:'not_requested',snapshot:null}});await tick();
+ f.node.querySelector('details').open=true;f.node.querySelector('[data-evidence-preview]').focus();artifacts=[...artifacts,{artifact_id:'b'.repeat(64),kind:'png'}];await f.view.refresh(true);
+ assert.equal(f.node.querySelector('details').open,true);assert.equal(f.w.document.activeElement,f.node.querySelector('[data-evidence-preview]'));
+});
 test('report renders frozen executor and real failure, escapes labels and downloads pinned revision',async t=>{
  const f=setup(t,async()=>({ok:true,report:{status:'ready',report_revision:'rev-1',snapshot:{...SNAP,app_name:'<img src=x onerror=alert(1)>'}}}));await tick();
  assert.match(f.node.textContent,/执行者乙/);assert.match(f.node.textContent,/失败 1/);assert.equal(f.node.querySelector('img'),null);

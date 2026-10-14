@@ -6435,7 +6435,13 @@ def _get_ui_batch_report(handler, qs, match):
 @route_post_regex(r"^/api/ui-executions/([^/]+)/report$")
 def _post_ui_batch_report(handler, qs, match):
     from .services.ui_batch_report_service import request_ui_batch_report
-    _ui_report_response(handler, lambda: {"report": request_ui_batch_report(None, match.group(1))}, match.group(1), status=202)
+    _ui_report_response(handler, lambda: {"report": request_ui_batch_report(None, match.group(1), handler._body())}, match.group(1), status=202)
+
+
+@route_get_regex(r"^/api/ui-executions/([^/]+)/evidence$")
+def _get_ui_batch_evidence(handler, qs, match):
+    from .services.ui_batch_report_service import get_ui_batch_evidence
+    _ui_report_response(handler, lambda: get_ui_batch_evidence(None, match.group(1)), match.group(1))
 
 
 @route_get_regex(r"^/api/ui-executions/([^/]+)/report/download$")

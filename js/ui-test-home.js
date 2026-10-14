@@ -1,6 +1,6 @@
 // Simple UI workflow state is scoped to the signed-in identity and mounted page.
 (() => {
-  const modes={start:'开始测试',library:'用例库',reports:'我的报告'};
+  const modes={start:'开始测试',library:'用例库',reports:'我的测试'};
   const labels={ready:'连接就绪 · 开始前检查占用',offline:'手机或执行器已离线',upgrade_required:'执行器需要更新',mapping_missing:'尚未配置 iOS 应用',not_ready:'未就绪，请检查手机连接与解锁'};
   const e=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const keyOf=target=>JSON.stringify([target.runner_id,target.device_id,target.platform]);
@@ -50,6 +50,7 @@
   function buttonState(s){
     if(!valid(s))return;
     pictureButtonState(s);
+    releasePurposeState(s);
     s.node.querySelector('[data-ui-form]').disabled=s.busy||s.uncertain;
     const button=s.node.querySelector('[data-ui-start]');if(!button)return;
     const device=s.devices.find(d=>keyOf(d.target)===s.target);
@@ -67,6 +68,17 @@
   }
   function remember(s){store(s,'selection',{app:s.app,module:s.module,target:s.target});}
   function invalidateStart(s){if(!s.uncertain)s.startIntent=null;buttonState(s);}
+  function clearReport(s,abandonIntent=false){
+    const previous={batchId:s.reportId,revision:s.reportRevision};
+    s.reportView?.dispose();s.reportView=null;s.reportId='';s.reportRevision='';
+    const host=s.node.querySelector('[data-ui-report-preview]');if(host){host.hidden=true;host.replaceChildren();}
+    if(abandonIntent&&previous.revision)s.options.onReportClose?.(previous);
+  }
+  function selectBatch(s,id){
+    if(s.batchId!==id){s.pending.get('batch')?.abort();s.pending.delete('batch');s.node.querySelector('[data-ui-batch]').hidden=true;s.batchSettled=false;}
+    if(s.reportId&&s.reportId!==id)clearReport(s,true);
+    s.batchId=id;
+  }
   function renderCases(s,data){
     const host=s.node.querySelector('[data-ui-cases]');host.replaceChildren();
     const groups=s.app?[{name:'',items:data.items||[]}]:data.groups||[];
@@ -109,7 +121,9 @@
       const app=s.node.querySelector('[name="ui-app"]'),module=s.node.querySelector('[name="ui-module"]');
       options(app,(data.apps||[]).map(a=>[a.app_id,a.name]),'全部应用');app.value=s.app;
       options(module,(data.modules||[]).map(v=>[v,v]),'全部模块');module.value=s.module;
-      renderNotificationPolicy(s,data.apps||[]);
+      const channel=(data.apps||[]).find(a=>a.app_id===s.app)?.notification_channel||null;
+      if(s.notificationChannel?.channel_id!==channel?.channel_id)s.notifyEnabled=false;
+      s.notificationChannel=channel;
       renderCases(s,data);
     }catch(error){
       if(s.app&&['app_forbidden','app_unavailable'].includes(error.code)&&!s.uncertain){changeApp(s,'');notice(s,'之前选择的应用已不可用，请重新选择。',true);}
@@ -133,8 +147,7 @@
   }
   function changeApp(s,app){
     if(s.busy||s.uncertain)return;
-    s.app=app;s.module='';s.cursor='';s.previous=[];s.selected.clear();s.devices=[];s.target='';s.notifyEnabled=false;s.notificationPolicyKey='';
-    renderNotificationPolicy(s,[]);
+    s.app=app;s.module='';s.cursor='';s.previous=[];s.selected.clear();s.devices=[];s.target='';s.notifyEnabled=false;s.notificationChannel=null;
     s.node.querySelector('[name="ui-app"]').value=app;
     s.pending.get('devices')?.abort();s.pending.delete('devices');s.deviceNodes.clear();
     s.node.querySelector('[data-ui-devices]').replaceChildren();invalidateStart(s);remember(s);loadCatalog(s);loadDevices(s);
@@ -211,17 +224,18 @@
     }catch(error){pictureNotice(s,'截图刷新请求失败：'+error.message+'；请稍后重试。',true);}
     finally{if(valid(s)){pictureButtonState(s);clearTimeout(s.pictureTimer);s.pictureTimer=setTimeout(()=>pictureButtonState(s),Math.max(0,s.pictureRefreshAfter-Date.now()));}}
   }
-  function renderNotificationPolicy(s,apps){
-    const toggle=s.node.querySelector('[data-ui-notify]');if(!toggle)return;
-    const channel=apps.find(a=>a.app_id===s.app)?.notification_channel;
-    const ready=channel?.ready===true,canNotify=s.options.canNotify()===true,key=s.app+'|'+ready+'|'+canNotify+'|'+(channel?.channel_id||'');
-    // Device polling never resets an explicit opt-out. An app/channel change creates a fresh default.
-    if(s.notificationPolicyKey!==key){s.notifyEnabled=ready&&canNotify;s.notificationPolicyKey=key;}
-    if(!canNotify)s.notifyEnabled=false;
-    toggle.checked=ready&&canNotify&&s.notifyEnabled;toggle.disabled=!ready||!canNotify;
-    s.node.querySelector('[data-ui-notify-target]').textContent=s.app?('飞书通知：'+(channel?.target_label||'未配置')+(!canNotify?' · 当前账号没有发送通知权限，可正常执行不通知':ready?' · 本次报告完成后自动发送':' · 可在应用配置中设置')):'先选择应用以查看通知目标';
+  function releasePurposeState(s){
+    const release=s.node.querySelector('[data-ui-release]');if(!release)return;
+    const frozen=s.uncertain?s.startIntent?.body:null,enabled=frozen?frozen.release_report?.enabled===true:s.releaseEnabled;
+    const notify=s.node.querySelector('[data-ui-notify]'),canNotify=s.options.canNotify()===true,channel=s.notificationChannel;
+    if(!frozen&&(!enabled||!canNotify||!channel?.ready))s.notifyEnabled=false;
+    release.checked=enabled;s.node.querySelector('[data-ui-notify-options]').hidden=!enabled;
+    notify.checked=frozen?frozen.notifications?.enabled===true:s.notifyEnabled;
+    notify.disabled=!enabled||!canNotify||!channel?.ready;
+    s.node.querySelector('[data-ui-notify-target]').textContent=!canNotify?'当前账号没有发送通知权限，仍可生成发版报告。':channel?.ready?'报告生成后发送至：'+(channel.target_label||'应用已配置飞书群'):'当前应用未配置可用飞书群，可正常生成发版报告。';
+    s.node.querySelector('[data-ui-release-hint]').textContent=enabled?'本次测试结束后自动生成发版报告，使用本次实际测试版本、执行人和结果。':'普通测试仅保留结果、步骤和截图。';
   }
-  function payload(s){return {app_id:s.app,cases:[...s.selected.values()].map(({case_id,revision})=>({case_id,revision})),targets:[s.devices.find(d=>keyOf(d.target)===s.target).target],notifications:{enabled:s.options.canNotify()===true&&s.notifyEnabled===true}};}
+  function payload(s){return {app_id:s.app,cases:[...s.selected.values()].map(({case_id,revision})=>({case_id,revision})),targets:[s.devices.find(d=>keyOf(d.target)===s.target).target],release_report:{enabled:s.releaseEnabled===true},notifications:{enabled:s.releaseEnabled===true&&s.options.canNotify()===true&&s.notificationChannel?.ready===true&&s.notifyEnabled===true}};}
   async function start(s,retry=false){
     if(!valid(s)||s.busy||!s.options.canAdmit()||!s.options.canExecute())return;
     if(!retry&&s.node.querySelector('[data-ui-start]').disabled)return;
@@ -238,7 +252,7 @@
       }
       store(s,'pending',s.startIntent);submitted=true;
       const data=await request(s,'start','/ui-executions',{method:'POST',headers:{'Idempotency-Key':s.startIntent.key},body});if(!data)return;
-      s.uncertain=false;store(s,'pending',null);s.startIntent=null;s.batchId=data.batch.ui_batch_id;store(s,'lastBatch',s.batchId);
+      s.uncertain=false;store(s,'pending',null);s.startIntent=null;selectBatch(s,data.batch.ui_batch_id);store(s,'lastBatch',s.batchId);
       notice(s,'已创建本次测试。');showBatch(s,data.batch);
     }catch(error){if(valid(s)){s.uncertain=submitted&&!error.definitive;if(!s.uncertain){store(s,'pending',null);s.startIntent=null;}if(s.uncertain)notice(s,'提交结果待确认，可安全重试核对：'+error.message,true);else notice(s,error.message,true);}}
     finally{if(valid(s)){s.busy=false;buttonState(s);s.node.querySelector('[data-ui-recover]').hidden=!s.uncertain;}}
@@ -250,19 +264,22 @@
       try{const data=await request(s,'action',`/ui-executions/${encodeURIComponent(id)}/confirm-stop`,{method:'POST',body});if(data&&s.batchId===id)showBatch(s,data.batch);}
       catch(error){if(valid(s)&&s.batchId===id){await loadBatch(s);throw error;}}
     },cancel:async id=>{const data=await request(s,'action',`/ui-executions/${encodeURIComponent(id)}/cancel`,{method:'POST',body:{}});if(data)showBatch(s,data.batch);},
-      rerun:async id=>{if(!valid(s)||!s.options.canAdmit()||!s.options.canExecute())return;s.rerunKeys[id] ||= requestId();const data=await request(s,'action',`/ui-executions/${encodeURIComponent(id)}/rerun`,{method:'POST',headers:{'Idempotency-Key':s.rerunKeys[id]},body:{scope:'failed'}});if(data){delete s.rerunKeys[id];s.batchId=data.batch.ui_batch_id;store(s,'lastBatch',s.batchId);showBatch(s,data.batch);}}};
+      rerun:async id=>{if(!valid(s)||!s.options.canAdmit()||!s.options.canExecute())return;s.rerunKeys[id] ||= requestId();const data=await request(s,'action',`/ui-executions/${encodeURIComponent(id)}/rerun`,{method:'POST',headers:{'Idempotency-Key':s.rerunKeys[id]},body:{scope:'failed'}});if(data){delete s.rerunKeys[id];selectBatch(s,data.batch.ui_batch_id);store(s,'lastBatch',s.batchId);showBatch(s,data.batch);}}};
     if(!s.options.canAdmit())delete actions.rerun;
     if(!s.options.canExecute()){delete actions.cancel;delete actions.rerun;delete actions.recover;}
     if(s.options.download&&window.UiBatchReport)actions.report=id=>openReport(s,id);
     if(s.options.copy)actions.copy=async id=>{const data=await request(s,'summary',`/ui-executions/${encodeURIComponent(id)}/summary`);if(data&&data.status==='ready')await s.options.copy(data.summary);else if(data)throw new Error('报告尚未就绪');};
     window.UiBatchView.update(host,batch,actions);
-    s.batchSettled=batch.execution_settled===true&&['ready','failed'].includes(batch.report_status)&&!['pending','queued','retry_wait','sending'].includes(batch.delivery_status);
+    s.batchSettled=batch.execution_settled===true&&['not_requested','ready','failed'].includes(batch.report_status)&&!['pending','queued','retry_wait','sending'].includes(batch.delivery_status);
     if(s.reportId===batch.ui_batch_id)s.reportView?.refresh(batch.report_status==='pending');
   }
   function openReport(s,id,revision){
-    if(!valid(s))return;s.reportView?.dispose();s.reportId=id;
+    if(!valid(s))return;
+    // Reopening the same linked test keeps its cited revision; choosing another test abandons that intent.
+    if(s.reportId===id&&!revision)revision=s.reportRevision;
+    clearReport(s,s.reportId!==id);s.reportId=id;s.reportRevision=revision||'';
     let host=s.node.querySelector('[data-ui-report-preview]');if(!host){host=document.createElement('section');host.dataset.uiReportPreview='';s.node.append(host);}
-    host.hidden=false;s.reportView=window.UiBatchReport.mount(host,{batchId:id,revision,identity:s.options.identity,canNotify:s.options.canNotify,request:s.options.request,download:s.options.download,loadEvidenceImage:s.options.loadEvidenceImage,copy:s.options.copy,onClose:()=>{if(valid(s)&&revision)s.options.onReportClose?.({batchId:id,revision});}});
+    host.hidden=false;s.reportView=window.UiBatchReport.mount(host,{batchId:id,revision,identity:s.options.identity,canNotify:s.options.canNotify,request:s.options.request,download:s.options.download,loadEvidenceImage:s.options.loadEvidenceImage,copy:s.options.copy,onClose:()=>{if(valid(s)&&s.reportId===id)clearReport(s,true);}});
     host.scrollIntoView?.({block:'start',behavior:'smooth'});
   }
   async function loadBatch(s){
@@ -283,8 +300,8 @@
         if(list.children[index]!==button)list.insertBefore(button,list.children[index]||null);index++;
         const date=new Date(Number(b.created_ns)/1e6);button.querySelector('strong').textContent=b.app_name||b.app_id;
         button.querySelector('span').textContent=`${b.owner_display_name||''} · ${Number.isFinite(date.getTime())?date.toLocaleString():''}`;
-        button.querySelector('small').textContent=`${({queued:'排队中',blocked:'等待条件满足',running:'执行中',passed:'通过',failed:'失败',cancelled:'已取消',cancelling:'正在停止',interrupted:'已中断'})[b.status]||'状态待确认'} · ${({ready:'报告已就绪',failed:'报告生成失败'})[b.report_status]||'报告尚未就绪'}`;
-        button.onclick=()=>{s.batchId=b.ui_batch_id;s.batchSettled=['ready','failed'].includes(b.report_status);
+        button.querySelector('small').textContent=`${({queued:'排队中',blocked:'等待条件满足',running:'执行中',passed:'通过',failed:'失败',cancelled:'已取消',cancelling:'正在停止',interrupted:'已中断'})[b.status]||'状态待确认'} · ${({not_requested:'普通测试，未申请发版报告',pending:'发版报告生成中',generating:'发版报告生成中',ready:'报告已就绪',failed:'报告生成失败'})[b.report_status]||'报告尚未就绪'}`;
+        button.onclick=()=>{selectBatch(s,b.ui_batch_id);s.batchSettled=['ready','failed'].includes(b.report_status);
           if(s.batchSettled&&s.options.download&&window.UiBatchReport){s.node.querySelector('[data-ui-batch]').hidden=true;openReport(s,b.ui_batch_id);}else loadBatch(s);};
       }
       for(const[id,button]of s.reportNodes)if(!keep.has(id)){button.remove();s.reportNodes.delete(id);}
@@ -305,10 +322,10 @@
   }
   function mount(node,options){
     leave();const mode=modes[options.mode]?options.mode:'start';
-    const s={node,options:{canExecute:()=>false,canNotify:()=>false,canRefreshPictures:()=>false,canAdmit:()=>true,...options,mode},identity:options.identity(),pending:new Map(),deviceNodes:new Map(),reportNodes:new Map(),devices:[],selected:new Map(),app:'',module:'',query:'',includeDrafts:false,composing:false,cursor:'',previous:[],next:'',target:'',batchId:'',batchSettled:false,busy:false,startIntent:null,uncertain:false,rerunKeys:{},notifyEnabled:false,notificationPolicyKey:'',pictureRefreshAfter:0};
+    const s={node,options:{canExecute:()=>false,canNotify:()=>false,canRefreshPictures:()=>false,canAdmit:()=>true,...options,mode},identity:options.identity(),pending:new Map(),deviceNodes:new Map(),reportNodes:new Map(),devices:[],selected:new Map(),app:'',module:'',query:'',includeDrafts:false,composing:false,cursor:'',previous:[],next:'',target:'',batchId:'',batchSettled:false,busy:false,startIntent:null,uncertain:false,rerunKeys:{},releaseEnabled:false,notifyEnabled:false,notificationChannel:null,pictureRefreshAfter:0};
     state=s;const saved=read(s,'selection');if(saved&&typeof saved.app==='string'){s.app=saved.app;s.module=typeof saved.module==='string'?saved.module:'';s.target=typeof saved.target==='string'?saved.target:'';}
     s.startIntent=read(s,'pending');s.uncertain=!!s.startIntent;
-    node.classList.add('ui-simple');node.innerHTML=`<header class="ui-simple-heading"><div><p>UI 自动化</p><h1>${modes[mode]}</h1></div><button type="button" class="btn-sm" data-ui-refresh>刷新</button></header><p class="ui-simple-intro">${mode==='reports'?'这里记录你发起的每次测试，报告保留当次用例、手机和结果。':'选好用例和手机，开始后自动记录本次执行结果。'}</p><p data-ui-notice role="status"></p><button type="button" class="btn-sm" data-ui-recover hidden>核对上次提交</button><fieldset data-ui-form><div class="ui-simple-filters"><label>应用<select name="ui-app"><option value="">全部应用</option></select></label>${mode!=='reports'?'<label>模块<select name="ui-module"><option value="">全部模块</option></select></label><div class="ui-simple-search"><label for="ui-catalog-query">搜索基线 / 用例</label><div class="ui-simple-search-input"><input id="ui-catalog-query" type="search" name="ui-query" maxlength="200" placeholder="基线文件名、用例名或步骤关键词" aria-describedby="ui-catalog-search-hint"><button type="button" class="btn-sm" data-ui-search>搜索</button></div><small id="ui-catalog-search-hint">输入后自动筛选，按 Enter 或点搜索立即查找</small></div>':''}</div>${mode==='library'?'<label class="ui-simple-drafts"><input type="checkbox" data-ui-include-drafts> 显示未发布用例</label>':''}<div class="ui-simple-selection" data-ui-selected aria-label="已选择的用例"></div><div class="ui-simple-content"><section class="ui-simple-case-panel" aria-label="用例">${mode!=='reports'?'<p data-ui-case-count role="status" aria-live="polite"></p><div data-ui-cases></div>':'<div data-ui-reports></div>'}<div class="ui-simple-pages"><button type="button" class="btn-sm" data-ui-prev disabled>上一页</button><button type="button" class="btn-sm" data-ui-next disabled>下一页</button></div></section>${mode!=='reports'?'<section class="ui-simple-device-panel"><div class="ui-simple-heading"><h2>选择手机</h2><button type="button" class="btn-sm" data-ui-pictures-refresh hidden title="请求在线空闲手机采集截图，忙碌手机会跳过">刷新手机截图</button></div><p data-ui-picture-notice role="status" hidden></p><p data-ui-notify-target></p><label><input type="checkbox" data-ui-notify disabled> 自动发送本次报告到已配置飞书群</label><p data-ui-device-hint></p><div class="ui-simple-devices" data-ui-devices></div></section>':''}</div></fieldset>${mode!=='reports'?'<div class="ui-simple-submit"><span data-ui-selection-count></span><button type="button" class="btn-primary" data-ui-start disabled>开始测试</button></div>':''}<section data-ui-batch hidden aria-label="本次测试"></section>`;
+    node.classList.add('ui-simple');node.innerHTML=`<header class="ui-simple-heading"><div><p>UI 自动化</p><h1>${modes[mode]}</h1></div><button type="button" class="btn-sm" data-ui-refresh>刷新</button></header><p class="ui-simple-intro">${mode==='reports'?'这里保留每次测试的结果、步骤和截图；标记“用于发版”的测试结束后自动生成报告。':'选好用例和手机，开始后保留执行结果与截图；如需发版报告，请勾选“用于发版”。'}</p><p data-ui-notice role="status"></p><button type="button" class="btn-sm" data-ui-recover hidden>核对上次提交</button><fieldset data-ui-form><div class="ui-simple-filters"><label>应用<select name="ui-app"><option value="">全部应用</option></select></label>${mode!=='reports'?'<label>模块<select name="ui-module"><option value="">全部模块</option></select></label><div class="ui-simple-search"><label for="ui-catalog-query">搜索基线 / 用例</label><div class="ui-simple-search-input"><input id="ui-catalog-query" type="search" name="ui-query" maxlength="200" placeholder="基线文件名、用例名或步骤关键词" aria-describedby="ui-catalog-search-hint"><button type="button" class="btn-sm" data-ui-search>搜索</button></div><small id="ui-catalog-search-hint">输入后自动筛选，按 Enter 或点搜索立即查找</small></div>':''}</div>${mode==='library'?'<label class="ui-simple-drafts"><input type="checkbox" data-ui-include-drafts> 显示未发布用例</label>':''}<div class="ui-simple-selection" data-ui-selected aria-label="已选择的用例"></div><div class="ui-simple-content"><section class="ui-simple-case-panel" aria-label="用例">${mode!=='reports'?'<p data-ui-case-count role="status" aria-live="polite"></p><div data-ui-cases></div>':'<div data-ui-reports></div>'}<div class="ui-simple-pages"><button type="button" class="btn-sm" data-ui-prev disabled>上一页</button><button type="button" class="btn-sm" data-ui-next disabled>下一页</button></div></section>${mode!=='reports'?'<section class="ui-simple-device-panel"><div class="ui-simple-heading"><h2>选择手机</h2><button type="button" class="btn-sm" data-ui-pictures-refresh hidden title="请求在线空闲手机采集截图，忙碌手机会跳过">刷新手机截图</button></div><p data-ui-picture-notice role="status" hidden></p><p data-ui-device-hint></p><div class="ui-simple-devices" data-ui-devices></div><div class="ui-simple-purpose"><label><input type="checkbox" data-ui-release> 用于发版</label><p data-ui-release-hint></p><div data-ui-notify-options hidden><label><input type="checkbox" data-ui-notify> 报告生成后发送飞书通知</label><p data-ui-notify-target></p></div></div></section>':''}</div></fieldset>${mode!=='reports'?'<div class="ui-simple-submit"><span data-ui-selection-count></span><button type="button" class="btn-primary" data-ui-start disabled>开始测试</button></div>':''}<section data-ui-batch hidden aria-label="本次测试"></section>`;
     s.node.querySelector('[data-ui-recover]').hidden=!s.uncertain;
     s.node.querySelector('[data-ui-recover]').onclick=()=>start(s,true);
     if(s.uncertain)notice(s,'上次提交结果待确认，请先核对，避免重复执行。',true);
@@ -320,6 +337,7 @@
     if(mode!=='reports'){
       s.node.querySelector('[data-ui-start]').onclick=()=>start(s);
       s.node.querySelector('[data-ui-pictures-refresh]').onclick=()=>refreshPictures(s);
+      s.node.querySelector('[data-ui-release]').onchange=event=>{s.releaseEnabled=event.target.checked;if(!s.releaseEnabled)s.notifyEnabled=false;invalidateStart(s);};
       s.node.querySelector('[data-ui-notify]').onchange=event=>{s.notifyEnabled=event.target.checked;invalidateStart(s);};
       s.node.querySelector('[name="ui-module"]').onchange=event=>{s.module=event.target.value;s.cursor='';s.previous=[];remember(s);loadCatalog(s);};
       const queryInput=s.node.querySelector('[name="ui-query"]');
@@ -334,7 +352,7 @@
       const drafts=s.node.querySelector('[data-ui-include-drafts]');
       if(drafts)drafts.onchange=()=>{s.includeDrafts=drafts.checked;s.module='';s.cursor='';s.previous=[];remember(s);loadCatalog(s);};
       loadCatalog(s);if(s.app)loadDevices(s);else renderDevices(s);
-      const last=read(s,'lastBatch');if(typeof last==='string'&&/^uib_[a-zA-Z0-9_]+$/.test(last)){s.batchId=last;loadBatch(s);}
+      const last=read(s,'lastBatch');if(typeof last==='string'&&/^uib_[a-zA-Z0-9_]+$/.test(last)){selectBatch(s,last);loadBatch(s);}
     }else{
       // The execution catalog is admission-gated; rollback reads all currently scoped reports.
       if(s.options.canAdmit())request(s,'apps','/ui-executions/catalog').then(data=>{if(data){const values=(data.apps||[]).map(a=>[a.app_id,a.name]);app.replaceChildren(new Option('全部应用',''));for(const[v,l]of values)app.add(new Option(l,v));app.value=s.app;}}).catch(error=>notice(s,error.message,true));

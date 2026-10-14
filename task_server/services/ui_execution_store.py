@@ -63,7 +63,7 @@ class UiExecutionStore(UiExecutionLifecycle):
         db.execute("PRAGMA busy_timeout=10000")
         db.execute("PRAGMA foreign_keys=ON")
         version = db.execute("PRAGMA user_version").fetchone()[0]
-        if version not in (0, 1, 2, 3, 4):
+        if version not in (0, 1, 2, 3, 4, 5):
             db.close()
             raise RuntimeError("Unsupported UI execution schema version")
         if version == 0:
@@ -75,7 +75,7 @@ class UiExecutionStore(UiExecutionLifecycle):
                 app_id TEXT NOT NULL, suite_id TEXT, suite_revision TEXT,
                 idempotency_key TEXT NOT NULL, request_hash TEXT NOT NULL,
                 selection_json TEXT NOT NULL, status TEXT NOT NULL,
-                report_status TEXT NOT NULL DEFAULT 'pending',
+                report_status TEXT NOT NULL DEFAULT 'not_requested',
                 delivery_status TEXT NOT NULL DEFAULT 'pending',
                 created_ns INTEGER NOT NULL,
                 UNIQUE(owner_user_id, idempotency_key)
@@ -184,6 +184,32 @@ class UiExecutionStore(UiExecutionLifecycle):
                 db.execute("ROLLBACK")
                 db.close()
                 raise
+        if version < 5:
+            db.execute("BEGIN IMMEDIATE")
+            try:
+                if db.execute("PRAGMA user_version").fetchone()[0] < 5:
+                    db.execute("ALTER TABLE batches ADD COLUMN report_requested_ns INTEGER")
+                    db.execute("ALTER TABLE batches ADD COLUMN report_request_json TEXT NOT NULL DEFAULT '{}' ")
+                    # Earlier versions queued every execution. No historical row is
+                    # evidence of an explicit release-report request. Keep saved
+                    # revisions and existing deliveries, but stop implicit builds.
+                    db.execute("UPDATE batches SET report_status='not_requested' WHERE report_status IN ('pending','generating')")
+                    if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='ui_report_heads'").fetchone():
+                        db.execute("""UPDATE batches SET report_status='ready' WHERE report_status='not_requested'
+                            AND EXISTS (SELECT 1 FROM ui_report_heads h JOIN ui_report_snapshots r
+                              ON r.ui_batch_id=h.ui_batch_id AND r.report_revision=h.report_revision
+                              WHERE h.ui_batch_id=batches.ui_batch_id AND r.status='ready')""")
+                    db.execute("""UPDATE batches SET delivery_status='not_requested'
+                        WHERE NOT EXISTS (SELECT 1 FROM delivery_outbox d WHERE d.ui_batch_id=batches.ui_batch_id)""")
+                    db.execute("DROP INDEX IF EXISTS ui_reports_pending")
+                    db.execute("""CREATE INDEX ui_reports_pending ON batches(created_ns)
+                        WHERE execution_settled=1 AND report_status='pending' AND report_requested_ns IS NOT NULL""")
+                    db.execute("PRAGMA user_version=5")
+                db.execute("COMMIT")
+            except Exception:
+                db.execute("ROLLBACK")
+                db.close()
+                raise
         return db
 
     def create_batch(self, prepared):
@@ -198,14 +224,21 @@ class UiExecutionStore(UiExecutionLifecycle):
                 batch_id = existing["ui_batch_id"]
             else:
                 batch_id = "uib_" + uuid.uuid4().hex
+                created_ns = time.time_ns()
+                release = (prepared['selection'].get('release_report') or {}).get('enabled') is True
+                report_request = {'requested_ns':created_ns,
+                    'actor':{key:prepared['owner_'+key] for key in ('user_id','username','display_name')},
+                    'notifications':prepared['selection'].get('notifications') or {'enabled':False}} if release else {}
                 db.execute("""INSERT INTO batches(ui_batch_id, owner_user_id, owner_username, owner_display_name,
                            app_id, suite_id, suite_revision, idempotency_key, request_hash, selection_json,
-                           status, delivery_status, created_ns) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                           status, report_status, delivery_status, created_ns, report_requested_ns, report_request_json)
+                           VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                            (batch_id, prepared["owner_user_id"], prepared["owner_username"], prepared["owner_display_name"],
                             prepared["app_id"], prepared.get("suite_id"), prepared.get("suite_revision"),
                             prepared["idempotency_key"], prepared["request_hash"], _json(prepared["selection"]),
-                            "queued", "pending" if (prepared["selection"].get("notifications") or {}).get("enabled") else "not_requested",
-                            time.time_ns()))
+                            "queued", "pending" if release else "not_requested",
+                            "pending" if release and report_request['notifications'].get('enabled') else "not_requested",
+                            created_ns, created_ns if release else None, _json(report_request)))
                 snapshots = {}
                 for snapshot in prepared["snapshots"]:
                     snapshot_id = uuid.uuid4().hex
@@ -250,6 +283,7 @@ class UiExecutionStore(UiExecutionLifecycle):
                 return None
             result = dict(row)
             result["selection"] = _decoded(result.pop("selection_json"))
+            result["report_request"] = _decoded(result.pop("report_request_json"))
             result["snapshots"] = []
             for item in db.execute("SELECT * FROM snapshots WHERE ui_batch_id=? ORDER BY rowid", (batch_id,)):
                 snapshot = dict(item)
@@ -378,7 +412,7 @@ class UiExecutionStore(UiExecutionLifecycle):
                         row["runner_id"], row["device_id"], row["platform"], attempt_no, dispatch_key,
                         row["target_resolution_json"], row["compiled_case_json"], "queued"))
             self._rollup(db, batch_id)
-            db.execute("UPDATE batches SET report_status='pending' WHERE ui_batch_id=?", (batch_id,))
+            db.execute("UPDATE batches SET report_status='pending' WHERE ui_batch_id=? AND report_requested_ns IS NOT NULL", (batch_id,))
             result = self._attempt(db.execute("SELECT * FROM case_attempts WHERE dispatch_key=?", (dispatch_key,)).fetchone())
             db.execute("COMMIT")
             return result

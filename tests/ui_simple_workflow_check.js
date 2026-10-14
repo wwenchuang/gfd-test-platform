@@ -167,6 +167,37 @@ test('one report-row click opens a ready report without fetching progress',async
  assert.deepEqual(opened,['uib_1']);assert.equal(f.calls.some(c=>c.path==='/ui-executions/uib_1'),false);
  assert.match(f.node.textContent,/报告内容/);
 });
+for(const targetStatus of ['not_requested','ready','pending'])test(`switching from ordinary evidence to ${targetStatus} batch removes prior artifacts`,async t=>{
+ const rows=['a','b'].map((id,i)=>({ui_batch_id:'uib_'+id,app_id:'app.a',app_name:'测试'+id,status:'passed',execution_settled:true,report_status:i?targetStatus:'not_requested',delivery_status:'not_requested',case_attempts:[],created_ns:1000000}));
+ const f=fixture(t,path=>{
+  if(path.startsWith('/ui-executions?'))return {ok:true,items:rows};
+  const row=rows.find(row=>path.startsWith('/ui-executions/'+row.ui_batch_id));if(!row)return;
+  if(path.endsWith('/evidence'))return {ok:true,artifacts:[{artifact_id:(row===rows[0]?'a':'b').repeat(64),kind:'png'}]};
+  if(path.endsWith('/report'))return {ok:true,report:{status:row.report_status,report_revision:row.report_status==='ready'?'b-revision':null,snapshot:row.report_status==='ready'?{summary:'测试b报告',artifacts:[{artifact_id:'b'.repeat(64),kind:'png'}]}:null}};
+  return {ok:true,batch:row};
+ });f.w.eval(fs.readFileSync('js/ui-batch-view.js','utf8'));f.w.eval(fs.readFileSync('js/ui-batch-report.js','utf8'));
+ f.mount('reports',{download:async()=>{}});await wait();f.node.querySelectorAll('.ui-simple-report-row')[0].click();await wait();f.node.querySelector('[data-batch-action="report"]').click();await wait();
+ assert.ok(f.node.querySelector('[data-evidence-preview="'+'a'.repeat(64)+'"]'));
+ f.node.querySelectorAll('.ui-simple-report-row')[1].click();await wait();assert.equal(f.node.querySelector('[data-evidence-preview="'+'a'.repeat(64)+'"]'),null);
+ if(targetStatus==='ready')assert.match(f.node.querySelector('[data-ui-report-preview]').textContent,/测试b报告/);
+ else{assert.equal(f.node.querySelector('[data-ui-report-preview]').hidden,true);assert.match(f.node.querySelector('[data-ui-batch]').textContent,/测试b/);}
+});
+test('batch selection aborts an in-flight private image and discards its late bytes',async t=>{
+ const rows=['a','b'].map(id=>({ui_batch_id:'uib_'+id,app_id:'app.a',status:'passed',execution_settled:true,report_status:'not_requested',delivery_status:'not_requested',case_attempts:[]}));let resolveImage,signal,created=0;
+ const f=fixture(t,path=>path.startsWith('/ui-executions?')?{ok:true,items:rows}:path.endsWith('/evidence')?{ok:true,artifacts:[{artifact_id:'a'.repeat(64),kind:'png'}]}:path.endsWith('/report')?{ok:true,report:{status:'not_requested',snapshot:null}}:rows.some(row=>path==='/ui-executions/'+row.ui_batch_id)?{ok:true,batch:rows.find(row=>path.endsWith(row.ui_batch_id))}:undefined);
+ f.w.eval(fs.readFileSync('js/ui-batch-view.js','utf8'));f.w.eval(fs.readFileSync('js/ui-batch-report.js','utf8'));
+ f.w.HTMLDialogElement.prototype.showModal=function(){this.open=true;};f.w.HTMLDialogElement.prototype.close=function(){this.open=false;};f.w.URL.createObjectURL=()=>{created++;return 'blob:old';};f.w.URL.revokeObjectURL=()=>{};
+ f.mount('reports',{download:async()=>{},loadEvidenceImage:(path,kind,o)=>{signal=o.signal;return new Promise(r=>resolveImage=r);}});await wait();f.node.querySelectorAll('.ui-simple-report-row')[0].click();await wait();f.node.querySelector('[data-batch-action="report"]').click();await wait();f.node.querySelector('[data-evidence-preview]').click();
+ f.node.querySelectorAll('.ui-simple-report-row')[1].click();assert.equal(signal.aborted,true);assert.equal(f.node.querySelector('dialog'),null);resolveImage(new Blob(['old']));await wait();assert.equal(created,0);assert.equal(f.node.querySelector('img[src="blob:old"]'),null);
+});
+test('selecting a linked test keeps its exact revision and choosing another test abandons the old link',async t=>{
+ const rows=['a','b'].map(id=>({ui_batch_id:'uib_'+id,app_id:'app.a',status:'passed',report_status:id==='a'?'ready':'not_requested'})),opened=[],closed=[];
+ const f=fixture(t,path=>path.startsWith('/ui-executions?')?{ok:true,items:rows}:undefined);
+ f.w.UiBatchReport={mount:(node,o)=>{opened.push(o);return {refresh(){},dispose(){node.replaceChildren();}};}};
+ const intent={batchId:'uib_a',revision:'f'.repeat(64)};f.mount('reports',{download:async()=>{},reportIntent:intent,onReportClose:value=>closed.push(value)});await wait();
+ f.node.querySelectorAll('.ui-simple-report-row')[0].click();await wait();assert.equal(opened.at(-1).revision,intent.revision);assert.equal(closed.length,0);
+ f.node.querySelectorAll('.ui-simple-report-row')[1].click();await wait();assert.deepEqual(JSON.parse(JSON.stringify(closed)),[intent]);
+});
 test('parent refresh discovers a newer ready report while settled progress stays idle',async t=>{
  let now=100000,revision='rev-1';
  const f=fixture(t,path=>{
@@ -210,16 +241,55 @@ test('selected cases stay named and removable when a search hides their rows',as
  assert.match(f.node.querySelector('[data-ui-selection-count]').textContent,/已选 0/);assert.equal(f.node.querySelector('[data-ui-start]').disabled,true);
 });
 
-test('configured app destination defaults on and opt out is frozen in start intent',async t=>{
+test('ordinary execution has no notification toggle and never opts into report delivery',async t=>{
  const f=fixture(t,path=>path.startsWith('/ui-executions/catalog')?{ok:true,apps:[{app_id:'app.a',name:'应用甲',notification_channel:{ready:true,target_label:'专属群'}}],modules:[],items:[CASE],total:1}:undefined);
- await select(t,f);const toggle=f.node.querySelector('[data-ui-notify]');assert.equal(toggle.checked,true);assert.match(f.node.textContent,/专属群/);
- toggle.click();f.node.querySelector('[data-ui-start]').click();await wait();await wait();
+ await select(t,f);assert.equal(f.node.querySelector('[data-ui-notify-options]').hidden,true);assert.equal(f.node.querySelector('[data-ui-release]').checked,false);
+ f.node.querySelector('[data-ui-start]').click();await wait();await wait();
  assert.equal(f.calls.find(c=>c.path==='/ui-executions'&&c.options.method==='POST').options.body.notifications.enabled,false);
+ assert.equal(f.calls.find(c=>c.path==='/ui-executions'&&c.options.method==='POST').options.body.release_report.enabled,false);
+});
+for(const notify of [false,true])test(`release purpose opts into generation and notification only when separately selected (${notify})`,async t=>{
+ const f=fixture(t,path=>path.startsWith('/ui-executions/catalog')?{ok:true,apps:[{app_id:'app.a',name:'应用甲',notification_channel:{ready:true,target_label:'专属群'}}],modules:[],items:[CASE],total:1}:undefined);
+ await select(t,f);const release=f.node.querySelector('[data-ui-release]');release.click();await wait();
+ assert.equal(f.node.querySelector('[data-ui-notify-options]').hidden,false);assert.match(f.node.textContent,/专属群/);assert.match(f.node.textContent,/结束后自动生成/);
+ const toggle=f.node.querySelector('[data-ui-notify]');assert.equal(toggle.checked,false);if(notify)toggle.click();
+ f.node.querySelector('[data-ui-start]').click();await wait();await wait();
+ for(const req of f.calls.filter(c=>c.path==='/ui-executions/preflight'||c.path==='/ui-executions')){assert.equal(req.options.body.release_report.enabled,true);assert.equal(req.options.body.notifications.enabled,notify);}
+});
+test('turning off release purpose clears notification and selecting it again stays opted out',async t=>{
+ const f=fixture(t,path=>path.startsWith('/ui-executions/catalog')?{ok:true,apps:[{app_id:'app.a',name:'应用甲',notification_channel:{ready:true,target_label:'专属群'}}],modules:[],items:[CASE],total:1}:undefined);await select(t,f);
+ const release=f.node.querySelector('[data-ui-release]'),notify=f.node.querySelector('[data-ui-notify]');release.click();notify.click();assert.equal(notify.checked,true);release.click();
+ assert.equal(notify.checked,false);assert.equal(f.node.querySelector('[data-ui-notify-options]').hidden,true);release.click();assert.equal(notify.checked,false);
+ release.click();f.node.querySelector('[data-ui-start]').click();await wait();await wait();const body=creationPosts(f)[0].options.body;assert.equal(body.release_report.enabled,false);assert.equal(body.notifications.enabled,false);
+});
+test('release generation remains available without notification permission and rechecks a revoked permission',async t=>{
+ let allowed=true;const f=fixture(t,path=>path.startsWith('/ui-executions/catalog')?{ok:true,apps:[{app_id:'app.a',name:'应用甲',notification_channel:{ready:true,target_label:'专属群'}}],modules:[],items:[CASE],total:1}:undefined);await select(t,f,{canNotify:()=>allowed});
+ f.node.querySelector('[data-ui-release]').click();f.node.querySelector('[data-ui-notify]').click();allowed=false;
+ f.node.querySelector('[data-ui-start]').click();await wait();await wait();const body=creationPosts(f)[0].options.body;assert.equal(body.release_report.enabled,true);assert.equal(body.notifications.enabled,false);
+});
+test('uncertain release submission restores its frozen purpose and notification for an idempotent retry',async t=>{
+ let fail=true;const f=fixture(t,(path,o)=>{
+  if(path.startsWith('/ui-executions/catalog'))return {ok:true,apps:[{app_id:'app.a',name:'应用甲',notification_channel:{ready:true,target_label:'专属群'}}],modules:[],items:[CASE],total:1};
+  if(path==='/ui-executions'&&o.method==='POST'&&fail)throw new Error('网络暂时断开');
+ });await select(t,f);f.node.querySelector('[data-ui-release]').click();f.node.querySelector('[data-ui-notify]').click();f.node.querySelector('[data-ui-start]').click();await wait();await wait();
+ const original=creationPosts(f)[0];f.mount();await wait();assert.equal(f.node.querySelector('[data-ui-release]').checked,true);assert.equal(f.node.querySelector('[data-ui-notify]').checked,true);assert.equal(f.node.querySelector('[data-ui-form]').disabled,true);
+ fail=false;f.node.querySelector('[data-ui-recover]').click();await wait();await wait();const recovered=creationPosts(f)[1];assert.equal(recovered.options.headers['Idempotency-Key'],original.options.headers['Idempotency-Key']);assert.deepEqual(JSON.parse(JSON.stringify(recovered.options.body)),JSON.parse(JSON.stringify(original.options.body)));
 });
 test('notification deep link opens its cited report revision on the reports page',async t=>{
  const f=fixture(t),calls=[];f.w.UiBatchReport={mount:(node,o)=>{calls.push(o);return {refresh:()=>{},dispose:()=>{}};}};
  f.mount('reports',{download:()=>{},canNotify:()=>false,reportIntent:{batchId:'uib_link',revision:'f'.repeat(64)}});await wait();
  assert.equal(calls[0].batchId,'uib_link');assert.equal(calls[0].revision,'f'.repeat(64));assert.equal(calls[0].canNotify(),false);
+});
+test('ordinary settled batch stops progress polling and opens evidence only on explicit action',async t=>{
+ const b={ui_batch_id:'uib_new',status:'passed',execution_settled:true,report_status:'not_requested',delivery_status:'not_requested',case_attempts:[]};
+ const f=fixture(t,path=>path==='/ui-executions/uib_new'?{ok:true,batch:b}:undefined),opened=[];let actions;
+ f.w.UiBatchView={update:(node,b,handlers)=>{actions=handlers;node.textContent='实际步骤结果';}};
+ f.w.UiBatchReport={mount:(node,o)=>{opened.push(o);return {refresh:()=>{},dispose:()=>{}};}};
+ f.w.sessionStorage.setItem('ui-simple:user-a:lastBatch',JSON.stringify('uib_new'));f.mount('start',{download:()=>{}});await wait();
+ const before=f.calls.filter(c=>c.path==='/ui-executions/uib_new').length;await f.w.UiSimpleFlow.refresh();await f.w.UiSimpleFlow.refresh();
+ assert.equal(f.calls.filter(c=>c.path==='/ui-executions/uib_new').length,before);assert.equal(opened.length,0);assert.equal(f.calls.some(c=>c.path.endsWith('/evidence')),false);
+ await actions.report('uib_new');assert.equal(opened.length,1);assert.equal(actions.generateReport,undefined);
+ assert.equal(f.calls.some(c=>c.path.endsWith('/report')&&c.options.method==='POST'),false);
 });
 
 test('execution card keeps polling until final notification status arrives',async t=>{
@@ -249,11 +319,11 @@ test('manual recovery uses exact payload, refreshes conflict, and suppresses acc
 });
 
 
-test('no notify grant shows disabled unchecked policy while allowing normal opt-out execution',async t=>{
+test('no notification permission still allows ordinary execution without notification controls',async t=>{
  const f=fixture(t,path=>path.startsWith('/ui-executions/catalog')?{ok:true,apps:[{app_id:'app.a',name:'应用甲',notification_channel:{ready:true,target_label:'专属群'}}],modules:[],items:[CASE],total:1}:undefined);
  f.mount('start',{canNotify:()=>false});await wait();const app=f.node.querySelector('[name="ui-app"]');app.value='app.a';app.dispatchEvent(new f.w.Event('change'));await wait();
  f.node.querySelector('[data-case-id]').click();f.node.querySelector('[data-device-key]').click();await wait();
- const toggle=f.node.querySelector('[data-ui-notify]');assert.equal(toggle.checked,false);assert.equal(toggle.disabled,true);assert.match(f.node.textContent,/没有.*通知权限/);
+ assert.equal(f.node.querySelector('[data-ui-notify-options]').hidden,true);assert.equal(f.node.querySelector('[data-ui-release]').checked,false);
  f.node.querySelector('[data-ui-start]').click();await wait();await wait();
  assert.equal(f.calls.find(c=>c.path==='/ui-executions'&&c.options.method==='POST').options.body.notifications.enabled,false);
 });

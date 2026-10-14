@@ -24,15 +24,19 @@ def notify_env(dispatch_env, monkeypatch):
     return app
 
 
-def ready(enabled=True):
+def ready(enabled=True, key='notify'):
     from task_server.services import ui_execution_service as service, ui_batch_dispatch as dispatch, job_service, ui_batch_report_service as reports
     body=request();body['notifications']['enabled']=enabled
-    with actor_context(ACTORS['a']): batch=service.create_ui_batch(None,body,'notify')
+    body['release_report']={'enabled':True}
+    with actor_context(ACTORS['a']): batch=service.create_ui_batch(None,body,key)
     dispatch.dispatch_ui_batch(batch['ui_batch_id'])
     job=job_service.get_job(batch['case_attempts'][0]['dispatch_key']);event=dispatch.claim_ui_job(job)
     event={**event,'runner_id':'mac','device_id':'iphone','status':'passed','execution_stopped':True,'type':'result'}
     dispatch.record_ui_attempt_event(job['job_id'],1,event)
-    with actor_context(ACTORS['a']): report=reports.build_ui_batch_report(None,batch['ui_batch_id'])
+    with actor_context(ACTORS['a']):
+        reports.request_ui_batch_report(None,batch['ui_batch_id'],{'notifications':{'enabled':enabled}})
+        report=reports.build_ui_batch_report(None,batch['ui_batch_id'])
+        batch=service.get_ui_batch(None,batch['ui_batch_id'])
     return batch,report,job,event
 
 
@@ -49,6 +53,7 @@ def test_configured_destination_is_frozen_without_secret_and_idempotent(notify_e
     assert 'https:' not in json.dumps(policy)
     notify_env['feishu_webhook']='https://example.invalid/changed'
     body=request();body['notifications']['enabled']=True
+    body['release_report']={'enabled':True}
     with actor_context(ACTORS['a']): again=create_ui_batch(None,body,'notify')
     assert again['selection']==batch['selection']
     assert enqueue(batch,report)['delivery_key']==enqueue(batch,report)['delivery_key']
@@ -190,11 +195,7 @@ def test_opt_out_never_enqueues_and_worker_does_not_block_dispatch(notify_env,mo
     batch,report,_,_=ready(False)
     assert notify.enqueue_ready_batch_deliveries(10)==0
     with pytest.raises(ValueError,match='notification_not_requested'):enqueue(batch,report)
-    db=notify.UiExecutionStore()._connect()
-    try:
-        selection=batch['selection'];selection['notifications']['enabled']=True
-        db.execute("UPDATE batches SET selection_json=?,delivery_status='pending' WHERE ui_batch_id=?",(json.dumps(selection),batch['ui_batch_id']))
-    finally:db.close()
+    ready(True, key='notify-enabled')
     entered,release=threading.Event(),threading.Event()
     def send(*a,**k):entered.set();assert release.wait(3);return {'code':0}
     monkeypatch.setattr(feishu_service,'send_feishu_card',send);monkeypatch.setattr(notify,'_WORKER',None)
@@ -275,13 +276,16 @@ def test_schema_v2_upgrade_preserves_snapshots_leases_and_delivery_rows(notify_e
         db.execute('DROP TABLE delivery_outbox')
         db.execute('CREATE TABLE delivery_outbox(delivery_key TEXT PRIMARY KEY,ui_batch_id TEXT NOT NULL REFERENCES batches(ui_batch_id),channel_id TEXT NOT NULL,report_revision TEXT NOT NULL,status TEXT NOT NULL,due_ns INTEGER NOT NULL,attempts INTEGER NOT NULL DEFAULT 0)')
         db.execute('INSERT INTO delivery_outbox VALUES(?,?,?,?,?,?,?)',(delivery['delivery_key'],batch['ui_batch_id'],delivery['channel_id'],report['report_revision'],'pending',time.time_ns(),0))
+        db.execute('DROP INDEX ui_reports_pending')
+        db.execute('ALTER TABLE batches DROP COLUMN report_requested_ns')
+        db.execute('ALTER TABLE batches DROP COLUMN report_request_json')
         db.execute('PRAGMA user_version=2')
     finally:db.close()
     before=UiExecutionStore().get_batch(batch['ui_batch_id'])
     assert before['snapshots']==batch['snapshots'] and before['selection']==batch['selection']
     db=UiExecutionStore()._connect()
     try:
-        assert db.execute('PRAGMA user_version').fetchone()[0]==4
+        assert db.execute('PRAGMA user_version').fetchone()[0]==5
         assert db.execute('SELECT count(*) FROM delivery_outbox').fetchone()[0]==1
         assert db.execute('SELECT manual_retries FROM delivery_outbox').fetchone()[0]==0
     finally:db.close()
@@ -307,6 +311,9 @@ def test_v2_inflight_migration_does_not_retry_unknown_outcome(notify_env):
         db.execute('DROP TABLE delivery_outbox')
         db.execute('CREATE TABLE delivery_outbox(delivery_key TEXT PRIMARY KEY,ui_batch_id TEXT NOT NULL REFERENCES batches(ui_batch_id),channel_id TEXT NOT NULL,report_revision TEXT NOT NULL,status TEXT NOT NULL,due_ns INTEGER NOT NULL,attempts INTEGER NOT NULL DEFAULT 0)')
         db.execute('INSERT INTO delivery_outbox VALUES(?,?,?,?,?,?,?)',('v2',batch['ui_batch_id'],batch['selection']['notifications']['channel_id'],report['report_revision'],'sending',time.time_ns(),1))
+        db.execute('DROP INDEX ui_reports_pending')
+        db.execute('ALTER TABLE batches DROP COLUMN report_requested_ns')
+        db.execute('ALTER TABLE batches DROP COLUMN report_request_json')
         db.execute('PRAGMA user_version=2')
     finally:db.close()
     db=UiExecutionStore()._connect()

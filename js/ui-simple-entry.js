@@ -98,7 +98,7 @@ function showUiSimpleWorkflow(){
     download:downloadUiBatchFile,copy:async text=>{if(!await copyText(text))throw new Error('复制未完成，请重试');}
   });
   // Keep the exact internal link through loading, errors, refresh and reauthentication.
-  // Only an explicit close or workflow departure abandons it.
+  // Only an explicit close, selecting another test, or workflow departure abandons it.
   return true;
 }
 async function loadUiBatchImage(path,kind,{signal}={}){

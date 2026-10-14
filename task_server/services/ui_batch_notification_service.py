@@ -67,7 +67,8 @@ def enqueue_batch_delivery(batch_id, report_revision, channel_id):
     store = UiExecutionStore()
     batch = store.get_batch(batch_id)
     if not batch: raise FileNotFoundError('batch_not_found')
-    policy = batch['selection'].get('notifications') or {}
+    policy = (batch.get('report_request') or {}).get('notifications') or {}
+    if batch.get('report_requested_ns') is None: raise ValueError('notification_not_requested')
     if not policy.get('enabled'): raise ValueError('notification_not_requested')
     if channel_id != policy.get('channel_id', 'unconfigured'): raise ValueError('channel_changed')
     key = hashlib.sha256(json.dumps([batch_id,report_revision,channel_id],separators=(',',':')).encode()).hexdigest()
@@ -91,17 +92,17 @@ def enqueue_ready_batch_deliveries(limit=20):
     db = _connect()
     try:
         # Bound every query. Existing identity suppresses repeated terminal callbacks.
-        rows = db.execute("""SELECT b.ui_batch_id,b.selection_json,h.report_revision FROM batches b
+        rows = db.execute("""SELECT b.ui_batch_id,b.report_request_json,h.report_revision FROM batches b
             JOIN ui_report_heads h ON h.ui_batch_id=b.ui_batch_id
             JOIN ui_report_snapshots r ON r.ui_batch_id=h.ui_batch_id AND r.report_revision=h.report_revision
             WHERE b.execution_settled=1 AND b.report_status='ready' AND b.delivery_status='pending' AND r.status='ready'
-              AND json_extract(b.selection_json,'$.notifications.enabled')=1
+              AND b.report_requested_ns IS NOT NULL AND json_extract(b.report_request_json,'$.notifications.enabled')=1
               AND NOT EXISTS(SELECT 1 FROM delivery_outbox d WHERE d.ui_batch_id=b.ui_batch_id
-                AND d.report_revision=h.report_revision AND d.channel_id=coalesce(json_extract(b.selection_json,'$.notifications.channel_id'),'unconfigured'))
+                AND d.report_revision=h.report_revision AND d.channel_id=coalesce(json_extract(b.report_request_json,'$.notifications.channel_id'),'unconfigured'))
             ORDER BY b.created_ns LIMIT ?""",(max(1,min(int(limit),50)),)).fetchall()
     finally: db.close()
     for row in rows:
-        policy=json.loads(row['selection_json']).get('notifications') or {}
+        policy=json.loads(row['report_request_json']).get('notifications') or {}
         enqueue_batch_delivery(row['ui_batch_id'],row['report_revision'],policy.get('channel_id','unconfigured'))
     return len(rows)
 
@@ -135,8 +136,16 @@ def _target(batch, channel_id):
     if (not profile or profile.get('user_id')!=batch['owner_user_id'] or profile.get('status')!='active'
             or profile.get('must_change_password') or 'ui.view' not in (profile.get('permissions') or [])
             or 'ui.execute' not in (profile.get('permissions') or [])
-            or 'platform.notify' not in (profile.get('permissions') or [])
             or ((profile.get('scope') or {}).get('ui_apps')!='*' and batch['app_id'] not in ((profile.get('scope') or {}).get('ui_apps') or []))):
+        raise ValueError('owner_access_revoked')
+    # The executor remains frozen. A later report requester authorizes sending;
+    # legacy queued deliveries retain their original owner's authorization.
+    requester=(batch.get('report_request') or {}).get('actor') or {'username':batch['owner_username'],'user_id':batch['owner_user_id']}
+    sender=identity.get_access_profile(requester['username'])
+    if (not sender or sender.get('user_id')!=requester['user_id'] or sender.get('status')!='active'
+            or sender.get('must_change_password') or 'platform.notify' not in (sender.get('permissions') or [])
+            or 'ui.view' not in (sender.get('permissions') or [])
+            or ((sender.get('scope') or {}).get('ui_apps')!='*' and batch['app_id'] not in ((sender.get('scope') or {}).get('ui_apps') or []))):
         raise ValueError('owner_access_revoked')
     app=business_line_service.configured_test_application(batch['app_id'])
     if not app or not app.get('enabled') or app.get('historical_only'): raise ValueError('app_unavailable')
@@ -228,8 +237,9 @@ def get_batch_deliveries(actor,batch_id,revision=None):
     try:
         rows=db.execute('SELECT * FROM delivery_outbox WHERE ui_batch_id=?'+(' AND report_revision=?' if revision else '')+' ORDER BY rowid DESC LIMIT 50',
                         (batch_id,revision) if revision else (batch_id,)).fetchall()
-        return {'items':[_public(row) for row in rows], 'policy':batch['selection'].get('notifications') or {'enabled':False},
-                'delivery_status':(rows[0]['status'] if rows else ('pending' if batch['selection'].get('notifications',{}).get('enabled') else 'not_requested')) if revision else batch['delivery_status']}
+        policy=(batch.get('report_request') or {}).get('notifications') or (batch['selection'].get('notifications') if rows else None) or {'enabled':False}
+        return {'items':[_public(row) for row in rows], 'policy':policy,
+                'delivery_status':(rows[0]['status'] if rows else ('pending' if policy.get('enabled') else 'not_requested')) if revision else batch['delivery_status']}
     finally: db.close()
 
 

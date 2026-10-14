@@ -33,7 +33,8 @@ def test_recovery_durable_identity_revokes_claim_and_is_idempotent(dispatch_env)
     saved = recover(batch)
     a = saved['case_attempts'][0]
     assert a['status'] == 'interrupted' and a['stop_confirmed'] and not a['stop_pending']
-    assert saved['execution_settled'] and saved['report_status'] == 'pending'
+    assert saved['execution_settled'] and saved['report_status'] == 'not_requested'
+    assert saved['report_requested_ns'] is None and saved['delivery_status'] == 'not_requested'
     assert a['manual_stop_recovery']['actor_user_id'] == 'u-a'
     assert a['manual_stop_recovery']['job_id'] == job['job_id']
     assert a['manual_stop_recovery']['device_id'] == 'iphone'
@@ -200,9 +201,13 @@ def test_schema3_upgrade_preserves_artifact_frozen_report_and_outbox(dispatch_en
     db=r._connect()
     db.execute("INSERT INTO ui_report_snapshots(ui_batch_id,report_revision,snapshot_json,created_ns,status,markdown) VALUES(?,?,?,?,?,?)",(batch['ui_batch_id'],'old-revision','{}',1,'ready',b'frozen'))
     db.execute("INSERT INTO delivery_outbox(delivery_key,ui_batch_id,channel_id,report_revision,status,due_ns) VALUES(?,?,?,?,?,?)",('old-delivery',batch['ui_batch_id'],'old-channel','old-revision','sent',1))
-    db.execute('DROP TABLE ui_manual_stop_recoveries');db.execute('PRAGMA user_version=3');db.close()
+    db.execute('DROP TABLE ui_manual_stop_recoveries')
+    db.execute('DROP INDEX ui_reports_pending')
+    db.execute('ALTER TABLE batches DROP COLUMN report_requested_ns')
+    db.execute('ALTER TABLE batches DROP COLUMN report_request_json')
+    db.execute('PRAGMA user_version=3');db.close()
     db=r._connect()
-    assert db.execute('PRAGMA user_version').fetchone()[0]==4
+    assert db.execute('PRAGMA user_version').fetchone()[0]==5
     assert db.execute('SELECT markdown FROM ui_report_snapshots').fetchone()[0]==b'frozen'
     assert db.execute('SELECT content FROM ui_report_artifacts WHERE artifact_id=?',(artifact['artifact_id'],)).fetchone()[0]==b'prior html'
     assert db.execute('SELECT status FROM delivery_outbox').fetchone()[0]=='sent'

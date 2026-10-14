@@ -44,6 +44,7 @@ _UI_BATCH_ACTIONS = {
     "POST.post_ui_execution_action.rerun": "rerun",
     "POST.post_ui_execution_confirm_stop": "confirm_stop",
     "GET.get_ui_batch_report": "report_view", "POST.post_ui_batch_report": "report_generate",
+    "GET.get_ui_batch_evidence": "evidence_view",
     "GET.get_ui_batch_report_download": "report_download", "GET.get_ui_batch_summary": "summary",
     "GET.get_ui_batch_artifact": "artifact_download", "GET.get_ui_batch_deliveries": "notification_status",
     "POST.retry_ui_batch_delivery": "notification_retry",

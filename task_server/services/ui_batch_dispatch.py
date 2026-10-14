@@ -302,15 +302,14 @@ def rerun_ui_batch(actor, batch_id, scope, idempotency_key):
         raise ValueError('rerun_empty')
     snapshots = [s for s in batch['snapshots'] if any(a['snapshot_id'] == s['snapshot_id'] for a in selected)]
     from .operation_attribution import current_actor
-    notifications = {**(batch['selection'].get('notifications') or {'enabled':False})}
-    if 'platform.notify' not in (profile.get('permissions') or []):
-        notifications['enabled'] = False
+    # A rerun is a new test, not a new release request or notification consent.
+    notifications = {**(batch['selection'].get('notifications') or {}),'enabled':False}
     prepared = {'owner_user_id':profile['user_id'],'owner_username':profile['username'],
         'owner_display_name':current_actor()['display_name'],'app_id':batch['app_id'],
         'suite_id':batch['suite_id'],'suite_revision':batch['suite_revision'],
         'idempotency_key':_identifier(idempotency_key,'idempotency_key_invalid'),
         'request_hash':_request_hash({'rerun_of':batch_id,'scope':scope}),
-        'selection':{**batch['selection'],'notifications':notifications,'rerun_of':batch_id,'scope':scope},'snapshots':snapshots,
+        'selection':{**batch['selection'],'notifications':notifications,'release_report':{'enabled':False},'rerun_of':batch_id,'scope':scope},'snapshots':snapshots,
         'attempts':[{'case_id':a['case_id'],'case_revision':a['case_revision'],
             'target':{k:a[k] for k in ('runner_id','device_id','platform')},
             'target_resolution':a['target_resolution'],'compiled_case':a['compiled_case']} for a in selected]}

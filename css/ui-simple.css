@@ -69,6 +69,11 @@
 .ui-simple-search small{font-size:12px;color:#91a5ba;font-weight:400}
 .ui-simple .ui-simple-drafts{display:flex;align-items:center;gap:8px;margin:14px 0 0;font-size:13px;color:#a8b6c7}
 .ui-simple-drafts input{width:16px;height:16px}
+.ui-simple-purpose{margin-top:16px;padding:14px;border:1px solid #34495e;border-radius:8px;background:#13202e}
+.ui-simple-purpose label{display:flex;align-items:center;gap:8px;font-size:14px;line-height:1.6}
+.ui-simple-purpose input{width:17px;height:17px;flex:none;accent-color:#27bed0}
+.ui-simple-purpose p{font-size:12px;line-height:1.6;color:#a8b6c7;margin:8px 0 0}
+.ui-simple-purpose [data-ui-notify-options]{margin-top:12px;padding-top:12px;border-top:1px solid #34495e}
 .ui-simple-filters input,.ui-simple-filters select{width:100%;box-sizing:border-box;min-height:42px;min-width:0;background:#0a1420;border:1px solid #40536a;border-radius:6px;color:#e8edf5;padding:8px 11px;font-size:14px}
 .ui-simple :is(button,input,select):focus-visible{outline:2px solid #58d5e6;outline-offset:3px}
 .ui-simple :is(button,input,select):disabled{cursor:not-allowed}

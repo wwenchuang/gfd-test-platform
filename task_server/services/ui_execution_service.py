@@ -13,7 +13,7 @@ from .ui_execution_store import BatchConflict, UiExecutionStore, default_db_path
 
 _REVISION = re.compile(r"^[0-9a-f]{64}$")
 _REFERENCE = re.compile(r"^[A-Za-z0-9_.:-]{1,128}$")
-_REQUEST_KEYS = {"app_id", "cases", "targets", "suite_id", "suite_revision", "test_data_refs", "notifications"}
+_REQUEST_KEYS = {"app_id", "cases", "targets", "suite_id", "suite_revision", "test_data_refs", "notifications", "release_report"}
 
 
 class BatchValidationError(ValueError):
@@ -69,6 +69,11 @@ def _normalize_request(request):
     notifications = request.get("notifications", {"enabled": False})
     if not isinstance(notifications, dict) or set(notifications) != {"enabled"} or type(notifications.get("enabled")) is not bool:
         raise BatchValidationError("notifications_invalid")
+    release_report = request.get("release_report", {"enabled": False})
+    if not isinstance(release_report, dict) or set(release_report) != {"enabled"} or type(release_report.get("enabled")) is not bool:
+        raise BatchValidationError("release_report_invalid")
+    if notifications["enabled"] and not release_report["enabled"]:
+        raise BatchValidationError("notifications_require_release_report")
     suite_id = request.get("suite_id")
     suite_revision = request.get("suite_revision")
     if (suite_id is None) != (suite_revision is None):
@@ -78,7 +83,8 @@ def _normalize_request(request):
         suite_revision = _identifier(suite_revision, "suite_invalid")
     return {"app_id": app_id, "cases": normalized_cases, "targets": normalized_targets,
             "suite_id": suite_id, "suite_revision": suite_revision,
-            "test_data_refs": references, "notifications": {"enabled": notifications["enabled"]}}
+            "test_data_refs": references, "notifications": {"enabled": notifications["enabled"]},
+            "release_report": {"enabled": release_report["enabled"]}}
 
 
 def _request_hash(request):
@@ -104,17 +110,28 @@ def _authorize_notifications(actor, normalized):
 def create_ui_batch(actor, request, idempotency_key):
     """Freeze selected shared baselines and dispatch intents without creating jobs."""
     _require_ui_admission()
-    normalized = _normalize_request(request)
-    profile = require_ui_actor(actor, app_id=normalized["app_id"])
-    _authorize_notifications(actor, normalized)
+    if not isinstance(request,dict):
+        raise BatchValidationError('request_invalid')
+    profile = require_ui_actor(actor, app_id=_identifier(request.get('app_id'),'app_required'))
     key = _identifier(idempotency_key, "idempotency_key_invalid")
-    request_hash = _request_hash(normalized)
     store = _store()
     prior = store.find_idempotent(profile["user_id"], key)
+    if prior and 'release_report' not in request:
+        # A pre-upgrade browser may retry an unknown submission. Validate every
+        # old field, then compare its exact old normalized digest. This branch
+        # reads a receipt only: it never creates intent or reauthorizes delivery.
+        legacy = _normalize_request({**request,'release_report':{'enabled':True}})
+        legacy.pop('release_report')
+        if prior['request_hash'] == _request_hash(legacy):
+            return get_ui_batch(actor,prior['ui_batch_id'])
+    normalized = _normalize_request(request)
+    request_hash = _request_hash(normalized)
     if prior:
         if prior["request_hash"] != request_hash:
             raise BatchConflict("idempotency_conflict")
-        return store.get_batch(prior["ui_batch_id"])
+        _authorize_notifications(actor,normalized)
+        return get_ui_batch(actor,prior['ui_batch_id'])
+    _authorize_notifications(actor,normalized)
     return store.create_batch(_prepare_ui_batch(actor, normalized, profile, key, request_hash))
 
 
