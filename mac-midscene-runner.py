@@ -1177,6 +1177,57 @@ def ios_execution_readiness(device_id, force=False):
     return dict(result)
 
 
+def parse_battery_state(text):
+    def number(name):
+        match = re.search(rf"(?m)^\s*{re.escape(name)}:\s*(-?\d+)", text or "")
+        return int(match.group(1)) if match else None
+    level = number("level")
+    temperature = number("temperature")
+    return {
+        "battery_level": level,
+        "battery_temperature_c": round(temperature / 10.0, 1) if temperature is not None else None,
+    }
+
+
+def parse_screen_on(text):
+    value = str(text or "").upper()
+    if re.search(r"(?:STATE|SCREEN_STATE)\s*=\s*OFF", value):
+        return False
+    if re.search(r"(?:STATE|SCREEN_STATE)\s*=\s*ON", value):
+        return True
+    return None
+
+
+def capture_screen_png(adb_bin, device_id, run=None, max_bytes=12 * 1024 * 1024):
+    # Match the Windows Runner's bounded, explicitly targeted binary capture.
+    result = (run or subprocess.run)([adb_bin, "-s", device_id, "exec-out", "screencap", "-p"],
+                                    capture_output=True, timeout=15)
+    content = result.stdout or b""
+    if getattr(result, "returncode", 0) != 0:
+        raise RuntimeError("ADB 截图失败")
+    if not content.startswith(b"\x89PNG\r\n\x1a\n"):
+        raise RuntimeError("ADB 未返回有效 PNG 截图")
+    if len(content) > max_bytes:
+        raise RuntimeError("手机截图超过 12MB 限制")
+    return content
+
+
+def capture_device_snapshot(adb_bin, device_id):
+    battery = parse_battery_state(adb_shell_text(adb_bin, device_id, "dumpsys", "battery", timeout=5))
+    display = adb_shell_text(adb_bin, device_id, "dumpsys", "display", timeout=5)
+    activity = adb_shell_text(adb_bin, device_id, "dumpsys", "window", "windows", timeout=6)
+    foreground = ""
+    match = re.search(r"mCurrentFocus=.*?\s([A-Za-z0-9._]+)/(?:[A-Za-z0-9._$]+)", activity)
+    if match:
+        foreground = match.group(1)
+    return {
+        **battery,
+        "screen_on": parse_screen_on(display),
+        "foreground_package": foreground,
+        "content_base64": base64.b64encode(capture_screen_png(adb_bin, device_id)).decode("ascii"),
+    }
+
+
 def capture_ios_device_snapshot(device_id):
     if not device_id or device_id not in ios_connected_device_ids():
         raise ValueError("截图设备不在当前 USB 连接列表中")
@@ -1199,13 +1250,14 @@ def capture_ios_device_snapshot(device_id):
 
 
 def upload_snapshot_requests(response, devices):
-    if RUNNER_PLATFORM != "ios":
+    if RUNNER_PLATFORM not in ("ios", "android"):
         return
     requests = response.get("snapshot_requests", []) if isinstance(response, dict) else []
     if not isinstance(requests, list):
         return
     available = {item.get("device_id") for item in devices if item.get("status", "online") == "online"}
     seen = set()
+    adb_bin = None
     for request in requests:
         if not isinstance(request, dict) or not request.get("request_id"):
             continue
@@ -1216,10 +1268,16 @@ def upload_snapshot_requests(response, devices):
         payload = {"runner_id": RUNNER_ID, "device_id": device_id, "request_id": request["request_id"]}
         try:
             if device_id not in available:
-                raise RuntimeError("所选 iPhone 已离线或不属于此 Runner")
-            payload.update(capture_ios_device_snapshot(device_id))
+                raise RuntimeError("所选设备已离线或不属于此 Runner")
+            if RUNNER_PLATFORM == "ios":
+                payload.update(capture_ios_device_snapshot(device_id))
+            else:
+                if adb_bin is None:
+                    adb_bin, _ = resolve_adb_with_devices(require_devices=False)
+                payload.update(capture_device_snapshot(adb_bin, device_id))
         except Exception:
-            payload["error"] = "iOS 当前画面采集失败，请检查 USB 连接、手机解锁及 WDA 服务"
+            payload["error"] = ("iOS 当前画面采集失败，请检查 USB 连接、手机解锁及 WDA 服务" if RUNNER_PLATFORM == "ios"
+                                else "Android 当前画面采集失败，请检查 USB 连接、ADB 授权及手机状态")
         http_json("POST", "/api/runner/device-snapshot", payload, timeout=15)
 
 
@@ -1275,6 +1333,7 @@ def detect_devices():
         preflight_ok = bool(adb_bin and device_id)
         devices.append({
             "device_id": device_id,
+            "platform": "android",
             "status": "online",
             "brand": brand,
             "model": model,

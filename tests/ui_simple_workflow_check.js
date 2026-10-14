@@ -99,6 +99,50 @@ test('device refresh retains the explicit offline phone instead of selecting ano
  await f.w.UiSimpleFlow.refresh();assert.equal(f.node.querySelector('[data-device-key]'),input);assert.equal(input.checked,true);assert.equal(input.disabled,true);
  assert.equal(f.node.querySelector('[data-ui-start]').disabled,true);assert.equal(f.w.document.activeElement,input);
 });
+test('moving the selected physical phone to another runner requires explicit reselection',async t=>{
+ const f=fixture(t);await select(t,f);
+ const old=f.node.querySelector('[data-device-key]');
+ f.setDevices([{...DEVICE,target:{...DEVICE.target,runner_id:'mac-new'}}]);
+ await f.w.UiSimpleFlow.refresh();
+ const inputs=f.node.querySelectorAll('[data-device-key]');assert.equal(inputs.length,1);assert.equal(old.isConnected,false);
+ assert.equal(inputs[0].checked,false);assert.equal(f.node.querySelector('[data-ui-start]').disabled,true);
+ assert.match(f.node.querySelector('[data-ui-notice]').textContent,/连接已变化.*重新选择/);
+ assert.equal(JSON.parse(f.w.sessionStorage.getItem('ui-simple:user-a:selection')).target,'');
+ assert.equal(f.calls.some(c=>c.path==='/ui-executions/preflight'),false);
+ inputs[0].click();await wait();f.node.querySelector('[data-ui-start]').click();await wait();await wait();
+ const post=creationPosts(f)[0];assert.equal(post.options.body.targets[0].runner_id,'mac-new');
+});
+test('missing phone with a different serial replacement stays unavailable and retains the original selection',async t=>{
+ const f=fixture(t);await select(t,f);const old=f.node.querySelector('[data-device-key]');
+ f.setDevices([{...DEVICE,target:{...DEVICE.target,device_id:'different-serial'}}]);await f.w.UiSimpleFlow.refresh();
+ assert.equal(old.isConnected,true);assert.equal(old.checked,true);assert.equal(old.disabled,true);
+ assert.equal(f.node.querySelector('[data-ui-start]').disabled,true);assert.doesNotMatch(f.node.querySelector('[data-ui-notice]').textContent,/连接已变化/);
+});
+test('moving a phone cannot rewrite an uncertain submitted target or idempotency key',async t=>{
+ let attempts=0;const f=fixture(t,(path,o)=>path==='/ui-executions'&&o.method==='POST'&&++attempts===1?Promise.reject(new Error('断线')):undefined);
+ await select(t,f);f.node.querySelector('[data-ui-start]').click();await wait();await wait();
+ const original=JSON.parse(f.w.sessionStorage.getItem('ui-simple:user-a:pending'));
+ f.setDevices([{...DEVICE,target:{...DEVICE.target,runner_id:'new-host'}}]);await f.w.UiSimpleFlow.refresh();
+ assert.deepEqual(JSON.parse(f.w.sessionStorage.getItem('ui-simple:user-a:pending')),original);
+ f.node.querySelector('[data-ui-recover]').click();await wait();await wait();
+ assert.equal(creationPosts(f)[1].options.body.targets[0].runner_id,'mac');
+ assert.equal(creationPosts(f)[1].options.headers['Idempotency-Key'],creationPosts(f)[0].options.headers['Idempotency-Key']);
+});
+test('remembered target moved before page load is cleared without selecting its replacement',async t=>{
+ const f=fixture(t);f.w.sessionStorage.setItem('ui-simple:user-a:selection',JSON.stringify({app:'app.a',target:JSON.stringify(['old-host','iphone','ios'])}));
+ f.mount();await wait();await wait();
+ assert.equal(f.node.querySelector('[data-device-key]').checked,false);
+ assert.equal(JSON.parse(f.w.sessionStorage.getItem('ui-simple:user-a:selection')).target,'');
+ assert.match(f.node.querySelector('[data-ui-notice]').textContent,/连接已变化.*重新选择/);
+});
+test('two online connections show runner identity and retain each exact target',async t=>{
+ const f=fixture(t);f.setDevices([DEVICE,{...DEVICE,target:{...DEVICE.target,runner_id:'second-host'}}]);await select(t,f);
+ const cards=f.node.querySelectorAll('.ui-simple-device');assert.equal(cards.length,2);
+ assert.match(cards[0].textContent,/执行机器：mac/);assert.match(cards[1].textContent,/执行机器：second-host/);
+ assert.match(cards[0].textContent,/多个在线连接/);
+ cards[1].querySelector('input').click();await wait();f.node.querySelector('[data-ui-start]').click();await wait();await wait();
+ assert.equal(creationPosts(f)[0].options.body.targets[0].runner_id,'second-host');
+});
 test('device refresh failure hides a previously visible image',async t=>{
  let fail=false;const f=fixture(t,path=>path.startsWith('/ui-executions/devices')&&fail?Promise.reject(new Error('权限已变化')):undefined);
  f.setDevices([{...DEVICE,app_id:'app.a',snapshot_url:'/api/runner/device-snapshot?runner_id=mac&device_id=iphone&app_id=app.a',snapshot_captured_at:'1'}]);

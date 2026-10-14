@@ -24,4 +24,21 @@
 
 ## 线上验收
 
-待部署后补记健康接口精确版本、资源字节、目录数量/草稿筛选、发版默认值与历史截图报告。不得将本地fixture写为实机验收。
+- 用户随后自行部署成功，root停止重复部署。实际health release_revision=421d718025e4ac5a2bb45969484822d8869d0404；7个HTML/JS/CSS文件字节与候选精确一致。备用51901字节bundle已在本地校验，但未上传、未执行第二次部署。
+- Chrome用例库默认搜索“基线”14条；勾选显示未发布用例19条，取消回14条。搜索按钮查不存在词0条；Enter及清空恢复15条已发布目录。原5条草稿不再混入默认结果。
+- “用于发版”默认false，通知选项隐藏；勾选用途后通知显示且false，勾选通知再取消用途，两者都回false。第一次浏览器断言用getByRole检查隐藏控件超时，改成正确定位后通过，属于验证脚本定位错误，非产品失败。
+- 历史第三轮报告uib_b0202cd57fa74ff89bf9380da1c752de仍ready，中文版本/执行人/时间/场景完整；实际第一张图片加载1170×2532，截图见/tmp/codex-release-report-20261014/live-old-preview.png。
+- 设备换线期间短暂fetch失败、iPhone退出列表；用户明确已拔iPhone换安卓并要求接入Mac。后续实际报告用途验收与安卓接入计划分开记录，不把隔离fixture当实机通过。
+
+## Mac 安卓实机用途验收
+
+用户换线后明确要求先接入Mac安卓。独立Runner mac-android-adouceshi/ecbfd645 已用新脚本完成真实平台任务：
+
+|用途|批次|真实结果|正式报告|通知|
+|---|---|---|---|---|
+|普通|uib_e383b988a9c64c91bd5010b78b2e4747|首次6/6通过，停止已确认|not_requested，截图与静态原始附件保留|not_requested|
+|用于发版|uib_3ff2061f8c7b4a5699fe240460ccd4f8|首次6/6通过，45.83秒，停止已确认|ready，安卓2.0.0（51）/管理员/17:09:10–17:09:56/导航覆盖场景|not_requested|
+
+源基线AI测试/跨端导航验收20261013.yaml revision55aac2e5c87eb76d213b4e5e928f4a007651ed3e5e5a9e08295ffc630f5b0790未修改，动作只启动/我的/首页/断言。普通截图实际Chrome打开1080×2412，/tmp/codex-release-report-20261014/android-ordinary-preview.png可见真实首页。没有把普通原始HTML证据当正式发版报告。
+
+Mac安装/启动/停止/状态说明在 /Users/adouceshi/Applications/MidsceneAndroid/INSTALL.md；独立配置0600，凭据不入仓库。本版Mac安卓预览/平台字段回归197项，root相关最终组合137Python/157Node及静态/语法通过。当前旧Windows离线来源尚需列表去重补丁部署；未删除旧Runner或历史任务。

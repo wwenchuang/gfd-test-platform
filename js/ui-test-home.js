@@ -153,12 +153,20 @@
     s.node.querySelector('[data-ui-devices]').replaceChildren();invalidateStart(s);remember(s);loadCatalog(s);loadDevices(s);
   }
   function renderDevices(s){
-    const host=s.node.querySelector('[data-ui-devices]'),keep=new Set();
+    const host=s.node.querySelector('[data-ui-devices]'),keep=new Set(),connections=new Map();
+    for(const d of s.devices){if(d.connection_status==='offline')continue;const physical=JSON.stringify([d.target.platform,d.target.device_id]);connections.set(physical,(connections.get(physical)||0)+1);}
+    if(s.target&&!s.busy&&!s.uncertain&&!s.devices.some(d=>keyOf(d.target)===s.target)){
+      let selected;try{selected=JSON.parse(s.target);}catch(_){/* Old saved selection remains unavailable. */}
+      if(Array.isArray(selected)&&selected.length===3&&s.devices.some(d=>d.target.platform===selected[2]&&d.target.device_id===selected[1]&&d.connection_status!=='offline')){
+        s.target='';s.startIntent=null;remember(s);
+        notice(s,'所选手机的连接已变化，请重新选择当前执行机器。',true);
+      }
+    }
     for(const d of s.devices){
       const key=keyOf(d.target);keep.add(key);let card=s.deviceNodes.get(key);
       if(!card){
         card=document.createElement('label');card.className='ui-simple-device';
-        card.innerHTML='<input type="radio" name="ui-device"><span class="ui-simple-preview"><img hidden><small data-picture-fallback>暂无截图</small></span><span class="ui-simple-device-info"><strong data-phone-name></strong><span data-phone-version></span><small data-phone-state></small><small data-phone-captured></small></span>';
+        card.innerHTML='<input type="radio" name="ui-device"><span class="ui-simple-preview"><img hidden><small data-picture-fallback>暂无截图</small></span><span class="ui-simple-device-info"><strong data-phone-name></strong><span data-phone-version></span><small data-phone-state></small><small data-phone-connection></small><small data-phone-captured></small></span>';
         const input=card.querySelector('input');input.dataset.deviceKey=key;input.onchange=()=>{if(s.busy||s.uncertain)return;s.target=key;invalidateStart(s);remember(s);};
         s.deviceNodes.set(key,card);host.append(card);
       }
@@ -166,6 +174,8 @@
       card.querySelector('[data-phone-name]').textContent=d.name;
       card.querySelector('[data-phone-version]').textContent=`${d.target.platform==='ios'?'iOS':'Android'} ${d.os_version||''} · 应用 ${d.app_version||'版本未上报'}`;
       card.querySelector('[data-phone-state]').textContent=labels[d.connection_status]||'设备状态待确认';
+      const connection=card.querySelector('[data-phone-connection]'),multiple=connections.get(JSON.stringify([d.target.platform,d.target.device_id]))>1;
+      connection.textContent=`${multiple&&d.connection_status!=='offline'?'多个在线连接 · ':''}执行机器：${d.target.runner_id}`;
       card.querySelector('[data-phone-captured]').textContent=d.snapshot_captured_at?`截图：${d.snapshot_captured_at}`:'尚未采集截图';
       card.classList.toggle('ui-device-unavailable',d.connection_status!=='ready');
       const img=card.querySelector('img');img.alt=`${d.name} 最近一次手机画面`;

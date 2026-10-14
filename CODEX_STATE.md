@@ -1,11 +1,20 @@
-## 2026-10-14 发版用途报告与基线搜索（已验证候选，准备部署）
+## 2026-10-14 Mac安卓接入与重复设备卡片（实机两轮通过，列表修复待部署）
+
+- 用户明确把OPPO接入Mac。独立安装于 `/Users/adouceshi/Applications/MidsceneAndroid`，Runner `mac-android-adouceshi`，固定手机ecbfd645；独立workspace/outbox/env/锁/PID/日志，只接收明确target任务，不改iOS配置或进程。保存start/stop/status脚本，stop已实际核对只停止本实例，重复启动被锁拒绝；未配置开机自启。
+- Mac Runner修复Android截图请求被iOS早退忽略，以及Android设备缺platform导致“需要更新”。按请求定向ADB采图、15秒/12MiB/PNG校验；无请求不采集，复用原服务端限频/忙碌跳过；双应用版本原有支持保持。Android副本SHA91f4501c1ad6bf00de218d88467fe463e3ca10b65e8ac98d1452af3bc88dbd15，备份 `MidsceneAndroid/backups/20261014-170115`；iOS副本未更新。
+- Chrome实际选择该Mac上的OPPO执行同一导航基线：普通 `uib_e383b988a9c64c91bd5010b78b2e4747` 6/6通过，正式报告/通知均not_requested，真实1080×2412截图可预览；发版 `uib_3ff2061f8c7b4a5699fe240460ccd4f8` 6/6通过、45.83秒，报告ready，包含安卓2.0.0(51)/管理员/时间/场景，通知未选且not_requested。两轮停止已确认，未修改源YAML或打印/删除数据。
+- 用户发现3张卡片：iPhone+旧Windows离线OPPO+新Mac在线OPPO。列表修复按平台+精确设备编号隐藏已有在线连接的离线旧条目，不合并截图/版本、不删除注册/历史；多个在线来源保留并显示执行机器，换连接清空旧选择要求重选，未知提交不换target。对齐Agent工作台优先在线设备的语义。
+- Runner相关197项回归；最终root组合137Python/157Node、后端63/前端84、Python/JS语法/diff通过。去重与home缓存版本待统一提交部署，不将当前线上3张卡片称已修复。两台并行后端可支持，简化页面仍单选，未实现前端一次勾选两台。
+
+## 2026-10-14 发版用途报告与基线搜索（421d718已部署，页面复验通过）
 
 - 按用户最终选择，开始测试默认普通用途；勾选“用于发版”才冻结报告申请，执行结束自动生成。飞书为独立可选项、默认关闭，取消发版用途即取消通知。普通测试保留结果、步骤和私有截图，不启动DOCX渲染；我的报告入口改“我的测试”。历史已生成报告及固定版本链接保留。
 - Schema 5 增加报告申请字段及worker门禁，结果回传、迟到截图/报告事件、停止恢复不再为普通测试自动建报告；重跑默认普通用途。证据接口仅返回授权元数据，图片仍点击加载。全部通知继续校验当前权限。
 - 独立复核修复两项：升级前未知提交的同账号/同幂等键/完全相同旧摘要重试可返回原批次，不能创建发版意图；切换批次清理旧截图并中止加载，固定报告版本仍可打开。
 - 最终前端152项、后端相关273项、后端63/前端84静态与适用语法/差异检查通过；root另独立复跑关键71项Python与全部152项Node通过。Chrome隔离真实HTTP/服务/SQLite/报告worker：普通测试0次DOCX/0正式快照，发版测试1次DOCX/1快照；中文Word实际下载、版本1.19.7(70)/执行人/时间/覆盖场景完整；390px布局与切换证据已验。模拟设备事件，不作为新实机Runner验收。
 - 线上仍为c3828e0；先前用户部署因GitHub超时未完成。服务器已通过SQLite在线备份保存 `/opt/midscene-auth-backups/release-purpose-20261014-155617/ui-executions.sqlite3`，schema4、34705408字节、quick_check=ok。将用校验Git bundle配合原标准脚本部署；schema5不可直接以旧代码降级，必要时须结合此备份评估恢复，优先向前修复。
-- 搜索4dc3f81与本次报告用途将统一部署；尚未把候选测试当线上验收。详见 `docs/evidence/ui-baseline-search-release-report-2026-10-14.md`。
+- 用户自行部署421d718；health精确SHA及7个资源字节匹配。Chrome默认搜索基线14条，显示草稿19条；按钮/Enter/清空及发版/通知默认值和联动通过；历史报告与1170×2532原图可正常打开。详见 `docs/evidence/ui-baseline-search-release-report-2026-10-14.md`。
+- 用户已拔iPhone换安卓并明确先接入Mac；ADB已识别ecbfd645。当前Mac仅iOS执行器，正在配置独立安卓Runner，补齐Mac安卓卡片截图回传，再从平台跑普通/发版导航验收。两手机并行后端支持，当前简化页仍单选，未宣称一次勾选两台可用。计划见 `docs/superpowers/plans/2026-10-14-mac-android-admission.md`。
 
 ## 2026-10-14 基线搜索范围与明确搜索入口（本地通过，待部署）
 

@@ -180,5 +180,14 @@ def get_ui_devices(actor, app_id):
             elif row['snapshot_captured_at']:
                 row['snapshot_url']='/api/runner/device-snapshot?'+urlencode({'runner_id':runner_id,'device_id':device_id,'app_id':app_id})
             result.append(row)
-    result.sort(key=lambda r:(r['connection_status']!='ready',r['name'],r['target']['device_id']))
+    # Match the workbench's online-device preference without deleting registry
+    # history. A moved USB phone keeps its current Runner's metadata and picture;
+    # the old Runner is never used as a fallback or merged into the new target.
+    connected_phones = {(r['target']['platform'], r['target']['device_id'])
+                        for r in result if r['connection_status'] != 'offline'}
+    result = [r for r in result if r['connection_status'] != 'offline'
+              or (r['target']['platform'], r['target']['device_id']) not in connected_phones]
+    # Multiple online connections remain separate explicit targets. Do not guess
+    # which Runner owns the phone by choosing a capability or latest heartbeat.
+    result.sort(key=lambda r:(r['connection_status']!='ready',r['name'],r['target']['device_id'],r['target']['runner_id']))
     return {'devices':result}

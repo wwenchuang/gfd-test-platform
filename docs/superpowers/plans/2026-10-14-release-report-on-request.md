@@ -26,7 +26,7 @@
 - [x] 保留300ms筛选，按钮/Enter立即搜索，IME与旧请求/旧分页隔离。
 - [x] 136 Node / 80 Python / 后端63 / 前端84通过；Chrome候选390px验证。
 - [x] 提交并推送4dc3f81。
-- [ ] 线上部署与真实目录复验。
+- [x] 用户部署421d718后health、资源字节及Chrome真实目录复验。
 
 ## Task 2: 明确申请与后端生成门禁
 
@@ -60,5 +60,5 @@ Files: js/ui-test-home.js, js/ui-batch-view.js, js/ui-batch-report.js, js/ui-sim
 - [x] 必跑Python编译/后端静态/前端静态/git diff --check；相关Node/Python全集。
 - [x] 在隔离DB跑真实HTTP+worker：普通测试完结和晚到图片无正式文件，勾选发版后结束才生成，重复请求无新增Job/通知。
 - [x] 复用真实JPG检查普通证据预览/下载、不勾选/勾选发版、历史报告，并恢复浏览器尺寸。
-- [ ] 更新CODEX_STATE；提交/推送；堡垒机登录可用后标准部署。
-- [ ] health精确SHA、页面资源与Chrome真实目录/历史报告核对；真实执行环境不可用时明确边界，不以本地fixture充当实机通过。
+- [x] 更新CODEX_STATE并提交/推送；用户自行部署421d718，root线上核对。
+- [x] health精确SHA、页面资源与Chrome真实目录/历史报告核对；用户换线安卓接入Mac后继续实际用途执行，见独立计划。

@@ -1,4 +1,5 @@
 """Simple entry catalog: current permissions, bounded summaries and cheap refresh."""
+import copy
 import hashlib
 import json
 
@@ -195,6 +196,73 @@ def test_offline_selection_remains_visible_and_no_replacement_selected(data):
     result=catalog.get_ui_devices(None,APP)
     assert len(result['devices'])==1 and result['devices'][0]['connection_status']=='offline'
     assert 'selected' not in json.dumps(result)
+
+@pytest.mark.parametrize('old_runner_online,old_device_status', [(False, 'online'), (True, 'offline')])
+def test_current_connection_hides_same_physical_phone_offline_copy_without_reusing_snapshot(data, old_runner_online, old_device_status):
+    data[0]['scope']['ui_apps'] = '*'
+    old = copy.deepcopy(data[3]['mac'])
+    old['online'] = old_runner_online
+    old['devices'][0]['status'] = old_device_status
+    data[3]['old-host'] = old
+    data[3]['mac']['devices'][0].pop('snapshot_captured_at')
+    before = copy.deepcopy(data[3])
+    result = catalog.get_ui_devices(None, APP)
+    assert [row['target']['runner_id'] for row in result['devices']] == ['mac']
+    assert result['devices'][0]['snapshot_url'] == ''
+    assert result['devices'][0]['snapshot_captured_at'] == ''
+    assert data[3] == before
+    assert data[2] == {'catalog':0, 'source':0, 'runner':1}
+
+
+def test_current_legacy_android_connection_hides_old_offline_explicit_platform_copy(data):
+    old = copy.deepcopy(data[3]['mac'])
+    old['online'] = False
+    old['capabilities']['ui_platforms'] = ['android']
+    old['devices'][0].update(platform='android', android_version='15', device_id='ecbfd645')
+    old['devices'][0].pop('ios_version')
+    current = copy.deepcopy(old)
+    current['online'] = True
+    current['devices'][0].pop('platform')
+    data[3].clear()
+    data[3].update({'windows':old, 'mac-android':current})
+    rows = catalog.get_ui_devices(None, APP)['devices']
+    assert len(rows) == 1 and rows[0]['target'] == {'runner_id':'mac-android', 'device_id':'ecbfd645', 'platform':'android'}
+    assert rows[0]['connection_status'] == 'upgrade_required'
+
+
+def test_same_model_different_serials_or_platforms_are_not_collapsed(data):
+    other = copy.deepcopy(data[3]['mac'])
+    other['online'] = False
+    other['devices'][0]['device_id'] = 'another-phone'
+    android = copy.deepcopy(other)
+    android['devices'][0].update(device_id='phone', platform='android')
+    data[3].update(other=other, android=android)
+    rows = catalog.get_ui_devices(None, APP)['devices']
+    assert len(rows) == 3
+    assert {row['target']['runner_id'] for row in rows} == {'mac', 'other', 'android'}
+
+
+def test_no_online_replacement_keeps_offline_connections_available_for_diagnostics(data):
+    data[3]['mac']['online'] = False
+    data[3]['old-host'] = copy.deepcopy(data[3]['mac'])
+    rows = catalog.get_ui_devices(None, APP)['devices']
+    assert len(rows) == 2
+    assert {row['target']['runner_id'] for row in rows} == {'mac', 'old-host'}
+    assert all(row['connection_status'] == 'offline' for row in rows)
+
+
+def test_both_online_connections_remain_explicit_exact_targets(data):
+    data[0]['scope']['ui_apps'] = '*'
+    other = copy.deepcopy(data[3]['mac'])
+    other['devices'][0]['snapshot_captured_at'] = '2026-10-14 17:00:00'
+    data[3]['other-host'] = other
+    rows = catalog.get_ui_devices(None, APP)['devices']
+    assert len(rows) == 2
+    for row in rows:
+        assert row['connection_status'] == 'ready'
+        assert 'runner_id=' + row['target']['runner_id'] in row['snapshot_url']
+    assert {row['snapshot_captured_at'] for row in rows} == {'2026-10-13 17:00:00', '2026-10-14 17:00:00'}
+
 
 @pytest.mark.parametrize('kwargs',[{'limit':101},{'limit':0},{'query':'x'*201},{'cursor':'bogus'},{'module':'x'*129}])
 def test_invalid_filters_rejected(data,kwargs):
