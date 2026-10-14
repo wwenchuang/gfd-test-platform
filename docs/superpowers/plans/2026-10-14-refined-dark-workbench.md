@@ -19,4 +19,4 @@
 - [x] `node --check js/ui-test-home.js`；`node --test tests/ui_simple_workflow_check.js tests/ui_simple_entry_check.js tests/ui_batch_view_check.js tests/ui_batch_report_check.js`，要求全部通过。
 - [x] `python3 tests/frontend_static_checks.py`；`python3 tests/backend_static_checks.py`；`git diff --check`。
 - [x] Chrome在真实页面临时加载候选模板/样式验证1634、1366、390布局。测试搜索、选择、发版控件和旧报告；不提交执行任务。结束重新加载恢复线上版本。
-- [ ] 提交、部署、确认版本和资源一致，在Chrome重新验证真实页面；记录证据与未完成项。
+- [x] b02277f已部署，health及HTML/JS/CSS字节一致；无临时覆盖的Chrome页面搜索/选择/发版联动通过，两张设备截图加载。关闭本轮固定视口旧标签，改用自然视口页面，实际窗口1200/1630分别刷新及截图后刷新均保持与app宽高一致；证据见CODEX_STATE.md及/tmp/codex-workbench-20261014/final-live.png。
