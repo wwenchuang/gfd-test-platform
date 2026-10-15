@@ -551,3 +551,31 @@ test('view-only users see why starting is unavailable',async t=>{
  assert.equal(f.node.querySelector('[data-ui-start]').disabled,true);
  assert.match(f.node.querySelector('[data-ui-start-hint]').textContent,/没有执行权限/);
 });
+
+test('library browses without device polling or execution controls and transfers selection explicitly',async t=>{
+ const f=fixture(t);let transferred;
+ f.mount('library',{openStartTest:selection=>{transferred=selection;}});await wait();
+ const app=f.node.querySelector('[name="ui-app"]');app.value='app.a';app.dispatchEvent(new f.w.Event('change'));await wait();
+ assert.equal(f.node.querySelector('[data-ui-devices]'),null);
+ assert.equal(f.node.querySelector('[data-ui-start]'),null);
+ assert.equal(f.node.querySelector('[data-ui-release]'),null);
+ const go=f.node.querySelector('[data-ui-go-start]');assert.equal(go.disabled,true);
+ f.node.querySelector('[data-case-id]').click();await wait();assert.equal(go.disabled,false);go.click();
+ assert.equal(transferred.app,'app.a');assert.equal(transferred.cases[0].case_id,'c1');
+ await f.w.UiSimpleFlow.refresh();f.node.querySelector('[data-ui-refresh]').click();await wait();
+ assert.equal(f.calls.some(c=>c.path.startsWith('/ui-executions/devices')),false);
+ assert.equal(creationPosts(f).length,0);
+});
+test('start accepts library selection without auto submitting or selecting a device',async t=>{
+ const f=fixture(t);f.mount('start',{entrySelection:{app:'app.a',cases:[CASE]}});await wait();
+ assert.equal(f.node.querySelector('[name="ui-app"]').value,'app.a');
+ assert.equal(f.node.querySelector('[data-case-id]').checked,true);
+ assert.equal(f.node.querySelector('[data-device-key]').checked,false);
+ assert.equal(f.node.querySelector('[data-ui-start]').disabled,true);
+ assert.equal(creationPosts(f).length,0);
+});
+test('library transfer cannot replace an unresolved submission',async t=>{
+ const f=fixture(t);f.w.sessionStorage.setItem('ui-simple:user-a:pending',JSON.stringify({key:'pending',body:{app_id:'app.original'}}));
+ const s=f.mount('start',{entrySelection:{app:'app.a',cases:[CASE]}});await wait();
+ assert.equal(s.uncertain,true);assert.equal(s.selected.size,0);assert.equal(s.startIntent.body.app_id,'app.original');
+});

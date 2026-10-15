@@ -219,6 +219,9 @@ class MainAccess:
         method = method.upper()
         permission = self.permission_for(method, path, qs, body)
         self.require(permission)
+        if self._draft_permission(method, path):
+            # Private draft services verify the persisted owner and current app scope.
+            return
         if ((method == "POST" and re.fullmatch(r"/api/ui-executions/[^/]+/deliveries/[0-9a-f]{64}/retry", path)) or
                 (method == "POST" and (path in {"/api/ui-executions", "/api/ui-executions/preflight"} or re.fullmatch(r"/api/ui-executions/[^/]+/(cancel|rerun|report|confirm-stop)", path))) or
                 (method in {"GET", "HEAD"} and (path == "/api/ui-executions" or path.startswith("/api/ui-executions/")))):
@@ -312,8 +315,24 @@ class MainAccess:
         # Arbitrary legacy file IDs, global diagnostics and unknown shapes stay closed.
         raise AccessDenied("该历史或跨应用操作尚不能确认数据归属，请由具有完整数据范围的管理员处理")
 
+    @staticmethod
+    def _draft_permission(method, path):
+        if method in {'GET', 'HEAD'} and re.fullmatch(r'/api/ui-case-drafts(?:/[^/]+)?', path):
+            return 'ui.view'
+        if method == 'POST':
+            if path == '/api/ui-case-drafts' or re.fullmatch(r'/api/ui-case-drafts/[^/]+/(update|restore)', path):
+                return 'ui.edit'
+            if re.fullmatch(r'/api/ui-case-drafts/[^/]+/(validate|try)', path):
+                return 'ui.execute'
+            if re.fullmatch(r'/api/ui-case-drafts/[^/]+/publish', path):
+                return 'ui.baseline'
+        return None
+
     def permission_for(self, method, path, qs, body):
         from task_server.config import safe_bool
+        draft_permission = self._draft_permission(method, path)
+        if draft_permission:
+            return draft_permission
         if method == "POST" and re.fullmatch(r"/api/ui-executions/[^/]+/deliveries/[0-9a-f]{64}/retry", path):
             return "platform.notify"
         if method in {"GET", "HEAD"} and (path == "/api/ui-executions" or path.startswith("/api/ui-executions/")):

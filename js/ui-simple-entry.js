@@ -2,6 +2,9 @@
 let uiSimpleEnabled=false;
 let uiSimpleEvidenceAvailable=false;
 let uiSimpleEpoch=0;
+let uiCaseCreationEpoch=0;
+let uiCaseDraftHandle=null;
+let uiSimpleStartSelection=null;
 const uiSimplePictures=new Map();
 const uiSimplePictureRequests=new Set();
 const uiSimpleDownloads=new Set();
@@ -9,6 +12,7 @@ function isUiSimpleWorkflow(key){return ['ui_start','ui_library','ui_reports'].i
 function isUiSimpleAvailable(key){return key==='ui_reports'?uiSimpleEvidenceAvailable:uiSimpleEnabled;}
 function uiSimpleIdentity(){return String(currentAccessProfile?.user_id||'');}
 function leaveUiSimpleWorkflow({discardReportIntent=false}={}){
+  uiCaseCreationEpoch++;uiCaseDraftHandle?.dispose();uiCaseDraftHandle=null;
   if(discardReportIntent)clearUiSimpleReportIntent();
   window.UiSimpleFlow?.leave();
   document.getElementById('app')?.classList.remove('ui-simple-active');
@@ -20,6 +24,7 @@ function leaveUiSimpleWorkflow({discardReportIntent=false}={}){
   uiSimplePictures.clear();
 }
 function resetUiSimpleWorkflow(){
+  uiSimpleStartSelection=null;
   uiSimpleEpoch++;uiSimpleEnabled=false;uiSimpleEvidenceAvailable=false;
   window.UiSimpleFlow?.reset();leaveUiSimpleWorkflow();
 }
@@ -90,16 +95,57 @@ function showUiSimpleWorkflow(){
   const area=document.getElementById('editor-area');area.classList.remove('editor-open');area.replaceChildren();
   const page=document.createElement('div');page.className='ui-simple-page';area.append(page);toggleLibrary(false);
   const reportIntent=activeWorkflow==='ui_reports'?uiSimpleReportIntent():null,identity=uiSimpleIdentity();
+  const entrySelection=activeWorkflow==='ui_start'&&uiSimpleStartSelection?.identity===identity?uiSimpleStartSelection.selection:null;
+  uiSimpleStartSelection=null;
   window.UiSimpleFlow.mount(page,{
     mode:{ui_start:'start',ui_library:'library',ui_reports:'reports'}[activeWorkflow],
+    entrySelection,openStartTest:selection=>{
+      if(identity!==uiSimpleIdentity()||activeWorkflow!=='ui_library'||!page.isConnected||!hasPermission('ui.execute'))return;
+      uiSimpleStartSelection={identity,selection};activateWorkflow('ui_start');
+    },
     request:apiRequest,identity:uiSimpleIdentity,canAdmit:()=>uiSimpleEnabled,canExecute:()=>hasPermission('ui.execute'),canNotify:()=>hasPermission('platform.notify'),reportIntent,loadPicture:loadUiSimplePicture,loadEvidenceImage:loadUiBatchImage,
     canRefreshPictures:()=>!!uiSimpleIdentity()&&hasPermission('ui.view')&&hasPermission('platform.configure')&&(currentAccessProfile.is_superuser===true||currentAccessProfile.scope?.ui_apps==='*'),
     onReportClose:intent=>{if(uiSimpleIdentity()===identity)clearUiSimpleReportIntent(intent);},
     download:downloadUiBatchFile,copy:async text=>{if(!await copyText(text))throw new Error('复制未完成，请重试');}
   });
+  if(activeWorkflow==='ui_library')attachUiCaseCreation(page);
   // Keep the exact internal link through loading, errors, refresh and reauthentication.
   // Only an explicit close, selecting another test, or workflow departure abandons it.
   return true;
+}
+// Creation is a child of the library; existing recording/material workflows remain available.
+function attachUiCaseCreation(page){
+  const epoch=uiCaseCreationEpoch,identity=uiSimpleIdentity();
+  const current=()=>epoch===uiCaseCreationEpoch&&identity===uiSimpleIdentity()&&activeWorkflow==='ui_library'&&page.isConnected;
+  const canEdit=()=>uiSimpleEnabled&&hasPermission('ui.edit');
+  const toolbar=document.createElement('div');toolbar.className='ui-case-creation-toolbar';
+  const create=document.createElement('button');create.type='button';create.className='btn-sm';create.dataset.uiCreateCase='';create.textContent='创建用例';create.disabled=!canEdit()||!window.UiCaseDraft;
+  if(!canEdit())create.title='创建用例需要用例编辑权限';
+  const drafts=document.createElement('button');drafts.type='button';drafts.className='btn-sm';drafts.dataset.uiResumeDrafts='';drafts.textContent='继续我的草稿';drafts.disabled=create.disabled;
+  drafts.onclick=()=>{if(!current()||!canEdit())return;create.click();page.querySelector('[data-ui-case-source="text"]')?.click();};
+  toolbar.append(drafts,create);page.prepend(toolbar);
+  create.onclick=()=>{
+    if(!current()||!canEdit()||!window.UiCaseDraft)return;
+    window.UiSimpleFlow?.leave();page.replaceChildren();
+    const back=document.createElement('button');back.type='button';back.className='btn-sm';back.dataset.uiCaseBack='';back.textContent='返回用例库';
+    back.onclick=()=>{if(current())showUiSimpleWorkflow();};
+    const heading=document.createElement('div');heading.className='ui-case-creation-toolbar';heading.append(back);page.append(heading);
+    const host=document.createElement('section');host.className='ui-case-source-picker';page.append(host);
+    host.innerHTML='<h2>从哪里开始创建用例</h2><p>选择你手上已有的内容，生成后先核对步骤，再试跑。</p><div class="ui-case-source-options"><button type="button" data-ui-case-source="text"><strong>大白话描述</strong><span>写下要做的操作和要检查的结果。</span></button><button type="button" data-ui-case-source="recording"><strong>操作录制</strong><span>打开现有录制工作台，在手机上完成操作。</span></button><button type="button" data-ui-case-source="materials"><strong>需求材料</strong><span>进入现有需求生成流程，使用需求文档或截图。</span></button></div><p>视频解析将在后续提供。</p>';
+    const access=workflow=>typeof canAccessWorkflow==='function'?canAccessWorkflow(workflow):canEdit();
+    for(const [source,workflow]of [['recording','device_recorder'],['materials','generate']]){
+      const button=host.querySelector(`[data-ui-case-source="${source}"]`);button.disabled=!access(workflow);if(button.disabled)button.title='当前账号暂不能使用该创建方式';
+      button.onclick=()=>{if(current()&&canEdit()&&access(workflow))activateWorkflow(workflow);};
+    }
+    host.querySelector('[data-ui-case-source="text"]').onclick=()=>{
+      if(!current()||!canEdit()||!window.UiCaseDraft)return;
+      host.className='';host.replaceChildren();
+      uiCaseDraftHandle=window.UiCaseDraft.mount(host,{request:apiRequest,identity:uiSimpleIdentity,
+        canEdit:()=>current()&&canEdit(),canExecute:()=>current()&&uiSimpleEnabled&&hasPermission('ui.execute'),
+        canPublish:()=>current()&&canEdit()&&hasPermission('ui.baseline'),
+        openMyTests:()=>{if(current())activateWorkflow('ui_reports');}});
+    };
+  };
 }
 async function loadUiBatchImage(path,kind,{signal}={}){
   const epoch=uiSimpleEpoch,identity=uiSimpleIdentity();

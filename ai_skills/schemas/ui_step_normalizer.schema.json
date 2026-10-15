@@ -1,0 +1,120 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "UI step normalizer text proposal",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "title",
+    "preconditions",
+    "steps",
+    "questions"
+  ],
+  "properties": {
+    "title": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "preconditions": {
+      "type": "array",
+      "maxItems": 20,
+      "items": {
+        "type": "string",
+        "maxLength": 1000
+      }
+    },
+    "steps": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 50,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "action",
+          "target",
+          "value",
+          "expected",
+          "review_state",
+          "source_ref"
+        ],
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "launch",
+              "aiTap",
+              "aiWaitFor",
+              "aiAssert",
+              "aiInput",
+              "aiScroll"
+            ]
+          },
+          "target": {
+            "type": "string",
+            "maxLength": 2000
+          },
+          "value": {
+            "oneOf": [
+              {
+                "type": "string",
+                "maxLength": 4000
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "direction": {
+                    "enum": [
+                      "down",
+                      "up",
+                      "right",
+                      "left"
+                    ]
+                  },
+                  "distance": {
+                    "type": "number",
+                    "exclusiveMinimum": 0
+                  },
+                  "scrollType": {
+                    "enum": [
+                      "singleAction",
+                      "scrollToBottom",
+                      "scrollToTop",
+                      "scrollToRight",
+                      "scrollToLeft"
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          "expected": {
+            "type": "string",
+            "maxLength": 2000
+          },
+          "review_state": {
+            "type": "string",
+            "enum": [
+              "needs_review"
+            ]
+          },
+          "source_ref": {
+            "type": "string",
+            "enum": [
+              "text"
+            ]
+          }
+        }
+      }
+    },
+    "questions": {
+      "type": "array",
+      "maxItems": 100,
+      "items": {
+        "type": "string",
+        "maxLength": 2000
+      }
+    }
+  }
+}

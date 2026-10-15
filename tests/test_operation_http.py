@@ -96,6 +96,7 @@ def test_registry_coverage_and_prefix_action_keys():
         for pattern, _ in entries:
             path = re.sub(r"\(\[\^/\]\+\)", "sample", pattern.pattern.strip("^$"))
             path = path.replace("([0-9a-f]{64})", "a" * 64).replace("(cancel|rerun)", "cancel")
+            path = path.replace('(update|restore|validate|try|publish)', 'update')
             assert pattern.fullmatch(path), (method, pattern.pattern, path)
             assert operation_http.route_key(method, path) != "unknown", (method, pattern.pattern)
     assert len(keys) == len(set(keys))

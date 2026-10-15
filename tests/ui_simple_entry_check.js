@@ -243,3 +243,25 @@ test('report image timeout aborts the network request at 15 seconds and gives a 
 test('private image HTTP errors retain status for the report UI',async t=>{
  const {w}=fixture(t);for(const status of [401,403,404,500]){w.nativeFetch=async()=>imageResponse(w,{status});await assert.rejects(()=>w.loadUiBatchImage(privateImagePath,'png'),error=>error.status===status);}
 });
+
+test('case creation lives under library and mounts Chinese editor with separate permissions',async t=>{const {w,calls}=fixture(t);let draftOptions,disposed=0;w.UiCaseDraft={mount:(node,options)=>{draftOptions=options;return {dispose:()=>disposed++};}};await w.initUiSimpleAvailability({navigate:false});w.activeWorkflow='ui_library';w.showUiSimpleWorkflow();w.document.querySelector('[data-ui-create-case]').click();assert.match(w.document.getElementById('editor-area').textContent,/大白话描述/);w.document.querySelector('[data-ui-case-source="text"]').click();assert.equal(draftOptions.canEdit(),true);assert.equal(draftOptions.canPublish(),true);w.document.querySelector('[data-ui-case-back]').click();assert.equal(disposed,1);assert.equal(calls.at(-1).mode,'library');});
+test('viewer cannot open creation and stale creation button cannot change next page',async t=>{const {w}=fixture(t);w.UiCaseDraft={mount:()=>({dispose(){}})};await w.initUiSimpleAvailability({navigate:false});w.activeWorkflow='ui_library';w.hasPermission=p=>p==='ui.view';w.showUiSimpleWorkflow();assert.equal(w.document.querySelector('[data-ui-create-case]').disabled,true);w.hasPermission=()=>true;w.showUiSimpleWorkflow();const stale=w.document.querySelector('[data-ui-create-case]');w.leaveUiSimpleWorkflow();w.activeWorkflow='ui_reports';w.document.getElementById('editor-area').textContent='其他页面';stale.click();assert.equal(w.document.getElementById('editor-area').textContent,'其他页面');});
+test('source chooser reuses authorized recording and requirement workflows',async t=>{const {w,calls}=fixture(t);w.UiCaseDraft={mount:()=>({dispose(){}})};w.canAccessWorkflow=key=>key!=='generate';await w.initUiSimpleAvailability({navigate:false});w.activeWorkflow='ui_library';w.showUiSimpleWorkflow();w.document.querySelector('[data-ui-create-case]').click();assert.equal(w.document.querySelector('[data-ui-case-source="materials"]').disabled,true);w.document.querySelector('[data-ui-case-source="recording"]').click();assert.equal(calls.at(-1),'device_recorder');});
+test('source chooser cannot mount an editor after identity changes',async t=>{const {w}=fixture(t);let mounts=0;w.UiCaseDraft={mount:()=>{mounts++;return {dispose(){}};}};await w.initUiSimpleAvailability({navigate:false});w.activeWorkflow='ui_library';w.showUiSimpleWorkflow();w.document.querySelector('[data-ui-create-case]').click();w.currentAccessProfile={user_id:'u2'};w.document.querySelector('[data-ui-case-source="text"]').click();assert.equal(mounts,0);});
+
+test('library handoff is one-use and identity-scoped',async t=>{
+ const {w,calls}=fixture(t);await w.initUiSimpleAvailability({navigate:false});w.activeWorkflow='ui_library';w.showUiSimpleWorkflow();
+ const library=calls.filter(c=>c?.mode==='library').at(-1),selection={app:'app.a',cases:[{case_id:'c1',revision:'r1'}]};
+ library.openStartTest(selection);assert.equal(w.activeWorkflow,'ui_start');w.showUiSimpleWorkflow();
+ assert.equal(calls.filter(c=>c?.mode==='start').at(-1).entrySelection.app,'app.a');
+ w.showUiSimpleWorkflow();assert.equal(calls.filter(c=>c?.mode==='start').at(-1).entrySelection,null);
+ w.activeWorkflow='ui_library';w.showUiSimpleWorkflow();const stale=calls.filter(c=>c?.mode==='library').at(-1);
+ w.currentAccessProfile={user_id:'u2'};stale.openStartTest(selection);assert.equal(w.activeWorkflow,'ui_library');
+});
+test('resume drafts opens the private editor directly without generating or dispatching',async t=>{
+ const {w,calls}=fixture(t);let mounts=0;
+ w.UiCaseDraft={mount:()=>{mounts++;return {dispose(){}};}};
+ await w.initUiSimpleAvailability({navigate:false});w.activeWorkflow='ui_library';w.showUiSimpleWorkflow();
+ w.document.querySelector('[data-ui-resume-drafts]').click();assert.equal(mounts,1);
+ assert.ok(w.document.querySelector('[data-ui-case-back]'));assert.equal(calls.includes('ui_start'),false);
+});

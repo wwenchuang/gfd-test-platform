@@ -184,3 +184,6 @@
  .ui-simple-submit-actions .ui-simple-purpose{flex:1 1 100%}
  .ui-simple-submit-actions .btn-primary{width:100%}
 }
+
+/* The library maintains cases; device execution belongs to Start Test. */
+.ui-simple[data-ui-mode="library"] .ui-simple-content{grid-template-columns:minmax(0,1fr)}

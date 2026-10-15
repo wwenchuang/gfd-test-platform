@@ -50,6 +50,13 @@ _UI_BATCH_ACTIONS = {
     "POST.retry_ui_batch_delivery": "notification_retry",
 }
 
+_UI_DRAFT_ACTIONS = {
+    'GET.api.ui_case_drafts': 'list', 'POST.api.ui_case_drafts': 'create',
+    'GET.get_ui_case_draft': 'view',
+    **{'POST.post_ui_case_draft_action.' + action: action
+       for action in ('update', 'restore', 'validate', 'try', 'publish')},
+}
+
 
 def _key(method, path):
     # Only call with a server-owned route literal, never a request path.
@@ -112,6 +119,8 @@ def route_key(method, path):
                     key = method + "." + fn.__name__.lstrip("_")
                     if key == "POST.post_ui_execution_action" and match.group(2) in {"cancel", "rerun"}:
                         return key + "." + match.group(2)
+                    if key == 'POST.post_ui_case_draft_action':
+                        return key + '.' + match.group(2)
                     return key
     return "unknown"
 
@@ -240,6 +249,9 @@ def observed_json(handler, payload):
 
 
 def _resource(path, method, payload, qs, status, parsed_body=None):
+    if path == '/api/ui-case-drafts' or path.startswith('/api/ui-case-drafts/'):
+        verb = _UI_DRAFT_ACTIONS.get(route_key(method, path))
+        return ('ui_draft', '', 'ui_draft.' + verb) if verb else ('unknown', '', 'unknown.request')
     if path == "/api/ui-executions" or path.startswith("/api/ui-executions/"):
         verb = _UI_BATCH_ACTIONS.get(route_key(method, path))
         return ("ui_batch", "", "ui_batch." + verb) if verb else ("unknown", "", "unknown.request")
@@ -343,7 +355,7 @@ def finish_request(handler):
         if not kind:
             return
         result = _result(status, payload, getattr(handler, "_operation_interrupted", False),
-                         ui_batch=registered_key in _UI_BATCH_ACTIONS)
+                         ui_batch=registered_key in _UI_BATCH_ACTIONS or registered_key == 'POST.post_ui_case_draft_action.try')
         items = []
         body = payload.get("data") if isinstance(payload, dict) and isinstance(payload.get("data"), dict) else payload
         raw_items = body.get("results") if isinstance(body, dict) else None
