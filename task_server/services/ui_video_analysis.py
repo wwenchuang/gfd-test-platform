@@ -67,7 +67,8 @@ def validate_analysis(result, frames, duration):
 def analyze_frames(document, root, cancelled):
     from . import ai_skill_service as ai
     frames=document['media']['frames']
-    limit=max(2,min(8,int(ai.AI_VISION_IMAGE_LIMIT)))
+    # The existing Gateway imagePartsFromBody accepts at most six images.
+    limit=max(2,min(6,int(ai.AI_VISION_IMAGE_LIMIT)))
     if int(ai.AI_VISION_IMAGE_LIMIT)<2: raise ValueError('video_vision_limit')
     events=[];questions=[];multi=False;last_end=-1
     # Adjacent batches share one boundary frame, preserving the whole chronology.

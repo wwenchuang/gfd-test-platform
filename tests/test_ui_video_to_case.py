@@ -263,3 +263,63 @@ def test_long_goal_preserved_without_exceeding_question_contract():
     content,snapshot=draft_proposal(doc)
     assert snapshot['goal']==doc['goal']
     assert len(content['questions'])==1 and len(content['questions'][0])<=2000
+
+
+def test_real_prompt_supplies_complete_json_envelope_and_event_fields():
+    import json,re
+    from task_server.services import ai_skill_service as ai
+    prompt=ai.render_ai_skill_prompt('ui_video_steps',{'app_id':APP,'frames':[]})
+    # Exercise the actual template and existing schema validator, not a mocked skill.
+    example=json.loads(re.search(r'```json\s*(.*?)\s*```',prompt,re.S).group(1))
+    ai.validate_ai_skill_output('ui_video_steps',example)
+    assert set(example)=={'events','uncertainties','multiple_scenarios'}
+    assert set(example['events'][0])=={'action','target','value','start_ms','end_ms','frame_refs','observation','evidence_kind','uncertainties'}
+    assert '结构示例' in prompt and '不能照抄' in prompt
+
+
+def test_default_image_batches_respect_gateway_six_image_contract(monkeypatch,tmp_path):
+    from task_server.services import ai_skill_service as ai
+    from task_server.services.ui_video_analysis import analyze_frames
+    frames=[{'frame_id':f'frame-{i:03}','timestamp_ms':i*1000} for i in range(14)]
+    (tmp_path/'frames').mkdir()
+    for frame in frames:(tmp_path/'frames'/(frame['frame_id']+'.jpg')).write_bytes(b'image fixture model mocked')
+    calls=[]
+    def model(name,payload,**kwargs):calls.append((payload,kwargs));return {'events':[],'uncertainties':[],'multiple_scenarios':False}
+    monkeypatch.setattr(ai,'AI_VISION_IMAGE_LIMIT',40);monkeypatch.setattr(ai,'run_ai_skill',model)
+    analyze_frames({'app_id':APP,'goal':'','media':{'duration_ms':14000,'frames':frames}},tmp_path,lambda:False)
+    assert [[f['timestamp_ms'] for f in c[0]['frames']] for c in calls]==[list(range(0,6000,1000)),list(range(5000,11000,1000)),list(range(10000,14000,1000))]
+    assert all(len(c[1]['image_assets'])<=6 for c in calls)
+    assert {f['frame_id'] for c in calls for f in c[0]['frames']}=={f['frame_id'] for f in frames}
+
+
+@pytest.mark.parametrize('stage,error_kind', [('analysis','runtime'),('analysis','schema'),('draft_validation','contract'),('decode','decoder')])
+def test_worker_diagnostics_are_stage_specific_and_never_include_exception_text(env,tmp_path,monkeypatch,caplog,stage,error_kind):
+    import json,logging
+    from task_server.services import ui_video_source_service as video,ui_video_analysis as analysis,ui_case_draft_service as drafts
+    from task_server.workers import ui_video_worker as worker
+    store=video.VideoStore(tmp_path/'videos');doc=store.upload(A,APP,'PRIVATE_FILENAME.mp4',io.BytesIO(b'video'),5,actor=A,goal='PRIVATE_GOAL')
+    sentinel='sk-PRIVATE_TOKEN raw-model-response PRIVATE_VIDEO'
+    class NoStringError(RuntimeError):
+        def __str__(self):raise AssertionError('must not stringify exception')
+    error=NoStringError(sentinel) if error_kind=='runtime' else ValueError('video_decode_invalid '+sentinel) if error_kind=='decoder' else ValueError(sentinel)
+    def fail(*args,**kwargs):raise error
+    monkeypatch.setattr(worker,'decode_video',lambda *args:{'black':False,'static':False,'frames':[{'frame_id':'f','timestamp_ms':0}],'duration_ms':100})
+    valid={'events':[{'action':'aiAssert','target':'个人页面显示帮助入口','value':'','start_ms':0,'end_ms':0,'frame_refs':['f'],'observation':'个人页面显示帮助入口','evidence_kind':'inferred','uncertainties':[]}],'uncertainties':[],'multiple_scenarios':False}
+    monkeypatch.setattr(analysis,'analyze_frames',lambda *args:valid)
+    if stage=='analysis':monkeypatch.setattr(analysis,'analyze_frames',fail)
+    elif stage=='draft_validation':monkeypatch.setattr(analysis,'draft_proposal',fail)
+    else:monkeypatch.setattr(worker,'decode_video',fail)
+    caplog.set_level(logging.WARNING)
+    worker.analyze_video_source(store,doc['source_id'])
+    logged=[r.getMessage() for r in caplog.records if r.name==worker.__name__]
+    assert len(logged)==1
+    detail=json.loads(logged[0].split(' ',1)[1])
+    assert detail['source_id']==doc['source_id'] and detail['stage']==stage
+    assert detail['exception_class']==type(error).__name__
+    assert detail['category'] in {'model_service','model_schema','draft_contract','decoder'}
+    assert detail['traceback'] and all(set(frame)=={'file','function','line'} for frame in detail['traceback'])
+    assert all('/' not in frame['file'] for frame in detail['traceback'])
+    assert not any(value in logged[0] for value in [sentinel,'PRIVATE_FILENAME','PRIVATE_GOAL','raw-model-response'])
+    result=store.get(doc['source_id'],A['user_id'],APP)
+    assert result['status']=='failed' and sentinel not in str(result)
+    assert result['error_code']=='video_analysis_failed'
