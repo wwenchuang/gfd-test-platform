@@ -61,8 +61,19 @@ def test_ios_closes_target_before_usb_forward_is_released(tmp_path,monkeypatch):
     monkeypatch.setattr(r,'ios_usb_forward',forward)
     monkeypatch.setattr(r,'ios_wda_request',lambda *a:{'ready':True})
     monkeypatch.setattr(r,'reset_ios_foreground_app',lambda port,bundle,**kw:calls.append(bundle))
-    monkeypatch.setattr(r,'run_standard_job',lambda job:calls.append('execute') or {'status':'passed'})
+    monkeypatch.setattr(r,'run_standard_job',lambda job:(r._APP_STOP_PROOF.update({'ios-cleanup':True}),calls.append('execute'),{'status':'passed'})[-1])
     result=r.run_job({'job_id':'ios-cleanup','target_runner_id':r.RUNNER_ID,'device_id':'phone',
                      'yaml_content':'android: {}\ntasks:\n- name: test\n  flow:\n  - launch: com.kfb.model\n'})
     assert result['status']=='passed' and result['teardown']['ok']
     assert calls==['forward-open','com.kfb.3d','execute','com.kfb.3d','forward-close']
+
+@pytest.mark.parametrize('outcome',[False,'exception'])
+def test_non_ui_stop_failure_never_allows_cleanup(monkeypatch,outcome):
+    def stop(proc):
+        if outcome=='exception':raise OSError('cannot stop')
+        return outcome
+    monkeypatch.setattr(r,'stop_midscene_process',stop)
+    r.record_execution_stopped('legacy',object())
+    monkeypatch.setattr(r,'resolve_adb_with_devices',lambda **kw:pytest.fail('must not clean'))
+    with pytest.raises(RuntimeError,match='停止尚未确认'):
+        r.close_android_test_app('legacy','phone','com.kfb.model')

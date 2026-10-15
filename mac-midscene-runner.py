@@ -427,6 +427,7 @@ def http_json_retry(method, path, payload=None, timeout=60, attempts=3, label="H
 
 # UI attempt credentials stay local to the claimed execution and its retry payload.
 _UI_DELIVERIES = {}
+_APP_STOP_PROOF = {}
 
 
 def initialize_ui_delivery(job):
@@ -1741,7 +1742,6 @@ def run_yaml_dry_run_job(job):
         "attempts": [],
         "stdout": stdout,
         "stderr": stderr,
-        "teardown": final.get("teardown"),
         "summary": summary,
         "screenshots": [],
         "report_url": "",
@@ -1830,7 +1830,7 @@ def with_app_cleanup(execute, cleanup, evidence_path):
 
 
 def close_android_test_app(job_id, device_id, app_package):
-    if job_id in _UI_DELIVERIES and _UI_DELIVERIES[job_id].get("stopped") is not True:
+    if not execution_stop_confirmed(job_id):
         raise RuntimeError("执行进程停止尚未确认，暂不关闭应用")
     adb_bin, _ = resolve_adb_with_devices(require_devices=False)
     reset_foreground_app(adb_bin, device_id, app_package)
@@ -2027,7 +2027,25 @@ def progress_observer_env(job_dir, device_id):
     return env
 
 
+def execution_stop_confirmed(job_id):
+    if job_id in _UI_DELIVERIES:
+        return _UI_DELIVERIES[job_id].get("stopped") is True
+    return _APP_STOP_PROOF.get(job_id) is True
+
+
+def record_execution_stopped(job_id, proc):
+    try:
+        stopped = proc is None or stop_midscene_process(proc) is True
+    except Exception:
+        stopped = False
+    _APP_STOP_PROOF.clear()  # This Runner executes one job at a time.
+    _APP_STOP_PROOF[job_id] = stopped
+    if job_id in _UI_DELIVERIES:
+        _UI_DELIVERIES[job_id]["stopped"] = stopped
+
+
 def execute_midscene(job_id, job_dir, yaml_path, task_names, device_id):
+    _APP_STOP_PROOF.clear()
     started = time.time()
     stdout_lines = []
     stderr = ""
@@ -2158,16 +2176,7 @@ def execute_midscene(job_id, job_dir, yaml_path, task_names, device_id):
             "duration": round(time.time() - started, 2)
         }
     finally:
-        try:
-            if job_id in _UI_DELIVERIES:
-                _UI_DELIVERIES[job_id]["stopped"] = proc is None or stop_midscene_process(proc) is True
-            elif proc is not None and proc.poll() is None:
-                stop_midscene_process(proc)
-        except Exception:
-            if job_id in _UI_DELIVERIES:
-                _UI_DELIVERIES[job_id]["stopped"] = False
-            else:
-                raise
+        record_execution_stopped(job_id, proc)
 
 
 def execution_command(midscene_bin, yaml_path, device_id):
@@ -2232,7 +2241,7 @@ def run_job(job):
                 "platform": "ios", "bundle_id": bundle_id, "source_file": job.get("file")}, ensure_ascii=False))
             reset_ios_foreground_app(port, bundle_id, allowed_bundle_id=bundle_id if job.get("ui_execution_contract") == "ui-v1" else None)
             def close_app():
-                if job["job_id"] in _UI_DELIVERIES and _UI_DELIVERIES[job["job_id"]].get("stopped") is not True:
+                if not execution_stop_confirmed(job["job_id"]):
                     raise RuntimeError("执行进程停止尚未确认，暂不关闭应用")
                 reset_ios_foreground_app(port, bundle_id, allowed_bundle_id=bundle_id)
             return with_app_cleanup(lambda: run_standard_job({**job, "yaml_content": compiled}),
