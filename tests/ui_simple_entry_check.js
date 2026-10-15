@@ -330,5 +330,40 @@ test('binary video upload retains bearer authentication with the real Headers he
  assert.equal(new Headers(upload.options.headers).get('Authorization'),'Bearer fixture-session-token');
  assert.equal(new Headers(upload.options.headers).get('Content-Type'),'application/octet-stream');
  assert.ok(upload.options.headers instanceof Headers);
- assert.match(f.q('[data-video-notice]').textContent,/上传完成/);
+ assert.match(f.q('[data-video-notice]').textContent,/待核对/);
+});
+
+test('visible video task status updates the list and notice including after a stale list response',async t=>{
+ const f=await videoFixture(t),initial={source_id:'uvs_'+'1'.repeat(32),filename:'clip.mp4',status:'decoding',analysis_version:1};let detail=initial;
+ f.respond(path=>path.includes(initial.source_id)?{ok:true,source:detail}:path.startsWith('/ui-video-sources?')?{ok:true,sources:[initial]}:undefined);
+ f.app('a');await wait();f.q('[data-video-open]').click();await wait();
+ f.q('[data-video-notice]').textContent='上传完成，后台分析中。';detail={...initial,status:'failed',error:'分析未返回有效步骤，请重试'};
+ f.q('[data-video-status]').click();await wait();assert.match(f.q('[data-video-detail]').textContent,/分析失败/);assert.match(f.q('[data-video-list]').textContent,/分析失败/);assert.match(f.q('[data-video-notice]').textContent,/分析未返回有效步骤/);assert.doesNotMatch(f.q('[data-video-notice]').textContent,/后台分析中/);
+ f.q('[data-video-refresh]').click();await wait();assert.match(f.q('[data-video-list]').textContent,/分析失败/);
+});
+
+test('unchanged video polling preserves selected media elements and object URLs',async t=>{
+ const f=await videoFixture(t),source={source_id:'uvs_'+'2'.repeat(32),filename:'clip.mp4',status:'analyzing',analysis_version:1,media:{duration_ms:1000,frames:[{frame_id:'f0',timestamp_ms:0}]},candidate_steps:[{start_ms:0,end_ms:0,evidence_kind:'inferred',action:'aiTap',target:'我的入口',observation:'个人页面出现',frame_refs:['f0'],uncertainties:[]}],uncertainties:[]};let updated=1,revoked=0;
+ f.respond(path=>path.includes(source.source_id)?{ok:true,source:{...source,updated_at:updated++}}:path.startsWith('/ui-video-sources?')?{ok:true,sources:[source]}:undefined);
+ f.w.URL.revokeObjectURL=()=>revoked++;
+ f.app('a');await wait();f.q('[data-video-open]').click();await wait();f.q('[data-video-preview]').click();await wait();const video=f.q('video');video.currentTime=0.5;f.q('[data-video-frame]').click();await wait();const image=f.q('[data-video-frame-preview]');
+ f.q('[data-video-status]').click();await wait();assert.equal(f.q('video'),video);assert.equal(video.getAttribute('src'),'blob:test');assert.equal(video.currentTime,0.5);assert.equal(f.q('[data-video-frame-preview]'),image);assert.equal(image.getAttribute('src'),'blob:test');assert.equal(revoked,0);
+ f.q('[data-ui-case-back]').click();assert.ok(revoked>0);
+});
+
+test('video polling resumes on visibility return stays bounded and removes its lifecycle listener',async t=>{
+ const f=await videoFixture(t),source={source_id:'uvs_'+'3'.repeat(32),filename:'clip.mp4',status:'analyzing',analysis_version:1};let hidden=false,nextTimer=0;
+ Object.defineProperty(f.w.document,'hidden',{configurable:true,get:()=>hidden});const timers=new Map();
+ f.w.setTimeout=(fn,ms)=>{assert.equal(ms,5000);const id=++nextTimer;timers.set(id,fn);return id;};f.w.clearTimeout=id=>timers.delete(id);
+ f.respond(path=>path.includes(source.source_id)?{ok:true,source}:path.startsWith('/ui-video-sources?')?{ok:true,sources:[source]}:undefined);
+ f.app('a');await wait();f.q('[data-video-open]').click();await wait();assert.equal(timers.size,1);
+ let [id,tick]=timers.entries().next().value;timers.delete(id);hidden=true;tick();await wait();assert.equal(timers.size,0);
+ const before=f.calls.filter(c=>c.path.includes(source.source_id)).length;
+ hidden=false;f.w.document.dispatchEvent(new f.w.Event('visibilitychange'));assert.equal(timers.size,1);
+ [id,tick]=timers.entries().next().value;timers.delete(id);tick();await wait();assert.equal(f.calls.filter(c=>c.path.includes(source.source_id)).length,before+1);
+ for(let i=0;i<130;i++){const entry=timers.entries().next().value;if(!entry)break;timers.delete(entry[0]);entry[1]();await wait();}
+ assert.equal(f.calls.filter(c=>c.path.includes(source.source_id)).length,before+120);assert.equal(timers.size,0);
+ hidden=true;f.w.document.dispatchEvent(new f.w.Event('visibilitychange'));hidden=false;f.w.document.dispatchEvent(new f.w.Event('visibilitychange'));assert.equal(timers.size,0);
+ let removed=0;const original=f.w.document.removeEventListener.bind(f.w.document);f.w.document.removeEventListener=(name,...args)=>{if(name==='visibilitychange')removed++;return original(name,...args);};
+ f.q('[data-ui-case-back]').click();assert.equal(removed,1);f.w.document.dispatchEvent(new f.w.Event('visibilitychange'));assert.equal(timers.size,0);
 });

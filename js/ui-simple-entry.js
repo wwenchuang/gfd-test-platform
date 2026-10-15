@@ -233,12 +233,12 @@ function openImportedUiDraft(draft){
 
 // One visible source task owns polling. Leaving this view never starts card timers.
 function mountUiVideoSource(node,{current,openDraft,initialSource=null}){
-  const identity=uiSimpleIdentity(),pending=new Set(),urls=new Set(),mediaRequests=new WeakMap();let alive=true,epoch=0,timer=null,source=null,app='',polls=0,busy=false;
+  const identity=uiSimpleIdentity(),pending=new Set(),urls=new Set(),mediaRequests=new WeakMap();let alive=true,epoch=0,timer=null,source=null,app='',polls=0,busy=false,renderedKey='',statusSequence=0;
   const q=s=>node.querySelector(s),escape=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const valid=()=>alive&&current()&&identity===uiSimpleIdentity()&&node.isConnected;
   function clearMedia(){for(const url of urls)URL.revokeObjectURL(url);urls.clear();}
-  function invalidate(){epoch++;clearTimeout(timer);for(const c of pending)c.abort();pending.clear();clearMedia();}
-  function dispose(){alive=false;invalidate();clearInterval(guard);}
+  function invalidate(){epoch++;statusSequence++;renderedKey='';clearTimeout(timer);timer=null;for(const c of pending)c.abort();pending.clear();clearMedia();}
+  function dispose(){alive=false;invalidate();clearInterval(guard);document.removeEventListener('visibilitychange',visibilityChanged);}
   function notice(text){if(valid())q('[data-video-notice]').textContent=text;}
   async function request(path,extra={}){
     const c=new AbortController(),version=epoch;pending.add(c);
@@ -256,14 +256,32 @@ function mountUiVideoSource(node,{current,openDraft,initialSource=null}){
     finally{pending.delete(c);}
   }
   node.innerHTML='<h2>上传录屏文件</h2><p>选择一个连续场景的 MP4/MOV，最多200MB、10分钟。分析后先核对观察、推断和业务预期，再选择手机试跑。</p><label>所属应用<select data-video-app><option value="">选择应用</option></select></label><label>测试目标或结束检查（可选）<input data-video-goal maxlength="2000" placeholder="视频缺少明确预期时再补充"></label><label>录屏文件<input data-video-file type="file" accept="video/mp4,video/quicktime,.mp4,.mov"></label><button type="button" data-video-upload>上传并分析</button><button type="button" data-video-refresh>刷新我的录屏</button><p data-video-notice role="status"></p><div data-video-list></div><section data-video-detail></section>';
-  async function list(){if(!app)return;try{const data=await request('/ui-video-sources?'+new URLSearchParams({app_id:app}));if(!data)return;q('[data-video-list]').innerHTML=(data.sources||[]).map(d=>`<button type="button" data-video-open="${escape(d.source_id)}">${escape(d.filename)} · ${escape(statusText(d.status))}</button>`).join('')||'<p>当前应用还没有上传录屏。</p>';}catch(e){notice(e.message);}}
+  async function list(){if(!app)return;try{const data=await request('/ui-video-sources?'+new URLSearchParams({app_id:app}));if(!data)return;q('[data-video-list]').innerHTML=(data.sources||[]).map(d=>{const row=source?.status&&source.source_id===d.source_id?source:d;return `<button type="button" data-video-open="${escape(row.source_id)}">${escape(row.filename)} · ${escape(statusText(row.status))}</button>`;}).join('')||'<p>当前应用还没有上传录屏。</p>';}catch(e){notice(e.message);}}
   function statusText(status){return ({queued:'排队中',decoding:'解码中',analyzing:'分析中',ready:'待核对',review_needed:'需补充素材',failed:'分析失败',cancelled:'已取消',interrupted:'重启后已停止'})[status]||status;}
+  function syncSourceStatus(){
+    if(!valid()||!source?.status)return;
+    for(const button of q('[data-video-list]').querySelectorAll('[data-video-open]'))if(button.dataset.videoOpen===source.source_id)button.textContent=source.filename+' · '+statusText(source.status);
+    const messages={queued:'上传完成，正在排队分析；离页后可从我的录屏恢复。',decoding:'正在解码录屏，尚未形成候选步骤。',analyzing:'正在分析录屏，尚未完成；不会操作手机。',ready:'分析完成，候选步骤待核对；请核对证据和业务预期。',review_needed:'需补充素材，请核对说明后重新选择连续片段。',failed:'分析失败，请核对说明后明确重试。',cancelled:'分析已取消；已有草稿与来源证据保留。',interrupted:'服务重启后分析已停止，请明确重试。'};
+    notice(source.error||messages[source.status]||statusText(source.status));
+  }
+  function schedulePoll(){
+    clearTimeout(timer);timer=null;
+    if(!valid()||document.hidden||polls>=120||!['queued','decoding','analyzing'].includes(source?.status))return;
+    const version=epoch,identifier=source.source_id;
+    timer=setTimeout(()=>{timer=null;if(!valid()||document.hidden||version!==epoch||source?.source_id!==identifier)return;polls++;refresh();},5000);
+  }
+  function visibilityChanged(){if(!valid())return;schedulePoll();}
   async function refresh(){
     if(!source||!valid())return;
-    try{const data=await request(`/ui-video-sources/${source.source_id}?`+new URLSearchParams({app_id:app}));if(data){source=data.source;render();}}catch(e){notice(e.message);}
+    const sequence=++statusSequence;
+    try{const data=await request(`/ui-video-sources/${source.source_id}?`+new URLSearchParams({app_id:app}));if(data&&sequence===statusSequence){source=data.source;render();}}catch(e){if(sequence===statusSequence)notice(e.message);}
+    finally{if(sequence===statusSequence)schedulePoll();}
   }
   function render(){
-    if(!valid())return;clearTimeout(timer);clearMedia();const box=q('[data-video-detail]'),id=source.source_id;
+    if(!valid())return;syncSourceStatus();
+    const key=JSON.stringify([source.source_id,source.status,source.error,source.error_code,source.analysis_version,source.draft_id,source.media,source.candidate_steps,source.uncertainties]);
+    if(key===renderedKey){schedulePoll();return;}renderedKey=key;
+    clearTimeout(timer);clearMedia();const box=q('[data-video-detail]'),id=source.source_id;
     box.innerHTML=`<h3>${escape(source.filename)} · ${escape(statusText(source.status))}</h3><p>${escape(source.error||'分析只提供候选；不会操作手机或发布用例。')}</p>${source.media?`<p>时间覆盖 0–${(source.media.duration_ms/1000).toFixed(2)} 秒 · ${source.media.frames.length} 张候选帧 · 识别版本 ${source.analysis_version}</p>`:''}<button type="button" data-video-status>刷新当前任务</button>${['queued','decoding','analyzing'].includes(source.status)?'<button type="button" data-video-action="cancel">取消分析</button>':''}${['failed','cancelled','interrupted','review_needed'].includes(source.status)&&!source.draft_id?'<button type="button" data-video-action="retry">明确重试</button>':''}${source.status==='ready'||source.draft_id?'<button type="button" data-video-action="import">核对中文步骤</button>':''}<button type="button" data-video-preview>预览私有原视频（需完整下载）</button><video controls preload="none" style="max-width:100%;max-height:320px" hidden></video><ul>${(source.uncertainties||[]).map(v=>`<li>${escape(v)}</li>`).join('')}</ul><ol>${(source.candidate_steps||[]).map((s,i)=>`<li><b>${(s.start_ms/1000).toFixed(2)}–${(s.end_ms/1000).toFixed(2)}秒</b> · ${s.evidence_kind==='observed'?'直接观察候选':'推断操作'} · ${escape(({launch:'启动应用',aiTap:'点击',aiInput:'输入',aiScroll:'滑动',aiWaitFor:'等待',aiAssert:'检查'})[s.action]||'待核对操作')} ${escape(s.target)}<p>观察：${escape(s.observation)}；业务预期仍需核对。</p>${s.frame_refs.map(f=>`<button type="button" data-video-frame="${escape(f)}">查看帧 ${escape(f)}</button>`).join('')}${s.uncertainties.map(v=>`<p>${escape(v)}</p>`).join('')}</li>`).join('')}</ol><img data-video-frame-preview alt="所选录屏证据帧" style="max-width:100%;max-height:400px" hidden>`;
     q('[data-video-status]').onclick=()=>{polls=0;refresh();};
     q('[data-video-preview]').onclick=()=>{if(!valid())return;const video=box.querySelector('video');video.hidden=false;media(`/ui-video-sources/${id}/video?`+new URLSearchParams({app_id:app}),video);};
@@ -274,10 +292,10 @@ function mountUiVideoSource(node,{current,openDraft,initialSource=null}){
         if(data.draft){dispose();openDraft(data.draft);return;}source=data.source;polls=0;render();list();
       }catch(e){notice(e.message);}finally{busy=false;if(button.isConnected)button.disabled=false;}
     };
-    if(['queued','decoding','analyzing'].includes(source.status)&&polls++<120)timer=setTimeout(()=>{if(valid()&&!document.hidden)refresh();},5000);
+    schedulePoll();
   }
-  q('[data-video-list]').onclick=async e=>{const button=e.target.closest('[data-video-open]');if(!button||busy)return;invalidate();source={source_id:button.dataset.videoOpen};polls=0;await refresh();};
-  q('[data-video-app]').onchange=()=>{if(busy)return;invalidate();app=q('[data-video-app]').value;source=null;q('[data-video-list]').replaceChildren();q('[data-video-detail]').replaceChildren();list();};
+  q('[data-video-list]').onclick=async e=>{const button=e.target.closest('[data-video-open]');if(!button||busy)return;invalidate();source={source_id:button.dataset.videoOpen};polls=0;notice('正在读取所选录屏状态…');await refresh();};
+  q('[data-video-app]').onchange=()=>{if(busy)return;invalidate();app=q('[data-video-app]').value;source=null;notice('');q('[data-video-list]').replaceChildren();q('[data-video-detail]').replaceChildren();list();};
   q('[data-video-refresh]').onclick=list;
   q('[data-video-upload]').onclick=async()=>{
     if(busy||!valid()||!app)return;const file=q('[data-video-file]').files[0];
@@ -291,6 +309,7 @@ function mountUiVideoSource(node,{current,openDraft,initialSource=null}){
     finally{clearInterval(accountGuard);busy=false;if(valid()){button.disabled=false;q('[data-video-app]').disabled=false;}}
   };
   const guard=setInterval(()=>{if(!valid())dispose();},1000);
+  document.addEventListener('visibilitychange',visibilityChanged);
   request('/ui-executions/catalog').then(data=>{if(!data)return;q('[data-video-app]').innerHTML='<option value="">选择应用</option>'+(data.apps||[]).map(a=>`<option value="${escape(a.app_id)}">${escape(a.name)}</option>`).join('');if(initialSource&&(data.apps||[]).some(a=>a.app_id===initialSource.app_id)){app=initialSource.app_id;q('[data-video-app]').value=app;source={source_id:initialSource.source_id};list();refresh();}}).catch(e=>notice(e.message));
   return {dispose};
 }
