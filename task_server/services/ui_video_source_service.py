@@ -225,7 +225,8 @@ def decode_video(video, output, cancelled):
     # scrolling is motion, not a reason to reject an otherwise short recording.
     output.mkdir(mode=0o700, parents=True, exist_ok=True)
     for old in output.glob('frame-*.jpg'): old.unlink()
-    base = "scale=480:480:force_original_aspect_ratio=decrease,format=yuv420p,mpdecimate=hi=768:lo=320:frac=0.10"
+    scale = f"scale={min(width,1280)}:{min(height,1280)}:force_original_aspect_ratio=decrease"
+    base = scale+",format=yuv420p,mpdecimate=hi=768:lo=320:frac=0.10"
     common = [_tool('ffmpeg'), '-nostdin', '-hide_banner', '-v', 'info', '-threads', '1', '-protocol_whitelist', 'file,pipe', '-f', 'mov', '-i', str(video), '-xerror', '-an', '-sn', '-dn']
     _, scan = _process([*common, '-vf', base+',signalstats,metadata=print:key=lavfi.signalstats.YDIF,showinfo', '-f', 'null', '-'], cancelled)
     all_times = [round(float(t)*1000) for t in re.findall(rb'\bn:\s*\d+.*?pts_time:([\d.e+\-]+)', scan)]
@@ -276,7 +277,7 @@ def decode_video(video, output, cancelled):
     # Always decode a last-frame anchor to expose missing endings rather than
     # representing an earlier frame as the end of the recording.
     tail = output/'frame-end.jpg'
-    _process([_tool('ffmpeg'), '-nostdin', '-v', 'error', '-threads', '1', '-sseof', '-0.08', '-protocol_whitelist', 'file,pipe', '-f', 'mov', '-i', str(video), '-xerror', '-an', '-sn', '-dn', '-vf', 'scale=480:480:force_original_aspect_ratio=decrease', '-frames:v', '1', '-threads', '1', '-pix_fmt', 'yuvj420p', '-y', str(tail)], cancelled, 20)
+    _process([_tool('ffmpeg'), '-nostdin', '-v', 'error', '-threads', '1', '-sseof', '-0.08', '-protocol_whitelist', 'file,pipe', '-f', 'mov', '-i', str(video), '-xerror', '-an', '-sn', '-dn', '-vf', scale, '-frames:v', '1', '-threads', '1', '-pix_fmt', 'yuvj420p', '-y', str(tail)], cancelled, 20)
     if tail.exists(): files.append(tail); times.append(max(times[-1], duration-80))
     if len(files)>MAX_FRAMES: raise ValueError('video_split_required')
     from PIL import Image, ImageChops, ImageStat

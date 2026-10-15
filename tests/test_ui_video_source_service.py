@@ -92,6 +92,16 @@ class VideoSourceTests(unittest.TestCase):
                 self.assertLessEqual(max(b-a for a,b in zip(times,times[1:])),3000)
                 self.assertFalse(result['static'])
 
+    def test_portrait_evidence_keeps_readable_control_and_record_text(self):
+        from task_server.services.ui_video_source_service import decode_video
+        from PIL import Image
+        directory=Path(self.temp.name)
+        movie=self.fixture(directory/'portrait.mp4','-f','lavfi','-i','testsrc2=s=580x1280:r=2:d=1','-c:v','libx264','-pix_fmt','yuv420p')
+        result=decode_video(movie,directory/'portrait',lambda:False)
+        for frame in result['frames']:
+            with Image.open(directory/'portrait'/(frame['frame_id']+'.jpg')) as image:
+                self.assertEqual(image.size,(580,1280))
+
     def test_real_ten_bit_hevc_uses_identical_scan_and_extraction_pixels(self):
         from task_server.services.ui_video_source_service import decode_video
         directory=Path(self.temp.name)

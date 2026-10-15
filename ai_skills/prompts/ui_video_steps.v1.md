@@ -17,6 +17,14 @@
 }
 ```
 
+最终产物是可回放的业务用例，请按控件所在的操作前页面确定目标，不能根据跳转后页面反推一个实际不存在的按钮。子页面返回个人中心时，若操作前画面只有左上返回箭头，没有底部导航，不得输出点击底部“我的”。
+
+应用启动与结束由平台预置：开头从系统桌面进入应用不生成点击应用内控件；末尾回到系统桌面、最近任务卡片、通知栏或停止录屏不生成业务步骤、等待或断言，也不因此判定多个业务场景。不要把最近任务卡片里的旧页面当作当前应用内页面。仅当系统/其他应用是业务中段必要操作且无法表达时集中提问。
+
+列表内有多个同名按钮时，必须按操作前后卡片归属确定具体对象。删除尤其要比较记录时间/编号和列表前后差异：哪条消失、哪些仍保留；弹窗背景最上面一条不等于被删除对象。只看到弹窗但对象不可确定时必须说“待确认目标记录”，不能猜第一条、最新一条或任意一条。瞬时“删除成功”是提示，不是记录按钮变灰或名称改变。不能将缺少触点本身当作反复追问理由：若前后变化唯一、目标明确，可标inferred并在总览保留需确认状态；只对影响执行对象、输入、方向或预期的真实歧义提问。
+
+等待只保留业务操作后必要的具体可见状态。不要添加“页面稳定”“弹窗完全显示”“提示消失”等没有业务必要性的步骤。正文精简为控件目标与可见结果，不复制整屏说明或广告内容。
+
 事件字段严格为 action,target,value,start_ms,end_ms,frame_refs,observation,evidence_kind,uncertainties。observation 只描述看到的页面变化，不能当成业务应有结果。不生成 expected、launch、包名、设备、确认状态、执行指令、shell、ADB或坐标。action 仅 aiTap/aiInput/aiScroll/aiWaitFor/aiAssert。系统键、跨应用和无法辨认动作在 uncertainties 提问，不降级成按钮点击。确认/取消弹窗必须区分，不用背景控件代替弹窗目标。失败弹窗描述原事实。
 
 aiAssert 只作为需要用户核对的可见检查候选，不推断后台数据/提交成功；目标是具体对象和状态。aiWaitFor 仅表示必要页面状态，不照抄视频停顿秒数。aiInput.value 总是空字符串；密码/验证码/令牌禁止转录，输入内容请用户手工配置，observation 也不得含秘密。aiScroll.value 必须是 JSON 对象，不能是字符串（包括不能把对象再次编码成字符串）、数组或 null；其他动作的 value 必须是字符串，且本任务统一用空字符串。滚动对象只允许 direction、distance、scrollType 三个可选字段：direction 仅 down/up/right/left；distance 仅有限正数；scrollType 仅 singleAction、scrollToBottom、scrollToTop、scrollToRight、scrollToLeft。scrollType 缺省或 singleAction 时才允许 direction/distance；scrollToBottom/scrollToTop/scrollToRight/scrollToLeft 不能带 direction 或 distance。不得增加 amount、pixels、speed、duration、x/y、from/to、shell 等其他字段。没有可靠方向或方式证据时 value={}，并在该事件 uncertainties 请求核对；不能将“向上滑动”等自然语言放入 value，也不能猜测滚动方向。目标缺失或遮挡必须提问。不因模型自信省略疑问，不生成准确率。
