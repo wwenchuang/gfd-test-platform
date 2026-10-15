@@ -157,6 +157,25 @@ def _consolidation_images(events,frames,limit):
     # least half for consequential before/confirmation/result evidence.
     reserved=list(dict.fromkeys(reserved))[:max(0,limit-3)] if priority else list(dict.fromkeys(reserved))[:limit]
     chosen=[f for f in frames if f['frame_id'] in reserved]
+    # Preserve an actual before/confirmation/result triplet. Spreading the
+    # union can pick the later return page as the only result image.
+    times={f['frame_id']:f['timestamp_ms'] for f in frames}
+    for index,event in enumerate(events):
+        if event['action']!='aiTap' or not re.search(r'删除|移除|清空|支付|付款|delete|remove|pay',event['target'],re.I):continue
+        confirmation=next((i for i in range(index+1,len(events)) if events[i]['action'] in {'aiTap','aiInput','aiScroll'}),None)
+        if confirmation is None or not re.search(r'确认|确定|提交|confirm|submit',events[confirmation]['target'],re.I):continue
+        following=next((events[i]['start_ms'] for i in range(confirmation+1,len(events)) if events[i]['action'] in {'aiTap','aiInput','aiScroll'}),duration+1)
+        result_refs={ref for item in events[confirmation+1:] for ref in item['frame_refs']
+                     if events[confirmation]['end_ms']<=times[ref]<following}
+        result_refs.update(ref for item in events[confirmation:] for ref in item.get('outcome',{}).get('frame_refs',[])
+                           if events[confirmation]['end_ms']<=times[ref]<following)
+        if not result_refs:continue
+        anchors=[event['frame_refs'][0],events[confirmation]['frame_refs'][0],max(result_refs,key=times.get)]
+        selected={f['frame_id'] for f in chosen}
+        for ref in anchors:
+            if len(chosen)<limit and ref not in selected:
+                chosen.append(next(f for f in frames if f['frame_id']==ref));selected.add(ref)
+        break
     selected={f['frame_id'] for f in chosen}
     if len(chosen)<limit:
         chosen+=spread([f for f in frames if f['frame_id'] in priority-selected],limit-len(chosen))

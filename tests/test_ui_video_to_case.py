@@ -583,6 +583,28 @@ def test_global_images_reserve_navigation_and_scroll_alongside_destructive_resul
     assert refs&{'f5','f6'} and refs&{'f7','f8'} and refs&{'f9','f10'}
 
 
+def test_global_result_image_stays_before_return_navigation(tmp_path):
+    from task_server.services.ui_video_analysis import _consolidation_images
+    frames,event=_consolidation_fixture(tmp_path)
+    events=[event('aiTap',0,1,'个人入口'),event('aiScroll',2,3,'个人页面'),
+            event('aiTap',5,6,'第二条记录删除'),event('aiTap',7,8,'弹窗确认'),
+            event('aiWaitFor',8,10,'记录列表'),event('aiTap',10,11,'返回个人页面')]
+    events[4]['frame_refs']=['f8','f9','f10']
+    refs={frame['frame_id'] for frame in _consolidation_images(events,frames,6)}
+    assert {'f1','f2','f3','f5','f7','f9'} == refs
+
+
+def test_global_result_image_can_come_from_confirmation_outcome(tmp_path):
+    from task_server.services.ui_video_analysis import _consolidation_images
+    frames,event=_consolidation_fixture(tmp_path)
+    events=[event('aiTap',0,1,'个人入口'),event('aiScroll',2,3,'个人页面'),
+            event('aiTap',5,6,'第二条记录删除'),event('aiTap',7,8,'弹窗确认'),
+            event('aiTap',10,11,'返回个人页面')]
+    events[3]['outcome']={'observation':'目标消失，邻居保留','frame_refs':['f9']}
+    refs={frame['frame_id'] for frame in _consolidation_images(events,frames,6)}
+    assert {'f1','f2','f3','f5','f7','f9'} == refs
+
+
 @pytest.mark.parametrize('duplicate_wrong_time',[False,True])
 def test_global_cannot_discard_required_navigation_even_with_equal_action_count(monkeypatch,tmp_path,duplicate_wrong_time):
     from task_server.services import ui_video_analysis as analysis,ai_skill_service as ai
