@@ -623,3 +623,9 @@ test('ordinary result reopens after an application filter round trip with the re
  assert.ok(f.node.querySelector('[data-ui-batch] [data-batch-progress]'));
  assert.doesNotMatch(f.node.querySelector('[data-ui-notice]').textContent,/读取失败/);
 });
+
+test('aborting a pending search for IME clears busy feedback',async t=>{
+ let hold=false;const f=fixture(t,path=>hold&&path.startsWith('/ui-executions/catalog')?new Promise(()=>{}):undefined);f.mount();await wait();
+ hold=true;f.node.querySelector('[data-ui-search]').click();await wait();assert.equal(f.node.querySelector('[data-ui-search]').getAttribute('aria-busy'),'true');
+ f.node.querySelector('[name="ui-query"]').dispatchEvent(new f.w.CompositionEvent('compositionstart'));assert.notEqual(f.node.querySelector('[data-ui-search]').getAttribute('aria-busy'),'true');
+});

@@ -9,10 +9,10 @@
     node.innerHTML='<header><div><p>本人本次执行</p><h2 data-report-title>本次报告</h2></div><button type="button" class="btn-sm" data-report-close>收起</button></header><p data-report-owner></p><p data-report-state role="status">正在读取报告…</p><div class="ui-report-actions"><button type="button" class="btn-sm" data-report-evidence-refresh hidden>刷新执行证据</button><button type="button" class="btn-sm" data-report-retry hidden>重新生成报告</button><button type="button" class="btn-sm" data-report-download="docx" hidden>下载 Word</button><button type="button" class="btn-sm" data-report-download="html" hidden>下载 HTML</button><button type="button" class="btn-sm" data-report-download="md" hidden>下载 Markdown</button><button type="button" class="btn-sm" data-report-copy hidden>复制测试摘要</button></div><div data-report-notifications role="status"></div><pre data-report-summary></pre><div data-report-attempts></div><div data-report-evidence></div><p data-report-message role="status"></p>';
     const text=(selector,value)=>{node.querySelector(selector).textContent=value;};
     async function action(button,callback,feedback=node.querySelector('[data-report-message]')){
-      if(!valid()||button.disabled)return;button.disabled=true;refreshError='';feedback.textContent='';
+      if(!valid()||button.disabled)return;button.disabled=true;button.setAttribute('aria-busy','true');refreshError='';feedback.textContent='';
       try{const message=await callback();if(valid()&&feedback.isConnected&&message)feedback.textContent=message;}
       catch(error){if(valid()&&feedback.isConnected)feedback.textContent=error.message||'操作失败，请重试。';}
-      finally{if(valid())button.disabled=false;}
+      finally{if(valid()){button.disabled=false;button.removeAttribute('aria-busy');}}
     }
     const artifactPath=item=>base+'/artifacts/'+item.artifact_id;
     async function downloadEvidence(item){

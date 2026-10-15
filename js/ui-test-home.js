@@ -28,6 +28,14 @@
   function reset(){const node=state?.node;leave();node?.replaceChildren();}
   async function request(s,slot,path,options={}){
     s.pending.get(slot)?.abort();const controller=new AbortController();s.pending.set(slot,controller);
+    const feedbackSelector={catalog:'[data-ui-search]',pictures:'[data-ui-pictures-refresh]'}[slot];
+    const feedback=feedbackSelector?s.node.querySelector(feedbackSelector):null;
+    feedback?.setAttribute('aria-busy','true');
+    const regionSelector={catalog:'[data-ui-cases]',devices:'[data-ui-devices]',reports:'[data-ui-reports]'}[slot];
+    const region=regionSelector?s.node.querySelector(regionSelector):null;
+    if(region&&!region.children.length){region.classList.add('ui-loading-region');region.setAttribute('aria-busy','true');region.setAttribute('data-loading-label',slot==='devices'?'正在查找已连接的手机…':slot==='reports'?'正在读取测试记录…':'正在查找测试基线…');}
+    const clearFeedback=()=>{if(s.pending.get(slot)===controller){feedback?.removeAttribute('aria-busy');region?.removeAttribute('aria-busy');}};
+    controller.signal.addEventListener('abort',clearFeedback,{once:true});
     const timeout=setTimeout(()=>controller.abort(),30000);
     try{
       const data=await s.options.request(path,{...options,signal:controller.signal});
@@ -40,7 +48,7 @@
       else if([400,401,403,404,409,413,422,429].includes(status)
         ||(status===200&&typeof error?.code==='string'&&error.code!=='batch_store_unavailable'))error.definitive=true;
       throw error;}
-    finally{clearTimeout(timeout);if(s.pending.get(slot)===controller)s.pending.delete(slot);}
+    finally{clearTimeout(timeout);clearFeedback();controller.signal.removeEventListener('abort',clearFeedback);if(s.pending.get(slot)===controller)s.pending.delete(slot);}
   }
   function options(select,values,placeholder){
     const current=select.value;select.replaceChildren(new Option(placeholder,''));
@@ -60,7 +68,7 @@
       s.node.querySelector('[data-ui-selection-count]').textContent=`已选 ${s.selected.size} 条基线`;
     }else{
     button.disabled=s.busy||s.uncertain||!s.options.canAdmit()||!s.options.canExecute()||!s.app||!s.selected.size||!device||device.connection_status!=='ready';
-    button.textContent=s.busy?'正在检查并提交…':'开始测试';
+    button.textContent=s.busy?'正在检查并提交…':'开始测试';button.setAttribute('aria-busy',String(s.busy));
     const startHint=s.node.querySelector('[data-ui-start-hint]');
     if(startHint)startHint.textContent=s.busy?'正在核对用例和手机，请稍候。':s.uncertain?'请先核对上次提交结果，避免重复执行。':!s.options.canAdmit()?'测试服务暂不可用，请刷新或联系管理员。':!s.options.canExecute()?'当前账号没有执行权限，请联系管理员。':!s.app?'先选择要测试的应用。':!s.selected.size?'勾选至少一条已发布基线。':!device?'请选择一台连接就绪的手机。':device.connection_status!=='ready'?(labels[device.connection_status]||'手机尚未就绪，请检查连接后刷新。'):'已准备好，点击开始测试。';
     s.node.querySelector('[data-ui-selection-count]').textContent=`已选 ${s.selected.size} 条用例${device?' · '+device.name:''}`;
@@ -221,7 +229,7 @@
     if(!valid(s))return;const button=s.node.querySelector('[data-ui-pictures-refresh]');if(!button)return;
     const allowed=canRefreshPictures(s),pending=s.pending.has('pictures');button.hidden=!allowed;
     button.disabled=!allowed||!s.app||s.busy||s.uncertain||pending||Date.now()<s.pictureRefreshAfter;
-    button.textContent=pending?'正在请求截图…':'刷新手机截图';
+    button.textContent=pending?'正在请求截图…':'刷新手机截图';button.setAttribute('aria-busy',String(pending));
     if(!allowed){const hint=s.node.querySelector('[data-ui-picture-notice]');hint.hidden=true;hint.textContent='';}
   }
   function pictureNotice(s,message,error=false){

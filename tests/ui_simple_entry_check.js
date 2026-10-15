@@ -434,3 +434,12 @@ test('leaving the upload application discards automatic completion intent and ig
  f.app('a');await wait();Object.defineProperty(f.q('[data-video-file]'),'files',{value:[new f.w.File(['video'],'clip.mp4')]});f.w.nativeFetch=async()=>({ok:true,json:async()=>({ok:true,source})});f.q('[data-video-upload]').click();await wait();f.q('[data-video-status]').click();await wait();
  f.app('b');await wait();resolveReady({ok:true,source:{...source,status:'ready'}});await wait();await wait();assert.equal(mounts,0);assert.equal(f.calls.some(c=>c.path.endsWith('/import')),false);assert.equal(f.q('[data-video-detail]').textContent,'');
 });
+
+test('video feedback shows actual stages, no invented percentage, and stops on failure',async t=>{
+ const f=await videoFixture(t);let source={source_id:'uvs_'+'c'.repeat(32),filename:'clip.mp4',status:'decoding',analysis_version:1,updated_at:1};
+ f.respond(path=>path.includes(source.source_id)?{ok:true,source}:path.startsWith('/ui-video-sources?')?{ok:true,sources:[source]}:undefined);
+ f.app('a');await wait();f.q('[data-video-open]').click();await wait();
+ assert.match(f.q('[data-video-progress]').textContent,/读取视频/);assert.equal(f.q('[data-video-progress]').getAttribute('aria-busy'),'true');assert.equal(f.q('[data-video-progress]').textContent.includes('%'),false);
+ source={...source,status:'analyzing',updated_at:2};f.q('[data-video-status]').click();await wait();assert.match(f.q('[aria-current="step"]').textContent,/AI 识别步骤/);
+ source={...source,status:'failed',error:'模型超时',updated_at:3};f.q('[data-video-status]').click();await wait();assert.equal(f.q('[data-video-progress]'),null);assert.ok(f.q('[data-video-action="retry"]'));
+});

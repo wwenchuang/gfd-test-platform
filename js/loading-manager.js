@@ -3,6 +3,7 @@
 
 const LoadingManager = {
   _overlayEl: null,
+  _buttons: new WeakMap(),
 
   /**
    * 显示全局加载遮罩
@@ -42,15 +43,22 @@ const LoadingManager = {
   setButtonLoading(btn, label = '处理中...') {
     const el = typeof btn === 'string' ? document.querySelector(btn) : btn;
     if (!el) return () => {};
-    const origHTML = el.innerHTML;
-    const origDisabled = el.disabled;
-    el.disabled = true;
-    el.classList.add('btn-loading');
-    el.innerHTML = `<span class="btn-spinner"></span> ${label}`;
+    let state=this._buttons.get(el);
+    if (!state) {
+      state={html:el.innerHTML,disabled:el.disabled,busy:el.getAttribute('aria-busy'),count:0};
+      this._buttons.set(el,state);
+    }
+    state.count++;
+    el.disabled=true;el.setAttribute('aria-busy','true');el.classList.add('btn-loading');
+    const spinner=document.createElement('span');spinner.className='btn-spinner';spinner.setAttribute('aria-hidden','true');
+    el.replaceChildren(spinner,document.createTextNode(' '+label));
+    let restored=false;const states=this._buttons;
     return function restore() {
-      el.innerHTML = origHTML;
-      el.disabled = origDisabled;
-      el.classList.remove('btn-loading');
+      if(restored)return;restored=true;
+      if(--state.count)return;
+      el.innerHTML=state.html;el.disabled=state.disabled;
+      if(state.busy===null)el.removeAttribute('aria-busy');else el.setAttribute('aria-busy',state.busy);
+      el.classList.remove('btn-loading');states.delete(el);
     };
   },
 
