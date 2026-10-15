@@ -270,10 +270,12 @@ def test_real_prompt_supplies_complete_json_envelope_and_event_fields():
     from task_server.services import ai_skill_service as ai
     prompt=ai.render_ai_skill_prompt('ui_video_steps',{'app_id':APP,'frames':[]})
     # Exercise the actual template and existing schema validator, not a mocked skill.
-    example=json.loads(re.search(r'```json\s*(.*?)\s*```',prompt,re.S).group(1))
-    ai.validate_ai_skill_output('ui_video_steps',example)
-    assert set(example)=={'events','uncertainties','multiple_scenarios'}
-    assert set(example['events'][0])=={'action','target','value','start_ms','end_ms','frame_refs','observation','evidence_kind','uncertainties'}
+    examples=[json.loads(block) for block in re.findall(r'```json\s*(.*?)\s*```',prompt,re.S)]
+    for example in examples:
+        ai.validate_ai_skill_output('ui_video_steps',example)
+        assert set(example)=={'events','uncertainties','multiple_scenarios'}
+    event=next(example['events'][0] for example in examples if example['events'])
+    assert set(event)=={'action','target','value','start_ms','end_ms','frame_refs','observation','evidence_kind','uncertainties'}
     assert '结构示例' in prompt and '不能照抄' in prompt
 
 
@@ -388,3 +390,58 @@ def test_scroll_json_representation_rejects_unsafe_or_invalid_contract(value):
     event={'action':'aiScroll','target':'页面列表','value':value,'start_ms':0,'end_ms':0,'frame_refs':['f0'],'observation':'页面列表显示底部入口','evidence_kind':'inferred','uncertainties':[]}
     with pytest.raises(ValueError,match='video_action_invalid'):
         validate_analysis({'events':[event],'uncertainties':[],'multiple_scenarios':False},[{'frame_id':'f0','timestamp_ms':0}],1000)
+
+
+from task_server.services.ai_skill_service import run_ai_skill as REAL_VIDEO_RUN_AI_SKILL
+
+@pytest.mark.parametrize('material,expected_status',[('passive_carousel','review_needed'),('touchless_navigation','ready')])
+def test_full_worker_distinguishes_passive_only_contract_from_touchless_navigation(env,tmp_path,monkeypatch,material,expected_status):
+    """Actual ffmpeg + skill prompt/schema; only provider response is simulated.
+
+    Synthetic frames test transport/state handling, not real AI classification.
+    """
+    import json,subprocess
+    from PIL import Image,ImageDraw
+    from task_server.services import ai_skill_service as ai,ui_video_source_service as video
+    from task_server.workers import ui_video_worker as worker
+    frame_count=8 if material=='passive_carousel' else 4
+    for i in range(frame_count):
+        image=Image.new('RGB',(160,240),'white');draw=ImageDraw.Draw(image)
+        draw.text((10,10),'Home' if material=='passive_carousel' or i<2 else 'Profile',fill='black')
+        draw.rectangle((8,45,152,180),fill=['red','blue','green','yellow'][i%4])
+        image.save(tmp_path/f'page-{i:03d}.png')
+    movie=tmp_path/'synthetic.mp4'
+    subprocess.run([video._tool('ffmpeg'),'-v','error','-framerate','1','-i',str(tmp_path/'page-%03d.png'),'-c:v','libx264','-pix_fmt','yuv420p',str(movie)],check=True)
+    store=video.VideoStore(tmp_path/'sources');body=movie.read_bytes()
+    doc=store.upload(A,APP,'synthetic.mp4',io.BytesIO(body),len(body),actor=A)
+    calls=[]
+    def provider(skill_name,prompt,**kwargs):
+        assert '自动轮播' in prompt and 'events=[]' in prompt and '跨页面导航' in prompt
+        assert '不能仅凭轮播内容变化生成 aiScroll 或 aiWaitFor' in prompt
+        calls.append(skill_name)
+        frames=kwargs['payload']['frames']
+        if material=='passive_carousel':result={'events':[],'uncertainties':['素材仅有自动轮播，没有可支持用户动作的证据，请提供实际操作片段'],'multiple_scenarios':False}
+        else:
+            event={'action':'aiTap','target':'首页个人中心入口','value':'','start_ms':frames[0]['timestamp_ms'],'end_ms':frames[-1]['timestamp_ms'],'frame_refs':[frames[0]['frame_id'],frames[-1]['frame_id']],'observation':'个人页面显示账号入口','evidence_kind':'inferred','uncertainties':[]}
+            result={'events':[event],'uncertainties':[],'multiple_scenarios':False}
+        return json.dumps(result,ensure_ascii=False)
+    monkeypatch.setattr(ai,'run_ai_skill',REAL_VIDEO_RUN_AI_SKILL)
+    monkeypatch.setattr(ai,'ai_gateway_skill_content',provider)
+    monkeypatch.setattr(ai,'AI_SKILLS_STRICT_MODEL',True)
+    monkeypatch.setattr(ai,'AI_VISION_IMAGE_LIMIT',6)
+    monkeypatch.setenv('MIDSCENE_AI_SKILLS_USE_GATEWAY','1')
+    worker.analyze_video_source(store,doc['source_id'])
+    result=store.get(doc['source_id'],A['user_id'],APP)
+    assert calls and all(name=='ui_video_steps' for name in calls)
+    assert len(calls)==(2 if material=='passive_carousel' else 1)
+    assert result['status']==expected_status
+    assert result['media']['coverage_end_ms']==frame_count*1000 and not result['media']['static']
+    assert result['draft_id']==''
+    if material=='passive_carousel':
+        assert result['candidate_steps']==[] and result['events']==[]
+        assert result['uncertainties'] and not result.get('multiple_scenarios')
+    else:
+        assert len(result['candidate_steps'])==1 and result['candidate_steps'][0]['evidence_kind']=='inferred'
+        from task_server.services.ui_video_analysis import draft_proposal
+        content,snapshot=draft_proposal(result)
+        assert all(step['review_state']=='needs_review' for step in content['steps'])
