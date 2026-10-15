@@ -1,6 +1,8 @@
 // app.js
 // Extracted from task-manager.html (no logic changes).
 
+let generateBusyOwner = null;
+
 // ===== KNOWLEDGE BASE =====
 function setKnowledgeStatus(text, type='') {
   const el = document.getElementById('knowledge-status');
@@ -6047,11 +6049,14 @@ async function generateYaml() {
 
   const file = fileInput || `task-${title}.yaml`;
   rememberAppPackage(appPackage);
+  const attempt = Symbol('generation attempt');
+  generateBusyOwner = attempt;
   setGenerateBusy(true);
   setGenerateProgress(32, '准备上传资料', 1);
   setGenerateStatus('正在上传资料并调用模型生成用例，稍等一下...', 'busy');
 
-  let current = captureGenerationView();
+  let viewCurrent = captureGenerationView();
+  const current = () => generateBusyOwner === attempt && viewCurrent();
   try {
     const files = [...generateAssetFiles];
     if (content) {
@@ -6091,7 +6096,7 @@ async function generateYaml() {
     closeModal('modal-generate');
     const centerShown = await showGenerateJobsCenter();
     if (centerShown === false) return;
-    current = captureGenerationView();
+    viewCurrent = captureGenerationView();
     const data = await pollGenerateJob(created.job_id, current);
     if (!current() || !data) return;
 
@@ -6099,7 +6104,6 @@ async function generateYaml() {
     const resultFile = data.file || file;
     await loadModules();
     if (!current()) return;
-    setGenerateBusy(false);
     if (!modules[resultModule]) modules[resultModule] = [];
     if (!modules[resultModule].includes(resultFile)) modules[resultModule].push(resultFile);
     currentModule = resultModule;
@@ -6127,7 +6131,10 @@ async function generateYaml() {
     loadJobs().catch(() => {});
     showToast(e.message || '生成失败', 'error');
   } finally {
-    if (current()) setGenerateBusy(false);
+    if (generateBusyOwner === attempt) {
+      generateBusyOwner = null;
+      setGenerateBusy(false);
+    }
   }
 }
 
