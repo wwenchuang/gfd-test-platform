@@ -1741,6 +1741,7 @@ def run_yaml_dry_run_job(job):
         "attempts": [],
         "stdout": stdout,
         "stderr": stderr,
+        "teardown": final.get("teardown"),
         "summary": summary,
         "screenshots": [],
         "report_url": "",
@@ -1798,42 +1799,42 @@ def should_force_stop_foreground(pkg, app_package):
 
 
 def reset_foreground_app(adb_bin, device_id, app_package):
-    if not app_package:
-        return
-    width, height = 1080, 2400
+    """Close only this test's app; YAML owns launch, never manipulate recents."""
+    if not device_id or not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z0-9_]+)+", app_package or ""):
+        raise ValueError("缺少明确手机或应用包名，不能清理")
+    result = run_cmd([adb_bin, "-s", device_id, "shell", "am", "force-stop", app_package], timeout=20)
+    if result.returncode:
+        raise RuntimeError("关闭被测应用失败")
+
+
+def with_app_cleanup(execute, cleanup, evidence_path):
+    """Retain the business result and record cleanup independently, even on errors."""
+    result = None
     try:
-        size = run_cmd([adb_bin, "-s", device_id, "shell", "wm", "size"], timeout=10).stdout or ""
-        match = re.search(r"(\d+)x(\d+)", size)
-        if match:
-            width, height = int(match.group(1)), int(match.group(2))
-    except Exception as e:
-        print(f"ADB reset warning: wm size -> {e}")
-    x = max(1, width // 2)
-    y1 = max(1, int(height * 0.82))
-    y2 = max(1, int(height * 0.18))
-    foreground_pkg = current_foreground_package(adb_bin, device_id)
-    commands = [
-        ["shell", "input", "keyevent", "3"],
-        ["shell", "input", "keyevent", "187"],
-        ["shell", "input", "swipe", str(x), str(y1), str(x), str(y2), "300"],
-        ["shell", "input", "swipe", str(x), str(y1), str(x), str(y2), "300"],
-        ["shell", "input", "swipe", str(x), str(y1), str(x), str(y2), "300"],
-        ["shell", "input", "keyevent", "3"],
-        ["shell", "am", "kill-all"],
-    ]
-    if should_force_stop_foreground(foreground_pkg, app_package):
-        commands.insert(0, ["shell", "am", "force-stop", foreground_pkg])
-    commands.extend([
-        ["shell", "am", "force-stop", app_package],
-        ["shell", "monkey", "-p", app_package, "-c", "android.intent.category.LAUNCHER", "1"],
-    ])
-    for args in commands:
+        result = execute()
+        return result
+    finally:
         try:
-            run_cmd([adb_bin, "-s", device_id] + args, timeout=20)
-            time.sleep(0.5)
-        except Exception as e:
-            print(f"ADB reset warning: {' '.join(args)} -> {e}")
-    time.sleep(2)
+            cleanup()
+            outcome = {"ok": True, "message": "被测应用已关闭"}
+        except Exception as exc:
+            outcome = {"ok": False, "message": "关闭被测应用失败", "error_type": type(exc).__name__}
+        if isinstance(result, dict):
+            result["teardown"] = outcome
+        try:
+            write_text(evidence_path, json.dumps(outcome, ensure_ascii=False, indent=2))
+        except Exception as exc:
+            print("App cleanup evidence write failed:", type(exc).__name__)
+        if not outcome["ok"]:
+            print("App cleanup failed:", outcome.get("error_type"))
+
+
+def close_android_test_app(job_id, device_id, app_package):
+    if job_id in _UI_DELIVERIES and _UI_DELIVERIES[job_id].get("stopped") is not True:
+        raise RuntimeError("执行进程停止尚未确认，暂不关闭应用")
+    adb_bin, _ = resolve_adb_with_devices(require_devices=False)
+    reset_foreground_app(adb_bin, device_id, app_package)
+
 
 
 def latest_file(root, pattern):
@@ -2230,7 +2231,12 @@ def run_job(job):
                 "source_sha256": hashlib.sha256(source.encode()).hexdigest(), "device_id": device_id,
                 "platform": "ios", "bundle_id": bundle_id, "source_file": job.get("file")}, ensure_ascii=False))
             reset_ios_foreground_app(port, bundle_id, allowed_bundle_id=bundle_id if job.get("ui_execution_contract") == "ui-v1" else None)
-            return run_standard_job({**job, "yaml_content": compiled})
+            def close_app():
+                if job["job_id"] in _UI_DELIVERIES and _UI_DELIVERIES[job["job_id"]].get("stopped") is not True:
+                    raise RuntimeError("执行进程停止尚未确认，暂不关闭应用")
+                reset_ios_foreground_app(port, bundle_id, allowed_bundle_id=bundle_id)
+            return with_app_cleanup(lambda: run_standard_job({**job, "yaml_content": compiled}),
+                                    close_app, job_dir / "teardown.json")
     except Exception as exc:
         return {"status": "failed", "device_id": device_id, "duration": 0, "stdout": "",
                 "stderr": f"iOS 执行前检查失败：{exc}", "attempts": []}
@@ -2283,7 +2289,13 @@ def run_standard_job(job):
             "device_id": device_id,
             "message": "准备执行"
         })
-        result = execute_midscene(job_id, attempt_dir, yaml_path, task_names, device_id)
+        if RUNNER_PLATFORM == "ios":
+            result = execute_midscene(job_id, attempt_dir, yaml_path, task_names, device_id)
+        else:
+            result = with_app_cleanup(
+                lambda: execute_midscene(job_id, attempt_dir, yaml_path, task_names, device_id),
+                lambda: close_android_test_app(job_id, device_id, app_package),
+                attempt_dir / "teardown.json")
         write_text(attempt_dir / "stdout.log", result["stdout"])
         write_text(attempt_dir / "stderr.log", result["stderr"])
         write_text(attempt_dir / "result.json", json.dumps({
@@ -2294,7 +2306,8 @@ def run_standard_job(job):
             "device_id": device_id,
             "status": result["status"],
             "returncode": result["returncode"],
-            "duration": result["duration"]
+            "duration": result["duration"],
+            "teardown": result.get("teardown")
         }, ensure_ascii=False, indent=2))
 
         attempt_report = latest_file(attempt_dir, "*.html")
@@ -2367,6 +2380,7 @@ def run_standard_job(job):
         "attempts": attempts,
         "stdout": final["stdout"][-12000:],
         "stderr": final["stderr"][-12000:],
+        "teardown": final.get("teardown"),
         "summary": summary,
         "screenshots": screenshots,
         "report_url": report_url,
