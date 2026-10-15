@@ -94,20 +94,15 @@ def analyze_frames(document, root, cancelled):
     return {'events':events,'uncertainties':list(dict.fromkeys(questions)), 'multiple_scenarios':multi}
 
 
-def _expected_candidate(event, goal, *, final_event=False):
+def _expected_candidate(event, goal):
     """A sourced visible check suggestion, never an established business outcome."""
     observation=event['observation'].strip()
     concrete=(len(observation)>=6 and re.search(r'显示|出现|可见|打开|包含|弹出',observation)
               and not re.search(r'不明确|不确定|无法|可能|似乎|未知|跳帧|页面变化|界面变化',observation))
     candidate=observation if concrete else ''
-    if final_event:
-        clauses=re.findall(r'(?:检查|验证|预期)(?:结果为|是否)?([^，,。；;\n]+)',goal)
-        explicit=clauses[-1].strip(' ：:') if clauses else ''
-        if len(explicit)>=6 and re.search(r'显示|出现|可见|打开|包含|弹出',explicit) and not re.search(r'不明确|不确定|无法|可能|似乎|未知|不要|不应|禁止|勿',explicit):
-            candidate=explicit
-    # A matching explicit goal backs this visible suggestion; otherwise the user
-    # must decide whether the observed state is the desired business result.
-    basis=('user_goal' if candidate and candidate in goal and not re.search(r'不要|不应|禁止|勿',goal)
+    # Never extract a goal clause: doing so loses negation and scope. Only a
+    # literal identical goal can share this observed candidate's attribution.
+    basis=('user_goal' if candidate and candidate==goal.strip()
            else 'visible_candidate' if candidate else 'unresolved')
     return {'text':candidate,'basis':basis,'frame_refs':list(event['frame_refs']),'requires_confirmation':True}
 
@@ -122,9 +117,9 @@ def draft_proposal(document):
     for index,event in enumerate(snapshot['events']):
         step_id=str(uuid.uuid4());event['draft_step_id']=step_id
         ref=f"video:{identifier}:{version}:{index}"
-        event['expected_candidate']=_expected_candidate(event,document['goal'],final_event=index==len(snapshot['events'])-1)
+        event['expected_candidate']=_expected_candidate(event,document['goal'])
         expected=event['expected_candidate']['text'] if event['action'] in {'aiTap','aiInput','aiScroll'} else ''
-        target=event['expected_candidate']['text'] if event['action']=='aiAssert' and event['expected_candidate']['basis']=='user_goal' else event['target']
+        target=event['target']
         steps.append({'step_id':step_id,'action':event['action'],'target':target,'value':event['value'],
                       'expected':expected,'source_ref':ref,'review_state':'needs_review'})
         questions.extend(f'片段 {event["start_ms"]/1000:g}–{event["end_ms"]/1000:g} 秒：{q}' for q in event['uncertainties'])
@@ -137,5 +132,18 @@ def draft_proposal(document):
                           'value':'','expected':'','source_ref':steps[-1]['source_ref'],'review_state':'needs_review'})
     if not steps or steps[-1]['action']!='aiAssert':
         questions.append('视频未给出明确结束检查，请补充业务预期；观察到的变化不能代替业务应有结果。')
+    goal=document['goal'].strip()
+    final_check=steps[-1]['target'] if steps and steps[-1]['action']=='aiAssert' else ''
+    candidates=list(dict.fromkeys(event['expected_candidate']['text'] for event in snapshot['events'] if event['expected_candidate']['text']))
+    assertion_mismatch=any(event['action']=='aiAssert' and event['expected_candidate']['text'] and event['target']!=event['expected_candidate']['text'] for event in snapshot['events'])
+    needs_confirmation=bool(goal and goal!=final_check) or assertion_mismatch
+    snapshot['goal_review']={'status':'needs_confirmation' if needs_confirmation else 'literal_match' if goal else 'not_provided',
+                             'visible_candidates':candidates,'requires_confirmation':needs_confirmation}
+    if needs_confirmation:
+        # Central human confirmation preserves the entire original goal in the
+        # immutable snapshot; no keyword-based success/negation interpretation.
+        visible='；'.join(candidates)[:500] or '没有明确可见结果'
+        questions.append(f'请明确确认目标与候选检查是否一致。用户目标原文：{goal[:600] or "未填写"}。录屏可见检查候选：{visible}。末尾检查候选：{final_check[:400] or "未明确"}。'
+                         '平台未解释目标中的否定、范围或业务含义；如有冲突请修改预期/结束检查，再逐步确认。完整目标保留在来源详情。')
     normalized=normalize_steps({'title':'录屏步骤待核对','preconditions':[],'steps':steps,'questions':questions},document['app_id'])
     return normalized,snapshot

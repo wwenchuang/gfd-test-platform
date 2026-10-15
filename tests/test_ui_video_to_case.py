@@ -169,7 +169,7 @@ def test_expected_candidates_keep_provenance_and_need_confirmation():
     assert content['steps'][0]['expected']=='个人页面出现'
     assert content['steps'][0]['review_state']=='needs_review'
     assert not any('补充明确的预期' in q for q in content['questions'])
-    assert snapshot['events'][0]['expected_candidate']=={'text':'个人页面出现','basis':'user_goal','frame_refs':['f0','f1'],'requires_confirmation':True}
+    assert snapshot['events'][0]['expected_candidate']=={'text':'个人页面出现','basis':'visible_candidate','frame_refs':['f0','f1'],'requires_confirmation':True}
     document['goal']=''
     content,snapshot=draft_proposal(document)
     assert content['steps'][0]['expected']=='个人页面出现'
@@ -188,15 +188,16 @@ def test_invalid_scroll_rejected_before_ready(value):
         validate_analysis({'events':[event],'uncertainties':[],'multiple_scenarios':False},[{'frame_id':'f0','timestamp_ms':0},{'frame_id':'f1','timestamp_ms':1000}],1000)
 
 
-def test_explicit_goal_is_candidate_even_when_video_ending_differs():
+def test_explicit_goal_does_not_overwrite_differing_video_ending():
     from task_server.services.ui_video_analysis import draft_proposal
     event={'action':'aiTap','target':'提交按钮','value':'','start_ms':0,'end_ms':1000,'frame_refs':['f0','f1'],'observation':'页面显示提交失败弹窗','evidence_kind':'inferred','uncertainties':[]}
     document={'source_id':'uvs_'+'a'*32,'app_id':APP,'analysis_version':1,'goal':'点击提交，检查订单页面显示已提交状态','media':{'duration_ms':1000,'frames':[{'frame_id':'f0','timestamp_ms':0},{'frame_id':'f1','timestamp_ms':1000}]},'events':[event],'uncertainties':[]}
     content,snapshot=draft_proposal(document)
-    assert content['steps'][0]['expected']=='订单页面显示已提交状态'
-    assert content['steps'][-1]['target']=='订单页面显示已提交状态'
+    assert content['steps'][0]['expected']=='页面显示提交失败弹窗'
+    assert content['steps'][-1]['target']=='页面显示提交失败弹窗'
+    assert len(content['questions'])==1 and document['goal'] in content['questions'][0]
     assert snapshot['events'][0]['observation']=='页面显示提交失败弹窗'
-    assert snapshot['events'][0]['expected_candidate']['basis']=='user_goal'
+    assert snapshot['events'][0]['expected_candidate']['basis']=='visible_candidate'
     assert all(step['review_state']=='needs_review' for step in content['steps'])
 
 
@@ -211,3 +212,54 @@ def test_worker_rejects_unimportable_scroll_before_ready(env,tmp_path,monkeypatc
     result=store.get(doc['source_id'],A['user_id'],APP)
     assert result['status']=='failed' and result['draft_id']==''
     assert store.retry(doc['source_id'],A['user_id'],APP)['status']=='queued'
+
+
+@pytest.mark.parametrize('goal',[
+    '点击提交，检查订单页面显示已提交状态',
+    '不要检查订单页面显示已提交状态，只核对失败弹窗',
+    '验证订单页面显示已提交状态不是本次预期，只检查失败提示',
+])
+def test_goal_context_never_rewrites_failed_observation_or_assertion(goal):
+    from task_server.services.ui_video_analysis import draft_proposal
+    failure='页面显示提交失败弹窗'
+    event={'action':'aiTap','target':'提交按钮','value':'','start_ms':0,'end_ms':1000,'frame_refs':['f0','f1'],'observation':failure,'evidence_kind':'inferred','uncertainties':[]}
+    final={**event,'action':'aiAssert','target':failure,'start_ms':1000,'frame_refs':['f1']}
+    document={'source_id':'uvs_'+'a'*32,'app_id':APP,'analysis_version':1,'goal':goal,'media':{'duration_ms':1000,'frames':[{'frame_id':'f0','timestamp_ms':0},{'frame_id':'f1','timestamp_ms':1000}]},'events':[event,final],'uncertainties':[]}
+    content,snapshot=draft_proposal(document)
+    assert content['steps'][0]['expected']==failure
+    assert content['steps'][-1]['target']==failure
+    assert all(item['expected_candidate']['text']==failure for item in snapshot['events'])
+    assert len(content['questions'])==1
+    assert goal in content['questions'][0] and failure in content['questions'][0]
+    assert '确认' in content['questions'][0] and '目标' in content['questions'][0]
+    assert snapshot['goal']==goal
+
+
+def test_undisputed_visible_checks_do_not_require_retyping():
+    from task_server.services.ui_video_analysis import draft_proposal
+    event={'action':'aiTap','target':'首页我的入口','value':'','start_ms':0,'end_ms':1000,'frame_refs':['f0','f1'],'observation':'个人页面出现','evidence_kind':'inferred','uncertainties':[]}
+    document={'source_id':'uvs_'+'a'*32,'app_id':APP,'analysis_version':1,'goal':'','media':{'duration_ms':1000,'frames':[{'frame_id':'f0','timestamp_ms':0},{'frame_id':'f1','timestamp_ms':1000}]},'events':[event],'uncertainties':[]}
+    content,snapshot=draft_proposal(document)
+    assert content['steps'][0]['expected']=='个人页面出现'
+    assert content['steps'][-1]['target']=='个人页面出现'
+    assert content['questions']==[]
+    assert all(step['review_state']=='needs_review' for step in content['steps'])
+
+
+def test_assertion_candidate_disagrees_with_its_observation_needs_confirmation():
+    from task_server.services.ui_video_analysis import draft_proposal
+    event={'action':'aiAssert','target':'订单页面显示已提交状态','value':'','start_ms':0,'end_ms':1000,'frame_refs':['f0','f1'],'observation':'页面显示提交失败弹窗','evidence_kind':'inferred','uncertainties':[]}
+    doc={'source_id':'uvs_'+'a'*32,'app_id':APP,'analysis_version':1,'goal':'订单页面显示已提交状态','media':{'duration_ms':1000,'frames':[{'frame_id':'f0','timestamp_ms':0},{'frame_id':'f1','timestamp_ms':1000}]},'events':[event],'uncertainties':[]}
+    content,snapshot=draft_proposal(doc)
+    assert content['questions'] and '末尾检查候选' in content['questions'][0]
+    assert event['target'] in content['questions'][0] and event['observation'] in content['questions'][0]
+    assert snapshot['goal_review']['requires_confirmation']
+
+
+def test_long_goal_preserved_without_exceeding_question_contract():
+    from task_server.services.ui_video_analysis import draft_proposal
+    event={'action':'aiTap','target':'首页我的入口','value':'','start_ms':0,'end_ms':1000,'frame_refs':['f0','f1'],'observation':'个人页面出现','evidence_kind':'inferred','uncertainties':[]}
+    doc={'source_id':'uvs_'+'a'*32,'app_id':APP,'analysis_version':1,'goal':'目标'*1000,'media':{'duration_ms':1000,'frames':[{'frame_id':'f0','timestamp_ms':0},{'frame_id':'f1','timestamp_ms':1000}]},'events':[event],'uncertainties':[]}
+    content,snapshot=draft_proposal(doc)
+    assert snapshot['goal']==doc['goal']
+    assert len(content['questions'])==1 and len(content['questions'][0])<=2000

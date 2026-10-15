@@ -311,3 +311,9 @@ test('latest clicked video frame wins even when superseded network and body fini
  assert.equal(signals.A.aborted,true);bodies.B({kind:'B'});await wait();assert.equal(f.q('[data-video-frame-preview]').getAttribute('src'),'blob:B');bodies.A({kind:'A'});await wait();assert.equal(f.q('[data-video-frame-preview]').getAttribute('src'),'blob:B');assert.deepEqual(urls,['blob:B']);
  f.q('[data-ui-case-back]').click();assert.ok(revoked.includes('blob:B'));
 });
+
+test('video candidate actions are presented in Chinese while import keeps original action data',async t=>{
+ const f=await videoFixture(t),source={source_id:'uvs_'+'d'.repeat(32),filename:'clip.mp4',status:'ready',analysis_version:1,candidate_steps:[{start_ms:0,end_ms:1000,evidence_kind:'inferred',action:'aiTap',target:'我的入口',observation:'个人页面出现',frame_refs:['frame-001'],uncertainties:[]}],uncertainties:[]};
+ f.respond(path=>path.includes(source.source_id)?{ok:true,source}:path.startsWith('/ui-video-sources?')?{ok:true,sources:[source]}:undefined);
+ f.app('a');await wait();f.q('[data-video-open]').click();await wait();assert.match(f.q('[data-video-detail]').textContent,/点击 我的入口/);assert.doesNotMatch(f.q('[data-video-detail]').textContent,/aiTap/);assert.equal(source.candidate_steps[0].action,'aiTap');
+});
