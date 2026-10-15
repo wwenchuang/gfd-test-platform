@@ -320,7 +320,7 @@ class MainAccess:
         if method in {'GET', 'HEAD'} and re.fullmatch(r'/api/ui-case-drafts(?:/[^/]+)?', path):
             return 'ui.view'
         if method == 'POST':
-            if path == '/api/ui-case-drafts' or re.fullmatch(r'/api/ui-case-drafts/[^/]+/(update|restore)', path):
+            if path in {'/api/ui-case-drafts', '/api/ui-case-drafts/import-recording'} or re.fullmatch(r'/api/ui-case-drafts/[^/]+/(update|restore)', path):
                 return 'ui.edit'
             if re.fullmatch(r'/api/ui-case-drafts/[^/]+/(validate|try)', path):
                 return 'ui.execute'

@@ -116,6 +116,7 @@ function showUiSimpleWorkflow(){
 // Creation is a child of the library; existing recording/material workflows remain available.
 function attachUiCaseCreation(page){
   const epoch=uiCaseCreationEpoch,identity=uiSimpleIdentity();
+  const imported=uiImportedDraft?.identity===identity?uiImportedDraft.draft:null;uiImportedDraft=null;
   const current=()=>epoch===uiCaseCreationEpoch&&identity===uiSimpleIdentity()&&activeWorkflow==='ui_library'&&page.isConnected;
   const canEdit=()=>uiSimpleEnabled&&hasPermission('ui.edit');
   const toolbar=document.createElement('div');toolbar.className='ui-case-creation-toolbar';
@@ -140,12 +141,13 @@ function attachUiCaseCreation(page){
     host.querySelector('[data-ui-case-source="text"]').onclick=()=>{
       if(!current()||!canEdit()||!window.UiCaseDraft)return;
       host.className='';host.replaceChildren();
-      uiCaseDraftHandle=window.UiCaseDraft.mount(host,{request:apiRequest,identity:uiSimpleIdentity,loadPicture:loadUiSimplePicture,
+      uiCaseDraftHandle=window.UiCaseDraft.mount(host,{initialDraft:imported,request:apiRequest,identity:uiSimpleIdentity,loadPicture:loadUiSimplePicture,
         canEdit:()=>current()&&canEdit(),canExecute:()=>current()&&uiSimpleEnabled&&hasPermission('ui.execute'),
         canPublish:()=>current()&&canEdit()&&hasPermission('ui.baseline'),
         openMyTests:()=>{if(current())activateWorkflow('ui_reports');}});
     };
   };
+  if(imported){create.click();page.querySelector('[data-ui-case-source="text"]')?.click();}
 }
 async function loadUiBatchImage(path,kind,{signal}={}){
   const epoch=uiSimpleEpoch,identity=uiSimpleIdentity();
@@ -211,3 +213,12 @@ async function downloadUiBatchFile(path){
   }finally{clearTimeout(timeout);uiSimpleDownloads.delete(controller);}
 }
 function refreshUiSimpleWorkflow(){return window.UiSimpleFlow?.refresh();}
+
+
+// Consumed synchronously by the library mount; never survives identity/navigation changes.
+let uiImportedDraft = null;
+function openImportedUiDraft(draft){
+  if(!uiSimpleEnabled||!hasPermission('ui.edit')||!draft?.draft_id)return;
+  uiImportedDraft={draft,identity:uiSimpleIdentity()};
+  activateWorkflow('ui_library');
+}

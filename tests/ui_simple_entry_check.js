@@ -265,3 +265,10 @@ test('resume drafts opens the private editor directly without generating or disp
  w.document.querySelector('[data-ui-resume-drafts]').click();assert.equal(mounts,1);
  assert.ok(w.document.querySelector('[data-ui-case-back]'));assert.equal(calls.includes('ui_start'),false);
 });
+
+test('recording handoff opens library editor once with the imported draft',async t=>{
+ const {w}=fixture(t);await w.initUiSimpleAvailability();const mounted=[];w.UiCaseDraft={mount:(n,o)=>{mounted.push(o);return {dispose(){}};}};
+ const draft={draft_id:'uid_x',app_id:'com.kfb.model'};w.openImportedUiDraft(draft);w.showUiSimpleWorkflow();
+ assert.equal(mounted.length,1);assert.equal(mounted[0].initialDraft,draft);
+ w.showUiSimpleWorkflow();assert.equal(mounted.length,1);
+});

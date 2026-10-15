@@ -108,3 +108,24 @@ def test_trial_http_audit_is_acceptance_not_execution_pass(operation_server, mon
     assert event['result'] == 'accepted'
     assert event['resource_id'] == 'uid_' + 'b' * 32
     assert 'PRIVATE_SENTINEL' not in str(event)
+
+def test_recording_import_route_permission_and_service(monkeypatch):
+    from task_server import ui_case_draft_http
+    from task_server.services import ui_case_draft_service
+    path = '/api/ui-case-drafts/import-recording'
+    MainAccess({'permissions': ['ui.edit'], 'scope': {'ui_apps': '*'}}, []).check('POST', path)
+    with pytest.raises(AccessDenied):
+        MainAccess({'permissions': ['ui.view'], 'scope': {'ui_apps': '*'}}, []).check('POST', path)
+    routes = {}
+    def register(key):
+        def decorator(fn): routes[key] = fn; return fn
+        return decorator
+    ui_case_draft_http.register_routes(register, register, register, register)
+    monkeypatch.setenv('UI_SIMPLE_FLOW_ENABLED', '1')
+    monkeypatch.setattr(ui_case_draft_service, 'import_recording_draft', lambda actor, body: {'draft_id':'uid_x','app_id':body['app_id']})
+    class Handler:
+        def _body(self): return {'app_id':'com.kfb.model','session_id':'a'*32}
+        def _json(self, body, status=200): self.response=body
+    handler = Handler()
+    routes[path](handler,{})
+    assert handler.response['draft']['app_id'] == 'com.kfb.model'

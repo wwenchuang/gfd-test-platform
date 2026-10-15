@@ -207,6 +207,25 @@ def create_draft(actor, body):
     return document
 
 
+def import_recording_draft(actor, body):
+    from .device_recording_service import get_recording_session
+    from .recording_draft_import import proposal
+    body = _body(body, {'app_id', 'session_id'}, {'app_id', 'session_id'})
+    profile = require_ui_actor(actor, permission='ui.edit', app_id=body['app_id'])
+    app = _application(body['app_id'])
+    if not isinstance(body['session_id'], str) or not re.fullmatch(r'[0-9a-f]{32}', body['session_id']):
+        raise ValueError('recording_import_invalid')
+    session = get_recording_session(body['session_id'])
+    if session.get('created_by') != profile['username'] or session.get('app_package') != body['app_id']:
+        raise AccessDenied('recording_import_scope')
+    if session.get('status') != 'finished':
+        raise ValueError('recording_import_unfinished')
+    snapshot, content = proposal(session, app)
+    require_ui_actor(actor, permission='ui.edit', app_id=body['app_id'])
+    return _store().create(profile, body['app_id'], '来源：已结束的操作录制；请逐步核对目标与预期。',
+                           recording_snapshot=snapshot, recording_content=content)
+
+
 def list_drafts(actor, app_id):
     profile = require_ui_actor(actor, permission='ui.view', app_id=app_id)
     _application(app_id)
@@ -223,6 +242,12 @@ def update_draft(actor, draft_id, body):
     revision = _revision(body)
     if document['revision'] != revision:
         raise DraftConflict('draft_revision_changed')
+    source = document.get('source_snapshot', {})
+    provenance = {item['draft_step_id']: f"recording:{source['snapshot_id']}:{item['id']}"
+                  for item in source.get('actions', []) if item.get('draft_step_id')}
+    for step in body.get('steps', []) if isinstance(body.get('steps'), list) else []:
+        if isinstance(step, dict) and step.get('source_ref', 'text') != provenance.get(step.get('step_id'), 'text'):
+            raise ValueError('draft_source_invalid')
     normalized = normalize_steps({key: body[key] for key in _EDIT_KEYS}, document['app_id'])
     compiled = build_draft_yaml(normalized, document['app_id'])
     require_ui_actor(actor, permission='ui.edit', app_id=document['app_id'])

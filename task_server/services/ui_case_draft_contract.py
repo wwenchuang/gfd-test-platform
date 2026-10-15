@@ -82,8 +82,8 @@ def normalize_steps(payload, app_id):
         if review_state not in ('needs_review', 'confirmed'):
             raise ValueError('review_state 仅支持 needs_review/confirmed')
         source_ref = raw.get('source_ref', 'text')
-        if source_ref != 'text':
-            raise ValueError('文字草稿 source_ref 只能为 text')
+        if not isinstance(source_ref, str) or (source_ref != 'text' and not re.fullmatch(r'recording:[0-9a-f]{64}:[0-9a-f]{32}', source_ref)):
+            raise ValueError('source_ref 必须为文字或规范录制来源')
         value = copy.deepcopy(raw.get('value', ''))
         if action == 'aiScroll':
             if value == '':
@@ -120,7 +120,7 @@ def normalize_steps(payload, app_id):
             unresolved.append('检查条件与预期不一致，请重新填写检查结果')
         if unresolved:
             review_state = 'needs_review'
-            questions.extend(f'步骤{index}：{question}' for question in unresolved)
+            questions.append(f'步骤{index}：' + '；'.join(unresolved))
         steps.append({'step_id': step_id, 'action': action, 'target': target,
                       'value': value, 'expected': expected, 'review_state': review_state,
                       'source_ref': source_ref})

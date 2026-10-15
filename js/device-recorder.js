@@ -1,3 +1,5 @@
+let recorderImportPending = false;
+let recorderImportEpoch = 0;
 let deviceRecorderSession = null;
 let deviceRecorderStarting = false;
 const deviceRecorderStepDeletions = new Set();
@@ -113,6 +115,7 @@ function updateRecorderStartState() {
 }
 
 function stopRecorderDevicePolling() {
+  recorderImportEpoch++;
   clearInterval(deviceRecorderDeviceTimer);
   deviceRecorderDeviceTimer = null;
   recorderDeviceGeneration++;
@@ -438,7 +441,7 @@ function renderDeviceRecorder(preserveDraft = false) {
           ${!session ? `<button class="btn-sm primary" data-action="start-recording" ${recorderHasReadyPhone() ? '' : 'disabled'} onclick="startDeviceRecording()">前往 Sonic 选择手机并开始</button>` : ''}
           ${session?.status === 'recording' ? '<button class="btn-sm" onclick="openRecorderSonic()">打开所选手机</button><button class="btn-sm" onclick="finishDeviceRecording()">结束录制</button><button class="btn-sm danger" onclick="cancelDeviceRecording()">取消本次录制</button>' : ''}
           ${['paused','generating'].includes(session?.status) ? '<button class="btn-sm danger" data-action="cancel-recording" onclick="cancelDeviceRecording()">取消录制</button>' : ''}
-          ${session?.status === 'finished' ? `<button class="btn-sm ai" data-action="generate-recording-yaml" ${recorderCanGenerate(session) ? '' : 'disabled'} onclick="generateDeviceRecordingYaml()">${recorderGenerateLabel(session)}</button>` : ''}
+          ${session?.status === 'finished' ? `<button class="btn-sm primary" data-action="import-recording-draft" ${recorderImportPending || typeof hasPermission !== 'function' || !hasPermission('ui.edit') ? 'disabled' : ''} onclick="importDeviceRecordingDraft()">${recorderImportPending ? '正在整理…' : '整理为可执行用例'}</button><span class="generate-hint">${typeof hasPermission === 'function' && hasPermission('ui.edit') ? '整理后先核对步骤，再检查并试跑。' : '整理需要用例编辑权限。'}</span><button class="btn-sm ai" data-action="generate-recording-yaml" ${recorderCanGenerate(session) ? '' : 'disabled'} onclick="generateDeviceRecordingYaml()">${recorderGenerateLabel(session)}</button>` : ''}
         </div>${!session ? `<p class="generate-hint" data-recorder-start-hint role="status">${recorderHasReadyPhone() ? '点击开始后，在 Sonic 中选择手机进行操作。' : '暂无可录制的空闲安卓手机，请检查连接并刷新手机状态。'}</p>` : ''}<div id="device-recorder-message" class="generate-hint">${session ? `手机：${escapeHtml(session.device_id || '等待在 Sonic 选择')} · 会话：${escapeHtml(session.id)} · ${escapeHtml(recorderSessionMessage(session))}` : '选择应用后开始录制，再在 Sonic 中选择要操作的手机。'}</div>
         <div id="device-recorder-preparation">${recorderPreparationPanel(session)}</div>
         ${session?.status === 'finished' ? `<div class="device-recorder-save"><label class="modal-label">用例名称</label><input id="device-recorder-task-name" value="${escapeHtml(deviceRecorderGenerated?.task_name || '录制生成用例')}" oninput="syncRecorderFileName(this.value)"><div id="device-recorder-name-note" class="generate-hint" hidden>名称已修改；保存时会按新名称重新生成 YAML。</div><label class="modal-label">保存到模块</label><select id="device-recorder-module">${recorderModuleOptions(session)}</select>${recorderModuleOptions(session) ? '' : '<div class="agent-risk show">当前应用没有已关联模块，请先到应用配置关联模块。</div>'}<label class="modal-label">YAML 文件名</label><input id="device-recorder-file" value="${escapeHtml(deviceRecorderGenerated?.task_name || '录制生成用例')}.yaml" oninput="deviceRecorderFileNameEdited=true"><button class="btn-sm success" ${deviceRecorderGenerated && recorderModuleOptions(session) ? '' : 'disabled'} onclick="saveDeviceRecordingYaml()">保存到用例资产</button></div>` : ''}
@@ -1039,4 +1042,20 @@ async function saveDeviceRecordingYaml() {
   if (!modules[moduleName].includes(fileName)) modules[moduleName].push(fileName);
   showToast(deviceRecorderGenerated.requires_confirmation ? '草稿已保存；确认有歧义步骤后再调试' : 'YAML 已保存到用例资产', deviceRecorderGenerated.requires_confirmation ? 'warn' : 'success');
   if (typeof openFile === 'function') openFile(moduleName, fileName);
+}
+
+
+async function importDeviceRecordingDraft() {
+  const session=deviceRecorderSession;
+  if(recorderImportPending||session?.status!=='finished'||typeof hasPermission!=='function'||!hasPermission('ui.edit'))return;
+  const id=session.id,app=session.app_package,epoch=recorderImportEpoch,identity=uiSimpleIdentity();
+  const current=()=>epoch===recorderImportEpoch&&identity===uiSimpleIdentity()&&activeWorkflow==='device_recorder'&&deviceRecorderView==='record'&&deviceRecorderSession?.id===id&&deviceRecorderSession?.app_package===app;
+  recorderImportPending=true;renderDeviceRecorder(true);
+  try{
+    const data=await apiRequest('/ui-case-drafts/import-recording',{method:'POST',body:JSON.stringify({session_id:id,app_id:app})});
+    if(!current())return;
+    if(data?.ok!==true||data.draft?.app_id!==app)throw new Error(data?.error||'整理结果未确认');
+    openImportedUiDraft(data.draft);
+  }catch(error){if(current()){const message=error.status===403?'当前账号没有整理此录制的权限。':`整理未确认：${error.message||'网络异常'}。可重试核对同一录制，也可到“继续我的草稿”查看；重试不会重复创建同一版本。`;const host=document.getElementById('device-recorder-message');if(host){host.textContent=message;host.setAttribute('role','alert');}showToast(message,'error');}}
+  finally{recorderImportPending=false;if(current()){const button=document.querySelector('[data-action="import-recording-draft"]');if(button){button.disabled=!hasPermission('ui.edit');button.textContent='整理为可执行用例';}}}
 }

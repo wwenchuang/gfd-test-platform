@@ -24,6 +24,9 @@ def _run(handler, operation, *, admission=False):
     except ValueError as error:
         code = getattr(error, 'code', '') or str(error)
         messages = {
+            'recording_import_unfinished': '请先结束录制；进行中或已取消的录制不能整理',
+            'recording_import_size': '录制需包含1至50步，且内容大小不能超过限制',
+            'recording_import_cross_app': '录制包含其他应用的启动动作，请先核对所属应用',
             'draft_generation_busy': '已有用例正在生成，请稍后重试',
             'draft_gate_failed': '用例尚未通过检查，请先处理待确认内容',
             'draft_trial_required': '请先完成当前版本的手机试跑，再发布基线',
@@ -62,6 +65,14 @@ def register_routes(route_get, route_post, route_get_regex, route_post_regex):
         from .services.ui_case_draft_service import create_draft
         def operation():
             draft = create_draft(None, handler._body())
+            return {'draft': draft}, draft['draft_id']
+        _run(handler, operation, admission=True)
+
+    @route_post('/api/ui-case-drafts/import-recording')
+    def _post_recording_draft_import(handler, qs):
+        from .services.ui_case_draft_service import import_recording_draft
+        def operation():
+            draft = import_recording_draft(None, handler._body())
             return {'draft': draft}, draft['draft_id']
         _run(handler, operation, admission=True)
 

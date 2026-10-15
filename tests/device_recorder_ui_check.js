@@ -9,7 +9,7 @@ const ROOT = path.resolve(__dirname, '..');
 
 test('task manager uses a new cache key for the server-bridged recorder script', () => {
   const html = fs.readFileSync(path.join(ROOT, 'task-manager.html'), 'utf8');
-  assert.match(html, /device-recorder\.js\?v=20261014-density-v1/);
+  assert.match(html, /device-recorder\.js\?v=20261015-recording-import-v1/);
 });
 
 test('history groups by app and module and filter changes clear hidden selections', () => {
@@ -778,4 +778,33 @@ test('failed deletion keeps the step and permits retry',async()=>{
   assert.equal(f.run('deviceRecorderSession.steps.length'),1);
   assert.equal(f.dom.window.document.querySelector('[data-action="delete-recording-step"]').disabled,false);
   assert.match(notices.at(-1),/删除失败/);
+});
+
+test('finished recording imports server ID only and stale session response never opens editor', async () => {
+  const f=fixture();let resolve;const opened=[];
+  f.context.hasPermission=()=>true;f.context.uiSimpleIdentity=()=> 'owner';f.context.activeWorkflow='device_recorder';
+  f.context.openImportedUiDraft=d=>opened.push(d);
+  f.context.apiRequest=(url,o)=>{f.calls.push({url,body:JSON.parse(o.body)});return new Promise(r=>resolve=r);};
+  f.run("deviceRecorderSession={id:'a',status:'finished',app_package:'com.kfb.model',steps:[]};renderDeviceRecorder()");
+  assert.ok(f.dom.window.document.querySelector('[data-action="import-recording-draft"]'));
+  const pending=f.run('importDeviceRecordingDraft()');
+  assert.deepEqual(f.calls[0].body,{app_id:'com.kfb.model',session_id:'a'});
+  f.run("deviceRecorderSession={id:'b',status:'finished',app_package:'com.kfb.model',steps:[]}");
+  resolve({ok:true,draft:{draft_id:'d',app_id:'com.kfb.model'}});await pending;
+  assert.equal(opened.length,0);
+});
+
+test('recording import opens unified editor without generating YAML or dispatching',async()=>{
+ const f=fixture(),opened=[];f.context.hasPermission=()=>true;f.context.uiSimpleIdentity=()=> 'owner';f.context.activeWorkflow='device_recorder';f.context.openImportedUiDraft=d=>opened.push(d);
+ f.context.apiRequest=async(url,o)=>{f.calls.push({url});return {ok:true,draft:{draft_id:'d',app_id:'com.kfb.model'}};};
+ f.run("deviceRecorderSession={id:'a',status:'finished',app_package:'com.kfb.model',steps:[]};renderDeviceRecorder()");
+ await f.run('importDeviceRecordingDraft()');assert.equal(opened.length,1);assert.deepEqual(f.calls.map(c=>c.url),['/ui-case-drafts/import-recording']);
+});
+
+test('import response after visiting history and returning cannot navigate',async()=>{
+ const f=fixture();let resolve;const opened=[];f.context.hasPermission=()=>true;f.context.uiSimpleIdentity=()=> 'owner';f.context.activeWorkflow='device_recorder';f.context.openImportedUiDraft=d=>opened.push(d);
+ f.context.apiRequest=()=>new Promise(r=>resolve=r);
+ f.run("deviceRecorderSession={id:'a',status:'finished',app_package:'com.kfb.model',steps:[]};renderDeviceRecorder()");
+ const pending=f.run('importDeviceRecordingDraft()');f.run("showDeviceRecordingHistory();deviceRecorderView='record';renderDeviceRecorder()");
+ resolve({ok:true,draft:{draft_id:'d',app_id:'com.kfb.model'}});await pending;assert.equal(opened.length,0);
 });
