@@ -127,7 +127,7 @@ class VideoStore:
                     raise ValueError('video_retry_state')
                 self._check_admission(db)
                 doc.pop('media',None)
-                doc.update(status='queued',error='',error_code='',events=[],segments=[],candidate_steps=[],uncertainties=[],analysis_version=doc['analysis_version']+1)
+                doc.update(status='queued',error='',error_code='',events=[],segments=[],candidate_steps=[],uncertainties=[],raw_events=[],raw_uncertainties=[],analysis_version=doc['analysis_version']+1)
                 self._save(db,doc)
                 return doc
 

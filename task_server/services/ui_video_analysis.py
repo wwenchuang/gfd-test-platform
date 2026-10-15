@@ -34,7 +34,7 @@ def _scroll_object(value):
     return value
 
 
-def validate_analysis(result, frames, duration):
+def validate_analysis(result, frames, duration, prior_secrets=()):
     if not isinstance(result, dict) or set(result)!={'events','uncertainties','multiple_scenarios'}: raise ValueError('video_model_invalid')
     if type(result['multiple_scenarios']) is not bool: raise ValueError('video_model_invalid')
     events=result['events']; questions=result['uncertainties']
@@ -73,7 +73,7 @@ def validate_analysis(result, frames, duration):
         elif event['value']!='': raise ValueError('video_action_invalid')
         last=start
         clean.append(event)
-    secrets=[e['value'] for e in events if isinstance(e,dict) and e.get('action')=='aiInput' and isinstance(e.get('value'),str) and e['value']]
+    secrets=list(prior_secrets)+[e['value'] for e in events if isinstance(e,dict) and e.get('action')=='aiInput' and isinstance(e.get('value'),str) and e['value']]
     def redact(value):
         if isinstance(value,str):
             for secret in secrets:value=value.replace(secret,'[输入内容未保存]')
@@ -84,25 +84,56 @@ def validate_analysis(result, frames, duration):
     return redact({'events':clean,'uncertainties':questions,'multiple_scenarios':result['multiple_scenarios']})
 
 
+def _consolidation_images(events,frames,limit):
+    """Prioritize ambiguous/destructive evidence; otherwise cover event chronology."""
+    counts={}
+    for event in events:
+        key=(event['action'],event['target'])
+        counts[key]=counts.get(key,0)+1
+    priority=set();secondary=set()
+    for index,event in enumerate(events):
+        destructive=re.search(r'删除|移除|清空|支付|付款|delete|remove|pay',event['target'],re.I)
+        ambiguous=counts[(event['action'],event['target'])]>1 or re.search(r'打印|下单',event['target'])
+        if destructive or ambiguous:
+            refs=priority if destructive else secondary
+            refs.update(event['frame_refs'])
+            if index+1<len(events):refs.update(events[index+1]['frame_refs'])
+    all_refs={ref for event in events for ref in event['frame_refs']}
+    def spread(items,count):
+        if len(items)<=count:return items
+        return [items[round(i*(len(items)-1)/(count-1))] for i in range(count)] if count>1 else [items[len(items)//2]]
+    chosen=spread([f for f in frames if f['frame_id'] in priority],limit)
+    selected={f['frame_id'] for f in chosen}
+    if len(chosen)<limit:
+        chosen+=spread([f for f in frames if f['frame_id'] in secondary-selected],limit-len(chosen))
+        selected={f['frame_id'] for f in chosen}
+    remaining=[f for f in frames if f['frame_id'] in all_refs-selected]
+    chosen+=spread(remaining,limit-len(chosen)) if len(chosen)<limit else []
+    return sorted(chosen,key=lambda frame:frame['timestamp_ms'])
+
+
 def analyze_frames(document, root, cancelled):
     from . import ai_skill_service as ai
     frames=document['media']['frames']
     # The existing Gateway imagePartsFromBody accepts at most six images.
     limit=max(2,min(6,int(ai.AI_VISION_IMAGE_LIMIT)))
     if int(ai.AI_VISION_IMAGE_LIMIT)<2: raise ValueError('video_vision_limit')
-    events=[];questions=[];multi=False;last_end=-1
+    events=[];questions=[];multi=False;last_end=-1;audit_events=[];known_secrets=[]
     # Adjacent batches share one boundary frame, preserving the whole chronology.
     for offset in range(0,len(frames)-1,limit-1):
         if cancelled(): raise ValueError('video_cancelled')
         batch=frames[offset:offset+limit]
         assets=[{'name':f['frame_id'], 'mime':'image/jpeg','base64':base64.b64encode((root/'frames'/(f['frame_id']+'.jpg')).read_bytes()).decode()} for f in batch]
+        if cancelled():raise ValueError('video_cancelled')
         result=ai.run_ai_skill('ui_video_steps', {'app_id':document['app_id'],'goal':document['goal'],
-                              'duration_ms':document['media']['duration_ms'],'frames':batch,
+                              'duration_ms':document['media']['duration_ms'],'phase':'batch','frames':batch,'image_frames':batch,
                               'previous_events':[{k:e[k] for k in ('start_ms','end_ms','action','target')} for e in events[-3:]],
                               'baseline_examples':document.get('baseline_examples',[])}, image_assets=assets,
                               timeout=120,retry_count=0,max_tokens=10000,repair_invalid_json=False)
         if cancelled(): raise ValueError('video_cancelled')
-        checked=validate_analysis(result,batch,document['media']['duration_ms'])
+        checked=validate_analysis(result,batch,document['media']['duration_ms'],known_secrets)
+        known_secrets.extend(e['value'] for e in result['events'] if e['action']=='aiInput' and isinstance(e['value'],str) and e['value'])
+        audit_events.extend(copy.deepcopy(checked['events']))
         for event in checked['events']:
             # Overlap may report a prior event; only exact same temporal identity
             # is deduplicated. Repeated same controls at different times survive.
@@ -112,7 +143,39 @@ def analyze_frames(document, root, cancelled):
             events.append(event);last_end=event['start_ms']
         questions.extend(checked['uncertainties']);multi|=checked['multiple_scenarios']
         if len(events)>50: raise ValueError('video_split_required')
-    return {'events':events,'uncertainties':list(dict.fromkeys(questions)), 'multiple_scenarios':multi}
+    raw_events=copy.deepcopy(audit_events)
+    candidates=copy.deepcopy(events)
+    raw_questions=list(dict.fromkeys(questions))
+    if events:
+        if cancelled():raise ValueError('video_cancelled')
+        image_frames=_consolidation_images(events,frames,limit)
+        assets=[{'name':f['frame_id'],'mime':'image/jpeg','base64':base64.b64encode((root/'frames'/(f['frame_id']+'.jpg')).read_bytes()).decode()} for f in image_frames]
+        if cancelled():raise ValueError('video_cancelled')
+        result=ai.run_ai_skill('ui_video_steps',{'phase':'consolidate','app_id':document['app_id'],
+                    'goal':document['goal'],'duration_ms':document['media']['duration_ms'],
+                    'frames':frames,'image_frames':image_frames,'candidate_events':candidates,
+                    'raw_uncertainties':raw_questions,'multiple_scenarios':multi},image_assets=assets,
+                    timeout=120,retry_count=0,max_tokens=10000,repair_invalid_json=False)
+        if cancelled():raise ValueError('video_cancelled')
+        checked=validate_analysis(result,frames,document['media']['duration_ms'],known_secrets)
+        for event in checked['events']:
+            matching=[raw for raw in raw_events if raw['action']==event['action'] and
+                      raw['start_ms']<=event['end_ms'] and event['start_ms']<=raw['end_ms']]
+            covered=event['start_ms']
+            for raw in sorted(matching,key=lambda item:item['start_ms']):
+                if raw['start_ms']>covered:break
+                covered=max(covered,raw['end_ms'])
+                if covered>=event['end_ms']:break
+            supported_refs={ref for raw in matching for ref in raw['frame_refs']}
+            supported_refs.update(frame['frame_id'] for frame in image_frames)
+            if (not matching or min(raw['start_ms'] for raw in matching)>event['start_ms'] or
+                covered<event['end_ms'] or not set(event['frame_refs'])<=supported_refs):
+                raise ValueError('video_model_timeline')
+            if all(raw['evidence_kind']=='inferred' for raw in matching):event['evidence_kind']='inferred'
+        events=checked['events'];questions=checked['uncertainties']
+        multi=multi or checked['multiple_scenarios']
+    return {'events':events,'uncertainties':list(dict.fromkeys(questions)), 'multiple_scenarios':multi,
+            'raw_events':raw_events,'raw_uncertainties':raw_questions}
 
 
 def _expected_candidate(event, goal):

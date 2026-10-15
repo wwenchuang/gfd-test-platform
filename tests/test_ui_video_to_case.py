@@ -433,7 +433,7 @@ def test_full_worker_distinguishes_passive_only_contract_from_touchless_navigati
     worker.analyze_video_source(store,doc['source_id'])
     result=store.get(doc['source_id'],A['user_id'],APP)
     assert calls and all(name=='ui_video_steps' for name in calls)
-    assert len(calls)==(2 if material=='passive_carousel' else 1)
+    assert len(calls)==2  # passive batches or one action batch plus global consolidation
     assert result['status']==expected_status
     assert result['media']['coverage_end_ms']==frame_count*1000 and not result['media']['static']
     assert result['draft_id']==''
@@ -442,6 +442,130 @@ def test_full_worker_distinguishes_passive_only_contract_from_touchless_navigati
         assert result['uncertainties'] and not result.get('multiple_scenarios')
     else:
         assert len(result['candidate_steps'])==1 and result['candidate_steps'][0]['evidence_kind']=='inferred'
+        assert len(result['raw_events'])==1 and 'raw_uncertainties' in result
         from task_server.services.ui_video_analysis import draft_proposal
         content,snapshot=draft_proposal(result)
         assert all(step['review_state']=='needs_review' for step in content['steps'])
+
+
+def _consolidation_fixture(tmp_path):
+    frames=[{'frame_id':f'f{i}','timestamp_ms':i*1000} for i in range(12)]
+    (tmp_path/'frames').mkdir()
+    for frame in frames:(tmp_path/'frames'/(frame['frame_id']+'.jpg')).write_bytes(b'mocked visual asset')
+    def event(action,start,end,target):
+        return {'action':action,'target':target,'value':'','start_ms':start*1000,'end_ms':end*1000,
+                'frame_refs':[f'f{start}',f'f{end}'] if start!=end else [f'f{start}'],
+                'observation':'页面显示相应状态','evidence_kind':'inferred','uncertainties':[]}
+    return frames,event
+
+
+def test_global_consolidation_preserves_audit_and_bounded_explicit_images(monkeypatch,tmp_path):
+    from task_server.services import ui_video_analysis as analysis,ai_skill_service as ai
+    frames,event=_consolidation_fixture(tmp_path)
+    opening=event('aiTap',0,1,'桌面应用图标')
+    delete=event('aiTap',5,6,'目标记录的删除')
+    confirm=event('aiTap',7,8,'确认删除')
+    result=event('aiAssert',9,10,'目标记录消失且邻居保留')
+    calls=[]
+    def model(name,payload,**kwargs):
+        calls.append((payload,kwargs))
+        if payload.get('phase')=='consolidate':
+            assert payload['frames']==frames
+            assert payload['candidate_events']==[opening,delete,confirm,result]
+            assert payload['raw_uncertainties']==['局部静止，没有操作']
+            assert len(payload['image_frames'])<=6
+            assert [f['frame_id'] for f in payload['image_frames']]==[asset['name'] for asset in kwargs['image_assets']]
+            assert {f'f{i}' for i in (5,6,7,8,9,10)}=={f['frame_id'] for f in payload['image_frames']}
+            return {'events':[delete,confirm,result],'uncertainties':[],'multiple_scenarios':False}
+        times=[f['timestamp_ms'] for f in payload['frames']]
+        batch_events=[e for e in (opening,delete,confirm,result) if times[0]<=e['start_ms'] and e['end_ms']<=times[-1]]
+        return {'events':batch_events,'uncertainties':['局部静止，没有操作'],'multiple_scenarios':False}
+    monkeypatch.setattr(ai,'AI_VISION_IMAGE_LIMIT',6);monkeypatch.setattr(ai,'run_ai_skill',model)
+    output=analysis.analyze_frames({'app_id':APP,'goal':'','media':{'duration_ms':12000,'frames':frames}},tmp_path,lambda:False)
+    assert len(calls)==4 and calls[-1][0]['phase']=='consolidate'
+    assert output['events']==[delete,confirm,result] and output['uncertainties']==[]
+    assert output['raw_events']==[opening,delete,confirm,result]
+    assert output['raw_uncertainties']==['局部静止，没有操作']
+
+
+@pytest.mark.parametrize('kind',['new_action','outside_time','extends_time','unknown_frame','cancelled','multiple','evidence_upgrade'])
+def test_consolidation_cannot_forge_evidence_or_clear_multiscene(monkeypatch,tmp_path,kind):
+    from task_server.services import ui_video_analysis as analysis,ai_skill_service as ai
+    frames,event=_consolidation_fixture(tmp_path);raw=event('aiTap',0,1,'入口')
+    cancelled=[False]
+    def model(name,payload,**kwargs):
+        if payload.get('phase')=='consolidate':
+            final=dict(raw)
+            if kind=='new_action':final['action']='aiAssert'
+            if kind=='outside_time':final.update(start_ms=9000,end_ms=10000,frame_refs=['f9','f10'])
+            if kind=='extends_time':final.update(end_ms=2000)
+            if kind=='evidence_upgrade':final['evidence_kind']='observed'
+            if kind=='unknown_frame':final['frame_refs']=['forged']
+            if kind=='cancelled':cancelled[0]=True
+            return {'events':[final],'uncertainties':[],'multiple_scenarios':False}
+        return {'events':[raw] if payload['frames'][0]['timestamp_ms']==0 else [],'uncertainties':[],'multiple_scenarios':kind=='multiple'}
+    monkeypatch.setattr(ai,'AI_VISION_IMAGE_LIMIT',6);monkeypatch.setattr(ai,'run_ai_skill',model)
+    run=lambda:analysis.analyze_frames({'app_id':APP,'goal':'','media':{'duration_ms':12000,'frames':frames}},tmp_path,lambda:cancelled[0])
+    if kind=='multiple':assert run()['multiple_scenarios'] is True
+    elif kind=='evidence_upgrade':assert run()['events'][0]['evidence_kind']=='inferred'
+    else:
+        with pytest.raises(ValueError):run()
+
+
+def test_consolidation_audit_keeps_overlap_observations_and_redacts_secrets(monkeypatch,tmp_path):
+    from task_server.services import ui_video_analysis as analysis,ai_skill_service as ai
+    frames,event=_consolidation_fixture(tmp_path)
+    calls=[]
+    def model(name,payload,**kwargs):
+        calls.append(payload)
+        if payload['phase']=='consolidate':
+            assert 'secret-value' not in str(payload)
+            return {'events':[],'uncertainties':['没有可执行操作'],'multiple_scenarios':False}
+        if payload['frames'][0]['timestamp_ms']>5000:
+            return {'events':[],'uncertainties':[],'multiple_scenarios':False}
+        raw=event('aiInput',5,5,'输入框')
+        raw.update(value='secret-value',observation=f"页面显示secret-value，批次{payload['frames'][0]['frame_id']}")
+        return {'events':[raw],'uncertainties':['secret-value 需要确认'],'multiple_scenarios':False}
+    monkeypatch.setattr(ai,'AI_VISION_IMAGE_LIMIT',6);monkeypatch.setattr(ai,'run_ai_skill',model)
+    result=analysis.analyze_frames({'app_id':APP,'goal':'','media':{'duration_ms':12000,'frames':frames}},tmp_path,lambda:False)
+    assert not result['events'] and len(result['raw_events'])==2
+    assert result['raw_events'][0]['observation']!=result['raw_events'][1]['observation']
+    assert 'secret-value' not in str(result)
+    assert all(event['value']=='' for event in result['raw_events'])
+
+
+def test_global_prompt_requires_business_scope_and_scroll_content_direction():
+    from pathlib import Path
+    prompt=(Path(__file__).resolve().parents[1]/'ai_skills/prompts/ui_video_steps.v1.md').read_text()
+    for requirement in ('phase=consolidate','image_frames','不是手指移动方向','不得填经验默认值','不能用按钮高亮当成业务预期','原始观察由平台独立保留审计'):
+        assert requirement in prompt
+
+
+def test_consolidation_cannot_bridge_unsupported_action_time_gaps(monkeypatch,tmp_path):
+    from task_server.services import ui_video_analysis as analysis,ai_skill_service as ai
+    frames,event=_consolidation_fixture(tmp_path)
+    def model(name,payload,**kwargs):
+        if payload['phase']=='consolidate':
+            return {'events':[event('aiTap',0,10,'合并点击')],'uncertainties':[],'multiple_scenarios':False}
+        raw=[]
+        if payload['frames'][0]['timestamp_ms']==0:raw=[event('aiTap',0,1,'入口')]
+        elif payload['frames'][0]['timestamp_ms']==5000:raw=[event('aiTap',9,10,'确认')]
+        return {'events':raw,'uncertainties':[],'multiple_scenarios':False}
+    monkeypatch.setattr(ai,'AI_VISION_IMAGE_LIMIT',6);monkeypatch.setattr(ai,'run_ai_skill',model)
+    with pytest.raises(ValueError,match='video_model_timeline'):
+        analysis.analyze_frames({'app_id':APP,'goal':'','media':{'duration_ms':12000,'frames':frames}},tmp_path,lambda:False)
+
+
+def test_consolidation_still_redacts_original_input_secret_when_value_is_empty(monkeypatch,tmp_path):
+    from task_server.services import ui_video_analysis as analysis,ai_skill_service as ai
+    frames,event=_consolidation_fixture(tmp_path)
+    def model(name,payload,**kwargs):
+        raw=event('aiInput',0,1,'输入框')
+        raw['observation']='页面显示输入secret-original'
+        if payload['phase']=='consolidate':
+            return {'events':[raw],'uncertainties':['secret-original需要核对'],'multiple_scenarios':False}
+        raw['value']='secret-original'
+        return {'events':[raw] if payload['frames'][0]['timestamp_ms']==0 else [],'uncertainties':[],'multiple_scenarios':False}
+    monkeypatch.setattr(ai,'AI_VISION_IMAGE_LIMIT',6);monkeypatch.setattr(ai,'run_ai_skill',model)
+    result=analysis.analyze_frames({'app_id':APP,'goal':'','media':{'duration_ms':12000,'frames':frames}},tmp_path,lambda:False)
+    assert 'secret-original' not in str(result)
