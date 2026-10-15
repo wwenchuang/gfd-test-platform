@@ -808,3 +808,22 @@ test('import response after visiting history and returning cannot navigate',asyn
  const pending=f.run('importDeviceRecordingDraft()');f.run("showDeviceRecordingHistory();deviceRecorderView='record';renderDeviceRecorder()");
  resolve({ok:true,draft:{draft_id:'d',app_id:'com.kfb.model'}});await pending;assert.equal(opened.length,0);
 });
+
+for (const destination of ['another recording', 'same recording after history']) {
+ test(`stale import releases current button after navigating to ${destination}`, async()=>{
+  const f=fixture();let resolve;const opened=[];
+  f.context.hasPermission=()=>true;f.context.uiSimpleIdentity=()=> 'owner';f.context.activeWorkflow='device_recorder';
+  f.context.openImportedUiDraft=d=>opened.push(d);
+  f.context.apiRequest=()=>new Promise(r=>resolve=r);
+  f.run("deviceRecorderSession={id:'a',status:'finished',app_package:'com.kfb.model',steps:[]};renderDeviceRecorder()");
+  const pending=f.run('importDeviceRecordingDraft()');
+  f.run('showDeviceRecordingHistory()');
+  if(destination==='another recording')f.run("deviceRecorderSession={id:'b',status:'finished',app_package:'com.kfb.model',steps:[]}");
+  f.run("deviceRecorderView='record';renderDeviceRecorder()");
+  const button=f.dom.window.document.querySelector('[data-action="import-recording-draft"]');
+  assert.equal(button.disabled,true);assert.equal(button.textContent,'正在整理…');
+  resolve({ok:true,draft:{draft_id:'old',app_id:'com.kfb.model'}});await pending;
+  assert.equal(opened.length,0);assert.equal(f.run('recorderImportPending'),false);
+  assert.equal(button.disabled,false);assert.equal(button.textContent,'整理为可执行用例');
+ });
+}

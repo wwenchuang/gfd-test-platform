@@ -1057,5 +1057,13 @@ async function importDeviceRecordingDraft() {
     if(data?.ok!==true||data.draft?.app_id!==app)throw new Error(data?.error||'整理结果未确认');
     openImportedUiDraft(data.draft);
   }catch(error){if(current()){const message=error.status===403?'当前账号没有整理此录制的权限。':`整理未确认：${error.message||'网络异常'}。可重试核对同一录制，也可到“继续我的草稿”查看；重试不会重复创建同一版本。`;const host=document.getElementById('device-recorder-message');if(host){host.textContent=message;host.setAttribute('role','alert');}showToast(message,'error');}}
-  finally{recorderImportPending=false;if(current()){const button=document.querySelector('[data-action="import-recording-draft"]');if(button){button.disabled=!hasPermission('ui.edit');button.textContent='整理为可执行用例';}}}
+  finally{
+    recorderImportPending=false;
+    // The global request lock also disabled any recording opened while awaiting it.
+    // Release that visible control using current permissions, without adopting stale data.
+    if(activeWorkflow==='device_recorder'&&deviceRecorderView==='record'){
+      const button=document.querySelector('[data-action="import-recording-draft"]');
+      if(button){button.disabled=deviceRecorderSession?.status!=='finished'||!hasPermission('ui.edit');button.textContent='整理为可执行用例';}
+    }
+  }
 }
