@@ -227,7 +227,7 @@ def decode_video(video, output, cancelled):
     for old in output.glob('frame-*.jpg'): old.unlink()
     base = "scale=480:480:force_original_aspect_ratio=decrease,format=yuv420p,mpdecimate=hi=768:lo=320:frac=0.10"
     common = [_tool('ffmpeg'), '-nostdin', '-hide_banner', '-v', 'info', '-threads', '1', '-protocol_whitelist', 'file,pipe', '-f', 'mov', '-i', str(video), '-xerror', '-an', '-sn', '-dn']
-    _, scan = _process([*common, '-vf', base+',showinfo', '-f', 'null', '-'], cancelled)
+    _, scan = _process([*common, '-vf', base+',signalstats,metadata=print:key=lavfi.signalstats.YDIF,showinfo', '-f', 'null', '-'], cancelled)
     all_times = [round(float(t)*1000) for t in re.findall(rb'\bn:\s*\d+.*?pts_time:([\d.e+\-]+)', scan)]
     if not all_times or len(all_times)>72000:raise ValueError('video_split_required')
     clusters=[];first=0
@@ -237,12 +237,14 @@ def decode_video(video, output, cancelled):
     selected={0, len(all_times)-1}
     for first,last in clusters:
         selected.update((max(0,first-1),first,last))
-    # Rapid high-contrast cuts remain distinct evidence, even if their timestamps
-    # form one contiguous motion cluster (for example repeated full-screen flashes).
-    means=[int(value) for value in re.findall(rb'\bmean:\[\s*(\d+)',scan)]
-    if len(means)==len(all_times):
-        for index in range(1,len(means)):
-            if abs(means[index]-means[index-1])>=64:
+    # Mean absolute pixel change retains spatial cuts even when two pages have
+    # identical overall brightness. Unlike scene-score acceleration, this also
+    # detects repeated abrupt cuts at a constant cadence. Smooth motion remains
+    # eligible for temporal sampling rather than treating every frame as a cut.
+    changes=[float(value) for value in re.findall(rb'lavfi\.signalstats\.YDIF=([\d.e+\-]+)',scan)]
+    if len(changes)==len(all_times):
+        for index,change in enumerate(changes[1:],1):
+            if change>=64:
                 selected.update((index-1,index))
     budget=MAX_FRAMES-1  # reserve the independently decoded final anchor
     if len(selected)>budget:raise ValueError('video_split_required')

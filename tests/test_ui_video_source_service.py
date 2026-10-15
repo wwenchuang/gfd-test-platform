@@ -111,6 +111,18 @@ class VideoSourceTests(unittest.TestCase):
         movie=self.fixture(directory/'fast.mp4','-framerate','5','-i',str(directory/'input-%03d.png'),'-c:v','libx264','-pix_fmt','yuv420p')
         with self.assertRaisesRegex(ValueError,'video_split_required'):decode_video(movie,directory/'fast',lambda:False)
 
+    def test_equal_luminance_rapid_spatial_cuts_require_split(self):
+        from task_server.services.ui_video_source_service import decode_video
+        from PIL import Image,ImageDraw
+        directory=Path(self.temp.name)
+        for index in range(64):
+            image=Image.new('RGB',(96,160),'black')
+            ImageDraw.Draw(image).rectangle((0,0,47,159) if index%2 else (0,0,95,79),fill='white')
+            image.save(directory/f'spatial-{index:03d}.png')
+        movie=self.fixture(directory/'spatial.mp4','-framerate','5','-i',str(directory/'spatial-%03d.png'),'-c:v','libx264','-pix_fmt','yuv420p')
+        with self.assertRaisesRegex(ValueError,'video_split_required'):
+            decode_video(movie,directory/'spatial',lambda:False)
+
     def test_cancel_before_decoder_launch(self):
         from task_server.services.ui_video_source_service import decode_video
         with self.assertRaisesRegex(ValueError, 'video_cancelled'):
