@@ -12,6 +12,7 @@ def test_scoped_draft_routes_have_distinct_permissions():
                          ('GET', '/api/ui-case-drafts/draft-1'),
                          ('POST', '/api/ui-case-drafts'),
                          ('POST', '/api/ui-case-drafts/draft-1/update'),
+                         ('POST', '/api/ui-case-drafts/draft-1/yaml-candidate'),
                          ('POST', '/api/ui-case-drafts/draft-1/validate'),
                          ('POST', '/api/ui-case-drafts/draft-1/try')]:
         access.check(method, path)
@@ -60,7 +61,7 @@ def test_registered_draft_routes_do_not_leak_internal_gate(monkeypatch):
 
 def test_draft_audit_keys_are_stable_and_do_not_include_description():
     from task_server import operation_http
-    for action in ('update', 'restore', 'validate', 'try', 'publish'):
+    for action in ('update', 'restore', 'yaml-candidate', 'validate', 'try', 'publish'):
         path = '/api/ui-case-drafts/private-id/' + action
         assert operation_http.route_key('POST', path) == 'POST.post_ui_case_draft_action.' + action
         assert operation_http._resource(path, 'POST', {'source_text': 'SECRET'}, {}, 200) == ('ui_draft', '', 'ui_draft.' + action)

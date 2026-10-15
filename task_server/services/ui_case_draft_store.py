@@ -12,7 +12,7 @@ from pathlib import Path
 from task_server import identity
 
 _SCHEMA_LOCK = threading.Lock()
-_CONTENT_KEYS = {'title', 'preconditions', 'steps', 'questions', 'yaml_content', 'ready'}
+_CONTENT_KEYS = {'title', 'preconditions', 'steps', 'questions', 'yaml_content', 'ready', 'yaml_candidate'}
 
 
 class DraftConflict(ValueError):
@@ -86,7 +86,7 @@ class DraftStore:
         if not isinstance(content, dict) or set(content) - _CONTENT_KEYS:
             raise ValueError('draft_content_invalid')
         for key, value in content.items():
-            expected = bool if key == 'ready' else list if key in {'preconditions', 'steps', 'questions'} else str
+            expected = dict if key == 'yaml_candidate' else bool if key == 'ready' else list if key in {'preconditions', 'steps', 'questions'} else str
             if type(value) is not expected:
                 raise ValueError('draft_content_invalid')
         # Round trip prevents callers retaining mutable store state.

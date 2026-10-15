@@ -24,6 +24,8 @@ def _run(handler, operation, *, admission=False):
     except ValueError as error:
         code = getattr(error, 'code', '') or str(error)
         messages = {
+            'draft_yaml_candidate_unresolved': '高级 YAML 候选尚未解决，请修正后提交或明确恢复上一有效版',
+            'draft_yaml_candidate_too_large': '候选文本超过20万字，请精简；当前已保存版本未修改',
             'recording_import_unfinished': '请先结束录制；进行中或已取消的录制不能整理',
             'recording_import_size': '录制需包含1至50步，且内容大小不能超过限制',
             'recording_import_cross_app': '录制包含其他应用的启动动作，请先核对所属应用',
@@ -84,7 +86,7 @@ def register_routes(route_get, route_post, route_get_regex, route_post_regex):
             return {'draft': draft}, draft['draft_id']
         _run(handler, operation)
 
-    @route_post_regex(r'^/api/ui-case-drafts/([^/]+)/(update|restore|validate|try|publish)$')
+    @route_post_regex(r'^/api/ui-case-drafts/([^/]+)/(update|restore|yaml-candidate|validate|try|publish)$')
     def _post_ui_case_draft_action(handler, qs, match):
         def operation():
             from .services import ui_case_draft_service as service
@@ -94,8 +96,8 @@ def register_routes(route_get, route_post, route_get_regex, route_post_regex):
                 gate = service.validate_draft(None, identifier, body)
                 # Compiled YAML/target resolution are internal dispatch inputs.
                 result = {'gate': {key: gate[key] for key in ('ready', 'blockers')}}
-            elif action in {'update', 'restore'}:
-                method = service.update_draft if action == 'update' else service.restore_draft
+            elif action in {'update', 'restore', 'yaml-candidate'}:
+                method = {'update': service.update_draft, 'restore': service.restore_draft, 'yaml-candidate': service.apply_yaml_candidate}[action]
                 result = {'draft': method(None, identifier, body)}
             else:
                 from .services.ui_case_draft_execution import create_draft_trial, publish_draft

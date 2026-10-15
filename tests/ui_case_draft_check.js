@@ -129,3 +129,34 @@ test('recording editor separates provenance from text generation and hides techn
  assert.equal(f.node.querySelector('[data-draft-create]').disabled,true);
  assert.doesNotMatch(f.node.querySelector('[data-draft-source]').textContent,/[a]{32}/);
 });
+test('advanced candidate is collapsed, explicit, and blocks conflicting changes until cancelled',async t=>{
+ const f=fixture(t,p=>p==='/ui-case-drafts/d1'?{ok:true,draft:confirmedDraft}:undefined);await open(f);
+ const input=f.node.querySelector('[data-draft-yaml-input]');assert.ok(input);assert.equal(input.closest('details').open,false);
+ input.value='tasks: [';input.dispatchEvent(new f.w.Event('input',{bubbles:true}));
+ assert.equal(f.node.querySelector('[data-draft-title]').disabled,true);assert.equal(f.node.querySelector('[data-draft-restore]').disabled,true);assert.equal(f.node.querySelector('[data-draft-try]').disabled,true);
+ assert.equal(f.calls.filter(c=>c.path.endsWith('/yaml-candidate')).length,0);
+ f.node.querySelector('[data-draft-yaml-cancel]').click();assert.equal(input.value,confirmedDraft.yaml_content);assert.equal(f.node.querySelector('[data-draft-title]').disabled,false);
+});
+test('advanced candidate raw survives departure and explicit apply adopts blocked revision',async t=>{
+ const f=fixture(t,(p,o)=>{if(p.endsWith('/yaml-candidate'))return {ok:true,draft:{...draft,revision:2,yaml_candidate:{raw:o.body.yaml_content,status:'invalid',error:'YAML 格式错误'}}};});await open(f);
+ let input=f.node.querySelector('[data-draft-yaml-input]');input.value='tasks: [';input.dispatchEvent(new f.w.Event('input',{bubbles:true}));
+ f.mounted.dispose();f.remount();await open(f);input=f.node.querySelector('[data-draft-yaml-input]');assert.equal(input.value,'tasks: [');
+ f.node.querySelector('[data-draft-yaml-apply]').click();await wait();assert.deepEqual(JSON.parse(JSON.stringify(f.calls.find(c=>c.path.endsWith('/yaml-candidate')).o.body)),{revision:1,yaml_content:'tasks: ['});
+ assert.equal(f.node.querySelector('[data-draft-title]').disabled,true);assert.equal(f.node.querySelector('[data-draft-restore]').disabled,false);assert.match(f.node.textContent,/YAML 格式错误/);assert.equal(f.calls.filter(c=>/\/(try|publish)$/.test(c.path)).length,0);
+});
+test('converted raw never overrides latest Chinese-generated YAML',async t=>{
+ const f=fixture(t,p=>p==='/ui-case-drafts/d1'?{ok:true,draft:{...draft,yaml_content:'最新中文步骤脚本',yaml_candidate:{raw:'原始脚本',status:'converted',error:''}}}:undefined);await open(f);
+ assert.equal(f.node.querySelector('[data-draft-yaml-input]').value,'最新中文步骤脚本');
+});
+test('YAML buffer is isolated by revision and restored buffer blocks create and app changes',async t=>{
+ const f=fixture(t);await open(f);const input=f.node.querySelector('[data-draft-yaml-input]');input.value='未提交脚本';input.dispatchEvent(new f.w.Event('input',{bubbles:true}));
+ assert.equal(f.node.querySelector('[data-draft-app]').disabled,true);assert.equal(f.node.querySelector('[data-open-draft]').disabled,true);
+ f.node.querySelector('[data-draft-text]').value='新的描述';f.node.querySelector('[data-draft-create]').dispatchEvent(new f.w.Event('click'));await wait();assert.equal(f.calls.filter(c=>c.path==='/ui-case-drafts').length,0);
+ const e=new f.w.Event('beforeunload',{cancelable:true});f.w.dispatchEvent(e);assert.equal(e.defaultPrevented,true);
+});
+test('YAML-derived recording steps are presented as manual script, retaining audit origin',async t=>{
+ const manual={...draft,source_snapshot:{actions:[{}],evidence_note:'原始证据'},steps:draft.steps.map(s=>({...s,source_ref:'manual_yaml'}))};
+ const f=fixture(t,p=>p==='/ui-case-drafts/d1'?{ok:true,draft:manual}:undefined);await open(f);
+ assert.match(f.node.querySelector('[data-draft-source]').textContent,/手工编辑脚本/);
+ assert.match(f.node.querySelector('[data-draft-source]').textContent,/历史来源/);
+});

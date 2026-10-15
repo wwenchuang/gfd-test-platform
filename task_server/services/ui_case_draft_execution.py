@@ -16,6 +16,8 @@ TRIAL_CONTRACT = 'private-draft-trial-v1'
 
 
 def _source(draft):
+    if draft.get('yaml_candidate', {}).get('status') == 'invalid':
+        raise BatchValidationError('draft_yaml_candidate_unresolved')
     proposal = {key:draft[key] for key in ('title','preconditions','steps','questions')}
     built = build_draft_yaml(proposal, draft['app_id'])
     static = validate_yaml_static_executable(built['yaml_content'], strict=True)
@@ -175,6 +177,8 @@ def publish_draft(actor, draft_id, body):
     require_ui_actor(actor, permission='ui.baseline', app_id=draft['app_id'])
     if draft['revision'] != body['revision']:
         raise DraftConflict('draft_revision_changed')
+    if draft.get('yaml_candidate', {}).get('status') == 'invalid':
+        raise BatchValidationError('draft_yaml_candidate_unresolved')
     module = body['module']
     app = business_line_service.configured_test_application(draft['app_id']) or {}
     from .sonic_service import sonic_notify_known_apps

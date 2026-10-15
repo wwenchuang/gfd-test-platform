@@ -236,15 +236,41 @@ def get_draft(actor, draft_id):
     return _owned(actor, draft_id, 'ui.view')[1]
 
 
+def apply_yaml_candidate(actor, draft_id, body):
+    from .ui_yaml_candidate import parse_candidate, MAX_RAW_CHARS
+    body = _body(body, {'revision', 'yaml_content'}, {'revision', 'yaml_content'})
+    profile, document = _owned(actor, draft_id, 'ui.edit')
+    revision = _revision(body)
+    if document['revision'] != revision:
+        raise DraftConflict('draft_revision_changed')
+    raw = body['yaml_content']
+    if not isinstance(raw, str) or len(raw) > MAX_RAW_CHARS:
+        raise ValueError('draft_yaml_candidate_too_large')
+    candidate = {'raw': raw, 'error': '', 'status': 'converted'}
+    content = {key: document[key] for key in _EDIT_KEYS | {'yaml_content'}}
+    try:
+        normalized = parse_candidate(raw, document['app_id'], document['preconditions'])
+        compiled = build_draft_yaml(normalized, document['app_id'])
+        content = {**normalized, 'yaml_content': compiled['yaml_content']}
+    except ValueError as error:
+        candidate.update(status='invalid', error=str(error))
+    require_ui_actor(actor, permission='ui.edit', app_id=document['app_id'])
+    return _store().revise(draft_id, profile['user_id'], revision,
+                           {**content, 'yaml_candidate': candidate, 'ready': False})
+
+
 def update_draft(actor, draft_id, body):
     body = _body(body, _EDIT_KEYS | {'revision'}, _EDIT_KEYS | {'revision'})
     profile, document = _owned(actor, draft_id, 'ui.edit')
     revision = _revision(body)
     if document['revision'] != revision:
         raise DraftConflict('draft_revision_changed')
+    if document.get('yaml_candidate', {}).get('status') == 'invalid':
+        raise ValueError('draft_yaml_candidate_unresolved')
     source = document.get('source_snapshot', {})
     provenance = {item['draft_step_id']: f"recording:{source['snapshot_id']}:{item['id']}"
                   for item in source.get('actions', []) if item.get('draft_step_id')}
+    provenance.update({step['step_id']: 'manual_yaml' for step in document['steps'] if step.get('source_ref') == 'manual_yaml'})
     for step in body.get('steps', []) if isinstance(body.get('steps'), list) else []:
         if isinstance(step, dict) and step.get('source_ref', 'text') != provenance.get(step.get('step_id'), 'text'):
             raise ValueError('draft_source_invalid')
@@ -252,7 +278,7 @@ def update_draft(actor, draft_id, body):
     compiled = build_draft_yaml(normalized, document['app_id'])
     require_ui_actor(actor, permission='ui.edit', app_id=document['app_id'])
     return _store().revise(draft_id, profile['user_id'], revision,
-                           {**normalized, 'yaml_content': compiled['yaml_content'], 'ready': False})
+                           {**normalized, 'yaml_content': compiled['yaml_content'], 'ready': False, 'yaml_candidate': {}})
 
 
 def restore_draft(actor, draft_id, body):
@@ -264,10 +290,13 @@ def restore_draft(actor, draft_id, body):
         raise DraftConflict('draft_revision_changed')
     if revision <= 1:
         raise ValueError('draft_previous_revision_missing')
-    prior = _store().get_revision(draft_id, profile['user_id'], revision - 1)
-    if not prior['steps']:
-        raise ValueError('draft_previous_revision_empty')
-    return update_draft(actor, draft_id, {'revision': revision, **{key: prior[key] for key in _EDIT_KEYS}})
+    for old_revision in range(revision - 1, 0, -1):
+        prior = _store().get_revision(draft_id, profile['user_id'], old_revision)
+        if prior['steps'] and prior.get('yaml_candidate', {}).get('status') != 'invalid':
+            require_ui_actor(actor, permission='ui.edit', app_id=document['app_id'])
+            return _store().revise(draft_id, profile['user_id'], revision,
+                {**{key: prior[key] for key in _EDIT_KEYS | {'yaml_content'}}, 'yaml_candidate': {}, 'ready': False})
+    raise ValueError('draft_previous_revision_empty')
 
 
 def validate_draft(actor, draft_id, body):
@@ -282,6 +311,9 @@ def validate_draft(actor, draft_id, body):
         raise ValueError('draft_target_invalid')
     gate = {'ready': False, 'blockers': [], 'compiled_case': {}, 'target_resolution': {},
             'draft': copy.deepcopy(document), 'static_validation': {}, 'executable_score': {}}
+    if document.get('yaml_candidate', {}).get('status') == 'invalid':
+        gate['blockers'].append({'code': 'draft_yaml_candidate_unresolved', 'message': document['yaml_candidate']['error']})
+        return gate
     if document['generation_status'] in {'queued', 'generating', 'failed'} or not document['steps']:
         gate['blockers'].append({'code': 'draft_generation_incomplete', 'message': '请先完成步骤整理或人工编辑'})
         return gate
