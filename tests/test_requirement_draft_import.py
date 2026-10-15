@@ -143,3 +143,27 @@ def test_missing_expected_with_full_question_list_fails_without_losing_source(so
     assert loaded['generation_status'] == 'failed'
     assert loaded['source_snapshot'] == draft['source_snapshot']
     assert len(loaded['questions']) <= 100
+
+@pytest.mark.parametrize('manual_source', ['generated', 'validation'])
+def test_partial_upper_groups_cannot_hide_manual_case(source, manual_source):
+    from task_server.services.requirement_draft_import import import_refs
+    source['artifacts']['generatedCaseGroups'] = {'executable_cases': [{'id': 'other'}]}
+    if manual_source == 'validation':
+        source['artifacts']['yamlValidation'] = {'executionGroups': {'manual_cases': [{'id':'C001'}]}}
+    else:
+        source['artifacts']['yamlValidation'] = {'executionGroups': {'draft_cases': []}}
+        source['artifacts']['generatedCases']['manual_cases'] = [{'id':'C001'}]
+    with pytest.raises(ValueError, match='requirement_import_manual'): imported()
+    assert import_refs(source) == []
+
+def test_explicit_empty_manual_group_matches_ui_precedence(source, env):
+    source['artifacts']['generatedCaseGroups'] = {'manual_cases': []}
+    source['artifacts']['generatedCases']['manual_cases'] = [{'id':'C001'}]
+    imported(); env[1].pop()()
+
+@pytest.mark.parametrize('action', [[], {}, ['aiTap'], {'name':'aiTap'}, None, 3])
+def test_malformed_structured_action_has_controlled_failure(source, action):
+    from task_server.services.requirement_draft_import import import_refs
+    source['artifacts']['generatedCases']['cases'][0]['steps'] = [{'action': action, 'target': '我的'}]
+    with pytest.raises(ValueError, match='requirement_import_unsupported'): imported()
+    assert import_refs(source) == []

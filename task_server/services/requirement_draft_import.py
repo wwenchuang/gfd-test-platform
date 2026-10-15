@@ -22,7 +22,7 @@ def _lines(value, required=False):
             # Preserve all supported structured step fields; never silently drop an action.
             if set(row) - {'action', 'target', 'value', 'expected', 'description', 'step', 'expected_result'}:
                 raise ValueError('requirement_import_unsupported')
-            if 'action' in row and row['action'] not in ACTIONS:
+            if 'action' in row and (not isinstance(row['action'], str) or row['action'] not in ACTIONS):
                 raise ValueError('requirement_import_unsupported')
             row = {key: _text(val) for key, val in row.items()}
             if not row: raise ValueError('requirement_import_size')
@@ -45,10 +45,17 @@ def case_snapshot(run, item, index):
     generated = artifacts.get('generatedCases') or {}
     validation = artifacts.get('yamlValidation') or {}
     if not isinstance(validation, dict): raise ValueError('requirement_import_size')
-    groups = artifacts.get('generatedCaseGroups') or validation.get('executionGroups') or generated
-    if not isinstance(groups, dict): raise ValueError('requirement_import_size')
-    manual = groups.get('manual_cases', []) if isinstance(groups, dict) else []
-    if not isinstance(manual, list): raise ValueError('requirement_import_size')
+    # Same per-key priority as agentGeneratedCaseGroups, not whole-dict fallback.
+    # An explicit empty list is authoritative in JavaScript; malformed values
+    # fail closed instead of hiding a manual classification from another layer.
+    layers = (artifacts.get('generatedCaseGroups', {}), validation.get('executionGroups', {}), generated)
+    manual = []
+    for layer in layers:
+        if not isinstance(layer, dict): raise ValueError('requirement_import_size')
+        if 'manual_cases' in layer:
+            manual = layer['manual_cases']
+            if not isinstance(manual, list): raise ValueError('requirement_import_size')
+            break
     identity = lambda row: next((row.get(key) for key in ('case_id', 'caseId', 'id', 'file', 'path', 'title', 'name') if row.get(key)), None)
     if any(isinstance(row, dict) and identity(row) and identity(row) == identity(item) for row in manual):
         raise ValueError('requirement_import_manual')
