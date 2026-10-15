@@ -160,3 +160,17 @@ test('YAML-derived recording steps are presented as manual script, retaining aud
  assert.match(f.node.querySelector('[data-draft-source]').textContent,/手工编辑脚本/);
  assert.match(f.node.querySelector('[data-draft-source]').textContent,/历史来源/);
 });
+test('generation polling fills advanced YAML without reopening the newly created draft',async t=>{
+ let polls=0,poll;const generated='android: {}\ntasks: [{name: 新用例, flow: [{aiAssert: 首页显示标题}]}]';
+ const f=fixture(t,p=>{if(p==='/ui-case-drafts/d1')return {ok:true,draft:++polls===1?{...draft,generation_status:'queued',steps:[],yaml_content:''}:{...draft,revision:2,generation_status:'ready',yaml_content:generated}};});
+ const timeout=f.w.setTimeout.bind(f.w);f.w.setTimeout=(fn,ms,...args)=>ms===2000?(poll=fn,12345):timeout(fn,ms,...args);
+ await open(f);assert.equal(f.node.querySelector('[data-draft-yaml-input]').value,'');assert.equal(typeof poll,'function');await poll();
+ assert.equal(f.node.querySelector('[data-draft-yaml-input]').value,generated);assert.equal(f.node.querySelector('[data-draft-yaml-apply]').disabled,true);
+});
+test('generation refresh does not overwrite a recovered unsubmitted YAML buffer',async t=>{
+ let polls=0,poll;const f=fixture(t,p=>p==='/ui-case-drafts/d1'?{ok:true,draft:{...draft,generation_status:++polls===1?'queued':'ready',yaml_content:polls===1?'':'生成后的脚本'}}:undefined);
+ f.w.sessionStorage.setItem('ui-draft-yaml:a:d1:1','需要保留的未提交脚本');
+ const timeout=f.w.setTimeout.bind(f.w);f.w.setTimeout=(fn,ms,...args)=>ms===2000?(poll=fn,12345):timeout(fn,ms,...args);
+ await open(f);await poll();assert.equal(f.node.querySelector('[data-draft-yaml-input]').value,'需要保留的未提交脚本');assert.equal(f.node.querySelector('[data-draft-yaml-apply]').disabled,false);
+ assert.equal(f.w.sessionStorage.getItem('ui-draft-yaml:a:d1:1'),'需要保留的未提交脚本');
+});
