@@ -325,9 +325,20 @@
       for(const[id,button]of s.reportNodes)if(!keep.has(id)){button.remove();s.reportNodes.delete(id);}
       if(focused?.isConnected&&focused.classList?.contains('ui-simple-report-row')&&document.activeElement!==focused)focused.focus({preventScroll:true});
       list.scrollTop=scrollTop;
-      if(!list.childElementCount){const empty=document.createElement('p');empty.dataset.uiEmptyReports='';empty.textContent='还没有你发起的测试。';list.append(empty);}
+      if(!list.childElementCount){const empty=document.createElement('p');empty.dataset.uiEmptyReports='';empty.textContent=s.app?'当前应用暂无测试记录，可切换应用或发起一次测试。':'还没有你发起的测试。';list.append(empty);}
       s.next=data.next_cursor||'';s.node.querySelector('[data-ui-prev]').disabled=!s.previous.length;s.node.querySelector('[data-ui-next]').disabled=!s.next;
     }catch(error){notice(s,error.message,true);}
+  }
+  function changeReportApp(s,app){
+    if(!valid(s))return;
+    clearReport(s,true);
+    // A filter change invalidates both the list and any ordinary-test detail.
+    for(const slot of ['reports','batch','summary','action']){s.pending.get(slot)?.abort();s.pending.delete(slot);}
+    s.app=app;s.cursor='';s.previous=[];s.next='';s.batchId='';s.batchSettled=false;
+    s.reportNodes.clear();s.node.querySelector('[data-ui-reports]').innerHTML='<p data-ui-empty-reports>正在加载当前应用的测试…</p>';
+    const batch=s.node.querySelector('[data-ui-batch]'),emptyBatch=batch.cloneNode(false);emptyBatch.hidden=true;batch.replaceWith(emptyBatch);
+    s.node.querySelector('[data-ui-prev]').disabled=true;s.node.querySelector('[data-ui-next]').disabled=true;
+    notice(s,'');loadReports(s);
   }
   async function refresh(){
     const s=state;if(!s||!valid(s)||document.hidden)return;
@@ -354,7 +365,7 @@
     s.node.querySelector('[data-ui-recover]').hidden=!s.uncertain;
     s.node.querySelector('[data-ui-recover]').onclick=()=>start(s,true);
     if(s.uncertain)notice(s,'上次提交结果待确认，请先核对，避免重复执行。',true);
-    const app=s.node.querySelector('[name="ui-app"]');app.onchange=()=>mode==='reports'?(s.app=app.value,s.cursor='',s.previous=[],loadReports(s)):changeApp(s,app.value);
+    const app=s.node.querySelector('[name="ui-app"]');app.onchange=()=>mode==='reports'?changeReportApp(s,app.value):changeApp(s,app.value);
     const load=()=>mode==='reports'?loadReports(s):loadCatalog(s);
     s.node.querySelector('[data-ui-refresh]').onclick=()=>{load();if(mode!=='reports')loadDevices(s);if(s.batchId&&!s.batchSettled)loadBatch(s);s.reportView?.refresh(true);};
     s.node.querySelector('[data-ui-prev]').onclick=()=>{if(!s.previous.length)return;s.cursor=s.previous.pop();load();};

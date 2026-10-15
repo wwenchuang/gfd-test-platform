@@ -11,7 +11,7 @@ test('dispose aborts pending requests and ignores late responses',async t=>{let 
 test('identity change clears contents on response',async t=>{let resolve;const f=fixture(t,p=>p.startsWith('/ui-executions/catalog')?new Promise(r=>resolve=r):undefined);f.setIdentity('b');resolve({ok:true,apps:[]});await wait();assert.equal(f.node.textContent,'');});
 test('read only user cannot create or save',async t=>{const f=fixture(t,null,{canEdit:()=>false});await open(f);assert.equal(f.node.querySelector('[data-draft-create]').disabled,true);assert.equal(f.node.querySelector('[data-draft-save]').disabled,true);});
 test('unknown submission retries same idempotency key and forbids publish',async t=>{let attempts=0;const f=fixture(t,p=>{if(p==='/ui-case-drafts/d1')return {ok:true,draft:{...draft,questions:[],steps:draft.steps.map(v=>({...v,review_state:'confirmed'}))}};if(p.endsWith('/try')&&++attempts===1)throw new Error('网络中断');});await open(f);f.node.querySelector('[data-draft-device]').value='0';f.node.querySelector('[data-draft-device]').dispatchEvent(new f.w.Event('change'));f.node.querySelector('[data-draft-try]').click();await wait();await wait();assert.equal(f.node.querySelector('[data-draft-publish]').disabled,true);f.node.querySelector('[data-draft-try]').click();await wait();const tries=f.calls.filter(c=>c.path.endsWith('/try'));assert.equal(tries.length,2);assert.equal(tries[0].o.headers['Idempotency-Key'],tries[1].o.headers['Idempotency-Key']);assert.deepEqual(tries[0].o.body,tries[1].o.body);});
-test('questions are removable and saved; unresolved steps cannot execute',async t=>{const f=fixture(t);await open(f);assert.equal(f.node.querySelector('[data-draft-execute]').hidden,true);f.node.querySelector('[data-resolve-question]').click();f.node.querySelector('[data-step-command="confirm"]').click();f.node.querySelector('[data-draft-save]').click();await wait();assert.equal(f.calls.find(c=>c.path.endsWith('/update')).o.body.questions.length,0);assert.equal(f.node.querySelector('[data-draft-execute]').hidden,false);});
+test('questions are removable and saved; unresolved steps cannot execute',async t=>{const f=fixture(t);await open(f);assert.equal(f.node.querySelector('[data-draft-try]').disabled,true);f.node.querySelector('[data-resolve-question]').click();f.node.querySelector('[data-step-command="confirm"]').click();f.node.querySelector('[data-draft-save]').click();await wait();assert.equal(f.calls.find(c=>c.path.endsWith('/update')).o.body.questions.length,0);assert.equal(f.node.querySelector('[data-draft-execute]').hidden,false);});
 test('publish remains unavailable unless server batch is settled and passed',async t=>{const f=fixture(t,p=>{if(p==='/ui-case-drafts/d1')return {ok:true,draft:{...draft,questions:[],steps:draft.steps.map(v=>({...v,review_state:'confirmed'}))}};if(p.endsWith('/try'))return {ok:true,batch:{ui_batch_id:'b',status:'passed',execution_settled:false}};});await open(f);const dev=f.node.querySelector('[data-draft-device]');dev.value='0';dev.dispatchEvent(new f.w.Event('change'));f.node.querySelector('[data-draft-module]').value='导航';f.node.querySelector('[data-draft-try]').click();await wait();await wait();assert.equal(f.node.querySelector('[data-draft-publish]').disabled,true);assert.equal(f.node.querySelector('[data-draft-publish-area]').hidden,true);});
 test('changing application aborts older draft fetch and ignores its result',async t=>{let resolve;const f=fixture(t,p=>p==='/ui-case-drafts?app_id=a'?new Promise(r=>resolve=r):undefined);await wait();const app=f.node.querySelector('[data-draft-app]');app.value='a';app.dispatchEvent(new f.w.Event('change'));await wait();app.value='';app.dispatchEvent(new f.w.Event('change'));resolve({ok:true,items:[draft]});await wait();assert.equal(f.node.querySelector('[data-open-draft]'),null);});
 test('saved edit invalidates successful execution and prevents publication',async t=>{const f=fixture(t,p=>p==='/ui-case-drafts/d1'?{ok:true,draft:{...draft,questions:[],steps:draft.steps.map(v=>({...v,review_state:'confirmed'}))}}:undefined);await open(f);const dev=f.node.querySelector('[data-draft-device]');dev.value='0';dev.dispatchEvent(new f.w.Event('change'));f.node.querySelector('[data-draft-module]').value='导航';f.node.querySelector('[data-draft-try]').click();await wait();await wait();assert.equal(f.node.querySelector('[data-draft-publish]').disabled,false);const title=f.node.querySelector('[data-draft-title]');title.value='新版';title.dispatchEvent(new f.w.Event('input',{bubbles:true}));assert.equal(f.node.querySelector('[data-draft-publish]').disabled,true);f.node.querySelector('[data-draft-save]').click();await wait();assert.equal(f.node.querySelector('[data-draft-publish]').disabled,true);});
@@ -78,4 +78,39 @@ test('draft response for another application is not adopted into the current edi
  const f=fixture(t,p=>p==='/ui-case-drafts/d1'?{ok:true,draft:{...draft,app_id:'other'}}:undefined);await open(f);
  assert.equal(f.node.querySelector('[data-draft-editor]').hidden,true);
  assert.match(f.node.querySelector('[data-draft-notice]').textContent,/应用/);
+});
+
+test('compact steps show readable summaries and expand one editor without losing edits',async t=>{
+ const two={...confirmedDraft,steps:[confirmedDraft.steps[0],{...confirmedDraft.steps[0],step_id:'s2',target:'首页',expected:'首页显示模型推荐'}]};
+ const f=fixture(t,p=>p==='/ui-case-drafts/d1'?{ok:true,draft:two}:undefined);await open(f);
+ const rows=()=>[...f.node.querySelectorAll('[data-step-index]')];
+ assert.ok(rows().every(row=>row.querySelector('[data-step-editor]').hidden));
+ assert.match(rows()[0].querySelector('[data-step-summary]').textContent,/我的/);
+ rows()[0].querySelector('[data-step-toggle]').click();assert.equal(rows()[0].querySelector('[data-step-editor]').hidden,false);
+ const input=rows()[0].querySelector('[data-step-field="expected"]');input.value='我的设备入口可见';input.dispatchEvent(new f.w.Event('input',{bubbles:true}));
+ rows()[1].querySelector('[data-step-toggle]').click();assert.equal(rows()[0].querySelector('[data-step-editor]').hidden,true);
+ assert.equal(rows()[1].querySelector('[data-step-editor]').hidden,false);
+ rows()[0].querySelector('[data-step-toggle]').click();assert.equal(rows()[0].querySelector('[data-step-field="expected"]').value,'我的设备入口可见');
+ rows()[0].querySelector('[data-step-command="confirm"]').click();assert.equal(rows()[0].querySelector('[data-step-editor]').hidden,true);
+ assert.match(rows()[0].querySelector('[data-step-summary]').textContent,/我的设备入口可见/);
+ assert.equal(f.node.querySelector('[data-draft-try]').disabled,true);
+});
+test('selected phone preview remains visible during review and ignores late pictures on switch or disposal',async t=>{
+ const pictures=[],phones=['安卓测试机','苹果测试机'].map((name,i)=>({name,connection_status:'ready',app_id:'a',os_version:i?'26':'15',app_version:i?'1.19.7 (70)':'2.0.0 (51)',snapshot_url:'/private/'+i,snapshot_captured_at:'2026-10-15 12:00:00',target:{runner_id:'r',device_id:'d'+i,platform:i?'ios':'android'}}));
+ const f=fixture(t,p=>p.startsWith('/ui-executions/devices')?{ok:true,devices:phones}:undefined,{loadPicture:(img,device,current)=>{pictures.push({img,device,current});return Promise.resolve(false);}});await open(f);
+ assert.equal(f.node.querySelector('[data-draft-execute]').hidden,false);
+ const select=f.node.querySelector('[data-draft-device]');select.value='0';select.dispatchEvent(new f.w.Event('change'));await wait();
+ assert.equal(pictures.length,1);assert.match(f.node.querySelector('[data-draft-phone]').textContent,/安卓测试机/);assert.match(f.node.querySelector('[data-draft-phone]').textContent,/2.0.0/);
+ assert.equal(f.node.querySelector('[data-draft-try]').disabled,true);
+ select.value='1';select.dispatchEvent(new f.w.Event('change'));await wait();assert.equal(pictures[0].current(),false);assert.equal(pictures[1].current(),true);
+ assert.match(f.node.querySelector('[data-draft-phone]').textContent,/苹果测试机/);assert.doesNotMatch(f.node.querySelector('[data-draft-phone]').textContent,/2.0.0/);
+ f.mounted.dispose();assert.equal(pictures[1].current(),false);
+});
+
+test('read-only users can expand steps while mutation controls stay disabled',async t=>{
+ const f=fixture(t,p=>p==='/ui-case-drafts/d1'?{ok:true,draft:confirmedDraft}:undefined,{canEdit:()=>false});await open(f);
+ const row=f.node.querySelector('[data-step-index]');row.querySelector('[data-step-toggle]').click();
+ assert.equal(row.querySelector('[data-step-editor]').hidden,false);
+ assert.equal(row.querySelector('[data-step-field="expected"]').disabled,true);
+ assert.equal(row.querySelector('[data-step-command="delete"]').disabled,true);
 });

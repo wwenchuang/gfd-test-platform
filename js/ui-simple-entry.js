@@ -140,7 +140,7 @@ function attachUiCaseCreation(page){
     host.querySelector('[data-ui-case-source="text"]').onclick=()=>{
       if(!current()||!canEdit()||!window.UiCaseDraft)return;
       host.className='';host.replaceChildren();
-      uiCaseDraftHandle=window.UiCaseDraft.mount(host,{request:apiRequest,identity:uiSimpleIdentity,
+      uiCaseDraftHandle=window.UiCaseDraft.mount(host,{request:apiRequest,identity:uiSimpleIdentity,loadPicture:loadUiSimplePicture,
         canEdit:()=>current()&&canEdit(),canExecute:()=>current()&&uiSimpleEnabled&&hasPermission('ui.execute'),
         canPublish:()=>current()&&canEdit()&&hasPermission('ui.baseline'),
         openMyTests:()=>{if(current())activateWorkflow('ui_reports');}});

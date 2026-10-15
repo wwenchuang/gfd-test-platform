@@ -579,3 +579,47 @@ test('library transfer cannot replace an unresolved submission',async t=>{
  const s=f.mount('start',{entrySelection:{app:'app.a',cases:[CASE]}});await wait();
  assert.equal(s.uncertain,true);assert.equal(s.selected.size,0);assert.equal(s.startIntent.body.app_id,'app.original');
 });
+
+for(const detail of ['report','batch'])test(`application filter clears ${detail} and rejects its late response`,async t=>{
+ let resolveDetail,signal;
+ const f=fixture(t,(path,o)=>{
+  if(path.startsWith('/ui-executions/catalog'))return {ok:true,apps:[{app_id:'app.a',name:'智小白3D'},{app_id:'app.b',name:'小白学习'}]};
+  if(path.startsWith('/ui-executions?'))return {ok:true,items:path.includes('app_id=app.b')?[]:[{ui_batch_id:'uib_old',app_id:'app.a',report_status:detail==='report'?'ready':'not_requested'}]};
+  if(path==='/ui-executions/uib_old'+(detail==='report'?'/report':'')){signal=o.signal;return new Promise(r=>resolveDetail=r);}
+ });
+ f.w.eval(fs.readFileSync('js/ui-batch-report.js','utf8'));
+ f.mount('reports',{download:async()=>{}});await wait();f.node.querySelector('.ui-simple-report-row').click();await wait();
+ const app=f.node.querySelector('[name="ui-app"]');app.value='app.b';app.dispatchEvent(new f.w.Event('change'));
+ assert.equal(signal.aborted,true);assert.equal(f.node.querySelector('.ui-simple-report-row'),null);
+ assert.equal(f.node.querySelector('[data-ui-batch]').hidden,true);
+ if(detail==='report')assert.equal(f.node.querySelector('[data-ui-report-preview]').hidden,true);
+ resolveDetail(detail==='report'?{ok:true,report:{status:'ready',snapshot:{summary:'旧应用报告'}}}:{ok:true,batch:{ui_batch_id:'uib_old',status:'running',case_attempts:[]}});
+ await wait();assert.doesNotMatch(f.node.textContent,/旧应用报告|uib_old/);
+ assert.match(f.node.querySelector('[data-ui-reports]').textContent,/当前应用暂无测试记录/);
+});
+test('rapid report filters replace an in-flight query and discard stale success or error',async t=>{
+ let resolveOld,oldSignal;
+ const f=fixture(t,(path,o)=>{
+  if(path.startsWith('/ui-executions/catalog'))return {ok:true,apps:[{app_id:'app.a',name:'甲'},{app_id:'app.b',name:'乙'}]};
+  if(path.startsWith('/ui-executions?')){
+   if(path.includes('app_id=app.a')){oldSignal=o.signal;return new Promise(r=>resolveOld=r);}
+   return {ok:true,items:[],next_cursor:null};
+  }
+ });f.mount('reports');await wait();
+ const app=f.node.querySelector('[name="ui-app"]');app.value='app.a';app.dispatchEvent(new f.w.Event('change'));await wait();
+ app.value='app.b';app.dispatchEvent(new f.w.Event('change'));await wait();
+ assert.equal(oldSignal.aborted,true);assert.ok(f.calls.some(c=>c.path.includes('app_id=app.b')));
+ resolveOld({ok:true,items:[{ui_batch_id:'uib_stale',app_name:'迟到旧应用',report_status:'ready'}],next_cursor:'old-page'});await wait();
+ assert.equal(f.node.querySelector('.ui-simple-report-row'),null);assert.equal(f.node.querySelector('[data-ui-next]').disabled,true);
+ assert.doesNotMatch(f.node.textContent,/迟到旧应用/);
+});
+
+test('ordinary result reopens after an application filter round trip with the real renderer',async t=>{
+ const b={ui_batch_id:'uib_roundtrip',status:'passed',execution_settled:true,app_id:'app.a',report_status:'not_requested',delivery_status:'not_requested',case_attempts:[]};
+ const f=fixture(t,p=>p.startsWith('/ui-executions/catalog')?{ok:true,apps:[{app_id:'app.a',name:'甲'},{app_id:'app.b',name:'乙'}]}:p.startsWith('/ui-executions?')?{ok:true,items:p.includes('app_id=app.b')?[]:[b]}:p==='/ui-executions/uib_roundtrip'?{ok:true,batch:b}:undefined);
+ f.w.eval(fs.readFileSync('js/ui-batch-view.js','utf8'));f.mount('reports');await wait();f.node.querySelector('.ui-simple-report-row').click();await wait();
+ const app=f.node.querySelector('[name="ui-app"]');for(const value of ['app.b','app.a']){app.value=value;app.dispatchEvent(new f.w.Event('change'));await wait();}
+ f.node.querySelector('.ui-simple-report-row').click();await wait();
+ assert.ok(f.node.querySelector('[data-ui-batch] [data-batch-progress]'));
+ assert.doesNotMatch(f.node.querySelector('[data-ui-notice]').textContent,/读取失败/);
+});
