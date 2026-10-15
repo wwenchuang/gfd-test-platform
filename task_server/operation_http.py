@@ -55,6 +55,7 @@ _UI_DRAFT_ACTIONS = {
     'GET.get_ui_case_draft': 'view',
     'POST.api.ui_case_drafts.import_recording': 'import_recording',
     'POST.api.ui_case_drafts.import_requirement': 'import_requirement',
+    'POST.api.ui_case_drafts.import_generation': 'import_generation',
     **{'POST.post_ui_case_draft_action.' + action: action
        for action in ('update', 'restore', 'yaml-candidate', 'validate', 'try', 'publish')},
 }

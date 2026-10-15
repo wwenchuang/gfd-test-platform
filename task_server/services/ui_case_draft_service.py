@@ -236,8 +236,6 @@ def import_requirement_draft(actor, body):
 
 
 def _import_requirement_draft(actor, body):
-    import hashlib
-    import json
     from .agent_service import load_agent_runs
     from .requirement_draft_import import case_snapshot
     body = _body(body, {'app_id', 'run_id', 'case_id', 'case_index', 'case_hash'}, {'app_id', 'run_id'})
@@ -271,6 +269,12 @@ def _import_requirement_draft(actor, body):
     snapshot = case_snapshot(run, selected, index)
     if 'case_hash' in body and body['case_hash'] != snapshot['snapshot_id']:
         raise DraftConflict('requirement_source_changed')
+    return _queue_requirement_snapshot(actor, profile, body, snapshot)
+
+
+def _queue_requirement_snapshot(actor, profile, body, snapshot):
+    import hashlib
+    import json
     store = _store()
     key = json.dumps([profile['user_id'], body['app_id'], snapshot['snapshot_id']], ensure_ascii=False)
     draft_id = 'uid_' + hashlib.sha256(key.encode()).hexdigest()[:32]
@@ -304,6 +308,28 @@ def _import_requirement_draft(actor, body):
         finally:
             lock.release()
         raise
+
+
+def import_generation_draft(actor, body):
+    from . import yaml_service
+    from .generation_draft_import import trusted_source
+    from .requirement_draft_import import case_snapshot
+    keys = {'app_id', 'case_set_id', 'case_index', 'case_hash'}
+    body = _body(body, keys, keys)
+    profile = require_ui_actor(actor, permission='ui.edit', app_id=body['app_id'])
+    _application(body['app_id'])
+    if not isinstance(body['case_set_id'], str) or not re.fullmatch(r'[a-zA-Z0-9_-]{1,120}', body['case_set_id']):
+        raise ValueError('draft_request_invalid')
+    with _requirement_import_lock:
+        summary = yaml_service.read_json_file(yaml_service.generation_summary_path(body['case_set_id']), default=None)
+        if not summary: raise KeyError(body['case_set_id'])
+        if summary.get('case_set_id') != body['case_set_id']: raise ValueError('requirement_import_source')
+        run = trusted_source(summary, profile['user_id'], body['app_id'])
+        index = body['case_index']
+        if type(index) is not int or not 0 <= index < len(summary['cases']): raise ValueError('draft_request_invalid')
+        snapshot = case_snapshot(run, summary['cases'][index], index)
+        if body['case_hash'] != snapshot['snapshot_id']: raise DraftConflict('requirement_source_changed')
+        return _queue_requirement_snapshot(actor, profile, body, snapshot)
 
 
 def list_drafts(actor, app_id):

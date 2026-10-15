@@ -8827,6 +8827,9 @@ def generate_ui_yaml_from_request(d, job_id=None):
         summary["hidden_ui_design_assets"] = ui_design_meta.get("hidden_designs") or []
     if ui_design_meta.get("excluded_figma_nodes"):
         summary["excluded_figma_nodes"] = ui_design_meta.get("excluded_figma_nodes") or []
+    summary["generation_job_id"] = job_id or ""
+    if job_id:
+        update_generate_job(job_id, case_set_id=case_set_id)
     summary_files = write_generation_summary(case_set_id, summary)
     static_by_file = {item.get("file"): item for item in yaml_static_validation_checks}
     yaml_executable_scores = []
@@ -10365,6 +10368,9 @@ def generate_mindmap_from_request(d, job_id=None):
         summary["hidden_ui_design_assets"] = ui_design_meta.get("hidden_designs") or []
     if ui_design_meta.get("excluded_figma_nodes"):
         summary["excluded_figma_nodes"] = ui_design_meta.get("excluded_figma_nodes") or []
+    summary["generation_job_id"] = job_id or ""
+    if job_id:
+        update_generate_job(job_id, case_set_id=case_set_id)
     summary_files = write_generation_summary(case_set_id, summary)
     return {
         "ok": True,

@@ -91,6 +91,14 @@ def register_routes(route_get, route_post, route_get_regex, route_post_regex):
             return {'draft': draft}, draft['draft_id']
         _run(handler, operation, admission=True)
 
+    @route_post('/api/ui-case-drafts/import-generation')
+    def _post_generation_draft_import(handler, qs):
+        from .services.ui_case_draft_service import import_generation_draft
+        def operation():
+            draft = import_generation_draft(None, handler._body())
+            return {'draft': draft}, draft['draft_id']
+        _run(handler, operation, admission=True)
+
     @route_get_regex(r'^/api/ui-case-drafts/([^/]+)$')
     def _get_ui_case_draft(handler, qs, match):
         from .services.ui_case_draft_service import get_draft

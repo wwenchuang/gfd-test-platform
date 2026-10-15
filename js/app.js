@@ -3118,6 +3118,31 @@ async function restoreExcludedFigmaNode(caseSetId, nodeId) {
   }
 }
 
+function generationDraftAction(run, sourceIndex) {
+  if (!run.generation_job_id) return '<p class="text-warning">旧产物缺少账号归属，请重新生成后整理。</p>';
+  if (typeof uiSimpleEnabled === 'undefined' || !uiSimpleEnabled || typeof hasPermission !== 'function' || !hasPermission('ui.edit')) return '<p>需要编辑用例权限才能整理。</p>';
+  const ref = (run.draft_import_cases || []).find(row => row.case_index === sourceIndex);
+  if (!ref) return '<p>仅可整理自己生成且有完整步骤的自动用例；旧产物请重新生成。</p>';
+  return `<button type="button" class="btn-sm" data-generation-draft onclick="importGenerationDraft(this, ${jsArg(run.case_set_id)}, ${ref.case_index}, ${jsArg(ref.case_hash)}, ${jsArg(run.app_package)})">整理为可执行用例</button><small>先核对中文步骤，再选手机试跑</small>`;
+}
+
+async function importGenerationDraft(button, caseSetId, caseIndex, caseHash, app) {
+  if (button.disabled || !uiSimpleEnabled || !hasPermission('ui.edit') || app !== currentModuleAppPackage()) return;
+  const workflow = activeWorkflow, epoch = uiSimpleEpoch, identity = currentAccessProfile?.user_id;
+  const current = () => button.isConnected && activeWorkflow === workflow && uiSimpleEpoch === epoch && currentAccessProfile?.user_id === identity && currentModuleAppPackage() === app;
+  button.disabled = true; button.textContent = '正在整理…';
+  try {
+    const data = await apiRequest('/ui-case-drafts/import-generation', {method:'POST', body:JSON.stringify({app_id:app, case_set_id:caseSetId, case_index:caseIndex, case_hash:caseHash})});
+    if (!current()) return;
+    if (data?.ok !== true || data.draft?.app_id !== app) throw new Error(data?.error || '整理结果未确认');
+    openImportedUiDraft(data.draft);
+  } catch (error) {
+    if (current()) showToast(`整理未确认：${error.message || '网络异常'}。可重试同一产物，或到“继续我的草稿”查看。`, 'error');
+  } finally {
+    button.disabled = false; button.textContent = '整理为可执行用例';
+  }
+}
+
 function generationReviewHtml(data={}) {
   const summary = data.summary || data;
   const counts = summary.counts || {};
@@ -3207,7 +3232,7 @@ function generationReviewHtml(data={}) {
       </div>
       <div class="review-panel">
         <h3>可自动化用例</h3>
-        ${cases.length ? `<div class="review-case-grid">${cases.slice(0, 24).map(item => reviewCaseCard(item, 'auto')).join('')}</div>` : '<p>暂无可自动化用例。</p>'}
+        ${cases.length ? `<div class="review-case-grid">${cases.slice(0, 24).map((item, index) => `<div>${reviewCaseCard(item, 'auto')}${generationDraftAction(summary, index)}</div>`).join('')}</div>` : '<p>暂无可自动化用例。</p>'}
       </div>
       <div class="review-panel">
         <h3>人工用例 / 待准备</h3>
@@ -3237,11 +3262,15 @@ async function showGenerationReviewByCaseSet(caseSetId) {
     showToast('这个生成任务没有关联批次 ID', 'error');
     return;
   }
+  const workflow = activeWorkflow, epoch = uiSimpleEpoch, identity = currentAccessProfile?.user_id;
+  const app = currentModuleAppPackage(), area = document.getElementById('editor-area'), content = area?.firstChild;
+  const current = () => activeWorkflow === workflow && uiSimpleEpoch === epoch && currentAccessProfile?.user_id === identity && currentModuleAppPackage() === app && area?.firstChild === content;
   try {
     const data = await apiRequest(`/cases/summary?case_set_id=${encodeURIComponent(caseSetId)}`);
+    if (!current()) return;
     showGenerationReview(data.summary || data || {});
   } catch(e) {
-    showToast(e.message || '读取生成分析失败', 'error');
+    if (current()) showToast(e.message || '读取生成分析失败', 'error');
   }
 }
 
@@ -6064,7 +6093,7 @@ async function generateYaml() {
     setGenerateProgress(100, '生成完成', 4);
     setGenerateStatus(`生成成功：${resultModule}/${resultFile}，共 ${data.caseCount || 0} 条用例${manual}${jobText}\n已打开生成结果评审页，确认后可查看自动化脚本或单条调试。\n${resultNote}`, 'success');
     showToast(`✓ 已生成 ${data.caseCount || 0} 条用例${manual}${jobText}`, 'success');
-    showGenerationReview(data);
+    await showGenerationReviewByCaseSet(data.summary?.case_set_id || data.case_set_id);
   } catch(e) {
     stopGenerateProgress();
     setGenerateProgressError('生成失败');

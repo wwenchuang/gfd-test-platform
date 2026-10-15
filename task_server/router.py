@@ -1529,6 +1529,8 @@ def _get_cases_summary(handler, qs):
         summary["hidden_ui_design_assets"] = ui_design_meta.get("hidden_designs") or []
     if ui_design_meta.get("excluded_figma_nodes"):
         summary["excluded_figma_nodes"] = ui_design_meta.get("excluded_figma_nodes") or []
+    from .services.generation_draft_import import source_refs
+    summary['draft_import_cases'] = source_refs(summary)
     mindmap_deleted = generation_mindmap_is_deleted(case_set_id)
     mindmap_exists = os.path.exists(generation_mindmap_path(case_set_id))
     handler._json({
@@ -3464,6 +3466,9 @@ def _acquire_sync_heavy_workload(handler):
     return False
 
 def _persist_and_enqueue_background_job(handler, job):
+    from .services.operation_attribution import current_actor
+    actor = current_actor()
+    job['ownerUserId'] = actor.get('user_id', '') if actor.get('kind') == 'user' else ''
     save_generate_job(job)
     if enqueue_persisted_background_job(job.get("job_id")):
         return True
