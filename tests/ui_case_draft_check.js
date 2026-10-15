@@ -124,7 +124,7 @@ test('imported draft mounts directly and retains its immutable source note',asyn
 
 test('recording editor separates provenance from text generation and hides technical IDs',async t=>{
  const f=fixture(t,undefined,{initialDraft:{...draft,source_text:'来源：已结束的操作录制',source_snapshot:{session_id:'a'.repeat(32),snapshot_id:'b'.repeat(64),actions:[{}],evidence_note:'原截图可能已变更或不可用'}}});await wait();
- assert.equal(f.node.querySelector('h2').textContent,'整理录制用例');
+ assert.equal(f.node.querySelector('h2').textContent,'整理操作录制');
  assert.equal(f.node.querySelector('[data-draft-text]').value,'');
  assert.equal(f.node.querySelector('[data-draft-create]').disabled,true);
  assert.doesNotMatch(f.node.querySelector('[data-draft-source]').textContent,/[a]{32}/);
