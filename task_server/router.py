@@ -6409,6 +6409,8 @@ def _post_ui_execution_confirm_stop(handler, qs, match):
 
 from task_server.ui_case_draft_http import register_routes as register_ui_case_draft_routes
 register_ui_case_draft_routes(route_get, route_post, route_get_regex, route_post_regex)
+from task_server.ui_video_http import register_routes as register_ui_video_routes
+register_ui_video_routes(route_get, route_post_prefix_before_body, route_get_regex, route_post_regex)
 register_api_testing_routes(route_get_prefix, route_post_prefix_before_body, route_delete_prefix, route_put_prefix)
 
 

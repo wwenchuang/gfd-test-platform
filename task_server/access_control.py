@@ -317,6 +317,10 @@ class MainAccess:
 
     @staticmethod
     def _draft_permission(method, path):
+        if method in {'GET', 'HEAD'} and re.fullmatch(r'/api/ui-video-sources(?:/uvs_[0-9a-f]{32}(?:/(?:video|frames/[^/]+))?)?', path):
+            return 'ui.view'
+        if method == 'POST' and (path == '/api/ui-video-sources/upload' or re.fullmatch(r'/api/ui-video-sources/uvs_[0-9a-f]{32}/(?:cancel|retry|import)', path)):
+            return 'ui.edit'
         if method in {'GET', 'HEAD'} and re.fullmatch(r'/api/ui-case-drafts(?:/[^/]+)?', path):
             return 'ui.view'
         if method == 'POST':
@@ -413,6 +417,8 @@ class MainAccess:
 
 
 def prepare_request_access(handler, method, path, qs):
+    if path == "/api/ui-video-sources/upload":
+        handler.close_connection = True
     """Return True when an identity endpoint or denied request is fully handled."""
     from task_server.auth import bearer_token, verify_session_token, is_authorized_with_query
     from task_server.identity import get_access_profile
@@ -467,7 +473,7 @@ def prepare_request_access(handler, method, path, qs):
             handler._json({"ok": True, **filter_scope_options(profile, options)})
             return True
         body = {}
-        if method in {"POST", "PUT"} and not profile.get("is_superuser"):
+        if method in {"POST", "PUT"} and not profile.get("is_superuser") and path != "/api/ui-video-sources/upload":
             if not handler._body_size_allowed(path):
                 return True
             body = handler._body()

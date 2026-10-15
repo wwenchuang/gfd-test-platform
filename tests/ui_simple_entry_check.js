@@ -272,3 +272,31 @@ test('recording handoff opens library editor once with the imported draft',async
  assert.equal(mounted.length,1);assert.equal(mounted[0].initialDraft,draft);
  w.showUiSimpleWorkflow();assert.equal(mounted.length,1);
 });
+
+async function videoFixture(t){
+ const f=fixture(t),{w}=f;w.UiCaseDraft={mount:()=>({dispose(){}})};await w.initUiSimpleAvailability({navigate:false});w.activeWorkflow='ui_library';w.showUiSimpleWorkflow();
+ const calls=[];let respond=null;
+ w.apiRequest=async(path,options={})=>{calls.push({path,options});if(respond){const result=respond(path,options);if(result!==undefined)return result;}return path.startsWith('/ui-executions/catalog')?{ok:true,apps:[{app_id:'a',name:'应用A'},{app_id:'b',name:'应用B'}]}:{ok:true,sources:[]};};
+ w.document.querySelector('[data-ui-create-case]').click();assert.ok(w.document.querySelector('[data-ui-case-source="video"]'));w.document.querySelector('[data-ui-case-source="video"]').click();await wait();
+ const q=s=>w.document.querySelector(s);function app(value){q('[data-video-app]').value=value;q('[data-video-app]').dispatchEvent(new w.Event('change'));}
+ return {...f,calls,q,app,respond:fn=>respond=fn};
+}
+test('video source picker lists durable own tasks and ignores late previous-app lists',async t=>{
+ const f=await videoFixture(t);let resolve;f.respond(path=>path==='/ui-video-sources?app_id=a'?new Promise(r=>resolve=r):undefined);
+ f.app('a');await wait();f.app('b');await wait();resolve({ok:true,sources:[{source_id:'old',filename:'旧应用素材',status:'ready'}]});await wait();
+ assert.doesNotMatch(f.q('[data-video-list]').textContent,/旧应用素材/);
+ assert.equal(f.calls.filter(c=>c.path.includes('/ui-executions/devices')).length,0);
+});
+test('video status cancellation wins over an older in-flight refresh',async t=>{
+ const f=await videoFixture(t),source={source_id:'uvs_'+'a'.repeat(32),filename:'clip.mp4',status:'analyzing',analysis_version:1};let resolve,reads=0;
+ f.respond(path=>{if(path.startsWith('/ui-video-sources?'))return {ok:true,sources:[source]};if(path.endsWith('/cancel'))return {ok:true,source:{...source,status:'cancelled'}};if(path.includes(source.source_id)){if(++reads===1)return {ok:true,source};return new Promise(r=>resolve=r);}});
+ f.app('a');await wait();f.q('[data-video-open]').click();await wait();f.q('[data-video-status]').click();await wait();f.q('[data-video-action="cancel"]').click();await wait();
+ resolve({ok:true,source});await wait();assert.match(f.q('[data-video-detail]').textContent,/已取消/);assert.equal(f.q('[data-video-action="cancel"]'),null);
+});
+test('video import opens existing Chinese editor without dispatch and revokes media on departure',async t=>{
+ const f=await videoFixture(t),source={source_id:'uvs_'+'b'.repeat(32),filename:'clip.mov',status:'ready',analysis_version:1,candidate_steps:[],uncertainties:[]};let adopted,revoked=0;
+ f.w.URL.revokeObjectURL=()=>revoked++;f.w.UiCaseDraft.mount=(n,o)=>{adopted=o.initialDraft;return {dispose(){}};};
+ f.respond(path=>path.endsWith('/import')?{ok:true,draft:{draft_id:'draft-video',app_id:'a'}}:path.includes(source.source_id)?{ok:true,source}:path.startsWith('/ui-video-sources?')?{ok:true,sources:[source]}:undefined);
+ f.app('a');await wait();f.q('[data-video-open]').click();await wait();f.q('[data-video-preview]').click();await wait();assert.equal(f.q('video').src,'blob:test');
+ f.q('[data-video-action="import"]').click();await wait();assert.equal(adopted.draft_id,'draft-video');assert.ok(revoked>0);assert.equal(f.calls.some(c=>/\/try$/.test(c.path)),false);
+});

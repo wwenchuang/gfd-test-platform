@@ -96,7 +96,9 @@ def test_registry_coverage_and_prefix_action_keys():
         for pattern, _ in entries:
             path = re.sub(r"\(\[\^/\]\+\)", "sample", pattern.pattern.strip("^$"))
             path = path.replace("([0-9a-f]{64})", "a" * 64).replace("(cancel|rerun)", "cancel")
-            path = path.replace('(update|restore|validate|try|publish)', 'update')
+            path = path.replace('(update|restore|validate|try|publish)', 'update').replace('(update|restore|yaml-candidate|validate|try|publish)', 'update')
+            if '/api/ui-video-sources/' in pattern.pattern:
+                path = '/api/ui-video-sources/uvs_' + 'a' * 32 + ('/cancel' if method == 'POST' else '/video')
             assert pattern.fullmatch(path), (method, pattern.pattern, path)
             assert operation_http.route_key(method, path) != "unknown", (method, pattern.pattern)
     assert len(keys) == len(set(keys))

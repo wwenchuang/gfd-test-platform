@@ -252,6 +252,9 @@ def observed_json(handler, payload):
 
 
 def _resource(path, method, payload, qs, status, parsed_body=None):
+    if path == '/api/ui-video-sources' or path.startswith('/api/ui-video-sources/'):
+        verb = 'read' if method in {'GET','HEAD'} else path.rsplit('/',1)[-1]
+        return ('ui_video', '', 'ui_video.' + verb)
     if path == '/api/ui-case-drafts' or path.startswith('/api/ui-case-drafts/'):
         verb = _UI_DRAFT_ACTIONS.get(route_key(method, path))
         return ('ui_draft', '', 'ui_draft.' + verb) if verb else ('unknown', '', 'unknown.request')

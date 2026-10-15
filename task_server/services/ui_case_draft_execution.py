@@ -242,7 +242,7 @@ def publish_draft(actor, draft_id, body):
             # Metadata is published last: partial file writes remain outside the catalog.
             job_service.update_task_meta(module, filename, {'status':'baseline','app_package':draft['app_id'],
                 'status_updated_by':profile['username'],'source_draft_id':draft_id,
-                'source_draft_revision':draft['revision'],'verified_ui_batch_id':batch['ui_batch_id'],
+                'source_draft_revision':draft['revision'],'source_snapshot':draft.get('source_snapshot',{}),'verified_ui_batch_id':batch['ui_batch_id'],
                 'verified_source_hash':source_hash,
                 'verified_platform':batch['case_attempts'][0]['platform'],
                 'verified_app_versions':batch['case_attempts'][0]['target_resolution']['device_snapshot'].get('app_versions'),

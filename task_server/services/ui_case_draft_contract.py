@@ -82,7 +82,7 @@ def normalize_steps(payload, app_id):
         if review_state not in ('needs_review', 'confirmed'):
             raise ValueError('review_state 仅支持 needs_review/confirmed')
         source_ref = raw.get('source_ref', 'text')
-        if not isinstance(source_ref, str) or (source_ref not in {'text', 'manual_yaml'} and not re.fullmatch(r'recording:[0-9a-f]{64}:[0-9a-f]{32}', source_ref)):
+        if not isinstance(source_ref, str) or (source_ref not in {'text', 'manual_yaml'} and not re.fullmatch(r'(?:recording:[0-9a-f]{64}:[0-9a-f]{32}|video:uvs_[0-9a-f]{32}:[1-9][0-9]*:[0-9]+)', source_ref)):
             raise ValueError('source_ref 必须为文字或规范录制来源')
         value = copy.deepcopy(raw.get('value', ''))
         if action == 'aiScroll':
