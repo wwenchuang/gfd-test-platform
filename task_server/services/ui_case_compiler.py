@@ -2,6 +2,7 @@
 
 import copy
 import hashlib
+import math
 
 import yaml
 
@@ -10,7 +11,28 @@ from task_server.schemas import MIDSCENE_FLOW_ACTIONS
 from .yaml_static_validator import STEP_ATTR_KEYS, validate_midscene_action_parameters
 
 
-PORTABLE_ACTIONS = ("launch", "aiTap", "aiWaitFor", "aiAssert")
+PORTABLE_ACTIONS = ("launch", "aiTap", "aiWaitFor", "aiAssert", "aiScroll")
+
+
+def _portable_scroll_valid(step):
+    # Keep this strict subset in parity with the standalone Mac Runner gate.
+    if (set(step)-{'aiScroll','direction','distance','scrollType'} or
+        not isinstance(step.get('aiScroll'),str) or not step['aiScroll'].strip() or
+        validate_midscene_action_parameters('aiScroll',step)):
+        return False
+    if 'scrollType' in step and step['scrollType'] not in (
+            'singleAction','scrollToTop','scrollToBottom','scrollToLeft','scrollToRight'):
+        return False
+    if step.get('scrollType','singleAction')=='singleAction':
+        if step.get('direction') not in ('up','down','left','right'):
+            return False
+    elif 'direction' in step or 'distance' in step:
+        return False
+    if 'distance' in step:
+        value=step['distance']
+        if isinstance(value,bool) or not isinstance(value,(int,float)) or not 0<value<=1.7976931348623157e308 or not math.isfinite(value):
+            return False
+    return True
 
 
 class _UniqueKeysLoader(yaml.SafeLoader):
@@ -116,6 +138,8 @@ def compile_ui_case(case_version, target_resolution):
                      isinstance(step[action], str) and bool(step[action].strip()) and
                      (action != 'aiWaitFor' or 'timeout' not in step or
                       isinstance(step['timeout'], int) and not isinstance(step['timeout'], bool) and step['timeout'] > 0))
+            if action == "aiScroll":
+                valid = _portable_scroll_valid(step)
             if action == "launch" and step.get(action) != source_package:
                 valid = False
             if not valid or action not in (capabilities.get("ui_actions") or []):

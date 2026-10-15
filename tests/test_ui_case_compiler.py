@@ -142,3 +142,29 @@ def test_step_id_shape_mismatch_does_not_invent_provenance():
 def test_duplicate_yaml_key_cannot_silently_replace_unsupported_field():
     duplicated = SOURCE.replace('  - aiTap: 我的', '  - aiTap: {x: 1}\n    aiTap: 我的')
     assert compile_case(duplicated)['ok'] is False
+
+
+@pytest.mark.parametrize('options', [
+    {'direction':'down'}, {'direction':'up','distance':400,'scrollType':'singleAction'},
+    {'direction':'left','distance':240}, {'direction':'right'},
+    *[{'scrollType':kind} for kind in ('scrollToTop','scrollToBottom','scrollToLeft','scrollToRight')],
+])
+@pytest.mark.parametrize('reverse',[False,True])
+def test_semantic_scroll_cross_platform_retains_official_parameters(options,reverse):
+    source=yaml.safe_load(SOURCE)
+    source['tasks'][0]['flow'].append({'aiScroll':'打印记录列表',**options})
+    target=copy.deepcopy(TARGET)
+    target['capabilities']['ui_actions'].append('aiScroll')
+    if reverse:
+        source['ios']=source.pop('android')
+        source['tasks'][0]['flow'][0]['launch']='com.kfb.3d'
+        target.update(platform='android',target_package='com.kfb.model')
+    result=compile_case(yaml.safe_dump(source,allow_unicode=True),target)
+    assert result['ok']
+    assert yaml.safe_load(result['yaml_content'])['tasks'][0]['flow'][-1]=={'aiScroll':'打印记录列表',**options}
+    assert result['required_actions'][-1]=='aiScroll'
+
+
+def test_scroll_requires_explicit_runner_capability_even_when_semantically_valid():
+    result=compile_case(SOURCE+'  - aiScroll: 打印记录列表\n    direction: down\n')
+    assert not result['ok'] and result['unsupported_steps'][-1]['flow_index']==5

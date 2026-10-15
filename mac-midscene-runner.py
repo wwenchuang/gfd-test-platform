@@ -3,6 +3,7 @@ import base64
 import hashlib
 from contextlib import contextmanager
 import json
+import math
 import http.cookiejar
 import os
 import platform
@@ -66,7 +67,7 @@ ANDROID_UI_ACTIONS = ["launch", "terminate", "sleep", "runAdbShell", "ai", "aiAc
                       "aiWaitFor", "aiQuery", "aiAsk", "aiBoolean", "aiNumber", "aiString",
                       "recordToReport"]
 RUNNER_CAPABILITIES.update(ui_execution_contract="ui-v1", ui_platforms=[RUNNER_PLATFORM],
-                           ui_actions=["launch", "aiTap", "aiWaitFor", "aiAssert"] if RUNNER_PLATFORM == "ios" else ANDROID_UI_ACTIONS,
+                           ui_actions=["launch", "aiTap", "aiWaitFor", "aiAssert", "aiScroll"] if RUNNER_PLATFORM == "ios" else ANDROID_UI_ACTIONS,
                            android_baseline=RUNNER_PLATFORM == "android")
 
 
@@ -91,6 +92,30 @@ def ios_job_mapping(job, launches):
     if not source_app:
         raise ValueError("用例缺少已配置映射的启动应用步骤")
     return source_app, mappings[source_app]
+
+
+def portable_scroll_valid(step):
+    """Standalone mirror of the platform's strict portable scroll contract.
+
+    Runner deployment is one file; parameterized parity tests bind this gate to
+    ui_case_compiler plus the existing Midscene static parameter validator.
+    """
+    if (set(step)-{'aiScroll','direction','distance','scrollType'} or
+        not isinstance(step.get('aiScroll'),str) or not step['aiScroll'].strip()):
+        return False
+    if 'scrollType' in step and step['scrollType'] not in (
+            'singleAction','scrollToTop','scrollToBottom','scrollToLeft','scrollToRight'):
+        return False
+    if step.get('scrollType','singleAction')=='singleAction':
+        if step.get('direction') not in ('up','down','left','right'):
+            return False
+    elif 'direction' in step or 'distance' in step:
+        return False
+    if 'distance' in step:
+        value=step['distance']
+        if isinstance(value,bool) or not isinstance(value,(int,float)) or not 0<value<=1.7976931348623157e308 or not math.isfinite(value):
+            return False
+    return True
 
 
 def prepare_ios_yaml(text, *, source_app, bundle_id, wda_port):
@@ -122,10 +147,14 @@ def prepare_ios_yaml(text, *, source_app, bundle_id, wda_port):
         for index, step in enumerate(task["flow"], 1):
             if not isinstance(step, dict):
                 raise ValueError(f"第 {index} 步结构无效")
-            actions = set(step) & {"launch", "aiTap", "aiWaitFor", "aiAssert"}
+            actions = set(step) & {"launch", "aiTap", "aiWaitFor", "aiAssert", "aiScroll"}
             if len(actions) != 1:
                 raise ValueError(f"第 {index} 步不是已验证的跨端导航动作")
             action = next(iter(actions))
+            if action == 'aiScroll':
+                if not portable_scroll_valid(step):
+                    raise ValueError(f"第 {index} 步滚动需语义目标及合法方向、距离和滚动模式")
+                continue
             if set(step) - {action, *(('timeout',) if action == 'aiWaitFor' else ())}:
                 raise ValueError(f"第 {index} 步含待适配参数")
             if not isinstance(step[action], str) or not step[action].strip():

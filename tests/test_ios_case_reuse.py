@@ -190,3 +190,62 @@ def test_ios_reset_only_terminates_the_mapped_app(monkeypatch):
     assert [r.method for r in requests]==['POST','POST','DELETE']
     assert requests[1].full_url=='http://127.0.0.1:12345/session/session/wda/apps/terminate'
     assert json.loads(requests[1].data)=={'bundleId':'com.kfb.3d'}
+
+
+@pytest.mark.parametrize('options',[
+    {'direction':'down'}, {'direction':'up','distance':400,'scrollType':'singleAction'},
+    {'direction':'left','distance':240}, {'direction':'right'},
+    *[{'scrollType':kind} for kind in ('scrollToTop','scrollToBottom','scrollToLeft','scrollToRight')],
+])
+def test_ios_semantic_scroll_matches_platform_validation(options):
+    from task_server.services.ui_case_compiler import compile_ui_case
+    source=yaml.safe_load(SOURCE)
+    source['tasks'][0]['flow'].append({'aiScroll':'打印记录列表',**options})
+    text=yaml.safe_dump(source,allow_unicode=True)
+    target={'ok':True,'platform':'ios','app_id':'com.kfb.model','target_package':'com.kfb.3d',
+            'platform_mappings':{'android':'com.kfb.model','ios':'com.kfb.3d'},
+            'capabilities':{'ui_actions':['launch','aiTap','aiWaitFor','aiAssert','aiScroll']}}
+    compiled=compile_ui_case({'yaml_content':text},target)
+    assert compiled['ok']
+    result=yaml.safe_load(convert(text))
+    assert result['tasks']==yaml.safe_load(compiled['yaml_content'])['tasks']
+
+
+@pytest.mark.parametrize('step',[
+    {'aiScroll':{'x':10,'y':20},'direction':'down'},
+    {'aiScroll':'','direction':'down'}, {'aiScroll':'列表'},
+    {'aiScroll':'列表','direction':'diagonal'}, {'aiScroll':'列表','direction':True},
+    {'aiScroll':'列表','direction':' down'}, {'aiScroll':'列表','direction':None},
+    {'aiScroll':'列表','direction':'down','distance':True},
+    {'aiScroll':'列表','direction':'down','distance':0},
+    {'aiScroll':'列表','direction':'down','distance':-1},
+    {'aiScroll':'列表','direction':'down','distance':'400'},
+    {'aiScroll':'列表','direction':'down','distance':float('nan')},
+    {'aiScroll':'列表','direction':'down','distance':10**400},
+    {'aiScroll':'列表','direction':'down','distance':-(10**400)},
+    {'aiScroll':'列表','direction':'down','distance':None},
+    {'aiScroll':'列表','direction':'down','distance':''},
+    {'aiScroll':'列表','direction':'down','distance':float('inf')},
+    {'aiScroll':'列表','scrollType':'scrollToTop','distance':400},
+    {'aiScroll':'列表','scrollType':'scrollToTop','direction':'up'},
+    {'aiScroll':'列表','scrollType':'untilBottom'},
+    {'aiScroll':'列表','direction':'down','locate':{'x':1,'y':2}},
+    {'aiScroll':'列表','direction':'down','unknown':True},
+    {'aiScroll':'列表','direction':'down','launch':'com.other.app'},
+])
+def test_portable_scroll_rejects_unsafe_shapes_identically(step):
+    from task_server.services.ui_case_compiler import compile_ui_case
+    source=yaml.safe_load(SOURCE);source['tasks'][0]['flow'].append(step)
+    text=yaml.safe_dump(source,allow_unicode=True)
+    target={'ok':True,'platform':'ios','app_id':'com.kfb.model','target_package':'com.kfb.3d',
+            'platform_mappings':{'android':'com.kfb.model','ios':'com.kfb.3d'},
+            'capabilities':{'ui_actions':['launch','aiTap','aiWaitFor','aiAssert','aiScroll']}}
+    assert not compile_ui_case({'yaml_content':text},target)['ok']
+    with pytest.raises(ValueError):convert(text)
+
+
+def test_ios_runner_advertises_scroll_only_in_verified_subset(monkeypatch):
+    monkeypatch.setenv('MIDSCENE_RUNNER_PLATFORM','ios')
+    spec=importlib.util.spec_from_file_location('ios_scroll_runner',Path(__file__).resolve().parents[1]/'mac-midscene-runner.py')
+    loaded=importlib.util.module_from_spec(spec);spec.loader.exec_module(loaded)
+    assert set(loaded.RUNNER_CAPABILITIES['ui_actions'])=={'launch','aiTap','aiWaitFor','aiAssert','aiScroll'}
