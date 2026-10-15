@@ -286,7 +286,7 @@ function mountUiVideoSource(node,{current,openDraft,initialSource=null}){
     // Navigation can detach the view while the bounded upload finishes. The
     // response never updates a detached/changed account; own sources are durable.
     const c=new AbortController();const accountGuard=setInterval(()=>{if(identity!==uiSimpleIdentity())c.abort();},500);
-    try{const response=await nativeFetch('/api/ui-video-sources/upload?'+new URLSearchParams({app_id:app,filename:file.name,goal:q('[data-video-goal]').value}),{method:'POST',headers:{...authHeaders(),'Content-Type':'application/octet-stream'},body:file,signal:c.signal});const data=await response.json();if(!valid()||version!==epoch)return;if(!response.ok||!data.ok)throw new Error(data.error||'上传未完成');source=data.source;polls=0;notice('上传完成，后台分析中。');render();list();}
+    try{const response=await nativeFetch('/api/ui-video-sources/upload?'+new URLSearchParams({app_id:app,filename:file.name,goal:q('[data-video-goal]').value}),{method:'POST',headers:authHeaders({'Content-Type':'application/octet-stream'}),body:file,signal:c.signal});const data=await response.json();if(!valid()||version!==epoch)return;if(!response.ok||!data.ok)throw new Error(data.error||'上传未完成');source=data.source;polls=0;notice('上传完成，后台分析中。');render();list();}
     catch(e){if(valid()&&version===epoch)notice('上传结果未确认：'+e.message+'。先刷新我的录屏核对，再决定重新上传。');}
     finally{clearInterval(accountGuard);busy=false;if(valid()){button.disabled=false;q('[data-video-app]').disabled=false;}}
   };

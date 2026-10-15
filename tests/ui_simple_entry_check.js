@@ -7,7 +7,8 @@ function fixture(t){
  const dom=new JSDOM('<div id="app"><details data-ui-advanced open></details><main id="editor-area"></main></div>',{url:'http://localhost/task-manager.html',runScripts:'dangerously',pretendToBeVisual:true});t.after(()=>dom.window.close());
  const w=dom.window,calls=[];w.currentAccessProfile={user_id:'u1'};w.activeWorkflow='dashboard';w.currentFile=null;
  w.apiRequest=async()=>({ok:true,enabled:true});w.hasPermission=()=>true;w.applyAccessNavigation=()=>{};w.toggleLibrary=()=>{};
- w.activateWorkflow=key=>{w.activeWorkflow=key;calls.push(key);};w.nativeFetch=async()=>({ok:true,headers:{get:()=> 'image/png'},blob:async()=>new w.Blob(['png'],{type:'image/png'})});w.authHeaders=()=>({});
+ w.activateWorkflow=key=>{w.activeWorkflow=key;calls.push(key);};w.nativeFetch=async()=>({ok:true,headers:{get:()=> 'image/png'},blob:async()=>new w.Blob(['png'],{type:'image/png'})});w.Headers=Headers;w.sessionStorage.setItem('sessionToken','fixture-session-token');
+ const utils=fs.readFileSync('js/utils.js','utf8');w.eval(utils.slice(utils.indexOf('function sessionToken()'),utils.indexOf('const WORKFLOW_SECTIONS')));
  w.URL.createObjectURL=()=> 'blob:test';w.URL.revokeObjectURL=()=>{};
  w.UiSimpleFlow={mount:(node,options)=>{calls.push(options);},reset:()=>calls.push('reset'),leave:()=>calls.push('leave'),refresh:()=>{}};
  w.eval(fs.readFileSync('js/ui-simple-entry.js','utf8'));
@@ -316,4 +317,18 @@ test('video candidate actions are presented in Chinese while import keeps origin
  const f=await videoFixture(t),source={source_id:'uvs_'+'d'.repeat(32),filename:'clip.mp4',status:'ready',analysis_version:1,candidate_steps:[{start_ms:0,end_ms:1000,evidence_kind:'inferred',action:'aiTap',target:'我的入口',observation:'个人页面出现',frame_refs:['frame-001'],uncertainties:[]}],uncertainties:[]};
  f.respond(path=>path.includes(source.source_id)?{ok:true,source}:path.startsWith('/ui-video-sources?')?{ok:true,sources:[source]}:undefined);
  f.app('a');await wait();f.q('[data-video-open]').click();await wait();assert.match(f.q('[data-video-detail]').textContent,/点击 我的入口/);assert.doesNotMatch(f.q('[data-video-detail]').textContent,/aiTap/);assert.equal(source.candidate_steps[0].action,'aiTap');
+});
+
+
+test('binary video upload retains bearer authentication with the real Headers helper',async t=>{
+ const f=await videoFixture(t);f.app('a');await wait();
+ const file=new f.w.File(['binary-fixture'],'recording.mp4',{type:'video/mp4'});
+ Object.defineProperty(f.q('[data-video-file]'),'files',{value:[file]});
+ let upload;f.w.nativeFetch=async(path,options)=>{upload={path,options};return {ok:true,json:async()=>({ok:true,source:{source_id:'uvs_'+'e'.repeat(32),filename:file.name,status:'ready',analysis_version:1}})};};
+ f.q('[data-video-upload]').click();await wait();await wait();
+ assert.ok(upload);assert.equal(upload.options.method,'POST');assert.equal(upload.options.body,file);
+ assert.equal(new Headers(upload.options.headers).get('Authorization'),'Bearer fixture-session-token');
+ assert.equal(new Headers(upload.options.headers).get('Content-Type'),'application/octet-stream');
+ assert.ok(upload.options.headers instanceof Headers);
+ assert.match(f.q('[data-video-notice]').textContent,/上传完成/);
 });
