@@ -683,3 +683,64 @@ def test_outcome_cannot_cross_next_final_interaction_with_same_start(monkeypatch
     monkeypatch.setattr(ai,'AI_VISION_IMAGE_LIMIT',6);monkeypatch.setattr(ai,'run_ai_skill',model)
     with pytest.raises(ValueError,match='video_reference_invalid'):
         analysis.analyze_frames({'app_id':APP,'goal':'','media':{'duration_ms':12000,'frames':frames}},tmp_path,lambda:False)
+
+
+@pytest.mark.parametrize('observation,expected',[
+    ('页面向下滚动浏览，顶部昵称区域移出屏幕，底部服务模块及二维码完全显现','页面向下滚动浏览，顶部昵称区域移出屏幕，底部服务模块及二维码完全显现'),
+    ('由打印记录列表返回个人中心，底部导航可见且我的标签高亮','由打印记录列表返回个人中心；底部导航可见'),
+    ('画面显示删除成功提示浮层，列表中目标记录已消失其余保留','列表中目标记录已消失其余保留'),
+    ('新页面并显示加载状态',''),
+    ('确认按钮显示高亮',''),
+    ('页面不显示报错，目标记录已消失','页面不显示报错，目标记录已消失'),
+    ('如果提示浮层消失，才显示目标记录',''),
+    ('不是目标记录消失，而是确认按钮高亮',''),
+])
+def test_visible_expected_keeps_stable_state_without_transient_feedback(observation,expected):
+    from task_server.services.ui_video_analysis import _expected_candidate
+    event={'observation':observation,'frame_refs':['action'],
+           'outcome':{'observation':observation,'frame_refs':['result']}}
+    candidate=_expected_candidate(event,'')
+    assert candidate['text']==expected
+    assert candidate['frame_refs']==['result'] and candidate['requires_confirmation']
+    assert event['observation']==observation and event['outcome']['observation']==observation
+
+
+def test_navigation_stable_result_creates_final_assert_without_requiring_feedback(tmp_path):
+    from task_server.services.ui_video_analysis import draft_proposal
+    frames,event=_consolidation_fixture(tmp_path)
+    back=event('aiTap',1,2,'左上返回')
+    back['observation']='由业务列表返回上级页面，底部导航可见且当前标签高亮'
+    content,snapshot=draft_proposal({'source_id':'uvs_'+'a'*32,'analysis_version':1,'app_id':APP,'goal':'',
+                                   'media':{'frames':frames,'duration_ms':12000},'events':[back],'uncertainties':[]})
+    assert content['steps'][-1]['action']=='aiAssert'
+    assert content['steps'][0]['expected']=='由业务列表返回上级页面；底部导航可见'
+    assert '高亮' not in content['steps'][-1]['target']
+    assert not content['questions']
+    assert snapshot['events'][0]['observation']==back['observation']
+    assert all(step['review_state']=='needs_review' for step in content['steps'])
+
+
+def test_global_prompt_requires_reassessment_of_local_notes_and_stable_outcomes():
+    prompt=(Path(__file__).resolve().parents[1]/'ai_skills/prompts/ui_video_steps.v1.md').read_text()
+    for rule in ('全局 uncertainties 不是 raw_uncertainties 的复制或汇总','局部结论','uncertainties=[] 是正确输出',
+                 '不能因为一句话含“无触点”就删除真正歧义','所有交互的 outcome 都优先表达',
+                 '目标列表可见','不要求浮层可见','不要延长end_ms'):
+        assert rule in prompt
+
+
+@pytest.mark.parametrize('observation',[
+    '未观察到以下状态：按钮高亮，目标记录消失',
+    '没有证据表明按钮高亮且目标记录消失',
+])
+def test_stable_projection_never_loses_cognitive_negation_scope(observation):
+    from task_server.services.ui_video_analysis import _expected_candidate
+    assert _expected_candidate({'observation':observation,'frame_refs':['f']},'')['text']==''
+
+
+def test_navigation_transition_keeps_named_destination_after_loading_clause_removed():
+    from task_server.services.ui_video_analysis import _expected_candidate
+    observation='画面由上级页面跳转至标题为“业务记录”的新页面，并显示加载状态。'
+    candidate=_expected_candidate({'observation':observation,'frame_refs':['f']},'')
+    assert candidate['text']=='画面由上级页面跳转至标题为“业务记录”的新页面'
+    for vague in ('画面跳转至新页面，并显示加载状态','画面进入未知页面，按钮高亮'):
+        assert _expected_candidate({'observation':vague,'frame_refs':['f']},'')['text']==''

@@ -250,13 +250,35 @@ def analyze_frames(document, root, cancelled):
             'raw_events':raw_events,'raw_uncertainties':raw_questions}
 
 
+def _visible_state(text):
+    if re.search(r'显示|出现|可见|打开|包含|弹出|消失|保留|仍在|关闭|显现|返回',text):return True
+    for target in re.findall(r'(?:跳转至|跳转到|进入|切换至|切换到|变为)([^，,。；;]{2,100})',text):
+        if not re.fullmatch(r'(?:目标|新|下一|其他|另一个|未知)?(?:页面|界面|页)',target.strip()):return True
+    return False
+
+
+def _stable_visible_observation(observation):
+    """Project only literal stable clauses; preserve the complete source audit."""
+    feedback=r'高亮|按下态|点击态|(?i:toast)|提示浮层|短暂提示|正在加载|加载(?:中|状态|动画)'
+    if not re.search(feedback,observation):return observation
+    # Removing a conditional/contrast clause may reverse its meaning. Leave the
+    # expected unresolved instead of extracting an apparently positive outcome.
+    if re.search(r'如果|假如|若(?!干)|除非|只有|仅当|一旦|否则|不是|并非|而是|不代表|所以|因此|不仅|不但|而且|没有证据|缺乏证据|无证据|证据不足|未证实|否认|无法确认|不能确定|(?:未|没|没有|不曾|尚未)(?:观察|看到|看见|见到|发现|检测)',observation):return ''
+    stable=[]
+    for clause in re.split(r'[，,。；;]|并且|且|同时',observation):
+        clause=clause.strip()
+        if (clause and not re.search(feedback,clause) and
+            _visible_state(clause)):
+            stable.append(clause)
+    return '；'.join(stable)
+
+
 def _expected_candidate(event, goal):
     """A sourced visible check suggestion, never an established business outcome."""
     outcome=event.get('outcome')
-    observation=(outcome['observation'] if outcome else event['observation']).strip()
-    concrete=(len(observation)>=6 and re.search(r'显示|出现|可见|打开|包含|弹出|消失|保留|仍在|关闭',observation)
+    observation=_stable_visible_observation((outcome['observation'] if outcome else event['observation']).strip())
+    concrete=(len(observation)>=6 and _visible_state(observation)
               and not re.search(r'不明确|不确定|无法|可能|似乎|未知|跳帧|页面变化|界面变化',observation))
-    if re.search(r'高亮|按下态|点击态',observation):concrete=False
     candidate=observation if concrete else ''
     # Never extract a goal clause: doing so loses negation and scope. Only a
     # literal identical goal can share this observed candidate's attribution.
