@@ -744,3 +744,20 @@ def test_navigation_transition_keeps_named_destination_after_loading_clause_remo
     assert candidate['text']=='画面由上级页面跳转至标题为“业务记录”的新页面'
     for vague in ('画面跳转至新页面，并显示加载状态','画面进入未知页面，按钮高亮'):
         assert _expected_candidate({'observation':vague,'frame_refs':['f']},'')['text']==''
+
+
+def test_stable_projection_keeps_record_reordering_and_drops_temporarily_shown_notice():
+    from task_server.services.ui_video_analysis import _expected_candidate
+    observation='目标记录（2026-09-28 10:43:15）从列表中消失，原第三条记录（10:41:25）上移成为第二条，且列表上方短暂显示“删除成功”提示框。'
+    event={'observation':'确认按钮按下','frame_refs':['action'],
+           'outcome':{'observation':observation,'frame_refs':['result']}}
+    candidate=_expected_candidate(event,'')
+    assert candidate['text']=='目标记录（2026-09-28 10:43:15）从列表中消失；原第三条记录（10:41:25）上移成为第二条'
+    assert candidate['frame_refs']==['result'] and candidate['requires_confirmation']
+    assert event['outcome']['observation']==observation
+
+
+@pytest.mark.parametrize('feedback',['短暂显示完成提示框','短暂出现完成提示','短暂弹出提示消息'])
+def test_temporary_notice_projection_preserves_negation_scope(feedback):
+    from task_server.services.ui_video_analysis import _expected_candidate
+    assert _expected_candidate({'observation':f'没有证据表明{feedback}且目标记录消失','frame_refs':['f']},'')['text']==''

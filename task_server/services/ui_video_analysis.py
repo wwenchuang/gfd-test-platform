@@ -251,7 +251,7 @@ def analyze_frames(document, root, cancelled):
 
 
 def _visible_state(text):
-    if re.search(r'显示|出现|可见|打开|包含|弹出|消失|保留|仍在|关闭|显现|返回',text):return True
+    if re.search(r'显示|出现|可见|打开|包含|弹出|消失|保留|仍在|关闭|显现|返回|成为',text):return True
     for target in re.findall(r'(?:跳转至|跳转到|进入|切换至|切换到|变为)([^，,。；;]{2,100})',text):
         if not re.fullmatch(r'(?:目标|新|下一|其他|另一个|未知)?(?:页面|界面|页)',target.strip()):return True
     return False
@@ -259,7 +259,7 @@ def _visible_state(text):
 
 def _stable_visible_observation(observation):
     """Project only literal stable clauses; preserve the complete source audit."""
-    feedback=r'高亮|按下态|点击态|(?i:toast)|提示浮层|短暂提示|正在加载|加载(?:中|状态|动画)'
+    feedback=r'高亮|按下态|点击态|(?i:toast)|提示浮层|短暂提示|短暂(?:显示|出现|弹出)[^，,。；;]{0,80}提示|正在加载|加载(?:中|状态|动画)'
     if not re.search(feedback,observation):return observation
     # Removing a conditional/contrast clause may reverse its meaning. Leave the
     # expected unresolved instead of extracting an apparently positive outcome.
