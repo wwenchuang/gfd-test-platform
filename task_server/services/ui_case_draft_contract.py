@@ -14,7 +14,7 @@ from .yaml_static_validator import validate_midscene_action_parameters
 
 ACTIONS = frozenset({'launch', 'aiTap', 'aiWaitFor', 'aiAssert', 'aiInput', 'aiScroll'})
 STEP_FIELDS = frozenset({'step_id', 'action', 'target', 'value', 'expected', 'review_state', 'source_ref'})
-AMBIGUOUS_TARGETS = frozenset({'按钮', '这里', '那里', '它', '点击这里', '输入框', '列表', '页面', '正常', '功能正常'})
+AMBIGUOUS_TARGETS = frozenset({'按钮', '这里', '那里', '它', '点击这里', '输入框', '列表', '页面', '正常', '功能正常', '可见', '显示', '成功', '通过', '显示正常', '操作成功'})
 SHORT_TIMEOUT_MS = 12000
 
 
@@ -114,6 +114,8 @@ def normalize_steps(payload, app_id):
                 unresolved.append('请补充明确的预期结果')
             if action == 'aiInput' and not value:
                 unresolved.append('请补充输入内容')
+        if expected in AMBIGUOUS_TARGETS:
+            unresolved.append('请在预期中写明检查对象及具体状态，例如：我的页面显示打印记录入口')
         if action == 'aiAssert' and expected and expected != target:
             unresolved.append('检查条件与预期不一致，请重新填写检查结果')
         if unresolved:

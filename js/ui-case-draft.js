@@ -22,7 +22,20 @@
       const device=s.devices[Number(q('[data-draft-device]').value)];
       q('[data-draft-next]').textContent=s.recovering?'正在恢复上次试跑记录。':s.uncertain?'点“重试核对上次试跑”，会复用原请求，不会另建重复任务。':s.busy?'正在处理，请稍候。':generating()?'AI 正在整理；完成后请核对每一步，生成本身不会操作手机。':running()?'手机正在试跑，可在下方查看进度和取消。':s.dirty?'修改尚未保存：确认调整后的步骤，再点“保存修改”。':!ready?'':s.draft.questions?.length?'先处理上方“需要你确认”的问题。':pending?`还有 ${pending} 步待核对，逐步点“确认”后保存。`:passed()?!options.canPublish()?'试跑已通过，发布需联系有基线管理权限的成员。':!q('[data-draft-module]').value?'试跑已通过，选择归属模块即可发布，其他人便能在“开始测试”中使用。':'可以发布这版已通过的基线。':!options.canExecute()?'草稿已保存，当前账号没有试跑权限，请联系管理员。':!q('[data-draft-device]').value?'步骤已确认，请选择一台连接就绪的手机试跑。':device?.connection_status!=='ready'?'当前手机未就绪，请连接、解锁后刷新手机列表。':'可以试跑；会先检查设备与步骤兼容性。';
     }
-    function dirty(){s.dirty=true;s.batch=null;q('[data-draft-batch]').replaceChildren();buttons();}
+    function dirty(){
+      s.dirty=true;s.batch=null;q('[data-draft-batch]').replaceChildren();
+      // Refresh the review affordance without rebuilding the field being typed in.
+      q('[data-draft-steps]').querySelectorAll('[data-step-index]').forEach(row=>{
+        const step=s.draft.steps[Number(row.dataset.stepIndex)];
+        if(step?.review_state!=='needs_review')return;
+        row.querySelector('.ui-draft-step-head small').textContent='待确认';
+        if(!row.querySelector('[data-step-command="confirm"]')){
+          const button=document.createElement('button');button.type='button';button.dataset.stepCommand='confirm';button.textContent='确认这一步';
+          row.querySelector('.ui-draft-step-tools').append(button);
+        }
+      });
+      buttons();
+    }
     function stepFields(step){
       const field=(name,label,value=step[name])=>`<label>${label}<input data-step-field="${name}" value="${escape(value)}"></label>`;
       const expected=field('expected','操作后应看到什么（运行时检查）');
@@ -51,7 +64,7 @@
     async function refreshBatch(){const id=s.progress?.batchId;if(!id||!current())return;try{const data=await request('batch',`/ui-executions/${encodeURIComponent(id)}`);if(data){s.recovering=false;displayBatch(data.batch);}}catch(e){notice('上次试跑状态核对失败：'+e.message+'。请刷新试跑状态或到我的测试核对。',true);buttons();}}
 
     function invalidate(){s.epoch++;clearTimeout(s.timer);for(const c of s.pending.values())c.abort();s.pending.clear();s.draft=null;s.batch=null;s.devices=[];s.dirty=false;s.uncertain=null;s.progress=null;s.recovering=false;}
-    async function catalog(){try{const data=await request('catalog','/ui-executions/catalog?'+new URLSearchParams({app_id:s.app}));if(!data)return;s.modules=data.modules||[];q('[data-draft-app]').innerHTML='<option value="">选择应用</option>'+(data.apps||[]).map(a=>`<option value="${escape(a.app_id)}">${escape(a.name)}</option>`).join('');q('[data-draft-app]').value=s.app;q('[data-draft-module]').innerHTML='<option value="">选择发布模块</option>'+s.modules.map(v=>`<option>${escape(v)}</option>`).join('');buttons();}catch(e){notice(e.message,true);}}
+    async function catalog(){try{const data=await request('catalog','/ui-executions/catalog?'+new URLSearchParams({app_id:s.app,publication:'1'}));if(!data)return;s.modules=data.publication_modules||[];q('[data-draft-app]').innerHTML='<option value="">选择应用</option>'+(data.apps||[]).map(a=>`<option value="${escape(a.app_id)}">${escape(a.name)}</option>`).join('');q('[data-draft-app]').value=s.app;q('[data-draft-module]').innerHTML='<option value="">选择发布模块</option>'+s.modules.map(v=>`<option>${escape(v)}</option>`).join('');buttons();}catch(e){notice(e.message,true);}}
     async function list(){try{const data=await request('list','/ui-case-drafts?'+new URLSearchParams({app_id:s.app}));if(!data)return;q('[data-draft-list]').innerHTML=(data.items||[]).map(d=>`<button type="button" data-open-draft="${escape(d.draft_id)}">${escape(d.title||'未命名草稿')} <small>第 ${escape(d.revision)} 版</small></button>`).join('')||'<p>当前应用还没有草稿。</p>';buttons();}catch(e){notice(e.message,true);}}
     async function devices(){const selected=s.devices[Number(q('[data-draft-device]').value)]?.target;const previous=q('[data-draft-device]').value?selected:null;q('[data-draft-device]').innerHTML='<option value="">选择试跑手机</option>';s.devices=[];buttons();try{const data=await request('devices','/ui-executions/devices?'+new URLSearchParams({app_id:s.app}));if(!data)return;s.devices=data.devices||[];q('[data-draft-device]').innerHTML='<option value="">选择试跑手机</option>'+s.devices.map((d,i)=>`<option value="${i}" ${d.connection_status!=='ready'?'disabled':''}>${escape(d.name)} · ${escape(d.target.platform==='ios'?'iOS':'安卓')} · ${escape(d.target.device_id)} · 执行机器 ${escape(d.target.runner_id)} · ${d.connection_status==='ready'?'连接就绪':'未就绪'}</option>`).join('');const target=s.progress?.target||s.uncertain?.body.target||previous;if(target){const index=s.devices.findIndex(d=>['runner_id','device_id','platform'].every(k=>d.target[k]===target[k]));if(index>=0)q('[data-draft-device]').value=String(index);}buttons();}catch(e){notice('手机状态未知：'+e.message,true);}}
     function displayBatch(batch){s.batch=batch;s.recovering=false;persistProgress({batchId:batch.ui_batch_id,target:s.progress?.target||s.uncertain?.body.target||s.devices[Number(q('[data-draft-device]').value)]?.target});const host=q('[data-draft-batch]');

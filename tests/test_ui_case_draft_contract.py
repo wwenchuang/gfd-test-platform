@@ -78,6 +78,26 @@ def test_final_assertion_is_required_and_never_invented():
     assert [item['aiAssert'] for item in yaml.safe_load(result['yaml_content'])['tasks'][0]['flow'] if 'aiAssert' in item] == ['搜索页可见', '输入框显示机器人']
 
 
+@pytest.mark.parametrize('action', ['launch', 'aiTap', 'aiWaitFor'])
+@pytest.mark.parametrize('expected', ['可见', '正常', '成功', '显示正常'])
+def test_objectless_expectation_cannot_be_confirmed_for_execution(action, expected):
+    source = payload()
+    source['steps'][0].update(action=action, target=APP if action == 'launch' else '底部导航的我的入口', expected=expected)
+    for step in source['steps']:
+        step['review_state'] = 'confirmed'
+    draft = normalize_steps(source, APP)
+    assert draft['steps'][0]['review_state'] == 'needs_review'
+    assert any('预期' in q for q in draft['questions'])
+    assert not build_draft_yaml(draft, APP)['ready']
+
+
+@pytest.mark.parametrize('action', ['aiWaitFor', 'aiAssert'])
+def test_objectless_state_is_not_a_checkable_target(action):
+    source = payload()
+    source['steps'] = [{'action': action, 'target': '可见', 'expected': '', 'review_state': 'confirmed'}]
+    assert not build_draft_yaml(source, APP)['ready']
+
+
 def test_compiles_real_midscene_parameters_and_provenance():
     source = payload()
     source['steps'].insert(2, {'action': 'aiScroll', 'target': '搜索结果列表',

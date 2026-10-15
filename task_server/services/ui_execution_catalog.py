@@ -93,7 +93,7 @@ def _page(rows, cursor, fingerprint, limit):
     return [_public(row) for row in selected], next_cursor
 
 
-def get_ui_catalog(actor=None, *, app_id='', module='', query='', cursor='', limit=20, scope='all'):
+def get_ui_catalog(actor=None, *, app_id='', module='', query='', cursor='', limit=20, scope='all', publication=False):
     profile = require_ui_actor(actor, permission='ui.view', app_id=app_id or None)
     if (type(limit) is not int or not 1 <= limit <= 100
             or not isinstance(query, str) or len(query) > 200
@@ -116,17 +116,30 @@ def get_ui_catalog(actor=None, *, app_id='', module='', query='', cursor='', lim
                   'platforms': ['android'] + (['ios'] if (app.get('platform_mappings') or {}).get('ios') else [])}
                  for app in apps]
     modules = sorted({r['module'] for r in scoped_rows})
+    # Search includes historical associations; new publication uses configured,
+    # exclusive ownership, exactly as the publication endpoint requires.
+    publication_modules = []
+    if app_id and publication:
+        from .sonic_service import sonic_notify_known_apps
+        owners = {}
+        for app in sonic_notify_known_apps():
+            if not isinstance(app, dict):
+                continue
+            for name in app.get('modules') or []:
+                if isinstance(name, str) and name.strip() and name not in {'.', '..'} and '/' not in name and '\\' not in name:
+                    owners.setdefault(name, set()).add(app.get('package'))
+        publication_modules = sorted(name for name, packages in owners.items() if packages == {app_id})
     if not app_id:
         if cursor:
             raise ValueError('cursor_invalid')
-        return {'apps':summaries, 'modules':modules, 'groups':[
+        return {'apps':summaries, 'modules':modules, 'publication_modules':publication_modules, 'groups':[
             {'app_id':a['app_id'], 'name':a['name'], 'total':len(group), 'has_more':len(group)>3,
              'items':[_public(r) for r in group[:3]]}
             for a in summaries for group in [[r for r in rows if r['app_id']==a['app_id']]] if group],
             'total':len(rows), 'items':[], 'next_cursor':None}
     fingerprint = hashlib.sha256(json.dumps([app_id,module,query,scope],ensure_ascii=False).encode()).hexdigest()[:16]
     items, next_cursor = _page(rows,cursor,fingerprint,limit)
-    return {'apps':summaries, 'modules':modules, 'groups':[], 'total':len(rows),
+    return {'apps':summaries, 'modules':modules, 'publication_modules':publication_modules, 'groups':[], 'total':len(rows),
             'items':items, 'next_cursor':next_cursor}
 
 

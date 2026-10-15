@@ -50,6 +50,24 @@ def test_all_groups_preview_three_without_private_fields(data):
     assert 'private' not in encoded and '不许泄露' not in encoded and 'yaml_content' not in encoded
     assert result['groups'][0]['items'][0]['revision']==hashlib.sha256(SOURCE.encode()).hexdigest()
 
+
+def test_publication_modules_use_exclusive_configured_ownership_not_legacy_case_rows(data, monkeypatch):
+    from task_server.services import sonic_service
+    monkeypatch.setattr(sonic_service, 'sonic_notify_known_apps', lambda: [
+        {'package': APP, 'modules': ['新模块', '共享模块']},
+        {'package': 'com.secret.app', 'modules': ['共享模块', '秘密']},
+    ])
+    result = catalog.get_ui_catalog(None, app_id=APP, publication=True)
+    assert result['modules'] == ['账户']  # Historical search remains compatible.
+    assert result['publication_modules'] == ['新模块']
+    assert catalog.get_ui_catalog(None)['publication_modules'] == []
+
+
+def test_normal_search_does_not_load_publication_configuration(data, monkeypatch):
+    from task_server.services import sonic_service
+    monkeypatch.setattr(sonic_service, 'sonic_notify_known_apps', lambda: pytest.fail('search must not read publication configuration'))
+    assert catalog.get_ui_catalog(None, app_id=APP)['publication_modules'] == []
+
 def test_searches_steps_and_pages_without_rescanning_catalog(data):
     first=catalog.get_ui_catalog(None,app_id=APP,query='打印记录',limit=3)
     second=catalog.get_ui_catalog(None,app_id=APP,query='打印记录',cursor=first['next_cursor'],limit=3)

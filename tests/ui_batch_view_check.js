@@ -16,6 +16,16 @@ function batch() {
       target_resolution:{device_snapshot:{label:'iPhone 13'}},step_progress_known:true,
       steps:[{step_id:'s1',label:'打开应用',status:'passed'},{step_id:'s2',label:'点击我的',status:'running'},{step_id:'s3',label:'检查我的页面',status:'pending'}]}]};
 }
+test('normal running batch does not claim it is waiting to stop', t=>{
+  const f=fixture(t), b=batch();b.stop_pending=true;b.execution_settled=false;
+  f.view.update(f.node,b);
+  assert.match(f.node.querySelector('[data-batch-hint]').textContent,/真实上报/);
+  assert.doesNotMatch(f.node.querySelector('[data-batch-hint]').textContent,/等待.*停止/);
+  b.status='cancelling';f.view.update(f.node,b);
+  assert.match(f.node.querySelector('[data-batch-hint]').textContent,/已请求取消/);
+  b.status='passed';f.view.update(f.node,b);
+  assert.match(f.node.querySelector('[data-batch-hint]').textContent,/等待手机确认停止/);
+});
 test('ordinary settled test keeps real results and exposes evidence without a report action',t=>{
  const f=fixture(t),b=batch();b.status='failed';b.execution_settled=true;b.report_status='not_requested';b.case_attempts[0].status='failed';
  f.view.update(f.node,b,{report:()=>{}});
