@@ -256,7 +256,18 @@ function mountUiVideoSource(node,{current,openDraft,initialSource=null}){
     finally{pending.delete(c);}
   }
   node.innerHTML='<h2>上传录屏文件</h2><p>选择一个连续场景的 MP4/MOV，最多200MB、10分钟。分析后先核对观察、推断和业务预期，再选择手机试跑。</p><label>所属应用<select data-video-app><option value="">选择应用</option></select></label><label>测试目标或结束检查（可选）<input data-video-goal maxlength="2000" placeholder="视频缺少明确预期时再补充"></label><label>录屏文件<input data-video-file type="file" accept="video/mp4,video/quicktime,.mp4,.mov"></label><button type="button" data-video-upload>上传并分析</button><button type="button" data-video-refresh>刷新我的录屏</button><p data-video-notice role="status"></p><div data-video-list></div><section data-video-detail></section>';
-  async function list(){if(!app)return;try{const data=await request('/ui-video-sources?'+new URLSearchParams({app_id:app}));if(!data)return;q('[data-video-list]').innerHTML=(data.sources||[]).map(d=>{const row=source?.status&&source.source_id===d.source_id?source:d;return `<button type="button" data-video-open="${escape(row.source_id)}">${escape(row.filename)} · ${escape(statusText(row.status))}</button>`;}).join('')||'<p>当前应用还没有上传录屏。</p>';}catch(e){notice(e.message);}}
+  function compareSource(left,right){
+    const version=(Number(left?.analysis_version)||0)-(Number(right?.analysis_version)||0);
+    return version||((Number(left?.updated_at)||0)-(Number(right?.updated_at)||0));
+  }
+  function adoptSource(next){
+    if(source?.source_id===next.source_id&&Number(next.analysis_version)>Number(source.analysis_version))polls=0;
+    source=next;render();
+  }
+  async function list(){if(!app)return;try{const data=await request('/ui-video-sources?'+new URLSearchParams({app_id:app}));if(!data)return;
+    const selected=(data.sources||[]).find(d=>d.source_id===source?.source_id);
+    if(source?.status&&selected&&compareSource(selected,source)>0)adoptSource(selected);
+    q('[data-video-list]').innerHTML=(data.sources||[]).map(d=>{const row=source?.status&&source.source_id===d.source_id&&compareSource(source,d)>=0?source:d;return `<button type="button" data-video-open="${escape(row.source_id)}">${escape(row.filename)} · ${escape(statusText(row.status))}</button>`;}).join('')||'<p>当前应用还没有上传录屏。</p>';}catch(e){notice(e.message);}}
   function statusText(status){return ({queued:'排队中',decoding:'解码中',analyzing:'分析中',ready:'待核对',review_needed:'需补充素材',failed:'分析失败',cancelled:'已取消',interrupted:'重启后已停止'})[status]||status;}
   function syncSourceStatus(){
     if(!valid()||!source?.status)return;
@@ -274,7 +285,7 @@ function mountUiVideoSource(node,{current,openDraft,initialSource=null}){
   async function refresh(){
     if(!source||!valid())return;
     const sequence=++statusSequence;
-    try{const data=await request(`/ui-video-sources/${source.source_id}?`+new URLSearchParams({app_id:app}));if(data&&sequence===statusSequence){source=data.source;render();}}catch(e){if(sequence===statusSequence)notice(e.message);}
+    try{const data=await request(`/ui-video-sources/${source.source_id}?`+new URLSearchParams({app_id:app}));if(data&&compareSource(data.source,source)>=0&&(sequence===statusSequence||compareSource(data.source,source)>0))adoptSource(data.source);}catch(e){if(sequence===statusSequence)notice(e.message);}
     finally{if(sequence===statusSequence)schedulePoll();}
   }
   function render(){

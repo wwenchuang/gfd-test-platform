@@ -367,3 +367,20 @@ test('video polling resumes on visibility return stays bounded and removes its l
  let removed=0;const original=f.w.document.removeEventListener.bind(f.w.document);f.w.document.removeEventListener=(name,...args)=>{if(name==='visibilitychange')removed++;return original(name,...args);};
  f.q('[data-ui-case-back]').click();assert.equal(removed,1);f.w.document.dispatchEvent(new f.w.Event('visibilitychange'));assert.equal(timers.size,0);
 });
+
+test('refreshing my videos adopts a newer retry from another tab and rejects older detail and list responses',async t=>{
+ const f=await videoFixture(t),failed={source_id:'uvs_'+'4'.repeat(32),filename:'clip.mp4',status:'failed',error:'旧分析失败',analysis_version:1,updated_at:100};
+ let listing=failed,detail=failed,oldDetail,oldList,deferDetail=false,deferList=false,next=0;const timers=new Map();
+ f.w.setTimeout=(fn,ms)=>{assert.equal(ms,5000);timers.set(++next,fn);return next;};f.w.clearTimeout=id=>timers.delete(id);
+ f.respond(path=>{if(path.startsWith('/ui-video-sources?')){if(deferList){deferList=false;return new Promise(r=>oldList=r);}return {ok:true,sources:[listing]};}if(path.includes(failed.source_id)){if(deferDetail){deferDetail=false;return new Promise(r=>oldDetail=r);}return {ok:true,source:detail};}});
+ f.app('a');await wait();f.q('[data-video-open]').click();await wait();assert.match(f.q('[data-video-detail]').textContent,/分析失败/);assert.equal(timers.size,0);
+ // Another tab retries this terminal source while a previous detail read is in flight.
+ deferDetail=true;f.q('[data-video-status]').click();await wait();listing={...failed,status:'queued',error:'',analysis_version:2,updated_at:200};
+ f.q('[data-video-refresh]').click();await wait();assert.match(f.q('[data-video-list]').textContent,/排队中/);assert.match(f.q('[data-video-detail]').textContent,/排队中/);assert.match(f.q('[data-video-notice]').textContent,/排队/);assert.equal(timers.size,1);
+ oldDetail({ok:true,source:failed});await wait();assert.match(f.q('[data-video-detail]').textContent,/排队中/);assert.equal(timers.size,1);
+ // A later detail progresses within the new version before an old list response arrives.
+ deferList=true;f.q('[data-video-refresh]').click();await wait();detail={...listing,status:'analyzing',updated_at:300};f.q('[data-video-status]').click();await wait();
+ oldList({ok:true,sources:[listing]});await wait();assert.match(f.q('[data-video-list]').textContent,/分析中/);assert.match(f.q('[data-video-detail]').textContent,/分析中/);assert.equal(timers.size,1);
+ listing={...detail,status:'failed',error:'新版本失败',updated_at:400};f.q('[data-video-refresh]').click();await wait();assert.match(f.q('[data-video-detail]').textContent,/新版本失败/);assert.equal(timers.size,0);
+ listing={...failed,updated_at:900};f.q('[data-video-refresh]').click();await wait();assert.match(f.q('[data-video-detail]').textContent,/新版本失败/);assert.match(f.q('[data-video-notice]').textContent,/新版本失败/);assert.equal(timers.size,0);
+});
