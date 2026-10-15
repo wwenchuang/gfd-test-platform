@@ -233,11 +233,12 @@ function openImportedUiDraft(draft){
 
 // One visible source task owns polling. Leaving this view never starts card timers.
 function mountUiVideoSource(node,{current,openDraft,initialSource=null}){
-  const identity=uiSimpleIdentity(),pending=new Set(),urls=new Set(),mediaRequests=new WeakMap();let alive=true,epoch=0,timer=null,source=null,app='',polls=0,busy=false,renderedKey='',statusSequence=0;
+  const identity=uiSimpleIdentity(),pending=new Set(),urls=new Set(),mediaRequests=new WeakMap();let alive=true,epoch=0,timer=null,source=null,app='',polls=0,busy=false,renderedKey='',statusSequence=0,autoIntent=null;
+  const autoImports=new Set();
   const q=s=>node.querySelector(s),escape=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const valid=()=>alive&&current()&&identity===uiSimpleIdentity()&&node.isConnected;
   function clearMedia(){for(const url of urls)URL.revokeObjectURL(url);urls.clear();}
-  function invalidate(){epoch++;statusSequence++;renderedKey='';clearTimeout(timer);timer=null;for(const c of pending)c.abort();pending.clear();clearMedia();}
+  function invalidate(){epoch++;statusSequence++;autoIntent=null;renderedKey='';clearTimeout(timer);timer=null;for(const c of pending)c.abort();pending.clear();clearMedia();}
   function dispose(){alive=false;invalidate();clearInterval(guard);document.removeEventListener('visibilitychange',visibilityChanged);}
   function notice(text){if(valid())q('[data-video-notice]').textContent=text;}
   async function request(path,extra={}){
@@ -255,7 +256,9 @@ function mountUiVideoSource(node,{current,openDraft,initialSource=null}){
     catch(e){if(latest())notice(e.message);}
     finally{pending.delete(c);}
   }
-  node.innerHTML='<h2>上传录屏文件</h2><p>选择一个连续场景的 MP4/MOV，最多200MB、10分钟。分析后先核对观察、推断和业务预期，再选择手机试跑。</p><label>所属应用<select data-video-app><option value="">选择应用</option></select></label><label>测试目标或结束检查（可选）<input data-video-goal maxlength="2000" placeholder="视频缺少明确预期时再补充"></label><label>录屏文件<input data-video-file type="file" accept="video/mp4,video/quicktime,.mp4,.mov"></label><button type="button" data-video-upload>上传并分析</button><button type="button" data-video-refresh>刷新我的录屏</button><p data-video-notice role="status"></p><div data-video-list></div><section data-video-detail></section>';
+  node.classList.add('ui-video-source');node.dataset.videoPhase='upload';
+  node.innerHTML='<h2>上传视频，生成测试用例</h2><ol class="ui-video-journey" data-video-journey><li><b>1</b>上传视频</li><li><b>2</b>生成用例</li><li><b>3</b>选机试跑</li></ol><p>上传包含完整操作的 MP4/MOV，生成后核对中文步骤，再选择手机试跑。最多200MB、10分钟。</p><div class="ui-video-upload-form"><label>测试应用<select data-video-app><option value="">选择应用</option></select></label><label>录屏文件<input data-video-file type="file" accept="video/mp4,video/quicktime,.mp4,.mov"></label><details data-video-goal-options><summary>补充测试目标（可选）</summary><label>业务目标或结束检查<input data-video-goal maxlength="2000" placeholder="已有明确目标时可补充，不必重写步骤"></label></details><button type="button" class="ui-video-primary" data-video-upload>生成测试用例</button></div><p data-video-notice role="status"></p><section data-video-detail></section><details data-video-history><summary>继续我的视频用例</summary><button type="button" data-video-refresh>刷新我的录屏</button><div data-video-list></div></details>';
+
   function compareSource(left,right){
     const version=(Number(left?.analysis_version)||0)-(Number(right?.analysis_version)||0);
     return version||((Number(left?.updated_at)||0)-(Number(right?.updated_at)||0));
@@ -273,7 +276,7 @@ function mountUiVideoSource(node,{current,openDraft,initialSource=null}){
     if(!valid()||!source?.status)return;
     for(const button of q('[data-video-list]').querySelectorAll('[data-video-open]'))if(button.dataset.videoOpen===source.source_id)button.textContent=source.filename+' · '+statusText(source.status);
     const messages={queued:'上传完成，正在排队分析；离页后可从我的录屏恢复。',decoding:'正在解码录屏，尚未形成候选步骤。',analyzing:'正在分析录屏，尚未完成；不会操作手机。',ready:'分析完成，候选步骤待核对；请核对证据和业务预期。',review_needed:'需补充素材，请核对说明后重新选择连续片段。',failed:'分析失败，请核对说明后明确重试。',cancelled:'分析已取消；已有草稿与来源证据保留。',interrupted:'服务重启后分析已停止，请明确重试。'};
-    notice(source.error||messages[source.status]||statusText(source.status));
+    notice(source.status==='review_needed'?'未生成用例，请上传包含实际操作的视频。':source.status==='failed'?'未生成用例。'+(source.error||'请重新生成。'):source.error||messages[source.status]||statusText(source.status));
   }
   function schedulePoll(){
     clearTimeout(timer);timer=null;
@@ -283,41 +286,67 @@ function mountUiVideoSource(node,{current,openDraft,initialSource=null}){
   }
   function visibilityChanged(){if(!valid())return;schedulePoll();}
   async function refresh(){
-    if(!source||!valid())return;
+    if(!source||!valid()||busy)return;
     const sequence=++statusSequence;
     try{const data=await request(`/ui-video-sources/${source.source_id}?`+new URLSearchParams({app_id:app}));if(data&&compareSource(data.source,source)>=0&&(sequence===statusSequence||compareSource(data.source,source)>0))adoptSource(data.source);}catch(e){if(sequence===statusSequence)notice(e.message);}
     finally{if(sequence===statusSequence)schedulePoll();}
   }
+  function sourceKey(item){return item?.source_id+':'+item?.analysis_version;}
+  function scheduleAutoImport(){
+    const version=epoch,key=sourceKey(source);
+    if(!autoIntent||autoIntent!==key||source?.status!=='ready'||autoImports.has(key))return;
+    Promise.resolve().then(()=>{if(valid()&&version===epoch&&!busy&&autoIntent===key&&sourceKey(source)===key)openSourceCase(true);});
+  }
+  async function openSourceCase(automatic=false){
+    if(!valid()||busy||!(source?.status==='ready'||source?.draft_id))return;
+    const id=source.source_id,key=sourceKey(source);
+    if(automatic){if(autoIntent!==key||autoImports.has(key))return;autoImports.add(key);}
+    invalidate();busy=true;q('[data-video-app]').disabled=true;
+    q('[data-video-detail]').querySelectorAll('[data-video-action]').forEach(button=>button.disabled=true);
+    notice('正在打开生成的中文用例，下一步确认步骤并选机试跑…');
+    try{
+      const data=await request(`/ui-video-sources/${id}/import`,{method:'POST',body:{app_id:app}});if(!data)return;
+      if(!data.draft||data.draft.app_id!==app||data.draft.source_snapshot?.source_id&&data.draft.source_snapshot.source_id!==id)throw new Error('用例关联未确认，请重新打开此视频');
+      dispose();openDraft(data.draft);
+    }catch(e){notice('用例打开未完成：'+e.message+'。请点击“查看用例并试跑”重试，已有编辑会保留。');}
+    finally{busy=false;if(valid()){q('[data-video-app]').disabled=false;q('[data-video-detail]').querySelectorAll('[data-video-action]').forEach(button=>button.disabled=false);}}
+  }
   function render(){
-    if(!valid())return;syncSourceStatus();
+    if(!valid())return;syncSourceStatus();node.dataset.videoPhase=source.status==='ready'?'trial':'generate';
+
     const key=JSON.stringify([source.source_id,source.status,source.error,source.error_code,source.analysis_version,source.draft_id,source.media,source.candidate_steps,source.uncertainties]);
-    if(key===renderedKey){schedulePoll();return;}renderedKey=key;
+    if(key===renderedKey){schedulePoll();scheduleAutoImport();return;}renderedKey=key;
     clearTimeout(timer);clearMedia();const box=q('[data-video-detail]'),id=source.source_id;
-    box.innerHTML=`<h3>${escape(source.filename)} · ${escape(statusText(source.status))}</h3><p>${escape(source.error||'分析只提供候选；不会操作手机或发布用例。')}</p>${source.media?`<p>时间覆盖 0–${(source.media.duration_ms/1000).toFixed(2)} 秒 · ${source.media.frames.length} 张候选帧 · 识别版本 ${source.analysis_version}</p>`:''}<button type="button" data-video-status>刷新当前任务</button>${['queued','decoding','analyzing'].includes(source.status)?'<button type="button" data-video-action="cancel">取消分析</button>':''}${['failed','cancelled','interrupted','review_needed'].includes(source.status)&&!source.draft_id?'<button type="button" data-video-action="retry">明确重试</button>':''}${source.status==='ready'||source.draft_id?'<button type="button" data-video-action="import">核对中文步骤</button>':''}<button type="button" data-video-preview>预览私有原视频（需完整下载）</button><video controls preload="none" style="max-width:100%;max-height:320px" hidden></video><ul>${(source.uncertainties||[]).map(v=>`<li>${escape(v)}</li>`).join('')}</ul><ol>${(source.candidate_steps||[]).map((s,i)=>`<li><b>${(s.start_ms/1000).toFixed(2)}–${(s.end_ms/1000).toFixed(2)}秒</b> · ${s.evidence_kind==='observed'?'直接观察候选':'推断操作'} · ${escape(({launch:'启动应用',aiTap:'点击',aiInput:'输入',aiScroll:'滑动',aiWaitFor:'等待',aiAssert:'检查'})[s.action]||'待核对操作')} ${escape(s.target)}<p>观察：${escape(s.observation)}；业务预期仍需核对。</p>${s.frame_refs.map(f=>`<button type="button" data-video-frame="${escape(f)}">查看帧 ${escape(f)}</button>`).join('')}${s.uncertainties.map(v=>`<p>${escape(v)}</p>`).join('')}</li>`).join('')}</ol><img data-video-frame-preview alt="所选录屏证据帧" style="max-width:100%;max-height:400px" hidden>`;
+    const active=['queued','decoding','analyzing'].includes(source.status),ready=source.status==='ready'||source.draft_id;
+    const headline=ready?'用例已生成，下一步核对并试跑':active?'正在生成测试用例':source.status==='review_needed'||source.status==='failed'?'未生成用例':'尚未生成用例';
+    box.innerHTML=`<div class="ui-video-task-main"><h3>${headline}</h3><p>${escape(source.filename)}</p>${source.status==='review_needed'?'<p>请上传包含实际操作的视频，保留操作前后页面和结束结果。</p><button type="button" class="ui-video-primary" data-video-reselect>重新选择视频</button>':ready?'<button type="button" class="ui-video-primary" data-video-action="import">查看用例并试跑</button>':['failed','cancelled','interrupted'].includes(source.status)?'<button type="button" class="ui-video-primary" data-video-action="retry">重新生成用例</button>':''}${active?'<p>完成后核对中文步骤；生成过程不会操作手机。</p><button type="button" data-video-action="cancel">取消生成</button>':''}</div><details data-video-technical><summary>查看原视频与分析详情（可选）</summary><p>任务状态：${escape(statusText(source.status))}</p><p>${escape(source.error||'观察和推断仅作为来源证据，不代表试跑通过。')}</p>${source.media?`<p>完整时间覆盖 0–${(source.media.duration_ms/1000).toFixed(2)} 秒 · ${source.media.frames.length} 张候选帧 · 识别版本 ${source.analysis_version}</p>`:''}<button type="button" data-video-status>刷新当前任务</button><button type="button" data-video-preview>预览私有原视频（需完整下载）</button><video controls preload="none" style="max-width:100%;max-height:320px" hidden></video><ul>${(source.uncertainties||[]).map(v=>`<li>${escape(v)}</li>`).join('')}</ul><ol>${(source.candidate_steps||[]).map(s=>`<li><b>${(s.start_ms/1000).toFixed(2)}–${(s.end_ms/1000).toFixed(2)}秒</b> · ${s.evidence_kind==='observed'?'直接观察候选':'推断操作'} · ${escape(({launch:'启动应用',aiTap:'点击',aiInput:'输入',aiScroll:'滑动',aiWaitFor:'等待',aiAssert:'检查'})[s.action]||'待核对操作')} ${escape(s.target)}<p>观察：${escape(s.observation)}；业务预期仍需核对。</p>${s.frame_refs.map(f=>`<button type="button" data-video-frame="${escape(f)}">查看帧 ${escape(f)}</button>`).join('')}${s.uncertainties.map(v=>`<p>${escape(v)}</p>`).join('')}</li>`).join('')}</ol><img data-video-frame-preview alt="所选录屏证据帧" style="max-width:100%;max-height:400px" hidden></details>`;
+    const reselect=q('[data-video-reselect]');if(reselect)reselect.onclick=()=>{if(!valid()||busy)return;invalidate();source=null;node.dataset.videoPhase='upload';q('[data-video-detail]').replaceChildren();notice('请选择包含完整操作的视频，再点击“生成测试用例”。');const file=q('[data-video-file]');file.value='';file.focus();file.click();};
+
     q('[data-video-status]').onclick=()=>{polls=0;refresh();};
     q('[data-video-preview]').onclick=()=>{if(!valid())return;const video=box.querySelector('video');video.hidden=false;media(`/ui-video-sources/${id}/video?`+new URLSearchParams({app_id:app}),video);};
     for(const button of box.querySelectorAll('[data-video-frame]'))button.onclick=()=>{const image=q('[data-video-frame-preview]');image.hidden=false;media(`/ui-video-sources/${id}/frames/${encodeURIComponent(button.dataset.videoFrame)}?`+new URLSearchParams({app_id:app}),image);};
     for(const button of box.querySelectorAll('[data-video-action]'))button.onclick=async()=>{
+      if(button.dataset.videoAction==='import')return openSourceCase();
       if(busy||!valid())return;invalidate();busy=true;button.disabled=true;
       try{const data=await request(`/ui-video-sources/${id}/${button.dataset.videoAction}`,{method:'POST',body:{app_id:app}});if(!data)return;
-        if(data.draft){dispose();openDraft(data.draft);return;}source=data.source;polls=0;render();list();
-      }catch(e){notice(e.message);}finally{busy=false;if(button.isConnected)button.disabled=false;}
+        if(data.draft){dispose();openDraft(data.draft);return;}source=data.source;polls=0;if(button.dataset.videoAction==='retry')autoIntent=sourceKey(source);render();list();
+      }catch(e){notice(e.message);}finally{busy=false;if(button.isConnected)button.disabled=false;scheduleAutoImport();}
     };
-    schedulePoll();
+    schedulePoll();scheduleAutoImport();
   }
   q('[data-video-list]').onclick=async e=>{const button=e.target.closest('[data-video-open]');if(!button||busy)return;invalidate();source={source_id:button.dataset.videoOpen};polls=0;notice('正在读取所选录屏状态…');await refresh();};
-  q('[data-video-app]').onchange=()=>{if(busy)return;invalidate();app=q('[data-video-app]').value;source=null;notice('');q('[data-video-list]').replaceChildren();q('[data-video-detail]').replaceChildren();list();};
+  q('[data-video-app]').onchange=()=>{if(busy)return;invalidate();app=q('[data-video-app]').value;source=null;node.dataset.videoPhase='upload';notice('');q('[data-video-list]').replaceChildren();q('[data-video-detail]').replaceChildren();list();};
   q('[data-video-refresh]').onclick=list;
   q('[data-video-upload]').onclick=async()=>{
     if(busy||!valid()||!app)return;const file=q('[data-video-file]').files[0];
     if(!file||!file.size||file.size>200*1024*1024||!/[.](mp4|mov)$/i.test(file.name)){notice('请选择不超过200MB的 MP4/MOV 文件');return;}
-    busy=true;const version=epoch,button=q('[data-video-upload]');button.disabled=true;q('[data-video-app]').disabled=true;notice('正在上传；上传完成后后台分析，离页可从“我的录屏”重新打开。');
+    invalidate();busy=true;const version=epoch,button=q('[data-video-upload]');button.disabled=true;q('[data-video-app]').disabled=true;notice('正在上传；上传完成后后台分析，离页可从“我的录屏”重新打开。');
     // Navigation can detach the view while the bounded upload finishes. The
     // response never updates a detached/changed account; own sources are durable.
     const c=new AbortController();const accountGuard=setInterval(()=>{if(identity!==uiSimpleIdentity())c.abort();},500);
-    try{const response=await nativeFetch('/api/ui-video-sources/upload?'+new URLSearchParams({app_id:app,filename:file.name,goal:q('[data-video-goal]').value}),{method:'POST',headers:authHeaders({'Content-Type':'application/octet-stream'}),body:file,signal:c.signal});const data=await response.json();if(!valid()||version!==epoch)return;if(!response.ok||!data.ok)throw new Error(data.error||'上传未完成');source=data.source;polls=0;notice('上传完成，后台分析中。');render();list();}
+    try{const response=await nativeFetch('/api/ui-video-sources/upload?'+new URLSearchParams({app_id:app,filename:file.name,goal:q('[data-video-goal]').value}),{method:'POST',headers:authHeaders({'Content-Type':'application/octet-stream'}),body:file,signal:c.signal});const data=await response.json();if(!valid()||version!==epoch)return;if(!response.ok||!data.ok)throw new Error(data.error||'上传未完成');source=data.source;polls=0;autoIntent=sourceKey(source);render();list();}
     catch(e){if(valid()&&version===epoch)notice('上传结果未确认：'+e.message+'。先刷新我的录屏核对，再决定重新上传。');}
-    finally{clearInterval(accountGuard);busy=false;if(valid()){button.disabled=false;q('[data-video-app]').disabled=false;}}
+    finally{clearInterval(accountGuard);busy=false;if(valid()){button.disabled=false;q('[data-video-app]').disabled=false;scheduleAutoImport();}}
   };
   const guard=setInterval(()=>{if(!valid())dispose();},1000);
   document.addEventListener('visibilitychange',visibilityChanged);

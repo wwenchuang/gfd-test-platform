@@ -187,3 +187,25 @@ test('video source details use the video label and identify proposed checks as u
  assert.equal(f.node.querySelector('[data-draft-original] summary').textContent,'对照原视频与时间证据');
  assert.match(f.node.querySelector('[data-draft-original-body]').textContent,/可见检查候选.*待确认/);
 });
+
+const bulkDraft={...draft,questions:[],steps:[
+ {step_id:'11111111-1111-4111-8111-111111111111',action:'aiTap',target:'首页个人入口',value:'',expected:'个人页面显示账号入口',review_state:'needs_review',source_ref:'text'},
+ {step_id:'22222222-2222-4222-8222-222222222222',action:'aiAssert',target:'个人页面显示账号入口',value:'',expected:'',review_state:'needs_review',source_ref:'text'}]};
+test('explicit bulk confirmation saves all reviewed steps once without selecting a phone or executing',async t=>{
+ let resolve;const f=fixture(t,(p,o)=>p.endsWith('/update')?new Promise(r=>resolve=()=>r({ok:true,draft:{...bulkDraft,...o.body,revision:2}})):undefined,{initialDraft:bulkDraft});await wait();
+ const button=f.node.querySelector('[data-draft-confirm-all]');assert.ok(button);assert.equal(button.textContent,'确认以上步骤并保存');assert.equal(button.disabled,false);
+ button.click();button.click();await wait();const writes=f.calls.filter(c=>c.path.endsWith('/update'));assert.equal(writes.length,1);assert.ok(writes[0].o.body.steps.every(s=>s.review_state==='confirmed'));assert.equal(writes[0].o.body.questions.length,0);
+ resolve();await wait();assert.match(f.node.querySelector('[data-draft-state]').textContent,/第 2 版/);assert.equal(f.node.querySelector('[data-draft-device]').value,'');assert.equal(f.calls.some(c=>c.path.endsWith('/try')),false);assert.equal(f.node.querySelector('[data-draft-confirm-all]').disabled,true);
+});
+for(const [name,changes,permissions]of [
+ ['unresolved questions',{questions:['请确认业务预期']},{}],['missing expected',{steps:bulkDraft.steps.map((s,i)=>i?{...s}:{...s,expected:''})},{}],
+ ['unsupported action',{steps:[{...bulkDraft.steps[0],action:'runAdbShell'},bulkDraft.steps[1]]},{}],['invalid scroll',{steps:[{...bulkDraft.steps[0],action:'aiScroll',value:{distance:-1}},bulkDraft.steps[1]]},{}],
+ ['read only',{}, {canEdit:()=>false}]
+])test(`bulk confirmation stays disabled for ${name} and does not remove questions`,async t=>{
+ const initial={...bulkDraft,...changes};const f=fixture(t,null,{initialDraft:initial,...permissions});await wait();const button=f.node.querySelector('[data-draft-confirm-all]');assert.ok(button);assert.equal(button.disabled,true);button.click();await wait();assert.equal(f.calls.some(c=>c.path.endsWith('/update')),false);assert.equal(f.node.querySelectorAll('[data-draft-question]').length,initial.questions.length);
+});
+
+test('failed bulk save retains original review states and advanced YAML still blocks bulk confirmation',async t=>{
+ const f=fixture(t,p=>p.endsWith('/update')?Promise.reject(new Error('save failed')):undefined,{initialDraft:bulkDraft});await wait();f.node.querySelector('[data-draft-confirm-all]').click();await wait();assert.match(f.node.querySelector('[data-draft-notice]').textContent,/save failed/);assert.ok([...f.node.querySelectorAll('.ui-draft-step-head small')].every(n=>n.textContent==='待确认'));
+ const yaml=f.node.querySelector('[data-draft-yaml-input]');yaml.value='invalid yaml';yaml.dispatchEvent(new f.w.Event('input'));assert.equal(f.node.querySelector('[data-draft-confirm-all]').disabled,true);assert.equal(f.calls.some(c=>c.path.endsWith('/try')),false);
+});
