@@ -106,7 +106,7 @@ class DraftStore:
                    (document['revision'], document['updated_ns'], encoded, document['draft_id']))
         db.execute('INSERT INTO draft_revisions VALUES (?,?,?)', (document['draft_id'], document['revision'], encoded))
 
-    def create(self, owner, app_id, text, *, recording_snapshot=None, recording_content=None):
+    def create(self, owner, app_id, text, *, recording_snapshot=None, recording_content=None, source_snapshot=None):
         fields = {key: owner.get(key) for key in ('user_id', 'username', 'display_name')}
         if any(not isinstance(value, str) or not value.strip() for value in fields.values()) or not isinstance(app_id, str) or not app_id.strip() or not isinstance(text, str) or not text.strip():
             raise ValueError('draft_input_invalid')
@@ -117,13 +117,16 @@ class DraftStore:
                     'title': '', 'preconditions': [], 'steps': [], 'questions': [],
                     'generation_status': 'queued', 'error': '', 'yaml_content': '', 'ready': False,
                     'created_ns': now, 'updated_ns': now}
-        if recording_snapshot is not None:
-            key = json.dumps([fields['user_id'], app_id, recording_snapshot['snapshot_id']], ensure_ascii=False)
+        snapshot = source_snapshot if source_snapshot is not None else recording_snapshot
+        if snapshot is not None:
+            key = json.dumps([fields['user_id'], app_id, snapshot['snapshot_id']], ensure_ascii=False)
             document.update(draft_id='uid_' + hashlib.sha256(key.encode()).hexdigest()[:32],
-                            source_snapshot=recording_snapshot, generation_status='ready')
-            document.update(self._content(recording_content))
-        with self._db(write=True) as db:
+                            source_snapshot=snapshot)
             if recording_snapshot is not None:
+                document['generation_status'] = 'ready'
+                document.update(self._content(recording_content))
+        with self._db(write=True) as db:
+            if snapshot is not None:
                 try:
                     return self._read(db, document['draft_id'], fields['user_id'])
                 except KeyError:

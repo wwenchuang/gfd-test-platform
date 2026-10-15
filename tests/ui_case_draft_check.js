@@ -174,3 +174,10 @@ test('generation refresh does not overwrite a recovered unsubmitted YAML buffer'
  await open(f);await poll();assert.equal(f.node.querySelector('[data-draft-yaml-input]').value,'需要保留的未提交脚本');assert.equal(f.node.querySelector('[data-draft-yaml-apply]').disabled,false);
  assert.equal(f.w.sessionStorage.getItem('ui-draft-yaml:a:d1:1'),'需要保留的未提交脚本');
 });
+test('requirement source shows immutable original steps for comparison without implying recording evidence',async t=>{
+ const f=fixture(t,null,{initialDraft:{...draft,source_snapshot:{kind:'requirement',title:'原用例',preconditions:['已登录'],steps:['原始动作 <script>'],expected:['原始预期']}}});await wait();
+ assert.equal(f.node.querySelector('h2').textContent,'整理需求用例');
+ const original=f.node.querySelector('[data-draft-original]');assert.ok(original);assert.equal(original.open,false);
+ assert.match(original.textContent,/原始动作 <script>/);assert.match(original.textContent,/原始预期/);assert.equal(original.querySelector('script'),null);
+ assert.doesNotMatch(f.node.querySelector('[data-draft-source]').textContent,/已结束的录制/);
+});

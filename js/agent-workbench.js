@@ -2376,6 +2376,33 @@ function agentCaseExecutionLabel(item = {}, groups = {}) {
   return '自动化候选';
 }
 
+function agentRequirementDraftAction(run, sourceIndex) {
+  if (run?.sourceType !== 'requirement') return '';
+  if (!run.ownerUserId) return '<p class="text-warning">旧产物缺少账号归属，请重新生成后整理。</p>';
+  if (typeof uiSimpleEnabled === 'undefined' || !uiSimpleEnabled || typeof hasPermission !== 'function' || !hasPermission('ui.edit')) return '<p>需要编辑用例权限才能整理。</p>';
+  if (run.ownerUserId !== currentAccessProfile?.user_id) return '<p>仅可整理自己生成的需求用例。</p>';
+  const ref = (run.draftImportCases || []).find(row => row.case_index === sourceIndex);
+  if (!ref) return '<p>此产物为人工检查项，或缺少可整理的完整步骤，请在原需求中补充。</p>';
+  return `<button type="button" class="btn-sm" data-requirement-draft onclick="importAgentRequirementDraft(this, ${jsArg(run.runId)}, ${ref.case_index}, ${jsArg(ref.case_hash)}, ${jsArg(run.appPackage)})">整理为可执行用例</button><small>先核对中文步骤，再选手机试跑</small>`;
+}
+
+async function importAgentRequirementDraft(button, runId, caseIndex, caseHash, app) {
+  if (button.disabled || !uiSimpleEnabled || !hasPermission('ui.edit') || app !== selectedAgentAppPackage()) return;
+  const workflow = activeWorkflow, epoch = uiSimpleEpoch, identity = currentAccessProfile?.user_id;
+  const current = () => button.isConnected && activeWorkflow === workflow && uiSimpleEpoch === epoch && currentAccessProfile?.user_id === identity && selectedAgentAppPackage() === app;
+  button.disabled = true; button.textContent = '正在整理…';
+  try {
+    const data = await apiRequest('/ui-case-drafts/import-requirement', {method:'POST', body:JSON.stringify({app_id:app, run_id:runId, case_index:caseIndex, case_hash:caseHash})});
+    if (!current()) return;
+    if (data?.ok !== true || data.draft?.app_id !== app) throw new Error(data?.error || '整理结果未确认');
+    openImportedUiDraft(data.draft);
+  } catch (error) {
+    if (current()) showToast(`整理未确认：${error.message || '网络异常'}。可重试同一产物，或到“继续我的草稿”查看。`, 'error');
+  } finally {
+    button.disabled = false; button.textContent = '整理为可执行用例';
+  }
+}
+
 function renderAgentCasesArtifact(run) {
   const artifacts = (run && run.artifacts) || {};
   const generated = artifacts.generatedCases && typeof artifacts.generatedCases === 'object'
@@ -2463,6 +2490,7 @@ function renderAgentCasesArtifact(run) {
       const reasons = agentCaseTextList(item.reasons || item.reason || item.automation_reason || item.automationReason);
       const businessPath = item.business_path || item.businessPath || item.path || '';
       const smoke = item.smoke === true || item.smokeCandidate === true || item.runnerCandidate === true;
+      const sourceMatches = automaticCases.map((row, rowIndex) => agentCaseIdentity(row, rowIndex) === identity ? rowIndex : -1).filter(rowIndex => rowIndex >= 0);
       return `
         <details class="agent-case-card" ${index < 2 ? 'open' : ''}>
           <summary>
@@ -2480,6 +2508,7 @@ function renderAgentCasesArtifact(run) {
             ${steps.length ? `<ol>${steps.map((step, stepIndex) => `<li><b>第 ${stepIndex + 1} 步：</b>${escapeHtml(step)}</li>`).join('')}</ol>` : '<p>未提供操作步骤。</p>'}
             ${assertions.length ? `<p class="agent-case-expected"><b>预期：</b>${assertions.map(escapeHtml).join('；')}</p>` : '<p class="text-warning">未提供明确预期结果。</p>'}
             ${reasons.length ? `<p><b>说明：</b>${reasons.map(escapeHtml).join('；')}</p>` : ''}
+            ${typeof agentRequirementDraftAction === 'function' ? agentRequirementDraftAction(run, sourceMatches.length === 1 ? sourceMatches[0] : -1) : ''}
           </div>
         </details>`;
     }).join('');

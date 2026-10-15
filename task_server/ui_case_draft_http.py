@@ -29,6 +29,11 @@ def _run(handler, operation, *, admission=False):
             'recording_import_unfinished': '请先结束录制；进行中或已取消的录制不能整理',
             'recording_import_size': '录制需包含1至50步，且内容大小不能超过限制',
             'recording_import_cross_app': '录制包含其他应用的启动动作，请先核对所属应用',
+            'requirement_import_owner_missing': '旧需求产物缺少可信账号归属，请重新生成后整理',
+            'requirement_import_source': '需求来源不完整或已变更，请刷新后重新选择',
+            'requirement_import_size': '请选择包含1至50步的单条完整用例，内容过长请精简后重新生成',
+            'requirement_import_unsupported': '此产物含暂不支持的操作，不能自动整理，请修改需求或人工核对',
+            'requirement_import_manual': '此产物仅供人工检查，不能直接整理为自动用例',
             'draft_generation_busy': '已有用例正在生成，请稍后重试',
             'draft_gate_failed': '用例尚未通过检查，请先处理待确认内容',
             'draft_trial_required': '请先完成当前版本的手机试跑，再发布基线',
@@ -75,6 +80,14 @@ def register_routes(route_get, route_post, route_get_regex, route_post_regex):
         from .services.ui_case_draft_service import import_recording_draft
         def operation():
             draft = import_recording_draft(None, handler._body())
+            return {'draft': draft}, draft['draft_id']
+        _run(handler, operation, admission=True)
+
+    @route_post('/api/ui-case-drafts/import-requirement')
+    def _post_requirement_draft_import(handler, qs):
+        from .services.ui_case_draft_service import import_requirement_draft
+        def operation():
+            draft = import_requirement_draft(None, handler._body())
             return {'draft': draft}, draft['draft_id']
         _run(handler, operation, admission=True)
 

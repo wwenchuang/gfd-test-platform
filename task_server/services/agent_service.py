@@ -1261,6 +1261,8 @@ def get_agent_run(run_id):
         return None
     enriched = _agent_run_with_input_summary(run, detailed=True)
     enriched["reportSummary"] = _agent_run_report_summary(run)
+    from .requirement_draft_import import import_refs
+    enriched["draftImportCases"] = import_refs(run)
     return enriched
 
 
@@ -1413,7 +1415,10 @@ def create_agent_run(payload):
         {"step": s, "status": "PENDING", "startedAt": None, "endedAt": None, "summary": "", "artifactRefs": []}
         for s in AGENT_RUN_STEPS if s not in ("IDLE", "DONE", "FAILED", "WAIT_CONFIRM")
     ]
+    from .operation_attribution import current_actor
+    trusted_owner = current_actor()
     run = {
+        "ownerUserId": trusted_owner.get("user_id", "") if trusted_owner.get("kind") == "user" else "",
         "runId": run_id,
         "mode": mode,
         "target": goal,
