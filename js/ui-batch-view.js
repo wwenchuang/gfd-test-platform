@@ -23,7 +23,7 @@
   }
   function init(node,batchId) {
     node.replaceChildren();node.classList.add('ui-batch-view');
-    node.innerHTML='<header class="ui-batch-head"><div><p class="ui-eyebrow">本次测试</p><h2 data-batch-title></h2><p data-batch-app></p><p data-batch-owner></p></div><strong data-batch-state></strong></header><div class="ui-batch-totals"><span data-batch-count></span><span data-batch-results></span></div><progress data-batch-progress aria-label="已结束的用例执行"></progress><p data-batch-hint role="status"></p><div class="ui-batch-actions"></div><p data-batch-action-error role="alert" hidden></p><div class="ui-batch-attempts"></div><footer class="ui-batch-foot"><span data-batch-report></span><span data-batch-delivery></span><small data-batch-id></small></footer>';
+    node.innerHTML='<div class="ui-batch-layout"><div class="ui-batch-overview"><header class="ui-batch-head"><div><p class="ui-eyebrow">执行结果</p><h2 data-batch-title></h2><div class="ui-batch-meta"><span data-batch-app></span><span data-batch-owner></span></div></div><strong data-batch-state></strong></header><div class="ui-batch-totals"><span data-batch-count></span><span data-batch-results></span></div><progress data-batch-progress aria-label="已结束的用例执行"></progress><p data-batch-hint role="status"></p><div class="ui-batch-actions"></div></div><div class="ui-batch-detail"><h3 class="ui-batch-detail-title">用例结果</h3><p data-batch-action-error role="alert" hidden></p><div class="ui-batch-attempts"></div></div></div><footer class="ui-batch-foot"><span data-batch-report></span><span data-batch-delivery></span><details class="ui-batch-identifier"><summary>执行编号</summary><small data-batch-id></small></details></footer>';
     const state={batchId,rows:new Map(),actions:{},busy:new Set(),batch:null};views.set(node,state);
     for (const [key,title] of [['cancel','取消本次测试'],['rerun','重跑未通过项'],['report','查看本次报告'],['copy','复制测试摘要']]) {
       const button=make('button','btn-sm',title);button.type='button';button.dataset.batchAction=key;
@@ -125,10 +125,10 @@
     text(node,'[data-batch-state]',label(batch.status));
     node.querySelector('[data-batch-state]').className='ui-state-text-'+status(batch.status);
     text(node,'[data-batch-count]',`${done} / ${attempts.length} 项已结束`);
-    text(node,'[data-batch-results]',`通过 ${passed} · 失败 ${failed} · 其余 ${attempts.length-passed-failed}`);
+    text(node,'[data-batch-results]',`通过 ${passed} · 失败 ${failed} · 其他状态 ${attempts.length-passed-failed}`);
     const progress=node.querySelector('[data-batch-progress]');progress.max=Math.max(1,attempts.length);progress.value=done;
     text(node,'[data-batch-hint]',batch.message || (batch.stop_pending?'正在等待手机确认停止；确认前不会释放设备。':batch.status==='queued'?'等待所选手机接单；可取消本次测试。':batch.status==='cancelling'?'已请求取消，正在等待手机确认停止。':batch.status==='running'?'按手机真实上报更新步骤。':label(batch.status)));
-    const reportLabels={not_requested:'普通测试，未申请发版报告；结果与截图已保留',pending:'发版报告等待生成',generating:'发版报告生成中',ready:'本次报告已就绪',failed:'报告生成失败，可补生成'};
+    const reportLabels={not_requested:'普通测试，未申请发版报告；结果与截图已保留',pending:'发版报告等待生成',generating:'发版报告生成中',ready:'本次报告已就绪',failed:'报告生成失败，请查看报告详情'};
     const deliveryLabels={not_requested:'未启用飞书通知',pending:'飞书通知待发送',queued:'飞书通知已入队',retry_wait:'飞书通知等待重试',sending:'飞书通知发送中',sent:'飞书通知已发送',failed:'飞书通知发送失败',unknown:'飞书送达待核对'};
     text(node,'[data-batch-report]',reportLabels[batch.report_status] || '报告状态待确认');
     text(node,'[data-batch-delivery]',deliveryLabels[batch.delivery_status] || '通知状态待确认');

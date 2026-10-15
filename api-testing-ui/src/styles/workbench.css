@@ -1,0 +1,569 @@
+/* API workbench shares the platform's graphite and mint palette. */
+:root {
+  color-scheme: dark;
+  color: #eaf1f5;
+  background: #10171d;
+  --canvas: #10171d;
+  --nav: #111a22;
+  --surface: #172229;
+  --line: #2c3b44;
+  --ink: #eaf1f5;
+  --muted: #acbdc8;
+  --blue: #83ebcb;
+  --teal: #83ebcb;
+  --red: #ff9aaa;
+  --text: #eaf1f5;
+  --danger: #ff9aaa;
+  --success: #83ebcb;
+}
+
+.app-shell { grid-template-columns: 188px minmax(0, 1fr); }
+.side-rail {
+  width: 188px;
+  padding: 18px 11px;
+  border-right: 1px solid #314541;
+  background: #111a22;
+}
+.brand {
+  width: 38px;
+  height: 38px;
+  margin: 0 8px 19px;
+  border-color: #4b7169;
+  border-radius: 10px;
+  background: #203b38;
+  color: #abebd5;
+}
+.rail-nav { gap: 13px; }
+.rail-section { gap: 3px; }
+.rail-section-label { padding: 0 10px 4px; color: #91aaa2; font-size: 10px; letter-spacing: .06em; }
+.rail-link { min-height: 34px; border: 1px solid transparent; border-radius: 7px; color: #c5d8d1; font-size: 12px; }
+.rail-link:hover { background: #29443c; color: #effff9; }
+.rail-link.router-link-exact-active { border-color: #537f70; background: #2e5548; color: #d4ffec; }
+.rail-link.router-link-exact-active svg { color: #a9eccd; }
+
+#app .main-content { background: var(--canvas); color: var(--ink); }
+.workspace { padding: 16px clamp(16px, 1.65vw, 30px) 30px; }
+.management-page, .baselines-page, .environment-center-page { max-width: none; }
+.page-toolbar { gap: 14px; min-height: 44px; margin-bottom: 12px; }
+.page-toolbar > div:first-child { min-width: 0; }
+.eyebrow { margin-bottom: 2px; color: #83ebcb; font-size: 10px; letter-spacing: .04em; }
+.page-toolbar h1 { font-size: 20px; line-height: 1.25; letter-spacing: -.02em; }
+.page-subtitle { margin-top: 4px; color: #acbdc8; font-size: 12px; line-height: 1.45; }
+.page-toolbar-actions, .load-toolbar-actions { align-items: center; }
+
+.panel, .section-empty, .task-list-panel, .endpoint-tree, .case-list-panel,
+.design-center, .ai-assistant, .management-detail, .baseline-filter-panel,
+.baseline-table-panel, .api-asset-projects, .api-asset-detail, .api-asset-actions,
+.setup-section, .environment-asset-navigation, .environment-detail-panel,
+.report-board, .report-hero, .report-stat-grid, .report-detail-hero,
+.report-detail-evidence {
+  border-color: var(--line);
+  border-radius: 9px;
+  box-shadow: 0 4px 16px #050c121a;
+}
+.panel { min-height: 250px; }
+.panel-header { min-height: 39px; padding-inline: 12px; }
+.workbench-grid, .workbench-shell, .management-shell, .case-management-shell,
+.baseline-board, .environment-center-shell, .report-dashboard { gap: 10px; }
+.workbench-grid, .workbench-shell, .management-shell, .case-management-shell { margin-top: 10px; }
+.workbench-shell { grid-template-columns: minmax(230px, 280px) minmax(0, 1fr); }
+.workbench-shell-focused { grid-template-columns: 1fr; }
+.design-workspace { grid-template-columns: minmax(210px, 270px) minmax(420px, 1fr) minmax(210px, 280px); gap: 10px; }
+.workbench-shell-focused .design-workspace { grid-template-columns: minmax(270px, 380px) minmax(440px, 1fr) minmax(230px, 290px); }
+.management-shell { grid-template-columns: minmax(290px, 360px) minmax(0, 1fr); }
+.case-management-shell { grid-template-columns: minmax(360px, 510px) minmax(0, 1fr); }
+.management-detail-head { min-height: 54px; padding: 9px 12px; }
+.management-detail-body { gap: 10px; padding: 11px; }
+.management-summary-grid > div { min-height: 54px; padding: 8px 10px; }
+.task-list-item { min-height: 90px; padding: 8px 10px; }
+.case-list-row { min-height: 50px; padding: 6px 9px; }
+.task-list-tools, .case-list-tools { gap: 6px; padding: 8px; }
+.context-bar { gap: 8px; min-height: 56px; padding: 8px 10px; }
+.context-strip { min-height: 36px; padding: 6px 10px; border-radius: 7px; }
+.task-status-strip { gap: 8px; min-height: 54px; padding: 8px 10px; }
+.task-help { margin-top: 0; font-size: 11px; line-height: 1.5; }
+.task-start-steps { gap: 8px; padding: 5px 0; }
+.setup-section { margin-top: 10px; padding: 12px; }
+.setup-section > header { margin-bottom: 9px; }
+.api-asset-projects header, .api-asset-detail header { min-height: 54px; padding: 10px 12px; }
+.api-asset-actions { gap: 8px; padding: 12px; }
+.asset-sync-panel { margin: 10px 0; border-radius: 9px; }
+.asset-sync-panel > summary { padding: 12px; font-size: 13px; }
+.baseline-summary-grid { margin: 9px 0; border-radius: 9px; }
+.baseline-summary-grid > div { padding: 9px 11px; }
+.baseline-board { grid-template-columns: 220px minmax(0, 1fr); }
+.baseline-group-list button { min-height: 34px; }
+.baseline-action-bar { min-height: 50px; padding: 7px 10px; }
+.baseline-row, .baseline-table-head { gap: 8px; padding: 7px 10px; }
+.baseline-row { line-height: 1.4; }
+.scheduled-row { min-height: 62px; padding: 8px 11px; }
+.environment-center-shell { grid-template-columns: minmax(340px, 390px) minmax(0, 1fr); }
+.environment-projects, .environment-detail-panel, .environment-detail-empty { min-height: 420px; }
+.environment-asset-item { min-height: 79px; padding: 8px 10px; }
+.environment-detail-header { min-height: 70px; padding: 11px 13px; }
+.environment-overview-strip > div { min-height: 56px; padding: 9px 11px; }
+.report-project-scope { margin: 9px 0 10px; padding: 12px 14px; box-shadow: 0 4px 16px #050c121a; }
+.report-dashboard { margin-bottom: 10px; }
+.report-hero { min-height: 112px; padding: 14px; }
+.report-hero h2 { font-size: 23px; }
+.report-hero > strong { font-size: 36px; }
+.report-stat-grid > div { min-height: 90px; padding: 11px; }
+.report-workbench { grid-template-columns: minmax(250px, 320px) minmax(0, 1fr); min-height: 480px; }
+.report-index-row { min-height: 88px; padding: 8px 10px; }
+.report-detail-panel { padding: 12px; }
+.report-detail-hero { min-height: 104px; padding: 13px; }
+.report-detail-stats > div { min-height: 66px; padding: 9px; }
+.report-history-card { min-height: 96px; }
+.report-card-main, .report-card-metrics, .report-card-buckets, .report-card-evidence { padding: 10px 12px; }
+.load-agent-summary > div { padding: 9px 11px; }
+.load-agent-summary strong { font-size: 20px; }
+.load-agent-card { padding: 11px; border-radius: 9px; }
+.load-agent-grid { gap: 10px; }
+
+.primary-command, .secondary-command, .debug-command, .baseline-command,
+.danger-command, .icon-command { border-radius: 7px; }
+.primary-command { background: #83ebcb; border-color: #83ebcb; color: #102d28; }
+.secondary-command, .debug-command, .icon-command { color: #83ebcb; }
+.primary-command:hover:not(:disabled) { background: #a3f4dc; border-color: #a3f4dc; }
+.secondary-command:hover:not(:disabled), .icon-command:hover:not(:disabled) { border-color: #83ebcb; background: #203b38; }
+#app .main-content :is(button, a, input, select, textarea, summary):focus-visible,
+.side-rail :is(button, a):focus-visible { outline: 2px solid #83ebcb; outline-offset: 2px; }
+
+/* Shared surfaces and controls. Existing status colors are handled below. */
+body, #app { background: #10171d; color: #eaf1f5; }
+#app .main-content :is(input, select, textarea) {
+  border-color: #40545f;
+  background: #121c24;
+  color: #eaf1f5;
+  caret-color: #83ebcb;
+}
+#app .main-content :is(input, textarea)::placeholder { color: #8b9eab; }
+#app .main-content select option { background: #172229; color: #eaf1f5; }
+#app .main-content :is(input, select, textarea):disabled { background: #1a262e; color: #8b9eab; }
+#app .main-content :is(label, legend) { color: #c1d0d8; }
+#app .main-content :is(code, pre) { color: #c9eee2; }
+#app .main-content :is(h1, h2, h3, h4, strong) { color: #eaf1f5; }
+#app .main-content :is(a, .text-command, .context-next) { color: #83ebcb; }
+#app .main-content :is(p, small, time, dt, dd) { color: inherit; }
+#app .main-content :is(.page-subtitle, .state-message, .empty-state, .section-empty, .selection-note, .agent-help) { color: #acbdc8; }
+
+#app .main-content :is(
+  .panel, .section-empty, .task-list-panel, .endpoint-tree, .case-list-panel,
+  .design-center, .ai-assistant, .management-detail, .baseline-filter-panel,
+  .baseline-table-panel, .api-asset-projects, .api-asset-detail, .api-asset-actions,
+  .setup-section, .environment-asset-navigation, .environment-detail-panel,
+  .asset-sync-panel, .advanced-import, .scheduled-editor, .scheduled-layout,
+  .report-board, .report-index, .report-detail-evidence, .report-section,
+  .report-stat-grid, .report-detail-stats, .report-detail-buckets > div,
+  .task-endpoint-section, .load-dialog, .load-confirm, .load-report-switcher,
+  .load-review-box, .load-console, .load-verdict, .load-latency, .load-thresholds,
+  .load-chart, .load-agent-report, .load-ai-panel, .load-scenario-list article,
+  .load-run-list article, .load-agent-card, .load-metric-grid article,
+  .load-thresholds article, .environment-projects, .environment-assets,
+  .workflow-step-card, .workflow-preview-panel, .workflow-evidence,
+  .case-endpoint-picker, .endpoint-picker, .case-group-picker,
+  .variable-picker, .dependency-picker, .variable-insert-menu,
+  .debug-drawer, .debug-raw-evidence, .execution-detail-drawer
+) { border-color: #2c3b44; background: #172229; color: #eaf1f5; }
+#app .main-content :is(
+  .management-summary-grid > div, .baseline-summary-grid, .environment-summary-grid > div,
+  .environment-overview-strip > div, .asset-version-grid > div, .asset-kpis > div,
+  .report-detail-panel, .report-workbench, .report-card-buckets span,
+  .report-stat-grid > div, .report-detail-stats > div, .load-agent-summary > div,
+  .load-capacity-grid > div, .load-context-banner > div, .load-agent-facts dt,
+  .load-agent-facts dd, .load-agent-technical, .load-run-list-footer,
+  .load-next-run, .load-thresholds article, .workflow-stage,
+  .workflow-evidence article, .environment-overview-services article,
+  .environment-read-section dt, .environment-history li, .asset-diff-summary,
+  .asset-diff-summary .diff-review-grid, .inline-create,
+  .notification-section .toggle-card, .report-feishu-state
+) { border-color: #30434d; background: #202e37; color: #eaf1f5; }
+#app .main-content :is(
+  .panel-header, .management-detail-head, .task-endpoint-section > header,
+  .endpoint-tree-header, .endpoint-tabs, .endpoint-search-bar,
+  .api-asset-projects header, .api-asset-detail header,
+  .environment-projects > header, .environment-assets-header,
+  .environment-detail-header, .environment-detail-tabs,
+  .report-board-header, .report-index-tools, .report-detail-evidence header,
+  .editor-toolbar, .case-list-group-toolbar, .case-version-picker,
+  .load-section-heading, .load-report-run-list > header,
+  .execution-tabs, .execution-list-tools, .execution-filter-tools,
+  .case-result-list-toolbar, .case-result-pagination, .debug-trace > header
+) { border-color: #30434d; background: #1b2932; color: #d7e4e9; }
+#app .main-content :is(
+  .task-list-item, .case-list-row, .baseline-group-list button, .baseline-row,
+  .scheduled-row, .report-index-row, .report-history-card,
+  .case-result-rows > button, .execution-row, .environment-project-item,
+  .environment-asset-item, .asset-project-card, .endpoint-picker-option,
+  .case-endpoint-results > button, .variable-option, .dependency-option,
+  .load-endpoint-list button, .load-report-run-list button,
+  .ai-generated-row, .debug-trace > article
+) { border-color: #2c3b44; background: #172229; color: #eaf1f5; }
+#app .main-content :is(
+  .task-list-item, .case-list-row, .baseline-group-list button, .baseline-row,
+  .scheduled-row, .report-index-row, .report-history-card,
+  .case-result-rows > button, .execution-row, .environment-project-item,
+  .environment-asset-item, .asset-project-card, .endpoint-picker-option,
+  .case-endpoint-results > button, .variable-option, .dependency-option,
+  .load-endpoint-list button, .load-report-run-list button,
+  .ai-generated-row
+):hover { background: #20343b; }
+#app .main-content :is(
+  .task-list-item, .case-list-row, .baseline-group-list button,
+  .report-index-row, .case-result-rows > button, .execution-row,
+  .environment-project-item, .environment-asset-item, .asset-project-card,
+  .load-report-run-list button
+).active { border-color: #83ebcb; background: #203b38; }
+#app .main-content :is(.case-list-row.selected, .target-option.active, .setting-toggle.active) { background: #203b38; }
+#app .main-content :is(.baseline-table-head, .table-head, .source-change-list th) {
+  border-color: #30434d; background: #202e37; color: #acbdc8;
+}
+#app .main-content :is(.baseline-filter-grid, .baseline-action-bar, .baseline-group-editor,
+  .task-endpoint-toolbar, .environment-asset-search, .report-search,
+  .load-list-toolbar, .load-report-filters) { border-color: #30434d; background: #1b2932; }
+#app .main-content :is(.search-box, .segmented, .report-filter-tabs, .report-source-tabs,
+  .environment-status-tabs, .schedule-picker, .target-picker, .cron-preset-panel) {
+  border-color: #40545f; background: #121c24; color: #acbdc8;
+}
+#app .main-content :is(.segmented button.active, .report-filter-tabs button.active,
+  .report-source-tabs button.active, .environment-status-tabs button.active,
+  .schedule-segments button.active, .endpoint-tabs button.active,
+  .environment-detail-tabs button.active) {
+  border-color: #83ebcb; background: #28483f; color: #baffdf; box-shadow: none;
+}
+#app .main-content :is(.secondary-command, .debug-command, .icon-command,
+  .mini-icon, .tiny-command, .row-add, .schedule-segments button,
+  .environment-row-action, .environment-history-action,
+  .list-pagination button, .case-result-pagination button,
+  .target-option, .cron-preset-grid button, .setting-toggle,
+  .variable-body-command, .assistant-actions button,
+  .report-case-filters button) {
+  border-color: #40545f; background: #202e37; color: #c4e8dc;
+}
+#app .main-content :is(.primary-command, .context-save, .baseline-command, .debug-command.primary) {
+  border-color: #83ebcb; background: #83ebcb; color: #102d28;
+}
+#app .main-content :is(.primary-command, .context-save):hover:not(:disabled) {
+  border-color: #a3f4dc; background: #a3f4dc; color: #102d28;
+}
+#app .main-content :is(.secondary-command, .icon-command, .mini-icon, .tiny-command,
+  .environment-row-action, .environment-history-action):hover:not(:disabled) {
+  border-color: #83ebcb; background: #284239; color: #d4ffec;
+}
+#app .main-content :is(.secondary-command.danger, .tiny-command.danger, .danger-command,
+  .baseline-group-actions .danger) {
+  border-color: #9b5261; background: #37222b; color: #ff9aaa;
+}
+#app .main-content :is(.secondary-command.danger, .tiny-command.danger, .danger-command):hover:not(:disabled) {
+  border-color: #bf6a79; background: #492b35; color: #ffbac4;
+}
+
+/* Data, help, code, and report surfaces retain their own structure. */
+#app .main-content :is(
+  .task-list-main strong, .case-list-copy strong, .task-endpoint-row strong,
+  .environment-project-copy strong, .environment-asset-title strong,
+  .environment-service-list strong, .environment-overview-services span,
+  .environment-detail-empty strong, .report-index-row strong,
+  .report-project-identity strong, .report-card-main strong,
+  .report-card-evidence > strong, .contract-row > strong,
+  .load-agent-summary strong, .load-agent-card strong,
+  .baseline-group-editor strong, .asset-project-card strong
+) { color: #eaf1f5; }
+#app .main-content :is(
+  .task-list-main small, .case-list-copy small, .task-fact span,
+  .task-heading span, .baseline-row time, .baseline-case-copy small,
+  .baseline-endpoint-copy code, .baseline-application-label,
+  .report-card-main small, .report-card-main time, .report-card-metrics span,
+  .report-card-evidence small, .environment-project-copy small,
+  .environment-asset-title small, .environment-asset-metrics,
+  .environment-overview-strip small, .environment-summary-grid small,
+  .load-agent-summary span, .load-agent-summary small,
+  .load-agent-card > header small, .contract-row > span,
+  .contract-row > small, .workflow-stage-heading span
+) { color: #acbdc8; }
+#app .main-content :is(.definition-list dd, .environment-read-section dd,
+  .environment-service-list code, .environment-overview-services code,
+  .report-context strong, .task-start-steps strong, .context-heading) { color: #dce9eb; }
+#app .main-content :is(.context-strip, .context-bar, .load-agent-guide,
+  .case-view-guidance, .environment-preview, .baseline-audit-band,
+  .report-focus-note, .source-version-mismatch,
+  .standalone-case-edit-note, .case-generation-status:not(.failed),
+  .load-model-guide, .load-statistical-basis) {
+  border-color: #446a61; background: #1b3535; color: #caefe2;
+}
+#app .main-content :is(.context-strip, .context-bar, .load-agent-guide,
+  .case-view-guidance, .environment-preview) :is(span, small, p) { color: #acbdc8; }
+#app .main-content :is(.report-project-scope, .report-hero, .report-detail-hero) {
+  border-color: #3b5a58; background: #1a2b32; color: #eaf1f5; box-shadow: none;
+}
+#app .main-content :is(.report-project-identity strong, .report-hero h2,
+  .report-detail-hero h2, .report-hero > strong, .report-detail-hero > strong) { color: #eaf1f5; }
+#app .main-content :is(.report-hero p, .report-detail-hero p,
+  .report-board-header span, .report-project-identity small) { color: #acbdc8; }
+#app .main-content :is(.report-detail-evidence article, .contract-row,
+  .source-change-list th, .source-change-list td, .environment-service-list article,
+  .assertion-result-list > div, .task-endpoint-row, .scheduled-row,
+  .baseline-row, .report-index-row) { border-color: #30434d; }
+#app .main-content :is(.console-output, .technical-log, .case-evidence pre,
+  .detail-body pre, .case-editor pre, .debug-result pre) {
+  background: #0d171e; color: #d5e9e5;
+}
+#app .main-content :is(.load-chart svg, .load-replay-chart svg, .load-metric-chart svg) {
+  background: #172229;
+}
+#app .main-content .source-change-list table { color: #eaf1f5; }
+#app .main-content .source-change-list :is(th, td) { border-color: #30434d; }
+#app .main-content .source-change-list th { color: #acbdc8; }
+
+/* Endpoint tree, work-view tabs, and assistant hints shown on the home page. */
+#app .main-content :is(.endpoint-domain-head, .endpoint-group h3,
+  .endpoint-subgroup .endpoint-group-head, .selected-endpoint-group h3) {
+  border-color: #30434d; background: #202e37; color: #eaf1f5;
+}
+#app .main-content :is(.endpoint-domain-head > span,
+  .endpoint-group h3 span) { color: #acbdc8; }
+#app .main-content .endpoint-row { border-color: #30434d; background: #172229; }
+#app .main-content .endpoint-tabs button,
+#app .main-content .case-work-views button {
+  border-color: #40545f; background: #202e37; color: #c1d0d8;
+}
+#app .main-content .endpoint-tabs button.active,
+#app .main-content .case-work-views button.active {
+  border-color: #83ebcb; background: #28483f; color: #baffdf; box-shadow: none;
+}
+#app .main-content .assistant-template-label { color: #dce9eb; }
+#app .main-content .assistant-template-label small { color: #acbdc8; }
+#app .main-content .environment-projects > header span { color: #dce9eb; }
+#app .main-content .asset-project-card .project-name { color: #eaf1f5; }
+#app .main-content .asset-project-card.active .project-name { color: #c4ffea; }
+#app .main-content .asset-state {
+  border-color: #4d8978; background: #203b38; color: #a3f4dc;
+}
+#app .main-content .target-picker > header {
+  border-color: #30434d; background: #202e37; color: #eaf1f5;
+}
+#app .main-content .target-picker > header strong { color: #eaf1f5; }
+#app .main-content .target-picker > header span { color: #acbdc8; }
+
+/* Status meaning remains visible on graphite. */
+#app .main-content :is(.inline-error, .field-error, .state-error,
+  .task-state-failed, .summary-failed strong, .tone-failed .report-status-chip,
+  .case-generation-status.failed) { color: #ff9aaa; }
+#app .main-content :is(.workspace-restore-error, .agent-calibration-error,
+  .case-generation-status.failed, .case-validation-summary:not(.clean),
+  .report-feishu-state.feishu-failed, .cron-feedback.invalid) {
+  border-color: #8e4b5a; background: #36232c; color: #ffc0ca;
+}
+#app .main-content :is(.production-environment-warning, .endpoint-status-badge,
+  .endpoint-development-warning, .load-warning,
+  .baseline-status-pill, .baseline-one-time-pill,
+  .baseline-audit-status.status-evidence_missing,
+  .baseline-audit-status.status-domain_assertion_required,
+  .load-heartbeat.offline) {
+  border-color: #8a7046; background: #352d22; color: #ffd095;
+}
+#app .main-content :is(.load-heartbeat.online, .configured-state,
+  .saved-state, .setup-success, .summary-passed strong,
+  .case-validation-summary.clean, .load-status-chip.passed,
+  .baseline-audit-status.status-verified) { color: #a3f4dc; }
+#app .main-content :is(.case-validation-summary.clean,
+  .baseline-audit-status.status-verified, .load-heartbeat.online) {
+  border-color: #4d8978; background: #203b38;
+}
+#app .main-content :is(.tone-failed .report-status-chip,
+  .baseline-audit-status.status-http_failure,
+  .baseline-audit-status.status-business_failure) {
+  border-color: #8e4b5a; background: #36232c; color: #ffbac4;
+}
+#app .main-content :is(.tone-broken .report-status-chip,
+  .summary-broken strong, .summary-cancelled strong,
+  .load-status-chip.cancelled) { color: #ffd095; }
+
+/* Preserve category and outcome cues without leaving pale chips on dark cards. */
+#app .main-content :is(.method-badge, .lifecycle-regular,
+  .task-state-pill, .report-status-chip, .load-status-chip,
+  .baseline-audit-status, .baseline-business-pill,
+  .baseline-maintenance-pill, .environment-version,
+  .history-version) {
+  border-color: #40545f; background: #25343d; color: #c1d0d8;
+}
+#app .main-content :is(.method-get, .lifecycle-baseline,
+  .baseline-business-pill:not(.business-shared):not(.business-unset)) {
+  border-color: #53718a; background: #203342; color: #a9d8fa;
+}
+#app .main-content :is(.method-post, .lifecycle-pass,
+  .task-state-pill.task-state-ready, .task-state-pill.task-state-completed,
+  .cron-feedback:not(.invalid),
+  .load-status-chip.ready, .load-status-chip.finished,
+  .tone-passed .report-status-chip, .current-version) {
+  border-color: #4d8978; background: #203b38; color: #a3f4dc;
+}
+#app .main-content :is(.method-put, .method-patch,
+  .task-state-pill.task-state-running, .task-state-pill.task-state-debugging,
+  .task-state-pill.task-state-designing,
+  .lifecycle-adapt, .lifecycle-one-time,
+  .baseline-business-pill.business-shared,
+  .load-status-chip.running, .load-status-chip.starting,
+  .load-status-chip.preflighting, .tone-broken .report-status-chip) {
+  border-color: #8a7046; background: #352d22; color: #ffd095;
+}
+#app .main-content :is(.method-delete, .lifecycle-fail,
+  .task-state-pill.task-state-failed,
+  .load-status-chip.failed, .tone-failed .report-status-chip) {
+  border-color: #8e4b5a; background: #36232c; color: #ffbac4;
+}
+#app .main-content :is(.load-status-chip.cancelled,
+  .baseline-business-pill.business-unset) {
+  border-color: #52636c; background: #27323a; color: #c1d0d8;
+}
+#app .main-content .load-decision-hero.tone-failed .load-decision-message strong,
+#app .main-content .tone-failed .load-executive-grid article.result > strong,
+#app .main-content .load-executive-grid article.risk > strong {
+  color: #ffd095;
+}
+#app .main-content .load-decision-hero.tone-failed header > b { color: #ffabb6; }
+
+/* Lazy-loaded performance report components use scoped styles. */
+#app .main-content .load-readable-report { max-width: none; color: #eaf1f5; }
+#app .main-content .load-readable-report :is(.page-subtitle, .report-explainer,
+  .load-latency small, .load-metric-grid article > span) { color: #acbdc8; }
+#app .main-content .load-readable-report :is(.load-metric-grid article,
+  .load-latency, .load-thresholds, .load-chart, .load-agent-report,
+  .load-ai-panel, .load-step-statistics) {
+  border-color: #30434d; background: #172229; color: #eaf1f5;
+}
+#app .main-content .report-table-scroll thead { background: #202e37; color: #c2d3dd; }
+#app .main-content .report-table-scroll :is(th, td) { border-color: #30434d; }
+
+/* Vue scoped cards in performance planning, monitoring, replay and guidance. */
+#app .main-content :is(
+  .load-schedules, .load-analysis, .performance-baselines,
+  .run-comparison, .resource-monitoring, .generator-resources,
+  .load-metric-guide, .load-run-replay, .replay-readable-chart,
+  .test-intent, .bottleneck-coverage, .curve-comparison,
+  .monitoring-selection, .service-facts, .load-next-policy,
+  .load-error-criteria, .load-stage-editor
+) { color: #eaf1f5; }
+#app .main-content :is(
+  .load-schedules .panel, .performance-baselines, .run-comparison,
+  .resource-monitoring, .generator-resources, .load-metric-guide,
+  .load-run-replay, .replay-readable-chart, .test-intent,
+  .bottleneck-coverage, .curve-comparison, .monitoring-selection,
+  .service-facts, .load-next-policy, .load-error-criteria,
+  .load-stage-editor, .monitoring-authorization
+) { border-color: #30434d; background: #172229; color: #eaf1f5; }
+#app .main-content :is(
+  .generator-values > div, .generator-trend, .resource-metric,
+  .baseline-form, .baseline-form fieldset, .comparison-options > label,
+  .fact-row, .coverage-items article, .replay-readout,
+  .replay-events, .replay-event-card, .sample-detail,
+  .guide-formula, .load-metric-guide .guide-grid > article,
+  .replay-readable-chart svg, .load-chart svg
+) { border-color: #30434d; background: #202e37; color: #eaf1f5; }
+#app .main-content :is(
+  .performance-baselines p, .performance-baselines li,
+  .run-comparison p, .run-comparison li, .run-comparison small,
+  .resource-monitoring p, .generator-resources p, .generator-resources small,
+  .test-intent p, .load-schedules p, .load-analysis p,
+  .load-error-criteria p, .load-error-criteria small,
+  .load-stage-editor p, .monitoring-selection p,
+  .monitoring-choice small, .facts-note, .fact-row p,
+  .coverage-note, .coverage-items small, .generator-trend small,
+  .trend-axis, .trend-times, .guide-subtitle, .guide-caveat,
+  .guide-empty, .guide-formula strong, .replay-hint,
+  .load-run-replay p, .replay-speed label, .replay-time,
+  .replay-events .event-note, .chart-legend, .chart-help,
+  .load-recommendations small, .load-next-policy details,
+  .report-exports small, .scenario-advanced header p,
+  .scenario-advanced dd, .advanced-actions span
+) { color: #acbdc8; }
+#app .main-content :is(.load-run-replay .replay-readout p,
+  .load-metric-guide .guide-grid h3, .generator-values strong,
+  .replay-readable-chart h3, .sample-detail strong,
+  .load-next-policy strong) { color: #eaf1f5; }
+#app .main-content :is(.performance-baselines summary,
+  .run-comparison summary, .resource-metric summary,
+  .generator-resources summary, .condition-value summary,
+  .load-metric-guide .guide-toggle-label,
+  .replay-event-card summary) { color: #83ebcb; }
+#app .main-content :is(.performance-baselines select,
+  .performance-baselines textarea, .performance-baselines input,
+  .monitoring-form select, .fact-row input, .fact-row select,
+  .fact-row textarea, .guide-search input,
+  .load-analysis .analysis-project select) {
+  border-color: #40545f; background: #121c24; color: #eaf1f5;
+}
+#app .main-content :is(.load-schedules button, .load-schedules pre,
+  .condition-value pre, .replay-event-card .event-tag,
+  .chart-tag, .chart-readout) {
+  border-color: #40545f; background: #202e37; color: #c4e8dc;
+}
+#app .main-content :is(.baseline-scroll th, .comparison-scroll th,
+  .generator-table th, .report-table-scroll thead) {
+  border-color: #30434d; background: #202e37; color: #c2d3dd;
+}
+#app .main-content :is(.baseline-scroll td, .comparison-scroll td,
+  .generator-table td, .resource-table td) { border-color: #30434d; color: #eaf1f5; }
+#app .main-content :is(.replay-readable-chart svg text,
+  .resource-metric svg text) { fill: #acbdc8; }
+#app .main-content :is(.chart-y, .chart-x, .chart-unit,
+  .chart-note, .chart-reference-label) { color: #acbdc8; }
+#app .main-content :is(.chart-gridline, .replay-readable-chart .gridline) { stroke: #40545f; }
+#app .main-content .load-schedules .error { background: #36232c; color: #ffbac4; }
+#app .main-content .load-schedules .success { background: #203b38; color: #a3f4dc; }
+#app .main-content :is(.load-schedules [role=alert],
+  .performance-baselines [role=alert], .run-comparison [role=alert],
+  .resource-monitoring [role=alert], .load-analysis [role=alert],
+  .monitoring-selection [role=alert], .report-exports [role=alert],
+  .facts-error) { color: #ff9aaa; }
+
+@media (max-width: 1240px) {
+  .design-workspace { grid-template-columns: 230px minmax(0, 1fr); }
+  .workbench-shell-focused .design-workspace { grid-template-columns: minmax(260px, 340px) minmax(0, 1fr); }
+  .management-shell, .case-management-shell { grid-template-columns: minmax(280px, 390px) minmax(0, 1fr); }
+}
+@media (max-width: 1100px) {
+  .baseline-board, .environment-center-shell { grid-template-columns: 1fr; }
+  .report-workbench { grid-template-columns: 1fr; }
+}
+@media (max-width: 1160px) {
+  /* The existing 320px + 560px schedule columns exceed the available main area here. */
+  .scheduled-layout { grid-template-columns: minmax(0, 1fr); }
+  .scheduled-list, .scheduled-editor { min-width: 0; }
+  .scheduled-editor .setup-grid { min-width: 0; }
+}
+@media (min-width: 621px) and (max-width: 1160px) {
+  .target-picker > header { grid-template-columns: minmax(0, .75fr) minmax(0, 1fr); }
+  .target-picker > header input { min-width: 0; }
+}
+@media (max-width: 920px) {
+  .app-shell { display: block; }
+  .side-rail { width: min(82vw, 280px); }
+  .mobile-app-bar { border-bottom-color: #2c3b44; background: #111a22; }
+  .workspace { padding: 13px; }
+  #app .main-content .mobile-workbench-tabs {
+    border-color: #40545f; background: #172229;
+    box-shadow: 0 4px 16px #050c1240;
+  }
+  #app .main-content .mobile-workbench-tabs button { color: #acbdc8; }
+  #app .main-content .mobile-workbench-tabs button.active {
+    border-color: #83ebcb; background: #28483f; color: #baffdf;
+  }
+  #app .main-content .context-toggle,
+  #app .main-content .management-back-to-list {
+    border-color: #40545f; background: #202e37; color: #c4e8dc;
+  }
+  #app .main-content .context-summary strong { color: #eaf1f5; }
+  .workbench-shell, .design-workspace, .workbench-shell-focused .design-workspace,
+  .management-shell, .case-management-shell { grid-template-columns: 1fr; }
+  .report-workbench { grid-template-columns: 1fr; }
+}
+@media (max-width: 620px) {
+  .workspace { padding: 10px; }
+  .page-toolbar { align-items: flex-start; flex-wrap: wrap; }
+  .page-toolbar h1 { font-size: 18px; }
+  .page-toolbar-actions, .load-toolbar-actions { flex-wrap: wrap; }
+  .report-hero, .report-detail-hero { min-height: 0; }
+  .report-history-card { min-height: 0; }
+  .management-summary-grid > div { min-height: 48px; }
+}

@@ -317,6 +317,8 @@ test('uncertain release submission restores its frozen purpose and notification 
   if(path==='/ui-executions'&&o.method==='POST'&&fail)throw new Error('网络暂时断开');
  });await select(t,f);f.node.querySelector('[data-ui-release]').click();f.node.querySelector('[data-ui-notify]').click();f.node.querySelector('[data-ui-start]').click();await wait();await wait();
  const original=creationPosts(f)[0];f.mount();await wait();assert.equal(f.node.querySelector('[data-ui-release]').checked,true);assert.equal(f.node.querySelector('[data-ui-notify]').checked,true);assert.equal(f.node.querySelector('[data-ui-form]').disabled,true);
+ const release=f.node.querySelector('[data-ui-release]'),notify=f.node.querySelector('[data-ui-notify]');
+ release.click();notify.click();assert.equal(release.checked,true);assert.equal(notify.checked,true);assert.equal(release.disabled,true);assert.equal(notify.disabled,true);
  fail=false;f.node.querySelector('[data-ui-recover]').click();await wait();await wait();const recovered=creationPosts(f)[1];assert.equal(recovered.options.headers['Idempotency-Key'],original.options.headers['Idempotency-Key']);assert.deepEqual(JSON.parse(JSON.stringify(recovered.options.body)),JSON.parse(JSON.stringify(original.options.body)));
 });
 test('notification deep link opens its cited report revision on the reports page',async t=>{
@@ -532,4 +534,20 @@ test('picture refresh with zero requests does not claim fresh pictures or a capt
  const f=fixture(t,path=>path==='/runners/refresh'?{ok:true,requested:0,requests:[]}:undefined);
  await select(t,f,{canRefreshPictures:()=>true});assert.ok(pictureButton(f));await pictureButton(f).onclick();
  assert.match(pictureNotice(f).textContent,/没有.*采集请求.*检查.*连接.*任务结束.*重试/);assert.doesNotMatch(pictureNotice(f).textContent,/已更新|已完成|已采集/);assertSelected(f);
+});
+
+test('start guidance follows missing selections and keeps execution gates',async t=>{
+ const f=fixture(t);f.mount();await wait();
+ const hint=()=>f.node.querySelector('[data-ui-start-hint]').textContent;
+ assert.match(hint(),/选择.*应用/);
+ const app=f.node.querySelector('[name="ui-app"]');app.value='app.a';app.dispatchEvent(new f.w.Event('change'));await wait();
+ assert.match(hint(),/勾选/);f.node.querySelector('[data-case-id]').click();await wait();
+ assert.match(hint(),/选择.*手机/);f.node.querySelector('[data-device-key]').click();await wait();
+ assert.equal(f.node.querySelector('[data-ui-start]').disabled,false);assert.match(hint(),/已准备好/);
+ assert.equal(f.calls.some(c=>c.path==='/ui-executions/preflight'),false);
+});
+test('view-only users see why starting is unavailable',async t=>{
+ const f=fixture(t);await select(t,f,{canExecute:()=>false});
+ assert.equal(f.node.querySelector('[data-ui-start]').disabled,true);
+ assert.match(f.node.querySelector('[data-ui-start-hint]').textContent,/没有执行权限/);
 });

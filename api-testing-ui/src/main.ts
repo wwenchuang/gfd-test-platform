@@ -8,6 +8,7 @@ import { installImeCompositionGuard } from './utils/imeCompositionGuard'
 import { loadTestApplications } from './utils/testApplications'
 import './styles/tokens.css'
 import './styles/app.css'
+import './styles/workbench.css'
 
 installImeCompositionGuard(document)
 

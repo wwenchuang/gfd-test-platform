@@ -1,0 +1,118 @@
+/* Shared presentation for the existing platform. No execution or data behavior. */
+:root {
+  --bg:#10171d; --surface:#172229; --surface2:#202e37; --surface3:#121c24;
+  --border:#2c3b44; --border2:#3b505c; --accent:#83ebcb; --accent-strong:#a3f4dc;
+  --accent2:#9ab9d4; --text:#eaf1f5; --text2:#acbdc8; --text3:#8b9eab;
+  --shadow-soft:0 4px 16px #050c121a; --glow:0 0 0 1px #83ebcb30;
+  --glass:#172229; --tech-line:#83ebcb40;
+}
+body {background:#10171d;background-image:none}
+#app {background:#10171d}
+.header {background:#0e151c;border-bottom:1px solid #2c3b44;box-shadow:none}
+.sidebar {background:#111a22;border-right:1px solid #2c3b44}
+.workflow-nav {padding:12px 10px}
+.workflow-step {border-radius:8px;box-shadow:none;min-height:46px}
+.workflow-step.active {background:#21343b;border-color:transparent;box-shadow:inset 3px 0 #83ebcb}
+.workflow-step:hover:not(.active) {background:#1b2932}
+.workflow-index {background:transparent;box-shadow:none;border:0;color:#c2d5dc;border-radius:6px}
+.workflow-name {font-weight:550;font-size:13px}
+.workflow-nav .nav-group-title,.workflow-nav>[data-ui-advanced]>summary {font-size:11px;color:#98acb9;letter-spacing:.04em}
+.brand-mark,.brand-mark.small {box-shadow:0 0 0 1px #83ebcb26}
+.brand-mark::after {animation:none}
+.statusbar {background:#142029;border-top:1px solid #293c46;color:#aabcc8}
+#workflow-navigation-help {white-space:normal;overflow:visible;max-width:80ch}
+#workflow-navigation-help summary {width:fit-content;cursor:pointer;color:var(--accent)}
+#workflow-navigation-help-text {margin:6px 0 0;line-height:1.6}
+.btn-sm {border-radius:7px;box-shadow:none;font-weight:550;transition:background .14s,border-color .14s}
+.btn-sm:hover:not(:disabled) {box-shadow:none}
+.btn-sm.primary,.btn-primary {background:#83ebcb;color:#102d28;border-color:transparent;box-shadow:none}
+.btn-sm.primary:hover:not(:disabled),.btn-primary:hover:not(:disabled) {background:#a3f4dc;color:#102d28;box-shadow:none}
+.btn-sm.danger {color:#ff9aaa;border-color:#9b5261;background:#37222b}
+.btn-sm.danger:hover:not(:disabled) {background:#492b35}
+:is(button,input,select,textarea,summary,a):focus-visible {outline:2px solid #83ebcb;outline-offset:3px}
+.review-page {padding:22px clamp(16px,2vw,32px);gap:16px;background:#10171d;min-width:0;grid-template-columns:minmax(0,1fr)}
+.review-page>*,.workflow-guide>* {min-width:0}
+.review-head {display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px 24px;padding:0 0 18px;border:0;border-bottom:1px solid #30414b;border-radius:0;background:none;box-shadow:none;overflow:visible;min-width:0}
+.review-head>div {min-width:0}
+.review-head::before {display:none}
+.review-head h2 {font-size:25px;letter-spacing:-.025em;line-height:1.3;margin:4px 0 6px}
+.review-head p {max-width:76ch;margin:0;font-size:12px}
+.workflow-kicker {font-size:11px;font-weight:600;color:#83ebcb;letter-spacing:.05em}
+.review-panel,.review-case-card,.agent-card {background:#172229;border:1px solid #2f414b;border-radius:10px;box-shadow:none;min-width:0}
+.review-panel {padding:16px;gap:10px}
+.review-panel h3,.agent-card h3 {font-size:15px;font-weight:600}
+.review-panel>.review-panel,.agent-card>.agent-card {background:#121e26;box-shadow:none}
+.review-stat,.agent-stat,.report-overview-card {background:#18262f;border-color:#30434d;border-radius:8px;box-shadow:none;padding:14px 16px}
+.review-stat strong {font-size:24px;letter-spacing:-.03em;font-variant-numeric:tabular-nums}
+.review-stat span {font-size:12px}
+.review-actions {gap:8px;align-items:center}
+.review-actions .btn-sm {font-size:12px;padding:7px 12px}
+.review-grid {gap:16px;align-items:start}
+.management-filter-bar {background:#18262f;border-color:#31434d;border-radius:9px;box-shadow:none;padding:12px;gap:10px}
+.management-filter-bar input:not([type=checkbox]),.management-filter-bar select {background:#111d25;color:#eaf1f5;border:1px solid #40545f;border-radius:7px;min-height:36px;padding:7px 10px}
+.workflow-guide {padding:22px clamp(16px,2vw,32px);background:#10171d}
+.workflow-hero,.workflow-grid {max-width:none}
+.workflow-hero {padding-bottom:16px;border-bottom:1px solid #30414b}
+.workflow-hero .workflow-card-actions {grid-row:auto}
+.workflow-grid.history-grid {grid-template-columns:repeat(auto-fit,minmax(min(100%,320px),1fr));gap:12px}
+.agent-run-history-card {background:#172229;border-color:#30434d;align-content:start}
+.agent-run-history-card .agent-run-title {font-size:15px;line-height:1.5}
+.module-directory {padding:22px clamp(16px,2vw,32px);background:#10171d}
+.module-directory-head {padding:0 0 16px;border:0;border-bottom:1px solid #30414b;background:none;border-radius:0}
+.management-list {background:#14212a;border-color:#2e414b;border-radius:9px}
+.management-row {min-height:64px;padding:12px 14px;gap:12px;border-color:#293c46}
+.management-row:hover,.bug-draft-row:hover {background:#1b2c35}
+.management-row-main strong {font-size:13px}
+.management-row-meta {font-size:11px}
+.management-pager {padding-top:12px;font-size:11px}
+.agent-hero {background:transparent;border:0;border-bottom:1px solid #30414b;border-radius:0;box-shadow:none;padding:0 0 18px}
+.agent-hero::before {display:none}
+.agent-hero h2 {font-size:25px;line-height:1.3}
+.agent-form-section {background:#14212a;border-color:#30434d;border-radius:9px}
+.agent-phone-grid {gap:10px}
+.agent-field .agent-phone-card {padding:14px 32px 14px 14px;gap:12px;min-height:150px}
+.agent-phone-item {background:#17262e;border-color:#324650;border-radius:10px}
+.agent-phone-art {background:#101b23;border-color:#536975}
+.agent-phone-item:has(input:checked) {background:#203738;border-color:#83ebcb;box-shadow:inset 0 0 0 1px #83ebcb22}
+.job-card,.job-row {box-shadow:none;border-color:#30434d;border-radius:8px}
+.job-card {background:#15222c;padding:12px}
+.job-card.running {border-color:#83ebcb}
+.job-progress-grid {gap:10px}
+.job-badge,.status-pill {font-size:11px;line-height:1.4;border-radius:20px;padding:3px 8px}
+.device-recorder-grid {gap:16px;align-items:start}
+.device-recorder-page .review-head {padding-bottom:16px}
+.device-recorder-history-list {display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,300px),1fr));gap:10px}
+.device-recorder-history-entry {min-width:0;background:#15232c;border-color:#30434d;box-shadow:none}
+.device-recorder-history-card {background:transparent;box-shadow:none;padding:12px;min-width:0}
+.device-recorder-history-app h3 {font-size:16px;margin:12px 0}
+.device-recorder-history-group>summary {padding:10px 0;font-size:13px;color:#bbced8}
+.device-recorder-step-nav {gap:8px}
+.device-recorder-timeline article {background:#14212a;border-color:#30434d;border-radius:9px}
+.mindmap-file-section {background:#15232b}
+.mindmap-library-row {background:#14212a;border-color:#30434d;border-radius:8px;padding:12px 14px}
+.mindmap-library-row .mindmap-row-title strong {font-size:14px}
+.mindmap-library-row .mindmap-row-foot {font-size:11px}
+.mindmap-library-group-head {border-bottom:1px solid #30434d;padding-bottom:8px;margin-bottom:4px}
+.mindmap-file-more-content {background:#1b2a34;border-color:#3b515c}
+.mindmap-library-filters {padding:12px;background:#1b2b34;border-radius:9px}
+.config-management-page,.bug-draft-page {width:100%;max-width:none}
+.config-management-page input,.config-management-page select,.config-management-page textarea {border-radius:7px}
+.login-box {border-color:#344a53;background:#17252e;box-shadow:0 24px 70px #0004;max-width:calc(100vw - 32px)}
+#login-screen {background:radial-gradient(ellipse at 65% 25%,#233c40,#10171d 65%)}
+#login-screen::before {display:none}
+@media(min-width:1700px){
+ .agent-phone-grid {grid-template-columns:repeat(auto-fit,minmax(285px,1fr))}
+ .device-recorder-history-list {grid-template-columns:repeat(auto-fill,minmax(340px,1fr))}
+}
+@media(max-width:760px){
+ .review-page {padding:16px 12px;gap:12px}
+ .workflow-guide,.module-directory {padding:16px 12px}
+ .review-head {align-items:flex-start;gap:10px;padding-bottom:12px}
+ .review-head h2,.agent-hero h2 {font-size:22px}
+ .review-head .review-actions {width:100%}
+ .review-panel {padding:12px}
+ .management-row {gap:8px;padding:12px}
+ .workflow-nav {padding:8px}
+ .device-recorder-history-list {grid-template-columns:1fr}
+}
+@media(prefers-reduced-motion:reduce){.btn-sm,.workflow-step{transition:none}}

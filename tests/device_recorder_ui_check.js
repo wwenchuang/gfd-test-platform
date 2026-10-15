@@ -9,7 +9,7 @@ const ROOT = path.resolve(__dirname, '..');
 
 test('task manager uses a new cache key for the server-bridged recorder script', () => {
   const html = fs.readFileSync(path.join(ROOT, 'task-manager.html'), 'utf8');
-  assert.match(html, /device-recorder\.js\?v=20260924-recorder-start-v34/);
+  assert.match(html, /device-recorder\.js\?v=20261014-density-v1/);
 });
 
 test('history groups by app and module and filter changes clear hidden selections', () => {
@@ -304,11 +304,85 @@ test('shows an empty state when no Android phone is online', async () => {
   assert.equal(f.dom.window.document.querySelector('[data-action="start-recording"]').disabled, true);
 });
 
+test('recording explains a missing app before allowing start on a ready phone', () => {
+  const f = fixture();
+  f.run('taskApps=[]; renderDeviceRecorder()');
+  const start = f.dom.window.document.querySelector('[data-action="start-recording"]');
+  assert.equal(start.disabled, true);
+  assert.match(f.dom.window.document.querySelector('[data-recorder-start-hint]').textContent, /应用/);
+  const select = f.dom.window.document.getElementById('device-recorder-app');
+  select.innerHTML = '<option value="com.kfb.model">智小白3D</option>';
+  f.run('refreshRecorderModuleOptions()');
+  assert.equal(start.disabled, false);
+  assert.match(f.dom.window.document.querySelector('[data-recorder-start-hint]').textContent, /点击开始/);
+});
+
+test('leaving the recorder while history loads cannot overwrite the next page', async () => {
+  const f = fixture();
+  f.context.activeWorkflow = 'device_recorder';
+  let reply;
+  let requested;
+  const loading = new Promise(resolve => { requested = resolve; });
+  f.context.apiRequest = () => new Promise(resolve => { reply = resolve; requested(); });
+  const pending = f.run('showDeviceRecorder()');
+  await loading;
+  f.context.activeWorkflow = 'execute';
+  f.dom.window.document.getElementById('editor-area').textContent = '调试执行中心';
+  reply({sessions: []});
+  await pending;
+  assert.equal(f.dom.window.document.getElementById('editor-area').textContent, '调试执行中心');
+});
+
 test('never offers business printer identifiers as recording phones', () => {
   const f = fixture();
   f.run("runnerDevices = [{runner_id:'win-runner-01',device_id:'9888E0094F2A',status:'online'}]");
   f.run('renderDeviceRecorder()');
   assert.doesNotMatch(f.dom.window.document.getElementById('editor-area').textContent, /9888E0094F2A/);
+});
+
+for (const failed of [false, true]) {
+  test(`history refresh ${failed ? 'failure' : 'success'} cannot repaint after leaving the recorder`, async () => {
+    const f = fixture();
+    f.context.activeWorkflow = 'device_recorder';
+    f.run('showDeviceRecordingHistory()');
+    let resolve, reject;
+    f.context.apiRequest = () => new Promise((yes, no) => { resolve = yes; reject = no; });
+    const pending = f.run('loadDeviceRecordingHistory()');
+    f.context.activeWorkflow = 'assets';
+    f.dom.window.document.getElementById('editor-area').textContent = '用例资产';
+    if (failed) reject(new Error('连接超时'));
+    else resolve({sessions: []});
+    await pending;
+    assert.equal(f.dom.window.document.getElementById('editor-area').textContent, '用例资产');
+  });
+}
+
+test('history refresh preserves new recording input when returning to recording view', async () => {
+  const f = fixture();
+  f.context.activeWorkflow = 'device_recorder';
+  f.run('showDeviceRecordingHistory()');
+  let resolve;
+  f.context.apiRequest = () => new Promise(yes => { resolve = yes; });
+  const pending = f.run('loadDeviceRecordingHistory()');
+  f.run("deviceRecorderView='record';renderDeviceRecorder()");
+  const editor = f.dom.window.document.getElementById('editor-area');
+  const form = editor.firstElementChild;
+  resolve({sessions: []});
+  await pending;
+  assert.equal(editor.firstElementChild, form);
+});
+
+test('older history refresh cannot replace a newer refresh result', async () => {
+  const f = fixture();
+  const replies = [];
+  f.context.apiRequest = () => new Promise(resolve => replies.push(resolve));
+  const old = f.run('loadDeviceRecordingHistory(false)');
+  const latest = f.run('loadDeviceRecordingHistory(false)');
+  replies[1]({sessions: [{id:'latest', status:'finished'}]});
+  await latest;
+  replies[0]({sessions: [{id:'stale', status:'finished'}]});
+  await old;
+  assert.equal(f.run('deviceRecorderHistory[0].id'), 'latest');
 });
 
 test('shows device health colors and explains that app and phone are independent', () => {

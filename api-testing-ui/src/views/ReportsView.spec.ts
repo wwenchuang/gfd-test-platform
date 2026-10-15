@@ -34,6 +34,22 @@ describe('ReportsView', () => {
     setActivePinia(createPinia())
   })
 
+  it.each([
+    { label: 'empty project', rows: [], title: '暂无测试结果' },
+    { label: 'cancelled before any case', rows: [{ ...report, state: 'CANCELLED', summary: { total: 0, passed: 0, failed: 0 }, case_results: [], case_statuses: [] }], title: '需要关注' },
+  ])('does not claim success for $label', ({ rows, title }) => {
+    const context = useContextStore()
+    vi.spyOn(context, 'loadSavedContext').mockResolvedValue()
+    vi.spyOn(context, 'loadOptions').mockResolvedValue()
+    useExecutionsStore().executions = rows as ExecutionView[]
+    const wrapper = mount(ReportsView)
+    expect(wrapper.get('.report-hero h2').text()).toBe(title)
+    expect(wrapper.get('[data-testid="report-dashboard-rate"]').text()).toBe('—')
+    expect(wrapper.find('.report-bucket-bar').exists()).toBe(false)
+    expect(wrapper.get('.report-dashboard').text()).not.toContain('全部通过')
+    wrapper.unmount()
+  })
+
   it('summarizes report health before opening the full diagnostic report', async () => {
     const executions = useExecutionsStore()
     const context = useContextStore()

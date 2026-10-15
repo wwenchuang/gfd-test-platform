@@ -95,6 +95,11 @@ const dashboard = computed(() => {
   }
 })
 const latestReport = computed(() => sourceScopedReports.value[0] || null)
+const dashboardConclusion = computed(() => {
+  if (!dashboard.value.totalReports) return '暂无测试结果'
+  if (dashboard.value.issueReports) return '需要关注'
+  return dashboard.value.totalCases ? '全部通过' : '尚无用例结果'
+})
 const projectName = computed(() => selectedProject.value?.name || '未选择项目')
 const reportRangeLabel = computed(() => sourceScopedReports.value.length ? `最近 ${sourceScopedReports.value.length} 次执行` : '暂无报告')
 const reportCoverageLabel = computed(() => {
@@ -432,10 +437,10 @@ async function restoreArchivedReports(): Promise<void> {
         <div class="report-hero">
           <div>
             <p class="eyebrow">项目报告驾驶舱</p>
-            <h2>{{ dashboard.issueCases ? '需要关注' : '全部通过' }}</h2>
+            <h2>{{ dashboardConclusion }}</h2>
             <p>{{ dashboard.totalReports }} 次执行 · {{ dashboard.totalCases }} 条用例 · 最近 {{ latestReport ? new Date(latestReport.created_at).toLocaleString('zh-CN') : '暂无执行' }}</p>
           </div>
-          <strong data-testid="report-dashboard-rate" :class="dashboard.issueCases ? 'tone-failed' : 'tone-passed'">{{ dashboard.passRate }}</strong>
+          <strong data-testid="report-dashboard-rate" :class="dashboard.issueReports ? 'tone-failed' : dashboard.totalCases ? 'tone-passed' : ''">{{ dashboard.totalCases ? dashboard.passRate : '—' }}</strong>
         </div>
         <div class="report-stat-grid">
           <div><ListChecks :size="16" /><span>执行次数</span><strong data-testid="report-dashboard-total">{{ dashboard.totalReports }} 次执行</strong></div>
@@ -443,12 +448,13 @@ async function restoreArchivedReports(): Promise<void> {
           <div><AlertTriangle :size="16" /><span>问题用例</span><strong>{{ dashboard.issueCases }} 个问题</strong></div>
           <div><Clock3 :size="16" /><span>用例累计耗时</span><strong>{{ formatDuration(dashboard.caseDurationMs) }}</strong></div>
         </div>
-        <div class="report-bucket-bar">
+        <div v-if="dashboard.totalCases" class="report-bucket-bar">
           <span :style="{ flexGrow: Math.max(dashboard.passed, 1) }" class="bucket-passed">通过 {{ dashboard.passed }}</span>
           <span :style="{ flexGrow: Math.max(dashboard.failed, 0) }" class="bucket-failed">失败 {{ dashboard.failed }}</span>
           <span :style="{ flexGrow: Math.max(dashboard.broken, 0) }" class="bucket-broken">异常 {{ dashboard.broken }}</span>
           <span :style="{ flexGrow: Math.max(dashboard.skipped + dashboard.cancelled, 0) }" class="bucket-neutral">未完成 {{ dashboard.skipped + dashboard.cancelled }}</span>
         </div>
+        <p v-else class="page-subtitle">{{ dashboard.totalReports ? '尚无用例执行结果，请查看下方执行记录中的原因。' : '完成一次接口测试后，这里会展示执行结果和问题用例。' }}</p>
       </section>
       <p v-if="executions.error" class="inline-error" role="alert">{{ executions.error }}</p>
       <p v-if="executions.deleting || reportActionMessage" class="setup-success" role="status">

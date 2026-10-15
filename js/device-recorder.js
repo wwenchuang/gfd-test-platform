@@ -13,6 +13,7 @@ let deviceRecorderRecognitionInFlight = false;
 let deviceRecorderHistory = [];
 let deviceRecorderHistoryState = 'ready';
 let deviceRecorderHistoryError = '';
+let deviceRecorderHistoryRequest = 0;
 let deviceRecorderHistoryApp = '*';
 let deviceRecorderHistoryModule = '*';
 const deviceRecorderHistorySelected = new Set();
@@ -100,8 +101,15 @@ function renderRecorderDevicePanel() {
   const panel = document.getElementById('device-recorder-devices');
   if (!panel) return;
   panel.innerHTML = recorderDevicePanel();
+  updateRecorderStartState();
+}
+
+function updateRecorderStartState() {
+  const appSelected = Boolean(document.getElementById('device-recorder-app')?.value);
   const start = document.querySelector('[data-action="start-recording"]');
-  if (start) start.disabled = deviceRecorderStarting || !recorderHasReadyPhone();
+  if (start) start.disabled = deviceRecorderStarting || !appSelected || !recorderHasReadyPhone();
+  const hint = document.querySelector('[data-recorder-start-hint]');
+  if (hint) hint.textContent = deviceRecorderStarting ? '正在准备录制，请稍候。' : !appSelected ? '请先选择应用；没有可选应用时，请联系管理员配置应用。' : recorderHasReadyPhone() ? '点击开始后，在 Sonic 中选择手机进行操作。' : '暂无可录制的空闲安卓手机，请检查连接并刷新手机状态。';
 }
 
 function stopRecorderDevicePolling() {
@@ -290,6 +298,7 @@ function recorderModuleOptions(session) {
 function refreshRecorderModuleOptions() {
   const input = document.getElementById('device-recorder-group-module');
   if (input) input.innerHTML = '<option value="">未分组</option>' + recorderModuleOptions({app_package:document.getElementById('device-recorder-app')?.value});
+  updateRecorderStartState();
 }
 
 async function updateRecorderModule(moduleName) {
@@ -430,7 +439,7 @@ function renderDeviceRecorder(preserveDraft = false) {
           ${session?.status === 'recording' ? '<button class="btn-sm" onclick="openRecorderSonic()">打开所选手机</button><button class="btn-sm" onclick="finishDeviceRecording()">结束录制</button><button class="btn-sm danger" onclick="cancelDeviceRecording()">取消本次录制</button>' : ''}
           ${['paused','generating'].includes(session?.status) ? '<button class="btn-sm danger" data-action="cancel-recording" onclick="cancelDeviceRecording()">取消录制</button>' : ''}
           ${session?.status === 'finished' ? `<button class="btn-sm ai" data-action="generate-recording-yaml" ${recorderCanGenerate(session) ? '' : 'disabled'} onclick="generateDeviceRecordingYaml()">${recorderGenerateLabel(session)}</button>` : ''}
-        </div><div id="device-recorder-message" class="generate-hint">${session ? `手机：${escapeHtml(session.device_id || '等待在 Sonic 选择')} · 会话：${escapeHtml(session.id)} · ${escapeHtml(recorderSessionMessage(session))}` : '选择应用后开始录制，再在 Sonic 中选择要操作的手机。'}</div>
+        </div>${!session ? `<p class="generate-hint" data-recorder-start-hint role="status">${recorderHasReadyPhone() ? '点击开始后，在 Sonic 中选择手机进行操作。' : '暂无可录制的空闲安卓手机，请检查连接并刷新手机状态。'}</p>` : ''}<div id="device-recorder-message" class="generate-hint">${session ? `手机：${escapeHtml(session.device_id || '等待在 Sonic 选择')} · 会话：${escapeHtml(session.id)} · ${escapeHtml(recorderSessionMessage(session))}` : '选择应用后开始录制，再在 Sonic 中选择要操作的手机。'}</div>
         <div id="device-recorder-preparation">${recorderPreparationPanel(session)}</div>
         ${session?.status === 'finished' ? `<div class="device-recorder-save"><label class="modal-label">用例名称</label><input id="device-recorder-task-name" value="${escapeHtml(deviceRecorderGenerated?.task_name || '录制生成用例')}" oninput="syncRecorderFileName(this.value)"><div id="device-recorder-name-note" class="generate-hint" hidden>名称已修改；保存时会按新名称重新生成 YAML。</div><label class="modal-label">保存到模块</label><select id="device-recorder-module">${recorderModuleOptions(session)}</select>${recorderModuleOptions(session) ? '' : '<div class="agent-risk show">当前应用没有已关联模块，请先到应用配置关联模块。</div>'}<label class="modal-label">YAML 文件名</label><input id="device-recorder-file" value="${escapeHtml(deviceRecorderGenerated?.task_name || '录制生成用例')}.yaml" oninput="deviceRecorderFileNameEdited=true"><button class="btn-sm success" ${deviceRecorderGenerated && recorderModuleOptions(session) ? '' : 'disabled'} onclick="saveDeviceRecordingYaml()">保存到用例资产</button></div>` : ''}
       </section>
@@ -448,6 +457,7 @@ function renderDeviceRecorder(preserveDraft = false) {
     const page=area.querySelector('[data-recorder-session]'); if(page) page.scrollTop=draft.scroll;
     if(draft.focus) document.getElementById(draft.focus)?.focus({preventScroll:true});
   }
+  updateRecorderStartState();
   startRecorderDevicePolling();
   if (selectedStep?.screenshot_path) setTimeout(() => loadRecorderEvidence(selectedStep.id), 0);
 }
@@ -577,21 +587,28 @@ async function showDeviceRecorder() {
   deviceRecorderView = 'record';
   resetYamlToolbarForManager();
   if (typeof loadModules === 'function') await loadModules();
+  if (typeof activeWorkflow !== 'undefined' && activeWorkflow !== 'device_recorder') return;
   await loadDeviceRecordingHistory(false);
+  if (typeof activeWorkflow !== 'undefined' && activeWorkflow !== 'device_recorder') return;
   if (deviceRecorderSession?.status === 'finished') deviceRecorderSession = null;
   deviceRecorderGenerated = null;
   renderDeviceRecorder();
 }
 
 async function loadDeviceRecordingHistory(render = true) {
+  const request = ++deviceRecorderHistoryRequest;
+  const view = deviceRecorderView;
+  const canRender = () => render && view === deviceRecorderView
+    && (typeof activeWorkflow === 'undefined' || activeWorkflow === 'device_recorder');
   deviceRecorderHistoryState = 'loading';
   deviceRecorderHistoryError = '';
-  if (render && deviceRecorderView === 'history') renderDeviceRecorderHistory();
+  if (canRender() && view === 'history') renderDeviceRecorderHistory();
   try {
     const rows = new Map();
     let offset = 0;
     do {
       const data = await apiRequest(`/device-recordings?limit=100&offset=${offset}`);
+      if (request !== deviceRecorderHistoryRequest) return;
       (data.sessions || []).forEach(item => rows.set(item.id,item));
       const next = data.next_offset;
       if (next == null || !Number.isInteger(next) || next <= offset) break;
@@ -601,11 +618,12 @@ async function loadDeviceRecordingHistory(render = true) {
     for (const id of deviceRecorderHistorySelected) if (!deviceRecorderHistory.some(item => item.id === id && recorderHistoryDeletable(item))) deviceRecorderHistorySelected.delete(id);
     deviceRecorderHistoryState = 'ready';
   } catch (error) {
+    if (request !== deviceRecorderHistoryRequest) return;
     deviceRecorderHistory = [];
     deviceRecorderHistoryState = 'error';
     deviceRecorderHistoryError = String(error.message || error || '读取失败');
   }
-  if (render) deviceRecorderView === 'history' ? renderDeviceRecorderHistory() : renderDeviceRecorder();
+  if (canRender()) view === 'history' ? renderDeviceRecorderHistory() : renderDeviceRecorder();
 }
 
 function showDeviceRecordingHistory() {

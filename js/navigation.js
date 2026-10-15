@@ -173,7 +173,44 @@ function isFileWorkflow(sectionKey = activeWorkflow) {
   return ['generate', 'execute', 'repair', 'baseline'].includes(sectionKey);
 }
 
+// Keep optional guidance outside editor-area: page loaders replace its content.
+const WORKFLOW_NAVIGATION_HELP = Object.freeze({
+  dashboard: '按目标组织自动化测试。先选择应用、范围和模式，启动后查看进度；日常执行已有用例可到“开始测试”。',
+  agent: '按目标组织自动化测试。先选择应用、范围和模式，启动后查看进度和待确认事项。',
+  agent_history: '查看自动化任务的运行过程。先筛选记录，再打开详情查看产物；遇到失败先查看失败原因。',
+  agent_confirm: '处理需要你确认的变更。先核对变更内容和证据，再确认或拒绝；确认后任务才继续。',
+  assets: '整理可复用的测试资料与脚本。先按应用找到用例，再打开编辑或调试；执行已发布用例可到“开始测试”。',
+  generate: '从需求生成测试用例。先提供需求与应用信息，生成后检查分析和覆盖范围，再调试脚本。',
+  yaml_edit: '修改测试脚本。先从“用例资产”打开文件，修改后保存并调试；保存后仍需验证执行结果。',
+  execute: '验证新建或修改的脚本。先打开文件并选择用例，调试后查看报告、截图和失败原因。',
+  baseline: '把已验证的脚本同步到 Sonic。先确认执行通过和应用归属，再同步；后续回归使用稳定基线。',
+  reports: '查找历史执行结果。先筛选任务，再打开报告或证据；你在“开始测试”发起的记录可到“我的测试”查看。',
+  failure_analysis: '判断失败原因并安排处理。先看截图和日志；脚本问题可生成修复草稿，设备或环境异常先恢复环境。',
+  repair: '根据失败证据修复脚本。先确认属于脚本问题，再生成并审核修复草稿，应用后重新调试。',
+  bug_drafts: '整理准备提交的缺陷。先核对描述与证据，确认后再提交到飞书；草稿阶段尚未提交。',
+  identity: '管理成员可用的功能。先选择成员并核对职责，再调整权限；缺少管理权限时联系管理员。',
+  config: '设置各项 AI 能力使用的模型。需要调整时先核对当前配置，保存后测试服务；服务密钥由管理员维护。',
+  app_config: '维护测试资源所属的应用。先核对应用信息和模块归属，再配置执行平台绑定与通知目标。',
+  sonic_config: '检查手机与执行环境是否就绪。先查看在线状态和应用绑定，异常时运行体检并联系管理员处理。',
+  feishu_config: '设置每个应用接收通知的群。先选择对应应用并核对通知目标，再维护配置；发版通知还需在开始测试时勾选。',
+  system_config: '检查服务、设备与模型是否可用。先查看体检结果，再按异常项处理；恢复后重新检查并回到测试。',
+  knowledge: '保存可复用的页面截图与说明。先选择应用并补充入口和关键元素，后续生成与修复会参考这些资料。',
+  operation_history: '查看自己的业务操作记录。先按时间或操作类型筛选，再打开详情核对操作结果。'
+});
+
+function updateWorkflowNavigationHelp() {
+  const details = document.getElementById('workflow-navigation-help');
+  const text = document.getElementById('workflow-navigation-help-text');
+  if (!details || !text) return;
+  const guidance = WORKFLOW_NAVIGATION_HELP[activeWorkflow] || '';
+  if (details.dataset.helpWorkflow !== activeWorkflow) details.open = false;
+  details.dataset.helpWorkflow = activeWorkflow;
+  details.hidden = !guidance;
+  text.textContent = guidance;
+}
+
 function renderWorkflowNav() {
+  updateWorkflowNavigationHelp();
   document.querySelectorAll('.workflow-step').forEach(btn => {
     btn.classList.toggle('active', btn.dataset.workflow === activeWorkflow);
   });
