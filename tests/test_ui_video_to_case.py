@@ -323,3 +323,68 @@ def test_worker_diagnostics_are_stage_specific_and_never_include_exception_text(
     result=store.get(doc['source_id'],A['user_id'],APP)
     assert result['status']=='failed' and sentinel not in str(result)
     assert result['error_code']=='video_analysis_failed'
+
+
+def test_video_schema_value_type_is_bound_to_action():
+    from jsonschema import Draft202012Validator
+    from task_server.services import ai_skill_service as ai
+    schema=ai.load_ai_skill_schema('ui_video_steps');Draft202012Validator.check_schema(schema)
+    validator=Draft202012Validator(schema)
+    base={'action':'aiScroll','target':'页面列表','value':{'direction':'down','scrollType':'singleAction'},'start_ms':0,'end_ms':1000,'frame_refs':['f0','f1'],'observation':'页面列表显示底部入口','evidence_kind':'inferred','uncertainties':[]}
+    def errors(event):return list(validator.iter_errors({'events':[event],'uncertainties':[],'multiple_scenarios':False}))
+    assert not errors(base)
+    assert errors({**base,'value':'down'})
+    assert errors({**base,'value':'{"direction":"down"}'})
+    assert errors({**base,'action':'aiTap'})
+    assert not errors({**base,'action':'aiTap','value':''})
+    for value in [{'direction':'diagonal'},{'distance':0},{'scrollType':'scrollToBottom','direction':'down'},{'scrollType':'scrollToTop','distance':1},{'invented':True}]:assert errors({**base,'value':value})
+    assert not errors({**base,'value':{'scrollType':'scrollToBottom'}})
+
+
+def test_video_prompt_has_real_scroll_object_example_and_full_parameter_contract():
+    import json,re
+    from jsonschema import Draft202012Validator
+    from task_server.services import ai_skill_service as ai
+    prompt=ai.render_ai_skill_prompt('ui_video_steps',{'app_id':APP,'frames':[]})
+    objects=[json.loads(block) for block in re.findall(r'```json\s*(.*?)\s*```',prompt,re.S)]
+    events=[event for obj in objects for event in obj['events']]
+    scrolls=[event for event in events if event['action']=='aiScroll']
+    assert scrolls and all(isinstance(event['value'],dict) for event in scrolls)
+    validator=Draft202012Validator(ai.load_ai_skill_schema('ui_video_steps'))
+    for obj in objects:validator.validate(obj)
+    for term in ['JSON 对象','字符串','down/up/right/left','singleAction','scrollToBottom','scrollToTop','scrollToRight','scrollToLeft','有限正数','不能带 direction 或 distance']:assert term in prompt
+
+
+@pytest.mark.parametrize('value',['down','向上滚动','{"direction":"down","shell":"forbidden"}'])
+def test_arbitrary_scroll_strings_remain_rejected(value):
+    from task_server.services.ui_video_analysis import validate_analysis
+    event={'action':'aiScroll','target':'页面列表','value':value,'start_ms':0,'end_ms':0,'frame_refs':['f0'],'observation':'页面列表显示底部入口','evidence_kind':'inferred','uncertainties':[]}
+    with pytest.raises(ValueError,match='video_action_invalid'):
+        validate_analysis({'events':[event],'uncertainties':[],'multiple_scenarios':False},[{'frame_id':'f0','timestamp_ms':0}],1000)
+
+
+@pytest.mark.parametrize('value',[{'direction':'down','scrollType':'singleAction'},{'scrollType':'scrollToBottom'},{}])
+def test_scroll_json_object_representation_normalizes_without_extra_questions(value):
+    import json
+    from task_server.services.ui_video_analysis import validate_analysis
+    event={'action':'aiScroll','target':'页面列表','value':json.dumps(value),'start_ms':0,'end_ms':0,'frame_refs':['f0'],'observation':'页面列表显示底部入口','evidence_kind':'inferred','uncertainties':[]}
+    result=validate_analysis({'events':[event],'uncertainties':[],'multiple_scenarios':False},[{'frame_id':'f0','timestamp_ms':0}],1000)
+    assert result['events'][0]['value']==value
+    assert result['events'][0]['uncertainties']==[] and result['uncertainties']==[]
+
+
+@pytest.mark.parametrize('value',[
+    '{"direction":"down","invented":true}',
+    '[{"direction":"down"}]','null','"down"','1','true',
+    '{"direction":{"value":"down"}}','{"distance":{"value":10}}',
+    '{"direction":"down","scrollType":"scrollToTop"}',
+    '{"direction":"up","direction":"down"}',
+    '{"distance":NaN}','{"distance":Infinity}',
+    '{"direction":"down"}'+(' '*4001),
+    '{"direction":'+('['*1200)+'"down"'+(']'*1200)+'}',
+])
+def test_scroll_json_representation_rejects_unsafe_or_invalid_contract(value):
+    from task_server.services.ui_video_analysis import validate_analysis
+    event={'action':'aiScroll','target':'页面列表','value':value,'start_ms':0,'end_ms':0,'frame_refs':['f0'],'observation':'页面列表显示底部入口','evidence_kind':'inferred','uncertainties':[]}
+    with pytest.raises(ValueError,match='video_action_invalid'):
+        validate_analysis({'events':[event],'uncertainties':[],'multiple_scenarios':False},[{'frame_id':'f0','timestamp_ms':0}],1000)

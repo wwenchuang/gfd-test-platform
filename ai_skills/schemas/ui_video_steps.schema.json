@@ -143,7 +143,35 @@
               "maxLength": 2000
             }
           }
-        }
+        },
+        "allOf": [
+          {
+            "if": {
+              "required": [
+                "action"
+              ],
+              "properties": {
+                "action": {
+                  "const": "aiScroll"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "value": {
+                  "type": "object"
+                }
+              }
+            },
+            "else": {
+              "properties": {
+                "value": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        ]
       }
     },
     "uncertainties": {

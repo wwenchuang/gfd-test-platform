@@ -15,6 +15,25 @@ def _text(value, limit=2000):
     return value.strip()
 
 
+def _scroll_object(value):
+    """Normalize only a bounded JSON-object encoding, preserving strict semantics."""
+    if isinstance(value,str):
+        if not value or len(value)>4000:raise ValueError('video_action_invalid')
+        def unique_object(pairs):
+            result={}
+            for key,item in pairs:
+                if key in result:raise ValueError('video_action_invalid')
+                result[key]=item
+            return result
+        def reject_constant(_):raise ValueError('video_action_invalid')
+        try:
+            value=json.loads(value,object_pairs_hook=unique_object,parse_constant=reject_constant)
+        except (ValueError,RecursionError):
+            raise ValueError('video_action_invalid') from None
+    if not isinstance(value,dict):raise ValueError('video_action_invalid')
+    return value
+
+
 def validate_analysis(result, frames, duration):
     if not isinstance(result, dict) or set(result)!={'events','uncertainties','multiple_scenarios'}: raise ValueError('video_model_invalid')
     if type(result['multiple_scenarios']) is not bool: raise ValueError('video_model_invalid')
@@ -45,7 +64,8 @@ def validate_analysis(result, frames, duration):
             event['uncertainties'].append('请手工填写非敏感测试输入；密码、验证码或令牌请使用人工前置条件')
         elif event['action']=='aiScroll':
             from .yaml_static_validator import validate_midscene_action_parameters
-            value=event['value']
+            value=_scroll_object(event['value'])
+            event['value']=value
             if not isinstance(value,dict) or set(value)-{'direction','distance','scrollType'}:raise ValueError('video_action_invalid')
             distance=value.get('distance')
             if isinstance(distance,(int,float)) and not math.isfinite(distance):raise ValueError('video_action_invalid')

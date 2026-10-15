@@ -4,7 +4,7 @@
 
 事件字段严格为 action,target,value,start_ms,end_ms,frame_refs,observation,evidence_kind,uncertainties。observation 只描述看到的页面变化，不能当成业务应有结果。不生成 expected、launch、包名、设备、确认状态、执行指令、shell、ADB或坐标。action 仅 aiTap/aiInput/aiScroll/aiWaitFor/aiAssert。系统键、跨应用和无法辨认动作在 uncertainties 提问，不降级成按钮点击。确认/取消弹窗必须区分，不用背景控件代替弹窗目标。失败弹窗描述原事实。
 
-aiAssert 只作为需要用户核对的可见检查候选，不推断后台数据/提交成功；目标是具体对象和状态。aiWaitFor 仅表示必要页面状态，不照抄视频停顿秒数。aiInput.value 总是空字符串；密码/验证码/令牌禁止转录，输入内容请用户手工配置，observation 也不得含秘密。aiScroll.value 只含 direction、distance、scrollType，符合现有 Midscene 参数。其他 value 为空字符串。目标缺失或遮挡必须提问。不因模型自信省略疑问，不生成准确率。
+aiAssert 只作为需要用户核对的可见检查候选，不推断后台数据/提交成功；目标是具体对象和状态。aiWaitFor 仅表示必要页面状态，不照抄视频停顿秒数。aiInput.value 总是空字符串；密码/验证码/令牌禁止转录，输入内容请用户手工配置，observation 也不得含秘密。aiScroll.value 必须是 JSON 对象，不能是字符串（包括不能把对象再次编码成字符串）、数组或 null；其他动作的 value 必须是字符串，且本任务统一用空字符串。滚动对象只允许 direction、distance、scrollType 三个可选字段：direction 仅 down/up/right/left；distance 仅有限正数；scrollType 仅 singleAction、scrollToBottom、scrollToTop、scrollToRight、scrollToLeft。scrollType 缺省或 singleAction 时才允许 direction/distance；scrollToBottom/scrollToTop/scrollToRight/scrollToLeft 不能带 direction 或 distance。不得增加 amount、pixels、speed、duration、x/y、from/to、shell 等其他字段。没有可靠方向或方式证据时 value={}，并在该事件 uncertainties 请求核对；不能将“向上滑动”等自然语言放入 value，也不能猜测滚动方向。目标缺失或遮挡必须提问。不因模型自信省略疑问，不生成准确率。
 
 必须返回且只返回一个完整 JSON 对象，顶层字段固定为 events、uncertainties、multiple_scenarios。events 是按时间排序的事件数组（0至50项）；uncertainties 是字符串数组；multiple_scenarios 是布尔值。禁止用 steps、candidate_steps、segments 代替 events，禁止增加顶层字段。没有可靠动作时 events=[] 并在 uncertainties 写明原因；不能省略任一顶层字段。每个事件必须包含上面列出的全部9个字段，不能增加字段。
 
@@ -22,6 +22,27 @@ aiAssert 只作为需要用户核对的可见检查候选，不推断后台数�
       "observation": "仅描述来源中看到的页面变化",
       "evidence_kind": "inferred",
       "uncertainties": ["缺少触点，操作为推断，请核对"]
+    }
+  ],
+  "uncertainties": [],
+  "multiple_scenarios": false
+}
+```
+
+滚动结构示例（同样不能照抄动作、页面、时间或帧ID；只有实际证据支持方向时才填写）：
+```json
+{
+  "events": [
+    {
+      "action": "aiScroll",
+      "target": "来源画面中的可滚动列表",
+      "value": {"direction": "down", "scrollType": "singleAction"},
+      "start_ms": 0,
+      "end_ms": 1000,
+      "frame_refs": ["frame-001", "frame-002"],
+      "observation": "来源画面显示列表滚动后的可见内容",
+      "evidence_kind": "inferred",
+      "uncertainties": ["没有明确触点，滚动操作和方向需要人工核对"]
     }
   ],
   "uncertainties": [],
