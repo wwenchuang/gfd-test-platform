@@ -220,12 +220,12 @@ def decode_video(video, output, cancelled):
     if len(streams) != 1 or not 1 <= duration <= MAX_DURATION_MS or not 1 <= width <= 4096 or not 1 <= height <= 4096 or width*height > 9000000:
         raise ValueError('video_limits')
     # First pass scans the entire source, discards near-duplicate waiting frames,
-    # and records timestamps only. Short contiguous motion bursts are treated as
-    # transitions; retain their opening and settled ending, not every animation
-    # frame. Long continuous motion cannot be reliably represented: ask to split.
+    # and records timestamps only. Preserve motion boundaries and abrupt luminance
+    # cuts, then distribute remaining anchors across the entire timeline. Continuous
+    # scrolling is motion, not a reason to reject an otherwise short recording.
     output.mkdir(mode=0o700, parents=True, exist_ok=True)
     for old in output.glob('frame-*.jpg'): old.unlink()
-    base = "scale=480:480:force_original_aspect_ratio=decrease,mpdecimate=hi=768:lo=320:frac=0.10"
+    base = "scale=480:480:force_original_aspect_ratio=decrease,format=yuv420p,mpdecimate=hi=768:lo=320:frac=0.10"
     common = [_tool('ffmpeg'), '-nostdin', '-hide_banner', '-v', 'info', '-threads', '1', '-protocol_whitelist', 'file,pipe', '-f', 'mov', '-i', str(video), '-xerror', '-an', '-sn', '-dn']
     _, scan = _process([*common, '-vf', base+',showinfo', '-f', 'null', '-'], cancelled)
     all_times = [round(float(t)*1000) for t in re.findall(rb'\bn:\s*\d+.*?pts_time:([\d.e+\-]+)', scan)]
@@ -234,12 +234,37 @@ def decode_video(video, output, cancelled):
     for index in range(1,len(all_times)+1):
         if index==len(all_times) or all_times[index]-all_times[index-1]>300:
             clusters.append((first,index-1));first=index
-    selected={0}
+    selected={0, len(all_times)-1}
     for first,last in clusters:
-        if all_times[last]-all_times[first]>2500:raise ValueError('video_split_required')
         selected.update((max(0,first-1),first,last))
+    # Rapid high-contrast cuts remain distinct evidence, even if their timestamps
+    # form one contiguous motion cluster (for example repeated full-screen flashes).
+    means=[int(value) for value in re.findall(rb'\bmean:\[\s*(\d+)',scan)]
+    if len(means)==len(all_times):
+        for index in range(1,len(means)):
+            if abs(means[index]-means[index-1])>=64:
+                selected.update((index-1,index))
+    budget=MAX_FRAMES-1  # reserve the independently decoded final anchor
+    if len(selected)>budget:raise ValueError('video_split_required')
+    # One-second targets use actual changed-frame timestamps. Add the least
+    # represented targets first so a full budget never silently truncates the tail.
+    from bisect import bisect_left
+    candidates=set()
+    for target in range(1000,duration,1000):
+        position=bisect_left(all_times,target)
+        choices=[i for i in (position-1,position) if 0<=i<len(all_times)]
+        candidates.add(min(choices,key=lambda i:abs(all_times[i]-target)))
+    candidates-=selected
+    while candidates and len(selected)<budget:
+        index=max(candidates,key=lambda i:(min(abs(all_times[i]-all_times[j]) for j in selected),-i))
+        selected.add(index);candidates.remove(index)
     indexes=sorted(selected)
-    if len(indexes)>=MAX_FRAMES:raise ValueError('video_split_required')
+    # Do not compress long sustained activity into sparse, misleading evidence.
+    # Static intervals may be long: only enforce density inside motion clusters.
+    for first,last in clusters:
+        anchors=[all_times[i] for i in indexes if first<=i<=last]
+        if any(b-a>3000 for a,b in zip(anchors,anchors[1:])):
+            raise ValueError('video_split_required')
     selector="+".join(f"eq(n,{i})" for i in indexes)
     _, log = _process([*common, '-vf', base+",select='"+selector+"',showinfo", *_sync_args(cancelled), '-threads', '1', '-pix_fmt', 'yuvj420p', '-q:v', '4', str(output/'frame-%03d.jpg')], cancelled)
     times = [round(float(t)*1000) for t in re.findall(rb'\bn:\s*\d+.*?pts_time:([\d.e+\-]+)', log)]

@@ -78,6 +78,31 @@ class VideoSourceTests(unittest.TestCase):
         self.assertEqual(result['coverage_end_ms'],2000)
         self.assertGreater(result['frames'][-1]['timestamp_ms'],1850)
 
+    def test_long_continuous_motion_samples_entire_timeline_with_bounded_frames(self):
+        from task_server.services.ui_video_source_service import decode_video
+        directory=Path(self.temp.name)
+        for duration in (31,90):
+            with self.subTest(duration=duration):
+                movie=self.fixture(directory/f'scroll-{duration}.mp4','-f','lavfi','-i',f'testsrc2=s=96x160:r=30:d={duration}','-c:v','libx264','-pix_fmt','yuv420p')
+                result=decode_video(movie,directory/f'scroll-{duration}',lambda:False)
+                times=[frame['timestamp_ms'] for frame in result['frames']]
+                self.assertLessEqual(len(times),60)
+                self.assertEqual(times[0],0)
+                self.assertGreater(times[-1],duration*1000-100)
+                self.assertLessEqual(max(b-a for a,b in zip(times,times[1:])),3000)
+                self.assertFalse(result['static'])
+
+    def test_real_ten_bit_hevc_uses_identical_scan_and_extraction_pixels(self):
+        from task_server.services.ui_video_source_service import decode_video
+        directory=Path(self.temp.name)
+        movie=self.fixture(directory/'ten-bit.mp4','-f','lavfi','-i','testsrc2=s=96x160:r=30:d=7','-c:v','libx265','-x265-params','pools=1:frame-threads=1:log-level=error','-pix_fmt','yuv420p10le')
+        result=decode_video(movie,directory/'ten-bit',lambda:False)
+        times=[frame['timestamp_ms'] for frame in result['frames']]
+        self.assertEqual(result['coverage_end_ms'],7000)
+        self.assertGreater(times[-1],6850)
+        self.assertTrue(any(2500<=time<=3500 for time in times))
+        self.assertLessEqual(len(times),60)
+
     def test_rapid_transitions_over_frame_budget_require_split(self):
         from task_server.services.ui_video_source_service import decode_video
         from PIL import Image
