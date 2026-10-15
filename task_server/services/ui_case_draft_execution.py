@@ -21,7 +21,7 @@ def _source(draft):
     proposal = {key:draft[key] for key in ('title','preconditions','steps','questions')}
     built = build_draft_yaml(proposal, draft['app_id'])
     static = validate_yaml_static_executable(built['yaml_content'], strict=True)
-    score = score_midscene_yaml_executable(built['yaml_content'], generated=True)
+    score = score_midscene_yaml_executable(built['yaml_content'], generated=True, compiler_roles=built['compiler_roles'])
     if not built['ready'] or not static['ok'] or static.get('warnings') or not score['ok']:
         raise BatchValidationError('draft_gate_required')
     return built

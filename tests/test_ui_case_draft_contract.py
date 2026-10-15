@@ -11,6 +11,43 @@ from task_server.services.ui_case_draft_contract import normalize_steps, build_d
 APP = 'com.kfb.model'
 
 
+def test_compiler_checks_do_not_double_penalize_business_complexity():
+    from task_server.services.yaml_executable_scorer import score_midscene_yaml_executable
+    draft={'title':'记录管理验证','steps':[
+        {'action':'aiTap','target':f'入口{i}','expected':f'页面{i}显示内容','review_state':'confirmed'} for i in range(6)
+    ]+[{'action':'aiAssert','target':'页面5显示内容','review_state':'confirmed'}]}
+    built=build_draft_yaml(draft,APP)
+    plain=score_midscene_yaml_executable(built['yaml_content'],generated=True)
+    assert not plain['ok']
+    scored=score_midscene_yaml_executable(built['yaml_content'],generated=True,compiler_roles=built['compiler_roles'])
+    assert scored['ok']
+    assert scored['taskScores'][0]['actionCount']==plain['taskScores'][0]['actionCount']
+    assert scored['taskScores'][0]['businessActionCount']==8
+
+
+@pytest.mark.parametrize('count,target',[ (14,'页面入口'), (6,'如果出现就点击入口') ])
+def test_compiler_provenance_does_not_allow_long_or_conditional_business(count,target):
+    from task_server.services.yaml_executable_scorer import score_midscene_yaml_executable
+    draft={'title':'业务检查','steps':[
+        {'action':'aiTap','target':target,'expected':'页面内容可见','review_state':'confirmed'} for _ in range(count)
+    ]+[{'action':'aiAssert','target':'页面内容可见','review_state':'confirmed'}]}
+    built=build_draft_yaml(draft,APP)
+    scored=score_midscene_yaml_executable(built['yaml_content'],compiler_roles=built['compiler_roles'])
+    assert not scored['ok']
+
+
+def test_compiler_roles_are_not_read_from_yaml_or_client_steps():
+    from task_server.services.yaml_executable_scorer import score_midscene_yaml_executable
+    draft={'title':'业务检查','steps':[
+        {'action':'aiTap','target':'页面入口','expected':'页面内容可见','review_state':'confirmed'} for _ in range(6)
+    ]+[{'action':'aiAssert','target':'页面内容可见','review_state':'confirmed'}]}
+    built=build_draft_yaml(draft,APP)
+    data=yaml.safe_load(built['yaml_content']);data['compiler_roles']=built['compiler_roles']
+    assert not score_midscene_yaml_executable(yaml.safe_dump(data,allow_unicode=True))['ok']
+    draft['steps'][0]['compiler_role']='guard'
+    with pytest.raises(ValueError):build_draft_yaml(draft,APP)
+
+
 def payload():
     return {'title': '搜索模型', 'preconditions': ['已登录'], 'steps': [
         {'action': 'aiTap', 'target': '首页搜索按钮', 'expected': '搜索页可见'},

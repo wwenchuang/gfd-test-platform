@@ -138,15 +138,17 @@ def build_draft_yaml(draft, app_id):
     app_id = _app_id(app_id)
     normalized = normalize_steps(draft, app_id)
     steps = normalized['steps']
-    flow, step_ids = [], []
+    flow, step_ids, roles = [], [], []
     if steps[0]['action'] != 'launch':
         flow.append({'launch': app_id})
         step_ids.append(steps[0]['step_id'])
+        roles.append('launch')
     for index, step in enumerate(steps):
         action, target = step['action'], step['target']
         if action == 'aiTap':
             flow.append({'aiWaitFor': target, 'timeout': SHORT_TIMEOUT_MS})
             step_ids.append(step['step_id'])
+            roles.append('guard')
         item = {action: target}
         if action == 'aiInput':
             item['value'] = step['value']
@@ -156,6 +158,7 @@ def build_draft_yaml(draft, app_id):
             item['timeout'] = SHORT_TIMEOUT_MS
         flow.append(item)
         step_ids.append(step['step_id'])
+        roles.append('business')
         # An expectation entered in the Chinese editor is an actual assertion.
         # Reuse an identical next explicit checkpoint rather than calling AI twice.
         following = steps[index + 1] if index + 1 < len(steps) else None
@@ -163,10 +166,11 @@ def build_draft_yaml(draft, app_id):
                 following and following['action'] == 'aiAssert' and following['target'] == step['expected']):
             flow.append({'aiAssert': step['expected']})
             step_ids.append(step['step_id'])
+            roles.append('expected')
     questions = list(normalized['questions'])
     unconfirmed = [str(index) for index, step in enumerate(steps, 1) if step['review_state'] != 'confirmed']
     if unconfirmed:
         questions.append('请确认建议步骤：' + '、'.join(unconfirmed))
     content = yaml.safe_dump({'android': {}, 'tasks': [{'name': normalized['title'], 'flow': flow}]},
                              allow_unicode=True, sort_keys=False)
-    return {'yaml_content': content, 'step_ids': [step_ids], 'questions': questions, 'ready': not questions}
+    return {'yaml_content': content, 'step_ids': [step_ids], 'compiler_roles': [roles], 'questions': questions, 'ready': not questions}

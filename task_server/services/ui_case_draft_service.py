@@ -430,7 +430,7 @@ def validate_draft(actor, draft_id, body):
     candidate = build_draft_yaml({key: document[key] for key in _EDIT_KEYS}, document['app_id'])
     gate['blockers'].extend(candidate['questions'])
     static = validate_yaml_static_executable(candidate['yaml_content'], strict=True)
-    score = score_midscene_yaml_executable(candidate['yaml_content'], generated=True)
+    score = score_midscene_yaml_executable(candidate['yaml_content'], generated=True, compiler_roles=candidate['compiler_roles'])
     gate.update(static_validation=static, executable_score=score)
     if not static.get('ok') or static.get('warnings'):
         gate['blockers'].extend(static.get('errors') or [])

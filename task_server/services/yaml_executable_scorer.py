@@ -580,7 +580,7 @@ def _has_generated_manual_condition(text: str) -> bool:
     return any(_compact_text(word) in compact for word in GENERATED_MANUAL_CONDITION_WORDS)
 
 
-def score_midscene_yaml_executable(yaml_text: str, *, generated: bool = True) -> dict:
+def score_midscene_yaml_executable(yaml_text: str, *, generated: bool = True, compiler_roles=None) -> dict:
     """Score whether YAML is safe enough to auto-send to Runner.
 
     Static parsers answer "can this YAML load"; this gate answers "should a
@@ -649,6 +649,16 @@ def score_midscene_yaml_executable(yaml_text: str, *, generated: bool = True) ->
                 score = 0
 
         task_name_text = str(task_name or "")
+        # Internal compiler provenance, reconstructed from saved typed steps at
+        # admission and dispatch. Never accept this map from YAML or API input.
+        roles = compiler_roles[idx-1] if isinstance(compiler_roles,list) and len(compiler_roles)==len(tasks) else []
+        valid_roles = isinstance(roles,list) and len(roles)==len(flow) and all(
+            role=='business' or role=='launch' and isinstance(step,dict) and 'launch' in step or
+            role=='guard' and isinstance(step,dict) and set(step)<= {'aiWaitFor','timeout'} and 'aiWaitFor' in step or
+            role=='expected' and isinstance(step,dict) and set(step)=={'aiAssert'}
+            for role,step in zip(roles,flow))
+        compiler_guards = roles.count('guard') if valid_roles else 0
+        compiler_asserts = roles.count('expected') if valid_roles else 0
         task_name_lower = task_name_text.lower()
         manual_hint = _manual_hint(task) if isinstance(task, dict) else False
         if generated and any(word in task_name_lower for word in FIGMA_INTERNAL_WORDS):
@@ -775,9 +785,10 @@ def score_midscene_yaml_executable(yaml_text: str, *, generated: bool = True) ->
         if missing_followups:
             warnings.append(f"{missing_followups} 个交互动作后缺少等待或终态判断")
             score -= min(25, 6 * missing_followups)
-        if assert_count > 3:
-            warnings.append(f"aiAssert 数量 {assert_count} 偏多，容易把 UI 差异放大成失败")
-            score -= min(20, 4 * (assert_count - 3))
+        business_assert_count = assert_count - compiler_asserts
+        if business_assert_count > 3:
+            warnings.append(f"aiAssert 数量 {business_assert_count} 偏多，容易把 UI 差异放大成失败")
+            score -= min(20, 4 * (business_assert_count - 3))
         if transition_count > 8:
             warnings.append(f"交互动作 {transition_count} 个偏多，建议拆成更短的自动化链路")
             score -= min(20, 3 * (transition_count - 8))
@@ -801,17 +812,18 @@ def score_midscene_yaml_executable(yaml_text: str, *, generated: bool = True) ->
         if len(flow) > 36:
             warnings.append("单条用例步骤过长，建议拆分后执行")
             score -= 15
+        business_action_count = action_count - compiler_guards - compiler_asserts
         if generated and not baseline_evidence:
-            if action_count > 12:
+            if business_action_count > 12:
                 if transition_count > 3:
                     replan_risk = "high"
                     warnings.append(
                         f"生成用例动作 {action_count} 个且无成功基线依据，容易触发 Midscene 重规划超限或 Runner 超时，建议拆成短链路"
                     )
-                    score -= min(30, 18 + 2 * (action_count - 12))
+                    score -= min(30, 18 + 2 * (business_action_count - 12))
                 else:
                     warnings.append(f"生成用例动作 {action_count} 个偏长，但主要为等待/启动保护；建议后续拆短")
-                    score -= min(8, action_count - 12)
+                    score -= min(8, business_action_count - 12)
             if wait_count >= 7 and assert_count <= 1:
                 replan_risk = "high"
                 warnings.append(
@@ -837,6 +849,9 @@ def score_midscene_yaml_executable(yaml_text: str, *, generated: bool = True) ->
             "errors": errors,
             "warnings": warnings,
             "actionCount": action_count,
+            "businessActionCount": business_action_count,
+            "compilerGuardCount": compiler_guards,
+            "compilerAssertCount": compiler_asserts,
             "transitionCount": transition_count,
             "waitCount": wait_count,
             "assertCount": assert_count,
