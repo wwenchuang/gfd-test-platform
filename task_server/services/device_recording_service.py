@@ -176,6 +176,20 @@ def _point_in_ui_xml(step: Dict[str, Any], point: Dict[str, Any]) -> Dict[str, i
     }
 
 
+def validate_recording_device(device):
+    """Only trusted Runner Android metadata enables capture; names are not evidence."""
+    platform = str(device.get("platform") or "").strip().lower()
+    if platform == "android":
+        return
+    if platform == "ios" or device.get("ios_version"):
+        raise ValueError("iOS 暂不支持此操作录制，可使用文字创建用例")
+    # Older authenticated Runner reports omit platform but report ADB/Android facts.
+    if not platform and any(str(device.get(key) or "").strip() for key in
+                            ("android_version", "androidVersion", "adb_path", "adbPath")):
+        return
+    raise ValueError("手机系统尚未确认，暂不能录制；请刷新手机状态或使用文字创建用例")
+
+
 def create_recording_session(
     user: str,
     runner_id: str,
@@ -245,6 +259,7 @@ def bind_recording_device(
     runner_id: str,
     device_id: str,
     *,
+    reported_device: Optional[Dict[str, Any]] = None,
     store_path: Optional[str] = None,
     now: Optional[float] = None,
 ) -> Dict[str, Any]:
@@ -260,6 +275,8 @@ def bind_recording_device(
         data = _load(path)
         row = _find(data, session_id)
         _owner(row, user)
+        if reported_device is not None:
+            validate_recording_device(reported_device)
         if row.get("status") != "recording":
             raise ValueError("录制会话当前不能绑定手机")
         if row.get("device_id"):
@@ -289,6 +306,7 @@ def bridge_recording_device(
     device_id: str,
     *,
     refresh_evidence: bool = False,
+    reported_device: Optional[Dict[str, Any]] = None,
     store_path: Optional[str] = None,
     now: Optional[float] = None,
 ) -> Dict[str, Any]:
@@ -306,6 +324,8 @@ def bridge_recording_device(
         _pause_stale(data, timestamp)
         row = _find(data, session_id)
         _recording_token(row, recording_token, timestamp)
+        if reported_device is not None:
+            validate_recording_device(reported_device)
         if _expire_pre_action_frame(row, timestamp):
             write_json_file(path, data)
         if row.get("status") != "recording":

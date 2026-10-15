@@ -68,8 +68,17 @@ function recorderVisibleDevices() {
   return [...phones.values()];
 }
 
+function recorderCapabilityMessage(device) {
+  const platform = String(device.platform || '').trim().toLowerCase();
+  if (platform === 'android') return '';
+  if (platform === 'ios' || device.ios_version) return 'iOS 暂不支持此操作录制，可使用文字创建用例';
+  // Match the server: authenticated legacy Android/ADB metadata, never a model name.
+  if (!platform && ['android_version', 'androidVersion', 'adb_path', 'adbPath'].some(key => String(device[key] || '').trim())) return '';
+  return '手机系统尚未确认，暂不能录制；请刷新手机状态或使用文字创建用例';
+}
+
 function recorderPhoneState(device) {
-  if (recorderDeviceError) return 'unknown';
+  if (recorderDeviceError || recorderCapabilityMessage(device)) return 'unknown';
   if (device.runner_online === false || !['online', 'device'].includes(device.status)) return 'offline';
   if (device.usage_status === 'unknown') return 'unknown';
   return device.usage_status && device.usage_status !== 'idle' ? 'busy' : 'idle';
@@ -85,10 +94,10 @@ function recorderDeviceCards(session) {
   return `<div class="device-recorder-phone-grid">${devices.map(device => {
     const state = recorderPhoneState(device);
     const current = session?.device_id === device.device_id;
-    const label = state === 'offline' ? (device.runner_online === false ? '离线 · Runner 未连接' : '离线 · 手机未连接')
+    const label = recorderCapabilityMessage(device) || (state === 'offline' ? (device.runner_online === false ? '离线 · Runner 未连接' : '离线 · 手机未连接')
       : state === 'unknown' ? (recorderDeviceError ? '状态待更新' : device.usage_label || '状态待确认')
-      : device.usage_label || (state === 'busy' ? '占用中' : '空闲可用');
-    return `<div class="device-recorder-phone ${state} ${current ? 'selected' : ''}"><span class="device-recorder-phone-status ${state}" aria-label="${escapeHtml(label)}"></span><div class="device-recorder-phone-info"><div class="device-recorder-phone-title"><strong>${escapeHtml(device.model || device.name || 'Android 手机')}</strong>${current ? '<em>本次录制</em>' : ''}</div><small>${escapeHtml(device.device_id || '')} · ${escapeHtml(device.runner_id || '')}</small></div><span class="device-recorder-phone-label">${escapeHtml(label)}</span></div>`;
+      : device.usage_label || (state === 'busy' ? '占用中' : '空闲可用'));
+    return `<div class="device-recorder-phone ${state} ${current ? 'selected' : ''}"><span class="device-recorder-phone-status ${state}" aria-label="${escapeHtml(label)}"></span><div class="device-recorder-phone-info"><div class="device-recorder-phone-title"><strong>${escapeHtml(device.model || device.name || '手机')}</strong>${current ? '<em>本次录制</em>' : ''}</div><small>${escapeHtml(device.device_id || '')} · ${escapeHtml(device.runner_id || '')}</small></div><span class="device-recorder-phone-label">${escapeHtml(label)}</span></div>`;
   }).join('')}</div>`;
 }
 

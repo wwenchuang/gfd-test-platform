@@ -33,7 +33,7 @@ class DeviceRecordingProtocolTest(unittest.TestCase):
             mock.patch.object(router, "_require_user_auth", return_value=False),
             mock.patch.object(router, "_authenticated_user", return_value="admin"),
             mock.patch.object(router, "all_online_devices", return_value=[{
-                "runner_id": "win-runner-01", "device_id": "ecbfd645", "runner_online": True, "status": "online",
+                "runner_id": "win-runner-01", "device_id": "ecbfd645", "runner_online": True, "status": "online", "platform": "android",
             }]),
         ]
         for patcher in self.patches:
@@ -49,6 +49,48 @@ class DeviceRecordingProtocolTest(unittest.TestCase):
         router._post_device_recordings(handler, {})
         self.assertEqual(handler.responses[0][0], 200)
         return handler.responses[0][1]["session"]
+
+    def test_unsupported_platform_rejected_before_capture_for_all_entry_points(self):
+        for metadata in ({"platform": "ios", "android_version": "14"}, {}, {"platform": "other"}):
+            with self.subTest(metadata=metadata):
+                row = {"runner_id": "win-runner-01", "device_id": "ecbfd645", "runner_online": True, "status": "online", **metadata}
+                session = recording.create_recording_session("admin", "", "", "com.tencent.mm")
+                with mock.patch.object(router, "all_online_devices", return_value=[row]):
+                    for route in (router._post_device_recordings, router._post_device_recording_bind, router._post_device_recording_bridge):
+                        handler = Handler({"runner_id": "win-runner-01", "device_id": "ecbfd645", "app_package": "com.tencent.mm", "session_id": session["id"], "recording_token": session["recording_token"]})
+                        route(handler, {})
+                        self.assertIn(handler.responses[0][0], (400, 409))
+                self.assertEqual(recording.pending_recording_evidence_requests("win-runner-01"), [])
+                self.assertEqual(recording.get_recording_session(session["id"])["device_id"], "")
+
+    def test_supported_legacy_android_and_explicit_runner_selection(self):
+        for metadata in ({"platform":"android"}, {"android_version":"14"}, {"adb_path":"/usr/bin/adb"}):
+            with self.subTest(metadata=metadata):
+                session = recording.create_recording_session("admin", "", "", "com.tencent.mm")
+                rows = [{"runner_id":"wrong", "device_id":"phone", "runner_online":True, "status":"online", "platform":"ios"},
+                        {"runner_id":"right", "device_id":"phone", "runner_online":True, "status":"online", **metadata}]
+                with mock.patch.object(router, "all_online_devices", return_value=rows):
+                    handler = Handler({"session_id":session["id"], "runner_id":"right", "device_id":"phone"})
+                    router._post_device_recording_bind(handler, {})
+                self.assertEqual(handler.responses[0][0], 200)
+                self.assertEqual(handler.responses[0][1]["session"]["runner_id"], "right")
+                recording.cancel_recording_session(session["id"], "admin")
+
+    def test_requested_runner_never_falls_back(self):
+        session = recording.create_recording_session("admin", "", "", "com.tencent.mm")
+        for route in (router._post_device_recording_bind, router._post_device_recording_bridge):
+            handler = Handler({"session_id":session["id"], "recording_token":session["recording_token"], "runner_id":"missing", "device_id":"ecbfd645"})
+            route(handler, {})
+            self.assertEqual(handler.responses[0][0], 409)
+        self.assertEqual(recording.pending_recording_evidence_requests("win-runner-01"), [])
+
+    def test_bridge_invalid_token_does_not_disclose_platform(self):
+        session = recording.create_recording_session("admin", "", "", "com.tencent.mm")
+        with mock.patch.object(router, "all_online_devices", return_value=[{"runner_id":"r", "device_id":"phone", "runner_online":True, "status":"online", "platform":"ios"}]):
+            handler = Handler({"session_id":session["id"], "recording_token":"wrong", "device_id":"phone"})
+            router._post_device_recording_bridge(handler, {})
+        self.assertEqual(handler.responses[0][0], 401)
+        self.assertNotIn("iOS", handler.responses[0][1]["error"])
 
     def test_create_read_action_finish_flow(self):
         session = self.create()

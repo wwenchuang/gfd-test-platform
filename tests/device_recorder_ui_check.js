@@ -9,7 +9,7 @@ const ROOT = path.resolve(__dirname, '..');
 
 test('task manager uses a new cache key for the server-bridged recorder script', () => {
   const html = fs.readFileSync(path.join(ROOT, 'task-manager.html'), 'utf8');
-  assert.match(html, /device-recorder\.js\?v=20261015-recording-import-v1/);
+  assert.match(html, /device-recorder\.js\?v=20261015-recording-capability-v1/);
 });
 
 test('history groups by app and module and filter changes clear hidden selections', () => {
@@ -225,7 +225,7 @@ function fixture() {
     window: dom.window, document: dom.window.document, location: dom.window.location,
     sessionStorage: dom.window.sessionStorage, URL, taskApps: [{name: '微信', package: 'com.tencent.mm', enabled: true, modules: ['微信登录']},{name:'智小白3D',package:'com.kfb.model',enabled:true,modules:['3D打印基线']}],
     modules: {'微信登录': [], '3D打印基线': []},
-    runnerDevices: [{runner_id: 'win-runner-01', device_id: 'ecbfd645', model: 'OPPO Reno9', status: 'online', usage_status: 'idle'}],
+    runnerDevices: [{runner_id: 'win-runner-01', device_id: 'ecbfd645', model: 'OPPO Reno9', platform:'android', status: 'online', usage_status: 'idle'}],
     escapeHtml: value => String(value ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;'),
     resetYamlToolbarForManager() {}, loadModules: async () => {}, loadRunnerDevices: async () => {},
     showToast() {}, prompt: () => '', clearInterval() {}, setInterval: () => 1, setTimeout() {},
@@ -596,7 +596,7 @@ test('live phone refresh changes availability without replacing form or evidence
   f.run('renderDeviceRecorder()');
   const app=f.dom.window.document.getElementById('device-recorder-app');app.value='com.tencent.mm';
   const timeline=f.dom.window.document.querySelector('.device-recorder-timeline');
-  let devices=[{device_id:'ecbfd645',model:'PHM110',runner_online:true,status:'online',usage_status:'busy',usage_label:'wangwc 占用中'}];
+  let devices=[{device_id:'ecbfd645',model:'PHM110',platform:'android',runner_online:true,status:'online',usage_status:'busy',usage_label:'wangwc 占用中'}];
   f.context.apiRequest=async()=>({devices});
   await f.run('refreshRecorderDevices()');
   assert.equal(f.dom.window.document.getElementById('device-recorder-app'),app);
@@ -604,7 +604,7 @@ test('live phone refresh changes availability without replacing form or evidence
   assert.equal(f.dom.window.document.querySelector('.device-recorder-timeline'),timeline);
   assert.match(f.dom.window.document.getElementById('device-recorder-devices').textContent,/wangwc 占用中/);
   assert.equal(f.dom.window.document.querySelector('[data-action="start-recording"]').disabled,true);
-  devices=[{device_id:'ecbfd645',model:'PHM110',runner_online:true,status:'online',usage_status:'idle'}];
+  devices=[{device_id:'ecbfd645',model:'PHM110',platform:'android',runner_online:true,status:'online',usage_status:'idle'}];
   await f.run('refreshRecorderDevices()');
   assert.equal(f.dom.window.document.querySelector('[data-action="start-recording"]').disabled,false);
   devices=[]; await f.run('refreshRecorderDevices()');
@@ -617,7 +617,7 @@ test('refresh failure marks cached devices stale and recovery restores availabil
   assert.match(f.dom.window.document.getElementById('device-recorder-devices').textContent,/更新失败.*可能已过期/s);
   assert.equal(f.dom.window.document.querySelector('[data-action="start-recording"]').disabled,true);
   assert.equal(f.dom.window.document.querySelector('.device-recorder-phone-status.idle'),null);
-  f.context.apiRequest=async()=>({devices:[{device_id:'ecbfd645',status:'online',runner_online:true,usage_status:'idle'}]});
+  f.context.apiRequest=async()=>({devices:[{device_id:'ecbfd645',platform:'android',status:'online',runner_online:true,usage_status:'idle'}]});
   await f.run('refreshRecorderDevices()');
   assert.equal(f.dom.window.document.querySelector('[data-action="start-recording"]').disabled,false);
 });
@@ -634,7 +634,7 @@ test('device polling avoids overlapping calls and ignores late results after lea
 });
 
 test('offline and unknown phones are never green or offered as ready', () => {
-  const f=fixture();f.run("recorderDevices=[{device_id:'a',runner_online:false,status:'online',usage_status:'idle'},{device_id:'b',runner_online:true,status:'online',usage_status:'unknown'}];renderDeviceRecorder()");
+  const f=fixture();f.run("recorderDevices=[{device_id:'a',platform:'android',runner_online:false,status:'online',usage_status:'idle'},{device_id:'b',platform:'android',runner_online:true,status:'online',usage_status:'unknown'}];renderDeviceRecorder()");
   assert.ok(f.dom.window.document.querySelector('.device-recorder-phone-status.offline'));
   assert.ok(f.dom.window.document.querySelector('.device-recorder-phone-status.unknown'));
   assert.equal(f.dom.window.document.querySelector('.device-recorder-phone-status.idle'),null);
@@ -827,3 +827,21 @@ for (const destination of ['another recording', 'same recording after history'])
   assert.equal(button.disabled,false);assert.equal(button.textContent,'整理为可执行用例');
  });
 }
+
+for (const metadata of [{platform:'ios',android_version:'14'}, {}, {platform:'other'}]) {
+  test('unsupported online phone cannot start recording: ' + JSON.stringify(metadata), () => {
+    const f=fixture();
+    f.context.runnerDevices=[{device_id:'phone',model:'Android phone',status:'online',runner_online:true,...metadata}];
+    f.run('renderDeviceRecorder()');
+    assert.equal(f.run('recorderHasReadyPhone()'),false);
+    assert.equal(f.dom.window.document.querySelector('[data-action="start-recording"]').disabled,true);
+    if(metadata.platform==='ios') assert.match(f.dom.window.document.body.textContent,/iOS 暂不支持此操作录制，可使用文字创建用例/);
+  });
+}
+test('mixed phones retain Android and trusted legacy Android availability',()=>{
+  const f=fixture();
+  for(const metadata of [{platform:'android'}, {android_version:'14'}, {adb_path:'/usr/bin/adb'}]) {
+    f.context.runnerDevices=[{device_id:'ios',platform:'ios',status:'online'},{device_id:'android',status:'online',...metadata}];
+    assert.equal(f.run('recorderHasReadyPhone()'),true);
+  }
+});

@@ -4049,7 +4049,7 @@ def _post_runner_recording_evidence(handler, qs):
 def _post_device_recordings(handler, qs):
     if _require_user_auth(handler):
         return
-    from task_server.services.device_recording_service import create_recording_session
+    from task_server.services.device_recording_service import create_recording_session, validate_recording_device
     payload = handler._body()
     try:
         app_package = payload.get("app_package") or payload.get("appPackage")
@@ -4059,15 +4059,14 @@ def _post_device_recordings(handler, qs):
         runner_id = str(payload.get("runner_id") or payload.get("runnerId") or "").strip()
         device_id = str(payload.get("device_id") or payload.get("deviceId") or "").strip()
         if runner_id or device_id:
-            online = any(
-                str(item.get("runner_id") or "") == runner_id
+            matched = next((item for item in all_online_devices()
+                if str(item.get("runner_id") or "") == runner_id
                 and str(item.get("device_id") or "") == device_id
                 and item.get("runner_online")
-                and item.get("status") in ("online", "device")
-                for item in all_online_devices()
-            )
-            if not online:
+                and item.get("status") in ("online", "device")), None)
+            if not matched:
                 raise ValueError("所选 Android 手机未由该 Runner 在线上报，请刷新设备后重试")
+            validate_recording_device(matched)
         session = create_recording_session(
             user=_authenticated_user(handler),
             runner_id=runner_id,
@@ -4089,7 +4088,8 @@ def _post_device_recording_bind(handler, qs):
     from task_server.services.device_recording_service import bind_recording_device
     payload = handler._body()
     device_id = str(payload.get("device_id") or payload.get("deviceId") or "").strip()
-    matched = next((item for item in all_online_devices() if str(item.get("device_id") or "") == device_id and item.get("runner_online") and item.get("status") in ("online", "device")), None)
+    runner_id = str(payload.get("runner_id") or payload.get("runnerId") or "").strip()
+    matched = next((item for item in all_online_devices() if str(item.get("device_id") or "") == device_id and (not runner_id or str(item.get("runner_id") or "") == runner_id) and item.get("runner_online") and item.get("status") in ("online", "device")), None)
     if not matched:
         handler._json({"ok": False, "error": "Sonic 实际打开的手机当前不在线或不可用"}, 409)
         return
@@ -4099,6 +4099,7 @@ def _post_device_recording_bind(handler, qs):
             _authenticated_user(handler),
             str(matched.get("runner_id") or ""),
             device_id,
+            reported_device=matched,
         )
     except PermissionError as exc:
         handler._json({"ok": False, "error": str(exc)}, 403)
@@ -4115,7 +4116,8 @@ def _post_device_recording_bridge(handler, qs):
     from task_server.services.device_recording_service import bridge_recording_device, schedule_recording_recognition
     payload = handler._body()
     device_id = str(payload.get("device_id") or payload.get("deviceId") or "").strip()
-    matched = next((item for item in all_online_devices() if str(item.get("device_id") or "") == device_id and item.get("runner_online") and item.get("status") in ("online", "device")), None)
+    runner_id = str(payload.get("runner_id") or payload.get("runnerId") or "").strip()
+    matched = next((item for item in all_online_devices() if str(item.get("device_id") or "") == device_id and (not runner_id or str(item.get("runner_id") or "") == runner_id) and item.get("runner_online") and item.get("status") in ("online", "device")), None)
     if not matched:
         handler._json({"ok": False, "error": "Sonic 实际打开的手机当前不在线或不可用"}, 409)
         return
@@ -4125,6 +4127,7 @@ def _post_device_recording_bridge(handler, qs):
             payload.get("recording_token") or payload.get("recordingToken") or "",
             str(matched.get("runner_id") or ""),
             device_id,
+            reported_device=matched,
             refresh_evidence=payload.get("refresh_evidence") is True,
         )
     except PermissionError as exc:
