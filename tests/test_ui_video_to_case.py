@@ -605,6 +605,63 @@ def test_global_result_image_can_come_from_confirmation_outcome(tmp_path):
     assert {'f1','f2','f3','f5','f7','f9'} == refs
 
 
+def test_batch_invalid_result_frame_gets_one_bounded_repair(monkeypatch,tmp_path):
+    from task_server.services import ui_video_analysis as analysis,ai_skill_service as ai
+    frames,event=_consolidation_fixture(tmp_path)
+    calls=[]
+    def model(name,payload,**kwargs):
+        calls.append(payload)
+        if len(calls)==1:
+            raw=event('aiTap',0,1,'入口')
+            raw['outcome']={'observation':'目标页面','frame_refs':['f0']}
+            return {'events':[raw],'uncertainties':[],'multiple_scenarios':False}
+        return {'events':[event('aiTap',0,1,'入口')] if len(calls)==2 or payload['phase']=='consolidate' else [],'uncertainties':[],'multiple_scenarios':False}
+    monkeypatch.setattr(ai,'AI_VISION_IMAGE_LIMIT',6);monkeypatch.setattr(ai,'run_ai_skill',model)
+    analysis.analyze_frames({'app_id':APP,'goal':'','media':{'duration_ms':12000,'frames':frames}},tmp_path,lambda:False)
+    assert len(calls)==5
+    assert 'validation_feedback' in calls[1]
+    assert calls[0]['frames']==calls[1]['frames']
+
+
+def test_outcome_repair_preserves_original_secrets_and_multiscene(monkeypatch,tmp_path):
+    from task_server.services import ui_video_analysis as analysis,ai_skill_service as ai
+    frames,event=_consolidation_fixture(tmp_path)
+    calls=[]
+    def model(name,payload,**kwargs):
+        calls.append(payload)
+        assert 'repair-private-input' not in str(payload)
+        raw=event('aiInput',0,1,'测试输入')
+        if len(calls)==1:
+            raw.update(value='repair-private-input',outcome={'observation':'结果出现','frame_refs':['f0']})
+            return {'events':[raw],'uncertainties':[],'multiple_scenarios':True}
+        if len(calls)==2 or payload['phase']=='consolidate':
+            raw['observation']='页面显示repair-private-input'
+            return {'events':[raw],'uncertainties':['repair-private-input需要核对'],'multiple_scenarios':False}
+        return {'events':[],'uncertainties':[],'multiple_scenarios':False}
+    monkeypatch.setattr(ai,'AI_VISION_IMAGE_LIMIT',6);monkeypatch.setattr(ai,'run_ai_skill',model)
+    result=analysis.analyze_frames({'app_id':APP,'goal':'','media':{'duration_ms':12000,'frames':frames}},tmp_path,lambda:False)
+    assert result['multiple_scenarios'] is True
+    assert 'repair-private-input' not in str(result)
+    assert len(calls)==5 and sum('validation_feedback' in payload for payload in calls)==1
+
+
+@pytest.mark.parametrize('repair_mode',['invalid','missing','later_batch'])
+def test_outcome_repair_cannot_loop_or_drop_interactions(monkeypatch,tmp_path,repair_mode):
+    from task_server.services import ui_video_analysis as analysis,ai_skill_service as ai
+    frames,event=_consolidation_fixture(tmp_path);calls=[]
+    def model(name,payload,**kwargs):
+        calls.append(payload)
+        start=payload['frames'][0]['timestamp_ms']//1000
+        raw=event('aiTap',start,start+1,'入口')
+        if len(calls)==1 or repair_mode=='invalid' or (repair_mode=='later_batch' and len(calls)==3):
+            raw['outcome']={'observation':'页面','frame_refs':[f'f{start}']}
+        return {'events':[] if len(calls)==2 and repair_mode=='missing' else [raw],'uncertainties':[],'multiple_scenarios':False}
+    monkeypatch.setattr(ai,'AI_VISION_IMAGE_LIMIT',6);monkeypatch.setattr(ai,'run_ai_skill',model)
+    with pytest.raises(ValueError):
+        analysis.analyze_frames({'app_id':APP,'goal':'','media':{'duration_ms':12000,'frames':frames}},tmp_path,lambda:False)
+    assert len(calls)==(3 if repair_mode=='later_batch' else 2)
+
+
 @pytest.mark.parametrize('duplicate_wrong_time',[False,True])
 def test_global_cannot_discard_required_navigation_even_with_equal_action_count(monkeypatch,tmp_path,duplicate_wrong_time):
     from task_server.services import ui_video_analysis as analysis,ai_skill_service as ai

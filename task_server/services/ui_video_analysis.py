@@ -194,20 +194,39 @@ def analyze_frames(document, root, cancelled):
     # The existing Gateway imagePartsFromBody accepts at most six images.
     limit=max(2,min(6,int(ai.AI_VISION_IMAGE_LIMIT)))
     if int(ai.AI_VISION_IMAGE_LIMIT)<2: raise ValueError('video_vision_limit')
-    events=[];questions=[];multi=False;last_end=-1;audit_events=[];known_secrets=[]
+    events=[];questions=[];multi=False;last_end=-1;audit_events=[];known_secrets=[];repair_used=False
     # Adjacent batches share one boundary frame, preserving the whole chronology.
     for offset in range(0,len(frames)-1,limit-1):
         if cancelled(): raise ValueError('video_cancelled')
         batch=frames[offset:offset+limit]
         assets=[{'name':f['frame_id'], 'mime':'image/jpeg','base64':base64.b64encode((root/'frames'/(f['frame_id']+'.jpg')).read_bytes()).decode()} for f in batch]
         if cancelled():raise ValueError('video_cancelled')
-        result=ai.run_ai_skill('ui_video_steps', {'app_id':document['app_id'],'goal':document['goal'],
+        payload={'app_id':document['app_id'],'goal':document['goal'],
                               'duration_ms':document['media']['duration_ms'],'phase':'batch','frames':batch,'image_frames':batch,
                               'previous_events':[{k:e[k] for k in ('start_ms','end_ms','action','target')} for e in events[-3:]],
-                              'baseline_examples':document.get('baseline_examples',[])}, image_assets=assets,
+                              'baseline_examples':document.get('baseline_examples',[])}
+        result=ai.run_ai_skill('ui_video_steps', payload, image_assets=assets,
                               timeout=120,retry_count=0,max_tokens=10000,repair_invalid_json=False)
         if cancelled(): raise ValueError('video_cancelled')
-        checked=validate_analysis(result,batch,document['media']['duration_ms'],known_secrets)
+        try:
+            checked=validate_analysis(result,batch,document['media']['duration_ms'],known_secrets)
+        except ValueError as error:
+            if repair_used or error.args!=('video_reference_invalid',):raise
+            # Repair only malformed optional outcome references. All original
+            # action evidence must independently pass before retry is allowed.
+            action_only=copy.deepcopy(result)
+            for event in action_only.get('events',[]):event.pop('outcome',None)
+            original=validate_analysis(action_only,batch,document['media']['duration_ms'],known_secrets)
+            known_secrets.extend(e['value'] for e in result['events'] if e['action']=='aiInput' and isinstance(e['value'],str) and e['value'])
+            repair_used=True
+            if cancelled():raise ValueError('video_cancelled')
+            result=ai.run_ai_skill('ui_video_steps',{**payload,'validation_feedback':
+                '上次outcome结果帧引用无效。重新核对同一图片：事件frame_refs在start_ms至end_ms之间；outcome每个引用须在end_ms之后或同刻。没有合法结果帧请省略outcome。保留原有可靠交互，不编造业务结果。'},
+                image_assets=assets,timeout=120,retry_count=0,max_tokens=10000,repair_invalid_json=False)
+            if cancelled():raise ValueError('video_cancelled')
+            checked=validate_analysis(result,batch,document['media']['duration_ms'],known_secrets)
+            _preserve_interactions(original['events'],checked['events'],_required_interactions(original['events'],document['media']['duration_ms']))
+            checked['multiple_scenarios']|=original['multiple_scenarios']
         known_secrets.extend(e['value'] for e in result['events'] if e['action']=='aiInput' and isinstance(e['value'],str) and e['value'])
         audit_events.extend(copy.deepcopy(checked['events']))
         for event in checked['events']:
