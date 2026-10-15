@@ -126,7 +126,7 @@ cd /opt/midscene-task-platform-src
 bash deploy/update-main-server.sh
 ```
 
-随后核对 `/api/health` 的精确提交号与静态资源，使用无固定视口的正式 Chrome 复验。当前没有可供本批部署的新提交。
+随后核对 `/api/health` 的精确提交号与静态资源，使用无固定视口的正式 Chrome 复验。本批代码提交75ed28b已推送main，等待恢复终端部署。
 
 ## 2026-10-15 收尾检查点
 
