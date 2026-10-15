@@ -75,10 +75,7 @@ class VideoStore:
         with _admit():
             self.cleanup()
             with self.db() as db:
-                docs = [json.loads(row[0]) for row in db.execute('SELECT document FROM sources')]
-            # Bound queued work, total retained sources and disk, including pinned evidence.
-            if sum(d['status'] not in TERMINAL for d in docs) >= 4 or len(docs) >= 100 or sum(p.stat().st_size for p in self.root.rglob('*') if p.is_file()) + length + 128*1024**2*sum(d['status'] not in TERMINAL for d in docs) > 2 * 1024**3:
-                raise ValueError('video_capacity')
+                self._check_admission(db,additional_bytes=length,new_source=True)
             identifier = 'uvs_' + uuid.uuid4().hex
             directory = self.root / identifier
             directory.mkdir(mode=0o700)
@@ -101,6 +98,38 @@ class VideoStore:
             except Exception:
                 shutil.rmtree(directory, ignore_errors=True)
                 raise
+
+    def _disk_bytes(self):
+        total=0
+        for path in self.root.rglob('*'):
+            try:
+                if path.is_file():total+=path.stat().st_size
+            except FileNotFoundError:pass # Concurrent terminal cleanup only reduces usage.
+        return total
+
+    def _check_admission(self, db, *, additional_bytes=0, new_source=False):
+        docs=[json.loads(row[0]) for row in db.execute('SELECT document FROM sources')]
+        active=sum(d['status'] not in TERMINAL for d in docs)
+        # Reserve the newly admitted decoder as well as existing active work.
+        if active>=4 or (new_source and len(docs)>=100) or self._disk_bytes()+additional_bytes+128*1024**2*(active+1)>2*1024**3:
+            raise ValueError('video_capacity')
+
+    def retry(self, identifier, owner, app):
+        # The same process admission lock serializes retries with streaming uploads;
+        # SQLite protects the read/check/version transition from other mutations.
+        with _admit():
+            with self.db() as db:
+                db.execute('BEGIN IMMEDIATE')
+                row=db.execute('SELECT document FROM sources WHERE id=? AND owner=? AND app=?',(identifier,owner,app)).fetchone()
+                if not row:raise KeyError(identifier)
+                doc=json.loads(row[0])
+                if doc['status'] not in {'failed','cancelled','interrupted','review_needed'} or doc.get('draft_id') or doc.get('retained'):
+                    raise ValueError('video_retry_state')
+                self._check_admission(db)
+                doc.pop('media',None)
+                doc.update(status='queued',error='',error_code='',events=[],segments=[],candidate_steps=[],uncertainties=[],analysis_version=doc['analysis_version']+1)
+                self._save(db,doc)
+                return doc
 
     def transition(self, identifier, allowed, status, **fields):
         with self.db() as db:
@@ -171,6 +200,13 @@ def _process(command, cancelled, timeout=150):
                 process.wait(timeout=5)
 
 
+def _sync_args(cancelled):
+    # FFmpeg 4.4 only has vsync; 9 removed it. Inspect actual capabilities instead
+    # of requiring a distribution upgrade or trusting an advertised version.
+    help_text,_=_process([_tool('ffmpeg'),'-hide_banner','-h','full'],cancelled,20)
+    return ['-fps_mode','vfr'] if b'-fps_mode' in help_text else ['-vsync','vfr']
+
+
 def decode_video(video, output, cancelled):
     if cancelled(): raise ValueError('video_cancelled')
     probe, _ = _process([_tool('ffprobe'), '-v', 'error', '-protocol_whitelist', 'file,pipe', '-f', 'mov', '-show_format', '-show_streams', '-of', 'json', str(video)], cancelled, 20)
@@ -205,7 +241,7 @@ def decode_video(video, output, cancelled):
     indexes=sorted(selected)
     if len(indexes)>=MAX_FRAMES:raise ValueError('video_split_required')
     selector="+".join(f"eq(n,{i})" for i in indexes)
-    _, log = _process([*common, '-vf', base+",select='"+selector+"',showinfo", '-fps_mode', 'vfr', '-threads', '1', '-pix_fmt', 'yuvj420p', '-q:v', '4', str(output/'frame-%03d.jpg')], cancelled)
+    _, log = _process([*common, '-vf', base+",select='"+selector+"',showinfo", *_sync_args(cancelled), '-threads', '1', '-pix_fmt', 'yuvj420p', '-q:v', '4', str(output/'frame-%03d.jpg')], cancelled)
     times = [round(float(t)*1000) for t in re.findall(rb'\bn:\s*\d+.*?pts_time:([\d.e+\-]+)', log)]
     files = sorted(output.glob('frame-*.jpg'))
     if not files or len(times) != len(files) or times!=[all_times[i] for i in indexes]: raise ValueError('video_frames_invalid')

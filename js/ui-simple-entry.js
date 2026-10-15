@@ -233,7 +233,7 @@ function openImportedUiDraft(draft){
 
 // One visible source task owns polling. Leaving this view never starts card timers.
 function mountUiVideoSource(node,{current,openDraft,initialSource=null}){
-  const identity=uiSimpleIdentity(),pending=new Set(),urls=new Set();let alive=true,epoch=0,timer=null,source=null,app='',polls=0,busy=false;
+  const identity=uiSimpleIdentity(),pending=new Set(),urls=new Set(),mediaRequests=new WeakMap();let alive=true,epoch=0,timer=null,source=null,app='',polls=0,busy=false;
   const q=s=>node.querySelector(s),escape=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const valid=()=>alive&&current()&&identity===uiSimpleIdentity()&&node.isConnected;
   function clearMedia(){for(const url of urls)URL.revokeObjectURL(url);urls.clear();}
@@ -246,9 +246,13 @@ function mountUiVideoSource(node,{current,openDraft,initialSource=null}){
     finally{pending.delete(c);}
   }
   async function media(path,element){
-    const c=new AbortController(),version=epoch;pending.add(c);
-    try{const response=await nativeFetch('/api'+path,{headers:authHeaders(),signal:c.signal});if(!response.ok)throw new Error('证据读取失败');const blob=await response.blob();if(!valid()||version!==epoch||!element.isConnected)return;const url=URL.createObjectURL(blob);urls.add(url);element.src=url;}
-    catch(e){if(valid()&&version===epoch)notice(e.message);}
+    const previous=mediaRequests.get(element);previous?.controller.abort();
+    if(previous?.url){URL.revokeObjectURL(previous.url);urls.delete(previous.url);}
+    const c=new AbortController(),version=epoch,entry={controller:c,url:null,sequence:(previous?.sequence||0)+1};
+    mediaRequests.set(element,entry);element.removeAttribute('src');pending.add(c);
+    const latest=()=>valid()&&version===epoch&&element.isConnected&&mediaRequests.get(element)===entry&&!c.signal.aborted;
+    try{const response=await nativeFetch('/api'+path,{headers:authHeaders(),signal:c.signal});if(!latest())return;if(!response.ok)throw new Error('证据读取失败');const blob=await response.blob();if(!latest())return;const url=URL.createObjectURL(blob);entry.url=url;urls.add(url);element.src=url;}
+    catch(e){if(latest())notice(e.message);}
     finally{pending.delete(c);}
   }
   node.innerHTML='<h2>上传录屏文件</h2><p>选择一个连续场景的 MP4/MOV，最多200MB、10分钟。分析后先核对观察、推断和业务预期，再选择手机试跑。</p><label>所属应用<select data-video-app><option value="">选择应用</option></select></label><label>测试目标或结束检查（可选）<input data-video-goal maxlength="2000" placeholder="视频缺少明确预期时再补充"></label><label>录屏文件<input data-video-file type="file" accept="video/mp4,video/quicktime,.mp4,.mov"></label><button type="button" data-video-upload>上传并分析</button><button type="button" data-video-refresh>刷新我的录屏</button><p data-video-notice role="status"></p><div data-video-list></div><section data-video-detail></section>';

@@ -95,9 +95,7 @@ def register_routes(route_get,route_post_prefix_before_body,route_get_regex,rout
                 store.cancel(identifier)
                 result={'source':public_source(store.get(identifier,doc['owner_user_id'],doc['app_id']))}
             else:
-                if doc.get('draft_id'):raise ValueError('video_retry_state')
-                updated=store.transition(identifier,{'failed','cancelled','interrupted','review_needed'},'queued',error='',events=[],segments=[],candidate_steps=[],uncertainties=[],analysis_version=doc['analysis_version']+1)
-                if not updated:raise ValueError('video_retry_state')
+                updated=store.retry(identifier,doc['owner_user_id'],doc['app_id'])
                 from task_server.workers.ui_video_worker import ensure_worker
                 ensure_worker(store).set();result={'source':public_source(updated)}
             _mark(handler,identifier);handler._json({'ok':True,**result})

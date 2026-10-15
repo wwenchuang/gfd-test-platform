@@ -109,7 +109,7 @@ from test_operation_http import operation_server,events
 from test_identity import identity_db
 
 
-def test_real_http_stream_upload_private_media_and_oversize_close(operation_server,tmp_path,monkeypatch):
+def test_real_http_stream_upload_private_media_and_oversize_close(operation_server,identity_db,tmp_path,monkeypatch):
     import http.client,json,threading,urllib.parse
     from task_server import auth
     from task_server.services import business_line_service
@@ -127,9 +127,87 @@ def test_real_http_stream_upload_private_media_and_oversize_close(operation_serv
     status,headers,body=call('GET',f"/api/ui-video-sources/{source['source_id']}/video?app_id={APP}")
     assert status==200 and body==b'fixture-not-decoded';assert headers['Cache-Control']=='private, no-store'
     assert call('GET',f"/api/ui-video-sources/{source['source_id']}?app_id=com.other.app")[0] in {400,403,404}
+    # A second real authenticated user has the same app and UI permissions.
+    # Their denials must be ownership failures, not a missing global permission.
+    from test_identity import create_member,activate
+    from task_server.services.ui_video_source_service import VideoStore
+    identity,identities=identity_db
+    create_member(identities,'video-second');activate(identities,'video-second')
+    identities.update_user('admin','video-second',{'scope':{'ui_apps':[APP],'api_projects':[],'api_environments':[]}})
+    second_token=auth.create_session_token('video-second')
+    private=VideoStore(tmp_path/'video-http')
+    frames=private.root/source['source_id']/'frames';frames.mkdir()
+    from PIL import Image
+    Image.new('RGB',(20,20),'blue').save(frames/'frame-001.jpg')
+    private.transition(source['source_id'],{'queued'},'queued',media={'frames':[{'frame_id':'frame-001','timestamp_ms':0}]})
+    before=private.list(source_owner:=identity.get_access_profile('admin')['user_id'],APP)[0]
+    assert call('GET',f"/api/ui-video-sources/{source['source_id']}/frames/frame-001?app_id={APP}")[0]==200
+    prefix=f"/api/ui-video-sources/{source['source_id']}"
+    for suffix in ('','/video','/frames/frame-001'):
+        status,_,payload=call('GET',prefix+suffix+'?app_id='+APP,headers={'Authorization':'Bearer '+second_token})
+        assert status==404,payload
+        assert b'fixture-not-decoded' not in payload and b'PRIVATE_SENTINEL' not in payload
+    status,_,payload=call('GET','/api/ui-video-sources?app_id='+APP,headers={'Authorization':'Bearer '+second_token})
+    assert status==200 and json.loads(payload)['sources']==[]
+    for verb in ('cancel','retry','import'):
+        status,_,payload=call('POST',prefix+'/'+verb,json.dumps({'app_id':APP}),{'Authorization':'Bearer '+second_token,'Content-Type':'application/json'})
+        assert status==404,payload
+    assert private.get(source['source_id'],source_owner,APP)==before
     # Header-only rejection must close the connection without reading 200MB.
     c=http.client.HTTPConnection('127.0.0.1',server.server_port,timeout=5)
     c.putrequest('POST','/api/ui-video-sources/upload?app_id='+APP+'&filename=x.mp4');c.putheader('Authorization','Bearer '+token);c.putheader('Content-Length',str(200*1024**2+1));c.putheader('Content-Type','application/octet-stream');c.endheaders()
     response=c.getresponse();assert response.status==400;assert json.loads(response.read())['code']=='video_size';assert response.will_close;c.close()
     rows=events(audit,4);assert any(r['resource_id']==source['source_id'] and r['resource_type']=='ui_video' for r in rows)
     assert 'PRIVATE_SENTINEL' not in str(rows)
+
+
+def test_expected_candidates_keep_provenance_and_need_confirmation():
+    from task_server.services.ui_video_analysis import draft_proposal
+    event={'action':'aiTap','target':'首页我的入口','value':'','start_ms':0,'end_ms':1000,'frame_refs':['f0','f1'],'observation':'个人页面出现','evidence_kind':'inferred','uncertainties':[]}
+    document={'source_id':'uvs_'+'a'*32,'app_id':APP,'analysis_version':1,'goal':'点击我的入口后检查个人页面出现','media':{'duration_ms':1000,'frames':[{'frame_id':'f0','timestamp_ms':0},{'frame_id':'f1','timestamp_ms':1000}]},'events':[event],'uncertainties':[]}
+    content,snapshot=draft_proposal(document)
+    assert content['steps'][0]['expected']=='个人页面出现'
+    assert content['steps'][0]['review_state']=='needs_review'
+    assert not any('补充明确的预期' in q for q in content['questions'])
+    assert snapshot['events'][0]['expected_candidate']=={'text':'个人页面出现','basis':'user_goal','frame_refs':['f0','f1'],'requires_confirmation':True}
+    document['goal']=''
+    content,snapshot=draft_proposal(document)
+    assert content['steps'][0]['expected']=='个人页面出现'
+    assert snapshot['events'][0]['expected_candidate']['basis']=='visible_candidate'
+    document['events'][0]['observation']='页面变化，结果不明确'
+    content,snapshot=draft_proposal(document)
+    assert content['steps'][0]['expected']==''
+    assert snapshot['events'][0]['expected_candidate']['basis']=='unresolved'
+
+
+@pytest.mark.parametrize('value',[{'distance':-10,'invented':True},{'distance':float('inf')},{'direction':'diagonal'},{'scrollType':'scrollToBottom','direction':'down'},{'distance':0}])
+def test_invalid_scroll_rejected_before_ready(value):
+    from task_server.services.ui_video_analysis import validate_analysis
+    event={'action':'aiScroll','target':'个人页面列表','value':value,'start_ms':0,'end_ms':1000,'frame_refs':['f0','f1'],'observation':'列表底部显示帮助入口','evidence_kind':'inferred','uncertainties':[]}
+    with pytest.raises(ValueError,match='video_action_invalid'):
+        validate_analysis({'events':[event],'uncertainties':[],'multiple_scenarios':False},[{'frame_id':'f0','timestamp_ms':0},{'frame_id':'f1','timestamp_ms':1000}],1000)
+
+
+def test_explicit_goal_is_candidate_even_when_video_ending_differs():
+    from task_server.services.ui_video_analysis import draft_proposal
+    event={'action':'aiTap','target':'提交按钮','value':'','start_ms':0,'end_ms':1000,'frame_refs':['f0','f1'],'observation':'页面显示提交失败弹窗','evidence_kind':'inferred','uncertainties':[]}
+    document={'source_id':'uvs_'+'a'*32,'app_id':APP,'analysis_version':1,'goal':'点击提交，检查订单页面显示已提交状态','media':{'duration_ms':1000,'frames':[{'frame_id':'f0','timestamp_ms':0},{'frame_id':'f1','timestamp_ms':1000}]},'events':[event],'uncertainties':[]}
+    content,snapshot=draft_proposal(document)
+    assert content['steps'][0]['expected']=='订单页面显示已提交状态'
+    assert content['steps'][-1]['target']=='订单页面显示已提交状态'
+    assert snapshot['events'][0]['observation']=='页面显示提交失败弹窗'
+    assert snapshot['events'][0]['expected_candidate']['basis']=='user_goal'
+    assert all(step['review_state']=='needs_review' for step in content['steps'])
+
+
+def test_worker_rejects_unimportable_scroll_before_ready(env,tmp_path,monkeypatch):
+    from task_server.services import ui_video_source_service as video,ui_video_analysis as analysis
+    from task_server.workers import ui_video_worker as worker
+    store=video.VideoStore(tmp_path/'videos');doc=store.upload(A,APP,'clip.mp4',io.BytesIO(b'video'),5,actor=A)
+    monkeypatch.setattr(worker,'decode_video',lambda *args:{'black':False,'static':False,'frames':[{'frame_id':'f','timestamp_ms':0}],'duration_ms':100})
+    invalid={'action':'aiScroll','target':'个人页面列表','value':{'invented':True},'start_ms':0,'end_ms':0,'frame_refs':['f'],'observation':'个人页面显示帮助入口','evidence_kind':'inferred','uncertainties':[]}
+    monkeypatch.setattr(analysis,'analyze_frames',lambda *args:{'events':[invalid],'uncertainties':[],'multiple_scenarios':False})
+    worker.analyze_video_source(store,doc['source_id'])
+    result=store.get(doc['source_id'],A['user_id'],APP)
+    assert result['status']=='failed' and result['draft_id']==''
+    assert store.retry(doc['source_id'],A['user_id'],APP)['status']=='queued'

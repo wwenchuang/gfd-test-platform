@@ -47,7 +47,7 @@ def analyze_video_source(store,identifier):
         return latest['status']=='cancelled' or latest['analysis_version']!=version
     try:
         from task_server.services.ui_case_draft_service import _application,_top3_examples
-        from task_server.services.ui_video_analysis import analyze_frames
+        from task_server.services.ui_video_analysis import analyze_frames,draft_proposal
         with actor_context(document['actor']):
             require_ui_actor(document['actor'],permission='ui.edit',app_id=app);_application(app)
             media=decode_video(store.root/identifier/'source.mp4',store.root/identifier/'frames',cancelled)
@@ -61,6 +61,9 @@ def analyze_video_source(store,identifier):
             if cancelled():raise ValueError('video_cancelled')
             require_ui_actor(document['actor'],permission='ui.edit',app_id=app);_application(app)
             status='review_needed' if result['multiple_scenarios'] or not result['events'] else 'ready'
+            if status=='ready':
+                # Validate the entire existing draft contract before advertising importability.
+                draft_proposal({**document,**result})
             message='包含多个独立场景或缺少可靠动作，请分段后重新上传' if status=='review_needed' else ''
             segments=[{'source_id':identifier,'segment_id':str(i),'start_ms':e['start_ms'],'end_ms':e['end_ms'],'frame_refs':e['frame_refs']} for i,e in enumerate(result['events'])]
             store.transition(identifier,{'analyzing'},status,**result,segments=segments,candidate_steps=result['events'],error=message)

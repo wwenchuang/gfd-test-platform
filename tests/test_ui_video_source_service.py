@@ -92,3 +92,45 @@ class VideoSourceTests(unittest.TestCase):
             decode_video(Path('/unused.mp4'), Path(self.temp.name), lambda: True)
 
 if __name__ == '__main__': unittest.main()
+
+class VideoRetryAdmissionTests(unittest.TestCase):
+    def test_retry_reuses_active_queue_and_disk_admission_atomically(self):
+        import threading
+        from task_server.services.ui_video_source_service import VideoStore
+        with tempfile.TemporaryDirectory() as directory:
+            store=VideoStore(Path(directory)); docs=[]
+            for i in range(6):
+                doc=store.upload({'user_id':'one'},'com.example.app','x.mp4',io.BytesIO(b'video'),5)
+                store.transition(doc['source_id'],{'queued'},'failed');docs.append(doc)
+            for doc in docs[:3]:store.retry(doc['source_id'],'one','com.example.app')
+            barrier=threading.Barrier(2);outcomes=[]
+            def retry(doc):
+                barrier.wait()
+                try:store.retry(doc['source_id'],'one','com.example.app');outcomes.append('queued')
+                except ValueError as error:outcomes.append(str(error))
+            threads=[threading.Thread(target=retry,args=(doc,)) for doc in docs[3:5]]
+            for thread in threads:thread.start()
+            for thread in threads:thread.join()
+            self.assertCountEqual(outcomes,['queued','video_capacity'])
+            self.assertEqual(sum(d['status']=='queued' for d in store.list('one','com.example.app')),4)
+            with self.assertRaisesRegex(ValueError,'video_capacity'):store.retry(docs[5]['source_id'],'one','com.example.app')
+            for doc in docs[:3]:store.cancel(doc['source_id'])
+            with patch.object(store,'_disk_bytes',return_value=2*1024**3-1):
+                with self.assertRaisesRegex(ValueError,'video_capacity'):store.retry(docs[5]['source_id'],'one','com.example.app')
+            self.assertEqual(store.get(docs[5]['source_id'],'one','com.example.app')['analysis_version'],1)
+            with self.assertRaises(KeyError):store.retry(docs[5]['source_id'],'other','com.example.app')
+
+    def test_decoder_selects_ffmpeg44_and_ffmpeg9_supported_sync(self):
+        from task_server.services import ui_video_source_service as video
+        old=video._process;commands=[]
+        def run(command,*args,**kwargs):commands.append(command);return old(command,*args,**kwargs)
+        with tempfile.TemporaryDirectory() as directory:
+            import subprocess
+            movie=Path(directory)/'x.mp4'
+            subprocess.run([video._tool('ffmpeg'),'-v','error','-f','lavfi','-i','color=c=blue:s=96x160:d=1','-c:v','libx264',str(movie)],check=True)
+            with patch.object(video,'_process',run):video.decode_video(movie,Path(directory)/'frames',lambda:False)
+        self.assertTrue(any(('-fps_mode' in command or '-vsync' in command) and 'vfr' in command for command in commands))
+        with patch.object(video,'_process',return_value=(b'ffmpeg 4.4 help: -vsync video sync method',b'')):
+            self.assertEqual(video._sync_args(lambda:False),['-vsync','vfr'])
+        with patch.object(video,'_process',return_value=(b'ffmpeg 9 help: -fps_mode per stream sync',b'')):
+            self.assertEqual(video._sync_args(lambda:False),['-fps_mode','vfr'])

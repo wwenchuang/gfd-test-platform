@@ -3,6 +3,7 @@ import base64
 import copy
 import hashlib
 import json
+import math
 import re
 import uuid
 
@@ -43,7 +44,12 @@ def validate_analysis(result, frames, duration):
             event['value']=''
             event['uncertainties'].append('请手工填写非敏感测试输入；密码、验证码或令牌请使用人工前置条件')
         elif event['action']=='aiScroll':
-            if not isinstance(event['value'],dict): raise ValueError('video_action_invalid')
+            from .yaml_static_validator import validate_midscene_action_parameters
+            value=event['value']
+            if not isinstance(value,dict) or set(value)-{'direction','distance','scrollType'}:raise ValueError('video_action_invalid')
+            distance=value.get('distance')
+            if isinstance(distance,(int,float)) and not math.isfinite(distance):raise ValueError('video_action_invalid')
+            if validate_midscene_action_parameters('aiScroll',{'aiScroll':event['target'],**value}):raise ValueError('video_action_invalid')
         elif event['value']!='': raise ValueError('video_action_invalid')
         last=start
         clean.append(event)
@@ -88,6 +94,24 @@ def analyze_frames(document, root, cancelled):
     return {'events':events,'uncertainties':list(dict.fromkeys(questions)), 'multiple_scenarios':multi}
 
 
+def _expected_candidate(event, goal, *, final_event=False):
+    """A sourced visible check suggestion, never an established business outcome."""
+    observation=event['observation'].strip()
+    concrete=(len(observation)>=6 and re.search(r'显示|出现|可见|打开|包含|弹出',observation)
+              and not re.search(r'不明确|不确定|无法|可能|似乎|未知|跳帧|页面变化|界面变化',observation))
+    candidate=observation if concrete else ''
+    if final_event:
+        clauses=re.findall(r'(?:检查|验证|预期)(?:结果为|是否)?([^，,。；;\n]+)',goal)
+        explicit=clauses[-1].strip(' ：:') if clauses else ''
+        if len(explicit)>=6 and re.search(r'显示|出现|可见|打开|包含|弹出',explicit) and not re.search(r'不明确|不确定|无法|可能|似乎|未知|不要|不应|禁止|勿',explicit):
+            candidate=explicit
+    # A matching explicit goal backs this visible suggestion; otherwise the user
+    # must decide whether the observed state is the desired business result.
+    basis=('user_goal' if candidate and candidate in goal and not re.search(r'不要|不应|禁止|勿',goal)
+           else 'visible_candidate' if candidate else 'unresolved')
+    return {'text':candidate,'basis':basis,'frame_refs':list(event['frame_refs']),'requires_confirmation':True}
+
+
 def draft_proposal(document):
     identifier=document['source_id'];version=document['analysis_version']
     snapshot={'kind':'video','source_id':identifier,'app_id':document['app_id'],'analysis_version':version,
@@ -98,10 +122,20 @@ def draft_proposal(document):
     for index,event in enumerate(snapshot['events']):
         step_id=str(uuid.uuid4());event['draft_step_id']=step_id
         ref=f"video:{identifier}:{version}:{index}"
-        steps.append({'step_id':step_id,'action':event['action'],'target':event['target'],'value':event['value'],
-                      'expected':'','source_ref':ref,'review_state':'needs_review'})
+        event['expected_candidate']=_expected_candidate(event,document['goal'],final_event=index==len(snapshot['events'])-1)
+        expected=event['expected_candidate']['text'] if event['action'] in {'aiTap','aiInput','aiScroll'} else ''
+        target=event['expected_candidate']['text'] if event['action']=='aiAssert' and event['expected_candidate']['basis']=='user_goal' else event['target']
+        steps.append({'step_id':step_id,'action':event['action'],'target':target,'value':event['value'],
+                      'expected':expected,'source_ref':ref,'review_state':'needs_review'})
         questions.extend(f'片段 {event["start_ms"]/1000:g}–{event["end_ms"]/1000:g} 秒：{q}' for q in event['uncertainties'])
         if re.search('删除|支付|付款|打印|下单',event['target']): questions.append('含删除/支付/打印等有副作用动作，请核对测试数据与授权后再手工试跑')
-    questions.append('请区分看到的结果与业务预期，核对可见检查候选；缺少结束检查时补充明确检查点。'+('用户测试目标：'+document['goal'] if document['goal'] else ''))
+    if steps and steps[-1]['action']!='aiAssert' and len(steps)<50:
+        event=snapshot['events'][-1]
+        if event['expected_candidate']['text']:
+            check_id=str(uuid.uuid4());event['expected_check_step_id']=check_id
+            steps.append({'step_id':check_id,'action':'aiAssert','target':event['expected_candidate']['text'],
+                          'value':'','expected':'','source_ref':steps[-1]['source_ref'],'review_state':'needs_review'})
+    if not steps or steps[-1]['action']!='aiAssert':
+        questions.append('视频未给出明确结束检查，请补充业务预期；观察到的变化不能代替业务应有结果。')
     normalized=normalize_steps({'title':'录屏步骤待核对','preconditions':[],'steps':steps,'questions':questions},document['app_id'])
     return normalized,snapshot

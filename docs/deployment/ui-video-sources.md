@@ -4,7 +4,7 @@
 
 ## 服务器依赖与部署
 
-服务账户必须能执行 ffmpeg 与 ffprobe（建议同版本，测试使用 FFmpeg 9；命令使用 FFmpeg 5.1+ 支持的 fps_mode）。Ubuntu/Debian：
+服务账户必须能执行 ffmpeg 与 ffprobe（建议同版本；兼容实际部署 FFmpeg 4.4.2 与本机测试 FFmpeg 9。解码前读取真实 ffmpeg -h full 能力：4.4 使用 -vsync vfr，支持 -fps_mode 的版本使用 -fps_mode vfr，避免FFmpeg9已移除旧参数的问题）。Ubuntu/Debian：
 
 ```sh
 sudo apt-get update

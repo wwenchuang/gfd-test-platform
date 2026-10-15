@@ -300,3 +300,14 @@ test('video import opens existing Chinese editor without dispatch and revokes me
  f.app('a');await wait();f.q('[data-video-open]').click();await wait();f.q('[data-video-preview]').click();await wait();assert.equal(f.q('video').src,'blob:test');
  f.q('[data-video-action="import"]').click();await wait();assert.equal(adopted.draft_id,'draft-video');assert.ok(revoked>0);assert.equal(f.calls.some(c=>/\/try$/.test(c.path)),false);
 });
+
+test('latest clicked video frame wins even when superseded network and body finish late',async t=>{
+ const f=await videoFixture(t),source={source_id:'uvs_'+'c'.repeat(32),filename:'clip.mp4',status:'ready',analysis_version:1,candidate_steps:[{start_ms:0,end_ms:1000,evidence_kind:'inferred',action:'aiTap',target:'我的入口',observation:'个人页面出现',frame_refs:['frame-001','frame-002'],uncertainties:[]}],uncertainties:[]};
+ f.respond(path=>path.includes(source.source_id)?{ok:true,source}:path.startsWith('/ui-video-sources?')?{ok:true,sources:[source]}:undefined);
+ f.app('a');await wait();f.q('[data-video-open]').click();await wait();
+ const bodies={},signals={},urls=[],revoked=[];f.w.URL.createObjectURL=blob=>{const url='blob:'+blob.kind;urls.push(url);return url;};f.w.URL.revokeObjectURL=url=>revoked.push(url);
+ f.w.nativeFetch=async(path,options)=>{const frame=path.includes('frame-001')?'A':'B';signals[frame]=options.signal;return {ok:true,blob:()=>new Promise(resolve=>bodies[frame]=resolve)};};
+ f.q('[data-video-frame="frame-001"]').click();await wait();f.q('[data-video-frame="frame-002"]').click();await wait();
+ assert.equal(signals.A.aborted,true);bodies.B({kind:'B'});await wait();assert.equal(f.q('[data-video-frame-preview]').getAttribute('src'),'blob:B');bodies.A({kind:'A'});await wait();assert.equal(f.q('[data-video-frame-preview]').getAttribute('src'),'blob:B');assert.deepEqual(urls,['blob:B']);
+ f.q('[data-ui-case-back]').click();assert.ok(revoked.includes('blob:B'));
+});

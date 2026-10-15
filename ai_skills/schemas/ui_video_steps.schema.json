@@ -46,7 +46,66 @@
                 "maxLength": 4000
               },
               {
-                "type": "object"
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "direction": {
+                    "enum": [
+                      "down",
+                      "up",
+                      "right",
+                      "left"
+                    ]
+                  },
+                  "distance": {
+                    "type": "number",
+                    "exclusiveMinimum": 0
+                  },
+                  "scrollType": {
+                    "enum": [
+                      "singleAction",
+                      "scrollToBottom",
+                      "scrollToTop",
+                      "scrollToRight",
+                      "scrollToLeft"
+                    ]
+                  }
+                },
+                "allOf": [
+                  {
+                    "if": {
+                      "required": [
+                        "scrollType"
+                      ],
+                      "properties": {
+                        "scrollType": {
+                          "enum": [
+                            "scrollToBottom",
+                            "scrollToTop",
+                            "scrollToRight",
+                            "scrollToLeft"
+                          ]
+                        }
+                      }
+                    },
+                    "then": {
+                      "not": {
+                        "anyOf": [
+                          {
+                            "required": [
+                              "direction"
+                            ]
+                          },
+                          {
+                            "required": [
+                              "distance"
+                            ]
+                          }
+                        ]
+                      }
+                    }
+                  }
+                ]
               }
             ]
           },

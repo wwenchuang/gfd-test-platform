@@ -181,3 +181,9 @@ test('requirement source shows immutable original steps for comparison without i
  assert.match(original.textContent,/原始动作 <script>/);assert.match(original.textContent,/原始预期/);assert.equal(original.querySelector('script'),null);
  assert.doesNotMatch(f.node.querySelector('[data-draft-source]').textContent,/已结束的录制/);
 });
+
+test('video source details use the video label and identify proposed checks as unconfirmed',async t=>{
+ const f=fixture(t,null,{initialDraft:{...draft,source_snapshot:{kind:'video',source_id:'uvs_x',analysis_version:1,duration_ms:1000,events:[{start_ms:0,end_ms:1000,target:'我的入口',observation:'个人页面出现',evidence_kind:'inferred',frame_refs:['f1'],expected_candidate:{text:'个人页面出现',basis:'visible_candidate',requires_confirmation:true}}]}}});await wait();
+ assert.equal(f.node.querySelector('[data-draft-original] summary').textContent,'对照原视频与时间证据');
+ assert.match(f.node.querySelector('[data-draft-original-body]').textContent,/可见检查候选.*待确认/);
+});
