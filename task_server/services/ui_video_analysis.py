@@ -44,7 +44,8 @@ def validate_analysis(result, frames, duration, prior_secrets=()):
     last=-1
     clean=[]
     for raw in events:
-        if not isinstance(raw,dict) or set(raw)!={'action','target','value','start_ms','end_ms','frame_refs','observation','evidence_kind','uncertainties'}: raise ValueError('video_model_invalid')
+        required={'action','target','value','start_ms','end_ms','frame_refs','observation','evidence_kind','uncertainties'}
+        if not isinstance(raw,dict) or not required<=set(raw)<=required|{'outcome'}: raise ValueError('video_model_invalid')
         event=copy.deepcopy(raw)
         if event['action'] not in ACTIONS-{'launch'} or event['evidence_kind'] not in {'observed','inferred'}: raise ValueError('video_action_invalid')
         start,end=event['start_ms'],event['end_ms'];refs=event['frame_refs']
@@ -53,6 +54,16 @@ def validate_analysis(result, frames, duration, prior_secrets=()):
         if [by_id[r] for r in refs]!=sorted(by_id[r] for r in refs): raise ValueError('video_reference_invalid')
         event['target']=_text(event['target']);event['observation']=_text(event['observation'])
         if not event['observation']: raise ValueError('video_observation_missing')
+        if 'outcome' in event:
+            outcome=event['outcome']
+            if not isinstance(outcome,dict) or set(outcome)!={'observation','frame_refs'}:
+                raise ValueError('video_model_invalid')
+            outcome['observation']=_text(outcome['observation'])
+            outcome_refs=outcome['frame_refs']
+            if (not outcome['observation'] or not isinstance(outcome_refs,list) or not 1<=len(outcome_refs)<=8 or
+                any(not isinstance(ref,str) or ref not in by_id or not end<=by_id[ref]<=duration for ref in outcome_refs) or
+                [by_id[ref] for ref in outcome_refs]!=sorted(by_id[ref] for ref in outcome_refs)):
+                raise ValueError('video_reference_invalid')
         if not isinstance(event['uncertainties'],list) or len(event['uncertainties'])>10: raise ValueError('video_model_invalid')
         event['uncertainties']=[_text(q) for q in event['uncertainties']]
         if event['action']=='aiInput':
@@ -84,6 +95,38 @@ def validate_analysis(result, frames, duration, prior_secrets=()):
     return redact({'events':clean,'uncertainties':questions,'multiple_scenarios':result['multiple_scenarios']})
 
 
+def _system_boundary(event,duration):
+    """Only explicit system-shell evidence at recording boundaries is removable."""
+    text=event['target']+' '+event['observation']
+    return (event['action'] in {'aiTap','aiWaitFor','aiAssert'} and
+            bool(re.search(r'系统桌面|桌面应用图标|系统最近任务|最近任务卡片|系统多任务|停止录屏|系统通知栏',text)) and
+            (event['end_ms']<=min(5000,duration*0.15) or
+             event['start_ms']>=max(duration*0.85,duration-5000)))
+
+
+def _required_interactions(events,duration):
+    return [index for index,event in enumerate(events) if event['action'] in {'aiTap','aiInput','aiScroll'}
+            and not _system_boundary(event,duration)]
+
+
+def _preserve_interactions(candidates,events,required):
+    # One output cannot stand in for two different interactions. Bipartite time
+    # matching also rejects equal-count replacements concentrated in one period.
+    owners={}
+    def assign(index,seen):
+        original=candidates[index]
+        for position,event in enumerate(events):
+            if (position in seen or original['action']!=event['action'] or
+                original['start_ms']>event['end_ms'] or event['start_ms']>original['end_ms']):continue
+            seen.add(position)
+            if position not in owners or assign(owners[position],seen):
+                owners[position]=index
+                return True
+        return False
+    if any(not assign(index,set()) for index in required):
+        raise ValueError('video_required_action_missing')
+
+
 def _consolidation_images(events,frames,limit):
     """Prioritize ambiguous/destructive evidence; otherwise cover event chronology."""
     counts={}
@@ -97,12 +140,26 @@ def _consolidation_images(events,frames,limit):
         if destructive or ambiguous:
             refs=priority if destructive else secondary
             refs.update(event['frame_refs'])
-            if index+1<len(events):refs.update(events[index+1]['frame_refs'])
+            for following in events[index+1:index+(3 if destructive else 2)]:
+                refs.update(following['frame_refs'])
     all_refs={ref for event in events for ref in event['frame_refs']}
     def spread(items,count):
         if len(items)<=count:return items
         return [items[round(i*(len(items)-1)/(count-1))] for i in range(count)] if count>1 else [items[len(items)//2]]
-    chosen=spread([f for f in frames if f['frame_id'] in priority],limit)
+    duration=frames[-1]['timestamp_ms'] if frames else 0
+    reserved=[]
+    navigations=[event for event in events if event['action'] in {'aiTap','aiInput'} and
+                 not _system_boundary(event,duration) and not set(event['frame_refs'])&priority]
+    if navigations:reserved.append(navigations[0]['frame_refs'][-1])
+    scrolls=[event for event in events if event['action']=='aiScroll']
+    if scrolls:reserved.extend((scrolls[0]['frame_refs'][0],scrolls[0]['frame_refs'][-1]))
+    # With six slots reserve up to three for the prerequisite chain; retain at
+    # least half for consequential before/confirmation/result evidence.
+    reserved=list(dict.fromkeys(reserved))[:max(0,limit-3)] if priority else list(dict.fromkeys(reserved))[:limit]
+    chosen=[f for f in frames if f['frame_id'] in reserved]
+    selected={f['frame_id'] for f in chosen}
+    if len(chosen)<limit:
+        chosen+=spread([f for f in frames if f['frame_id'] in priority-selected],limit-len(chosen))
     selected={f['frame_id'] for f in chosen}
     if len(chosen)<limit:
         chosen+=spread([f for f in frames if f['frame_id'] in secondary-selected],limit-len(chosen))
@@ -148,17 +205,22 @@ def analyze_frames(document, root, cancelled):
     raw_questions=list(dict.fromkeys(questions))
     if events:
         if cancelled():raise ValueError('video_cancelled')
+        required_indices=_required_interactions(candidates,document['media']['duration_ms'])
         image_frames=_consolidation_images(events,frames,limit)
         assets=[{'name':f['frame_id'],'mime':'image/jpeg','base64':base64.b64encode((root/'frames'/(f['frame_id']+'.jpg')).read_bytes()).decode()} for f in image_frames]
         if cancelled():raise ValueError('video_cancelled')
         result=ai.run_ai_skill('ui_video_steps',{'phase':'consolidate','app_id':document['app_id'],
                     'goal':document['goal'],'duration_ms':document['media']['duration_ms'],
                     'frames':frames,'image_frames':image_frames,'candidate_events':candidates,
-                    'raw_uncertainties':raw_questions,'multiple_scenarios':multi},image_assets=assets,
+                    'raw_uncertainties':raw_questions,'multiple_scenarios':multi,
+                    'required_candidate_indexes':required_indices},image_assets=assets,
                     timeout=120,retry_count=0,max_tokens=10000,repair_invalid_json=False)
         if cancelled():raise ValueError('video_cancelled')
         checked=validate_analysis(result,frames,document['media']['duration_ms'],known_secrets)
-        for event in checked['events']:
+        all_refs={ref for raw in raw_events for ref in raw['frame_refs']}
+        all_refs.update(frame['frame_id'] for frame in image_frames)
+        times={frame['frame_id']:frame['timestamp_ms'] for frame in frames}
+        for event_index,event in enumerate(checked['events']):
             matching=[raw for raw in raw_events if raw['action']==event['action'] and
                       raw['start_ms']<=event['end_ms'] and event['start_ms']<=raw['end_ms']]
             covered=event['start_ms']
@@ -171,7 +233,17 @@ def analyze_frames(document, root, cancelled):
             if (not matching or min(raw['start_ms'] for raw in matching)>event['start_ms'] or
                 covered<event['end_ms'] or not set(event['frame_refs'])<=supported_refs):
                 raise ValueError('video_model_timeline')
+            if 'outcome' in event:
+                next_start=min((raw['start_ms'] for raw in candidates if raw['action'] in {'aiTap','aiInput','aiScroll'}
+                                and raw['start_ms']>event['start_ms']),default=document['media']['duration_ms'])
+                next_output=next((item['start_ms'] for item in checked['events'][event_index+1:]
+                                  if item['action'] in {'aiTap','aiInput','aiScroll'}),document['media']['duration_ms'])
+                next_start=min(next_start,next_output)
+                if (not set(event['outcome']['frame_refs'])<=all_refs or
+                    any(times[ref]>next_start for ref in event['outcome']['frame_refs'])):
+                    raise ValueError('video_reference_invalid')
             if all(raw['evidence_kind']=='inferred' for raw in matching):event['evidence_kind']='inferred'
+        _preserve_interactions(candidates,checked['events'],required_indices)
         events=checked['events'];questions=checked['uncertainties']
         multi=multi or checked['multiple_scenarios']
     return {'events':events,'uncertainties':list(dict.fromkeys(questions)), 'multiple_scenarios':multi,
@@ -180,15 +252,17 @@ def analyze_frames(document, root, cancelled):
 
 def _expected_candidate(event, goal):
     """A sourced visible check suggestion, never an established business outcome."""
-    observation=event['observation'].strip()
-    concrete=(len(observation)>=6 and re.search(r'显示|出现|可见|打开|包含|弹出',observation)
+    outcome=event.get('outcome')
+    observation=(outcome['observation'] if outcome else event['observation']).strip()
+    concrete=(len(observation)>=6 and re.search(r'显示|出现|可见|打开|包含|弹出|消失|保留|仍在|关闭',observation)
               and not re.search(r'不明确|不确定|无法|可能|似乎|未知|跳帧|页面变化|界面变化',observation))
+    if re.search(r'高亮|按下态|点击态',observation):concrete=False
     candidate=observation if concrete else ''
     # Never extract a goal clause: doing so loses negation and scope. Only a
     # literal identical goal can share this observed candidate's attribution.
     basis=('user_goal' if candidate and candidate==goal.strip()
            else 'visible_candidate' if candidate else 'unresolved')
-    return {'text':candidate,'basis':basis,'frame_refs':list(event['frame_refs']),'requires_confirmation':True}
+    return {'text':candidate,'basis':basis,'frame_refs':list(outcome['frame_refs'] if outcome else event['frame_refs']),'requires_confirmation':True}
 
 
 def draft_proposal(document):

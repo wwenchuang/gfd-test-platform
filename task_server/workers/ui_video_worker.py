@@ -16,7 +16,7 @@ _FAILURE_CODES=frozenset({
     'video_decoder_missing','video_split_required','video_limits','video_decode_invalid',
     'video_metadata_invalid','video_frames_invalid','video_decode_timeout','video_memory_limit',
     'video_cancelled','video_vision_limit','video_action_invalid','video_model_invalid',
-    'video_model_timeline','video_observation_missing','video_reference_invalid',
+    'video_model_timeline','video_required_action_missing','video_observation_missing','video_reference_invalid',
 })
 
 
@@ -123,7 +123,8 @@ def analyze_video_source(store,identifier):
     except Exception as error:
         code=_failure_code(error)
         _log_failure(identifier,stage,error,code)
-        messages={'video_decoder_missing':'服务器缺少 ffmpeg/ffprobe，请管理员安装并配置 UI_VIDEO_FFMPEG/UI_VIDEO_FFPROBE 后重试',
+        messages={'video_required_action_missing':'用例整理遗漏必要业务操作，请重试分析',
+                  'video_decoder_missing':'服务器缺少 ffmpeg/ffprobe，请管理员安装并配置 UI_VIDEO_FFMPEG/UI_VIDEO_FFPROBE 后重试',
                   'video_split_required':'转场/候选帧超过60张，请按连续场景分段上传',
                   'video_limits':'视频超过10分钟或画面尺寸限制，请压缩或分段上传',
                   'video_decode_invalid':'视频无法完整解码，请检查格式伪装、损坏或截断后重新导出',

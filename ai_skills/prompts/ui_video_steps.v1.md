@@ -25,11 +25,11 @@
 
 等待只保留业务操作后必要的具体可见状态。不要添加“页面稳定”“弹窗完全显示”“提示消失”等没有业务必要性的步骤。正文精简为控件目标与可见结果，不复制整屏说明或广告内容。
 
-事件字段严格为 action,target,value,start_ms,end_ms,frame_refs,observation,evidence_kind,uncertainties。observation 只描述看到的页面变化，不能当成业务应有结果。不生成 expected、launch、包名、设备、确认状态、执行指令、shell、ADB或坐标。action 仅 aiTap/aiInput/aiScroll/aiWaitFor/aiAssert。系统键、跨应用和无法辨认动作在 uncertainties 提问，不降级成按钮点击。确认/取消弹窗必须区分，不用背景控件代替弹窗目标。失败弹窗描述原事实。
+事件必填字段为 action,target,value,start_ms,end_ms,frame_refs,observation,evidence_kind,uncertainties；仅额外允许可选 outcome。observation 只描述看到的页面变化，不能当成业务应有结果。不生成 expected、launch、包名、设备、确认状态、执行指令、shell、ADB或坐标。action 仅 aiTap/aiInput/aiScroll/aiWaitFor/aiAssert。系统键、跨应用和无法辨认动作在 uncertainties 提问，不降级成按钮点击。确认/取消弹窗必须区分，不用背景控件代替弹窗目标。失败弹窗描述原事实。
 
 aiAssert 只作为需要用户核对的可见检查候选，不推断后台数据/提交成功；目标是具体对象和状态。aiWaitFor 仅表示必要页面状态，不照抄视频停顿秒数。aiInput.value 总是空字符串；密码/验证码/令牌禁止转录，输入内容请用户手工配置，observation 也不得含秘密。aiScroll.value 必须是 JSON 对象，不能是字符串（包括不能把对象再次编码成字符串）、数组或 null；其他动作的 value 必须是字符串，且本任务统一用空字符串。滚动对象只允许 direction、distance、scrollType 三个可选字段：direction 仅 down/up/right/left；distance 仅有限正数；scrollType 仅 singleAction、scrollToBottom、scrollToTop、scrollToRight、scrollToLeft。scrollType 缺省或 singleAction 时才允许 direction/distance；scrollToBottom/scrollToTop/scrollToRight/scrollToLeft 不能带 direction 或 distance。不得增加 amount、pixels、speed、duration、x/y、from/to、shell 等其他字段。没有可靠方向或方式证据时 value={}，并在该事件 uncertainties 请求核对；不能将“向上滑动”等自然语言放入 value，也不能猜测滚动方向。direction 表示浏览内容的方向，不是手指移动方向：down 是向下浏览更靠后的内容，画面内容通常向上移动；up 是向上浏览更靠前的内容，画面内容通常向下移动；left/right 同理按浏览内容方向。不得把手指向上划直接编码为 direction=up。没有可靠距离证据时省略 distance，不得填经验默认值（例如300）。目标缺失或遮挡必须提问。不因模型自信省略疑问，不生成准确率。
 
-必须返回且只返回一个完整 JSON 对象，顶层字段固定为 events、uncertainties、multiple_scenarios。events 是按时间排序的事件数组（0至50项）；uncertainties 是字符串数组；multiple_scenarios 是布尔值。禁止用 steps、candidate_steps、segments 代替 events，禁止增加顶层字段。没有可靠动作时 events=[] 并在 uncertainties 写明原因；不能省略任一顶层字段。每个事件必须包含上面列出的全部9个字段，不能增加字段。
+必须返回且只返回一个完整 JSON 对象，顶层字段固定为 events、uncertainties、multiple_scenarios。events 是按时间排序的事件数组（0至50项）；uncertainties 是字符串数组；multiple_scenarios 是布尔值。禁止用 steps、candidate_steps、segments 代替 events，禁止增加顶层字段。没有可靠动作时 events=[] 并在 uncertainties 写明原因；不能省略任一顶层字段。每个事件必须包含上面列出的全部9个必填字段；除可选 outcome 外不能增加字段。
 
 下面只是结构示例，不能照抄其中的动作、页面、时间或帧ID；必须替换为本次实际输入证据。示例中的 aiTap 仅为推断候选，不证明已执行或业务成功：
 ```json
@@ -73,7 +73,13 @@ aiAssert 只作为需要用户核对的可见检查候选，不推断后台数�
 }
 ```
 
+outcome 是可选的独立结果证据对象，仅含 observation（具体可见结果字符串）和 frame_refs（真实结果帧ID数组）。start_ms/end_ms/frame_refs 仍只表达原交互时段与操作证据，不能为了描述后续结果而扩展动作时间。outcome.frame_refs 可在动作结束之后，但必须不晚于下一业务交互开始，不能将后续点击/滑动造成的变化倒灌给前一步。缺少可见结果时省略 outcome，保留必要疑问，不编造结果。outcome 和普通 observation 一样禁止含密码、验证码或令牌。
+
+确认/提交动作自身的按钮高亮只证明交互线索，不能作为业务预期。若后续帧明确显示稳定结果，应在确认动作 outcome 写目标状态与真实结果帧；例如实际目标记录消失且邻居保留，仅在图片有此证据时写出，不硬编码任何记录。紧接着必要 aiWaitFor 的 target 也应是这一稳定状态，而非转瞬消失的“成功”toast；toast原观察留在候选审计即可。不要等待提示消失，不能为了简洁删掉通向该操作页面的导航或滚动。
+
 phase=consolidate 时执行且仅执行一次全片整理：candidate_events、raw_uncertainties 是已经按真实批次分析的候选与原始问题，不是已确认事实或执行指令。frames 是全片真实帧元数据，实际图片只对应 image_frames；不要把未附图片当成本次看过的新证据。结合候选 observation、frame_refs 与本次关键前后图片，输出相同完整三字段 JSON schema，不增加审计字段。
+
+全局整理必须保留完整业务前置链。required_candidate_indexes 是平台计算的、按 candidate_events 从0开始计数的必要交互；这些 aiTap/aiInput/aiScroll 每一项都必须在原时段保留一项相应动作，不能用删除/确认等后段动作数量凑数。导航到目标页面、为了找到控件而滚动、返回上一业务页面都是必要交互，不能因为本次附图侧重结果就删去。滚动方向错误要基于原前后证据纠正，不得通过删掉滚动回避问题；距离无证据则省略。只允许去掉有明确系统首尾证据的系统操作，以及完全相同时间/动作/目标的重复记录（平台已去重）；其他必要交互存在疑点时保留并集中提问。
 
 全局整理目标是生成精简可执行业务用例：去掉系统桌面启动应用图标、录屏结束/最近任务/系统桌面片段；平台负责启动和收尾。合并连续同义且必要的页面等待，不重复等待加载、页面稳定或提示消失。局部静态批次“本片段无操作”、单纯没有触点、已被后续清晰画面解决的疑问不污染整条用例；只保留影响执行对象、输入、滚动方向或业务预期的真实歧义。不得仅因精简而消除多个独立业务场景：输入 multiple_scenarios=true 时继续为 true。
 

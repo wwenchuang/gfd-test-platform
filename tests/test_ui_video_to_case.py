@@ -520,7 +520,7 @@ def test_consolidation_audit_keeps_overlap_observations_and_redacts_secrets(monk
         calls.append(payload)
         if payload['phase']=='consolidate':
             assert 'secret-value' not in str(payload)
-            return {'events':[],'uncertainties':['没有可执行操作'],'multiple_scenarios':False}
+            return {'events':payload['candidate_events'],'uncertainties':[],'multiple_scenarios':False}
         if payload['frames'][0]['timestamp_ms']>5000:
             return {'events':[],'uncertainties':[],'multiple_scenarios':False}
         raw=event('aiInput',5,5,'输入框')
@@ -528,7 +528,7 @@ def test_consolidation_audit_keeps_overlap_observations_and_redacts_secrets(monk
         return {'events':[raw],'uncertainties':['secret-value 需要确认'],'multiple_scenarios':False}
     monkeypatch.setattr(ai,'AI_VISION_IMAGE_LIMIT',6);monkeypatch.setattr(ai,'run_ai_skill',model)
     result=analysis.analyze_frames({'app_id':APP,'goal':'','media':{'duration_ms':12000,'frames':frames}},tmp_path,lambda:False)
-    assert not result['events'] and len(result['raw_events'])==2
+    assert len(result['events'])==1 and len(result['raw_events'])==2
     assert result['raw_events'][0]['observation']!=result['raw_events'][1]['observation']
     assert 'secret-value' not in str(result)
     assert all(event['value']=='' for event in result['raw_events'])
@@ -569,3 +569,117 @@ def test_consolidation_still_redacts_original_input_secret_when_value_is_empty(m
     monkeypatch.setattr(ai,'AI_VISION_IMAGE_LIMIT',6);monkeypatch.setattr(ai,'run_ai_skill',model)
     result=analysis.analyze_frames({'app_id':APP,'goal':'','media':{'duration_ms':12000,'frames':frames}},tmp_path,lambda:False)
     assert 'secret-original' not in str(result)
+
+
+def test_global_images_reserve_navigation_and_scroll_alongside_destructive_result(tmp_path):
+    from task_server.services.ui_video_analysis import _consolidation_images
+    frames,event=_consolidation_fixture(tmp_path)
+    events=[event('aiTap',0,1,'个人入口'),event('aiScroll',2,3,'记录列表'),
+            event('aiTap',5,6,'目标记录删除'),event('aiTap',7,8,'确认删除'),
+            event('aiWaitFor',9,10,'目标消失且其他记录保留')]
+    refs={frame['frame_id'] for frame in _consolidation_images(events,frames,6)}
+    assert len(refs)<=6 and refs&{'f0','f1'}
+    assert {'f2','f3'}<=refs
+    assert refs&{'f5','f6'} and refs&{'f7','f8'} and refs&{'f9','f10'}
+
+
+@pytest.mark.parametrize('duplicate_wrong_time',[False,True])
+def test_global_cannot_discard_required_navigation_even_with_equal_action_count(monkeypatch,tmp_path,duplicate_wrong_time):
+    from task_server.services import ui_video_analysis as analysis,ai_skill_service as ai
+    frames,event=_consolidation_fixture(tmp_path)
+    def model(name,payload,**kwargs):
+        if payload['phase']=='consolidate':
+            events=[event('aiTap',9,10,'后续确认')]
+            if duplicate_wrong_time:events.insert(0,event('aiTap',9,9,'重复后续确认'))
+            return {'events':events,'uncertainties':[],'multiple_scenarios':False}
+        events=[]
+        if payload['frames'][0]['timestamp_ms']==0:events=[event('aiTap',0,1,'个人入口')]
+        elif payload['frames'][0]['timestamp_ms']==5000:events=[event('aiTap',9,10,'后续确认')]
+        return {'events':events,'uncertainties':[],'multiple_scenarios':False}
+    monkeypatch.setattr(ai,'AI_VISION_IMAGE_LIMIT',6);monkeypatch.setattr(ai,'run_ai_skill',model)
+    with pytest.raises(ValueError,match='video_required_action_missing'):
+        analysis.analyze_frames({'app_id':APP,'goal':'','media':{'duration_ms':12000,'frames':frames}},tmp_path,lambda:False)
+
+
+def test_outcome_refs_are_separate_from_interaction_time_and_supply_expected(tmp_path):
+    from task_server.services.ui_video_analysis import validate_analysis,draft_proposal
+    frames,event=_consolidation_fixture(tmp_path)
+    confirm=event('aiTap',1,2,'确认删除')
+    confirm['observation']='确认按钮出现高亮'
+    confirm['outcome']={'observation':'目标记录消失，其他记录仍然可见','frame_refs':['f3','f4']}
+    result=validate_analysis({'events':[confirm],'uncertainties':[],'multiple_scenarios':False},frames,12000)
+    assert result['events'][0]['end_ms']==2000
+    content,snapshot=draft_proposal({'source_id':'uvs_'+'a'*32,'analysis_version':1,'app_id':APP,'goal':'','media':{'frames':frames,'duration_ms':12000},**result})
+    assert content['steps'][0]['expected']=='目标记录消失，其他记录仍然可见'
+    assert snapshot['events'][0]['expected_candidate']['frame_refs']==['f3','f4']
+    assert all(step['review_state']=='needs_review' for step in content['steps'])
+
+
+@pytest.mark.parametrize('outcome',[
+    {'observation':'目标记录消失','frame_refs':['unknown']},
+    {'observation':'目标记录消失','frame_refs':['f0']},
+    {'observation':'目标记录消失','frame_refs':['f4','f3']},
+    {'observation':'目标记录消失','frame_refs':['f3'],'extra':True},
+])
+def test_outcome_rejects_unknown_early_or_invalid_evidence(tmp_path,outcome):
+    from task_server.services.ui_video_analysis import validate_analysis
+    frames,event=_consolidation_fixture(tmp_path)
+    raw=event('aiTap',1,2,'确认删除');raw['outcome']=outcome
+    with pytest.raises(ValueError):validate_analysis({'events':[raw],'uncertainties':[],'multiple_scenarios':False},frames,12000)
+
+
+@pytest.mark.parametrize('result_time,allowed',[(3,True),(4,True),(5,False)])
+def test_consolidated_outcome_cannot_borrow_result_from_next_interaction(monkeypatch,tmp_path,result_time,allowed):
+    from task_server.services import ui_video_analysis as analysis,ai_skill_service as ai
+    frames,event=_consolidation_fixture(tmp_path)
+    def model(name,payload,**kwargs):
+        if payload['phase']=='consolidate':
+            first=event('aiTap',0,1,'确认操作')
+            first['outcome']={'observation':'目标记录消失且其他记录保留','frame_refs':[f'f{result_time}']}
+            return {'events':[first,event('aiTap',4,5,'后续导航')],'uncertainties':[],'multiple_scenarios':False}
+        events=[]
+        if payload['frames'][0]['timestamp_ms']==0:
+            events=[event('aiTap',0,1,'确认操作'),event('aiWaitFor',2,3,'目标状态'),event('aiTap',4,5,'后续导航')]
+        if payload['frames'][0]['timestamp_ms']==5000:events=[event('aiWaitFor',5,6,'其他页面')]
+        return {'events':events,'uncertainties':[],'multiple_scenarios':False}
+    monkeypatch.setattr(ai,'AI_VISION_IMAGE_LIMIT',6);monkeypatch.setattr(ai,'run_ai_skill',model)
+    run=lambda:analysis.analyze_frames({'app_id':APP,'goal':'','media':{'duration_ms':12000,'frames':frames}},tmp_path,lambda:False)
+    if allowed:assert run()['events'][0]['outcome']['frame_refs']==[f'f{result_time}']
+    else:
+        with pytest.raises(ValueError,match='video_reference_invalid'):run()
+
+
+def test_outcome_is_schema_compatible_redacted_and_not_button_highlight_expected(tmp_path):
+    import json,jsonschema
+    from task_server.services.ui_video_analysis import validate_analysis,_expected_candidate
+    frames,event=_consolidation_fixture(tmp_path)
+    raw=event('aiInput',0,1,'测试输入')
+    raw.update(value='secret-outcome',outcome={'observation':'页面显示secret-outcome','frame_refs':['f2']})
+    payload={'events':[raw],'uncertainties':[],'multiple_scenarios':False}
+    schema=json.loads((Path(__file__).resolve().parents[1]/'ai_skills/schemas/ui_video_steps.schema.json').read_text())
+    jsonschema.validate(payload,schema)
+    clean=validate_analysis(payload,frames,12000)
+    assert 'secret-outcome' not in str(clean)
+    raw['value']=''
+    assert 'secret-outcome' not in str(validate_analysis(payload,frames,12000,['secret-outcome']))
+    highlight=event('aiTap',0,1,'弹窗确认删除');highlight['observation']='确认按钮显示高亮'
+    assert _expected_candidate(highlight,'')['text']==''
+    highlight['outcome']={'observation':'确认按钮显示高亮','frame_refs':['f2']}
+    assert _expected_candidate(highlight,'')['text']==''
+
+
+def test_outcome_cannot_cross_next_final_interaction_with_same_start(monkeypatch,tmp_path):
+    from task_server.services import ui_video_analysis as analysis,ai_skill_service as ai
+    frames,event=_consolidation_fixture(tmp_path)
+    def model(name,payload,**kwargs):
+        if payload['phase']=='consolidate':
+            first=event('aiTap',2,2,'确认')
+            first['outcome']={'observation':'目标状态显示完成','frame_refs':['f5']}
+            return {'events':[first,event('aiTap',2,4,'下一交互')],'uncertainties':[],'multiple_scenarios':False}
+        raw=[]
+        if payload['frames'][0]['timestamp_ms']==0:raw=[event('aiTap',0,2,'确认'),event('aiTap',2,4,'下一交互')]
+        elif payload['frames'][0]['timestamp_ms']==5000:raw=[event('aiWaitFor',5,6,'后续结果')]
+        return {'events':raw,'uncertainties':[],'multiple_scenarios':False}
+    monkeypatch.setattr(ai,'AI_VISION_IMAGE_LIMIT',6);monkeypatch.setattr(ai,'run_ai_skill',model)
+    with pytest.raises(ValueError,match='video_reference_invalid'):
+        analysis.analyze_frames({'app_id':APP,'goal':'','media':{'duration_ms':12000,'frames':frames}},tmp_path,lambda:False)
