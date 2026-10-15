@@ -2349,9 +2349,11 @@ function sleepMs(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-async function pollGenerateJob(jobId) {
+async function pollGenerateJob(jobId, current = () => true) {
   for (;;) {
+    if (!current()) return null;
     const data = await apiRequest(`/ui/generate-status?job_id=${encodeURIComponent(jobId)}`);
+    if (!current()) return null;
     const job = data.job || {};
     const progress = Number(job.progress || 0);
     const status = job.status || 'running';
@@ -3752,12 +3754,17 @@ function renderGenerateJobsCenter() {
 async function showGenerateJobsCenter() {
   generationRecordVisibleCount = GENERATION_RECORD_PAGE_SIZE;
   renderGenerateJobsCenterLoading();
+  const current = captureGenerationView();
   try {
     await loadJobs(false, true);
+    if (!current()) return false;
     renderGenerateJobsCenter();
+    return true;
   } catch (error) {
+    if (!current()) return false;
     renderGenerateJobsCenterLoading(`生成记录读取失败：${error?.message || '请稍后重试'}`);
     showToast(error?.message || '生成记录读取失败，请稍后重试', 'error');
+    return false;
   }
 }
 
@@ -5990,6 +5997,18 @@ function isEditablePasteTarget(target) {
   return tag === 'input' || tag === 'textarea' || tag === 'select' || target.isContentEditable;
 }
 
+function captureGenerationView() {
+  const workflow = activeWorkflow, epoch = uiSimpleEpoch, identity = currentAccessProfile?.user_id;
+  const app = currentModuleAppPackage(), filter = document.getElementById('app-filter')?.value;
+  const selected = selectedGenerateApplication()?.package;
+  const area = document.getElementById('editor-area'), content = area?.firstChild;
+  const modal = document.getElementById('modal-generate'), modalOpen = modal?.classList.contains('show');
+  return () => activeWorkflow === workflow && uiSimpleEpoch === epoch && currentAccessProfile?.user_id === identity
+    && currentModuleAppPackage() === app && document.getElementById('app-filter')?.value === filter
+    && selectedGenerateApplication()?.package === selected && area?.firstChild === content
+    && modal?.classList.contains('show') === modalOpen;
+}
+
 async function generateYaml() {
   const mod = document.getElementById('generate-module').value;
   const title = document.getElementById('generate-title').value.trim() || 'UI自动化用例';
@@ -6032,6 +6051,7 @@ async function generateYaml() {
   setGenerateProgress(32, '准备上传资料', 1);
   setGenerateStatus('正在上传资料并调用模型生成用例，稍等一下...', 'busy');
 
+  let current = captureGenerationView();
   try {
     const files = [...generateAssetFiles];
     if (content) {
@@ -6064,17 +6084,22 @@ async function generateYaml() {
         device_strategy: selectedDevice.device_strategy
       })
     });
+    if (!current()) return;
     setGenerateProgress(40, '后台任务已创建，等待模型生成', 2);
     showToast('✓ 生成任务已提交，已切到生成记录查看进度', 'success');
     generateModalReturnWorkflow = '';
     closeModal('modal-generate');
-    await showGenerateJobsCenter();
-    const data = await pollGenerateJob(created.job_id);
-    loadJobs();
+    const centerShown = await showGenerateJobsCenter();
+    if (centerShown === false) return;
+    current = captureGenerationView();
+    const data = await pollGenerateJob(created.job_id, current);
+    if (!current() || !data) return;
 
     const resultModule = data.module || mod;
     const resultFile = data.file || file;
     await loadModules();
+    if (!current()) return;
+    setGenerateBusy(false);
     if (!modules[resultModule]) modules[resultModule] = [];
     if (!modules[resultModule].includes(resultFile)) modules[resultModule].push(resultFile);
     currentModule = resultModule;
@@ -6095,13 +6120,14 @@ async function generateYaml() {
     showToast(`✓ 已生成 ${data.caseCount || 0} 条用例${manual}${jobText}`, 'success');
     await showGenerationReviewByCaseSet(data.summary?.case_set_id || data.case_set_id);
   } catch(e) {
+    if (!current()) return;
     stopGenerateProgress();
     setGenerateProgressError('生成失败');
     setGenerateStatus(e.message || '生成失败，请检查服务端日志或模型配置。', 'error');
     loadJobs().catch(() => {});
     showToast(e.message || '生成失败', 'error');
   } finally {
-    setGenerateBusy(false);
+    if (current()) setGenerateBusy(false);
   }
 }
 
