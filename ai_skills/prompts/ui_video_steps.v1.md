@@ -27,7 +27,7 @@
 
 等待只保留业务操作后必要的具体可见状态。不要添加“页面稳定”“弹窗完全显示”“提示消失”等没有业务必要性的步骤。正文精简为控件目标与可见结果，不复制整屏说明或广告内容。
 
-事件必填字段为 action,target,value,start_ms,end_ms,frame_refs,observation,evidence_kind,uncertainties；仅额外允许可选 outcome。observation 只描述看到的页面变化，不能当成业务应有结果。不生成 expected、launch、包名、设备、确认状态、执行指令、shell、ADB或坐标。action 仅 aiTap/aiInput/aiScroll/aiWaitFor/aiAssert。系统键、跨应用和无法辨认动作在 uncertainties 提问，不降级成按钮点击。确认/取消弹窗必须区分，不用背景控件代替弹窗目标。失败弹窗描述原事实。
+事件必填字段为 action,target,value,start_ms,end_ms,frame_refs,observation,evidence_kind,uncertainties；额外仅允许可选 outcome、selection、reusable_expected；不适用的可选字段必须省略，不能输出空字符串或 null。observation 只描述看到的页面变化，不能当成业务应有结果。不生成 expected、launch、包名、设备、确认状态、执行指令、shell、ADB或坐标。action 仅 aiTap/aiInput/aiScroll/aiWaitFor/aiAssert。系统键、跨应用和无法辨认动作在 uncertainties 提问，不降级成按钮点击。确认/取消弹窗必须区分，不用背景控件代替弹窗目标。失败弹窗描述原事实。
 
 aiAssert 只作为需要用户核对的可见检查候选，不推断后台数据/提交成功；目标是具体对象和状态。aiWaitFor 仅表示必要页面状态，不照抄视频停顿秒数。aiInput.value 总是空字符串；密码/验证码/令牌禁止转录，输入内容请用户手工配置，observation 也不得含秘密。aiScroll.value 必须是 JSON 对象，不能是字符串（包括不能把对象再次编码成字符串）、数组或 null；其他动作的 value 必须是字符串，且本任务统一用空字符串。滚动对象只允许 direction、distance、scrollType 三个可选字段：direction 仅 down/up/right/left；distance 仅有限正数；scrollType 仅 singleAction、scrollToBottom、scrollToTop、scrollToRight、scrollToLeft。scrollType 缺省或 singleAction 时才允许 direction/distance；scrollToBottom/scrollToTop/scrollToRight/scrollToLeft 不能带 direction 或 distance。不得增加 amount、pixels、speed、duration、x/y、from/to、shell 等其他字段。没有可靠方向或方式证据时 value={}，并在该事件 uncertainties 请求核对；不能将“向上滑动”等自然语言放入 value，也不能猜测滚动方向。direction 表示浏览内容的方向，不是手指移动方向：down 是向下浏览更靠后的内容，画面内容通常向上移动；up 是向上浏览更靠前的内容，画面内容通常向下移动；left/right 同理按浏览内容方向。不得把手指向上划直接编码为 direction=up。没有可靠距离证据时省略 distance，不得填经验默认值（例如300）。目标缺失或遮挡必须提问。不因模型自信省略疑问，不生成准确率。
 
@@ -99,7 +99,7 @@ phase=consolidate 时执行且仅执行一次全片整理：candidate_events、r
 
 同名/破坏性操作必须结合目标卡片→弹窗→结果的连续证据，不能用按钮高亮当成业务预期。举例仅说明推理关系：点击目标记录删除后的可见候选是删除确认弹窗出现；确认弹窗后的可见候选是目标记录消失且其他记录保留。只有对应实际 frame_refs/observation 支持时才保留这些观察，不照抄示例、不猜目标记录。原始观察由平台独立保留审计，整理不等于用户确认或试跑通过。
 
-复用规则：录屏中的长编号、日期、位置是历史证据，不应成为删除类测试每次执行的固定目标。observation/outcome.observation 仍保留实际所见编号，不篡改证据。在删除/移除的首个目标点击事件上可给出 selection（当前页面内可复用的候选选取条件，不含旧编号/日期），target 使用 {{本次对象}}定位同一对象；后续确认结果可给 reusable_expected，例如“{{本次对象}}消失，{{保留对象}}仍显示”。这两个字段是待确认的复用建议，必须对应原有删除链和实际可见结果，不新增业务操作，不把无后续证据的删除写成成功。selection 在全片最多一次，必须放在首次引用之前；平台会插入只读选取步骤。非破坏性普通事件不要添加。不能把录屏里的特定目标理解为允许任意删除；不清楚允许范围时集中询问选取范围，平台会要求确认。若原用户要求只操作某个明确对象，保留该范围，提出一次性数据不可复用的问题，不擅自替换。保留对象用于验证无关记录仍存在，不能把删除后补位的“第一条”当作原对象；不使用伪造变量或坐标。
+复用规则：录屏中的长编号、日期、位置是历史证据，不应成为删除类测试每次执行的固定目标。observation/outcome.observation 仍保留实际所见编号，不篡改证据。在删除/移除的首个目标点击事件上可给出 selection（当前页面内可复用的候选选取条件，不含旧编号/日期），target 使用 {{本次对象}}定位同一对象；后续确认结果可给 reusable_expected，例如“{{本次对象}}消失，{{保留对象}}仍显示”。这两个字段是待确认的复用建议，必须对应原有删除链和实际可见结果，不新增业务操作，不把无后续证据的删除写成成功。selection 在全片最多一次，必须与首次引用 {{本次对象}} 的 aiTap 放在同一个事件中；该事件 target 必须包含 {{本次对象}}（例如“{{本次对象}}卡片内的删除按钮”），不可仍写历史编号或“确认按钮”。平台会在这个事件之前插入只读选取步骤。确认弹窗按钮是后续独立 aiTap，不得再带 selection；没有选取条件的普通事件必须省略 selection 字段。非破坏性普通事件不要添加。不能把录屏里的特定目标理解为允许任意删除；不清楚允许范围时集中询问选取范围，平台会要求确认。若原用户要求只操作某个明确对象，保留该范围，提出一次性数据不可复用的问题，不擅自替换。保留对象用于验证无关记录仍存在，不能把删除后补位的“第一条”当作原对象；不使用伪造变量或坐标。
 
 平台绑定与真实帧清单如下：
 {{payload}}
