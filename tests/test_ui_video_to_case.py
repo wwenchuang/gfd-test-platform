@@ -109,7 +109,7 @@ def test_cancel_retry_during_model_does_not_publish_old_analysis(env,tmp_path,mo
         store.cancel(doc['source_id']);store.transition(doc['source_id'],{'cancelled'},'queued',analysis_version=2)
         cancellation.append(cancelled())
         return {'events':[],'uncertainties':[],'multiple_scenarios':False}
-    monkeypatch.setattr(analysis,'analyze_frames',model)
+    monkeypatch.setattr(analysis,'analyze_whole_frames',model)
     worker.analyze_video_source(store,doc['source_id'])
     assert store.get(doc['source_id'],A['user_id'],APP)['status']=='queued'
     assert cancellation==[True]
@@ -216,7 +216,7 @@ def test_worker_rejects_unimportable_scroll_before_ready(env,tmp_path,monkeypatc
     store=video.VideoStore(tmp_path/'videos');doc=store.upload(A,APP,'clip.mp4',io.BytesIO(b'video'),5,actor=A)
     monkeypatch.setattr(worker,'decode_video',lambda *args:{'black':False,'static':False,'frames':[{'frame_id':'f','timestamp_ms':0}],'duration_ms':100})
     invalid={'action':'aiScroll','target':'个人页面列表','value':{'invented':True},'start_ms':0,'end_ms':0,'frame_refs':['f'],'observation':'个人页面显示帮助入口','evidence_kind':'inferred','uncertainties':[]}
-    monkeypatch.setattr(analysis,'analyze_frames',lambda *args:{'events':[invalid],'uncertainties':[],'multiple_scenarios':False})
+    monkeypatch.setattr(analysis,'analyze_whole_frames',lambda *args:{'events':[invalid],'uncertainties':[],'multiple_scenarios':False})
     worker.analyze_video_source(store,doc['source_id'])
     result=store.get(doc['source_id'],A['user_id'],APP)
     assert result['status']=='failed' and result['draft_id']==''
@@ -316,8 +316,8 @@ def test_worker_diagnostics_are_stage_specific_and_never_include_exception_text(
     def fail(*args,**kwargs):raise error
     monkeypatch.setattr(worker,'decode_video',lambda *args:{'black':False,'static':False,'frames':[{'frame_id':'f','timestamp_ms':0}],'duration_ms':100})
     valid={'events':[{'action':'aiAssert','target':'个人页面显示帮助入口','value':'','start_ms':0,'end_ms':0,'frame_refs':['f'],'observation':'个人页面显示帮助入口','evidence_kind':'inferred','uncertainties':[]}],'uncertainties':[],'multiple_scenarios':False}
-    monkeypatch.setattr(analysis,'analyze_frames',lambda *args:valid)
-    if stage=='analysis':monkeypatch.setattr(analysis,'analyze_frames',fail)
+    monkeypatch.setattr(analysis,'analyze_whole_frames',lambda *args:valid)
+    if stage=='analysis':monkeypatch.setattr(analysis,'analyze_whole_frames',fail)
     elif stage=='draft_validation':monkeypatch.setattr(analysis,'draft_proposal',fail)
     else:monkeypatch.setattr(worker,'decode_video',fail)
     caplog.set_level(logging.WARNING)
@@ -425,13 +425,17 @@ def test_full_worker_distinguishes_passive_only_contract_from_touchless_navigati
     doc=store.upload(A,APP,'synthetic.mp4',io.BytesIO(body),len(body),actor=A)
     calls=[]
     def provider(skill_name,prompt,**kwargs):
-        assert '自动轮播' in prompt and 'events=[]' in prompt and '跨页面导航' in prompt
-        assert '不能仅凭轮播内容变化生成 aiScroll 或 aiWaitFor' in prompt
+        assert '自动轮播' in prompt
         calls.append(skill_name)
         frames=kwargs['payload']['frames']
         if material=='passive_carousel':result={'events':[],'uncertainties':['素材仅有自动轮播，没有可支持用户动作的证据，请提供实际操作片段'],'multiple_scenarios':False}
         else:
             event={'action':'aiTap','target':'首页个人中心入口','value':'','start_ms':frames[0]['timestamp_ms'],'end_ms':frames[-1]['timestamp_ms'],'frame_refs':[frames[0]['frame_id'],frames[-1]['frame_id']],'observation':'个人页面显示账号入口','evidence_kind':'inferred','uncertainties':[]}
+            if skill_name=='ui_video_observe':
+                for key in ('start_ms','end_ms','evidence_kind'):event.pop(key)
+            else:
+                for key in ('start_ms','end_ms','evidence_kind','frame_refs'):event.pop(key)
+                event['candidate_index']=0
             result={'events':[event],'uncertainties':[],'multiple_scenarios':False}
         return json.dumps(result,ensure_ascii=False)
     monkeypatch.setattr(ai,'run_ai_skill',REAL_VIDEO_RUN_AI_SKILL)
@@ -441,8 +445,7 @@ def test_full_worker_distinguishes_passive_only_contract_from_touchless_navigati
     monkeypatch.setenv('MIDSCENE_AI_SKILLS_USE_GATEWAY','1')
     worker.analyze_video_source(store,doc['source_id'])
     result=store.get(doc['source_id'],A['user_id'],APP)
-    assert calls and all(name=='ui_video_steps' for name in calls)
-    assert len(calls)==2  # passive batches or one action batch plus global consolidation
+    assert calls==(['ui_video_observe'] if material=='passive_carousel' else ['ui_video_observe','ui_video_steps'])
     assert result['status']==expected_status
     assert result['media']['coverage_end_ms']==frame_count*1000 and not result['media']['static']
     assert result['draft_id']==''

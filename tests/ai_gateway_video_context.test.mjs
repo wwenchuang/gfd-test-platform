@@ -1,0 +1,18 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import vm from 'node:vm';
+const source=fs.readFileSync(new URL('../ai-gateway/server.js',import.meta.url),'utf8');
+const fn=source.slice(source.indexOf('function imagePartsFromBody('),source.indexOf('\nfunction assistantOutputText'));
+const imageParts=vm.runInNewContext(fn+';imagePartsFromBody');
+const frames=Array.from({length:58},(_,i)=>({frame_id:`frame-${String(i+1).padStart(3,'0')}`,timestamp_ms:i*100}));
+const assets=frames.map(f=>({name:f.frame_id,timestamp_ms:f.timestamp_ms,mime:'image/jpeg',base64:'YQ=='}));
+const body={skillName:'ui_video_observe',payload:{phase:'whole-observe',image_frames:frames},imageAssets:assets};
+const parts=imageParts(body);
+assert.equal(parts.filter(p=>p.type==='image_url').length,58);
+assert.equal(parts[0].text,'frame-001 0ms');assert.equal(parts[114].text,'frame-058 5700ms');
+assert.equal(imageParts({...body,skillName:'other'}).length,6);
+assert.throws(()=>imageParts({...body,imageAssets:assets.slice(1)}),/video_vision_limit/);
+assert.throws(()=>imageParts({...body,imageAssets:[{...assets[0],base64:'a'.repeat(10*1024*1024+1)},...assets.slice(1)]}),/video_vision_limit/);
+assert.throws(()=>imageParts({...body,imageAssets:[{...assets[0],name:'fake'},...assets.slice(1)]}),/video_frames_invalid/);
+assert.equal(imageParts({...body,skillName:'ui_video_steps',payload:{...body.payload,phase:'whole-consolidate'}}).length,116);
+console.log('whole-video transport: labels, complete timeline, limits and legacy isolation passed');

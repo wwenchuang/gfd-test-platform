@@ -645,13 +645,33 @@ function buildUserMessage(action, body) {
 
 function imagePartsFromBody(body = {}) {
   const assets = Array.isArray(body?.imageAssets) ? body.imageAssets : [];
-  return assets.slice(0, 6).flatMap((item) => {
+  const wholeVideo = (body.skillName === 'ui_video_observe' && body.payload?.phase === 'whole-observe') ||
+    (body.skillName === 'ui_video_steps' && body.payload?.phase === 'whole-consolidate');
+  if (wholeVideo) {
+    const frames = body.payload?.image_frames;
+    if (assets.length < 2 || assets.length > 60 || !Array.isArray(frames) || frames.length !== assets.length)
+      throw new Error('video_vision_limit');
+    let total = 0; let last = -1; const names = new Set();
+    for (const [index, item] of assets.entries()) {
+      const frame = frames[index];
+      if (!/^frame-[0-9]{3}$/.test(frame?.frame_id || '') || names.has(frame.frame_id) ||
+          !Number.isInteger(frame.timestamp_ms) || frame.timestamp_ms <= last || frame.timestamp_ms > 600000 ||
+          item?.name !== frame.frame_id || item.timestamp_ms !== frame.timestamp_ms ||
+          item.mime !== 'image/jpeg' || typeof item.base64 !== 'string' || !item.base64 || item.dataUrl)
+        throw new Error('video_frames_invalid');
+      total += item.base64.length;
+      if (total > 10 * 1024 * 1024) throw new Error('video_vision_limit');
+      names.add(frame.frame_id); last = frame.timestamp_ms;
+    }
+  }
+  return assets.slice(0, wholeVideo ? 60 : 6).flatMap((item) => {
     const mime = String(item?.mime || 'image/png').toLowerCase();
     const base64 = String(item?.base64 || '').replace(/\s+/g, '');
     const dataUrl = String(item?.dataUrl || '').trim();
     const url = dataUrl.startsWith('data:image/') ? dataUrl : (base64 ? `data:${mime};base64,${base64}` : '');
     if (!url || !/^data:image\/(?:png|jpe?g|webp);base64,/i.test(url)) return [];
-    return [{type: 'image_url', image_url: {url}}];
+    return [...(wholeVideo ? [{type: 'text', text: `${item.name} ${item.timestamp_ms}ms`}] : []),
+      {type: 'image_url', image_url: {url}}];
   });
 }
 

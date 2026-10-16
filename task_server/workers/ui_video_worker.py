@@ -93,7 +93,7 @@ def analyze_video_source(store,identifier):
     stage='authorize'
     try:
         from task_server.services.ui_case_draft_service import _application,_top3_examples
-        from task_server.services.ui_video_analysis import analyze_frames,draft_proposal
+        from task_server.services.ui_video_analysis import analyze_whole_frames,draft_proposal
         with actor_context(document['actor']):
             require_ui_actor(document['actor'],permission='ui.edit',app_id=app);_application(app)
             stage='decode'
@@ -107,7 +107,7 @@ def analyze_video_source(store,identifier):
             stage='baseline'
             document['baseline_examples']=_top3_examples(app,document['goal'] or '录屏操作步骤')
             stage='analysis'
-            result=analyze_frames(document,store.root/identifier,cancelled)
+            result=analyze_whole_frames(document,store.root/identifier,cancelled)
             if cancelled():raise ValueError('video_cancelled')
             stage='reauthorize'
             require_ui_actor(document['actor'],permission='ui.edit',app_id=app);_application(app)

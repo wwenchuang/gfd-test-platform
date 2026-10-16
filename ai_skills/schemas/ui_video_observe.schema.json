@@ -1,0 +1,171 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "events",
+    "uncertainties",
+    "multiple_scenarios"
+  ],
+  "properties": {
+    "events": {
+      "type": "array",
+      "maxItems": 50,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "action",
+          "target",
+          "value",
+          "frame_refs",
+          "observation"
+        ],
+        "properties": {
+          "action": {
+            "enum": [
+              "aiTap",
+              "aiInput",
+              "aiScroll",
+              "aiWaitFor",
+              "aiAssert"
+            ]
+          },
+          "target": {
+            "type": "string",
+            "maxLength": 2000
+          },
+          "value": {
+            "oneOf": [
+              {
+                "type": "string",
+                "maxLength": 4000
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "direction": {
+                    "enum": [
+                      "down",
+                      "up",
+                      "right",
+                      "left"
+                    ]
+                  },
+                  "distance": {
+                    "type": "number",
+                    "exclusiveMinimum": 0
+                  },
+                  "scrollType": {
+                    "enum": [
+                      "singleAction",
+                      "scrollToBottom",
+                      "scrollToTop",
+                      "scrollToRight",
+                      "scrollToLeft"
+                    ]
+                  }
+                },
+                "allOf": [
+                  {
+                    "if": {
+                      "required": [
+                        "scrollType"
+                      ],
+                      "properties": {
+                        "scrollType": {
+                          "enum": [
+                            "scrollToBottom",
+                            "scrollToTop",
+                            "scrollToRight",
+                            "scrollToLeft"
+                          ]
+                        }
+                      }
+                    },
+                    "then": {
+                      "not": {
+                        "anyOf": [
+                          {
+                            "required": [
+                              "direction"
+                            ]
+                          },
+                          {
+                            "required": [
+                              "distance"
+                            ]
+                          }
+                        ]
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "frame_refs": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 8,
+            "items": {
+              "type": "string"
+            }
+          },
+          "observation": {
+            "type": "string",
+            "maxLength": 2000
+          },
+          "uncertainties": {
+            "type": "array",
+            "maxItems": 30,
+            "items": {
+              "type": "string",
+              "maxLength": 2000
+            }
+          }
+        },
+        "allOf": [
+          {
+            "if": {
+              "required": [
+                "action"
+              ],
+              "properties": {
+                "action": {
+                  "const": "aiScroll"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "value": {
+                  "type": "object"
+                }
+              }
+            },
+            "else": {
+              "properties": {
+                "value": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        ]
+      }
+    },
+    "uncertainties": {
+      "type": "array",
+      "maxItems": 30,
+      "items": {
+        "type": "string",
+        "maxLength": 2000
+      }
+    },
+    "multiple_scenarios": {
+      "type": "boolean"
+    }
+  }
+}

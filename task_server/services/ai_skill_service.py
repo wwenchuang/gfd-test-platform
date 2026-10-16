@@ -304,6 +304,48 @@ def _repair_ai_skill_json_output(skill_name, raw, parse_error, model_config, run
     return result
 
 
+def _video_context_assets(skill_name, payload, assets):
+    """Only the two whole-video phases may carry a complete bounded timeline."""
+    payload = payload if isinstance(payload, dict) else {}
+    scoped = ((skill_name == "ui_video_observe" and payload.get("phase") == "whole-observe") or
+              (skill_name == "ui_video_steps" and payload.get("phase") == "whole-consolidate"))
+    if not scoped:
+        return False
+    frames = payload.get("image_frames")
+    if not isinstance(assets, list) or not 2 <= len(assets) <= 60 or not isinstance(frames, list) or len(frames) != len(assets):
+        raise ValueError("video_vision_limit")
+    total = 0
+    last = -1
+    names = set()
+    for frame, asset in zip(frames, assets):
+        if not isinstance(frame, dict) or not isinstance(asset, dict):
+            raise ValueError("video_frames_invalid")
+        name, stamp = frame.get("frame_id"), frame.get("timestamp_ms")
+        data = asset.get("base64")
+        if (not isinstance(name, str) or not re.fullmatch(r"frame-[0-9]{3}", name) or name in names or
+            type(stamp) is not int or not last < stamp <= 600000 or
+            asset.get("name") != name or asset.get("timestamp_ms") != stamp or
+            asset.get("mime") != "image/jpeg" or not isinstance(data, str) or not data or
+            asset.get("dataUrl")):
+            raise ValueError("video_frames_invalid")
+        total += len(data)
+        if total > 10 * 1024 * 1024:
+            raise ValueError("video_vision_limit")
+        names.add(name)
+        last = stamp
+    return True
+
+
+def _video_output_defaults(result, enabled):
+    # A missing optional question list carries no claim of successful execution.
+    # Invalid explicit values remain invalid, and all imported steps need review.
+    if enabled and isinstance(result, dict) and isinstance(result.get("events"), list):
+        for event in result["events"]:
+            if isinstance(event, dict):
+                event.setdefault("uncertainties", [])
+    return result
+
+
 def run_ai_skill(
     skill_name,
     payload=None,
@@ -321,6 +363,7 @@ def run_ai_skill(
     repair_invalid_json=False,
 ):
     """执行 AI skill：优先走统一 Gateway，平台直连仅用于无显式模型的最终兼容兜底。"""
+    whole_video = _video_context_assets(skill_name, payload, image_assets)
     prompt = render_ai_skill_prompt(skill_name, payload, version=version, fallback_prompt=fallback_prompt)
     if not prompt:
         raise ValueError(f"AI skill prompt 不存在：{skill_name}.{version}")
@@ -360,7 +403,7 @@ def run_ai_skill(
                     max_tokens=max_tokens,
                 )
                 json_repaired = True
-            result = _merge_missing_output_defaults(result, output_defaults)
+            result = _video_output_defaults(_merge_missing_output_defaults(result, output_defaults), whole_video)
             try:
                 validated = validate_ai_skill_output(skill_name, result)
             except Exception as exc:
@@ -382,7 +425,7 @@ def run_ai_skill(
         except Exception as exc:
             gateway_error = str(exc)
             runtime_trace.update({"source": "ai_gateway", "error": gateway_error[:500]})
-            if model_config or AI_SKILLS_STRICT_MODEL:
+            if whole_video or model_config or AI_SKILLS_STRICT_MODEL:
                 raise RuntimeError(
                     f"AI Gateway skill 调用失败；显式模型只允许由 Gateway 按可用性/能力策略回退：{exc}"
                 ) from exc
@@ -395,6 +438,7 @@ def run_ai_skill(
         respect_global_timeout=respect_global_timeout,
         retry_count=retry_count,
         max_tokens=max_tokens,
+        **({"image_limit": 60, "chronological_images": True} if whole_video else {}),
     )
     runtime_trace.update({
         "selectedProviderId": (model_config or {}).get("providerId") if isinstance(model_config, dict) else "",
@@ -406,7 +450,7 @@ def run_ai_skill(
         "source": "dashscope_direct",
     })
     result = normalize_model_json(raw)
-    result = _merge_missing_output_defaults(result, output_defaults)
+    result = _video_output_defaults(_merge_missing_output_defaults(result, output_defaults), whole_video)
     return validate_ai_skill_output(skill_name, result)
 
 
@@ -462,8 +506,9 @@ def ai_gateway_skill_content(
     """Call the unified Gateway for text or image skills and expose the actual routed model."""
     model_config = model_config if isinstance(model_config, dict) else {}
     runtime_trace = runtime_trace if isinstance(runtime_trace, dict) else {}
+    whole_video = _video_context_assets(skill_name, payload, image_assets)
     normalized_images = []
-    for index, asset in enumerate((image_assets or [])[:AI_VISION_IMAGE_LIMIT], start=1):
+    for index, asset in enumerate((image_assets or [])[:60 if whole_video else AI_VISION_IMAGE_LIMIT], start=1):
         if not isinstance(asset, dict):
             continue
         base64_text = str(asset.get("base64") or asset.get("contentBase64") or "").strip()
@@ -475,6 +520,7 @@ def ai_gateway_skill_content(
             "mime": str(asset.get("mime") or asset.get("contentType") or "image/png"),
             "base64": base64_text,
             "dataUrl": data_url,
+            **({"timestamp_ms": asset["timestamp_ms"]} if whole_video else {}),
         })
     fallback_model_config = {}
     if normalized_images:
@@ -574,6 +620,7 @@ def build_dashscope_chat_body(
     json_response=True,
     image_limit=None,
     max_tokens=None,
+    chronological_images=False,
 ):
     """构建 DashScope Chat API 请求体。"""
     image_assets = image_assets or []
@@ -582,6 +629,8 @@ def build_dashscope_chat_body(
     if image_assets:
         user_content = [{"type": "text", "text": prompt}]
         for asset in image_assets[:image_limit]:
+            if chronological_images:
+                user_content.append({"type": "text", "text": f"{asset['name']} {asset['timestamp_ms']}ms"})
             user_content.append({
                 "type": "image_url",
                 "image_url": {
@@ -620,6 +669,7 @@ def dashscope_chat_content(
     respect_global_timeout=True,
     retry_count=None,
     max_tokens=None,
+    chronological_images=False,
 ):
     """调用 DashScope Chat API 并返回 content 字符串。"""
     api_key = dashscope_api_key()
@@ -638,6 +688,7 @@ def dashscope_chat_content(
         json_response=json_response,
         image_limit=image_limit,
         max_tokens=max_tokens,
+        chronological_images=chronological_images,
     ), ensure_ascii=False).encode("utf-8")
     last_error = None
     for attempt in range(retries + 1):

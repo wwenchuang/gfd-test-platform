@@ -294,6 +294,87 @@ def _validate_consolidated_evidence(checked,raw_events,candidates,frames,image_f
     _preserve_interactions(candidates,checked['events'],required_indices)
 
 
+def _bind_whole_evidence(result, frames):
+    """Bind only actual sent frame IDs; model times or confidence cannot override them."""
+    if not isinstance(result, dict) or not isinstance(result.get('events'), list):
+        raise ValueError('video_model_invalid')
+    bound=copy.deepcopy(result)
+    times={frame['frame_id']:frame['timestamp_ms'] for frame in frames}
+    last=-1
+    for event in bound['events']:
+        required={'action','target','value','frame_refs','observation'}
+        if not isinstance(event,dict) or not required<=set(event)<=required|{'uncertainties'}:
+            raise ValueError('video_model_invalid')
+        refs=event['frame_refs']
+        if (not isinstance(refs,list) or not 1<=len(refs)<=8 or
+            any(not isinstance(ref,str) or ref not in times for ref in refs) or len(set(refs))!=len(refs)):
+            raise ValueError('video_reference_invalid')
+        stamps=[times[ref] for ref in refs]
+        if stamps!=sorted(stamps) or stamps[0]<last:raise ValueError('video_reference_invalid')
+        if 'uncertainties' in event and not isinstance(event['uncertainties'],list):raise ValueError('video_model_invalid')
+        event.setdefault('uncertainties',[])
+        event.update(start_ms=stamps[0],end_ms=stamps[-1],evidence_kind='inferred')
+        last=stamps[0]
+    return bound
+
+
+def analyze_whole_frames(document, root, cancelled):
+    """One full-context observation, one bounded plan, at most one correction."""
+    from . import ai_skill_service as ai
+    frames=document['media']['frames'];duration=document['media']['duration_ms']
+    if cancelled():raise ValueError('video_cancelled')
+    if not 2<=len(frames)<=60:raise ValueError('video_vision_limit')
+    assets=[];total=0
+    for frame in frames:
+        if cancelled():raise ValueError('video_cancelled')
+        path=root/'frames'/(frame['frame_id']+'.jpg')
+        if path.stat().st_size>8*1024*1024:raise ValueError('video_vision_limit')
+        data=base64.b64encode(path.read_bytes()).decode()
+        total+=len(data)
+        if total>10*1024*1024:raise ValueError('video_vision_limit')
+        assets.append({'name':frame['frame_id'],'timestamp_ms':frame['timestamp_ms'],'mime':'image/jpeg','base64':data})
+    payload={'phase':'whole-observe','frames':frames,'image_frames':frames,'duration_ms':duration}
+    # No user intent or baseline style in factual observation. Planning receives both.
+    result=ai.run_ai_skill('ui_video_observe',payload,image_assets=assets,timeout=120,
+        retry_count=0,max_tokens=10000,repair_invalid_json=False)
+    if cancelled():raise ValueError('video_cancelled')
+    result=_bind_whole_evidence(result,frames)
+    known_secrets=[e['value'] for e in result['events'] if e['action']=='aiInput' and isinstance(e.get('value'),str) and e['value']]
+    observed=validate_analysis(result,frames,duration)
+    candidates=observed['events'];multi=observed['multiple_scenarios']
+    if not candidates:return {**observed,'raw_events':[],'raw_uncertainties':observed['uncertainties']}
+    required_indices=_required_interactions(candidates,duration)
+    payload={'phase':'whole-consolidate','app_id':document['app_id'],'goal':document['goal'],
+        'frames':frames,'image_frames':frames,'duration_ms':duration,'candidate_events':candidates,
+        'required_candidate_indexes':required_indices,'raw_uncertainties':observed['uncertainties'],
+        'multiple_scenarios':multi,'baseline_examples':document.get('baseline_examples',[])}
+    for attempt in range(2):
+        if cancelled():raise ValueError('video_cancelled')
+        planned=ai.run_ai_skill('ui_video_steps',payload,image_assets=assets,version='consolidate',
+            timeout=120,retry_count=0,max_tokens=10000,repair_invalid_json=False)
+        if cancelled():raise ValueError('video_cancelled')
+        if isinstance(planned,dict) and type(planned.get('multiple_scenarios')) is bool:multi|=planned['multiple_scenarios']
+        try:
+            bound=_bind_candidate_evidence(planned,candidates,required_indices)
+            checked=validate_analysis(bound,frames,duration,known_secrets)
+            _validate_consolidated_evidence(checked,candidates,candidates,frames,frames,duration,required_indices)
+            draft_proposal({**document,**checked,'source_id':document.get('source_id','uvs_'+'0'*32),
+                            'analysis_version':document.get('analysis_version',1)})
+            return {**checked,'multiple_scenarios':multi,'raw_events':candidates,'raw_uncertainties':observed['uncertainties']}
+        except ValueError:
+            if attempt:raise
+            # Never send model output/error strings back: only a fixed safe correction.
+            if isinstance(planned,dict) and isinstance(planned.get('events'),list):
+                known_secrets.extend(e['value'] for e in planned['events'] if isinstance(e,dict) and
+                    e.get('action')=='aiInput' and isinstance(e.get('value'),str) and e['value'])
+            payload={**payload,'multiple_scenarios':multi,'validation_feedback':
+                '上一结果未通过平台证据/复用校验。每事件必须有candidate_index/action/target/value/observation/uncertainties。'
+                '索引严格递增，保留全部required_candidate_indexes及原action，不输出时间或frame_refs/evidence_kind。'
+                'outcome只用不早于该候选end_ms且不晚于下一交互start_ms的真实结果帧。'
+                'selection仅在首次对象操作上出现一次，不含任何旧编号/日期/{{}}。后续操作引用{{本次对象}}；'
+                '确认后的reusable_expected检查{{本次对象}}消失和{{保留对象}}仍显示。不等待toast。其他导航只检查相关稳定页面。'}
+
+
 def analyze_frames(document, root, cancelled):
     from . import ai_skill_service as ai
     frames=document['media']['frames']
