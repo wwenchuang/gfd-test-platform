@@ -630,6 +630,8 @@ def test_batch_invalid_result_frame_gets_one_bounded_repair(monkeypatch,tmp_path
     assert len(calls)==5
     assert 'validation_feedback' in calls[1]
     assert calls[0]['frames']==calls[1]['frames']
+    assert calls[1]['candidate_events']==[event('aiTap',0,1,'入口')]
+    assert calls[1]['required_candidate_indexes']==[0]
 
 
 def test_outcome_repair_preserves_original_secrets_and_multiscene(monkeypatch,tmp_path):

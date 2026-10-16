@@ -230,8 +230,11 @@ def analyze_frames(document, root, cancelled):
             known_secrets.extend(e['value'] for e in result['events'] if e['action']=='aiInput' and isinstance(e['value'],str) and e['value'])
             repair_used=True
             if cancelled():raise ValueError('video_cancelled')
-            result=ai.run_ai_skill('ui_video_steps',{**payload,'validation_feedback':
-                '上次outcome结果帧引用无效。重新核对同一图片：事件frame_refs在start_ms至end_ms之间；outcome每个引用须在end_ms之后或同刻。没有合法结果帧请省略outcome。保留原有可靠交互，不编造业务结果。'},
+            result=ai.run_ai_skill('ui_video_steps',{**payload,
+                'candidate_events':original['events'],
+                'required_candidate_indexes':_required_interactions(original['events'],document['media']['duration_ms']),
+                'validation_feedback':
+                'candidate_events是上次已校验且脱敏的操作证据。逐项保留原action、target、时间及frame_refs；只补正可选outcome，不重新猜测或删除交互。上次outcome结果帧引用无效。重新核对同一图片：事件frame_refs在start_ms至end_ms之间；outcome每个引用须在end_ms之后或同刻。没有合法结果帧请省略outcome。保留原有可靠交互，不编造业务结果。'},
                 image_assets=assets,timeout=120,retry_count=0,max_tokens=10000,repair_invalid_json=False)
             if cancelled():raise ValueError('video_cancelled')
             checked=validate_analysis(result,batch,document['media']['duration_ms'],known_secrets)

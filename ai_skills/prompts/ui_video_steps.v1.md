@@ -31,7 +31,7 @@
 
 aiAssert 只作为需要用户核对的可见检查候选，不推断后台数据/提交成功；目标是具体对象和状态。aiWaitFor 仅表示必要页面状态，不照抄视频停顿秒数。aiInput.value 总是空字符串；密码/验证码/令牌禁止转录，输入内容请用户手工配置，observation 也不得含秘密。aiScroll.value 必须是 JSON 对象，不能是字符串（包括不能把对象再次编码成字符串）、数组或 null；其他动作的 value 必须是字符串，且本任务统一用空字符串。滚动对象只允许 direction、distance、scrollType 三个可选字段：direction 仅 down/up/right/left；distance 仅有限正数；scrollType 仅 singleAction、scrollToBottom、scrollToTop、scrollToRight、scrollToLeft。scrollType 缺省或 singleAction 时才允许 direction/distance；scrollToBottom/scrollToTop/scrollToRight/scrollToLeft 不能带 direction 或 distance。不得增加 amount、pixels、speed、duration、x/y、from/to、shell 等其他字段。没有可靠方向或方式证据时 value={}，并在该事件 uncertainties 请求核对；不能将“向上滑动”等自然语言放入 value，也不能猜测滚动方向。direction 表示浏览内容的方向，不是手指移动方向：down 是向下浏览更靠后的内容，画面内容通常向上移动；up 是向上浏览更靠前的内容，画面内容通常向下移动；left/right 同理按浏览内容方向。不得把手指向上划直接编码为 direction=up。没有可靠距离证据时省略 distance，不得填经验默认值（例如300）。目标缺失或遮挡必须提问。不因模型自信省略疑问，不生成准确率。
 
-必须返回且只返回一个完整 JSON 对象，顶层字段固定为 events、uncertainties、multiple_scenarios。events 是按时间排序的事件数组（0至50项）；uncertainties 是字符串数组；multiple_scenarios 是布尔值。禁止用 steps、candidate_steps、segments 代替 events，禁止增加顶层字段。没有可靠动作时 events=[] 并在 uncertainties 写明原因；不能省略任一顶层字段。每个事件必须包含上面列出的全部9个必填字段；除可选 outcome 外不能增加字段。
+必须返回且只返回一个完整 JSON 对象，顶层必填字段为 events、uncertainties、multiple_scenarios；全片整理阶段还必须提供 title。events 是按时间排序的事件数组（0至50项）；uncertainties 是字符串数组；multiple_scenarios 是布尔值。禁止用 steps、candidate_steps、segments 代替 events，除 title 外禁止增加其他顶层字段。没有可靠动作时 events=[] 并在 uncertainties 写明原因；不能省略任一必填顶层字段。每个事件必须包含上面列出的全部9个必填字段；可选字段仅 outcome、selection、reusable_expected，不适用时省略。
 
 下面只是结构示例，不能照抄其中的动作、页面、时间或帧ID；必须替换为本次实际输入证据。示例中的 aiTap 仅为推断候选，不证明已执行或业务成功：
 ```json
