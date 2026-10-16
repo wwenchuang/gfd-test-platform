@@ -29,6 +29,14 @@ class VideoSourceTests(unittest.TestCase):
         self.store.cancel(doc['source_id'])
         self.assertEqual(self.store.get(doc['source_id'], 'one', 'com.example.app')['status'], 'cancelled')
 
+    def test_retry_does_not_reuse_previous_analysis_title(self):
+        doc=self.store.upload({'user_id':'one'},'com.example.app','x.mp4',io.BytesIO(b'1234'),4)
+        self.store.transition(doc['source_id'],{'queued'},'review_needed',title='上一版业务名称')
+        retry=self.store.retry(doc['source_id'],'one','com.example.app')
+        self.assertNotIn('title',retry)
+        self.store.transition(doc['source_id'],{'queued'},'ready',events=[])
+        self.assertNotIn('title',self.store.get(doc['source_id'],'one','com.example.app'))
+
     def test_real_mp4_static_and_spoof(self):
         import shutil, subprocess
         from task_server.services.ui_video_source_service import decode_video

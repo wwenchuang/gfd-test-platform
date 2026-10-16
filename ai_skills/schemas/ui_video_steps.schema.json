@@ -8,6 +8,11 @@
     "multiple_scenarios"
   ],
   "properties": {
+    "title": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 80
+    },
     "events": {
       "type": "array",
       "maxItems": 50,

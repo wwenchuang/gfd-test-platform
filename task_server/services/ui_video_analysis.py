@@ -35,7 +35,9 @@ def _scroll_object(value):
 
 
 def validate_analysis(result, frames, duration, prior_secrets=()):
-    if not isinstance(result, dict) or set(result)!={'events','uncertainties','multiple_scenarios'}: raise ValueError('video_model_invalid')
+    required_fields={'events','uncertainties','multiple_scenarios'}
+    if not isinstance(result, dict) or not required_fields<=set(result)<=required_fields|{'title'}: raise ValueError('video_model_invalid')
+    title=_text(result['title'],80) if 'title' in result else ''
     if type(result['multiple_scenarios']) is not bool: raise ValueError('video_model_invalid')
     events=result['events']; questions=result['uncertainties']
     if not isinstance(events,list) or len(events)>50 or not isinstance(questions,list) or len(questions)>30: raise ValueError('video_model_invalid')
@@ -100,7 +102,7 @@ def validate_analysis(result, frames, duration, prior_secrets=()):
         if isinstance(value,list):return [redact(v) for v in value]
         if isinstance(value,dict):return {k:redact(v) for k,v in value.items()}
         return value
-    return redact({'events':clean,'uncertainties':questions,'multiple_scenarios':result['multiple_scenarios']})
+    return redact({'events':clean,'uncertainties':questions,'multiple_scenarios':result['multiple_scenarios'],**({'title':title} if title else {})})
 
 
 def _system_boundary(event,duration):
@@ -202,7 +204,7 @@ def analyze_frames(document, root, cancelled):
     # The existing Gateway imagePartsFromBody accepts at most six images.
     limit=max(2,min(6,int(ai.AI_VISION_IMAGE_LIMIT)))
     if int(ai.AI_VISION_IMAGE_LIMIT)<2: raise ValueError('video_vision_limit')
-    events=[];questions=[];multi=False;last_end=-1;audit_events=[];known_secrets=[];repair_used=False
+    events=[];questions=[];multi=False;last_end=-1;audit_events=[];known_secrets=[];repair_used=False;title=''
     # Adjacent batches share one boundary frame, preserving the whole chronology.
     for offset in range(0,len(frames)-1,limit-1):
         if cancelled(): raise ValueError('video_cancelled')
@@ -255,14 +257,50 @@ def analyze_frames(document, root, cancelled):
         image_frames=_consolidation_images(events,frames,limit)
         assets=[{'name':f['frame_id'],'mime':'image/jpeg','base64':base64.b64encode((root/'frames'/(f['frame_id']+'.jpg')).read_bytes()).decode()} for f in image_frames]
         if cancelled():raise ValueError('video_cancelled')
-        result=ai.run_ai_skill('ui_video_steps',{'phase':'consolidate','app_id':document['app_id'],
+        payload={'phase':'consolidate','app_id':document['app_id'],
                     'goal':document['goal'],'duration_ms':document['media']['duration_ms'],
                     'frames':frames,'image_frames':image_frames,'candidate_events':candidates,
                     'raw_uncertainties':raw_questions,'multiple_scenarios':multi,
-                    'required_candidate_indexes':required_indices},image_assets=assets,
-                    timeout=120,retry_count=0,max_tokens=10000,repair_invalid_json=False)
-        if cancelled():raise ValueError('video_cancelled')
-        checked=validate_analysis(result,frames,document['media']['duration_ms'],known_secrets)
+                    'required_candidate_indexes':required_indices}
+        reuse_errors={
+            'video_selection_invalid','不支持的运行时对象引用',
+            '每条用例只能选取一次对象，选取条件不能引用尚未读取的对象',
+            '请先添加“选取本次测试对象”，再引用本次对象',
+            '可复用步骤不能固定录屏编号或日期，请使用本次对象/保留对象',
+            '选取后必须使用本次对象定位操作',
+            '请同时检查本次对象的结果和保留对象，避免误操作',
+        }
+        for correction in range(2):
+            if cancelled():raise ValueError('video_cancelled')
+            result=ai.run_ai_skill('ui_video_steps',payload,image_assets=assets,
+                        timeout=120,retry_count=0,max_tokens=10000,repair_invalid_json=False)
+            if cancelled():raise ValueError('video_cancelled')
+            try:
+                checked=validate_analysis(result,frames,document['media']['duration_ms'],known_secrets)
+                multi|=checked['multiple_scenarios']
+                if any(event.get('selection') or '{{' in event['target'] or event.get('reusable_expected') for event in checked['events']):
+                    draft_proposal({**document,**checked,
+                        'source_id':document.get('source_id','uvs_'+'0'*32),
+                        'analysis_version':document.get('analysis_version',1)})
+                break
+            except ValueError as error:
+                # Share the existing one-correction budget. Never relax the
+                # draft gate or include arbitrary provider output in feedback.
+                reason=error.args[0] if error.args else None
+                if correction or repair_used or reason not in reuse_errors:raise
+                # Preserve first-response restrictions even when schema checks
+                # failed before producing a cleaned result.
+                if type(result.get('multiple_scenarios')) is bool:multi|=result['multiple_scenarios']
+                known_secrets.extend(e['value'] for e in result.get('events',[])
+                    if isinstance(e,dict) and e.get('action')=='aiInput' and isinstance(e.get('value'),str) and e['value'])
+                repair_used=True
+                payload={**payload,'multiple_scenarios':multi,'validation_feedback':
+                    '复用规则校验失败：'+reason+'。仅纠正复用建议，保留原候选全部必要交互及真实帧证据。'
+                    'selection全片只能一个，与首次使用{{本次对象}}的aiTap同一事件；'
+                    'selection本身只写普通中文筛选条件，不得含任何{{}}引用或历史编号。'
+                    '后续操作使用{{本次对象}}，最终结果使用{{本次对象}}和{{保留对象}}；'
+                    '观察仍保留原事实，reusable_expected单独给出无历史编号的检查建议。'
+                    '不适用的可选字段省略，不得改动允许范围或新增业务操作。'}
         all_refs={ref for raw in raw_events for ref in raw['frame_refs']}
         all_refs.update(frame['frame_id'] for frame in image_frames)
         times={frame['frame_id']:frame['timestamp_ms'] for frame in frames}
@@ -290,10 +328,10 @@ def analyze_frames(document, root, cancelled):
                     raise ValueError('video_reference_invalid')
             if all(raw['evidence_kind']=='inferred' for raw in matching):event['evidence_kind']='inferred'
         _preserve_interactions(candidates,checked['events'],required_indices)
-        events=checked['events'];questions=checked['uncertainties']
+        events=checked['events'];questions=checked['uncertainties'];title=checked.get('title','')
         multi=multi or checked['multiple_scenarios']
     return {'events':events,'uncertainties':list(dict.fromkeys(questions)), 'multiple_scenarios':multi,
-            'raw_events':raw_events,'raw_uncertainties':raw_questions}
+            'raw_events':raw_events,'raw_uncertainties':raw_questions,**({'title':title} if title else {})}
 
 
 def _visible_state(text):
@@ -337,7 +375,8 @@ def draft_proposal(document):
     identifier=document['source_id'];version=document['analysis_version']
     snapshot={'kind':'video','source_id':identifier,'app_id':document['app_id'],'analysis_version':version,
               'duration_ms':document['media']['duration_ms'],'frames':document['media']['frames'],
-              'events':copy.deepcopy(document['events']),'goal':document['goal']}
+              'events':copy.deepcopy(document['events']),'goal':document['goal'],
+              'generated_title':document.get('title','')}
     snapshot['snapshot_id']=hashlib.sha256(json.dumps([identifier,version]).encode()).hexdigest()
     steps=[];questions=list(document['uncertainties'])
     for index,event in enumerate(snapshot['events']):
@@ -383,5 +422,5 @@ def draft_proposal(document):
         visible='；'.join(candidates)[:500] or '没有明确可见结果'
         questions.append(f'请明确确认目标与候选检查是否一致。用户目标原文：{goal[:600] or "未填写"}。录屏可见检查候选：{visible}。末尾检查候选：{final_check[:400] or "未明确"}。'
                          '平台未解释目标中的否定、范围或业务含义；如有冲突请修改预期/结束检查，再逐步确认。完整目标保留在来源详情。')
-    normalized=normalize_steps({'title':'录屏步骤待核对','preconditions':[],'steps':steps,'questions':questions},document['app_id'])
+    normalized=normalize_steps({'title':document.get('title') or '录屏操作验证','preconditions':[],'steps':steps,'questions':questions},document['app_id'])
     return normalized,snapshot

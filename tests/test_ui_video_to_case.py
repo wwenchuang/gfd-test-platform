@@ -3,6 +3,15 @@ import unittest
 from pathlib import Path
 
 class VideoCandidateTests(unittest.TestCase):
+    def test_generated_title_is_accepted_validated_and_redacted(self):
+        from task_server.services.ui_video_analysis import validate_analysis
+        result={'events':[],'uncertainties':[],'multiple_scenarios':False,
+                'title':'删除打印记录并验证列表更新'}
+        self.assertEqual(validate_analysis(result,[],1000)['title'],result['title'])
+        with self.assertRaises(ValueError):validate_analysis({**result,'title':'x'*81},[],1000)
+        with self.assertRaises(ValueError):validate_analysis({**result,'title':{}},[],1000)
+        cleaned=validate_analysis({**result,'title':'验证private-input'},[],1000,['private-input'])
+        self.assertNotIn('private-input',cleaned['title'])
     def test_references_and_platform_actions_are_enforced(self):
         from task_server.services.ui_video_analysis import validate_analysis
         frames=[{'frame_id':'frame-001','timestamp_ms':0},{'frame_id':'frame-end','timestamp_ms':1900}]

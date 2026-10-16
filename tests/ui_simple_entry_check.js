@@ -282,6 +282,24 @@ async function videoFixture(t){
  const q=s=>w.document.querySelector(s);function app(value){q('[data-video-app]').value=value;q('[data-video-app]').dispatchEvent(new w.Event('change'));}
  return {...f,calls,q,app,respond:fn=>respond=fn};
 }
+test('library opens saved video history directly without upload or execution',async t=>{
+ const {w}=fixture(t);w.UiCaseDraft={mount:()=>({dispose(){}})};await w.initUiSimpleAvailability({navigate:false});
+ w.activeWorkflow='ui_library';w.showUiSimpleWorkflow();const calls=[];
+ w.apiRequest=async path=>{calls.push(path);return {ok:true,apps:[]};};
+ w.document.querySelector('[data-ui-video-history]').click();await wait();
+ assert.equal(w.document.querySelector('[data-video-history]').open,true);
+ assert.deepEqual(calls,['/ui-executions/catalog']);
+});
+test('saved video history uses readable escaped names and distinguishes repeated analyses',async t=>{
+ const f=await videoFixture(t);
+ f.respond(path=>path.startsWith('/ui-video-sources?')?{ok:true,sources:[{source_id:'s1',
+  filename:'opaque-source.mp4',title:'删除打印记录 <img src=x>',status:'ready',draft_id:'uid_1',
+  created_at:1792114455,analysis_version:2}]}:undefined);
+ f.app('a');await wait();const list=f.q('[data-video-list]');
+ assert.match(list.textContent,/删除打印记录/);assert.match(list.textContent,/已保存用例/);
+ assert.match(list.textContent,/2026/);assert.match(list.textContent,/第 2 次分析/);
+ assert.equal(list.querySelector('img'),null);
+});
 test('video source picker lists durable own tasks and ignores late previous-app lists',async t=>{
  const f=await videoFixture(t);let resolve;f.respond(path=>path==='/ui-video-sources?app_id=a'?new Promise(r=>resolve=r):undefined);
  f.app('a');await wait();f.app('b');await wait();resolve({ok:true,sources:[{source_id:'old',filename:'旧应用素材',status:'ready'}]});await wait();
