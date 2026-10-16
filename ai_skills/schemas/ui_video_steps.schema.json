@@ -23,11 +23,7 @@
           "action",
           "target",
           "value",
-          "start_ms",
-          "end_ms",
-          "frame_refs",
           "observation",
-          "evidence_kind",
           "uncertainties"
         ],
         "properties": {
@@ -180,6 +176,11 @@
             "type": "string",
             "minLength": 1,
             "maxLength": 2000
+          },
+          "candidate_index": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 49
           }
         },
         "allOf": [
@@ -207,6 +208,50 @@
                   "type": "string"
                 }
               }
+            }
+          }
+        ],
+        "oneOf": [
+          {
+            "required": [
+              "start_ms",
+              "end_ms",
+              "frame_refs",
+              "evidence_kind"
+            ],
+            "not": {
+              "required": [
+                "candidate_index"
+              ]
+            }
+          },
+          {
+            "required": [
+              "candidate_index"
+            ],
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "start_ms"
+                  ]
+                },
+                {
+                  "required": [
+                    "end_ms"
+                  ]
+                },
+                {
+                  "required": [
+                    "frame_refs"
+                  ]
+                },
+                {
+                  "required": [
+                    "evidence_kind"
+                  ]
+                }
+              ]
             }
           }
         ]

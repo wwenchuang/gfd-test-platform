@@ -242,6 +242,28 @@ def _consolidation_images(events,frames,limit):
     return sorted(chosen,key=lambda frame:frame['timestamp_ms'])
 
 
+def _bind_candidate_evidence(result, candidates, required_indices=()):
+    """Bind indexed plans to validated evidence; legacy plans remain strict."""
+    if not isinstance(result,dict) or not isinstance(result.get('events'),list):return result
+    events=result['events']
+    indexed=[isinstance(event,dict) and 'candidate_index' in event for event in events]
+    if not any(indexed):return result
+    if not all(indexed):raise ValueError('video_model_timeline')
+    bound=copy.deepcopy(result);last=-1;seen=set()
+    owned=('start_ms','end_ms','frame_refs','evidence_kind')
+    for event in bound['events']:
+        index=event.pop('candidate_index')
+        if type(index) is not int or not last<index<len(candidates):
+            raise ValueError('video_model_timeline')
+        candidate=candidates[index]
+        if any(key in event for key in owned) or event.get('action')!=candidate['action']:
+            raise ValueError('video_model_timeline')
+        for key in owned:event[key]=copy.deepcopy(candidate[key])
+        last=index;seen.add(index)
+    if not set(required_indices)<=seen:raise ValueError('video_required_action_missing')
+    return bound
+
+
 def _validate_consolidated_evidence(checked,raw_events,candidates,frames,image_frames,duration,required_indices):
     all_refs={ref for raw in raw_events for ref in raw['frame_refs']}
     all_refs.update(frame['frame_id'] for frame in image_frames)
@@ -356,6 +378,7 @@ def analyze_frames(document, root, cancelled):
                         timeout=120,retry_count=0,max_tokens=10000,repair_invalid_json=False)
             if cancelled():raise ValueError('video_cancelled')
             try:
+                result=_bind_candidate_evidence(result,candidates,required_indices)
                 checked=validate_analysis(result,frames,document['media']['duration_ms'],known_secrets)
                 multi|=checked['multiple_scenarios']
                 _validate_consolidated_evidence(checked,raw_events,candidates,frames,image_frames,document['media']['duration_ms'],required_indices)
@@ -381,7 +404,7 @@ def analyze_frames(document, root, cancelled):
                 repair_used=True
                 payload={**payload,'multiple_scenarios':multi,'validation_feedback':
                     '整理校验失败：'+reason+'。逐项保留required_candidate_indexes的必要交互，不可遗漏或合并两次点击。'
-                    '直接保留对应候选start_ms/end_ms和frame_refs，不向前后拓展；同类等待仅合并连续区间，不能跨空隙或改action。'
+                    '用candidate_index引用原候选，每项一个，严格递增不重复且action不变。不要输出start_ms/end_ms/frame_refs/evidence_kind；平台负责绑定来源。'
                     'outcome仅引用事件end_ms之后或同刻且下一业务交互之前的结果帧；操作前图片不得混入。'
                     '没有合法结果帧时省略outcome并保留结果不明问题，不编造成功。'
                     'selection全片只能一个，与首次使用{{本次对象}}的aiTap同一事件；'
