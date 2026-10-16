@@ -211,10 +211,18 @@ def _consolidation_images(events,frames,limit):
         confirmation=next((i for i in range(index+1,len(events)) if events[i]['action'] in {'aiTap','aiInput','aiScroll'}),None)
         if confirmation is None or not re.search(r'确认|确定|提交|confirm|submit',events[confirmation]['target'],re.I):continue
         following=next((events[i]['start_ms'] for i in range(confirmation+1,len(events)) if events[i]['action'] in {'aiTap','aiInput','aiScroll'}),duration+1)
-        result_refs={ref for item in events[confirmation+1:] for ref in item['frame_refs']
-                     if events[confirmation]['end_ms']<=times[ref]<following}
-        result_refs.update(ref for item in events[confirmation:] for ref in item.get('outcome',{}).get('frame_refs',[])
-                           if events[confirmation]['end_ms']<=times[ref]<following)
+        # A stable result can be a decoded frame with no local event. The
+        # model must see it before deciding what happened; this selects evidence,
+        # not a successful outcome. Never include the next interaction's frame.
+        result_refs={frame['frame_id'] for frame in frames
+                     if events[confirmation]['end_ms']<=frame['timestamp_ms']<following}
+        # If no later business interaction bounds the interval, the decoded
+        # tail may already be the desktop. Prefer locally associated result
+        # evidence when available, instead of replacing it with a system tail.
+        if following==duration+1:
+            associated={ref for item in events[confirmation+1:] for ref in item['frame_refs'] if ref in result_refs}
+            associated.update(ref for item in events[confirmation:] for ref in item.get('outcome',{}).get('frame_refs',[]) if ref in result_refs)
+            if associated:result_refs=associated
         if not result_refs:continue
         anchors=[event['frame_refs'][0],events[confirmation]['frame_refs'][0],max(result_refs,key=times.get)]
         selected={f['frame_id'] for f in chosen}
@@ -251,7 +259,7 @@ def analyze_frames(document, root, cancelled):
                               'duration_ms':document['media']['duration_ms'],'phase':'batch','frames':batch,'image_frames':batch,
                               'previous_events':[{k:e[k] for k in ('start_ms','end_ms','action','target')} for e in events[-3:]],
                               'baseline_examples':document.get('baseline_examples',[])}
-        result=ai.run_ai_skill('ui_video_steps', payload, image_assets=assets,
+        result=ai.run_ai_skill('ui_video_steps', payload, image_assets=assets, version='batch',
                               timeout=120,retry_count=0,max_tokens=10000,repair_invalid_json=False)
         if cancelled(): raise ValueError('video_cancelled')
         result=_align_batch_evidence_times(result,batch,document['media']['duration_ms'])
@@ -272,7 +280,7 @@ def analyze_frames(document, root, cancelled):
                 'required_candidate_indexes':_required_interactions(original['events'],document['media']['duration_ms']),
                 'validation_feedback':
                 'candidate_events是上次已校验且脱敏的操作证据。逐项保留原action、target、时间及frame_refs；只补正可选outcome，不重新猜测或删除交互。上次outcome结果帧引用无效。重新核对同一图片：事件frame_refs在start_ms至end_ms之间；outcome每个引用须在end_ms之后或同刻。没有合法结果帧请省略outcome。保留原有可靠交互，不编造业务结果。'},
-                image_assets=assets,timeout=120,retry_count=0,max_tokens=10000,repair_invalid_json=False)
+                image_assets=assets,version='batch',timeout=120,retry_count=0,max_tokens=10000,repair_invalid_json=False)
             if cancelled():raise ValueError('video_cancelled')
             result=_align_batch_evidence_times(result,batch,document['media']['duration_ms'])
             checked=validate_analysis(result,batch,document['media']['duration_ms'],known_secrets)
@@ -313,7 +321,7 @@ def analyze_frames(document, root, cancelled):
         }
         for correction in range(2):
             if cancelled():raise ValueError('video_cancelled')
-            result=ai.run_ai_skill('ui_video_steps',payload,image_assets=assets,
+            result=ai.run_ai_skill('ui_video_steps',payload,image_assets=assets,version='consolidate',
                         timeout=120,retry_count=0,max_tokens=10000,repair_invalid_json=False)
             if cancelled():raise ValueError('video_cancelled')
             try:

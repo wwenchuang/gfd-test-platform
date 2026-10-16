@@ -882,3 +882,34 @@ def test_batch_time_alignment_does_not_hide_original_reverse_order():
     raw={'events':[{'start_ms':900,'end_ms':1000,'frame_refs':['f0']},
                    {'start_ms':500,'end_ms':600,'frame_refs':['f0']}]}
     assert _align_batch_evidence_times(raw,frames,2000)==raw
+
+
+def test_video_phases_use_separate_prompts_without_extra_calls(monkeypatch,tmp_path):
+    from task_server.services import ui_video_analysis as analysis,ai_skill_service as ai
+    frames,event=_consolidation_fixture(tmp_path)
+    navigation=event('aiTap',0,1,'首页个人中心入口')
+    calls=[]
+    def model(name,payload,**kwargs):
+        calls.append(payload['phase'])
+        assert kwargs.get('version')==payload['phase']
+        prompt=ai.render_ai_skill_prompt(name,payload,version=kwargs['version'])
+        assert prompt and '{{payload}}' not in prompt
+        return {'events':[navigation] if payload['phase']=='consolidate' or payload['frames'][0]['timestamp_ms']==0 else [],'uncertainties':[],'multiple_scenarios':False}
+    monkeypatch.setattr(ai,'run_ai_skill',model)
+    monkeypatch.setattr(ai,'AI_VISION_IMAGE_LIMIT',6)
+    output=analysis.analyze_frames({'app_id':APP,'goal':'','media':{'duration_ms':12000,'frames':frames}},tmp_path,lambda:False)
+    assert calls==['batch','batch','batch','consolidate']
+    assert output['events']==[navigation]
+
+
+def test_confirmation_keeps_decoded_result_frame_without_local_event(tmp_path):
+    from task_server.services.ui_video_analysis import _consolidation_images
+    frames,event=_consolidation_fixture(tmp_path)
+    events=[event('aiTap',0,1,'我的'),event('aiScroll',2,3,'内容'),
+            event('aiTap',5,6,'记录删除'),event('aiTap',7,8,'确认删除'),
+            event('aiTap',10,11,'返回箭头')]
+    selected=_consolidation_images(events,frames,6)
+    ids={f['frame_id'] for f in selected}
+    assert {'f5','f7','f9'}<=ids
+    assert len(selected)<=6
+    assert 'f10' not in ids and 'f11' not in ids
