@@ -304,7 +304,7 @@ def analyze_frames(document, root, cancelled):
                     'raw_uncertainties':raw_questions,'multiple_scenarios':multi,
                     'required_candidate_indexes':required_indices}
         reuse_errors={
-            'video_selection_invalid','不支持的运行时对象引用',
+            'video_reference_invalid','video_selection_invalid','不支持的运行时对象引用',
             '每条用例只能选取一次对象，选取条件不能引用尚未读取的对象',
             '请先添加“选取本次测试对象”，再引用本次对象',
             '可复用步骤不能固定录屏编号或日期，请使用本次对象/保留对象',
@@ -329,6 +329,10 @@ def analyze_frames(document, root, cancelled):
                 # draft gate or include arbitrary provider output in feedback.
                 reason=error.args[0] if error.args else None
                 if correction or repair_used or reason not in reuse_errors:raise
+                if reason=='video_reference_invalid':
+                    action_only=copy.deepcopy(result)
+                    for event in action_only.get('events',[]):event.pop('outcome',None)
+                    validate_analysis(action_only,frames,document['media']['duration_ms'],known_secrets)
                 # Preserve first-response restrictions even when schema checks
                 # failed before producing a cleaned result.
                 if type(result.get('multiple_scenarios')) is bool:multi|=result['multiple_scenarios']
@@ -336,7 +340,9 @@ def analyze_frames(document, root, cancelled):
                     if isinstance(e,dict) and e.get('action')=='aiInput' and isinstance(e.get('value'),str) and e['value'])
                 repair_used=True
                 payload={**payload,'multiple_scenarios':multi,'validation_feedback':
-                    '复用规则校验失败：'+reason+'。仅纠正复用建议，保留原候选全部必要交互及真实帧证据。'
+                    '整理校验失败：'+reason+'。保留原候选全部必要交互及真实帧证据。'
+                    'outcome仅引用事件end_ms之后或同刻且下一业务交互之前的结果帧；操作前图片不得混入。'
+                    '没有合法结果帧时省略outcome并保留结果不明问题，不编造成功。'
                     'selection全片只能一个，与首次使用{{本次对象}}的aiTap同一事件；'
                     'selection本身只写普通中文筛选条件，不得含任何{{}}引用或历史编号。'
                     '后续操作使用{{本次对象}}，最终结果使用{{本次对象}}和{{保留对象}}；'

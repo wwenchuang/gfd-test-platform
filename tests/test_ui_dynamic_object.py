@@ -78,7 +78,7 @@ def test_dynamic_yaml_can_be_edited_and_converted_back():
     assert yaml.safe_load(build_draft_yaml(parsed,'com.kfb.model')['yaml_content'])==yaml.safe_load(built['yaml_content'])
 
 
-@pytest.mark.parametrize('retry_mode', ['valid', 'invalid_again', 'drops_action', 'multi', 'secret'])
+@pytest.mark.parametrize('retry_mode', ['valid', 'invalid_again', 'drops_action', 'multi', 'secret', 'outcome'])
 def test_video_reuse_contract_gets_one_bounded_correction(monkeypatch,tmp_path,retry_mode):
     import copy
     from task_server.services import ai_skill_service as ai
@@ -100,9 +100,11 @@ def test_video_reuse_contract_gets_one_bounded_correction(monkeypatch,tmp_path,r
             result['title']='删除记录并验证其他记录保留'
             fixed='validation_feedback' in payload and retry_mode!='invalid_again'
             result['events'][0].update(target='{{本次对象}}卡片的删除按钮',
-               selection='当前列表允许删除的记录' if fixed else '选取{{本次对象}}与{{保留对象}}',
+               selection='当前列表允许删除的记录' if fixed or retry_mode=='outcome' else '选取{{本次对象}}与{{保留对象}}',
                reusable_expected='删除确认弹窗可见')
             result['events'][1]['reusable_expected']='{{本次对象}}消失，{{保留对象}}仍显示'
+            if retry_mode=='outcome' and not fixed:
+                result['events'][1]['outcome']={'observation':'目标消失','frame_refs':['f0']}
             if fixed and retry_mode=='drops_action':result['events'].pop()
             if retry_mode=='multi' and not fixed:
                 result['multiple_scenarios']=True
@@ -115,7 +117,7 @@ def test_video_reuse_contract_gets_one_bounded_correction(monkeypatch,tmp_path,r
     monkeypatch.setattr(ai,'run_ai_skill',model)
     run=lambda:analyze_frames({'app_id':'com.kfb.model','goal':'允许任意一条测试记录',
        'media':{'duration_ms':2000,'frames':frames}},tmp_path,lambda:False)
-    if retry_mode in {'valid','multi','secret'}:
+    if retry_mode in {'valid','multi','secret','outcome'}:
         result=run()
         assert len(result['events'])==3
         assert result['raw_events'][0]['target']=='记录的删除按钮'
