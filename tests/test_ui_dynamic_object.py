@@ -129,3 +129,50 @@ def test_video_reuse_contract_gets_one_bounded_correction(monkeypatch,tmp_path,r
         with pytest.raises(ValueError):run()
     assert len(calls)==3
     assert 'validation_feedback' in calls[-1]
+
+
+@pytest.mark.parametrize('action',['aiAssert','aiWaitFor'])
+def test_video_reusable_check_projects_execution_target_and_retains_source(action):
+    from task_server.services.ui_video_analysis import draft_proposal
+    document={'source_id':'uvs_'+'d'*32,'analysis_version':1,'app_id':'com.kfb.model','goal':'',
+      'media':{'duration_ms':1000,'frames':[]},'uncertainties':[],
+      'events':[{'action':'aiTap','target':'{{本次对象}}卡片内的删除按钮','value':'','start_ms':0,'end_ms':100,
+        'frame_refs':['f1'],'evidence_kind':'inferred','uncertainties':[],
+        'selection':'当前列表允许删除的测试记录','observation':'删除确认框可见'},
+        {'action':action,'target':'编号1554081049356550144消失且邻居仍显示','value':'','start_ms':200,'end_ms':300,
+        'frame_refs':['f2'],'evidence_kind':'inferred','uncertainties':[],
+        'observation':'编号1554081049356550144消失且邻居仍显示',
+        'reusable_expected':'{{本次对象}}消失，{{保留对象}}仍显示'}]}
+    normalized,snapshot=draft_proposal(document)
+    assert normalized['steps'][-1]['action']=='aiAssert'
+    assert normalized['steps'][-1]['target']=='{{本次对象}}消失，{{保留对象}}仍显示'
+    assert normalized['steps'][2]['target']=='{{本次对象}}消失，{{保留对象}}仍显示'
+    assert all(step['review_state']=='needs_review' for step in normalized['steps'])
+    assert '1554081049356550144' in snapshot['events'][-1]['target']
+    assert '1554081049356550144' in snapshot['events'][-1]['expected_candidate']['text']
+    assert any('复用' in q for q in normalized['questions'])
+
+
+def test_reusable_assertion_does_not_promote_transient_or_uncertain_observation():
+    from task_server.services.ui_video_analysis import draft_proposal
+    document={'source_id':'uvs_'+'e'*32,'analysis_version':1,'app_id':'com.kfb.model','goal':'',
+      'media':{'duration_ms':1000,'frames':[]},'uncertainties':[],
+      'events':[{'action':'aiAssert','target':'原结果待核对','value':'','start_ms':0,'end_ms':100,
+        'frame_refs':['f1'],'evidence_kind':'inferred','uncertainties':[],
+        'observation':'删除成功提示浮层短暂显示', 'reusable_expected':'目标记录消失'}]}
+    for observation in ('删除成功提示浮层短暂显示','无法确认目标记录是否消失'):
+        document['events'][0]['observation']=observation
+        normalized,snapshot=draft_proposal(document)
+        assert normalized['steps'][0]['target']=='原结果待核对'
+        assert snapshot['events'][0]['expected_candidate']['text']==''
+
+
+def test_plain_video_final_wait_still_asserts_observed_stable_result():
+    from task_server.services.ui_video_analysis import draft_proposal
+    doc={'source_id':'uvs_'+'f'*32,'analysis_version':1,'app_id':'com.kfb.model','goal':'',
+      'media':{'duration_ms':1000,'frames':[]},'uncertainties':[],
+      'events':[{'action':'aiWaitFor','target':'加载完成','value':'','start_ms':0,'end_ms':100,
+        'frame_refs':['f1'],'evidence_kind':'inferred','uncertainties':[],
+        'observation':'列表显示记录条目'}]}
+    proposal,_=draft_proposal(doc)
+    assert proposal['steps'][-1]['target']=='列表显示记录条目'

@@ -913,3 +913,22 @@ def test_confirmation_keeps_decoded_result_frame_without_local_event(tmp_path):
     assert {'f5','f7','f9'}<=ids
     assert len(selected)<=6
     assert 'f10' not in ids and 'f11' not in ids
+
+
+@pytest.mark.parametrize('fixed',[True,False])
+def test_full_timeline_gate_shares_single_correction_budget(monkeypatch,tmp_path,fixed):
+    from task_server.services import ui_video_analysis as analysis,ai_skill_service as ai
+    frames,event=_consolidation_fixture(tmp_path);original=event('aiTap',0,1,'我的')
+    calls=[]
+    def model(name,payload,**kwargs):
+        calls.append(payload['phase'])
+        output=dict(original)
+        if payload['phase']=='consolidate' and (not fixed or not payload.get('validation_feedback')):
+            output.update(end_ms=2000,frame_refs=['f0','f2'])
+        return {'events':[output] if payload['phase']=='consolidate' or payload['frames'][0]['timestamp_ms']==0 else [],'uncertainties':[],'multiple_scenarios':False}
+    monkeypatch.setattr(ai,'run_ai_skill',model);monkeypatch.setattr(ai,'AI_VISION_IMAGE_LIMIT',6)
+    run=lambda:analysis.analyze_frames({'app_id':APP,'goal':'','media':{'duration_ms':12000,'frames':frames}},tmp_path,lambda:False)
+    if fixed:assert run()['events']==[original]
+    else:
+        with pytest.raises(ValueError,match='video_model_timeline'):run()
+    assert calls.count('consolidate')==2

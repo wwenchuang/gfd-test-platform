@@ -242,6 +242,36 @@ def _consolidation_images(events,frames,limit):
     return sorted(chosen,key=lambda frame:frame['timestamp_ms'])
 
 
+def _validate_consolidated_evidence(checked,raw_events,candidates,frames,image_frames,duration,required_indices):
+    all_refs={ref for raw in raw_events for ref in raw['frame_refs']}
+    all_refs.update(frame['frame_id'] for frame in image_frames)
+    times={frame['frame_id']:frame['timestamp_ms'] for frame in frames}
+    for event_index,event in enumerate(checked['events']):
+        matching=[raw for raw in raw_events if raw['action']==event['action'] and
+                  raw['start_ms']<=event['end_ms'] and event['start_ms']<=raw['end_ms']]
+        covered=event['start_ms']
+        for raw in sorted(matching,key=lambda item:item['start_ms']):
+            if raw['start_ms']>covered:break
+            covered=max(covered,raw['end_ms'])
+            if covered>=event['end_ms']:break
+        supported_refs={ref for raw in matching for ref in raw['frame_refs']}
+        supported_refs.update(frame['frame_id'] for frame in image_frames)
+        if (not matching or min(raw['start_ms'] for raw in matching)>event['start_ms'] or
+            covered<event['end_ms'] or not set(event['frame_refs'])<=supported_refs):
+            raise ValueError('video_model_timeline')
+        if 'outcome' in event:
+            next_start=min((raw['start_ms'] for raw in candidates if raw['action'] in {'aiTap','aiInput','aiScroll'}
+                            and raw['start_ms']>event['start_ms']),default=duration)
+            next_output=next((item['start_ms'] for item in checked['events'][event_index+1:]
+                              if item['action'] in {'aiTap','aiInput','aiScroll'}),duration)
+            next_start=min(next_start,next_output)
+            if (not set(event['outcome']['frame_refs'])<=all_refs or
+                any(times[ref]>next_start for ref in event['outcome']['frame_refs'])):
+                raise ValueError('video_reference_invalid')
+        if all(raw['evidence_kind']=='inferred' for raw in matching):event['evidence_kind']='inferred'
+    _preserve_interactions(candidates,checked['events'],required_indices)
+
+
 def analyze_frames(document, root, cancelled):
     from . import ai_skill_service as ai
     frames=document['media']['frames']
@@ -312,6 +342,7 @@ def analyze_frames(document, root, cancelled):
                     'raw_uncertainties':raw_questions,'multiple_scenarios':multi,
                     'required_candidate_indexes':required_indices}
         reuse_errors={
+            'video_model_timeline','video_required_action_missing',
             'video_reference_invalid','video_selection_invalid','不支持的运行时对象引用',
             '每条用例只能选取一次对象，选取条件不能引用尚未读取的对象',
             '请先添加“选取本次测试对象”，再引用本次对象',
@@ -327,6 +358,7 @@ def analyze_frames(document, root, cancelled):
             try:
                 checked=validate_analysis(result,frames,document['media']['duration_ms'],known_secrets)
                 multi|=checked['multiple_scenarios']
+                _validate_consolidated_evidence(checked,raw_events,candidates,frames,image_frames,document['media']['duration_ms'],required_indices)
                 if any(event.get('selection') or '{{' in event['target'] or event.get('reusable_expected') for event in checked['events']):
                     draft_proposal({**document,**checked,
                         'source_id':document.get('source_id','uvs_'+'0'*32),
@@ -348,7 +380,8 @@ def analyze_frames(document, root, cancelled):
                     if isinstance(e,dict) and e.get('action')=='aiInput' and isinstance(e.get('value'),str) and e['value'])
                 repair_used=True
                 payload={**payload,'multiple_scenarios':multi,'validation_feedback':
-                    '整理校验失败：'+reason+'。保留原候选全部必要交互及真实帧证据。'
+                    '整理校验失败：'+reason+'。逐项保留required_candidate_indexes的必要交互，不可遗漏或合并两次点击。'
+                    '直接保留对应候选start_ms/end_ms和frame_refs，不向前后拓展；同类等待仅合并连续区间，不能跨空隙或改action。'
                     'outcome仅引用事件end_ms之后或同刻且下一业务交互之前的结果帧；操作前图片不得混入。'
                     '没有合法结果帧时省略outcome并保留结果不明问题，不编造成功。'
                     'selection全片只能一个，与首次使用{{本次对象}}的aiTap同一事件；'
@@ -356,33 +389,6 @@ def analyze_frames(document, root, cancelled):
                     '后续操作使用{{本次对象}}，最终结果使用{{本次对象}}和{{保留对象}}；'
                     '观察仍保留原事实，reusable_expected单独给出无历史编号的检查建议。'
                     '不适用的可选字段省略，不得改动允许范围或新增业务操作。'}
-        all_refs={ref for raw in raw_events for ref in raw['frame_refs']}
-        all_refs.update(frame['frame_id'] for frame in image_frames)
-        times={frame['frame_id']:frame['timestamp_ms'] for frame in frames}
-        for event_index,event in enumerate(checked['events']):
-            matching=[raw for raw in raw_events if raw['action']==event['action'] and
-                      raw['start_ms']<=event['end_ms'] and event['start_ms']<=raw['end_ms']]
-            covered=event['start_ms']
-            for raw in sorted(matching,key=lambda item:item['start_ms']):
-                if raw['start_ms']>covered:break
-                covered=max(covered,raw['end_ms'])
-                if covered>=event['end_ms']:break
-            supported_refs={ref for raw in matching for ref in raw['frame_refs']}
-            supported_refs.update(frame['frame_id'] for frame in image_frames)
-            if (not matching or min(raw['start_ms'] for raw in matching)>event['start_ms'] or
-                covered<event['end_ms'] or not set(event['frame_refs'])<=supported_refs):
-                raise ValueError('video_model_timeline')
-            if 'outcome' in event:
-                next_start=min((raw['start_ms'] for raw in candidates if raw['action'] in {'aiTap','aiInput','aiScroll'}
-                                and raw['start_ms']>event['start_ms']),default=document['media']['duration_ms'])
-                next_output=next((item['start_ms'] for item in checked['events'][event_index+1:]
-                                  if item['action'] in {'aiTap','aiInput','aiScroll'}),document['media']['duration_ms'])
-                next_start=min(next_start,next_output)
-                if (not set(event['outcome']['frame_refs'])<=all_refs or
-                    any(times[ref]>next_start for ref in event['outcome']['frame_refs'])):
-                    raise ValueError('video_reference_invalid')
-            if all(raw['evidence_kind']=='inferred' for raw in matching):event['evidence_kind']='inferred'
-        _preserve_interactions(candidates,checked['events'],required_indices)
         events=checked['events'];questions=checked['uncertainties'];title=checked.get('title','')
         multi=multi or checked['multiple_scenarios']
     return {'events':events,'uncertainties':list(dict.fromkeys(questions)), 'multiple_scenarios':multi,
@@ -440,11 +446,12 @@ def draft_proposal(document):
         event['expected_candidate']=_expected_candidate(event,document['goal'])
         expected=event['expected_candidate']['text'] if event['action'] in {'aiTap','aiInput','aiScroll'} else ''
         target=event['target']
-        if event.get('reusable_expected') and expected:
+        if event.get('reusable_expected') and event['expected_candidate']['text']:
             # A reuse proposal is not a new observed fact. Keep the literal
             # expected_candidate and its frame references in the source snapshot.
-            expected=event['reusable_expected']
-            questions.append('请确认复用后的结果检查与原录屏一致：'+expected)
+            if event['action'] in {'aiWaitFor','aiAssert'}:target=event['reusable_expected']
+            else:expected=event['reusable_expected']
+            questions.append('请确认复用后的结果检查与原录屏一致：'+event['reusable_expected'])
         if event.get('selection'):
             event['selection_step_id']=str(uuid.uuid4())
             steps.append({'step_id':event['selection_step_id'],'action':'selectRecord','target':event['selection'],'value':'',
@@ -460,14 +467,15 @@ def draft_proposal(document):
         event=snapshot['events'][-1]
         if event['expected_candidate']['text']:
             check_id=str(uuid.uuid4());event['expected_check_step_id']=check_id
-            steps.append({'step_id':check_id,'action':'aiAssert','target':steps[-1].get('expected') or event['expected_candidate']['text'],
+            steps.append({'step_id':check_id,'action':'aiAssert','target':(steps[-1]['target'] if steps[-1]['action']=='aiWaitFor' and event.get('reusable_expected') else steps[-1].get('expected') or event['expected_candidate']['text']),
                           'value':'','expected':'','source_ref':steps[-1]['source_ref'],'review_state':'needs_review'})
     if not steps or steps[-1]['action']!='aiAssert':
         questions.append('视频未给出明确结束检查，请补充业务预期；观察到的变化不能代替业务应有结果。')
     goal=document['goal'].strip()
     final_check=steps[-1]['target'] if steps and steps[-1]['action']=='aiAssert' else ''
     candidates=list(dict.fromkeys(event['expected_candidate']['text'] for event in snapshot['events'] if event['expected_candidate']['text']))
-    assertion_mismatch=any(event['action']=='aiAssert' and event['expected_candidate']['text'] and event['target']!=event['expected_candidate']['text'] for event in snapshot['events'])
+    execution_targets={step['step_id']:step['target'] for step in steps}
+    assertion_mismatch=any(event['action']=='aiAssert' and event['expected_candidate']['text'] and execution_targets[event['draft_step_id']]!=event['expected_candidate']['text'] for event in snapshot['events'])
     needs_confirmation=bool(goal and goal!=final_check) or assertion_mismatch
     snapshot['goal_review']={'status':'needs_confirmation' if needs_confirmation else 'literal_match' if goal else 'not_provided',
                              'visible_candidates':candidates,'requires_confirmation':needs_confirmation}

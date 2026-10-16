@@ -4,7 +4,7 @@
 每事件必填：action、target、value、start_ms、end_ms、frame_refs、observation、evidence_kind、uncertainties。action仅aiTap/aiInput/aiScroll/aiWaitFor/aiAssert；可选字段仅outcome、selection、reusable_expected，不适用省略，禁止null。
 
 先核对再输出：
-1. 保留required_candidate_indexes的每个aiTap/aiInput/aiScroll，时间与对应候选相交，不能把两次点击合一；不要漏我的/列表入口、滚动、返回等导航。合并连续同义等待，去掉自动轮播、toast等待和系统首尾。平台预置启动/关闭应用，不生成它们。不能仅凭轮播内容变化生成 aiScroll 或 aiWaitFor；纯自然变化events=[]。跨页面导航可inferred。
+1. 保留required_candidate_indexes的每个aiTap/aiInput/aiScroll，直接保留对应候选的start_ms/end_ms/frame_refs，不向前后拓展；合并同类等待只允许连续覆盖的区间、不能跨空隙，不能把两次点击合一；不要漏我的/列表入口、滚动、返回等导航。合并连续同义等待，去掉自动轮播、toast等待和系统首尾。平台预置启动/关闭应用，不生成它们。不能仅凭轮播内容变化生成 aiScroll 或 aiWaitFor；纯自然变化events=[]。跨页面导航可inferred。
 2. 滚动必须重查附图：内容上移而更下面的入口进入视野，value={"direction":"down","scrollType":"singleAction"}；内容下移而更上方入口进入视野则up。不要照搬局部候选的手指方向。value仅滚动为对象（direction/scrollType/有证据的distance），其他为""；输入内容禁止转录。方向不清保留问题，不删除滚动。
 3. 删除对象先按操作前后唯一编号逐项比对：消失的是目标，前移且仍在的是保留对象。不能猜第一条或照抄局部错误。目标不清提出具体问题。确认弹窗独立点击；返回目标用操作前真实返回箭头，不用子页不存在的底部导航。
 4. 可回放预期只检查稳定状态，不要求昵称、广告、勋章、二维码、原设备编号或跨端装饰一致。导航后相关页面可见；滚动后相关入口可见；确认后目标消失且其他对象保留；返回后目标页可见。不要等待或断言瞬态“成功”提示/toast、按钮反馈、加载动效。这些只保留原观察。即使局部候选把toast做aiWaitFor，也应删除；已有实际稳定结果才能补结果检查，不可仅凭toast推断成功。
