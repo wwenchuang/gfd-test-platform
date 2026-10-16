@@ -622,6 +622,7 @@ def test_batch_invalid_result_frame_gets_one_bounded_repair(monkeypatch,tmp_path
         calls.append(payload)
         if len(calls)==1:
             raw=event('aiTap',0,1,'入口')
+            raw['start_ms']=100;raw['end_ms']=800  # Real refs are 0 and 1000ms.
             raw['outcome']={'observation':'目标页面','frame_refs':['f0']}
             return {'events':[raw],'uncertainties':[],'multiple_scenarios':False}
         return {'events':[event('aiTap',0,1,'入口')] if len(calls)==2 or payload['phase']=='consolidate' else [],'uncertainties':[],'multiple_scenarios':False}
@@ -851,3 +852,33 @@ def test_stable_projection_keeps_record_reordering_and_drops_temporarily_shown_n
 def test_temporary_notice_projection_preserves_negation_scope(feedback):
     from task_server.services.ui_video_analysis import _expected_candidate
     assert _expected_candidate({'observation':f'没有证据表明{feedback}且目标记录消失','frame_refs':['f']},'')['text']==''
+
+
+def test_batch_evidence_time_alignment_uses_real_frames_without_mutating_input():
+    from task_server.services.ui_video_analysis import _align_batch_evidence_times
+    frames=[{'frame_id':'f0','timestamp_ms':0},{'frame_id':'f1','timestamp_ms':1000}]
+    raw={'events':[{'action':'aiTap','target':'入口','start_ms':100,'end_ms':800,'frame_refs':['f0','f1']} ]}
+    aligned=_align_batch_evidence_times(raw,frames,2000)
+    assert (aligned['events'][0]['start_ms'],aligned['events'][0]['end_ms'])==(0,1000)
+    assert raw['events'][0]['start_ms']==100 and raw['events'][0]['end_ms']==800
+    assert aligned['events'][0]['target']=='入口'
+
+
+@pytest.mark.parametrize('override',[
+    {'frame_refs':['unknown']},{'start_ms':-1},{'end_ms':3000},
+    {'start_ms':'100'},{'frame_refs':['f1','f0']},
+])
+def test_batch_time_alignment_never_repairs_unknown_frames_or_invalid_timeline(override):
+    from task_server.services.ui_video_analysis import _align_batch_evidence_times
+    frames=[{'frame_id':'f0','timestamp_ms':0},{'frame_id':'f1','timestamp_ms':1000}]
+    raw={'events':[dict(start_ms=100,end_ms=800,frame_refs=['f0','f1'])]}
+    raw['events'][0].update(override)
+    assert _align_batch_evidence_times(raw,frames,2000)==raw
+
+
+def test_batch_time_alignment_does_not_hide_original_reverse_order():
+    from task_server.services.ui_video_analysis import _align_batch_evidence_times
+    frames=[{'frame_id':'f0','timestamp_ms':0}]
+    raw={'events':[{'start_ms':900,'end_ms':1000,'frame_refs':['f0']},
+                   {'start_ms':500,'end_ms':600,'frame_refs':['f0']}]}
+    assert _align_batch_evidence_times(raw,frames,2000)==raw

@@ -34,6 +34,35 @@ def _scroll_object(value):
     return value
 
 
+def _align_batch_evidence_times(result, frames, duration):
+    """Expand valid batch intervals only to include their actual source frames.
+
+    The model describes actions; the platform owns frame timestamps. Unknown
+    frames, malformed intervals and event order still go to strict validation.
+    Consolidated intervals are never adjusted here.
+    """
+    if not isinstance(result,dict) or not isinstance(result.get('events'),list):return result
+    last=0
+    for event in result['events']:
+        if not isinstance(event,dict):return result
+        start,end=event.get('start_ms'),event.get('end_ms')
+        if type(start) is not int or type(end) is not int or not last<=start<=end<=duration:return result
+        last=start
+    aligned=copy.deepcopy(result)
+    times={frame['frame_id']:frame['timestamp_ms'] for frame in frames}
+    for event in aligned['events']:
+        if not isinstance(event,dict):continue
+        start,end,refs=event.get('start_ms'),event.get('end_ms'),event.get('frame_refs')
+        if (type(start) is not int or type(end) is not int or not 0<=start<=end<=duration or
+            not isinstance(refs,list) or not 1<=len(refs)<=8 or
+            any(not isinstance(ref,str) or ref not in times for ref in refs)):continue
+        stamps=[times[ref] for ref in refs]
+        if stamps!=sorted(stamps):continue
+        event['start_ms']=min(start,stamps[0])
+        event['end_ms']=max(end,stamps[-1])
+    return aligned
+
+
 def validate_analysis(result, frames, duration, prior_secrets=()):
     required_fields={'events','uncertainties','multiple_scenarios'}
     if not isinstance(result, dict) or not required_fields<=set(result)<=required_fields|{'title'}: raise ValueError('video_model_invalid')
@@ -225,6 +254,7 @@ def analyze_frames(document, root, cancelled):
         result=ai.run_ai_skill('ui_video_steps', payload, image_assets=assets,
                               timeout=120,retry_count=0,max_tokens=10000,repair_invalid_json=False)
         if cancelled(): raise ValueError('video_cancelled')
+        result=_align_batch_evidence_times(result,batch,document['media']['duration_ms'])
         try:
             checked=validate_analysis(result,batch,document['media']['duration_ms'],known_secrets)
         except ValueError as error:
@@ -244,6 +274,7 @@ def analyze_frames(document, root, cancelled):
                 'candidate_events是上次已校验且脱敏的操作证据。逐项保留原action、target、时间及frame_refs；只补正可选outcome，不重新猜测或删除交互。上次outcome结果帧引用无效。重新核对同一图片：事件frame_refs在start_ms至end_ms之间；outcome每个引用须在end_ms之后或同刻。没有合法结果帧请省略outcome。保留原有可靠交互，不编造业务结果。'},
                 image_assets=assets,timeout=120,retry_count=0,max_tokens=10000,repair_invalid_json=False)
             if cancelled():raise ValueError('video_cancelled')
+            result=_align_batch_evidence_times(result,batch,document['media']['duration_ms'])
             checked=validate_analysis(result,batch,document['media']['duration_ms'],known_secrets)
             _preserve_interactions(original['events'],checked['events'],_required_interactions(original['events'],document['media']['duration_ms']))
             checked['multiple_scenarios']|=original['multiple_scenarios']
