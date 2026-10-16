@@ -11,8 +11,9 @@ from uuid import UUID, uuid4
 import yaml
 
 from .yaml_static_validator import validate_midscene_action_parameters
+from .ui_dynamic_object import PREFIX, validate_references
 
-ACTIONS = frozenset({'launch', 'aiTap', 'aiWaitFor', 'aiAssert', 'aiInput', 'aiScroll'})
+ACTIONS = frozenset({'launch', 'aiTap', 'aiWaitFor', 'aiAssert', 'aiInput', 'aiScroll', 'selectRecord'})
 STEP_FIELDS = frozenset({'step_id', 'action', 'target', 'value', 'expected', 'review_state', 'source_ref'})
 AMBIGUOUS_TARGETS = frozenset({'按钮', '这里', '那里', '它', '点击这里', '输入框', '列表', '页面', '正常', '功能正常', '可见', '显示', '成功', '通过', '显示正常', '操作成功'})
 SHORT_TIMEOUT_MS = 12000
@@ -110,7 +111,7 @@ def normalize_steps(payload, app_id):
         else:
             if not target or target in AMBIGUOUS_TARGETS:
                 unresolved.append('请明确目标控件或具体页面状态')
-            if action not in ('aiWaitFor', 'aiAssert') and not expected:
+            if action not in ('aiWaitFor', 'aiAssert', 'selectRecord') and not expected:
                 unresolved.append('请补充明确的预期结果')
             if action == 'aiInput' and not value:
                 unresolved.append('请补充输入内容')
@@ -124,6 +125,7 @@ def normalize_steps(payload, app_id):
         steps.append({'step_id': step_id, 'action': action, 'target': target,
                       'value': value, 'expected': expected, 'review_state': review_state,
                       'source_ref': source_ref})
+    validate_references(steps)
     if steps[-1]['action'] != 'aiAssert' or not steps[-1]['target'] or steps[-1]['target'] in AMBIGUOUS_TARGETS:
         questions.append('请在最后添加明确的 aiAssert 检查点')
     return {'title': title, 'preconditions': preconditions, 'steps': steps, 'questions': list(dict.fromkeys(questions))}
@@ -139,6 +141,7 @@ def build_draft_yaml(draft, app_id):
     normalized = normalize_steps(draft, app_id)
     steps = normalized['steps']
     flow, step_ids, roles = [], [], []
+    deferred_checks = {}
     if steps[0]['action'] != 'launch':
         flow.append({'launch': app_id})
         step_ids.append(steps[0]['step_id'])
@@ -149,7 +152,7 @@ def build_draft_yaml(draft, app_id):
             flow.append({'aiWaitFor': target, 'timeout': SHORT_TIMEOUT_MS})
             step_ids.append(step['step_id'])
             roles.append('guard')
-        item = {action: target}
+        item = {'aiQuery': PREFIX + target} if action == 'selectRecord' else {action: target}
         if action == 'aiInput':
             item['value'] = step['value']
         elif action == 'aiScroll':
@@ -159,14 +162,26 @@ def build_draft_yaml(draft, app_id):
         flow.append(item)
         step_ids.append(step['step_id'])
         roles.append('business')
-        # An expectation entered in the Chinese editor is an actual assertion.
-        # Reuse an identical next explicit checkpoint rather than calling AI twice.
+        # A visible post-action state may arrive asynchronously. Wait briefly
+        # before asserting it; keep explicit assertions and their source mapping.
         following = steps[index + 1] if index + 1 < len(steps) else None
-        if action != 'aiAssert' and step['expected'] and not (action == 'aiWaitFor' and target == step['expected']) and not (
-                following and following['action'] == 'aiAssert' and following['target'] == step['expected']):
-            flow.append({'aiAssert': step['expected']})
-            step_ids.append(step['step_id'])
-            roles.append('expected')
+        checks = []
+        if index in deferred_checks:
+            checks.append(deferred_checks[index])
+        if action != 'aiAssert' and step['expected'] and not (action == 'aiWaitFor' and target == step['expected']):
+            checks.append((step['expected'], step['step_id']))
+        for expected, owner in dict.fromkeys(checks):
+            if following and following['action'] == 'aiWaitFor' and following['target'] == expected:
+                deferred_checks[index + 1] = (expected, owner)
+                continue
+            if not (action == 'aiWaitFor' and target == expected):
+                flow.append({'aiWaitFor': expected, 'timeout': SHORT_TIMEOUT_MS})
+                step_ids.append(owner)
+                roles.append('guard')
+            if not (following and following['action'] == 'aiAssert' and following['target'] == expected):
+                flow.append({'aiAssert': expected})
+                step_ids.append(owner)
+                roles.append('expected')
     questions = list(normalized['questions'])
     unconfirmed = [str(index) for index, step in enumerate(steps, 1) if step['review_state'] != 'confirmed']
     if unconfirmed:

@@ -165,6 +165,16 @@
                 }
               }
             }
+          },
+          "selection": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          },
+          "reusable_expected": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
           }
         },
         "allOf": [

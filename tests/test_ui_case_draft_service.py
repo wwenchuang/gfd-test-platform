@@ -324,3 +324,26 @@ def test_permissions_are_specific_for_edit_view_and_execute(env):
         with pytest.raises(PermissionError):
             service.get_draft(A, draft['draft_id'])
         assert not service.validate_draft(A, draft['draft_id'], {'revision': draft['revision'], 'target': TARGET})['ready']
+
+
+def test_video_selection_step_can_be_confirmed_and_saved(env):
+    from task_server.services.ui_video_analysis import draft_proposal
+    from task_server.services.ui_case_draft_contract import build_draft_yaml
+    event={'action':'aiTap','target':'{{本次对象}}的删除按钮','value':'','start_ms':0,'end_ms':100,
+      'frame_refs':['f1'],'evidence_kind':'inferred','uncertainties':[],
+      'selection':'当前列表中第一条可删除测试记录','observation':'目标记录消失，其他记录保留',
+      'reusable_expected':'{{本次对象}}消失，{{保留对象}}仍显示'}
+    source={'source_id':'uvs_'+'c'*32,'analysis_version':1,'app_id':APP,'goal':'',
+            'media':{'duration_ms':1000,'frames':[]},'uncertainties':[],'events':[event]}
+    proposal,snapshot=draft_proposal(source)
+    built=build_draft_yaml(proposal,APP)
+    with actor_context(A):
+        record=service._store().create(A,APP,'录屏来源',recording_snapshot=snapshot,
+                         recording_content={**proposal,'yaml_content':built['yaml_content'],'ready':False})
+        fetched=service.get_draft(A,record['draft_id'])
+        body={key:copy.deepcopy(fetched[key]) for key in ('revision','title','preconditions','steps','questions')}
+        body['questions']=[]
+        for step in body['steps']:step['review_state']='confirmed'
+        saved=service.update_draft(A,record['draft_id'],body)
+    assert saved['revision']==record['revision']+1
+    assert saved['steps'][0]['action']=='selectRecord'

@@ -1,7 +1,7 @@
 // Chinese draft editor: server revisions and real execution evidence remain authoritative.
 (() => {
   const escape=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-  const actions={launch:'启动应用',aiTap:'点击',aiWaitFor:'等待出现',aiAssert:'检查',aiInput:'输入',aiScroll:'滚动'};
+  const actions={launch:'启动应用',aiTap:'点击',aiWaitFor:'等待出现',aiAssert:'检查',aiInput:'输入',aiScroll:'滚动',selectRecord:'选取本次测试对象'};
   const clone=v=>JSON.parse(JSON.stringify(v));
   function mount(node,options){
     const s={identity:options.identity(),alive:true,pending:new Map(),epoch:0,app:'',draft:null,dirty:false,busy:false,uncertain:null,batch:null,devices:[],modules:[],timer:null,progress:null,recovering:false,expanded:-1,phoneEpoch:0,appName:'',yamlDirty:false,yamlText:''};
@@ -34,7 +34,7 @@
         if(!text(step.target,2000)||!step.target.trim()||ambiguous.has(step.target.trim())||!text(step.expected??'',2000)||ambiguous.has(step.expected?.trim())||!['needs_review','confirmed'].includes(step.review_state))return false;
         if(step.source_ref!==undefined&&step.source_ref!=='text'&&step.source_ref!=='manual_yaml'&&!/^(?:recording:[a-f0-9]{64}:[a-f0-9]{32}|video:uvs_[a-f0-9]{32}:[1-9][0-9]*:[0-9]+)$/.test(step.source_ref))return false;
         if(step.action==='launch'&&(i!==0||step.target!==s.app))return false;
-        if(!['launch','aiWaitFor','aiAssert'].includes(step.action)&&!step.expected?.trim())return false;
+        if(!['launch','aiWaitFor','aiAssert','selectRecord'].includes(step.action)&&!step.expected?.trim())return false;
         if(step.action==='aiAssert'&&step.expected&&step.expected!==step.target)return false;
         if(step.action==='aiScroll'){
           const v=step.value===''?{}:step.value;if(!v||typeof v!=='object'||Array.isArray(v)||Object.keys(v).some(k=>!['direction','distance','scrollType'].includes(k)))return false;
@@ -73,6 +73,7 @@
       const field=(name,label,value=step[name])=>`<label>${label}<input data-step-field="${name}" value="${escape(value)}"></label>`;
       const expected=field('expected','操作后应看到什么（运行时检查）');
       if(step.action==='launch')return field('target','应用标识')+field('expected','启动后应看到什么（可选，运行时检查）');
+      if(step.action==='selectRecord')return field('target','选取条件（每次运行重新读取，仅选择允许操作的测试数据）');
       if(step.action==='aiAssert')return field('assertion','需要检查的结果',step.target||step.expected);
       if(step.action==='aiInput')return field('target','输入框')+field('value','输入内容')+expected;
       if(step.action==='aiScroll'){

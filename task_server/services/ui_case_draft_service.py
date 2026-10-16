@@ -380,6 +380,8 @@ def update_draft(actor, draft_id, body):
                        for index,item in enumerate(source.get('events', [])) if item.get('draft_step_id')})
     provenance.update({item['expected_check_step_id']: f"video:{source['source_id']}:{source['analysis_version']}:{index}"
                        for index,item in enumerate(source.get('events', [])) if item.get('expected_check_step_id')})
+    provenance.update({item['selection_step_id']: f"video:{source['source_id']}:{source['analysis_version']}:{index}"
+                       for index,item in enumerate(source.get('events', [])) if item.get('selection_step_id')})
     provenance.update({step['step_id']: 'manual_yaml' for step in document['steps'] if step.get('source_ref') == 'manual_yaml'})
     for step in body.get('steps', []) if isinstance(body.get('steps'), list) else []:
         if isinstance(step, dict) and step.get('source_ref', 'text') != provenance.get(step.get('step_id'), 'text'):

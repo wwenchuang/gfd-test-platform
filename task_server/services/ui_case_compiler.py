@@ -9,6 +9,7 @@ import yaml
 from task_server.schemas import MIDSCENE_FLOW_ACTIONS
 
 from .yaml_static_validator import STEP_ATTR_KEYS, validate_midscene_action_parameters
+from .ui_dynamic_object import PREFIX, uses_dynamic_object
 
 
 PORTABLE_ACTIONS = ("launch", "aiTap", "aiWaitFor", "aiAssert", "aiScroll")
@@ -69,6 +70,8 @@ def compile_ui_case(case_version, target_resolution):
     capabilities = target_resolution.get("capabilities") or {}
     if platform not in ("android", "ios") or not isinstance(target_package, str) or not target_package:
         return blocked("target_invalid")
+    if uses_dynamic_object(source) and capabilities.get("ui_dynamic_object_v1") is not True:
+        return blocked("dynamic_object_unsupported")
     try:
         data = yaml.load(source, Loader=_UniqueKeysLoader)
     except (yaml.YAMLError, TypeError):
@@ -138,6 +141,8 @@ def compile_ui_case(case_version, target_resolution):
                      isinstance(step[action], str) and bool(step[action].strip()) and
                      (action != 'aiWaitFor' or 'timeout' not in step or
                       isinstance(step['timeout'], int) and not isinstance(step['timeout'], bool) and step['timeout'] > 0))
+            if action == "aiQuery":
+                valid = set(step) == {"aiQuery"} and isinstance(step[action], str) and step[action].startswith(PREFIX)
             if action == "aiScroll":
                 valid = _portable_scroll_valid(step)
             if action == "launch" and step.get(action) != source_package:

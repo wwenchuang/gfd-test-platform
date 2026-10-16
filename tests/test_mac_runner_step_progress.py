@@ -23,6 +23,7 @@ def test_failed_cli_keeps_final_step_state_and_does_not_log_protocol_frames(tmp_
     monkeypatch.setattr(runner, 'resolve_command', lambda *args: sys.executable)
     monkeypatch.setattr(runner, 'execution_command', lambda *args: command)
     monkeypatch.setattr(runner, 'post_job_progress', lambda job, body: sent.append(body))
+    (tmp_path / 'case.yaml').write_text('ios: {}\ntasks: []\n')
     result = runner.execute_midscene('job', tmp_path, tmp_path / 'case.yaml', ['navigation'], 'iphone')
     assert result['status'] == 'failed'
     assert sent[-1]['execution_progress'] == snapshots[-1]

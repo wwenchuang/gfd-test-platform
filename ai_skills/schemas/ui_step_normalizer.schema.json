@@ -47,7 +47,8 @@
               "aiWaitFor",
               "aiAssert",
               "aiInput",
-              "aiScroll"
+              "aiScroll",
+              "selectRecord"
             ]
           },
           "target": {

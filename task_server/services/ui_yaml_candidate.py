@@ -1,6 +1,7 @@
 """Deliberately narrow YAML-to-Chinese adapter. Never executes or calls a model."""
 import yaml
 from .ui_case_draft_contract import ACTIONS, SHORT_TIMEOUT_MS, normalize_steps, build_draft_yaml
+from .ui_dynamic_object import PREFIX
 
 MAX_PARSE_CHARS = 100000
 MAX_RAW_CHARS = 200000
@@ -30,7 +31,7 @@ def parse_candidate(raw, app_id, preconditions):
                 depth += 1
             if isinstance(event, (yaml.events.MappingEndEvent, yaml.events.SequenceEndEvent)):
                 depth -= 1
-            if depth > 12 or count > 2000:
+            if depth > 12 or count > 3000:
                 raise ValueError('YAML 结构过深或内容过多，请精简')
         document = yaml.load(raw, Loader=_UniqueLoader)
     except yaml.YAMLError as error:
@@ -43,10 +44,12 @@ def parse_candidate(raw, app_id, preconditions):
         raise ValueError('仅支持一个包含 name 和 flow 的任务；不支持额外任务配置')
     task = tasks[0]
     flow = task['flow']
-    if not isinstance(flow, list) or not 1 <= len(flow) <= 151:
-        raise ValueError('候选 YAML 必须包含1至151个动作（转换后最多50个中文步骤）')
+    if not isinstance(flow, list) or not 1 <= len(flow) <= 201:
+        raise ValueError('候选 YAML 必须包含1至201个动作（转换后最多50个中文步骤）')
     steps = []
     for index, item in enumerate(flow):
+        if isinstance(item,dict) and set(item)=={'aiQuery'} and isinstance(item['aiQuery'],str) and item['aiQuery'].startswith(PREFIX):
+            item={'selectRecord':item['aiQuery'][len(PREFIX):]}
         if not isinstance(item, dict) or len(set(item) & ACTIONS) != 1:
             raise ValueError(f'第 {index + 1} 个动作不支持；不能转换坐标、ADB 或系统指令')
         action = next(iter(set(item) & ACTIONS))
@@ -60,25 +63,32 @@ def parse_candidate(raw, app_id, preconditions):
                 raise ValueError('动作文字首尾空格不能无损转换，请核对后去除')
         target = item[action]
         following = flow[index + 1] if index + 1 < len(flow) else {}
-        expected = target if action == 'aiAssert' else following.get('aiAssert', '') if isinstance(following, dict) else ''
+        expected = target if action == 'aiAssert' else ''
         steps.append({'action':action, 'target':target, 'value': {k:v for k,v in item.items() if k != action} if action == 'aiScroll' else item.get('value', ''),
                       'expected':expected, 'source_ref':'manual_yaml', 'review_state':'needs_review'})
-    # Fold only exact compiler-generated guards/checkpoints. The resulting flow
-    # remains byte-value equivalent, while a 50-step draft stays within its bound.
+    # Fold only patterns which the compiler reconstructs byte-for-byte. Direct
+    # assertions in older manual scripts stay explicit (no invented waits).
     compact = []
+    consumed = set()
     for index, step in enumerate(steps):
+        if index in consumed:
+            continue
         following = steps[index + 1] if index + 1 < len(steps) else None
+        check = steps[index + 2] if index + 2 < len(steps) else None
         if step['action'] == 'launch':
             if index != 0 or step['target'] != app_id:
                 raise ValueError('禁止跨应用 launch，启动应用只能在首步声明一次')
             if following:
-                continue  # build_draft_yaml supplies this same launch.
-        if step['action'] == 'aiWaitFor' and not step['expected'] and following and following['action'] == 'aiTap' and following['target'] == step['target']:
-            continue  # compiler restores the exact timeout:12000 guard.
-        if step['action'] == 'aiAssert' and following and compact:
-            previous = steps[index - 1]
-            if not (following['action'] == 'aiAssert' and following['target'] == step['target']) and previous['action'] != 'aiAssert' and previous['expected'] == step['target'] and not (previous['action'] == 'aiWaitFor' and previous['target'] == step['target']):
-                continue  # compiler restores this expected-result assertion.
+                continue
+        if step['action'] == 'aiWaitFor' and following and following['action'] == 'aiTap' and following['target'] == step['target']:
+            continue
+        if (step['action'] in {'aiTap','aiInput','aiScroll'} and following and check
+                and following['action']=='aiWaitFor' and check['action']=='aiAssert'
+                and following['target']==check['target']):
+            step['expected']=following['target']
+            consumed.add(index+1)
+            if index+2 < len(steps)-1:
+                consumed.add(index+2)
         compact.append(step)
     if len(compact) > 50:
         raise ValueError('转换后超过50个中文步骤，请拆分用例；原始 YAML 已保留')

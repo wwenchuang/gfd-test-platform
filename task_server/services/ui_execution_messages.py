@@ -1,5 +1,6 @@
 """Stable machine codes and concise user-facing blockers for the UI batch workflow."""
 BLOCKER_MESSAGES = {
+    'dynamic_object_unsupported': '请更新执行器以支持每次重新选取测试对象；当前不会执行删除。',
     'suite_execution_unavailable': '该套件暂不支持可信的指定设备执行，请使用已验证基线。',
     'test_data_unavailable': '测试数据引用尚未完成权限校验和解析，不能执行。',
     'generated_case_gate_required': '生成用例尚未通过平台静态检查、评分和冒烟门禁。',

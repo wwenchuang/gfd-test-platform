@@ -45,15 +45,23 @@ def validate_analysis(result, frames, duration, prior_secrets=()):
     clean=[]
     for raw in events:
         required={'action','target','value','start_ms','end_ms','frame_refs','observation','evidence_kind','uncertainties'}
-        if not isinstance(raw,dict) or not required<=set(raw)<=required|{'outcome'}: raise ValueError('video_model_invalid')
+        if not isinstance(raw,dict) or not required<=set(raw)<=required|{'outcome','selection','reusable_expected'}: raise ValueError('video_model_invalid')
         event=copy.deepcopy(raw)
-        if event['action'] not in ACTIONS-{'launch'} or event['evidence_kind'] not in {'observed','inferred'}: raise ValueError('video_action_invalid')
+        if event['action'] not in ACTIONS-{'launch','selectRecord'} or event['evidence_kind'] not in {'observed','inferred'}: raise ValueError('video_action_invalid')
         start,end=event['start_ms'],event['end_ms'];refs=event['frame_refs']
         if type(start) is not int or type(end) is not int or not last<=start<=end<=duration: raise ValueError('video_reference_invalid')
         if not isinstance(refs,list) or not 1<=len(refs)<=8 or any(not isinstance(r,str) or r not in by_id or not start<=by_id[r]<=end for r in refs): raise ValueError('video_reference_invalid')
         if [by_id[r] for r in refs]!=sorted(by_id[r] for r in refs): raise ValueError('video_reference_invalid')
         event['target']=_text(event['target']);event['observation']=_text(event['observation'])
         if not event['observation']: raise ValueError('video_observation_missing')
+        if 'selection' in event:
+            event['selection']=_text(event['selection'])
+            if not event['selection'] or event['action']!='aiTap' or '{{本次对象}}' not in event['target']:
+                raise ValueError('video_selection_invalid')
+        if 'reusable_expected' in event:
+            event['reusable_expected']=_text(event['reusable_expected'])
+            if not event['reusable_expected']:
+                raise ValueError('video_selection_invalid')
         if 'outcome' in event:
             outcome=event['outcome']
             if not isinstance(outcome,dict) or set(outcome)!={'observation','frame_refs'}:
@@ -338,15 +346,27 @@ def draft_proposal(document):
         event['expected_candidate']=_expected_candidate(event,document['goal'])
         expected=event['expected_candidate']['text'] if event['action'] in {'aiTap','aiInput','aiScroll'} else ''
         target=event['target']
+        if event.get('reusable_expected') and expected:
+            # A reuse proposal is not a new observed fact. Keep the literal
+            # expected_candidate and its frame references in the source snapshot.
+            expected=event['reusable_expected']
+            questions.append('请确认复用后的结果检查与原录屏一致：'+expected)
+        if event.get('selection'):
+            event['selection_step_id']=str(uuid.uuid4())
+            steps.append({'step_id':event['selection_step_id'],'action':'selectRecord','target':event['selection'],'value':'',
+                          'expected':'','source_ref':ref,'review_state':'needs_review'})
+            questions.append('请确认本次测试对象的选取范围：'+event['selection']+'。录屏仅证明历史操作，不代表允许操作其他记录。')
         steps.append({'step_id':step_id,'action':event['action'],'target':target,'value':event['value'],
                       'expected':expected,'source_ref':ref,'review_state':'needs_review'})
         questions.extend(f'片段 {event["start_ms"]/1000:g}–{event["end_ms"]/1000:g} 秒：{q}' for q in event['uncertainties'])
+        if re.search('删除|移除',event['target']) and re.search(r'\d{12,}|\d{4}[-/]\d{2}[-/]\d{2}',event['target']) and not event.get('selection'):
+            questions.append('删除目标包含录屏中的一次性编号或日期，请改为选取本次测试对象；特定对象用例请确认数据仍存在。')
         if re.search('删除|支付|付款|打印|下单',event['target']): questions.append('含删除/支付/打印等有副作用动作，请核对测试数据与授权后再手工试跑')
     if steps and steps[-1]['action']!='aiAssert' and len(steps)<50:
         event=snapshot['events'][-1]
         if event['expected_candidate']['text']:
             check_id=str(uuid.uuid4());event['expected_check_step_id']=check_id
-            steps.append({'step_id':check_id,'action':'aiAssert','target':event['expected_candidate']['text'],
+            steps.append({'step_id':check_id,'action':'aiAssert','target':steps[-1].get('expected') or event['expected_candidate']['text'],
                           'value':'','expected':'','source_ref':steps[-1]['source_ref'],'review_state':'needs_review'})
     if not steps or steps[-1]['action']!='aiAssert':
         questions.append('视频未给出明确结束检查，请补充业务预期；观察到的变化不能代替业务应有结果。')

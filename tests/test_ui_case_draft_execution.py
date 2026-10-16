@@ -260,8 +260,8 @@ def test_publish_rejects_incomplete_raw_authenticated_step_evidence(publish_env,
 
 def test_publish_accepts_actual_observer_final_zero_based_cursor(publish_env):
     (draft, _), _ = publish_env
-    batch = passed_trial(draft, progress_override={'current_step':4})
-    assert batch['case_attempts'][0]['execution_progress']['tasks'][0]['total_steps'] == 5
+    batch = passed_trial(draft, progress_override={'current_step':5})
+    assert batch['case_attempts'][0]['execution_progress']['tasks'][0]['total_steps'] == 6
     assert publish(draft, batch['ui_batch_id'])['status'] == 'baseline'
 
 

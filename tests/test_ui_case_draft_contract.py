@@ -149,8 +149,8 @@ def test_compiles_real_midscene_parameters_and_provenance():
     assert yaml.safe_load(result['yaml_content'])['android'] == {}
     assert flow[0] == {'launch': APP}
     assert flow[1] == {'aiWaitFor': '首页搜索按钮', 'timeout': 12000}
-    assert flow[4] == {'aiInput': '搜索输入框', 'value': '机器人'}
-    assert flow[6] == {'aiScroll': '搜索结果列表', 'direction': 'down', 'distance': 300, 'scrollType': 'singleAction'}
+    assert next(step for step in flow if 'aiInput' in step) == {'aiInput': '搜索输入框', 'value': '机器人'}
+    assert next(step for step in flow if 'aiScroll' in step) == {'aiScroll': '搜索结果列表', 'direction': 'down', 'distance': 300, 'scrollType': 'singleAction'}
     assert len(result['step_ids'][0]) == len(flow)
     assert result['step_ids'][0][1:3] == [draft['steps'][0]['step_id']] * 2
     from task_server.services.yaml_static_validator import validate_yaml_static_executable
@@ -240,3 +240,17 @@ def test_assertion_conflicting_expectation_requires_human_resolution():
         {'action':'aiAssert','target':'结果成功','expected':'出现错误','review_state':'confirmed'}]}, APP)
     assert not result['ready']
     assert any('不一致' in question for question in result['questions'])
+
+@pytest.mark.parametrize('explicit_next_wait', [False, True])
+def test_navigation_result_waits_before_asserting_and_preserves_assertion(explicit_next_wait):
+    steps=[{'action':'aiTap','target':'打印记录入口','expected':'打印记录列表可见','review_state':'confirmed'}]
+    if explicit_next_wait:
+        steps.append({'action':'aiWaitFor','target':'打印记录列表可见','review_state':'confirmed'})
+    steps.append({'action':'aiAssert','target':'打印记录列表可见','review_state':'confirmed'})
+    built=build_draft_yaml({'title':'打印记录导航','steps':steps}, APP)
+    flow=yaml.safe_load(built['yaml_content'])['tasks'][0]['flow']
+    click=next(i for i,x in enumerate(flow) if 'aiTap' in x)
+    check=next(i for i,x in enumerate(flow) if x.get('aiAssert')=='打印记录列表可见')
+    assert {'aiWaitFor':'打印记录列表可见','timeout':12000} in flow[click+1:check]
+    assert len([x for x in flow if x.get('aiWaitFor')=='打印记录列表可见'])==1
+    assert len(built['compiler_roles'][0])==len(flow)==len(built['step_ids'][0])
