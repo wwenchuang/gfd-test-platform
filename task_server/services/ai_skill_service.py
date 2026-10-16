@@ -322,7 +322,7 @@ def _video_context_assets(skill_name, payload, assets):
             raise ValueError("video_frames_invalid")
         name, stamp = frame.get("frame_id"), frame.get("timestamp_ms")
         data = asset.get("base64")
-        if (not isinstance(name, str) or not re.fullmatch(r"frame-[0-9]{3}", name) or name in names or
+        if (not isinstance(name, str) or not re.fullmatch(r"frame-(?:[0-9]{3}|end)", name) or name in names or
             type(stamp) is not int or not last < stamp <= 600000 or
             asset.get("name") != name or asset.get("timestamp_ms") != stamp or
             asset.get("mime") != "image/jpeg" or not isinstance(data, str) or not data or

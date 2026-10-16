@@ -654,7 +654,7 @@ function imagePartsFromBody(body = {}) {
     let total = 0; let last = -1; const names = new Set();
     for (const [index, item] of assets.entries()) {
       const frame = frames[index];
-      if (!/^frame-[0-9]{3}$/.test(frame?.frame_id || '') || names.has(frame.frame_id) ||
+      if (!/^frame-(?:[0-9]{3}|end)$/.test(frame?.frame_id || '') || names.has(frame.frame_id) ||
           !Number.isInteger(frame.timestamp_ms) || frame.timestamp_ms <= last || frame.timestamp_ms > 600000 ||
           item?.name !== frame.frame_id || item.timestamp_ms !== frame.timestamp_ms ||
           item.mime !== 'image/jpeg' || typeof item.base64 !== 'string' || !item.base64 || item.dataUrl)

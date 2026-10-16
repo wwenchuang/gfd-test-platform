@@ -4,7 +4,7 @@ import pytest
 
 
 def frames():
-    return [{'frame_id':f'frame-{i:03d}','timestamp_ms':i*100} for i in range(1,9)]
+    return [{'frame_id':f'frame-{i:03d}' if i<8 else 'frame-end','timestamp_ms':i*100} for i in range(1,9)]
 
 
 def observation():
@@ -42,7 +42,7 @@ def test_transport_whole_frames_complete_and_labelled():
     content=body['messages'][1]['content']
     assert len([p for p in content if p['type']=='image_url'])==8
     assert content[1]['text']=='frame-001 100ms'
-    assert content[-2]['text']=='frame-008 800ms'
+    assert content[-2]['text']=='frame-end 800ms'
     assert not _video_context_assets('other',{'phase':'whole-observe'},assets)
 
 
