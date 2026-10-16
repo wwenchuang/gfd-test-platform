@@ -52,7 +52,14 @@ def validate_analysis(result, frames, duration, prior_secrets=()):
         if event['action'] not in ACTIONS-{'launch','selectRecord'} or event['evidence_kind'] not in {'observed','inferred'}: raise ValueError('video_action_invalid')
         start,end=event['start_ms'],event['end_ms'];refs=event['frame_refs']
         if type(start) is not int or type(end) is not int or not last<=start<=end<=duration: raise ValueError('video_reference_invalid')
-        if not isinstance(refs,list) or not 1<=len(refs)<=8 or any(not isinstance(r,str) or r not in by_id or not start<=by_id[r]<=end for r in refs): raise ValueError('video_reference_invalid')
+        # Separate structural, unknown-frame and time-range failures so the safe
+        # traceback identifies the cause without logging model text or media.
+        if not isinstance(refs,list) or not 1<=len(refs)<=8:
+            raise ValueError('video_reference_invalid')
+        if any(not isinstance(r,str) or r not in by_id for r in refs):
+            raise ValueError('video_reference_invalid')
+        if any(not start<=by_id[r]<=end for r in refs):
+            raise ValueError('video_reference_invalid')
         if [by_id[r] for r in refs]!=sorted(by_id[r] for r in refs): raise ValueError('video_reference_invalid')
         event['target']=_text(event['target']);event['observation']=_text(event['observation'])
         if not event['observation']: raise ValueError('video_observation_missing')
