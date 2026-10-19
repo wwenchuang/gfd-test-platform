@@ -402,8 +402,8 @@ test('video polling resumes on visibility return stays bounded and removes its l
  const before=f.calls.filter(c=>c.path.includes(source.source_id)).length;
  hidden=false;f.w.document.dispatchEvent(new f.w.Event('visibilitychange'));assert.equal(timers.size,1);
  [id,tick]=timers.entries().next().value;timers.delete(id);tick();await wait();assert.equal(f.calls.filter(c=>c.path.includes(source.source_id)).length,before+1);
- for(let i=0;i<130;i++){const entry=timers.entries().next().value;if(!entry)break;timers.delete(entry[0]);entry[1]();await wait();}
- assert.equal(f.calls.filter(c=>c.path.includes(source.source_id)).length,before+120);assert.equal(timers.size,0);
+ for(let i=0;i<370;i++){const entry=timers.entries().next().value;if(!entry)break;timers.delete(entry[0]);entry[1]();await wait();}
+ assert.equal(f.calls.filter(c=>c.path.includes(source.source_id)).length,before+360);assert.equal(timers.size,0);
  hidden=true;f.w.document.dispatchEvent(new f.w.Event('visibilitychange'));hidden=false;f.w.document.dispatchEvent(new f.w.Event('visibilitychange'));assert.equal(timers.size,0);
  let removed=0;const original=f.w.document.removeEventListener.bind(f.w.document);f.w.document.removeEventListener=(name,...args)=>{if(name==='visibilitychange')removed++;return original(name,...args);};
  f.q('[data-ui-case-back]').click();assert.equal(removed,1);f.w.document.dispatchEvent(new f.w.Event('visibilitychange'));assert.equal(timers.size,0);
@@ -483,4 +483,14 @@ test('video feedback shows actual stages, no invented percentage, and stops on f
  assert.match(f.q('[data-video-progress]').textContent,/读取视频/);assert.equal(f.q('[data-video-progress]').getAttribute('aria-busy'),'true');assert.equal(f.q('[data-video-progress]').textContent.includes('%'),false);
  source={...source,status:'analyzing',updated_at:2};f.q('[data-video-status]').click();await wait();assert.match(f.q('[aria-current="step"]').textContent,/AI 识别步骤/);
  source={...source,status:'failed',error:'模型超时',updated_at:3};f.q('[data-video-status]').click();await wait();assert.equal(f.q('[data-video-progress]'),null);assert.ok(f.q('[data-video-action="retry"]'));
+});
+
+
+test('long video progress updates without resetting private media',async t=>{
+ const f=await videoFixture(t),source={source_id:'uvs_'+'a'.repeat(32),filename:'clip.mp4',status:'analyzing',analysis_version:1};let progress={phase:'observing',completed:0,total:10};
+ f.respond(path=>path.includes(source.source_id)?{ok:true,source:{...source,analysis_progress:progress}}:path.startsWith('/ui-video-sources?')?{ok:true,sources:[source]}:undefined);
+ f.app('a');await wait();f.q('[data-video-open]').click();await wait();
+ assert.match(f.q('[data-video-progress]').textContent,/第 1 \/ 10 段/);const video=f.q('video');
+ progress={phase:'planning',completed:10,total:10};f.q('[data-video-status]').click();await wait();
+ assert.match(f.q('[data-video-progress]').textContent,/视频已识别完/);assert.equal(f.q('video'),video);
 });

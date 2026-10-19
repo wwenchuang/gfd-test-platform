@@ -200,3 +200,25 @@ class VideoRetryAdmissionTests(unittest.TestCase):
             self.assertEqual(video._sync_args(lambda:False),['-vsync','vfr'])
         with patch.object(video,'_process',return_value=(b'ffmpeg 9 help: -fps_mode per stream sync',b'')):
             self.assertEqual(video._sync_args(lambda:False),['-fps_mode','vfr'])
+
+
+def test_soft_page_transitions_preserve_the_short_settled_page_between_them():
+    from task_server.services.ui_video_source_service import _transition_anchors
+    times=list(range(0,2001,50))
+    changes=[20 if 300<=t<=450 or 900<=t<=1050 else 1 for t in times]
+    selected=_transition_anchors(times,changes)
+    assert any(500<=times[i]<900 for i in selected)
+    assert any(1100<=times[i]<1500 for i in selected)
+    assert 250 in {times[i] for i in selected}
+
+
+def test_progress_from_stale_analysis_cannot_overwrite_retried_source(tmp_path):
+    from task_server.services.ui_video_source_service import VideoStore
+    store=VideoStore(tmp_path)
+    source=store.upload({'user_id':'one'},'com.example.app','x.mp4',io.BytesIO(b'1234'),4)
+    identifier=source['source_id'];store.transition(identifier,{'queued'},'analyzing',analysis_version=2)
+    assert store.transition(identifier,{'analyzing'},'analyzing',expected_version=1,analysis_progress={'completed':9}) is None
+    for status in ('ready','failed','cancelled'):
+        assert store.transition(identifier,{'analyzing'},status,expected_version=1,error='old') is None
+    current=store.get(identifier,'one','com.example.app')
+    assert current['status']=='analyzing' and 'analysis_progress' not in current

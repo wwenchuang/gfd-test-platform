@@ -100,15 +100,19 @@ def analyze_video_source(store,identifier):
             stage='decode'
             media=decode_video(store.root/identifier/'source.mp4',store.root/identifier/'frames',cancelled)
             if media['black'] or media['static']:
-                store.transition(identifier,{'decoding'},'review_needed',media=media,error='黑屏或静止视频没有可靠操作证据，请选择包含完整操作和结束结果的片段')
+                store.transition(identifier,{'decoding'},'review_needed',expected_version=version,media=media,error='黑屏或静止视频没有可靠操作证据，请选择包含完整操作和结束结果的片段')
                 return
             stage='persist'
-            document=store.transition(identifier,{'decoding'},'analyzing',media=media)
+            document=store.transition(identifier,{'decoding'},'analyzing',expected_version=version,media=media)
             if not document:return
             stage='baseline'
             document['baseline_examples']=_top3_examples(app,document['goal'] or '录屏操作步骤')
             stage='analysis'
-            result=analyze_whole_frames(document,store.root/identifier,cancelled)
+            def progress(phase,completed,total,events):
+                if cancelled():raise ValueError('video_cancelled')
+                store.transition(identifier,{'analyzing'},'analyzing',expected_version=version,
+                    analysis_progress={'phase':phase,'completed':completed,'total':total},raw_events=events)
+            result=analyze_whole_frames(document,store.root/identifier,cancelled,progress)
             if cancelled():raise ValueError('video_cancelled')
             stage='reauthorize'
             require_ui_actor(document['actor'],permission='ui.edit',app_id=app);_application(app)
@@ -120,7 +124,7 @@ def analyze_video_source(store,identifier):
             message='包含多个独立场景或缺少可靠动作，请分段后重新上传' if status=='review_needed' else ''
             segments=[{'source_id':identifier,'segment_id':str(i),'start_ms':e['start_ms'],'end_ms':e['end_ms'],'frame_refs':e['frame_refs']} for i,e in enumerate(result['events'])]
             stage='persist'
-            store.transition(identifier,{'analyzing'},status,**result,segments=segments,candidate_steps=result['events'],error=message)
+            store.transition(identifier,{'analyzing'},status,expected_version=version,**result,segments=segments,candidate_steps=result['events'],error=message)
     except Exception as error:
         code=_failure_code(error)
         _log_failure(identifier,stage,error,code)
@@ -134,4 +138,4 @@ def analyze_video_source(store,identifier):
                   'video_access_changed':'账号或应用权限已变化，分析停止',
                   'video_cancelled':'已取消',
                   'video_decode_timeout':'解码超时，请缩短视频后重试'}
-        store.transition(identifier,{'decoding','analyzing'},'cancelled' if code=='video_cancelled' else 'failed',error=messages.get(code,'分析未能返回可靠步骤，请重试或缩短片段；原视频保留'),error_code=code)
+        store.transition(identifier,{'decoding','analyzing'},'cancelled' if code=='video_cancelled' else 'failed',expected_version=version,error=messages.get(code,'分析未能返回可靠步骤，请重试或缩短片段；原视频保留'),error_code=code)

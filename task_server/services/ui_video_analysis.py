@@ -264,7 +264,7 @@ def _bind_candidate_evidence(result, candidates, required_indices=()):
     return bound
 
 
-def _validate_consolidated_evidence(checked,raw_events,candidates,frames,image_frames,duration,required_indices):
+def _validate_consolidated_evidence(checked,raw_events,candidates,frames,image_frames,duration,required_indices,omitted_indices=()):
     all_refs={ref for raw in raw_events for ref in raw['frame_refs']}
     all_refs.update(frame['frame_id'] for frame in image_frames)
     times={frame['frame_id']:frame['timestamp_ms'] for frame in frames}
@@ -282,7 +282,7 @@ def _validate_consolidated_evidence(checked,raw_events,candidates,frames,image_f
             covered<event['end_ms'] or not set(event['frame_refs'])<=supported_refs):
             raise ValueError('video_model_timeline')
         if 'outcome' in event:
-            next_start=min((raw['start_ms'] for raw in candidates if raw['action'] in {'aiTap','aiInput','aiScroll'}
+            next_start=min((raw['start_ms'] for i,raw in enumerate(candidates) if i not in omitted_indices and raw['action'] in {'aiTap','aiInput','aiScroll'}
                             and raw['start_ms']>event['start_ms']),default=duration)
             next_output=next((item['start_ms'] for item in checked['events'][event_index+1:]
                               if item['action'] in {'aiTap','aiInput','aiScroll'}),duration)
@@ -318,21 +318,21 @@ def _bind_whole_evidence(result, frames):
     return bound
 
 
-def analyze_whole_frames(document, root, cancelled):
+def analyze_whole_frames(document, root, cancelled, progress=None):
     """One full-context observation, one bounded plan, at most one correction."""
     from . import ai_skill_service as ai
     frames=document['media']['frames'];duration=document['media']['duration_ms']
     if cancelled():raise ValueError('video_cancelled')
     if not 2<=len(frames)<=240:raise ValueError('video_vision_limit')
     from .ui_video_windows import observe_windows, load_assets, planning_frames
-    observed,known_secrets=observe_windows(frames,duration,root,cancelled)
+    observed,known_secrets=observe_windows(frames,duration,root,cancelled,progress)
     candidates=observed['events'];multi=observed['multiple_scenarios']
     if not candidates:return {**observed,'raw_events':[],'raw_uncertainties':observed['uncertainties']}
     image_frames=frames if len(frames)<=60 else planning_frames(candidates,frames)
     assets=load_assets(image_frames,root,cancelled)
     required_indices=_required_interactions(candidates,duration)
     payload={'phase':'whole-consolidate','app_id':document['app_id'],'goal':document['goal'],
-        'frames':frames,'image_frames':image_frames,'duration_ms':duration,'candidate_events':candidates,
+        'frames':frames,'image_frames':image_frames,'duration_ms':duration,'candidate_events':[{**event,'candidate_index':i} for i,event in enumerate(candidates)],
         'required_candidate_indexes':required_indices,'raw_uncertainties':observed['uncertainties'],
         'multiple_scenarios':multi,'baseline_examples':document.get('baseline_examples',[])}
     for attempt in range(2):
@@ -346,7 +346,7 @@ def analyze_whole_frames(document, root, cancelled):
             plan,effective_required,recovery=review_retries(planned,candidates,required_indices)
             bound=_bind_candidate_evidence(plan,candidates,effective_required)
             checked=validate_analysis(bound,frames,duration,known_secrets)
-            _validate_consolidated_evidence(checked,candidates,candidates,frames,image_frames,duration,effective_required)
+            _validate_consolidated_evidence(checked,candidates,candidates,frames,image_frames,duration,effective_required,{item['candidate_index'] for item in recovery})
             proposal,_=draft_proposal({**document,**checked,'source_id':document.get('source_id','uvs_'+'0'*32),
                                       'analysis_version':document.get('analysis_version',1)})
             if any(step['action'] in {'aiTap','aiScroll'} and not step['expected'] for step in proposal['steps']):

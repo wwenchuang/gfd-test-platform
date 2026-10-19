@@ -105,7 +105,7 @@ def test_cancel_retry_during_model_does_not_publish_old_analysis(env,tmp_path,mo
     store=video.VideoStore(tmp_path/'videos');doc=store.upload(A,APP,'clip.mp4',io.BytesIO(b'video'),5,actor=A)
     monkeypatch.setattr(worker,'decode_video',lambda *args:{'black':False,'static':False,'frames':[],'duration_ms':100})
     cancellation=[]
-    def model(document,root,cancelled):
+    def model(document,root,cancelled,progress=None):
         store.cancel(doc['source_id']);store.transition(doc['source_id'],{'cancelled'},'queued',analysis_version=2)
         cancellation.append(cancelled())
         return {'events':[],'uncertainties':[],'multiple_scenarios':False}

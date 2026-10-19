@@ -13,7 +13,7 @@ def review_retries(plan,candidates,required):
     for item in omitted:
         if not isinstance(item,dict) or set(item)!={'candidate_index','repeated_by','reason'}:raise ValueError('video_retry_invalid')
         index,later=item['candidate_index'],item['repeated_by'];reason=item['reason']
-        if (type(index) is not int or type(later) is not int or not 0<=index<later<len(candidates) or
+        if (type(index) is not int or type(later) is not int or not (0<=index<len(candidates) and 0<=later<len(candidates) and index!=later) or
             index in dropped or index in kept or later not in kept or index not in required or
             not isinstance(reason,str) or not 1<=len(reason.strip())<=500):raise ValueError('video_retry_invalid')
         before,after=candidates[index],candidates[later]
@@ -23,13 +23,13 @@ def review_retries(plan,candidates,required):
     targets={candidates[index]['target'].strip() for index in dropped}
     audit=[]
     for index,later,reason in pairs:
-        span=candidates[index:later]
-        if any(e['action'] in {'aiInput','aiScroll'} or
+        span=candidates[min(index,later):max(index,later)]
+        if len(targets)>2 or any(e['action'] in {'aiInput','aiScroll'} or
                (e['action']=='aiTap' and e['target'].strip() not in targets) for e in span):
             raise ValueError('video_retry_invalid')
-        failures=[e for e in span if re.search(r'失败|未完成|超时|未成功|稍后重试',e['observation'])]
+        failures=[e for e in span if re.search(r'失败|未完成|超时|未成功|稍后重试',re.sub(r'(?:没有|未发生|无|并非)失败','',e['observation']))]
         if not failures:raise ValueError('video_retry_invalid')
-        audit.append({'candidate_index':index,'repeated_by':later,'reason':'录屏中的失败重试已合并，保留后续同控件操作及结果检查',
+        audit.append({'candidate_index':index,'repeated_by':later,'reason':'录屏中的失败重试已合并，保留同控件操作及业务结果检查',
                       'frame_refs':list(candidates[index]['frame_refs']),
                       'failure_frame_refs':list(dict.fromkeys(ref for e in failures for ref in e['frame_refs']))})
     return cleaned,[i for i in required if i not in dropped],audit

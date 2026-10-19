@@ -128,17 +128,17 @@ class VideoStore:
                 self._check_admission(db)
                 doc.pop('media',None)
                 doc.pop('title',None)
-                doc.update(status='queued',error='',error_code='',events=[],segments=[],candidate_steps=[],uncertainties=[],raw_events=[],raw_uncertainties=[],omitted_retries=[],analysis_version=doc['analysis_version']+1)
+                doc.update(status='queued',error='',error_code='',events=[],segments=[],candidate_steps=[],uncertainties=[],raw_events=[],raw_uncertainties=[],omitted_retries=[],analysis_progress={},analysis_version=doc['analysis_version']+1)
                 self._save(db,doc)
                 return doc
 
-    def transition(self, identifier, allowed, status, **fields):
+    def transition(self, identifier, allowed, status, expected_version=None, **fields):
         with self.db() as db:
             db.execute('BEGIN IMMEDIATE')
             row = db.execute('SELECT document FROM sources WHERE id=?', (identifier,)).fetchone()
             if not row: raise KeyError(identifier)
             doc = json.loads(row[0])
-            if doc['status'] not in allowed: return None
+            if doc['status'] not in allowed or (expected_version is not None and doc['analysis_version']!=expected_version): return None
             doc.update(fields, status=status)
             self._save(db, doc)
             return doc
@@ -208,6 +208,23 @@ def _sync_args(cancelled):
     return ['-fps_mode','vfr'] if b'-fps_mode' in help_text else ['-vsync','vfr']
 
 
+def _transition_anchors(times,changes):
+    """Keep both sides of soft animated transitions, including brief return pages."""
+    from bisect import bisect_left
+    if len(changes)!=len(times):return set()
+    runs=[]
+    for index,change in enumerate(changes):
+        if change<12:continue
+        if not runs or times[index]-times[runs[-1][-1]]>250:runs.append([index])
+        else:runs[-1].append(index)
+    selected=set()
+    for position,run in enumerate(runs):
+        after=min(len(times)-1,bisect_left(times,times[run[-1]]+150))
+        if position+1<len(runs):after=min(after,runs[position+1][0]-1)
+        selected.update((max(0,run[0]-1),after))
+    return selected
+
+
 def decode_video(video, output, cancelled):
     if cancelled(): raise ValueError('video_cancelled')
     probe, _ = _process([_tool('ffprobe'), '-v', 'error', '-protocol_whitelist', 'file,pipe', '-f', 'mov', '-show_format', '-show_streams', '-of', 'json', str(video)], cancelled, 20)
@@ -237,8 +254,6 @@ def decode_video(video, output, cancelled):
         if index==len(all_times) or all_times[index]-all_times[index-1]>300:
             clusters.append((first,index-1));first=index
     selected={0, len(all_times)-1}
-    for first,last in clusters:
-        selected.update((max(0,first-1),first,last))
     # Mean absolute pixel change retains spatial cuts even when two pages have
     # identical overall brightness. Unlike scene-score acceleration, this also
     # detects repeated abrupt cuts at a constant cadence. Smooth motion remains
@@ -248,6 +263,11 @@ def decode_video(video, output, cancelled):
         for index,change in enumerate(changes[1:],1):
             if change>=64:
                 selected.update((index-1,index))
+    selected.update(_transition_anchors(all_times,changes))
+    for first,last in clusters:
+        for index in (max(0,first-1),first,last):
+            if min(abs(all_times[index]-all_times[j]) for j in selected)>400:
+                selected.add(index)
     frame_limit=min(MAX_FRAMES,60 if duration<=90000 else ((duration+59999)//60000)*60)
     budget=frame_limit-1  # reserve the independently decoded final anchor
     if len(selected)>budget:raise ValueError('video_split_required')
@@ -285,7 +305,9 @@ def decode_video(video, output, cancelled):
     # representing an earlier frame as the end of the recording.
     tail = output/'frame-end.jpg'
     _process([_tool('ffmpeg'), '-nostdin', '-v', 'error', '-threads', '1', '-sseof', '-0.08', '-protocol_whitelist', 'file,pipe', '-f', 'mov', '-i', str(video), '-xerror', '-an', '-sn', '-dn', '-vf', scale, '-frames:v', '1', '-threads', '1', '-pix_fmt', 'yuvj420p', '-y', str(tail)], cancelled, 20)
-    if tail.exists(): files.append(tail); times.append(max(times[-1], duration-80))
+    if tail.exists() and duration-80>times[-1]:
+        files.append(tail);times.append(duration-80)
+    elif tail.exists():tail.unlink()
     if len(files)>MAX_FRAMES: raise ValueError('video_split_required')
     from PIL import Image, ImageChops, ImageStat
     signatures = []

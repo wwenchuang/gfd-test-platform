@@ -14,10 +14,11 @@ def load_assets(frames,root,cancelled):
     return assets
 
 
-def observe_windows(frames,duration,root,cancelled):
+def observe_windows(frames,duration,root,cancelled,progress=None):
     from . import ai_skill_service as ai
     from .ui_video_analysis import _bind_whole_evidence,validate_analysis
-    windows=[frames[i:i+60] for i in range(0,max(1,len(frames)-4),56)]
+    size=30 if len(frames)>60 else 60
+    windows=[frames[i:i+size] for i in range(0,max(1,len(frames)-4),size-4)]
     events=[];questions=[];secrets=[];multi=False;previous_end=-1
     for index,window in enumerate(windows):
         if cancelled():raise ValueError('video_cancelled')
@@ -26,6 +27,7 @@ def observe_windows(frames,duration,root,cancelled):
             payload['window']={'index':index+1,'total':len(windows),'previous_end_ms':previous_end,
                                'final':index==len(windows)-1}
             payload['prior_events']=events[-8:]
+        if progress:progress('observing',index,len(windows),events)
         result=ai.run_ai_skill('ui_video_observe',payload,image_assets=load_assets(window,root,cancelled),
             timeout=120,retry_count=0,max_tokens=10000,repair_invalid_json=False)
         if cancelled():raise ValueError('video_cancelled')
@@ -38,6 +40,14 @@ def observe_windows(frames,duration,root,cancelled):
             duplicate=next((old for old in reversed(events) if old['action']==event['action'] and
                             old['frame_refs']==event['frame_refs']),None)
             if duplicate:continue
+            old=events[-1] if events else None
+            if (old and old['action']==event['action']=='aiInput' and old['target']==event['target'] and
+                event['start_ms']<=old['end_ms']):
+                times={f['frame_id']:f['timestamp_ms'] for f in frames}
+                refs=sorted(set(old['frame_refs']+event['frame_refs']),key=times.get)
+                if len(refs)>8:refs=[refs[round(i*(len(refs)-1)/7)] for i in range(8)]
+                old.update(start_ms=min(old['start_ms'],event['start_ms']),end_ms=max(old['end_ms'],event['end_ms']),frame_refs=refs,observation=event['observation'])
+                continue
             events.append(event)
         questions.extend(checked['uncertainties']);multi|=checked['multiple_scenarios']
         previous_end=window[-1]['timestamp_ms']
@@ -45,6 +55,7 @@ def observe_windows(frames,duration,root,cancelled):
     # Revalidate aggregate budgets, chronology and redaction across all windows.
     result=validate_analysis({'events':events,'uncertainties':list(dict.fromkeys(questions))[:30],
                               'multiple_scenarios':multi},frames,duration,secrets)
+    if progress:progress('planning',len(windows),len(windows),result['events'])
     return result,secrets
 
 

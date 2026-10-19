@@ -172,14 +172,14 @@ def test_long_video_observes_all_frames_in_bounded_overlapping_windows(monkeypat
         if skill=='ui_video_observe':
             window=payload['image_frames'];seen.update(f['frame_id'] for f in window)
             # A repeated observation in overlap must not become a second click.
-            refs=['frame-057','frame-058'] if window[0]['timestamp_ms']<=57000<=window[-1]['timestamp_ms'] else [window[-2]['frame_id'],window[-1]['frame_id']]
+            refs=['frame-027','frame-028'] if window[0]['timestamp_ms']<=27000<=window[-1]['timestamp_ms'] else [window[-2]['frame_id'],window[-1]['frame_id']]
             return {'events':[{'action':'aiTap','target':'入口','value':'','frame_refs':refs,'observation':'入口页面显示'}],'uncertainties':[],'multiple_scenarios':False}
         return {'events':[{'candidate_index':i,'action':e['action'],'target':e['target'],'value':'','observation':e['observation'],'uncertainties':[]} for i,e in enumerate(payload['candidate_events'])], 'uncertainties':[],'multiple_scenarios':False,'title':'长视频完整导航验证'}
     monkeypatch.setattr(ai,'run_ai_skill',model)
     result=va.analyze_whole_frames({'app_id':'com.example.app','goal':'','media':{'frames':fs,'duration_ms':121000}},tmp_path,lambda:False)
     assert seen=={f['frame_id'] for f in fs}
-    assert len([c for c in calls if c[0]=='ui_video_observe'])==3
-    assert len(result['events'])==2
+    assert len([c for c in calls if c[0]=='ui_video_observe'])==5
+    assert len(result['events'])==4
     assert result['events'][-1]['start_ms']>=110000
 
 
@@ -225,3 +225,71 @@ def test_retry_reduction_cannot_skip_intervening_new_business_or_input():
          {'action':'aiTap','target':'取消','observation':'取消完成','start_ms':4,'end_ms':5,'frame_refs':['frame-003']}]
     plan={'events':[{'candidate_index':1},{'candidate_index':2}], 'omitted_retries':[{'candidate_index':0,'repeated_by':2,'reason':'重试'}]}
     with pytest.raises(ValueError,match='video_retry_invalid'):review_retries(plan,raw,[0,1,2])
+
+
+def test_long_video_does_not_drop_new_action_only_because_it_is_in_overlap(monkeypatch,tmp_path):
+    from task_server.services import ui_video_analysis as va,ai_skill_service as ai
+    fs=[{'frame_id':f'frame-{i:03d}','timestamp_ms':i*1000} for i in range(1,81)]
+    (tmp_path/'frames').mkdir()
+    for f in fs:(tmp_path/'frames'/(f['frame_id']+'.jpg')).write_bytes(b'image')
+    calls=[0]
+    def model(skill,payload,**kw):
+        if skill=='ui_video_observe':
+            calls[0]+=1
+            refs=['frame-027','frame-028'] if calls[0]==1 else ['frame-029','frame-030']
+            if calls[0]>2:return {'events':[],'uncertainties':[],'multiple_scenarios':False}
+            return {'events':[{'action':'aiTap','target':'同一按钮','value':'','frame_refs':refs,'observation':'目标页面显示'}],'uncertainties':[],'multiple_scenarios':False}
+        return {'events':[{'candidate_index':i,'action':e['action'],'target':e['target'],'value':'','observation':e['observation'],'uncertainties':[]} for i,e in enumerate(payload['candidate_events'])], 'uncertainties':[],'multiple_scenarios':False}
+    monkeypatch.setattr(ai,'run_ai_skill',model)
+    result=va.analyze_whole_frames({'app_id':'com.example.app','goal':'','media':{'frames':fs,'duration_ms':81000}},tmp_path,lambda:False)
+    assert len(result['events'])==2
+
+
+def test_retry_reduction_can_retain_original_confirmation_and_audit_later_retries():
+    from task_server.services.ui_video_recovery import review_retries
+    raw=[]
+    for i,target in enumerate(['取消打印','确认取消','取消打印','确认取消','取消打印']):
+        raw.append({'action':'aiTap','target':target,'start_ms':i*1000,'end_ms':i*1000+200,
+                    'frame_refs':[f'frame-{i:03d}'],'observation':'取消流程未完成，请稍后重试' if i in {1,3} else '取消页面显示'})
+    plan={'events':[{'candidate_index':0},{'candidate_index':1}],
+          'omitted_retries':[{'candidate_index':2,'repeated_by':0,'reason':'重复取消'},
+                             {'candidate_index':3,'repeated_by':1,'reason':'重复确认'},
+                             {'candidate_index':4,'repeated_by':0,'reason':'重试后终于结束'}]}
+    _,required,audit=review_retries(plan,raw,list(range(5)))
+    assert required==[0,1] and len(audit)==3
+    bad=copy.deepcopy(raw);bad[1]['observation']=bad[3]['observation']='没有失败，取消完成'
+    with pytest.raises(ValueError,match='video_retry_invalid'):review_retries(plan,bad,list(range(5)))
+
+
+@pytest.mark.parametrize("first_refs,start", [(["frame-025","frame-028"],25000),(["frame-028","frame-030"],27000)])
+def test_long_video_merges_only_overlapping_typing_and_reports_checked_progress(monkeypatch,tmp_path,first_refs,start):
+    from task_server.services import ui_video_analysis as va,ai_skill_service as ai
+    fs=[{'frame_id':f'frame-{i:03d}','timestamp_ms':i*1000} for i in range(1,81)]
+    (tmp_path/'frames').mkdir()
+    for f in fs:(tmp_path/'frames'/(f['frame_id']+'.jpg')).write_bytes(b'image')
+    windows=[0];progress=[]
+    def model(skill,payload,**kw):
+        if skill=='ui_video_observe':
+            windows[0]+=1
+            refs=first_refs if windows[0]==1 else ['frame-027','frame-032']
+            events=[] if windows[0]>2 else [{'action':'aiInput','target':'文字输入框','value':'','frame_refs':refs,'observation':'输入后内容显示'}]
+            return {'events':events,'uncertainties':[],'multiple_scenarios':False}
+        return {'events':[{'candidate_index':i,'action':e['action'],'target':e['target'],'value':'','observation':e['observation'],'uncertainties':[]} for i,e in enumerate(payload['candidate_events'])],'uncertainties':[],'multiple_scenarios':False}
+    monkeypatch.setattr(ai,'run_ai_skill',model)
+    result=va.analyze_whole_frames({'app_id':'com.example.app','goal':'','media':{'frames':fs,'duration_ms':81000}},tmp_path,lambda:False,lambda *args:progress.append(copy.deepcopy(args)))
+    assert len(result['events'])==1
+    assert result['events'][0]['start_ms']==start and result['events'][0]['end_ms']==32000
+    assert progress[-1][0]=='planning' and progress[-1][1]==progress[-1][2]==3
+
+
+def test_only_verified_retry_omissions_extend_result_evidence_until_next_business():
+    from task_server.services.ui_video_analysis import _validate_consolidated_evidence
+    fs=[{'frame_id':f'f{i}','timestamp_ms':i*1000} for i in range(8)]
+    raw=[{'action':'aiTap','target':'按钮','start_ms':i*1000,'end_ms':i*1000,'frame_refs':[f'f{i}'],'evidence_kind':'inferred'} for i in [0,1,2,3,4,6]]
+    output=copy.deepcopy([raw[0],raw[1],raw[5]])
+    output[1]['outcome']={'observation':'业务终态','frame_refs':['f5']}
+    args=(dict(events=output),raw,raw,fs,fs,8000,[0,1,5])
+    with pytest.raises(ValueError,match='video_reference_invalid'):_validate_consolidated_evidence(*args)
+    _validate_consolidated_evidence(*args,{2,3,4})
+    output[1]['outcome']['frame_refs']=['f7']
+    with pytest.raises(ValueError,match='video_reference_invalid'):_validate_consolidated_evidence(*args,{2,3,4})
