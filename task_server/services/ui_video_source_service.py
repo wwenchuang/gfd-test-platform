@@ -1,5 +1,6 @@
 """Private durable screen-video sources. No device dispatch or execution authority."""
 import json
+from decimal import Decimal, ROUND_HALF_UP
 import os
 import re
 import shutil
@@ -230,6 +231,60 @@ def _transition_anchors(times,changes,include_direction=True):
     return selected
 
 
+
+def _timestamp_ms(value):
+    # FFmpeg logs decimal timestamps; avoid binary-float half-ms drift.
+    text=value.decode('ascii') if isinstance(value,bytes) else str(value)
+    return int((Decimal(text)*1000).to_integral_value(rounding=ROUND_HALF_UP))
+
+
+def _micro_motion_groups(times, changes):
+    """Retain short local motion as visual evidence, never as a claimed touch.
+
+    Clock ticks are isolated; sustained spinners are long. Small touch marks can
+    occupy too few pixels to qualify as a page transition, so preserve the short
+    burst's onset, middle, release and adjacent context for the vision model.
+    """
+    if len(times)!=len(changes):return []
+    runs=[]
+    for index,change in enumerate(changes):
+        if not .08<=change<12:continue
+        if not runs or index!=runs[-1][-1]+1 or times[index]-times[runs[-1][-1]]>150:
+            runs.append([index])
+        else:runs[-1].append(index)
+    selected=[]
+    for run in runs:
+        if len(run)<2 or not 30<=times[run[-1]]-times[run[0]]<=800:continue
+        middle=min(run,key=lambda i:abs(times[i]-(times[run[0]]+times[run[-1]])/2))
+        selected.append({max(0,run[0]-1),run[0],middle,run[-1],min(len(times)-1,run[-1]+1)})
+    return selected
+
+
+
+def _micro_motion_anchors(times, changes):
+    return set().union(*_micro_motion_groups(times, changes))
+
+
+def _select_micro_motion(groups, times, base, limit, cancelled=lambda:False):
+    """Add complete micro-bursts across the timeline without displacing pages."""
+    selected=set(base)
+    candidates=[{times[j] for j in group} for group in groups]
+    centers=[(min(group)+max(group))/2 for group in candidates]
+    remaining={i for i,candidate in enumerate(candidates) if not candidate<=selected}
+    distance={i:float('inf') for i in remaining}
+    chosen=False
+    while remaining and len(selected)<limit:
+        if cancelled():raise ValueError('video_cancelled')
+        index=max(remaining,key=lambda i:(distance[i] if chosen else -i,-i))
+        remaining.remove(index)
+        candidate=candidates[index]
+        if len(selected|candidate)>limit:continue
+        selected.update(candidate);chosen=True
+        remaining={i for i in remaining if not candidates[i]<=selected}
+        for i in remaining:distance[i]=min(distance[i],abs(centers[i]-centers[index]))
+    return selected, sum(candidate<=selected for candidate in candidates)
+
+
 def decode_video(video, output, cancelled):
     if cancelled(): raise ValueError('video_cancelled')
     probe, _ = _process([_tool('ffprobe'), '-v', 'error', '-protocol_whitelist', 'file,pipe', '-f', 'mov', '-show_format', '-show_streams', '-of', 'json', str(video)], cancelled, 20)
@@ -252,7 +307,7 @@ def decode_video(video, output, cancelled):
     base = scale+",format=yuv420p,mpdecimate=hi=768:lo=320:frac=0.10"
     common = [_tool('ffmpeg'), '-nostdin', '-hide_banner', '-v', 'info', '-threads', '1', '-protocol_whitelist', 'file,pipe', '-f', 'mov', '-i', str(video), '-xerror', '-an', '-sn', '-dn']
     _, scan = _process([*common, '-vf', base+',signalstats,metadata=print:key=lavfi.signalstats.YDIF,showinfo', '-f', 'null', '-'], cancelled)
-    all_times = [round(float(t)*1000) for t in re.findall(rb'\bn:\s*\d+.*?pts_time:([\d.e+\-]+)', scan)]
+    all_times = [_timestamp_ms(t) for t in re.findall(rb'\bn:\s*\d+.*?pts_time:([\d.e+\-]+)', scan)]
     if not all_times or len(all_times)>72000:raise ValueError('video_split_required')
     clusters=[];first=0
     for index in range(1,len(all_times)+1):
@@ -275,11 +330,19 @@ def decode_video(video, output, cancelled):
         for index in (max(0,first-1),first,last):
             if min(abs(all_times[index]-all_times[j]) for j in selected)>400:
                 selected.add(index)
+    # Independent sensitive pass keeps small/local motion that the page-level
+    # decimator may discard. No coordinates or action labels leave this layer.
+    sensitive=scale+",format=yuv420p,mpdecimate=hi=128:lo=64:frac=0.01"
+    _, micro_scan=_process([*common,'-vf',sensitive+',signalstats,metadata=print:key=lavfi.signalstats.YDIF,showinfo','-f','null','-'],cancelled)
+    micro_times=[_timestamp_ms(t) for t in re.findall(rb'\bn:\s*\d+.*?pts_time:([\d.e+\-]+)',micro_scan)]
+    micro_changes=[float(t) for t in re.findall(rb'lavfi\.signalstats\.YDIF=([\d.e+\-]+)',micro_scan)]
+    if len(micro_times)>72000 or len(micro_times)!=len(micro_changes):raise ValueError('video_frames_invalid')
+    micro_groups=_micro_motion_groups(micro_times,micro_changes)
     base_limit=min(240,60 if duration<=90000 else ((duration+59999)//60000)*60)
     # Reserve only observed direction anchors, not an arbitrary larger sample.
     # Keep per-request image and aggregate byte limits unchanged.
     frame_limit=min(MAX_FRAMES,base_limit+len(direction_extra))
-    budget=frame_limit-1  # reserve the independently decoded final anchor
+    budget=frame_limit-1  # preserve original page density and final anchor first
     if len(selected)>budget:raise ValueError('video_split_required')
     # One-second targets use actual changed-frame timestamps. Add the least
     # represented targets first so a full budget never silently truncates the tail.
@@ -305,11 +368,26 @@ def decode_video(video, output, cancelled):
         if len(items)==1:return f"eq(n,{items[0]})"
         middle=len(items)//2
         return "("+expression(items[:middle])+"+"+expression(items[middle:])+")"
-    selector=expression(indexes)
-    _, log = _process([*common, '-vf', base+",select='"+selector+"',showinfo", *_sync_args(cancelled), '-threads', '1', '-pix_fmt', 'yuvj420p', '-q:v', '4', str(output/'frame-%03d.jpg')], cancelled)
-    times = [round(float(t)*1000) for t in re.findall(rb'\bn:\s*\d+.*?pts_time:([\d.e+\-]+)', log)]
+    base_times={all_times[i] for i in indexes}
+    combined,sampled_groups=_select_micro_motion(micro_groups,micro_times,base_times,MAX_FRAMES-1,cancelled)
+    expected_times=sorted(combined)
+    if combined-base_times:
+        # Select by original timestamps: sensitive-pass indexes are not indexes
+        # in the old decimated stream. Never relabel an unrelated page frame.
+        # Use the original integer PTS, not rounded seconds in the selector.
+        # 29.97fps includes half-ms values whose binary floats differ between
+        # Python and FFmpeg even with nominally identical rounding rules.
+        pts_by_time={_timestamp_ms(t):int(pts) for pts,t in re.findall(
+            rb'\bn:\s*\d+.*?pts:\s*(-?\d+)\s+pts_time:([\d.e+\-]+)',scan+micro_scan)}
+        if any(t not in pts_by_time for t in expected_times):raise ValueError('video_frames_invalid')
+        selector=expression([pts_by_time[t] for t in expected_times]).replace('eq(n,','eq(pts,')
+        extract_base=scale+",format=yuv420p"
+    else:
+        selector=expression(indexes);extract_base=base
+    _, log = _process([*common, '-vf', extract_base+",select='"+selector+"',showinfo", *_sync_args(cancelled), '-threads', '1', '-pix_fmt', 'yuvj420p', '-q:v', '4', str(output/'frame-%03d.jpg')], cancelled)
+    times = [_timestamp_ms(t) for t in re.findall(rb'\bn:\s*\d+.*?pts_time:([\d.e+\-]+)', log)]
     files = sorted(output.glob('frame-*.jpg'))
-    if not files or len(times) != len(files) or times!=[all_times[i] for i in indexes]: raise ValueError('video_frames_invalid')
+    if not files or len(times) != len(files) or times!=expected_times: raise ValueError('video_frames_invalid')
     if sum(path.stat().st_size for path in files)>16*1024**2:raise ValueError('video_frames_invalid')
     # Always decode a last-frame anchor to expose missing endings rather than
     # representing an earlier frame as the end of the recording.
@@ -329,7 +407,9 @@ def decode_video(video, output, cancelled):
     static = all(ImageStat.Stat(ImageChops.difference(signatures[0], image)).mean[0] < 2 for image in signatures[1:])
     frames = [{'frame_id': path.stem, 'timestamp_ms': timestamp} for path,timestamp in zip(files,times)]
     return {'duration_ms': duration, 'coverage_start_ms': 0, 'coverage_end_ms': duration,
-            'frames': frames, 'static': static, 'black': black, 'width': width, 'height': height}
+            'frames': frames, 'static': static, 'black': black, 'width': width, 'height': height,
+            'micro_motion_frame_count':len(combined-base_times),
+            'micro_motion_groups_total':len(micro_groups), 'micro_motion_groups_sampled':sampled_groups}
 
 
 def service_store():
