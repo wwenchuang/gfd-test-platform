@@ -135,3 +135,61 @@ def test_review_candidates_are_local_and_do_not_offer_foreign_frame_refs(monkeyp
         return {'events':[],'uncertainties':[],'multiple_scenarios':False}
     monkeypatch.setattr(ai,'run_ai_skill',model)
     vw.observe_windows(fs,9000,tmp_path,lambda:False,review_events=candidates)
+
+
+def test_review_payload_never_copies_first_pass_semantic_claims(monkeypatch,tmp_path):
+    import json
+    from task_server.services import ui_video_windows as vw,ai_skill_service as ai
+    fs=[{'frame_id':f'frame-{i:03d}','timestamp_ms':i*100} for i in range(90)]
+    (tmp_path/'frames').mkdir()
+    for f in fs:(tmp_path/'frames'/(f['frame_id']+'.jpg')).write_bytes(b'image')
+    old=event(2);old.update(target='FIRST_PASS_POISON',observation='FIRST_PASS_POISON',
+        uncertainties=['FIRST_PASS_POISON'],frame_refs=['frame-002'])
+    before=copy.deepcopy(old)
+    def model(skill,payload,**kw):
+        assert 'FIRST_PASS_POISON' not in json.dumps(payload)
+        assert all(set(e)=={'frame_refs'} for e in payload['candidate_events'])
+        return {'events':[],'uncertainties':[],'multiple_scenarios':False}
+    monkeypatch.setattr(ai,'run_ai_skill',model)
+    vw.observe_windows(fs,9000,tmp_path,lambda:False,review_events=[old])
+    assert old==before
+
+
+def test_planning_prioritizes_each_interaction_result_before_repeated_observations():
+    from task_server.services.ui_video_windows import planning_frames
+    fs=[{'frame_id':f'frame-{i:03d}','timestamp_ms':i*100} for i in range(120)]
+    events=[]
+    for i in range(119):
+        e=event(i,'aiTap' if i in (0,10,20,90,110) else 'aiAssert')
+        e.update(frame_refs=[fs[i]['frame_id']],target='确认打印' if i>20 else '导航')
+        events.append(e)
+    selected={f['frame_id'] for f in planning_frames(events,fs)}
+    assert {'frame-009','frame-019','frame-089','frame-109','frame-119'}<=selected
+    assert len(selected)<=60
+
+
+def test_business_result_cannot_use_later_system_desktop():
+    from task_server.services.ui_video_analysis import _validate_consolidated_evidence
+    fs=[{'frame_id':f'f{i}','timestamp_ms':i*100} for i in range(8,12)]
+    business=event(8);business['target']='返回首页'
+    desktop=event(11,'aiAssert');desktop.update(target='手机系统桌面',observation='手机系统桌面可见')
+    checked=copy.deepcopy(business)
+    checked['outcome']={'observation':'系统桌面可见','frame_refs':['f11']}
+    with pytest.raises(ValueError,match='video_reference_invalid'):
+        _validate_consolidated_evidence({'events':[checked]},[business,desktop],[business,desktop],fs,fs,1200,[0])
+
+
+def test_planning_keeps_shared_after_before_frame_for_adjacent_actions(monkeypatch):
+    from task_server.services.ui_video_windows import planning_frames
+    fs=[{'frame_id':f'frame-{i:03d}','timestamp_ms':i*100} for i in range(120)]
+    from task_server.services import ui_video_analysis as va
+    monkeypatch.setattr(va,'_consolidation_images',lambda events,frames,limit: frames[20:20+limit])
+    events=[]
+    for i in range(110):
+        e=event(i,'aiTap' if i in (10,11,60,61) else 'aiAssert')
+        e.update(frame_refs=[fs[i]['frame_id']],target='确认打印')
+        if i in (10,60):
+            e.update(end_ms=(i+1)*100,frame_refs=[fs[i]['frame_id'],fs[i+1]['frame_id']])
+        events.append(e)
+    selected={f['frame_id'] for f in planning_frames(events,fs)}
+    assert {'frame-011','frame-061'}<=selected

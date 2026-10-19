@@ -143,7 +143,7 @@ def validate_analysis(result, frames, duration, prior_secrets=(), *, max_events=
 
 def _system_boundary(event,duration):
     """Only explicit system-shell evidence at recording boundaries is removable."""
-    text=event['target']+' '+event['observation']
+    text=event.get('target','')+' '+event.get('observation','')
     return (event['action'] in {'aiTap','aiWaitFor','aiAssert'} and
             bool(re.search(r'系统桌面|桌面应用图标|系统最近任务|最近任务卡片|系统多任务|停止录屏|系统通知栏',text)) and
             (event['end_ms']<=min(5000,duration*0.15) or
@@ -287,7 +287,8 @@ def _validate_consolidated_evidence(checked,raw_events,candidates,frames,image_f
             next_output=next((item['start_ms'] for item in checked['events'][event_index+1:]
                               if item['action'] in {'aiTap','aiInput','aiScroll'}),duration)
             next_start=min(next_start,next_output)
-            if (not set(event['outcome']['frame_refs'])<=all_refs or
+            system_start=min((raw['start_ms'] for raw in candidates if raw['start_ms']>event['start_ms'] and _system_boundary(raw,duration)),default=duration+1)
+            if (not set(event['outcome']['frame_refs'])<=all_refs or any(times[ref]>=system_start for ref in event['outcome']['frame_refs']) or
                 any(times[ref]>next_start for ref in event['outcome']['frame_refs'])):
                 raise ValueError('video_reference_invalid')
         if all(raw['evidence_kind']=='inferred' for raw in matching):event['evidence_kind']='inferred'
@@ -342,6 +343,10 @@ def analyze_whole_frames(document, root, cancelled, progress=None):
         'frames':frames,'image_frames':image_frames,'duration_ms':duration,'candidate_events':[{**event,'candidate_index':i} for i,event in enumerate(candidates)],
         'required_candidate_indexes':required_indices,'raw_uncertainties':observed['uncertainties'],
         'multiple_scenarios':multi,'baseline_examples':document.get('baseline_examples',[])}
+    for index,event in enumerate(payload['candidate_events']):
+        boundary=next((e['start_ms'] for e in candidates[index+1:] if e['action'] in {'aiTap','aiInput','aiScroll'}),duration)
+        system_start=min((e['start_ms'] for e in candidates[index+1:] if _system_boundary(e,duration)),default=duration+1)
+        event['ordinary_outcome_frame_ids']=[f['frame_id'] for f in image_frames if event['end_ms']<=f['timestamp_ms']<=boundary and f['timestamp_ms']<system_start]
     for attempt in range(2):
         if cancelled():raise ValueError('video_cancelled')
         planned=ai.run_ai_skill('ui_video_steps',payload,image_assets=assets,version='consolidate',
@@ -358,10 +363,13 @@ def analyze_whole_frames(document, root, cancelled, progress=None):
             bound=_bind_candidate_evidence(plan,candidates,effective_required)
             checked=validate_analysis(bound,frames,duration,known_secrets)
             _validate_consolidated_evidence(checked,candidates,candidates,frames,image_frames,duration,effective_required,{item['candidate_index'] for item in recovery})
-            proposal,_=draft_proposal({**document,**checked,'print_recovery':print_group,'source_id':document.get('source_id','uvs_'+'0'*32),
+            proposal,snapshot=draft_proposal({**document,**checked,'print_recovery':print_group,'source_id':document.get('source_id','uvs_'+'0'*32),
                                       'analysis_version':document.get('analysis_version',1)})
-            if any(step['action'] in {'aiTap','aiScroll'} and not step['expected'] for step in proposal['steps']):
-                raise ValueError('video_expected_missing')
+            missing={step['step_id'] for step in proposal['steps'] if step['action'] in {'aiTap','aiScroll'} and not step['expected']}
+            if missing:
+                error=ValueError('video_expected_missing')
+                error.result_check_candidate_indexes=[plan['events'][i]['candidate_index'] for i,event in enumerate(snapshot['events']) if event['draft_step_id'] in missing and 'candidate_index' in plan['events'][i]]
+                raise error
             checked['uncertainties']=list(dict.fromkeys(observed['uncertainties']+checked['uncertainties']))[:30]
             return {**checked,'multiple_scenarios':multi,'first_pass_events':first_pass,'raw_events':candidates,'raw_uncertainties':observed['uncertainties'],'omitted_retries':recovery,'print_recovery':print_group}
         except ValueError as error:
@@ -370,9 +378,10 @@ def analyze_whole_frames(document, root, cancelled, progress=None):
             if isinstance(planned,dict) and isinstance(planned.get('events'),list):
                 known_secrets.extend(e['value'] for e in planned['events'] if isinstance(e,dict) and
                     e.get('action')=='aiInput' and isinstance(e.get('value'),str) and e['value'])
-            payload={**payload,'multiple_scenarios':multi,'recovery_feedback':getattr(error,'model_feedback',''),'validation_feedback':
+            payload={**payload,'multiple_scenarios':multi,'recovery_feedback':getattr(error,'model_feedback',''),
+                'result_check_candidate_indexes':getattr(error,'result_check_candidate_indexes',[]),'validation_feedback':
                 '上一结果未通过平台证据/复用校验。每事件必须有candidate_index/action/target/value/observation/uncertainties。'
-                '索引严格递增，除有效omitted_retries声明外保留全部required_candidate_indexes及原action，不输出时间或frame_refs/evidence_kind。'
+                '索引严格递增，除有效omitted_retries声明外保留全部required_candidate_indexes及原action，不输出事件顶层的时间或frame_refs/evidence_kind；outcome内部必须包含真实frame_refs。'
                 'outcome只用不早于该候选end_ms且不晚于下一交互start_ms的真实结果帧。'
                 'selection仅在首次对象操作上出现一次，不含任何旧编号/日期/{{}}。后续操作引用{{本次对象}}；'
                 '确认后的reusable_expected检查{{本次对象}}消失和{{保留对象}}仍显示。不等待toast。其他导航只检查相关稳定页面。'
@@ -506,7 +515,12 @@ def analyze_frames(document, root, cancelled):
             'raw_events':raw_events,'raw_uncertainties':raw_questions,**({'title':title} if title else {})}
 
 
+def _visible_form_state(text):
+    return bool(re.search(r'(?:选项|复选框|单选框|字体)[^，,。；;]{0,30}(?:被选中|已选中|处于选中|保持选中|选中状态)|(?:按钮|控件)[^，,。；;]{0,20}(?:已禁用|不可用|可用|已启用)',text))
+
+
 def _visible_state(text):
+    if _visible_form_state(text):return True
     if re.search(r'显示|出现|可见|打开|包含|弹出|消失|保留|仍在|关闭|显现|返回|成为',text):return True
     for target in re.findall(r'(?:跳转至|跳转到|进入|切换至|切换到|变为)([^，,。；;]{2,100})',text):
         if not re.fullmatch(r'(?:目标|新|下一|其他|另一个|未知)?(?:页面|界面|页)',target.strip()):return True
@@ -515,7 +529,8 @@ def _visible_state(text):
 
 def _stable_visible_observation(observation):
     """Project only literal stable clauses; preserve the complete source audit."""
-    feedback=r'高亮|按下态|点击态|(?i:toast)|提示浮层|短暂提示|短暂(?:显示|出现|弹出)[^，,。；;]{0,80}提示|正在加载|加载(?:中|状态|动画)'
+    if _visible_form_state(observation) and re.search(r'短暂|瞬间|瞬时|暂时|仅(?:持续)?[一1]帧|[一1]帧后',observation):return ''
+    feedback=r'(?<!选中)高亮|按下态|点击态|(?i:toast)|提示浮层|短暂提示|短暂(?:显示|出现|弹出)[^，,。；;]{0,80}提示|正在加载|加载(?:中|状态|动画)'
     if not re.search(feedback,observation):return observation
     # Removing a conditional/contrast clause may reverse its meaning. Leave the
     # expected unresolved instead of extracting an apparently positive outcome.

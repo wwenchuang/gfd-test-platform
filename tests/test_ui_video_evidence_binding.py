@@ -118,3 +118,25 @@ def test_indexed_invalid_input_retains_secret_redaction_on_correction(monkeypatc
     monkeypatch.setattr(ai,'run_ai_skill',model);monkeypatch.setattr(ai,'AI_VISION_IMAGE_LIMIT',6)
     result=analysis.analyze_frames({'app_id':'app','goal':'','media':{'duration_ms':5000,'frames':frames}},tmp_path,lambda:False)
     assert 'private-code' not in str(result)
+
+@pytest.mark.parametrize('observation',[
+    '不想打了选项被选中，与前一选项同时高亮',
+    '模型脱落选项被选中高亮',
+    '复选框处于选中状态',
+    '提交反馈按钮已禁用，原因选项仍保持选中',
+])
+def test_persistent_form_state_is_a_visible_result(observation):
+    from task_server.services.ui_video_analysis import _expected_candidate
+    e={'observation':observation,'frame_refs':['f1']}
+    assert _expected_candidate(e,'')['text']
+
+@pytest.mark.parametrize('observation',[
+    '点击按钮短暂高亮','按钮按下态','显示反馈成功Toast提示',
+    '选项短暂高亮，无法确认是否选中',
+    '选项短暂处于选中高亮状态，随后恢复未选中',
+    '选项被选中高亮，仅持续一帧后消失',
+    '提交按钮短暂不可用',
+])
+def test_transient_form_feedback_is_not_a_stable_result(observation):
+    from task_server.services.ui_video_analysis import _expected_candidate
+    assert not _expected_candidate({'observation':observation,'frame_refs':['f1']},'')['text']

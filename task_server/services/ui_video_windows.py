@@ -37,8 +37,7 @@ def observe_windows(frames,duration,root,cancelled,progress=None,review_events=N
             ids=set(refs)|{f['frame_id'] for f in window}
             images=[f for f in frames if f['frame_id'] in ids]
             current_ids={f['frame_id'] for f in window}
-            local_events=[{**{k:e[k] for k in ('action','target','value','observation','uncertainties')},
-                           'frame_refs':[ref for ref in e['frame_refs'] if ref in current_ids]}
+            local_events=[{'frame_refs':[ref for ref in e['frame_refs'] if ref in current_ids]}
                           for e in review_events if set(e['frame_refs']) & current_ids]
             payload.update(review_mode='full_flow_after_recovery',candidate_events=local_events,
                            image_frames=images,context_frame_ids=refs)
@@ -84,9 +83,28 @@ def observe_windows(frames,duration,root,cancelled,progress=None,review_events=N
 
 
 def planning_frames(events,frames):
-    from .ui_video_analysis import _consolidation_images
+    from .ui_video_analysis import _consolidation_images,_system_boundary
+    ids={frames[0]['frame_id'],frames[-1]['frame_id']}
+    ids.update(f['frame_id'] for f in _consolidation_images(events,frames,6))
+    duration=frames[-1]['timestamp_ms']
+    # Reserve candidate result pixels for every interaction before spending the
+    # budget on repeated loading/failure observations. Last does not mean stable:
+    # the model and evidence validator must still establish the visible outcome.
+    for i,event in enumerate(events):
+        if event['action'] not in {'aiTap','aiInput','aiScroll'} or _system_boundary(event,duration):continue
+        boundary=next((e['start_ms'] for e in events[i+1:]
+                       if e['action'] in {'aiTap','aiInput','aiScroll'} or _system_boundary(e,duration)),duration+1)
+        result=[f for f in frames if event['end_ms']<=f['timestamp_ms']<boundary]
+        if not result and boundary==event['end_ms']:
+            # Consecutive interactions can share the after/before screenshot.
+            # Keep it available, but never borrow a system-cleanup frame.
+            system_start=min((e['start_ms'] for e in events[i+1:] if _system_boundary(e,duration)),default=duration+1)
+            result=[f for f in frames if f['timestamp_ms']==boundary and f['timestamp_ms']<system_start]
+        if result:ids.add(result[-1]['frame_id'])
+    if len(ids)>60:raise ValueError('video_vision_limit')
     chosen=_consolidation_images(events,frames,58)
-    ids={f['frame_id'] for f in chosen}|{frames[0]['frame_id'],frames[-1]['frame_id']}
+    for frame in chosen:
+        if len(ids)<60:ids.add(frame['frame_id'])
     # Fill unused slots across the whole recording, never only its prefix.
     remaining=[f for f in frames if f['frame_id'] not in ids]
     while remaining and len(ids)<60:

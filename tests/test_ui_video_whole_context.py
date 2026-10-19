@@ -65,6 +65,7 @@ def test_whole_pipeline_preserves_context_and_one_repair(monkeypatch,tmp_path):
         calls.append((skill,payload))
         assert len(kwargs['image_assets'])==8
         if skill=='ui_video_observe':return observation()
+        assert payload['candidate_events'][0]['ordinary_outcome_frame_ids']==[f['frame_id'] for f in fs[1:]]
         item={'candidate_index':0,'action':'aiTap','target':'我的','value':'','observation':'我的页面显示','uncertainties':[]}
         if not payload.get('validation_feedback'):item['candidate_index']=99
         return {'events':[item],'uncertainties':[],'multiple_scenarios':False,'title':'查看我的页面'}
@@ -91,6 +92,8 @@ def test_whole_pipeline_repairs_missing_scroll_expectation_once(monkeypatch,tmp_
         if skill=='ui_video_observe':
             return {'events':[{**event,'frame_refs':['frame-001','frame-002']}],'uncertainties':[],'multiple_scenarios':False}
         event['candidate_index']=0
+        if payload.get('validation_feedback'):
+            assert payload['result_check_candidate_indexes']==[0]
         if payload.get('validation_feedback') and repair_succeeds:
             event['outcome']={'observation':'个人中心页面显示打印记录入口','frame_refs':['frame-002']}
             event['reusable_expected']='打印记录入口可见'
