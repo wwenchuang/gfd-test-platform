@@ -16,7 +16,8 @@ def prepare_group(plan,candidates,required):
     if not isinstance(group,dict) or 'end' not in group:return result
     if set(group)!={'submit','cancel','confirm','end'}:raise ValueError('video_retry_invalid')
     start,confirm,end=[group[k] for k in ('cancel','confirm','end')]
-    if any(type(i) is not int for i in (start,confirm,end)) or not 0<=start<confirm<end<len(candidates):raise ValueError('video_retry_invalid')
+    if any(type(i) is not int for i in (start,confirm,end)) or not 0<=start<confirm<end<len(candidates):
+        raise invalid_retry('print_recovery索引必须使用原始candidate_events的整数candidate_index，不是精简后events序号、时间或字符串；满足0 <= cancel < confirm < end < 候选总数。请从原候选重新核对首次取消、紧接确认和终态观察，禁止调整业务顺序凑索引。')
     terminal=candidates[end]
     observation=terminal['observation']
     if (terminal['action'] not in ('aiAssert','aiWaitFor') or

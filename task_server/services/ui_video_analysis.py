@@ -95,7 +95,9 @@ def validate_analysis(result, frames, duration, prior_secrets=(), *, max_events=
         if 'selection' in event:
             event['selection']=_text(event['selection'])
             if not event['selection'] or event['action']!='aiTap' or '{{本次对象}}' not in event['target']:
-                raise ValueError('video_selection_invalid')
+                error=ValueError('video_selection_invalid')
+                error.model_feedback='selection仅用于首次动态对象选择的aiTap，target必须引用{{本次对象}}，且selection为非空选择条件。普通导航、模型查看、返回、断言等不适用时必须省略selection字段，不要输出空字符串或null；不要给普通操作强加对象占位符。'
+                raise error
         if 'reusable_expected' in event:
             event['reusable_expected']=_text(event['reusable_expected'])
             if not event['reusable_expected']:
