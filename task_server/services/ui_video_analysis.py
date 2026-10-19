@@ -63,13 +63,13 @@ def _align_batch_evidence_times(result, frames, duration):
     return aligned
 
 
-def validate_analysis(result, frames, duration, prior_secrets=()):
+def validate_analysis(result, frames, duration, prior_secrets=(), *, max_events=50):
     required_fields={'events','uncertainties','multiple_scenarios'}
     if not isinstance(result, dict) or not required_fields<=set(result)<=required_fields|{'title'}: raise ValueError('video_model_invalid')
     title=_text(result['title'],80) if 'title' in result else ''
     if type(result['multiple_scenarios']) is not bool: raise ValueError('video_model_invalid')
     events=result['events']; questions=result['uncertainties']
-    if not isinstance(events,list) or len(events)>50 or not isinstance(questions,list) or len(questions)>30: raise ValueError('video_model_invalid')
+    if not isinstance(events,list) or len(events)>max_events or not isinstance(questions,list) or len(questions)>30: raise ValueError('video_model_invalid')
     questions=[_text(q) for q in questions]
     by_id={f['frame_id']:f['timestamp_ms'] for f in frames}
     last=-1

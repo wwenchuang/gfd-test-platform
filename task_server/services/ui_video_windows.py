@@ -65,7 +65,7 @@ def observe_windows(frames,duration,root,cancelled,progress=None,review_events=N
     events.sort(key=lambda e:(e['start_ms'],e['end_ms']))
     # Revalidate aggregate budgets, chronology and redaction across all windows.
     result=validate_analysis({'events':events,'uncertainties':list(dict.fromkeys(questions))[:30],
-                              'multiple_scenarios':multi},frames,duration,secrets)
+                              'multiple_scenarios':multi},frames,duration,secrets,max_events=120)
     if progress:progress('planning',len(windows),len(windows),result['events'])
     return result,secrets
 

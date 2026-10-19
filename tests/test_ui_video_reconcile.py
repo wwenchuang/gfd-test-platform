@@ -71,3 +71,20 @@ def test_review_all_frames_and_shared_secrets(monkeypatch,tmp_path):
     monkeypatch.setattr(ai,'run_ai_skill',model)
     result=vr.reconcile(original,fs,9000,tmp_path,lambda:False,secrets)
     assert len(seen)==90 and 'NEW_SECRET' in secrets and 'NEW_SECRET' not in str(result)
+
+
+def test_long_observation_budget_is_separate_from_final_case_budget(monkeypatch,tmp_path):
+    from task_server.services import ui_video_windows as vw,ai_skill_service as ai
+    from task_server.services.ui_video_analysis import validate_analysis
+    fs=[{'frame_id':f'frame-{i:03d}','timestamp_ms':i*100} for i in range(90)]
+    (tmp_path/'frames').mkdir()
+    for f in fs:(tmp_path/'frames'/(f['frame_id']+'.jpg')).write_bytes(b'image')
+    def model(skill,payload,**kw):
+        return {'events':[{'action':'aiAssert','target':'当前任务','value':'','observation':'任务仍在',
+                          'frame_refs':[f['frame_id']]} for f in payload['frames']],
+                'uncertainties':[],'multiple_scenarios':False}
+    monkeypatch.setattr(ai,'run_ai_skill',model)
+    observed,_=vw.observe_windows(fs,9000,tmp_path,lambda:False)
+    assert len(observed['events'])==90
+    with pytest.raises(ValueError,match='video_model_invalid'):
+        validate_analysis(observed,fs,9000)

@@ -180,7 +180,7 @@
           "candidate_index": {
             "type": "integer",
             "minimum": 0,
-            "maximum": 49
+            "maximum": 119
           }
         },
         "allOf": [
