@@ -14,6 +14,33 @@ def load_assets(frames,root,cancelled):
     return assets
 
 
+
+def context_frames(window,frames,root,events,cancelled):
+    """Select prior look-alike pages as references, never as action evidence."""
+    prior=[f for f in frames if f['timestamp_ms']<window[0]['timestamp_ms']-2000]
+    if not prior:return []
+    try:
+        from PIL import Image,ImageChops,ImageStat
+        small={}
+        for f in prior+window:
+            if cancelled():raise ValueError('video_cancelled')
+            with Image.open(root/'frames'/(f['frame_id']+'.jpg')) as source:
+                small[f['frame_id']]=source.convert('RGB').resize((32,64))
+        ranked={}
+        for current in window:
+            scores=[(sum(ImageStat.Stat(ImageChops.difference(small[f['frame_id']],small[current['frame_id']])).mean),f['frame_id']) for f in prior]
+            score,ref=min(scores)
+            ranked[ref]=min(score,ranked.get(ref,float('inf')))
+        ids=set(sorted(ranked,key=ranked.get)[:16])
+        return [f for f in prior if f['frame_id'] in ids]
+    except (OSError,ImportError):
+        # Optional reference ranking cannot authorize any action. The normal
+        # asset transport still validates the actual images and local refs.
+        refs=list(dict.fromkeys(e['frame_refs'][-1] for e in events if e['end_ms']<window[0]['timestamp_ms']))
+        if len(refs)>16:refs=[refs[round(i*(len(refs)-1)/15)] for i in range(16)]
+        return [f for f in prior if f['frame_id'] in refs]
+
+
 def observe_windows(frames,duration,root,cancelled,progress=None,review_events=None,prior_secrets=()):
     from . import ai_skill_service as ai
     from .ui_video_analysis import _bind_whole_evidence,validate_analysis
@@ -31,9 +58,7 @@ def observe_windows(frames,duration,root,cancelled,progress=None,review_events=N
         if review_events is not None:
             # Show previous page identities as visual context without letting
             # the model emit events outside the current continuous window.
-            refs=[e['frame_refs'][-1] for e in review_events if e['end_ms']<window[0]['timestamp_ms']]
-            refs=list(dict.fromkeys(refs))
-            if len(refs)>16:refs=[refs[round(i*(len(refs)-1)/15)] for i in range(16)]
+            refs=[f['frame_id'] for f in context_frames(window,frames,root,review_events,cancelled)]
             ids=set(refs)|{f['frame_id'] for f in window}
             images=[f for f in frames if f['frame_id'] in ids]
             current_ids={f['frame_id'] for f in window}

@@ -347,10 +347,14 @@ def analyze_whole_frames(document, root, cancelled, progress=None):
         boundary=next((e['start_ms'] for e in candidates[index+1:] if e['action'] in {'aiTap','aiInput','aiScroll'}),duration)
         system_start=min((e['start_ms'] for e in candidates[index+1:] if _system_boundary(e,duration)),default=duration+1)
         event['ordinary_outcome_frame_ids']=[f['frame_id'] for f in image_frames if event['end_ms']<=f['timestamp_ms']<=boundary and f['timestamp_ms']<system_start]
+    pending_plan=None
     for attempt in range(2):
         if cancelled():raise ValueError('video_cancelled')
-        planned=ai.run_ai_skill('ui_video_steps',payload,image_assets=assets,version='consolidate',
-            timeout=120,retry_count=0,max_tokens=10000,repair_invalid_json=False)
+        if pending_plan is not None:
+            planned=pending_plan;pending_plan=None
+        else:
+            planned=ai.run_ai_skill('ui_video_steps',payload,image_assets=assets,version='consolidate',
+                timeout=120,retry_count=0,max_tokens=10000,repair_invalid_json=False)
         if cancelled():raise ValueError('video_cancelled')
         if isinstance(planned,dict) and type(planned.get('multiple_scenarios')) is bool:multi|=planned['multiple_scenarios']
         try:
@@ -371,13 +375,21 @@ def analyze_whole_frames(document, root, cancelled, progress=None):
                 error.result_check_candidate_indexes=[plan['events'][i]['candidate_index'] for i,event in enumerate(snapshot['events']) if event['draft_step_id'] in missing and 'candidate_index' in plan['events'][i]]
                 raise error
             checked['uncertainties']=list(dict.fromkeys(observed['uncertainties']+checked['uncertainties']))[:30]
-            return {**checked,'multiple_scenarios':multi,'first_pass_events':first_pass,'raw_events':candidates,'raw_uncertainties':observed['uncertainties'],'omitted_retries':recovery,'print_recovery':print_group}
+            first_pass=validate_analysis({'events':first_pass,'uncertainties':[],'multiple_scenarios':False},frames,duration,known_secrets,max_events=120)['events']
+            return {**checked,'multiple_scenarios':multi,'first_pass_events':first_pass,'reconciliation_audit':observed.get('reconciliation_audit'),'raw_events':candidates,'raw_uncertainties':observed['uncertainties'],'omitted_retries':recovery,'print_recovery':print_group}
         except ValueError as error:
             if attempt:raise
             # Never send model output/error strings back: only a fixed safe correction.
             if isinstance(planned,dict) and isinstance(planned.get('events'),list):
                 known_secrets.extend(e['value'] for e in planned['events'] if isinstance(e,dict) and
                     e.get('action')=='aiInput' and isinstance(e.get('value'),str) and e['value'])
+            missing_indexes=getattr(error,'result_check_candidate_indexes',[])
+            if missing_indexes:
+                from .ui_video_outcomes import repair_outcomes
+                pending_plan,repair_images=repair_outcomes(planned,candidates,frames,duration,root,missing_indexes,cancelled,known_secrets)
+                evidence_ids={f['frame_id'] for f in image_frames+repair_images}
+                image_frames=[f for f in frames if f['frame_id'] in evidence_ids]
+                continue
             payload={**payload,'multiple_scenarios':multi,'recovery_feedback':getattr(error,'model_feedback',''),
                 'result_check_candidate_indexes':getattr(error,'result_check_candidate_indexes',[]),'validation_feedback':
                 '上一结果未通过平台证据/复用校验。每事件必须有candidate_index/action/target/value/observation/uncertainties。'
@@ -564,7 +576,7 @@ def draft_proposal(document):
               'duration_ms':document['media']['duration_ms'],'frames':document['media']['frames'],
               'events':copy.deepcopy(document['events']),'goal':document['goal'],
               'generated_title':document.get('title',''),'omitted_retries':copy.deepcopy(document.get('omitted_retries',[])),
-              'raw_events':copy.deepcopy(document.get('raw_events',[])),'first_pass_events':copy.deepcopy(document.get('first_pass_events',[])),'print_recovery':copy.deepcopy(document.get('print_recovery'))}
+              'raw_events':copy.deepcopy(document.get('raw_events',[])),'first_pass_events':copy.deepcopy(document.get('first_pass_events',[])),'reconciliation_audit':copy.deepcopy(document.get('reconciliation_audit')),'print_recovery':copy.deepcopy(document.get('print_recovery'))}
     snapshot['snapshot_id']=hashlib.sha256(json.dumps([identifier,version]).encode()).hexdigest()
     steps=[];questions=list(document['uncertainties'])
     if document.get('omitted_retries'):

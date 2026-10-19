@@ -89,6 +89,9 @@ def test_whole_pipeline_repairs_missing_scroll_expectation_once(monkeypatch,tmp_
         calls.append((skill,payload))
         event={'action':'aiScroll','target':'个人中心页面','value':{'direction':'down','scrollType':'singleAction'},
                'observation':'页面内容上移','uncertainties':[]}
+        if kwargs.get('version')=='outcome':
+            assert payload['checks'][0]['target']=='candidate:0'
+            return {'events':[{'action':'aiAssert','target':'candidate:0','value':'','frame_refs':['frame-002'],'observation':'个人中心页面显示打印记录入口','uncertainties':[]}] if repair_succeeds else [],'uncertainties':[],'multiple_scenarios':False}
         if skill=='ui_video_observe':
             return {'events':[{**event,'frame_refs':['frame-001','frame-002']}],'uncertainties':[],'multiple_scenarios':False}
         event['candidate_index']=0
@@ -102,11 +105,11 @@ def test_whole_pipeline_repairs_missing_scroll_expectation_once(monkeypatch,tmp_
     doc={'app_id':'com.example.app','goal':'','media':{'frames':fs,'duration_ms':1000}}
     if repair_succeeds:
         result=va.analyze_whole_frames(doc,tmp_path,lambda:False)
-        assert result['events'][0]['reusable_expected']=='打印记录入口可见'
+        assert result['events'][0]['reusable_expected']=='个人中心页面显示打印记录入口'
     else:
         with pytest.raises(ValueError,match='video_expected_missing'):
             va.analyze_whole_frames(doc,tmp_path,lambda:False)
-    assert [c[0] for c in calls]==['ui_video_observe','ui_video_steps','ui_video_steps']
+    assert [c[0] for c in calls]==['ui_video_observe','ui_video_steps','ui_video_observe']
 
 
 def test_whole_schema_failure_never_calls_hidden_direct_fallback(monkeypatch):
@@ -296,3 +299,26 @@ def test_only_verified_retry_omissions_extend_result_evidence_until_next_busines
     _validate_consolidated_evidence(*args,{2,3,4})
     output[1]['outcome']['frame_refs']=['f7']
     with pytest.raises(ValueError,match='video_reference_invalid'):_validate_consolidated_evidence(*args,{2,3,4})
+
+
+def test_local_result_outside_initial_planning_images_is_bound(monkeypatch,tmp_path):
+    from task_server.services import ui_video_analysis as va,ui_video_windows as vw,ai_skill_service as ai
+    fs=[{'frame_id':f'frame-{i:03d}','timestamp_ms':i*100} for i in range(1,82)]
+    (tmp_path/'frames').mkdir()
+    for f in fs:(tmp_path/'frames'/(f['frame_id']+'.jpg')).write_bytes(b'image')
+    observed={'events':[{'action':'aiScroll','target':'个人中心','value':{'direction':'down','scrollType':'singleAction'},
+        'observation':'页面内容上移','uncertainties':[],'frame_refs':['frame-001','frame-002'],'start_ms':100,'end_ms':200,'evidence_kind':'inferred'}],
+        'uncertainties':[],'multiple_scenarios':False}
+    monkeypatch.setattr(vw,'observe_windows',lambda *a,**kw:(observed,[]))
+    monkeypatch.setattr(vw,'planning_frames',lambda *a:fs[:2])
+    def model(skill,payload,**kw):
+        if skill=='ui_video_steps':
+            return {'events':[{'candidate_index':0,'action':'aiScroll','target':'个人中心','value':{'direction':'down','scrollType':'singleAction'},
+                'observation':'页面内容上移','uncertainties':[]}],'uncertainties':[],'multiple_scenarios':False}
+        refs=payload['checks'][0]['outcome_frame_ids'];ref=refs[-1]
+        assert ref not in {'frame-001','frame-002'}
+        return {'events':[{'action':'aiAssert','target':'candidate:0','value':'','observation':'打印记录入口可见','frame_refs':[ref],'uncertainties':[]}],
+            'uncertainties':[],'multiple_scenarios':False}
+    monkeypatch.setattr(ai,'run_ai_skill',model)
+    result=va.analyze_whole_frames({'app_id':'com.example.app','goal':'','media':{'frames':fs,'duration_ms':8200}},tmp_path,lambda:False)
+    assert result['events'][0]['outcome']['frame_refs']==['frame-081']

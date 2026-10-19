@@ -193,3 +193,98 @@ def test_planning_keeps_shared_after_before_frame_for_adjacent_actions(monkeypat
         events.append(e)
     selected={f['frame_id'] for f in planning_frames(events,fs)}
     assert {'frame-011','frame-061'}<=selected
+
+
+def gap_fixture(tmp_path,count=10):
+    fs=[{'frame_id':f'f{i}','timestamp_ms':i*100} for i in range(count)]
+    (tmp_path/'frames').mkdir()
+    for f in fs:(tmp_path/'frames'/(f['frame_id']+'.jpg')).write_bytes(b'image')
+    original=[event(2),event(4,'aiScroll'),event(7)]
+    original[1]['value']={'direction':'up','scrollType':'singleAction'}
+    checked={'events':[original[0],original[2]],'uncertainties':[],'multiple_scenarios':False}
+    return fs,original,copy.deepcopy(checked)
+
+
+def test_missing_coverage_gets_one_pixel_review_and_audit(monkeypatch,tmp_path):
+    from task_server.services import ui_video_windows as vw,ai_skill_service as ai
+    fs,original,checked=gap_fixture(tmp_path);before=copy.deepcopy(checked);calls=[]
+    monkeypatch.setattr(vw,'observe_windows',lambda *a,**kw:(checked,[]))
+    def model(skill,payload,**kw):
+        calls.append(payload)
+        assert payload['candidate_events']==[{'frame_refs':['f2']},{'frame_refs':['f4']}]
+        assert kw['retry_count']==0
+        return {'events':[{k:v for k,v in e.items() if k not in ('start_ms','end_ms','evidence_kind')} for e in original[:2]],
+            'uncertainties':[],'multiple_scenarios':False}
+    monkeypatch.setattr(ai,'run_ai_skill',model)
+    actual=vr.reconcile(original,fs,1000,tmp_path,lambda:False,[])
+    assert len(calls)==1 and checked==before
+    assert [e['action'] for e in actual['events']]==['aiTap','aiScroll','aiTap']
+    assert actual['reconciliation_audit']['before_events']==before['events']
+
+
+@pytest.mark.parametrize('bad',['missing','foreign','cancel','provider'])
+def test_local_gap_repair_keeps_gate_and_never_retries(monkeypatch,tmp_path,bad):
+    from task_server.services import ui_video_windows as vw,ai_skill_service as ai
+    fs,original,checked=gap_fixture(tmp_path);calls=[];stop=[False]
+    monkeypatch.setattr(vw,'observe_windows',lambda *a,**kw:(checked,[]))
+    def model(skill,payload,**kw):
+        calls.append(1)
+        if bad=='provider':raise RuntimeError('provider unavailable')
+        if bad=='cancel':stop[0]=True
+        e={k:v for k,v in original[0].items() if k not in ('start_ms','end_ms','evidence_kind')}
+        if bad=='foreign':e['frame_refs']=['f9']
+        return {'events':[e],'uncertainties':[],'multiple_scenarios':False}
+    monkeypatch.setattr(ai,'run_ai_skill',model)
+    with pytest.raises((ValueError,RuntimeError)):vr.reconcile(original,fs,1000,tmp_path,lambda:stop[0],[])
+    assert len(calls)==1
+
+
+def test_disjoint_gaps_exceeding_budget_are_not_silently_truncated(monkeypatch,tmp_path):
+    from task_server.services import ai_skill_service as ai
+    fs,original,checked=gap_fixture(tmp_path,80)
+    monkeypatch.setattr(ai,'run_ai_skill',lambda *a,**kw:pytest.fail('unexpected call'))
+    with pytest.raises(ValueError,match='video_required_action_missing'):
+        vr._repair_coverage(original,checked,fs,8000,tmp_path,lambda:False,[],{'f1','f70'})
+
+
+def test_local_repair_cannot_drop_independently_discovered_input(monkeypatch,tmp_path):
+    from task_server.services import ai_skill_service as ai
+    fs,original,checked=gap_fixture(tmp_path)
+    extra=event(5,'aiInput');extra['target']='姓名';extra['value']=''
+    checked['events'].insert(1,extra)
+    monkeypatch.setattr(ai,'run_ai_skill',lambda *a,**kw:{'events':[{k:v for k,v in e.items() if k not in ('start_ms','end_ms','evidence_kind')} for e in original[:2]],'uncertainties':[],'multiple_scenarios':False})
+    with pytest.raises(ValueError,match='video_required_action_missing'):
+        vr._repair_coverage(original,checked,fs,1000,tmp_path,lambda:False,[],{'f4'})
+
+
+def test_local_audit_redacts_newly_discovered_input(monkeypatch,tmp_path):
+    from task_server.services import ai_skill_service as ai
+    fs,original,checked=gap_fixture(tmp_path)
+    checked['events'][0]['observation']='页面 NEW_SECRET'
+    extra=event(5,'aiInput');extra.update(target='姓名',value='NEW_SECRET')
+    monkeypatch.setattr(ai,'run_ai_skill',lambda *a,**kw:{'events':[{k:v for k,v in e.items() if k not in ('start_ms','end_ms','evidence_kind')} for e in original[:2]+[extra]],'uncertainties':[],'multiple_scenarios':False})
+    actual=vr._repair_coverage(original,checked,fs,1000,tmp_path,lambda:False,[],{'f4'})
+    assert 'NEW_SECRET' not in str(actual)
+
+
+def test_review_context_prefers_matching_previous_pages(tmp_path):
+    from PIL import Image
+    from task_server.services.ui_video_windows import context_frames
+    fs=[{'frame_id':f'frame-{i:03d}','timestamp_ms':i*1000} for i in range(1,40)]
+    root=tmp_path/'frames';root.mkdir()
+    for i,f in enumerate(fs):Image.new('RGB',(32,64),('red' if i==4 or i>=36 else 'blue')).save(root/(f['frame_id']+'.jpg'))
+    selected=context_frames(fs[-3:],fs,tmp_path,[],lambda:False)
+    assert selected==[fs[4]]
+    assert all(f['timestamp_ms']<fs[-3]['timestamp_ms'] for f in selected)
+
+
+def test_matching_context_is_capped_and_cancelable(tmp_path):
+    from PIL import Image
+    from task_server.services.ui_video_windows import context_frames
+    fs=[{'frame_id':f'frame-{i:03d}','timestamp_ms':i*1000} for i in range(1,81)]
+    root=tmp_path/'frames';root.mkdir()
+    for i,f in enumerate(fs):Image.new('RGB',(32,64),(i%30*8,0,0)).save(root/(f['frame_id']+'.jpg'))
+    selected=context_frames(fs[-30:],fs,tmp_path,[],lambda:False)
+    assert len(selected)<=16 and len({f['frame_id'] for f in selected})==len(selected)
+    assert all(f['timestamp_ms']<fs[-30]['timestamp_ms']-2000 for f in selected)
+    with pytest.raises(ValueError,match='video_cancelled'):context_frames(fs[-30:],fs,tmp_path,[],lambda:True)
