@@ -5,6 +5,13 @@ PREFIX = '平台运行时对象选择v1：'
 TARGET = '{{本次对象}}'
 RETAINED = '{{保留对象}}'
 TOKENS = {TARGET, RETAINED}
+# A truncated recording ID is still a fixed historical object. Keep ordinary
+# positions and quantities (e.g. 第2条 / 数量3) usable as selection criteria.
+FIXED_RECORD_ID = re.compile(
+    r'(?:编号|订单号|流水号|尾号|(?i:record\s*id)|(?i:\bid\b)|记录(?i:id))'
+    r'\s*(?:(?:尾号|[后末][\d一二三四五六七八九十]+位)\s*)?'
+    r'[\s:：=为是的以"\'“”‘’]*[A-Za-z_-]*\d+(?!\d|位)'
+)
 
 
 def validate_references(steps):
@@ -21,7 +28,7 @@ def validate_references(steps):
             selected = True
         elif refs and not selected:
             raise ValueError('请先添加“选取本次测试对象”，再引用本次对象')
-        if selected and re.search(r'\d{12,}|\d{4}[-/]\d{2}[-/]\d{2}', text):
+        if selected and (re.search(r'\d{12,}|\d{4}[-/]\d{2}[-/]\d{2}', text) or FIXED_RECORD_ID.search(text)):
             raise ValueError('可复用步骤不能固定录屏编号或日期，请使用本次对象/保留对象')
     if selected:
         after = steps[next(i for i,s in enumerate(steps) if s['action']=='selectRecord')+1:]

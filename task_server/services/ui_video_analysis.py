@@ -358,8 +358,10 @@ def analyze_whole_frames(document, root, cancelled):
             bound=_bind_candidate_evidence(planned,candidates,required_indices)
             checked=validate_analysis(bound,frames,duration,known_secrets)
             _validate_consolidated_evidence(checked,candidates,candidates,frames,frames,duration,required_indices)
-            draft_proposal({**document,**checked,'source_id':document.get('source_id','uvs_'+'0'*32),
-                            'analysis_version':document.get('analysis_version',1)})
+            proposal,_=draft_proposal({**document,**checked,'source_id':document.get('source_id','uvs_'+'0'*32),
+                                      'analysis_version':document.get('analysis_version',1)})
+            if any(step['action'] in {'aiTap','aiScroll'} and not step['expected'] for step in proposal['steps']):
+                raise ValueError('video_expected_missing')
             return {**checked,'multiple_scenarios':multi,'raw_events':candidates,'raw_uncertainties':observed['uncertainties']}
         except ValueError:
             if attempt:raise
@@ -372,7 +374,9 @@ def analyze_whole_frames(document, root, cancelled):
                 '索引严格递增，保留全部required_candidate_indexes及原action，不输出时间或frame_refs/evidence_kind。'
                 'outcome只用不早于该候选end_ms且不晚于下一交互start_ms的真实结果帧。'
                 'selection仅在首次对象操作上出现一次，不含任何旧编号/日期/{{}}。后续操作引用{{本次对象}}；'
-                '确认后的reusable_expected检查{{本次对象}}消失和{{保留对象}}仍显示。不等待toast。其他导航只检查相关稳定页面。'}
+                '确认后的reusable_expected检查{{本次对象}}消失和{{保留对象}}仍显示。不等待toast。其他导航只检查相关稳定页面。'
+                '每次点击和滚动都要有可见的稳定结果；缺少时重查对应结果帧，补outcome及简短reusable_expected，'
+                '不要留空让用户手写，也不要编造证据中未出现的结果。'}
 
 
 def analyze_frames(document, root, cancelled):

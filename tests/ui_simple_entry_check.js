@@ -338,6 +338,19 @@ test('video candidate actions are presented in Chinese while import keeps origin
 });
 
 
+test('video upload without an application explains the missing field and focuses it',async t=>{
+ const f=await videoFixture(t);let uploads=0;f.w.nativeFetch=async()=>{uploads++;};
+ Object.defineProperty(f.q('[data-video-file]'),'files',{value:[new f.w.File(['video'],'clip.mp4')]});
+ f.q('[data-video-upload]').click();await wait();
+ assert.match(f.q('[data-video-notice]').textContent,/请先选择测试应用/);
+ assert.equal(f.w.document.activeElement,f.q('[data-video-app]'));assert.equal(uploads,0);
+});
+test('video upload without a file focuses the chooser and sends no request',async t=>{
+ const f=await videoFixture(t);f.app('a');await wait();let uploads=0;f.w.nativeFetch=async()=>{uploads++;};
+ f.q('[data-video-upload]').click();await wait();
+ assert.match(f.q('[data-video-notice]').textContent,/请选择.*MP4\/MOV/);
+ assert.equal(f.w.document.activeElement,f.q('[data-video-file]'));assert.equal(uploads,0);
+});
 test('binary video upload retains bearer authentication with the real Headers helper',async t=>{
  const f=await videoFixture(t);f.app('a');await wait();
  const file=new f.w.File(['binary-fixture'],'recording.mp4',{type:'video/mp4'});

@@ -47,6 +47,23 @@ def test_old_runner_cannot_receive_dynamic_case():
     assert compile_ui_case({'yaml_content':source},target)['ok']
 
 
+@pytest.mark.parametrize('condition',[
+    '打印编号尾号为50144的记录', '编号后4位为1234的记录',
+    '订单号为AB123的记录', '记录ID：A123', '尾号 50144 的记录',
+    '打印编号尾号为“50144”的记录', '打印编号以50144结尾的记录',
+])
+def test_reusable_selection_rejects_partial_historical_identifiers(condition):
+    d=draft();d['steps'][0]['target']=condition
+    with pytest.raises(ValueError,match='不能固定录屏编号'):
+        build_draft_yaml(d,'com.kfb.model')
+
+
+@pytest.mark.parametrize('condition',['当前列表第2条已完成的测试记录，数量为3','编号末4位可见的当前第2条记录','当前列表第2条记录，编号为18位数字'])
+def test_reusable_selection_allows_current_position_and_business_quantity(condition):
+    d=draft();d['steps'][0]['target']=condition
+    build_draft_yaml(d,'com.kfb.model')
+
+
 def test_video_import_builds_selection_without_changing_observed_evidence():
     from task_server.services.ui_video_analysis import draft_proposal
     document={'source_id':'uvs_'+'a'*32,'analysis_version':1,'app_id':'com.kfb.model','goal':'',

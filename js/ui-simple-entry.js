@@ -347,8 +347,10 @@ function mountUiVideoSource(node,{current,openDraft,initialSource=null}){
   q('[data-video-app]').onchange=()=>{if(busy)return;invalidate();app=q('[data-video-app]').value;source=null;node.dataset.videoPhase='upload';notice('');q('[data-video-list]').replaceChildren();q('[data-video-detail]').replaceChildren();list();};
   q('[data-video-refresh]').onclick=list;
   q('[data-video-upload]').onclick=async()=>{
-    if(busy||!valid()||!app)return;const file=q('[data-video-file]').files[0];
-    if(!file||!file.size||file.size>200*1024*1024||!/[.](mp4|mov)$/i.test(file.name)){notice('请选择不超过200MB的 MP4/MOV 文件');return;}
+    if(busy||!valid())return;
+    if(!app){notice('请先选择测试应用，再生成测试用例。');q('[data-video-app]').focus();return;}
+    const file=q('[data-video-file]').files[0];
+    if(!file||!file.size||file.size>200*1024*1024||!/[.](mp4|mov)$/i.test(file.name)){notice('请选择不超过200MB的 MP4/MOV 文件');q('[data-video-file]').focus();return;}
     invalidate();busy=true;const version=epoch,button=q('[data-video-upload]');button.disabled=true;button.setAttribute('aria-busy','true');button.textContent='正在上传视频…';q('[data-video-app]').disabled=true;notice('正在上传；上传完成后后台分析，离页可从“我的录屏”重新打开。');
     // Navigation can detach the view while the bounded upload finishes. The
     // response never updates a detached/changed account; own sources are durable.

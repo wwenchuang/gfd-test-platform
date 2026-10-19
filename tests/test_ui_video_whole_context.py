@@ -78,6 +78,34 @@ def test_whole_pipeline_preserves_context_and_one_repair(monkeypatch,tmp_path):
     with pytest.raises(ValueError,match='video_cancelled'):va.analyze_whole_frames(doc,tmp_path,lambda:True)
 
 
+@pytest.mark.parametrize('repair_succeeds',[True,False])
+def test_whole_pipeline_repairs_missing_scroll_expectation_once(monkeypatch,tmp_path,repair_succeeds):
+    from task_server.services import ui_video_analysis as va,ai_skill_service as ai
+    fs=frames();(tmp_path/'frames').mkdir()
+    for f in fs:(tmp_path/'frames'/(f['frame_id']+'.jpg')).write_bytes(b'image')
+    calls=[]
+    def model(skill,payload,**kwargs):
+        calls.append((skill,payload))
+        event={'action':'aiScroll','target':'个人中心页面','value':{'direction':'down','scrollType':'singleAction'},
+               'observation':'页面内容上移','uncertainties':[]}
+        if skill=='ui_video_observe':
+            return {'events':[{**event,'frame_refs':['frame-001','frame-002']}],'uncertainties':[],'multiple_scenarios':False}
+        event['candidate_index']=0
+        if payload.get('validation_feedback') and repair_succeeds:
+            event['outcome']={'observation':'个人中心页面显示打印记录入口','frame_refs':['frame-002']}
+            event['reusable_expected']='打印记录入口可见'
+        return {'events':[event],'uncertainties':[],'multiple_scenarios':False,'title':'查看打印记录入口'}
+    monkeypatch.setattr(ai,'run_ai_skill',model)
+    doc={'app_id':'com.example.app','goal':'','media':{'frames':fs,'duration_ms':1000}}
+    if repair_succeeds:
+        result=va.analyze_whole_frames(doc,tmp_path,lambda:False)
+        assert result['events'][0]['reusable_expected']=='打印记录入口可见'
+    else:
+        with pytest.raises(ValueError,match='video_expected_missing'):
+            va.analyze_whole_frames(doc,tmp_path,lambda:False)
+    assert [c[0] for c in calls]==['ui_video_observe','ui_video_steps','ui_video_steps']
+
+
 def test_whole_schema_failure_never_calls_hidden_direct_fallback(monkeypatch):
     from task_server.services import ai_skill_service as ai
     fs=frames();assets=[{'name':f['frame_id'],'timestamp_ms':f['timestamp_ms'],'mime':'image/jpeg','base64':'YQ=='} for f in fs]
