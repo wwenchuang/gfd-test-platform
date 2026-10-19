@@ -121,3 +121,17 @@ def test_invalid_window_stops_after_two_model_calls(monkeypatch,tmp_path):
     with pytest.raises(ValueError,match='video_reference_invalid'):
         vw.observe_windows(fs,300,tmp_path,lambda:False)
     assert len(calls)==2
+
+
+def test_review_candidates_are_local_and_do_not_offer_foreign_frame_refs(monkeypatch,tmp_path):
+    from task_server.services import ui_video_windows as vw,ai_skill_service as ai
+    fs=[{'frame_id':f'frame-{i:03d}','timestamp_ms':i*100} for i in range(90)]
+    (tmp_path/'frames').mkdir()
+    for f in fs:(tmp_path/'frames'/(f['frame_id']+'.jpg')).write_bytes(b'image')
+    candidates=[{**event(i),'frame_refs':[fs[i]['frame_id']]} for i in (0,30,60,89)]
+    def model(skill,payload,**kw):
+        ids={f['frame_id'] for f in payload['frames']}
+        assert all(set(e['frame_refs'])<=ids and 'start_ms' not in e for e in payload['candidate_events'])
+        return {'events':[],'uncertainties':[],'multiple_scenarios':False}
+    monkeypatch.setattr(ai,'run_ai_skill',model)
+    vw.observe_windows(fs,9000,tmp_path,lambda:False,review_events=candidates)

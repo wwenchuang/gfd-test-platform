@@ -36,7 +36,11 @@ def observe_windows(frames,duration,root,cancelled,progress=None,review_events=N
             if len(refs)>16:refs=[refs[round(i*(len(refs)-1)/15)] for i in range(16)]
             ids=set(refs)|{f['frame_id'] for f in window}
             images=[f for f in frames if f['frame_id'] in ids]
-            payload.update(review_mode='full_flow_after_recovery',candidate_events=review_events,
+            current_ids={f['frame_id'] for f in window}
+            local_events=[{**{k:e[k] for k in ('action','target','value','observation','uncertainties')},
+                           'frame_refs':[ref for ref in e['frame_refs'] if ref in current_ids]}
+                          for e in review_events if set(e['frame_refs']) & current_ids]
+            payload.update(review_mode='full_flow_after_recovery',candidate_events=local_events,
                            image_frames=images,context_frame_ids=refs)
         if progress:progress('reviewing' if review_events is not None else 'observing',index,len(windows),events)
         assets=load_assets(images,root,cancelled)
