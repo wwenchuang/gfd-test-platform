@@ -148,7 +148,7 @@ def test_compiles_real_midscene_parameters_and_provenance():
     flow = yaml.safe_load(result['yaml_content'])['tasks'][0]['flow']
     assert yaml.safe_load(result['yaml_content'])['android'] == {}
     assert flow[0] == {'launch': APP}
-    assert flow[1] == {'aiWaitFor': '首页搜索按钮', 'timeout': 12000}
+    assert flow[1] == {'aiWaitFor': '页面中可见且可点击的目标：首页搜索按钮', 'timeout': 12000}
     assert next(step for step in flow if 'aiInput' in step) == {'aiInput': '搜索输入框', 'value': '机器人'}
     assert next(step for step in flow if 'aiScroll' in step) == {'aiScroll': '搜索结果列表', 'direction': 'down', 'distance': 300, 'scrollType': 'singleAction'}
     assert len(result['step_ids'][0]) == len(flow)
@@ -254,3 +254,22 @@ def test_navigation_result_waits_before_asserting_and_preserves_assertion(explic
     assert {'aiWaitFor':'打印记录列表可见','timeout':12000} in flow[click+1:check]
     assert len([x for x in flow if x.get('aiWaitFor')=='打印记录列表可见'])==1
     assert len(built['compiler_roles'][0])==len(flow)==len(built['step_ids'][0])
+
+
+def test_tap_guard_checks_visible_control_not_current_destination():
+    draft={'title':'返回首页','steps':[
+        {'action':'aiTap','target':'首页','expected':'首页核心功能可见','review_state':'confirmed'},
+        {'action':'aiAssert','target':'首页核心功能可见','review_state':'confirmed'}]}
+    built=build_draft_yaml(draft,APP)
+    flow=yaml.safe_load(built['yaml_content'])['tasks'][0]['flow']
+    assert flow[1]=={'aiWaitFor':'页面中可见且可点击的目标：首页','timeout':12000}
+    assert flow[2]=={'aiTap':'首页'}
+    assert flow[3]=={'aiWaitFor':'首页核心功能可见','timeout':12000}
+
+def test_explicit_click_wait_keeps_original_condition_without_duplicate_guard():
+    draft={'title':'显式等待','steps':[
+        {'action':'aiWaitFor','target':'首页','review_state':'confirmed'},
+        {'action':'aiTap','target':'首页','expected':'首页核心功能可见','review_state':'confirmed'},
+        {'action':'aiAssert','target':'首页核心功能可见','review_state':'confirmed'}]}
+    flow=yaml.safe_load(build_draft_yaml(draft,APP)['yaml_content'])['tasks'][0]['flow']
+    assert flow[1:3]==[{'aiWaitFor':'首页','timeout':12000},{'aiTap':'首页'}]

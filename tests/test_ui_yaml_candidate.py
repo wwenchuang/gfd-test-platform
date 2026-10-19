@@ -143,6 +143,7 @@ def test_repeated_explicit_waits_are_not_dropped(env):
         {'aiTap':'我的入口'}, {'aiAssert':'我的页面显示设备入口'}]}]}, allow_unicode=True)
     with actor_context(A):
         result = apply(draft,raw)
+    assert result['yaml_candidate']['status'] == 'converted'
     assert yaml.safe_load(result['yaml_content']) == yaml.safe_load(raw)
 
 def test_repeated_assertions_are_never_silently_dropped(env):

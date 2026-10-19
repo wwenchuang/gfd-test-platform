@@ -1,6 +1,6 @@
 """Deliberately narrow YAML-to-Chinese adapter. Never executes or calls a model."""
 import yaml
-from .ui_case_draft_contract import ACTIONS, SHORT_TIMEOUT_MS, normalize_steps, build_draft_yaml
+from .ui_case_draft_contract import ACTIONS, SHORT_TIMEOUT_MS, normalize_steps, build_draft_yaml, click_target_condition
 from .ui_dynamic_object import PREFIX
 
 MAX_PARSE_CHARS = 100000
@@ -80,7 +80,7 @@ def parse_candidate(raw, app_id, preconditions):
                 raise ValueError('禁止跨应用 launch，启动应用只能在首步声明一次')
             if following:
                 continue
-        if step['action'] == 'aiWaitFor' and following and following['action'] == 'aiTap' and following['target'] == step['target']:
+        if step['action'] == 'aiWaitFor' and following and following['action'] == 'aiTap' and click_target_condition(following['target']) == step['target']:
             continue
         if (step['action'] in {'aiTap','aiInput','aiScroll'} and following and check
                 and following['action']=='aiWaitFor' and check['action']=='aiAssert'

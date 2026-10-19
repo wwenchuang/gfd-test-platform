@@ -131,6 +131,10 @@ def normalize_steps(payload, app_id):
     return {'title': title, 'preconditions': preconditions, 'steps': steps, 'questions': list(dict.fromkeys(questions))}
 
 
+def click_target_condition(target):
+    return "页面中可见且可点击的目标：" + target
+
+
 def build_draft_yaml(draft, app_id):
     """Build an Android source candidate; target compiler retains capability gates.
 
@@ -148,8 +152,11 @@ def build_draft_yaml(draft, app_id):
         roles.append('launch')
     for index, step in enumerate(steps):
         action, target = step['action'], step['target']
-        if action == 'aiTap':
-            flow.append({'aiWaitFor': target, 'timeout': SHORT_TIMEOUT_MS})
+        previous = steps[index - 1] if index else None
+        explicit_guard = (previous and previous['action'] == 'aiWaitFor'
+                          and previous['target'] in (target, click_target_condition(target)))
+        if action == 'aiTap' and not explicit_guard:
+            flow.append({'aiWaitFor': click_target_condition(target), 'timeout': SHORT_TIMEOUT_MS})
             step_ids.append(step['step_id'])
             roles.append('guard')
         item = {'aiQuery': PREFIX + target} if action == 'selectRecord' else {action: target}
