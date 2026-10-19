@@ -76,6 +76,8 @@ def _target_check(batch, attempt, occupancy=None, fresh=False):
             return 'app_version_unavailable'
     if versions != frozen_versions:
         return 'app_version_changed'
+    if '平台打印取消恢复v1：' in attempt['compiled_case'].get('yaml_content','') and resolved['capabilities'].get('ui_print_recovery_v1') is not True:
+        return 'print_recovery_unsupported'
     if not set(attempt['compiled_case']['required_actions']) <= set(resolved['capabilities'].get('ui_actions') or []):
         return 'runner_capability_missing'
     try:

@@ -16,6 +16,13 @@ function batch() {
       target_resolution:{device_snapshot:{label:'iPhone 13'}},step_progress_known:true,
       steps:[{step_id:'s1',label:'打开应用',status:'passed'},{step_id:'s2',label:'点击我的',status:'running'},{step_id:'s3',label:'检查我的页面',status:'pending'}]}]};
 }
+test('print recovery exposes attempts and prior failures without HTML injection',t=>{
+ const f=fixture(t),b=batch();b.case_attempts[0].execution_progress={tasks:[{print_recovery:{status:'passed',attempts:3,recovered:true,elapsed_ms:48000,history:[{elapsed_ms:10000,attempts:1,state:'暂时失败 <img src=x>'}]}}]};
+ f.view.update(f.node,b);assert.match(f.node.textContent,/重试后取消成功.*尝试 3 次.*耗时 48 秒/);
+ const details=f.node.querySelector('[data-print-recovery-history]');details.open=true;assert.match(details.textContent,/暂时失败/);assert.equal(details.querySelector('img'),null);
+ f.view.update(f.node,b);assert.equal(details.open,true);
+ delete b.case_attempts[0].execution_progress;f.view.update(f.node,b);assert.equal(f.node.querySelector('[data-print-recovery-history]'),null);
+});
 test('normal running batch does not claim it is waiting to stop', t=>{
   const f=fixture(t), b=batch();b.stop_pending=true;b.execution_settled=false;
   f.view.update(f.node,b);

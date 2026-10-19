@@ -78,7 +78,7 @@ def validate_analysis(result, frames, duration, prior_secrets=()):
         required={'action','target','value','start_ms','end_ms','frame_refs','observation','evidence_kind','uncertainties'}
         if not isinstance(raw,dict) or not required<=set(raw)<=required|{'outcome','selection','reusable_expected'}: raise ValueError('video_model_invalid')
         event=copy.deepcopy(raw)
-        if event['action'] not in ACTIONS-{'launch','selectRecord'} or event['evidence_kind'] not in {'observed','inferred'}: raise ValueError('video_action_invalid')
+        if event['action'] not in ACTIONS-{'launch','selectRecord','submitPrint','cancelPrint'} or event['evidence_kind'] not in {'observed','inferred'}: raise ValueError('video_action_invalid')
         start,end=event['start_ms'],event['end_ms'];refs=event['frame_refs']
         if type(start) is not int or type(end) is not int or not last<=start<=end<=duration: raise ValueError('video_reference_invalid')
         # Separate structural, unknown-frame and time-range failures so the safe
@@ -343,29 +343,35 @@ def analyze_whole_frames(document, root, cancelled, progress=None):
         if isinstance(planned,dict) and type(planned.get('multiple_scenarios')) is bool:multi|=planned['multiple_scenarios']
         try:
             from .ui_video_recovery import review_retries
-            plan,effective_required,recovery=review_retries(planned,candidates,required_indices)
+            from .ui_video_print_recovery import prepare_group,bind_group
+            plan,effective_required,recovery=review_retries(prepare_group(planned,candidates,required_indices),candidates,required_indices)
+            print_group=bind_group(plan,candidates)
+            if recovery and any('取消打印' in candidates[item['candidate_index']]['target'] for item in recovery) and not print_group:
+                raise ValueError('video_retry_invalid')
             bound=_bind_candidate_evidence(plan,candidates,effective_required)
             checked=validate_analysis(bound,frames,duration,known_secrets)
             _validate_consolidated_evidence(checked,candidates,candidates,frames,image_frames,duration,effective_required,{item['candidate_index'] for item in recovery})
-            proposal,_=draft_proposal({**document,**checked,'source_id':document.get('source_id','uvs_'+'0'*32),
+            proposal,_=draft_proposal({**document,**checked,'print_recovery':print_group,'source_id':document.get('source_id','uvs_'+'0'*32),
                                       'analysis_version':document.get('analysis_version',1)})
             if any(step['action'] in {'aiTap','aiScroll'} and not step['expected'] for step in proposal['steps']):
                 raise ValueError('video_expected_missing')
-            return {**checked,'multiple_scenarios':multi,'raw_events':candidates,'raw_uncertainties':observed['uncertainties'],'omitted_retries':recovery}
-        except ValueError:
+            return {**checked,'multiple_scenarios':multi,'raw_events':candidates,'raw_uncertainties':observed['uncertainties'],'omitted_retries':recovery,'print_recovery':print_group}
+        except ValueError as error:
             if attempt:raise
             # Never send model output/error strings back: only a fixed safe correction.
             if isinstance(planned,dict) and isinstance(planned.get('events'),list):
                 known_secrets.extend(e['value'] for e in planned['events'] if isinstance(e,dict) and
                     e.get('action')=='aiInput' and isinstance(e.get('value'),str) and e['value'])
-            payload={**payload,'multiple_scenarios':multi,'validation_feedback':
+            payload={**payload,'multiple_scenarios':multi,'recovery_feedback':getattr(error,'model_feedback',''),'validation_feedback':
                 '上一结果未通过平台证据/复用校验。每事件必须有candidate_index/action/target/value/observation/uncertainties。'
                 '索引严格递增，除有效omitted_retries声明外保留全部required_candidate_indexes及原action，不输出时间或frame_refs/evidence_kind。'
                 'outcome只用不早于该候选end_ms且不晚于下一交互start_ms的真实结果帧。'
                 'selection仅在首次对象操作上出现一次，不含任何旧编号/日期/{{}}。后续操作引用{{本次对象}}；'
                 '确认后的reusable_expected检查{{本次对象}}消失和{{保留对象}}仍显示。不等待toast。其他导航只检查相关稳定页面。'
                 '每次点击和滚动都要有可见的稳定结果；缺少时重查对应结果帧，补outcome及简短reusable_expected，'
-                '不要留空让用户手写，也不要编造证据中未出现的结果。'}
+                '不要留空让用户手写，也不要编造证据中未出现的结果。'
+                '打印取消请输出print_recovery的submit/cancel/confirm/end四个原始候选下标：最终确认打印、首次取消、紧接的弹窗确认、任务消失或取消原因页的稳定观察。'
+                '平台检查区间内只能包含相同取消/确认控件及等待，不可跨过原因选择、反馈、返回、新打印；这些后续业务必须保留。'}
 
 
 def analyze_frames(document, root, cancelled):
@@ -535,11 +541,11 @@ def draft_proposal(document):
               'duration_ms':document['media']['duration_ms'],'frames':document['media']['frames'],
               'events':copy.deepcopy(document['events']),'goal':document['goal'],
               'generated_title':document.get('title',''),'omitted_retries':copy.deepcopy(document.get('omitted_retries',[])),
-              'raw_events':copy.deepcopy(document.get('raw_events',[]))}
+              'raw_events':copy.deepcopy(document.get('raw_events',[])),'print_recovery':copy.deepcopy(document.get('print_recovery'))}
     snapshot['snapshot_id']=hashlib.sha256(json.dumps([identifier,version]).encode()).hexdigest()
     steps=[];questions=list(document['uncertainties'])
     if document.get('omitted_retries'):
-        questions.append('已合并录屏中的失败重试，原始证据保留。常规用例只执行一次对应操作并检查业务终态；再次失败应停止，不能自动反复点击。')
+        questions.append('已保留失败重试证据；打印取消使用有限恢复，处理中不连点，最多8次/180秒。请核对本次任务范围及现场条件。' if document.get('print_recovery') else '已合并历史重试，当前操作不支持自动重试，请核对执行预期。')
     for index,event in enumerate(snapshot['events']):
         step_id=str(uuid.uuid4());event['draft_step_id']=step_id
         ref=f"video:{identifier}:{version}:{index}"
@@ -585,5 +591,9 @@ def draft_proposal(document):
         visible='；'.join(candidates)[:500] or '没有明确可见结果'
         questions.append(f'请明确确认目标与候选检查是否一致。用户目标原文：{goal[:600] or "未填写"}。录屏可见检查候选：{visible}。末尾检查候选：{final_check[:400] or "未明确"}。'
                          '平台未解释目标中的否定、范围或业务含义；如有冲突请修改预期/结束检查，再逐步确认。完整目标保留在来源详情。')
+    if document.get('print_recovery'):
+        if any(e.get('selection') for e in snapshot['events']):raise ValueError('video_retry_invalid')
+        from .ui_video_print_recovery import apply_group
+        steps=apply_group(steps,document['print_recovery'])
     normalized=normalize_steps({'title':document.get('title') or '录屏操作验证','preconditions':[],'steps':steps,'questions':questions},document['app_id'])
     return normalized,snapshot

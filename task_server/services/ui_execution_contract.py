@@ -101,4 +101,4 @@ def resolve_ui_target(app_id, device_target, actor=None):
             "target_package": target_package,
             "platform_mappings": {"android": app_id, **mappings},
             "device_snapshot": _device_snapshot(device, target_package),
-            "capabilities": {key: capabilities[key] for key in ("ui_execution_contract", "ui_platforms", "ui_actions", "android_baseline", "ui_dynamic_object_v1") if key in capabilities}}
+            "capabilities": {key: capabilities[key] for key in ("ui_execution_contract", "ui_platforms", "ui_actions", "android_baseline", "ui_dynamic_object_v1", "ui_print_recovery_v1") if key in capabilities}}

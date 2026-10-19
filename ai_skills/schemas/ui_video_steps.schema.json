@@ -295,6 +295,34 @@
           }
         }
       }
+    },
+    "print_recovery": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "submit",
+        "cancel",
+        "confirm",
+        "end"
+      ],
+      "properties": {
+        "submit": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "cancel": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "confirm": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "end": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
     }
   }
 }

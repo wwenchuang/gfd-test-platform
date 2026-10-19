@@ -153,6 +153,14 @@
       if(a.manual_stop_recovery)recoveryNote.textContent=`人工确认停止 · ${a.manual_stop_recovery.actor_display_name||a.manual_stop_recovery.actor_username||'操作人'} · ${new Date(a.manual_stop_recovery.confirmed_ns/1e6).toLocaleString()} · ${a.manual_stop_recovery.reason}。测试结果仍按中断或取消保留。`;
       const known=a.step_progress_known===true && Array.isArray(a.steps);
       text(row,'[data-attempt-hint]',a.block_message || a.message || (known?(a.step_progress_truncated?'当前仅展示部分步骤，完整结果请查看报告。':'步骤状态来自本次手机执行。'):'尚无步骤证据，仅用例级进度。'));
+      const printRecoveries=(a.execution_progress?.tasks||[]).map(t=>t.print_recovery).filter(Boolean);
+      if(printRecoveries.length){const r=printRecoveries.at(-1);const message=r.status==='passed'?(r.recovered?'重试后取消成功':'首次取消成功'):r.status==='bound'?'已绑定本次打印任务':r.status==='failed'?'未确认任务结束，请人工核对':'正在取消本次打印';const hint=row.querySelector('[data-attempt-hint]');hint.textContent+=' '+message+` · 尝试 ${r.attempts} 次 · 耗时 ${Math.round(r.elapsed_ms/1000)} 秒`;}
+      let recoveryHistory=row.querySelector('[data-print-recovery-history]');
+      if(printRecoveries.length){
+        if(!recoveryHistory){recoveryHistory=make('details');recoveryHistory.dataset.printRecoveryHistory='';recoveryHistory.append(make('summary','','取消恢复记录'),make('ul'));row.querySelector('[data-attempt-hint]').after(recoveryHistory);}
+        const history=printRecoveries.at(-1).history||[],signature=JSON.stringify(history);
+        if(recoveryHistory._signature!==signature){recoveryHistory._signature=signature;const ul=recoveryHistory.querySelector('ul');ul.replaceChildren();for(const item of history)ul.append(make('li','',`${Math.round(item.elapsed_ms/1000)} 秒 · 第 ${item.attempts} 次尝试 · ${item.state}`));}
+      }else recoveryHistory?.remove();
       const signature=JSON.stringify(known?a.steps:[]);
       if(row._stepsSignature!==signature){
         row._stepsSignature=signature;const steps=row.querySelector('ol');steps.replaceChildren();

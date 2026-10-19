@@ -248,4 +248,4 @@ def test_ios_runner_advertises_scroll_only_in_verified_subset(monkeypatch):
     monkeypatch.setenv('MIDSCENE_RUNNER_PLATFORM','ios')
     spec=importlib.util.spec_from_file_location('ios_scroll_runner',Path(__file__).resolve().parents[1]/'mac-midscene-runner.py')
     loaded=importlib.util.module_from_spec(spec);spec.loader.exec_module(loaded)
-    assert set(loaded.RUNNER_CAPABILITIES['ui_actions'])=={'launch','aiTap','aiWaitFor','aiAssert','aiScroll'}
+    assert set(loaded.RUNNER_CAPABILITIES['ui_actions'])=={'launch','aiTap','aiWaitFor','aiAssert','aiScroll','aiQuery'}

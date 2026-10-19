@@ -1,5 +1,7 @@
 """Stable machine codes and concise user-facing blockers for the UI batch workflow."""
 BLOCKER_MESSAGES = {
+    'print_recovery_unsupported': '请更新执行器以支持本次打印任务的有限取消重试；当前不会下发打印。',
+    'print_recovery_invalid': '打印恢复步骤不完整或参数超限，请检查确认打印与取消的配对。',
     'dynamic_object_unsupported': '请更新执行器以支持每次重新选取测试对象；当前不会执行删除。',
     'suite_execution_unavailable': '该套件暂不支持可信的指定设备执行，请使用已验证基线。',
     'test_data_unavailable': '测试数据引用尚未完成权限校验和解析，不能执行。',

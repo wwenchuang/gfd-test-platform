@@ -12,8 +12,9 @@ import yaml
 
 from .yaml_static_validator import validate_midscene_action_parameters
 from .ui_dynamic_object import PREFIX, validate_references
+from . import ui_print_recovery as print_recovery
 
-ACTIONS = frozenset({'launch', 'aiTap', 'aiWaitFor', 'aiAssert', 'aiInput', 'aiScroll', 'selectRecord'})
+ACTIONS = frozenset({'launch', 'aiTap', 'aiWaitFor', 'aiAssert', 'aiInput', 'aiScroll', 'selectRecord', 'submitPrint', 'cancelPrint'})
 STEP_FIELDS = frozenset({'step_id', 'action', 'target', 'value', 'expected', 'review_state', 'source_ref'})
 AMBIGUOUS_TARGETS = frozenset({'按钮', '这里', '那里', '它', '点击这里', '输入框', '列表', '页面', '正常', '功能正常', '可见', '显示', '成功', '通过', '显示正常', '操作成功'})
 SHORT_TIMEOUT_MS = 12000
@@ -86,7 +87,13 @@ def normalize_steps(payload, app_id):
         if not isinstance(source_ref, str) or (source_ref not in {'text', 'manual_yaml'} and not re.fullmatch(r'(?:recording:[0-9a-f]{64}:[0-9a-f]{32}|video:uvs_[0-9a-f]{32}:[1-9][0-9]*:[0-9]+)', source_ref)):
             raise ValueError('source_ref 必须为文字或规范录制来源')
         value = copy.deepcopy(raw.get('value', ''))
-        if action == 'aiScroll':
+        if action in ('submitPrint','cancelPrint'):
+            value=print_recovery.policy(value)
+            if action=='submitPrint':
+                if expected and expected!=print_recovery.SUBMIT_EXPECTED:
+                    raise ValueError('确认打印步骤只检查本次新任务绑定；其他业务结果请增加独立检查点')
+                expected=print_recovery.SUBMIT_EXPECTED
+        elif action == 'aiScroll':
             if value == '':
                 value = {}
             if not isinstance(value, dict) or set(value) - {'direction', 'distance', 'scrollType'}:
@@ -126,6 +133,7 @@ def normalize_steps(payload, app_id):
                       'value': value, 'expected': expected, 'review_state': review_state,
                       'source_ref': source_ref})
     validate_references(steps)
+    print_recovery.validate_steps(steps)
     if steps[-1]['action'] != 'aiAssert' or not steps[-1]['target'] or steps[-1]['target'] in AMBIGUOUS_TARGETS:
         questions.append('请在最后添加明确的 aiAssert 检查点')
     return {'title': title, 'preconditions': preconditions, 'steps': steps, 'questions': list(dict.fromkeys(questions))}
@@ -159,6 +167,13 @@ def build_draft_yaml(draft, app_id):
             flow.append({'aiWaitFor': click_target_condition(target), 'timeout': SHORT_TIMEOUT_MS})
             step_ids.append(step['step_id'])
             roles.append('guard')
+        if action in ('submitPrint','cancelPrint'):
+            flow.append({'aiQuery':print_recovery.encode(action,target,step['value'])})
+            step_ids.append(step['step_id']);roles.append('business')
+            if action=='cancelPrint' and step['expected']:
+                flow.extend([{'aiWaitFor':step['expected'],'timeout':SHORT_TIMEOUT_MS},{'aiAssert':step['expected']}])
+                step_ids.extend([step['step_id'],step['step_id']]);roles.extend(['expected_wait','expected_assert'])
+            continue
         item = {'aiQuery': PREFIX + target} if action == 'selectRecord' else {action: target}
         if action == 'aiInput':
             item['value'] = step['value']

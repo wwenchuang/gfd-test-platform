@@ -534,3 +534,26 @@ The cleanup script only removes:
 
 It does not remove `/opt/midscene-tasks`, `/opt/midscene-reports`, reports,
 cases, learning data, or the running app directory.
+
+### Print cancellation recovery (2026-10-19)
+
+Update the server with `bash deploy/update-main-server.sh`. The server alone does
+not upgrade desktop Runners. After all jobs finish, back up and replace the
+installed Mac `mac-midscene-runner.py`, then restart each existing Android/iOS
+Runner with its configured launcher. Keep the existing environment and Runner ID;
+do not start duplicate processes. Verify heartbeat capability `ui_print_recovery_v1`.
+The adapter requires the verified Midscene 1.13.x integration. Windows does not
+advertise this capability and rejects these cases before any application action.
+
+The default cancellation budget is 180000 ms / 8 attempts / at least 10000 ms
+after explicit temporary failure. Draft policy values may only reduce the total
+time/attempt caps; retry delay is 10000–60000 ms. Submit is performed once, followed
+by binding the new task and cancellation. Processing states never trigger repeated
+taps. Task identity uncertainty, timeout, disconnect or interruption requires
+manual physical-task inspection; stopping the UI test does not stop a printer.
+
+Current visual binding requires a visible unique printer ID and task ID. A model
+name, list position or the recording's old number is never an identity substitute.
+Screens without those identifiers need a separately verified identity/status
+source before this workflow can be accepted on physical hardware. Do not claim
+real printing acceptance from simulated state-machine checks or generated YAML.

@@ -1,7 +1,9 @@
 """Deliberately narrow YAML-to-Chinese adapter. Never executes or calls a model."""
 import yaml
+import json
 from .ui_case_draft_contract import ACTIONS, SHORT_TIMEOUT_MS, normalize_steps, build_draft_yaml, click_target_condition
 from .ui_dynamic_object import PREFIX
+from . import ui_print_recovery as print_recovery
 
 MAX_PARSE_CHARS = 100000
 MAX_RAW_CHARS = 200000
@@ -46,14 +48,19 @@ def parse_candidate(raw, app_id, preconditions):
     flow = task['flow']
     if not isinstance(flow, list) or not 1 <= len(flow) <= 201:
         raise ValueError('候选 YAML 必须包含1至201个动作（转换后最多50个中文步骤）')
+    print_recovery.validate_flow(document)
     steps = []
     for index, item in enumerate(flow):
         if isinstance(item,dict) and set(item)=={'aiQuery'} and isinstance(item['aiQuery'],str) and item['aiQuery'].startswith(PREFIX):
             item={'selectRecord':item['aiQuery'][len(PREFIX):]}
+        if isinstance(item,dict) and set(item)=={'aiQuery'} and isinstance(item['aiQuery'],str) and item['aiQuery'].startswith(print_recovery.PREFIX):
+            body=json.loads(item['aiQuery'][len(print_recovery.PREFIX):])
+            action='submitPrint' if body['operation']=='submit' else 'cancelPrint'
+            item={action:body['target'],'value':{key:body[key] for key in print_recovery.DEFAULTS}}
         if not isinstance(item, dict) or len(set(item) & ACTIONS) != 1:
             raise ValueError(f'第 {index + 1} 个动作不支持；不能转换坐标、ADB 或系统指令')
         action = next(iter(set(item) & ACTIONS))
-        allowed = {action} | ({'timeout'} if action == 'aiWaitFor' else {'value'} if action == 'aiInput' else {'direction', 'distance', 'scrollType'} if action == 'aiScroll' else set())
+        allowed = {action} | ({'timeout'} if action == 'aiWaitFor' else {'value'} if action in ('aiInput','submitPrint','cancelPrint') else {'direction', 'distance', 'scrollType'} if action == 'aiScroll' else set())
         if set(item) - allowed:
             raise ValueError(f'第 {index + 1} 个动作含不支持的选项：' + '、'.join(sorted(set(item) - allowed)))
         if action == 'aiWaitFor' and (type(item.get('timeout')) is not int or item['timeout'] != SHORT_TIMEOUT_MS):
@@ -82,7 +89,7 @@ def parse_candidate(raw, app_id, preconditions):
                 continue
         if step['action'] == 'aiWaitFor' and following and following['action'] == 'aiTap' and click_target_condition(following['target']) == step['target']:
             continue
-        if (step['action'] in {'aiTap','aiInput','aiScroll'} and following and check
+        if (step['action'] in {'aiTap','aiInput','aiScroll','cancelPrint'} and following and check
                 and following['action']=='aiWaitFor' and check['action']=='aiAssert'
                 and following['target']==check['target']):
             step['expected']=following['target']
