@@ -323,29 +323,16 @@ def analyze_whole_frames(document, root, cancelled):
     from . import ai_skill_service as ai
     frames=document['media']['frames'];duration=document['media']['duration_ms']
     if cancelled():raise ValueError('video_cancelled')
-    if not 2<=len(frames)<=60:raise ValueError('video_vision_limit')
-    assets=[];total=0
-    for frame in frames:
-        if cancelled():raise ValueError('video_cancelled')
-        path=root/'frames'/(frame['frame_id']+'.jpg')
-        if path.stat().st_size>8*1024*1024:raise ValueError('video_vision_limit')
-        data=base64.b64encode(path.read_bytes()).decode()
-        total+=len(data)
-        if total>10*1024*1024:raise ValueError('video_vision_limit')
-        assets.append({'name':frame['frame_id'],'timestamp_ms':frame['timestamp_ms'],'mime':'image/jpeg','base64':data})
-    payload={'phase':'whole-observe','frames':frames,'image_frames':frames,'duration_ms':duration}
-    # No user intent or baseline style in factual observation. Planning receives both.
-    result=ai.run_ai_skill('ui_video_observe',payload,image_assets=assets,timeout=120,
-        retry_count=0,max_tokens=10000,repair_invalid_json=False)
-    if cancelled():raise ValueError('video_cancelled')
-    result=_bind_whole_evidence(result,frames)
-    known_secrets=[e['value'] for e in result['events'] if e['action']=='aiInput' and isinstance(e.get('value'),str) and e['value']]
-    observed=validate_analysis(result,frames,duration)
+    if not 2<=len(frames)<=240:raise ValueError('video_vision_limit')
+    from .ui_video_windows import observe_windows, load_assets, planning_frames
+    observed,known_secrets=observe_windows(frames,duration,root,cancelled)
     candidates=observed['events'];multi=observed['multiple_scenarios']
     if not candidates:return {**observed,'raw_events':[],'raw_uncertainties':observed['uncertainties']}
+    image_frames=frames if len(frames)<=60 else planning_frames(candidates,frames)
+    assets=load_assets(image_frames,root,cancelled)
     required_indices=_required_interactions(candidates,duration)
     payload={'phase':'whole-consolidate','app_id':document['app_id'],'goal':document['goal'],
-        'frames':frames,'image_frames':frames,'duration_ms':duration,'candidate_events':candidates,
+        'frames':frames,'image_frames':image_frames,'duration_ms':duration,'candidate_events':candidates,
         'required_candidate_indexes':required_indices,'raw_uncertainties':observed['uncertainties'],
         'multiple_scenarios':multi,'baseline_examples':document.get('baseline_examples',[])}
     for attempt in range(2):
@@ -355,14 +342,16 @@ def analyze_whole_frames(document, root, cancelled):
         if cancelled():raise ValueError('video_cancelled')
         if isinstance(planned,dict) and type(planned.get('multiple_scenarios')) is bool:multi|=planned['multiple_scenarios']
         try:
-            bound=_bind_candidate_evidence(planned,candidates,required_indices)
+            from .ui_video_recovery import review_retries
+            plan,effective_required,recovery=review_retries(planned,candidates,required_indices)
+            bound=_bind_candidate_evidence(plan,candidates,effective_required)
             checked=validate_analysis(bound,frames,duration,known_secrets)
-            _validate_consolidated_evidence(checked,candidates,candidates,frames,frames,duration,required_indices)
+            _validate_consolidated_evidence(checked,candidates,candidates,frames,image_frames,duration,effective_required)
             proposal,_=draft_proposal({**document,**checked,'source_id':document.get('source_id','uvs_'+'0'*32),
                                       'analysis_version':document.get('analysis_version',1)})
             if any(step['action'] in {'aiTap','aiScroll'} and not step['expected'] for step in proposal['steps']):
                 raise ValueError('video_expected_missing')
-            return {**checked,'multiple_scenarios':multi,'raw_events':candidates,'raw_uncertainties':observed['uncertainties']}
+            return {**checked,'multiple_scenarios':multi,'raw_events':candidates,'raw_uncertainties':observed['uncertainties'],'omitted_retries':recovery}
         except ValueError:
             if attempt:raise
             # Never send model output/error strings back: only a fixed safe correction.
@@ -371,7 +360,7 @@ def analyze_whole_frames(document, root, cancelled):
                     e.get('action')=='aiInput' and isinstance(e.get('value'),str) and e['value'])
             payload={**payload,'multiple_scenarios':multi,'validation_feedback':
                 '上一结果未通过平台证据/复用校验。每事件必须有candidate_index/action/target/value/observation/uncertainties。'
-                '索引严格递增，保留全部required_candidate_indexes及原action，不输出时间或frame_refs/evidence_kind。'
+                '索引严格递增，除有效omitted_retries声明外保留全部required_candidate_indexes及原action，不输出时间或frame_refs/evidence_kind。'
                 'outcome只用不早于该候选end_ms且不晚于下一交互start_ms的真实结果帧。'
                 'selection仅在首次对象操作上出现一次，不含任何旧编号/日期/{{}}。后续操作引用{{本次对象}}；'
                 '确认后的reusable_expected检查{{本次对象}}消失和{{保留对象}}仍显示。不等待toast。其他导航只检查相关稳定页面。'
@@ -545,9 +534,12 @@ def draft_proposal(document):
     snapshot={'kind':'video','source_id':identifier,'app_id':document['app_id'],'analysis_version':version,
               'duration_ms':document['media']['duration_ms'],'frames':document['media']['frames'],
               'events':copy.deepcopy(document['events']),'goal':document['goal'],
-              'generated_title':document.get('title','')}
+              'generated_title':document.get('title',''),'omitted_retries':copy.deepcopy(document.get('omitted_retries',[])),
+              'raw_events':copy.deepcopy(document.get('raw_events',[]))}
     snapshot['snapshot_id']=hashlib.sha256(json.dumps([identifier,version]).encode()).hexdigest()
     steps=[];questions=list(document['uncertainties'])
+    if document.get('omitted_retries'):
+        questions.append('已合并录屏中的失败重试，原始证据保留。常规用例只执行一次对应操作并检查业务终态；再次失败应停止，不能自动反复点击。')
     for index,event in enumerate(snapshot['events']):
         step_id=str(uuid.uuid4());event['draft_step_id']=step_id
         ref=f"video:{identifier}:{version}:{index}"

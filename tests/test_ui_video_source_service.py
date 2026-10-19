@@ -141,6 +141,17 @@ class VideoSourceTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,'video_split_required'):
             decode_video(movie,directory/'spatial',lambda:False)
 
+    def test_long_flow_over_sixty_boundaries_keeps_end_and_bounded_frames(self):
+        from task_server.services.ui_video_source_service import decode_video
+        from PIL import Image
+        directory=Path(self.temp.name)
+        for i in range(72):Image.new('RGB',(96,160),['red','blue'][i%2]).save(directory/f'long-{i:03d}.png')
+        movie=self.fixture(directory/'long-flow.mp4','-framerate','0.72','-i',str(directory/'long-%03d.png'),'-c:v','libx264','-pix_fmt','yuv420p')
+        result=decode_video(movie,directory/'long-flow',lambda:False)
+        self.assertGreater(len(result['frames']),60)
+        self.assertLessEqual(len(result['frames']),240)
+        self.assertGreater(result['frames'][-1]['timestamp_ms'],97000)
+
     def test_cancel_before_decoder_launch(self):
         from task_server.services.ui_video_source_service import decode_video
         with self.assertRaisesRegex(ValueError, 'video_cancelled'):

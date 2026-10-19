@@ -16,7 +16,7 @@ from pathlib import Path
 
 MAX_BYTES = 200 * 1024 * 1024
 MAX_DURATION_MS = 600000
-MAX_FRAMES = 60
+MAX_FRAMES = 240
 _ADMISSION = threading.Lock()
 @contextmanager
 def _admit():
@@ -128,7 +128,7 @@ class VideoStore:
                 self._check_admission(db)
                 doc.pop('media',None)
                 doc.pop('title',None)
-                doc.update(status='queued',error='',error_code='',events=[],segments=[],candidate_steps=[],uncertainties=[],raw_events=[],raw_uncertainties=[],analysis_version=doc['analysis_version']+1)
+                doc.update(status='queued',error='',error_code='',events=[],segments=[],candidate_steps=[],uncertainties=[],raw_events=[],raw_uncertainties=[],omitted_retries=[],analysis_version=doc['analysis_version']+1)
                 self._save(db,doc)
                 return doc
 
@@ -248,7 +248,8 @@ def decode_video(video, output, cancelled):
         for index,change in enumerate(changes[1:],1):
             if change>=64:
                 selected.update((index-1,index))
-    budget=MAX_FRAMES-1  # reserve the independently decoded final anchor
+    frame_limit=min(MAX_FRAMES,60 if duration<=90000 else ((duration+59999)//60000)*60)
+    budget=frame_limit-1  # reserve the independently decoded final anchor
     if len(selected)>budget:raise ValueError('video_split_required')
     # One-second targets use actual changed-frame timestamps. Add the least
     # represented targets first so a full budget never silently truncates the tail.
@@ -269,7 +270,12 @@ def decode_video(video, output, cancelled):
         anchors=[all_times[i] for i in indexes if first<=i<=last]
         if any(b-a>3000 for a,b in zip(anchors,anchors[1:])):
             raise ValueError('video_split_required')
-    selector="+".join(f"eq(n,{i})" for i in indexes)
+    # FFmpeg expression parsing has a recursion limit: keep the sum balanced.
+    def expression(items):
+        if len(items)==1:return f"eq(n,{items[0]})"
+        middle=len(items)//2
+        return "("+expression(items[:middle])+"+"+expression(items[middle:])+")"
+    selector=expression(indexes)
     _, log = _process([*common, '-vf', base+",select='"+selector+"',showinfo", *_sync_args(cancelled), '-threads', '1', '-pix_fmt', 'yuvj420p', '-q:v', '4', str(output/'frame-%03d.jpg')], cancelled)
     times = [round(float(t)*1000) for t in re.findall(rb'\bn:\s*\d+.*?pts_time:([\d.e+\-]+)', log)]
     files = sorted(output.glob('frame-*.jpg'))
