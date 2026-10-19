@@ -26,7 +26,7 @@ def observe_windows(frames,duration,root,cancelled,progress=None,review_events=N
         if len(windows)>1:
             payload['window']={'index':index+1,'total':len(windows),'previous_end_ms':previous_end,
                                'final':index==len(windows)-1}
-            payload['prior_events']=events[-8:]
+            payload['prior_events']=[{k:e[k] for k in ('action','target','value','frame_refs','observation','uncertainties')} for e in events[-8:]]
         images=window
         if review_events is not None:
             # Show previous page identities as visual context without letting
@@ -39,12 +39,21 @@ def observe_windows(frames,duration,root,cancelled,progress=None,review_events=N
             payload.update(review_mode='full_flow_after_recovery',candidate_events=review_events,
                            image_frames=images,context_frame_ids=refs)
         if progress:progress('reviewing' if review_events is not None else 'observing',index,len(windows),events)
-        result=ai.run_ai_skill('ui_video_observe',payload,image_assets=load_assets(images,root,cancelled),
-            timeout=120,retry_count=0,max_tokens=10000,repair_invalid_json=False)
-        if cancelled():raise ValueError('video_cancelled')
-        result=_bind_whole_evidence(result,window)
-        secrets.extend(e['value'] for e in result['events'] if e['action']=='aiInput' and isinstance(e.get('value'),str) and e['value'])
-        checked=validate_analysis(result,window,duration,secrets)
+        assets=load_assets(images,root,cancelled)
+        for attempt in range(2):
+            if cancelled():raise ValueError('video_cancelled')
+            result=ai.run_ai_skill('ui_video_observe',payload,image_assets=assets,
+                timeout=120,retry_count=0,max_tokens=10000,repair_invalid_json=False)
+            if cancelled():raise ValueError('video_cancelled')
+            if isinstance(result,dict) and isinstance(result.get('events'),list):
+                secrets.extend(e['value'] for e in result['events'] if isinstance(e,dict) and e.get('action')=='aiInput' and isinstance(e.get('value'),str) and e['value'])
+            try:
+                result=_bind_whole_evidence(result,window)
+                checked=validate_analysis(result,window,duration,secrets)
+                break
+            except ValueError:
+                if attempt:raise
+                payload['validation_feedback']='本窗口输出未通过格式或证据检查。重新核对当前frames，仅输出action/target/value/frame_refs/observation及可选uncertainties，不输出start_ms/end_ms/evidence_kind或其它字段。只引用当前窗真实帧且按时间排序，完整保留当前窗操作。'
         for event in checked['events']:
             # Only identical evidence in an overlap is a duplicate. Never erase
             # a repeated business click merely because the target text matches.

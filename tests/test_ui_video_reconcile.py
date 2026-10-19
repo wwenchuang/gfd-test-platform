@@ -88,3 +88,36 @@ def test_long_observation_budget_is_separate_from_final_case_budget(monkeypatch,
     assert len(observed['events'])==90
     with pytest.raises(ValueError,match='video_model_invalid'):
         validate_analysis(observed,fs,9000)
+
+
+def test_window_retries_malformed_output_once_without_copying_platform_fields(monkeypatch,tmp_path):
+    from task_server.services import ui_video_windows as vw,ai_skill_service as ai
+    fs=[{'frame_id':f'frame-{i:03d}','timestamp_ms':i*100} for i in range(3)]
+    (tmp_path/'frames').mkdir()
+    for f in fs:(tmp_path/'frames'/(f['frame_id']+'.jpg')).write_bytes(b'image')
+    calls=[]
+    def model(skill,payload,**kw):
+        calls.append(copy.deepcopy(payload))
+        e={'action':'aiAssert','target':'当前页面','value':'','observation':'首页可见','frame_refs':['frame-001']}
+        if len(calls)==1:e['start_ms']=100
+        return {'events':[e],'uncertainties':[],'multiple_scenarios':False}
+    monkeypatch.setattr(ai,'run_ai_skill',model)
+    result,_=vw.observe_windows(fs,300,tmp_path,lambda:False)
+    assert len(calls)==2 and calls[1]['validation_feedback']
+    assert result['events'][0]['start_ms']==100
+
+
+def test_invalid_window_stops_after_two_model_calls(monkeypatch,tmp_path):
+    from task_server.services import ui_video_windows as vw,ai_skill_service as ai
+    fs=[{'frame_id':f'frame-{i:03d}','timestamp_ms':i*100} for i in range(3)]
+    (tmp_path/'frames').mkdir()
+    for f in fs:(tmp_path/'frames'/(f['frame_id']+'.jpg')).write_bytes(b'image')
+    calls=[]
+    def model(*args,**kw):
+        calls.append(1)
+        return {'events':[{'action':'aiTap','target':'页面','value':'','observation':'点击','frame_refs':['forged']}],
+                'uncertainties':[],'multiple_scenarios':False}
+    monkeypatch.setattr(ai,'run_ai_skill',model)
+    with pytest.raises(ValueError,match='video_reference_invalid'):
+        vw.observe_windows(fs,300,tmp_path,lambda:False)
+    assert len(calls)==2

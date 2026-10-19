@@ -1,3 +1,10 @@
+## 2026-10-19 原片v6最后窗口格式错误与执行器更新
+
+- 7169dfcd已校验包部署，health/终端完成一致。v6保留64条观察后在第10窗字段合同失败，trace位于_bind_whole_evidence:307；同窗独立调用返回BOUND_OK，定位为暂时输出格式问题。仅本窗格式/证据失败可固定反馈纠正一次，不重试provider异常、不回传模型原文，输入脱敏和取消检查跨重试保持。
+- 152项相关Python及backend63/Gateway46/编译/diff通过，独立复审验证provider异常不重试、取消阻断和敏感输入跨重试脱敏。
+- 已确认平台无pending/running手机任务，备份并更新本机MidsceneAndroid、MidsceneIOS的mac-midscene-runner.py，原环境/RunnerID保持，各自启动器重启，平台均online=true且ui_print_recovery_v1=true。备份各自backups/20261019-before-print-recovery.py；未下发手机任务或打印。
+- 原视频尚未生成最终草稿，继续重新分析验收。
+
 ## 2026-10-19 原片v5证据数量门禁修复
 
 - 38585ac0经校验增量包部署，health精确一致。原片v5已识别58条观察，在全部窗口聚合时误用最终50步骤限制，video_model_invalid；尚未进入新增复核。
