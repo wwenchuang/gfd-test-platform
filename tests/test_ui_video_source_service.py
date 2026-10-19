@@ -222,3 +222,12 @@ def test_progress_from_stale_analysis_cannot_overwrite_retried_source(tmp_path):
         assert store.transition(identifier,{'analyzing'},status,expected_version=1,error='old') is None
     current=store.get(identifier,'one','com.example.app')
     assert current['status']=='analyzing' and 'analysis_progress' not in current
+
+
+def test_soft_navigation_keeps_directional_midframe_not_only_endpoints():
+    from task_server.services.ui_video_source_service import _transition_anchors
+    times=list(range(0,1201,50))
+    changes=[30 if 300<=t<=600 else 1 for t in times]
+    selected={times[i] for i in _transition_anchors(times,changes)}
+    assert 250 in selected and 750 in selected
+    assert 450 in selected

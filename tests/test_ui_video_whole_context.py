@@ -322,3 +322,12 @@ def test_local_result_outside_initial_planning_images_is_bound(monkeypatch,tmp_p
     monkeypatch.setattr(ai,'run_ai_skill',model)
     result=va.analyze_whole_frames({'app_id':'com.example.app','goal':'','media':{'frames':fs,'duration_ms':8200}},tmp_path,lambda:False)
     assert result['events'][0]['outcome']['frame_refs']==['frame-081']
+
+
+def test_whole_frame_limit_rejects_before_model(monkeypatch,tmp_path):
+    from task_server.services import ui_video_analysis as va,ai_skill_service as ai
+    from task_server.services.ui_video_source_service import MAX_FRAMES
+    monkeypatch.setattr(ai,'run_ai_skill',lambda *a,**kw:pytest.fail('unexpected AI'))
+    fs=[{'frame_id':f'frame-{i:03d}','timestamp_ms':i*100} for i in range(MAX_FRAMES+1)]
+    with pytest.raises(ValueError,match='video_vision_limit'):
+        va.analyze_whole_frames({'media':{'frames':fs,'duration_ms':60000}},tmp_path,lambda:False)

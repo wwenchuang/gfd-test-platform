@@ -324,7 +324,8 @@ def analyze_whole_frames(document, root, cancelled, progress=None):
     from . import ai_skill_service as ai
     frames=document['media']['frames'];duration=document['media']['duration_ms']
     if cancelled():raise ValueError('video_cancelled')
-    if not 2<=len(frames)<=240:raise ValueError('video_vision_limit')
+    from .ui_video_source_service import MAX_FRAMES
+    if not 2<=len(frames)<=MAX_FRAMES:raise ValueError('video_vision_limit')
     from .ui_video_windows import observe_windows, load_assets, planning_frames
     observed,known_secrets=observe_windows(frames,duration,root,cancelled,progress)
     first_pass=copy.deepcopy(observed['events'])

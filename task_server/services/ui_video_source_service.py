@@ -16,7 +16,7 @@ from pathlib import Path
 
 MAX_BYTES = 200 * 1024 * 1024
 MAX_DURATION_MS = 600000
-MAX_FRAMES = 240
+MAX_FRAMES = 300
 _ADMISSION = threading.Lock()
 @contextmanager
 def _admit():
@@ -208,8 +208,8 @@ def _sync_args(cancelled):
     return ['-fps_mode','vfr'] if b'-fps_mode' in help_text else ['-vsync','vfr']
 
 
-def _transition_anchors(times,changes):
-    """Keep both sides of soft animated transitions, including brief return pages."""
+def _transition_anchors(times,changes,include_direction=True):
+    """Keep stable endpoints and direction evidence of soft page transitions."""
     from bisect import bisect_left
     if len(changes)!=len(times):return set()
     runs=[]
@@ -222,6 +222,11 @@ def _transition_anchors(times,changes):
         after=min(len(times)-1,bisect_left(times,times[run[-1]]+150))
         if position+1<len(runs):after=min(after,runs[position+1][0]-1)
         selected.update((max(0,run[0]-1),after))
+        # Only a short, substantial multi-frame transition needs direction
+        # evidence; do not spend the bounded budget on sustained spinners.
+        if include_direction and 80<=times[run[-1]]-times[run[0]]<=1000 and max(changes[i] for i in run)>=24:
+            middle=min(run,key=lambda i:abs(times[i]-(times[run[0]]+times[run[-1]])/2))
+            selected.add(middle)
     return selected
 
 
@@ -263,12 +268,17 @@ def decode_video(video, output, cancelled):
         for index,change in enumerate(changes[1:],1):
             if change>=64:
                 selected.update((index-1,index))
-    selected.update(_transition_anchors(all_times,changes))
+    transition_anchors=_transition_anchors(all_times,changes)
+    direction_extra=transition_anchors-_transition_anchors(all_times,changes,include_direction=False)-selected
+    selected.update(transition_anchors)
     for first,last in clusters:
         for index in (max(0,first-1),first,last):
             if min(abs(all_times[index]-all_times[j]) for j in selected)>400:
                 selected.add(index)
-    frame_limit=min(MAX_FRAMES,60 if duration<=90000 else ((duration+59999)//60000)*60)
+    base_limit=min(240,60 if duration<=90000 else ((duration+59999)//60000)*60)
+    # Reserve only observed direction anchors, not an arbitrary larger sample.
+    # Keep per-request image and aggregate byte limits unchanged.
+    frame_limit=min(MAX_FRAMES,base_limit+len(direction_extra))
     budget=frame_limit-1  # reserve the independently decoded final anchor
     if len(selected)>budget:raise ValueError('video_split_required')
     # One-second targets use actual changed-frame timestamps. Add the least
