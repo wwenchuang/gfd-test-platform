@@ -172,3 +172,43 @@ def test_duplicate_attempt_rolls_back_batch_and_all_snapshots(tmp_path):
         assert db.execute("SELECT count(*) FROM batches").fetchone()[0] == 0
         assert db.execute("SELECT count(*) FROM snapshots").fetchone()[0] == 0
         assert db.execute("SELECT count(*) FROM case_attempts").fetchone()[0] == 0
+
+
+def test_list_includes_safe_frozen_execution_summary(tmp_path):
+    from task_server.services.ui_execution_store import UiExecutionStore
+    store = UiExecutionStore(tmp_path / 'history.sqlite3')
+    item = prepared()
+    item['attempts'][0]['target_resolution']['device_snapshot'] = {
+        'model': 'iPhone 13', 'ios_version': '26.6',
+        'app_versions': [{'version_name': '1.19.7', 'version_code': '70'}]}
+    batch = store.create_batch(item)
+    with store._connect() as db:
+        db.execute("UPDATE case_attempts SET status='passed',started_ns=1000000000,finished_ns=4000000000 WHERE ui_batch_id=?", (batch['ui_batch_id'],))
+        db.execute("UPDATE batches SET execution_settled=1 WHERE ui_batch_id=?", (batch['ui_batch_id'],))
+    row = store.list_batches('u-b')['items'][0]
+    assert row['case_names'] == ['导航']
+    assert row['case_count'] == 1
+    assert row['counts'] == {'passed': 1}
+    assert row['duration_seconds'] == 3
+    assert row['devices'][0]['name'] == 'iPhone 13'
+    assert row['devices'][0]['app_version'] == '1.19.7 (70)'
+    assert 'compiled_case' not in str(row)
+    assert 'source_yaml' not in str(row)
+    assert store.list_batches('u-a')['items'] == []
+
+
+def test_list_summary_counts_attempts_and_missing_metadata_honestly(tmp_path):
+    from task_server.services.ui_execution_store import UiExecutionStore
+    store = UiExecutionStore(tmp_path / 'history.sqlite3')
+    item = prepared()
+    item['snapshots'][0]['metadata'] = {}
+    batch = store.create_batch(item)
+    a = batch['case_attempts'][0]
+    store.append_case_attempt(batch['ui_batch_id'],a['case_id'],a['case_revision'],item['attempts'][0]['target'],a['compiled_case'])
+    row = store.list_batches('u-b')['items'][0]
+    assert row['case_count'] == 1
+    assert row['case_names'] == []
+    assert row['counts'] == {'queued': 2}
+    assert len(row['devices']) == 1
+    assert row['devices'][0]['app_version'] == ''
+    assert row['duration_seconds'] is None

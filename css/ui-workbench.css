@@ -187,3 +187,20 @@
 
 /* The library maintains cases; device execution belongs to Start Test. */
 .ui-simple[data-ui-mode="library"] .ui-simple-content{grid-template-columns:minmax(0,1fr)}
+
+/* Execution history: distinguish purpose, scope and frozen environment at a glance. */
+.ui-simple [data-ui-reports]{grid-template-columns:repeat(auto-fill,minmax(min(100%,360px),1fr));gap:12px}
+.ui-simple-report-row{gap:9px;min-width:0;transition:border-color .15s,background .15s}
+.ui-simple-report-row .ui-history-head{display:flex;align-items:flex-start;gap:12px;justify-content:space-between}
+.ui-history-head strong{color:#ecf5f2;line-height:1.5;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.ui-simple-report-row [data-history-status]{white-space:nowrap;font-size:11px;line-height:1.7;border:1px solid #516773;border-radius:20px;padding:1px 8px;color:#bfd0d8;flex-shrink:0}
+.ui-simple-report-row[data-status=passed] [data-history-status]{color:#83ebcb;border-color:#3c796b;background:#193b35}
+.ui-simple-report-row[data-status=failed] [data-history-status]{color:#ffa4b2;border-color:#8b4757;background:#39262e}
+.ui-simple-report-row:is([data-status=running],[data-status=queued],[data-status=cancelling]) [data-history-status]{color:#8fd8f3;border-color:#3b6f85;background:#193340}
+.ui-simple-report-row [data-history-device]{overflow-wrap:anywhere;color:#cedbdc}
+.ui-simple-report-row [data-history-counts]{padding:8px 0;border-block:1px solid #30434b;color:#d0dfdf}
+.ui-simple-report-row .ui-history-footer{display:flex;gap:8px;align-items:center;justify-content:space-between;flex-wrap:wrap}
+.ui-simple-report-row .ui-history-footer small{font-size:11px}
+.ui-simple-report-row .ui-history-footer em{white-space:nowrap;margin:0}
+.ui-simple[data-ui-mode=reports] .ui-simple-filters{max-width:480px}
+@media(prefers-reduced-motion:reduce){.ui-simple-report-row{transition:none}}

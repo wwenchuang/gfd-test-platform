@@ -350,18 +350,66 @@ class UiExecutionStore(UiExecutionLifecycle):
         query = """SELECT ui_batch_id, owner_user_id, owner_display_name, app_id,
                    (SELECT json_extract(s.metadata_json, '$.app_name') FROM snapshots s
                     WHERE s.ui_batch_id=batches.ui_batch_id ORDER BY s.rowid LIMIT 1) AS app_name,
-                   status, report_status, delivery_status, created_ns FROM batches"""
+                   status, report_status, delivery_status, execution_settled, created_ns FROM batches"""
         if where:
             query += " WHERE " + " AND ".join(where)
         query += " ORDER BY created_ns DESC, ui_batch_id DESC LIMIT ?"
         db = self._connect()
         try:
             rows = [dict(row) for row in db.execute(query, (*params, limit + 1))]
+            self._list_summaries(db, rows[:limit])
         finally:
             db.close()
         items = rows[:limit]
         next_cursor = f"{items[-1]['created_ns']}:{items[-1]['ui_batch_id']}" if len(rows) > limit else ""
         return {"items": items, "next_cursor": next_cursor}
+
+    @staticmethod
+    def _list_summaries(db, items):
+        """Summarize authorized page IDs without loading scripts, results or credentials."""
+        if not items:
+            return
+        by_id = {item['ui_batch_id']: item for item in items}
+        marks = ','.join('?' for _ in items)
+        for item in items:
+            item.update(case_names=[], case_count=0, counts={}, devices=[], duration_seconds=None)
+        for row in db.execute(f"""SELECT ui_batch_id, json_extract(metadata_json, '$.task_name') AS name
+                FROM snapshots WHERE ui_batch_id IN ({marks}) ORDER BY rowid""", tuple(by_id)):
+            item = by_id[row['ui_batch_id']]
+            item['case_count'] += 1
+            if row['name'] and str(row['name']).strip():
+                item['case_names'].append(str(row['name']).strip())
+        seen, timing = {}, {}
+        for row in db.execute(f"""SELECT ui_batch_id, runner_id, device_id, platform, status, started_ns, finished_ns,
+                json_extract(target_resolution_json, '$.device_snapshot') AS device_json
+                FROM case_attempts WHERE ui_batch_id IN ({marks}) ORDER BY rowid""", tuple(by_id)):
+            item = by_id[row['ui_batch_id']]
+            counts = item['counts']
+            counts[row['status']] = counts.get(row['status'], 0) + 1
+            times = timing.setdefault(row['ui_batch_id'], [[], []])
+            if row['started_ns']:
+                times[0].append(row['started_ns'])
+            if row['finished_ns']:
+                times[1].append(row['finished_ns'])
+            device = _decoded(row['device_json'])
+            if not isinstance(device, dict):
+                device = {}
+            versions = device.get('app_versions') or []
+            version = next((v for v in versions if isinstance(v, dict) and v.get('version_name')), {})
+            version_text = str(version.get('version_name') or '')
+            if version_text and version.get('version_code') is not None:
+                version_text += ' (' + str(version['version_code']) + ')'
+            key = (row['runner_id'], row['device_id'], row['platform'], version_text)
+            keys = seen.setdefault(row['ui_batch_id'], set())
+            if key not in keys:
+                keys.add(key)
+                item['devices'].append({'name': str(device.get('label') or device.get('model') or '设备名称未记录'),
+                    'platform': row['platform'], 'app_version': version_text})
+        for item in items:
+            starts, ends = timing.get(item['ui_batch_id'], ([], []))
+            if item['execution_settled'] and starts and ends:
+                item['duration_seconds'] = max(0, (max(ends) - min(starts)) / 1e9)
+            item['execution_settled'] = bool(item['execution_settled'])
 
     def pending_dispatches(self, limit=100):
         db = self._connect()

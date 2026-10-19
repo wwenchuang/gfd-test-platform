@@ -315,6 +315,32 @@
     const id=s.batchId;try{const data=await request(s,'batch','/ui-executions/'+encodeURIComponent(id));if(data&&id===s.batchId)showBatch(s,data.batch);}
     catch(error){notice(s,'本次执行读取失败：'+error.message,true);}
   }
+  function renderHistoryCard(button,b){
+    const names=(b.case_names||[]).filter(name=>typeof name==='string'&&name.trim());
+    const count=Number(b.case_count)||names.length;
+    const title=names.length?names[0]+(count>1?` 等 ${count} 条用例`:''):(count?`${count} 条用例测试`:'测试记录');
+    const state=({queued:'排队中',blocked:'等待条件满足',running:'执行中',passed:'通过',failed:'失败',cancelled:'已取消',cancelling:'正在停止',interrupted:'已中断'})[b.status]||'状态待确认';
+    button.dataset.status=b.status||'unknown';
+    button.querySelector('[data-history-title]').textContent=title;
+    button.querySelector('[data-history-title]').title=names.join('、');
+    button.querySelector('[data-history-status]').textContent=state;
+    const purpose=({not_requested:'普通测试',pending:'发版 · 报告生成中',generating:'发版 · 报告生成中',ready:'发版 · 报告已就绪',failed:'发版 · 报告生成失败'})[b.report_status]||'报告状态待确认';
+    button.querySelector('[data-history-app]').textContent=`${b.app_name||b.app_id||'应用未记录'} · ${purpose}`;
+    const devices=(b.devices||[]).map(d=>`${d.name||'设备名称未记录'} · ${({android:'安卓',ios:'iOS'})[d.platform]||'系统未记录'} · ${d.app_version||'版本未记录'}`);
+    const deviceText=devices.length?devices.slice(0,2).join('；')+(devices.length>2?` 等 ${devices.length} 台设备`:''):'设备信息未记录';
+    button.querySelector('[data-history-device]').textContent=deviceText;
+    button.querySelector('[data-history-device]').title=devices.join('；');
+    const counts=b.counts,parts=[];
+    if(counts&&Object.keys(counts).length){
+      const total=Object.values(counts).reduce((sum,n)=>sum+(Number(n)||0),0),passed=Number(counts.passed)||0,failed=(Number(counts.failed)||0)+(Number(counts.timeout)||0);
+      parts.push(`${count||'—'} 条用例 · ${total} 次执行`,`通过 ${passed}`,`失败 ${failed}`);
+      if(total>passed+failed)parts.push(`其他 ${total-passed-failed}`);
+    }else parts.push('执行统计未记录');
+    if(b.duration_seconds!=null&&Number.isFinite(Number(b.duration_seconds))){const n=Math.max(0,Math.round(Number(b.duration_seconds)));parts.push(`耗时 ${n>=60?Math.floor(n/60)+'分':''}${n%60}秒`);}
+    button.querySelector('[data-history-counts]').textContent=parts.join(' · ');
+    const date=new Date(Number(b.created_ns)/1e6);
+    button.querySelector('[data-history-owner]').textContent=`${b.owner_display_name||'执行人未记录'} · ${b.created_ns&&Number.isFinite(date.getTime())?date.toLocaleString('zh-CN',{hour12:false}):'时间未记录'}`;
+  }
   async function loadReports(s){
     if(s.pending.has('reports'))return;
     const query=new URLSearchParams({scope:'own',limit:'20'});if(s.app)query.set('app_id',s.app);if(s.cursor)query.set('cursor',s.cursor);
@@ -324,11 +350,9 @@
       let index=0;
       for(const b of data.items||[]){
         keep.add(b.ui_batch_id);let button=s.reportNodes.get(b.ui_batch_id);
-        if(!button){button=document.createElement('button');button.type='button';button.className='ui-simple-report-row';button.innerHTML='<strong></strong><span></span><small></small><em>查看结果 →</em>';s.reportNodes.set(b.ui_batch_id,button);}
+        if(!button){button=document.createElement('button');button.type='button';button.className='ui-simple-report-row';button.innerHTML='<span class="ui-history-head"><strong data-history-title></strong><b data-history-status></b></span><span data-history-app></span><span data-history-device></span><span data-history-counts></span><span class="ui-history-footer"><small data-history-owner></small><em>查看结果 →</em></span>';s.reportNodes.set(b.ui_batch_id,button);}
         if(list.children[index]!==button)list.insertBefore(button,list.children[index]||null);index++;
-        const date=new Date(Number(b.created_ns)/1e6);button.querySelector('strong').textContent=b.app_name||b.app_id;
-        button.querySelector('span').textContent=`${b.owner_display_name||''} · ${Number.isFinite(date.getTime())?date.toLocaleString():''}`;
-        button.querySelector('small').textContent=`${({queued:'排队中',blocked:'等待条件满足',running:'执行中',passed:'通过',failed:'失败',cancelled:'已取消',cancelling:'正在停止',interrupted:'已中断'})[b.status]||'状态待确认'} · ${({not_requested:'普通测试，未申请发版报告',pending:'发版报告生成中',generating:'发版报告生成中',ready:'报告已就绪',failed:'报告生成失败'})[b.report_status]||'报告尚未就绪'}`;
+        renderHistoryCard(button,b);
         button.onclick=()=>{selectBatch(s,b.ui_batch_id);s.batchSettled=['ready','failed'].includes(b.report_status);
           if(s.batchSettled&&s.options.download&&window.UiBatchReport){s.node.querySelector('[data-ui-batch]').hidden=true;openReport(s,b.ui_batch_id);}else loadBatch(s);};
       }

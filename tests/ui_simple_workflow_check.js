@@ -201,7 +201,8 @@ test('report list explicitly requests own scope',async t=>{
 test('report list displays frozen application names even when admission catalog is disabled',async t=>{
  const f=fixture(t,path=>path.startsWith('/ui-executions?')?{ok:true,items:[{ui_batch_id:'uib_1',app_id:'com.kfb.model',app_name:'智小白3D',status:'passed',report_status:'ready',created_ns:1000000}]}:undefined);
  f.mount('reports',{canAdmit:()=>false});await wait();
- assert.equal(f.node.querySelector('.ui-simple-report-row strong').textContent,'智小白3D');
+ assert.match(f.node.querySelector('[data-history-app]').textContent,/智小白3D/);
+ assert.equal(f.node.querySelector('.ui-simple-report-row strong').textContent,'测试记录');
  assert.equal(f.calls.some(c=>c.path.startsWith('/ui-executions/catalog')),false);
 });
 test('one report-row click opens a ready report without fetching progress',async t=>{
@@ -628,4 +629,19 @@ test('aborting a pending search for IME clears busy feedback',async t=>{
  let hold=false;const f=fixture(t,path=>hold&&path.startsWith('/ui-executions/catalog')?new Promise(()=>{}):undefined);f.mount();await wait();
  hold=true;f.node.querySelector('[data-ui-search]').click();await wait();assert.equal(f.node.querySelector('[data-ui-search]').getAttribute('aria-busy'),'true');
  f.node.querySelector('[name="ui-query"]').dispatchEvent(new f.w.CompositionEvent('compositionstart'));assert.notEqual(f.node.querySelector('[data-ui-search]').getAttribute('aria-busy'),'true');
+});
+
+
+test('history cards distinguish case, frozen device version and attempt totals without detail requests',async t=>{
+ const row={ui_batch_id:'uib_card',app_name:'智小白3D',owner_display_name:'小王',created_ns:'1792375756000000000',status:'passed',report_status:'not_requested',case_names:['删除打印记录'],case_count:1,counts:{passed:1,failed:1},devices:[{name:'iPhone 13',platform:'ios',app_version:'1.19.7 (70)'}],duration_seconds:145};
+ const f=fixture(t,path=>path.startsWith('/ui-executions?')?{ok:true,items:[row]}:undefined);f.mount('reports');await wait();
+ const card=f.node.querySelector('.ui-simple-report-row');assert.match(card.querySelector('strong').textContent,/删除打印记录/);
+ for(const value of ['智小白3D','iPhone 13','1.19.7 (70)','通过 1','失败 1','2分25秒','普通测试','小王'])assert.ok(card.textContent.includes(value),value);
+ assert.equal(f.calls.filter(c=>/^\/ui-executions\/uib_/.test(c.path)).length,0);
+ assert.equal(card.dataset.status,'passed');
+});
+test('history cards render untrusted titles as text and avoid invented legacy counts',async t=>{
+ const row={ui_batch_id:'uib_legacy',app_name:'应用甲',status:'queued',report_status:'pending',case_names:['<img src=x onerror=alert(1)>'],case_count:2};
+ const f=fixture(t,path=>path.startsWith('/ui-executions?')?{ok:true,items:[row]}:undefined);f.mount('reports');await wait();
+ const card=f.node.querySelector('.ui-simple-report-row');assert.equal(card.querySelector('img'),null);assert.match(card.textContent,/等 2 条用例/);assert.match(card.textContent,/排队中/);assert.doesNotMatch(card.textContent,/通过 0|undefined|NaN/);
 });
