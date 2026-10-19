@@ -111,7 +111,8 @@ def analyze_video_source(store,identifier):
             def progress(phase,completed,total,events):
                 if cancelled():raise ValueError('video_cancelled')
                 store.transition(identifier,{'analyzing'},'analyzing',expected_version=version,
-                    analysis_progress={'phase':phase,'completed':completed,'total':total},raw_events=events)
+                    analysis_progress={'phase':phase,'completed':completed,'total':total},raw_events=events,
+                    **({'first_pass_events':events} if phase=='reconciling' else {}))
             result=analyze_whole_frames(document,store.root/identifier,cancelled,progress)
             if cancelled():raise ValueError('video_cancelled')
             stage='reauthorize'

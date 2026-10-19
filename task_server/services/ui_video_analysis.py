@@ -326,6 +326,13 @@ def analyze_whole_frames(document, root, cancelled, progress=None):
     if not 2<=len(frames)<=240:raise ValueError('video_vision_limit')
     from .ui_video_windows import observe_windows, load_assets, planning_frames
     observed,known_secrets=observe_windows(frames,duration,root,cancelled,progress)
+    first_pass=copy.deepcopy(observed['events'])
+    from .ui_video_reconcile import needs_reconciliation,reconcile
+    if needs_reconciliation(first_pass,frames):
+        if progress:progress('reconciling',0,1,first_pass)
+        reviewed=reconcile(first_pass,frames,duration,root,cancelled,known_secrets,progress)
+        observed={**reviewed,'multiple_scenarios':observed['multiple_scenarios'] or reviewed['multiple_scenarios']}
+        if progress:progress('planning',1,1,observed['events'])
     candidates=observed['events'];multi=observed['multiple_scenarios']
     if not candidates:return {**observed,'raw_events':[],'raw_uncertainties':observed['uncertainties']}
     image_frames=frames if len(frames)<=60 else planning_frames(candidates,frames)
@@ -355,7 +362,8 @@ def analyze_whole_frames(document, root, cancelled, progress=None):
                                       'analysis_version':document.get('analysis_version',1)})
             if any(step['action'] in {'aiTap','aiScroll'} and not step['expected'] for step in proposal['steps']):
                 raise ValueError('video_expected_missing')
-            return {**checked,'multiple_scenarios':multi,'raw_events':candidates,'raw_uncertainties':observed['uncertainties'],'omitted_retries':recovery,'print_recovery':print_group}
+            checked['uncertainties']=list(dict.fromkeys(observed['uncertainties']+checked['uncertainties']))[:30]
+            return {**checked,'multiple_scenarios':multi,'first_pass_events':first_pass,'raw_events':candidates,'raw_uncertainties':observed['uncertainties'],'omitted_retries':recovery,'print_recovery':print_group}
         except ValueError as error:
             if attempt:raise
             # Never send model output/error strings back: only a fixed safe correction.
@@ -541,7 +549,7 @@ def draft_proposal(document):
               'duration_ms':document['media']['duration_ms'],'frames':document['media']['frames'],
               'events':copy.deepcopy(document['events']),'goal':document['goal'],
               'generated_title':document.get('title',''),'omitted_retries':copy.deepcopy(document.get('omitted_retries',[])),
-              'raw_events':copy.deepcopy(document.get('raw_events',[])),'print_recovery':copy.deepcopy(document.get('print_recovery'))}
+              'raw_events':copy.deepcopy(document.get('raw_events',[])),'first_pass_events':copy.deepcopy(document.get('first_pass_events',[])),'print_recovery':copy.deepcopy(document.get('print_recovery'))}
     snapshot['snapshot_id']=hashlib.sha256(json.dumps([identifier,version]).encode()).hexdigest()
     steps=[];questions=list(document['uncertainties'])
     if document.get('omitted_retries'):

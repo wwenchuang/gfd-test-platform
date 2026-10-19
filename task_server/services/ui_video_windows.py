@@ -14,12 +14,12 @@ def load_assets(frames,root,cancelled):
     return assets
 
 
-def observe_windows(frames,duration,root,cancelled,progress=None):
+def observe_windows(frames,duration,root,cancelled,progress=None,review_events=None,prior_secrets=()):
     from . import ai_skill_service as ai
     from .ui_video_analysis import _bind_whole_evidence,validate_analysis
     size=30 if len(frames)>60 else 60
     windows=[frames[i:i+size] for i in range(0,max(1,len(frames)-4),size-4)]
-    events=[];questions=[];secrets=[];multi=False;previous_end=-1
+    events=[];questions=[];secrets=list(prior_secrets);multi=False;previous_end=-1
     for index,window in enumerate(windows):
         if cancelled():raise ValueError('video_cancelled')
         payload={'phase':'whole-observe','frames':window,'image_frames':window,'duration_ms':duration}
@@ -27,8 +27,19 @@ def observe_windows(frames,duration,root,cancelled,progress=None):
             payload['window']={'index':index+1,'total':len(windows),'previous_end_ms':previous_end,
                                'final':index==len(windows)-1}
             payload['prior_events']=events[-8:]
-        if progress:progress('observing',index,len(windows),events)
-        result=ai.run_ai_skill('ui_video_observe',payload,image_assets=load_assets(window,root,cancelled),
+        images=window
+        if review_events is not None:
+            # Show previous page identities as visual context without letting
+            # the model emit events outside the current continuous window.
+            refs=[e['frame_refs'][-1] for e in review_events if e['end_ms']<window[0]['timestamp_ms']]
+            refs=list(dict.fromkeys(refs))
+            if len(refs)>16:refs=[refs[round(i*(len(refs)-1)/15)] for i in range(16)]
+            ids=set(refs)|{f['frame_id'] for f in window}
+            images=[f for f in frames if f['frame_id'] in ids]
+            payload.update(review_mode='full_flow_after_recovery',candidate_events=review_events,
+                           image_frames=images,context_frame_ids=refs)
+        if progress:progress('reviewing' if review_events is not None else 'observing',index,len(windows),events)
+        result=ai.run_ai_skill('ui_video_observe',payload,image_assets=load_assets(images,root,cancelled),
             timeout=120,retry_count=0,max_tokens=10000,repair_invalid_json=False)
         if cancelled():raise ValueError('video_cancelled')
         result=_bind_whole_evidence(result,window)
