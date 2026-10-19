@@ -4,7 +4,7 @@
   function close(){const old=active;if(!old)return;active=null;old.controller?.abort();clearTimeout(old.timeout);old.dialog.querySelector('iframe')?.remove();old.dialog.close();old.dialog.remove();old.focus?.isConnected&&old.focus.focus();}
   function open(options){
     close();const dialog=document.createElement('dialog');dialog.className='ui-replay-dialog';dialog.setAttribute('aria-label','执行回放');
-    dialog.innerHTML='<header><div><strong>执行回放</strong><p>按时间轴查看执行画面，点击步骤定位操作。</p></div><button type="button" data-replay-close>关闭</button></header><div class="ui-replay-toolbar"><label hidden data-replay-choice>执行记录 <select data-replay-select></select></label><button type="button" data-replay-retry>重新加载</button></div><p data-replay-message role="status">正在读取回放记录…</p><div data-replay-frame></div>';
+    dialog.innerHTML='<header><div><strong>执行回放</strong><p>按时间轴查看执行画面，点击步骤定位操作。</p></div><button type="button" class="btn-sm" data-replay-close>关闭</button></header><div class="ui-replay-toolbar"><label hidden data-replay-choice>执行记录 <select data-replay-select></select></label><button type="button" class="btn-sm" data-replay-retry>重新加载</button></div><p data-replay-message role="status">正在读取回放记录…</p><div data-replay-frame></div>';
     const state={dialog,focus:document.activeElement,version:0};active=state;document.body.append(dialog);dialog.showModal();
     const q=s=>dialog.querySelector(s),valid=()=>active===state&&dialog.isConnected&&options.isCurrent()!==false;
     q('[data-replay-close]').onclick=close;dialog.oncancel=e=>{e.preventDefault();close();};dialog.onclose=()=>{if(active===state)close();};
