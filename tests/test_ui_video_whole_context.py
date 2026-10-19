@@ -331,3 +331,33 @@ def test_whole_frame_limit_rejects_before_model(monkeypatch,tmp_path):
     fs=[{'frame_id':f'frame-{i:03d}','timestamp_ms':i*100} for i in range(MAX_FRAMES+1)]
     with pytest.raises(ValueError,match='video_vision_limit'):
         va.analyze_whole_frames({'media':{'frames':fs,'duration_ms':60000}},tmp_path,lambda:False)
+
+@pytest.mark.parametrize('second_start,second_target,expected',[(28,'姓名牌',1),(29,'姓名牌',2),(28,'取消打印',2)])
+def test_cross_window_same_start_nested_click_evidence_is_one_action(monkeypatch,tmp_path,second_start,second_target,expected):
+    from task_server.services import ui_video_windows as vw, ai_skill_service as ai
+    fs=[{'frame_id':f'f{i}','timestamp_ms':i*100} for i in range(61)]
+    monkeypatch.setattr(vw,'load_assets',lambda *a:[])
+    def model(skill,payload,**kw):
+        index=payload['window']['index']
+        refs=['f28','f29'] if index==1 else [f'f{i}' for i in range(second_start,31)]
+        target='姓名牌' if index==1 else second_target
+        return {'events':[{'action':'aiTap','target':target,'value':'','frame_refs':refs,'observation':'预览页面可见'}] if index<=2 else [],'uncertainties':[],'multiple_scenarios':False}
+    monkeypatch.setattr(ai,'run_ai_skill',model)
+    result,_=vw.observe_windows(fs,6100,tmp_path,lambda:False)
+    assert len(result['events'])==expected
+    if expected==1:
+        assert result['events'][0]['frame_refs']==['f28','f29','f30']
+        assert result['events'][0]['end_ms']==3000
+
+
+def test_overlap_keeps_equal_end_more_complete_evidence_and_all_questions(monkeypatch,tmp_path):
+    from task_server.services import ui_video_windows as vw,ai_skill_service as ai
+    fs=[{'frame_id':f'f{i}','timestamp_ms':i*100} for i in range(61)]
+    monkeypatch.setattr(vw,'load_assets',lambda *a:[])
+    def model(skill,payload,**kw):
+        index=payload['window']['index']
+        return {'events':[{'action':'aiTap','target':'返回','value':'','frame_refs':['f26','f29'] if index==1 else ['f26','f27','f29'],'observation':'已返回','uncertainties':[f'问题{index}-{i}' for i in range(8)]}] if index<=2 else [],'uncertainties':[],'multiple_scenarios':False}
+    monkeypatch.setattr(ai,'run_ai_skill',model)
+    result,_=vw.observe_windows(fs,6100,tmp_path,lambda:False)
+    assert result['events'][0]['frame_refs']==['f26','f27','f29']
+    assert len(set(result['events'][0]['uncertainties']+result['uncertainties']))==16

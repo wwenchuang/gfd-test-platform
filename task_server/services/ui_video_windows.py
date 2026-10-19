@@ -82,12 +82,29 @@ def observe_windows(frames,duration,root,cancelled,progress=None,review_events=N
             except ValueError:
                 if attempt:raise
                 payload['validation_feedback']='本窗口输出未通过格式或证据检查。重新核对当前frames，仅输出action/target/value/frame_refs/observation及可选uncertainties，不输出start_ms/end_ms/evidence_kind或其它字段。只引用当前窗真实帧且按时间排序，完整保留当前窗操作。'
+        previous_window_events=list(events)
         for event in checked['events']:
             # Only identical evidence in an overlap is a duplicate. Never erase
             # a repeated business click merely because the target text matches.
             duplicate=next((old for old in reversed(events) if old['action']==event['action'] and
+                            old['target']==event['target'] and old['value']==event['value'] and
                             old['frame_refs']==event['frame_refs']),None)
             if duplicate:continue
+            # Adjacent windows may extend the after-frame of the exact same
+            # click. Preserve that extension instead of creating two clicks
+            # with one start time (which gives the first a zero outcome span).
+            # Different starts/targets and non-nested evidence remain distinct.
+            overlap=next((old for old in reversed(previous_window_events)
+                if old['action']==event['action']=='aiTap' and
+                old['target']==event['target'] and old['value']==event['value'] and
+                old['start_ms']==event['start_ms'] and
+                (set(old['frame_refs'])<=set(event['frame_refs']) or set(event['frame_refs'])<=set(old['frame_refs']))),None)
+            if overlap:
+                merged_questions=list(dict.fromkeys(overlap['uncertainties']+event['uncertainties']))
+                overlap['uncertainties']=merged_questions[:10];questions.extend(merged_questions[10:])
+                if set(event['frame_refs'])>set(overlap['frame_refs']):
+                    overlap.update(end_ms=event['end_ms'],frame_refs=event['frame_refs'],observation=event['observation'])
+                continue
             old=events[-1] if events else None
             if (old and old['action']==event['action']=='aiInput' and old['target']==event['target'] and
                 event['start_ms']<=old['end_ms']):
