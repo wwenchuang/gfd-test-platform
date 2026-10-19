@@ -361,3 +361,32 @@ def test_overlap_keeps_equal_end_more_complete_evidence_and_all_questions(monkey
     result,_=vw.observe_windows(fs,6100,tmp_path,lambda:False)
     assert result['events'][0]['frame_refs']==['f26','f27','f29']
     assert len(set(result['events'][0]['uncertainties']+result['uncertainties']))==16
+
+
+@pytest.mark.parametrize('indexed',[True,False])
+def test_final_plan_cannot_compile_gesture_area_as_tap(indexed):
+    from task_server.services.ui_video_analysis import _bind_candidate_evidence
+    candidate={'action':'aiTap','target':'屏幕右侧边缘返回手势区域','value':'','start_ms':10,'end_ms':20,'frame_refs':['f1','f2'],'evidence_kind':'inferred'}
+    output={'candidate_index':0,'action':'aiTap','target':candidate['target'],'value':''} if indexed else copy.deepcopy(candidate)
+    with pytest.raises(ValueError,match='video_action_invalid'):_bind_candidate_evidence({'events':[output]},[candidate],[0])
+    output['target']='详情页左上角返回箭头'
+    assert _bind_candidate_evidence({'events':[output]},[candidate],[0])['events'][0]['target']==output['target']
+
+
+def test_real_gesture_settings_button_is_not_a_gesture_area():
+    from task_server.services.ui_video_analysis import _bind_candidate_evidence
+    plan={'events':[{'action':'aiTap','target':'设置页手势设置按钮'}]}
+    assert _bind_candidate_evidence(plan,[])==plan
+
+
+@pytest.mark.parametrize('target',['屏幕左侧边缘向右滑动','屏幕右侧边缘位置','屏幕边缘（返回）'])
+def test_edge_gesture_target_variants_are_not_clicks(target):
+    from task_server.services.ui_video_analysis import _bind_candidate_evidence
+    with pytest.raises(ValueError,match='video_action_invalid'):
+        _bind_candidate_evidence({'events':[{'action':'aiTap','target':target}]},[])
+
+
+def test_named_back_gesture_setting_switch_is_a_real_control():
+    from task_server.services.ui_video_analysis import _bind_candidate_evidence
+    plan={'events':[{'action':'aiTap','target':'设置页返回手势开关'}]}
+    assert _bind_candidate_evidence(plan,[])==plan

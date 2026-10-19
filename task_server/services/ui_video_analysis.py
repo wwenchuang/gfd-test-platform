@@ -242,10 +242,21 @@ def _consolidation_images(events,frames,limit):
     return sorted(chosen,key=lambda frame:frame['timestamp_ms'])
 
 
+def _gesture_target(target):
+    text=str(target).strip()
+    # Labels for settings/help controls can legitimately contain “手势”.
+    if re.search(r'(?:开关|(?:设置|教程|说明|帮助)(?:按钮|入口|选项)?)$',text):return False
+    return bool(re.search(r'(?:返回|滑动)手势|侧滑(?:返回|区域)|屏幕[^，。\n]{0,12}边缘',text))
+
+
 def _bind_candidate_evidence(result, candidates, required_indices=()):
     """Bind indexed plans to validated evidence; legacy plans remain strict."""
     if not isinstance(result,dict) or not isinstance(result.get('events'),list):return result
     events=result['events']
+    # A touch trace is evidence, not a tappable cross-platform control.
+    if any(isinstance(e,dict) and e.get('action')=='aiTap' and
+           _gesture_target(e.get('target','')) for e in events):
+        raise ValueError('video_action_invalid')
     indexed=[isinstance(event,dict) and 'candidate_index' in event for event in events]
     if not any(indexed):return result
     if not all(indexed):raise ValueError('video_model_timeline')

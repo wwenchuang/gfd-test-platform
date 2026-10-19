@@ -212,6 +212,8 @@ def test_missing_coverage_gets_one_pixel_review_and_audit(monkeypatch,tmp_path):
     def model(skill,payload,**kw):
         calls.append(payload)
         assert payload['candidate_events']==[{'frame_refs':['f2']},{'frame_refs':['f4']}]
+        assert payload['coverage_checks']=={'first_pass':[{'frame_refs':['f2']},{'frame_refs':['f4']}],'independent_review':[{'frame_refs':['f2']}]}
+        assert '静止事实' in payload['validation_feedback']
         assert kw['retry_count']==0
         return {'events':[{k:v for k,v in e.items() if k not in ('start_ms','end_ms','evidence_kind')} for e in original[:2]],
             'uncertainties':[],'multiple_scenarios':False}
@@ -288,3 +290,23 @@ def test_matching_context_is_capped_and_cancelable(tmp_path):
     assert len(selected)<=16 and len({f['frame_id'] for f in selected})==len(selected)
     assert all(f['timestamp_ms']<fs[-30]['timestamp_ms']-2000 for f in selected)
     with pytest.raises(ValueError,match='video_cancelled'):context_frames(fs[-30:],fs,tmp_path,[],lambda:True)
+
+
+def test_touch_gesture_candidates_require_independent_full_review():
+    item=event(1);item['target']='屏幕右侧边缘返回手势区域'
+    assert vr.needs_reconciliation([item],[{}]*30)
+
+
+def test_explicit_pixel_based_auto_layout_correction_can_remove_false_scroll():
+    old=event(1,'aiScroll');old['frame_refs']=['f1','f2']
+    new=copy.deepcopy(old);new.update(action='aiAssert',value='',observation='标签自动加载后内容填充，未见滚动操作')
+    vr.check_coverage([old],[new])
+    assert new['uncertainties']
+    new['frame_refs']=['f2']
+    with pytest.raises(ValueError,match='video_required_action_missing'):vr.check_coverage([old],[new])
+
+
+def test_loading_failure_negation_does_not_erase_real_scroll():
+    old=event(1,'aiScroll');old['frame_refs']=['f1','f2']
+    new=copy.deepcopy(old);new.update(action='aiAssert',value='',observation='自动加载未完成，滚动后出现下方卡片')
+    with pytest.raises(ValueError,match='video_required_action_missing'):vr.check_coverage([old],[new])
