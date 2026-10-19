@@ -25,7 +25,7 @@
     node.replaceChildren();node.classList.add('ui-batch-view');
     node.innerHTML='<div class="ui-batch-layout"><div class="ui-batch-overview"><header class="ui-batch-head"><div><p class="ui-eyebrow">执行结果</p><h2 data-batch-title></h2><div class="ui-batch-meta"><span data-batch-app></span><span data-batch-owner></span></div></div><strong data-batch-state></strong></header><div class="ui-batch-totals"><span data-batch-count></span><span data-batch-results></span></div><progress data-batch-progress aria-label="已结束的用例执行"></progress><p data-batch-hint role="status"></p><div class="ui-batch-actions"></div></div><div class="ui-batch-detail"><h3 class="ui-batch-detail-title">用例结果</h3><p data-batch-action-error role="alert" hidden></p><div class="ui-batch-attempts"></div></div></div><footer class="ui-batch-foot"><span data-batch-report></span><span data-batch-delivery></span><details class="ui-batch-identifier"><summary>执行编号</summary><small data-batch-id></small></details></footer>';
     const state={batchId,rows:new Map(),actions:{},busy:new Set(),batch:null};views.set(node,state);
-    for (const [key,title] of [['cancel','取消本次测试'],['rerun','重跑未通过项'],['report','查看本次报告'],['copy','复制测试摘要']]) {
+    for (const [key,title] of [['cancel','取消本次测试'],['rerun','重跑未通过项'],['replay','查看执行回放'],['report','查看本次报告'],['copy','复制测试摘要']]) {
       const button=make('button','btn-sm',title);button.type='button';button.dataset.batchAction=key;
       button.onclick=async()=>{
         if (views.get(node)!==state || state.busy.has(key) || typeof state.actions[key]!=='function') return;
@@ -41,7 +41,7 @@
   }
   function updateActions(node,state) {
     const b=state.batch, attempts=b.case_attempts || [];
-    const available={cancel:!settled(b)&&b.status!=='cancelling',
+    const available={replay:settled(b),cancel:!settled(b)&&b.status!=='cancelling',
       rerun:settled(b)&&attempts.some(a=>!['passed','success'].includes(a.status)),
       report:settled(b)&&['not_requested','pending','generating','ready','failed'].includes(b.report_status),copy:b.report_status==='ready'};
     node.querySelectorAll('[data-attempt-recover]').forEach(button=>{button.disabled=state.busy.has('recover');});

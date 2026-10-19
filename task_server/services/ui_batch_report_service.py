@@ -135,6 +135,20 @@ def read_ui_artifact(actor,batch_id,artifact_id):
         db.close()
 
 
+def read_ui_replay(actor, batch_id, artifact_id):
+    _batch(actor, batch_id)
+    db = _connect()
+    try:
+        row = db.execute('SELECT kind,content FROM ui_report_artifacts WHERE ui_batch_id=? AND artifact_id=?',
+                         (batch_id, artifact_id)).fetchone()
+        if not row or row['kind'] != 'html':
+            raise FileNotFoundError('artifact_not_found')
+        from .ui_report_replay import build_replay_document
+        return {'document': build_replay_document(bytes(row['content']))}
+    finally:
+        db.close()
+
+
 def _evidence(db,batch_id):
     return [_artifact_metadata(batch_id,r['artifact_id'],r['kind'],r['attempt_id']) for r in db.execute(
         '''SELECT e.artifact_id,e.attempt_id,a.kind FROM ui_report_evidence e JOIN ui_report_artifacts a

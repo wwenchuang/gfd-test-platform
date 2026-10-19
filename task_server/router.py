@@ -6474,6 +6474,12 @@ def _get_ui_batch_artifact(handler, qs, match):
     _ui_report_response(handler, lambda: read_ui_artifact(None, match.group(1), match.group(2)), match.group(1), binary=True)
 
 
+@route_get_regex(r"^/api/ui-executions/([^/]+)/artifacts/([0-9a-f]{64})/replay$")
+def _get_ui_batch_replay(handler, qs, match):
+    from .services.ui_batch_report_service import read_ui_replay
+    _ui_report_response(handler, lambda: read_ui_replay(None, match.group(1), match.group(2)), match.group(1))
+
+
 @route_get_regex(r"^/api/ui-executions/([^/]+)/deliveries$")
 def _get_ui_batch_deliveries(handler, qs, match):
     from .services.ui_batch_notification_service import get_batch_deliveries

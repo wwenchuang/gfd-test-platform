@@ -24,7 +24,7 @@
   function store(s,key,value){try{sessionStorage.setItem(`ui-simple:${s.identity}:${key}`,JSON.stringify(value));}catch(_){/* Storage can be disabled; current-page behavior still works. */}}
   function read(s,key){try{return JSON.parse(sessionStorage.getItem(`ui-simple:${s.identity}:${key}`)||'null');}catch(_){return null;}}
   function notice(s,message,error=false){if(!valid(s))return;const n=s.node.querySelector('[data-ui-notice]');n.textContent=message;n.setAttribute('role',error?'alert':'status');n.classList.toggle('ui-simple-error',error);}
-  function leave(){if(!state)return;state.reportView?.dispose();clearInterval(state.timer);clearTimeout(state.searchTimer);clearTimeout(state.pictureTimer);for(const c of state.pending.values())c.abort();state.pending.clear();state=null;}
+  function leave(){window.UiExecutionReplay?.close();if(!state)return;state.reportView?.dispose();clearInterval(state.timer);clearTimeout(state.searchTimer);clearTimeout(state.pictureTimer);for(const c of state.pending.values())c.abort();state.pending.clear();state=null;}
   function reset(){const node=state?.node;leave();node?.replaceChildren();}
   async function request(s,slot,path,options={}){
     s.pending.get(slot)?.abort();const controller=new AbortController();s.pending.set(slot,controller);
@@ -91,6 +91,7 @@
     if(abandonIntent&&previous.revision)s.options.onReportClose?.(previous);
   }
   function selectBatch(s,id){
+    if(s.batchId!==id)window.UiExecutionReplay?.close();
     if(s.batchId!==id){s.pending.get('batch')?.abort();s.pending.delete('batch');s.node.querySelector('[data-ui-batch]').hidden=true;s.batchSettled=false;}
     if(s.reportId&&s.reportId!==id)clearReport(s,true);
     s.batchId=id;
@@ -293,6 +294,7 @@
       rerun:async id=>{if(!valid(s)||!s.options.canAdmit()||!s.options.canExecute())return;s.rerunKeys[id] ||= requestId();const data=await request(s,'action',`/ui-executions/${encodeURIComponent(id)}/rerun`,{method:'POST',headers:{'Idempotency-Key':s.rerunKeys[id]},body:{scope:'failed'}});if(data){delete s.rerunKeys[id];selectBatch(s,data.batch.ui_batch_id);store(s,'lastBatch',s.batchId);showBatch(s,data.batch);}}};
     if(!s.options.canAdmit())delete actions.rerun;
     if(!s.options.canExecute()){delete actions.cancel;delete actions.rerun;delete actions.recover;}
+    if(window.UiExecutionReplay)actions.replay=id=>window.UiExecutionReplay.open({batchId:id,request:s.options.request,isCurrent:()=>valid(s)&&s.batchId===id});
     if(s.options.download&&window.UiBatchReport)actions.report=id=>openReport(s,id);
     if(s.options.copy)actions.copy=async id=>{const data=await request(s,'summary',`/ui-executions/${encodeURIComponent(id)}/summary`);if(data&&data.status==='ready')await s.options.copy(data.summary);else if(data)throw new Error('报告尚未就绪');};
     window.UiBatchView.update(host,batch,actions);

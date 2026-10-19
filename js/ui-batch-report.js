@@ -6,7 +6,7 @@
     let active=true,busy=false,revealed=false,status='',revision='',snapshot=null,controller=null,nextRefreshAt=0,evidenceOpen=false,evidenceFocus=null,reportFocus=null,deliverySignature='',refreshError='',preview=null,evidenceLoaded=false,evidenceSignature='';
     const valid=()=>active&&node.isConnected&&options.identity()===identity;
     node.classList.add('ui-batch-report');
-    node.innerHTML='<header><div><p>本人本次执行</p><h2 data-report-title>本次报告</h2></div><button type="button" class="btn-sm" data-report-close>收起</button></header><p data-report-owner></p><p data-report-state role="status">正在读取报告…</p><div class="ui-report-actions"><button type="button" class="btn-sm" data-report-evidence-refresh hidden>刷新执行证据</button><button type="button" class="btn-sm" data-report-retry hidden>重新生成报告</button><button type="button" class="btn-sm" data-report-download="docx" hidden>下载 Word</button><button type="button" class="btn-sm" data-report-download="html" hidden>下载 HTML</button><button type="button" class="btn-sm" data-report-download="md" hidden>下载 Markdown</button><button type="button" class="btn-sm" data-report-copy hidden>复制测试摘要</button></div><div data-report-notifications role="status"></div><pre data-report-summary></pre><div data-report-attempts></div><div data-report-evidence></div><p data-report-message role="status"></p>';
+    node.innerHTML='<header><div><p>本人本次执行</p><h2 data-report-title>本次报告</h2></div><button type="button" class="btn-sm" data-report-close>收起</button></header><p data-report-owner></p><p data-report-state role="status">正在读取报告…</p><div class="ui-report-actions"><button type="button" class="btn-sm" data-report-replay>查看执行回放</button><button type="button" class="btn-sm" data-report-evidence-refresh hidden>刷新执行证据</button><button type="button" class="btn-sm" data-report-retry hidden>重新生成报告</button><button type="button" class="btn-sm" data-report-download="docx" hidden>下载 Word</button><button type="button" class="btn-sm" data-report-download="html" hidden>下载 HTML</button><button type="button" class="btn-sm" data-report-download="md" hidden>下载 Markdown</button><button type="button" class="btn-sm" data-report-copy hidden>复制测试摘要</button></div><div data-report-notifications role="status"></div><pre data-report-summary></pre><div data-report-attempts></div><div data-report-evidence></div><p data-report-message role="status"></p>';
     const text=(selector,value)=>{node.querySelector(selector).textContent=value;};
     async function action(button,callback,feedback=node.querySelector('[data-report-message]')){
       if(!valid()||button.disabled)return;button.disabled=true;button.setAttribute('aria-busy','true');refreshError='';feedback.textContent='';
@@ -92,11 +92,12 @@
       closePreview();
       status=report.status;revision=String(report.report_revision||'');snapshot=report.snapshot;
       const ready=status==='ready'&&!!snapshot;
+      node.querySelector('[data-report-replay]').hidden=status==='unavailable';
       text('[data-report-state]',ready?'报告已就绪':status==='not_requested'?'本次为普通测试，未申请发版报告。执行结果与截图已保留。':status==='failed'?'报告生成失败，可以单独重试。':status==='unavailable'?'当前无法访问这份报告。':'报告正在生成，完成后可下载。');
       node.querySelector('[data-report-evidence-refresh]').hidden=status!=='not_requested';
       node.querySelector('[data-report-retry]').hidden=status!=='failed'||!!options.revision;
       node.querySelectorAll('[data-report-download],[data-report-copy]').forEach(button=>{button.hidden=!ready;});
-      if(!ready){text('[data-report-title]',status==='not_requested'?'本次执行证据':'本次报告');text('[data-report-summary]','');delete node.querySelector('[data-report-summary]').dataset.outcome;text('[data-report-owner]','');node.querySelector('[data-report-attempts]').replaceChildren();if(status==='unavailable'){node.querySelector('[data-report-evidence]').replaceChildren();evidenceSignature='';evidenceLoaded=false;node.querySelector('[data-report-notifications]').replaceChildren();deliverySignature='';reportFocus=null;evidenceFocus=null;evidenceOpen=false;}return;}
+      if(!ready){text('[data-report-title]',status==='not_requested'?'本次执行证据':'本次报告');text('[data-report-summary]','');delete node.querySelector('[data-report-summary]').dataset.outcome;text('[data-report-owner]','');node.querySelector('[data-report-attempts]').replaceChildren();if(status==='unavailable'){window.UiExecutionReplay?.close();node.querySelector('[data-report-evidence]').replaceChildren();evidenceSignature='';evidenceLoaded=false;node.querySelector('[data-report-notifications]').replaceChildren();deliverySignature='';reportFocus=null;evidenceFocus=null;evidenceOpen=false;}return;}
       const view=snapshot.presentation;
       text('[data-report-title]',view?.title||'发布测试报告');
       text('[data-report-owner]','测试版本：'+(view?.test_versions?.join('；')||'未获取')+'\n执行人：'+(view?.owner||snapshot.owner_display_name||'未记录')+(view?.time_range?'\n测试时间：'+view.time_range:''));
@@ -160,7 +161,8 @@
       }catch(error){if(valid()){if([401,403,404].includes(error.status))render({status:'unavailable',snapshot:null});showRefreshError(error.message||'报告读取失败，请重试');}}
       finally{clearTimeout(timeout);busy=false;nextRefreshAt=Date.now()+(status==='ready'||status==='unavailable'?15000:5000);}
     }
-    function dispose(){active=false;controller?.abort();closePreview();node.replaceChildren();}
+    function dispose(){window.UiExecutionReplay?.close();active=false;controller?.abort();closePreview();node.replaceChildren();}
+    node.querySelector('[data-report-replay]').onclick=()=>{if(valid()&&status!=='unavailable')window.UiExecutionReplay?.open({batchId:options.batchId,request:options.request,isCurrent:()=>valid()&&status!=='unavailable'});};
     node.querySelector('[data-report-close]').onclick=()=>{if(!valid())return;options.onClose?.();dispose();node.hidden=true;};
     node.querySelector('[data-report-evidence-refresh]').onclick=event=>action(event.currentTarget,()=>refresh(true));
     node.querySelector('[data-report-retry]').onclick=event=>action(event.currentTarget,()=>refresh(true,'POST'));

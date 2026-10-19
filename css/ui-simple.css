@@ -159,3 +159,10 @@
 @media(max-width:640px){.ui-batch-report{padding:16px;}.ui-batch-report h2{font-size:21px;}.ui-report-coverage th,.ui-report-coverage td{padding:8px;}.ui-report-coverage table{font-size:13px;}.ui-report-coverage th:nth-child(3){width:19%;}}
 
 .ui-stop-confirmation{border:1px solid #536677;border-radius:8px;padding:16px;margin:14px 0;overflow-wrap:anywhere;min-width:0}.ui-stop-confirmation p{line-height:1.6}.ui-stop-confirmation label{display:flex;gap:8px;align-items:flex-start;line-height:1.6}.ui-stop-confirmation>div{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}.ui-stop-confirmation button{min-height:40px;padding:8px 14px}.ui-stop-confirmation input{flex:none;margin-top:5px}.ui-stop-confirmation :focus-visible{outline:2px solid #41ccdc;outline-offset:2px}
+
+/* On-demand private replay; natural viewport, no fixed browser dimensions. */
+.ui-replay-dialog{width:calc(100vw - 32px);max-width:1800px;height:calc(100dvh - 32px);max-height:none;box-sizing:border-box;background:#101b22;color:#e7f0f3;border:1px solid #38505c;border-radius:16px;padding:16px;overflow:hidden}
+.ui-replay-dialog[open]{display:flex;flex-direction:column;gap:8px}.ui-replay-dialog::backdrop{background:#02070bd9}
+.ui-replay-dialog header{display:flex;justify-content:space-between;align-items:start;gap:16px}.ui-replay-dialog header strong{font-size:20px}.ui-replay-dialog p{margin:4px 0;color:#a9bdc8;font-size:13px}
+.ui-replay-toolbar{display:flex;gap:12px;align-items:center}.ui-replay-dialog [data-replay-frame]{flex:1;min-height:0;background:white;border-radius:8px;overflow:hidden}.ui-replay-dialog iframe{width:100%;height:100%;border:0}
+@media(max-width:600px){.ui-replay-dialog{width:100vw;height:100dvh;border-radius:0;padding:10px}.ui-replay-dialog header p{max-width:240px}}

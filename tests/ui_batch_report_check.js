@@ -246,3 +246,11 @@ test('preview button keyboard focus survives a new report revision for the same 
  f.node.querySelector('details').open=true;f.node.querySelector('[data-evidence-preview]').focus();revision='2';await f.view.refresh(true);
  assert.equal(f.w.document.activeElement,f.node.querySelector('[data-evidence-preview]'));
 });
+test('revoked report access closes replay and invalidates late replay loads',async t=>{
+ let denied=false,opened=null,closed=0;
+ const f=setup(t,async path=>{if(denied)throw Object.assign(new Error('无权访问'),{status:403});return {ok:true,report:{status:'ready',snapshot:SNAP}};});
+ f.w.UiExecutionReplay={open:options=>{opened=options;},close:()=>{closed++;}};
+ await tick();f.node.querySelector('[data-report-replay]').click();assert.equal(opened.isCurrent(),true);
+ await f.view.refresh(true);assert.equal(closed,0);
+ denied=true;await f.view.refresh(true);assert.equal(closed,1);assert.equal(opened.isCurrent(),false);assert.equal(f.node.querySelector('[data-report-replay]').hidden,true);
+});

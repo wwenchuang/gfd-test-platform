@@ -173,3 +173,5 @@ test('polling invalidates confirmation without taking focus from another control
  const other=f.node.querySelector('[data-batch-action="cancel"]');other.hidden=false;other.focus();b.case_attempts[0].event_sequence++;
  f.view.update(f.node,b,{recover:()=>{},cancel:()=>{}});assert.equal(f.node.ownerDocument.activeElement,other);
 });
+
+test('settled execution exposes replay in either result host without formal report',t=>{const f=fixture(t),b=batch();b.status='passed';b.execution_settled=true;b.report_status='not_requested';f.view.update(f.node,b,{replay:()=>{}});assert.equal(f.node.querySelector('[data-batch-action="replay"]').hidden,false);b.execution_settled=false;f.view.update(f.node,b,{replay:()=>{}});assert.equal(f.node.querySelector('[data-batch-action="replay"]').hidden,true);});

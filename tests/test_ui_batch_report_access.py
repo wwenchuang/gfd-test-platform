@@ -23,6 +23,7 @@ def test_report_and_artifacts_require_owner_and_current_app(dispatch_env,monkeyp
                 lambda: reports.download_ui_batch_report(None,batch['ui_batch_id'],'docx'),
                 lambda: reports.get_ui_batch_summary(None,batch['ui_batch_id']),
                 lambda: reports.read_ui_artifact(None,batch['ui_batch_id'],artifact['artifact_id']),
+                lambda: reports.read_ui_replay(None,batch['ui_batch_id'],artifact['artifact_id']),
             ):
                 with pytest.raises((PermissionError,FileNotFoundError)): fn()
 
@@ -276,3 +277,21 @@ def test_abandoned_private_chunks_are_reclaimed_on_retry_and_bounded_expiry(disp
     db=reports._connect()
     try: assert db.execute('SELECT COUNT(*) FROM ui_report_chunks').fetchone()[0] == 0
     finally: db.close()
+
+
+def test_private_replay_http_rebuilds_owned_report_and_denies_other_actor(dispatch_env):
+    import re
+    from task_server import router
+    from task_server.services import ui_batch_report_service as reports
+    batch, job, event = completed()
+    raw=b'<script>unsafeOriginal()</script><script type="midscene_web_dump">{"executions":[]}</script>'
+    artifact=reports.save_ui_artifact(job['job_id'],event,raw,'html')
+    match=re.fullmatch(r'([^/]+)/([a-f0-9]{64})',batch['ui_batch_id']+'/'+artifact['artifact_id'])
+    with actor_context(ACTORS['a']):
+        h=Handler();router._get_ui_batch_replay(h,{},match)
+        assert h.response[1] == 200
+        document=h.response[0]['document']
+        assert 'unsafeOriginal()' not in document and 'midscene_web_dump' in document
+    with actor_context(ACTORS['b']):
+        h=Handler();router._get_ui_batch_replay(h,{},match)
+        assert h.response[1] in (403,404) and 'document' not in h.response[0]
