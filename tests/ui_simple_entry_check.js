@@ -351,6 +351,16 @@ test('video upload without a file focuses the chooser and sends no request',asyn
  assert.match(f.q('[data-video-notice]').textContent,/请选择.*MP4\/MOV/);
  assert.equal(f.w.document.activeElement,f.q('[data-video-file]'));assert.equal(uploads,0);
 });
+test('late history failure cannot overwrite a newer video upload status',async t=>{
+ const f=await videoFixture(t);let rejectHistory;
+ f.respond(path=>path.startsWith('/ui-video-sources?')&&!rejectHistory?new Promise((_,reject)=>rejectHistory=reject):undefined);
+ f.app('a');await wait();
+ Object.defineProperty(f.q('[data-video-file]'),'files',{value:[new f.w.File(['video'],'clip.mp4')]});
+ f.w.nativeFetch=async()=>({ok:true,json:async()=>({ok:true,source:{source_id:'uvs_'+'b'.repeat(32),filename:'clip.mp4',status:'queued',analysis_version:1}})});
+ f.q('[data-video-upload]').click();await wait();assert.match(f.q('[data-video-notice]').textContent,/排队/);
+ rejectHistory(new Error('旧列表请求超时'));await wait();
+ assert.match(f.q('[data-video-notice]').textContent,/排队/);
+});
 test('binary video upload retains bearer authentication with the real Headers helper',async t=>{
  const f=await videoFixture(t);f.app('a');await wait();
  const file=new f.w.File(['binary-fixture'],'recording.mp4',{type:'video/mp4'});

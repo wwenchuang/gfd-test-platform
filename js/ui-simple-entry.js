@@ -269,10 +269,10 @@ function mountUiVideoSource(node,{current,openDraft,initialSource=null}){
     if(source?.source_id===next.source_id&&Number(next.analysis_version)>Number(source.analysis_version))polls=0;
     source=next;render();
   }
-  async function list(){if(!app)return;try{const data=await request('/ui-video-sources?'+new URLSearchParams({app_id:app}));if(!data)return;
+  async function list(){if(!app)return;const version=epoch;try{const data=await request('/ui-video-sources?'+new URLSearchParams({app_id:app}));if(!data)return;
     const selected=(data.sources||[]).find(d=>d.source_id===source?.source_id);
     if(source?.status&&selected&&compareSource(selected,source)>0)adoptSource(selected);
-    q('[data-video-list]').innerHTML=(data.sources||[]).map(d=>{const row=source?.status&&source.source_id===d.source_id&&compareSource(source,d)>=0?source:d;return `<button type="button" data-video-open="${escape(row.source_id)}">${escape(historyLabel(row))}</button>`;}).join('')||'<p>当前应用还没有上传录屏。</p>';}catch(e){notice(e.message);}}
+    q('[data-video-list]').innerHTML=(data.sources||[]).map(d=>{const row=source?.status&&source.source_id===d.source_id&&compareSource(source,d)>=0?source:d;return `<button type="button" data-video-open="${escape(row.source_id)}">${escape(historyLabel(row))}</button>`;}).join('')||'<p>当前应用还没有上传录屏。</p>';}catch(e){if(version===epoch)notice(e.message);}}
   function statusText(status){return ({queued:'排队中',decoding:'解码中',analyzing:'分析中',ready:'待核对',review_needed:'需补充素材',failed:'分析失败',cancelled:'已取消',interrupted:'重启后已停止'})[status]||status;}
   function historyLabel(row){
     const timestamp=Number(row.created_at),date=new Date(timestamp*1000);
