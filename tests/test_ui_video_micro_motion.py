@@ -8,6 +8,25 @@ class MicroMotionTests(unittest.TestCase):
         changes=[0,.5,.2,.3,.4,0,0]
         self.assertTrue({0,1,2,4,5}.issubset(video._micro_motion_anchors(times,changes)))
 
+    def test_brief_quiet_frame_does_not_split_one_local_state_change(self):
+        times=[175867,176833,176900,176933,176967,177000]
+        changes=[.027,.14,.002,5.49,.014,.043]
+        anchors=video._micro_motion_anchors(times,changes)
+        self.assertTrue({0,1,3,4}.issubset(anchors))
+
+    def test_local_bursts_never_bridge_a_major_transition(self):
+        self.assertEqual(video._micro_motion_anchors([0,33,66,100],[.3,25,.4,0]),set())
+
+    def test_budget_completes_more_partially_present_bursts_before_expensive_new_one(self):
+        times=list(range(10))
+        selected,count=video._select_micro_motion([{0,1,2,3},{4,5,6},{7,8,9}],times,{4,5,7,8},8)
+        self.assertEqual(selected,{4,5,6,7,8,9})
+        self.assertEqual(count,2)
+
+    def test_bridging_never_erases_existing_short_touch_groups(self):
+        times=list(range(0,1500,50));changes=[.3 if i%3!=2 else .001 for i in range(len(times))]
+        self.assertTrue({0,1,2}.issubset(video._micro_motion_anchors(times,changes)))
+
     def test_clock_tick_and_sustained_spinner_do_not_expand(self):
         self.assertEqual(video._micro_motion_anchors([0,1000,2000],[0,.3,.3]),set())
         self.assertEqual(video._micro_motion_anchors(list(range(0,2001,50)),[.3]*41),set())

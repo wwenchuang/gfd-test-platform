@@ -247,16 +247,24 @@ def _micro_motion_groups(times, changes):
     """
     if len(times)!=len(changes):return []
     runs=[]
-    for index,change in enumerate(changes):
-        if not .08<=change<12:continue
-        if not runs or index!=runs[-1][-1]+1 or times[index]-times[runs[-1][-1]]>150:
-            runs.append([index])
-        else:runs[-1].append(index)
+    # Keep all original contiguous bursts. Bridged candidates supplement them;
+    # joining several short bursts must never turn them into a discarded spinner.
+    for bridge_quiet in (False,True):
+        grouped=[]
+        for index,change in enumerate(changes):
+            if not .08<=change<12:continue
+            if (not grouped or times[index]-times[grouped[-1][-1]]>150 or
+                (not bridge_quiet and index!=grouped[-1][-1]+1) or
+                any(c>=12 for c in changes[grouped[-1][-1]+1:index])):
+                grouped.append([index])
+            else:grouped[-1].append(index)
+        runs.extend(grouped)
     selected=[]
     for run in runs:
         if len(run)<2 or not 30<=times[run[-1]]-times[run[0]]<=800:continue
         middle=min(run,key=lambda i:abs(times[i]-(times[run[0]]+times[run[-1]])/2))
-        selected.append({max(0,run[0]-1),run[0],middle,run[-1],min(len(times)-1,run[-1]+1)})
+        group={max(0,run[0]-1),run[0],middle,run[-1],min(len(times)-1,run[-1]+1)}
+        if group not in selected:selected.append(group)
     return selected
 
 
@@ -275,7 +283,8 @@ def _select_micro_motion(groups, times, base, limit, cancelled=lambda:False):
     chosen=False
     while remaining and len(selected)<limit:
         if cancelled():raise ValueError('video_cancelled')
-        index=max(remaining,key=lambda i:(distance[i] if chosen else -i,-i))
+        # Complete partially captured bursts first; spread equally costly ones.
+        index=max(remaining,key=lambda i:(-len(candidates[i]-selected),distance[i] if chosen else -i,-i))
         remaining.remove(index)
         candidate=candidates[index]
         if len(selected|candidate)>limit:continue
