@@ -1,53 +1,30 @@
 {
   "generate_case": {
     "providerId": "qwen_plus",
-    "fallbackProviderIds": [
-      "highway_gpt5_mini",
-      "highway_gpt4_1_mini",
-      "highway_deepseek"
-    ]
+    "fallbackProviderIds": []
   },
   "api_case_generation": {
     "providerId": "qwen_plus",
-    "fallbackProviderIds": [
-      "highway_gpt5_mini",
-      "highway_gpt4_1_mini",
-      "highway_deepseek"
-    ]
+    "fallbackProviderIds": []
   },
   "generate_yaml": {
     "providerId": "qwen_plus",
-    "fallbackProviderIds": [
-      "highway_gpt5_mini",
-      "highway_gpt4_1_mini"
-    ]
+    "fallbackProviderIds": []
   },
   "analyze_failure": {
     "providerId": "qwen_plus",
-    "fallbackProviderIds": [
-      "highway_gpt4_1_mini",
-      "highway_deepseek"
-    ]
+    "fallbackProviderIds": []
   },
   "optimize_yaml": {
     "providerId": "qwen_plus",
-    "fallbackProviderIds": [
-      "highway_gpt5_mini",
-      "highway_gpt4_1_mini"
-    ]
+    "fallbackProviderIds": []
   },
   "agent_plan": {
     "providerId": "qwen_plus",
-    "fallbackProviderIds": [
-      "highway_gpt5_mini",
-      "highway_gpt4_1_mini",
-      "highway_deepseek"
-    ]
+    "fallbackProviderIds": []
   },
   "generate_bug": {
     "providerId": "qwen_plus",
-    "fallbackProviderIds": [
-      "highway_gpt4_1_mini"
-    ]
+    "fallbackProviderIds": []
   }
 }

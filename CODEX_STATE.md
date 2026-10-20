@@ -1,3 +1,22 @@
+## 2026-10-20 用户要求后续先只用千问
+
+- 用户明确要求先仅使用千问。线上GET /ai/model-router回读6项能力均为qwen_plus，fallbackRouter均空；配置界面仍有其他可选provider，不等于本次已调用它们。截图所示错误内因是multiple_scenarios类型校验，不能把Gateway外层提示当成已切换模型的证据。
+- 线上POST /ai/providers/test指定qwen_plus真实调用成功，返回providerId=qwen_plus、model=qwen-plus；Gateway46项静态检查与diff检查通过。
+- 仓库7项默认路由统一qwen_plus并清空原Highway备用列表，避免新环境恢复跨模型回退。保留Gateway传输层及其他provider凭据，不删除历史配置。后续视频诊断只用千问；尚未完成两段视频业务验收。
+
+## 2026-10-20 姓名牌最终规划诊断：确认打印重复识别，仍未验收
+
+- 只读整片诊断完成12窗观察与复核，保存77项候选。planner-replay.py复用该候选，仅重跑最终规划，不是正常来源全流程验收。首轮错误链为Gateway HTTP500；下一次同候选模型调用成功，最终在ui_video_recovery.review_retries第35行video_retry_invalid失败，不能将前次500认定为唯一根因。
+- 保存结果/tmp/nameplate-last-model.json显示print_recovery submit=23,cancel=27,confirm=28,end=60；omitted_retries额外把24声明为23的确认打印重试，混入取消、确认之外第三类控件，触发现有限制。23引用105..108，24引用108..109，两者都声称弹窗关闭/指令已发送。
+- 已通过授权API读取105..118原始帧并人工核对：105..109弹窗仍打开，仅示意图加载；110弹窗才消失，111加载，113..114进入设备页，115显示任务。因此23/24证据语义错误，不能通过删除重试声明或放宽校验解决，更不能保留两次下发。证据/tmp/nameplate-review/submit-frames.jpg、submit-after.jpg、meta.png、group.png。
+- submit-probe.py以105..118本地窗口独立重读；第一次因multiple_scenarios类型错误被schema拒绝，尝试补明确array/boolean类型，但终端未确认命令执行，不计重试或通过。无生产模型/提示词修改，无下发手机或打印。触点独立局部图一次正确、并排合成错误的结果仍不满足验收。
+
+## 2026-10-20 自动触点与合成图反例（未接入生产）
+
+- 保守横纵细线定位在原片025得到(335,993)，整片193帧扫描后增加当前画面细线存在检查，避免把消失当当前触点；5项原型测试通过。原型仅保存在/tmp/nameplate-review/touch-detail-prototype.py及test-touch-detail-prototype.py，未接入生产。
+- 自动生成同帧原图与局部图并排的composite-probe.py经SHA256校验135d479ac7295c1eb5e0d5c06fe8bbc3a60fa55e89ee1ebb2c6117e890c3cd7c后实际运行，模型再次误选可爱卡皮巴拉，方案拒绝。证据/tmp/nameplate-review/composite-result.png。此前单独局部图一次正确不能证明稳定性，不能据此上线自动增强。
+- 固定引用诊断cb06256e已推送main，独立审查57项通过；尚未部署。姓名牌整片只读诊断nameplate-diagnostic.py经SHA256校验14b34b94d44193ef87521b044c8e5c3218cb01fd05f5df87397601639f8021b9后已实际启动。当前观察9/12，053..082和079..108首轮outside_window经现有重试继续，尚未完成，不记生成成功。
+
 ## 2026-10-20 触点局部图对照与引用错误诊断
 
 - 用户退出卡住的 git pull 后，终端恢复。独立 crop-direct.py 已经 SHA256 校验（16b137a15df517970075d980455e4d05314ef66fbedd0214b5a9bef1eafcd75e）；随后仅将临时脚本 phase 改为 crop-probe，使用普通六图通道对照。此前两次受 whole-video 图片数量合同拦截，没有调用模型，不计识别结果。
