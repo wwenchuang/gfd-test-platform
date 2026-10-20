@@ -935,3 +935,16 @@ def test_full_timeline_gate_shares_single_correction_budget(monkeypatch,tmp_path
     else:
         with pytest.raises(ValueError,match='video_model_timeline'):run()
     assert calls.count('consolidate')==2
+
+@pytest.mark.parametrize('reuse',['进入模型详情页，显示对应模型标题及加载状态','正在加载','进入模型详情页，按钮短暂高亮'])
+def test_reusable_expected_cannot_restore_transient_checks(tmp_path,reuse):
+    from task_server.services.ui_video_analysis import draft_proposal
+    frames,event=_consolidation_fixture(tmp_path)
+    tap=event('aiTap',1,2,'作品卡片')
+    tap.update(observation='模型详情页可见，显示加载动画',reusable_expected=reuse)
+    content,snapshot=draft_proposal({'source_id':'uvs_'+'a'*32,'analysis_version':1,'app_id':APP,'goal':'',
+        'media':{'frames':frames,'duration_ms':12000},'events':[tap],'uncertainties':[]})
+    assert content['steps'][0]['expected']
+    assert '加载' not in content['steps'][0]['expected']
+    assert '高亮' not in content['steps'][-1]['target']
+    assert snapshot['events'][0]['reusable_expected']==reuse

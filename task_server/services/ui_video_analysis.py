@@ -620,12 +620,13 @@ def draft_proposal(document):
         event['expected_candidate']=_expected_candidate(event,document['goal'])
         expected=event['expected_candidate']['text'] if event['action'] in {'aiTap','aiInput','aiScroll'} else ''
         target=event['target']
-        if event.get('reusable_expected') and event['expected_candidate']['text']:
+        reusable=_stable_visible_observation(event.get('reusable_expected',''))
+        if reusable and event['expected_candidate']['text']:
             # A reuse proposal is not a new observed fact. Keep the literal
             # expected_candidate and its frame references in the source snapshot.
-            if event['action'] in {'aiWaitFor','aiAssert'}:target=event['reusable_expected']
-            else:expected=event['reusable_expected']
-            questions.append('请确认复用后的结果检查与原录屏一致：'+event['reusable_expected'])
+            if event['action'] in {'aiWaitFor','aiAssert'}:target=reusable
+            else:expected=reusable
+            questions.append('请确认复用后的结果检查与原录屏一致：'+reusable)
         if event.get('selection'):
             event['selection_step_id']=str(uuid.uuid4())
             steps.append({'step_id':event['selection_step_id'],'action':'selectRecord','target':event['selection'],'value':'',
