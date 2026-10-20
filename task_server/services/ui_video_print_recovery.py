@@ -10,7 +10,7 @@ def eligible_terminal(terminal):
     # Remove only complete, narrowly recognized clauses; keep task negation and
     # uncertainty intact, and preserve the original candidate for audit.
     observation='，'.join(clause for clause in re.split(r'[，。；,;\n]',terminal['observation'])
-        if not re.fullmatch(r'(?:期间)?未(?:见|观察到)用户(?:手动)?(?:点击(?:导航入口|操作)?|操作)',clause.strip()))
+        if not re.fullmatch(r'(?:期间)?未(?:见|观察到)用户(?:手动)?(?:点击(?:(?:导航)?入口|操作)?|操作)',clause.strip()))
     # Unselected feedback options describe form state, not an unfinished task.
     observation=re.sub(r'(?<=为)未选中状态', '待选择状态', observation)
     return not (terminal['action'] not in ('aiAssert','aiWaitFor') or

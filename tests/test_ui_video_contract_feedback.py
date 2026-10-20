@@ -25,6 +25,7 @@ def test_selection_failure_has_specific_safe_correction(action,target,selection)
 @pytest.mark.parametrize('observation', [
     '页面自动跳转至反馈页，显示取消原因选项列表，未见用户手动点击导航入口。',
     '本次任务卡片已消失；期间未观察到用户点击操作。',
+    '页面自动跳转至取消原因反馈页，显示原因选项。此跳转发生在任务同步完成后，未见用户手动点击入口。',
     '进入反馈页，页面保持静止。所有选项均为未选中状态（灰色对勾/无边框），提交反馈按钮为灰色不可用状态。未见用户操作。',
 ])
 def test_terminal_observation_allows_explicit_absence_of_user_input(observation):
