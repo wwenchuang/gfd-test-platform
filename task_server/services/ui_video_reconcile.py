@@ -12,6 +12,19 @@ def check_coverage(original,reviewed,duration=None):
     from .ui_video_analysis import _system_boundary
     required=[event for event in original if event['action'] in ('aiTap','aiInput','aiScroll')
               and not (duration is not None and _system_boundary(event,duration))]
+    # aiInput already focuses its field. Only absorb an explicit focus tap when
+    # the immediately following interaction is input into that exact same field,
+    # and one reviewed input covers both original time ranges and evidence.
+    absorbed=set()
+    for i,(focus,typed) in enumerate(zip(required,required[1:])):
+        if (focus['action']!='aiTap' or typed['action']!='aiInput' or
+            focus['target']!=typed['target'] or
+            not re.search(r'输入框.*(?:获得焦点|键盘)|键盘.*(?:弹出|显示)',focus['observation'])):continue
+        if any(new['action']=='aiInput' and new['target']==typed['target'] and
+               new['start_ms']<=focus['start_ms'] and new['end_ms']>=typed['end_ms'] and
+               set(new['frame_refs'])&set(focus['frame_refs']) and
+               set(new['frame_refs'])&set(typed['frame_refs']) for new in reviewed):absorbed.add(i)
+    required=[e for i,e in enumerate(required) if i not in absorbed]
     owners={}
     def assign(index,seen):
         old=required[index]
@@ -24,7 +37,13 @@ def check_coverage(original,reviewed,duration=None):
                 if not (new['action']=='aiAssert' and set(old['frame_refs'])<=set(new['frame_refs'])
                     and re.search(r'(?:未观察到|未见|未发生|没有观察到|没有发生|没有|并非|不是)(?:任何|实际的|实际|用户|手指|触点|页面|内容|新的|本次|进行|发生){0,3}(?:滚动|滑动)',new['observation'])
                     and re.search(r'自动|加载|布局|轮播',new['observation'])):continue
-            if old['action']=='aiTap' and new['action'] not in ('aiTap','aiAssert','aiWaitFor'):continue
+            if old['action']=='aiTap' and new['action']!='aiTap':
+                # A return/navigation is still an interaction even if the
+                # physical gesture is not directly executable as a tap.
+                if not (new['action']=='aiAssert' and set(old['frame_refs'])<=set(new['frame_refs']) and
+                    re.search(r'未(?:见|观察到|发生)|没有',new['observation']) and
+                    re.search(r'自动|静止|保持不变',new['observation']) and
+                    not re.search(r'用户.*(?:执行|触发).*返回|完成.*导航|从.*返回',new['observation'])):continue
             seen.add(position)
             if position not in owners or assign(owners[position],seen):
                 owners[position]=index

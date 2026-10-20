@@ -5,6 +5,19 @@ from .ui_print_recovery import DEFAULTS,SUBMIT_EXPECTED
 from .ui_video_recovery import invalid_retry
 
 
+def eligible_terminal(terminal):
+    # An explicit absence of user input is not a negated business result.
+    # Remove only complete, narrowly recognized clauses; keep task negation and
+    # uncertainty intact, and preserve the original candidate for audit.
+    observation='，'.join(clause for clause in re.split(r'[，。；,;\n]',terminal['observation'])
+        if not re.fullmatch(r'(?:期间)?未(?:见|观察到)用户(?:手动)?(?:点击(?:导航入口|操作)?|操作)',clause.strip()))
+    # Unselected feedback options describe form state, not an unfinished task.
+    observation=re.sub(r'(?<=为)未选中状态', '待选择状态', observation)
+    return not (terminal['action'] not in ('aiAssert','aiWaitFor') or
+        re.search(r'未|没有|无法|不能|可能|不确定',observation) or
+        not re.search(r'取消原因|反馈.*(?:页|界面)|任务.*(?:移除|消失)',observation))
+
+
 def prepare_group(plan,candidates,required):
     """Expand an explicit recovery region into independently checked omissions.
 
@@ -18,16 +31,9 @@ def prepare_group(plan,candidates,required):
     start,confirm,end=[group[k] for k in ('cancel','confirm','end')]
     if any(type(i) is not int for i in (start,confirm,end)) or not 0<=start<confirm<end<len(candidates):
         raise invalid_retry('print_recovery索引必须使用原始candidate_events的整数candidate_index，不是精简后events序号、时间或字符串；满足0 <= cancel < confirm < end < 候选总数。请从原候选重新核对首次取消、紧接确认和终态观察，禁止调整业务顺序凑索引。')
-    terminal=candidates[end]
-    # An explicit absence of user input is not a negated business result.
-    # Remove only complete, narrowly recognized clauses; keep task negation and
-    # uncertainty intact, and preserve the original candidate for audit.
-    observation='，'.join(clause for clause in re.split(r'[，。；,;\n]',terminal['observation'])
-        if not re.fullmatch(r'(?:期间)?未(?:见|观察到)用户(?:手动)?(?:点击(?:导航入口|操作)?|操作)',clause.strip()))
-    if (terminal['action'] not in ('aiAssert','aiWaitFor') or
-        re.search(r'未|没有|无法|不能|可能|不确定',observation) or
-        not re.search(r'取消原因|反馈.*(?:页|界面)|任务.*(?:移除|消失)',observation)):
-        raise invalid_retry('打印恢复end需要明确任务消失或取消原因页的稳定观察，不能是处理中、失败或仅设备空闲。')
+    if not eligible_terminal(candidates[end]):
+        eligible=[i for i in range(confirm+1,len(candidates)) if eligible_terminal(candidates[i])]
+        raise invalid_retry('打印恢复end需要明确任务消失或取消原因页的稳定观察，不能是处理中、失败或仅设备空闲。请改用通过终态校验的原始候选索引：'+str(eligible)+'；仍须满足区间内无其他业务交互。')
     representatives={candidates[i]['target'].strip():i for i in (start,confirm)}
     if len(representatives)!=2:raise ValueError('video_retry_invalid')
     omissions=[]
@@ -57,7 +63,9 @@ def bind_group(plan,candidates):
     if any(i not in positions for i in indexes):raise ValueError('video_retry_invalid')
     submit,cancel,confirm=[candidates[i] for i in indexes]
     if any(e['action']!='aiTap' for e in (submit,cancel,confirm)):raise ValueError('video_retry_invalid')
-    if not re.search('确认打印',submit['target']) or '取消' in submit['target']:
+    if (not re.search('确认打印',submit['target']) or '取消' in submit['target'] or
+        any(e['action']=='aiTap' and '确认打印' in e['target'] and '取消' not in e['target']
+            for e in candidates[indexes[0]+1:indexes[1]])):
         raise invalid_retry('print_recovery.submit必须指向最终确认打印的原始候选，不是打开确认弹窗的确认按钮；请核对检查无误后真正下发本次任务的点击，保留此前打开弹窗的步骤。')
     if not re.search('取消.*打印',cancel['target']) or not re.search('确认|确定',confirm['target']):raise ValueError('video_retry_invalid')
     if any(e['action'] in ('aiTap','aiInput','aiScroll') for e in candidates[indexes[1]+1:indexes[2]]):raise ValueError('video_retry_invalid')

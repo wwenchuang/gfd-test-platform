@@ -25,6 +25,7 @@ def test_selection_failure_has_specific_safe_correction(action,target,selection)
 @pytest.mark.parametrize('observation', [
     '页面自动跳转至反馈页，显示取消原因选项列表，未见用户手动点击导航入口。',
     '本次任务卡片已消失；期间未观察到用户点击操作。',
+    '进入反馈页，页面保持静止。所有选项均为未选中状态（灰色对勾/无边框），提交反馈按钮为灰色不可用状态。未见用户操作。',
 ])
 def test_terminal_observation_allows_explicit_absence_of_user_input(observation):
     from task_server.services.ui_video_print_recovery import prepare_group
@@ -48,9 +49,10 @@ def test_terminal_observation_still_rejects_uncertain_or_negated_result(observat
         prepare_group({'events':[], 'print_recovery':{'submit':0,'cancel':1,'confirm':2,'end':3}},candidates,[0,1,2])
 
 
-def test_wrong_submit_boundary_returns_specific_safe_feedback():
+@pytest.mark.parametrize('opening_target', ['确认按钮','确认打印按钮'])
+def test_wrong_submit_boundary_returns_specific_safe_feedback(opening_target):
     from task_server.services.ui_video_print_recovery import bind_group
-    candidates=[{'action':'aiTap','target':t} for t in ('确认按钮','检查无误，确认打印按钮','取消打印按钮','确认按钮')]
+    candidates=[{'action':'aiTap','target':t} for t in (opening_target,'检查无误，确认打印按钮','取消打印按钮','确认按钮')]
     plan={'events':[{'candidate_index':i} for i in range(4)],'print_recovery':{'submit':0,'cancel':2,'confirm':3}}
     with pytest.raises(ValueError,match='video_retry_invalid') as caught:
         bind_group(plan,candidates)

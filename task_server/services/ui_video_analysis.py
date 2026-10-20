@@ -381,7 +381,9 @@ def analyze_whole_frames(document, root, cancelled, progress=None):
         'frames':frames,'image_frames':image_frames,'duration_ms':duration,'candidate_events':[{**event,'candidate_index':i} for i,event in enumerate(candidates)],
         'required_candidate_indexes':required_indices,'raw_uncertainties':observed['uncertainties'],
         'multiple_scenarios':multi,'baseline_examples':document.get('baseline_examples',[])}
+    from .ui_video_print_recovery import eligible_terminal
     for index,event in enumerate(payload['candidate_events']):
+        event['print_recovery_terminal_eligible']=eligible_terminal(event)
         boundary=next((e['start_ms'] for e in candidates[index+1:] if e['action'] in {'aiTap','aiInput','aiScroll'}),duration)
         system_start=min((e['start_ms'] for e in candidates[index+1:] if _system_boundary(e,duration)),default=duration+1)
         event['ordinary_outcome_frame_ids']=[f['frame_id'] for f in image_frames if event['end_ms']<=f['timestamp_ms']<=boundary and f['timestamp_ms']<system_start]

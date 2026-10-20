@@ -11,7 +11,7 @@ def event(i,action='aiTap'):
 
 def test_review_rejects_silent_removal_but_allows_auto_transition_correction():
     original=[event(1),event(2)]
-    corrected=copy.deepcopy(original);corrected[1]['action']='aiAssert'
+    corrected=copy.deepcopy(original);corrected[1]['action']='aiAssert';corrected[1]['observation']='页面自动加载，未见用户点击操作'
     vr.check_coverage(original,corrected)
     with pytest.raises(ValueError,match='video_required_action_missing'):
         vr.check_coverage(original,corrected[:1])
@@ -309,4 +309,23 @@ def test_explicit_pixel_based_auto_layout_correction_can_remove_false_scroll():
 def test_loading_failure_negation_does_not_erase_real_scroll():
     old=event(1,'aiScroll');old['frame_refs']=['f1','f2']
     new=copy.deepcopy(old);new.update(action='aiAssert',value='',observation='自动加载未完成，滚动后出现下方卡片')
+    with pytest.raises(ValueError,match='video_required_action_missing'):vr.check_coverage([old],[new])
+
+
+def test_focus_tap_can_be_absorbed_only_by_same_field_input():
+    focus={**event(1),'target':'名称输入框','observation':'输入框获得焦点，弹出软键盘','end_ms':110,'frame_refs':['f1','f2']}
+    typed={**event(2,'aiInput'),'target':'名称输入框','start_ms':110,'end_ms':300,'frame_refs':['f2','f3']}
+    merged={**typed,'start_ms':100,'frame_refs':['f1','f2','f3']}
+    vr.check_coverage([focus,typed],[merged])
+    for changed in [dict(merged,target='其他输入框'),dict(merged,start_ms=120),dict(merged,action='aiTap')]:
+        with pytest.raises(ValueError,match='video_required_action_missing'):vr.check_coverage([focus,typed],[changed])
+    with pytest.raises(ValueError,match='video_required_action_missing'):
+        vr.check_coverage([{**focus,'observation':'点击后打开详情页'},typed],[merged])
+    with pytest.raises(ValueError,match='video_required_action_missing'):
+        vr.check_coverage([focus,event(5),typed],[merged])
+
+
+def test_navigation_cannot_be_reclassified_as_passive_assertion():
+    old=event(1)
+    new={**old,'action':'aiAssert','observation':'用户执行返回手势，详情页滑出，返回上一页'}
     with pytest.raises(ValueError,match='video_required_action_missing'):vr.check_coverage([old],[new])
