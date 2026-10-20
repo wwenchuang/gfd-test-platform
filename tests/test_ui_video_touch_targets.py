@@ -28,7 +28,7 @@ def test_detail_probe_requires_parent_reference_and_single_certain_tap(monkeypat
         assert kw['version']=='touch-target'
         return response
     monkeypatch.setattr(targets.ai,'run_ai_skill',call)
-    assert targets.probe(frames,[detail],assets,1000,lambda:False)==[{'frame_id':'frame-002','target':'查看生成记录'}]
+    assert targets.probe(frames,[detail],assets,1000,lambda:False)==[{'frame_id':'frame-002','target':'查看生成记录','observation':'记录页可见'}]
     response['events'][0]['uncertainties']=['触点不清楚']
     assert targets.probe(frames,[detail],assets,1000,lambda:False)==[]
     response['events'][0]['uncertainties']=[];response['events'][0]['frame_refs']=['frame-003']

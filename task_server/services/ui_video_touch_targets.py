@@ -31,7 +31,7 @@ def probe(frames, details, assets, duration, cancelled):
         event = checked['events'][0]
         if (event['action'] == 'aiTap' and not event['uncertainties'] and
                 parent['frame_id'] in event['frame_refs'] and event['target']):
-            hints.append({'frame_id':parent['frame_id'], 'target':event['target']})
+            hints.append({'frame_id':parent['frame_id'], 'target':event['target'],'observation':event['observation']})
     return hints
 
 
@@ -42,5 +42,5 @@ def conflict(events, hints, frames):
         nearby = explicit or [e for e in events if e.get('action') == 'aiTap' and e.get('frame_refs')
                   and abs(times[e['frame_refs'][0]]-times[hint['frame_id']]) <= 350]
         if len(nearby) == 1 and nearby[0]['target'].strip() != hint['target'].strip():
-            return '触点附近的点击目标与同帧局部复核不一致：'+hint['frame_id']+' 应使用目标 '+hint['target']+'。按该原帧触点核对，不用转场中经过触点的底部控件替代。'
+            return '触点附近的点击目标与同帧局部复核不一致：'+hint['frame_id']+' 应使用目标 '+hint['target']+'。局部交互证据：'+hint.get('observation','')[:500]+'。按该原帧触点核对，不用转场中经过触点的底部控件替代。'
     return ''
