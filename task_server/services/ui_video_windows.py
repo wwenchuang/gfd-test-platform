@@ -99,6 +99,8 @@ def observe_windows(frames,duration,root,cancelled,progress=None,review_events=N
         assets=load_assets(images,root,cancelled)
         from .ui_video_touch_detail import append_details
         payload['detail_frames']=append_details(images,root,assets,cancelled,current_ids)
+        from .ui_video_touch_targets import probe,conflict
+        payload['touch_targets']=probe(images,payload['detail_frames'],assets,duration,cancelled)
         for attempt in range(2):
             if cancelled():raise ValueError('video_cancelled')
             result=ai.run_ai_skill('ui_video_observe',payload,image_assets=assets,
@@ -109,6 +111,11 @@ def observe_windows(frames,duration,root,cancelled,progress=None,review_events=N
             try:
                 result=_bind_whole_evidence(result,window)
                 checked=validate_analysis(result,window,duration,secrets)
+                target_conflict=conflict(checked['events'],payload['touch_targets'],images)
+                if target_conflict:
+                    error=ValueError('video_model_invalid')
+                    error.model_feedback=target_conflict
+                    raise error
                 break
             except ValueError as error:
                 if attempt:raise
@@ -130,20 +137,30 @@ def observe_windows(frames,duration,root,cancelled,progress=None,review_events=N
             # Adjacent windows can describe the same interaction with a
             # nested subset of its evidence. Keep the complete evidence when
             # either endpoint is shared, not a second action at the boundary.
-            # Disjoint/non-nested evidence and different controls stay distinct.
+            # A shared start plus two shared anchors also identifies the same
+            # tap, provided no other interaction intervenes. Keep its union.
+            # Disjoint evidence and different controls stay distinct.
             overlap=next((old for old in reversed(previous_window_events)
                 if old['action']==event['action'] and event['action'] in {'aiTap','aiScroll'} and
                 old['target']==event['target'] and (old['value']==event['value'] or _same_scroll_direction_conflict(old,event)) and
                 (old['start_ms']==event['start_ms'] or old['end_ms']==event['end_ms']) and
-                (set(old['frame_refs'])<=set(event['frame_refs']) or set(event['frame_refs'])<=set(old['frame_refs']))),None)
+                (set(old['frame_refs'])<=set(event['frame_refs']) or set(event['frame_refs'])<=set(old['frame_refs']) or
+                 (old['action']=='aiTap' and old['start_ms']==event['start_ms'] and
+                  len(set(old['frame_refs']) & set(event['frame_refs']))>=2 and
+                  len(set(old['frame_refs']) | set(event['frame_refs']))<=8 and
+                  not any(other['action'] in {'aiTap','aiInput','aiScroll'} and
+                          old['start_ms']<other['start_ms']<=max(old['end_ms'],event['end_ms'])
+                          for other in events)))),None)
             if overlap:
                 if _same_scroll_direction_conflict(overlap,event):
                     question='同一滚动方向存在识别分歧，请对照原画面核对内容移动方向；该段仅保留一次操作'
                     event['uncertainties'].append(question);questions.append(question)
                 merged_questions=list(dict.fromkeys(overlap['uncertainties']+event['uncertainties']))
                 overlap['uncertainties']=merged_questions[:10];questions.extend(merged_questions[10:])
-                if set(event['frame_refs'])>set(overlap['frame_refs']):
-                    overlap.update(start_ms=event['start_ms'],end_ms=event['end_ms'],frame_refs=event['frame_refs'],observation=event['observation'])
+                times={f['frame_id']:f['timestamp_ms'] for f in frames}
+                refs=sorted(set(overlap['frame_refs']) | set(event['frame_refs']),key=times.get)
+                if refs!=overlap['frame_refs']:
+                    overlap.update(start_ms=times[refs[0]],end_ms=times[refs[-1]],frame_refs=refs,observation=event['observation'])
                 continue
             old=events[-1] if events else None
             if (old and old['action']==event['action']=='aiInput' and old['target']==event['target'] and

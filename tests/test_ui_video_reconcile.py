@@ -212,7 +212,7 @@ def test_missing_coverage_gets_one_pixel_review_and_audit(monkeypatch,tmp_path):
     def model(skill,payload,**kw):
         calls.append(payload)
         assert payload['candidate_events']==[{'frame_refs':['f2']},{'frame_refs':['f4']}]
-        assert payload['coverage_checks']=={'first_pass':[{'frame_refs':['f2']},{'frame_refs':['f4']}],'independent_review':[{'frame_refs':['f2']}]}
+        assert payload['coverage_checks']=={'first_pass':[{'action':'aiTap','frame_refs':['f2']},{'action':'aiScroll','frame_refs':['f4']}],'independent_review':[{'action':'aiTap','frame_refs':['f2']}]}
         assert '静止事实' in payload['validation_feedback']
         assert kw['retry_count']==0
         return {'events':[{k:v for k,v in e.items() if k not in ('start_ms','end_ms','evidence_kind')} for e in original[:2]],
@@ -238,7 +238,7 @@ def test_local_gap_repair_keeps_gate_and_never_retries(monkeypatch,tmp_path,bad)
         return {'events':[e],'uncertainties':[],'multiple_scenarios':False}
     monkeypatch.setattr(ai,'run_ai_skill',model)
     with pytest.raises((ValueError,RuntimeError)):vr.reconcile(original,fs,1000,tmp_path,lambda:stop[0],[])
-    assert len(calls)==1
+    assert len(calls)==(2 if bad=='missing' else 1)
 
 
 def test_disjoint_gaps_exceeding_budget_are_not_silently_truncated(monkeypatch,tmp_path):
@@ -246,7 +246,7 @@ def test_disjoint_gaps_exceeding_budget_are_not_silently_truncated(monkeypatch,t
     fs,original,checked=gap_fixture(tmp_path,80)
     monkeypatch.setattr(ai,'run_ai_skill',lambda *a,**kw:pytest.fail('unexpected call'))
     with pytest.raises(ValueError,match='video_required_action_missing'):
-        vr._repair_coverage(original,checked,fs,8000,tmp_path,lambda:False,[],{'f1','f70'})
+        vr._repair_coverage(original,checked,fs,8000,tmp_path,lambda:False,[],{f'f{i}' for i in range(0,80,5)})
 
 
 def test_local_repair_cannot_drop_independently_discovered_input(monkeypatch,tmp_path):
@@ -329,3 +329,60 @@ def test_navigation_cannot_be_reclassified_as_passive_assertion():
     old=event(1)
     new={**old,'action':'aiAssert','observation':'用户执行返回手势，详情页滑出，返回上一页'}
     with pytest.raises(ValueError,match='video_required_action_missing'):vr.check_coverage([old],[new])
+
+
+def test_distant_local_gaps_use_one_bounded_image_budget():
+    fs=[{'frame_id':f'f{i}','timestamp_ms':i*100} for i in range(80)]
+    selected=vr._gap_frames(fs,[],{'f1','f70'})
+    assert [f['frame_id'] for f in selected]==['f0','f1','f2','f3','f68','f69','f70','f71','f72']
+    with pytest.raises(ValueError,match='video_required_action_missing'):
+        vr._gap_frames(fs,[],{f'f{i}' for i in range(0,80,5)})
+
+
+def test_gap_expands_whole_existing_observation_or_rejects_budget():
+    fs=[{'frame_id':f'f{i}','timestamp_ms':i*100} for i in range(80)]
+    with pytest.raises(ValueError,match='video_required_action_missing'):
+        vr._gap_frames(fs,[{'frame_refs':['f1','f40']}],{'f1'})
+
+
+def test_nested_generic_and_visible_return_anchors_are_one_navigation():
+    old={**event(1),'target':'返回上一级','end_ms':300,'frame_refs':['f1','f2','f3']}
+    duplicate={**event(2),'observation':old['observation'],'target':'左上角返回箭头','end_ms':300,'frame_refs':['f2','f3']}
+    vr.check_coverage([old,duplicate],[old])
+    with pytest.raises(ValueError):vr.check_coverage([old,{**duplicate,'frame_refs':['f3','f4']}],[old])
+    with pytest.raises(ValueError):vr.check_coverage([old,{**duplicate,'target':'确认打印'}],[old])
+
+
+def test_explicit_full_evidence_correction_from_false_scroll_to_tap():
+    old={**event(1,'aiScroll'),'frame_refs':['f1','f2']}
+    new={**old,'action':'aiTap','target':'确认打印','observation':'未见滚动，实际点击确认打印按钮，弹窗消失'}
+    vr.check_coverage([old],[new])
+    for replacement in [dict(new,frame_refs=['f2']),dict(new,observation='点击确认打印按钮')]:
+        with pytest.raises(ValueError):vr.check_coverage([old],[replacement])
+
+
+def test_same_touch_continued_with_outcome_does_not_require_second_submission():
+    first={**event(1),'target':'确认打印按钮','end_ms':200,'frame_refs':['f1','f2'],'observation':'点击确认打印，f2可见触点。'}
+    second={**event(2),'target':first['target'],'end_ms':400,'frame_refs':['f2','f3'],'observation':first['observation']+'随后弹窗消失。'}
+    vr.check_coverage([first,second],[second])
+    with pytest.raises(ValueError):vr.check_coverage([first,{**second,'observation':'再次点击确认打印'}],[second])
+
+
+def test_continuation_must_not_absorb_explicit_retry_suffix():
+    first={**event(1),'target':'确认打印','end_ms':200,'frame_refs':['f1','f2'],'observation':'点击确认打印，f2可见触点。'}
+    second={**event(2),'target':first['target'],'end_ms':400,'frame_refs':['f2','f3'],'observation':first['observation']+'再次点击确认打印，随后弹窗消失。'}
+    with pytest.raises(ValueError):vr.check_coverage([first,second],[second])
+
+
+def test_nested_return_with_distinct_navigation_remains_required():
+    first={**event(1),'target':'返回上一级','end_ms':300,'frame_refs':['f1','f2','f3'],'observation':'从详情返回列表'}
+    second={**event(2),'target':'左上角返回箭头','end_ms':300,'frame_refs':['f2','f3'],'observation':'再次点击返回，从列表返回首页'}
+    with pytest.raises(ValueError):vr.check_coverage([first,second],[first])
+
+
+def test_duplicate_navigation_requires_explicit_review_and_retained_tap():
+    old={**event(1),'target':'返回上一级','end_ms':300,'frame_refs':['f1','f2','f3']}
+    correction={**old,'action':'aiAssert','observation':'未见新增点击，同一次返回的转场延续，页面自动稳定'}
+    tap={**old,'target':'左上角返回箭头'}
+    vr.check_coverage([old],[correction,tap])
+    with pytest.raises(ValueError):vr.check_coverage([old],[dict(correction,observation='用户从列表返回首页')])

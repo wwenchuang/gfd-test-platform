@@ -497,3 +497,16 @@ def test_backend_rejects_forged_detail_transport(change):
     if change=='asset':assets[-1]['mime']='text/plain'
     if change=='metadata_type':payload['detail_frames']=[None]
     with pytest.raises(ValueError):_video_context_assets(skill,payload,assets)
+
+
+def test_same_start_cross_window_return_keeps_union_not_fake_retry(monkeypatch,tmp_path):
+    from task_server.services import ui_video_windows as vw,ai_skill_service as ai
+    fs=[{'frame_id':f'f{i}','timestamp_ms':i*100} for i in range(61)]
+    monkeypatch.setattr(vw,'load_assets',lambda *a:[])
+    def model(skill,payload,**kw):
+        i=payload['window']['index']
+        return {'events':[{'action':'aiTap','target':'左上角返回箭头','value':'','frame_refs':['f26','f27','f28','f29'] if i==1 else ['f26','f29','f32'],'observation':'返回AI建模页'}] if i<=2 else [],'uncertainties':[],'multiple_scenarios':False}
+    monkeypatch.setattr(ai,'run_ai_skill',model)
+    result,_=vw.observe_windows(fs,6100,tmp_path,lambda:False)
+    assert len(result['events'])==1
+    assert result['events'][0]['frame_refs']==['f26','f27','f28','f29','f32']
