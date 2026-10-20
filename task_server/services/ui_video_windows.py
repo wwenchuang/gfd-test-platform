@@ -41,6 +41,20 @@ def context_frames(window,frames,root,events,cancelled):
         return [f for f in prior if f['frame_id'] in refs]
 
 
+def temporal_context_frames(window,frames):
+    """Bounded nearby pages explain transitions without becoming local evidence."""
+    if not window:return []
+    start,end=window[0]['timestamp_ms'],window[-1]['timestamp_ms']
+    before=[f for f in frames if f['timestamp_ms']<start]
+    after=[f for f in frames if f['timestamp_ms']>end]
+    ids=set()
+    for pool,targets in ((before,[start-3000,start-1500,start-500,start-1]),
+                         (after,[end+1,end+500,end+1500,end+3000])):
+        for target in targets:
+            if pool:ids.add(min(pool,key=lambda f:abs(f['timestamp_ms']-target))['frame_id'])
+    return [f for f in frames if f['frame_id'] in ids]
+
+
 def observe_windows(frames,duration,root,cancelled,progress=None,review_events=None,prior_secrets=()):
     from . import ai_skill_service as ai
     from .ui_video_analysis import _bind_whole_evidence,validate_analysis
@@ -53,19 +67,24 @@ def observe_windows(frames,duration,root,cancelled,progress=None,review_events=N
         if len(windows)>1:
             payload['window']={'index':index+1,'total':len(windows),'previous_end_ms':previous_end,
                                'final':index==len(windows)-1}
-            payload['prior_events']=[{k:e[k] for k in ('action','target','value','frame_refs','observation','uncertainties')} for e in events[-8:]]
-        images=window
+            payload['prior_events']=[{k:e[k] for k in ('action','target','value','observation','uncertainties')} for e in events[-8:]]
+        temporal=temporal_context_frames(window,frames) if len(windows)>1 else []
+        temporal_ids={f['frame_id'] for f in temporal}
+        current_ids={f['frame_id'] for f in window}
+        images=[f for f in frames if f['frame_id'] in current_ids|temporal_ids]
+        payload.update(image_frames=images,context_frame_ids=[f['frame_id'] for f in temporal],
+                       temporal_context_frame_ids=[f['frame_id'] for f in temporal])
         if review_events is not None:
             # Show previous page identities as visual context without letting
             # the model emit events outside the current continuous window.
             refs=[f['frame_id'] for f in context_frames(window,frames,root,review_events,cancelled)]
-            ids=set(refs)|{f['frame_id'] for f in window}
+            ids=set(refs)|current_ids|temporal_ids
             images=[f for f in frames if f['frame_id'] in ids]
             current_ids={f['frame_id'] for f in window}
             local_events=[{'frame_refs':[ref for ref in e['frame_refs'] if ref in current_ids]}
                           for e in review_events if set(e['frame_refs']) & current_ids]
             payload.update(review_mode='full_flow_after_recovery',candidate_events=local_events,
-                           image_frames=images,context_frame_ids=refs)
+                           image_frames=images,context_frame_ids=[f['frame_id'] for f in images if f['frame_id'] not in current_ids])
         if progress:progress('reviewing' if review_events is not None else 'observing',index,len(windows),events)
         assets=load_assets(images,root,cancelled)
         for attempt in range(2):
@@ -79,9 +98,9 @@ def observe_windows(frames,duration,root,cancelled,progress=None,review_events=N
                 result=_bind_whole_evidence(result,window)
                 checked=validate_analysis(result,window,duration,secrets)
                 break
-            except ValueError:
+            except ValueError as error:
                 if attempt:raise
-                payload['validation_feedback']='本窗口输出未通过格式或证据检查。重新核对当前frames，仅输出action/target/value/frame_refs/observation及可选uncertainties，不输出start_ms/end_ms/evidence_kind或其它字段。只引用当前窗真实帧且按时间排序，完整保留当前窗操作。'
+                payload['validation_feedback']=getattr(error,'model_feedback','')+' 本窗口输出未通过格式或证据检查。重新核对当前frames，仅输出action/target/value/frame_refs/observation及可选uncertainties，不输出start_ms/end_ms/evidence_kind或其它字段。只引用当前窗真实帧且按时间排序，完整保留当前窗操作。'
         previous_window_events=list(events)
         for event in checked['events']:
             # Only identical evidence in an overlap is a duplicate. Never erase

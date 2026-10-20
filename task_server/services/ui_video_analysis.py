@@ -308,6 +308,20 @@ def _validate_consolidated_evidence(checked,raw_events,candidates,frames,image_f
     _preserve_interactions(candidates,checked['events'],required_indices)
 
 
+def _invalid_window_reference(reason):
+    feedback={
+        'count':'frame_refs必须是含1至8个帧编号的数组，不可为空或超过上限。',
+        'outside_window':'frame_refs引用了本窗之外或不存在的帧。只能引用frames中的frame_id；context_frame_ids和历史步骤均不是当前动作证据，不得引用。',
+        'duplicate':'同一事件的frame_refs包含重复编号，每张真实帧只能引用一次。',
+        'order':'同一事件的frame_refs必须按frames真实时间从早到晚排列，不能倒序。',
+        'event_order':'events必须按每项首个证据帧的时间先后排列，不可把较早操作放在较晚操作之后。',
+    }
+    error=ValueError('video_reference_invalid')
+    error.reference_reason=reason
+    error.model_feedback=feedback[reason]  # Fixed platform text, never untrusted model output.
+    return error
+
+
 def _bind_whole_evidence(result, frames):
     """Bind only actual sent frame IDs; model times or confidence cannot override them."""
     if not isinstance(result, dict) or not isinstance(result.get('events'), list):
@@ -320,11 +334,14 @@ def _bind_whole_evidence(result, frames):
         if not isinstance(event,dict) or not required<=set(event)<=required|{'uncertainties'}:
             raise ValueError('video_model_invalid')
         refs=event['frame_refs']
-        if (not isinstance(refs,list) or not 1<=len(refs)<=8 or
-            any(not isinstance(ref,str) or ref not in times for ref in refs) or len(set(refs))!=len(refs)):
-            raise ValueError('video_reference_invalid')
+        if not isinstance(refs,list) or not 1<=len(refs)<=8:
+            raise _invalid_window_reference('count')
+        if any(not isinstance(ref,str) or ref not in times for ref in refs):
+            raise _invalid_window_reference('outside_window')
+        if len(set(refs))!=len(refs):raise _invalid_window_reference('duplicate')
         stamps=[times[ref] for ref in refs]
-        if stamps!=sorted(stamps) or stamps[0]<last:raise ValueError('video_reference_invalid')
+        if stamps!=sorted(stamps):raise _invalid_window_reference('order')
+        if stamps[0]<last:raise _invalid_window_reference('event_order')
         if 'uncertainties' in event and not isinstance(event['uncertainties'],list):raise ValueError('video_model_invalid')
         event.setdefault('uncertainties',[])
         event.update(start_ms=stamps[0],end_ms=stamps[-1],evidence_kind='inferred')

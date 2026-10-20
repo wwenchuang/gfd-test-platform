@@ -176,7 +176,7 @@ def test_long_video_observes_all_frames_in_bounded_overlapping_windows(monkeypat
         assert 2<=len(kw['image_assets'])<=60
         assert [a['name'] for a in kw['image_assets']]==[f['frame_id'] for f in payload['image_frames']]
         if skill=='ui_video_observe':
-            window=payload['image_frames'];seen.update(f['frame_id'] for f in window)
+            window=payload['frames'];seen.update(f['frame_id'] for f in window)
             # A repeated observation in overlap must not become a second click.
             refs=['frame-027','frame-028'] if window[0]['timestamp_ms']<=27000<=window[-1]['timestamp_ms'] else [window[-2]['frame_id'],window[-1]['frame_id']]
             return {'events':[{'action':'aiTap','target':'入口','value':'','frame_refs':refs,'observation':'入口页面显示'}],'uncertainties':[],'multiple_scenarios':False}
