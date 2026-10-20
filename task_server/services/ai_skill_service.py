@@ -312,7 +312,11 @@ def _video_context_assets(skill_name, payload, assets):
     if not scoped:
         return False
     frames = payload.get("image_frames")
-    if not isinstance(assets, list) or not 2 <= len(assets) <= 60 or not isinstance(frames, list) or len(frames) != len(assets):
+    details = payload.get("detail_frames", [])
+    if not isinstance(details, list) or len(details) > 6 or (details and skill_name != "ui_video_observe"):
+        raise ValueError("video_frames_invalid")
+    if (not isinstance(assets, list) or not 2 <= len(assets) <= 60 or not isinstance(frames, list)
+            or len(frames) < 2 or len(frames) + len(details) != len(assets)):
         raise ValueError("video_vision_limit")
     total = 0
     last = -1
@@ -333,6 +337,21 @@ def _video_context_assets(skill_name, payload, assets):
             raise ValueError("video_vision_limit")
         names.add(name)
         last = stamp
+    parents = {frame["frame_id"]: frame for frame in frames}
+    for detail, asset in zip(details, assets[len(frames):]):
+        if not isinstance(detail, dict) or not isinstance(asset, dict):
+            raise ValueError("video_frames_invalid")
+        parent = parents.get(detail.get("source_frame_id"))
+        name, stamp, data = detail.get("frame_id"), detail.get("timestamp_ms"), asset.get("base64")
+        if (not parent or name != parent["frame_id"] + "-detail" or name in names or
+                type(stamp) is not int or stamp != parent["timestamp_ms"] or
+                asset.get("name") != name or asset.get("timestamp_ms") != stamp or
+                asset.get("mime") != "image/jpeg" or not isinstance(data, str) or not data or asset.get("dataUrl")):
+            raise ValueError("video_frames_invalid")
+        total += len(data)
+        if total > 10 * 1024 * 1024:
+            raise ValueError("video_vision_limit")
+        names.add(name)
     return True
 
 

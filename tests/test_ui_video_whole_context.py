@@ -468,3 +468,32 @@ def test_future_outcome_repairs_only_result_without_replanning_actions(monkeypat
     assert result['events'][0]['outcome']['frame_refs']==['frame-003']
     assert [e['target'] for e in result['events']]==['列表入口','返回']
     assert calls==[('ui_video_observe',None),('ui_video_steps','consolidate'),('ui_video_observe','outcome')]
+
+
+def detail_transport():
+    fs=frames()
+    detail={'frame_id':'frame-002-detail','source_frame_id':'frame-002','timestamp_ms':200}
+    assets=[{'name':f['frame_id'],'timestamp_ms':f['timestamp_ms'],'mime':'image/jpeg','base64':'YQ=='} for f in fs+[detail]]
+    return {'phase':'whole-observe','image_frames':fs,'detail_frames':[detail]},assets
+
+
+def test_backend_accepts_bounded_same_frame_detail_before_gateway():
+    from task_server.services.ai_skill_service import _video_context_assets
+    payload,assets=detail_transport()
+    assert _video_context_assets('ui_video_observe',payload,assets)
+
+
+@pytest.mark.parametrize('change',['parent','timestamp','name','duplicate','budget','phase','asset','metadata_type'])
+def test_backend_rejects_forged_detail_transport(change):
+    from task_server.services.ai_skill_service import _video_context_assets
+    payload,assets=detail_transport()
+    d=payload['detail_frames'][0];skill='ui_video_observe'
+    if change=='parent':d['source_frame_id']='frame-999'
+    if change=='timestamp':d['timestamp_ms']=300;assets[-1]['timestamp_ms']=300
+    if change=='name':d['frame_id']='frame-999-detail';assets[-1]['name']=d['frame_id']
+    if change=='duplicate':payload['detail_frames'].append(dict(d));assets.append(dict(assets[-1]))
+    if change=='budget':assets[-1]['base64']='a'*(10*1024*1024)
+    if change=='phase':skill='ui_video_steps';payload['phase']='whole-consolidate'
+    if change=='asset':assets[-1]['mime']='text/plain'
+    if change=='metadata_type':payload['detail_frames']=[None]
+    with pytest.raises(ValueError):_video_context_assets(skill,payload,assets)
