@@ -1,3 +1,9 @@
+## 2026-10-20 3.8线上切换与结构化调用适配
+
+- 增量包SHA256校验后部署c2b0827c，部署脚本完成、任务服务active、公网health版本一致。运行环境DASHSCOPE_MODEL/DASHSCOPE_VL_MODEL及Gateway providers配置同步3.8，原配置已备份。默认providers/test实际返回qwen3.8-max/gateway ok；所有路由Qwen且无fallback。
+- 姓名牌第18次第一窗model_service失败，独立14帧请求明确Request timed out；触点新来源uvs_8a924c8ae24d4beea194bdf82fb82e9a开始分析。尚无整片通过。
+- 发现结构化JSON关闭思考模式的匹配仅支持3.5/3.6/3.7，漏掉3.8。新增行为测试先红后绿，补充3.8兼容；不改变非JSON调用或其他服务商。是否解决真实超时仍须上线复验。
+
 ## 2026-10-20 千问 3.8 Max 切换准备
 
 - 用户要求改用3.8。官方模型目录列明qwen3.8-max支持图像与视频理解；通过线上Gateway显式调用成功，回读model=qwen3.8-max、fallbackUsed=false。同组触点原图正确定位我的作品第二张粉色收纳盒卡片，未编造加载成功。姓名牌同组调用HTTP500，尚未完整验收。

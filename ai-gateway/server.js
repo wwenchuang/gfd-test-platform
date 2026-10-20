@@ -583,7 +583,7 @@ function requestedCompletionTokens(body = {}, route = {}) {
 function routeSupportsQwenHybridThinking(route) {
   const model = String(route?.model || '').toLowerCase();
   const baseUrl = String(route?.baseUrl || '').toLowerCase();
-  return baseUrl.includes('dashscope.aliyuncs.com') && /^qwen3\.(?:5|6|7)(?:-|$)/.test(model);
+  return baseUrl.includes('dashscope.aliyuncs.com') && /^qwen3\.(?:5|6|7|8)(?:-|$)/.test(model);
 }
 
 function completionOptionsForRoute(route, prompt, body, callOptions = {}) {
