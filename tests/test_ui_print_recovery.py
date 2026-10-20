@@ -97,3 +97,14 @@ def test_invalid_yaml_row_remains_validation_error(step):
     from task_server.services.ui_yaml_candidate import parse_candidate
     raw=yaml.safe_dump({'android':{},'tasks':[{'name':'测试','flow':[step]}]})
     with pytest.raises(ValueError):parse_candidate(raw,'com.test.app',[])
+
+
+def test_video_cancel_step_never_uses_pending_confirmation_as_success():
+    from task_server.services.ui_video_print_recovery import apply_group
+    steps=[{'action':'aiTap','target':t,'value':'','expected':e} for t,e in [
+        ('检查无误，确认打印','进入设备页'),('取消打印','弹出确认框'),('确认','触发取消流程，显示等待提示'),('不想打了','原因被选中')]]
+    result=apply_group(steps,{'submit':0,'cancel':1,'confirm':2})
+    assert result[1]['action']=='cancelPrint'
+    assert '本次打印任务已结束' in result[1]['expected']
+    assert '等待提示' not in result[1]['expected']
+    assert steps[2]['expected']=='触发取消流程，显示等待提示'

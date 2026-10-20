@@ -442,3 +442,29 @@ def test_same_start_scroll_direction_conflict_is_not_two_operations(monkeypatch,
         assert result['events'][0]['frame_refs']==second_refs
         assert any('方向' in q and '分歧' in q for q in result['uncertainties'])
         assert result['events'][0]['uncertainties']
+
+
+@pytest.mark.parametrize('missing_second',[False,True])
+def test_future_outcome_repairs_only_result_without_replanning_actions(monkeypatch,tmp_path,missing_second):
+    from task_server.services import ui_video_analysis as va,ai_skill_service as ai
+    fs=frames();(tmp_path/'frames').mkdir()
+    for f in fs:(tmp_path/'frames'/(f['frame_id']+'.jpg')).write_bytes(b'image')
+    calls=[]
+    def model(skill,payload,**kw):
+        calls.append((skill,kw.get('version')))
+        if kw.get('version')=='outcome':
+            assert [c['target'] for c in payload['checks']]==(['candidate:0','candidate:1'] if missing_second else ['candidate:0'])
+            assert 'frame-006' not in payload['checks'][0]['outcome_frame_ids']
+            return {'events':[{'action':'aiAssert','target':'candidate:0','value':'','frame_refs':['frame-003'],'observation':'列表页面显示返回按钮','uncertainties':[]}]+([{'action':'aiAssert','target':'candidate:1','value':'','frame_refs':['frame-007'],'observation':'首页显示列表入口','uncertainties':[]}] if missing_second else []),'uncertainties':[],'multiple_scenarios':False}
+        if skill=='ui_video_observe':
+            return {'events':[{'action':'aiTap','target':t,'value':'','frame_refs':r,'observation':'页面发生跳转','uncertainties':[]} for t,r in [('列表入口',['frame-001','frame-002']),('返回',['frame-005','frame-006'])]],'uncertainties':[],'multiple_scenarios':False}
+        assert calls.count(('ui_video_steps','consolidate'))==1
+        result={'title':'查看列表后返回首页','events':[{'candidate_index':i,'action':'aiTap','target':t,'value':'','observation':'页面发生跳转','uncertainties':[], 'outcome':{'observation':o,'frame_refs':[r]},'reusable_expected':o} for i,t,o,r in [(0,'列表入口','列表页面显示返回按钮','frame-006'),(1,'返回','首页显示列表入口','frame-007')]],'uncertainties':[],'multiple_scenarios':False}
+        if missing_second:
+            result['events'][1].pop('outcome');result['events'][1].pop('reusable_expected');result['events'][1]['observation']='加载中'
+        return result
+    monkeypatch.setattr(ai,'run_ai_skill',model)
+    result=va.analyze_whole_frames({'app_id':'com.example.app','goal':'','media':{'frames':fs,'duration_ms':1000}},tmp_path,lambda:False)
+    assert result['events'][0]['outcome']['frame_refs']==['frame-003']
+    assert [e['target'] for e in result['events']]==['列表入口','返回']
+    assert calls==[('ui_video_observe',None),('ui_video_steps','consolidate'),('ui_video_observe','outcome')]

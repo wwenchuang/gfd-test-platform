@@ -281,6 +281,7 @@ def _validate_consolidated_evidence(checked,raw_events,candidates,frames,image_f
     all_refs={ref for raw in raw_events for ref in raw['frame_refs']}
     all_refs.update(frame['frame_id'] for frame in image_frames)
     times={frame['frame_id']:frame['timestamp_ms'] for frame in frames}
+    invalid_outcomes=[]
     for event_index,event in enumerate(checked['events']):
         matching=[raw for raw in raw_events if raw['action']==event['action'] and
                   raw['start_ms']<=event['end_ms'] and event['start_ms']<=raw['end_ms']]
@@ -303,9 +304,13 @@ def _validate_consolidated_evidence(checked,raw_events,candidates,frames,image_f
             system_start=min((raw['start_ms'] for raw in candidates if raw['start_ms']>event['start_ms'] and _system_boundary(raw,duration)),default=duration+1)
             if (not set(event['outcome']['frame_refs'])<=all_refs or any(times[ref]>=system_start for ref in event['outcome']['frame_refs']) or
                 any(times[ref]>next_start for ref in event['outcome']['frame_refs'])):
-                raise ValueError('video_reference_invalid')
+                invalid_outcomes.append(event_index)
         if all(raw['evidence_kind']=='inferred' for raw in matching):event['evidence_kind']='inferred'
     _preserve_interactions(candidates,checked['events'],required_indices)
+    if invalid_outcomes:
+        error=ValueError('video_reference_invalid')
+        error.outcome_event_indexes=invalid_outcomes
+        raise error
 
 
 def _invalid_window_reference(reason):
@@ -417,6 +422,19 @@ def analyze_whole_frames(document, root, cancelled, progress=None):
                 known_secrets.extend(e['value'] for e in planned['events'] if isinstance(e,dict) and
                     e.get('action')=='aiInput' and isinstance(e.get('value'),str) and e['value'])
             missing_indexes=getattr(error,'result_check_candidate_indexes',[])
+            invalid_outcomes=getattr(error,'outcome_event_indexes',[])
+            if invalid_outcomes:
+                # Re-read only ordinary result frames. Cancellation and dynamic
+                # object outcomes retain their dedicated ownership/terminal gates.
+                indexes=[plan['events'][i].get('candidate_index') for i in invalid_outcomes]
+                protected=set(planned.get('print_recovery',{}).values()) if isinstance(planned.get('print_recovery'),dict) else set()
+                if all(type(i) is int and i not in protected for i in indexes):
+                    proposal,snapshot=draft_proposal({**document,**checked,'print_recovery':print_group,
+                        'source_id':document.get('source_id','uvs_'+'0'*32),'analysis_version':document.get('analysis_version',1)})
+                    missing={step['step_id'] for step in proposal['steps'] if step['action'] in {'aiTap','aiScroll'} and not step['expected']}
+                    indexes.extend(plan['events'][i]['candidate_index'] for i,event in enumerate(snapshot['events'])
+                        if event['draft_step_id'] in missing and 'candidate_index' in plan['events'][i])
+                    missing_indexes=sorted(set(indexes))
             if missing_indexes:
                 from .ui_video_outcomes import repair_outcomes
                 pending_plan,repair_images=repair_outcomes(planned,candidates,frames,duration,root,missing_indexes,cancelled,known_secrets)
