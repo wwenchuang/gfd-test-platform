@@ -17,7 +17,7 @@ _FAILURE_CODES=frozenset({
     'video_metadata_invalid','video_frames_invalid','video_decode_timeout','video_memory_limit',
     'video_cancelled','video_vision_limit','video_action_invalid','video_model_invalid',
     'video_model_timeline','video_required_action_missing','video_observation_missing','video_reference_invalid',
-    'video_expected_missing','video_retry_invalid',
+    'video_expected_missing','video_retry_invalid','video_coverage_resolution_invalid',
 })
 
 
@@ -136,7 +136,8 @@ def analyze_video_source(store,identifier):
     except Exception as error:
         code=_failure_code(error)
         _log_failure(identifier,stage,error,code)
-        messages={'video_required_action_missing':'用例整理遗漏必要业务操作，请重试分析',
+        messages={'video_coverage_resolution_invalid':'重复操作的前后画面仍有歧义，尚未生成可执行用例；原视频已保留',
+                  'video_required_action_missing':'用例整理遗漏必要业务操作，请重试分析',
                   'video_expected_missing':'未能确认点击或滚动后的稳定结果，请保留操作后画面再重试；原视频保留',
                   'video_decoder_missing':'服务器缺少 ffmpeg/ffprobe，请管理员安装并配置 UI_VIDEO_FFMPEG/UI_VIDEO_FFPROBE 后重试',
                   'video_split_required':'视频操作变化过于密集，超出完整证据容量，请缩短连续场景后重试',

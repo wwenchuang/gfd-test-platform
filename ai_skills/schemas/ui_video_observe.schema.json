@@ -166,6 +166,104 @@
     },
     "multiple_scenarios": {
       "type": "boolean"
+    },
+    "coverage_resolutions": {
+      "type": "array",
+      "maxItems": 8,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "source_anchor_ids",
+          "resolution",
+          "reviewed_event_index",
+          "evidence"
+        ],
+        "properties": {
+          "source_anchor_ids": {
+            "type": "array",
+            "minItems": 2,
+            "maxItems": 8,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 80
+            }
+          },
+          "resolution": {
+            "enum": [
+              "same_interaction",
+              "same_interaction_with_action_correction"
+            ]
+          },
+          "reviewed_event_index": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 49
+          },
+          "evidence": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "before_state",
+              "interaction",
+              "after_state",
+              "why_not_separate_actions",
+              "before_frame",
+              "interaction_frame",
+              "after_frame",
+              "examined_frame_refs"
+            ],
+            "properties": {
+              "before_state": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 800
+              },
+              "interaction": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 800
+              },
+              "after_state": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 800
+              },
+              "why_not_separate_actions": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 800
+              },
+              "before_frame": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 80
+              },
+              "interaction_frame": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 80
+              },
+              "after_frame": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 80
+              },
+              "examined_frame_refs": {
+                "type": "array",
+                "minItems": 2,
+                "maxItems": 8,
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 80
+                }
+              }
+            }
+          }
+        }
+      }
     }
   }
 }

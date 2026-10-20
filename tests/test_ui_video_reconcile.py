@@ -211,11 +211,11 @@ def test_missing_coverage_gets_one_pixel_review_and_audit(monkeypatch,tmp_path):
     monkeypatch.setattr(vw,'observe_windows',lambda *a,**kw:(checked,[]))
     def model(skill,payload,**kw):
         calls.append(payload)
-        assert payload['candidate_events']==[{'frame_refs':['f2']},{'frame_refs':['f4']}]
-        assert payload['coverage_checks']=={'first_pass':[{'action':'aiTap','frame_refs':['f2']},{'action':'aiScroll','frame_refs':['f4']}],'independent_review':[{'action':'aiTap','frame_refs':['f2']}]}
+        assert payload['candidate_events']==[{'frame_refs':['f4']}]
+        assert payload['coverage_checks']=={'first_pass':[{'anchor_id':'first_pass:0','action':'aiScroll','frame_refs':['f4']}],'independent_review':[]}
         assert '静止事实' in payload['validation_feedback']
         assert kw['retry_count']==0
-        return {'events':[{k:v for k,v in e.items() if k not in ('start_ms','end_ms','evidence_kind')} for e in original[:2]],
+        return {'events':[{k:v for k,v in e.items() if k not in ('start_ms','end_ms','evidence_kind')} for e in original[1:2]],
             'uncertainties':[],'multiple_scenarios':False}
     monkeypatch.setattr(ai,'run_ai_skill',model)
     actual=vr.reconcile(original,fs,1000,tmp_path,lambda:False,[])
@@ -225,7 +225,7 @@ def test_missing_coverage_gets_one_pixel_review_and_audit(monkeypatch,tmp_path):
 
 
 @pytest.mark.parametrize('bad',['missing','foreign','cancel','provider'])
-def test_local_gap_repair_keeps_gate_and_never_retries(monkeypatch,tmp_path,bad):
+def test_local_gap_repair_has_bounded_correction_but_no_provider_or_cancel_retry(monkeypatch,tmp_path,bad):
     from task_server.services import ui_video_windows as vw,ai_skill_service as ai
     fs,original,checked=gap_fixture(tmp_path);calls=[];stop=[False]
     monkeypatch.setattr(vw,'observe_windows',lambda *a,**kw:(checked,[]))
@@ -238,7 +238,7 @@ def test_local_gap_repair_keeps_gate_and_never_retries(monkeypatch,tmp_path,bad)
         return {'events':[e],'uncertainties':[],'multiple_scenarios':False}
     monkeypatch.setattr(ai,'run_ai_skill',model)
     with pytest.raises((ValueError,RuntimeError)):vr.reconcile(original,fs,1000,tmp_path,lambda:stop[0],[])
-    assert len(calls)==(2 if bad=='missing' else 1)
+    assert len(calls)==(2 if bad in {'missing','foreign'} else 1)
 
 
 def test_disjoint_gaps_exceeding_budget_are_not_silently_truncated(monkeypatch,tmp_path):
@@ -254,9 +254,9 @@ def test_local_repair_cannot_drop_independently_discovered_input(monkeypatch,tmp
     fs,original,checked=gap_fixture(tmp_path)
     extra=event(5,'aiInput');extra['target']='姓名';extra['value']=''
     checked['events'].insert(1,extra)
-    monkeypatch.setattr(ai,'run_ai_skill',lambda *a,**kw:{'events':[{k:v for k,v in e.items() if k not in ('start_ms','end_ms','evidence_kind')} for e in original[:2]],'uncertainties':[],'multiple_scenarios':False})
-    with pytest.raises(ValueError,match='video_required_action_missing'):
-        vr._repair_coverage(original,checked,fs,1000,tmp_path,lambda:False,[],{'f4'})
+    monkeypatch.setattr(ai,'run_ai_skill',lambda *a,**kw:{'events':[{k:v for k,v in e.items() if k not in ('start_ms','end_ms','evidence_kind')} for e in original[1:2]],'uncertainties':[],'multiple_scenarios':False})
+    actual=vr._repair_coverage(original,checked,fs,1000,tmp_path,lambda:False,[],{'f4'})
+    assert any(e['action']=='aiInput' and e['target']=='姓名' for e in actual['events'])
 
 
 def test_local_audit_redacts_newly_discovered_input(monkeypatch,tmp_path):
@@ -264,8 +264,8 @@ def test_local_audit_redacts_newly_discovered_input(monkeypatch,tmp_path):
     fs,original,checked=gap_fixture(tmp_path)
     checked['events'][0]['observation']='页面 NEW_SECRET'
     extra=event(5,'aiInput');extra.update(target='姓名',value='NEW_SECRET')
-    monkeypatch.setattr(ai,'run_ai_skill',lambda *a,**kw:{'events':[{k:v for k,v in e.items() if k not in ('start_ms','end_ms','evidence_kind')} for e in original[:2]+[extra]],'uncertainties':[],'multiple_scenarios':False})
-    actual=vr._repair_coverage(original,checked,fs,1000,tmp_path,lambda:False,[],{'f4'})
+    monkeypatch.setattr(ai,'run_ai_skill',lambda *a,**kw:{'events':[{k:v for k,v in e.items() if k not in ('start_ms','end_ms','evidence_kind')} for e in original[1:2]+[extra]],'uncertainties':[],'multiple_scenarios':False})
+    actual=vr._repair_coverage(original,checked,fs,1000,tmp_path,lambda:False,[],{'f4','f5'})
     assert 'NEW_SECRET' not in str(actual)
 
 
@@ -297,11 +297,14 @@ def test_touch_gesture_candidates_require_independent_full_review():
     assert vr.needs_reconciliation([item],[{}]*30)
 
 
-def test_explicit_pixel_based_auto_layout_correction_can_remove_false_scroll():
+@pytest.mark.parametrize('description',['标签自动加载后内容填充，未见滚动操作','图片资源异步自动加载，非滚动操作'])
+def test_explicit_pixel_based_auto_layout_correction_can_remove_false_scroll(description):
     old=event(1,'aiScroll');old['frame_refs']=['f1','f2']
-    new=copy.deepcopy(old);new.update(action='aiAssert',value='',observation='标签自动加载后内容填充，未见滚动操作')
+    new=copy.deepcopy(old);new.update(action='aiAssert',value='',observation=description)
     vr.check_coverage([old],[new])
     assert new['uncertainties']
+    vr.check_coverage([old],[new])
+    assert len(new['uncertainties'])==1
     new['frame_refs']=['f2']
     with pytest.raises(ValueError,match='video_required_action_missing'):vr.check_coverage([old],[new])
 
@@ -386,3 +389,12 @@ def test_duplicate_navigation_requires_explicit_review_and_retained_tap():
     tap={**old,'target':'左上角返回箭头'}
     vr.check_coverage([old],[correction,tap])
     with pytest.raises(ValueError):vr.check_coverage([old],[dict(correction,observation='用户从列表返回首页')])
+
+
+def test_gap_closes_chained_interactions_but_not_long_passive_loading():
+    fs=[{'frame_id':f'f{i}','timestamp_ms':i*100} for i in range(30)]
+    events=[{'action':'aiTap','frame_refs':['f7','f9']},
+            {'action':'aiTap','frame_refs':['f9','f11']},
+            {'action':'aiAssert','frame_refs':['f11','f29']}]
+    selected=vr._gap_frames(fs,events,{'f5'})
+    assert {f['frame_id'] for f in selected}=={f'f{i}' for i in range(3,12)}
