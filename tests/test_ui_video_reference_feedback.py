@@ -90,3 +90,18 @@ def test_worker_does_not_log_arbitrary_reference_attributes(caplog):
     error.reference_shape='private-data'
     _log_failure('uvs_'+'a'*32,'analysis',error,'video_reference_invalid')
     assert 'private-data' not in caplog.text
+
+
+@pytest.mark.parametrize('frame,binding,logged',[
+    ('frame-099','explicit',True),('private-data','explicit',False),
+    ('frame-099',['private-data'],False),
+])
+def test_worker_target_diagnostic_is_content_free(caplog,frame,binding,logged):
+    import json
+    from task_server.workers.ui_video_worker import _log_failure
+    error=ValueError('video_model_invalid')
+    error.target_diagnostic={'frame_id':frame,'binding':binding,'comparison':'mismatch','target':'private-data'}
+    _log_failure('uvs_'+'a'*32,'analysis',error,'video_model_invalid')
+    detail=json.loads(caplog.records[-1].getMessage().split(' ',1)[1])
+    assert ('target_diagnostic' in detail)==logged
+    assert 'private-data' not in caplog.text

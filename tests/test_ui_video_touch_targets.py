@@ -45,3 +45,22 @@ def test_pointer_reference_binds_even_with_earlier_before_frame():
     frames=[{'frame_id':'f1','timestamp_ms':100},{'frame_id':'f2','timestamp_ms':800}]
     events=[{'action':'aiTap','target':'底部首页','frame_refs':['f1','f2']}]
     assert '查看生成记录' in targets.conflict(events,[{'frame_id':'f2','target':'查看生成记录'}],frames)
+
+
+@pytest.mark.parametrize('target,match',[
+    ('查看生成记录按钮',True),('“查看生成记录”',True),('查看生成记录入口',True),
+    ('底部查看生成记录',False),('查看打印记录',False),('查看记录',False),
+])
+def test_target_comparison_ignores_only_control_suffix(target,match):
+    frames=[{'frame_id':'f1','timestamp_ms':100}]
+    events=[{'action':'aiTap','target':target,'frame_refs':['f1']}]
+    diagnostic={}
+    result=targets.conflict(events,[{'frame_id':'f1','target':'查看生成记录'}],frames,diagnostic)
+    assert (not result)==match
+    assert diagnostic=={'frame_id':'f1','binding':'explicit','comparison':'normalized_match' if match else 'mismatch'}
+
+
+def test_empty_control_label_is_not_normalized_to_other_empty_label():
+    frames=[{'frame_id':'f1','timestamp_ms':100}]
+    assert targets.conflict([{'action':'aiTap','target':'按钮','frame_refs':['f1']}],
+                            [{'frame_id':'f1','target':'入口'}],frames)

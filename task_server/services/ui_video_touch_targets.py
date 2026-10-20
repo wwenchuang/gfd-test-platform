@@ -35,12 +35,28 @@ def probe(frames, details, assets, duration, cancelled):
     return hints
 
 
-def conflict(events, hints, frames):
+def _label(value):
+    text=value.strip()
+    if len(text)>1 and (text[0],text[-1]) in {('“','”'),('「','」'),('"','"'),("'","'")}:
+        text=text[1:-1].strip()
+    for suffix in ('按钮','入口'):
+        if text.endswith(suffix):
+            text=text[:-len(suffix)].strip()
+            break
+    return text
+
+
+def conflict(events, hints, frames, diagnostic=None):
     times = {f['frame_id']:f['timestamp_ms'] for f in frames}
     for hint in hints:
         explicit = [e for e in events if e.get('action') == 'aiTap' and hint['frame_id'] in e.get('frame_refs',[])]
         nearby = explicit or [e for e in events if e.get('action') == 'aiTap' and e.get('frame_refs')
                   and abs(times[e['frame_refs'][0]]-times[hint['frame_id']]) <= 350]
-        if len(nearby) == 1 and nearby[0]['target'].strip() != hint['target'].strip():
-            return '触点附近的点击目标与同帧局部复核不一致：'+hint['frame_id']+' 应使用目标 '+hint['target']+'。局部交互证据：'+hint.get('observation','')[:500]+'。按该原帧触点核对，不用转场中经过触点的底部控件替代。'
+        if len(nearby)==1:
+            left,right=nearby[0]['target'].strip(),hint['target'].strip()
+            comparison='exact_match' if left==right else 'normalized_match' if _label(left) and _label(left)==_label(right) else 'mismatch'
+            if diagnostic is not None:
+                diagnostic.update(frame_id=hint['frame_id'],binding='explicit' if explicit else 'nearby',comparison=comparison)
+            if comparison=='mismatch':
+                return '触点附近的点击目标与同帧局部复核不一致：'+hint['frame_id']+' 应使用目标 '+hint['target']+'。局部交互证据：'+hint.get('observation','')[:500]+'。按该原帧触点核对，不用转场中经过触点的底部控件替代。'
     return ''

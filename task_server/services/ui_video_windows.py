@@ -111,10 +111,12 @@ def observe_windows(frames,duration,root,cancelled,progress=None,review_events=N
             try:
                 result=_bind_whole_evidence(result,window)
                 checked=validate_analysis(result,window,duration,secrets)
-                target_conflict=conflict(checked['events'],payload['touch_targets'],images)
+                target_diagnostic={}
+                target_conflict=conflict(checked['events'],payload['touch_targets'],images,target_diagnostic)
                 if target_conflict:
                     error=ValueError('video_model_invalid')
                     error.model_feedback=target_conflict
+                    error.target_diagnostic=target_diagnostic
                     raise error
                 break
             except ValueError as error:
