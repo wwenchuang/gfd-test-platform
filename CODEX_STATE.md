@@ -1,3 +1,9 @@
+## 2026-10-20 千问 3.8 Max 切换准备
+
+- 用户要求改用3.8。官方模型目录列明qwen3.8-max支持图像与视频理解；通过线上Gateway显式调用成功，回读model=qwen3.8-max、fallbackUsed=false。同组触点原图正确定位我的作品第二张粉色收纳盒卡片，未编造加载成功。姓名牌同组调用HTTP500，尚未完整验收。
+- 修改Gateway默认provider模型、服务端文本/视觉默认值及部署环境示例。保留providerId=qwen_plus兼容已有路由，保持仅千问无fallback。现有服务器环境变量优先于默认值，必须同步修改DASHSCOPE_MODEL/DASHSCOPE_VL_MODEL并重启后验证，不能把本地默认值修改说成线上完成。Runner本机显式模型尚未改动。
+- 原提示词在显式3.7对照中仍错误定位触点且编造姓名牌两次确认；两段完整视频验收仍未完成，无手机下发或打印。
+
 ## 2026-10-20 用户要求后续先只用千问
 
 - 用户明确要求先仅使用千问。线上GET /ai/model-router回读6项能力均为qwen_plus，fallbackRouter均空；配置界面仍有其他可选provider，不等于本次已调用它们。截图所示错误内因是multiple_scenarios类型校验，不能把Gateway外层提示当成已切换模型的证据。

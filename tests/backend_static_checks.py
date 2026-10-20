@@ -309,16 +309,16 @@ def check_midscene_model_family_protocol():
     deploy_env_source = (ROOT / "deploy" / "midscene.env.example").read_text(encoding="utf-8")
     sonic_runner_source = (ROOT / "sonic-midscene-task-runner.groovy").read_text(encoding="utf-8")
     providers = json.loads((ROOT / "ai-gateway" / "config" / "providers.json").read_text(encoding="utf-8"))
-    require('DEFAULT_TEXT_MODEL = os.getenv("DASHSCOPE_MODEL", "qwen3.7-plus")' in config_source, "Task Server default text model must be qwen3.7-plus")
-    require('DEFAULT_VL_MODEL = os.getenv("DASHSCOPE_VL_MODEL", "qwen3.7-plus")' in config_source, "Task Server default visual model must be qwen3.7-plus")
-    require("DASHSCOPE_MODEL='qwen3.7-plus'" in deploy_env_source and "DASHSCOPE_VL_MODEL='qwen3.7-plus'" in deploy_env_source, "Deployment defaults must keep text and visual models on qwen3.7-plus")
+    require('DEFAULT_TEXT_MODEL = os.getenv("DASHSCOPE_MODEL", "qwen3.8-max")' in config_source, "Task Server default text model must be qwen3.8-max")
+    require('DEFAULT_VL_MODEL = os.getenv("DASHSCOPE_VL_MODEL", "qwen3.8-max")' in config_source, "Task Server default visual model must be qwen3.8-max")
+    require("DASHSCOPE_MODEL='qwen3.8-max'" in deploy_env_source and "DASHSCOPE_VL_MODEL='qwen3.8-max'" in deploy_env_source, "Deployment defaults must keep text and visual models on qwen3.8-max")
     require('bridgeVersion = "2026.07.26-qwen3.7-result-retry-v1"' in sonic_runner_source, "Sonic execution logs must expose the Qwen3.7/Midscene 1.10 bridge version")
     require(sonic_runner_source.count('"qwen3.7-plus"') >= 2, "Sonic fallback text and visual models must use qwen3.7-plus")
     require('builder.environment().put("MIDSCENE_MODEL_FAMILY", midsceneModelFamily)' in sonic_runner_source, "Sonic must pass the explicit current model family to Midscene")
     require('normalizedMidsceneModelName.contains("qwen3.7") ? "qwen3"' in sonic_runner_source, "Sonic must use the official qwen3 family for Qwen3.7 Plus on Midscene 1.10+")
     require('builder.environment().put("MIDSCENE_USE_QWEN_VL"' not in sonic_runner_source, "Sonic must not force Qwen3.7 through the legacy Qwen2.5-VL switch")
     require('codePoint < 0x20' in sonic_runner_source and 'String.format("u%04x", codePoint)' in sonic_runner_source, "Sonic result callbacks must JSON-escape every control character, including ANSI log bytes")
-    require(providers.get("providers", {}).get("qwen_plus", {}).get("model") == "qwen3.7-plus", "AI Gateway Qwen Plus route must use qwen3.7-plus")
+    require(providers.get("providers", {}).get("qwen_plus", {}).get("model") == "qwen3.8-max", "AI Gateway Qwen Plus route must use qwen3.8-max")
 
     require(runner_service.infer_midscene_model_family("qwen3.7-plus") == "qwen3", "Server must map qwen3.7-plus to the official Midscene Qwen3 family")
     require(runner_service.infer_midscene_model_family("qwen3.7-plus", "qwen2.5-vl") == "qwen3", "Known Qwen3.7 model names must override stale incompatible family settings with the official qwen3 family")
@@ -14983,7 +14983,7 @@ def check_ai_gateway_fallback_and_skill_static():
         and "禁止静默切换到平台直连视觉模型" in ai_skill_source,
         "Text and image AI skills must use Gateway, with an explicit audited vision fallback and no silent direct-model switch",
     )
-    require('"fallbackProviderIds"' in router_config and "highway_gpt5_mini" in router_config, "Model router config must include fallback providers")
+    require(all(route.get("providerId") == "qwen_plus" and route.get("fallbackProviderIds") == [] for route in json.loads(router_config).values()), "Default routes must use Qwen only without other provider fallbacks")
     require("mindmapMode: 'cases'" in app_js_source, "Mindmap-only frontend requests must default to case-content-only mode")
 
 
