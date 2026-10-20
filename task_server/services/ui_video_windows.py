@@ -114,20 +114,20 @@ def observe_windows(frames,duration,root,cancelled,progress=None,review_events=N
                             old['target']==event['target'] and old['value']==event['value'] and
                             old['frame_refs']==event['frame_refs']),None)
             if duplicate:continue
-            # Adjacent windows may extend the after-frame of the exact same
-            # click. Preserve that extension instead of creating two clicks
-            # with one start time (which gives the first a zero outcome span).
-            # Different starts/targets and non-nested evidence remain distinct.
+            # Adjacent windows can describe the same interaction with a
+            # nested subset of its evidence. Keep the complete evidence when
+            # either endpoint is shared, not a second action at the boundary.
+            # Disjoint/non-nested evidence and different controls stay distinct.
             overlap=next((old for old in reversed(previous_window_events)
-                if old['action']==event['action']=='aiTap' and
+                if old['action']==event['action'] and event['action'] in {'aiTap','aiScroll'} and
                 old['target']==event['target'] and old['value']==event['value'] and
-                old['start_ms']==event['start_ms'] and
+                (old['start_ms']==event['start_ms'] or old['end_ms']==event['end_ms']) and
                 (set(old['frame_refs'])<=set(event['frame_refs']) or set(event['frame_refs'])<=set(old['frame_refs']))),None)
             if overlap:
                 merged_questions=list(dict.fromkeys(overlap['uncertainties']+event['uncertainties']))
                 overlap['uncertainties']=merged_questions[:10];questions.extend(merged_questions[10:])
                 if set(event['frame_refs'])>set(overlap['frame_refs']):
-                    overlap.update(end_ms=event['end_ms'],frame_refs=event['frame_refs'],observation=event['observation'])
+                    overlap.update(start_ms=event['start_ms'],end_ms=event['end_ms'],frame_refs=event['frame_refs'],observation=event['observation'])
                 continue
             old=events[-1] if events else None
             if (old and old['action']==event['action']=='aiInput' and old['target']==event['target'] and

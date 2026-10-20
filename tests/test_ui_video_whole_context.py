@@ -402,3 +402,22 @@ def test_reference_roles_are_adjacent_to_each_image():
     assert content[1]['text']=='frame-001 100ms [当前窗口证据，可引用]'
     assert content[-2]['text']=='frame-end 800ms [仅供上下文参考，禁止引用或输出该帧操作]'
     assert content[-1]['type']=='image_url'
+
+@pytest.mark.parametrize('action,first,second,value,expected',[
+    ('aiTap',['f28','f29'],['f29'],'',1),
+    ('aiScroll',['f27','f28','f29'],['f28','f29'],{'direction':'up','scrollType':'singleAction'},1),
+    ('aiTap',['f27','f28'],['f29'],'',2),
+    ('aiTap',['f27','f29'],['f28','f29'],'',2),
+    ('aiScroll',['f27','f28'],['f28','f29'],{'direction':'up','scrollType':'singleAction'},2),
+])
+def test_cross_window_nested_same_end_preserves_single_evidence(monkeypatch,tmp_path,action,first,second,value,expected):
+    from task_server.services import ui_video_windows as vw,ai_skill_service as ai
+    fs=[{'frame_id':f'f{i}','timestamp_ms':i*100} for i in range(61)]
+    monkeypatch.setattr(vw,'load_assets',lambda *a:[])
+    def model(skill,payload,**kw):
+        index=payload['window']['index']
+        return {'events':[{'action':action,'target':'当前控件','value':value,'frame_refs':first if index==1 else second,'observation':'页面变化'}] if index<=2 else [],'uncertainties':[],'multiple_scenarios':False}
+    monkeypatch.setattr(ai,'run_ai_skill',model)
+    result,_=vw.observe_windows(fs,6100,tmp_path,lambda:False)
+    assert len(result['events'])==expected
+    if expected==1:assert result['events'][0]['frame_refs']==first
