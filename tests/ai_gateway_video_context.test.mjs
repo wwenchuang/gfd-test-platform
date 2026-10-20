@@ -16,3 +16,7 @@ assert.throws(()=>imageParts({...body,imageAssets:[{...assets[0],base64:'a'.repe
 assert.throws(()=>imageParts({...body,imageAssets:[{...assets[0],name:'fake'},...assets.slice(1)]}),/video_frames_invalid/);
 assert.equal(imageParts({...body,skillName:'ui_video_steps',payload:{...body.payload,phase:'whole-consolidate'}}).length,116);
 console.log('whole-video transport: labels, complete timeline, limits and legacy isolation passed');
+const scoped=imageParts({...body,payload:{...body.payload,context_frame_ids:['frame-end']}});
+assert.equal(scoped[0].text,'frame-001 0ms [当前窗口证据，可引用]');
+assert.equal(scoped[114].text,'frame-end 5700ms [仅供上下文参考，禁止引用或输出该帧操作]');
+assert.equal(scoped[115].type,'image_url');

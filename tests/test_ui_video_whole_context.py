@@ -129,9 +129,11 @@ def test_direct_video_disabled_gateway_keeps_all_labels(monkeypatch):
     monkeypatch.setenv('MIDSCENE_AI_SKILLS_USE_GATEWAY','0');calls=[]
     def direct(*args,**kwargs):calls.append(kwargs);return json.dumps(observation())
     monkeypatch.setattr(ai,'dashscope_chat_content',direct)
-    ai.run_ai_skill('ui_video_observe',{'phase':'whole-observe','image_frames':fs},image_assets=assets)
+    ai.run_ai_skill('ui_video_observe',{'phase':'whole-observe','image_frames':fs,'context_frame_ids':['frame-end']},image_assets=assets)
     assert calls[0]['chronological_images'] is True and calls[0]['image_limit']==60
     assert len(calls[0]['image_assets'])==8
+
+    assert calls[0]['reference_frame_ids']==['frame-end']
 
 
 def test_whole_correction_retains_multiscenario_and_input_redaction(monkeypatch,tmp_path):
@@ -390,3 +392,13 @@ def test_named_back_gesture_setting_switch_is_a_real_control():
     from task_server.services.ui_video_analysis import _bind_candidate_evidence
     plan={'events':[{'action':'aiTap','target':'设置页返回手势开关'}]}
     assert _bind_candidate_evidence(plan,[])==plan
+
+
+def test_reference_roles_are_adjacent_to_each_image():
+    from task_server.services.ai_skill_service import build_dashscope_chat_body
+    assets=[{'name':f['frame_id'],'timestamp_ms':f['timestamp_ms'],'mime':'image/jpeg','base64':'YQ=='} for f in frames()]
+    body=build_dashscope_chat_body('prompt',image_assets=assets,image_limit=60,chronological_images=True,reference_frame_ids=['frame-end'])
+    content=body['messages'][1]['content']
+    assert content[1]['text']=='frame-001 100ms [当前窗口证据，可引用]'
+    assert content[-2]['text']=='frame-end 800ms [仅供上下文参考，禁止引用或输出该帧操作]'
+    assert content[-1]['type']=='image_url'

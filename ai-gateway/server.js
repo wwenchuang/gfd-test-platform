@@ -670,7 +670,9 @@ function imagePartsFromBody(body = {}) {
     const dataUrl = String(item?.dataUrl || '').trim();
     const url = dataUrl.startsWith('data:image/') ? dataUrl : (base64 ? `data:${mime};base64,${base64}` : '');
     if (!url || !/^data:image\/(?:png|jpe?g|webp);base64,/i.test(url)) return [];
-    return [...(wholeVideo ? [{type: 'text', text: `${item.name} ${item.timestamp_ms}ms`}] : []),
+    const role = wholeVideo && body.skillName === 'ui_video_observe' && Array.isArray(body.payload?.context_frame_ids)
+      ? (body.payload.context_frame_ids.includes(item.name) ? ' [仅供上下文参考，禁止引用或输出该帧操作]' : ' [当前窗口证据，可引用]') : '';
+    return [...(wholeVideo ? [{type: 'text', text: `${item.name} ${item.timestamp_ms}ms${role}`}] : []),
       {type: 'image_url', image_url: {url}}];
   });
 }

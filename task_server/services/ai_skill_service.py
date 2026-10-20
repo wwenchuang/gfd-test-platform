@@ -438,7 +438,8 @@ def run_ai_skill(
         respect_global_timeout=respect_global_timeout,
         retry_count=retry_count,
         max_tokens=max_tokens,
-        **({"image_limit": 60, "chronological_images": True} if whole_video else {}),
+        **({"image_limit": 60, "chronological_images": True,
+            "reference_frame_ids": payload.get("context_frame_ids") if skill_name == "ui_video_observe" else None} if whole_video else {}),
     )
     runtime_trace.update({
         "selectedProviderId": (model_config or {}).get("providerId") if isinstance(model_config, dict) else "",
@@ -621,6 +622,7 @@ def build_dashscope_chat_body(
     image_limit=None,
     max_tokens=None,
     chronological_images=False,
+    reference_frame_ids=None,
 ):
     """构建 DashScope Chat API 请求体。"""
     image_assets = image_assets or []
@@ -630,7 +632,10 @@ def build_dashscope_chat_body(
         user_content = [{"type": "text", "text": prompt}]
         for asset in image_assets[:image_limit]:
             if chronological_images:
-                user_content.append({"type": "text", "text": f"{asset['name']} {asset['timestamp_ms']}ms"})
+                label = f"{asset['name']} {asset['timestamp_ms']}ms"
+                if reference_frame_ids is not None:
+                    label += " [仅供上下文参考，禁止引用或输出该帧操作]" if asset["name"] in reference_frame_ids else " [当前窗口证据，可引用]"
+                user_content.append({"type": "text", "text": label})
             user_content.append({
                 "type": "image_url",
                 "image_url": {
@@ -670,6 +675,7 @@ def dashscope_chat_content(
     retry_count=None,
     max_tokens=None,
     chronological_images=False,
+    reference_frame_ids=None,
 ):
     """调用 DashScope Chat API 并返回 content 字符串。"""
     api_key = dashscope_api_key()
@@ -689,6 +695,7 @@ def dashscope_chat_content(
         image_limit=image_limit,
         max_tokens=max_tokens,
         chronological_images=chronological_images,
+        reference_frame_ids=reference_frame_ids,
     ), ensure_ascii=False).encode("utf-8")
     last_error = None
     for attempt in range(retries + 1):
