@@ -68,3 +68,25 @@ def test_outside_window_retry_resends_only_local_pixels(monkeypatch,tmp_path,rev
         windows.observe_windows(fs,6500,tmp_path,lambda:False,review_events=[] if review else None)
     assert len(calls)==2
     assert calls[0][0]['frames']==calls[1][0]['frames']
+
+
+@pytest.mark.parametrize('refs,issue',[(None,'not_array'),('private-data','not_array'),([], 'empty'),(['private-data']*9,'too_many')])
+def test_worker_logs_reference_shape_without_model_content(caplog,refs,issue):
+    import json
+    from task_server.workers.ui_video_worker import _log_failure
+    with pytest.raises(ValueError) as caught:
+        _bind_whole_evidence(result(refs),[{'frame_id':'a','timestamp_ms':10}])
+    _log_failure('uvs_'+'a'*32,'analysis',caught.value,'video_reference_invalid')
+    detail=json.loads(caplog.records[-1].getMessage().split(' ',1)[1])
+    assert detail['reference_reason']=='count'
+    assert detail['reference_shape']==issue
+    assert 'private-data' not in caplog.text
+
+
+def test_worker_does_not_log_arbitrary_reference_attributes(caplog):
+    from task_server.workers.ui_video_worker import _log_failure
+    error=ValueError('video_reference_invalid')
+    error.reference_reason='private-data'
+    error.reference_shape='private-data'
+    _log_failure('uvs_'+'a'*32,'analysis',error,'video_reference_invalid')
+    assert 'private-data' not in caplog.text

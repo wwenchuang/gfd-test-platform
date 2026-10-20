@@ -44,6 +44,13 @@ def _log_failure(identifier,stage,error,code):
                for frame,line in traceback.walk_tb(error.__traceback__)]
     detail={'source_id':identifier if re.fullmatch(r'uvs_[0-9a-f]{32}',identifier or '') else 'unassigned',
             'stage':stage,'exception_class':type(error).__name__,'category':category,'traceback':locations[-12:]}
+    if code=='video_reference_invalid':
+        reason=getattr(error,'reference_reason',None)
+        shape=getattr(error,'reference_shape',None)
+        if type(reason) is str and reason in {'count','outside_window','duplicate','order','event_order'}:
+            detail['reference_reason']=reason
+        if reason=='count' and type(shape) is str and shape in {'not_array','empty','too_many'}:
+            detail['reference_shape']=shape
     # No exc_info, arbitrary error str, source lines, payload, prompt, identity,
     # media path, provider trace or model output enters this diagnostic.
     _LOG.warning('ui_video_failure %s',json.dumps(detail,ensure_ascii=True,sort_keys=True))

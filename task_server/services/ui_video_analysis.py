@@ -335,7 +335,9 @@ def _bind_whole_evidence(result, frames):
             raise ValueError('video_model_invalid')
         refs=event['frame_refs']
         if not isinstance(refs,list) or not 1<=len(refs)<=8:
-            raise _invalid_window_reference('count')
+            error=_invalid_window_reference('count')
+            error.reference_shape='not_array' if not isinstance(refs,list) else 'empty' if not refs else 'too_many'
+            raise error
         if any(not isinstance(ref,str) or ref not in times for ref in refs):
             raise _invalid_window_reference('outside_window')
         if len(set(refs))!=len(refs):raise _invalid_window_reference('duplicate')
