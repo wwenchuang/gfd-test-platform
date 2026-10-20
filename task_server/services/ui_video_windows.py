@@ -100,6 +100,11 @@ def observe_windows(frames,duration,root,cancelled,progress=None,review_events=N
                 break
             except ValueError as error:
                 if attempt:raise
+                if getattr(error,'reference_reason',None)=='outside_window':
+                    # Re-observe original local pixels; never trim invalid model
+                    # references or accept context-only events as evidence.
+                    payload.update(image_frames=window,context_frame_ids=[],temporal_context_frame_ids=[])
+                    assets=load_assets(window,root,cancelled)
                 payload['validation_feedback']=getattr(error,'model_feedback','')+' 本窗口输出未通过格式或证据检查。重新核对当前frames，仅输出action/target/value/frame_refs/observation及可选uncertainties，不输出start_ms/end_ms/evidence_kind或其它字段。只引用当前窗真实帧且按时间排序，完整保留当前窗操作。'
         previous_window_events=list(events)
         for event in checked['events']:

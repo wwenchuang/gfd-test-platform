@@ -43,3 +43,28 @@ def test_observation_repair_receives_specific_feedback_and_keeps_retry_budget(mo
     assert len(calls)==2
     assert '本窗之外' in calls[1]['validation_feedback']
     assert 'outside-private-name' not in calls[1]['validation_feedback']
+
+
+@pytest.mark.parametrize('review',[False,True])
+def test_outside_window_retry_resends_only_local_pixels(monkeypatch,tmp_path,review):
+    from task_server.services import ui_video_windows as windows,ai_skill_service as ai
+    fs=[{'frame_id':f'f{i}','timestamp_ms':i*100} for i in range(65)]
+    (tmp_path/'frames').mkdir()
+    for f in fs:(tmp_path/'frames'/(f['frame_id']+'.jpg')).write_bytes(b'image')
+    monkeypatch.setattr(windows,'context_frames',lambda *args:[])
+    calls=[]
+    def model(skill,payload,**kwargs):
+        calls.append((copy.deepcopy(payload),copy.deepcopy(kwargs['image_assets'])))
+        if len(calls)==1:
+            assert payload['context_frame_ids']
+            return result([payload['context_frame_ids'][-1]])
+        assert payload['context_frame_ids']==[]
+        assert payload['temporal_context_frame_ids']==[]
+        assert payload['image_frames']==payload['frames']
+        assert [a['name'] for a in kwargs['image_assets']]==[f['frame_id'] for f in payload['frames']]
+        raise RuntimeError('stop-after-retry')
+    monkeypatch.setattr(ai,'run_ai_skill',model)
+    with pytest.raises(RuntimeError,match='stop-after-retry'):
+        windows.observe_windows(fs,6500,tmp_path,lambda:False,review_events=[] if review else None)
+    assert len(calls)==2
+    assert calls[0][0]['frames']==calls[1][0]['frames']
