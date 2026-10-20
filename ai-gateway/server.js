@@ -649,10 +649,12 @@ function imagePartsFromBody(body = {}) {
     (body.skillName === 'ui_video_steps' && body.payload?.phase === 'whole-consolidate');
   if (wholeVideo) {
     const frames = body.payload?.image_frames;
-    if (assets.length < 2 || assets.length > 60 || !Array.isArray(frames) || frames.length !== assets.length)
+    const details = body.payload?.detail_frames || [];
+    if (!Array.isArray(details) || details.length > 6 || (details.length && body.skillName !== 'ui_video_observe')) throw new Error('video_frames_invalid');
+    if (assets.length < 2 || assets.length > 60 || !Array.isArray(frames) || frames.length < 2 || frames.length + details.length !== assets.length)
       throw new Error('video_vision_limit');
     let total = 0; let last = -1; const names = new Set();
-    for (const [index, item] of assets.entries()) {
+    for (const [index, item] of assets.slice(0, frames.length).entries()) {
       const frame = frames[index];
       if (!/^frame-(?:[0-9]{3}|end)$/.test(frame?.frame_id || '') || names.has(frame.frame_id) ||
           !Number.isInteger(frame.timestamp_ms) || frame.timestamp_ms <= last || frame.timestamp_ms > 600000 ||
@@ -663,6 +665,17 @@ function imagePartsFromBody(body = {}) {
       if (total > 10 * 1024 * 1024) throw new Error('video_vision_limit');
       names.add(frame.frame_id); last = frame.timestamp_ms;
     }
+    for (const [index, detail] of details.entries()) {
+      const item = assets[frames.length + index];
+      const parent = frames.find(f => f.frame_id === detail.source_frame_id);
+      if (!parent || detail.frame_id !== `${parent.frame_id}-detail` || names.has(detail.frame_id) ||
+          detail.timestamp_ms !== parent.timestamp_ms || item?.name !== detail.frame_id ||
+          item.timestamp_ms !== detail.timestamp_ms || item.mime !== 'image/jpeg' ||
+          typeof item.base64 !== 'string' || !item.base64 || item.dataUrl) throw new Error('video_frames_invalid');
+      total += item.base64.length;
+      if (total > 10 * 1024 * 1024) throw new Error('video_vision_limit');
+      names.add(detail.frame_id);
+    }
   }
   return assets.slice(0, wholeVideo ? 60 : 6).flatMap((item) => {
     const mime = String(item?.mime || 'image/png').toLowerCase();
@@ -670,7 +683,8 @@ function imagePartsFromBody(body = {}) {
     const dataUrl = String(item?.dataUrl || '').trim();
     const url = dataUrl.startsWith('data:image/') ? dataUrl : (base64 ? `data:${mime};base64,${base64}` : '');
     if (!url || !/^data:image\/(?:png|jpe?g|webp);base64,/i.test(url)) return [];
-    const role = wholeVideo && body.skillName === 'ui_video_observe' && Array.isArray(body.payload?.context_frame_ids)
+    const detail = wholeVideo && body.payload?.detail_frames?.find(f => f.frame_id === item.name);
+    const role = detail ? ` [${detail.source_frame_id}的同帧局部放大，不是新事件；仅辅助读文字，${body.payload?.context_frame_ids?.includes(detail.source_frame_id) ? '父帧仅供上下文参考，禁止引用或输出该帧操作' : '引用原帧'}]` : wholeVideo && body.skillName === 'ui_video_observe' && Array.isArray(body.payload?.context_frame_ids)
       ? (body.payload.context_frame_ids.includes(item.name) ? ' [仅供上下文参考，禁止引用或输出该帧操作]' : ' [当前窗口证据，可引用]') : '';
     return [...(wholeVideo ? [{type: 'text', text: `${item.name} ${item.timestamp_ms}ms${role}`}] : []),
       {type: 'image_url', image_url: {url}}];

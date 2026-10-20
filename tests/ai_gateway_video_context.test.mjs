@@ -20,3 +20,13 @@ const scoped=imageParts({...body,payload:{...body.payload,context_frame_ids:['fr
 assert.equal(scoped[0].text,'frame-001 0ms [当前窗口证据，可引用]');
 assert.equal(scoped[114].text,'frame-end 5700ms [仅供上下文参考，禁止引用或输出该帧操作]');
 assert.equal(scoped[115].type,'image_url');
+const detail={frame_id:'frame-002-detail',source_frame_id:'frame-002',timestamp_ms:100};
+const detailAsset={name:detail.frame_id,timestamp_ms:100,mime:'image/jpeg',base64:'YQ=='};
+const withDetail={...body,payload:{...body.payload,detail_frames:[detail]},imageAssets:[...assets,detailAsset]};
+assert.equal(imageParts(withDetail).length,118);
+assert.match(imageParts(withDetail).at(-2).text,/frame-002.*局部放大.*不是新事件/);
+assert.throws(()=>imageParts({...withDetail,payload:{...withDetail.payload,detail_frames:[{...detail,source_frame_id:'frame-999'}]}}),/video_frames_invalid/);
+assert.throws(()=>imageParts({...withDetail,imageAssets:[...assets,{...detailAsset,timestamp_ms:999}]}),/video_frames_invalid/);
+const contextDetail=imageParts({...withDetail,payload:{...withDetail.payload,context_frame_ids:['frame-002']}});
+assert.match(contextDetail.at(-2).text,/禁止引用/);
+assert.throws(()=>imageParts({...withDetail,payload:{...withDetail.payload,detail_frames:[detail,detail]},imageAssets:[...assets,detailAsset,detailAsset]}),/video_frames_invalid/);

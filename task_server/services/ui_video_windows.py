@@ -97,6 +97,8 @@ def observe_windows(frames,duration,root,cancelled,progress=None,review_events=N
                            image_frames=images,context_frame_ids=[f['frame_id'] for f in images if f['frame_id'] not in current_ids])
         if progress:progress('reviewing' if review_events is not None else 'observing',index,len(windows),events)
         assets=load_assets(images,root,cancelled)
+        from .ui_video_touch_detail import append_details
+        payload['detail_frames']=append_details(images,root,assets,cancelled,current_ids)
         for attempt in range(2):
             if cancelled():raise ValueError('video_cancelled')
             result=ai.run_ai_skill('ui_video_observe',payload,image_assets=assets,
@@ -115,6 +117,7 @@ def observe_windows(frames,duration,root,cancelled,progress=None,review_events=N
                     # references or accept context-only events as evidence.
                     payload.update(image_frames=window,context_frame_ids=[],temporal_context_frame_ids=[])
                     assets=load_assets(window,root,cancelled)
+                    payload['detail_frames']=append_details(window,root,assets,cancelled)
                 payload['validation_feedback']=getattr(error,'model_feedback','')+' 本窗口输出未通过格式或证据检查。重新核对当前frames，仅输出action/target/value/frame_refs/observation及可选uncertainties，不输出start_ms/end_ms/evidence_kind或其它字段。只引用当前窗真实帧且按时间排序，完整保留当前窗操作。'
         previous_window_events=list(events)
         for event in checked['events']:
