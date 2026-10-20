@@ -55,6 +55,16 @@ def temporal_context_frames(window,frames):
     return [f for f in frames if f['frame_id'] in ids]
 
 
+def _same_scroll_direction_conflict(old,event):
+    """Same gesture evidence can disagree on finger versus content direction."""
+    if old['action']!=event['action'] or event['action']!='aiScroll' or old['start_ms']!=event['start_ms']:
+        return False
+    left,right=old['value'],event['value']
+    if not isinstance(left,dict) or not isinstance(right,dict):return False
+    return ({left.get('direction'),right.get('direction')} in ({'up','down'},{'left','right'}) and
+            {k:v for k,v in left.items() if k!='direction'}=={k:v for k,v in right.items() if k!='direction'})
+
+
 def observe_windows(frames,duration,root,cancelled,progress=None,review_events=None,prior_secrets=()):
     from . import ai_skill_service as ai
     from .ui_video_analysis import _bind_whole_evidence,validate_analysis
@@ -120,10 +130,13 @@ def observe_windows(frames,duration,root,cancelled,progress=None,review_events=N
             # Disjoint/non-nested evidence and different controls stay distinct.
             overlap=next((old for old in reversed(previous_window_events)
                 if old['action']==event['action'] and event['action'] in {'aiTap','aiScroll'} and
-                old['target']==event['target'] and old['value']==event['value'] and
+                old['target']==event['target'] and (old['value']==event['value'] or _same_scroll_direction_conflict(old,event)) and
                 (old['start_ms']==event['start_ms'] or old['end_ms']==event['end_ms']) and
                 (set(old['frame_refs'])<=set(event['frame_refs']) or set(event['frame_refs'])<=set(old['frame_refs']))),None)
             if overlap:
+                if _same_scroll_direction_conflict(overlap,event):
+                    question='同一滚动方向存在识别分歧，请对照原画面核对内容移动方向；该段仅保留一次操作'
+                    event['uncertainties'].append(question);questions.append(question)
                 merged_questions=list(dict.fromkeys(overlap['uncertainties']+event['uncertainties']))
                 overlap['uncertainties']=merged_questions[:10];questions.extend(merged_questions[10:])
                 if set(event['frame_refs'])>set(overlap['frame_refs']):

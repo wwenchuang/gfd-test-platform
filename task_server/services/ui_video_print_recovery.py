@@ -19,7 +19,11 @@ def prepare_group(plan,candidates,required):
     if any(type(i) is not int for i in (start,confirm,end)) or not 0<=start<confirm<end<len(candidates):
         raise invalid_retry('print_recovery索引必须使用原始candidate_events的整数candidate_index，不是精简后events序号、时间或字符串；满足0 <= cancel < confirm < end < 候选总数。请从原候选重新核对首次取消、紧接确认和终态观察，禁止调整业务顺序凑索引。')
     terminal=candidates[end]
-    observation=terminal['observation']
+    # An explicit absence of user input is not a negated business result.
+    # Remove only complete, narrowly recognized clauses; keep task negation and
+    # uncertainty intact, and preserve the original candidate for audit.
+    observation='，'.join(clause for clause in re.split(r'[，。；,;\n]',terminal['observation'])
+        if not re.fullmatch(r'(?:期间)?未(?:见|观察到)用户(?:手动)?(?:点击(?:导航入口|操作)?|操作)',clause.strip()))
     if (terminal['action'] not in ('aiAssert','aiWaitFor') or
         re.search(r'未|没有|无法|不能|可能|不确定',observation) or
         not re.search(r'取消原因|反馈.*(?:页|界面)|任务.*(?:移除|消失)',observation)):
@@ -53,7 +57,9 @@ def bind_group(plan,candidates):
     if any(i not in positions for i in indexes):raise ValueError('video_retry_invalid')
     submit,cancel,confirm=[candidates[i] for i in indexes]
     if any(e['action']!='aiTap' for e in (submit,cancel,confirm)):raise ValueError('video_retry_invalid')
-    if not re.search('确认打印',submit['target']) or '取消' in submit['target'] or not re.search('取消.*打印',cancel['target']) or not re.search('确认|确定',confirm['target']):raise ValueError('video_retry_invalid')
+    if not re.search('确认打印',submit['target']) or '取消' in submit['target']:
+        raise invalid_retry('print_recovery.submit必须指向最终确认打印的原始候选，不是打开确认弹窗的确认按钮；请核对检查无误后真正下发本次任务的点击，保留此前打开弹窗的步骤。')
+    if not re.search('取消.*打印',cancel['target']) or not re.search('确认|确定',confirm['target']):raise ValueError('video_retry_invalid')
     if any(e['action'] in ('aiTap','aiInput','aiScroll') for e in candidates[indexes[1]+1:indexes[2]]):raise ValueError('video_retry_invalid')
     return {key:positions[group[key]] for key in group}
 

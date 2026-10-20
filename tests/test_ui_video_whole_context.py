@@ -421,3 +421,24 @@ def test_cross_window_nested_same_end_preserves_single_evidence(monkeypatch,tmp_
     result,_=vw.observe_windows(fs,6100,tmp_path,lambda:False)
     assert len(result['events'])==expected
     if expected==1:assert result['events'][0]['frame_refs']==first
+
+@pytest.mark.parametrize('second_refs,second_value,count',[
+    (['f27','f28','f29'],{'direction':'down','scrollType':'singleAction'},1),
+    (['f28','f29'],{'direction':'down','scrollType':'singleAction'},2),
+    (['f27','f28','f29'],{'direction':'right','scrollType':'singleAction'},2),
+    (['f27','f28','f29'],{'direction':'down','scrollType':'singleAction','distance':100},2),
+])
+def test_same_start_scroll_direction_conflict_is_not_two_operations(monkeypatch,tmp_path,second_refs,second_value,count):
+    from task_server.services import ui_video_windows as vw,ai_skill_service as ai
+    fs=[{'frame_id':f'f{i}','timestamp_ms':i*100} for i in range(61)]
+    monkeypatch.setattr(vw,'load_assets',lambda *a:[])
+    def model(skill,payload,**kw):
+        index=payload['window']['index']
+        return {'events':[{'action':'aiScroll','target':'首页列表','value':{'direction':'up','scrollType':'singleAction'} if index==1 else second_value,'frame_refs':['f27','f28'] if index==1 else second_refs,'observation':'列表内容下移，顶部入口可见'}] if index<=2 else [],'uncertainties':[],'multiple_scenarios':False}
+    monkeypatch.setattr(ai,'run_ai_skill',model)
+    result,_=vw.observe_windows(fs,6100,tmp_path,lambda:False)
+    assert len(result['events'])==count
+    if count==1:
+        assert result['events'][0]['frame_refs']==second_refs
+        assert any('方向' in q and '分歧' in q for q in result['uncertainties'])
+        assert result['events'][0]['uncertainties']
