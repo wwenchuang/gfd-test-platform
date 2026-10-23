@@ -6,5 +6,5 @@ detail_frames 是 source_frame_id 同一原图的局部放大，只帮助读字�
 若确为点击：读取触点中心下的真实控件名称，再用完整画面及后续结果核对，不能用转场后经过触点位置的底部导航替代。
 若确为返回手势：操作前页面存在可见的应用返回箭头时，输出 aiTap 该返回箭头作为跨端等价动作，observation明确原片是返回手势及前后页面；没有可见等价入口时输出空events并说明疑问。滑动浏览、长按等非点击交互不在本次目标提示范围，输出空events，不强行转成按钮点击。
 动画、图标和加载圆环可能误检；只有残留触点、不能辨认手势或没有足够前后状态时输出空events并写疑问。
-最多输出一次有证据的 aiTap。target只写控件可见名称，不加页面方位和解释；observation用一至两句说明交互及变化，不逐帧复述，不重复文字；所有疑问合计不超过三条。frame_refs 必须包含 source_frame_id 及可用后续原帧，禁止引用-detail。不得补成功结果，不使用坐标。不输出其他操作。
+最多输出一次有证据的 aiTap。target对有文字的控件只写可见名称，不加页面方位和解释；没有文字的图标使用可见区域和图标语义命名，例如“左上角返回箭头”，不要仅输出“<”等符号；observation用一至两句说明交互及变化，不逐帧复述，不重复文字；所有疑问合计不超过三条。frame_refs 必须包含 source_frame_id 及可用后续原帧，禁止引用-detail。不得补成功结果，不使用坐标。不输出其他操作。
 仅返回JSON：{"events":[{"action":"aiTap","target":"真实控件名称","value":"","frame_refs":["实际原帧"],"observation":"实际交互及画面变化","uncertainties":[]}],"uncertainties":[],"multiple_scenarios":false}
