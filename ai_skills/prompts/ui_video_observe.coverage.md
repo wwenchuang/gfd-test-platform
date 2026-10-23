@@ -21,3 +21,9 @@ coverage_checks是有编号的旧识别假设，不一定正确。与真实操�
 eligible_resolution_groups仅表示哪些旧锚点在结构上共享原帧，不代表同一次操作。映射仅从这些组选择，经原图确认后一次列入该交互的全部锚点；不要把同一个reviewed_event_index拆成多条声明，不给这些组外的正常操作声明。例如首轮A:1/A:2及复核B:3/B:4若确为同一次点击，只提交一条含四个ID的映射。
 
 映射的最小结构示意（这些编号和文字不是本次答案，严禁照抄）：若本次events[1]是一处真实按钮点击，旧first_pass:19误认为滚动、first_pass:20记录该点击，旧independent_review:8/9重复记录同一次点击，则coverage_resolutions只含一条source_anchor_ids=["first_pass:19","first_pass:20","independent_review:8","independent_review:9"]、reviewed_event_index=1的声明。不是为每个来源各写一条，也不是为每个events步骤写一条。events[0]即使纠正为自动加载，也不需要声明。先输出真实events，再找“同来源重复计数”这一唯一需要映射的情况；没有重复计数，数组留空即可。平台会根据已通过证据检查的旧、新action规范化改型标记。
+
+输出前逐一核对coverage_checks的每个anchor_id，包括最后一个：它必须对应独立事件、由完整原帧证明的自动状态纠正，或列入已证实的同次交互声明。不得只修正resolution_diagnostics列出的错误而遗漏其它锚点。一次按压前、按压中、弹窗关闭后的相邻锚点若共享真实按压帧，且确认只有一次按压，应全部列入同一声明；不能遗漏最后一段点击结果，也不能为凑覆盖再造一次点击。
+
+若有resolution_diagnostics：interaction_frame_belongs_to_anchor=false说明该旧锚点不能归入当前触点声明，必须移出并由其实际事件或自动状态解释；undeclared_state_frames非空说明前/触点/后帧未列入examined_frame_refs。按实际触点选择structural_groups中common_frame等于interaction_frame的组，重新核对所有成员。不得原样复制invalid_resolution_candidate；自动加载锚点不能因由点击触发就归入点击映射。
+
+若same_result_claim_anchor_ids列出多条声明指向同一个结果事件，不能仅删除其中一条来通过结构校验：重新核对这些全部锚点；确属同一交互且满足共同触点时，将它们完整合成一条声明。否则分别保留真实操作或报告疑问。

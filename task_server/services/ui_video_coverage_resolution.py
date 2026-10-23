@@ -50,6 +50,13 @@ def diagnose(claims,sources,reviewed,frames):
             anchors.append({
                 'anchor_id':aid,'action':old['action'],'frame_refs':list(old['frame_refs']),
                 'missing_declared_frame_refs':[r for r in old['frame_refs'] if r not in refs],
+                'interaction_frame_belongs_to_anchor':isinstance(evidence,dict) and evidence.get('interaction_frame') in old['frame_refs'],
+                'undeclared_state_frames':[evidence.get(k) for k in ('before_frame','interaction_frame','after_frame') if isinstance(evidence,dict) and (not isinstance(evidence.get(k),str) or evidence.get(k) not in refs)],
+                'same_result_claim_anchor_ids':list(dict.fromkeys(
+                    ref for other in claims if isinstance(other,dict) and type(claim.get('reviewed_event_index')) is int and
+                    type(other.get('reviewed_event_index')) is int and other.get('reviewed_event_index')==claim.get('reviewed_event_index') and
+                    isinstance(other.get('source_anchor_ids'),list)
+                    for ref in other['source_anchor_ids'] if isinstance(ref,str))),
                 'structural_groups':[g for g in groups if aid in g['anchor_ids']],
             })
     return {'rejected_claims':rejected,'anchors_to_recheck':anchors,

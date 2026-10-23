@@ -210,3 +210,33 @@ def test_preserved_boundary_cannot_be_reexecuted(monkeypatch,tmp_path,action):
         result=vr._repair_coverage([preserved,scroll],checked,frames,1000,tmp_path,lambda:False,[],{'f3'})
         assert [e['action'] for e in result['events']]==['aiTap','aiAssert']
         assert result['events'][0]['target']=='打开弹窗'
+
+
+def test_diagnostics_identify_foreign_touch_and_undeclared_state_frames():
+    frames,old,new,claim=fixture()
+    claim['evidence']['interaction_frame']='f1'
+    claim['evidence']['examined_frame_refs']=['f2','f3']
+    feedback=cr.diagnose([claim],{'first_pass':old},new,frames)
+    anchors={a['anchor_id']:a for a in feedback['anchors_to_recheck']}
+    assert anchors['first_pass:0']['interaction_frame_belongs_to_anchor'] is True
+    assert anchors['first_pass:1']['interaction_frame_belongs_to_anchor'] is False
+    assert anchors['first_pass:1']['undeclared_state_frames']==['f1','f1']
+    with pytest.raises(ValueError):cr.validate([claim],{'first_pass':old},new,frames)
+
+
+def test_diagnostics_keep_all_anchors_when_claims_split_one_result():
+    frames,old,new,claim=fixture()
+    second=copy.deepcopy(claim);second['source_anchor_ids']=['first_pass:1']
+    first=copy.deepcopy(claim);first['source_anchor_ids']=['first_pass:0']
+    feedback=cr.diagnose([first,second],{'first_pass':old},new,frames)
+    assert all(a['same_result_claim_anchor_ids']==['first_pass:0','first_pass:1'] for a in feedback['anchors_to_recheck'])
+    with pytest.raises(ValueError):cr.validate([first,second],{'first_pass':old},new,frames)
+
+
+@pytest.mark.parametrize('value',[[],{}])
+def test_diagnostics_handle_non_string_state_frame(value):
+    frames,old,new,claim=fixture()
+    claim['evidence']['before_frame']=value
+    feedback=cr.diagnose([claim],{'first_pass':old},new,frames)
+    assert feedback['rejected_claims']==[0]
+    assert feedback['anchors_to_recheck'][0]['undeclared_state_frames']==[value]

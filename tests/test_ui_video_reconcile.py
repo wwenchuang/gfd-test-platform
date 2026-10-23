@@ -449,3 +449,63 @@ def test_scroll_gap_keeps_existing_mapping_capable_prompt(monkeypatch,tmp_path):
             'coverage_resolutions':[],'uncertainties':[],'multiple_scenarios':False}
     monkeypatch.setattr(ai,'run_ai_skill',model)
     vr._repair_window([old],{'events':[],'uncertainties':[],'multiple_scenarios':False},fs,1000,tmp_path,lambda:False,[],set(old['frame_refs']))
+
+@pytest.mark.parametrize('repeat_invalid',[False,True])
+def test_unnecessary_invalid_merge_requests_observation_retry_without_bypassing_validation(monkeypatch,tmp_path,repeat_invalid):
+    from task_server.services import ai_skill_service as ai
+    fs=[{'frame_id':f'f{i}','timestamp_ms':i*100} for i in range(1,5)]
+    (tmp_path/'frames').mkdir()
+    for f in fs:(tmp_path/'frames'/(f['frame_id']+'.jpg')).write_bytes(b'image')
+    old=[{**event(1),'frame_refs':['f1','f2'],'end_ms':200},
+         {**event(2),'frame_refs':['f2','f3'],'end_ms':300}]
+    observations=[{'action':'aiTap','target':'确认调整','value':'','frame_refs':['f1','f2'],'observation':'点击确认调整，弹窗关闭'},
+                  {'action':'aiAssert','target':'自动校验','value':'','frame_refs':['f2','f3','f4'],'observation':'未见新点击，实际为系统自动加载弹窗'}]
+    calls=[]
+    def model(skill,payload,**kw):
+        calls.append(kw['version'])
+        if len(calls)==2:
+            assert kw['version']=='coverage-observe'
+            assert 'coverage_resolution_contract' not in payload
+        return {'events':observations,'coverage_resolutions':[{}] if len(calls)==1 or repeat_invalid else [],'uncertainties':[],'multiple_scenarios':False}
+    monkeypatch.setattr(ai,'run_ai_skill',model)
+    args=(old,{'events':copy.deepcopy(old),'uncertainties':[],'multiple_scenarios':False},fs,1000,tmp_path,lambda:False,[],{'f1','f2','f3'})
+    if repeat_invalid:
+        with pytest.raises(ValueError,match='video_coverage_resolution_invalid'):vr._repair_window(*args)
+    else:
+        result=vr._repair_window(*args)
+        assert len(result['events'])==2 and result['reconciliation_audit']['coverage_resolutions']==[]
+    assert calls==['coverage','coverage-observe']
+
+
+def test_missing_independent_interaction_does_not_switch_to_observation_only(monkeypatch,tmp_path):
+    from task_server.services import ai_skill_service as ai
+    fs=[{'frame_id':f'f{i}','timestamp_ms':i*100} for i in range(1,5)]
+    (tmp_path/'frames').mkdir()
+    for f in fs:(tmp_path/'frames'/(f['frame_id']+'.jpg')).write_bytes(b'image')
+    old=[{**event(1),'frame_refs':['f1','f2'],'end_ms':200},
+         {**event(2),'frame_refs':['f2','f3'],'end_ms':300}]
+    calls=[]
+    def model(skill,payload,**kw):
+        calls.append(kw['version'])
+        assert kw['version']=='coverage'
+        return {'events':[{'action':'aiTap','target':'返回','value':'','frame_refs':['f1','f2','f3'],'observation':'点击返回'}],
+                'coverage_resolutions':[{}],'uncertainties':[],'multiple_scenarios':False}
+    monkeypatch.setattr(ai,'run_ai_skill',model)
+    with pytest.raises(ValueError,match='video_coverage_resolution_invalid'):
+        vr._repair_window(old,{'events':copy.deepcopy(old),'uncertainties':[],'multiple_scenarios':False},fs,1000,tmp_path,lambda:False,[],{'f1','f2','f3'})
+    assert calls==['coverage','coverage']
+
+
+def test_repair_window_includes_interaction_crossing_initial_gap_boundary(monkeypatch,tmp_path):
+    fs=[{'frame_id':f'f{i}','timestamp_ms':i*100} for i in range(1,6)]
+    old=[{**event(i),'frame_refs':[f'f{i}',f'f{i+1}'],'end_ms':(i+1)*100} for i in (1,2,3)]
+    checked={'events':copy.deepcopy(old),'uncertainties':[],'multiple_scenarios':False}
+    calls=[]
+    def repair(original,local,window,*args,**kwargs):
+        calls.append([e['frame_refs'] for e in original])
+        assert original==old
+        assert args[4]=={'f1','f2','f3','f4'}
+        return {**local,'reconciliation_audit':{'coverage_resolutions':[]}}
+    monkeypatch.setattr(vr,'_repair_window',repair)
+    result=vr._repair_coverage(old,checked,fs,1000,tmp_path,lambda:False,[],{'f4'})
+    assert len(calls)==1 and len(result['events'])==3

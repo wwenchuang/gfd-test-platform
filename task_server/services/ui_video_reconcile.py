@@ -140,7 +140,22 @@ def _repair_coverage(original,checked,frames,duration,root,cancelled,secrets,mis
     for event in affected:
         indexes=[positions[r] for r in event['frame_refs']]
         selected.update(range(min(indexes),max(indexes)+1))
-    if len(selected)>40:raise ValueError('video_required_action_missing')
+    # Include same-action/target overlapping evidence from both passes. A
+    # partial duplicate outside the gap competes with its repaired counterpart
+    # when the windows are joined, despite each local coverage check passing.
+    while True:
+        expanded=set(selected)
+        for event in original+checked['events']:
+            indexes=[positions[r] for r in event['frame_refs']]
+            related=any(other['action']==event['action'] and other['target']==event['target']
+                        and set(other['frame_refs'])&set(event['frame_refs'])
+                        and all(positions[r] in selected for r in other['frame_refs'])
+                        for other in original+checked['events'])
+            if event['action'] in {'aiTap','aiInput','aiScroll'} and selected.intersection(indexes) and related:
+                expanded.update(range(min(indexes),max(indexes)+1))
+        if len(expanded)>40:raise ValueError('video_required_action_missing')
+        if expanded==selected:break
+        selected=expanded
     window=[f for i,f in enumerate(frames) if i in selected]
     groups=[]
     for frame in window:
@@ -148,18 +163,19 @@ def _repair_coverage(original,checked,frames,duration,root,cancelled,secrets,mis
         groups[-1].append(frame)
     if len(groups)>2:raise ValueError('video_required_action_missing')
     result=copy.deepcopy(checked);resolutions=[];replacements=[]
-    replaced={i for i,e in enumerate(checked['events']) if set(e['frame_refs'])&missing_refs}
+    all_ids={f['frame_id'] for f in window}
+    replaced={i for i,e in enumerate(checked['events']) if set(e['frame_refs'])<=all_ids}
     preserved=[e for i,e in enumerate(checked['events']) if i not in replaced]
     boundary={r for e in preserved if e['action'] in {'aiTap','aiInput','aiScroll'} for r in e['frame_refs']}
     all_ids={f['frame_id'] for f in window}
     for group in groups:
         if cancelled():raise ValueError('video_cancelled')
         ids={f['frame_id'] for f in group}
-        indexes={name:[i for i,e in enumerate(source) if set(e['frame_refs'])<=ids and set(e['frame_refs'])&missing_refs]
+        indexes={name:[i for i,e in enumerate(source) if set(e['frame_refs'])<=ids]
                  for name,source in [('first_pass',original),('independent_review',checked['events'])]}
         local_original=[original[i] for i in indexes['first_pass']]
         local_checked={**checked,'events':[checked['events'][i] for i in indexes['independent_review']]}
-        repaired=_repair_window(local_original,local_checked,group,duration,root,cancelled,secrets,missing_refs&ids,boundary&ids,context_frames=frames)
+        repaired=_repair_window(local_original,local_checked,group,duration,root,cancelled,secrets,ids,boundary&ids,context_frames=frames)
         from .ui_video_coverage_resolution import boundary_safe
         if any(not boundary_safe(e,boundary,repaired['reconciliation_audit']['coverage_resolutions'],frames) for e in repaired['events']):
             raise ValueError('video_required_action_missing')
@@ -256,6 +272,24 @@ def _repair_window(original,checked,frames,duration,root,cancelled,secrets,missi
                 raise ValueError('video_reference_invalid')
         except ValueError:
             if attempt:raise
+            # If the observed events already cover both sources one-to-one,
+            # a merge declaration is unnecessary. Ask for a fresh observation
+            # response; never accept or silently strip an invalid declaration.
+            from .ui_video_coverage_resolution import boundary_safe
+            try:
+                check_coverage(original,repaired['events'],duration)
+                check_coverage(before,repaired['events'],duration)
+                if any(not boundary_safe(e,boundary,[],window) for e in repaired['events']):
+                    raise ValueError('video_reference_invalid')
+            except ValueError:
+                pass
+            else:
+                repair_version='coverage-observe'
+                payload.pop('coverage_resolution_contract',None)
+                payload.pop('eligible_resolution_groups',None)
+                payload['gap_note']='本轮已能独立解释旧锚点，不需要合并声明；重新核对原帧，coverage_resolutions必须为空。上下文只作参考，不得重放相邻已保留交互。'
+                payload['validation_feedback']='上次事件已分别解释旧锚点，但附加合并声明无效。只按原画面重新输出实际点击及自动状态，完整保留证据，不把自动加载映射为点击；coverage_resolutions必须为空。'
+                continue
             if repair_version=='coverage-observe':
                 payload['validation_feedback']+=' 上次声明无效。本窗coverage_resolutions必须为空，不提交合并声明；重新观察原帧保留真实操作，自动转场只作状态说明。'
                 continue
