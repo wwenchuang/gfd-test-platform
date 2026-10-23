@@ -260,6 +260,15 @@ def _micro_motion_groups(times, changes):
             else:grouped[-1].append(index)
         runs.extend(grouped)
     selected=[]
+    # A faint one-frame pointer can precede a visible response without meeting
+    # the sustained-burst threshold. Preserve original before/onset/response
+    # pixels after a quiet gap; this is evidence, not a claimed tap.
+    for index in range(1,len(times)):
+        if times[index]-times[index-1]<200 or not .04<=changes[index]<.08:continue
+        response=next((j for j in range(index+1,min(len(times),index+7))
+                       if 0<times[j]-times[index]<=150 and .08<=changes[j]<12
+                       and not any(c>=12 for c in changes[index+1:j])),None)
+        if response is not None:selected.append({index-1,index,response})
     for run in runs:
         if len(run)<2 or not 30<=times[run[-1]]-times[run[0]]<=800:continue
         middle=min(run,key=lambda i:abs(times[i]-(times[run[0]]+times[run[-1]])/2))
@@ -283,8 +292,9 @@ def _select_micro_motion(groups, times, base, limit, cancelled=lambda:False):
     chosen=False
     while remaining and len(selected)<limit:
         if cancelled():raise ValueError('video_cancelled')
-        # Complete partially captured bursts first; spread equally costly ones.
-        index=max(remaining,key=lambda i:(-len(candidates[i]-selected),distance[i] if chosen else -i,-i))
+        # Preserve brief onset/response triplets before filling longer bursts;
+        # then complete partially captured bursts and spread equal-cost ones.
+        index=max(remaining,key=lambda i:(len(candidates[i])<=3,-len(candidates[i]-selected),distance[i] if chosen else -i,-i))
         remaining.remove(index)
         candidate=candidates[index]
         if len(selected|candidate)>limit:continue

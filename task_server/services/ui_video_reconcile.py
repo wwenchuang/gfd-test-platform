@@ -91,6 +91,19 @@ def check_coverage(original,reviewed,duration=None,resolutions=None,source=None)
             if warning not in reviewed[position]['uncertainties']:reviewed[position]['uncertainties'].append(warning)
 
 
+def _overlapping_gesture_refs(events):
+    """Flag ambiguous window overlaps for pixel review, never merge by wording."""
+    refs=set()
+    interactions=[e for e in events if e['action'] in {'aiTap','aiInput','aiScroll'}]
+    for first,second in zip(interactions,interactions[1:]):
+        if (first['action']==second['action']=='aiTap' and first['target']==second['target'] and
+            first['start_ms']<=second['start_ms']<first['end_ms'] and
+            set(first['frame_refs'])&set(second['frame_refs']) and
+            all(re.search(r'返回手势|侧滑|手势.*返回',e['observation']) for e in (first,second))):
+            refs.update(first['frame_refs']);refs.update(second['frame_refs'])
+    return refs
+
+
 def reconcile(events,frames,duration,root,cancelled,secrets,progress=None):
     from .ui_video_windows import observe_windows
     # Revisit all decoded pixels. Resampling a long film back to sixty images
@@ -98,11 +111,14 @@ def reconcile(events,frames,duration,root,cancelled,secrets,progress=None):
     checked,new_secrets=observe_windows(frames,duration,root,cancelled,progress,
                                        review_events=events,prior_secrets=secrets)
     secrets.extend(new_secrets)
+    repair_refs=_overlapping_gesture_refs(checked['events'])
     try:
         check_coverage(events,checked['events'],duration)
     except ValueError as error:
         if not getattr(error,'missing_frame_refs',None):raise
-        checked=_repair_coverage(events,checked,frames,duration,root,cancelled,secrets,error.missing_frame_refs)
+        repair_refs.update(error.missing_frame_refs)
+    if repair_refs:
+        checked=_repair_coverage(events,checked,frames,duration,root,cancelled,secrets,repair_refs)
         check_coverage(events,checked['events'],duration,checked.get('reconciliation_audit',{}).get('coverage_resolutions'),'first_pass')
     warnings=[q for e in checked['events'] for q in e['uncertainties'] if q.startswith(('首轮点击','首轮滚动'))]
     checked['uncertainties']=list(dict.fromkeys(checked['uncertainties']+warnings))

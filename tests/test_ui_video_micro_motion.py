@@ -74,3 +74,24 @@ class RealTouchDecodeTests(unittest.TestCase):
             self.assertIn(501,[f['timestamp_ms'] for f in result['frames']])
 
 if __name__=='__main__':unittest.main()
+
+
+def test_faint_isolated_onset_followed_by_response_keeps_original_evidence():
+    times=[42900,43333,43400,43433,43500]
+    changes=[.017,.066,.003,2.51,.055]
+    groups=video._micro_motion_groups(times,changes)
+    assert any({0,1,3}<=g for g in groups)
+
+
+def test_faint_clock_without_immediate_response_is_not_promoted():
+    assert video._micro_motion_groups([0,1000,2000],[0,.066,.066])==[]
+
+
+def test_short_onset_response_groups_survive_busy_background_budget():
+    selected,_=video._select_micro_motion([{0,1,2},{3,4,5,6,7}],list(range(8)),{3,4,5,6},7)
+    assert {0,1,2}<=selected
+    assert {3,4,5,6}<=selected
+
+
+def test_faint_onset_does_not_bridge_intervening_page_cut():
+    assert video._micro_motion_groups([0,400,433,466],[0,.066,30,.5])==[]

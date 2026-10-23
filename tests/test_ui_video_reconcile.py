@@ -509,3 +509,60 @@ def test_repair_window_includes_interaction_crossing_initial_gap_boundary(monkey
     monkeypatch.setattr(vr,'_repair_window',repair)
     result=vr._repair_coverage(old,checked,fs,1000,tmp_path,lambda:False,[],{'f4'})
     assert len(calls)==1 and len(result['events'])==3
+
+
+def test_cross_window_return_gesture_rechecks_even_when_each_anchor_is_covered(monkeypatch,tmp_path):
+    from task_server.services import ui_video_windows as vw
+    frames=[{'frame_id':f'f{i}','timestamp_ms':i*100} for i in range(7)]
+    first={**event(1),'target':'左上角返回箭头','start_ms':100,'end_ms':400,
+           'frame_refs':['f1','f2','f4'],'observation':'返回手势开始，页面横移'}
+    second={**first,'start_ms':300,'end_ms':600,'frame_refs':['f3','f4','f6'],
+            'observation':'连续返回手势结束，进入上一级'}
+    checked={'events':[first,second],'uncertainties':[],'multiple_scenarios':False}
+    monkeypatch.setattr(vw,'observe_windows',lambda *a,**kw:(copy.deepcopy(checked),[]))
+    calls=[]
+    def repair(original,result,fs,duration,root,cancelled,secrets,refs):
+        calls.append(refs)
+        # Platform cannot merge by text; only invoke the existing pixel/evidence gate.
+        return result
+    monkeypatch.setattr(vr,'_repair_coverage',repair)
+    result=vr.reconcile(checked['events'],frames,1000,tmp_path,lambda:False,[])
+    assert calls==[{'f1','f2','f3','f4','f6'}]
+    assert len(result['events'])==2
+
+
+@pytest.mark.parametrize('change', ['separate_time','no_gesture','other_control','no_shared_frame'])
+def test_unrelated_returns_do_not_trigger_overlap_repair(change):
+    first={**event(1),'target':'左上角返回箭头','start_ms':100,'end_ms':400,
+           'frame_refs':['f1','f2','f4'],'observation':'返回手势，页面横移'}
+    second={**first,'start_ms':300,'end_ms':600,'frame_refs':['f3','f4','f6']}
+    if change=='separate_time':second['start_ms']=500
+    if change=='no_gesture':second['observation']='点击返回按钮'
+    if change=='other_control':second['target']='关闭按钮'
+    if change=='no_shared_frame':second['frame_refs']=['f3','f5','f6']
+    assert not vr._overlapping_gesture_refs([first,second])
+
+
+def test_intervening_interaction_separates_gesture_candidates():
+    first={**event(1),'target':'左上角返回箭头','start_ms':100,'end_ms':400,
+           'frame_refs':['f1','f2','f4'],'observation':'返回手势，页面横移'}
+    second={**first,'start_ms':300,'end_ms':600,'frame_refs':['f3','f4','f6']}
+    for action in ('aiInput','aiScroll'):
+        assert not vr._overlapping_gesture_refs([first,event(2,action),second])
+
+
+def test_missing_and_overlap_share_one_bounded_repair(monkeypatch,tmp_path):
+    from task_server.services import ui_video_windows as vw
+    fs=[{'frame_id':f'f{i}','timestamp_ms':i*100} for i in range(8)]
+    first={**event(1),'target':'左上角返回箭头','start_ms':100,'end_ms':400,
+           'frame_refs':['f1','f2','f4'],'observation':'返回手势，页面横移'}
+    second={**first,'start_ms':300,'end_ms':600,'frame_refs':['f3','f4','f6']}
+    old=[first,second,event(7)]
+    checked={'events':[first,second],'uncertainties':[],'multiple_scenarios':False}
+    monkeypatch.setattr(vw,'observe_windows',lambda *a,**kw:(copy.deepcopy(checked),[]))
+    calls=[]
+    def repair(original,result,frames,duration,root,cancelled,secrets,refs):
+        calls.append(refs);return {**result,'events':copy.deepcopy(old)}
+    monkeypatch.setattr(vr,'_repair_coverage',repair)
+    vr.reconcile(old,fs,1000,tmp_path,lambda:False,[])
+    assert calls==[{'f1','f2','f3','f4','f6','f7'}]
