@@ -11,3 +11,5 @@
 - 不确定时保留疑问，不为凑步骤推测未发生的操作。
 
 仅返回JSON：{"events":[],"coverage_resolutions":[],"uncertainties":[],"multiple_scenarios":false}。
+
+用户返回手势仍是交互，不能仅因手指没有点按钮就改为aiAssert：原片操作前若可见应用返回箭头，用aiTap该可见箭头作跨端等价返回，observation注明原片为手势及前后页面。没有可见等价控件则保留疑问。只有前序操作已经记录、该段确无新交互时才把后续转场作为自动状态。

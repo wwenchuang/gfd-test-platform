@@ -73,7 +73,7 @@ def validate(claims,sources,reviewed,frames):
         if (not isinstance(ids,list) or not 2<=len(ids)<=8 or any(not isinstance(i,str) for i in ids) or
             len(set(ids))!=len(ids) or set(ids)&used or type(index) is not int or not 0<=index<len(reviewed) or index in destinations):_fail()
         if not any(sum(aid.startswith(name+':') for aid in ids)>=2 for name in sources):_fail()
-        if claim['resolution'] not in {'same_interaction','same_interaction_with_action_correction'}:_fail()
+        if claim['resolution'] not in {'same_interaction','same_interaction_with_action_correction','same_return_gesture'}:_fail()
         if not isinstance(ev,dict) or set(ev)!={'before_frame','interaction_frame','after_frame','examined_frame_refs','before_state','interaction','after_state','why_not_separate_actions'}:_fail()
         refs=ev['examined_frame_refs']
         if (not isinstance(refs,list) or not 2<=len(refs)<=8 or any(not isinstance(r,str) or r not in times for r in refs) or
@@ -86,6 +86,7 @@ def validate(claims,sources,reviewed,frames):
         new=reviewed[index]
         if new['action'] not in {'aiTap','aiScroll'} or new.get('uncertainties') or not {before,touch,after}<=set(new['frame_refs']):_fail()
         if touch in targets and targets[touch]!=new['target']:_fail()
+        gesture=claim['resolution']=='same_return_gesture'
         anchors=[]
         for aid in ids:
             parts=aid.split(':')
@@ -93,7 +94,12 @@ def validate(claims,sources,reviewed,frames):
             pos=int(parts[1]);source=sources[parts[0]]
             if pos>=len(source):_fail()
             old=source[pos]
-            if old['action'] not in {'aiTap','aiScroll'} or touch not in old['frame_refs'] or not set(old['frame_refs'])<=set(refs):_fail()
+            if old['action'] not in {'aiTap','aiScroll'} or not set(old['frame_refs'])<=set(refs):_fail()
+            if gesture:
+                if (old['action']!='aiTap' or new['action']!='aiTap' or old['target']!=new['target'] or
+                    old.get('value','')!='' or new.get('value','')!='' or
+                    not old['start_ms']<=times[touch]<=old['end_ms']):_fail()
+            elif touch not in old['frame_refs']:_fail()
             if old['action']!=new['action']:
                 if (old['action']!='aiScroll' or new['action']!='aiTap' or
                     not re.search(r'(?:未见|没有|未观察到)(?:独立|新增|新的|用户)?(?:滚动|滑动)',ev['interaction']) or '点击' not in ev['interaction']):_fail()
@@ -106,6 +112,19 @@ def validate(claims,sources,reviewed,frames):
                     not re.search(r'(?:未见|未观察到|没有|无)[^。；，,]{0,30}(?:第二次|二次|再次|重新|新的)[^。；，,]{0,20}(?:触点|按下|重触|滑动|滚动|手势)',statement) or
                     re.search(r'再次|重新|反向|两次|多次|先.*随后',affirmative)):_fail()
             anchors.append(old)
+        if gesture:
+            old_notes='。'.join(a.get('observation','') for a in anchors)
+            old_affirmative=re.sub(r'(?:未见|未观察到|没有|无)[^。；，,但]*', '', old_notes)
+            if ('返回手势' not in old_notes or re.search(r'(?:再次|第二次|两次|多次)[^。；，,]{0,30}(?:点击|返回|导航|按下)',old_affirmative)):_fail()
+            if (new['target'] not in {'左上角返回箭头','左上角返回按钮','返回箭头','返回按钮'} or
+                not set.intersection(*(set(a['frame_refs']) for a in anchors)) or
+                not any(touch in a['frame_refs'] for a in anchors) or
+                not re.search(r'返回(?:箭头|按钮).*可见|可见.*返回(?:箭头|按钮)',ev['before_state']) or
+                not re.search(r'同一次|单次',ev['interaction']+'。'+ev['why_not_separate_actions']) or '返回手势' not in ev['interaction'] or
+                not re.search(r'(?:未见|未观察到|没有|无)[^。；]{0,30}(?:第二次|二次|再次|重新|新的)[^。；]{0,20}(?:按下|触点|手势|导航)',ev['why_not_separate_actions'])):_fail()
+            affirmative=re.sub(r'(?:未见|未观察到|没有|无)[^。；，,但]*', '', ev['interaction']+'。'+ev['why_not_separate_actions'])
+            affirmative=re.sub(r'旧识别将其误判为(?:两次|多次)独立的点击操作', '', affirmative)
+            if re.search(r'再次|重新|第二次|两次|多次',affirmative):_fail()
         low=min(e['start_ms'] for e in anchors);high=max(e['end_ms'] for e in anchors)
         for source_name,source in sources.items():
             for pos,old in enumerate(source):
@@ -113,7 +132,7 @@ def validate(claims,sources,reviewed,frames):
                     low<old['start_ms']<high and old['end_ms']<=high):_fail()
         used.update(ids);destinations.add(index);targets[touch]=new['target']
         normalized='same_interaction_with_action_correction' if any(old['action']!=new['action'] for old in anchors) else 'same_interaction'
-        result.append({**copy.deepcopy(claim),'resolution':normalized,'reviewed_event':copy.deepcopy(new),
+        result.append({**copy.deepcopy(claim),'resolution':'same_return_gesture' if gesture else normalized,'reviewed_event':copy.deepcopy(new),
                        'source_anchors':{aid:copy.deepcopy(sources[aid.split(':')[0]][int(aid.split(':')[1])]) for aid in ids}})
     return result
 

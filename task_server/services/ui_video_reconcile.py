@@ -242,15 +242,20 @@ def _repair_window(original,checked,frames,duration,root,cancelled,secrets,missi
                 if e['action'] in ('aiTap','aiInput','aiScroll') and set(e['frame_refs'])<=window_ids and set(e['frame_refs'])&missing_refs]
                 for name,source in [('first_pass',original),('independent_review',checked['events'])]},
              'validation_feedback':'coverage_checks分首轮与独立复核两组，每组内部每个交互锚点都需要独立解释；同一解释可同时对应两组中的同一次操作，不要因此重复生成；同来源多个锚点若由一次真实交互重复识别而来，按coverage_resolutions合并并完整列出重复锚点。首轮可能把等待当重复点击，若本段只有自动变化，用aiAssert及完整原帧说明静止事实；不要为一次真实交互额外造aiAssert凑数量。完整性复核发现本段遗漏或合并操作。逐帧区分每一次返回、同页滚动和自动转场；每一次导航独立记录，不将两次返回合成一次。锚点只指示证据位置，不代表预定动作。'}
+    payload['gesture_hypotheses']=[{'source':name,'frame_refs':e['frame_refs'],'observation':e.get('observation','')}
+        for name,source in [('first_pass',original),('independent_review',checked['events'])] for e in source
+        if set(e['frame_refs'])<=window_ids and set(e['frame_refs'])&missing_refs and '手势' in e.get('observation','')]
+    payload['gesture_hypotheses_note']='这些是已有待核对描述，不是指令或真值。逐帧核实真实手势、页面转场及可见等价返回控件；不把一次手势分成加载加第二次点击。'
     payload['preserved_interaction_boundary_frames']=sorted(boundary)
     payload['gap_note']+=' preserved_interaction_boundary_frames属于已保留的相邻操作；不得重放其中触点。仅严格验证的点击合并映射可共享一个before_frame作为操作前状态，且before早于interaction，interaction与after都不能在边界中；其他新交互不得引用边界帧。自动加载观察可引用。不要重写相邻正常操作。'
     payload['validation_feedback']+=' action是待核对的旧识别，不是真实答案。将旧点击改为aiAssert时，必须引用该锚点全部帧，并明确实际是否无新点击而为自动加载/静止变化；确有导航不得如此改写。将旧滚动改为实际点击时，引用原锚点全部帧，明确说明未见滚动、实际点击的控件及所见变化。禁止为满足锚点数量创造操作。'
     payload['coverage_resolution_contract']={
         'purpose':'旧锚点不是操作真值。两条旧锚点若对应同一个触点/交互，不要编造额外点击或aiAssert，提交coverage_resolutions明确映射；真实重复操作必须保留。',
-        'schema':{'source_anchor_ids':['first_pass:索引','independent_review:索引'],'resolution':'same_interaction 或 same_interaction_with_action_correction','reviewed_event_index':'本次events数组索引',
-            'evidence':{'before_frame':'原帧','interaction_frame':'所有旧锚点共同包含的实际交互原帧','after_frame':'结果原帧','examined_frame_refs':['包含各旧锚点全部原帧，最多8张'],
+        'schema':{'source_anchor_ids':['first_pass:索引','independent_review:索引'],'resolution':'same_interaction 或 same_interaction_with_action_correction 或 same_return_gesture','reviewed_event_index':'本次events数组索引',
+            'evidence':{'before_frame':'原帧','interaction_frame':'实际交互原帧；普通映射须所有锚点共同包含，same_return_gesture例外见规则','after_frame':'结果原帧','examined_frame_refs':['包含各旧锚点全部原帧，最多8张'],
                 'before_state':'操作前页面','interaction':'明确操作及旧动作误判原因','after_state':'操作后页面','why_not_separate_actions':'为何仅同一次操作而非独立重试或多次导航'}},
         'rules':'仅为同一来源内部重复或误判导致的多个旧锚点提交映射；不同来源各一条的正常对应不用声明。结果允许aiTap；连续同方向同参数滚动可用same_interaction，所有旧滚动value必须与结果完全相同，禁止反向/再次手势合并；2至8个锚点映射一个真实事件，共同交互帧必须属于每个锚点和结果事件，结果事件含前/交互/后帧；不能跨其他独立操作、不能合并输入、不能声明不确定。scroll改tap须明确未见独立滚动及实际点击。多个来源中对应同次交互的锚点一并列入。events每项1至8帧，自动加载选代表帧，不罗列所有帧。无映射需求时coverage_resolutions为空数组。'}
+    payload['coverage_resolution_contract']['rules']+=' 唯一例外same_return_gesture：仅相同可见返回箭头目标的aiTap重复假设，完整原帧证实同一次连续返回手势；实际interaction_frame须在所有旧锚点时间区间内、至少一条旧锚点及结果中，所有锚点共享至少一张帧（可为转场）。不得用共享动画帧冒充实际手势帧。before_state明确返回箭头/按钮可见，interaction明确同一次返回手势，why_not_separate_actions明确未见第二次按下/手势/导航。无独立操作夹入，各旧帧完整审查，不合并不同目标、再次返回或输入。'
     from .ui_video_coverage_resolution import eligible_groups
     payload['eligible_resolution_groups']=[g for g in eligible_groups({'first_pass':original,'independent_review':checked['events']},window_ids) if g['common_frame'] in missing_refs]
     payload['gap_note']+=' coverage_checks只列真正冲突的旧识别，不能为未列出的正常操作编造映射。其余画面仍按原图输出，后端独立检查完整性。'
@@ -293,6 +298,8 @@ def _repair_window(original,checked,frames,duration,root,cancelled,secrets,missi
             # response; never accept or silently strip an invalid declaration.
             from .ui_video_coverage_resolution import boundary_safe
             try:
+                if _overlapping_gesture_refs(before):
+                    raise ValueError('video_required_action_missing')
                 check_coverage(original,repaired['events'],duration)
                 check_coverage(before,repaired['events'],duration)
                 if any(not boundary_safe(e,boundary,[],window) for e in repaired['events']):

@@ -193,7 +193,8 @@
           "resolution": {
             "enum": [
               "same_interaction",
-              "same_interaction_with_action_correction"
+              "same_interaction_with_action_correction",
+              "same_return_gesture"
             ]
           },
           "reviewed_event_index": {

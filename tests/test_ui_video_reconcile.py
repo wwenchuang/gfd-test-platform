@@ -566,3 +566,23 @@ def test_missing_and_overlap_share_one_bounded_repair(monkeypatch,tmp_path):
     monkeypatch.setattr(vr,'_repair_coverage',repair)
     vr.reconcile(old,fs,1000,tmp_path,lambda:False,[])
     assert calls==[{'f1','f2','f3','f4','f6','f7'}]
+
+
+def test_unresolved_gesture_overlap_keeps_mapping_retry(monkeypatch,tmp_path):
+    from task_server.services import ai_skill_service as ai
+    fs=[{'frame_id':f'f{i}','timestamp_ms':i*100} for i in range(1,5)]
+    (tmp_path/'frames').mkdir()
+    for f in fs:(tmp_path/'frames'/(f['frame_id']+'.jpg')).write_bytes(b'image')
+    old=[{**event(1),'target':'左上角返回箭头','frame_refs':['f1','f2','f3'],'end_ms':300,'observation':'返回手势开始'},
+         {**event(2),'target':'左上角返回箭头','frame_refs':['f2','f3','f4'],'end_ms':400,'observation':'返回手势结束'}]
+    calls=[]
+    def model(skill,payload,**kw):
+        calls.append(kw['version'])
+        # Individually covering anchors cannot settle whether one gesture was
+        # counted twice; retain the original mapping contract on retry.
+        return {'events':[{k:e[k] for k in ('action','target','value','frame_refs','observation')} for e in old],
+                'coverage_resolutions':[{}],'uncertainties':[],'multiple_scenarios':False}
+    monkeypatch.setattr(ai,'run_ai_skill',model)
+    with pytest.raises(ValueError,match='video_coverage_resolution_invalid'):
+        vr._repair_window(old,{'events':copy.deepcopy(old),'uncertainties':[],'multiple_scenarios':False},fs,1000,tmp_path,lambda:False,[],{'f1','f2','f3','f4'})
+    assert calls==['coverage','coverage']

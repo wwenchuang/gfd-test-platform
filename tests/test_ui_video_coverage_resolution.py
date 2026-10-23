@@ -240,3 +240,62 @@ def test_diagnostics_handle_non_string_state_frame(value):
     feedback=cr.diagnose([claim],{'first_pass':old},new,frames)
     assert feedback['rejected_claims']==[0]
     assert feedback['anchors_to_recheck'][0]['undeclared_state_frames']==[value]
+
+
+def return_gesture_fixture():
+    frames,old,new,claim=fixture()
+    old[0].update(action='aiTap',target='左上角返回箭头',frame_refs=['f1','f3'],start_ms=100,end_ms=300,value='')
+    old[1].update(target='左上角返回箭头',frame_refs=['f2','f3','f4'],start_ms=200,end_ms=400,value='')
+    new[0].update(target='左上角返回箭头',frame_refs=['f1','f2','f4'],value='')
+    for e in old:e['observation']='原片为连续返回手势，页面横移进入上一级'
+    claim.update(resolution='same_return_gesture')
+    claim['evidence'].update(after_frame='f4',examined_frame_refs=['f1','f2','f3','f4'],before_state='模型详情页左上角返回箭头可见',interaction='同一次连续返回手势，箭头可见，页面横移',after_state='进入上一级列表页面',why_not_separate_actions='未见第二次按下或新的手势，仅同一次返回导航')
+    return frames,old,new,claim
+
+
+def test_continuous_return_accepts_actual_touch_inside_overlapping_anchor_interval():
+    frames,old,new,claim=return_gesture_fixture()
+    result=cr.validate([claim],{'first_pass':old},new,frames)
+    assert result[0]['resolution']=='same_return_gesture'
+    assert result[0]['evidence']['interaction_frame']=='f2'
+    assert result[0]['source_anchors']['first_pass:0']['frame_refs']==['f1','f3']
+
+
+@pytest.mark.parametrize('mutation',['generic','different_target','input','outside_interval','no_overlap','no_arrow','second_gesture','uncertain','missing_frame','intervening'])
+def test_return_gesture_does_not_relax_other_interaction_guards(mutation):
+    frames,old,new,claim=return_gesture_fixture()
+    if mutation=='generic':claim['resolution']='same_interaction'
+    if mutation=='different_target':old[0]['target']='删除按钮'
+    if mutation=='input':old[0]['action']='aiInput'
+    if mutation=='outside_interval':old[0]['start_ms']=250
+    if mutation=='no_overlap':old[0]['frame_refs']=['f1']
+    if mutation=='no_arrow':claim['evidence']['before_state']='模型详情页面显示'
+    if mutation=='second_gesture':claim['evidence']['why_not_separate_actions']='再次按下并完成第二次返回'
+    if mutation=='uncertain':claim['evidence']['interaction']='可能为一次返回手势'
+    if mutation=='missing_frame':claim['evidence']['examined_frame_refs'].remove('f3')
+    if mutation=='intervening':old.append({'action':'aiTap','target':'其他按钮','start_ms':250,'end_ms':260,'frame_refs':['f3']})
+    with pytest.raises(ValueError,match='video_coverage_resolution_invalid'):
+        cr.validate([claim],{'first_pass':old},new,frames)
+
+
+def test_return_gesture_single_interaction_can_be_explained_in_rationale():
+    frames,old,new,claim=return_gesture_fixture()
+    claim['evidence']['interaction']='原片为返回手势，映射可见返回箭头'
+    claim['evidence']['why_not_separate_actions']='同一次连续手势，未见第二次按下或导航'
+    assert cr.validate([claim],{'first_pass':old},new,frames)
+
+
+@pytest.mark.parametrize('mutation',['contradictory_rationale','explicit_second_return','no_gesture_evidence'])
+def test_return_gesture_rejects_contradictions_and_ineligible_old_anchors(mutation):
+    frames,old,new,claim=return_gesture_fixture()
+    if mutation=='contradictory_rationale':claim['evidence']['why_not_separate_actions']='未见第二次按下，但随后再次返回并完成第二次导航'
+    if mutation=='explicit_second_return':old[1]['observation']='再次点击左上角返回箭头，完成第二次返回'
+    if mutation=='no_gesture_evidence':
+        for e in old:e['observation']='点击返回按钮'
+    with pytest.raises(ValueError):cr.validate([claim],{'first_pass':old},new,frames)
+
+
+def test_return_gesture_can_explain_old_two_click_misclassification():
+    frames,old,new,claim=return_gesture_fixture()
+    claim['evidence']['interaction']='原片为返回手势。旧识别将其误判为两次独立的点击操作，实际为同一次连续返回导航。'
+    assert cr.validate([claim],{'first_pass':old},new,frames)
