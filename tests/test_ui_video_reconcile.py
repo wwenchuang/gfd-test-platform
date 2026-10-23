@@ -586,3 +586,15 @@ def test_unresolved_gesture_overlap_keeps_mapping_retry(monkeypatch,tmp_path):
     with pytest.raises(ValueError,match='video_coverage_resolution_invalid'):
         vr._repair_window(old,{'events':copy.deepcopy(old),'uncertainties':[],'multiple_scenarios':False},fs,1000,tmp_path,lambda:False,[],{'f1','f2','f3','f4'})
     assert calls==['coverage','coverage']
+
+
+def test_return_overlap_with_explicit_touch_displacement_requires_review():
+    first={**event(1),'target':'左上角返回箭头','frame_refs':['f1','f2','f3'],'end_ms':300,'observation':'原片为返回手势，页面退回上一级'}
+    second={**event(2),'target':'左上角返回箭头','frame_refs':['f2','f3','f4'],'end_ms':400,'observation':'可见触点及dX负值的向左位移轨迹，执行返回操作，页面滑出'}
+    assert vr._overlapping_gesture_refs([first,second])=={'f1','f2','f3','f4'}
+
+
+def test_two_return_displacement_descriptions_require_pixel_review():
+    old=[{**event(1),'target':'左上角返回箭头','frame_refs':['f1','f2','f3'],'end_ms':300,'observation':'触点持续横向位移，返回上一级'},
+         {**event(2),'target':'左上角返回箭头','frame_refs':['f2','f3','f4'],'end_ms':400,'observation':'触点及向左位移轨迹，页面退回'}]
+    assert vr._overlapping_gesture_refs(old)

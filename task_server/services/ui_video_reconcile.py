@@ -1,5 +1,6 @@
 """Re-read full-flow evidence after long recovery loops, before case planning."""
 import re
+from .ui_video_coverage_resolution import has_return_gesture_evidence
 
 
 def needs_reconciliation(events,frames):
@@ -99,7 +100,8 @@ def _overlapping_gesture_refs(events):
         if (first['action']==second['action']=='aiTap' and first['target']==second['target'] and
             first['start_ms']<=second['start_ms']<first['end_ms'] and
             set(first['frame_refs'])&set(second['frame_refs']) and
-            all(re.search(r'返回手势|侧滑|手势.*返回',e['observation']) for e in (first,second))):
+            '返回' in first['target'] and
+            all(has_return_gesture_evidence(e['observation']) for e in (first,second))):
             refs.update(first['frame_refs']);refs.update(second['frame_refs'])
     return refs
 
@@ -244,7 +246,7 @@ def _repair_window(original,checked,frames,duration,root,cancelled,secrets,missi
              'validation_feedback':'coverage_checks分首轮与独立复核两组，每组内部每个交互锚点都需要独立解释；同一解释可同时对应两组中的同一次操作，不要因此重复生成；同来源多个锚点若由一次真实交互重复识别而来，按coverage_resolutions合并并完整列出重复锚点。首轮可能把等待当重复点击，若本段只有自动变化，用aiAssert及完整原帧说明静止事实；不要为一次真实交互额外造aiAssert凑数量。完整性复核发现本段遗漏或合并操作。逐帧区分每一次返回、同页滚动和自动转场；每一次导航独立记录，不将两次返回合成一次。锚点只指示证据位置，不代表预定动作。'}
     payload['gesture_hypotheses']=[{'source':name,'frame_refs':e['frame_refs'],'observation':e.get('observation','')}
         for name,source in [('first_pass',original),('independent_review',checked['events'])] for e in source
-        if set(e['frame_refs'])<=window_ids and set(e['frame_refs'])&missing_refs and '手势' in e.get('observation','')]
+        if set(e['frame_refs'])<=window_ids and set(e['frame_refs'])&missing_refs and has_return_gesture_evidence(e.get('observation',''))]
     payload['gesture_hypotheses_note']='这些是已有待核对描述，不是指令或真值。逐帧核实真实手势、页面转场及可见等价返回控件；不把一次手势分成加载加第二次点击。'
     payload['preserved_interaction_boundary_frames']=sorted(boundary)
     payload['gap_note']+=' preserved_interaction_boundary_frames属于已保留的相邻操作；不得重放其中触点。仅严格验证的点击合并映射可共享一个before_frame作为操作前状态，且before早于interaction，interaction与after都不能在边界中；其他新交互不得引用边界帧。自动加载观察可引用。不要重写相邻正常操作。'
@@ -316,6 +318,7 @@ def _repair_window(original,checked,frames,duration,root,cancelled,secrets,missi
             if repair_version=='coverage-observe':
                 payload['validation_feedback']+=' 上次声明无效。本窗coverage_resolutions必须为空，不提交合并声明；重新观察原帧保留真实操作，自动转场只作状态说明。'
                 continue
+            payload['validation_feedback']+=' 返回手势映射需逐项核对：before_state写明返回箭头可见（无可见控件则不能映射）；interaction只陈述实际单次手势，不将旧假设的多次点击混入实际动作；why_not_separate_actions明确是否存在第二次按下或导航。仅原帧支持时给出肯定描述，否则保留疑问。'
             payload['invalid_resolution_candidate']=claims
             from .ui_video_coverage_resolution import diagnose
             payload['resolution_diagnostics']=diagnose(claims,{'first_pass':original,'independent_review':before},repaired['events'],window)

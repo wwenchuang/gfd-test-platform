@@ -299,3 +299,10 @@ def test_return_gesture_can_explain_old_two_click_misclassification():
     frames,old,new,claim=return_gesture_fixture()
     claim['evidence']['interaction']='原片为返回手势。旧识别将其误判为两次独立的点击操作，实际为同一次连续返回导航。'
     assert cr.validate([claim],{'first_pass':old},new,frames)
+
+
+@pytest.mark.parametrize('note',['点击返回按钮，触点没有位移轨迹','点击返回按钮，未见触点轨迹','触点无位移','未见返回手势','触点不存在位移轨迹','这不属于返回手势'])
+def test_negated_gesture_description_cannot_authorize_exception(note):
+    frames,old,new,claim=return_gesture_fixture()
+    for event in old:event['observation']=note
+    with pytest.raises(ValueError):cr.validate([claim],{'first_pass':old},new,frames)

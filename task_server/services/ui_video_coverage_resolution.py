@@ -7,6 +7,16 @@ def _fail():
     raise ValueError('video_coverage_resolution_invalid')
 
 
+def has_return_gesture_evidence(note):
+    """Require affirmative motion evidence; a negated observation is not proof."""
+    for clause in re.split(r'[。；，,;\n]|但是|但', note):
+        if re.search(r'未|没|无|不|并非', clause):
+            continue
+        if re.search(r'返回手势|侧滑|手势.*返回|触点.{0,80}(?:位移|轨迹)', clause):
+            return True
+    return False
+
+
 def _signature(event):
     return (event['action'],event['target'],tuple(event['frame_refs']))
 
@@ -115,7 +125,7 @@ def validate(claims,sources,reviewed,frames):
         if gesture:
             old_notes='。'.join(a.get('observation','') for a in anchors)
             old_affirmative=re.sub(r'(?:未见|未观察到|没有|无)[^。；，,但]*', '', old_notes)
-            if ('返回手势' not in old_notes or re.search(r'(?:再次|第二次|两次|多次)[^。；，,]{0,30}(?:点击|返回|导航|按下)',old_affirmative)):_fail()
+            if (not has_return_gesture_evidence(old_notes) or re.search(r'(?:再次|第二次|两次|多次)[^。；，,]{0,30}(?:点击|返回|导航|按下)',old_affirmative)):_fail()
             if (new['target'] not in {'左上角返回箭头','左上角返回按钮','返回箭头','返回按钮'} or
                 not set.intersection(*(set(a['frame_refs']) for a in anchors)) or
                 not any(touch in a['frame_refs'] for a in anchors) or
