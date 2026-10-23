@@ -1,7 +1,7 @@
 ## 2026-10-23 下拉刷新原片对照
 
 - 小白学习原帧064至087使用同一千问3.8调用对照：旧观察提示输出down，与其内容下移描述矛盾；新增拖动/回弹规则后输出up，释放后刷新独立识别为状态，不生成反向操作。证据/tmp/xiaobai-print-review/refresh-before.json及refresh-after.json。规则同步观察/分段/整理三个入口。仅为真实局部验证，完整重生成尚待部署。
-- 62b34097已推送main；堡垒机已自行恢复登录，待部署校验。
+- 89a145a1已部署，/api/health核对版本及ok=true；小白学习草稿rev2线上validate返回ready=true/blockers=[]。原片重新上传uvs_3e9ff669b5c342a7be28d9191bc82bda完整AI复验已ready，10项业务操作保留，刷新自动输出up，后两次浏览down，结束仅任务传输中；保留旧来源与草稿。OPPO非提交打印前置试跑被小白学习登录失效阻断，截图/tmp/xiaobai-print-review/phone-current.png；已请求用户手机登录，未下发纸张打印。
 
 ## 2026-10-23 小白学习原片生成与评分重复计数修复
 
