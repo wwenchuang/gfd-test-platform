@@ -398,3 +398,54 @@ def test_gap_closes_chained_interactions_but_not_long_passive_loading():
             {'action':'aiAssert','frame_refs':['f11','f29']}]
     selected=vr._gap_frames(fs,events,{'f5'})
     assert {f['frame_id'] for f in selected}=={f'f{i}' for i in range(3,12)}
+
+
+def test_gap_without_duplicate_candidates_uses_observation_contract(monkeypatch,tmp_path):
+    from task_server.services import ai_skill_service as ai
+    fs=[{'frame_id':f'f{i}','timestamp_ms':i*100} for i in range(1,4)]
+    (tmp_path/'frames').mkdir()
+    for f in fs:(tmp_path/'frames'/(f['frame_id']+'.jpg')).write_bytes(b'image')
+    old={**event(1),'frame_refs':['f1','f2','f3'],'end_ms':300}
+    def model(skill,payload,**kw):
+        assert kw['version']=='coverage-observe'
+        assert 'coverage_resolution_contract' not in payload
+        assert payload['coverage_checks']['first_pass'][0]['frame_refs']==old['frame_refs']
+        return {'events':[{'action':'aiAssert','target':'转场','value':'','frame_refs':old['frame_refs'],
+            'observation':'未见新的点击，实际为前序点击后的自动转场'}],
+            'coverage_resolutions':[],'uncertainties':[],'multiple_scenarios':False}
+    monkeypatch.setattr(ai,'run_ai_skill',model)
+    result=vr._repair_window([old],{'events':[],'uncertainties':[],'multiple_scenarios':False},fs,1000,tmp_path,lambda:False,[],set(old['frame_refs']))
+    assert result['events'][0]['action']=='aiAssert'
+
+
+def test_observation_only_retry_does_not_reintroduce_merge_instructions(monkeypatch,tmp_path):
+    from task_server.services import ai_skill_service as ai
+    fs=[{'frame_id':f'f{i}','timestamp_ms':i*100} for i in range(1,4)]
+    (tmp_path/'frames').mkdir()
+    for f in fs:(tmp_path/'frames'/(f['frame_id']+'.jpg')).write_bytes(b'image')
+    old={**event(1),'frame_refs':['f1','f2','f3'],'end_ms':300};calls=[]
+    def model(skill,payload,**kw):
+        calls.append(copy.deepcopy(payload))
+        if len(calls)==1:return {'events':[],'coverage_resolutions':[],'uncertainties':[],'multiple_scenarios':False}
+        assert '在coverage_resolutions中完整列入' not in payload['validation_feedback']
+        assert 'coverage_resolutions必须为空' in payload['validation_feedback']
+        return {'events':[{'action':'aiAssert','target':'转场','value':'','frame_refs':old['frame_refs'],
+            'observation':'未见新的点击，实际为自动转场'}],'coverage_resolutions':[],'uncertainties':[],'multiple_scenarios':False}
+    monkeypatch.setattr(ai,'run_ai_skill',model)
+    vr._repair_window([old],{'events':[],'uncertainties':[],'multiple_scenarios':False},fs,1000,tmp_path,lambda:False,[],set(old['frame_refs']))
+    assert len(calls)==2
+
+
+def test_scroll_gap_keeps_existing_mapping_capable_prompt(monkeypatch,tmp_path):
+    from task_server.services import ai_skill_service as ai
+    fs=[{'frame_id':f'f{i}','timestamp_ms':i*100} for i in range(1,4)]
+    (tmp_path/'frames').mkdir()
+    for f in fs:(tmp_path/'frames'/(f['frame_id']+'.jpg')).write_bytes(b'image')
+    old={**event(1,'aiScroll'),'value':{'direction':'down','scrollType':'singleAction'},'frame_refs':['f1','f2','f3'],'end_ms':300}
+    def model(skill,payload,**kw):
+        assert kw['version']=='coverage'
+        assert 'coverage_resolution_contract' in payload
+        return {'events':[{k:old[k] for k in ('action','target','value','frame_refs','observation','uncertainties')}],
+            'coverage_resolutions':[],'uncertainties':[],'multiple_scenarios':False}
+    monkeypatch.setattr(ai,'run_ai_skill',model)
+    vr._repair_window([old],{'events':[],'uncertainties':[],'multiple_scenarios':False},fs,1000,tmp_path,lambda:False,[],set(old['frame_refs']))

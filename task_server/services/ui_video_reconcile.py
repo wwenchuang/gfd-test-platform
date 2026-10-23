@@ -222,11 +222,20 @@ def _repair_window(original,checked,frames,duration,root,cancelled,secrets,missi
     from .ui_video_coverage_resolution import eligible_groups
     payload['eligible_resolution_groups']=[g for g in eligible_groups({'first_pass':original,'independent_review':checked['events']},window_ids) if g['common_frame'] in missing_refs]
     payload['gap_note']+=' coverage_checks只列真正冲突的旧识别，不能为未列出的正常操作编造映射。其余画面仍按原图输出，后端独立检查完整性。'
+    repair_version='coverage'
+    # Scroll-only duplicates are legal but not enumerated by eligible_groups.
+    # Keep their existing mapping-capable path rather than forbidding recovery.
+    has_scroll=any(e['action']=='aiScroll' for e in original+checked['events'])
+    if not payload['eligible_resolution_groups'] and not has_scroll:
+        repair_version='coverage-observe'
+        payload.pop('coverage_resolution_contract')
+        payload['gap_note']='逐帧重新核对本窗口的旧识别。没有合法的同次交互合并候选；coverage_resolutions必须为空。context_frame_ids仅作上下文，不属于可引用证据；不得重放preserved_interaction_boundary_frames中的相邻操作。'
+        payload['validation_feedback']='旧锚点不是真值。真实点击、滚动和输入须保留；旧点击若只是前序动作后的自动转场，引用旧锚点全部帧并明确未见新点击以及实际自动变化。不得用自动状态代替真实导航。连续输入分段观察，保留各段证据，不提交输入合并声明。旧滚动若为自动加载或静止事实，完整引用旧帧并明确未见滚动的依据。'
     before=copy.deepcopy(checked['events'])
     resolutions=[]
     for attempt in range(2):
         if cancelled():raise ValueError('video_cancelled')
-        raw=ai.run_ai_skill('ui_video_observe',payload,version='coverage',image_assets=load_assets(images,root,cancelled),
+        raw=ai.run_ai_skill('ui_video_observe',payload,version=repair_version,image_assets=load_assets(images,root,cancelled),
             timeout=120,retry_count=0,max_tokens=5000,repair_invalid_json=False)
         if cancelled():raise ValueError('video_cancelled')
         if isinstance(raw,dict) and isinstance(raw.get('events'),list):
@@ -247,6 +256,9 @@ def _repair_window(original,checked,frames,duration,root,cancelled,secrets,missi
                 raise ValueError('video_reference_invalid')
         except ValueError:
             if attempt:raise
+            if repair_version=='coverage-observe':
+                payload['validation_feedback']+=' 上次声明无效。本窗coverage_resolutions必须为空，不提交合并声明；重新观察原帧保留真实操作，自动转场只作状态说明。'
+                continue
             payload['invalid_resolution_candidate']=claims
             from .ui_video_coverage_resolution import diagnose
             payload['resolution_diagnostics']=diagnose(claims,{'first_pass':original,'independent_review':before},repaired['events'],window)
@@ -264,6 +276,9 @@ def _repair_window(original,checked,frames,duration,root,cancelled,secrets,missi
             missing=getattr(error,'missing_frame_refs',None)
             if attempt or not missing or not missing<=window_ids:raise
             payload['unresolved_hypotheses']=[{'action':e['action'],'target':e['target'],'observation':e['observation'],'frame_refs':e['frame_refs']} for e in original+before if set(e['frame_refs'])<=missing]
+            if repair_version=='coverage-observe':
+                payload['validation_feedback']+=' 上次仍未解释这些原帧：'+','.join(sorted(missing))+'。coverage_resolutions必须为空；根据原画面保留真实操作，若旧点击实际为自动转场则完整引用旧帧并说明未见新点击，不复制旧假设凑步骤。'
+                continue
             payload['validation_feedback']+=' 上次仍未完整解释这些原帧：'+','.join(sorted(missing))+ '。unresolved_hypotheses是待证伪的旧识别，绝非正确答案。请逐帧核对旧识别是否误判；纠正旧点击/滚动时，完整引用其帧并明确说明实际动作或无新交互的自动状态。若多条旧识别实际为同一次操作，保留一次真实交互，并在coverage_resolutions中完整列入对应锚点，不额外造aiAssert代替重复锚点。仅独立的自动加载阶段可用aiAssert。不要复制旧动作凑数量。'
     before=validate_analysis({'events':before,'uncertainties':[],'multiple_scenarios':False},frames,duration,secrets,max_events=120)['events']
     resolutions=_redact_audit(resolutions,secrets)
