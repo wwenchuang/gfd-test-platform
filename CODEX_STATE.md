@@ -1,7 +1,8 @@
 ## 2026-10-23 小白学习登录恢复后真机验证
 
 - 登录恢复，OPPO年级面板七年级被底部确认按钮遮挡；草稿新增面板中部滚动300，实际选择七年级并进入名校试卷通过。刷新等待曾超时，保留日志；后续截图刷新完成。分段续跑资料定位、试卷预览、打印设置检查全部通过，未点击确认打印，不能作为整例通过。当前草稿rev5保留末尾明确检查点。
-- 自动编译的launch计入业务上限，使11次交互+末尾检查误计13；仅可信compiler_roles的launch从businessActionCount扣除，原始动作数与未标记YAML不变。6/10/11红绿验证、14交互及条件动作拒绝继续通过；76专项、后端63、编译/diff通过。待部署。
+- 自动编译的launch计入业务上限，使11次交互+末尾检查误计13；仅可信compiler_roles的launch从businessActionCount扣除，原始动作数与未标记YAML不变。6/10/11红绿验证、14交互及条件动作拒绝继续通过；76专项、后端63、编译/diff通过。2a339d6c已部署，health及草稿rev6线上校验ready=true核对。
+- 重新从启动到打印设置连续执行通过，耗时261.53秒；报告/tmp/xiaobai-print-review/phone-preflight/midscene_run/report/xiaobai-preflight-2026-10-23_15-43-07-b0c2a21c.html，截图phone-settings-passed.png确认HP SmartTank580-590在线及1份/彩色/1至16页/单面/A4/逆序。未提交纸张打印，未验证传输或出纸，未宣称平台整例执行通过。
 
 ## 2026-10-23 下拉刷新原片对照
 
