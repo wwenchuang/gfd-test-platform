@@ -140,3 +140,20 @@ def test_persistent_form_state_is_a_visible_result(observation):
 def test_transient_form_feedback_is_not_a_stable_result(observation):
     from task_server.services.ui_video_analysis import _expected_candidate
     assert not _expected_candidate({'observation':observation,'frame_refs':['f1']},'')['text']
+
+
+@pytest.mark.parametrize('text',[
+    '触发下拉刷新，顶部显示刷新状态提示',
+    '顶部显示刷新完成提示',
+    '页面显示刷新动画',
+    '页面顶部出现释放立即刷新提示',
+])
+def test_refresh_feedback_is_not_a_required_stable_result(text):
+    from task_server.services.ui_video_analysis import _stable_visible_observation
+    assert _stable_visible_observation(text)==''
+
+
+def test_refresh_result_preserves_visible_content_after_feedback():
+    from task_server.services.ui_video_analysis import _stable_visible_observation
+    assert _stable_visible_observation('顶部显示刷新完成提示，试卷列表可见')=='试卷列表可见'
+    assert _stable_visible_observation('刷新后试卷列表可见')=='刷新后试卷列表可见'

@@ -44,6 +44,17 @@ def _log_failure(identifier,stage,error,code):
                for frame,line in traceback.walk_tb(error.__traceback__)]
     detail={'source_id':identifier if re.fullmatch(r'uvs_[0-9a-f]{32}',identifier or '') else 'unassigned',
             'stage':stage,'exception_class':type(error).__name__,'category':category,'traceback':locations[-12:]}
+    # Gateway wrappers preserve __cause__; retain locations and types only.
+    # Never stringify nested provider/schema exceptions (they may contain media).
+    causes=[];seen={id(error)};cause=error.__cause__
+    while cause is not None and id(cause) not in seen and len(causes)<4:
+        seen.add(id(cause))
+        causes.append({'exception_class':type(cause).__name__,
+            'traceback':[{'file':Path(frame.f_code.co_filename).name,
+                          'function':frame.f_code.co_name,'line':line}
+                         for frame,line in traceback.walk_tb(cause.__traceback__)][-8:]})
+        cause=cause.__cause__
+    if causes:detail['causes']=causes
     target=getattr(error,'target_diagnostic',None)
     if code=='video_model_invalid' and type(target) is dict:
         if (type(target.get('frame_id')) is str and re.fullmatch(r'frame-[0-9]{3,6}',target['frame_id']) and

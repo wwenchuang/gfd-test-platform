@@ -105,3 +105,41 @@ def test_worker_target_diagnostic_is_content_free(caplog,frame,binding,logged):
     detail=json.loads(caplog.records[-1].getMessage().split(' ',1)[1])
     assert ('target_diagnostic' in detail)==logged
     assert 'private-data' not in caplog.text
+
+
+def test_worker_records_wrapped_cause_locations_without_error_content(caplog):
+    import json
+    from task_server.workers.ui_video_worker import _log_failure
+    try:
+        try:
+            raise json.JSONDecodeError('private-message', 'private-video-text', 0)
+        except ValueError as cause:
+            raise RuntimeError('private-provider-response') from cause
+    except RuntimeError as error:
+        _log_failure('uvs_'+'a'*32,'analysis',error,'video_analysis_failed')
+    detail=json.loads(caplog.records[-1].getMessage().split(' ',1)[1])
+    assert detail['causes'][0]['exception_class']=='JSONDecodeError'
+    assert detail['causes'][0]['traceback'][-1]['function']== 'test_worker_records_wrapped_cause_locations_without_error_content'
+    assert 'private-' not in caplog.text
+
+
+def test_worker_cause_chain_is_bounded_and_cycle_safe(caplog):
+    import json
+    from task_server.workers.ui_video_worker import _log_failure
+    error=RuntimeError('private-error'); inner=ValueError('private-cause')
+    error.__cause__=inner;inner.__cause__=error
+    _log_failure('uvs_'+'a'*32,'analysis',error,'video_analysis_failed')
+    detail=json.loads(caplog.records[-1].getMessage().split(' ',1)[1])
+    assert len(detail['causes'])==1
+    assert 'private-' not in caplog.text
+
+
+def test_result_prompts_preserve_visible_business_configuration_not_only_navigation():
+    from pathlib import Path
+    root=Path(__file__).resolve().parents[1]/'ai_skills/prompts'
+    for name in ('ui_video_steps.consolidate.md','ui_video_observe.outcome.md'):
+        prompt=(root/name).read_text()
+        assert '业务配置及其当前选中值' in prompt
+        assert '不能只写面板打开或按钮可见' in prompt
+        assert '未发生的修改操作' in prompt
+        assert '任务传输中不等于打印完成' in prompt

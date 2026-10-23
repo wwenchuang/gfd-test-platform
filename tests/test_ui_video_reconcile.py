@@ -598,3 +598,22 @@ def test_two_return_displacement_descriptions_require_pixel_review():
     old=[{**event(1),'target':'左上角返回箭头','frame_refs':['f1','f2','f3'],'end_ms':300,'observation':'触点持续横向位移，返回上一级'},
          {**event(2),'target':'左上角返回箭头','frame_refs':['f2','f3','f4'],'end_ms':400,'observation':'触点及向左位移轨迹，页面退回'}]
     assert vr._overlapping_gesture_refs(old)
+
+
+def test_static_loading_span_does_not_expand_two_local_interaction_repairs(monkeypatch,tmp_path):
+    """A long loading observation may share a frame with a later return tap."""
+    fs=[{'frame_id':f'f{i}','timestamp_ms':i*100} for i in range(1,101)]
+    loading={**event(1,'aiAssert'),'target':'模型加载状态','frame_refs':['f1','f50'],'end_ms':5000}
+    taps=[{**event(i),'target':'左上角返回箭头','frame_refs':[f'f{i}',f'f{i+1}'],'end_ms':(i+1)*100} for i in (50,80)]
+    old=[loading,*taps]
+    checked={'events':copy.deepcopy(old),'uncertainties':[],'multiple_scenarios':False}
+    calls=[]
+    def repair(original,local,window,*args,**kwargs):
+        calls.append([f['frame_id'] for f in window])
+        assert all(e['action']=='aiTap' for e in original)
+        return {**local,'reconciliation_audit':{'coverage_resolutions':[]}}
+    monkeypatch.setattr(vr,'_repair_window',repair)
+    result=vr._repair_coverage(old,checked,fs,11000,tmp_path,lambda:False,[],{'f50','f51','f80','f81'})
+    assert calls==[['f50','f51'],['f80','f81']]
+    assert result['events']==old
+    assert checked['events']==old

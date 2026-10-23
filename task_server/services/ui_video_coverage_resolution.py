@@ -133,7 +133,12 @@ def validate(claims,sources,reviewed,frames):
                 not re.search(r'同一次|单次',ev['interaction']+'。'+ev['why_not_separate_actions']) or '返回手势' not in ev['interaction'] or
                 not re.search(r'(?:未见|未观察到|没有|无)[^。；]{0,30}(?:第二次|二次|再次|重新|新的)[^。；]{0,20}(?:按下|触点|手势|导航)',ev['why_not_separate_actions'])):_fail()
             affirmative=re.sub(r'(?:未见|未观察到|没有|无)[^。；，,但]*', '', ev['interaction']+'。'+ev['why_not_separate_actions'])
-            affirmative=re.sub(r'旧识别将其误判为(?:两次|多次)独立的点击操作', '', affirmative)
+            # Only remove an explicit attribution to a mistaken OLD analysis.
+            # Stop at clause boundaries so a real subsequent action survives.
+            affirmative=re.sub(
+                r'(?:旧识别|旧锚点|首轮识别)[^。；，,但\n]{0,80}?'
+                r'(?:误判为|误识别为|误拆成|拆分为)(?:两次|多次)(?:独立的?|单独的?)?'
+                r'(?:点击|返回|操作|手势|导航)(?:操作)?', '', affirmative)
             if re.search(r'再次|重新|第二次|两次|多次',affirmative):_fail()
         low=min(e['start_ms'] for e in anchors);high=max(e['end_ms'] for e in anchors)
         for source_name,source in sources.items():

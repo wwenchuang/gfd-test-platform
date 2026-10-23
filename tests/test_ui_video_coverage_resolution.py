@@ -306,3 +306,26 @@ def test_negated_gesture_description_cannot_authorize_exception(note):
     frames,old,new,claim=return_gesture_fixture()
     for event in old:event['observation']=note
     with pytest.raises(ValueError):cr.validate([claim],{'first_pass':old},new,frames)
+
+
+@pytest.mark.parametrize('explanation', [
+    '旧锚点将此单次手势的不同阶段（起始与转场）误识别为两次独立点击。',
+    '首轮识别把同一手势误拆成两次返回操作。',
+    '旧识别将其拆分为多次点击或重复记录。实际仅发生一次导航交互。',
+    '旧识别将其误判为点击或拆分为多次操作。实际为同一次导航手势。',
+    '旧识别将其误判为两次独立的点击操作。',
+])
+def test_return_misclassification_explanation_does_not_claim_new_action(explanation):
+    frames,old,new,claim=return_gesture_fixture()
+    claim['evidence']['interaction']='同一次返回手势。'+explanation
+    assert cr.validate([claim],{'first_pass':old},new,frames)
+
+
+@pytest.mark.parametrize('tail', [
+    '但随后再次按下返回。', '，实际又进行了第二次返回。',
+    '；之后重新点击返回。', '，随后再次导航。',
+])
+def test_old_misclassification_cannot_hide_new_return(tail):
+    frames,old,new,claim=return_gesture_fixture()
+    claim['evidence']['interaction']='同一次返回手势。旧锚点将起始与转场误识别为两次独立点击'+tail
+    with pytest.raises(ValueError):cr.validate([claim],{'first_pass':old},new,frames)

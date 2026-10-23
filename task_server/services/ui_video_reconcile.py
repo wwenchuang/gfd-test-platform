@@ -152,7 +152,11 @@ def _repair_coverage(original,checked,frames,duration,root,cancelled,secrets,mis
     """Keep distant conflicts separate, with a fixed four-call total ceiling."""
     import copy
     from .ui_video_analysis import validate_analysis
-    affected=[e for e in original+checked['events'] if set(e['frame_refs'])&missing_refs]
+    # A loading observation can span many seconds and share its final frame
+    # with a tap. Preserve that observation outside the replacement instead
+    # of pulling its entire static interval into the interaction repair.
+    affected=[e for e in original+checked['events']
+              if e['action'] in {'aiTap','aiInput','aiScroll'} and set(e['frame_refs'])&missing_refs]
     positions={f['frame_id']:i for i,f in enumerate(frames)}
     selected={positions[r] for r in missing_refs}
     for event in affected:
