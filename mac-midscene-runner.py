@@ -67,7 +67,7 @@ ANDROID_UI_ACTIONS = ["launch", "terminate", "sleep", "runAdbShell", "ai", "aiAc
                       "aiWaitFor", "aiQuery", "aiAsk", "aiBoolean", "aiNumber", "aiString",
                       "recordToReport"]
 RUNNER_CAPABILITIES.update(ui_execution_contract="ui-v1", ui_platforms=[RUNNER_PLATFORM],
-                           ui_actions=["launch", "aiTap", "aiWaitFor", "aiAssert", "aiScroll", "aiQuery"] if RUNNER_PLATFORM == "ios" else ANDROID_UI_ACTIONS,
+                           ui_actions=["launch", "aiTap", "aiWaitFor", "aiAssert", "aiScroll", "aiQuery", "aiInput"] if RUNNER_PLATFORM == "ios" else ANDROID_UI_ACTIONS,
                            android_baseline=RUNNER_PLATFORM == "android", ui_dynamic_object_v1=True, ui_print_recovery_v1=True)
 
 
@@ -121,7 +121,7 @@ def portable_scroll_valid(step):
 def prepare_ios_yaml(text, *, source_app, bundle_id, wda_port):
     """Compile an execution copy; never rewrite the shared source asset.
 
-    This first compatibility gate supports semantic navigation only. Anything
+    This compatibility gate supports semantic navigation and text input. Anything
     outside the verified subset requires an explicit platform adaptation.
     """
     import yaml
@@ -147,13 +147,19 @@ def prepare_ios_yaml(text, *, source_app, bundle_id, wda_port):
         for index, step in enumerate(task["flow"], 1):
             if not isinstance(step, dict):
                 raise ValueError(f"第 {index} 步结构无效")
-            actions = set(step) & {"launch", "aiTap", "aiWaitFor", "aiAssert", "aiScroll", "aiQuery"}
+            actions = set(step) & {"launch", "aiTap", "aiWaitFor", "aiAssert", "aiScroll", "aiQuery", "aiInput"}
             if len(actions) != 1:
                 raise ValueError(f"第 {index} 步不是已验证的跨端导航动作")
             action = next(iter(actions))
             if action == 'aiQuery':
                 if set(step) != {'aiQuery'} or not isinstance(step[action], str) or not step[action].startswith(('平台运行时对象选择v1：','平台打印取消恢复v1：')):
                     raise ValueError('iOS 仅支持受控的本次测试对象选取')
+                continue
+            if action == 'aiInput':
+                if (set(step) != {'aiInput', 'value'} or
+                    not isinstance(step[action], str) or not step[action].strip() or
+                    not isinstance(step.get('value'), str) or not step['value']):
+                    raise ValueError(f'第 {index} 步输入需语义目标和非空文字')
                 continue
             if action == 'aiScroll':
                 if not portable_scroll_valid(step):
@@ -241,7 +247,7 @@ def ensure_android_sdk_env(env):
 
 def infer_midscene_model_family(model_name, configured_family=""):
     name = str(model_name or "").strip().lower()
-    if "qwen3.7" in name:
+    if "qwen3.7" in name or "qwen3.8" in name:
         return "qwen3"
     if "qwen3.6" in name:
         return "qwen3.6"

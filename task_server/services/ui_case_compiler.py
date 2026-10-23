@@ -150,6 +150,10 @@ def compile_ui_case(case_version, target_resolution):
                 valid = set(step) == {"aiQuery"} and isinstance(step[action], str) and step[action].startswith((PREFIX,print_recovery.PREFIX))
             if action == "aiScroll":
                 valid = _portable_scroll_valid(step)
+            if action == "aiInput":
+                valid = (set(step) == {"aiInput", "value"} and
+                         isinstance(step[action], str) and bool(step[action].strip()) and
+                         isinstance(step.get("value"), str) and bool(step["value"]))
             if action == "launch" and step.get(action) != source_package:
                 valid = False
             if not valid or action not in (capabilities.get("ui_actions") or []):

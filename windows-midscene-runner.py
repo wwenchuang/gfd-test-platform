@@ -242,7 +242,7 @@ def ensure_android_sdk_env(env):
 
 def infer_midscene_model_family(model_name, configured_family=""):
     name = str(model_name or "").strip().lower()
-    if "qwen3.7" in name:
+    if "qwen3.7" in name or "qwen3.8" in name:
         return "qwen3"
     if "qwen3.6" in name:
         return "qwen3.6"

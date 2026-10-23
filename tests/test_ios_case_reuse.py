@@ -248,4 +248,30 @@ def test_ios_runner_advertises_scroll_only_in_verified_subset(monkeypatch):
     monkeypatch.setenv('MIDSCENE_RUNNER_PLATFORM','ios')
     spec=importlib.util.spec_from_file_location('ios_scroll_runner',Path(__file__).resolve().parents[1]/'mac-midscene-runner.py')
     loaded=importlib.util.module_from_spec(spec);spec.loader.exec_module(loaded)
-    assert set(loaded.RUNNER_CAPABILITIES['ui_actions'])=={'launch','aiTap','aiWaitFor','aiAssert','aiScroll','aiQuery'}
+    assert set(loaded.RUNNER_CAPABILITIES['ui_actions'])=={'launch','aiTap','aiWaitFor','aiAssert','aiScroll','aiQuery','aiInput'}
+
+@pytest.mark.parametrize('step,valid',[
+    ({'aiInput':'姓名牌文字输入框','value':'自动测试'},True),
+    ({'aiInput':'姓名牌文字输入框','value':'123'},True),
+    ({'aiInput':'姓名牌文字输入框'},False),
+    ({'aiInput':'姓名牌文字输入框','value':123},False),
+    ({'aiInput':'姓名牌文字输入框','value':''},False),
+    ({'aiInput':{'x':1,'y':2},'value':'测试'},False),
+    ({'aiInput':'','value':'测试'},False),
+    ({'aiInput':'姓名牌文字输入框','value':'测试','mode':'append'},False),
+])
+def test_portable_input_compiler_and_runner_agree(step,valid):
+    from task_server.services.ui_case_compiler import compile_ui_case
+    source=yaml.safe_load(SOURCE);source['tasks'][0]['flow'].append(step)
+    text=yaml.safe_dump(source,allow_unicode=True)
+    target={'ok':True,'platform':'ios','app_id':'com.kfb.model','target_package':'com.kfb.3d',
+            'platform_mappings':{'android':'com.kfb.model','ios':'com.kfb.3d'},
+            'capabilities':{'ui_actions':['launch','aiTap','aiWaitFor','aiAssert','aiInput']}}
+    compiled=compile_ui_case({'yaml_content':text},target)
+    assert compiled['ok'] is valid
+    if valid:
+        assert yaml.safe_load(convert(text))['tasks']==yaml.safe_load(compiled['yaml_content'])['tasks']
+        target['capabilities']['ui_actions'].remove('aiInput')
+        assert not compile_ui_case({'yaml_content':text},target)['ok']
+    else:
+        with pytest.raises(ValueError):convert(text)

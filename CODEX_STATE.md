@@ -1,3 +1,10 @@
+## 2026-10-23 千问3.8执行适配与iOS文字输入
+
+- 真机启动复现MIDSCENE_MODEL_FAMILY缺失；服务端及Mac/Windows Runner为Qwen3.8选择qwen3适配器，不切换模型。iPhone 13在本机修复后launch及首页等待通过。
+- iOS编译与Runner支持严格aiInput语义目标+非空字符串value，仍要求执行器能力声明；拒绝坐标、缺值和未支持输入选项。iPhone 13实际搜索框输入“姓名牌”并断言通过，截图及Midscene报告保存在/tmp/nameplate-review/ios-input-acceptance。此为动作验证，不是姓名牌打印整例验收。
+- iOS/编译/生命周期118项、Qwen映射6项、后端63项及编译/diff通过；独立审查无阻断。部署脚本更新服务端；本机双Runner空闲时备份替换mac-midscene-runner.py并重启原启动脚本。Windows脚本尚未远程更新。
+- 0d63ea1f部署已完成，原片触点v9在099目标冲突失败；相同已完成前窗输入的独立复测识别正确，尚需正常生成稳定验收。姓名牌v32进入reviewing，未下发打印。
+
 ## 2026-10-23 局部识别输出截断
 
 - e48f9e99已部署并核对健康版本；触点v7目标冲突、姓名牌v30首窗模型服务失败，均未完成验收。
