@@ -64,3 +64,15 @@ def test_empty_control_label_is_not_normalized_to_other_empty_label():
     frames=[{'frame_id':'f1','timestamp_ms':100}]
     assert targets.conflict([{'action':'aiTap','target':'按钮','frame_refs':['f1']}],
                             [{'frame_id':'f1','target':'入口'}],frames)
+
+
+def test_probe_allows_structured_response_beyond_old_truncation_limit(monkeypatch):
+    frames=[{'frame_id':'f1','timestamp_ms':100},{'frame_id':'f2','timestamp_ms':200}]
+    detail={'frame_id':'f1-detail','source_frame_id':'f1','timestamp_ms':100}
+    assets=[{'name':f['frame_id']} for f in frames+[detail]]
+    def call(*args,**kw):
+        if kw['max_tokens']<4000:raise RuntimeError('Structured output truncated: finish_reason=length')
+        assert kw['retry_count']==0 and kw['max_tokens']<=5000
+        return {'events':[],'uncertainties':['没有可靠点击证据'],'multiple_scenarios':False}
+    monkeypatch.setattr(targets.ai,'run_ai_skill',call)
+    assert targets.probe(frames,[detail],assets,1000,lambda:False)==[]

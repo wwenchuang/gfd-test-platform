@@ -22,7 +22,7 @@ def probe(frames, details, assets, duration, cancelled):
                    'detail_frames':[detail], 'duration_ms':duration}
         result = ai.run_ai_skill('ui_video_observe', payload, version='touch-target',
             image_assets=[by_name[f['frame_id']] for f in selected]+[by_name[detail['frame_id']]],
-            timeout=120, retry_count=0, max_tokens=2500, repair_invalid_json=False)
+            timeout=120, retry_count=0, max_tokens=5000, repair_invalid_json=False)
         if cancelled():
             raise ValueError('video_cancelled')
         checked = validate_analysis(_bind_whole_evidence(result, selected), selected, duration)
