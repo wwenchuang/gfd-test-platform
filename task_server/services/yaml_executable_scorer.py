@@ -809,7 +809,9 @@ def score_midscene_yaml_executable(yaml_text: str, *, generated: bool = True, co
             score -= min(70, 55 * heavy_adb_cleanup)
         if nested_action_prefixes:
             warnings.append(f"{nested_action_prefixes} 个步骤内容嵌套了动作名前缀，需要先规范化再执行")
-        if len(flow) > 36:
+        business_flow_count = len(flow) - compiler_guards - compiler_asserts
+        business_wait_count = wait_count - compiler_guards
+        if business_flow_count > 36:
             warnings.append("单条用例步骤过长，建议拆分后执行")
             score -= 15
         business_action_count = action_count - compiler_guards - compiler_asserts
@@ -824,13 +826,13 @@ def score_midscene_yaml_executable(yaml_text: str, *, generated: bool = True, co
                 else:
                     warnings.append(f"生成用例动作 {action_count} 个偏长，但主要为等待/启动保护；建议后续拆短")
                     score -= min(8, business_action_count - 12)
-            if wait_count >= 7 and assert_count <= 1:
+            if business_wait_count >= 7 and assert_count <= 1:
                 replan_risk = "high"
                 warnings.append(
                     f"等待链路 {wait_count} 个但终态断言不足，容易长时间识别/等待后失败，建议只保留当前检查点"
                 )
                 score -= 10
-            if transition_count >= 3 and wait_count >= 7:
+            if transition_count >= 3 and business_wait_count >= 7:
                 replan_risk = "high"
                 warnings.append("交互和等待组合偏长，首批冒烟应只验证稳定入口/核心一步，不应串联外部授权或文件选择")
                 score -= 5

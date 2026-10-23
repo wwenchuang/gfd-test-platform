@@ -108,3 +108,16 @@ def test_video_cancel_step_never_uses_pending_confirmation_as_success():
     assert '本次打印任务已结束' in result[1]['expected']
     assert '等待提示' not in result[1]['expected']
     assert steps[2]['expected']=='触发取消流程，显示等待提示'
+
+
+def test_generated_cancel_expectation_distinguishes_recent_history_in_compiled_case():
+    from task_server.services.ui_video_print_recovery import apply_group
+    steps=[{'action':'aiTap','target':t,'value':'','expected':'','review_state':'confirmed'}
+           for t in ['检查无误，确认打印','取消打印','确认']]
+    steps=apply_group(steps,{'submit':0,'cancel':1,'confirm':2})
+    normalized=normalize_steps({'title':'取消后保留历史记录','steps':steps},'com.test.app')
+    flow=yaml.safe_load(build_draft_yaml(normalized,'com.test.app')['yaml_content'])['tasks'][0]['flow']
+    expected=next(s['aiAssert'] for s in flow if 'aiAssert' in s and '本次打印任务已结束' in s['aiAssert'])
+    assert '最近打印' in expected
+    assert '历史记录' in expected
+    assert '进度' in expected and '取消按钮' in expected

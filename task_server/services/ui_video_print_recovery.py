@@ -78,6 +78,6 @@ def apply_group(steps,group):
     submit,cancel,confirm=[group[k] for k in ('submit','cancel','confirm')]
     if not 0<=submit<cancel<confirm<len(result) or any(result[i]['action']!='aiTap' for i in (submit,cancel,confirm)):raise ValueError('video_retry_invalid')
     result[submit].update(action='submitPrint',value=dict(DEFAULTS),expected=SUBMIT_EXPECTED)
-    result[cancel].update(action='cancelPrint',target='取消本次打印并等待结束',value=dict(DEFAULTS),expected='本次打印任务已结束，显示取消原因页或本次活动任务卡片已消失')
+    result[cancel].update(action='cancelPrint',target='取消本次打印并等待结束',value=dict(DEFAULTS),expected='本次打印任务已结束：显示取消原因页，或设备已空闲且活动任务区域内本次任务的进度、暂停及取消按钮均已消失；最近打印中的历史记录允许保留，不属于活动任务')
     result.pop(confirm)
     return result
