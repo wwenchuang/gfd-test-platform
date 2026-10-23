@@ -147,6 +147,8 @@ def test_transient_form_feedback_is_not_a_stable_result(observation):
     '顶部显示刷新完成提示',
     '页面显示刷新动画',
     '页面顶部出现释放立即刷新提示',
+    '页面顶部显示“释放立即刷新”提示',
+    '页面显示正在刷新',
 ])
 def test_refresh_feedback_is_not_a_required_stable_result(text):
     from task_server.services.ui_video_analysis import _stable_visible_observation

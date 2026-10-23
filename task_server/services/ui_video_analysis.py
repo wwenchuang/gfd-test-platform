@@ -277,6 +277,33 @@ def _bind_candidate_evidence(result, candidates, required_indices=()):
     return bound
 
 
+def _validate_consolidated_analysis(bound,frames,duration,secrets):
+    """Route invalid optional result references to bounded visual repair only."""
+    try:
+        return validate_analysis(bound,frames,duration,secrets)
+    except ValueError as error:
+        if str(error)!='video_reference_invalid':raise
+        action_only=copy.deepcopy(bound)
+        for event in action_only.get('events',[]):event.pop('outcome',None)
+        # Invalid action evidence must still fail before any result repair.
+        checked=validate_analysis(action_only,frames,duration,secrets)
+        invalid=[]
+        for index,event in enumerate(bound['events']):
+            if 'outcome' not in event:continue
+            try:
+                one=validate_analysis({'events':[event],'uncertainties':[],
+                    'multiple_scenarios':False},frames,duration,secrets)
+            except ValueError as outcome_error:
+                if str(outcome_error)!='video_reference_invalid':raise
+                invalid.append(index)
+            else:
+                checked['events'][index]=one['events'][0]
+        if not invalid:raise
+        error.outcome_event_indexes=invalid
+        error.validated_actions=checked
+        raise
+
+
 def _validate_consolidated_evidence(checked,raw_events,candidates,frames,image_frames,duration,required_indices,omitted_indices=()):
     all_refs={ref for raw in raw_events for ref in raw['frame_refs']}
     all_refs.update(frame['frame_id'] for frame in image_frames)
@@ -405,7 +432,7 @@ def analyze_whole_frames(document, root, cancelled, progress=None):
             if recovery and any('取消打印' in candidates[item['candidate_index']]['target'] for item in recovery) and not print_group:
                 raise ValueError('video_retry_invalid')
             bound=_bind_candidate_evidence(plan,candidates,effective_required)
-            checked=validate_analysis(bound,frames,duration,known_secrets)
+            checked=_validate_consolidated_analysis(bound,frames,duration,known_secrets)
             _validate_consolidated_evidence(checked,candidates,candidates,frames,image_frames,duration,effective_required,{item['candidate_index'] for item in recovery})
             proposal,snapshot=draft_proposal({**document,**checked,'print_recovery':print_group,'source_id':document.get('source_id','uvs_'+'0'*32),
                                       'analysis_version':document.get('analysis_version',1)})
@@ -426,6 +453,13 @@ def analyze_whole_frames(document, root, cancelled, progress=None):
             missing_indexes=getattr(error,'result_check_candidate_indexes',[])
             invalid_outcomes=getattr(error,'outcome_event_indexes',[])
             if invalid_outcomes:
+                if hasattr(error,'validated_actions'):
+                    checked=error.validated_actions
+                    try:
+                        _validate_consolidated_evidence(checked,candidates,candidates,frames,image_frames,duration,effective_required,{item['candidate_index'] for item in recovery})
+                    except ValueError as boundary_error:
+                        if not getattr(boundary_error,'outcome_event_indexes',[]):raise
+                        invalid_outcomes=sorted(set(invalid_outcomes+boundary_error.outcome_event_indexes))
                 # Re-read only ordinary result frames. Cancellation and dynamic
                 # object outcomes retain their dedicated ownership/terminal gates.
                 indexes=[plan['events'][i].get('candidate_index') for i in invalid_outcomes]
@@ -595,7 +629,7 @@ def _visible_state(text):
 def _stable_visible_observation(observation):
     """Project only literal stable clauses; preserve the complete source audit."""
     if _visible_form_state(observation) and re.search(r'短暂|瞬间|瞬时|暂时|仅(?:持续)?[一1]帧|[一1]帧后',observation):return ''
-    feedback=r'(?<!选中)高亮|按下态|点击态|(?i:toast)|提示浮层|短暂提示|短暂(?:显示|出现|弹出)[^，,。；;]{0,80}提示|正在加载|加载(?:中|状态|动画)|刷新(?:完成|状态|中)?(?:提示|动画)'
+    feedback=r'(?<!选中)高亮|按下态|点击态|(?i:toast)|提示浮层|短暂提示|短暂(?:显示|出现|弹出)[^，,。；;]{0,80}提示|正在刷新|正在加载|加载(?:中|状态|动画)|刷新(?:完成|状态|中)?[”」"]?(?:提示|动画)'
     if not re.search(feedback,observation):return observation
     # Removing a conditional/contrast clause may reverse its meaning. Leave the
     # expected unresolved instead of extracting an apparently positive outcome.

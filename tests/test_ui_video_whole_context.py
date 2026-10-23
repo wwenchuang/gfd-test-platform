@@ -444,10 +444,12 @@ def test_same_start_scroll_direction_conflict_is_not_two_operations(monkeypatch,
         assert result['events'][0]['uncertainties']
 
 
-@pytest.mark.parametrize('missing_second',[False,True])
-def test_future_outcome_repairs_only_result_without_replanning_actions(monkeypatch,tmp_path,missing_second):
+@pytest.mark.parametrize('missing_second',[False,True,'system_boundary'])
+@pytest.mark.parametrize('invalid_ref',['frame-006','frame-001','frame-999'])
+def test_future_outcome_repairs_only_result_without_replanning_actions(monkeypatch,tmp_path,missing_second,invalid_ref):
     from task_server.services import ui_video_analysis as va,ai_skill_service as ai
-    fs=frames();(tmp_path/'frames').mkdir()
+    fs=frames();fs[-1]['timestamp_ms']=900
+    (tmp_path/'frames').mkdir()
     for f in fs:(tmp_path/'frames'/(f['frame_id']+'.jpg')).write_bytes(b'image')
     calls=[]
     def model(skill,payload,**kw):
@@ -457,10 +459,15 @@ def test_future_outcome_repairs_only_result_without_replanning_actions(monkeypat
             assert 'frame-006' not in payload['checks'][0]['outcome_frame_ids']
             return {'events':[{'action':'aiAssert','target':'candidate:0','value':'','frame_refs':['frame-003'],'observation':'列表页面显示返回按钮','uncertainties':[]}]+([{'action':'aiAssert','target':'candidate:1','value':'','frame_refs':['frame-007'],'observation':'首页显示列表入口','uncertainties':[]}] if missing_second else []),'uncertainties':[],'multiple_scenarios':False}
         if skill=='ui_video_observe':
-            return {'events':[{'action':'aiTap','target':t,'value':'','frame_refs':r,'observation':'页面发生跳转','uncertainties':[]} for t,r in [('列表入口',['frame-001','frame-002']),('返回',['frame-005','frame-006'])]],'uncertainties':[],'multiple_scenarios':False}
+            events=[{'action':'aiTap','target':t,'value':'','frame_refs':r,'observation':'页面发生跳转','uncertainties':[]} for t,r in [('列表入口',['frame-001','frame-002']),('返回',['frame-005','frame-006'])]]
+            if missing_second=='system_boundary':
+                events.append({'action':'aiAssert','target':'系统桌面','value':'','frame_refs':['frame-end'],'observation':'系统桌面可见','uncertainties':[]})
+            return {'events':events,'uncertainties':[],'multiple_scenarios':False}
         assert calls.count(('ui_video_steps','consolidate'))==1
-        result={'title':'查看列表后返回首页','events':[{'candidate_index':i,'action':'aiTap','target':t,'value':'','observation':'页面发生跳转','uncertainties':[], 'outcome':{'observation':o,'frame_refs':[r]},'reusable_expected':o} for i,t,o,r in [(0,'列表入口','列表页面显示返回按钮','frame-006'),(1,'返回','首页显示列表入口','frame-007')]],'uncertainties':[],'multiple_scenarios':False}
-        if missing_second:
+        result={'title':'查看列表后返回首页','events':[{'candidate_index':i,'action':'aiTap','target':t,'value':'','observation':'页面发生跳转','uncertainties':[], 'outcome':{'observation':o,'frame_refs':[r]},'reusable_expected':o} for i,t,o,r in [(0,'列表入口','列表页面显示返回按钮',invalid_ref),(1,'返回','首页显示列表入口','frame-007')]],'uncertainties':[],'multiple_scenarios':False}
+        if missing_second=='system_boundary':
+            result['events'][1]['outcome']['frame_refs']=['frame-end']
+        elif missing_second:
             result['events'][1].pop('outcome');result['events'][1].pop('reusable_expected');result['events'][1]['observation']='加载中'
         return result
     monkeypatch.setattr(ai,'run_ai_skill',model)

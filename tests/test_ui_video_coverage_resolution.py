@@ -166,13 +166,13 @@ def test_disjoint_repair_translates_ids_and_is_atomic(monkeypatch,tmp_path,secon
     assert len(calls)==2 and checked==saved
 
 
-def test_three_disjoint_windows_fail_before_any_model_call(monkeypatch,tmp_path):
+def test_five_disjoint_windows_fail_before_any_model_call(monkeypatch,tmp_path):
     from task_server.services import ui_video_reconcile as vr,ai_skill_service as ai
     frames=[{'frame_id':f'f{i}','timestamp_ms':i*100} for i in range(60)]
-    original=[{'action':'aiTap','target':'入口','value':'','frame_refs':[f'f{i}'],'start_ms':i*100,'end_ms':i*100,'observation':'点击入口','uncertainties':[]} for i in (5,25,45)]
+    original=[{'action':'aiTap','target':'入口','value':'','frame_refs':[f'f{i}'],'start_ms':i*100,'end_ms':i*100,'observation':'点击入口','uncertainties':[]} for i in (5,15,25,35,45)]
     monkeypatch.setattr(ai,'run_ai_skill',lambda *a,**kw:pytest.fail('over budget model call'))
     with pytest.raises(ValueError,match='video_required_action_missing'):
-        vr._repair_coverage(original,{'events':[],'uncertainties':[],'multiple_scenarios':False},frames,6000,tmp_path,lambda:False,[],{'f5','f25','f45'})
+        vr._repair_coverage(original,{'events':[],'uncertainties':[],'multiple_scenarios':False},frames,6000,tmp_path,lambda:False,[],{'f5','f15','f25','f35','f45'})
 
 
 def test_production_skill_schema_accepts_only_structured_resolution():

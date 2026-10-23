@@ -183,21 +183,26 @@ def _repair_coverage(original,checked,frames,duration,root,cancelled,secrets,mis
     for frame in window:
         if not groups or positions[frame['frame_id']]!=positions[groups[-1][-1]['frame_id']]+1:groups.append([])
         groups[-1].append(frame)
-    if len(groups)>2:raise ValueError('video_required_action_missing')
+    if len(groups)>4:raise ValueError('video_required_action_missing')
     result=copy.deepcopy(checked);resolutions=[];replacements=[]
     all_ids={f['frame_id'] for f in window}
     replaced={i for i,e in enumerate(checked['events']) if set(e['frame_refs'])<=all_ids}
     preserved=[e for i,e in enumerate(checked['events']) if i not in replaced]
     boundary={r for e in preserved if e['action'] in {'aiTap','aiInput','aiScroll'} for r in e['frame_refs']}
     all_ids={f['frame_id'] for f in window}
-    for group in groups:
+    calls_remaining=4
+    for group_index,group in enumerate(groups):
         if cancelled():raise ValueError('video_cancelled')
         ids={f['frame_id'] for f in group}
         indexes={name:[i for i,e in enumerate(source) if set(e['frame_refs'])<=ids]
                  for name,source in [('first_pass',original),('independent_review',checked['events'])]}
         local_original=[original[i] for i in indexes['first_pass']]
         local_checked={**checked,'events':[checked['events'][i] for i in indexes['independent_review']]}
-        repaired=_repair_window(local_original,local_checked,group,duration,root,cancelled,secrets,ids,boundary&ids,context_frames=frames)
+        # Reserve one call for each later gap; extra attempts share the same
+        # four-call ceiling instead of imposing a two-gap ceiling.
+        attempt_limit=min(2,calls_remaining-(len(groups)-group_index-1))
+        repaired=_repair_window(local_original,local_checked,group,duration,root,cancelled,secrets,ids,boundary&ids,context_frames=frames,attempt_limit=attempt_limit)
+        calls_remaining-=repaired['reconciliation_audit'].get('model_attempts',attempt_limit)
         from .ui_video_coverage_resolution import boundary_safe
         if any(not boundary_safe(e,boundary,repaired['reconciliation_audit']['coverage_resolutions'],frames) for e in repaired['events']):
             raise ValueError('video_required_action_missing')
@@ -223,7 +228,7 @@ def _repair_coverage(original,checked,frames,duration,root,cancelled,secrets,mis
     return result
 
 
-def _repair_window(original,checked,frames,duration,root,cancelled,secrets,missing_refs,boundary=(),context_frames=None):
+def _repair_window(original,checked,frames,duration,root,cancelled,secrets,missing_refs,boundary=(),context_frames=None,attempt_limit=2):
     """Revisit one bounded gap without accepting omission or copying old semantics."""
     import copy
     from . import ai_skill_service as ai
@@ -276,7 +281,7 @@ def _repair_window(original,checked,frames,duration,root,cancelled,secrets,missi
         payload['validation_feedback']='旧锚点不是真值。真实点击、滚动和输入须保留；旧点击若只是前序动作后的自动转场，引用旧锚点全部帧并明确未见新点击以及实际自动变化。不得用自动状态代替真实导航。连续输入分段观察，保留各段证据，不提交输入合并声明。旧滚动若为自动加载或静止事实，完整引用旧帧并明确未见滚动的依据。'
     before=copy.deepcopy(checked['events'])
     resolutions=[]
-    for attempt in range(2):
+    for attempt in range(attempt_limit):
         if cancelled():raise ValueError('video_cancelled')
         raw=ai.run_ai_skill('ui_video_observe',payload,version=repair_version,image_assets=load_assets(images,root,cancelled),
             timeout=120,retry_count=0,max_tokens=5000,repair_invalid_json=False)
@@ -289,7 +294,7 @@ def _repair_window(original,checked,frames,duration,root,cancelled,secrets,missi
         try:
             repaired=validate_analysis(_bind_whole_evidence(observation,window),window,duration,secrets)
         except ValueError as error:
-            if attempt or str(error) not in {'video_action_invalid','video_model_invalid','video_reference_invalid'}:raise
+            if attempt+1>=attempt_limit or str(error) not in {'video_action_invalid','video_model_invalid','video_reference_invalid'}:raise
             payload['validation_feedback']+=' 上次结构校验未通过。events每项只含规定字段，frame_refs须1至8个本次原帧且按时间排列；滚动只用direction=up/down/left/right及scrollType=singleAction；不输出时间字段或未提供帧。'
             continue
         try:
@@ -298,7 +303,7 @@ def _repair_window(original,checked,frames,duration,root,cancelled,secrets,missi
             if any(not boundary_safe(e,boundary,resolutions,window) for e in repaired['events']):
                 raise ValueError('video_reference_invalid')
         except ValueError:
-            if attempt:raise
+            if attempt+1>=attempt_limit:raise
             # If the observed events already cover both sources one-to-one,
             # a merge declaration is unnecessary. Ask for a fresh observation
             # response; never accept or silently strip an invalid declaration.
@@ -338,7 +343,7 @@ def _repair_window(original,checked,frames,duration,root,cancelled,secrets,missi
             break
         except ValueError as error:
             missing=getattr(error,'missing_frame_refs',None)
-            if attempt or not missing or not missing<=window_ids:raise
+            if attempt+1>=attempt_limit or not missing or not missing<=window_ids:raise
             payload['unresolved_hypotheses']=[{'action':e['action'],'target':e['target'],'observation':e['observation'],'frame_refs':e['frame_refs']} for e in original+before if set(e['frame_refs'])<=missing]
             if repair_version=='coverage-observe':
                 payload['validation_feedback']+=' 上次仍未解释这些原帧：'+','.join(sorted(missing))+'。coverage_resolutions必须为空；根据原画面保留真实操作，若旧点击实际为自动转场则完整引用旧帧并说明未见新点击，不复制旧假设凑步骤。'
@@ -346,7 +351,7 @@ def _repair_window(original,checked,frames,duration,root,cancelled,secrets,missi
             payload['validation_feedback']+=' 上次仍未完整解释这些原帧：'+','.join(sorted(missing))+ '。unresolved_hypotheses是待证伪的旧识别，绝非正确答案。请逐帧核对旧识别是否误判；纠正旧点击/滚动时，完整引用其帧并明确说明实际动作或无新交互的自动状态。若多条旧识别实际为同一次操作，保留一次真实交互，并在coverage_resolutions中完整列入对应锚点，不额外造aiAssert代替重复锚点。仅独立的自动加载阶段可用aiAssert。不要复制旧动作凑数量。'
     before=validate_analysis({'events':before,'uncertainties':[],'multiple_scenarios':False},frames,duration,secrets,max_events=120)['events']
     resolutions=_redact_audit(resolutions,secrets)
-    result['reconciliation_audit']=_redact_audit({'frame_refs':[f['frame_id'] for f in window],'before_events':before,'coverage_resolutions':resolutions},secrets)
+    result['reconciliation_audit']=_redact_audit({'frame_refs':[f['frame_id'] for f in window],'before_events':before,'coverage_resolutions':resolutions,'model_attempts':attempt+1},secrets)
     return result
 
 

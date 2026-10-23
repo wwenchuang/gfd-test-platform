@@ -617,3 +617,39 @@ def test_static_loading_span_does_not_expand_two_local_interaction_repairs(monke
     assert calls==[['f50','f51'],['f80','f81']]
     assert result['events']==old
     assert checked['events']==old
+
+
+@pytest.mark.parametrize('count,retry_first,expected_calls',[(3,False,3),(3,1,4),(3,2,4),(3,3,4),(4,False,4)])
+def test_disjoint_repairs_share_four_call_budget(monkeypatch,tmp_path,count,retry_first,expected_calls):
+    from task_server.services import ai_skill_service as ai
+    fs=[{'frame_id':f'f{i}','timestamp_ms':i*100} for i in range(1,26)]
+    old=[event(i) for i in (2,7,12,17)[:count]]
+    checked={'events':copy.deepcopy(old),'uncertainties':[],'multiple_scenarios':False}
+    (tmp_path/'frames').mkdir()
+    for f in fs:(tmp_path/'frames'/(f['frame_id']+'.jpg')).write_bytes(b'image')
+    calls=[]
+    def model(skill,payload,**kw):
+        calls.append(payload['frames'][0]['frame_id'])
+        if retry_first and len(set(calls))==retry_first and calls.count(calls[-1])==1:return {'events':[], 'uncertainties':[], 'multiple_scenarios':False}
+        e=next(e for e in old if e['frame_refs']==[payload['frames'][0]['frame_id']])
+        return {'events':[{k:e[k] for k in ('action','target','value','frame_refs','observation')}],
+                'coverage_resolutions':[],'uncertainties':[],'multiple_scenarios':False}
+    monkeypatch.setattr(ai,'run_ai_skill',model)
+    out=vr._repair_coverage(old,checked,fs,3000,tmp_path,lambda:False,[],{e['frame_refs'][0] for e in old})
+    assert len(calls)==expected_calls
+    assert len(out['events'])==count
+
+
+def test_four_gaps_do_not_spend_reserved_calls_on_first_gap_retry(monkeypatch,tmp_path):
+    from task_server.services import ai_skill_service as ai
+    fs=[{'frame_id':f'f{i}','timestamp_ms':i*100} for i in range(1,26)]
+    old=[event(i) for i in (2,7,12,17)]
+    (tmp_path/'frames').mkdir()
+    for f in fs:(tmp_path/'frames'/(f['frame_id']+'.jpg')).write_bytes(b'image')
+    calls=[]
+    def model(*args,**kw):
+        calls.append(1);return {'events':[], 'uncertainties':[], 'multiple_scenarios':False}
+    monkeypatch.setattr(ai,'run_ai_skill',model)
+    with pytest.raises(ValueError):
+        vr._repair_coverage(old,{'events':old,'uncertainties':[],'multiple_scenarios':False},fs,3000,tmp_path,lambda:False,[],{e['frame_refs'][0] for e in old})
+    assert len(calls)==1
