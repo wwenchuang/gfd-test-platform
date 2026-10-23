@@ -11,7 +11,7 @@ from task_server.services.ui_case_draft_contract import normalize_steps, build_d
 APP = 'com.kfb.model'
 
 
-@pytest.mark.parametrize('count',[6,10])
+@pytest.mark.parametrize('count',[6,10,11])
 def test_compiler_checks_do_not_double_penalize_business_complexity(count):
     from task_server.services.yaml_executable_scorer import score_midscene_yaml_executable
     draft={'title':'记录管理验证','steps':[
@@ -23,7 +23,7 @@ def test_compiler_checks_do_not_double_penalize_business_complexity(count):
     scored=score_midscene_yaml_executable(built['yaml_content'],generated=True,compiler_roles=built['compiler_roles'])
     assert scored['ok']
     assert scored['taskScores'][0]['actionCount']==plain['taskScores'][0]['actionCount']
-    assert scored['taskScores'][0]['businessActionCount']==count+2
+    assert scored['taskScores'][0]['businessActionCount']==count+1
 
 
 @pytest.mark.parametrize('count,target',[ (14,'页面入口'), (6,'如果出现就点击入口') ])

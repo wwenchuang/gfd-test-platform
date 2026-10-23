@@ -659,6 +659,7 @@ def score_midscene_yaml_executable(yaml_text: str, *, generated: bool = True, co
             for role,step in zip(roles,flow))
         compiler_guards = roles.count('guard') if valid_roles else 0
         compiler_asserts = roles.count('expected') if valid_roles else 0
+        compiler_launches = roles.count('launch') if valid_roles else 0
         task_name_lower = task_name_text.lower()
         manual_hint = _manual_hint(task) if isinstance(task, dict) else False
         if generated and any(word in task_name_lower for word in FIGMA_INTERNAL_WORDS):
@@ -814,7 +815,7 @@ def score_midscene_yaml_executable(yaml_text: str, *, generated: bool = True, co
         if business_flow_count > 36:
             warnings.append("单条用例步骤过长，建议拆分后执行")
             score -= 15
-        business_action_count = action_count - compiler_guards - compiler_asserts
+        business_action_count = action_count - compiler_guards - compiler_asserts - compiler_launches
         if generated and not baseline_evidence:
             if business_action_count > 12:
                 if transition_count > 3:
