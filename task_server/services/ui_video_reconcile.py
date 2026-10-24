@@ -70,6 +70,8 @@ def check_coverage(original,reviewed,duration=None,resolutions=None,source=None)
                     and re.search(r'(?:未观察到|未见|未发生|没有观察到|没有发生|没有|并非|而非|不是|(?<=[，。；])非)(?:任何|实际的|实际|用户|手指|触点|页面|内容|新的|独立的|独立|发起的|发起了|本次|进行|发生){0,4}(?:滚动|滑动|拖动)',new['observation'])
                     and re.search(r'自动|加载|布局|轮播' if new['action']=='aiAssert' else r'实际点击|触点.*按钮',new['observation'])):continue
             if old['action']=='aiTap' and new['action']!='aiTap':
+                from .ui_video_delayed_response import has_positive_tap
+                if new['action']=='aiAssert' and has_positive_tap(new['observation']):continue
                 # A return/navigation is still an interaction even if the
                 # physical gesture is not directly executable as a tap.
                 if not (new['action']=='aiAssert' and set(old['frame_refs'])<=set(new['frame_refs']) and
@@ -117,6 +119,8 @@ def reconcile(events,frames,duration,root,cancelled,secrets,progress=None):
     secrets.extend(new_secrets)
     from .ui_video_automatic_motion import review_refs
     repair_refs=review_refs(events) | review_refs(checked['events']) | _overlapping_gesture_refs(checked['events'])
+    from .ui_video_delayed_response import review_refs as delayed_refs
+    repair_refs.update(delayed_refs(events,checked['events']))
     try:
         check_coverage(events,checked['events'],duration)
     except ValueError as error:
@@ -257,7 +261,9 @@ def _repair_window(original,checked,frames,duration,root,cancelled,secrets,missi
     refs=[context_frames[i]['frame_id'] for i in sorted(neighbors) if context_frames[i]['frame_id'] not in window_ids][:16]
     from .ui_video_automatic_motion import review_refs,REVIEW_QUESTION
     motion_review=bool((review_refs(original) | review_refs(checked['events'])) & missing_refs)
-    if motion_review:
+    from .ui_video_delayed_response import review_refs as delayed_refs,REVIEW_QUESTION as DELAYED_QUESTION
+    delayed_review=bool(delayed_refs(original,checked['events']) & missing_refs)
+    if motion_review or delayed_review:
         from .ui_video_windows import temporal_context_frames
         temporal=temporal_context_frames(window,context_frames)
         refs=list(dict.fromkeys([f['frame_id'] for f in temporal]+refs))[:16]
@@ -307,6 +313,11 @@ def _repair_window(original,checked,frames,duration,root,cancelled,secrets,missi
         payload['gesture_hypotheses']=[]
         payload['validation_feedback']=REVIEW_QUESTION+' 不使用旧动作名称作为答案；先根据头部高度的变化与列表相对位置，区分布局收起和独立用户拖动。不能仅以内容上移符合滑动特征来推断用户操作。'
 
+    if delayed_review:
+        payload['delayed_response_question']=DELAYED_QUESTION
+        payload['coverage_checks']={name:[{'anchor_id':a['anchor_id'],'frame_refs':a['frame_refs']} for a in anchors] for name,anchors in payload['coverage_checks'].items()}
+        payload['gesture_hypotheses']=[]
+        payload['validation_feedback']=(REVIEW_QUESTION if motion_review else '')+DELAYED_QUESTION
     before=copy.deepcopy(checked['events'])
     resolutions=[]
     for attempt in range(attempt_limit):
