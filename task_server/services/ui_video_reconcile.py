@@ -173,7 +173,16 @@ def _repair_coverage(original,checked,frames,duration,root,cancelled,secrets,mis
                         and set(other['frame_refs'])&set(event['frame_refs'])
                         and all(positions[r] in selected for r in other['frame_refs'])
                         for other in original+checked['events'])
-            if event['action'] in {'aiTap','aiInput','aiScroll'} and selected.intersection(indexes) and related:
+            # A second pass can name the same scroll region differently and
+            # shift its sampled endpoints. Review both complete spans; this
+            # only expands evidence, never merges actions or accepts direction.
+            counterpart=checked['events'] if any(event is e for e in original) else original
+            scroll_overlap=event['action']=='aiScroll' and any(
+                other['action']=='aiScroll' and other['value']==event['value'] and
+                max(other['start_ms'],event['start_ms'])<min(other['end_ms'],event['end_ms']) and
+                all(positions[r] in selected for r in other['frame_refs'])
+                for other in counterpart)
+            if event['action'] in {'aiTap','aiInput','aiScroll'} and selected.intersection(indexes) and (related or scroll_overlap):
                 expanded.update(range(min(indexes),max(indexes)+1))
         if len(expanded)>40:raise ValueError('video_required_action_missing')
         if expanded==selected:break

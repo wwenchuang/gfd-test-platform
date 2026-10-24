@@ -79,6 +79,9 @@ def test_probe_allows_structured_response_beyond_old_truncation_limit(monkeypatc
 
 @pytest.mark.parametrize('left,right,matched', [
     ('我的作品区域右侧的查看生成记录文字链接','查看生成记录',True),
+    ('我的作品区域上方的查看生成记录入口','查看生成记录',True),
+    ('我的作品区域上方的查看生成记录文字链接','查看生成记录',True),
+    ('我的作品区域上方的查看生成记录入口','我的作品区域下方的查看生成记录入口',False),
     ('查看生成记录','我的作品区域右侧的查看生成记录文字链接',True),
     ('我的作品区域右侧的查看生成记录文字链接','查看打印记录',False),
     ('我的作品区域右侧的查看生成记录文字链接','收藏区域右侧的查看生成记录文字链接',False),

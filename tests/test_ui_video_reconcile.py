@@ -667,3 +667,36 @@ def test_return_overlap_with_motion_and_return_in_separate_clauses_requires_revi
 def test_motion_without_affirmative_return_does_not_authorize_return_mapping(note):
     from task_server.services.ui_video_coverage_resolution import has_return_gesture_evidence
     assert not has_return_gesture_evidence(note)
+
+
+def test_scroll_repair_includes_cross_pass_shifted_evidence_despite_target_wording(monkeypatch,tmp_path):
+    fs=[{'frame_id':f'f{i}','timestamp_ms':i*100} for i in range(1,7)]
+    first={**event(1,'aiScroll'),'target':'页面内容区域','value':{'direction':'down','scrollType':'singleAction'},'frame_refs':['f1','f3'],'end_ms':300}
+    reviewed={**first,'target':'页面列表','start_ms':200,'end_ms':400,'frame_refs':['f2','f4']}
+    class Captured(Exception):pass
+    def repair(original,local,window,*args,**kwargs):
+        assert [f['frame_id'] for f in window]==['f1','f2','f3','f4']
+        assert local['events']==[reviewed]
+        assert args[5]==set()
+        raise Captured()
+    monkeypatch.setattr(vr,'_repair_window',repair)
+    with pytest.raises(Captured):
+        vr._repair_coverage([first],{'events':[reviewed]},fs,1000,tmp_path,lambda:False,[],{'f1','f3'})
+
+
+@pytest.mark.parametrize('change',['direction','parameters','touching_time'])
+def test_scroll_cross_pass_expansion_rejects_nonmatching_spans(monkeypatch,tmp_path,change):
+    fs=[{'frame_id':f'f{i}','timestamp_ms':i*100} for i in range(1,7)]
+    first={**event(1,'aiScroll'),'target':'内容区域','value':{'direction':'down','scrollType':'singleAction'},'frame_refs':['f1','f3'],'end_ms':300}
+    reviewed={**first,'target':'列表','start_ms':200,'end_ms':400,'frame_refs':['f2','f4']}
+    if change=='direction':reviewed['value']={'direction':'up','scrollType':'singleAction'}
+    if change=='parameters':reviewed['value']={**reviewed['value'],'distance':200}
+    if change=='touching_time':reviewed.update(start_ms=300,frame_refs=['f3','f4'])
+    class Captured(Exception):pass
+    def repair(original,local,window,*args,**kwargs):
+        assert [f['frame_id'] for f in window]==['f1','f2','f3']
+        assert local['events']==[]
+        raise Captured()
+    monkeypatch.setattr(vr,'_repair_window',repair)
+    with pytest.raises(Captured):
+        vr._repair_coverage([first],{'events':[reviewed]},fs,1000,tmp_path,lambda:False,[],{'f1'})

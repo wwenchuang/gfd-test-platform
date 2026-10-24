@@ -50,7 +50,7 @@ def _label(value):
 def _qualified_label(value):
     # Only an explicit region+side prefix is decoration. Never use substring
     # matching, remove arbitrary context, or equate two conflicting locations.
-    match=re.fullmatch(r'([\w\u4e00-\u9fff]{1,20}区域(?:左侧|右侧|左上角|右上角))的(.{2,60})', value.strip())
+    match=re.fullmatch(r'([\w\u4e00-\u9fff]{1,20}区域(?:左侧|右侧|上方|下方|左上角|右上角))的(.{2,60})', value.strip())
     if not match:
         return None
     label=match[2]
