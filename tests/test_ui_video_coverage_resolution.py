@@ -314,6 +314,7 @@ def test_negated_gesture_description_cannot_authorize_exception(note):
     '旧识别将其拆分为多次点击或重复记录。实际仅发生一次导航交互。',
     '旧识别将其误判为点击或拆分为多次操作。实际为同一次导航手势。',
     '旧识别将其误判为两次独立的点击操作。',
+    '旧锚点将此手势分别识别为两次点击或重复操作，实际为同一次连续返回手势。',
 ])
 def test_return_misclassification_explanation_does_not_claim_new_action(explanation):
     frames,old,new,claim=return_gesture_fixture()
@@ -328,4 +329,43 @@ def test_return_misclassification_explanation_does_not_claim_new_action(explanat
 def test_old_misclassification_cannot_hide_new_return(tail):
     frames,old,new,claim=return_gesture_fixture()
     claim['evidence']['interaction']='同一次返回手势。旧锚点将起始与转场误识别为两次独立点击'+tail
+    with pytest.raises(ValueError):cr.validate([claim],{'first_pass':old},new,frames)
+
+@pytest.mark.parametrize('note', [
+    '旧锚点将此手势分别识别为两次点击或重复操作，实际又进行了第二次返回。',
+    '实际分别识别为两次点击，之后同一次返回手势结束。',
+])
+def test_historical_wording_does_not_hide_observed_repeated_action(note):
+    frames,old,new,claim=return_gesture_fixture()
+    claim['evidence']['interaction']='同一次返回手势。'+note
+    with pytest.raises(ValueError):cr.validate([claim],{'first_pass':old},new,frames)
+
+@pytest.mark.parametrize('state', ['模型详情页，左上角有返回箭头', '模型详情页显示返回按钮'])
+def test_return_control_visibility_accepts_explicit_presence(state):
+    frames,old,new,claim=return_gesture_fixture()
+    claim['evidence']['before_state']=state
+    assert cr.validate([claim],{'first_pass':old},new,frames)
+
+@pytest.mark.parametrize('state', ['左上角没有返回箭头', '未显示返回按钮', '返回箭头不可见', '返回按钮没有显示'])
+def test_return_control_negation_is_not_visibility_evidence(state):
+    frames,old,new,claim=return_gesture_fixture()
+    claim['evidence']['before_state']=state
+    with pytest.raises(ValueError):cr.validate([claim],{'first_pass':old},new,frames)
+
+
+def test_rejected_return_mapping_reports_time_mismatch_without_approving_claim():
+    frames,old,new,claim=return_gesture_fixture()
+    old[1]['start_ms']=250
+    old[1]['frame_refs']=['f3','f4']
+    feedback=cr.diagnose([claim],{'first_pass':old},new,frames)
+    anchor=next(x for x in feedback['anchors_to_recheck'] if x['anchor_id']=='first_pass:1')
+    assert anchor['interaction_frame_within_anchor_time'] is False
+    assert anchor['anchor_start_ms']==250
+    assert anchor['anchor_end_ms']==old[1]['end_ms']
+    with pytest.raises(ValueError):cr.validate([claim],{'first_pass':old},new,frames)
+
+@pytest.mark.parametrize('state', ['界面只有返回箭头的说明文字', '左上角有返回箭头，但返回箭头不可见', '左上角有返回按钮，但实际控件隐藏'])
+def test_description_or_contradiction_cannot_prove_visible_return(state):
+    frames,old,new,claim=return_gesture_fixture()
+    claim['evidence']['before_state']=state
     with pytest.raises(ValueError):cr.validate([claim],{'first_pass':old},new,frames)

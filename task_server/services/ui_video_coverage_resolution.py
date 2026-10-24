@@ -17,6 +17,19 @@ def has_return_gesture_evidence(note):
     return False
 
 
+def has_visible_return_control(note):
+    if re.search(r'(?:返回箭头|返回按钮|实际控件)[^。；，,]{0,20}(?:不可见|未显示|没有显示|隐藏)|(?:没有|未显示|不可见)[^。；，,]{0,20}返回(?:箭头|按钮)', note):
+        return False
+    for clause in re.split(r'[。；，,;\n]|但是|但', note):
+        if re.search(r'未|没|无|不|并非', clause):
+            continue
+        if re.search(r'说明|文字|文案', clause):
+            continue
+        if re.search(r'返回(?:箭头|按钮).*(?:可见|显示)|(?:可见|显示|有).*返回(?:箭头|按钮)', clause):
+            return True
+    return False
+
+
 def _signature(event):
     return (event['action'],event['target'],tuple(event['frame_refs']))
 
@@ -38,6 +51,7 @@ def diagnose(claims,sources,reviewed,frames):
     """Read-only retry context. Structural candidates never authorize a merge."""
     groups=eligible_groups(sources,{f['frame_id'] for f in frames})
     rejected=[];anchors=[]
+    times={f['frame_id']:f['timestamp_ms'] for f in frames}
     for index,claim in enumerate(claims if isinstance(claims,list) else []):
         try:
             validate([claim],sources,reviewed,frames)
@@ -57,8 +71,11 @@ def diagnose(claims,sources,reviewed,frames):
             pos=int(parts[1])
             if pos>=len(sources[parts[0]]):continue
             old=sources[parts[0]][pos]
+            touch_time=times.get(evidence.get('interaction_frame')) if isinstance(evidence,dict) and isinstance(evidence.get('interaction_frame'),str) else None
             anchors.append({
                 'anchor_id':aid,'action':old['action'],'frame_refs':list(old['frame_refs']),
+                'anchor_start_ms':old.get('start_ms'),'anchor_end_ms':old.get('end_ms'),
+                'interaction_frame_within_anchor_time':touch_time is not None and old.get('start_ms',float('inf'))<=touch_time<=old.get('end_ms',float('-inf')),
                 'missing_declared_frame_refs':[r for r in old['frame_refs'] if r not in refs],
                 'interaction_frame_belongs_to_anchor':isinstance(evidence,dict) and evidence.get('interaction_frame') in old['frame_refs'],
                 'undeclared_state_frames':[evidence.get(k) for k in ('before_frame','interaction_frame','after_frame') if isinstance(evidence,dict) and (not isinstance(evidence.get(k),str) or evidence.get(k) not in refs)],
@@ -129,7 +146,7 @@ def validate(claims,sources,reviewed,frames):
             if (new['target'] not in {'左上角返回箭头','左上角返回按钮','返回箭头','返回按钮'} or
                 not set.intersection(*(set(a['frame_refs']) for a in anchors)) or
                 not any(touch in a['frame_refs'] for a in anchors) or
-                not re.search(r'返回(?:箭头|按钮).*可见|可见.*返回(?:箭头|按钮)',ev['before_state']) or
+                not has_visible_return_control(ev['before_state']) or
                 not re.search(r'同一次|单次',ev['interaction']+'。'+ev['why_not_separate_actions']) or '返回手势' not in ev['interaction'] or
                 not re.search(r'(?:未见|未观察到|没有|无)[^。；]{0,30}(?:第二次|二次|再次|重新|新的)[^。；]{0,20}(?:按下|触点|手势|导航)',ev['why_not_separate_actions'])):_fail()
             affirmative=re.sub(r'(?:未见|未观察到|没有|无)[^。；，,但]*', '', ev['interaction']+'。'+ev['why_not_separate_actions'])
@@ -139,6 +156,13 @@ def validate(claims,sources,reviewed,frames):
                 r'(?:旧识别|旧锚点|首轮识别)[^。；，,但\n]{0,80}?'
                 r'(?:误判为|误识别为|误拆成|拆分为)(?:两次|多次)(?:独立的?|单独的?)?'
                 r'(?:点击|返回|操作|手势|导航)(?:操作)?', '', affirmative)
+            # A historical attribution may use neutral wording rather than
+            # 'misidentified'; require an immediate explicit single-gesture
+            # correction and retain that correction and all following clauses.
+            affirmative=re.sub(
+                r'(?:旧识别|旧锚点|首轮识别)[^。；，,但\n]{0,80}?'
+                r'分别识别为(?:两次|多次)(?:独立的?|单独的?)?点击(?:或重复操作)?'
+                r'(?=[，,]实际为同一次(?:连续)?返回手势)', '', affirmative)
             if re.search(r'再次|重新|第二次|两次|多次',affirmative):_fail()
         low=min(e['start_ms'] for e in anchors);high=max(e['end_ms'] for e in anchors)
         for source_name,source in sources.items():

@@ -149,6 +149,10 @@ def test_transient_form_feedback_is_not_a_stable_result(observation):
     '页面顶部出现释放立即刷新提示',
     '页面顶部显示“释放立即刷新”提示',
     '页面显示正在刷新',
+    "页面顶部出现'释放立即刷新'提示及向下箭头",
+    '页面触发刷新，顶部显示刷新状态或加载提示。',
+    '顶部显示刷新完成',
+    '顶部显示刷新完成状态',
 ])
 def test_refresh_feedback_is_not_a_required_stable_result(text):
     from task_server.services.ui_video_analysis import _stable_visible_observation
@@ -159,3 +163,8 @@ def test_refresh_result_preserves_visible_content_after_feedback():
     from task_server.services.ui_video_analysis import _stable_visible_observation
     assert _stable_visible_observation('顶部显示刷新完成提示，试卷列表可见')=='试卷列表可见'
     assert _stable_visible_observation('刷新后试卷列表可见')=='刷新后试卷列表可见'
+
+@pytest.mark.parametrize('text',['刷新完成后试卷列表可见','刷新完成，试卷列表可见'])
+def test_refresh_completion_keeps_stable_list_result(text):
+    from task_server.services.ui_video_analysis import _stable_visible_observation
+    assert _stable_visible_observation(text)=='试卷列表可见'

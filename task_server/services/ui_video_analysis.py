@@ -629,7 +629,7 @@ def _visible_state(text):
 def _stable_visible_observation(observation):
     """Project only literal stable clauses; preserve the complete source audit."""
     if _visible_form_state(observation) and re.search(r'短暂|瞬间|瞬时|暂时|仅(?:持续)?[一1]帧|[一1]帧后',observation):return ''
-    feedback=r'(?<!选中)高亮|按下态|点击态|(?i:toast)|提示浮层|短暂提示|短暂(?:显示|出现|弹出)[^，,。；;]{0,80}提示|正在刷新|正在加载|加载(?:中|状态|动画)|刷新(?:完成|状态|中)?[”」"]?(?:提示|动画)'
+    feedback=r'(?<!选中)高亮|按下态|点击态|(?i:toast)|提示浮层|短暂提示|短暂(?:显示|出现|弹出)[^，,。；;]{0,80}提示|正在刷新|释放(?:立即)?刷新|正在加载|加载(?:中|状态|动画|提示)|刷新(?:完成|状态|中|提示|动画)'
     if not re.search(feedback,observation):return observation
     # Removing a conditional/contrast clause may reverse its meaning. Leave the
     # expected unresolved instead of extracting an apparently positive outcome.
@@ -637,6 +637,7 @@ def _stable_visible_observation(observation):
     stable=[]
     for clause in re.split(r'[，,。；;]|并且|且|同时',observation):
         clause=clause.strip()
+        clause=re.sub(r'^刷新完成后', '', clause).strip()
         if (clause and not re.search(feedback,clause) and
             _visible_state(clause)):
             stable.append(clause)
