@@ -426,3 +426,35 @@ def test_return_equivalent_wording_still_requires_motion_and_navigation(interact
     frames,old,new,claim=return_gesture_fixture()
     claim['evidence']['interaction']=interaction
     with pytest.raises(ValueError):cr.validate([claim],{'first_pass':old},new,frames)
+
+
+def test_return_started_before_overlapping_suffix_keeps_original_touch():
+    frames,old,new,claim=return_gesture_fixture()
+    old[0].update(frame_refs=['f1','f2','f3'],start_ms=100,end_ms=300)
+    old[1].update(frame_refs=['f3','f4'],start_ms=300,end_ms=400)
+    new[0]['frame_refs']=['f1','f2','f3','f4']
+    before=copy.deepcopy((old,new,claim))
+    result=cr.validate([claim],{'first_pass':old},new,frames)
+    assert result[0]['evidence']['interaction_frame']=='f2'
+    assert (old,new,claim)==before
+
+
+@pytest.mark.parametrize('mutation',['bad_time','no_bridge','bridge_is_after','touch_before_all','late_touch','second_press','intervening'])
+def test_return_suffix_exception_needs_continuous_shared_evidence(mutation):
+    frames,old,new,claim=return_gesture_fixture()
+    old[0].update(frame_refs=['f1','f2','f3'],start_ms=100,end_ms=300)
+    old[1].update(frame_refs=['f3','f4'],start_ms=300,end_ms=400)
+    new[0]['frame_refs']=['f1','f2','f3','f4']
+    if mutation=='bad_time':old[1]['start_ms']=250
+    if mutation=='no_bridge':new[0]['frame_refs'].remove('f3')
+    if mutation=='bridge_is_after':claim['evidence']['after_frame']='f3'
+    if mutation=='touch_before_all':
+        frames.insert(0,{'frame_id':'f0','timestamp_ms':0})
+        claim['evidence'].update(before_frame='f0',interaction_frame='f0')
+        claim['evidence']['examined_frame_refs'].insert(0,'f0')
+        new[0]['frame_refs'].insert(0,'f0')
+    if mutation=='late_touch':
+        claim['evidence']['interaction_frame']='f4'
+    if mutation=='second_press':old[1]['observation']='再次点击返回，完成第二次导航'
+    if mutation=='intervening':old.append({'action':'aiInput','target':'搜索','start_ms':250,'end_ms':260,'frame_refs':['f3']})
+    with pytest.raises(ValueError):cr.validate([claim],{'first_pass':old},new,frames)

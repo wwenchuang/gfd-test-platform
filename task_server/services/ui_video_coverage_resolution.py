@@ -46,6 +46,25 @@ def has_visible_return_control(note):
     return False
 
 
+def _validate_return_touch_span(anchors,new,evidence,times):
+    """A later overlapping observation may contain only a gesture's suffix.
+
+    Keep the original touch instead of asking the model to label a later
+    animation as a new touch. The suffix must have exact source bounds and
+    share a retained intermediate frame with every anchor. The caller still
+    requires a single return gesture, no second press and no intervening action.
+    """
+    touch=times[evidence['interaction_frame']]
+    if all(a['start_ms']<=touch<=a['end_ms'] for a in anchors):return
+    if not min(a['start_ms'] for a in anchors)<=touch<=min(a['end_ms'] for a in anchors):_fail()
+    for anchor in anchors:
+        refs=anchor['frame_refs']
+        if (anchor['start_ms']!=min(times[r] for r in refs) or
+            anchor['end_ms']!=max(times[r] for r in refs)):_fail()
+    bridge=set(new['frame_refs']).intersection(*(set(a['frame_refs']) for a in anchors))
+    if not any(touch<times[r]<times[evidence['after_frame']] for r in bridge):_fail()
+
+
 def _signature(event):
     return (event['action'],event['target'],tuple(event['frame_refs']))
 
@@ -141,7 +160,7 @@ def validate(claims,sources,reviewed,frames):
             if gesture:
                 if (old['action']!='aiTap' or new['action']!='aiTap' or old['target']!=new['target'] or
                     old.get('value','')!='' or new.get('value','')!='' or
-                    not old['start_ms']<=times[touch]<=old['end_ms']):_fail()
+                    times[touch]>old['end_ms']):_fail()
             elif touch not in old['frame_refs']:_fail()
             if old['action']!=new['action']:
                 if (old['action']!='aiScroll' or new['action']!='aiTap' or
@@ -156,6 +175,7 @@ def validate(claims,sources,reviewed,frames):
                     re.search(r'再次|重新|反向|两次|多次|先.*随后',affirmative)):_fail()
             anchors.append(old)
         if gesture:
+            _validate_return_touch_span(anchors,new,ev,times)
             old_notes='。'.join(a.get('observation','') for a in anchors)
             old_affirmative=re.sub(r'(?:未见|未观察到|没有|无)[^。；，,但]*', '', old_notes)
             if (not has_return_gesture_evidence(old_notes) or re.search(r'(?:再次|第二次|两次|多次)[^。；，,]{0,30}(?:点击|返回|导航|按下)',old_affirmative)):_fail()
