@@ -1,4 +1,5 @@
 """Read pointer targets in a small context before observing the full window."""
+import re
 from . import ai_skill_service as ai
 
 
@@ -46,6 +47,27 @@ def _label(value):
     return text
 
 
+def _qualified_label(value):
+    # Only an explicit region+side prefix is decoration. Never use substring
+    # matching, remove arbitrary context, or equate two conflicting locations.
+    match=re.fullmatch(r'([\w\u4e00-\u9fff]{1,20}区域(?:左侧|右侧|左上角|右上角))的(.{2,60})', value.strip())
+    if not match:
+        return None
+    label=match[2]
+    for suffix in ('文字链接','文字按钮','文字入口'):
+        if label.endswith(suffix):
+            label=label[:-len(suffix)]
+            break
+    return _label(label)
+
+
+def _same_explicit_label(left,right):
+    a,b=_qualified_label(left),_qualified_label(right)
+    if (a is None)==(b is None):
+        return False
+    return bool(a and a==_label(right) or b and b==_label(left))
+
+
 def conflict(events, hints, frames, diagnostic=None):
     times = {f['frame_id']:f['timestamp_ms'] for f in frames}
     for hint in hints:
@@ -55,6 +77,8 @@ def conflict(events, hints, frames, diagnostic=None):
         if len(nearby)==1:
             left,right=nearby[0]['target'].strip(),hint['target'].strip()
             comparison='exact_match' if left==right else 'normalized_match' if _label(left) and _label(left)==_label(right) else 'mismatch'
+            if comparison=='mismatch' and explicit and _same_explicit_label(left,right):
+                comparison='normalized_match'
             if diagnostic is not None:
                 diagnostic.update(frame_id=hint['frame_id'],binding='explicit' if explicit else 'nearby',comparison=comparison)
             if comparison=='mismatch':

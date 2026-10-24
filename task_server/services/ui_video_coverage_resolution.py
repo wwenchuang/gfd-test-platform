@@ -9,12 +9,15 @@ def _fail():
 
 def has_return_gesture_evidence(note):
     """Require affirmative motion evidence; a negated observation is not proof."""
+    affirmative=[]
     for clause in re.split(r'[。；，,;\n]|但是|但', note):
         if re.search(r'未|没|无|不|并非', clause):
             continue
+        affirmative.append(clause)
         if re.search(r'返回手势|侧滑|手势.*返回|触点.{0,80}(?:位移|轨迹)', clause):
             return True
-    return False
+    return (any(re.search(r'横向位移手势', clause) for clause in affirmative) and
+            any(re.search(r'返回操作|返回导航|退回上一级', clause) for clause in affirmative))
 
 
 def has_visible_return_control(note):

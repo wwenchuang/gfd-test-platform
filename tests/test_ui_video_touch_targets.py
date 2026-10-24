@@ -76,3 +76,41 @@ def test_probe_allows_structured_response_beyond_old_truncation_limit(monkeypatc
         return {'events':[],'uncertainties':['没有可靠点击证据'],'multiple_scenarios':False}
     monkeypatch.setattr(targets.ai,'run_ai_skill',call)
     assert targets.probe(frames,[detail],assets,1000,lambda:False)==[]
+
+@pytest.mark.parametrize('left,right,matched', [
+    ('我的作品区域右侧的查看生成记录文字链接','查看生成记录',True),
+    ('查看生成记录','我的作品区域右侧的查看生成记录文字链接',True),
+    ('我的作品区域右侧的查看生成记录文字链接','查看打印记录',False),
+    ('我的作品区域右侧的查看生成记录文字链接','收藏区域右侧的查看生成记录文字链接',False),
+    ('我的作品区域左侧的查看生成记录文字链接','我的作品区域右侧的查看生成记录文字链接',False),
+    ('查看生成记录中的删除按钮','查看生成记录',False),
+])
+def test_same_explicit_touch_accepts_one_qualified_exact_control_label(left,right,matched):
+    frames=[{'frame_id':'f1','timestamp_ms':100}]
+    events=[{'action':'aiTap','target':left,'frame_refs':['f1']}]
+    assert (not targets.conflict(events,[{'frame_id':'f1','target':right}],frames))==matched
+
+
+def test_nearby_frame_does_not_waive_qualified_target_difference():
+    frames=[{'frame_id':'f1','timestamp_ms':100},{'frame_id':'f2','timestamp_ms':200}]
+    events=[{'action':'aiTap','target':'我的作品区域右侧的查看生成记录文字链接','frame_refs':['f2']}]
+    assert targets.conflict(events,[{'frame_id':'f1','target':'查看生成记录'}],frames)
+
+
+def test_observe_window_keeps_qualified_target_without_spurious_retry(monkeypatch,tmp_path):
+    from task_server.services import ui_video_windows as windows,ui_video_touch_detail as detail
+    frames=[{'frame_id':'frame-001','timestamp_ms':100},{'frame_id':'frame-002','timestamp_ms':200}]
+    qualified='我的作品区域右侧的查看生成记录文字链接'
+    monkeypatch.setattr(windows,'load_assets',lambda *a:[])
+    monkeypatch.setattr(detail,'append_details',lambda *a:[])
+    monkeypatch.setattr(targets,'probe',lambda *a:[{'frame_id':'frame-001','target':'查看生成记录'}])
+    calls=[]
+    def model(*args,**kwargs):
+        calls.append(1)
+        return {'events':[{'action':'aiTap','target':qualified,'value':'','frame_refs':['frame-001','frame-002'],
+                           'observation':'记录列表可见','uncertainties':[]}], 'uncertainties':[],'multiple_scenarios':False}
+    monkeypatch.setattr(targets.ai,'run_ai_skill',model)
+    result,_=windows.observe_windows(frames,1000,tmp_path,lambda:False)
+    assert len(calls)==1
+    assert result['events'][0]['target']==qualified
+    assert result['events'][0]['frame_refs']==['frame-001','frame-002']

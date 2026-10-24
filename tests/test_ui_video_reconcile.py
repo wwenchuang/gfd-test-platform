@@ -653,3 +653,17 @@ def test_four_gaps_do_not_spend_reserved_calls_on_first_gap_retry(monkeypatch,tm
     with pytest.raises(ValueError):
         vr._repair_coverage(old,{'events':old,'uncertainties':[],'multiple_scenarios':False},fs,3000,tmp_path,lambda:False,[],{e['frame_refs'][0] for e in old})
     assert len(calls)==1
+
+
+def test_return_overlap_with_motion_and_return_in_separate_clauses_requires_review():
+    first={**event(1),'target':'左上角返回箭头','frame_refs':['f1','f2','f3'],'end_ms':300,
+           'observation':'顶部数据显示dX:-246.0，表明发生从右向左的大幅度横向位移手势。页面向右移出，确认执行了返回操作。'}
+    second={**event(2),'target':'左上角返回箭头','frame_refs':['f2','f3','f4'],'end_ms':400,
+            'observation':'同一次返回手势，页面退回上一级'}
+    assert vr._overlapping_gesture_refs([first,second])=={'f1','f2','f3','f4'}
+
+
+@pytest.mark.parametrize('note', ['未见横向位移手势。确认执行返回操作。', '横向位移手势。没有执行返回操作。', '横向位移手势。页面内容左右滚动。'])
+def test_motion_without_affirmative_return_does_not_authorize_return_mapping(note):
+    from task_server.services.ui_video_coverage_resolution import has_return_gesture_evidence
+    assert not has_return_gesture_evidence(note)
