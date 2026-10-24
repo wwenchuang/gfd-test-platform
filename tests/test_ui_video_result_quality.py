@@ -57,3 +57,30 @@ def test_repair_cannot_drop_transmission_and_keep_only_completion():
 ])
 def test_category_without_observed_value_is_not_sufficient(observed,expected):
     assert needs_result_review(event('打印设置面板显示'+observed),'打印设置面板显示'+expected)
+
+
+@pytest.mark.parametrize('text',[
+    '筛选面板展开，地区选中上海，排序为最新',
+    '导出配置页面显示格式PDF，质量高清',
+    '预约表单可见，服务类型选择到店',
+    '通知设置面板显示提醒方式为邮件',
+    '打印设置面板显示A4、单面',
+])
+def test_generic_configuration_review_does_not_depend_on_app_or_values(text):
+    from task_server.services.ui_video_result_quality import needs_configuration_review
+    assert needs_configuration_review(event(text))
+
+
+@pytest.mark.parametrize('text',[
+    '首页可见设置入口', '记录详情展示历史打印参数',
+    '模型详情页显示去打印按钮', '点击设置按钮后首页仍可见',
+])
+def test_navigation_or_history_does_not_force_configuration_review(text):
+    from task_server.services.ui_video_result_quality import needs_configuration_review
+    assert not needs_configuration_review(event(text))
+
+
+def test_dynamic_object_keeps_dedicated_result_path():
+    from task_server.services.ui_video_result_quality import needs_configuration_review
+    e=event('筛选面板可见');e['target']='{{本次对象}}'
+    assert not needs_configuration_review(e)

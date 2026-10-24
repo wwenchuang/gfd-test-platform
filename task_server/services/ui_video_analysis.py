@@ -415,7 +415,10 @@ def analyze_whole_frames(document, root, cancelled, progress=None):
         system_start=min((e['start_ms'] for e in candidates[index+1:] if _system_boundary(e,duration)),default=duration+1)
         event['ordinary_outcome_frame_ids']=[f['frame_id'] for f in image_frames if event['end_ms']<=f['timestamp_ms']<=boundary and f['timestamp_ms']<system_start]
     pending_plan=None
-    for attempt in range(2):
+    reviewed_configuration_indexes=set()
+    outcome_review_used=False
+    # At most two planning calls plus one independent result review.
+    for attempt in range(3):
         if cancelled():raise ValueError('video_cancelled')
         if pending_plan is not None:
             planned=pending_plan;pending_plan=None
@@ -436,11 +439,14 @@ def analyze_whole_frames(document, root, cancelled, progress=None):
             _validate_consolidated_evidence(checked,candidates,candidates,frames,image_frames,duration,effective_required,{item['candidate_index'] for item in recovery})
             proposal,snapshot=draft_proposal({**document,**checked,'print_recovery':print_group,'source_id':document.get('source_id','uvs_'+'0'*32),
                                       'analysis_version':document.get('analysis_version',1)})
-            from .ui_video_result_quality import needs_result_review
+            from .ui_video_result_quality import needs_result_review,configuration_review_indexes
             expected_by_step={step['step_id']:step.get('expected','') for step in proposal['steps']}
             missing={step['step_id'] for step in proposal['steps'] if step['action'] in {'aiTap','aiScroll'} and not step['expected']}
             missing.update(event['draft_step_id'] for event in snapshot['events']
                            if not print_group and needs_result_review(event,expected_by_step.get(event['draft_step_id'],'')))
+            configuration_indexes=configuration_review_indexes(plan,candidates,reviewed_configuration_indexes,bool(print_group))
+            missing.update(event['draft_step_id'] for i,event in enumerate(snapshot['events'])
+                           if plan['events'][i].get('candidate_index') in configuration_indexes)
             if missing:
                 error=ValueError('video_expected_missing')
                 error.result_check_candidate_indexes=[plan['events'][i]['candidate_index'] for i,event in enumerate(snapshot['events']) if event['draft_step_id'] in missing and 'candidate_index' in plan['events'][i]]
@@ -449,7 +455,7 @@ def analyze_whole_frames(document, root, cancelled, progress=None):
             first_pass=validate_analysis({'events':first_pass,'uncertainties':[],'multiple_scenarios':False},frames,duration,known_secrets,max_events=120)['events']
             return {**checked,'multiple_scenarios':multi,'first_pass_events':first_pass,'reconciliation_audit':observed.get('reconciliation_audit'),'raw_events':candidates,'raw_uncertainties':observed['uncertainties'],'omitted_retries':recovery,'print_recovery':print_group}
         except ValueError as error:
-            if attempt:raise
+            if attempt and (outcome_review_used or not (getattr(error,'result_check_candidate_indexes',[]) or getattr(error,'outcome_event_indexes',[]))):raise
             # Never send model output/error strings back: only a fixed safe correction.
             if isinstance(planned,dict) and isinstance(planned.get('events'),list):
                 known_secrets.extend(e['value'] for e in planned['events'] if isinstance(e,dict) and
@@ -476,11 +482,17 @@ def analyze_whole_frames(document, root, cancelled, progress=None):
                         if event['draft_step_id'] in missing and 'candidate_index' in plan['events'][i])
                     missing_indexes=sorted(set(indexes))
             if missing_indexes:
+                if outcome_review_used:raise
+                from .ui_video_result_quality import configuration_review_indexes
+                missing_indexes=sorted(set(missing_indexes)|configuration_review_indexes(plan,candidates,reviewed_configuration_indexes,bool(print_group)))
                 from .ui_video_outcomes import repair_outcomes
                 pending_plan,repair_images=repair_outcomes(planned,candidates,frames,duration,root,missing_indexes,cancelled,known_secrets)
+                outcome_review_used=True
+                reviewed_configuration_indexes.update(missing_indexes)
                 evidence_ids={f['frame_id'] for f in image_frames+repair_images}
                 image_frames=[f for f in frames if f['frame_id'] in evidence_ids]
                 continue
+            if attempt:raise
             payload={**payload,'multiple_scenarios':multi,'recovery_feedback':getattr(error,'model_feedback',''),
                 'result_check_candidate_indexes':getattr(error,'result_check_candidate_indexes',[]),'validation_feedback':
                 '上一结果未通过平台证据/复用校验。每事件必须有candidate_index/action/target/value/observation/uncertainties。'

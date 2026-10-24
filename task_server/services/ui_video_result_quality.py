@@ -37,3 +37,30 @@ def review_requirements(event):
             if re.search(r'打印(?:设置|配置|参数)',observed) and re.search(pattern,observed)],
         'check_business_status_not_reward_overlay':bool(re.search(r'任务传输中|正在传输',observed)),
     }
+
+
+def needs_configuration_review(event):
+    """Recognize a visible configuration surface, not a specific business value.
+
+    This only selects original frames for an independent review. It does not
+    infer facts or decide whether the case is correct.
+    """
+    if event.get('selection') or '{{' in event.get('target',''):
+        return False
+    if event.get('action') not in {'aiTap','aiScroll'}:
+        return False
+    observed=(event.get('outcome') or {}).get('observation','') or event.get('observation','')
+    return bool(re.search(r'(?:设置|配置|参数|筛选)(?:面板|页面|页|弹窗|对话框)|表单(?:可见|显示|展开)',observed))
+
+
+def configuration_review_indexes(plan,candidates,reviewed,protected=False):
+    if protected:return set()
+    result=set()
+    for event in plan['events']:
+        index=event.get('candidate_index')
+        if (type(index) is int and 0<=index<len(candidates) and index not in reviewed and
+            event.get('action') in {'aiTap','aiScroll'} and
+            not event.get('selection') and '{{' not in event.get('target','') and
+            (needs_configuration_review(event) or needs_configuration_review(candidates[index]))):
+            result.add(index)
+    return result

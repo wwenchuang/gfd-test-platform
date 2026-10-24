@@ -26,8 +26,9 @@ def repair_outcomes(plan,candidates,frames,duration,root,indexes,cancelled,secre
         operation=event['target']
         for secret in secrets:
             if secret:operation=operation.replace(secret,'[输入内容未保存]')
-        from .ui_video_result_quality import review_requirements
+        from .ui_video_result_quality import review_requirements,needs_configuration_review
         checks.append({'target':key,'operation':operation,'outcome_frame_ids':[f['frame_id'] for f in results],
+                       'check_visible_configuration_values':needs_configuration_review(event) or needs_configuration_review(candidate),
                        **review_requirements(event)})
     images=[f for f in frames if f['frame_id'] in image_ids]
     if not 2<=len(images)<=60:raise ValueError('video_vision_limit')

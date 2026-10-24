@@ -444,9 +444,10 @@ def test_same_start_scroll_direction_conflict_is_not_two_operations(monkeypatch,
         assert result['events'][0]['uncertainties']
 
 
-@pytest.mark.parametrize('missing_second',[False,True,'system_boundary'])
+@pytest.mark.parametrize('missing_second',[False,True,'system_boundary','configuration'])
 @pytest.mark.parametrize('invalid_ref',['frame-006','frame-001','frame-999'])
-def test_future_outcome_repairs_only_result_without_replanning_actions(monkeypatch,tmp_path,missing_second,invalid_ref):
+@pytest.mark.parametrize('initial_bad_plan',[False,True])
+def test_future_outcome_repairs_only_result_without_replanning_actions(monkeypatch,tmp_path,missing_second,invalid_ref,initial_bad_plan):
     from task_server.services import ui_video_analysis as va,ai_skill_service as ai
     fs=frames();fs[-1]['timestamp_ms']=900
     (tmp_path/'frames').mkdir()
@@ -463,9 +464,13 @@ def test_future_outcome_repairs_only_result_without_replanning_actions(monkeypat
             if missing_second=='system_boundary':
                 events.append({'action':'aiAssert','target':'系统桌面','value':'','frame_refs':['frame-end'],'observation':'系统桌面可见','uncertainties':[]})
             return {'events':events,'uncertainties':[],'multiple_scenarios':False}
-        assert calls.count(('ui_video_steps','consolidate'))==1
         result={'title':'查看列表后返回首页','events':[{'candidate_index':i,'action':'aiTap','target':t,'value':'','observation':'页面发生跳转','uncertainties':[], 'outcome':{'observation':o,'frame_refs':[r]},'reusable_expected':o} for i,t,o,r in [(0,'列表入口','列表页面显示返回按钮',invalid_ref),(1,'返回','首页显示列表入口','frame-007')]],'uncertainties':[],'multiple_scenarios':False}
-        if missing_second=='system_boundary':
+        if initial_bad_plan and not payload.get('validation_feedback'):
+            result['events'][0]['candidate_index']=99
+        if missing_second=='configuration':
+            result['events'][1]['outcome']['observation']='筛选面板可见，类型选中全部'
+            result['events'][1]['reusable_expected']='筛选面板可见'
+        elif missing_second=='system_boundary':
             result['events'][1]['outcome']['frame_refs']=['frame-end']
         elif missing_second:
             result['events'][1].pop('outcome');result['events'][1].pop('reusable_expected');result['events'][1]['observation']='加载中'
@@ -474,7 +479,7 @@ def test_future_outcome_repairs_only_result_without_replanning_actions(monkeypat
     result=va.analyze_whole_frames({'app_id':'com.example.app','goal':'','media':{'frames':fs,'duration_ms':1000}},tmp_path,lambda:False)
     assert result['events'][0]['outcome']['frame_refs']==['frame-003']
     assert [e['target'] for e in result['events']]==['列表入口','返回']
-    assert calls==[('ui_video_observe',None),('ui_video_steps','consolidate'),('ui_video_observe','outcome')]
+    assert calls==[('ui_video_observe',None)]+[('ui_video_steps','consolidate')]*(2 if initial_bad_plan else 1)+[('ui_video_observe','outcome')]
 
 
 def detail_transport():
@@ -547,3 +552,57 @@ def test_settings_loss_uses_one_visual_repair_not_replanning(monkeypatch,tmp_pat
     else:
         with pytest.raises(ValueError,match='video_expected_missing'):va.analyze_whole_frames(doc,tmp_path,lambda:False)
     assert calls==[('ui_video_observe',None),('ui_video_steps','consolidate'),('ui_video_observe','outcome')]
+
+
+@pytest.mark.parametrize('readable',[True,False])
+@pytest.mark.parametrize('initial_bad_plan',[False,True])
+def test_configuration_gets_one_independent_pixel_review_even_with_nonempty_expected(monkeypatch,tmp_path,readable,initial_bad_plan):
+    from task_server.services import ui_video_analysis as va,ai_skill_service as ai
+    fs=frames();(tmp_path/'frames').mkdir()
+    for f in fs:(tmp_path/'frames'/(f['frame_id']+'.jpg')).write_bytes(b'image')
+    calls=[]
+    def model(skill,payload,**kw):
+        calls.append((skill,kw.get('version')))
+        if kw.get('version')=='outcome':
+            assert payload['checks'][0]['check_visible_configuration_values'] is True
+            return {'events':[{'action':'aiAssert','target':'candidate:0','value':'','frame_refs':['frame-004'],
+                    'observation':'筛选面板可见，地区选中上海，排序选中最新','uncertainties':[]}] if readable else [],
+                    'uncertainties':[],'multiple_scenarios':False}
+        e={'action':'aiTap','target':'筛选','value':'','observation':'筛选面板展开，地区选中上海，排序选中最新','uncertainties':[]}
+        if skill=='ui_video_observe':
+            return {'events':[{**e,'frame_refs':['frame-001','frame-002']}],'uncertainties':[],'multiple_scenarios':False}
+        return {'title':'筛选资料','events':[{**e,'candidate_index':99 if initial_bad_plan and not payload.get('validation_feedback') else 0,
+            'outcome':{'observation':'筛选面板可见','frame_refs':['frame-004']},
+            'reusable_expected':'筛选面板可见'}],'uncertainties':[],'multiple_scenarios':False}
+    monkeypatch.setattr(ai,'run_ai_skill',model)
+    doc={'app_id':'com.unrelated.catalog','goal':'','media':{'frames':fs,'duration_ms':1000}}
+    if readable:
+        r=va.analyze_whole_frames(doc,tmp_path,lambda:False)
+        assert len(r['events'])==1 and r['events'][0]['action']=='aiTap'
+        assert '上海' in r['events'][0]['reusable_expected']
+    else:
+        with pytest.raises(ValueError,match='video_expected_missing'):va.analyze_whole_frames(doc,tmp_path,lambda:False)
+    assert len(calls)==(4 if initial_bad_plan else 3)
+
+
+def test_protected_outcome_after_plan_retry_never_makes_third_plan_call(monkeypatch,tmp_path):
+    from task_server.services import ui_video_analysis as va,ai_skill_service as ai
+    from task_server.services import ui_video_print_recovery as pr,ui_video_recovery as recovery
+    fs=frames();(tmp_path/'frames').mkdir()
+    for f in fs:(tmp_path/'frames'/(f['frame_id']+'.jpg')).write_bytes(b'image')
+    calls=[]
+    monkeypatch.setattr(pr,'prepare_group',lambda p,*a:p)
+    monkeypatch.setattr(pr,'bind_group',lambda *a:{})
+    monkeypatch.setattr(recovery,'review_retries',lambda p,*a:(p,[0],[]))
+    def invalid_outcome(*a,**kw):
+        e=ValueError('video_reference_invalid');e.outcome_event_indexes=[0];raise e
+    monkeypatch.setattr(va,'_validate_consolidated_analysis',invalid_outcome)
+    def model(skill,payload,**kw):
+        calls.append((skill,kw.get('version')))
+        if skill=='ui_video_observe':return observation()
+        return {'title':'查看页面','events':[{'candidate_index':99 if calls.count(('ui_video_steps','consolidate'))==1 else 0,
+            'action':'aiTap','target':'我的','value':'','observation':'页面可见','uncertainties':[]}],
+            'print_recovery':{'protected':0},'uncertainties':[],'multiple_scenarios':False}
+    monkeypatch.setattr(ai,'run_ai_skill',model)
+    with pytest.raises(ValueError):va.analyze_whole_frames({'app_id':'com.example.app','goal':'','media':{'frames':fs,'duration_ms':1000}},tmp_path,lambda:False)
+    assert calls==[('ui_video_observe',None),('ui_video_steps','consolidate'),('ui_video_steps','consolidate')]
