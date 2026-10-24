@@ -13,12 +13,19 @@ _PRINT_SETTINGS=(
 )
 
 
+def _sequential_process_states(text):
+    # A signal for original-frame review only, never a text rewrite or proof
+    # that a later state was reached. Keep a single ongoing state usable.
+    return bool(re.search(r'(?:正在|(?:上传|下载|提交|处理|传输|加载)中)[\s\S]{0,180}(?:随后|然后|接着|最终)(?:进入|出现|显示|跳转|返回|变为)',text))
+
+
 def needs_result_review(event,expected):
     """A suspicion is a review trigger, not permission to rewrite the case."""
     if event.get('selection') or '{{' in event.get('target',''):
         return False
     if event.get('action') not in {'aiTap','aiScroll'}:
         return False
+    if _sequential_process_states(expected):return True
     observed=(event.get('outcome') or {}).get('observation','')
     incidental_parts=[part for part in re.split(r'[，,。；;]',expected)
                       if not re.search(r'已(?:关闭|隐藏|清空|禁用|取消)|不再显示',part)]
@@ -41,6 +48,7 @@ def review_requirements(event):
     """Only platform category names enter feedback, never source text or values."""
     observed=(event.get('outcome') or {}).get('observation','')
     return {
+        'check_final_visible_state_only':_sequential_process_states(observed) or _sequential_process_states(event.get('reusable_expected','')),
         'configuration_categories_to_check':[
             name for name,pattern in zip(_SETTING_NAMES,_PRINT_SETTINGS)
             if re.search(r'打印(?:设置|配置|参数)',observed) and re.search(pattern,observed)],
