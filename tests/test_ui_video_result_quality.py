@@ -135,3 +135,15 @@ def test_explicit_dynamic_content_operation_is_not_rejected(target):
 def test_explicit_dynamic_content_state_change_is_valid(target,expected):
     candidate={'action':'aiTap','target':target,'outcome':{'observation':expected}}
     assert not needs_result_review(candidate,expected)
+
+
+@pytest.mark.parametrize('quantity',['份数选中2','份数已选中 3','份数当前值为4','份数设置为5'])
+def test_explicit_selected_quantity_is_not_a_missing_setting(quantity):
+    event={'action':'aiTap','target':'打印入口','outcome':{'observation':'打印设置面板显示份数'+quantity[-1]}}
+    assert not needs_result_review(event,'打印设置面板可见，'+quantity)
+
+
+@pytest.mark.parametrize('quantity',['份数可设置','份数未选中','份数选中','份数设置为'])
+def test_quantity_still_requires_a_number(quantity):
+    event={'action':'aiTap','target':'打印入口','outcome':{'observation':'打印设置面板显示份数2'}}
+    assert needs_result_review(event,'打印设置面板可见，'+quantity)

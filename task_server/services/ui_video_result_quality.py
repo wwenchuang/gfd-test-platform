@@ -4,7 +4,7 @@ import re
 # Categories only: values and assertions must still be read from outcome pixels.
 _SETTING_NAMES=('份数','色彩','页码范围','单双面','纸张大小','打印顺序')
 _PRINT_SETTINGS=(
-    r'份数\s*(?:显示)?\s*(?:为|是|=|：|:)?\s*\d+|\d+\s*份',
+    r'份数\s*(?:显示|已选中|选中|当前值|设置)?\s*(?:为|是|=|：|:)?\s*\d+|\d+\s*份',
     r'彩色|黑白',
     r'\d+\s*(?:至|到|[-—])\s*\d+\s*页|全部(?:页面|页)',
     r'单面|(?<!单)双面',

@@ -117,3 +117,19 @@ def test_observe_window_keeps_qualified_target_without_spurious_retry(monkeypatc
     assert len(calls)==1
     assert result['events'][0]['target']==qualified
     assert result['events'][0]['frame_refs']==['frame-001','frame-002']
+
+
+@pytest.mark.parametrize('qualified',[
+    '订单区域上方的查看详情链接','订单区域右上方的查看详情按钮',
+    '订单区域左下方的查看详情入口','订单区域右下角的查看详情文字链接',
+])
+def test_explicit_same_frame_qualified_labels_support_diagonal_positions(qualified):
+    frames=[{'frame_id':'f1','timestamp_ms':100}]
+    events=[{'action':'aiTap','target':qualified,'frame_refs':['f1']}]
+    assert not targets.conflict(events,[{'frame_id':'f1','target':'查看详情'}],frames)
+
+
+def test_diagonal_qualifications_do_not_equate_conflicting_regions():
+    frames=[{'frame_id':'f1','timestamp_ms':100}]
+    events=[{'action':'aiTap','target':'订单区域右上方的查看详情按钮','frame_refs':['f1']}]
+    assert targets.conflict(events,[{'frame_id':'f1','target':'订单区域左下方的查看详情按钮'}],frames)
