@@ -405,3 +405,24 @@ def test_historical_partition_cannot_swallow_actual_repeat(explanation):
     frames,old,new,claim=return_gesture_fixture()
     claim['evidence']['interaction']='同一次返回手势。'+explanation
     with pytest.raises(ValueError):cr.validate([claim],{'first_pass':old},new,frames)
+
+
+def test_return_motion_and_navigation_can_be_separate_clauses():
+    frames,old,new,claim=return_gesture_fixture()
+    claim['evidence']['interaction']='画面显示从右向左的长距离滑动手势，触发返回导航。'
+    assert cr.validate([claim],{'first_pass':old},new,frames)
+
+
+@pytest.mark.parametrize('interaction',[
+    '同一次滑动手势，页面内容滚动。',
+    '未见滑动手势，页面发生返回导航。',
+    '同一次滑动手势，但未触发返回导航。',
+    '同一次点击按钮，触发返回导航。',
+    '同一次触点位移，页面内容滚动。',
+    '同一次侧滑，但未触发返回导航。',
+    '同一次返回手势，但未触发返回导航。',
+])
+def test_return_equivalent_wording_still_requires_motion_and_navigation(interaction):
+    frames,old,new,claim=return_gesture_fixture()
+    claim['evidence']['interaction']=interaction
+    with pytest.raises(ValueError):cr.validate([claim],{'first_pass':old},new,frames)

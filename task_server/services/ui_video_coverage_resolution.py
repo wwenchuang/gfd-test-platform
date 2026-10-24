@@ -22,6 +22,17 @@ def has_return_gesture_evidence(note):
             any(re.search(r'返回操作|返回导航|退回上一级', clause) for clause in affirmative))
 
 
+def has_confirmed_return_gesture(note):
+    """Merge evidence must establish navigation, not merely moving pixels."""
+    clauses=re.split(r'[。；，,;\n]|但是|但',note)
+    if any(re.search(r'未|没|无|不|并非',c) and re.search(r'返回|退回|导航',c) for c in clauses):
+        return False
+    affirmative=[c for c in clauses if not re.search(r'未|没|无|不|并非',c)]
+    return (any('返回手势' in c for c in affirmative) or
+            (any(re.search(r'滑动手势|横向位移手势',c) for c in affirmative) and
+             any(re.search(r'触发返回导航|返回操作|退回上一级',c) for c in affirmative)))
+
+
 def has_visible_return_control(note):
     if re.search(r'(?:返回箭头|返回按钮|实际控件)[^。；，,]{0,20}(?:不可见|未显示|没有显示|隐藏)|(?:没有|未显示|不可见)[^。；，,]{0,20}返回(?:箭头|按钮)', note):
         return False
@@ -158,7 +169,7 @@ def validate(claims,sources,reviewed,frames):
                 _fail('return_control_not_visible')
             if not re.search(r'同一次|单次',ev['interaction']+'。'+ev['why_not_separate_actions']):
                 _fail('return_single_gesture_not_explicit')
-            if '返回手势' not in ev['interaction']:
+            if not has_confirmed_return_gesture(ev['interaction']):
                 _fail('return_gesture_not_explicit')
             if not re.search(r'(?:未见|未观察到|没有|无)[^。；]{0,30}(?:第二次|二次|再次|重新|新的)[^。；]{0,20}(?:按下|触点|手势|导航)',ev['why_not_separate_actions']):
                 _fail('return_second_press_not_excluded')
