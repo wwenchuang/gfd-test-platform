@@ -67,6 +67,15 @@ def _log_failure(identifier,stage,error,code):
             detail['reference_reason']=reason
         if reason=='count' and type(shape) is str and shape in {'not_array','empty','too_many'}:
             detail['reference_shape']=shape
+    if code=='video_coverage_resolution_invalid':
+        reason=getattr(error,'coverage_reason',None)
+        if type(reason) is str and reason in {
+            'return_target_not_supported','return_anchors_not_overlapping',
+            'return_touch_not_in_anchor','return_control_not_visible',
+            'return_single_gesture_not_explicit','return_gesture_not_explicit',
+            'return_second_press_not_excluded',
+        }:
+            detail['coverage_reason']=reason
     # No exc_info, arbitrary error str, source lines, payload, prompt, identity,
     # media path, provider trace or model output enters this diagnostic.
     _LOG.warning('ui_video_failure %s',json.dumps(detail,ensure_ascii=True,sort_keys=True))

@@ -3,8 +3,10 @@ import copy
 import re
 
 
-def _fail():
-    raise ValueError('video_coverage_resolution_invalid')
+def _fail(reason=None):
+    error=ValueError('video_coverage_resolution_invalid')
+    if reason is not None:error.coverage_reason=reason
+    raise error
 
 
 def has_return_gesture_evidence(note):
@@ -146,12 +148,20 @@ def validate(claims,sources,reviewed,frames):
             old_notes='。'.join(a.get('observation','') for a in anchors)
             old_affirmative=re.sub(r'(?:未见|未观察到|没有|无)[^。；，,但]*', '', old_notes)
             if (not has_return_gesture_evidence(old_notes) or re.search(r'(?:再次|第二次|两次|多次)[^。；，,]{0,30}(?:点击|返回|导航|按下)',old_affirmative)):_fail()
-            if (new['target'] not in {'左上角返回箭头','左上角返回按钮','返回箭头','返回按钮'} or
-                not set.intersection(*(set(a['frame_refs']) for a in anchors)) or
-                not any(touch in a['frame_refs'] for a in anchors) or
-                not has_visible_return_control(ev['before_state']) or
-                not re.search(r'同一次|单次',ev['interaction']+'。'+ev['why_not_separate_actions']) or '返回手势' not in ev['interaction'] or
-                not re.search(r'(?:未见|未观察到|没有|无)[^。；]{0,30}(?:第二次|二次|再次|重新|新的)[^。；]{0,20}(?:按下|触点|手势|导航)',ev['why_not_separate_actions'])):_fail()
+            if new['target'] not in {'左上角返回箭头','左上角返回按钮','返回箭头','返回按钮'}:
+                _fail('return_target_not_supported')
+            if not set.intersection(*(set(a['frame_refs']) for a in anchors)):
+                _fail('return_anchors_not_overlapping')
+            if not any(touch in a['frame_refs'] for a in anchors):
+                _fail('return_touch_not_in_anchor')
+            if not has_visible_return_control(ev['before_state']):
+                _fail('return_control_not_visible')
+            if not re.search(r'同一次|单次',ev['interaction']+'。'+ev['why_not_separate_actions']):
+                _fail('return_single_gesture_not_explicit')
+            if '返回手势' not in ev['interaction']:
+                _fail('return_gesture_not_explicit')
+            if not re.search(r'(?:未见|未观察到|没有|无)[^。；]{0,30}(?:第二次|二次|再次|重新|新的)[^。；]{0,20}(?:按下|触点|手势|导航)',ev['why_not_separate_actions']):
+                _fail('return_second_press_not_excluded')
             affirmative=re.sub(r'(?:未见|未观察到|没有|无)[^。；，,但]*', '', ev['interaction']+'。'+ev['why_not_separate_actions'])
             # Only remove an explicit attribution to a mistaken OLD analysis.
             # Stop at clause boundaries so a real subsequent action survives.

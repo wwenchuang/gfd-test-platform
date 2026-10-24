@@ -143,3 +143,21 @@ def test_result_prompts_preserve_visible_business_configuration_not_only_navigat
         assert '不能只写面板打开或按钮可见' in prompt
         assert '未发生的修改操作' in prompt
         assert '任务传输中不等于打印完成' in prompt
+
+
+@pytest.mark.parametrize('reason,logged',[
+    ('return_control_not_visible',True),
+    ('return_gesture_not_explicit',True),
+    ('return_second_press_not_excluded',True),
+    ('private-model-content',False),
+    (['private-model-content'],False),
+])
+def test_worker_coverage_reason_is_allowlisted(caplog,reason,logged):
+    import json
+    from task_server.workers.ui_video_worker import _log_failure
+    error=ValueError('video_coverage_resolution_invalid')
+    error.coverage_reason=reason
+    _log_failure('uvs_'+'a'*32,'analysis',error,'video_coverage_resolution_invalid')
+    detail=json.loads(caplog.records[-1].getMessage().split(' ',1)[1])
+    assert ('coverage_reason' in detail)==logged
+    assert 'private-model-content' not in caplog.text

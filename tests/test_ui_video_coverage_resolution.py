@@ -369,3 +369,17 @@ def test_description_or_contradiction_cannot_prove_visible_return(state):
     frames,old,new,claim=return_gesture_fixture()
     claim['evidence']['before_state']=state
     with pytest.raises(ValueError):cr.validate([claim],{'first_pass':old},new,frames)
+
+
+@pytest.mark.parametrize('field,text,reason',[
+    ('before_state','模型详情页面显示','return_control_not_visible'),
+    ('interaction','同一次页面横移','return_gesture_not_explicit'),
+    ('why_not_separate_actions','同一次连续返回导航','return_second_press_not_excluded'),
+])
+def test_return_rejection_has_content_free_reason(field,text,reason):
+    frames,old,new,claim=return_gesture_fixture()
+    claim['evidence'][field]=text
+    with pytest.raises(ValueError) as caught:
+        cr.validate([claim],{'first_pass':old},new,frames)
+    assert caught.value.coverage_reason==reason
+    assert str(caught.value)=='video_coverage_resolution_invalid'
