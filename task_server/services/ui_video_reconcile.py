@@ -117,8 +117,9 @@ def reconcile(events,frames,duration,root,cancelled,secrets,progress=None):
     checked,new_secrets=observe_windows(frames,duration,root,cancelled,progress,
                                        review_events=events,prior_secrets=secrets)
     secrets.extend(new_secrets)
-    from .ui_video_automatic_motion import review_refs
+    from .ui_video_automatic_motion import review_refs,disputed_scroll_refs
     repair_refs=review_refs(events) | review_refs(checked['events']) | _overlapping_gesture_refs(checked['events'])
+    repair_refs.update(disputed_scroll_refs(events,checked['events']))
     from .ui_video_delayed_response import review_refs as delayed_refs
     repair_refs.update(delayed_refs(events,checked['events']))
     try:
@@ -259,8 +260,8 @@ def _repair_window(original,checked,frames,duration,root,cancelled,secrets,missi
     positions={f['frame_id']:i for i,f in enumerate(context_frames)}
     neighbors={positions[f['frame_id']]+offset for f in window for offset in (-2,-1,1,2) if 0<=positions[f['frame_id']]+offset<len(context_frames)}
     refs=[context_frames[i]['frame_id'] for i in sorted(neighbors) if context_frames[i]['frame_id'] not in window_ids][:16]
-    from .ui_video_automatic_motion import review_refs,REVIEW_QUESTION
-    motion_review=bool((review_refs(original) | review_refs(checked['events'])) & missing_refs)
+    from .ui_video_automatic_motion import review_refs,disputed_scroll_refs,REVIEW_QUESTION
+    motion_review=bool((review_refs(original) | review_refs(checked['events']) | disputed_scroll_refs(original,checked['events'])) & missing_refs)
     from .ui_video_delayed_response import review_refs as delayed_refs,REVIEW_QUESTION as DELAYED_QUESTION
     delayed_review=bool(delayed_refs(original,checked['events']) & missing_refs)
     if motion_review or delayed_review:

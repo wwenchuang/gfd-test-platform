@@ -111,3 +111,43 @@ def test_single_window_still_reviews_automatic_motion(monkeypatch,tmp_path):
 def test_negative_movement_without_conflict_is_not_positive():
     from task_server.services.ui_video_automatic_motion import has_positive_drag
     assert not has_positive_drag('用户没有拖动列表；刷新头部自动收起。')
+
+
+def test_new_scroll_over_same_automatic_frames_requests_review_only():
+    from task_server.services.ui_video_automatic_motion import disputed_scroll_refs
+    old=[{'action':'aiAssert','frame_refs':['a','b','c'],'observation':'异步卡片填充'}]
+    reviewed=[{'action':'aiScroll','frame_refs':['a','b','c']}]
+    assert disputed_scroll_refs(old,reviewed)=={'a','b','c'}
+    assert reviewed[0]['action']=='aiScroll'
+
+
+@pytest.mark.parametrize('original_action',['aiTap','aiScroll','aiInput'])
+def test_new_scroll_does_not_reinterpret_existing_interaction(original_action):
+    from task_server.services.ui_video_automatic_motion import disputed_scroll_refs
+    old=[{'action':'aiAssert','frame_refs':['a','b','c']},{'action':original_action,'frame_refs':['b']}]
+    assert not disputed_scroll_refs(old,[{'action':'aiScroll','frame_refs':['a','b','c']}])
+
+
+def test_new_scroll_requires_complete_same_frame_contradiction():
+    from task_server.services.ui_video_automatic_motion import disputed_scroll_refs
+    old=[{'action':'aiAssert','frame_refs':['a','b']}]
+    assert not disputed_scroll_refs(old,[{'action':'aiScroll','frame_refs':['a','c']}])
+    assert not disputed_scroll_refs(old,[{'action':'aiTap','frame_refs':['a','b']}])
+
+
+def test_disputed_scroll_enters_shared_review_with_unbiased_context(monkeypatch,tmp_path):
+    from task_server.services import ui_video_reconcile as rec,ui_video_windows as windows,ai_skill_service as ai
+    old={'action':'aiAssert','target':'列表','value':'','frame_refs':['f1','f2'],'start_ms':100,'end_ms':200,'observation':'内容自动填充','uncertainties':[]}
+    new={**old,'action':'aiScroll','value':{'direction':'down','scrollType':'singleAction'},'observation':'内容出现，判断用户滚动'}
+    checked={'events':[new],'uncertainties':[],'multiple_scenarios':False}
+    frames=[{'frame_id':f'f{i}','timestamp_ms':i*100} for i in range(4)]
+    monkeypatch.setattr(windows,'observe_windows',lambda *a,**kw:(checked,[]))
+    monkeypatch.setattr(windows,'load_assets',lambda *a:[])
+    class StopProbe(Exception):pass
+    def model(name,payload,**kw):
+        assert 'motion_review_question' in payload
+        assert all('action' not in a for values in payload['coverage_checks'].values() for a in values)
+        assert '完整前后原帧' in payload['motion_review_question']
+        raise StopProbe()
+    monkeypatch.setattr(ai,'run_ai_skill',model)
+    with pytest.raises(StopProbe):rec.reconcile([old],frames,1000,tmp_path,lambda:False,[])

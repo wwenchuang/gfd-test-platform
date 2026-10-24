@@ -15,8 +15,25 @@ def review_refs(events):
     return refs
 
 
+def disputed_scroll_refs(original, reviewed):
+    """Request pixel review for a newly inferred scroll, never choose its action."""
+    observations = [set(e.get('frame_refs', [])) for e in original
+                    if e.get('action') == 'aiAssert']
+    interactions = set().union(*(set(e.get('frame_refs', [])) for e in original
+                                 if e.get('action') in ('aiTap', 'aiScroll', 'aiInput')))
+    refs = set()
+    for event in reviewed:
+        frames = set(event.get('frame_refs', []))
+        if (event.get('action') == 'aiScroll' and frames and
+                not frames & interactions and any(frames <= old for old in observations)):
+            refs.update(frames)
+    return refs
+
+
 REVIEW_QUESTION=(
     '核对疑似自动位移：刷新头部/提示收起、自动回弹或布局重排不等于新的用户滚动。'
+    '同组画面被分别解释为自动变化和用户滚动时，核对固定控件位置与完整触点轨迹；'
+    '异步数据填充、占位卡片替换或推荐内容出现，不等于页面整体滚动。'
     '结合完整前后原帧判断，真实重新按下拖动须保留，单次真实拖动后的惯性不能抹掉原滚动。'
     '仅未看见触点不足以证明没有操作。确为自动变化时用aiAssert完整引用旧锚点原帧，'
     '明确未见独立用户滚动及自动变化依据，并描述稳定的后续页面；不要把短暂刷新提示作为可执行预期。'
