@@ -7,6 +7,7 @@ def probe(frames, details, assets, duration, cancelled):
     from .ui_video_analysis import _bind_whole_evidence, validate_analysis
     by_name = {asset['name']: asset for asset in assets}
     hints = []
+    schema_correction_used = False
     for detail in details[:6]:
         if cancelled():
             raise ValueError('video_cancelled')
@@ -21,9 +22,20 @@ def probe(frames, details, assets, duration, cancelled):
             continue
         payload = {'phase':'whole-observe', 'frames':selected, 'image_frames':selected,
                    'detail_frames':[detail], 'duration_ms':duration}
-        result = ai.run_ai_skill('ui_video_observe', payload, version='touch-target',
-            image_assets=[by_name[f['frame_id']] for f in selected]+[by_name[detail['frame_id']]],
-            timeout=120, retry_count=0, max_tokens=5000, repair_invalid_json=False)
+        # One extra schema correction for the entire probe, not per detail.
+        # Never turn malformed output into an empty successful observation.
+        for attempt in range(2):
+            if cancelled():raise ValueError('video_cancelled')
+            try:
+                result = ai.run_ai_skill('ui_video_observe', payload, version='touch-target',
+                    image_assets=[by_name[f['frame_id']] for f in selected]+[by_name[detail['frame_id']]],
+                    timeout=120, retry_count=0, max_tokens=5000, repair_invalid_json=False)
+                break
+            except ai.SkillSchemaError as error:
+                if cancelled():raise ValueError('video_cancelled') from None
+                if schema_correction_used or attempt:raise
+                schema_correction_used = True
+                payload['validation_feedback'] = error.model_feedback + ' 重新核对同一组原帧，按规定JSON结构输出；不补造操作，不省略events字段。'
         if cancelled():
             raise ValueError('video_cancelled')
         checked = validate_analysis(_bind_whole_evidence(result, selected), selected, duration)

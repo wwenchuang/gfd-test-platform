@@ -133,3 +133,61 @@ def test_diagonal_qualifications_do_not_equate_conflicting_regions():
     frames=[{'frame_id':'f1','timestamp_ms':100}]
     events=[{'action':'aiTap','target':'订单区域右上方的查看详情按钮','frame_refs':['f1']}]
     assert targets.conflict(events,[{'frame_id':'f1','target':'订单区域左下方的查看详情按钮'}],frames)
+
+
+@pytest.mark.parametrize('always_invalid',[False,True])
+def test_probe_schema_correction_is_bounded_and_keeps_pixels(monkeypatch,always_invalid):
+    import copy
+    frames=[{'frame_id':'frame-001','timestamp_ms':100},{'frame_id':'frame-002','timestamp_ms':200}]
+    detail={'frame_id':'frame-001-detail','source_frame_id':'frame-001','timestamp_ms':100}
+    assets=[{'name':f['frame_id']} for f in frames+[detail]]
+    calls=[]
+    def call(*args,**kwargs):
+        calls.append(copy.deepcopy((args[1],kwargs['image_assets'])))
+        if len(calls)==1 or always_invalid:raise targets.ai.SkillSchemaError('$.events','required')
+        return {'events':[],'uncertainties':['无可靠点击'],'multiple_scenarios':False}
+    monkeypatch.setattr(targets.ai,'run_ai_skill',call)
+    if always_invalid:
+        with pytest.raises(targets.ai.SkillSchemaError):targets.probe(frames,[detail],assets,1000,lambda:False)
+    else:assert targets.probe(frames,[detail],assets,1000,lambda:False)==[]
+    assert len(calls)==2 and calls[0][1]==calls[1][1]
+    assert calls[0][0]['frames']==calls[1][0]['frames']
+    assert 'events' in calls[1][0]['validation_feedback']
+
+
+@pytest.mark.parametrize('error',[RuntimeError('provider'),TimeoutError('timeout')])
+def test_probe_service_errors_are_not_schema_retries(monkeypatch,error):
+    calls=[]
+    def call(*args,**kw):calls.append(1);raise error
+    monkeypatch.setattr(targets.ai,'run_ai_skill',call)
+    frames=[{'frame_id':'f1','timestamp_ms':100},{'frame_id':'f2','timestamp_ms':200}]
+    detail={'frame_id':'detail','source_frame_id':'f1'}
+    with pytest.raises(type(error)):targets.probe(frames,[detail],[{'name':f['frame_id']} for f in frames+[detail]],1000,lambda:False)
+    assert len(calls)==1
+
+
+def test_probe_schema_budget_shared_across_details(monkeypatch):
+    frames=[{'frame_id':f'f{i}','timestamp_ms':i*100} for i in range(1,4)]
+    details=[{'frame_id':f'd{i}','source_frame_id':f'f{i}'} for i in (1,2)]
+    calls=[]
+    def call(*args,**kw):
+        calls.append(1)
+        if len(calls)!=2:raise targets.ai.SkillSchemaError('$.events','required')
+        return {'events':[],'uncertainties':[],'multiple_scenarios':False}
+    monkeypatch.setattr(targets.ai,'run_ai_skill',call)
+    with pytest.raises(targets.ai.SkillSchemaError):
+        targets.probe(frames,details,[{'name':f['frame_id']} for f in frames+details],1000,lambda:False)
+    assert len(calls)==3
+
+
+def test_probe_cancel_after_schema_failure_does_not_retry(monkeypatch):
+    calls=[]
+    def call(*args,**kw):
+        calls.append(1)
+        raise targets.ai.SkillSchemaError('$.events','required')
+    monkeypatch.setattr(targets.ai,'run_ai_skill',call)
+    frames=[{'frame_id':'f1','timestamp_ms':100},{'frame_id':'f2','timestamp_ms':200}]
+    detail={'frame_id':'detail','source_frame_id':'f1'}
+    with pytest.raises(ValueError,match='video_cancelled'):
+        targets.probe(frames,[detail],[{'name':f['frame_id']} for f in frames+[detail]],1000,lambda:bool(calls))
+    assert len(calls)==1
