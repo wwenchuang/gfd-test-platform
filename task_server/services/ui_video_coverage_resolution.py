@@ -85,7 +85,7 @@ def boundary_safe(event,boundary,resolutions,frames):
 def diagnose(claims,sources,reviewed,frames):
     """Read-only retry context. Structural candidates never authorize a merge."""
     groups=eligible_groups(sources,{f['frame_id'] for f in frames})
-    rejected=[];anchors=[]
+    rejected=[];anchors=[];results=[]
     times={f['frame_id']:f['timestamp_ms'] for f in frames}
     for index,claim in enumerate(claims if isinstance(claims,list) else []):
         try:
@@ -99,6 +99,19 @@ def diagnose(claims,sources,reviewed,frames):
         refs=evidence.get('examined_frame_refs',[]) if isinstance(evidence,dict) else []
         refs={r for r in refs if isinstance(r,str)} if isinstance(refs,list) else set()
         ids=claim.get('source_anchor_ids',[])
+        result_index=claim.get('reviewed_event_index')
+        valid_index=type(result_index) is int and 0<=result_index<len(reviewed)
+        result_refs=set(reviewed[result_index].get('frame_refs',[])) if valid_index else set()
+        valid_ids=set()
+        for aid in ids if isinstance(ids,list) else []:
+            if not isinstance(aid,str):continue
+            parts=aid.split(':')
+            if len(parts)==2 and parts[0] in sources and parts[1].isdigit() and int(parts[1])<len(sources[parts[0]]):
+                valid_ids.add((parts[0],int(parts[1])))
+        states=[evidence.get(k) for k in ('before_frame','interaction_frame','after_frame')] if isinstance(evidence,dict) else []
+        results.append({'claim_index':index,'valid_result_index':valid_index,
+                        'missing_result_state_frames':list(dict.fromkeys(r for r in states if isinstance(r,str) and r in times and r not in result_refs)),
+                        'has_same_source_duplicates':any(sum(source==name for source,pos in valid_ids)>=2 for name in sources)})
         for aid in ids if isinstance(ids,list) else []:
             if not isinstance(aid,str):continue
             parts=aid.split(':')
@@ -121,8 +134,8 @@ def diagnose(claims,sources,reviewed,frames):
                     for ref in other['source_anchor_ids'] if isinstance(ref,str))),
                 'structural_groups':[g for g in groups if aid in g['anchor_ids']],
             })
-    return {'rejected_claims':rejected,'anchors_to_recheck':anchors,
-            'instruction':'删除非法声明不免除旧锚点的解释责任。重新核对完整原帧；结构候选不是动作真值。属于已有交互时完整声明对应组及改型证据，独立操作必须保留；不能确定则报告疑问，不造操作或断言凑数。'}
+    return {'rejected_claims':rejected,'anchors_to_recheck':anchors,'result_evidence_to_recheck':results,
+            'instruction':'missing_result_state_frames表示声明中的前态、实际交互或后态帧未被结果事件引用；须重核原图，仅原图支持时完整引用。has_same_source_duplicates为false表示没有同来源多锚点可合并，普通跨来源一对一对应不需要合并声明。删除非法声明不免除旧锚点的解释责任。重新核对完整原帧；结构候选不是动作真值。属于已有交互时完整声明对应组及改型证据，独立操作必须保留；不能确定则报告疑问，不造操作或断言凑数。'}
 
 
 def validate(claims,sources,reviewed,frames):
@@ -187,7 +200,7 @@ def validate(claims,sources,reviewed,frames):
                 _fail('return_touch_not_in_anchor')
             if not has_visible_return_control(ev['before_state']):
                 _fail('return_control_not_visible')
-            if not re.search(r'同一次|单次',ev['interaction']+'。'+ev['why_not_separate_actions']):
+            if not re.search(r'同一次|单次|(?<!第)一次(?:连续|完整)的?返回手势',ev['interaction']+'。'+ev['why_not_separate_actions']):
                 _fail('return_single_gesture_not_explicit')
             if not has_confirmed_return_gesture(ev['interaction']):
                 _fail('return_gesture_not_explicit')

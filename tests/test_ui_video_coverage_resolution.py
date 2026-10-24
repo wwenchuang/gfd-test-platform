@@ -458,3 +458,46 @@ def test_return_suffix_exception_needs_continuous_shared_evidence(mutation):
     if mutation=='second_press':old[1]['observation']='再次点击返回，完成第二次导航'
     if mutation=='intervening':old.append({'action':'aiInput','target':'搜索','start_ms':250,'end_ms':260,'frame_refs':['f3']})
     with pytest.raises(ValueError):cr.validate([claim],{'first_pass':old},new,frames)
+
+
+def test_diagnostics_identify_state_evidence_missing_from_result():
+    frames,old,new,claim=fixture()
+    new[0]['frame_refs']=['f2','f3']
+    before=copy.deepcopy((old,new,claim))
+    feedback=cr.diagnose([claim],{'first_pass':old},new,frames)
+    detail=feedback['result_evidence_to_recheck'][0]
+    assert detail['claim_index']==0
+    assert detail['missing_result_state_frames']==['f1']
+    assert detail['has_same_source_duplicates'] is True
+    assert (old,new,claim)==before
+    with pytest.raises(ValueError):cr.validate([claim],{'first_pass':old},new,frames)
+
+
+def test_diagnostics_reject_cross_source_one_to_one_merge():
+    frames,old,new,claim=fixture()
+    claim['source_anchor_ids']=['first_pass:0','independent_review:0']
+    feedback=cr.diagnose([claim],{'first_pass':[old[0]],'independent_review':[old[1]]},new,frames)
+    assert feedback['result_evidence_to_recheck'][0]['has_same_source_duplicates'] is False
+
+
+@pytest.mark.parametrize('index',[None,True,-1,99,[],{}])
+def test_diagnostics_invalid_result_index_is_bounded(index):
+    frames,old,new,claim=fixture();claim['reviewed_event_index']=index
+    feedback=cr.diagnose([claim],{'first_pass':old},new,frames)
+    assert feedback['result_evidence_to_recheck'][0]['valid_result_index'] is False
+
+
+@pytest.mark.parametrize('single',['一次连续的返回手势','一次连续返回手势','一次完整的返回手势'])
+def test_return_gesture_accepts_explicit_singular_equivalent(single):
+    frames,old,new,claim=return_gesture_fixture()
+    claim['evidence']['interaction']='原片显示'+single+'，页面横移'
+    claim['evidence']['why_not_separate_actions']='未见第二次按下或再次导航'
+    assert cr.validate([claim],{'first_pass':old},new,frames)
+
+
+@pytest.mark.parametrize('single',['第一次返回手势','有一次返回手势后又返回','不是一次连续的返回手势','未见一次完整的返回手势'])
+def test_return_gesture_singular_wording_does_not_accept_multiple_or_negation(single):
+    frames,old,new,claim=return_gesture_fixture()
+    claim['evidence']['interaction']=single
+    claim['evidence']['why_not_separate_actions']='未见第二次按下或再次导航'
+    with pytest.raises(ValueError):cr.validate([claim],{'first_pass':old},new,frames)
