@@ -436,7 +436,11 @@ def analyze_whole_frames(document, root, cancelled, progress=None):
             _validate_consolidated_evidence(checked,candidates,candidates,frames,image_frames,duration,effective_required,{item['candidate_index'] for item in recovery})
             proposal,snapshot=draft_proposal({**document,**checked,'print_recovery':print_group,'source_id':document.get('source_id','uvs_'+'0'*32),
                                       'analysis_version':document.get('analysis_version',1)})
+            from .ui_video_result_quality import needs_result_review
+            expected_by_step={step['step_id']:step.get('expected','') for step in proposal['steps']}
             missing={step['step_id'] for step in proposal['steps'] if step['action'] in {'aiTap','aiScroll'} and not step['expected']}
+            missing.update(event['draft_step_id'] for event in snapshot['events']
+                           if not print_group and needs_result_review(event,expected_by_step.get(event['draft_step_id'],'')))
             if missing:
                 error=ValueError('video_expected_missing')
                 error.result_check_candidate_indexes=[plan['events'][i]['candidate_index'] for i,event in enumerate(snapshot['events']) if event['draft_step_id'] in missing and 'candidate_index' in plan['events'][i]]

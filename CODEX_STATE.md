@@ -13515,3 +13515,6 @@ git diff --check
 
 ### 2026-10-24 视频返回复核诊断
 - 返回手势合并校验增加七项固定原因日志，条件保持不变；不记录模型正文。固定524c3e批次继续运行，4轮中触点2/4、小白学习3/4生成ready，语义核对独立记录；未进行手机执行。
+
+### 2026-10-24 Result-quality review
+- Platform learning-1 draft confirmed settings loss and reward-status contamination. Added one bounded visual-result repair with fixed category hints; no action/value rewriting. Three local Qwen replays preserved six settings and transmission status. Whole-platform fixed-version cohort continues.

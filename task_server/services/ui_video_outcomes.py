@@ -26,7 +26,9 @@ def repair_outcomes(plan,candidates,frames,duration,root,indexes,cancelled,secre
         operation=event['target']
         for secret in secrets:
             if secret:operation=operation.replace(secret,'[输入内容未保存]')
-        checks.append({'target':key,'operation':operation,'outcome_frame_ids':[f['frame_id'] for f in results]})
+        from .ui_video_result_quality import review_requirements
+        checks.append({'target':key,'operation':operation,'outcome_frame_ids':[f['frame_id'] for f in results],
+                       **review_requirements(event)})
     images=[f for f in frames if f['frame_id'] in image_ids]
     if not 2<=len(images)<=60:raise ValueError('video_vision_limit')
     result=ai.run_ai_skill('ui_video_observe',{'phase':'whole-observe','frames':images,'image_frames':images,
@@ -50,6 +52,8 @@ def repair_outcomes(plan,candidates,frames,duration,root,indexes,cancelled,secre
         key=f"candidate:{event['candidate_index']}"
         if key in updates:
             observed,stable=updates[key]
+            from .ui_video_result_quality import needs_result_review
+            if needs_result_review(event,stable):raise ValueError('video_expected_missing')
             event['outcome']={'observation':observed['observation'],'frame_refs':observed['frame_refs']}
             event['reusable_expected']=stable
     return repaired,images

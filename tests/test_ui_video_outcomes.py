@@ -81,3 +81,14 @@ def test_focus_returns_exact_sent_evidence_and_redacts_request(monkeypatch,tmp_p
     repaired,images=repair_outcomes(plan,candidates,frames,800,tmp_path,[0],lambda:False,['TOPSECRET'])
     assert [f['frame_id'] for f in images]==[f'frame-{i:03d}' for i in range(1,6)]
     assert repaired['events'][0]['outcome']['frame_refs']==['frame-004']
+
+
+def test_visual_repair_cannot_erase_settings_to_evade_quality_gate(monkeypatch,tmp_path):
+    from task_server.services.ui_video_outcomes import repair_outcomes
+    from task_server.services import ai_skill_service as ai
+    frames,candidates,plan=fixture(tmp_path)
+    plan['events'][0]['outcome']={'observation':'打印设置面板显示彩色、单面、A4','frame_refs':['frame-004']}
+    r=result();r['events'][0]['observation']='打印设置面板可见，确认打印按钮可见'
+    monkeypatch.setattr(ai,'run_ai_skill',lambda *a,**kw:r)
+    with pytest.raises(ValueError,match='video_expected_missing'):
+        repair_outcomes(plan,candidates,frames,800,tmp_path,[0],lambda:False,[])

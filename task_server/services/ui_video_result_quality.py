@@ -1,0 +1,39 @@
+"""Request bounded pixel review for known result-loss signals, never invent values."""
+import re
+
+# Categories only: values and assertions must still be read from outcome pixels.
+_SETTING_NAMES=('份数','色彩','页码范围','单双面','纸张大小','打印顺序')
+_PRINT_SETTINGS=(
+    r'份数\s*(?:为|是|=|：|:)?\s*\d+|\d+\s*份',
+    r'彩色|黑白',
+    r'\d+\s*(?:至|到|[-—])\s*\d+\s*页|全部(?:页面|页)',
+    r'单面|(?<!单)双面',
+    r'(?<![A-Za-z0-9])[AaBb][0-6](?![A-Za-z0-9])',
+    r'逆序|正序',
+)
+
+
+def needs_result_review(event,expected):
+    """A suspicion is a review trigger, not permission to rewrite the case."""
+    if event.get('selection') or '{{' in event.get('target',''):
+        return False
+    if event.get('action') not in {'aiTap','aiScroll'}:
+        return False
+    observed=(event.get('outcome') or {}).get('observation','')
+    if re.search(r'打印(?:设置|配置|参数)',observed):
+        if any(re.search(pattern,observed) and not re.search(pattern,expected)
+               for pattern in _PRINT_SETTINGS):
+            return True
+    return bool(re.search(r'任务传输中|正在传输',observed+'。'+expected) and
+                re.search(r'任务完成|打印完成|打印成功',expected))
+
+
+def review_requirements(event):
+    """Only platform category names enter feedback, never source text or values."""
+    observed=(event.get('outcome') or {}).get('observation','')
+    return {
+        'configuration_categories_to_check':[
+            name for name,pattern in zip(_SETTING_NAMES,_PRINT_SETTINGS)
+            if re.search(r'打印(?:设置|配置|参数)',observed) and re.search(pattern,observed)],
+        'check_business_status_not_reward_overlay':bool(re.search(r'任务传输中|正在传输',observed)),
+    }

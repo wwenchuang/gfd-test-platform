@@ -517,3 +517,33 @@ def test_same_start_cross_window_return_keeps_union_not_fake_retry(monkeypatch,t
     result,_=vw.observe_windows(fs,6100,tmp_path,lambda:False)
     assert len(result['events'])==1
     assert result['events'][0]['frame_refs']==['f26','f27','f28','f29','f32']
+
+
+@pytest.mark.parametrize('fixed',[True,False])
+def test_settings_loss_uses_one_visual_repair_not_replanning(monkeypatch,tmp_path,fixed):
+    from task_server.services import ui_video_analysis as va,ai_skill_service as ai
+    fs=frames();(tmp_path/'frames').mkdir()
+    for f in fs:(tmp_path/'frames'/(f['frame_id']+'.jpg')).write_bytes(b'image')
+    calls=[]
+    def model(skill,payload,**kw):
+        calls.append((skill,kw.get('version')))
+        if kw.get('version')=='outcome':
+            assert payload['checks'][0]['configuration_categories_to_check']==['色彩','单双面','纸张大小']
+            return {'events':[{'action':'aiAssert','target':'candidate:0','value':'','frame_refs':['frame-003'],
+                'observation':'打印设置面板显示彩色、单面、A4' if fixed else '打印设置面板显示彩色、A4','uncertainties':[]}],
+                'uncertainties':[],'multiple_scenarios':False}
+        if skill=='ui_video_observe':
+            return {'events':[{'action':'aiTap','target':'立即打印','value':'','frame_refs':['frame-001','frame-002'],
+                'observation':'打印设置面板展开','uncertainties':[]}],'uncertainties':[],'multiple_scenarios':False}
+        return {'title':'查看打印设置','events':[{'candidate_index':0,'action':'aiTap','target':'立即打印','value':'',
+            'observation':'打印设置面板展开','uncertainties':[],
+            'outcome':{'observation':'打印设置面板显示彩色、单面、A4','frame_refs':['frame-003']},
+            'reusable_expected':'打印设置面板显示彩色、A4'}],'uncertainties':[],'multiple_scenarios':False}
+    monkeypatch.setattr(ai,'run_ai_skill',model)
+    doc={'app_id':'com.example.app','goal':'','media':{'frames':fs,'duration_ms':1000}}
+    if fixed:
+        result=va.analyze_whole_frames(doc,tmp_path,lambda:False)
+        assert '单面' in result['events'][0]['reusable_expected']
+    else:
+        with pytest.raises(ValueError,match='video_expected_missing'):va.analyze_whole_frames(doc,tmp_path,lambda:False)
+    assert calls==[('ui_video_observe',None),('ui_video_steps','consolidate'),('ui_video_observe','outcome')]

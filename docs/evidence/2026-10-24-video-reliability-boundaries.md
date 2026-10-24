@@ -20,3 +20,9 @@
 复合门禁拆为相同顺序的七个判定，只增加固定原因枚举，不改变校验条件。服务器日志白名单记录原因，不记录模型正文。新增测试先观察6项失败，再修复为115项相关测试通过；独立审查无阻断问题。
 
 固定版本复验第4轮结束：触点累计2/4 ready，小白学习3/4 ready。小白学习第4轮已由平台导入草稿uid_3b174443af3bcbcb7bba528a68c59f3d，11个业务步骤、6项打印设置和任务传输终态齐全；刷新后稳定预期已对照frame082，严格静态校验通过。仍未进行手机执行。
+
+## Result-quality follow-up
+
+Platform learning-1 draft uid_b7dda149cd63eec3fb3a626073ede479 confirms missing duplex setting and reward completion text mixed into transmission expectation. The bounded result review now checks missing concrete setting categories and transmission/completion conflicts without changing actions or supplying values. Dynamic object and print recovery paths retain their dedicated gates.
+
+Three local Qwen result-frame replays with old feedback all missed at least one of the two expectations. Three with explicit category and business-state feedback retained all six settings and transmission-only status. Evidence: /tmp/video-reliability/recheck-result-quality-v2.log and result-quality-{1,2,3}.json. These are local visual repairs, not whole-platform success-rate or device-execution results. Review findings concerning category-only answers and dropping transmission were fixed with negative tests; 100 scoped checks passed. This limited detector does not validate every value and does not replace manual source comparison.
