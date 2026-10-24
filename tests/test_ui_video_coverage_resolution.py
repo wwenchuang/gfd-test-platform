@@ -383,3 +383,25 @@ def test_return_rejection_has_content_free_reason(field,text,reason):
         cr.validate([claim],{'first_pass':old},new,frames)
     assert caught.value.coverage_reason==reason
     assert str(caught.value)=='video_coverage_resolution_invalid'
+
+
+@pytest.mark.parametrize('explanation',[
+    '旧识别将其分为两次点击，实际为同一次连续手势导致的页面转场。',
+    '旧识别将其分为两次点击（分别对应前后帧的触点状态），实际为同一次连续手势导致的页面转场。',
+])
+def test_historical_partition_with_immediate_single_gesture_correction(explanation):
+    frames,old,new,claim=return_gesture_fixture()
+    claim['evidence']['interaction']='同一次返回手势。'+explanation
+    assert cr.validate([claim],{'first_pass':old},new,frames)
+
+
+@pytest.mark.parametrize('explanation',[
+    '旧识别将其分为两次点击，实际发生第二次返回。',
+    '旧识别将其分为两次点击（随后再次按下），实际为同一次连续手势。',
+    '旧识别将其分为两次点击，实际为同一次连续手势。随后重新点击返回。',
+    '原片发生两次点击，实际为同一次连续手势。',
+])
+def test_historical_partition_cannot_swallow_actual_repeat(explanation):
+    frames,old,new,claim=return_gesture_fixture()
+    claim['evidence']['interaction']='同一次返回手势。'+explanation
+    with pytest.raises(ValueError):cr.validate([claim],{'first_pass':old},new,frames)

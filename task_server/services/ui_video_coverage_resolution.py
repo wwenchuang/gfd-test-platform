@@ -176,6 +176,12 @@ def validate(claims,sources,reviewed,frames):
                 r'(?:旧识别|旧锚点|首轮识别)[^。；，,但\n]{0,80}?'
                 r'分别识别为(?:两次|多次)(?:独立的?|单独的?)?点击(?:或重复操作)?'
                 r'(?=[，,]实际为同一次(?:连续)?返回手势)', '', affirmative)
+            # A neutral historical partition is harmless only with an immediate
+            # explicit correction. Parentheses cannot conceal a repeated action.
+            affirmative=re.sub(
+                r'(?:旧识别|旧锚点|首轮识别)[^。；，,但\n]{0,40}?分为(?:两次|多次)点击'
+                r'(?:（(?:(?!再次|重新|第二次|两次|多次|[。；，,但\n]).){0,100}）)?'
+                r'(?=[，,]实际为同一次(?:连续)?(?:返回)?手势)', '', affirmative)
             if re.search(r'再次|重新|第二次|两次|多次',affirmative):_fail()
         low=min(e['start_ms'] for e in anchors);high=max(e['end_ms'] for e in anchors)
         for source_name,source in sources.items():
