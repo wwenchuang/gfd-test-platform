@@ -111,12 +111,17 @@ def observe_windows(frames,duration,root,cancelled,progress=None,review_events=N
                     secrets.extend(e['value'] for e in result['events'] if isinstance(e,dict) and e.get('action')=='aiInput' and isinstance(e.get('value'),str) and e['value'])
                 result=_bind_whole_evidence(result,window)
                 checked=validate_analysis(result,window,duration,secrets)
-                target_diagnostic={}
-                target_conflict=conflict(checked['events'],payload['touch_targets'],images,target_diagnostic)
+                target_diagnostic={};target_evidence={}
+                target_conflict=conflict(checked['events'],payload['touch_targets'],images,target_diagnostic,evidence=target_evidence)
                 if target_conflict:
                     error=ValueError('video_model_invalid')
                     error.model_feedback=target_conflict
                     error.target_diagnostic=target_diagnostic
+                    # Private source evidence only; never included in service logs.
+                    for key in ('observed_target','probe_target'):
+                        for secret in secrets:
+                            if secret:target_evidence[key]=target_evidence[key].replace(secret,'[输入内容未保存]')
+                    error.target_failure_evidence=target_evidence
                     raise error
                 break
             except ValueError as error:

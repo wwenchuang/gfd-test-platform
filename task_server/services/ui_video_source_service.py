@@ -129,6 +129,7 @@ class VideoStore:
                 self._check_admission(db)
                 doc.pop('media',None)
                 doc.pop('title',None)
+                doc.pop('failure_diagnostic',None)
                 doc.update(status='queued',error='',error_code='',events=[],segments=[],candidate_steps=[],uncertainties=[],raw_events=[],first_pass_events=[],reconciliation_audit=None,raw_uncertainties=[],omitted_retries=[],print_recovery=None,analysis_progress={},analysis_version=doc['analysis_version']+1)
                 self._save(db,doc)
                 return doc

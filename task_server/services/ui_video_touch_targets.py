@@ -80,7 +80,7 @@ def _same_explicit_label(left,right):
     return bool(a and a==_label(right) or b and b==_label(left))
 
 
-def conflict(events, hints, frames, diagnostic=None):
+def conflict(events, hints, frames, diagnostic=None, evidence=None):
     times = {f['frame_id']:f['timestamp_ms'] for f in frames}
     for hint in hints:
         explicit = [e for e in events if e.get('action') == 'aiTap' and hint['frame_id'] in e.get('frame_refs',[])]
@@ -94,5 +94,7 @@ def conflict(events, hints, frames, diagnostic=None):
             if diagnostic is not None:
                 diagnostic.update(frame_id=hint['frame_id'],binding='explicit' if explicit else 'nearby',comparison=comparison)
             if comparison=='mismatch':
+                if evidence is not None:
+                    evidence.update(frame_id=hint['frame_id'],observed_target=left,probe_target=right)
                 return '触点附近的点击目标与同帧局部复核不一致：'+hint['frame_id']+' 应使用目标 '+hint['target']+'。局部交互证据：'+hint.get('observation','')[:500]+'。按该原帧触点核对，不用转场中经过触点的底部控件替代。'
     return ''

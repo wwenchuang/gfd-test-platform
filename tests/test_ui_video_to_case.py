@@ -948,3 +948,19 @@ def test_reusable_expected_cannot_restore_transient_checks(tmp_path,reuse):
     assert '加载' not in content['steps'][0]['expected']
     assert '高亮' not in content['steps'][-1]['target']
     assert snapshot['events'][0]['reusable_expected']==reuse
+
+
+def test_target_failure_evidence_stays_owner_scoped_and_clears_on_retry(env,tmp_path,monkeypatch):
+    from task_server.services import ui_video_source_service as video,ui_video_analysis as analysis
+    from task_server.workers import ui_video_worker as worker
+    store=video.VideoStore(tmp_path/'videos');doc=store.upload(A,APP,'target.mp4',io.BytesIO(b'video'),5,actor=A)
+    monkeypatch.setattr(worker,'decode_video',lambda *a:{'black':False,'static':False,'frames':[{'frame_id':'frame-001','timestamp_ms':0}],'duration_ms':100})
+    def fail(*a):
+        error=ValueError('video_model_invalid');error.target_failure_evidence={'frame_id':'frame-001','observed_target':'确定','probe_target':'取消'};raise error
+    monkeypatch.setattr(analysis,'analyze_whole_frames',fail)
+    worker.analyze_video_source(store,doc['source_id'])
+    saved=store.get(doc['source_id'],A['user_id'],APP)
+    assert saved['failure_diagnostic']['observed_target']=='确定'
+    with pytest.raises(KeyError):store.get(doc['source_id'],'other-user',APP)
+    retried=store.retry(doc['source_id'],A['user_id'],APP)
+    assert 'failure_diagnostic' not in retried
