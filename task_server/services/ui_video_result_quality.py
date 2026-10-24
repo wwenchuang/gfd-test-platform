@@ -20,6 +20,12 @@ def needs_result_review(event,expected):
     if event.get('action') not in {'aiTap','aiScroll'}:
         return False
     observed=(event.get('outcome') or {}).get('observation','')
+    incidental_parts=[part for part in re.split(r'[，,。；;]',expected)
+                      if not re.search(r'已(?:关闭|隐藏|清空|禁用|取消)|不再显示',part)]
+    if (any(re.search(r'搜索(?:框)?[^，,。；;]{0,10}(?:推荐|热词)|推荐位内容|个性化推荐内容',part)
+            for part in incidental_parts) and
+        not re.search(r'搜索|推荐|热词',event.get('target',''))):
+        return True
     if (event['action']=='aiScroll' and re.search(r'轮播[^，,。；;]{0,16}切换为',expected) and
         not re.search(r'轮播|广告',event.get('target',''))):
         return True

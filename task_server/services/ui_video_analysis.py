@@ -153,8 +153,10 @@ def _system_boundary(event,duration):
 
 
 def _required_interactions(events,duration):
+    from .ui_video_terminal_cleanup import is_terminal_app_exit
     return [index for index,event in enumerate(events) if event['action'] in {'aiTap','aiInput','aiScroll'}
-            and not _system_boundary(event,duration)]
+            and not _system_boundary(event,duration)
+            and not is_terminal_app_exit(events,index,duration)]
 
 
 def _preserve_interactions(candidates,events,required):

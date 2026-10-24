@@ -109,3 +109,29 @@ def test_explicit_advert_interaction_keeps_its_own_result():
 def test_advert_business_results_are_not_incidental_banner_noise(target,expected):
     e={'action':'aiTap','target':target,'outcome':{'observation':expected}}
     assert not needs_result_review(e,expected)
+
+
+@pytest.mark.parametrize('expected', [
+    '首页顶部年级显示为七年级，搜索框推荐内容与七年级相关。',
+    '筛选已应用，推荐位内容与地区相匹配。',
+    '页面展示搜索热词和个性化推荐内容。',
+])
+def test_incidental_recommendation_requires_review(expected):
+    candidate={'action':'aiTap','target':'确定按钮','outcome':{'observation':'已返回筛选结果页面'}}
+    assert needs_result_review(candidate,expected)
+
+
+@pytest.mark.parametrize('target', ['推荐商品入口','搜索框','搜索热词'])
+def test_explicit_dynamic_content_operation_is_not_rejected(target):
+    candidate={'action':'aiTap','target':target,'outcome':{'observation':'推荐内容可见'}}
+    assert not needs_result_review(candidate,'搜索热词和个性化推荐内容可见')
+
+
+@pytest.mark.parametrize('target,expected', [
+    ('关闭按钮','搜索热词弹窗已关闭，搜索页面可见'),
+    ('开关','个性化推荐内容已隐藏'),
+    ('清空按钮','搜索热词已清空'),
+])
+def test_explicit_dynamic_content_state_change_is_valid(target,expected):
+    candidate={'action':'aiTap','target':target,'outcome':{'observation':expected}}
+    assert not needs_result_review(candidate,expected)

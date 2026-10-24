@@ -13535,3 +13535,12 @@ git diff --check
 
 ### 2026-10-24 Result-quality review
 - Platform learning-1 draft confirmed settings loss and reward-status contamination. Added one bounded visual-result repair with fixed category hints; no action/value rewriting. Three local Qwen replays preserved six settings and transmission status. Whole-platform fixed-version cohort continues.
+
+
+## 2026-10-24 固定版本重复测试发现通用质量问题
+
+- af2ca509 固定版本批次继续，两段原片各计划 10 次独立上传，保持空目标、原文件哈希和服务版本，证据位于 /tmp/video-reliability-af2ca509。
+- 触点第 1 次失败：确认退出应用到系统桌面的末尾清理被误列入必备业务动作，与平台预置生命周期冲突。仅明确末尾退出、无不确定性、无后续业务交互时排除；保留全部原始证据。页面返回、账号退出、否定及不确定观察仍保留。
+- 学习第 1 次虽然生成并静态通过，但包含“搜索推荐内容与所选年级相关”的无证据因果断言，记为内容不合格。通用修复触发已有有限原帧复核，区分偶发推荐变化与操作结果；不改变实际选择值，显式搜索推荐操作与关闭/隐藏/清空推荐仍允许。
+- 触点第 2 次服务器明确 coverage_reason=return_single_gesture_not_explicit，正在保存原始结果并复现，不凭通用错误提示放宽门禁。
+- 本次末尾清理与偶发推荐修复纯暂存快照：611 项视频回归、63 项后端静态检查、主链编译及差异检查通过，独立审查通过。尚未部署；不混入未完成拖动实验，不中断本轮固定版本统计。不宣称生成成功率或真机通过。
