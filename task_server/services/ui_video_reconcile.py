@@ -62,10 +62,12 @@ def check_coverage(original,reviewed,duration=None,resolutions=None,source=None)
             if position in seen or not set(old['frame_refs']) & set(new['frame_refs']):continue
             if old['action']=='aiInput' and new['action']!='aiInput':continue
             if old['action']=='aiScroll' and new['action']!='aiScroll':
+                from .ui_video_automatic_motion import has_positive_drag
+                if has_positive_drag(new['observation']):continue
                 # An explicit, full-evidence correction can explain a false
                 # scroll caused by asynchronous layout; a generic wait cannot.
                 if not (new['action'] in {'aiAssert','aiTap'} and set(old['frame_refs'])<=set(new['frame_refs'])
-                    and re.search(r'(?:未观察到|未见|未发生|没有观察到|没有发生|没有|并非|不是|(?<=[，。；])非)(?:任何|实际的|实际|用户|手指|触点|页面|内容|新的|本次|进行|发生){0,3}(?:滚动|滑动)',new['observation'])
+                    and re.search(r'(?:未观察到|未见|未发生|没有观察到|没有发生|没有|并非|而非|不是|(?<=[，。；])非)(?:任何|实际的|实际|用户|手指|触点|页面|内容|新的|独立的|独立|发起的|发起了|本次|进行|发生){0,4}(?:滚动|滑动|拖动)',new['observation'])
                     and re.search(r'自动|加载|布局|轮播' if new['action']=='aiAssert' else r'实际点击|触点.*按钮',new['observation'])):continue
             if old['action']=='aiTap' and new['action']!='aiTap':
                 # A return/navigation is still an interaction even if the
@@ -113,7 +115,8 @@ def reconcile(events,frames,duration,root,cancelled,secrets,progress=None):
     checked,new_secrets=observe_windows(frames,duration,root,cancelled,progress,
                                        review_events=events,prior_secrets=secrets)
     secrets.extend(new_secrets)
-    repair_refs=_overlapping_gesture_refs(checked['events'])
+    from .ui_video_automatic_motion import review_refs
+    repair_refs=review_refs(events) | review_refs(checked['events']) | _overlapping_gesture_refs(checked['events'])
     try:
         check_coverage(events,checked['events'],duration)
     except ValueError as error:
@@ -252,6 +255,12 @@ def _repair_window(original,checked,frames,duration,root,cancelled,secrets,missi
     positions={f['frame_id']:i for i,f in enumerate(context_frames)}
     neighbors={positions[f['frame_id']]+offset for f in window for offset in (-2,-1,1,2) if 0<=positions[f['frame_id']]+offset<len(context_frames)}
     refs=[context_frames[i]['frame_id'] for i in sorted(neighbors) if context_frames[i]['frame_id'] not in window_ids][:16]
+    from .ui_video_automatic_motion import review_refs,REVIEW_QUESTION
+    motion_review=bool((review_refs(original) | review_refs(checked['events'])) & missing_refs)
+    if motion_review:
+        from .ui_video_windows import temporal_context_frames
+        temporal=temporal_context_frames(window,context_frames)
+        refs=list(dict.fromkeys([f['frame_id'] for f in temporal]+refs))[:16]
     images=[f for f in context_frames if f['frame_id'] in window_ids|set(refs)]
     payload={'phase':'whole-observe','frames':window,'image_frames':images,'duration_ms':duration,
              'window':{'index':1,'total':1,'final':window[-1]==frames[-1]},'review_mode':'full_flow_after_recovery',
@@ -282,12 +291,22 @@ def _repair_window(original,checked,frames,duration,root,cancelled,secrets,missi
     repair_version='coverage'
     # Scroll-only duplicates are legal but not enumerated by eligible_groups.
     # Keep their existing mapping-capable path rather than forbidding recovery.
-    has_scroll=any(e['action']=='aiScroll' for e in original+checked['events'])
+    has_scroll=any(sum(e['action']=='aiScroll' for e in source)>=2
+                   for source in (original,checked['events']))
     if not payload['eligible_resolution_groups'] and not has_scroll:
         repair_version='coverage-observe'
         payload.pop('coverage_resolution_contract')
         payload['gap_note']='逐帧重新核对本窗口的旧识别。没有合法的同次交互合并候选；coverage_resolutions必须为空。context_frame_ids仅作上下文，不属于可引用证据；不得重放preserved_interaction_boundary_frames中的相邻操作。'
         payload['validation_feedback']='旧锚点不是真值。真实点击、滚动和输入须保留；旧点击若只是前序动作后的自动转场，引用旧锚点全部帧并明确未见新点击以及实际自动变化。不得用自动状态代替真实导航。连续输入分段观察，保留各段证据，不提交输入合并声明。旧滚动若为自动加载或静止事实，完整引用旧帧并明确未见滚动的依据。'
+    if motion_review:
+        payload['motion_review_question']=REVIEW_QUESTION
+        # Re-observe pixels without priming the answer with the disputed action.
+        # Original actions stay in backend coverage checks and the audit.
+        payload['coverage_checks']={name:[{'anchor_id':a['anchor_id'],'frame_refs':a['frame_refs']} for a in anchors]
+                                    for name,anchors in payload['coverage_checks'].items()}
+        payload['gesture_hypotheses']=[]
+        payload['validation_feedback']=REVIEW_QUESTION+' 不使用旧动作名称作为答案；先根据头部高度的变化与列表相对位置，区分布局收起和独立用户拖动。不能仅以内容上移符合滑动特征来推断用户操作。'
+
     before=copy.deepcopy(checked['events'])
     resolutions=[]
     for attempt in range(attempt_limit):

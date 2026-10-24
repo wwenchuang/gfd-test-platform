@@ -436,15 +436,15 @@ def test_observation_only_retry_does_not_reintroduce_merge_instructions(monkeypa
     assert len(calls)==2
 
 
-def test_scroll_gap_keeps_existing_mapping_capable_prompt(monkeypatch,tmp_path):
+def test_single_scroll_gap_needs_observation_not_merge_declaration(monkeypatch,tmp_path):
     from task_server.services import ai_skill_service as ai
     fs=[{'frame_id':f'f{i}','timestamp_ms':i*100} for i in range(1,4)]
     (tmp_path/'frames').mkdir()
     for f in fs:(tmp_path/'frames'/(f['frame_id']+'.jpg')).write_bytes(b'image')
     old={**event(1,'aiScroll'),'value':{'direction':'down','scrollType':'singleAction'},'frame_refs':['f1','f2','f3'],'end_ms':300}
     def model(skill,payload,**kw):
-        assert kw['version']=='coverage'
-        assert 'coverage_resolution_contract' in payload
+        assert kw['version']=='coverage-observe'
+        assert 'coverage_resolution_contract' not in payload
         return {'events':[{k:old[k] for k in ('action','target','value','frame_refs','observation','uncertainties')}],
             'coverage_resolutions':[],'uncertainties':[],'multiple_scenarios':False}
     monkeypatch.setattr(ai,'run_ai_skill',model)
