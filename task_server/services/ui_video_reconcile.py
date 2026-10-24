@@ -322,8 +322,16 @@ def _repair_window(original,checked,frames,duration,root,cancelled,secrets,missi
     resolutions=[]
     for attempt in range(attempt_limit):
         if cancelled():raise ValueError('video_cancelled')
-        raw=ai.run_ai_skill('ui_video_observe',payload,version=repair_version,image_assets=load_assets(images,root,cancelled),
-            timeout=120,retry_count=0,max_tokens=5000,repair_invalid_json=False)
+        try:
+            raw=ai.run_ai_skill('ui_video_observe',payload,version=repair_version,image_assets=load_assets(images,root,cancelled),
+                timeout=120,retry_count=0,max_tokens=5000,repair_invalid_json=False)
+        except ai.SkillSchemaError as error:
+            if cancelled():raise ValueError('video_cancelled') from None
+            if attempt+1>=attempt_limit:raise
+            # Consume the existing local/global repair budget; do not create
+            # another retry layer or turn malformed output into empty events.
+            payload['validation_feedback']+=' '+error.model_feedback+' 核对同一组原帧，完整输出规定字段；不补造操作。'
+            continue
         if cancelled():raise ValueError('video_cancelled')
         if isinstance(raw,dict) and isinstance(raw.get('events'),list):
             secrets.extend(e['value'] for e in raw['events'] if isinstance(e,dict) and e.get('action')=='aiInput' and isinstance(e.get('value'),str) and e['value'])
