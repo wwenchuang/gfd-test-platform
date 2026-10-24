@@ -55,6 +55,11 @@ def _log_failure(identifier,stage,error,code):
                          for frame,line in traceback.walk_tb(cause.__traceback__)][-8:]})
         cause=cause.__cause__
     if causes:detail['causes']=causes
+    from task_server.services.ai_skill_service import SkillSchemaError
+    if isinstance(error, SkillSchemaError):
+        schema_path = getattr(error, 'schema_path', None)
+        if type(schema_path) is str and re.fullmatch(r'\$(?:\.[a-zA-Z_][a-zA-Z0-9_]*){0,8}', schema_path):
+            detail['schema_path'] = schema_path
     target=getattr(error,'target_diagnostic',None)
     if code=='video_model_invalid' and type(target) is dict:
         if (type(target.get('frame_id')) is str and re.fullmatch(r'frame-[0-9]{3,6}',target['frame_id']) and

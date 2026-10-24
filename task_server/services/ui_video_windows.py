@@ -103,12 +103,12 @@ def observe_windows(frames,duration,root,cancelled,progress=None,review_events=N
         payload['touch_targets']=probe(images,payload['detail_frames'],assets,duration,cancelled)
         for attempt in range(2):
             if cancelled():raise ValueError('video_cancelled')
-            result=ai.run_ai_skill('ui_video_observe',payload,image_assets=assets,
-                timeout=120,retry_count=0,max_tokens=10000,repair_invalid_json=False)
-            if cancelled():raise ValueError('video_cancelled')
-            if isinstance(result,dict) and isinstance(result.get('events'),list):
-                secrets.extend(e['value'] for e in result['events'] if isinstance(e,dict) and e.get('action')=='aiInput' and isinstance(e.get('value'),str) and e['value'])
             try:
+                result=ai.run_ai_skill('ui_video_observe',payload,image_assets=assets,
+                    timeout=120,retry_count=0,max_tokens=10000,repair_invalid_json=False)
+                if cancelled():raise ValueError('video_cancelled')
+                if isinstance(result,dict) and isinstance(result.get('events'),list):
+                    secrets.extend(e['value'] for e in result['events'] if isinstance(e,dict) and e.get('action')=='aiInput' and isinstance(e.get('value'),str) and e['value'])
                 result=_bind_whole_evidence(result,window)
                 checked=validate_analysis(result,window,duration,secrets)
                 target_diagnostic={}
@@ -120,7 +120,7 @@ def observe_windows(frames,duration,root,cancelled,progress=None,review_events=N
                     raise error
                 break
             except ValueError as error:
-                if attempt:raise
+                if cancelled() or attempt:raise
                 if getattr(error,'reference_reason',None)=='outside_window':
                     # Re-observe original local pixels; never trim invalid model
                     # references or accept context-only events as evidence.

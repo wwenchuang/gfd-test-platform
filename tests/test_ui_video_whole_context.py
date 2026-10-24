@@ -120,7 +120,7 @@ def test_whole_schema_failure_never_calls_hidden_direct_fallback(monkeypatch):
     monkeypatch.setattr(ai,'ai_gateway_skill_content',lambda *a,**k:'{"events":[]}')
     def forbidden(*a,**k):pytest.fail('unexpected hidden model call')
     monkeypatch.setattr(ai,'dashscope_chat_content',forbidden)
-    with pytest.raises(RuntimeError):ai.run_ai_skill('ui_video_observe',{'phase':'whole-observe','image_frames':fs},image_assets=assets)
+    with pytest.raises(ai.SkillSchemaError):ai.run_ai_skill('ui_video_observe',{'phase':'whole-observe','image_frames':fs},image_assets=assets)
 
 
 def test_direct_video_disabled_gateway_keeps_all_labels(monkeypatch):

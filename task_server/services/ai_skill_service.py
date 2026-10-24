@@ -159,31 +159,39 @@ def load_ai_skill_schema(skill_name):
 # JSON Schema minimal validation
 # ---------------------------------------------------------------------------
 
+class SkillSchemaError(ValueError):
+    """Schema-owned path only; never retain the rejected model value."""
+    def __init__(self, path, reason):
+        super().__init__(f"{path} {reason}")
+        self.schema_path = path
+        self.model_feedback = f"输出结构错误：{path} {reason}。按 schema 重新输出完整对象。"
+
+
 def validate_json_schema_minimal(value, schema, path="$"):
     """最小化 JSON Schema 校验。"""
     expected = schema.get("type")
     if expected == "object":
         if not isinstance(value, dict):
-            raise ValueError(f"{path} 必须是 object")
+            raise SkillSchemaError(path, "必须是 object")
         for key in schema.get("required") or []:
             if key not in value:
-                raise ValueError(f"{path}.{key} 为必填字段")
+                raise SkillSchemaError(f"{path}.{key}", "为必填字段")
         properties = schema.get("properties") or {}
         for key, child_schema in properties.items():
             if key in value:
                 validate_json_schema_minimal(value[key], child_schema, f"{path}.{key}")
     elif expected == "array":
         if not isinstance(value, list):
-            raise ValueError(f"{path} 必须是 array")
+            raise SkillSchemaError(path, "必须是 array")
     elif expected == "string":
         if not isinstance(value, str):
-            raise ValueError(f"{path} 必须是 string")
+            raise SkillSchemaError(path, "必须是 string")
     elif expected == "boolean":
         if not isinstance(value, bool):
-            raise ValueError(f"{path} 必须是 boolean")
+            raise SkillSchemaError(path, "必须是 boolean")
     elif expected in ("number", "integer"):
         if not isinstance(value, (int, float)):
-            raise ValueError(f"{path} 必须是 number")
+            raise SkillSchemaError(path, "必须是 number")
     return True
 
 
@@ -442,6 +450,10 @@ def run_ai_skill(
             runtime_trace.update({"source": "ai_gateway", "error": f"AI Gateway skill {skill_name} timeout"})
             raise
         except Exception as exc:
+            if whole_video and isinstance(exc, SkillSchemaError):
+                # Keep model contracts distinct from provider/transport failures.
+                # The caller owns the bounded evidence-based correction budget.
+                raise
             gateway_error = str(exc)
             runtime_trace.update({"source": "ai_gateway", "error": gateway_error[:500]})
             if whole_video or model_config or AI_SKILLS_STRICT_MODEL:
