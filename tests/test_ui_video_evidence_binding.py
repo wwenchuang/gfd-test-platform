@@ -168,3 +168,23 @@ def test_refresh_result_preserves_visible_content_after_feedback():
 def test_refresh_completion_keeps_stable_list_result(text):
     from task_server.services.ui_video_analysis import _stable_visible_observation
     assert _stable_visible_observation(text)=='试卷列表可见'
+
+
+@pytest.mark.parametrize('text',[
+    '七年级选项高亮选中，八年级选项为灰色',
+    '导出格式PDF选项高亮选中',
+    '提醒方式邮件选项处于选中高亮状态',
+])
+def test_persistent_selection_is_not_discarded_as_press_feedback(text):
+    from task_server.services.ui_video_analysis import _stable_visible_observation
+    assert _stable_visible_observation(text)==text
+
+
+@pytest.mark.parametrize('text',[
+    '选项短暂高亮选中，随后恢复灰色',
+    '选项瞬间高亮选中',
+    '选项高亮选中，仅持续一帧后消失',
+])
+def test_transient_highlight_selection_is_not_persistent_state(text):
+    from task_server.services.ui_video_analysis import _stable_visible_observation
+    assert _stable_visible_observation(text)==''

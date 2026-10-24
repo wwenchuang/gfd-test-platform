@@ -84,3 +84,28 @@ def test_dynamic_object_keeps_dedicated_result_path():
     from task_server.services.ui_video_result_quality import needs_configuration_review
     e=event('筛选面板可见');e['target']='{{本次对象}}'
     assert not needs_configuration_review(e)
+
+
+@pytest.mark.parametrize('phrase',['份数显示为1','份数显示1','份数为1','份数是1','份数：1'])
+def test_numeric_configuration_display_wording_is_not_value_loss(phrase):
+    assert not needs_result_review(event('打印设置面板显示份数1'), '打印设置面板'+phrase)
+
+
+def test_unrelated_rotating_advert_is_reviewed_not_fixed_as_browse_result():
+    e={'action':'aiScroll','target':'资料列表','outcome':{'observation':'资料列表可见，顶部轮播广告自动切换'}}
+    assert needs_result_review(e,'资料列表可见，轮播图切换为某促销广告')
+
+
+def test_explicit_advert_interaction_keeps_its_own_result():
+    e={'action':'aiTap','target':'轮播广告入口','outcome':{'observation':'广告详情页可见'}}
+    assert not needs_result_review(e,'广告详情页可见')
+
+
+@pytest.mark.parametrize('target,expected',[
+    ('关闭按钮','广告弹窗消失，首页可见'),
+    ('跳过','广告结束，首页可见'),
+    ('轮播区域','轮播图切换为促销广告'),
+])
+def test_advert_business_results_are_not_incidental_banner_noise(target,expected):
+    e={'action':'aiTap','target':target,'outcome':{'observation':expected}}
+    assert not needs_result_review(e,expected)

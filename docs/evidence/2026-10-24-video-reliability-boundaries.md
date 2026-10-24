@@ -26,3 +26,9 @@
 Platform learning-1 draft uid_b7dda149cd63eec3fb3a626073ede479 confirms missing duplex setting and reward completion text mixed into transmission expectation. The bounded result review now checks missing concrete setting categories and transmission/completion conflicts without changing actions or supplying values. Dynamic object and print recovery paths retain their dedicated gates.
 
 Three local Qwen result-frame replays with old feedback all missed at least one of the two expectations. Three with explicit category and business-state feedback retained all six settings and transmission-only status. Evidence: /tmp/video-reliability/recheck-result-quality-v2.log and result-quality-{1,2,3}.json. These are local visual repairs, not whole-platform success-rate or device-execution results. Review findings concerning category-only answers and dropping transmission were fixed with negative tests; 100 scoped checks passed. This limited detector does not validate every value and does not replace manual source comparison.
+
+## 追加的通用文字处理问题
+
+小白学习第9次虽ready，平台实际草稿仍固定自动轮播促销广告，且“目标年级高亮选中”被按点击反馈过滤，退化为旧年级灰色检查，记录为内容不合格。新增规则保留持续的“高亮选中”，明确短暂/一帧仍拒绝；普通浏览结果混入轮播切换内容走原图复核，不改变关闭广告等业务结果。
+
+独立结果重放捕获“份数显示为1”被当缺值，两个实际响应都含正确数值；补通用显示表达，要求仍有数字，不接受纯类别。捕获数据 /tmp/video-reliability/generic-outcome-capture-{1,2,3}.json。纯暂存583项视频回归、后端63、主链编译和独立190项审查通过。以上不计入平台整片成功率。
