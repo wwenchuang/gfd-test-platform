@@ -21,9 +21,9 @@ def test_checkpoint_tasks_preserve_every_action_and_source_mapping():
     old=build_draft_yaml(plain,APP);new=build_draft_yaml(draft,APP)
     tasks=yaml.safe_load(new['yaml_content'])['tasks']
     assert len(tasks)==3
-    assert [a for t in tasks for a in t['flow']]==yaml.safe_load(old['yaml_content'])['tasks'][0]['flow']
-    assert [i for ids in new['step_ids'] for i in ids]==old['step_ids'][0]
-    assert [r for roles in new['compiler_roles'] for r in roles]==old['compiler_roles'][0]
+    assert [a for i,t in enumerate(tasks) for a in t['flow'][int(i>0):]]==yaml.safe_load(old['yaml_content'])['tasks'][0]['flow']
+    assert [v for i,ids in enumerate(new['step_ids']) for v in ids[int(i>0):]]==old['step_ids'][0]
+    assert [r for i,roles in enumerate(new['compiler_roles']) for r in roles[int(i>0):]]==old['compiler_roles'][0]
     assert all('aiAssert' in t['flow'][-1] for t in tasks)
     assert all(set(t)=={'name','flow'} for t in tasks)
     assert not score_midscene_yaml_executable(old['yaml_content'],generated=True,compiler_roles=old['compiler_roles'])['ok']
@@ -82,3 +82,38 @@ def test_stage_cannot_cut_print_submission_and_cancellation_scope():
            {'action':'cancelPrint','target':'取消本次任务','expected':'取消完成'},
            {'action':'aiAssert','target':'设备空闲'}]
     with pytest.raises(ValueError):normalize_steps({'title':'打印取消','steps':steps},APP)
+
+
+def test_later_stage_waits_for_exact_previous_checkpoint_without_home_keywords():
+    draft=normalize_steps({'title':'编辑模型','steps':[
+        {'action':'aiInput','target':'请输入文本输入框','value':'UI自动化','expected':'UI自动化可见','review_state':'confirmed'},
+        {'action':'aiAssert','target':'UI自动化可见','stage_end':True,'review_state':'confirmed'},
+        {'action':'aiTap','target':'生成模型','expected':'去打印按钮可见','review_state':'confirmed'},
+        {'action':'aiAssert','target':'去打印按钮可见','review_state':'confirmed'}]},APP)
+    built=build_draft_yaml(draft,APP)
+    document=yaml.safe_load(built['yaml_content'])
+    assert document['tasks'][1]['flow'][0]=={'aiWaitFor':'UI自动化可见','timeout':12000}
+    assert built['step_ids'][1][0]==draft['steps'][1]['step_id']
+    assert built['compiler_roles'][1][0]=='guard'
+    score=score_midscene_yaml_executable(built['yaml_content'],compiler_roles=built['compiler_roles'])
+    assert score['ok'],score
+    from task_server.services.ui_yaml_candidate import parse_candidate
+    parsed=parse_candidate(built['yaml_content'],APP,[])
+    assert yaml.safe_load(build_draft_yaml(parsed,APP)['yaml_content'])==document
+    for change in ('mismatch','missing','continue'):
+        bad=copy.deepcopy(document)
+        if change=='mismatch':bad['tasks'][1]['flow'][0]['aiWaitFor']='其它内容可见'
+        elif change=='missing':bad['tasks'][1]['flow'].pop(0)
+        else:bad['tasks'][0]['continueOnError']=True
+        result=score_midscene_yaml_executable(yaml.safe_dump(bad,allow_unicode=True),compiler_roles=built['compiler_roles'])
+        assert not result['taskScores'][1]['startGuard'],change
+
+
+def test_checkpoint_entry_cannot_carry_task_scoped_objects():
+    steps=[{'action':'selectRecord','target':'当前测试账号的可删除记录'},
+           {'action':'aiTap','target':'{{本次对象}}详情','expected':'详情可见'},
+           {'action':'aiAssert','target':'{{本次对象}}详情与{{保留对象}}仍可见','stage_end':True},
+           {'action':'aiTap','target':'设置','expected':'设置内容可见'},
+           {'action':'aiAssert','target':'设置内容可见'}]
+    with pytest.raises(ValueError,match='选取'):
+        normalize_steps({'title':'记录检查后打开设置','steps':steps},APP)

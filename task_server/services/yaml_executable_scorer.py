@@ -697,6 +697,18 @@ def score_midscene_yaml_executable(yaml_text: str, *, generated: bool = True, co
         heavy_adb_cleanup = 0
         replan_risk = "low"
         start_guard = _has_start_guard(flow)
+        # A compiler-generated continuation must re-check the exact preceding
+        # checkpoint before any action. It is not an independently launched test.
+        if not start_guard and idx > 1 and valid_roles and roles and roles[0] == 'guard':
+            previous_task = tasks[idx-2]
+            previous_flow = previous_task.get('flow', []) if isinstance(previous_task, dict) else []
+            checkpoint = previous_flow[-1] if previous_flow else None
+            start_guard = bool(
+                isinstance(checkpoint, dict) and set(checkpoint) == {'aiAssert'}
+                and isinstance(checkpoint['aiAssert'], str) and checkpoint['aiAssert'].strip()
+                and not previous_task.get('continueOnError')
+                and flow[0] == {'aiWaitFor': checkpoint['aiAssert'], 'timeout': 12000}
+            )
         if flow and not start_guard:
             warnings.append("缺少稳定起点/启动守卫，可能依赖上一个页面状态")
             score -= 25 if generated else 10

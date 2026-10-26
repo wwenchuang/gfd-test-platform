@@ -145,6 +145,8 @@ def normalize_steps(payload, app_id):
         for index, step in enumerate(steps):
             if step.get('stage_end') or index == len(steps) - 1:
                 stage = steps[start:index + 1]
+                if start:
+                    stage = [{'action': 'aiWaitFor', 'target': steps[start-1]['target'], 'expected': ''}] + stage
                 # Runtime bindings are task-scoped; a checkpoint cannot carry
                 # an object or an unfinished print lifecycle into another task.
                 validate_references(stage)
@@ -232,8 +234,14 @@ def build_draft_yaml(draft, app_id):
     tasks, task_ids, task_roles, start = [], [], [], 0
     for number, end in enumerate(cuts, 1):
         name = normalized['title'] if len(cuts) == 1 else f"{normalized['title']} · 第{number}阶段"
-        tasks.append({'name': name, 'flow': flow[start:end]})
-        task_ids.append(step_ids[start:end]);task_roles.append(roles[start:end])
+        stage_flow = flow[start:end]
+        stage_ids, stage_roles = step_ids[start:end], roles[start:end]
+        if start:
+            stage_flow = [{'aiWaitFor': flow[start-1]['aiAssert'], 'timeout': SHORT_TIMEOUT_MS}] + stage_flow
+            stage_ids = [step_ids[start-1]] + stage_ids
+            stage_roles = ['guard'] + stage_roles
+        tasks.append({'name': name, 'flow': stage_flow})
+        task_ids.append(stage_ids);task_roles.append(stage_roles)
         start = end
     content = yaml.safe_dump({'android': {}, 'tasks': tasks}, allow_unicode=True, sort_keys=False)
     return {'yaml_content': content, 'step_ids': task_ids, 'compiler_roles': task_roles, 'questions': questions, 'ready': not questions}

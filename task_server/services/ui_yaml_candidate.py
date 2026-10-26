@@ -49,6 +49,7 @@ def parse_candidate(raw, app_id, preconditions):
         raise ValueError('阶段动作不能为空')
     title = tasks[0]['name']
     boundaries = set()
+    stage_entries = set()
     if len(tasks) > 1:
         suffix = ' · 第1阶段'
         if not isinstance(title, str) or not title.endswith(suffix):
@@ -58,6 +59,11 @@ def parse_candidate(raw, app_id, preconditions):
         for number, task in enumerate(tasks, 1):
             if task['name'] != f'{title} · 第{number}阶段':
                 raise ValueError('阶段名称或顺序不一致')
+            if number > 1:
+                previous = tasks[number-2]['flow'][-1]
+                if task['flow'][0] != {'aiWaitFor': previous['aiAssert'], 'timeout': SHORT_TIMEOUT_MS}:
+                    raise ValueError('阶段必须先等待上一检查点的完整状态')
+                stage_entries.add(total)
             total += len(task['flow'])
             if number < len(tasks):
                 if not isinstance(task['flow'][-1], dict) or set(task['flow'][-1]) != {'aiAssert'}:
@@ -98,7 +104,7 @@ def parse_candidate(raw, app_id, preconditions):
     compact = []
     consumed = set()
     for index, step in enumerate(steps):
-        if index in consumed:
+        if index in consumed or index in stage_entries:
             continue
         following = steps[index + 1] if index + 1 < len(steps) else None
         check = steps[index + 2] if index + 2 < len(steps) else None
