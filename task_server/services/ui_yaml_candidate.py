@@ -40,13 +40,31 @@ def parse_candidate(raw, app_id, preconditions):
         mark = getattr(error, 'problem_mark', None)
         raise ValueError('YAML 格式错误' + (f'，请检查第 {mark.line + 1} 行' if mark else '')) from None
     if not isinstance(document, dict) or set(document) != {'android', 'tasks'} or document['android'] != {}:
-        raise ValueError('仅支持 android: {} 和单个 tasks；设备、平台及其他配置不能从 YAML 导入')
+        raise ValueError('仅支持 android: {} 和检查点分段的 tasks；设备、平台及其他配置不能从 YAML 导入')
     tasks = document['tasks']
-    if not isinstance(tasks, list) or len(tasks) != 1 or not isinstance(tasks[0], dict) or set(tasks[0]) != {'name', 'flow'}:
-        raise ValueError('仅支持一个包含 name 和 flow 的任务；不支持额外任务配置')
-    task = tasks[0]
-    flow = task['flow']
-    if not isinstance(flow, list) or not 1 <= len(flow) <= 201:
+    if (not isinstance(tasks, list) or not 1 <= len(tasks) <= 50
+            or any(not isinstance(t, dict) or set(t) != {'name', 'flow'} for t in tasks)):
+        raise ValueError('仅支持包含 name 和 flow 的任务；不支持额外任务配置')
+    if any(not isinstance(t['flow'], list) or not t['flow'] for t in tasks):
+        raise ValueError('阶段动作不能为空')
+    title = tasks[0]['name']
+    boundaries = set()
+    if len(tasks) > 1:
+        suffix = ' · 第1阶段'
+        if not isinstance(title, str) or not title.endswith(suffix):
+            raise ValueError('多个任务只支持由检查点生成的连续阶段名称')
+        title = title[:-len(suffix)]
+        total = 0
+        for number, task in enumerate(tasks, 1):
+            if task['name'] != f'{title} · 第{number}阶段':
+                raise ValueError('阶段名称或顺序不一致')
+            total += len(task['flow'])
+            if number < len(tasks):
+                if not isinstance(task['flow'][-1], dict) or set(task['flow'][-1]) != {'aiAssert'}:
+                    raise ValueError('阶段只能在明确检查步骤后结束')
+                boundaries.add(total - 1)
+    flow = [item for task in tasks for item in task['flow']]
+    if not 1 <= len(flow) <= 201:
         raise ValueError('候选 YAML 必须包含1至201个动作（转换后最多50个中文步骤）')
     print_recovery.validate_flow(document)
     steps = []
@@ -73,6 +91,8 @@ def parse_candidate(raw, app_id, preconditions):
         expected = target if action == 'aiAssert' else ''
         steps.append({'action':action, 'target':target, 'value': {k:v for k,v in item.items() if k != action} if action == 'aiScroll' else item.get('value', ''),
                       'expected':expected, 'source_ref':'manual_yaml', 'review_state':'needs_review'})
+        if index in boundaries:
+            steps[-1]['stage_end'] = True
     # Fold only patterns which the compiler reconstructs byte-for-byte. Direct
     # assertions in older manual scripts stay explicit (no invented waits).
     compact = []
@@ -94,12 +114,12 @@ def parse_candidate(raw, app_id, preconditions):
                 and following['target']==check['target']):
             step['expected']=following['target']
             consumed.add(index+1)
-            if index+2 < len(steps)-1:
+            if index+2 < len(steps)-1 and not check.get('stage_end'):
                 consumed.add(index+2)
         compact.append(step)
     if len(compact) > 50:
         raise ValueError('转换后超过50个中文步骤，请拆分用例；原始 YAML 已保留')
-    normalized = normalize_steps({'title':task['name'], 'preconditions':preconditions, 'steps':compact, 'questions':[]}, app_id)
+    normalized = normalize_steps({'title':title, 'preconditions':preconditions, 'steps':compact, 'questions':[]}, app_id)
     rebuilt = yaml.safe_load(build_draft_yaml(normalized, app_id)['yaml_content'])
     if rebuilt != document:
         raise ValueError('当前脚本不能无损转换为中文步骤；请保留自动启动、点击前等待及完整检查点，或恢复上一有效版')

@@ -209,3 +209,13 @@ test('failed bulk save retains original review states and advanced YAML still bl
  const f=fixture(t,p=>p.endsWith('/update')?Promise.reject(new Error('save failed')):undefined,{initialDraft:bulkDraft});await wait();f.node.querySelector('[data-draft-confirm-all]').click();await wait();assert.match(f.node.querySelector('[data-draft-notice]').textContent,/save failed/);assert.ok([...f.node.querySelectorAll('.ui-draft-step-head small')].every(n=>n.textContent==='待确认'));
  const yaml=f.node.querySelector('[data-draft-yaml-input]');yaml.value='invalid yaml';yaml.dispatchEvent(new f.w.Event('input'));assert.equal(f.node.querySelector('[data-draft-confirm-all]').disabled,true);assert.equal(f.calls.some(c=>c.path.endsWith('/try')),false);
 });
+
+test('checkpoint stage marker survives editing and saving without confirming the step',async t=>{
+ const checkpoint={...draft,questions:[],steps:[{step_id:'11111111-1111-4111-8111-111111111111',action:'aiAssert',target:'首页导航可见',expected:'',value:'',review_state:'confirmed',source_ref:'text'}]};
+ const f=fixture(t,p=>p==='/ui-case-drafts/d1'?{ok:true,draft:checkpoint}:undefined);await open(f);
+ const marker=f.node.querySelector('[data-stage-end]');assert.ok(marker);marker.checked=true;marker.dispatchEvent(new f.w.Event('change',{bubbles:true}));
+ assert.equal(f.node.querySelector('[data-draft-try]').disabled,true);
+ f.node.querySelector('[data-draft-save]').click();await wait();
+ const saved=f.calls.find(c=>c.path.endsWith('/update')).o.body.steps[0];assert.equal(saved.stage_end,true);assert.equal(saved.review_state,'needs_review');
+ assert.equal(f.node.querySelector('[data-stage-end]').checked,true);
+});

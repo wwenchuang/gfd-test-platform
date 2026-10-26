@@ -273,3 +273,24 @@ def test_published_asset_retry_checks_exact_bytes(publish_env):
     target.write_bytes(target.read_bytes().replace(b'\n', b'\r\n'))
     with pytest.raises(DraftConflict, match='draft_publish_asset_changed'):
         publish(draft, batch['ui_batch_id'])
+
+
+def test_staged_trial_freezes_all_tasks_and_rejects_partial_stage_evidence(draft_env):
+    import yaml
+    draft,_=draft_env
+    steps=copy.deepcopy(draft['steps'])
+    steps[-1]['stage_end']=True
+    second=copy.deepcopy(steps)
+    for step in second:step['step_id']=str(uuid4());step.pop('stage_end',None)
+    draft=DraftStore().revise(draft['draft_id'],'u-a',draft['revision'],{'steps':steps+second})
+    batch=passed_trial(draft)
+    attempt=batch['case_attempts'][0]
+    assert len(yaml.safe_load(attempt['compiled_case']['yaml_content'])['tasks'])==2
+    assert execution.validate_trial_snapshot(batch,attempt)
+    assert len(attempt['execution_progress']['tasks'])==2
+    # Publication must not turn a passed summary into proof of missing stages.
+    partial=copy.deepcopy(batch);partial['case_attempts'][0]['execution_progress']['tasks'].pop()
+    from unittest.mock import patch
+    with actor_context(ACTORS['a']), patch.object(execution.UiExecutionStore,'get_batch',return_value=partial):
+        with pytest.raises(execution.BatchValidationError,match='draft_trial_steps_required'):
+            execution._verified_publish_batch(ACTORS['a'],draft,batch['ui_batch_id'])

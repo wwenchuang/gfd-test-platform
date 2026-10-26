@@ -15,7 +15,7 @@ from .ui_dynamic_object import PREFIX, validate_references
 from . import ui_print_recovery as print_recovery
 
 ACTIONS = frozenset({'launch', 'aiTap', 'aiWaitFor', 'aiAssert', 'aiInput', 'aiScroll', 'selectRecord', 'submitPrint', 'cancelPrint'})
-STEP_FIELDS = frozenset({'step_id', 'action', 'target', 'value', 'expected', 'review_state', 'source_ref'})
+STEP_FIELDS = frozenset({'step_id', 'action', 'target', 'value', 'expected', 'review_state', 'source_ref', 'stage_end'})
 AMBIGUOUS_TARGETS = frozenset({'按钮', '这里', '那里', '它', '点击这里', '输入框', '列表', '页面', '正常', '功能正常', '可见', '显示', '成功', '通过', '显示正常', '操作成功'})
 SHORT_TIMEOUT_MS = 12000
 
@@ -67,6 +67,10 @@ def normalize_steps(payload, app_id):
         action = raw.get('action')
         if not isinstance(action, str) or action not in ACTIONS:
             raise ValueError(f'步骤{index} action 不支持')
+        if 'stage_end' in raw and type(raw['stage_end']) is not bool:
+            raise ValueError('stage_end 必须为布尔值')
+        if raw.get('stage_end') and action != 'aiAssert':
+            raise ValueError('阶段只能在明确检查步骤后结束')
         step_id = raw.get('step_id')
         if step_id is None:
             step_id = str(uuid4())
@@ -132,8 +136,20 @@ def normalize_steps(payload, app_id):
         steps.append({'step_id': step_id, 'action': action, 'target': target,
                       'value': value, 'expected': expected, 'review_state': review_state,
                       'source_ref': source_ref})
+        if raw.get('stage_end'):
+            steps[-1]['stage_end'] = True
     validate_references(steps)
     print_recovery.validate_steps(steps)
+    if any(step.get('stage_end') for step in steps):
+        start = 0
+        for index, step in enumerate(steps):
+            if step.get('stage_end') or index == len(steps) - 1:
+                stage = steps[start:index + 1]
+                # Runtime bindings are task-scoped; a checkpoint cannot carry
+                # an object or an unfinished print lifecycle into another task.
+                validate_references(stage)
+                print_recovery.validate_steps(stage)
+                start = index + 1
     if steps[-1]['action'] != 'aiAssert' or not steps[-1]['target'] or steps[-1]['target'] in AMBIGUOUS_TARGETS:
         questions.append('请在最后添加明确的 aiAssert 检查点')
     return {'title': title, 'preconditions': preconditions, 'steps': steps, 'questions': list(dict.fromkeys(questions))}
@@ -208,6 +224,16 @@ def build_draft_yaml(draft, app_id):
     unconfirmed = [str(index) for index, step in enumerate(steps, 1) if step['review_state'] != 'confirmed']
     if unconfirmed:
         questions.append('请确认建议步骤：' + '、'.join(unconfirmed))
-    content = yaml.safe_dump({'android': {}, 'tasks': [{'name': normalized['title'], 'flow': flow}]},
-                             allow_unicode=True, sort_keys=False)
-    return {'yaml_content': content, 'step_ids': [step_ids], 'compiler_roles': [roles], 'questions': questions, 'ready': not questions}
+    boundaries = {step['step_id'] for step in steps if step.get('stage_end')}
+    cuts = [i + 1 for i, (item, owner) in enumerate(zip(flow, step_ids))
+            if 'aiAssert' in item and owner in boundaries]
+    if not cuts or cuts[-1] != len(flow):
+        cuts.append(len(flow))
+    tasks, task_ids, task_roles, start = [], [], [], 0
+    for number, end in enumerate(cuts, 1):
+        name = normalized['title'] if len(cuts) == 1 else f"{normalized['title']} · 第{number}阶段"
+        tasks.append({'name': name, 'flow': flow[start:end]})
+        task_ids.append(step_ids[start:end]);task_roles.append(roles[start:end])
+        start = end
+    content = yaml.safe_dump({'android': {}, 'tasks': tasks}, allow_unicode=True, sort_keys=False)
+    return {'yaml_content': content, 'step_ids': task_ids, 'compiler_roles': task_roles, 'questions': questions, 'ready': not questions}
