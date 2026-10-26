@@ -23,8 +23,40 @@ def _tap_is_drag(old,new,eligible_refs):
                 re.search(r'内容.{0,20}(?:位移|上移|下移|移动)',affirmative))
 
 
+def _input_rounds(events):
+    """Only adjacent same-field edit fragments are eligible for pixel review."""
+    group=[]
+    for event in events:
+        if (group and event['action']=='aiInput' and event['target']==group[-1]['target']
+                and 0<=event['start_ms']-group[-1]['end_ms']<=5000
+                and event['end_ms']-group[0]['start_ms']<=30000):
+            group.append(event)
+        else:
+            if 2<=len(group)<=4:yield group
+            group=[event] if event['action']=='aiInput' else []
+    if 2<=len(group)<=4:yield group
+
+
+def _confirmed_input_round(note):
+    clauses=re.split(r'[。；，,;\n]|但是|但|随后|然后',note)
+    if re.search(r'可能|疑似|无法确认|不确定|(?:并非|不是|不属于).{0,10}同一',note):return False
+    if re.search(r'(?:并非|不是|不)(?:没有|未|没|无|不)',note):return False
+    affirmative=[c for c in clauses if not re.search(r'未|没|无|不|并非',c)]
+    # Negate only the action predicate. "提交没有响应" still records a submit.
+    boundary=r'(?:提交|导航|切换(?:页面|字段|输入框)|离开(?:当前)?(?:页面|字段|输入框)|换字段|重新进入|再次进入)'
+    negative=r'(?:未(?:见|观察到|发生)?|没有(?:发生)?|并非|不是)'
+    remaining=re.sub(negative+boundary+r'(?:(?:或|和|及)'+boundary+r')*','',note)
+    if re.search(boundary,remaining):return False
+    if re.search(r'第[二三四五六七八九十0-9]+轮|[两二三四五多0-9]+(?:轮|次|个独立).{0,8}(?:输入|编辑|修改)|分开(?:输入|编辑)',remaining):return False
+    # Keyboard editing is part of this round; other explicit clicks are not.
+    remaining=re.sub(r'(?:点击|点按)(?:删除键|退格键|候选词|字母键|数字键|空格键)(?=$|[。；，,;\n]|后|并|继续|清空)','',remaining)
+    if re.search(r'点击|点按|滚动|滑动|拖动',remaining):return False
+    return any(re.search(r'同一[^。；]{0,30}(?:连续|持续)(?:输入|编辑)',c) for c in affirmative)
+
+
 def check_coverage(original,reviewed,duration=None,resolutions=None,source=None):
     from .ui_video_analysis import _system_boundary
+    from .ui_video_business_inputs import _MANUAL
     from .ui_video_coverage_resolution import positions
     mapped=positions(resolutions,source,reviewed) if resolutions else {}
     required=[];claimed=set()
@@ -68,6 +100,20 @@ def check_coverage(original,reviewed,duration=None,resolutions=None,source=None)
                new['start_ms']<=focus['start_ms'] and new['end_ms']>=typed['end_ms'] and
                set(new['frame_refs'])&set(focus['frame_refs']) and
                set(new['frame_refs'])&set(typed['frame_refs']) for new in reviewed):absorbed.add(i)
+    # A visual re-observation may combine fragments of one editing round, but
+    # must retain every fragment's beginning/end and the exact complete span.
+    # Any intervening event (including a page-state event) breaks eligibility.
+    for group in _input_rounds(original):
+        if any('_resolved_position' in e for e in group):continue
+        anchors={ref for e in group for ref in (e['frame_refs'][0],e['frame_refs'][-1])}
+        for new in reviewed:
+            note=new.get('observation','')
+            if (new['action']=='aiInput' and new['target']==group[0]['target']
+                    and new['start_ms']==group[0]['start_ms'] and new['end_ms']==group[-1]['end_ms']
+                    and anchors<=set(new['frame_refs']) and not (set(new.get('uncertainties',[]))-{_MANUAL})
+                    and _confirmed_input_round(note)):
+                absorbed.update(i for i,e in enumerate(required) if any(e is part for part in group[1:]))
+                break
     required=[e for i,e in enumerate(required) if i not in absorbed]
     owners={}
     def assign(index,seen):
@@ -139,6 +185,8 @@ def _overlapping_input_refs(events):
             first['start_ms']<=second['start_ms']<first['end_ms'] and
             set(first['frame_refs'])&set(second['frame_refs'])):
             refs.update(first['frame_refs']);refs.update(second['frame_refs'])
+    for group in _input_rounds(events):
+        refs.update(ref for event in group for ref in event['frame_refs'])
     return refs
 
 
@@ -228,6 +276,10 @@ def _repair_coverage(original,checked,frames,duration,root,cancelled,secrets,mis
               if e['action'] in {'aiTap','aiInput','aiScroll'} and set(e['frame_refs'])&missing_refs]
     positions={f['frame_id']:i for i,f in enumerate(frames)}
     selected={positions[r] for r in missing_refs}
+    for source in (original,checked['events']):
+        for group in _input_rounds(source):
+            if all(set(e['frame_refs'])<=missing_refs for e in group):
+                selected.update(range(positions[group[0]['frame_refs'][0]],positions[group[-1]['frame_refs'][-1]]+1))
     for event in affected:
         indexes=[positions[r] for r in event['frame_refs']]
         selected.update(range(min(indexes),max(indexes)+1))
@@ -253,7 +305,7 @@ def _repair_coverage(original,checked,frames,duration,root,cancelled,secrets,mis
                 for other in counterpart)
             if event['action'] in {'aiTap','aiInput','aiScroll'} and selected.intersection(indexes) and (related or scroll_overlap):
                 expanded.update(range(min(indexes),max(indexes)+1))
-        if len(expanded)>40:raise ValueError('video_required_action_missing')
+        if len(expanded)>160:raise ValueError('video_required_action_missing')
         if expanded==selected:break
         selected=expanded
     window=[f for i,f in enumerate(frames) if i in selected]
@@ -261,7 +313,7 @@ def _repair_coverage(original,checked,frames,duration,root,cancelled,secrets,mis
     for frame in window:
         if not groups or positions[frame['frame_id']]!=positions[groups[-1][-1]['frame_id']]+1:groups.append([])
         groups[-1].append(frame)
-    if len(groups)>4:raise ValueError('video_required_action_missing')
+    if len(groups)>4 or any(len(group)>40 for group in groups):raise ValueError('video_required_action_missing')
     result=copy.deepcopy(checked);resolutions=[];replacements=[]
     all_ids={f['frame_id'] for f in window}
     replaced={i for i,e in enumerate(checked['events']) if set(e['frame_refs'])<=all_ids}
@@ -385,6 +437,12 @@ def _repair_window(original,checked,frames,duration,root,cancelled,secrets,missi
         payload['validation_feedback']=(REVIEW_QUESTION if motion_review else '')+DELAYED_QUESTION
     if _overlapping_input_refs(original) or _overlapping_input_refs(checked['events']):
         payload['validation_feedback']+=' 点击输入框与后续输入的原证据区间重叠：逐帧区分点击聚焦、键盘弹出与实际文字修改。保留真实点击及输入；输入证据从实际删改文字开始，不把较早的聚焦或键盘动画当作输入开始。同一字段删除旧字后连续输入新字、切换输入法及选择候选词属于一次完整文字替换，保留删改到最终文字的证据，不把中间暂时清空拆成空值输入；不能跨提交、换字段或其他独立业务操作合并。不得按时间直接裁剪或补造边界，不得删除不同控件操作；无法从原图确认则保留疑问。'
+    if list(_input_rounds(original)) or list(_input_rounds(checked['events'])):
+        payload['validation_feedback']+=' 相邻同字段aiInput可能是跨窗口拆开的同一轮编辑。必须核对全部原图：仅确认为同一输入框的一轮连续编辑时输出一个aiInput，保留每个旧输入片段的首尾原帧、从首段开始至末段结束的完整时间范围；observation明确同一输入框的一轮连续编辑及最终状态，不转录输入值。不要用coverage_resolutions声明输入合并。存在切换页面、字段、提交、重新进入或疑问时保留独立输入。'
+    input_groups=list(_input_rounds(checked['events']))
+    if input_groups and all(e['action']=='aiInput' for e in original+checked['events']):
+        repair_version='input-round'
+        payload['input_round_candidates']=[{'field':group[0]['target'],'fragments':[{'frame_refs':e['frame_refs']} for e in group]} for group in input_groups]
     # Reuse bounded same-frame detail during conflict review as in initial observation.
     # Crops aid perception only; validate_analysis still accepts original frame IDs only.
     assets=load_assets(images,root,cancelled)
