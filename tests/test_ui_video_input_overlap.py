@@ -162,3 +162,25 @@ def test_input_round_does_not_negate_action_when_response_is_missing(note):
 def test_input_round_allows_explicit_absence_of_business_boundary(note):
     old,new=input_round();new['observation']=note
     review.check_coverage(old,[new],1000)
+
+
+@pytest.mark.parametrize('note',[
+ '同一输入框的一轮连续编辑。全过程无页面切换或提交，属于同一轮编辑。',
+ '同一输入框的一轮连续编辑。全过程无页面切换或提交操作，属于同一轮编辑。',
+])
+def test_input_round_accepts_absent_boundary_as_noun_phrase(note):
+    old,new=input_round();new['observation']=note
+    review.check_coverage(old,[new],1000)
+
+
+@pytest.mark.parametrize('note',[
+ '同一输入框的一轮连续编辑。无页面切换，但提交后继续输入。',
+ '同一输入框的一轮连续编辑。无提交响应，随后继续修改。',
+ '同一输入框的一轮连续编辑。并非无页面切换或提交。',
+ '同一输入框的一轮连续编辑。页面切换后继续输入。',
+ '同一输入框的一轮连续编辑。没有提交响应，随后继续修改。',
+])
+def test_input_round_rejects_boundary_or_absent_response(note):
+    old,new=input_round();new['observation']=note
+    with pytest.raises(ValueError,match='video_required_action_missing'):
+        review.check_coverage(old,[new],1000)

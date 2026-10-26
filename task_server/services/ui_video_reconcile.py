@@ -43,9 +43,11 @@ def _confirmed_input_round(note):
     if re.search(r'(?:并非|不是|不)(?:没有|未|没|无|不)',note):return False
     affirmative=[c for c in clauses if not re.search(r'未|没|无|不|并非',c)]
     # Negate only the action predicate. "提交没有响应" still records a submit.
-    boundary=r'(?:提交|导航|切换(?:页面|字段|输入框)|离开(?:当前)?(?:页面|字段|输入框)|换字段|重新进入|再次进入)'
-    negative=r'(?:未(?:见|观察到|发生)?|没有(?:发生)?|并非|不是)'
-    remaining=re.sub(negative+boundary+r'(?:(?:或|和|及)'+boundary+r')*','',note)
+    boundary=r'(?:提交|导航|切换(?:页面|字段|输入框)|(?:页面|字段|输入框)切换|离开(?:当前)?(?:页面|字段|输入框)|换字段|重新进入|再次进入)'
+    negative=r'(?:未(?:见|观察到|发生)?|没有(?:发生)?|无|并非|不是)'
+    # A noun phrase such as "无页面切换或提交" negates the operations;
+    # "没有提交响应" only negates the response and must remain a boundary.
+    remaining=re.sub(negative+boundary+r'(?:(?:或|和|及)'+boundary+r')*(?:操作)?(?=$|[。；，,;\n])','',note)
     if re.search(boundary,remaining):return False
     if re.search(r'第[二三四五六七八九十0-9]+轮|[两二三四五多0-9]+(?:轮|次|个独立).{0,8}(?:输入|编辑|修改)|分开(?:输入|编辑)',remaining):return False
     # Keyboard editing is part of this round; other explicit clicks are not.
