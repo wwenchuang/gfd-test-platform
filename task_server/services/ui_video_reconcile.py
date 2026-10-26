@@ -126,6 +126,22 @@ def _tap_scroll_refs(events):
     return refs
 
 
+def _overlapping_input_refs(events):
+    """Review input evidence that starts inside the preceding focus tap.
+
+    Shared pre-input context can make the tap's outcome interval empty. Only
+    request pixels here; neither action nor its time range is edited by code.
+    """
+    interactions=[e for e in events if e['action'] in {'aiTap','aiInput','aiScroll'}]
+    refs=set()
+    for first,second in zip(interactions,interactions[1:]):
+        if (first['action']=='aiTap' and second['action']=='aiInput' and
+            first['start_ms']<=second['start_ms']<first['end_ms'] and
+            set(first['frame_refs'])&set(second['frame_refs'])):
+            refs.update(first['frame_refs']);refs.update(second['frame_refs'])
+    return refs
+
+
 def _overlapping_gesture_refs(events):
     """Flag ambiguous window overlaps for pixel review, never merge by wording."""
     refs=set()
@@ -163,6 +179,7 @@ def reconcile(events,frames,duration,root,cancelled,secrets,progress=None):
     from .ui_video_automatic_motion import review_refs,disputed_scroll_refs
     repair_refs=review_refs(events) | review_refs(checked['events']) | _overlapping_gesture_refs(checked['events']) | _tap_scroll_refs(events) | _tap_scroll_refs(checked['events'])
     repair_refs.update(_overlapping_tap_refs(events) | _overlapping_tap_refs(checked['events']))
+    repair_refs.update(_overlapping_input_refs(checked['events']))
     repair_refs.update(disputed_scroll_refs(events,checked['events']))
     from .ui_video_delayed_response import review_refs as delayed_refs
     repair_refs.update(delayed_refs(events,checked['events']))
@@ -351,7 +368,7 @@ def _repair_window(original,checked,frames,duration,root,cancelled,secrets,missi
         repair_version='coverage-observe'
         payload.pop('coverage_resolution_contract')
         payload['gap_note']='逐帧重新核对本窗口的旧识别。没有合法的同次交互合并候选；coverage_resolutions必须为空。context_frame_ids仅作上下文，不属于可引用证据；不得重放preserved_interaction_boundary_frames中的相邻操作。'
-        payload['validation_feedback']='旧锚点不是真值。真实点击、滚动和输入须保留；旧点击若只是前序动作后的自动转场，引用旧锚点全部帧并明确未见新点击以及实际自动变化。不得用自动状态代替真实导航。连续输入分段观察，保留各段证据，不提交输入合并声明。旧滚动若为自动加载或静止事实，完整引用旧帧并明确未见滚动的依据。'
+        payload['validation_feedback']='旧锚点不是真值。真实点击、滚动和输入须保留；旧点击若只是前序动作后的自动转场，引用旧锚点全部帧并明确未见新点击以及实际自动变化。不得用自动状态代替真实导航。逐帧观察连续输入，保留全部删改证据，不提交输入合并声明。旧滚动若为自动加载或静止事实，完整引用旧帧并明确未见滚动的依据。'
     if motion_review:
         payload['motion_review_question']=REVIEW_QUESTION
         # Re-observe pixels without priming the answer with the disputed action.
@@ -366,6 +383,8 @@ def _repair_window(original,checked,frames,duration,root,cancelled,secrets,missi
         payload['coverage_checks']={name:[{'anchor_id':a['anchor_id'],'frame_refs':a['frame_refs']} for a in anchors] for name,anchors in payload['coverage_checks'].items()}
         payload['gesture_hypotheses']=[]
         payload['validation_feedback']=(REVIEW_QUESTION if motion_review else '')+DELAYED_QUESTION
+    if _overlapping_input_refs(original) or _overlapping_input_refs(checked['events']):
+        payload['validation_feedback']+=' 点击输入框与后续输入的原证据区间重叠：逐帧区分点击聚焦、键盘弹出与实际文字修改。保留真实点击及输入；输入证据从实际删改文字开始，不把较早的聚焦或键盘动画当作输入开始。同一字段删除旧字后连续输入新字、切换输入法及选择候选词属于一次完整文字替换，保留删改到最终文字的证据，不把中间暂时清空拆成空值输入；不能跨提交、换字段或其他独立业务操作合并。不得按时间直接裁剪或补造边界，不得删除不同控件操作；无法从原图确认则保留疑问。'
     # Reuse bounded same-frame detail during conflict review as in initial observation.
     # Crops aid perception only; validate_analysis still accepts original frame IDs only.
     assets=load_assets(images,root,cancelled)

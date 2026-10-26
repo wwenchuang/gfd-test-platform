@@ -1,3 +1,11 @@
+## 2026-10-26 输入聚焦边界复核（待部署整片验收）
+
+- 接续来源 uvs_7e5bd6443e3e4dde91f219e5793b32ad/v1，线上9b6881d0已核对；任务failed/video_expected_missing。堡垒机日志定位ui_video_outcomes.repair_outcomes第21行：聚焦点击18433–18600ms与后续输入18467–25967ms重叠，合法结果区间为空。
+- 通用检测相邻aiTap/aiInput共享帧且时间严格重叠，进入已有有界原帧复核；不直接改时间、不删除动作、不放宽结果/覆盖门禁。完整替换提示区分连续删改和跨提交/换字段；修复提示被后续分支覆盖的问题。
+- 原视频SHA256与人工基线一致。局部真实模型边界复核和后续整理/业务输入恢复通过静态校验，值为姓名、姓名牌、UI、UI自动化。保留早期局部空值失败；这不代表完整生成内容正确，旧观察中下一步位置仍需全片重跑核对。
+- 880视频回归、63后端检查、主链编译和diff检查通过；独立85项复审无新P1/P2。Android Runner/mac-android-adouceshi和ecbfd645在线；未操作打印机、未取消任务、未做真机整例。长链评分及4F2A任务归属仍待验收。
+- 证据：/Users/adouceshi/Documents/projects/video-reliability-20261026/new-touch/current-platform/accept-9b6881-current.json；input-overlap-replay/overlap-v4-final.json、pipeline-v4-final.json。下一步提交推送、bundle部署，再重试保留来源（不重新上传）。
+
 ## 2026-10-24 延迟响应误识别复核（待上线整片验证）
 
 - 触点第3次的两次点击来自：首轮把真实按下当静态，复核找回触点后仍保留稍后页面响应的旧点击。新增通用触发：旧静态被改识别为点击，500ms内又有旧点击假设，二者共同进入原有一次原图修复预算；不按目标名匹配，不自动合并，不增加调用上限。
