@@ -36,3 +36,14 @@
 .ui-case-draft [data-draft-journey]{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));padding:0;list-style:none;margin:16px 0}.ui-case-draft [data-draft-journey] [aria-current=step]{color:#83ebcb;border-color:#83ebcb}.ui-case-draft [data-draft-journey][hidden]{display:none}@media(max-width:640px){.ui-case-draft [data-draft-journey]{grid-template-columns:repeat(2,minmax(0,1fr))}}
 /* A video task opens directly into its steps; ancillary authoring stays off-screen. */
 .ui-case-draft.ui-draft-video-review{max-width:1280px;margin-inline:auto}.ui-draft-video-review .ui-draft-layout{grid-template-columns:minmax(0,1fr)}.ui-draft-video-review [data-draft-authoring][hidden]{display:none}.ui-case-draft [data-draft-questions-box]{margin-bottom:16px;border:1px solid #3a4c58;border-radius:8px;padding:12px}.ui-case-draft [data-draft-questions-box]>summary{cursor:pointer;color:#d4e3e8;font-weight:600}.ui-case-draft [data-draft-questions-box] ul{margin-bottom:0}.ui-case-draft [data-draft-video-back]{margin:0 0 14px}.ui-draft-video-review .ui-draft-edit-grid{grid-template-columns:minmax(0,1fr) 260px}@media(max-width:760px){.ui-draft-video-review .ui-draft-edit-grid{grid-template-columns:minmax(0,1fr)}}
+
+/* Keep video work visible below the primary navigation on narrow screens.
+   Secondary tools remain available after returning to the library. */
+@media(max-width:760px){
+  #app.ui-simple-active:has(.ui-video-source,.ui-draft-video-review)>.header{height:48px;flex-shrink:0;padding-inline:12px}
+  #app.ui-simple-active:has(.ui-video-source,.ui-draft-video-review) .header-subtitle{display:none}
+  #app.ui-simple-active:has(.ui-video-source,.ui-draft-video-review) .sidebar{max-height:56px;overflow:auto}
+  #app.ui-simple-active:has(.ui-video-source,.ui-draft-video-review) .workflow-nav{flex-wrap:nowrap;padding:4px;gap:4px}
+  #app.ui-simple-active:has(.ui-video-source,.ui-draft-video-review) .workflow-nav>:not([data-workflow]){display:none}
+  #app.ui-simple-active:has(.ui-video-source,.ui-draft-video-review) .workflow-nav>[data-workflow]{min-width:0;min-height:38px;padding:7px 5px}
+}
