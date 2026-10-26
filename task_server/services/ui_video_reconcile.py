@@ -140,6 +140,19 @@ def _overlapping_gesture_refs(events):
     return refs
 
 
+def _overlapping_tap_refs(events):
+    """Request pixel review for duplicate hypotheses, never deduplicate actions."""
+    refs=set()
+    interactions=[e for e in events if e['action'] in {'aiTap','aiInput','aiScroll'}]
+    for first,second in zip(interactions,interactions[1:]):
+        if (first['action']==second['action']=='aiTap' and first['target']==second['target'] and
+            first.get('value','')==second.get('value','') and
+            first['start_ms']<second['start_ms']<first['end_ms'] and
+            len(set(first['frame_refs'])&set(second['frame_refs']))>=2):
+            refs.update(first['frame_refs']);refs.update(second['frame_refs'])
+    return refs
+
+
 def reconcile(events,frames,duration,root,cancelled,secrets,progress=None):
     from .ui_video_windows import observe_windows
     # Revisit all decoded pixels. Resampling a long film back to sixty images
@@ -149,6 +162,7 @@ def reconcile(events,frames,duration,root,cancelled,secrets,progress=None):
     secrets.extend(new_secrets)
     from .ui_video_automatic_motion import review_refs,disputed_scroll_refs
     repair_refs=review_refs(events) | review_refs(checked['events']) | _overlapping_gesture_refs(checked['events']) | _tap_scroll_refs(events) | _tap_scroll_refs(checked['events'])
+    repair_refs.update(_overlapping_tap_refs(events) | _overlapping_tap_refs(checked['events']))
     repair_refs.update(disputed_scroll_refs(events,checked['events']))
     from .ui_video_delayed_response import review_refs as delayed_refs
     repair_refs.update(delayed_refs(events,checked['events']))

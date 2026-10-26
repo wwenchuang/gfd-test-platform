@@ -700,3 +700,17 @@ def test_scroll_cross_pass_expansion_rejects_nonmatching_spans(monkeypatch,tmp_p
     monkeypatch.setattr(vr,'_repair_window',repair)
     with pytest.raises(Captured):
         vr._repair_coverage([first],{'events':[reviewed]},fs,1000,tmp_path,lambda:False,[],{'f1'})
+
+
+@pytest.mark.parametrize('mutation', ['overlap','disjoint','different_target','intervening_input','one_shared_frame'])
+def test_non_return_overlapping_taps_require_pixel_review_without_merging(mutation):
+    first={**event(0),'target':'文字输入框','frame_refs':['f0','f1','f2'],'start_ms':0,'end_ms':200}
+    second={**event(1),'target':'文字输入框','frame_refs':['f1','f2','f3'],'start_ms':100,'end_ms':300}
+    events=[first,second]
+    if mutation=='disjoint':second.update(frame_refs=['f3','f4'],start_ms=300,end_ms=400)
+    if mutation=='different_target':second['target']='提交按钮'
+    if mutation=='intervening_input':events.insert(1,{**event(1,'aiInput'),'target':'文字输入框'})
+    if mutation=='one_shared_frame':second.update(frame_refs=['f2','f3'],start_ms=200)
+    before=copy.deepcopy(events)
+    assert vr._overlapping_tap_refs(events)==({'f0','f1','f2','f3'} if mutation=='overlap' else set())
+    assert events==before
