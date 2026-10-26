@@ -367,6 +367,12 @@ def decode_video(video, output, cancelled):
     # Reserve only observed direction anchors, not an arbitrary larger sample.
     # Keep per-request image and aggregate byte limits unchanged.
     frame_limit=min(MAX_FRAMES,base_limit+len(direction_extra))
+    if len(selected)>=frame_limit:
+        # Dense page changes may need the existing per-minute allowance even
+        # below 90 seconds. Expand only to preserve observed anchors; smooth
+        # videos keep the smaller budget, and sub-minute rapid cuts still fail.
+        base_limit=max(base_limit,min(240,((duration+59999)//60000)*60))
+        frame_limit=min(MAX_FRAMES,base_limit+len(direction_extra))
     budget=frame_limit-1  # preserve original page density and final anchor first
     if len(selected)>budget:raise ValueError('video_split_required')
     # One-second targets use actual changed-frame timestamps. Add the least

@@ -141,6 +141,19 @@ class VideoSourceTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,'video_split_required'):
             decode_video(movie,directory/'spatial',lambda:False)
 
+    def test_minute_flow_preserves_over_sixty_spaced_page_boundaries(self):
+        from task_server.services.ui_video_source_service import decode_video
+        from PIL import Image
+        directory=Path(self.temp.name)
+        for i in range(76):Image.new('RGB',(96,160),['red','blue'][i%2]).save(directory/f'minute-{i:03d}.png')
+        movie=self.fixture(directory/'minute-flow.mp4','-framerate','1','-i',str(directory/'minute-%03d.png'),'-c:v','libx264','-pix_fmt','yuv420p')
+        result=decode_video(movie,directory/'minute-flow',lambda:False)
+        times=[frame['timestamp_ms'] for frame in result['frames']]
+        self.assertGreater(len(times),60)
+        self.assertLessEqual(len(times),120)
+        self.assertGreaterEqual(times[-1],75000)
+        self.assertTrue(all(any(abs(t-i*1000)<=80 for t in times) for i in range(76)))
+
     def test_long_flow_over_sixty_boundaries_keeps_end_and_bounded_frames(self):
         from task_server.services.ui_video_source_service import decode_video
         from PIL import Image
