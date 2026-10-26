@@ -147,3 +147,15 @@ def test_explicit_selected_quantity_is_not_a_missing_setting(quantity):
 def test_quantity_still_requires_a_number(quantity):
     event={'action':'aiTap','target':'打印入口','outcome':{'observation':'打印设置面板显示份数2'}}
     assert needs_result_review(event,'打印设置面板可见，'+quantity)
+
+
+@pytest.mark.parametrize('expected',[
+    '若存在任务则弹出处理提示，否则直接进入预览流程',
+    '如果列表为空则显示空状态，否则显示记录',
+])
+def test_conditional_expected_requests_original_result_review(expected):
+    assert needs_result_review(event('当前有一个正在处理的任务提示框可见'),expected)
+
+
+def test_concrete_result_does_not_request_conditional_review():
+    assert not needs_result_review(event('正在处理的任务提示框可见'),'正在处理的任务提示框可见，包含去处理按钮')

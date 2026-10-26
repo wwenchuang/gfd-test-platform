@@ -25,6 +25,9 @@ def needs_result_review(event,expected):
         return False
     if event.get('action') not in {'aiTap','aiScroll'}:
         return False
+    # A recorded path has one observed result. Branch alternatives are design
+    # speculation: re-read the actual result pixels instead of rewriting text.
+    if re.search(r'(?:若|如果|如有)[\s\S]{0,160}(?:则|否则)|否则',expected):return True
     if _sequential_process_states(expected):return True
     observed=(event.get('outcome') or {}).get('observation','')
     incidental_parts=[part for part in re.split(r'[，,。；;]',expected)
