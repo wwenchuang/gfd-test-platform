@@ -59,3 +59,17 @@ def test_wrong_submit_boundary_returns_specific_safe_feedback(opening_target):
         bind_group(plan,candidates)
     assert '最终确认打印' in caught.value.model_feedback
     assert 'submit' in caught.value.model_feedback
+
+
+def test_processing_cancellation_cannot_enter_print_recovery():
+    from task_server.services.ui_video_print_recovery import prepare_group
+    candidates=[{'action':'aiTap','target':t} for t in ('耗材弹窗确认','取消打印','确定')]
+    candidates.append({'action':'aiAssert','target':'模型处理结果','observation':'已取消模型处理'})
+    plan={'events':[{'candidate_index':i} for i in range(4)],
+          'print_recovery':{'submit':0,'cancel':1,'confirm':2,'end':3}}
+    before=copy.deepcopy(plan)
+    with pytest.raises(ValueError,match='video_retry_invalid') as caught:
+        prepare_group(plan,candidates,[0,1,2])
+    assert '没有最终确认打印' in caught.value.model_feedback
+    assert '移除print_recovery' in caught.value.model_feedback
+    assert plan==before

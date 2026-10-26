@@ -31,6 +31,8 @@ def prepare_group(plan,candidates,required):
     start,confirm,end=[group[k] for k in ('cancel','confirm','end')]
     if any(type(i) is not int for i in (start,confirm,end)) or not 0<=start<confirm<end<len(candidates):
         raise invalid_retry('print_recovery索引必须使用原始candidate_events的整数candidate_index，不是精简后events序号、时间或字符串；满足0 <= cancel < confirm < end < 候选总数。请从原候选重新核对首次取消、紧接确认和终态观察，禁止调整业务顺序凑索引。')
+    if not any(e.get('action')=='aiTap' and '确认打印' in e.get('target','') and '取消' not in e.get('target','') for e in candidates[:start]):
+        raise invalid_retry('没有最终确认打印的候选证据，不能使用打印下发后的恢复规则；移除print_recovery，保留模型处理取消、耗材确认、已有任务处理及后续新任务的每个独立操作。不同任务的两次取消不是失败重试，不生成omitted_retries。')
     if not eligible_terminal(candidates[end]):
         eligible=[i for i in range(confirm+1,len(candidates)) if eligible_terminal(candidates[i])]
         raise invalid_retry('打印恢复end需要明确任务消失或取消原因页的稳定观察，不能是处理中、失败或仅设备空闲。请改用通过终态校验的原始候选索引：'+str(eligible)+'；仍须满足区间内无其他业务交互。')

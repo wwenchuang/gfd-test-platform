@@ -511,7 +511,8 @@ def analyze_whole_frames(document, root, cancelled, progress=None):
                 '确认后的reusable_expected检查{{本次对象}}消失和{{保留对象}}仍显示。不等待toast。其他导航只检查相关稳定页面。'
                 '每次点击和滚动都要有可见的稳定结果；缺少时重查对应结果帧，补outcome及简短reusable_expected，'
                 '不要留空让用户手写，也不要编造证据中未出现的结果。'
-                '打印取消请输出print_recovery的submit/cancel/confirm/end四个原始候选下标：最终确认打印、首次取消、紧接的弹窗确认、任务消失或取消原因页的稳定观察。'
+                '仅当原候选确有最终确认打印→本次任务取消的完整证据时，才输出print_recovery的submit/cancel/confirm/end四个原始候选下标。'
+                '没有最终确认打印时移除print_recovery；模型处理取消、耗材确认、已有任务取消与新任务取消按普通步骤分别保留，不得当作同一任务失败重试。'
                 '平台检查区间内只能包含相同取消/确认控件及等待，不可跨过原因选择、反馈、返回、新打印；这些后续业务必须保留。'}
 
 
