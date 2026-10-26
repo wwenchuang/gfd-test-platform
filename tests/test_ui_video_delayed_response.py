@@ -65,3 +65,17 @@ def test_contradictory_automatic_state_cannot_remove_retry(note):
     old={**event('aiTap',['b','c'],100,200),'value':'','uncertainties':[]}
     new={**old,'action':'aiAssert','observation':note,'uncertainties':[]}
     with pytest.raises(ValueError,match='video_required_action_missing'):check_coverage([old],[new],1000)
+
+
+def test_negated_release_and_press_does_not_hide_later_real_click():
+    from task_server.services.ui_video_delayed_response import has_positive_tap
+    assert not has_positive_tap('未见独立点击，未见松开后重新按下')
+    assert has_positive_tap('未见松开后重新按下，但用户明确点击按钮没有响应')
+
+
+def test_negated_coordinated_actions_are_not_positive_clicks():
+    from task_server.services.ui_video_delayed_response import has_positive_tap,has_drag_conflict
+    note='未见松开后重新按下或独立点击事件'
+    assert not has_positive_tap(note)
+    assert not has_drag_conflict(note)
+    assert has_drag_conflict(note+'，但独立点击无响应')

@@ -9,11 +9,26 @@ def needs_reconciliation(events,frames):
         re.search(r'取消.*(?:未完成|失败|未成功)',e['observation']) for e in events))
 
 
+def _tap_is_drag(old,new,eligible_refs):
+    if (new['action']!='aiScroll' or '返回' in old['target'] or new.get('uncertainties') or
+        not set(old['frame_refs'])<=set(new['frame_refs']) or not set(old['frame_refs'])<=eligible_refs):return False
+    note=new['observation']
+    from .ui_video_delayed_response import has_drag_conflict
+    if has_drag_conflict(note):return False
+    if re.search(r'可能|不确定|无法确认|疑似',note):return False
+    affirmative='。'.join(c for c in re.split(r'[。；，,;]',note) if not re.search(r'未|没|无|不|并非',c))
+    return bool(re.search(r'(?:未见|未观察到|没有)独立点击',note) and
+                re.search(r'同一次|连续',affirmative) and
+                re.search(r'触点.{0,20}(?:移动|位移|拖动)',affirmative) and
+                re.search(r'内容.{0,20}(?:位移|上移|下移|移动)',affirmative))
+
+
 def check_coverage(original,reviewed,duration=None,resolutions=None,source=None):
     from .ui_video_analysis import _system_boundary
     from .ui_video_coverage_resolution import positions
     mapped=positions(resolutions,source,reviewed) if resolutions else {}
     required=[];claimed=set()
+    drag_refs=_tap_scroll_refs(original)
     for index,event in enumerate(original):
         if event['action'] not in ('aiTap','aiInput','aiScroll') or (duration is not None and _system_boundary(event,duration)):continue
         if index in mapped:
@@ -74,10 +89,10 @@ def check_coverage(original,reviewed,duration=None,resolutions=None,source=None)
                 if new['action']=='aiAssert' and has_positive_tap(new['observation']):continue
                 # A return/navigation is still an interaction even if the
                 # physical gesture is not directly executable as a tap.
-                if not (new['action']=='aiAssert' and set(old['frame_refs'])<=set(new['frame_refs']) and
+                if not (_tap_is_drag(old,new,drag_refs) or (new['action']=='aiAssert' and set(old['frame_refs'])<=set(new['frame_refs']) and
                     re.search(r'未(?:见|观察到|发生)|没有',new['observation']) and
                     re.search(r'自动|静止|保持不变',new['observation']) and
-                    not re.search(r'用户.*(?:执行|触发).*返回|完成.*导航|从.*返回',new['observation'])):continue
+                    not re.search(r'用户.*(?:执行|触发).*返回|完成.*导航|从.*返回',new['observation']))):continue
             seen.add(position)
             if position not in owners or assign(owners[position],seen):
                 owners[position]=index
@@ -90,10 +105,25 @@ def check_coverage(original,reviewed,duration=None,resolutions=None,source=None)
         raise error
     for position,index in owners.items():
         if required[index]['action'] in ('aiTap','aiScroll') and reviewed[position]['action']!=required[index]['action']:
+            # The repair audit retains old/new actions. Do not turn a verified
+            # drag correction into a model uncertainty before subsequent checks.
+            if reviewed[position]['action']=='aiScroll':continue
             kind='点击' if required[index]['action']=='aiTap' else '滚动'
-            corrected='点击' if reviewed[position]['action']=='aiTap' else '自动状态变化'
+            corrected={'aiTap':'点击','aiScroll':'连续拖动'}.get(reviewed[position]['action'],'自动状态变化')
             warning=f'首轮{kind}已复核为{corrected}，请核对该段视频'
             if warning not in reviewed[position]['uncertainties']:reviewed[position]['uncertainties'].append(warning)
+
+
+def _tap_scroll_refs(events):
+    """A shared tap/drag boundary requests pixels; it never removes a tap."""
+    interactions=[e for e in events if e['action'] in {'aiTap','aiInput','aiScroll'}]
+    refs=set()
+    for first,second in zip(interactions,interactions[1:]):
+        if (first['action']=='aiTap' and second['action']=='aiScroll' and
+            first['start_ms']<=second['start_ms']<=first['end_ms'] and
+            set(first['frame_refs'])&set(second['frame_refs'])):
+            refs.update(first['frame_refs']);refs.update(second['frame_refs'])
+    return refs
 
 
 def _overlapping_gesture_refs(events):
@@ -118,7 +148,7 @@ def reconcile(events,frames,duration,root,cancelled,secrets,progress=None):
                                        review_events=events,prior_secrets=secrets)
     secrets.extend(new_secrets)
     from .ui_video_automatic_motion import review_refs,disputed_scroll_refs
-    repair_refs=review_refs(events) | review_refs(checked['events']) | _overlapping_gesture_refs(checked['events'])
+    repair_refs=review_refs(events) | review_refs(checked['events']) | _overlapping_gesture_refs(checked['events']) | _tap_scroll_refs(events) | _tap_scroll_refs(checked['events'])
     repair_refs.update(disputed_scroll_refs(events,checked['events']))
     from .ui_video_delayed_response import review_refs as delayed_refs
     repair_refs.update(delayed_refs(events,checked['events']))
@@ -287,11 +317,14 @@ def _repair_window(original,checked,frames,duration,root,cancelled,secrets,missi
     payload['validation_feedback']+=' action是待核对的旧识别，不是真实答案。将旧点击改为aiAssert时，必须引用该锚点全部帧，并明确实际是否无新点击而为自动加载/静止变化；确有导航不得如此改写。将旧滚动改为实际点击时，引用原锚点全部帧，明确说明未见滚动、实际点击的控件及所见变化。禁止为满足锚点数量创造操作。'
     payload['coverage_resolution_contract']={
         'purpose':'旧锚点不是操作真值。两条旧锚点若对应同一个触点/交互，不要编造额外点击或aiAssert，提交coverage_resolutions明确映射；真实重复操作必须保留。',
-        'schema':{'source_anchor_ids':['first_pass:索引','independent_review:索引'],'resolution':'same_interaction 或 same_interaction_with_action_correction 或 same_return_gesture','reviewed_event_index':'本次events数组索引',
+        'schema':{'source_anchor_ids':['first_pass:索引','independent_review:索引'],'resolution':'same_interaction 或 same_interaction_with_action_correction 或 same_return_gesture 或 same_scroll_gesture','reviewed_event_index':'本次events数组索引',
             'evidence':{'before_frame':'原帧','interaction_frame':'实际交互原帧；普通映射须所有锚点共同包含，same_return_gesture例外见规则','after_frame':'结果原帧','examined_frame_refs':['包含各旧锚点全部原帧，最多8张'],
                 'before_state':'操作前页面','interaction':'明确操作及旧动作误判原因','after_state':'操作后页面','why_not_separate_actions':'为何仅同一次操作而非独立重试或多次导航'}},
         'rules':'仅为同一来源内部重复或误判导致的多个旧锚点提交映射；不同来源各一条的正常对应不用声明。结果允许aiTap；连续同方向同参数滚动可用same_interaction，所有旧滚动value必须与结果完全相同，禁止反向/再次手势合并；2至8个锚点映射一个真实事件，共同交互帧必须属于每个锚点和结果事件，结果事件含前/交互/后帧；不能跨其他独立操作、不能合并输入、不能声明不确定。scroll改tap须明确未见独立滚动及实际点击。多个来源中对应同次交互的锚点一并列入。events每项1至8帧，自动加载选代表帧，不罗列所有帧。无映射需求时coverage_resolutions为空数组。'}
     payload['coverage_resolution_contract']['rules']+=' 唯一例外same_return_gesture：仅相同可见返回箭头目标的aiTap重复假设，完整原帧证实同一次连续返回手势；实际interaction_frame须属于至少一条旧锚点及结果，且不晚于任何旧锚点结束。后窗只含同次手势后半段时不伪造新的触点：所有锚点时间须与所引原帧一致，并在实际触点之后、结果之前共享至少一张中间原帧，该帧也须保留在结果事件中。不得用共享动画帧冒充实际手势帧。before_state明确返回箭头/按钮可见，interaction明确同一次返回手势，why_not_separate_actions明确未见第二次按下/手势/导航。无独立操作夹入，各旧帧完整审查，不合并不同目标、再次返回或输入。'
+    payload['validation_feedback']+=' 相邻旧点击和滚动也可能实际是两次滚动，不能强行合并。旧点击若为第一段连续拖动，可一对一改为aiScroll，不提交映射，但结果必须引用该旧点击的全部原帧，observation明确未见独立点击、触点连续移动、内容随之位移；保留之后新的独立滚动。真实点击无响应仍须保留。只有多个旧锚点确属一次手势才使用same_scroll_gesture；普通一对一改型coverage_resolutions为空。'
+    payload['coverage_resolution_contract']['rules']+=' same_scroll_gesture仅用于相邻点击和滚动原来属于一次连续拖动：完整引用两个锚点全部原帧，共同交互帧真实存在，interaction明确触点持续移动且内容随之位移；why_not_separate_actions明确未见独立点击、未见松开后重新按下。结果只为aiScroll，除由content_motion_direction原图证据纠正的方向外，既有滚动参数必须保持一致；所有旧原帧须在examined_frame_refs中完整审查，结果frame_refs只保留本次交互的前/中/后证据，不强塞下一操作的起始上下文。若确实先点击再滚动，保留两项，不提交映射；真实无响应点击也必须保留。空心圆跨控件移动是触点，不因起点在按钮旁就当点击或加载图标。证据不清保留疑问。'
+    payload['coverage_resolution_contract']['gesture_facts_for_same_scroll_gesture']={'content_motion_direction':'原帧内容移动方向up/down/left/right，与结果浏览direction相反；可纠正旧误判方向，其它参数保持','interaction_count':'实际独立交互次数整数','independent_click_observed':'存在独立点击的布尔事实','continuous_drag_observed':'原帧证明持续拖动的布尔事实','release_then_press_observed':'松开后再次按下的布尔事实'}
     from .ui_video_coverage_resolution import eligible_groups
     payload['eligible_resolution_groups']=[g for g in eligible_groups({'first_pass':original,'independent_review':checked['events']},window_ids) if g['common_frame'] in missing_refs]
     payload['gap_note']+=' coverage_checks只列真正冲突的旧识别，不能为未列出的正常操作编造映射。其余画面仍按原图输出，后端独立检查完整性。'
@@ -319,12 +352,17 @@ def _repair_window(original,checked,frames,duration,root,cancelled,secrets,missi
         payload['coverage_checks']={name:[{'anchor_id':a['anchor_id'],'frame_refs':a['frame_refs']} for a in anchors] for name,anchors in payload['coverage_checks'].items()}
         payload['gesture_hypotheses']=[]
         payload['validation_feedback']=(REVIEW_QUESTION if motion_review else '')+DELAYED_QUESTION
+    # Reuse bounded same-frame detail during conflict review as in initial observation.
+    # Crops aid perception only; validate_analysis still accepts original frame IDs only.
+    assets=load_assets(images,root,cancelled)
+    from .ui_video_touch_detail import append_details
+    payload['detail_frames']=append_details(images,root,assets,cancelled,window_ids)
     before=copy.deepcopy(checked['events'])
     resolutions=[]
     for attempt in range(attempt_limit):
         if cancelled():raise ValueError('video_cancelled')
         try:
-            raw=ai.run_ai_skill('ui_video_observe',payload,version=repair_version,image_assets=load_assets(images,root,cancelled),
+            raw=ai.run_ai_skill('ui_video_observe',payload,version=repair_version,image_assets=assets,
                 timeout=120,retry_count=0,max_tokens=5000,repair_invalid_json=False)
         except ai.SkillSchemaError as error:
             if cancelled():raise ValueError('video_cancelled') from None
@@ -357,7 +395,7 @@ def _repair_window(original,checked,frames,duration,root,cancelled,secrets,missi
             # response; never accept or silently strip an invalid declaration.
             from .ui_video_coverage_resolution import boundary_safe
             try:
-                if _overlapping_gesture_refs(before):
+                if _overlapping_gesture_refs(before) or _tap_scroll_refs(before):
                     raise ValueError('video_required_action_missing')
                 check_coverage(original,repaired['events'],duration)
                 check_coverage(before,repaired['events'],duration)
@@ -379,7 +417,7 @@ def _repair_window(original,checked,frames,duration,root,cancelled,secrets,missi
             payload['invalid_resolution_candidate']=claims
             from .ui_video_coverage_resolution import diagnose
             payload['resolution_diagnostics']=diagnose(claims,{'first_pass':original,'independent_review':before},repaired['events'],window)
-            payload['validation_feedback']+=' 上次invalid_resolution_candidate已被拒绝。不要重抄：aiAssert不得作为映射目标，应删除自动加载映射，只保留该aiAssert完整覆盖相应旧帧。每个anchor_id仅能出现在一个映射；before_frame允许与interaction_frame相同，但after_frame必须更晚。映射不符合合同：仅声明同一来源内部至少两条旧锚点合并到一次交互，不声明普通跨来源一对一对应。连续滚动只允许同action同value的same_interaction，不能声明action_correction。examined_frame_refs必须完整包含这些锚点的帧并集，不能遗漏较早帧；interaction_frame必须是实际触点所在帧，不能使用之后转场帧；前/触点/后帧也须在结果事件中。scroll改tap明确写未见独立滚动，理由不能含可能或不确定；仍不能确定就保留疑问，不造证据。'
+            payload['validation_feedback']+=' 上次invalid_resolution_candidate已被拒绝。不要重抄：aiAssert不得作为映射目标，应删除自动加载映射，只保留该aiAssert完整覆盖相应旧帧。每个anchor_id仅能出现在一个映射；before_frame允许与interaction_frame相同，但after_frame必须更晚。映射不符合合同：仅声明同一来源内部至少两条旧锚点合并到一次交互，不声明普通跨来源一对一对应。同action同value连续滚动用same_interaction；旧tap加scroll确为一次拖动则仅用same_scroll_gesture，不能声明action_correction，examined_frame_refs必须覆盖全部旧帧，结果保留真实前态、交互与后态帧。examined_frame_refs必须完整包含这些锚点的帧并集，不能遗漏较早帧；interaction_frame必须是实际触点所在帧，不能使用之后转场帧；前/触点/后帧也须在结果事件中。scroll改tap明确写未见独立滚动，理由不能含可能或不确定；仍不能确定就保留疑问，不造证据。'
             continue
         combined=[e for e in checked['events'] if not set(e['frame_refs'])<=window_ids]+repaired['events']
         combined.sort(key=lambda e:(e['start_ms'],e['end_ms']))

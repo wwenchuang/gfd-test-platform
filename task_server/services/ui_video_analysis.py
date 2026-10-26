@@ -402,12 +402,12 @@ def analyze_whole_frames(document, root, cancelled, progress=None):
         observed={**reviewed,'multiple_scenarios':observed['multiple_scenarios'] or reviewed['multiple_scenarios']}
         if progress:progress('planning',1,1,observed['events'])
     else:
+        from .ui_video_reconcile import _tap_scroll_refs,_repair_coverage
         from .ui_video_automatic_motion import review_refs
-        from .ui_video_reconcile import _repair_coverage
-        motion_refs=review_refs(first_pass)
-        if motion_refs:
+        drag_refs=_tap_scroll_refs(first_pass) | review_refs(first_pass)
+        if drag_refs:
             if progress:progress('reconciling',0,1,first_pass)
-            observed=_repair_coverage(first_pass,observed,frames,duration,root,cancelled,known_secrets,motion_refs)
+            observed=_repair_coverage(first_pass,observed,frames,duration,root,cancelled,known_secrets,drag_refs)
     candidates=observed['events'];multi=observed['multiple_scenarios']
     if not candidates:return {**observed,'raw_events':[],'raw_uncertainties':observed['uncertainties']}
     image_frames=frames if len(frames)<=60 else planning_frames(candidates,frames)

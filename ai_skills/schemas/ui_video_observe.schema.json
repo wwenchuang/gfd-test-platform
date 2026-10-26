@@ -194,7 +194,8 @@
             "enum": [
               "same_interaction",
               "same_interaction_with_action_correction",
-              "same_return_gesture"
+              "same_return_gesture",
+              "same_scroll_gesture"
             ]
           },
           "reviewed_event_index": {
@@ -259,6 +260,42 @@
                   "type": "string",
                   "minLength": 1,
                   "maxLength": 80
+                }
+              },
+              "gesture_facts": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "interaction_count",
+                  "independent_click_observed",
+                  "continuous_drag_observed",
+                  "release_then_press_observed",
+                  "content_motion_direction"
+                ],
+                "properties": {
+                  "interaction_count": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 8
+                  },
+                  "independent_click_observed": {
+                    "type": "boolean"
+                  },
+                  "continuous_drag_observed": {
+                    "type": "boolean"
+                  },
+                  "release_then_press_observed": {
+                    "type": "boolean"
+                  },
+                  "content_motion_direction": {
+                    "type": "string",
+                    "enum": [
+                      "up",
+                      "down",
+                      "left",
+                      "right"
+                    ]
+                  }
                 }
               }
             }

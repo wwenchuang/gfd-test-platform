@@ -46,6 +46,7 @@ def has_visible_return_control(note):
     return False
 
 
+
 def _validate_return_touch_span(anchors,new,evidence,times):
     """A later overlapping observation may contain only a gesture's suffix.
 
@@ -148,8 +149,10 @@ def validate(claims,sources,reviewed,frames):
         if (not isinstance(ids,list) or not 2<=len(ids)<=8 or any(not isinstance(i,str) for i in ids) or
             len(set(ids))!=len(ids) or set(ids)&used or type(index) is not int or not 0<=index<len(reviewed) or index in destinations):_fail()
         if not any(sum(aid.startswith(name+':') for aid in ids)>=2 for name in sources):_fail()
-        if claim['resolution'] not in {'same_interaction','same_interaction_with_action_correction','same_return_gesture'}:_fail()
-        if not isinstance(ev,dict) or set(ev)!={'before_frame','interaction_frame','after_frame','examined_frame_refs','before_state','interaction','after_state','why_not_separate_actions'}:_fail()
+        if claim['resolution'] not in {'same_interaction','same_interaction_with_action_correction','same_return_gesture','same_scroll_gesture'}:_fail()
+        required_evidence={'before_frame','interaction_frame','after_frame','examined_frame_refs','before_state','interaction','after_state','why_not_separate_actions'}
+        if claim['resolution']=='same_scroll_gesture':required_evidence.add('gesture_facts')
+        if not isinstance(ev,dict) or set(ev)!=required_evidence:_fail()
         refs=ev['examined_frame_refs']
         if (not isinstance(refs,list) or not 2<=len(refs)<=8 or any(not isinstance(r,str) or r not in times for r in refs) or
             len(set(refs))!=len(refs) or refs!=sorted(refs,key=times.get)):_fail()
@@ -162,6 +165,7 @@ def validate(claims,sources,reviewed,frames):
         if new['action'] not in {'aiTap','aiScroll'} or new.get('uncertainties') or not {before,touch,after}<=set(new['frame_refs']):_fail()
         if touch in targets and targets[touch]!=new['target']:_fail()
         gesture=claim['resolution']=='same_return_gesture'
+        drag=claim['resolution']=='same_scroll_gesture'
         anchors=[]
         for aid in ids:
             parts=aid.split(':')
@@ -175,18 +179,20 @@ def validate(claims,sources,reviewed,frames):
                     old.get('value','')!='' or new.get('value','')!='' or
                     times[touch]>old['end_ms']):_fail()
             elif touch not in old['frame_refs']:_fail()
-            if old['action']!=new['action']:
+            if old['action']!=new['action'] and not (drag and old['action']=='aiTap' and new['action']=='aiScroll'):
                 if (old['action']!='aiScroll' or new['action']!='aiTap' or
                     not re.search(r'(?:未见|没有|未观察到)(?:独立|新增|新的|用户)?(?:滚动|滑动)',ev['interaction']) or '点击' not in ev['interaction']):_fail()
-            if new['action']=='aiScroll':
+            if new['action']=='aiScroll' and not drag:
                 statement=ev['interaction']+'。'+ev['why_not_separate_actions']
                 # Remove explicit negatives before looking for admitted new gestures.
                 affirmative=re.sub(r'(?:未见|未观察到|没有|无)[^。；，,]{0,40}(?:触点|按下|重触|滑动|滚动|操作|手势)', '', statement)
-                if (old.get('value')!=new.get('value') or
+                if ((old.get('value')!=new.get('value') and not (drag and old['action']=='aiTap' and old.get('value','')=='')) or
                     not re.search(r'同一次|单次',statement) or
                     not re.search(r'(?:未见|未观察到|没有|无)[^。；，,]{0,30}(?:第二次|二次|再次|重新|新的)[^。；，,]{0,20}(?:触点|按下|重触|滑动|滚动|手势)',statement) or
                     re.search(r'再次|重新|反向|两次|多次|先.*随后',affirmative)):_fail()
             anchors.append(old)
+        if drag:
+            _validate_drag(ids,sources,anchors,new,ev)
         if gesture:
             _validate_return_touch_span(anchors,new,ev,times)
             old_notes='。'.join(a.get('observation','') for a in anchors)
@@ -234,9 +240,43 @@ def validate(claims,sources,reviewed,frames):
                     low<old['start_ms']<high and old['end_ms']<=high):_fail()
         used.update(ids);destinations.add(index);targets[touch]=new['target']
         normalized='same_interaction_with_action_correction' if any(old['action']!=new['action'] for old in anchors) else 'same_interaction'
-        result.append({**copy.deepcopy(claim),'resolution':'same_return_gesture' if gesture else normalized,'reviewed_event':copy.deepcopy(new),
+        result.append({**copy.deepcopy(claim),'resolution':'same_return_gesture' if gesture else 'same_scroll_gesture' if drag else normalized,'reviewed_event':copy.deepcopy(new),
                        'source_anchors':{aid:copy.deepcopy(sources[aid.split(':')[0]][int(aid.split(':')[1])]) for aid in ids}})
     return result
+
+
+def _validate_drag(ids,sources,anchors,new,evidence):
+    """Only a complete adjacent tap/scroll hypothesis can be one drag."""
+    if new['action']!='aiScroll' or {a['action'] for a in anchors}!={'aiTap','aiScroll'}:_fail()
+    facts=evidence.get('gesture_facts')
+    reverse={'up':'down','down':'up','left':'right','right':'left'}
+    direction=new.get('value',{}).get('direction')
+    if direction not in reverse:_fail('drag_direction_invalid')
+    expected={'content_motion_direction':reverse[direction],'interaction_count':1,'independent_click_observed':False,'continuous_drag_observed':True,'release_then_press_observed':False}
+    if not isinstance(facts,dict) or set(facts)!=set(expected) or any(type(facts[k]) is not type(v) or facts[k]!=v for k,v in expected.items()):_fail('drag_facts_not_established')
+    if any(a['action']=='aiScroll' and {k:v for k,v in a.get('value',{}).items() if k!='direction'}!={k:v for k,v in new['value'].items() if k!='direction'} for a in anchors):_fail()
+    if any(a['action']=='aiTap' and '返回' in a.get('target','') for a in anchors):_fail()
+    paired=False
+    for name,source in sources.items():
+        indexes=sorted(int(a.split(':')[1]) for a in ids if a.startswith(name+':'))
+        if len(indexes)<2:continue
+        selected=[source[i] for i in indexes]
+        if len(selected)!=2 or [e['action'] for e in selected]!=['aiTap','aiScroll']:_fail()
+        first,second=selected
+        between=source[indexes[0]+1:indexes[1]]
+        if (any(e['action'] in {'aiTap','aiInput','aiScroll'} for e in between) or
+            not first['start_ms']<=second['start_ms']<=first['end_ms']):_fail()
+        paired=True
+    statement=evidence['interaction']+'。'+evidence['why_not_separate_actions']
+    from .ui_video_delayed_response import has_drag_conflict
+    if has_drag_conflict(statement+'。'+new['observation']):_fail('drag_conflicting_click_evidence')
+    motion_words={'上':'up','下':'down','左':'left','右':'right'}
+    for motion in re.findall(r'内容(?:随触点|随手指)?(?:向)?([上下左右])移',statement+'。'+new['observation']):
+        if motion_words[motion]!=facts['content_motion_direction']:_fail('drag_conflicting_direction_evidence')
+    affirmative='。'.join(c for c in re.split(r'[。；，,;]',statement) if not re.search(r'未|没|无|不|并非',c))
+    if (not paired or not re.search(r'触点.{0,20}(?:移动|位移|拖动)',affirmative) or
+        not re.search(r'内容.{0,20}(?:位移|上移|下移|移动)',affirmative) or
+        re.search(r'独立点击|重新按下|再次|两次|反向',affirmative)):_fail()
 
 
 def positions(resolutions,source,reviewed):

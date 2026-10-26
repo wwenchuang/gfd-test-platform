@@ -24,8 +24,29 @@ REVIEW_QUESTION=(
 )
 
 
+def _without_negated_actions(note):
+    import re
+    action=r'(?:松开后)?(?:任何|新的|新|独立的|独立|用户|手指|触点|再次|重新){0,4}(?:点击|按下|重试|滑动|滚动|拖动)'
+    return re.sub(r'(?:未见|未观察到|未发生|没有|并非|而非|不是)'+action+r'(?:(?:或|和|及)'+action+r')*','',note)
+
+
 def has_positive_tap(note):
     import re
-    remaining=re.sub(r'(?:未见|未观察到|未发生|没有|并非|而非|不是)(?:任何|新的|新|独立的|独立|用户|手指|触点|再次|重新){0,4}(?:点击|按下|重试)','',note)
-    return any(re.search(r'(?:用户|手指|触点|再次|重新).{0,20}(?:点击|按下|重试)',clause)
+    remaining=_without_negated_actions(note)
+    return any(re.search(r'(?:独立|用户|手指|触点|再次|重新).{0,20}(?:点击|按下|重试)',clause)
                for clause in re.split(r'[，。；;,]|但是|但|随后|并且|且',remaining))
+
+
+def has_drag_conflict(note):
+    """Reject independent actions; response negation does not negate an action."""
+    import re
+    if has_positive_tap(note):return True
+    note=_without_negated_actions(note)
+    note=re.sub(r'(?:未见|没有|无)(?:停顿|抬手|松开)(?:或|及|和)(?:重新|再次)(?:按压|按下)(?:迹象)?','',note)
+    remaining=re.sub(
+        r'(?:未观察到|未见|未发生|没有|并非|而非|不是|无)(?:松开后)?'
+        r'(?:任何|新的|新|独立的|独立|用户|手指|触点|再次|重新|第二次){0,4}'
+        r'(?:点击|按下|按压|滚动|滑动|拖动)', '', note)
+    return bool(re.search(
+        r'(?:再次|重新|第二次|又)[^，。；;,]{0,12}(?:滑动|滚动|拖动|按下)|'
+        r'(?:[两二三四五六七八九十多]|[2-9]|[1-9][0-9]+)次(?:独立)?(?:滑动|滚动|拖动)', remaining))

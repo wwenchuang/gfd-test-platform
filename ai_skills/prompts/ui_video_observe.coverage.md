@@ -2,7 +2,7 @@
 {{payload}}
 
 先逐张比较frames中的原画面，还原实际交互。context_frame_ids仅辅助看前后页面，不得作为事件/映射的证据。不补画面未出现的操作；静止、加载、转场属于状态。每次真实点击、滚动、返回单独保留；触点出现与消失及页面变化应结合判断，不重复计算同一次按压及其结果。
-输出本次frames内证据完整的events，每项仅含action、target、value、frame_refs、observation、uncertainties。action仅aiTap/aiScroll/aiInput/aiAssert；value通常为空，滚动为{"direction":"down","scrollType":"singleAction"}（方向按实际画面）；frame_refs每项1至8张本次原帧，按时间排序；不输出时间。输入值留空。不要补写片段间隔中的业务。
+输出本次frames内证据完整的events，每项仅含action、target、value、frame_refs、observation、uncertainties。action仅aiTap/aiScroll/aiInput/aiAssert；value通常为空，滚动为{"direction":"down","scrollType":"singleAction"}（按浏览方向：内容上移、露出下方内容=down；内容下移、露出上方内容=up，不按手指移动方向命名）；frame_refs每项1至8张本次原帧，按时间排序；不输出时间。输入值留空。不要补写片段间隔中的业务。
 
 coverage_checks是有编号的旧识别假设，不一定正确。与真实操作一一对应时无需声明。只有同一来源的多个锚点实际上对应一次交互，才输出coverage_resolutions；它不是步骤、不下发手机。
 严格遵守coverage_resolution_contract。特别注意：
@@ -31,3 +31,17 @@ eligible_resolution_groups仅表示哪些旧锚点在结构上共享原帧，不
 返回手势沿用正常观察规则：标题/返回栏随整个页面横移并进入上一级是导航，不是同页内容滚动。若操作前原帧可见应用返回箭头，events用aiTap该可见箭头作为跨端等价操作，observation及映射interaction如实注明原片为连续返回手势、箭头可见及前后页面；不得虚构手指点过箭头。跨窗重复记录同一次手势时，核对完整前/中/后原帧后只映射一次；真实再次按下或第二次导航仍独立保留。若没有可见等价返回控件，报告不确定，不编造控件。
 
 连续返回手势跨窗被重复识别时，若共同帧只是动画、实际手势帧只在一组引用中，不要伪造共同触点。可用same_return_gesture，严格按合同检查所有旧时间区间覆盖实际手势时刻、原帧并集证实同一次导航且前页返回箭头可见。结果仍为点击可见返回箭头的跨端等价动作；观察如实写原片手势。gesture_hypotheses只是待核对线索，不能取代原帧。普通按钮点击仍要求共同实际触点。
+
+相邻点击与滚动共享交互帧时，核对是否同一次连续拖动。空心触点从控件旁持续移动并带动内容，不等于先点击按钮；静态圆形图标也不等于加载动画。只有原帧证明未见独立点击且未见松开后重新按下，才能按合同声明same_scroll_gesture；完整保留旧帧，结果aiScroll除有content_motion_direction原图证据纠正的方向外，其它参数与旧滚动一致。真实先点击再拖动保留两项，真实点击无响应也不能删除。
+
+拖动复核先逐帧识别每次按下、移动、松开，再确定events数量。触点在页面上方结束后，又在下方出现并重新带动内容，是新的一次拖动；不能因为方向相同、旧锚点共享边界帧，就声明连续同一次手势。若旧aiTap其实是第一段拖动、旧aiScroll覆盖后续第二段拖动，输出两条aiScroll，一对一更正第一条，不填写合并声明。只有全段原帧均证明同一次持续按压，才合并；看不清松开与重新按下时保留不确定，不把“未见”当成已证明没有。
+
+下拉刷新中，内容被向下拉且出现释放刷新提示，direction=up；松手后的回弹属于自动状态，不额外生成反向滚动。判断每次真实拖动的内容位移，不用最终回弹方向覆盖原手势，也不能以旧识别的方向为真值。之后若有新的独立拖动必须保留，不能一并当作回弹；未见触点本身不能证明没有操作。观察与direction必须一致；无法判断则保留疑问。
+
+detail_frames为同一原帧的局部放大，只帮助辨认触点和控件。它不是新的时刻、动作或执行坐标；结合完整原帧的前后位移判断点击、持续拖动或加载图标，不能只看圆圈落在按钮旁就判点击。events及映射仍只引用frames中的原帧编号，禁止引用detail编号。
+
+映射类型按旧动作和结果严格区分：旧aiScroll纠正为aiTap才可用same_interaction_with_action_correction；旧aiTap加aiScroll经原帧证明确为一次拖动、结果为aiScroll，必须用same_scroll_gesture。后一种的examined_frame_refs必须完整包含该组所有旧锚点原帧（最多8张）；events.frame_refs保留本动作前态、真实交互及后态，不强塞仅用于审查的上下文。若超过8张或缺乏连续手势证据，不合并。审查上下文不等于动作本身，仍不得遗漏原锚点的审查证据，也不得编造缺失帧。
+
+仅same_scroll_gesture的evidence必须另含gesture_facts：interaction_count（实际独立交互次数，整数）、independent_click_observed（是否存在独立点击，布尔）、continuous_drag_observed（是否原帧证明持续拖动，布尔）、release_then_press_observed（是否松开后再次按下，布尔）。这些是待原图验证的事实，不是默认答案；只有次数1、无独立点击、连续拖动确证、无再次按下才可合并。看不清不填写肯定事实，保留uncertainties、不提交映射。自然语言说明仍须如实陈述运动，不能与事实矛盾；不要为满足旧固定措辞编写观察。其余映射不加gesture_facts。
+
+拖动gesture_facts还须包含content_motion_direction，按原帧中内容实际移动方向填up/down/left/right（不是手指方向，也不是浏览方向）。结果滚动direction须与它相反。若旧识别方向错误，按原图纠正并在interaction说明，不能盲从旧值；scrollType等其它参数不改变，真实两次反向手势仍不能合并。
