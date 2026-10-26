@@ -207,14 +207,19 @@ def _overlapping_gesture_refs(events):
 
 
 def _overlapping_tap_refs(events):
-    """Request pixel review for duplicate hypotheses, never deduplicate actions."""
+    """Re-read temporally overlapping hypotheses, never deduplicate actions.
+
+    Sparse samples may share only one frame despite strictly overlapping time
+    spans. Frame count cannot rule out ambiguity; the existing pixel/coverage
+    gates still decide whether these are one touch or two real operations.
+    """
     refs=set()
     interactions=[e for e in events if e['action'] in {'aiTap','aiInput','aiScroll'}]
     for first,second in zip(interactions,interactions[1:]):
         if (first['action']==second['action']=='aiTap' and first['target']==second['target'] and
             first.get('value','')==second.get('value','') and
             first['start_ms']<second['start_ms']<first['end_ms'] and
-            len(set(first['frame_refs'])&set(second['frame_refs']))>=2):
+            set(first['frame_refs'])&set(second['frame_refs'])):
             refs.update(first['frame_refs']);refs.update(second['frame_refs'])
     return refs
 

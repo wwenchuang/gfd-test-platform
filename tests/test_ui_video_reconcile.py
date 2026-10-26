@@ -702,7 +702,7 @@ def test_scroll_cross_pass_expansion_rejects_nonmatching_spans(monkeypatch,tmp_p
         vr._repair_coverage([first],{'events':[reviewed]},fs,1000,tmp_path,lambda:False,[],{'f1'})
 
 
-@pytest.mark.parametrize('mutation', ['overlap','disjoint','different_target','intervening_input','one_shared_frame'])
+@pytest.mark.parametrize('mutation', ['overlap','disjoint','different_target','intervening_input','one_shared_frame','one_shared_overlap','one_shared_overlap_same_end'])
 def test_non_return_overlapping_taps_require_pixel_review_without_merging(mutation):
     first={**event(0),'target':'文字输入框','frame_refs':['f0','f1','f2'],'start_ms':0,'end_ms':200}
     second={**event(1),'target':'文字输入框','frame_refs':['f1','f2','f3'],'start_ms':100,'end_ms':300}
@@ -711,6 +711,10 @@ def test_non_return_overlapping_taps_require_pixel_review_without_merging(mutati
     if mutation=='different_target':second['target']='提交按钮'
     if mutation=='intervening_input':events.insert(1,{**event(1,'aiInput'),'target':'文字输入框'})
     if mutation=='one_shared_frame':second.update(frame_refs=['f2','f3'],start_ms=200)
+    if mutation=='one_shared_overlap':second.update(frame_refs=['f1','f3'],start_ms=100)
+    if mutation=='one_shared_overlap_same_end':
+        first.update(frame_refs=['f0','f3'],end_ms=300)
+        second.update(frame_refs=['f1','f2','f3'],start_ms=100,end_ms=300)
     before=copy.deepcopy(events)
-    assert vr._overlapping_tap_refs(events)==({'f0','f1','f2','f3'} if mutation=='overlap' else set())
+    assert vr._overlapping_tap_refs(events)==({'f0','f1','f2','f3'} if mutation in {'overlap','one_shared_overlap','one_shared_overlap_same_end'} else set())
     assert events==before

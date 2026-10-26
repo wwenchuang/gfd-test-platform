@@ -400,7 +400,6 @@ def analyze_whole_frames(document, root, cancelled, progress=None):
         if progress:progress('reconciling',0,1,first_pass)
         reviewed=reconcile(first_pass,frames,duration,root,cancelled,known_secrets,progress)
         observed={**reviewed,'multiple_scenarios':observed['multiple_scenarios'] or reviewed['multiple_scenarios']}
-        if progress:progress('planning',1,1,observed['events'])
     else:
         from .ui_video_reconcile import _tap_scroll_refs,_overlapping_tap_refs,_overlapping_input_refs,_repair_coverage
         from .ui_video_automatic_motion import review_refs
@@ -410,6 +409,9 @@ def analyze_whole_frames(document, root, cancelled, progress=None):
             observed=_repair_coverage(first_pass,observed,frames,duration,root,cancelled,known_secrets,drag_refs)
     from .ui_video_delayed_response import review_pending_responses
     observed=review_pending_responses(observed,document,root,cancelled,known_secrets)
+    # Persist the actual post-repair/post-response candidates even when planning
+    # later fails; the owner-scoped raw evidence must not stop at first pass.
+    if progress:progress('planning',1,1,observed['events'])
     candidates=observed['events'];multi=observed['multiple_scenarios']
     if not candidates:return {**observed,'raw_events':[],'raw_uncertainties':observed['uncertainties']}
     image_frames=frames if len(frames)<=60 else planning_frames(candidates,frames)

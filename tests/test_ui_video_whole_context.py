@@ -287,7 +287,8 @@ def test_long_video_merges_only_overlapping_typing_and_reports_checked_progress(
     result=va.analyze_whole_frames({'app_id':'com.example.app','goal':'','media':{'frames':fs,'duration_ms':81000}},tmp_path,lambda:False,lambda *args:progress.append(copy.deepcopy(args)))
     assert len(result['events'])==1
     assert result['events'][0]['start_ms']==start and result['events'][0]['end_ms']==32000
-    assert progress[-1][0]=='planning' and progress[-1][1]==progress[-1][2]==3
+    assert any(item[0]=='planning' and item[1]==item[2]==3 for item in progress)
+    assert progress[-1][0]=='planning' and progress[-1][3]==result['raw_events']
 
 
 def test_only_verified_retry_omissions_extend_result_evidence_until_next_business():
@@ -606,3 +607,25 @@ def test_protected_outcome_after_plan_retry_never_makes_third_plan_call(monkeypa
     monkeypatch.setattr(ai,'run_ai_skill',model)
     with pytest.raises(ValueError):va.analyze_whole_frames({'app_id':'com.example.app','goal':'','media':{'frames':fs,'duration_ms':1000}},tmp_path,lambda:False)
     assert calls==[('ui_video_observe',None),('ui_video_steps','consolidate'),('ui_video_steps','consolidate')]
+
+
+@pytest.mark.parametrize('full_review',[False,True])
+def test_final_candidates_are_reported_before_planning_can_fail(monkeypatch,tmp_path,full_review):
+    from task_server.services import ui_video_analysis as va,ui_video_windows as vw,ui_video_reconcile as vr,ui_video_delayed_response as delayed
+    fs=frames()
+    observed={'events':[{'action':'aiTap','target':'我的','value':'','start_ms':100,'end_ms':200,'frame_refs':['frame-001','frame-002'],'observation':'我的页面显示','uncertainties':[],'evidence_kind':'inferred'}],'uncertainties':[],'multiple_scenarios':False}
+    reviewed=copy.deepcopy(observed);reviewed['events'][0]['observation']='原图复核后的页面状态'
+    final=copy.deepcopy(reviewed);final['events'][0]['observation']='响应复核后的最终候选'
+    before=copy.deepcopy(observed);progress=[]
+    monkeypatch.setattr(vw,'observe_windows',lambda *a,**kw:(copy.deepcopy(observed),[]))
+    monkeypatch.setattr(vr,'needs_reconciliation',lambda *a:full_review)
+    monkeypatch.setattr(vr,'reconcile',lambda *a:copy.deepcopy(reviewed))
+    monkeypatch.setattr(delayed,'review_pending_responses',lambda *a:copy.deepcopy(final))
+    def failed_assets(*a):raise RuntimeError('planning asset failure')
+    monkeypatch.setattr(vw,'load_assets',failed_assets)
+    with pytest.raises(RuntimeError,match='planning asset failure'):
+        va.analyze_whole_frames({'app_id':'com.example.app','goal':'','media':{'frames':fs,'duration_ms':1000}},tmp_path,lambda:False,lambda *args:progress.append(copy.deepcopy(args)))
+    reported=[item for item in progress if item[0]=='planning']
+    assert len(reported)==1
+    assert reported[0][3]==final['events']
+    assert observed==before
