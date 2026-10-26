@@ -111,8 +111,13 @@ class VideoStore:
     def _check_admission(self, db, *, additional_bytes=0, new_source=False):
         docs=[json.loads(row[0]) for row in db.execute('SELECT document FROM sources')]
         active=sum(d['status'] not in TERMINAL for d in docs)
+        try:
+            source_limit=int(os.getenv('TASK_UI_VIDEO_MAX_SOURCES','100'))
+        except ValueError:
+            source_limit=100
+        if not 1<=source_limit<=1000:source_limit=100
         # Reserve the newly admitted decoder as well as existing active work.
-        if active>=4 or (new_source and len(docs)>=100) or self._disk_bytes()+additional_bytes+128*1024**2*(active+1)>2*1024**3:
+        if active>=4 or (new_source and len(docs)>=source_limit) or self._disk_bytes()+additional_bytes+128*1024**2*(active+1)>2*1024**3:
             raise ValueError('video_capacity')
 
     def retry(self, identifier, owner, app):
