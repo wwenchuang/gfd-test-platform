@@ -501,3 +501,53 @@ def test_return_gesture_singular_wording_does_not_accept_multiple_or_negation(si
     claim['evidence']['interaction']=single
     claim['evidence']['why_not_separate_actions']='未见第二次按下或再次导航'
     with pytest.raises(ValueError):cr.validate([claim],{'first_pass':old},new,frames)
+
+
+@pytest.mark.parametrize('negative',['非两次独立点击','并非两次独立点击','不是两次单独的返回操作'])
+def test_return_explicit_negation_is_not_a_positive_repeat(negative):
+    frames,old,new,claim=return_gesture_fixture()
+    claim['evidence']['interaction']+='。'+negative+'。'
+    assert cr.validate([claim],{'first_pass':old},new,frames)
+
+
+@pytest.mark.parametrize('tail',['，随后再次点击返回','。实际发生第二次返回','，但确实有两次点击'])
+def test_return_negation_cannot_hide_a_later_positive_repeat(tail):
+    frames,old,new,claim=return_gesture_fixture()
+    claim['evidence']['interaction']+='。非两次独立点击'+tail
+    with pytest.raises(ValueError):cr.validate([claim],{'first_pass':old},new,frames)
+
+
+def test_return_bridge_diagnostic_identifies_missing_real_frame_without_accepting():
+    frames,old,new,claim=return_gesture_fixture()
+    old[0].update(frame_refs=['f1','f2','f3'],start_ms=100,end_ms=300)
+    old[1].update(frame_refs=['f3','f4'],start_ms=300,end_ms=400)
+    new[0]['frame_refs']=['f1','f2','f4']
+    before=copy.deepcopy((old,new,claim))
+    feedback=cr.diagnose([claim],{'first_pass':old},new,frames)
+    item=feedback['result_evidence_to_recheck'][0]
+    assert item['reason']=='return_shared_intermediate_frame_missing'
+    assert item['shared_intermediate_frame_candidates']==['f3']
+    assert (old,new,claim)==before
+    with pytest.raises(ValueError):cr.validate([claim],{'first_pass':old},new,frames)
+
+
+def test_return_bridge_diagnostic_does_not_offer_after_state_as_bridge():
+    frames,old,new,claim=return_gesture_fixture()
+    old[0].update(frame_refs=['f1','f2','f3'],start_ms=100,end_ms=300)
+    old[1].update(frame_refs=['f3','f4'],start_ms=300,end_ms=400)
+    new[0]['frame_refs']=['f1','f2','f3','f4']
+    claim['evidence']['after_frame']='f3'
+    item=cr.diagnose([claim],{'first_pass':old},new,frames)['result_evidence_to_recheck'][0]
+    assert item['reason']=='return_shared_intermediate_frame_missing'
+    assert item['shared_intermediate_frame_candidates']==[]
+
+
+@pytest.mark.parametrize('statement',[
+    '并非两次独立点击，而是三次独立点击',
+    '非两次独立点击后又点击返回',
+    '并非两次独立点击，实际第三次返回',
+])
+def test_return_negation_keeps_other_positive_repeat_counts(statement):
+    frames,old,new,claim=return_gesture_fixture()
+    claim['evidence']['interaction']+='。'+statement
+    with pytest.raises(ValueError):cr.validate([claim],{'first_pass':old},new,frames)

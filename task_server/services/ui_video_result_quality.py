@@ -48,7 +48,9 @@ def review_requirements(event):
     """Only platform category names enter feedback, never source text or values."""
     observed=(event.get('outcome') or {}).get('observation','')
     return {
-        'check_final_visible_state_only':_sequential_process_states(observed) or _sequential_process_states(event.get('reusable_expected','')),
+        # Every outcome is a state assertion, even when the original text
+        # did not mention intermediate states. Never request a timeline.
+        'check_final_visible_state_only':True,
         'configuration_categories_to_check':[
             name for name,pattern in zip(_SETTING_NAMES,_PRINT_SETTINGS)
             if re.search(r'打印(?:设置|配置|参数)',observed) and re.search(pattern,observed)],

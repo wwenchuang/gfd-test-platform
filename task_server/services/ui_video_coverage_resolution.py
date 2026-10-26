@@ -22,9 +22,15 @@ def has_return_gesture_evidence(note):
             any(re.search(r'返回操作|返回导航|退回上一级', clause) for clause in affirmative))
 
 
+def _without_negated_repeat(note):
+    """Remove only the negated repeat predicate, never the following action."""
+    return re.sub(r'(?:并非|而非|不是|非)(?:两次|多次|第二次)'
+                  r'(?:独立的?|单独的?)?(?:点击|按下|返回操作|返回手势|返回导航)', '', note)
+
+
 def has_confirmed_return_gesture(note):
     """Merge evidence must establish navigation, not merely moving pixels."""
-    clauses=re.split(r'[。；，,;\n]|但是|但',note)
+    clauses=re.split(r'[。；，,;\n]|但是|但',_without_negated_repeat(note))
     if any(re.search(r'未|没|无|不|并非',c) and re.search(r'返回|退回|导航',c) for c in clauses):
         return False
     affirmative=[c for c in clauses if not re.search(r'未|没|无|不|并非',c)]
@@ -57,13 +63,13 @@ def _validate_return_touch_span(anchors,new,evidence,times):
     """
     touch=times[evidence['interaction_frame']]
     if all(a['start_ms']<=touch<=a['end_ms'] for a in anchors):return
-    if not min(a['start_ms'] for a in anchors)<=touch<=min(a['end_ms'] for a in anchors):_fail()
+    if not min(a['start_ms'] for a in anchors)<=touch<=min(a['end_ms'] for a in anchors):_fail('return_touch_outside_original_span')
     for anchor in anchors:
         refs=anchor['frame_refs']
         if (anchor['start_ms']!=min(times[r] for r in refs) or
-            anchor['end_ms']!=max(times[r] for r in refs)):_fail()
+            anchor['end_ms']!=max(times[r] for r in refs)):_fail('return_anchor_bounds_not_exact')
     bridge=set(new['frame_refs']).intersection(*(set(a['frame_refs']) for a in anchors))
-    if not any(touch<times[r]<times[evidence['after_frame']] for r in bridge):_fail()
+    if not any(touch<times[r]<times[evidence['after_frame']] for r in bridge):_fail('return_shared_intermediate_frame_missing')
 
 
 def _signature(event):
@@ -91,7 +97,8 @@ def diagnose(claims,sources,reviewed,frames):
     for index,claim in enumerate(claims if isinstance(claims,list) else []):
         try:
             validate([claim],sources,reviewed,frames)
-        except (ValueError,KeyError,TypeError):
+        except (ValueError,KeyError,TypeError) as error:
+            reason=getattr(error,'coverage_reason','invalid_merge_evidence')
             rejected.append(index)
         else:
             continue
@@ -110,7 +117,15 @@ def diagnose(claims,sources,reviewed,frames):
             if len(parts)==2 and parts[0] in sources and parts[1].isdigit() and int(parts[1])<len(sources[parts[0]]):
                 valid_ids.add((parts[0],int(parts[1])))
         states=[evidence.get(k) for k in ('before_frame','interaction_frame','after_frame')] if isinstance(evidence,dict) else []
-        results.append({'claim_index':index,'valid_result_index':valid_index,
+        bridge_candidates=[]
+        if reason=='return_shared_intermediate_frame_missing' and valid_ids and isinstance(evidence,dict):
+            shared=set.intersection(*(set(sources[name][pos]['frame_refs']) for name,pos in valid_ids))
+            touch_time=times.get(evidence.get('interaction_frame'))
+            after_time=times.get(evidence.get('after_frame'))
+            if touch_time is not None and after_time is not None:
+                bridge_candidates=sorted((r for r in shared if r in times and touch_time<times[r]<after_time),key=times.get)
+        results.append({'claim_index':index,'valid_result_index':valid_index,'reason':reason,
+                        'shared_intermediate_frame_candidates':bridge_candidates,
                         'missing_result_state_frames':list(dict.fromkeys(r for r in states if isinstance(r,str) and r in times and r not in result_refs)),
                         'has_same_source_duplicates':any(sum(source==name for source,pos in valid_ids)>=2 for name in sources)})
         for aid in ids if isinstance(ids,list) else []:
@@ -136,7 +151,7 @@ def diagnose(claims,sources,reviewed,frames):
                 'structural_groups':[g for g in groups if aid in g['anchor_ids']],
             })
     return {'rejected_claims':rejected,'anchors_to_recheck':anchors,'result_evidence_to_recheck':results,
-            'instruction':'missing_result_state_frames表示声明中的前态、实际交互或后态帧未被结果事件引用；须重核原图，仅原图支持时完整引用。has_same_source_duplicates为false表示没有同来源多锚点可合并，普通跨来源一对一对应不需要合并声明。删除非法声明不免除旧锚点的解释责任。重新核对完整原帧；结构候选不是动作真值。属于已有交互时完整声明对应组及改型证据，独立操作必须保留；不能确定则报告疑问，不造操作或断言凑数。'}
+            'instruction':'reason说明被拒绝的证据规则。shared_intermediate_frame_candidates仅是全部旧锚点共同引用且位于实际触点与后态之间的原帧；必须核对原图确属同一连续手势后再引用到结果，不得把后态或动画虚构成新触点。missing_result_state_frames表示声明中的前态、实际交互或后态帧未被结果事件引用；须重核原图，仅原图支持时完整引用。has_same_source_duplicates为false表示没有同来源多锚点可合并，普通跨来源一对一对应不需要合并声明。删除非法声明不免除旧锚点的解释责任。重新核对完整原帧；结构候选不是动作真值。属于已有交互时完整声明对应组及改型证据，独立操作必须保留；不能确定则报告疑问，不造操作或断言凑数。'}
 
 
 def validate(claims,sources,reviewed,frames):
@@ -232,7 +247,8 @@ def validate(claims,sources,reviewed,frames):
                 r'(?:旧识别|旧锚点|首轮识别)[^。；，,但\n]{0,40}?分为(?:两次|多次)点击'
                 r'(?:（(?:(?!再次|重新|第二次|两次|多次|[。；，,但\n]).){0,100}）)?'
                 r'(?=[，,]实际为同一次(?:连续)?(?:返回)?手势)', '', affirmative)
-            if re.search(r'再次|重新|第二次|两次|多次',affirmative):_fail()
+            affirmative=_without_negated_repeat(affirmative)
+            if re.search(r'再次|重新|第[二三四五六七八九十百0-9]+次|[两二三四五六七八九十百2-9]次|多次|又[^。；，,]{0,12}(?:点击|按下|返回|导航)',affirmative):_fail()
         low=min(e['start_ms'] for e in anchors);high=max(e['end_ms'] for e in anchors)
         for source_name,source in sources.items():
             for pos,old in enumerate(source):

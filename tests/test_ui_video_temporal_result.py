@@ -33,3 +33,8 @@ def test_temporal_review_only_adds_boolean_requirement():
     r=review_requirements(event('私人任务123显示上传中，然后进入文件详情页面。'))
     assert r['check_final_visible_state_only'] is True
     assert '私人' not in str(r)
+
+
+@pytest.mark.parametrize('observation',['任务传输中页面可见','提交表单保持显示','弹窗可见，包含确认和取消按钮'])
+def test_result_review_always_requests_last_visible_state_even_without_prior_sequence(observation):
+    assert review_requirements(event(observation))['check_final_visible_state_only'] is True
