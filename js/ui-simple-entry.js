@@ -235,14 +235,14 @@ function openImportedUiDraft(draft){
 
 // One visible source task owns polling. Leaving this view never starts card timers.
 function mountUiVideoSource(node,{current,openDraft,initialSource=null}){
-  const identity=uiSimpleIdentity(),pending=new Set(),urls=new Set(),mediaRequests=new WeakMap();let alive=true,epoch=0,timer=null,source=null,app='',polls=0,busy=false,renderedKey='',statusSequence=0,autoIntent=null;
-  const autoImports=new Set();
+  const identity=uiSimpleIdentity(),pending=new Set(),urls=new Set(),mediaRequests=new WeakMap();let alive=true,epoch=0,timer=null,source=null,app='',polls=0,busy=false,renderedKey='',statusSequence=0,rows=[],limit=10,listSequence=0;
   const q=s=>node.querySelector(s),escape=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const valid=()=>alive&&current()&&identity===uiSimpleIdentity()&&node.isConnected;
   function clearMedia(){for(const url of urls)URL.revokeObjectURL(url);urls.clear();}
-  function invalidate(){epoch++;statusSequence++;autoIntent=null;renderedKey='';clearTimeout(timer);timer=null;for(const c of pending)c.abort();pending.clear();clearMedia();}
+  function invalidate(){epoch++;statusSequence++;renderedKey='';clearTimeout(timer);timer=null;for(const c of pending)c.abort();pending.clear();clearMedia();}
   function dispose(){alive=false;invalidate();clearInterval(guard);document.removeEventListener('visibilitychange',visibilityChanged);}
   function notice(text){if(valid())q('[data-video-notice]').textContent=text;}
+  function detailNotice(text){if(node.dataset.videoView==='detail')notice(text);}
   async function request(path,extra={}){
     const c=new AbortController(),version=epoch;pending.add(c);
     try{const data=await apiRequest(path,{...extra,signal:c.signal});if(!valid()||version!==epoch)return null;if(!data?.ok)throw new Error(data?.error||'请求未完成');return data;}
@@ -255,11 +255,27 @@ function mountUiVideoSource(node,{current,openDraft,initialSource=null}){
     mediaRequests.set(element,entry);element.removeAttribute('src');pending.add(c);
     const latest=()=>valid()&&version===epoch&&element.isConnected&&mediaRequests.get(element)===entry&&!c.signal.aborted;
     try{const response=await nativeFetch('/api'+path,{headers:authHeaders(),signal:c.signal});if(!latest())return;if(!response.ok)throw new Error('证据读取失败');const blob=await response.blob();if(!latest())return;const url=URL.createObjectURL(blob);entry.url=url;urls.add(url);element.src=url;}
-    catch(e){if(latest())notice(e.message);}
+    catch(e){if(latest())detailNotice(e.message);}
     finally{pending.delete(c);}
   }
   node.classList.add('ui-video-source');node.dataset.videoPhase='upload';
-  node.innerHTML='<h2>上传视频，生成测试用例</h2><ol class="ui-video-journey" data-video-journey><li><b>1</b>上传视频</li><li><b>2</b>生成用例</li><li><b>3</b>选机试跑</li></ol><p>上传包含完整操作的 MP4/MOV，生成后核对中文步骤，再选择手机试跑。最多200MB、10分钟。</p><div class="ui-video-upload-form"><label>测试应用<select data-video-app><option value="">选择应用</option></select></label><label>录屏文件<input data-video-file type="file" accept="video/mp4,video/quicktime,.mp4,.mov"></label><details data-video-goal-options><summary>补充测试目标（可选）</summary><label>业务目标或结束检查<input data-video-goal maxlength="2000" placeholder="已有明确目标时可补充，不必重写步骤"></label></details><button type="button" class="ui-video-primary" data-video-upload>生成测试用例</button></div><p data-video-notice role="status"></p><section data-video-detail></section><details data-video-history><summary>继续我的视频用例</summary><button type="button" data-video-refresh>刷新我的录屏</button><div data-video-list></div></details>';
+  node.innerHTML='<h2>我的视频任务</h2><ol class="ui-video-journey" data-video-journey><li><b>1</b>上传视频</li><li><b>2</b>生成用例</li><li><b>3</b>核对步骤</li><li><b>4</b>手机试跑</li></ol><label>测试应用<select data-video-app><option value="">选择应用</option></select></label><p data-video-notice role="status"></p><section data-video-history data-video-view="list"><button type="button" class="ui-video-primary" data-video-new>上传视频</button><button type="button" data-video-refresh>刷新我的录屏</button><div class="ui-video-list-controls"><label>搜索任务<input type="search" data-video-query placeholder="任务名称或原文件"></label><label>状态<select data-video-filter><option value="">全部状态</option><option value="active">生成中</option><option value="ready">待核对</option><option value="draft">已生成草稿</option><option value="failed">分析失败</option><option value="review_needed">需补充素材</option><option value="cancelled">已取消</option><option value="interrupted">已停止</option></select></label></div><p data-video-list-summary></p><div data-video-list><p>请先选择测试应用，查看自己的视频任务。</p></div><button type="button" data-video-more hidden>加载更多</button></section><section data-video-upload-view data-video-view="upload" hidden><button type="button" data-video-upload-back>返回任务列表</button><h3>上传视频</h3><p>上传包含完整操作的 MP4/MOV，最多200MB、10分钟。</p><div class="ui-video-upload-form"><label>录屏文件<input data-video-file type="file" accept="video/mp4,video/quicktime,.mp4,.mov"></label><details data-video-goal-options><summary>补充测试目标（可选）</summary><label>业务目标或结束检查<input data-video-goal maxlength="2000" placeholder="已有明确目标时可补充，不必重写步骤"></label></details><button type="button" class="ui-video-primary" data-video-upload>生成测试用例</button></div></section><section data-video-detail-view data-video-view="detail" hidden><button type="button" data-video-back>返回任务列表</button><section data-video-detail></section></section>';
+  function syncJourney(){node.dataset.videoPhase=node.dataset.videoView==='detail'?(source?.status==='ready'||source?.draft_id?'review':'generate'):'upload';}
+  function view(name){if(name==='upload'&&node.dataset.videoView!=='upload'&&!busy)notice('');node.dataset.videoView=name;syncJourney();for(const panel of node.querySelectorAll('[data-video-view]'))panel.hidden=panel.dataset.videoView!==name;}
+  function renderList(){
+    const term=q('[data-video-query]').value.trim().toLocaleLowerCase(),filter=q('[data-video-filter]').value;
+    const filtered=rows.map(row=>source?.status&&source.source_id===row.source_id&&compareSource(source,row)>=0?source:row).filter(row=>(!term||[row.title,row.filename].some(v=>String(v||'').toLocaleLowerCase().includes(term)))&&(!filter||(filter==='draft'?!!row.draft_id:filter==='active'?['queued','decoding','analyzing'].includes(row.status):filter==='ready'?row.status==='ready'&&!row.draft_id:row.status===filter))).sort((a,b)=>(Number(b.updated_at)||Number(b.created_at)||0)-(Number(a.updated_at)||Number(a.created_at)||0));
+    q('[data-video-list-summary]').textContent=`当前应用最近最多30项 · 生成中 ${rows.filter(r=>['queued','decoding','analyzing'].includes((source?.source_id===r.source_id?source:r).status)).length} · 待核对 ${rows.filter(r=>{const item=source?.source_id===r.source_id?source:r;return item.status==='ready'&&!item.draft_id;}).length} · 已生成草稿 ${rows.filter(r=>(source?.source_id===r.source_id?source:r).draft_id).length}`;
+    const host=q('[data-video-list]'),focused=document.activeElement,focusId=host.contains(focused)?focused.closest('[data-video-open]')?.dataset.videoOpen:null;
+    const html=filtered.slice(0,limit).map(row=>`<article class="ui-video-task-row"><div><strong title="${escape(row.title||row.filename)}">${escape(row.title||row.filename)}</strong><small title="${escape(row.filename)}">原文件：${escape(row.filename)}</small></div><span>${escape(row.draft_id?'已生成草稿':statusText(row.status))}</span><time>${escape(historyTime(row))}${row.analysis_version?`<small>第 ${escape(row.analysis_version)} 次分析</small>`:''}</time><button type="button" data-video-open="${escape(row.source_id)}">${row.status==='ready'||row.draft_id?'查看并核对':'查看任务'}</button></article>`).join('')||'<p>没有符合条件的视频任务。</p>';
+    if(host.innerHTML!==html){host.innerHTML=html;if(focusId&&node.dataset.videoView==='list'){const action=Array.from(host.querySelectorAll('[data-video-open]')).find(button=>button.dataset.videoOpen===focusId);action?.focus({preventScroll:true});}}
+    q('[data-video-more]').hidden=filtered.length<=limit;
+  }
+  q('[data-video-new]').onclick=()=>{if(valid()&&!busy)view('upload');};
+  q('[data-video-back]').onclick=q('[data-video-upload-back]').onclick=()=>{if(valid()&&!busy)view('list');};
+  q('[data-video-query]').oninput=q('[data-video-filter]').onchange=()=>{limit=10;renderList();};
+  q('[data-video-more]').onclick=()=>{limit+=10;renderList();};
+  view('list');
 
   function compareSource(left,right){
     const version=(Number(left?.analysis_version)||0)-(Number(right?.analysis_version)||0);
@@ -269,20 +285,17 @@ function mountUiVideoSource(node,{current,openDraft,initialSource=null}){
     if(source?.source_id===next.source_id&&Number(next.analysis_version)>Number(source.analysis_version))polls=0;
     source=next;render();
   }
-  async function list(){if(!app)return;const version=epoch;try{const data=await request('/ui-video-sources?'+new URLSearchParams({app_id:app}));if(!data)return;
-    const selected=(data.sources||[]).find(d=>d.source_id===source?.source_id);
+  async function list(){if(!app)return;const version=epoch,sequence=++listSequence;try{const data=await request('/ui-video-sources?'+new URLSearchParams({app_id:app}));if(!data||sequence!==listSequence)return;
+    rows=data.sources||[];const selected=rows.find(d=>d.source_id===source?.source_id);
     if(source?.status&&selected&&compareSource(selected,source)>0)adoptSource(selected);
-    q('[data-video-list]').innerHTML=(data.sources||[]).map(d=>{const row=source?.status&&source.source_id===d.source_id&&compareSource(source,d)>=0?source:d;return `<button type="button" data-video-open="${escape(row.source_id)}">${escape(historyLabel(row))}</button>`;}).join('')||'<p>当前应用还没有上传录屏。</p>';}catch(e){if(version===epoch)notice(e.message);}}
+    renderList();}catch(e){if(version===epoch&&node.dataset.videoView==='list')notice(e.message);}}
   function statusText(status){return ({queued:'排队中',decoding:'解码中',analyzing:'分析中',ready:'待核对',review_needed:'需补充素材',failed:'分析失败',cancelled:'已取消',interrupted:'重启后已停止'})[status]||status;}
-  function historyLabel(row){
-    const timestamp=Number(row.created_at),date=new Date(timestamp*1000);
-    const time=timestamp>0&&Number.isFinite(date.getTime())?date.toLocaleString('zh-CN',{hour12:false}):'';
-    return [row.title||row.filename,row.draft_id?'已保存用例':statusText(row.status),time?`创建 ${time}`:'',row.analysis_version?`第 ${row.analysis_version} 次分析`:''].filter(Boolean).join(' · ');
-  }
+  function historyTime(row){const stamp=Number(row.updated_at)||Number(row.created_at),date=new Date(stamp*1000);return stamp>0&&Number.isFinite(date.getTime())?date.toLocaleString('zh-CN',{hour12:false}):'时间未提供';}
   function syncSourceStatus(){
     if(!valid()||!source?.status)return;
-    for(const button of q('[data-video-list]').querySelectorAll('[data-video-open]'))if(button.dataset.videoOpen===source.source_id)button.textContent=historyLabel(source);
+    renderList();
     const messages={queued:'上传完成，正在排队分析；离页后可从我的录屏恢复。',decoding:'正在解码录屏，尚未形成候选步骤。',analyzing:'正在分析录屏，尚未完成；不会操作手机。',ready:'分析完成，候选步骤待核对；请核对证据和业务预期。',review_needed:'需补充素材，请核对说明后重新选择连续片段。',failed:'分析失败，请核对说明后明确重试。',cancelled:'分析已取消；已有草稿与来源证据保留。',interrupted:'服务重启后分析已停止，请明确重试。'};
+    if(node.dataset.videoView!=='detail')return;
     notice(source.status==='review_needed'?'未生成用例，请上传包含实际操作的视频。':source.status==='failed'?'未生成用例。'+(source.error||'请重新生成。'):source.error||messages[source.status]||statusText(source.status));
   }
   function schedulePoll(){
@@ -295,42 +308,35 @@ function mountUiVideoSource(node,{current,openDraft,initialSource=null}){
   async function refresh(){
     if(!source||!valid()||busy)return;
     const sequence=++statusSequence;
-    try{const data=await request(`/ui-video-sources/${source.source_id}?`+new URLSearchParams({app_id:app}));if(data&&compareSource(data.source,source)>=0&&(sequence===statusSequence||compareSource(data.source,source)>0))adoptSource(data.source);}catch(e){if(sequence===statusSequence)notice(e.message);}
+    try{const data=await request(`/ui-video-sources/${source.source_id}?`+new URLSearchParams({app_id:app}));if(data&&compareSource(data.source,source)>=0&&(sequence===statusSequence||compareSource(data.source,source)>0))adoptSource(data.source);}catch(e){if(sequence===statusSequence)detailNotice(e.message);}
     finally{if(sequence===statusSequence)schedulePoll();}
   }
-  function sourceKey(item){return item?.source_id+':'+item?.analysis_version;}
-  function scheduleAutoImport(){
-    const version=epoch,key=sourceKey(source);
-    if(!autoIntent||autoIntent!==key||source?.status!=='ready'||autoImports.has(key))return;
-    Promise.resolve().then(()=>{if(valid()&&version===epoch&&!busy&&autoIntent===key&&sourceKey(source)===key)openSourceCase(true);});
-  }
-  async function openSourceCase(automatic=false){
+  async function openSourceCase(){
     if(!valid()||busy||!(source?.status==='ready'||source?.draft_id))return;
-    const id=source.source_id,key=sourceKey(source);
-    if(automatic){if(autoIntent!==key||autoImports.has(key))return;autoImports.add(key);}
+    const id=source.source_id;
     invalidate();busy=true;q('[data-video-app]').disabled=true;
     q('[data-video-detail]').querySelectorAll('[data-video-action]').forEach(button=>button.disabled=true);
-    notice('正在打开生成的中文用例，下一步确认步骤并选机试跑…');
+    detailNotice('正在打开生成的中文用例，下一步确认步骤并选机试跑…');
     try{
       const data=await request(`/ui-video-sources/${id}/import`,{method:'POST',body:{app_id:app}});if(!data)return;
       if(!data.draft||data.draft.app_id!==app||data.draft.source_snapshot?.source_id&&data.draft.source_snapshot.source_id!==id)throw new Error('用例关联未确认，请重新打开此视频');
       dispose();openDraft(data.draft);
-    }catch(e){notice('用例打开未完成：'+e.message+'。请点击“查看用例并试跑”重试，已有编辑会保留。');}
+    }catch(e){detailNotice('用例打开未完成：'+e.message+'。请点击“开始核对”重试，已有编辑会保留。');}
     finally{busy=false;if(valid()){q('[data-video-app]').disabled=false;q('[data-video-detail]').querySelectorAll('[data-video-action]').forEach(button=>button.disabled=false);}}
   }
   function render(){
-    if(!valid())return;syncSourceStatus();node.dataset.videoPhase=source.status==='ready'?'trial':'generate';
+    if(!valid())return;syncSourceStatus();syncJourney();
 
-    const analysis=source.analysis_progress,detail=analysis?.phase==='reviewing'?`正在复核第 ${Number(analysis.completed)+1} / ${Number(analysis.total)} 段操作`:analysis?.phase==='reconciling'?'正在复核取消恢复及返回路径':analysis?.phase==='planning'?'视频已识别完，正在整理可执行用例':analysis?.phase==='observing'?`正在识别第 ${Number(analysis.completed)+1} / ${Number(analysis.total)} 段操作`:'';
+    const analysis=source.analysis_progress,detail=analysis?.phase==='reviewing'?`复核已完成 ${Number(analysis.completed)||0} / ${Number(analysis.total)||0} 段`:analysis?.phase==='reconciling'?'正在复核取消恢复及返回路径':analysis?.phase==='planning'?'视频已识别完，正在整理可执行用例':analysis?.phase==='observing'?`识别已完成 ${Number(analysis.completed)||0} / ${Number(analysis.total)||0} 段`:'';
     const key=JSON.stringify([source.source_id,source.status,source.error,source.error_code,source.analysis_version,source.draft_id,source.title,source.media,source.candidate_steps,source.uncertainties]);
-    if(key===renderedKey){const label=q('[data-video-progress] .ui-busy-inline');if(label&&detail)label.textContent=detail;schedulePoll();scheduleAutoImport();return;}renderedKey=key;
+    if(key===renderedKey){const label=q('[data-video-progress] .ui-busy-inline');if(label&&detail)label.textContent=detail;schedulePoll();return;}renderedKey=key;
     clearTimeout(timer);clearMedia();const box=q('[data-video-detail]'),id=source.source_id;
     const active=['queued','decoding','analyzing'].includes(source.status),ready=source.status==='ready'||source.draft_id;
-    const headline=ready?'用例已生成，下一步核对并试跑':active?'正在生成测试用例':source.status==='review_needed'||source.status==='failed'?'未生成用例':'尚未生成用例';
+    const headline=ready?'已生成草稿，下一步核对步骤':active?'正在生成测试用例':source.status==='review_needed'||source.status==='failed'?'未生成用例':'尚未生成用例';
     const stage=['queued','decoding','analyzing'].indexOf(source.status);
-    const progress=active?`<div class="ui-task-progress" data-video-progress role="status" aria-live="polite" aria-busy="true"><p class="ui-busy-inline" aria-busy="true">${escape(detail||['正在排队，等待分析资源','正在读取视频，提取操作画面','AI 正在识别操作并整理中文步骤'][stage])}</p><ol>${['排队','读取视频','AI 识别步骤','待核对'].map((label,i)=>`<li class="${i<stage?'is-done':i===stage?'is-current':''}" ${i===stage?'aria-current="step"':''}><span aria-hidden="true">${i<stage?'✓':i+1}</span>${label}</li>`).join('')}</ol><small>${autoIntent===sourceKey(source)?'完成后自动打开中文步骤':'完成后点击“查看用例并试跑”'}；可先处理其他工作，稍后从“继续我的视频用例”查看。</small></div>`:'';
-    box.innerHTML=`<div class="ui-video-task-main"><h3>${headline}</h3>${progress}<p>${escape(source.title||source.filename)}</p>${source.title?`<small>原文件：${escape(source.filename)}</small>`:""}${source.status==='review_needed'?'<p>请上传包含实际操作的视频，保留操作前后页面和结束结果。</p><button type="button" class="ui-video-primary" data-video-reselect>重新选择视频</button>':ready?'<button type="button" class="ui-video-primary" data-video-action="import">查看用例并试跑</button>':['failed','cancelled','interrupted'].includes(source.status)?'<button type="button" class="ui-video-primary" data-video-action="retry">重新生成用例</button>':''}${active?'<p>完成后核对中文步骤；生成过程不会操作手机。</p><button type="button" data-video-action="cancel">取消生成</button>':''}</div><details data-video-technical><summary>查看原视频与分析详情（可选）</summary><p>任务状态：${escape(statusText(source.status))}</p><p>${escape(source.error||'观察和推断仅作为来源证据，不代表试跑通过。')}</p>${source.media?`<p>完整时间覆盖 0–${(source.media.duration_ms/1000).toFixed(2)} 秒 · ${source.media.frames.length} 张候选帧 · 识别版本 ${source.analysis_version}</p>`:''}<button type="button" data-video-status>刷新当前任务</button><button type="button" data-video-preview>预览私有原视频（需完整下载）</button><video controls preload="none" style="max-width:100%;max-height:320px" hidden></video><ul>${(source.uncertainties||[]).map(v=>`<li>${escape(v)}</li>`).join('')}</ul><ol>${(source.candidate_steps||[]).map(s=>`<li><b>${(s.start_ms/1000).toFixed(2)}–${(s.end_ms/1000).toFixed(2)}秒</b> · ${s.evidence_kind==='observed'?'直接观察候选':'推断操作'} · ${escape(({launch:'启动应用',aiTap:'点击',aiInput:'输入',aiScroll:'滑动',aiWaitFor:'等待',aiAssert:'检查'})[s.action]||'待核对操作')} ${escape(s.target)}<p>观察：${escape(s.observation)}；业务预期仍需核对。</p>${s.frame_refs.map(f=>`<button type="button" data-video-frame="${escape(f)}">查看帧 ${escape(f)}</button>`).join('')}${s.uncertainties.map(v=>`<p>${escape(v)}</p>`).join('')}</li>`).join('')}</ol><img data-video-frame-preview alt="所选录屏证据帧" style="max-width:100%;max-height:400px" hidden></details>`;
-    const reselect=q('[data-video-reselect]');if(reselect)reselect.onclick=()=>{if(!valid()||busy)return;invalidate();source=null;node.dataset.videoPhase='upload';q('[data-video-detail]').replaceChildren();notice('请选择包含完整操作的视频，再点击“生成测试用例”。');const file=q('[data-video-file]');file.value='';file.focus();file.click();};
+    const progress=active?`<div class="ui-task-progress" data-video-progress role="status" aria-live="polite" aria-busy="true"><p class="ui-busy-inline" aria-busy="true">${escape(detail||['正在排队，等待分析资源','正在读取视频，提取操作画面','AI 正在识别操作并整理中文步骤'][stage])}</p><small>完成后点击“开始核对”；可先处理其他工作，稍后从“我的视频任务”查看。</small></div>`:'';
+    box.innerHTML=`<div class="ui-video-task-main"><h3>${headline}</h3>${progress}<p>${escape(source.title||source.filename)}</p>${source.title?`<small>原文件：${escape(source.filename)}</small>`:""}${source.status==='review_needed'?'<p>请上传包含实际操作的视频，保留操作前后页面和结束结果。</p><button type="button" class="ui-video-primary" data-video-reselect>重新选择视频</button>':ready?'<button type="button" class="ui-video-primary" data-video-action="import">开始核对</button>':['failed','cancelled','interrupted'].includes(source.status)?'<button type="button" class="ui-video-primary" data-video-action="retry">重新生成用例</button>':''}${active?'<p>完成后核对中文步骤；生成过程不会操作手机。</p><button type="button" data-video-action="cancel">取消生成</button>':''}</div><details data-video-technical><summary>查看原视频与分析详情（可选）</summary><p>任务状态：${escape(statusText(source.status))}</p><p>${escape(source.error||'观察和推断仅作为来源证据，不代表试跑通过。')}</p>${source.media?`<p>完整时间覆盖 0–${(source.media.duration_ms/1000).toFixed(2)} 秒 · ${source.media.frames.length} 张候选帧 · 第 ${source.analysis_version} 次分析</p>`:''}<button type="button" data-video-status>刷新当前任务</button><button type="button" data-video-preview>预览私有原视频（需完整下载）</button><video controls preload="none" style="max-width:100%;max-height:320px" hidden></video><ul>${(source.uncertainties||[]).map(v=>`<li>${escape(v)}</li>`).join('')}</ul><ol>${(source.candidate_steps||[]).map(s=>`<li><b>${(s.start_ms/1000).toFixed(2)}–${(s.end_ms/1000).toFixed(2)}秒</b> · ${s.evidence_kind==='observed'?'直接观察候选':'推断操作'} · ${escape(({launch:'启动应用',aiTap:'点击',aiInput:'输入',aiScroll:'滑动',aiWaitFor:'等待',aiAssert:'检查'})[s.action]||'待核对操作')} ${escape(s.target)}<p>观察：${escape(s.observation)}；业务预期仍需核对。</p>${s.frame_refs.map(f=>`<button type="button" data-video-frame="${escape(f)}">查看帧 ${escape(f)}</button>`).join('')}${s.uncertainties.map(v=>`<p>${escape(v)}</p>`).join('')}</li>`).join('')}</ol><img data-video-frame-preview alt="所选录屏证据帧" style="max-width:100%;max-height:400px" hidden></details>`;
+    const reselect=q('[data-video-reselect]');if(reselect)reselect.onclick=()=>{if(!valid()||busy)return;invalidate();source=null;view('upload');node.dataset.videoPhase='upload';q('[data-video-detail]').replaceChildren();notice('请选择包含完整操作的视频，再点击“生成测试用例”。');const file=q('[data-video-file]');file.value='';file.focus();file.click();};
 
     q('[data-video-status]').onclick=()=>{polls=0;refresh();};
     q('[data-video-preview]').onclick=()=>{if(!valid())return;const video=box.querySelector('video');video.hidden=false;media(`/ui-video-sources/${id}/video?`+new URLSearchParams({app_id:app}),video);};
@@ -339,13 +345,13 @@ function mountUiVideoSource(node,{current,openDraft,initialSource=null}){
       if(button.dataset.videoAction==='import')return openSourceCase();
       if(busy||!valid())return;invalidate();busy=true;button.disabled=true;button.setAttribute('aria-busy','true');
       try{const data=await request(`/ui-video-sources/${id}/${button.dataset.videoAction}`,{method:'POST',body:{app_id:app}});if(!data)return;
-        if(data.draft){dispose();openDraft(data.draft);return;}source=data.source;polls=0;if(button.dataset.videoAction==='retry')autoIntent=sourceKey(source);render();list();
-      }catch(e){notice(e.message);}finally{busy=false;if(button.isConnected){button.disabled=false;button.removeAttribute('aria-busy');}scheduleAutoImport();}
+        if(data.draft){dispose();openDraft(data.draft);return;}source=data.source;polls=0;view('detail');render();list();
+      }catch(e){detailNotice(e.message);}finally{busy=false;if(button.isConnected){button.disabled=false;button.removeAttribute('aria-busy');}}
     };
-    schedulePoll();scheduleAutoImport();
+    schedulePoll();
   }
-  q('[data-video-list]').onclick=async e=>{const button=e.target.closest('[data-video-open]');if(!button||busy)return;invalidate();source={source_id:button.dataset.videoOpen};polls=0;notice('正在读取所选录屏状态…');await refresh();};
-  q('[data-video-app]').onchange=()=>{if(busy)return;invalidate();app=q('[data-video-app]').value;source=null;node.dataset.videoPhase='upload';notice('');q('[data-video-list]').replaceChildren();q('[data-video-detail]').replaceChildren();list();};
+  q('[data-video-list]').onclick=async e=>{const button=e.target.closest('[data-video-open]');if(!button||busy)return;invalidate();source={source_id:button.dataset.videoOpen};view('detail');polls=0;notice('正在读取所选录屏状态…');await refresh();};
+  q('[data-video-app]').onchange=()=>{if(busy)return;invalidate();app=q('[data-video-app]').value;source=null;rows=[];limit=10;q('[data-video-query]').value='';q('[data-video-filter]').value='';view('list');node.dataset.videoPhase='upload';notice('');q('[data-video-list]').replaceChildren();q('[data-video-detail]').replaceChildren();q('[data-video-list-summary]').textContent='';if(app)list();else q('[data-video-list]').textContent='请先选择测试应用，查看自己的视频任务。';};
   q('[data-video-refresh]').onclick=list;
   q('[data-video-upload]').onclick=async()=>{
     if(busy||!valid())return;
@@ -356,12 +362,12 @@ function mountUiVideoSource(node,{current,openDraft,initialSource=null}){
     // Navigation can detach the view while the bounded upload finishes. The
     // response never updates a detached/changed account; own sources are durable.
     const c=new AbortController();const accountGuard=setInterval(()=>{if(identity!==uiSimpleIdentity())c.abort();},500);
-    try{const response=await nativeFetch('/api/ui-video-sources/upload?'+new URLSearchParams({app_id:app,filename:file.name,goal:q('[data-video-goal]').value}),{method:'POST',headers:authHeaders({'Content-Type':'application/octet-stream'}),body:file,signal:c.signal});const data=await response.json();if(!valid()||version!==epoch)return;if(!response.ok||!data.ok)throw new Error(data.error||'上传未完成');source=data.source;polls=0;autoIntent=sourceKey(source);render();list();}
+    try{const response=await nativeFetch('/api/ui-video-sources/upload?'+new URLSearchParams({app_id:app,filename:file.name,goal:q('[data-video-goal]').value}),{method:'POST',headers:authHeaders({'Content-Type':'application/octet-stream'}),body:file,signal:c.signal});const data=await response.json();if(!valid()||version!==epoch)return;if(!response.ok||!data.ok)throw new Error(data.error||'上传未完成');source=data.source;polls=0;view('detail');render();list();}
     catch(e){if(valid()&&version===epoch)notice('上传结果未确认：'+e.message+'。先刷新我的录屏核对，再决定重新上传。');}
-    finally{clearInterval(accountGuard);busy=false;if(valid()){button.disabled=false;button.removeAttribute('aria-busy');button.textContent='生成测试用例';q('[data-video-app]').disabled=false;scheduleAutoImport();}}
+    finally{clearInterval(accountGuard);busy=false;if(valid()){button.disabled=false;button.removeAttribute('aria-busy');button.textContent='生成测试用例';q('[data-video-app]').disabled=false;}}
   };
   const guard=setInterval(()=>{if(!valid())dispose();},1000);
   document.addEventListener('visibilitychange',visibilityChanged);
-  request('/ui-executions/catalog').then(data=>{if(!data)return;q('[data-video-app]').innerHTML='<option value="">选择应用</option>'+(data.apps||[]).map(a=>`<option value="${escape(a.app_id)}">${escape(a.name)}</option>`).join('');if(initialSource&&(data.apps||[]).some(a=>a.app_id===initialSource.app_id)){app=initialSource.app_id;q('[data-video-app]').value=app;source={source_id:initialSource.source_id};list();refresh();}}).catch(e=>notice(e.message));
+  request('/ui-executions/catalog').then(data=>{if(!data)return;q('[data-video-app]').innerHTML='<option value="">选择应用</option>'+(data.apps||[]).map(a=>`<option value="${escape(a.app_id)}">${escape(a.name)}</option>`).join('');if(initialSource&&(data.apps||[]).some(a=>a.app_id===initialSource.app_id)){app=initialSource.app_id;q('[data-video-app]').value=app;source={source_id:initialSource.source_id};view('detail');list();refresh();}}).catch(e=>notice(e.message));
   return {dispose};
 }

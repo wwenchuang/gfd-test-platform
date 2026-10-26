@@ -296,7 +296,7 @@ test('saved video history uses readable escaped names and distinguishes repeated
   filename:'opaque-source.mp4',title:'删除打印记录 <img src=x>',status:'ready',draft_id:'uid_1',
   created_at:1792114455,analysis_version:2}]}:undefined);
  f.app('a');await wait();const list=f.q('[data-video-list]');
- assert.match(list.textContent,/删除打印记录/);assert.match(list.textContent,/已保存用例/);
+ assert.match(list.textContent,/删除打印记录/);assert.match(list.textContent,/已生成草稿/);
  assert.match(list.textContent,/2026/);assert.match(list.textContent,/第 2 次分析/);
  assert.equal(list.querySelector('img'),null);
 });
@@ -426,11 +426,11 @@ test('refreshing my videos adopts a newer retry from another tab and rejects old
  listing={...failed,updated_at:900};f.q('[data-video-refresh]').click();await wait();assert.match(f.q('[data-video-detail]').textContent,/新版本失败/);assert.match(f.q('[data-video-notice]').textContent,/新版本失败/);assert.equal(timers.size,0);
 });
 
-test('video main journey shows three stages and folds technical details for historical sources',async t=>{
+test('video main journey shows four stages and folds technical details for historical sources',async t=>{
  const f=await videoFixture(t),source={source_id:'uvs_'+'5'.repeat(32),filename:'clip.mp4',status:'ready',analysis_version:1,updated_at:100,candidate_steps:[{action:'aiTap',target:'我的入口',start_ms:0,end_ms:1000,frame_refs:['f0'],observation:'个人页面出现',evidence_kind:'inferred',uncertainties:[]}],uncertainties:[]};
  f.respond(path=>path.includes(source.source_id)?{ok:true,source}:path.startsWith('/ui-video-sources?')?{ok:true,sources:[source]}:undefined);
  f.app('a');await wait();f.q('[data-video-open]').click();await wait();
- assert.match(f.q('[data-video-journey]').textContent,/上传视频.*生成用例.*选机试跑/);assert.equal(f.q('[data-video-action="import"]').textContent,'查看用例并试跑');
+ assert.match(f.q('[data-video-journey]').textContent,/上传视频.*生成用例.*核对步骤.*手机试跑/);assert.equal(f.q('[data-video-action="import"]').textContent,'开始核对');
  assert.equal(f.q('[data-video-technical]').open,false);assert.ok(f.q('[data-video-frame]').closest('[data-video-technical]'));assert.equal(f.calls.some(c=>c.path.endsWith('/import')),false);
 });
 test('a video without usable interactions explicitly offers another upload instead of a generated case',async t=>{
@@ -438,38 +438,39 @@ test('a video without usable interactions explicitly offers another upload inste
  f.respond(path=>path.includes(source.source_id)?{ok:true,source}:path.startsWith('/ui-video-sources?')?{ok:true,sources:[source]}:undefined);f.app('a');await wait();f.q('[data-video-open]').click();await wait();
  assert.match(f.q('[data-video-detail]').textContent,/未生成用例.*请上传包含实际操作的视频/);assert.ok(f.q('[data-video-reselect]'));assert.equal(f.q('[data-video-action="import"]'),null);
 });
-test('new upload reaching ready imports exactly once and opens the generated Chinese draft',async t=>{
+test('new upload reaching ready waits for explicit review before importing once',async t=>{
  const f=await videoFixture(t),queued={source_id:'uvs_'+'7'.repeat(32),filename:'clip.mp4',status:'queued',analysis_version:1,updated_at:100};let detail=queued,resolveImport,adopted;
  f.w.UiCaseDraft.mount=(n,o)=>{adopted=o.initialDraft;return {dispose(){}};};
  f.respond(path=>path.endsWith('/import')?new Promise(r=>resolveImport=r):path.includes(queued.source_id)?{ok:true,source:detail}:path.startsWith('/ui-video-sources?')?{ok:true,sources:[queued]}:undefined);
  f.app('a');await wait();Object.defineProperty(f.q('[data-video-file]'),'files',{value:[new f.w.File(['video'],'clip.mp4')]});f.w.nativeFetch=async()=>({ok:true,json:async()=>({ok:true,source:queued})});f.q('[data-video-upload]').click();await wait();
- detail={...queued,status:'ready',updated_at:200};f.q('[data-video-status]').click();await wait();await wait();assert.equal(f.calls.filter(c=>c.path.endsWith('/import')).length,1);
+ detail={...queued,status:'ready',updated_at:200};f.q('[data-video-status]').click();await wait();await wait();assert.equal(f.calls.filter(c=>c.path.endsWith('/import')).length,0);
+ f.q('[data-video-action="import"]').click();await wait();
  f.q('[data-video-status]')?.click();await wait();assert.equal(f.calls.filter(c=>c.path.endsWith('/import')).length,1);
  resolveImport({ok:true,draft:{draft_id:'generated',app_id:'a'}});await wait();assert.equal(adopted.draft_id,'generated');assert.equal(f.calls.some(c=>c.path.endsWith('/try')),false);
 });
-test('late automatic video import never opens a draft for a different signed in identity',async t=>{
+test('late explicit video import never opens a draft for a different signed in identity',async t=>{
  const f=await videoFixture(t),source={source_id:'uvs_'+'8'.repeat(32),filename:'clip.mp4',status:'ready',analysis_version:1};let resolveImport,mounts=0;
  f.w.UiCaseDraft.mount=()=>{mounts++;return {dispose(){}};};f.respond(path=>path.endsWith('/import')?new Promise(r=>resolveImport=r):undefined);
- f.app('a');await wait();Object.defineProperty(f.q('[data-video-file]'),'files',{value:[new f.w.File(['video'],'clip.mp4')]});f.w.nativeFetch=async()=>({ok:true,json:async()=>({ok:true,source})});f.q('[data-video-upload]').click();await wait();await wait();assert.equal(typeof resolveImport,'function');
+ f.app('a');await wait();Object.defineProperty(f.q('[data-video-file]'),'files',{value:[new f.w.File(['video'],'clip.mp4')]});f.w.nativeFetch=async()=>({ok:true,json:async()=>({ok:true,source})});f.q('[data-video-upload]').click();await wait();await wait();assert.equal(resolveImport,undefined);f.q('[data-video-action="import"]').click();await wait();assert.equal(typeof resolveImport,'function');
  f.w.currentAccessProfile={user_id:'other'};resolveImport({ok:true,draft:{draft_id:'wrong-owner',app_id:'a'}});await wait();assert.equal(mounts,0);
 });
 
-test('explicit retry completion automatically opens its new version once',async t=>{
+test('explicit retry completion waits for review before opening its new version',async t=>{
  const f=await videoFixture(t),failed={source_id:'uvs_'+'9'.repeat(32),filename:'clip.mp4',status:'failed',analysis_version:1,updated_at:100};let detail=failed,adopted;
  f.w.UiCaseDraft.mount=(n,o)=>{adopted=o.initialDraft;return {dispose(){}};};
  f.respond(path=>path.endsWith('/retry')?{ok:true,source:{...failed,status:'queued',analysis_version:2,updated_at:200}}:path.endsWith('/import')?{ok:true,draft:{draft_id:'retry-generated',revision:3,app_id:'a'}}:path.includes(failed.source_id)?{ok:true,source:detail}:path.startsWith('/ui-video-sources?')?{ok:true,sources:[failed]}:undefined);
  f.app('a');await wait();f.q('[data-video-open]').click();await wait();f.q('[data-video-action="retry"]').click();await wait();detail={...failed,status:'ready',analysis_version:2,updated_at:300};f.q('[data-video-status]').click();await wait();await wait();
- assert.equal(f.calls.filter(c=>c.path.endsWith('/import')).length,1);assert.equal(adopted.draft_id,'retry-generated');assert.equal(f.calls.some(c=>c.path.endsWith('/try')),false);
+ assert.equal(f.calls.filter(c=>c.path.endsWith('/import')).length,0);f.q('[data-video-action="import"]').click();await wait();assert.equal(adopted.draft_id,'retry-generated');assert.equal(f.calls.some(c=>c.path.endsWith('/try')),false);
 });
-test('automatic import failure stays manually recoverable without repeated ready polling imports',async t=>{
+test('explicit import failure stays manually recoverable without repeated ready polling imports',async t=>{
  const f=await videoFixture(t),source={source_id:'uvs_'+'a'.repeat(32),filename:'clip.mp4',status:'ready',analysis_version:1,updated_at:100};let tries=0,adopted;
  f.w.UiCaseDraft.mount=(n,o)=>{adopted=o.initialDraft;return {dispose(){}};};
  f.respond(path=>path.endsWith('/import')?(++tries===1?Promise.reject(new Error('temporary failure')):{ok:true,draft:{draft_id:'preserved',revision:5,app_id:'a'}}):path.includes(source.source_id)?{ok:true,source}:undefined);
- f.app('a');await wait();Object.defineProperty(f.q('[data-video-file]'),'files',{value:[new f.w.File(['video'],'clip.mp4')]});f.w.nativeFetch=async()=>({ok:true,json:async()=>({ok:true,source})});f.q('[data-video-upload]').click();await wait();await wait();assert.equal(tries,1);
+ f.app('a');await wait();Object.defineProperty(f.q('[data-video-file]'),'files',{value:[new f.w.File(['video'],'clip.mp4')]});f.w.nativeFetch=async()=>({ok:true,json:async()=>({ok:true,source})});f.q('[data-video-upload]').click();await wait();await wait();assert.equal(tries,0);f.q('[data-video-action="import"]').click();await wait();assert.equal(tries,1);
  f.q('[data-video-status]').click();await wait();await wait();assert.equal(tries,1);assert.ok(f.q('[data-video-action="import"]'));
  f.q('[data-video-action="import"]').click();await wait();assert.equal(tries,2);assert.equal(adopted.revision,5);
 });
-test('leaving the upload application discards automatic completion intent and ignores late ready data',async t=>{
+test('leaving the upload application preserves explicit navigation and ignores late ready data',async t=>{
  const f=await videoFixture(t),source={source_id:'uvs_'+'b'.repeat(32),filename:'clip.mp4',status:'queued',analysis_version:1};let resolveReady,mounts=0;
  f.w.UiCaseDraft.mount=()=>{mounts++;return {dispose(){}};};f.respond(path=>path.includes(source.source_id)?new Promise(r=>resolveReady=r):undefined);
  f.app('a');await wait();Object.defineProperty(f.q('[data-video-file]'),'files',{value:[new f.w.File(['video'],'clip.mp4')]});f.w.nativeFetch=async()=>({ok:true,json:async()=>({ok:true,source})});f.q('[data-video-upload]').click();await wait();f.q('[data-video-status]').click();await wait();
@@ -481,7 +482,7 @@ test('video feedback shows actual stages, no invented percentage, and stops on f
  f.respond(path=>path.includes(source.source_id)?{ok:true,source}:path.startsWith('/ui-video-sources?')?{ok:true,sources:[source]}:undefined);
  f.app('a');await wait();f.q('[data-video-open]').click();await wait();
  assert.match(f.q('[data-video-progress]').textContent,/读取视频/);assert.equal(f.q('[data-video-progress]').getAttribute('aria-busy'),'true');assert.equal(f.q('[data-video-progress]').textContent.includes('%'),false);
- source={...source,status:'analyzing',updated_at:2};f.q('[data-video-status]').click();await wait();assert.match(f.q('[aria-current="step"]').textContent,/AI 识别步骤/);
+ source={...source,status:'analyzing',updated_at:2};f.q('[data-video-status]').click();await wait();assert.match(f.q('[data-video-progress]').textContent,/AI 正在识别/);
  source={...source,status:'failed',error:'模型超时',updated_at:3};f.q('[data-video-status]').click();await wait();assert.equal(f.q('[data-video-progress]'),null);assert.ok(f.q('[data-video-action="retry"]'));
 });
 
@@ -490,7 +491,27 @@ test('long video progress updates without resetting private media',async t=>{
  const f=await videoFixture(t),source={source_id:'uvs_'+'a'.repeat(32),filename:'clip.mp4',status:'analyzing',analysis_version:1};let progress={phase:'observing',completed:0,total:10};
  f.respond(path=>path.includes(source.source_id)?{ok:true,source:{...source,analysis_progress:progress}}:path.startsWith('/ui-video-sources?')?{ok:true,sources:[source]}:undefined);
  f.app('a');await wait();f.q('[data-video-open]').click();await wait();
- assert.match(f.q('[data-video-progress]').textContent,/第 1 \/ 10 段/);const video=f.q('video');
+ assert.match(f.q('[data-video-progress]').textContent,/已完成 0 \/ 10 段/);const video=f.q('video');
  progress={phase:'planning',completed:10,total:10};f.q('[data-video-status]').click();await wait();
  assert.match(f.q('[data-video-progress]').textContent,/视频已识别完/);assert.equal(f.q('video'),video);
 });
+
+test('video list filters, loads more and keeps exclusive views with truthful draft state',async t=>{
+ const f=await videoFixture(t),sources=Array.from({length:12},(_,i)=>({source_id:'source'+i,title:'任务'+i,filename:'clip'+i+'.mp4',status:i===11?'failed':'ready',draft_id:i===0?'draft':'',updated_at:100-i}));
+ f.respond(p=>p.startsWith('/ui-video-sources?')?{ok:true,sources}:p.includes('source0')?{ok:true,source:sources[0]}:undefined);f.app('a');await wait();
+ assert.equal(f.q('[data-video-history]').hidden,false);assert.equal(f.q('[data-video-upload-view]').hidden,true);assert.equal(f.q('[data-video-detail-view]').hidden,true);assert.equal(f.q('[data-video-list]').querySelectorAll('[data-video-open]').length,10);assert.match(f.q('[data-video-list]').textContent,/已生成草稿/);assert.doesNotMatch(f.q('[data-video-list]').textContent,/已保存用例|试跑通过/);
+ f.q('[data-video-more]').click();assert.equal(f.q('[data-video-list]').querySelectorAll('[data-video-open]').length,12);
+ f.q('[data-video-query]').value='clip11';f.q('[data-video-query]').dispatchEvent(new f.w.Event('input'));assert.equal(f.q('[data-video-list]').querySelectorAll('[data-video-open]').length,1);
+ f.q('[data-video-filter]').value='ready';f.q('[data-video-filter]').dispatchEvent(new f.w.Event('change'));assert.equal(f.q('[data-video-list]').querySelectorAll('[data-video-open]').length,0);
+ f.q('[data-video-query]').value='';f.q('[data-video-query]').dispatchEvent(new f.w.Event('input'));f.q('[data-video-open]').click();await wait();assert.equal(f.q('[data-video-detail-view]').hidden,false);assert.equal(f.q('[data-video-history]').hidden,true);
+ f.q('[data-video-back]').click();assert.equal(f.q('[data-video-history]').hidden,false);f.q('[data-video-new]').click();assert.equal(f.q('[data-video-upload-view]').hidden,false);assert.equal(f.q('[data-video-history]').hidden,true);
+});
+test('returning to list keeps active task and never navigates when ready arrives',async t=>{
+ const f=await videoFixture(t);let source={source_id:'active',filename:'clip.mp4',status:'analyzing',analysis_version:1,updated_at:1};f.respond(p=>p.startsWith('/ui-video-sources?')?{ok:true,sources:[source]}:p.includes('/active?')?{ok:true,source}:undefined);f.app('a');await wait();f.q('[data-video-open]').click();await wait();f.q('[data-video-back]').click();source={...source,status:'ready',updated_at:2};f.q('[data-video-status]').click();await wait();assert.equal(f.q('[data-video-history]').hidden,false);assert.equal(f.q('[data-video-detail-view]').hidden,true);assert.equal(f.calls.some(c=>c.path.endsWith('/import')),false);assert.match(f.q('[data-video-list-summary]').textContent,/待核对 1/);assert.match(f.q('[data-video-list-summary]').textContent,/最近.*30/);
+});
+test('upload view resets journey and hidden task refresh cannot overwrite upload feedback',async t=>{
+ const f=await videoFixture(t);let source={source_id:'hidden',filename:'old.mp4',status:'analyzing',analysis_version:1,updated_at:1};f.respond(p=>p.startsWith('/ui-video-sources?')?{ok:true,sources:[source]}:p.includes('/hidden?')?{ok:true,source}:undefined);f.app('a');await wait();f.q('[data-video-open]').click();await wait();f.q('[data-video-back]').click();f.q('[data-video-new]').click();assert.equal(f.q('[data-video-app]').closest('.ui-video-source').dataset.videoPhase,'upload');f.q('[data-video-notice]').textContent='正在选择新原片';source={...source,status:'failed',error:'旧任务失败',updated_at:2};f.q('[data-video-status]').click();await wait();assert.equal(f.q('[data-video-notice]').textContent,'正在选择新原片');assert.equal(f.q('[data-video-app]').closest('.ui-video-source').dataset.videoPhase,'upload');f.q('[data-video-upload-back]').click();assert.match(f.q('[data-video-list]').textContent,/分析失败/);f.q('[data-video-open]').click();await wait();assert.match(f.q('[data-video-notice]').textContent,/旧任务失败/);
+});
+test('ready filter excludes generated drafts consistently with summary categories',async t=>{const f=await videoFixture(t);f.respond(p=>p.startsWith('/ui-video-sources?')?{ok:true,sources:[{source_id:'one',status:'ready',filename:'one.mp4'},{source_id:'two',status:'ready',filename:'two.mp4',draft_id:'draft'}]}:undefined);f.app('a');await wait();f.q('[data-video-filter]').value='ready';f.q('[data-video-filter]').dispatchEvent(new f.w.Event('change'));assert.equal(f.q('[data-video-list]').querySelectorAll('[data-video-open]').length,1);assert.match(f.q('[data-video-list-summary]').textContent,/待核对 1.*已生成草稿 1/);});
+test('entering upload clears selected task notice and hidden request errors preserve upload feedback',async t=>{const f=await videoFixture(t);let reject=false;const source={source_id:'notice',status:'analyzing',filename:'old.mp4',analysis_version:1};f.respond(p=>p.startsWith('/ui-video-sources?')?{ok:true,sources:[source]}:p.includes('/notice?')?(reject?Promise.reject(new Error('hidden failure')):{ok:true,source}):undefined);f.app('a');await wait();f.q('[data-video-open]').click();await wait();assert.match(f.q('[data-video-notice]').textContent,/分析/);f.q('[data-video-back]').click();f.q('[data-video-new]').click();assert.equal(f.q('[data-video-notice]').textContent,'');f.q('[data-video-notice]').textContent='新视频待上传';reject=true;f.q('[data-video-status]').click();await wait();assert.equal(f.q('[data-video-notice]').textContent,'新视频待上传');});
+test('list polling preserves focused task action across unchanged and updated source status',async t=>{const f=await videoFixture(t);let source={source_id:'focus',status:'analyzing',filename:'clip.mp4',analysis_version:1,updated_at:1};f.respond(p=>p.startsWith('/ui-video-sources?')?{ok:true,sources:[source]}:p.includes('/focus?')?{ok:true,source}:undefined);f.app('a');await wait();f.q('[data-video-open]').click();await wait();f.q('[data-video-back]').click();const button=f.q('[data-video-open]');button.focus();f.q('[data-video-status]').click();await wait();assert.equal(f.w.document.activeElement,button);source={...source,status:'ready',updated_at:2};f.q('[data-video-status]').click();await wait();assert.equal(f.w.document.activeElement,f.q('[data-video-open]'));assert.equal(f.q('[data-video-history]').hidden,false);assert.match(f.q('[data-video-list]').textContent,/待核对/);});
