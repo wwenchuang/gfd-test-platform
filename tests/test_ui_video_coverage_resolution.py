@@ -551,3 +551,22 @@ def test_return_negation_keeps_other_positive_repeat_counts(statement):
     frames,old,new,claim=return_gesture_fixture()
     claim['evidence']['interaction']+='。'+statement
     with pytest.raises(ValueError):cr.validate([claim],{'first_pass':old},new,frames)
+
+
+def test_nonshared_press_frame_returns_shared_candidates_without_authorizing_merge():
+    frames,old,new,claim=fixture()
+    old[0].update(action='aiTap',target='确认',frame_refs=['f1','f3'],end_ms=300)
+    old[1].update(frame_refs=['f2','f3','f4'],end_ms=400)
+    new[0].update(frame_refs=['f1','f2','f4'],end_ms=400)
+    claim.update(resolution='same_interaction')
+    claim['evidence'].update(interaction_frame='f2',after_frame='f4',examined_frame_refs=['f1','f2','f3','f4'])
+    before=copy.deepcopy((old,new,claim))
+    with pytest.raises(ValueError) as caught:cr.validate([claim],{'first_pass':old},new,frames)
+    assert caught.value.coverage_reason=='interaction_frame_not_shared'
+    diagnostic=cr.diagnose([claim],{'first_pass':old},new,frames)
+    assert diagnostic['result_evidence_to_recheck'][0]['shared_interaction_frame_candidates']==['f3']
+    assert (old,new,claim)==before
+    # A later frame of the same held press is legal only after the model
+    # explicitly rechecks it and includes it in the actual result evidence.
+    claim['evidence']['interaction_frame']='f3';new[0]['frame_refs']=['f1','f3','f4']
+    assert cr.validate([claim],{'first_pass':old},new,frames)

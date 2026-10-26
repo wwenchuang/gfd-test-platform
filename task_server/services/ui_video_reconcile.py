@@ -431,6 +431,7 @@ def _repair_window(original,checked,frames,duration,root,cancelled,secrets,missi
             payload['invalid_resolution_candidate']=claims
             from .ui_video_coverage_resolution import diagnose
             payload['resolution_diagnostics']=diagnose(claims,{'first_pass':original,'independent_review':before},repaired['events'],window)
+            payload['validation_feedback']+=' interaction_frame_not_shared表示交互帧未同时属于全部旧锚点。shared_interaction_frame_candidates只列共同原帧候选，须重新看图确认真实触点；持续按压可选共同的后续按压帧，不必固定第一次按下帧。结果frame_refs必须包含该交互帧；只有共同结果而无真实交互证据时不能合并。'
             payload['validation_feedback']+=' 上次invalid_resolution_candidate已被拒绝。不要重抄：aiAssert不得作为映射目标，应删除自动加载映射，只保留该aiAssert完整覆盖相应旧帧。每个anchor_id仅能出现在一个映射；before_frame允许与interaction_frame相同，但after_frame必须更晚。映射不符合合同：仅声明同一来源内部至少两条旧锚点合并到一次交互，不声明普通跨来源一对一对应。同action同value连续滚动用same_interaction；旧tap加scroll确为一次拖动则仅用same_scroll_gesture，不能声明action_correction，examined_frame_refs必须覆盖全部旧帧，结果保留真实前态、交互与后态帧。examined_frame_refs必须完整包含这些锚点的帧并集，不能遗漏较早帧；interaction_frame必须是实际触点所在帧，不能使用之后转场帧；前/触点/后帧也须在结果事件中。scroll改tap明确写未见独立滚动，理由不能含可能或不确定；仍不能确定就保留疑问，不造证据。'
             continue
         combined=[e for e in checked['events'] if not set(e['frame_refs'])<=window_ids]+repaired['events']

@@ -117,6 +117,9 @@ def diagnose(claims,sources,reviewed,frames):
             if len(parts)==2 and parts[0] in sources and parts[1].isdigit() and int(parts[1])<len(sources[parts[0]]):
                 valid_ids.add((parts[0],int(parts[1])))
         states=[evidence.get(k) for k in ('before_frame','interaction_frame','after_frame')] if isinstance(evidence,dict) else []
+        shared_candidates=[]
+        if reason=='interaction_frame_not_shared' and valid_ids:
+            shared_candidates=sorted((r for r in set.intersection(*(set(sources[name][pos]['frame_refs']) for name,pos in valid_ids)) if r in times),key=times.get)
         bridge_candidates=[]
         if reason=='return_shared_intermediate_frame_missing' and valid_ids and isinstance(evidence,dict):
             shared=set.intersection(*(set(sources[name][pos]['frame_refs']) for name,pos in valid_ids))
@@ -126,6 +129,7 @@ def diagnose(claims,sources,reviewed,frames):
                 bridge_candidates=sorted((r for r in shared if r in times and touch_time<times[r]<after_time),key=times.get)
         results.append({'claim_index':index,'valid_result_index':valid_index,'reason':reason,
                         'shared_intermediate_frame_candidates':bridge_candidates,
+                        'shared_interaction_frame_candidates':shared_candidates,
                         'missing_result_state_frames':list(dict.fromkeys(r for r in states if isinstance(r,str) and r in times and r not in result_refs)),
                         'has_same_source_duplicates':any(sum(source==name for source,pos in valid_ids)>=2 for name in sources)})
         for aid in ids if isinstance(ids,list) else []:
@@ -193,7 +197,7 @@ def validate(claims,sources,reviewed,frames):
                 if (old['action']!='aiTap' or new['action']!='aiTap' or old['target']!=new['target'] or
                     old.get('value','')!='' or new.get('value','')!='' or
                     times[touch]>old['end_ms']):_fail()
-            elif touch not in old['frame_refs']:_fail()
+            elif touch not in old['frame_refs']:_fail('interaction_frame_not_shared')
             if old['action']!=new['action'] and not (drag and old['action']=='aiTap' and new['action']=='aiScroll'):
                 if (old['action']!='aiScroll' or new['action']!='aiTap' or
                     not re.search(r'(?:未见|没有|未观察到)(?:独立|新增|新的|用户)?(?:滚动|滑动)',ev['interaction']) or '点击' not in ev['interaction']):_fail()
