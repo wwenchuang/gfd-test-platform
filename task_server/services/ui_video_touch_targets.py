@@ -48,10 +48,15 @@ def probe(frames, details, assets, duration, cancelled):
     return hints
 
 
-def _label(value):
+def _unquote(value):
     text=value.strip()
     if len(text)>1 and (text[0],text[-1]) in {('“','”'),('「','」'),('"','"'),("'","'")}:
         text=text[1:-1].strip()
+    return text
+
+
+def _label(value):
+    text=_unquote(value)
     for suffix in ('按钮','入口'):
         if text.endswith(suffix):
             text=text[:-len(suffix)].strip()
@@ -80,6 +85,20 @@ def _same_explicit_label(left,right):
     return bool(a and a==_label(right) or b and b==_label(left))
 
 
+
+def _same_explicit_input_label(left, right):
+    # A bare visible value and that exact value plus an input type describe
+    # the same explicit touch. Never erase a conflicting control type or
+    # location, and never apply this to a merely nearby frame.
+    left, right = _unquote(left), _unquote(right)
+    for typed, bare in ((left, right), (right, left)):
+        if bare.endswith(('输入框', '按钮', '入口', '链接')):
+            continue
+        match = re.fullmatch(r'(.+?)(?:文本输入框|输入框)', typed)
+        if match and bare and _unquote(match[1]) == bare:
+            return True
+    return False
+
 def conflict(events, hints, frames, diagnostic=None, evidence=None):
     times = {f['frame_id']:f['timestamp_ms'] for f in frames}
     for hint in hints:
@@ -89,7 +108,7 @@ def conflict(events, hints, frames, diagnostic=None, evidence=None):
         if len(nearby)==1:
             left,right=nearby[0]['target'].strip(),hint['target'].strip()
             comparison='exact_match' if left==right else 'normalized_match' if _label(left) and _label(left)==_label(right) else 'mismatch'
-            if comparison=='mismatch' and explicit and _same_explicit_label(left,right):
+            if comparison=='mismatch' and explicit and (_same_explicit_label(left,right) or _same_explicit_input_label(left,right)):
                 comparison='normalized_match'
             if diagnostic is not None:
                 diagnostic.update(frame_id=hint['frame_id'],binding='explicit' if explicit else 'nearby',comparison=comparison)

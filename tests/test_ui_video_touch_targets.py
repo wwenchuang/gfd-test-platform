@@ -191,3 +191,26 @@ def test_probe_cancel_after_schema_failure_does_not_retry(monkeypatch):
     with pytest.raises(ValueError,match='video_cancelled'):
         targets.probe(frames,[detail],[{'name':f['frame_id']} for f in frames+[detail]],1000,lambda:bool(calls))
     assert len(calls)==1
+
+
+@pytest.mark.parametrize('left,right,matched', [
+    ('测试名称文本输入框','测试名称',True),
+    ('测试名称','测试名称输入框',True),
+    ('“测试名称”文本输入框','测试名称',True),
+    ('文本输入框','',False),
+    ('测试名称文本输入框','测试名称按钮',False),
+    ('测试名称文本输入框','测试名称入口',False),
+    ('测试名称文本输入框','其他名称',False),
+    ('上方测试名称文本输入框','测试名称',False),
+    ('测试名称文本输入框','测试名称二文本输入框',False),
+])
+def test_same_explicit_touch_accepts_input_type_only_with_exact_bare_label(left,right,matched):
+    frames=[{'frame_id':'f1','timestamp_ms':100}]
+    events=[{'action':'aiTap','target':left,'frame_refs':['f1']}]
+    assert (not targets.conflict(events,[{'frame_id':'f1','target':right}],frames))==matched
+
+
+def test_nearby_touch_does_not_equate_input_type_with_bare_label():
+    frames=[{'frame_id':'f1','timestamp_ms':100},{'frame_id':'f2','timestamp_ms':200}]
+    events=[{'action':'aiTap','target':'测试名称文本输入框','frame_refs':['f2']}]
+    assert targets.conflict(events,[{'frame_id':'f1','target':'测试名称'}],frames)
