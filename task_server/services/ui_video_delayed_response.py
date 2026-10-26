@@ -27,7 +27,9 @@ REVIEW_QUESTION=(
 def _without_negated_actions(note):
     import re
     action=r'(?:松开后)?(?:任何|新的|新|独立的|独立|用户|手指|触点|再次|重新){0,4}(?:点击|按下|重试|滑动|滚动|拖动)'
-    return re.sub(r'(?:未见|未观察到|未发生|没有|并非|而非|不是)'+action+r'(?:(?:或|和|及)'+action+r')*','',note)
+    target=r'(?:针对(?:“[^“”，。；\n]{1,80}”|「[^「」，。；\n]{1,80}」|"[^"，。；\n]{1,80}")(?:按钮|控件|入口)?的)?'
+    negative=r'(?:未见|未观察到|未发生|没有|并非|而非|不是|(?<!并非)(?<!不是)(?<!没有)(?<!不)无)'
+    return re.sub(negative+target+action+r'(?:(?:或|和|及)'+action+r')*','',note)
 
 
 def has_positive_tap(note):

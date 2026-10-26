@@ -156,3 +156,27 @@ def test_response_observation_cannot_reintroduce_known_input(monkeypatch,tmp_pat
         {'media':{'frames':fs,'duration_ms':2800}},tmp_path,lambda:False,['private-input-value'])
     assert 'private-input-value' not in str(out)
     assert '[输入内容未保存]' in out['events'][2]['observation']
+
+
+@pytest.mark.parametrize('note',[
+ '未见针对“提交”按钮的新独立触点按下或松开操作，页面自动跳转。',
+ '按钮区域无新的独立触点按下或高亮反馈，页面自动加载。',
+])
+def test_targeted_negation_does_not_invent_positive_touch(note):
+    from task_server.services.ui_video_reconcile import check_coverage
+    from task_server.services.ui_video_delayed_response import has_positive_tap
+    assert not has_positive_tap(note)
+    old={**event('aiTap',['b','c'],100,200),'value':'','uncertainties':[]}
+    # Coverage still requires explicit negative evidence plus an automatic cause.
+    new={**old,'action':'aiAssert','observation':'未见新点击。'+note,'uncertainties':[]}
+    check_coverage([old],[new],1000)
+    for suffix in ['但用户再次按下按钮重试。','随后独立触点按下按钮。','用户点击按钮没有响应。']:
+        assert has_positive_tap(note+suffix)
+        with pytest.raises(ValueError,match='video_required_action_missing'):
+            check_coverage([old],[{**new,'observation':note+suffix}],1000)
+
+
+def test_target_negation_cannot_swallow_feedback_clause_or_other_control():
+    from task_server.services.ui_video_delayed_response import has_positive_tap
+    assert has_positive_tap('未见针对提交按钮的响应，用户再次点击按钮。')
+    assert has_positive_tap('未见针对“提交”按钮的新点击，但用户点击“取消”按钮。')
