@@ -10,6 +10,8 @@
 - 输出events每项仅含action、target、value、frame_refs、observation、uncertainties；action仅aiTap/aiInput/aiScroll/aiAssert。滚动value使用direction与scrollType=singleAction；按浏览方向命名，内容上移、露出下方内容=down，内容下移、露出上方内容=up，不按手指移动方向命名，其余value通常为空。不输出时间字段。
 - 不确定时保留疑问，不为凑步骤推测未发生的操作。
 
+连续文字替换只输出一个完整aiInput，不按语言切换、前半段/后半段或帧引用数量拆成多项。从实际开始删改到最终文字可见，选取至多8张关键原帧证明整轮编辑；不需要逐个列出每个按键的采样帧。聚焦点击若独立存在仍保留，输入开始从实际删改算起；提交、换字段或其它真实业务操作仍是轮次边界。
+
 仅返回JSON：{"events":[],"coverage_resolutions":[],"uncertainties":[],"multiple_scenarios":false}。
 
 用户返回手势仍是交互，不能仅因手指没有点按钮就改为aiAssert：原片操作前若可见应用返回箭头，用aiTap该可见箭头作跨端等价返回，observation注明原片为手势及前后页面。没有可见等价控件则保留疑问。只有前序操作已经记录、该段确无新交互时才把后续转场作为自动状态。
