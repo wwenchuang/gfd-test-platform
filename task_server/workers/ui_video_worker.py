@@ -42,7 +42,7 @@ def _log_failure(identifier,stage,error,code):
     elif isinstance(error,AccessDenied):category='access_changed'
     elif isinstance(error,TimeoutError):category='timeout'
     elif isinstance(error,json.JSONDecodeError):category='model_json'
-    elif stage=='analysis':
+    elif stage in {'analysis','input_recovery'}:
         category='model_contract' if code in _FAILURE_CODES else 'model_schema' if isinstance(error,ValueError) else 'model_service'
     elif stage=='draft_validation':category='draft_contract'
     elif stage=='decode':category='decoder'
@@ -161,6 +161,9 @@ def analyze_video_source(store,identifier):
                     **({'first_pass_events':events} if phase=='reconciling' else {}))
             result=analyze_whole_frames(document,store.root/identifier,cancelled,progress)
             if cancelled():raise ValueError('video_cancelled')
+            from task_server.services.ui_video_business_inputs import recover_business_inputs
+            stage='input_recovery'
+            result=recover_business_inputs(result,document,store.root/identifier,cancelled)
             stage='reauthorize'
             require_ui_actor(document['actor'],permission='ui.edit',app_id=app);_application(app)
             status='review_needed' if result['multiple_scenarios'] or not result['events'] else 'ready'

@@ -50,3 +50,65 @@ def has_drag_conflict(note):
     return bool(re.search(
         r'(?:再次|重新|第二次|又)[^，。；;,]{0,12}(?:滑动|滚动|拖动|按下)|'
         r'(?:[两二三四五六七八九十多]|[2-9]|[1-9][0-9]+)次(?:独立)?(?:滑动|滚动|拖动)', remaining))
+
+
+def pending_response_checks(events,frames):
+    """Find a repeated-control hypothesis separated by a confirmation gate."""
+    import re
+    interactions=[(i,e) for i,e in enumerate(events) if e['action'] in {'aiTap','aiInput','aiScroll'}]
+    checks=[]
+    for (opening_index,opening),(confirm_index,confirm),(index,event) in zip(interactions,interactions[1:],interactions[2:]):
+        if (not opening['action']==confirm['action']==event['action']=='aiTap' or
+            opening['target']!=event['target'] or
+            not 0<=confirm['start_ms']-opening['end_ms']<=10000 or
+            not 0<=event['start_ms']-confirm['end_ms']<=3000 or
+            not re.search(r'确认|确定|同意|提交',confirm['target']) or
+            not re.search(r'弹窗|对话框',confirm['observation']) or
+            not re.search(r'消失|关闭',confirm['observation'])):continue
+        checks.append({'candidate_index':index,'opening_index':opening_index,'confirmation_index':confirm_index,
+            'target':f'candidate:{index}', 'control':event['target'],
+            'opening_frame_ids':opening['frame_refs'],'confirmation_frame_ids':confirm['frame_refs'],
+            'response_frame_ids':event['frame_refs'],
+            'context_frame_ids':[f['frame_id'] for f in frames if opening['start_ms']<=f['timestamp_ms']<=event['end_ms']]})
+    return checks
+
+
+def review_pending_responses(observed,document,root,cancelled,known_secrets=()):
+    """Review the response cause, preserving real clicks and original coverage."""
+    import copy
+    from . import ai_skill_service as ai
+    from .ui_video_windows import load_assets
+    from .ui_video_analysis import _bind_whole_evidence,validate_analysis
+    from .ui_video_reconcile import check_coverage
+    if cancelled():raise ValueError('video_cancelled')
+    frames=document['media']['frames'];events=observed['events']
+    checks=pending_response_checks(events,frames)
+    if not checks:return observed
+    ids={ref for check in checks for ref in check['context_frame_ids']}
+    images=[f for f in frames if f['frame_id'] in ids]
+    if not 1<=len(checks)<=4 or not 2<=len(images)<=60:raise ValueError('video_vision_limit')
+    raw=ai.run_ai_skill('ui_video_observe',{'phase':'whole-observe','frames':images,'image_frames':images,
+        'duration_ms':document['media']['duration_ms'],'checks':checks},image_assets=load_assets(images,root,cancelled),
+        version='response',timeout=120,retry_count=0,max_tokens=4000,repair_invalid_json=False)
+    if cancelled():raise ValueError('video_cancelled')
+    checked=validate_analysis(_bind_whole_evidence(raw,images),images,document['media']['duration_ms'],known_secrets)
+    if checked['uncertainties'] or checked['multiple_scenarios']:raise ValueError('video_expected_missing')
+    by_key={check['target']:check for check in checks};seen=set();out=copy.deepcopy(observed);audit=[]
+    for response in checked['events']:
+        key=response['target']
+        if key not in by_key or key in seen or response['action'] not in {'aiTap','aiAssert'} or response['uncertainties']:
+            raise ValueError('video_reference_invalid')
+        check=by_key[key];index=check['candidate_index'];seen.add(key)
+        if response['frame_refs']!=events[index]['frame_refs']:raise ValueError('video_reference_invalid')
+        revised={**events[index],'action':response['action'],'observation':response['observation'],'uncertainties':[]}
+        if revised['action']!=events[index]['action']:
+            revised.pop('outcome',None);revised.pop('reusable_expected',None)
+        # Inferred page motion is not enough: the ordinary evidence gate still
+        # requires full old refs and explicit no-new-click + automatic cause.
+        check_coverage([events[index]],[revised],document['media']['duration_ms'])
+        out['events'][index]=revised
+        audit.append({'candidate_index':index,'opening_index':check['opening_index'],
+            'confirmation_index':check['confirmation_index'],'action':revised['action'],
+            'frame_refs':list(response['frame_refs']),'context_frame_ids':check['context_frame_ids']})
+    if seen!=set(by_key):raise ValueError('video_model_invalid')
+    return {**out,'response_review':audit}

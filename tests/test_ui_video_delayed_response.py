@@ -79,3 +79,80 @@ def test_negated_coordinated_actions_are_not_positive_clicks():
     assert not has_positive_tap(note)
     assert not has_drag_conflict(note)
     assert has_drag_conflict(note+'，但独立点击无响应')
+
+
+@pytest.mark.parametrize('change',['delayed','real_retry','too_late','input_between','not_confirmation'])
+def test_confirmation_followed_by_page_response_requires_original_pixel_review(change):
+    from task_server.services.ui_video_delayed_response import review_refs
+    frames=[{'frame_id':f'f{i}','timestamp_ms':i*200} for i in range(20)]
+    first={**event('aiTap',['f1','f3'],200,600),'target':'耗材确认弹窗确认按钮','observation':'点击弹窗确认，弹窗关闭，返回编辑页'}
+    second={**event('aiTap',['f11','f12'],2200,2400),'target':'下一步按钮','observation':'页面跳转预览'}
+    opener={**event('aiTap',['f0'],0,0),'target':'下一步按钮','observation':'点击下一步后弹出确认对话框'}
+    reviewed=[opener,first,second]
+    if change=='real_retry':second['observation']='用户再次按下下一步，真实重试'
+    if change=='too_late':second.update(start_ms=3800,end_ms=3900,frame_refs=['f19'])
+    if change=='input_between':reviewed.insert(2,{**event('aiInput',['f4'],800,800),'target':'标题'})
+    if change=='not_confirmation':first.update(target='返回按钮',observation='返回上一级')
+    from task_server.services.ui_video_delayed_response import pending_response_checks
+    checks=pending_response_checks(reviewed,frames)
+    refs={r for check in checks for r in check['context_frame_ids']}
+    if change in {'delayed','real_retry'}:
+        # Both hypotheses get visual review; wording never silently erases retry.
+        assert refs=={f'f{i}' for i in range(13)}
+    else:assert not refs
+
+
+def test_cancel_completed_result_followed_by_return_is_not_pending_confirmation():
+    first={**event('aiTap',['f1','f3'],200,600),'target':'确定按钮',
+           'observation':'点击取消确认弹窗确定，弹窗消失，页面跳转至显示已取消模型处理的结果页'}
+    second={**event('aiTap',['f5','f6'],1000,1200),'target':'返回按钮'}
+    from task_server.services.ui_video_delayed_response import pending_response_checks
+    assert not pending_response_checks([first,second],[])
+
+
+@pytest.mark.parametrize('actual',['automatic','real_click','contradictory','foreign'])
+def test_response_review_preserves_real_click_or_requires_explicit_automatic_evidence(monkeypatch,tmp_path,actual):
+    from task_server.services.ui_video_delayed_response import review_pending_responses
+    from task_server.services import ui_video_windows,ai_skill_service as ai
+    fs=[{'frame_id':f'f{i}','timestamp_ms':i*200} for i in range(14)]
+    es=[{**event('aiTap',['f0'],0,0),'target':'提交按钮','observation':'点击提交后显示确认弹窗'},
+        {**event('aiTap',['f1','f3'],200,600),'target':'确认按钮','observation':'确认弹窗消失，返回表单'},
+        {**event('aiTap',['f11','f12'],2200,2400),'target':'提交按钮','observation':'表单发生转场'}]
+    for e in es:e.update(value='',uncertainties=[],evidence_kind='inferred')
+    observed={'events':es,'uncertainties':[],'multiple_scenarios':False}
+    monkeypatch.setattr(ui_video_windows,'load_assets',lambda *a:[])
+    note='原提交确认后继续处理，未见新点击，页面自动跳转'
+    action='aiAssert'
+    if actual=='real_click':action='aiTap';note='新的独立触点按下并松开，按钮被再次点击'
+    if actual=='contradictory':note+='，但用户再次点击按钮'
+    refs=['f11','f12'] if actual!='foreign' else ['f0']
+    monkeypatch.setattr(ai,'run_ai_skill',lambda *a,**k:{'events':[{'action':action,'target':'candidate:2','value':'',
+        'frame_refs':refs,'observation':note,'uncertainties':[]}],'uncertainties':[],'multiple_scenarios':False})
+    import copy
+    before=copy.deepcopy(observed)
+    if actual in {'contradictory','foreign'}:
+        with pytest.raises(ValueError):review_pending_responses(observed,{'media':{'frames':fs,'duration_ms':2800}},tmp_path,lambda:False)
+    else:
+        out=review_pending_responses(observed,{'media':{'frames':fs,'duration_ms':2800}},tmp_path,lambda:False)
+        assert out['events'][2]['action']==action
+        assert out['events'][2]['target']=='提交按钮'
+        assert out['events'][:2]==es[:2]
+    assert observed==before
+
+
+def test_response_observation_cannot_reintroduce_known_input(monkeypatch,tmp_path):
+    from task_server.services.ui_video_delayed_response import review_pending_responses
+    from task_server.services import ui_video_windows,ai_skill_service as ai
+    fs=[{'frame_id':f'f{i}','timestamp_ms':i*200} for i in range(14)]
+    es=[{**event('aiTap',['f0'],0,0),'target':'提交按钮','observation':'打开确认弹窗'},
+        {**event('aiTap',['f1','f3'],200,600),'target':'确认按钮','observation':'确认弹窗消失'},
+        {**event('aiTap',['f11','f12'],2200,2400),'target':'提交按钮'}]
+    for e in es:e.update(value='',uncertainties=[],evidence_kind='inferred')
+    monkeypatch.setattr(ui_video_windows,'load_assets',lambda *a:[])
+    monkeypatch.setattr(ai,'run_ai_skill',lambda *a,**k:{'events':[{'action':'aiAssert','target':'candidate:2','value':'',
+        'frame_refs':['f11','f12'],'observation':'未见新点击，页面自动加载private-input-value','uncertainties':[]}],
+        'uncertainties':[],'multiple_scenarios':False})
+    out=review_pending_responses({'events':es,'uncertainties':[],'multiple_scenarios':False},
+        {'media':{'frames':fs,'duration_ms':2800}},tmp_path,lambda:False,['private-input-value'])
+    assert 'private-input-value' not in str(out)
+    assert '[输入内容未保存]' in out['events'][2]['observation']

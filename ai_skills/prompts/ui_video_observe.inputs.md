@@ -1,0 +1,7 @@
+根据本次附带的原始录屏图片，核对checks指定输入框的最终完整输入值。只输出JSON：{"events":[],"uncertainties":[],"multiple_scenarios":false}。
+每个check恰好输出一项：action="aiInput"，target照抄check.target，value为最终可见完整文本，frame_refs只引用该check.final_input_frame_ids中的1至4张真实图片，observation只可为“普通业务输入”“敏感输入”“无法确认”之一，uncertainties为数组。
+只恢复明确用于搜索、模型文字、名称、标题、备注、数量、页码等业务字段的内容。结合图片中字段标签及页面上下文判断；账号、手机号、邮箱、密码、验证码、口令、令牌、密钥、地址及不能确定性质的字段，value必须为空，observation写敏感输入或无法确认，不得在任何字段复述敏感原文。
+读取输入结束后的输入框内容，不读拼音候选、键盘按键、占位符或原始预填值，不将输入中的中间修正拆成多次操作。最终文字看不清、被截断或屏幕没有最终输入状态时value为空且observation为无法确认。不得从模型名称、文件名、历史案例或上下文猜答案。
+不输出其它动作、标题、测试目标或解释，不执行手机。
+输入：
+{{payload}}
