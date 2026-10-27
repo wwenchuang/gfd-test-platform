@@ -606,10 +606,17 @@ function completionOptionsForRoute(route, prompt, body, callOptions = {}) {
   if (body?.jsonResponse === true) {
     completionOptions.response_format = {type: 'json_object'};
     if (routeSupportsQwenHybridThinking(route)) {
-      // DashScope JSON Mode is incompatible with thinking=true. These skill
-      // calls already have explicit schemas and deterministic output gates.
+      // Preserve non-thinking JSON defaults; bounded trajectory reasoning is
+      // explicitly requested only on official Qwen 3.8 Max/Flash routes.
       completionOptions.enable_thinking = false;
     }
+  }
+  if (body?.jsonResponse === true && body?.skillName === 'ui_video_trajectory' &&
+      body?.payload?.phase === 'whole-trajectory' && body?.payload?.reasoning_mode === 'bounded' &&
+      ['qwen3.8-max', 'qwen3.8-flash'].includes(String(route.model || '').trim().toLowerCase()) &&
+      /^https:\/\/dashscope(?:-intl|-us)?\.aliyuncs\.com(?:\/|$)/i.test(String(route.baseUrl || ''))) {
+    completionOptions.enable_thinking = true;
+    completionOptions.thinking_budget = 1024;
   }
   return completionOptions;
 }

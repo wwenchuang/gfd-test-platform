@@ -470,6 +470,8 @@ def run_ai_skill(
         respect_global_timeout=respect_global_timeout,
         retry_count=retry_count,
         max_tokens=max_tokens,
+        **({'bounded_trajectory_reasoning':True} if skill_name=='ui_video_trajectory' and isinstance(payload,dict) and
+           payload.get('phase')=='whole-trajectory' and payload.get('reasoning_mode')=='bounded' else {}),
         **({"image_limit": 60, "chronological_images": True,
             "reference_frame_ids": payload.get("context_frame_ids") if skill_name in {"ui_video_observe", "ui_video_trajectory"} else None,
             "trajectory_context": skill_name == "ui_video_trajectory"} if whole_video else {}),
@@ -657,6 +659,7 @@ def build_dashscope_chat_body(
     chronological_images=False,
     reference_frame_ids=None,
     trajectory_context=False,
+    bounded_trajectory_reasoning=False,
 ):
     """构建 DashScope Chat API 请求体。"""
     image_assets = image_assets or []
@@ -689,11 +692,15 @@ def build_dashscope_chat_body(
     }
     if json_response:
         body["response_format"] = {"type": "json_object"}
-        if re.match(r"^qwen3\.(?:5|6|7)(?:-|$)", str(model or "").strip().lower()):
-            # Qwen 3.5/3.6/3.7 defaults to thinking mode, while DashScope JSON
-            # Mode requires non-thinking output. Structured skills are still
-            # evaluated by their schema and the platform quality gates.
+        if re.match(r"^qwen3\.(?:5|6|7|8)(?:-|$)", str(model or "").strip().lower()):
+            # Keep structured calls non-thinking by default. Official Qwen 3.8
+            # supports JSON with thinking; the trajectory exception below is
+            # bounded explicitly and keeps the existing evidence gates.
             body["enable_thinking"] = False
+        if (bounded_trajectory_reasoning is True and str(model or '').strip().lower() in {'qwen3.8-max','qwen3.8-flash'} and
+                re.match(r'^https://dashscope(?:-intl|-us)?\.aliyuncs\.com(?:/|$)',dashscope_base_url(),re.I)):
+            body['enable_thinking']=True
+            body['thinking_budget']=1024
     if safe_int(max_tokens, 0) > 0:
         body["max_tokens"] = safe_int(max_tokens, 0)
     return body
@@ -712,6 +719,7 @@ def dashscope_chat_content(
     chronological_images=False,
     reference_frame_ids=None,
     trajectory_context=False,
+    bounded_trajectory_reasoning=False,
 ):
     """调用 DashScope Chat API 并返回 content 字符串。"""
     api_key = dashscope_api_key()
@@ -733,6 +741,7 @@ def dashscope_chat_content(
         chronological_images=chronological_images,
         reference_frame_ids=reference_frame_ids,
         trajectory_context=trajectory_context,
+        bounded_trajectory_reasoning=bounded_trajectory_reasoning,
     ), ensure_ascii=False).encode("utf-8")
     last_error = None
     for attempt in range(retries + 1):

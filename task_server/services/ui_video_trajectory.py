@@ -1,5 +1,6 @@
 """State memory and owned action packets; diagnostic observer, not execution authority."""
 import copy
+import math
 import time
 
 from .ui_video_analysis import _bind_whole_evidence, validate_analysis
@@ -227,16 +228,21 @@ def observe_trajectory(document,root,cancelled,progress=None,record=None,revisit
         if cancelled():raise ValueError('video_cancelled')
         if calls>=24 or time.monotonic()-started>1200:raise ValueError('video_vision_limit')
         calls+=1;trace={};tick=time.monotonic()
-        payload={'phase':'whole-trajectory','duration_ms':duration,'frames':images,'image_frames':images,**context}
+        payload={'phase':'whole-trajectory','duration_ms':duration,'frames':images,'image_frames':images,**context,'reasoning_mode':'bounded'}
         if record:record(f'{calls:02d}-{version}-request',redact(payload))
         raw=ai.run_ai_skill('ui_video_trajectory',payload,version=version,image_assets=load_assets(images,root,cancelled),
-                            runtime_trace=trace,timeout=120,retry_count=0,max_tokens=10000,repair_invalid_json=False)
+                            runtime_trace=trace,timeout=120,respect_global_timeout=False,retry_count=0,max_tokens=10000,repair_invalid_json=False)
         if cancelled():raise ValueError('video_cancelled')
         if isinstance(raw,dict):
             secrets.extend(e.get('value') for e in raw.get('events',[]) if isinstance(e,dict) and e.get('action')=='aiInput' and isinstance(e.get('value'),str) and e['value'])
         entry={'call':calls,'stage':version,'elapsed_seconds':round(time.monotonic()-tick,3),
                'model':{k:trace[k] for k in ('providerId','model','selectedModel','fallbackUsed','source') if k in trace},
-               'frame_refs':[f['frame_id'] for f in images]}
+               'frame_refs':[f['frame_id'] for f in images],'requested_reasoning_mode':'bounded'}
+        usage=trace.get('usage')
+        if isinstance(usage,dict):
+            counts={k:v for k,v in usage.items() if k in {'promptTokens','completionTokens','reasoningTokens','totalTokens'}
+                    and type(v) in {int,float} and v>=0 and (type(v) is int or math.isfinite(v))}
+            if counts:entry['usage']=counts
         call_audit.append(entry)
         if record:record(f'{calls:02d}-{version}-result',redact({'result':raw,'runtime':entry}))
         return _envelope(raw,version)

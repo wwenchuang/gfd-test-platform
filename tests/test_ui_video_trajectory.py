@@ -98,6 +98,9 @@ def run_observer(monkeypatch, n=90, continuation=False, missing=False, cancelled
     from task_server.services import ai_skill_service, ui_video_windows
     calls=[]
     def reply(name,payload,**kwargs):
+        assert payload['reasoning_mode']=='bounded'
+        assert kwargs['timeout']==120 and kwargs['retry_count']==0
+        assert kwargs['respect_global_timeout'] is False
         calls.append((kwargs['version'],copy.deepcopy(payload)))
         raw=dict(states=[],events=[],checks=[],uncertainties=[],multiple_scenarios=False)
         if kwargs['version']=='observe' and corrections and sum(v=='observe' for v,_ in calls)<=corrections:

@@ -84,3 +84,20 @@
 - compiled事件从raw确定性保首末/触发及时间跨度，最多8；普通outcome只使用raw最后可见结果帧，来源terminal_outcome_anchor，描述/动作/verdict不改。raw响应过程、每段输入片段和审计原图完整保留，private reference_compilation可追溯。最终legacy validator和普通8帧限制未改。
 - 实际保存run5的02→04→06、02→04→07、02→04→08三组均完成3包绑定并final validate_analysis通过，每组8事件、action最大8/outcome最大1。不是视觉内容通过。独立15项编译测试及复审无P1/P2，383相关范围、全1057视频18.67秒、63后端、主链/变更编译、Node传输/diff通过。
 - 第六轮原上传遇到T_1006后明确会话过期；用户回复好了后，新会话实际回显可用，旧路径确实没有包。重新上传/trajectory-reference-6.zip SHA256333e5084f9d689e2ebda9e1e8ca69df7eb78efda8eefbe8f5684f2993e3515e0，本地/终端一致；实际解压/tmp/reference6并启动trajectory-live.py 6。尚未记为成功。
+
+## 第六轮完整返回但内容验收不通过
+
+19:26:21 run6完成全部9包，27事件/27审计决定/21调用，315帧，顶层questions空、multiple_scenarios=false；16张补帧仅用于198→200第二次下一步。完整JSON已下载new-touch/trajectory-v1/run-6。首次完整返回不能计为资格成功。
+
+独立原图审核确认三个硬失败：去打印用128(35967ms)输入框右侧触点倒推，raw自己已有位置不符疑问，audit仍双supported；110→111独立收键盘被吞入输入；282→283返回搜索后空白收键盘完全遗漏，audit无issue。147(42967ms)起已在下一步上出现触点，run6却把触发定150(44833ms)，仍需42.9–44.9秒密帧判定按压生命周期。两次下一步/两次取消/最终首页/无最终物理确认在结构上保留，不抵消上述失败。人工对照保存manual-quality-review.json，未下发手机。
+
+Gateway现对所有qwen3.5/6/7/8 JSON请求enable_thinking=false。官方结构化输出及深度思考文档列Qwen3.8-Max可思考JSON Object，但目前没有证据证明关闭思考就是本轮根因。只做同Qwen配置/同原图/同提示的开启思考隔离对照，先选packet4和9，enable_thinking=true/thinking_budget4096，不改生产、不更换厂商，不保存或打印reasoning_content。脚本trajectory-thinking-probe.py已上传/acceptance-trajectory-v1并实际启动，等待结果。
+
+## 同千问思考模式对照与有界能力候选
+
+- 首个脚本未找到Gateway专用环境变量时assert停止，尚未调用模型；修正只读取既有provider声明的同一个key。44图/4096思考预算的实际第一调用120秒TimeoutError，无结果，保留thinking-probes-v1，不把它解释成识别成败。
+- focused-probes-v1对三组相同6图/相同提示/同qwen3.8-max分别false与true1024，全部真实返回：direct18.92/4.56/5.74秒，thinking37.22/32.43/37.54秒，真实usage均reasoning_tokens1024。print direct仍用128倒推去打印；thinking分清输入行触点并请求35967→37000回看。late direct误认键盘搜索，thinking正确识别空白收键盘。early thinking仍未确认触发并请求27167→27367回看。只是局部对照，不是整片通过。
+- thinking-probes-v2使用正式观察提示、原完整packet4/9/3与1024思考预算，81.69/61.15/49.22秒返回，usage均1024。packet3正确分别聚焦/完整输入/110收键盘；packet9新增收键盘但目标写工具栏箭头而原点在空白；packet4仍用128推断去打印并保位置疑问，无revisit。因此不能仅开启思考便宣称整片问题解决。接着用同图审计对照检查候选因果叙述是否导致确认偏差。
+- 新bounded能力仅exact ui_video_trajectory/whole-trajectory/reasoning_mode=bounded/JSON及官方DashScope精确qwen3.8-max或flash启用固定1024，其余Gateway请求不变。直连内部专用flag同限制；图片/调用/纠正/120秒/1200秒门禁不变，无思考文本读取。private audit只记录4项有限非负usage及requested模式，实际reasoningTokens>0才证明执行，缺失不造0。
+- 402相关回归、父全1072视频19.44秒、63后端/46Gateway/7Node/主链编译/JS语法/diff通过，独立15Python/6Node及复审无新增P1/P2。候选尚未部署，生产仍旧observer。
+- 官方依据：[结构化输出](https://help.aliyun.com/zh/model-studio/qwen-structured-output)、[深度思考](https://help.aliyun.com/zh/model-studio/deep-thinking)。官方支持不等于本原片已合格，效果仍以实际对照及正常链路验收为准。
