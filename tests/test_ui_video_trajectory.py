@@ -288,3 +288,103 @@ def test_revisit_cannot_orphan_pixels_inside_already_processed_time(monkeypatch)
         vt.observe_trajectory({'media':dict(frames=frames(),duration_ms=9001)},None,lambda:False,
                               revisit=lambda *a:[dict(frame_id='frame-091',timestamp_ms=3050)])
     assert getattr(exc.value,'trajectory_reason','')=='revisit_outside_owned_interval'
+
+
+@pytest.mark.parametrize('bad_kind',['eleven_refs','outside','missing','duplicate','missing_trigger','missing_outcome'])
+def test_audit_check_contract_is_corrected_in_same_stage(monkeypatch,bad_kind):
+    from task_server.services import ai_skill_service,ui_video_windows
+    calls=[];audit_count=0
+    def reply(name,payload,**kw):
+        nonlocal audit_count
+        calls.append((kw['version'],copy.deepcopy(payload)))
+        r=dict(states=[],events=[],checks=[],uncertainties=[],multiple_scenarios=False)
+        if kw['version']=='observe':r['events']=[event(['frame-001','frame-002'])]
+        if kw['version']=='audit':
+            audit_count+=1
+            t=payload['trajectory'][0]['track']
+            c=dict(event_id=t['event_id'],status='confirmed',frame_refs=['frame-001','frame-002'],question='')
+            r['checks']=[c]
+            if audit_count==1:
+                if bad_kind=='eleven_refs':c['frame_refs']=[f['frame_id'] for f in frames(11)]
+                elif bad_kind=='outside':c['frame_refs']=['frame-001','frame-002','frame-003']
+                elif bad_kind=='missing':r['checks']=[]
+                elif bad_kind=='duplicate':r['checks']=[c,c]
+                elif bad_kind=='missing_trigger':c['frame_refs']=['frame-002']
+                elif bad_kind=='missing_outcome':c['frame_refs']=['frame-001']
+        return r
+    monkeypatch.setattr(ai_skill_service,'run_ai_skill',reply);monkeypatch.setattr(ui_video_windows,'load_assets',lambda *a:[])
+    result=vt.observe_trajectory({'media':dict(frames=frames(12),duration_ms=1201)},None,lambda:False)
+    assert result['events'] and [v for v,_ in calls]==['overview','observe','audit','audit']
+    audit=calls[-1][1];track=audit['trajectory'][0]['track']
+    assert set(audit['trajectory'][0])=={'track'}
+    assert track['required_frame_refs']==['frame-001','frame-002']
+    assert track['allowed_frame_refs']==['frame-001','frame-002']
+    assert audit['frames']==frames(12)
+    assert audit['validation_feedback'] and bad_kind not in audit['validation_feedback']
+
+
+def test_audit_validation_uses_shared_two_correction_limit(monkeypatch):
+    from task_server.services import ai_skill_service,ui_video_windows
+    calls=[];observe_count=0
+    def reply(name,payload,**kw):
+        nonlocal observe_count
+        calls.append(kw['version']);r=dict(states=[],events=[],checks=[],uncertainties=[],multiple_scenarios=False)
+        if kw['version']=='observe':
+            observe_count+=1
+            if observe_count==1:r['checks']=[{}]
+            else:r['events']=[event(['frame-001','frame-002'])]
+        return r  # Audit continually omits the required decision.
+    monkeypatch.setattr(ai_skill_service,'run_ai_skill',reply);monkeypatch.setattr(ui_video_windows,'load_assets',lambda *a:[])
+    with pytest.raises(ValueError) as exc:
+        vt.observe_trajectory({'media':dict(frames=frames(12),duration_ms=1201)},None,lambda:False)
+    assert exc.value.trajectory_reason=='audit_missing_event'
+    assert calls==['overview','observe','observe','audit','audit']
+
+
+def test_audit_service_runtime_error_is_not_a_contract_correction(monkeypatch):
+    from task_server.services import ai_skill_service,ui_video_windows
+    calls=[]
+    def reply(name,payload,**kw):
+        calls.append(kw['version'])
+        if kw['version']=='audit':raise RuntimeError('private upstream transport failure')
+        return dict(states=[],events=[event(['frame-001','frame-002'])] if kw['version']=='observe' else [],checks=[],uncertainties=[],multiple_scenarios=False)
+    monkeypatch.setattr(ai_skill_service,'run_ai_skill',reply);monkeypatch.setattr(ui_video_windows,'load_assets',lambda *a:[])
+    with pytest.raises(RuntimeError):
+        vt.observe_trajectory({'media':dict(frames=frames(12),duration_ms=1201)},None,lambda:False)
+    assert calls==['overview','observe','audit']
+
+
+@pytest.mark.parametrize('track,refs',[
+    (dict(trigger_frame='frame-009',frame_refs=['frame-009','frame-010'],outcome={'frame_refs':['frame-011']}),
+     ['frame-008','frame-009','frame-010','frame-011']),
+    (dict(trigger_frame='frame-016',frame_refs=['frame-016','frame-017','frame-027'],
+          outcome={'frame_refs':['frame-041','frame-042','frame-045','frame-047']}),
+     ['frame-016','frame-017','frame-027','frame-034','frame-037','frame-041','frame-042','frame-045','frame-047']),
+])
+def test_replayed_audit_foreign_frames_and_nine_refs_remain_rejected(track,refs):
+    track={**track,'event_id':'actual-replay-fragment'}
+    with pytest.raises(ValueError):
+        vt.validate_checks([dict(event_id=track['event_id'],status='confirmed',frame_refs=refs,question='')],[track],frames())
+
+
+def test_audit_large_allowed_union_uses_two_required_anchors_without_losing_images(monkeypatch):
+    from task_server.services import ai_skill_service,ui_video_windows
+    audits=[]
+    def reply(name,payload,**kw):
+        r=dict(states=[],events=[],checks=[],uncertainties=[],multiple_scenarios=False)
+        if kw['version']=='observe':
+            e=event([f['frame_id'] for f in frames(4)])
+            e['outcome']['frame_refs']=[f'frame-{i:03d}' for i in range(4,12)]
+            r['events']=[e]
+        if kw['version']=='audit':
+            audits.append(copy.deepcopy(payload));t=payload['trajectory'][0]['track']
+            assert len(t['allowed_frame_refs'])==11
+            assert t['required_frame_refs']==['frame-001','frame-011']
+            r['checks']=[dict(event_id=t['event_id'],status='confirmed',frame_refs=t['required_frame_refs'],question='')]
+            r['uncertainties']=['frame-012 存在轨迹未记录的操作']
+        return r
+    monkeypatch.setattr(ai_skill_service,'run_ai_skill',reply);monkeypatch.setattr(ui_video_windows,'load_assets',lambda *a:[])
+    result=vt.observe_trajectory({'media':dict(frames=frames(12),duration_ms=1201)},None,lambda:False)
+    assert audits[0]['frames']==frames(12)
+    assert result['uncertainties']==['frame-012 存在轨迹未记录的操作']
+    assert result['trajectory_audit']['fragment_checks'][0]['frame_refs']==['frame-001','frame-011']

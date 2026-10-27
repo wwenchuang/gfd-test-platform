@@ -191,7 +191,7 @@ def observe_trajectory(document,root,cancelled,progress=None,record=None,revisit
         call_audit.append(entry)
         if record:record(f'{calls:02d}-{version}-result',redact({'result':raw,'runtime':entry}))
         return _envelope(raw)
-    def ask(version,images,**context):
+    def ask(version,images,validator=None,**context):
         nonlocal corrections
         while True:
             try:
@@ -199,6 +199,7 @@ def observe_trajectory(document,root,cancelled,progress=None,record=None,revisit
                 if version=='overview' and (raw['events'] or raw['checks']):_fail('overview_shape')
                 if version=='audit' and (raw['states'] or raw['events']):_fail('audit_shape')
                 if version=='observe' and raw['checks']:_fail('observe_checks')
+                if validator is not None and not raw.get('revisit'):validator(raw)
                 return raw
             except ValueError as error:
                 if corrections>=2:raise
@@ -207,7 +208,19 @@ def observe_trajectory(document,root,cancelled,progress=None,record=None,revisit
                 corrections+=1
                 reason=getattr(error,'trajectory_reason','schema')
                 if record:record(f'{calls:02d}-contract-rejection',{'stage':version,'reason':reason})
-                context['validation_feedback']='输出合同不符合当前阶段：'+reason+'。本轮只输出该阶段规定字段；audit的states/events必须为空，不能复制输入的页面记忆。重新核对原图，不补造操作。'
+                explanation={
+                    'audit_shape':'audit只能输出checks，states/events必须为空，不得复制页面记忆或轨迹。',
+                    'audit_missing_event':'checks数量必须与trajectory一致，每个track.event_id恰好出现一次，不得漏项或重复。',
+                    'audit_identity':'checks只能使用给定track.event_id，每个ID恰好一次。',
+                    'frame_reference':'每项frame_refs必须为1至8个真实且唯一的原帧ID，按时间顺序排列。',
+                    'audit_evidence':'每项frame_refs必须包含其required_frame_refs，额外帧只能来自同项allowed_frame_refs。',
+                    'audit_status':'status只能是confirmed或needs_review。',
+                    'audit_question':'needs_review必须填写具体证据疑问。',
+                    'audit_contradiction':'confirmed的question必须为空，仍有疑问应使用needs_review。',
+                }.get(reason,'当前阶段输出结构不符合合同，请只返回规定字段及合法值。')
+                context['validation_feedback']=('平台合同校验未通过：'+explanation+
+                    ('重新核对全部附图；每项证据默认只返回required_frame_refs的触发及最终结果1至2帧，总数最多8帧。'
+                     if version=='audit' else '重新核对本阶段全部原图，完整输出该阶段合同。')+'不补造操作。')
     def expand(packet,requests):
         nonlocal revisits,frames
         if not requests:return False
@@ -272,13 +285,16 @@ def observe_trajectory(document,root,cancelled,progress=None,record=None,revisit
                     if fragment['trigger_frame'] not in owned:continue
                     review={**copy.deepcopy(fragment),'event_id':f"{track['event_id']}:fragment-{number}",
                             'canonical_event_id':track['event_id']}
-                    batch.append({'track':review,'event':copy.deepcopy(fragment)})
-            audited=ask('audit',packet['frames'],state_memory=states+extra,trajectory=batch,
+                    times={f['frame_id']:f['timestamp_ms'] for f in packet['frames']}
+                    review['required_frame_refs']=sorted({review['trigger_frame'],review['outcome']['frame_refs'][-1]},key=times.get)
+                    review['allowed_frame_refs']=sorted(set(review['frame_refs'])|set(review['outcome']['frame_refs']),key=times.get)
+                    batch.append({'track':review})
+            audited=ask('audit',packet['frames'],validator=lambda result:validate_checks(result['checks'],[p['track'] for p in batch],packet['frames']),
+                    state_memory=states+extra,trajectory=batch,
                     packet_id=packet['packet_id'],owned_frame_ids=packet['owned_frame_ids'],
                     context_frame_ids=packet['context_frame_ids'],
                     prior_events=[{**t,'event':e} for t,e in list(zip(tracks,events))[-8:]])
             if expand(packet,audited.get('revisit',[])):continue
-            validate_checks(audited['checks'],[p['track'] for p in batch],packet['frames'])
             break
         events,tracks=proposed,history;states.extend(extra)
         packet_outputs.append({'packet':packet,'raw':redact(raw),'audit':redact(audited)})
