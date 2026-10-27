@@ -94,7 +94,7 @@ def test_nonempty_input_value_is_not_accepted_as_replay_data():
     with pytest.raises(ValueError):vt.bind_packet_events([raw],p,fs,[],[])
 
 
-def run_observer(monkeypatch, n=90, continuation=False, missing=False, cancelled=lambda:False, reject_fragment=False, corrections=0):
+def run_observer(monkeypatch, n=90, continuation=False, missing=False, cancelled=lambda:False, reject_fragment=False, corrections=0, fragment_questions=False):
     from task_server.services import ai_skill_service, ui_video_windows
     calls=[]
     def reply(name,payload,**kwargs):
@@ -110,6 +110,9 @@ def run_observer(monkeypatch, n=90, continuation=False, missing=False, cancelled
                 raw['events']=[event(['frame-026','frame-032'],'aiInput') if continuation else event(['frame-001','frame-002'])]
             elif continuation and payload['packet_id']=='packet-002':
                 e=event(['frame-033','frame-047'],'aiInput');e['continuation_of']='packet-001:event-0';raw['events']=[e]
+        if kwargs['version']=='observe' and fragment_questions:
+            for item in raw['events']:
+                if item['action']=='aiInput':item['uncertainties']=['本包末编辑未结束' if payload['packet_id']=='packet-001' else '候选点击未被采样帧捕捉']
         if kwargs['version']=='audit':
             for p in payload['trajectory']:
                 t=p['track'];raw['checks'].append(dict(event_id=t['event_id'],status='confirmed',frame_refs=list(dict.fromkeys([t['trigger_frame'],t['outcome']['frame_refs'][-1]])),question=''))
@@ -287,3 +290,55 @@ def test_revisit_cannot_orphan_pixels_inside_already_processed_time(monkeypatch)
         vt.observe_trajectory({'media':dict(frames=frames(),duration_ms=9001)},None,lambda:False,
                               revisit=lambda *a:[dict(frame_id='frame-091',timestamp_ms=3050)])
     assert getattr(exc.value,'trajectory_reason','')=='revisit_outside_owned_interval'
+
+
+@pytest.mark.parametrize('prior_question,new_question',[
+    ('本包末编辑未结束，最终上屏词与提交方式需在后续包确认',''),
+    ('','frame-038到frame-041候选点击未被采样帧捕捉'),
+    ('本包末编辑未结束','候选点击未被采样帧捕捉')])
+def test_continuation_preserves_questions_without_using_them_as_edit_identity(prior_question,new_question):
+    fs=frames();packets=vt.make_packets(fs,[])
+    first=event(['frame-026','frame-032'],'aiInput');first['uncertainties']=[prior_question] if prior_question else []
+    previous,tracks=vt.bind_packet_events([first],packets[0],fs,[],[])
+    second=event(['frame-033','frame-047'],'aiInput');second.update(continuation_of=tracks[0]['event_id'],uncertainties=[new_question] if new_question else [])
+    untouched=copy.deepcopy((first,second,previous,tracks))
+    merged,history=vt.bind_packet_events([second],packets[1],fs,previous,tracks)
+    assert len(merged)==1 and len(history[0]['fragments'])==2
+    expected=list(dict.fromkeys(previous[0]['uncertainties']+second['uncertainties']))
+    assert merged[0]['uncertainties']==expected
+    assert history[0]['fragments']==[first,second]
+    assert (first,second,previous,tracks)==untouched
+
+
+@pytest.mark.parametrize('change',[{'target':'另一个输入框'},{'page_before':'page-b'},
+    {'page_after':'page-b'},{'edit_boundary':'submission'},{'edit_boundary':'field_change'},
+    {'edit_boundary':'navigation'},{'continuation_of':'unknown'},{'trigger_kind':'uncertain'}])
+def test_uncertain_continuations_still_require_all_structural_identity_boundaries(change):
+    fs=frames();packets=vt.make_packets(fs,[])
+    first=event(['frame-026','frame-032'],'aiInput');first['uncertainties']=['编辑未结束']
+    previous,tracks=vt.bind_packet_events([first],packets[0],fs,[],[])
+    second=event(['frame-033','frame-047'],'aiInput')
+    second.update(continuation_of=tracks[0]['event_id'],uncertainties=['候选点击缺帧']);second.update(change)
+    with pytest.raises(ValueError):vt.bind_packet_events([second],packets[1],fs,previous,tracks)
+
+
+
+def test_confirmed_fragment_audits_do_not_erase_observer_input_questions(monkeypatch):
+    result,calls=run_observer(monkeypatch,continuation=True,fragment_questions=True)
+    questions=result['events'][0]['uncertainties']
+    assert '本包末编辑未结束' in questions and '候选点击未被采样帧捕捉' in questions
+    track=result['trajectory_audit']['tracks'][0]
+    assert [f['uncertainties'] for f in track['fragments']]==[['本包末编辑未结束'],['候选点击未被采样帧捕捉']]
+    assert len(result['trajectory_audit']['fragment_checks'])==2
+    # Independent trigger/outcome support is not a resolution of separate questions.
+    assert all(c['status']=='confirmed' for c in result['trajectory_audit']['fragment_checks'])
+
+
+def test_multiple_question_fragments_keep_all_questions_and_input_placeholder():
+    fs=frames(120);packets=vt.make_packets(fs,[]);previous=[];tracks=[]
+    for i,refs in enumerate([['frame-026','frame-032'],['frame-033','frame-047'],['frame-065','frame-070']]):
+        raw=event(refs,'aiInput');raw['uncertainties']=['编辑证据问题'+str(i)]
+        if tracks:raw['continuation_of']=tracks[-1]['event_id']
+        previous,tracks=vt.bind_packet_events([raw],packets[i],fs,previous,tracks)
+    assert len(previous)==1 and len(tracks[0]['fragments'])==3
+    assert previous[0]['uncertainties']==['编辑证据问题0','请手工填写非敏感测试输入；密码、验证码或令牌请使用人工前置条件','编辑证据问题1','编辑证据问题2']

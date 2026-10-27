@@ -716,7 +716,8 @@ function completionUsageSummary(usage = {}) {
     promptTokens: Number(usage?.prompt_tokens || usage?.promptTokens || 0),
     completionTokens: Number(usage?.completion_tokens || usage?.completionTokens || 0),
     totalTokens: Number(usage?.total_tokens || usage?.totalTokens || 0),
-    reasoningTokens: Number(details?.reasoning_tokens || details?.reasoningTokens || 0),
+    // The route already carries a normalized summary when projected to HTTP.
+    reasoningTokens: Number(details?.reasoning_tokens ?? details?.reasoningTokens ?? usage?.reasoningTokens ?? 0),
   };
 }
 

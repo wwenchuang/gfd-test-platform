@@ -127,16 +127,18 @@ def bind_packet_events(raw_events,packet,frames,previous,tracks):
                 events[-1]['action']!='aiInput' or raw['target']!=events[-1]['target'] or
                 raw['page_before']!=history[-1]['page_after'] or raw['page_after']!=raw['page_before'] or
                 raw['edit_boundary']!='none' or history[-1]['edit_boundary']!='none' or
-                not 0<=times[refs[0]]-events[-1]['end_ms']<=5000 or raw['uncertainties'] or
-                any(q!='请手工填写非敏感测试输入；密码、验证码或令牌请使用人工前置条件' for q in events[-1]['uncertainties'])):_fail('input_continuation')
+                not 0<=times[refs[0]]-events[-1]['end_ms']<=5000):_fail('input_continuation')
             old=events[-1];track=history[-1]
             fragments=track['fragments']+[fragment]
             mandatory={r for part in fragments for r in (part['frame_refs'][0],part['frame_refs'][-1],part['trigger_frame'])}
             if len(mandatory)>8:_fail('input_evidence_budget')
             union=sorted(set(track['frame_refs'])|set(refs),key=times.get)
             selected,action_compilation=_compile_references(union,times,mandatory)
+            # Identity is structural; unresolved evidence remains a review blocker.
+            # Never resolve an earlier question just because a later fragment exists.
             old.update(frame_refs=selected,end_ms=checked['end_ms'],
-                       observation=checked['observation'],outcome=compiled_outcome)
+                       observation=checked['observation'],outcome=compiled_outcome,
+                       uncertainties=list(dict.fromkeys(old['uncertainties']+checked['uncertainties'])))
             fragment_compilations=track['reference_compilation']['fragments']+[fragment_compilation]
             track.update(fragments=fragments,frame_refs=sorted(set(track['frame_refs'])|set(refs),key=times.get),
                          page_after=raw['page_after'],outcome=copy.deepcopy(outcome),

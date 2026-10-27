@@ -67,7 +67,12 @@ def register_routes(route_get,route_post_prefix_before_body,route_get_regex,rout
             else:
                 frame_id=asset.split('/')[1]
                 if frame_id not in {f['frame_id'] for f in doc.get('media',{}).get('frames',[])}:raise KeyError(frame_id)
-                path=store.root/identifier/'frames'/(frame_id+'.jpg');mime='image/jpeg'
+                version=qs.get('analysis_version')
+                if version is not None and (not isinstance(version,str) or not re.fullmatch(r'[1-9][0-9]*',version) or int(version)!=doc.get('analysis_version')):raise KeyError(frame_id)
+                if not re.fullmatch(r'frame-(?:[0-9]{3}|end)',frame_id):raise KeyError(frame_id)
+                from .services.ui_video_workspace import resolve_frame_directory
+                path=resolve_frame_directory(store.root,doc)/(frame_id+'.jpg');mime='image/jpeg'
+                if path.is_symlink():raise KeyError(frame_id)
             # Stream bounded chunks; do not allocate a 200MB response in HTTP memory.
             length=path.stat().st_size
             handler.send_response(200)

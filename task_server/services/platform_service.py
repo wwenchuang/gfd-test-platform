@@ -387,6 +387,13 @@ def ai_skills_status():
         for name in os.listdir(prompt_dir):
             if name.endswith(".v1.md"):
                 prompt_names.add(name[:-len(".v1.md")])
+    # This observer is invoked only through its three explicit stage versions.
+    # Other skills retain the existing v1 catalog contract.
+    if all(os.path.isfile(os.path.join(prompt_dir, f"ui_video_trajectory.{stage}.md"))
+           for stage in ("overview", "observe", "audit")):
+        prompt_names.add("ui_video_trajectory")
+    else:
+        prompt_names.discard("ui_video_trajectory")
     if os.path.isdir(schema_dir):
         for name in os.listdir(schema_dir):
             if name.endswith(".schema.json"):

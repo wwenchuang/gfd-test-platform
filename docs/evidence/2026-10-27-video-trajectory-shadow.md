@@ -109,3 +109,13 @@ Gateway现对所有qwen3.5/6/7/8 JSON请求enable_thinking=false。官方结构�
 claim-only输入只在深拷贝中移除当前track.observation、audit prior.event.observation、audit prior.fragments[].observation；结果主张、疑问、身份边界与全部原图保留，observe历史和private原始记录不变。private audit_input_mode明确标记。真实补图后的动作/目标及审计仍需重新验证，不因出现revisit就计通过。
 
 新两项反例先红后绿，406相关范围、父全1074视频19.66秒、63后端/编译/diff通过，独立48项及复审无P1/P2。有界能力16681f61已提交推送；claim-only候选继续提交，用于正式Gateway新诊断，不切换生产worker默认。
+
+## 第七轮实际终态与输入续接修正
+
+- 2da79646994c527b8b285538073c835af1481f72 已通过既有部署脚本实际部署；20:45:32 公网健康精确 revision 一致。安装 Gateway 文件 SHA256 为 b8ba21587e57fe00f189801cfde37c62c416e13fef54e9e3237e0464a3420064，与本地一致。生产 worker 默认入口仍未切换。
+- 第七轮使用部署后的真实模块与 Gateway，无提示或模块私有替换；后台 PID3138436，20:46:57 启动，20:53:04 终止。首包回看018→027新增20张原帧；第二包连续三次返回均在 input_continuation 被拒绝，仅完成1/9包。完整请求、响应、run-meta、失败与补帧记录通过原生堡垒机下载，保留在外部 new-touch/trajectory-v1/run-7，没有修改模型回答。
+- 05/06/07 响应的同字段 target、页面、canonical ID、相邻时间和无独立边界均符合续接；拒绝来自 prior“本包末编辑未结束”和新片段“候选按键未采样”等疑问。候选修正仅移除疑问存在即拒续接的条件，保留原有全部结构身份/提交/导航/字段/时间/中间操作门禁；canonical 问题取前后稳定去重并集，原始 fragments 不变，后续结果或 audit supported 都不自动清除疑问。累计问题超限仍由原最终校验拒绝。
+- Gateway HTTP usage 对已归一化摘要再次归一化时丢失顶层 reasoningTokens，导致 run7 七次显示0。已用 provider嵌套1024→第一次1024→HTTP0 的红测试证明；候选兼容自身顶层摘要并保留嵌套真实零值。此为回传观测错误，不能据此断言 run7 未执行思考；请求 reasoning_mode 没有被删除，真实原始日志用量待只读导出。
+- 下一批同时准备版本工作目录与私有字段边界：只允许服务器构造 analysis-vN/frames，严格正整数版本、无效marker不回退、旧来源无marker兼容；帧HTTP保留owner/app与成员校验，支持可选版本拒绝过期，拒符号链接；公开响应剔除私有审计与路径，retry清私有索引但保留旧证据目录。helper不负责数据库CAS，未来worker必须显式使用expected_version发布；当前未接线新worker。
+- skill目录健康检查识别trajectory实际overview/observe/audit三份提示，缺任一仍不ready，不新增v1别名；ready仅表示目录配套完整。
+- 本批父任务1112项视频及catalog测试20.69秒通过、后端63/Gateway46/Node10/主链及改动编译/JS语法/diff通过；独立metadata7项、workspace18项及续接/usage60Python+2Node复审批准。本轮不是整片合格，没有正式新草稿或新手机下发，固定设备与不确认物理打印约束不变。

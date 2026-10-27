@@ -1,3 +1,11 @@
+## 2026-10-27 第七轮误拒续接与用量回传修正（进行中）
+
+- 2da79646已实际部署，20:45:32公网健康完整revision一致、Gateway文件SHA与本地一致。真实部署模块run7于20:46:57后台启动，20:53:04第二包input_continuation失败，1/9；完整JSON已原生下载new-touch/trajectory-v1/run-7，未改回答。
+- 首包原片回看20张后仍记录部分编辑未完疑问；第二包05/06/07结构身份均合法，却因前后疑问存在被拒。候选分离身份与证据未决，全部结构边界保留，canonical问题稳定并集、原始片段不变，audit supported不清问题，最终问题门禁保留。
+- 实际七次Qwen调用的HTTP reasoningTokens0来自usage二次归一化丢顶层字段，红测试已证；候选只修摘要投影，不能据0推断未思考。全部千问配置与实际provider/model仍保持，原始日志真实用量待导出。
+- 版本私有workspace/帧HTTP/公开审计过滤/retry清索引基础和三阶段skill目录健康修正已完成，正常worker尚未接线；1112视频与catalog20.69秒、后端63/Gateway46/Node10/编译语法diff通过，metadata/workspace及续接/usage独立复审批准。
+- 仍无整片内容资格成功/正式新草稿/新手机试跑。固定ecbfd645/9888E0094F2A，有归属明确已有任务则取消、无则继续，不确认物理打印。详情docs/evidence/2026-10-27-video-trajectory-shadow.md。
+
 ## 2026-10-27 审计只核验主张，准备run7（进行中）
 
 - 同44图/同Qwen3.8Max/1024对照：full-narrative保print触发supported但结果unclear及错位issue、无回看；claim-only明确触发unclear并请求127→129，结果均已下载保留。实际补图后能否还原仍待验证。
