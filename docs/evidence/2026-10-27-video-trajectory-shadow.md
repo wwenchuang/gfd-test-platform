@@ -101,3 +101,11 @@ Gateway现对所有qwen3.5/6/7/8 JSON请求enable_thinking=false。官方结构�
 - 新bounded能力仅exact ui_video_trajectory/whole-trajectory/reasoning_mode=bounded/JSON及官方DashScope精确qwen3.8-max或flash启用固定1024，其余Gateway请求不变。直连内部专用flag同限制；图片/调用/纠正/120秒/1200秒门禁不变，无思考文本读取。private audit只记录4项有限非负usage及requested模式，实际reasoningTokens>0才证明执行，缺失不造0。
 - 402相关回归、父全1072视频19.44秒、63后端/46Gateway/7Node/主链编译/JS语法/diff通过，独立15Python/6Node及复审无新增P1/P2。候选尚未部署，生产仍旧observer。
 - 官方依据：[结构化输出](https://help.aliyun.com/zh/model-studio/qwen-structured-output)、[深度思考](https://help.aliyun.com/zh/model-studio/deep-thinking)。官方支持不等于本原片已合格，效果仍以实际对照及正常链路验收为准。
+
+## 独立审计去因果叙述对照
+
+同44图/同Qwen3.8Max/同1024思考/同audit提示：full-narrative29.95秒，print trigger=supported/outcome=unclear，并提出128触点错位issue但不回看；claim-only29.40秒，trigger=unclear/outcome=supported，主动请求127→129核实128触点及漏按，原始结果均保留new-touch/trajectory-v1/audit-thinking-probes-v1。不是把原模型判断改写成新判断。
+
+claim-only输入只在深拷贝中移除当前track.observation、audit prior.event.observation、audit prior.fragments[].observation；结果主张、疑问、身份边界与全部原图保留，observe历史和private原始记录不变。private audit_input_mode明确标记。真实补图后的动作/目标及审计仍需重新验证，不因出现revisit就计通过。
+
+新两项反例先红后绿，406相关范围、父全1074视频19.66秒、63后端/编译/diff通过，独立48项及复审无P1/P2。有界能力16681f61已提交推送；claim-only候选继续提交，用于正式Gateway新诊断，不切换生产worker默认。

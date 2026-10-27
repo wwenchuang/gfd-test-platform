@@ -211,6 +211,16 @@ def overview_frames(frames,limit=60):
     return [f for i,f in enumerate(frames) if i in ids]
 
 
+def audit_claim_context(trajectory,prior_events):
+    """Fork audit claims without observer narrative; preserve original evidence."""
+    claims=copy.deepcopy(trajectory);prior=copy.deepcopy(prior_events)
+    for item in claims:item['track'].pop('observation',None)
+    for item in prior:
+        item['event'].pop('observation',None)
+        for fragment in item['fragments']:fragment.pop('observation',None)
+    return claims,prior
+
+
 def observe_trajectory(document,root,cancelled,progress=None,record=None,revisit=None):
     from . import ai_skill_service as ai
     from .ui_video_windows import load_assets
@@ -348,11 +358,12 @@ def observe_trajectory(document,root,cancelled,progress=None,record=None,revisit
                     review['required_frame_refs']=sorted({review['trigger_frame'],review['outcome']['frame_refs'][-1]},key=times.get)
                     review['allowed_frame_refs']=sorted(set(review['frame_refs'])|set(review['outcome']['frame_refs']),key=times.get)
                     batch.append({'track':review})
+            audit_batch,audit_prior=audit_claim_context(batch,[{**t,'event':e} for t,e in list(zip(tracks,events))[-8:]])
             audited=ask('audit',packet['frames'],validator=lambda result:(bind_audit_checks(result['checks'],[p['track'] for p in batch],packet['frames']),validate_audit_issues(result['issues'],packet)),
-                    state_memory=states+extra,overview_hypotheses=overview_hypotheses,trajectory=batch,
+                    state_memory=states+extra,overview_hypotheses=overview_hypotheses,trajectory=audit_batch,
                     packet_id=packet['packet_id'],owned_frame_ids=packet['owned_frame_ids'],
                     context_frame_ids=packet['context_frame_ids'],
-                    prior_events=[{**t,'event':e} for t,e in list(zip(tracks,events))[-8:]])
+                    prior_events=audit_prior)
             if expand(packet,audited.get('revisit',[])):continue
             bound_checks=bind_audit_checks(audited['checks'],[p['track'] for p in batch],packet['frames'])
             break
@@ -377,7 +388,7 @@ def observe_trajectory(document,root,cancelled,progress=None,record=None,revisit
     checked=validate_analysis({'events':events,'uncertainties':list(dict.fromkeys(questions)),
                                'multiple_scenarios':multi},frames,duration,secrets,max_events=120)
     for e in checked['events']:e['uncertainties']=list(dict.fromkeys(e['uncertainties']))
-    result={**checked,'media':{**copy.deepcopy(document['media']),'frames':frames},'trajectory_audit':redact({'version':'trajectory-v2','overview_hypotheses':overview_hypotheses,'states':states,'tracks':tracks,'checks':checks,'fragment_checks':fragment_checks,
+    result={**checked,'media':{**copy.deepcopy(document['media']),'frames':frames},'trajectory_audit':redact({'version':'trajectory-v2','audit_input_mode':'claims_without_observer_narrative','overview_hypotheses':overview_hypotheses,'states':states,'tracks':tracks,'checks':checks,'fragment_checks':fragment_checks,
              'packets':packet_outputs,'calls':call_audit,'elapsed_seconds':round(time.monotonic()-started,3)})}
     if record:record('trajectory-final',redact(result))
     if progress:progress('planning',1,1,checked['events'])
