@@ -218,3 +218,14 @@ v6原始两个会话无需事后合并，但其时间与状态仍有硬限制：
 - 可选传输组件2c12aa52199f7b8e5abcb2f2a663b580f44e34a8：仅exact ui_video_trajectory/whole-trajectory显式perception_mode=fine-detail、official HTTPS DashScope exact qwen3.8-max路由增加每图sibling min_pixels1658880；未指定模式的调用保持原状。错误模式/其它路由拒绝，frame/JPEG/context标签不改，不单独启用thinking、不改24/1200/图片/重试/默认worker/模型路由。此参数未按sourceID/帧号/坐标/输入值分支。新25行生产差异配TDD红26Python/3Node后绿166相关Python+Node5/6；独立spec+quality均批准，父全1181视频+catalog20.17秒、后端63/Gateway46/主链编译/Node语法/diff通过。计划与完整报告见qwen-video-fine-detail计划和.superpowers/sdd/qwen-fine-detail；尚未部署、没有整片或Runner通过。
 - 新独立compact probe单callHTTP200/stop，105.465秒、首正文78.783秒、正文1485tokens，reasoning1024，prompt34859(图片25320/文字9539)/completion2510/total37369。此次完整返回仍失败，不能再只用timeout解释：parts3>2、q数组、整帧代替fact、ph越part、111..116无编辑仍当第三part、final错选生成后的128、键盘内部a3..a9重复独立tap、110真实触点/111残留拆为2动作、第一生成结果122越过第二触发121。119引用均exact可查，说明短alias解决复制不能解决角色/因果。raw与全部不利结果保留compact-mapping-protocol-probe-v1/execution-v1；res为空，原问题完整不消除，旧B账簿SHA9f46d48b6267fd9a90d1cfbcbb2d2b2613096ce82b1b8ad11d0558ea89ea7d30未变，无补call。
 - 下一层应继续区分视觉感知与业务语义而非给同一视觉mapper堆提示。官方结构化文档说明多模态json_schema会降级json_object，文本Schema模式才约束类型；准备纯文本语义映射对照，只用冻结视觉观察及native候选、实际raw图等待另一独立视觉审核，任何结果都不可据此称光学确认或可执行。模型仍千问，不放宽本地schema/owner/fact角色/真实PTS/源问题门禁。[官方结构化输出说明](https://help.aliyun.com/zh/model-studio/qwen-structured-output)。此新text-only probe尚未调用。
+
+
+## 纯文本映射失败、真实Gateway烟测与整片fine-detail启动
+
+纯文本strict json_schema单次49.061秒HTTP200/stop，所有76帧/268事实文字保留，图片0；8处uniqueItems只从wire projection去除、本地schema不变。schema零错误，但本地phase_outside_part，键盘内部按键重复为独立操作、111残点新点击、088父anchor晚于085删除phase，内容不合格。六处原问题保持未决，res空、compilable=false、requires_visual_audit=true。停止新增全局mapper或提示变体，回到现有stateful observer的单参数图像细节对照。原始失败保留new-touch/trajectory-v1/text-only-semantic-role-probe-v1/execution-v1。
+
+真实本地Gateway代码拷贝使用2c12aa52组件，唯一POST55.345秒HTTP200/stop、actual qwen_plus/qwen3.8-max、fallback=false/index0、prompt13886/completion2812/total16698/reasoning1024。8张原JPEG不变、每图min_pixels1658880；标准Gateway system/标签与旧direct probe不同，只说明组件兼容，不能归因视觉增益。原auth保持、LOG=false、独占127.0.0.1 child终于清理，无凭据/思考落盘。完整报告及原文在Downloads/qwen-fine-detail-gateway-smoke-20261028-5iet9cje。
+
+唯一整片shadow经父审后从Downloads/qwen-fine-detail-trajectory-shadow-prepared-20261028-xwcxpkvv/shadow.py启动，脚本SHA535f62ae5cc395ec8acd03a75a55d09a8f4871d69b5817baf71a6433e81e76ab。仅原metadata299 JPEG，不混入run10补帧；原source SHA370d92e2622686330d114ce14c67c50788a8e92e4aa1babbbd7e856e2796d893、75376ms/432x960。直接调用当前observer和canonical loader；只observe/audit加入fine-detail、overview普通。原callback请求保留wrapper前内容，actual payload增量/图SHA另ledger，不伪称callback已带mode。共享原24calls/2纠正/4补帧64新图/60图10MiB/120秒/0retry，并补严格外层1200秒中断，不重置/不自动重跑。此前内部仅调用前检查wall的事实不变。actual soleMax/fallbackfalse每call校验；所有结果仍qualified=false，待独立全片审核。无consolidation/正常平台草稿/Runner启动。
+
+01:10:07新手机只读截图显示指定4F2A在线/空闲23°C，活动任务区域消失，本agent未取消旧巧克力任务。证据new-touch/current-platform/phone-20261028-011007-preflight.json及同名前缀PNG。仅视觉前置，不是API归属证明或手机验收。Chrome当前仍密码登录，部署等待真实可用终端；本地解析诊断继续，不新下发打印。

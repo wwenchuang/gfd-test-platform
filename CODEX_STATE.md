@@ -1,3 +1,10 @@
+## 2026-10-28 整片高细节对照已启动（继续）
+
+- 3083af52分支已推送；runtime/main仍f7f8a426，未默认切换observer。纯文本strict Schema诊断49.061秒HTTP200/stop、schema零错误但phase_outside_part及IME内部动作重复/111残点另造点击，qualified=false；停止追加global mapper提示路线。
+- 当前实际Gateway本地smoke单次55.345秒HTTP200/stop，actual qwen_plus/qwen3.8-max、fallback=false、reasoning1024，8原JPEG保持；原auth启用、localhost独占child已清理。组件兼容通过，不等于整片内容通过。
+- 外部qwen-fine-detail-trajectory-shadow-prepared-20261028-xwcxpkvv脚本535f62ae经父审后唯一整片run已启动；299原JPEG/源SHA不变，只有observe/audit payload增加fine-detail，overview普通；原observer/canonical loader原逻辑不改。诊断额外严格外层24attempts/1200秒、不自动重启；状态与actual路由/usage保留records。未调用consolidation/Runner，原片资格仍为0。
+- 01:10:07指定ecbfd645只读截图显示EP3-9888E0094F2A在线/空闲23°C，无活动任务区域；此前非归属巧克力任务本agent未取消。仅visual preflight，不证明API绑定/完整执行。Chrome当前仍堡垒机密码页，本地整片不依赖该连接；未新问登录或操作打印。
+
 ## 2026-10-28 受限高细节传输组件与语义角色失败（继续）
 
 - 2c12aa52已提交可选fine-detail传输，仅exact trajectory/whole显式模式、official exact qwen3.8-max每图min_pixels1658880；原图/标签/limits/thinking/defaultworker/routes不改。TDD先红26Python/3Node后绿166相关+5新Node/6Qwen，独立spec+quality批准；父全1181视频/catalog20.17秒、后端63/Gateway46/主链编译/Node语法/diff绿。未部署/未默认启用，原片及Runner仍无通过。
