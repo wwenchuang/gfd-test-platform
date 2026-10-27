@@ -59,6 +59,7 @@
 
 ## fd413f4f交付及浏览器连接阻塞
 
+- 用户12:43恢复新主机会话，能读取根目录文件列表。后续确认电脑控制层异常：坐标操作返回Computer Use server error -10005: noWindowsAvailable；原生粘贴pwd及Return无终端回显，ZIP选择后打开仍不可用。已请求用户确认Mac解锁、无屏保、Chrome前台及手动pwd回显，区分于登录或服务端问题。没有上传或部署成功输出；只发送了只读pwd，不能据此认定命令已执行。
 - fd413f4f0bbed270b22c653a26d4af8f83fcde26已提交并推送origin/main及当前分支，保留其它已有脏文件；CODEX_STATE仅stage本次前缀。12:36公网health仍为ceb4bb1c，本批尚未部署。
 - Chrome堡垒机会话反复T_514/T_1006，重连、页面重载及已登录desktop入口新建连接未恢复可操作终端；原生文件选择器选bundle和zip均显示打开不可用，不能据选择操作宣称上传成功。页面内容空白或画面不刷新。已请求用户手动恢复QA终端并确认可输入；无确认输出时不继续发部署命令。
 - 12:33真实ADB device、Runner在线ready；12:35手机实际截图指定EP3-9888E0094F2A在线空闲、喷头25°C。current-platform/phone-preflight-fd413f4f.{json,png}；截图不依赖旧平台snapshot。没有创建/取消/物理打印或Runner试跑。

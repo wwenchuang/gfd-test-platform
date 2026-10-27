@@ -1,5 +1,6 @@
 ## 2026-10-27 原片真机接续：共同按压与后态帧诊断（进行中）
 
+- 用户12:43恢复新QA会话，已读到文件列表；但工具坐标操作反复noWindowsAvailable，原生粘贴pwd后无终端回显，文件选择器选ZIP后打开仍不可用。已明确告知用户不是登录失败，异步请求确认Mac解锁/无屏保/Chrome前台并手动pwd回显；等待恢复实际输入能力。没有上传或部署成功证据，当前只曾发送只读pwd，不把操作尝试视作执行。
 - 本批fd413f4f已提交并推送origin/main及codex/ui-platform-simple-workflows，尚未部署。12:36公网health仍精确ceb4bb1c。堡垒机反复T_514/T_1006；原生重连/重载/已登录入口新建会话未恢复，Chrome内容空白或画面不刷新，文件选择器选bundle及zip时打开均不可用，没有上传成功证据。已异步请求用户手动恢复可输入终端；不是再次索要登录凭据。12:33 Runner在线ready，12:35真实ADB图4F2A在线空闲25°C。没有创建/取消任务或真机试跑。
 - 本地下一步包/Users/adouceshi/Downloads/press-release.zip（含press-fix.bundle及deploy-press.sh，ZIP SHA256 3c70d95edfc281be07949c9df0da892787fd4b6322ab9032467feb7234508d28）；bundle SHA256 32ec558aee293cfc2f2967d2a712a2e33b663c5cda432a146ec40b5b9b21fd67。脚本语法通过，解压到/acceptance-current/press-release后运行bash deploy-press.sh，检查clean工作区、bundle校验、ff-only、精确fd413f4f再调用既有部署脚本。上传解压及运行均未完成。
 - ceb4bb1c已实际bundle部署并核对终端及公网精确revision；v2完整失败文档已下载。正常平台同原片/无补充目标重新生成v3，10:35:16在coverage_resolution.validate:200失败，52首轮/55复核raw，12/12观察；没有新草稿、没有真机执行。
