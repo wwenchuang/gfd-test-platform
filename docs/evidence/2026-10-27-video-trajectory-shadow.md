@@ -260,3 +260,14 @@ v6原始两个会话无需事后合并，但其时间与状态仍有硬限制：
 原型v1六synthetic通过并冻结后，唯一fullsource尝试被本机FFmpeg9的-vsync0语法拒绝，ffprobe2258真PTS0..75233.333ms/432x960、实际0帧解码、1.129秒，不能推断Hough效果。独立v2-decoder-only经本机help/手册核实仅改-fps_mode passthrough，保v1所有seal/结果，Hough/tracking参数不变。v2首帧0ms得到129圆>32冻结cap，全部129保留，无截断；解码/Hough1帧，fullyprocessed0、后2257帧未检查，全部2258未完成，3.305654秒。输出约2.14MB/4联系表及总览、source原frame PNG、raw全部几何候选。父看总览，普通文字/图标/模型纹理大量成圆形，不能把geometryproposal当动作。既没有min2frame候选，也没有055/110召回结论。所有原记录和源不改，0AI/0Runner/0生产改动。v3仅准备通用局部时序变化筛选，尚未执行原片，不把已知点用于过滤或调参。
 
 18:20:14UTC公网/api/health返回HTTP200/oktrue、完整revision f7f8a426213e80ff2b0ff5d54a330c93862ea70b；git ls-remote refs/heads/main同SHA。18:20:41UTChealth.models text_model与vl_model都qwen3.8-max，officialhost合法、URL不含凭据。外部current-platform/health-20261028-verified.json和model-health-20261028-verified.json。较早health-live摘要用不存在status字段为None，原摘要保留，另存正确ok字段，不能据投影None推服务错误。线上默认旧worker，分支输入guard修正已推；当前仍没有原片合格新用例或手机整例通过。
+
+
+## 原生全帧测量、变化分组与单包真实输入改善
+
+OFFLINE原型v3在第38解码帧因36有效候选超过32停止；v4整帧overflow改UNKNOWN后到67.867秒因203 transient超过200停止。v5只容量200→512，原核心/阈值不变，2258/2258 native帧69.631秒完成，PTS/RGB/PNG零绑定差异。468轨迹中234候选、207单帧、27背景；131整帧unknown、36间隔、585局部unknown、139截断及4EOF均保留。独立预选8个困难点仅6处空间匹配；两次生成被同一长期文字几何桥接。均不是物理触摸或动作确认，12个均匀ID样本9普通UI、2似标记、1不明，非随机精度估计。
+
+通用变化分组未再解码/调API，保留468父及7077观察；646novel按既有100ms真PTS间隔分508组，另40中点检查/2072证据引用。index SHA05b9a7f4a61fd0f788fb327ff0f1e437dd27ab2dd09af27bb9c545e10274e6df。独立原PNG支持生成局部圆首次在(29166.667,29200]、第二次在(30966.667,31000]出现，30100/30966.667采样无圆；不推断连续全部缺席、物理press/release或因果。原v5的6/8不回改，新增图也不回算旧模型已见。
+
+marker-cue-packet-probe-v1从immutable旧audit按trigger不清→issue顺序自动选2窗口(128及121)，原44JPEG+16独立native Q90派生共60图，40变化候选，2800644编码字节。原3包prefix仅复用9事件/8问题，未声称fresh whole；所有2258原生绑定/319原图与prefix/原call10 render均验证。唯一实际observer96.281秒、actual qwen_plus/qwen3.8-max/fallbackfalse、prompt151591/completion2722/total154313/reasoning1024，原auth独占local child清理true；无重试/自动audit/conso/Runner。完整raw/bind/outcome/trace及独立content-review在外部同名目录。
+
+局部改善明确：110context收键盘没有再次造111绿色确定，实际print触发从128文本行误判改为33136600（33036566.667无圆）；本stage33336967不可混旧47967。仍不合格：117与32231000的两次可见overlay已经被模型描述，却以一次生成响应为由并成一个aiTap，outcome122跨第二尝试借结果；40条候选没有逐项保留处置，冻结prefix原dismiss遗漏仍在。contract_valid不等内容通过，独立模型audit尚无、正常平台新用例/Runner仍0。下一处理须把视觉尝试账簿与业务归并分层，不能把CV直接编成aiTap，也不继续整片相同高细节循环。

@@ -1,3 +1,11 @@
+## 2026-10-28 原生变化账簿与真实单包对照（继续）
+
+- OFFLINE v3/v4分别在filtered36>32及transient203>200停止，旧失败封存；v5仅提高容量200→512，2258/2258真PTS帧69.631秒完成、RGB/PNG/PTS零绑定差异。468父轨迹=234候选/207单帧/27背景，131整帧unknown/36间隔；候选不是触摸真值。独立预选8点6处有候选，生成两次均被持续文字几何parent192桥接，原6/8指标不回改。
+- 通用novel分组派生保留468父/7077观察，646novel形成508changes及40间隔检查，2072引用绑定原生PTS/SHA；0分类升级/0点击确认。独立PNG见C第一次(29166.667,29200]、第二次(30966.667,31000]出现，中间30100/30966.667无overlay；不证明精确物理press/release。目录trajectory-v1/marker-change-bursts-v1，index SHA05b9a7f4a61fd0f788fb327ff0f1e437dd27ab2dd09af27bb9c545e10274e6df。
+- 单包marker-cue-packet-probe-v1实际唯一observer96.281秒，actual qwen_plus/qwen3.8-max/fallbackfalse/1024；40自动候选、原44JPEG+16原生派生=60图、2800644编码字节，prefix3包9事件/8问题仅缓存未资格。contract_valid但内容仍不合格，无独立模型audit/正常新草稿/Runner。
+- 独立原图复核：不再把110context收键盘重造111绿色确定；但冻结prefix原遗漏未修。print定位从128文本行改真实331=36600，333在本stage=36967勿混旧47967。生成仍承认117/322两次overlay却以单响应归并，并将第二尝试后的122结果借给117，40候选无逐项disposition。下一最小设计为不可变视觉尝试与业务事件分层，不能继续仅加长提示或默认CV=tap。
+- 新selective-detail仅明确opt-in细节帧1..12的传输任务在实现（base2082c470），不改默认worker/路由/门禁，待TDD与独立review。当前Chrome所见堡垒机仍密码登录；没有部署输出，生产仍上次验证f7f8a426。保留用户历史dirty。
+
 ## 2026-10-28 OFFLINE候选检测尚未取得全片数据（继续）
 
 - marker-candidate-prototype-v1唯一冻结scan在FFmpeg9拒绝-vsync0前终止：0/2258真PTS帧，1.129秒。独立v2-decoder-only只改-fps_mode passthrough，旧seal不动；解码/Hough1帧、fullyprocessed0，首帧129圆>32cap，3.306秒即止。保全129proposals/4contactpages/总览，不把普通图标文字图片细节当触点，055/110recall未测，所有2258未完整处理。无AI调用/源改动/新生产代码。
