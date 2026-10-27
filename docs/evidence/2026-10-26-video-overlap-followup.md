@@ -64,3 +64,12 @@
 - Chrome堡垒机会话反复T_514/T_1006，重连、页面重载及已登录desktop入口新建连接未恢复可操作终端；原生文件选择器选bundle和zip均显示打开不可用，不能据选择操作宣称上传成功。页面内容空白或画面不刷新。已请求用户手动恢复QA终端并确认可输入；无确认输出时不继续发部署命令。
 - 12:33真实ADB device、Runner在线ready；12:35手机实际截图指定EP3-9888E0094F2A在线空闲、喷头25°C。current-platform/phone-preflight-fd413f4f.{json,png}；截图不依赖旧平台snapshot。没有创建/取消/物理打印或Runner试跑。
 - /Users/adouceshi/Downloads/press-release.zip内含press-fix.bundle和deploy-press.sh，ZIP SHA256 3c70d95edfc281be07949c9df0da892787fd4b6322ab9032467feb7234508d28；bundle SHA256 32ec558aee293cfc2f2967d2a712a2e33b663c5cda432a146ec40b5b9b21fd67。脚本bash -n通过，解压目的/acceptance-current/press-release；先校验bundle、clean工作区、ff-only、精确fd413f4f再运行既有部署脚本。上传、解压、运行及正常v4原片生成仍未完成。
+
+
+## 2026-10-27 fd413f4f实际部署、v4失败与方法复盘
+
+- 实际输入能力恢复后press-release.zip上传到/，ZIP和bundle SHA256匹配；部署脚本完成fd413f4f，13:50:08公网health完整revision一致。部署截图及JSON在new-touch/current-platform/。
+- 同原片/同来源/无额外目标正常生成v4，14:06:59 failed/video_required_action_missing，40首轮、48独立复核，未生成草稿、未试跑。observe_windows结束报告planning12/12，不能据此声称最终用例规划已执行。journal实际栈为analysis401→reconcile247→repair_coverage362→repair_window551→check_coverage153。
+- 新鲜会话原生重连恢复后读取日志，上传并运行只读/video-replay-v4.py；两次input-round模型响应后在同层失败，缺失042/045/047。实际第二次返回一个完整搜索输入，refs026/027/030/034/037/041/042/047、描述同一轮编辑且无页面切换/提交，同时出现“退格键点击”。_confirmed_input_round只识别反向词序“点击退格键”，故泛点击边界拒绝该合并。这是捕获输出复验发现的假阴性，不能推断与线上未保存的局部模型响应完全相同。服务端/acceptance-replay-v4/留存请求/结果/窗口/失败。
+- 本地实际截图accept-fd413f4f-v4-{journal,input-replay,input-result}.png及accept-fd413f4f-v4-failed.json保存到外部current-platform。仍没有新草稿或手机试跑，不混报通过。
+- 用户要求系统复盘并融合公开方法；本轮先暂停继续堆局部补丁。已核验VideoAgentTrek实际8阶段入口、Video2GUI官方方法、Qwen视频时间元数据、Gemini低帧率局限、OmniParser及同步输入录制方案；结论和方案比较见docs/superpowers/specs/2026-10-27-video-evidence-pipeline-review.md。当前仅研究文档，不称新解析器已经完成。

@@ -1,13 +1,11 @@
-## 2026-10-27 原片真机接续：共同按压与后态帧诊断（进行中）
+## 2026-10-27 原片解析方法复盘与实际v4失败（进行中）
 
-- 用户12:43恢复新QA会话，已读到文件列表；但工具坐标操作反复noWindowsAvailable，原生粘贴pwd后无终端回显，文件选择器选ZIP后打开仍不可用。已明确告知用户不是登录失败，异步请求确认Mac解锁/无屏保/Chrome前台并手动pwd回显；等待恢复实际输入能力。没有上传或部署成功证据，当前只曾发送只读pwd，不把操作尝试视作执行。
-- 本批fd413f4f已提交并推送origin/main及codex/ui-platform-simple-workflows，尚未部署。12:36公网health仍精确ceb4bb1c。堡垒机反复T_514/T_1006；原生重连/重载/已登录入口新建会话未恢复，Chrome内容空白或画面不刷新，文件选择器选bundle及zip时打开均不可用，没有上传成功证据。已异步请求用户手动恢复可输入终端；不是再次索要登录凭据。12:33 Runner在线ready，12:35真实ADB图4F2A在线空闲25°C。没有创建/取消任务或真机试跑。
-- 本地下一步包/Users/adouceshi/Downloads/press-release.zip（含press-fix.bundle及deploy-press.sh，ZIP SHA256 3c70d95edfc281be07949c9df0da892787fd4b6322ab9032467feb7234508d28）；bundle SHA256 32ec558aee293cfc2f2967d2a712a2e33b663c5cda432a146ec40b5b9b21fd67。脚本语法通过，解压到/acceptance-current/press-release后运行bash deploy-press.sh，检查clean工作区、bundle校验、ff-only、精确fd413f4f再调用既有部署脚本。上传解压及运行均未完成。
-- ceb4bb1c已实际bundle部署并核对终端及公网精确revision；v2完整失败文档已下载。正常平台同原片/无补充目标重新生成v3，10:35:16在coverage_resolution.validate:200失败，52首轮/55复核raw，12/12观察；没有新草稿、没有真机执行。
-- 10:31实时ADB及Runner在线，ecbfd645应用1.19.71(52)，手机截图EP3-9888E0094F2A在线空闲。只做只读前检，不算设备验收。
-- 同保存两轮观察隔离重放重复失败：确认205/212及209/212稀疏锚点只共享末帧212，旧窗口无更晚可引用后态。补1张安全后帧、原预算/映射验证器不变。修正副本请求实际frames205–213，context203/204/214/215，仍选209并错误称被所有锚点引用；移除拒绝模型正文、保留结构诊断后仍失败，不能宣称已解决。
-- 找到coverage.md提示“非共同当前帧必须移出锚点”与共同持续触点改选冲突，改为先核对共同帧再决定归属，保留全部合法锚点及返回手势例外；该coverage提示隔离复验仍失败。v1初观察保留真实按压末帧后，两原窗实际保留205/211/212及209/211/212，但后窗仍猜测无明确触点的第三次下一步；因果段改为先检查前次确认的异步响应，保留独立交互与具体疑问，待正常整片复验。单帧后态与重试反馈反例先红后绿，946视频、63后端及主链编译/diff通过；最后提示编辑后320专项及63后端通过。独立审查修正1个反馈作用域P2后通过。本批待提交部署及完整原片验证。
-- 证据docs/evidence/2026-10-26-video-overlap-followup.md，外部new-touch/current-platform/accept-ceb4bb1c-v3-failed.json、replay-v3/及latest-replays/。后续先实际局部复验，再提交部署/正常整片生成/核对门禁/Runner整例；有归属明确测试任务则取消，无则继续，仅4F2A/ecbfd645，不做最终物理确认打印。
+- 用户要求认真复盘为何交互式理解能看懂、平台持续失败，并融合公开方法；暂停继续堆局部提示/重试，已核验作者官方仓库和模型官方文档，形成 docs/superpowers/specs/2026-10-27-video-evidence-pipeline-review.md。推荐整体状态记忆、完整动作包、结构化轨迹、局部按需回看，再复用现有编译与执行门禁；当前只是设计建议，尚未实现或切换生产。
+- 本轮实际输入已恢复。press-release.zip上传到根目录、SHA256与本地一致；解压 /acceptance-current/press-release，部署脚本实际完成fd413f4f，13:50:08公网health精确revision一致。之前的noWindowsAvailable/等待上传记录已被这次实际部署替代。13:48 Runner在线ready，仅只读前检，未下发手机。
+- 正常平台同来源uvs_2c853ccbcb1d46c1a5b91e808f22fe49、同原片、无补充目标重新生成v4，14:06:59 failed/video_required_action_missing。40首轮、48独立复核raw，无草稿、审计为空。12/12 planning来自observe_windows结束报告，不证明最终规划已开始。实际journal栈到reconcile:247→_repair_coverage:362→_repair_window:551→check_coverage:153。
+- 保存两轮观察及原帧隔离重放 /video-replay-v4.py，实际两次input-round后同层失败，missing frame-042/045/047。第二次模型已合并一轮搜索输入、保留各片段首尾，但描述“退格键点击”被只识别“点击退格键”的正则当独立业务操作。定位了假阴性；没有据此改写生成输出或放宽门禁，尚未修改运行代码。隔离响应不等于线上原始响应。
+- 完整原数据new-touch/current-platform/accept-fd413f4f-v4-failed.json，部署终端、journal、局部重放及原响应截图同目录；服务端 /acceptance-replay-v4/ 保留私有请求/结果。已知去打印、连续输入、虚构第三次下一步、独立收键盘等内容仍需整片验证，不把40/48项观察当正确动作数。
+- 后续先对同原片和固定人工基线做新旧方法隔离对照，逐项统计漏动作/多造动作/输入/因果及成本；至少3次完整解析全部硬项通过再正常平台导入门禁及完整Runner验收。仅ecbfd645/9888E0094F2A，已有归属明确测试任务有则取消、无则继续，不做最终确认物理打印。原片及手机验收仍未通过。
 
 ## 2026-10-26 继续原视频真机：重叠复核及失败候选留存（待部署）
 
