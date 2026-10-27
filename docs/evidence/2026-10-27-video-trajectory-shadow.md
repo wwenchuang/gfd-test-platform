@@ -149,3 +149,65 @@ claim-only输入只在深拷贝中移除当前track.observation、audit prior.ev
 后续两项独立实验通过同批ZIP上传，SHA d268896b65b4d4275ea6aae6102821e653b1ac963de63a925aab55f05d312d3d实际核对一致。第一项同44图同claims仅增加共享输入粒度说明，观察是否去除094/101假遗漏且保留110独立边界；第二项同6原图同claims同提示仅增加两个父帧的固定四象限2倍局部图，所有原图保留，绑定父帧与原时间，无标注/答案/人工ROI，不作新事件。各2次同Qwen3.8Max/1024/120秒，顺序后台运行，原始结果及实际wire/派生图哈希均保留；不修改生产Gateway图片合同或默认worker。
 
 局部放大参照千问官方[工具列表](https://qwenlm.github.io/Qwen-Agent/en/guide/get_started/features/)与[Qwen3-VL放大工具实现](https://github.com/QwenLM/Qwen-Agent/blob/main/qwen_agent/tools/image_zoom_in_qwen3vl.py)。本实验固定四象限，未冒充官方模型选择bbox流程；官方支持该方法不代表本来源已通过。
+
+## 第十轮实际终态与预算限制
+
+f7f8a426213e80ff2b0ff5d54a330c93862ea70b已推送分支/main并部署，ZIP SHA fb070932a93b4a145e9bd737ea6075250dc4b337ae0b6774952e96916c25a6d9远端一致，终端与公网health精确revision一致。run10后台PID3205097最终完成6/9包，25事件，packet7达到60图再次请求回看，video_vision_limit终止。完整398项目录归档（含该轮实际原帧与盲测）已原生下载到外部trajectory-v1/run-10及visual-inventory-probes-v1；没有新正式草稿或手机执行。
+
+已用20/24模型调用，捕获模型耗时合计1192.315秒；剩余4调用恰被后两包基础观察/审计占用，没有额外纠正或回看余量。3次补帧为一次空新增、13张及16张，累计29/64，但packet7为60/60，无当前图片空位。audit20还将239(context)写作issue owner，尚未通过最终合同；不能仅放宽容量错误就宣称完成本包或整片。当前全片串行策略的质量及时间预算均未合格，不继续逐项扩大上限。
+
+实际内容仍有硬失败：110真实收键盘触发吞入输入、以111误作新触发；117/121两次生成合为一条raw；128文本行触点误作去打印（audit已unclear但没补35967→37000）；第一下一步147与149/150仍当连续残留；199新按钮触点误作返回后自动校验；214→216自动处理链又推断下一步；230→231无新触点却改写为点击直接打印。旧任务去处理174→取消185→确定187→返回193及与新任务区分基本保留。晚收键盘282和最终首页未覆盖，不能记为本轮通过或漏报。
+
+## 视觉诊断结果与本地千问路径
+
+- 固定四象限放大未改善：12 full JPEG、16 tile SHA及RGB SHA逐一匹配，16 tile按父图bbox/2xNEAREST重建像素完全一致，模型仍漏看079/081灰圆并支持末帧8条热搜。输入粒度对照base/shared两次均issues空、110 supported，未复现旧094/101误报，无法归因改善。完整结果外部focus-quadrant-probes-v1及input-granularity-probes-v1保留，候选未上线。
+- 无动作主张的两次六图盲测（PID3219971，包SHA df998b637f9fc3dc2d3b8358602e8eb51eb5f601f497f9b5e87a399cd296644a）真实返回：看见079—082浅灰圆形的持续/变淡，且描述018/300终帧只能看到5条热搜；仍对圆形功能不确定，没有把像素等同于按下。两次均同Qwen3.8Max/1024。这个局部事实改善不证明稳定因果修复，尤其081并非最早可见圆点。
+- 堡垒机再次明确退出登录，入口密码页无可用保存密码，已请求用户恢复；正常平台通过Chrome已保存登录恢复成功，六项模型仍Qwen3.8Max，旧27步/25问题草稿只读查看、未改或下发。
+- 发现本地Runner runtime已有同官方DashScope/qwen3.8-max/qwen3配置，凭据仅内存使用，从而继续独立本地诊断。inventory-assisted-audit-local-v1两次完成：negative37.548秒/positive30.965秒，均1024；positive现在承认灰圆自079已存在，但negative仍支持末帧8条，不可称已解决审计。原始JSON及12实际图保留。
+- 原生整片视频调用仅诊断，无Runner或源码改动。原片12249942字节、base64请求16335644字节在16MiB内。v1一次请求HTTP400，仅safe status；v2另获授权一次同请求，safe error明确total_pixels必须<=268435456，实际endpoint与文档819200000存在差异。v3仅按实际错误改这一参数，其余原片/fps10/temp0.6/1024/120秒/零重试保持，正在运行。各轮独占native-video-local-v1/v2/v3，保留失败，不隐藏重试，不存base64/key/thoughts。
+- 官方参数文档提示Qwen3.8思考视觉temperature低于0.6会按0.6处理；此前实验记录0.1是请求值，不能据此保证实际低温或确定性。新原生诊断明确请求0.6。依据[官方参数参考](https://help.aliyun.com/zh/model-studio/qwen-api-via-openai-chat-completions/)。
+
+
+## 原生视频流式响应与职责拆分对照
+
+同一原片 SHA370d92e2622686330d114ce14c67c50788a8e92e4aa1babbbd7e856e2796d893，同Qwen3.8Max、fps10、max_pixels655360、实际total_pixels268435456、temperature0.6、thinking1024，所有调用独立输出、单次零重试，无凭据/base64/思考内容落盘。以下均是隔离诊断，没有生成正式可执行草稿或下发手机。
+
+| 轮次 | 唯一主要差别 | 实际结果 | 内容资格 |
+| --- | --- | --- | --- |
+| native v3 | 按实际endpoint错误修正total_pixels | 非流式120.238秒超时 | 失败保留 |
+| native v4 | stream+include_usage，单次诊断deadline300秒 | 127.366秒，首正文67.706秒，HTTP200/stop，19事件，reasoning1024 | 主线更连贯，但多个跨控件点击、两次重复触点及多级返回被合并，未合格 |
+| native v5 | 同v4参数，只改原子交互提示 | 101.776秒，首正文46.717秒，HTTP200/stop，38事件，reasoning1024 | 两个取消与确定分别列出、收键盘独立；但同字段输入拆7段、遗漏模型卡片点击、重复触发与返回仍漏，未合格 |
+| native v6 | 同v4参数，只做连续输入会话专项 | 57.096秒，首正文44.931秒，HTTP200/stop，原始2父会话，reasoning1024 | 本轮删除/英中切换/IME/候选留在同父会话，改善v5碎裂；不是整片资格通过 |
+| native v7 | 同v4参数，只做非输入原子交互 | 90.777秒，首正文52.208秒，HTTP200/stop，25事件，reasoning1024 | 恢复卡片点击，但漏早收键盘、首次耗材确认及分离next；55500附近又主张无原帧触点的next，未合格 |
+
+v4保留旧任务与新姓名牌任务的不同预览及取消路径，没有像run10那样在214附近新造下一步、230附近把自动刷新写成点击。不能据此使用其近似秒钟绑定帧号：早收键盘吞进input、晚收键盘不明，117/121与42967/44033仍被合并。v5分清下一步/耗材确认和取消/确定，但搜索输入4段、模型输入3段，多级返回仍有合并，说明同一提示同时承担业务摘要、输入合并与原子触发识别存在目标冲突。
+
+v6原始两个会话无需事后合并，但其时间与状态仍有硬限制：搜索last_edit11000仅近似，04711600才有最终可见状态、04811867有提交触点；模型last_edit26000时109仍组合态，11027167才见已上屏与独立收键盘触点，不能把26000改造成已验证终态。第二final_visible_state写键盘已收起，越过独立结束边界；部分phase.question非空而根/session uncertainties为空，还有question=null的非严格合同。未来必须逐路径保留疑问，不能只看根层空数组。父任务实际读取raw并与原图复核，独立review亦确认上述限制。
+
+隔离后续路线：整片只给业务/状态候选，输入会话单独识别，非输入独立操作单独识别；近似时间只用于检索真实原帧，不能自动变为trigger、抹除疑问或绕过旧consolidation/执行门禁。再用不带动作主张的原帧像素清单核对触点、文字、键盘与状态；人工选取的诊断窗口明确标记，不能称整片自动覆盖。v7非输入专项随后已单次结束，25事件仍未合格，完整review保留native-video-local-v7；58图盲时序清单实际结果见下一节，均未接入默认worker。旧串行方案不再仅靠放宽预算继续试错。
+
+外部证据：new-touch/trajectory-v1/native-video-local-v3/v4/v5/v6/v7（request-metadata、原始response-content、status、content-review）；生产仍f7f8a426，正常平台旧27步25问题草稿未改未下发。22:36:46指定ecbfd645只读在取消原因/反馈页，没有4F2A任务归属证据，不执行取消或打印；堡垒机仍等待用户恢复登录，独立本地诊断可继续。
+
+
+## 盲时序事实清单与当前手机前置状态
+
+- 58图/6组单call实际118.539秒，Qwen3.8Max、reasoning1024、stop，prompt27834/completion6522/total34356。所有原frame ID/顺序逐一齐全，没有漏/多/重复；这仅是机械覆盖，非视觉通过。原content SHA41cd3f9fa36123cbe9e5e0d8c8f35fbe7d066d7f0c2f84aa92025222949a2184，实际图与元数据/时钟证据保留外部blind-temporal-evidence-inventory-v1。
+- 父与独立review实际看原图：C正确列117生成按钮圆、118/119/120无圆、121再现；D实际补8均匀帧后，147首次所给圆→34743733/34844000无圆→14944033新圆；E282键盘上方空白圆→283隐藏键盘；F128及329..331文本行圆与336..339去打印按钮圆不混。33536533按钮无圆、33636600已见圆，早先36667是已有清晰证据点，不是已证最早按下时刻；外部baseline amendment追加说明，业务基线不变。
+- 仍有实际漏检：055卡片内圆、110键盘工具栏最右端圆未报告；111布局变后邻近尺寸条的残圆虽然几何描述可成立，但不得反向当成尺寸条新点击或111收键盘触发。此轮qualified=false。新8原图与同8+8固定象限对照只测试小标记复查；旧58与新8模板/attention scope也不同，不能宣称缩包或放大是已证单因素改善。
+- 23:22–23:23指定ecbfd645实际截图：仍在空白取消反馈页；本轮仅一次KEYCODE_BACK返回当前设备页，未点取消/提交反馈/确认打印。清楚显示EP3-9888E0094F2A、在线/异常、喷头115°C、巧克力印章0%、第1盘把手打印中/第2盘印面待打印。这不是原片姓名牌，任务归属未证，未取消。外部current-platform/phone-20261027-232320-*.png及preflight.json。当前不能进行影响打印任务的试跑；不得沿用19:01的空闲/25°C快照。
+- 新路线的小样本与预算检查记录在docs/superpowers/plans/2026-10-27-video-evidence-trajectory.md后半部。源码默认worker仍不变，没有正式新视频草稿或Runner整例执行证据。
+
+
+## 2026-10-28 空间与模型原生分辨率对照、跨包组装终态
+
+同8原JPEG/同盲prompt/同system/payload/文字，base60.361秒与+8固定象限53.191秒均Qwen3.8Max/stop/reasoning1024、全8原帧机械覆盖。base仍漏055/056但已看见110；+tiles报告055/056同位卡片圆和110工具栏圆，所以110变化不能归因空间放大。独立最初看056为无圆是人眼漏看，原review保留并追加v2更正；父任务实际看056原JPEG确认仍有圆。父也逐像素复算8块NEAREST派生图全部相同，原图从未修改。仍是单次局部信号，qualified=false。
+
+新增单参数实验保持所有JPEG wire bytes/文字/图数不动，仅每个image part增加sibling min_pixels=1658880，遵循[官方图像输入参数](https://help.aliyun.com/zh/model-studio/qwen-api-via-openai-chat-completions/)。实际单call47.626秒、Qwen3.8Max/stop/reasoning1024，8帧全部返回；provider明确image_tokens12976/text_tokens956、prompt13932/completion2799/total16731。该轮看见055/056卡片圆及110工具栏圆，同时保留功能不确定；054/112没有报告短暂标记，111明确可能为残留。实际provider重采样尺寸没有返回，不能仅凭请求值宣称已证分辨率或稳定改善；原base没有image分项，不编造其计数。无需人工选ROI、原JPEG字节不变的高细节机制值得下一步试验，但尚未接入Gateway/默认worker。
+
+固定原299网格sample p3owned065..096/p4owned097..128，各44原JPEG(前后6context)，未为已知动作移动owner边界。实际单call76.672秒与69.461秒；每包32owned顺序、role、context引用身份严格通过。p3原文带完整JSON围栏，raw strict JSONDecodeError原样保留；另外使用现有yaml_service.normalize_model_json派生解析并标parser_mode，未手改raw或花API纠正。两实际请求缺response_format=json_object，与正式Gateway有协议差异，已记录且不追改。p4清单正确指110工具栏收起箭头圆、111键盘隐藏、117按钮圆→118/120无圆→121再现、128输入行圆；p3看见删除清空等编辑阶段。
+
+跨包mapping实际单call120.005秒超时，首正文33.225秒，仅15855字节partial，无stop/DONE/usage，JSON截断；没有闭合补JSON、删字段、补call或称成功。共享ledger从15:46:52.966UTC起原deadline16:06:52.966不重置，实际3calls/0API纠正/1040.489秒wall，其中模型耗时合计266.138秒，其余准备review也计入。原样候选、nested问题和未完成dispositions都保留。不能据partial宣布输入父会话、独立收键盘或重复触发已通过；但其已返回部分显示重复抄SHA/JSONpath且又将IME内部按键列入independent_actions，下一步应缩短模型输出合同并由平台绑定证据，拒绝重复业务动作，而不是只加超时。
+
+旧sample终止failed/incomplete。另准备紧凑映射协议对照时会明确是新独立诊断，复用冻结输入不视为fresh整片或复活旧预算。候选/证据使用短alias，owner/PTS/hash/path由平台查不可变索引，原问题直接保留在ledger无需模型逐项抄写；同字段输入内删除/切键盘/组合/候选保为phase，不另下发Runner动作。尚未调用新compact mapper或编写生产接入。外部证据candidate-driven-spatial-review-v1、native-min-pixels-probe-v1、cross-packet-blind-inventory-v1-prepared。
+
+23:56:33公网health再次确认release_revision=f7f8a426213e80ff2b0ff5d54a330c93862ea70b。此后无新运行时代码提交/部署，默认旧worker仍未切换；没有正式新视频草稿或新Runner整例。当前认证及4F2A异常/归属未证任务依赖仍未解除。

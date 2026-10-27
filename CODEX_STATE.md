@@ -1,3 +1,27 @@
+## 2026-10-28 小标记感知与跨包组装分层结果（继续）
+
+- 同8原图base/quad对照均stop，base漏055/056而110可见，quad恢复两处；056人眼最初漏看已保原review另加更正。父独立复算8tile像素一致。单参数sibling min_pixels1658880保持原JPEG/text/图数不变，单call47.626秒实际image_tokens12976/text956，恢复055/056和110且保功能未知；实际resize尺寸不可见，单次局部qualifiedfalse，未进生产。
+- 固定p3owned065..096/p4owned097..128各44图，两盲76.672/69.461秒，32owned各自role/顺序/context通过。p3围栏由现有platform normalizer派生解析，raw strict失败保留；实际遗漏response_format与production协议差异单列，未补调。p4像素清单明确110收键盘箭头圆、111键盘隐藏、117→无点→121再现及128字段圆，跨包输入最终组装尚未通过。
+- mapping唯一call120.005秒截断JSON，partial15855B无stop/usage，不补JSON/不追call；旧sample终止failed/incomplete，ledger3calls/0纠正/1040.489秒wall，实际模型合266.138秒。partial有SHA/path冗余且IME键又被列独立动作，下一独立compact协议诊断准备中，不复活旧run/不算fresh资格。
+- 23:56:33health仍f7f8a426；无新运行时代码部署/正式草稿/Runner下发。4F2A最新在线/异常115°C巧克力印章非源任务未取消；堡垒机最近读数为密码页，等待用户恢复。原片和真机均无资格通过。详见docs/evidence/2026-10-27-video-trajectory-shadow.md，外部各probe raw齐全。
+
+## 2026-10-27 原生视频职责拆分与原帧绑定诊断（继续）
+
+- 最新手机23:22/23:23仅一次KEYCODE_BACK从空白反馈页返回：4F2A在线/异常、115°C、巧克力印章0%/把手打印中/印面待打印，归属未证，未取消/未下发，不沿用旧空闲快照。外部current-platform/phone-20261027-232320。
+- 生产仍f7f8a426旧worker；run10原始失败保留。全链模型仍Qwen3.8Max/qwen3，未新下发手机。
+- native v3非流式120.238秒超时；v4同原片改流式300秒单call127.366秒返回19事件，主线连贯但跨控件/重复点击/返回合并；v5仅原子提示101.776秒38事件改善取消确认拆分，却将两轮IME拆7段、漏卡片与重复触发，均未合格。
+- v6同原片/options输入专项单call57.096秒直接返回2父会话（删除/切键盘/IME/候选nested，value空），本轮分组改善；近似last26000仍组合态，final键盘已收起跨独立dismiss边界，nested问题/nullablequestion不得丢。父与独立review实际核原帧，不能当正常用例或整片通过。
+- 后续转分工候选+真实原帧绑定，不再仅放大旧串行预算。v7非输入atomic单call已启动；盲时序像素清单原50+canonical D补8共58图准备中，不带nativeclaims/业务答案，先review再单call。人工诊断选窗不称整片自动覆盖。
+- 堡垒机入口仍密码页，已向用户发恢复登录问题；本地Runner既有official runtime key仅内存可继续独立Qwen诊断。22:36:46指定ecbfd645取消原因/反馈页只读，4F2A任务归属不可见，无操作。平台旧27步/25问题草稿未改未下发；无原片/真机资格通过。证据docs/evidence/2026-10-27-video-trajectory-shadow.md及外部native-video-local-v3..v6。
+
+## 2026-10-27 第十轮终态与原生千问视频诊断（继续）
+
+- f7f8a426已实际部署/精确health核对，run10最终6/9包25事件，packet7满60图再次请求补帧而video_vision_limit。完整JSON及实际原帧已原生下载外部run-10。20/24模型调用合计1192.315秒，余4次只够后2包基础调用，audit20还存在239=context非法owner；不能仅放宽工具容量冒充整片合格。print128错目标、两次生成/下一步触点归并、110收键盘错包、第二下一步误当自动、后续自动链又造点击等仍未解决；晚返回未覆盖。
+- 四象限放大未改善，输入粒度base/shared均无误报，无法证明增益。盲六图不带动作主张时千问正确描述079..082灰圆及终态5行，未把灰圆当新按下。inventory-assisted本地两次均1024，positive承认圆已存在，但negative仍支持8行，不能算修复。
+- 22:36:46只读ecbfd645当前1.19.71(52)，在取消原因/反馈页，看不到4F2ASN和任务绑定；未操作。正常平台保存登录已恢复，旧27步25问题草稿只读未改未下发，六项模型仍千问。
+- 堡垒机明确会话已结束、入口密码页无保存密码，已向用户请求重登。发现本地Runner既有官方DashScope/qwen3.8max/qwen3运行凭据可仅在内存用于诊断，模型实验继续独立进行。
+- 本地原生原片视频v1/v2各单次HTTP400，v2安全错误明确total_pixels<=268435456（文档819200000不符）。v3仅改此参数，原片SHA/bytes/fps10/temp0.6/1024/120s/零重试不变，正在运行。证据外部trajectory-v1/native-video-local-v1/v2/v3；无base64/凭据/thoughts落盘。代码/生产默认worker仍f7旧observer，未完成原片或手机验收。
+
 ## 2026-10-27 第九轮越界工具请求与分离实验（继续）
 
 - run9在第一包047→053回看跨owned[0,11867]直接失败，21:32:44终态0/9；完整JSON已原生下载外部run-9。先校验全部请求再decoder的候选加入既有共享2次纠正，owner/原图/3秒/真实4次资源门禁不变，服务/取消等仍硬失败；两份提示只补工具范围/no_new合同，失败focus定义已外部park并恢复。
