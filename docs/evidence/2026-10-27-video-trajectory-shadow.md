@@ -240,3 +240,23 @@ v6原始两个会话无需事后合并，但其时间与状态仍有硬限制：
 修复8c09e4c6ee836ac272967cfbe92e88a61e46fc44只改时间谓词，允许同一输入futurecontext交叠；currenttrigger>lastfragmenttrigger、currentfirst>=canonicalstart、actionend与rawoutcome终点各自nonregress、max(0,currenttrigger-oldactionend)<=5000。exactidentity/target/pages、adjacency、真实边界、owner、所有问题/raw/8ref编译及逐fragment独立audit不变。14新测试，RED5失败/8通过后GREEN158专项，父1195视频/catalog20.28秒、主链compile/backend63/diff绿；独立spec/quality批准。实际06/08分别保32/34rawrefs编译8，问题与片段不可变；07继续拒绝。计划docs/superpowers/plans/2026-10-28-trajectory-input-context-overlap.md、报告/复核.superpowers/sdd/input-context。当前仍0合格整片/正式用例/新手机trial，不能把binding修复当内容完成。
 
 后续新独立299原帧整片模板已准备，未混前轮补帧/overview/response/state；旧run不复活。另对audit03把edit误要求最早physicaltouch，以及audit05无触点推聚焦点击/光标隐去推失焦，准备唯一同38图prompt模态澄清对照；不植入原片帧号、目标或期望答案，保原始疑问及结果，尚待实测。此前9个堡垒机标签均实际密码登录，生产main/runtime仍f7，未部署默认observer。通用分层参照[ShowUI-Aloha实际parser](https://raw.githubusercontent.com/showlab/ShowUI-Aloha/main/Aloha_Learn/parser.py)：其依赖独立事件日志先合并动作再提图，不是只有录屏便可照搬；本来源缺日志，仍需Qwen真实画面证据。
+
+
+## temporal修正后的整片终态与未通过的模态提示
+
+新独立whole目录Downloads/qwen-fine-detail-trajectory-continuation-template-20261028-77genb3q，reviewed code8c09e4c6，observerSHAb39dce660b8da0afad9a9e53aac7cee34c6fa829cf593d3970e7b26a0c2b53ef，原299/源SHA/原提示不变。终态failed RuntimeError、5/9包、18canonicalevents、17attempts、模型调用合1193.323秒，图片呈现840次；16份成功actual route均qwen_plus/qwen3.8-max/fallbackfalse。最后audit17 dispatch只剩17.454865秒，timeout同值，15.039秒后失败，无actual provider/usage及具体safe reason，不能断言outerSIGALRM或已确认上游route。cleanup/sourcehashtrue。observe16仅第6包raw，未审计；第6至9包不能计完成，后半返回/第二取消尚无完整结果。performance-summary.json及independent-review-terminal.json保留实际限制。
+
+离线binding修复在真实第二包生效，两个搜索输入immutablefragment合并身份、原refs与第一fragment未决不丢；048提交/055卡片独立动作及audit支持。内容hard错误仍在：owned110收键盘推给后包，下一包111残点误绑绿色确定且audit11支持；117有点→118/120无点→121再现却合一次“有效触发”并借第二次后125结果；12835967字段行圆反推去打印，audit11正确unclear但未请求解码36.6，本轮没见旧诊断336不能借证；147/149两生命周期合一次，没补43.6..44.0无点间隔，audit15全支持。firstfragment audit05将未声称的“文字上屏”加入outcome而判unclear；raw14又写143..150无触点同时列147/148点，audit未发现。故图像细节提高不足以解决所有权/生命周期/主张理解，也没有整片性能资格。
+
+本轮新补go处理局部有效：33247900无圆、33347967圆首现、17448200续圆，raw14绑定333→176并audit支持；不能混成旧36.6秒同编号补帧。新原raw和独立报告均不改问题与verdict；不是源内容或Runner通过。不得再次盲目重复全片fine-detail或只扩超时。
+
+另独立ONE模态澄清probe目录Downloads/qwen-audit-modality-oneprobe-20261028-onir0gak：真实helper与Gateway wire证明body仅prompt末追加通用edit/touch/光标语义，38原JPEG/labels/payload/1024/10000/soleMax全不变。实际53.381秒HTTP200/stop、prompt71183/completion1554/total72737/reasoning1024、fallbackfalse；三check双supported但仍无证推聚焦点击，并输出owner026不含refs018..025，现有validator拒audit_issue_owner。整体FAIL，不land、不补call、不清原问题；原auditpromptSHA8745d65ea164d95b7b2f92fdddcb84674bc21a7de35a80d78164621d9c2ac088保持。
+
+现有触点辅助离线诊断见new-touch/trajectory-v1/existing-auto-detail-probe-v1/diagnosis-20261028：054→0551033ms和109→1101167ms先被500ms门限跳过；055在当前色差85时与图片加载连成48x23/density.291，诊断45可18x18/.861004但非通用参数；110 .859922<.86；110→111全图差58.654>20反向也拒。原source/JPEG未动，不直接调阈值后宣称解决。下一候选-only离线实验按[OpenCV官方Hough方法](https://docs.opencv.org/4.13.0/d4/d70/tutorial_hough_circle.html)冻结参数和syntheticcontrols后唯一扫描，实际PTS、全源未处理范围和假阳性必须可审查；没有AI/API/生产改动或动作授权。
+
+
+## 候选原型前两次冻结结果与当前线上配置
+
+原型v1六synthetic通过并冻结后，唯一fullsource尝试被本机FFmpeg9的-vsync0语法拒绝，ffprobe2258真PTS0..75233.333ms/432x960、实际0帧解码、1.129秒，不能推断Hough效果。独立v2-decoder-only经本机help/手册核实仅改-fps_mode passthrough，保v1所有seal/结果，Hough/tracking参数不变。v2首帧0ms得到129圆>32冻结cap，全部129保留，无截断；解码/Hough1帧，fullyprocessed0、后2257帧未检查，全部2258未完成，3.305654秒。输出约2.14MB/4联系表及总览、source原frame PNG、raw全部几何候选。父看总览，普通文字/图标/模型纹理大量成圆形，不能把geometryproposal当动作。既没有min2frame候选，也没有055/110召回结论。所有原记录和源不改，0AI/0Runner/0生产改动。v3仅准备通用局部时序变化筛选，尚未执行原片，不把已知点用于过滤或调参。
+
+18:20:14UTC公网/api/health返回HTTP200/oktrue、完整revision f7f8a426213e80ff2b0ff5d54a330c93862ea70b；git ls-remote refs/heads/main同SHA。18:20:41UTChealth.models text_model与vl_model都qwen3.8-max，officialhost合法、URL不含凭据。外部current-platform/health-20261028-verified.json和model-health-20261028-verified.json。较早health-live摘要用不存在status字段为None，原摘要保留，另存正确ok字段，不能据投影None推服务错误。线上默认旧worker，分支输入guard修正已推；当前仍没有原片合格新用例或手机整例通过。

@@ -1,3 +1,16 @@
+## 2026-10-28 OFFLINE候选检测尚未取得全片数据（继续）
+
+- marker-candidate-prototype-v1唯一冻结scan在FFmpeg9拒绝-vsync0前终止：0/2258真PTS帧，1.129秒。独立v2-decoder-only只改-fps_mode passthrough，旧seal不动；解码/Hough1帧、fullyprocessed0，首帧129圆>32cap，3.306秒即止。保全129proposals/4contactpages/总览，不把普通图标文字图片细节当触点，055/110recall未测，所有2258未完整处理。无AI调用/源改动/新生产代码。
+- 正在prepare-only v3通用temporal novelty：首帧left-censored未知，比较局部圆区域变化及外围环带变化，既有Hough参数不变；rawgeometry cap与有效transient cap分开。需先syntheticcontrols/已封首帧小benchmark/freeze再由root审后唯一扫描；当前未GO全片。候选不授权动作，不按源时间/坐标筛knownpositive。qwen_fine_detail_review负责外部实验，repo/pinned/oldrecords均不可改。
+- 18:20:14UTC公网health HTTP200/oktrue且revision仍f7f8a426；git ls-remote main同f7。18:20:41线上healthtext_model/vl_model均qwen3.8-max，officialQwen host且无URL凭据；证据current-platform/health-20261028-verified.json及model-health-20261028-verified.json。第一份health摘要误投影不存在status字段成None，原样保留，不据此判服务异常。分支已推送7638697c；原片内容/平台新草稿/Runner资格仍0，堡垒机最近9页均密码登录。
+
+## 2026-10-28 高细节整片复跑未达标，停止同路线重复（继续）
+
+- 8c09e4c6及docs7638697c已推送分支；runtime/main仍f7旧worker。新whole continuation-template-20261028-77genb3q原299+frozenprompts实际终态failed RuntimeError，5/9、18events、17attempts、调用合1193.323秒/840次图片呈现。1..16 actual qwen_plus/qwen3.8-max/fallbackfalse；17audit仅剩17.4549秒、15.039秒后异常，safe reason及actualprovider不可用，不能声称已确认SIGALRM或17实际route。cleanuptrue。raw16第6包未审计，不计完成。
+- 修正跨包输入实际生效、A055通过；但hard失败：110 owned收键盘漏→111残点错写绿色确定且audit支持；117/121真实两触发合一次；128字段圆反推去打印（audit unclear且本轮没补36.6）；147/149合一次，没补43.7无点间隔；firstinput audit把未声称的上屏加进claim。新增333=47967去处理补帧局部有效，勿混旧36.6补帧编号。独立terminal报告位于newwhole根，来源内容资格0，无正式新用例/Runner。停止重复同一全片高细节方案。
+- 单次audit模态澄清probe53.381秒HTTP200/stop，三check支持但虚构聚焦点击+owner026不含自身refs导致audit_issue_owner，整体FAIL，未landprompt/未重试。source audit原prompt8745d65不改。证据Downloads/qwen-audit-modality-oneprobe-20261028-onir0gak。
+- 现有touch_detail漏检已离线定位：054→0551033ms/109→1101167ms均被500ms门限跳过；055组件与加载图片合并；110IoU .859922略低.86；110→111整体差58.654>20。不直接降阈值冒称修好。新OFFLINE候选实验marker-candidate-prototype-v1，固定全屏320/median3/Hough参数(1,14,60,12,6..15)+多帧track；privateopencv4.13.0/numpy2.0.2，6synthetic通过，source前冻结script c13c144c/config eb6958ca；18:13:01UTC已唯一fullsource扫描，180秒/2GB/32circles每帧/200transienttracks上限。无AI/生产修改，候选不是动作/Runner坐标，真PTS由ffprobe逐帧绑定，等结果再独立召回/假阳性审核，不用known55/110做提取选择。旧299/运行包不动。
+
 ## 2026-10-28 连续输入上下文重叠修正已批准（继续）
 
 - 新整片fine-detail实际终态failed/input_continuation：1/9包、8次调用合计592.990模型秒，全部actual qwen_plus/qwen3.8-max/fallbackfalse，child清理及输入SHA不变。第一包补20真实帧将编辑证据由0274567提前到3073933；这不是精确物理onset。第二包06/08只因refs0334767早于前输入合法futurecontext末0365067而-300ms误拒，07另有真实page身份错误；target/id未错，早期命名假设已纠正。
