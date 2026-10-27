@@ -29,11 +29,11 @@
 - max(0, current trigger timestamp - prior canonical action end)<=5000. Old context references cannot bridge a long gap to a late new trigger.
 - Overlap otherwise is allowed for verified same input identity; all relevant original refs/fragments/anchors/questions remain, compiled canonical start stays unchanged and endpoints do not regress.
 
-- [ ] Write failing overlap test(s) including current trigger before/after previous future-context endpoint; confirm meaningful RED on current code.
-- [ ] Write guard tests for repeated/backward trigger incl last of3fragments, regressing action endpoint, regressing outcome-only endpoint, reference before canonical start, long forward trigger gap despite overlapping first context ref. Existing different field/page/id/independent-action/boundary/question tests must remain passing.
-- [ ] Implement minimal temporal predicate only. No response repair/rewrite or special source conditions.
-- [ ] GREEN focused trajectory/input-overlap/reference/audit/consolidation tests; mandatory mainchain py_compile, backend static, git diff --check. Gateway/frontend unchanged, no need to rerun those checks.
-- [ ] Replay accepted04 plus actual06/08 offline and report binding result;07 must still fail page identity. This replay proves contract handling only, never source qualification or actual new model run.
-- [ ] Self-review; commit only owned code/tests after checks, write .superpowers/sdd/input-context/task-1-report.md with RED/GREEN evidence/commit/exact commands and concerns. Root will dispatch fresh independent spec/quality review and broader video tests.
+- [x] Write failing overlap test(s) including current trigger before/after previous future-context endpoint; confirm meaningful RED on current code.
+- [x] Write guard tests for repeated/backward trigger incl last of3fragments, regressing action endpoint, regressing outcome-only endpoint, reference before canonical start, long forward trigger gap despite overlapping first context ref. Existing different field/page/id/independent-action/boundary/question tests must remain passing.
+- [x] Implement minimal temporal predicate only. No response repair/rewrite or special source conditions.
+- [x] GREEN focused trajectory/input-overlap/reference/audit/consolidation tests; mandatory mainchain py_compile, backend static, git diff --check. Gateway/frontend unchanged, no need to rerun those checks.
+- [x] Replay accepted04 plus actual06/08 offline and report binding result;07 must still fail page identity. This replay proves contract handling only, never source qualification or actual new model run.
+- [x] Self-review; commit only owned code/tests after checks, write .superpowers/sdd/input-context/task-1-report.md with RED/GREEN evidence/commit/exact commands and concerns. Root will dispatch fresh independent spec/quality review and broader video tests.
 
 After review, root will decide one fresh diagnostic based on actual fixed failure. Existing full-source qualification, normal platform integration, shared whole-chain budgets and fixed-device acceptance remain open; this repair alone cannot claim completion.

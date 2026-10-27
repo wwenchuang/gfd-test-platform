@@ -229,3 +229,14 @@ v6原始两个会话无需事后合并，但其时间与状态仍有硬限制：
 唯一整片shadow经父审后从Downloads/qwen-fine-detail-trajectory-shadow-prepared-20261028-xwcxpkvv/shadow.py启动，脚本SHA535f62ae5cc395ec8acd03a75a55d09a8f4871d69b5817baf71a6433e81e76ab。仅原metadata299 JPEG，不混入run10补帧；原source SHA370d92e2622686330d114ce14c67c50788a8e92e4aa1babbbd7e856e2796d893、75376ms/432x960。直接调用当前observer和canonical loader；只observe/audit加入fine-detail、overview普通。原callback请求保留wrapper前内容，actual payload增量/图SHA另ledger，不伪称callback已带mode。共享原24calls/2纠正/4补帧64新图/60图10MiB/120秒/0retry，并补严格外层1200秒中断，不重置/不自动重跑。此前内部仅调用前检查wall的事实不变。actual soleMax/fallbackfalse每call校验；所有结果仍qualified=false，待独立全片审核。无consolidation/正常平台草稿/Runner启动。
 
 01:10:07新手机只读截图显示指定4F2A在线/空闲23°C，活动任务区域消失，本agent未取消旧巧克力任务。证据new-touch/current-platform/phone-20261028-011007-preflight.json及同名前缀PNG。仅视觉前置，不是API归属证明或手机验收。Chrome当前仍密码登录，部署等待真实可用终端；本地解析诊断继续，不新下发打印。
+
+
+## 整片fine-detail实际失败与上下文重叠根因修复
+
+外部qwen-fine-detail-trajectory-shadow-prepared-20261028-xwcxpkvv原run终态failed/input_continuation，stage1/9/events3、8calls合计592.990模型秒；actual全qwen_plus/qwen3.8-max/fallbackfalse，cleanup确认owned child停止、原source/initial299/code在当时不变。没有consolidation/平台新草稿/Runner下发。原run原样终止，未重置预算。第一包实际canonical补20帧：3063900无键位圆、3073933 WXYZ圆、3084000按下、3094033组合串，重新观察04与audit05均支持edit；最早所给证据不等于精确物理onset。audit03误称027为context，但请求实际owned001..032/context033..038，错误已分开保留。
+
+离线重建实际accepted04+revisit1和下一包prior_events完全一致。06/08的exact target/id/pages/boundaries均合法，唯一old predicate冲突是当前refs首0334767早于前输入futurecontext末0365067，差-300ms；08 trigger0375567已晚于旧end仍被拒，因此不是简单模型命名问题。07另外page_before=s2不匹配旧s3，且自身前后page不等，仍应拒绝。不裁剪rawrefs或改写s2/s3。完整只读分析/原SHA与base/fixed replay保留外部input-continuation-readonly-*和.superpowers/sdd/input-context/actual-replay.json。
+
+修复8c09e4c6ee836ac272967cfbe92e88a61e46fc44只改时间谓词，允许同一输入futurecontext交叠；currenttrigger>lastfragmenttrigger、currentfirst>=canonicalstart、actionend与rawoutcome终点各自nonregress、max(0,currenttrigger-oldactionend)<=5000。exactidentity/target/pages、adjacency、真实边界、owner、所有问题/raw/8ref编译及逐fragment独立audit不变。14新测试，RED5失败/8通过后GREEN158专项，父1195视频/catalog20.28秒、主链compile/backend63/diff绿；独立spec/quality批准。实际06/08分别保32/34rawrefs编译8，问题与片段不可变；07继续拒绝。计划docs/superpowers/plans/2026-10-28-trajectory-input-context-overlap.md、报告/复核.superpowers/sdd/input-context。当前仍0合格整片/正式用例/新手机trial，不能把binding修复当内容完成。
+
+后续新独立299原帧整片模板已准备，未混前轮补帧/overview/response/state；旧run不复活。另对audit03把edit误要求最早physicaltouch，以及audit05无触点推聚焦点击/光标隐去推失焦，准备唯一同38图prompt模态澄清对照；不植入原片帧号、目标或期望答案，保原始疑问及结果，尚待实测。此前9个堡垒机标签均实际密码登录，生产main/runtime仍f7，未部署默认observer。通用分层参照[ShowUI-Aloha实际parser](https://raw.githubusercontent.com/showlab/ShowUI-Aloha/main/Aloha_Learn/parser.py)：其依赖独立事件日志先合并动作再提图，不是只有录屏便可照搬；本来源缺日志，仍需Qwen真实画面证据。

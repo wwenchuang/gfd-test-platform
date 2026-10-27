@@ -1,3 +1,9 @@
+## 2026-10-28 连续输入上下文重叠修正已批准（继续）
+
+- 新整片fine-detail实际终态failed/input_continuation：1/9包、8次调用合计592.990模型秒，全部actual qwen_plus/qwen3.8-max/fallbackfalse，child清理及输入SHA不变。第一包补20真实帧将编辑证据由0274567提前到3073933；这不是精确物理onset。第二包06/08只因refs0334767早于前输入合法futurecontext末0365067而-300ms误拒，07另有真实page身份错误；target/id未错，早期命名假设已纠正。
+- 8c09e4c6修正仅continuation时间谓词：允许同字段context重叠，需trigger严格晚于最后fragment、首ref不早于canonical start、action/outcome终点均不退、真实trigger正向gap<=5000；所有身份/独立边界/问题/raw/8ref门禁不变。RED5fail/8pass，GREEN158专项；父1195视频/catalog20.28秒、compile/backend63/diff通过，独立spec+quality批准。真实raw04/06/08离线binding通过，07仍拒，原记录SHA全不变；不是原片内容通过。
+- 新整片模板continuation-template-20261028-77genb3q只原299/源MP4，未复用20补帧或旧模型答案，尚未运行；待最终reviewed hashpin。另一独立单call audit模态对照在准备/执行，仅澄清edit不等于touch、光标显隐不能证明失焦；不输入source/frame答案，结果待审。生产main/runtime仍f7旧worker，无正式新用例/手机下发。9个堡垒机标签页当前均密码登录，本地验证继续。
+
 ## 2026-10-28 整片高细节对照已启动（继续）
 
 - 3083af52分支已推送；runtime/main仍f7f8a426，未默认切换observer。纯文本strict Schema诊断49.061秒HTTP200/stop、schema零错误但phase_outside_part及IME内部动作重复/111残点另造点击，qualified=false；停止追加global mapper提示路线。
