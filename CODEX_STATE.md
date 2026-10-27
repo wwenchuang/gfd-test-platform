@@ -1,3 +1,9 @@
+## 2026-10-28 受限高细节传输组件与语义角色失败（继续）
+
+- 2c12aa52已提交可选fine-detail传输，仅exact trajectory/whole显式模式、official exact qwen3.8-max每图min_pixels1658880；原图/标签/limits/thinking/defaultworker/routes不改。TDD先红26Python/3Node后绿166相关+5新Node/6Qwen，独立spec+quality批准；父全1181视频/catalog20.17秒、后端63/Gateway46/主链编译/Node语法/diff绿。未部署/未默认启用，原片及Runner仍无通过。
+- compact新独立probe105.465秒完整stop/1485正文tokens，仍schema+角色失败：3parts、q数组、编辑帧/ph错配、键盘内部a3..a9独立tap、111残点另造dismiss、firstgen outcome122跨secondgen121。119 refs全可查但不证明角色。raw保留qualifiedfalse，旧B账簿未变，未补call。
+- 下一text-only语义Schema对照只准备未调用；官方说明image/video json_schema会降级object，故不再让同一视觉调用兼做结构编程。后续任何文本mapped仍须独立视觉审核/旧consolidation，不可编译或试跑。证据及计划docs/evidence/2026-10-27-video-trajectory-shadow.md、docs/superpowers/plans/2026-10-28-qwen-video-fine-detail.md。当前main/runtime仍f7f8a426，分支已含955b8a4f证据和2c12aa52组件；用户历史未提交改动保留。
+
 ## 2026-10-28 小标记感知与跨包组装分层结果（继续）
 
 - 同8原图base/quad对照均stop，base漏055/056而110可见，quad恢复两处；056人眼最初漏看已保原review另加更正。父独立复算8tile像素一致。单参数sibling min_pixels1658880保持原JPEG/text/图数不变，单call47.626秒实际image_tokens12976/text956，恢复055/056和110且保功能未知；实际resize尺寸不可见，单次局部qualifiedfalse，未进生产。

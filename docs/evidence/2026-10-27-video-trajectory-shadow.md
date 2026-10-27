@@ -211,3 +211,10 @@ v6原始两个会话无需事后合并，但其时间与状态仍有硬限制：
 旧sample终止failed/incomplete。另准备紧凑映射协议对照时会明确是新独立诊断，复用冻结输入不视为fresh整片或复活旧预算。候选/证据使用短alias，owner/PTS/hash/path由平台查不可变索引，原问题直接保留在ledger无需模型逐项抄写；同字段输入内删除/切键盘/组合/候选保为phase，不另下发Runner动作。尚未调用新compact mapper或编写生产接入。外部证据candidate-driven-spatial-review-v1、native-min-pixels-probe-v1、cross-packet-blind-inventory-v1-prepared。
 
 23:56:33公网health再次确认release_revision=f7f8a426213e80ff2b0ff5d54a330c93862ea70b。此后无新运行时代码提交/部署，默认旧worker仍未切换；没有正式新视频草稿或新Runner整例。当前认证及4F2A异常/归属未证任务依赖仍未解除。
+
+
+## 受限高细节传输组件与紧凑协议完整失败
+
+- 可选传输组件2c12aa52199f7b8e5abcb2f2a663b580f44e34a8：仅exact ui_video_trajectory/whole-trajectory显式perception_mode=fine-detail、official HTTPS DashScope exact qwen3.8-max路由增加每图sibling min_pixels1658880；未指定模式的调用保持原状。错误模式/其它路由拒绝，frame/JPEG/context标签不改，不单独启用thinking、不改24/1200/图片/重试/默认worker/模型路由。此参数未按sourceID/帧号/坐标/输入值分支。新25行生产差异配TDD红26Python/3Node后绿166相关Python+Node5/6；独立spec+quality均批准，父全1181视频+catalog20.17秒、后端63/Gateway46/主链编译/Node语法/diff通过。计划与完整报告见qwen-video-fine-detail计划和.superpowers/sdd/qwen-fine-detail；尚未部署、没有整片或Runner通过。
+- 新独立compact probe单callHTTP200/stop，105.465秒、首正文78.783秒、正文1485tokens，reasoning1024，prompt34859(图片25320/文字9539)/completion2510/total37369。此次完整返回仍失败，不能再只用timeout解释：parts3>2、q数组、整帧代替fact、ph越part、111..116无编辑仍当第三part、final错选生成后的128、键盘内部a3..a9重复独立tap、110真实触点/111残留拆为2动作、第一生成结果122越过第二触发121。119引用均exact可查，说明短alias解决复制不能解决角色/因果。raw与全部不利结果保留compact-mapping-protocol-probe-v1/execution-v1；res为空，原问题完整不消除，旧B账簿SHA9f46d48b6267fd9a90d1cfbcbb2d2b2613096ce82b1b8ad11d0558ea89ea7d30未变，无补call。
+- 下一层应继续区分视觉感知与业务语义而非给同一视觉mapper堆提示。官方结构化文档说明多模态json_schema会降级json_object，文本Schema模式才约束类型；准备纯文本语义映射对照，只用冻结视觉观察及native候选、实际raw图等待另一独立视觉审核，任何结果都不可据此称光学确认或可执行。模型仍千问，不放宽本地schema/owner/fact角色/真实PTS/源问题门禁。[官方结构化输出说明](https://help.aliyun.com/zh/model-studio/qwen-structured-output)。此新text-only probe尚未调用。
