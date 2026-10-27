@@ -127,7 +127,10 @@ def bind_packet_events(raw_events,packet,frames,previous,tracks):
                 events[-1]['action']!='aiInput' or raw['target']!=events[-1]['target'] or
                 raw['page_before']!=history[-1]['page_after'] or raw['page_after']!=raw['page_before'] or
                 raw['edit_boundary']!='none' or history[-1]['edit_boundary']!='none' or
-                not 0<=times[refs[0]]-events[-1]['end_ms']<=5000):_fail('input_continuation')
+                times[trigger]<=times[history[-1]['fragments'][-1]['trigger_frame']] or
+                times[refs[0]]<events[-1]['start_ms'] or checked['end_ms']<events[-1]['end_ms'] or
+                times[after[-1]]<times[history[-1]['outcome']['frame_refs'][-1]] or
+                max(0,times[trigger]-events[-1]['end_ms'])>5000):_fail('input_continuation')
             old=events[-1];track=history[-1]
             fragments=track['fragments']+[fragment]
             mandatory={r for part in fragments for r in (part['frame_refs'][0],part['frame_refs'][-1],part['trigger_frame'])}
