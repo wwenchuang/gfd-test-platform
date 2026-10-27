@@ -13,11 +13,12 @@
 
 每项填写：
 - action：aiTap/aiInput/aiScroll/aiAssert/aiWaitFor；target明确可见目标；除aiScroll外value=""。aiScroll value={"direction":"up/down/left/right","scrollType":"singleAction"}，方向按Midscene浏览方向，下拉刷新为up。
-- frame_refs：1至8张提供的原帧，按时间排列，包含trigger_frame和该动作前后证据。不输出时间字段。每次真实重复点击独立输出，不能因同目标合并。
+- frame_refs：1至60张提供的原帧，按时间排列，包含trigger_frame和该动作前后证据。不输出时间字段。每次真实重复点击独立输出，不能因同目标合并。
 - trigger_frame：动作真实发生的本包原帧。trigger_kind：touch明确触点、pressed_control明确按下状态、navigation有证据的导航、edit文字修改、automatic自动变化、uncertain证据不足。交互不能使用automatic；uncertain必须写具体uncertainties。
 - page_before/page_after：明确页面身份和状态，优先沿用states的state_id，也可写本包新见页面身份；不以按钮名字替代页面。
 - edit_boundary：none/submission/field_change/navigation，写该输入片段内实际独立边界；边界动作须另列，不跨边界续接。
-- outcome：{"frame_refs":["触发之后实际结果原帧"],"observation":"一个具体可见结果状态"}。不能把等待中变成完成，不能把多阶段经过写成一个断言，不能用以后另一次操作的结果填当前结果。无响应也保留该事实。
+- 原始证据与编译：保留全部相关原始frame_refs，不为满足普通用例8帧上限删掉触发、编辑过程或结果；平台只在验证完整原始证据后，将普通事件编译至最多8帧，普通outcome只绑定原始outcome最后一帧，审计仍查看完整原片段。不得输出未提供或重复、倒序原帧。
+- outcome：{"frame_refs":["触发之后实际结果原帧"],"observation":"一个具体可见结果状态"}。原始outcome.frame_refs最多60张，第一张不早于trigger_frame，最后一张不早于本事件frame_refs最后一张。outcome.observation只能描述最后结果帧支持的单一具体终态，不能将中间过程写成末帧结果。不能把等待中变成完成，不能把多阶段经过写成一个断言，不能用以后另一次操作的结果填当前结果。无响应也保留该事实。
 - observation：说明本次动作和证据，保留原片事实，不转录输入内容；uncertainties只列具体不能确定的问题。
 
 普通状态观察可用aiAssert，target写实际可见状态，与observation保持一致，trigger_kind=automatic。只输出有作用的状态变化，避免每帧重复断言。首尾系统桌面/停止录屏不是应用业务步骤，不输出。视频含打印入口不代表最终确认打印已经发生。

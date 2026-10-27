@@ -1,3 +1,11 @@
+## 2026-10-27 原始引用与终态锚点编译（原片run6进行中）
+
+- run5新audit前2包通过，第三包输入11/10/10张合法原引用触发旧8张整理限制。完整证据已下载，不能算整片通过。
+- 新observer raw≤60先完整校验，普通事件仅从raw选≤8并保首末/触发/时间跨度，完整raw/片段/审计及编译来源保留。raw outcome全不早于trigger、末不早于raw事件末，否则硬拒；普通outcome只绑定最后可见结果锚点，不改描述、verdict或旧validator。
+- 保存run5三组前三包绑定及最终validate_analysis均通过；383相关、全1057视频18.67秒、63后端、主链/变更编译/Node/diff通过，独立15项及复审无P1/P2。合同通过不是视觉验收。
+- 用户恢复堡垒机登录后实际新终端可输入；包SHA333e5084f9d689e2ebda9e1e8ca69df7eb78efda8eefbe8f5684f2993e3515e0重新上传核验，/tmp/reference6/trajectory-live.py 6已实际启动，待整片终态。生产仍b041dba1旧observer，未切新默认。
+- 19:01真实4F2A在线空闲/25℃、手机1.19.71(52)，但有刀刃3盘待打印，非姓名牌、无可取消归属证明，未操作该任务。仍只用ecbfd645/9888E0094F2A，未下发本轮新用例/未确认物理打印。
+
 ## 2026-10-27 千问轨迹审计职责与疑问生命周期（进行中）
 
 - 用户明确全部用千问；实际线上模型页六项为Qwen3.8Max，Gateway所有路由/fallback及真实模型记录均qwen，无其它厂商。证据new-touch/current-platform/qwen-only-model-policy.png。

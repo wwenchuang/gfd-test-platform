@@ -27,6 +27,24 @@ def _refs(refs,times,limit=8):
     return refs
 
 
+def _compile_references(refs,times,required):
+    """Select only validated raw evidence, preserving endpoints and edit anchors."""
+    mandatory=set(required)
+    if len(mandatory)>8:_fail('input_evidence_budget')
+    if not mandatory<=set(refs):_fail('event_evidence')
+    if len(refs)<=8:selected=list(refs)
+    else:
+        selected=set(mandatory)
+        # Farthest-point sampling spreads remaining slots over actual time,
+        # including unevenly sampled recordings, with stable earliest ties.
+        while len(selected)<8:
+            remaining=set(refs)-selected
+            selected.add(max(remaining,key=lambda r:(min(abs(times[r]-times[a]) for a in selected),-times[r],r)))
+        selected=sorted(selected,key=times.get)
+    return selected,{'raw_frame_refs':list(refs),'selected_frame_refs':list(selected),
+                     'required_anchors':sorted(mandatory,key=times.get)}
+
+
 def validate_states(states,frames):
     times={f['frame_id']:f['timestamp_ms'] for f in frames}
     if not isinstance(states,list) or len(states)>60:_fail('states')
@@ -74,7 +92,7 @@ def bind_packet_events(raw_events,packet,frames,previous,tracks):
         if action not in INTERACTIONS|{'aiAssert','aiWaitFor'}:_fail('action')
         if trigger not in owned or times[trigger]<last_trigger:_fail('trigger_ownership')
         last_trigger=times[trigger]
-        refs=_refs(raw['frame_refs'],times)
+        refs=_refs(raw['frame_refs'],times,limit=60)
         if not set(refs)<=allowed or trigger not in refs:_fail('event_evidence')
         if (not isinstance(raw['uncertainties'],list) or len(raw['uncertainties'])>10 or
             any(not isinstance(q,str) or not q or len(q)>2000 for q in raw['uncertainties'])):_fail('questions')
@@ -88,13 +106,20 @@ def bind_packet_events(raw_events,packet,frames,previous,tracks):
         if raw['edit_boundary'] not in {'none','submission','field_change','navigation'}:_fail('edit_boundary')
         outcome=raw['outcome']
         if not isinstance(outcome,dict) or set(outcome)!={'frame_refs','observation'}:_fail('outcome')
-        after=_refs(outcome['frame_refs'],times)
-        if not set(after)<=allowed or times[after[0]]<times[trigger]:_fail('outcome_reference')
+        after=_refs(outcome['frame_refs'],times,limit=60)
+        if not set(after)<=allowed or times[after[0]]<times[trigger] or times[after[-1]]<times[refs[-1]]:_fail('outcome_reference')
         _text(outcome['observation'])
+        selected,action_compilation=_compile_references(refs,times,{refs[0],refs[-1],trigger})
+        selected_outcome=[after[-1]]
+        outcome_compilation={'method':'terminal_outcome_anchor','version':1,'raw_frame_refs':list(after),
+                             'selected_frame_refs':list(selected_outcome),'required_anchors':list(selected_outcome)}
+        compiled_outcome={**copy.deepcopy(outcome),'frame_refs':selected_outcome}
+        fragment_compilation={'action':action_compilation,'outcome':outcome_compilation}
         ordinary={k:copy.deepcopy(raw[k]) for k in ('action','target','value','frame_refs','observation','uncertainties')}
+        ordinary['frame_refs']=selected
         bound=_bind_whole_evidence({'events':[ordinary],'uncertainties':[],'multiple_scenarios':False},packet['frames'])
         checked=validate_analysis(bound,packet['frames'],frames[-1]['timestamp_ms']+1)['events'][0]
-        checked['outcome']=copy.deepcopy(outcome)
+        checked['outcome']=compiled_outcome
         fragment=copy.deepcopy(raw)
         if raw['continuation_of']:
             if (not history or raw['continuation_of']!=history[-1]['event_id'] or action!='aiInput' or
@@ -107,18 +132,23 @@ def bind_packet_events(raw_events,packet,frames,previous,tracks):
             fragments=track['fragments']+[fragment]
             mandatory={r for part in fragments for r in (part['frame_refs'][0],part['frame_refs'][-1],part['trigger_frame'])}
             if len(mandatory)>8:_fail('input_evidence_budget')
-            union=set(old['frame_refs'])|set(refs)
-            selected=mandatory|set(sorted(union-mandatory,key=times.get)[:8-len(mandatory)])
-            old.update(frame_refs=sorted(selected,key=times.get),end_ms=checked['end_ms'],
-                       observation=checked['observation'],outcome=copy.deepcopy(outcome))
+            union=sorted(set(track['frame_refs'])|set(refs),key=times.get)
+            selected,action_compilation=_compile_references(union,times,mandatory)
+            old.update(frame_refs=selected,end_ms=checked['end_ms'],
+                       observation=checked['observation'],outcome=compiled_outcome)
+            fragment_compilations=track['reference_compilation']['fragments']+[fragment_compilation]
             track.update(fragments=fragments,frame_refs=sorted(set(track['frame_refs'])|set(refs),key=times.get),
-                         page_after=raw['page_after'],outcome=copy.deepcopy(outcome))
+                         page_after=raw['page_after'],outcome=copy.deepcopy(outcome),
+                         reference_compilation={'method':'anchor_time_spread','version':1,'action':action_compilation,
+                                                'outcome':outcome_compilation,'fragments':fragment_compilations})
         else:
             events.append(checked)
             history.append({'event_id':f"{packet['packet_id']}:event-{index}",'packet_id':packet['packet_id'],
                             'trigger_frame':trigger,'trigger_kind':kind,'page_before':raw['page_before'],
                             'page_after':raw['page_after'],'edit_boundary':raw['edit_boundary'],
-                            'frame_refs':list(refs),'outcome':copy.deepcopy(outcome),'fragments':[fragment]})
+                            'frame_refs':list(refs),'outcome':copy.deepcopy(outcome),'fragments':[fragment],
+                            'reference_compilation':{'method':'anchor_time_spread','version':1,'action':action_compilation,
+                                                     'outcome':outcome_compilation,'fragments':[fragment_compilation]}})
     return events,history
 
 

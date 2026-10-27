@@ -69,3 +69,18 @@
 - 新反例先红后绿；368相关回归、父任务70项及全部1042视频回归18.82秒通过，63后端、主链/变更编译、diff通过。独立70项复审无P1/P2；补充了结果属于当前操作、不能借后续结果或把等待当完成。
 - trajectory-verdict-5.zip SHA256ccaf0c1e94390ca0c606c7867d81c37ee54e6806f3b44b1a890a508825c61299已实际上传核验，解压/tmp/verdict5，运行trajectory-live.py 5。当前已完成前两个包进入2/9；仍为私有诊断，没有改生产worker默认入口。
 - 实际线上模型配置页六项能力均显示Qwen3.8Max；此前实际全部Gateway路由及fallback均qwen，真实各轮runtime也为qwen_plus/qwen3.8-max/fallbackUsed=false。页面证据new-touch/current-platform/qwen-only-model-policy.png。指定手机ecbfd645与Runner18:34在线ready；快照时间仍旧，未将其当新页面验收。
+
+## 第五轮实际终态及机械引用限制
+
+- run-5前两个包新audit均双supported、issues空，未发生旧审计复制和未来context误报。第三包观察06/07/08输入引用分别11/10/10张真实、唯一、有序、当前已提供原帧，含081/trigger082/110，因原max8连续拒绝，终态frame_reference。完整原始JSON已下载new-touch/trajectory-v1/run-5。这不代表后续触发/结果已视觉通过。
+- 新分层编译候选保留raw动作/结果各最多本包60张，先完整校验，再从原集合确定性选择最多8张供普通事件，保留事件首末与触发、完整raw/private审计及派生来源。原始错误不能被压缩隐藏。独立84项通过，run5保存响应绑定层11/10/10→8通过，原返回不变。
+- 独立复核发现旧observer允许raw outcome不早于trigger，而final validate_analysis要求ordinary outcome不早于event.end；实际搜索证据048/050/052/054+outcome052/054触发跨层冲突。因此尚未启动run6，先统一原始响应区间与最终可见结果锚点的编译含义，不改legacy最终门禁。
+- 原图人工只读复核：110(27167ms)键盘工具栏右侧收起控件有白色触点且键盘展开；111(27367ms)首次收起、仅淡残迹；112(27400ms)稳定结果。run5中trigger110/111的变化必须由新实际审计判断，不能把离线引用编译通过算内容正确。
+- 19:01实际手机只读截图：应用1.19.71(52)、4F2A在线空闲/25℃，页面有“刀刃”剩余3盘待打印（含连杆/指关节）。这不是原片姓名牌任务，尚无可取消归属证明；不操作该任务。证据phone-4f2a-20261027-1901.png。未下发本轮新用例。
+
+## 原始证据与普通终态的编译合同（第六轮候选）
+
+- raw事件及结果各最多60引用，全部先做真实已提供/唯一/时序/归属校验；raw outcome不得早于trigger，且末帧不得早于raw事件末引用。真实错误不能通过选图隐藏。
+- compiled事件从raw确定性保首末/触发及时间跨度，最多8；普通outcome只使用raw最后可见结果帧，来源terminal_outcome_anchor，描述/动作/verdict不改。raw响应过程、每段输入片段和审计原图完整保留，private reference_compilation可追溯。最终legacy validator和普通8帧限制未改。
+- 实际保存run5的02→04→06、02→04→07、02→04→08三组均完成3包绑定并final validate_analysis通过，每组8事件、action最大8/outcome最大1。不是视觉内容通过。独立15项编译测试及复审无P1/P2，383相关范围、全1057视频18.67秒、63后端、主链/变更编译、Node传输/diff通过。
+- 第六轮原上传遇到T_1006后明确会话过期；用户回复好了后，新会话实际回显可用，旧路径确实没有包。重新上传/trajectory-reference-6.zip SHA256333e5084f9d689e2ebda9e1e8ca69df7eb78efda8eefbe8f5684f2993e3515e0，本地/终端一致；实际解压/tmp/reference6并启动trajectory-live.py 6。尚未记为成功。

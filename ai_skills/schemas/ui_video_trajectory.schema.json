@@ -122,7 +122,7 @@
               "frame_refs": {
                 "type": "array",
                 "minItems": 1,
-                "maxItems": 8,
+                "maxItems": 60,
                 "items": {
                   "type": "string",
                   "maxLength": 80
@@ -185,7 +185,7 @@
                   "frame_refs": {
                     "type": "array",
                     "minItems": 1,
-                    "maxItems": 8,
+                    "maxItems": 60,
                     "items": {
                       "type": "string",
                       "maxLength": 80
