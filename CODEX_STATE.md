@@ -1,5 +1,7 @@
 ## 2026-10-27 原片真机接续：共同按压与后态帧诊断（进行中）
 
+- 本批fd413f4f已提交并推送origin/main及codex/ui-platform-simple-workflows，尚未部署。12:36公网health仍精确ceb4bb1c。堡垒机反复T_514/T_1006；原生重连/重载/已登录入口新建会话未恢复，Chrome内容空白或画面不刷新，文件选择器选bundle及zip时打开均不可用，没有上传成功证据。已异步请求用户手动恢复可输入终端；不是再次索要登录凭据。12:33 Runner在线ready，12:35真实ADB图4F2A在线空闲25°C。没有创建/取消任务或真机试跑。
+- 本地下一步包/Users/adouceshi/Downloads/press-release.zip（含press-fix.bundle及deploy-press.sh，ZIP SHA256 3c70d95edfc281be07949c9df0da892787fd4b6322ab9032467feb7234508d28）；bundle SHA256 32ec558aee293cfc2f2967d2a712a2e33b663c5cda432a146ec40b5b9b21fd67。脚本语法通过，解压到/acceptance-current/press-release后运行bash deploy-press.sh，检查clean工作区、bundle校验、ff-only、精确fd413f4f再调用既有部署脚本。上传解压及运行均未完成。
 - ceb4bb1c已实际bundle部署并核对终端及公网精确revision；v2完整失败文档已下载。正常平台同原片/无补充目标重新生成v3，10:35:16在coverage_resolution.validate:200失败，52首轮/55复核raw，12/12观察；没有新草稿、没有真机执行。
 - 10:31实时ADB及Runner在线，ecbfd645应用1.19.71(52)，手机截图EP3-9888E0094F2A在线空闲。只做只读前检，不算设备验收。
 - 同保存两轮观察隔离重放重复失败：确认205/212及209/212稀疏锚点只共享末帧212，旧窗口无更晚可引用后态。补1张安全后帧、原预算/映射验证器不变。修正副本请求实际frames205–213，context203/204/214/215，仍选209并错误称被所有锚点引用；移除拒绝模型正文、保留结构诊断后仍失败，不能宣称已解决。

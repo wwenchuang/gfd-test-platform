@@ -56,3 +56,10 @@
 - 使用当前v1真实提示、原片window7(183–212)/window8(209–238)、原图片及touch-target probe做隔离观察，12:04/12:05均通过既有validate_analysis，生成6项观察。前窗确认refs205/211/212，后窗209/211/212，保留共同真实按压211；不是以弹窗消失212冒充触点。重建prior只取已保存前段最后8项，未运行touch-target conflict及整片流程，故仅诊断。服务端/acceptance-press-anchors保留每窗request/result/checked；第二窗终端截图current-platform/press-anchor-window-8-terminal.png。
 - 第二窗仍明写frame214无明确触点、仅依据随后转场推断额外下一步。修改既有因果段：先核对前一次提交/确认尚在继续的异步响应，短暂露原页与入口可见不足以证明再点击；保留新触点、按下变化或其它独立证据的真实操作，因果不明保留具体疑问。独立审查无P1/P2，此新因果段尚待正常原片验证。
 - 当前946视频回归19.10秒、63后端、主链/改动编译/diff通过；最后因果提示编辑后320专项及63后端再次通过。日志/tmp/video-press-anchor-final{,-backend}.log及/tmp/video-causal-{final,backend}.log。仍没有完整可执行草稿或手机试跑通过，不把两窗观察成功当整片验收。
+
+## fd413f4f交付及浏览器连接阻塞
+
+- fd413f4f0bbed270b22c653a26d4af8f83fcde26已提交并推送origin/main及当前分支，保留其它已有脏文件；CODEX_STATE仅stage本次前缀。12:36公网health仍为ceb4bb1c，本批尚未部署。
+- Chrome堡垒机会话反复T_514/T_1006，重连、页面重载及已登录desktop入口新建连接未恢复可操作终端；原生文件选择器选bundle和zip均显示打开不可用，不能据选择操作宣称上传成功。页面内容空白或画面不刷新。已请求用户手动恢复QA终端并确认可输入；无确认输出时不继续发部署命令。
+- 12:33真实ADB device、Runner在线ready；12:35手机实际截图指定EP3-9888E0094F2A在线空闲、喷头25°C。current-platform/phone-preflight-fd413f4f.{json,png}；截图不依赖旧平台snapshot。没有创建/取消/物理打印或Runner试跑。
+- /Users/adouceshi/Downloads/press-release.zip内含press-fix.bundle和deploy-press.sh，ZIP SHA256 3c70d95edfc281be07949c9df0da892787fd4b6322ab9032467feb7234508d28；bundle SHA256 32ec558aee293cfc2f2967d2a712a2e33b663c5cda432a146ec40b5b9b21fd67。脚本bash -n通过，解压目的/acceptance-current/press-release；先校验bundle、clean工作区、ff-only、精确fd413f4f再运行既有部署脚本。上传、解压、运行及正常v4原片生成仍未完成。
