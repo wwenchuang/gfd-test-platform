@@ -312,6 +312,14 @@ def _repair_ai_skill_json_output(skill_name, raw, parse_error, model_config, run
     return result
 
 
+def _validate_trajectory_detail_selection(frame_ids, assets, enabled):
+    if (enabled is not True or not isinstance(frame_ids, list) or not 1 <= len(frame_ids) <= 12 or
+            any(not isinstance(name, str) for name in frame_ids) or
+            len(set(frame_ids)) != len(frame_ids) or
+            not set(frame_ids).issubset({asset.get("name") for asset in assets})):
+        raise ValueError("video_perception_selection_invalid")
+
+
 def _video_context_assets(skill_name, payload, assets):
     """Only explicit whole-video phases may carry a complete bounded timeline."""
     payload = payload if isinstance(payload, dict) else {}
@@ -320,9 +328,6 @@ def _video_context_assets(skill_name, payload, assets):
               (skill_name == "ui_video_trajectory" and payload.get("phase") == "whole-trajectory"))
     if not scoped:
         return False
-    if (skill_name == "ui_video_trajectory" and "perception_mode" in payload and
-            payload["perception_mode"] != "fine-detail"):
-        raise ValueError("video_perception_mode_invalid")
     frames = payload.get("image_frames")
     details = payload.get("detail_frames", [])
     if not isinstance(details, list) or len(details) > 6 or (details and skill_name != "ui_video_observe"):
@@ -364,6 +369,12 @@ def _video_context_assets(skill_name, payload, assets):
         if total > 10 * 1024 * 1024:
             raise ValueError("video_vision_limit")
         names.add(name)
+    if skill_name == "ui_video_trajectory":
+        if "perception_frame_ids" in payload:
+            _validate_trajectory_detail_selection(
+                payload["perception_frame_ids"], assets, payload.get("perception_mode") == "fine-detail")
+        if "perception_mode" in payload and payload["perception_mode"] != "fine-detail":
+            raise ValueError("video_perception_mode_invalid")
     return True
 
 
@@ -477,6 +488,9 @@ def run_ai_skill(
            payload.get('phase')=='whole-trajectory' and payload.get('reasoning_mode')=='bounded' else {}),
         **({"bounded_trajectory_detail": True} if skill_name == "ui_video_trajectory" and isinstance(payload, dict) and
            payload.get("phase") == "whole-trajectory" and payload.get("perception_mode") == "fine-detail" else {}),
+        **({"trajectory_detail_frame_ids": payload["perception_frame_ids"]} if skill_name == "ui_video_trajectory" and
+           isinstance(payload, dict) and payload.get("phase") == "whole-trajectory" and
+           "perception_frame_ids" in payload else {}),
         **({"image_limit": 60, "chronological_images": True,
             "reference_frame_ids": payload.get("context_frame_ids") if skill_name in {"ui_video_observe", "ui_video_trajectory"} else None,
             "trajectory_context": skill_name == "ui_video_trajectory"} if whole_video else {}),
@@ -666,10 +680,14 @@ def build_dashscope_chat_body(
     trajectory_context=False,
     bounded_trajectory_reasoning=False,
     bounded_trajectory_detail=False,
+    trajectory_detail_frame_ids=None,
 ):
     """构建 DashScope Chat API 请求体。"""
     image_assets = image_assets or []
     image_limit = max(1, int(image_limit or AI_VISION_IMAGE_LIMIT))
+    if trajectory_detail_frame_ids is not None:
+        _validate_trajectory_detail_selection(
+            trajectory_detail_frame_ids, image_assets[:image_limit], bounded_trajectory_detail)
     model = dashscope_model_for_images(image_assets)
     if bounded_trajectory_detail is True and (model != "qwen3.8-max" or not re.match(
             r"^https://dashscope(?:-intl|-us)?\.aliyuncs\.com(?:/|$)", dashscope_base_url(), re.I)):
@@ -688,7 +706,8 @@ def build_dashscope_chat_body(
                 "image_url": {
                     "url": f"data:{asset['mime']};base64,{asset['base64']}"
                 },
-                **({"min_pixels": 1658880} if bounded_trajectory_detail is True else {}),
+                **({"min_pixels": 1658880} if bounded_trajectory_detail is True and
+                   (trajectory_detail_frame_ids is None or asset["name"] in trajectory_detail_frame_ids) else {}),
             })
     else:
         user_content = prompt
@@ -731,6 +750,7 @@ def dashscope_chat_content(
     trajectory_context=False,
     bounded_trajectory_reasoning=False,
     bounded_trajectory_detail=False,
+    trajectory_detail_frame_ids=None,
 ):
     """调用 DashScope Chat API 并返回 content 字符串。"""
     api_key = dashscope_api_key()
@@ -754,6 +774,7 @@ def dashscope_chat_content(
         trajectory_context=trajectory_context,
         bounded_trajectory_reasoning=bounded_trajectory_reasoning,
         bounded_trajectory_detail=bounded_trajectory_detail,
+        trajectory_detail_frame_ids=trajectory_detail_frame_ids,
     ), ensure_ascii=False).encode("utf-8")
     last_error = None
     for attempt in range(retries + 1):

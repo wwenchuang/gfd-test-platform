@@ -91,3 +91,76 @@ test('fine detail retains image guards before applying options and independent r
   assert.equal(nonJson.enable_thinking,undefined);assert.equal(nonJson.thinking_budget,undefined);
   assert.ok(nonJson.messages[1].content.filter(p=>p.type==='image_url').every(p=>p.min_pixels===1658880));
 });
+
+const invalidSelections=[null,true,false,1,'frame-001',{},[],['frame-001','frame-001'],
+  ['frame-unknown'],[1],[true],[null],[['frame-001']],assets.slice(0,13).map(a=>a.name)];
+
+test('selective detail changes only named owned and context image siblings',()=>{
+  for(const selected of [['frame-001','frame-end'],assets.slice(0,12).map(a=>a.name)]) {
+    for(const reasoning of [undefined,'bounded']) {
+      for(const jsonResponse of [true,false]) {
+        const input={...fineBody,jsonResponse,payload:{...fineBody.payload,reasoning_mode:reasoning,perception_frame_ids:selected}};
+        const original=JSON.stringify(input);
+        const noMode={...input,payload:{...input.payload}};
+        delete noMode.payload.perception_mode;delete noMode.payload.perception_frame_ids;
+        const expected=completion(noMode);
+        const result=completion(input);
+        const normalized=JSON.parse(JSON.stringify(result));
+        const images=normalized.messages[1].content.filter(p=>p.type==='image_url');
+        assert.equal(images.length,assets.length);
+        for(const [i,part] of images.entries()) {
+          if(selected.includes(assets[i].name)) {assert.equal(part.min_pixels,1658880);delete part.min_pixels;}
+          else assert.equal(Object.hasOwn(part,'min_pixels'),false);
+        }
+        normalized.messages[1].content[0]=expected.messages[1].content[0];
+        assert.deepEqual(normalized,expected);
+        assert.equal(JSON.stringify(input),original);
+        assert.equal(result.enable_thinking,jsonResponse?(reasoning==='bounded'?true:false):undefined);
+        assert.equal(result.thinking_budget,jsonResponse&&reasoning==='bounded'?1024:undefined);
+      }
+    }
+  }
+});
+
+test('scoped selection rejects malformed, duplicate, unknown and unbounded values',()=>{
+  for(const selected of invalidSelections) {
+    assert.throws(()=>completion({...fineBody,payload:{...fineBody.payload,perception_frame_ids:selected}}),/video_perception_selection_invalid/);
+  }
+});
+
+test('selection requires exact mode and image failures retain priority',()=>{
+  for(const mode of [undefined,null,true,'fine','FINE-DETAIL']) {
+    const input={...fineBody,payload:{...fineBody.payload,perception_frame_ids:['frame-001']}};
+    if(mode===undefined) delete input.payload.perception_mode; else input.payload.perception_mode=mode;
+    assert.throws(()=>completion(input),/video_perception_selection_invalid/);
+  }
+  const invalid={...fineBody,payload:{...fineBody.payload,perception_frame_ids:null}};
+  assert.throws(()=>completion({...invalid,imageAssets:assets.slice(1)}),/video_vision_limit/);
+  assert.throws(()=>completion({...invalid,imageAssets:[{...assets[0],name:'fake'},...assets.slice(1)]}),/video_frames_invalid/);
+  assert.throws(()=>completion({...invalid,imageAssets:[{...assets[0],base64:'a'.repeat(10*1024*1024+1)},...assets.slice(1)]}),/video_vision_limit/);
+});
+
+test('selection outside exact scope is ignored for ordinary image options',()=>{
+  for(const change of [{skillName:'other'},{skillName:'ui_video_trajectory_extra'},
+    {payload:{...fineBody.payload,phase:'whole-observe'}},
+    {skillName:'ui_video_observe',payload:{...fineBody.payload,phase:'whole-observe'}}]) {
+    for(const selected of invalidSelections) {
+      const input={...fineBody,...change};
+      input.payload={...input.payload,perception_frame_ids:selected};
+      const result=completion(input);
+      assert.ok(result.messages[1].content.every(p=>!('min_pixels' in p)));
+    }
+  }
+});
+
+test('selective detail retains official route restrictions',()=>{
+  const input={...fineBody,payload:{...fineBody.payload,perception_frame_ids:['frame-end']}};
+  for(const host of ['dashscope.aliyuncs.com','dashscope-intl.aliyuncs.com','dashscope-us.aliyuncs.com']) {
+    assert.equal(completion(input,{...route,baseUrl:`https://${host}/v1`}).messages[1].content.filter(p=>p.min_pixels).length,1);
+  }
+  for(const change of [{model:'qwen3.8-flash'},{model:'QWEN3.8-MAX'},
+    {baseUrl:'http://dashscope.aliyuncs.com/v1'},{baseUrl:'https://example.com/v1'},
+    {baseUrl:'https://dashscope.aliyuncs.com.evil.example/v1'},{baseUrl:'https://dashscope.aliyuncs.com@evil.example/v1'}]) {
+    assert.throws(()=>completion(input,{...route,...change}),/video_perception_route_unsupported/);
+  }
+});

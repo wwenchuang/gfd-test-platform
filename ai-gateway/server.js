@@ -589,15 +589,29 @@ function routeSupportsQwenHybridThinking(route) {
 function completionOptionsForRoute(route, prompt, body, callOptions = {}) {
   const userText = callOptions.userMessage || buildUserMessage(route.action || 'chat', body);
   const imageParts = imagePartsFromBody(body);
-  if (body?.skillName === 'ui_video_trajectory' && body?.payload?.phase === 'whole-trajectory' &&
-      Object.prototype.hasOwnProperty.call(body.payload, 'perception_mode')) {
+  const trajectoryDetailScope = body?.skillName === 'ui_video_trajectory' && body?.payload?.phase === 'whole-trajectory';
+  const hasDetailSelection = trajectoryDetailScope && Object.prototype.hasOwnProperty.call(body.payload, 'perception_frame_ids');
+  const detailFrameIds = hasDetailSelection ? body.payload.perception_frame_ids : null;
+  if (hasDetailSelection) {
+    const names = new Set(body.imageAssets.map(asset => asset.name));
+    if (body.payload.perception_mode !== 'fine-detail' || !Array.isArray(detailFrameIds) ||
+        detailFrameIds.length < 1 || detailFrameIds.length > 12 ||
+        detailFrameIds.some(name => typeof name !== 'string' || !names.has(name)) ||
+        new Set(detailFrameIds).size !== detailFrameIds.length) {
+      throw new Error('video_perception_selection_invalid');
+    }
+  }
+  if (trajectoryDetailScope && Object.prototype.hasOwnProperty.call(body.payload, 'perception_mode')) {
     if (body.payload.perception_mode !== 'fine-detail') throw new Error('video_perception_mode_invalid');
     if (route.model !== 'qwen3.8-max' ||
         !/^https:\/\/dashscope(?:-intl|-us)?\.aliyuncs\.com(?:\/|$)/i.test(String(route.baseUrl || ''))) {
       throw new Error('video_perception_route_unsupported');
     }
+    let imageIndex = 0;
     for (const part of imageParts) {
-      if (part.type === 'image_url') part.min_pixels = 1658880;
+      if (part.type !== 'image_url') continue;
+      const asset = body.imageAssets[imageIndex++];
+      if (!hasDetailSelection || detailFrameIds.includes(asset.name)) part.min_pixels = 1658880;
     }
   }
   const completionOptions = {
