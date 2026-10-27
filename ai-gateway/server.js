@@ -589,6 +589,17 @@ function routeSupportsQwenHybridThinking(route) {
 function completionOptionsForRoute(route, prompt, body, callOptions = {}) {
   const userText = callOptions.userMessage || buildUserMessage(route.action || 'chat', body);
   const imageParts = imagePartsFromBody(body);
+  if (body?.skillName === 'ui_video_trajectory' && body?.payload?.phase === 'whole-trajectory' &&
+      Object.prototype.hasOwnProperty.call(body.payload, 'perception_mode')) {
+    if (body.payload.perception_mode !== 'fine-detail') throw new Error('video_perception_mode_invalid');
+    if (route.model !== 'qwen3.8-max' ||
+        !/^https:\/\/dashscope(?:-intl|-us)?\.aliyuncs\.com(?:\/|$)/i.test(String(route.baseUrl || ''))) {
+      throw new Error('video_perception_route_unsupported');
+    }
+    for (const part of imageParts) {
+      if (part.type === 'image_url') part.min_pixels = 1658880;
+    }
+  }
   const completionOptions = {
     model: route.model,
     messages: [
