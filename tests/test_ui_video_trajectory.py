@@ -424,3 +424,132 @@ def test_repeated_exhausted_request_cannot_bypass_audit_issue_validation(monkeyp
     with pytest.raises(ValueError) as exc:
         vt.observe_trajectory({'media':dict(frames=frames(20),duration_ms=2001)},None,lambda:False,revisit=lambda *a:[])
     assert exc.value.trajectory_reason in {'audit_issue_owner','frame_reference','audit_issue_shape'}
+
+
+@pytest.mark.parametrize('stage',['observe','audit'])
+def test_bad_revisit_request_receives_shared_correction_on_same_owned_images(monkeypatch,stage):
+    from task_server.services import ai_skill_service,ui_video_windows
+    calls=[];loads=[];records=[];invalid=True
+    def reply(name,payload,**kw):
+        nonlocal invalid
+        calls.append((kw['version'],copy.deepcopy(payload)))
+        raw=dict(states=[],events=[],checks=[],uncertainties=[],multiple_scenarios=False)
+        if kw['version']=='observe' and payload['packet_id']=='packet-001':raw['events']=[event(['frame-001','frame-003'])]
+        if kw['version']=='audit':raw=audit_reply({**raw,'checks':[dict(event_id=x['track']['event_id'],status='confirmed',frame_refs=[],question='') for x in payload['trajectory']]})
+        if kw['version']==stage and invalid:
+            invalid=False;raw['revisit']=[dict(first_frame='frame-030',last_frame='frame-035',question='未来上下文需要补帧')]
+        return raw
+    monkeypatch.setattr(ai_skill_service,'run_ai_skill',reply)
+    monkeypatch.setattr(ui_video_windows,'load_assets',lambda *a:[])
+    def loader(*args):loads.append(args);return []
+    result=vt.observe_trajectory({'media':dict(frames=frames(),duration_ms=9001)},None,lambda:False,revisit=loader,record=lambda key,value:records.append((key,value)))
+    retried=[p for v,p in calls if v==stage and p.get('packet_id')=='packet-001']
+    assert len(retried)==2 and retried[0]['frames']==retried[1]['frames']
+    assert all(p['owned_time_range_ms']==[100,3300] for p in retried)
+    assert 'validation_feedback' in retried[1] and 'owned' in retried[1]['validation_feedback']
+    assert loads==[] and len(result['events'])==1
+    rejected=[v for k,v in records if k.endswith('contract-rejection')]
+    assert rejected[0]['reason']=='revisit_outside_owned_interval'
+    assert rejected[0]['requests'][0]['last_frame']=='frame-035'
+
+
+def test_all_model_revisit_requests_are_prevalidated_before_any_decode(monkeypatch):
+    from task_server.services import ai_skill_service,ui_video_windows
+    calls=[];loads=[]
+    def reply(name,payload,**kw):
+        calls.append(kw['version'])
+        raw=dict(states=[],events=[],checks=[],uncertainties=[],multiple_scenarios=False)
+        if kw['version']=='observe':raw['revisit']=[dict(first_frame='frame-001',last_frame='frame-003',question='valid'),dict(first_frame='unknown',last_frame='frame-003',question='bad')]
+        return raw
+    monkeypatch.setattr(ai_skill_service,'run_ai_skill',reply)
+    monkeypatch.setattr(ui_video_windows,'load_assets',lambda *a:[])
+    def loader(*args):loads.append(args);return []
+    with pytest.raises(ValueError) as exc:
+        vt.observe_trajectory({'media':dict(frames=frames(),duration_ms=9001)},None,lambda:False,revisit=loader)
+    assert exc.value.trajectory_reason=='revisit_reference'
+    assert calls==['overview','observe','observe','observe'] and loads==[]
+
+
+@pytest.mark.parametrize('message',['video_cancelled','video_vision_limit','video_decoder_missing'])
+def test_actual_revisit_resource_or_service_errors_are_not_corrected(monkeypatch,message):
+    from task_server.services import ai_skill_service,ui_video_windows
+    calls=[]
+    def reply(name,payload,**kw):
+        calls.append(kw['version'])
+        return dict(states=[],events=[],checks=[],uncertainties=[],multiple_scenarios=False,
+                    **({'revisit':[dict(first_frame='frame-001',last_frame='frame-003',question='核实')]} if kw['version']=='observe' else {}))
+    monkeypatch.setattr(ai_skill_service,'run_ai_skill',reply)
+    monkeypatch.setattr(ui_video_windows,'load_assets',lambda *a:[])
+    def loader(*args):raise ValueError(message)
+    with pytest.raises(ValueError,match=message):
+        vt.observe_trajectory({'media':dict(frames=frames(),duration_ms=9001)},None,lambda:False,revisit=loader)
+    assert calls==['overview','observe']
+
+
+@pytest.mark.parametrize('change,reason',[
+    ({'last_frame':'frame-001'},'revisit_span'),
+    ({'first_frame':'frame-003','last_frame':'frame-001'},'revisit_span'),
+    ({'question':' '},'revisit_question'),
+    ({'first_frame':'unknown'},'revisit_reference')])
+def test_model_revisit_contract_reasons_are_separate_from_resource_budget(change,reason):
+    packet=vt.make_packets(frames(),[])[0]
+    request=dict(first_frame='frame-001',last_frame='frame-003',question='核实');request.update(change)
+    with pytest.raises(ValueError) as exc:vt.validate_revisit_requests([request],packet)
+    assert exc.value.trajectory_reason==reason
+
+
+def test_revisit_and_schema_errors_share_two_global_corrections_across_stages(monkeypatch):
+    from task_server.services import ai_skill_service,ui_video_windows
+    calls=[];observations=0;loads=[]
+    bad=dict(first_frame='unknown',last_frame='frame-003',question='核实')
+    def reply(name,payload,**kw):
+        nonlocal observations
+        calls.append(kw['version'])
+        raw=dict(states=[],events=[],checks=[],uncertainties=[],multiple_scenarios=False)
+        if kw['version']=='observe':
+            observations+=1
+            if observations==1:raw['checks']=[{}]
+            elif observations==2:raw['revisit']=[bad]
+            else:raw['events']=[event(['frame-001','frame-003'])]
+        if kw['version']=='audit':raw=dict(checks=[],issues=[],multiple_scenarios=False,revisit=[bad])
+        return raw
+    monkeypatch.setattr(ai_skill_service,'run_ai_skill',reply)
+    monkeypatch.setattr(ui_video_windows,'load_assets',lambda *a:[])
+    def loader(*args):loads.append(args);return []
+    with pytest.raises(ValueError) as exc:
+        vt.observe_trajectory({'media':dict(frames=frames(),duration_ms=9001)},None,lambda:False,revisit=loader)
+    assert exc.value.trajectory_reason=='revisit_reference'
+    assert calls==['overview','observe','observe','observe','audit'] and loads==[]
+
+
+
+def test_revisit_end_boundary_brackets_gap_but_is_not_reassigned_to_current_owner():
+    packet=vt.make_packets(frames(),[])[0]
+    assert packet['owned_start_ms']==100 and packet['owned_end_ms']==3300
+    assert 'frame-033' not in packet['owned_frame_ids'] and 'frame-033' in packet['context_frame_ids']
+    assert vt.validate_revisit_requests([dict(first_frame='frame-032',last_frame='frame-033',question='边界间隙')],packet) is None
+    with pytest.raises(ValueError) as exc:
+        vt.validate_revisit_requests([dict(first_frame='frame-032',last_frame='frame-034',question='未来上下文')],packet)
+    assert exc.value.trajectory_reason=='revisit_outside_owned_interval'
+
+
+@pytest.mark.parametrize('stage',['observe','audit'])
+@pytest.mark.parametrize('prior_reference',[False,True])
+def test_malformed_revisit_shape_before_envelope_return_is_corrected_without_stale_raw(monkeypatch,stage,prior_reference):
+    from task_server.services import ai_skill_service,ui_video_windows
+    failures=([[dict(first_frame='unknown',last_frame='frame-003',question='bad reference')]] if prior_reference else [])+['not a list'];records=[]
+    def reply(name,payload,**kw):
+        raw=dict(states=[],events=[],checks=[],uncertainties=[],multiple_scenarios=False)
+        if kw['version']=='observe':raw['events']=[event(['frame-001','frame-003'])]
+        if kw['version']=='audit':raw=dict(checks=[dict(event_id=x['track']['event_id'],trigger_verdict='supported',outcome_verdict='supported',question='') for x in payload['trajectory']],issues=[],multiple_scenarios=False,revisit=[])
+        if kw['version']==stage and failures:raw['revisit']=failures.pop(0)
+        return raw
+    monkeypatch.setattr(ai_skill_service,'run_ai_skill',reply)
+    monkeypatch.setattr(ui_video_windows,'load_assets',lambda *a:[])
+    result=vt.observe_trajectory({'media':dict(frames=frames(20),duration_ms=2001)},None,lambda:False,revisit=lambda *a:[],record=lambda key,value:records.append((key,value)))
+    assert len(result['events'])==1
+    rejections=[v for k,v in records if k.endswith('contract-rejection')]
+    assert len(rejections)==(2 if prior_reference else 1)
+    rejection=rejections[-1]
+    assert rejection['reason']=='revisit_shape'
+    assert 'requests' not in rejection

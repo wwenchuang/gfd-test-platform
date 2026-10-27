@@ -223,6 +223,20 @@ def audit_claim_context(trajectory,prior_events):
     return claims,prior
 
 
+def validate_revisit_requests(requests,packet):
+    """Validate all model requests before any decoder work or pixel mutation."""
+    times={f['frame_id']:f['timestamp_ms'] for f in packet['frames']}
+    start,end=packet['owned_start_ms'],packet['owned_end_ms']
+    for request in requests:
+        if (not isinstance(request,dict) or set(request)!={'first_frame','last_frame','question'} or
+            type(request['first_frame']) is not str or type(request['last_frame']) is not str or
+            request['first_frame'] not in times or request['last_frame'] not in times):_fail('revisit_reference')
+        if not isinstance(request['question'],str) or not request['question'].strip() or len(request['question'])>2000:_fail('revisit_question')
+        left,right=times[request['first_frame']],times[request['last_frame']]
+        if left<start or right>end:_fail('revisit_outside_owned_interval')
+        if not 0<right-left<=3000:_fail('revisit_span')
+
+
 def observe_trajectory(document,root,cancelled,progress=None,record=None,revisit=None):
     from . import ai_skill_service as ai
     from .ui_video_windows import load_assets
@@ -261,13 +275,15 @@ def observe_trajectory(document,root,cancelled,progress=None,record=None,revisit
         call_audit.append(entry)
         if record:record(f'{calls:02d}-{version}-result',redact({'result':raw,'runtime':entry}))
         return _envelope(raw,version)
-    def ask(version,images,validator=None,**context):
+    def ask(version,images,validator=None,revisit_packet=None,**context):
         nonlocal corrections
         while True:
+            raw=None
             try:
                 raw=ask_once(version,images,**context)
                 if version=='overview' and (raw['events'] or raw['checks']):_fail('overview_shape')
                 if version=='observe' and raw['checks']:_fail('observe_checks')
+                if revisit_packet is not None:validate_revisit_requests(raw.get('revisit',[]),revisit_packet)
                 if validator is not None and not raw.get('revisit'):validator(raw)
                 return raw
             except ValueError as error:
@@ -276,8 +292,16 @@ def observe_trajectory(document,root,cancelled,progress=None,record=None,revisit
                 if not isinstance(error,SkillSchemaError) and not hasattr(error,'trajectory_reason'):raise
                 corrections+=1
                 reason=getattr(error,'trajectory_reason','schema')
-                if record:record(f'{calls:02d}-contract-rejection',{'stage':version,'reason':reason})
+                rejection={'stage':version,'reason':reason}
+                if reason.startswith('revisit_') and revisit_packet is not None and isinstance(raw,dict):
+                    rejection.update(requests=copy.deepcopy(raw.get('revisit',[])),
+                                     owned_time_range_ms=[revisit_packet['owned_start_ms'],revisit_packet['owned_end_ms']])
+                if record:record(f'{calls:02d}-contract-rejection',redact(rejection))
                 explanation={
+                    'revisit_reference':'补帧端点必须是当前实际附图中的真实frame_id，且请求仅含first_frame/last_frame/question。',
+                    'revisit_question':'补帧question必须是非空且不超过2000字符的问题。',
+                    'revisit_outside_owned_interval':'补帧只能位于当前owned时间区间；future context属于后续owner，不能提前归入当前包。',
+                    'revisit_span':'补帧first必须早于last且间隔不超过3000ms，只能请求当前owned区间。',
                     'audit_shape':'audit根只能含checks/issues/multiple_scenarios/revisit；check只能含event_id/trigger_verdict/outcome_verdict/question，不得输出旧status/frame_refs或states/events。',
                     'audit_missing_event':'checks数量必须与trajectory一致，每个track.event_id恰好出现一次，不得漏项或重复。',
                     'audit_identity':'checks只能使用给定track.event_id，每个ID恰好一次。',
@@ -291,6 +315,8 @@ def observe_trajectory(document,root,cancelled,progress=None,record=None,revisit
                     'audit_question':'任一verdict不是supported时必须填写具体证据疑问。',
                     'audit_contradiction':'双supported的question必须为空；仍有疑问请明确使用unclear或contradicted。',
                 }.get(reason,'当前阶段输出结构不符合合同，请只返回规定字段及合法值。')
+                if reason.startswith('revisit_'):
+                    explanation+='仅请求当前owned时间区间；future context由后续owner处理，不得夹取或改派原帧。'
                 context['validation_feedback']=('平台合同校验未通过：'+explanation+
                     ('重新核对全部附图，分别判断给定片段的触发和结果；check不返回帧号，由平台绑定原片段锚点。'
                      if version=='audit' else '重新核对本阶段全部原图，完整输出该阶段合同。')+'不补造操作。')
@@ -351,7 +377,7 @@ def observe_trajectory(document,root,cancelled,progress=None,record=None,revisit
         # Audit before proceeding: a requested revisit can re-observe this packet
         # without invalidating identities in any later packet.
         while True:
-            raw=ask('observe',packet['frames'],states=states,overview_hypotheses=overview_hypotheses,packet_id=packet['packet_id'],
+            raw=ask('observe',packet['frames'],revisit_packet=packet,states=states,overview_hypotheses=overview_hypotheses,packet_id=packet['packet_id'],
                     owned_frame_ids=packet['owned_frame_ids'],context_frame_ids=packet['context_frame_ids'],
                     owned_time_range_ms=[packet['owned_start_ms'],packet['owned_end_ms']],
                     prior_events=[{**t,'event':e} for t,e in list(zip(tracks,events))[-8:]],validation_feedback=feedback)
@@ -374,10 +400,11 @@ def observe_trajectory(document,root,cancelled,progress=None,record=None,revisit
                     review['allowed_frame_refs']=sorted(set(review['frame_refs'])|set(review['outcome']['frame_refs']),key=times.get)
                     batch.append({'track':review})
             audit_batch,audit_prior=audit_claim_context(batch,[{**t,'event':e} for t,e in list(zip(tracks,events))[-8:]])
-            audited=ask('audit',packet['frames'],validator=lambda result:(bind_audit_checks(result['checks'],[p['track'] for p in batch],packet['frames']),validate_audit_issues(result['issues'],packet)),
+            audited=ask('audit',packet['frames'],revisit_packet=packet,validator=lambda result:(bind_audit_checks(result['checks'],[p['track'] for p in batch],packet['frames']),validate_audit_issues(result['issues'],packet)),
                     state_memory=states+extra,overview_hypotheses=overview_hypotheses,trajectory=audit_batch,
                     packet_id=packet['packet_id'],owned_frame_ids=packet['owned_frame_ids'],
                     context_frame_ids=packet['context_frame_ids'],
+                    owned_time_range_ms=[packet['owned_start_ms'],packet['owned_end_ms']],
                     prior_events=audit_prior)
             if expand(packet,audited.get('revisit',[])):continue
             bound_checks=bind_audit_checks(audited['checks'],[p['track'] for p in batch],packet['frames'])

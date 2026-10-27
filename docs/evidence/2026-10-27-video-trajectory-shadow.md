@@ -134,3 +134,18 @@ claim-only输入只在深拷贝中移除当前track.observation、audit prior.ev
 - 四次同Qwen3.8Max/1024/同图同payload的focus-evidence-probes-v1真实对照已下载。负例58图：原audit仍支持013触发但拒绝结果描述，候选拒绝013触发并请求012→014。正例44图：原audit三项supported，候选拒绝081的touch主张并误报094输入法切换、101候选上屏为两项missing_action，违反同轮输入颗粒度。全部原始结果/模板/图片SHA保留，候选提示尚未提交部署，不能称已改善稳定性。
 - 正例实际来自thinking-probes-v2/packet-003-result重建，包含聚焦081/连续输入/收键盘三项；各对照合同及图像fingerprints匹配。外部local-decode JPEG哈希不同于服务器实际wire图，需取得实际发送JPEG后再判断细小触点的模型误认，不能仅用本机重新解码图作像素一致证明。
 - 21:10–21:11只读Runner审计：mac-android-adouceshi心跳在线、PID43512、仅ecbfd645注册ready，CLI/core/android/shared均1.13.0，实时模型及心跳caps均qwen3.8-max/family=qwen3、服务host均官方DashScope。设备快照仍10/23旧值，不作为当前页面或新执行验收。
+
+## 第九轮越界回看与有界请求纠正
+
+- befbc6d857c44218129f5bd22ecf04ed2b3ecddc已实际部署，ZIP SHA dfd9ac6c56f9e6485c6114382874515832e6e97b1e21c2652f948e1578bb93b4与远端一致，终端及公网health完整revision一致。launch-trajectory.py9后台PID3181904，21:32:44第一包请求047→053越过owned区间[0,11867]，立即revisit_outside_owned_interval终止0/9。完整JSON已原生下载new-touch/trajectory-v1/run-9；没有成功整片。
+- 回看工具提示此前未清楚列出owned范围限制。候选仅在observe/audit提示补齐端点/区间/后包归属及no_new规则；失败的focus定义候选已经存入外部parked-focus-candidate并从仓库工作文件恢复，不随本批部署。
+- 所有模型回看请求现在先在ask内整体验证，合法后才调用decoder；未知帧、非法shape/question/owned跨度使用既有全局共享两次纠正，同组原图和原owner不变，无夹取、改派或静默删请求。真实4次资源/容量/服务/解码/取消/非法loader仍硬失败。audit现同样显式收到owned_time_range_ms。右端点可为end作边界夹帧，但其ownership保持半开区间、不移交context。
+- 修正中独立发现_envelope因revisit_shape提前失败会留下未绑定raw；先红后绿处理为每次ask循环raw=None、仅dict才记请求摘要，避免旧轮raw污染。85专项、父1138视频及catalog19.74秒、后端63/主链编译/diff通过；独立116及复审无P1/P2，批准继续真实诊断，未声称内容正确。
+
+## 实际六图结果与后续分离实验
+
+两次六图仍未解决：actual wire079/080/081均有灰色圆点、082淡出，但千问仍说没有触点；081也不是已见圆点最早起点，不能把supported作为实验成功目标。负例末帧018/300只见5条热搜，原主张8条仍被错误supported。12张实际发送JPEG全部与请求SHA一致，已下载外部focus-six-images-v1，消除了本机重解码哈希不同的证据疑问。
+
+后续两项独立实验通过同批ZIP上传，SHA d268896b65b4d4275ea6aae6102821e653b1ac963de63a925aab55f05d312d3d实际核对一致。第一项同44图同claims仅增加共享输入粒度说明，观察是否去除094/101假遗漏且保留110独立边界；第二项同6原图同claims同提示仅增加两个父帧的固定四象限2倍局部图，所有原图保留，绑定父帧与原时间，无标注/答案/人工ROI，不作新事件。各2次同Qwen3.8Max/1024/120秒，顺序后台运行，原始结果及实际wire/派生图哈希均保留；不修改生产Gateway图片合同或默认worker。
+
+局部放大参照千问官方[工具列表](https://qwenlm.github.io/Qwen-Agent/en/guide/get_started/features/)与[Qwen3-VL放大工具实现](https://github.com/QwenLM/Qwen-Agent/blob/main/qwen_agent/tools/image_zoom_in_qwen3vl.py)。本实验固定四象限，未冒充官方模型选择bbox流程；官方支持该方法不代表本来源已通过。
