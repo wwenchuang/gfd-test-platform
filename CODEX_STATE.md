@@ -1,3 +1,16 @@
+## 2026-10-27 第八轮空补帧与焦点对照（继续）
+
+- run8第一包audit对016聚焦点击判unclear并请求0151633→0171700；0161667已提供，实际loader完整解码后无新增帧，机械revisit_result终止0/9。完整JSON与run7原始用量白名单已下载，HTTP思考计数修正后三次均1024。
+- no_new_frames最小候选保留4次尝试预算/同图反馈/私有ledger/原问题人工blocker，同耗尽区间不重复解码或循环，不自动确认；成功新增图生命周期不变；耗尽重放checks与issues仍全校验。1122视频及catalog19.84秒、后端63/编译diff通过，独立100项批准诊断。
+- 四次同Qwen/1024焦点对照负例有改善、正例误拒081且错拆输入法/候选为独立遗漏；提示候选不提交上线。完整JSON/模板/imageSHA外部focus-evidence-probes-v1保留；本机decode JPEG不同服务器wire，继续取实际图与更小证据范围对照。
+- Runner21:10在线、CLI1.13.0、实际Qwen3.8Max/qwen3，指定ecbfd645；旧手机快照不作新验收。无原片整片资格成功/正式新草稿/手机下发，生产默认仍旧observer，固定9888E0094F2A，不确认物理打印。
+
+## 2026-10-27 第八轮后台整片运行中
+
+- 41c5d8ce已推送分支/main并实际部署，ZIP SHA37597a81本地/服务器一致、终端及公网完整revision一致；launch-trajectory.py 8实际后台PID3158115，等待run-8整片终态。新observer仍未切生产默认。
+- 原Gateway日志白名单导出7行与run7顺序和token计数一致：均qwen_plus/qwen3.8-max、fallback0、真实reasoningTokens1024。确认run7确实思考，HTTP0只是投影bug；仍保留原失败，不改记录。
+- 第八轮需核查真实print触点、两个独立收键盘及下一步物理生命周期；无正式新草稿/手机试跑/物理打印确认。固定ecbfd645/9888E0094F2A。
+
 ## 2026-10-27 第七轮误拒续接与用量回传修正（进行中）
 
 - 2da79646已实际部署，20:45:32公网健康完整revision一致、Gateway文件SHA与本地一致。真实部署模块run7于20:46:57后台启动，20:53:04第二包input_continuation失败，1/9；完整JSON已原生下载new-touch/trajectory-v1/run-7，未改回答。

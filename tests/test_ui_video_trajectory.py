@@ -342,3 +342,85 @@ def test_multiple_question_fragments_keep_all_questions_and_input_placeholder():
         previous,tracks=vt.bind_packet_events([raw],packets[i],fs,previous,tracks)
     assert len(previous)==1 and len(tracks[0]['fragments'])==3
     assert previous[0]['uncertainties']==['编辑证据问题0','请手工填写非敏感测试输入；密码、验证码或令牌请使用人工前置条件','编辑证据问题1','编辑证据问题2']
+
+
+@pytest.mark.parametrize('repeat',[False,True])
+def test_exhausted_revisit_is_recorded_and_rechecked_without_loop_or_confirmation(monkeypatch,repeat):
+    from task_server.services import ai_skill_service,ui_video_windows
+    calls=[];loads=[];records=[]
+    request=dict(first_frame='frame-001',last_frame='frame-003',question='触发不明确')
+    def reply(name,payload,**kw):
+        calls.append((kw['version'],copy.deepcopy(payload)))
+        if kw['version']=='audit':
+            out=dict(checks=[dict(event_id=x['track']['event_id'],trigger_verdict='unclear',outcome_verdict='supported',question='原帧仍不能确认按下') for x in payload['trajectory']],issues=[],multiple_scenarios=False,revisit=[])
+            if payload['packet_id']=='packet-001' and (repeat or not payload.get('exhausted_revisit_ranges')):out['revisit']=[request]
+            return out
+        out=dict(states=[],events=[],checks=[],uncertainties=[],multiple_scenarios=False)
+        if kw['version']=='observe' and payload['packet_id']=='packet-001':out['events']=[event(['frame-001','frame-003'])]
+        return out
+    monkeypatch.setattr(ai_skill_service,'run_ai_skill',reply)
+    monkeypatch.setattr(ui_video_windows,'load_assets',lambda *a:[])
+    def loader(req,capacity):loads.append((req,capacity));return []
+    result=vt.observe_trajectory({'media':dict(frames=frames(),duration_ms=9001)},None,lambda:False,revisit=loader,record=lambda key,value:records.append((key,value)))
+    assert len(loads)==1 and len(calls)==9
+    assert result['trajectory_audit']['checks'][0]['status']=='needs_review'
+    assert '独立证据复核：原帧仍不能确认按下' in result['events'][0]['uncertainties']
+    assert any('触发不明确' in q for q in result['uncertainties'])
+    attempts=[v for k,v in records if k.startswith('revisit-') and v.get('status')=='no_new_frames']
+    assert len(attempts)==1 and attempts[0]['new_frames']==[]
+    later=[p for v,p in calls if p.get('exhausted_revisit_ranges')]
+    assert {p['exhausted_revisit_ranges'][0]['status'] for p in later}=={'no_new_frames'}
+    assert all(p['frames']==frames()[:38] for p in later if p.get('packet_id')=='packet-001')
+
+
+def test_empty_revisit_attempts_consume_global_four_attempt_budget(monkeypatch):
+    from task_server.services import ai_skill_service,ui_video_windows
+    asked=0;loaded=[]
+    def reply(name,payload,**kw):
+        nonlocal asked
+        raw=dict(states=[],events=[],checks=[],uncertainties=[],multiple_scenarios=False)
+        if kw['version']=='observe':
+            asked+=1;raw['revisit']=[dict(first_frame=f'frame-{asked:03d}',last_frame=f'frame-{asked+2:03d}',question='需核实不同区间')]
+        return raw
+    monkeypatch.setattr(ai_skill_service,'run_ai_skill',reply)
+    monkeypatch.setattr(ui_video_windows,'load_assets',lambda *a:[])
+    def loader(request,capacity):loaded.append(request);return []
+    with pytest.raises(ValueError) as exc:
+        vt.observe_trajectory({'media':dict(frames=frames(),duration_ms=9001)},None,lambda:False,revisit=loader)
+    assert exc.value.trajectory_reason=='revisit_budget' and len(loaded)==4
+
+
+@pytest.mark.parametrize('invalid',[None,{},'empty',()])
+def test_nonlist_revisit_result_remains_invalid(monkeypatch,invalid):
+    from task_server.services import ai_skill_service,ui_video_windows
+    def reply(name,payload,**kw):
+        return dict(states=[],events=[],checks=[],uncertainties=[],multiple_scenarios=False,
+                    **({'revisit':[dict(first_frame='frame-001',last_frame='frame-003',question='需核实')]} if kw['version']=='observe' else {}))
+    monkeypatch.setattr(ai_skill_service,'run_ai_skill',reply)
+    monkeypatch.setattr(ui_video_windows,'load_assets',lambda *a:[])
+    with pytest.raises(ValueError) as exc:
+        vt.observe_trajectory({'media':dict(frames=frames(),duration_ms=9001)},None,lambda:False,revisit=lambda *a:invalid)
+    assert exc.value.trajectory_reason=='revisit_result'
+
+
+@pytest.mark.parametrize('issue',[
+    dict(kind='missing_action',owner_frame='frame-040',frame_refs=['frame-040'],question='上下文不能作为本包新动作'),
+    dict(kind='missing_action',owner_frame='frame-002',frame_refs=['unknown'],question='未知帧'),
+    dict(kind='missing_action',owner_frame='frame-002',frame_refs=['frame-002']),
+])
+def test_repeated_exhausted_request_cannot_bypass_audit_issue_validation(monkeypatch,issue):
+    from task_server.services import ai_skill_service,ui_video_windows
+    audit_calls=0
+    def reply(name,payload,**kw):
+        nonlocal audit_calls
+        if kw['version']=='audit':
+            audit_calls+=1
+            return dict(checks=[dict(event_id=x['track']['event_id'],trigger_verdict='unclear',outcome_verdict='supported',question='证据不明确') for x in payload['trajectory']],
+                        issues=[] if audit_calls==1 else [issue],multiple_scenarios=False,
+                        revisit=[dict(first_frame='frame-001',last_frame='frame-003',question='触发需核实')])
+        return dict(states=[],events=[event(['frame-001','frame-003'])] if kw['version']=='observe' else [],checks=[],uncertainties=[],multiple_scenarios=False)
+    monkeypatch.setattr(ai_skill_service,'run_ai_skill',reply)
+    monkeypatch.setattr(ui_video_windows,'load_assets',lambda *a:[])
+    with pytest.raises(ValueError) as exc:
+        vt.observe_trajectory({'media':dict(frames=frames(20),duration_ms=2001)},None,lambda:False,revisit=lambda *a:[])
+    assert exc.value.trajectory_reason in {'audit_issue_owner','frame_reference','audit_issue_shape'}

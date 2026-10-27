@@ -119,3 +119,18 @@ claim-only输入只在深拷贝中移除当前track.observation、audit prior.ev
 - 下一批同时准备版本工作目录与私有字段边界：只允许服务器构造 analysis-vN/frames，严格正整数版本、无效marker不回退、旧来源无marker兼容；帧HTTP保留owner/app与成员校验，支持可选版本拒绝过期，拒符号链接；公开响应剔除私有审计与路径，retry清私有索引但保留旧证据目录。helper不负责数据库CAS，未来worker必须显式使用expected_version发布；当前未接线新worker。
 - skill目录健康检查识别trajectory实际overview/observe/audit三份提示，缺任一仍不ready，不新增v1别名；ready仅表示目录配套完整。
 - 本批父任务1112项视频及catalog测试20.69秒通过、后端63/Gateway46/Node10/主链及改动编译/JS语法/diff通过；独立metadata7项、workspace18项及续接/usage60Python+2Node复审批准。本轮不是整片合格，没有正式新草稿或新手机下发，固定设备与不确认物理打印约束不变。
+
+## 第八轮已部署启动与实际思考计数核实
+
+41c5d8ce510feb146a94e9665102ff8b35d978f5已提交推送分支和main，并通过原生堡垒机运行部署脚本。ZIP SHA25637597a8119bde542d4028da68e56e4b6740456a3733d80dc7819efe2a2445dc7，上传后实际sha256sum一致；终端显示部署完成41c5d8ce，公网health完整revision一致。新worker尚未启用。后台launch-trajectory.py 8实际启动PID3158115，私有日志/acceptance-trajectory-v1/run-8.log，待完整终态。
+
+只读导出Gateway原始日志，仅保留id/time/action/providerId/model/success/usage/durationMs/fallbackIndex，取得2026-10-27T12:48:32.051Z至12:53:04.029Z七行，恰与run7七次调用顺序和prompt/completion计数一致。每行providerId=qwen_plus、model=qwen3.8-max、success=true、fallbackIndex=0、usage.reasoningTokens=1024。由此确认run7实际已执行固定1024思考，HTTP投影0是观测错误；不再把run7视为未启用思考。原始白名单JSON与ZIP在服务器/acceptance-trajectory-v1/run7-gateway-usage.json及同名zip，实际终端截图保留在外部current-platform/run7-original-usage.png。这不改变run7的input_continuation失败终态。
+
+## 第八轮空补帧终态与焦点对照未合格
+
+- run8第一包audit正确将016键盘升起的点击主张判trigger unclear/outcome supported，请求015(1633ms)→017(1700ms)回看；016(1667ms)已经提供。实际loader完整解码该区间返回空新增列表，observer却要求至少一张而revisit_result终止。完整JSON及run7原始用量白名单通过原生下载到外部run-8和run-7；三次HTTP用量均已正确显示1024。不能将0/9失败记为整片通过。
+- 最小候选区分成功解码但无新增帧与真实解码错误：空尝试仍消费4次预算，私有ledger保存原请求/时间范围/no_new_frames，下一次observe/audit同组原图接收耗尽区间反馈；同区间不重复解码或无限循环，原请求问题保留人工blocker，不制造图或自动确认。实际新增图片时的问题生命周期保持原样。重复耗尽请求即使revisit仍非空，最终checks与issues也完整校验，三个恶意issue反例先红后绿。
+- 1122项视频及catalog测试19.84秒、后端63/主链编译/diff通过；独立100项及复审批准继续隔离诊断，无P1/P2。正式worker及手机验收仍未启用。
+- 四次同Qwen3.8Max/1024/同图同payload的focus-evidence-probes-v1真实对照已下载。负例58图：原audit仍支持013触发但拒绝结果描述，候选拒绝013触发并请求012→014。正例44图：原audit三项supported，候选拒绝081的touch主张并误报094输入法切换、101候选上屏为两项missing_action，违反同轮输入颗粒度。全部原始结果/模板/图片SHA保留，候选提示尚未提交部署，不能称已改善稳定性。
+- 正例实际来自thinking-probes-v2/packet-003-result重建，包含聚焦081/连续输入/收键盘三项；各对照合同及图像fingerprints匹配。外部local-decode JPEG哈希不同于服务器实际wire图，需取得实际发送JPEG后再判断细小触点的模型误认，不能仅用本机重新解码图作像素一致证明。
+- 21:10–21:11只读Runner审计：mac-android-adouceshi心跳在线、PID43512、仅ecbfd645注册ready，CLI/core/android/shared均1.13.0，实时模型及心跳caps均qwen3.8-max/family=qwen3、服务host均官方DashScope。设备快照仍10/23旧值，不作为当前页面或新执行验收。

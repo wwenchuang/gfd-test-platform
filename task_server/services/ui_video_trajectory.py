@@ -227,7 +227,7 @@ def observe_trajectory(document,root,cancelled,progress=None,record=None,revisit
     from . import ai_skill_service as ai
     from .ui_video_windows import load_assets
     frames=copy.deepcopy(document['media']['frames']);duration=document['media']['duration_ms']
-    calls=0;corrections=0;revisits=0;started=time.monotonic();secrets=[];call_audit=[]
+    calls=0;corrections=0;revisits=0;started=time.monotonic();secrets=[];call_audit=[];revisit_attempts=[]
     def redact(value):
         if isinstance(value,str):
             for secret in secrets:
@@ -240,6 +240,9 @@ def observe_trajectory(document,root,cancelled,progress=None,record=None,revisit
         if cancelled():raise ValueError('video_cancelled')
         if calls>=24 or time.monotonic()-started>1200:raise ValueError('video_vision_limit')
         calls+=1;trace={};tick=time.monotonic()
+        exhausted=[copy.deepcopy(a) for a in revisit_attempts if a['status']=='no_new_frames' and a['packet_id']==context.get('packet_id')]
+        if exhausted:
+            context.update(exhausted_revisit_ranges=exhausted,revisit_feedback='这些区间已成功解码全部真实原帧但没有新增帧，不会重复解码；继续核对当前同组原图。证据不够时保留unclear和具体问题，或据实际原图更正观察，不得因无新增帧而确认。')
         payload={'phase':'whole-trajectory','duration_ms':duration,'frames':images,'image_frames':images,**context,'reasoning_mode':'bounded'}
         if record:record(f'{calls:02d}-{version}-request',redact(payload))
         raw=ai.run_ai_skill('ui_video_trajectory',payload,version=version,image_assets=load_assets(images,root,cancelled),
@@ -298,6 +301,7 @@ def observe_trajectory(document,root,cancelled,progress=None,record=None,revisit
         times={f['frame_id']:f['timestamp_ms'] for f in frames}
         allowed={f['frame_id'] for f in packet['frames']}
         start,end=packet['owned_start_ms'],packet['owned_end_ms']
+        attempted=False
         for request in requests:
             if (not isinstance(request,dict) or set(request)!={'first_frame','last_frame','question'} or
                 type(request['first_frame']) is not str or type(request['last_frame']) is not str or
@@ -305,26 +309,35 @@ def observe_trajectory(document,root,cancelled,progress=None,record=None,revisit
             _text(request['question'])
             left,right=times[request['first_frame']],times[request['last_frame']]
             if left<start or right>end:_fail('revisit_outside_owned_interval')
-            if not 0<right-left<=3000 or revisits>=4:_fail('revisit_budget')
+            if not 0<right-left<=3000:_fail('revisit_budget')
+            if any(a['status']=='no_new_frames' and a['packet_id']==packet['packet_id'] and a['time_range_ms']==[left,right] for a in revisit_attempts):
+                questions.append('补帧区间已无新增原帧，仍需核实：'+request['first_frame']+'至'+request['last_frame']+'：'+request['question'])
+                continue
+            if revisits>=4:_fail('revisit_budget')
             capacity=min(20,60-len(packet['frames']))
             if capacity<2:raise ValueError('video_vision_limit')
             extra=revisit(request,capacity)
             if cancelled():raise ValueError('video_cancelled')
-            if not isinstance(extra,list) or not 1<=len(extra)<=capacity:_fail('revisit_result')
+            if not isinstance(extra,list) or not 0<=len(extra)<=capacity:_fail('revisit_result')
             stamps=set(times.values());names=set(times)
             for f in extra:
                 if (not isinstance(f,dict) or set(f)!={'frame_id','timestamp_ms'} or
                     type(f['frame_id']) is not str or f['frame_id'] in names or type(f['timestamp_ms']) is not int or
                     not left<=f['timestamp_ms']<=right or f['timestamp_ms'] in stamps):_fail('revisit_result')
                 names.add(f['frame_id']);stamps.add(f['timestamp_ms'])
-            revisits+=1;frames=sorted(frames+extra,key=lambda f:f['timestamp_ms'])
+            revisits+=1;attempted=True
+            attempt={'request':copy.deepcopy(request),'new_frames':copy.deepcopy(extra),'packet_id':packet['packet_id'],
+                     'time_range_ms':[left,right],'status':'frames_added' if extra else 'no_new_frames'}
+            revisit_attempts.append(attempt)
+            if not extra:questions.append('补帧无新增原帧，仍需核实：'+request['first_frame']+'至'+request['last_frame']+'：'+request['question'])
+            frames=sorted(frames+extra,key=lambda f:f['timestamp_ms'])
             packet['frames']=sorted(packet['frames']+extra,key=lambda f:f['timestamp_ms'])
             owned=set(packet['owned_frame_ids'])|{f['frame_id'] for f in extra if start<=f['timestamp_ms']<end}
             packet['owned_frame_ids']=[f['frame_id'] for f in packet['frames'] if f['frame_id'] in owned]
             packet['context_frame_ids']=[f['frame_id'] for f in packet['frames'] if f['frame_id'] not in owned]
             allowed.update(f['frame_id'] for f in extra);times.update({f['frame_id']:f['timestamp_ms'] for f in extra})
-            if record:record(f'revisit-{revisits}',{'request':request,'new_frames':extra,'packet_id':packet['packet_id']})
-        return True
+            if record:record(f'revisit-{revisits}',redact(attempt))
+        return attempted
     images=overview_frames(frames)
     overview=ask('overview',images)
     if overview['events'] or overview['checks']:_fail('overview_shape')
@@ -368,6 +381,9 @@ def observe_trajectory(document,root,cancelled,progress=None,record=None,revisit
                     prior_events=audit_prior)
             if expand(packet,audited.get('revisit',[])):continue
             bound_checks=bind_audit_checks(audited['checks'],[p['track'] for p in batch],packet['frames'])
+            # A known exhausted request does not expand the packet. Its truthy
+            # revisit field must not bypass final issue ownership/shape checks.
+            validate_audit_issues(audited['issues'],packet)
             break
         events,tracks=proposed,history;states.extend(extra)
         packet_outputs.append({'packet':packet,'raw':redact(raw),'audit':redact(audited)})
@@ -391,7 +407,7 @@ def observe_trajectory(document,root,cancelled,progress=None,record=None,revisit
                                'multiple_scenarios':multi},frames,duration,secrets,max_events=120)
     for e in checked['events']:e['uncertainties']=list(dict.fromkeys(e['uncertainties']))
     result={**checked,'media':{**copy.deepcopy(document['media']),'frames':frames},'trajectory_audit':redact({'version':'trajectory-v2','audit_input_mode':'claims_without_observer_narrative','overview_hypotheses':overview_hypotheses,'states':states,'tracks':tracks,'checks':checks,'fragment_checks':fragment_checks,
-             'packets':packet_outputs,'calls':call_audit,'elapsed_seconds':round(time.monotonic()-started,3)})}
+             'packets':packet_outputs,'revisit_attempts':revisit_attempts,'calls':call_audit,'elapsed_seconds':round(time.monotonic()-started,3)})}
     if record:record('trajectory-final',redact(result))
     if progress:progress('planning',1,1,checked['events'])
     return result
