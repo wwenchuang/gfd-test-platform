@@ -43,7 +43,7 @@ Files: diagnostic CLI outside source storage; external acceptance evidence. Reus
 
 - [x] Upload exact changed modules/prompts/schema in an isolated diagnostic package through native bastion; confirm actual hash and command output.
 - [ ] Execute observe_trajectory with captured stage results. Compare output with fixed manual baseline including true print-entry, two next actions, distinct cancellations, continuous edits, independent keyboard dismiss and home endpoint.
-- [ ] Reproduce failures from captured responses before changing the failure layer. No fabricated output or broad gate reduction.
+- [x] Reproduce failures from captured responses before changing the failure layer. No fabricated output or broad gate reduction.
 - [ ] At least 3 complete runs satisfy all fixed-film hard requirements; evaluate separate recordings and report limits.
 
 ## Task 4: Existing platform integration and acceptance
@@ -56,3 +56,5 @@ Files: ui_video_analysis.py, workers/ui_video_worker.py, source snapshot persist
 - [ ] Normal platform original-film generation, review/import, stage checkpoint gates and full Runner execution on fixed phone. Separate generation/content/branch/device outcomes; do not report completion until evidence supports it.
 
 Implementation note: independent audit runs immediately after every owned packet with all original images and immutable fragment IDs. Optional revisit requests acquire bounded actual source frames, preserve canonical decoder time, extend the private media ledger and own half-open time intervals. A failed shape may consume the shared two-correction budget; missing evidence is never accepted by stripping fields. Actual full-source validation remains pending.
+
+2026-10-27 protocol revision: audit now judges supplied immutable trigger/outcome claims via separate supported/unclear/contradicted verdicts. Platform binds provided anchors, labels reference provenance and preserves raw verdicts. Owned structured issues carry final package blockers; sparse overview hypotheses remain review context. Original raw v1 failures remain unchanged; v2 must be assessed with new real model requests.

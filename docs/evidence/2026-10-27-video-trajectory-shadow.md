@@ -59,3 +59,13 @@
 - 修正仅明确每个审计片段required/allowed帧、去除重复event副本，并将完整check合同校验纳入既有共享2次纠正；审计仍检查全部原图，服务RuntimeError不作为结构错误重试，24调用及1200秒上限保留。独立复审无新增P1/P2，39项独立测试及350相关回归通过；父任务最终58项、63后端、主链编译/diff通过。
 
 - 第四轮隔离包trajectory-audit-4.zip SHA2568c8ec3bc872065194de6dde52d53ca6698d165fecdecf01d4ea7334b7f2271e7实际上传校验一致；终端解压目录实际为/acceptance-current/trajectory-aud。运行trajectory-live.py 4，当前概览完成进入observing0/9。使用正式ui_video_trajectory通道，私有覆盖当前候选模块/提示/schema，无旧transport映射；每次返回断言provider/model均qwen。结果仅写run-4私有目录，finally打包run2/3/4 JSON为evidence-4.zip。
+
+## 第四轮失败后的职责修正与第五轮
+
+- run-4完成前两个包，第三包08/09审计均将要求的111触发/112结果抄成110/111，audit_evidence失败；05复制states还消耗过一次纠正。完整run2/3/4原始JSON已原生下载并解压外部new-touch/trajectory-v1/，没有修改模型返回。
+- 另直接发现两处流程根因：稀疏overview疑问被当永久阻断；packet1把context050搜索提交报遗漏，但packet2实际已负责记录050。不能靠累积自然语言疑问判断最终完整性。
+- 新trajectory-v2审计严格阶段输出checks/issues/multiple_scenarios/revisit。模型分别判断不可变片段触发/结果为supported、unclear或contradicted，不抄帧ID；平台只从原片段绑定双锚，并明确reference_binding=platform_immutable_fragment，原始verdict保留。不是把旧审计升级为新判断，也不是平台预填confirmed。
+- issues必须含kind、owned owner_frame、实际frame_refs、具体question；context只能提供结果背景，不能作为本包新动作归属。overview_hypotheses只供完整原图后续核查，不自动进入最终阻断；观察者真实问题和独立审计合法未决问题仍保护。
+- 新反例先红后绿；368相关回归、父任务70项及全部1042视频回归18.82秒通过，63后端、主链/变更编译、diff通过。独立70项复审无P1/P2；补充了结果属于当前操作、不能借后续结果或把等待当完成。
+- trajectory-verdict-5.zip SHA256ccaf0c1e94390ca0c606c7867d81c37ee54e6806f3b44b1a890a508825c61299已实际上传核验，解压/tmp/verdict5，运行trajectory-live.py 5。当前已完成前两个包进入2/9；仍为私有诊断，没有改生产worker默认入口。
+- 实际线上模型配置页六项能力均显示Qwen3.8Max；此前实际全部Gateway路由及fallback均qwen，真实各轮runtime也为qwen_plus/qwen3.8-max/fallbackUsed=false。页面证据new-touch/current-platform/qwen-only-model-policy.png。指定手机ecbfd645与Runner18:34在线ready；快照时间仍旧，未将其当新页面验收。
