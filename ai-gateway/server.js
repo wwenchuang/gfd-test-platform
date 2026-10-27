@@ -646,7 +646,8 @@ function buildUserMessage(action, body) {
 function imagePartsFromBody(body = {}) {
   const assets = Array.isArray(body?.imageAssets) ? body.imageAssets : [];
   const wholeVideo = (body.skillName === 'ui_video_observe' && body.payload?.phase === 'whole-observe') ||
-    (body.skillName === 'ui_video_steps' && body.payload?.phase === 'whole-consolidate');
+    (body.skillName === 'ui_video_steps' && body.payload?.phase === 'whole-consolidate') ||
+    (body.skillName === 'ui_video_trajectory' && body.payload?.phase === 'whole-trajectory');
   if (wholeVideo) {
     const frames = body.payload?.image_frames;
     const details = body.payload?.detail_frames || [];
@@ -684,8 +685,8 @@ function imagePartsFromBody(body = {}) {
     const url = dataUrl.startsWith('data:image/') ? dataUrl : (base64 ? `data:${mime};base64,${base64}` : '');
     if (!url || !/^data:image\/(?:png|jpe?g|webp);base64,/i.test(url)) return [];
     const detail = wholeVideo && body.payload?.detail_frames?.find(f => f.frame_id === item.name);
-    const role = detail ? ` [${detail.source_frame_id}的同帧局部放大，不是新事件；仅辅助读文字，${body.payload?.context_frame_ids?.includes(detail.source_frame_id) ? '父帧仅供上下文参考，禁止引用或输出该帧操作' : '引用原帧'}]` : wholeVideo && body.skillName === 'ui_video_observe' && Array.isArray(body.payload?.context_frame_ids)
-      ? (body.payload.context_frame_ids.includes(item.name) ? ' [仅供上下文参考，禁止引用或输出该帧操作]' : ' [当前窗口证据，可引用]') : '';
+    const role = detail ? ` [${detail.source_frame_id}的同帧局部放大，不是新事件；仅辅助读文字，${body.payload?.context_frame_ids?.includes(detail.source_frame_id) ? '父帧仅供上下文参考，禁止引用或输出该帧操作' : '引用原帧'}]` : wholeVideo && ['ui_video_observe', 'ui_video_trajectory'].includes(body.skillName) && Array.isArray(body.payload?.context_frame_ids)
+      ? (body.payload.context_frame_ids.includes(item.name) ? (body.skillName === 'ui_video_trajectory' ? ' [可引用为前后态或结果证据；不得作为本包新动作触发]' : ' [仅供上下文参考，禁止引用或输出该帧操作]') : ' [当前窗口证据，可引用]') : '';
     return [...(wholeVideo ? [{type: 'text', text: `${item.name} ${item.timestamp_ms}ms${role}`}] : []),
       {type: 'image_url', image_url: {url}}];
   });

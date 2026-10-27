@@ -387,12 +387,11 @@ def _bind_whole_evidence(result, frames):
 
 def analyze_whole_frames(document, root, cancelled, progress=None):
     """One full-context observation, one bounded plan, at most one correction."""
-    from . import ai_skill_service as ai
     frames=document['media']['frames'];duration=document['media']['duration_ms']
     if cancelled():raise ValueError('video_cancelled')
     from .ui_video_source_service import MAX_FRAMES
     if not 2<=len(frames)<=MAX_FRAMES:raise ValueError('video_vision_limit')
-    from .ui_video_windows import observe_windows, load_assets, planning_frames
+    from .ui_video_windows import observe_windows
     observed,known_secrets=observe_windows(frames,duration,root,cancelled,progress)
     first_pass=copy.deepcopy(observed['events'])
     from .ui_video_reconcile import needs_reconciliation,reconcile
@@ -412,8 +411,19 @@ def analyze_whole_frames(document, root, cancelled, progress=None):
     # Persist the actual post-repair/post-response candidates even when planning
     # later fails; the owner-scoped raw evidence must not stop at first pass.
     if progress:progress('planning',1,1,observed['events'])
+    return consolidate_observed_frames(document,root,cancelled,observed,first_pass,known_secrets,progress)
+
+
+def consolidate_observed_frames(document, root, cancelled, observed, first_pass, known_secrets, progress=None):
+    """Compile observed evidence through the shared planning and draft gates."""
+    from . import ai_skill_service as ai
+    from .ui_video_windows import load_assets, planning_frames
+    frames=document['media']['frames'];duration=document['media']['duration_ms']
+    known_secrets=list(known_secrets)
+    trajectory_audit=({'trajectory_audit':copy.deepcopy(observed['trajectory_audit'])}
+                      if 'trajectory_audit' in observed else {})
     candidates=observed['events'];multi=observed['multiple_scenarios']
-    if not candidates:return {**observed,'raw_events':[],'raw_uncertainties':observed['uncertainties']}
+    if not candidates:return {**observed,**trajectory_audit,'raw_events':[],'raw_uncertainties':observed['uncertainties']}
     image_frames=frames if len(frames)<=60 else planning_frames(candidates,frames)
     assets=load_assets(image_frames,root,cancelled)
     required_indices=_required_interactions(candidates,duration)
@@ -450,6 +460,22 @@ def analyze_whole_frames(document, root, cancelled, progress=None):
             bound=_bind_candidate_evidence(plan,candidates,effective_required)
             checked=_validate_consolidated_analysis(bound,frames,duration,known_secrets)
             _validate_consolidated_evidence(checked,candidates,candidates,frames,image_frames,duration,effective_required,{item['candidate_index'] for item in recovery})
+            if trajectory_audit:
+                # Independent trajectory findings are immutable review blockers;
+                # a planner may neither resolve them nor erase their association.
+                from .ui_video_business_inputs import _MANUAL
+                blockers=list(observed['uncertainties'])
+                for event in candidates:
+                    # This event-local placeholder can be resolved by the later
+                    # safe input recovery pass; it is not independent evidence.
+                    blockers.extend(q for q in event['uncertainties'] if q and q!=_MANUAL)
+                for check in observed['trajectory_audit'].get('checks',[]):
+                    if check.get('status')=='needs_review':
+                        blockers.append('独立证据复核：'+(check.get('question') or '该操作的证据仍需人工核对'))
+                for event,item in zip(checked['events'],plan['events']):
+                    original=candidates[item['candidate_index']]['uncertainties']
+                    event['uncertainties']=list(dict.fromkeys(event['uncertainties']+[q for q in original if q]))
+                checked['uncertainties']=list(dict.fromkeys(blockers+checked['uncertainties']))
             proposal,snapshot=draft_proposal({**document,**checked,'print_recovery':print_group,'source_id':document.get('source_id','uvs_'+'0'*32),
                                       'analysis_version':document.get('analysis_version',1)})
             from .ui_video_result_quality import needs_result_review,configuration_review_indexes
@@ -464,9 +490,10 @@ def analyze_whole_frames(document, root, cancelled, progress=None):
                 error=ValueError('video_expected_missing')
                 error.result_check_candidate_indexes=[plan['events'][i]['candidate_index'] for i,event in enumerate(snapshot['events']) if event['draft_step_id'] in missing and 'candidate_index' in plan['events'][i]]
                 raise error
-            checked['uncertainties']=list(dict.fromkeys(observed['uncertainties']+checked['uncertainties']))[:30]
+            if not trajectory_audit:
+                checked['uncertainties']=list(dict.fromkeys(observed['uncertainties']+checked['uncertainties']))[:30]
             first_pass=validate_analysis({'events':first_pass,'uncertainties':[],'multiple_scenarios':False},frames,duration,known_secrets,max_events=120)['events']
-            return {**checked,'multiple_scenarios':multi,'first_pass_events':first_pass,'reconciliation_audit':observed.get('reconciliation_audit'),'response_review':observed.get('response_review',[]),'raw_events':candidates,'raw_uncertainties':observed['uncertainties'],'omitted_retries':recovery,'print_recovery':print_group}
+            return {**checked,**trajectory_audit,'multiple_scenarios':multi,'first_pass_events':first_pass,'reconciliation_audit':observed.get('reconciliation_audit'),'response_review':observed.get('response_review',[]),'raw_events':candidates,'raw_uncertainties':observed['uncertainties'],'omitted_retries':recovery,'print_recovery':print_group}
         except ValueError as error:
             if attempt and (outcome_review_used or not (getattr(error,'result_check_candidate_indexes',[]) or getattr(error,'outcome_event_indexes',[]))):raise
             # Never send model output/error strings back: only a fixed safe correction.

@@ -1,11 +1,12 @@
-## 2026-10-27 原片解析方法复盘与实际v4失败（进行中）
+## 2026-10-27 结构化轨迹、完整审计与原片按需补帧（进行中）
 
-- 用户要求认真复盘为何交互式理解能看懂、平台持续失败，并融合公开方法；暂停继续堆局部提示/重试，已核验作者官方仓库和模型官方文档，形成 docs/superpowers/specs/2026-10-27-video-evidence-pipeline-review.md。推荐整体状态记忆、完整动作包、结构化轨迹、局部按需回看，再复用现有编译与执行门禁；当前只是设计建议，尚未实现或切换生产。
-- 本轮实际输入已恢复。press-release.zip上传到根目录、SHA256与本地一致；解压 /acceptance-current/press-release，部署脚本实际完成fd413f4f，13:50:08公网health精确revision一致。之前的noWindowsAvailable/等待上传记录已被这次实际部署替代。13:48 Runner在线ready，仅只读前检，未下发手机。
-- 正常平台同来源uvs_2c853ccbcb1d46c1a5b91e808f22fe49、同原片、无补充目标重新生成v4，14:06:59 failed/video_required_action_missing。40首轮、48独立复核raw，无草稿、审计为空。12/12 planning来自observe_windows结束报告，不证明最终规划已开始。实际journal栈到reconcile:247→_repair_coverage:362→_repair_window:551→check_coverage:153。
-- 保存两轮观察及原帧隔离重放 /video-replay-v4.py，实际两次input-round后同层失败，missing frame-042/045/047。第二次模型已合并一轮搜索输入、保留各片段首尾，但描述“退格键点击”被只识别“点击退格键”的正则当独立业务操作。定位了假阴性；没有据此改写生成输出或放宽门禁，尚未修改运行代码。隔离响应不等于线上原始响应。
-- 完整原数据new-touch/current-platform/accept-fd413f4f-v4-failed.json，部署终端、journal、局部重放及原响应截图同目录；服务端 /acceptance-replay-v4/ 保留私有请求/结果。已知去打印、连续输入、虚构第三次下一步、独立收键盘等内容仍需整片验证，不把40/48项观察当正确动作数。
-- 后续先对同原片和固定人工基线做新旧方法隔离对照，逐项统计漏动作/多造动作/输入/因果及成本；至少3次完整解析全部硬项通过再正常平台导入门禁及完整Runner验收。仅ecbfd645/9888E0094F2A，已有归属明确测试任务有则取消、无则继续，不做最终确认物理打印。原片及手机验收仍未通过。
+- 用户明确“有好的方案直接做、然后验证、不需要同意”。新解析器在现有隔离工作树实现：全片状态记忆、稳定动作身份、跨窗输入续接、逐原帧包独立审计、按需回看原片、共享既有最终整合门禁。生产worker尚未切换，线上仍fd413f4f旧路径；不是原片或真机通过。
+- 新代码当前1013视频回归18.63秒通过，63后端、46Gateway、两Node图像传输、主链/变更编译及diff通过。独立审查的遗漏盲区/片段证据/标签冲突/审计问题消失/输入占位永久阻断/补帧归属/时间原点/新帧端点问题均先红后绿修正；最终复审批准提交与继续shadow，无剩余P1/P2。
+- 真实shadow run-1在/acceptance-trajectory-v1/run-1完成9观察包后audit_shape失败，模型复制states；完整25JSON下载到new-touch/trajectory-v1/run-1。仍漏去打印/第二次下一步，返回误写等待，不能按生成成功算通过。
+- 已直接回看原片证实frame12835967ms→12937000ms间隙漏掉去打印真实按压36.63–36.83秒；真实补帧在36667ms重新取得按钮触点。新loader保持与原解码器相同规范时间轴，无fps/setpts；非零起始视频实际反例通过。新图每次<=20/累计64、模型<=60图，连续半开时间区间唯一归属，已处理区间请求明确拒绝不孤立证据。
+- 新shadow-2包SHA2563a3717caf7bb945b1f8974b36c3ff65aed9cf0e830439ee60f893f8de1f4a85d已实际上传核对、解压并启动/acceptance-current/trajectory-shadow-2/trajectory-shadow.py 2。run-2原图私有副本及结果位于/acceptance-trajectory-v1/run-2，原来源/草稿/设备不改动。等待完整模型输出和逐项基线对照；仍需连续3次整片合格、正常平台门禁和Runner整例。
+- fd413f4f已实际部署及公网精确revision核对；正常原片来源uvs_2c853ccbcb1d46c1a5b91e808f22fe49/v4在14:06:59证据覆盖失败，40首轮48独立复核；没有正式新草稿/手机试跑。12/12planning仅观察进度，不证明最终规划已开始。
+- 固定ecbfd645/9888E0094F2A：已有归属明确测试任务有则取消、无则继续，不做最终确认物理打印。原片和手机验收都尚未通过。详细证据docs/evidence/2026-10-27-video-trajectory-shadow.md；实施计划docs/superpowers/plans/2026-10-27-video-evidence-trajectory.md。
 
 ## 2026-10-26 继续原视频真机：重叠复核及失败候选留存（待部署）
 

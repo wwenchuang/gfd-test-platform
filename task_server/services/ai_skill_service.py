@@ -313,10 +313,11 @@ def _repair_ai_skill_json_output(skill_name, raw, parse_error, model_config, run
 
 
 def _video_context_assets(skill_name, payload, assets):
-    """Only the two whole-video phases may carry a complete bounded timeline."""
+    """Only explicit whole-video phases may carry a complete bounded timeline."""
     payload = payload if isinstance(payload, dict) else {}
     scoped = ((skill_name == "ui_video_observe" and payload.get("phase") == "whole-observe") or
-              (skill_name == "ui_video_steps" and payload.get("phase") == "whole-consolidate"))
+              (skill_name == "ui_video_steps" and payload.get("phase") == "whole-consolidate") or
+              (skill_name == "ui_video_trajectory" and payload.get("phase") == "whole-trajectory"))
     if not scoped:
         return False
     frames = payload.get("image_frames")
@@ -470,7 +471,8 @@ def run_ai_skill(
         retry_count=retry_count,
         max_tokens=max_tokens,
         **({"image_limit": 60, "chronological_images": True,
-            "reference_frame_ids": payload.get("context_frame_ids") if skill_name == "ui_video_observe" else None} if whole_video else {}),
+            "reference_frame_ids": payload.get("context_frame_ids") if skill_name in {"ui_video_observe", "ui_video_trajectory"} else None,
+            "trajectory_context": skill_name == "ui_video_trajectory"} if whole_video else {}),
     )
     runtime_trace.update({
         "selectedProviderId": (model_config or {}).get("providerId") if isinstance(model_config, dict) else "",
@@ -654,6 +656,7 @@ def build_dashscope_chat_body(
     max_tokens=None,
     chronological_images=False,
     reference_frame_ids=None,
+    trajectory_context=False,
 ):
     """构建 DashScope Chat API 请求体。"""
     image_assets = image_assets or []
@@ -665,7 +668,8 @@ def build_dashscope_chat_body(
             if chronological_images:
                 label = f"{asset['name']} {asset['timestamp_ms']}ms"
                 if reference_frame_ids is not None:
-                    label += " [仅供上下文参考，禁止引用或输出该帧操作]" if asset["name"] in reference_frame_ids else " [当前窗口证据，可引用]"
+                    context_label = " [可引用为前后态或结果证据；不得作为本包新动作触发]" if trajectory_context else " [仅供上下文参考，禁止引用或输出该帧操作]"
+                    label += context_label if asset["name"] in reference_frame_ids else " [当前窗口证据，可引用]"
                 user_content.append({"type": "text", "text": label})
             user_content.append({
                 "type": "image_url",
@@ -707,6 +711,7 @@ def dashscope_chat_content(
     max_tokens=None,
     chronological_images=False,
     reference_frame_ids=None,
+    trajectory_context=False,
 ):
     """调用 DashScope Chat API 并返回 content 字符串。"""
     api_key = dashscope_api_key()
@@ -727,6 +732,7 @@ def dashscope_chat_content(
         max_tokens=max_tokens,
         chronological_images=chronological_images,
         reference_frame_ids=reference_frame_ids,
+        trajectory_context=trajectory_context,
     ), ensure_ascii=False).encode("utf-8")
     last_error = None
     for attempt in range(retries + 1):
