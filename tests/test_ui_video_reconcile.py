@@ -718,3 +718,68 @@ def test_non_return_overlapping_taps_require_pixel_review_without_merging(mutati
     before=copy.deepcopy(events)
     assert vr._overlapping_tap_refs(events)==({'f0','f1','f2','f3'} if mutation in {'overlap','one_shared_overlap','one_shared_overlap_same_end'} else set())
     assert events==before
+
+
+@pytest.mark.parametrize('repair_bad_claim',[False,True,'invalid_merge'])
+def test_sparse_overlapping_taps_can_review_shared_hold_then_following_state(monkeypatch,tmp_path,repair_bad_claim):
+    from task_server.services import ai_skill_service as ai
+    fs=[{'frame_id':f'f{i}','timestamp_ms':i*100} for i in range(9)]
+    (tmp_path/'frames').mkdir()
+    for f in fs:(tmp_path/'frames'/(f['frame_id']+'.jpg')).write_bytes(b'image')
+    first={**event(1),'target':'确认按钮','frame_refs':['f1','f4'],'end_ms':400}
+    second={**first,'start_ms':300,'frame_refs':['f3','f4']}
+    old=[first,second];checked={'events':copy.deepcopy(old),'uncertainties':[],'multiple_scenarios':False}
+    calls=[]
+    def model(skill,payload,**kw):
+        calls.append(payload)
+        assert 'f5' in {f['frame_id'] for f in payload['frames']}
+        if len(calls)>1:
+            assert 'invalid_resolution_candidate' not in payload
+            diagnostic=payload['resolution_diagnostics']['result_evidence_to_recheck'][0]
+            if repair_bad_claim is True:
+                assert diagnostic['shared_interaction_frame_candidates']==['f4']
+            else:
+                assert diagnostic['reason']=='invalid_merge_evidence'
+                assert '优先处理resolution_diagnostics中的拒绝原因' not in payload['validation_feedback']
+        response={'events':[{'action':'aiTap','target':'确认按钮','value':'','frame_refs':['f1','f4','f5'],
+            'observation':'同一持续按压，弹窗关闭后触点仍保持，随后显示模型页面','uncertainties':[]}],
+            'coverage_resolutions':[{'source_anchor_ids':['first_pass:0','first_pass:1','independent_review:0','independent_review:1'],
+                'resolution':'same_interaction','reviewed_event_index':0,'evidence':{
+                    'before_frame':'f1','interaction_frame':'f4','after_frame':'f5',
+                    'examined_frame_refs':['f1','f3','f4','f5'],'before_state':'确认弹窗可见',
+                    'interaction':'同一次持续按压，弹窗消失时触点仍保持',
+                    'after_state':'模型页面稳定显示','why_not_separate_actions':'原帧触点连续保持，未见第二次按下'}}],
+            'uncertainties':[],'multiple_scenarios':False}
+        if repair_bad_claim and len(calls)==1:
+            response['events'][0]['frame_refs']=['f1','f3','f5']
+            response['coverage_resolutions'][0]['evidence']['interaction_frame']='f3'
+            if repair_bad_claim=='invalid_merge':response['coverage_resolutions'][0]['resolution']='unknown'
+        return response
+    monkeypatch.setattr(ai,'run_ai_skill',model)
+    result=vr._repair_coverage(old,checked,fs,1000,tmp_path,lambda:False,[],{'f1','f3','f4'})
+    assert len(calls)==(2 if repair_bad_claim else 1) and len(result['events'])==1
+    assert result['events'][0]['frame_refs']==['f1','f4','f5']
+    assert len(result['reconciliation_audit']['coverage_resolutions'])==1
+    assert old==[first,second] and checked['events']==old
+
+
+@pytest.mark.parametrize('boundary',['next_interaction','video_end','frame_budget','endpoint_only'])
+def test_terminal_overlap_context_does_not_cross_actions_or_budgets(monkeypatch,tmp_path,boundary):
+    count=45 if boundary=='frame_budget' else 9
+    tail=40 if boundary=='frame_budget' else 4
+    fs=[{'frame_id':f'f{i}','timestamp_ms':i*100} for i in range(count)]
+    first={**event(1),'target':'确认按钮','frame_refs':['f1',f'f{tail}'],'end_ms':tail*100}
+    second={**first,'start_ms':(tail-1)*100,'frame_refs':[f'f{tail-1}',f'f{tail}']}
+    if boundary=='endpoint_only':second.update(start_ms=tail*100,frame_refs=[f'f{tail}'])
+    old=[first,second]
+    if boundary=='next_interaction':old.append({**event(tail+1),'target':'独立业务按钮'})
+    if boundary=='video_end':fs=fs[:tail+1]
+    captured=[]
+    def inspect(*args,**kw):
+        captured.extend(f['frame_id'] for f in args[2]);raise LookupError('captured')
+    monkeypatch.setattr(vr,'_repair_window',inspect)
+    with pytest.raises(LookupError,match='captured'):
+        vr._repair_coverage(old,{'events':copy.deepcopy(old),'uncertainties':[],'multiple_scenarios':False},
+            fs,count*100,tmp_path,lambda:False,[],{'f1',f'f{tail-1}',f'f{tail}'})
+    assert f'f{tail+1}' not in captured
+    assert len(captured)<=40
