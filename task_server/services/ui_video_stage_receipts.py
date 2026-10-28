@@ -103,4 +103,11 @@ def safe_attestation(value):
 
 
 def validate_attestation(value, body):
-    if value != make_expected_attestation(body):raise RuntimeError('video_stage_attestation_invalid')
+    # Python dict equality conflates booleans/integers and integers/equal floats.
+    # Canonical JSON preserves their wire types, as in the existing options proof.
+    try:
+        matches = canonical_sha(value) == canonical_sha(make_expected_attestation(body))
+    except (TypeError, ValueError, OverflowError, RecursionError):
+        raise RuntimeError('video_stage_attestation_invalid') from None
+    if not matches:
+        raise RuntimeError('video_stage_attestation_invalid')

@@ -336,3 +336,42 @@ def test_legacy_gateway_decoder_retains_existing_diagnostics():
  with pytest.raises(RuntimeError,match='PRIVATE_LEGACY_BODY') as error:
   ai._decode_ai_gateway_json_response(b'PRIVATE_LEGACY_BODY',content_type='PRIVATE_LEGACY_HEADER')
  assert 'PRIVATE_LEGACY_HEADER' in str(error.value)
+
+
+@pytest.mark.parametrize('entry',['adapter','run_skill'])
+@pytest.mark.parametrize('stage,field,value',[
+ ('inputs','enable_thinking',1), ('perception','enable_thinking',0),
+ ('inputs','max_tokens',3000.0), ('semantic','max_tokens',10000.0),
+ ('inputs','thinking_budget',1024.0), ('inputs','image_count',3.0),
+ ('inputs','max_tokens',True), ('inputs','image_count',float('nan')),
+ ('inputs','thinking_budget',float('inf')), ('inputs','image_count',10**400),
+])
+def test_full_attestation_rejects_wrong_numeric_types_after_raw_ack(monkeypatch,entry,stage,field,value):
+ from task_server.services.ui_video_stage_receipts import make_expected_attestation
+ skill,kw=request(stage);receipts=[];trace={};order=[]
+ def http(req,timeout):
+  order.append('http');attestation=make_expected_attestation(json.loads(req.data))
+  attestation['effective_options'][field]=value
+  return io.BytesIO(json.dumps({'success':True,'content':'ORIGINAL untouched provider content 中文',
+   'model':policy.STAGES[stage][3], 'fallbackUsed':False,'finishReason':'stop',
+   'videoPolicy':attestation}).encode())
+ def receipt(value):order.append('raw_ack');receipts.append(value)
+ monkeypatch.setattr(ai.urllib.request,'urlopen',http)
+ with pytest.raises(RuntimeError) as error:
+  if entry=='adapter':ai.ai_gateway_skill_content(skill,'pixels',**kw,runtime_trace=trace,raw_receipt=receipt)
+  else:
+   payload=kw.pop('payload');ai.run_ai_skill(skill,payload,**kw,retry_count=0,runtime_trace=trace,raw_receipt=receipt)
+ assert str(error.value)==('video_stage_attestation_invalid' if entry=='adapter' else 'video_stage_call_failed')
+ assert order==['http','raw_ack'] and len(receipts)==1
+ assert receipts[0]['content']=='ORIGINAL untouched provider content 中文'
+ assert field not in receipts[0]['videoPolicy']['effective_options']
+
+
+@pytest.mark.parametrize('value',[{'unexpected':object()}, {'unexpected':{1,2}}, {'unexpected':float('nan')}])
+def test_nonserializable_full_attestation_has_static_rejection(value):
+ from task_server.services.ui_video_stage_receipts import validate_attestation
+ skill,kw=request('inputs')
+ body={'videoStage':'inputs','payload':kw['payload'],'imageAssets':kw['image_assets'],
+       'prompt':'pixels','skillName':skill,'skillVersion':kw['version'],'videoCorrelation':'a'*32}
+ with pytest.raises(RuntimeError,match='^video_stage_attestation_invalid$'):
+  validate_attestation(value,body)
