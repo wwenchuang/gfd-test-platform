@@ -331,7 +331,10 @@ def observe_trajectory(document,root,cancelled,progress=None,record=None,revisit
         allowed={f['frame_id'] for f in packet['frames']}
         start,end=packet['owned_start_ms'],packet['owned_end_ms']
         attempted=False
-        for request in requests:
+        def exhausted(request):
+            span=[times[request['first_frame']],times[request['last_frame']]]
+            return any(a['status']=='no_new_frames' and a['packet_id']==packet['packet_id'] and a['time_range_ms']==span for a in revisit_attempts)
+        for index,request in enumerate(requests):
             if (not isinstance(request,dict) or set(request)!={'first_frame','last_frame','question'} or
                 type(request['first_frame']) is not str or type(request['last_frame']) is not str or
                 request['first_frame'] not in allowed or request['last_frame'] not in allowed):_fail('revisit_reference')
@@ -339,11 +342,12 @@ def observe_trajectory(document,root,cancelled,progress=None,record=None,revisit
             left,right=times[request['first_frame']],times[request['last_frame']]
             if left<start or right>end:_fail('revisit_outside_owned_interval')
             if not 0<right-left<=3000:_fail('revisit_budget')
-            if any(a['status']=='no_new_frames' and a['packet_id']==packet['packet_id'] and a['time_range_ms']==[left,right] for a in revisit_attempts):
+            if exhausted(request):
                 questions.append('补帧区间已无新增原帧，仍需核实：'+request['first_frame']+'至'+request['last_frame']+'：'+request['question'])
                 continue
             if revisits>=4:_fail('revisit_budget')
-            capacity=min(20,60-len(packet['frames']))
+            remaining=sum(not exhausted(pending) for pending in requests[index:])
+            capacity=min(20,(60-len(packet['frames']))//remaining)
             if capacity<2:raise ValueError('video_vision_limit')
             extra=revisit(request,capacity)
             if cancelled():raise ValueError('video_cancelled')

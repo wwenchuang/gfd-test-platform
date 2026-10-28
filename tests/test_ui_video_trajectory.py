@@ -553,3 +553,78 @@ def test_malformed_revisit_shape_before_envelope_return_is_corrected_without_sta
     rejection=rejections[-1]
     assert rejection['reason']=='revisit_shape'
     assert 'requests' not in rejection
+
+
+def capacity_observer(monkeypatch, *, first_count=None, exhausted_first=False, packet_size=44):
+    """Exercise real packet expansion; only the AI and image IO are stubbed."""
+    from task_server.services import ai_skill_service,ui_video_windows
+    original=frames();loads=[];observations=[];raw_replies=[];packets=vt.make_packets(original,[])
+    packet=packets[1]
+    if packet_size!=44:
+        refs={f['frame_id'] for f in packet['frames']}
+        packet['frames']+=copy.deepcopy([f for f in original if f['frame_id'] not in refs][:packet_size-44])
+        packet['frames'].sort(key=lambda f:f['timestamp_ms'])
+        owned=set(packet['owned_frame_ids'])
+        packet['context_frame_ids']=[f['frame_id'] for f in packet['frames'] if f['frame_id'] not in owned]
+        monkeypatch.setattr(vt,'make_packets',lambda *a:copy.deepcopy(packets))
+    requests=[dict(first_frame='frame-033',last_frame='frame-035',question='第一处独立触发证据'),
+              dict(first_frame='frame-036',last_frame='frame-038',question='第二处独立触发证据')]
+    def reply(name,payload,**kw):
+        raw=dict(states=[],events=[],checks=[],uncertainties=[],multiple_scenarios=False)
+        if kw['version']=='observe' and payload['packet_id']=='packet-002':
+            observations.append(copy.deepcopy(payload))
+            raw['events']=[event(['frame-033','frame-034'])]
+            if len(observations)==1:raw['revisit']=[requests[1]] if exhausted_first else requests
+            elif exhausted_first and len(observations)==2:raw['revisit']=requests
+            raw_replies.append(copy.deepcopy(raw))
+        if kw['version']=='audit':
+            raw=dict(checks=[dict(event_id=x['track']['event_id'],trigger_verdict='supported',outcome_verdict='supported',question='') for x in payload['trajectory']],issues=[],multiple_scenarios=False,revisit=[])
+        return raw
+    monkeypatch.setattr(ai_skill_service,'run_ai_skill',reply)
+    monkeypatch.setattr(ui_video_windows,'load_assets',lambda *a:[])
+    def loader(request,capacity):
+        loads.append((copy.deepcopy(request),capacity))
+        if exhausted_first and request==requests[1]:return []
+        count=first_count if first_count is not None and len(loads)==1 else capacity
+        start=3300 if request==requests[0] else 3600
+        offset=0 if request==requests[0] else 20
+        return [dict(frame_id=f'frame-{91+offset+i:03d}',timestamp_ms=start+i+1) for i in range(count)]
+    return original,packets,requests,loads,observations,raw_replies,loader
+
+
+@pytest.mark.parametrize('first_count,capacities,final_size',[(None,[8,8],60),(3,[8,13],60),(0,[8,16],60)])
+def test_two_revisit_windows_share_capacity_and_roll_unused_slots_forward(monkeypatch,first_count,capacities,final_size):
+    original,packets,requests,loads,observations,replies,loader=capacity_observer(monkeypatch,first_count=first_count)
+    result=vt.observe_trajectory({'media':dict(frames=original,duration_ms=9001)},None,lambda:False,revisit=loader)
+    assert [capacity for _,capacity in loads]==capacities
+    assert [request for request,_ in loads]==requests
+    assert len(observations[-1]['frames'])==final_size
+    packet=result['trajectory_audit']['packets'][1]['packet']
+    assert all(f in packet['frames'] for f in packets[1]['frames'])
+    assert all(f in result['media']['frames'] for f in original)
+    owners=[r for p in result['trajectory_audit']['packets'] for r in p['packet']['owned_frame_ids']]
+    assert len(owners)==len(set(owners))==len(result['media']['frames'])
+    assert set(owners)=={f['frame_id'] for f in result['media']['frames']}
+    assert packet['context_frame_ids']==packets[1]['context_frame_ids']
+    assert result['trajectory_audit']['packets'][1]['raw']==replies[-1]
+    assert replies[-1]['events'][0]['frame_refs']==['frame-033','frame-034']
+    assert observations[0]['frames']==packets[1]['frames']
+    if first_count==0:
+        assert any(requests[0]['question'] in q for q in result['uncertainties'])
+
+
+def test_exhausted_revisit_neither_reserves_slots_nor_decodes_or_consumes_attempt_again(monkeypatch):
+    original,_,requests,loads,observations,_,loader=capacity_observer(monkeypatch,exhausted_first=True)
+    result=vt.observe_trajectory({'media':dict(frames=original,duration_ms=9001)},None,lambda:False,revisit=loader)
+    assert loads==[(requests[1],16),(requests[0],16)]
+    assert len(result['trajectory_audit']['revisit_attempts'])==2
+    assert len(observations[-1]['frames'])==60
+    assert any(requests[1]['question'] in q for q in result['uncertainties'])
+
+
+@pytest.mark.parametrize('packet_size',[57,58,59,60])
+def test_two_revisit_windows_require_minimum_capacity_before_any_loader(monkeypatch,packet_size):
+    original,_,_,loads,_,_,loader=capacity_observer(monkeypatch,packet_size=packet_size)
+    with pytest.raises(ValueError,match='video_vision_limit'):
+        vt.observe_trajectory({'media':dict(frames=original,duration_ms=9001)},None,lambda:False,revisit=loader)
+    assert loads==[]
