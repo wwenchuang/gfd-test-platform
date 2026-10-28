@@ -448,6 +448,7 @@ def run_ai_skill(
     gateway_enabled = safe_bool(os.getenv("MIDSCENE_AI_SKILLS_USE_GATEWAY", "1"), True)
     gateway_error = ""
     if gateway_enabled:
+        stage_response_received = False
         try:
             invoke = (lambda fn, *_: fn()) if stage else _run_ai_skill_call_with_hard_timeout
             raw = invoke(
@@ -469,6 +470,7 @@ def run_ai_skill(
                 timeout,
                 f"AI Gateway skill {skill_name}",
             )
+            stage_response_received = True
             json_repaired = False
             try:
                 result = normalize_model_json(raw)
@@ -518,6 +520,8 @@ def run_ai_skill(
                 raise
             gateway_error = "video_stage_call_failed" if stage else str(exc)
             runtime_trace.update({"source": "ai_gateway", "error": gateway_error[:500]})
+            if stage and not stage_response_received:
+                raise RuntimeError("video_stage_call_failed") from None
             if whole_video or model_config or AI_SKILLS_STRICT_MODEL:
                 raise RuntimeError(
                     f"AI Gateway skill 调用失败；显式模型只允许由 Gateway 按可用性/能力策略回退：{exc}"
@@ -697,19 +701,30 @@ def ai_gateway_skill_content(
     if remaining <= 0:raise TimeoutError('video_stage_deadline')
     try:
         with urllib.request.urlopen(req, timeout=remaining) as resp:
-            data = _decode_ai_gateway_json_response(
-                read_response_bytes(resp, min(AI_MAX_RESPONSE_BYTES, 1024*1024) if stage else AI_MAX_RESPONSE_BYTES, "AI Gateway"),
-                status=getattr(resp, "status", 200),
-                content_type=_ai_gateway_response_content_type(resp),
-                endpoint=endpoint,
-            )
+            if stage:
+                # HTTP envelopes are not provider content. Never preview their body/headers.
+                raw_response = read_response_bytes(resp, min(AI_MAX_RESPONSE_BYTES, 1024*1024), "AI Gateway")
+                try:
+                    data = json.loads(raw_response)
+                except (ValueError, UnicodeError, RecursionError):
+                    raise RuntimeError('video_stage_gateway_response_invalid') from None
+                if (not isinstance(data, dict) or type(data.get('success')) is not bool or
+                        type(data.get('content')) is not str):
+                    raise RuntimeError('video_stage_gateway_response_invalid')
+            else:
+                data = _decode_ai_gateway_json_response(
+                    read_response_bytes(resp, AI_MAX_RESPONSE_BYTES, "AI Gateway"),
+                    status=getattr(resp, "status", 200),
+                    content_type=_ai_gateway_response_content_type(resp),
+                    endpoint=endpoint,
+                )
     except urllib.error.HTTPError as exc:
         if stage:
             rejection = 'video_stage_gateway_rejected'
             try:
                 rejected = json.loads(read_response_bytes(exc, 1024*1024, 'AI Gateway'))
                 code = rejected.get('error') if isinstance(rejected, dict) else None
-                if code in {'video_stage_actual_model_invalid', 'video_stage_provider_failed',
+                if type(code) is str and code in {'video_stage_actual_model_invalid', 'video_stage_provider_failed',
                             'video_stage_cancelled', 'video_stage_deadline',
                             'video_perception_reasoning_usage_invalid'}:
                     rejection = code
@@ -734,6 +749,16 @@ def ai_gateway_skill_content(
         except RuntimeError as decode_exc:
             error_text = str(decode_exc)
         raise RuntimeError(f"AI Gateway HTTP {exc.code}：{error_text}") from exc
+    except TimeoutError:
+        if stage:
+            raise TimeoutError('video_stage_deadline') from None
+        raise
+    except Exception as exc:
+        if stage:
+            code = ('video_stage_gateway_response_invalid' if type(exc) is RuntimeError and
+                    str(exc) == 'video_stage_gateway_response_invalid' else 'video_stage_gateway_transport_failed')
+            raise RuntimeError(code) from None
+        raise
     selected_provider_id = model_config.get("providerId") or model_config.get("provider") or ""
     selected_model = model_config.get("model") or model_config.get("modelName") or ""
     usage = data.get("usage") if isinstance(data.get("usage"), dict) else {}
@@ -786,6 +811,8 @@ def ai_gateway_skill_content(
                   data.get("finishReason") != "stop"):
         raise RuntimeError("video_stage_reply_invalid")
     if not content.strip():
+        if stage:
+            raise RuntimeError('video_stage_reply_invalid')
         raise RuntimeError(
             "AI Gateway skill 返回空内容："
             f"provider={data.get('providerId') or selected_provider_id} "

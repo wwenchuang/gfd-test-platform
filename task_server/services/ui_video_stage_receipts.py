@@ -2,7 +2,7 @@
 import copy
 import hashlib
 import json
-import math
+import re
 from .ui_video_stage_policy import POLICY_VERSION, STAGES
 
 SYSTEM_PROMPT = '你是移动端测试平台 AI Skill 执行器。必须严格遵守用户输入的 Skill Prompt，只输出合法 JSON。'
@@ -53,18 +53,52 @@ def make_expected_attestation(body):
 
 
 def safe_attestation(value):
-    """Bounded positive projection even on malformed/untrusted Gateway replies."""
-    if not isinstance(value,dict):return None
-    out={k:v for k in ('version','stage','skill','skill_version','correlation','model','provider_options_sha256','output_schema_sha256')
-         if (v:=value.get(k)) is None or (type(v) is str and len(v)<=128)}
-    effective=value.get('effective_options')
-    if isinstance(effective,dict):
-        allowed={'model','temperature','max_tokens','enable_thinking','thinking_budget','response_format','image_count'}
-        out['effective_options']={k:v for k,v in effective.items() if k in allowed and
-            (type(v) is bool or (type(v) in (int,float) and -2**53 <= v <= 2**53 and math.isfinite(v)) or (type(v) is str and len(v)<=128))}
-        refs=effective.get('fine_frame_ids')
-        if isinstance(refs,list) and len(refs)<=60 and all(type(r) is str and len(r)<=32 for r in refs):
-            out['effective_options']['fine_frame_ids']=list(refs)
+    """Export only closed policy metadata, even before full attestation rejection."""
+    if not isinstance(value, dict):
+        return None
+    out = {}
+    enums = {
+        'version': {POLICY_VERSION}, 'stage': set(STAGES),
+        'skill': {config[0] for config in STAGES.values()},
+        'skill_version': {config[1] for config in STAGES.values()},
+        'model': {config[3] for config in STAGES.values()},
+    }
+    for key, allowed in enums.items():
+        item = value.get(key)
+        if type(item) is str and item in allowed:
+            out[key] = item
+    for key, length in (('correlation', 32), ('provider_options_sha256', 64),
+                        ('output_schema_sha256', 64)):
+        item = value.get(key)
+        if type(item) is str and re.fullmatch(r'[0-9a-f]{' + str(length) + '}', item):
+            out[key] = item
+        elif key == 'output_schema_sha256' and key in value and item is None:
+            out[key] = None
+    effective = value.get('effective_options')
+    if isinstance(effective, dict):
+        safe = {}
+        for key, allowed in (('model', enums['model']),
+                             ('response_format', {'json_object', 'json_schema'})):
+            item = effective.get(key)
+            if type(item) is str and item in allowed:
+                safe[key] = item
+        item = effective.get('temperature')
+        if type(item) in (int, float) and item == 0.1:
+            safe['temperature'] = item
+        for key, allowed in (('max_tokens', {config[4] for config in STAGES.values()}),
+                             ('thinking_budget', {1024}), ('image_count', {0, *range(2, 61)})):
+            item = effective.get(key)
+            if type(item) is int and item in allowed:
+                safe[key] = item
+        item = effective.get('enable_thinking')
+        if type(item) is bool:
+            safe['enable_thinking'] = item
+        refs = effective.get('fine_frame_ids')
+        if (isinstance(refs, list) and len(refs) <= 12 and
+                all(type(ref) is str and re.fullmatch(r'frame-(?:[0-9]{3}|end)', ref) for ref in refs) and
+                len(set(refs)) == len(refs)):
+            safe['fine_frame_ids'] = list(refs)
+        out['effective_options'] = safe
     return out
 
 
