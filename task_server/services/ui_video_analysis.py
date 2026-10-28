@@ -716,12 +716,15 @@ def _expected_candidate(event, goal):
 
 
 def draft_proposal(document):
+    from .ui_video_execution_contract import source_execution_contract
+    execution_contract=source_execution_contract(document)
     identifier=document['source_id'];version=document['analysis_version']
     snapshot={'kind':'video','source_id':identifier,'app_id':document['app_id'],'analysis_version':version,
               'duration_ms':document['media']['duration_ms'],'frames':document['media']['frames'],
               'events':copy.deepcopy(document['events']),'goal':document['goal'],
               'generated_title':document.get('title',''),'input_recovery':copy.deepcopy(document.get('input_recovery',[])),'response_review':copy.deepcopy(document.get('response_review',[])),'omitted_retries':copy.deepcopy(document.get('omitted_retries',[])),
               'raw_events':copy.deepcopy(document.get('raw_events',[])),'first_pass_events':copy.deepcopy(document.get('first_pass_events',[])),'reconciliation_audit':copy.deepcopy(document.get('reconciliation_audit')),'print_recovery':copy.deepcopy(document.get('print_recovery'))}
+    if execution_contract is not None:snapshot['execution_contract']=execution_contract
     snapshot['snapshot_id']=hashlib.sha256(json.dumps([identifier,version]).encode()).hexdigest()
     steps=[];questions=list(document['uncertainties'])
     if document.get('omitted_retries'):

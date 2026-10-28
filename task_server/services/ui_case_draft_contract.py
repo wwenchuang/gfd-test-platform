@@ -161,12 +161,14 @@ def click_target_condition(target):
     return "页面中可见且可点击的目标：" + target
 
 
-def build_draft_yaml(draft, app_id):
+def build_draft_yaml(draft, app_id, *, execution_contract=None):
     """Build an Android source candidate; target compiler retains capability gates.
 
     Every generated flow entry maps to its source step. The automatic launch is
     attributed to the first source step rather than a synthetic editable step.
     """
+    from .ui_video_execution_contract import validate_execution_contract
+    validate_execution_contract(execution_contract)
     app_id = _app_id(app_id)
     normalized = normalize_steps(draft, app_id)
     steps = normalized['steps']
@@ -195,6 +197,8 @@ def build_draft_yaml(draft, app_id):
         item = {'aiQuery': PREFIX + target} if action == 'selectRecord' else {action: target}
         if action == 'aiInput':
             item['value'] = step['value']
+            if execution_contract is not None and step['source_ref'].startswith('video:'):
+                item['autoDismissKeyboard'] = False
         elif action == 'aiScroll':
             item.update(step['value'])
         elif action == 'aiWaitFor':

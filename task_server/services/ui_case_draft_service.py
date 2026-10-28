@@ -9,6 +9,7 @@ from . import ai_skill_service, business_line_service, yaml_baseline_cache
 from .operation_attribution import actor_context, current_actor
 from .ui_case_compiler import compile_ui_case
 from .ui_case_draft_contract import build_draft_yaml, normalize_steps
+from .ui_video_execution_contract import compiler_options
 from .ui_case_draft_store import DraftConflict, DraftStore
 from .ui_execution_contract import AccessDenied, require_ui_actor, resolve_ui_target
 from .ui_execution_messages import blocker_message
@@ -164,7 +165,8 @@ def _generate(draft_id, trusted_actor, lock):
             source = document.get('source_snapshot', {})
             if source.get('kind') == 'requirement' and not source.get('expected'):
                 normalized['questions'].append('原始用例未提供明确预期，请补充并核对')
-            compiled = build_draft_yaml(normalized, document['app_id'])
+            compiled = build_draft_yaml(normalized, document['app_id'],
+                **compiler_options(document.get('source_snapshot', {}), document['app_id'], normalized['steps']))
             store.set_generation(draft_id, owner_id, 'ready', {
                 **normalized, 'yaml_content': compiled['yaml_content'], 'ready': False,
             })
@@ -356,7 +358,8 @@ def apply_yaml_candidate(actor, draft_id, body):
     content = {key: document[key] for key in _EDIT_KEYS | {'yaml_content'}}
     try:
         normalized = parse_candidate(raw, document['app_id'], document['preconditions'])
-        compiled = build_draft_yaml(normalized, document['app_id'])
+        compiled = build_draft_yaml(normalized, document['app_id'],
+            **compiler_options(document.get('source_snapshot', {}), document['app_id'], normalized['steps']))
         content = {**normalized, 'yaml_content': compiled['yaml_content']}
     except ValueError as error:
         candidate.update(status='invalid', error=str(error))
@@ -387,7 +390,8 @@ def update_draft(actor, draft_id, body):
         if isinstance(step, dict) and step.get('source_ref', 'text') != provenance.get(step.get('step_id'), 'text'):
             raise ValueError('draft_source_invalid')
     normalized = normalize_steps({key: body[key] for key in _EDIT_KEYS}, document['app_id'])
-    compiled = build_draft_yaml(normalized, document['app_id'])
+    compiled = build_draft_yaml(normalized, document['app_id'],
+        **compiler_options(document.get('source_snapshot', {}), document['app_id'], normalized['steps']))
     require_ui_actor(actor, permission='ui.edit', app_id=document['app_id'])
     return _store().revise(draft_id, profile['user_id'], revision,
                            {**normalized, 'yaml_content': compiled['yaml_content'], 'ready': False, 'yaml_candidate': {}})
@@ -429,7 +433,8 @@ def validate_draft(actor, draft_id, body):
     if document['generation_status'] in {'queued', 'generating', 'failed'} or not document['steps']:
         gate['blockers'].append({'code': 'draft_generation_incomplete', 'message': '请先完成步骤整理或人工编辑'})
         return gate
-    candidate = build_draft_yaml({key: document[key] for key in _EDIT_KEYS}, document['app_id'])
+    candidate = build_draft_yaml({key: document[key] for key in _EDIT_KEYS}, document['app_id'],
+        **compiler_options(document.get('source_snapshot', {}), document['app_id'], document['steps']))
     gate['blockers'].extend(candidate['questions'])
     static = validate_yaml_static_executable(candidate['yaml_content'], strict=True)
     score = score_midscene_yaml_executable(candidate['yaml_content'], generated=True, compiler_roles=candidate['compiler_roles'])

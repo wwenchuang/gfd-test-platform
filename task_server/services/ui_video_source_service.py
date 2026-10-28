@@ -488,7 +488,8 @@ def import_video_draft(actor, identifier, app):
     if document.get('draft_id'):return _store().get(document['draft_id'],profile['user_id'])
     if document['status']!='ready':raise ValueError('video_not_ready')
     proposal,snapshot=draft_proposal(document)
-    compiled=build_draft_yaml(proposal,app)
+    from .ui_video_execution_contract import compiler_options
+    compiled=build_draft_yaml(proposal,app,**compiler_options(snapshot,app,proposal['steps']))
     store.transition(identifier,{'ready'},'ready',retained=True)
     draft=_store().create(profile,app,'来源：上传录屏，观察与推断未经手机验证。',recording_snapshot=snapshot,
                            recording_content={**proposal,'yaml_content':compiled['yaml_content'],'ready':False})
