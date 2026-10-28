@@ -499,7 +499,7 @@ function routeWithModel(action, route, model) {
 }
 
 async function routeCandidatesForCall(action, body = {}, options = {}) {
-  const disableFallback = Boolean(options.disableFallback || body?.disableFallback);
+  const disableFallback = Boolean(Object.hasOwn(body, 'videoStage') || options.disableFallback || body?.disableFallback);
   const requestedProviderId = requestedProviderIdFromBody(body, options);
   let routes = [];
   if (requestedProviderId) {
@@ -586,7 +586,169 @@ function routeSupportsQwenHybridThinking(route) {
   return baseUrl.includes('dashscope.aliyuncs.com') && /^qwen3\.(?:5|6|7|8)(?:-|$)/.test(model);
 }
 
+// Stage capabilities are server invocation parameters, never a public response_format.
+function videoSemanticContract() {
+  const text = () => ({type: 'string'});
+  const list = items => ({type: 'array', items});
+  const object = properties => ({type: 'object', properties, required: Object.keys(properties), additionalProperties: false});
+  const choice = values => ({type: 'string', enum: values});
+  const refs = () => list(text());
+  return object({
+    states: list(object({state_id: text(), first_frame: text(), last_frame: text(),
+      kind: choice(['page', 'input', 'wait', 'transition']), description: text()})),
+    events: list(object({action: choice(['aiTap', 'aiInput', 'aiScroll', 'aiAssert', 'aiWaitFor']),
+      target: text(), value: {anyOf: [choice(['']), object({direction: choice(['up', 'down', 'left', 'right']),
+        scrollType: choice(['singleAction'])})]}, frame_refs: refs(), observation: text(), uncertainties: refs(),
+      trigger_frame: text(), trigger_kind: choice(['touch', 'pressed_control', 'navigation', 'edit', 'automatic', 'uncertain']),
+      page_before: text(), page_after: text(), continuation_of: text(),
+      edit_boundary: choice(['none', 'submission', 'field_change', 'navigation']),
+      outcome: object({frame_refs: refs(), observation: text()})})),
+    checks: list(object({event_id: text(), status: choice(['confirmed', 'needs_review']), frame_refs: refs(), question: text()})),
+    uncertainties: refs(), multiple_scenarios: {type: 'boolean'},
+    revisit: list(object({first_frame: text(), last_frame: text(), question: text()})),
+  });
+}
+
+function validateVideoOutputSchema(schema) {
+  const fail = () => { throw new Error('video_output_schema_invalid'); };
+  let encoded;
+  try { encoded = JSON.stringify(schema); } catch { fail(); }
+  if (!encoded || Buffer.byteLength(encoded, 'utf8') > 32768) fail();
+  let count = 0;
+  function normalize(node, depth = 0) {
+    if (++count > 512 || depth > 16 || !node || typeof node !== 'object' || Array.isArray(node)) fail();
+    const keys = Object.keys(node);
+    if (keys.length === 1 && ['anyOf', 'oneOf'].includes(keys[0])) {
+      const variants = node[keys[0]];
+      if (!Array.isArray(variants) || variants.length < 2 || variants.length > 8) fail();
+      return {anyOf: variants.map(child => normalize(child, depth + 1))};
+    }
+    const out = {...node};
+    if (keys.length === 1 && keys[0] === 'enum') out.type = 'string';
+    const kind = out.type;
+    const allowed = new Set(['type', 'enum']);
+    if (kind === 'object') {
+      ['properties', 'required', 'additionalProperties'].forEach(k => allowed.add(k));
+      const props = out.properties, required = out.required;
+      if (!props || typeof props !== 'object' || Array.isArray(props) || !Array.isArray(required) ||
+          out.additionalProperties !== false || Object.keys(props).some(k => !k || k.length > 128) ||
+          required.some(k => typeof k !== 'string') || new Set(required).size !== required.length ||
+          required.length !== Object.keys(props).length || required.some(k => !Object.hasOwn(props, k))) fail();
+      out.properties = Object.fromEntries(Object.entries(props).map(([k, child]) => [k, normalize(child, depth + 1)]));
+    } else if (kind === 'array') {
+      allowed.add('items'); out.items = normalize(out.items, depth + 1);
+    } else if (!['string', 'boolean', 'integer', 'number'].includes(kind)) fail();
+    if (Object.keys(out).some(k => !allowed.has(k))) fail();
+    if (Object.hasOwn(out, 'enum')) {
+      const values = out.enum;
+      if (['object', 'array'].includes(kind) || !Array.isArray(values) || !values.length || values.length > 128 ||
+          new Set(values).size !== values.length ||
+          values.some(v => kind === 'integer' ? !Number.isSafeInteger(v) : kind === 'number' ?
+            typeof v !== 'number' || !Number.isFinite(v) : typeof v !== kind)) fail();
+    }
+    return out;
+  }
+  const normalized = normalize(schema), expected = videoSemanticContract();
+  const props = normalized.properties || {}, fields = ['states', 'events', 'checks', 'uncertainties', 'multiple_scenarios'];
+  if (Object.keys(props).length === fields.length && fields.every(k => Object.hasOwn(props, k))) {
+    delete expected.properties.revisit; expected.required = fields;
+  }
+  function match(actual, contract) {
+    if (Object.hasOwn(contract, 'anyOf')) {
+      if (Object.keys(actual).length !== 1 || !Array.isArray(actual.anyOf) || actual.anyOf.length !== contract.anyOf.length) fail();
+      actual.anyOf.forEach((child, i) => match(child, contract.anyOf[i]));
+      return;
+    }
+    if (actual.type !== contract.type) fail();
+    if (contract.type === 'object') {
+      if (Object.keys(actual.properties).length !== Object.keys(contract.properties).length ||
+          Object.keys(contract.properties).some(k => !Object.hasOwn(actual.properties, k))) fail();
+      Object.entries(contract.properties).forEach(([k, child]) => match(actual.properties[k], child));
+    } else if (contract.type === 'array') match(actual.items, contract.items);
+    if (contract.enum) {
+      if (contract.enum.length === 1 && contract.enum[0] === '' && !actual.enum) actual.enum = [''];
+      if (!actual.enum || actual.enum.some(v => !contract.enum.includes(v))) fail();
+    }
+  }
+  match(normalized, expected);
+  return normalized;
+}
+
+function validateVideoStage(body, route) {
+  if (!Object.hasOwn(body || {}, 'videoStage')) {
+    if (body?.skillName === 'ui_video_perception') throw new Error('video_stage_required');
+    if (Object.hasOwn(body || {}, 'outputSchema')) throw new Error('video_stage_schema_without_stage');
+    return null;
+  }
+  const stage = body.videoStage, payload = body.payload;
+  if (!['perception', 'semantic', 'audit'].includes(stage)) throw new Error('video_stage_invalid');
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload) || body.jsonResponse !== true ||
+      body.skillName !== (stage === 'perception' ? 'ui_video_perception' : 'ui_video_trajectory') ||
+      payload.phase !== (stage === 'perception' ? 'whole-perception' : 'whole-trajectory'))
+    throw new Error('video_stage_scope_invalid');
+  if (route && (route.model !== 'qwen3.8-max' ||
+      !/^https:\/\/dashscope(?:-intl|-us)?\.aliyuncs\.com(?:\/|$)/i.test(String(route.baseUrl || ''))))
+    throw new Error('video_stage_route_unsupported');
+  const frames = stage === 'semantic' ? payload.frames : payload.image_frames;
+  if (!Array.isArray(frames) || frames.length < 2 || frames.length > 1000) throw new Error('video_frames_invalid');
+  let last = -1; const names = new Set();
+  for (const frame of frames) {
+    if (!/^frame-(?:[0-9]{3}|end)$/.test(frame?.frame_id || '') || names.has(frame.frame_id) ||
+        !Number.isInteger(frame.timestamp_ms) || frame.timestamp_ms <= last || frame.timestamp_ms > 600000)
+      throw new Error('video_frames_invalid');
+    names.add(frame.frame_id); last = frame.timestamp_ms;
+  }
+  const assets = body.imageAssets;
+  if (stage === 'semantic') {
+    if (!Array.isArray(assets) || assets.length || payload.reasoning_mode !== 'bounded' ||
+        ['image_frames', 'detail_frames', 'perception_mode', 'perception_frame_ids'].some(k => Object.hasOwn(payload, k)))
+      throw new Error('video_stage_semantic_invalid');
+    validateVideoOutputSchema(body.outputSchema);
+    return stage;
+  }
+  if (Object.hasOwn(body, 'outputSchema')) throw new Error('video_stage_schema_invalid');
+  if (!Array.isArray(assets) || assets.length !== frames.length || assets.length < 2 || assets.length > (stage === 'perception' ? 12 : 60))
+    throw new Error('video_vision_limit');
+  if (stage === 'perception') {
+    if (typeof payload.packet_id !== 'string' || !payload.packet_id || payload.packet_id.length > 128 ||
+        JSON.stringify(payload.frames) !== JSON.stringify(frames) ||
+        ['detail_frames', 'perception_mode', 'perception_frame_ids'].some(k => Object.hasOwn(payload, k)))
+      throw new Error('video_stage_perception_invalid');
+    const partition = new Set();
+    for (const role of ['owned', 'context']) {
+      const refs = payload[`${role}_frame_ids`]; let previous = -1;
+      if (!Array.isArray(refs)) throw new Error('video_frames_invalid');
+      for (const ref of refs) {
+        const index = frames.findIndex(f => f.frame_id === ref);
+        if (typeof ref !== 'string' || !/^frame-[0-9]{3}$/.test(ref) || index <= previous || partition.has(ref))
+          throw new Error('video_frames_invalid');
+        partition.add(ref); previous = index;
+      }
+    }
+    if (partition.size !== frames.length) throw new Error('video_frames_invalid');
+  } else {
+    if (payload.reasoning_mode !== 'bounded' || Object.hasOwn(payload, 'detail_frames')) throw new Error('video_stage_audit_invalid');
+    if (['perception_mode', 'perception_frame_ids'].some(k => Object.hasOwn(payload, k)) &&
+        (payload.perception_mode !== 'fine-detail' || !Array.isArray(payload.perception_frame_ids) ||
+         !payload.perception_frame_ids.length || payload.perception_frame_ids.length > 12 ||
+         new Set(payload.perception_frame_ids).size !== payload.perception_frame_ids.length ||
+         payload.perception_frame_ids.some(ref => typeof ref !== 'string' || !names.has(ref))))
+      throw new Error('video_stage_audit_invalid');
+  }
+  let total = 0;
+  for (const [i, asset] of assets.entries()) {
+    const frame = frames[i], data = asset?.base64;
+    if (asset?.name !== frame.frame_id || asset.timestamp_ms !== frame.timestamp_ms || asset.mime !== 'image/jpeg' ||
+        typeof data !== 'string' || !data || asset.dataUrl) throw new Error('video_frames_invalid');
+    total += data.length;
+    if (total > 10 * 1024 * 1024) throw new Error('video_vision_limit');
+    if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(data)) throw new Error('video_frames_invalid');
+  }
+  return stage;
+}
+
 function completionOptionsForRoute(route, prompt, body, callOptions = {}) {
+  const videoStage = validateVideoStage(body, route);
   const userText = callOptions.userMessage || buildUserMessage(route.action || 'chat', body);
   const imageParts = imagePartsFromBody(body);
   const trajectoryDetailScope = body?.skillName === 'ui_video_trajectory' && body?.payload?.phase === 'whole-trajectory';
@@ -643,6 +805,18 @@ function completionOptionsForRoute(route, prompt, body, callOptions = {}) {
     completionOptions.enable_thinking = true;
     completionOptions.thinking_budget = 1024;
   }
+  if (videoStage) {
+    completionOptions.temperature = 0.1;
+    completionOptions.max_tokens = videoStage === 'perception' ? 4000 : 10000;
+    completionOptions.enable_thinking = videoStage !== 'perception';
+    if (videoStage === 'perception') {
+      delete completionOptions.thinking_budget;
+      for (const part of imageParts) if (part.type === 'image_url') part.min_pixels = 1658880;
+    } else completionOptions.thinking_budget = 1024;
+    completionOptions.response_format = videoStage === 'semantic' ?
+      {type: 'json_schema', json_schema: {name: 'video_semantic', strict: true, schema: validateVideoOutputSchema(body.outputSchema)}} :
+      {type: 'json_object'};
+  }
   return completionOptions;
 }
 
@@ -677,7 +851,9 @@ function buildUserMessage(action, body) {
 
 function imagePartsFromBody(body = {}) {
   const assets = Array.isArray(body?.imageAssets) ? body.imageAssets : [];
-  const wholeVideo = (body.skillName === 'ui_video_observe' && body.payload?.phase === 'whole-observe') ||
+  if (body.videoStage === 'semantic') return [];
+  const wholeVideo = (body.videoStage === 'perception' && body.skillName === 'ui_video_perception' && body.payload?.phase === 'whole-perception') ||
+    (body.skillName === 'ui_video_observe' && body.payload?.phase === 'whole-observe') ||
     (body.skillName === 'ui_video_steps' && body.payload?.phase === 'whole-consolidate') ||
     (body.skillName === 'ui_video_trajectory' && body.payload?.phase === 'whole-trajectory');
   if (wholeVideo) {
@@ -717,7 +893,7 @@ function imagePartsFromBody(body = {}) {
     const url = dataUrl.startsWith('data:image/') ? dataUrl : (base64 ? `data:${mime};base64,${base64}` : '');
     if (!url || !/^data:image\/(?:png|jpe?g|webp);base64,/i.test(url)) return [];
     const detail = wholeVideo && body.payload?.detail_frames?.find(f => f.frame_id === item.name);
-    const role = detail ? ` [${detail.source_frame_id}的同帧局部放大，不是新事件；仅辅助读文字，${body.payload?.context_frame_ids?.includes(detail.source_frame_id) ? '父帧仅供上下文参考，禁止引用或输出该帧操作' : '引用原帧'}]` : wholeVideo && ['ui_video_observe', 'ui_video_trajectory'].includes(body.skillName) && Array.isArray(body.payload?.context_frame_ids)
+    const role = body.videoStage === 'perception' ? ` [${body.payload.context_frame_ids.includes(item.name) ? 'context' : 'owned'}]` : detail ? ` [${detail.source_frame_id}的同帧局部放大，不是新事件；仅辅助读文字，${body.payload?.context_frame_ids?.includes(detail.source_frame_id) ? '父帧仅供上下文参考，禁止引用或输出该帧操作' : '引用原帧'}]` : wholeVideo && ['ui_video_observe', 'ui_video_trajectory'].includes(body.skillName) && Array.isArray(body.payload?.context_frame_ids)
       ? (body.payload.context_frame_ids.includes(item.name) ? (body.skillName === 'ui_video_trajectory' ? ' [可引用为前后态或结果证据；不得作为本包新动作触发]' : ' [仅供上下文参考，禁止引用或输出该帧操作]') : ' [当前窗口证据，可引用]') : '';
     return [...(wholeVideo ? [{type: 'text', text: `${item.name} ${item.timestamp_ms}ms${role}`}] : []),
       {type: 'image_url', image_url: {url}}];
@@ -797,9 +973,15 @@ function isFallbackEligibleAiError(errorText) {
 }
 
 async function callAi(action, body, options = {}) {
+  const videoStage = validateVideoStage(body);
+  if (videoStage && options.messages) throw new Error('video_stage_messages_invalid');
   const id = uuidv4();
   const prompt = options.promptOverride ?? await readPrompt(action);
   const routes = await routeCandidatesForCall(action, body, options);
+  if (videoStage) {
+    if (routes.length !== 1) throw new Error('video_stage_fallback_invalid');
+    validateVideoStage(body, routes[0]);
+  }
   const totalTimeoutMs = requestedCallTimeoutMs(body);
   const deadline = Date.now() + totalTimeoutMs;
   let output = '';
@@ -854,6 +1036,16 @@ async function callAi(action, body, options = {}) {
       const completion = await client.chat.completions.create(completionOptions);
       const choice = completion.choices?.[0] || {};
       finishReason = String(choice?.finish_reason || choice?.finishReason || '');
+      if (videoStage === 'perception') {
+        const rawUsage = completion?.usage || {};
+        const rawDetails = [rawUsage.completion_tokens_details, rawUsage.completionTokensDetails];
+        const reported = rawDetails.flatMap(details => details && typeof details === 'object' ?
+          ['reasoning_tokens', 'reasoningTokens'].filter(k => Object.hasOwn(details, k)).map(k => details[k]) : []);
+        for (const key of ['reasoning_tokens', 'reasoningTokens'])
+          if (Object.hasOwn(rawUsage, key)) reported.push(rawUsage[key]);
+        if (reported.some(value => !Number.isInteger(value) || value !== 0))
+          throw new Error('video_perception_reasoning_usage_invalid');
+      }
       usage = completionUsageSummary(completion?.usage || {});
       output = assistantOutputText(choice?.message?.content);
       if (options.stripFence) output = stripMarkdownFence(output);
@@ -907,8 +1099,8 @@ async function callAi(action, body, options = {}) {
         totalTimeoutMs,
         finishReason,
         usage,
-        inputPreview: preview(body),
-        outputPreview: preview(output),
+        inputPreview: videoStage ? '[video stage content omitted]' : preview(body),
+        outputPreview: videoStage ? '[video stage content omitted]' : preview(output),
         error: errorText,
       }).catch(() => {});
     }
@@ -1205,17 +1397,22 @@ app.post('/ai/skill', asyncRoute(async (req, res) => {
     res.status(400).json({success: false, error: 'prompt required'});
     return;
   }
+  const stageRequested = Object.hasOwn(req.body || {}, 'videoStage');
   const body = {
     skillName,
     payload: req.body?.payload || {},
-    jsonResponse: req.body?.jsonResponse !== false,
+    jsonResponse: stageRequested && Object.hasOwn(req.body || {}, 'jsonResponse') ?
+      req.body.jsonResponse : req.body?.jsonResponse !== false,
     modelConfig: req.body?.modelConfig || req.body?.model_config || {},
     providerId: req.body?.providerId || req.body?.provider || '',
     model: req.body?.model || req.body?.modelName || '',
-    imageAssets: req.body?.imageAssets || [],
+    imageAssets: stageRequested && Object.hasOwn(req.body || {}, 'imageAssets') ?
+      req.body.imageAssets : req.body?.imageAssets || [],
     fallbackModelConfig: req.body?.fallbackModelConfig || req.body?.fallback_model_config || {},
     maxTokens: req.body?.maxTokens ?? req.body?.max_tokens,
     timeoutMs: req.body?.timeoutMs || req.body?.timeout_ms,
+    ...(stageRequested ? {videoStage: req.body.videoStage} : {}),
+    ...(Object.hasOwn(req.body || {}, 'outputSchema') ? {outputSchema: req.body.outputSchema} : {}),
   };
   const action = SKILL_ACTION_MAP[skillName] || 'generate_case';
   const {output, route} = await callAi(action, body, {
