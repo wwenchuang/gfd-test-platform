@@ -233,6 +233,28 @@ def audit_claim_context(trajectory,prior_events):
     return claims,prior
 
 
+def _validated_audit_batches(claims,batcher,packet):
+    """A callback may partition immutable claims, never rewrite or discard them."""
+    batches=batcher(copy.deepcopy(claims))
+    if not isinstance(batches,list) or not batches:raise ValueError('video_audit_batches_invalid')
+    original={claim['track']['event_id']:claim for claim in claims};seen=set()
+    available={frame['frame_id'] for frame in packet['frames']}
+    if len(original)!=len(claims):raise ValueError('video_audit_batches_invalid')
+    for batch in batches:
+        if not isinstance(batch,list) or (not batch and (claims or len(batches)!=1)):
+            raise ValueError('video_audit_batches_invalid')
+        anchors=set()
+        for claim in batch:
+            track=claim.get('track') if isinstance(claim,dict) else None
+            identity=track.get('event_id') if isinstance(track,dict) else None
+            if (not isinstance(identity,str) or identity not in original or identity in seen or
+                claim!=original[identity]):raise ValueError('video_audit_batches_invalid')
+            seen.add(identity);anchors.update(track['required_frame_refs'])
+        if len(anchors)>12 or not anchors<=available:raise ValueError('video_audit_batches_invalid')
+    if seen!=set(original):raise ValueError('video_audit_batches_invalid')
+    return copy.deepcopy(batches)
+
+
 def _revisit_range(request,packet,allow_context_anchors):
     times={f['frame_id']:f['timestamp_ms'] for f in packet['frames']}
     start,end=packet['owned_start_ms'],packet['owned_end_ms']
@@ -262,11 +284,12 @@ def validate_revisit_requests(requests,packet,*,allow_context_anchors=False):
         seen.add(bounds[:2])
 
 
-def observe_trajectory(document,root,cancelled,progress=None,record=None,revisit=None,*,revisit_bounded=None,skill_runner=None):
+def observe_trajectory(document,root,cancelled,progress=None,record=None,revisit=None,*,revisit_bounded=None,skill_runner=None,audit_batcher=None):
     from . import ai_skill_service as ai
     from .ui_video_windows import load_assets
     if revisit_bounded is not None and not callable(revisit_bounded):raise ValueError('video_revisit_invalid')
     if skill_runner is not None and not callable(skill_runner):raise ValueError('video_skill_runner_invalid')
+    if audit_batcher is not None and not callable(audit_batcher):raise ValueError('video_audit_batches_invalid')
     run_skill=ai.run_ai_skill if skill_runner is None else skill_runner
     bounded_revisit=revisit_bounded is not None
     frames=copy.deepcopy(document['media']['frames']);duration=document['media']['duration_ms']
@@ -302,6 +325,11 @@ def observe_trajectory(document,root,cancelled,progress=None,record=None,revisit
             counts={k:v for k,v in usage.items() if k in {'promptTokens','completionTokens','reasoningTokens','totalTokens'}
                     and type(v) in {int,float} and v>=0 and (type(v) is int or math.isfinite(v))}
             if counts:entry['usage']=counts
+        if version=='audit' and audit_batcher is not None:
+            entry.update(packet_id=context['packet_id'],
+                         audit_target_event_ids=[p['track']['event_id'] for p in context['trajectory']],
+                         audit_context_event_ids=[p['track']['event_id'] for p in context['context_trajectory']],
+                         raw_response=redact(copy.deepcopy(raw)))
         call_audit.append(entry)
         if record:record(f'{calls:02d}-{version}-result',redact({'result':raw,'runtime':entry}))
         return _envelope(raw,version)
@@ -438,20 +466,44 @@ def observe_trajectory(document,root,cancelled,progress=None,record=None,revisit
                     review['allowed_frame_refs']=sorted(set(review['frame_refs'])|set(review['outcome']['frame_refs']),key=times.get)
                     batch.append({'track':review})
             audit_batch,audit_prior=audit_claim_context(batch,[{**t,'event':e} for t,e in list(zip(tracks,events))[-8:]])
-            audited=ask('audit',packet['frames'],revisit_packet=packet,validator=lambda result:(bind_audit_checks(result['checks'],[p['track'] for p in batch],packet['frames']),validate_audit_issues(result['issues'],packet)),
-                    state_memory=states+extra,overview_hypotheses=overview_hypotheses,trajectory=audit_batch,
-                    packet_id=packet['packet_id'],owned_frame_ids=packet['owned_frame_ids'],
-                    context_frame_ids=packet['context_frame_ids'],
-                    owned_time_range_ms=[packet['owned_start_ms'],packet['owned_end_ms']],
-                    prior_events=audit_prior)
-            if expand(packet,audited.get('revisit',[])):continue
-            bound_checks=bind_audit_checks(audited['checks'],[p['track'] for p in batch],packet['frames'])
-            # A known exhausted request does not expand the packet. Its truthy
-            # revisit field must not bypass final issue ownership/shape checks.
-            validate_audit_issues(audited['issues'],packet)
+            audit_batches=([audit_batch] if audit_batcher is None else
+                           _validated_audit_batches(audit_batch,audit_batcher,packet))
+            audit_shards=[];bound_checks=[];expanded=False
+            for shard_index,shard in enumerate(audit_batches,1):
+                first_call=calls+1
+                audited=ask('audit',packet['frames'],revisit_packet=packet,
+                        validator=lambda result:(bind_audit_checks(result['checks'],[p['track'] for p in shard],packet['frames']),validate_audit_issues(result['issues'],packet)),
+                        state_memory=states+extra,overview_hypotheses=overview_hypotheses,trajectory=shard,
+                        **({'context_trajectory':audit_batch} if audit_batcher is not None else {}),
+                        packet_id=packet['packet_id'],owned_frame_ids=packet['owned_frame_ids'],
+                        context_frame_ids=packet['context_frame_ids'],
+                        owned_time_range_ms=[packet['owned_start_ms'],packet['owned_end_ms']],
+                        prior_events=audit_prior)
+                if expand(packet,audited.get('revisit',[])):
+                    expanded=True;break
+                shard_checks=bind_audit_checks(audited['checks'],[p['track'] for p in shard],packet['frames'])
+                # Exhausted revisit locators never bypass final issue validation.
+                validate_audit_issues(audited['issues'],packet)
+                bound_checks.extend(shard_checks)
+                audit_shards.append({'index':shard_index,'event_ids':[p['track']['event_id'] for p in shard],
+                                     'calls':list(range(first_call,calls+1)),'raw':copy.deepcopy(audited)})
+            if expanded:continue
+            if audit_batcher is not None:
+                order=[p['track']['event_id'] for p in audit_batch]
+                bound_by_id={check['event_id']:check for check in bound_checks}
+                bound_checks=[bound_by_id[identity] for identity in order]
+                raw_by_id={check['event_id']:check for shard in audit_shards for check in shard['raw']['checks']}
+                audited={'derived':True,'method':'audit_shards',
+                         'checks':[copy.deepcopy(raw_by_id[identity]) for identity in order],
+                         'issues':[copy.deepcopy(issue) for shard in audit_shards for issue in shard['raw']['issues']],
+                         'multiple_scenarios':any(shard['raw']['multiple_scenarios'] for shard in audit_shards),
+                         'revisit':[copy.deepcopy(request) for shard in audit_shards for request in shard['raw']['revisit']]}
+                if record:record(packet['packet_id']+'-audit-combined',redact({'derived':True,'audit':audited,'audit_shards':audit_shards}))
             break
         events,tracks=proposed,history;states.extend(extra)
-        packet_outputs.append({'packet':packet,'raw':redact(raw),'audit':redact(audited)})
+        packet_output={'packet':packet,'raw':redact(raw),'audit':redact(audited)}
+        if audit_batcher is not None:packet_output['audit_shards']=redact(audit_shards)
+        packet_outputs.append(packet_output)
         fragment_checks.extend(bound_checks)
         questions.extend(raw['uncertainties']+[issue['question'] for issue in audited['issues']])
         multi|=raw['multiple_scenarios'] or audited['multiple_scenarios']
