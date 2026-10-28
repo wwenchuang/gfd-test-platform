@@ -16,7 +16,9 @@ from __future__ import annotations
 import base64
 import copy
 import concurrent.futures
+import hashlib
 import json
+import math
 import os
 import re
 import socket
@@ -46,6 +48,7 @@ from task_server.config import (
     safe_bool,
     safe_int,
 )
+from task_server.services.ui_video_stage_policy import UNSET, validate_video_stage, validate_stage_output, validate_output_schema
 from task_server.core.http_client import read_response_bytes
 from task_server.storage import (
     clean_asset_filename,
@@ -408,9 +411,20 @@ def run_ai_skill(
     max_tokens=None,
     runtime_trace=None,
     repair_invalid_json=False,
+    *,
+    video_stage=UNSET,
+    output_schema=UNSET,
+    raw_receipt=None,
 ):
     """执行 AI skill：优先走统一 Gateway，平台直连仅用于无显式模型的最终兼容兜底。"""
-    whole_video = _video_context_assets(skill_name, payload, image_assets)
+    stage = validate_video_stage(skill_name, payload, image_assets, video_stage, output_schema)
+    if stage == "semantic":
+        output_schema = validate_output_schema(output_schema)
+    if stage and (output_defaults is not None or repair_invalid_json or not safe_bool(os.getenv("MIDSCENE_AI_SKILLS_USE_GATEWAY", "1"), True)):
+        raise ValueError("video_stage_requires_gateway_without_repair")
+    if raw_receipt is not None and (not stage or not callable(raw_receipt)):
+        raise ValueError("video_stage_receipt_invalid")
+    whole_video = bool(stage) or _video_context_assets(skill_name, payload, image_assets)
     prompt = render_ai_skill_prompt(skill_name, payload, version=version, fallback_prompt=fallback_prompt)
     if not prompt:
         raise ValueError(f"AI skill prompt 不存在：{skill_name}.{version}")
@@ -431,6 +445,8 @@ def run_ai_skill(
                     image_assets=image_assets,
                     runtime_trace=runtime_trace,
                     max_tokens=max_tokens,
+                    **({"video_stage": video_stage, "output_schema": output_schema,
+                        "raw_receipt": raw_receipt} if stage else {}),
                 ),
                 timeout,
                 f"AI Gateway skill {skill_name}",
@@ -450,7 +466,15 @@ def run_ai_skill(
                     max_tokens=max_tokens,
                 )
                 json_repaired = True
-            result = _video_output_defaults(_merge_missing_output_defaults(result, output_defaults), whole_video)
+            if stage == "perception":
+                from .ui_video_perception_binding import bind_inventory
+                bank = bind_inventory(result, payload)
+                if bank['binding_audit']['warnings']:
+                    raise ValueError("video_perception_role_mismatch")
+            elif stage == "semantic":
+                validate_stage_output(result, output_schema)
+            if not stage:
+                result = _video_output_defaults(_merge_missing_output_defaults(result, output_defaults), whole_video)
             try:
                 validated = validate_ai_skill_output(skill_name, result)
             except Exception as exc:
@@ -562,11 +586,22 @@ def ai_gateway_skill_content(
     image_assets=None,
     runtime_trace=None,
     max_tokens=None,
+    *,
+    video_stage=UNSET,
+    output_schema=UNSET,
+    raw_receipt=None,
 ):
     """Call the unified Gateway for text or image skills and expose the actual routed model."""
     model_config = model_config if isinstance(model_config, dict) else {}
     runtime_trace = runtime_trace if isinstance(runtime_trace, dict) else {}
-    whole_video = _video_context_assets(skill_name, payload, image_assets)
+    stage = validate_video_stage(skill_name, payload, image_assets, video_stage, output_schema)
+    if stage == "semantic":
+        output_schema = validate_output_schema(output_schema)
+    if stage and json_response is not True:
+        raise ValueError("video_stage_json_required")
+    if raw_receipt is not None and (not stage or not callable(raw_receipt)):
+        raise ValueError("video_stage_receipt_invalid")
+    whole_video = bool(stage) or _video_context_assets(skill_name, payload, image_assets)
     normalized_images = []
     for index, asset in enumerate((image_assets or [])[:60 if whole_video else AI_VISION_IMAGE_LIMIT], start=1):
         if not isinstance(asset, dict):
@@ -583,7 +618,7 @@ def ai_gateway_skill_content(
             **({"timestamp_ms": asset["timestamp_ms"]} if whole_video else {}),
         })
     fallback_model_config = {}
-    if normalized_images:
+    if normalized_images and not stage:
         fallback_model_config = {
             "providerId": AI_GATEWAY_VISION_FALLBACK_PROVIDER_ID,
             "model": dashscope_vl_model(),
@@ -601,6 +636,10 @@ def ai_gateway_skill_content(
         "fallbackModelConfig": fallback_model_config,
         "timeoutMs": max(5000, (safe_int(timeout, 180) - 2) * 1000),
     }
+    if stage:
+        request_body["videoStage"] = stage
+        if stage == "semantic":
+            request_body["outputSchema"] = output_schema
     requested_max_tokens = safe_int(max_tokens, 0)
     if requested_max_tokens > 0:
         request_body["maxTokens"] = requested_max_tokens
@@ -657,6 +696,16 @@ def ai_gateway_skill_content(
         content = json.dumps(content, ensure_ascii=False)
     else:
         content = str(content or "")
+    if stage and raw_receipt is not None:
+        receipt_usage = {k: v for k, v in usage.items() if k in
+                         {"promptTokens", "completionTokens", "reasoningTokens", "totalTokens"} and
+                         type(v) in {int, float} and math.isfinite(v) and v >= 0}
+        raw_receipt({"content": content, **{k: runtime_trace[k] for k in
+                    ("providerId", "model", "fallbackUsed", "finishReason")}, "usage": receipt_usage,
+                    "gateway_request_sha256": hashlib.sha256(body).hexdigest()})
+    if stage and (data.get("model") != "qwen3.8-max" or data.get("fallbackUsed") is not False or
+                  data.get("finishReason") != "stop"):
+        raise RuntimeError("video_stage_reply_invalid")
     if not content.strip():
         raise RuntimeError(
             "AI Gateway skill 返回空内容："

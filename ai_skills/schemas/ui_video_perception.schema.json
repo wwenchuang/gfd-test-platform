@@ -1,0 +1,175 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "packet_id",
+    "frames",
+    "uncertainties"
+  ],
+  "properties": {
+    "packet_id": {
+      "type": "string",
+      "maxLength": 128
+    },
+    "frames": {
+      "type": "array",
+      "maxItems": 1000,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "frame_id",
+          "role",
+          "transient_marks",
+          "persistent_ui",
+          "field_state",
+          "keyboard_state",
+          "changes",
+          "context_refs",
+          "uncertainties"
+        ],
+        "properties": {
+          "frame_id": {
+            "type": "string",
+            "maxLength": 8192
+          },
+          "role": {
+            "enum": [
+              "owned",
+              "context"
+            ]
+          },
+          "transient_marks": {
+            "type": "array",
+            "maxItems": 128,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "shape",
+                "color",
+                "position",
+                "nearest_visible_control",
+                "uncertainty"
+              ],
+              "properties": {
+                "shape": {
+                  "type": "string",
+                  "maxLength": 8192
+                },
+                "color": {
+                  "type": "string",
+                  "maxLength": 8192
+                },
+                "position": {
+                  "type": "string",
+                  "maxLength": 8192
+                },
+                "nearest_visible_control": {
+                  "type": "string",
+                  "maxLength": 8192
+                },
+                "uncertainty": {
+                  "type": "string",
+                  "maxLength": 8192
+                }
+              }
+            }
+          },
+          "persistent_ui": {
+            "type": "array",
+            "maxItems": 128,
+            "items": {
+              "oneOf": [
+                {
+                  "type": "string",
+                  "maxLength": 8192
+                },
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "shape",
+                    "color",
+                    "position",
+                    "nearest_visible_control"
+                  ],
+                  "properties": {
+                    "shape": {
+                      "type": "string",
+                      "maxLength": 8192
+                    },
+                    "color": {
+                      "type": "string",
+                      "maxLength": 8192
+                    },
+                    "position": {
+                      "type": "string",
+                      "maxLength": 8192
+                    },
+                    "nearest_visible_control": {
+                      "type": "string",
+                      "maxLength": 8192
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          "field_state": {
+            "type": "string",
+            "maxLength": 8192
+          },
+          "keyboard_state": {
+            "type": "string",
+            "maxLength": 8192
+          },
+          "changes": {
+            "type": "string",
+            "maxLength": 8192
+          },
+          "context_refs": {
+            "type": "array",
+            "maxItems": 1000,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "frame_id",
+                "role"
+              ],
+              "properties": {
+                "frame_id": {
+                  "type": "string",
+                  "maxLength": 8192
+                },
+                "role": {
+                  "enum": [
+                    "owned",
+                    "context"
+                  ]
+                }
+              }
+            }
+          },
+          "uncertainties": {
+            "type": "array",
+            "maxItems": 128,
+            "items": {
+              "type": "string",
+              "maxLength": 8192
+            }
+          }
+        }
+      }
+    },
+    "uncertainties": {
+      "type": "array",
+      "maxItems": 128,
+      "items": {
+        "type": "string",
+        "maxLength": 8192
+      }
+    }
+  }
+}

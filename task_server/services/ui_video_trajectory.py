@@ -262,10 +262,12 @@ def validate_revisit_requests(requests,packet,*,allow_context_anchors=False):
         seen.add(bounds[:2])
 
 
-def observe_trajectory(document,root,cancelled,progress=None,record=None,revisit=None,*,revisit_bounded=None):
+def observe_trajectory(document,root,cancelled,progress=None,record=None,revisit=None,*,revisit_bounded=None,skill_runner=None):
     from . import ai_skill_service as ai
     from .ui_video_windows import load_assets
     if revisit_bounded is not None and not callable(revisit_bounded):raise ValueError('video_revisit_invalid')
+    if skill_runner is not None and not callable(skill_runner):raise ValueError('video_skill_runner_invalid')
+    run_skill=ai.run_ai_skill if skill_runner is None else skill_runner
     bounded_revisit=revisit_bounded is not None
     frames=copy.deepcopy(document['media']['frames']);duration=document['media']['duration_ms']
     calls=0;corrections=0;revisits=0;started=time.monotonic();secrets=[];call_audit=[];revisit_attempts=[]
@@ -287,7 +289,7 @@ def observe_trajectory(document,root,cancelled,progress=None,record=None,revisit
         payload={'phase':'whole-trajectory','duration_ms':duration,'frames':images,'image_frames':images,**context,'reasoning_mode':'bounded'}
         if version in {'observe','audit'}:payload['revisit_context_anchors']=bounded_revisit
         if record:record(f'{calls:02d}-{version}-request',redact(payload))
-        raw=ai.run_ai_skill('ui_video_trajectory',payload,version=version,image_assets=load_assets(images,root,cancelled),
+        raw=run_skill('ui_video_trajectory',payload,version=version,image_assets=load_assets(images,root,cancelled),
                             runtime_trace=trace,timeout=120,respect_global_timeout=False,retry_count=0,max_tokens=10000,repair_invalid_json=False)
         if cancelled():raise ValueError('video_cancelled')
         if isinstance(raw,dict):
