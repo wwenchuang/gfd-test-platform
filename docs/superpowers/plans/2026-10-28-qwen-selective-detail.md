@@ -11,7 +11,7 @@
 ## Global Constraints
 
 - Work only in /Users/adouceshi/.codex/worktrees/recorder-touch-target-fix/midscene-task-platform, branch codex/ui-platform-simple-workflows. Root owns state/evidence/plan; preserve all unrelated dirty files.
-- No worker, prompt, route, Runner, UI, schema-output or execution-gate changes. No actual API/device/deployment calls by implementer.
+- No worker, prompt, general model-router/config, Runner, UI, schema-output or execution-gate changes. No actual API/device/deployment calls by implementer. Owner clarification after review: a server-enforced per-call `disableFallback` option for exact `ui_video_trajectory` / `whole-trajectory` / `fine-detail` `/ai/skill` requests is authorized to satisfy the literal no-fallback requirement; callers cannot override it. Default and unrelated calls retain existing routing.
 - Exact scope is skill ui_video_trajectory and phase whole-trajectory. Other skills/phases ignore this new payload property and retain current behavior.
 - Optional payload property perception_frame_ids requires perception_mode exactly fine-detail. If present, it must be a list of 1..12 unique strings, each an actually provided image asset name. Reject null/bool/scalar/empty/duplicates/unknown IDs/too many with video_perception_selection_invalid. Original image validation runs first, so preexisting image failures retain their classification.
 - Absent selection preserves current all-image fine-detail behavior. Absent mode and selection preserves current default behavior. Scope-matched selection without exact mode is invalid.

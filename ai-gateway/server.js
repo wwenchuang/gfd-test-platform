@@ -1219,6 +1219,8 @@ app.post('/ai/skill', asyncRoute(async (req, res) => {
   };
   const action = SKILL_ACTION_MAP[skillName] || 'generate_case';
   const {output, route} = await callAi(action, body, {
+    disableFallback: skillName === 'ui_video_trajectory' &&
+      body.payload.phase === 'whole-trajectory' && body.payload.perception_mode === 'fine-detail',
     promptOverride: '你是移动端测试平台 AI Skill 执行器。必须严格遵守用户输入的 Skill Prompt，只输出合法 JSON。',
     userMessage: prompt,
     temperature: typeof req.body?.temperature === 'number' ? req.body.temperature : 0.1,

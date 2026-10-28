@@ -164,3 +164,97 @@ test('selective detail retains official route restrictions',()=>{
     assert.throws(()=>completion(input,{...route,...change}),/video_perception_route_unsupported/);
   }
 });
+
+// Run the actual /ai/skill handler, route selection, completion builder and retry
+// loop. Only configuration I/O, logging and provider clients are replaced locally.
+function skillOrchestration({primaryFails=true,primaryChange={}}={}) {
+  const calls=[];const logs=[];let handler;
+  const providers={providers:{
+    primary:{...route,...primaryChange,name:'primary'},
+    backup:{...route,baseUrl:'https://dashscope-intl.aliyuncs.com/v1',name:'backup'},
+  }};
+  const router={generate_case:{providerId:'primary',fallbackProviderIds:['backup']}};
+  const sandbox=vm.createContext({
+    Buffer,DYNAMIC_PROVIDER_PREFIX:'dynamic:',ROUTER_FILE:'offline-router',
+    AI_CALL_TIMEOUT_MS:120000,AI_CALL_FALLBACK_RESERVE_MS:10000,MOCK_ENABLED:false,
+    SKILL_ACTION_MAP:{ui_video_trajectory:'generate_case'},
+    readJson:async()=>router,readProviders:async()=>providers,
+    uuidv4:()=> 'offline-call',appendAiLog:async entry=>logs.push(entry),
+    sanitizeError:error=>String(error.message),preview:()=> 'offline',
+    asyncRoute:fn=>fn,app:{post:(_path,fn)=>{handler=fn;}},
+    clientForRoute:selectedRoute=>({chat:{completions:{create:async options=>{
+      calls.push({providerId:selectedRoute.providerId,options});
+      if(primaryFails&&selectedRoute.providerId==='primary') throw new Error('primary timeout');
+      return {choices:[{message:{content:'{}'},finish_reason:'stop'}],usage:{}};
+    }}}}),
+  });
+  for(const [start,end] of [
+    ['function normalizeLegacyProviderId(', 'async function discoverProviderChannel('],
+    ['function routeFromProviderConfig(', 'function clientForRoute('],
+    ['function requestedCallTimeoutMs(', 'async function appendAiLog('],
+    ['function stripMarkdownFence(', 'function mockAiOutput('],
+    ["app.post('/ai/skill'", "app.post('/ai/analyze-failure'"],
+  ]) vm.runInContext(source.slice(source.indexOf(start),source.indexOf(end)),sandbox);
+  return {calls,logs,async request(input) {
+    let response;
+    await handler({body:input},{json:value=>{response=value;}});
+    return response;
+  }};
+}
+
+test('fine-detail skill forces one provider even when caller permits official Max fallback',async()=>{
+  for(const explicitProvider of [false,true]) {
+    for(const selection of [undefined,['frame-001','frame-end']]) {
+      const input={...fineBody,prompt:'trajectory',disableFallback:false,
+        ...(explicitProvider?{providerId:'primary',model:'qwen3.8-max'}:{}),
+        fallbackModelConfig:{providerId:'backup',model:'qwen3.8-max'},
+        payload:{...fineBody.payload,...(selection?{perception_frame_ids:selection}:{})}};
+      const original=JSON.stringify(input);
+      const run=skillOrchestration();
+      await assert.rejects(run.request(input),/primary timeout/);
+      assert.deepEqual(run.calls.map(call=>call.providerId),['primary']);
+      assert.equal(run.logs.length,1);assert.equal(run.logs[0].fallbackTotal,1);
+      assert.equal(JSON.stringify(input),original);
+    }
+  }
+});
+
+test('default and unrelated skill calls retain configured official Max fallback',async()=>{
+  const withoutMode={...fineBody.payload};delete withoutMode.perception_mode;
+  for(const change of [
+    {payload:withoutMode},{skillName:'other'},{skillName:'ui_video_trajectory_extra'},
+    {payload:{...fineBody.payload,phase:'whole-observe'}},
+  ]) {
+    const run=skillOrchestration();
+    const response=await run.request({...fineBody,prompt:'trajectory',disableFallback:false,
+      providerId:'primary',fallbackModelConfig:{providerId:'backup',model:'qwen3.8-max'},...change});
+    assert.deepEqual(run.calls.map(call=>call.providerId),['primary','backup']);
+    assert.equal(response.fallbackUsed,true);assert.equal(response.fallbackIndex,1);
+    assert.equal(response.providerId,'backup');assert.equal(run.logs[0].fallbackTotal,2);
+  }
+});
+
+test('skill orchestration preserves image guard priority, selection and exact route rejection',async()=>{
+  const invalidSelection={...fineBody,prompt:'trajectory',payload:{...fineBody.payload,perception_frame_ids:null}};
+  for(const [input,primaryChange,error] of [
+    [{...invalidSelection,imageAssets:assets.slice(1)},{model:'qwen3.8-flash'},/video_vision_limit/],
+    [{...invalidSelection,imageAssets:[{...assets[0],name:'fake'},...assets.slice(1)]},{},/video_frames_invalid/],
+    [invalidSelection,{},/video_perception_selection_invalid/],
+    [{...fineBody,prompt:'trajectory'},{model:'qwen3.8-flash'},/video_perception_route_unsupported/],
+    [{...fineBody,prompt:'trajectory'},{baseUrl:'https://dashscope.aliyuncs.com.evil.example/v1'},/video_perception_route_unsupported/],
+  ]) {
+    const run=skillOrchestration({primaryChange});
+    await assert.rejects(run.request(input),error);
+    assert.equal(run.calls.length,0);
+  }
+});
+
+test('successful fine-detail skill reports primary route with independent bounded reasoning',async()=>{
+  const run=skillOrchestration({primaryFails:false});
+  const response=await run.request({...fineBody,prompt:'trajectory',disableFallback:false,
+    payload:{...fineBody.payload,reasoning_mode:'bounded',perception_frame_ids:['frame-end']}});
+  assert.equal(response.fallbackUsed,false);assert.equal(response.fallbackIndex,0);
+  assert.equal(response.providerId,'primary');assert.equal(run.logs[0].fallbackTotal,1);
+  assert.equal(run.calls[0].options.thinking_budget,1024);
+  assert.equal(run.calls[0].options.messages[1].content.filter(part=>part.min_pixels).length,1);
+});
