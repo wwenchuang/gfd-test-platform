@@ -390,7 +390,11 @@ def observe_trajectory(document,root,cancelled,progress=None,record=None,revisit
                 proposed,history=bind_packet_events(raw['events'],packet,frames,events,tracks)
             except ValueError as error:
                 if corrections>=2:raise
-                corrections+=1;feedback='结构或证据未通过：'+getattr(error,'trajectory_reason','contract')+'。重看同一组原图，完整输出当前包；不改写上下文动作，不补造操作。'
+                corrections+=1
+                reason=getattr(error,'trajectory_reason','contract')
+                feedback='结构或证据未通过：'+reason+'。重看同一组原图，完整输出当前包；不改写上下文动作，不补造操作。'
+                if reason in {'state_shape','state_reference','state_kind'}:
+                    feedback+='states每项必须且只能含state_id、first_frame、last_frame、kind、description；state_id和description为非空字符串，kind只能为page/input/wait/transition。first_frame和last_frame必须引用本次已提供的真实frame_id，first_frame不晚于last_frame，各项按first_frame时间排列。无新增状态时states可为[]；完整保留本包events和uncertainties，不能以删除状态代替修正元数据。'
                 continue
             owned=set(packet['owned_frame_ids']);batch=[]
             for track,event in zip(history,proposed):

@@ -24,3 +24,5 @@
 普通状态观察可用aiAssert，target写实际可见状态，与observation保持一致，trigger_kind=automatic。只输出有作用的状态变化，避免每帧重复断言。首尾系统桌面/停止录屏不是应用业务步骤，不输出。视频含打印入口不代表最终确认打印已经发生。
 只返回JSON，所有字段都要有；states只补本包新见页面或编辑区间，可为空，checks为空：
 {"states":[],"events":[{"action":"aiTap","target":"可见目标","value":"","frame_refs":["原帧"],"observation":"所见动作与变化","uncertainties":[],"trigger_frame":"本包原帧","trigger_kind":"touch","page_before":"s1","page_after":"s2","continuation_of":"","edit_boundary":"none","outcome":{"frame_refs":["结果原帧"],"observation":"具体可见状态"}}],"checks":[],"uncertainties":[],"multiple_scenarios":false,"revisit":[]}。
+
+states非空时，每项必须且只能包含以下五个字段：{"state_id":"同一页面或编辑区间的短ID","first_frame":"本次已提供的真实frame_id","last_frame":"本次已提供的真实frame_id","kind":"page","description":"页面或编辑区间的具体可见状态"}。state_id和description为非空字符串；kind只能为page/input/wait/transition。first_frame不晚于last_frame，各项按first_frame的真实时间排列，不得使用未提供的帧或自行编造时间。states只补充本包新见状态；无新增状态时[]合法。
