@@ -1,3 +1,9 @@
+## 2026-10-29 Unified business-event prompts reviewed
+
+- Observer/audit now share business-intent/independent-boundary definitions. Same-field focus/clear/type/IME can be one aiInput with earliest visible edit evidence; genuine independent interactions/no-response retries/returns/confirmations remain. Mark reappearance alone proves no physical count. Final-state predicates use the last outcome frame, with full causal trace retained; material missing triggers still request source revisit.
+- Independent SPEC/QUALITY PASS,6 render/172 scoped compatibility/backend63/compile/diff PASS. Only two templates plus render tests; schema/engine/loader/renderer and all gates unchanged. Old raw003/004 hashes/verdicts remain unchanged.
+- Next: unique bounded4/2/2 official-Qwen controls for canonical boundary16frames and frozen003/004 semantic-audit pairs, total8 attempts before another whole. No new model run, formal case, deployment or phone trial at this checkpoint; source/runtime still5368b0e8/defaultold and bastion credentials pending.
+
 ## 2026-10-29 Reviewed temporal ownership and bounded source revisit
 
 - Midpoint ownership is frozen between original samples; explicit revisit_bounded permits supplied context anchors while exporting only current-owned canonical PTS. Original frame roles and4/64/60/24/two-correction gates stay intact. Legacy callback remains strict.
