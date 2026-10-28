@@ -198,3 +198,141 @@ def test_stage_runtime_trace_excludes_arbitrary_provider_fields(monkeypatch):
  monkeypatch.setattr(ai.urllib.request,'urlopen',http)
  ai.ai_gateway_skill_content(skill,'pixels',**kw,runtime_trace=trace)
  assert 'private' not in json.dumps(trace) and trace['usage']=={'totalTokens':4}
+
+
+# Safe receipts are a positive metadata projection, never an arbitrary string log.
+UNSAFE_ATTESTATION_FIELDS = [
+ ('version', 'PRIVATE_POLICY'), ('stage', 'PRIVATE_STAGE'), ('skill', 'PRIVATE_SKILL'),
+ ('skill_version', 'PRIVATE_VERSION'), ('model', 'PRIVATE_MODEL'),
+ ('correlation', 'PRIVATE_CORRELATION'), ('correlation', 'a'*31),
+ ('provider_options_sha256', 'PRIVATE_PROVIDER_BODY'), ('provider_options_sha256', None),
+ ('output_schema_sha256', 'PRIVATE_SCHEMA'), ('output_schema_sha256', 'a'*63),
+ ('effective_options.model', 'PRIVATE_MODEL'), ('effective_options.temperature', 'PRIVATE_TEMPERATURE'),
+ ('effective_options.temperature', True), ('effective_options.temperature', float('inf')),
+ ('effective_options.temperature', float('nan')), ('effective_options.temperature', 10**400),
+ ('effective_options.temperature', .2), ('effective_options.max_tokens', True),
+ ('effective_options.max_tokens', 4000.0), ('effective_options.max_tokens', 10**400),
+ ('effective_options.max_tokens', 999), ('effective_options.enable_thinking', 'PRIVATE_REASONING'),
+ ('effective_options.enable_thinking', 1), ('effective_options.thinking_budget', True),
+ ('effective_options.thinking_budget', 1024.0), ('effective_options.thinking_budget', 1025),
+ ('effective_options.response_format', 'PRIVATE_FORMAT'), ('effective_options.response_format', {}),
+ ('effective_options.image_count', True), ('effective_options.image_count', 1),
+ ('effective_options.image_count', -1), ('effective_options.image_count', 61),
+ ('effective_options.image_count', 3.0), ('effective_options.fine_frame_ids', ['PRIVATE_FRAME']),
+ ('effective_options.fine_frame_ids', ['frame-000-detail']),
+ ('effective_options.fine_frame_ids', ['frame-00']),
+ ('effective_options.fine_frame_ids', ['frame-000','frame-000']),
+ ('effective_options.fine_frame_ids', [f'frame-{i:03d}' for i in range(13)]),
+ ('effective_options.fine_frame_ids', [True]), ('effective_options.PRIVATE_KEY', 'PRIVATE_BODY'),
+ ('PRIVATE_KEY', {'nested':'PRIVATE_BODY'}),
+]
+
+@pytest.mark.parametrize('path,value', UNSAFE_ATTESTATION_FIELDS)
+def test_safe_attestation_omits_invalid_field_without_mutation(path,value):
+ from task_server.services.ui_video_stage_receipts import safe_attestation
+ root, _, leaf = path.partition('.')
+ original = {root:{leaf:value}} if leaf else {root:value}
+ before = copy.deepcopy(original)
+ projected = safe_attestation(original)
+ assert (leaf not in projected.get(root, {}) if leaf else root not in projected)
+ assert 'PRIVATE' not in json.dumps(projected, allow_nan=False)
+ # JSON comparison also handles deliberately nonfinite malicious numbers.
+ assert json.dumps(original, sort_keys=True) == json.dumps(before, sort_keys=True)
+
+@pytest.mark.parametrize('stage', STAGES)
+def test_valid_attestation_projection_is_exact_and_detached(monkeypatch,stage):
+ from task_server.services.ui_video_stage_receipts import make_expected_attestation, safe_attestation
+ skill, kw = request(stage); originals=[]; receipts=[]
+ def http(req,timeout):
+  attestation = make_expected_attestation(json.loads(req.data)); originals.append(attestation)
+  assert safe_attestation(attestation) == attestation
+  return io.BytesIO(json.dumps({'success':True,'content':'raw 中文 😀\n\t\\',
+   'model':policy.STAGES[stage][3], 'fallbackUsed':False, 'finishReason':'stop',
+   'videoPolicy':attestation}).encode())
+ monkeypatch.setattr(ai.urllib.request, 'urlopen', http)
+ assert ai.ai_gateway_skill_content(skill, '中文 😀\n\t\\', **kw, raw_receipt=receipts.append) == 'raw 中文 😀\n\t\\'
+ assert receipts[0]['videoPolicy'] == originals[0]
+ projected = safe_attestation(originals[0]); projected['effective_options']['fine_frame_ids'].append('frame-end')
+ assert originals[0] == receipts[0]['videoPolicy']
+
+@pytest.mark.parametrize('path,value', [
+ ('provider_options_sha256','PRIVATE_PROVIDER_BODY'),
+ ('effective_options.enable_thinking','PRIVATE_REASONING'),
+ ('effective_options.max_tokens',True),
+ ('effective_options.fine_frame_ids',['PRIVATE_FRAME']),
+])
+def test_run_skill_preserves_raw_content_but_rejects_private_attestation(monkeypatch,path,value):
+ from task_server.services.ui_video_stage_receipts import make_expected_attestation
+ skill,kw=request('inputs'); payload=kw.pop('payload');receipts=[];trace={};originals=[]
+ def http(req,timeout):
+  attestation=make_expected_attestation(json.loads(req.data));root,_,leaf=path.partition('.')
+  if leaf:attestation[root][leaf]=value
+  else:attestation[root]=value
+  originals.append(copy.deepcopy(attestation))
+  return io.BytesIO(json.dumps({'success':True,'content':'ORIGINAL provider content 中文',
+   'model':'qwen3.8-max','fallbackUsed':False,'finishReason':'stop','videoPolicy':attestation}).encode())
+ monkeypatch.setattr(ai.urllib.request,'urlopen',http)
+ with pytest.raises(RuntimeError) as error:
+  ai.run_ai_skill(skill,payload,**kw,retry_count=0,runtime_trace=trace,raw_receipt=receipts.append)
+ assert 'video_stage_attestation_invalid' in str(error.value) or str(error.value)=='video_stage_call_failed'
+ assert len(receipts)==1 and receipts[0]['content']=='ORIGINAL provider content 中文'
+ root,_,leaf=path.partition('.')
+ assert (leaf not in receipts[0]['videoPolicy'].get(root,{}) if leaf else root not in receipts[0]['videoPolicy'])
+ assert 'PRIVATE' not in json.dumps([receipts,trace,str(error.value)],allow_nan=False)
+ assert (originals[0][root][leaf] if leaf else originals[0][root]) == value
+
+@pytest.mark.parametrize('entry',['adapter','run_skill'])
+@pytest.mark.parametrize('raw',[
+ b'<html>PRIVATE_GATEWAY_BODY</html>', b'', b'"PRIVATE_GATEWAY_BODY"',
+ b'["PRIVATE_GATEWAY_BODY"]', b'{"error":"PRIVATE_GATEWAY_BODY"}',
+ b'{"success":true,"content":{"PRIVATE_GATEWAY_BODY":1}}',
+ b'{"success":"PRIVATE_GATEWAY_BODY","content":""}',
+ b'\xffPRIVATE_GATEWAY_BODY',
+])
+def test_stage_malformed_http_envelope_has_only_safe_error(monkeypatch,entry,raw):
+ import traceback
+ skill,kw=request('inputs');trace={};receipts=[];proofs=[]
+ def http(req,timeout):
+  response=io.BytesIO(raw)
+  response.headers={'Content-Type':'PRIVATE_HEADER','Content-Length':'PRIVATE_HEADER'}
+  return response
+ monkeypatch.setattr(ai.urllib.request,'urlopen',http)
+ with pytest.raises(RuntimeError) as error:
+  if entry=='adapter':
+   ai.ai_gateway_skill_content(skill,'pixels',**kw,runtime_trace=trace,raw_receipt=receipts.append,request_proof_hook=proofs.append)
+  else:
+   payload=kw.pop('payload')
+   ai.run_ai_skill(skill,payload,**kw,retry_count=0,runtime_trace=trace,raw_receipt=receipts.append,request_proof_hook=proofs.append)
+ assert str(error.value) in {'video_stage_gateway_response_invalid','video_stage_call_failed'}
+ assert len(proofs)==1 and receipts==[]  # HTTP bytes are not provider message.content.
+ assert 'PRIVATE' not in json.dumps([trace,receipts,proofs,''.join(traceback.format_exception(type(error.value), error.value, error.value.__traceback__))])
+
+@pytest.mark.parametrize('entry',['adapter','run_skill'])
+@pytest.mark.parametrize('kind',['url','read','timeout','oversized_header'])
+def test_stage_transport_errors_cannot_export_body_or_headers(monkeypatch,entry,kind):
+ import traceback
+ skill,kw=request('inputs');trace={};receipts=[]
+ def http(req,timeout):
+  if kind=='url':raise ai.urllib.error.URLError('PRIVATE_TRANSPORT_BODY')
+  if kind=='timeout':raise TimeoutError('PRIVATE_TIMEOUT_BODY')
+  class Response(io.BytesIO):
+   def read(self,*args):
+    if kind=='read':raise OSError('PRIVATE_READ_BODY')
+    return super().read(*args)
+  response=Response(b'PRIVATE_GATEWAY_BODY')
+  response.headers={'Content-Length':'9'*400 if kind=='oversized_header' else 'PRIVATE_HEADER'}
+  return response
+ monkeypatch.setattr(ai.urllib.request,'urlopen',http)
+ with pytest.raises((RuntimeError,TimeoutError)) as error:
+  if entry=='adapter':ai.ai_gateway_skill_content(skill,'pixels',**kw,runtime_trace=trace,raw_receipt=receipts.append)
+  else:
+   payload=kw.pop('payload');ai.run_ai_skill(skill,payload,**kw,retry_count=0,runtime_trace=trace,raw_receipt=receipts.append)
+ assert str(error.value) in {'video_stage_gateway_transport_failed','video_stage_deadline','video_stage_call_failed'}
+ rendered=json.dumps([trace,receipts,''.join(traceback.format_exception(type(error.value), error.value, error.value.__traceback__))])
+ assert 'PRIVATE' not in rendered and '9'*400 not in rendered and receipts==[]
+
+
+def test_legacy_gateway_decoder_retains_existing_diagnostics():
+ with pytest.raises(RuntimeError,match='PRIVATE_LEGACY_BODY') as error:
+  ai._decode_ai_gateway_json_response(b'PRIVATE_LEGACY_BODY',content_type='PRIVATE_LEGACY_HEADER')
+ assert 'PRIVATE_LEGACY_HEADER' in str(error.value)
