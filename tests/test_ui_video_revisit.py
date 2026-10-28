@@ -137,3 +137,61 @@ def test_real_offset_source_uses_canonical_decoder_time_origin(tmp_path):
     subprocess.run([ffmpeg,'-nostdin','-v','error','-i',str(source),'-vf',"select='eq(n,51)'",'-frames:v','1','-q:v','4',str(expected)],check=True)
     with Image.open(expected) as a, Image.open(root/'frames'/(found[0]['frame_id']+'.jpg')) as b:
         assert max(ImageStat.Stat(ImageChops.difference(a,b)).mean)<1
+
+
+def test_bounded_locator_clips_decoder_before_write_and_keeps_request(tmp_path,monkeypatch):
+    import copy
+    loader,root,_,calls=setup_loader(tmp_path,monkeypatch,pts=(1.2,))
+    q=request();before=copy.deepcopy(q)
+    result=loader(q,2,owned_time_range_ms=(1150,1250))
+    assert [f['timestamp_ms'] for f in result]==[1200] and q==before
+    vf=calls[0][calls[0].index('-vf')+1]
+    assert 'between(t,1.149,1.251)'in vf and 'floor('not in vf
+
+
+@pytest.mark.parametrize('pts',[(1.149,), (1.25,), (1.251,)])
+def test_bounded_decoder_filters_collar_and_exclusive_end_without_new_files(tmp_path,monkeypatch,pts):
+    loader,root,_,_=setup_loader(tmp_path,monkeypatch,pts=pts)
+    assert loader(request(),2,owned_time_range_ms=(1150,1250))==[]
+    assert [p.name for p in (root/'frames').iterdir()]==['frame-002.jpg']
+
+
+@pytest.mark.parametrize('bounds',[(1400,1500),(0,1000),(1250,1150),(True,1200),(1000.0,1200),(1000,),None])
+def test_invalid_bounded_ranges_reject_before_decoder(tmp_path,monkeypatch,bounds):
+    loader,_,_,calls=setup_loader(tmp_path,monkeypatch)
+    if bounds is None:
+        # None is explicitly the legacy inclusive decoder mode.
+        assert loader(request(),2)
+    else:
+        with pytest.raises(ValueError):loader(request(),2,owned_time_range_ms=bounds)
+        assert calls==[]
+
+
+@pytest.mark.parametrize('rate,duration,first,last,cut,expected,timescale',[(30,0.2,33,100,67,67,None),(2000,0.003,0,2,1,1,None),(2000,0.51,500,502,501,501,1000000)])
+def test_real_fractional_pts_midpoint_belongs_to_exactly_one_canonical_ms_owner(tmp_path,rate,duration,first,last,cut,expected,timescale):
+    import shutil
+    import subprocess
+    ffmpeg=shutil.which('ffmpeg')
+    if not ffmpeg:pytest.skip('ffmpeg unavailable')
+    source=tmp_path/'fractional.mp4'
+    command=[ffmpeg,'-nostdin','-v','error','-f','lavfi','-i',f'testsrc2=size=96x96:rate={rate}:duration={duration}','-c:v','mpeg4']
+    if timescale is not None:command+=['-video_track_timescale',str(timescale)]
+    subprocess.run(command+[str(source)],check=True)
+    root=tmp_path/'output';root.mkdir();(root/'frames').mkdir()
+    loader=rv.make_revisit_loader(source,root,[dict(frame_id='frame-001',timestamp_ms=first),dict(frame_id='frame-002',timestamp_ms=last)],lambda:False)
+    q=dict(first_frame='frame-001',last_frame='frame-002',question='fractional source PTS at frozen canonical midpoint')
+    assert loader(q,2,owned_time_range_ms=(first,cut))==[]
+    result=loader(q,2,owned_time_range_ms=(cut,last+1))
+    assert result==[dict(frame_id='frame-003',timestamp_ms=expected)]
+
+
+def test_bounded_filter_uses_decimal_half_up_at_both_canonical_edges(tmp_path,monkeypatch):
+    loader,_,_,_=setup_loader(tmp_path,monkeypatch,pts=(1.149499,1.1495,1.149501,1.249499,1.2495,1.249501))
+    found=loader(request(),20,owned_time_range_ms=(1150,1250))
+    assert [f['timestamp_ms']for f in found]==[1150,1249]
+
+
+def test_bounded_raw_padding_still_rejects121_frames_before_canonical_filter(tmp_path,monkeypatch):
+    loader,root,_,_=setup_loader(tmp_path,monkeypatch,pts=[1.149+i/100000 for i in range(121)])
+    with pytest.raises(ValueError,match='video_frames_invalid'):loader(request(),20,owned_time_range_ms=(1150,1151))
+    assert [p.name for p in (root/'frames').iterdir()]==['frame-002.jpg']

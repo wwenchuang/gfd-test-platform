@@ -216,11 +216,11 @@ def test_requested_original_segment_is_reloaded_without_mutating_source_metadata
             for p in payload['trajectory']:
                 t=p['track'];r['checks'].append(dict(event_id=t['event_id'],status='confirmed',frame_refs=[t['trigger_frame'],t['outcome']['frame_refs'][-1]],question=''))
         return r
-    def loader(request,capacity):
+    def loader(request,capacity,*,owned_time_range_ms):
         loaded.append((request,capacity));return [dict(frame_id='frame-091',timestamp_ms=3150)]
     monkeypatch.setattr(ai_skill_service,'run_ai_skill',lambda *a,**kw:audit_reply(reply(*a,**kw)) if kw['version']=='audit' else reply(*a,**kw))
     monkeypatch.setattr(ui_video_windows,'load_assets',lambda *a:[])
-    result=vt.observe_trajectory({'media':dict(frames=fs,duration_ms=9001)},None,lambda:False,revisit=loader)
+    result=vt.observe_trajectory({'media':dict(frames=fs,duration_ms=9001)},None,lambda:False,revisit_bounded=loader)
     assert len(loaded)==1 and loaded[0][1]<=20
     assert result['events'][0]['frame_refs']==['frame-091','frame-032']
     assert dict(frame_id='frame-091',timestamp_ms=3150) in result['media']['frames']
@@ -270,9 +270,9 @@ def test_supplement_between_original_cores_has_exactly_one_trigger_owner(monkeyp
         return r
     monkeypatch.setattr(ai_skill_service,'run_ai_skill',lambda *a,**kw:audit_reply(reply(*a,**kw)) if kw['version']=='audit' else reply(*a,**kw));monkeypatch.setattr(ui_video_windows,'load_assets',lambda *a:[])
     result=vt.observe_trajectory({'media':dict(frames=frames(),duration_ms=9001)},None,lambda:False,
-                               revisit=lambda *a:[dict(frame_id='frame-091',timestamp_ms=3250)])
+                               revisit_bounded=lambda *a,**kw:[dict(frame_id='frame-091',timestamp_ms=3249)])
     assert sum('frame-091' in p['owned_frame_ids'] for p in audits)==1
-    assert result['events'][0]['start_ms']==3250
+    assert result['events'][0]['start_ms']==3249
 
 
 def test_revisit_cannot_orphan_pixels_inside_already_processed_time(monkeypatch):
@@ -445,7 +445,7 @@ def test_bad_revisit_request_receives_shared_correction_on_same_owned_images(mon
     result=vt.observe_trajectory({'media':dict(frames=frames(),duration_ms=9001)},None,lambda:False,revisit=loader,record=lambda key,value:records.append((key,value)))
     retried=[p for v,p in calls if v==stage and p.get('packet_id')=='packet-001']
     assert len(retried)==2 and retried[0]['frames']==retried[1]['frames']
-    assert all(p['owned_time_range_ms']==[100,3300] for p in retried)
+    assert all(p['owned_time_range_ms']==[100,3250] for p in retried)
     assert 'validation_feedback' in retried[1] and 'owned' in retried[1]['validation_feedback']
     assert loads==[] and len(result['events'])==1
     rejected=[v for k,v in records if k.endswith('contract-rejection')]
@@ -525,9 +525,11 @@ def test_revisit_and_schema_errors_share_two_global_corrections_across_stages(mo
 
 def test_revisit_end_boundary_brackets_gap_but_is_not_reassigned_to_current_owner():
     packet=vt.make_packets(frames(),[])[0]
-    assert packet['owned_start_ms']==100 and packet['owned_end_ms']==3300
+    assert packet['owned_start_ms']==100 and packet['owned_end_ms']==3250
     assert 'frame-033' not in packet['owned_frame_ids'] and 'frame-033' in packet['context_frame_ids']
-    assert vt.validate_revisit_requests([dict(first_frame='frame-032',last_frame='frame-033',question='边界间隙')],packet) is None
+    with pytest.raises(ValueError):
+        vt.validate_revisit_requests([dict(first_frame='frame-032',last_frame='frame-033',question='边界间隙')],packet)
+    assert vt.validate_revisit_requests([dict(first_frame='frame-032',last_frame='frame-033',question='边界间隙')],packet,allow_context_anchors=True)is None
     with pytest.raises(ValueError) as exc:
         vt.validate_revisit_requests([dict(first_frame='frame-032',last_frame='frame-034',question='未来上下文')],packet)
     assert exc.value.trajectory_reason=='revisit_outside_owned_interval'

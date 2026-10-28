@@ -224,6 +224,11 @@ def render_ai_skill_prompt(skill_name, payload=None, version="v1", fallback_prom
     template = load_ai_skill_prompt(skill_name, version)
     if not template:
         return fallback_prompt
+    if skill_name == "ui_video_trajectory" and version in {"observe", "audit"}:
+        bounded = isinstance(payload, dict) and payload.get("revisit_context_anchors") is True
+        contract = ("端点必须是本次已提供原帧；本次支持context端点仅作定位，至少一个端点必须属于owned_frame_ids，原始跨度大于0且不超过3000ms；平台只解码请求与当前owned_time_range_ms半开区间[start,end)相交的非空部分。context原帧归属不变，不导入其它包的像素。"
+                    if bounded else "端点必须是本次已提供原帧，整段时间必须位于owned_time_range_ms之内；context只能作结果参考，不能要求回看前后其它包的时间区间。新增像素严格属于当前[start,end)区间。")
+        template = template.replace("{{revisit_contract}}", contract)
     payload_text = json.dumps(payload or {}, ensure_ascii=False, indent=2)
     rendered = template.replace("{{payload}}", payload_text)
     if skill_name in {"requirement_analyzer", "scenario_designer", "automation_filter", "visual_grounder"}:

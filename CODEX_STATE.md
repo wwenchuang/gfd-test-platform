@@ -1,3 +1,10 @@
+## 2026-10-29 Reviewed temporal ownership and bounded source revisit
+
+- Midpoint ownership is frozen between original samples; explicit revisit_bounded permits supplied context anchors while exporting only current-owned canonical PTS. Original frame roles and4/64/60/24/two-correction gates stay intact. Legacy callback remains strict.
+- Independent SPEC/QUALITY PASS after two real fractional-time regressions: bounded raw +/-1ms acquisition is filtered with authoritative Decimal canonical PTS before file creation; original raw120/121-sentinel/16MiB guards remain.346 scoped tests, backend63, compile and diff pass.
+- Authentic original locator12835967->12937000 now recovers15 true source PTS36500..36967; v3 matches JPEG hashes,369 old whole-v2 files unchanged. Independent pixel review sees go-print circle303..310 and preparing panel312..314. Decoder/visual witness only: no model qualification, formal case, deployment or phone trial.
+- Actual whole-v2 remains failed/evidence_budget4of10,57 official receipts; slot58 storage failed before HTTP. Next separate unified business-episode prompt and bounded storage/neighbor-window dependency fixes, then focused Qwen/source review before another whole run. Runtime/default worker still5368b0e8; nativeChrome bastion passwordlogin, existing credential question pending.
+
 ## 当前继续点：先修正语义自洽，再做fresh整片
 
 - 最新两阶段局部结果：纯感知46.627秒恢复关键标记，Max纯文字44.613秒结构绑定通过，但独立内容审核仍不合格（生成叙述两次/事件一条、结果跨后次出现、去打印触发/终态与OCR问题）。全部原raw/问题/不利证据保留，未出新正式用例/Runner。

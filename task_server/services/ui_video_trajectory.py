@@ -61,7 +61,11 @@ def validate_states(states,frames):
 
 
 def make_packets(frames,states):
-    if not 2<=len(frames)<=300:_fail('frame_count')
+    if not isinstance(frames,list) or not 2<=len(frames)<=300:_fail('frame_count')
+    if (any(not isinstance(f,dict) or not isinstance(f.get('frame_id'),str) or not f['frame_id'] or
+            type(f.get('timestamp_ms'))is not int or f['timestamp_ms']<0 for f in frames) or
+        len({f['frame_id'] for f in frames})!=len(frames) or
+        any(a['timestamp_ms']>=b['timestamp_ms'] for a,b in zip(frames,frames[1:]))):_fail('frame_reference')
     validate_states(states,frames)
     positions={f['frame_id']:i for i,f in enumerate(frames)}
     packets=[];start=0
@@ -74,8 +78,11 @@ def make_packets(frames,states):
         local=frames[max(0,start-6):min(len(frames),stop+6)]
         owned=[f['frame_id'] for f in frames[start:stop]];ids=set(owned)
         packets.append({'packet_id':f'packet-{len(packets)+1:03d}','frames':local,
-                        'owned_start_ms':frames[start]['timestamp_ms'],
-                        'owned_end_ms':frames[stop]['timestamp_ms'] if stop<len(frames) else frames[-1]['timestamp_ms']+1,
+                        # Freeze nearest-original-sample ownership; later revisits never move these cuts.
+                        'owned_start_ms':((frames[start-1]['timestamp_ms']+frames[start]['timestamp_ms']+1)//2
+                                          if start else frames[0]['timestamp_ms']),
+                        'owned_end_ms':((frames[stop-1]['timestamp_ms']+frames[stop]['timestamp_ms']+1)//2
+                                        if stop<len(frames) else frames[-1]['timestamp_ms']+1),
                         'owned_frame_ids':owned,'context_frame_ids':[f['frame_id'] for f in local if f['frame_id'] not in ids]})
         start=stop
     return packets
@@ -226,23 +233,40 @@ def audit_claim_context(trajectory,prior_events):
     return claims,prior
 
 
-def validate_revisit_requests(requests,packet):
-    """Validate all model requests before any decoder work or pixel mutation."""
+def _revisit_range(request,packet,allow_context_anchors):
     times={f['frame_id']:f['timestamp_ms'] for f in packet['frames']}
     start,end=packet['owned_start_ms'],packet['owned_end_ms']
-    for request in requests:
-        if (not isinstance(request,dict) or set(request)!={'first_frame','last_frame','question'} or
-            type(request['first_frame']) is not str or type(request['last_frame']) is not str or
-            request['first_frame'] not in times or request['last_frame'] not in times):_fail('revisit_reference')
-        if not isinstance(request['question'],str) or not request['question'].strip() or len(request['question'])>2000:_fail('revisit_question')
-        left,right=times[request['first_frame']],times[request['last_frame']]
+    if (not isinstance(request,dict) or set(request)!={'first_frame','last_frame','question'} or
+        type(request['first_frame']) is not str or type(request['last_frame']) is not str or
+        request['first_frame'] not in times or request['last_frame'] not in times):_fail('revisit_reference')
+    if not isinstance(request['question'],str) or not request['question'].strip() or len(request['question'])>2000:_fail('revisit_question')
+    left,right=times[request['first_frame']],times[request['last_frame']]
+    if not 0<right-left<=3000:_fail('revisit_span')
+    if allow_context_anchors:
+        if not {request['first_frame'],request['last_frame']} & set(packet['owned_frame_ids']):_fail('revisit_outside_owned_interval')
+        clipped_left,clipped_right=max(left,start),min(right,end)
+        if clipped_left>=clipped_right:_fail('revisit_outside_owned_interval')
+    else:
         if left<start or right>end:_fail('revisit_outside_owned_interval')
-        if not 0<right-left<=3000:_fail('revisit_span')
+        clipped_left,clipped_right=left,right
+    return left,right,clipped_left,clipped_right
 
 
-def observe_trajectory(document,root,cancelled,progress=None,record=None,revisit=None):
+def validate_revisit_requests(requests,packet,*,allow_context_anchors=False):
+    """Validate every locator before decode; bounded capability is explicit."""
+    if type(allow_context_anchors)is not bool:raise ValueError('video_revisit_invalid')
+    seen=set()
+    for request in requests:
+        bounds=_revisit_range(request,packet,allow_context_anchors)
+        if allow_context_anchors and bounds[:2]in seen:_fail('revisit_reference')
+        seen.add(bounds[:2])
+
+
+def observe_trajectory(document,root,cancelled,progress=None,record=None,revisit=None,*,revisit_bounded=None):
     from . import ai_skill_service as ai
     from .ui_video_windows import load_assets
+    if revisit_bounded is not None and not callable(revisit_bounded):raise ValueError('video_revisit_invalid')
+    bounded_revisit=revisit_bounded is not None
     frames=copy.deepcopy(document['media']['frames']);duration=document['media']['duration_ms']
     calls=0;corrections=0;revisits=0;started=time.monotonic();secrets=[];call_audit=[];revisit_attempts=[]
     def redact(value):
@@ -261,6 +285,7 @@ def observe_trajectory(document,root,cancelled,progress=None,record=None,revisit
         if exhausted:
             context.update(exhausted_revisit_ranges=exhausted,revisit_feedback='这些区间已成功解码全部真实原帧但没有新增帧，不会重复解码；继续核对当前同组原图。证据不够时保留unclear和具体问题，或据实际原图更正观察，不得因无新增帧而确认。')
         payload={'phase':'whole-trajectory','duration_ms':duration,'frames':images,'image_frames':images,**context,'reasoning_mode':'bounded'}
+        if version in {'observe','audit'}:payload['revisit_context_anchors']=bounded_revisit
         if record:record(f'{calls:02d}-{version}-request',redact(payload))
         raw=ai.run_ai_skill('ui_video_trajectory',payload,version=version,image_assets=load_assets(images,root,cancelled),
                             runtime_trace=trace,timeout=120,respect_global_timeout=False,retry_count=0,max_tokens=10000,repair_invalid_json=False)
@@ -286,7 +311,7 @@ def observe_trajectory(document,root,cancelled,progress=None,record=None,revisit
                 raw=ask_once(version,images,**context)
                 if version=='overview' and (raw['events'] or raw['checks']):_fail('overview_shape')
                 if version=='observe' and raw['checks']:_fail('observe_checks')
-                if revisit_packet is not None:validate_revisit_requests(raw.get('revisit',[]),revisit_packet)
+                if revisit_packet is not None:validate_revisit_requests(raw.get('revisit',[]),revisit_packet,allow_context_anchors=bounded_revisit)
                 if validator is not None and not raw.get('revisit'):validator(raw)
                 return raw
             except ValueError as error:
@@ -303,8 +328,8 @@ def observe_trajectory(document,root,cancelled,progress=None,record=None,revisit
                 explanation={
                     'revisit_reference':'补帧端点必须是当前实际附图中的真实frame_id，且请求仅含first_frame/last_frame/question。',
                     'revisit_question':'补帧question必须是非空且不超过2000字符的问题。',
-                    'revisit_outside_owned_interval':'补帧只能位于当前owned时间区间；future context属于后续owner，不能提前归入当前包。',
-                    'revisit_span':'补帧first必须早于last且间隔不超过3000ms，只能请求当前owned区间。',
+                    'revisit_outside_owned_interval':('context端点仅作定位，至少一端必须为owned且与当前owned半开区间有非空交集；平台只解码交集，不改变原帧归属。' if bounded_revisit else '补帧只能位于当前owned时间区间；future context属于后续owner，不能提前归入当前包。'),
+                    'revisit_span':('原始定位端点first必须早于last且间隔不超过3000ms，裁剪后也必须有非空当前owned交集。' if bounded_revisit else '补帧first必须早于last且间隔不超过3000ms，只能请求当前owned区间。'),
                     'audit_shape':'audit根只能含checks/issues/multiple_scenarios/revisit；check只能含event_id/trigger_verdict/outcome_verdict/question，不得输出旧status/frame_refs或states/events。',
                     'audit_missing_event':'checks数量必须与trajectory一致，每个track.event_id恰好出现一次，不得漏项或重复。',
                     'audit_identity':'checks只能使用给定track.event_id，每个ID恰好一次。',
@@ -319,14 +344,16 @@ def observe_trajectory(document,root,cancelled,progress=None,record=None,revisit
                     'audit_contradiction':'双supported的question必须为空；仍有疑问请明确使用unclear或contradicted。',
                 }.get(reason,'当前阶段输出结构不符合合同，请只返回规定字段及合法值。')
                 if reason.startswith('revisit_'):
-                    explanation+='仅请求当前owned时间区间；future context由后续owner处理，不得夹取或改派原帧。'
+                    explanation+=('本次支持context端点仅作定位：至少一个端点须为owned，原始跨度最多3000ms；平台只解码与当前owned半开区间相交的非空部分，不改派context原帧。'
+                                  if bounded_revisit else '仅请求当前owned时间区间；future context由后续owner处理，不得夹取或改派原帧。')
                 context['validation_feedback']=('平台合同校验未通过：'+explanation+
                     ('重新核对全部附图，分别判断给定片段的触发和结果；check不返回帧号，由平台绑定原片段锚点。'
                      if version=='audit' else '重新核对本阶段全部原图，完整输出该阶段合同。')+'不补造操作。')
     def expand(packet,requests):
         nonlocal revisits,frames
         if not requests:return False
-        if revisit is None:_fail('revisit_unavailable')
+        if revisit is None and not bounded_revisit:_fail('revisit_unavailable')
+        validate_revisit_requests(requests,packet,allow_context_anchors=bounded_revisit)
         times={f['frame_id']:f['timestamp_ms'] for f in frames}
         allowed={f['frame_id'] for f in packet['frames']}
         start,end=packet['owned_start_ms'],packet['owned_end_ms']
@@ -335,13 +362,7 @@ def observe_trajectory(document,root,cancelled,progress=None,record=None,revisit
             span=[times[request['first_frame']],times[request['last_frame']]]
             return any(a['status']=='no_new_frames' and a['packet_id']==packet['packet_id'] and a['time_range_ms']==span for a in revisit_attempts)
         for index,request in enumerate(requests):
-            if (not isinstance(request,dict) or set(request)!={'first_frame','last_frame','question'} or
-                type(request['first_frame']) is not str or type(request['last_frame']) is not str or
-                request['first_frame'] not in allowed or request['last_frame'] not in allowed):_fail('revisit_reference')
-            _text(request['question'])
-            left,right=times[request['first_frame']],times[request['last_frame']]
-            if left<start or right>end:_fail('revisit_outside_owned_interval')
-            if not 0<right-left<=3000:_fail('revisit_budget')
+            left,right,clipped_left,clipped_right=_revisit_range(request,packet,bounded_revisit)
             if exhausted(request):
                 questions.append('补帧区间已无新增原帧，仍需核实：'+request['first_frame']+'至'+request['last_frame']+'：'+request['question'])
                 continue
@@ -349,18 +370,22 @@ def observe_trajectory(document,root,cancelled,progress=None,record=None,revisit
             remaining=sum(not exhausted(pending) for pending in requests[index:])
             capacity=min(20,(60-len(packet['frames']))//remaining)
             if capacity<2:raise ValueError('video_vision_limit')
-            extra=revisit(request,capacity)
+            extra=(revisit_bounded(request,capacity,owned_time_range_ms=(start,end))
+                   if bounded_revisit else revisit(request,capacity))
             if cancelled():raise ValueError('video_cancelled')
             if not isinstance(extra,list) or not 0<=len(extra)<=capacity:_fail('revisit_result')
             stamps=set(times.values());names=set(times)
             for f in extra:
                 if (not isinstance(f,dict) or set(f)!={'frame_id','timestamp_ms'} or
                     type(f['frame_id']) is not str or f['frame_id'] in names or type(f['timestamp_ms']) is not int or
-                    not left<=f['timestamp_ms']<=right or f['timestamp_ms'] in stamps):_fail('revisit_result')
+                    not clipped_left<=f['timestamp_ms']<=clipped_right or not start<=f['timestamp_ms']<end or
+                    f['timestamp_ms'] in stamps):_fail('revisit_result')
                 names.add(f['frame_id']);stamps.add(f['timestamp_ms'])
             revisits+=1;attempted=True
             attempt={'request':copy.deepcopy(request),'new_frames':copy.deepcopy(extra),'packet_id':packet['packet_id'],
-                     'time_range_ms':[left,right],'status':'frames_added' if extra else 'no_new_frames'}
+                     'time_range_ms':[left,right],'requested_time_range_ms':[left,right],
+                     'decoded_time_range_ms':[clipped_left,clipped_right],'decoded_end_exclusive':clipped_right==end,
+                     'owned_time_range_ms':[start,end],'status':'frames_added' if extra else 'no_new_frames'}
             revisit_attempts.append(attempt)
             if not extra:questions.append('补帧无新增原帧，仍需核实：'+request['first_frame']+'至'+request['last_frame']+'：'+request['question'])
             frames=sorted(frames+extra,key=lambda f:f['timestamp_ms'])
