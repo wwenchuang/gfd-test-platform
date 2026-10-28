@@ -271,3 +271,57 @@ OFFLINE原型v3在第38解码帧因36有效候选超过32停止；v4整帧overfl
 marker-cue-packet-probe-v1从immutable旧audit按trigger不清→issue顺序自动选2窗口(128及121)，原44JPEG+16独立native Q90派生共60图，40变化候选，2800644编码字节。原3包prefix仅复用9事件/8问题，未声称fresh whole；所有2258原生绑定/319原图与prefix/原call10 render均验证。唯一实际observer96.281秒、actual qwen_plus/qwen3.8-max/fallbackfalse、prompt151591/completion2722/total154313/reasoning1024，原auth独占local child清理true；无重试/自动audit/conso/Runner。完整raw/bind/outcome/trace及独立content-review在外部同名目录。
 
 局部改善明确：110context收键盘没有再次造111绿色确定，实际print触发从128文本行误判改为33136600（33036566.667无圆）；本stage33336967不可混旧47967。仍不合格：117与32231000的两次可见overlay已经被模型描述，却以一次生成响应为由并成一个aiTap，outcome122跨第二尝试借结果；40条候选没有逐项保留处置，冻结prefix原dismiss遗漏仍在。contract_valid不等内容通过，独立模型audit尚无、正常平台新用例/Runner仍0。下一处理须把视觉尝试账簿与业务归并分层，不能把CV直接编成aiTap，也不继续整片相同高细节循环。
+
+## 2026-10-28 16:42 实际部署与短窗口视觉账簿
+
+- 5368b0e8精确调用禁止fallback独立规格/质量复审通过；代码分支已推送。原生Chrome上传archive SHA ae7487dad1b1de2923bebccc08df2d576ec5ef7211ffef1c3eb8cdfad3eb09c5与服务器sha256sum实际一致，bundle SHA701b3ae8e1165ed2ff739572d63d1cd62740354dc5ace5fb804228ca38fcdf3d。既有deploy/update-main-server.sh实际终态部署完成5368b0e8，16:42:34+08公网HTTP200/oktrue/完整revision一致，Sonic容器保护及服务/登录/前端检查完成。origin/main仍旧f7、服务器main已ff到536；默认worker仍旧分析入口，无正式新草稿/Runner通过。
+- v2单包唯一实际请求118.091秒后RuntimeError，无原response/HTTPstatus/code/usage/actualprovider，仅trace source=ai_gateway；不是可确认模型语义结果，不能断言具体timeout来源。ownedchild清理true。原60图/25owneddispositions方案失败封存，不重复同输入。下个harness已在实际guarded urlopen捕HTTPstatus/精确白名单code/type及通用classification，不存任意错误正文/凭据/思考。
+- marker-cue-focused-probe-v3从原machine issue frame121窗口[30967,33000]及其parents自动带出3ownedcue，保全部6witness/gap+2context共8原JPEG，6fine/2default、prompt10330UTF8B。唯一实际调用32.529秒，qwen_plus/qwen3.8-max/fallbackfalse，usage14158/1641/15799/reasoning1024；contract_valid_only，清理true。root与独立8图目视均确认117圆出现、118/120无圆、322/121再次出现；raw ledger没有再合掉这两次视觉出现。323/122是中央生成中矩形加载面板，原prompt overlay一词未区分录屏触点与应用浮层；第三cue不能当第三触摸。独立报告待写，不直接生产集成/不计整片通过。
+- 下一小步v4纯prepare：相同8原JPEG，明确input_visualization/app_ui/unknown并关联原trajectory事件及不可变cue，未决关系保留，不强制点击数、不借后次结果。旧v1/v2/v3及raw均不改，待rootreview再唯一调用。
+- 15:44:03指定ecbfd645只读图显示EP3-9888E0094F2A在线/工作中27°C，掐丝珐琅任务下载或打印进度超时、重新打印按钮可见；归属未证，未取消/重印/下发。早4:14的idle不能代表当前。没有新手机试跑或最终物理确认打印。
+
+## 2026-10-28 hybrid首轮与局部绑定结果
+
+- 87b4a564状态元数据合同修正已提交推送分支，独立spec+quality PASS：明确state五字段、实际outercatch给固定安全state反馈；RED7fail8pass→GREEN15，271trajectory/backend63/compile/diff绿。origin/main已ff5368b0e8与实际线上一致；87尚未部署，worker默认旧入口不变。
+- v4单次真实68.545秒，Max/fallbackfalse、15979/3242/19221/reasoning1024；raw两aiTap分117与322，firstoutcome118/120在second前、second323/122只处理中，app_ui独立分类改善。终态failed ValueError；离线精确诊断state_shape缺三字段。直接下层bind_packet_events对原2events成功/rawfragments不变，rawSHA80be1b6e...前后一致；没有删state后冒充通过。独立发现0216局部指代混用、同分辨率误述、光标回看过度猜测，整轮仍不合格。
+- Flash盲packet004一次46.174秒/stop，actualqwen_plus/qwen3.8-flash/fallbackfalse，22001/4062/26063/reasoning1024，32owned/44图合同完整；root选择性看097/110/111/128及同原C图，支持收键盘/两次marker/文本框触点归属的局部事实，不声称32条全部准确；历史Maxstream/JSON/system设置差异已列，非纯模型A/B。无生产Flash路由改动。
+- 新wholehybrid-v1 /Users/adouceshi/Downloads/qwen-hybrid-whole-prepared-20261028-v1仅原299/sourceSHA370d92...，Flashoverview/observe默认细节，Maxaudit自动requiredrefs至多12fine，Maxconso/input默认；每请求fallbackConfig与所选model一致、真实route均无回退。root审脚本f2a5f7b6a8aa800b1a84063e4f014c62372d8a64fc7dd39e258c9e5a7713e40b及sourcepinsfc6cb151e30d6b5ccefd72350ba2ead61fe93343b68c6f6b91e0665e2c65c482后唯一运行，24calls/1200秒共享到tail、4revisit64新帧60图等不变；12synthetics/五阶段实际GatewayVM及60/64文件预算检查通过。私有诊断未携带baseline_examples，服务器真实Top3尚未读取；诊断不等于正常平台资格。
+- 实际hybrid-v1 failed/video_vision_limit，1/9完成、5successfulcalls：Flash41.609/30.061/29.208，Maxaudit36.158，Flash30.956；模型合167.992秒，均actualQwen/1024/fallbackfalse。3revisit新8/0/16，323帧，总新24未触全局64上限；无conso/input/正式草稿/Runner。第二包原44图32owned12context，请求两个回看，expand把16空位全给首区间达到60，第二区间capacity0失败。原失败永久保留，不复活预算。
+- 正在surgical revisit_capacity_fix：按剩余有效回看请求公平分配局部容量，保原图/owned/context/所有原限制；简明澄清IME内部按键/片段未结束不是独立业务边界、续接身份逐字复用、光标/键盘状态不能反推点击；不写自动清疑问或删步骤代码。brief .superpowers/sdd/attempt-cue-probe/revisit-capacity-brief.md，待TDD/独立审查再从原299开新轮。
+- 指定ecbfd645/9888E0094F2A，15:44只读为工作中/掐丝珐琅进度超时非归属证明，未取消/重新打印；没有新真机执行或最终物理确认。当前瓶颈是源解析及门禁，没有要求用户再次给素材/确认方案。
+
+## 2026-10-28 hybrid-v2实际终止：视觉记录与步骤关联仍错位
+
+- 公平回看容量02e0c501已完成独立spec/quality PASS；RED5fail3pass→GREEN8，306trajectory/revisit/catalog、backend63、主链编译及diff通过。已推送分支，尚未部署；线上仍5368b0e8且默认旧入口未变。
+- 新独立wholehybrid-v2只原299帧，sourcepins SHA04c467c510f100d1ec117e2128da5d2a8529da6173bb5f9082234f33cfc6cf04；实际终态failed/revisit_budget/video_model_invalid，3/9包完成，15次成功千问调用合501.798模型秒，actual Flash/Max按阶段且fallbackfalse/1024。四次回看新增7/11/0/8帧，第四包第二请求触4次上限；没有conso/input/正式草稿/Runner。旧轮不复活、不扩预算。
+- 第一包假聚焦点击改为键盘状态断言；但第二包055搜索卡片真实指示点漏看，060被当触发，回看消耗三次；第三包111结果/残点误作收键盘触发（实际110），audit错误支持。第四包原raw13空数组被合同拒，纠正raw14仍合并117/121视觉出现并借122后次加载，误把128文本框圆绑定去打印；audit15仅后项抓到，整体不合格。
+- 下一步私有typed-frame-evidence-pilot-v1：保原44图/原事件合同，增加逐帧视觉记录及事件关联，只检查模型自洽与真实原图，不把每个圆自动变点击、不强制两次物理按压、不自动清疑问。三冻结包局部诊断不计整片资格，准备者禁止API，root审后各最多一次实际调用。brief .superpowers/sdd/attempt-cue-probe/typed-frame-pilot-brief.md。
+- 原生平台只读确认16已发布基线、指定Runner连接就绪、原片最新仍分析失败；没有导入/保存/启动。Top3服务只读导出脚本仅本地准备，堡垒机当前再次会话结束，未运行服务器命令。手机最近只读15:44为掐丝珐琅任务进度超时、非本次归属证明，未取消或重新打印。
+
+## 2026-10-28 typed混合请求三包均失败，定位输出合同冲突
+
+- 私有v1准备27synthetic/独立spec+quality PASS、165输入pins及3historical核对，root三次独立真实请求已全部终态FAILED。002/003/004实际Flash/fallbackfalse/1024，25.119/26.593/45.945秒，prompt29174/33169/34860，completion2206/1963/4432，total31380/35132/39292。各attempt1、ownedchild已清理，无自动重试/补帧/审计/正常用例/Runner。
+- 002/003仅输出旧六字段，遗漏新增bank/links；004输出44bank但新增phase/packet_id且3revisit超2，schema失败。004把110/117/121/128均记absent，且先events后bank；原步骤仍有结果反推触发/重复去打印。新typed记录并未使视觉自动正确，原始raw及失败保留。
+- 控制器发现自己新增prefix与旧prompt末尾仅旧root JSON示例冲突，不能归因成千问服务错误。下一次只对原packet004隔离此项：唯一规范输出合同、bank首先输出，原业务规则/44原图/完整payload不变，不新增全局mapper，不复活旧预算。brief typed-bank-first-control-brief.md，prepare-only，无新API。
+- 独立像素review覆盖108unique/132memberships，确认055卡片/110收键盘/117与121间有无点/128文本行；报告明确STATE与memory背景暴露，非完全盲测。无raw/manualbaseline输入到producer。对原三结果的独立contentreview进行中。
+
+## 2026-10-28 单一规范bank-first对照仍失败，停止混合提示变体
+
+- typed-frame-bank-first-control-v2独立spec+quality PASS，root核对后唯一实际52.944秒，actualFlash/fallbackfalse/1024，34856prompt/4426completion/39282total，ownedchild清理true。raw八键顺序正确、44bank、2revisit；但3events均漏continuation_of导致schema failed，44rows仍全absent、110/117/121/128漏看，事件仍122/129状态反推及137额外导航。没有补字段后冒充通过，不续跑旧轮。
+- 此次prompt清除旧root-only例子、bank最先输出并保持原44图/payload；格式冲突确实解除，视觉/因果仍错，不能继续同类mixedprompt变体。报告与精确SHA在.superpowers/sdd/attempt-cue-probe/typed-bank-first-control-report.md；原raw保留外部同名目录。
+- 下一纯感知对照perception-only-control-v3仅复用先前成功Flashblindinventory的原prompt/32ownedrows协议，改为当前packet004同44图/role/time，去掉不属于感知职责的prior_events/states/hypotheses；不输入旧模型答案/手工源标签。纯画面形状/位置/控件/字段和键盘状态，零业务动作。准备者禁止API，root审后一次实际；不是新globalmapper/不重置旧预算。后续语义与独立审核须另做，当前未生成新用例/Runner。
+- 独立实际内容review确认旧v1三包不合格且raw6份/原账簿2份SHA不变；审阅者重看065发现确有去编辑淡圆，更正原账簿absent判断并在新报告公开，不覆盖旧ledger。此更正不输入producer。堡垒机最新原生AX仍密码登录，登录请求待答，本地继续。
+
+## 2026-10-28 纯感知职责分离恢复关键画面事实
+
+- perception-only-control-v3独立spec/quality PASS、76pins及44图一致，root离线verify后唯一实际46.627秒，official qwen_plus/qwen3.8-flash/fallbackfalse/stop/1024，prompt22001/completion4121/total26122。32ownedrows合同完整，child清理true。root选择性复核117/121分别圆出现、118-120圆消失、128文本行灰圆，均被事实记录保留；122/129加载面板也以transient视觉元素记录，不能当触点。所有32行的独立像素内容review尚在进行。
+- 此输入与失败bankfirst-v2同44图/role/time，但producer只做纯画面描述，不携带prior_events/states/hypotheses。prompt6517B，完整旧request私有保留不删除；不是纯模型A/B或单参数归因。scriptccc81b965a4e902c4711f666629aac0876a2e6c219569a67136fab7ae919d8c9/manifestb8646458ece25cf685d1c2ce611309f13b3ada5f0b5a8f4b3013d08657a15e26。
+- 下步prepare-only perception-backed-observer-v1：从真实32行视觉事实做单packet原trajectory事件/状态语义映射，Max纯文本strictschema，0图/1024/10000/120/0retry/1call；不是旧全局phase/aliasmapper。保原历史全文private，模型prior只给身份/refs/问题投影，去未验证因果叙述；不注入人工baseline/review/旧失败答案。schema维持原event/state字段及原binder，事实问题原样保留provenance，真实业务疑问必须输出。独立视觉review及root审后才实际调用。brief perception-backed-observer-brief.md。
+- 尚无whole-source通过/正常新草稿/Runner；当前仅支持职责分离能恢复视觉事实，不代表生成业务用例已通过。堡垒机仍密码登录，凭据恢复请求待答。
+
+## 2026-10-28 分离后的Max语义阶段合同通过，内容仍待审核
+
+- perception-backed-observer-v1独立spec+quality PASS，rootexact离线verify后唯一44.613秒 official qwen3.8-max/stop/1024，prompt8868/completion2030/total10898。纯文本严格schema，0图；原event/state/binder校验通过，raw不变。没有fallback路径/child/listener/key落盘，不伪造providerId或fallback返回字段。
+- 新输出2事件（生成模型、去打印），去打印的准备toast与后续导航未再拆为两次操作；但生成observation明确说两次点击而仅一event、outcome跨121，触发129被称navigation而实际转场137，标题OCR少字和按钮颜色功能推断继续传播。recordingmarks不证明物理次数，当前仍needsindependentvisualaudit/qualifiedfalse，不能当whole/正常用例/Runner通过。
+- source事实32行与8priortrack/fragment身份/原问题/refs精确投影保留，先前因果叙述不进入semantic；完整oldrequest私有，未人工补值/改raw/注入review结论。script235f573231a5d245814536df409e546c4531f201d8dc9fba288b8916828be137/manifest0a16a3bc17757075d0279ef513462d70eb08047d06e3aab6bb9418b1eeb3ba0b；10focused tests/24inputs/56sourceprovenance pins已核对。
+- 纯感知32owned独立像素review完成：核心117/121/128支持，但112越context未填refs、按钮/字段外观变化遗漏、141标题少字等缺口完整保留，不将事实清单视为全真。独立semantic内容review进行中。下一次完整fresh诊断将复用既有trajectory/conso/input门禁并加入独立感知阶段；默认worker仍未切换。旧失败全部保留，不再试mixedprompt变体。
