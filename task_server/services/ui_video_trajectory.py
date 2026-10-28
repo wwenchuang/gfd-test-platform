@@ -1,9 +1,12 @@
 """State memory and owned action packets; diagnostic observer, not execution authority."""
 import copy
+import json
 import math
+from collections import Counter
 import time
 
 from .ui_video_analysis import _bind_whole_evidence, validate_analysis
+from .ui_video_execution_contract import validate_execution_contract, project_audit_claims
 
 ROOT_FIELDS={'states','events','checks','uncertainties','multiple_scenarios'}
 EVENT_FIELDS={'action','target','value','frame_refs','observation','uncertainties','trigger_frame',
@@ -200,6 +203,46 @@ def validate_audit_issues(issues,packet):
     return copy.deepcopy(issues)
 
 
+_TRIGGER_LOCK_FIELDS=('action','target','value','trigger_frame','trigger_kind','continuation_of')
+
+
+def _supported_trigger_locks(claims,checks):
+    """Copy actual supported business candidates, preserving multiplicity."""
+    supported={check['event_id'] for check in checks if check['trigger_verdict']=='supported'}
+    return [{key:copy.deepcopy(claim['track'][key]) for key in _TRIGGER_LOCK_FIELDS}
+            for claim in claims if claim['track']['event_id'] in supported and claim['track']['action'] in INTERACTIONS]
+
+
+def _trigger_lock_identity(fragment):
+    return json.dumps({key:fragment[key] for key in _TRIGGER_LOCK_FIELDS},sort_keys=True,ensure_ascii=False)
+
+
+def _merge_positive_trigger_locks(previous,claims,checks):
+    """Skipped/unclear audits cannot revoke earlier positive trigger evidence."""
+    contradicted={check['event_id'] for check in checks if check['trigger_verdict']=='contradicted'}
+    refuted=Counter(_trigger_lock_identity(claim['track']) for claim in claims
+                    if claim['track']['event_id'] in contradicted and claim['track']['action'] in INTERACTIONS)
+    supported=_supported_trigger_locks(claims,checks)
+    # Maximum observed multiplicity, not an append across repeated audits.
+    required=(Counter(map(_trigger_lock_identity,previous))-refuted)|Counter(map(_trigger_lock_identity,supported))
+    merged=[];seen=Counter()
+    for lock in previous+supported:
+        identity=_trigger_lock_identity(lock)
+        if seen[identity]<required[identity]:
+            merged.append(copy.deepcopy(lock));seen[identity]+=1
+    return merged
+
+
+def _validate_positive_trigger_locks(locks,history,packet):
+    """Compare newly bound current-owned fragments, never regenerated IDs."""
+    if not locks:return
+    owned=set(packet['owned_frame_ids'])
+    available=Counter(_trigger_lock_identity(fragment) for track in history for fragment in track['fragments']
+                      if fragment['trigger_frame'] in owned)
+    required=Counter(map(_trigger_lock_identity,locks))
+    if required-available:_fail('audit_positive_trigger_changed')
+
+
 def _envelope(raw,version=None):
     if version=='audit':
         if not isinstance(raw,dict) or set(raw)!={'checks','issues','multiple_scenarios','revisit'}:_fail('audit_shape')
@@ -223,8 +266,11 @@ def overview_frames(frames,limit=60):
     return [f for i,f in enumerate(frames) if i in ids]
 
 
-def audit_claim_context(trajectory,prior_events):
+def audit_claim_context(trajectory,prior_events,*,execution_contract=None):
     """Fork audit claims without observer narrative; preserve original evidence."""
+    validate_execution_contract(execution_contract)
+    if execution_contract is not None:
+        return project_audit_claims(trajectory),project_audit_claims(prior_events)
     claims=copy.deepcopy(trajectory);prior=copy.deepcopy(prior_events)
     for item in claims:item['track'].pop('observation',None)
     for item in prior:
@@ -284,7 +330,8 @@ def validate_revisit_requests(requests,packet,*,allow_context_anchors=False):
         seen.add(bounds[:2])
 
 
-def observe_trajectory(document,root,cancelled,progress=None,record=None,revisit=None,*,revisit_bounded=None,skill_runner=None,audit_batcher=None):
+def observe_trajectory(document,root,cancelled,progress=None,record=None,revisit=None,*,revisit_bounded=None,skill_runner=None,audit_batcher=None,execution_contract=None):
+    validate_execution_contract(execution_contract)
     from . import ai_skill_service as ai
     from .ui_video_windows import load_assets
     if revisit_bounded is not None and not callable(revisit_bounded):raise ValueError('video_revisit_invalid')
@@ -293,7 +340,7 @@ def observe_trajectory(document,root,cancelled,progress=None,record=None,revisit
     run_skill=ai.run_ai_skill if skill_runner is None else skill_runner
     bounded_revisit=revisit_bounded is not None
     frames=copy.deepcopy(document['media']['frames']);duration=document['media']['duration_ms']
-    calls=0;corrections=0;revisits=0;started=time.monotonic();secrets=[];call_audit=[];revisit_attempts=[]
+    calls=0;corrections=0;revisits=0;started=time.monotonic();secrets=[];call_audit=[];revisit_attempts=[];repair_feedback=[]
     def redact(value):
         if isinstance(value,str):
             for secret in secrets:
@@ -310,6 +357,7 @@ def observe_trajectory(document,root,cancelled,progress=None,record=None,revisit
         if exhausted:
             context.update(exhausted_revisit_ranges=exhausted,revisit_feedback='这些区间已成功解码全部真实原帧但没有新增帧，不会重复解码；继续核对当前同组原图。证据不够时保留unclear和具体问题，或据实际原图更正观察，不得因无新增帧而确认。')
         payload={'phase':'whole-trajectory','duration_ms':duration,'frames':images,'image_frames':images,**context,'reasoning_mode':'bounded'}
+        if execution_contract is not None:payload['execution_contract']=execution_contract
         if version in {'observe','audit'}:payload['revisit_context_anchors']=bounded_revisit
         if record:record(f'{calls:02d}-{version}-request',redact(payload))
         raw=run_skill('ui_video_trajectory',payload,version=version,image_assets=load_assets(images,root,cancelled),
@@ -325,6 +373,7 @@ def observe_trajectory(document,root,cancelled,progress=None,record=None,revisit
             counts={k:v for k,v in usage.items() if k in {'promptTokens','completionTokens','reasoningTokens','totalTokens'}
                     and type(v) in {int,float} and v>=0 and (type(v) is int or math.isfinite(v))}
             if counts:entry['usage']=counts
+        if execution_contract is not None:entry['raw_response']=redact(copy.deepcopy(raw))
         if version=='audit' and audit_batcher is not None:
             entry.update(packet_id=context['packet_id'],
                          audit_target_event_ids=[p['track']['event_id'] for p in context['trajectory']],
@@ -435,22 +484,28 @@ def observe_trajectory(document,root,cancelled,progress=None,record=None,revisit
     packet_outputs=[];checks=[];fragment_checks=[]
     for index,packet in enumerate(packets):
         if progress:progress('observing',index,len(packets),events)
-        feedback=''
+        feedback='';audit_feedback=None;positive_trigger_locks=[]
         # Audit before proceeding: a requested revisit can re-observe this packet
         # without invalidating identities in any later packet.
         while True:
             raw=ask('observe',packet['frames'],revisit_packet=packet,states=states,overview_hypotheses=overview_hypotheses,packet_id=packet['packet_id'],
                     owned_frame_ids=packet['owned_frame_ids'],context_frame_ids=packet['context_frame_ids'],
                     owned_time_range_ms=[packet['owned_start_ms'],packet['owned_end_ms']],
-                    prior_events=[{**t,'event':e} for t,e in list(zip(tracks,events))[-8:]],validation_feedback=feedback)
+                    prior_events=[{**t,'event':e} for t,e in list(zip(tracks,events))[-8:]],validation_feedback=feedback,
+                    **({'audit_feedback':copy.deepcopy(audit_feedback)} if audit_feedback is not None else {}))
             if expand(packet,raw.get('revisit',[])):continue
             try:
                 extra=validate_states(raw['states'],packet['frames'])
                 proposed,history=bind_packet_events(raw['events'],packet,frames,events,tracks)
+                if execution_contract is not None:_validate_positive_trigger_locks(positive_trigger_locks,history,packet)
             except ValueError as error:
-                if corrections>=2:raise
-                corrections+=1
                 reason=getattr(error,'trajectory_reason','contract')
+                if corrections>=2:
+                    if reason=='audit_positive_trigger_changed':_fail('audit_positive_trigger_exhausted')
+                    raise
+                corrections+=1
+                if reason=='audit_positive_trigger_changed' and record:
+                    record(f'{calls:02d}-positive-trigger-rejection',{'reason':reason,'packet_id':packet['packet_id']})
                 feedback='结构或证据未通过：'+reason+'。重看同一组原图，完整输出当前包；不改写上下文动作，不补造操作。'
                 if reason in {'state_shape','state_reference','state_kind'}:
                     feedback+='states每项必须且只能含state_id、first_frame、last_frame、kind、description；state_id和description为非空字符串，kind只能为page/input/wait/transition。first_frame和last_frame必须引用本次已提供的真实frame_id，first_frame不晚于last_frame，各项按first_frame时间排列。无新增状态时states可为[]；完整保留本包events和uncertainties，不能以删除状态代替修正元数据。'
@@ -465,15 +520,18 @@ def observe_trajectory(document,root,cancelled,progress=None,record=None,revisit
                     review['required_frame_refs']=sorted({review['trigger_frame'],review['outcome']['frame_refs'][-1]},key=times.get)
                     review['allowed_frame_refs']=sorted(set(review['frame_refs'])|set(review['outcome']['frame_refs']),key=times.get)
                     batch.append({'track':review})
-            audit_batch,audit_prior=audit_claim_context(batch,[{**t,'event':e} for t,e in list(zip(tracks,events))[-8:]])
+            audit_batch,audit_prior=audit_claim_context(batch,[{**t,'event':e} for t,e in list(zip(tracks,events))[-8:]],execution_contract=execution_contract)
             audit_batches=([audit_batch] if audit_batcher is None else
                            _validated_audit_batches(audit_batch,audit_batcher,packet))
-            audit_shards=[];bound_checks=[];expanded=False
+            audit_shards=[];bound_checks=[];expanded=False;repair=False
             for shard_index,shard in enumerate(audit_batches,1):
                 first_call=calls+1
                 audited=ask('audit',packet['frames'],revisit_packet=packet,
                         validator=lambda result:(bind_audit_checks(result['checks'],[p['track'] for p in shard],packet['frames']),validate_audit_issues(result['issues'],packet)),
-                        state_memory=states+extra,overview_hypotheses=overview_hypotheses,trajectory=shard,
+                        state_memory=states+extra,
+                        **({'state_memory_status':'unverified_model_claims','prior_context_status':'unverified_model_claims'}
+                           if execution_contract is not None else {'overview_hypotheses':overview_hypotheses}),
+                        trajectory=shard,
                         **({'context_trajectory':audit_batch} if audit_batcher is not None else {}),
                         packet_id=packet['packet_id'],owned_frame_ids=packet['owned_frame_ids'],
                         context_frame_ids=packet['context_frame_ids'],
@@ -487,7 +545,29 @@ def observe_trajectory(document,root,cancelled,progress=None,record=None,revisit
                 bound_checks.extend(shard_checks)
                 audit_shards.append({'index':shard_index,'event_ids':[p['track']['event_id'] for p in shard],
                                      'calls':list(range(first_call,calls+1)),'raw':copy.deepcopy(audited)})
-            if expanded:continue
+                missing=any(issue['kind']=='missing_action' for issue in audited['issues'])
+                contradicted=any(check[field]=='contradicted' for check in audited['checks']
+                                 for field in ('trigger_verdict','outcome_verdict'))
+                if execution_contract is not None and (missing or contradicted):
+                    if corrections>=2:_fail('audit_contradiction_exhausted' if contradicted else 'audit_missing_action_exhausted')
+                    corrections+=1
+                    validated_checks=[copy.deepcopy(check) for part in audit_shards for check in part['raw']['checks']]
+                    audited_ids={check['event_id'] for check in validated_checks}
+                    audited_claims=[copy.deepcopy(claim) for claim in audit_batch if claim['track']['event_id'] in audited_ids]
+                    positive_trigger_locks=_merge_positive_trigger_locks(positive_trigger_locks,audited_claims,validated_checks)
+                    audit_feedback={'classification':'unverified_audit_finding_data','instruction_authority':False,
+                                    'packet_id':packet['packet_id'],'audit_call':calls,
+                                    'checks':validated_checks,'audited_claims':audited_claims,
+                                    'positive_trigger_locks':copy.deepcopy(positive_trigger_locks),
+                                    'issues':[copy.deepcopy(issue) for part in audit_shards for issue in part['raw']['issues']]}
+                    repair_feedback.append(copy.deepcopy(audit_feedback))
+                    if record:record(f'{calls:02d}-audit-repair-feedback',redact(audit_feedback))
+                    # Reobserve the whole current packet. No action, value, target
+                    # or source fact is authored by this controller.
+                    questions.extend(raw['uncertainties'])
+                    questions.extend(q for event in raw['events'] for q in event['uncertainties'])
+                    repair=True;break
+            if expanded or repair:continue
             if audit_batcher is not None:
                 order=[p['track']['event_id'] for p in audit_batch]
                 bound_by_id={check['event_id']:check for check in bound_checks}
@@ -525,6 +605,10 @@ def observe_trajectory(document,root,cancelled,progress=None,record=None,revisit
     for e in checked['events']:e['uncertainties']=list(dict.fromkeys(e['uncertainties']))
     result={**checked,'media':{**copy.deepcopy(document['media']),'frames':frames},'trajectory_audit':redact({'version':'trajectory-v2','audit_input_mode':'claims_without_observer_narrative','overview_hypotheses':overview_hypotheses,'states':states,'tracks':tracks,'checks':checks,'fragment_checks':fragment_checks,
              'packets':packet_outputs,'revisit_attempts':revisit_attempts,'calls':call_audit,'elapsed_seconds':round(time.monotonic()-started,3)})}
+    if execution_contract is not None:
+        result['execution_contract']=execution_contract
+        result['trajectory_audit'].update(execution_contract=execution_contract,
+            audit_input_mode='positive_claim_projection_v1',corrections_used=corrections,repair_feedback=redact(repair_feedback))
     if record:record('trajectory-final',redact(result))
     if progress:progress('planning',1,1,checked['events'])
     return result
