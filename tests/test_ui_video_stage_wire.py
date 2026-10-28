@@ -4,6 +4,7 @@ import io
 import json
 import pytest
 from task_server.services import ai_skill_service as ai, ui_video_trajectory as vt, ui_video_windows
+from task_server.services.ui_video_stage_receipts import make_expected_attestation
 
 
 def evidence(n=3):
@@ -23,7 +24,7 @@ def capture(monkeypatch, content='{}'):
     calls=[]
     def urlopen(req,timeout):
         calls.append(json.loads(req.data))
-        return io.BytesIO(json.dumps({'success':True,'content':content,'providerId':'official','model':'qwen3.8-max','fallbackUsed':False,'finishReason':'stop','usage':{'totalTokens':2}}).encode())
+        return io.BytesIO(json.dumps({'success':True,'content':content,'providerId':'official','model':'qwen3.8-max','fallbackUsed':False,'finishReason':'stop','usage':{'totalTokens':2}, **({'videoPolicy':make_expected_attestation(calls[-1])} if 'videoStage' in calls[-1] else {})}).encode())
     monkeypatch.setattr(ai.urllib.request,'urlopen',urlopen)
     return calls
 
@@ -56,7 +57,7 @@ def test_perception_rejects_invalid_originals_before_transport(monkeypatch,chang
 
 def test_semantic_zero_image_and_schema_forwarded(monkeypatch):
     p,_=evidence();p['phase']='whole-trajectory';p['reasoning_mode']='bounded';p.pop('image_frames');calls=capture(monkeypatch)
-    ai.ai_gateway_skill_content('ui_video_trajectory','semantics',payload=p,image_assets=[],video_stage='semantic',output_schema=semantic_schema())
+    ai.ai_gateway_skill_content('ui_video_trajectory','semantics',payload=p,image_assets=[],video_stage='semantic',version='observe',output_schema=semantic_schema())
     assert calls[0]['imageAssets']==[] and calls[0]['outputSchema']==semantic_schema()
     assert calls[0]['videoStage']=='semantic'
 
@@ -82,7 +83,7 @@ def test_semantic_invalid_combinations_rejected(monkeypatch,change):
     if change=='schema_enum':s['properties']['events']['items']['enum']=[{}]
     if change=='schema_size':s['properties']['events']['items']['enum']=['x'*33000]
     with pytest.raises(ValueError,match='video_'):
-        ai.ai_gateway_skill_content(skill,'semantics',payload=p,image_assets=assets,video_stage='semantic',output_schema=s)
+        ai.ai_gateway_skill_content(skill,'semantics',payload=p,image_assets=assets,video_stage='semantic',version='observe',output_schema=s)
     assert not calls
 
 
@@ -101,7 +102,7 @@ def test_raw_receipt_precedes_invalid_json(monkeypatch):
         ai.run_ai_skill('ui_video_perception',p,image_assets=a,video_stage='perception',raw_receipt=receipts.append)
     assert len(calls)==1 and len(receipts)==1
     assert receipts[0]['content']=='not-json' and receipts[0]['finishReason']=='stop'
-    assert set(receipts[0])=={'content','providerId','model','fallbackUsed','finishReason','usage','gateway_request_sha256'}
+    assert set(receipts[0])=={'content','providerId','model','fallbackUsed','finishReason','usage','gateway_request_sha256','videoPolicy'}
     assert len(receipts[0]['gateway_request_sha256'])==64
 
 
@@ -173,7 +174,7 @@ def test_stage_never_silently_projects_roles_or_fills_output(monkeypatch,change)
 def test_malformed_schema_rejected_as_value_error(monkeypatch,invalid):
     p,_=evidence();p.update(phase='whole-trajectory',reasoning_mode='bounded');p.pop('image_frames');calls=capture(monkeypatch)
     with pytest.raises(ValueError,match='video_'):
-        ai.ai_gateway_skill_content('ui_video_trajectory','semantic',payload=p,image_assets=[],video_stage='semantic',output_schema=invalid)
+        ai.ai_gateway_skill_content('ui_video_trajectory','semantic',payload=p,image_assets=[],video_stage='semantic',version='observe',output_schema=invalid)
     assert not calls
 
 
@@ -192,7 +193,7 @@ def test_semantic_strict_output_checked_locally_before_defaults(monkeypatch):
 def test_audit_rejects_selection_before_transport(monkeypatch,selected):
     p,a=evidence();p.update(phase='whole-trajectory',reasoning_mode='bounded',perception_mode='fine-detail',perception_frame_ids=selected);calls=capture(monkeypatch)
     with pytest.raises(ValueError,match='video_'):
-        ai.ai_gateway_skill_content('ui_video_trajectory','audit',payload=p,image_assets=a,video_stage='audit')
+        ai.ai_gateway_skill_content('ui_video_trajectory','audit',payload=p,image_assets=a,video_stage='audit',version='audit')
     assert not calls
 
 
@@ -200,7 +201,7 @@ def test_receipt_uses_only_safe_usage_fields(monkeypatch):
     p,a=evidence();receipts=[]
     def urlopen(req,timeout):
         return io.BytesIO(json.dumps({'success':True,'content':'{}','providerId':'official','model':'qwen3.8-max',
-          'fallbackUsed':False,'finishReason':'stop','usage':{'totalTokens':3,'promptTokens':1,'completionTokens':2,'thoughts':'private','bad':{},'reasoningTokens':-1}}).encode())
+          'fallbackUsed':False,'finishReason':'stop','usage':{'totalTokens':3,'promptTokens':1,'completionTokens':2,'thoughts':'private','bad':{},'reasoningTokens':-1},'videoPolicy':make_expected_attestation(json.loads(req.data))}).encode())
     monkeypatch.setattr(ai.urllib.request,'urlopen',urlopen)
     ai.ai_gateway_skill_content('ui_video_perception','pixels',payload=p,image_assets=a,video_stage='perception',raw_receipt=receipts.append)
     assert receipts[0]['usage']=={'totalTokens':3,'promptTokens':1,'completionTokens':2}
@@ -218,7 +219,7 @@ def test_duplicate_enum_is_invalid_before_transport(monkeypatch):
     p,_=evidence();p.update(phase='whole-trajectory',reasoning_mode='bounded');p.pop('image_frames');s=semantic_schema()
     s['properties']['events']['items']['properties']['action']['enum']=['aiTap','aiTap'];calls=capture(monkeypatch)
     with pytest.raises(ValueError,match='video_output_schema_invalid'):
-        ai.ai_gateway_skill_content('ui_video_trajectory','semantic',payload=p,image_assets=[],video_stage='semantic',output_schema=s)
+        ai.ai_gateway_skill_content('ui_video_trajectory','semantic',payload=p,image_assets=[],video_stage='semantic',version='observe',output_schema=s)
     assert not calls
 
 
@@ -254,7 +255,7 @@ def test_semantic_schema_cannot_replace_the_original_scaffold(monkeypatch,change
     if change=='unknown_action':s['properties']['events']['items']['properties']['action']['enum']=['made_up']
     calls=capture(monkeypatch)
     with pytest.raises(ValueError,match='video_output_schema_invalid'):
-        ai.ai_gateway_skill_content('ui_video_trajectory','semantic',payload=p,image_assets=[],video_stage='semantic',output_schema=s)
+        ai.ai_gateway_skill_content('ui_video_trajectory','semantic',payload=p,image_assets=[],video_stage='semantic',version='observe',output_schema=s)
     assert not calls
 
 
@@ -274,7 +275,7 @@ def test_full_original_semantic_output_rejects_wrong_value(monkeypatch,value):
 
 def test_image_audit_with_empty_trajectory_and_no_fine_selection_is_valid(monkeypatch):
     p,a=evidence();p.update(phase='whole-trajectory',reasoning_mode='bounded',trajectory=[]);calls=capture(monkeypatch)
-    assert ai.ai_gateway_skill_content('ui_video_trajectory','audit',payload=p,image_assets=a,video_stage='audit')=='{}'
+    assert ai.ai_gateway_skill_content('ui_video_trajectory','audit',payload=p,image_assets=a,video_stage='audit',version='audit')=='{}'
     assert calls[0]['imageAssets'] and 'perception_frame_ids' not in calls[0]['payload']
 
 
@@ -284,7 +285,7 @@ def test_stage_reply_guard_runs_after_safe_raw_receipt(monkeypatch,change):
     p,a=evidence();receipts=[]
     response={'success':True,'content':'unparsed raw','providerId':'official','model':'qwen3.8-max',
               'fallbackUsed':False,'finishReason':'stop',**change}
-    monkeypatch.setattr(ai.urllib.request,'urlopen',lambda *args,**kw:io.BytesIO(json.dumps(response).encode()))
+    monkeypatch.setattr(ai.urllib.request,'urlopen',lambda req,**kw:io.BytesIO(json.dumps({**response,'videoPolicy':make_expected_attestation(json.loads(req.data))}).encode()))
     with pytest.raises(RuntimeError,match='video_stage_reply_invalid'):
         ai.ai_gateway_skill_content('ui_video_perception','pixels',payload=p,image_assets=a,video_stage='perception',raw_receipt=receipts.append)
     assert len(receipts)==1 and receipts[0]['content']=='unparsed raw'

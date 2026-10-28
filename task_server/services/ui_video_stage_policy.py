@@ -6,6 +6,16 @@ import math
 import re
 
 UNSET = object()
+POLICY_VERSION = 'video-stage-policy-v1'
+STAGES = {
+    'perception': ('ui_video_perception', 'v1', 'whole-perception', 'qwen3.8-max', 4000),
+    'overview': ('ui_video_trajectory', 'overview', 'whole-trajectory', 'qwen3.8-flash', 10000),
+    'semantic': ('ui_video_trajectory', 'observe', 'whole-trajectory', 'qwen3.8-max', 10000),
+    'audit': ('ui_video_trajectory', 'audit', 'whole-trajectory', 'qwen3.8-max', 10000),
+    'consolidate': ('ui_video_steps', 'consolidate', 'whole-consolidate', 'qwen3.8-max', 10000),
+    'outcome': ('ui_video_observe', 'outcome', 'whole-observe', 'qwen3.8-max', 4000),
+    'inputs': ('ui_video_observe', 'inputs', 'whole-observe', 'qwen3.8-max', 3000),
+}
 _SEMANTIC_FIELDS = {'states', 'events', 'checks', 'uncertainties', 'multiple_scenarios'}
 
 
@@ -129,7 +139,7 @@ def _metadata(frames):
         previous = stamp
 
 
-def validate_video_stage(skill, payload, assets, stage=UNSET, schema=UNSET):
+def validate_video_stage(skill, payload, assets, stage=UNSET, schema=UNSET, *, version="v1"):
     """Validate before transport. Explicit null capabilities are invalid."""
     if stage is UNSET:
         if skill == 'ui_video_perception':
@@ -137,13 +147,12 @@ def validate_video_stage(skill, payload, assets, stage=UNSET, schema=UNSET):
         if schema is not UNSET:
             raise ValueError('video_stage_schema_without_stage')
         return None
-    if not isinstance(stage, str) or stage not in {'perception', 'semantic', 'audit'}:
+    if not isinstance(stage, str) or stage not in STAGES:
         raise ValueError('video_stage_invalid')
     if not isinstance(payload, dict):
         raise ValueError('video_stage_payload_invalid')
-    phase = 'whole-perception' if stage == 'perception' else 'whole-trajectory'
-    expected = 'ui_video_perception' if stage == 'perception' else 'ui_video_trajectory'
-    if skill != expected or payload.get('phase') != phase:
+    expected, expected_version, phase, _, _ = STAGES[stage]
+    if skill != expected or version != expected_version or payload.get('phase') != phase:
         raise ValueError('video_stage_scope_invalid')
     if stage == 'semantic':
         if assets not in (None, []) or payload.get('reasoning_mode') != 'bounded':
@@ -165,8 +174,11 @@ def validate_video_stage(skill, payload, assets, stage=UNSET, schema=UNSET):
             _source_index(payload)
         except ValueError as exc:
             raise ValueError('video_frames_invalid') from exc
-    elif payload.get('reasoning_mode') != 'bounded' or 'detail_frames' in payload:
+    elif ('detail_frames' in payload or
+          (stage in {'overview', 'audit'} and payload.get('reasoning_mode') != 'bounded')):
         raise ValueError('video_stage_audit_invalid')
+    if stage not in {'audit', 'perception'} and any(k in payload for k in ('perception_mode', 'perception_frame_ids')):
+        raise ValueError('video_perception_selection_invalid')
     frames = payload.get('image_frames')
     _metadata(frames)
     if not isinstance(assets, list) or len(assets) != len(frames) or not 2 <= len(assets) <= 60:

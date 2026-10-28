@@ -1,4 +1,5 @@
 import cors from 'cors';
+import {createHash} from 'node:crypto';
 import dotenv from 'dotenv';
 import express from 'express';
 import fs from 'fs/promises';
@@ -566,6 +567,11 @@ function clientForRoute(route, timeoutMs = AI_CALL_TIMEOUT_MS) {
 }
 
 function requestedCallTimeoutMs(body = {}) {
+  if (Object.hasOwn(body, 'videoStage')) {
+    const remaining = Math.min(body.timeoutMs, body.videoDeadlineMs - Date.now(), 120000);
+    if (!Number.isFinite(remaining) || remaining <= 0) throw new Error('video_stage_deadline');
+    return remaining;
+  }
   const requested = Number(body?.timeoutMs || body?.timeout_ms);
   if (!Number.isFinite(requested)) return AI_CALL_TIMEOUT_MS;
   return Math.max(5000, Math.min(600000, requested));
@@ -674,6 +680,36 @@ function validateVideoOutputSchema(schema) {
   return normalized;
 }
 
+function videoStageConfig(stage) {
+  return {
+    perception: ['ui_video_perception', 'v1', 'whole-perception', 'qwen3.8-max', 4000],
+    overview: ['ui_video_trajectory', 'overview', 'whole-trajectory', 'qwen3.8-flash', 10000],
+    semantic: ['ui_video_trajectory', 'observe', 'whole-trajectory', 'qwen3.8-max', 10000],
+    audit: ['ui_video_trajectory', 'audit', 'whole-trajectory', 'qwen3.8-max', 10000],
+    consolidate: ['ui_video_steps', 'consolidate', 'whole-consolidate', 'qwen3.8-max', 10000],
+    outcome: ['ui_video_observe', 'outcome', 'whole-observe', 'qwen3.8-max', 4000],
+    inputs: ['ui_video_observe', 'inputs', 'whole-observe', 'qwen3.8-max', 3000],
+  }[stage];
+}
+
+function videoCanonicalSha(value) {
+  const canonical = node => Array.isArray(node) ? node.map(canonical) : node && typeof node === 'object' ?
+    Object.fromEntries(Object.keys(node).sort().map(k => [k, canonical(node[k])])) : node;
+  return createHash('sha256').update(JSON.stringify(canonical(value)), 'utf8').digest('hex');
+}
+
+function videoPolicyAttestation(body, options) {
+  const {messages, ...effective} = options;
+  effective.response_format = options.response_format.type;
+  const images = Array.isArray(messages[1].content) ? messages[1].content.filter(p => p.type === 'image_url') : [];
+  effective.image_count = images.length;
+  effective.fine_frame_ids = images.flatMap((part, i) => part.min_pixels === 1658880 ? [body.imageAssets[i].name] : []);
+  return {version:'video-stage-policy-v1',stage:body.videoStage,skill:body.skillName,skill_version:body.skillVersion,
+    correlation:body.videoCorrelation,model:options.model,effective_options:effective,
+    provider_options_sha256:videoCanonicalSha(options),
+    output_schema_sha256:body.outputSchema ? videoCanonicalSha(validateVideoOutputSchema(body.outputSchema)) : null};
+}
+
 function validateVideoStage(body, route) {
   if (!Object.hasOwn(body || {}, 'videoStage')) {
     if (body?.skillName === 'ui_video_perception') throw new Error('video_stage_required');
@@ -681,12 +717,17 @@ function validateVideoStage(body, route) {
     return null;
   }
   const stage = body.videoStage, payload = body.payload;
-  if (!['perception', 'semantic', 'audit'].includes(stage)) throw new Error('video_stage_invalid');
+  const config = typeof stage === 'string' && videoStageConfig(stage);
+  if (!config) throw new Error('video_stage_invalid');
   if (!payload || typeof payload !== 'object' || Array.isArray(payload) || body.jsonResponse !== true ||
-      body.skillName !== (stage === 'perception' ? 'ui_video_perception' : 'ui_video_trajectory') ||
-      payload.phase !== (stage === 'perception' ? 'whole-perception' : 'whole-trajectory'))
+      body.skillName !== config[0] || body.skillVersion !== config[1] || payload.phase !== config[2])
     throw new Error('video_stage_scope_invalid');
-  if (route && (route.model !== 'qwen3.8-max' ||
+  if (body.videoPolicyVersion !== 'video-stage-policy-v1' || !/^[a-f0-9]{32}$/.test(body.videoCorrelation || ''))
+    throw new Error('video_stage_metadata_invalid');
+  if ((body.maxTokens != null && body.maxTokens !== config[4]) ||
+      (body.temperature != null && body.temperature !== 0.1) ||
+      (body.model && body.model !== config[3])) throw new Error('video_stage_options_invalid');
+  if (route && (route.model !== config[3] ||
       !/^https:\/\/dashscope(?:-intl|-us)?\.aliyuncs\.com(?:\/|$)/i.test(String(route.baseUrl || ''))))
     throw new Error('video_stage_route_unsupported');
   const frames = stage === 'semantic' ? payload.frames : payload.image_frames;
@@ -727,7 +768,9 @@ function validateVideoStage(body, route) {
     }
     if (partition.size !== frames.length) throw new Error('video_frames_invalid');
   } else {
-    if (payload.reasoning_mode !== 'bounded' || Object.hasOwn(payload, 'detail_frames')) throw new Error('video_stage_audit_invalid');
+    if ((['overview','audit'].includes(stage) && payload.reasoning_mode !== 'bounded') || Object.hasOwn(payload, 'detail_frames')) throw new Error('video_stage_audit_invalid');
+    if (stage !== 'audit' && ['perception_mode', 'perception_frame_ids'].some(k => Object.hasOwn(payload,k)))
+      throw new Error('video_stage_options_invalid');
     if (['perception_mode', 'perception_frame_ids'].some(k => Object.hasOwn(payload, k)) &&
         (payload.perception_mode !== 'fine-detail' || !Array.isArray(payload.perception_frame_ids) ||
          !payload.perception_frame_ids.length || payload.perception_frame_ids.length > 12 ||
@@ -807,7 +850,7 @@ function completionOptionsForRoute(route, prompt, body, callOptions = {}) {
   }
   if (videoStage) {
     completionOptions.temperature = 0.1;
-    completionOptions.max_tokens = videoStage === 'perception' ? 4000 : 10000;
+    completionOptions.max_tokens = videoStageConfig(videoStage)[4];
     completionOptions.enable_thinking = videoStage !== 'perception';
     if (videoStage === 'perception') {
       delete completionOptions.thinking_budget;
@@ -926,6 +969,7 @@ function completionAuditResponse(route = {}) {
   return {
     finishReason: String(route?.finishReason || ''),
     usage: completionUsageSummary(route?.usage || {}),
+    ...(route.videoPolicy ? {videoPolicy:route.videoPolicy} : {}),
   };
 }
 
@@ -1000,13 +1044,14 @@ async function callAi(action, body, options = {}) {
       Math.max(0, remainingMs - 3000),
       perFallbackReserveMs * remainingFallbacks,
     );
-    const routeTimeoutMs = Math.max(3000, remainingMs - reserveMs);
+    const routeTimeoutMs = videoStage ? remainingMs : Math.max(3000, remainingMs - reserveMs);
     const startedAt = Date.now();
     let success = false;
     let errorText = null;
     let finishReason = '';
     let usage = {};
     try {
+      if (videoStage && (MOCK_ENABLED || options.signal?.aborted)) throw new Error('video_stage_cancelled');
       if (MOCK_ENABLED) {
         output = mockAiOutput(action, body);
         if (options.stripFence) output = stripMarkdownFence(output);
@@ -1033,7 +1078,12 @@ async function callAi(action, body, options = {}) {
       if (Array.isArray(options.messages) && options.messages.length) {
         completionOptions.messages = options.messages;
       }
-      const completion = await client.chat.completions.create(completionOptions);
+      const policy = videoStage ? videoPolicyAttestation(body, completionOptions) : null;
+      if (videoStage && (options.signal?.aborted || Date.now() >= deadline)) throw new Error('video_stage_deadline');
+      const completion = await client.chat.completions.create(completionOptions,
+        ...(videoStage ? [{signal: options.signal, timeout: Math.min(routeTimeoutMs, deadline-Date.now()), maxRetries:0}] : []));
+      if (videoStage && (options.signal?.aborted || Date.now() >= deadline)) throw new Error('video_stage_cancelled');
+      if (videoStage && completion.model !== videoStageConfig(videoStage)[3]) throw new Error('video_stage_actual_model_invalid');
       const choice = completion.choices?.[0] || {};
       finishReason = String(choice?.finish_reason || choice?.finishReason || '');
       if (videoStage === 'perception') {
@@ -1069,11 +1119,12 @@ async function callAi(action, body, options = {}) {
           fallbackReason: fallbackErrors[fallbackErrors.length - 1]?.error || '',
           finishReason,
           usage,
+          ...(videoStage ? {model:completion.model, videoPolicy:policy} : {}),
         },
         output,
       };
     } catch (error) {
-      errorText = sanitizeError(error);
+      errorText = videoStage ? (/^video_[a-z_]+$/.test(error?.message || '') ? error.message : 'video_stage_provider_failed') : sanitizeError(error);
       lastErrorText = errorText;
       fallbackErrors.push({
         providerId: route.providerId,
@@ -1162,6 +1213,7 @@ function asyncRoute(handler) {
     try {
       await handler(req, res);
     } catch (error) {
+      if (res.destroyed || res.writableEnded) return;
       res.status(500).json({
         success: false,
         error: sanitizeError(error),
@@ -1411,17 +1463,31 @@ app.post('/ai/skill', asyncRoute(async (req, res) => {
     fallbackModelConfig: req.body?.fallbackModelConfig || req.body?.fallback_model_config || {},
     maxTokens: req.body?.maxTokens ?? req.body?.max_tokens,
     timeoutMs: req.body?.timeoutMs || req.body?.timeout_ms,
-    ...(stageRequested ? {videoStage: req.body.videoStage} : {}),
+    ...(stageRequested ? {videoStage: req.body.videoStage, skillVersion:req.body.skillVersion,
+      videoPolicyVersion:req.body.videoPolicyVersion, videoCorrelation:req.body.videoCorrelation,
+      videoDeadlineMs:req.body.videoDeadlineMs, temperature:req.body.temperature} : {}),
     ...(Object.hasOwn(req.body || {}, 'outputSchema') ? {outputSchema: req.body.outputSchema} : {}),
   };
   const action = SKILL_ACTION_MAP[skillName] || 'generate_case';
+  const controller = stageRequested ? new AbortController() : null;
+  const abort = () => controller?.abort();
+  const close = () => {if (!res.writableEnded) abort();};
+  let timer;
+  try {
+  if (stageRequested) {
+    req.on('aborted', abort);res.on('close', close);
+    timer = setTimeout(abort, requestedCallTimeoutMs(body));
+    if (req.aborted || res.destroyed) abort();
+  }
   const {output, route} = await callAi(action, body, {
+    ...(controller ? {signal:controller.signal} : {}),
     disableFallback: skillName === 'ui_video_trajectory' &&
       body.payload.phase === 'whole-trajectory' && body.payload.perception_mode === 'fine-detail',
     promptOverride: '你是移动端测试平台 AI Skill 执行器。必须严格遵守用户输入的 Skill Prompt，只输出合法 JSON。',
     userMessage: prompt,
     temperature: typeof req.body?.temperature === 'number' ? req.body.temperature : 0.1,
   });
+  if (controller?.signal.aborted || res.destroyed || res.writableEnded) return;
   res.json({
     success: true,
     content: output,
@@ -1434,6 +1500,9 @@ app.post('/ai/skill', asyncRoute(async (req, res) => {
     fallbackReason: route.fallbackReason || '',
     ...completionAuditResponse(route),
   });
+  } finally {
+    if (controller) {clearTimeout(timer);req.removeListener('aborted',abort);res.removeListener('close',close);}
+  }
 }));
 
 app.post('/ai/analyze-failure', asyncRoute(async (req, res) => {

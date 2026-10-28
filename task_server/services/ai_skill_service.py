@@ -25,6 +25,7 @@ import socket
 import time
 import urllib.error
 import urllib.request
+import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -425,15 +426,20 @@ def run_ai_skill(
     video_stage=UNSET,
     output_schema=UNSET,
     raw_receipt=None,
+    request_proof_hook=None,
 ):
     """执行 AI skill：优先走统一 Gateway，平台直连仅用于无显式模型的最终兼容兜底。"""
-    stage = validate_video_stage(skill_name, payload, image_assets, video_stage, output_schema)
+    stage = validate_video_stage(skill_name, payload, image_assets, video_stage, output_schema, version=version)
+    if request_proof_hook is not None and (not stage or not callable(request_proof_hook)):
+        raise ValueError("video_stage_proof_invalid")
     if stage == "semantic":
         output_schema = validate_output_schema(output_schema)
     if stage and (output_defaults is not None or repair_invalid_json or not safe_bool(os.getenv("MIDSCENE_AI_SKILLS_USE_GATEWAY", "1"), True)):
         raise ValueError("video_stage_requires_gateway_without_repair")
     if raw_receipt is not None and (not stage or not callable(raw_receipt)):
         raise ValueError("video_stage_receipt_invalid")
+    if stage and (retry_count not in (None, 0) or fallback_prompt):
+        raise ValueError("video_stage_options_invalid")
     whole_video = bool(stage) or _video_context_assets(skill_name, payload, image_assets)
     prompt = render_ai_skill_prompt(skill_name, payload, version=version, fallback_prompt=fallback_prompt)
     if not prompt:
@@ -443,7 +449,8 @@ def run_ai_skill(
     gateway_error = ""
     if gateway_enabled:
         try:
-            raw = _run_ai_skill_call_with_hard_timeout(
+            invoke = (lambda fn, *_: fn()) if stage else _run_ai_skill_call_with_hard_timeout
+            raw = invoke(
                 lambda: ai_gateway_skill_content(
                     skill_name,
                     prompt,
@@ -456,7 +463,8 @@ def run_ai_skill(
                     runtime_trace=runtime_trace,
                     max_tokens=max_tokens,
                     **({"video_stage": video_stage, "output_schema": output_schema,
-                        "raw_receipt": raw_receipt} if stage else {}),
+                        "raw_receipt": raw_receipt, "version": version,
+                        "request_proof_hook": request_proof_hook} if stage else {}),
                 ),
                 timeout,
                 f"AI Gateway skill {skill_name}",
@@ -508,7 +516,7 @@ def run_ai_skill(
                 # Keep model contracts distinct from provider/transport failures.
                 # The caller owns the bounded evidence-based correction budget.
                 raise
-            gateway_error = str(exc)
+            gateway_error = "video_stage_call_failed" if stage else str(exc)
             runtime_trace.update({"source": "ai_gateway", "error": gateway_error[:500]})
             if whole_video or model_config or AI_SKILLS_STRICT_MODEL:
                 raise RuntimeError(
@@ -600,17 +608,34 @@ def ai_gateway_skill_content(
     video_stage=UNSET,
     output_schema=UNSET,
     raw_receipt=None,
+    version="v1",
+    request_proof_hook=None,
 ):
     """Call the unified Gateway for text or image skills and expose the actual routed model."""
     model_config = model_config if isinstance(model_config, dict) else {}
     runtime_trace = runtime_trace if isinstance(runtime_trace, dict) else {}
-    stage = validate_video_stage(skill_name, payload, image_assets, video_stage, output_schema)
+    stage = validate_video_stage(skill_name, payload, image_assets, video_stage, output_schema, version=version)
     if stage == "semantic":
         output_schema = validate_output_schema(output_schema)
     if stage and json_response is not True:
         raise ValueError("video_stage_json_required")
     if raw_receipt is not None and (not stage or not callable(raw_receipt)):
         raise ValueError("video_stage_receipt_invalid")
+    if request_proof_hook is not None and (not stage or not callable(request_proof_hook)):
+        raise ValueError("video_stage_proof_invalid")
+    if stage:
+        from .ui_video_stage_policy import POLICY_VERSION, STAGES
+        from .ui_video_stage_receipts import safe_attestation, validate_attestation
+        if (type(timeout) not in (int, float) or not math.isfinite(timeout) or timeout <= 0 or
+                temperature != 0.1 or (max_tokens is not None and max_tokens != STAGES[stage][4]) or
+                set(model_config) - {'providerId', 'model'} or
+                model_config.get('model', STAGES[stage][3]) != STAGES[stage][3]):
+            raise ValueError("video_stage_options_invalid")
+        model_config = {**model_config, 'model': STAGES[stage][3]}
+        timeout = min(timeout, 120)
+        deadline = time.monotonic() + timeout
+        deadline_ms = int((time.time()+timeout)*1000)
+        prompt = prompt.strip()
     whole_video = bool(stage) or _video_context_assets(skill_name, payload, image_assets)
     normalized_images = []
     for index, asset in enumerate((image_assets or [])[:60 if whole_video else AI_VISION_IMAGE_LIMIT], start=1):
@@ -647,7 +672,9 @@ def ai_gateway_skill_content(
         "timeoutMs": max(5000, (safe_int(timeout, 180) - 2) * 1000),
     }
     if stage:
-        request_body["videoStage"] = stage
+        request_body.update(videoStage=stage, skillVersion=version, videoPolicyVersion=POLICY_VERSION,
+                            videoCorrelation=uuid.uuid4().hex, timeoutMs=max(1, int(timeout*1000)),
+                            videoDeadlineMs=deadline_ms)
         if stage == "semantic":
             request_body["outputSchema"] = output_schema
     requested_max_tokens = safe_int(max_tokens, 0)
@@ -661,15 +688,41 @@ def ai_gateway_skill_content(
         method="POST",
     )
     endpoint = "/ai/skill"
+    if stage and request_proof_hook is not None:
+        request_proof_hook({'stage':stage, 'skill':skill_name, 'skill_version':version,
+                            'correlation':request_body['videoCorrelation'],
+                            'gateway_request_sha256':hashlib.sha256(body).hexdigest(),
+                            'timeout_ms':request_body['timeoutMs']})
+    remaining = deadline - time.monotonic() if stage else max(30, safe_int(timeout, 180))
+    if remaining <= 0:raise TimeoutError('video_stage_deadline')
     try:
-        with urllib.request.urlopen(req, timeout=max(30, safe_int(timeout, 180))) as resp:
+        with urllib.request.urlopen(req, timeout=remaining) as resp:
             data = _decode_ai_gateway_json_response(
-                read_response_bytes(resp, AI_MAX_RESPONSE_BYTES, "AI Gateway"),
+                read_response_bytes(resp, min(AI_MAX_RESPONSE_BYTES, 1024*1024) if stage else AI_MAX_RESPONSE_BYTES, "AI Gateway"),
                 status=getattr(resp, "status", 200),
                 content_type=_ai_gateway_response_content_type(resp),
                 endpoint=endpoint,
             )
     except urllib.error.HTTPError as exc:
+        if stage:
+            rejection = 'video_stage_gateway_rejected'
+            try:
+                rejected = json.loads(read_response_bytes(exc, 1024*1024, 'AI Gateway'))
+                code = rejected.get('error') if isinstance(rejected, dict) else None
+                if code in {'video_stage_actual_model_invalid', 'video_stage_provider_failed',
+                            'video_stage_cancelled', 'video_stage_deadline',
+                            'video_perception_reasoning_usage_invalid'}:
+                    rejection = code
+            except (ValueError, RuntimeError, OSError):
+                pass
+            finally:
+                exc.close()
+            if raw_receipt is not None:
+                raw_receipt({'content':'', 'providerId':None, 'model':None, 'fallbackUsed':None,
+                             'finishReason':None, 'usage':{}, 'videoPolicy':None,
+                             'http_status':exc.code, 'rejection_code':rejection,
+                             'gateway_request_sha256':hashlib.sha256(body).hexdigest()})
+            raise RuntimeError('video_stage_gateway_rejected') from None
         try:
             error_data = _decode_ai_gateway_json_response(
                 read_response_bytes(exc, AI_MAX_RESPONSE_BYTES, "AI Gateway 错误"),
@@ -684,21 +737,28 @@ def ai_gateway_skill_content(
     selected_provider_id = model_config.get("providerId") or model_config.get("provider") or ""
     selected_model = model_config.get("model") or model_config.get("modelName") or ""
     usage = data.get("usage") if isinstance(data.get("usage"), dict) else {}
+    if stage:
+        usage = {k:v for k,v in usage.items() if k in {'promptTokens','completionTokens','reasoningTokens','totalTokens'}
+                 and type(v) in (int,float) and 0 <= v <= 2**53 and math.isfinite(v)}
     runtime_trace.update({
         "selectedProviderId": selected_provider_id,
         "selectedModel": selected_model,
-        "providerId": data.get("providerId") or selected_provider_id,
-        "model": data.get("model") or selected_model,
+        "providerId": data.get("providerId") if stage else data.get("providerId") or selected_provider_id,
+        "model": data.get("model") if stage else data.get("model") or selected_model,
         "fallbackUsed": bool(data.get("fallbackUsed")),
         "fallbackIndex": safe_int(data.get("fallbackIndex"), 0),
-        "fallbackReason": str(data.get("fallbackReason") or "")[:500],
+        "fallbackReason": "" if stage else str(data.get("fallbackReason") or "")[:500],
         "source": "ai_gateway",
         "imageCount": len(normalized_images),
         "finishReason": str(data.get("finishReason") or ""),
         "usage": usage,
     })
-    if not data.get("success"):
-        raise RuntimeError(str(data.get("error") or "AI Gateway skill 调用失败"))
+    if stage:
+        # Failed replies may still be returned to the owning supervisor as trace.
+        for key, pattern in (("providerId", r'[A-Za-z0-9:_-]{1,128}'), ("model", r'[A-Za-z0-9._:-]{1,128}')):
+            value = data.get(key)
+            runtime_trace[key] = value if type(value) is str and re.fullmatch(pattern, value) else None
+        runtime_trace['finishReason'] = data.get('finishReason') if type(data.get('finishReason')) is str and data['finishReason'] in {'stop','length','content_filter','tool_calls','function_call',''} else None
     content = data.get("content")
     if content is None:
         content = data.get("data")
@@ -709,11 +769,20 @@ def ai_gateway_skill_content(
     if stage and raw_receipt is not None:
         receipt_usage = {k: v for k, v in usage.items() if k in
                          {"promptTokens", "completionTokens", "reasoningTokens", "totalTokens"} and
-                         type(v) in {int, float} and math.isfinite(v) and v >= 0}
-        raw_receipt({"content": content, **{k: runtime_trace[k] for k in
-                    ("providerId", "model", "fallbackUsed", "finishReason")}, "usage": receipt_usage,
+                         type(v) in {int, float} and 0 <= v <= 2**53 and math.isfinite(v)}
+        raw_receipt({"content": content,
+                    "providerId":data.get('providerId') if type(data.get('providerId')) is str and re.fullmatch(r'[A-Za-z0-9:_-]{1,128}', data['providerId']) else None,
+                    "model":data.get('model') if type(data.get('model')) is str and re.fullmatch(r'[A-Za-z0-9._:-]{1,128}', data['model']) else None,
+                    "fallbackUsed":data.get('fallbackUsed') if type(data.get('fallbackUsed')) is bool else None,
+                    "finishReason":data.get('finishReason') if type(data.get('finishReason')) is str and data.get('finishReason') in {'stop','length','content_filter','tool_calls','function_call',''} else None, "usage": receipt_usage,
+                    "videoPolicy":safe_attestation(data.get("videoPolicy")),
                     "gateway_request_sha256": hashlib.sha256(body).hexdigest()})
-    if stage and (data.get("model") != "qwen3.8-max" or data.get("fallbackUsed") is not False or
+    if stage:
+        if time.monotonic() >= deadline:raise TimeoutError("video_stage_deadline")
+        validate_attestation(data.get("videoPolicy"), request_body)
+    if not data.get("success"):
+        raise RuntimeError("video_stage_gateway_rejected" if stage else str(data.get("error") or "AI Gateway skill 调用失败"))
+    if stage and (data.get("model") != STAGES[stage][3] or data.get("fallbackUsed") is not False or
                   data.get("finishReason") != "stop"):
         raise RuntimeError("video_stage_reply_invalid")
     if not content.strip():
