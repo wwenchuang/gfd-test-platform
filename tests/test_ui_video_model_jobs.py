@@ -401,3 +401,174 @@ def test_38_producer_builders_are_lazy_and_abandonment_has_no_late_writes(tmp_pa
         time.sleep(.1)
         assert owner.records.snapshot() == before and not owner.active_pids
         assert all(r['cleanup'] for r in owner.accounting)
+
+
+class CleanupProcess:
+    """Fault injection for operations that cannot be induced reliably in an OS."""
+    pid = 123456789
+
+    def __init__(self, failure):
+        self.failure, self.calls = failure, []
+
+    def poll(self):
+        self.calls.append('poll')
+        return None
+
+    def terminate(self):
+        self.calls.append('terminate')
+        if self.failure == 'terminate': raise OSError('PRIVATE_CLEANUP_SENTINEL')
+
+    def wait(self, timeout):
+        self.calls.append('wait')
+        if self.failure == 'wait': raise OSError('PRIVATE_CLEANUP_SENTINEL')
+        if self.failure == 'kill': raise subprocess.TimeoutExpired('private', timeout)
+        return 0
+
+    def kill(self):
+        self.calls.append('kill')
+        if self.failure == 'kill': raise OSError('PRIVATE_CLEANUP_SENTINEL')
+
+
+class CleanupChannel:
+    def __init__(self, failure):
+        self.failure, self.calls = failure, []
+
+    def close(self):
+        self.calls.append('close')
+        if self.failure == 'close': raise OSError('PRIVATE_CLEANUP_SENTINEL')
+
+
+def add_cleanup_double(owner, failure):
+    row = dict(index=len(owner.accounting), cleanup=False, terminal=False, events=[])
+    job = dict(process=CleanupProcess(failure), channel=CleanupChannel(failure), row=row, trace={})
+    owner.accounting.append(row); owner._active.append(job)
+    return job
+
+
+@pytest.mark.parametrize('failure', ['terminate', 'close', 'wait', 'kill'])
+def test_cleanup_failure_isolated_per_child_and_fixed_metadata(tmp_path, gateway, failure):
+    owner = manager(tmp_path, gateway)
+    first, sibling = add_cleanup_double(owner, failure), add_cleanup_double(owner, None)
+    try:
+        if failure == 'terminate':
+            owner.close()  # The first wait still proves a successful reap.
+            assert first['row']['cleanup']
+        else:
+            with pytest.raises(jobs.ModelJobError, match='^video_job_cleanup_failed$'):
+                owner.close()
+            assert not first['row']['cleanup']
+        assert first['channel'].calls and 'terminate' in first['process'].calls
+        assert 'wait' in first['process'].calls
+        if failure in ('wait', 'kill'): assert 'kill' in first['process'].calls
+        assert sibling['channel'].calls and 'terminate' in sibling['process'].calls
+        assert 'wait' in sibling['process'].calls and sibling['row']['cleanup']
+        assert sibling not in owner._active
+        expected = {'wait': ['wait', 'reap'], 'kill': ['kill', 'reap']}.get(failure, [failure])
+        assert owner.cleanup_failures == [dict(index=0, operations=expected)]
+        assert 'PRIVATE' not in json.dumps(owner.cleanup_failures)
+    finally:
+        first['process'].failure = first['channel'].failure = None
+        owner.close()
+
+
+@pytest.mark.parametrize('entrypoint', ['close', 'dispose'])
+def test_actual_two_child_cleanup_reaps_sibling_after_first_terminate_error(tmp_path, gateway, monkeypatch, entrypoint):
+    owner = manager(tmp_path, gateway)
+    fake_child(monkeypatch, owner, 'time.sleep(10)')
+    owner._start(invocation, 0); owner._start(invocation, 1)
+    children = [job['process'] for job in owner._active]
+    monkeypatch.setattr(children[0], 'terminate', lambda: (_ for _ in ()).throw(OSError('PRIVATE_SIGNAL')))
+    try:
+        if entrypoint == 'dispose': owner._dispose(owner._active[0])
+        owner.close()
+        assert not owner.active_pids and all(child.poll() is not None for child in children)
+        assert all(row['cleanup'] for row in owner.accounting)
+        assert owner.cleanup_failures == [dict(index=0, operations=['terminate'])]
+    finally:
+        for child in children:
+            if child.poll() is None: child.kill()
+            child.wait(timeout=1)
+        owner.close()
+
+
+@pytest.mark.parametrize('terminal,late', [
+    ('error', 'proof'), ('error', 'receipt'),
+    ('result', 'proof'), ('result', 'receipt'), ('result', 'raw'),
+    ('result', 'result'), ('result', 'error'), ('result', 'unknown'),
+])
+def test_post_terminal_ipc_never_writes_calls_hooks_acks_or_admits(tmp_path, gateway, monkeypatch, terminal, late):
+    with manager(tmp_path, gateway) as owner:
+        ack_file = tmp_path / 'late-ack'
+        proof = dict(stage='overview', skill='ui_video_trajectory', skill_version='overview',
+                     correlation='a'*32, gateway_request_sha256='a'*64, timeout_ms=1000)
+        receipt = dict(content='{}', gateway_request_sha256='a'*64)
+        body = 'p=' + repr(proof) + '\nv=' + repr(receipt) + '\n'
+        prefix = []
+        if terminal == 'result' or late == 'receipt':
+            body += "send('proof',p);recv()\n"
+            prefix.append('proof')
+        if terminal == 'result':
+            body += "send('receipt',v);recv()\n"
+            prefix.append('receipt')
+        body += "send(" + repr(terminal) + "," + ("{'code':'failed'}" if terminal == 'error' else '{}') + ");time.sleep(.08)\n"
+        value = {'proof': proof, 'receipt': receipt, 'error': {'code':'failed'}}.get(late, {})
+        body += "b=json.dumps(dict(event=" + repr(late) + ",value=" + repr(value) + ",trace={'usage':{'totalTokens':999}})).encode()\n"
+        body += "s.sendall(struct.pack('!I',len(b))+b)\n"
+        body += "try:\n a=recv()\n open(" + repr(str(ack_file)) + ",'w').write(json.dumps(a))\nexcept Exception:pass\n"
+        fake_child(monkeypatch, owner, body)
+        writes, hooks = [], []
+        append = owner.records.append
+        def write(kind, value):
+            writes.append(kind)
+            return append(kind, value)
+        monkeypatch.setattr(owner.records, 'append', write)
+        skill, payload, kw = invocation()
+        kw.update(request_proof_hook=lambda _: hooks.append('proof'), raw_receipt=lambda _: hooks.append('receipt'))
+        with pytest.raises(jobs.ModelJobError, match='^video_job_protocol_invalid$'):
+            owner.run(skill, payload, **kw)
+        assert writes == hooks == prefix
+        assert not ack_file.exists()
+        assert kw['runtime_trace'].get('usage', {}).get('totalTokens') != 999
+        row = owner.accounting[0]
+        assert not row['admitted'] and row['cleanup'] and not owner.active_pids
+        assert row['proof_persisted'] == ('proof' in prefix)
+        assert row['dispatch_intent'] == ('proof' in prefix)
+        assert row['raw_received'] == row['receipt_persisted'] == ('receipt' in prefix)
+        assert not owner.pending_receipts and not gateway.calls
+        with pytest.raises(jobs.ModelJobError, match='latched'):
+            owner.run(skill, payload, **kw)
+
+
+@pytest.mark.parametrize('operation,original', [
+    ('close', OSError('local writer failure')),
+    ('poll', PermissionError('local authorization failure')),
+    ('terminate', jobs.ModelJobCancelled('local cancellation')),
+    ('wait', TimeoutError('local deadline')),
+    ('kill', OSError('local callback failure')),
+])
+def test_recovered_cleanup_operation_preserves_original_parent_failure(tmp_path, gateway, monkeypatch, operation, original):
+    owner = manager(tmp_path, gateway)
+    first, sibling = add_cleanup_double(owner, None), add_cleanup_double(owner, None)
+    target = first['channel'] if operation == 'close' else first['process']
+    method = getattr(target, operation)
+    calls = []
+    def fail_once(*args, **kwargs):
+        calls.append(True)
+        if len(calls) == 1: raise OSError('PRIVATE_TRANSIENT_FAILURE')
+        return method(*args, **kwargs)
+    monkeypatch.setattr(target, operation, fail_once)
+    if operation == 'kill':
+        waits = []
+        def wait(timeout):
+            waits.append(True)
+            if len(waits) == 1: raise subprocess.TimeoutExpired('private', timeout)
+            return 0  # Concurrent child exit can make reap succeed despite kill failure.
+        monkeypatch.setattr(first['process'], 'wait', wait)
+    owner.check = lambda: (_ for _ in ()).throw(original)
+    try:
+        with pytest.raises(type(original)) as caught: list(owner.map([]))
+        assert caught.value is original
+        assert first['row']['cleanup'] and sibling['row']['cleanup'] and not owner.active_pids
+        assert owner.cleanup_failures == [dict(index=0, operations=[operation])]
+    finally:
+        owner.close()

@@ -196,6 +196,7 @@ class ModelJobs:
         self.reserve, self.check, self.engine_deadline = reserve, check, engine_deadline
         self._thread = (os.getpid(), threading.get_ident())
         self._active, self.accounting, self.pending_receipts = [], [], []
+        self.cleanup_failures = []  # At most two rows, closed operation names only.
         self._closed, self._latched, self._busy = False, False, False
         # No HOME/PYTHONPATH/proxy/Runner/provider key inheritance, prefix copies,
         # config-file access, or process-global environment changes.
@@ -287,7 +288,7 @@ class ModelJobs:
         self._active.append(job)
 
     def _event(self, job, message):
-        if set(message) != {'event', 'value', 'trace'}:
+        if job['final'] is not None or set(message) != {'event', 'value', 'trace'}:
             raise ModelJobError('video_job_protocol_invalid')
         event, value, row = message['event'], message['value'], job['row']
         job['trace'].update(_safe_trace(message['trace']))
@@ -322,7 +323,7 @@ class ModelJobs:
                 row.update(dispatch_intent=True, transport_status='unknown')
                 row['events'].append('dispatch_intent')
         elif event in ('result', 'error'):
-            if job['final'] is not None or (event == 'result' and job['phase'] != 'final'):
+            if event == 'result' and job['phase'] != 'final':
                 raise ModelJobError('video_job_protocol_invalid')
             if event == 'error' and (type(value) is not dict or value.get('code') not in ('schema', 'timeout', 'failed') or set(value) - {'code', 'path'}):
                 raise ModelJobError('video_job_protocol_invalid')
@@ -374,32 +375,70 @@ class ModelJobs:
                 raise ModelJobError('video_job_child_exit')
         return None
 
-    def _dispose(self, job):
-        job['channel'].close()
+    def _cleanup_failure(self, job, operation):
+        # Keep only the latest two owned jobs; never export exception text.
+        index = job['row']['index']
+        entry = next((row for row in self.cleanup_failures if row['index'] == index), None)
+        if entry is None:
+            entry = dict(index=index, operations=[])
+            self.cleanup_failures.append(entry)
+            self.cleanup_failures[:] = self.cleanup_failures[-2:]
+        if operation not in entry['operations']:
+            entry['operations'].append(operation)
+
+    def _cleanup_call(self, job, operation, callback):
+        try:
+            callback()
+            return True
+        except Exception:
+            self._cleanup_failure(job, operation)
+            return False
+
+    def _signal(self, job):
+        if not job.get('channel_closed'):
+            job['channel_closed'] = self._cleanup_call(job, 'close', job['channel'].close)
         process = job['process']
-        if process.poll() is None:
-            process.terminate()
+        try:
+            alive = process.poll() is None
+        except Exception:
+            self._cleanup_failure(job, 'poll')
+            alive = True
+        if alive:
+            self._cleanup_call(job, 'terminate', process.terminate)
+
+    def _dispose(self, job, *, signal=True):
+        if signal:
+            self._signal(job)
+        elif not job.get('channel_closed'):
+            job['channel_closed'] = self._cleanup_call(job, 'close', job['channel'].close)
+        process, reaped = job['process'], False
         try:
             process.wait(timeout=.1)
+            reaped = True
         except subprocess.TimeoutExpired:
-            process.kill()
-            process.wait(timeout=.1)
-        job['row']['cleanup'] = True
+            pass  # Expected escalation, not an unsuccessful cleanup by itself.
+        except Exception:
+            self._cleanup_failure(job, 'wait')
+        if not reaped:
+            self._cleanup_call(job, 'kill', process.kill)
+            reaped = self._cleanup_call(job, 'reap', lambda: process.wait(timeout=.1))
         job['row']['terminal'] = True
+        if not reaped or not job['channel_closed']:
+            self._latched = True
+            raise ModelJobError('video_job_cleanup_failed') from None
+        job['row']['cleanup'] = True
         job['row']['events'].append('cleanup')
         self._active.remove(job)
 
     def _stop_all(self):
-        # Close all sockets and signal all children before bounded waits.
+        # Every socket/signal is attempted before any child's bounded wait.
         for job in self._active:
-            job['channel'].close()
-            if job['process'].poll() is None:
-                job['process'].terminate()
+            self._signal(job)
         failures = []
         for job in list(self._active):
             try:
-                self._dispose(job)
-            except (OSError, subprocess.TimeoutExpired):
+                self._dispose(job, signal=False)
+            except ModelJobError:
                 failures.append(job)
         for row in self.accounting:
             if not row['terminal'] and not any(job['row'] is row for job in failures):
