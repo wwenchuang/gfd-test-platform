@@ -14,6 +14,7 @@ _ROW_FIELDS = {
     'keyboard_state', 'changes', 'context_refs', 'uncertainties',
 }
 _MARK_FIELDS = {'shape', 'color', 'position', 'nearest_visible_control', 'uncertainty'}
+_PERSISTENT_UI_FIELDS = {'shape', 'color', 'position', 'nearest_visible_control'}
 _HASH_DEFINITION = (
     'sha256(UTF-8 JSON; sorted keys; compact separators; '
     'ensure_ascii=false; allow_nan=false)'
@@ -39,6 +40,18 @@ def _texts(value, path):
     _list(value, path)
     for item in value:
         _text(item, path)
+
+
+def _persistent_ui(value, path):
+    _list(value, path)
+    for i, item in enumerate(value):
+        item_path = f'{path}[{i}]'
+        if isinstance(item, dict):
+            _keys(item, _PERSISTENT_UI_FIELDS, item_path)
+            for key in _PERSISTENT_UI_FIELDS:
+                _text(item[key], f'{item_path}.{key}')
+        else:
+            _text(item, item_path)
 
 
 def _role(value, path):
@@ -106,6 +119,8 @@ def bind_inventory(raw, packet, *, allow_numeric_suffix_aliases=False):
     """Return a new fact bank; exact IDs by default, proven suffix aliases opt-in.
 
     Text fields are bounded to 8192 characters; visual/question lists to 128.
+    Persistent UI entries are strings or exact four-field visual descriptions;
+    their original structure and values are copied without interpretation.
     The source index and reference lists allow at most 1000 frames (the complete
     three-digit namespace). Roles always come from the disjoint source partition.
     ``normalized_bank_sha256`` excludes binding_audit to avoid a recursive hash.
@@ -159,7 +174,7 @@ def bind_inventory(raw, packet, *, allow_numeric_suffix_aliases=False):
             _keys(mark, _MARK_FIELDS, f'{path}.transient_marks')
             for key in _MARK_FIELDS:
                 _text(mark[key], f'{path}.transient_marks.{key}')
-        _texts(row['persistent_ui'], f'{path}.persistent_ui')
+        _persistent_ui(row['persistent_ui'], f'{path}.persistent_ui')
         _texts(row['uncertainties'], f'{path}.uncertainties')
         for key in ('field_state', 'keyboard_state', 'changes'):
             _text(row[key], f'{path}.{key}')

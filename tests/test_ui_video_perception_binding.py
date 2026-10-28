@@ -285,3 +285,84 @@ def test_alias_compatibility_requires_an_explicit_boolean(option):
     raw, packet = fixture()
     with pytest.raises(ValueError):
         bind(raw, packet, allow_numeric_suffix_aliases=option)
+
+
+def persistent_ui_object():
+    # Exact first structured description from the actual failed perception bank.
+    return {
+        'shape': '蓝色线框3D立方体+网格地板+椭圆模型',
+        'color': '蓝色线框', 'position': '页面中部',
+        'nearest_visible_control': '模型尺寸文字下方',
+    }
+
+
+def test_persistent_ui_accepts_exact_object_and_string_union_losslessly():
+    raw, packet = fixture()
+    description = persistent_ui_object()
+    raw['frames'][0]['persistent_ui'] = ['field', description, 'field', description]
+    before_raw, before_packet = encoded(raw), encoded(packet)
+    bank = bind(raw, packet)
+    items = bank['frames'][0]['persistent_ui']
+    assert items == raw['frames'][0]['persistent_ui']
+    assert list(items[1]) == list(description)
+    assert type(items[1]) is dict
+    assert bank['frames'][0]['uncertainties'] == raw['frames'][0]['uncertainties']
+    assert bank['uncertainties'] == raw['uncertainties']
+    assert bank['binding_audit']['raw_inventory_sha256'] == digest(raw)
+    assert bank['binding_audit']['normalized_bank_sha256'] == digest({
+        k: v for k, v in bank.items() if k != 'binding_audit'})
+    assert bank['binding_audit']['pixel_verified'] is False
+    assert bank['binding_audit']['qualified'] is False
+    items[1]['shape'] = 'changed only in result'
+    assert encoded(raw) == before_raw and encoded(packet) == before_packet
+    raw['frames'][0]['persistent_ui'][1]['color'] = 'changed only in source'
+    assert items[1]['color'] == '蓝色线框'
+
+
+@pytest.mark.parametrize('key', ['shape', 'color', 'position', 'nearest_visible_control'])
+@pytest.mark.parametrize('value', [None, True, 3, [], {}, 'x' * 8193])
+def test_persistent_ui_objects_require_bounded_string_values(key, value):
+    raw, packet = fixture()
+    item = persistent_ui_object()
+    item[key] = value
+    raw['frames'][0]['persistent_ui'] = [item]
+    with pytest.raises(ValueError):
+        bind(raw, packet)
+
+
+@pytest.mark.parametrize('key', ['shape', 'color', 'position', 'nearest_visible_control'])
+def test_persistent_ui_objects_require_every_exact_key(key):
+    raw, packet = fixture()
+    item = persistent_ui_object()
+    del item[key]
+    raw['frames'][0]['persistent_ui'] = [item]
+    with pytest.raises(ValueError):
+        bind(raw, packet)
+
+
+@pytest.mark.parametrize('item', [
+    {}, {'text': 'field'}, {'shape': 'circle'},
+    dict(persistent_ui_object(), uncertainty='unknown'),
+    dict(persistent_ui_object(), action='tap'),
+    ['field'], None, False,
+])
+def test_persistent_ui_rejects_arbitrary_objects_and_other_item_types(item):
+    raw, packet = fixture()
+    raw['frames'][0]['persistent_ui'] = [item]
+    with pytest.raises(ValueError):
+        bind(raw, packet)
+
+
+@pytest.mark.parametrize('key', ['shape', 'color', 'position', 'nearest_visible_control'])
+def test_persistent_ui_object_values_use_existing_inclusive_text_bound(key):
+    raw, packet = fixture()
+    item = persistent_ui_object()
+    item[key] = 'x' * 8192
+    raw['frames'][0]['persistent_ui'] = [item]
+    bank = bind(raw, packet)
+    assert bank['frames'][0]['persistent_ui'] == [item]
+    previous_hash = bank['binding_audit']['raw_inventory_sha256']
+    item[key] = ''  # Empty text follows the existing bounded-string rule too.
+    changed = bind(raw, packet)
+    assert changed['frames'][0]['persistent_ui'] == [item]
+    assert changed['binding_audit']['raw_inventory_sha256'] != previous_hash
