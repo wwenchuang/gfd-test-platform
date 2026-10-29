@@ -1,0 +1,36 @@
+# Video Evidence Bounds Implementation Plan
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development. Execute sequentially; each task requires spec and quality review.
+
+**Goal:** Diagnose interacting full-chain failure contracts, repair the smallest coherent boundary, and qualify the unchanged source through normal gates and phone.
+
+**Architecture:** Existing Qwen perception bank and source PTS remain the immutable record. Model request capacity is distinct from evidence storage. Structure correction precedes additional pixel acquisition; independent audit and normal execution gates remain authoritative.
+
+**Tech Stack:** Python services/tests, Qwen DashScope via Node Gateway, native Chrome, Midscene Runner Android.
+
+## Global Constraints
+Read the linked design constraints in full; they govern every task. No increase to image/call/deadline gates, no manual transcription, no deletion of source actions or unresolved facts, no vendor fallback. Only phone ecbfd645 and printer9888E0094F2A.
+
+### Task 1: Whole-chain evidence audit and exact implementation contract
+Files: create .superpowers/sdd/video-evidence-contract-audit.md. Read-only source and frozen runs8/9/10; no production changes.
+- [ ] Reconstruct actual44+16 failure from receipt96 and make_packets; verify budget48/68 and all48cleanup.
+- [ ] Map ask/expand/bind/correction/audit ordering, facts/provenance growth, input recovery and review/try dependencies.
+- [ ] Test existing binder directly against captured invalid continuation; record actual reason, avoid proposing duplicate protection.
+- [ ] Specify bounded request/overlay handling preserving every original ID/PTS/claim and audit anchor; identify precise files/functions/tests, correction ordering and error states.
+- [ ] Compare baseline native-video diagnostic, existing bank adaptation, and budget/model tuning; choose smallest coherent implementation from actual evidence.
+- [ ] Save exact design refinements and failure-oriented fixture/test cases. Root reviews and locks production implementation scope before Task2.
+
+### Task 2: Implement locked contract with captured-fixture TDD
+Files/tests and exact changes are determined by Task1 evidence, then recorded as a concrete appended task before dispatch. Do not start code with a speculative interface.
+- [ ] Record RED test of captured failure and no-acquisition-before-correction.
+- [ ] Implement only reviewed evidence/request contract; preserve source, existing gates and unrelated dirt.
+- [ ] Run focused GREEN, adjacent regressions and mandatory AGENTS checks.
+- [ ] Independently review scoped diff, correct important findings, then commit/push/offline deploy and exacthealth.
+
+### Task 3: Normal full-source and designated phone acceptance
+No private Runner bypass. Native UI retry once after actual release, frozen evidence retained.
+- [ ] Export terminal result and verify manifests/canonical logical hashes.
+- [ ] Compare full content to manual baseline, actual input recovery, independent audit, no thirdNext/finalprint.
+- [ ] Normal import, human-readable review, static validation, scoring and approved scope/phone selection.
+- [ ] Normal phone trial and report actual branch coverage, account/printer/task binding, failures/replay, no unsupported success.
+- [ ] Additional unchanged-source and independent-original qualification; no reliability claim if any required stage remains unpassed.
