@@ -689,6 +689,146 @@ def test_runtime_terminal_capacity_cause_is_private_without_reset(tmp_path,monke
     assert rows[-1]['reserved']==0 and rows[-1]['limit']==budget.limit
 
 
+@pytest.mark.parametrize('reason', ['provider_allowance', 'runtime_deadline', 'model_job_deadline'])
+def test_nested_overlay_failure_retains_exact_terminal_cause(tmp_path, monkeypatch, reason):
+    from task_server.services import ui_video_model_jobs as jm, ui_video_windows as windows
+    from task_server.services import ui_video_revisit as revisit
+    from task_server.services.ui_video_records import RecordStore
+    from task_server.services.ui_video_stage_policy import STAGES
+
+    m = runtime()
+    now = [0.0]
+    budget = m.RuntimeBudget(2, clock=lambda: now[0])
+    published, path, instances = [], [], []
+    injected = {}
+    request = dict(first_frame='frame-001', last_frame='frame-003', question='核实原帧间的变化')
+    extra = {'frame_id': 'frame-010', 'timestamp_ms': 150}
+    original = frames(10)
+    before = copy.deepcopy(original)
+
+    class Jobs:
+        def __init__(self, records, **kw):
+            self.records, self.kw, self.accounting = records, kw, []
+            self.closed = False
+            instances.append(self)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            self.closed = True
+            for row in self.accounting:
+                if not row['cleanup']:
+                    row.update(terminal=True, cleanup=True)
+                    row['events'].append('cleanup')
+            return False
+
+        def run(self, skill, payload, **kw):
+            stage = kw['video_stage']
+            if stage == 'perception' and payload['packet_id'].startswith('producer-revisit-'):
+                # This must be produce(windows) inside the real revisit callback,
+                # after both original jobs and a validated observer request.
+                assert path == ['producer-original-001', 'producer-original-002', 'overview', 'semantic', 'loader']
+                assert payload['owned_frame_ids'] == [extra['frame_id']]
+                path.append(payload['packet_id'])
+                assert len(self.accounting) == 4
+                if reason == 'provider_allowance':
+                    budget.reserved = budget.limit  # Inject exhaustion at this exact boundary.
+                elif reason == 'runtime_deadline':
+                    now[0] = budget.engine_deadline()
+                injected['reserved_before'] = budget.reserved
+                try:
+                    self.kw['reserve']()
+                    assert reason == 'model_job_deadline'
+                    proof = self.records.append('proof', dict(stage=stage, skill=STAGES[stage][0],
+                        skill_version=STAGES[stage][1], correlation='f'*32,
+                        gateway_request_sha256='a'*64, timeout_ms=120000))
+                    self.accounting.append(dict(index=4, reserved=True, proof_persisted=True,
+                        dispatch_intent=True, raw_received=False, receipt_persisted=False,
+                        admitted=False, terminal=False, cleanup=False, transport_status='unknown',
+                        proof_ref=proof, events=['reserved', 'proof_persisted', 'dispatch_intent', 'timeout']))
+                    raise TimeoutError('video_job_deadline')
+                except (ValueError, TimeoutError) as error:
+                    injected['error'] = error
+                    injected['reserved_at_failure'] = budget.reserved
+                    raise
+            self.kw['reserve']()
+            path.append(payload['packet_id'] if stage == 'perception' else stage)
+            raw = inventory(payload) if stage == 'perception' else dict(states=[], events=[], checks=[],
+                uncertainties=[], multiple_scenarios=False, revisit=[request] if stage == 'semantic' else [])
+            index = len(self.accounting)
+            row = fake_receipted_job(self.records, stage, index)
+            # Store the actual synthetic response as the request provenance.
+            row['receipt_ref'] = self.records.append('receipt', dict(content=json.dumps(raw, ensure_ascii=False),
+                gateway_request_sha256='a'*64))
+            self.accounting.append(row)
+            return raw
+
+        def map(self, builders, **kw):
+            try:
+                for i, build in enumerate(builders):
+                    skill, payload, options = build()
+                    yield i, self.run(skill, payload, **options)
+            finally:
+                path.append('overlay_iterator_closed' if injected else 'original_iterator_closed')
+                # Keep the asserted stage sequence free of iterator bookkeeping.
+                if not injected:
+                    path.pop()
+
+    def loader(requested, capacity, *, owned_time_range_ms):
+        assert requested == request and capacity == 20
+        assert owned_time_range_ms == (0, 901)
+        assert len(instances[0].accounting) == 4
+        assert all(row['admitted'] and row['cleanup'] for row in instances[0].accounting)
+        path.append('loader')
+        return [extra]
+
+    monkeypatch.setattr(jm, 'ModelJobs', Jobs)
+    monkeypatch.setattr(windows, 'load_assets', lambda *args: [])
+    monkeypatch.setattr(revisit, 'make_revisit_loader', lambda *args: loader)
+    with pytest.raises((ValueError, TimeoutError)) as caught:
+        m.run_runtime({'media': {'frames': original, 'duration_ms': 1001}}, tmp_path,
+            tmp_path/'source.mp4', lambda: None, lambda **kw: published.append(copy.deepcopy(kw)), budget=budget)
+    assert caught.value is injected['error']
+    assert str(caught.value) == {'provider_allowance': 'video_vision_limit',
+        'runtime_deadline': 'video_runtime_deadline', 'model_job_deadline': 'video_job_deadline'}[reason]
+    assert path == ['producer-original-001', 'producer-original-002', 'overview', 'semantic', 'loader',
+                    'producer-revisit-1-001', 'overlay_iterator_closed']
+    assert instances[0].closed and all(row['cleanup'] for row in instances[0].accounting)
+    terminal = published[-1]
+    private = terminal['video_runtime_private']
+    diagnostics = private['trajectory_diagnostics']
+    pending, failure = diagnostics[-2:]
+    assert pending['kind'] == 'acquisition_failure' and pending['reason'] == 'acquisition_failed'
+    assert pending['stage'] == 'observe' and pending['call'] == 2 and pending['packet_id'] == 'packet-001'
+    assert pending['pending_request_indexes'] == [0]
+    assert pending['questions_ref']['revisit_count'] == 1
+    assert pending['corrections'] == pending['revisits'] == pending['acquired_frames'] == 0
+    assert not any(row['kind'] in {'acquisition', 'rejection'} or row.get('status') == 'no_new_frames' for row in diagnostics)
+    for key in ('stage', 'packet_id', 'call', 'proof_ref', 'receipt_ref'):
+        assert failure[key] == pending[key]
+    assert failure['acquired_frames'] == 1  # Runtime media has pixels; trajectory callback did not finish.
+    assert original == before
+    assert terminal['media']['frames'] == sorted(original+[extra], key=lambda f: f['timestamp_ms'])
+    assert len(private['windows']) == 2  # Failed overlay has no admitted bank entry.
+    assert terminal['video_runtime_summary']['receipts'] == 4
+    assert budget.reserved == failure['reserved'] == injected['reserved_at_failure']
+    assert budget.reserved == injected['reserved_before'] + (reason == 'model_job_deadline')
+    assert budget.limit == failure['limit'] == 16
+    with RecordStore.open_snapshot(tmp_path/'model-records', private['records']) as records:
+        rows = [records.read(ref) for ref in records.read(private['accounting_ref'])['refs']]
+        assert all(row['cleanup'] for row in rows)
+        assert len(rows) == (5 if reason == 'model_job_deadline' else 4)
+        assert records.read(pending['proof_ref'])['stage'] == 'semantic'
+        assert json.loads(records.read(pending['receipt_ref'])['content'])['revisit'] == [request]
+        if reason == 'model_job_deadline':
+            assert records.read(rows[-1]['proof_ref'])['stage'] == 'perception'
+            assert not rows[-1]['admitted'] and not rows[-1]['receipt_persisted']
+            assert 'receipt_ref' not in rows[-1]
+    # Keep this last: a RED here proves all nested-path/provenance assertions ran.
+    assert failure['kind'] == 'runtime_failure' and failure['reason'] == reason
+
+
 @pytest.mark.parametrize('prior,expected', [
     ([], ['']),
     ([{'event_id':'input-1','event':{'action':'aiInput'},'edit_boundary':'none'},
