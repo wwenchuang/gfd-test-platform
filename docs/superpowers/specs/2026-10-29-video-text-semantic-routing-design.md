@@ -1,0 +1,11 @@
+# Text semantic routing within the existing Qwen video pipeline
+
+Actual normal v9 completed all38 original Max perception groups, then failed in packet5 semantic inference at its own119527ms call deadline. Runtime51/70 reservations,50durable receipts and all51cleanups are verified from153 logical records. This is not v8's outer1800s failure. Independent keyboard dismissal was recovered from original revisit and supported by the Max audit in packet4, but full source/case/phone remain unqualified.
+
+Use official Qwen3.8 Flash for the existing text-only semantic stage. Keep original-pixel perception and independent original-image audit on Max. Qwen's official structured-output documentation lists3.8Flash JSON Schema support; official model documentation identifies the model as qwen3.8-flash. The semantic stage already removes all image assets and uses source-bound perception facts; it is a distinct inference workload from prior Flash image controls which missed fine marks. All other six stages/options stay exact, including Max input recovery and outcome review. No fallback is added.
+
+Alternatives considered: increasing time/call limits increases waiting and does not reduce the repeated text inference workload; compiler-context removal alone saves only17785/163336prettyUTF8bytes in a reconstruction matching the11accepted partial events. Persistent resume/cache or broad compression introduces a new trust contract. The chosen change is two closed model policy entries with exact attestation/runtime regression coverage. No contexts, facts, source actions, values, questions or gates are removed.
+
+Success requires offline actual-request/receipt policy tests and independent review, followed by deployment and the unchanged normal original source. Valid Flash output must still pass the existing binder, original-image Max audit, semantic repair/retention gates, consolidation, authoritative input recovery and normal review/static/score/Runner admission. No latency or accuracy promise follows from vendor documentation alone. A new complete same-source result and designated-phone execution are required.
+
+The user explicitly authorized autonomous good方案 implementation and verification. No additional design approval is required.
