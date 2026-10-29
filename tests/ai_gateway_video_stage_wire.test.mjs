@@ -293,3 +293,29 @@ for(const role of ['owned','context'])test(`actual perception handler rejects in
   await assert.rejects(run.request(b),/video_frames_invalid/);assert.equal(run.calls.length,0);
  }
 });
+
+test('explicit video stages classify provider length as closed output truncation without leaking content',async()=>{
+ // normal-run5: official Max, 17,640 prompt + 4,000 completion, zero reasoning.
+ const usage={prompt_tokens:17640,completion_tokens:4000,total_tokens:21640,
+  completion_tokens_details:{reasoning_tokens:0}};
+ for(const stage of ['perception','semantic','audit']) for(const content of ['{"private":"unfinished','{}','']) {
+  const run=orchestration(false,usage,async options=>({model:options.model,
+   choices:[{message:{content},finish_reason:'length'}],usage}));
+  await assert.rejects(run.request(input(stage)),{message:'video_stage_output_truncated'});
+  assert.equal(run.calls.length,1);assert.equal(run.logs.length,1);
+  const log=run.logs[0];assert.equal(log.success,false);assert.equal(log.finishReason,'length');
+  assert.equal(log.error,'video_stage_output_truncated');assert.equal(log.usage.completionTokens,4000);
+  assert.equal(log.usage.promptTokens,17640);assert.equal(log.usage.reasoningTokens,0);
+  assert.equal(log.inputPreview,'[video stage content omitted]');
+  assert.equal(log.outputPreview,'[video stage content omitted]');
+  assert.equal(JSON.stringify(log).includes('unfinished'),false);
+ }
+});
+
+test('legacy structured length rejection keeps its existing error classification',async()=>{
+ const run=orchestration(false,{},async options=>({model:options.model,
+  choices:[{message:{content:'{}'},finish_reason:'length'}],usage:{completion_tokens:4000}}));
+ await assert.rejects(run.request({skillName:'ordinary_skill',jsonResponse:true,imageAssets:[],payload:{}}),
+  /Structured output truncated: finish_reason=length, completion_tokens=4000/);
+ assert.ok(run.logs.every(log=>log.success===false && !log.error.startsWith('video_')));
+});

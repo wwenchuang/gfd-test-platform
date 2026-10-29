@@ -1097,6 +1097,9 @@ async function callAi(action, body, options = {}) {
           throw new Error('video_perception_reasoning_usage_invalid');
       }
       usage = completionUsageSummary(completion?.usage || {});
+      if (videoStage && finishReason.toLowerCase() === 'length') {
+        throw new Error('video_stage_output_truncated');
+      }
       output = assistantOutputText(choice?.message?.content);
       if (options.stripFence) output = stripMarkdownFence(output);
       if (!String(output || '').trim()) {
