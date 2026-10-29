@@ -221,7 +221,8 @@ def test_runtime_wires_original_engine_tail_sorted_media_once_and_exact_stages(t
         def run(self,skill,payload,**kw):
             self.kw['check']();self.kw['reserve']();self.accounting.append(fake_receipted_job(self.records,kw['video_stage'],len(self.accounting)));calls.append((skill,copy.deepcopy(payload),copy.deepcopy(kw)))
             return inventory(payload) if kw['video_stage']=='perception' else {}
-        def map(self,builders):
+        def map(self,builders,*,concurrency=2):
+            assert concurrency == 4
             for i,build in enumerate(builders):
                 skill,payload,kw=build();yield i,self.run(skill,payload,**kw)
     monkeypatch.setattr(jobs_module,'ModelJobs',Jobs)
@@ -448,7 +449,8 @@ def test_actual_engine_consolidation_input_and_draft_with_injected_jobs(tmp_path
                 return {'title':'输入备注','events':[{'candidate_index':0,'action':'aiInput','target':'备注输入框','value':'','observation':'目标页面标题可见','uncertainties':[]}],'multiple_scenarios':False,'uncertainties':[]}
             if stage=='inputs':return {'events':[{'action':'aiInput','target':'candidate:0','value':'测试备注','frame_refs':payload['checks'][0]['final_input_frame_ids'][-1:],'observation':'普通业务输入','uncertainties':[]}],'uncertainties':[],'multiple_scenarios':False}
             pytest.fail(stage)
-        def map(self,builders):
+        def map(self,builders,*,concurrency=2):
+            assert concurrency == 4
             for i,build in enumerate(builders):
                 skill,payload,kw=build();yield i,self.run(skill,payload,**kw)
     monkeypatch.setattr(jobs_module,'ModelJobs',Jobs)
@@ -541,7 +543,7 @@ def test_normal_runtime_owned_jobs_real_loopback_transport_records_and_cleanup(t
     try:
         monkeypatch.setattr(config,'AI_GATEWAY_URL',gateway.url)
         result=runtime().run_runtime(doc,tmp_path,tmp_path/'source.mp4',lambda:None,lambda **kw:None)
-        assert len(gateway.calls)==8 and gateway.peak==2
+        assert len(gateway.calls)==8 and gateway.peak==3
         summary=result['video_runtime_summary'];assert summary['reserved']==summary['receipts']==8
         private=result['video_runtime_private']
         with RecordStore.open_snapshot(tmp_path/'model-records',private['records']) as records:
@@ -578,7 +580,8 @@ def test_runtime_rejects_perception_without_owned_receipt_provenance(tmp_path,mo
         def __init__(self,*a,**kw):self.accounting=[]
         def __enter__(self):return self
         def __exit__(self,*a):return False
-        def map(self,builders):
+        def map(self,builders,*,concurrency=2):
+            assert concurrency == 4
             for i,build in enumerate(builders):
                 _,payload,_=build();yield i,inventory(payload)
     monkeypatch.setattr(module,'ModelJobs',Unproven)

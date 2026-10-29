@@ -236,7 +236,7 @@ def run_runtime(document, workspace, source_path, check, publish, *, budget=None
                                     image_assets=assets, timeout=120, retry_count=0, max_tokens=STAGES['perception'][4],
                                     repair_invalid_json=False, raw_receipt=receipt)
                             yield build
-                    iterator = jobs.map(builders())
+                    iterator = jobs.map(builders(), concurrency=4)
                     try:
                         for index, raw in iterator:
                             boundary()
