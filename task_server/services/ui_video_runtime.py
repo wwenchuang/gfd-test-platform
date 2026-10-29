@@ -233,7 +233,7 @@ def run_runtime(document, workspace, source_path, check, publish, *, budget=None
                                 boundary()
                                 return 'ui_video_perception', payload, dict(version='v1', video_stage='perception',
                                     model_config={'providerId':'qwen_plus','model':STAGES['perception'][3]},
-                                    image_assets=assets, timeout=120, retry_count=0, max_tokens=4000,
+                                    image_assets=assets, timeout=120, retry_count=0, max_tokens=STAGES['perception'][4],
                                     repair_invalid_json=False, raw_receipt=receipt)
                             yield build
                     iterator = jobs.map(builders())

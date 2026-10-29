@@ -19,7 +19,8 @@ def test_compact_prompt_retains_full_independent_rows_and_unchanged_payload(monk
     before = copy.deepcopy(payload)
     rendered = ai.render_ai_skill_prompt('ui_video_perception', payload)
     assert json.loads(rendered.split('输入：\n', 1)[1]) == before == payload
-    for required in ['4000', '300', '按区域', '短字符串', '不得用“同上”',
+    assert '4000' not in rendered
+    for required in ['8192', '300', '这个目标不是事实数量或单行硬上限', '按区域', '短字符串', '不得用“同上”',
                      '不得为预算省略', '逐帧独立', '顶栏/主体/底部', '光标/选区',
                      '出现、消失和再次出现', 'context_refs', 'uncertainties']:
         assert required in rendered

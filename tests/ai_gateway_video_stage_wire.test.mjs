@@ -37,7 +37,7 @@ test('perception exact final wire preserves 2..12 originals, roles, byte/order a
  for(const n of [2,8,12]) {
   const b=input('perception',n),before=JSON.stringify(b),wire=complete(b),parts=wire.messages[1].content;
   assert.equal(wire.enable_thinking,false);assert.equal(wire.thinking_budget,undefined);
-  assert.equal(wire.temperature,.1);assert.equal(wire.max_tokens,4000);assert.deepEqual(wire.response_format,{type:'json_object'});
+  assert.equal(wire.temperature,.1);assert.equal(wire.max_tokens,8192);assert.deepEqual(wire.response_format,{type:'json_object'});
   const images=parts.filter(p=>p.type==='image_url');assert.equal(images.length,n);
   images.forEach(p=>{assert.equal(p.min_pixels,1658880);assert.equal(p.image_url.url,'data:image/jpeg;base64,YQ==');});
   assert.match(parts.at(-2).text,/context/);assert.equal(JSON.stringify(b),before);
@@ -99,9 +99,56 @@ test('actual /ai/skill forwards capabilities, no fallback, and actual route/usag
   const run=orchestration(),response=await run.request(b);
   assert.equal(run.calls.length,1);assert.equal(response.model,'qwen3.8-max');assert.equal(response.providerId,'primary');
   assert.equal(response.fallbackUsed,false);assert.equal(response.finishReason,'stop');assert.equal(response.usage.totalTokens,3);
-  assert.equal(run.calls[0].options.max_tokens,stage==='perception'?4000:10000);
+  assert.equal(run.calls[0].options.max_tokens,stage==='perception'?8192:10000);
+  assert.equal(response.videoPolicy.effective_options.max_tokens,stage==='perception'?8192:10000);
+  ctx.options=run.calls[0].options;
+  assert.equal(response.videoPolicy.provider_options_sha256,vm.runInContext('videoCanonicalSha(options)',ctx));
   const failed=orchestration(true);await assert.rejects(failed.request(b),/video_stage_provider_failed/);assert.equal(failed.calls.length,1);
   const rejected=orchestration();b.payload.phase='invalid';await assert.rejects(rejected.request(b),/video_/);assert.equal(rejected.calls.length,0);
+ }
+});
+
+test('perception accepts complete output above the old cap with the exact 8192 policy receipt',async()=>{
+ const usage={prompt_tokens:21486,completion_tokens:5001,total_tokens:26487,
+  completion_tokens_details:{reasoning_tokens:0}};
+ const run=orchestration(false,usage),response=await run.request(input());
+ assert.equal(response.success,true);assert.equal(response.finishReason,'stop');
+ assert.equal(response.usage.completionTokens,5001);assert.equal(response.usage.reasoningTokens,0);
+ assert.equal(run.calls.length,1);assert.equal(run.calls[0].options.max_tokens,8192);
+ assert.equal(run.calls[0].options.enable_thinking,false);assert.equal(run.calls[0].options.thinking_budget,undefined);
+ assert.equal(response.videoPolicy.effective_options.max_tokens,8192);
+ ctx.options=run.calls[0].options;
+ assert.equal(response.videoPolicy.provider_options_sha256,vm.runInContext('videoCanonicalSha(options)',ctx));
+});
+
+test('perception new output capacity preserves per-request and remaining deadline caps',async()=>{
+ const timeoutSource=source.slice(source.indexOf('function requestedCallTimeoutMs('),source.indexOf('function requestedCompletionTokens('));
+ for(const [requested,remaining,expected] of [[180000,180000,120000],[180000,900,900],[600,180000,600]]) {
+  const b=input();b.timeoutMs=requested;b.videoDeadlineMs=1000+remaining;
+  assert.equal(vm.runInNewContext(timeoutSource+'requestedCallTimeoutMs(body)',{body:b,Date:{now:()=>1000}}),expected);
+  b.videoDeadlineMs=Date.now()+remaining;
+  let requestOptions;
+  const run=orchestration(false,{},async(options,transport)=>{
+   requestOptions=transport;return {model:options.model,choices:[{message:{content:'{}'},finish_reason:'stop'}]};
+  });
+  await run.request(b);
+  assert.ok(requestOptions.timeout>0 && requestOptions.timeout<=expected);
+  assert.equal(requestOptions.maxRetries,0);assert.equal(run.calls[0].options.max_tokens,8192);
+ }
+});
+
+test('perception rejects length at the new cap even when content looks complete',async()=>{
+ const usage={prompt_tokens:21486,completion_tokens:8192,total_tokens:29678,
+  completion_tokens_details:{reasoning_tokens:0}};
+ for(const content of ['{}','{"private":"unfinished','']) {
+  const run=orchestration(false,usage,async options=>({model:options.model,
+   choices:[{message:{content},finish_reason:'length'}],usage}));
+  await assert.rejects(run.request(input()),{message:'video_stage_output_truncated'});
+  assert.equal(run.calls.length,1);assert.equal(run.calls[0].options.max_tokens,8192);
+  assert.equal(run.logs[0].success,false);assert.equal(run.logs[0].finishReason,'length');
+  assert.equal(run.logs[0].usage.completionTokens,8192);
+  assert.equal(run.logs[0].outputPreview,'[video stage content omitted]');
+  assert.equal(JSON.stringify(run.logs).includes('unfinished'),false);
  }
 });
 

@@ -261,6 +261,11 @@ def test_runtime_wires_original_engine_tail_sorted_media_once_and_exact_stages(t
     assert all(kw.get('model_config')=={'providerId':'qwen_plus','model':STAGES[kw['video_stage']][3]} for _,p,kw in calls)
     stages=[kw['video_stage'] for _,p,kw in calls]
     assert stages==['perception','perception','overview','semantic','perception','audit','consolidate','outcome','inputs']
+    expected_tokens={'perception':8192,'overview':10000,'semantic':10000,'audit':10000,
+                     'consolidate':10000,'outcome':4000,'inputs':3000}
+    assert all(kw['max_tokens']==expected_tokens[kw['video_stage']] for _,p,kw in calls)
+    assert all(kw['timeout']==120 and kw['retry_count']==0 and kw['repair_invalid_json'] is False
+               for _,p,kw in calls if kw['video_stage']=='perception')
     semantic=next((p,k) for _,p,k in calls if k['video_stage']=='semantic')
     assert 'image_frames' not in semantic[0] and semantic[1]['image_assets']==[] and semantic[1]['output_schema']
     assert semantic[0]['perception_bank']['windows'] and 'baseline_examples' not in semantic[0]
@@ -454,6 +459,11 @@ def test_actual_engine_consolidation_input_and_draft_with_injected_jobs(tmp_path
     assert result['events'][0]['value']=='测试备注'
     assert result['input_recovery'][0]['status']=='recovered'
     assert len([1 for s,p,k in calls if k['video_stage']=='perception'])==(n+7)//8
+    producers=[(p,k) for s,p,k in calls if k['video_stage']=='perception']
+    assert all(k['max_tokens']==8192 and k['timeout']==120 and k['retry_count']==0 and
+               k['repair_invalid_json'] is False for p,k in producers)
+    assert [fid for p,k in producers for fid in p['owned_frame_ids']]==[f['frame_id'] for f in original]
+    assert all(len(p['owned_frame_ids'])<=8 and len(p['frames'])<=12 for p,k in producers)
     assert len([1 for s,p,k in calls if k['video_stage']=='inputs'])==1
     assert len(result['trajectory_audit']['calls'])==1+2*((n+31)//32)+corrections
     proposal,snapshot=analysis.draft_proposal({**doc,**result})

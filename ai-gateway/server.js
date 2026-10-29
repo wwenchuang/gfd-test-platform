@@ -682,7 +682,7 @@ function validateVideoOutputSchema(schema) {
 
 function videoStageConfig(stage) {
   return {
-    perception: ['ui_video_perception', 'v1', 'whole-perception', 'qwen3.8-max', 4000],
+    perception: ['ui_video_perception', 'v1', 'whole-perception', 'qwen3.8-max', 8192],
     overview: ['ui_video_trajectory', 'overview', 'whole-trajectory', 'qwen3.8-flash', 10000],
     semantic: ['ui_video_trajectory', 'observe', 'whole-trajectory', 'qwen3.8-max', 10000],
     audit: ['ui_video_trajectory', 'audit', 'whole-trajectory', 'qwen3.8-max', 10000],
