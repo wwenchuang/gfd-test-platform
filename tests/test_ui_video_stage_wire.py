@@ -156,11 +156,9 @@ def test_valid_inventory_returns_original_evidence_and_questions(monkeypatch):
     assert ai.run_ai_skill('ui_video_perception',p,image_assets=a,video_stage='perception')==before
 
 
-@pytest.mark.parametrize('change',['owned_role','context_role','extra','schema_without_stage','perception_without_stage','defaults'])
-def test_stage_never_silently_projects_roles_or_fills_output(monkeypatch,change):
+@pytest.mark.parametrize('change',['extra','schema_without_stage','perception_without_stage','defaults'])
+def test_stage_rejects_extra_fields_or_implicit_scope_or_defaults(monkeypatch,change):
     p,a=evidence();raw=inventory(p);kwargs={'video_stage':'perception'}
-    if change=='owned_role':raw['frames'][0]['role']='context'
-    if change=='context_role':raw['frames'][0]['context_refs'][0]['role']='owned'
     if change=='extra':raw['frames'][0]['business_action']='tap'
     if change=='schema_without_stage':kwargs={'output_schema':semantic_schema()}
     if change=='perception_without_stage':kwargs={}

@@ -12,7 +12,7 @@
 
 精简只限表达：每行仍须逐帧独立给出完整可见快照，静止画面也重复其实际内容，不得用“同上”、引用上一行或只列变化来替代本帧事实。不得为预算省略控件、可读文字、字段/键盘状态、暂态图形、差异、引用或疑问；不得合并帧、截短文字、填造缺失事实或输出省略号占位。无变化可简写“无可见变化”，不可辨处保留具体疑问。省去 JSON 缩进、客套话和结论，不输出代码围栏。
 
-输出唯一 JSON 对象：packet_id 原样；frames 每项精确包含 frame_id、role、transient_marks、persistent_ui、field_state、keyboard_state、changes、context_refs、uncertainties。transient_marks 每项精确包含 shape、color、position、nearest_visible_control、uncertainty；persistent_ui 每项为字符串或包含 shape、color、position、nearest_visible_control 的对象；context_refs 每项包含 frame_id 和 role。所有说明为字符串，各列表为空时用 []。根仅有 packet_id、frames、uncertainties。role 只使用 owned/context，owned 行必须标 owned。
+输出唯一 JSON 对象：packet_id 原样；frames 每项精确包含 frame_id、role、transient_marks、persistent_ui、field_state、keyboard_state、changes、context_refs、uncertainties。transient_marks 每项精确包含 shape、color、position、nearest_visible_control、uncertainty；persistent_ui 每项为字符串或包含 shape、color、position、nearest_visible_control 的对象；context_refs 每项包含 frame_id 和 role。field_state、keyboard_state、changes 及对象内说明为字符串。frames、transient_marks、persistent_ui、context_refs、根 uncertainties 和每行 uncertainties 必须始终为 JSON 数组；只有一项也用方括号，例如 persistent_ui:["顶栏：白底黑字〈原文〉"]、uncertainties:["具体疑问"]，不得直接写成字符串。各列表为空时用 []。根仅有 packet_id、frames、uncertainties。role 只使用 owned/context，owned 行必须标 owned。context_refs 的名称不决定引用角色：引用 owned_frame_ids 中的前一帧也必须写 role:"owned"，仅引用 context_frame_ids 中的帧写 role:"context"。
 
 输入：
 {{payload}}

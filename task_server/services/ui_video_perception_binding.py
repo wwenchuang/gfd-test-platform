@@ -21,6 +21,32 @@ _HASH_DEFINITION = (
 )
 
 
+def project_inventory_format(raw):
+    """Losslessly wrap only three known string/list paths, never validate or repair.
+
+    The explicit perception caller must still validate the full canonical schema
+    and exact source binding. Metadata contains paths/types only, no fact copies.
+    Bound traversal by the explicit stage 12-image limit; over-limit rows remain
+    unchanged and fail exact source binding, never silently lose trailing rows.
+    """
+    result = copy.deepcopy(raw)
+    audit = []
+    def wrap(container, key, path):
+        if type(container.get(key)) is str:
+            container[key] = [container[key]]
+            audit.append({'path': path, 'reason': 'singleton_string_array',
+                          'from_type': 'string', 'to_type': 'array'})
+    if isinstance(result, dict):
+        wrap(result, 'uncertainties', '$.uncertainties')
+        rows = result.get('frames')
+        if isinstance(rows, list) and len(rows) <= 12:
+            for i, row in enumerate(rows):
+                if isinstance(row, dict):
+                    for key in ('persistent_ui', 'uncertainties'):
+                        wrap(row, key, f'$.frames[{i}].{key}')
+    return result, audit
+
+
 def _keys(value, expected, path):
     if not isinstance(value, dict) or set(value) != expected:
         raise ValueError(f'{path}: invalid fields')

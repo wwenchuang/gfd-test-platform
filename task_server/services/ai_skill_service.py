@@ -487,9 +487,11 @@ def run_ai_skill(
                 )
                 json_repaired = True
             if stage == "perception":
-                from .ui_video_perception_binding import bind_inventory
+                from .ui_video_perception_binding import bind_inventory, project_inventory_format
+                result, _ = project_inventory_format(result)
+                validate_ai_skill_output(skill_name, result)
                 bank = bind_inventory(result, payload)
-                if bank['binding_audit']['warnings']:
+                if any(w['reason'] != 'source_partition_role' for w in bank['binding_audit']['warnings']):
                     raise ValueError("video_perception_role_mismatch")
             elif stage == "semantic":
                 validate_stage_output(result, output_schema)

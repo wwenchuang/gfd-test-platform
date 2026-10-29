@@ -119,9 +119,14 @@ def test_overlay_only_owns_new_frames_and_original_partitions_stay_frozen():
     assert [f['frame_id'] for f in windows[0]['frames']]==['frame-007','frame-008','frame-020','frame-021','frame-010','frame-011']
 
 
-def test_inventory_projection_warning_is_not_admitted():
+def test_inventory_source_role_projection_is_admitted_with_warning():
     bank=runtime().PerceptionBank(frames(4)); raw=inventory(bank.windows[0]);raw['frames'][0]['role']='context'
-    with pytest.raises(ValueError,match='video_perception_binding_invalid'):bank.admit(bank.windows[0],raw,{})
+    bank.admit(bank.windows[0],raw,{})
+    assert raw['frames'][0]['role']=='context'
+    assert bank.entries[0]['frames'][0]['role']=='owned'
+    assert bank.entries[0]['binding_audit']['warnings']==[{'path':'frames[0].role',
+        'original':'context','canonical':'owned','reason':'source_partition_role'}]
+    assert bank.entries[0]['binding_audit']['qualified'] is False
 
 
 def test_shared_cap_lowers_once_before_semantics_never_refunds():

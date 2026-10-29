@@ -5,12 +5,13 @@ version/owner/app CAS publication. Model jobs alone own bounded transport; the
 bank contains unverified pixel proposals, never accepted actions or input values.
 """
 import copy
+import json
 import os
 from pathlib import Path
 import re
 import time
 
-from .ui_video_perception_binding import bind_inventory, _source_index
+from .ui_video_perception_binding import bind_inventory, project_inventory_format, _source_index
 
 MODE = 'video-perception-bank-v1'
 
@@ -61,7 +62,7 @@ class PerceptionBank:
 
     def admit(self, window, raw, accounting):
         bound = bind_inventory(raw, window)
-        if bound['binding_audit']['warnings']:
+        if any(w['reason'] != 'source_partition_role' for w in bound['binding_audit']['warnings']):
             raise ValueError('video_perception_binding_invalid')
         index, _ = _source_index(window)
         first = next(i for i, f in enumerate(self.frames) if f['frame_id'] == window['frames'][0]['frame_id'])
@@ -186,6 +187,7 @@ def run_runtime(document, workspace, source_path, check, publish, *, budget=None
     bank = PerceptionBank(document['media']['frames'])
     budget = budget or RuntimeBudget(bank.original_count)
     media = copy.deepcopy(document['media'])
+    perception_format_projections = []
     def boundary():
         check()
         budget.check()
@@ -209,8 +211,21 @@ def run_runtime(document, workspace, source_path, check, publish, *, budget=None
                 def produce(windows, initial=False):
                     offset = len(jobs.accounting)
                     def builders():
-                        for window in windows:
-                            def build(window=window):
+                        for window_index, window in enumerate(windows):
+                            def receipt(value, window=window, window_index=window_index):
+                                # ModelJobs invokes this only after durable raw storage.
+                                # Parse/projection never changes that original receipt.
+                                from .ai_skill_service import normalize_model_json
+                                try:
+                                    parsed = normalize_model_json(value['content'])
+                                except json.JSONDecodeError:
+                                    return  # Child retains the original invalid-JSON rejection.
+                                _, audit = project_inventory_format(parsed)
+                                if audit:
+                                    perception_format_projections.append({
+                                        'window_id': window['packet_id'], 'projections': audit,
+                                        'receipt_ref': copy.deepcopy(jobs.accounting[offset + window_index]['receipt_ref'])})
+                            def build(window=window, receipt=receipt):
                                 boundary()
                                 payload = {'phase': 'whole-perception', **copy.deepcopy(window),
                                     'image_frames': copy.deepcopy(window['frames'])}
@@ -219,7 +234,7 @@ def run_runtime(document, workspace, source_path, check, publish, *, budget=None
                                 return 'ui_video_perception', payload, dict(version='v1', video_stage='perception',
                                     model_config={'providerId':'qwen_plus','model':STAGES['perception'][3]},
                                     image_assets=assets, timeout=120, retry_count=0, max_tokens=4000,
-                                    repair_invalid_json=False)
+                                    repair_invalid_json=False, raw_receipt=receipt)
                             yield build
                     iterator = jobs.map(builders())
                     try:
@@ -301,6 +316,7 @@ def run_runtime(document, workspace, source_path, check, publish, *, budget=None
             refs = [records.append('status', row) for row in jobs.accounting]
             aggregate = records.append('aggregate', {'refs': refs})
             private = {'mode': MODE, 'windows': bank.index(), 'records': records.snapshot(),
+                       'perception_format_projections': copy.deepcopy(perception_format_projections),
                        'accounting_ref': aggregate}
             summary = {'mode': MODE, 'original_windows': bank.original_count,
                        'reserved': budget.reserved, 'limit': budget.limit,
