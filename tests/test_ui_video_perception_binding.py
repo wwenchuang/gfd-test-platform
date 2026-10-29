@@ -366,3 +366,54 @@ def test_persistent_ui_object_values_use_existing_inclusive_text_bound(key):
     changed = bind(raw, packet)
     assert changed['frames'][0]['persistent_ui'] == [item]
     assert changed['binding_audit']['raw_inventory_sha256'] != previous_hash
+
+
+@pytest.mark.parametrize('role', ['owned', 'context'])
+def test_exact_decoder_final_frame_row_and_reference_preserve_provenance(role):
+    raw, packet = final_frame_fixture(role)
+    before = copy.deepcopy((raw, packet))
+    bank = bind(raw, packet)
+    assert (raw, packet) == before
+    assert bank['binding_audit']['warnings'] == []
+    assert bank['binding_audit']['authoritative_index_sha256'] == digest({
+        'packet_id': packet['packet_id'], 'frames': [
+            {**f, 'role': 'owned' if f['frame_id'] in packet['owned_frame_ids'] else 'context'}
+            for f in packet['frames']]})
+    assert bank['uncertainties'] == raw['uncertainties']
+    for row, original in zip(bank['frames'], raw['frames']):
+        assert row == {**{k:v for k,v in original.items() if k != 'context_refs'},
+                       'evidence_refs': original['context_refs']}
+        assert row['evidence_refs'] == [{'frame_id': 'frame-end', 'role': role}]
+    assert ('frame-end' in [r['frame_id'] for r in bank['frames']]) == (role == 'owned')
+
+
+def final_frame_fixture(role):
+    raw, packet = fixture()
+    packet['frames'][-1] = {'frame_id': 'frame-end', 'timestamp_ms': 220}
+    packet['owned_frame_ids'] = ['frame-004', 'frame-end'] if role == 'owned' else ['frame-001', 'frame-004']
+    packet['context_frame_ids'] = ['frame-001'] if role == 'owned' else ['frame-end']
+    for row, fid in zip(raw['frames'], packet['owned_frame_ids']):
+        row['frame_id'] = fid
+        row['context_refs'] = [{'frame_id': 'frame-end', 'role': role}]
+    return raw, packet
+
+
+@pytest.mark.parametrize('role', ['owned', 'context'])
+@pytest.mark.parametrize('label', ['end', '002', 'frame-002', 'frame-END', 'frame-end ', 'unknown'])
+def test_decoder_final_frame_never_gains_alias_or_numeric_renaming(role, label):
+    raw, packet = final_frame_fixture(role)
+    if role == 'owned':
+        raw['frames'][-1]['frame_id'] = label
+    else:
+        raw['frames'][0]['context_refs'][0]['frame_id'] = label
+    with pytest.raises(ValueError):
+        bind(raw, packet, allow_numeric_suffix_aliases=True)
+
+
+@pytest.mark.parametrize('target', ['row', 'reference'])
+def test_final_frame_identity_must_be_present_in_authoritative_source(target):
+    raw, packet = fixture()
+    if target == 'row':raw['frames'][0]['frame_id'] = 'frame-end'
+    else:raw['frames'][0]['context_refs'][0]['frame_id'] = 'frame-end'
+    with pytest.raises(ValueError, match='unknown frame ID'):
+        bind(raw, packet, allow_numeric_suffix_aliases=True)

@@ -761,7 +761,7 @@ function validateVideoStage(body, route) {
       if (!Array.isArray(refs)) throw new Error('video_frames_invalid');
       for (const ref of refs) {
         const index = frames.findIndex(f => f.frame_id === ref);
-        if (typeof ref !== 'string' || !/^frame-[0-9]{3}$/.test(ref) || index <= previous || partition.has(ref))
+        if (typeof ref !== 'string' || !/^frame-(?:[0-9]{3}|end)$/.test(ref) || index <= previous || partition.has(ref))
           throw new Error('video_frames_invalid');
         partition.add(ref); previous = index;
       }
