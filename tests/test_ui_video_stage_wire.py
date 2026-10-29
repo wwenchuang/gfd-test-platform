@@ -24,7 +24,7 @@ def capture(monkeypatch, content='{}'):
     calls=[]
     def urlopen(req,timeout):
         calls.append(json.loads(req.data))
-        return io.BytesIO(json.dumps({'success':True,'content':content,'providerId':'official','model':'qwen3.8-max','fallbackUsed':False,'finishReason':'stop','usage':{'totalTokens':2}, **({'videoPolicy':make_expected_attestation(calls[-1])} if 'videoStage' in calls[-1] else {})}).encode())
+        return io.BytesIO(json.dumps({'success':True,'content':content,'providerId':'official','model':calls[-1]['model'],'fallbackUsed':False,'finishReason':'stop','usage':{'totalTokens':2}, **({'videoPolicy':make_expected_attestation(calls[-1])} if 'videoStage' in calls[-1] else {})}).encode())
     monkeypatch.setattr(ai.urllib.request,'urlopen',urlopen)
     return calls
 

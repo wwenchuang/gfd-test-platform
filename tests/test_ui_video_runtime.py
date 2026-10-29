@@ -553,6 +553,9 @@ def test_normal_runtime_owned_jobs_real_loopback_transport_records_and_cleanup(t
             assert all(row['cleanup'] and row['admitted'] and row['receipt_persisted'] for row in rows)
         assert len(private['windows'])==3 and all('proof_ref' in w and 'receipt_ref' in w for w in private['windows'])
         semantic=next(call for call in gateway.calls if call['videoStage']=='semantic')
+        assert semantic['model']==semantic['modelConfig']['model']=='qwen3.8-flash'
+        assert semantic['providerId']==semantic['modelConfig']['providerId']=='qwen_plus'
+        assert semantic['maxTokens']==10000 and 0<semantic['timeoutMs']<=120000
         assert semantic['imageAssets']==[] and semantic['outputSchema']
         assert result['media']['frames']==original
         if with_end:
