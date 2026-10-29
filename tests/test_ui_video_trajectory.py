@@ -630,3 +630,225 @@ def test_two_revisit_windows_require_minimum_capacity_before_any_loader(monkeypa
     with pytest.raises(ValueError,match='video_vision_limit'):
         vt.observe_trajectory({'media':dict(frames=original,duration_ms=9001)},None,lambda:False,revisit=loader)
     assert loads==[]
+
+
+@pytest.fixture
+def captured_ordering(monkeypatch):
+    """Immutable receipts, original PTS and frozen ownership from failed run10."""
+    import hashlib
+    import json
+    from pathlib import Path
+    from task_server.services.ai_skill_service import normalize_model_json
+    from task_server.services import ui_video_windows
+    frozen=json.loads((Path(__file__).parent/'fixtures/ui_video/run10-ordering.json').read_text())
+    replies={}
+    for entry in frozen['entries']:
+        logical={k:entry[k] for k in ('entry','kind','value')}
+        assert hashlib.sha256(json.dumps(logical,ensure_ascii=False,sort_keys=True,separators=(',',':')).encode()).hexdigest()==entry['sha256']
+        replies[entry['entry']]=normalize_model_json(entry['value']['content'])
+    original=[f for f in frozen['media']['frames'] if f['frame_id'] not in {f'frame-{i:03d}' for i in range(300,323)}]
+    packets=vt.make_packets(original,replies[78]['states'])[:2]
+    for p in packets:
+        extras=[f for f in frozen['media']['frames'] if f not in original and p['owned_start_ms']<=f['timestamp_ms']<p['owned_end_ms']]
+        p['frames']=sorted(p['frames']+extras,key=lambda f:f['timestamp_ms'])
+        p['owned_frame_ids']+= [f['frame_id'] for f in extras]
+    assert [len(p['frames']) for p in packets]==[60,60]  # captured53+7 and44+16
+    monkeypatch.setattr(vt,'make_packets',lambda *a:copy.deepcopy(packets))
+    monkeypatch.setattr(vt,'overview_frames',lambda fs:fs)
+    monkeypatch.setattr(ui_video_windows,'load_assets',lambda *a:[])
+    return frozen,replies,packets
+
+
+@pytest.mark.parametrize('receipt,reason,expanded',[(90,'event_evidence',False),(90,'event_evidence',True),(96,'input_continuation',True)])
+def test_captured_invalid_claim_with_revisit_corrects_before_loader(captured_ordering,receipt,reason,expanded):
+    frozen,replies,packets=captured_ordering
+    if not expanded:
+        packets[1]['frames']=[f for f in packets[1]['frames'] if int(f['frame_id'].split('-')[1])<307]
+        packets[1]['owned_frame_ids']=[fid for fid in packets[1]['owned_frame_ids'] if int(fid.split('-')[1])<307]
+    calls=[];loads=[];diagnostics=[]
+    def runner(skill,payload,**kw):
+        calls.append((kw['version'],copy.deepcopy(payload)))
+        if kw['version']=='overview':return copy.deepcopy(replies[78])
+        if kw['version']=='audit':return {'checks':[dict(event_id=c['track']['event_id'],trigger_verdict='supported',outcome_verdict='supported',question='') for c in payload['trajectory']], 'issues':[], 'multiple_scenarios':False,'revisit':[]}
+        return copy.deepcopy(replies[86 if payload['packet_id']=='packet-001' else receipt])
+    with pytest.raises(ValueError) as exc:
+        vt.observe_trajectory({'media':frozen['media']},None,lambda:False,skill_runner=runner,
+            revisit_bounded=lambda *a,**k:loads.append(a) or [],diagnostics=diagnostics)
+    assert getattr(exc.value,'trajectory_reason',None)==reason
+    assert not loads
+    rejected=[r for r in diagnostics if r['kind']=='rejection']
+    assert [r['reason'] for r in rejected]==[reason]*3
+    assert all(r['packet_id']=='packet-002' for r in rejected)
+    assert len([p for v,p in calls if v=='observe' and p['packet_id']=='packet-002'])==3
+    assert reason in calls[-1][1]['validation_feedback']
+    assert all(r['questions_ref']['revisit_count']==len(replies[receipt]['revisit']) for r in rejected)
+
+
+def test_malformed_audit_revisit_corrects_before_acquisition(monkeypatch):
+    from task_server.services import ui_video_windows
+    monkeypatch.setattr(ui_video_windows,'load_assets',lambda *a:[])
+    loads=[];calls=[]
+    def runner(skill,payload,**kw):
+        calls.append((kw['version'],copy.deepcopy(payload)))
+        raw={'states':[],'events':[],'checks':[],'uncertainties':[],'multiple_scenarios':False,'revisit':[]}
+        if kw['version']=='observe':raw['events']=[event(['frame-001','frame-002'])]
+        if kw['version']=='audit':return {'checks':[dict(event_id='wrong',trigger_verdict='supported',outcome_verdict='supported',question='')], 'issues':[], 'multiple_scenarios':False,'revisit':[dict(first_frame='frame-001',last_frame='frame-002',question='pending')]}
+        return raw
+    with pytest.raises(ValueError) as exc:
+        vt.observe_trajectory({'media':{'frames':frames(10),'duration_ms':1001}},None,lambda:False,
+            skill_runner=runner,revisit=lambda *a:loads.append(a) or [])
+    assert getattr(exc.value,'trajectory_reason',None)=='audit_identity'
+    assert not loads
+    assert len([v for v,p in calls if v=='audit'])==3
+
+
+@pytest.mark.parametrize('capacity_stop',[True,False])
+def test_capacity_refusal_differs_from_successful_empty_decode(captured_ordering,capacity_stop):
+    frozen,replies,packets=captured_ordering
+    if not capacity_stop:
+        packets[1]['frames']=[f for f in packets[1]['frames'] if int(f['frame_id'].split('-')[1])<307]
+        packets[1]['owned_frame_ids']=[f for f in packets[1]['owned_frame_ids'] if int(f.split('-')[1])<307]
+    loads=[];diagnostics=[];counts={}
+    def runner(skill,payload,**kw):
+        if kw['version']=='overview':return {'states':[],'events':[],'checks':[],'uncertainties':[], 'multiple_scenarios':False}
+        if kw['version']=='audit':return {'checks':[dict(event_id=c['track']['event_id'],trigger_verdict='supported',outcome_verdict='supported',question='') for c in payload['trajectory']], 'issues':[], 'multiple_scenarios':False,'revisit':[]}
+        if payload['packet_id']=='packet-001':return copy.deepcopy(replies[86])
+        pid=payload['packet_id'];counts[pid]=counts.get(pid,0)+1
+        return {'states':[],'events':[],'checks':[],'uncertainties':['unverified observation'], 'multiple_scenarios':False,
+                'revisit':copy.deepcopy(replies[96]['revisit']) if pid=='packet-002' and counts[pid]==1 else []}
+    def run():return vt.observe_trajectory({'media':frozen['media']},None,lambda:False,skill_runner=runner,
+        revisit_bounded=lambda *a,**k:loads.append(a) or [],diagnostics=diagnostics)
+    if capacity_stop:
+        with pytest.raises(ValueError,match='video_vision_limit'):run()
+        row=next(r for r in diagnostics if r['kind']=='capacity_refusal')
+        assert row['reason']=='request_image_capacity'
+        assert row['packet_frames']==60 and row['capacity']==0 and row['revisits']==0
+        assert row['pending_request_indexes']==[0,1]
+        assert not loads
+        assert not any(r.get('status')=='no_new_frames' for r in diagnostics)
+    else:
+        owners=set(packets[0]['owned_frame_ids'])|set(packets[1]['owned_frame_ids'])
+        frozen['media']['frames']=[f for f in frozen['media']['frames'] if f['frame_id'] in owners]
+        result=run()
+        assert len(loads)==2
+        assert len(result['trajectory_audit']['revisit_attempts'])==2
+        assert all(r['status']=='no_new_frames' for r in result['trajectory_audit']['revisit_attempts'])
+        assert not any(r['kind']=='capacity_refusal' for r in diagnostics)
+    responses=[r for r in diagnostics if r['kind']=='response']
+    assert responses and all(r['questions_ref']['status']=='unverified_model_claims' for r in responses)
+    assert all('raw_response' not in r for r in diagnostics)
+
+
+def test_captured_44_plus_16_then_two_pending_requests_preserve_capacity_counters(captured_ordering):
+    frozen,replies,packets=captured_ordering
+    all_frames=copy.deepcopy(frozen['media']['frames'])
+    for p in packets:
+        p['frames']=[f for f in p['frames'] if int(f['frame_id'].split('-')[1])<300]
+        p['owned_frame_ids']=[fid for fid in p['owned_frame_ids'] if int(fid.split('-')[1])<300]
+    assert [len(p['frames']) for p in packets]==[53,44]
+    frozen['media']['frames']=[f for f in all_frames if int(f['frame_id'].split('-')[1])<300]
+    counts={};loads=[];diagnostics=[]
+    def runner(skill,payload,**kw):
+        if kw['version']=='overview':return copy.deepcopy(replies[78])
+        if kw['version']=='audit':return {'checks':[dict(event_id=c['track']['event_id'],trigger_verdict='supported',outcome_verdict='supported',question='') for c in payload['trajectory']], 'issues':[], 'multiple_scenarios':False,'revisit':[]}
+        pid=payload['packet_id'];counts[pid]=counts.get(pid,0)+1
+        if pid=='packet-001':return copy.deepcopy(replies[80 if counts[pid]==1 else 86])
+        return dict(states=[],events=[],checks=[],uncertainties=['unverified pending'],multiple_scenarios=False,
+                    revisit=copy.deepcopy(replies[90 if counts[pid]==1 else 96]['revisit']))
+    times={f['frame_id']:f['timestamp_ms'] for f in all_frames}
+    def loader(request,capacity,*,owned_time_range_ms):
+        loads.append((request,capacity))
+        return [f for f in all_frames if int(f['frame_id'].split('-')[1])>=300 and
+                times[request['first_frame']]<=f['timestamp_ms']<=times[request['last_frame']] and
+                owned_time_range_ms[0]<=f['timestamp_ms']<owned_time_range_ms[1]][:capacity]
+    with pytest.raises(ValueError,match='video_vision_limit'):
+        vt.observe_trajectory({'media':frozen['media']},None,lambda:False,skill_runner=runner,
+            revisit_bounded=loader,diagnostics=diagnostics)
+    row=diagnostics[-1]
+    assert row['kind']=='capacity_refusal' and row['reason']=='request_image_capacity'
+    assert row['packet_frames']==60 and row['revisits']==3 and row['acquired_frames']==23
+    assert row['pending_request_indexes']==[0,1] and row['questions_ref']['revisit_count']==2
+    assert len(loads)==3 and all(r.get('status')!='no_new_frames' for r in diagnostics)
+
+
+@pytest.mark.parametrize('stage',['observe','audit'])
+def test_valid_uncertain_claim_and_audit_with_revisit_still_acquire(monkeypatch,stage):
+    from task_server.services import ui_video_windows
+    monkeypatch.setattr(ui_video_windows,'load_assets',lambda *a:[])
+    counts={};loads=[];diagnostics=[]
+    def runner(skill,payload,**kw):
+        version=kw['version'];counts[version]=counts.get(version,0)+1
+        raw=dict(states=[],events=[],checks=[],uncertainties=['pending observation'],multiple_scenarios=False,revisit=[])
+        if version=='observe':
+            item=event(['frame-001','frame-002']);item['uncertainties']=['pending trigger']
+            raw['events']=[item]
+        if version=='audit':
+            raw=dict(checks=[dict(event_id=c['track']['event_id'],trigger_verdict='unclear',outcome_verdict='supported',question='pending trigger') for c in payload['trajectory']],issues=[],multiple_scenarios=False,revisit=[])
+        if version==stage and counts[version]==1:
+            raw['revisit']=[dict(first_frame='frame-001',last_frame='frame-002',question='unverified request')]
+        return raw
+    def loader(*a):loads.append(a);return [{'frame_id':'frame-011','timestamp_ms':150}]
+    result=vt.observe_trajectory({'media':{'frames':frames(10),'duration_ms':1001}},None,lambda:False,
+        skill_runner=runner,revisit=loader,diagnostics=diagnostics)
+    assert len(loads)==1 and result['trajectory_audit']['checks'][0]['status']=='needs_review'
+    assert result['events'][0]['uncertainties']
+    assert not any(r['kind']=='rejection' for r in diagnostics)
+    assert any(r['questions_ref'].get('revisit_count')==1 for r in diagnostics)
+
+
+@pytest.mark.parametrize('loader_fails',[False,True])
+def test_attempt_and_loader_refusals_never_become_empty_decode(monkeypatch,loader_fails):
+    from task_server.services import ui_video_windows
+    monkeypatch.setattr(ui_video_windows,'load_assets',lambda *a:[])
+    count=0;loads=[];diagnostics=[]
+    def runner(skill,payload,**kw):
+        nonlocal count
+        raw=dict(states=[],events=[],checks=[],uncertainties=[],multiple_scenarios=False,revisit=[])
+        if kw['version']=='observe':
+            count+=1
+            raw['revisit']=[dict(first_frame=f'frame-{count:03d}',last_frame=f'frame-{count+1:03d}',question='pending')]
+        return raw
+    def loader(*a):
+        loads.append(a)
+        if loader_fails:raise ValueError('video_revisit_limit')
+        return []
+    with pytest.raises(ValueError) as exc:
+        vt.observe_trajectory({'media':{'frames':frames(10),'duration_ms':1001}},None,lambda:False,
+            skill_runner=runner,revisit=loader,diagnostics=diagnostics)
+    row=diagnostics[-1]
+    if loader_fails:
+        assert str(exc.value)=='video_revisit_limit'
+        assert row['kind']=='acquisition_failure' and row['reason']=='loader_capacity' and row['revisits']==0
+        assert len(loads)==1 and not any(r.get('status')=='no_new_frames' for r in diagnostics)
+    else:
+        assert exc.value.trajectory_reason=='revisit_budget'
+        assert row['kind']=='capacity_refusal' and row['reason']=='revisit_attempts' and row['revisits']==4
+        assert len(loads)==4 and len([r for r in diagnostics if r.get('status')=='no_new_frames'])==4
+
+
+def test_captured_correction_acquires_then_reobserves_without_committing_tentative_claims(captured_ordering):
+    frozen,replies,packets=captured_ordering
+    overlay=[f for f in frozen['media']['frames'] if int(f['frame_id'].split('-')[1])>=307]
+    frozen['media']['frames']=[f for f in frozen['media']['frames'] if f not in overlay]
+    packets[1]['frames']=[f for f in packets[1]['frames'] if f not in overlay]
+    packets[1]['owned_frame_ids']=[fid for fid in packets[1]['owned_frame_ids'] if fid not in {f['frame_id'] for f in overlay}]
+    observations=[];loads=[];diagnostics=[]
+    def runner(skill,payload,**kw):
+        if kw['version']=='overview':return copy.deepcopy(replies[78])
+        if kw['version']=='audit':return {'checks':[dict(event_id=c['track']['event_id'],trigger_verdict='supported',outcome_verdict='supported',question='') for c in payload['trajectory']], 'issues':[], 'multiple_scenarios':False,'revisit':[]}
+        if payload['packet_id']=='packet-001':return copy.deepcopy(replies[86])
+        observations.append(copy.deepcopy(payload))
+        if len(observations)==1:return copy.deepcopy(replies[90])
+        if len(observations)==2:return dict(states=[],events=[],checks=[],uncertainties=['pending request'],multiple_scenarios=False,revisit=copy.deepcopy(replies[90]['revisit']))
+        return copy.deepcopy(replies[96])
+    def loader(*a,**kw):
+        assert len(observations)==2
+        loads.append(a);return copy.deepcopy(overlay)
+    with pytest.raises(ValueError) as exc:
+        vt.observe_trajectory({'media':frozen['media']},None,lambda:False,skill_runner=runner,
+            revisit_bounded=loader,diagnostics=diagnostics)
+    assert exc.value.trajectory_reason=='input_continuation'
+    assert len(loads)==1 and len(observations)==4
+    assert [len(p['frames']) for p in observations]==[44,44,60,60]
+    assert all(p['prior_events']==observations[0]['prior_events'] for p in observations)
+    assert [r['reason'] for r in diagnostics if r['kind']=='rejection']==['event_evidence','input_continuation','input_continuation']

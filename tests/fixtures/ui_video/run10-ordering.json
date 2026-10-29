@@ -1,0 +1,1497 @@
+{
+  "provenance": {
+    "export": "normal-run10/run10",
+    "source_sha256": "370d92e2622686330d114ce14c67c50788a8e92e4aa1babbbd7e856e2796d893",
+    "source_json_sha256": "33c4e4e1d93e09a7c379fe9d170b94236ad810c9b4dee9325d7aa00a6a282abd"
+  },
+  "media": {
+    "frames": [
+      {
+        "frame_id": "frame-001",
+        "timestamp_ms": 0
+      },
+      {
+        "frame_id": "frame-002",
+        "timestamp_ms": 33
+      },
+      {
+        "frame_id": "frame-003",
+        "timestamp_ms": 267
+      },
+      {
+        "frame_id": "frame-004",
+        "timestamp_ms": 533
+      },
+      {
+        "frame_id": "frame-005",
+        "timestamp_ms": 567
+      },
+      {
+        "frame_id": "frame-006",
+        "timestamp_ms": 600
+      },
+      {
+        "frame_id": "frame-007",
+        "timestamp_ms": 633
+      },
+      {
+        "frame_id": "frame-008",
+        "timestamp_ms": 667
+      },
+      {
+        "frame_id": "frame-009",
+        "timestamp_ms": 1167
+      },
+      {
+        "frame_id": "frame-300",
+        "timestamp_ms": 1200
+      },
+      {
+        "frame_id": "frame-301",
+        "timestamp_ms": 1333
+      },
+      {
+        "frame_id": "frame-302",
+        "timestamp_ms": 1433
+      },
+      {
+        "frame_id": "frame-010",
+        "timestamp_ms": 1467
+      },
+      {
+        "frame_id": "frame-011",
+        "timestamp_ms": 1500
+      },
+      {
+        "frame_id": "frame-012",
+        "timestamp_ms": 1533
+      },
+      {
+        "frame_id": "frame-013",
+        "timestamp_ms": 1567
+      },
+      {
+        "frame_id": "frame-014",
+        "timestamp_ms": 1600
+      },
+      {
+        "frame_id": "frame-015",
+        "timestamp_ms": 1633
+      },
+      {
+        "frame_id": "frame-016",
+        "timestamp_ms": 1667
+      },
+      {
+        "frame_id": "frame-017",
+        "timestamp_ms": 1700
+      },
+      {
+        "frame_id": "frame-018",
+        "timestamp_ms": 1900
+      },
+      {
+        "frame_id": "frame-019",
+        "timestamp_ms": 2433
+      },
+      {
+        "frame_id": "frame-020",
+        "timestamp_ms": 2533
+      },
+      {
+        "frame_id": "frame-021",
+        "timestamp_ms": 2567
+      },
+      {
+        "frame_id": "frame-022",
+        "timestamp_ms": 2700
+      },
+      {
+        "frame_id": "frame-023",
+        "timestamp_ms": 2933
+      },
+      {
+        "frame_id": "frame-024",
+        "timestamp_ms": 3000
+      },
+      {
+        "frame_id": "frame-025",
+        "timestamp_ms": 3100
+      },
+      {
+        "frame_id": "frame-026",
+        "timestamp_ms": 3567
+      },
+      {
+        "frame_id": "frame-027",
+        "timestamp_ms": 4567
+      },
+      {
+        "frame_id": "frame-028",
+        "timestamp_ms": 4600
+      },
+      {
+        "frame_id": "frame-029",
+        "timestamp_ms": 4633
+      },
+      {
+        "frame_id": "frame-030",
+        "timestamp_ms": 4667
+      },
+      {
+        "frame_id": "frame-031",
+        "timestamp_ms": 4700
+      },
+      {
+        "frame_id": "frame-032",
+        "timestamp_ms": 4733
+      },
+      {
+        "frame_id": "frame-033",
+        "timestamp_ms": 4767
+      },
+      {
+        "frame_id": "frame-034",
+        "timestamp_ms": 4800
+      },
+      {
+        "frame_id": "frame-035",
+        "timestamp_ms": 4833
+      },
+      {
+        "frame_id": "frame-036",
+        "timestamp_ms": 5067
+      },
+      {
+        "frame_id": "frame-037",
+        "timestamp_ms": 5567
+      },
+      {
+        "frame_id": "frame-038",
+        "timestamp_ms": 6200
+      },
+      {
+        "frame_id": "frame-039",
+        "timestamp_ms": 6933
+      },
+      {
+        "frame_id": "frame-040",
+        "timestamp_ms": 7567
+      },
+      {
+        "frame_id": "frame-041",
+        "timestamp_ms": 9000
+      },
+      {
+        "frame_id": "frame-042",
+        "timestamp_ms": 9967
+      },
+      {
+        "frame_id": "frame-043",
+        "timestamp_ms": 10000
+      },
+      {
+        "frame_id": "frame-044",
+        "timestamp_ms": 10067
+      },
+      {
+        "frame_id": "frame-045",
+        "timestamp_ms": 10100
+      },
+      {
+        "frame_id": "frame-046",
+        "timestamp_ms": 10600
+      },
+      {
+        "frame_id": "frame-047",
+        "timestamp_ms": 11600
+      },
+      {
+        "frame_id": "frame-303",
+        "timestamp_ms": 11633
+      },
+      {
+        "frame_id": "frame-304",
+        "timestamp_ms": 11667
+      },
+      {
+        "frame_id": "frame-305",
+        "timestamp_ms": 11700
+      },
+      {
+        "frame_id": "frame-306",
+        "timestamp_ms": 11733
+      },
+      {
+        "frame_id": "frame-048",
+        "timestamp_ms": 11867
+      },
+      {
+        "frame_id": "frame-049",
+        "timestamp_ms": 11933
+      },
+      {
+        "frame_id": "frame-050",
+        "timestamp_ms": 12000
+      },
+      {
+        "frame_id": "frame-051",
+        "timestamp_ms": 12033
+      },
+      {
+        "frame_id": "frame-052",
+        "timestamp_ms": 12067
+      },
+      {
+        "frame_id": "frame-053",
+        "timestamp_ms": 12233
+      },
+      {
+        "frame_id": "frame-054",
+        "timestamp_ms": 12900
+      },
+      {
+        "frame_id": "frame-307",
+        "timestamp_ms": 12933
+      },
+      {
+        "frame_id": "frame-308",
+        "timestamp_ms": 13000
+      },
+      {
+        "frame_id": "frame-309",
+        "timestamp_ms": 13067
+      },
+      {
+        "frame_id": "frame-310",
+        "timestamp_ms": 13133
+      },
+      {
+        "frame_id": "frame-311",
+        "timestamp_ms": 13200
+      },
+      {
+        "frame_id": "frame-312",
+        "timestamp_ms": 13267
+      },
+      {
+        "frame_id": "frame-313",
+        "timestamp_ms": 13333
+      },
+      {
+        "frame_id": "frame-314",
+        "timestamp_ms": 13400
+      },
+      {
+        "frame_id": "frame-315",
+        "timestamp_ms": 13433
+      },
+      {
+        "frame_id": "frame-316",
+        "timestamp_ms": 13500
+      },
+      {
+        "frame_id": "frame-317",
+        "timestamp_ms": 13567
+      },
+      {
+        "frame_id": "frame-318",
+        "timestamp_ms": 13633
+      },
+      {
+        "frame_id": "frame-319",
+        "timestamp_ms": 13700
+      },
+      {
+        "frame_id": "frame-320",
+        "timestamp_ms": 13767
+      },
+      {
+        "frame_id": "frame-321",
+        "timestamp_ms": 13833
+      },
+      {
+        "frame_id": "frame-322",
+        "timestamp_ms": 13900
+      },
+      {
+        "frame_id": "frame-055",
+        "timestamp_ms": 13933
+      },
+      {
+        "frame_id": "frame-056",
+        "timestamp_ms": 14000
+      },
+      {
+        "frame_id": "frame-057",
+        "timestamp_ms": 14033
+      },
+      {
+        "frame_id": "frame-058",
+        "timestamp_ms": 14067
+      },
+      {
+        "frame_id": "frame-059",
+        "timestamp_ms": 14100
+      },
+      {
+        "frame_id": "frame-060",
+        "timestamp_ms": 14133
+      },
+      {
+        "frame_id": "frame-061",
+        "timestamp_ms": 14533
+      },
+      {
+        "frame_id": "frame-062",
+        "timestamp_ms": 14933
+      },
+      {
+        "frame_id": "frame-063",
+        "timestamp_ms": 14967
+      },
+      {
+        "frame_id": "frame-064",
+        "timestamp_ms": 15000
+      },
+      {
+        "frame_id": "frame-065",
+        "timestamp_ms": 15333
+      },
+      {
+        "frame_id": "frame-066",
+        "timestamp_ms": 15600
+      },
+      {
+        "frame_id": "frame-067",
+        "timestamp_ms": 15900
+      },
+      {
+        "frame_id": "frame-068",
+        "timestamp_ms": 15967
+      },
+      {
+        "frame_id": "frame-069",
+        "timestamp_ms": 16000
+      },
+      {
+        "frame_id": "frame-070",
+        "timestamp_ms": 16200
+      },
+      {
+        "frame_id": "frame-071",
+        "timestamp_ms": 16633
+      },
+      {
+        "frame_id": "frame-072",
+        "timestamp_ms": 16667
+      },
+      {
+        "frame_id": "frame-073",
+        "timestamp_ms": 16700
+      },
+      {
+        "frame_id": "frame-074",
+        "timestamp_ms": 16833
+      },
+      {
+        "frame_id": "frame-075",
+        "timestamp_ms": 17000
+      },
+      {
+        "frame_id": "frame-076",
+        "timestamp_ms": 17033
+      },
+      {
+        "frame_id": "frame-077",
+        "timestamp_ms": 17233
+      },
+      {
+        "frame_id": "frame-078",
+        "timestamp_ms": 17433
+      },
+      {
+        "frame_id": "frame-079",
+        "timestamp_ms": 17933
+      },
+      {
+        "frame_id": "frame-080",
+        "timestamp_ms": 18433
+      },
+      {
+        "frame_id": "frame-081",
+        "timestamp_ms": 18467
+      },
+      {
+        "frame_id": "frame-082",
+        "timestamp_ms": 18600
+      },
+      {
+        "frame_id": "frame-083",
+        "timestamp_ms": 18633
+      },
+      {
+        "frame_id": "frame-084",
+        "timestamp_ms": 18933
+      },
+      {
+        "frame_id": "frame-085",
+        "timestamp_ms": 18967
+      },
+      {
+        "frame_id": "frame-086",
+        "timestamp_ms": 19000
+      },
+      {
+        "frame_id": "frame-087",
+        "timestamp_ms": 19267
+      },
+      {
+        "frame_id": "frame-088",
+        "timestamp_ms": 19533
+      },
+      {
+        "frame_id": "frame-089",
+        "timestamp_ms": 19567
+      },
+      {
+        "frame_id": "frame-090",
+        "timestamp_ms": 19600
+      },
+      {
+        "frame_id": "frame-091",
+        "timestamp_ms": 19633
+      },
+      {
+        "frame_id": "frame-092",
+        "timestamp_ms": 20000
+      },
+      {
+        "frame_id": "frame-093",
+        "timestamp_ms": 20033
+      },
+      {
+        "frame_id": "frame-094",
+        "timestamp_ms": 20933
+      },
+      {
+        "frame_id": "frame-095",
+        "timestamp_ms": 21400
+      },
+      {
+        "frame_id": "frame-096",
+        "timestamp_ms": 21500
+      },
+      {
+        "frame_id": "frame-097",
+        "timestamp_ms": 21933
+      },
+      {
+        "frame_id": "frame-098",
+        "timestamp_ms": 21967
+      },
+      {
+        "frame_id": "frame-099",
+        "timestamp_ms": 22000
+      },
+      {
+        "frame_id": "frame-100",
+        "timestamp_ms": 22033
+      },
+      {
+        "frame_id": "frame-101",
+        "timestamp_ms": 23467
+      },
+      {
+        "frame_id": "frame-102",
+        "timestamp_ms": 23900
+      },
+      {
+        "frame_id": "frame-103",
+        "timestamp_ms": 24033
+      },
+      {
+        "frame_id": "frame-104",
+        "timestamp_ms": 25000
+      },
+      {
+        "frame_id": "frame-105",
+        "timestamp_ms": 25833
+      },
+      {
+        "frame_id": "frame-106",
+        "timestamp_ms": 25867
+      },
+      {
+        "frame_id": "frame-107",
+        "timestamp_ms": 25933
+      },
+      {
+        "frame_id": "frame-108",
+        "timestamp_ms": 25967
+      },
+      {
+        "frame_id": "frame-109",
+        "timestamp_ms": 26000
+      },
+      {
+        "frame_id": "frame-110",
+        "timestamp_ms": 27167
+      },
+      {
+        "frame_id": "frame-111",
+        "timestamp_ms": 27367
+      },
+      {
+        "frame_id": "frame-112",
+        "timestamp_ms": 27400
+      },
+      {
+        "frame_id": "frame-113",
+        "timestamp_ms": 27433
+      },
+      {
+        "frame_id": "frame-114",
+        "timestamp_ms": 27500
+      },
+      {
+        "frame_id": "frame-115",
+        "timestamp_ms": 27533
+      },
+      {
+        "frame_id": "frame-116",
+        "timestamp_ms": 27967
+      },
+      {
+        "frame_id": "frame-117",
+        "timestamp_ms": 29200
+      },
+      {
+        "frame_id": "frame-118",
+        "timestamp_ms": 30000
+      },
+      {
+        "frame_id": "frame-119",
+        "timestamp_ms": 30500
+      },
+      {
+        "frame_id": "frame-120",
+        "timestamp_ms": 30967
+      },
+      {
+        "frame_id": "frame-121",
+        "timestamp_ms": 31400
+      },
+      {
+        "frame_id": "frame-122",
+        "timestamp_ms": 33000
+      },
+      {
+        "frame_id": "frame-123",
+        "timestamp_ms": 34233
+      },
+      {
+        "frame_id": "frame-124",
+        "timestamp_ms": 34267
+      },
+      {
+        "frame_id": "frame-125",
+        "timestamp_ms": 34433
+      },
+      {
+        "frame_id": "frame-126",
+        "timestamp_ms": 34600
+      },
+      {
+        "frame_id": "frame-127",
+        "timestamp_ms": 34933
+      },
+      {
+        "frame_id": "frame-128",
+        "timestamp_ms": 35967
+      },
+      {
+        "frame_id": "frame-129",
+        "timestamp_ms": 37000
+      },
+      {
+        "frame_id": "frame-130",
+        "timestamp_ms": 38000
+      },
+      {
+        "frame_id": "frame-131",
+        "timestamp_ms": 39000
+      },
+      {
+        "frame_id": "frame-132",
+        "timestamp_ms": 40000
+      },
+      {
+        "frame_id": "frame-133",
+        "timestamp_ms": 40800
+      },
+      {
+        "frame_id": "frame-134",
+        "timestamp_ms": 40833
+      },
+      {
+        "frame_id": "frame-135",
+        "timestamp_ms": 40867
+      },
+      {
+        "frame_id": "frame-136",
+        "timestamp_ms": 40933
+      },
+      {
+        "frame_id": "frame-137",
+        "timestamp_ms": 41067
+      },
+      {
+        "frame_id": "frame-138",
+        "timestamp_ms": 41333
+      },
+      {
+        "frame_id": "frame-139",
+        "timestamp_ms": 41467
+      },
+      {
+        "frame_id": "frame-140",
+        "timestamp_ms": 41500
+      },
+      {
+        "frame_id": "frame-141",
+        "timestamp_ms": 41767
+      },
+      {
+        "frame_id": "frame-142",
+        "timestamp_ms": 41800
+      },
+      {
+        "frame_id": "frame-143",
+        "timestamp_ms": 41833
+      },
+      {
+        "frame_id": "frame-144",
+        "timestamp_ms": 41867
+      },
+      {
+        "frame_id": "frame-145",
+        "timestamp_ms": 42067
+      },
+      {
+        "frame_id": "frame-146",
+        "timestamp_ms": 42100
+      },
+      {
+        "frame_id": "frame-147",
+        "timestamp_ms": 42967
+      },
+      {
+        "frame_id": "frame-148",
+        "timestamp_ms": 43433
+      },
+      {
+        "frame_id": "frame-149",
+        "timestamp_ms": 44033
+      },
+      {
+        "frame_id": "frame-150",
+        "timestamp_ms": 44833
+      },
+      {
+        "frame_id": "frame-151",
+        "timestamp_ms": 44967
+      },
+      {
+        "frame_id": "frame-152",
+        "timestamp_ms": 45000
+      },
+      {
+        "frame_id": "frame-153",
+        "timestamp_ms": 45067
+      },
+      {
+        "frame_id": "frame-154",
+        "timestamp_ms": 45100
+      },
+      {
+        "frame_id": "frame-155",
+        "timestamp_ms": 45167
+      },
+      {
+        "frame_id": "frame-156",
+        "timestamp_ms": 45233
+      },
+      {
+        "frame_id": "frame-157",
+        "timestamp_ms": 45267
+      },
+      {
+        "frame_id": "frame-158",
+        "timestamp_ms": 45567
+      },
+      {
+        "frame_id": "frame-159",
+        "timestamp_ms": 45700
+      },
+      {
+        "frame_id": "frame-160",
+        "timestamp_ms": 45767
+      },
+      {
+        "frame_id": "frame-161",
+        "timestamp_ms": 45833
+      },
+      {
+        "frame_id": "frame-162",
+        "timestamp_ms": 45900
+      },
+      {
+        "frame_id": "frame-163",
+        "timestamp_ms": 45933
+      },
+      {
+        "frame_id": "frame-164",
+        "timestamp_ms": 45967
+      },
+      {
+        "frame_id": "frame-165",
+        "timestamp_ms": 46000
+      },
+      {
+        "frame_id": "frame-166",
+        "timestamp_ms": 46167
+      },
+      {
+        "frame_id": "frame-167",
+        "timestamp_ms": 46233
+      },
+      {
+        "frame_id": "frame-168",
+        "timestamp_ms": 46400
+      },
+      {
+        "frame_id": "frame-169",
+        "timestamp_ms": 46433
+      },
+      {
+        "frame_id": "frame-170",
+        "timestamp_ms": 46467
+      },
+      {
+        "frame_id": "frame-171",
+        "timestamp_ms": 46500
+      },
+      {
+        "frame_id": "frame-172",
+        "timestamp_ms": 46533
+      },
+      {
+        "frame_id": "frame-173",
+        "timestamp_ms": 46733
+      },
+      {
+        "frame_id": "frame-174",
+        "timestamp_ms": 48200
+      },
+      {
+        "frame_id": "frame-175",
+        "timestamp_ms": 48500
+      },
+      {
+        "frame_id": "frame-176",
+        "timestamp_ms": 48567
+      },
+      {
+        "frame_id": "frame-177",
+        "timestamp_ms": 48600
+      },
+      {
+        "frame_id": "frame-178",
+        "timestamp_ms": 48633
+      },
+      {
+        "frame_id": "frame-179",
+        "timestamp_ms": 48667
+      },
+      {
+        "frame_id": "frame-180",
+        "timestamp_ms": 48700
+      },
+      {
+        "frame_id": "frame-181",
+        "timestamp_ms": 48767
+      },
+      {
+        "frame_id": "frame-182",
+        "timestamp_ms": 48800
+      },
+      {
+        "frame_id": "frame-183",
+        "timestamp_ms": 48967
+      },
+      {
+        "frame_id": "frame-184",
+        "timestamp_ms": 50000
+      },
+      {
+        "frame_id": "frame-185",
+        "timestamp_ms": 50733
+      },
+      {
+        "frame_id": "frame-186",
+        "timestamp_ms": 50867
+      },
+      {
+        "frame_id": "frame-187",
+        "timestamp_ms": 51433
+      },
+      {
+        "frame_id": "frame-188",
+        "timestamp_ms": 51467
+      },
+      {
+        "frame_id": "frame-189",
+        "timestamp_ms": 51500
+      },
+      {
+        "frame_id": "frame-190",
+        "timestamp_ms": 51533
+      },
+      {
+        "frame_id": "frame-191",
+        "timestamp_ms": 51567
+      },
+      {
+        "frame_id": "frame-192",
+        "timestamp_ms": 51633
+      },
+      {
+        "frame_id": "frame-193",
+        "timestamp_ms": 51967
+      },
+      {
+        "frame_id": "frame-194",
+        "timestamp_ms": 52633
+      },
+      {
+        "frame_id": "frame-195",
+        "timestamp_ms": 52667
+      },
+      {
+        "frame_id": "frame-196",
+        "timestamp_ms": 52700
+      },
+      {
+        "frame_id": "frame-197",
+        "timestamp_ms": 52733
+      },
+      {
+        "frame_id": "frame-198",
+        "timestamp_ms": 52833
+      },
+      {
+        "frame_id": "frame-199",
+        "timestamp_ms": 53133
+      },
+      {
+        "frame_id": "frame-200",
+        "timestamp_ms": 53600
+      },
+      {
+        "frame_id": "frame-201",
+        "timestamp_ms": 53733
+      },
+      {
+        "frame_id": "frame-202",
+        "timestamp_ms": 53767
+      },
+      {
+        "frame_id": "frame-203",
+        "timestamp_ms": 53900
+      },
+      {
+        "frame_id": "frame-204",
+        "timestamp_ms": 53933
+      },
+      {
+        "frame_id": "frame-205",
+        "timestamp_ms": 54033
+      },
+      {
+        "frame_id": "frame-206",
+        "timestamp_ms": 54100
+      },
+      {
+        "frame_id": "frame-207",
+        "timestamp_ms": 54133
+      },
+      {
+        "frame_id": "frame-208",
+        "timestamp_ms": 54200
+      },
+      {
+        "frame_id": "frame-209",
+        "timestamp_ms": 54233
+      },
+      {
+        "frame_id": "frame-210",
+        "timestamp_ms": 54267
+      },
+      {
+        "frame_id": "frame-211",
+        "timestamp_ms": 54300
+      },
+      {
+        "frame_id": "frame-212",
+        "timestamp_ms": 54400
+      },
+      {
+        "frame_id": "frame-213",
+        "timestamp_ms": 54567
+      },
+      {
+        "frame_id": "frame-214",
+        "timestamp_ms": 55967
+      },
+      {
+        "frame_id": "frame-215",
+        "timestamp_ms": 56100
+      },
+      {
+        "frame_id": "frame-216",
+        "timestamp_ms": 56367
+      },
+      {
+        "frame_id": "frame-217",
+        "timestamp_ms": 56400
+      },
+      {
+        "frame_id": "frame-218",
+        "timestamp_ms": 56433
+      },
+      {
+        "frame_id": "frame-219",
+        "timestamp_ms": 56467
+      },
+      {
+        "frame_id": "frame-220",
+        "timestamp_ms": 57933
+      },
+      {
+        "frame_id": "frame-221",
+        "timestamp_ms": 57967
+      },
+      {
+        "frame_id": "frame-222",
+        "timestamp_ms": 58000
+      },
+      {
+        "frame_id": "frame-223",
+        "timestamp_ms": 58033
+      },
+      {
+        "frame_id": "frame-224",
+        "timestamp_ms": 58933
+      },
+      {
+        "frame_id": "frame-225",
+        "timestamp_ms": 58967
+      },
+      {
+        "frame_id": "frame-226",
+        "timestamp_ms": 59000
+      },
+      {
+        "frame_id": "frame-227",
+        "timestamp_ms": 59033
+      },
+      {
+        "frame_id": "frame-228",
+        "timestamp_ms": 59967
+      },
+      {
+        "frame_id": "frame-229",
+        "timestamp_ms": 60967
+      },
+      {
+        "frame_id": "frame-230",
+        "timestamp_ms": 62333
+      },
+      {
+        "frame_id": "frame-231",
+        "timestamp_ms": 62467
+      },
+      {
+        "frame_id": "frame-232",
+        "timestamp_ms": 62500
+      },
+      {
+        "frame_id": "frame-233",
+        "timestamp_ms": 62600
+      },
+      {
+        "frame_id": "frame-234",
+        "timestamp_ms": 62633
+      },
+      {
+        "frame_id": "frame-235",
+        "timestamp_ms": 62800
+      },
+      {
+        "frame_id": "frame-236",
+        "timestamp_ms": 63967
+      },
+      {
+        "frame_id": "frame-237",
+        "timestamp_ms": 65233
+      },
+      {
+        "frame_id": "frame-238",
+        "timestamp_ms": 65367
+      },
+      {
+        "frame_id": "frame-239",
+        "timestamp_ms": 66167
+      },
+      {
+        "frame_id": "frame-240",
+        "timestamp_ms": 66200
+      },
+      {
+        "frame_id": "frame-241",
+        "timestamp_ms": 66233
+      },
+      {
+        "frame_id": "frame-242",
+        "timestamp_ms": 66267
+      },
+      {
+        "frame_id": "frame-243",
+        "timestamp_ms": 66333
+      },
+      {
+        "frame_id": "frame-244",
+        "timestamp_ms": 66633
+      },
+      {
+        "frame_id": "frame-245",
+        "timestamp_ms": 66967
+      },
+      {
+        "frame_id": "frame-246",
+        "timestamp_ms": 67000
+      },
+      {
+        "frame_id": "frame-247",
+        "timestamp_ms": 67067
+      },
+      {
+        "frame_id": "frame-248",
+        "timestamp_ms": 67533
+      },
+      {
+        "frame_id": "frame-249",
+        "timestamp_ms": 67667
+      },
+      {
+        "frame_id": "frame-250",
+        "timestamp_ms": 67800
+      },
+      {
+        "frame_id": "frame-251",
+        "timestamp_ms": 67833
+      },
+      {
+        "frame_id": "frame-252",
+        "timestamp_ms": 67867
+      },
+      {
+        "frame_id": "frame-253",
+        "timestamp_ms": 67900
+      },
+      {
+        "frame_id": "frame-254",
+        "timestamp_ms": 67933
+      },
+      {
+        "frame_id": "frame-255",
+        "timestamp_ms": 68000
+      },
+      {
+        "frame_id": "frame-256",
+        "timestamp_ms": 68033
+      },
+      {
+        "frame_id": "frame-257",
+        "timestamp_ms": 68067
+      },
+      {
+        "frame_id": "frame-258",
+        "timestamp_ms": 68500
+      },
+      {
+        "frame_id": "frame-259",
+        "timestamp_ms": 68667
+      },
+      {
+        "frame_id": "frame-260",
+        "timestamp_ms": 68800
+      },
+      {
+        "frame_id": "frame-261",
+        "timestamp_ms": 68833
+      },
+      {
+        "frame_id": "frame-262",
+        "timestamp_ms": 68867
+      },
+      {
+        "frame_id": "frame-263",
+        "timestamp_ms": 68900
+      },
+      {
+        "frame_id": "frame-264",
+        "timestamp_ms": 68933
+      },
+      {
+        "frame_id": "frame-265",
+        "timestamp_ms": 68967
+      },
+      {
+        "frame_id": "frame-266",
+        "timestamp_ms": 69000
+      },
+      {
+        "frame_id": "frame-267",
+        "timestamp_ms": 69033
+      },
+      {
+        "frame_id": "frame-268",
+        "timestamp_ms": 69500
+      },
+      {
+        "frame_id": "frame-269",
+        "timestamp_ms": 69633
+      },
+      {
+        "frame_id": "frame-270",
+        "timestamp_ms": 69767
+      },
+      {
+        "frame_id": "frame-271",
+        "timestamp_ms": 69800
+      },
+      {
+        "frame_id": "frame-272",
+        "timestamp_ms": 69833
+      },
+      {
+        "frame_id": "frame-273",
+        "timestamp_ms": 69867
+      },
+      {
+        "frame_id": "frame-274",
+        "timestamp_ms": 69900
+      },
+      {
+        "frame_id": "frame-275",
+        "timestamp_ms": 69933
+      },
+      {
+        "frame_id": "frame-276",
+        "timestamp_ms": 69967
+      },
+      {
+        "frame_id": "frame-277",
+        "timestamp_ms": 70000
+      },
+      {
+        "frame_id": "frame-278",
+        "timestamp_ms": 70033
+      },
+      {
+        "frame_id": "frame-279",
+        "timestamp_ms": 70433
+      },
+      {
+        "frame_id": "frame-280",
+        "timestamp_ms": 70567
+      },
+      {
+        "frame_id": "frame-281",
+        "timestamp_ms": 70800
+      },
+      {
+        "frame_id": "frame-282",
+        "timestamp_ms": 71533
+      },
+      {
+        "frame_id": "frame-283",
+        "timestamp_ms": 71900
+      },
+      {
+        "frame_id": "frame-284",
+        "timestamp_ms": 71933
+      },
+      {
+        "frame_id": "frame-285",
+        "timestamp_ms": 72000
+      },
+      {
+        "frame_id": "frame-286",
+        "timestamp_ms": 72033
+      },
+      {
+        "frame_id": "frame-287",
+        "timestamp_ms": 72500
+      },
+      {
+        "frame_id": "frame-288",
+        "timestamp_ms": 72667
+      },
+      {
+        "frame_id": "frame-289",
+        "timestamp_ms": 73000
+      },
+      {
+        "frame_id": "frame-290",
+        "timestamp_ms": 73467
+      },
+      {
+        "frame_id": "frame-291",
+        "timestamp_ms": 73933
+      },
+      {
+        "frame_id": "frame-292",
+        "timestamp_ms": 73967
+      },
+      {
+        "frame_id": "frame-293",
+        "timestamp_ms": 74000
+      },
+      {
+        "frame_id": "frame-294",
+        "timestamp_ms": 74033
+      },
+      {
+        "frame_id": "frame-295",
+        "timestamp_ms": 74233
+      },
+      {
+        "frame_id": "frame-296",
+        "timestamp_ms": 74467
+      },
+      {
+        "frame_id": "frame-297",
+        "timestamp_ms": 74500
+      },
+      {
+        "frame_id": "frame-298",
+        "timestamp_ms": 74533
+      },
+      {
+        "frame_id": "frame-299",
+        "timestamp_ms": 75233
+      }
+    ],
+    "duration_ms": 75376
+  },
+  "entries": [
+    {
+      "entry": 78,
+      "kind": "receipt",
+      "sha256": "aaba3c7b9b90810a51582975a376cfd1b36b21c2ac14524773d59b0ea60d2934",
+      "value": {
+        "content": "{\"states\":[{\"state_id\":\"s1\",\"first_frame\":\"frame-001\",\"last_frame\":\"frame-009\",\"kind\":\"page\",\"description\":\"首页/AI建模推荐页：顶部设备编号EP3-9070692832BA与“模型处理完成/去打印”提示条，中部“模型推荐/热门模型/最新模型/可编辑”标签及模型卡片列表（军工套卡导弹车、直升机等），底部导航“模型库/AI建模/课程/我的”。\"},{\"state_id\":\"s2\",\"first_frame\":\"frame-021\",\"last_frame\":\"frame-047\",\"kind\":\"input\",\"description\":\"搜索页：含“搜索历史”标签云与“热搜榜”，搜索框聚焦并弹出软键盘，用户在搜索框内持续编辑（拼音组词上屏，最终文本为“姓名牌”）。\"},{\"state_id\":\"s3\",\"first_frame\":\"frame-054\",\"last_frame\":\"frame-057\",\"kind\":\"page\",\"description\":\"搜索结果页：顶部搜索框显示“姓名牌”、键盘已收起，结果区显示“姓名牌(可编辑)”“Max挂牌”卡片及“结果较少？试试AI创作”引导横幅。\"},{\"state_id\":\"s4\",\"first_frame\":\"frame-065\",\"last_frame\":\"frame-065\",\"kind\":\"page\",\"description\":\"模型详情页“姓名牌”：顶部产品图与1/1页码、可编辑角标，含标签、打印人数、“模型文件”信息卡及描述文案，底部“旋钮设置/去编辑”按钮。\"},{\"state_id\":\"s5\",\"first_frame\":\"frame-071\",\"last_frame\":\"frame-071\",\"kind\":\"wait\",\"description\":\"“编辑模型”加载过渡页：黑色背景中央显示“正在加载...”旋转指示器。\"},{\"state_id\":\"s6\",\"first_frame\":\"frame-079\",\"last_frame\":\"frame-121\",\"kind\":\"input\",\"description\":\"“编辑模型”页：3D网格预览区+模型尺寸提示，下方“请输入文本”字段。字段先聚焦弹出键盘并持续编辑（清空原“智小白”后输入“UI自动化”），随后键盘收起、底部按钮由“去打印”变为“生成模型”。\"},{\"state_id\":\"s7\",\"first_frame\":\"frame-122\",\"last_frame\":\"frame-133\",\"kind\":\"wait\",\"description\":\"“编辑模型”页生成/准备等待态：预览区叠加“生成中...”“准备打印...”半透明遮罩与旋转指示器，文本字段仍为“UI自动化”，按钮显示“去打印”。\"},{\"state_id\":\"s8\",\"first_frame\":\"frame-145\",\"last_frame\":\"frame-173\",\"kind\":\"page\",\"description\":\"3D打印参数/预览页“姓名牌”(黄色)：左侧居中/旋转/复制/一键适配/删除工具栏、右上坐标轴、底部尺寸与缩放控件及“下一步”按钮；期间叠加“璇玑AI引擎优化已完成”“请确认耗材颜色”“当前有1个正在处理的任务请去处理”等弹窗。\"},{\"state_id\":\"s9\",\"first_frame\":\"frame-175\",\"last_frame\":\"frame-248\",\"kind\":\"wait\",\"description\":\"“模型打印预览”页：多次访问，含“正在渲染模型...”加载、分析进度列表（待打印任务已生成/打印时间/消耗克数/尺寸/分析完成）、渲染完成显示黄色姓名牌模型与预计时间/耗材参数及“取消打印/确认打印”，以及“确认要取消任务吗？”弹窗与“已取消模型处理(重新编辑/返回)”状态。\"},{\"state_id\":\"s10\",\"first_frame\":\"frame-262\",\"last_frame\":\"frame-262\",\"kind\":\"page\",\"description\":\"“编辑模型”页(再次访问)：预览区显示已生成模型、文本字段为“UI自动化”、底部按钮为“去打印”。\"},{\"state_id\":\"s11\",\"first_frame\":\"frame-278\",\"last_frame\":\"frame-278\",\"kind\":\"page\",\"description\":\"模型详情页“姓名牌”(再次访问)：与s4同构，产品图、模型文件信息卡、描述文案及“旋钮设置/去编辑”按钮。\"},{\"state_id\":\"s12\",\"first_frame\":\"frame-282\",\"last_frame\":\"frame-282\",\"kind\":\"page\",\"description\":\"搜索结果页(再次访问)：顶部“姓名牌”搜索框、结果卡片与AI创作横幅，键盘重新弹出。\"},{\"state_id\":\"s13\",\"first_frame\":\"frame-288\",\"last_frame\":\"frame-299\",\"kind\":\"transition\",\"description\":\"返回首页过渡：frame-288为详情页向右滑出/首页滑入的转场帧，随后frame-292、frame-299稳定显示首页“模型推荐”内容（同s1）。\"}],\"events\":[],\"checks\":[],\"uncertainties\":[\"frame-021至frame-047搜索框文本由拼音组词逐步上屏为“姓名牌”，概览帧未捕捉每次候选选择/删除的精确触点，仅能确认同字段持续编辑区间。\",\"frame-079至frame-110编辑文本字段从“智小白”变为“UI自动化”的清空与重输过程含多次停顿与IME组词，概览未提供逐触点证据。\",\"frame-145至frame-173多个弹窗(优化完成/确认耗材颜色/正在处理任务)的出现与关闭、以及frame-173“去处理”是否触发跳转至s9，概览帧时间间隔较大，无法核实具体点击动作。\",\"frame-193“已取消模型处理”后frame-200又回到s8校验态、frame-215再次进入s9处理列表，页面往返关系(是否经“重新编辑/返回”按钮)在概览中无独立动作证据。\",\"frame-248“已取消模型处理”到frame-262“编辑模型”再到frame-278详情页、frame-282搜索结果、frame-288转场回首页的连续返回路径，概览未捕捉返回手势或按钮触点，仅按页面出现顺序记录。\"],\"multiple_scenarios\":false}",
+        "fallbackUsed": false,
+        "finishReason": "stop",
+        "gateway_request_sha256": "010f9e038942d83822734545b731afb84be8866bdd10670f7f2f3e172167eee1",
+        "model": "qwen3.8-flash",
+        "providerId": "qwen_plus",
+        "usage": {
+          "completionTokens": 2376,
+          "promptTokens": 30316,
+          "reasoningTokens": 1024,
+          "totalTokens": 32692
+        },
+        "videoPolicy": {
+          "correlation": "821bbda57b67462e95c5bbd431843358",
+          "effective_options": {
+            "enable_thinking": true,
+            "fine_frame_ids": [],
+            "image_count": 60,
+            "max_tokens": 10000,
+            "model": "qwen3.8-flash",
+            "response_format": "json_object",
+            "temperature": 0.1,
+            "thinking_budget": 1024
+          },
+          "model": "qwen3.8-flash",
+          "output_schema_sha256": null,
+          "provider_options_sha256": "0c03554cedff8fc32008f5a01d768a78d4ff5e23542264440b792141c3a2e971",
+          "skill": "ui_video_trajectory",
+          "skill_version": "overview",
+          "stage": "overview",
+          "version": "video-stage-policy-v1"
+        }
+      }
+    },
+    {
+      "entry": 80,
+      "kind": "receipt",
+      "sha256": "54651ba05c2fbe399408fc0275104098b26e47ca8535c2c38b6c8453a3d50d0f",
+      "value": {
+        "content": "{\"states\":[{\"state_id\":\"s1\",\"first_frame\":\"frame-001\",\"last_frame\":\"frame-009\",\"kind\":\"page\",\"description\":\"首页/AI建模推荐页：顶部设备编号EP3-9070692832BA与\"\n  },{\"state_id\":\"s2\",\"first_frame\":\"frame-010\",\"last_frame\":\"frame-047\",\"kind\":\"input\",\"description\":\"搜索页：含搜索历史标签云与热搜榜，搜索框聚焦并弹出软键盘，用户在搜索框内持续编辑（拼音组词上屏，最终文本为\"\n  }],\"events\":[{\"action\":\"aiTap\",\"target\":\"搜索图标\",\"value\":\"\",\"frame_refs\":[\"frame-009\",\"frame-010\"],\"observation\":\"用户点击应用头部搜索放大镜图标，页面从首页切换至搜索页，搜索历史与热搜榜加载显示\",\"uncertainties\":[\"frame-009到frame-010间隔300ms，具体触点位置由页面切换方向推断\"],\"trigger_frame\":\"frame-010\",\"trigger_kind\":\"navigation\",\"page_before\":\"s1\",\"page_after\":\"s2\",\"continuation_of\":\"\",\"edit_boundary\":\"none\",\"outcome\":{\"frame_refs\":[\"frame-010\"],\"observation\":\"搜索页已显示，含搜索历史标签云与热搜榜加载动画\"}},{\"action\":\"aiInput\",\"target\":\"搜索框\",\"value\":\"\",\"frame_refs\":[\"frame-027\",\"frame-028\",\"frame-029\",\"frame-030\",\"frame-031\",\"frame-032\",\"frame-033\",\"frame-034\",\"frame-035\",\"frame-036\",\"frame-037\",\"frame-038\",\"frame-039\",\"frame-040\",\"frame-041\",\"frame-042\",\"frame-043\",\"frame-044\",\"frame-045\",\"frame-046\",\"frame-047\"],\"observation\":\"用户在搜索框内通过九宫格拼音输入法持续编辑，候选词经历xing→ying'g→ying'ho→(退格)→xing→姓名→姓名贴→(退格)→姓名→姓名牌的组词与上屏过程，最终搜索框显示\"\n  ,\"uncertainties\":[\"frame-027至frame-040期间搜索框仍显示占位符文本，实际输入字符被候选栏遮挡或尚未上屏，无法逐帧确认每个候选选择触点\",\"退格操作(frame-037,frame-042)的精确触发帧与抬起帧间隔无法区分\"],\"trigger_frame\":\"frame-027\",\"trigger_kind\":\"edit\",\"page_before\":\"s2\",\"page_after\":\"s2\",\"continuation_of\":\"\",\"edit_boundary\":\"none\",\"outcome\":{\"frame_refs\":[\"frame-047\"],\"observation\":\"搜索框内显示文字\"\n  }}],\"checks\":[],\"uncertainties\":[\"frame-010至frame-016期间页面加载与键盘弹出为自动响应，未单独记录为业务动作\",\"frame-021光标消失与frame-025光标重现可能为IME内部状态切换，无独立业务动作证据\"],\"multiple_scenarios\":false,\"revisit\":[{\"first_frame\":\"frame-009\",\"last_frame\":\"frame-010\",\"question\":\"确认从首页到搜索页的导航触发是点击搜索图标还是其他入口，以及是否存在中间过渡帧\"},{\"first_frame\":\"frame-047\",\"last_frame\":\"frame-048\",\"question\":\"确认frame-048搜索按钮上的圆形遮罩是否为用户点击提交搜索的触点证据\"}]}",
+        "fallbackUsed": false,
+        "finishReason": "stop",
+        "gateway_request_sha256": "a9d67807307c072619b9c9236f7b934470b1339e2853f908415c3af6b1997c6c",
+        "model": "qwen3.8-flash",
+        "providerId": "qwen_plus",
+        "usage": {
+          "completionTokens": 1801,
+          "promptTokens": 33404,
+          "reasoningTokens": 1024,
+          "totalTokens": 35205
+        },
+        "videoPolicy": {
+          "correlation": "b8d8bf67c07b4f68a4e118fd6063d547",
+          "effective_options": {
+            "enable_thinking": true,
+            "fine_frame_ids": [],
+            "image_count": 0,
+            "max_tokens": 10000,
+            "model": "qwen3.8-flash",
+            "response_format": "json_schema",
+            "temperature": 0.1,
+            "thinking_budget": 1024
+          },
+          "model": "qwen3.8-flash",
+          "output_schema_sha256": "5a36d30e43eb43eed91aed9f89ed8ea4d6c8d67c6ecb65f620e15e12ffa79052",
+          "provider_options_sha256": "de4ceed3db94ca95609d73404afc44dc3ef86811f19ccd456ea8a2274c5ee678",
+          "skill": "ui_video_trajectory",
+          "skill_version": "observe",
+          "stage": "semantic",
+          "version": "video-stage-policy-v1"
+        }
+      }
+    },
+    {
+      "entry": 86,
+      "kind": "receipt",
+      "sha256": "a15ab5d44b5b0c2fba1d588a699e52747e66de1b0f1142fdbec30362f9189d02",
+      "value": {
+        "content": "{\"states\":[{\"state_id\":\"s2a\",\"first_frame\":\"frame-027\",\"last_frame\":\"frame-047\",\"kind\":\"input\",\"description\":\"搜索页输入编辑区间：搜索框从占位符逐步变为\"\n\n  \t}\n\t],\"events\":[{\"action\":\"aiTap\",\"target\":\"顶部搜索放大镜图标\",\"value\":\"\",\"frame_refs\":[\"frame-008\",\"frame-300\",\"frame-301\",\"frame-302\",\"frame-010\",\"frame-011\",\"frame-012\",\"frame-013\",\"frame-014\",\"frame-015\"],\"observation\":\"首页静态停留后，右侧滑入搜索面板覆盖原页面，搜索历史标签云与热搜榜加载动画出现，最终稳定显示搜索页。\",\"uncertainties\":[\"frame-301至frame-302为转场中间帧，具体触点位置不可见，导航由唯一页面路径支持\"],\"trigger_frame\":\"frame-301\",\"trigger_kind\":\"navigation\",\"page_before\":\"s1\",\"page_after\":\"s2\",\"continuation_of\":\"\",\"edit_boundary\":\"none\",\"outcome\":{\"frame_refs\":[\"frame-010\",\"frame-011\",\"frame-012\",\"frame-013\",\"frame-014\",\"frame-015\"],\"observation\":\"搜索页稳定显示：搜索框含占位符、搜索历史标签云完整、热搜榜加载完成并显示带排名图标的列表项。\"}},{\"action\":\"aiTap\",\"target\":\"搜索框\",\"value\":\"\",\"frame_refs\":[\"frame-015\",\"frame-016\",\"frame-017\",\"frame-018\"],\"observation\":\"键盘从底部弹出，搜索框内出现蓝色光标，键盘完全展开显示九宫格布局及绿色搜索键。\",\"uncertainties\":[],\"trigger_frame\":\"frame-016\",\"trigger_kind\":\"touch\",\"page_before\":\"s2\",\"page_after\":\"s2\",\"continuation_of\":\"\",\"edit_boundary\":\"none\",\"outcome\":{\"frame_refs\":[\"frame-017\",\"frame-018\"],\"observation\":\"键盘完整可见，搜索框内蓝色光标位于占位符文字起始处。\"}},{\"action\":\"aiInput\",\"target\":\"搜索框\",\"value\":\"\",\"frame_refs\":[\"frame-027\",\"frame-028\",\"frame-029\",\"frame-030\",\"frame-031\",\"frame-032\",\"frame-033\",\"frame-034\",\"frame-035\",\"frame-036\",\"frame-037\",\"frame-038\",\"frame-039\",\"frame-040\",\"frame-041\",\"frame-042\",\"frame-043\",\"frame-044\",\"frame-045\",\"frame-046\",\"frame-047\",\"frame-303\",\"frame-304\",\"frame-305\",\"frame-306\"],\"observation\":\"用户在搜索框内通过九宫格拼音输入法持续编辑：候选栏出现拼音xing、ying'g、ying'ho等组词状态，退格键与MNO键出现触摸反馈，搜索框文字从无到\"\n\n \t,\"uncertainties\":[\"frame-027至frame-040期间搜索框始终显示占位符，拼音组词阶段的中间上屏文字不可见，无法确认每次候选选择的精确触点\",\"frame-042退格键触摸反馈后frame-045文字从\"\n\n \t],\"trigger_frame\":\"frame-027\",\"trigger_kind\":\"edit\",\"page_before\":\"s2\",\"page_after\":\"s2\",\"continuation_of\":\"\",\"edit_boundary\":\"none\",\"outcome\":{\"frame_refs\":[\"frame-047\",\"frame-303\",\"frame-304\",\"frame-305\",\"frame-306\"],\"observation\":\"搜索框内稳定显示文字\"\n\n \t}},{\"action\":\"aiTap\",\"target\":\"蓝色搜索按钮\",\"value\":\"\",\"frame_refs\":[\"frame-047\",\"frame-306\",\"frame-048\"],\"observation\":\"蓝色搜索按钮上出现圆形半透明触摸反馈遮罩，表明用户点击了搜索按钮。\",\"uncertainties\":[\"frame-048为context帧，仅作为触摸反馈的视觉证据，实际触发由frame-306后的状态变化支持\"],\"trigger_frame\":\"frame-047\",\"trigger_kind\":\"touch\",\"page_before\":\"s2\",\"page_after\":\"s2\",\"continuation_of\":\"\",\"edit_boundary\":\"none\",\"outcome\":{\"frame_refs\":[\"frame-048\"],\"observation\":\"搜索按钮上可见圆形半透明触摸反馈遮罩。\"}}],\"checks\":[],\"uncertainties\":[\"frame-001至frame-008首页静态期间无业务动作\",\"frame-019至frame-026键盘可见但搜索框无文字修改，仅为光标闪烁与计时器变化\",\"frame-303至frame-306为revisit补帧，确认frame-047搜索框文字\"\n\n \t],\"multiple_scenarios\":false,\"revisit\":[]}",
+        "fallbackUsed": false,
+        "finishReason": "stop",
+        "gateway_request_sha256": "eedaa2be2bebd5d4ba474375c8a2f6b83df85438ea9435a5252fbed6bfebd7c5",
+        "model": "qwen3.8-flash",
+        "providerId": "qwen_plus",
+        "usage": {
+          "completionTokens": 2101,
+          "promptTokens": 38995,
+          "reasoningTokens": 1024,
+          "totalTokens": 41096
+        },
+        "videoPolicy": {
+          "correlation": "426e378ff14944588047f165f669509b",
+          "effective_options": {
+            "enable_thinking": true,
+            "fine_frame_ids": [],
+            "image_count": 0,
+            "max_tokens": 10000,
+            "model": "qwen3.8-flash",
+            "response_format": "json_schema",
+            "temperature": 0.1,
+            "thinking_budget": 1024
+          },
+          "model": "qwen3.8-flash",
+          "output_schema_sha256": "0a9cfa294afedb53ae1aa689c616664936db92bb6fc1ced4cb544af5b14705f4",
+          "provider_options_sha256": "a0a3e3930fb84be3f5986bd034e062c52b92a09e8af7741e8b90a367c3d4b34a",
+          "skill": "ui_video_trajectory",
+          "skill_version": "observe",
+          "stage": "semantic",
+          "version": "video-stage-policy-v1"
+        }
+      }
+    },
+    {
+      "entry": 90,
+      "kind": "receipt",
+      "sha256": "95ee02f7c2c5c1d42fdf49e02a87df10cb950339bee1fe0606fde28ef0b3bfab",
+      "value": {
+        "content": "{\"states\":[{\"state_id\":\"s2b\",\"first_frame\":\"frame-048\",\"last_frame\":\"frame-052\",\"kind\":\"wait\",\"description\":\"搜索页提交等待态：搜索框显示\"\n   },{\"state_id\":\"s3b\",\"first_frame\":\"frame-053\",\"last_frame\":\"frame-056\",\"kind\":\"page\",\"description\":\"搜索结果页加载完成态：键盘收起，双列卡片\"\n  },{\"state_id\":\"s4b\",\"first_frame\":\"frame-057\",\"last_frame\":\"frame-064\",\"kind\":\"page\",\"description\":\"模型详情页\"\n  }],\"events\":[{\"action\":\"aiTap\",\"target\":\"姓名牌卡片图片区域\",\"value\":\"\",\"frame_refs\":[\"frame-055\",\"frame-056\",\"frame-057\",\"frame-058\",\"frame-059\",\"frame-060\",\"frame-061\"],\"observation\":\"搜索结果页稳定后，左卡图片区域出现淡灰圆点（frame-055/056），随后全屏白色半透明遮罩过渡（frame-060），最终切换至\"\n  ,\"uncertainties\":[\"frame-055/056淡灰圆点是否为触摸反馈或图片加载残留无法仅凭像素确定\"\n  ],\"trigger_frame\":\"frame-055\",\"trigger_kind\":\"touch\",\"page_before\":\"s3\",\"page_after\":\"s4\",\"continuation_of\":\"\",\"edit_boundary\":\"none\",\"outcome\":{\"frame_refs\":[\"frame-061\"],\"observation\":\"模型详情页\"\n  }},{\"action\":\"aiTap\",\"target\":\"去编辑按钮\",\"value\":\"\",\"frame_refs\":[\"frame-064\",\"frame-065\",\"frame-066\",\"frame-067\"],\"observation\":\"模型详情页底部\"\n  ,\"uncertainties\":[\"frame-066右侧边缘露出的内容归属不明，可能为转场中间态\"\n  ],\"trigger_frame\":\"frame-065\",\"trigger_kind\":\"touch\",\"page_before\":\"s4\",\"page_after\":\"s5\",\"continuation_of\":\"\",\"edit_boundary\":\"none\",\"outcome\":{\"frame_refs\":[\"frame-067\"],\"observation\":\"编辑模型页\"\n  }},{\"action\":\"aiWaitFor\",\"target\":\"编辑模型加载完成\",\"value\":\"\",\"frame_refs\":[\"frame-067\",\"frame-068\",\"frame-069\",\"frame-070\",\"frame-071\",\"frame-072\",\"frame-073\",\"frame-074\",\"frame-075\",\"frame-076\",\"frame-077\",\"frame-078\",\"frame-079\"],\"observation\":\"编辑模型页从空白白底（frame-067/068）进入黑色加载态（frame-069/070/071），加载完成后显示3D线框预览、模型尺寸\"\n  ,\"uncertainties\":[],\"trigger_frame\":\"frame-069\",\"trigger_kind\":\"automatic\",\"page_before\":\"s5\",\"page_after\":\"s6\",\"continuation_of\":\"\",\"edit_boundary\":\"none\",\"outcome\":{\"frame_refs\":[\"frame-079\"],\"observation\":\"编辑模型页\"\n  }},{\"action\":\"aiTap\",\"target\":\"请输入文本输入框\",\"value\":\"\",\"frame_refs\":[\"frame-079\",\"frame-080\",\"frame-081\",\"frame-082\",\"frame-083\",\"frame-084\"],\"observation\":\"输入框从静止态（frame-079/080）出现蓝色聚焦边框与光标（frame-081），键盘从底部弹出（frame-082半透明过渡，frame-083完全可见），输入框下方出现蓝色水滴光标手柄（frame-084）。\",\"uncertainties\":[],\"trigger_frame\":\"frame-079\",\"trigger_kind\":\"touch\",\"page_before\":\"s6\",\"page_after\":\"s6\",\"continuation_of\":\"\",\"edit_boundary\":\"none\",\"outcome\":{\"frame_refs\":[\"frame-084\"],\"observation\":\"输入框获焦\"\n  }},{\"action\":\"aiInput\",\"target\":\"请输入文本输入框\",\"value\":\"\",\"frame_refs\":[\"frame-084\",\"frame-085\"],\"observation\":\"键盘退格键位置出现灰色圆形波纹（frame-085），输入框内容仍为\"\n  ,\"uncertainties\":[\"frame-085退格波纹后文字未变，无法确定是否成功删除或仅为触摸反馈\"\n  ],\"trigger_frame\":\"frame-079\",\"trigger_kind\":\"edit\",\"page_before\":\"s6\",\"page_after\":\"s6\",\"continuation_of\":\"\",\"edit_boundary\":\"none\",\"outcome\":{\"frame_refs\":[\"frame-085\"],\"observation\":\"输入框内容仍为\"\n  }}],\"checks\":[],\"uncertainties\":[\"frame-042至frame-047搜索框文字从\"\n  ,\"frame-055/056左卡图片上淡灰圆点性质不明（触摸反馈/加载残留/悬浮球）\"\n  ,\"frame-065去编辑按钮上淡白圆形光斑具体成因不确定\"\n  ,\"frame-066右侧边缘露出内容层级关系不明\"\n  ,\"frame-078两个重叠圆角矩形加载框的具体含义不明\"\n  ,\"frame-085退格键波纹后文字未变，无法确认是否发生实际删除\"\n  ],\"multiple_scenarios\":false,\"revisit\":[{\"first_frame\":\"frame-054\",\"last_frame\":\"frame-055\",\"question\":\"frame-054搜索框内文字是\"\n  }]}",
+        "fallbackUsed": false,
+        "finishReason": "stop",
+        "gateway_request_sha256": "aead969b4e10b16144a268eb419ff23a324367609dfebaeba1988bee8d4b50d6",
+        "model": "qwen3.8-flash",
+        "providerId": "qwen_plus",
+        "usage": {
+          "completionTokens": 2221,
+          "promptTokens": 35267,
+          "reasoningTokens": 1024,
+          "totalTokens": 37488
+        },
+        "videoPolicy": {
+          "correlation": "a6258615011b4281b2673f5bcd756b95",
+          "effective_options": {
+            "enable_thinking": true,
+            "fine_frame_ids": [],
+            "image_count": 0,
+            "max_tokens": 10000,
+            "model": "qwen3.8-flash",
+            "response_format": "json_schema",
+            "temperature": 0.1,
+            "thinking_budget": 1024
+          },
+          "model": "qwen3.8-flash",
+          "output_schema_sha256": "b3285f65ab533d66b8cdc172c41226aa6eab49dafe4bd2a740e59d8ff982d610",
+          "provider_options_sha256": "04963ca6729de4a8232fc7afd26066d83589dcb66958dd42c0adb90f991fb549",
+          "skill": "ui_video_trajectory",
+          "skill_version": "observe",
+          "stage": "semantic",
+          "version": "video-stage-policy-v1"
+        }
+      }
+    },
+    {
+      "entry": 96,
+      "kind": "receipt",
+      "sha256": "db90fb95556183f33f7b0877cf82b117c72a03fb491e42a7a9a7770e16df8c6b",
+      "value": {
+        "content": "{\"states\":[{\"state_id\":\"s3a\",\"first_frame\":\"frame-053\",\"last_frame\":\"frame-054\",\"kind\":\"page\",\"description\":\"搜索结果页加载态：键盘已收起，页面从搜索历史/热搜榜切换至结果卡片布局，中央出现'搜索中...'黑色半透明遮罩，卡片图片区域呈灰白模糊占位状态。\"},{\"state_id\":\"s3b\",\"first_frame\":\"frame-055\",\"last_frame\":\"frame-064\",\"kind\":\"page\",\"description\":\"搜索结果页稳定态：卡片图片完全加载（左卡显示墙上挂钩黄色牌，右卡显示桌面蓝色名牌与兔子摆件），右下角出现卡通人物悬浮图标，无遮罩无键盘。\"},{\"state_id\":\"s5a\",\"first_frame\":\"frame-067\",\"last_frame\":\"frame-072\",\"kind\":\"wait\",\"description\":\"编辑模型页初始加载态：导航栏显示'编辑模型'标题，主体从空白白色背景过渡到黑色背景中央'正在加载...'旋转指示器，底部出现'模型尺寸: --'及'暂无可编辑参数'提示和'生成模型'按钮。\"},{\"state_id\":\"s5b\",\"first_frame\":\"frame-073\",\"last_frame\":\"frame-078\",\"kind\":\"wait\",\"description\":\"编辑模型页模型加载过渡：中央出现灰色圆角矩形'加载中...'旋转指示器，随后叠加显示'加载中33%'进度，底部面板更新为实际尺寸'52mm(X)×2mm(Y)×26mm(Z)'，输入字段'请输入文本'出现并预填'智小白'，底部按钮变为'去打印'。\"}],\"events\":[{\"action\":\"aiInput\",\"target\":\"搜索框\",\"value\":\"\",\"frame_refs\":[\"frame-048\",\"frame-049\",\"frame-050\",\"frame-051\",\"frame-052\",\"frame-053\",\"frame-054\",\"frame-307\",\"frame-308\",\"frame-309\",\"frame-310\",\"frame-311\",\"frame-312\",\"frame-313\",\"frame-314\",\"frame-315\",\"frame-316\",\"frame-317\",\"frame-318\",\"frame-319\",\"frame-320\",\"frame-321\",\"frame-322\",\"frame-055\",\"frame-056\",\"frame-057\",\"frame-058\",\"frame-059\",\"frame-060\",\"frame-061\",\"frame-062\",\"frame-063\",\"frame-064\",\"frame-065\",\"frame-066\",\"frame-067\",\"frame-068\",\"frame-069\",\"frame-070\",\"frame-071\",\"frame-072\",\"frame-073\",\"frame-074\",\"frame-075\",\"frame-076\",\"frame-077\",\"frame-078\",\"frame-079\"],\"observation\":\"用户通过九宫格拼音输入法在搜索框内完成'姓名牌'输入：frame-042可见'姓名贴'，frame-045退格删除'贴'回退至'姓名'，frame-047候选词选择'牌'上屏为'姓名牌'，frame-048搜索按钮出现触摸反馈遮罩触发提交，随后页面经历搜索加载遮罩(frame-052-053)、结果卡片渐进加载(frame-054-055)、图片完全渲染(frame-310)、用户停留浏览(frame-311-322)、最终点击左卡'姓名牌'进入详情页(frame-060转场-frame-061)、详情页停留(frame-061-064)、点击'去编辑'按钮(frame-065触摸反馈-frame-066转场)、编辑模型页加载(frame-067-072)、模型3D预览渲染完成显示'智小白'文本字段(frame-078-079)。\",\"uncertainties\":[\"frame-042至frame-045退格操作的具体触点不可见，仅由文字变化'姓名贴'→'姓名'及退格键位置圆形遮罩推断\",\"frame-047候选词'牌'选择触点不可见，仅由搜索框文字从'姓名'变为'姓名牌'及候选栏更新推断\",\"frame-057至frame-060之间进入详情页的卡片点击触点不可见，仅由页面从搜索结果切换至详情推断\",\"frame-065至frame-067之间'去编辑'按钮点击有触摸反馈证据但转场中间帧未捕捉完整手势\"],\"trigger_frame\":\"frame-048\",\"trigger_kind\":\"edit\",\"page_before\":\"s2\",\"page_after\":\"s6\",\"continuation_of\":\"packet-001:event-2\",\"edit_boundary\":\"submission\",\"outcome\":{\"frame_refs\":[\"frame-079\"],\"observation\":\"编辑模型页加载完成：3D线框预览区显示灰色椭圆物体，底部输入字段'请输入文本'内预填'智小白'，底部按钮显示'去打印'，键盘不可见。\"}},{\"action\":\"aiTap\",\"target\":\"输入框'请输入文本'\",\"value\":\"\",\"frame_refs\":[\"frame-079\",\"frame-080\",\"frame-081\"],\"observation\":\"输入框从静态显示'智小白'状态变为获得焦点：出现蓝色聚焦边框和末尾光标，为后续编辑做准备。\",\"uncertainties\":[],\"trigger_frame\":\"frame-079\",\"trigger_kind\":\"touch\",\"page_before\":\"s6\",\"page_after\":\"s6\",\"continuation_of\":\"\",\"edit_boundary\":\"none\",\"outcome\":{\"frame_refs\":[\"frame-081\"],\"observation\":\"输入框显示蓝色聚焦边框，内含文字'智小白'，末尾可见光标，键盘尚未弹出。\"}}],\"checks\":[],\"uncertainties\":[\"frame-048搜索按钮触摸反馈与frame-052加载遮罩之间(11867ms-12067ms)的精确触发时序依赖context帧frame-047的prior事件\",\"frame-057至frame-060卡片点击进入详情页缺少明确触点证据，仅由页面切换推断\",\"frame-065至frame-067'去编辑'按钮点击后转场中间帧(frame-066)显示页面左移，但具体手势类型(点击/滑动)不可完全区分\"],\"multiple_scenarios\":false,\"revisit\":[{\"first_frame\":\"frame-059\",\"last_frame\":\"frame-061\",\"question\":\"frame-059到frame-061之间用户是否点击了搜索结果页左卡'姓名牌'进入详情页，还是通过其他导航方式到达\"},{\"first_frame\":\"frame-065\",\"last_frame\":\"frame-067\",\"question\":\"frame-065'去编辑'按钮触摸反馈到frame-067编辑模型页出现之间，是否存在独立的新触点或仅为按钮点击后的自动页面跳转\"}]}",
+        "fallbackUsed": false,
+        "finishReason": "stop",
+        "gateway_request_sha256": "c8f3cddb763482f809e1e222293adada775f5895309426e8a46bf0011336dad5",
+        "model": "qwen3.8-flash",
+        "providerId": "qwen_plus",
+        "usage": {
+          "completionTokens": 2554,
+          "promptTokens": 44430,
+          "reasoningTokens": 1024,
+          "totalTokens": 46984
+        },
+        "videoPolicy": {
+          "correlation": "bdf69223b2494480aea1eb1dc8262df4",
+          "effective_options": {
+            "enable_thinking": true,
+            "fine_frame_ids": [],
+            "image_count": 0,
+            "max_tokens": 10000,
+            "model": "qwen3.8-flash",
+            "response_format": "json_schema",
+            "temperature": 0.1,
+            "thinking_budget": 1024
+          },
+          "model": "qwen3.8-flash",
+          "output_schema_sha256": "d766547bcf877e78241c1070532463de4f407628b9e6c0142622777037ca5e0a",
+          "provider_options_sha256": "a1f70812b582b5fcc95a9a204571d7b4c60ce92deebeaa64b5896e01ea17f94f",
+          "skill": "ui_video_trajectory",
+          "skill_version": "observe",
+          "stage": "semantic",
+          "version": "video-stage-policy-v1"
+        }
+      }
+    }
+  ]
+}

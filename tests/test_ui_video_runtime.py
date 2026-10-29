@@ -634,3 +634,56 @@ def test_native_frame_route_reads_augmented_worker_failure_and_rejects_stale_ver
             handler=Handler();get(handler,{'app_id':APP,'analysis_version':version},re.match(pattern,'/api/ui-video-sources/'+doc['source_id']+'/frames/frame-004'))
             assert handler.status==expected
             assert handler.wfile.getvalue()==(b'original revisit' if expected==200 else b'')
+
+
+def test_runtime_failure_publishes_bounded_diagnostics_with_durable_links(tmp_path,monkeypatch):
+    from task_server.services import ui_video_model_jobs as jm, ui_video_windows as windows, ui_video_revisit as revisit
+    m=runtime();published=[];closed=[]
+    class Jobs:
+        def __init__(self,records,**kw):self.accounting=[];self.records=records;self.kw=kw
+        def __enter__(self):return self
+        def __exit__(self,*a):closed.append(True)
+        def run(self,skill,payload,**kw):
+            self.kw['reserve']()
+            self.accounting.append(fake_receipted_job(self.records,kw['video_stage'],len(self.accounting)))
+            if kw['video_stage']=='perception':return inventory(payload)
+            return dict(states=[],events=[],checks=[{}] if kw['version']=='observe' else [],uncertainties=['receipt question'],multiple_scenarios=False)
+        def map(self,builders,**kw):
+            for i,build in enumerate(builders):
+                skill,payload,kw=build();yield i,self.run(skill,payload,**kw)
+    monkeypatch.setattr(jm,'ModelJobs',Jobs)
+    monkeypatch.setattr(windows,'load_assets',lambda *a:[])
+    monkeypatch.setattr(revisit,'make_revisit_loader',lambda *a:lambda *a,**kw:pytest.fail('invalid claim acquired evidence'))
+    with pytest.raises(ValueError,match='video_model_invalid'):
+        m.run_runtime({'media':{'frames':frames(10),'duration_ms':1001}},tmp_path,tmp_path/'source.mp4',lambda:None,lambda **kw:published.append(copy.deepcopy(kw)))
+    assert closed
+    private=published[-1]['video_runtime_private'];rows=private['trajectory_diagnostics']
+    assert len(rows)<=64
+    rejections=[r for r in rows if r['kind']=='rejection']
+    assert len(rejections)==3 and all(r['reason']=='observe_checks' for r in rejections)
+    from task_server.services.ui_video_records import RecordStore
+    with RecordStore.open_snapshot(tmp_path/'model-records',private['records']) as store:
+        for row in rejections:
+            assert store.read(row['proof_ref'])['stage']=='semantic'
+            assert store.read(row['receipt_ref'])['content']=='{}'
+    assert all(r['questions_ref']['root_uncertainty_count']==1 for r in rejections)
+
+
+@pytest.mark.parametrize('failure,reason',[(ValueError('video_vision_limit'),'provider_allowance'),(TimeoutError('video_runtime_deadline'),'runtime_deadline'),(TimeoutError('video_job_deadline'),'model_job_deadline')])
+def test_runtime_terminal_capacity_cause_is_private_without_reset(tmp_path,monkeypatch,failure,reason):
+    from task_server.services import ui_video_model_jobs as jm, ui_video_windows as windows
+    m=runtime();published=[]
+    class Jobs:
+        def __init__(self,records,**kw):self.accounting=[];self.records=records;self.kw=kw
+        def __enter__(self):return self
+        def __exit__(self,*a):return False
+        def map(self,builders,**kw):raise failure;yield
+    monkeypatch.setattr(jm,'ModelJobs',Jobs)
+    monkeypatch.setattr(windows,'load_assets',lambda *a:[])
+    budget=m.RuntimeBudget(2)
+    if reason=='provider_allowance':budget.limit=0
+    with pytest.raises(type(failure),match=str(failure)):
+        m.run_runtime({'media':{'frames':frames(10),'duration_ms':1001}},tmp_path,tmp_path/'source.mp4',lambda:None,lambda **kw:published.append(copy.deepcopy(kw)),budget=budget)
+    rows=published[-1]['video_runtime_private']['trajectory_diagnostics']
+    assert rows[-1]['kind']=='runtime_failure' and rows[-1]['reason']==reason
+    assert rows[-1]['reserved']==0 and rows[-1]['limit']==budget.limit

@@ -188,6 +188,7 @@ def run_runtime(document, workspace, source_path, check, publish, *, budget=None
     budget = budget or RuntimeBudget(bank.original_count)
     media = copy.deepcopy(document['media'])
     perception_format_projections = []
+    trajectory_diagnostics = []
     def boundary():
         check()
         budget.check()
@@ -275,7 +276,14 @@ def run_runtime(document, workspace, source_path, check, publish, *, budget=None
                         payload.update(perception_mode='fine-detail',
                                        perception_frame_ids=fine or [payload['owned_frame_ids'][0]])
                     kwargs['model_config']={'providerId':'qwen_plus','model':STAGES[stage][3]}
-                    return jobs.run(skill, payload, **kwargs, video_stage=stage)
+                    offset=len(jobs.accounting)
+                    try:
+                        return jobs.run(skill, payload, **kwargs, video_stage=stage)
+                    finally:
+                        trace=kwargs.get('runtime_trace')
+                        if isinstance(trace,dict) and len(jobs.accounting)>offset:
+                            trace['video_record_refs']={k:copy.deepcopy(jobs.accounting[offset][k])
+                                for k in ('proof_ref','receipt_ref') if k in jobs.accounting[offset]}
 
                 produce(bank.windows, initial=True)
                 boundary()
@@ -294,7 +302,7 @@ def run_runtime(document, workspace, source_path, check, publish, *, budget=None
                 budget.start_engine()
                 observed = observe_trajectory(document, workspace, cancelled, progress,
                     revisit_bounded=revisit, skill_runner=runner, audit_batcher=partition_audit_claims,
-                    execution_contract=VIDEO_EXPLICIT_KEYBOARD_V1)
+                    execution_contract=VIDEO_EXPLICIT_KEYBOARD_V1,diagnostics=trajectory_diagnostics)
                 budget.end_engine()
                 boundary()
                 media = copy.deepcopy(observed['media'])
@@ -310,6 +318,23 @@ def run_runtime(document, workspace, source_path, check, publish, *, budget=None
                 result = recover_business_inputs(result, augmented, workspace, cancelled, skill_runner=runner)
                 boundary()
             boundary()
+        except Exception as error:
+            # Preserve the original exception and exact local capacity cause.
+            # Private metadata links back to durable replies; no model text is
+            # copied into an error code or used to authorize a new action.
+            previous=trajectory_diagnostics[-1] if trajectory_diagnostics else {}
+            reason=(previous.get('reason') if previous.get('kind') in {'capacity_refusal','acquisition_failure'} else None)
+            if reason is None:
+                reason=('runtime_deadline' if isinstance(error,TimeoutError) and str(error)=='video_runtime_deadline' else
+                        'model_job_deadline' if isinstance(error,TimeoutError) and str(error)=='video_job_deadline' else
+                        'provider_allowance' if str(error)=='video_vision_limit' and budget.reserved>=budget.limit else
+                        'runtime_failed')
+            if len(trajectory_diagnostics)<64:
+                trajectory_diagnostics.append({'kind':'runtime_failure','reason':reason,
+                    **{k:copy.deepcopy(previous[k]) for k in ('stage','packet_id','call','proof_ref','receipt_ref') if k in previous},
+                    'reserved':budget.reserved,'limit':budget.limit,
+                    'acquired_frames':len(bank.frames)-len(document['media']['frames'])})
+            raise
         finally:
             # All owned jobs have closed before the manifest is frozen. A failed
             # store latches and raises here; never claim an unpersisted raw receipt.
@@ -317,7 +342,7 @@ def run_runtime(document, workspace, source_path, check, publish, *, budget=None
             aggregate = records.append('aggregate', {'refs': refs})
             private = {'mode': MODE, 'windows': bank.index(), 'records': records.snapshot(),
                        'perception_format_projections': copy.deepcopy(perception_format_projections),
-                       'accounting_ref': aggregate}
+                       'accounting_ref': aggregate, 'trajectory_diagnostics': copy.deepcopy(trajectory_diagnostics)}
             summary = {'mode': MODE, 'original_windows': bank.original_count,
                        'reserved': budget.reserved, 'limit': budget.limit,
                        'receipts': sum(row.get('receipt_persisted', False) for row in jobs.accounting)}
