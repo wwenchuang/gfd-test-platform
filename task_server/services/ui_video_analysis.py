@@ -414,9 +414,10 @@ def analyze_whole_frames(document, root, cancelled, progress=None):
     return consolidate_observed_frames(document,root,cancelled,observed,first_pass,known_secrets,progress)
 
 
-def consolidate_observed_frames(document, root, cancelled, observed, first_pass, known_secrets, progress=None):
+def consolidate_observed_frames(document, root, cancelled, observed, first_pass, known_secrets, progress=None, *, skill_runner=None):
     """Compile observed evidence through the shared planning and draft gates."""
     from . import ai_skill_service as ai
+    run_skill=ai.run_ai_skill if skill_runner is None else skill_runner
     from .ui_video_windows import load_assets, planning_frames
     frames=document['media']['frames'];duration=document['media']['duration_ms']
     known_secrets=list(known_secrets)
@@ -446,7 +447,7 @@ def consolidate_observed_frames(document, root, cancelled, observed, first_pass,
         if pending_plan is not None:
             planned=pending_plan;pending_plan=None
         else:
-            planned=ai.run_ai_skill('ui_video_steps',payload,image_assets=assets,version='consolidate',
+            planned=run_skill('ui_video_steps',payload,image_assets=assets,version='consolidate',
                 timeout=120,retry_count=0,max_tokens=10000,repair_invalid_json=False)
         if cancelled():raise ValueError('video_cancelled')
         if isinstance(planned,dict) and type(planned.get('multiple_scenarios')) is bool:multi|=planned['multiple_scenarios']
@@ -526,7 +527,7 @@ def consolidate_observed_frames(document, root, cancelled, observed, first_pass,
                 from .ui_video_result_quality import configuration_review_indexes
                 missing_indexes=sorted(set(missing_indexes)|configuration_review_indexes(plan,candidates,reviewed_configuration_indexes,bool(print_group)))
                 from .ui_video_outcomes import repair_outcomes
-                pending_plan,repair_images=repair_outcomes(planned,candidates,frames,duration,root,missing_indexes,cancelled,known_secrets)
+                pending_plan,repair_images=repair_outcomes(planned,candidates,frames,duration,root,missing_indexes,cancelled,known_secrets,skill_runner=skill_runner)
                 outcome_review_used=True
                 reviewed_configuration_indexes.update(missing_indexes)
                 evidence_ids={f['frame_id'] for f in image_frames+repair_images}

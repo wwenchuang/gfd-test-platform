@@ -5,6 +5,7 @@ import json
 from .operation_attribution import current_actor
 from .ui_case_compiler import compile_ui_case
 from .ui_case_draft_contract import build_draft_yaml
+from .ui_video_execution_contract import compiler_options
 from .ui_case_draft_store import DraftStore, DraftConflict
 from .ui_execution_contract import require_ui_actor
 from .ui_execution_service import _identifier, _request_hash, _require_ui_admission, BatchValidationError
@@ -19,7 +20,8 @@ def _source(draft):
     if draft.get('yaml_candidate', {}).get('status') == 'invalid':
         raise BatchValidationError('draft_yaml_candidate_unresolved')
     proposal = {key:draft[key] for key in ('title','preconditions','steps','questions')}
-    built = build_draft_yaml(proposal, draft['app_id'])
+    built = build_draft_yaml(proposal, draft['app_id'],
+        **compiler_options(draft.get('source_snapshot', {}), draft['app_id'], proposal['steps']))
     static = validate_yaml_static_executable(built['yaml_content'], strict=True)
     score = score_midscene_yaml_executable(built['yaml_content'], generated=True, compiler_roles=built['compiler_roles'])
     if not built['ready'] or not static['ok'] or static.get('warnings') or not score['ok']:

@@ -516,3 +516,15 @@ test('ready filter excludes generated drafts consistently with summary categorie
 test('entering upload clears selected task notice and hidden request errors preserve upload feedback',async t=>{const f=await videoFixture(t);let reject=false;const source={source_id:'notice',status:'analyzing',filename:'old.mp4',analysis_version:1};f.respond(p=>p.startsWith('/ui-video-sources?')?{ok:true,sources:[source]}:p.includes('/notice?')?(reject?Promise.reject(new Error('hidden failure')):{ok:true,source}):undefined);f.app('a');await wait();f.q('[data-video-open]').click();await wait();assert.match(f.q('[data-video-notice]').textContent,/分析/);f.q('[data-video-back]').click();f.q('[data-video-new]').click();assert.equal(f.q('[data-video-notice]').textContent,'');f.q('[data-video-notice]').textContent='新视频待上传';reject=true;f.q('[data-video-status]').click();await wait();assert.equal(f.q('[data-video-notice]').textContent,'新视频待上传');});
 test('list polling preserves focused task action across unchanged and updated source status',async t=>{const f=await videoFixture(t);let source={source_id:'focus',status:'analyzing',filename:'clip.mp4',analysis_version:1,updated_at:1};f.respond(p=>p.startsWith('/ui-video-sources?')?{ok:true,sources:[source]}:p.includes('/focus?')?{ok:true,source}:undefined);f.app('a');await wait();f.q('[data-video-open]').click();await wait();f.q('[data-video-back]').click();const button=f.q('[data-video-open]');button.focus();f.q('[data-video-status]').click();await wait();assert.equal(f.w.document.activeElement,button);source={...source,status:'ready',updated_at:2};f.q('[data-video-status]').click();await wait();assert.equal(f.w.document.activeElement,f.q('[data-video-open]'));assert.equal(f.q('[data-video-history]').hidden,false);assert.match(f.q('[data-video-list]').textContent,/待核对/);});
 test('leaving upload clears file validation notice from task list',async t=>{const f=await videoFixture(t);f.app('a');await wait();f.q('[data-video-new]').click();f.q('[data-video-upload]').click();assert.match(f.q('[data-video-notice]').textContent,/MP4/);f.q('[data-video-upload-back]').click();assert.equal(f.q('[data-video-notice]').textContent,'');});
+
+test('video bank and input recovery progress labels preserve active review state',async t=>{
+ const f=await videoFixture(t);let source={source_id:'runtime-progress',status:'analyzing',filename:'clip.mp4',analysis_version:1,analysis_progress:{phase:'perceiving',completed:7,total:38}};
+ f.respond(p=>p.startsWith('/ui-video-sources?')?{ok:true,sources:[source]}:p.includes('/runtime-progress?')?{ok:true,source}:undefined);
+ f.app('a');await wait();f.q('[data-video-open]').click();await wait();
+ assert.match(f.q('[data-video-progress]').textContent,/画面核对已完成 7 \/ 38/);
+ assert.equal(f.q('[data-video-progress]').getAttribute('aria-busy'),'true');
+ source={...source,analysis_progress:{phase:'input_recovery',completed:0,total:1}};
+ f.q('[data-video-status]').click();await wait();
+ assert.match(f.q('[data-video-progress]').textContent,/正在核对输入文字/);
+ assert.doesNotMatch(f.q('[data-video-progress]').textContent,/已生成草稿/);
+});

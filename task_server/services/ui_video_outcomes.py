@@ -2,8 +2,9 @@
 import copy
 
 
-def repair_outcomes(plan,candidates,frames,duration,root,indexes,cancelled,secrets):
+def repair_outcomes(plan,candidates,frames,duration,root,indexes,cancelled,secrets,*,skill_runner=None):
     from . import ai_skill_service as ai
+    run_skill=ai.run_ai_skill if skill_runner is None else skill_runner
     from .ui_video_analysis import _system_boundary,_bind_whole_evidence,validate_analysis,_expected_candidate
     from .ui_video_windows import load_assets
     if cancelled():raise ValueError('video_cancelled')
@@ -32,7 +33,7 @@ def repair_outcomes(plan,candidates,frames,duration,root,indexes,cancelled,secre
                        **review_requirements(event)})
     images=[f for f in frames if f['frame_id'] in image_ids]
     if not 2<=len(images)<=60:raise ValueError('video_vision_limit')
-    result=ai.run_ai_skill('ui_video_observe',{'phase':'whole-observe','frames':images,'image_frames':images,
+    result=run_skill('ui_video_observe',{'phase':'whole-observe','frames':images,'image_frames':images,
         'duration_ms':duration,'checks':checks},image_assets=load_assets(images,root,cancelled),version='outcome',
         timeout=120,retry_count=0,max_tokens=4000,repair_invalid_json=False)
     if cancelled():raise ValueError('video_cancelled')
