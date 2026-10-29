@@ -84,7 +84,7 @@ def _source_index(packet):
         if not isinstance(frame, dict):
             raise ValueError('packet.frames: expected frame object')
         frame_id = frame.get('frame_id')
-        if not isinstance(frame_id, str) or not re.fullmatch(r'frame-[0-9]{3}', frame_id):
+        if not isinstance(frame_id, str) or not re.fullmatch(r'frame-(?:[0-9]{3}|end)', frame_id):
             raise ValueError('packet.frames: invalid canonical frame ID')
         timestamp = frame.get('timestamp_ms')
         if type(timestamp) is not int or timestamp <= previous_time:
@@ -139,6 +139,9 @@ def bind_inventory(raw, packet, *, allow_numeric_suffix_aliases=False):
         raise ValueError('inventory.frames: incomplete or extra owned rows')
     aliases = {}
     for frame_id in roles:
+        # The decoder's final anchor is exact-only, never an "end" alias.
+        if frame_id == 'frame-end':
+            continue
         suffix = frame_id[-3:]
         if suffix in aliases or suffix in roles:
             raise ValueError('packet: ambiguous suffix alias')

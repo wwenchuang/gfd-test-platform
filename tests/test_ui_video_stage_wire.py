@@ -289,3 +289,22 @@ def test_stage_reply_guard_runs_after_safe_raw_receipt(monkeypatch,change):
     with pytest.raises(RuntimeError,match='video_stage_reply_invalid'):
         ai.ai_gateway_skill_content('ui_video_perception','pixels',payload=p,image_assets=a,video_stage='perception',raw_receipt=receipts.append)
     assert len(receipts)==1 and receipts[0]['content']=='unparsed raw'
+
+
+@pytest.mark.parametrize('role', ['owned', 'context'])
+def test_decoder_final_frame_transport_and_output_bind_exact_identity(monkeypatch, role):
+    payload, assets = evidence()
+    payload['frames'][-1] = {'frame_id':'frame-end', 'timestamp_ms':220}
+    payload['image_frames'] = copy.deepcopy(payload['frames'])
+    assets[-1].update(name='frame-end', timestamp_ms=220)
+    if role == 'owned':
+        payload['owned_frame_ids'].append('frame-end');payload['context_frame_ids']=['frame-000']
+        payload['owned_frame_ids'].remove('frame-000')
+    else:payload['context_frame_ids']=['frame-end']
+    raw=inventory(payload)
+    for row in raw['frames']:row['context_refs']=[{'frame_id':'frame-end','role':role}]
+    before=copy.deepcopy((payload,assets,raw));calls=capture(monkeypatch,content=json.dumps(raw))
+    assert ai.run_ai_skill('ui_video_perception',payload,image_assets=assets,video_stage='perception')==raw
+    assert calls[0]['payload']==payload
+    assert calls[0]['imageAssets']==[{**asset,'dataUrl':''} for asset in assets]
+    assert (payload,assets,raw)==before

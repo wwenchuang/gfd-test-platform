@@ -26,6 +26,12 @@ def frames(n=299):
     return [{'frame_id':f'frame-{i:03d}', 'timestamp_ms':i*100} for i in range(n)]
 
 
+def decoder_contract_frames(n):
+    # FFmpeg frame-%03d sequence plus the separate unchanged duration-80 anchor.
+    samples=[{'frame_id':f'frame-{i+1:03d}', 'timestamp_ms':i*100} for i in range(n-1)]
+    return samples+[{'frame_id':'frame-end', 'timestamp_ms':n*100-80}]
+
+
 def inventory(window):
     return dict(packet_id=window['packet_id'], frames=[dict(frame_id=fid, role='owned', transient_marks=[],
         persistent_ui=['完整原文字'], field_state='', keyboard_state='未知', changes='与前张相同',
@@ -54,6 +60,37 @@ def test_original_bank_299_windows_complete_and_temporal_neighbors():
         assert w['frames']==original[max(0,i*8-2):min(299,i*8+len(w['owned_frame_ids'])+2)]
         assert len(w['frames'])<=12 and len(w['owned_frame_ids'])<=8
     assert original==before
+
+
+@pytest.mark.parametrize('n', [9, 299, 300])
+def test_decoder_final_frame_bank_windows_and_projection_preserve_exact_source(n):
+    original = decoder_contract_frames(n)
+    before = copy.deepcopy(original)
+    bank = runtime().PerceptionBank(original)
+    assert bank.original_count == (len(original) + 7) // 8
+    assert [fid for w in bank.windows for fid in w['owned_frame_ids']] == [f['frame_id'] for f in original]
+    for w in bank.windows:
+        assert len(w['frames']) <= 12 and len(w['owned_frame_ids']) <= 8
+        raw = inventory(w)
+        if 'frame-end' in [f['frame_id'] for f in w['frames']]:
+            role = 'owned' if 'frame-end' in w['owned_frame_ids'] else 'context'
+            for row in raw['frames']:row['context_refs'].append({'frame_id':'frame-end', 'role':role})
+        bank.admit(w, raw, {'proof_ref':{'entry':1,'sha256':'a'*64}, 'receipt_ref':{'entry':2,'sha256':'b'*64}})
+    for role in ['owned', 'context']:
+        packet = {'frames':original[-2:],
+                  'owned_frame_ids':['frame-end'] if role == 'owned' else [original[-2]['frame_id']],
+                  'context_frame_ids':[original[-2]['frame_id']] if role == 'owned' else ['frame-end']}
+        projection = bank.project(packet)
+        assert projection['packet_roles']['frame-end'] == role
+        window, row = next((w, r) for w in projection['windows'] for r in w['frames'] if r['frame_id'] == 'frame-end')
+        assert row['role'] == 'owned' and row['uncertainties'] == ['原行问题']
+        assert row['changes'] == '与前张相同' and row['persistent_ui'] == ['完整原文字']
+        assert {'frame_id':'frame-end', 'role':'owned'} in row['evidence_refs']
+        assert window['uncertainties'] == ['窗口问题'] and window['binding_audit']['warnings'] == []
+        assert window['source_index']['frames'][-1] == {**original[-1], 'role':'owned'}
+        assert window['proof_ref'] == {'entry':1,'sha256':'a'*64}
+        assert window['receipt_ref'] == {'entry':2,'sha256':'b'*64}
+    assert original == before
 
 
 def test_projection_preserves_neighbor_scope_roles_questions_and_predecessors():
@@ -369,13 +406,15 @@ def test_original_tail_local_runner_covers_outcome_and_safe_input(monkeypatch,tm
     assert all(k['retry_count']==0 and k['timeout']==120 and k['repair_invalid_json'] is False for _,p,k in calls)
 
 
-@pytest.mark.parametrize('n,corrections',[(10,0),(299,0),(299,2)])
-def test_actual_engine_consolidation_input_and_draft_with_injected_jobs(tmp_path,monkeypatch,n,corrections):
+@pytest.mark.parametrize('n,corrections,with_end',[(10,0,False),(299,0,False),(299,2,False),(299,0,True)])
+def test_actual_engine_consolidation_input_and_draft_with_injected_jobs(tmp_path,monkeypatch,n,corrections,with_end):
     m=runtime()
     from task_server.services import ui_video_model_jobs as jobs_module, ui_video_windows, ui_video_revisit
     from task_server.services import ai_skill_service as ai
     from test_ui_video_trajectory import event
     fs=frames(n);calls=[];publications=[]
+    if with_end:fs=decoder_contract_frames(n)
+    original=copy.deepcopy(fs)
     doc={'source_id':'uvs_'+'a'*32,'app_id':APP,'analysis_version':1,'goal':'',
          'baseline_examples':[{'title':'真实成功基线','yaml_content':'tasks: []'}], 'media':{'frames':fs,'duration_ms':n*100}}
     class Jobs:
@@ -414,8 +453,18 @@ def test_actual_engine_consolidation_input_and_draft_with_injected_jobs(tmp_path
     assert len(result['trajectory_audit']['calls'])==1+2*((n+31)//32)+corrections
     proposal,snapshot=analysis.draft_proposal({**doc,**result})
     assert snapshot['execution_contract']=='video-explicit-keyboard-v1' and all(s['review_state']=='needs_review' for s in proposal['steps'])
+    assert snapshot['frames']==original
     assert all('baseline_examples' not in p for s,p,k in calls if k['video_stage']!='consolidate')
     assert result['video_runtime_summary']['reserved']==len(calls)
+    assert result['media']['frames']==original and doc['media']['frames']==original
+    assert result['video_runtime_summary']['original_windows']==(len(original)+7)//8
+    if with_end:
+        semantic=next(p for s,p,k in reversed(calls) if k['video_stage']=='semantic')
+        assert semantic['perception_bank']['packet_roles']['frame-end']=='owned'
+        assert any(row['frame_id']=='frame-end' for w in semantic['perception_bank']['windows'] for row in w['frames'])
+        audit=next(p for s,p,k in reversed(calls) if k['video_stage']=='audit')
+        assert audit['frames'][-1]==original[-1] and 'frame-end' in audit['owned_frame_ids']
+        assert all(len(p.get('perception_frame_ids',[]))<=12 for s,p,k in calls)
 
 
 from test_ui_case_draft_execution import draft_env
@@ -449,13 +498,16 @@ def test_normal_validate_trial_and_snapshot_keep_same_protected_options(draft_en
     assert not execution.validate_trial_snapshot(changed,attempt)
 
 
-def test_normal_runtime_owned_jobs_real_loopback_transport_records_and_cleanup(tmp_path,monkeypatch):
+@pytest.mark.parametrize('with_end', [False, True])
+def test_normal_runtime_owned_jobs_real_loopback_transport_records_and_cleanup(tmp_path,monkeypatch,with_end):
     from test_ui_video_model_jobs import Gateway
     from test_ui_video_trajectory import event
     from task_server import config
     from task_server.services.ui_video_records import RecordStore
     fs=frames(17);doc={'source_id':'uvs_'+'a'*32,'app_id':APP,'analysis_version':1,'goal':'',
                        'media':{'frames':fs,'duration_ms':1700},'baseline_examples':[]}
+    if with_end:fs[:]=decoder_contract_frames(17)
+    original=copy.deepcopy(fs)
     (tmp_path/'frames').mkdir();(tmp_path/'source.mp4').write_bytes(b'synthetic test source')
     for f in fs:(tmp_path/'frames'/(f['frame_id']+'.jpg')).write_bytes(b'test-original')
     def response(body):
@@ -485,6 +537,16 @@ def test_normal_runtime_owned_jobs_real_loopback_transport_records_and_cleanup(t
         assert len(private['windows'])==3 and all('proof_ref' in w and 'receipt_ref' in w for w in private['windows'])
         semantic=next(call for call in gateway.calls if call['videoStage']=='semantic')
         assert semantic['imageAssets']==[] and semantic['outputSchema']
+        assert result['media']['frames']==original
+        if with_end:
+            producers=sorted((call for call in gateway.calls if call['videoStage']=='perception'),key=lambda call:call['payload']['packet_id'])
+            assert [fid for call in producers for fid in call['payload']['owned_frame_ids']]==[f['frame_id'] for f in original]
+            for role in ['owned','context']:
+                call=next(call for call in producers if 'frame-end' in call['payload'][role+'_frame_ids'])
+                assert call['payload']['frames'][-1]==original[-1]
+                assert call['imageAssets'][-1]=={'name':'frame-end','timestamp_ms':1620,'mime':'image/jpeg','base64':'dGVzdC1vcmlnaW5hbA==','dataUrl':''}
+            assert (tmp_path/'frames'/'frame-end.jpg').read_bytes()==b'test-original'
+            assert private['windows'][-1]['source_index']['frames'][-1]=={**original[-1],'role':'owned'}
     finally:gateway.close()
 
 

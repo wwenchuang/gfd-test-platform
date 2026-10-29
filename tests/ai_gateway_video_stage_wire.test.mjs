@@ -257,3 +257,39 @@ test('normal runtime pins official provider and Flash despite a nonofficial gene
  assert.equal(run.calls[0].options.model,'qwen3.8-flash');assert.equal(run.calls[0].options.thinking_budget,1024);
  assert.equal(response.videoPolicy.model,'qwen3.8-flash');assert.equal(response.videoPolicy.effective_options.max_tokens,10000);
 });
+
+
+function finalFrameInput(role) {
+ const b=input('perception',3);
+ Object.assign(b.payload.frames.at(-1),{frame_id:'frame-end',timestamp_ms:220});
+ Object.assign(b.imageAssets.at(-1),{name:'frame-end',timestamp_ms:220});
+ b.payload.context_frame_ids=['frame-end'];
+ if(role==='owned') {b.payload.owned_frame_ids.push('frame-end');b.payload.context_frame_ids=[];}
+ return b;
+}
+for(const role of ['owned','context'])test(`actual perception handler accepts exact decoder frame-end as ${role}`,async()=>{
+ const b=finalFrameInput(role),before=JSON.stringify(b),run=orchestration();
+ const response=await run.request(b);
+ assert.equal(run.calls.length,1);assert.equal(response.model,'qwen3.8-max');
+ assert.deepEqual(Array.from(response.videoPolicy.effective_options.fine_frame_ids),b.imageAssets.map(a=>a.name));
+ const parts=run.calls[0].options.messages[1].content;
+ assert.equal(parts.filter(p=>p.type==='image_url').length,3);
+ assert.ok(parts.some(p=>p.type==='text'&&p.text.includes('frame-end')&&p.text.includes('220')));
+ assert.equal(JSON.stringify(b),before);
+});
+for(const role of ['owned','context'])test(`actual perception handler rejects invalid final-frame ${role} partitions before dispatch`,async()=>{
+ const mutations=[
+  b=>b.payload[`${role}_frame_ids`].pop(),
+  b=>b.payload[`${role}_frame_ids`].push('frame-end'),
+  b=>b.payload[`${role==='owned'?'context':'owned'}_frame_ids`].push('frame-end'),
+  ...['end','002','frame-002','frame-END','frame-end ','unknown'].map(label=>b=>{
+   const ids=b.payload[`${role}_frame_ids`];ids[ids.indexOf('frame-end')]=label;
+  }),
+  b=>b.payload.frames.push({...b.payload.frames.at(-1)}),
+  b=>{b.payload.frames.at(-1).frame_id='frame-last';b.imageAssets.at(-1).name='frame-last';},
+ ];
+ for(const mutate of mutations) {
+  const b=finalFrameInput(role),run=orchestration();mutate(b);
+  await assert.rejects(run.request(b),/video_frames_invalid/);assert.equal(run.calls.length,0);
+ }
+});
