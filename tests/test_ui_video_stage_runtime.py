@@ -9,7 +9,7 @@ from task_server.services import ui_video_stage_policy as policy
 from test_ui_video_stage_wire import evidence, semantic_schema
 
 STAGES = {
- 'perception': ('ui_video_perception','v1','whole-perception',4000),
+ 'perception': ('ui_video_perception','v1','whole-perception',8192),
  'overview': ('ui_video_trajectory','overview','whole-trajectory',10000),
  'semantic': ('ui_video_trajectory','observe','whole-trajectory',10000),
  'audit': ('ui_video_trajectory','audit','whole-trajectory',10000),
@@ -24,6 +24,38 @@ def request(stage):
  kw=dict(payload=p,image_assets=a,video_stage=stage,version=version,max_tokens=tokens)
  if stage=='semantic':p.pop('image_frames');kw.update(image_assets=[],output_schema=semantic_schema())
  return skill,kw
+
+
+@pytest.mark.parametrize('timeout,cap', [(180,120), (1.5,1.5)])
+def test_perception_8192_reconstructed_options_hash_and_raw_receipt(monkeypatch,timeout,cap):
+ from task_server.services.ui_video_stage_receipts import expected_provider_options, make_expected_attestation
+ skill,kw=request('perception');receipts=[];calls=[]
+ def http(req,timeout):
+  body=json.loads(req.data);calls.append(body)
+  assert body['maxTokens']==8192 and 0<timeout<=cap and 0<body['timeoutMs']<=cap*1000
+  content=[{'type':'text','text':'pixels'}]
+  for asset in body['imageAssets']:
+   role='context' if asset['name'] in body['payload']['context_frame_ids'] else 'owned'
+   content.extend([{'type':'text','text':f"{asset['name']} {asset['timestamp_ms']}ms [{role}]"},
+    {'type':'image_url','image_url':{'url':'data:image/jpeg;base64,'+asset['base64']},'min_pixels':1658880}])
+  # Literal independent policy, rather than deriving the expectation from STAGES.
+  options={'model':'qwen3.8-max','temperature':0.1,'max_tokens':8192,'enable_thinking':False,
+   'response_format':{'type':'json_object'},'messages':[
+    {'role':'system','content':'你是移动端测试平台 AI Skill 执行器。必须严格遵守用户输入的 Skill Prompt，只输出合法 JSON。'},
+    {'role':'user','content':content}]}
+  digest=hashlib.sha256(json.dumps(options,sort_keys=True,ensure_ascii=False,separators=(',',':')).encode()).hexdigest()
+  assert expected_provider_options(body)==options
+  attestation=make_expected_attestation(body)
+  assert attestation['effective_options']['max_tokens']==8192
+  assert attestation['provider_options_sha256']==digest
+  return io.BytesIO(json.dumps({'success':True,'content':'raw complete','model':'qwen3.8-max',
+   'fallbackUsed':False,'finishReason':'stop','usage':{'completionTokens':5001,'reasoningTokens':0},
+   'videoPolicy':attestation}).encode())
+ monkeypatch.setattr(ai.urllib.request,'urlopen',http)
+ assert ai.ai_gateway_skill_content(skill,'pixels',**kw,timeout=timeout,raw_receipt=receipts.append)=='raw complete'
+ assert len(calls)==len(receipts)==1
+ assert receipts[0]['content']=='raw complete' and receipts[0]['usage']['completionTokens']==5001
+ assert receipts[0]['videoPolicy']['effective_options']['max_tokens']==8192
 
 @pytest.mark.parametrize('stage',STAGES)
 def test_exact_stage_version_required_before_http(monkeypatch,stage):
