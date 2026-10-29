@@ -728,3 +728,26 @@ def test_four_actual_sigterm_resistant_children_join_with_one_reserve(tmp_path, 
             if process.poll() is None: process.kill()
             process.wait(timeout=1)
         owner.close()
+
+
+@pytest.mark.parametrize('actual_model', ['qwen3.8-flash', 'qwen3.8-max'])
+def test_semantic_flash_owned_child_admission_and_wrong_max_receipt(tmp_path,monkeypatch,actual_model):
+    raw={'states':[],'events':[],'checks':[],'uncertainties':[],'multiple_scenarios':False,'revisit':[]}
+    def response(body):
+        assert body['model']=='qwen3.8-flash' and body['imageAssets']==[]
+        # Alter only the loopback response model; the acknowledged request stays Flash.
+        body['model']=actual_model
+        return json.dumps(raw)
+    gateway=Gateway(response)
+    try:
+        with manager(tmp_path,gateway) as owner:
+            skill,kw=request('semantic');payload=kw.pop('payload')
+            kw['model_config']={'providerId':'qwen_plus','model':'qwen3.8-flash'}
+            if actual_model=='qwen3.8-flash':assert owner.run(skill,payload,**kw)==raw
+            else:
+                with pytest.raises(jobs.ModelJobError):owner.run(skill,payload,**kw)
+            row=owner.accounting[0]
+            assert row['proof_persisted'] and row['receipt_persisted'] and row['cleanup']
+            assert row['admitted']==(actual_model=='qwen3.8-flash')
+            assert len(gateway.calls)==1 and not owner.active_pids
+    finally:gateway.close()

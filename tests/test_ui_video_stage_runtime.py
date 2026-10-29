@@ -71,7 +71,7 @@ def test_all_stage_proof_then_receipt_then_admission(monkeypatch,stage):
  def http(req,timeout):
   order.append('http');body=json.loads(req.data);bodies.append(body)
   assert 0<timeout<=1.5 and 0<body['timeoutMs']<=1500
-  return io.BytesIO(json.dumps({'success':True,'content':'raw content','model': 'qwen3.8-flash' if stage=='overview' else 'qwen3.8-max',
+  return io.BytesIO(json.dumps({'success':True,'content':'raw content','model': 'qwen3.8-flash' if stage in {'overview','semantic'} else 'qwen3.8-max',
    'providerId':'official','fallbackUsed':False,'finishReason':'stop','videoPolicy':make_expected_attestation(body)}).encode())
  monkeypatch.setattr(ai.urllib.request,'urlopen',http)
  proofs=[];receipts=[]
@@ -124,7 +124,7 @@ def test_python_matches_actual_gateway_canonical_options_with_unicode(monkeypatc
  skill,kw=request(stage);bodies=[]
  def http(req,timeout):
   body=json.loads(req.data);bodies.append(body)
-  return io.BytesIO(json.dumps({'success':True,'content':'{}','model': 'qwen3.8-flash' if stage=='overview' else 'qwen3.8-max',
+  return io.BytesIO(json.dumps({'success':True,'content':'{}','model': 'qwen3.8-flash' if stage in {'overview','semantic'} else 'qwen3.8-max',
    'fallbackUsed':False,'finishReason':'stop','videoPolicy':make_expected_attestation(body)}).encode())
  monkeypatch.setattr(ai.urllib.request,'urlopen',http)
  ai.ai_gateway_skill_content(skill,'中文“原文” 😀\nline\t\\ end',**kw)
@@ -223,7 +223,7 @@ def test_normal_skill_call_uses_hooks_before_json_without_thread_or_fallback(mon
  monkeypatch.setattr(ai,'dashscope_chat_content',forbidden)
  def http(req,timeout):
   events.append('http');body=json.loads(req.data)
-  return io.BytesIO(json.dumps({'success':True,'content':'INVALID JSON','model': 'qwen3.8-flash' if stage=='overview' else 'qwen3.8-max',
+  return io.BytesIO(json.dumps({'success':True,'content':'INVALID JSON','model': 'qwen3.8-flash' if stage in {'overview','semantic'} else 'qwen3.8-max',
    'fallbackUsed':False,'finishReason':'stop','videoPolicy':make_expected_attestation(body)}).encode())
  monkeypatch.setattr(ai.urllib.request,'urlopen',http)
  with pytest.raises(RuntimeError):
@@ -447,3 +447,55 @@ def test_nonserializable_full_attestation_has_static_rejection(value):
        'prompt':'pixels','skillName':skill,'skillVersion':kw['version'],'videoCorrelation':'a'*32}
  with pytest.raises(RuntimeError,match='^video_stage_attestation_invalid$'):
   validate_attestation(value,body)
+
+
+@pytest.mark.parametrize('reply', ['valid', 'actual_max', 'attested_max', 'invalid_output'])
+def test_semantic_flash_literal_options_hash_and_raw_before_admission(monkeypatch,reply):
+ from task_server.services.ui_video_stage_receipts import expected_provider_options, make_expected_attestation, SYSTEM_PROMPT
+ assert policy.STAGES['semantic']==('ui_video_trajectory','observe','whole-trajectory','qwen3.8-flash',10000)
+ skill,kw=request('semantic');kw['model_config']={'providerId':'qwen_plus','model':'qwen3.8-flash'}
+ payload=kw.pop('payload');receipts=[];proofs=[];calls=[]
+ raw={'states':[],'events':[],'checks':[],'uncertainties':[],'multiple_scenarios':False,'revisit':[]}
+ if reply=='invalid_output':raw['extra']='forbidden'
+ def http(req,timeout):
+  body=json.loads(req.data);calls.append(body)
+  assert body['modelConfig']=={'providerId':'qwen_plus','model':'qwen3.8-flash'}
+  assert body['model']=='qwen3.8-flash' and body['providerId']=='qwen_plus'
+  assert body['imageAssets']==[] and body['fallbackModelConfig']=={}
+  assert body['outputSchema']==kw['output_schema'] and body['payload']==payload
+  assert body['maxTokens']==10000 and 0<timeout<=120 and 0<body['timeoutMs']<=120000
+  options={'model':'qwen3.8-flash','temperature':.1,'max_tokens':10000,'enable_thinking':True,
+   'thinking_budget':1024,'response_format':{'type':'json_schema','json_schema':{
+    'name':'video_semantic','strict':True,'schema':kw['output_schema']}},
+   'messages':[{'role':'system','content':SYSTEM_PROMPT},{'role':'user','content':body['prompt']}]}
+  assert expected_provider_options(body)==options
+  a=make_expected_attestation(body)
+  assert a['model']=='qwen3.8-flash' and a['effective_options']['image_count']==0
+  assert a['provider_options_sha256']==hashlib.sha256(json.dumps(options,sort_keys=True,ensure_ascii=False,separators=(',',':')).encode()).hexdigest()
+  assert a['output_schema_sha256']==hashlib.sha256(json.dumps(kw['output_schema'],sort_keys=True,ensure_ascii=False,separators=(',',':')).encode()).hexdigest()
+  if reply=='attested_max':a['model']='qwen3.8-max'
+  return io.BytesIO(json.dumps({'success':True,'content':json.dumps(raw),'model':'qwen3.8-max' if reply=='actual_max' else 'qwen3.8-flash',
+   'providerId':'qwen_plus','fallbackUsed':False,'finishReason':'stop','videoPolicy':a}).encode())
+ monkeypatch.setattr(ai.urllib.request,'urlopen',http)
+ def run():
+  if reply in {'actual_max','attested_max'}:
+   return ai.ai_gateway_skill_content(skill,'semantics',payload=payload,**kw,timeout=120,request_proof_hook=proofs.append,raw_receipt=receipts.append)
+  return ai.run_ai_skill(skill,payload,**kw,timeout=120,retry_count=0,request_proof_hook=proofs.append,raw_receipt=receipts.append)
+ if reply=='valid':assert run()==raw
+ else:
+  error={'actual_max':'video_stage_reply_invalid','attested_max':'video_stage_attestation_invalid','invalid_output':'video_semantic_output_invalid'}[reply]
+  with pytest.raises(RuntimeError,match=error):run()
+ assert len(calls)==len(proofs)==len(receipts)==1
+ assert json.loads(receipts[0]['content'])==raw
+ assert proofs[0]['gateway_request_sha256']==receipts[0]['gateway_request_sha256']
+
+
+def test_seven_stage_models_versions_and_caps_remain_literal():
+ assert policy.STAGES=={
+  'perception':('ui_video_perception','v1','whole-perception','qwen3.8-max',8192),
+  'overview':('ui_video_trajectory','overview','whole-trajectory','qwen3.8-flash',10000),
+  'semantic':('ui_video_trajectory','observe','whole-trajectory','qwen3.8-flash',10000),
+  'audit':('ui_video_trajectory','audit','whole-trajectory','qwen3.8-max',10000),
+  'consolidate':('ui_video_steps','consolidate','whole-consolidate','qwen3.8-max',10000),
+  'outcome':('ui_video_observe','outcome','whole-observe','qwen3.8-max',4000),
+  'inputs':('ui_video_observe','inputs','whole-observe','qwen3.8-max',3000)}

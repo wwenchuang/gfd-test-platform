@@ -10,7 +10,7 @@ const route={model:'qwen3.8-max',baseUrl:'https://dashscope.aliyuncs.com/compati
 const ctx=vm.createContext({Buffer,createHash});
 vm.runInContext(source.slice(source.indexOf('function requestedCompletionTokens('),source.indexOf('async function appendAiLog('))+
  source.slice(source.indexOf('function buildUserMessage('),source.indexOf('\nfunction assistantOutputText')),ctx);
-function complete(body,selected=route) {ctx.body=body;ctx.route=selected;return JSON.parse(JSON.stringify(vm.runInContext('completionOptionsForRoute(route,"pixels",body)',ctx)));}
+function complete(body,selected={...route,model:body.videoStage==='semantic'?'qwen3.8-flash':route.model}) {ctx.body=body;ctx.route=selected;return JSON.parse(JSON.stringify(vm.runInContext('completionOptionsForRoute(route,"pixels",body)',ctx)));}
 const observerSchema=JSON.parse(fs.readFileSync(new URL('../ai_skills/schemas/ui_video_trajectory.schema.json',import.meta.url),'utf8')).oneOf[0];
 function project(node, normalized=true) {
  if(node.oneOf)return {[normalized?'anyOf':'oneOf']:node.oneOf.map(child=>project(child,normalized))};
@@ -29,7 +29,7 @@ function input(stage='perception',n=8) {
  payload:{phase:stage==='perception'?'whole-perception':'whole-trajectory',packet_id:'w1',frames,image_frames:frames,
  owned_frame_ids:frames.slice(0,-1).map(f=>f.frame_id),context_frame_ids:[frames.at(-1).frame_id]},
  imageAssets:frames.map(f=>({name:f.frame_id,timestamp_ms:f.timestamp_ms,mime:'image/jpeg',base64:'YQ=='}))};
- if(stage==='semantic') {b.imageAssets=[];delete b.payload.image_frames;b.payload.reasoning_mode='bounded';b.outputSchema=schema();}
+ if(stage==='semantic') {b.model='qwen3.8-flash';b.imageAssets=[];delete b.payload.image_frames;b.payload.reasoning_mode='bounded';b.outputSchema=schema();}
  if(stage==='audit')Object.assign(b.payload,{reasoning_mode:'bounded',perception_mode:'fine-detail',perception_frame_ids:frames.slice(0,Math.min(n,12)).map(f=>f.frame_id)});
  return b;
 }
@@ -45,6 +45,7 @@ test('perception exact final wire preserves 2..12 originals, roles, byte/order a
 });
 test('semantic final wire is strict text with bounded thinking',()=>{
  const b=input('semantic'),wire=complete(b);
+ assert.equal(wire.model,'qwen3.8-flash');
  assert.equal(typeof wire.messages[1].content,'string');assert.equal(wire.max_tokens,10000);
  assert.equal(wire.enable_thinking,true);assert.equal(wire.thinking_budget,1024);
  assert.deepEqual(wire.response_format,{type:'json_schema',json_schema:{name:'video_semantic',strict:true,schema:b.outputSchema}});
@@ -70,8 +71,8 @@ test('invalid stage/scope/schema/role/image combinations fail before provider di
  }
  const b=input();delete b.videoStage;b.outputSchema=schema();assert.throws(()=>complete(b),/video_/);
 });
-test('stages require official exact Max route',()=>{
- for(const stage of ['perception','semantic','audit']) for(const change of [{model:'qwen3.8-flash'},
+test('stages require official exact stage model route',()=>{
+ for(const stage of ['perception','semantic','audit']) for(const change of [{model:stage==='semantic'?'qwen3.8-max':'qwen3.8-flash'},
  {baseUrl:'https://example.com/v1'},{baseUrl:'http://dashscope.aliyuncs.com/v1'},
  {baseUrl:'https://dashscope.aliyuncs.com@evil.example/v1'},{baseUrl:'https://dashscope.aliyuncs.com.evil.example/v1'}])
   assert.throws(()=>complete(input(stage),{...route,...change}),/video_.*route/);
@@ -97,7 +98,7 @@ test('actual /ai/skill forwards capabilities, no fallback, and actual route/usag
  for(const stage of ['perception','semantic','audit']) {
   const b=input(stage);b.providerId='primary';b.fallbackModelConfig={providerId:'backup',model:'qwen3.8-max'};
   const run=orchestration(),response=await run.request(b);
-  assert.equal(run.calls.length,1);assert.equal(response.model,'qwen3.8-max');assert.equal(response.providerId,'primary');
+  assert.equal(run.calls.length,1);assert.equal(response.model,stage==='semantic'?'qwen3.8-flash':'qwen3.8-max');assert.equal(response.providerId,'primary');
   assert.equal(response.fallbackUsed,false);assert.equal(response.finishReason,'stop');assert.equal(response.usage.totalTokens,3);
   assert.equal(run.calls[0].options.max_tokens,stage==='perception'?8192:10000);
   assert.equal(response.videoPolicy.effective_options.max_tokens,stage==='perception'?8192:10000);
