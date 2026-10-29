@@ -37,3 +37,7 @@
 - [ ] Native QA upload/deploy and verify exact release. No unchanged full-source retry before deployment.
 - [ ] Retry same original normal source once, record progress and export terminal evidence; verify every hash and classify outcome from actual receipts.
 - [ ] Continue whole-source review/import/normal gates and specified phone execution. Any content defect requires evidence-based next fix; generation/deployment alone never means task complete.
+
+### Task 2: Terminal status remains observable after bounded polling
+
+An actual native page still showed v8 analyzing6/9 after terminal failure; full refresh showed failure. The periodic360 poll cap is intentional, but visibility return needs a fresh guarded read and main content needs a read-only refresh control and truthful pause notice. Full binding requirements and TDD cases are in .superpowers/sdd/normal-video-status-refresh-brief.md. No extra periodic budget on visibility, no source/model changes or automatic navigation/retry. Modify js/ui-simple-entry.js and tests/ui_simple_entry_check.js only; run full Node frontend behavioral suite, frontend_static_checks, node syntax and diff check; independent review before deployment. Implement sequentially after Task1 commit, not parallel implementation.
