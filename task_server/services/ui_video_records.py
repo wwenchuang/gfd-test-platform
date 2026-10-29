@@ -108,6 +108,7 @@ def safe_record(kind, value):
         out['http_status'] = value['http_status']
     if type(value.get('rejection_code')) is str and value['rejection_code'] in {
             'video_stage_gateway_rejected', 'video_stage_actual_model_invalid', 'video_stage_provider_failed',
+            'video_stage_output_truncated',
             'video_stage_cancelled', 'video_stage_deadline', 'video_perception_reasoning_usage_invalid'}:
         out['rejection_code'] = value['rejection_code']
     return out

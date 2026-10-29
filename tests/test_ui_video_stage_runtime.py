@@ -142,6 +142,46 @@ def test_http_rejection_retains_only_safe_receipt_metadata(monkeypatch):
  assert receipts[0]['rejection_code']=='video_stage_actual_model_invalid'
  assert 'private' not in json.dumps(receipts) and 'secret' not in json.dumps(receipts)
 
+
+@pytest.mark.parametrize('stage', ['perception', 'semantic', 'audit'])
+@pytest.mark.parametrize('code,expected', [
+ ('video_stage_output_truncated', 'video_stage_output_truncated'),
+ ('unknown_PRIVATE_CODE', 'video_stage_gateway_rejected'),
+ ('video_stage_output_truncated\nPRIVATE_CODE', 'video_stage_gateway_rejected'),
+ ({'error': 'PRIVATE_CODE'}, 'video_stage_gateway_rejected'),
+])
+def test_http_rejection_code_survives_safe_private_record_roundtrip(monkeypatch,tmp_path,stage,code,expected):
+ from task_server.services.ui_video_records import RecordStore, safe_record
+ skill,kw=request(stage);receipts=[];calls=[];proofs=[]
+ rejected=io.BytesIO(json.dumps({'error':code,'content':'PRIVATE_BODY',
+  'reasoning_content':'PRIVATE_REASONING','message':'PRIVATE_MESSAGE'}).encode())
+ def forbidden(*args,**kwargs):pytest.fail('rejected stage attempted fallback')
+ def http(req,timeout):
+  calls.append(json.loads(req.data))
+  raise ai.urllib.error.HTTPError(req.full_url,500,'PRIVATE_HTTP_REASON',{},rejected)
+ monkeypatch.setattr(ai.urllib.request,'urlopen',http)
+ monkeypatch.setattr(ai,'dashscope_chat_content',forbidden)
+ with pytest.raises(RuntimeError,match='^video_stage_gateway_rejected$') as error:
+  ai.ai_gateway_skill_content(skill,'pixels',**kw,raw_receipt=receipts.append,request_proof_hook=proofs.append)
+ assert len(calls)==len(receipts)==len(proofs)==1 and rejected.closed
+ assert calls[0]['fallbackModelConfig']=={}
+ receipt=receipts[0]
+ assert receipt['rejection_code']==expected and receipt['http_status']==500
+ assert receipt['content']=='' and receipt['usage']=={}
+ assert all(receipt[key] is None for key in ['providerId','model','fallbackUsed','finishReason','videoPolicy'])
+ assert receipt['gateway_request_sha256']==proofs[0]['gateway_request_sha256']
+ safe=safe_record('receipt',receipt)
+ assert safe==receipt
+ with RecordStore(tmp_path/'records') as store:
+  ref=store.append('receipt',safe)
+  private={'records':store.snapshot(),'receipt_ref':ref}
+ with RecordStore.open_snapshot(tmp_path/'records',private['records']) as reader:
+  restored=reader.read(private['receipt_ref'])
+ assert restored==receipt and restored['rejection_code']==expected
+ exported=json.dumps({'receipt':restored,'private':private,'exception':str(error.value)})
+ assert 'PRIVATE' not in exported
+ assert all(b'PRIVATE' not in path.read_bytes() for path in (tmp_path/'records').iterdir())
+
 @pytest.mark.parametrize('stage',STAGES)
 def test_normal_skill_call_uses_hooks_before_json_without_thread_or_fallback(monkeypatch,stage):
  from task_server.services.ui_video_stage_receipts import make_expected_attestation

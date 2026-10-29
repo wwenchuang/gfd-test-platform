@@ -725,6 +725,7 @@ def ai_gateway_skill_content(
                 rejected = json.loads(read_response_bytes(exc, 1024*1024, 'AI Gateway'))
                 code = rejected.get('error') if isinstance(rejected, dict) else None
                 if type(code) is str and code in {'video_stage_actual_model_invalid', 'video_stage_provider_failed',
+                            'video_stage_output_truncated',
                             'video_stage_cancelled', 'video_stage_deadline',
                             'video_perception_reasoning_usage_invalid'}:
                     rejection = code

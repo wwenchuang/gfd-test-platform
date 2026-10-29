@@ -75,6 +75,34 @@ def test_per_file_limit_symlink_ancestry_and_privacy(tmp_path):
         with pytest.raises(records.RecordError): store.append('receipt', receipt('x' * (1024 * 1024)))
 
 
+def test_output_truncated_code_survives_projection_and_snapshot_reopen(tmp_path):
+    source = receipt('')
+    source.update(http_status=500, rejection_code='video_stage_output_truncated')
+    assert records.safe_record('receipt', source) == source
+    with records.RecordStore(tmp_path / 'records') as store:
+        ref = store.append('receipt', source)
+        snapshot = store.snapshot()
+    with records.RecordStore.open_snapshot(tmp_path / 'records', snapshot) as reader:
+        assert reader.read(ref) == source
+
+
+@pytest.mark.parametrize('code', [
+    'unknown_PRIVATE_CODE', 'video_stage_output_truncated PRIVATE_CODE',
+    {'error': 'PRIVATE_CODE'}, ['video_stage_output_truncated'], True, None,
+])
+def test_untrusted_rejection_codes_are_omitted_from_safe_and_durable_records(tmp_path, code):
+    source = receipt('')
+    source.update(http_status=500, rejection_code=code, reasoning_content='PRIVATE_REASONING')
+    safe = records.safe_record('receipt', source)
+    assert 'rejection_code' not in safe and safe['http_status'] == 500
+    with records.RecordStore(tmp_path / 'records') as store:
+        ref = store.append('receipt', source)
+        snapshot = store.snapshot()
+    with records.RecordStore.open_snapshot(tmp_path / 'records', snapshot) as reader:
+        assert reader.read(ref) == safe
+    assert all(b'PRIVATE' not in path.read_bytes() for path in (tmp_path / 'records').iterdir())
+
+
 def test_atomic_failure_latches_and_removes_temp(tmp_path, monkeypatch):
     with records.RecordStore(tmp_path / 'records') as store:
         store.append('receipt', receipt())
