@@ -235,7 +235,7 @@ function openImportedUiDraft(draft){
 
 // One visible source task owns polling. Leaving this view never starts card timers.
 function mountUiVideoSource(node,{current,openDraft,initialSource=null}){
-  const identity=uiSimpleIdentity(),pending=new Set(),urls=new Set(),mediaRequests=new WeakMap();let alive=true,epoch=0,timer=null,source=null,app='',polls=0,busy=false,renderedKey='',statusSequence=0,rows=[],limit=10,listSequence=0;
+  const identity=uiSimpleIdentity(),pending=new Set(),urls=new Set(),mediaRequests=new WeakMap();let alive=true,epoch=0,timer=null,source=null,app='',polls=0,busy=false,renderedKey='',statusSequence=0,rows=[],limit=10,listSequence=0,wasHidden=document.hidden,visibilityRead=null;
   const q=s=>node.querySelector(s),escape=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const valid=()=>alive&&current()&&identity===uiSimpleIdentity()&&node.isConnected;
   function clearMedia(){for(const url of urls)URL.revokeObjectURL(url);urls.clear();}
@@ -298,13 +298,26 @@ function mountUiVideoSource(node,{current,openDraft,initialSource=null}){
     if(node.dataset.videoView!=='detail')return;
     notice(source.status==='review_needed'?'未生成用例，请上传包含实际操作的视频。':source.status==='failed'?'未生成用例。'+(source.error||'请重新生成。'):source.error||messages[source.status]||statusText(source.status));
   }
+  function syncPollingNotice(){
+    if(!valid())return;
+    const paused=q('[data-video-poll-paused]');if(paused)paused.hidden=polls<360||!['queued','decoding','analyzing'].includes(source?.status);
+  }
   function schedulePoll(){
-    clearTimeout(timer);timer=null;
+    clearTimeout(timer);timer=null;syncPollingNotice();
     if(!valid()||document.hidden||polls>=360||!['queued','decoding','analyzing'].includes(source?.status))return;
     const version=epoch,identifier=source.source_id;
-    timer=setTimeout(()=>{timer=null;if(!valid()||document.hidden||version!==epoch||source?.source_id!==identifier)return;polls++;refresh();},5000);
+    timer=setTimeout(()=>{timer=null;if(!valid()||document.hidden||version!==epoch||source?.source_id!==identifier)return;polls++;syncPollingNotice();refresh();},5000);
   }
-  function visibilityChanged(){if(!valid())return;schedulePoll();}
+  function visibilityChanged(){
+    const returned=wasHidden&&!document.hidden;wasHidden=document.hidden;
+    if(!valid())return;
+    if(document.hidden){clearTimeout(timer);timer=null;return;}
+    if(!returned||busy||!['queued','decoding','analyzing'].includes(source?.status))return;
+    if(visibilityRead?.epoch===epoch)return;
+    clearTimeout(timer);timer=null;
+    const read={epoch};visibilityRead=read;
+    refresh().finally(()=>{if(visibilityRead===read)visibilityRead=null;});
+  }
   async function refresh(){
     if(!source||!valid()||busy)return;
     const sequence=++statusSequence;
@@ -335,10 +348,12 @@ function mountUiVideoSource(node,{current,openDraft,initialSource=null}){
     const headline=ready?'已生成草稿，下一步核对步骤':active?'正在生成测试用例':source.status==='review_needed'||source.status==='failed'?'未生成用例':'尚未生成用例';
     const stage=['queued','decoding','analyzing'].indexOf(source.status);
     const progress=active?`<div class="ui-task-progress" data-video-progress role="status" aria-live="polite" aria-busy="true"><p class="ui-busy-inline" aria-busy="true">${escape(detail||['正在排队，等待分析资源','正在读取视频，提取操作画面','AI 正在识别操作并整理中文步骤'][stage])}</p><small>完成后点击“开始核对”；可先处理其他工作，稍后从“我的视频任务”查看。</small></div>`:'';
-    box.innerHTML=`<div class="ui-video-task-main"><h3>${headline}</h3>${progress}<p>${escape(source.title||source.filename)}</p>${source.title?`<small>原文件：${escape(source.filename)}</small>`:""}${source.status==='review_needed'?'<p>请上传包含实际操作的视频，保留操作前后页面和结束结果。</p><button type="button" class="ui-video-primary" data-video-reselect>重新选择视频</button>':ready?'<button type="button" class="ui-video-primary" data-video-action="import">开始核对</button>':['failed','cancelled','interrupted'].includes(source.status)?'<button type="button" class="ui-video-primary" data-video-action="retry">重新生成用例</button>':''}${active?'<p>完成后核对中文步骤；生成过程不会操作手机。</p><button type="button" data-video-action="cancel">取消生成</button>':''}</div><details data-video-technical><summary>查看原视频与分析详情（可选）</summary><p>任务状态：${escape(statusText(source.status))}</p><p>${escape(source.error||'观察和推断仅作为来源证据，不代表试跑通过。')}</p>${source.media?`<p>完整时间覆盖 0–${(source.media.duration_ms/1000).toFixed(2)} 秒 · ${source.media.frames.length} 张候选帧 · 第 ${source.analysis_version} 次分析</p>`:''}<button type="button" data-video-status>刷新当前任务</button><button type="button" data-video-preview>预览私有原视频（需完整下载）</button><video controls preload="none" style="max-width:100%;max-height:320px" hidden></video><ul>${(source.uncertainties||[]).map(v=>`<li>${escape(v)}</li>`).join('')}</ul><ol>${(source.candidate_steps||[]).map(s=>`<li><b>${(s.start_ms/1000).toFixed(2)}–${(s.end_ms/1000).toFixed(2)}秒</b> · ${s.evidence_kind==='observed'?'直接观察候选':'推断操作'} · ${escape(({launch:'启动应用',aiTap:'点击',aiInput:'输入',aiScroll:'滑动',aiWaitFor:'等待',aiAssert:'检查'})[s.action]||'待核对操作')} ${escape(s.target)}<p>观察：${escape(s.observation)}；业务预期仍需核对。</p>${s.frame_refs.map(f=>`<button type="button" data-video-frame="${escape(f)}">查看帧 ${escape(f)}</button>`).join('')}${s.uncertainties.map(v=>`<p>${escape(v)}</p>`).join('')}</li>`).join('')}</ol><img data-video-frame-preview alt="所选录屏证据帧" style="max-width:100%;max-height:400px" hidden></details>`;
+    box.innerHTML=`<div class="ui-video-task-main"><h3>${headline}</h3>${progress}<p>${escape(source.title||source.filename)}</p>${source.title?`<small>原文件：${escape(source.filename)}</small>`:""}${source.status==='review_needed'?'<p>请上传包含实际操作的视频，保留操作前后页面和结束结果。</p><button type="button" class="ui-video-primary" data-video-reselect>重新选择视频</button>':ready?'<button type="button" class="ui-video-primary" data-video-action="import">开始核对</button>':['failed','cancelled','interrupted'].includes(source.status)?'<button type="button" class="ui-video-primary" data-video-action="retry">重新生成用例</button>':''}${active?'<p data-video-poll-paused hidden role="status">自动更新已暂停，任务仍可能在运行；请点击“刷新进度”查看最新状态。</p><button type="button" data-video-progress-refresh>刷新进度</button><p>完成后核对中文步骤；生成过程不会操作手机。</p><button type="button" data-video-action="cancel">取消生成</button>':''}</div><details data-video-technical><summary>查看原视频与分析详情（可选）</summary><p>任务状态：${escape(statusText(source.status))}</p><p>${escape(source.error||'观察和推断仅作为来源证据，不代表试跑通过。')}</p>${source.media?`<p>完整时间覆盖 0–${(source.media.duration_ms/1000).toFixed(2)} 秒 · ${source.media.frames.length} 张候选帧 · 第 ${source.analysis_version} 次分析</p>`:''}<button type="button" data-video-status>刷新当前任务</button><button type="button" data-video-preview>预览私有原视频（需完整下载）</button><video controls preload="none" style="max-width:100%;max-height:320px" hidden></video><ul>${(source.uncertainties||[]).map(v=>`<li>${escape(v)}</li>`).join('')}</ul><ol>${(source.candidate_steps||[]).map(s=>`<li><b>${(s.start_ms/1000).toFixed(2)}–${(s.end_ms/1000).toFixed(2)}秒</b> · ${s.evidence_kind==='observed'?'直接观察候选':'推断操作'} · ${escape(({launch:'启动应用',aiTap:'点击',aiInput:'输入',aiScroll:'滑动',aiWaitFor:'等待',aiAssert:'检查'})[s.action]||'待核对操作')} ${escape(s.target)}<p>观察：${escape(s.observation)}；业务预期仍需核对。</p>${s.frame_refs.map(f=>`<button type="button" data-video-frame="${escape(f)}">查看帧 ${escape(f)}</button>`).join('')}${s.uncertainties.map(v=>`<p>${escape(v)}</p>`).join('')}</li>`).join('')}</ol><img data-video-frame-preview alt="所选录屏证据帧" style="max-width:100%;max-height:400px" hidden></details>`;
     const reselect=q('[data-video-reselect]');if(reselect)reselect.onclick=()=>{if(!valid()||busy)return;invalidate();source=null;view('upload');node.dataset.videoPhase='upload';q('[data-video-detail]').replaceChildren();notice('请选择包含完整操作的视频，再点击“生成测试用例”。');const file=q('[data-video-file]');file.value='';file.focus();file.click();};
 
-    q('[data-video-status]').onclick=()=>{polls=0;refresh();};
+    const manualRefresh=()=>{if(!valid()||busy)return;polls=0;syncPollingNotice();refresh();};
+    q('[data-video-status]').onclick=manualRefresh;
+    const progressRefresh=q('[data-video-progress-refresh]');if(progressRefresh)progressRefresh.onclick=manualRefresh;
     q('[data-video-preview]').onclick=()=>{if(!valid())return;const video=box.querySelector('video');video.hidden=false;media(`/ui-video-sources/${id}/video?`+new URLSearchParams({app_id:app}),video);};
     for(const button of box.querySelectorAll('[data-video-frame]'))button.onclick=()=>{const image=q('[data-video-frame-preview]');image.hidden=false;media(`/ui-video-sources/${id}/frames/${encodeURIComponent(button.dataset.videoFrame)}?`+new URLSearchParams({app_id:app}),image);};
     for(const button of box.querySelectorAll('[data-video-action]'))button.onclick=async()=>{

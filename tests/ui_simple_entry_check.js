@@ -392,21 +392,62 @@ test('unchanged video polling preserves selected media elements and object URLs'
  f.q('[data-ui-case-back]').click();assert.ok(revoked>0);
 });
 
-test('video polling resumes on visibility return stays bounded and removes its lifecycle listener',async t=>{
- const f=await videoFixture(t),source={source_id:'uvs_'+'3'.repeat(32),filename:'clip.mp4',status:'analyzing',analysis_version:1};let hidden=false,nextTimer=0;
- Object.defineProperty(f.w.document,'hidden',{configurable:true,get:()=>hidden});const timers=new Map();
- f.w.setTimeout=(fn,ms)=>{assert.equal(ms,5000);const id=++nextTimer;timers.set(id,fn);return id;};f.w.clearTimeout=id=>timers.delete(id);
- f.respond(path=>path.includes(source.source_id)?{ok:true,source}:path.startsWith('/ui-video-sources?')?{ok:true,sources:[source]}:undefined);
- f.app('a');await wait();f.q('[data-video-open]').click();await wait();assert.equal(timers.size,1);
- let [id,tick]=timers.entries().next().value;timers.delete(id);hidden=true;tick();await wait();assert.equal(timers.size,0);
- const before=f.calls.filter(c=>c.path.includes(source.source_id)).length;
- hidden=false;f.w.document.dispatchEvent(new f.w.Event('visibilitychange'));assert.equal(timers.size,1);
- [id,tick]=timers.entries().next().value;timers.delete(id);tick();await wait();assert.equal(f.calls.filter(c=>c.path.includes(source.source_id)).length,before+1);
- for(let i=0;i<370;i++){const entry=timers.entries().next().value;if(!entry)break;timers.delete(entry[0]);entry[1]();await wait();}
- assert.equal(f.calls.filter(c=>c.path.includes(source.source_id)).length,before+360);assert.equal(timers.size,0);
- hidden=true;f.w.document.dispatchEvent(new f.w.Event('visibilitychange'));hidden=false;f.w.document.dispatchEvent(new f.w.Event('visibilitychange'));assert.equal(timers.size,0);
- let removed=0;const original=f.w.document.removeEventListener.bind(f.w.document);f.w.document.removeEventListener=(name,...args)=>{if(name==='visibilitychange')removed++;return original(name,...args);};
- f.q('[data-ui-case-back]').click();assert.equal(removed,1);f.w.document.dispatchEvent(new f.w.Event('visibilitychange'));assert.equal(timers.size,0);
+function videoClock(f){
+ let hidden=false,next=0;const timers=new Map();
+ Object.defineProperty(f.w.document,'hidden',{configurable:true,get:()=>hidden});
+ f.w.setTimeout=(fn,ms)=>{assert.equal(ms,5000);timers.set(++next,fn);return next;};f.w.clearTimeout=id=>timers.delete(id);
+ return {timers,visibility(value){hidden=value;f.w.document.dispatchEvent(new f.w.Event('visibilitychange'));},async tick(){const entry=timers.entries().next().value;assert.ok(entry,'periodic timer exists');timers.delete(entry[0]);entry[1]();await wait();},async exhaust(){for(let i=0;i<360;i++)await this.tick();assert.equal(timers.size,0);}};
+}
+async function activeVideo(t){
+ const f=await videoFixture(t),clock=videoClock(f);let source={source_id:'status-refresh',filename:'clip.mp4',status:'analyzing',analysis_version:1,updated_at:1,analysis_progress:{phase:'observing',completed:6,total:9},uncertainties:['保留原始疑问']};
+ f.respond(p=>p.startsWith('/ui-video-sources?')?{ok:true,sources:[source]}:p.includes('/status-refresh?')?{ok:true,source}:undefined);
+ f.app('a');await wait();f.q('[data-video-open]').click();await wait();
+ return {...f,clock,get source(){return source;},set source(next){source=next;},reads:()=>f.calls.filter(c=>c.path.includes('/status-refresh?')).length};
+}
+test('video status refresh reads terminal immediately after capped hidden return without event floods',async t=>{
+ const f=await activeVideo(t);await f.clock.exhaust();const before=f.reads();
+ f.clock.visibility(true);await wait();assert.equal(f.reads(),before);assert.equal(f.clock.timers.size,0);
+ f.source={...f.source,status:'failed',error:'真实服务端失败',updated_at:2};f.clock.visibility(false);
+ assert.equal(f.reads(),before+1,'return must fetch before a timer fires');
+ for(let i=0;i<5;i++)f.clock.visibility(false);await wait();
+ assert.equal(f.reads(),before+1);assert.equal(f.clock.timers.size,0);assert.match(f.q('[data-video-detail]').textContent,/真实服务端失败/);
+ assert.equal(f.q('[data-video-progress]'),null);assert.equal(f.calls.some(c=>c.options.method==='POST'),false);
+ let removed=0;const remove=f.w.document.removeEventListener.bind(f.w.document);f.w.document.removeEventListener=(name,...args)=>{if(name==='visibilitychange')removed++;return remove(name,...args);};
+ f.q('[data-ui-case-back]').click();f.clock.visibility(true);f.clock.visibility(false);await wait();assert.equal(removed,1);assert.equal(f.reads(),before+1);
+});
+test('video status refresh exposes paused notice without replacing media and manual GET resets cap',async t=>{
+ const f=await activeVideo(t);f.q('[data-video-preview]').click();await wait();const video=f.q('video');video.currentTime=0.5;let revoked=0;f.w.URL.revokeObjectURL=()=>revoked++;
+ const button=f.q('.ui-video-task-main [data-video-progress-refresh]');assert.ok(button,'main progress refresh outside details');assert.equal(button.textContent,'刷新进度');button.focus();
+ await f.clock.exhaust();const paused=f.q('[data-video-poll-paused]');assert.ok(paused&&!paused.hidden);assert.match(paused.textContent,/自动更新已暂停.*仍可能.*刷新进度/);
+ assert.match(f.q('[data-video-progress]').textContent,/6 \/ 9/);assert.match(f.q('[data-video-technical]').textContent,/保留原始疑问/);assert.equal(f.q('video'),video);assert.equal(f.w.document.activeElement,button);assert.equal(video.currentTime,0.5);assert.equal(revoked,0);
+ const before=f.reads();f.clock.visibility(true);f.clock.visibility(false);await wait();assert.equal(f.reads(),before+1);assert.equal(f.clock.timers.size,0);assert.equal(paused.hidden,false);
+ button.click();assert.equal(paused.hidden,true,'manual reset removes notice immediately');await wait();assert.equal(f.reads(),before+2);assert.equal(f.clock.timers.size,1);
+ f.source={...f.source,status:'ready',updated_at:2};button.click();await wait();assert.equal(f.q('[data-video-technical]').open,false);assert.match(f.q('[data-video-detail]').textContent,/开始核对/);assert.equal(f.q('[data-video-poll-paused]'),null);assert.equal(f.clock.timers.size,0);assert.equal(f.calls.some(c=>c.options.method==='POST'),false);
+});
+test('video status refresh clears exhausted notice on newer analysis version',async t=>{
+ const f=await activeVideo(t);await f.clock.exhaust();assert.equal(f.q('[data-video-poll-paused]')?.hidden,false);
+ f.source={...f.source,analysis_version:2,updated_at:2};f.clock.visibility(true);f.clock.visibility(false);await wait();assert.equal(f.q('[data-video-poll-paused]').hidden,true);assert.equal(f.clock.timers.size,1);
+});
+test('video status refresh pauses hidden periodic timer and resumes immediately with one bounded read',async t=>{
+ const f=await activeVideo(t),before=f.reads();assert.equal(f.clock.timers.size,1);f.clock.visibility(true);assert.equal(f.clock.timers.size,0);assert.equal(f.reads(),before);
+ f.clock.visibility(false);assert.equal(f.reads(),before+1);await wait();assert.equal(f.clock.timers.size,1);for(let i=0;i<3;i++)f.clock.visibility(false);assert.equal(f.reads(),before+1);
+ await f.clock.exhaust();assert.equal(f.reads(),before+361);
+});
+for(const change of ['teardown','account','app','source','version','newer status'])test(`video status refresh rejects stale visibility response after ${change}`,async t=>{
+ const f=await activeVideo(t);let resolve;const source=f.source;
+ f.respond(p=>p.startsWith('/ui-video-sources?')?{ok:true,sources:[f.source]}:p.includes('/status-refresh?')?new Promise(r=>resolve=r):p.includes('/other?')?{ok:true,source:{...source,source_id:'other',filename:'other.mp4'}}:undefined);
+ f.clock.visibility(true);f.clock.visibility(false);assert.ok(resolve,'visibility starts guarded read');for(let i=0;i<3;i++)f.clock.visibility(false);assert.equal(f.reads(),2);
+ if(change==='teardown')f.q('[data-ui-case-back]').click();
+ if(change==='account')f.w.currentAccessProfile={user_id:'other'};
+ if(change==='app')f.app('b');
+ if(change==='source'){f.source={...source,source_id:'other',filename:'other.mp4'};f.q('[data-video-refresh]').click();await wait();f.q('[data-video-open]').click();await wait();}
+ if(change==='version'){f.source={...source,analysis_version:2,updated_at:2};f.q('[data-video-refresh]').click();await wait();}
+ if(change==='newer status'){f.respond(p=>p.includes('/status-refresh?')?{ok:true,source:{...source,status:'ready',updated_at:3}}:undefined);f.q('[data-video-status]').click();await wait();}
+ resolve({ok:true,source:{...source,status:'failed',updated_at:2,error:'STALE VISIBILITY'}});await wait();
+ assert.doesNotMatch(f.q('[data-video-detail]')?.textContent||'',/STALE VISIBILITY/);
+ if(change==='version')assert.match(f.q('[data-video-detail]').textContent,/第 2 次分析|分析中/);
+ if(change==='newer status')assert.match(f.q('[data-video-detail]').textContent,/开始核对/);
+ if(['teardown','account','app'].includes(change)){f.clock.visibility(true);f.clock.visibility(false);await wait();assert.equal(f.clock.timers.size,0);}
 });
 
 test('refreshing my videos adopts a newer retry from another tab and rejects older detail and list responses',async t=>{
@@ -527,4 +568,18 @@ test('video bank and input recovery progress labels preserve active review state
  f.q('[data-video-status]').click();await wait();
  assert.match(f.q('[data-video-progress]').textContent,/正在核对输入文字/);
  assert.doesNotMatch(f.q('[data-video-progress]').textContent,/已生成草稿/);
+});
+
+test('video status refresh shows cap notice while final periodic status GET is still pending',async t=>{
+ const f=await activeVideo(t);for(let i=0;i<359;i++)await f.clock.tick();let resolve;
+ f.respond(p=>p.includes('/status-refresh?')?new Promise(r=>resolve=r):undefined);
+ await f.clock.tick();assert.ok(resolve);assert.equal(f.clock.timers.size,0);assert.equal(f.q('[data-video-poll-paused]').hidden,false);
+ resolve({ok:true,source:f.source});await wait();assert.equal(f.q('[data-video-poll-paused]').hidden,false);
+});
+test('video status refresh coalesces returning edges during a pending read and escapes GET failures',async t=>{
+ const f=await activeVideo(t);let reject;f.respond(p=>p.includes('/status-refresh?')?new Promise((_,r)=>reject=r):undefined);
+ f.clock.visibility(true);f.clock.visibility(false);const reads=f.reads();
+ f.clock.visibility(true);f.clock.visibility(false);f.clock.visibility(false);assert.equal(f.reads(),reads);
+ reject(new Error('<img src=x> status fetch failed'));await wait();assert.match(f.q('[data-video-notice]').textContent,/status fetch failed/);assert.equal(f.q('[data-video-notice] img'),null);assert.match(f.q('[data-video-detail]').textContent,/6 \/ 9/);assert.equal(f.calls.some(c=>c.options.method==='POST'),false);
+ f.clock.visibility(true);f.clock.visibility(false);assert.equal(f.reads(),reads+1);f.q('[data-ui-case-back]').click();reject(new Error('late error'));await wait();
 });
