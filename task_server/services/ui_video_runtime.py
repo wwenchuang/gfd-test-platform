@@ -144,7 +144,10 @@ def _semantic_schema(payload):
     schema = _provider_projection(load_ai_skill_schema('ui_video_trajectory')['oneOf'][0])
     refs = [f['frame_id'] for f in payload['frames']]
     owned = payload['owned_frame_ids']
-    prior = [''] + [e['event_id'] for e in payload.get('prior_events', [])]
+    prior = ['']
+    history = payload.get('prior_events', [])
+    if history and history[-1].get('event', {}).get('action') == 'aiInput' and history[-1].get('edit_boundary') == 'none':
+        prior.append(history[-1]['event_id'])
     def narrow(node):
         for key, child in node.get('properties', {}).items():
             if key in {'first_frame', 'last_frame'}:
