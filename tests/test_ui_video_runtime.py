@@ -687,3 +687,79 @@ def test_runtime_terminal_capacity_cause_is_private_without_reset(tmp_path,monke
     rows=published[-1]['video_runtime_private']['trajectory_diagnostics']
     assert rows[-1]['kind']=='runtime_failure' and rows[-1]['reason']==reason
     assert rows[-1]['reserved']==0 and rows[-1]['limit']==budget.limit
+
+
+@pytest.mark.parametrize('prior,expected', [
+    ([], ['']),
+    ([{'event_id':'input-1','event':{'action':'aiInput'},'edit_boundary':'none'},
+      {'event_id':'tap-2','event':{'action':'aiTap'},'edit_boundary':'none'}], ['']),
+    ([{'event_id':'input-1','event':{'action':'aiInput'},'edit_boundary':'none'},
+      {'event_id':'input-2','event':{'action':'aiInput'},'edit_boundary':'none'}], ['', 'input-2']),
+    *[([{'event_id':'input-1','event':{'action':'aiInput'},'edit_boundary':boundary}], [''])
+      for boundary in ('submission','field_change','navigation')],
+    ([{'event_id':'input-1','event':{'action':'aiInput'}}], ['']),
+    ([{'event_id':'input-1','edit_boundary':'none'}], ['']),
+    ([{'event_id':'input-1','event':{},'edit_boundary':'none'}], ['']),
+    ([{'event_id':'input-1','event':{'action':'aiInput'},'edit_boundary':'none'}], ['', 'input-1']),
+])
+def test_semantic_continuation_schema_exposes_only_eligible_last_input(prior, expected):
+    import hashlib
+    payload={'frames':[{'frame_id':'frame-001'},{'frame_id':'frame-002'}],
+             'owned_frame_ids':['frame-001'],'prior_events':prior}
+    before=copy.deepcopy(payload)
+    schema=runtime()._semantic_schema(payload)
+    continuation=schema['properties']['events']['items']['properties']['continuation_of']
+    assert continuation.pop('enum')==expected
+    # Literal baseline pins every other projected scaffold/enum/value/ref field.
+    assert hashlib.sha256(json.dumps(schema,sort_keys=True,separators=(',',':')).encode()).hexdigest()=='d3c9756dae96aed48617448e115952de7be3f3316189aaecd78dcbf58d2c628d'
+    assert payload==before
+
+
+def test_semantic_continuation_schema_rejects_captured_96_identity():
+    import hashlib
+    from task_server.services.ai_skill_service import normalize_model_json
+    from task_server.services import ui_video_trajectory as vt
+    from task_server.services.ui_video_stage_policy import validate_stage_output
+    fixture=Path(__file__).parent/'fixtures/ui_video/run10-ordering.json'
+    frozen=json.loads(fixture.read_text());before=fixture.read_bytes();replies={}
+    for entry in frozen['entries']:
+        logical={k:entry[k] for k in ('entry','kind','value')}
+        assert hashlib.sha256(json.dumps(logical,ensure_ascii=False,sort_keys=True,separators=(',',':')).encode()).hexdigest()==entry['sha256']
+        replies[entry['entry']]=normalize_model_json(entry['value']['content'])
+    fs=frozen['media']['frames']
+    original=[f for f in fs if f['frame_id'] not in {f'frame-{i:03d}' for i in range(300,323)}]
+    packets=vt.make_packets(original,replies[78]['states'])
+    # Reconstruct accepted history from raw86, rather than authoring its identities.
+    first={**packets[0],'frames':fs,'owned_frame_ids':[f['frame_id'] for f in fs]}
+    events,tracks=vt.bind_packet_events(replies[86]['events'],first,fs,[],[])
+    prior=[{**t,'event':e} for t,e in zip(tracks,events)]
+    assert prior[-1]['event_id']=='packet-001:event-3' and prior[-1]['event']['action']=='aiTap'
+    raw=replies[96];assert raw['events'][0]['continuation_of']=='packet-001:event-2'
+    packet=packets[1]
+    extras=[f for f in fs if f not in original and packet['owned_start_ms']<=f['timestamp_ms']<packet['owned_end_ms']]
+    packet['frames']=sorted(packet['frames']+extras,key=lambda f:f['timestamp_ms'])
+    packet['owned_frame_ids'] += [f['frame_id'] for f in extras]
+    assert len(packet['frames'])==60
+    payload={**packet,'prior_events':prior}
+    payload_before=copy.deepcopy(payload);raw_before=copy.deepcopy(raw)
+    schema=runtime()._semantic_schema(payload)
+    with pytest.raises(ValueError,match=r'video_semantic_output_invalid:.*continuation_of'):
+        validate_stage_output(raw,schema)
+    assert payload==payload_before and raw==raw_before and fixture.read_bytes()==before
+
+
+def test_semantic_continuation_schema_preserves_real_last_input_and_binder():
+    from task_server.services import ui_video_trajectory as vt
+    from task_server.services.ui_video_stage_policy import validate_stage_output
+    from test_ui_video_trajectory import event, frames
+    fs=frames();packets=vt.make_packets(fs,[])
+    events,tracks=vt.bind_packet_events([event(['frame-026','frame-032'],'aiInput')],packets[0],fs,[],[])
+    payload={**packets[1],'prior_events':[{**t,'event':e} for t,e in zip(tracks,events)]}
+    before=copy.deepcopy(payload)
+    second=event(['frame-033','frame-047'],'aiInput');second['continuation_of']=tracks[-1]['event_id']
+    raw={'states':[],'events':[second],'checks':[],'uncertainties':[],'multiple_scenarios':False,'revisit':[]}
+    schema=runtime()._semantic_schema(payload)
+    assert validate_stage_output(raw,schema)==raw
+    joined,history=vt.bind_packet_events(raw['events'],packets[1],fs,events,tracks)
+    assert len(joined)==1 and len(history[0]['fragments'])==2
+    assert payload==before
