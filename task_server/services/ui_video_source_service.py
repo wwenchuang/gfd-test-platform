@@ -141,13 +141,15 @@ class VideoStore:
                 self._save(db,doc)
                 return doc
 
-    def transition(self, identifier, allowed, status, expected_version=None, **fields):
+    def transition(self, identifier, allowed, status, expected_version=None, *, expected_owner=None, expected_app=None, **fields):
         with self.db() as db:
             db.execute('BEGIN IMMEDIATE')
             row = db.execute('SELECT document FROM sources WHERE id=?', (identifier,)).fetchone()
             if not row: raise KeyError(identifier)
             doc = json.loads(row[0])
             if doc['status'] not in allowed or (expected_version is not None and doc['analysis_version']!=expected_version): return None
+            if ((expected_owner is not None and doc['owner_user_id']!=expected_owner) or
+                (expected_app is not None and doc['app_id']!=expected_app)):return None
             doc.update(fields, status=status)
             self._save(db, doc)
             return doc
@@ -462,7 +464,13 @@ def owned_source(actor, identifier, app, permission='ui.view'):
 
 def public_source(document):
     from .ui_video_workspace import PRIVATE_FIELDS
-    return {k:v for k,v in document.items() if k not in {'actor','owner_user_id','baseline_examples'}|PRIVATE_FIELDS}
+    out={k:v for k,v in document.items() if k not in {'actor','owner_user_id','baseline_examples'}|PRIVATE_FIELDS}
+    summary=document.get('video_runtime_summary')
+    if (isinstance(summary,dict) and summary.get('mode')=='video-perception-bank-v1' and
+        all(type(summary.get(k)) is int and 0<=summary[k]<=bound for k,bound in
+            (('original_windows',125),('reserved',80),('limit',80),('receipts',80)))):
+        out['video_runtime_summary']={k:summary[k] for k in ('mode','original_windows','reserved','limit','receipts')}
+    return out
 
 
 def create_video_source(actor, upload):

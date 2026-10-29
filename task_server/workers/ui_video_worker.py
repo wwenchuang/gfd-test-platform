@@ -130,6 +130,9 @@ def _loop(store,wake):
 
 
 def analyze_video_source(store,identifier):
+    from task_server.services.ui_video_runtime import selected
+    if selected(identifier):
+        return _analyze_runtime_source(store,identifier)
     document=store.transition(identifier,{'queued'},'decoding')
     if not document:return
     owner,app=document['owner_user_id'],document['app_id']
@@ -190,3 +193,97 @@ def analyze_video_source(store,identifier):
                   'video_cancelled':'已取消',
                   'video_decode_timeout':'解码超时，请缩短视频后重试'}
         store.transition(identifier,{'decoding','analyzing'},'cancelled' if code=='video_cancelled' else 'failed',expected_version=version,error=messages.get(code,'分析未能返回可靠步骤，请重试或缩短片段；原视频保留'),error_code=code,failure_diagnostic=_private_target_failure(error,code,document))
+
+
+def _analyze_runtime_source(store,identifier):
+    """One server-enrolled version; all publication stays in the parent worker."""
+    from task_server.services.ui_video_runtime import MODE, RuntimeBudget, run_runtime
+    from task_server.services.ui_video_workspace import MARKER, create_analysis_workspace
+    from task_server.services.ui_case_draft_service import _application, _top3_examples
+    from task_server.services.ui_video_analysis import draft_proposal
+    with store.db() as db:
+        row=db.execute('SELECT document FROM sources WHERE id=?',(identifier,)).fetchone()
+    if not row:return
+    original=json.loads(row[0])
+    owner,app,version=original['owner_user_id'],original['app_id'],original['analysis_version']
+    actor=original['actor']
+    selection={'mode':MODE,'source_id':identifier,'owner_user_id':owner,'app_id':app,'analysis_version':version}
+    stage='authorize'
+    document=original
+    def current(allowed):
+        latest=store.get(identifier,owner,app)
+        if (latest['source_id']!=identifier or latest['owner_user_id']!=owner or latest['app_id']!=app or
+            latest['analysis_version']!=version or latest['status'] not in allowed):
+            raise ValueError('video_cancelled')
+        return latest
+    def authorize():
+        profile=require_ui_actor(actor,permission='ui.edit',app_id=app)
+        if profile['user_id']!=owner:raise AccessDenied('video_access_changed')
+        try:_application(app)
+        except ValueError:raise AccessDenied('video_access_changed') from None
+    def check():
+        latest=current({'decoding','analyzing'})
+        if latest.get('video_runtime_selection')!=selection:raise ValueError('video_cancelled')
+        authorize()
+    def cancelled():
+        check()
+        return False
+    def transition(allowed,status,**fields):
+        check()
+        value=store.transition(identifier,allowed,status,expected_version=version,
+            expected_owner=owner,expected_app=app,**fields)
+        if value is None:raise ValueError('video_cancelled')
+        return value
+    def publish(**fields):
+        return transition({'analyzing'},'analyzing',**fields)
+    with actor_context(actor):
+        try:
+            current({'queued'})
+            authorize()
+            document=store.transition(identifier,{'queued'},'decoding',expected_version=version,
+                expected_owner=owner,expected_app=app,video_runtime_selection=selection)
+            if document is None:return
+            check()
+            workspace=create_analysis_workspace(store.root,document,version)
+            document=transition({'decoding'},'decoding',**{MARKER:version})
+            stage='decode'
+            media=decode_video(store.root/identifier/'source.mp4',workspace/'frames',cancelled)
+            budget=RuntimeBudget((len(media['frames'])+7)//8)
+            budget.check()
+            if media['black'] or media['static']:
+                transition({'decoding'},'review_needed',media=media,
+                    error='黑屏或静止视频没有可靠操作证据，请选择包含完整操作和结束结果的片段')
+                return
+            stage='persist'
+            document=transition({'decoding'},'analyzing',media=media)
+            stage='baseline'
+            check();budget.check()
+            document['baseline_examples']=_top3_examples(app,document['goal'] or '录屏操作步骤')
+            check();budget.check()
+            stage='analysis'
+            result=run_runtime(document,workspace,store.root/identifier/'source.mp4',check,publish,budget=budget)
+            check();budget.check()
+            status='review_needed' if result['multiple_scenarios'] or not result['events'] else 'ready'
+            if status=='ready':
+                stage='draft_validation'
+                draft_proposal({**document,**result})
+            check();budget.check()
+            segments=[{'source_id':identifier,'segment_id':str(i),'start_ms':e['start_ms'],
+                'end_ms':e['end_ms'],'frame_refs':e['frame_refs']} for i,e in enumerate(result['events'])]
+            stage='persist'
+            transition({'analyzing'},status,**result,segments=segments,candidate_steps=result['events'],
+                error='包含多个独立场景或缺少可靠动作，请分段后重新上传' if status=='review_needed' else '')
+        except Exception as error:
+            code=_failure_code(error)
+            _log_failure(identifier,stage,error,code)
+            try:
+                # Terminal status only may settle after revoked access. It never
+                # adds AI content, and cannot overwrite cancelled/new/foreign work.
+                current({'queued','decoding','analyzing'})
+                store.transition(identifier,{'queued','decoding','analyzing'},
+                    'cancelled' if code=='video_cancelled' else 'failed',expected_version=version,
+                    expected_owner=owner,expected_app=app,error_code=code,
+                    error='账号或应用权限已变化，分析停止' if code=='video_access_changed' else
+                    '分析未能返回可靠步骤，请重试或缩短片段；原视频保留')
+            except (KeyError,ValueError):
+                pass

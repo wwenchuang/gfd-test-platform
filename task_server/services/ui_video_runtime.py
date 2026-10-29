@@ -1,0 +1,314 @@
+"""Server-selected, bank-first video runtime using the original trajectory/tail.
+
+This module never writes a source. Its parent supplies fresh authorization and
+version/owner/app CAS publication. Model jobs alone own bounded transport; the
+bank contains unverified pixel proposals, never accepted actions or input values.
+"""
+import copy
+import os
+from pathlib import Path
+import re
+import time
+
+from .ui_video_perception_binding import bind_inventory, _source_index
+
+MODE = 'video-perception-bank-v1'
+
+
+def selected(identifier):
+    value = os.getenv('UI_VIDEO_RUNTIME_QA_SOURCE_ID', '')
+    return bool(re.fullmatch(r'uvs_[0-9a-f]{32}', value) and value == identifier)
+
+
+def producer_windows(owned, universe, *, prefix='original'):
+    """Eight actual owned originals and nearest two timeline neighbors each side."""
+    positions = {f['frame_id']: i for i, f in enumerate(universe)}
+    windows = []
+    for start in range(0, len(owned), 8):
+        group = owned[start:start + 8]
+        left, right = positions[group[0]['frame_id']], positions[group[-1]['frame_id']]
+        ids = {f['frame_id'] for f in group}
+        # Overlay windows must not absorb intervening originals as owned rows.
+        context = universe[max(0, left - 2):left] + universe[right + 1:right + 3]
+        images = sorted(group + context, key=lambda f: f['timestamp_ms'])
+        windows.append({'packet_id': f'producer-{prefix}-{len(windows) + 1:03d}',
+            'frames': copy.deepcopy(images), 'owned_frame_ids': [f['frame_id'] for f in group],
+            'context_frame_ids': [f['frame_id'] for f in images if f['frame_id'] not in ids]})
+    return windows
+
+
+class PerceptionBank:
+    def __init__(self, frames):
+        self.frames = copy.deepcopy(frames)
+        # Reuse the exact authoritative ID/time/partition validator before any job.
+        _source_index({'packet_id': 'original', 'frames': self.frames,
+                       'owned_frame_ids': [f['frame_id'] for f in frames], 'context_frame_ids': []})
+        self.windows = producer_windows(self.frames, self.frames)
+        self.original_count = len(self.windows)
+        self.entries = []
+        self.overlays = 0
+
+    def add_frames(self, extra):
+        if not extra:
+            return []
+        universe = sorted(self.frames + copy.deepcopy(extra), key=lambda f: f['timestamp_ms'])
+        _source_index({'packet_id': 'augmented', 'frames': universe,
+                       'owned_frame_ids': [f['frame_id'] for f in universe], 'context_frame_ids': []})
+        self.overlays += 1
+        windows = producer_windows(extra, universe, prefix=f'revisit-{self.overlays}')
+        self.frames = universe
+        return windows
+
+    def admit(self, window, raw, accounting):
+        bound = bind_inventory(raw, window)
+        if bound['binding_audit']['warnings']:
+            raise ValueError('video_perception_binding_invalid')
+        index, _ = _source_index(window)
+        first = next(i for i, f in enumerate(self.frames) if f['frame_id'] == window['frames'][0]['frame_id'])
+        entry = {'window_id': window['packet_id'], 'source_index': index,
+            'predecessor_frame_id': self.frames[first - 1]['frame_id'] if first else None,
+            'frames': bound['frames'], 'uncertainties': bound['uncertainties'],
+            'binding_audit': bound['binding_audit'],
+            **{k: copy.deepcopy(accounting[k]) for k in ('proof_ref', 'receipt_ref') if k in accounting}}
+        self.entries.append(entry)
+        times={f['frame_id']:f['timestamp_ms'] for f in self.frames}
+        self.entries.sort(key=lambda item:times[item['frames'][0]['frame_id']])
+
+    def project(self, packet):
+        refs = {f['frame_id'] for f in packet['frames']}
+        owned = set(packet['owned_frame_ids'])
+        windows = []
+        for entry in self.entries:
+            rows = [row for row in entry['frames'] if row['frame_id'] in refs]
+            if rows:
+                windows.append({**copy.deepcopy(entry), 'frames': copy.deepcopy(rows)})
+        return {'classification': 'unverified_pixel_proposals', 'windows': windows,
+                'packet_roles': {f['frame_id']: 'owned' if f['frame_id'] in owned else 'context' for f in packet['frames']}}
+
+    def index(self):
+        # Raw content is stored once by the jobs receipt hook. Private provenance
+        # references it instead of repeating all inventory content in source state.
+        return [{k: copy.deepcopy(v) for k, v in entry.items() if k not in {'frames', 'uncertainties'}}
+                for entry in self.entries]
+
+
+class RuntimeBudget:
+    def __init__(self, original_count, *, clock=time.monotonic):
+        self.clock = clock
+        self.deadline = clock() + 1800
+        self.original_count = original_count
+        self.limit = 80
+        self.reserved = 0
+        self.frozen = False
+        self._engine_deadline = None
+        self._engine_started = False
+
+    def check(self):
+        # ModelJobs reserves its own 0.5s cleanup inside this same deadline.
+        if self.clock() >= min(self.deadline - .5, self._engine_deadline or self.deadline):
+            raise TimeoutError('video_runtime_deadline')
+
+    def reserve(self):
+        self.check()
+        if self.reserved >= self.limit:
+            raise ValueError('video_vision_limit')
+        self.reserved += 1
+
+    def freeze_packets(self, count):
+        if not self.frozen:
+            if type(count) is not int or count < 1:
+                raise ValueError('video_vision_limit')
+            self.limit = min(80, self.original_count + 2 * count + 12)
+            self.frozen = True
+            if self.reserved > self.limit:
+                raise ValueError('video_vision_limit')
+
+    def start_engine(self):
+        self.check()
+        if self._engine_started:
+            raise ValueError('video_runtime_engine_started')
+        self._engine_started = True
+        self._engine_deadline = self.clock() + 1200
+
+    def end_engine(self):
+        self._engine_deadline = None
+
+    def engine_deadline(self):
+        return self._engine_deadline
+
+
+def _semantic_schema(payload):
+    from .ai_skill_service import load_ai_skill_schema
+    from .ui_video_stage_policy import _provider_projection, validate_output_schema
+    schema = _provider_projection(load_ai_skill_schema('ui_video_trajectory')['oneOf'][0])
+    refs = [f['frame_id'] for f in payload['frames']]
+    owned = payload['owned_frame_ids']
+    prior = [''] + [e['event_id'] for e in payload.get('prior_events', [])]
+    def narrow(node):
+        for key, child in node.get('properties', {}).items():
+            if key in {'first_frame', 'last_frame'}:
+                child['enum'] = refs
+            elif key == 'trigger_frame':
+                child['enum'] = owned
+            elif key == 'frame_refs':
+                child['items']['enum'] = refs
+            elif key == 'continuation_of':
+                child['enum'] = list(dict.fromkeys(prior))
+            narrow(child)
+        if 'items' in node:
+            narrow(node['items'])
+        for child in node.get('anyOf', []):
+            narrow(child)
+    narrow(schema)
+    return validate_output_schema(schema)
+
+
+def run_runtime(document, workspace, source_path, check, publish, *, budget=None):
+    """Return original analysis shape; parent remains the sole source publisher.
+
+    check reauthorizes source binding and may raise; publish performs the same
+    check and owner/app/version/status CAS. Only injected tests replace normal
+    helpers. Production always uses owned jobs, bounded records and original
+    trajectory, consolidation, outcome review and final input recovery.
+    """
+    from .ui_video_records import RecordStore
+    from .ui_video_model_jobs import ModelJobs
+    from .ui_video_windows import load_assets
+    from .ui_video_trajectory import observe_trajectory
+    from .ui_video_audit_batches import partition_audit_claims
+    from .ui_video_audit_sampling import select_audit_fine_frames
+    from .ui_video_execution_contract import VIDEO_EXPLICIT_KEYBOARD_V1
+    from .ui_video_revisit import make_revisit_loader
+    from .ui_video_analysis import consolidate_observed_frames
+    from .ui_video_business_inputs import recover_business_inputs
+    from .ui_video_stage_policy import STAGES
+
+    bank = PerceptionBank(document['media']['frames'])
+    budget = budget or RuntimeBudget(bank.original_count)
+    media = copy.deepcopy(document['media'])
+    def boundary():
+        check()
+        budget.check()
+    def cancelled():
+        boundary()
+        return False
+    def progress(phase, completed, total, events):
+        boundary()
+        if phase == 'observing':
+            budget.freeze_packets(total)
+        publish(media=copy.deepcopy(media), raw_events=events,
+                analysis_progress={'phase': phase, 'completed': completed, 'total': total})
+        boundary()
+
+    boundary()
+    with RecordStore(Path(workspace) / 'model-records') as records:
+        jobs = ModelJobs(records, deadline=budget.deadline, reserve=budget.reserve,
+                         check=boundary, engine_deadline=budget.engine_deadline)
+        try:
+            with jobs:
+                def produce(windows, initial=False):
+                    offset = len(jobs.accounting)
+                    def builders():
+                        for window in windows:
+                            def build(window=window):
+                                boundary()
+                                payload = {'phase': 'whole-perception', **copy.deepcopy(window),
+                                    'image_frames': copy.deepcopy(window['frames'])}
+                                assets = load_assets(window['frames'], workspace, cancelled)
+                                boundary()
+                                return 'ui_video_perception', payload, dict(version='v1', video_stage='perception',
+                                    model_config={'providerId':'qwen_plus','model':STAGES['perception'][3]},
+                                    image_assets=assets, timeout=120, retry_count=0, max_tokens=4000,
+                                    repair_invalid_json=False)
+                            yield build
+                    iterator = jobs.map(builders())
+                    try:
+                        for index, raw in iterator:
+                            boundary()
+                            if len(jobs.accounting)<=offset+index:
+                                raise ValueError('video_perception_receipt_missing')
+                            row = jobs.accounting[offset + index]
+                            if not (row.get('admitted') and row.get('receipt_persisted') and
+                                    row.get('proof_ref') and row.get('receipt_ref')):
+                                raise ValueError('video_perception_receipt_missing')
+                            bank.admit(windows[index], raw, row)
+                            if initial:
+                                progress('perceiving', len(bank.entries), bank.original_count, [])
+                    finally:
+                        iterator.close()
+
+                def runner(skill, payload, **kwargs):
+                    boundary()
+                    payload = copy.deepcopy(payload)
+                    version = kwargs.get('version', 'v1')
+                    stage = next((name for name, rule in STAGES.items() if (skill, version) == rule[:2]), None)
+                    if stage is None:
+                        raise ValueError('video_stage_scope_invalid')
+                    if stage == 'semantic':
+                        if not budget.frozen:
+                            raise ValueError('video_runtime_packets_missing')
+                        payload.pop('image_frames', None)
+                        payload['perception_bank'] = bank.project(payload)
+                        kwargs.update(image_assets=[], output_schema=_semantic_schema(payload))
+                    elif stage == 'audit':
+                        projection = bank.project(payload)
+                        # Sampler takes current roles; immutable producer roles in
+                        # the bank remain untouched and are not sent as new claims.
+                        facts = [{**copy.deepcopy(row), 'role': projection['packet_roles'][row['frame_id']]}
+                                 for window in projection['windows'] for row in window['frames']]
+                        fine = select_audit_fine_frames(payload['frames'], payload['trajectory'], facts, payload['owned_frame_ids'])
+                        payload.update(perception_mode='fine-detail',
+                                       perception_frame_ids=fine or [payload['owned_frame_ids'][0]])
+                    kwargs['model_config']={'providerId':'qwen_plus','model':STAGES[stage][3]}
+                    return jobs.run(skill, payload, **kwargs, video_stage=stage)
+
+                produce(bank.windows, initial=True)
+                boundary()
+                loader = make_revisit_loader(source_path, workspace, bank.frames, cancelled)
+                def revisit(request, capacity, *, owned_time_range_ms):
+                    boundary()
+                    extra = loader(request, capacity, owned_time_range_ms=owned_time_range_ms)
+                    boundary()
+                    windows = bank.add_frames(extra)
+                    media['frames'] = copy.deepcopy(bank.frames)
+                    # Make matching media available before any progress/event refs,
+                    # even if overlay perception or a later original tail fails.
+                    publish(media=copy.deepcopy(media))
+                    produce(windows)
+                    return extra
+                budget.start_engine()
+                observed = observe_trajectory(document, workspace, cancelled, progress,
+                    revisit_bounded=revisit, skill_runner=runner, audit_batcher=partition_audit_claims,
+                    execution_contract=VIDEO_EXPLICIT_KEYBOARD_V1)
+                budget.end_engine()
+                boundary()
+                media = copy.deepcopy(observed['media'])
+                trusted = {'media': media, 'execution_contract': VIDEO_EXPLICIT_KEYBOARD_V1,
+                           'trajectory_audit': copy.deepcopy(observed['trajectory_audit'])}
+                augmented = {**document, **trusted}
+                publish(**trusted)
+                first_pass = copy.deepcopy(observed['events'])
+                result = consolidate_observed_frames(augmented, workspace, cancelled, observed,
+                    first_pass, [], progress, skill_runner=runner)
+                result.update(trusted)
+                progress('input_recovery', 0, 1, result['events'])
+                result = recover_business_inputs(result, augmented, workspace, cancelled, skill_runner=runner)
+                boundary()
+            boundary()
+        finally:
+            # All owned jobs have closed before the manifest is frozen. A failed
+            # store latches and raises here; never claim an unpersisted raw receipt.
+            refs = [records.append('status', row) for row in jobs.accounting]
+            aggregate = records.append('aggregate', {'refs': refs})
+            private = {'mode': MODE, 'windows': bank.index(), 'records': records.snapshot(),
+                       'accounting_ref': aggregate}
+            summary = {'mode': MODE, 'original_windows': bank.original_count,
+                       'reserved': budget.reserved, 'limit': budget.limit,
+                       'receipts': sum(row.get('receipt_persisted', False) for row in jobs.accounting)}
+            # Parent checks current access independently; terminal revocation can
+            # settle without publishing this content or mutating a foreign source.
+            check()
+            publish(media=copy.deepcopy(media), video_runtime_private=private, video_runtime_summary=summary)
+        result.update(video_runtime_private=private, video_runtime_summary=summary)
+    boundary()
+    return result

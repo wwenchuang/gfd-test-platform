@@ -21,8 +21,9 @@ def _safe_value(value):
             not any(ord(c)<32 for c in value))
 
 
-def recover_business_inputs(result,document,root,cancelled):
+def recover_business_inputs(result,document,root,cancelled,*,skill_runner=None):
     from . import ai_skill_service as ai
+    run_skill=ai.run_ai_skill if skill_runner is None else skill_runner
     from .ui_video_windows import load_assets
     if cancelled():raise ValueError('video_cancelled')
     out=copy.deepcopy(result);audit=[];checks=[];allowed={};image_ids=set()
@@ -49,7 +50,7 @@ def recover_business_inputs(result,document,root,cancelled):
         extra=next((f for f in reversed(frames) if f['timestamp_ms']<images[0]['timestamp_ms']),None)
         if extra:images.insert(0,extra)
     if not 2<=len(images)<=60:raise ValueError('video_vision_limit')
-    raw=ai.run_ai_skill('ui_video_observe',{'phase':'whole-observe','frames':images,'image_frames':images,
+    raw=run_skill('ui_video_observe',{'phase':'whole-observe','frames':images,'image_frames':images,
         'duration_ms':document['media']['duration_ms'],'checks':checks},image_assets=load_assets(images,root,cancelled),
         version='inputs',timeout=120,retry_count=0,max_tokens=3000,repair_invalid_json=False)
     if cancelled():raise ValueError('video_cancelled')

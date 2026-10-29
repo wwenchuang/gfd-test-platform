@@ -76,9 +76,10 @@ test('stages require official exact Max route',()=>{
  {baseUrl:'https://dashscope.aliyuncs.com@evil.example/v1'},{baseUrl:'https://dashscope.aliyuncs.com.evil.example/v1'}])
   assert.throws(()=>complete(input(stage),{...route,...change}),/video_.*route/);
 });
-function orchestration(fail=false, usage={prompt_tokens:1,completion_tokens:2,total_tokens:3},dispatch=null) {
+function orchestration(fail=false, usage={prompt_tokens:1,completion_tokens:2,total_tokens:3},dispatch=null,primaryRoute=route) {
  const calls=[],logs=[];let handler;
- const providers={providers:{primary:{...route,name:'primary'},backup:{...route,name:'backup'}}};
+ const official=JSON.parse(fs.readFileSync(new URL('../ai-gateway/config/providers.json',import.meta.url),'utf8')).providers.qwen_plus;
+ const providers={providers:{primary:{...primaryRoute,name:'primary'},backup:{...route,name:'backup'},qwen_plus:official}};
  const sandbox=vm.createContext({Buffer,createHash,AbortController,setTimeout,clearTimeout,DYNAMIC_PROVIDER_PREFIX:'dynamic:',ROUTER_FILE:'offline',AI_CALL_TIMEOUT_MS:120000,
  AI_CALL_FALLBACK_RESERVE_MS:10000,MOCK_ENABLED:false,SKILL_ACTION_MAP:{},readJson:async()=>({generate_case:{providerId:'primary',fallbackProviderIds:['backup']}}),
  readProviders:async()=>providers,uuidv4:()=> 'offline',appendAiLog:async e=>logs.push(e),sanitizeError:e=>String(e.message),preview:()=>'',
@@ -240,4 +241,19 @@ test('normal completed response removes cancellation listeners without aborting 
  const badRes=Object.assign(new EventEmitter(),{json(){}});
  await assert.rejects(run.handler(badReq,badRes),/video_stage_deadline/);
  assert.equal(badReq.listenerCount('aborted'),0);assert.equal(badRes.listenerCount('close'),0);
+});
+
+
+test('normal runtime pins official provider and Flash despite a nonofficial generic route',async()=>{
+ const unpinned=input('overview');unpinned.payload.reasoning_mode='bounded';
+ unpinned.model='qwen3.8-flash';unpinned.modelConfig={model:'qwen3.8-flash'};
+ const nonofficial={...route,baseUrl:'https://generic.example.invalid/v1'};
+ const rejected=orchestration(false,{},null,nonofficial);
+ await assert.rejects(rejected.request(unpinned),/video_stage_route_unsupported/);assert.equal(rejected.calls.length,0);
+ const pinned={...unpinned,providerId:'qwen_plus',modelConfig:{providerId:'qwen_plus',model:'qwen3.8-flash'},maxTokens:10000};
+ const run=orchestration(false,{},null,nonofficial);const response=await run.request(pinned);
+ assert.equal(response.success,true);assert.equal(response.providerId,'qwen_plus');assert.equal(response.model,'qwen3.8-flash');
+ assert.equal(response.fallbackUsed,false);assert.equal(run.calls.length,1);
+ assert.equal(run.calls[0].options.model,'qwen3.8-flash');assert.equal(run.calls[0].options.thinking_budget,1024);
+ assert.equal(response.videoPolicy.model,'qwen3.8-flash');assert.equal(response.videoPolicy.effective_options.max_tokens,10000);
 });
