@@ -327,11 +327,13 @@ def run_runtime(document, workspace, source_path, check, publish, *, budget=None
             # copied into an error code or used to authorize a new action.
             previous=trajectory_diagnostics[-1] if trajectory_diagnostics else {}
             reason=(previous.get('reason') if previous.get('kind') in {'capacity_refusal','acquisition_failure'} else None)
-            if reason is None:
+            # A callback also runs overlay jobs: its generic acquisition label
+            # must not mask the actual deadline or exhausted provider allowance.
+            if reason in {None,'acquisition_failed'}:
                 reason=('runtime_deadline' if isinstance(error,TimeoutError) and str(error)=='video_runtime_deadline' else
                         'model_job_deadline' if isinstance(error,TimeoutError) and str(error)=='video_job_deadline' else
                         'provider_allowance' if str(error)=='video_vision_limit' and budget.reserved>=budget.limit else
-                        'runtime_failed')
+                        reason or 'runtime_failed')
             if len(trajectory_diagnostics)<64:
                 trajectory_diagnostics.append({'kind':'runtime_failure','reason':reason,
                     **{k:copy.deepcopy(previous[k]) for k in ('stage','packet_id','call','proof_ref','receipt_ref') if k in previous},
