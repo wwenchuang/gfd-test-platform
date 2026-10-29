@@ -330,7 +330,7 @@ def validate_revisit_requests(requests,packet,*,allow_context_anchors=False):
         seen.add(bounds[:2])
 
 
-def observe_trajectory(document,root,cancelled,progress=None,record=None,revisit=None,*,revisit_bounded=None,skill_runner=None,audit_batcher=None,execution_contract=None):
+def observe_trajectory(document,root,cancelled,progress=None,record=None,revisit=None,*,revisit_bounded=None,skill_runner=None,audit_batcher=None,execution_contract=None,diagnostics=None):
     validate_execution_contract(execution_contract)
     from . import ai_skill_service as ai
     from .ui_video_windows import load_assets
@@ -341,6 +341,22 @@ def observe_trajectory(document,root,cancelled,progress=None,record=None,revisit
     bounded_revisit=revisit_bounded is not None
     frames=copy.deepcopy(document['media']['frames']);duration=document['media']['duration_ms']
     calls=0;corrections=0;revisits=0;started=time.monotonic();secrets=[];call_audit=[];revisit_attempts=[];repair_feedback=[]
+    # At most24 replies,3 rejections,4 acquisitions and terminal capacity records.
+    # Questions stay in immutable raw receipts; paths retain provenance without
+    # turning rejected model narrative into execution authority.
+    last_diagnostic={}
+    def diagnose(kind, **fields):
+        if diagnostics is not None and len(diagnostics)<64:
+            diagnostics.append(copy.deepcopy({'kind':kind,**last_diagnostic,
+                'corrections':corrections,'revisits':revisits,
+                'acquired_frames':sum(len(a['new_frames']) for a in revisit_attempts),**fields}))
+    def question_refs(raw):
+        if not isinstance(raw,dict):return {'status':'unverified_model_claims'}
+        return {'status':'unverified_model_claims','root_path':'uncertainties',
+                'root_uncertainty_count':len(raw.get('uncertainties',[])) if isinstance(raw.get('uncertainties'),list) else 0,
+                'event_path':'events[*].uncertainties','audit_paths':['checks[*].question','issues[*].question'],
+                'revisit_path':'revisit[*].question',
+                'revisit_count':len(raw.get('revisit',[])) if isinstance(raw.get('revisit'),list) else 0}
     def redact(value):
         if isinstance(value,str):
             for secret in secrets:
@@ -351,7 +367,9 @@ def observe_trajectory(document,root,cancelled,progress=None,record=None,revisit
     def ask_once(version,images,**context):
         nonlocal calls
         if cancelled():raise ValueError('video_cancelled')
-        if calls>=24 or time.monotonic()-started>1200:raise ValueError('video_vision_limit')
+        if calls>=24 or time.monotonic()-started>1200:
+            diagnose('capacity_refusal',reason='trajectory_calls' if calls>=24 else 'trajectory_deadline')
+            raise ValueError('video_vision_limit')
         calls+=1;trace={};tick=time.monotonic()
         exhausted=[copy.deepcopy(a) for a in revisit_attempts if a['status']=='no_new_frames' and a['packet_id']==context.get('packet_id')]
         if exhausted:
@@ -360,8 +378,16 @@ def observe_trajectory(document,root,cancelled,progress=None,record=None,revisit
         if execution_contract is not None:payload['execution_contract']=execution_contract
         if version in {'observe','audit'}:payload['revisit_context_anchors']=bounded_revisit
         if record:record(f'{calls:02d}-{version}-request',redact(payload))
-        raw=run_skill('ui_video_trajectory',payload,version=version,image_assets=load_assets(images,root,cancelled),
-                            runtime_trace=trace,timeout=120,respect_global_timeout=False,retry_count=0,max_tokens=10000,repair_invalid_json=False)
+        last_diagnostic.clear()
+        last_diagnostic.update(stage=version,packet_id=context.get('packet_id'),call=calls)
+        raw=None
+        try:
+            raw=run_skill('ui_video_trajectory',payload,version=version,image_assets=load_assets(images,root,cancelled),
+                                runtime_trace=trace,timeout=120,respect_global_timeout=False,retry_count=0,max_tokens=10000,repair_invalid_json=False)
+        finally:
+            last_diagnostic.update(copy.deepcopy(trace.get('video_record_refs',{})))
+            last_diagnostic['questions_ref']=question_refs(raw)
+            diagnose('response')
         if cancelled():raise ValueError('video_cancelled')
         if isinstance(raw,dict):
             secrets.extend(e.get('value') for e in raw.get('events',[]) if isinstance(e,dict) and e.get('action')=='aiInput' and isinstance(e.get('value'),str) and e['value'])
@@ -391,12 +417,13 @@ def observe_trajectory(document,root,cancelled,progress=None,record=None,revisit
                 if version=='overview' and (raw['events'] or raw['checks']):_fail('overview_shape')
                 if version=='observe' and raw['checks']:_fail('observe_checks')
                 if revisit_packet is not None:validate_revisit_requests(raw.get('revisit',[]),revisit_packet,allow_context_anchors=bounded_revisit)
-                if validator is not None and not raw.get('revisit'):validator(raw)
+                if validator is not None:validator(raw)
                 return raw
             except ValueError as error:
-                if corrections>=2:raise
                 from .ai_skill_service import SkillSchemaError
                 if not isinstance(error,SkillSchemaError) and not hasattr(error,'trajectory_reason'):raise
+                diagnose('rejection',reason=getattr(error,'trajectory_reason','schema'))
+                if corrections>=2:raise
                 corrections+=1
                 reason=getattr(error,'trajectory_reason','schema')
                 rejection={'stage':version,'reason':reason}
@@ -445,12 +472,24 @@ def observe_trajectory(document,root,cancelled,progress=None,record=None,revisit
             if exhausted(request):
                 questions.append('补帧区间已无新增原帧，仍需核实：'+request['first_frame']+'至'+request['last_frame']+'：'+request['question'])
                 continue
-            if revisits>=4:_fail('revisit_budget')
+            if revisits>=4:
+                diagnose('capacity_refusal',reason='revisit_attempts',packet_frames=len(packet['frames']),
+                         pending_request_indexes=list(range(index,len(requests))))
+                _fail('revisit_budget')
             remaining=sum(not exhausted(pending) for pending in requests[index:])
             capacity=min(20,(60-len(packet['frames']))//remaining)
-            if capacity<2:raise ValueError('video_vision_limit')
-            extra=(revisit_bounded(request,capacity,owned_time_range_ms=(start,end))
-                   if bounded_revisit else revisit(request,capacity))
+            if capacity<2:
+                diagnose('capacity_refusal',reason='request_image_capacity',packet_frames=len(packet['frames']),
+                         capacity=capacity,pending_request_indexes=list(range(index,len(requests))))
+                raise ValueError('video_vision_limit')
+            try:
+                extra=(revisit_bounded(request,capacity,owned_time_range_ms=(start,end))
+                       if bounded_revisit else revisit(request,capacity))
+            except (ValueError,TimeoutError) as error:
+                diagnose('acquisition_failure',reason='loader_capacity' if str(error)=='video_revisit_limit' else 'acquisition_failed',
+                         packet_frames=len(packet['frames']),capacity=capacity,
+                         pending_request_indexes=list(range(index,len(requests))))
+                raise
             if cancelled():raise ValueError('video_cancelled')
             if not isinstance(extra,list) or not 0<=len(extra)<=capacity:_fail('revisit_result')
             stamps=set(times.values());names=set(times)
@@ -466,6 +505,7 @@ def observe_trajectory(document,root,cancelled,progress=None,record=None,revisit
                      'decoded_time_range_ms':[clipped_left,clipped_right],'decoded_end_exclusive':clipped_right==end,
                      'owned_time_range_ms':[start,end],'status':'frames_added' if extra else 'no_new_frames'}
             revisit_attempts.append(attempt)
+            diagnose('acquisition',status=attempt['status'],request_index=index,new_frame_count=len(extra),capacity=capacity)
             if not extra:questions.append('补帧无新增原帧，仍需核实：'+request['first_frame']+'至'+request['last_frame']+'：'+request['question'])
             frames=sorted(frames+extra,key=lambda f:f['timestamp_ms'])
             packet['frames']=sorted(packet['frames']+extra,key=lambda f:f['timestamp_ms'])
@@ -493,13 +533,13 @@ def observe_trajectory(document,root,cancelled,progress=None,record=None,revisit
                     owned_time_range_ms=[packet['owned_start_ms'],packet['owned_end_ms']],
                     prior_events=[{**t,'event':e} for t,e in list(zip(tracks,events))[-8:]],validation_feedback=feedback,
                     **({'audit_feedback':copy.deepcopy(audit_feedback)} if audit_feedback is not None else {}))
-            if expand(packet,raw.get('revisit',[])):continue
             try:
                 extra=validate_states(raw['states'],packet['frames'])
                 proposed,history=bind_packet_events(raw['events'],packet,frames,events,tracks)
                 if execution_contract is not None:_validate_positive_trigger_locks(positive_trigger_locks,history,packet)
             except ValueError as error:
                 reason=getattr(error,'trajectory_reason','contract')
+                diagnose('rejection',reason=reason)
                 if corrections>=2:
                     if reason=='audit_positive_trigger_changed':_fail('audit_positive_trigger_exhausted')
                     raise
@@ -507,9 +547,14 @@ def observe_trajectory(document,root,cancelled,progress=None,record=None,revisit
                 if reason=='audit_positive_trigger_changed' and record:
                     record(f'{calls:02d}-positive-trigger-rejection',{'reason':reason,'packet_id':packet['packet_id']})
                 feedback='结构或证据未通过：'+reason+'。重看同一组原图，完整输出当前包；不改写上下文动作，不补造操作。'
+                if reason=='event_evidence':
+                    feedback+='frame_refs必须保留该事件的真实trigger_frame和outcome锚点，只能选择已提供的原帧。'
+                if reason=='input_continuation':
+                    feedback+='continuation_of只能延续紧邻的最后一个aiInput，且必须同页面同字段、无提交或其他业务操作间隔；不能把跨页导航合并为输入。'
                 if reason in {'state_shape','state_reference','state_kind'}:
                     feedback+='states每项必须且只能含state_id、first_frame、last_frame、kind、description；state_id和description为非空字符串，kind只能为page/input/wait/transition。first_frame和last_frame必须引用本次已提供的真实frame_id，first_frame不晚于last_frame，各项按first_frame时间排列。无新增状态时states可为[]；完整保留本包events和uncertainties，不能以删除状态代替修正元数据。'
                 continue
+            if expand(packet,raw.get('revisit',[])):continue
             owned=set(packet['owned_frame_ids']);batch=[]
             for track,event in zip(history,proposed):
                 for number,fragment in enumerate(track['fragments'],1):
@@ -525,9 +570,13 @@ def observe_trajectory(document,root,cancelled,progress=None,record=None,revisit
                            _validated_audit_batches(audit_batch,audit_batcher,packet))
             audit_shards=[];bound_checks=[];expanded=False;repair=False
             for shard_index,shard in enumerate(audit_batches,1):
-                first_call=calls+1
+                first_call=calls+1;validated_audit=[]
+                def validate_audit(result):
+                    bound=bind_audit_checks(result['checks'],[p['track'] for p in shard],packet['frames'])
+                    validate_audit_issues(result['issues'],packet)
+                    validated_audit.append(bound)
                 audited=ask('audit',packet['frames'],revisit_packet=packet,
-                        validator=lambda result:(bind_audit_checks(result['checks'],[p['track'] for p in shard],packet['frames']),validate_audit_issues(result['issues'],packet)),
+                        validator=validate_audit,
                         state_memory=states+extra,
                         **({'state_memory_status':'unverified_model_claims','prior_context_status':'unverified_model_claims'}
                            if execution_contract is not None else {'overview_hypotheses':overview_hypotheses}),
@@ -539,9 +588,7 @@ def observe_trajectory(document,root,cancelled,progress=None,record=None,revisit
                         prior_events=audit_prior)
                 if expand(packet,audited.get('revisit',[])):
                     expanded=True;break
-                shard_checks=bind_audit_checks(audited['checks'],[p['track'] for p in shard],packet['frames'])
-                # Exhausted revisit locators never bypass final issue validation.
-                validate_audit_issues(audited['issues'],packet)
+                shard_checks=validated_audit[-1]
                 bound_checks.extend(shard_checks)
                 audit_shards.append({'index':shard_index,'event_ids':[p['track']['event_id'] for p in shard],
                                      'calls':list(range(first_call,calls+1)),'raw':copy.deepcopy(audited)})
