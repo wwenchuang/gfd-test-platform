@@ -194,6 +194,7 @@ def test_run_reusable_after_success_and_parent_hooks_never_serialized(tmp_path, 
         assert owner.run(skill, payload, **kw) == {}
         assert owner.run(skill, payload, **kw) == {}
         assert len(proof) == len(raw) == len(gateway.calls) == 2
+        assert gateway.peak == 1
 
 
 def fake_child(monkeypatch, owner, body):
@@ -571,4 +572,159 @@ def test_recovered_cleanup_operation_preserves_original_parent_failure(tmp_path,
         assert first['row']['cleanup'] and sibling['row']['cleanup'] and not owner.active_pids
         assert owner.cleanup_failures == [dict(index=0, operations=[operation])]
     finally:
+        owner.close()
+
+
+@pytest.mark.parametrize('concurrency', [True, False, 0, 3, 5, -1, 1.0, 2.0, 4.0, '4', None])
+def test_concurrency_rejected_before_any_builder_reservation_or_dispatch(tmp_path, gateway, concurrency):
+    touched = []
+    with manager(tmp_path, gateway, reserve=lambda: touched.append('reserve')) as owner:
+        def builders():
+            touched.append('iterate')
+            yield lambda: touched.append('build')
+        with pytest.raises(jobs.ModelJobError, match='owner_invalid'):
+            list(owner.map(builders(), concurrency=concurrency))
+        assert not touched and not owner.accounting and not gateway.calls
+
+
+def test_real_http_four_peak_38_lazy_refill_and_ack_order(tmp_path, gateway):
+    built, reserved = [], []
+    with manager(tmp_path, gateway, reserve=lambda: reserved.append(True)) as owner:
+        owner.deadline = time.monotonic() + 30
+        def builders():
+            for i in range(38):
+                def build(i=i):
+                    built.append(i)
+                    assert len(built) <= sum(r['admitted'] for r in owner.accounting) + 4
+                    return invocation()
+                yield build
+        iterator = owner.map(builders(), concurrency=4)
+        first = next(iterator)
+        assert built == [0, 1, 2, 3]
+        results = [first, *iterator]
+        assert sorted(i for i, _ in results) == list(range(38))
+        assert len(reserved) == len(gateway.calls) == 38 and gateway.peak == 4
+        for row in owner.accounting:
+            events = row['events']
+            assert events.index('proof_persisted') < events.index('dispatch_intent')
+            assert events.index('raw_received') < events.index('receipt_persisted') < events.index('admitted')
+            assert row['cleanup']
+        assert not owner.active_pids
+        # Same owner lifecycle as initial perception -> reasoning -> revisit -> reasoning.
+        for revisit in (False, True, False):
+            if revisit:
+                assert sorted(i for i, _ in owner.map([invocation] * 4, concurrency=4)) == list(range(4))
+            else:
+                skill, payload, kw = invocation()
+                assert owner.run(skill, payload, **kw) == {}
+            assert owner._cleanup_deadline is None and not owner._busy and not owner.active_pids
+        assert len(owner.accounting) == len(gateway.calls) == 44
+        assert all(row['cleanup'] and row['admitted'] for row in owner.accounting)
+
+
+@pytest.mark.parametrize('failure', ['cancel', 'permission', 'deadline', 'proof', 'receipt', 'schema', 'abandon'])
+def test_four_siblings_fail_closed_without_refill_or_late_records(tmp_path, monkeypatch, failure):
+    gateway = Gateway(hold=failure in ('cancel', 'permission', 'deadline'))
+    built = []
+    def check():
+        if len(gateway.calls) == 4:
+            if failure == 'cancel': return False
+            if failure == 'permission': raise PermissionError('revoked')
+    try:
+        with manager(tmp_path, gateway, check=check) as owner:
+            if failure in ('proof', 'receipt'):
+                append = owner.records.append
+                def write(kind, value):
+                    if kind == failure: raise OSError('writer sentinel')
+                    return append(kind, value)
+                monkeypatch.setattr(owner.records, 'append', write)
+            if failure == 'schema':
+                skills = tmp_path / 'skills'
+                (skills / 'schemas').mkdir(parents=True)
+                (skills / 'prompts').mkdir()
+                (skills / 'prompts' / 'ui_video_trajectory.overview.md').write_text('schema test')
+                (skills / 'schemas' / 'ui_video_trajectory.schema.json').write_text(
+                    json.dumps({'type': 'object', 'required': ['states']}))
+                owner.child_environment['AI_SKILLS_DIR'] = str(skills)
+            def build():
+                built.append(True)
+                skill, payload, kw = invocation()
+                if failure == 'deadline': kw['timeout'] = 2
+                return skill, payload, kw
+            iterator = owner.map(iter([build] * 38), concurrency=4)
+            if failure == 'abandon':
+                next(iterator); iterator.close()
+            else:
+                expected = {'cancel': jobs.ModelJobCancelled, 'permission': PermissionError,
+                            'deadline': TimeoutError, 'proof': OSError, 'receipt': OSError,
+                            'schema': SkillSchemaError}[failure]
+                with pytest.raises(expected): list(iterator)
+            assert len(built) == 4 and not owner.active_pids
+            assert all(row['cleanup'] for row in owner.accounting)
+            snapshot = owner.records.snapshot()
+            time.sleep(.1)
+            assert snapshot == owner.records.snapshot()
+            if failure != 'schema':
+                with pytest.raises(jobs.ModelJobError, match='latched'):
+                    list(owner.map([invocation]))
+            if failure == 'proof': assert not gateway.calls
+            if failure == 'receipt': assert owner.pending_receipts
+    finally:
+        gateway.close()
+
+
+@pytest.mark.parametrize('context', [False, True])
+def test_four_unreapable_children_share_cleanup_reserve_and_keep_original_error(tmp_path, gateway, monkeypatch, context):
+    owner = manager(tmp_path, gateway)
+    siblings = [add_cleanup_double(owner, None) for _ in range(4)]
+    waits = []
+    for job in siblings:
+        def wait(timeout, job=job):
+            waits.append((job['row']['index'], timeout))
+            time.sleep(timeout)
+            raise subprocess.TimeoutExpired('private', timeout)
+        monkeypatch.setattr(job['process'], 'wait', wait)
+    original = PermissionError('original parent failure')
+    owner.check = lambda: (_ for _ in ()).throw(original)
+    before = time.monotonic()
+    try:
+        with pytest.raises(PermissionError) as caught:
+            if context:
+                with owner: list(owner.map([]))
+            else:
+                list(owner.map([]))
+        assert caught.value is original
+        assert time.monotonic() - before < jobs.CLEANUP_SECONDS + .12
+        assert not owner._busy
+        assert {index for index, _ in waits} == set(range(4))
+        assert all('kill' in job['process'].calls and job['channel'].calls for job in siblings)
+        assert all(not row['cleanup'] for row in owner.accounting) and owner._latched
+        assert len(owner.cleanup_failures) == 4
+    finally:
+        for job in siblings: monkeypatch.setattr(job['process'], 'wait', lambda timeout: 0)
+        owner.close()
+
+
+def test_four_actual_sigterm_resistant_children_join_with_one_reserve(tmp_path, gateway, monkeypatch):
+    owner = manager(tmp_path, gateway)
+    ready = tmp_path / 'ready'
+    fake_child(monkeypatch, owner, 'import signal\nsignal.signal(signal.SIGTERM,signal.SIG_IGN)\n'
+               + 'open(' + repr(str(ready)) + ',"a").write("1")\ntime.sleep(10)')
+    for i in range(4): owner._start(invocation, i)
+    children = [job['process'] for job in owner._active]
+    # Drain the startup request so every child installs its handler before close.
+    end = time.monotonic() + 3
+    try:
+        while (not ready.exists() or len(ready.read_text()) < 4) and time.monotonic() < end:
+            owner._step()
+        assert ready.read_text() == '1111'
+        before = time.monotonic()
+        owner.close()
+        assert time.monotonic() - before < jobs.CLEANUP_SECONDS + .12
+        assert not owner.active_pids and all(p.poll() is not None for p in children)
+        assert all(row['cleanup'] for row in owner.accounting)
+    finally:
+        for process in children:
+            if process.poll() is None: process.kill()
+            process.wait(timeout=1)
         owner.close()

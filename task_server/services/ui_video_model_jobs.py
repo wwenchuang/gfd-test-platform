@@ -9,8 +9,8 @@ None. Both deadlines include cleanup. run has the run_ai_skill keyword shape,
 but requires an explicit stage, forbids fallback/retry and never chooses stages.
 
 map receives a lazy iterable of zero-argument builders returning (skill, payload,
-kwargs); at most TWO are built/owned at once. It yields (input_index, result) in
-completion order. Refill occurs only when the caller resumes iteration, after
+kwargs); defaults to two owned jobs, with explicit one/four-job options. It
+yields (input_index, result) in completion order. Refill occurs only when the caller resumes iteration, after
 its own binding/publication. Builders/check/reserve/hooks stay in the parent,
 never pickled. Builders must be bounded and cooperatively call check themselves
 when doing long work; checks bracket every build. Caller must use the context
@@ -196,8 +196,9 @@ class ModelJobs:
         self.reserve, self.check, self.engine_deadline = reserve, check, engine_deadline
         self._thread = (os.getpid(), threading.get_ident())
         self._active, self.accounting, self.pending_receipts = [], [], []
-        self.cleanup_failures = []  # At most two rows, closed operation names only.
+        self.cleanup_failures = []  # At most four rows, closed operation names only.
         self._closed, self._latched, self._busy = False, False, False
+        self._cleanup_deadline = None  # Failed cleanup cannot renew its reserve on unwind.
         # No HOME/PYTHONPATH/proxy/Runner/provider key inheritance, prefix copies,
         # config-file access, or process-global environment changes.
         self.child_environment = {k: os.environ[k] for k in ('LANG', 'LC_ALL', 'LC_CTYPE', 'TZ', 'SYSTEMROOT') if k in os.environ}
@@ -207,8 +208,12 @@ class ModelJobs:
     def __enter__(self):
         return self
 
-    def __exit__(self, *_):
-        self.close()
+    def __exit__(self, exc_type, *_):
+        try:
+            self.close()
+        except ModelJobError:
+            if exc_type is None:
+                raise  # Preserve an existing parent error; diagnostics retain cleanup failure.
 
     @property
     def active_pids(self):
@@ -376,13 +381,13 @@ class ModelJobs:
         return None
 
     def _cleanup_failure(self, job, operation):
-        # Keep only the latest two owned jobs; never export exception text.
+        # Keep only the latest four owned jobs; never export exception text.
         index = job['row']['index']
         entry = next((row for row in self.cleanup_failures if row['index'] == index), None)
         if entry is None:
             entry = dict(index=index, operations=[])
             self.cleanup_failures.append(entry)
-            self.cleanup_failures[:] = self.cleanup_failures[-2:]
+            self.cleanup_failures[:] = self.cleanup_failures[-4:]
         if operation not in entry['operations']:
             entry['operations'].append(operation)
 
@@ -406,14 +411,18 @@ class ModelJobs:
         if alive:
             self._cleanup_call(job, 'terminate', process.terminate)
 
-    def _dispose(self, job, *, signal=True):
+    def _dispose(self, job, *, signal=True, deadline=None, grace_deadline=None):
+        if deadline is None:
+            deadline = self._cleanup_deadline or time.monotonic() + CLEANUP_SECONDS
+        if grace_deadline is None:
+            grace_deadline = min(deadline, time.monotonic() + .1)
         if signal:
             self._signal(job)
         elif not job.get('channel_closed'):
             job['channel_closed'] = self._cleanup_call(job, 'close', job['channel'].close)
         process, reaped = job['process'], False
         try:
-            process.wait(timeout=.1)
+            process.wait(timeout=max(0, min(.1, grace_deadline - time.monotonic())))
             reaped = True
         except subprocess.TimeoutExpired:
             pass  # Expected escalation, not an unsuccessful cleanup by itself.
@@ -421,23 +430,27 @@ class ModelJobs:
             self._cleanup_failure(job, 'wait')
         if not reaped:
             self._cleanup_call(job, 'kill', process.kill)
-            reaped = self._cleanup_call(job, 'reap', lambda: process.wait(timeout=.1))
+            reaped = self._cleanup_call(job, 'reap', lambda: process.wait(timeout=max(0, min(.1, deadline - time.monotonic()))))
         job['row']['terminal'] = True
         if not reaped or not job['channel_closed']:
             self._latched = True
+            self._cleanup_deadline = deadline
             raise ModelJobError('video_job_cleanup_failed') from None
         job['row']['cleanup'] = True
         job['row']['events'].append('cleanup')
         self._active.remove(job)
 
     def _stop_all(self):
+        # All siblings share the same reserve, including the graceful wait.
+        deadline = self._cleanup_deadline or time.monotonic() + CLEANUP_SECONDS
+        grace_deadline = min(deadline, time.monotonic() + .1)
         # Every socket/signal is attempted before any child's bounded wait.
         for job in self._active:
             self._signal(job)
         failures = []
         for job in list(self._active):
             try:
-                self._dispose(job, signal=False)
+                self._dispose(job, signal=False, deadline=deadline, grace_deadline=grace_deadline)
             except ModelJobError:
                 failures.append(job)
         for row in self.accounting:
@@ -446,6 +459,7 @@ class ModelJobs:
                 row['events'].append('cancelled_before_launch')
         if failures:
             raise ModelJobError('video_job_cleanup_failed') from None
+        self._cleanup_deadline = None
 
     def close(self):
         self._closed = True
@@ -461,8 +475,8 @@ class ModelJobs:
             iterator.close()
 
     def map(self, builders, *, concurrency=2):
-        """Yield indexed results lazily; concurrency is only 1 (run) or 2."""
-        if concurrency not in (1, 2) or self._busy:
+        """Yield indexed results lazily; explicit concurrency is integer 1, 2 or 4."""
+        if type(concurrency) is not int or concurrency not in (1, 2, 4) or self._busy:
             raise ModelJobError('video_job_owner_invalid')
         self._busy = True
         iterator, index, exhausted = iter(builders), 0, False
@@ -515,5 +529,11 @@ class ModelJobs:
                     row['events'].append(reason)
             raise
         finally:
-            self._stop_all()
-            self._busy = False
+            original = sys.exc_info()[1]
+            try:
+                self._stop_all()
+            except ModelJobError:
+                if original is None:
+                    raise
+            finally:
+                self._busy = False
