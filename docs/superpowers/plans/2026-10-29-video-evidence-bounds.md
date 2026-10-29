@@ -34,3 +34,16 @@ No private Runner bypass. Native UI retry once after actual release, frozen evid
 - [ ] Normal import, human-readable review, static validation, scoring and approved scope/phone selection.
 - [ ] Normal phone trial and report actual branch coverage, account/printer/task binding, failures/replay, no unsupported success.
 - [ ] Additional unchanged-source and independent-original qualification; no reliability claim if any required stage remains unpassed.
+
+## Task2 locked implementation contract after evidence audit
+
+Authoritative audit: `.superpowers/sdd/video-evidence-contract-audit.md`. Native actual journal17:18:32 confirms expand451. Root direct reproduction also confirms96 input_continuation.
+
+Files allowed: `task_server/services/ui_video_trajectory.py`, `task_server/services/ui_video_runtime.py`, a focused `task_server/services/ui_video_diagnostics.py` if a separate bounded ledger is simpler, existing trajectory/runtime tests and minimal captured fixtures under `tests/fixtures/ui_video/`. STATE append only, excluded commit. No Gateway/model/prompt/UI/schema/cap changes.
+
+- [ ] RED: captured86 accepted history+90 event_evidence /96 input_continuation both contain valid revisit; loader must not run until corrected reply. Exact raw fixtures with export-entry provenance. Include valid uncertain/empty-events pending-revisit and malformed audit-with-revisit. Do not fabricate fixture as implementation mirror.
+- [ ] Move existing observer state/binder/positive-lock block before expand; preserve tentative proposed/history, reobserve after actual expand. Always run provided audit validator in existing ask correction loop even when revisit nonempty. Existing2corrections/24asks/4revisits, original source/ownership unchanged; no duplicate validator.
+- [ ] Add optional run-local diagnostics plumbing to observe_trajectory and runtime failure-final publish. Bounded typed records identify rejected stage/packet/trajectorycall/reason and capacity causes/counters; link to already durable proof/receipt refs instead of duplicating unlimited raw replies. Full rejected/superseded uncertainties and revisit questions remain in immutable receipts and diagnostic provenance. Do not automatically promote every rejected model question into a new execution blocker or auto-resolve a valid existing uncertainty; preserve existing final evidence decision logic. No model output text as instruction authority.
+- [ ] On local image/attempt/loader capacity refusal, preserve pending request provenance and exact reason/counters; zero fake successful decode/no_new_frames; no counter reset or budget bypass. Keep existing outward error compatibility unless needed for exact internalreason. Do not implement >60 transport or silent skip-to-audit success in this task.
+- [ ] Verify captured44+16/two pendingrequests, no-new vs no-capacity, third invalid boundedstop, valid later owner/context/revisit/audit/positive-lock behavior and runtime terminal diagnostics/cleanup. Run focused and adjacent tests plus mandatory compile/backend/diff.
+- [ ] Commit named files only; independent scoped SPEC+QUALITY review before integration. This task is a necessary contract repair, not source/reliability acceptance. Lock context projection as a following separately tested task before next whole-source qualification if still needed; no repeated unchangednormalruns.
