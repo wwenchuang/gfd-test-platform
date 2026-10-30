@@ -16,7 +16,7 @@ def canonical_sha(value):
 def expected_provider_options(body):
     """Independent reconstruction of the closed video-stage Gateway wire policy."""
     stage = body['videoStage'];payload = body['payload'];assets = body['imageAssets']
-    content = [{'type':'text','text':body['prompt']}]
+    content = []
     for asset in assets:
         if stage == 'timeline':
             content.append({'type':'video_url','video_url':{'url':'data:video/mp4;base64,'+asset['base64']},
@@ -32,6 +32,7 @@ def expected_provider_options(body):
         part = {'type':'image_url','image_url':{'url':'data:image/jpeg;base64,'+asset['base64']}}
         if stage=='perception' or name in payload.get('perception_frame_ids', []):part['min_pixels']=1658880
         content.append(part)
+    if assets:content.append({'type':'text','text':body['prompt']})
     options = {'model':STAGES[stage][3], 'temperature':0.1, 'max_tokens':STAGES[stage][4],
         'enable_thinking':stage!='perception', 'response_format':{'type':'json_object'},
         'messages':[{'role':'system','content':SYSTEM_PROMPT},
@@ -116,3 +117,13 @@ def validate_attestation(value, body):
         raise RuntimeError('video_stage_attestation_invalid') from None
     if not matches:
         raise RuntimeError('video_stage_attestation_invalid')
+
+
+def cached_token_usage(usage):
+    """Optional measured cache count only; base token legacy types stay intact."""
+    if not isinstance(usage, dict):
+        return {}
+    prompt, cached = usage.get('promptTokens'), usage.get('cachedTokens')
+    if type(prompt) is int and 0 <= prompt <= 2**53 - 1 and type(cached) is int and 0 <= cached <= prompt:
+        return {'cachedTokens': cached}
+    return {}

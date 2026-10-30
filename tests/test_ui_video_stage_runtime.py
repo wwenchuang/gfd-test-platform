@@ -33,11 +33,12 @@ def test_perception_8192_reconstructed_options_hash_and_raw_receipt(monkeypatch,
  def http(req,timeout):
   body=json.loads(req.data);calls.append(body)
   assert body['maxTokens']==8192 and 0<timeout<=cap and 0<body['timeoutMs']<=cap*1000
-  content=[{'type':'text','text':'pixels'}]
+  content=[]
   for asset in body['imageAssets']:
    role='context' if asset['name'] in body['payload']['context_frame_ids'] else 'owned'
    content.extend([{'type':'text','text':f"{asset['name']} {asset['timestamp_ms']}ms [{role}]"},
     {'type':'image_url','image_url':{'url':'data:image/jpeg;base64,'+asset['base64']},'min_pixels':1658880}])
+  content.append({'type':'text','text':'pixels'})
   # Literal independent policy, rather than deriving the expectation from STAGES.
   options={'model':'qwen3.8-max','temperature':0.1,'max_tokens':8192,'enable_thinking':False,
    'response_format':{'type':'json_object'},'messages':[

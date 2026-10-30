@@ -7,6 +7,7 @@ import time
 
 from .ui_video_analysis import _bind_whole_evidence, validate_analysis
 from .ui_video_stage_policy import video_stage_image_limit
+from .ui_video_stage_receipts import cached_token_usage
 from .ui_video_execution_contract import validate_execution_contract, project_audit_claims
 
 ROOT_FIELDS={'states','events','checks','uncertainties','multiple_scenarios'}
@@ -498,6 +499,7 @@ def observe_trajectory(document,root,cancelled,progress=None,record=None,revisit
         if isinstance(usage,dict):
             counts={k:v for k,v in usage.items() if k in {'promptTokens','completionTokens','reasoningTokens','totalTokens'}
                     and type(v) in {int,float} and v>=0 and (type(v) is int or math.isfinite(v))}
+            counts.update(cached_token_usage(usage))
             if counts:entry['usage']=counts
         if execution_contract is not None:entry['raw_response']=redact(copy.deepcopy(raw))
         if version=='audit' and audit_batcher is not None:

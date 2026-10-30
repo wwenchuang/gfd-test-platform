@@ -646,7 +646,7 @@ def ai_gateway_skill_content(
         raise ValueError("video_stage_proof_invalid")
     if stage:
         from .ui_video_stage_policy import POLICY_VERSION, STAGES
-        from .ui_video_stage_receipts import safe_attestation, validate_attestation
+        from .ui_video_stage_receipts import safe_attestation, validate_attestation, cached_token_usage
         if (type(timeout) not in (int, float) or not math.isfinite(timeout) or timeout <= 0 or
                 temperature != 0.1 or (max_tokens is not None and max_tokens != STAGES[stage][4]) or
                 set(model_config) - {'providerId', 'model'} or
@@ -781,8 +781,8 @@ def ai_gateway_skill_content(
     selected_model = model_config.get("model") or model_config.get("modelName") or ""
     usage = data.get("usage") if isinstance(data.get("usage"), dict) else {}
     if stage:
-        usage = {k:v for k,v in usage.items() if k in {'promptTokens','completionTokens','reasoningTokens','totalTokens'}
-                 and type(v) in (int,float) and 0 <= v <= 2**53 and math.isfinite(v)}
+        usage = {**{k:v for k,v in usage.items() if k in {'promptTokens','completionTokens','reasoningTokens','totalTokens'}
+                 and type(v) in (int,float) and 0 <= v <= 2**53 and math.isfinite(v)}, **cached_token_usage(usage)}
     runtime_trace.update({
         "selectedProviderId": selected_provider_id,
         "selectedModel": selected_model,
@@ -817,7 +817,7 @@ def ai_gateway_skill_content(
                     "providerId":data.get('providerId') if type(data.get('providerId')) is str and re.fullmatch(r'[A-Za-z0-9:_-]{1,128}', data['providerId']) else None,
                     "model":data.get('model') if type(data.get('model')) is str and re.fullmatch(r'[A-Za-z0-9._:-]{1,128}', data['model']) else None,
                     "fallbackUsed":data.get('fallbackUsed') if type(data.get('fallbackUsed')) is bool else None,
-                    "finishReason":data.get('finishReason') if type(data.get('finishReason')) is str and data.get('finishReason') in {'stop','length','content_filter','tool_calls','function_call',''} else None, "usage": receipt_usage,
+                    "finishReason":data.get('finishReason') if type(data.get('finishReason')) is str and data.get('finishReason') in {'stop','length','content_filter','tool_calls','function_call',''} else None, "usage": {**receipt_usage, **cached_token_usage(usage)},
                     "videoPolicy":safe_attestation(data.get("videoPolicy")),
                     "gateway_request_sha256": hashlib.sha256(body).hexdigest()})
     if stage:
