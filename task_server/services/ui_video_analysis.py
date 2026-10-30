@@ -753,7 +753,7 @@ def _business_question_presentation(root_questions, events):
     return questions,set(anchors)
 
 
-def _pack_business_review_questions(root_questions, event_issues, snapshot, global_questions):
+def _pack_business_review_questions(root_questions, event_issues, snapshot, global_questions, steps):
     """Pack whole literal issues, retaining every event association separately.
 
     A maximum-length atomic issue uses its unprefixed text; the adjacent derived
@@ -762,7 +762,23 @@ def _pack_business_review_questions(root_questions, event_issues, snapshot, glob
     associated={q for issues in event_issues for q in issues}
     questions=[q for q in root_questions if q not in associated]
     groups=[]
+    current={step['step_id']:step for step in steps}
     for index,(event,issues) in enumerate(zip(snapshot['events'],event_issues)):
+        source_ref=f"video:{snapshot['source_id']}:{snapshot['analysis_version']}:{index}"
+        original_step_id=event['draft_step_id'];step_id=original_step_id
+        replacement={}
+        if step_id not in current:
+            recovery=snapshot.get('print_recovery')
+            if not recovery or index!=recovery['confirm']:raise ValueError('video_retry_invalid')
+            replacement_index=recovery['cancel']
+            step_id=snapshot['events'][replacement_index]['draft_step_id']
+            if step_id not in current or current[step_id]['action']!='cancelPrint':raise ValueError('video_retry_invalid')
+            replacement={'replacement_event_index':replacement_index}
+        # Selection/assertion companions share the original source. Recovery's
+        # removed confirmation explicitly maps to the surviving cancel action;
+        # its immutable original source_ref is never relabeled as the cancel's.
+        step_ids=[step['step_id'] for step in steps if step['source_ref']==source_ref]
+        if step_id not in step_ids:step_ids.append(step_id)
         prefix=f'事件 {index+1}（片段 {event["start_ms"]/1000:g}–{event["end_ms"]/1000:g} 秒）：'
         chunks=[];chunk=[]
         for issue in dict.fromkeys(issues):
@@ -777,8 +793,8 @@ def _pack_business_review_questions(root_questions, event_issues, snapshot, glob
             if len(text)>2000:text=members[0]  # One full issue, anchor in ledger.
             questions.append(text)
             groups.append({'event_index':index,'start_ms':event['start_ms'],'end_ms':event['end_ms'],
-                           'step_id':event['draft_step_id'],
-                           'source_ref':f"video:{snapshot['source_id']}:{snapshot['analysis_version']}:{index}",
+                           'original_step_id':original_step_id,'step_id':step_id,'step_ids':list(step_ids),
+                           'source_ref':source_ref,'step_source_refs':{sid:current[sid]['source_ref'] for sid in step_ids},**replacement,
                            'issues':list(members),'question':text})
     snapshot['review_question_groups']=groups
     return questions+global_questions
@@ -863,7 +879,7 @@ def draft_proposal(document):
     needs_groups=business and (len(questions)>100 or any(len(q)>2000 for q in questions))
     normalized=None if needs_groups else normalize_steps(payload,document['app_id'])
     if business and (needs_groups or len(normalized['questions'])>100):
-        payload['questions']=_pack_business_review_questions(document['uncertainties'],event_issues,snapshot,global_questions)
+        payload['questions']=_pack_business_review_questions(document['uncertainties'],event_issues,snapshot,global_questions,steps)
         normalized=normalize_steps(payload,document['app_id'])
         # Normalization can append unresolved step questions. Validate that final
         # presentation too, with the same unchanged normal draft contract.

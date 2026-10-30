@@ -193,3 +193,54 @@ def test_legacy_capacity_shape_still_rejects_without_grouping():
     before=copy.deepcopy(doc)
     with pytest.raises(ValueError,match='最多100项'):analysis.draft_proposal(doc)
     assert doc==before
+
+
+def test_normal_print_recovery_rebinds_confirm_review_to_surviving_cancel_step():
+    doc=shaped(True);doc['print_recovery']={'submit':0,'cancel':1,'confirm':2}
+    doc['events'][0]['target']='确认打印'
+    doc['events'][1]['target']='取消打印'
+    doc['events'][2]['target']='确认取消'
+    before=copy.deepcopy(doc)
+    proposal,snapshot=analysis.draft_proposal(doc)
+    assert doc==before and len(proposal['steps'])==37
+    current={s['step_id']:s for s in proposal['steps']}
+    assert current[snapshot['events'][0]['draft_step_id']]['action']=='submitPrint'
+    cancel=snapshot['events'][1]['draft_step_id']
+    assert current[cancel]['action']=='cancelPrint'
+    original=snapshot['events'][2]['draft_step_id']
+    assert original not in current
+    groups=[g for g in snapshot['review_question_groups'] if g['event_index']==2]
+    assert groups and sum(len(g['issues']) for g in groups)==4
+    for g in groups:
+        assert g['original_step_id']==original and g['step_id']==cancel
+        assert g['step_ids']==[cancel]
+        assert g['replacement_event_index']==1
+        assert g['source_ref'].endswith(':2')
+        assert g['step_source_refs']=={cancel:current[cancel]['source_ref']}
+        assert current[cancel]['source_ref'].endswith(':1')
+        assert (g['start_ms'],g['end_ms'])==(doc['events'][2]['start_ms'],doc['events'][2]['end_ms'])
+        assert g['question'] in proposal['questions']
+    for g in snapshot['review_question_groups']:
+        assert g['step_id'] in current and set(g['step_ids'])<=set(current)
+    assert all(s['review_state']=='needs_review' for s in proposal['steps'])
+    for old,new in zip(doc['events'],snapshot['events']):
+        assert all(new[k]==v for k,v in old.items())
+
+
+def test_group_mapping_includes_selection_and_final_assertion_companions():
+    doc=shaped(True)
+    doc['events'][2].update(selection='仅本次创建的测试对象',target='{{本次对象}}详情入口',reusable_expected='页面显示{{本次对象}}与{{保留对象}}均保留')
+    doc['events'][-1].update(action='aiTap',uncertainties=['末尾完整审阅问题'])
+    proposal,snapshot=analysis.draft_proposal(doc)
+    current={s['step_id'] for s in proposal['steps']}
+    for index,companion in ((2,'selection_step_id'),(37,'expected_check_step_id')):
+        event=snapshot['events'][index]
+        groups=[g for g in snapshot['review_question_groups'] if g['event_index']==index]
+        assert groups
+        for g in groups:
+            assert g['original_step_id']==event['draft_step_id']
+            assert set(g['step_ids'])=={event['draft_step_id'],event[companion]}
+            assert set(g['step_ids'])<=current
+            assert set(g['step_source_refs'])==set(g['step_ids'])
+            assert set(g['step_source_refs'].values())=={g['source_ref']}
+            assert 'replacement_event_index' not in g
