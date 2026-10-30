@@ -207,7 +207,7 @@ def validate_video_stage(skill, payload, assets, stage=UNSET, schema=UNSET, *, v
         from .ui_video_perception_binding import _source_index
         if (not isinstance(assets, list) or not 2 <= len(assets) <= 12 or
                 payload.get('image_frames') != payload.get('frames') or
-                any(k in payload for k in ('detail_frames', 'perception_mode', 'perception_frame_ids'))):
+                any(k in payload for k in ('perception_mode', 'perception_frame_ids'))):
             raise ValueError('video_stage_perception_invalid')
         try:
             _source_index(payload)
@@ -220,6 +220,10 @@ def validate_video_stage(skill, payload, assets, stage=UNSET, schema=UNSET, *, v
         raise ValueError('video_perception_selection_invalid')
     frames = payload.get('image_frames')
     _metadata(frames)
+    if stage == 'perception':
+        from .ui_video_perception_details import validate_detail_frames
+        details = validate_detail_frames(frames, payload.get('detail_frames', []))
+        frames = frames + details
     if not isinstance(assets, list) or len(assets) != len(frames) or not 2 <= len(assets) <= video_stage_image_limit(stage):
         raise ValueError('video_vision_limit')
     if stage == 'audit' and any(k in payload for k in ('perception_mode', 'perception_frame_ids')):
@@ -235,7 +239,8 @@ def validate_video_stage(skill, payload, assets, stage=UNSET, schema=UNSET, *, v
         if not isinstance(asset, dict):
             raise ValueError('video_frames_invalid')
         data = asset.get('base64')
-        if (asset.get('name') != frame['frame_id'] or asset.get('timestamp_ms') != frame['timestamp_ms'] or
+        if ((stage == 'perception' and 'source_frame_id' in frame and type(asset.get('timestamp_ms')) is not int) or
+                asset.get('name') != frame['frame_id'] or asset.get('timestamp_ms') != frame['timestamp_ms'] or
                 asset.get('mime') != 'image/jpeg' or not isinstance(data, str) or not data or asset.get('dataUrl')):
             raise ValueError('video_frames_invalid')
         total += len(data)
