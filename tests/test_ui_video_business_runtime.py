@@ -185,12 +185,12 @@ def test_real_trajectory_keeps_native_hypotheses_private_and_budget_global(monke
         diagnostics=diagnostics,business_timeline=hypothesis)
     observations=[p for v,p in calls if v=='observe'];audits=[p for v,p in calls if v=='audit']
     first=observations[0]['acquisition_budget']
-    assert first=={'remaining_revisit_attempts':4,'remaining_new_frames':64,'packet_image_slots':60-len(observations[0]['frames']),
+    assert first=={'remaining_revisit_attempts':4,'remaining_new_frames':64,'packet_image_slots':128-len(observations[0]['frames']),
                    'max_requests_per_response':2,'max_frames_per_request':20,'max_request_span_ms':3000}
     for payload in observations[1:]+audits:
         assert payload['acquisition_budget']['remaining_revisit_attempts']==3
         assert payload['acquisition_budget']['remaining_new_frames']==63
-        assert payload['acquisition_budget']['packet_image_slots']==60-len(payload['frames'])
+        assert payload['acquisition_budget']['packet_image_slots']==128-len(payload['frames'])
     assert result['uncertainties']==[]
     assert acquisitions[0][0]['question']=='actual action order?'
     assert result['trajectory_audit']['revisit_attempts'][0]['new_frames']==[{'frame_id':'frame-090','timestamp_ms':150}]

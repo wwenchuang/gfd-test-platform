@@ -3,7 +3,7 @@ import copy
 import hashlib
 import json
 import re
-from .ui_video_stage_policy import POLICY_VERSION, STAGES
+from .ui_video_stage_policy import POLICY_VERSION, STAGES, video_stage_image_limit
 
 SYSTEM_PROMPT = '你是移动端测试平台 AI Skill 执行器。必须严格遵守用户输入的 Skill Prompt，只输出合法 JSON。'
 
@@ -91,7 +91,7 @@ def safe_attestation(value):
         if type(item) in (int, float) and item == 0.1:
             safe['temperature'] = item
         for key, allowed in (('max_tokens', {config[4] for config in STAGES.values()}),
-                             ('thinking_budget', {1024}), ('video_count', {1}), ('image_count', {0, *range(2, 61)})):
+                             ('thinking_budget', {1024}), ('video_count', {1}), ('image_count', {0, *range(2, video_stage_image_limit(value.get('stage')) + 1)})):
             item = effective.get(key)
             if type(item) is int and item in allowed:
                 safe[key] = item

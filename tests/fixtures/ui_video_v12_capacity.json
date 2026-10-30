@@ -1,0 +1,1462 @@
+{
+  "provenance": {
+    "source": "normal-run12/run12/source.json",
+    "source_sha256": "dd1960b9dc4a2440dfa7ddf8e58e9b5b294a46f3608b2c94994e54bdd9d13429",
+    "receipt_content_sha256": {
+      "4": "cdf03d645c5c1cec0104c7f906482b9c7febb866681ada8fa730ba9703d6f56d",
+      "18": "fffbf23b48922dc977522681c9ac445818174aab903e7d52c29bfd3f62b4db14",
+      "20": "f24403ad6717e180010b54beaa51bb01f593b830be6ecd244c961426603cde8b"
+    }
+  },
+  "frames": [
+    {
+      "frame_id": "frame-001",
+      "timestamp_ms": 0
+    },
+    {
+      "frame_id": "frame-002",
+      "timestamp_ms": 33
+    },
+    {
+      "frame_id": "frame-003",
+      "timestamp_ms": 267
+    },
+    {
+      "frame_id": "frame-004",
+      "timestamp_ms": 533
+    },
+    {
+      "frame_id": "frame-005",
+      "timestamp_ms": 567
+    },
+    {
+      "frame_id": "frame-006",
+      "timestamp_ms": 600
+    },
+    {
+      "frame_id": "frame-007",
+      "timestamp_ms": 633
+    },
+    {
+      "frame_id": "frame-008",
+      "timestamp_ms": 667
+    },
+    {
+      "frame_id": "frame-009",
+      "timestamp_ms": 1167
+    },
+    {
+      "frame_id": "frame-010",
+      "timestamp_ms": 1467
+    },
+    {
+      "frame_id": "frame-011",
+      "timestamp_ms": 1500
+    },
+    {
+      "frame_id": "frame-012",
+      "timestamp_ms": 1533
+    },
+    {
+      "frame_id": "frame-013",
+      "timestamp_ms": 1567
+    },
+    {
+      "frame_id": "frame-014",
+      "timestamp_ms": 1600
+    },
+    {
+      "frame_id": "frame-015",
+      "timestamp_ms": 1633
+    },
+    {
+      "frame_id": "frame-016",
+      "timestamp_ms": 1667
+    },
+    {
+      "frame_id": "frame-017",
+      "timestamp_ms": 1700
+    },
+    {
+      "frame_id": "frame-018",
+      "timestamp_ms": 1900
+    },
+    {
+      "frame_id": "frame-019",
+      "timestamp_ms": 2433
+    },
+    {
+      "frame_id": "frame-020",
+      "timestamp_ms": 2533
+    },
+    {
+      "frame_id": "frame-021",
+      "timestamp_ms": 2567
+    },
+    {
+      "frame_id": "frame-022",
+      "timestamp_ms": 2700
+    },
+    {
+      "frame_id": "frame-023",
+      "timestamp_ms": 2933
+    },
+    {
+      "frame_id": "frame-024",
+      "timestamp_ms": 3000
+    },
+    {
+      "frame_id": "frame-025",
+      "timestamp_ms": 3100
+    },
+    {
+      "frame_id": "frame-026",
+      "timestamp_ms": 3567
+    },
+    {
+      "frame_id": "frame-027",
+      "timestamp_ms": 4567
+    },
+    {
+      "frame_id": "frame-028",
+      "timestamp_ms": 4600
+    },
+    {
+      "frame_id": "frame-029",
+      "timestamp_ms": 4633
+    },
+    {
+      "frame_id": "frame-030",
+      "timestamp_ms": 4667
+    },
+    {
+      "frame_id": "frame-031",
+      "timestamp_ms": 4700
+    },
+    {
+      "frame_id": "frame-032",
+      "timestamp_ms": 4733
+    },
+    {
+      "frame_id": "frame-033",
+      "timestamp_ms": 4767
+    },
+    {
+      "frame_id": "frame-034",
+      "timestamp_ms": 4800
+    },
+    {
+      "frame_id": "frame-035",
+      "timestamp_ms": 4833
+    },
+    {
+      "frame_id": "frame-036",
+      "timestamp_ms": 5067
+    },
+    {
+      "frame_id": "frame-037",
+      "timestamp_ms": 5567
+    },
+    {
+      "frame_id": "frame-038",
+      "timestamp_ms": 6200
+    },
+    {
+      "frame_id": "frame-039",
+      "timestamp_ms": 6933
+    },
+    {
+      "frame_id": "frame-040",
+      "timestamp_ms": 7567
+    },
+    {
+      "frame_id": "frame-041",
+      "timestamp_ms": 9000
+    },
+    {
+      "frame_id": "frame-042",
+      "timestamp_ms": 9967
+    },
+    {
+      "frame_id": "frame-043",
+      "timestamp_ms": 10000
+    },
+    {
+      "frame_id": "frame-044",
+      "timestamp_ms": 10067
+    },
+    {
+      "frame_id": "frame-045",
+      "timestamp_ms": 10100
+    },
+    {
+      "frame_id": "frame-046",
+      "timestamp_ms": 10600
+    },
+    {
+      "frame_id": "frame-047",
+      "timestamp_ms": 11600
+    },
+    {
+      "frame_id": "frame-048",
+      "timestamp_ms": 11867
+    },
+    {
+      "frame_id": "frame-049",
+      "timestamp_ms": 11933
+    },
+    {
+      "frame_id": "frame-050",
+      "timestamp_ms": 12000
+    },
+    {
+      "frame_id": "frame-051",
+      "timestamp_ms": 12033
+    },
+    {
+      "frame_id": "frame-052",
+      "timestamp_ms": 12067
+    },
+    {
+      "frame_id": "frame-053",
+      "timestamp_ms": 12233
+    },
+    {
+      "frame_id": "frame-054",
+      "timestamp_ms": 12900
+    },
+    {
+      "frame_id": "frame-055",
+      "timestamp_ms": 13933
+    },
+    {
+      "frame_id": "frame-056",
+      "timestamp_ms": 14000
+    },
+    {
+      "frame_id": "frame-057",
+      "timestamp_ms": 14033
+    },
+    {
+      "frame_id": "frame-058",
+      "timestamp_ms": 14067
+    },
+    {
+      "frame_id": "frame-059",
+      "timestamp_ms": 14100
+    },
+    {
+      "frame_id": "frame-060",
+      "timestamp_ms": 14133
+    },
+    {
+      "frame_id": "frame-061",
+      "timestamp_ms": 14533
+    },
+    {
+      "frame_id": "frame-062",
+      "timestamp_ms": 14933
+    },
+    {
+      "frame_id": "frame-063",
+      "timestamp_ms": 14967
+    },
+    {
+      "frame_id": "frame-064",
+      "timestamp_ms": 15000
+    },
+    {
+      "frame_id": "frame-065",
+      "timestamp_ms": 15333
+    },
+    {
+      "frame_id": "frame-066",
+      "timestamp_ms": 15600
+    },
+    {
+      "frame_id": "frame-067",
+      "timestamp_ms": 15900
+    },
+    {
+      "frame_id": "frame-068",
+      "timestamp_ms": 15967
+    },
+    {
+      "frame_id": "frame-069",
+      "timestamp_ms": 16000
+    },
+    {
+      "frame_id": "frame-070",
+      "timestamp_ms": 16200
+    },
+    {
+      "frame_id": "frame-071",
+      "timestamp_ms": 16633
+    },
+    {
+      "frame_id": "frame-072",
+      "timestamp_ms": 16667
+    },
+    {
+      "frame_id": "frame-073",
+      "timestamp_ms": 16700
+    },
+    {
+      "frame_id": "frame-074",
+      "timestamp_ms": 16833
+    },
+    {
+      "frame_id": "frame-075",
+      "timestamp_ms": 17000
+    },
+    {
+      "frame_id": "frame-076",
+      "timestamp_ms": 17033
+    },
+    {
+      "frame_id": "frame-077",
+      "timestamp_ms": 17233
+    },
+    {
+      "frame_id": "frame-078",
+      "timestamp_ms": 17433
+    },
+    {
+      "frame_id": "frame-079",
+      "timestamp_ms": 17933
+    },
+    {
+      "frame_id": "frame-080",
+      "timestamp_ms": 18433
+    },
+    {
+      "frame_id": "frame-081",
+      "timestamp_ms": 18467
+    },
+    {
+      "frame_id": "frame-082",
+      "timestamp_ms": 18600
+    },
+    {
+      "frame_id": "frame-083",
+      "timestamp_ms": 18633
+    },
+    {
+      "frame_id": "frame-084",
+      "timestamp_ms": 18933
+    },
+    {
+      "frame_id": "frame-085",
+      "timestamp_ms": 18967
+    },
+    {
+      "frame_id": "frame-086",
+      "timestamp_ms": 19000
+    },
+    {
+      "frame_id": "frame-087",
+      "timestamp_ms": 19267
+    },
+    {
+      "frame_id": "frame-088",
+      "timestamp_ms": 19533
+    },
+    {
+      "frame_id": "frame-089",
+      "timestamp_ms": 19567
+    },
+    {
+      "frame_id": "frame-090",
+      "timestamp_ms": 19600
+    },
+    {
+      "frame_id": "frame-091",
+      "timestamp_ms": 19633
+    },
+    {
+      "frame_id": "frame-092",
+      "timestamp_ms": 20000
+    },
+    {
+      "frame_id": "frame-093",
+      "timestamp_ms": 20033
+    },
+    {
+      "frame_id": "frame-094",
+      "timestamp_ms": 20933
+    },
+    {
+      "frame_id": "frame-095",
+      "timestamp_ms": 21400
+    },
+    {
+      "frame_id": "frame-096",
+      "timestamp_ms": 21500
+    },
+    {
+      "frame_id": "frame-097",
+      "timestamp_ms": 21933
+    },
+    {
+      "frame_id": "frame-098",
+      "timestamp_ms": 21967
+    },
+    {
+      "frame_id": "frame-099",
+      "timestamp_ms": 22000
+    },
+    {
+      "frame_id": "frame-100",
+      "timestamp_ms": 22033
+    },
+    {
+      "frame_id": "frame-101",
+      "timestamp_ms": 23467
+    },
+    {
+      "frame_id": "frame-102",
+      "timestamp_ms": 23900
+    },
+    {
+      "frame_id": "frame-103",
+      "timestamp_ms": 24033
+    },
+    {
+      "frame_id": "frame-104",
+      "timestamp_ms": 25000
+    },
+    {
+      "frame_id": "frame-105",
+      "timestamp_ms": 25833
+    },
+    {
+      "frame_id": "frame-106",
+      "timestamp_ms": 25867
+    },
+    {
+      "frame_id": "frame-107",
+      "timestamp_ms": 25933
+    },
+    {
+      "frame_id": "frame-108",
+      "timestamp_ms": 25967
+    },
+    {
+      "frame_id": "frame-109",
+      "timestamp_ms": 26000
+    },
+    {
+      "frame_id": "frame-110",
+      "timestamp_ms": 27167
+    },
+    {
+      "frame_id": "frame-111",
+      "timestamp_ms": 27367
+    },
+    {
+      "frame_id": "frame-112",
+      "timestamp_ms": 27400
+    },
+    {
+      "frame_id": "frame-113",
+      "timestamp_ms": 27433
+    },
+    {
+      "frame_id": "frame-114",
+      "timestamp_ms": 27500
+    },
+    {
+      "frame_id": "frame-115",
+      "timestamp_ms": 27533
+    },
+    {
+      "frame_id": "frame-116",
+      "timestamp_ms": 27967
+    },
+    {
+      "frame_id": "frame-117",
+      "timestamp_ms": 29200
+    },
+    {
+      "frame_id": "frame-300",
+      "timestamp_ms": 29233
+    },
+    {
+      "frame_id": "frame-301",
+      "timestamp_ms": 29533
+    },
+    {
+      "frame_id": "frame-302",
+      "timestamp_ms": 29800
+    },
+    {
+      "frame_id": "frame-118",
+      "timestamp_ms": 30000
+    },
+    {
+      "frame_id": "frame-303",
+      "timestamp_ms": 30133
+    },
+    {
+      "frame_id": "frame-304",
+      "timestamp_ms": 30433
+    },
+    {
+      "frame_id": "frame-119",
+      "timestamp_ms": 30500
+    },
+    {
+      "frame_id": "frame-305",
+      "timestamp_ms": 30767
+    },
+    {
+      "frame_id": "frame-120",
+      "timestamp_ms": 30967
+    },
+    {
+      "frame_id": "frame-306",
+      "timestamp_ms": 31067
+    },
+    {
+      "frame_id": "frame-307",
+      "timestamp_ms": 31367
+    },
+    {
+      "frame_id": "frame-121",
+      "timestamp_ms": 31400
+    },
+    {
+      "frame_id": "frame-122",
+      "timestamp_ms": 33000
+    },
+    {
+      "frame_id": "frame-123",
+      "timestamp_ms": 34233
+    },
+    {
+      "frame_id": "frame-124",
+      "timestamp_ms": 34267
+    },
+    {
+      "frame_id": "frame-125",
+      "timestamp_ms": 34433
+    },
+    {
+      "frame_id": "frame-126",
+      "timestamp_ms": 34600
+    },
+    {
+      "frame_id": "frame-127",
+      "timestamp_ms": 34933
+    },
+    {
+      "frame_id": "frame-308",
+      "timestamp_ms": 34967
+    },
+    {
+      "frame_id": "frame-309",
+      "timestamp_ms": 35233
+    },
+    {
+      "frame_id": "frame-310",
+      "timestamp_ms": 35533
+    },
+    {
+      "frame_id": "frame-311",
+      "timestamp_ms": 35800
+    },
+    {
+      "frame_id": "frame-128",
+      "timestamp_ms": 35967
+    },
+    {
+      "frame_id": "frame-312",
+      "timestamp_ms": 36133
+    },
+    {
+      "frame_id": "frame-313",
+      "timestamp_ms": 36400
+    },
+    {
+      "frame_id": "frame-314",
+      "timestamp_ms": 36700
+    },
+    {
+      "frame_id": "frame-315",
+      "timestamp_ms": 36967
+    },
+    {
+      "frame_id": "frame-129",
+      "timestamp_ms": 37000
+    },
+    {
+      "frame_id": "frame-130",
+      "timestamp_ms": 38000
+    },
+    {
+      "frame_id": "frame-131",
+      "timestamp_ms": 39000
+    },
+    {
+      "frame_id": "frame-132",
+      "timestamp_ms": 40000
+    },
+    {
+      "frame_id": "frame-133",
+      "timestamp_ms": 40800
+    },
+    {
+      "frame_id": "frame-134",
+      "timestamp_ms": 40833
+    },
+    {
+      "frame_id": "frame-135",
+      "timestamp_ms": 40867
+    },
+    {
+      "frame_id": "frame-136",
+      "timestamp_ms": 40933
+    },
+    {
+      "frame_id": "frame-137",
+      "timestamp_ms": 41067
+    },
+    {
+      "frame_id": "frame-138",
+      "timestamp_ms": 41333
+    },
+    {
+      "frame_id": "frame-139",
+      "timestamp_ms": 41467
+    },
+    {
+      "frame_id": "frame-140",
+      "timestamp_ms": 41500
+    },
+    {
+      "frame_id": "frame-141",
+      "timestamp_ms": 41767
+    },
+    {
+      "frame_id": "frame-142",
+      "timestamp_ms": 41800
+    },
+    {
+      "frame_id": "frame-143",
+      "timestamp_ms": 41833
+    },
+    {
+      "frame_id": "frame-144",
+      "timestamp_ms": 41867
+    },
+    {
+      "frame_id": "frame-145",
+      "timestamp_ms": 42067
+    },
+    {
+      "frame_id": "frame-146",
+      "timestamp_ms": 42100
+    },
+    {
+      "frame_id": "frame-147",
+      "timestamp_ms": 42967
+    },
+    {
+      "frame_id": "frame-148",
+      "timestamp_ms": 43433
+    },
+    {
+      "frame_id": "frame-149",
+      "timestamp_ms": 44033
+    },
+    {
+      "frame_id": "frame-150",
+      "timestamp_ms": 44833
+    },
+    {
+      "frame_id": "frame-151",
+      "timestamp_ms": 44967
+    },
+    {
+      "frame_id": "frame-152",
+      "timestamp_ms": 45000
+    },
+    {
+      "frame_id": "frame-153",
+      "timestamp_ms": 45067
+    },
+    {
+      "frame_id": "frame-154",
+      "timestamp_ms": 45100
+    },
+    {
+      "frame_id": "frame-155",
+      "timestamp_ms": 45167
+    },
+    {
+      "frame_id": "frame-156",
+      "timestamp_ms": 45233
+    },
+    {
+      "frame_id": "frame-157",
+      "timestamp_ms": 45267
+    },
+    {
+      "frame_id": "frame-158",
+      "timestamp_ms": 45567
+    },
+    {
+      "frame_id": "frame-159",
+      "timestamp_ms": 45700
+    },
+    {
+      "frame_id": "frame-160",
+      "timestamp_ms": 45767
+    },
+    {
+      "frame_id": "frame-161",
+      "timestamp_ms": 45833
+    },
+    {
+      "frame_id": "frame-162",
+      "timestamp_ms": 45900
+    },
+    {
+      "frame_id": "frame-163",
+      "timestamp_ms": 45933
+    },
+    {
+      "frame_id": "frame-164",
+      "timestamp_ms": 45967
+    },
+    {
+      "frame_id": "frame-165",
+      "timestamp_ms": 46000
+    },
+    {
+      "frame_id": "frame-166",
+      "timestamp_ms": 46167
+    },
+    {
+      "frame_id": "frame-167",
+      "timestamp_ms": 46233
+    },
+    {
+      "frame_id": "frame-168",
+      "timestamp_ms": 46400
+    },
+    {
+      "frame_id": "frame-169",
+      "timestamp_ms": 46433
+    },
+    {
+      "frame_id": "frame-170",
+      "timestamp_ms": 46467
+    },
+    {
+      "frame_id": "frame-171",
+      "timestamp_ms": 46500
+    },
+    {
+      "frame_id": "frame-172",
+      "timestamp_ms": 46533
+    },
+    {
+      "frame_id": "frame-173",
+      "timestamp_ms": 46733
+    },
+    {
+      "frame_id": "frame-174",
+      "timestamp_ms": 48200
+    },
+    {
+      "frame_id": "frame-175",
+      "timestamp_ms": 48500
+    },
+    {
+      "frame_id": "frame-176",
+      "timestamp_ms": 48567
+    },
+    {
+      "frame_id": "frame-177",
+      "timestamp_ms": 48600
+    },
+    {
+      "frame_id": "frame-178",
+      "timestamp_ms": 48633
+    },
+    {
+      "frame_id": "frame-179",
+      "timestamp_ms": 48667
+    },
+    {
+      "frame_id": "frame-180",
+      "timestamp_ms": 48700
+    },
+    {
+      "frame_id": "frame-181",
+      "timestamp_ms": 48767
+    },
+    {
+      "frame_id": "frame-182",
+      "timestamp_ms": 48800
+    },
+    {
+      "frame_id": "frame-183",
+      "timestamp_ms": 48967
+    },
+    {
+      "frame_id": "frame-184",
+      "timestamp_ms": 50000
+    },
+    {
+      "frame_id": "frame-185",
+      "timestamp_ms": 50733
+    },
+    {
+      "frame_id": "frame-186",
+      "timestamp_ms": 50867
+    },
+    {
+      "frame_id": "frame-187",
+      "timestamp_ms": 51433
+    },
+    {
+      "frame_id": "frame-188",
+      "timestamp_ms": 51467
+    },
+    {
+      "frame_id": "frame-189",
+      "timestamp_ms": 51500
+    },
+    {
+      "frame_id": "frame-190",
+      "timestamp_ms": 51533
+    },
+    {
+      "frame_id": "frame-191",
+      "timestamp_ms": 51567
+    },
+    {
+      "frame_id": "frame-192",
+      "timestamp_ms": 51633
+    },
+    {
+      "frame_id": "frame-193",
+      "timestamp_ms": 51967
+    },
+    {
+      "frame_id": "frame-194",
+      "timestamp_ms": 52633
+    },
+    {
+      "frame_id": "frame-195",
+      "timestamp_ms": 52667
+    },
+    {
+      "frame_id": "frame-196",
+      "timestamp_ms": 52700
+    },
+    {
+      "frame_id": "frame-197",
+      "timestamp_ms": 52733
+    },
+    {
+      "frame_id": "frame-198",
+      "timestamp_ms": 52833
+    },
+    {
+      "frame_id": "frame-199",
+      "timestamp_ms": 53133
+    },
+    {
+      "frame_id": "frame-200",
+      "timestamp_ms": 53600
+    },
+    {
+      "frame_id": "frame-201",
+      "timestamp_ms": 53733
+    },
+    {
+      "frame_id": "frame-202",
+      "timestamp_ms": 53767
+    },
+    {
+      "frame_id": "frame-203",
+      "timestamp_ms": 53900
+    },
+    {
+      "frame_id": "frame-204",
+      "timestamp_ms": 53933
+    },
+    {
+      "frame_id": "frame-205",
+      "timestamp_ms": 54033
+    },
+    {
+      "frame_id": "frame-206",
+      "timestamp_ms": 54100
+    },
+    {
+      "frame_id": "frame-207",
+      "timestamp_ms": 54133
+    },
+    {
+      "frame_id": "frame-208",
+      "timestamp_ms": 54200
+    },
+    {
+      "frame_id": "frame-209",
+      "timestamp_ms": 54233
+    },
+    {
+      "frame_id": "frame-210",
+      "timestamp_ms": 54267
+    },
+    {
+      "frame_id": "frame-211",
+      "timestamp_ms": 54300
+    },
+    {
+      "frame_id": "frame-212",
+      "timestamp_ms": 54400
+    },
+    {
+      "frame_id": "frame-213",
+      "timestamp_ms": 54567
+    },
+    {
+      "frame_id": "frame-214",
+      "timestamp_ms": 55967
+    },
+    {
+      "frame_id": "frame-215",
+      "timestamp_ms": 56100
+    },
+    {
+      "frame_id": "frame-216",
+      "timestamp_ms": 56367
+    },
+    {
+      "frame_id": "frame-217",
+      "timestamp_ms": 56400
+    },
+    {
+      "frame_id": "frame-218",
+      "timestamp_ms": 56433
+    },
+    {
+      "frame_id": "frame-219",
+      "timestamp_ms": 56467
+    },
+    {
+      "frame_id": "frame-220",
+      "timestamp_ms": 57933
+    },
+    {
+      "frame_id": "frame-221",
+      "timestamp_ms": 57967
+    },
+    {
+      "frame_id": "frame-222",
+      "timestamp_ms": 58000
+    },
+    {
+      "frame_id": "frame-223",
+      "timestamp_ms": 58033
+    },
+    {
+      "frame_id": "frame-224",
+      "timestamp_ms": 58933
+    },
+    {
+      "frame_id": "frame-225",
+      "timestamp_ms": 58967
+    },
+    {
+      "frame_id": "frame-226",
+      "timestamp_ms": 59000
+    },
+    {
+      "frame_id": "frame-227",
+      "timestamp_ms": 59033
+    },
+    {
+      "frame_id": "frame-228",
+      "timestamp_ms": 59967
+    },
+    {
+      "frame_id": "frame-229",
+      "timestamp_ms": 60967
+    },
+    {
+      "frame_id": "frame-230",
+      "timestamp_ms": 62333
+    },
+    {
+      "frame_id": "frame-231",
+      "timestamp_ms": 62467
+    },
+    {
+      "frame_id": "frame-232",
+      "timestamp_ms": 62500
+    },
+    {
+      "frame_id": "frame-233",
+      "timestamp_ms": 62600
+    },
+    {
+      "frame_id": "frame-234",
+      "timestamp_ms": 62633
+    },
+    {
+      "frame_id": "frame-235",
+      "timestamp_ms": 62800
+    },
+    {
+      "frame_id": "frame-236",
+      "timestamp_ms": 63967
+    },
+    {
+      "frame_id": "frame-237",
+      "timestamp_ms": 65233
+    },
+    {
+      "frame_id": "frame-238",
+      "timestamp_ms": 65367
+    },
+    {
+      "frame_id": "frame-239",
+      "timestamp_ms": 66167
+    },
+    {
+      "frame_id": "frame-240",
+      "timestamp_ms": 66200
+    },
+    {
+      "frame_id": "frame-241",
+      "timestamp_ms": 66233
+    },
+    {
+      "frame_id": "frame-242",
+      "timestamp_ms": 66267
+    },
+    {
+      "frame_id": "frame-243",
+      "timestamp_ms": 66333
+    },
+    {
+      "frame_id": "frame-244",
+      "timestamp_ms": 66633
+    },
+    {
+      "frame_id": "frame-245",
+      "timestamp_ms": 66967
+    },
+    {
+      "frame_id": "frame-246",
+      "timestamp_ms": 67000
+    },
+    {
+      "frame_id": "frame-247",
+      "timestamp_ms": 67067
+    },
+    {
+      "frame_id": "frame-248",
+      "timestamp_ms": 67533
+    },
+    {
+      "frame_id": "frame-249",
+      "timestamp_ms": 67667
+    },
+    {
+      "frame_id": "frame-250",
+      "timestamp_ms": 67800
+    },
+    {
+      "frame_id": "frame-251",
+      "timestamp_ms": 67833
+    },
+    {
+      "frame_id": "frame-252",
+      "timestamp_ms": 67867
+    },
+    {
+      "frame_id": "frame-253",
+      "timestamp_ms": 67900
+    },
+    {
+      "frame_id": "frame-254",
+      "timestamp_ms": 67933
+    },
+    {
+      "frame_id": "frame-255",
+      "timestamp_ms": 68000
+    },
+    {
+      "frame_id": "frame-256",
+      "timestamp_ms": 68033
+    },
+    {
+      "frame_id": "frame-257",
+      "timestamp_ms": 68067
+    },
+    {
+      "frame_id": "frame-258",
+      "timestamp_ms": 68500
+    },
+    {
+      "frame_id": "frame-259",
+      "timestamp_ms": 68667
+    },
+    {
+      "frame_id": "frame-260",
+      "timestamp_ms": 68800
+    },
+    {
+      "frame_id": "frame-261",
+      "timestamp_ms": 68833
+    },
+    {
+      "frame_id": "frame-262",
+      "timestamp_ms": 68867
+    },
+    {
+      "frame_id": "frame-263",
+      "timestamp_ms": 68900
+    },
+    {
+      "frame_id": "frame-264",
+      "timestamp_ms": 68933
+    },
+    {
+      "frame_id": "frame-265",
+      "timestamp_ms": 68967
+    },
+    {
+      "frame_id": "frame-266",
+      "timestamp_ms": 69000
+    },
+    {
+      "frame_id": "frame-267",
+      "timestamp_ms": 69033
+    },
+    {
+      "frame_id": "frame-268",
+      "timestamp_ms": 69500
+    },
+    {
+      "frame_id": "frame-269",
+      "timestamp_ms": 69633
+    },
+    {
+      "frame_id": "frame-270",
+      "timestamp_ms": 69767
+    },
+    {
+      "frame_id": "frame-271",
+      "timestamp_ms": 69800
+    },
+    {
+      "frame_id": "frame-272",
+      "timestamp_ms": 69833
+    },
+    {
+      "frame_id": "frame-273",
+      "timestamp_ms": 69867
+    },
+    {
+      "frame_id": "frame-274",
+      "timestamp_ms": 69900
+    },
+    {
+      "frame_id": "frame-275",
+      "timestamp_ms": 69933
+    },
+    {
+      "frame_id": "frame-276",
+      "timestamp_ms": 69967
+    },
+    {
+      "frame_id": "frame-277",
+      "timestamp_ms": 70000
+    },
+    {
+      "frame_id": "frame-278",
+      "timestamp_ms": 70033
+    },
+    {
+      "frame_id": "frame-279",
+      "timestamp_ms": 70433
+    },
+    {
+      "frame_id": "frame-280",
+      "timestamp_ms": 70567
+    },
+    {
+      "frame_id": "frame-281",
+      "timestamp_ms": 70800
+    },
+    {
+      "frame_id": "frame-282",
+      "timestamp_ms": 71533
+    },
+    {
+      "frame_id": "frame-283",
+      "timestamp_ms": 71900
+    },
+    {
+      "frame_id": "frame-284",
+      "timestamp_ms": 71933
+    },
+    {
+      "frame_id": "frame-285",
+      "timestamp_ms": 72000
+    },
+    {
+      "frame_id": "frame-286",
+      "timestamp_ms": 72033
+    },
+    {
+      "frame_id": "frame-287",
+      "timestamp_ms": 72500
+    },
+    {
+      "frame_id": "frame-288",
+      "timestamp_ms": 72667
+    },
+    {
+      "frame_id": "frame-289",
+      "timestamp_ms": 73000
+    },
+    {
+      "frame_id": "frame-290",
+      "timestamp_ms": 73467
+    },
+    {
+      "frame_id": "frame-291",
+      "timestamp_ms": 73933
+    },
+    {
+      "frame_id": "frame-292",
+      "timestamp_ms": 73967
+    },
+    {
+      "frame_id": "frame-293",
+      "timestamp_ms": 74000
+    },
+    {
+      "frame_id": "frame-294",
+      "timestamp_ms": 74033
+    },
+    {
+      "frame_id": "frame-295",
+      "timestamp_ms": 74233
+    },
+    {
+      "frame_id": "frame-296",
+      "timestamp_ms": 74467
+    },
+    {
+      "frame_id": "frame-297",
+      "timestamp_ms": 74500
+    },
+    {
+      "frame_id": "frame-298",
+      "timestamp_ms": 74533
+    },
+    {
+      "frame_id": "frame-299",
+      "timestamp_ms": 75233
+    }
+  ],
+  "overview_states": [
+    {
+      "state_id": "s1",
+      "first_frame": "frame-001",
+      "last_frame": "frame-009",
+      "kind": "page",
+      "description": "首页推荐流：顶部显示已连接设备编号EP3-9070692832BA与空闲状态、绿色“模型处理完成”提示条与“去打印”入口；中部横向模型分类卡与“模型推荐/热门模型/最新模型/可编辑”标签栏；下方模型推荐卡片列表（军工套卡导弹车、军工套卡直升机、动物形状配对积木等）；底部导航含模型库、AI建模、课程、我的。"
+    },
+    {
+      "state_id": "s2",
+      "first_frame": "frame-021",
+      "last_frame": "frame-047",
+      "kind": "input",
+      "description": "搜索页：顶部返回箭头、搜索框、清除按钮与“搜索”按钮；“搜索历史”标签组与“热搜榜”列表；软键盘持续弹出。在该搜索框字段内通过拼音组词方式持续编辑搜索词，经历多组拼音候选与上屏、删改，最终框内为三字搜索词；同一字段编辑区间，未离开页面。"
+    },
+    {
+      "state_id": "s3",
+      "first_frame": "frame-054",
+      "last_frame": "frame-057",
+      "kind": "wait",
+      "description": "搜索结果页加载：顶部搜索框保留三字搜索词；结果区先显示两张占位骨架卡（姓名牌、Max挂牌）与“结果较少？试试AI创作”推广横幅，随后两张模型卡片图片加载完成，各带标签与打印人数。"
+    },
+    {
+      "state_id": "s4",
+      "first_frame": "frame-065",
+      "last_frame": "frame-065",
+      "kind": "page",
+      "description": "模型详情页：顶部大图带“可编辑”角标与页码1/1及收藏/分享/更多图标；下方模型名称、标签组、打印人数；“模型文件”区含可编辑缩略、预计时长、材料克重、尺寸；简介文案；底部“旋钮设置”与“去编辑”两按钮。"
+    },
+    {
+      "state_id": "s5",
+      "first_frame": "frame-071",
+      "last_frame": "frame-071",
+      "kind": "transition",
+      "description": "编辑模型页进入加载：标题“编辑模型”，整页黑屏中央显示“正在加载...”转圈。"
+    },
+    {
+      "state_id": "s6",
+      "first_frame": "frame-079",
+      "last_frame": "frame-079",
+      "kind": "page",
+      "description": "编辑模型页初始态：标题“编辑模型”，三维网格空间内显示姓名牌模型，模型尺寸条52mm(X)*2mm(Y)*26mm(Z)，“请输入文本”输入区预填默认文本，底部“下载”与“去打印”按钮；键盘未弹出。"
+    },
+    {
+      "state_id": "s7",
+      "first_frame": "frame-086",
+      "last_frame": "frame-110",
+      "kind": "input",
+      "description": "编辑模型页文本字段编辑：在“请输入文本”框唤起软键盘，先逐字清空预填默认文本至显示占位“输入文本内容”，再切换英文键盘输入字母、切回拼音组词上屏中文，框内最终为“UI自动化”；期间三维预览仍显示旧文本模型。同一字段持续编辑区间。"
+    },
+    {
+      "state_id": "s8",
+      "first_frame": "frame-116",
+      "last_frame": "frame-128",
+      "kind": "wait",
+      "description": "编辑模型页生成流程：键盘已收起，文本框保留“UI自动化”，底部按钮变为“生成模型”并出现按压态；随后中央弹出“生成中...”遮罩转圈，生成完成后遮罩消失、模型尺寸条数值由2mm(Y)*26mm(Z)变为26mm(Y)*2mm(Z)、底部按钮变回“去打印”。"
+    },
+    {
+      "state_id": "s9",
+      "first_frame": "frame-129",
+      "last_frame": "frame-133",
+      "kind": "wait",
+      "description": "编辑模型页准备打印遮罩：中央持续显示“准备打印...”转圈，页面其余内容（文本框UI自动化、尺寸条、去打印按钮）保持不变。"
+    },
+    {
+      "state_id": "s10",
+      "first_frame": "frame-145",
+      "last_frame": "frame-150",
+      "kind": "page",
+      "description": "打印编辑页：标题“姓名牌”与黄色耗材标识；左侧居中/旋转/复制/一键适配/删除工具栏；中央三维空间显示包围盒，先弹出“璇玑AI引擎优化已完成”绿色对勾提示，随后显示黄色姓名牌模型；底部模型尺寸条、缩放比例100%、“更多打印参数已智能匹配”与“下一步”按钮。"
+    },
+    {
+      "state_id": "s11",
+      "first_frame": "frame-162",
+      "last_frame": "frame-162",
+      "kind": "page",
+      "description": "打印编辑页上的“请确认耗材颜色”弹窗：说明当前使用官方耗材-黄色，提示颜色选择错误可能影响打印效果或导致打印失败，提供“修改设置”“确认”按钮及“7天内不再提醒”勾选项。"
+    },
+    {
+      "state_id": "s12",
+      "first_frame": "frame-173",
+      "last_frame": "frame-173",
+      "kind": "page",
+      "description": "打印编辑页上的“当前有1个正在处理的任务 请去处理”对话框，提供“取消”与“去处理”两按钮。"
+    },
+    {
+      "state_id": "s13",
+      "first_frame": "frame-175",
+      "last_frame": "frame-184",
+      "kind": "transition",
+      "description": "模型打印预览页进入加载：标题“模型打印预览”，先白屏转场，随后显示“正在渲染模型...”转圈，底部已出现预计时间1小时41分钟、模型耗材13.83g、支撑耗材4.39g、设备状态完美提示条与取消打印/确认打印按钮。"
+    },
+    {
+      "state_id": "s14",
+      "first_frame": "frame-186",
+      "last_frame": "frame-186",
+      "kind": "page",
+      "description": "模型打印预览页上的“确认要取消任务吗？”对话框，含“取消”“确定”按钮，背景为已渲染的黄色模型与1小时41分钟/13.83g/4.39g参数。"
+    },
+    {
+      "state_id": "s15",
+      "first_frame": "frame-193",
+      "last_frame": "frame-193",
+      "kind": "page",
+      "description": "模型打印预览页已取消态：中央显示黄色模型缩略图与“已取消模型处理”，底部按钮变为“重新编辑”与“返回”。"
+    },
+    {
+      "state_id": "s16",
+      "first_frame": "frame-200",
+      "last_frame": "frame-213",
+      "kind": "wait",
+      "description": "打印编辑页再次加载与校验：标题“姓名牌”黄色耗材，三维空间先显示“正在校验模型...”遮罩，随后显示黄色姓名牌模型与包围盒，底部尺寸条、缩放100%、“下一步”按钮。"
+    },
+    {
+      "state_id": "s17",
+      "first_frame": "frame-215",
+      "last_frame": "frame-229",
+      "kind": "wait",
+      "description": "模型打印预览页任务处理流程：转场进入后显示进度0.0%与步骤清单，依次勾选待打印任务已生成、打印时间已分析完成、模型消耗克数已分析完成、模型尺寸已分析完成，最后停留在“分析完成，请等待模型处理”；底部有“处理完成后直接打印”与“取消处理”按钮及“我的-打印记录”提示；期间背景尺寸条暂显0mm。"
+    },
+    {
+      "state_id": "s18",
+      "first_frame": "frame-231",
+      "last_frame": "frame-237",
+      "kind": "wait",
+      "description": "模型打印预览页重新渲染：先白屏加载条，随后显示带新文本的黄色姓名牌模型、预计时间17分钟、模型耗材2.03g、支撑耗材1.79g、设备状态完美提示条与取消打印/确认打印按钮。"
+    },
+    {
+      "state_id": "s19",
+      "first_frame": "frame-243",
+      "last_frame": "frame-248",
+      "kind": "page",
+      "description": "模型打印预览页再次取消态：先显示“确认要取消任务吗？”对话框淡出，随后中央显示姓名牌缩略图与“已取消模型处理”，底部为“重新编辑”与“返回”按钮。"
+    },
+    {
+      "state_id": "s20",
+      "first_frame": "frame-262",
+      "last_frame": "frame-262",
+      "kind": "page",
+      "description": "编辑模型页再次访问：标题“编辑模型”，三维网格显示带新文本的姓名牌模型，尺寸条52mm(X)*26mm(Y)*2mm(Z)，文本框保留“UI自动化”，底部“下载”与“去打印”按钮。"
+    },
+    {
+      "state_id": "s21",
+      "first_frame": "frame-278",
+      "last_frame": "frame-278",
+      "kind": "page",
+      "description": "模型详情页再次访问：与s1同结构，姓名牌大图、可编辑角标、1/1、名称标签、打印人数、模型文件信息、简介、底部旋钮设置/去编辑。"
+    },
+    {
+      "state_id": "s22",
+      "first_frame": "frame-282",
+      "last_frame": "frame-282",
+      "kind": "page",
+      "description": "搜索结果页再次访问：顶部搜索框保留三字搜索词与清除按钮，下方姓名牌、Max挂牌卡片及AI创作推广横幅，软键盘弹出处于可编辑态。"
+    },
+    {
+      "state_id": "s23",
+      "first_frame": "frame-288",
+      "last_frame": "frame-299",
+      "kind": "transition",
+      "description": "从搜索结果页逐级返回至首页推荐流的转场：frame-288为首页与搜索/详情页左右并排的转场中间态，frame-292起稳定显示首页推荐流（设备编号、模型处理完成提示条、模型推荐栏目与卡片、底部导航），frame-299保持首页。"
+    }
+  ],
+  "requests": {
+    "18": [
+      {
+        "first_frame": "frame-117",
+        "last_frame": "frame-121",
+        "question": "frame-117与frame-121“生成模型”按钮上两次灰色按压反馈之间（frame-118至frame-120）是否存在第二次独立手指按下，还是同一次按压的反馈重现/渲染残留？需确认两次触点的独立性以决定是否拆分为两次点击事件。"
+      },
+      {
+        "first_frame": "frame-127",
+        "last_frame": "frame-129",
+        "question": "frame-128文本框行右缘的灰色圆形触点反馈实际落在“去打印”按钮还是文本框区域？frame-129“准备打印...”遮罩出现前按钮中心是否有独立按压反馈圈？需确认“去打印”点击的触点位置与受理证据。"
+      }
+    ],
+    "20": [
+      {
+        "first_frame": "frame-301",
+        "last_frame": "frame-306",
+        "question": "frame-302至frame-305之间“生成模型”按钮反馈圈消失期间是否存在第二次独立按压起始帧，以判定frame-306的反馈圈是新点击还是同一次长按延续"
+      },
+      {
+        "first_frame": "frame-313",
+        "last_frame": "frame-315",
+        "question": "frame-128文本框行内灰点与frame-314去打印按钮按压反馈之间是否存在其它触点，确认准备打印遮罩仅由去打印按钮点击触发"
+      }
+    ]
+  }
+}

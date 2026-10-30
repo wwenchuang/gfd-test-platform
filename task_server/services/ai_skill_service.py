@@ -49,7 +49,7 @@ from task_server.config import (
     safe_bool,
     safe_int,
 )
-from task_server.services.ui_video_stage_policy import UNSET, validate_video_stage, validate_stage_output, validate_output_schema
+from task_server.services.ui_video_stage_policy import UNSET, validate_video_stage, validate_stage_output, validate_output_schema, video_stage_image_limit
 from task_server.core.http_client import read_response_bytes
 from task_server.storage import (
     clean_asset_filename,
@@ -656,7 +656,7 @@ def ai_gateway_skill_content(
         prompt = prompt.strip()
     whole_video = bool(stage) or _video_context_assets(skill_name, payload, image_assets)
     normalized_images = []
-    for index, asset in enumerate((image_assets or [])[:60 if whole_video else AI_VISION_IMAGE_LIMIT], start=1):
+    for index, asset in enumerate((image_assets or [])[:video_stage_image_limit(stage) if whole_video else AI_VISION_IMAGE_LIMIT], start=1):
         if not isinstance(asset, dict):
             continue
         base64_text = str(asset.get("base64") or asset.get("contentBase64") or "").strip()
