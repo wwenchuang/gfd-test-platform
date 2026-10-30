@@ -100,3 +100,47 @@ git diff --check
 ```
 
 Results on the final repaired code: **857 passed in 48.72s**, compile exit 0, backend **63 checks / ok True**, diff exit 0. An earlier question-only intermediate suite passed 822 tests in 49.74s; the 857-test final run includes the subsequent audit-retirement repair and supersedes it. No provider/browser/device/source/deployment/push operations, budget changes or STATE edits were performed. All original limits and legacy behavior remain unchanged. Parent retains review and integration ownership.
+
+## Narrow cross-packet current-context follow-up (spec base 7d9fdd1b)
+
+Read the complete revised temporal ownership spec and `.superpowers/sdd/temporal-cross-packet-context27-followup.md`. This follow-up authorizes only bounded whole-current-packet reobservation when immutable accepted history can remain unchanged. Historical final receipt16 changed trigger/kind and is **not** evidence of a successful unchanged-signature correction of receipt10. No private source replay or new actual provider evidence was performed by this implementation.
+
+Added pure `unsafe_current_correction_conflicts` in the existing temporal helper. It checks every required conflict before correction against accepted pre-packet `events`/`tracks` (the binder makes proposed copies). A system-exclusive violation, missing next interaction, next canonical boundary with historical identity/prefix, unknown historical left owner, or accepted snapshot `max(end_ms, terminal_pts)` later than the current next interaction's preserved trigger fails before spending. Equality is eligible. For a folded prior-plus-current left input, eligibility still uses the accepted prefix snapshot; current fragment presence does not make the prefix mutable. Only a wholly current next independent interaction can supply a potentially revisable evidence-start boundary.
+
+The existing observer branch now invokes that pure classifier before using its unchanged two-correction path. Feedback explicitly preserves accepted history and distinguishes trigger eligibility from the final evidence-start bound; it gives no desired frame answer. `ordinary_outcome_domain`, inclusive `next.start`, signature multiplicity, exact validated refutation, positive audit locks, acquisition ordering, raw receipts, complete valid questions, final global guard, caps and legacy behavior are unchanged. No clipping, rollback or automatic evidence edits occur.
+
+TDD: after repairing generic fixture timestamps to use a shared frame for equality and a distinct sorted source frame for the one-unit case, the focused command produced **6 failed, 27 passed** on the old guard: both safe/equality cases immediately failed, and repeat/signature-loss cases received no bounded correction. The existing one-unit and older hard negative remained passing. After the helper/branch change: **33 passed in 0.43s**. Additional continuation/system/multiple-conflict/lock/final checks then passed. A system fixture was moved into the actual recording-tail boundary so it exercised the unchanged system classifier.
+
+Eight verification groups in the real injected engine (plus pure checks where a valid accepted canonical order cannot naturally construct the malformed ownership case):
+
+1. `test_safe_cross_packet_context_reobserves_only_current_with_immutable_history`: safe prior end/terminal between current context and trigger, exact shared equality; prior raw/fragments/audit and prior event snapshots remain equal, all prior/current rejected valid questions retained, no acquisition before correction, expected overview/prior observe-audit/current observe-observe-audit sequence.
+2. Same test's equality parameter and `test_one_unit_unsafe_immutable_floor_fails_before_spending`: equality eligible and final shared bound inclusive; floor one millisecond after trigger fails with one current observation and no current audit/acquisition. Existing `test_cross_packet_fails_without_current_correction_or_prior_mutation` remains a hard negative.
+3. `test_eligible_cross_packet_context_still_exhausts_and_preserves_signatures` and `test_cross_context_keeps_independent_signature_multiplicity`: unchanged bad envelopes exhaust exactly two corrections; changed trigger/kind, deleted action or duplicate-signature loss cannot pass. Eligibility never admits an unchanged out-of-domain response.
+4. `test_current_left_input_continuation_respects_immutable_prefix_floor`, existing valid continuation controls, and `test_eligibility_refuses_historical_next_prefix_and_absent_next_without_mutation`: folding happens first; safe current suffix may be reobserved, unsafe accepted prefix still fails immediately; historical next-prefix and no-next are refused without mutation. Existing malformed/intervened continuation rejection remains in the trajectory regressions.
+5. `test_multiple_safe_required_conflicts_use_one_whole_current_correction` and `test_all_required_conflicts_classified_before_any_partial_correction`: all-safe conflicts use one complete packet correction, a single unsafe immutable conflict blocks the whole transaction before spending. Existing optional-wait ledger tests still pass.
+6. `test_system_conflict_is_immediate_even_for_current_only_left` plus the no-next pure control: system/no-boundary violations do not enter a correction exception even if a current observation could otherwise change.
+7. `test_positive_current_lock_remains_authoritative_during_context_correction`: an existing supported current trigger lock survives a later temporal context correction; changing its target is rejected by the stronger original lock after the shared two-correction budget. Existing exact-refutation, unclear, outcome-only and exact-multiplicity tests remain passing.
+8. `test_final_global_preflight_is_still_a_fail_closed_safety_net`: an injected residual conflict at final preflight fails closed without further correction. Existing legacy, safe diagnostics, immutable receipt and valid/malformed question controls remain passing.
+
+Final focused command:
+
+```sh
+PYTHONDONTWRITEBYTECODE=1 python3 -m pytest -q -p no:cacheprovider tests/test_ui_video_temporal_ownership.py tests/test_ui_video_executor_contradiction.py
+```
+
+**75 passed in 0.72s**: 44 temporal ownership tests and 31 existing executor contradiction tests.
+
+Follow-up implementation commit: `6b032a5c` (`fix: permit bounded current-context ownership correction`), exactly the helper, trajectory service and temporal test file. This report update is committed separately. No analysis/runtime/planning code was touched.
+
+Final expanded command:
+
+```sh
+PYTHONDONTWRITEBYTECODE=1 python3 -m pytest -q -p no:cacheprovider tests/test_ui_video_temporal_ownership.py tests/test_ui_video_executor_contradiction.py tests/test_ui_video_trajectory*.py tests/test_ui_video_packet_contract.py tests/test_ui_video_audit*.py tests/test_ui_video_business*.py tests/test_ui_video_outcomes.py tests/test_ui_video_to_case.py tests/test_ui_video_consolidation_entry.py tests/test_ui_video_runtime*.py
+python3 -m py_compile task_server/services/agent_service.py task_server/services/yaml_service.py task_server/services/yaml_executable_scorer.py task_server/services/ui_video_trajectory.py task_server/services/ui_video_temporal_ownership.py
+python3 tests/backend_static_checks.py
+git diff --check
+```
+
+Final result: **877 passed in 49.31s**, compile exit 0, backend **63 checks / ok True**, diff exit 0. An earlier expanded collection passed 875 tests before the last two duplicate-signature parameters entered collection; the final run above supersedes that count. Self-review confirmed accepted snapshots remain unchanged because binding updates only proposed deep copies, and the classifier is read-only. Final global guard and all prior correction/refutation/question controls remain in place.
+
+No provider/API/browser/source/device/deployment/push action or fresh actual Qwen correction occurred. Previous actual27 remains failed; same-trigger envelope correction has only synthetic evidence. No model or limits changed. Dirty parent CODEX_STATE.md was neither edited nor staged. Independent review and any actual diagnostics remain parent-owned.
