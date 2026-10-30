@@ -30,6 +30,45 @@ def action_contract():
         'aiWaitFor':['automatic','uncertain']},'input_value':''}
 
 
+def _continuation_feedback(index,raw,events,history,times,refs,after,checked):
+    """Describe the failed existing predicates without echoing model prose."""
+    feedback={'event_index':index,'prior_eligible':False,'failed_checks':[]}
+    if not history or not events:
+        feedback['failed_checks']=['prior_history_available']
+        return feedback
+    prior=history[-1];event=events[-1]
+    checks={
+        'last_event_identity':raw['continuation_of']==prior['event_id'],
+        'current_action_input':raw['action']=='aiInput',
+        'prior_action_input':event['action']=='aiInput',
+        'same_field':raw['target']==event['target'],
+        'page_before_matches_prior_end':raw['page_before']==prior['page_after'],
+        'page_after_matches_page_before':raw['page_after']==raw['page_before'],
+        'current_boundary_none':raw['edit_boundary']=='none',
+        'prior_boundary_none':prior['edit_boundary']=='none',
+        'trigger_moves_forward':times[raw['trigger_frame']]>times[prior['fragments'][-1]['trigger_frame']],
+        'evidence_not_before_prior_start':times[refs[0]]>=event['start_ms'],
+        'end_not_before_prior_end':checked['end_ms']>=event['end_ms'],
+        'outcome_not_before_prior_outcome':times[after[-1]]>=times[prior['outcome']['frame_refs'][-1]],
+        'gap_at_most_5000ms':max(0,times[raw['trigger_frame']]-event['end_ms'])<=5000,
+    }
+    feedback.update(prior_eligible=event['action']=='aiInput' and prior['edit_boundary']=='none',
+                    failed_checks=[name for name,passed in checks.items() if not passed],
+                    expected_identity={'continuation_of':'prior_events[-1].event_id',
+                        'target':'prior_events[-1].event.target',
+                        'page_before':'prior_events[-1].page_after','page_after':'prior_events[-1].page_after'})
+    return feedback
+
+
+def _correction_feedback(context,parent,latest):
+    """Keep one unresolved outer cause and the latest inner error, bounded separately."""
+    for key,value in (('parent_validation_feedback',parent),('validation_feedback',latest)):
+        context.pop(key,None);context.pop(key+'_truncated',None)
+        if value or key=='validation_feedback':
+            context[key]=value[:12000]
+            if len(value)>12000:context[key+'_truncated']=True
+
+
 def _action_conflicts(raw_events,packet,times):
     conflicts=[];allowed={f['frame_id'] for f in packet['frames']}
     policy=action_contract()['allowed_trigger_kinds']
@@ -181,7 +220,8 @@ def bind_packet_events(raw_events,packet,frames,previous,tracks):
                 times[trigger]<=times[history[-1]['fragments'][-1]['trigger_frame']] or
                 times[refs[0]]<events[-1]['start_ms'] or checked['end_ms']<events[-1]['end_ms'] or
                 times[after[-1]]<times[history[-1]['outcome']['frame_refs'][-1]] or
-                max(0,times[trigger]-events[-1]['end_ms'])>5000):_fail('input_continuation')
+                max(0,times[trigger]-events[-1]['end_ms'])>5000):
+                _fail('input_continuation',_continuation_feedback(index,raw,events,history,times,refs,after,checked))
             old=events[-1];track=history[-1]
             fragments=track['fragments']+[fragment]
             mandatory={r for part in fragments for r in (part['frame_refs'][0],part['frame_refs'][-1],part['trigger_frame'])}
@@ -465,6 +505,8 @@ def observe_trajectory(document,root,cancelled,progress=None,record=None,revisit
         return _envelope(raw,version)
     def ask(version,images,validator=None,revisit_packet=None,**context):
         nonlocal corrections
+        outer_feedback=context.get('validation_feedback','')
+        if outer_feedback:_correction_feedback(context,'',outer_feedback)
         while True:
             raw=None
             try:
@@ -512,9 +554,10 @@ def observe_trajectory(document,root,cancelled,progress=None,record=None,revisit
                 if reason.startswith('revisit_'):
                     explanation+=('本次支持context端点仅作定位：至少一个端点须为owned，原始跨度最多3000ms；平台只解码与当前owned半开区间相交的非空部分，不改派context原帧。'
                                   if bounded_revisit else '仅请求当前owned时间区间；future context由后续owner处理，不得夹取或改派原帧。')
-                context['validation_feedback']=('平台合同校验未通过：'+explanation+
+                latest_feedback=('平台合同校验未通过：'+explanation+
                     ('重新核对全部附图，分别判断给定片段的触发和结果；check不返回帧号，由平台绑定原片段锚点。'
                      if version=='audit' else '重新核对本阶段全部原图，完整输出该阶段合同。')+'不补造操作。')
+                _correction_feedback(context,outer_feedback,latest_feedback)
     def expand(packet,requests):
         nonlocal revisits,frames
         if not requests:return False
@@ -617,6 +660,9 @@ def observe_trajectory(document,root,cancelled,progress=None,record=None,revisit
                     feedback+=json.dumps(error.model_feedback,ensure_ascii=False,separators=(',',':'))
                     feedback+='重新判断本动作自身的证据范围及实际响应；保留后续独立动作及其触发和结果，不能借用后次动作结果。不能仅延长outcome或删去证据来满足顺序；重看原图后完整输出当前包。'
                 if reason=='input_continuation':
+                    if hasattr(error,'model_feedback'):
+                        feedback+=json.dumps(error.model_feedback,ensure_ascii=False,separators=(',',':'))
+                    feedback+='若原图支持续接，continuation_of和target分别沿用紧邻上一项event_id和event.target；page_before与page_after都必须逐字等于上一项page_after，不能用新的编辑区间state_id替换页面身份。'
                     feedback+='continuation_of只能延续紧邻的最后一个aiInput，且必须同页面同字段、无提交或其他业务操作间隔；不能把跨页导航合并为输入。'
                 if reason in {'state_shape','state_reference','state_kind'}:
                     feedback+='states每项必须且只能含state_id、first_frame、last_frame、kind、description；state_id和description为非空字符串，kind只能为page/input/wait/transition。first_frame和last_frame必须引用本次已提供的真实frame_id，first_frame不晚于last_frame，各项按first_frame时间排列。无新增状态时states可为[]；完整保留本包events和uncertainties，不能以删除状态代替修正元数据。'
