@@ -623,8 +623,24 @@ function videoSemanticContract() {
   });
 }
 
-function validateVideoOutputSchema(schema) {
+function videoAuditContract() {
+  const text = () => ({type: 'string'});
+  const list = items => ({type: 'array', items});
+  const object = properties => ({type: 'object', properties, required: Object.keys(properties), additionalProperties: false});
+  const choice = values => ({type: 'string', enum: values});
+  return object({
+    checks: list(object({event_id: text(), trigger_verdict: choice(['supported', 'unclear', 'contradicted']),
+      outcome_verdict: choice(['supported', 'unclear', 'contradicted']), question: text()})),
+    issues: list(object({kind: choice(['missing_action', 'unresolved_evidence']), owner_frame: text(),
+      frame_refs: list(text()), question: text()})),
+    multiple_scenarios: {type: 'boolean'},
+    revisit: list(object({first_frame: text(), last_frame: text(), question: text()})),
+  });
+}
+
+function validateVideoOutputSchema(schema, stage = 'semantic') {
   const fail = () => { throw new Error('video_output_schema_invalid'); };
+  if (!['semantic', 'grounding', 'audit'].includes(stage)) fail();
   let encoded;
   try { encoded = JSON.stringify(schema); } catch { fail(); }
   if (!encoded || Buffer.byteLength(encoded, 'utf8') > 32768) fail();
@@ -662,9 +678,9 @@ function validateVideoOutputSchema(schema) {
     }
     return out;
   }
-  const normalized = normalize(schema), expected = videoSemanticContract();
+  const normalized = normalize(schema), expected = stage === 'audit' ? videoAuditContract() : videoSemanticContract();
   const props = normalized.properties || {}, fields = ['states', 'events', 'checks', 'uncertainties', 'multiple_scenarios'];
-  if (Object.keys(props).length === fields.length && fields.every(k => Object.hasOwn(props, k))) {
+  if (stage !== 'audit' && Object.keys(props).length === fields.length && fields.every(k => Object.hasOwn(props, k))) {
     delete expected.properties.revisit; expected.required = fields;
   }
   function match(actual, contract) {
@@ -719,7 +735,7 @@ function videoPolicyAttestation(body, options) {
   return {version:'video-stage-policy-v1',stage:body.videoStage,skill:body.skillName,skill_version:body.skillVersion,
     correlation:body.videoCorrelation,model:options.model,effective_options:effective,
     provider_options_sha256:videoCanonicalSha(options),
-    output_schema_sha256:body.outputSchema ? videoCanonicalSha(validateVideoOutputSchema(body.outputSchema)) : null};
+    output_schema_sha256:body.outputSchema ? videoCanonicalSha(validateVideoOutputSchema(body.outputSchema, body.videoStage)) : null};
 }
 
 function validateNativeVideo(payload, assets) {
@@ -776,7 +792,7 @@ function validateVideoStage(body, route) {
   if (stage === 'grounding') {
     if (payload.reasoning_mode !== 'bounded' || Object.hasOwn(payload,'perception_bank'))
       throw new Error('video_stage_grounding_invalid');
-    validateVideoOutputSchema(body.outputSchema);
+    validateVideoOutputSchema(body.outputSchema, body.videoStage);
   }
   const frames = stage === 'semantic' ? payload.frames : payload.image_frames;
   if (!Array.isArray(frames) || frames.length < 2 || frames.length > 1000) throw new Error('video_frames_invalid');
@@ -792,10 +808,11 @@ function validateVideoStage(body, route) {
     if (!Array.isArray(assets) || assets.length || payload.reasoning_mode !== 'bounded' ||
         ['image_frames', 'detail_frames', 'perception_mode', 'perception_frame_ids'].some(k => Object.hasOwn(payload, k)))
       throw new Error('video_stage_semantic_invalid');
-    validateVideoOutputSchema(body.outputSchema);
+    validateVideoOutputSchema(body.outputSchema, body.videoStage);
     return stage;
   }
-  if (Object.hasOwn(body, 'outputSchema') && stage !== 'grounding') throw new Error('video_stage_schema_invalid');
+  if (stage === 'audit' && Object.hasOwn(body, 'outputSchema')) validateVideoOutputSchema(body.outputSchema, stage);
+  if (Object.hasOwn(body, 'outputSchema') && !['grounding', 'audit'].includes(stage)) throw new Error('video_stage_schema_invalid');
   if (!Array.isArray(assets) || assets.length !== frames.length || assets.length < 2 || assets.length > videoStageImageLimit(stage))
     throw new Error('video_vision_limit');
   if (stage === 'perception' || stage === 'grounding') {
@@ -904,8 +921,9 @@ function completionOptionsForRoute(route, prompt, body, callOptions = {}) {
       delete completionOptions.thinking_budget;
       for (const part of imageParts) if (part.type === 'image_url') part.min_pixels = 1658880;
     } else completionOptions.thinking_budget = 1024;
-    completionOptions.response_format = ['semantic','grounding'].includes(videoStage) ?
-      {type: 'json_schema', json_schema: {name: 'video_semantic', strict: true, schema: validateVideoOutputSchema(body.outputSchema)}} :
+    completionOptions.response_format = (['semantic','grounding'].includes(videoStage) ||
+      (videoStage === 'audit' && Object.hasOwn(body, 'outputSchema'))) ?
+      {type: 'json_schema', json_schema: {name: videoStage === 'audit' ? 'video_audit' : 'video_semantic', strict: true, schema: validateVideoOutputSchema(body.outputSchema, body.videoStage)}} :
       {type: 'json_object'};
   }
   return completionOptions;

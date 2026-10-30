@@ -441,8 +441,8 @@ def run_ai_skill(
     stage = validate_video_stage(skill_name, payload, image_assets, video_stage, output_schema, version=version)
     if request_proof_hook is not None and (not stage or not callable(request_proof_hook)):
         raise ValueError("video_stage_proof_invalid")
-    if stage in {"semantic", "grounding"}:
-        output_schema = validate_output_schema(output_schema)
+    if stage in {"semantic", "grounding"} or (stage == "audit" and output_schema is not UNSET):
+        output_schema = validate_output_schema(output_schema, stage=stage)
     if stage and (output_defaults is not None or repair_invalid_json or not safe_bool(os.getenv("MIDSCENE_AI_SKILLS_USE_GATEWAY", "1"), True)):
         raise ValueError("video_stage_requires_gateway_without_repair")
     if raw_receipt is not None and (not stage or not callable(raw_receipt)):
@@ -505,7 +505,7 @@ def run_ai_skill(
                 bank = bind_inventory(result, payload)
                 if any(w['reason'] != 'source_partition_role' for w in bank['binding_audit']['warnings']):
                     raise ValueError("video_perception_role_mismatch")
-            elif stage in {"semantic", "grounding"}:
+            elif stage in {"semantic", "grounding"} or (stage == "audit" and output_schema is not UNSET):
                 try:
                     validate_stage_output(result, output_schema)
                 except VideoStageOutputError as exc:
@@ -636,8 +636,8 @@ def ai_gateway_skill_content(
     model_config = model_config if isinstance(model_config, dict) else {}
     runtime_trace = runtime_trace if isinstance(runtime_trace, dict) else {}
     stage = validate_video_stage(skill_name, payload, image_assets, video_stage, output_schema, version=version)
-    if stage in {"semantic", "grounding"}:
-        output_schema = validate_output_schema(output_schema)
+    if stage in {"semantic", "grounding"} or (stage == "audit" and output_schema is not UNSET):
+        output_schema = validate_output_schema(output_schema, stage=stage)
     if stage and json_response is not True:
         raise ValueError("video_stage_json_required")
     if raw_receipt is not None and (not stage or not callable(raw_receipt)):
@@ -696,7 +696,7 @@ def ai_gateway_skill_content(
         request_body.update(videoStage=stage, skillVersion=version, videoPolicyVersion=POLICY_VERSION,
                             videoCorrelation=uuid.uuid4().hex, timeoutMs=max(1, int(timeout*1000)),
                             videoDeadlineMs=deadline_ms)
-        if stage in {"semantic", "grounding"}:
+        if stage in {"semantic", "grounding"} or (stage == "audit" and output_schema is not UNSET):
             request_body["outputSchema"] = output_schema
     requested_max_tokens = safe_int(max_tokens, 0)
     if requested_max_tokens > 0:

@@ -482,8 +482,11 @@ def test_semantic_flash_literal_options_hash_and_raw_before_admission(monkeypatc
    return ai.ai_gateway_skill_content(skill,'semantics',payload=payload,**kw,timeout=120,request_proof_hook=proofs.append,raw_receipt=receipts.append)
   return ai.run_ai_skill(skill,payload,**kw,timeout=120,retry_count=0,request_proof_hook=proofs.append,raw_receipt=receipts.append)
  if reply=='valid':assert run()==raw
+ elif reply=='invalid_output':
+  with pytest.raises(ai.SkillSchemaError,match='输出不符合当前阶段schema') as caught:run()
+  assert caught.value.schema_path=='$'
  else:
-  error={'actual_max':'video_stage_reply_invalid','attested_max':'video_stage_attestation_invalid','invalid_output':'video_semantic_output_invalid'}[reply]
+  error={'actual_max':'video_stage_reply_invalid','attested_max':'video_stage_attestation_invalid'}[reply]
   with pytest.raises(RuntimeError,match=error):run()
  assert len(calls)==len(proofs)==len(receipts)==1
  assert json.loads(receipts[0]['content'])==raw

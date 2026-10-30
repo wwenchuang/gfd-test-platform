@@ -295,6 +295,11 @@ def _run_runtime(document, workspace, source_path, check, publish, *, budget=Non
                         payload.pop('image_frames', None)
                         payload['perception_bank'] = bank.project(payload)
                         kwargs.update(image_assets=[], output_schema=_semantic_schema(payload))
+                    elif stage == 'audit' and business:
+                        from .ai_skill_service import load_ai_skill_schema
+                        from .ui_video_stage_policy import _provider_projection, validate_output_schema
+                        kwargs['output_schema'] = validate_output_schema(_provider_projection(
+                            load_ai_skill_schema('ui_video_trajectory')['oneOf'][1]), stage='audit')
                     elif stage == 'audit' and not business:
                         projection = bank.project(payload)
                         # Sampler takes current roles; immutable producer roles in

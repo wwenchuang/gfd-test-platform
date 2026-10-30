@@ -1,0 +1,45 @@
+{
+  "source_id": "uvs_2c853ccbcb1d46c1a5b91e808f22fe49",
+  "source_sha256": "370d92e2622686330d114ce14c67c50788a8e92e4aa1babbbd7e856e2796d893",
+  "version": 15,
+  "receipt_entry": {
+    "entry": 40,
+    "kind": "receipt",
+    "sha256": "355440da839d461ae7471a24da38cd7261c578641ddbe80a889acb5873026918",
+    "value": {
+      "content": "{\n  \"reasoning\": \"The packet contains one tap on the print edit page's 'Next' button (event 0), a second tap on the model info page's 'Confirm' button (event 1), and a dwell wait on the print edit page (event 2). Event 0's trigger frame 247 shows a circular touch marker on the 'Next' button; the transition frames 248-250 show the slide to the model info page. Event 1's trigger frame 250 shows a touch marker on the 'Confirm' button; frames 251-258 show the return to the print edit page. Event 2's trigger frame 258 shows the print edit page with the model info not restored (size 0mm(X)*0mm(Y)*0mm(Z), selection frame around the model), and the dwell frames 258-266 confirm the page remains stable in that state. No later event contradicts this.\",\n  \"action\": \"accept\",\n  \"outcome\": \"The model info is not restored after the task cancellation. The print edit page shows size 0mm(X)*0mm(Y)*0mm(Z) with the selection frame around the model, and the 'Next' button remains available. The model info page confirms the cancellation. Event 2's dwell confirms the print edit page stays in the waiting state.\"\n}",
+      "fallbackUsed": false,
+      "finishReason": "stop",
+      "gateway_request_sha256": "34e48b0f506ae5034f93fd8eb151704b6e860f36e84035c14f3e878660117306",
+      "model": "qwen3.8-max",
+      "providerId": "qwen_plus",
+      "usage": {
+        "completionTokens": 1326,
+        "promptTokens": 46958,
+        "reasoningTokens": 1024,
+        "totalTokens": 48284
+      },
+      "videoPolicy": {
+        "correlation": "bebe8761b459490c8712afe24ec1c82e",
+        "effective_options": {
+          "enable_thinking": true,
+          "fine_frame_ids": [],
+          "image_count": 44,
+          "max_tokens": 10000,
+          "model": "qwen3.8-max",
+          "response_format": "json_object",
+          "temperature": 0.1,
+          "thinking_budget": 1024
+        },
+        "model": "qwen3.8-max",
+        "output_schema_sha256": null,
+        "provider_options_sha256": "86d82a0dad402c5549e7e76e8112b90b5d0e47c41a99c548a2b67065b860e00f",
+        "skill": "ui_video_trajectory",
+        "skill_version": "audit",
+        "stage": "audit",
+        "version": "video-stage-policy-v1"
+      }
+    }
+  },
+  "server_zip_sha256": "f110cc13bab8fea7534ad153d768d6770a0541daa0bf6a14bc4ffbee78b63f61"
+}
