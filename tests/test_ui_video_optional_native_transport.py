@@ -93,7 +93,7 @@ def test_real_owned_native_failure_then_actual_independent_audit(tmp_path,monkey
             result=published[-1]
         else:result=run()
         stages=[b['videoStage'] for b in calls]
-        assert stages==(['timeline','overview','grounding','audit'] if native_status!='oversize' else ['overview']+['grounding','audit']*10)
+        assert stages==(['timeline','overview','grounding','audit'] if native_status!='oversize' else ['overview']+['grounding','audit']*10)+(['audit'] if later_failure else [])
         assert all(not o.active_pids and o._closed for o in owners)
         if native_status!='oversize':
             native=owners[1];assert native._latched
