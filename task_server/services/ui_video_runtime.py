@@ -172,6 +172,24 @@ def _semantic_schema(payload):
     return validate_output_schema(schema)
 
 
+def _audit_schema(payload):
+    """Narrow canonical audit leaves to this dispatch's images, owners and shard."""
+    from .ai_skill_service import load_ai_skill_schema
+    from .ui_video_stage_policy import _provider_projection, validate_output_schema
+    schema = _provider_projection(load_ai_skill_schema('ui_video_trajectory')['oneOf'][1])
+    refs = [f['frame_id'] for f in payload['frames']]
+    owned = payload['owned_frame_ids']
+    ids = [claim['track']['event_id'] for claim in payload['trajectory']]
+    props = schema['properties']
+    props['issues']['items']['properties']['owner_frame']['enum'] = list(owned)
+    props['issues']['items']['properties']['frame_refs']['items']['enum'] = refs
+    for name in ('first_frame', 'last_frame'):
+        props['revisit']['items']['properties'][name]['enum'] = refs
+    if ids:
+        props['checks']['items']['properties']['event_id']['enum'] = ids
+    return validate_output_schema(schema, stage='audit')
+
+
 def run_runtime(document, workspace, source_path, check, publish, *, budget=None, mode=None):
     # The worker freezes selection under source/version CAS. Default callers keep
     # the bank path even if the process environment later changes.
@@ -296,10 +314,14 @@ def _run_runtime(document, workspace, source_path, check, publish, *, budget=Non
                         payload['perception_bank'] = bank.project(payload)
                         kwargs.update(image_assets=[], output_schema=_semantic_schema(payload))
                     elif stage == 'audit' and business:
-                        from .ai_skill_service import load_ai_skill_schema
-                        from .ui_video_stage_policy import _provider_projection, validate_output_schema
-                        kwargs['output_schema'] = validate_output_schema(_provider_projection(
-                            load_ai_skill_schema('ui_video_trajectory')['oneOf'][1]), stage='audit')
+                        kwargs['output_schema'] = _audit_schema(payload)
+                        # Multimodal providers may ignore json_schema; repeat trusted
+                        # domains in prompt input while retaining local validation.
+                        payload['reference_contract'] = {
+                            'version': 'packet-audit-reference-v1',
+                            'check_event_ids': [c['track']['event_id'] for c in payload['trajectory']],
+                            'issue_owner_frame_ids': list(payload['owned_frame_ids']),
+                            'image_frame_ids': [f['frame_id'] for f in payload['frames']]}
                     elif stage == 'audit' and not business:
                         projection = bank.project(payload)
                         # Sampler takes current roles; immutable producer roles in

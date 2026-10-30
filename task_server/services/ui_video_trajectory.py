@@ -15,8 +15,9 @@ EVENT_FIELDS={'action','target','value','frame_refs','observation','uncertaintie
 INTERACTIONS={'aiTap','aiInput','aiScroll'}
 
 
-def _fail(reason):
+def _fail(reason,model_feedback=None):
     error=ValueError('video_model_invalid');error.trajectory_reason=reason
+    if model_feedback is not None:error.model_feedback=model_feedback
     raise error
 
 
@@ -119,7 +120,14 @@ def bind_packet_events(raw_events,packet,frames,previous,tracks):
         outcome=raw['outcome']
         if not isinstance(outcome,dict) or set(outcome)!={'frame_refs','observation'}:_fail('outcome')
         after=_refs(outcome['frame_refs'],times,limit=60)
-        if not set(after)<=allowed or times[after[0]]<times[trigger] or times[after[-1]]<times[refs[-1]]:_fail('outcome_reference')
+        if not set(after)<=allowed:_fail('outcome_reference')
+        if times[after[0]]<times[trigger] or times[after[-1]]<times[refs[-1]]:
+            # Only IDs and timestamps already validated against actual packet images.
+            anchors={'trigger':trigger,'evidence_last':refs[-1],
+                     'outcome_first':after[0],'outcome_last':after[-1]}
+            feedback={'event_index':index,**{name:{'frame_id':ref,'timestamp_ms':times[ref]}
+                                           for name,ref in anchors.items()}}
+            _fail('outcome_reference',feedback)
         _text(outcome['observation'])
         selected,action_compilation=_compile_references(refs,times,{refs[0],refs[-1],trigger})
         selected_outcome=[after[-1]]
@@ -462,7 +470,10 @@ def observe_trajectory(document,root,cancelled,progress=None,record=None,revisit
                     'audit_contradiction':'双supported的question必须为空；仍有疑问请明确使用unclear或contradicted。',
                 }.get(reason,'当前阶段输出结构不符合合同，请只返回规定字段及合法值。')
                 if isinstance(error,SkillSchemaError):
-                    explanation=error.model_feedback+'trigger_frame必须属于owned_frame_ids，context仅可提供证据，不能作为本包新动作触发。'
+                    explanation=error.model_feedback+(
+                        'checks必须逐项对应当前trajectory中的track.event_id且恰好一次；owner_frame必须属于当前owned_frame_ids并包含在该issue的frame_refs中；issues.frame_refs及revisit端点只能引用当前实际附图。context触发属于其实际owner，不能另造当前issue。'
+                        if version=='audit' else
+                        'trigger_frame必须属于owned_frame_ids，context仅可提供证据，不能作为本包新动作触发。')
                 if reason.startswith('revisit_'):
                     explanation+=('本次支持context端点仅作定位：至少一个端点须为owned，原始跨度最多3000ms；平台只解码与当前owned半开区间相交的非空部分，不改派context原帧。'
                                   if bounded_revisit else '仅请求当前owned时间区间；future context由后续owner处理，不得夹取或改派原帧。')
@@ -563,6 +574,9 @@ def observe_trajectory(document,root,cancelled,progress=None,record=None,revisit
                 feedback='结构或证据未通过：'+reason+'。重看同一组原图，完整输出当前包；不改写上下文动作，不补造操作。'
                 if reason=='event_evidence':
                     feedback+='frame_refs必须保留该事件的真实trigger_frame和outcome锚点，只能选择已提供的原帧。'
+                if reason=='outcome_reference' and hasattr(error,'model_feedback'):
+                    feedback+=json.dumps(error.model_feedback,ensure_ascii=False,separators=(',',':'))
+                    feedback+='重新判断本动作自身的证据范围及实际响应；保留后续独立动作及其触发和结果，不能借用后次动作结果。不能仅延长outcome或删去证据来满足顺序；重看原图后完整输出当前包。'
                 if reason=='input_continuation':
                     feedback+='continuation_of只能延续紧邻的最后一个aiInput，且必须同页面同字段、无提交或其他业务操作间隔；不能把跨页导航合并为输入。'
                 if reason in {'state_shape','state_reference','state_kind'}:

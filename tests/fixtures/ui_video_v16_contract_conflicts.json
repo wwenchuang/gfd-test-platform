@@ -1,0 +1,2058 @@
+{
+  "provenance": {
+    "export": "/Users/adouceshi/Documents/projects/video-reliability-20261026/new-touch/current-platform/normal-run16/run16",
+    "source_json_sha256": "67d52ec1987e9916288003b21567947ce4f2e100df5a98fa38646bb95d6efc96",
+    "source_id": "uvs_2c853ccbcb1d46c1a5b91e808f22fe49",
+    "analysis_version": 16,
+    "filename": "d38feca256f7bb66b3d9a793c1ff298e.mp4",
+    "source_sha256": "370d92e2622686330d114ce14c67c50788a8e92e4aa1babbbd7e856e2796d893",
+    "original_document_sha256": "c84838045f5eec756faa080b00e7f43188def81fba7f813ce18021b7cdaa3e9b",
+    "original_frame_sha256": {
+      "frame-185": "11bfa22e8ea1fe4a4ee7b469647756a0add41c98e2981f8169085a46ffb7da16",
+      "frame-186": "d6f1173ddb5d9f9382984d893c2712acba932ec3079d0bcd58edaa7a34d5eda1",
+      "frame-187": "0f48a10a7413838b529018911b825926d00bbe0da3c0461aab4532640bc149b7"
+    }
+  },
+  "media": {
+    "duration_ms": 75376,
+    "coverage_start_ms": 0,
+    "coverage_end_ms": 75376,
+    "frames": [
+      {
+        "frame_id": "frame-001",
+        "timestamp_ms": 0
+      },
+      {
+        "frame_id": "frame-002",
+        "timestamp_ms": 33
+      },
+      {
+        "frame_id": "frame-003",
+        "timestamp_ms": 267
+      },
+      {
+        "frame_id": "frame-004",
+        "timestamp_ms": 533
+      },
+      {
+        "frame_id": "frame-005",
+        "timestamp_ms": 567
+      },
+      {
+        "frame_id": "frame-006",
+        "timestamp_ms": 600
+      },
+      {
+        "frame_id": "frame-007",
+        "timestamp_ms": 633
+      },
+      {
+        "frame_id": "frame-008",
+        "timestamp_ms": 667
+      },
+      {
+        "frame_id": "frame-009",
+        "timestamp_ms": 1167
+      },
+      {
+        "frame_id": "frame-010",
+        "timestamp_ms": 1467
+      },
+      {
+        "frame_id": "frame-011",
+        "timestamp_ms": 1500
+      },
+      {
+        "frame_id": "frame-012",
+        "timestamp_ms": 1533
+      },
+      {
+        "frame_id": "frame-013",
+        "timestamp_ms": 1567
+      },
+      {
+        "frame_id": "frame-014",
+        "timestamp_ms": 1600
+      },
+      {
+        "frame_id": "frame-015",
+        "timestamp_ms": 1633
+      },
+      {
+        "frame_id": "frame-016",
+        "timestamp_ms": 1667
+      },
+      {
+        "frame_id": "frame-017",
+        "timestamp_ms": 1700
+      },
+      {
+        "frame_id": "frame-018",
+        "timestamp_ms": 1900
+      },
+      {
+        "frame_id": "frame-019",
+        "timestamp_ms": 2433
+      },
+      {
+        "frame_id": "frame-020",
+        "timestamp_ms": 2533
+      },
+      {
+        "frame_id": "frame-021",
+        "timestamp_ms": 2567
+      },
+      {
+        "frame_id": "frame-022",
+        "timestamp_ms": 2700
+      },
+      {
+        "frame_id": "frame-023",
+        "timestamp_ms": 2933
+      },
+      {
+        "frame_id": "frame-024",
+        "timestamp_ms": 3000
+      },
+      {
+        "frame_id": "frame-025",
+        "timestamp_ms": 3100
+      },
+      {
+        "frame_id": "frame-026",
+        "timestamp_ms": 3567
+      },
+      {
+        "frame_id": "frame-027",
+        "timestamp_ms": 4567
+      },
+      {
+        "frame_id": "frame-028",
+        "timestamp_ms": 4600
+      },
+      {
+        "frame_id": "frame-029",
+        "timestamp_ms": 4633
+      },
+      {
+        "frame_id": "frame-030",
+        "timestamp_ms": 4667
+      },
+      {
+        "frame_id": "frame-031",
+        "timestamp_ms": 4700
+      },
+      {
+        "frame_id": "frame-032",
+        "timestamp_ms": 4733
+      },
+      {
+        "frame_id": "frame-033",
+        "timestamp_ms": 4767
+      },
+      {
+        "frame_id": "frame-034",
+        "timestamp_ms": 4800
+      },
+      {
+        "frame_id": "frame-035",
+        "timestamp_ms": 4833
+      },
+      {
+        "frame_id": "frame-036",
+        "timestamp_ms": 5067
+      },
+      {
+        "frame_id": "frame-037",
+        "timestamp_ms": 5567
+      },
+      {
+        "frame_id": "frame-038",
+        "timestamp_ms": 6200
+      },
+      {
+        "frame_id": "frame-039",
+        "timestamp_ms": 6933
+      },
+      {
+        "frame_id": "frame-040",
+        "timestamp_ms": 7567
+      },
+      {
+        "frame_id": "frame-041",
+        "timestamp_ms": 9000
+      },
+      {
+        "frame_id": "frame-042",
+        "timestamp_ms": 9967
+      },
+      {
+        "frame_id": "frame-043",
+        "timestamp_ms": 10000
+      },
+      {
+        "frame_id": "frame-044",
+        "timestamp_ms": 10067
+      },
+      {
+        "frame_id": "frame-045",
+        "timestamp_ms": 10100
+      },
+      {
+        "frame_id": "frame-046",
+        "timestamp_ms": 10600
+      },
+      {
+        "frame_id": "frame-047",
+        "timestamp_ms": 11600
+      },
+      {
+        "frame_id": "frame-048",
+        "timestamp_ms": 11867
+      },
+      {
+        "frame_id": "frame-049",
+        "timestamp_ms": 11933
+      },
+      {
+        "frame_id": "frame-050",
+        "timestamp_ms": 12000
+      },
+      {
+        "frame_id": "frame-051",
+        "timestamp_ms": 12033
+      },
+      {
+        "frame_id": "frame-052",
+        "timestamp_ms": 12067
+      },
+      {
+        "frame_id": "frame-053",
+        "timestamp_ms": 12233
+      },
+      {
+        "frame_id": "frame-054",
+        "timestamp_ms": 12900
+      },
+      {
+        "frame_id": "frame-055",
+        "timestamp_ms": 13933
+      },
+      {
+        "frame_id": "frame-056",
+        "timestamp_ms": 14000
+      },
+      {
+        "frame_id": "frame-057",
+        "timestamp_ms": 14033
+      },
+      {
+        "frame_id": "frame-058",
+        "timestamp_ms": 14067
+      },
+      {
+        "frame_id": "frame-059",
+        "timestamp_ms": 14100
+      },
+      {
+        "frame_id": "frame-060",
+        "timestamp_ms": 14133
+      },
+      {
+        "frame_id": "frame-061",
+        "timestamp_ms": 14533
+      },
+      {
+        "frame_id": "frame-062",
+        "timestamp_ms": 14933
+      },
+      {
+        "frame_id": "frame-063",
+        "timestamp_ms": 14967
+      },
+      {
+        "frame_id": "frame-064",
+        "timestamp_ms": 15000
+      },
+      {
+        "frame_id": "frame-065",
+        "timestamp_ms": 15333
+      },
+      {
+        "frame_id": "frame-066",
+        "timestamp_ms": 15600
+      },
+      {
+        "frame_id": "frame-067",
+        "timestamp_ms": 15900
+      },
+      {
+        "frame_id": "frame-068",
+        "timestamp_ms": 15967
+      },
+      {
+        "frame_id": "frame-069",
+        "timestamp_ms": 16000
+      },
+      {
+        "frame_id": "frame-070",
+        "timestamp_ms": 16200
+      },
+      {
+        "frame_id": "frame-071",
+        "timestamp_ms": 16633
+      },
+      {
+        "frame_id": "frame-072",
+        "timestamp_ms": 16667
+      },
+      {
+        "frame_id": "frame-073",
+        "timestamp_ms": 16700
+      },
+      {
+        "frame_id": "frame-074",
+        "timestamp_ms": 16833
+      },
+      {
+        "frame_id": "frame-075",
+        "timestamp_ms": 17000
+      },
+      {
+        "frame_id": "frame-076",
+        "timestamp_ms": 17033
+      },
+      {
+        "frame_id": "frame-077",
+        "timestamp_ms": 17233
+      },
+      {
+        "frame_id": "frame-078",
+        "timestamp_ms": 17433
+      },
+      {
+        "frame_id": "frame-079",
+        "timestamp_ms": 17933
+      },
+      {
+        "frame_id": "frame-080",
+        "timestamp_ms": 18433
+      },
+      {
+        "frame_id": "frame-081",
+        "timestamp_ms": 18467
+      },
+      {
+        "frame_id": "frame-082",
+        "timestamp_ms": 18600
+      },
+      {
+        "frame_id": "frame-083",
+        "timestamp_ms": 18633
+      },
+      {
+        "frame_id": "frame-084",
+        "timestamp_ms": 18933
+      },
+      {
+        "frame_id": "frame-085",
+        "timestamp_ms": 18967
+      },
+      {
+        "frame_id": "frame-086",
+        "timestamp_ms": 19000
+      },
+      {
+        "frame_id": "frame-087",
+        "timestamp_ms": 19267
+      },
+      {
+        "frame_id": "frame-088",
+        "timestamp_ms": 19533
+      },
+      {
+        "frame_id": "frame-089",
+        "timestamp_ms": 19567
+      },
+      {
+        "frame_id": "frame-090",
+        "timestamp_ms": 19600
+      },
+      {
+        "frame_id": "frame-091",
+        "timestamp_ms": 19633
+      },
+      {
+        "frame_id": "frame-092",
+        "timestamp_ms": 20000
+      },
+      {
+        "frame_id": "frame-093",
+        "timestamp_ms": 20033
+      },
+      {
+        "frame_id": "frame-094",
+        "timestamp_ms": 20933
+      },
+      {
+        "frame_id": "frame-095",
+        "timestamp_ms": 21400
+      },
+      {
+        "frame_id": "frame-096",
+        "timestamp_ms": 21500
+      },
+      {
+        "frame_id": "frame-097",
+        "timestamp_ms": 21933
+      },
+      {
+        "frame_id": "frame-098",
+        "timestamp_ms": 21967
+      },
+      {
+        "frame_id": "frame-099",
+        "timestamp_ms": 22000
+      },
+      {
+        "frame_id": "frame-100",
+        "timestamp_ms": 22033
+      },
+      {
+        "frame_id": "frame-101",
+        "timestamp_ms": 23467
+      },
+      {
+        "frame_id": "frame-102",
+        "timestamp_ms": 23900
+      },
+      {
+        "frame_id": "frame-103",
+        "timestamp_ms": 24033
+      },
+      {
+        "frame_id": "frame-104",
+        "timestamp_ms": 25000
+      },
+      {
+        "frame_id": "frame-105",
+        "timestamp_ms": 25833
+      },
+      {
+        "frame_id": "frame-106",
+        "timestamp_ms": 25867
+      },
+      {
+        "frame_id": "frame-107",
+        "timestamp_ms": 25933
+      },
+      {
+        "frame_id": "frame-108",
+        "timestamp_ms": 25967
+      },
+      {
+        "frame_id": "frame-109",
+        "timestamp_ms": 26000
+      },
+      {
+        "frame_id": "frame-110",
+        "timestamp_ms": 27167
+      },
+      {
+        "frame_id": "frame-111",
+        "timestamp_ms": 27367
+      },
+      {
+        "frame_id": "frame-112",
+        "timestamp_ms": 27400
+      },
+      {
+        "frame_id": "frame-113",
+        "timestamp_ms": 27433
+      },
+      {
+        "frame_id": "frame-114",
+        "timestamp_ms": 27500
+      },
+      {
+        "frame_id": "frame-115",
+        "timestamp_ms": 27533
+      },
+      {
+        "frame_id": "frame-116",
+        "timestamp_ms": 27967
+      },
+      {
+        "frame_id": "frame-117",
+        "timestamp_ms": 29200
+      },
+      {
+        "frame_id": "frame-118",
+        "timestamp_ms": 30000
+      },
+      {
+        "frame_id": "frame-119",
+        "timestamp_ms": 30500
+      },
+      {
+        "frame_id": "frame-120",
+        "timestamp_ms": 30967
+      },
+      {
+        "frame_id": "frame-121",
+        "timestamp_ms": 31400
+      },
+      {
+        "frame_id": "frame-122",
+        "timestamp_ms": 33000
+      },
+      {
+        "frame_id": "frame-123",
+        "timestamp_ms": 34233
+      },
+      {
+        "frame_id": "frame-124",
+        "timestamp_ms": 34267
+      },
+      {
+        "frame_id": "frame-125",
+        "timestamp_ms": 34433
+      },
+      {
+        "frame_id": "frame-126",
+        "timestamp_ms": 34600
+      },
+      {
+        "frame_id": "frame-127",
+        "timestamp_ms": 34933
+      },
+      {
+        "frame_id": "frame-128",
+        "timestamp_ms": 35967
+      },
+      {
+        "frame_id": "frame-129",
+        "timestamp_ms": 37000
+      },
+      {
+        "frame_id": "frame-130",
+        "timestamp_ms": 38000
+      },
+      {
+        "frame_id": "frame-131",
+        "timestamp_ms": 39000
+      },
+      {
+        "frame_id": "frame-132",
+        "timestamp_ms": 40000
+      },
+      {
+        "frame_id": "frame-133",
+        "timestamp_ms": 40800
+      },
+      {
+        "frame_id": "frame-134",
+        "timestamp_ms": 40833
+      },
+      {
+        "frame_id": "frame-135",
+        "timestamp_ms": 40867
+      },
+      {
+        "frame_id": "frame-136",
+        "timestamp_ms": 40933
+      },
+      {
+        "frame_id": "frame-137",
+        "timestamp_ms": 41067
+      },
+      {
+        "frame_id": "frame-138",
+        "timestamp_ms": 41333
+      },
+      {
+        "frame_id": "frame-139",
+        "timestamp_ms": 41467
+      },
+      {
+        "frame_id": "frame-140",
+        "timestamp_ms": 41500
+      },
+      {
+        "frame_id": "frame-141",
+        "timestamp_ms": 41767
+      },
+      {
+        "frame_id": "frame-142",
+        "timestamp_ms": 41800
+      },
+      {
+        "frame_id": "frame-143",
+        "timestamp_ms": 41833
+      },
+      {
+        "frame_id": "frame-144",
+        "timestamp_ms": 41867
+      },
+      {
+        "frame_id": "frame-145",
+        "timestamp_ms": 42067
+      },
+      {
+        "frame_id": "frame-146",
+        "timestamp_ms": 42100
+      },
+      {
+        "frame_id": "frame-147",
+        "timestamp_ms": 42967
+      },
+      {
+        "frame_id": "frame-148",
+        "timestamp_ms": 43433
+      },
+      {
+        "frame_id": "frame-149",
+        "timestamp_ms": 44033
+      },
+      {
+        "frame_id": "frame-150",
+        "timestamp_ms": 44833
+      },
+      {
+        "frame_id": "frame-151",
+        "timestamp_ms": 44967
+      },
+      {
+        "frame_id": "frame-152",
+        "timestamp_ms": 45000
+      },
+      {
+        "frame_id": "frame-153",
+        "timestamp_ms": 45067
+      },
+      {
+        "frame_id": "frame-154",
+        "timestamp_ms": 45100
+      },
+      {
+        "frame_id": "frame-155",
+        "timestamp_ms": 45167
+      },
+      {
+        "frame_id": "frame-156",
+        "timestamp_ms": 45233
+      },
+      {
+        "frame_id": "frame-157",
+        "timestamp_ms": 45267
+      },
+      {
+        "frame_id": "frame-158",
+        "timestamp_ms": 45567
+      },
+      {
+        "frame_id": "frame-159",
+        "timestamp_ms": 45700
+      },
+      {
+        "frame_id": "frame-160",
+        "timestamp_ms": 45767
+      },
+      {
+        "frame_id": "frame-161",
+        "timestamp_ms": 45833
+      },
+      {
+        "frame_id": "frame-162",
+        "timestamp_ms": 45900
+      },
+      {
+        "frame_id": "frame-163",
+        "timestamp_ms": 45933
+      },
+      {
+        "frame_id": "frame-164",
+        "timestamp_ms": 45967
+      },
+      {
+        "frame_id": "frame-165",
+        "timestamp_ms": 46000
+      },
+      {
+        "frame_id": "frame-166",
+        "timestamp_ms": 46167
+      },
+      {
+        "frame_id": "frame-167",
+        "timestamp_ms": 46233
+      },
+      {
+        "frame_id": "frame-168",
+        "timestamp_ms": 46400
+      },
+      {
+        "frame_id": "frame-169",
+        "timestamp_ms": 46433
+      },
+      {
+        "frame_id": "frame-170",
+        "timestamp_ms": 46467
+      },
+      {
+        "frame_id": "frame-171",
+        "timestamp_ms": 46500
+      },
+      {
+        "frame_id": "frame-172",
+        "timestamp_ms": 46533
+      },
+      {
+        "frame_id": "frame-173",
+        "timestamp_ms": 46733
+      },
+      {
+        "frame_id": "frame-174",
+        "timestamp_ms": 48200
+      },
+      {
+        "frame_id": "frame-175",
+        "timestamp_ms": 48500
+      },
+      {
+        "frame_id": "frame-176",
+        "timestamp_ms": 48567
+      },
+      {
+        "frame_id": "frame-177",
+        "timestamp_ms": 48600
+      },
+      {
+        "frame_id": "frame-178",
+        "timestamp_ms": 48633
+      },
+      {
+        "frame_id": "frame-179",
+        "timestamp_ms": 48667
+      },
+      {
+        "frame_id": "frame-180",
+        "timestamp_ms": 48700
+      },
+      {
+        "frame_id": "frame-181",
+        "timestamp_ms": 48767
+      },
+      {
+        "frame_id": "frame-182",
+        "timestamp_ms": 48800
+      },
+      {
+        "frame_id": "frame-183",
+        "timestamp_ms": 48967
+      },
+      {
+        "frame_id": "frame-184",
+        "timestamp_ms": 50000
+      },
+      {
+        "frame_id": "frame-185",
+        "timestamp_ms": 50733
+      },
+      {
+        "frame_id": "frame-186",
+        "timestamp_ms": 50867
+      },
+      {
+        "frame_id": "frame-187",
+        "timestamp_ms": 51433
+      },
+      {
+        "frame_id": "frame-188",
+        "timestamp_ms": 51467
+      },
+      {
+        "frame_id": "frame-189",
+        "timestamp_ms": 51500
+      },
+      {
+        "frame_id": "frame-190",
+        "timestamp_ms": 51533
+      },
+      {
+        "frame_id": "frame-191",
+        "timestamp_ms": 51567
+      },
+      {
+        "frame_id": "frame-192",
+        "timestamp_ms": 51633
+      },
+      {
+        "frame_id": "frame-193",
+        "timestamp_ms": 51967
+      },
+      {
+        "frame_id": "frame-194",
+        "timestamp_ms": 52633
+      },
+      {
+        "frame_id": "frame-195",
+        "timestamp_ms": 52667
+      },
+      {
+        "frame_id": "frame-196",
+        "timestamp_ms": 52700
+      },
+      {
+        "frame_id": "frame-197",
+        "timestamp_ms": 52733
+      },
+      {
+        "frame_id": "frame-198",
+        "timestamp_ms": 52833
+      },
+      {
+        "frame_id": "frame-199",
+        "timestamp_ms": 53133
+      },
+      {
+        "frame_id": "frame-200",
+        "timestamp_ms": 53600
+      },
+      {
+        "frame_id": "frame-201",
+        "timestamp_ms": 53733
+      },
+      {
+        "frame_id": "frame-202",
+        "timestamp_ms": 53767
+      },
+      {
+        "frame_id": "frame-203",
+        "timestamp_ms": 53900
+      },
+      {
+        "frame_id": "frame-204",
+        "timestamp_ms": 53933
+      },
+      {
+        "frame_id": "frame-205",
+        "timestamp_ms": 54033
+      },
+      {
+        "frame_id": "frame-206",
+        "timestamp_ms": 54100
+      },
+      {
+        "frame_id": "frame-207",
+        "timestamp_ms": 54133
+      },
+      {
+        "frame_id": "frame-208",
+        "timestamp_ms": 54200
+      },
+      {
+        "frame_id": "frame-209",
+        "timestamp_ms": 54233
+      },
+      {
+        "frame_id": "frame-210",
+        "timestamp_ms": 54267
+      },
+      {
+        "frame_id": "frame-211",
+        "timestamp_ms": 54300
+      },
+      {
+        "frame_id": "frame-212",
+        "timestamp_ms": 54400
+      },
+      {
+        "frame_id": "frame-213",
+        "timestamp_ms": 54567
+      },
+      {
+        "frame_id": "frame-214",
+        "timestamp_ms": 55967
+      },
+      {
+        "frame_id": "frame-215",
+        "timestamp_ms": 56100
+      },
+      {
+        "frame_id": "frame-216",
+        "timestamp_ms": 56367
+      },
+      {
+        "frame_id": "frame-217",
+        "timestamp_ms": 56400
+      },
+      {
+        "frame_id": "frame-218",
+        "timestamp_ms": 56433
+      },
+      {
+        "frame_id": "frame-219",
+        "timestamp_ms": 56467
+      },
+      {
+        "frame_id": "frame-220",
+        "timestamp_ms": 57933
+      },
+      {
+        "frame_id": "frame-221",
+        "timestamp_ms": 57967
+      },
+      {
+        "frame_id": "frame-222",
+        "timestamp_ms": 58000
+      },
+      {
+        "frame_id": "frame-223",
+        "timestamp_ms": 58033
+      },
+      {
+        "frame_id": "frame-224",
+        "timestamp_ms": 58933
+      },
+      {
+        "frame_id": "frame-225",
+        "timestamp_ms": 58967
+      },
+      {
+        "frame_id": "frame-226",
+        "timestamp_ms": 59000
+      },
+      {
+        "frame_id": "frame-227",
+        "timestamp_ms": 59033
+      },
+      {
+        "frame_id": "frame-228",
+        "timestamp_ms": 59967
+      },
+      {
+        "frame_id": "frame-229",
+        "timestamp_ms": 60967
+      },
+      {
+        "frame_id": "frame-230",
+        "timestamp_ms": 62333
+      },
+      {
+        "frame_id": "frame-231",
+        "timestamp_ms": 62467
+      },
+      {
+        "frame_id": "frame-232",
+        "timestamp_ms": 62500
+      },
+      {
+        "frame_id": "frame-233",
+        "timestamp_ms": 62600
+      },
+      {
+        "frame_id": "frame-234",
+        "timestamp_ms": 62633
+      },
+      {
+        "frame_id": "frame-235",
+        "timestamp_ms": 62800
+      },
+      {
+        "frame_id": "frame-236",
+        "timestamp_ms": 63967
+      },
+      {
+        "frame_id": "frame-237",
+        "timestamp_ms": 65233
+      },
+      {
+        "frame_id": "frame-238",
+        "timestamp_ms": 65367
+      },
+      {
+        "frame_id": "frame-239",
+        "timestamp_ms": 66167
+      },
+      {
+        "frame_id": "frame-240",
+        "timestamp_ms": 66200
+      },
+      {
+        "frame_id": "frame-241",
+        "timestamp_ms": 66233
+      },
+      {
+        "frame_id": "frame-242",
+        "timestamp_ms": 66267
+      },
+      {
+        "frame_id": "frame-243",
+        "timestamp_ms": 66333
+      },
+      {
+        "frame_id": "frame-244",
+        "timestamp_ms": 66633
+      },
+      {
+        "frame_id": "frame-245",
+        "timestamp_ms": 66967
+      },
+      {
+        "frame_id": "frame-246",
+        "timestamp_ms": 67000
+      },
+      {
+        "frame_id": "frame-247",
+        "timestamp_ms": 67067
+      },
+      {
+        "frame_id": "frame-248",
+        "timestamp_ms": 67533
+      },
+      {
+        "frame_id": "frame-249",
+        "timestamp_ms": 67667
+      },
+      {
+        "frame_id": "frame-250",
+        "timestamp_ms": 67800
+      },
+      {
+        "frame_id": "frame-251",
+        "timestamp_ms": 67833
+      },
+      {
+        "frame_id": "frame-252",
+        "timestamp_ms": 67867
+      },
+      {
+        "frame_id": "frame-253",
+        "timestamp_ms": 67900
+      },
+      {
+        "frame_id": "frame-254",
+        "timestamp_ms": 67933
+      },
+      {
+        "frame_id": "frame-255",
+        "timestamp_ms": 68000
+      },
+      {
+        "frame_id": "frame-256",
+        "timestamp_ms": 68033
+      },
+      {
+        "frame_id": "frame-257",
+        "timestamp_ms": 68067
+      },
+      {
+        "frame_id": "frame-258",
+        "timestamp_ms": 68500
+      },
+      {
+        "frame_id": "frame-259",
+        "timestamp_ms": 68667
+      },
+      {
+        "frame_id": "frame-260",
+        "timestamp_ms": 68800
+      },
+      {
+        "frame_id": "frame-261",
+        "timestamp_ms": 68833
+      },
+      {
+        "frame_id": "frame-262",
+        "timestamp_ms": 68867
+      },
+      {
+        "frame_id": "frame-263",
+        "timestamp_ms": 68900
+      },
+      {
+        "frame_id": "frame-264",
+        "timestamp_ms": 68933
+      },
+      {
+        "frame_id": "frame-265",
+        "timestamp_ms": 68967
+      },
+      {
+        "frame_id": "frame-266",
+        "timestamp_ms": 69000
+      },
+      {
+        "frame_id": "frame-267",
+        "timestamp_ms": 69033
+      },
+      {
+        "frame_id": "frame-268",
+        "timestamp_ms": 69500
+      },
+      {
+        "frame_id": "frame-269",
+        "timestamp_ms": 69633
+      },
+      {
+        "frame_id": "frame-270",
+        "timestamp_ms": 69767
+      },
+      {
+        "frame_id": "frame-271",
+        "timestamp_ms": 69800
+      },
+      {
+        "frame_id": "frame-272",
+        "timestamp_ms": 69833
+      },
+      {
+        "frame_id": "frame-273",
+        "timestamp_ms": 69867
+      },
+      {
+        "frame_id": "frame-274",
+        "timestamp_ms": 69900
+      },
+      {
+        "frame_id": "frame-275",
+        "timestamp_ms": 69933
+      },
+      {
+        "frame_id": "frame-276",
+        "timestamp_ms": 69967
+      },
+      {
+        "frame_id": "frame-277",
+        "timestamp_ms": 70000
+      },
+      {
+        "frame_id": "frame-278",
+        "timestamp_ms": 70033
+      },
+      {
+        "frame_id": "frame-279",
+        "timestamp_ms": 70433
+      },
+      {
+        "frame_id": "frame-280",
+        "timestamp_ms": 70567
+      },
+      {
+        "frame_id": "frame-281",
+        "timestamp_ms": 70800
+      },
+      {
+        "frame_id": "frame-282",
+        "timestamp_ms": 71533
+      },
+      {
+        "frame_id": "frame-283",
+        "timestamp_ms": 71900
+      },
+      {
+        "frame_id": "frame-284",
+        "timestamp_ms": 71933
+      },
+      {
+        "frame_id": "frame-285",
+        "timestamp_ms": 72000
+      },
+      {
+        "frame_id": "frame-286",
+        "timestamp_ms": 72033
+      },
+      {
+        "frame_id": "frame-287",
+        "timestamp_ms": 72500
+      },
+      {
+        "frame_id": "frame-288",
+        "timestamp_ms": 72667
+      },
+      {
+        "frame_id": "frame-289",
+        "timestamp_ms": 73000
+      },
+      {
+        "frame_id": "frame-290",
+        "timestamp_ms": 73467
+      },
+      {
+        "frame_id": "frame-291",
+        "timestamp_ms": 73933
+      },
+      {
+        "frame_id": "frame-292",
+        "timestamp_ms": 73967
+      },
+      {
+        "frame_id": "frame-293",
+        "timestamp_ms": 74000
+      },
+      {
+        "frame_id": "frame-294",
+        "timestamp_ms": 74033
+      },
+      {
+        "frame_id": "frame-295",
+        "timestamp_ms": 74233
+      },
+      {
+        "frame_id": "frame-296",
+        "timestamp_ms": 74467
+      },
+      {
+        "frame_id": "frame-297",
+        "timestamp_ms": 74500
+      },
+      {
+        "frame_id": "frame-298",
+        "timestamp_ms": 74533
+      },
+      {
+        "frame_id": "frame-299",
+        "timestamp_ms": 75233
+      }
+    ],
+    "static": false,
+    "black": false,
+    "width": 432,
+    "height": 960,
+    "micro_motion_frame_count": 165,
+    "micro_motion_groups_total": 121,
+    "micro_motion_groups_sampled": 60
+  },
+  "entries": [
+    {
+      "entry": 4,
+      "kind": "receipt",
+      "sha256": "7d48aa530a0b10b686f808ac72efc36c2ba56c365eaf80a5266ffc484675262a",
+      "value": {
+        "content": "{\"states\":[{\"state_id\":\"s1\",\"first_frame\":\"frame-001\",\"last_frame\":\"frame-009\",\"kind\":\"page\",\"description\":\"应用首页（模型推荐页）：顶部设备名EP3-9070692832BA与空闲状态、搜索/通知图标，绿色\\\"模型处理完成\\\"横幅带\\\"去打印\\\"入口，横向分类卡与推荐模型列表（军工套卡导弹车/直升机等），底部导航含AI建模。停留浏览。\"},{\"state_id\":\"s2\",\"first_frame\":\"frame-021\",\"last_frame\":\"frame-047\",\"kind\":\"input\",\"description\":\"搜索页：顶部返回+搜索框，\\\"搜索历史\\\"标签区与\\\"热搜榜\\\"，软键盘持续弹出。本区间为搜索框同一字段的连续编辑：从空占位开始，经拼音组词候选（ying'ho、xing、姓名、姓名牌）逐步上屏，最终框内为\\\"姓名牌\\\"。\"},{\"state_id\":\"s3\",\"first_frame\":\"frame-054\",\"last_frame\":\"frame-057\",\"kind\":\"page\",\"description\":\"搜索结果页：搜索框为\\\"姓名牌\\\"，键盘已收起，展示两张结果卡片（姓名牌-可编辑/3001人打印、Max挂牌-5人打印）及\\\"结果较少？试试AI创作\\\"推广横幅。\"},{\"state_id\":\"s4\",\"first_frame\":\"frame-065\",\"last_frame\":\"frame-065\",\"kind\":\"page\",\"description\":\"模型详情页（姓名牌）：顶部模型图1/1与可编辑标，标签行，\\\"模型文件\\\"卡（约18分钟、4g材料、52×2×26mm），描述文案，底部\\\"旋钮设置\\\"\\\"去编辑\\\"按钮。\"},{\"state_id\":\"s5\",\"first_frame\":\"frame-071\",\"last_frame\":\"frame-071\",\"kind\":\"wait\",\"description\":\"编辑模型页加载态：标题\\\"编辑模型\\\"，黑底居中\\\"正在加载...\\\"旋转指示。\"},{\"state_id\":\"s6\",\"first_frame\":\"frame-079\",\"last_frame\":\"frame-116\",\"kind\":\"input\",\"description\":\"编辑模型页：3D预览空间（蓝色立方体+网格+椭圆模型）、模型尺寸条、\\\"请输入文本\\\"区、底部按钮。本区间为文本框同一字段连续编辑：默认\\\"智小白\\\"获焦后清空为空占位\\\"输入文本内容\\\"，再切英文输入\\\"UI\\\"、切拼音组词，最终上屏\\\"UI自动化\\\"，末尾键盘收起。\"},{\"state_id\":\"s7\",\"first_frame\":\"frame-117\",\"last_frame\":\"frame-133\",\"kind\":\"wait\",\"description\":\"编辑模型页生成/准备态：文本\\\"UI自动化\\\"保留，底部按钮先为\\\"生成模型\\\"，点击后出现\\\"生成中...\\\"遮罩，尺寸更新为52×26×2mm、按钮变\\\"去打印\\\"，随后出现\\\"准备打印...\\\"遮罩等待进入打印流程。\"},{\"state_id\":\"s8\",\"first_frame\":\"frame-145\",\"last_frame\":\"frame-162\",\"kind\":\"page\",\"description\":\"打印编辑页（标题姓名牌，右上黄色耗材）：左侧居中/旋转/复制/一键适配/删除工具列，3D平台虚线框内黄色模型，尺寸条、缩放100%、\\\"更多打印参数已智能匹配\\\"、底部\\\"下一步\\\"。先有\\\"璇玑AI引擎优化已完成\\\"绿色对勾提示，后弹\\\"请确认耗材颜色\\\"对话框（官方耗材-黄色，含修改设置/确认/7天内不再提醒）。\"},{\"state_id\":\"s9\",\"first_frame\":\"frame-173\",\"last_frame\":\"frame-173\",\"kind\":\"page\",\"description\":\"打印编辑页上的\\\"当前有1个正在处理的任务 请去处理\\\"对话框，含\\\"取消\\\"\\\"去处理\\\"按钮。\"},{\"state_id\":\"s10\",\"first_frame\":\"frame-175\",\"last_frame\":\"frame-193\",\"kind\":\"page\",\"description\":\"模型打印预览页（第1次访问）：先加载/\\\"正在渲染模型...\\\"，随后渲染出一个黄色马形+字母模型（与姓名牌外观不同），预计时间1小时41分钟、模型耗材13.83g、支撑4.39g，底部\\\"取消打印\\\"\\\"确认打印\\\"；点击取消后弹\\\"确认要取消任务吗？\\\"，确定后显示\\\"已取消模型处理\\\"及\\\"重新编辑\\\"\\\"返回\\\"。\"},{\"state_id\":\"s11\",\"first_frame\":\"frame-200\",\"last_frame\":\"frame-213\",\"kind\":\"page\",\"description\":\"打印编辑页（第2次访问，姓名牌/黄色）：先\\\"正在校验模型...\\\"遮罩，随后黄色姓名牌模型在平台内，底部\\\"下一步\\\"。\"},{\"state_id\":\"s12\",\"first_frame\":\"frame-215\",\"last_frame\":\"frame-229\",\"kind\":\"wait\",\"description\":\"模型打印预览页（第2次访问，分析阶段）：标题\\\"模型打印预览\\\"，姓名牌挂饰图+进度0.0%，步骤列表逐项完成（待打印任务已生成→打印时间→模型消耗克数→模型尺寸→分析完成请等待模型处理），底部\\\"处理完成后直接打印\\\"\\\"取消处理\\\"。\"},{\"state_id\":\"s13\",\"first_frame\":\"frame-231\",\"last_frame\":\"frame-248\",\"kind\":\"page\",\"description\":\"模型打印预览页（第2次访问，渲染完成态）：先短暂空白加载，随后渲染出本次编辑的黄色姓名牌模型（带UI自动化文本），预计17分钟、模型耗材2.03g、支撑1.79g，底部\\\"取消打印\\\"\\\"确认打印\\\"；点击取消后弹\\\"确认要取消任务吗？\\\"，确定后显示\\\"已取消模型处理\\\"及\\\"重新编辑\\\"\\\"返回\\\"。\"},{\"state_id\":\"s14\",\"first_frame\":\"frame-262\",\"last_frame\":\"frame-262\",\"kind\":\"page\",\"description\":\"编辑模型页（返回访问）：3D预览、尺寸52×26×2mm、文本框保留\\\"UI自动化\\\"、底部\\\"去打印\\\"，无键盘。\"},{\"state_id\":\"s15\",\"first_frame\":\"frame-278\",\"last_frame\":\"frame-278\",\"kind\":\"page\",\"description\":\"模型详情页（返回访问，姓名牌）：模型图、标签、模型文件卡、底部\\\"旋钮设置\\\"\\\"去编辑\\\"。\"},{\"state_id\":\"s16\",\"first_frame\":\"frame-282\",\"last_frame\":\"frame-282\",\"kind\":\"page\",\"description\":\"搜索结果页（返回访问，姓名牌）：两张结果卡片与AI创作横幅，软键盘曾弹出后处于可见态。\"},{\"state_id\":\"s17\",\"first_frame\":\"frame-288\",\"last_frame\":\"frame-299\",\"kind\":\"transition\",\"description\":\"返回首页的过渡与停留：frame-288为搜索结果页与首页左右滑动的过渡帧，随后首页（模型推荐）稳定显示至结束，顶部通知角标较开头增加。\"}],\"events\":[],\"checks\":[],\"uncertainties\":[\"frame-186预览页渲染的黄色马形+字母模型与本次编辑的姓名牌外观不同，是否为点击\\\"去处理\\\"后跳转到的遗留待处理任务，无法仅凭概览帧确证。\",\"两次进入\\\"模型打印预览\\\"页对应的任务对象是否相同、第一次取消与第二次提交是否为同一队列不同对象，概览无法判定。\",\"视频开头\\\"模型处理完成\\\"横幅对应任务与中途被取消任务的关系无法核实。\",\"最终返回首页后本次姓名牌打印任务是否仍处已取消状态未重新提交，概览帧无法确认。\",\"frame-288为滑动过渡帧，无法精确区分返回操作的逐帧边界。\"],\"multiple_scenarios\":false}",
+        "fallbackUsed": false,
+        "finishReason": "stop",
+        "gateway_request_sha256": "e0be43d8dd113aac86b0c611dde4bd4439432bc5f405a39bab4858597fb21e81",
+        "model": "qwen3.8-flash",
+        "providerId": "qwen_plus",
+        "usage": {
+          "completionTokens": 2737,
+          "promptTokens": 33557,
+          "reasoningTokens": 1024,
+          "totalTokens": 36294
+        },
+        "videoPolicy": {
+          "correlation": "cb8174bd2635410ab7dd53e48009fdef",
+          "effective_options": {
+            "enable_thinking": true,
+            "fine_frame_ids": [],
+            "image_count": 60,
+            "max_tokens": 10000,
+            "model": "qwen3.8-flash",
+            "response_format": "json_object",
+            "temperature": 0.1,
+            "thinking_budget": 1024
+          },
+          "model": "qwen3.8-flash",
+          "output_schema_sha256": null,
+          "provider_options_sha256": "b1504c32bf7101283e69f41ba17849f0417117b5302ec37b038e3132e05bd71a",
+          "skill": "ui_video_trajectory",
+          "skill_version": "overview",
+          "stage": "overview",
+          "version": "video-stage-policy-v1"
+        }
+      }
+    },
+    {
+      "entry": 6,
+      "kind": "receipt",
+      "sha256": "ae139214d4040427221459e82c68e3d37decb492b04e1d869b79981b027ba3f8",
+      "value": {
+        "content": "{\n  \"states\": [],\n  \"events\": [\n    {\n      \"action\": \"aiTap\",\n      \"target\": \"首页顶部搜索图标\",\n      \"value\": \"\",\n      \"frame_refs\": [\"frame-008\", \"frame-009\", \"frame-010\", \"frame-011\", \"frame-012\"],\n      \"observation\": \"frame-009首页右上搜索图标出现圆形按压高亮，随后frame-010起页面滑入搜索页（返回箭头+搜索框占位\\\"搜索您感兴趣的内容\\\"+搜索历史标签+热搜榜加载 spinner），frame-012搜索页稳定。\",\n      \"uncertainties\": [],\n      \"trigger_frame\": \"frame-009\",\n      \"trigger_kind\": \"touch\",\n      \"page_before\": \"s1\",\n      \"page_after\": \"s2\",\n      \"continuation_of\": \"\",\n      \"edit_boundary\": \"none\",\n      \"outcome\": {\n        \"frame_refs\": [\"frame-011\", \"frame-012\"],\n        \"observation\": \"搜索页完整显示：搜索框为空占位、搜索历史标签区与热搜榜加载动画可见，首页已不在前台。\"\n      }\n    },\n    {\n      \"action\": \"aiInput\",\n      \"target\": \"搜索页顶部\\\"搜索您感兴趣的内容\\\"搜索输入框\",\n      \"value\": \"\",\n      \"frame_refs\": [\"frame-027\", \"frame-028\", \"frame-029\", \"frame-030\", \"frame-031\", \"frame-032\", \"frame-033\", \"frame-034\", \"frame-035\", \"frame-036\", \"frame-037\", \"frame-038\", \"frame-039\", \"frame-040\", \"frame-041\", \"frame-042\", \"frame-043\", \"frame-044\", \"frame-045\", \"frame-046\", \"frame-047\"],\n      \"observation\": \"软键盘弹出后搜索框保持空占位；frame-027起键盘出现拼音组词组合串且GHI/MNO键有按压高亮，组合串与候选多次变化，frame-037退格键出现按压高亮后组合串回退；frame-041搜索框首次上屏可见文字并带光标与清除按钮，frame-042至frame-044框内文字变为误选候选后的三字状态，frame-045经退格修正回两字，frame-047框内变为最终三字状态，键盘仍弹出，属同一搜索框字段连续编辑，未转录输入内容。\",\n      \"uncertainties\": [\n        \"frame-013光标出现至frame-026之间仅有聚焦与键盘弹出证据，未见文字修改，编辑触发以frame-027组合串出现为准；精确按键次数与IME内部组词机制无法逐帧确证。\"\n      ],\n      \"trigger_frame\": \"frame-027\",\n      \"trigger_kind\": \"edit\",\n      \"page_before\": \"s2\",\n      \"page_after\": \"s2\",\n      \"continuation_of\": \"\",\n      \"edit_boundary\": \"none\",\n      \"outcome\": {\n        \"frame_refs\": [\"frame-047\"],\n        \"observation\": \"搜索框内为编辑后的最终可见文字状态（带清除按钮与光标），拼音键盘仍弹出，页面仍为搜索页，未发生页面跳转。\"\n      }\n    }\n  ],\n  \"checks\": [],\n  \"uncertainties\": [\n    \"frame-047至frame-052之间搜索按钮的按下触点落在context帧，本包不记录该提交动作，仅保留frame-048起搜索按钮高亮与frame-052\\\"搜索中...\\\"遮罩作为后续包核验线索。\",\n    \"frame-042至frame-044的误选候选与frame-045退格修正的精确按键序列无法逐帧区分，仅能确认框内文字先增后减的可见变化。\"\n  ],\n  \"multiple_scenarios\": false,\n  \"revisit\": []\n}",
+        "fallbackUsed": false,
+        "finishReason": "stop",
+        "gateway_request_sha256": "5283c6ab118ac96de8222a6e0d9a9c85251de107e42456f2363d9ef32a7dac7d",
+        "model": "qwen3.8-max",
+        "providerId": "qwen_plus",
+        "usage": {
+          "completionTokens": 1994,
+          "promptTokens": 38916,
+          "reasoningTokens": 1024,
+          "totalTokens": 40910
+        },
+        "videoPolicy": {
+          "correlation": "54920ed5dd704462b66169316151963a",
+          "effective_options": {
+            "enable_thinking": true,
+            "fine_frame_ids": [],
+            "image_count": 53,
+            "max_tokens": 10000,
+            "model": "qwen3.8-max",
+            "response_format": "json_schema",
+            "temperature": 0.1,
+            "thinking_budget": 1024
+          },
+          "model": "qwen3.8-max",
+          "output_schema_sha256": "5a36d30e43eb43eed91aed9f89ed8ea4d6c8d67c6ecb65f620e15e12ffa79052",
+          "provider_options_sha256": "4f7a377eceade14ab7868755eca15b8dfa82206dfb2635cf9b8b45e22693ad87",
+          "skill": "ui_video_trajectory",
+          "skill_version": "observe",
+          "stage": "grounding",
+          "version": "video-stage-policy-v1"
+        }
+      }
+    },
+    {
+      "entry": 8,
+      "kind": "receipt",
+      "sha256": "59eee74218065588d42f145431ec2c87052d18f9addd225b64714190bd640b4c",
+      "value": {
+        "content": "{\n  \"checks\": [\n    {\n      \"event_id\": \"packet-001:event-0:fragment-1\",\n      \"trigger_verdict\": \"supported\",\n      \"outcome_verdict\": \"supported\",\n      \"question\": \"\"\n    },\n    {\n      \"event_id\": \"packet-001:event-1:fragment-1\",\n      \"trigger_verdict\": \"supported\",\n      \"outcome_verdict\": \"supported\",\n      \"question\": \"\"\n    }\n  ],\n  \"issues\": [\n    {\n      \"kind\": \"unresolved_evidence\",\n      \"owner_frame\": \"frame-048\",\n      \"frame_refs\": [\n        \"frame-047\",\n        \"frame-048\",\n        \"frame-049\",\n        \"frame-050\",\n        \"frame-051\",\n        \"frame-052\"\n      ],\n      \"question\": \"frame-048至frame-051搜索按钮上出现圆形按压高亮且按钮变灰，frame-052出现\\\"搜索中...\\\"遮罩，疑似一次独立提交点击；但owned区间末帧frame-047无任何按压证据，该触发起点落在context帧，无法在本包内归属触发，需确认提交动作是否应由后续包声明而非遗漏。\"\n    }\n  ],\n  \"multiple_scenarios\": false,\n  \"revisit\": []\n}",
+        "fallbackUsed": false,
+        "finishReason": "stop",
+        "gateway_request_sha256": "ee2516d6a987d779c1aa8abbca0cf44d67938a726a7b813735e72e547ed6d2b7",
+        "model": "qwen3.8-max",
+        "providerId": "qwen_plus",
+        "usage": {
+          "completionTokens": 1355,
+          "promptTokens": 33455,
+          "reasoningTokens": 1024,
+          "totalTokens": 34810
+        },
+        "videoPolicy": {
+          "correlation": "47d549923eaf4050b95b66ef3ae4d2bd",
+          "effective_options": {
+            "enable_thinking": true,
+            "fine_frame_ids": [],
+            "image_count": 53,
+            "max_tokens": 10000,
+            "model": "qwen3.8-max",
+            "response_format": "json_schema",
+            "temperature": 0.1,
+            "thinking_budget": 1024
+          },
+          "model": "qwen3.8-max",
+          "output_schema_sha256": "4903a92b9e4d2b9098c252b94b2fde961dd6edb28a509b53dbe7b5323db6e410",
+          "provider_options_sha256": "26700c97319a2f0815c0dbcc10792200e85e8caf5cd7d13b9003ba5e57fd7425",
+          "skill": "ui_video_trajectory",
+          "skill_version": "audit",
+          "stage": "audit",
+          "version": "video-stage-policy-v1"
+        }
+      }
+    },
+    {
+      "entry": 10,
+      "kind": "receipt",
+      "sha256": "14db62fa8b18e6b941a484ab293073f6f54aca6a64e13fb541ea7c4d19b66bd5",
+      "value": {
+        "content": "{\n  \"checks\": [\n    {\n      \"event_id\": \"packet-001:event-0:fragment-1\",\n      \"trigger_verdict\": \"supported\",\n      \"outcome_verdict\": \"supported\",\n      \"question\": \"\"\n    },\n    {\n      \"event_id\": \"packet-001:event-1:fragment-1\",\n      \"trigger_verdict\": \"supported\",\n      \"outcome_verdict\": \"supported\",\n      \"question\": \"\"\n    }\n  ],\n  \"issues\": [\n    {\n      \"kind\": \"unresolved_evidence\",\n      \"owner_frame\": \"frame-048\",\n      \"frame_refs\": [\n        \"frame-047\",\n        \"frame-048\",\n        \"frame-049\",\n        \"frame-050\",\n        \"frame-051\",\n        \"frame-052\"\n      ],\n      \"question\": \"frame-048至frame-051可见搜索按钮上的按压高亮残留，frame-052出现'搜索中...'遮罩，表明存在一次提交/搜索动作；但owned区间(frame-001..frame-047)内无任何触点或按压状态证据，触发可能落在owned末尾采样间隙或context包，无法归属本包新动作，亦不能编造触发帧，故保留未决。\"\n    }\n  ],\n  \"multiple_scenarios\": false,\n  \"revisit\": [\n    {\n      \"first_frame\": \"frame-047\",\n      \"last_frame\": \"frame-049\",\n      \"question\": \"补看owned末帧与context首帧之间是否存在对搜索按钮的独立触点/按下状态证据，以判定提交搜索动作的触发归属（本包末尾或后续包）。\"\n    }\n  ]\n}",
+        "fallbackUsed": false,
+        "finishReason": "stop",
+        "gateway_request_sha256": "7dff58fffcd7076f08f0278919f2f6a88e1acd66f03916d5e4a173769774bae2",
+        "model": "qwen3.8-max",
+        "providerId": "qwen_plus",
+        "usage": {
+          "completionTokens": 1444,
+          "promptTokens": 33532,
+          "reasoningTokens": 1024,
+          "totalTokens": 34976
+        },
+        "videoPolicy": {
+          "correlation": "38cd13fcb2984822b2b6c254771ff85a",
+          "effective_options": {
+            "enable_thinking": true,
+            "fine_frame_ids": [],
+            "image_count": 53,
+            "max_tokens": 10000,
+            "model": "qwen3.8-max",
+            "response_format": "json_schema",
+            "temperature": 0.1,
+            "thinking_budget": 1024
+          },
+          "model": "qwen3.8-max",
+          "output_schema_sha256": "4903a92b9e4d2b9098c252b94b2fde961dd6edb28a509b53dbe7b5323db6e410",
+          "provider_options_sha256": "5f9fb5b5a61303b8ab92b151ef05d0b6c13109f67d7132772148d0f7b60c2307",
+          "skill": "ui_video_trajectory",
+          "skill_version": "audit",
+          "stage": "audit",
+          "version": "video-stage-policy-v1"
+        }
+      }
+    },
+    {
+      "entry": 14,
+      "kind": "receipt",
+      "sha256": "147f69d1528585d68b59057d00e08bf338c4944fa8adc7891a40296dc216974a",
+      "value": {
+        "content": "{\n \"states\": [],\n \"events\": [\n  {\n   \"action\": \"aiTap\",\n   \"target\": \"搜索页搜索框右侧蓝色\\\"搜索\\\"按钮\",\n   \"value\": \"\",\n   \"frame_refs\": [\n    \"frame-047\",\n    \"frame-048\",\n    \"frame-049\",\n    \"frame-050\",\n    \"frame-051\",\n    \"frame-052\",\n    \"frame-053\",\n    \"frame-054\",\n    \"frame-055\"\n   ],\n   \"observation\": \"frame-048起蓝色\\\"搜索\\\"按钮上出现圆形按压高亮并持续至frame-051（按钮变浅蓝按下态），frame-052键盘下滑收起且热搜榜区域出现\\\"搜索中...\\\"旋转遮罩，frame-053整页变暗显示\\\"搜索中...\\\"，frame-054至frame-055搜索结果页（姓名牌/Max挂牌两卡片与AI创作横幅）完整可见，键盘已收起。\",\n   \"uncertainties\": [],\n   \"trigger_frame\": \"frame-048\",\n   \"trigger_kind\": \"touch\",\n   \"page_before\": \"s2\",\n   \"page_after\": \"s3\",\n   \"continuation_of\": \"\",\n   \"edit_boundary\": \"submission\",\n   \"outcome\": {\n    \"frame_refs\": [\n     \"frame-054\",\n     \"frame-055\"\n    ],\n    \"observation\": \"搜索结果页稳定显示：搜索框为\\\"姓名牌\\\"、键盘收起，姓名牌与Max挂牌两张结果卡片及\\\"结果较少？试试AI创作\\\"横幅可见。\"\n   }\n  },\n  {\n   \"action\": \"aiTap\",\n   \"target\": \"搜索结果页左侧\\\"姓名牌\\\"结果卡片\",\n   \"value\": \"\",\n   \"frame_refs\": [\n    \"frame-058\",\n    \"frame-059\",\n    \"frame-060\",\n    \"frame-061\",\n    \"frame-062\"\n   ],\n   \"observation\": \"frame-059结果页仍稳定，frame-060出现向左滑出的转场（结果页淡出、新页返回箭头滑入），frame-061起模型详情页完整显示：顶部姓名牌挂饰图1/1、标签行、\\\"模型文件\\\"卡（约18分钟、4g材料、52mm(X)*2mm(Y)*26mm(Z)）、底部\\\"旋钮设置\\\"\\\"去编辑\\\"按钮。\",\n   \"uncertainties\": [\n    \"frame-059与frame-061之间采样间隙内未捕获卡片上的按压高亮，点击位置依据唯一有序页面路径推断为\\\"姓名牌\\\"卡片。\"\n   ],\n   \"trigger_frame\": \"frame-060\",\n   \"trigger_kind\": \"navigation\",\n   \"page_before\": \"s3\",\n   \"page_after\": \"s4\",\n   \"continuation_of\": \"\",\n   \"edit_boundary\": \"none\",\n   \"outcome\": {\n    \"frame_refs\": [\n     \"frame-061\",\n     \"frame-062\"\n    ],\n    \"observation\": \"模型详情页（姓名牌）稳定显示：模型图、标签、模型文件卡与底部\\\"旋钮设置\\\"\\\"去编辑\\\"按钮均可见，搜索结果页已不在前台。\"\n   }\n  },\n  {\n   \"action\": \"aiTap\",\n   \"target\": \"模型详情页底部蓝色\\\"去编辑\\\"按钮\",\n   \"value\": \"\",\n   \"frame_refs\": [\n    \"frame-064\",\n    \"frame-065\",\n    \"frame-066\",\n    \"frame-067\",\n    \"frame-068\",\n    \"frame-069\",\n    \"frame-070\",\n    \"frame-071\"\n   ],\n   \"observation\": \"frame-065底部\\\"去编辑\\\"按钮上出现圆形按压高亮，frame-066详情页整体左滑转场，frame-067至frame-068出现标题\\\"编辑模型\\\"的空白页，frame-069至frame-071黑底居中\\\"正在加载...\\\"旋转指示持续显示。\",\n   \"uncertainties\": [],\n   \"trigger_frame\": \"frame-065\",\n   \"trigger_kind\": \"touch\",\n   \"page_before\": \"s4\",\n   \"page_after\": \"s5\",\n   \"continuation_of\": \"\",\n   \"edit_boundary\": \"none\",\n   \"outcome\": {\n    \"frame_refs\": [\n     \"frame-071\"\n    ],\n    \"observation\": \"编辑模型页处于加载态：标题\\\"编辑模型\\\"，黑底居中\\\"正在加载...\\\"旋转指示可见，详情页已不在前台。\"\n   }\n  },\n  {\n   \"action\": \"aiWaitFor\",\n   \"target\": \"编辑模型页加载完成（3D预览、模型尺寸、\\\"请输入文本\\\"区与底部按钮出现）\",\n   \"value\": \"\",\n   \"frame_refs\": [\n    \"frame-071\",\n    \"frame-072\",\n    \"frame-073\",\n    \"frame-074\",\n    \"frame-075\",\n    \"frame-076\",\n    \"frame-077\",\n    \"frame-078\",\n    \"frame-079\"\n   ],\n   \"observation\": \"frame-072起黑底加载变为白底并出现底部\\\"模型尺寸: --\\\"\\\"暂无可编辑参数\\\"与置灰\\\"生成模型\\\"按钮，frame-073至frame-077中部\\\"加载中...\\\"遮罩持续，frame-078出现\\\"加载中33%\\\"、尺寸条更新为52mm(X)*2mm(Y)*26mm(Z)、\\\"请输入文本\\\"区含默认文本且底部按钮变\\\"去打印\\\"，frame-079遮罩消失、3D预览空间与椭圆模型完整显示，全程无新的用户触点。\",\n   \"uncertainties\": [],\n   \"trigger_frame\": \"frame-072\",\n   \"trigger_kind\": \"automatic\",\n   \"page_before\": \"s5\",\n   \"page_after\": \"s6\",\n   \"continuation_of\": \"\",\n   \"edit_boundary\": \"none\",\n   \"outcome\": {\n    \"frame_refs\": [\n     \"frame-079\"\n    ],\n    \"observation\": \"编辑模型页加载完成：3D预览空间（蓝色线框+网格+椭圆模型）、尺寸条52mm(X)*2mm(Y)*26mm(Z)、\\\"请输入文本\\\"区与底部\\\"去打印\\\"按钮均可见，无加载遮罩。\"\n   }\n  }\n ],\n \"checks\": [],\n \"uncertainties\": [\n  \"frame-059至frame-061之间未捕获\\\"姓名牌\\\"卡片上的按压高亮，进入详情页的触发依据唯一有序页面路径推断。\",\n  \"frame-079至frame-081之间文本框获焦（光标出现）的触点落在包边界间隙，本包不对其单列动作。\"\n ],\n \"multiple_scenarios\": false,\n \"revisit\": []\n}",
+        "fallbackUsed": false,
+        "finishReason": "stop",
+        "gateway_request_sha256": "932cdc104a128d300fb5fcae92209ecb188b3abd65caa3cd9cc76558101ce568",
+        "model": "qwen3.8-max",
+        "providerId": "qwen_plus",
+        "usage": {
+          "completionTokens": 2697,
+          "promptTokens": 37594,
+          "reasoningTokens": 1024,
+          "totalTokens": 40291
+        },
+        "videoPolicy": {
+          "correlation": "574b2aff327b4c83a31c2760c18e7c50",
+          "effective_options": {
+            "enable_thinking": true,
+            "fine_frame_ids": [],
+            "image_count": 44,
+            "max_tokens": 10000,
+            "model": "qwen3.8-max",
+            "response_format": "json_schema",
+            "temperature": 0.1,
+            "thinking_budget": 1024
+          },
+          "model": "qwen3.8-max",
+          "output_schema_sha256": "acbf9aebcbfbd2124da4ed6cb1f795f65595214bbfb083b2e1af7b134863cccb",
+          "provider_options_sha256": "96eac79f73ea509dea4f1f6f30591a775fa3634b4abaeaa0ead6163a4ddfc3de",
+          "skill": "ui_video_trajectory",
+          "skill_version": "observe",
+          "stage": "grounding",
+          "version": "video-stage-policy-v1"
+        }
+      }
+    },
+    {
+      "entry": 18,
+      "kind": "receipt",
+      "sha256": "a5675a9bdc70d87baaf5a1d325696ee52ab13799bb4e14e9d0ce9cf197c67ced",
+      "value": {
+        "content": "{\n \"states\": [],\n \"events\": [\n  {\n   \"action\": \"aiInput\",\n   \"target\": \"编辑模型页\\\"请输入文本\\\"文本输入框\",\n   \"value\": \"\",\n   \"frame_refs\": [\n    \"frame-080\",\n    \"frame-081\",\n    \"frame-082\",\n    \"frame-083\",\n    \"frame-084\",\n    \"frame-085\",\n    \"frame-086\",\n    \"frame-087\",\n    \"frame-088\",\n    \"frame-089\",\n    \"frame-090\",\n    \"frame-091\",\n    \"frame-092\",\n    \"frame-093\",\n    \"frame-094\",\n    \"frame-095\",\n    \"frame-096\",\n    \"frame-097\",\n    \"frame-098\",\n    \"frame-099\",\n    \"frame-100\",\n    \"frame-101\",\n    \"frame-102\",\n    \"frame-103\",\n    \"frame-104\",\n    \"frame-105\",\n    \"frame-106\",\n    \"frame-107\",\n    \"frame-108\",\n    \"frame-109\",\n    \"frame-110\",\n    \"frame-111\",\n    \"frame-112\"\n   ],\n   \"observation\": \"frame-080文本框为默认\\\"智小白\\\"无键盘；frame-081框变蓝边并出现光标（聚焦），frame-082至frame-083软键盘上滑弹出；frame-084出现蓝色光标拖拽柄；frame-085起退格键持续按压高亮，框内文字逐帧回退（智小白→智小→智），frame-090至frame-091出现候选行，frame-092清空为空占位\\\"输入文本内容\\\"；frame-094键盘切英文小写、frame-096切大写，frame-097\\\"U\\\"键按压气泡，frame-098起组合串与候选出现，frame-099至frame-100框内上屏\\\"U\\\"，frame-101至frame-102为\\\"UI\\\"且中英切换键有按压高亮，frame-103切回拼音键盘，frame-104至frame-109组合串继续变化（候选含\\\"自动化\\\"），frame-110框内最终上屏三字中文与\\\"UI\\\"组合文本、键盘仍弹出；属同一文本字段连续编辑（聚焦、退格清空、IME切换与组词上屏），未转录输入内容。\",\n   \"uncertainties\": [\n    \"frame-080至frame-081之间仅见聚焦蓝边与光标出现，未捕获手指触点高亮，聚焦方式（点按框体）依据键盘随后弹出推断。\"\n   ],\n   \"trigger_frame\": \"frame-088\",\n   \"trigger_kind\": \"edit\",\n   \"page_before\": \"s6\",\n   \"page_after\": \"s6\",\n   \"continuation_of\": \"\",\n   \"edit_boundary\": \"none\",\n   \"outcome\": {\n    \"frame_refs\": [\n     \"frame-110\",\n     \"frame-111\",\n     \"frame-112\"\n    ],\n    \"observation\": \"frame-112文本框内为编辑后的最终可见文字（\\\"UI\\\"加三字中文组合）且无加载遮罩，键盘已收起，页面仍为编辑模型页，底部按钮可见，未发生页面跳转。\"\n   }\n  },\n  {\n   \"action\": \"aiTap\",\n   \"target\": \"编辑模型页键盘右上区域收起键盘控件\",\n   \"value\": \"\",\n   \"frame_refs\": [\n    \"frame-110\",\n    \"frame-111\",\n    \"frame-112\"\n   ],\n   \"observation\": \"frame-110键盘工具行最右出现圆形按压高亮（收起控件位置），frame-111键盘下滑收起过程中底部\\\"生成模型\\\"按钮重新露出，frame-112键盘完全消失、页面恢复无键盘布局，文本框文字保持不变。\",\n   \"uncertainties\": [\n    \"frame-110按压高亮覆盖在键盘工具行右端图标上，该图标具体语义（收起键盘/完成）仅凭单帧高亮无法完全区分，但结果为键盘收起且无文字提交变化。\"\n   ],\n   \"trigger_frame\": \"frame-110\",\n   \"trigger_kind\": \"touch\",\n   \"page_before\": \"s6\",\n   \"page_after\": \"s6\",\n   \"continuation_of\": \"\",\n   \"edit_boundary\": \"none\",\n   \"outcome\": {\n    \"frame_refs\": [\n     \"frame-112\"\n    ],\n    \"observation\": \"软键盘完全收起，编辑模型页恢复全高布局：3D预览、尺寸条、含最终文字的文本框与底部\\\"生成模型\\\"按钮均可见，无键盘遮挡。\"\n   }\n  }\n ],\n \"checks\": [],\n \"uncertainties\": [\n  \"frame-094至frame-096键盘由拼音切英文小写再切大写的按键级证据仅有键盘布局变化帧，具体切换键触点未被高亮捕获。\",\n  \"frame-110收起键盘的按压高亮与编辑末态同帧，收键盘触点是否略早于该帧无法逐帧确证。\"\n ],\n \"multiple_scenarios\": false,\n \"revisit\": []\n}",
+        "fallbackUsed": false,
+        "finishReason": "stop",
+        "gateway_request_sha256": "c2c5da1b7c40f8c3d540e19cf64030116ad69d0d1d9cfccb28fc51e1bd49437c",
+        "model": "qwen3.8-max",
+        "providerId": "qwen_plus",
+        "usage": {
+          "completionTokens": 2344,
+          "promptTokens": 44147,
+          "reasoningTokens": 1024,
+          "totalTokens": 46491
+        },
+        "videoPolicy": {
+          "correlation": "cd576f8845b44acb8a5bb6943d68fa6f",
+          "effective_options": {
+            "enable_thinking": true,
+            "fine_frame_ids": [],
+            "image_count": 44,
+            "max_tokens": 10000,
+            "model": "qwen3.8-max",
+            "response_format": "json_schema",
+            "temperature": 0.1,
+            "thinking_budget": 1024
+          },
+          "model": "qwen3.8-max",
+          "output_schema_sha256": "b67d011f87376da305e210c724fb120c8dc8071136ef484397dcd8a0970ad963",
+          "provider_options_sha256": "f36736ac700fd63a80b78a09ecc354611292f920be91c5d6e919dd897b9a2a3e",
+          "skill": "ui_video_trajectory",
+          "skill_version": "observe",
+          "stage": "grounding",
+          "version": "video-stage-policy-v1"
+        }
+      }
+    },
+    {
+      "entry": 22,
+      "kind": "receipt",
+      "sha256": "844693cf7326daa716b876dfcd28c5605e7bc9f8999d0ee51bee6a7198035c0e",
+      "value": {
+        "content": "{\n  \"states\": [],\n  \"events\": [\n    {\n      \"action\": \"aiTap\",\n      \"target\": \"编辑模型页底部蓝色\\\"生成模型\\\"按钮\",\n      \"value\": \"\",\n      \"frame_refs\": [\"frame-112\", \"frame-113\", \"frame-114\", \"frame-115\", \"frame-116\", \"frame-117\", \"frame-118\", \"frame-119\", \"frame-120\", \"frame-121\", \"frame-122\"],\n      \"observation\": \"frame-112至frame-116键盘已收起、文本框保留\\\"UI自动化\\\"、底部\\\"生成模型\\\"按钮可见且无遮罩；frame-117按钮中部出现圆形按压高亮，frame-118至frame-120高亮消失但页面无遮罩（按压未产生可见响应）；frame-121同一按钮再次出现圆形按压高亮，frame-122立即出现居中\\\"生成中...\\\"遮罩、按钮变置灰、文本框变灰禁用。两次高亮目标相同但间隔内页面无响应，属有独立证据的重复按压，不合并。\",\n      \"uncertainties\": [\n        \"frame-117首次按压高亮后直至frame-120均无遮罩或状态变化，该次按压是无响应误触还是响应延迟无法仅凭帧确证；仅能确认frame-121按压后紧跟\\\"生成中...\\\"遮罩。\"\n      ],\n      \"trigger_frame\": \"frame-117\",\n      \"trigger_kind\": \"touch\",\n      \"page_before\": \"s6\",\n      \"page_after\": \"s7\",\n      \"continuation_of\": \"\",\n      \"edit_boundary\": \"none\",\n      \"outcome\": {\n        \"frame_refs\": [\"frame-122\"],\n        \"observation\": \"编辑模型页出现居中\\\"生成中...\\\"旋转遮罩，底部\\\"生成模型\\\"按钮置灰、文本框灰底禁用，生成流程已启动。\"\n      }\n    },\n    {\n      \"action\": \"aiWaitFor\",\n      \"target\": \"编辑模型页模型生成完成（\\\"生成中...\\\"遮罩消失、尺寸条更新、底部按钮变\\\"去打印\\\"）\",\n      \"value\": \"\",\n      \"frame_refs\": [\"frame-122\", \"frame-123\", \"frame-124\", \"frame-125\", \"frame-126\", \"frame-127\"],\n      \"observation\": \"frame-122\\\"生成中...\\\"遮罩持续，frame-123叠加\\\"加载中100%\\\"遮罩，frame-124尺寸条更新为52mm(X)×26mm(Y)×2mm(Z)且按钮文字变\\\"去打印\\\"（仍置灰），frame-125遮罩淡出、按钮恢复蓝色可点，frame-126至frame-127遮罩完全消失、3D预览中模型文本更新、底部\\\"去打印\\\"稳定可见，全程无新的用户触点，属点击\\\"生成模型\\\"后的自动异步响应。\",\n      \"uncertainties\": [],\n      \"trigger_frame\": \"frame-122\",\n      \"trigger_kind\": \"automatic\",\n      \"page_before\": \"s7\",\n      \"page_after\": \"s7\",\n      \"continuation_of\": \"\",\n      \"edit_boundary\": \"none\",\n      \"outcome\": {\n        \"frame_refs\": [\"frame-127\"],\n        \"observation\": \"生成完成态稳定：无遮罩，尺寸条为52mm(X)×26mm(Y)×2mm(Z)，文本框保留\\\"UI自动化\\\"，底部蓝色\\\"去打印\\\"按钮可点。\"\n      }\n    },\n    {\n      \"action\": \"aiTap\",\n      \"target\": \"编辑模型页底部蓝色\\\"去打印\\\"按钮\",\n      \"value\": \"\",\n      \"frame_refs\": [\"frame-127\", \"frame-128\", \"frame-129\", \"frame-130\", \"frame-131\", \"frame-132\", \"frame-133\", \"frame-134\", \"frame-135\", \"frame-136\", \"frame-137\"],\n      \"observation\": \"frame-127\\\"去打印\\\"按钮可点且无遮罩；frame-128在底部操作区出现圆形按压高亮（生成完成后唯一触点），frame-129立即出现居中\\\"准备打印...\\\"遮罩且\\\"去打印\\\"按钮置灰，frame-130至frame-136遮罩持续、按钮保持置灰，frame-137编辑模型页整体向左滑出、右侧露出黑色新页边缘，进入转场。\",\n      \"uncertainties\": [\n        \"frame-128按压高亮位置偏底部面板右侧，与\\\"去打印\\\"按钮中心略有偏移，但随后唯一响应为\\\"准备打印...\\\"遮罩与按钮置灰，目标判定为\\\"去打印\\\"。\"\n      ],\n      \"trigger_frame\": \"frame-128\",\n      \"trigger_kind\": \"touch\",\n      \"page_before\": \"s7\",\n      \"page_after\": \"s7\",\n      \"continuation_of\": \"\",\n      \"edit_boundary\": \"none\",\n      \"outcome\": {\n        \"frame_refs\": [\"frame-136\", \"frame-137\"],\n        \"observation\": \"frame-136\\\"准备打印...\\\"遮罩仍显示且\\\"去打印\\\"置灰；frame-137编辑模型页左滑转场开始，右侧出现新页黑色背景，打印流程跳转启动。\"\n      }\n    },\n    {\n      \"action\": \"aiWaitFor\",\n      \"target\": \"打印编辑页加载（黑底\\\"正在加载...\\\"到标题\\\"姓名牌\\\"与黄色耗材标识、左侧工具列出现）\",\n      \"value\": \"\",\n      \"frame_refs\": [\"frame-137\", \"frame-138\", \"frame-139\", \"frame-140\", \"frame-141\", \"frame-142\", \"frame-143\"],\n      \"observation\": \"frame-137转场后frame-138至frame-139为黑底居中\\\"正在加载...\\\"旋转指示，frame-140出现标题\\\"模型打印编辑\\\"与左侧居中/旋转/复制/一键适配/删除工具列及\\\"正在加载...\\\"，frame-141标题变\\\"姓名牌\\\"、右上出现黄色耗材标识、\\\"正在加载...0%\\\"，frame-142至frame-143显示\\\"加载中100%\\\"，全程无用户触点，属点击\\\"去打印\\\"后的自动加载响应。\",\n      \"uncertainties\": [],\n      \"trigger_frame\": \"frame-138\",\n      \"trigger_kind\": \"automatic\",\n      \"page_before\": \"s7\",\n      \"page_after\": \"s8\",\n      \"continuation_of\": \"\",\n      \"edit_boundary\": \"none\",\n      \"outcome\": {\n        \"frame_refs\": [\"frame-143\"],\n        \"observation\": \"打印编辑页框架加载至\\\"加载中100%\\\"：标题\\\"姓名牌\\\"、右上黄色耗材、左侧工具列与坐标轴可见，3D平台区仍为加载旋转指示。\"\n      }\n    }\n  ],\n  \"checks\": [],\n  \"uncertainties\": [\n    \"frame-117与frame-121两次\\\"生成模型\\\"按压高亮之间（frame-118至frame-120）无任何遮罩或按钮状态变化，首次按压是否为无响应误触无法确证，仅按可见高亮保留两次独立按压证据。\",\n    \"frame-128按压高亮圆心位于底部面板右侧而非\\\"去打印\\\"按钮文字中心，是否为用户先点空白再点按钮无法区分；后续唯一响应为\\\"准备打印...\\\"遮罩。\",\n    \"本包末帧frame-143仍处\\\"加载中100%\\\"，打印编辑页模型摆放与\\\"璇玑AI引擎优化已完成\\\"提示在frame-145之后才可见，加载完成终态由后续包核验。\"\n  ],\n  \"multiple_scenarios\": false,\n  \"revisit\": []\n}",
+        "fallbackUsed": false,
+        "finishReason": "stop",
+        "gateway_request_sha256": "0097390ceb3f7f316bd3d90d2fcb879bff3ef8114fa62815abe419d0ff49f4db",
+        "model": "qwen3.8-max",
+        "providerId": "qwen_plus",
+        "usage": {
+          "completionTokens": 2928,
+          "promptTokens": 48567,
+          "reasoningTokens": 1024,
+          "totalTokens": 51495
+        },
+        "videoPolicy": {
+          "correlation": "c20bf1c00a5840f59452865a8b924f0c",
+          "effective_options": {
+            "enable_thinking": true,
+            "fine_frame_ids": [],
+            "image_count": 44,
+            "max_tokens": 10000,
+            "model": "qwen3.8-max",
+            "response_format": "json_schema",
+            "temperature": 0.1,
+            "thinking_budget": 1024
+          },
+          "model": "qwen3.8-max",
+          "output_schema_sha256": "287de55016a00c4bb83e6bc17d6fbd202eaf308375b728caecdfa124863ffc33",
+          "provider_options_sha256": "018f375a6e984704144ed96d4702498d35874ca708283da58eb776bf9e19c3f4",
+          "skill": "ui_video_trajectory",
+          "skill_version": "observe",
+          "stage": "grounding",
+          "version": "video-stage-policy-v1"
+        }
+      }
+    },
+    {
+      "entry": 26,
+      "kind": "receipt",
+      "sha256": "1ba8d3118bf9922a1e48724864e7fdc530454630c643d2f7837dbc0fbf6f5f12",
+      "value": {
+        "content": "{\n  \"states\": [],\n  \"events\": [\n    {\n      \"action\": \"aiWaitFor\",\n      \"target\": \"打印编辑页加载完成（\\\"加载中100%\\\"结束，出现\\\"璇玑AI引擎优化已完成\\\"绿色对勾提示、模型尺寸条、缩放100%与底部\\\"下一步\\\"按钮）\",\n      \"value\": \"\",\n      \"frame_refs\": [\"frame-144\", \"frame-145\", \"frame-146\"],\n      \"observation\": \"frame-144仍为\\\"加载中100%\\\"旋转指示且底部面板未出现；frame-145加载指示消失，3D平台虚线框内出现居中绿色对勾\\\"璇玑AI引擎|优化已完成\\\"提示，底部出现模型尺寸52mm(X)×26mm(Y)×2mm(Z)、缩放100%、\\\"更多打印参数已智能匹配\\\"与蓝色\\\"下一步\\\"按钮；frame-146该状态稳定，全程无用户触点，属上一包点击\\\"去打印\\\"后的自动加载延续。\",\n      \"uncertainties\": [],\n      \"trigger_frame\": \"frame-144\",\n      \"trigger_kind\": \"automatic\",\n      \"page_before\": \"s8\",\n      \"page_after\": \"s8\",\n      \"continuation_of\": \"\",\n      \"edit_boundary\": \"none\",\n      \"outcome\": {\n        \"frame_refs\": [\"frame-146\"],\n        \"observation\": \"打印编辑页加载完成态稳定：绿色对勾\\\"璇玑AI引擎优化已完成\\\"提示居中显示，底部尺寸条、缩放100%与蓝色\\\"下一步\\\"按钮可见，无加载旋转指示。\"\n      }\n    },\n    {\n      \"action\": \"aiTap\",\n      \"target\": \"打印编辑页底部蓝色\\\"下一步\\\"按钮\",\n      \"value\": \"\",\n      \"frame_refs\": [\"frame-146\", \"frame-147\", \"frame-148\", \"frame-149\", \"frame-150\", \"frame-151\", \"frame-152\", \"frame-153\", \"frame-154\", \"frame-155\", \"frame-156\", \"frame-157\", \"frame-158\"],\n      \"observation\": \"frame-146\\\"下一步\\\"按钮无触点；frame-147按钮上\\\"下一步\\\"文字右侧出现圆形按压高亮并持续至frame-154逐渐淡出；期间frame-149\\\"优化已完成\\\"提示自动消失、黄色姓名牌模型带选中手柄出现在平台内，frame-151至frame-155出现居中\\\"正在校验模型...\\\"遮罩后淡出，frame-156至frame-158\\\"请确认耗材颜色\\\"对话框（官方耗材-黄色，含修改设置/确认/7天内不再提醒）自动弹出并完全展开；按压后响应为校验与耗材确认弹窗，未发生页面跳转。\",\n      \"uncertainties\": [\n        \"frame-147按压高亮位于\\\"下一步\\\"文字右侧而非按钮正中，但随后唯一响应为\\\"正在校验模型...\\\"与耗材确认弹窗，目标判定为\\\"下一步\\\"。\"\n      ],\n      \"trigger_frame\": \"frame-147\",\n      \"trigger_kind\": \"touch\",\n      \"page_before\": \"s8\",\n      \"page_after\": \"s8\",\n      \"continuation_of\": \"\",\n      \"edit_boundary\": \"none\",\n      \"outcome\": {\n        \"frame_refs\": [\"frame-158\"],\n        \"observation\": \"\\\"请确认耗材颜色\\\"对话框完全展开：巫师形象、\\\"请确认当前使用的耗材颜色为：官方耗材-黄色\\\"、耗材示意图、\\\"修改设置\\\"与蓝色\\\"确认\\\"按钮、\\\"7天内不再提醒\\\"复选框及下方圆形关闭钮均可见，打印编辑页背景压暗。\"\n      }\n    },\n    {\n      \"action\": \"aiTap\",\n      \"target\": \"\\\"请确认耗材颜色\\\"对话框内蓝色\\\"确认\\\"按钮\",\n      \"value\": \"\",\n      \"frame_refs\": [\"frame-162\", \"frame-163\", \"frame-164\", \"frame-165\", \"frame-166\", \"frame-167\", \"frame-168\", \"frame-169\", \"frame-170\", \"frame-171\", \"frame-172\", \"frame-173\"],\n      \"observation\": \"frame-162对话框稳定无触点；frame-163\\\"确认\\\"按钮右上出现圆形按压高亮并持续至frame-166；frame-167对话框消失、打印编辑页恢复（黄色模型在平台内、底部\\\"下一步\\\"可见）；frame-169至frame-171平台区短暂出现点状加载环后淡出；frame-172居中淡入\\\"当前有1个正在处理的任务 请去处理\\\"对话框（含取消/去处理），frame-173该对话框完全展开，全程除\\\"确认\\\"外无其它触点。\",\n      \"uncertainties\": [],\n      \"trigger_frame\": \"frame-163\",\n      \"trigger_kind\": \"touch\",\n      \"page_before\": \"s8\",\n      \"page_after\": \"s9\",\n      \"continuation_of\": \"\",\n      \"edit_boundary\": \"none\",\n      \"outcome\": {\n        \"frame_refs\": [\"frame-173\"],\n        \"observation\": \"打印编辑页上\\\"当前有1个正在处理的任务 请去处理\\\"白色对话框完全可见，含灰色\\\"取消\\\"与蓝色\\\"去处理\\\"按钮，背景3D平台压暗。\"\n      }\n    },\n    {\n      \"action\": \"aiTap\",\n      \"target\": \"\\\"当前有1个正在处理的任务 请去处理\\\"对话框内蓝色\\\"去处理\\\"按钮\",\n      \"value\": \"\",\n      \"frame_refs\": [\"frame-173\", \"frame-174\", \"frame-175\", \"frame-176\", \"frame-177\", \"frame-178\"],\n      \"observation\": \"frame-173对话框稳定无触点；frame-174\\\"去处理\\\"按钮中部出现圆形按压高亮；frame-175打印编辑页整体左滑、右侧露出白底新页标题\\\"模型打印预览\\\"；frame-176转场接近完成，frame-177至frame-178新页黑底居中\\\"正在加载...\\\"旋转指示持续显示，属点击\\\"去处理\\\"后的跳转响应。\",\n      \"uncertainties\": [\n        \"frame-173至frame-174之间存在约1.5秒采样间隙，间隙内是否另有触点无法排除，但frame-174高亮与随后唯一转场路径支持\\\"去处理\\\"为触发目标。\"\n      ],\n      \"trigger_frame\": \"frame-174\",\n      \"trigger_kind\": \"touch\",\n      \"page_before\": \"s9\",\n      \"page_after\": \"s10\",\n      \"continuation_of\": \"\",\n      \"edit_boundary\": \"navigation\",\n      \"outcome\": {\n        \"frame_refs\": [\"frame-178\"],\n        \"observation\": \"已进入\\\"模型打印预览\\\"页：顶部标题\\\"模型打印预览\\\"与返回箭头可见，页面黑底居中\\\"正在加载...\\\"旋转指示显示，打印编辑页不在前台。\"\n      }\n    }\n  ],\n  \"checks\": [],\n  \"uncertainties\": [\n    \"frame-174点击\\\"去处理\\\"后进入的打印预览页所加载的任务对象（后续渲染为黄色马形模型）是否为遗留待处理任务，本包帧仅见加载态，无法确证。\",\n    \"frame-147按压高亮偏\\\"下一步\\\"文字右侧、frame-163高亮偏\\\"确认\\\"按钮右上，单帧高亮位置与按钮中心略有偏移，目标语义依据随后唯一响应判定。\"\n  ],\n  \"multiple_scenarios\": false,\n  \"revisit\": []\n}",
+        "fallbackUsed": false,
+        "finishReason": "stop",
+        "gateway_request_sha256": "f59f9a601073f911f817719b73c284976c8f4834eee43efbfc83d946feecb0c4",
+        "model": "qwen3.8-max",
+        "providerId": "qwen_plus",
+        "usage": {
+          "completionTokens": 2856,
+          "promptTokens": 48812,
+          "reasoningTokens": 1024,
+          "totalTokens": 51668
+        },
+        "videoPolicy": {
+          "correlation": "8bd84fba3df545e79bee483cbd603c27",
+          "effective_options": {
+            "enable_thinking": true,
+            "fine_frame_ids": [],
+            "image_count": 44,
+            "max_tokens": 10000,
+            "model": "qwen3.8-max",
+            "response_format": "json_schema",
+            "temperature": 0.1,
+            "thinking_budget": 1024
+          },
+          "model": "qwen3.8-max",
+          "output_schema_sha256": "152cfe891893b071e142003d9538ecfdc32f5090d5db900ca17430e84c686c97",
+          "provider_options_sha256": "434ed7900945f47a458c08a742095ea58a68d40fbc0ac7dd33676c708b9429a6",
+          "skill": "ui_video_trajectory",
+          "skill_version": "observe",
+          "stage": "grounding",
+          "version": "video-stage-policy-v1"
+        }
+      }
+    },
+    {
+      "entry": 30,
+      "kind": "receipt",
+      "sha256": "f785526588bae32714e3457c7db0a746a1a601bf7e917a00175ee54bf0684efd",
+      "value": {
+        "content": "{\n  \"states\": [],\n  \"events\": [\n    {\n      \"action\": \"aiWaitFor\",\n      \"target\": \"模型打印预览页加载与渲染（黑底\\\"正在加载...\\\"到\\\"正在渲染模型...\\\"并渲染出黄色马形+字母模型及预计时间/耗材信息）\",\n      \"value\": \"\",\n      \"frame_refs\": [\"frame-176\", \"frame-177\", \"frame-178\", \"frame-179\", \"frame-180\", \"frame-181\", \"frame-182\", \"frame-183\", \"frame-184\", \"frame-185\"],\n      \"observation\": \"frame-176转场收尾、白底\\\"模型打印预览\\\"页滑入；frame-177至frame-181黑底居中\\\"正在加载...\\\"旋转指示，frame-182至frame-183背景变白仍\\\"正在加载...\\\"；frame-184变为\\\"正在渲染模型...\\\"并出现预计时间1小时41分钟、模型耗材13.83g、支撑耗材4.39g、\\\"设备状态完美/一切准备就绪\\\"横幅与底部\\\"取消打印\\\"\\\"确认打印\\\"；frame-185渲染出黄色马形+字母N模型。全程无用户触点，属上一包点击\\\"去处理\\\"后的自动加载与渲染延续。\",\n      \"uncertainties\": [\n        \"frame-185渲染出的黄色马形+字母模型与本次编辑的姓名牌外观明显不同，是否为\\\"去处理\\\"指向的遗留待处理任务对象，仅凭本包帧无法确证。\"\n      ],\n      \"trigger_frame\": \"frame-176\",\n      \"trigger_kind\": \"automatic\",\n      \"page_before\": \"s10\",\n      \"page_after\": \"s10\",\n      \"continuation_of\": \"\",\n      \"edit_boundary\": \"none\",\n      \"outcome\": {\n        \"frame_refs\": [\"frame-185\"],\n        \"observation\": \"模型打印预览页渲染完成态：黄色马形+字母N模型居中显示，预计时间1小时41分钟、模型耗材13.83g、支撑耗材4.39g，底部\\\"取消打印\\\"\\\"确认打印\\\"按钮可见，无加载指示。\"\n      }\n    },\n    {\n      \"action\": \"aiTap\",\n      \"target\": \"模型打印预览页底部灰色\\\"取消打印\\\"按钮\",\n      \"value\": \"\",\n      \"frame_refs\": [\"frame-185\", \"frame-186\", \"frame-187\"],\n      \"observation\": \"frame-185渲染完成态下\\\"取消打印\\\"按钮右部出现圆形按压高亮（渲染完成后首个触点）；frame-186立即弹出居中\\\"确认要取消任务吗？\\\"对话框（含灰色\\\"取消\\\"与蓝色\\\"确定\\\"），预览页背景压暗；frame-187对话框保持且高亮转移至\\\"确定\\\"按钮，证明frame-185的按压目标为\\\"取消打印\\\"并触发了确认对话框。\",\n      \"uncertainties\": [],\n      \"trigger_frame\": \"frame-185\",\n      \"trigger_kind\": \"touch\",\n      \"page_before\": \"s10\",\n      \"page_after\": \"s10\",\n      \"continuation_of\": \"\",\n      \"edit_boundary\": \"none\",\n      \"outcome\": {\n        \"frame_refs\": [\"frame-186\"],\n        \"observation\": \"\\\"确认要取消任务吗？\\\"对话框完全展开：灰色\\\"取消\\\"与蓝色\\\"确定\\\"按钮可见，背景黄色马形模型与耗材信息被压暗。\"\n      }\n    },\n    {\n      \"action\": \"aiTap\",\n      \"target\": \"\\\"确认要取消任务吗？\\\"对话框内蓝色\\\"确定\\\"按钮\",\n      \"value\": \"\",\n      \"frame_refs\": [\"frame-186\", \"frame-187\", \"frame-188\", \"frame-189\", \"frame-190\", \"frame-191\", \"frame-192\"],\n      \"observation\": \"frame-186对话框稳定无触点；frame-187\\\"确定\\\"按钮右部出现圆形按压高亮并持续至frame-188；frame-189至frame-191对话框区域叠加白色点状加载环并逐渐淡出；frame-192对话框消失，页面变为\\\"已取消模型处理\\\"状态（灰色叉号图标+文案），底部按钮变为\\\"重新编辑\\\"与蓝色\\\"返回\\\"，属点击\\\"确定\\\"后的取消处理响应。\",\n      \"uncertainties\": [],\n      \"trigger_frame\": \"frame-187\",\n      \"trigger_kind\": \"touch\",\n      \"page_before\": \"s10\",\n      \"page_after\": \"s10\",\n      \"continuation_of\": \"\",\n      \"edit_boundary\": \"none\",\n      \"outcome\": {\n        \"frame_refs\": [\"frame-192\"],\n        \"observation\": \"取消完成态：页面居中显示\\\"已取消模型处理\\\"文案与灰色叉号图标，黄色模型缩略图在上方，底部为\\\"重新编辑\\\"与蓝色\\\"返回\\\"按钮，无对话框与加载环。\"\n      }\n    },\n    {\n      \"action\": \"aiTap\",\n      \"target\": \"\\\"已取消模型处理\\\"页底部蓝色\\\"返回\\\"按钮\",\n      \"value\": \"\",\n      \"frame_refs\": [\"frame-192\", \"frame-193\", \"frame-194\", \"frame-195\", \"frame-196\", \"frame-197\", \"frame-198\", \"frame-199\"],\n      \"observation\": \"frame-192取消完成态无触点；frame-193\\\"返回\\\"按钮中部出现圆形按压高亮并持续至frame-195；frame-196至frame-198预览页整体向右滑出、左侧露出黑底打印编辑页（标题\\\"姓名牌\\\"、黄色模型在平台内）；frame-199打印编辑页完全回到前台且\\\"下一步\\\"按钮上残留按压高亮淡出痕迹，返回导航完成。\",\n      \"uncertainties\": [\n        \"frame-199\\\"下一步\\\"按钮上的圆形高亮出现在返回转场完成帧，无法排除为转场经过产生的残留显示，但唯一有序页面路径支持本次动作为点击\\\"返回\\\"。\"\n      ],\n      \"trigger_frame\": \"frame-193\",\n      \"trigger_kind\": \"touch\",\n      \"page_before\": \"s10\",\n      \"page_after\": \"s11\",\n      \"continuation_of\": \"\",\n      \"edit_boundary\": \"navigation\",\n      \"outcome\": {\n        \"frame_refs\": [\"frame-199\"],\n        \"observation\": \"打印编辑页（第2次访问）完全在前台：标题\\\"姓名牌\\\"、右上黄色耗材、左侧工具列、平台内黄色姓名牌模型、底部尺寸条与蓝色\\\"下一步\\\"按钮可见，预览页不在前台。\"\n      }\n    },\n    {\n      \"action\": \"aiTap\",\n      \"target\": \"打印编辑页底部蓝色\\\"下一步\\\"按钮\",\n      \"value\": \"\",\n      \"frame_refs\": [\"frame-199\", \"frame-200\", \"frame-201\", \"frame-202\", \"frame-203\"],\n      \"observation\": \"frame-199返回后打印编辑页稳定、\\\"下一步\\\"按钮带按压高亮残留；frame-200平台区出现居中\\\"正在校验模型...\\\"半透明遮罩（点击\\\"下一步\\\"后的校验响应）；frame-201至frame-203\\\"请确认耗材颜色\\\"对话框（官方耗材-黄色，含修改设置/确认/7天内不再提醒与圆形关闭钮）自动弹出并完全展开，背景压暗，全程除\\\"下一步\\\"残留高亮外无其它触点。\",\n      \"uncertainties\": [\n        \"frame-199的\\\"下一步\\\"高亮与frame-200校验遮罩之间无独立新增高亮帧，触发按压发生在frame-199还是采样间隙内无法逐帧确证，但唯一响应路径支持目标为\\\"下一步\\\"。\"\n      ],\n      \"trigger_frame\": \"frame-199\",\n      \"trigger_kind\": \"touch\",\n      \"page_before\": \"s11\",\n      \"page_after\": \"s11\",\n      \"continuation_of\": \"\",\n      \"edit_boundary\": \"none\",\n      \"outcome\": {\n        \"frame_refs\": [\"frame-203\"],\n        \"observation\": \"\\\"请确认耗材颜色\\\"对话框完全展开：巫师形象、\\\"请确认当前使用的耗材颜色为：官方耗材-黄色\\\"、耗材示意图、\\\"修改设置\\\"与蓝色\\\"确认\\\"按钮、\\\"7天内不再提醒\\\"复选框均可见，打印编辑页背景压暗。\"\n      }\n    },\n    {\n      \"action\": \"aiTap\",\n      \"target\": \"\\\"请确认耗材颜色\\\"对话框内蓝色\\\"确认\\\"按钮\",\n      \"value\": \"\",\n      \"frame_refs\": [\"frame-203\", \"frame-204\", \"frame-205\", \"frame-206\", \"frame-207\", \"frame-208\", \"frame-209\", \"frame-210\", \"frame-211\", \"frame-212\", \"frame-213\"],\n      \"observation\": \"frame-203至frame-204对话框稳定无触点；frame-205\\\"确认\\\"按钮中部出现圆形按压高亮并持续至frame-211；frame-212对话框消失、打印编辑页恢复（黄色姓名牌模型在平台内、底部\\\"下一步\\\"可见），frame-213该状态稳定；本包owned末帧为止对话框关闭为唯一响应，未见新弹窗或转场。\",\n      \"uncertainties\": [\n        \"frame-205按压\\\"确认\\\"后直至frame-211对话框仍未关闭、仅高亮持续，是响应延迟还是需二次生效无法仅凭帧确证；frame-212之后是否立即进入\\\"收集模型信息中\\\"或跳转预览页属后包核验范围。\"\n      ],\n      \"trigger_frame\": \"frame-205\",\n      \"trigger_kind\": \"touch\",\n      \"page_before\": \"s11\",\n      \"page_after\": \"s11\",\n      \"continuation_of\": \"\",\n      \"edit_boundary\": \"none\",\n      \"outcome\": {\n        \"frame_refs\": [\"frame-213\"],\n        \"observation\": \"打印编辑页恢复无对话框状态：标题\\\"姓名牌\\\"、右上黄色耗材、平台内黄色姓名牌模型带选中手柄、底部尺寸条52mm(X)×26mm(Y)×2mm(Z)、缩放100%与蓝色\\\"下一步\\\"按钮可见。\"\n      }\n    }\n  ],\n  \"checks\": [],\n  \"uncertainties\": [\n    \"frame-185渲染的黄色马形+字母模型与本次编辑姓名牌外观不同，其任务对象身份（遗留待处理任务）仅凭本包帧无法确证。\",\n    \"frame-199\\\"下一步\\\"残留高亮与frame-205\\\"确认\\\"按压后长延迟均存在响应归属的细微未决，已按唯一可见响应路径记录。\"\n  ],\n  \"multiple_scenarios\": false,\n  \"revisit\": []\n}",
+        "fallbackUsed": false,
+        "finishReason": "stop",
+        "gateway_request_sha256": "9b02667fe02341dde844d2b56f910f8242523ca35dd39ab77e8b8a48753f1cdc",
+        "model": "qwen3.8-max",
+        "providerId": "qwen_plus",
+        "usage": {
+          "completionTokens": 3634,
+          "promptTokens": 48017,
+          "reasoningTokens": 1024,
+          "totalTokens": 51651
+        },
+        "videoPolicy": {
+          "correlation": "fa11311d64594e30b50541a4b35ee5c3",
+          "effective_options": {
+            "enable_thinking": true,
+            "fine_frame_ids": [],
+            "image_count": 44,
+            "max_tokens": 10000,
+            "model": "qwen3.8-max",
+            "response_format": "json_schema",
+            "temperature": 0.1,
+            "thinking_budget": 1024
+          },
+          "model": "qwen3.8-max",
+          "output_schema_sha256": "1a851b206cbe5c187d323d05983a87d3147cd92da8cd905bfc72157ab6d877d2",
+          "provider_options_sha256": "6a96dabd4f70bc2e8ea05f2cb6d4a14ce7513ce6769667af067bc48560340a63",
+          "skill": "ui_video_trajectory",
+          "skill_version": "observe",
+          "stage": "grounding",
+          "version": "video-stage-policy-v1"
+        }
+      }
+    }
+  ],
+  "packet_ownership_derived_from_entry": 4,
+  "packets": [
+    {
+      "packet_id": "packet-001",
+      "owned_start_ms": 0,
+      "owned_end_ms": 11734,
+      "owned_frame_ids": [
+        "frame-001",
+        "frame-002",
+        "frame-003",
+        "frame-004",
+        "frame-005",
+        "frame-006",
+        "frame-007",
+        "frame-008",
+        "frame-009",
+        "frame-010",
+        "frame-011",
+        "frame-012",
+        "frame-013",
+        "frame-014",
+        "frame-015",
+        "frame-016",
+        "frame-017",
+        "frame-018",
+        "frame-019",
+        "frame-020",
+        "frame-021",
+        "frame-022",
+        "frame-023",
+        "frame-024",
+        "frame-025",
+        "frame-026",
+        "frame-027",
+        "frame-028",
+        "frame-029",
+        "frame-030",
+        "frame-031",
+        "frame-032",
+        "frame-033",
+        "frame-034",
+        "frame-035",
+        "frame-036",
+        "frame-037",
+        "frame-038",
+        "frame-039",
+        "frame-040",
+        "frame-041",
+        "frame-042",
+        "frame-043",
+        "frame-044",
+        "frame-045",
+        "frame-046",
+        "frame-047"
+      ],
+      "context_frame_ids": [
+        "frame-048",
+        "frame-049",
+        "frame-050",
+        "frame-051",
+        "frame-052",
+        "frame-053"
+      ]
+    },
+    {
+      "packet_id": "packet-002",
+      "owned_start_ms": 11734,
+      "owned_end_ms": 18183,
+      "owned_frame_ids": [
+        "frame-048",
+        "frame-049",
+        "frame-050",
+        "frame-051",
+        "frame-052",
+        "frame-053",
+        "frame-054",
+        "frame-055",
+        "frame-056",
+        "frame-057",
+        "frame-058",
+        "frame-059",
+        "frame-060",
+        "frame-061",
+        "frame-062",
+        "frame-063",
+        "frame-064",
+        "frame-065",
+        "frame-066",
+        "frame-067",
+        "frame-068",
+        "frame-069",
+        "frame-070",
+        "frame-071",
+        "frame-072",
+        "frame-073",
+        "frame-074",
+        "frame-075",
+        "frame-076",
+        "frame-077",
+        "frame-078",
+        "frame-079"
+      ],
+      "context_frame_ids": [
+        "frame-042",
+        "frame-043",
+        "frame-044",
+        "frame-045",
+        "frame-046",
+        "frame-047",
+        "frame-080",
+        "frame-081",
+        "frame-082",
+        "frame-083",
+        "frame-084",
+        "frame-085"
+      ]
+    },
+    {
+      "packet_id": "packet-003",
+      "owned_start_ms": 18183,
+      "owned_end_ms": 27384,
+      "owned_frame_ids": [
+        "frame-080",
+        "frame-081",
+        "frame-082",
+        "frame-083",
+        "frame-084",
+        "frame-085",
+        "frame-086",
+        "frame-087",
+        "frame-088",
+        "frame-089",
+        "frame-090",
+        "frame-091",
+        "frame-092",
+        "frame-093",
+        "frame-094",
+        "frame-095",
+        "frame-096",
+        "frame-097",
+        "frame-098",
+        "frame-099",
+        "frame-100",
+        "frame-101",
+        "frame-102",
+        "frame-103",
+        "frame-104",
+        "frame-105",
+        "frame-106",
+        "frame-107",
+        "frame-108",
+        "frame-109",
+        "frame-110",
+        "frame-111"
+      ],
+      "context_frame_ids": [
+        "frame-074",
+        "frame-075",
+        "frame-076",
+        "frame-077",
+        "frame-078",
+        "frame-079",
+        "frame-112",
+        "frame-113",
+        "frame-114",
+        "frame-115",
+        "frame-116",
+        "frame-117"
+      ]
+    },
+    {
+      "packet_id": "packet-004",
+      "owned_start_ms": 27384,
+      "owned_end_ms": 41850,
+      "owned_frame_ids": [
+        "frame-112",
+        "frame-113",
+        "frame-114",
+        "frame-115",
+        "frame-116",
+        "frame-117",
+        "frame-118",
+        "frame-119",
+        "frame-120",
+        "frame-121",
+        "frame-122",
+        "frame-123",
+        "frame-124",
+        "frame-125",
+        "frame-126",
+        "frame-127",
+        "frame-128",
+        "frame-129",
+        "frame-130",
+        "frame-131",
+        "frame-132",
+        "frame-133",
+        "frame-134",
+        "frame-135",
+        "frame-136",
+        "frame-137",
+        "frame-138",
+        "frame-139",
+        "frame-140",
+        "frame-141",
+        "frame-142",
+        "frame-143"
+      ],
+      "context_frame_ids": [
+        "frame-106",
+        "frame-107",
+        "frame-108",
+        "frame-109",
+        "frame-110",
+        "frame-111",
+        "frame-144",
+        "frame-145",
+        "frame-146",
+        "frame-147",
+        "frame-148",
+        "frame-149"
+      ]
+    },
+    {
+      "packet_id": "packet-005",
+      "owned_start_ms": 41850,
+      "owned_end_ms": 48534,
+      "owned_frame_ids": [
+        "frame-144",
+        "frame-145",
+        "frame-146",
+        "frame-147",
+        "frame-148",
+        "frame-149",
+        "frame-150",
+        "frame-151",
+        "frame-152",
+        "frame-153",
+        "frame-154",
+        "frame-155",
+        "frame-156",
+        "frame-157",
+        "frame-158",
+        "frame-159",
+        "frame-160",
+        "frame-161",
+        "frame-162",
+        "frame-163",
+        "frame-164",
+        "frame-165",
+        "frame-166",
+        "frame-167",
+        "frame-168",
+        "frame-169",
+        "frame-170",
+        "frame-171",
+        "frame-172",
+        "frame-173",
+        "frame-174",
+        "frame-175"
+      ],
+      "context_frame_ids": [
+        "frame-138",
+        "frame-139",
+        "frame-140",
+        "frame-141",
+        "frame-142",
+        "frame-143",
+        "frame-176",
+        "frame-177",
+        "frame-178",
+        "frame-179",
+        "frame-180",
+        "frame-181"
+      ]
+    },
+    {
+      "packet_id": "packet-006",
+      "owned_start_ms": 48534,
+      "owned_end_ms": 54167,
+      "owned_frame_ids": [
+        "frame-176",
+        "frame-177",
+        "frame-178",
+        "frame-179",
+        "frame-180",
+        "frame-181",
+        "frame-182",
+        "frame-183",
+        "frame-184",
+        "frame-185",
+        "frame-186",
+        "frame-187",
+        "frame-188",
+        "frame-189",
+        "frame-190",
+        "frame-191",
+        "frame-192",
+        "frame-193",
+        "frame-194",
+        "frame-195",
+        "frame-196",
+        "frame-197",
+        "frame-198",
+        "frame-199",
+        "frame-200",
+        "frame-201",
+        "frame-202",
+        "frame-203",
+        "frame-204",
+        "frame-205",
+        "frame-206",
+        "frame-207"
+      ],
+      "context_frame_ids": [
+        "frame-170",
+        "frame-171",
+        "frame-172",
+        "frame-173",
+        "frame-174",
+        "frame-175",
+        "frame-208",
+        "frame-209",
+        "frame-210",
+        "frame-211",
+        "frame-212",
+        "frame-213"
+      ]
+    },
+    {
+      "packet_id": "packet-007",
+      "owned_start_ms": 54167,
+      "owned_end_ms": 66184,
+      "owned_frame_ids": [
+        "frame-208",
+        "frame-209",
+        "frame-210",
+        "frame-211",
+        "frame-212",
+        "frame-213",
+        "frame-214",
+        "frame-215",
+        "frame-216",
+        "frame-217",
+        "frame-218",
+        "frame-219",
+        "frame-220",
+        "frame-221",
+        "frame-222",
+        "frame-223",
+        "frame-224",
+        "frame-225",
+        "frame-226",
+        "frame-227",
+        "frame-228",
+        "frame-229",
+        "frame-230",
+        "frame-231",
+        "frame-232",
+        "frame-233",
+        "frame-234",
+        "frame-235",
+        "frame-236",
+        "frame-237",
+        "frame-238",
+        "frame-239"
+      ],
+      "context_frame_ids": [
+        "frame-202",
+        "frame-203",
+        "frame-204",
+        "frame-205",
+        "frame-206",
+        "frame-207",
+        "frame-240",
+        "frame-241",
+        "frame-242",
+        "frame-243",
+        "frame-244",
+        "frame-245"
+      ]
+    },
+    {
+      "packet_id": "packet-008",
+      "owned_start_ms": 66184,
+      "owned_end_ms": 69817,
+      "owned_frame_ids": [
+        "frame-240",
+        "frame-241",
+        "frame-242",
+        "frame-243",
+        "frame-244",
+        "frame-245",
+        "frame-246",
+        "frame-247",
+        "frame-248",
+        "frame-249",
+        "frame-250",
+        "frame-251",
+        "frame-252",
+        "frame-253",
+        "frame-254",
+        "frame-255",
+        "frame-256",
+        "frame-257",
+        "frame-258",
+        "frame-259",
+        "frame-260",
+        "frame-261",
+        "frame-262",
+        "frame-263",
+        "frame-264",
+        "frame-265",
+        "frame-266",
+        "frame-267",
+        "frame-268",
+        "frame-269",
+        "frame-270",
+        "frame-271"
+      ],
+      "context_frame_ids": [
+        "frame-234",
+        "frame-235",
+        "frame-236",
+        "frame-237",
+        "frame-238",
+        "frame-239",
+        "frame-272",
+        "frame-273",
+        "frame-274",
+        "frame-275",
+        "frame-276",
+        "frame-277"
+      ]
+    },
+    {
+      "packet_id": "packet-009",
+      "owned_start_ms": 69817,
+      "owned_end_ms": 75234,
+      "owned_frame_ids": [
+        "frame-272",
+        "frame-273",
+        "frame-274",
+        "frame-275",
+        "frame-276",
+        "frame-277",
+        "frame-278",
+        "frame-279",
+        "frame-280",
+        "frame-281",
+        "frame-282",
+        "frame-283",
+        "frame-284",
+        "frame-285",
+        "frame-286",
+        "frame-287",
+        "frame-288",
+        "frame-289",
+        "frame-290",
+        "frame-291",
+        "frame-292",
+        "frame-293",
+        "frame-294",
+        "frame-295",
+        "frame-296",
+        "frame-297",
+        "frame-298",
+        "frame-299"
+      ],
+      "context_frame_ids": [
+        "frame-266",
+        "frame-267",
+        "frame-268",
+        "frame-269",
+        "frame-270",
+        "frame-271"
+      ]
+    }
+  ]
+}
