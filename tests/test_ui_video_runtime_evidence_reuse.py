@@ -217,15 +217,26 @@ def test_authentic20_replay_stops_at_same_candidate_reaudit_without_source_succe
     assert diagnostics[-1]['reason']=='model_job_deadline' and diagnostics[-1]['call']==19
 
 
-@pytest.mark.parametrize('dispatches',[8,24])
-def test_no_reset_after_exhaustion_or_schema_correction(monkeypatch,dispatches):
-    now=[0.];monkeypatch.setattr(vt.time,'monotonic',lambda:now[0]);loaded=[]
+@pytest.mark.parametrize('limit',['deadline','corrections'])
+def test_no_reset_after_exhaustion_or_schema_correction(monkeypatch,limit):
+    now=[0.];monkeypatch.setattr(vt.time,'monotonic',lambda:now[0]);loaded=[];diagnostics=[]
     def mutate(stage,payload,raw,calls):
-        now[0]+=200 if dispatches==8 else 0
+        now[0]+=200 if limit=='deadline' else 0
         if stage=='audit' and payload['packet_id']=='packet-002':
             if not loaded:raw['revisit']=[request()]
-            else:raw['checks']=[]
+            elif limit=='corrections':raw['checks']=[]
     engine=BusinessEngine(monkeypatch,mutate=mutate,revisit=lambda *a:loaded.append(a) or [])
-    with pytest.raises(ValueError):engine.run(engine_deadline=1560.)
-    if dispatches==8:assert len(engine.calls)==8 and now[0]==1600
-    else:assert len(engine.calls)<24  # packet's shared two corrections still stop invalid repeated audits
+    with pytest.raises(ValueError) as refused:
+        engine.run(engine_deadline=1560.,diagnostics=diagnostics)
+    assert len(engine.calls)==8
+    assert len(loaded)==1
+    if limit=='deadline':
+        assert str(refused.value)=='video_vision_limit' and now[0]==1600
+        assert diagnostics[-1]['kind']=='capacity_refusal'
+        assert diagnostics[-1]['reason']=='trajectory_deadline'
+    else:
+        assert str(refused.value)=='video_model_invalid' and now[0]==0
+        assert refused.value.trajectory_reason=='audit_missing_event'
+        assert diagnostics[-1]['kind']=='rejection'
+        assert diagnostics[-1]['reason']=='audit_missing_event'
+        assert diagnostics[-1]['correction_scope_used']==2
