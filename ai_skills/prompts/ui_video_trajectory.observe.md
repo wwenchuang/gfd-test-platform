@@ -14,13 +14,13 @@ aiInput的trigger_kind=edit由已识别字段中有序可见的文字修改支�
 
 触点中心应对应操作前控件，不能对应转场中经过该位置的控件。边缘返回手势如果操作前可见等价返回箭头，可记录aiTap该箭头，trigger_kind=navigation并说明原片手势；无等价控件则保留定位问题。滚动依据内容随实际拖动的连续位移，返回动画、布局重排不能视作滚动。执行目标用中文可见控件语义，不能输出坐标。
 
-输入规则：同一字段的预备聚焦、清空、输入及内部退格/候选选择/IME切换可构成同一aiInput业务意图，直到实际独立提交、换字段或导航边界。不为仅记录预备聚焦另造aiTap，执行aiInput可包含必要的字段聚焦；独立导航、不同对象/意图或独立结果的聚焦仍单列。所有真实聚焦/触点证据留在原始事实与轨迹，不能删除，也不能假称聚焦帧已发生文字修改。停顿、按键或候选机制未知不自动增加功能步骤；有证据的单独收起键盘仍是独立动作，不能并入输入。target写字段标签/占位提示加输入框，value保持空串。frame_refs从实际文字修改开始并保留编辑末态；更早的预备聚焦见证仍保存在事实/轨迹来源。若本包是prior_events最后一项aiInput的继续编辑且没有中间独立操作，continuation_of逐字复用该最后一项track.event_id；target、page_before、page_after逐字复用该项原字符串，不使用语义别名，edit_boundary=none。不要伪造ID。若有其它业务点击、提交或导航，不能声明续接。本包首次开始的新输入continuation_of为空。
+输入规则：同一字段的预备聚焦、清空、输入及内部退格/候选选择/IME切换可构成同一aiInput业务意图，直到实际独立提交、换字段或导航边界。不为仅记录预备聚焦另造aiTap，执行aiInput可包含必要的字段聚焦；独立导航、不同对象/意图或独立结果的聚焦仍单列。所有真实聚焦/触点证据留在原始事实与轨迹，不能删除，也不能假称聚焦帧已发生文字修改。停顿、按键或候选机制未知不自动增加功能步骤；有证据的单独收起键盘仍是独立动作，不能并入输入。target写字段标签/占位提示加输入框，value保持空串。frame_refs从实际文字修改开始并保留编辑末态；更早的预备聚焦见证仍保存在事实/轨迹来源。若本包是prior_events最后一项aiInput的继续编辑且没有中间独立操作，continuation_of逐字复用该最后一项event_id；target逐字复用该项event.target；page_before和page_after都逐字复用该项page_after，不沿用该项page_before，不使用语义别名，edit_boundary=none。不要伪造ID。若有其它业务点击、提交或导航，不能声明续接。本包首次开始的新输入continuation_of为空。
 
 每项填写：
 - action：aiTap/aiInput/aiScroll/aiAssert/aiWaitFor；target明确可见目标；除aiScroll外value=""。aiScroll value={"direction":"up/down/left/right","scrollType":"singleAction"}，方向按Midscene浏览方向，下拉刷新为up。
 - frame_refs：1至60张提供的原帧，按时间排列，包含trigger_frame和该动作自身的前后证据；后续独立动作的触发和结果须独立归属，不能仅因它在附图中可见就扩展当前事件证据。若同一真实原帧同时支持本动作响应与后续动作触发，可作为共享边界帧；仍须分别保留两个独立事件，不能借用后次动作结果。不输出时间字段。有证据的独立重复交互逐项保留，不能因同目标或同一次最终响应合并；不从标记次数推算重复点击。
 - trigger_frame：动作真实发生的本包原帧。trigger_kind：touch明确触点、pressed_control明确按下状态、navigation有证据的导航、edit文字修改、automatic自动变化、uncertain证据不足。交互不能使用automatic；uncertain必须写具体uncertainties。
-- page_before/page_after：明确页面身份和状态，优先沿用states的state_id，也可写本包新见页面身份；不以按钮名字替代页面。
+- page_before/page_after：表示稳定页面身份，编辑区间的state_id不能仅因文字、候选词、IME或键盘状态变化而替换续接页面身份；这些变化记录在states或observation。新动作可沿用确属同一页面的state_id或有证据的新页面身份，不以按钮名字替代页面；实际独立导航、换字段或提交仍须分开，不能为沿用身份掩盖边界。
 - edit_boundary：none/submission/field_change/navigation，写该输入片段内实际独立边界；边界动作须另列，不跨边界续接。
 - 原始证据与编译：保留全部相关原始frame_refs，不为满足普通用例8帧上限删掉触发、编辑过程或结果；平台只在验证完整原始证据后，将普通事件编译至最多8帧，普通outcome只绑定原始outcome最后一帧，审计仍查看完整原片段。不得输出未提供或重复、倒序原帧。
 仅用outcome最后一帧逐项核对所述终态谓词，中间键盘/布局与末帧不同本身不是矛盾；完整原始证据仍用于核对因果、归属、顺序和后续独立动作。不能借用后次动作的结果，等待不能写成完成；末帧不支持的终态、OCR或目标仍不合格。不得为制造supported而删改原主张。
@@ -34,3 +34,5 @@ aiInput的trigger_kind=edit由已识别字段中有序可见的文字修改支�
 states非空时，每项必须且只能包含以下五个字段：{"state_id":"同一页面或编辑区间的短ID","first_frame":"本次已提供的真实frame_id","last_frame":"本次已提供的真实frame_id","kind":"page","description":"页面或编辑区间的具体可见状态"}。state_id和description为非空字符串；kind只能为page/input/wait/transition。first_frame不晚于last_frame，各项按first_frame的真实时间排列，不得使用未提供的帧或自行编造时间。states只补充本包新见状态；无新增状态时[]合法。
 
 可信 action_contract 描述当前平台既有动作与 trigger_kind 配对；它不证明操作发生。独立且有连续转场证据的返回导航，若操作前原图确有可见等价返回控件，可表达为 aiTap/navigation。自动响应或等待页面变化使用 aiWaitFor/automatic。例如可见返回控件并有独立返回转场时按导航解释；提交后的自动加载按等待解释。不得凭空猜控件、把导航改为 automatic/uncertain、删除导航来满足合同。保留真实疑问及原有回看要求。
+
+若payload同时含parent_validation_feedback与validation_feedback，两者都是尚须满足的校验约束：前者保留外层尚未解决的问题，后者指出最近一次结构/帧号等错误。修正后者不会自动解决前者；重看同组原图，完整输出当前包，仍保留真实疑问和独立动作，不按反馈补造操作。

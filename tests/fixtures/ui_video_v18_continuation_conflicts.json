@@ -1,0 +1,245 @@
+{
+  "provenance": {
+    "export": "/Users/adouceshi/Documents/projects/video-reliability-20261026/new-touch/current-platform/normal-run18/run18",
+    "media_reference": "ui_video_v16_contract_conflicts.json",
+    "source_document_sha256": "124f1c29d89ded06776d195571b023e7702de7d1188bc2dcdcb790483a9b5650",
+    "original_source_sha256": "370d92e2622686330d114ce14c67c50788a8e92e4aa1babbbd7e856e2796d893",
+    "packet_ownership": "derived by unchanged make_packets from captured overview entry4"
+  },
+  "entries": [
+    {
+      "entry": 4,
+      "kind": "receipt",
+      "sha256": "967a86a72c51b6c8d11713845a4c95313b94137883f5195137a119d8ca2f92f8",
+      "value": {
+        "content": "{\"states\":[{\"state_id\":\"s1\",\"first_frame\":\"frame-001\",\"last_frame\":\"frame-009\",\"kind\":\"page\",\"description\":\"App首页（模型推荐页）。顶部显示设备名称EP3-9070692832BA及空闲状态、搜索图标、消息图标；\\\"模型处理完成\\\"绿色横幅带\\\"去打印\\\"按钮；下方为模型推荐列表（军工套卡导弹车、直升机等）及底部导航栏（模型库、AI建模、课程、我的）。\"},{\"state_id\":\"s2\",\"first_frame\":\"frame-021\",\"last_frame\":\"frame-026\",\"kind\":\"page\",\"description\":\"搜索页。顶部搜索框为空（占位\\\"搜索您感兴趣的内容\\\"），搜索按钮蓝色；搜索历史标签组（小王子、机甲、捏捏球等）；热搜榜列表（龙、手机支架、MC、笔筒、剑）；软键盘已弹出（中文拼音键盘）。\"},{\"state_id\":\"s3\",\"first_frame\":\"frame-036\",\"last_frame\":\"frame-047\",\"kind\":\"input\",\"description\":\"搜索页文本输入框的连续编辑区间。从拼音输入\\\"ying'ho\\\"→\\\"xing\\\"→候选词上屏\\\"姓名\\\"→继续输入\\\"姓名牌\\\"，搜索框内容逐步变化，键盘始终可见，候选词栏持续更新。\"},{\"state_id\":\"s4\",\"first_frame\":\"frame-054\",\"last_frame\":\"frame-057\",\"kind\":\"page\",\"description\":\"搜索结果页。搜索框保留\\\"姓名牌\\\"，结果区显示两个模型卡片（姓名牌-3001人打印、Max挂牌-5人打印），图片从占位逐步加载完成；下方\\\"结果较少？试试AI创作\\\"推广横幅。\"},{\"state_id\":\"s5\",\"first_frame\":\"frame-065\",\"last_frame\":\"frame-065\",\"kind\":\"page\",\"description\":\"模型详情页（姓名牌）。顶部封面图（金色吊牌挂在墙上），标签\\\"装饰房间/日常使用/摆件装饰\\\"，3001人打印；模型文件区显示姓名牌（约18分钟、4g材料、52mm×2mm×26mm）；描述文字；底部\\\"旋钮设置\\\"和\\\"去编辑\\\"按钮。\"},{\"state_id\":\"s6\",\"first_frame\":\"frame-071\",\"last_frame\":\"frame-071\",\"kind\":\"transition\",\"description\":\"编辑模型页加载过渡。黑色背景，中央显示\\\"正在加载...\\\"及旋转加载指示器，顶部标题\\\"编辑模型\\\"。\"},{\"state_id\":\"s7\",\"first_frame\":\"frame-079\",\"last_frame\":\"frame-079\",\"kind\":\"page\",\"description\":\"编辑模型页（初始状态）。3D线框预览区显示网格平台上的旧文本模型（智小白）；模型尺寸52mm(X)×2mm(Y)×26mm(Z)；\\\"请输入文本\\\"输入框含默认文本\\\"智小白\\\"；底部\\\"下载\\\"图标和\\\"去打印\\\"按钮。\"},{\"state_id\":\"s8\",\"first_frame\":\"frame-086\",\"last_frame\":\"frame-110\",\"kind\":\"input\",\"description\":\"编辑模型页文本输入框的连续编辑区间。聚焦输入框→删除默认文本\\\"智小白\\\"→切换英文键盘输入\\\"UI\\\"→切换回中文键盘拼音输入→候选词上屏形成\\\"UI自动化\\\"。键盘始终可见，输入框内容持续变化。\"},{\"state_id\":\"s9\",\"first_frame\":\"frame-116\",\"last_frame\":\"frame-121\",\"kind\":\"page\",\"description\":\"编辑模型页（键盘收起后）。3D线框预览区仍显示旧文本模型；输入框保留\\\"UI自动化\\\"文本；底部按钮变为\\\"生成模型\\\"；模型尺寸仍为52mm(X)×2mm(Y)×26mm(Z)。\"},{\"state_id\":\"s10\",\"first_frame\":\"frame-122\",\"last_frame\":\"frame-125\",\"kind\":\"wait\",\"description\":\"编辑模型页生成中。页面中央显示\\\"生成中...\\\"深色浮层及加载动画，预览区模型正在更新，底部按钮仍为\\\"生成模型\\\"（禁用态）。\"},{\"state_id\":\"s11\",\"first_frame\":\"frame-128\",\"last_frame\":\"frame-128\",\"kind\":\"page\",\"description\":\"编辑模型页（生成完成）。浮层消失，预览区模型更新为新文本形态（UI自动化）；模型尺寸变为52mm(X)×26mm(Y)×2mm(Z)；输入框保留\\\"UI自动化\\\"；底部按钮恢复为\\\"去打印\\\"。\"},{\"state_id\":\"s12\",\"first_frame\":\"frame-129\",\"last_frame\":\"frame-133\",\"kind\":\"wait\",\"description\":\"编辑模型页准备打印。页面中央显示\\\"准备打印...\\\"深色浮层及加载动画，底部\\\"去打印\\\"按钮禁用态。\"},{\"state_id\":\"s13\",\"first_frame\":\"frame-145\",\"last_frame\":\"frame-150\",\"kind\":\"page\",\"description\":\"打印摆放页（深色背景）。标题\\\"姓名牌\\\"，右上角\\\"黄色\\\"耗材标识；3D打印空间线框内显示黄色模型；左侧工具栏（居中、旋转、复制、一键适配、删除）；缩放控件100%；\\\"更多打印参数已智能匹配\\\"；底部\\\"下一步\\\"按钮。frame-145/148有\\\"璇玑AI引擎优化已完成\\\"浮层，frame-150浮层消失。\"},{\"state_id\":\"s14\",\"first_frame\":\"frame-162\",\"last_frame\":\"frame-162\",\"kind\":\"page\",\"description\":\"耗材颜色确认对话框（覆盖在打印摆放页上）。标题\\\"请确认耗材颜色\\\"，提示当前使用官方耗材-黄色，含打印机示意图，警告颜色选择错误可能影响打印效果；\\\"修改设置\\\"和\\\"确认\\\"按钮，\\\"7天内不再提醒\\\"复选框。\"},{\"state_id\":\"s15\",\"first_frame\":\"frame-173\",\"last_frame\":\"frame-173\",\"kind\":\"page\",\"description\":\"任务冲突对话框（覆盖在打印摆放页上）。提示\\\"当前有1个正在处理的任务 请去处理\\\"，提供\\\"取消\\\"和\\\"去处理\\\"按钮。\"},{\"state_id\":\"s16\",\"first_frame\":\"frame-175\",\"last_frame\":\"frame-184\",\"kind\":\"transition\",\"description\":\"模型打印预览页加载过渡。frame-175显示页面从左侧滑入（半屏白色），标题\\\"模型打印预览\\\"；frame-184显示\\\"正在渲染模型...\\\"加载动画，下方已显示预计时间1小时41分钟、模型耗材13.83g、支撑耗材4.39g、设备状态完美提示、\\\"取消打印\\\"和\\\"确认打印\\\"按钮。\"},{\"state_id\":\"s17\",\"first_frame\":\"frame-186\",\"last_frame\":\"frame-186\",\"kind\":\"page\",\"description\":\"模型打印预览页（渲染完成+取消确认对话框）。预览区显示一个黄色马形/动物模型（非姓名牌形状）；中央弹出\\\"确认要取消任务吗？\\\"对话框，含\\\"取消\\\"和\\\"确定\\\"按钮；下方仍显示预计时间、耗材克数、设备状态、底部按钮。\"},{\"state_id\":\"s18\",\"first_frame\":\"frame-193\",\"last_frame\":\"frame-193\",\"kind\":\"page\",\"description\":\"模型打印预览页（已取消状态）。显示黄色马形/动物模型封面图，\\\"已取消模型处理\\\"提示；底部按钮变为\\\"重新编辑\\\"和\\\"返回\\\"。\"},{\"state_id\":\"s19\",\"first_frame\":\"frame-200\",\"last_frame\":\"frame-213\",\"kind\":\"page\",\"description\":\"打印摆放页（返回后）。深色背景，标题\\\"姓名牌\\\"，黄色耗材标识；3D线框内显示黄色姓名牌模型；frame-200有\\\"正在校验模型...\\\"浮层，frame-213浮层消失；左侧工具栏、缩放控件、\\\"下一步\\\"按钮可见。\"},{\"state_id\":\"s20\",\"first_frame\":\"frame-215\",\"last_frame\":\"frame-229\",\"kind\":\"wait\",\"description\":\"模型打印预览页（任务分析进度）。显示姓名牌封面图、进度条0.0%、逐步推进的分析步骤列表（待打印任务已生成→正在分析打印时间→正在分析模型消耗克数→正在分析模型尺寸→分析完成请等待模型处理）；底部\\\"处理完成后直接打印\\\"和\\\"取消处理\\\"按钮。frame-215为页面滑入过渡。\"},{\"state_id\":\"s21\",\"first_frame\":\"frame-231\",\"last_frame\":\"frame-231\",\"kind\":\"transition\",\"description\":\"模型打印预览页重新加载过渡。标题\\\"模型打印预览\\\"，页面内容区为空白（顶部有蓝色进度条），右下角卡通人物可见。\"},{\"state_id\":\"s22\",\"first_frame\":\"frame-236\",\"last_frame\":\"frame-237\",\"kind\":\"page\",\"description\":\"模型打印预览页（渲染完成）。预览区显示带\\\"UI自动化\\\"文本的黄色姓名牌模型；预计时间17分钟、模型耗材2.03g、支撑耗材1.79g；设备状态完美提示；底部\\\"取消打印\\\"和\\\"确认打印\\\"按钮。\"},{\"state_id\":\"s23\",\"first_frame\":\"frame-243\",\"last_frame\":\"frame-243\",\"kind\":\"page\",\"description\":\"模型打印预览页（取消确认对话框+已取消状态叠加）。显示姓名牌封面图、\\\"已取消模型处理\\\"文字，中央有\\\"确认要取消任务吗？\\\"对话框（正在消失的过渡态）；底部\\\"重新编辑\\\"和\\\"返回\\\"按钮。\"},{\"state_id\":\"s24\",\"first_frame\":\"frame-248\",\"last_frame\":\"frame-248\",\"kind\":\"page\",\"description\":\"模型打印预览页（已取消状态）。显示姓名牌封面图、\\\"已取消模型处理\\\"提示；底部\\\"重新编辑\\\"和\\\"返回\\\"按钮。\"},{\"state_id\":\"s25\",\"first_frame\":\"frame-262\",\"last_frame\":\"frame-262\",\"kind\":\"page\",\"description\":\"编辑模型页（返回后）。3D线框预览区显示带\\\"UI自动化\\\"文本的新模型；模型尺寸52mm(X)×26mm(Y)×2mm(Z)；输入框保留\\\"UI自动化\\\"；底部\\\"去打印\\\"按钮。\"},{\"state_id\":\"s26\",\"first_frame\":\"frame-278\",\"last_frame\":\"frame-278\",\"kind\":\"page\",\"description\":\"模型详情页（姓名牌，返回后）。与s5结构相同：封面图、标签、3001人打印、模型文件信息、\\\"旋钮设置\\\"和\\\"去编辑\\\"按钮。\"},{\"state_id\":\"s27\",\"first_frame\":\"frame-282\",\"last_frame\":\"frame-282\",\"kind\":\"page\",\"description\":\"搜索结果页（返回后）。搜索框保留\\\"姓名牌\\\"，结果卡片（姓名牌、Max挂牌）及AI创作横幅可见；软键盘弹出。\"},{\"state_id\":\"s28\",\"first_frame\":\"frame-288\",\"last_frame\":\"frame-299\",\"kind\":\"page\",\"description\":\"App首页（模型推荐页，返回后）。与s1结构相同：设备名称、推荐列表、底部导航栏。frame-288为从搜索页滑回首页的过渡态（左右分屏），frame-292/299为完整首页。\"}],\"events\":[],\"checks\":[],\"uncertainties\":[\"frame-186中预览区显示的黄色模型形状（马/动物形）与姓名牌模型明显不同，可能是上一次遗留任务或另一个模型的渲染结果，无法仅从概览帧确认其归属。\",\"frame-175中页面从左侧滑入的过渡方向暗示可能是push进入而非返回，但概览帧无法确认具体导航方式。\",\"frame-243中对话框与已取消状态同时出现，可能是取消确认对话框消失动画与状态切换的重叠帧，无法确定实际点击时序。\",\"frame-288中首页与搜索页左右分屏的过渡态，无法确定是系统返回手势还是点击返回按钮触发。\",\"搜索提交的具体触发方式（点击搜索按钮还是键盘搜索键）在概览帧中无法区分，frame-047到frame-054之间缺少中间帧。\"],\"multiple_scenarios\":false}",
+        "fallbackUsed": false,
+        "finishReason": "stop",
+        "gateway_request_sha256": "bbd8494fe8a5d66dda0511de04e80a342ca07171857954d2fd6c125c55a0e178",
+        "model": "qwen3.8-flash",
+        "providerId": "qwen_plus",
+        "usage": {
+          "completionTokens": 3709,
+          "promptTokens": 34179,
+          "reasoningTokens": 1024,
+          "totalTokens": 37888
+        },
+        "videoPolicy": {
+          "correlation": "f7e0a8eed91b495baada122d8f8f3d2b",
+          "effective_options": {
+            "enable_thinking": true,
+            "fine_frame_ids": [],
+            "image_count": 60,
+            "max_tokens": 10000,
+            "model": "qwen3.8-flash",
+            "response_format": "json_object",
+            "temperature": 0.1,
+            "thinking_budget": 1024
+          },
+          "model": "qwen3.8-flash",
+          "output_schema_sha256": null,
+          "provider_options_sha256": "f1ff9dedeb4c7e8a4fcd880318d7be3572258632d63f0268fa8e649280a8486d",
+          "skill": "ui_video_trajectory",
+          "skill_version": "overview",
+          "stage": "overview",
+          "version": "video-stage-policy-v1"
+        }
+      }
+    },
+    {
+      "entry": 6,
+      "kind": "receipt",
+      "sha256": "b3f487fee2bc61d2e226e94d311465d0149ffe787c753d949ab940bb8922a41e",
+      "value": {
+        "content": "{\n \"states\": [\n  {\n   \"state_id\": \"p1\",\n   \"first_frame\": \"frame-010\",\n   \"last_frame\": \"frame-015\",\n   \"kind\": \"transition\",\n   \"description\": \"搜索页进入过渡与初始态。frame-010/011页面自右侧滑入（左缘可见首页残影），frame-012滑入完成；搜索框为空（占位\\\"搜索您感兴趣的内容\\\"），搜索历史标签组可见，热搜榜先显示加载旋转指示（frame-010至012）后列出条目（frame-013无排名角标、frame-014起带1-8排名角标）；此阶段软键盘尚未弹出。\"\n  },\n  {\n   \"state_id\": \"p2\",\n   \"first_frame\": \"frame-016\",\n   \"last_frame\": \"frame-026\",\n   \"kind\": \"page\",\n   \"description\": \"搜索页键盘弹出态。frame-016底部先露出键盘工具栏与键位顶边，frame-017起中文拼音九宫格键盘完整可见（含\\\"搜索\\\"绿键）；搜索框仍为空且带光标，搜索历史与热搜榜列表不变，至frame-026无任何文字修改。\"\n  },\n  {\n   \"state_id\": \"p3\",\n   \"first_frame\": \"frame-027\",\n   \"last_frame\": \"frame-032\",\n   \"kind\": \"input\",\n   \"description\": \"搜索框拼音编辑区间（本包部分）。frame-027起键盘上方出现组合串\\\"xing\\\"与候选词行（行、萤、硬、营…），frame-028/029可见GHI与MNO键按下高亮；frame-030起组合串变为\\\"ying'g\\\"、候选词换为（应该、性感、性格、型号…）；搜索框正文始终为空，编辑仍在继续（后续帧组合串继续变化）。\"\n  }\n ],\n \"events\": [\n  {\n   \"action\": \"aiTap\",\n   \"target\": \"首页顶部设备名称右侧的搜索图标\",\n   \"value\": \"\",\n   \"frame_refs\": [\n    \"frame-008\",\n    \"frame-009\",\n    \"frame-010\",\n    \"frame-011\",\n    \"frame-012\"\n   ],\n   \"observation\": \"frame-008首页静止；frame-009顶部搜索（放大镜）图标出现圆形按压高亮；frame-010/011搜索页自右滑入（左缘可见首页残影），frame-012滑入完成，显示空搜索框、搜索历史标签与热搜榜加载指示。\",\n   \"uncertainties\": [],\n   \"trigger_frame\": \"frame-009\",\n   \"trigger_kind\": \"touch\",\n   \"page_before\": \"s1\",\n   \"page_after\": \"p1\",\n   \"continuation_of\": \"\",\n   \"edit_boundary\": \"none\",\n   \"outcome\": {\n    \"frame_refs\": [\n     \"frame-010\",\n     \"frame-011\",\n     \"frame-012\"\n    ],\n    \"observation\": \"搜索页完成滑入：空搜索框（占位\\\"搜索您感兴趣的内容\\\"）、搜索历史标签组与热搜榜加载区可见，首页不再可见。\"\n   }\n  },\n  {\n   \"action\": \"aiWaitFor\",\n   \"target\": \"搜索页热搜榜列表加载完成\",\n   \"value\": \"\",\n   \"frame_refs\": [\n    \"frame-012\",\n    \"frame-013\",\n    \"frame-014\"\n   ],\n   \"observation\": \"frame-012热搜榜区域仍为旋转加载指示；frame-013列出热搜条目（龙、手机支架、MC、笔筒、剑、刀、手机、收纳）但无排名角标；frame-014起条目带1-8排名角标，加载完成。\",\n   \"uncertainties\": [],\n   \"trigger_frame\": \"frame-013\",\n   \"trigger_kind\": \"automatic\",\n   \"page_before\": \"p1\",\n   \"page_after\": \"p1\",\n   \"continuation_of\": \"\",\n   \"edit_boundary\": \"none\",\n   \"outcome\": {\n    \"frame_refs\": [\n     \"frame-014\"\n    ],\n    \"observation\": \"热搜榜八条条目带排名角标完整显示，加载指示消失。\"\n   }\n  },\n  {\n   \"action\": \"aiInput\",\n   \"target\": \"搜索您感兴趣的内容 搜索输入框\",\n   \"value\": \"\",\n   \"frame_refs\": [\n    \"frame-016\",\n    \"frame-017\",\n    \"frame-026\",\n    \"frame-027\",\n    \"frame-028\",\n    \"frame-029\",\n    \"frame-030\",\n    \"frame-031\",\n    \"frame-032\"\n   ],\n   \"observation\": \"frame-016键盘工具栏自底部露出、frame-017中文拼音九宫格键盘完整弹出（搜索框出现光标，为预备聚焦）；frame-018至026键盘就绪无文字变化；frame-027起键盘上方出现拼音组合串与候选词行，frame-028/029可见GHI、MNO键按下高亮，frame-030起组合串与候选词换组，编辑持续进行；搜索框正文在本包内始终为空，未见提交或换字段。\",\n   \"uncertainties\": [\n    \"键盘弹出是搜索页自动聚焦还是存在未被采样到的触摸聚焦（frame-015与016之间无触点高亮证据）\",\n    \"组合串各段落对应的具体按键序列无法从采样帧完整还原\"\n   ],\n   \"trigger_frame\": \"frame-027\",\n   \"trigger_kind\": \"edit\",\n   \"page_before\": \"p2\",\n   \"page_after\": \"p3\",\n   \"continuation_of\": \"\",\n   \"edit_boundary\": \"none\",\n   \"outcome\": {\n    \"frame_refs\": [\n     \"frame-027\",\n     \"frame-028\",\n     \"frame-029\",\n     \"frame-030\",\n     \"frame-031\",\n     \"frame-032\"\n    ],\n    \"observation\": \"frame-032键盘上方仍显示拼音组合串与候选词行（应该、性感、性格、型号等），搜索框正文为空，编辑处于进行中未提交状态。\"\n   }\n  }\n ],\n \"checks\": [],\n \"uncertainties\": [\n  \"frame-009搜索图标的按压高亮是否为真实用户触点（高亮圈清晰，判定为touch，但无更早按下帧）\",\n  \"搜索框光标在frame-013已可见而键盘至frame-016才弹出，聚焦与键盘弹出之间的机制不明\",\n  \"本包末尾拼音编辑仍在进行，最终上屏候选词与提交动作归属后续包核验\"\n ],\n \"multiple_scenarios\": false,\n \"revisit\": []\n}",
+        "fallbackUsed": false,
+        "finishReason": "stop",
+        "gateway_request_sha256": "a6f4aa7620b9cc2d5a08f7fdb7f579857fb93f80e154642f5118b85771ec29e2",
+        "model": "qwen3.8-max",
+        "providerId": "qwen_plus",
+        "usage": {
+          "completionTokens": 2709,
+          "promptTokens": 32651,
+          "reasoningTokens": 1024,
+          "totalTokens": 35360
+        },
+        "videoPolicy": {
+          "correlation": "323f3df889f846fbbc113bb1c340bef0",
+          "effective_options": {
+            "enable_thinking": true,
+            "fine_frame_ids": [],
+            "image_count": 38,
+            "max_tokens": 10000,
+            "model": "qwen3.8-max",
+            "response_format": "json_schema",
+            "temperature": 0.1,
+            "thinking_budget": 1024
+          },
+          "model": "qwen3.8-max",
+          "output_schema_sha256": "726f7423858178627f5904cae9bec6f952f260be84adc4a3537d5952439ce524",
+          "provider_options_sha256": "10d23d79d8e9decb4a7dc13eae1299d8694f5a984441aedcf0de8bbbc43db998",
+          "skill": "ui_video_trajectory",
+          "skill_version": "observe",
+          "stage": "grounding",
+          "version": "video-stage-policy-v1"
+        }
+      }
+    },
+    {
+      "entry": 9,
+      "kind": "proof",
+      "sha256": "66312fb04e35be7961520df6e75527d947179156d658cbd3e1939c8ef7984232",
+      "value": {
+        "correlation": "aa865fbcea0f4e7b98331cae96735381",
+        "gateway_request_sha256": "2ddf1d283f9c80868a1f0dcfb347167c83ee82e99a4aa09601161f95a7c607fb",
+        "skill": "ui_video_trajectory",
+        "skill_version": "observe",
+        "stage": "grounding",
+        "timeout_ms": 119478
+      }
+    },
+    {
+      "entry": 10,
+      "kind": "receipt",
+      "sha256": "4f7398d658ac01424c73b796e71bccb8413118032f44bb971f7754ada558dcd3",
+      "value": {
+        "content": "{\n  \"states\": [\n    {\n      \"state_id\": \"p4\",\n      \"first_frame\": \"frame-033\",\n      \"last_frame\": \"frame-047\",\n      \"kind\": \"input\",\n      \"description\": \"搜索框拼音编辑区间（本包部分）。frame-033组合串ying'g；frame-034/035/036组合串ying'ho候选（影后、猩红、星宫…）；frame-037退格键按下高亮；frame-038/039/040组合串回退为xing；frame-041候选词上屏搜索框出现\\\"姓名\\\"并继续组词（贴、牌候选）；frame-042/043/044搜索框\\\"姓名贴\\\"且退格高亮；frame-045/046回退为\\\"姓名\\\"；frame-047搜索框\\\"姓名牌\\\"，编辑未提交。\"\n    },\n    {\n      \"state_id\": \"p5\",\n      \"first_frame\": \"frame-048\",\n      \"last_frame\": \"frame-052\",\n      \"kind\": \"page\",\n      \"description\": \"搜索提交过渡态。frame-048/049顶部蓝色\\\"搜索\\\"按钮出现圆形按压高亮；frame-050/051按钮变浅禁用态、键盘开始下移；frame-052热搜榜区域中央出现\\\"搜索中...\\\"灰色加载浮层，键盘进一步收起。\"\n    },\n    {\n      \"state_id\": \"p6\",\n      \"first_frame\": \"frame-053\",\n      \"last_frame\": \"frame-059\",\n      \"kind\": \"wait\",\n      \"description\": \"搜索结果页加载态。frame-053整页蒙灰且中央\\\"搜索中...\\\"浮层，结果卡片仅文字；frame-054浮层消失、卡片图片为占位浅色；frame-055至059两张结果卡片图片加载完成，\\\"结果较少？试试AI创作\\\"横幅可见，键盘已收起。\"\n    }\n  ],\n  \"events\": [\n    {\n      \"action\": \"aiInput\",\n      \"target\": \"搜索您感兴趣的内容 搜索输入框\",\n      \"value\": \"\",\n      \"frame_refs\": [\n        \"frame-033\",\n        \"frame-034\",\n        \"frame-035\",\n        \"frame-036\",\n        \"frame-037\",\n        \"frame-038\",\n        \"frame-039\",\n        \"frame-040\",\n        \"frame-041\",\n        \"frame-042\",\n        \"frame-043\",\n        \"frame-044\",\n        \"frame-045\",\n        \"frame-046\",\n        \"frame-047\"\n      ],\n      \"observation\": \"续接上一包搜索框编辑：frame-033组合串ying'g；frame-034起组合串变为ying'ho、候选换组（影后、猩红、星宫…）；frame-037退格键按下高亮后frame-038组合串回退为xing；frame-040 MNO键按下高亮；frame-041候选词上屏使搜索框首次出现\\\"姓名\\\"并带光标与清除按钮，候选行继续更新；frame-042至044搜索框一度为\\\"姓名贴\\\"且退格高亮；frame-045/046回退为\\\"姓名\\\"；frame-047搜索框为\\\"姓名牌\\\"、候选行仍可见，编辑未提交。\",\n      \"uncertainties\": [\n        \"组合串各段落与退格次数对应的具体按键序列无法从采样帧完整还原\",\n        \"frame-041上屏候选词是第几候选无法从采样帧确认\"\n      ],\n      \"trigger_frame\": \"frame-034\",\n      \"trigger_kind\": \"edit\",\n      \"page_before\": \"p3\",\n      \"page_after\": \"p4\",\n      \"continuation_of\": \"packet-001:event-2\",\n      \"edit_boundary\": \"none\",\n      \"outcome\": {\n        \"frame_refs\": [\n          \"frame-047\"\n        ],\n        \"observation\": \"frame-047搜索框正文为\\\"姓名牌\\\"，键盘候选行仍显示（子、的吧、照、子好等），编辑完成但尚未提交搜索。\"\n      }\n    },\n    {\n      \"action\": \"aiTap\",\n      \"target\": \"搜索框右侧蓝色\\\"搜索\\\"按钮\",\n      \"value\": \"\",\n      \"frame_refs\": [\n        \"frame-047\",\n        \"frame-048\",\n        \"frame-049\",\n        \"frame-050\",\n        \"frame-051\",\n        \"frame-052\"\n      ],\n      \"observation\": \"frame-047编辑末态；frame-048/049顶部蓝色\\\"搜索\\\"按钮出现圆形按压高亮；frame-050/051按钮转为浅色禁用态、软键盘开始下移收起；frame-052热搜榜区域中央出现\\\"搜索中...\\\"加载浮层，提交响应开始。\",\n      \"uncertainties\": [],\n      \"trigger_frame\": \"frame-048\",\n      \"trigger_kind\": \"touch\",\n      \"page_before\": \"p4\",\n      \"page_after\": \"p5\",\n      \"continuation_of\": \"\",\n      \"edit_boundary\": \"submission\",\n      \"outcome\": {\n        \"frame_refs\": [\n          \"frame-052\"\n        ],\n        \"observation\": \"frame-052页面仍为搜索页布局但热搜榜区域被\\\"搜索中...\\\"加载浮层覆盖，键盘已大部分收起，搜索请求已发出。\"\n      }\n    },\n    {\n      \"action\": \"aiWaitFor\",\n      \"target\": \"搜索结果页结果卡片与图片加载完成\",\n      \"value\": \"\",\n      \"frame_refs\": [\n        \"frame-052\",\n        \"frame-053\",\n        \"frame-054\",\n        \"frame-055\"\n      ],\n      \"observation\": \"frame-052搜索中浮层覆盖热搜榜；frame-053整页蒙灰、中央\\\"搜索中...\\\"浮层且结果区仅显示卡片文字（姓名牌、Max挂牌）；frame-054浮层消失、卡片图片为浅色占位；frame-055两张结果卡片图片加载完成，键盘完全收起。\",\n      \"uncertainties\": [],\n      \"trigger_frame\": \"frame-053\",\n      \"trigger_kind\": \"automatic\",\n      \"page_before\": \"p5\",\n      \"page_after\": \"p6\",\n      \"continuation_of\": \"\",\n      \"edit_boundary\": \"none\",\n      \"outcome\": {\n        \"frame_refs\": [\n          \"frame-055\"\n        ],\n        \"observation\": \"frame-055搜索结果页完整可见：搜索框保留\\\"姓名牌\\\"，姓名牌与Max挂牌两张卡片图片加载完成，下方AI创作横幅可见，无加载浮层。\"\n      }\n    },\n    {\n      \"action\": \"aiTap\",\n      \"target\": \"搜索结果列表第一个结果\\\"姓名牌\\\"卡片\",\n      \"value\": \"\",\n      \"frame_refs\": [\n        \"frame-058\",\n        \"frame-059\",\n        \"frame-060\",\n        \"frame-061\"\n      ],\n      \"observation\": \"frame-058/059结果页静止、姓名牌卡片图片区域可见疑似按压痕迹；frame-060页面变白转场且左上出现第二层返回箭头（新页面压入）；frame-061模型详情页完整显示（封面金色吊牌、标签、3001人打印、模型文件信息、底部旋钮设置与去编辑按钮）。\",\n      \"uncertainties\": [\n        \"frame-058/059姓名牌图片上的圆形痕迹是否为本次按压高亮无法完全确认，转场方向与目标卡片位置一致支持点击该卡片\"\n      ],\n      \"trigger_frame\": \"frame-059\",\n      \"trigger_kind\": \"touch\",\n      \"page_before\": \"p6\",\n      \"page_after\": \"s5\",\n      \"continuation_of\": \"\",\n      \"edit_boundary\": \"none\",\n      \"outcome\": {\n        \"frame_refs\": [\n          \"frame-061\"\n        ],\n        \"observation\": \"frame-061模型详情页（姓名牌）完整可见：封面图、标签组、3001人打印、模型文件区（约18分钟、4g材料、52mm×2mm×26mm）及底部\\\"旋钮设置\\\"\\\"去编辑\\\"按钮。\"\n      }\n    }\n  ],\n  \"checks\": [],\n  \"uncertainties\": [\n    \"frame-065底部\\\"去编辑\\\"按钮上的按压高亮触发发生在frame-065（属后续包），本包不记录该点击，仅保留frame-066至070的转场与加载作为后续证据\",\n    \"frame-042至044\\\"姓名贴\\\"回退为\\\"姓名\\\"的退格次数与候选选择顺序无法从采样帧精确还原\"\n  ],\n  \"multiple_scenarios\": false,\n  \"revisit\": []\n}",
+        "fallbackUsed": false,
+        "finishReason": "stop",
+        "gateway_request_sha256": "2ddf1d283f9c80868a1f0dcfb347167c83ee82e99a4aa09601161f95a7c607fb",
+        "model": "qwen3.8-max",
+        "providerId": "qwen_plus",
+        "usage": {
+          "completionTokens": 3225,
+          "promptTokens": 41238,
+          "reasoningTokens": 1024,
+          "totalTokens": 44463
+        },
+        "videoPolicy": {
+          "correlation": "aa865fbcea0f4e7b98331cae96735381",
+          "effective_options": {
+            "enable_thinking": true,
+            "fine_frame_ids": [],
+            "image_count": 44,
+            "max_tokens": 10000,
+            "model": "qwen3.8-max",
+            "response_format": "json_schema",
+            "temperature": 0.1,
+            "thinking_budget": 1024
+          },
+          "model": "qwen3.8-max",
+          "output_schema_sha256": "5d5fceef5f4b87fb4c85c47a5a46d2ea1253ee49c501585e449537aa710e23d1",
+          "provider_options_sha256": "a351e322cdb65546c29965f2d0c60b95ce70904284083d0fddf13936823b7aee",
+          "skill": "ui_video_trajectory",
+          "skill_version": "observe",
+          "stage": "grounding",
+          "version": "video-stage-policy-v1"
+        }
+      }
+    },
+    {
+      "entry": 11,
+      "kind": "proof",
+      "sha256": "0b85dd085a379215fadb9eb57a723a669416e84e5ac32f8b9ec2ca98e04d22a8",
+      "value": {
+        "correlation": "54f073ac17be4d3da7d68a700019921a",
+        "gateway_request_sha256": "00b8a4afb477811502e33aa9d4a6d69e6d5eeb8de6fabd0293234ffe09265e95",
+        "skill": "ui_video_trajectory",
+        "skill_version": "observe",
+        "stage": "grounding",
+        "timeout_ms": 119470
+      }
+    },
+    {
+      "entry": 12,
+      "kind": "receipt",
+      "sha256": "793eaef29709e4bf3d019a8f85c3b4962b3c571f9c87cd11c95ecdc00e203f2b",
+      "value": {
+        "content": "{\n  \"states\": [\n    {\n      \"state_id\": \"s4a\",\n      \"first_frame\": \"frame-053\",\n      \"last_frame\": \"frame-053\",\n      \"kind\": \"wait\",\n      \"description\": \"搜索结果页加载过渡。搜索框保留\\\"姓名牌\\\"，结果区卡片为灰色占位（姓名牌、Max挂牌文字可见），中央深色浮层显示\\\"搜索中...\\\"旋转指示，键盘已收起。\"\n    },\n    {\n      \"state_id\": \"s5a\",\n      \"first_frame\": \"frame-060\",\n      \"last_frame\": \"frame-060\",\n      \"kind\": \"transition\",\n      \"description\": \"模型详情页滑入过渡。搜索结果页整体变淡，左上叠加出现详情页返回箭头\\\"<\\\"，封面区尚未渲染完成。\"\n    },\n    {\n      \"state_id\": \"s6a\",\n      \"first_frame\": \"frame-066\",\n      \"last_frame\": \"frame-070\",\n      \"kind\": \"transition\",\n      \"description\": \"编辑模型页加载过渡。frame-066详情页开始左移露出右缘新页返回箭头；frame-067/068白色页面标题\\\"编辑模型\\\"、内容空白带顶部进度条；frame-069/070黑色背景中央\\\"正在加载...\\\"旋转指示。\"\n    }\n  ],\n  \"events\": [\n    {\n      \"action\": \"aiInput\",\n      \"target\": \"搜索您感兴趣的内容 搜索输入框\",\n      \"value\": \"\",\n      \"frame_refs\": [\n        \"frame-033\",\n        \"frame-034\",\n        \"frame-035\",\n        \"frame-036\",\n        \"frame-037\",\n        \"frame-038\",\n        \"frame-039\",\n        \"frame-040\",\n        \"frame-041\",\n        \"frame-042\",\n        \"frame-043\",\n        \"frame-044\",\n        \"frame-045\",\n        \"frame-046\",\n        \"frame-047\"\n      ],\n      \"observation\": \"frame-033键盘上方组合串仍为ying'g；frame-034/035组合串变为ying'ho且候选换组（影后、猩红、星宫等）；frame-037退格键出现按压高亮；frame-038组合串回退为xing；frame-040 MNO键按压高亮；frame-041候选词上屏使搜索框首次出现正文并带光标与清除图标；frame-042/043退格键高亮且正文末字变化；frame-045正文回退；frame-047正文稳定为三字终态，候选栏换组；全程键盘可见、未提交、未换字段，为packet-001:event-2同字段编辑的继续。\",\n      \"uncertainties\": [\n        \"组合串各段落与候选上屏对应的具体按键序列无法从采样帧完整还原\",\n        \"frame-042至045之间末字的增删次序存在采样间隙，仅能确认正文可见变化\"\n      ],\n      \"trigger_frame\": \"frame-034\",\n      \"trigger_kind\": \"edit\",\n      \"page_before\": \"p3\",\n      \"page_after\": \"s3\",\n      \"continuation_of\": \"packet-001:event-2\",\n      \"edit_boundary\": \"none\",\n      \"outcome\": {\n        \"frame_refs\": [\n          \"frame-041\",\n          \"frame-042\",\n          \"frame-043\",\n          \"frame-044\",\n          \"frame-045\",\n          \"frame-046\",\n          \"frame-047\"\n        ],\n        \"observation\": \"frame-047搜索框正文为三字终态并带清除图标，键盘候选栏换组且无组合串气泡，编辑仍未提交。\"\n      }\n    },\n    {\n      \"action\": \"aiTap\",\n      \"target\": \"搜索框右侧蓝色\\\"搜索\\\"按钮\",\n      \"value\": \"\",\n      \"frame_refs\": [\n        \"frame-047\",\n        \"frame-048\",\n        \"frame-049\",\n        \"frame-050\",\n        \"frame-051\",\n        \"frame-052\"\n      ],\n      \"observation\": \"frame-047搜索按钮静止；frame-048/049按钮上方出现圆形按压高亮；frame-050/051按钮变为浅色禁用态；frame-052结果区中央出现\\\"搜索中...\\\"浮层且键盘开始收起，提交响应启动。\",\n      \"uncertainties\": [\n        \"提交由顶部蓝色搜索按钮还是键盘绿色搜索键触发无法区分（两者同期可见，仅顶部按钮处见按压高亮）\"\n      ],\n      \"trigger_frame\": \"frame-048\",\n      \"trigger_kind\": \"touch\",\n      \"page_before\": \"s3\",\n      \"page_after\": \"s4a\",\n      \"continuation_of\": \"\",\n      \"edit_boundary\": \"submission\",\n      \"outcome\": {\n        \"frame_refs\": [\n          \"frame-050\",\n          \"frame-051\",\n          \"frame-052\"\n        ],\n        \"observation\": \"frame-052搜索框保留三字关键词，结果区显示\\\"搜索中...\\\"加载浮层，键盘收起中，搜索请求已发起。\"\n      }\n    },\n    {\n      \"action\": \"aiWaitFor\",\n      \"target\": \"搜索结果页结果卡片与图片加载完成\",\n      \"value\": \"\",\n      \"frame_refs\": [\n        \"frame-052\",\n        \"frame-053\",\n        \"frame-054\",\n        \"frame-055\"\n      ],\n      \"observation\": \"frame-052/053为\\\"搜索中...\\\"浮层与占位卡片；frame-054浮层消失、结果卡片出现但图片仍为占位；frame-055两张结果卡片图片加载完成，\\\"结果较少？试试AI创作\\\"横幅可见。\",\n      \"uncertainties\": [],\n      \"trigger_frame\": \"frame-053\",\n      \"trigger_kind\": \"automatic\",\n      \"page_before\": \"s4a\",\n      \"page_after\": \"s4\",\n      \"continuation_of\": \"\",\n      \"edit_boundary\": \"none\",\n      \"outcome\": {\n        \"frame_refs\": [\n          \"frame-054\",\n          \"frame-055\"\n        ],\n        \"observation\": \"frame-055结果页静止：姓名牌与Max挂牌卡片图片完整加载，AI创作横幅可见，无加载指示。\"\n      }\n    },\n    {\n      \"action\": \"aiTap\",\n      \"target\": \"搜索结果列表第一个结果\\\"姓名牌\\\"卡片\",\n      \"value\": \"\",\n      \"frame_refs\": [\n        \"frame-055\",\n        \"frame-056\",\n        \"frame-057\",\n        \"frame-058\",\n        \"frame-059\",\n        \"frame-060\",\n        \"frame-061\"\n      ],\n      \"observation\": \"frame-055结果页静止且姓名牌卡片图片区可见圆形按压高亮；frame-056至059页面保持；frame-060结果页变淡并叠加详情页返回箭头（滑入过渡）；frame-061模型详情页完整显示（封面、标签、3001人打印、模型文件信息、底部旋钮设置与去编辑按钮）。\",\n      \"uncertainties\": [\n        \"按压高亮位置落在卡片图片区，触点究竟意图点卡片整体还是封面图无法进一步区分（二者同属该结果入口）\"\n      ],\n      \"trigger_frame\": \"frame-055\",\n      \"trigger_kind\": \"touch\",\n      \"page_before\": \"s4\",\n      \"page_after\": \"s5\",\n      \"continuation_of\": \"\",\n      \"edit_boundary\": \"navigation\",\n      \"outcome\": {\n        \"frame_refs\": [\n          \"frame-060\",\n          \"frame-061\"\n        ],\n        \"observation\": \"frame-061模型详情页（姓名牌）完整可见：金色吊牌封面、标签行、3001人打印、模型文件区与底部按钮，搜索结果页不再可见。\"\n      }\n    },\n    {\n      \"action\": \"aiTap\",\n      \"target\": \"模型详情页底部蓝色\\\"去编辑\\\"按钮\",\n      \"value\": \"\",\n      \"frame_refs\": [\n        \"frame-064\",\n        \"frame-065\",\n        \"frame-066\",\n        \"frame-067\",\n        \"frame-068\",\n        \"frame-069\",\n        \"frame-070\"\n      ],\n      \"observation\": \"frame-064详情页静止；frame-065底部\\\"去编辑\\\"按钮出现圆形按压高亮；frame-066详情页左移露出新页返回箭头；frame-067/068白色\\\"编辑模型\\\"页空白带顶部进度条；frame-069/070黑色背景中央显示\\\"正在加载...\\\"旋转指示。\",\n      \"uncertainties\": [],\n      \"trigger_frame\": \"frame-065\",\n      \"trigger_kind\": \"touch\",\n      \"page_before\": \"s5\",\n      \"page_after\": \"s6a\",\n      \"continuation_of\": \"\",\n      \"edit_boundary\": \"navigation\",\n      \"outcome\": {\n        \"frame_refs\": [\n          \"frame-066\",\n          \"frame-067\",\n          \"frame-068\",\n          \"frame-069\",\n          \"frame-070\"\n        ],\n        \"observation\": \"frame-070编辑模型页加载过渡中：黑色背景、中央\\\"正在加载...\\\"旋转指示与顶部标题\\\"编辑模型\\\"，详情页不再可见。\"\n      }\n    }\n  ],\n  \"checks\": [],\n  \"uncertainties\": [\n    \"搜索提交触点归属（顶部蓝色搜索按钮 vs 键盘绿色搜索键）仅凭frame-048/049顶部按钮处按压高亮推断，键盘搜索键同期可见\",\n    \"frame-041候选上屏前的组合串（应为xing+后续键）在采样间隙内变化，具体按键序列未知\",\n    \"frame-055姓名牌卡片上的圆形高亮是否为本次进入详情页的唯一触点，frame-056至059之间无新增高亮证据\"\n  ],\n  \"multiple_scenarios\": false,\n  \"revisit\": []\n}",
+        "fallbackUsed": false,
+        "finishReason": "stop",
+        "gateway_request_sha256": "00b8a4afb477811502e33aa9d4a6d69e6d5eeb8de6fabd0293234ffe09265e95",
+        "model": "qwen3.8-max",
+        "providerId": "qwen_plus",
+        "usage": {
+          "completionTokens": 3544,
+          "promptTokens": 41305,
+          "reasoningTokens": 1024,
+          "totalTokens": 44849
+        },
+        "videoPolicy": {
+          "correlation": "54f073ac17be4d3da7d68a700019921a",
+          "effective_options": {
+            "enable_thinking": true,
+            "fine_frame_ids": [],
+            "image_count": 44,
+            "max_tokens": 10000,
+            "model": "qwen3.8-max",
+            "response_format": "json_schema",
+            "temperature": 0.1,
+            "thinking_budget": 1024
+          },
+          "model": "qwen3.8-max",
+          "output_schema_sha256": "5d5fceef5f4b87fb4c85c47a5a46d2ea1253ee49c501585e449537aa710e23d1",
+          "provider_options_sha256": "486260fc211b31eb885280aa8d28132fa42b22ee452a95a3735430cad5ce86f1",
+          "skill": "ui_video_trajectory",
+          "skill_version": "observe",
+          "stage": "grounding",
+          "version": "video-stage-policy-v1"
+        }
+      }
+    },
+    {
+      "entry": 13,
+      "kind": "proof",
+      "sha256": "b962cbcac7a78977dd0aca55d25d0aaecc8990abc921ee040e49e4b4cd4ca2f2",
+      "value": {
+        "correlation": "0a3d2020bc89411f87346b5c0b4bc5af",
+        "gateway_request_sha256": "2df2bbc1052c134abab73c6aa3da8a5e1693b7f932bb42be0d17f09519da1931",
+        "skill": "ui_video_trajectory",
+        "skill_version": "observe",
+        "stage": "grounding",
+        "timeout_ms": 119464
+      }
+    },
+    {
+      "entry": 14,
+      "kind": "receipt",
+      "sha256": "c5b2e7c66c7010726a53fdcc5bd22695e7de61b55cc4a5e05c18b20776787f70",
+      "value": {
+        "content": "{\n \"states\": [\n  {\n   \"state_id\": \"s4\",\n   \"first_frame\": \"frame-053\",\n   \"last_frame\": \"frame-059\",\n   \"kind\": \"page\",\n   \"description\": \"搜索结果页。搜索框保留\\\"姓名牌\\\"与清除图标；结果区两个模型卡片（姓名牌-装饰房间/日常使用-3001人打印、Max挂牌-日常使用/标识挂牌-5人打印），frame-053/054卡片图片为占位或半加载，frame-055起图片加载完成；下方\\\"结果较少？试试AI创作\\\"推广横幅；键盘已收起。\"\n  },\n  {\n   \"state_id\": \"s5\",\n   \"first_frame\": \"frame-060\",\n   \"last_frame\": \"frame-064\",\n   \"kind\": \"page\",\n   \"description\": \"模型详情页（姓名牌）。frame-060为自右滑入过渡（搜索结果页残影可见）；frame-061起完整：顶部封面图（金色吊牌挂墙上，1/1页标）、左上返回箭头、收藏/分享/更多图标；标题\\\"姓名牌\\\"、标签行、3001人打印；模型文件区（约18分钟、4g材料、52mm(X)*2mm(Y)*26mm(Z)）；描述文字；底部\\\"旋钮设置\\\"与\\\"去编辑\\\"按钮。\"\n  }\n ],\n \"events\": [\n  {\n   \"action\": \"aiInput\",\n   \"target\": \"搜索您感兴趣的内容 搜索输入框\",\n   \"value\": \"\",\n   \"frame_refs\": [\n    \"frame-033\",\n    \"frame-034\",\n    \"frame-035\",\n    \"frame-036\",\n    \"frame-037\",\n    \"frame-038\",\n    \"frame-039\",\n    \"frame-040\",\n    \"frame-041\"\n   ],\n   \"observation\": \"续接上一包搜索框编辑：frame-033组合串仍为ying'g；frame-034起组合串变为ying'ho且候选换组（影后、猩红、星宫…）；frame-037退格键出现圆形按下高亮；frame-038/039组合串回退为xing；frame-040 MNO键按下高亮；frame-041候选词上屏，搜索框正文首次出现文字并带光标与清除图标，编辑仍未提交。\",\n   \"uncertainties\": [\n    \"frame-036与038之间退格按压次数与组合串回退路径无法从采样帧完整还原\",\n    \"frame-039搜索框光标短暂不可见是否为采样渲染间隙，无法确认是否发生过失焦再聚焦\"\n   ],\n   \"trigger_frame\": \"frame-034\",\n   \"trigger_kind\": \"edit\",\n   \"page_before\": \"p3\",\n   \"page_after\": \"s3\",\n   \"continuation_of\": \"packet-001:event-2\",\n   \"edit_boundary\": \"none\",\n   \"outcome\": {\n    \"frame_refs\": [\n     \"frame-041\"\n    ],\n    \"observation\": \"frame-041搜索框正文显示已上屏候选词文字并带光标与清除图标，键盘候选栏仍可见，编辑处于进行中未提交状态。\"\n   }\n  },\n  {\n   \"action\": \"aiInput\",\n   \"target\": \"搜索您感兴趣的内容 搜索输入框\",\n   \"value\": \"\",\n   \"frame_refs\": [\n    \"frame-041\",\n    \"frame-042\",\n    \"frame-043\",\n    \"frame-044\",\n    \"frame-045\",\n    \"frame-046\",\n    \"frame-047\"\n   ],\n   \"observation\": \"同一搜索框继续编辑：frame-042/043正文变为\\\"姓名贴\\\"且退格键按下高亮；frame-044候选栏换组（贴、牌、电话…）；frame-045/046正文回退为\\\"姓名\\\"；frame-047正文变为\\\"姓名牌\\\"，候选栏再次换组，键盘仍弹出，未提交。\",\n   \"uncertainties\": [\n    \"frame-046到047之间\\\"牌\\\"字是经候选点选还是拼音上屏无法从采样帧区分\"\n   ],\n   \"trigger_frame\": \"frame-042\",\n   \"trigger_kind\": \"edit\",\n   \"page_before\": \"s3\",\n   \"page_after\": \"s3\",\n   \"continuation_of\": \"\",\n   \"edit_boundary\": \"none\",\n   \"outcome\": {\n    \"frame_refs\": [\n     \"frame-047\"\n    ],\n    \"observation\": \"frame-047搜索框正文为\\\"姓名牌\\\"，键盘与候选栏仍可见，处于提交前编辑末态。\"\n   }\n  },\n  {\n   \"action\": \"aiTap\",\n   \"target\": \"搜索框右侧蓝色\\\"搜索\\\"按钮\",\n   \"value\": \"\",\n   \"frame_refs\": [\n    \"frame-047\",\n    \"frame-048\",\n    \"frame-049\",\n    \"frame-050\",\n    \"frame-051\",\n    \"frame-052\"\n   ],\n   \"observation\": \"frame-047搜索按钮静止；frame-048至052蓝色\\\"搜索\\\"按钮持续出现圆形按压高亮；frame-051键盘开始下滑收起；frame-052页面中央出现\\\"搜索中...\\\"加载浮层，提交生效。\",\n   \"uncertainties\": [],\n   \"trigger_frame\": \"frame-048\",\n   \"trigger_kind\": \"touch\",\n   \"page_before\": \"s3\",\n   \"page_after\": \"s4\",\n   \"continuation_of\": \"\",\n   \"edit_boundary\": \"submission\",\n   \"outcome\": {\n    \"frame_refs\": [\n     \"frame-052\"\n    ],\n    \"observation\": \"frame-052搜索页中央显示\\\"搜索中...\\\"加载浮层，键盘收起中，搜索请求已触发。\"\n   }\n  },\n  {\n   \"action\": \"aiWaitFor\",\n   \"target\": \"搜索结果页结果卡片与图片加载完成\",\n   \"value\": \"\",\n   \"frame_refs\": [\n    \"frame-052\",\n    \"frame-053\",\n    \"frame-054\",\n    \"frame-055\"\n   ],\n   \"observation\": \"frame-052仍为搜索页加载浮层；frame-053切换至搜索结果页并带\\\"搜索中...\\\"浮层、卡片图片为占位；frame-054浮层消失、图片半加载；frame-055两个结果卡片图片完整加载完成。\",\n   \"uncertainties\": [],\n   \"trigger_frame\": \"frame-053\",\n   \"trigger_kind\": \"automatic\",\n   \"page_before\": \"s4\",\n   \"page_after\": \"s4\",\n   \"continuation_of\": \"\",\n   \"edit_boundary\": \"none\",\n   \"outcome\": {\n    \"frame_refs\": [\n     \"frame-055\"\n    ],\n    \"observation\": \"frame-055搜索结果页姓名牌与Max挂牌卡片图片完整显示，加载浮层消失，键盘已收起。\"\n   }\n  },\n  {\n   \"action\": \"aiTap\",\n   \"target\": \"搜索结果列表第一个结果\\\"姓名牌\\\"模型卡片\",\n   \"value\": \"\",\n   \"frame_refs\": [\n    \"frame-058\",\n    \"frame-059\",\n    \"frame-060\",\n    \"frame-061\"\n   ],\n   \"observation\": \"frame-058/059结果页静止、姓名牌卡片图片区可见按压圆形高亮；frame-060模型详情页自右滑入（结果页残影可见）；frame-061详情页完整显示（封面、标签、模型文件信息、底部按钮）。\",\n   \"uncertainties\": [\n    \"frame-055至058之间卡片按压高亮的首现帧未被采样，触点起始时刻不精确\"\n   ],\n   \"trigger_frame\": \"frame-058\",\n   \"trigger_kind\": \"touch\",\n   \"page_before\": \"s4\",\n   \"page_after\": \"s5\",\n   \"continuation_of\": \"\",\n   \"edit_boundary\": \"none\",\n   \"outcome\": {\n    \"frame_refs\": [\n     \"frame-061\"\n    ],\n    \"observation\": \"frame-061模型详情页（姓名牌）完整可见：封面图、标签行、3001人打印、模型文件信息与\\\"旋钮设置\\\"\\\"去编辑\\\"按钮。\"\n   }\n  }\n ],\n \"checks\": [],\n \"uncertainties\": [\n  \"frame-041与042之间候选上屏的具体点选对象未被采样，仅能确认正文由空变为已上屏文字\",\n  \"frame-065（上下文帧）\\\"去编辑\\\"按钮上的按压高亮属于下一包触发，本包不记录该动作\"\n ],\n \"multiple_scenarios\": false,\n \"revisit\": []\n}",
+        "fallbackUsed": false,
+        "finishReason": "stop",
+        "gateway_request_sha256": "2df2bbc1052c134abab73c6aa3da8a5e1693b7f932bb42be0d17f09519da1931",
+        "model": "qwen3.8-max",
+        "providerId": "qwen_plus",
+        "usage": {
+          "completionTokens": 3201,
+          "promptTokens": 41308,
+          "reasoningTokens": 1024,
+          "totalTokens": 44509
+        },
+        "videoPolicy": {
+          "correlation": "0a3d2020bc89411f87346b5c0b4bc5af",
+          "effective_options": {
+            "enable_thinking": true,
+            "fine_frame_ids": [],
+            "image_count": 44,
+            "max_tokens": 10000,
+            "model": "qwen3.8-max",
+            "response_format": "json_schema",
+            "temperature": 0.1,
+            "thinking_budget": 1024
+          },
+          "model": "qwen3.8-max",
+          "output_schema_sha256": "5d5fceef5f4b87fb4c85c47a5a46d2ea1253ee49c501585e449537aa710e23d1",
+          "provider_options_sha256": "14d01dc073784f85dc27aa11bcfe869367aebd4a51352149c852d90a08c2bc66",
+          "skill": "ui_video_trajectory",
+          "skill_version": "observe",
+          "stage": "grounding",
+          "version": "video-stage-policy-v1"
+        }
+      }
+    }
+  ]
+}
