@@ -52,10 +52,12 @@ def _provider_projection(node):
     return out
 
 
-def validate_output_schema(schema):
-    """Only the original observer scaffold, with bounded leaf-enum narrowing."""
+def validate_output_schema(schema, *, stage="semantic"):
+    """Only the selected canonical scaffold, with bounded leaf-enum narrowing."""
     def fail():
         raise ValueError('video_output_schema_invalid')
+    if stage not in {"semantic", "grounding", "audit"}:
+        fail()
     try:
         encoded = json.dumps(schema, ensure_ascii=False, allow_nan=False)
     except (TypeError, ValueError, RecursionError):
@@ -109,9 +111,9 @@ def validate_output_schema(schema):
     normalized = normalize(schema)
     # The source contract remains canonical. No alternate event/state scaffolds.
     from .ai_skill_service import load_ai_skill_schema
-    expected = _provider_projection(load_ai_skill_schema('ui_video_trajectory')['oneOf'][0])
+    expected = _provider_projection(load_ai_skill_schema('ui_video_trajectory')['oneOf'][1 if stage == 'audit' else 0])
     props = normalized.get('properties', {})
-    if set(props) == _SEMANTIC_FIELDS:
+    if stage != 'audit' and set(props) == _SEMANTIC_FIELDS:
         del expected['properties']['revisit']
         expected['required'].remove('revisit')
     def match(actual, contract):
@@ -197,7 +199,9 @@ def validate_video_stage(skill, payload, assets, stage=UNSET, schema=UNSET, *, v
         _metadata(payload.get('frames'))
         validate_output_schema(schema)
         return stage
-    if schema is not UNSET and stage != 'grounding':
+    if stage == 'audit' and schema is not UNSET:
+        validate_output_schema(schema, stage=stage)
+    if schema is not UNSET and stage not in {'grounding', 'audit'}:
         raise ValueError('video_stage_schema_invalid')
     if stage == 'perception':
         from .ui_video_perception_binding import _source_index

@@ -367,3 +367,32 @@ test('legacy structured length rejection keeps its existing error classification
   /Structured output truncated: finish_reason=length, completion_tokens=4000/);
  assert.ok(run.logs.every(log=>log.success===false && !log.error.startsWith('video_')));
 });
+
+test('strict audit uses canonical audit scaffold at provider and attestation',()=>{
+ const canonical=JSON.parse(fs.readFileSync(new URL('../ai_skills/schemas/ui_video_trajectory.schema.json',import.meta.url),'utf8')).oneOf[1];
+ const b=input('audit');b.outputSchema=project(canonical);
+ const wire=complete(b);
+ assert.deepEqual(wire.response_format,{type:'json_schema',json_schema:{name:'video_audit',strict:true,schema:b.outputSchema}});
+ ctx.body=b;ctx.options=wire;
+ const proof=JSON.parse(JSON.stringify(vm.runInContext('videoPolicyAttestation(body,options)',ctx)));
+ assert.equal(proof.effective_options.response_format,'json_schema');
+ assert.equal(proof.output_schema_sha256,vm.runInContext('videoCanonicalSha(body.outputSchema)',ctx));
+});
+test('audit/observer cross-stage schemas, null and extra fields rejected',()=>{
+ const canonical=JSON.parse(fs.readFileSync(new URL('../ai_skills/schemas/ui_video_trajectory.schema.json',import.meta.url),'utf8')).oneOf[1];
+ for(const supplied of [null,schema(),{...project(canonical),extra:true}]) {
+  const b=input('audit');b.outputSchema=supplied;assert.throws(()=>complete(b),/video_output_schema_invalid/);
+ }
+ const b=input('semantic');b.outputSchema=project(canonical);assert.throws(()=>complete(b),/video_output_schema_invalid/);
+});
+test('actual strict audit dispatch attests exact schema and no fallback/retry',async()=>{
+ const canonical=JSON.parse(fs.readFileSync(new URL('../ai_skills/schemas/ui_video_trajectory.schema.json',import.meta.url),'utf8')).oneOf[1];
+ const b=input('audit');b.outputSchema=project(canonical);
+ const run=orchestration(),response=await run.request(b);
+ assert.equal(run.calls.length,1);assert.equal(response.fallbackUsed,false);
+ assert.deepEqual(JSON.parse(JSON.stringify(run.calls[0].options.response_format)),{type:'json_schema',json_schema:{name:'video_audit',strict:true,schema:b.outputSchema}});
+ assert.equal(response.videoPolicy.effective_options.response_format,'json_schema');
+ ctx.body=b;assert.equal(response.videoPolicy.output_schema_sha256,vm.runInContext('videoCanonicalSha(body.outputSchema)',ctx));
+ const failed=orchestration(true);await assert.rejects(failed.request(b),/video_stage_provider_failed/);assert.equal(failed.calls.length,1);
+ b.outputSchema=null;const rejected=orchestration();await assert.rejects(rejected.request(b),/video_output_schema_invalid/);assert.equal(rejected.calls.length,0);
+});

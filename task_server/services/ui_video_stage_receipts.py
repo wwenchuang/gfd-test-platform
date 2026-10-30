@@ -37,8 +37,8 @@ def expected_provider_options(body):
         'messages':[{'role':'system','content':SYSTEM_PROMPT},
                     {'role':'user','content':content if assets else body['prompt']}]}
     if stage!='perception':options['thinking_budget']=1024
-    if stage in {'semantic','grounding'}:options['response_format']={'type':'json_schema','json_schema':{
-        'name':'video_semantic','strict':True,'schema':body['outputSchema']}}
+    if stage in {'semantic','grounding'} or (stage == 'audit' and 'outputSchema' in body):options['response_format']={'type':'json_schema','json_schema':{
+        'name':'video_audit' if stage == 'audit' else 'video_semantic','strict':True,'schema':body['outputSchema']}}
     return options
 
 
