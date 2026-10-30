@@ -21,3 +21,8 @@ Use generic synthetic fixtures, RED then GREEN: two separate same-target presses
 ## Limits
 
 This task does not activate detail perception or bounded planning, run a provider diagnostic, regenerate a source, create a draft, deploy, or operate a phone. Parent coordinates those separately after evidence and review. No guarantee that an ordinary supported result exists for every declared action.
+
+## Review clarifications
+
+- Preserving rejected questions means preserving valid complete nonblank strings within the existing2000-character question contract as final blockers. Malformed/oversized entries remain exact in immutable raw/provenance; do not promote them into otherwise valid corrected final questions or truncate them to fit.
+- Unverified temporal signature constraints cannot overrule a subsequent validated independent audit's explicit `trigger_verdict=contradicted` on the exact corresponding fragment. Retire only that matched signature multiplicity through the existing audit repair transaction. Unclear triggers, outcome-only contradictions or unmatched IDs do not revoke constraints. Existing supported trigger locks and shared correction budget remain unchanged.
