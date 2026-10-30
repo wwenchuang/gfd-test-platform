@@ -226,5 +226,748 @@
         }
       }
     }
+  ],
+  "replay_entries": [
+    {
+      "entry": 4,
+      "kind": "receipt",
+      "sha256": "d419fadb9411c3de8cf483e0ae20c3ee2855fea0ca0d6ac60c741319ffcbfad6",
+      "value": {
+        "content": "{\"states\":[{\"state_id\":\"s1\",\"first_frame\":\"frame-001\",\"last_frame\":\"frame-009\",\"kind\":\"page\",\"description\":\"3D打印应用首页（模型推荐页），顶部显示设备名称EP3-9070692832BA及空闲状态，有模型处理完成提示横幅与去打印入口，页面展示推荐模型列表与底部导航栏（模型库/AI建模/课程/我的）。\"},{\"state_id\":\"s2\",\"first_frame\":\"frame-021\",\"last_frame\":\"frame-047\",\"kind\":\"page\",\"description\":\"搜索页，顶部搜索框，显示搜索历史词条与热搜榜列表，系统键盘弹出。\"},{\"state_id\":\"s3\",\"first_frame\":\"frame-021\",\"last_frame\":\"frame-047\",\"kind\":\"input\",\"description\":\"搜索框字段持续编辑区间：从空占位符开始，经拼音输入xing、ming等候选词上屏，最终确定文本为姓名牌。\"},{\"state_id\":\"s4\",\"first_frame\":\"frame-054\",\"last_frame\":\"frame-057\",\"kind\":\"page\",\"description\":\"搜索结果页，搜索框保留姓名牌，展示两个结果卡片（姓名牌3001人打印、Max挂牌5人打印）及AI创作推广横幅。\"},{\"state_id\":\"s5\",\"first_frame\":\"frame-065\",\"last_frame\":\"frame-065\",\"kind\":\"page\",\"description\":\"姓名牌模型详情页，展示模型图片、标签、打印人数、模型文件信息（约18分钟/4g材料/尺寸）、描述文字及底部旋钮设置与去编辑按钮。\"},{\"state_id\":\"s6\",\"first_frame\":\"frame-071\",\"last_frame\":\"frame-071\",\"kind\":\"transition\",\"description\":\"编辑模型页黑屏加载过渡，显示正在加载... Spinner。\"},{\"state_id\":\"s7\",\"first_frame\":\"frame-079\",\"last_frame\":\"frame-133\",\"kind\":\"page\",\"description\":\"编辑模型页，浅色3D预览空间带网格底板、模型尺寸信息、请输入文本输入区与底部操作按钮。\"},{\"state_id\":\"s8\",\"first_frame\":\"frame-086\",\"last_frame\":\"frame-110\",\"kind\":\"input\",\"description\":\"编辑模型页文本输入字段持续编辑区间：从默认文本智小白获得焦点弹出键盘，清空后切换英文键盘输入UI，再切回拼音输入自动化相关词，最终文本为UI自动化。\"},{\"state_id\":\"s9\",\"first_frame\":\"frame-116\",\"last_frame\":\"frame-133\",\"kind\":\"wait\",\"description\":\"编辑模型页键盘收起后停留，文本显示UI自动化，底部按钮从生成模型变为去打印，期间出现生成中...与准备打印...加载提示。\"},{\"state_id\":\"s10\",\"first_frame\":\"frame-145\",\"last_frame\":\"frame-150\",\"kind\":\"page\",\"description\":\"打印编辑页（深色3D场景），标题姓名牌，右上角黄色耗材标识，左侧工具栏（居中/旋转/复制/一键适配/删除），3D模型在边界框内，底部显示模型尺寸、缩放控件、更多打印参数已智能匹配及下一步按钮，出现璇玑AI引擎优化已完成提示。\"},{\"state_id\":\"s11\",\"first_frame\":\"frame-162\",\"last_frame\":\"frame-162\",\"kind\":\"page\",\"description\":\"耗材颜色确认弹窗，提示确认当前使用官方耗材-黄色，含打印机图示、修改设置与确认按钮及7天内不再提醒选项。\"},{\"state_id\":\"s12\",\"first_frame\":\"frame-173\",\"last_frame\":\"frame-173\",\"kind\":\"page\",\"description\":\"任务冲突提示弹窗：当前有1个正在处理的任务请去处理，含取消与去处理按钮。\"},{\"state_id\":\"s13\",\"first_frame\":\"frame-175\",\"last_frame\":\"frame-193\",\"kind\":\"page\",\"description\":\"模型打印预览页（第一次访问），渲染出黄色N形模型（非姓名牌标签形态），显示预计时间1小时41分钟、模型耗材13.83g、支撑耗材4.39g、设备状态完美提示，底部取消打印与确认打印按钮；用户取消后显示已取消模型处理及重新编辑与返回按钮。\"},{\"state_id\":\"s14\",\"first_frame\":\"frame-200\",\"last_frame\":\"frame-213\",\"kind\":\"page\",\"description\":\"返回打印编辑页（深色3D场景），出现正在校验模型...加载提示后恢复模型显示与下一步按钮。\"},{\"state_id\":\"s15\",\"first_frame\":\"frame-215\",\"last_frame\":\"frame-229\",\"kind\":\"page\",\"description\":\"模型打印预览页任务处理流程，显示待打印任务已生成、打印时间/消耗克数/尺寸分析逐项完成的步骤列表，底部处理完成后直接打印与取消处理按钮。\"},{\"state_id\":\"s16\",\"first_frame\":\"frame-231\",\"last_frame\":\"frame-237\",\"kind\":\"page\",\"description\":\"模型打印预览页（第二次渲染完成），显示黄色姓名牌标签模型（含UI自动化文本），预计时间17分钟、模型耗材2.03g、支撑耗材1.79g、设备状态完美，底部取消打印与确认打印按钮。\"},{\"state_id\":\"s17\",\"first_frame\":\"frame-243\",\"last_frame\":\"frame-248\",\"kind\":\"page\",\"description\":\"模型打印预览页取消确认弹窗叠加后变为已取消模型处理状态，显示旧姓名牌图片、重新编辑与返回按钮。\"},{\"state_id\":\"s18\",\"first_frame\":\"frame-262\",\"last_frame\":\"frame-262\",\"kind\":\"page\",\"description\":\"返回编辑模型页，3D预览显示新文本UI自动化模型，文本输入区保留UI自动化，底部去打印按钮。\"},{\"state_id\":\"s19\",\"first_frame\":\"frame-278\",\"last_frame\":\"frame-278\",\"kind\":\"page\",\"description\":\"返回姓名牌模型详情页，展示模型图片、标签、打印人数、模型文件信息及旋钮设置与去编辑按钮。\"},{\"state_id\":\"s20\",\"first_frame\":\"frame-282\",\"last_frame\":\"frame-282\",\"kind\":\"page\",\"description\":\"返回搜索结果页，搜索框保留姓名牌，展示两个结果卡片与AI创作横幅，键盘短暂弹出。\"},{\"state_id\":\"s21\",\"first_frame\":\"frame-288\",\"last_frame\":\"frame-299\",\"kind\":\"page\",\"description\":\"返回首页（模型推荐页），展示设备状态、推荐模型列表与底部导航栏，停留至视频结束。\"}],\"events\":[],\"checks\":[],\"uncertainties\":[\"第一次打印预览页渲染的黄色N形模型与编辑页输入的UI自动化文本模型不一致，疑似为之前遗留的旧任务而非当前新模型\",\"搜索框最终提交词从frame-041可见姓名两字、frame-047可见姓名牌，中间候选词上屏过程存在误选修正，最终提交词为姓名牌\",\"编辑模型页文本输入从默认智小白到UI自动化期间，3D预览中的模型文本未即时更新，生成模型按钮点击后才刷新\",\"frame-288为从搜索结果页返回首页的过渡帧，左右分屏可见搜索结果页与首页重叠\",\"两次取消打印均未真正提交打印任务，第一次取消的是旧任务（N形模型），第二次取消的是新任务（UI自动化姓名牌）\"],\"multiple_scenarios\":false}",
+        "fallbackUsed": false,
+        "finishReason": "stop",
+        "gateway_request_sha256": "ffa4517a3aa4e012dd2497b82cc0f8078ff3107eebb843df18fbe2886cd009d4",
+        "model": "qwen3.8-flash",
+        "providerId": "qwen_plus",
+        "usage": {
+          "completionTokens": 2622,
+          "promptTokens": 33844,
+          "reasoningTokens": 1024,
+          "totalTokens": 36466
+        },
+        "videoPolicy": {
+          "correlation": "d123af37341a48af9187f3669a7cf675",
+          "effective_options": {
+            "enable_thinking": true,
+            "fine_frame_ids": [],
+            "image_count": 60,
+            "max_tokens": 10000,
+            "model": "qwen3.8-flash",
+            "response_format": "json_object",
+            "temperature": 0.1,
+            "thinking_budget": 1024
+          },
+          "model": "qwen3.8-flash",
+          "output_schema_sha256": null,
+          "provider_options_sha256": "c14a92407ef00ca268c73207225f5f33a8c264d64eff69914191b208b816828b",
+          "skill": "ui_video_trajectory",
+          "skill_version": "overview",
+          "stage": "overview",
+          "version": "video-stage-policy-v1"
+        }
+      }
+    },
+    {
+      "entry": 6,
+      "kind": "receipt",
+      "sha256": "13f8344b320d096e756f4127ca830495fad05e4e183e0a3bdd465c801c4adec5",
+      "value": {
+        "content": "{\n\"states\": [],\n\"events\": [\n{\n\"action\": \"aiTap\",\n\"target\": \"首页右上角搜索图标\",\n\"value\": \"\",\n\"frame_refs\": [\"frame-008\", \"frame-009\", \"frame-010\", \"frame-011\"],\n\"observation\": \"frame-009首页右上角放大镜搜索图标出现圆形触点高亮，随后frame-010可见搜索页自右滑入的转场（左缘残留首页内容），frame-011搜索页完整显示，含搜索历史词条与热搜榜加载spinner。\",\n\"uncertainties\": [],\n\"trigger_frame\": \"frame-009\",\n\"trigger_kind\": \"touch\",\n\"page_before\": \"s1\",\n\"page_after\": \"s2\",\n\"continuation_of\": \"\",\n\"edit_boundary\": \"none\",\n\"outcome\": {\n\"frame_refs\": [\"frame-010\", \"frame-011\"],\n\"observation\": \"搜索页完整显示，搜索框为占位符状态，搜索历史与热搜榜加载spinner可见。\"\n}\n},\n{\n\"action\": \"aiWaitFor\",\n\"target\": \"搜索页热搜榜列表加载完成\",\n\"value\": \"\",\n\"frame_refs\": [\"frame-011\", \"frame-012\", \"frame-013\", \"frame-014\"],\n\"observation\": \"frame-011至frame-012热搜榜区域仅有加载spinner，frame-013出现热搜条目文字，frame-014条目带1至8排名角标稳定显示，为页面异步加载的自动响应，期间无触点。\",\n\"uncertainties\": [],\n\"trigger_frame\": \"frame-013\",\n\"trigger_kind\": \"automatic\",\n\"page_before\": \"s2\",\n\"page_after\": \"s2\",\n\"continuation_of\": \"\",\n\"edit_boundary\": \"none\",\n\"outcome\": {\n\"frame_refs\": [\"frame-014\"],\n\"observation\": \"热搜榜列表加载完成，显示带排名角标的8条热搜条目。\"\n}\n},\n{\n\"action\": \"aiInput\",\n\"target\": \"搜索您感兴趣的内容搜索输入框\",\n\"value\": \"\",\n\"frame_refs\": [\"frame-027\", \"frame-028\", \"frame-029\", \"frame-030\", \"frame-031\", \"frame-032\", \"frame-033\", \"frame-034\", \"frame-035\", \"frame-036\", \"frame-037\", \"frame-038\", \"frame-039\", \"frame-040\", \"frame-041\", \"frame-042\", \"frame-043\", \"frame-044\", \"frame-045\", \"frame-046\", \"frame-047\"],\n\"observation\": \"frame-016至frame-018系统键盘自动弹出且搜索框出现光标（预备聚焦，未见文字修改）；frame-027起键盘上方出现拼音组合串与候选词，为最早可见文字修改证据；frame-028至frame-029可见GHI/MNO键按压高亮，frame-030至frame-036组合串变化为误选候选，frame-037退格键按压高亮后组合串回退，frame-040 MNO键按压高亮，frame-041搜索框上屏两字并带光标与清除按钮，frame-042至frame-044上屏三字候选，frame-045至frame-046回退为两字，frame-047最终上屏三字确定词；键盘保持弹出未收起。\",\n\"uncertainties\": [\n\"组合串多次变化对应的具体候选误选与退格次数因采样间隙无法逐次确认\",\n\"frame-013至frame-015搜索框光标出现时键盘尚未弹出，聚焦触发方式（自动聚焦或触点）无法确认\"\n],\n\"trigger_frame\": \"frame-027\",\n\"trigger_kind\": \"edit\",\n\"page_before\": \"s2\",\n\"page_after\": \"s2\",\n\"continuation_of\": \"\",\n\"edit_boundary\": \"none\",\n\"outcome\": {\n\"frame_refs\": [\"frame-041\", \"frame-042\", \"frame-043\", \"frame-044\", \"frame-045\", \"frame-046\", \"frame-047\"],\n\"observation\": \"搜索框最终显示三字确定搜索词并带清除按钮，键盘仍弹出，未发生提交跳转。\"\n}\n}\n],\n\"checks\": [],\n\"uncertainties\": [\n\"搜索提交点击的触发证据位于frame-048之后（frame-048可见搜索按钮按压高亮），属后续包核验范围，本包不记录提交事件\",\n\"frame-042至frame-044上屏三字与frame-045回退两字之间的误选修正细节因采样间隔无法完全确认\"\n],\n\"multiple_scenarios\": false,\n\"revisit\": []\n}",
+        "fallbackUsed": false,
+        "finishReason": "stop",
+        "gateway_request_sha256": "0dd2e9b010ef944016edc6f7b7f5d92c1972e068851500d6a32b89c46e884391",
+        "model": "qwen3.8-max",
+        "providerId": "qwen_plus",
+        "usage": {
+          "completionTokens": 2199,
+          "promptTokens": 39287,
+          "reasoningTokens": 1024,
+          "totalTokens": 41486
+        },
+        "videoPolicy": {
+          "correlation": "2991171e0f0e4808874f5bf26a93dff9",
+          "effective_options": {
+            "enable_thinking": true,
+            "fine_frame_ids": [],
+            "image_count": 53,
+            "max_tokens": 10000,
+            "model": "qwen3.8-max",
+            "response_format": "json_schema",
+            "temperature": 0.1,
+            "thinking_budget": 1024
+          },
+          "model": "qwen3.8-max",
+          "output_schema_sha256": "5a36d30e43eb43eed91aed9f89ed8ea4d6c8d67c6ecb65f620e15e12ffa79052",
+          "provider_options_sha256": "96ccf077a88d32ab9540633664080a306183dc466dfac71717e1883ec9d0a76a",
+          "skill": "ui_video_trajectory",
+          "skill_version": "observe",
+          "stage": "grounding",
+          "version": "video-stage-policy-v1"
+        }
+      }
+    },
+    {
+      "entry": 8,
+      "kind": "receipt",
+      "sha256": "f655fb611875aeb64a7bc462598a65fe5b184a8ff52b2af30d322de830d7ea89",
+      "value": {
+        "content": "{\n  \"checks\": [\n    {\n      \"event_id\": \"packet-001:event-0:fragment-1\",\n      \"trigger_verdict\": \"supported\",\n      \"outcome_verdict\": \"supported\",\n      \"question\": \"\"\n    },\n    {\n      \"event_id\": \"packet-001:event-1:fragment-1\",\n      \"trigger_verdict\": \"supported\",\n      \"outcome_verdict\": \"supported\",\n      \"question\": \"\"\n    },\n    {\n      \"event_id\": \"packet-001:event-2:fragment-1\",\n      \"trigger_verdict\": \"supported\",\n      \"outcome_verdict\": \"supported\",\n      \"question\": \"\"\n    }\n  ],\n  \"issues\": [],\n  \"multiple_scenarios\": false,\n  \"revisit\": []\n}",
+        "fallbackUsed": false,
+        "finishReason": "stop",
+        "gateway_request_sha256": "c9a356116210311da495b9f99eb9c02299424cf84a1cc71baf22ee7a8bea81d5",
+        "model": "qwen3.8-max",
+        "providerId": "qwen_plus",
+        "usage": {
+          "completionTokens": 1218,
+          "promptTokens": 36740,
+          "reasoningTokens": 1024,
+          "totalTokens": 37958
+        },
+        "videoPolicy": {
+          "correlation": "d2029d5492d54435acb5dfc00cb39f56",
+          "effective_options": {
+            "enable_thinking": true,
+            "fine_frame_ids": [],
+            "image_count": 53,
+            "max_tokens": 10000,
+            "model": "qwen3.8-max",
+            "response_format": "json_schema",
+            "temperature": 0.1,
+            "thinking_budget": 1024
+          },
+          "model": "qwen3.8-max",
+          "output_schema_sha256": "d8a257eabc88507d34f0a46804ac16afead3905ebf4e869cfdabd026c6175390",
+          "provider_options_sha256": "6ec39e14a616769929b581ed29fed473f082b974026329bb9e23583de33e7bec",
+          "skill": "ui_video_trajectory",
+          "skill_version": "audit",
+          "stage": "audit",
+          "version": "video-stage-policy-v1"
+        }
+      }
+    },
+    {
+      "entry": 10,
+      "kind": "receipt",
+      "sha256": "e94a07a410f7d6d794a4cf513f8d08bd8c8488959c814aed06665b50fb2d0741",
+      "value": {
+        "content": "{\n  \"states\": [\n    {\n      \"state_id\": \"s2b\",\n      \"first_frame\": \"frame-048\",\n      \"last_frame\": \"frame-052\",\n      \"kind\": \"transition\",\n      \"description\": \"搜索页提交阶段：搜索框保留姓名牌，搜索按钮出现触点并进入按压态，随后页面中央出现搜索中spinner、键盘收起。\"\n    },\n    {\n      \"state_id\": \"s4load\",\n      \"first_frame\": \"frame-053\",\n      \"last_frame\": \"frame-053\",\n      \"kind\": \"transition\",\n      \"description\": \"搜索结果页加载态：结果卡片与AI创作横幅被压暗遮罩覆盖，中央搜索中spinner可见，键盘已收起。\"\n    },\n    {\n      \"state_id\": \"s6w\",\n      \"first_frame\": \"frame-067\",\n      \"last_frame\": \"frame-068\",\n      \"kind\": \"transition\",\n      \"description\": \"编辑模型页白屏进入态：仅标题编辑模型与返回箭头，主体空白。\"\n    },\n    {\n      \"state_id\": \"s7load\",\n      \"first_frame\": \"frame-069\",\n      \"last_frame\": \"frame-078\",\n      \"kind\": \"wait\",\n      \"description\": \"编辑模型页加载等待：先黑屏正在加载spinner，后白屏加载中方块与加载中33%进度，底部从暂无可编辑参数/生成模型变为模型尺寸、请输入文本(智小白)与去打印按钮。\"\n    }\n  ],\n  \"events\": [\n    {\n      \"action\": \"aiTap\",\n      \"target\": \"搜索页右上角蓝色搜索按钮\",\n      \"value\": \"\",\n      \"frame_refs\": [\"frame-047\", \"frame-048\", \"frame-049\", \"frame-050\", \"frame-051\", \"frame-052\", \"frame-053\", \"frame-054\"],\n      \"observation\": \"frame-048搜索按钮上出现圆形触点高亮，frame-050至frame-052按钮呈按压浅色态；frame-051键盘开始下移收起，frame-052页面中央出现搜索中spinner，frame-053结果页带压暗遮罩与搜索中spinner，frame-054搜索结果页完整显示两个结果卡片与AI创作横幅，为提交搜索的独立响应。\",\n      \"uncertainties\": [],\n      \"trigger_frame\": \"frame-048\",\n      \"trigger_kind\": \"touch\",\n      \"page_before\": \"s2\",\n      \"page_after\": \"s4\",\n      \"continuation_of\": \"\",\n      \"edit_boundary\": \"submission\",\n      \"outcome\": {\n        \"frame_refs\": [\"frame-052\", \"frame-053\", \"frame-054\"],\n        \"observation\": \"frame-054搜索结果页完整显示：搜索框保留姓名牌，姓名牌与Max挂牌两个结果卡片及AI创作横幅可见，键盘已收起。\"\n      }\n    },\n    {\n      \"action\": \"aiTap\",\n      \"target\": \"搜索结果页姓名牌模型结果卡片\",\n      \"value\": \"\",\n      \"frame_refs\": [\"frame-054\", \"frame-055\", \"frame-056\", \"frame-057\", \"frame-058\", \"frame-059\", \"frame-060\", \"frame-061\"],\n      \"observation\": \"frame-055至frame-059姓名牌卡片图片区域出现圆形触点高亮并持续，frame-060页面出现转场（搜索结果页压暗、新返回箭头与加载spinner叠加），frame-061姓名牌模型详情页完整显示，含模型图片、标签、3001人打印、模型文件信息与底部旋钮设置/去编辑按钮。\",\n      \"uncertainties\": [],\n      \"trigger_frame\": \"frame-055\",\n      \"trigger_kind\": \"touch\",\n      \"page_before\": \"s4\",\n      \"page_after\": \"s5\",\n      \"continuation_of\": \"\",\n      \"edit_boundary\": \"navigation\",\n      \"outcome\": {\n        \"frame_refs\": [\"frame-060\", \"frame-061\"],\n        \"observation\": \"frame-061姓名牌模型详情页稳定显示：顶部模型图与1/1页标、标题姓名牌、标签行、模型文件卡片（约18分钟/4g材料/尺寸）及底部旋钮设置与去编辑按钮。\"\n      }\n    },\n    {\n      \"action\": \"aiTap\",\n      \"target\": \"模型详情页底部去编辑按钮\",\n      \"value\": \"\",\n      \"frame_refs\": [\"frame-064\", \"frame-065\", \"frame-066\", \"frame-067\"],\n      \"observation\": \"frame-065去编辑按钮上出现圆形触点高亮，frame-066页面自右向左转场（详情页左移、右缘露出编辑模型页返回箭头），frame-067编辑模型页白屏进入态，仅标题编辑模型与返回箭头。\",\n      \"uncertainties\": [],\n      \"trigger_frame\": \"frame-065\",\n      \"trigger_kind\": \"touch\",\n      \"page_before\": \"s5\",\n      \"page_after\": \"s6w\",\n      \"continuation_of\": \"\",\n      \"edit_boundary\": \"navigation\",\n      \"outcome\": {\n        \"frame_refs\": [\"frame-066\", \"frame-067\"],\n        \"observation\": \"frame-067编辑模型页白屏进入态：标题编辑模型、左上返回箭头，主体尚未渲染。\"\n      }\n    },\n    {\n      \"action\": \"aiWaitFor\",\n      \"target\": \"编辑模型页加载完成（3D预览、文本输入区与底部按钮可见）\",\n      \"value\": \"\",\n      \"frame_refs\": [\"frame-067\", \"frame-068\", \"frame-069\", \"frame-070\", \"frame-071\", \"frame-072\", \"frame-073\", \"frame-074\", \"frame-075\", \"frame-076\", \"frame-077\", \"frame-078\", \"frame-079\"],\n      \"observation\": \"frame-069至frame-071黑屏正在加载spinner，frame-072起白屏并出现模型尺寸占位与暂无可编辑参数、生成模型置灰按钮，frame-073至frame-077中央加载中方块spinner，frame-078出现加载中33%进度、模型尺寸52mm(X)*2mm(Y)*26mm(Z)、请输入文本输入区（默认文本智小白）与去打印按钮，frame-079 3D预览网格底板与模型渲染完成；期间无任何触点，为页面自动加载响应。\",\n      \"uncertainties\": [],\n      \"trigger_frame\": \"frame-069\",\n      \"trigger_kind\": \"automatic\",\n      \"page_before\": \"s6w\",\n      \"page_after\": \"s7\",\n      \"continuation_of\": \"\",\n      \"edit_boundary\": \"none\",\n      \"outcome\": {\n        \"frame_refs\": [\"frame-078\", \"frame-079\"],\n        \"observation\": \"frame-079编辑模型页加载完成：浅色3D预览空间带网格底板与模型、模型尺寸信息、请输入文本输入区显示智小白、底部下载与去打印按钮可见。\"\n      }\n    }\n  ],\n  \"checks\": [],\n  \"uncertainties\": [\n    \"frame-055至frame-059姓名牌卡片上的触点高亮持续约200ms，是否为单次按下抬起还是按下后停留，采样间隙无法确认\",\n    \"frame-060转场叠加态中搜索页返回箭头与详情页返回箭头同时可见，进入详情页的唯一路径仍由frame-055触点与frame-061终态支持，但转场起点控件层级无法逐帧确认\"\n  ],\n  \"multiple_scenarios\": false,\n  \"revisit\": []\n}",
+        "fallbackUsed": false,
+        "finishReason": "stop",
+        "gateway_request_sha256": "e236b46edc8f08cc16293c326556a22fadb671d499812dfe9c07a01190a6a034",
+        "model": "qwen3.8-max",
+        "providerId": "qwen_plus",
+        "usage": {
+          "completionTokens": 2916,
+          "promptTokens": 39362,
+          "reasoningTokens": 1024,
+          "totalTokens": 42278
+        },
+        "videoPolicy": {
+          "correlation": "b534fe7a95ff4858ac45d586e7550df3",
+          "effective_options": {
+            "enable_thinking": true,
+            "fine_frame_ids": [],
+            "image_count": 44,
+            "max_tokens": 10000,
+            "model": "qwen3.8-max",
+            "response_format": "json_schema",
+            "temperature": 0.1,
+            "thinking_budget": 1024
+          },
+          "model": "qwen3.8-max",
+          "output_schema_sha256": "8088ccba1bf121776b39cabe56e254148c57c45ce4882cbd91b9fff6c1756190",
+          "provider_options_sha256": "5d6343722702048594d74bd7f98b903fb0b1c5d81d333db0192e3ddfce30d9fd",
+          "skill": "ui_video_trajectory",
+          "skill_version": "observe",
+          "stage": "grounding",
+          "version": "video-stage-policy-v1"
+        }
+      }
+    },
+    {
+      "entry": 12,
+      "kind": "receipt",
+      "sha256": "60265ab5c2a3940d692bdf8e6b406b1f0e52b28a6b002b05a138dfc385eeebcb",
+      "value": {
+        "content": "{\n  \"checks\": [\n    {\n      \"event_id\": \"packet-002:event-0:fragment-1\",\n      \"trigger_verdict\": \"supported\",\n      \"outcome_verdict\": \"supported\",\n      \"question\": \"\"\n    },\n    {\n      \"event_id\": \"packet-002:event-1:fragment-1\",\n      \"trigger_verdict\": \"supported\",\n      \"outcome_verdict\": \"supported\",\n      \"question\": \"\"\n    },\n    {\n      \"event_id\": \"packet-002:event-2:fragment-1\",\n      \"trigger_verdict\": \"supported\",\n      \"outcome_verdict\": \"supported\",\n      \"question\": \"\"\n    },\n    {\n      \"event_id\": \"packet-002:event-3:fragment-1\",\n      \"trigger_verdict\": \"supported\",\n      \"outcome_verdict\": \"supported\",\n      \"question\": \"\"\n    }\n  ],\n  \"issues\": [],\n  \"multiple_scenarios\": false,\n  \"revisit\": []\n}",
+        "fallbackUsed": false,
+        "finishReason": "stop",
+        "gateway_request_sha256": "d7ffb1e1697dcff9172f4278c2311d0bb1c6a5815e16d25bee1ad468efc1b274",
+        "model": "qwen3.8-max",
+        "providerId": "qwen_plus",
+        "usage": {
+          "completionTokens": 1270,
+          "promptTokens": 37160,
+          "reasoningTokens": 1024,
+          "totalTokens": 38430
+        },
+        "videoPolicy": {
+          "correlation": "204fe4343e8449969c1de655deee551e",
+          "effective_options": {
+            "enable_thinking": true,
+            "fine_frame_ids": [],
+            "image_count": 44,
+            "max_tokens": 10000,
+            "model": "qwen3.8-max",
+            "response_format": "json_schema",
+            "temperature": 0.1,
+            "thinking_budget": 1024
+          },
+          "model": "qwen3.8-max",
+          "output_schema_sha256": "6eef003d9648f4227527d6ebb00505e8b59462b2ceb2648bf9429b9555fec243",
+          "provider_options_sha256": "22555b98197ccddf709f8b29037b5a4dc866e8d56ad4217b18b3859a2183cc15",
+          "skill": "ui_video_trajectory",
+          "skill_version": "audit",
+          "stage": "audit",
+          "version": "video-stage-policy-v1"
+        }
+      }
+    },
+    {
+      "entry": 14,
+      "kind": "receipt",
+      "sha256": "25356b72e16d92b1f257274fc45c5c73cfe258c11b7de5b772052525e25e0e42",
+      "value": {
+        "content": "{\n\"states\":[\n{\"state_id\":\"s8focus\",\"first_frame\":\"frame-081\",\"last_frame\":\"frame-083\",\"kind\":\"transition\",\"description\":\"编辑模型页请输入文本输入框预备聚焦：frame-081输入框出现边框与光标（文本仍为智小白），frame-082至frame-083系统键盘自下滑出至完全可见，尚未见文字修改。\"},\n{\"state_id\":\"s8ime\",\"first_frame\":\"frame-094\",\"last_frame\":\"frame-109\",\"kind\":\"input\",\"description\":\"清空后输入法切换与重输入过程：frame-094键盘切为英文小写布局，frame-096大写布局，frame-097至frame-100输入U并上屏UI，frame-103中/英键触点切回拼音布局，frame-104至frame-109拼音组合串zhe、zhen'mi'hu误选后修正为zi'dong'hua候选自动化。\"}\n],\n\"events\":[\n{\n\"action\":\"aiInput\",\n\"target\":\"请输入文本输入框\",\n\"value\":\"\",\n\"frame_refs\":[\"frame-080\",\"frame-081\",\"frame-082\",\"frame-083\",\"frame-084\",\"frame-085\",\"frame-086\",\"frame-087\",\"frame-088\",\"frame-089\",\"frame-090\",\"frame-091\",\"frame-092\",\"frame-093\",\"frame-094\",\"frame-095\",\"frame-096\",\"frame-097\",\"frame-098\",\"frame-099\",\"frame-100\",\"frame-101\",\"frame-102\",\"frame-103\",\"frame-104\",\"frame-105\",\"frame-106\",\"frame-107\",\"frame-108\",\"frame-109\",\"frame-110\"],\n\"observation\":\"frame-080输入框无光标；frame-081输入框出现边框与文末光标（预备聚焦），frame-082至frame-083键盘滑出完成；frame-084光标/选择柄移至文本首；frame-085至frame-087退格键出现圆形触点高亮，frame-088至frame-091文本逐字回退智小白→智小→智（frame-090候选栏短暂出现白孩区穴等候选），frame-092清空显示占位符输入文本内容；frame-094键盘切为英文小写布局、frame-096大写布局；frame-097 U键触点高亮并弹U气泡，frame-099上屏U，frame-101中/英键触点高亮后上屏UI；frame-103中/英键触点高亮切回拼音布局；frame-104组合串zhe、frame-105至frame-106组合串zhen'mi'hu（候选真迷糊等，ABC键触点高亮为误选证据），frame-107修正为zi'dong'hua候选自动化；frame-110输入框最终显示UI自动化、键盘仍弹出。全程为同一字段的聚焦、清空、IME切换与重输入，无独立提交或导航。\",\n\"uncertainties\":[\n\"frame-081光标出现的确切触发方式（自动聚焦或采样间隙内的触点）无法确认\",\n\"frame-090候选栏短暂候选对应的组合串残留机制因采样间隙无法逐键确认\",\n\"frame-105至frame-106误选候选真迷糊后的回退次数因采样间隙无法逐次确认\"\n],\n\"trigger_frame\":\"frame-088\",\n\"trigger_kind\":\"edit\",\n\"page_before\":\"s7\",\n\"page_after\":\"s7\",\n\"continuation_of\":\"\",\n\"edit_boundary\":\"none\",\n\"outcome\":{\n\"frame_refs\":[\"frame-110\"],\n\"observation\":\"frame-110输入框显示确定文本UI自动化，拼音键盘仍弹出，3D预览仍为旧文本模型，未发生提交或跳转。\"\n}\n},\n{\n\"action\":\"aiTap\",\n\"target\":\"键盘右上角收起键盘按钮\",\n\"value\":\"\",\n\"frame_refs\":[\"frame-110\",\"frame-111\",\"frame-112\"],\n\"observation\":\"frame-110键盘工具栏最右收起箭头键出现圆形触点高亮；frame-111键盘整体下移收起中、底部露出下载与生成模型按钮；frame-112键盘完全收起，页面恢复完整编辑模型页布局，输入框保留UI自动化。\",\n\"uncertainties\":[],\n\"trigger_frame\":\"frame-110\",\n\"trigger_kind\":\"touch\",\n\"page_before\":\"s7\",\n\"page_after\":\"s7\",\n\"continuation_of\":\"\",\n\"edit_boundary\":\"none\",\n\"outcome\":{\n\"frame_refs\":[\"frame-112\"],\n\"observation\":\"frame-112键盘完全收起，编辑模型页完整显示：3D预览、模型尺寸、输入框UI自动化与底部生成模型按钮。\"\n}\n}\n],\n\"checks\":[],\n\"uncertainties\":[\n\"frame-117生成模型按钮上的灰色圆斑是否为下一包生成模型点击的触点，本包不判定\"\n],\n\"multiple_scenarios\":false,\n\"revisit\":[]\n}",
+        "fallbackUsed": false,
+        "finishReason": "stop",
+        "gateway_request_sha256": "c103397c5ea69ffdc6f107377a319845a8b992180ecf32cd1c8a485a9507f60b",
+        "model": "qwen3.8-max",
+        "providerId": "qwen_plus",
+        "usage": {
+          "completionTokens": 2261,
+          "promptTokens": 46223,
+          "reasoningTokens": 1024,
+          "totalTokens": 48484
+        },
+        "videoPolicy": {
+          "correlation": "06fdcddda44845b4b1cb5a793e70b5cb",
+          "effective_options": {
+            "enable_thinking": true,
+            "fine_frame_ids": [],
+            "image_count": 44,
+            "max_tokens": 10000,
+            "model": "qwen3.8-max",
+            "response_format": "json_schema",
+            "temperature": 0.1,
+            "thinking_budget": 1024
+          },
+          "model": "qwen3.8-max",
+          "output_schema_sha256": "b67d011f87376da305e210c724fb120c8dc8071136ef484397dcd8a0970ad963",
+          "provider_options_sha256": "e75456b70f3ddf8b1c49590ef1195ceabe5165c105956cbbae4c960a2e90a967",
+          "skill": "ui_video_trajectory",
+          "skill_version": "observe",
+          "stage": "grounding",
+          "version": "video-stage-policy-v1"
+        }
+      }
+    },
+    {
+      "entry": 16,
+      "kind": "receipt",
+      "sha256": "a7195514501af1d3558f88050d7148e271755f415a384bdc5360843a88b26040",
+      "value": {
+        "content": "{\n  \"checks\": [\n    {\n      \"event_id\": \"packet-003:event-0:fragment-1\",\n      \"trigger_verdict\": \"supported\",\n      \"outcome_verdict\": \"supported\",\n      \"question\": \"\"\n    },\n    {\n      \"event_id\": \"packet-003:event-1:fragment-1\",\n      \"trigger_verdict\": \"supported\",\n      \"outcome_verdict\": \"supported\",\n      \"question\": \"\"\n    }\n  ],\n  \"issues\": [],\n  \"multiple_scenarios\": false,\n  \"revisit\": []\n}",
+        "fallbackUsed": false,
+        "finishReason": "stop",
+        "gateway_request_sha256": "f964c0f2e2fae38197d216a52fda2fb29d1149ef2f0337dfc73831a24a0b2c4b",
+        "model": "qwen3.8-max",
+        "providerId": "qwen_plus",
+        "usage": {
+          "completionTokens": 1166,
+          "promptTokens": 41855,
+          "reasoningTokens": 1024,
+          "totalTokens": 43021
+        },
+        "videoPolicy": {
+          "correlation": "2a801aaaa804412ea027a75c11859170",
+          "effective_options": {
+            "enable_thinking": true,
+            "fine_frame_ids": [],
+            "image_count": 44,
+            "max_tokens": 10000,
+            "model": "qwen3.8-max",
+            "response_format": "json_schema",
+            "temperature": 0.1,
+            "thinking_budget": 1024
+          },
+          "model": "qwen3.8-max",
+          "output_schema_sha256": "41fa77e174a31e30fb1ee05e15c692bc9487d0bd697655207664b56a35a902f4",
+          "provider_options_sha256": "4475fd76557243535d7aacd689ef9771823dbf718e025cc23c6f9dad8ec2487b",
+          "skill": "ui_video_trajectory",
+          "skill_version": "audit",
+          "stage": "audit",
+          "version": "video-stage-policy-v1"
+        }
+      }
+    },
+    {
+      "entry": 18,
+      "kind": "receipt",
+      "sha256": "728e9a499bf186fc50c6ab36ef2609e83fc284f2fa42854b1f5c50d476b54edb",
+      "value": {
+        "content": "{\n  \"states\": [\n    {\n      \"state_id\": \"s4p1\",\n      \"first_frame\": \"frame-112\",\n      \"last_frame\": \"frame-121\",\n      \"kind\": \"wait\",\n      \"description\": \"编辑模型页键盘收起后停留：3D预览仍为旧文本模型，模型尺寸52mm(X)×2mm(Y)×26mm(Z)，输入框保留UI自动化，底部下载与生成模型按钮可见，等待用户操作。\"\n    },\n    {\n      \"state_id\": \"s4gen\",\n      \"first_frame\": \"frame-122\",\n      \"last_frame\": \"frame-127\",\n      \"kind\": \"wait\",\n      \"description\": \"生成模型加载态：页面中央生成中spinner（frame-123叠加加载中100%方块），输入区置灰，生成模型按钮置灰；frame-124起模型尺寸更新为52mm(X)×26mm(Y)×2mm(Z)、底部按钮变为去打印，frame-126 spinner消失且3D预览更新为新文本模型。\"\n    },\n    {\n      \"state_id\": \"s4prep\",\n      \"first_frame\": \"frame-129\",\n      \"last_frame\": \"frame-136\",\n      \"kind\": \"wait\",\n      \"description\": \"准备打印加载态：3D预览区叠加准备打印...spinner，去打印按钮置灰（frame-135短暂恢复蓝色后frame-136再置灰），页面停留等待跳转。\"\n    },\n    {\n      \"state_id\": \"s10load\",\n      \"first_frame\": \"frame-137\",\n      \"last_frame\": \"frame-143\",\n      \"kind\": \"transition\",\n      \"description\": \"打印编辑页进入过渡：frame-137编辑模型页左移右缘露黑转场，frame-138至frame-139黑屏正在加载spinner，frame-140起深色模型打印编辑页带左侧工具栏与正在加载，frame-141至frame-143标题姓名牌、右上黄色耗材标识、正在加载0%至加载中100%。\"\n    }\n  ],\n  \"events\": [\n    {\n      \"action\": \"aiTap\",\n      \"target\": \"编辑模型页底部生成模型按钮\",\n      \"value\": \"\",\n      \"frame_refs\": [\n        \"frame-116\",\n        \"frame-117\",\n        \"frame-118\",\n        \"frame-119\",\n        \"frame-120\"\n      ],\n      \"observation\": \"frame-117生成模型按钮文字上出现圆形触点高亮，为owned区间内最早触点证据；frame-118至frame-120按钮恢复常态蓝色、页面无生成中提示、3D预览与尺寸信息均未变化，该次按压未产生可见业务响应（无响应事实保留）。\",\n      \"uncertainties\": [\n        \"frame-117触点按压后无响应的原因（未命中生效区或被忽略）无法从原帧确认\"\n      ],\n      \"trigger_frame\": \"frame-117\",\n      \"trigger_kind\": \"touch\",\n      \"page_before\": \"s7\",\n      \"page_after\": \"s7\",\n      \"continuation_of\": \"\",\n      \"edit_boundary\": \"none\",\n      \"outcome\": {\n        \"frame_refs\": [\n          \"frame-118\",\n          \"frame-119\",\n          \"frame-120\"\n        ],\n        \"observation\": \"frame-120编辑模型页维持原状：输入框UI自动化、生成模型按钮常态蓝色、无生成中提示，该次触点未触发可见响应。\"\n      }\n    },\n    {\n      \"action\": \"aiTap\",\n      \"target\": \"编辑模型页底部生成模型按钮\",\n      \"value\": \"\",\n      \"frame_refs\": [\n        \"frame-120\",\n        \"frame-121\",\n        \"frame-122\",\n        \"frame-123\",\n        \"frame-124\",\n        \"frame-125\",\n        \"frame-126\",\n        \"frame-127\"\n      ],\n      \"observation\": \"frame-121生成模型按钮上再次出现圆形触点高亮，为独立第二次按压；frame-122页面中央出现生成中spinner、输入区与按钮置灰，frame-123叠加加载中100%方块，frame-124模型尺寸更新为52mm(X)×26mm(Y)×2mm(Z且底部按钮变为去打印（置灰），frame-125去打印恢复蓝色，frame-126 spinner消失、3D预览更新为新文本模型，frame-127状态稳定；为该次按压的独立响应。\",\n      \"uncertainties\": [],\n      \"trigger_frame\": \"frame-121\",\n      \"trigger_kind\": \"touch\",\n      \"page_before\": \"s7\",\n      \"page_after\": \"s7\",\n      \"continuation_of\": \"\",\n      \"edit_boundary\": \"none\",\n      \"outcome\": {\n        \"frame_refs\": [\n          \"frame-126\",\n          \"frame-127\"\n        ],\n        \"observation\": \"frame-127生成完成态：3D预览显示新文本模型、模型尺寸52mm(X)×26mm(Y)×2mm(Z)、输入区置灰显示UI自动化、底部去打印按钮蓝色可点。\"\n      }\n    },\n    {\n      \"action\": \"aiWaitFor\",\n      \"target\": \"编辑模型页模型生成完成（生成中提示消失、3D预览与尺寸更新、去打印按钮可点）\",\n      \"value\": \"\",\n      \"frame_refs\": [\n        \"frame-122\",\n        \"frame-123\",\n        \"frame-124\",\n        \"frame-125\",\n        \"frame-126\",\n        \"frame-127\"\n      ],\n      \"observation\": \"frame-122至frame-125中央生成中spinner持续（frame-123叠加加载中100%），frame-124起尺寸与去打印按钮先行更新，frame-126 spinner消失且3D预览渲染出新文本模型，frame-127稳定；期间frame-122至frame-126无触点，为生成请求的自动异步响应。\",\n      \"uncertainties\": [],\n      \"trigger_frame\": \"frame-122\",\n      \"trigger_kind\": \"automatic\",\n      \"page_before\": \"s7\",\n      \"page_after\": \"s7\",\n      \"continuation_of\": \"\",\n      \"edit_boundary\": \"none\",\n      \"outcome\": {\n        \"frame_refs\": [\n          \"frame-127\"\n        ],\n        \"observation\": \"frame-127生成中提示完全消失，3D预览为新文本模型，去打印按钮蓝色可点，生成流程自动完成。\"\n      }\n    },\n    {\n      \"action\": \"aiTap\",\n      \"target\": \"编辑模型页底部去打印按钮\",\n      \"value\": \"\",\n      \"frame_refs\": [\n        \"frame-127\",\n        \"frame-128\",\n        \"frame-129\",\n        \"frame-130\",\n        \"frame-131\",\n        \"frame-132\",\n        \"frame-133\",\n        \"frame-134\",\n        \"frame-135\",\n        \"frame-136\"\n      ],\n      \"observation\": \"frame-128输入区行内出现圆形触点高亮（去打印按钮上方区域，疑似按压偏移或落点记录偏差），随后frame-129页面中央出现准备打印...spinner且去打印按钮置灰，为该次按压的响应；frame-130至frame-136准备打印spinner持续、按钮多数帧置灰（frame-135短暂恢复蓝色），页面停留等待跳转，无新触点。\",\n      \"uncertainties\": [\n        \"frame-128触点中心落在输入区行内而非去打印按钮中心，实际按压目标依后续准备打印响应推断为去打印按钮，无法逐帧确认落点\"\n      ],\n      \"trigger_frame\": \"frame-128\",\n      \"trigger_kind\": \"touch\",\n      \"page_before\": \"s7\",\n      \"page_after\": \"s7\",\n      \"continuation_of\": \"\",\n      \"edit_boundary\": \"none\",\n      \"outcome\": {\n        \"frame_refs\": [\n          \"frame-129\",\n          \"frame-130\",\n          \"frame-131\",\n          \"frame-132\",\n          \"frame-133\",\n          \"frame-134\",\n          \"frame-135\",\n          \"frame-136\"\n        ],\n        \"observation\": \"frame-136编辑模型页仍显示准备打印...spinner且去打印按钮置灰，打印准备流程仍在进行尚未跳转。\"\n      }\n    },\n    {\n      \"action\": \"aiWaitFor\",\n      \"target\": \"打印编辑页加载完成进入（深色3D场景、左侧工具栏、标题姓名牌与加载中进度可见）\",\n      \"value\": \"\",\n      \"frame_refs\": [\n        \"frame-136\",\n        \"frame-137\",\n        \"frame-138\",\n        \"frame-139\",\n        \"frame-140\",\n        \"frame-141\",\n        \"frame-142\",\n        \"frame-143\"\n      ],\n      \"observation\": \"frame-137编辑模型页左移、右缘露出黑色新页转场，frame-138至frame-139黑屏正在加载spinner，frame-140深色模型打印编辑页出现左侧工具栏（居中/旋转/复制/一键适配/删除）与正在加载，frame-141标题姓名牌与右上黄色耗材标识、正在加载0%，frame-142至frame-143加载中100%；期间无触点，为去打印发起的自动转场与加载响应。\",\n      \"uncertainties\": [],\n      \"trigger_frame\": \"frame-137\",\n      \"trigger_kind\": \"automatic\",\n      \"page_before\": \"s7\",\n      \"page_after\": \"s10load\",\n      \"continuation_of\": \"\",\n      \"edit_boundary\": \"navigation\",\n      \"outcome\": {\n        \"frame_refs\": [\n          \"frame-143\"\n        ],\n        \"observation\": \"frame-143打印编辑页加载中100%：标题姓名牌、黄色耗材标识、左侧工具栏完整可见，3D模型尚未渲染完成。\"\n      }\n    }\n  ],\n  \"checks\": [],\n  \"uncertainties\": [\n    \"frame-117生成模型按钮触点按压后无任何可见响应，与frame-121第二次按压的关系（首次未命中或应用忽略）无法从原帧确认\",\n    \"frame-128触点中心位于输入区行内而非去打印按钮中心，实际按压落点与目标控件的对应关系仅能依准备打印响应推断\"\n  ],\n  \"multiple_scenarios\": false,\n  \"revisit\": []\n}",
+        "fallbackUsed": false,
+        "finishReason": "stop",
+        "gateway_request_sha256": "2a45261ed145d8851ef52e3ac95b2f85ea67d06ec18ad1fbb512eee9a8fe9220",
+        "model": "qwen3.8-max",
+        "providerId": "qwen_plus",
+        "usage": {
+          "completionTokens": 3656,
+          "promptTokens": 49433,
+          "reasoningTokens": 1024,
+          "totalTokens": 53089
+        },
+        "videoPolicy": {
+          "correlation": "1e0d2b47643b46218495157bee17a789",
+          "effective_options": {
+            "enable_thinking": true,
+            "fine_frame_ids": [],
+            "image_count": 44,
+            "max_tokens": 10000,
+            "model": "qwen3.8-max",
+            "response_format": "json_schema",
+            "temperature": 0.1,
+            "thinking_budget": 1024
+          },
+          "model": "qwen3.8-max",
+          "output_schema_sha256": "287de55016a00c4bb83e6bc17d6fbd202eaf308375b728caecdfa124863ffc33",
+          "provider_options_sha256": "45d5ae3ff095794f707fd29e9d0b28768872e9d69e57ffb5c06376637e5087d7",
+          "skill": "ui_video_trajectory",
+          "skill_version": "observe",
+          "stage": "grounding",
+          "version": "video-stage-policy-v1"
+        }
+      }
+    },
+    {
+      "entry": 20,
+      "kind": "receipt",
+      "sha256": "199eff11d22e4e0c28a4a7447f4733f594c215c9778c24f2fe7ad97a64f35383",
+      "value": {
+        "content": "{\n  \"checks\": [\n    {\n      \"event_id\": \"packet-004:event-0:fragment-1\",\n      \"trigger_verdict\": \"supported\",\n      \"outcome_verdict\": \"supported\",\n      \"question\": \"\"\n    },\n    {\n      \"event_id\": \"packet-004:event-1:fragment-1\",\n      \"trigger_verdict\": \"supported\",\n      \"outcome_verdict\": \"supported\",\n      \"question\": \"\"\n    },\n    {\n      \"event_id\": \"packet-004:event-2:fragment-1\",\n      \"trigger_verdict\": \"supported\",\n      \"outcome_verdict\": \"supported\",\n      \"question\": \"\"\n    },\n    {\n      \"event_id\": \"packet-004:event-3:fragment-1\",\n      \"trigger_verdict\": \"supported\",\n      \"outcome_verdict\": \"supported\",\n      \"question\": \"\"\n    },\n    {\n      \"event_id\": \"packet-004:event-4:fragment-1\",\n      \"trigger_verdict\": \"supported\",\n      \"outcome_verdict\": \"supported\",\n      \"question\": \"\"\n    }\n  ],\n  \"issues\": [],\n  \"multiple_scenarios\": false,\n  \"revisit\": []\n}",
+        "fallbackUsed": false,
+        "finishReason": "stop",
+        "gateway_request_sha256": "d55e9f5356fa25973e04a9d16b556b1d38b4ecbfb18fef71873e6e4f7d4e2b60",
+        "model": "qwen3.8-max",
+        "providerId": "qwen_plus",
+        "usage": {
+          "completionTokens": 1322,
+          "promptTokens": 46510,
+          "reasoningTokens": 1024,
+          "totalTokens": 47832
+        },
+        "videoPolicy": {
+          "correlation": "c2b631f95a104cc9b704a847d70b9195",
+          "effective_options": {
+            "enable_thinking": true,
+            "fine_frame_ids": [],
+            "image_count": 44,
+            "max_tokens": 10000,
+            "model": "qwen3.8-max",
+            "response_format": "json_schema",
+            "temperature": 0.1,
+            "thinking_budget": 1024
+          },
+          "model": "qwen3.8-max",
+          "output_schema_sha256": "45e584d15f69e4946d862145da323660ccb9c662870c833f3bd3e04024f55d79",
+          "provider_options_sha256": "d95e114058ef39acef310a38eea2c4a9e31cc9bd0455e207aae12981051fd7bc",
+          "skill": "ui_video_trajectory",
+          "skill_version": "audit",
+          "stage": "audit",
+          "version": "video-stage-policy-v1"
+        }
+      }
+    },
+    {
+      "entry": 22,
+      "kind": "receipt",
+      "sha256": "4896e09c3ee2a088f5e358e11c2b5ab3999d9e45632fca2d1025438028ac24c0",
+      "value": {
+        "content": "{\n  \"states\": [\n    {\n      \"state_id\": \"s10a\",\n      \"first_frame\": \"frame-144\",\n      \"last_frame\": \"frame-146\",\n      \"kind\": \"transition\",\n      \"description\": \"打印编辑页加载收尾：frame-144仍显示加载中100% spinner，frame-145起spinner消失、3D边界框与模型出现、中央璇玑AI引擎优化已完成提示、底部模型尺寸52mm(X)×26mm(Y)×2mm(Z、缩放100%、更多打印参数已智能匹配与下一步按钮完整可见。\"\n    },\n    {\n      \"state_id\": \"s10b\",\n      \"first_frame\": \"frame-151\",\n      \"last_frame\": \"frame-155\",\n      \"kind\": \"wait\",\n      \"description\": \"打印编辑页正在校验模型...加载态：3D区中央叠加灰色正在校验模型...提示块，底部下一步按钮保持可见，等待校验完成。\"\n    },\n    {\n      \"state_id\": \"s11pop\",\n      \"first_frame\": \"frame-156\",\n      \"last_frame\": \"frame-166\",\n      \"kind\": \"page\",\n      \"description\": \"耗材颜色确认弹窗完整态：巫师形象与请确认耗材颜色气泡、请确认当前使用的耗材颜色为：官方耗材-黄色、打印机图示、颜色选择错误警告、修改设置与确认按钮、7天内不再提醒复选框。\"\n    },\n    {\n      \"state_id\": \"s12pop\",\n      \"first_frame\": \"frame-169\",\n      \"last_frame\": \"frame-174\",\n      \"kind\": \"page\",\n      \"description\": \"任务冲突提示弹窗：当前有1个正在处理的任务请去处理，含取消与去处理按钮；frame-169至frame-171先见加载点圈随后弹窗淡入，frame-173完整可见，frame-174去处理按钮出现触点。\"\n    }\n  ],\n  \"events\": [\n    {\n      \"action\": \"aiWaitFor\",\n      \"target\": \"打印编辑页加载完成（璇玑AI引擎优化已完成提示、3D模型边界框、底部尺寸与下一步按钮可见）\",\n      \"value\": \"\",\n      \"frame_refs\": [\n        \"frame-144\",\n        \"frame-145\",\n        \"frame-146\"\n      ],\n      \"observation\": \"frame-144仍为加载中100% spinner；frame-145 spinner消失，3D空间出现蓝色虚线边界框与模型，中央弹出璇玑AI引擎优化已完成绿色对勾提示，底部显示模型尺寸52mm(X)×26mm(Y)×2mm(Z)、缩放100%、更多打印参数已智能匹配与蓝色下一步按钮；frame-146状态稳定。期间无触点，为页面自动加载响应。\",\n      \"uncertainties\": [],\n      \"trigger_frame\": \"frame-144\",\n      \"trigger_kind\": \"automatic\",\n      \"page_before\": \"s10load\",\n      \"page_after\": \"s10\",\n      \"continuation_of\": \"\",\n      \"edit_boundary\": \"none\",\n      \"outcome\": {\n        \"frame_refs\": [\n          \"frame-146\"\n        ],\n        \"observation\": \"frame-146打印编辑页完整可见：优化已完成提示、3D边界框内模型、底部尺寸/缩放/下一步按钮齐全，加载结束。\"\n      }\n    },\n    {\n      \"action\": \"aiTap\",\n      \"target\": \"打印编辑页底部下一步按钮\",\n      \"value\": \"\",\n      \"frame_refs\": [\n        \"frame-146\",\n        \"frame-147\",\n        \"frame-148\",\n        \"frame-149\",\n        \"frame-150\",\n        \"frame-151\",\n        \"frame-152\",\n        \"frame-153\",\n        \"frame-154\",\n        \"frame-155\"\n      ],\n      \"observation\": \"frame-147下一步按钮文字右侧出现圆形触点高亮（持续至frame-151渐隐），为owned区间内最早触点证据；frame-149优化完成提示消失、黄色模型在边界框内带选择手柄可见；frame-151起页面中央出现正在校验模型...灰色提示块，为该次按压的响应；frame-152至frame-155校验提示持续并渐隐，无新触点。\",\n      \"uncertainties\": [\n        \"frame-147触点圆心略偏下一步文字右侧，是否精确命中按钮生效区仅能由后续校验响应推断\"\n      ],\n      \"trigger_frame\": \"frame-147\",\n      \"trigger_kind\": \"touch\",\n      \"page_before\": \"s10\",\n      \"page_after\": \"s10\",\n      \"continuation_of\": \"\",\n      \"edit_boundary\": \"none\",\n      \"outcome\": {\n        \"frame_refs\": [\n          \"frame-155\"\n        ],\n        \"observation\": \"frame-155打印编辑页中央正在校验模型...提示渐隐、黄色模型可见，校验流程已因该次点击启动且仍在进行。\"\n      }\n    },\n    {\n      \"action\": \"aiWaitFor\",\n      \"target\": \"耗材颜色确认弹窗自动弹出（请确认当前使用的耗材颜色为：官方耗材-黄色，含修改设置与确认按钮）\",\n      \"value\": \"\",\n      \"frame_refs\": [\n        \"frame-155\",\n        \"frame-156\",\n        \"frame-157\",\n        \"frame-158\",\n        \"frame-159\",\n        \"frame-160\",\n        \"frame-161\",\n        \"frame-162\"\n      ],\n      \"observation\": \"frame-155校验提示渐隐后，frame-156至frame-157弹窗半透明淡入（请确认耗材颜色气泡、官方耗材-黄色文案、修改设置/确认按钮可见），frame-158弹窗完全不透明并显示打印机图示、颜色选择错误警告与7天内不再提醒复选框，frame-159至frame-162保持稳定；期间无触点，为校验完成后的自动弹窗响应。\",\n      \"uncertainties\": [],\n      \"trigger_frame\": \"frame-156\",\n      \"trigger_kind\": \"automatic\",\n      \"page_before\": \"s10\",\n      \"page_after\": \"s11\",\n      \"continuation_of\": \"\",\n      \"edit_boundary\": \"none\",\n      \"outcome\": {\n        \"frame_refs\": [\n          \"frame-162\"\n        ],\n        \"observation\": \"frame-162耗材颜色确认弹窗完整稳定显示，等待用户选择修改设置或确认。\"\n      }\n    },\n    {\n      \"action\": \"aiTap\",\n      \"target\": \"耗材颜色确认弹窗确认按钮\",\n      \"value\": \"\",\n      \"frame_refs\": [\n        \"frame-162\",\n        \"frame-163\",\n        \"frame-164\",\n        \"frame-165\",\n        \"frame-166\",\n        \"frame-167\",\n        \"frame-168\"\n      ],\n      \"observation\": \"frame-163确认按钮右上出现圆形触点高亮（持续至frame-166渐隐），为独立触点证据；frame-167弹窗关闭、回到打印编辑页深色3D场景且黄色模型与下一步按钮恢复可见，为该次按压的响应；frame-168页面保持稳定，无新触点。\",\n      \"uncertainties\": [],\n      \"trigger_frame\": \"frame-163\",\n      \"trigger_kind\": \"touch\",\n      \"page_before\": \"s11\",\n      \"page_after\": \"s10\",\n      \"continuation_of\": \"\",\n      \"edit_boundary\": \"none\",\n      \"outcome\": {\n        \"frame_refs\": [\n          \"frame-168\"\n        ],\n        \"observation\": \"frame-168耗材弹窗已关闭，打印编辑页恢复完整布局：黄色模型在边界框内、底部下一步按钮蓝色可点。\"\n      }\n    },\n    {\n      \"action\": \"aiWaitFor\",\n      \"target\": \"任务冲突提示弹窗自动弹出（当前有1个正在处理的任务请去处理，含取消与去处理按钮）\",\n      \"value\": \"\",\n      \"frame_refs\": [\n        \"frame-168\",\n        \"frame-169\",\n        \"frame-170\",\n        \"frame-171\",\n        \"frame-172\",\n        \"frame-173\"\n      ],\n      \"observation\": \"frame-169 3D区中部先出现白色点圈加载标记，frame-172任务冲突弹窗半透明淡入（当前有1个正在处理的任务请去处理、取消与去处理按钮），frame-173弹窗完全不透明、背景压暗；期间无触点，为确认耗材后的自动弹窗响应。\",\n      \"uncertainties\": [],\n      \"trigger_frame\": \"frame-172\",\n      \"trigger_kind\": \"automatic\",\n      \"page_before\": \"s10\",\n      \"page_after\": \"s12\",\n      \"continuation_of\": \"\",\n      \"edit_boundary\": \"none\",\n      \"outcome\": {\n        \"frame_refs\": [\n          \"frame-173\"\n        ],\n        \"observation\": \"frame-173任务冲突弹窗完整可见：当前有1个正在处理的任务请去处理，取消与去处理按钮可点。\"\n      }\n    },\n    {\n      \"action\": \"aiTap\",\n      \"target\": \"任务冲突弹窗去处理按钮\",\n      \"value\": \"\",\n      \"frame_refs\": [\n        \"frame-173\",\n        \"frame-174\",\n        \"frame-175\"\n      ],\n      \"observation\": \"frame-174去处理按钮文字上出现圆形触点高亮，为独立触点证据；frame-175页面左移转场、右缘滑入标题为模型打印预览的新页（主体尚空白），为该次按压发起的导航响应。\",\n      \"uncertainties\": [],\n      \"trigger_frame\": \"frame-174\",\n      \"trigger_kind\": \"touch\",\n      \"page_before\": \"s12\",\n      \"page_after\": \"s13\",\n      \"continuation_of\": \"\",\n      \"edit_boundary\": \"navigation\",\n      \"outcome\": {\n        \"frame_refs\": [\n          \"frame-175\"\n        ],\n        \"observation\": \"frame-175转场进行中：模型打印预览页自右滑入覆盖大半屏，左侧仍露打印编辑页边缘，导航已启动。\"\n      }\n    },\n    {\n      \"action\": \"aiWaitFor\",\n      \"target\": \"模型打印预览页进入加载（标题模型打印预览与正在加载...spinner可见）\",\n      \"value\": \"\",\n      \"frame_refs\": [\n        \"frame-175\",\n        \"frame-176\",\n        \"frame-177\",\n        \"frame-178\",\n        \"frame-179\",\n        \"frame-180\",\n        \"frame-181\"\n      ],\n      \"observation\": \"frame-175转场开始，frame-176预览页接近全屏仍空白，frame-177起黑色主体中央出现正在加载...spinner并持续至frame-181，frame-179起顶部出现黄色进度条；期间无触点，为去处理发起的自动加载响应（后续渲染由后包核验）。\",\n      \"uncertainties\": [],\n      \"trigger_frame\": \"frame-175\",\n      \"trigger_kind\": \"automatic\",\n      \"page_before\": \"s12\",\n      \"page_after\": \"s13\",\n      \"continuation_of\": \"\",\n      \"edit_boundary\": \"navigation\",\n      \"outcome\": {\n        \"frame_refs\": [\n          \"frame-181\"\n        ],\n        \"observation\": \"frame-181模型打印预览页黑色主体中央正在加载...spinner持续，页面尚未渲染出模型与按钮。\"\n      }\n    }\n  ],\n  \"checks\": [],\n  \"uncertainties\": [\n    \"frame-147下一步触点圆心偏文字右侧，精确落点无法逐帧确认，仅以frame-151正在校验模型...响应归因\",\n    \"frame-169至frame-171点圈加载标记与任务冲突弹窗的因果顺序（先加载后弹窗）仅由帧序推断，无触点证据\"\n  ],\n  \"multiple_scenarios\": false,\n  \"revisit\": []\n}",
+        "fallbackUsed": false,
+        "finishReason": "stop",
+        "gateway_request_sha256": "781413ea5fc37808d9f346de96de9377fe773c652795892e5eab3db45599120a",
+        "model": "qwen3.8-max",
+        "providerId": "qwen_plus",
+        "usage": {
+          "completionTokens": 4006,
+          "promptTokens": 49941,
+          "reasoningTokens": 1024,
+          "totalTokens": 53947
+        },
+        "videoPolicy": {
+          "correlation": "fee4f68ce54e49aba6b9328ea0fdd1c9",
+          "effective_options": {
+            "enable_thinking": true,
+            "fine_frame_ids": [],
+            "image_count": 44,
+            "max_tokens": 10000,
+            "model": "qwen3.8-max",
+            "response_format": "json_schema",
+            "temperature": 0.1,
+            "thinking_budget": 1024
+          },
+          "model": "qwen3.8-max",
+          "output_schema_sha256": "152cfe891893b071e142003d9538ecfdc32f5090d5db900ca17430e84c686c97",
+          "provider_options_sha256": "5a4157bcd255cd233e683f809aee1db126843f0d9e8b63a51ee21ef61e4c7067",
+          "skill": "ui_video_trajectory",
+          "skill_version": "observe",
+          "stage": "grounding",
+          "version": "video-stage-policy-v1"
+        }
+      }
+    },
+    {
+      "entry": 24,
+      "kind": "receipt",
+      "sha256": "8df44c4831b543166ed0ec69b75e6b1a1875f1930a441d21df505d214f7f5654",
+      "value": {
+        "content": "{\n  \"checks\": [\n    {\n      \"event_id\": \"packet-005:event-0:fragment-1\",\n      \"trigger_verdict\": \"supported\",\n      \"outcome_verdict\": \"supported\",\n      \"question\": \"\"\n    },\n    {\n      \"event_id\": \"packet-005:event-1:fragment-1\",\n      \"trigger_verdict\": \"supported\",\n      \"outcome_verdict\": \"supported\",\n      \"question\": \"\"\n    },\n    {\n      \"event_id\": \"packet-005:event-2:fragment-1\",\n      \"trigger_verdict\": \"supported\",\n      \"outcome_verdict\": \"supported\",\n      \"question\": \"\"\n    },\n    {\n      \"event_id\": \"packet-005:event-3:fragment-1\",\n      \"trigger_verdict\": \"supported\",\n      \"outcome_verdict\": \"supported\",\n      \"question\": \"\"\n    },\n    {\n      \"event_id\": \"packet-005:event-4:fragment-1\",\n      \"trigger_verdict\": \"supported\",\n      \"outcome_verdict\": \"supported\",\n      \"question\": \"\"\n    },\n    {\n      \"event_id\": \"packet-005:event-5:fragment-1\",\n      \"trigger_verdict\": \"supported\",\n      \"outcome_verdict\": \"supported\",\n      \"question\": \"\"\n    }\n  ],\n  \"issues\": [],\n  \"multiple_scenarios\": false,\n  \"revisit\": []\n}",
+        "fallbackUsed": false,
+        "finishReason": "stop",
+        "gateway_request_sha256": "e486e2f4ed749a32527b966a1bd6d2d580e9b5b386af43598bb1fe74bdeb1680",
+        "model": "qwen3.8-max",
+        "providerId": "qwen_plus",
+        "usage": {
+          "completionTokens": 1374,
+          "promptTokens": 47703,
+          "reasoningTokens": 1024,
+          "totalTokens": 49077
+        },
+        "videoPolicy": {
+          "correlation": "3d917530d033417cace016771f8d12b6",
+          "effective_options": {
+            "enable_thinking": true,
+            "fine_frame_ids": [],
+            "image_count": 44,
+            "max_tokens": 10000,
+            "model": "qwen3.8-max",
+            "response_format": "json_schema",
+            "temperature": 0.1,
+            "thinking_budget": 1024
+          },
+          "model": "qwen3.8-max",
+          "output_schema_sha256": "a3007363bcc418f2b4ce5083027585346b6354fc14319a59a9313b26c8da7ac6",
+          "provider_options_sha256": "fc77401c91804ed0a22f00d4dfaa5f4a6edd313987b4ed056ff2a3bf75b41e39",
+          "skill": "ui_video_trajectory",
+          "skill_version": "audit",
+          "stage": "audit",
+          "version": "video-stage-policy-v1"
+        }
+      }
+    },
+    {
+      "entry": 26,
+      "kind": "receipt",
+      "sha256": "03452243e8b6f6cf84a5415290f4f2d69ec0b16afbb80d7caf2f88ccf3852233",
+      "value": {
+        "content": "{\n  \"checks\": [\n    {\n      \"event_id\": \"packet-005:event-6:fragment-1\",\n      \"trigger_verdict\": \"supported\",\n      \"outcome_verdict\": \"supported\",\n      \"question\": \"\"\n    }\n  ],\n  \"issues\": [],\n  \"multiple_scenarios\": false,\n  \"revisit\": []\n}",
+        "fallbackUsed": false,
+        "finishReason": "stop",
+        "gateway_request_sha256": "b578aac1cd8c6329f21c59c4e50854ba9e1c8d9bbcf765c95f646c19567338ee",
+        "model": "qwen3.8-max",
+        "providerId": "qwen_plus",
+        "usage": {
+          "completionTokens": 1114,
+          "promptTokens": 45674,
+          "reasoningTokens": 1024,
+          "totalTokens": 46788
+        },
+        "videoPolicy": {
+          "correlation": "5c4e65965b8a4656a87c6b4385971622",
+          "effective_options": {
+            "enable_thinking": true,
+            "fine_frame_ids": [],
+            "image_count": 44,
+            "max_tokens": 10000,
+            "model": "qwen3.8-max",
+            "response_format": "json_schema",
+            "temperature": 0.1,
+            "thinking_budget": 1024
+          },
+          "model": "qwen3.8-max",
+          "output_schema_sha256": "84bc9837010eb8f9bd95c506d9f8c73a1da7f23dcbf5139b08a4fa6baaed2b03",
+          "provider_options_sha256": "e90a05232334e7f6fff7bfcdaca022de396fb428b67a266ac23b77bf2d0b7290",
+          "skill": "ui_video_trajectory",
+          "skill_version": "audit",
+          "stage": "audit",
+          "version": "video-stage-policy-v1"
+        }
+      }
+    },
+    {
+      "entry": 28,
+      "kind": "receipt",
+      "sha256": "829666dadf850e05c1e163f3fcd465be15557bbbeee81dfb06712c9444cd3fa8",
+      "value": {
+        "content": "{\"states\":[{\"state_id\":\"s13load\",\"first_frame\":\"frame-176\",\"last_frame\":\"frame-183\",\"kind\":\"transition\",\"description\":\"模型打印预览页进入收尾：frame-176白底主体仍空白仅标题，frame-177至frame-181黑色主体中央正在加载...spinner且frame-179起顶部黄色进度条，frame-182至frame-183主体转白底spinner持续，模型与按钮尚未渲染。\"},{\"state_id\":\"s13render\",\"first_frame\":\"frame-184\",\"last_frame\":\"frame-185\",\"kind\":\"wait\",\"description\":\"模型打印预览页渲染阶段：frame-184正在渲染模型...spinner与预计时间1小时41分钟/模型耗材13.83g/支撑耗材4.39g卡片、设备状态完美横幅、取消打印与确认打印按钮可见但模型未出；frame-185黄色N形旧任务模型渲染完成。\"},{\"state_id\":\"s13cancel\",\"first_frame\":\"frame-186\",\"last_frame\":\"frame-191\",\"kind\":\"page\",\"description\":\"打印预览页取消确认弹窗：确认要取消任务吗？含取消与确定按钮，背景压暗；frame-187起确定按钮出现触点，frame-189至frame-191弹窗中央叠加白色点圈加载并渐隐。\"},{\"state_id\":\"s13done\",\"first_frame\":\"frame-192\",\"last_frame\":\"frame-197\",\"kind\":\"page\",\"description\":\"已取消模型处理状态：黄色N形模型缩略图、已取消模型处理文案、底部重新编辑与返回按钮；frame-193起返回按钮出现触点，frame-196至frame-197页面右滑退出转场。\"}],\"events\":[{\"action\":\"aiWaitFor\",\"target\":\"模型打印预览页加载并渲染出模型与打印信息（正在加载/正在渲染模型spinner、预计时间与耗材克重卡片、取消打印与确认打印按钮、黄色模型）\",\"value\":\"\",\"frame_refs\":[\"frame-176\",\"frame-177\",\"frame-178\",\"frame-179\",\"frame-180\",\"frame-181\",\"frame-182\",\"frame-183\",\"frame-184\",\"frame-185\"],\"observation\":\"frame-176预览页白底主体仍空白，frame-177至frame-181黑色主体中央正在加载...spinner持续且frame-179起顶部出现黄色进度条，frame-182至frame-183主体转白底spinner继续，frame-184变为正在渲染模型...spinner并显示预计时间1小时41分钟、模型耗材13.83g、支撑耗材4.39g、设备状态完美横幅与取消打印/确认打印按钮，frame-185黄色N形模型渲染完成；期间无触点，为去处理导航发起的自动加载与渲染响应。\",\"uncertainties\":[],\"trigger_frame\":\"frame-176\",\"trigger_kind\":\"automatic\",\"page_before\":\"s13\",\"page_after\":\"s13\",\"continuation_of\":\"\",\"edit_boundary\":\"none\",\"outcome\":{\"frame_refs\":[\"frame-185\"],\"observation\":\"frame-185打印预览页渲染完成：黄色N形模型、预计时间1小时41分钟/模型耗材13.83g/支撑耗材4.39g、设备状态完美横幅与取消打印/确认打印按钮完整可见。\"}},{\"action\":\"aiTap\",\"target\":\"模型打印预览页底部取消打印按钮\",\"value\":\"\",\"frame_refs\":[\"frame-185\",\"frame-186\",\"frame-187\"],\"observation\":\"frame-185取消打印按钮文字右侧出现圆形触点高亮，为owned区间内最早触点证据；frame-186页面中央弹出确认要取消任务吗？弹窗（取消与确定按钮、背景压暗），为该次按压的响应；frame-187弹窗稳定且确定按钮上随后出现新触点（属后续独立动作）。\",\"uncertainties\":[],\"trigger_frame\":\"frame-185\",\"trigger_kind\":\"touch\",\"page_before\":\"s13\",\"page_after\":\"s13cancel\",\"continuation_of\":\"\",\"edit_boundary\":\"none\",\"outcome\":{\"frame_refs\":[\"frame-186\"],\"observation\":\"frame-186取消确认弹窗完整可见：确认要取消任务吗？含取消与确定按钮，预览页背景压暗。\"}},{\"action\":\"aiTap\",\"target\":\"取消确认弹窗确定按钮\",\"value\":\"\",\"frame_refs\":[\"frame-187\",\"frame-188\",\"frame-189\",\"frame-190\",\"frame-191\",\"frame-192\"],\"observation\":\"frame-187确定按钮文字右侧出现圆形触点高亮（持续至frame-191渐隐），为独立触点证据；frame-189至frame-191弹窗中央叠加白色点圈加载标记并渐隐，frame-192弹窗关闭、页面变为已取消模型处理状态（黄色N形模型缩略图、重新编辑与返回按钮），为该次按压的响应。\",\"uncertainties\":[],\"trigger_frame\":\"frame-187\",\"trigger_kind\":\"touch\",\"page_before\":\"s13cancel\",\"page_after\":\"s13done\",\"continuation_of\":\"\",\"edit_boundary\":\"none\",\"outcome\":{\"frame_refs\":[\"frame-192\"],\"observation\":\"frame-192已取消模型处理状态完整可见：黄色N形模型、已取消模型处理文案、底部重新编辑与返回按钮。\"}},{\"action\":\"aiTap\",\"target\":\"已取消模型处理页底部返回按钮\",\"value\":\"\",\"frame_refs\":[\"frame-193\",\"frame-194\",\"frame-195\",\"frame-196\",\"frame-197\",\"frame-198\",\"frame-199\"],\"observation\":\"frame-193返回按钮文字上出现圆形触点高亮（frame-194至frame-195持续可见），为独立触点证据；frame-196至frame-198预览页右滑退出、左侧露出打印编辑页深色3D场景，frame-199回到打印编辑页完整布局（黄色模型在边界框内、下一步按钮可点），为该次按压发起的返回导航响应。\",\"uncertainties\":[],\"trigger_frame\":\"frame-193\",\"trigger_kind\":\"touch\",\"page_before\":\"s13done\",\"page_after\":\"s10\",\"continuation_of\":\"\",\"edit_boundary\":\"navigation\",\"outcome\":{\"frame_refs\":[\"frame-199\"],\"observation\":\"frame-199打印编辑页恢复完整：标题姓名牌、黄色耗材标识、左侧工具栏、边界框内黄色模型与底部下一步按钮可见。\"}},{\"action\":\"aiTap\",\"target\":\"打印编辑页底部下一步按钮（返回后第二次点击）\",\"value\":\"\",\"frame_refs\":[\"frame-199\",\"frame-200\",\"frame-201\",\"frame-202\",\"frame-203\"],\"observation\":\"frame-199下一步按钮文字右侧出现圆形触点高亮，为独立触点证据（与packet-005中frame-147的首次点击分离）；frame-200页面中央出现正在校验模型...灰色提示块，frame-201至frame-203耗材颜色确认弹窗淡入至完整（请确认当前使用的耗材颜色为：官方耗材-黄色、修改设置与确认按钮、7天内不再提醒复选框），为该次按压的响应链。\",\"uncertainties\":[],\"trigger_frame\":\"frame-199\",\"trigger_kind\":\"touch\",\"page_before\":\"s10\",\"page_after\":\"s11\",\"continuation_of\":\"\",\"edit_boundary\":\"none\",\"outcome\":{\"frame_refs\":[\"frame-203\"],\"observation\":\"frame-203耗材颜色确认弹窗完整不透明：巫师形象气泡、官方耗材-黄色文案、打印机图示、修改设置与确认按钮、7天内不再提醒复选框齐全。\"}},{\"action\":\"aiTap\",\"target\":\"耗材颜色确认弹窗确认按钮（第二次确认）\",\"value\":\"\",\"frame_refs\":[\"frame-204\",\"frame-205\",\"frame-206\",\"frame-207\"],\"observation\":\"frame-205确认按钮文字上出现圆形触点高亮（持续至frame-207及后续上下文帧），为独立触点证据；至frame-207弹窗仍完整可见、尚未关闭，关闭与后续收集模型信息响应发生在owned区间之后，由后包核验。\",\"uncertainties\":[\"frame-207末帧弹窗仍未关闭，该次确认的后续响应（弹窗关闭/进入任务处理流程）在本包内不可见，仅能由触点与后包帧推断其生效\"],\"trigger_frame\":\"frame-205\",\"trigger_kind\":\"touch\",\"page_before\":\"s11\",\"page_after\":\"s11\",\"continuation_of\":\"\",\"edit_boundary\":\"none\",\"outcome\":{\"frame_refs\":[\"frame-207\"],\"observation\":\"frame-207确认按钮触点高亮仍可见、耗材颜色确认弹窗保持完整显示，等待系统响应。\"}}],\"checks\":[],\"uncertainties\":[\"frame-184渲染信息卡显示的预计时间1小时41分钟与黄色N形模型对应旧任务，与编辑页新文本UI自动化模型不一致，支持旧任务假设但本包仅记录可见状态\"],\"multiple_scenarios\":false,\"revisit\":[]\n}",
+        "fallbackUsed": false,
+        "finishReason": "stop",
+        "gateway_request_sha256": "d9621b4f5a70f5185d371d134693ac4251a5490cfb56a32728d0ab6918dc6723",
+        "model": "qwen3.8-max",
+        "providerId": "qwen_plus",
+        "usage": {
+          "completionTokens": 3057,
+          "promptTokens": 47854,
+          "reasoningTokens": 1024,
+          "totalTokens": 50911
+        },
+        "videoPolicy": {
+          "correlation": "c12dff3a76d24528921d095326b5fd79",
+          "effective_options": {
+            "enable_thinking": true,
+            "fine_frame_ids": [],
+            "image_count": 44,
+            "max_tokens": 10000,
+            "model": "qwen3.8-max",
+            "response_format": "json_schema",
+            "temperature": 0.1,
+            "thinking_budget": 1024
+          },
+          "model": "qwen3.8-max",
+          "output_schema_sha256": "1a851b206cbe5c187d323d05983a87d3147cd92da8cd905bfc72157ab6d877d2",
+          "provider_options_sha256": "51ec3e1ac68aae1a9f59197e5974350ea83f1fcf6dd7baa9e269c6d8978fe6cc",
+          "skill": "ui_video_trajectory",
+          "skill_version": "observe",
+          "stage": "grounding",
+          "version": "video-stage-policy-v1"
+        }
+      }
+    },
+    {
+      "entry": 30,
+      "kind": "receipt",
+      "sha256": "716c23d95768d102b5e87fa8a4a5cb494280213203260d085e9f79b7740687f0",
+      "value": {
+        "content": "{\n  \"states\": [\n    {\n      \"state_id\": \"s13load\",\n      \"first_frame\": \"frame-176\",\n      \"last_frame\": \"frame-183\",\n      \"kind\": \"wait\",\n      \"description\": \"模型打印预览页加载等待：frame-176白色主体空白，frame-177至frame-181黑色主体中央正在加载...spinner（frame-179起顶部黄色进度条），frame-182至frame-183转为浅色主体spinner，模型与按钮尚未渲染。\"\n    },\n    {\n      \"state_id\": \"s13cancel\",\n      \"first_frame\": \"frame-186\",\n      \"last_frame\": \"frame-191\",\n      \"kind\": \"page\",\n      \"description\": \"取消确认弹窗叠加态：预览页压暗，弹窗确认要取消任务吗含取消与确定按钮；frame-189起弹窗中部出现白色点圈加载标记，frame-191弹窗开始淡出。\"\n    }\n  ],\n  \"events\": [\n    {\n      \"action\": \"aiWaitFor\",\n      \"target\": \"模型打印预览页渲染完成（黄色N形模型、预计时间1小时41分钟、模型耗材13.83g、支撑耗材4.39g、设备状态完美横幅与取消打印/确认打印按钮可见）\",\n      \"value\": \"\",\n      \"frame_refs\": [\n        \"frame-176\",\n        \"frame-177\",\n        \"frame-178\",\n        \"frame-179\",\n        \"frame-180\",\n        \"frame-181\",\n        \"frame-182\",\n        \"frame-183\",\n        \"frame-184\",\n        \"frame-185\"\n      ],\n      \"observation\": \"frame-176预览页白色主体仍空白，frame-177至frame-181黑色主体中央正在加载...spinner持续且frame-179起顶部出现黄色进度条，frame-182至frame-183浅色主体spinner继续，frame-184出现正在渲染模型...spinner与预计时间/ model耗材/支撑耗材信息卡、设备状态完美横幅及取消打印与确认打印按钮，frame-185黄色N形模型渲染完成、spinner消失；期间无触点，为进入预览页后的自动加载与渲染响应。\",\n      \"uncertainties\": [],\n      \"trigger_frame\": \"frame-176\",\n      \"trigger_kind\": \"automatic\",\n      \"page_before\": \"s13\",\n      \"page_after\": \"s13\",\n      \"continuation_of\": \"\",\n      \"edit_boundary\": \"none\",\n      \"outcome\": {\n        \"frame_refs\": [\n          \"frame-184\",\n          \"frame-185\"\n        ],\n        \"observation\": \"frame-185预览页渲染完成：黄色N形模型完整可见，信息卡预计时间1小时41分钟、模型耗材13.83g、支撑耗材4.39g，设备状态完美横幅与取消打印/确认打印按钮齐全，取消打印按钮右缘已出现本次取消点击的圆形触点。\"\n      }\n    },\n    {\n      \"action\": \"aiTap\",\n      \"target\": \"模型打印预览页底部取消打印按钮\",\n      \"value\": \"\",\n      \"frame_refs\": [\n        \"frame-185\",\n        \"frame-186\"\n      ],\n      \"observation\": \"frame-185取消打印按钮右缘出现圆形触点高亮，为owned区间内独立触点证据；frame-186页面压暗并弹出确认要取消任务吗弹窗（取消与确定按钮可见），为该次按压的响应；本事件证据止于弹窗出现，不延入确定按钮的触点帧。\",\n      \"uncertainties\": [],\n      \"trigger_frame\": \"frame-185\",\n      \"trigger_kind\": \"touch\",\n      \"page_before\": \"s13\",\n      \"page_after\": \"s13cancel\",\n      \"continuation_of\": \"\",\n      \"edit_boundary\": \"none\",\n      \"outcome\": {\n        \"frame_refs\": [\n          \"frame-186\"\n        ],\n        \"observation\": \"frame-186取消确认弹窗完整可见：确认要取消任务吗标题、取消与确定按钮，预览页背景压暗，黄色N形模型仍可见。\"\n      }\n    },\n    {\n      \"action\": \"aiTap\",\n      \"target\": \"取消确认弹窗确定按钮\",\n      \"value\": \"\",\n      \"frame_refs\": [\n        \"frame-186\",\n        \"frame-187\",\n        \"frame-188\",\n        \"frame-189\",\n        \"frame-190\",\n        \"frame-191\",\n        \"frame-192\"\n      ],\n      \"observation\": \"frame-187确定按钮文字右侧出现圆形触点高亮并持续至frame-191，为独立触点证据；frame-189至frame-191弹窗中部出现白色点圈加载标记且弹窗渐隐，frame-192弹窗消失、页面转为已取消模型处理状态（黄色N形模型、重新编辑与返回按钮），为该次按压的响应。\",\n      \"uncertainties\": [],\n      \"trigger_frame\": \"frame-187\",\n      \"trigger_kind\": \"touch\",\n      \"page_before\": \"s13cancel\",\n      \"page_after\": \"s13\",\n      \"continuation_of\": \"\",\n      \"edit_boundary\": \"none\",\n      \"outcome\": {\n        \"frame_refs\": [\n          \"frame-192\"\n        ],\n        \"observation\": \"frame-192已取消模型处理状态：灰色叉号图标与已取消模型处理文字、黄色N形模型、底部重新编辑与返回按钮可见，取消确认弹窗已关闭。\"\n      }\n    },\n    {\n      \"action\": \"aiTap\",\n      \"target\": \"模型打印预览页已取消状态底部返回按钮\",\n      \"value\": \"\",\n      \"frame_refs\": [\n        \"frame-192\",\n        \"frame-193\",\n        \"frame-194\",\n        \"frame-195\",\n        \"frame-196\",\n        \"frame-197\",\n        \"frame-198\",\n        \"frame-199\"\n      ],\n      \"observation\": \"frame-193返回按钮文字上出现圆形触点高亮并持续至frame-197，为独立触点证据；frame-196起预览页整体右移、左缘露出深色打印编辑页，frame-198转场过半可见打印编辑页标题姓名牌与3D边界框，frame-199转场结束回到打印编辑页完整布局，为该次按压发起的返回导航响应。\",\n      \"uncertainties\": [],\n      \"trigger_frame\": \"frame-193\",\n      \"trigger_kind\": \"touch\",\n      \"page_before\": \"s13\",\n      \"page_after\": \"s10\",\n      \"continuation_of\": \"\",\n      \"edit_boundary\": \"navigation\",\n      \"outcome\": {\n        \"frame_refs\": [\n          \"frame-199\"\n        ],\n        \"observation\": \"frame-199打印编辑页完整恢复：标题姓名牌、右上黄色耗材标识、左侧工具栏、3D边界框内黄色模型、底部模型尺寸52mm(X)×26mm(Y)×2mm(Z)与下一步按钮可见，返回按钮上触点残影仍在渐隐。\"\n      }\n    },\n    {\n      \"action\": \"aiTap\",\n      \"target\": \"打印编辑页底部下一步按钮\",\n      \"value\": \"\",\n      \"frame_refs\": [\n        \"frame-199\",\n        \"frame-200\"\n      ],\n      \"observation\": \"frame-199下一步按钮文字右侧出现圆形触点高亮，为独立触点证据；frame-200页面中央3D区叠加正在校验模型...灰色提示块且触点残影仍在，为该次按压的响应。\",\n      \"uncertainties\": [],\n      \"trigger_frame\": \"frame-199\",\n      \"trigger_kind\": \"touch\",\n      \"page_before\": \"s10\",\n      \"page_after\": \"s10\",\n      \"continuation_of\": \"\",\n      \"edit_boundary\": \"none\",\n      \"outcome\": {\n        \"frame_refs\": [\n          \"frame-200\"\n        ],\n        \"observation\": \"frame-200打印编辑页中央正在校验模型...提示块可见，黄色模型在边界框内，底部下一步按钮保持可见且触点残影渐隐。\"\n      }\n    },\n    {\n      \"action\": \"aiWaitFor\",\n      \"target\": \"耗材颜色确认弹窗再次自动弹出（请确认当前使用的耗材颜色为：官方耗材-黄色，含修改设置与确认按钮、7天内不再提醒复选框）\",\n      \"value\": \"\",\n      \"frame_refs\": [\n        \"frame-200\",\n        \"frame-201\",\n        \"frame-202\",\n        \"frame-203\",\n        \"frame-204\"\n      ],\n      \"observation\": \"frame-200校验提示之后，frame-201至frame-202弹窗半透明淡入（巫师形象、请确认耗材颜色气泡、官方耗材-黄色文案、打印机图示、修改设置/确认按钮、底部圆形关闭图标），frame-203至frame-204弹窗完全不透明并显示7天内不再提醒复选框；期间无新触点，为校验完成后的自动弹窗响应。\",\n      \"uncertainties\": [],\n      \"trigger_frame\": \"frame-201\",\n      \"trigger_kind\": \"automatic\",\n      \"page_before\": \"s10\",\n      \"page_after\": \"s11\",\n      \"continuation_of\": \"\",\n      \"edit_boundary\": \"none\",\n      \"outcome\": {\n        \"frame_refs\": [\n          \"frame-204\"\n        ],\n        \"observation\": \"frame-204耗材颜色确认弹窗完整稳定：请确认当前使用的耗材颜色为官方耗材-黄色、打印机图示、颜色选择错误警告、修改设置与确认按钮、7天内不再提醒复选框齐全。\"\n      }\n    },\n    {\n      \"action\": \"aiTap\",\n      \"target\": \"耗材颜色确认弹窗确认按钮\",\n      \"value\": \"\",\n      \"frame_refs\": [\n        \"frame-204\",\n        \"frame-205\",\n        \"frame-206\",\n        \"frame-207\"\n      ],\n      \"observation\": \"frame-205确认按钮文字上出现圆形触点高亮并持续至frame-207，为owned区间末段独立触点证据；frame-206至frame-207弹窗仍保持可见、未见关闭或跳转，本包内该次按压的响应尚未显现。\",\n      \"uncertainties\": [\n        \"frame-205触点之后弹窗在owned区间内未关闭，确认按钮的实际响应（关闭弹窗或后续加载/跳转）需由后包帧核验\"\n      ],\n      \"trigger_frame\": \"frame-205\",\n      \"trigger_kind\": \"touch\",\n      \"page_before\": \"s11\",\n      \"page_after\": \"s11\",\n      \"continuation_of\": \"\",\n      \"edit_boundary\": \"none\",\n      \"outcome\": {\n        \"frame_refs\": [\n          \"frame-207\"\n        ],\n        \"observation\": \"frame-207耗材颜色确认弹窗仍完整可见，确认按钮上圆形触点高亮持续，页面尚未发生关闭或转场。\"\n      }\n    }\n  ],\n  \"checks\": [],\n  \"uncertainties\": [\n    \"frame-185渲染出的黄色N形模型与编辑页输入的UI自动化姓名牌形态不一致，疑似为之前遗留旧任务，仅凭本包帧无法确认其任务归属\",\n    \"frame-205确认按钮触点在owned区间内未见响应，其结果（弹窗关闭、收集信息或跳转）由后包核验\"\n  ],\n  \"multiple_scenarios\": false,\n  \"revisit\": []\n}",
+        "fallbackUsed": false,
+        "finishReason": "stop",
+        "gateway_request_sha256": "b6e042352d62515c079f33682027f94d84326ec977e56e8523251fa497ef5dfe",
+        "model": "qwen3.8-max",
+        "providerId": "qwen_plus",
+        "usage": {
+          "completionTokens": 3860,
+          "promptTokens": 48027,
+          "reasoningTokens": 1024,
+          "totalTokens": 51887
+        },
+        "videoPolicy": {
+          "correlation": "2d8b3fe5a1da4de8ab53554aa893d382",
+          "effective_options": {
+            "enable_thinking": true,
+            "fine_frame_ids": [],
+            "image_count": 44,
+            "max_tokens": 10000,
+            "model": "qwen3.8-max",
+            "response_format": "json_schema",
+            "temperature": 0.1,
+            "thinking_budget": 1024
+          },
+          "model": "qwen3.8-max",
+          "output_schema_sha256": "1a851b206cbe5c187d323d05983a87d3147cd92da8cd905bfc72157ab6d877d2",
+          "provider_options_sha256": "7e4e3636e5a5c017dc688574b7173cbbdab22ae0500a9d12f855dc2788601604",
+          "skill": "ui_video_trajectory",
+          "skill_version": "observe",
+          "stage": "grounding",
+          "version": "video-stage-policy-v1"
+        }
+      }
+    },
+    {
+      "entry": 32,
+      "kind": "receipt",
+      "sha256": "e201e08419f399227c9d7b3ec1bf39a725bf59bff82f8d796c664807fc004b67",
+      "value": {
+        "content": "{\n  \"checks\": [\n    {\n      \"event_id\": \"packet-006:event-0:fragment-1\",\n      \"trigger_verdict\": \"supported\",\n      \"outcome_verdict\": \"supported\",\n      \"question\": \"\"\n    },\n    {\n      \"event_id\": \"packet-006:event-1:fragment-1\",\n      \"trigger_verdict\": \"supported\",\n      \"outcome_verdict\": \"supported\",\n      \"question\": \"\"\n    },\n    {\n      \"event_id\": \"packet-006:event-2:fragment-1\",\n      \"trigger_verdict\": \"supported\",\n      \"outcome_verdict\": \"supported\",\n      \"question\": \"\"\n    },\n    {\n      \"event_id\": \"packet-006:event-3:fragment-1\",\n      \"trigger_verdict\": \"supported\",\n      \"outcome_verdict\": \"supported\",\n      \"question\": \"\"\n    },\n    {\n      \"event_id\": \"packet-006:event-4:fragment-1\",\n      \"trigger_verdict\": \"supported\",\n      \"outcome_verdict\": \"supported\",\n      \"question\": \"\"\n    },\n    {\n      \"event_id\": \"packet-006:event-5:fragment-1\",\n      \"trigger_verdict\": \"supported\",\n      \"outcome_verdict\": \"supported\",\n      \"question\": \"\"\n    },\n    {\n      \"event_id\": \"packet-006:event-6:fragment-1\",\n      \"trigger_verdict\": \"supported\",\n      \"outcome_verdict\": \"supported\",\n      \"question\": \"\"\n    }\n  ],\n  \"issues\": [],\n  \"multiple_scenarios\": false,\n  \"revisit\": []\n}",
+        "fallbackUsed": false,
+        "finishReason": "stop",
+        "gateway_request_sha256": "d852e2df5c6ba7ae178201973505a2dc47abbb96fd71a12093d1c06ff26c48a8",
+        "model": "qwen3.8-max",
+        "providerId": "qwen_plus",
+        "usage": {
+          "completionTokens": 1426,
+          "promptTokens": 46733,
+          "reasoningTokens": 1024,
+          "totalTokens": 48159
+        },
+        "videoPolicy": {
+          "correlation": "6d4fb7d34002451b8d513da710cc7f93",
+          "effective_options": {
+            "enable_thinking": true,
+            "fine_frame_ids": [],
+            "image_count": 44,
+            "max_tokens": 10000,
+            "model": "qwen3.8-max",
+            "response_format": "json_schema",
+            "temperature": 0.1,
+            "thinking_budget": 1024
+          },
+          "model": "qwen3.8-max",
+          "output_schema_sha256": "b93558ee5f88fd84e92634b66bedcd5cf7746fcba50a9c8ef50279ad11e6ee80",
+          "provider_options_sha256": "57ec1a34bc1bb7c0869b9b6b52b170acc86c3887653d6e9d133578b7c6cea086",
+          "skill": "ui_video_trajectory",
+          "skill_version": "audit",
+          "stage": "audit",
+          "version": "video-stage-policy-v1"
+        }
+      }
+    },
+    {
+      "entry": 34,
+      "kind": "receipt",
+      "sha256": "4f0b987c56793f3664fab363f584ec50b689f1681c98035ba6ed9c5aefd6324b",
+      "value": {
+        "content": "{\n  \"states\": [\n    {\n      \"state_id\": \"s15proc\",\n      \"first_frame\": \"frame-215\",\n      \"last_frame\": \"frame-230\",\n      \"kind\": \"wait\",\n      \"description\": \"模型打印预览页任务处理步骤列表：frame-215转场进入，frame-216起正在生成待打印任务spinner与0.0%进度，frame-220起待打印任务已生成勾选并出现姓名牌挂挂钩图片，随后打印时间/模型消耗克数/模型尺寸逐项分析完成，frame-228至frame-230停留于分析完成请等待模型处理，底部处理完成后直接打印与取消处理按钮全程可见且无触点。\"\n    },\n    {\n      \"state_id\": \"s16reload\",\n      \"first_frame\": \"frame-231\",\n      \"last_frame\": \"frame-235\",\n      \"kind\": \"transition\",\n      \"description\": \"模型打印预览页处理完成后自动重载：frame-231浅色空白仅标题与顶部黄色进度条，frame-232至frame-233黑色主体中央正在加载...spinner，frame-234至frame-235浅色主体正在加载...spinner，模型与按钮尚未渲染。\"\n    }\n  ],\n  \"events\": [\n    {\n      \"action\": \"aiWaitFor\",\n      \"target\": \"耗材颜色确认弹窗确认按压的响应：弹窗关闭并回到打印编辑页（标题姓名牌、右上黄色耗材标识、左侧工具栏、3D边界框内黄色模型、模型尺寸52mm(X)×26mm(Y)×2mm(Z)、缩放100%与下一步按钮可见）\",\n      \"value\": \"\",\n      \"frame_refs\": [\n        \"frame-208\",\n        \"frame-209\",\n        \"frame-210\",\n        \"frame-211\",\n        \"frame-212\",\n        \"frame-213\"\n      ],\n      \"observation\": \"frame-208至frame-211耗材颜色确认弹窗仍完整可见且确认按钮上圆形触点高亮持续（该按压触发于packet-006 frame-205，本包不重放触发）；frame-212弹窗消失、打印编辑页完整可见且确认按钮原位置留有灰色触点残影，frame-213残影继续渐隐；期间无新触点，为前包确认按压的自动关闭响应。\",\n      \"uncertainties\": [],\n      \"trigger_frame\": \"frame-208\",\n      \"trigger_kind\": \"automatic\",\n      \"page_before\": \"s11\",\n      \"page_after\": \"s14\",\n      \"continuation_of\": \"\",\n      \"edit_boundary\": \"none\",\n      \"outcome\": {\n        \"frame_refs\": [\n          \"frame-213\"\n        ],\n        \"observation\": \"frame-213打印编辑页完整稳定：弹窗已关闭，3D边界框内黄色模型带选中标记，模型尺寸52mm(X)×26mm(Y)×2mm(Z)、缩放100%、更多打印参数已智能匹配与下一步按钮可见，确认按钮位置触点残影渐隐中。\"\n      }\n    },\n    {\n      \"action\": \"aiWaitFor\",\n      \"target\": \"打印编辑页自动进入收集模型信息阶段（模型尺寸短暂归零0mm(X)×0mm(Y)×0mm(Z)、缩放行隐藏）并自动转场进入模型打印预览页任务处理页（正在生成待打印任务步骤列表可见）\",\n      \"value\": \"\",\n      \"frame_refs\": [\n        \"frame-213\",\n        \"frame-214\",\n        \"frame-215\",\n        \"frame-216\"\n      ],\n      \"observation\": \"frame-213编辑页尺寸仍为52mm(X)×26mm(Y)×2mm(Z)；frame-214尺寸变为0mm(X)×0mm(Y)×0mm(Z)且缩放行隐藏、下一步按钮保持可见，为确认耗材后的自动收集模型信息状态；frame-215预览页自右滑入与编辑页左右分屏，frame-216预览页全屏显示正在生成待打印任务spinner、0.0%进度与处理完成后直接打印/取消处理按钮；frame-213至frame-216全程无触点，为自动响应而非新点击。\",\n      \"uncertainties\": [\n        \"frame-213至frame-214之间约1.4秒采样间隙内未见触点，按唯一页面路径与无触点证据判定为确认后的自动流程；若间隙内存在未被采样的点击需原片复核\"\n      ],\n      \"trigger_frame\": \"frame-214\",\n      \"trigger_kind\": \"automatic\",\n      \"page_before\": \"s14\",\n      \"page_after\": \"s15\",\n      \"continuation_of\": \"\",\n      \"edit_boundary\": \"none\",\n      \"outcome\": {\n        \"frame_refs\": [\n          \"frame-216\"\n        ],\n        \"observation\": \"frame-216模型打印预览页任务处理页全屏：标题模型打印预览、正在生成待打印任务蓝色spinner、0.0%进度条、其余分析步骤灰色未勾选，底部处理完成后直接打印与取消处理按钮可见。\"\n      }\n    },\n    {\n      \"action\": \"aiWaitFor\",\n      \"target\": \"任务处理步骤列表逐项异步完成（待打印任务已生成、打印时间已分析完成、模型消耗克数已分析完成、模型尺寸已分析完成，最终分析完成请等待模型处理）\",\n      \"value\": \"\",\n      \"frame_refs\": [\n        \"frame-216\",\n        \"frame-220\",\n        \"frame-221\",\n        \"frame-225\",\n        \"frame-228\",\n        \"frame-229\",\n        \"frame-230\"\n      ],\n      \"observation\": \"frame-216至frame-219正在生成待打印任务spinner持续；frame-220待打印任务已生成勾选、姓名牌挂挂钩图片出现且正在分析打印时间；frame-221至frame-224打印时间已分析完成勾选、正在分析模型消耗克数；frame-225至frame-227消耗克数已分析完成、正在分析模型尺寸；frame-228至frame-230尺寸已分析完成勾选、分析完成请等待模型处理spinner转动；全程无触点，为任务处理的自动异步响应。\",\n      \"uncertainties\": [],\n      \"trigger_frame\": \"frame-220\",\n      \"trigger_kind\": \"automatic\",\n      \"page_before\": \"s15\",\n      \"page_after\": \"s15\",\n      \"continuation_of\": \"\",\n      \"edit_boundary\": \"none\",\n      \"outcome\": {\n        \"frame_refs\": [\n          \"frame-230\"\n        ],\n        \"observation\": \"frame-230步骤列表四项全部勾选（待打印任务已生成/打印时间/模型消耗克数/模型尺寸已分析完成），末项分析完成请等待模型处理带spinner，进度仍0.0%，底部处理完成后直接打印与取消处理按钮可见。\"\n      }\n    },\n    {\n      \"action\": \"aiWaitFor\",\n      \"target\": \"任务处理完成后预览页自动重载并渲染新模型（黄色UI自动化姓名牌标签模型、预计时间17分钟、模型耗材2.03g、支撑耗材1.79g、设备状态完美横幅与取消打印/确认打印按钮可见）\",\n      \"value\": \"\",\n      \"frame_refs\": [\n        \"frame-230\",\n        \"frame-231\",\n        \"frame-232\",\n        \"frame-233\",\n        \"frame-234\",\n        \"frame-235\",\n        \"frame-236\",\n        \"frame-237\"\n      ],\n      \"observation\": \"frame-230仍为分析完成请等待模型处理；frame-231页面清空仅标题与顶部黄色进度条，frame-232至frame-233黑色主体正在加载...spinner，frame-234至frame-235浅色主体正在加载...spinner；frame-236渲染完成：黄色椭圆标签模型表面可见UI自动化字样、预计时间17分钟、模型耗材2.03g、支撑耗材1.79g、设备状态完美与一切准备就绪即将开始打印横幅、取消打印与确认打印按钮；frame-237取消打印按钮文字右侧出现圆形触点高亮（该触点归属后续取消事件）；全程无触发触点，为处理完成后的自动重载渲染。\",\n      \"uncertainties\": [],\n      \"trigger_frame\": \"frame-231\",\n      \"trigger_kind\": \"automatic\",\n      \"page_before\": \"s15\",\n      \"page_after\": \"s16\",\n      \"continuation_of\": \"\",\n      \"edit_boundary\": \"none\",\n      \"outcome\": {\n        \"frame_refs\": [\n          \"frame-237\"\n        ],\n        \"observation\": \"frame-237预览页渲染完成稳定：黄色UI自动化姓名牌标签模型、预计时间17分钟、模型耗材2.03g、支撑耗材1.79g、设备状态完美横幅齐全，取消打印按钮右缘已出现本次取消点击的圆形触点。\"\n      }\n    },\n    {\n      \"action\": \"aiTap\",\n      \"target\": \"模型打印预览页底部取消打印按钮\",\n      \"value\": \"\",\n      \"frame_refs\": [\n        \"frame-237\",\n        \"frame-238\"\n      ],\n      \"observation\": \"frame-237取消打印按钮文字右侧出现圆形触点高亮，为owned区间内独立触点证据；frame-238页面压暗并弹出确认要取消任务吗弹窗（取消与确定按钮可见），黄色UI自动化模型仍可见，为该次按压的响应；本事件证据止于弹窗出现，不延入确定按钮的触点帧。\",\n      \"uncertainties\": [],\n      \"trigger_frame\": \"frame-237\",\n      \"trigger_kind\": \"touch\",\n      \"page_before\": \"s16\",\n      \"page_after\": \"s16cancel\",\n      \"continuation_of\": \"\",\n      \"edit_boundary\": \"none\",\n      \"outcome\": {\n        \"frame_refs\": [\n          \"frame-238\"\n        ],\n        \"observation\": \"frame-238取消确认弹窗完整可见：确认要取消任务吗标题、取消与确定按钮，预览页背景压暗，黄色UI自动化姓名牌模型与17分钟/2.03g/1.79g信息仍可见。\"\n      }\n    },\n    {\n      \"action\": \"aiTap\",\n      \"target\": \"取消确认弹窗确定按钮\",\n      \"value\": \"\",\n      \"frame_refs\": [\n        \"frame-238\",\n        \"frame-239\"\n      ],\n      \"observation\": \"frame-239确定按钮文字上出现圆形触点高亮，为owned区间末段独立触点证据；frame-239弹窗仍完整可见、页面尚未转为已取消状态，本包内该次按压的后续响应（弹窗加载标记与已取消模型处理态）由frame-240及之后上下文帧见证、由后包核验。\",\n      \"uncertainties\": [\n        \"frame-239触点之后弹窗在owned区间内未关闭，确定按钮的实际响应（弹窗加载、关闭及已取消模型处理状态）需由后包帧核验\"\n      ],\n      \"trigger_frame\": \"frame-239\",\n      \"trigger_kind\": \"touch\",\n      \"page_before\": \"s16cancel\",\n      \"page_after\": \"s16cancel\",\n      \"continuation_of\": \"\",\n      \"edit_boundary\": \"none\",\n      \"outcome\": {\n        \"frame_refs\": [\n          \"frame-239\"\n        ],\n        \"observation\": \"frame-239取消确认弹窗仍完整可见，确定按钮上圆形触点高亮持续，页面尚未发生关闭或状态转换。\"\n      }\n    }\n  ],\n  \"checks\": [],\n  \"uncertainties\": [\n    \"frame-213至frame-214之间约1.4秒采样间隙无帧，收集模型信息（尺寸归零）与进入任务处理页之间是否存在未被采样的用户触点无法完全排除，当前按无触点自动流程记录\"\n  ],\n  \"multiple_scenarios\": false,\n  \"revisit\": []\n}",
+        "fallbackUsed": false,
+        "finishReason": "stop",
+        "gateway_request_sha256": "364807cc99e5c770f4902960dff57f57b421e14e6aedbda95b900bea9168dc0f",
+        "model": "qwen3.8-max",
+        "providerId": "qwen_plus",
+        "usage": {
+          "completionTokens": 3937,
+          "promptTokens": 47909,
+          "reasoningTokens": 1024,
+          "totalTokens": 51846
+        },
+        "videoPolicy": {
+          "correlation": "81d71d18222d4a47b530c45d6377248b",
+          "effective_options": {
+            "enable_thinking": true,
+            "fine_frame_ids": [],
+            "image_count": 44,
+            "max_tokens": 10000,
+            "model": "qwen3.8-max",
+            "response_format": "json_schema",
+            "temperature": 0.1,
+            "thinking_budget": 1024
+          },
+          "model": "qwen3.8-max",
+          "output_schema_sha256": "11cdf4999cd57ab268e40b9c0e9bd1699641ea22c73b32bb19399d2e24ff86ae",
+          "provider_options_sha256": "a2ad4f6fab4cc8917a0f09e7b25e0017ec76e9f5367573ee7b3d107114c90c74",
+          "skill": "ui_video_trajectory",
+          "skill_version": "observe",
+          "stage": "grounding",
+          "version": "video-stage-policy-v1"
+        }
+      }
+    },
+    {
+      "entry": 36,
+      "kind": "receipt",
+      "sha256": "e815274c7200890f7ef6e32e930f4c62dc70ecd7fef94fad08b53542cea303d8",
+      "value": {
+        "content": "{\n  \"checks\": [\n    {\n      \"event_id\": \"packet-007:event-0:fragment-1\",\n      \"trigger_verdict\": \"supported\",\n      \"outcome_verdict\": \"supported\",\n      \"question\": \"\"\n    },\n    {\n      \"event_id\": \"packet-007:event-1:fragment-1\",\n      \"trigger_verdict\": \"supported\",\n      \"outcome_verdict\": \"supported\",\n      \"question\": \"\"\n    },\n    {\n      \"event_id\": \"packet-007:event-2:fragment-1\",\n      \"trigger_verdict\": \"supported\",\n      \"outcome_verdict\": \"supported\",\n      \"question\": \"\"\n    },\n    {\n      \"event_id\": \"packet-007:event-3:fragment-1\",\n      \"trigger_verdict\": \"supported\",\n      \"outcome_verdict\": \"supported\",\n      \"question\": \"\"\n    },\n    {\n      \"event_id\": \"packet-007:event-4:fragment-1\",\n      \"trigger_verdict\": \"supported\",\n      \"outcome_verdict\": \"supported\",\n      \"question\": \"\"\n    },\n    {\n      \"event_id\": \"packet-007:event-5:fragment-1\",\n      \"trigger_verdict\": \"supported\",\n      \"outcome_verdict\": \"supported\",\n      \"question\": \"\"\n    }\n  ],\n  \"issues\": [],\n  \"multiple_scenarios\": false,\n  \"revisit\": []\n}",
+        "fallbackUsed": false,
+        "finishReason": "stop",
+        "gateway_request_sha256": "8669ec0e9882637c1a961d788428c600d2da1c44afb57089f6e180c34e922f86",
+        "model": "qwen3.8-max",
+        "providerId": "qwen_plus",
+        "usage": {
+          "completionTokens": 1374,
+          "promptTokens": 46308,
+          "reasoningTokens": 1024,
+          "totalTokens": 47682
+        },
+        "videoPolicy": {
+          "correlation": "5a8110ee62b34978a908b7772efed1b9",
+          "effective_options": {
+            "enable_thinking": true,
+            "fine_frame_ids": [],
+            "image_count": 44,
+            "max_tokens": 10000,
+            "model": "qwen3.8-max",
+            "response_format": "json_schema",
+            "temperature": 0.1,
+            "thinking_budget": 1024
+          },
+          "model": "qwen3.8-max",
+          "output_schema_sha256": "5ff161372fe8f07602be2e8e6b87e9c5f2bada990d4796a2abe0003b65d783a7",
+          "provider_options_sha256": "882b809af64533985285946ad2107a14c6bc4e199b7682cf3ad3cfa127e0edc8",
+          "skill": "ui_video_trajectory",
+          "skill_version": "audit",
+          "stage": "audit",
+          "version": "video-stage-policy-v1"
+        }
+      }
+    },
+    {
+      "entry": 38,
+      "kind": "receipt",
+      "sha256": "ed906dd180cf4a3ffaa90b01278244ab45135eac37c01cdee632a67c3fd4e81f",
+      "value": {
+        "content": "{\n  \"states\": [\n    {\n      \"state_id\": \"s17load\",\n      \"first_frame\": \"frame-240\",\n      \"last_frame\": \"frame-242\",\n      \"kind\": \"transition\",\n      \"description\": \"取消确认弹窗确定按压后的加载态：弹窗中部出现白色点圈加载标记（frame-240至frame-241完整、frame-242随弹窗半透明淡出），背景仍为压暗的预览页与黄色UI自动化模型。\"\n    },\n    {\n      \"state_id\": \"s14b\",\n      \"first_frame\": \"frame-250\",\n      \"last_frame\": \"frame-257\",\n      \"kind\": \"page\",\n      \"description\": \"取消后返回的打印编辑页（深色3D场景）：标题姓名牌、右上黄色耗材标识、左侧居中/旋转/复制/一键适配/删除工具栏、3D边界框内黄色模型、模型尺寸0mm(X)×0mm(Y)×0mm(Z)、更多打印参数已智能匹配与查看、底部下一步按钮。\"\n    }\n  ],\n  \"events\": [\n    {\n      \"action\": \"aiWaitFor\",\n      \"target\": \"取消确认弹窗确定按压（packet-007 frame-239触发）的响应：弹窗中部加载点圈出现后弹窗淡出，页面转为已取消模型处理状态（旧姓名牌挂钩图片、已取消模型处理文案、重新编辑与返回按钮）\",\n      \"value\": \"\",\n      \"frame_refs\": [\n        \"frame-239\",\n        \"frame-240\",\n        \"frame-241\",\n        \"frame-242\",\n        \"frame-243\",\n        \"frame-244\"\n      ],\n      \"observation\": \"frame-239确定按钮触点仍在（触发属packet-007，本包不重放）；frame-240至frame-241弹窗中部出现白色点圈加载标记、frame-242弹窗半透明淡出且点圈仍可见；frame-243弹窗残影下页面已切换为已取消模型处理态（挂钩姓名牌图片、已取消模型处理、重新编辑/返回按钮），frame-244弹窗完全消失、该状态完整稳定；全程无新触点，为前包确定按压的自动响应。\",\n      \"uncertainties\": [],\n      \"trigger_frame\": \"frame-240\",\n      \"trigger_kind\": \"automatic\",\n      \"page_before\": \"s16cancel\",\n      \"page_after\": \"s17\",\n      \"continuation_of\": \"\",\n      \"edit_boundary\": \"none\",\n      \"outcome\": {\n        \"frame_refs\": [\n          \"frame-244\"\n        ],\n        \"observation\": \"frame-244已取消模型处理状态完整稳定：挂钩姓名牌图片、已取消模型处理文案、底部重新编辑与返回按钮齐全，弹窗与加载标记均已消失。\"\n      }\n    },\n    {\n      \"action\": \"aiTap\",\n      \"target\": \"已取消模型处理页底部返回按钮\",\n      \"value\": \"\",\n      \"frame_refs\": [\n        \"frame-246\",\n        \"frame-247\",\n        \"frame-248\",\n        \"frame-249\",\n        \"frame-250\"\n      ],\n      \"observation\": \"frame-246页面仍为已取消模型处理稳定态；frame-247返回按钮文字左侧出现圆形触点高亮并持续至frame-248；frame-249预览页自右向左滑出、左侧露出深色打印编辑页（标题姓名牌、3D边界框、下一步）形成左右分屏转场；frame-250打印编辑页全屏，为该次返回按压的响应。\",\n      \"uncertainties\": [],\n      \"trigger_frame\": \"frame-247\",\n      \"trigger_kind\": \"touch\",\n      \"page_before\": \"s17\",\n      \"page_after\": \"s14b\",\n      \"continuation_of\": \"\",\n      \"edit_boundary\": \"none\",\n      \"outcome\": {\n        \"frame_refs\": [\n          \"frame-250\"\n        ],\n        \"observation\": \"frame-250打印编辑页完整可见：标题姓名牌、右上黄色耗材标识、左侧工具栏、3D边界框内黄色模型、模型尺寸0mm(X)×0mm(Y)×0mm(Z)、更多打印参数已智能匹配与下一步按钮。\"\n      }\n    },\n    {\n      \"action\": \"aiWaitFor\",\n      \"target\": \"打印编辑页返回箭头触发的返回导航响应：深色打印编辑页右滑退出、编辑模型页（浅色3D预览、请输入文本UI自动化、去打印按钮）回位全屏\",\n      \"value\": \"\",\n      \"frame_refs\": [\n        \"frame-255\",\n        \"frame-256\",\n        \"frame-257\",\n        \"frame-258\",\n        \"frame-259\",\n        \"frame-260\"\n      ],\n      \"observation\": \"frame-255打印编辑页静止；frame-256至frame-257右缘中部出现圆形触点并停留（位置对应左上返回箭头随转场右移经过处）；frame-258深色页整体右移、左缘露出浅色编辑模型页边缘；frame-259左右分屏（左编辑模型页含UI自动化文本与去打印按钮、右深色打印编辑页滑出）；frame-260编辑模型页全屏稳定；转场期间无其它控件触点，为返回导航的自动转场响应。\",\n      \"uncertainties\": [\n        \"frame-256右缘触点是否为对打印编辑页左上返回箭头的按压（箭头随页面右移经过该位置）仅由转场路径间接支持，按压瞬间未见箭头正下方的高亮\"\n      ],\n      \"trigger_frame\": \"frame-256\",\n      \"trigger_kind\": \"navigation\",\n      \"page_before\": \"s14b\",\n      \"page_after\": \"s18\",\n      \"continuation_of\": \"\",\n      \"edit_boundary\": \"none\",\n      \"outcome\": {\n        \"frame_refs\": [\n          \"frame-260\"\n        ],\n        \"observation\": \"frame-260编辑模型页全屏稳定：浅色3D预览内灰色旧文本模型、模型尺寸52mm(X)×26mm(Y)×2mm(Z)、请输入文本输入区保留UI自动化、底部下载与去打印按钮可见。\"\n      }\n    },\n    {\n      \"action\": \"aiWaitFor\",\n      \"target\": \"编辑模型页返回箭头触发的返回导航响应：编辑模型页右滑退出、姓名牌模型详情页（模型图片、标签、模型文件信息、旋钮设置与去编辑按钮）回位全屏\",\n      \"value\": \"\",\n      \"frame_refs\": [\n        \"frame-266\",\n        \"frame-267\",\n        \"frame-268\",\n        \"frame-269\",\n        \"frame-270\",\n        \"frame-271\"\n      ],\n      \"observation\": \"frame-266至frame-267编辑模型页静止无触点；frame-268编辑模型页开始右移、左缘露出详情页图片边缘且页面中部偏下出现圆形触点残影；frame-269左右分屏（左详情页含姓名牌标题、模型文件、旋钮设置/去编辑按钮，右编辑模型页滑出）；frame-270至frame-271详情页全屏稳定；期间无新独立控件触点，为返回导航的自动转场响应。\",\n      \"uncertainties\": [\n        \"frame-268圆形触点残影的归属（返回箭头按压残影或其它控件误触）不能由现有帧完全确定，仅页面唯一返回路径支持本次导航\"\n      ],\n      \"trigger_frame\": \"frame-268\",\n      \"trigger_kind\": \"navigation\",\n      \"page_before\": \"s18\",\n      \"page_after\": \"s19\",\n      \"continuation_of\": \"\",\n      \"edit_boundary\": \"none\",\n      \"outcome\": {\n        \"frame_refs\": [\n          \"frame-271\"\n        ],\n        \"observation\": \"frame-271姓名牌模型详情页全屏稳定：模型图片与1/1页标、装饰房间/日常使用/摆件装饰/标识标签、3001人打印、模型文件（约18分钟/4g材料/52mm(X)*2mm(Y)*26mm(Z）、描述文字与底部旋钮设置、去编辑按钮齐全。\"\n      }\n    }\n  ],\n  \"checks\": [],\n  \"uncertainties\": [\n    \"frame-256至frame-257右缘圆形触点与frame-268圆形触点残影的精确按压目标（返回箭头或其它控件）缺少按压瞬间的直接高亮证据，仅由唯一返回路径与转场方向支持\",\n    \"返回打印编辑页后模型尺寸显示0mm(X)×0mm(Y)×0mm(Z)而非此前的52mm(X)×26mm(Y)×2mm(Z)，是否为取消任务后的状态重置未被本包进一步操作验证\"\n  ],\n  \"multiple_scenarios\": false,\n  \"revisit\": []\n}",
+        "fallbackUsed": false,
+        "finishReason": "stop",
+        "gateway_request_sha256": "1688218426b1f1715ae75e3ef4ea67cf4cff39ad3fb2e362977bdb1044badffb",
+        "model": "qwen3.8-max",
+        "providerId": "qwen_plus",
+        "usage": {
+          "completionTokens": 3181,
+          "promptTokens": 48796,
+          "reasoningTokens": 1024,
+          "totalTokens": 51977
+        },
+        "videoPolicy": {
+          "correlation": "b369a9c8cbfb4a32a6379af7a294757b",
+          "effective_options": {
+            "enable_thinking": true,
+            "fine_frame_ids": [],
+            "image_count": 44,
+            "max_tokens": 10000,
+            "model": "qwen3.8-max",
+            "response_format": "json_schema",
+            "temperature": 0.1,
+            "thinking_budget": 1024
+          },
+          "model": "qwen3.8-max",
+          "output_schema_sha256": "3be29ac64ece0c74f93f40432766edaa2acfdfe790a638f50951c4ccbcc84d03",
+          "provider_options_sha256": "dc7a1bee4a27ad8e91c3d547261f9a819762da571fe20ea6fb76b86a914cbce5",
+          "skill": "ui_video_trajectory",
+          "skill_version": "observe",
+          "stage": "grounding",
+          "version": "video-stage-policy-v1"
+        }
+      }
+    },
+    {
+      "entry": 40,
+      "kind": "receipt",
+      "sha256": "06df471edf69324cf541dd628dd51a64267906c5387ff62e895f9d50044657da",
+      "value": {
+        "content": "{\n  \"states\": [\n    {\n      \"state_id\": \"s17load\",\n      \"first_frame\": \"frame-240\",\n      \"last_frame\": \"frame-242\",\n      \"kind\": \"transition\",\n      \"description\": \"取消确认弹窗加载淡出态：弹窗中部白色点圈加载标记转动，确定按钮触点残影渐隐，frame-242弹窗整体半透明淡出，背景预览页仍压暗。\"\n    },\n    {\n      \"state_id\": \"s17b\",\n      \"first_frame\": \"frame-244\",\n      \"last_frame\": \"frame-248\",\n      \"kind\": \"page\",\n      \"description\": \"已取消模型处理稳定页：旧姓名牌挂钩照片、已取消模型处理提示、底部重新编辑与返回按钮；frame-247起返回按钮出现触点。\"\n    },\n    {\n      \"state_id\": \"s14b\",\n      \"first_frame\": \"frame-250\",\n      \"last_frame\": \"frame-257\",\n      \"kind\": \"page\",\n      \"description\": \"返回后的打印编辑页（深色3D场景）：标题姓名牌、右上黄色耗材标识、左侧工具栏、3D边界框内黄色模型、模型尺寸0mm(X)×0mm(Y)×0mm(Z)、更多打印参数已智能匹配与下一步按钮。\"\n    }\n  ],\n  \"events\": [\n    {\n      \"action\": \"aiWaitFor\",\n      \"target\": \"取消确认弹窗确定按压的响应：弹窗中部加载标记转动后弹窗淡出，页面转为已取消模型处理状态（旧姓名牌挂钩照片、已取消模型处理提示、重新编辑与返回按钮）\",\n      \"value\": \"\",\n      \"frame_refs\": [\n        \"frame-240\",\n        \"frame-241\",\n        \"frame-242\",\n        \"frame-243\",\n        \"frame-244\"\n      ],\n      \"observation\": \"frame-240至frame-241取消确认弹窗中部出现白色点圈加载标记、确定按钮触点残影仍在（该按压触发于packet-007 frame-239，本包不重放触发）；frame-242弹窗半透明淡出；frame-243弹窗鬼影残留且页面已切换为已取消模型处理（旧姓名牌挂钩照片、重新编辑/返回按钮）；frame-244弹窗完全消失、已取消状态完整可见；期间无新触点，为前包确定按压的自动响应。\",\n      \"uncertainties\": [],\n      \"trigger_frame\": \"frame-240\",\n      \"trigger_kind\": \"automatic\",\n      \"page_before\": \"s16cancel\",\n      \"page_after\": \"s17\",\n      \"continuation_of\": \"\",\n      \"edit_boundary\": \"none\",\n      \"outcome\": {\n        \"frame_refs\": [\n          \"frame-244\"\n        ],\n        \"observation\": \"frame-244已取消模型处理页稳定：旧姓名牌挂钩照片、已取消模型处理提示、底部重新编辑与返回按钮齐全，取消确认弹窗已完全消失。\"\n      }\n    },\n    {\n      \"action\": \"aiTap\",\n      \"target\": \"已取消模型处理页底部返回按钮\",\n      \"value\": \"\",\n      \"frame_refs\": [\n        \"frame-246\",\n        \"frame-247\",\n        \"frame-248\",\n        \"frame-249\",\n        \"frame-250\"\n      ],\n      \"observation\": \"frame-247返回按钮文字左侧出现圆形触点高亮并持续至frame-248，为owned区间内独立触点证据；frame-249预览页自右向左滑出、左侧露出深色打印编辑页（标题姓名牌、3D边界框与下一步按钮）左右分屏，为该次按压的返回转场；frame-250打印编辑页全屏稳定。\",\n      \"uncertainties\": [],\n      \"trigger_frame\": \"frame-247\",\n      \"trigger_kind\": \"touch\",\n      \"page_before\": \"s17\",\n      \"page_after\": \"s14b\",\n      \"continuation_of\": \"\",\n      \"edit_boundary\": \"none\",\n      \"outcome\": {\n        \"frame_refs\": [\n          \"frame-250\"\n        ],\n        \"observation\": \"frame-250打印编辑页完整稳定：标题姓名牌、右上黄色耗材标识、左侧工具栏、3D边界框内黄色模型、模型尺寸0mm(X)×0mm(Y)×0mm(Z)、更多打印参数已智能匹配与下一步按钮可见。\"\n      }\n    },\n    {\n      \"action\": \"aiWaitFor\",\n      \"target\": \"打印编辑页返回导航继续：从打印编辑页（深色3D场景）返回编辑模型页（浅色3D预览、请输入文本输入区保留UI自动化、下载与去打印按钮）\",\n      \"value\": \"\",\n      \"frame_refs\": [\n        \"frame-250\",\n        \"frame-256\",\n        \"frame-257\",\n        \"frame-258\",\n        \"frame-259\",\n        \"frame-260\"\n      ],\n      \"observation\": \"frame-250至frame-255打印编辑页停留无操作；frame-256至frame-257右缘中部出现灰色圆形触点标记但其位置不对应任何可见控件；frame-258深色打印编辑页整体右移、左缘露出浅色编辑模型页蓝网格预览，frame-259左右分屏（左编辑模型页完整要素、右深色编辑页滑出），frame-260编辑模型页全屏稳定；转场方向与层级符合打印编辑页返回编辑模型页的唯一路径。\",\n      \"uncertainties\": [\n        \"frame-256至frame-258右缘灰色圆点不对应可见控件，返回的实际触发方式（不可见返回控件触点或边缘返回手势）无法仅凭原帧确定\"\n      ],\n      \"trigger_frame\": \"frame-258\",\n      \"trigger_kind\": \"navigation\",\n      \"page_before\": \"s14b\",\n      \"page_after\": \"s18\",\n      \"continuation_of\": \"\",\n      \"edit_boundary\": \"none\",\n      \"outcome\": {\n        \"frame_refs\": [\n          \"frame-260\"\n        ],\n        \"observation\": \"frame-260编辑模型页完整稳定：标题编辑模型、浅色3D预览带蓝网格底板与灰色旧文本模型、模型尺寸52mm(X)×26mm(Y)×2mm(Z)、请输入文本输入区保留UI自动化、底部下载与去打印按钮可见。\"\n      }\n    },\n    {\n      \"action\": \"aiWaitFor\",\n      \"target\": \"编辑模型页返回导航继续：从编辑模型页返回姓名牌模型详情页（模型图片、标签、3001人打印、模型文件信息、旋钮设置与去编辑按钮）\",\n      \"value\": \"\",\n      \"frame_refs\": [\n        \"frame-260\",\n        \"frame-267\",\n        \"frame-268\",\n        \"frame-269\",\n        \"frame-270\",\n        \"frame-271\"\n      ],\n      \"observation\": \"frame-260至frame-267编辑模型页停留无触点；frame-268编辑模型页整体右移、左缘露出详情页图片与文字边缘，frame-269左右分屏（左姓名牌详情页图片/标签/模型文件区、右编辑模型页滑出），frame-270至frame-271详情页全屏稳定；转场方向与层级符合编辑模型页返回详情页的唯一路径，全程未见明确返回箭头触点。\",\n      \"uncertainties\": [\n        \"frame-267至frame-268之间未见明确触点，返回触发方式（左上返回箭头点击或边缘手势）无法仅凭原帧确定\"\n      ],\n      \"trigger_frame\": \"frame-268\",\n      \"trigger_kind\": \"navigation\",\n      \"page_before\": \"s18\",\n      \"page_after\": \"s19\",\n      \"continuation_of\": \"\",\n      \"edit_boundary\": \"none\",\n      \"outcome\": {\n        \"frame_refs\": [\n          \"frame-271\"\n        ],\n        \"observation\": \"frame-271姓名牌模型详情页完整稳定：顶部模型图片与1/1页标、可编辑角标、姓名牌标题、装饰房间/日常使用/摆件装饰/标识挂标签、3001人打印、模型文件卡片（约18分钟/4g材料/52mm(X)*2mm(Y)*26mm(Z）、描述文字与底部旋钮设置/去编辑按钮可见。\"\n      }\n    }\n  ],\n  \"checks\": [],\n  \"uncertainties\": [\n    \"frame-256至frame-258右缘灰色圆点标记不对应任何可见控件，其含义（误触残影、手势指示或录制叠加层）无法确定\",\n    \"两次返回导航（打印编辑页→编辑模型页、编辑模型页→详情页）均未见明确返回箭头触点，仅由唯一页面路径与转场方向支持\"\n  ],\n  \"multiple_scenarios\": false,\n  \"revisit\": [\n    {\n      \"first_frame\": \"frame-255\",\n      \"last_frame\": \"frame-258\",\n      \"question\": \"frame-256至frame-258右缘灰色圆点是否为返回触点的按下证据，或该返回为边缘手势/不可见控件触发？需确认打印编辑页返回编辑模型页的实际触发方式与位置\"\n    },\n    {\n      \"first_frame\": \"frame-266\",\n      \"last_frame\": \"frame-269\",\n      \"question\": \"frame-268编辑模型页右移返回详情页的触发证据：左上返回箭头是否出现触点按压态，或为边缘返回手势？\"\n    }\n  ]\n}",
+        "fallbackUsed": false,
+        "finishReason": "stop",
+        "gateway_request_sha256": "d7a754d75916b66f383c9a599db1455539d16957af2489bb7ee31d6afe966c11",
+        "model": "qwen3.8-max",
+        "providerId": "qwen_plus",
+        "usage": {
+          "completionTokens": 3352,
+          "promptTokens": 48829,
+          "reasoningTokens": 1024,
+          "totalTokens": 52181
+        },
+        "videoPolicy": {
+          "correlation": "c4a49e6554a14998ab2f43c1f2d8de31",
+          "effective_options": {
+            "enable_thinking": true,
+            "fine_frame_ids": [],
+            "image_count": 44,
+            "max_tokens": 10000,
+            "model": "qwen3.8-max",
+            "response_format": "json_schema",
+            "temperature": 0.1,
+            "thinking_budget": 1024
+          },
+          "model": "qwen3.8-max",
+          "output_schema_sha256": "3be29ac64ece0c74f93f40432766edaa2acfdfe790a638f50951c4ccbcc84d03",
+          "provider_options_sha256": "76231643d38614a102e7180eceae9323ee89ab21a5facb2e0fb4138227aade6b",
+          "skill": "ui_video_trajectory",
+          "skill_version": "observe",
+          "stage": "grounding",
+          "version": "video-stage-policy-v1"
+        }
+      }
+    }
   ]
 }
