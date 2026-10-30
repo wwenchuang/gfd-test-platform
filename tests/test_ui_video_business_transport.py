@@ -46,8 +46,8 @@ def test_native_rejection_before_transport(monkeypatch,change):
     assert not calls
 
 
-def test_actual_size_timeline_transport_and_renderer(monkeypatch):
-    p,a=native(12249942); calls=capture(monkeypatch,content='{"scenes":[],"questions":[]}')
+def test_supported_size_timeline_transport_and_renderer(monkeypatch):
+    p,a=native(7499997); calls=capture(monkeypatch,content='{"scenes":[],"questions":[]}')
     assert policy.STAGES['timeline']==('ui_video_timeline','v1','whole-timeline','qwen3.8-max',10000)
     trace={}
     assert ai.run_ai_skill('ui_video_timeline',p,image_assets=a,video_stage='timeline',runtime_trace=trace)=={'scenes':[],'questions':[]}
@@ -114,6 +114,10 @@ def test_native_modeljobs_owned_child_and_global_admission(tmp_path,size):
         with manager(tmp_path,gateway) as owner:
             if size==12*1024*1024:
                 with pytest.raises(ModelJobError,match='video_job_message_limit'):
+                    owner.run('ui_video_timeline',p,image_assets=a,video_stage='timeline')
+                assert not gateway.calls and not owner.active_pids
+            elif size==12249942:
+                with pytest.raises(ModelJobError,match='video_job_failed'):
                     owner.run('ui_video_timeline',p,image_assets=a,video_stage='timeline')
                 assert not gateway.calls and not owner.active_pids
             else:

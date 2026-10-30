@@ -755,7 +755,7 @@ function validateNativeVideo(payload, assets) {
       Object.keys(asset).some(k => !['name','mime','base64','timestamp_ms','dataUrl'].includes(k)) ||
       asset.name !== 'source-video' || asset.mime !== 'video/mp4' || asset.timestamp_ms !== 0 ||
       (Object.hasOwn(asset,'dataUrl') && asset.dataUrl !== '') ||
-      typeof asset.base64 !== 'string' || !asset.base64.length || asset.base64.length > 16 * 1024 * 1024) fail();
+      typeof asset.base64 !== 'string' || !asset.base64.length || asset.base64.length >= 10000000) fail();
   // Canonical round-trip is bounded and avoids V8 regexp stack overflow on original videos.
   const raw = Buffer.from(asset.base64, 'base64');
   if (raw.length !== meta.source_bytes || raw.toString('base64') !== asset.base64 ||
@@ -927,6 +927,18 @@ function completionOptionsForRoute(route, prompt, body, callOptions = {}) {
       {type: 'json_object'};
   }
   return completionOptions;
+}
+
+function videoFailureDiagnostics(error) {
+  const status = Number.isInteger(error?.status) && error.status >= 400 && error.status <= 599 ? error.status : null;
+  const names = {APIConnectionTimeoutError:'timeout', APIConnectionError:'connection', APIUserAbortError:'abort', AbortError:'abort'};
+  return {failureCategory: status !== null ? 'http_status' : (Object.hasOwn(names, error?.name) ? names[error.name] : 'unknown'), httpStatus:status};
+}
+
+function videoLogError(code) {
+  return new Set(['video_stage_provider_failed','video_stage_actual_model_invalid',
+    'video_stage_output_truncated','video_stage_cancelled','video_stage_deadline',
+    'video_perception_reasoning_usage_invalid']).has(code) ? code : 'video_stage_provider_failed';
 }
 
 async function appendAiLog(entry) {
@@ -1129,6 +1141,7 @@ async function callAi(action, body, options = {}) {
     const startedAt = Date.now();
     let success = false;
     let errorText = null;
+    let videoFailure = null;
     let finishReason = '';
     let usage = {};
     try {
@@ -1208,6 +1221,7 @@ async function callAi(action, body, options = {}) {
         output,
       };
     } catch (error) {
+      if (videoStage) videoFailure = videoFailureDiagnostics(error);
       errorText = videoStage ? (/^video_[a-z_]+$/.test(error?.message || '') ? error.message : 'video_stage_provider_failed') : sanitizeError(error);
       lastErrorText = errorText;
       fallbackErrors.push({
@@ -1236,7 +1250,8 @@ async function callAi(action, body, options = {}) {
         usage,
         inputPreview: videoStage ? '[video stage content omitted]' : preview(body),
         outputPreview: videoStage ? '[video stage content omitted]' : preview(output),
-        error: errorText,
+        error: videoStage && errorText ? videoLogError(errorText) : errorText,
+        ...(videoFailure || {}),
       }).catch(() => {});
     }
   }
