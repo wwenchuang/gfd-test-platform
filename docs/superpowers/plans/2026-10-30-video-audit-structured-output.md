@@ -22,7 +22,7 @@ Verified v15 failed observing7/9 on d01cf791. Full export integrity verified by 
 - Legacy audit with no output schema remains unchanged; the business-first runtime must always supply the strict audit schema on every audit shard and correction. Keep all unrelated stages unchanged.
 - Work in this isolated checkout. Protect dirty CODEX_STATE.md and primary checkout249 dirty files. Root handles integration/push/deployment/same-source normal run and designated-phone acceptance.
 
-## Task1: Closed audit schema capability and business runtime wiring
+### Task 1: Closed audit schema capability and business runtime wiring
 
 **Files:** task_server/services/ui_video_stage_policy.py, ai_skill_service.py, ui_video_runtime.py; ai-gateway/server.js. Modify ui_video_model_jobs.py only if necessary for stage-schema path verification. Add focused tests/test_ui_video_audit_structured_output.py, tests/fixtures/ui_video_v15_audit_shape.json and affected Gateway tests. Use existing tests as integration helpers. Avoid large refactors.
 
@@ -38,4 +38,4 @@ Verified v15 failed observing7/9 on d01cf791. Full export integrity verified by 
 
 - [ ] Fresh deployed revision and health verified; no active run restarted.
 - [ ] Same original source normal regeneration once; audit provider receipt proves strict json_schema plus correct schema hash and model, no semantic acceptance from format alone.
-- [ ] Full generated content checked against fixed baseline, then normal draft review/static/score gate and phone ec bfd645 (actual ID ecbfd645) / printer9888E0094F2A. Verify fresh account/task binding before any cancellation, no final physical print.
+- [ ] Full generated content checked against fixed baseline, then normal draft review/static/score gate and phone ecbfd645 / printer9888E0094F2A. Verify fresh account/task binding before any cancellation, no final physical print.
