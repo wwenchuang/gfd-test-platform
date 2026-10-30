@@ -1,0 +1,16 @@
+# Bounded unavailable-evidence implementation plan
+
+Read matching design first. Base94635311 isolated=deployed146bee75 tree. One cohesive task and one reviewed release; root owns exact deployment/full original22/normal gates/phone. User has authorized implementation and validation without routine approval.
+
+## Task 1: Precise state contracts and bounded unfulfilled acquisitions
+
+- Files: task_server/services/ui_video_trajectory.py, ui_video_runtime.py, ai_skills/prompts/ui_video_trajectory.observe.md and audit.md; new tests/test_ui_video_unavailable_evidence.py + exact tests/fixtures/ui_video_v21_unavailable_evidence.json; minimal affected-test changes only for deliberate business32/+20 allowance. No unrelated files/prototypes/STATE commit.
+- Freeze exact original21 export /Users/adouceshi/Documents/projects/video-reliability-20261026/new-touch/current-platform/normal-run21/run21, canonical hashes/full source+frame metadata/manifests and provenance. Original21 failed permanent. No synthetic remainder called source success.
+- TDD RED before production. Exact raw24/26 keep state_reference rejection but safe metadata identifies reversed anchor order; raw28 states valid. Captured raw28 two pending requests/remaining1 must not partially decode or fail all trajectory: produce not_acquired provenance and unchanged-candidate independent audit plus unresolved blockers. Test valid frame anchors with numerically later IDs earlier timestamps; malformed/hostile metadata never echoed. Actual Skill/Gateway/child correction path and both parent/latest slots.
+- Implement separate typed deferral/provenance (not no_new_frames), complete-batch preflight and fair global-frame allocation, fixed guidance/current-packet deferred metadata. Full question preservation through consolidation/source/draft blocking, no implicit supported verdict. Exercise mixed additions, zero, already exhausted, unavailable, shards and candidate repairs/positive locks; foreign ownership/decoder errors/cancellation still fail. No rerun solely for capacity denial, no added model retry/reset.
+- Explicit business engine32/provider formula+20/diagnostic128, legacy24/+12/64. Time1800/120/source-240.5/1560,4actualattempts/64newframes/128images/two corrections/30questions unchanged. Meaningful exact limits and cross-path noreset/cleanup tests. Update intentionally changed business fixtures, never archived captures.
+- Run new+runtime/business/trajectory/audit/revisit/stage/wire/executor/record checks and mandatory compile/backend/Gateway/diff; preserve RED/GREEN reports. Append STATE only, exclude preexisting dirtySTATE from commit. Scoped commit/report .superpowers/sdd/unavailable-evidence-task-report.md.
+
+## Root gates
+
+Fresh scoped task review and complete946..HEAD release review, fix findings. Retain primary249 protection/fullcurrentSTATE snapshot, exact-tree integration/fresh mandatorychecks/remote codexverify (no main claim), offlineCRC/internalhashes/bundle/script/nativeupload/serverSHA/exact fullhealth. Same original22 once only after failure21 preserved/noactive. Inspect all terminal records/business baseline; only ready/reviewed complete source goes normaldraft gates/SDKparse/designatedphone binding. OLD absent is separately labeled conditional path; preserve original case, no arbitrary/physical print.
