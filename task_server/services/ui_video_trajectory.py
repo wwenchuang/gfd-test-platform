@@ -459,6 +459,12 @@ def observe_trajectory(document,root,cancelled,progress=None,record=None,revisit
         raise ValueError('video_forward_context_invalid')
     validate_execution_contract(execution_contract)
     from .ui_video_context_questions import freeze_ownership, partition_issues
+    forward_audit_reference_feedback=(
+        'issues的owner_frame只能使用当前owned_frame_ids，或平台根据实际附图context角色、当前owned半开终点及冻结原始归属独立确定的未来owner（future_issue_owner_frame_ids）；'
+        'owner必须包含在自身1至8个唯一且时间有序的frame_refs中；past context、unknown或未附图owner仍非法。'
+        '未来finding仅为unverified_forward_context_question且instruction_authority=False，不是当前遗漏或已验证动作，不得据此推断当前动作。'
+        '完整保留合法未来finding的问题及原始owner/refs；不得改派owner到当前包或删除问题来隐藏其他校验错误，应按原图修正其他无效字段，不能伪造归属或证据。'
+        'checks必须逐项对应当前trajectory中的track.event_id且恰好一次；issues.frame_refs及revisit端点只能引用当前实际附图，既有check绑定及revisit时间/归属规则不变。')
     from . import ai_skill_service as ai
     from .ui_video_windows import load_assets
     if revisit_bounded is not None and not callable(revisit_bounded):raise ValueError('video_revisit_invalid')
@@ -621,7 +627,8 @@ def observe_trajectory(document,root,cancelled,progress=None,record=None,revisit
                     'frame_reference':'每项frame_refs必须为1至8个真实且唯一的原帧ID，按时间顺序排列。',
                     'audit_evidence':'每项frame_refs必须包含其required_frame_refs，额外帧只能来自同项allowed_frame_refs。',
                     'audit_verdict':'trigger_verdict和outcome_verdict只能是supported、unclear或contradicted字符串。',
-                    'audit_issue_owner':'issues的owner_frame必须属于本包owned_frame_ids且包含在该issue的frame_refs中，不可把context帧当本包新操作。',
+                    'audit_issue_owner':(forward_audit_reference_feedback if forward_context_issues else
+                        'issues的owner_frame必须属于本包owned_frame_ids且包含在该issue的frame_refs中，不可把context帧当本包新操作。'),
                     'audit_issue_shape':'issues每项只能含kind/owner_frame/frame_refs/question。',
                     'audit_issue_kind':'issue.kind只能为missing_action或unresolved_evidence。',
                     'audit_issues':'issues必须为最多30项的数组。',
@@ -630,7 +637,8 @@ def observe_trajectory(document,root,cancelled,progress=None,record=None,revisit
                 }.get(reason,'当前阶段输出结构不符合合同，请只返回规定字段及合法值。')
                 if isinstance(error,SkillSchemaError):
                     explanation=error.model_feedback+(
-                        'checks必须逐项对应当前trajectory中的track.event_id且恰好一次；owner_frame必须属于当前owned_frame_ids并包含在该issue的frame_refs中；issues.frame_refs及revisit端点只能引用当前实际附图。context触发属于其实际owner，不能另造当前issue。'
+                        (forward_audit_reference_feedback if forward_context_issues else
+                         'checks必须逐项对应当前trajectory中的track.event_id且恰好一次；owner_frame必须属于当前owned_frame_ids并包含在该issue的frame_refs中；issues.frame_refs及revisit端点只能引用当前实际附图。context触发属于其实际owner，不能另造当前issue。')
                         if version=='audit' else
                         'trigger_frame必须属于owned_frame_ids，context仅可提供证据，不能作为本包新动作触发。')
                 if reason=='state_reference' and hasattr(error,'model_feedback'):
