@@ -49,7 +49,7 @@ from task_server.config import (
     safe_bool,
     safe_int,
 )
-from task_server.services.ui_video_stage_policy import UNSET, validate_video_stage, validate_stage_output, validate_output_schema, video_stage_image_limit
+from task_server.services.ui_video_stage_policy import UNSET, VideoStageOutputError, validate_video_stage, validate_stage_output, validate_output_schema, video_stage_image_limit
 from task_server.core.http_client import read_response_bytes
 from task_server.storage import (
     clean_asset_filename,
@@ -506,7 +506,10 @@ def run_ai_skill(
                 if any(w['reason'] != 'source_partition_role' for w in bank['binding_audit']['warnings']):
                     raise ValueError("video_perception_role_mismatch")
             elif stage in {"semantic", "grounding"}:
-                validate_stage_output(result, output_schema)
+                try:
+                    validate_stage_output(result, output_schema)
+                except VideoStageOutputError as exc:
+                    raise SkillSchemaError(exc.schema_path, '输出不符合当前阶段schema') from None
             if not stage:
                 result = _video_output_defaults(_merge_missing_output_defaults(result, output_defaults), whole_video)
             try:

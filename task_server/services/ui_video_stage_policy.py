@@ -244,15 +244,22 @@ def validate_video_stage(skill, payload, assets, stage=UNSET, schema=UNSET, *, v
     return stage
 
 
+class VideoStageOutputError(ValueError):
+    """Closed output mismatch with a schema-owned path, never rejected values."""
+    def __init__(self, path):
+        super().__init__(f'video_semantic_output_invalid:{path}')
+        self.schema_path = path
+
+
 def validate_stage_output(value, schema, path='$'):
     """Validate the already checked strict subset without weakening legacy schemas."""
     if 'anyOf' in schema:
         for child in schema['anyOf']:
             try:
                 return validate_stage_output(value, child, path)
-            except ValueError:
+            except VideoStageOutputError:
                 pass
-        raise ValueError(f'video_semantic_output_invalid:{path}')
+        raise VideoStageOutputError(path)
     kind = schema['type']
     valid = {'object': lambda: isinstance(value, dict), 'array': lambda: isinstance(value, list),
              'string': lambda: isinstance(value, str), 'boolean': lambda: type(value) is bool,
@@ -260,10 +267,10 @@ def validate_stage_output(value, schema, path='$'):
     if kind == 'number' and valid and not math.isfinite(value):
         valid = False
     if not valid or ('enum' in schema and value not in schema['enum']):
-        raise ValueError(f'video_semantic_output_invalid:{path}')
+        raise VideoStageOutputError(path)
     if kind == 'object':
         if set(value) != set(schema['properties']):
-            raise ValueError(f'video_semantic_output_invalid:{path}')
+            raise VideoStageOutputError(path)
         for key, child in schema['properties'].items():
             validate_stage_output(value[key], child, f'{path}.{key}')
     elif kind == 'array':

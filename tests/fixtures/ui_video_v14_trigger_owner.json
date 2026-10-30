@@ -1,0 +1,379 @@
+{
+  "provenance": {
+    "analysis_version": 14,
+    "source_sha256": "370d92e2622686330d114ce14c67c50788a8e92e4aa1babbbd7e856e2796d893",
+    "source_json_sha256": "0db7913a97ec7de8e07897b6430f43412702627a0560a59b2892606286bb22f2",
+    "receipt_entry": 24,
+    "receipt_canonical_sha256": "85f36be478274df80b5c6a97932d33cecc9b8db59ea8da7c4257c72238d1dec2",
+    "receipt_content_sha256": "98dfa11d6dd2828c841480abf66857f6ace1c6fce23127d879d61f314695af95",
+    "output_schema_sha256": "dec91f90540f39fd3d5900918eca60158db7494824297d14ee3148dd72210473"
+  },
+  "packet": {
+    "packet_id": "packet-005",
+    "frames": [
+      {
+        "frame_id": "frame-123",
+        "timestamp_ms": 34233
+      },
+      {
+        "frame_id": "frame-124",
+        "timestamp_ms": 34267
+      },
+      {
+        "frame_id": "frame-125",
+        "timestamp_ms": 34433
+      },
+      {
+        "frame_id": "frame-126",
+        "timestamp_ms": 34600
+      },
+      {
+        "frame_id": "frame-127",
+        "timestamp_ms": 34933
+      },
+      {
+        "frame_id": "frame-128",
+        "timestamp_ms": 35967
+      },
+      {
+        "frame_id": "frame-129",
+        "timestamp_ms": 37000
+      },
+      {
+        "frame_id": "frame-130",
+        "timestamp_ms": 38000
+      },
+      {
+        "frame_id": "frame-131",
+        "timestamp_ms": 39000
+      },
+      {
+        "frame_id": "frame-132",
+        "timestamp_ms": 40000
+      },
+      {
+        "frame_id": "frame-133",
+        "timestamp_ms": 40800
+      },
+      {
+        "frame_id": "frame-134",
+        "timestamp_ms": 40833
+      },
+      {
+        "frame_id": "frame-135",
+        "timestamp_ms": 40867
+      },
+      {
+        "frame_id": "frame-136",
+        "timestamp_ms": 40933
+      },
+      {
+        "frame_id": "frame-137",
+        "timestamp_ms": 41067
+      },
+      {
+        "frame_id": "frame-138",
+        "timestamp_ms": 41333
+      },
+      {
+        "frame_id": "frame-139",
+        "timestamp_ms": 41467
+      },
+      {
+        "frame_id": "frame-140",
+        "timestamp_ms": 41500
+      },
+      {
+        "frame_id": "frame-141",
+        "timestamp_ms": 41767
+      },
+      {
+        "frame_id": "frame-142",
+        "timestamp_ms": 41800
+      },
+      {
+        "frame_id": "frame-143",
+        "timestamp_ms": 41833
+      },
+      {
+        "frame_id": "frame-144",
+        "timestamp_ms": 41867
+      },
+      {
+        "frame_id": "frame-145",
+        "timestamp_ms": 42067
+      },
+      {
+        "frame_id": "frame-146",
+        "timestamp_ms": 42100
+      },
+      {
+        "frame_id": "frame-147",
+        "timestamp_ms": 42967
+      },
+      {
+        "frame_id": "frame-148",
+        "timestamp_ms": 43433
+      },
+      {
+        "frame_id": "frame-149",
+        "timestamp_ms": 44033
+      },
+      {
+        "frame_id": "frame-150",
+        "timestamp_ms": 44833
+      },
+      {
+        "frame_id": "frame-151",
+        "timestamp_ms": 44967
+      },
+      {
+        "frame_id": "frame-152",
+        "timestamp_ms": 45000
+      },
+      {
+        "frame_id": "frame-153",
+        "timestamp_ms": 45067
+      },
+      {
+        "frame_id": "frame-154",
+        "timestamp_ms": 45100
+      },
+      {
+        "frame_id": "frame-155",
+        "timestamp_ms": 45167
+      },
+      {
+        "frame_id": "frame-156",
+        "timestamp_ms": 45233
+      },
+      {
+        "frame_id": "frame-157",
+        "timestamp_ms": 45267
+      },
+      {
+        "frame_id": "frame-158",
+        "timestamp_ms": 45567
+      },
+      {
+        "frame_id": "frame-159",
+        "timestamp_ms": 45700
+      },
+      {
+        "frame_id": "frame-160",
+        "timestamp_ms": 45767
+      },
+      {
+        "frame_id": "frame-161",
+        "timestamp_ms": 45833
+      },
+      {
+        "frame_id": "frame-162",
+        "timestamp_ms": 45900
+      },
+      {
+        "frame_id": "frame-163",
+        "timestamp_ms": 45933
+      },
+      {
+        "frame_id": "frame-164",
+        "timestamp_ms": 45967
+      },
+      {
+        "frame_id": "frame-165",
+        "timestamp_ms": 46000
+      },
+      {
+        "frame_id": "frame-166",
+        "timestamp_ms": 46167
+      }
+    ],
+    "owned_start_ms": 36484,
+    "owned_end_ms": 45800,
+    "owned_frame_ids": [
+      "frame-129",
+      "frame-130",
+      "frame-131",
+      "frame-132",
+      "frame-133",
+      "frame-134",
+      "frame-135",
+      "frame-136",
+      "frame-137",
+      "frame-138",
+      "frame-139",
+      "frame-140",
+      "frame-141",
+      "frame-142",
+      "frame-143",
+      "frame-144",
+      "frame-145",
+      "frame-146",
+      "frame-147",
+      "frame-148",
+      "frame-149",
+      "frame-150",
+      "frame-151",
+      "frame-152",
+      "frame-153",
+      "frame-154",
+      "frame-155",
+      "frame-156",
+      "frame-157",
+      "frame-158",
+      "frame-159",
+      "frame-160"
+    ],
+    "context_frame_ids": [
+      "frame-123",
+      "frame-124",
+      "frame-125",
+      "frame-126",
+      "frame-127",
+      "frame-128",
+      "frame-161",
+      "frame-162",
+      "frame-163",
+      "frame-164",
+      "frame-165",
+      "frame-166"
+    ]
+  },
+  "response": {
+    "states": [
+      {
+        "state_id": "s6e",
+        "first_frame": "frame-129",
+        "last_frame": "frame-136",
+        "kind": "wait",
+        "description": "编辑模型页去打印等待：页面中央“准备打印...”遮罩带旋转环，底部“去打印”按钮置灰浅蓝，3D预览与尺寸条52mm(X)×26mm(Y)×2mm(Z)、输入框“UI自动化”保持可见，键盘未升起。"
+      },
+      {
+        "state_id": "s7a",
+        "first_frame": "frame-137",
+        "last_frame": "frame-144",
+        "kind": "wait",
+        "description": "打印编辑页进入与加载：frame-137自右向左滑入转场（编辑模型页左移、右侧露出黑底新页），frame-138至frame-139黑底中央“正在加载...”环，frame-140出现标题“模型打印编辑”与左侧工具栏，frame-141起标题变“姓名牌”、右上黄色“黄色”标识，加载环依次显示“正在加载...0%”“加载中100%”。"
+      },
+      {
+        "state_id": "s7b",
+        "first_frame": "frame-145",
+        "last_frame": "frame-155",
+        "kind": "page",
+        "description": "打印编辑页加载完成：黑色3D场景虚线打印空间与坐标轴，左侧工具栏（居中/旋转/复制/一键适配/删除），frame-145至frame-148中央“璇玑AI引擎优化已完成”绿色对勾提示，frame-149起黄色姓名牌模型带选中控制柄可见；底部模型尺寸条、缩放100%控件、“更多打印参数已智能匹配 查看”与蓝色“下一步”按钮；frame-151起叠加“正在校验模型...”遮罩。"
+      },
+      {
+        "state_id": "s7c",
+        "first_frame": "frame-156",
+        "last_frame": "frame-160",
+        "kind": "page",
+        "description": "耗材颜色确认弹窗：frame-156至frame-157弹窗渐显，frame-158起完整显示巫师形象与“请确认耗材颜色”气泡、正文“请确认当前使用的耗材颜色为：官方耗材-黄色”含黄色色块、耗材示意图、橙色警示文字、“修改设置”与蓝色“确认”按钮、“7天内不再提醒”复选框及底部圆形关闭键，背景打印编辑页压暗。"
+      }
+    ],
+    "events": [
+      {
+        "action": "aiTap",
+        "target": "编辑模型页底部蓝色“去打印”按钮",
+        "value": "",
+        "frame_refs": [
+          "frame-128",
+          "frame-129",
+          "frame-130",
+          "frame-132",
+          "frame-134",
+          "frame-136",
+          "frame-137",
+          "frame-138",
+          "frame-140",
+          "frame-142",
+          "frame-144",
+          "frame-145"
+        ],
+        "observation": "frame-128底部“去打印”仍蓝色可点且无遮罩；frame-129页面中央出现“准备打印...”遮罩且“去打印”按钮变置灰浅蓝，frame-130至frame-136遮罩旋转环持续、按钮保持置灰，frame-137页面自右向左滑入转场（编辑模型页左移、右侧露出黑底新页），frame-138至frame-139黑底“正在加载...”环，frame-140出现“模型打印编辑”标题与左侧工具栏，frame-141起标题变“姓名牌”并带右上黄色标识，frame-142至frame-144显示“加载中100%”，frame-145打印编辑页渲染出虚线打印空间与“璇玑AI引擎优化已完成”提示；按压触点本身落在frame-128与frame-129采样间隙内，由唯一按钮路径与即时遮罩响应支持本次点击。",
+        "uncertainties": [
+          "“去打印”按钮上的触摸波纹未被采样帧捕获，精确按下帧只能界定在frame-128(35967ms)与frame-129(37000ms)之间",
+          "frame-128输入框区域的圆形高亮（上一包遗留疑问）与本次“去打印”点击无关，但其成因仍未确认"
+        ],
+        "trigger_frame": "frame-129",
+        "trigger_kind": "touch",
+        "page_before": "s6",
+        "page_after": "s7",
+        "continuation_of": "",
+        "edit_boundary": "navigation",
+        "outcome": {
+          "frame_refs": [
+            "frame-145"
+          ],
+          "observation": "frame-145打印编辑页加载完成：黑色3D场景虚线打印空间与坐标轴、左侧工具栏、中央“璇玑AI引擎优化已完成”绿色对勾提示、底部模型尺寸条与缩放100%控件及蓝色“下一步”按钮均可见。"
+        }
+      },
+      {
+        "action": "aiTap",
+        "target": "打印编辑页底部蓝色“下一步”按钮",
+        "value": "",
+        "frame_refs": [
+          "frame-146",
+          "frame-147",
+          "frame-148",
+          "frame-149",
+          "frame-151",
+          "frame-153",
+          "frame-155",
+          "frame-156",
+          "frame-158",
+          "frame-160"
+        ],
+        "observation": "frame-146“下一步”按钮蓝色可点且无触点；frame-147按钮上“下一步”文字右侧首次出现圆形触摸波纹并持续至frame-155，frame-149中央“璇玑AI引擎优化已完成”提示消失、黄色姓名牌模型带选中控制柄完整可见，frame-151起页面中央叠加“正在校验模型...”遮罩，frame-156起耗材颜色确认弹窗渐显（“请确认当前使用的耗材颜色为：官方耗材-黄色”及“修改设置/确认”按钮），frame-158至frame-160弹窗完整显示并含“7天内不再提醒”复选框与圆形关闭键，为点击“下一步”后触发的校验与弹窗响应。",
+        "uncertainties": [],
+        "trigger_frame": "frame-147",
+        "trigger_kind": "touch",
+        "page_before": "s7",
+        "page_after": "s7",
+        "continuation_of": "",
+        "edit_boundary": "none",
+        "outcome": {
+          "frame_refs": [
+            "frame-160"
+          ],
+          "observation": "frame-160耗材颜色确认弹窗完整显示：巫师形象与“请确认耗材颜色”气泡、正文“请确认当前使用的耗材颜色为：官方耗材-黄色”含黄色色块、耗材示意图、橙色警示文字、“修改设置”与蓝色“确认”按钮、“7天内不再提醒”复选框及底部圆形关闭键，背景打印编辑页压暗。"
+        }
+      },
+      {
+        "action": "aiAssert",
+        "target": "耗材颜色确认弹窗蓝色“确认”按钮出现按压波纹且弹窗保持打开",
+        "value": "",
+        "frame_refs": [
+          "frame-160",
+          "frame-163",
+          "frame-164",
+          "frame-165",
+          "frame-166"
+        ],
+        "observation": "frame-160弹窗“确认”按钮无触点；frame-163起“确认”按钮右上部出现圆形触摸波纹并持续至frame-166，但弹窗在frame-163至frame-166期间保持完全打开、文字与按钮布局无变化，关闭或后续跳转的响应尚未在可见帧中呈现。",
+        "uncertainties": [
+          "frame-163“确认”按钮波纹对应的关闭/跳转响应超出本包owned区间，其结果须由后包核验，本包不记录该点击为已完成事件"
+        ],
+        "trigger_frame": "frame-163",
+        "trigger_kind": "automatic",
+        "page_before": "s7",
+        "page_after": "s7",
+        "continuation_of": "",
+        "edit_boundary": "none",
+        "outcome": {
+          "frame_refs": [
+            "frame-166"
+          ],
+          "observation": "frame-166耗材颜色确认弹窗仍完整打开，“确认”按钮上的圆形触摸波纹残留可见，页面未发生关闭或跳转。"
+        }
+      }
+    ],
+    "checks": [],
+    "uncertainties": [
+      "“去打印”按钮的触摸波纹未被采样帧捕获，仅能由frame-129即时出现的“准备打印...”遮罩与按钮置灰反推点击发生在frame-128与frame-129之间",
+      "frame-147“下一步”波纹出现时“正在校验模型...”遮罩尚未出现（frame-151才出现），波纹持续约800ms后才见校验响应，其间是否存在防抖或二次按压无法逐帧区分",
+      "frame-163至frame-166“确认”按钮波纹的后续响应（弹窗关闭或进入下一流程）不在本包owned区间，不能在本包确认该次点击的结果"
+    ],
+    "multiple_scenarios": false,
+    "revisit": []
+  }
+}

@@ -182,7 +182,7 @@ def test_semantic_strict_output_checked_locally_before_defaults(monkeypatch):
     calls=capture(monkeypatch,content=json.dumps(raw))
     assert ai.run_ai_skill('ui_video_trajectory',p,version='observe',image_assets=[],video_stage='semantic',output_schema=semantic_schema())==raw
     capture(monkeypatch,content=json.dumps({**raw,'extra':'forbidden'}))
-    with pytest.raises(RuntimeError,match='video_semantic_output_invalid'):
+    with pytest.raises(ai.SkillSchemaError,match='输出不符合当前阶段schema'):
         ai.run_ai_skill('ui_video_trajectory',p,version='observe',image_assets=[],video_stage='semantic',output_schema=semantic_schema())
     assert len(calls)==1
 
@@ -267,7 +267,7 @@ def test_full_original_semantic_output_rejects_wrong_value(monkeypatch,value):
            'outcome':{'frame_refs':['frame-001'],'observation':'list rows changed'}}
     raw={'states':[],'events':[event],'checks':[],'uncertainties':[],'multiple_scenarios':False,'revisit':[]}
     capture(monkeypatch,content=json.dumps(raw))
-    with pytest.raises(RuntimeError,match='video_semantic_output_invalid'):
+    with pytest.raises(ai.SkillSchemaError,match='输出不符合当前阶段schema'):
         ai.run_ai_skill('ui_video_trajectory',p,version='observe',image_assets=[],video_stage='semantic',output_schema=semantic_schema())
 
 
