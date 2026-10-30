@@ -490,8 +490,10 @@ def test_semantic_flash_literal_options_hash_and_raw_before_admission(monkeypatc
  assert proofs[0]['gateway_request_sha256']==receipts[0]['gateway_request_sha256']
 
 
-def test_seven_stage_models_versions_and_caps_remain_literal():
+def test_closed_stage_models_versions_and_caps_remain_literal():
  assert policy.STAGES=={
+  'timeline':('ui_video_timeline','v1','whole-timeline','qwen3.8-max',10000),
+  'grounding':('ui_video_trajectory','observe','whole-trajectory','qwen3.8-max',10000),
   'perception':('ui_video_perception','v1','whole-perception','qwen3.8-max',8192),
   'overview':('ui_video_trajectory','overview','whole-trajectory','qwen3.8-flash',10000),
   'semantic':('ui_video_trajectory','observe','whole-trajectory','qwen3.8-flash',10000),

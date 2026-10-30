@@ -432,7 +432,7 @@ def run_ai_skill(
     stage = validate_video_stage(skill_name, payload, image_assets, video_stage, output_schema, version=version)
     if request_proof_hook is not None and (not stage or not callable(request_proof_hook)):
         raise ValueError("video_stage_proof_invalid")
-    if stage == "semantic":
+    if stage in {"semantic", "grounding"}:
         output_schema = validate_output_schema(output_schema)
     if stage and (output_defaults is not None or repair_invalid_json or not safe_bool(os.getenv("MIDSCENE_AI_SKILLS_USE_GATEWAY", "1"), True)):
         raise ValueError("video_stage_requires_gateway_without_repair")
@@ -486,6 +486,9 @@ def run_ai_skill(
                     max_tokens=max_tokens,
                 )
                 json_repaired = True
+            if stage == "timeline":
+                from .ui_video_native import validate_timeline_output
+                validate_timeline_output(result, payload["video"]["duration_ms"])
             if stage == "perception":
                 from .ui_video_perception_binding import bind_inventory, project_inventory_format
                 result, _ = project_inventory_format(result)
@@ -493,7 +496,7 @@ def run_ai_skill(
                 bank = bind_inventory(result, payload)
                 if any(w['reason'] != 'source_partition_role' for w in bank['binding_audit']['warnings']):
                     raise ValueError("video_perception_role_mismatch")
-            elif stage == "semantic":
+            elif stage in {"semantic", "grounding"}:
                 validate_stage_output(result, output_schema)
             if not stage:
                 result = _video_output_defaults(_merge_missing_output_defaults(result, output_defaults), whole_video)
@@ -621,7 +624,7 @@ def ai_gateway_skill_content(
     model_config = model_config if isinstance(model_config, dict) else {}
     runtime_trace = runtime_trace if isinstance(runtime_trace, dict) else {}
     stage = validate_video_stage(skill_name, payload, image_assets, video_stage, output_schema, version=version)
-    if stage == "semantic":
+    if stage in {"semantic", "grounding"}:
         output_schema = validate_output_schema(output_schema)
     if stage and json_response is not True:
         raise ValueError("video_stage_json_required")
@@ -681,7 +684,7 @@ def ai_gateway_skill_content(
         request_body.update(videoStage=stage, skillVersion=version, videoPolicyVersion=POLICY_VERSION,
                             videoCorrelation=uuid.uuid4().hex, timeoutMs=max(1, int(timeout*1000)),
                             videoDeadlineMs=deadline_ms)
-        if stage == "semantic":
+        if stage in {"semantic", "grounding"}:
             request_body["outputSchema"] = output_schema
     requested_max_tokens = safe_int(max_tokens, 0)
     if requested_max_tokens > 0:
@@ -777,7 +780,7 @@ def ai_gateway_skill_content(
         "fallbackIndex": safe_int(data.get("fallbackIndex"), 0),
         "fallbackReason": "" if stage else str(data.get("fallbackReason") or "")[:500],
         "source": "ai_gateway",
-        "imageCount": len(normalized_images),
+        "imageCount": 0 if stage == "timeline" else len(normalized_images),
         "finishReason": str(data.get("finishReason") or ""),
         "usage": usage,
     })

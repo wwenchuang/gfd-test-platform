@@ -682,6 +682,8 @@ function validateVideoOutputSchema(schema) {
 
 function videoStageConfig(stage) {
   return {
+    timeline: ['ui_video_timeline', 'v1', 'whole-timeline', 'qwen3.8-max', 10000],
+    grounding: ['ui_video_trajectory', 'observe', 'whole-trajectory', 'qwen3.8-max', 10000],
     perception: ['ui_video_perception', 'v1', 'whole-perception', 'qwen3.8-max', 8192],
     overview: ['ui_video_trajectory', 'overview', 'whole-trajectory', 'qwen3.8-flash', 10000],
     semantic: ['ui_video_trajectory', 'observe', 'whole-trajectory', 'qwen3.8-flash', 10000],
@@ -703,6 +705,8 @@ function videoPolicyAttestation(body, options) {
   effective.response_format = options.response_format.type;
   const images = Array.isArray(messages[1].content) ? messages[1].content.filter(p => p.type === 'image_url') : [];
   effective.image_count = images.length;
+  if (body.videoStage === 'timeline')
+    effective.video_count = messages[1].content.filter(p => p.type === 'video_url').length;
   effective.fine_frame_ids = images.flatMap((part, i) => part.min_pixels === 1658880 ? [body.imageAssets[i].name] : []);
   return {version:'video-stage-policy-v1',stage:body.videoStage,skill:body.skillName,skill_version:body.skillVersion,
     correlation:body.videoCorrelation,model:options.model,effective_options:effective,
@@ -710,9 +714,35 @@ function videoPolicyAttestation(body, options) {
     output_schema_sha256:body.outputSchema ? videoCanonicalSha(validateVideoOutputSchema(body.outputSchema)) : null};
 }
 
+function validateNativeVideo(payload, assets) {
+  const fail = () => { throw new Error('video_native_asset_invalid'); };
+  const exact = (value, keys) => value && typeof value === 'object' && !Array.isArray(value) &&
+    Object.keys(value).length === keys.length && keys.every(k => Object.hasOwn(value, k));
+  if (!exact(payload, ['phase', 'video']) || payload.phase !== 'whole-timeline') fail();
+  const meta = payload.video;
+  if (!exact(meta, ['source_sha256','source_bytes','duration_ms','fps','max_pixels','total_pixels']) ||
+      typeof meta.source_sha256 !== 'string' || !/^[0-9a-f]{64}$/.test(meta.source_sha256) ||
+      !Number.isSafeInteger(meta.source_bytes) || meta.source_bytes < 12 || meta.source_bytes > 12 * 1024 * 1024 ||
+      !Number.isSafeInteger(meta.duration_ms) || meta.duration_ms <= 0 || meta.duration_ms > 600000 ||
+      meta.fps !== 4 || meta.max_pixels !== 655360 || meta.total_pixels !== 268435456) fail();
+  if (!Array.isArray(assets) || assets.length !== 1) fail();
+  const asset = assets[0];
+  if (!asset || typeof asset !== 'object' || Array.isArray(asset) ||
+      Object.keys(asset).some(k => !['name','mime','base64','timestamp_ms','dataUrl'].includes(k)) ||
+      asset.name !== 'source-video' || asset.mime !== 'video/mp4' || asset.timestamp_ms !== 0 ||
+      (Object.hasOwn(asset,'dataUrl') && asset.dataUrl !== '') ||
+      typeof asset.base64 !== 'string' || !asset.base64.length || asset.base64.length > 16 * 1024 * 1024) fail();
+  // Canonical round-trip is bounded and avoids V8 regexp stack overflow on original videos.
+  const raw = Buffer.from(asset.base64, 'base64');
+  if (raw.length !== meta.source_bytes || raw.toString('base64') !== asset.base64 ||
+      raw.subarray(4,8).toString('ascii') !== 'ftyp' ||
+      createHash('sha256').update(raw).digest('hex') !== meta.source_sha256) fail();
+}
+
 function validateVideoStage(body, route) {
   if (!Object.hasOwn(body || {}, 'videoStage')) {
-    if (body?.skillName === 'ui_video_perception') throw new Error('video_stage_required');
+    if (['ui_video_perception','ui_video_timeline'].includes(body?.skillName) ||
+        (Array.isArray(body?.imageAssets) && body.imageAssets.some(a => a?.mime === 'video/mp4' || a?.name === 'source-video'))) throw new Error('video_stage_required');
     if (Object.hasOwn(body || {}, 'outputSchema')) throw new Error('video_stage_schema_without_stage');
     return null;
   }
@@ -730,6 +760,16 @@ function validateVideoStage(body, route) {
   if (route && (route.model !== config[3] ||
       !/^https:\/\/dashscope(?:-intl|-us)?\.aliyuncs\.com(?:\/|$)/i.test(String(route.baseUrl || ''))))
     throw new Error('video_stage_route_unsupported');
+  if (stage === 'timeline') {
+    if (Object.hasOwn(body, 'outputSchema')) throw new Error('video_stage_schema_invalid');
+    validateNativeVideo(payload, body.imageAssets);
+    return stage;
+  }
+  if (stage === 'grounding') {
+    if (payload.reasoning_mode !== 'bounded' || Object.hasOwn(payload,'perception_bank'))
+      throw new Error('video_stage_grounding_invalid');
+    validateVideoOutputSchema(body.outputSchema);
+  }
   const frames = stage === 'semantic' ? payload.frames : payload.image_frames;
   if (!Array.isArray(frames) || frames.length < 2 || frames.length > 1000) throw new Error('video_frames_invalid');
   let last = -1; const names = new Set();
@@ -747,10 +787,10 @@ function validateVideoStage(body, route) {
     validateVideoOutputSchema(body.outputSchema);
     return stage;
   }
-  if (Object.hasOwn(body, 'outputSchema')) throw new Error('video_stage_schema_invalid');
+  if (Object.hasOwn(body, 'outputSchema') && stage !== 'grounding') throw new Error('video_stage_schema_invalid');
   if (!Array.isArray(assets) || assets.length !== frames.length || assets.length < 2 || assets.length > (stage === 'perception' ? 12 : 60))
     throw new Error('video_vision_limit');
-  if (stage === 'perception') {
+  if (stage === 'perception' || stage === 'grounding') {
     if (typeof payload.packet_id !== 'string' || !payload.packet_id || payload.packet_id.length > 128 ||
         JSON.stringify(payload.frames) !== JSON.stringify(frames) ||
         ['detail_frames', 'perception_mode', 'perception_frame_ids'].some(k => Object.hasOwn(payload, k)))
@@ -856,7 +896,7 @@ function completionOptionsForRoute(route, prompt, body, callOptions = {}) {
       delete completionOptions.thinking_budget;
       for (const part of imageParts) if (part.type === 'image_url') part.min_pixels = 1658880;
     } else completionOptions.thinking_budget = 1024;
-    completionOptions.response_format = videoStage === 'semantic' ?
+    completionOptions.response_format = ['semantic','grounding'].includes(videoStage) ?
       {type: 'json_schema', json_schema: {name: 'video_semantic', strict: true, schema: validateVideoOutputSchema(body.outputSchema)}} :
       {type: 'json_object'};
   }
@@ -895,6 +935,12 @@ function buildUserMessage(action, body) {
 function imagePartsFromBody(body = {}) {
   const assets = Array.isArray(body?.imageAssets) ? body.imageAssets : [];
   if (body.videoStage === 'semantic') return [];
+  if (body.videoStage === 'timeline') {
+    validateNativeVideo(body.payload, assets);
+    const meta = body.payload.video;
+    return [{type:'video_url',video_url:{url:'data:video/mp4;base64,'+assets[0].base64},
+      fps:meta.fps,max_pixels:meta.max_pixels,total_pixels:meta.total_pixels}];
+  }
   const wholeVideo = (body.videoStage === 'perception' && body.skillName === 'ui_video_perception' && body.payload?.phase === 'whole-perception') ||
     (body.skillName === 'ui_video_observe' && body.payload?.phase === 'whole-observe') ||
     (body.skillName === 'ui_video_steps' && body.payload?.phase === 'whole-consolidate') ||

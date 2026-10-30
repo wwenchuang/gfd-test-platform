@@ -8,6 +8,7 @@ import re
 UNSET = object()
 POLICY_VERSION = 'video-stage-policy-v1'
 STAGES = {
+    'timeline': ('ui_video_timeline', 'v1', 'whole-timeline', 'qwen3.8-max', 10000),
     'perception': ('ui_video_perception', 'v1', 'whole-perception', 'qwen3.8-max', 8192),
     'overview': ('ui_video_trajectory', 'overview', 'whole-trajectory', 'qwen3.8-flash', 10000),
     'semantic': ('ui_video_trajectory', 'observe', 'whole-trajectory', 'qwen3.8-flash', 10000),
@@ -15,6 +16,8 @@ STAGES = {
     'consolidate': ('ui_video_steps', 'consolidate', 'whole-consolidate', 'qwen3.8-max', 10000),
     'outcome': ('ui_video_observe', 'outcome', 'whole-observe', 'qwen3.8-max', 4000),
     'inputs': ('ui_video_observe', 'inputs', 'whole-observe', 'qwen3.8-max', 3000),
+    # Existing bank runner resolves observe by first match; semantic must stay first.
+    'grounding': ('ui_video_trajectory', 'observe', 'whole-trajectory', 'qwen3.8-max', 10000),
 }
 _SEMANTIC_FIELDS = {'states', 'events', 'checks', 'uncertainties', 'multiple_scenarios'}
 
@@ -142,7 +145,9 @@ def _metadata(frames):
 def validate_video_stage(skill, payload, assets, stage=UNSET, schema=UNSET, *, version="v1"):
     """Validate before transport. Explicit null capabilities are invalid."""
     if stage is UNSET:
-        if skill == 'ui_video_perception':
+        if (skill in {'ui_video_perception', 'ui_video_timeline'} or
+                isinstance(assets, list) and any(isinstance(a, dict) and
+                    (a.get('mime') == 'video/mp4' or a.get('name') == 'source-video') for a in assets)):
             raise ValueError('video_stage_required')
         if schema is not UNSET:
             raise ValueError('video_stage_schema_without_stage')
@@ -154,6 +159,23 @@ def validate_video_stage(skill, payload, assets, stage=UNSET, schema=UNSET, *, v
     expected, expected_version, phase, _, _ = STAGES[stage]
     if skill != expected or version != expected_version or payload.get('phase') != phase:
         raise ValueError('video_stage_scope_invalid')
+    if stage == 'timeline':
+        from .ui_video_native import validate_native_asset
+        if schema is not UNSET:
+            raise ValueError('video_stage_schema_invalid')
+        validate_native_asset(payload, assets)
+        return stage
+    if stage == 'grounding':
+        if payload.get('reasoning_mode') != 'bounded' or 'perception_bank' in payload:
+            raise ValueError('video_stage_grounding_invalid')
+        validate_output_schema(schema)
+        from .ui_video_perception_binding import _source_index
+        try:
+            _source_index(payload)
+        except ValueError as exc:
+            raise ValueError('video_frames_invalid') from exc
+        if payload.get('frames') != payload.get('image_frames'):
+            raise ValueError('video_frames_invalid')
     if stage == 'semantic':
         if assets not in (None, []) or payload.get('reasoning_mode') != 'bounded':
             raise ValueError('video_stage_semantic_invalid')
@@ -162,7 +184,7 @@ def validate_video_stage(skill, payload, assets, stage=UNSET, schema=UNSET, *, v
         _metadata(payload.get('frames'))
         validate_output_schema(schema)
         return stage
-    if schema is not UNSET:
+    if schema is not UNSET and stage != 'grounding':
         raise ValueError('video_stage_schema_invalid')
     if stage == 'perception':
         from .ui_video_perception_binding import _source_index

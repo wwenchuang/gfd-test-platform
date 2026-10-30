@@ -14,10 +14,14 @@ def canonical_sha(value):
 
 
 def expected_provider_options(body):
-    """Independent reconstruction of the closed seven-stage Gateway wire policy."""
+    """Independent reconstruction of the closed video-stage Gateway wire policy."""
     stage = body['videoStage'];payload = body['payload'];assets = body['imageAssets']
     content = [{'type':'text','text':body['prompt']}]
     for asset in assets:
+        if stage == 'timeline':
+            content.append({'type':'video_url','video_url':{'url':'data:video/mp4;base64,'+asset['base64']},
+                            **{k:payload['video'][k] for k in ('fps','max_pixels','total_pixels')}})
+            continue
         name = asset['name'];role = ''
         if stage == 'perception':
             role = ' [context]' if name in payload['context_frame_ids'] else ' [owned]'
@@ -33,7 +37,7 @@ def expected_provider_options(body):
         'messages':[{'role':'system','content':SYSTEM_PROMPT},
                     {'role':'user','content':content if assets else body['prompt']}]}
     if stage!='perception':options['thinking_budget']=1024
-    if stage=='semantic':options['response_format']={'type':'json_schema','json_schema':{
+    if stage in {'semantic','grounding'}:options['response_format']={'type':'json_schema','json_schema':{
         'name':'video_semantic','strict':True,'schema':body['outputSchema']}}
     return options
 
@@ -41,7 +45,8 @@ def expected_provider_options(body):
 def make_expected_attestation(body):
     options = expected_provider_options(body)
     effective = {k:copy.deepcopy(v) for k,v in options.items() if k!='messages'}
-    effective['image_count']=len(body['imageAssets'])
+    effective['image_count']=0 if body['videoStage']=='timeline' else len(body['imageAssets'])
+    if body['videoStage']=='timeline':effective['video_count']=1
     effective['fine_frame_ids']=[a['name'] for a in body['imageAssets'] if body['videoStage']=='perception' or a['name'] in body['payload'].get('perception_frame_ids',[])]
     # Schema remains private request data; export only its digest.
     effective['response_format']=options['response_format']['type']
@@ -86,7 +91,7 @@ def safe_attestation(value):
         if type(item) in (int, float) and item == 0.1:
             safe['temperature'] = item
         for key, allowed in (('max_tokens', {config[4] for config in STAGES.values()}),
-                             ('thinking_budget', {1024}), ('image_count', {0, *range(2, 61)})):
+                             ('thinking_budget', {1024}), ('video_count', {1}), ('image_count', {0, *range(2, 61)})):
             item = effective.get(key)
             if type(item) is int and item in allowed:
                 safe[key] = item
