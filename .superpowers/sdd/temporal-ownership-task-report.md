@@ -64,3 +64,39 @@ Self-review found the envelope question-loss gap and lack of fragment diagnostic
 No actual provider calls, all-source rerun, source regeneration, browser/API/device/phone operation, draft creation, deployment, push or model change occurred. AI remains Qwen. Offline tests do not prove visual attribution, that every preserved trigger is physically real, that a supported ordinary result exists, or fresh whole-source/normal-case/device acceptance. Candidate constraints intentionally remain unverified. No source-specific IDs/targets/coordinates/answers are present in the implementation.
 
 No deployment command is issued: task scope explicitly excludes deployment. Parent should independently review base `40dd0690` through implementation `8b26eb24` (and this report commit), then coordinate any separately authorized diagnostics. No rollback, automatic evidence trimming, trigger relocation, causal inference or softening of normal export/review/input/side-effect/printer gates was added.
+
+## Independent review fixes (2026-10-31)
+
+The independent review in `.superpowers/sdd/temporal-ownership-review.md` found two P2 combinations absent from the first test set. Parent authorized both repairs and clarified that exact validated trigger refutation may retire only its corresponding unverified temporal constraint.
+
+1. Rejected schema-invalid question text had been promoted to final review blockers. A 2001-character root/event question could poison final validation despite a valid correction and supported audit. `preserve_questions` now admits only strings that are nonblank and at most 2000 characters, matching the existing valid question domain. It does not strip, slice, resolve, edit or overwrite raw text. Six injected root/event tests preserve the original response exactly, exclude oversized/empty/whitespace malformed entries from blockers, and retain a separate valid question of exactly 2000 characters. The whitespace-event fixture uses an independent envelope shape rejection to enter correction because the existing binder itself does not reject whitespace; binder and legacy behavior remain unchanged.
+2. Temporal candidate constraints had survived a later independent explicit trigger contradiction. At the existing validated audit-repair boundary, the matched audited fragment IDs whose `trigger_verdict` is exactly `contradicted` now subtract only their own structural signature multiplicity from the unverified Counter. No target matching or raw/unmatched check is used. Strong positive audit locks are unchanged. `unclear` triggers, outcome-only contradiction and unrelated supported fragments remain protected. Two same-signature fragments plus a contradiction of exactly one leave multiplicity one. A temporal correction followed by a trigger contradiction can now reach a fresh audit after replacement, using exactly the original two corrections.
+
+Review-fix RED/GREEN:
+
+```sh
+PYTHONDONTWRITEBYTECODE=1 python3 -m pytest -q -p no:cacheprovider tests/test_ui_video_temporal_ownership.py
+```
+
+Question-fix RED: **5 failed, 17 passed**, including both oversized question cases failing final validation. GREEN after the blocker predicate and whitespace correction-path fixture adjustment: **22 passed in 0.36s**. Existing valid long-question retention continues to pass.
+
+Audit-retirement RED: **2 failed, 24 passed**, both intended legitimate replacements rejected as `ordinary_candidate_preservation`. After exact validated multiplicity retirement:
+
+```sh
+PYTHONDONTWRITEBYTECODE=1 python3 -m pytest -q -p no:cacheprovider tests/test_ui_video_temporal_ownership.py tests/test_ui_video_executor_contradiction.py
+```
+
+GREEN: **57 passed in 0.51s** (26 temporal tests plus 31 existing executor contradiction tests). The unclear and outcome-only controls continue to reject the changed trigger, including rejection by the stronger positive lock for the supported-trigger/outcome-only case. Original deletion/merge exhaustion tests remain passing.
+
+Review fixes implementation commit: `71f53314` (`fix: respect question validity and exact audit trigger refutation`). Only `ui_video_trajectory.py` and its temporal ownership test file are included.
+
+Final review-fix verification:
+
+```sh
+PYTHONDONTWRITEBYTECODE=1 python3 -m pytest -q -p no:cacheprovider tests/test_ui_video_temporal_ownership.py tests/test_ui_video_executor_contradiction.py tests/test_ui_video_trajectory*.py tests/test_ui_video_packet_contract.py tests/test_ui_video_audit*.py tests/test_ui_video_business*.py tests/test_ui_video_outcomes.py tests/test_ui_video_to_case.py tests/test_ui_video_consolidation_entry.py tests/test_ui_video_runtime*.py
+python3 -m py_compile task_server/services/agent_service.py task_server/services/yaml_service.py task_server/services/yaml_executable_scorer.py task_server/services/ui_video_trajectory.py
+python3 tests/backend_static_checks.py
+git diff --check
+```
+
+Results on the final repaired code: **857 passed in 48.72s**, compile exit 0, backend **63 checks / ok True**, diff exit 0. An earlier question-only intermediate suite passed 822 tests in 49.74s; the 857-test final run includes the subsequent audit-retirement repair and supersedes it. No provider/browser/device/source/deployment/push operations, budget changes or STATE edits were performed. All original limits and legacy behavior remain unchanged. Parent retains review and integration ownership.
