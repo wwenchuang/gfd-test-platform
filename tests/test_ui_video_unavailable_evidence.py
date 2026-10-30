@@ -188,7 +188,7 @@ def test_real_skill_gateway_nested_parent_latest_state_feedback(monkeypatch):
     from task_server.services import ai_skill_service as ai
     from test_ui_video_stage_wire import capture
     actual=ai.run_ai_skill
-    attempts=[];bodies=[]
+    attempts=[];bodies=[];stage_bodies=[]
     def mutate(stage,p,r,c):
         if stage=='observe' and p['packet_id']=='packet-001':
             attempts.append(copy.deepcopy(p))
@@ -199,7 +199,9 @@ def test_real_skill_gateway_nested_parent_latest_state_feedback(monkeypatch):
     def run(name,p,**kw):
         r=generate(name,p,**kw);r.setdefault('revisit',[]);captured=capture(monkeypatch,json.dumps(r));
         try:return actual(name,p,version=kw['version'],image_assets=kw['image_assets'],retry_count=0,repair_invalid_json=False,**(dict(video_stage='grounding',output_schema=runtime._semantic_schema(p)) if kw['version']=='observe' else {}))
-        finally:bodies.extend(captured)
+        finally:
+            bodies.extend(captured)
+            stage_bodies.extend((kw['version'],body) for body in captured)
     engine.model=run;result=engine.run()
     assert len(attempts)==3 and result['trajectory_audit']['corrections_used']==2
     assert 'first_not_after_last' in attempts[1]['validation_feedback']
@@ -212,6 +214,34 @@ const fn=s.slice(s.indexOf('function buildUserMessage('),s.indexOf('function ima
 const build=vm.runInNewContext(fn+';buildUserMessage');process.stdout.write(build('ui_video_trajectory',JSON.parse(fs.readFileSync(0,'utf8'))));"""
     wire=subprocess.run(['node','-e',script],input=json.dumps(body),capture_output=True,text=True,check=True).stdout
     assert 'first_not_after_last' in wire and 'parent_validation_feedback' in wire and 'validation_feedback' in wire
+    # Exercise both rendered Skill prompts and the actual Gateway message builder;
+    # reading templates alone cannot detect renderer/transport omissions.
+    guidance=(
+        '可见按压反馈与独立响应序列可作为交互候选的证据',
+        '无需手指在画面中出现',
+        '不能仅凭标记消失/重现推断物理按下/抬起次数',
+        '装饰性标记或反馈归属不清时保留unclear和具体问题',
+        '重复补帧未必能证明绝对物理按压边界',
+        '不得抑制确有业务边界疑问的补帧请求',
+        'not_acquired不代表已解码无新增帧，也不代表支持任何事实',
+        '完整保留其问题与现有证据疑问',
+        '状态锚点按给定timestamp_ms判断先后',
+        'frame_id数字大小不代表时间顺序',
+    )
+    for stage in ('observe','audit'):
+        actual_body=next(body for name,body in stage_bodies if name==stage)
+        actual_wire=subprocess.run(['node','-e',script],input=json.dumps(actual_body),
+                                   capture_output=True,text=True,check=True).stdout
+        for rendered in (actual_body['prompt'],actual_wire):
+            assert all(fragment in rendered for fragment in guidance),stage
+            assert fixture()['source']['source_id'] not in rendered
+            assert fixture()['source']['filename'] not in rendered
+        # The new physical-mechanism paragraph must stay general; other prompt
+        # sections legitimately contain numeric budget/schema limits.
+        paragraph=next(line for line in actual_body['prompt'].splitlines()
+                       if line.startswith('控件的可见按压反馈'))
+        assert not any(answer in paragraph for answer in
+                       ('29.2','31.033','两次点击','两次按压','frame-139','d38feca'))
 
 
 def test_real_child_transports_state_feedback_and_deferral_data(tmp_path):
