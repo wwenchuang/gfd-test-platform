@@ -108,8 +108,9 @@ def test_real_child_rejection_has_proof_raw_receipt_cleanup_and_no_retry(tmp_pat
 
 def test_business_runner_supplies_audit_schema(harness):
     h = harness; h['run']()
-    audits = [kw for _, kw in h['calls'] if kw['video_stage'] == 'audit']
-    assert audits and all(kw['output_schema'] == audit_schema() for kw in audits)
+    from task_server.services.ui_video_runtime import _audit_schema
+    audits = [(p, kw) for p, kw in h['calls'] if kw['video_stage'] == 'audit']
+    assert audits and all(kw['output_schema'] == _audit_schema(p) for p, kw in audits)
 
 
 def test_business_real_trajectory_shards_and_shared_correction_keep_strict_schema(harness, monkeypatch):
@@ -147,5 +148,12 @@ def test_business_real_trajectory_shards_and_shared_correction_keep_strict_schem
     second = [(p, kw) for p, kw in audits if p['packet_id'] == 'packet-002']
     assert [len(p['trajectory']) for p, _ in second] == [6, 1, 1]
     assert 'validation_feedback' in second[-1][0] and rejected == [True]
-    assert all(kw['output_schema'] == audit_schema() for _, kw in audits)
+    from task_server.services.ui_video_runtime import _audit_schema
+    assert all(kw['output_schema'] == _audit_schema(p) for p, kw in audits)
+    assert all(kw['output_schema']['properties']['checks']['items']['properties']['event_id'].get('enum', []) ==
+               [c['track']['event_id'] for c in p['trajectory']] for p, kw in audits)
+    for p, kw in audits:
+        assert p['reference_contract'] == dict(version='packet-audit-reference-v1',
+            check_event_ids=[c['track']['event_id'] for c in p['trajectory']],
+            issue_owner_frame_ids=p['owned_frame_ids'],image_frame_ids=[f['frame_id'] for f in p['frames']])
     assert all('business_timeline' not in p for p, _ in audits)
