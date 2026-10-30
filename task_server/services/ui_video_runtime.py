@@ -206,6 +206,38 @@ def run_runtime(document, workspace, source_path, check, publish, *, budget=None
     return _run_runtime(document, workspace, source_path, check, publish, budget=budget)
 
 
+def _native_transport_unavailable(error, owner, records):
+    """Only terminal, durable timeline transport failures qualify; content is ignored."""
+    from .ui_video_model_jobs import LocalModelJobDeadline, ModelJobError
+    if (owner.active_pids or owner.cleanup_failures or len(owner.accounting) != 1):
+        return None
+    row = owner.accounting[0]
+    if (any(row.get(k) is not True for k in ('reserved', 'proof_persisted', 'dispatch_intent', 'terminal', 'cleanup')) or
+            row.get('admitted') is not False or not row.get('proof_ref')):
+        return None
+    proof = records.read(row['proof_ref'])
+    if (proof.get('stage'), proof.get('skill'), proof.get('skill_version')) != ('timeline', 'ui_video_timeline', 'v1'):
+        return None
+    refs = {'proof_ref': copy.deepcopy(row['proof_ref'])}
+    if isinstance(error, LocalModelJobDeadline) and not row.get('raw_received') and not row.get('receipt_persisted') and not row.get('receipt_ref'):
+        reason = 'local_job_deadline'
+    elif type(error) is ModelJobError and str(error) == 'video_job_failed' and row.get('raw_received') and row.get('receipt_persisted') and row.get('receipt_ref'):
+        receipt = records.read(row['receipt_ref'])
+        status = receipt.get('http_status')
+        if (receipt.get('gateway_request_sha256') != proof['gateway_request_sha256'] or
+                receipt.get('rejection_code') != 'video_stage_provider_failed' or
+                type(status) is not int or not (status == 429 or 500 <= status <= 599) or
+                any(receipt.get(k) is not None for k in ('providerId', 'model', 'fallbackUsed', 'videoPolicy'))):
+            return None
+        reason = 'temporary_provider_failure'
+        refs['receipt_ref'] = copy.deepcopy(row['receipt_ref'])
+    else:
+        return None
+    return {'classification': 'native_hypotheses_unavailable', 'instruction_authority': False,
+            'reason': reason, **refs,
+            'feedback': '可选视频传输不可用，没有可用原生假设。必须完整观察原始帧并独立审核，不得推断或补造动作。'}
+
+
 def _run_runtime(document, workspace, source_path, check, publish, *, budget=None, business=False):
     """Return original analysis shape; parent remains the sole source publisher.
 
@@ -253,6 +285,7 @@ def _run_runtime(document, workspace, source_path, check, publish, *, budget=Non
     with RecordStore(Path(workspace) / 'model-records') as records:
         jobs = ModelJobs(records, deadline=budget.deadline, reserve=budget.reserve,
                          check=boundary, engine_deadline=budget.engine_deadline)
+        native_jobs = None
         try:
             with jobs:
                 def produce(windows, initial=False):
@@ -348,27 +381,42 @@ def _run_runtime(document, workspace, source_path, check, publish, *, budget=Non
                                 for k in ('proof_ref','receipt_ref') if k in jobs.accounting[offset]}
 
                 if business:
-                    from .ui_video_native import load_native_video
+                    from .ui_video_native import prepare_optional_native_video
                     from .ui_video_business_first import validate_business_timeline
                     boundary()
-                    metadata, assets = load_native_video(source_path, media['duration_ms'])
+                    metadata, assets, business_timeline = prepare_optional_native_video(source_path, media['duration_ms'])
                     boundary()
                     progress('understanding', 0, 1, [])
-                    offset = len(jobs.accounting)
-                    native = runner('ui_video_timeline', {'phase':'whole-timeline', 'video':metadata},
-                        version='v1', image_assets=assets, timeout=120, retry_count=0,
-                        max_tokens=10000, repair_invalid_json=False)
-                    # Keep durable provenance even when returned scene bounds fail.
-                    row = jobs.accounting[offset]
-                    business_timeline = {'classification':'unverified_business_hypotheses',
-                        'instruction_authority':False,
-                        **{k:copy.deepcopy(row[k]) for k in ('proof_ref','receipt_ref') if k in row}}
-                    boundary()
-                    if not (row.get('admitted') and row.get('receipt_persisted') and
-                            row.get('proof_ref') and row.get('receipt_ref')):
-                        raise ValueError('video_timeline_receipt_missing')
-                    validate_business_timeline(native, media['duration_ms'])
-                    business_timeline['timeline'] = copy.deepcopy(native)
+                    if business_timeline is None:
+                        native_jobs = ModelJobs(records, deadline=budget.deadline, reserve=budget.reserve,
+                            check=boundary, engine_deadline=budget.engine_deadline)
+                        native_error = None
+                        try:
+                            with native_jobs:
+                                native = native_jobs.run('ui_video_timeline',
+                                    {'phase':'whole-timeline', 'video':metadata},
+                                    version='v1', image_assets=assets, timeout=120, retry_count=0,
+                                    max_tokens=10000, repair_invalid_json=False, video_stage='timeline',
+                                    model_config={'providerId':'qwen_plus','model':STAGES['timeline'][3]})
+                        except Exception as error:
+                            native_error = error
+                        boundary()
+                        if native_error is not None:
+                            business_timeline = _native_transport_unavailable(native_error, native_jobs, records)
+                            if business_timeline is None:
+                                raise native_error
+                        # Keep durable provenance even when returned scene bounds fail.
+                        row = native_jobs.accounting[0]
+                        if native_error is None:
+                            business_timeline = {'classification':'unverified_business_hypotheses',
+                                'instruction_authority':False,
+                                **{k:copy.deepcopy(row[k]) for k in ('proof_ref','receipt_ref') if k in row}}
+                            boundary()
+                            if not (row.get('admitted') and row.get('receipt_persisted') and
+                                    row.get('proof_ref') and row.get('receipt_ref')):
+                                raise ValueError('video_timeline_receipt_missing')
+                            validate_business_timeline(native, media['duration_ms'])
+                            business_timeline['timeline'] = copy.deepcopy(native)
                     progress('understanding', 1, 1, [])
                 else:
                     produce(bank.windows, initial=True)
@@ -428,16 +476,24 @@ def _run_runtime(document, workspace, source_path, check, publish, *, budget=Non
         finally:
             # All owned jobs have closed before the manifest is frozen. A failed
             # store latches and raises here; never claim an unpersisted raw receipt.
-            refs = [records.append('status', row) for row in jobs.accounting]
+            accounting = (native_jobs.accounting if native_jobs is not None else []) + jobs.accounting
+            refs = [records.append('status', {**row, 'index': index}) for index, row in enumerate(accounting)]
             aggregate = records.append('aggregate', {'refs': refs})
             private = {'mode': mode, 'windows': bank.index(), 'records': records.snapshot(),
                        'perception_format_projections': copy.deepcopy(perception_format_projections),
                        'accounting_ref': aggregate, 'trajectory_diagnostics': copy.deepcopy(trajectory_diagnostics)}
             if business:
                 private['business_timeline'] = copy.deepcopy(business_timeline)
+                private['job_owners'] = [
+                    {'scope': scope, 'status_refs': copy.deepcopy(refs[start:end]),
+                     'cleanup_failures': copy.deepcopy(getattr(owner, 'cleanup_failures', []))}
+                    for scope, owner, start, end in (
+                        ('native', native_jobs, 0, len(native_jobs.accounting) if native_jobs else 0),
+                        ('authoritative', jobs, len(native_jobs.accounting) if native_jobs else 0, len(refs)))
+                    if owner is not None]
             summary = {'mode': mode, 'original_windows': 0 if business else bank.original_count,
                        'reserved': budget.reserved, 'limit': budget.limit,
-                       'receipts': sum(row.get('receipt_persisted', False) for row in jobs.accounting)}
+                       'receipts': sum(row.get('receipt_persisted', False) for row in accounting)}
             # Parent checks current access independently; terminal revocation can
             # settle without publishing this content or mutating a foreign source.
             check()

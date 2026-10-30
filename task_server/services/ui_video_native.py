@@ -6,10 +6,11 @@ import re
 from pathlib import Path
 
 MAX_NATIVE_BYTES = 12 * 1024 * 1024
+MAX_NATIVE_ENCODED = 10_000_000
 NATIVE_OPTIONS = {'fps': 4, 'max_pixels': 655360, 'total_pixels': 268435456}
 
 
-def validate_native_asset(payload, assets):
+def _validate_native_asset(payload, assets, *, transport=True):
     def fail():
         raise ValueError('video_native_asset_invalid')
     if (type(payload) is not dict or set(payload) != {'phase', 'video'} or
@@ -31,6 +32,8 @@ def validate_native_asset(payload, assets):
             ('dataUrl' in asset and asset['dataUrl'] != '') or
             type(asset.get('base64')) is not str or not 0 < len(asset['base64']) <= 16 * 1024 * 1024):
         fail()
+    if transport and len(asset['base64']) >= MAX_NATIVE_ENCODED:
+        fail()
     try:
         raw = base64.b64decode(asset['base64'], validate=True)
     except (ValueError, binascii.Error):
@@ -41,7 +44,11 @@ def validate_native_asset(payload, assets):
         fail()
 
 
-def load_native_video(source_path, duration_ms):
+def validate_native_asset(payload, assets):
+    return _validate_native_asset(payload, assets)
+
+
+def _load_native_video(source_path, duration_ms):
     with Path(source_path).open('rb') as source:
         raw = source.read(MAX_NATIVE_BYTES + 1)
     if len(raw) > MAX_NATIVE_BYTES:
@@ -50,8 +57,28 @@ def load_native_video(source_path, duration_ms):
                 'duration_ms': duration_ms, **NATIVE_OPTIONS}
     assets = [{'name': 'source-video', 'mime': 'video/mp4', 'base64': base64.b64encode(raw).decode('ascii'),
                'timestamp_ms': 0}]
-    validate_native_asset({'phase': 'whole-timeline', 'video': metadata}, assets)
+    _validate_native_asset({'phase': 'whole-timeline', 'video': metadata}, assets, transport=False)
     return metadata, assets
+
+
+def load_native_video(source_path, duration_ms):
+    metadata, assets = _load_native_video(source_path, duration_ms)
+    validate_native_asset({'phase':'whole-timeline', 'video':metadata}, assets)
+    return metadata, assets
+
+
+def prepare_optional_native_video(source_path, duration_ms):
+    """Validate original bytes locally before skipping unsupported transport only."""
+    metadata, assets = _load_native_video(source_path, duration_ms)
+    encoded_size = len(assets[0]['base64'])
+    unavailable = None
+    if encoded_size >= MAX_NATIVE_ENCODED:
+        unavailable = {'classification':'native_hypotheses_unavailable', 'instruction_authority':False,
+            'reason':'encoded_video_transport_limit', 'source_sha256':metadata['source_sha256'],
+            'source_bytes':metadata['source_bytes'], 'encoded_characters':encoded_size,
+            'encoded_character_limit_exclusive':MAX_NATIVE_ENCODED,
+            'feedback':'原始视频编码超过可选传输上限，未调用原生模型且没有可用假设。必须完整观察原始帧并独立审核，不得推断或补造动作。'}
+    return metadata, assets, unavailable
 
 
 def validate_timeline_output(value, duration_ms):

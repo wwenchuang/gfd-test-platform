@@ -1,0 +1,137 @@
+{
+  "22": [
+    {
+      "entry": 1,
+      "kind": "proof",
+      "sha256": "b7e1189514d67fd126d8fb1f3f97901ab442786f5e6bb5745700788562d17327",
+      "value": {
+        "correlation": "cd0004165ac845cdb481ef52dba7e8a9",
+        "gateway_request_sha256": "b71790f4498c33073608433564a3594bb6b33bdfcb4b945451be5ba48119043a",
+        "skill": "ui_video_timeline",
+        "skill_version": "v1",
+        "stage": "timeline",
+        "timeout_ms": 119124
+      }
+    },
+    {
+      "entry": 2,
+      "kind": "receipt",
+      "sha256": "bfabfc24369def80f233c6f85f4056555b57845310a32222db87c82bed1357f4",
+      "value": {
+        "content": "",
+        "fallbackUsed": null,
+        "finishReason": null,
+        "gateway_request_sha256": "b71790f4498c33073608433564a3594bb6b33bdfcb4b945451be5ba48119043a",
+        "http_status": 500,
+        "model": null,
+        "providerId": null,
+        "rejection_code": "video_stage_provider_failed",
+        "usage": {},
+        "videoPolicy": null
+      }
+    },
+    {
+      "entry": 3,
+      "kind": "status",
+      "sha256": "a853070707b4450575c9bb41142c1d99943b18c8f854ca0fe6d5cc94d1ca5176",
+      "value": {
+        "admitted": false,
+        "cleanup": true,
+        "dispatch_intent": true,
+        "events": [
+          "reserved",
+          "proof_persisted",
+          "dispatch_intent",
+          "raw_received",
+          "receipt_persisted",
+          "cleanup",
+          "failed"
+        ],
+        "index": 0,
+        "proof_persisted": true,
+        "proof_ref": {
+          "entry": 1,
+          "sha256": "b7e1189514d67fd126d8fb1f3f97901ab442786f5e6bb5745700788562d17327"
+        },
+        "raw_received": true,
+        "receipt_persisted": true,
+        "receipt_ref": {
+          "entry": 2,
+          "sha256": "bfabfc24369def80f233c6f85f4056555b57845310a32222db87c82bed1357f4"
+        },
+        "reserved": true,
+        "terminal": true,
+        "transport_status": "receipt_received"
+      }
+    },
+    {
+      "entry": 4,
+      "kind": "aggregate",
+      "sha256": "a54bd1cb7d64c6deed17256c1a1e359c4c88ac633f742445aa696ba70216383a",
+      "value": {
+        "refs": [
+          {
+            "entry": 3,
+            "sha256": "a853070707b4450575c9bb41142c1d99943b18c8f854ca0fe6d5cc94d1ca5176"
+          }
+        ]
+      }
+    }
+  ],
+  "23": [
+    {
+      "entry": 1,
+      "kind": "proof",
+      "sha256": "4e6d3d001998fc8ada27d1e7b2d38457641fb0a2a82a81942001439b8bbc8d5b",
+      "value": {
+        "correlation": "17a80b02423646a29992d7bdde8b58df",
+        "gateway_request_sha256": "dc2f01156ebc643093b6ff72292e13ad7e106fd9e6a5d5d8966e9bd7b9bdd58f",
+        "skill": "ui_video_timeline",
+        "skill_version": "v1",
+        "stage": "timeline",
+        "timeout_ms": 119106
+      }
+    },
+    {
+      "entry": 2,
+      "kind": "status",
+      "sha256": "a17da17649557ebbb38ee126597b5624c855bac44cfee4545334a5bd5e009ab2",
+      "value": {
+        "admitted": false,
+        "cleanup": true,
+        "dispatch_intent": true,
+        "events": [
+          "reserved",
+          "proof_persisted",
+          "dispatch_intent",
+          "timeout",
+          "cleanup"
+        ],
+        "index": 0,
+        "proof_persisted": true,
+        "proof_ref": {
+          "entry": 1,
+          "sha256": "4e6d3d001998fc8ada27d1e7b2d38457641fb0a2a82a81942001439b8bbc8d5b"
+        },
+        "raw_received": false,
+        "receipt_persisted": false,
+        "reserved": true,
+        "terminal": true,
+        "transport_status": "unknown"
+      }
+    },
+    {
+      "entry": 3,
+      "kind": "aggregate",
+      "sha256": "149c2b02b3707889bcb2cb38535d790a18482f3039a0d802900390442e478a10",
+      "value": {
+        "refs": [
+          {
+            "entry": 2,
+            "sha256": "a17da17649557ebbb38ee126597b5624c855bac44cfee4545334a5bd5e009ab2"
+          }
+        ]
+      }
+    }
+  ]
+}

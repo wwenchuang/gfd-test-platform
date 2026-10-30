@@ -50,6 +50,10 @@ class ModelJobError(RuntimeError):
     """Closed safe child/IPC classification, never arbitrary provider text."""
 
 
+class LocalModelJobDeadline(TimeoutError):
+    """Parent observed its owned job clock expire; never a child timeout label."""
+
+
 class ModelJobCancelled(ModelJobError):
     pass
 
@@ -253,7 +257,7 @@ class ModelJobs:
                 deadline = min(deadline, engine)
         deadline -= CLEANUP_SECONDS
         if time.monotonic() >= deadline:
-            raise TimeoutError('video_job_deadline')
+            raise LocalModelJobDeadline('video_job_deadline')
         return deadline
 
     def _launch(self):
@@ -338,7 +342,7 @@ class ModelJobs:
                 job['hooks'][event](copy.deepcopy(safe))
             self._guard()
             if time.monotonic() >= job['deadline']:
-                raise TimeoutError('video_job_deadline')
+                raise LocalModelJobDeadline('video_job_deadline')
             job['send'] = memoryview(_encode({'ack': event}, 256))
             job['phase'] = 'receipt' if event == 'proof' else 'final'
             if event == 'proof':
@@ -359,7 +363,7 @@ class ModelJobs:
         with selectors.DefaultSelector() as selector:
             for job in self._active:
                 if time.monotonic() >= job['deadline']:
-                    raise TimeoutError('video_job_deadline')
+                    raise LocalModelJobDeadline('video_job_deadline')
                 selector.register(job['channel'], selectors.EVENT_READ | (selectors.EVENT_WRITE if job['send'] else 0), job)
             for key, mask in selector.select(POLL_SECONDS):
                 job = key.data

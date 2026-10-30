@@ -98,7 +98,7 @@ def test_business_reuses_jobs_original_trajectory_and_tail_without_bank(harness)
     assert not {'business_timeline','perception_bank','perception_mode','perception_frame_ids'} & audit.keys()
     assert len(opts['image_assets'])==11
     assert budget.reserved==7 and budget.limit==22 and budget.engine_deadline() is None
-    assert h['instances'][0].kw['deadline']==budget.deadline and h['closed']==[True]
+    assert h['instances'][0].kw['deadline']==budget.deadline and h['closed']==[True,True]
     private=result['video_runtime_private'];assert private['mode']==BUSINESS
     assert private['business_timeline']['timeline']==TIMELINE
     assert private['business_timeline']['proof_ref'] and private['business_timeline']['receipt_ref']
@@ -118,7 +118,7 @@ def test_invalid_timeline_stops_before_trajectory_but_preserves_receipts(harness
     h=harness;h['timeline'].clear();h['timeline'].update(bad)
     with pytest.raises(ValueError,match='video_timeline_output_invalid'):h['run']()
     assert [kw['video_stage'] for _,kw in h['calls']]==['timeline']
-    assert h['closed']==[True]
+    assert h['closed']==[True,True]
     assert h['published'][-1]['video_runtime_summary']['receipts']==1
 
 
@@ -243,7 +243,7 @@ def test_tail_failure_retains_native_provenance_and_cleanup(harness,monkeypatch)
     monkeypatch.setattr(inputs,'recover_business_inputs',fail)
     with pytest.raises(ValueError,match='video_required_action_missing'):h['run']()
     private=h['published'][-1]['video_runtime_private']
-    assert private['business_timeline']['timeline']==TIMELINE and h['closed']==[True]
+    assert private['business_timeline']['timeline']==TIMELINE and h['closed']==[True,True]
     with RecordStore.open_snapshot(h['tmp_path']/'model-records',private['records']) as records:
         assert records.read(private['business_timeline']['proof_ref'])['stage']=='timeline'
         assert records.read(private['business_timeline']['receipt_ref'])['content']=='{}'

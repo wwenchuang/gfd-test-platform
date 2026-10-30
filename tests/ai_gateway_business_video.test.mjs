@@ -19,7 +19,7 @@ function input(size=32) {
  imageAssets:[{name:'source-video',mime:'video/mp4',base64:raw.toString('base64'),timestamp_ms:0,dataUrl:''}]};
 }
 function wire(b,r=route){ctx.body=b;ctx.route=r;ctx.system=system;return JSON.parse(JSON.stringify(vm.runInContext('completionOptionsForRoute(route,system,body,{userMessage:body.prompt})',ctx)));}
-for(const size of [32,12249942,12*1024*1024])test(`native ${size} bytes real Gateway and independent Python attestation`,()=>{
+for(const size of [32,7499997])test(`native ${size} bytes real Gateway and independent Python attestation`,()=>{
  const b=input(size),options=wire(b),parts=options.messages[1].content;
  assert.equal(parts.filter(p=>p.type==='image_url').length,0);
  assert.deepEqual(parts.filter(p=>p.type==='video_url'),[{type:'video_url',video_url:{url:'data:video/mp4;base64,'+b.imageAssets[0].base64},fps:4,max_pixels:655360,total_pixels:268435456}]);
@@ -59,7 +59,7 @@ function orchestration(fail=false, usage={prompt_tokens:1,completion_tokens:2,to
 }
 
 test('actual native /ai/skill handler preserves options, proof and redacts logs',async()=>{
- const b=input(12249942),run=orchestration();
+ const b=input(32),run=orchestration();
  const response=await run.request(b);
  assert.equal(run.calls.length,1);assert.equal(response.videoPolicy.effective_options.video_count,1);
  assert.equal(run.calls[0].options.messages[1].content.filter(p=>p.type==='video_url').length,1);
@@ -118,4 +118,26 @@ for(const stage of ['grounding','audit']) test(`closed ${stage} actual128 provid
   if(bad==='legacy'){delete rejected.videoStage;delete rejected.outputSchema;}
   await assert.rejects(runner.request(rejected),/video_/);assert.equal(runner.calls.length,0);
  }
+});
+
+for (const [error, category, status] of [
+ [Object.assign(new Error('video_private_secret'), {status:503,body:'secret',code:'secret'}),'http_status',503],
+ [Object.assign(new Error('secret'), {name:'APIConnectionTimeoutError'}),'timeout',null],
+ [Object.assign(new Error('secret'), {name:'APIConnectionError'}),'connection',null],
+ [Object.assign(new Error('secret'), {name:'APIUserAbortError'}),'abort',null],
+ [Object.assign(new Error('video_private_secret'), {status:'503',code:'secret'}),'unknown',null],
+]) test(`closed video diagnostics ${category}/${status}`,async()=>{
+ const run=orchestration(false,{},async()=>{throw error;});await assert.rejects(run.request(input()));
+ assert.equal(run.logs.length,1);const log=run.logs[0];
+ assert.equal(log.failureCategory,category);assert.equal(log.httpStatus,status);
+ assert.equal(JSON.stringify(log).includes('secret'),false);
+});
+
+for (const size of [7499998,12249942,12*1024*1024]) test(`unsupported encoded native ${size} bytes rejected`,()=>{assert.throws(()=>wire(input(size)),/video_native_asset_invalid/);});
+
+test('legacy failures retain existing logs without video diagnostic fields',async()=>{
+ const run=orchestration(false,{},async()=>{throw Object.assign(new Error('legacy error'),{status:503});});
+ await assert.rejects(run.request({skillName:'generate_case',payload:{}}));
+ assert.ok(run.logs.length>0);
+ assert.ok(run.logs.every(log=>!Object.hasOwn(log,'failureCategory')&&!Object.hasOwn(log,'httpStatus')&&log.error==='legacy error'));
 });
