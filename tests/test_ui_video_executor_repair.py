@@ -67,10 +67,20 @@ def test_prompt_capability_is_generic_opt_in_and_legacy_exact(monkeypatch):
     payload={'frames':[]}
     old=ai.render_ai_skill_prompt('ui_video_trajectory',payload,version='observe')
     new=ai.render_ai_skill_prompt('ui_video_trajectory',{**payload,'execution_contract':CONTRACT},version='observe')
+    legacy_revisit=('端点必须是本次已提供原帧，整段时间必须位于owned_time_range_ms之内；context只能作结果参考，不能要求回看前后其它包的时间区间。新增像素严格属于当前[start,end)区间。')
+    expected=prompt.replace('{{revisit_contract}}',legacy_revisit).replace('{{payload}}',json.dumps(payload,ensure_ascii=False,indent=2))
+    assert old==expected
     assert 'autoDismissKeyboard=false' in new and 'autoDismissKeyboard=false' not in old
     assert '独立' in new and '提交' in new
-    for source_answer in ('frame-110','frame-111','隐藏控件','失焦','两次点击'):assert source_answer not in new.replace(prompt,'')
-    assert old==ai.render_ai_skill_prompt('ui_video_trajectory',payload,version='observe')
+    # Isolate the injected capability from the fully rendered template and payload.
+    sentinel='UNCHANGED BASE TEMPLATE'
+    monkeypatch.setattr(ai,'load_ai_skill_prompt',lambda *a:sentinel)
+    assert ai.render_ai_skill_prompt('ui_video_trajectory',payload,version='observe')==sentinel
+    capability=ai.render_ai_skill_prompt('ui_video_trajectory',{**payload,'execution_contract':CONTRACT},version='observe')
+    assert capability.startswith(sentinel)
+    capability=capability[len(sentinel):]
+    assert 'autoDismissKeyboard=false' in capability and '独立' in capability and '提交' in capability
+    for source_answer in ('frame-110','frame-111','隐藏控件','失焦','两次点击'):assert source_answer not in capability
 
 
 @pytest.mark.parametrize('mode',['unknown',True,{},[]])
