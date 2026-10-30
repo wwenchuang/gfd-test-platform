@@ -753,6 +753,37 @@ def _business_question_presentation(root_questions, events):
     return questions,set(anchors)
 
 
+def _pack_business_review_questions(root_questions, event_issues, snapshot, global_questions):
+    """Pack whole literal issues, retaining every event association separately.
+
+    A maximum-length atomic issue uses its unprefixed text; the adjacent derived
+    ledger carries its anchor. No source event/root/audit is edited or resolved.
+    """
+    associated={q for issues in event_issues for q in issues}
+    questions=[q for q in root_questions if q not in associated]
+    groups=[]
+    for index,(event,issues) in enumerate(zip(snapshot['events'],event_issues)):
+        prefix=f'事件 {index+1}（片段 {event["start_ms"]/1000:g}–{event["end_ms"]/1000:g} 秒）：'
+        chunks=[];chunk=[]
+        for issue in dict.fromkeys(issues):
+            # Atomic validation precedes rendering: never truncate an issue.
+            _text(issue)
+            if chunk and len(prefix+'\n'.join(chunk+[issue]))>2000:
+                chunks.append(chunk);chunk=[]
+            chunk.append(issue)
+        if chunk:chunks.append(chunk)
+        for members in chunks:
+            text=prefix+'\n'.join(members)
+            if len(text)>2000:text=members[0]  # One full issue, anchor in ledger.
+            questions.append(text)
+            groups.append({'event_index':index,'start_ms':event['start_ms'],'end_ms':event['end_ms'],
+                           'step_id':event['draft_step_id'],
+                           'source_ref':f"video:{snapshot['source_id']}:{snapshot['analysis_version']}:{index}",
+                           'issues':list(members),'question':text})
+    snapshot['review_question_groups']=groups
+    return questions+global_questions
+
+
 def draft_proposal(document):
     from .ui_video_execution_contract import source_execution_contract
     execution_contract=source_execution_contract(document)
@@ -766,12 +797,18 @@ def draft_proposal(document):
     snapshot['snapshot_id']=hashlib.sha256(json.dumps([identifier,version]).encode()).hexdigest()
     steps=[];questions=list(document['uncertainties']);root_event_questions=set()
     selection=document.get('video_runtime_selection')
-    if isinstance(selection,dict) and selection.get('mode')=='video-business-first-v1':
+    business=isinstance(selection,dict) and selection.get('mode')=='video-business-first-v1'
+    event_issues=[[] for _ in snapshot['events']];global_questions=[]
+    def add_global(question):
+        questions.append(question);global_questions.append(question)
+    if business:
         questions,root_event_questions=_business_question_presentation(document['uncertainties'],snapshot['events'])
         snapshot['raw_root_questions']=copy.deepcopy(document['uncertainties'])
     if document.get('omitted_retries'):
-        questions.append('已保留失败重试证据；打印取消使用有限恢复，处理中不连点，最多8次/180秒。请核对本次任务范围及现场条件。' if document.get('print_recovery') else '已合并历史重试，当前操作不支持自动重试，请核对执行预期。')
+        add_global('已保留失败重试证据；打印取消使用有限恢复，处理中不连点，最多8次/180秒。请核对本次任务范围及现场条件。' if document.get('print_recovery') else '已合并历史重试，当前操作不支持自动重试，请核对执行预期。')
     for index,event in enumerate(snapshot['events']):
+        def add_event(question):
+            questions.append(question);event_issues[index].append(question)
         step_id=str(uuid.uuid4());event['draft_step_id']=step_id
         ref=f"video:{identifier}:{version}:{index}"
         event['expected_candidate']=_expected_candidate(event,document['goal'])
@@ -783,18 +820,19 @@ def draft_proposal(document):
             # expected_candidate and its frame references in the source snapshot.
             if event['action'] in {'aiWaitFor','aiAssert'}:target=reusable
             else:expected=reusable
-            questions.append('请确认复用后的结果检查与原录屏一致：'+reusable)
+            add_event('请确认复用后的结果检查与原录屏一致：'+reusable)
         if event.get('selection'):
             event['selection_step_id']=str(uuid.uuid4())
             steps.append({'step_id':event['selection_step_id'],'action':'selectRecord','target':event['selection'],'value':'',
                           'expected':'','source_ref':ref,'review_state':'needs_review'})
-            questions.append('请确认本次测试对象的选取范围：'+event['selection']+'。录屏仅证明历史操作，不代表允许操作其他记录。')
+            add_event('请确认本次测试对象的选取范围：'+event['selection']+'。录屏仅证明历史操作，不代表允许操作其他记录。')
         steps.append({'step_id':step_id,'action':event['action'],'target':target,'value':event['value'],
                       'expected':expected,'source_ref':ref,'review_state':'needs_review'})
+        event_issues[index].extend(event['uncertainties'])
         questions.extend(f'片段 {event["start_ms"]/1000:g}–{event["end_ms"]/1000:g} 秒：{q}' for q in event['uncertainties'] if q not in root_event_questions)
         if re.search('删除|移除',event['target']) and re.search(r'\d{12,}|\d{4}[-/]\d{2}[-/]\d{2}',event['target']) and not event.get('selection'):
-            questions.append('删除目标包含录屏中的一次性编号或日期，请改为选取本次测试对象；特定对象用例请确认数据仍存在。')
-        if re.search('删除|支付|付款|打印|下单',event['target']): questions.append('含删除/支付/打印等有副作用动作，请核对测试数据与授权后再手工试跑')
+            add_event('删除目标包含录屏中的一次性编号或日期，请改为选取本次测试对象；特定对象用例请确认数据仍存在。')
+        if re.search('删除|支付|付款|打印|下单',event['target']): add_event('含删除/支付/打印等有副作用动作，请核对测试数据与授权后再手工试跑')
     if steps and steps[-1]['action']!='aiAssert' and len(steps)<50:
         event=snapshot['events'][-1]
         if event['expected_candidate']['text']:
@@ -802,7 +840,7 @@ def draft_proposal(document):
             steps.append({'step_id':check_id,'action':'aiAssert','target':(steps[-1]['target'] if steps[-1]['action']=='aiWaitFor' and event.get('reusable_expected') else steps[-1].get('expected') or event['expected_candidate']['text']),
                           'value':'','expected':'','source_ref':steps[-1]['source_ref'],'review_state':'needs_review'})
     if not steps or steps[-1]['action']!='aiAssert':
-        questions.append('视频未给出明确结束检查，请补充业务预期；观察到的变化不能代替业务应有结果。')
+        add_global('视频未给出明确结束检查，请补充业务预期；观察到的变化不能代替业务应有结果。')
     goal=document['goal'].strip()
     final_check=steps[-1]['target'] if steps and steps[-1]['action']=='aiAssert' else ''
     candidates=list(dict.fromkeys(event['expected_candidate']['text'] for event in snapshot['events'] if event['expected_candidate']['text']))
@@ -815,11 +853,19 @@ def draft_proposal(document):
         # Central human confirmation preserves the entire original goal in the
         # immutable snapshot; no keyword-based success/negation interpretation.
         visible='；'.join(candidates)[:500] or '没有明确可见结果'
-        questions.append(f'请明确确认目标与候选检查是否一致。用户目标原文：{goal[:600] or "未填写"}。录屏可见检查候选：{visible}。末尾检查候选：{final_check[:400] or "未明确"}。'
+        add_global(f'请明确确认目标与候选检查是否一致。用户目标原文：{goal[:600] or "未填写"}。录屏可见检查候选：{visible}。末尾检查候选：{final_check[:400] or "未明确"}。'
                          '平台未解释目标中的否定、范围或业务含义；如有冲突请修改预期/结束检查，再逐步确认。完整目标保留在来源详情。')
     if document.get('print_recovery'):
         if any(e.get('selection') for e in snapshot['events']):raise ValueError('video_retry_invalid')
         from .ui_video_print_recovery import apply_group
         steps=apply_group(steps,document['print_recovery'])
-    normalized=normalize_steps({'title':document.get('title') or '录屏操作验证','preconditions':[],'steps':steps,'questions':questions},document['app_id'])
+    payload={'title':document.get('title') or '录屏操作验证','preconditions':[],'steps':steps,'questions':questions}
+    needs_groups=business and (len(questions)>100 or any(len(q)>2000 for q in questions))
+    normalized=None if needs_groups else normalize_steps(payload,document['app_id'])
+    if business and (needs_groups or len(normalized['questions'])>100):
+        payload['questions']=_pack_business_review_questions(document['uncertainties'],event_issues,snapshot,global_questions)
+        normalized=normalize_steps(payload,document['app_id'])
+        # Normalization can append unresolved step questions. Validate that final
+        # presentation too, with the same unchanged normal draft contract.
+        normalize_steps(normalized,document['app_id'])
     return normalized,snapshot
