@@ -29,3 +29,10 @@
 - [ ] Prepare one controlled planner request with exact candidates and existing result-frame selection; a concise generic instruction changes only requested prose repetition. Preserve required indexes, outcomes/configuration values, uncertainties and all existing validators. Never delete required actions or suppress immutable blockers.
 - [ ] Review helper/auth/integrity/call bounds; execute once using unchanged production model/deadline. If it fails, diagnose actual reply or deadline before any new production approach.
 - [ ] Evaluate full fixed baseline and downstream gates; if evidence supports production change, write its exact follow-up implementation/test scope and obtain independent review, then integrate/deploy and run unchanged original once.
+
+### Task 3: Independent terminal-neighbor pixel inventory
+
+- [ ] Reuse the frozen claim/packet and authenticated frame manifest to derive terminal-minus-two through terminal-plus-one, retaining original roles; send no observer/state/candidate narratives or expected answer.
+- [ ] Prepare one guarded existing ui_video_perception call with unchanged68 skills and normal bind_inventory. One attempt/120seconds,180second total, no retry/follow-up audit/source/device action.
+- [ ] Test actual fixture binding, source/frame/auth drift refusal and private output guards; independent helper review, exact archive/server SHA before execution.
+- [ ] Verify actual inventory/receipts/cleanup and compare all three owned frame rows against actual pixels. Preserve uncertainty and distinguish factual inventory from causal action recognition and full-source acceptance.
