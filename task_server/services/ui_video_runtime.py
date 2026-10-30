@@ -303,6 +303,8 @@ def _run_runtime(document, workspace, source_path, check, publish, *, budget=Non
                     if stage is None:
                         raise ValueError('video_stage_scope_invalid')
                     if business and stage == 'semantic':
+                        from .ui_video_trajectory import action_contract
+                        payload['action_contract'] = action_contract()
                         stage = 'grounding'
                         if not budget.frozen:
                             raise ValueError('video_runtime_packets_missing')

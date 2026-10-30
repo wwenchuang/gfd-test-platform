@@ -21,6 +21,38 @@ def _fail(reason,model_feedback=None):
     raise error
 
 
+def action_contract():
+    """Fresh trusted description of existing local admissibility, not evidence."""
+    return {'version':'action-trigger-v1','allowed_trigger_kinds':{
+        'aiTap':['touch','pressed_control','navigation','edit','uncertain'],
+        'aiScroll':['touch','pressed_control','navigation','edit','uncertain'],
+        'aiInput':['edit'],'aiAssert':['automatic','uncertain'],
+        'aiWaitFor':['automatic','uncertain']},'input_value':''}
+
+
+def _action_conflicts(raw_events,packet,times):
+    conflicts=[];allowed={f['frame_id'] for f in packet['frames']}
+    policy=action_contract()['allowed_trigger_kinds']
+    for index,raw in enumerate(raw_events[:50]):
+        try:
+            if not isinstance(raw,dict) or set(raw)!=EVENT_FIELDS:continue
+            action=raw['action'];kind=raw['trigger_kind'];trigger=raw['trigger_frame']
+            if action not in policy or kind not in {'touch','pressed_control','navigation','edit','automatic','uncertain'}:continue
+            if trigger not in packet['owned_frame_ids'] or trigger not in times:continue
+            refs=_refs(raw['frame_refs'],times,limit=60)
+            if not set(refs)<=allowed or trigger not in refs:continue
+            if (not isinstance(raw['uncertainties'],list) or len(raw['uncertainties'])>10 or
+                any(not isinstance(q,str) or not q or len(q)>2000 for q in raw['uncertainties'])):continue
+            for key in ('target','observation','page_before','page_after'):_text(raw[key])
+            _text(raw['continuation_of'],100,empty=True)
+            if kind=='uncertain' and not raw['uncertainties']:continue
+            if kind not in policy[action] or (action=='aiInput' and raw['value']!=''):
+                conflicts.append({'event_index':index,'action':action,'trigger_kind':kind,
+                                  'trigger':{'frame_id':trigger,'timestamp_ms':times[trigger]}})
+        except (ValueError,TypeError,KeyError):continue
+    return {'action_conflicts':conflicts}
+
+
 def _text(value,limit=2000,empty=False):
     if not isinstance(value,str) or len(value)>limit or (not empty and not value.strip()):_fail('text')
     return value
@@ -113,9 +145,9 @@ def bind_packet_events(raw_events,packet,frames,previous,tracks):
         _text(raw['continuation_of'],100,empty=True)
         if kind not in {'touch','pressed_control','navigation','edit','automatic','uncertain'}:_fail('trigger_kind')
         if kind=='uncertain' and not raw['uncertainties']:_fail('missing_uncertainty')
-        if action in INTERACTIONS and kind=='automatic':_fail('automatic_interaction')
-        if action not in INTERACTIONS and kind in {'touch','pressed_control','navigation','edit'}:_fail('interaction_as_state')
-        if action=='aiInput' and (kind!='edit' or raw['value']!=''):_fail('input_contract')
+        if action in INTERACTIONS and kind=='automatic':_fail('automatic_interaction',_action_conflicts(raw_events,packet,times))
+        if action not in INTERACTIONS and kind in {'touch','pressed_control','navigation','edit'}:_fail('interaction_as_state',_action_conflicts(raw_events,packet,times))
+        if action=='aiInput' and (kind!='edit' or raw['value']!=''):_fail('input_contract',_action_conflicts(raw_events,packet,times))
         if raw['edit_boundary'] not in {'none','submission','field_change','navigation'}:_fail('edit_boundary')
         outcome=raw['outcome']
         if not isinstance(outcome,dict) or set(outcome)!={'frame_refs','observation'}:_fail('outcome')
@@ -350,7 +382,9 @@ def observe_trajectory(document,root,cancelled,progress=None,record=None,revisit
     packet_image_limit=video_stage_image_limit('grounding' if business_timeline is not None else None)
     bounded_revisit=revisit_bounded is not None
     frames=copy.deepcopy(document['media']['frames']);duration=document['media']['duration_ms']
-    calls=0;corrections=0;revisits=0;started=time.monotonic();secrets=[];call_audit=[];revisit_attempts=[];repair_feedback=[]
+    calls=0;corrections=0;correction_scope_start=0;revisits=0;started=time.monotonic();secrets=[];call_audit=[];revisit_attempts=[];repair_feedback=[]
+    def correction_available():
+        return corrections-correction_scope_start<2
     # At most24 replies,3 rejections,4 acquisitions and terminal capacity records.
     # Questions stay in immutable raw receipts; paths retain provenance without
     # turning rejected model narrative into execution authority.
@@ -358,7 +392,8 @@ def observe_trajectory(document,root,cancelled,progress=None,record=None,revisit
     def diagnose(kind, **fields):
         if diagnostics is not None and len(diagnostics)<64:
             diagnostics.append(copy.deepcopy({'kind':kind,**last_diagnostic,
-                'corrections':corrections,'revisits':revisits,
+                'corrections':corrections,'correction_scope_used':corrections-correction_scope_start,
+                'correction_policy':'business_packet_two' if business_timeline is not None else 'legacy_global_two','revisits':revisits,
                 'acquired_frames':sum(len(a['new_frames']) for a in revisit_attempts),**fields}))
     def question_refs(raw):
         if not isinstance(raw,dict):return {'status':'unverified_model_claims'}
@@ -443,7 +478,7 @@ def observe_trajectory(document,root,cancelled,progress=None,record=None,revisit
                 from .ai_skill_service import SkillSchemaError
                 if not isinstance(error,SkillSchemaError) and not hasattr(error,'trajectory_reason'):raise
                 diagnose('rejection',reason=getattr(error,'trajectory_reason','schema'))
-                if corrections>=2:raise
+                if not correction_available():raise
                 corrections+=1
                 reason=getattr(error,'trajectory_reason','schema')
                 rejection={'stage':version,'reason':reason}
@@ -548,6 +583,7 @@ def observe_trajectory(document,root,cancelled,progress=None,record=None,revisit
     packets=make_packets(frames,states);events=[];tracks=[];questions=[];multi=overview['multiple_scenarios']
     packet_outputs=[];checks=[];fragment_checks=[]
     for index,packet in enumerate(packets):
+        if business_timeline is not None:correction_scope_start=corrections
         if progress:progress('observing',index,len(packets),events)
         feedback='';audit_feedback=None;positive_trigger_locks=[]
         # Audit before proceeding: a requested revisit can re-observe this packet
@@ -565,13 +601,16 @@ def observe_trajectory(document,root,cancelled,progress=None,record=None,revisit
             except ValueError as error:
                 reason=getattr(error,'trajectory_reason','contract')
                 diagnose('rejection',reason=reason)
-                if corrections>=2:
+                if not correction_available():
                     if reason=='audit_positive_trigger_changed':_fail('audit_positive_trigger_exhausted')
                     raise
                 corrections+=1
                 if reason=='audit_positive_trigger_changed' and record:
                     record(f'{calls:02d}-positive-trigger-rejection',{'reason':reason,'packet_id':packet['packet_id']})
                 feedback='结构或证据未通过：'+reason+'。重看同一组原图，完整输出当前包；不改写上下文动作，不补造操作。'
+                if reason in {'interaction_as_state','automatic_interaction','input_contract'} and hasattr(error,'model_feedback'):
+                    feedback+=json.dumps(error.model_feedback,ensure_ascii=False,separators=(',',':'))
+                    feedback+='重新核对独立导航与自动响应。只有原图支持实际可见的等价控件时才能表达导航操作；不得猜测控件、删除独立导航或改变trigger_kind规避合同。完整保留真实疑问与输入。'
                 if reason=='event_evidence':
                     feedback+='frame_refs必须保留该事件的真实trigger_frame和outcome锚点，只能选择已提供的原帧。'
                 if reason=='outcome_reference' and hasattr(error,'model_feedback'):
@@ -624,7 +663,7 @@ def observe_trajectory(document,root,cancelled,progress=None,record=None,revisit
                 contradicted=any(check[field]=='contradicted' for check in audited['checks']
                                  for field in ('trigger_verdict','outcome_verdict'))
                 if execution_contract is not None and (missing or contradicted):
-                    if corrections>=2:_fail('audit_contradiction_exhausted' if contradicted else 'audit_missing_action_exhausted')
+                    if not correction_available():_fail('audit_contradiction_exhausted' if contradicted else 'audit_missing_action_exhausted')
                     corrections+=1
                     validated_checks=[copy.deepcopy(check) for part in audit_shards for check in part['raw']['checks']]
                     audited_ids={check['event_id'] for check in validated_checks}
@@ -680,10 +719,12 @@ def observe_trajectory(document,root,cancelled,progress=None,record=None,revisit
     for e in checked['events']:e['uncertainties']=list(dict.fromkeys(e['uncertainties']))
     result={**checked,'media':{**copy.deepcopy(document['media']),'frames':frames},'trajectory_audit':redact({'version':'trajectory-v2','audit_input_mode':'claims_without_observer_narrative','overview_hypotheses':overview_hypotheses,'states':states,'tracks':tracks,'checks':checks,'fragment_checks':fragment_checks,
              'packets':packet_outputs,'revisit_attempts':revisit_attempts,'calls':call_audit,'elapsed_seconds':round(time.monotonic()-started,3)})}
+    result['trajectory_audit'].update(corrections_used=corrections,
+        correction_policy='business_packet_two' if business_timeline is not None else 'legacy_global_two')
     if execution_contract is not None:
         result['execution_contract']=execution_contract
         result['trajectory_audit'].update(execution_contract=execution_contract,
-            audit_input_mode='positive_claim_projection_v1',corrections_used=corrections,repair_feedback=redact(repair_feedback))
+            audit_input_mode='positive_claim_projection_v1',repair_feedback=redact(repair_feedback))
     if record:record('trajectory-final',redact(result))
     if progress:progress('planning',1,1,checked['events'])
     return result

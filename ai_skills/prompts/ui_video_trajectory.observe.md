@@ -32,3 +32,5 @@ aiInput的trigger_kind=edit由已识别字段中有序可见的文字修改支�
 {"states":[],"events":[{"action":"aiTap","target":"可见目标","value":"","frame_refs":["原帧"],"observation":"所见动作与变化","uncertainties":[],"trigger_frame":"本包原帧","trigger_kind":"touch","page_before":"s1","page_after":"s2","continuation_of":"","edit_boundary":"none","outcome":{"frame_refs":["结果原帧"],"observation":"具体可见状态"}}],"checks":[],"uncertainties":[],"multiple_scenarios":false,"revisit":[]}。
 
 states非空时，每项必须且只能包含以下五个字段：{"state_id":"同一页面或编辑区间的短ID","first_frame":"本次已提供的真实frame_id","last_frame":"本次已提供的真实frame_id","kind":"page","description":"页面或编辑区间的具体可见状态"}。state_id和description为非空字符串；kind只能为page/input/wait/transition。first_frame不晚于last_frame，各项按first_frame的真实时间排列，不得使用未提供的帧或自行编造时间。states只补充本包新见状态；无新增状态时[]合法。
+
+可信 action_contract 描述当前平台既有动作与 trigger_kind 配对；它不证明操作发生。独立且有连续转场证据的返回导航，若操作前原图确有可见等价返回控件，可表达为 aiTap/navigation。自动响应或等待页面变化使用 aiWaitFor/automatic。例如可见返回控件并有独立返回转场时按导航解释；提交后的自动加载按等待解释。不得凭空猜控件、把导航改为 automatic/uncertain、删除导航来满足合同。保留真实疑问及原有回看要求。
