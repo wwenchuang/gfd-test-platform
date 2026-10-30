@@ -426,13 +426,44 @@ def validate_revisit_requests(requests,packet,*,allow_context_anchors=False):
         seen.add(bounds[:2])
 
 
-def observe_trajectory(document,root,cancelled,progress=None,record=None,revisit=None,*,revisit_bounded=None,skill_runner=None,audit_batcher=None,execution_contract=None,diagnostics=None,business_timeline=None,engine_deadline=None):
+def select_input_tail(frames,states,packets):
+    """Freeze one unverified initial input-tail sampling hint from original metadata."""
+    ordered=sorted(frames,key=lambda f:f['timestamp_ms'])
+    positions={f['frame_id']:i for i,f in enumerate(ordered)}
+    candidates={}
+    for state in states:
+        if not isinstance(state,dict) or state.get('kind')!='input':continue
+        anchor=state.get('last_frame')
+        if not isinstance(anchor,str) or anchor not in positions:continue
+        i=positions[anchor]
+        if i==0 or i==len(ordered)-1:continue
+        left,right=ordered[i-1],ordered[i+1]
+        span=right['timestamp_ms']-left['timestamp_ms']
+        if not 500<=span<=3000:continue
+        owner=next((p for p in packets if anchor in p['owned_frame_ids']),None)
+        if owner is None:continue
+        request={'first_frame':left['frame_id'],'last_frame':right['frame_id'],
+                 'question':'核对输入区间末端相邻原始画面的可见变化。'}
+        try:a,b,c,d=_revisit_range(request,owner,True)
+        except ValueError:continue
+        key=(-span,a,left['frame_id'],right['frame_id'])
+        candidates[key]={'policy_version':'input-tail-v1','origin':'platform_input_tail',
+            'packet_id':owner['packet_id'],'request':request,'requested_time_range_ms':[a,b],
+            'decoded_time_range_ms':[c,d],
+            'owned_time_range_ms':[owner['owned_start_ms'],owner['owned_end_ms']]}
+    return copy.deepcopy(candidates[min(candidates)]) if candidates else None
+
+
+def observe_trajectory(document,root,cancelled,progress=None,record=None,revisit=None,*,revisit_bounded=None,skill_runner=None,audit_batcher=None,execution_contract=None,diagnostics=None,business_timeline=None,engine_deadline=None,dense_input_tail_sampling=False):
     validate_execution_contract(execution_contract)
     from . import ai_skill_service as ai
     from .ui_video_windows import load_assets
     if revisit_bounded is not None and not callable(revisit_bounded):raise ValueError('video_revisit_invalid')
     if skill_runner is not None and not callable(skill_runner):raise ValueError('video_skill_runner_invalid')
     if audit_batcher is not None and not callable(audit_batcher):raise ValueError('video_audit_batches_invalid')
+    if (type(dense_input_tail_sampling) is not bool or
+        (dense_input_tail_sampling and (not isinstance(business_timeline,dict) or revisit_bounded is None))):
+        raise ValueError('video_dense_input_tail_invalid')
     run_skill=ai.run_ai_skill if skill_runner is None else skill_runner
     packet_image_limit=video_stage_image_limit('grounding' if business_timeline is not None else None)
     bounded_revisit=revisit_bounded is not None
@@ -464,7 +495,7 @@ def observe_trajectory(document,root,cancelled,progress=None,record=None,revisit
                 rejected_questions.extend(q for q in event['uncertainties'] if isinstance(q,str) and q.strip() and len(q)<=2000)
     def diagnose(kind, **fields):
         if diagnostics is not None and len(diagnostics)<diagnostic_limit:
-            diagnostics.append(copy.deepcopy({'kind':kind,**last_diagnostic,
+            diagnostics.append(copy.deepcopy({'kind':kind,**({} if fields.get('origin')=='platform_input_tail' else last_diagnostic),
                 'corrections':corrections,'correction_scope_used':corrections-correction_scope_start,
                 'correction_policy':'business_packet_two' if business_timeline is not None else 'legacy_global_two','revisits':revisits,
                 'acquired_frames':sum(len(a['new_frames']) for a in revisit_attempts),**fields}))
@@ -489,7 +520,7 @@ def observe_trajectory(document,root,cancelled,progress=None,record=None,revisit
             diagnose('capacity_refusal',reason='trajectory_calls' if calls>=call_limit else 'trajectory_deadline')
             raise ValueError('video_vision_limit')
         calls+=1;trace={};tick=time.monotonic()
-        exhausted=[copy.deepcopy(a) for a in revisit_attempts if a['status']=='no_new_frames' and a['packet_id']==context.get('packet_id')]
+        exhausted=[copy.deepcopy(a) for a in revisit_attempts if a['status']=='no_new_frames' and a.get('origin')!='platform_input_tail' and a['packet_id']==context.get('packet_id')]
         if exhausted:
             context.update(exhausted_revisit_ranges=exhausted,revisit_feedback='这些区间已成功解码全部真实原帧但没有新增帧，不会重复解码；继续核对当前同组原图。证据不够时保留unclear和具体问题，或据实际原图更正观察，不得因无新增帧而确认。')
         deferred=[copy.deepcopy(a) for a in deferred_revisit_requests if a['packet_id']==context.get('packet_id')]
@@ -602,7 +633,7 @@ def observe_trajectory(document,root,cancelled,progress=None,record=None,revisit
                     ('重新核对全部附图，分别判断给定片段的触发和结果；check不返回帧号，由平台绑定原片段锚点。'
                      if version=='audit' else '重新核对本阶段全部原图，完整输出该阶段合同。')+'不补造操作。')
                 _correction_feedback(context,outer_feedback,latest_feedback)
-    def expand(packet,requests):
+    def expand(packet,requests,*,origin=None):
         nonlocal revisits,frames
         if not requests:return 'not_attempted'
         if revisit is None and not bounded_revisit:_fail('revisit_unavailable')
@@ -611,9 +642,22 @@ def observe_trajectory(document,root,cancelled,progress=None,record=None,revisit
         allowed={f['frame_id'] for f in packet['frames']}
         start,end=packet['owned_start_ms'],packet['owned_end_ms']
         outcome='not_attempted'
+        platform=origin=='platform_input_tail'
+        provenance={'origin':origin,'policy_version':'input-tail-v1'} if platform else {}
+        if platform:
+            # Optional headroom is checked only now; earlier model requests keep priority.
+            reason=('revisit_attempts' if 4-revisits<2 else
+                    'new_frame_capacity' if 64-sum(len(a['new_frames']) for a in revisit_attempts)<40 else
+                    'request_image_capacity' if packet_image_limit-len(packet['frames'])<20 else
+                    'engine_deadline' if engine_deadline-time.monotonic()<270.5 else None)
+            if reason:
+                dense_plan.update(status='not_acquired',reason=reason)
+                diagnose('acquisition_deferred',**dense_plan)
+                if record:record('dense-input-tail-deferred',redact(dense_plan))
+                return 'not_acquired'
         def exhausted(request):
             span=[times[request['first_frame']],times[request['last_frame']]]
-            return any(a['status']=='no_new_frames' and a['packet_id']==packet['packet_id'] and a['time_range_ms']==span for a in revisit_attempts)
+            return not platform and any(a['status']=='no_new_frames' and a['packet_id']==packet['packet_id'] and a['time_range_ms']==span for a in revisit_attempts)
         pending=[(i,r) for i,r in enumerate(requests) if not exhausted(r)]
         if business_timeline is not None and pending:
             available=min(64-sum(len(a['new_frames']) for a in revisit_attempts),
@@ -663,7 +707,7 @@ def observe_trajectory(document,root,cancelled,progress=None,record=None,revisit
                 extra=(revisit_bounded(request,capacity,owned_time_range_ms=(start,end))
                        if bounded_revisit else revisit(request,capacity))
             except (ValueError,TimeoutError) as error:
-                diagnose('acquisition_failure',reason='loader_capacity' if str(error)=='video_revisit_limit' else 'acquisition_failed',
+                diagnose('acquisition_failure',**provenance,reason='loader_capacity' if str(error)=='video_revisit_limit' else 'acquisition_failed',
                          packet_frames=len(packet['frames']),capacity=capacity,
                          pending_request_indexes=list(range(index,len(requests))))
                 raise
@@ -682,10 +726,13 @@ def observe_trajectory(document,root,cancelled,progress=None,record=None,revisit
             attempt={'request':copy.deepcopy(request),'new_frames':copy.deepcopy(extra),'packet_id':packet['packet_id'],
                      'time_range_ms':[left,right],'requested_time_range_ms':[left,right],
                      'decoded_time_range_ms':[clipped_left,clipped_right],'decoded_end_exclusive':clipped_right==end,
-                     'owned_time_range_ms':[start,end],'status':'frames_added' if extra else 'no_new_frames'}
+                     'owned_time_range_ms':[start,end],'status':'frames_added' if extra else 'no_new_frames',**provenance}
             revisit_attempts.append(attempt)
-            diagnose('acquisition',status=attempt['status'],request_index=index,new_frame_count=len(extra),capacity=capacity)
-            if not extra:
+            diagnose('acquisition',**provenance,status=attempt['status'],request_index=index,new_frame_count=len(extra),capacity=capacity,
+                     **({'attempt':copy.deepcopy(attempt)} if platform else {}))
+            if platform:dense_plan.update(status=attempt['status'],attempt=copy.deepcopy(attempt))
+            # A sampling opportunity is not a model question or an evidence verdict.
+            if not extra and not platform:
                 if business_timeline is not None:questions.extend([request['question'],'补帧无新增原帧，仍需核实。'])
                 else:questions.append('补帧无新增原帧，仍需核实：'+request['first_frame']+'至'+request['last_frame']+'：'+request['question'])
             frames=sorted(frames+extra,key=lambda f:f['timestamp_ms'])
@@ -702,9 +749,17 @@ def observe_trajectory(document,root,cancelled,progress=None,record=None,revisit
     states=validate_states(overview['states'],images)
     overview_hypotheses=copy.deepcopy(overview['uncertainties'])
     packets=make_packets(frames,states);events=[];tracks=[];questions=[];multi=overview['multiple_scenarios']
+    dense_plan=select_input_tail(frames,states,packets) if dense_input_tail_sampling else None
+    if dense_plan:
+        dense_plan['status']='planned'
+        diagnose('acquisition_plan',**dense_plan)
+        if record:record('dense-input-tail-plan',redact(dense_plan))
     packet_outputs=[];checks=[];fragment_checks=[]
     for index,packet in enumerate(packets):
         if business_timeline is not None:correction_scope_start=corrections
+        if dense_plan and packet['packet_id']==dense_plan['packet_id']:
+            if cancelled():raise ValueError('video_cancelled')
+            expand(packet,[dense_plan['request']],origin='platform_input_tail')
         if progress:progress('observing',index,len(packets),events)
         feedback='';audit_feedback=None;positive_trigger_locks=[];candidate_signatures=Counter()
         # Audit before proceeding: a requested revisit can re-observe this packet
@@ -904,7 +959,7 @@ def observe_trajectory(document,root,cancelled,progress=None,record=None,revisit
         raise
     for e in checked['events']:e['uncertainties']=list(dict.fromkeys(e['uncertainties']))
     result={**checked,'media':{**copy.deepcopy(document['media']),'frames':frames},'trajectory_audit':redact({'version':'trajectory-v2','audit_input_mode':'claims_without_observer_narrative','overview_hypotheses':overview_hypotheses,'states':states,'tracks':tracks,'checks':checks,'fragment_checks':fragment_checks,
-             'packets':packet_outputs,**({'deferred_revisit_requests':deferred_revisit_requests} if business_timeline is not None else {}),'revisit_attempts':revisit_attempts,'calls':call_audit,'elapsed_seconds':round(time.monotonic()-started,3)})}
+             'packets':packet_outputs,**({'deferred_revisit_requests':deferred_revisit_requests} if business_timeline is not None else {}),**({'dense_input_tail':dense_plan} if dense_input_tail_sampling else {}),'revisit_attempts':revisit_attempts,'calls':call_audit,'elapsed_seconds':round(time.monotonic()-started,3)})}
     result['trajectory_audit'].update(corrections_used=corrections,
         correction_policy='business_packet_two' if business_timeline is not None else 'legacy_global_two')
     if business_timeline is not None:

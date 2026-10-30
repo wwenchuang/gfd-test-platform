@@ -460,7 +460,7 @@ def _run_runtime(document, workspace, source_path, check, publish, *, budget=Non
                 observed = observe_trajectory(document, workspace, cancelled, progress,
                     revisit_bounded=revisit, skill_runner=runner, audit_batcher=partition_audit_claims,
                     execution_contract=VIDEO_EXPLICIT_KEYBOARD_V1,diagnostics=trajectory_diagnostics,
-                    **({'business_timeline':business_timeline,'engine_deadline':budget.engine_deadline()} if business else {}))
+                    **({'business_timeline':business_timeline,'engine_deadline':budget.engine_deadline(),'dense_input_tail_sampling':True} if business else {}))
                 budget.end_engine()
                 boundary()
                 media = copy.deepcopy(observed['media'])
