@@ -99,7 +99,7 @@ def _safe_trace(trace, stage=None):
 def _schema_path(path, skill, skills_dir=None):
     """Only schema-owned property paths cross IPC; no rejected model values."""
     from .ai_skill_service import load_ai_skill_schema
-    if type(path) is not str or len(path) > 512 or not re.fullmatch(r'\$(?:\.[a-zA-Z_][a-zA-Z_0-9]*)*', path):
+    if type(path) is not str or len(path) > 512 or not re.fullmatch(r'\$(?:\.[a-zA-Z_][a-zA-Z_0-9]*|\[(?:0|[1-9][0-9]{0,3})\])*', path):
         return '$'
     if skills_dir is None:
         schema = load_ai_skill_schema(skill)
@@ -112,10 +112,27 @@ def _schema_path(path, skill, skills_dir=None):
             schema = json.loads(raw)
         except (OSError, ValueError, RecursionError):
             return '$'
-    for key in path.split('.')[1:]:
-        if key not in schema.get('properties', {}) and key not in schema.get('required', []):
+    def variants(node):
+        yield node
+        for union in ('oneOf', 'anyOf'):
+            for child in node.get(union, []):
+                yield from variants(child)
+
+    nodes = [schema]
+    for match in re.finditer(r'\.([a-zA-Z_][a-zA-Z_0-9]*)|\[([0-9]+)\]', path[1:]):
+        key, index = match.groups()
+        children = []
+        for candidate in nodes:
+            for node in variants(candidate):
+                if key is not None:
+                    if key in node.get('properties', {}) or key in node.get('required', []):
+                        children.append(node.get('properties', {}).get(key, {}))
+                elif (node.get('type') == 'array' and isinstance(node.get('items'), dict)
+                      and int(index) < node.get('maxItems', 10000)):
+                    children.append(node['items'])
+        if not children:
             return '$'
-        schema = schema.get('properties', {}).get(key, {})
+        nodes = children
     return path
 
 

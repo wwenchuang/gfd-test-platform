@@ -461,6 +461,8 @@ def observe_trajectory(document,root,cancelled,progress=None,record=None,revisit
                     'audit_question':'任一verdict不是supported时必须填写具体证据疑问。',
                     'audit_contradiction':'双supported的question必须为空；仍有疑问请明确使用unclear或contradicted。',
                 }.get(reason,'当前阶段输出结构不符合合同，请只返回规定字段及合法值。')
+                if isinstance(error,SkillSchemaError):
+                    explanation=error.model_feedback+'trigger_frame必须属于owned_frame_ids，context仅可提供证据，不能作为本包新动作触发。'
                 if reason.startswith('revisit_'):
                     explanation+=('本次支持context端点仅作定位：至少一个端点须为owned，原始跨度最多3000ms；平台只解码与当前owned半开区间相交的非空部分，不改派context原帧。'
                                   if bounded_revisit else '仅请求当前owned时间区间；future context由后续owner处理，不得夹取或改派原帧。')
