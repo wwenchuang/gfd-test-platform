@@ -725,7 +725,7 @@ def observe_trajectory(document,root,cancelled,progress=None,record=None,revisit
                 proposed,history=bind_packet_events(raw['events'],packet,frames,events,tracks)
                 if execution_contract is not None:_validate_positive_trigger_locks(positive_trigger_locks,history,packet)
                 if business_timeline is not None:
-                    from .ui_video_temporal_ownership import ordinary_export_conflicts
+                    from .ui_video_temporal_ownership import ordinary_export_conflicts, unsafe_current_correction_conflicts
                     signatures=Counter((fragment['action'],fragment['trigger_frame'],fragment['trigger_kind'])
                         for track in history for fragment in track['fragments']
                         if fragment['trigger_frame'] in packet['owned_frame_ids'] and
@@ -735,7 +735,7 @@ def observe_trajectory(document,root,cancelled,progress=None,record=None,revisit
                     conflicts=ordinary_export_conflicts(proposed,history,frames,duration,packets)
                     required_conflicts=[c for c in conflicts if c['required']]
                     if required_conflicts:
-                        if any(packet['packet_id'] not in c['event']['fragment_owner_ids'] for c in required_conflicts):
+                        if unsafe_current_correction_conflicts(required_conflicts,events,tracks,frames,packet['packet_id']):
                             _fail('ordinary_temporal_cross_packet',required_conflicts)
                         candidate_signatures |= signatures
                         _fail('ordinary_temporal_conflict',required_conflicts)
@@ -756,7 +756,7 @@ def observe_trajectory(document,root,cancelled,progress=None,record=None,revisit
                     feedback+=json.dumps(error.model_feedback,ensure_ascii=False,separators=(',',':'))
                     feedback+='重新核对独立导航与自动响应。只有原图支持实际可见的等价控件时才能表达导航操作；不得猜测控件、删除独立导航或改变trigger_kind规避合同。完整保留真实疑问与输入。'
                 if reason in {'ordinary_temporal_conflict','ordinary_candidate_preservation'}:
-                    feedback+='重看整个当前包，重新判断本动作自身证据与结果；区分无即时响应和后次操作后的模糊响应。保留每个独立动作的action/trigger_frame/trigger_kind及次数，这些是未验证候选保留约束，不是已获支持的审核锁。保留所有原问题；不得删除、合并独立动作、改移触发、自动裁剪证据或借用后次结果来制造成功。'
+                    feedback+='已接受的历史事件、片段和审核保持不可变，只能重看当前包；触发时间仅用于纠正资格，最终仍须满足下一独立事件的实际证据起点上界。重看整个当前包，重新判断本动作自身证据与结果；区分无即时响应和后次操作后的模糊响应。保留每个独立动作的action/trigger_frame/trigger_kind及次数，这些是未验证候选保留约束，不是已获支持的审核锁。保留所有原问题；不得删除、合并独立动作、改移触发、自动裁剪证据或借用后次结果来制造成功。'
                     if hasattr(error,'model_feedback'):
                         feedback+=json.dumps(error.model_feedback,ensure_ascii=False,separators=(',',':'))
                 if reason=='event_evidence':

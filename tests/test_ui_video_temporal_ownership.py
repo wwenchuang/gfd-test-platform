@@ -287,3 +287,210 @@ def test_exact_refuted_fragment_retires_only_one_signature_multiplicity(monkeypa
     same=next(s for s in constraints if s['trigger_frame']=='frame-002')
     assert same['multiplicity']==1
     assert len(result['events'])==3
+
+
+def context_engine(monkeypatch,mode='safe',floor=3400):
+    """Generic two packets; accepted response lies in current pre-context."""
+    attempts=[];prior=[];acquired=[]
+    terminal='frame-035' if floor==3500 else 'frame-036' if floor==3501 else 'frame-034'
+    def mutate(stage,p,raw,calls):
+        if stage=='observe' and p['packet_id']=='packet-001':
+            raw['events']=[event(['frame-030',terminal],'aiInput')]
+            raw['uncertainties']=['accepted prior question'];prior.append(copy.deepcopy(raw))
+        if stage=='observe' and p['packet_id']=='packet-002':
+            attempts.append(copy.deepcopy(p));fixed=len(attempts)>1 and mode!='repeat'
+            raw['events']=[event(['frame-035','frame-038'] if fixed else ['frame-032','frame-035','frame-038'])]
+            raw['events'][0]['trigger_frame']='frame-035'
+            if len(attempts)==1:
+                raw['uncertainties']=['rejected current root question']
+                raw['events'][0]['uncertainties']=['rejected current event question']
+                raw['revisit']=[dict(first_frame='frame-033',last_frame='frame-034',question='pixel question')]
+            if fixed and mode=='change_trigger':raw['events'][0]['trigger_frame']='frame-038'
+            if fixed and mode=='change_kind':raw['events'][0]['trigger_kind']='pressed_control'
+            if fixed and mode=='delete':raw['events']=[]
+    engine=Engine(monkeypatch,count=60,mutate=mutate)
+    fs=frames(60);next(f for f in fs if f['frame_id']==terminal)['timestamp_ms']=floor
+    fs.sort(key=lambda f:f['timestamp_ms'])
+    def execute(**kw):
+        return vt.observe_trajectory({'media':{'frames':fs,'duration_ms':6001}},None,lambda:False,
+            skill_runner=engine.model,business_timeline={'classification':'unverified_business_hypotheses'},
+            revisit=lambda *a:(acquired.append(a) or []),
+            record=lambda n,d:engine.records.append((n,copy.deepcopy(d))),**kw)
+    return engine,attempts,prior,acquired,execute
+
+
+@pytest.mark.parametrize('floor',[3400,3500])
+def test_safe_cross_packet_context_reobserves_only_current_with_immutable_history(monkeypatch,floor):
+    engine,attempts,prior,acquired,execute=context_engine(monkeypatch,floor=floor)
+    result=execute()
+    assert len(attempts)==2 and not acquired and result['trajectory_audit']['corrections_used']==1
+    assert [s for s,_,_ in engine.calls]==['overview','observe','audit','observe','observe','audit']
+    assert result['events'][0]['end_ms']==floor
+    assert result['events'][1]['start_ms']==3500
+    assert result['trajectory_audit']['packets'][0]['raw']==prior[0]
+    assert attempts[0]['prior_events']==attempts[1]['prior_events']
+    assert 'rejected current root question' in result['uncertainties']
+    assert 'rejected current event question' in result['uncertainties']
+    assert 'accepted prior question' in result['uncertainties']
+    assert result['trajectory_audit']['tracks'][0]['fragments']==prior[0]['events']
+    accepted_audit=next(d['result'] for n,d in engine.records if n.endswith('audit-result'))
+    assert result['trajectory_audit']['packets'][0]['audit']==accepted_audit
+    assert 'rejected current' not in attempts[1]['validation_feedback']
+
+
+@pytest.mark.parametrize('mode',['repeat','change_trigger','change_kind','delete'])
+def test_eligible_cross_packet_context_still_exhausts_and_preserves_signatures(monkeypatch,mode):
+    engine,attempts,prior,acquired,execute=context_engine(monkeypatch,mode=mode)
+    with pytest.raises(ValueError) as caught:execute()
+    assert len(attempts)==3 and not acquired
+    assert not engine.audits('packet-002')
+    assert caught.value.trajectory_reason==('ordinary_temporal_conflict' if mode=='repeat' else 'ordinary_candidate_preservation')
+
+
+def test_one_unit_unsafe_immutable_floor_fails_before_spending(monkeypatch):
+    engine,attempts,prior,acquired,execute=context_engine(monkeypatch,floor=3501)
+    with pytest.raises(ValueError) as caught:execute()
+    assert caught.value.trajectory_reason=='ordinary_temporal_cross_packet'
+    assert len(attempts)==1 and not acquired and not engine.audits('packet-002')
+
+
+@pytest.mark.parametrize('unsafe',[False,True])
+def test_current_left_input_continuation_respects_immutable_prefix_floor(monkeypatch,unsafe):
+    attempts=[];prior=[]
+    def mutate(stage,p,raw,calls):
+        if stage!='observe':return
+        if p['packet_id']=='packet-001':
+            raw['events']=[event(['frame-030','frame-038' if unsafe else 'frame-034'],'aiInput')]
+            raw['events'][0]['uncertainties']=['accepted prefix question'];prior.append(copy.deepcopy(raw))
+        else:
+            attempts.append(p)
+            continuation=event(['frame-034','frame-036','frame-040'],'aiInput')
+            continuation.update(trigger_frame='frame-036',continuation_of='packet-001:event-0')
+            tap=event(['frame-036','frame-037','frame-042'] if unsafe else
+                      ['frame-041','frame-042'] if len(attempts)>1 else ['frame-039','frame-041','frame-042'])
+            tap['trigger_frame']='frame-037' if unsafe else 'frame-041'
+            raw['events']=[continuation,tap]
+    engine=Engine(monkeypatch,count=60,mutate=mutate)
+    if unsafe:
+        with pytest.raises(ValueError) as caught:run(engine)
+        assert caught.value.trajectory_reason=='ordinary_temporal_cross_packet' and len(attempts)==1
+    else:
+        result=run(engine)
+        assert len(attempts)==2 and result['trajectory_audit']['corrections_used']==1
+        fragments=result['trajectory_audit']['tracks'][0]['fragments']
+        assert fragments[0]==prior[0]['events'][0] and len(fragments)==2
+        assert 'accepted prefix question' in result['events'][0]['uncertainties']
+
+
+def test_all_required_conflicts_classified_before_any_partial_correction(monkeypatch):
+    attempts=[]
+    def mutate(stage,p,raw,calls):
+        if stage=='observe' and p['packet_id']=='packet-001':raw['events']=[event(['frame-030','frame-038'],'aiInput')]
+        if stage=='observe' and p['packet_id']=='packet-002':
+            attempts.append(p)
+            raw['events']=[event(['frame-032','frame-035','frame-038']),event(['frame-036','frame-040','frame-042'])]
+            raw['events'][0]['trigger_frame']='frame-035';raw['events'][1]['trigger_frame']='frame-040'
+    engine=Engine(monkeypatch,count=60,mutate=mutate)
+    with pytest.raises(ValueError) as caught:run(engine)
+    assert caught.value.trajectory_reason=='ordinary_temporal_cross_packet' and len(attempts)==1
+    assert len(caught.value.model_feedback)==2
+
+
+def test_multiple_safe_required_conflicts_use_one_whole_current_correction(monkeypatch):
+    attempts=[]
+    def mutate(stage,p,raw,calls):
+        if stage=='observe' and p['packet_id']=='packet-001':raw['events']=[event(['frame-030','frame-034'],'aiInput')]
+        if stage=='observe' and p['packet_id']=='packet-002':
+            attempts.append(p);fixed=len(attempts)>1
+            raw['events']=[event(['frame-035','frame-038'] if fixed else ['frame-032','frame-035','frame-038']),
+                           event(['frame-040','frame-042'] if fixed else ['frame-036','frame-040','frame-042'])]
+            raw['events'][0]['trigger_frame']='frame-035';raw['events'][1]['trigger_frame']='frame-040'
+    engine=Engine(monkeypatch,count=60,mutate=mutate);result=run(engine)
+    assert len(result['events'])==3 and len(attempts)==2 and result['trajectory_audit']['corrections_used']==1
+
+
+def test_system_conflict_is_immediate_even_for_current_only_left(monkeypatch):
+    attempts=[]
+    def mutate(stage,p,raw,calls):
+        if stage!='observe':return
+        attempts.append(p);raw['events']=[event(['frame-001','frame-010']),event(['frame-009'],'aiAssert')]
+        raw['events'][1].update(target='系统桌面',trigger_kind='automatic')
+    engine=Engine(monkeypatch,count=10,mutate=mutate)
+    with pytest.raises(ValueError) as caught:run(engine)
+    assert caught.value.trajectory_reason=='ordinary_temporal_cross_packet' and len(attempts)==1
+
+
+def test_eligibility_refuses_historical_next_prefix_and_absent_next_without_mutation():
+    from task_server.services.ui_video_temporal_ownership import unsafe_current_correction_conflicts
+    engine_frames=frames(10)
+    left={'event_id':'old-left','fragment_owner_ids':['old','current'],'last':{'timestamp_ms':500},'terminal':{'timestamp_ms':500}}
+    nxt={'event_id':'old-next','packet_id':'old','fragment_owner_ids':['old','current'],'trigger':{'timestamp_ms':800}}
+    conflict={'required':True,'event':left,'next_interaction':nxt,'interval':{'system_start_ms_exclusive':1001}}
+    accepted=[{'end_ms':300,'outcome':{'frame_refs':['frame-003']}},{'end_ms':800,'outcome':{'frame_refs':['frame-008']}}]
+    tracks=[{'event_id':'old-left'},{'event_id':'old-next'}];before=copy.deepcopy((conflict,accepted,tracks))
+    assert unsafe_current_correction_conflicts([conflict],accepted,tracks,engine_frames,'current')==[conflict]
+    assert (conflict,accepted,tracks)==before
+    conflict['next_interaction']=None
+    assert unsafe_current_correction_conflicts([conflict],accepted,tracks,engine_frames,'current')==[conflict]
+
+
+@pytest.mark.parametrize('change_supported_target',[False,True])
+def test_positive_current_lock_remains_authoritative_during_context_correction(monkeypatch,change_supported_target):
+    from task_server.services.ui_video_execution_contract import VIDEO_EXPLICIT_KEYBOARD_V1
+    attempts=[];audits=[]
+    def mutate(stage,p,raw,calls):
+        if stage=='observe' and p['packet_id']=='packet-001':raw['events']=[event(['frame-030','frame-034'],'aiInput')]
+        if stage=='observe' and p['packet_id']=='packet-002':
+            attempts.append(p)
+            raw['events']=[event(['frame-032','frame-035','frame-038'] if len(attempts)==2 else ['frame-035','frame-038'])]
+            raw['events'][0]['trigger_frame']='frame-035'
+            if len(attempts)==3 and change_supported_target:raw['events'][0]['target']='different candidate target'
+        if stage=='audit' and p['packet_id']=='packet-002':
+            audits.append(p)
+            if len(audits)==1:raw['issues']=[dict(kind='missing_action',owner_frame='frame-035',frame_refs=['frame-035'],question='audit missing action question')]
+    engine=Engine(monkeypatch,count=60,mutate=mutate)
+    if change_supported_target:
+        with pytest.raises(ValueError) as caught:run(engine,execution_contract=VIDEO_EXPLICIT_KEYBOARD_V1)
+        assert caught.value.trajectory_reason=='audit_positive_trigger_exhausted' and len(audits)==1
+    else:
+        result=run(engine,execution_contract=VIDEO_EXPLICIT_KEYBOARD_V1)
+        assert result['trajectory_audit']['corrections_used']==2 and len(audits)==2
+    assert len(attempts)==3
+
+
+def test_final_global_preflight_is_still_a_fail_closed_safety_net(monkeypatch):
+    from task_server.services import ui_video_temporal_ownership as ownership
+    engine,attempts,prior,acquired,execute=context_engine(monkeypatch)
+    original=ownership.ordinary_export_conflicts
+    def residual(events,tracks,fs,duration,packets):
+        if engine.audits('packet-002'):
+            copied=copy.deepcopy(events)
+            copied[1]['start_ms']=3200
+            return original(copied,tracks,fs,duration,packets)
+        return original(events,tracks,fs,duration,packets)
+    monkeypatch.setattr(ownership,'ordinary_export_conflicts',residual)
+    with pytest.raises(ValueError) as caught:execute()
+    assert caught.value.trajectory_reason=='ordinary_temporal_final'
+    assert len(attempts)==2 and len(engine.audits('packet-002'))==1
+
+
+@pytest.mark.parametrize('drop_duplicate',[False,True])
+def test_cross_context_keeps_independent_signature_multiplicity(monkeypatch,drop_duplicate):
+    attempts=[]
+    def mutate(stage,p,raw,calls):
+        if stage=='observe' and p['packet_id']=='packet-001':raw['events']=[event(['frame-030','frame-034'],'aiInput')]
+        if stage=='observe' and p['packet_id']=='packet-002':
+            attempts.append(p)
+            first=event(['frame-032','frame-035','frame-038'] if len(attempts)==1 else ['frame-035'])
+            first['trigger_frame']='frame-035'
+            raw['events']=[first,event(['frame-035'])]
+            if len(attempts)>1 and drop_duplicate:raw['events']=raw['events'][:1]
+    engine=Engine(monkeypatch,count=60,mutate=mutate)
+    if drop_duplicate:
+        with pytest.raises(ValueError) as caught:run(engine)
+        assert caught.value.trajectory_reason=='ordinary_candidate_preservation' and len(attempts)==3
+    else:
+        result=run(engine)
+        assert len(result['events'])==3 and len(attempts)==2
+    signatures=attempts[1]['candidate_preservation_constraints']['signatures']
+    assert len(signatures)==1 and signatures[0]['multiplicity']==2

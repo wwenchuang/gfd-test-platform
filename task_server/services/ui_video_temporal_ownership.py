@@ -51,3 +51,32 @@ def ordinary_export_conflicts(events, tracks, frames, duration, packets):
                           'next_interaction': identity(next_index) if next_index is not None else None,
                           'interval': domain})
     return conflicts
+
+
+def unsafe_current_correction_conflicts(conflicts, accepted_events, accepted_tracks, frames, packet_id):
+    """Classify all required conflicts against the immutable pre-packet snapshot.
+
+    Trigger PTS is eligibility only. Callers still rerun the original next.start
+    domain after a whole-current-packet response; this function edits no evidence.
+    """
+    snapshots={t['event_id']:e for t,e in zip(accepted_tracks,accepted_events)}
+    times={f['frame_id']:f['timestamp_ms'] for f in frames}
+    unsafe=[]
+    for conflict in conflicts:
+        if not conflict['required']:continue
+        left=conflict['event'];nxt=conflict['next_interaction'];domain=conflict['interval']
+        proposed_floor=max(left['last']['timestamp_ms'],left['terminal']['timestamp_ms'])
+        if proposed_floor>=domain['system_start_ms_exclusive'] or nxt is None:
+            unsafe.append(conflict);continue
+        if (nxt['event_id'] in snapshots or nxt['packet_id']!=packet_id or
+            any(owner!=packet_id for owner in nxt['fragment_owner_ids'])):
+            unsafe.append(conflict);continue
+        snapshot=snapshots.get(left['event_id'])
+        if snapshot is None:
+            if any(owner!=packet_id for owner in left['fragment_owner_ids']):unsafe.append(conflict)
+            continue
+        # A current continuation never makes its accepted prefix mutable.
+        floor=max(snapshot['end_ms'],times[snapshot['outcome']['frame_refs'][-1]])
+        if floor>nxt['trigger']['timestamp_ms'] or floor>=domain['system_start_ms_exclusive']:
+            unsafe.append(conflict)
+    return unsafe
