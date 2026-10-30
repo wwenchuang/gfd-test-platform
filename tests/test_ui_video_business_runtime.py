@@ -49,6 +49,7 @@ def harness(tmp_path,monkeypatch):
         return loader
     monkeypatch.setattr(revisit,'make_revisit_loader',factory)
     def engine(doc,root,cancelled,progress,**kw):
+        assert kw['dense_input_tail_sampling'] is True
         assert kw['business_timeline']['classification']=='unverified_business_hypotheses'
         assert kw['business_timeline']['timeline']==timeline
         assert kw['business_timeline']['instruction_authority'] is False
