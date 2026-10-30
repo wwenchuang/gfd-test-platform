@@ -105,9 +105,9 @@ for(const stage of ['grounding','audit']) test(`closed ${stage} actual128 provid
  const images=parts.filter(p=>p.type==='image_url');assert.equal(images.length,128);
  for(let i=0;i<128;i++){
   assert.equal(images[i].image_url.url,'data:image/jpeg;base64,'+b.imageAssets[i].base64);
-  assert.equal(parts[2*i+1].text.startsWith(`${frames[i].frame_id} ${frames[i].timestamp_ms}ms`),true);
+  assert.equal(parts[2*i].text.startsWith(`${frames[i].frame_id} ${frames[i].timestamp_ms}ms`),true);
  }
- assert.match(parts[255].text,/不得作为本包新动作触发/);
+ assert.match(parts[254].text,/不得作为本包新动作触发/);
  assert.equal(response.videoPolicy.effective_options.image_count,128);
  const py=spawnSync('python3',['-c','import json,sys;from task_server.services.ui_video_stage_receipts import make_expected_attestation;print(json.dumps(make_expected_attestation(json.load(sys.stdin))))'],{input:JSON.stringify({...b,prompt:'pixels'}),maxBuffer:2*1024*1024});
  assert.equal(py.status,0,py.stderr.toString());assert.deepEqual(JSON.parse(JSON.stringify(response.videoPolicy)),JSON.parse(py.stdout));

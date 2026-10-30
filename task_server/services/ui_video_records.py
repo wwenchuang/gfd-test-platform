@@ -18,7 +18,7 @@ import threading
 import uuid
 
 from .ui_video_stage_policy import STAGES
-from .ui_video_stage_receipts import safe_attestation
+from .ui_video_stage_receipts import safe_attestation, cached_token_usage
 
 MAX_FILES = 64
 MAX_TOTAL = 16 * 1024 * 1024
@@ -103,6 +103,7 @@ def safe_record(kind, value):
     out['usage'] = {k: v for k, v in (usage.items() if isinstance(usage, dict) else [])
                     if k in {'promptTokens', 'completionTokens', 'reasoningTokens', 'totalTokens'} and
                     type(v) in (int, float) and math.isfinite(v) and 0 <= v <= 2**53}
+    out['usage'].update(cached_token_usage(usage))
     out['videoPolicy'] = safe_attestation(value.get('videoPolicy'))
     if type(value.get('http_status')) is int and 400 <= value['http_status'] <= 599:
         out['http_status'] = value['http_status']

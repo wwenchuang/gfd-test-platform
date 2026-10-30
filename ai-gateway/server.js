@@ -888,7 +888,7 @@ function completionOptionsForRoute(route, prompt, body, callOptions = {}) {
     model: route.model,
     messages: [
       {role: 'system', content: prompt},
-      {role: 'user', content: imageParts.length ? [{type: 'text', text: userText}, ...imageParts] : userText},
+      {role: 'user', content: imageParts.length ? (videoStage ? [...imageParts, {type: 'text', text: userText}] : [{type: 'text', text: userText}, ...imageParts]) : userText},
     ],
   };
   if (route.temperatureLocked) {
@@ -1028,13 +1028,22 @@ function assistantOutputText(content) {
 
 function completionUsageSummary(usage = {}) {
   const details = usage?.completion_tokens_details || usage?.completionTokensDetails || {};
-  return {
+  const summary = {
     promptTokens: Number(usage?.prompt_tokens || usage?.promptTokens || 0),
     completionTokens: Number(usage?.completion_tokens || usage?.completionTokens || 0),
     totalTokens: Number(usage?.total_tokens || usage?.totalTokens || 0),
     // The route already carries a normalized summary when projected to HTTP.
     reasoningTokens: Number(details?.reasoning_tokens ?? details?.reasoningTokens ?? usage?.reasoningTokens ?? 0),
   };
+  // Preserve absence versus provider-reported zero; never infer cache hits.
+  // The HTTP projection is normalized a second time, so accept that form too.
+  const promptDetails = usage?.prompt_tokens_details;
+  const cached = promptDetails && Object.hasOwn(promptDetails, 'cached_tokens') ?
+    promptDetails.cached_tokens : usage?.cachedTokens;
+  const prompt = usage?.prompt_tokens ?? usage?.promptTokens;
+  if (Number.isSafeInteger(prompt) && prompt >= 0 && Number.isSafeInteger(cached) && cached >= 0 && cached <= prompt)
+    summary.cachedTokens = cached;
+  return summary;
 }
 
 function completionAuditResponse(route = {}) {

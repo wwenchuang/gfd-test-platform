@@ -20,8 +20,9 @@ from test_ui_video_stage_runtime import request
 
 
 class Gateway:
-    def __init__(self, content='{}', hold=False):
+    def __init__(self, content='{}', hold=False, usage=None):
         self.content, self.hold = content, hold
+        self.usage = {'totalTokens': 4} if usage is None else usage
         self.calls, self.active, self.peak, self.closed = [], 0, 0, 0
         self.lock, self.release = threading.Lock(), threading.Event()
         outer = self
@@ -42,7 +43,7 @@ class Gateway:
                     content = outer.content(body) if callable(outer.content) else outer.content
                     data = json.dumps({'success': True, 'content': content, 'model': body['model'],
                                        'providerId': 'official', 'fallbackUsed': False, 'finishReason': 'stop',
-                                       'usage': {'totalTokens': 4}, 'videoPolicy': make_expected_attestation(body)}).encode()
+                                       'usage': outer.usage, 'videoPolicy': make_expected_attestation(body)}).encode()
                     self.send_response(200); self.send_header('Content-Length', str(len(data))); self.end_headers(); self.wfile.write(data)
                 except (BrokenPipeError, ConnectionResetError):
                     outer.closed += 1
