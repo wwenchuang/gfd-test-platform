@@ -444,7 +444,7 @@ def observe_trajectory(document,root,cancelled,progress=None,record=None,revisit
     if engine_deadline is None:
         engine_deadline=started+1200
     elif (type(engine_deadline) not in (int,float) or not math.isfinite(engine_deadline) or
-          engine_deadline>started+1560):
+          engine_deadline>started+(4020 if business_timeline is not None else 1560)):
         raise ValueError('video_runtime_engine_deadline_invalid')
     def correction_available():
         return corrections-correction_scope_start<2

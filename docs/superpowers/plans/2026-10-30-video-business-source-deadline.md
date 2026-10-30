@@ -10,7 +10,7 @@
 Read the exact binding spec docs/superpowers/specs/2026-10-30-video-business-source-deadline.md. No other codepaths/caps/prompt/gate changes. Preserve dirty CODEX_STATE.md, neverstage it; no credentials. Do not deploy orstartsource25 inimplementationtask.
 
 ### Task 1: Business-only bounded source clock
-Files: task_server/services/ui_video_runtime.py, task_server/services/ui_video_trajectory.py, focused tests (existing runtime evidence reuse/business modules and a new deadline test if clearer).
+Files: task_server/services/ui_video_runtime.py, task_server/services/ui_video_trajectory.py, task_server/workers/ui_video_worker.py (normal worker creates/injects the source budget before runtime; exact business mode must select4500 there), focused tests (existing runtime evidence reuse/business modules and a new deadline test if clearer).
 - [ ] Read spec and AGENTS, inspect current runtime/observer and affectedtests.
 - [ ] Write failing clock/control tests covering exact requirements. Run RED before implementation.
 - [ ] Minimal implementation source4500 onlybusiness,480.5tail onlybusiness, max4020 onlyexplicitbusiness observer; legacy oldvalues. Existing custombudget neverextended. Defaultdirectobserver1200 unchanged.

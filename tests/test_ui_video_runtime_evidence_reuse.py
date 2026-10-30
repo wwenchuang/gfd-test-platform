@@ -76,7 +76,7 @@ def test_observer_no_new_still_reconsiders(monkeypatch):
 def test_business_deadline_derived_from_source_not_engine_start():
     now=[100.];budget=runtime.RuntimeBudget(0,clock=lambda:now[0]);now[0]=200.
     budget.start_engine(business=True)
-    assert budget.engine_deadline()==budget.deadline-240.5==1659.5
+    assert budget.engine_deadline()==budget.deadline-480.5==1419.5
     now[0]=budget.engine_deadline()
     with pytest.raises(TimeoutError):budget.reserve()
     budget.end_engine();budget.reserve()  # tail still source-bound, not an extra480 guarantee
@@ -90,7 +90,7 @@ def test_legacy_deadline_unchanged():
     with pytest.raises(ValueError,match='engine_started'):budget.start_engine()
 
 
-@pytest.mark.parametrize('value',[float('inf'),float('nan'),True,'1560',1560.001])
+@pytest.mark.parametrize('value',[float('inf'),float('nan'),True,'4020',4020.001])
 def test_standalone_explicit_clock_rejects_invalid_or_unbounded(monkeypatch,value):
     monkeypatch.setattr(vt.time,'monotonic',lambda:0.)
     with pytest.raises(ValueError,match='deadline'):
@@ -148,7 +148,7 @@ def test_runtime_passes_exact_source_deadline_to_trajectory(harness,monkeypatch)
     budget=runtime.RuntimeBudget(0)
     def inspect(*args,**kwargs):
         seen.append(kwargs['engine_deadline'])
-        assert kwargs['engine_deadline']==budget.engine_deadline()==budget.deadline-240.5
+        assert kwargs['engine_deadline']==budget.engine_deadline()==budget.deadline-480.5
         return previous(*args,**kwargs)
     monkeypatch.setattr(vt,'observe_trajectory',inspect)
     harness['run'](budget=budget)

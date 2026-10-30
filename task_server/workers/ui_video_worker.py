@@ -249,7 +249,8 @@ def _analyze_runtime_source(store,identifier):
             document=transition({'decoding'},'decoding',**{MARKER:version})
             stage='decode'
             media=decode_video(store.root/identifier/'source.mp4',workspace/'frames',cancelled)
-            budget=RuntimeBudget(0 if mode==BUSINESS_MODE else (len(media['frames'])+7)//8)
+            budget=RuntimeBudget(0 if mode==BUSINESS_MODE else (len(media['frames'])+7)//8,
+                business=mode==BUSINESS_MODE)
             budget.check()
             if media['black'] or media['static']:
                 transition({'decoding'},'review_needed',media=media,
