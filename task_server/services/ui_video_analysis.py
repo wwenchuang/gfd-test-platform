@@ -63,13 +63,26 @@ def _align_batch_evidence_times(result, frames, duration):
     return aligned
 
 
-def validate_analysis(result, frames, duration, prior_secrets=(), *, max_events=50):
+def _check_question_count(questions,limit):
+    if len(questions)>limit:
+        error=ValueError('video_model_invalid')
+        error.analysis_reason='root_question_limit'
+        error.question_count=len(questions)
+        error.question_limit=limit
+        raise error
+
+
+def validate_analysis(result, frames, duration, prior_secrets=(), *, max_events=50, max_questions=30):
+    # Only the explicit business intermediate policy may exceed final/legacy30.
+    if type(max_questions) is not int or max_questions not in (30,128):
+        raise ValueError('video_analysis_options_invalid')
     required_fields={'events','uncertainties','multiple_scenarios'}
     if not isinstance(result, dict) or not required_fields<=set(result)<=required_fields|{'title'}: raise ValueError('video_model_invalid')
     title=_text(result['title'],80) if 'title' in result else ''
     if type(result['multiple_scenarios']) is not bool: raise ValueError('video_model_invalid')
     events=result['events']; questions=result['uncertainties']
-    if not isinstance(events,list) or len(events)>max_events or not isinstance(questions,list) or len(questions)>30: raise ValueError('video_model_invalid')
+    if not isinstance(events,list) or len(events)>max_events or not isinstance(questions,list): raise ValueError('video_model_invalid')
+    _check_question_count(questions,max_questions)
     questions=[_text(q) for q in questions]
     by_id={f['frame_id']:f['timestamp_ms'] for f in frames}
     last=-1
@@ -716,6 +729,30 @@ def _expected_candidate(event, goal):
     return {'text':candidate,'basis':basis,'frame_refs':list(outcome['frame_refs'] if outcome else event['frame_refs']),'requires_confirmation':True}
 
 
+def _business_question_presentation(root_questions, events):
+    """Exact duplicate blockers share presentation only; every event stays anchored."""
+    if not isinstance(root_questions,list):raise ValueError('video_model_invalid')
+    _check_question_count(root_questions,128)
+    for question in root_questions:
+        _text(question)  # Validate the bounded private copy without rewriting it.
+    root_set=set(root_questions)
+    anchors={}
+    for index,event in enumerate(events):
+        anchor=f'事件 {index+1}（片段 {event["start_ms"]/1000:g}–{event["end_ms"]/1000:g} 秒）'
+        for question in event['uncertainties']:
+            if question in root_set:
+                group=anchors.setdefault(question,[])
+                if anchor not in group:group.append(anchor)
+    questions=[];presented=set()
+    for question in root_questions:
+        if question not in anchors:
+            questions.append(question)
+        elif question not in presented:
+            questions.append('、'.join(anchors[question])+'：'+question)
+            presented.add(question)
+    return questions,set(anchors)
+
+
 def draft_proposal(document):
     from .ui_video_execution_contract import source_execution_contract
     execution_contract=source_execution_contract(document)
@@ -727,7 +764,11 @@ def draft_proposal(document):
               'raw_events':copy.deepcopy(document.get('raw_events',[])),'first_pass_events':copy.deepcopy(document.get('first_pass_events',[])),'reconciliation_audit':copy.deepcopy(document.get('reconciliation_audit')),'print_recovery':copy.deepcopy(document.get('print_recovery'))}
     if execution_contract is not None:snapshot['execution_contract']=execution_contract
     snapshot['snapshot_id']=hashlib.sha256(json.dumps([identifier,version]).encode()).hexdigest()
-    steps=[];questions=list(document['uncertainties'])
+    steps=[];questions=list(document['uncertainties']);root_event_questions=set()
+    selection=document.get('video_runtime_selection')
+    if isinstance(selection,dict) and selection.get('mode')=='video-business-first-v1':
+        questions,root_event_questions=_business_question_presentation(document['uncertainties'],snapshot['events'])
+        snapshot['raw_root_questions']=copy.deepcopy(document['uncertainties'])
     if document.get('omitted_retries'):
         questions.append('已保留失败重试证据；打印取消使用有限恢复，处理中不连点，最多8次/180秒。请核对本次任务范围及现场条件。' if document.get('print_recovery') else '已合并历史重试，当前操作不支持自动重试，请核对执行预期。')
     for index,event in enumerate(snapshot['events']):
@@ -750,7 +791,7 @@ def draft_proposal(document):
             questions.append('请确认本次测试对象的选取范围：'+event['selection']+'。录屏仅证明历史操作，不代表允许操作其他记录。')
         steps.append({'step_id':step_id,'action':event['action'],'target':target,'value':event['value'],
                       'expected':expected,'source_ref':ref,'review_state':'needs_review'})
-        questions.extend(f'片段 {event["start_ms"]/1000:g}–{event["end_ms"]/1000:g} 秒：{q}' for q in event['uncertainties'])
+        questions.extend(f'片段 {event["start_ms"]/1000:g}–{event["end_ms"]/1000:g} 秒：{q}' for q in event['uncertainties'] if q not in root_event_questions)
         if re.search('删除|移除',event['target']) and re.search(r'\d{12,}|\d{4}[-/]\d{2}[-/]\d{2}',event['target']) and not event.get('selection'):
             questions.append('删除目标包含录屏中的一次性编号或日期，请改为选取本次测试对象；特定对象用例请确认数据仍存在。')
         if re.search('删除|支付|付款|打印|下单',event['target']): questions.append('含删除/支付/打印等有副作用动作，请核对测试数据与授权后再手工试跑')

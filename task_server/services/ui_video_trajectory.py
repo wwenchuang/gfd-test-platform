@@ -841,8 +841,15 @@ def observe_trajectory(document,root,cancelled,progress=None,record=None,revisit
     owners=[r for p in packets for r in p['owned_frame_ids']]
     if len(owners)!=len(set(owners)) or set(owners)!={f['frame_id'] for f in frames}:_fail('frame_ownership_incomplete')
     if not events:_fail('empty_trajectory')
-    checked=validate_analysis({'events':events,'uncertainties':list(dict.fromkeys(questions)),
-                               'multiple_scenarios':multi},frames,duration,secrets,max_events=120)
+    try:
+        checked=validate_analysis({'events':events,'uncertainties':list(dict.fromkeys(questions)),
+            'multiple_scenarios':multi},frames,duration,secrets,max_events=120,
+            max_questions=128 if business_timeline is not None else 30)
+    except ValueError as error:
+        if getattr(error,'analysis_reason',None)=='root_question_limit':
+            diagnose('capacity_refusal',reason='trajectory_questions',
+                question_count=error.question_count,question_limit=error.question_limit)
+        raise
     for e in checked['events']:e['uncertainties']=list(dict.fromkeys(e['uncertainties']))
     result={**checked,'media':{**copy.deepcopy(document['media']),'frames':frames},'trajectory_audit':redact({'version':'trajectory-v2','audit_input_mode':'claims_without_observer_narrative','overview_hypotheses':overview_hypotheses,'states':states,'tracks':tracks,'checks':checks,'fragment_checks':fragment_checks,
              'packets':packet_outputs,**({'deferred_revisit_requests':deferred_revisit_requests} if business_timeline is not None else {}),'revisit_attempts':revisit_attempts,'calls':call_audit,'elapsed_seconds':round(time.monotonic()-started,3)})}
