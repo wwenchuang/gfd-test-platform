@@ -1,8 +1,8 @@
-"""Server-selected, bank-first video runtime using the original trajectory/tail.
+"""Server-selected video runtimes sharing the original trajectory and tail.
 
 This module never writes a source. Its parent supplies fresh authorization and
 version/owner/app CAS publication. Model jobs alone own bounded transport; the
-bank contains unverified pixel proposals, never accepted actions or input values.
+bank and native timeline contain unverified proposals, never accepted actions or input values.
 """
 import copy
 import json
@@ -14,6 +14,11 @@ import time
 from .ui_video_perception_binding import bind_inventory, project_inventory_format, _source_index
 
 MODE = 'video-perception-bank-v1'
+BUSINESS_MODE = 'video-business-first-v1'
+
+
+def runtime_mode():
+    return BUSINESS_MODE if os.getenv('UI_VIDEO_RUNTIME_BUSINESS_FIRST') == '1' else MODE
 
 
 def selected(identifier):
@@ -167,7 +172,19 @@ def _semantic_schema(payload):
     return validate_output_schema(schema)
 
 
-def run_runtime(document, workspace, source_path, check, publish, *, budget=None):
+def run_runtime(document, workspace, source_path, check, publish, *, budget=None, mode=None):
+    # The worker freezes selection under source/version CAS. Default callers keep
+    # the bank path even if the process environment later changes.
+    if mode == BUSINESS_MODE:
+        from .ui_video_business_first import run_business_runtime
+        return run_business_runtime(document, workspace, source_path, check, publish,
+                                    budget=budget or RuntimeBudget(0))
+    if mode not in (None, MODE):
+        raise ValueError('video_runtime_mode_invalid')
+    return _run_runtime(document, workspace, source_path, check, publish, budget=budget)
+
+
+def _run_runtime(document, workspace, source_path, check, publish, *, budget=None, business=False):
     """Return original analysis shape; parent remains the sole source publisher.
 
     check reauthorizes source binding and may raise; publish performs the same
@@ -188,7 +205,11 @@ def run_runtime(document, workspace, source_path, check, publish, *, budget=None
     from .ui_video_stage_policy import STAGES
 
     bank = PerceptionBank(document['media']['frames'])
-    budget = budget or RuntimeBudget(bank.original_count)
+    budget = budget or RuntimeBudget(0 if business else bank.original_count)
+    if business and budget.original_count != 0:
+        raise ValueError('video_runtime_budget_invalid')
+    mode = BUSINESS_MODE if business else MODE
+    business_timeline = None
     media = copy.deepcopy(document['media'])
     perception_format_projections = []
     trajectory_diagnostics = []
@@ -263,13 +284,18 @@ def run_runtime(document, workspace, source_path, check, publish, *, budget=None
                     stage = next((name for name, rule in STAGES.items() if (skill, version) == rule[:2]), None)
                     if stage is None:
                         raise ValueError('video_stage_scope_invalid')
-                    if stage == 'semantic':
+                    if business and stage == 'semantic':
+                        stage = 'grounding'
+                        if not budget.frozen:
+                            raise ValueError('video_runtime_packets_missing')
+                        kwargs['output_schema'] = _semantic_schema(payload)
+                    elif stage == 'semantic':
                         if not budget.frozen:
                             raise ValueError('video_runtime_packets_missing')
                         payload.pop('image_frames', None)
                         payload['perception_bank'] = bank.project(payload)
                         kwargs.update(image_assets=[], output_schema=_semantic_schema(payload))
-                    elif stage == 'audit':
+                    elif stage == 'audit' and not business:
                         projection = bank.project(payload)
                         # Sampler takes current roles; immutable producer roles in
                         # the bank remain untouched and are not sent as new claims.
@@ -288,7 +314,31 @@ def run_runtime(document, workspace, source_path, check, publish, *, budget=None
                             trace['video_record_refs']={k:copy.deepcopy(jobs.accounting[offset][k])
                                 for k in ('proof_ref','receipt_ref') if k in jobs.accounting[offset]}
 
-                produce(bank.windows, initial=True)
+                if business:
+                    from .ui_video_native import load_native_video
+                    from .ui_video_business_first import validate_business_timeline
+                    boundary()
+                    metadata, assets = load_native_video(source_path, media['duration_ms'])
+                    boundary()
+                    progress('understanding', 0, 1, [])
+                    offset = len(jobs.accounting)
+                    native = runner('ui_video_timeline', {'phase':'whole-timeline', 'video':metadata},
+                        version='v1', image_assets=assets, timeout=120, retry_count=0,
+                        max_tokens=10000, repair_invalid_json=False)
+                    # Keep durable provenance even when returned scene bounds fail.
+                    row = jobs.accounting[offset]
+                    business_timeline = {'classification':'unverified_business_hypotheses',
+                        'instruction_authority':False,
+                        **{k:copy.deepcopy(row[k]) for k in ('proof_ref','receipt_ref') if k in row}}
+                    boundary()
+                    if not (row.get('admitted') and row.get('receipt_persisted') and
+                            row.get('proof_ref') and row.get('receipt_ref')):
+                        raise ValueError('video_timeline_receipt_missing')
+                    validate_business_timeline(native, media['duration_ms'])
+                    business_timeline['timeline'] = copy.deepcopy(native)
+                    progress('understanding', 1, 1, [])
+                else:
+                    produce(bank.windows, initial=True)
                 boundary()
                 loader = make_revisit_loader(source_path, workspace, bank.frames, cancelled)
                 def revisit(request, capacity, *, owned_time_range_ms):
@@ -300,12 +350,14 @@ def run_runtime(document, workspace, source_path, check, publish, *, budget=None
                     # Make matching media available before any progress/event refs,
                     # even if overlay perception or a later original tail fails.
                     publish(media=copy.deepcopy(media))
-                    produce(windows)
+                    if not business:
+                        produce(windows)
                     return extra
                 budget.start_engine()
                 observed = observe_trajectory(document, workspace, cancelled, progress,
                     revisit_bounded=revisit, skill_runner=runner, audit_batcher=partition_audit_claims,
-                    execution_contract=VIDEO_EXPLICIT_KEYBOARD_V1,diagnostics=trajectory_diagnostics)
+                    execution_contract=VIDEO_EXPLICIT_KEYBOARD_V1,diagnostics=trajectory_diagnostics,
+                    **({'business_timeline':business_timeline} if business else {}))
                 budget.end_engine()
                 boundary()
                 media = copy.deepcopy(observed['media'])
@@ -345,10 +397,12 @@ def run_runtime(document, workspace, source_path, check, publish, *, budget=None
             # store latches and raises here; never claim an unpersisted raw receipt.
             refs = [records.append('status', row) for row in jobs.accounting]
             aggregate = records.append('aggregate', {'refs': refs})
-            private = {'mode': MODE, 'windows': bank.index(), 'records': records.snapshot(),
+            private = {'mode': mode, 'windows': bank.index(), 'records': records.snapshot(),
                        'perception_format_projections': copy.deepcopy(perception_format_projections),
                        'accounting_ref': aggregate, 'trajectory_diagnostics': copy.deepcopy(trajectory_diagnostics)}
-            summary = {'mode': MODE, 'original_windows': bank.original_count,
+            if business:
+                private['business_timeline'] = copy.deepcopy(business_timeline)
+            summary = {'mode': mode, 'original_windows': 0 if business else bank.original_count,
                        'reserved': budget.reserved, 'limit': budget.limit,
                        'receipts': sum(row.get('receipt_persisted', False) for row in jobs.accounting)}
             # Parent checks current access independently; terminal revocation can

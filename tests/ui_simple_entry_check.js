@@ -583,3 +583,11 @@ test('video status refresh coalesces returning edges during a pending read and e
  reject(new Error('<img src=x> status fetch failed'));await wait();assert.match(f.q('[data-video-notice]').textContent,/status fetch failed/);assert.equal(f.q('[data-video-notice] img'),null);assert.match(f.q('[data-video-detail]').textContent,/6 \/ 9/);assert.equal(f.calls.some(c=>c.options.method==='POST'),false);
  f.clock.visibility(true);f.clock.visibility(false);assert.equal(f.reads(),reads+1);f.q('[data-ui-case-back]').click();reject(new Error('late error'));await wait();
 });
+
+test('video native understanding describes whole video without frame group counts',async t=>{
+ const f=await videoFixture(t);const source={source_id:'native-progress',status:'analyzing',filename:'clip.mp4',analysis_version:1,analysis_progress:{phase:'understanding',completed:0,total:1}};
+ f.respond(p=>p.startsWith('/ui-video-sources?')?{ok:true,sources:[source]}:p.includes('/native-progress?')?{ok:true,source}:undefined);
+ f.app('a');await wait();f.q('[data-video-open]').click();await wait();
+ assert.match(f.q('[data-video-detail]').textContent,/正在通读完整视频，梳理业务流程/);
+ assert.doesNotMatch(f.q('[data-video-detail]').textContent,/0 \/ 1 组|38 组|预计|%/);
+});

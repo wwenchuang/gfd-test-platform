@@ -340,7 +340,7 @@ function mountUiVideoSource(node,{current,openDraft,initialSource=null}){
   function render(){
     if(!valid())return;syncSourceStatus();syncJourney();
 
-    const analysis=source.analysis_progress,detail=analysis?.phase==='perceiving'?`画面核对已完成 ${Number(analysis.completed)||0} / ${Number(analysis.total)||0} 组`:analysis?.phase==='input_recovery'?'正在核对输入文字':analysis?.phase==='reviewing'?`复核已完成 ${Number(analysis.completed)||0} / ${Number(analysis.total)||0} 段`:analysis?.phase==='reconciling'?'正在复核取消恢复及返回路径':analysis?.phase==='planning'?'视频已识别完，正在整理可执行用例':analysis?.phase==='observing'?`识别已完成 ${Number(analysis.completed)||0} / ${Number(analysis.total)||0} 段`:'';
+    const analysis=source.analysis_progress,detail=analysis?.phase==='understanding'?'正在通读完整视频，梳理业务流程':analysis?.phase==='perceiving'?`画面核对已完成 ${Number(analysis.completed)||0} / ${Number(analysis.total)||0} 组`:analysis?.phase==='input_recovery'?'正在核对输入文字':analysis?.phase==='reviewing'?`复核已完成 ${Number(analysis.completed)||0} / ${Number(analysis.total)||0} 段`:analysis?.phase==='reconciling'?'正在复核取消恢复及返回路径':analysis?.phase==='planning'?'视频已识别完，正在整理可执行用例':analysis?.phase==='observing'?`识别已完成 ${Number(analysis.completed)||0} / ${Number(analysis.total)||0} 段`:'';
     const key=JSON.stringify([source.source_id,source.status,source.error,source.error_code,source.analysis_version,source.draft_id,source.title,source.media,source.candidate_steps,source.uncertainties]);
     if(key===renderedKey){const label=q('[data-video-progress] .ui-busy-inline');if(label&&detail)label.textContent=detail;schedulePoll();return;}renderedKey=key;
     clearTimeout(timer);clearMedia();const box=q('[data-video-detail]'),id=source.source_id;
