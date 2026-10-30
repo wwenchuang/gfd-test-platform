@@ -24,7 +24,11 @@ def expected_provider_options(body):
             continue
         name = asset['name'];role = ''
         if stage == 'perception':
-            role = ' [context]' if name in payload['context_frame_ids'] else ' [owned]'
+            detail = next((d for d in payload.get('detail_frames', []) if d['frame_id'] == name), None)
+            parent = detail['source_frame_id'] if detail else name
+            parent_role = 'context' if parent in payload['context_frame_ids'] else 'owned'
+            role = (f" [source_frame_id={parent} box={json.dumps(detail['box'], separators=(',', ':'))} role={parent_role}; same-frame visual assistance; no separate time/event/action or ownership]"
+                    if detail else f' [{parent_role}]')
         elif body['skillName'] in {'ui_video_observe', 'ui_video_trajectory'} and isinstance(payload.get('context_frame_ids'), list):
             role = (' [可引用为前后态或结果证据；不得作为本包新动作触发]' if body['skillName']=='ui_video_trajectory'
                     else ' [仅供上下文参考，禁止引用或输出该帧操作]') if name in payload['context_frame_ids'] else ' [当前窗口证据，可引用]'
@@ -101,7 +105,7 @@ def safe_attestation(value):
             safe['enable_thinking'] = item
         refs = effective.get('fine_frame_ids')
         if (isinstance(refs, list) and len(refs) <= 12 and
-                all(type(ref) is str and re.fullmatch(r'frame-(?:[0-9]{3}|end)', ref) for ref in refs) and
+                all(type(ref) is str and re.fullmatch(r'frame-(?:[0-9]{3}|end)' + (r'(?:-detail-[0-2])?' if value.get('stage') == 'perception' else ''), ref) for ref in refs) and
                 len(set(refs)) == len(refs)):
             safe['fine_frame_ids'] = list(refs)
         out['effective_options'] = safe

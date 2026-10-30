@@ -763,6 +763,30 @@ function validateNativeVideo(payload, assets) {
       createHash('sha256').update(raw).digest('hex') !== meta.source_sha256) fail();
 }
 
+function validatePerceptionDetails(frames, details) {
+  const fail = () => { throw new Error('video_detail_frames_invalid'); };
+  if (!Array.isArray(details) || ![0,3,6].includes(details.length)) fail();
+  let previous = -1;
+  for (let offset = 0; offset < details.length; offset += 3) {
+    const first = details[offset];
+    const index = frames.findIndex(f => f.frame_id === first?.source_frame_id);
+    if (index <= previous) fail();
+    previous = index;
+    const parent = frames[index], size = first.source_size;
+    if (!Array.isArray(size) || size.length !== 2 || size.some(v => !Number.isInteger(v) || v < 100 || v > 4096) || size[0]*size[1] > 16777216) fail();
+    const [w,h] = size;
+    for (let i = 0; i < 3; i++) {
+      const d = details[offset+i];
+      if (!d || Object.keys(d).sort().join(',') !== 'box,frame_id,source_frame_id,source_size,timestamp_ms' ||
+          d.frame_id !== `${parent.frame_id}-detail-${i}` || d.source_frame_id !== parent.frame_id ||
+          !Number.isInteger(d.timestamp_ms) || d.timestamp_ms !== parent.timestamp_ms ||
+          JSON.stringify(d.source_size) !== JSON.stringify(size) ||
+          JSON.stringify(d.box) !== JSON.stringify([0,Math.floor(h*i/3),w,Math.floor(h*(i+1)/3)])) fail();
+    }
+  }
+  return details;
+}
+
 function validateVideoStage(body, route) {
   if (!Object.hasOwn(body || {}, 'videoStage')) {
     if (['ui_video_perception','ui_video_timeline'].includes(body?.skillName) ||
@@ -813,12 +837,14 @@ function validateVideoStage(body, route) {
   }
   if (stage === 'audit' && Object.hasOwn(body, 'outputSchema')) validateVideoOutputSchema(body.outputSchema, stage);
   if (Object.hasOwn(body, 'outputSchema') && !['grounding', 'audit'].includes(stage)) throw new Error('video_stage_schema_invalid');
-  if (!Array.isArray(assets) || assets.length !== frames.length || assets.length < 2 || assets.length > videoStageImageLimit(stage))
+  const details = stage === 'perception' ? validatePerceptionDetails(frames, payload.detail_frames === undefined ? [] : payload.detail_frames) : [];
+  const wireFrames = [...frames, ...details];
+  if (!Array.isArray(assets) || assets.length !== wireFrames.length || assets.length < 2 || assets.length > videoStageImageLimit(stage))
     throw new Error('video_vision_limit');
   if (stage === 'perception' || stage === 'grounding') {
     if (typeof payload.packet_id !== 'string' || !payload.packet_id || payload.packet_id.length > 128 ||
         JSON.stringify(payload.frames) !== JSON.stringify(frames) ||
-        ['detail_frames', 'perception_mode', 'perception_frame_ids'].some(k => Object.hasOwn(payload, k)))
+        (stage === 'perception' ? ['perception_mode', 'perception_frame_ids'] : ['detail_frames', 'perception_mode', 'perception_frame_ids']).some(k => Object.hasOwn(payload, k)))
       throw new Error('video_stage_perception_invalid');
     const partition = new Set();
     for (const role of ['owned', 'context']) {
@@ -845,7 +871,7 @@ function validateVideoStage(body, route) {
   }
   let total = 0;
   for (const [i, asset] of assets.entries()) {
-    const frame = frames[i], data = asset?.base64;
+    const frame = wireFrames[i], data = asset?.base64;
     if (asset?.name !== frame.frame_id || asset.timestamp_ms !== frame.timestamp_ms || asset.mime !== 'image/jpeg' ||
         typeof data !== 'string' || !data || asset.dataUrl) throw new Error('video_frames_invalid');
     total += data.length;
@@ -983,7 +1009,10 @@ function imagePartsFromBody(body = {}) {
     (body.skillName === 'ui_video_observe' && body.payload?.phase === 'whole-observe') ||
     (body.skillName === 'ui_video_steps' && body.payload?.phase === 'whole-consolidate') ||
     (body.skillName === 'ui_video_trajectory' && body.payload?.phase === 'whole-trajectory');
-  if (wholeVideo) {
+  if (wholeVideo && body.videoStage === 'perception') {
+    validatePerceptionDetails(body.payload.image_frames, body.payload.detail_frames === undefined ? [] : body.payload.detail_frames);
+    if (assets.length !== body.payload.image_frames.length + (body.payload.detail_frames || []).length || assets.length > 12) throw new Error('video_vision_limit');
+  } else if (wholeVideo) {
     const frames = body.payload?.image_frames;
     const details = body.payload?.detail_frames || [];
     if (!Array.isArray(details) || details.length > 6 || (details.length && body.skillName !== 'ui_video_observe')) throw new Error('video_frames_invalid');
@@ -1020,7 +1049,9 @@ function imagePartsFromBody(body = {}) {
     const url = dataUrl.startsWith('data:image/') ? dataUrl : (base64 ? `data:${mime};base64,${base64}` : '');
     if (!url || !/^data:image\/(?:png|jpe?g|webp);base64,/i.test(url)) return [];
     const detail = wholeVideo && body.payload?.detail_frames?.find(f => f.frame_id === item.name);
-    const role = body.videoStage === 'perception' ? ` [${body.payload.context_frame_ids.includes(item.name) ? 'context' : 'owned'}]` : detail ? ` [${detail.source_frame_id}的同帧局部放大，不是新事件；仅辅助读文字，${body.payload?.context_frame_ids?.includes(detail.source_frame_id) ? '父帧仅供上下文参考，禁止引用或输出该帧操作' : '引用原帧'}]` : wholeVideo && ['ui_video_observe', 'ui_video_trajectory'].includes(body.skillName) && Array.isArray(body.payload?.context_frame_ids)
+    const parent = detail ? detail.source_frame_id : item.name;
+    const parentRole = body.payload?.context_frame_ids?.includes(parent) ? 'context' : 'owned';
+    const role = body.videoStage === 'perception' ? (detail ? ` [source_frame_id=${parent} box=${JSON.stringify(detail.box)} role=${parentRole}; same-frame visual assistance; no separate time/event/action or ownership]` : ` [${parentRole}]`) : detail ? ` [${detail.source_frame_id}的同帧局部放大，不是新事件；仅辅助读文字，${body.payload?.context_frame_ids?.includes(detail.source_frame_id) ? '父帧仅供上下文参考，禁止引用或输出该帧操作' : '引用原帧'}]` : wholeVideo && ['ui_video_observe', 'ui_video_trajectory'].includes(body.skillName) && Array.isArray(body.payload?.context_frame_ids)
       ? (body.payload.context_frame_ids.includes(item.name) ? (body.skillName === 'ui_video_trajectory' ? ' [可引用为前后态或结果证据；不得作为本包新动作触发]' : ' [仅供上下文参考，禁止引用或输出该帧操作]') : ' [当前窗口证据，可引用]') : '';
     return [...(wholeVideo ? [{type: 'text', text: `${item.name} ${item.timestamp_ms}ms${role}`}] : []),
       {type: 'image_url', image_url: {url}}];

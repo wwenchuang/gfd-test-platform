@@ -35,7 +35,7 @@ test('invalid stage/scope/schema/role/image combinations fail before provider di
  b=>b.payload.phase='whole-trajectory',b=>b.outputSchema=schema(),b=>b.jsonResponse=false,
  b=>b.payload.context_frame_ids.push(b.payload.owned_frame_ids[0]),b=>b.payload.owned_frame_ids.reverse(),
  b=>b.imageAssets[0].name='forged',b=>b.payload.frames.reverse(),b=>b.imageAssets[0].base64='@@',
- b=>b.imageAssets[0].base64='a'.repeat(10*1024*1024+1),b=>b.payload.detail_frames=[]];
+ b=>b.imageAssets[0].base64='a'.repeat(10*1024*1024+1),b=>b.payload.detail_frames=[{}]];
  for(const mutate of mutations) {const b=input();mutate(b);assert.throws(()=>complete(b),/video_/);}
  for(const n of [1,13])assert.throws(()=>complete(input('perception',n)),/video_/);
  for(const mutate of [b=>delete b.outputSchema,b=>b.imageAssets=input().imageAssets,b=>b.payload.reasoning_mode='x',
