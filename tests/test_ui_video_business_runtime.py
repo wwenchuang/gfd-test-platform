@@ -97,7 +97,7 @@ def test_business_reuses_jobs_original_trajectory_and_tail_without_bank(harness)
     audit,opts=h['calls'][3]
     assert not {'business_timeline','perception_bank','perception_mode','perception_frame_ids'} & audit.keys()
     assert len(opts['image_assets'])==11
-    assert budget.reserved==7 and budget.limit==14 and budget.engine_deadline() is None
+    assert budget.reserved==7 and budget.limit==22 and budget.engine_deadline() is None
     assert h['instances'][0].kw['deadline']==budget.deadline and h['closed']==[True]
     private=result['video_runtime_private'];assert private['mode']==BUSINESS
     assert private['business_timeline']['timeline']==TIMELINE
@@ -214,8 +214,11 @@ def test_business_budget_refusal_does_not_decode_or_confirm(monkeypatch):
         vt.observe_trajectory({'media':{'frames':frames(10),'duration_ms':1001}},None,lambda:False,
             skill_runner=run,revisit_bounded=load,diagnostics=diagnostics,business_timeline={'classification':'unverified_business_hypotheses','timeline':TIMELINE})
     assert len(loads)==4
-    assert [p['acquisition_budget']['remaining_revisit_attempts'] for p in calls]==[4,3,2,1,0]
-    assert diagnostics[-1]['kind']=='capacity_refusal' and diagnostics[-1]['reason']=='revisit_attempts'
+    assert [p['acquisition_budget']['remaining_revisit_attempts'] for p in calls]==[4,3,2,1,0,0,0,0]
+    deferred=[d for d in diagnostics if d['kind']=='acquisition_deferred']
+    assert len(deferred)==1 and deferred[0]['reason']=='revisit_attempts'
+    assert calls[5]['deferred_revisit_requests'][0]['request']['question']=='real unresolved action'
+    assert diagnostics[-1]['kind']=='rejection' and diagnostics[-1]['reason']=='audit_shape'
     assert sum(d['kind']=='acquisition' for d in diagnostics)==4
 
 

@@ -120,11 +120,11 @@ class RuntimeBudget:
             raise ValueError('video_vision_limit')
         self.reserved += 1
 
-    def freeze_packets(self, count):
+    def freeze_packets(self, count, *, business=False):
         if not self.frozen:
             if type(count) is not int or count < 1:
                 raise ValueError('video_vision_limit')
-            self.limit = min(80, self.original_count + 2 * count + 12)
+            self.limit = min(80, self.original_count + 2 * count + (20 if business else 12))
             self.frozen = True
             if self.reserved > self.limit:
                 raise ValueError('video_vision_limit')
@@ -244,7 +244,7 @@ def _run_runtime(document, workspace, source_path, check, publish, *, budget=Non
     def progress(phase, completed, total, events):
         boundary()
         if phase == 'observing':
-            budget.freeze_packets(total)
+            budget.freeze_packets(total,business=business)
         publish(media=copy.deepcopy(media), raw_events=events,
                 analysis_progress={'phase': phase, 'completed': completed, 'total': total})
         boundary()

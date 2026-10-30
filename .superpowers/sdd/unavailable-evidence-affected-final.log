@@ -1,0 +1,18 @@
+COMMAND: python3 -m pytest -q tests/test_ui_video_audit_batches.py tests/test_ui_video_audit_sampling.py tests/test_ui_video_audit_structured_output.py tests/test_ui_video_business_runtime.py tests/test_ui_video_consolidation_entry.py tests/test_ui_video_continuation_guidance.py tests/test_ui_video_executor_contract.py tests/test_ui_video_executor_contradiction.py tests/test_ui_video_executor_repair.py tests/test_ui_video_model_jobs.py tests/test_ui_video_navigation_contract.py tests/test_ui_video_records.py tests/test_ui_video_revisit.py tests/test_ui_video_runtime.py tests/test_ui_video_runtime_evidence_reuse.py tests/test_ui_video_stage_runtime.py tests/test_ui_video_stage_schema_classification.py tests/test_ui_video_stage_wire.py tests/test_ui_video_trajectory.py tests/test_ui_video_trajectory_audit_claims.py tests/test_ui_video_trajectory_boundary.py tests/test_ui_video_trajectory_input_context.py tests/test_ui_video_trajectory_reasoning.py tests/test_ui_video_trajectory_reference_compilation.py tests/test_ui_video_trajectory_state_contract.py tests/test_ui_video_trajectory_transport.py tests/test_ui_video_trajectory_verdicts.py tests/test_ui_video_unavailable_evidence.py
+........................................................................ [  6%]
+........................................................................ [ 13%]
+........................................................................ [ 19%]
+........................................................................ [ 26%]
+........................................................................ [ 32%]
+........................................................................ [ 39%]
+........................................................................ [ 45%]
+........................................................................ [ 52%]
+........................................................................ [ 59%]
+........................................................................ [ 65%]
+........................................................................ [ 72%]
+........................................................................ [ 78%]
+........................................................................ [ 85%]
+........................................................................ [ 91%]
+........................................................................ [ 98%]
+.................                                                        [100%]
+1097 passed in 154.58s (0:02:34)
