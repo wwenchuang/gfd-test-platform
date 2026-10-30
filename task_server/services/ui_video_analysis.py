@@ -448,9 +448,9 @@ def consolidate_observed_frames(document, root, cancelled, observed, first_pass,
     from .ui_video_print_recovery import eligible_terminal
     for index,event in enumerate(payload['candidate_events']):
         event['print_recovery_terminal_eligible']=eligible_terminal(event)
-        boundary=next((e['start_ms'] for e in candidates[index+1:] if e['action'] in {'aiTap','aiInput','aiScroll'}),duration)
-        system_start=min((e['start_ms'] for e in candidates[index+1:] if _system_boundary(e,duration)),default=duration+1)
-        event['ordinary_outcome_frame_ids']=[f['frame_id'] for f in image_frames if event['end_ms']<=f['timestamp_ms']<=boundary and f['timestamp_ms']<system_start]
+        from .ui_video_temporal_ownership import ordinary_outcome_domain, ordinary_outcome_frames
+        event['ordinary_outcome_frame_ids']=ordinary_outcome_frames(candidates,index,image_frames,duration)
+        event['ordinary_outcome_domain']=ordinary_outcome_domain(candidates,index,duration)
     pending_plan=None
     reviewed_configuration_indexes=set()
     outcome_review_used=False
