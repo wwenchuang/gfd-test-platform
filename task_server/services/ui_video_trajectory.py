@@ -457,11 +457,11 @@ def observe_trajectory(document,root,cancelled,progress=None,record=None,revisit
     def preserve_questions(raw):
         if business_timeline is None or not isinstance(raw,dict):return
         root_questions=raw.get('uncertainties',[])
-        if isinstance(root_questions,list):rejected_questions.extend(q for q in root_questions if isinstance(q,str))
+        if isinstance(root_questions,list):rejected_questions.extend(q for q in root_questions if isinstance(q,str) and q.strip() and len(q)<=2000)
         raw_events=raw.get('events',[])
         for event in raw_events if isinstance(raw_events,list) else []:
             if isinstance(event,dict) and isinstance(event.get('uncertainties'),list):
-                rejected_questions.extend(q for q in event['uncertainties'] if isinstance(q,str))
+                rejected_questions.extend(q for q in event['uncertainties'] if isinstance(q,str) and q.strip() and len(q)<=2000)
     def diagnose(kind, **fields):
         if diagnostics is not None and len(diagnostics)<diagnostic_limit:
             diagnostics.append(copy.deepcopy({'kind':kind,**last_diagnostic,
@@ -836,6 +836,13 @@ def observe_trajectory(document,root,cancelled,progress=None,record=None,revisit
                     audited_ids={check['event_id'] for check in validated_checks}
                     audited_claims=[copy.deepcopy(claim) for claim in audit_batch if claim['track']['event_id'] in audited_ids]
                     positive_trigger_locks=_merge_positive_trigger_locks(positive_trigger_locks,audited_claims,validated_checks)
+                    if business_timeline is not None:
+                        refuted_ids={c['event_id'] for c in validated_checks if c['trigger_verdict']=='contradicted'}
+                        # Only exact validated fragment refutations retire their own
+                        # unverified multiplicity; supported locks remain authoritative.
+                        candidate_signatures-=Counter((claim['track']['action'],claim['track']['trigger_frame'],claim['track']['trigger_kind'])
+                            for claim in audited_claims if claim['track']['event_id'] in refuted_ids and
+                            claim['track']['action'] in INTERACTIONS and not claim['track']['continuation_of'])
                     audit_feedback={'classification':'unverified_audit_finding_data','instruction_authority':False,
                                     'packet_id':packet['packet_id'],'audit_call':calls,
                                     'checks':validated_checks,'audited_claims':audited_claims,

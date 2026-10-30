@@ -209,3 +209,81 @@ def test_rejected_envelope_keeps_full_questions_after_success(monkeypatch):
     engine=Engine(monkeypatch,count=10,mutate=mutate);result=run(engine)
     assert result['trajectory_audit']['corrections_used']==1
     assert 'original schema-rejected root question' in result['uncertainties']
+
+
+@pytest.mark.parametrize('location',['root','event'])
+@pytest.mark.parametrize('malformed',['z'*2001,'','   '],ids=['oversized','empty','whitespace'])
+def test_malformed_rejected_question_stays_raw_without_poisoning_corrected_result(monkeypatch,location,malformed):
+    attempts=[];original=[];valid='v'*2000
+    def mutate(stage,p,raw,calls):
+        if stage!='observe':return
+        attempts.append(p);raw['events']=pair(False)
+        if len(attempts)==1:
+            questions=[malformed,valid]
+            if location=='root':raw['uncertainties']=questions
+            else:raw['events'][0]['uncertainties']=questions
+            if location=='event' and malformed.isspace():raw['unknown_field']=True
+            original.append(copy.deepcopy(raw))
+    engine=Engine(monkeypatch,count=10,mutate=mutate);result=run(engine)
+    assert len(attempts)==2 and result['trajectory_audit']['corrections_used']==1
+    assert len(engine.audits('packet-001'))==1
+    assert valid in result['uncertainties'] and malformed not in result['uncertainties']
+    recorded=next(d['result'] for n,d in engine.records if n.endswith('observe-result'))
+    assert recorded==original[0]
+    raw_questions=recorded['uncertainties'] if location=='root' else recorded['events'][0]['uncertainties']
+    assert raw_questions==[malformed,valid]
+
+
+@pytest.mark.parametrize('verdict',['contradicted','unclear','outcome_only'])
+def test_exact_audit_trigger_refutation_can_retire_temporal_signature(monkeypatch,verdict):
+    from task_server.services.ui_video_execution_contract import VIDEO_EXPLICIT_KEYBOARD_V1
+    attempts=[];audits=[]
+    def mutate(stage,p,raw,calls):
+        if stage=='observe':
+            attempts.append(copy.deepcopy(p));raw['events']=pair(len(attempts)==1)
+            if len(attempts)==3:raw['events'][0]['trigger_frame']='frame-001'
+        if stage=='audit':
+            audits.append(copy.deepcopy(p))
+            if len(audits)==1:
+                check=next(c for c in raw['checks'] if c['event_id'].endswith('event-0:fragment-1'))
+                check.update(trigger_verdict='supported' if verdict=='outcome_only' else verdict,
+                             outcome_verdict='supported' if verdict=='contradicted' else 'contradicted',question='independent audit question')
+    engine=Engine(monkeypatch,count=10,mutate=mutate)
+    if verdict=='contradicted':
+        result=run(engine,execution_contract=VIDEO_EXPLICIT_KEYBOARD_V1)
+        assert result['trajectory_audit']['corrections_used']==2 and len(audits)==2
+        assert result['trajectory_audit']['tracks'][0]['trigger_frame']=='frame-001'
+        assert [s for s,_,_ in engine.calls]==['overview','observe','observe','audit','observe','audit']
+        signatures=attempts[2]['candidate_preservation_constraints']['signatures']
+        assert [s['trigger_frame'] for s in signatures]==['frame-004']
+        assert len(attempts[2]['audit_feedback']['positive_trigger_locks'])==1
+    else:
+        with pytest.raises(ValueError) as caught:run(engine,execution_contract=VIDEO_EXPLICIT_KEYBOARD_V1)
+        assert caught.value.trajectory_reason==('audit_positive_trigger_exhausted' if verdict=='outcome_only' else 'ordinary_candidate_preservation')
+        assert len(audits)==1
+    assert len(attempts)==3
+
+
+def test_exact_refuted_fragment_retires_only_one_signature_multiplicity(monkeypatch):
+    from task_server.services.ui_video_execution_contract import VIDEO_EXPLICIT_KEYBOARD_V1
+    attempts=[];audits=[]
+    def mutate(stage,p,raw,calls):
+        if stage=='observe':
+            attempts.append(copy.deepcopy(p))
+            first=event(['frame-001','frame-002','frame-006'] if len(attempts)==1 else ['frame-002'])
+            first['trigger_frame']='frame-002'
+            raw['events']=[first,event(['frame-002']),event(['frame-004','frame-007'])]
+            if len(attempts)==3:
+                raw['events'][0]=event(['frame-001'])
+        if stage=='audit':
+            audits.append(p)
+            if len(audits)==1:
+                check=next(c for c in raw['checks'] if c['event_id'].endswith('event-0:fragment-1'))
+                check.update(trigger_verdict='contradicted',question='only first fragment refuted')
+    engine=Engine(monkeypatch,count=10,mutate=mutate)
+    result=run(engine,execution_contract=VIDEO_EXPLICIT_KEYBOARD_V1)
+    assert len(audits)==2 and result['trajectory_audit']['corrections_used']==2
+    constraints=attempts[2]['candidate_preservation_constraints']['signatures']
+    same=next(s for s in constraints if s['trigger_frame']=='frame-002')
+    assert same['multiplicity']==1
+    assert len(result['events'])==3
