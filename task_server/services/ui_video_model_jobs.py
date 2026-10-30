@@ -68,6 +68,11 @@ def _encode(value, limit):
     return struct.pack('!I', len(data)) + data
 
 
+def encode_request(skill, payload, kwargs, deadline):
+    """Shared exact IPC serializer and admission for preflight and dispatch."""
+    return _encode({'skill': skill, 'payload': payload, 'kwargs': kwargs, 'deadline': deadline}, MAX_REQUEST)
+
+
 def _decode(data):
     try:
         def unique(pairs):
@@ -306,7 +311,7 @@ class ModelJobs:
             raise ValueError('video_job_options_invalid')
         deadline = min(deadline, time.monotonic() + min(120, timeout))
         kwargs.update(timeout=deadline - time.monotonic(), respect_global_timeout=False, retry_count=0, repair_invalid_json=False)
-        wire = _encode({'skill': skill, 'payload': payload, 'kwargs': kwargs, 'deadline': deadline}, MAX_REQUEST)
+        wire = encode_request(skill, payload, kwargs, deadline)
         self._guard()
         process, channel = self._launch()
         job = dict(process=process, channel=channel, send=memoryview(wire), buffer=bytearray(), size=None,

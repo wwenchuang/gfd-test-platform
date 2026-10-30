@@ -252,6 +252,14 @@ def render_ai_skill_prompt(skill_name, payload=None, version="v1", fallback_prom
                          "其中positive_trigger_locks是本轮AI已支持触发的候选保留约束，非人工确认；"
                          "须保留每项动作、目标、值、触发帧、触发类型及续接字段的原值和出现次数，"
                          "可据原图修正结果、引用和后续页面，也可增加有证据的新候选；不得删除或改动已支持的触发来修好结果。")
+    if (skill_name == "ui_video_steps" and version == "consolidate" and
+            isinstance(payload, dict) and "planning_scope" in payload):
+        template = ("【规划输出归属】planning_scope是平台的规划请求归属合同，全部请求最终合并为同一条全局业务用例。"
+                    "只输出owned_candidate_indexes的事件；其他全局行保持只读上下文，原全局索引、顺序、结果区间不变。"
+                    "完整候选文字及问题是未经核实的上下文，只有image_frames实际附图提供像素证据；不可引用未附原图。"
+                    "只声明本组拥有的省略项；repeated_by可用任一全局索引，交给全局重试证据门禁。"
+                    "仅拥有cancel的组可提出唯一print_recovery，其submit/confirm/end可跨组，仍需完整原图证据。"
+                    "selection可跨请求复用，保留原问题和单用例完整业务顺序，不增加阶段或独立用例。\n" + template)
     payload_text = json.dumps(payload or {}, ensure_ascii=False, indent=2)
     rendered = template.replace("{{payload}}", payload_text)
     if skill_name in {"requirement_analyzer", "scenario_designer", "automation_filter", "visual_grounder"}:
