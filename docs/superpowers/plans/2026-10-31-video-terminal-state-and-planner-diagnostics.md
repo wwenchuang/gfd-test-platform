@@ -36,3 +36,10 @@
 - [ ] Prepare one guarded existing ui_video_perception call with unchanged68 skills and normal bind_inventory. One attempt/120seconds,180second total, no retry/follow-up audit/source/device action.
 - [ ] Test actual fixture binding, source/frame/auth drift refusal and private output guards; independent helper review, exact archive/server SHA before execution.
 - [ ] Verify actual inventory/receipts/cleanup and compare all three owned frame rows against actual pixels. Preserve uncertainty and distinguish factual inventory from causal action recognition and full-source acceptance.
+
+### Task 4: Bounded planning requests with global merge
+
+- [ ] Implement only a new diagnostic helper package following the precise Task4 spec; pure deterministic split/projection/merge helpers and tests first, no production file change.
+- [ ] Reuse frozen38 candidates/45 root questions/full audit/60 authenticated JPEGs. Derive split and copy global ordinary result domains; preserve global array positions and use read-only projections for nonowned rows.
+- [ ] Invoke two existing normal consolidate calls at most; retain all proofs/replies/status and run merged proposal through unchanged normal global gates. Third provider call or an unrepresentable partition fails honestly.
+- [ ] Independent helper review, checked package/server SHA, two actual calls once; verify records/coverage/results and any unchanged installed gate failure. Separate offline replay against reviewed question presentation, no disguised deployment or acceptance.
