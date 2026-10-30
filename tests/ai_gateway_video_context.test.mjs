@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 const source=fs.readFileSync(new URL('../ai-gateway/server.js',import.meta.url),'utf8');
-const fn=source.slice(source.indexOf('function imagePartsFromBody('),source.indexOf('\nfunction assistantOutputText'));
+const fn=source.slice(source.indexOf('function videoStageImageLimit('),source.indexOf('function routeSupportsQwenHybridThinking('))+source.slice(source.indexOf('function imagePartsFromBody('),source.indexOf('\nfunction assistantOutputText'));
 const imageParts=vm.runInNewContext(fn+';imagePartsFromBody');
 const frames=Array.from({length:58},(_,i)=>({frame_id:i===57?'frame-end':`frame-${String(i+1).padStart(3,'0')}`,timestamp_ms:i*100}));
 const assets=frames.map(f=>({name:f.frame_id,timestamp_ms:f.timestamp_ms,mime:'image/jpeg',base64:'YQ=='}));
