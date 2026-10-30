@@ -19,7 +19,7 @@
 
 - [x] Verify receipt20, receipt22 and authenticated frame111 discrepancy without rewriting source evidence.
 - [x] Fetch original packet003's44 JPEGs through authenticated version27 endpoints and record byte hashes.
-- [ ] Build diagnostic helper in Downloads/normal-video-qa/terminal-state-probe-27 using the existing guarded frozen-audit helper. Original44 versus required trigger/terminal immediate-neighbor6, explicitly partial scope; two calls maximum. Preserve exact original projected claim.
+- [ ] Build diagnostic helper in Downloads/normal-video-qa/terminal-state-probe-27 using the existing guarded frozen-audit helper. Original44 versus all immutable claimed evidence plus immediate terminal neighbors17, explicitly partial scope; two calls maximum. Preserve exact original projected claim.
 - [ ] Check frozen hashes, source guards, denied actor/drift cases and binding behavior locally; independent helper review.
 - [ ] Upload checked ZIP, verify server SHA, execute once, download and verify all records. Report actual outcome verdicts and limits separately from full-source acceptance.
 
