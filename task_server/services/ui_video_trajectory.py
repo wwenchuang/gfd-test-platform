@@ -411,7 +411,7 @@ def validate_revisit_requests(requests,packet,*,allow_context_anchors=False):
         seen.add(bounds[:2])
 
 
-def observe_trajectory(document,root,cancelled,progress=None,record=None,revisit=None,*,revisit_bounded=None,skill_runner=None,audit_batcher=None,execution_contract=None,diagnostics=None,business_timeline=None):
+def observe_trajectory(document,root,cancelled,progress=None,record=None,revisit=None,*,revisit_bounded=None,skill_runner=None,audit_batcher=None,execution_contract=None,diagnostics=None,business_timeline=None,engine_deadline=None):
     validate_execution_contract(execution_contract)
     from . import ai_skill_service as ai
     from .ui_video_windows import load_assets
@@ -423,6 +423,11 @@ def observe_trajectory(document,root,cancelled,progress=None,record=None,revisit
     bounded_revisit=revisit_bounded is not None
     frames=copy.deepcopy(document['media']['frames']);duration=document['media']['duration_ms']
     calls=0;corrections=0;correction_scope_start=0;revisits=0;started=time.monotonic();secrets=[];call_audit=[];revisit_attempts=[];repair_feedback=[]
+    if engine_deadline is None:
+        engine_deadline=started+1200
+    elif (type(engine_deadline) not in (int,float) or not math.isfinite(engine_deadline) or
+          engine_deadline>started+1560):
+        raise ValueError('video_runtime_engine_deadline_invalid')
     def correction_available():
         return corrections-correction_scope_start<2
     # At most24 replies,3 rejections,4 acquisitions and terminal capacity records.
@@ -452,7 +457,7 @@ def observe_trajectory(document,root,cancelled,progress=None,record=None,revisit
     def ask_once(version,images,**context):
         nonlocal calls
         if cancelled():raise ValueError('video_cancelled')
-        if calls>=24 or time.monotonic()-started>1200:
+        if calls>=24 or time.monotonic()>=engine_deadline:
             diagnose('capacity_refusal',reason='trajectory_calls' if calls>=24 else 'trajectory_deadline')
             raise ValueError('video_vision_limit')
         calls+=1;trace={};tick=time.monotonic()
@@ -560,13 +565,13 @@ def observe_trajectory(document,root,cancelled,progress=None,record=None,revisit
                 _correction_feedback(context,outer_feedback,latest_feedback)
     def expand(packet,requests):
         nonlocal revisits,frames
-        if not requests:return False
+        if not requests:return 'not_attempted'
         if revisit is None and not bounded_revisit:_fail('revisit_unavailable')
         validate_revisit_requests(requests,packet,allow_context_anchors=bounded_revisit)
         times={f['frame_id']:f['timestamp_ms'] for f in frames}
         allowed={f['frame_id'] for f in packet['frames']}
         start,end=packet['owned_start_ms'],packet['owned_end_ms']
-        attempted=False
+        outcome='not_attempted'
         def exhausted(request):
             span=[times[request['first_frame']],times[request['last_frame']]]
             return any(a['status']=='no_new_frames' and a['packet_id']==packet['packet_id'] and a['time_range_ms']==span for a in revisit_attempts)
@@ -602,7 +607,9 @@ def observe_trajectory(document,root,cancelled,progress=None,record=None,revisit
                     not clipped_left<=f['timestamp_ms']<=clipped_right or not start<=f['timestamp_ms']<end or
                     f['timestamp_ms'] in stamps):_fail('revisit_result')
                 names.add(f['frame_id']);stamps.add(f['timestamp_ms'])
-            revisits+=1;attempted=True
+            revisits+=1
+            if extra:outcome='frames_added'
+            elif outcome!='frames_added':outcome='no_new_frames'
             attempt={'request':copy.deepcopy(request),'new_frames':copy.deepcopy(extra),'packet_id':packet['packet_id'],
                      'time_range_ms':[left,right],'requested_time_range_ms':[left,right],
                      'decoded_time_range_ms':[clipped_left,clipped_right],'decoded_end_exclusive':clipped_right==end,
@@ -617,7 +624,7 @@ def observe_trajectory(document,root,cancelled,progress=None,record=None,revisit
             packet['context_frame_ids']=[f['frame_id'] for f in packet['frames'] if f['frame_id'] not in owned]
             allowed.update(f['frame_id'] for f in extra);times.update({f['frame_id']:f['timestamp_ms'] for f in extra})
             if record:record(f'revisit-{revisits}',redact(attempt))
-        return attempted
+        return outcome
     images=overview_frames(frames)
     overview=ask('overview',images)
     if overview['events'] or overview['checks']:_fail('overview_shape')
@@ -667,7 +674,7 @@ def observe_trajectory(document,root,cancelled,progress=None,record=None,revisit
                 if reason in {'state_shape','state_reference','state_kind'}:
                     feedback+='states每项必须且只能含state_id、first_frame、last_frame、kind、description；state_id和description为非空字符串，kind只能为page/input/wait/transition。first_frame和last_frame必须引用本次已提供的真实frame_id，first_frame不晚于last_frame，各项按first_frame时间排列。无新增状态时states可为[]；完整保留本包events和uncertainties，不能以删除状态代替修正元数据。'
                 continue
-            if expand(packet,raw.get('revisit',[])):continue
+            if expand(packet,raw.get('revisit',[]))!='not_attempted':continue
             owned=set(packet['owned_frame_ids']);batch=[]
             for track,event in zip(history,proposed):
                 for number,fragment in enumerate(track['fragments'],1):
@@ -688,19 +695,33 @@ def observe_trajectory(document,root,cancelled,progress=None,record=None,revisit
                     bound=bind_audit_checks(result['checks'],[p['track'] for p in shard],packet['frames'])
                     validate_audit_issues(result['issues'],packet)
                     validated_audit.append(bound)
-                audited=ask('audit',packet['frames'],revisit_packet=packet,
-                        validator=validate_audit,
-                        state_memory=states+extra,
-                        **({'state_memory_status':'unverified_model_claims','prior_context_status':'unverified_model_claims'}
-                           if execution_contract is not None else {'overview_hypotheses':overview_hypotheses}),
-                        trajectory=shard,
-                        **({'context_trajectory':audit_batch} if audit_batcher is not None else {}),
-                        packet_id=packet['packet_id'],owned_frame_ids=packet['owned_frame_ids'],
-                        context_frame_ids=packet['context_frame_ids'],
-                        owned_time_range_ms=[packet['owned_start_ms'],packet['owned_end_ms']],
-                        prior_events=audit_prior)
-                if expand(packet,audited.get('revisit',[])):
-                    expanded=True;break
+                while True:
+                    audited=ask('audit',packet['frames'],revisit_packet=packet,
+                            validator=validate_audit,
+                            state_memory=states+extra,
+                            **({'state_memory_status':'unverified_model_claims','prior_context_status':'unverified_model_claims'}
+                               if execution_contract is not None else {'overview_hypotheses':overview_hypotheses}),
+                            trajectory=shard,
+                            **({'context_trajectory':audit_batch} if audit_batcher is not None else {}),
+                            packet_id=packet['packet_id'],owned_frame_ids=packet['owned_frame_ids'],
+                            context_frame_ids=packet['context_frame_ids'],
+                            owned_time_range_ms=[packet['owned_start_ms'],packet['owned_end_ms']],
+                            prior_events=audit_prior)
+                    acquisition=expand(packet,audited.get('revisit',[]))
+                    if acquisition=='frames_added' or (acquisition=='no_new_frames' and business_timeline is None):
+                        expanded=True;break
+                    if acquisition=='no_new_frames':
+                        # Keep this candidate and earlier shards immutable. The next
+                        # independent audit receives the original exhausted record;
+                        # a repeated exhausted request cannot dispatch another loop.
+                        questions.extend(issue['question'] for issue in audited['issues'])
+                        questions.extend(check['question'] for check in audited['checks'] if check['question'])
+                        missing=any(issue['kind']=='missing_action' for issue in audited['issues'])
+                        contradicted=any(check[field]=='contradicted' for check in audited['checks']
+                                         for field in ('trigger_verdict','outcome_verdict'))
+                        if not (execution_contract is not None and (missing or contradicted)):continue
+                    break
+                if expanded:break
                 shard_checks=validated_audit[-1]
                 bound_checks.extend(shard_checks)
                 audit_shards.append({'index':shard_index,'event_ids':[p['track']['event_id'] for p in shard],

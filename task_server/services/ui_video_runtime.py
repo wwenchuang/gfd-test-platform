@@ -129,12 +129,16 @@ class RuntimeBudget:
             if self.reserved > self.limit:
                 raise ValueError('video_vision_limit')
 
-    def start_engine(self):
+    def start_engine(self, *, business=False):
         self.check()
         if self._engine_started:
             raise ValueError('video_runtime_engine_started')
         self._engine_started = True
-        self._engine_deadline = self.clock() + 1200
+        # Business shares the source clock, leaving minimum normal-path tail
+        # headroom. Four downstream120s calls can still exceed that reserve;
+        # every tail dispatch remains bounded by the original source deadline.
+        self._engine_deadline = self.deadline - 240.5 if business else self.clock() + 1200
+        self.check()
 
     def end_engine(self):
         self._engine_deadline = None
@@ -382,11 +386,11 @@ def _run_runtime(document, workspace, source_path, check, publish, *, budget=Non
                     if not business:
                         produce(windows)
                     return extra
-                budget.start_engine()
+                budget.start_engine(business=business)
                 observed = observe_trajectory(document, workspace, cancelled, progress,
                     revisit_bounded=revisit, skill_runner=runner, audit_batcher=partition_audit_claims,
                     execution_contract=VIDEO_EXPLICIT_KEYBOARD_V1,diagnostics=trajectory_diagnostics,
-                    **({'business_timeline':business_timeline} if business else {}))
+                    **({'business_timeline':business_timeline,'engine_deadline':budget.engine_deadline()} if business else {}))
                 budget.end_engine()
                 boundary()
                 media = copy.deepcopy(observed['media'])
