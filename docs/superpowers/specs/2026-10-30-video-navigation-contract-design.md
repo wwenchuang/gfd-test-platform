@@ -1,0 +1,22 @@
+# Evidence-bound navigation classification and packet-local correction
+
+User explicitly resumed implementation and deployment/real-phone validation after run17; retain all-Qwen models and the same original/manual baseline. No further routine approval is needed.
+
+## Evidence and architectural diagnosis
+
+Run17 on48b95be4 failed packet008 observing7/9. Authentic receipts38 and40 each describe two independent returns but encode both as aiWaitFor + navigation. Original operation-before frames255/267 have visible back arrows; continuous transitions258/268 reach previous pages260/271. Existing observer rules already permit an equivalent visible back control without inventing a touch. Current correction gives only the reason interaction_as_state, not affected indices or fields. Separately, a single global two-correction pool couples nine independent owned packets: packet006 consumed one correction, leaving packet008 only one. These are output-contract/repair-scheduling failures, not proof that changing model, image cap or source content is required.
+
+## Chosen design
+
+1. Keep action/type validation and immutable raw responses. Expose a trusted, fixed action_contract in business grounding input, generated from the same accepted pairs as the current validator. The pair policy must exactly preserve existing accepted/rejected combinations, including aiInput edit/empty value; uncertain still requires questions. Do not automatically rewrite actions or kinds.
+2. When action/type binding fails, attach bounded sanitized metadata identifying all safely inspectable conflicts in the current packet, including event index, legal action/kind strings and an owned trigger ID/time. No target, observation, question or arbitrary exception/model prose enters trusted feedback. Invalid/foreign IDs must not be echoed. The outer correction includes this metadata plus a fixed instruction to re-observe all conflicts, retain independent actions, and distinguish active navigation from automatic response. Do not relabel navigation automatic/uncertain merely to pass or invent a control. A supported return with a visible operation-before equivalent control can use the existing aiTap/navigation rule; unknown execution targets remain unresolved and can request bounded revisit.
+3. For business_timeline mode only, each owned packet has at most two corrections shared by schema/revisit validation, event binding, audit shards, missing/contradicted audit findings and re-observation. Overview has its own two-correction scope. Revisit and shard loops do not reset the scope. Cumulative corrections_used stays cumulative; legacy mode retains global two. Existing engine24 calls/1200s, RuntimeBudget, provider request120s/no provider retries, image/revisit/ownership/audit/positive-lock/input/evidence/draft/Runner gates remain unchanged. Reaching a global limit still refuses; per-packet allowance never promises extra global capacity.
+4. Add packet-local correction accounting to bounded diagnostics and final trajectory metadata, without raw narrative. Invalid binding continues before revisit acquisition.
+
+## Alternatives considered
+
+Only adding prompt wording leaves unhelpful correction and cross-packet budget coupling. Automatically replacing aiWaitFor with aiTap could invent interactions or controls and is rejected. A new nested JSON Schema discriminator would require Python/Gateway canonical scaffold changes while multimodal providers may ignore decoding constraints; no such rewrite is justified by this evidence. The selected fix uses existing contracts and unchanged admission gates.
+
+## Verification and delivery
+
+Authentic run17 captures must remain rejected. Test all conflicting indices, safe feedback, exact existing pair policy, actual runtime/skill/Gateway serialization, child raw receipt/hash/cleanup/no-retry where applicable, synthetic corrected responses explicitly labeled, packet-local sharing and exhaustion, legacy global2, overview isolation, revisit/shard no-reset, cumulative totals and unchanged global24/deadlines. Run scoped and affected tests plus required repository checks. Fresh independent task and release reviews precede exact primary integration/push/package; preserve249 dirty primary files and STATE prefixes. Verify deployed revision and same-original normal UI generation once, export all terminal evidence. Only a successful normal draft proceeds through normal validation/target compilation/dry-run and designated phone/printer binding; never report offline replay as source acceptance.
