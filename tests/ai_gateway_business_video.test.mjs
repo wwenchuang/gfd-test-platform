@@ -91,3 +91,31 @@ test('actual grounding /ai/skill schema narrowing, exact JPEGs and cross-languag
   const bad=grounding(),rejected=orchestration();mutate(bad);await assert.rejects(rejected.request(bad),/video_/);assert.equal(rejected.calls.length,0);
  }
 });
+
+for(const stage of ['grounding','audit']) test(`closed ${stage} actual128 provider parts and independent proof;129 denied`,async()=>{
+ const b=grounding();b.videoStage=stage;b.skillVersion=stage==='grounding'?'observe':'audit';
+ const jpeg='YQ==';const frames=Array.from({length:128},(_,i)=>({frame_id:`frame-${String(i).padStart(3,'0')}`,timestamp_ms:i*100}));
+ b.payload.frames=frames;b.payload.image_frames=frames;b.payload.owned_frame_ids=frames.slice(0,127).map(f=>f.frame_id);b.payload.context_frame_ids=['frame-127'];
+ b.imageAssets=frames.map((f,i)=>({name:f.frame_id,timestamp_ms:f.timestamp_ms,mime:'image/jpeg',base64:Buffer.from(`fixture-image-${i}`).toString('base64')}));
+ if(stage==='audit')delete b.outputSchema;
+ else b.outputSchema.properties.events.items.properties.frame_refs.items.enum=frames.map(f=>f.frame_id);
+ const before=structuredClone(b),run=orchestration(),response=await run.request(b);
+ assert.deepEqual(b,before);assert.equal(run.calls.length,1);
+ const parts=run.calls[0].options.messages[1].content;
+ const images=parts.filter(p=>p.type==='image_url');assert.equal(images.length,128);
+ for(let i=0;i<128;i++){
+  assert.equal(images[i].image_url.url,'data:image/jpeg;base64,'+b.imageAssets[i].base64);
+  assert.equal(parts[2*i+1].text.startsWith(`${frames[i].frame_id} ${frames[i].timestamp_ms}ms`),true);
+ }
+ assert.match(parts[255].text,/不得作为本包新动作触发/);
+ assert.equal(response.videoPolicy.effective_options.image_count,128);
+ const py=spawnSync('python3',['-c','import json,sys;from task_server.services.ui_video_stage_receipts import make_expected_attestation;print(json.dumps(make_expected_attestation(json.load(sys.stdin))))'],{input:JSON.stringify({...b,prompt:'pixels'}),maxBuffer:2*1024*1024});
+ assert.equal(py.status,0,py.stderr.toString());assert.deepEqual(JSON.parse(JSON.stringify(response.videoPolicy)),JSON.parse(py.stdout));
+ for(const bad of ['129','bytes','legacy']){
+  const rejected=structuredClone(b),runner=orchestration();
+  if(bad==='129'){const f={frame_id:'frame-128',timestamp_ms:12800};rejected.payload.frames.push(f);rejected.payload.owned_frame_ids.push(f.frame_id);rejected.imageAssets.push({name:f.frame_id,timestamp_ms:f.timestamp_ms,mime:'image/jpeg',base64:jpeg});}
+  if(bad==='bytes')rejected.imageAssets[0].base64='YQ=='.repeat(10*1024*1024/4+1);
+  if(bad==='legacy'){delete rejected.videoStage;delete rejected.outputSchema;}
+  await assert.rejects(runner.request(rejected),/video_/);assert.equal(runner.calls.length,0);
+ }
+});

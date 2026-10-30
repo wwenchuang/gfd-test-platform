@@ -586,6 +586,14 @@ function requestedCompletionTokens(body = {}, route = {}) {
   return Number(route?.defaultMaxTokens || 0);
 }
 
+function videoStageImageLimit(stage) {
+  if (stage === 'grounding' || stage === 'audit') return 128;
+  if (stage === 'perception') return 12;
+  if (stage === 'semantic') return 0;
+  if (stage === 'timeline') return 1;
+  return 60;
+}
+
 function routeSupportsQwenHybridThinking(route) {
   const model = String(route?.model || '').toLowerCase();
   const baseUrl = String(route?.baseUrl || '').toLowerCase();
@@ -788,7 +796,7 @@ function validateVideoStage(body, route) {
     return stage;
   }
   if (Object.hasOwn(body, 'outputSchema') && stage !== 'grounding') throw new Error('video_stage_schema_invalid');
-  if (!Array.isArray(assets) || assets.length !== frames.length || assets.length < 2 || assets.length > (stage === 'perception' ? 12 : 60))
+  if (!Array.isArray(assets) || assets.length !== frames.length || assets.length < 2 || assets.length > videoStageImageLimit(stage))
     throw new Error('video_vision_limit');
   if (stage === 'perception' || stage === 'grounding') {
     if (typeof payload.packet_id !== 'string' || !payload.packet_id || payload.packet_id.length > 128 ||
@@ -949,7 +957,7 @@ function imagePartsFromBody(body = {}) {
     const frames = body.payload?.image_frames;
     const details = body.payload?.detail_frames || [];
     if (!Array.isArray(details) || details.length > 6 || (details.length && body.skillName !== 'ui_video_observe')) throw new Error('video_frames_invalid');
-    if (assets.length < 2 || assets.length > 60 || !Array.isArray(frames) || frames.length < 2 || frames.length + details.length !== assets.length)
+    if (assets.length < 2 || assets.length > videoStageImageLimit(body.videoStage) || !Array.isArray(frames) || frames.length < 2 || frames.length + details.length !== assets.length)
       throw new Error('video_vision_limit');
     let total = 0; let last = -1; const names = new Set();
     for (const [index, item] of assets.slice(0, frames.length).entries()) {
@@ -975,7 +983,7 @@ function imagePartsFromBody(body = {}) {
       names.add(detail.frame_id);
     }
   }
-  return assets.slice(0, wholeVideo ? 60 : 6).flatMap((item) => {
+  return assets.slice(0, wholeVideo ? videoStageImageLimit(body.videoStage) : 6).flatMap((item) => {
     const mime = String(item?.mime || 'image/png').toLowerCase();
     const base64 = String(item?.base64 || '').replace(/\s+/g, '');
     const dataUrl = String(item?.dataUrl || '').trim();

@@ -6,6 +6,7 @@ from collections import Counter
 import time
 
 from .ui_video_analysis import _bind_whole_evidence, validate_analysis
+from .ui_video_stage_policy import video_stage_image_limit
 from .ui_video_execution_contract import validate_execution_contract, project_audit_claims
 
 ROOT_FIELDS={'states','events','checks','uncertainties','multiple_scenarios'}
@@ -338,6 +339,7 @@ def observe_trajectory(document,root,cancelled,progress=None,record=None,revisit
     if skill_runner is not None and not callable(skill_runner):raise ValueError('video_skill_runner_invalid')
     if audit_batcher is not None and not callable(audit_batcher):raise ValueError('video_audit_batches_invalid')
     run_skill=ai.run_ai_skill if skill_runner is None else skill_runner
+    packet_image_limit=video_stage_image_limit('grounding' if business_timeline is not None else None)
     bounded_revisit=revisit_bounded is not None
     frames=copy.deepcopy(document['media']['frames']);duration=document['media']['duration_ms']
     calls=0;corrections=0;revisits=0;started=time.monotonic();secrets=[];call_audit=[];revisit_attempts=[];repair_feedback=[]
@@ -382,7 +384,7 @@ def observe_trajectory(document,root,cancelled,progress=None,record=None,revisit
                 payload['acquisition_budget'] = {
                     'remaining_revisit_attempts': max(0, 4-revisits),
                     'remaining_new_frames': max(0, 64-sum(len(a['new_frames']) for a in revisit_attempts)),
-                    'packet_image_slots': max(0, 60-len(images)),
+                    'packet_image_slots': max(0, packet_image_limit-len(images)),
                     'max_requests_per_response': 2, 'max_frames_per_request': 20,
                     'max_request_span_ms': 3000}
         if execution_contract is not None:payload['execution_contract']=execution_contract
@@ -487,7 +489,7 @@ def observe_trajectory(document,root,cancelled,progress=None,record=None,revisit
                          pending_request_indexes=list(range(index,len(requests))))
                 _fail('revisit_budget')
             remaining=sum(not exhausted(pending) for pending in requests[index:])
-            capacity=min(20,(60-len(packet['frames']))//remaining)
+            capacity=min(20,(packet_image_limit-len(packet['frames']))//remaining)
             if capacity<2:
                 diagnose('capacity_refusal',reason='request_image_capacity',packet_frames=len(packet['frames']),
                          capacity=capacity,pending_request_indexes=list(range(index,len(requests))))

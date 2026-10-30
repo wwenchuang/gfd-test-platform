@@ -22,6 +22,19 @@ STAGES = {
 _SEMANTIC_FIELDS = {'states', 'events', 'checks', 'uncertainties', 'multiple_scenarios'}
 
 
+def video_stage_image_limit(stage=None):
+    """Closed stage count policy; legacy callers retain the 60-image bound."""
+    if stage in ('grounding', 'audit'):
+        return 128
+    if stage == 'perception':
+        return 12
+    if stage == 'semantic':
+        return 0
+    if stage == 'timeline':
+        return 1
+    return 60
+
+
 def _provider_projection(node):
     """Project the canonical observer schema into the bounded provider subset."""
     if 'oneOf' in node:
@@ -203,7 +216,7 @@ def validate_video_stage(skill, payload, assets, stage=UNSET, schema=UNSET, *, v
         raise ValueError('video_perception_selection_invalid')
     frames = payload.get('image_frames')
     _metadata(frames)
-    if not isinstance(assets, list) or len(assets) != len(frames) or not 2 <= len(assets) <= 60:
+    if not isinstance(assets, list) or len(assets) != len(frames) or not 2 <= len(assets) <= video_stage_image_limit(stage):
         raise ValueError('video_vision_limit')
     if stage == 'audit' and any(k in payload for k in ('perception_mode', 'perception_frame_ids')):
         if payload.get('perception_mode') != 'fine-detail':

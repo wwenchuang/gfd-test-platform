@@ -38,7 +38,7 @@ import threading
 import time
 
 from .ui_video_records import safe_record
-from .ui_video_stage_policy import STAGES
+from .ui_video_stage_policy import STAGES, video_stage_image_limit
 
 MAX_REQUEST = 16 * 1024 * 1024
 MAX_MESSAGE = 1024 * 1024
@@ -81,7 +81,7 @@ def _decode(data):
         raise ModelJobError('video_job_message_invalid') from None
 
 
-def _safe_trace(trace):
+def _safe_trace(trace, stage=None):
     if not isinstance(trace, dict):
         raise ModelJobError('video_job_message_invalid')
     receipt = safe_record('receipt', {**trace, 'content': '', 'gateway_request_sha256': '0' * 64})
@@ -91,7 +91,7 @@ def _safe_trace(trace):
     for key in ('selectedModel',):
         if trace.get(key) in ('qwen3.8-max', 'qwen3.8-flash'):
             out[key] = trace[key]
-    if type(trace.get('imageCount')) is int and 0 <= trace['imageCount'] <= 60:
+    if type(trace.get('imageCount')) is int and 0 <= trace['imageCount'] <= video_stage_image_limit(stage):
         out['imageCount'] = trace['imageCount']
     return out
 
@@ -123,7 +123,7 @@ def _child_main(fd):
     """Fresh interpreter imports config only after Popen's sanitized env exists."""
     from .ai_skill_service import run_ai_skill, SkillSchemaError
     channel = socket.socket(fileno=fd)
-    deadline, trace, skill = time.monotonic() + 120, {}, None
+    deadline, trace, skill, stage = time.monotonic() + 120, {}, None, None
 
     def remaining():
         left = deadline - time.monotonic()
@@ -156,7 +156,7 @@ def _child_main(fd):
             data = data[written:]
 
     def hook(event, value):
-        send({'event': event, 'value': value, 'trace': _safe_trace(trace)})
+        send({'event': event, 'value': value, 'trace': _safe_trace(trace, stage)})
         if receive(256) != {'ack': event}:
             raise ModelJobError('video_job_ack_invalid')
         remaining()
@@ -168,18 +168,19 @@ def _child_main(fd):
         deadline, skill = request['deadline'], request['skill']
         remaining()
         kwargs = request['kwargs']
+        stage = kwargs.get('video_stage')
         kwargs['timeout'] = min(kwargs['timeout'], deadline - time.monotonic())
         result = run_ai_skill(skill, request['payload'], **kwargs, runtime_trace=trace,
                               request_proof_hook=lambda value: hook('proof', value),
                               raw_receipt=lambda value: hook('receipt', value))
-        send({'event': 'result', 'value': result, 'trace': _safe_trace(trace)})
+        send({'event': 'result', 'value': result, 'trace': _safe_trace(trace, stage)})
     except Exception as exc:
         code = 'schema' if isinstance(exc, SkillSchemaError) else 'timeout' if isinstance(exc, TimeoutError) else 'failed'
         value = {'code': code}
         if code == 'schema':
             value['path'] = _schema_path(exc.schema_path, skill)
         try:
-            send({'event': 'error', 'value': value, 'trace': _safe_trace(trace)})
+            send({'event': 'error', 'value': value, 'trace': _safe_trace(trace, stage)})
         except Exception:
             pass
     finally:
@@ -296,7 +297,7 @@ class ModelJobs:
         if job['final'] is not None or set(message) != {'event', 'value', 'trace'}:
             raise ModelJobError('video_job_protocol_invalid')
         event, value, row = message['event'], message['value'], job['row']
-        job['trace'].update(_safe_trace(message['trace']))
+        job['trace'].update(_safe_trace(message['trace'], job['stage']))
         if event in ('proof', 'receipt'):
             if job['phase'] != event or job['send']:
                 raise ModelJobError('video_job_protocol_invalid')
