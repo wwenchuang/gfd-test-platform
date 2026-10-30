@@ -231,3 +231,57 @@ def test_frozen_packet_timestamp_must_match_original_source():
     h=helper();fs=frames(70);ps=vt.make_packets(fs,[])
     ps[0]['frames']=copy.deepcopy(ps[0]['frames']);ps[0]['frames'][1]['timestamp_ms']+=1
     with pytest.raises(ValueError):h.freeze_ownership(fs,ps)
+
+
+@pytest.mark.parametrize('reason',['local_owner','schema_check'])
+def test_enabled_correction_preserves_valid_future_question_domain(monkeypatch,reason):
+    from task_server.services import ai_skill_service as ai
+    first_raw=[];audits=[]
+    future=issue(question='Keep this exact future question')
+    current=issue('frame-002',question='Keep this separate current question')
+    def mutate(stage,p,raw,calls):
+        if stage!='audit' or p['packet_id']!='packet-001':return
+        audits.append(copy.deepcopy(p));raw['issues']=[copy.deepcopy(future),copy.deepcopy(current)]
+        if len(audits)==1:
+            if reason=='local_owner':raw['issues'][1]['owner_frame']='unknown-owner'
+            else:raw['checks'][0]['event_id']='invalid-check-id'
+            first_raw.append(copy.deepcopy(raw))
+            if reason=='schema_check':raise ai.SkillSchemaError('$.checks[0].event_id','invalid check ID')
+    engine=Engine(monkeypatch,count=70,mutate=mutate);result=run(engine)
+    assert len(audits)==2 and 'frame-033' in audits[1]['context_frame_ids']
+    feedback=audits[1]['validation_feedback']
+    for required in ('future_issue_owner_frame_ids','owner_frame','frame_refs','check','revisit',
+                     'unverified_forward_context_question','instruction_authority=False'):
+        assert required in feedback
+    assert 'unknown' in feedback and 'past' in feedback
+    assert '完整保留合法未来finding的问题及原始owner/refs' in feedback
+    assert '不得改派owner' in feedback and '删除问题' in feedback
+    assert 'owner_frame必须属于本包owned_frame_ids且包含在该issue的frame_refs中' not in feedback
+    assert 'owner_frame必须属于当前owned_frame_ids并包含在该issue的frame_refs中' not in feedback
+    assert result['trajectory_audit']['corrections_used']==1
+    assert result['trajectory_audit']['forward_context_questions'][0]['issue']==future
+    assert result['uncertainties']==[future['question'],current['question']]
+    assert first_raw[0]['issues'][0]==future
+    # One occurrence, admitted only after whole corrected reply passes.
+    assert len(result['trajectory_audit']['forward_context_questions'])==1
+    recorded=[d['result'] for n,d in engine.records if n.endswith('audit-result')]
+    if reason=='local_owner':assert recorded[0]==first_raw[0]
+
+
+@pytest.mark.parametrize('reason',['local_owner','schema_check'])
+def test_legacy_audit_owner_correction_feedback_remains_exact(monkeypatch,reason):
+    from task_server.services import ai_skill_service as ai
+    audits=[]
+    def mutate(stage,p,raw,calls):
+        if stage!='audit' or p['packet_id']!='packet-001':return
+        audits.append(copy.deepcopy(p))
+        if len(audits)==1:
+            if reason=='local_owner':raw['issues']=[issue('unknown-owner')]
+            else:raise ai.SkillSchemaError('$.checks[0].event_id','invalid check ID')
+    engine=Engine(monkeypatch,count=70,mutate=mutate);engine.run()
+    feedback=audits[1]['validation_feedback']
+    expected=('issues的owner_frame必须属于本包owned_frame_ids且包含在该issue的frame_refs中，不可把context帧当本包新操作。'
+              if reason=='local_owner' else 'checks必须逐项对应当前trajectory中的track.event_id且恰好一次；owner_frame必须属于当前owned_frame_ids并包含在该issue的frame_refs中；issues.frame_refs及revisit端点只能引用当前实际附图。context触发属于其实际owner，不能另造当前issue。')
+    if reason=='schema_check':expected=ai.SkillSchemaError('$.checks[0].event_id','invalid check ID').model_feedback+expected
+    expected='平台合同校验未通过：'+expected+'重新核对全部附图，分别判断给定片段的触发和结果；check不返回帧号，由平台绑定原片段锚点。不补造操作。'
+    assert feedback==expected and 'future_issue_owner_frame_ids' not in feedback
