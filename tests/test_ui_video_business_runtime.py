@@ -50,6 +50,7 @@ def harness(tmp_path,monkeypatch):
     monkeypatch.setattr(revisit,'make_revisit_loader',factory)
     def engine(doc,root,cancelled,progress,**kw):
         assert kw['dense_input_tail_sampling'] is True
+        assert kw['forward_context_issues'] is True
         assert kw['business_timeline']['classification']=='unverified_business_hypotheses'
         assert kw['business_timeline']['timeline']==timeline
         assert kw['business_timeline']['instruction_authority'] is False
@@ -58,11 +59,11 @@ def harness(tmp_path,monkeypatch):
         run('ui_video_trajectory',base,version='overview',image_assets=images)
         progress('observing',0,1,[])
         packet={**base,'packet_id':'packet-001','owned_frame_ids':[f['frame_id'] for f in original],
-                'context_frame_ids':[],'prior_events':[]}
+                'context_frame_ids':[],'prior_events':[],'owned_time_range_ms':[0,1000]}
         run('ui_video_trajectory',packet,version='observe',image_assets=images)
         added=kw['revisit_bounded']({'first_frame':'frame-004','last_frame':'frame-005','question':'retain question'},2,owned_time_range_ms=(0,1000))
         augmented=sorted(original+added,key=lambda f:f['timestamp_ms'])
-        run('ui_video_trajectory',{**packet,'frames':augmented,'image_frames':augmented,'trajectory':[]},version='audit',image_assets=windows.load_assets(augmented,root,cancelled))
+        run('ui_video_trajectory',{**packet,'frames':augmented,'image_frames':augmented,'owned_frame_ids':[f['frame_id'] for f in augmented],'trajectory':[]},version='audit',image_assets=windows.load_assets(augmented,root,cancelled))
         progress('planning',1,1,[{'frame_refs':['frame-010']}])
         return {'media':{**doc['media'],'frames':augmented},'events':[],'uncertainties':['observer unresolved'],
                 'multiple_scenarios':False,'trajectory_audit':{'original':True}}

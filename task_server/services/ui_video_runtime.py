@@ -186,13 +186,18 @@ def _semantic_schema(payload):
     return validate_output_schema(schema)
 
 
-def _audit_schema(payload):
+def _audit_schema(payload, *, forward_context_issues=False):
     """Narrow canonical audit leaves to this dispatch's images, owners and shard."""
     from .ai_skill_service import load_ai_skill_schema
     from .ui_video_stage_policy import _provider_projection, validate_output_schema
+    if type(forward_context_issues) is not bool:raise ValueError('video_forward_context_invalid')
     schema = _provider_projection(load_ai_skill_schema('ui_video_trajectory')['oneOf'][1])
     refs = [f['frame_id'] for f in payload['frames']]
     owned = payload['owned_frame_ids']
+    if forward_context_issues:
+        from .ui_video_context_questions import audit_domains
+        current,future=audit_domains(payload)
+        owned=current+future
     ids = [claim['track']['event_id'] for claim in payload['trajectory']]
     props = schema['properties']
     props['issues']['items']['properties']['owner_frame']['enum'] = list(owned)
@@ -367,13 +372,15 @@ def _run_runtime(document, workspace, source_path, check, publish, *, budget=Non
                         payload['perception_bank'] = bank.project(payload)
                         kwargs.update(image_assets=[], output_schema=_semantic_schema(payload))
                     elif stage == 'audit' and business:
-                        kwargs['output_schema'] = _audit_schema(payload)
+                        from .ui_video_context_questions import audit_domains
+                        kwargs['output_schema'] = _audit_schema(payload,forward_context_issues=True)
                         # Multimodal providers may ignore json_schema; repeat trusted
                         # domains in prompt input while retaining local validation.
                         payload['reference_contract'] = {
-                            'version': 'packet-audit-reference-v1',
+                            'version': 'packet-audit-reference-v2',
                             'check_event_ids': [c['track']['event_id'] for c in payload['trajectory']],
                             'issue_owner_frame_ids': list(payload['owned_frame_ids']),
+                            'future_issue_owner_frame_ids': audit_domains(payload)[1],
                             'image_frame_ids': [f['frame_id'] for f in payload['frames']]}
                     elif stage == 'audit' and not business:
                         projection = bank.project(payload)
@@ -460,7 +467,7 @@ def _run_runtime(document, workspace, source_path, check, publish, *, budget=Non
                 observed = observe_trajectory(document, workspace, cancelled, progress,
                     revisit_bounded=revisit, skill_runner=runner, audit_batcher=partition_audit_claims,
                     execution_contract=VIDEO_EXPLICIT_KEYBOARD_V1,diagnostics=trajectory_diagnostics,
-                    **({'business_timeline':business_timeline,'engine_deadline':budget.engine_deadline(),'dense_input_tail_sampling':True} if business else {}))
+                    **({'business_timeline':business_timeline,'engine_deadline':budget.engine_deadline(),'dense_input_tail_sampling':True,'forward_context_issues':True} if business else {}))
                 budget.end_engine()
                 boundary()
                 media = copy.deepcopy(observed['media'])

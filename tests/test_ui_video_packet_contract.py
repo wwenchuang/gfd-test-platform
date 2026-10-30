@@ -182,7 +182,9 @@ def test_business_reference_metadata_actual_dispatch_overwrites_input(harness,mo
     monkeypatch.setattr(trajectory,'observe_trajectory',spoof)
     h['run']()
     audits=[p for p,kw in h['calls'] if kw['video_stage']=='audit']
-    assert audits and all(p['reference_contract']==reference_contract(p) for p in audits)
+    from task_server.services.ui_video_context_questions import audit_domains
+    assert audits and all(p['reference_contract']=={**reference_contract(p),'version':'packet-audit-reference-v2',
+        'future_issue_owner_frame_ids':audit_domains(p)[1]} for p in audits)
 
 
 def test_audit_schema_error_correction_feedback_uses_issue_owner_not_trigger(monkeypatch):
