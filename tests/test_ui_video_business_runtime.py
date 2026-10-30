@@ -66,7 +66,9 @@ def harness(tmp_path,monkeypatch):
         return {'media':{**doc['media'],'frames':augmented},'events':[],'uncertainties':['observer unresolved'],
                 'multiple_scenarios':False,'trajectory_audit':{'original':True}}
     monkeypatch.setattr(trajectory,'observe_trajectory',engine)
-    def consolidate(doc,root,cancelled,observed,first_pass,secrets,progress,*,skill_runner):
+    def consolidate(doc,root,cancelled,observed,first_pass,secrets,progress,*,skill_runner,bounded_business_planning=False,planning_preflight=None):
+        assert bounded_business_planning is True and callable(planning_preflight)
+        planning_preflight([({}, {})])
         assert doc['trajectory_audit']=={'original':True} and first_pass==[]
         assert 'business_timeline' not in doc
         skill_runner('ui_video_steps',{'phase':'whole-consolidate'},version='consolidate')
@@ -326,3 +328,25 @@ def test_unknown_mode_is_rejected_before_jobs(harness):
     with pytest.raises(ValueError,match='video_runtime_mode_invalid'):
         runtime.run_runtime(h['doc'],h['tmp_path'],h['path'],lambda:None,lambda **kw:None,mode='public-choice')
     assert not h['calls']
+
+
+def test_business_bounded_allocation_private_links_each_physical_status_and_proof(harness,monkeypatch):
+    from task_server.services import ui_video_analysis as analysis
+    h=harness
+    def consolidate(doc,root,cancelled,observed,*args,skill_runner,**options):
+        assert options['bounded_business_planning'] is True
+        options['planning_preflight']([({},{}),({},{})])
+        for group in range(2):
+            scope={'group_index':group,'group_count':2,'owned_candidate_indexes':[group]}
+            trace={'planning_pass':1,'planning_group':scope}
+            skill_runner('ui_video_steps',{'phase':'whole-consolidate','planning_scope':scope},
+                         version='consolidate',runtime_trace=trace)
+            trace['planning_gate_failure']='video_reference_invalid'
+        return observed
+    monkeypatch.setattr(analysis,'consolidate_observed_frames',consolidate)
+    result=h['run']()
+    links=result['video_runtime_private']['bounded_planning']
+    assert len(links)==2 and [p['planning_group']['group_index'] for p in links]==[0,1]
+    assert all(p['planning_pass']==1 and p['status_ref'] and p['proof_ref'] and p['receipt_ref'] for p in links)
+    assert links[0]['proof_ref']!=links[1]['proof_ref']
+    assert all(p['planning_gate_failure']=='video_reference_invalid' for p in links)

@@ -292,16 +292,16 @@ def _bind_candidate_evidence(result, candidates, required_indices=()):
     return bound
 
 
-def _validate_consolidated_analysis(bound,frames,duration,secrets):
+def _validate_consolidated_analysis(bound,frames,duration,secrets,*,max_questions=30):
     """Route invalid optional result references to bounded visual repair only."""
     try:
-        return validate_analysis(bound,frames,duration,secrets)
+        return validate_analysis(bound,frames,duration,secrets,max_questions=max_questions)
     except ValueError as error:
         if str(error)!='video_reference_invalid':raise
         action_only=copy.deepcopy(bound)
         for event in action_only.get('events',[]):event.pop('outcome',None)
         # Invalid action evidence must still fail before any result repair.
-        checked=validate_analysis(action_only,frames,duration,secrets)
+        checked=validate_analysis(action_only,frames,duration,secrets,max_questions=max_questions)
         invalid=[]
         for index,event in enumerate(bound['events']):
             if 'outcome' not in event:continue
@@ -427,7 +427,7 @@ def analyze_whole_frames(document, root, cancelled, progress=None):
     return consolidate_observed_frames(document,root,cancelled,observed,first_pass,known_secrets,progress)
 
 
-def consolidate_observed_frames(document, root, cancelled, observed, first_pass, known_secrets, progress=None, *, skill_runner=None):
+def consolidate_observed_frames(document, root, cancelled, observed, first_pass, known_secrets, progress=None, *, skill_runner=None, bounded_business_planning=False, planning_preflight=None):
     """Compile observed evidence through the shared planning and draft gates."""
     from . import ai_skill_service as ai
     run_skill=ai.run_ai_skill if skill_runner is None else skill_runner
@@ -451,20 +451,86 @@ def consolidate_observed_frames(document, root, cancelled, observed, first_pass,
         from .ui_video_temporal_ownership import ordinary_outcome_domain, ordinary_outcome_frames
         event['ordinary_outcome_frame_ids']=ordinary_outcome_frames(candidates,index,image_frames,duration)
         event['ordinary_outcome_domain']=ordinary_outcome_domain(candidates,index,duration)
+    planning_groups=None
+    if bounded_business_planning:
+        from .ui_video_planning_groups import partition
+        planning_groups=partition(payload)
+        # Master files are loaded once. Verify every original before any group
+        # dispatch, including an image that only group1 will attach.
+        from PIL import Image
+        import io
+        for asset in assets:
+            if cancelled():raise ValueError('video_cancelled')
+            try:
+                with Image.open(io.BytesIO(base64.b64decode(asset['base64'],validate=True))) as image:
+                    if image.format!='JPEG':raise ValueError('video_frames_invalid')
+                    image.load()
+            except (OSError,ValueError):raise ValueError('video_frames_invalid') from None
     pending_plan=None
+    planning_pass=0
+    planning_primary_gate=None
+    pass_traces=[]
     reviewed_configuration_indexes=set()
     outcome_review_used=False
-    # At most two planning calls plus one independent result review.
+    # At most two whole planning passes plus one independent result review.
     for attempt in range(3):
         if cancelled():raise ValueError('video_cancelled')
         if pending_plan is not None:
             planned=pending_plan;pending_plan=None
         else:
-            planned=run_skill('ui_video_steps',payload,image_assets=assets,version='consolidate',
-                timeout=120,retry_count=0,max_tokens=10000,repair_invalid_json=False)
+            local_error=None
+            if planning_groups is None:
+                planned=run_skill('ui_video_steps',payload,image_assets=assets,version='consolidate',
+                    timeout=120,retry_count=0,max_tokens=10000,repair_invalid_json=False)
+            else:
+                from .ui_video_planning_groups import PlanningReplyError, validate_reply, merge
+                from .ui_video_stage_policy import validate_video_stage, STAGES
+                from .ui_video_model_jobs import encode_request
+                asset_by_id={a['name']:a for a in assets}
+                requests=[]
+                for frozen in planning_groups:
+                    group=copy.deepcopy(payload)
+                    group.update({k:copy.deepcopy(frozen[k]) for k in
+                        ('image_frames','required_candidate_indexes','planning_scope')})
+                    group_assets=[copy.deepcopy(asset_by_id[f['frame_id']]) for f in group['image_frames']]
+                    options=dict(image_assets=group_assets,version='consolidate',timeout=120,
+                        retry_count=0,max_tokens=10000,repair_invalid_json=False)
+                    validate_video_stage('ui_video_steps',group,group_assets,'consolidate',version='consolidate')
+                    # Conservative float-width placeholders cover the actual
+                    # remaining timeout/deadline; dispatch uses this exact serializer.
+                    wire_options={**options,'model_config':{'providerId':'qwen_plus','model':STAGES['consolidate'][3]},
+                                  'video_stage':'consolidate','respect_global_timeout':False,'timeout':-1.2345678901234567e+100}
+                    encode_request('ui_video_steps',group,wire_options,-1.2345678901234567e+100)
+                    requests.append((group,options))
+                if planning_preflight is not None:
+                    try:planning_preflight(requests)
+                    except Exception as error:
+                        if planning_primary_gate:error.planning_primary_gate=planning_primary_gate
+                        raise
+                replies=[];planning_pass+=1;pass_traces=[]
+                planned={'events':[]}
+                for group,options in requests:
+                    if cancelled():raise ValueError('video_cancelled')
+                    trace={'planning_pass':planning_pass,'planning_group':copy.deepcopy(group['planning_scope'])}
+                    pass_traces.append(trace)
+                    reply=run_skill('ui_video_steps',group,**options,runtime_trace=trace)
+                    replies.append(copy.deepcopy(reply))
+                    if isinstance(reply,dict) and type(reply.get('multiple_scenarios')) is bool:
+                        multi|=reply['multiple_scenarios']
+                    try:validate_reply(group,reply)
+                    except PlanningReplyError as error:
+                        local_error=error;break
+                # Detached partial replies only collect secret values; original
+                # raw responses remain owned by ordinary durable jobs receipts.
+                planned={'events':[copy.deepcopy(e) for r in replies if isinstance(r,dict) and isinstance(r.get('events'),list)
+                                   for e in r['events']]}
+                if local_error is None:
+                    try:planned=merge(payload,[r[0] for r in requests],replies)
+                    except PlanningReplyError as error:local_error=error
         if cancelled():raise ValueError('video_cancelled')
         if isinstance(planned,dict) and type(planned.get('multiple_scenarios')) is bool:multi|=planned['multiple_scenarios']
         try:
+            if planning_groups is not None and local_error is not None:raise local_error
             from .ui_video_recovery import review_retries
             from .ui_video_print_recovery import prepare_group,bind_group
             plan,effective_required,recovery=review_retries(prepare_group(planned,candidates,required_indices),candidates,required_indices)
@@ -472,7 +538,8 @@ def consolidate_observed_frames(document, root, cancelled, observed, first_pass,
             if recovery and any('取消打印' in candidates[item['candidate_index']]['target'] for item in recovery) and not print_group:
                 raise ValueError('video_retry_invalid')
             bound=_bind_candidate_evidence(plan,candidates,effective_required)
-            checked=_validate_consolidated_analysis(bound,frames,duration,known_secrets)
+            checked=_validate_consolidated_analysis(bound,frames,duration,known_secrets,
+                **({'max_questions':128} if bounded_business_planning else {}))
             _validate_consolidated_evidence(checked,candidates,candidates,frames,image_frames,duration,effective_required,{item['candidate_index'] for item in recovery})
             if trajectory_audit:
                 # Independent trajectory findings are immutable review blockers;
@@ -509,6 +576,15 @@ def consolidate_observed_frames(document, root, cancelled, observed, first_pass,
             first_pass=validate_analysis({'events':first_pass,'uncertainties':[],'multiple_scenarios':False},frames,duration,known_secrets,max_events=120)['events']
             return {**checked,**trajectory_audit,'multiple_scenarios':multi,'first_pass_events':first_pass,'reconciliation_audit':observed.get('reconciliation_audit'),'response_review':observed.get('response_review',[]),'raw_events':candidates,'raw_uncertainties':observed['uncertainties'],'omitted_retries':recovery,'print_recovery':print_group}
         except ValueError as error:
+            if bounded_business_planning:
+                # Only platform validation reaches this block. Keep a closed
+                # original gate code when later repair/capacity also fails.
+                code=str(error)
+                if planning_primary_gate is None and re.fullmatch(r'video_[a-z_]+',code):
+                    planning_primary_gate=code
+                if planning_primary_gate:error.planning_primary_gate=planning_primary_gate
+                if re.fullmatch(r'video_[a-z_]+',code):
+                    for trace in pass_traces:trace.setdefault('planning_gate_failure',code)
             if attempt and (outcome_review_used or not (getattr(error,'result_check_candidate_indexes',[]) or getattr(error,'outcome_event_indexes',[]))):raise
             # Never send model output/error strings back: only a fixed safe correction.
             if isinstance(planned,dict) and isinstance(planned.get('events'),list):
@@ -540,7 +616,11 @@ def consolidate_observed_frames(document, root, cancelled, observed, first_pass,
                 from .ui_video_result_quality import configuration_review_indexes
                 missing_indexes=sorted(set(missing_indexes)|configuration_review_indexes(plan,candidates,reviewed_configuration_indexes,bool(print_group)))
                 from .ui_video_outcomes import repair_outcomes
-                pending_plan,repair_images=repair_outcomes(planned,candidates,frames,duration,root,missing_indexes,cancelled,known_secrets,skill_runner=skill_runner)
+                try:
+                    pending_plan,repair_images=repair_outcomes(planned,candidates,frames,duration,root,missing_indexes,cancelled,known_secrets,skill_runner=skill_runner)
+                except Exception as repair_error:
+                    if planning_primary_gate:repair_error.planning_primary_gate=planning_primary_gate
+                    raise
                 outcome_review_used=True
                 reviewed_configuration_indexes.update(missing_indexes)
                 evidence_ids={f['frame_id'] for f in image_frames+repair_images}

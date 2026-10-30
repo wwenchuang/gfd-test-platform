@@ -120,6 +120,17 @@ class RuntimeBudget:
             raise ValueError('video_vision_limit')
         self.reserved += 1
 
+    def preflight_planning(self, count):
+        """Non-consuming admission on the original source allowance and clock."""
+        self.check()
+        if type(count) is not int or not 1<=count<=2:
+            raise ValueError('video_planning_capacity')
+        if self.limit-self.reserved<count:
+            raise ValueError('video_vision_limit')
+        end=min(self.deadline,self._engine_deadline or self.deadline)
+        if end-self.clock()<count*120+.5:
+            raise TimeoutError('video_runtime_deadline')
+
     def freeze_packets(self, count, *, business=False):
         if not self.frozen:
             if type(count) is not int or count < 1:
@@ -375,9 +386,17 @@ def _run_runtime(document, workspace, source_path, check, publish, *, budget=Non
                                        perception_frame_ids=fine or [payload['owned_frame_ids'][0]])
                     kwargs['model_config']={'providerId':'qwen_plus','model':STAGES[stage][3]}
                     offset=len(jobs.accounting)
+                    incoming_trace=kwargs.get('runtime_trace',{})
+                    planning_provenance=({k:copy.deepcopy(incoming_trace[k]) for k in
+                        ('planning_pass','planning_group') if k in incoming_trace}
+                        if business and stage=='consolidate' else {})
                     try:
                         return jobs.run(skill, payload, **kwargs, video_stage=stage)
                     finally:
+                        if planning_provenance:
+                            for row in jobs.accounting[offset:]:
+                                row['planning_allocation']=copy.deepcopy(planning_provenance)
+                                row['planning_trace']=incoming_trace
                         trace=kwargs.get('runtime_trace')
                         if not business and isinstance(trace,dict) and len(jobs.accounting)>offset:
                             trace['video_record_refs']={k:copy.deepcopy(jobs.accounting[offset][k])
@@ -450,8 +469,13 @@ def _run_runtime(document, workspace, source_path, check, publish, *, budget=Non
                 augmented = {**document, **trusted}
                 publish(**trusted)
                 first_pass = copy.deepcopy(observed['events'])
+                def planning_preflight(requests):
+                    boundary()
+                    budget.preflight_planning(len(requests))
+                    boundary()
                 result = consolidate_observed_frames(augmented, workspace, cancelled, observed,
-                    first_pass, [], progress, skill_runner=runner)
+                    first_pass, [], progress, skill_runner=runner,
+                    **({'bounded_business_planning':True,'planning_preflight':planning_preflight} if business else {}))
                 result.update(trusted)
                 progress('input_recovery', 0, 1, result['events'])
                 result = recover_business_inputs(result, augmented, workspace, cancelled, skill_runner=runner)
@@ -473,6 +497,8 @@ def _run_runtime(document, workspace, source_path, check, publish, *, budget=Non
             if len(trajectory_diagnostics)<64:
                 trajectory_diagnostics.append({'kind':'runtime_failure','reason':reason,
                     **{k:copy.deepcopy(previous[k]) for k in ('stage','packet_id','call','proof_ref','receipt_ref') if k in previous},
+                    **({'planning_primary_gate':error.planning_primary_gate}
+                       if re.fullmatch(r'video_[a-z_]+',getattr(error,'planning_primary_gate','')) else {}),
                     'reserved':budget.reserved,'limit':budget.limit,
                     'acquired_frames':len(bank.frames)-len(document['media']['frames'])})
             raise
@@ -488,6 +514,13 @@ def _run_runtime(document, workspace, source_path, check, publish, *, budget=Non
             if business:
                 private['business_timeline'] = copy.deepcopy(business_timeline)
                 private['transport_retries'] = copy.deepcopy(jobs.retries)
+                private['bounded_planning'] = [
+                    {**copy.deepcopy(row['planning_allocation']),
+                     'status_ref':refs[index],
+                     **({'planning_gate_failure':row['planning_trace']['planning_gate_failure']}
+                        if re.fullmatch(r'video_[a-z_]+',row.get('planning_trace',{}).get('planning_gate_failure','')) else {}),
+                     **{k:copy.deepcopy(row[k]) for k in ('proof_ref','receipt_ref') if k in row}}
+                    for index,row in enumerate(accounting) if row.get('planning_allocation')]
                 private['job_owners'] = []
                 start = 0
                 owners = ([('native', 0, native_jobs)] if native_jobs is not None else []) + [

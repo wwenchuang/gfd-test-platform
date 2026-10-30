@@ -285,3 +285,24 @@ def test_false_authorization_after_owner_close_cancels_without_replacement(tmp_p
         with jobs,pytest.raises(jm.ModelJobCancelled):invoke(jobs)
         assert len(calls)==1 and len(owners)==1 and not jobs.retries
     finally:records.close()
+
+
+def test_bounded_consolidate_groups_share_facade_replacement_budget_and_proof_links(tmp_path):
+    from test_ui_video_planning_groups import payload
+    from task_server.services.ui_video_planning_groups import partition
+    records,budget,jobs,owners,calls=scripted(tmp_path,['503','ok','ok'])
+    groups=partition(payload());before=copy.deepcopy(groups)
+    try:
+        with jobs:
+            budget.freeze_packets(9,business=True)
+            budget.preflight_planning(len(groups))
+            for group in groups:
+                jobs.run('ui_video_steps',group,version='consolidate',video_stage='consolidate',
+                         image_assets=[],retry_count=0,model_config={'providerId':'qwen_plus','model':STAGES['consolidate'][3]})
+        assert len(calls)==3 and budget.reserved==3 and budget.limit==38
+        assert calls[0][1]==calls[1][1] and calls[2][1]['planning_scope']['group_index']==1
+        assert groups==before and len(owners)==2 and len(jobs.retries)==1
+        assert len({row['proof_ref']['entry'] for row in jobs.accounting})==3
+        assert jobs.retries[0]['failed_refs']['proof_ref']==jobs.accounting[0]['proof_ref']
+        assert jobs.retries[0]['replacement_refs']['proof_ref']==jobs.accounting[1]['proof_ref']
+    finally:records.close()
