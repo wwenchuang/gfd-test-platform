@@ -99,9 +99,9 @@ class PerceptionBank:
 
 
 class RuntimeBudget:
-    def __init__(self, original_count, *, clock=time.monotonic):
+    def __init__(self, original_count, *, clock=time.monotonic, business=False):
         self.clock = clock
-        self.deadline = clock() + 1800
+        self.deadline = clock() + (4500 if business else 1800)
         self.original_count = original_count
         self.limit = 80
         self.reserved = 0
@@ -134,10 +134,9 @@ class RuntimeBudget:
         if self._engine_started:
             raise ValueError('video_runtime_engine_started')
         self._engine_started = True
-        # Business shares the source clock, leaving minimum normal-path tail
-        # headroom. Four downstream120s calls can still exceed that reserve;
-        # every tail dispatch remains bounded by the original source deadline.
-        self._engine_deadline = self.deadline - 240.5 if business else self.clock() + 1200
+        # Business retains four bounded120s tail calls plus cleanup on the same
+        # original source clock; injected smaller budgets are never extended.
+        self._engine_deadline = self.deadline - 480.5 if business else self.clock() + 1200
         self.check()
 
     def end_engine(self):
@@ -200,7 +199,7 @@ def run_runtime(document, workspace, source_path, check, publish, *, budget=None
     if mode == BUSINESS_MODE:
         from .ui_video_business_first import run_business_runtime
         return run_business_runtime(document, workspace, source_path, check, publish,
-                                    budget=budget or RuntimeBudget(0))
+                                    budget=budget or RuntimeBudget(0, business=True))
     if mode not in (None, MODE):
         raise ValueError('video_runtime_mode_invalid')
     return _run_runtime(document, workspace, source_path, check, publish, budget=budget)
@@ -259,7 +258,7 @@ def _run_runtime(document, workspace, source_path, check, publish, *, budget=Non
     from .ui_video_stage_policy import STAGES
 
     bank = PerceptionBank(document['media']['frames'])
-    budget = budget or RuntimeBudget(0 if business else bank.original_count)
+    budget = budget or RuntimeBudget(0 if business else bank.original_count, business=business)
     if business and budget.original_count != 0:
         raise ValueError('video_runtime_budget_invalid')
     mode = BUSINESS_MODE if business else MODE
