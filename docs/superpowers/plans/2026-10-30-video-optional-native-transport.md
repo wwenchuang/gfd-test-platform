@@ -21,3 +21,7 @@ All constraints in ../specs/2026-10-30-video-optional-native-transport.md apply 
 - [ ] Add closed video Gateway diagnostic category/status; hostile error text/body/code must never appear; legacy unchanged.
 - [ ] Run scoped tests plus mandatory compile/backend/Gateway/diff; self-review, update STATE, scoped commit/report.
 - [ ] Fresh task review SPEC PASS/QUALITY APPROVED, then whole-release review; root owns integration and full normal original24/phone acceptance.
+
+### Task1 amendment (same review unit)
+
+- [ ] Follow verified transport-size amendment: encoded<10,000,000strict Python/Gateway; preflight oversized otherwise-valid original MP4 native-unavailable without launch/reservation/fakeproof; exactfullauthoritativeframes unchanged. RED boundary/originalsize/directGateway negative controls, prior oversized admission tests updated candidly. No source shortening/transcoding/newupload. No causal claim that size proved22/23 failures.
