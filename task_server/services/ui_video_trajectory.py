@@ -330,7 +330,7 @@ def validate_revisit_requests(requests,packet,*,allow_context_anchors=False):
         seen.add(bounds[:2])
 
 
-def observe_trajectory(document,root,cancelled,progress=None,record=None,revisit=None,*,revisit_bounded=None,skill_runner=None,audit_batcher=None,execution_contract=None,diagnostics=None):
+def observe_trajectory(document,root,cancelled,progress=None,record=None,revisit=None,*,revisit_bounded=None,skill_runner=None,audit_batcher=None,execution_contract=None,diagnostics=None,business_timeline=None):
     validate_execution_contract(execution_contract)
     from . import ai_skill_service as ai
     from .ui_video_windows import load_assets
@@ -375,6 +375,16 @@ def observe_trajectory(document,root,cancelled,progress=None,record=None,revisit
         if exhausted:
             context.update(exhausted_revisit_ranges=exhausted,revisit_feedback='这些区间已成功解码全部真实原帧但没有新增帧，不会重复解码；继续核对当前同组原图。证据不够时保留unclear和具体问题，或据实际原图更正观察，不得因无新增帧而确认。')
         payload={'phase':'whole-trajectory','duration_ms':duration,'frames':images,'image_frames':images,**context,'reasoning_mode':'bounded'}
+        if business_timeline is not None:
+            if version in {'overview','observe'}:
+                payload['business_timeline'] = copy.deepcopy(business_timeline)
+            if version in {'observe','audit'}:
+                payload['acquisition_budget'] = {
+                    'remaining_revisit_attempts': max(0, 4-revisits),
+                    'remaining_new_frames': max(0, 64-sum(len(a['new_frames']) for a in revisit_attempts)),
+                    'packet_image_slots': max(0, 60-len(images)),
+                    'max_requests_per_response': 2, 'max_frames_per_request': 20,
+                    'max_request_span_ms': 3000}
         if execution_contract is not None:payload['execution_contract']=execution_contract
         if version in {'observe','audit'}:payload['revisit_context_anchors']=bounded_revisit
         if record:record(f'{calls:02d}-{version}-request',redact(payload))

@@ -197,7 +197,7 @@ def analyze_video_source(store,identifier):
 
 def _analyze_runtime_source(store,identifier):
     """One server-enrolled version; all publication stays in the parent worker."""
-    from task_server.services.ui_video_runtime import MODE, RuntimeBudget, run_runtime
+    from task_server.services.ui_video_runtime import BUSINESS_MODE, RuntimeBudget, run_runtime, runtime_mode
     from task_server.services.ui_video_workspace import MARKER, create_analysis_workspace
     from task_server.services.ui_case_draft_service import _application, _top3_examples
     from task_server.services.ui_video_analysis import draft_proposal
@@ -207,7 +207,8 @@ def _analyze_runtime_source(store,identifier):
     original=json.loads(row[0])
     owner,app,version=original['owner_user_id'],original['app_id'],original['analysis_version']
     actor=original['actor']
-    selection={'mode':MODE,'source_id':identifier,'owner_user_id':owner,'app_id':app,'analysis_version':version}
+    mode=runtime_mode()
+    selection={'mode':mode,'source_id':identifier,'owner_user_id':owner,'app_id':app,'analysis_version':version}
     stage='authorize'
     document=original
     def current(allowed):
@@ -248,7 +249,7 @@ def _analyze_runtime_source(store,identifier):
             document=transition({'decoding'},'decoding',**{MARKER:version})
             stage='decode'
             media=decode_video(store.root/identifier/'source.mp4',workspace/'frames',cancelled)
-            budget=RuntimeBudget((len(media['frames'])+7)//8)
+            budget=RuntimeBudget(0 if mode==BUSINESS_MODE else (len(media['frames'])+7)//8)
             budget.check()
             if media['black'] or media['static']:
                 transition({'decoding'},'review_needed',media=media,
@@ -261,7 +262,7 @@ def _analyze_runtime_source(store,identifier):
             document['baseline_examples']=_top3_examples(app,document['goal'] or '录屏操作步骤')
             check();budget.check()
             stage='analysis'
-            result=run_runtime(document,workspace,store.root/identifier/'source.mp4',check,publish,budget=budget)
+            result=run_runtime(document,workspace,store.root/identifier/'source.mp4',check,publish,budget=budget,mode=mode)
             check();budget.check()
             status='review_needed' if result['multiple_scenarios'] or not result['events'] else 'ready'
             if status=='ready':

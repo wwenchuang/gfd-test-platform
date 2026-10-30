@@ -234,6 +234,15 @@ def render_ai_skill_prompt(skill_name, payload=None, version="v1", fallback_prom
                     if bounded else "端点必须是本次已提供原帧，整段时间必须位于owned_time_range_ms之内；context只能作结果参考，不能要求回看前后其它包的时间区间。新增像素严格属于当前[start,end)区间。")
         template = template.replace("{{revisit_contract}}", contract)
     if skill_name == "ui_video_trajectory" and isinstance(payload, dict):
+        if version in {"overview", "observe"} and "business_timeline" in payload:
+            template += ("\n【业务时间线核验】business_timeline是未经核实的业务假设；native questions和场景描述仅作核验线索，"
+                         "近似时间不能转换为帧ID或动作，输入文字不能从时间线转录。以提供的原始JPEG及真实ID/PTS/owned归属核实。"
+                         "分别保留独立导航、确认、收键盘及逐级返回，区分自动异步响应的归属；不能按时间线补造点击。"
+                         "原始观察和审计的实际疑问仍保留，不得借时间线消除。")
+        if version in {"observe", "audit"} and "acquisition_budget" in payload:
+            template += ("\n【剩余取证容量】acquisition_budget是本次请求前实际剩余的全局容量，不会随包或重观察重置。"
+                         "优先核实影响动作、对象、顺序、最终值、结果或业务边界的实质歧义；精确IME机制或光标来源本身无需补帧。"
+                         "容量不足不能视为确认，不得清空实际未决问题，也不得推断缺失点击；保留具体unclear或uncertainties。")
         from .ui_video_execution_contract import VIDEO_EXPLICIT_KEYBOARD_V1
         if payload.get("execution_contract") == VIDEO_EXPLICIT_KEYBOARD_V1:
             template += ("\n【服务端执行能力合同】aiInput使用autoDismissKeyboard=false：覆盖同字段聚焦、清空、替换、输入及IME内部组词，"
