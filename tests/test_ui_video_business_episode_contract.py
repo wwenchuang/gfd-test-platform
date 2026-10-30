@@ -62,7 +62,9 @@ def test_edit_modality_and_terminal_claims_keep_negative_limits(monkeypatch):
 def test_rendering_preserves_original_schema_example_payload_and_tool_capability(monkeypatch,version,bounded):
     payload={'raw_question':'literal {{revisit_contract}} "question" stays', 'frame_refs':['original-a','original-b']}
     original=copy.deepcopy(payload);text=rendered(monkeypatch,version,bounded,payload)
-    actual_payload=json.JSONDecoder().raw_decode(text.split('\n',1)[1])[0]
+    # Instructions may have multiple lines before the serialized payload.
+    payload_start=text.index('\n{')+1
+    actual_payload=json.JSONDecoder().raw_decode(text[payload_start:])[0]
     assert actual_payload=={'revisit_context_anchors':bounded,**payload}and payload==original
     assert text.count('{{revisit_contract}}')==1 # only the literal inside raw data survives
     assert ('context端点仅作定位'in text)is bounded
