@@ -1,0 +1,220 @@
+.FFFFFFFFFF                                                              [100%]
+=================================== FAILURES ===================================
+___________ test_authentic_reversed_states_safe_indexed_feedback[24] ___________
+
+n = 24
+
+    @pytest.mark.parametrize('n',[24,26])
+    def test_authentic_reversed_states_safe_indexed_feedback(n):
+        fs=fixture()['source']['media']['frames'];r=raw(n);before=copy.deepcopy(r)
+        with pytest.raises(ValueError) as e:vt.validate_states(r['states'],fs)
+        assert e.value.trajectory_reason=='state_reference'
+>       fb=e.value.model_feedback
+E       AttributeError: 'ValueError' object has no attribute 'model_feedback'
+
+tests/test_ui_video_unavailable_evidence.py:40: AttributeError
+___________ test_authentic_reversed_states_safe_indexed_feedback[26] ___________
+
+n = 26
+
+    @pytest.mark.parametrize('n',[24,26])
+    def test_authentic_reversed_states_safe_indexed_feedback(n):
+        fs=fixture()['source']['media']['frames'];r=raw(n);before=copy.deepcopy(r)
+        with pytest.raises(ValueError) as e:vt.validate_states(r['states'],fs)
+        assert e.value.trajectory_reason=='state_reference'
+>       fb=e.value.model_feedback
+E       AttributeError: 'ValueError' object has no attribute 'model_feedback'
+
+tests/test_ui_video_unavailable_evidence.py:40: AttributeError
+_____________ test_state_feedback_only_validated_metadata[missing] _____________
+
+kind = 'missing'
+
+    @pytest.mark.parametrize('kind',['missing','ordering','hostile'])
+    def test_state_feedback_only_validated_metadata(kind):
+        fs=[dict(frame_id='frame-999',timestamp_ms=1),dict(frame_id='frame-001',timestamp_ms=2)]
+        s=dict(state_id='DO NOT ECHO',description='PRIVATE',kind='page',first_frame='frame-999',last_frame='frame-001')
+        assert vt.validate_states([s],fs)==[s] # numeric IDs are not chronology
+        if kind=='ordering':states=[dict(s,first_frame='frame-001'),s]
+        else:states=[dict(s,first_frame='HOSTILE' if kind=='hostile' else 'missing')]
+        with pytest.raises(ValueError) as e:vt.validate_states(states,fs)
+>       fb=e.value.model_feedback
+E       AttributeError: 'ValueError' object has no attribute 'model_feedback'
+
+tests/test_ui_video_unavailable_evidence.py:56: AttributeError
+____________ test_state_feedback_only_validated_metadata[ordering] _____________
+
+kind = 'ordering'
+
+    @pytest.mark.parametrize('kind',['missing','ordering','hostile'])
+    def test_state_feedback_only_validated_metadata(kind):
+        fs=[dict(frame_id='frame-999',timestamp_ms=1),dict(frame_id='frame-001',timestamp_ms=2)]
+        s=dict(state_id='DO NOT ECHO',description='PRIVATE',kind='page',first_frame='frame-999',last_frame='frame-001')
+        assert vt.validate_states([s],fs)==[s] # numeric IDs are not chronology
+        if kind=='ordering':states=[dict(s,first_frame='frame-001'),s]
+        else:states=[dict(s,first_frame='HOSTILE' if kind=='hostile' else 'missing')]
+        with pytest.raises(ValueError) as e:vt.validate_states(states,fs)
+>       fb=e.value.model_feedback
+E       AttributeError: 'ValueError' object has no attribute 'model_feedback'
+
+tests/test_ui_video_unavailable_evidence.py:56: AttributeError
+_____________ test_state_feedback_only_validated_metadata[hostile] _____________
+
+kind = 'hostile'
+
+    @pytest.mark.parametrize('kind',['missing','ordering','hostile'])
+    def test_state_feedback_only_validated_metadata(kind):
+        fs=[dict(frame_id='frame-999',timestamp_ms=1),dict(frame_id='frame-001',timestamp_ms=2)]
+        s=dict(state_id='DO NOT ECHO',description='PRIVATE',kind='page',first_frame='frame-999',last_frame='frame-001')
+        assert vt.validate_states([s],fs)==[s] # numeric IDs are not chronology
+        if kind=='ordering':states=[dict(s,first_frame='frame-001'),s]
+        else:states=[dict(s,first_frame='HOSTILE' if kind=='hostile' else 'missing')]
+        with pytest.raises(ValueError) as e:vt.validate_states(states,fs)
+>       fb=e.value.model_feedback
+E       AttributeError: 'ValueError' object has no attribute 'model_feedback'
+
+tests/test_ui_video_unavailable_evidence.py:56: AttributeError
+___________ test_runtime_provider_exact_allowance_and_freeze[False] ____________
+
+business = False
+
+    @pytest.mark.parametrize('business',[False,True])
+    def test_runtime_provider_exact_allowance_and_freeze(business):
+>       b=runtime.RuntimeBudget(0,clock=lambda:0);b.freeze_packets(9,business=business)
+E       TypeError: freeze_packets() got an unexpected keyword argument 'business'
+
+tests/test_ui_video_unavailable_evidence.py:63: TypeError
+____________ test_runtime_provider_exact_allowance_and_freeze[True] ____________
+
+business = True
+
+    @pytest.mark.parametrize('business',[False,True])
+    def test_runtime_provider_exact_allowance_and_freeze(business):
+>       b=runtime.RuntimeBudget(0,clock=lambda:0);b.freeze_packets(9,business=business)
+E       TypeError: freeze_packets() got an unexpected keyword argument 'business'
+
+tests/test_ui_video_unavailable_evidence.py:63: TypeError
+_ test_business_no_loader_records_not_acquired_and_independent_audit[observe] __
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10b8855b0>
+stage = 'observe'
+
+    @pytest.mark.parametrize('stage',['observe','audit'])
+    def test_business_no_loader_records_not_acquired_and_independent_audit(monkeypatch,stage):
+        q='Q'*2000
+        def mutate(s,p,r,c):
+            if s==stage and p.get('packet_id')=='packet-002':r['revisit']=[dict(request(),question=q)]
+        engine=BusinessEngine(monkeypatch,mutate=mutate)
+>       result=engine.run();a=result['trajectory_audit']
+
+tests/test_ui_video_unavailable_evidence.py:76:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+tests/test_ui_video_runtime_evidence_reuse.py:17: in run
+    return vt.observe_trajectory({'media': {'frames': frames(self.count), 'duration_ms': self.count*100+1}},
+task_server/services/ui_video_trajectory.py:679: in observe_trajectory
+    if expand(packet,raw.get('revisit',[]))!='not_attempted':continue
+task_server/services/ui_video_trajectory.py:571: in expand
+    if revisit is None and not bounded_revisit:_fail('revisit_unavailable')
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+reason = 'revisit_unavailable', model_feedback = None
+
+    def _fail(reason,model_feedback=None):
+        error=ValueError('video_model_invalid');error.trajectory_reason=reason
+        if model_feedback is not None:error.model_feedback=model_feedback
+>       raise error
+E       ValueError: video_model_invalid
+
+task_server/services/ui_video_trajectory.py:22: ValueError
+__ test_business_no_loader_records_not_acquired_and_independent_audit[audit] ___
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10b968b80>
+stage = 'audit'
+
+    @pytest.mark.parametrize('stage',['observe','audit'])
+    def test_business_no_loader_records_not_acquired_and_independent_audit(monkeypatch,stage):
+        q='Q'*2000
+        def mutate(s,p,r,c):
+            if s==stage and p.get('packet_id')=='packet-002':r['revisit']=[dict(request(),question=q)]
+        engine=BusinessEngine(monkeypatch,mutate=mutate)
+>       result=engine.run();a=result['trajectory_audit']
+
+tests/test_ui_video_unavailable_evidence.py:76:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+tests/test_ui_video_runtime_evidence_reuse.py:17: in run
+    return vt.observe_trajectory({'media': {'frames': frames(self.count), 'duration_ms': self.count*100+1}},
+task_server/services/ui_video_trajectory.py:712: in observe_trajectory
+    acquisition=expand(packet,audited.get('revisit',[]))
+task_server/services/ui_video_trajectory.py:571: in expand
+    if revisit is None and not bounded_revisit:_fail('revisit_unavailable')
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+reason = 'revisit_unavailable', model_feedback = None
+
+    def _fail(reason,model_feedback=None):
+        error=ValueError('video_model_invalid');error.trajectory_reason=reason
+        if model_feedback is not None:error.model_feedback=model_feedback
+>       raise error
+E       ValueError: video_model_invalid
+
+task_server/services/ui_video_trajectory.py:22: ValueError
+__________ test_authentic21_no_prefix_decode_and_same_candidate_audit __________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x1083f2fa0>
+
+    def test_authentic21_no_prefix_decode_and_same_candidate_audit(monkeypatch):
+        f=fixture();media=f['source']['media'];fs=media['frames'];originals=fs[:299]
+        rows={e['entry']:e for e in f['entries']};numbers=iter(range(4,30,2));calls=[];loads=[]
+        monkeypatch.setattr(ui_video_windows,'load_assets',lambda *a:[])
+        class ReachedAudit(Exception):pass
+        def model(name,p,**kw):
+            calls.append((kw['version'],copy.deepcopy(p)))
+            if len(calls)==14:
+                assert kw['version']=='audit' and p['packet_id']=='packet-004'
+                assert len(loads)==3 and len(p['frames'])==84
+                assert [x['request'] for x in p['deferred_revisit_requests']]==raw(28)['revisit']
+                assert all(x['status']=='not_acquired' and x['reason']=='revisit_attempts' for x in p['deferred_revisit_requests'])
+                assert 'first_not_after_last' in calls[-3][1]['validation_feedback']
+                raise ReachedAudit()
+            n=next(numbers);r=json.loads(rows[n]['value']['content'])
+            if n==6:
+                from task_server.services.ai_skill_service import SkillSchemaError
+                raise SkillSchemaError('ui_video_trajectory','$.events[0]','object','synthetic transport of captured schema refusal')
+            return r
+        times={x['frame_id']:x['timestamp_ms'] for x in fs}
+        def load(req,capacity,**kw):
+            loads.append(req);left=times[req['first_frame']];right=times[req['last_frame']]
+            return [x for x in fs[299:339] if left<=x['timestamp_ms']<=right]
+        with pytest.raises(ReachedAudit):
+>           vt.observe_trajectory({'media':{**media,'frames':originals}},None,lambda:False,
+                skill_runner=model,revisit_bounded=load,business_timeline={})
+
+tests/test_ui_video_unavailable_evidence.py:110:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+task_server/services/ui_video_trajectory.py:633: in observe_trajectory
+    states=validate_states(overview['states'],images)
+task_server/services/ui_video_trajectory.py:135: in validate_states
+    if a not in times or b not in times or not last<=times[a]<=times[b]:_fail('state_reference')
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+reason = 'state_reference', model_feedback = None
+
+    def _fail(reason,model_feedback=None):
+        error=ValueError('video_model_invalid');error.trajectory_reason=reason
+        if model_feedback is not None:error.model_feedback=model_feedback
+>       raise error
+E       ValueError: video_model_invalid
+
+task_server/services/ui_video_trajectory.py:22: ValueError
+=========================== short test summary info ============================
+FAILED tests/test_ui_video_unavailable_evidence.py::test_authentic_reversed_states_safe_indexed_feedback[24]
+FAILED tests/test_ui_video_unavailable_evidence.py::test_authentic_reversed_states_safe_indexed_feedback[26]
+FAILED tests/test_ui_video_unavailable_evidence.py::test_state_feedback_only_validated_metadata[missing]
+FAILED tests/test_ui_video_unavailable_evidence.py::test_state_feedback_only_validated_metadata[ordering]
+FAILED tests/test_ui_video_unavailable_evidence.py::test_state_feedback_only_validated_metadata[hostile]
+FAILED tests/test_ui_video_unavailable_evidence.py::test_runtime_provider_exact_allowance_and_freeze[False]
+FAILED tests/test_ui_video_unavailable_evidence.py::test_runtime_provider_exact_allowance_and_freeze[True]
+FAILED tests/test_ui_video_unavailable_evidence.py::test_business_no_loader_records_not_acquired_and_independent_audit[observe]
+FAILED tests/test_ui_video_unavailable_evidence.py::test_business_no_loader_records_not_acquired_and_independent_audit[audit]
+FAILED tests/test_ui_video_unavailable_evidence.py::test_authentic21_no_prefix_decode_and_same_candidate_audit
+10 failed, 1 passed in 0.60s

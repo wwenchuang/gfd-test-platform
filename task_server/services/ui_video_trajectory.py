@@ -123,16 +123,30 @@ def _compile_references(refs,times,required):
                      'required_anchors':sorted(mandatory,key=times.get)}
 
 
+def _state_feedback(index,a,b,last,times):
+    # Only authoritative current-frame identifiers and times may leave this helper.
+    first=type(a) is str and a in times
+    end=type(b) is str and b in times
+    checks={'first_anchor_available':first,'last_anchor_available':end}
+    if first and end:
+        checks.update(first_not_after_last=times[a]<=times[b],
+                      start_not_before_previous=last<=times[a])
+    feedback={'state_index':index,'previous_start_timestamp_ms':last,'failed_checks':[k for k,v in checks.items() if not v]}
+    for key,ref,valid in (('first_anchor',a,first),('last_anchor',b,end)):
+        if valid:feedback[key]={'frame_id':ref,'timestamp_ms':times[ref]}
+    return feedback
+
+
 def validate_states(states,frames):
     times={f['frame_id']:f['timestamp_ms'] for f in frames}
     if not isinstance(states,list) or len(states)>60:_fail('states')
     last=-1
-    for s in states:
+    for index,s in enumerate(states):
         if not isinstance(s,dict) or set(s)!={'state_id','first_frame','last_frame','kind','description'}:_fail('state_shape')
         _text(s['state_id'],80);_text(s['description'])
         if s['kind'] not in {'page','input','wait','transition'}:_fail('state_kind')
         a,b=s['first_frame'],s['last_frame']
-        if a not in times or b not in times or not last<=times[a]<=times[b]:_fail('state_reference')
+        if a not in times or b not in times or not last<=times[a]<=times[b]:_fail('state_reference',_state_feedback(index,a,b,last,times))
         last=times[a]
     return copy.deepcopy(states)
 
@@ -422,6 +436,9 @@ def observe_trajectory(document,root,cancelled,progress=None,record=None,revisit
     run_skill=ai.run_ai_skill if skill_runner is None else skill_runner
     packet_image_limit=video_stage_image_limit('grounding' if business_timeline is not None else None)
     bounded_revisit=revisit_bounded is not None
+    call_limit=32 if business_timeline is not None else 24
+    diagnostic_limit=128 if business_timeline is not None else 64
+    deferred_revisit_requests=[]
     frames=copy.deepcopy(document['media']['frames']);duration=document['media']['duration_ms']
     calls=0;corrections=0;correction_scope_start=0;revisits=0;started=time.monotonic();secrets=[];call_audit=[];revisit_attempts=[];repair_feedback=[]
     if engine_deadline is None:
@@ -431,12 +448,13 @@ def observe_trajectory(document,root,cancelled,progress=None,record=None,revisit
         raise ValueError('video_runtime_engine_deadline_invalid')
     def correction_available():
         return corrections-correction_scope_start<2
-    # At most24 replies,3 rejections,4 acquisitions and terminal capacity records.
+    # Business32 / legacy24 replies, bounded corrections,4 actual acquisitions.
+    # Business128 / legacy64 diagnostic records retain deferred acquisitions.
     # Questions stay in immutable raw receipts; paths retain provenance without
     # turning rejected model narrative into execution authority.
     last_diagnostic={}
     def diagnose(kind, **fields):
-        if diagnostics is not None and len(diagnostics)<64:
+        if diagnostics is not None and len(diagnostics)<diagnostic_limit:
             diagnostics.append(copy.deepcopy({'kind':kind,**last_diagnostic,
                 'corrections':corrections,'correction_scope_used':corrections-correction_scope_start,
                 'correction_policy':'business_packet_two' if business_timeline is not None else 'legacy_global_two','revisits':revisits,
@@ -458,13 +476,17 @@ def observe_trajectory(document,root,cancelled,progress=None,record=None,revisit
     def ask_once(version,images,**context):
         nonlocal calls
         if cancelled():raise ValueError('video_cancelled')
-        if calls>=24 or time.monotonic()>=engine_deadline:
-            diagnose('capacity_refusal',reason='trajectory_calls' if calls>=24 else 'trajectory_deadline')
+        if calls>=call_limit or time.monotonic()>=engine_deadline:
+            diagnose('capacity_refusal',reason='trajectory_calls' if calls>=call_limit else 'trajectory_deadline')
             raise ValueError('video_vision_limit')
         calls+=1;trace={};tick=time.monotonic()
         exhausted=[copy.deepcopy(a) for a in revisit_attempts if a['status']=='no_new_frames' and a['packet_id']==context.get('packet_id')]
         if exhausted:
             context.update(exhausted_revisit_ranges=exhausted,revisit_feedback='这些区间已成功解码全部真实原帧但没有新增帧，不会重复解码；继续核对当前同组原图。证据不够时保留unclear和具体问题，或据实际原图更正观察，不得因无新增帧而确认。')
+        deferred=[copy.deepcopy(a) for a in deferred_revisit_requests if a['packet_id']==context.get('packet_id')]
+        if deferred:
+            context.update(deferred_revisit_requests=deferred,
+                deferred_revisit_feedback='补帧尚未执行，not_acquired不等于无新增帧或证据支持。保留完整问题，独立核对现有证据；不能因补帧请求被拒绝而判定证据充分；仍按原图核对，无法判定时使用unclear并保留问题。')
         payload={'phase':'whole-trajectory','duration_ms':duration,'frames':images,'image_frames':images,**context,'reasoning_mode':'bounded'}
         if business_timeline is not None:
             if version in {'overview','observe'}:
@@ -558,6 +580,8 @@ def observe_trajectory(document,root,cancelled,progress=None,record=None,revisit
                         'checks必须逐项对应当前trajectory中的track.event_id且恰好一次；owner_frame必须属于当前owned_frame_ids并包含在该issue的frame_refs中；issues.frame_refs及revisit端点只能引用当前实际附图。context触发属于其实际owner，不能另造当前issue。'
                         if version=='audit' else
                         'trigger_frame必须属于owned_frame_ids，context仅可提供证据，不能作为本包新动作触发。')
+                if reason=='state_reference' and hasattr(error,'model_feedback'):
+                    explanation+=json.dumps(error.model_feedback,ensure_ascii=False,separators=(',',':'))
                 if reason.startswith('revisit_'):
                     explanation+=('本次支持context端点仅作定位：至少一个端点须为owned，原始跨度最多3000ms；平台只解码与当前owned半开区间相交的非空部分，不改派context原帧。'
                                   if bounded_revisit else '仅请求当前owned时间区间；future context由后续owner处理，不得夹取或改派原帧。')
@@ -577,17 +601,47 @@ def observe_trajectory(document,root,cancelled,progress=None,record=None,revisit
         def exhausted(request):
             span=[times[request['first_frame']],times[request['last_frame']]]
             return any(a['status']=='no_new_frames' and a['packet_id']==packet['packet_id'] and a['time_range_ms']==span for a in revisit_attempts)
+        pending=[(i,r) for i,r in enumerate(requests) if not exhausted(r)]
+        if business_timeline is not None and pending:
+            available=min(64-sum(len(a['new_frames']) for a in revisit_attempts),
+                          packet_image_limit-len(packet['frames']))
+            reason=('revisit_attempts' if len(pending)>4-revisits else
+                    'new_frame_capacity' if 64-sum(len(a['new_frames']) for a in revisit_attempts)<2*len(pending) else
+                    'request_image_capacity' if available<2*len(pending) else None)
+            if reason:
+                for index,request in pending:
+                    left,right,clipped_left,clipped_right=_revisit_range(request,packet,bounded_revisit)
+                    deferred={'status':'not_acquired','reason':reason,'request':copy.deepcopy(request),
+                        'request_index':index,'packet_id':packet['packet_id'],
+                        'requested_time_range_ms':[left,right],'decoded_time_range_ms':None,
+                        'owned_time_range_ms':[start,end],
+                        'remaining_revisit_attempts':max(0,4-revisits),
+                        'remaining_new_frames':max(0,64-sum(len(a['new_frames']) for a in revisit_attempts)),
+                        'packet_image_slots':max(0,packet_image_limit-len(packet['frames'])),
+                        **{k:copy.deepcopy(last_diagnostic[k]) for k in ('call','stage','proof_ref','receipt_ref') if k in last_diagnostic}}
+                    deferred_revisit_requests.append(deferred)
+                    # Full original question stays separate from fixed explanation (2000-char gate).
+                    questions.extend([request['question'],'补帧尚未执行，证据问题未解决，需人工复核。'])
+                    diagnose('acquisition_deferred',**deferred)
+                    if record:record(f"deferred-revisit-{len(deferred_revisit_requests)}",redact(deferred))
+                pending=[]
+                outcome='not_acquired'
+        pending_indexes={i for i,_ in pending}
         for index,request in enumerate(requests):
             left,right,clipped_left,clipped_right=_revisit_range(request,packet,bounded_revisit)
             if exhausted(request):
-                questions.append('补帧区间已无新增原帧，仍需核实：'+request['first_frame']+'至'+request['last_frame']+'：'+request['question'])
+                if business_timeline is not None:questions.extend([request['question'],'补帧区间已无新增原帧，仍需核实。'])
+                else:questions.append('补帧区间已无新增原帧，仍需核实：'+request['first_frame']+'至'+request['last_frame']+'：'+request['question'])
                 continue
+            if index not in pending_indexes:continue
             if revisits>=4:
                 diagnose('capacity_refusal',reason='revisit_attempts',packet_frames=len(packet['frames']),
                          pending_request_indexes=list(range(index,len(requests))))
                 _fail('revisit_budget')
             remaining=sum(not exhausted(pending) for pending in requests[index:])
             capacity=min(20,(packet_image_limit-len(packet['frames']))//remaining)
+            if business_timeline is not None:
+                capacity=min(capacity,(64-sum(len(a['new_frames']) for a in revisit_attempts))//remaining)
             if capacity<2:
                 diagnose('capacity_refusal',reason='request_image_capacity',packet_frames=len(packet['frames']),
                          capacity=capacity,pending_request_indexes=list(range(index,len(requests))))
@@ -618,7 +672,9 @@ def observe_trajectory(document,root,cancelled,progress=None,record=None,revisit
                      'owned_time_range_ms':[start,end],'status':'frames_added' if extra else 'no_new_frames'}
             revisit_attempts.append(attempt)
             diagnose('acquisition',status=attempt['status'],request_index=index,new_frame_count=len(extra),capacity=capacity)
-            if not extra:questions.append('补帧无新增原帧，仍需核实：'+request['first_frame']+'至'+request['last_frame']+'：'+request['question'])
+            if not extra:
+                if business_timeline is not None:questions.extend([request['question'],'补帧无新增原帧，仍需核实。'])
+                else:questions.append('补帧无新增原帧，仍需核实：'+request['first_frame']+'至'+request['last_frame']+'：'+request['question'])
             frames=sorted(frames+extra,key=lambda f:f['timestamp_ms'])
             packet['frames']=sorted(packet['frames']+extra,key=lambda f:f['timestamp_ms'])
             owned=set(packet['owned_frame_ids'])|{f['frame_id'] for f in extra if start<=f['timestamp_ms']<end}
@@ -673,10 +729,12 @@ def observe_trajectory(document,root,cancelled,progress=None,record=None,revisit
                         feedback+=json.dumps(error.model_feedback,ensure_ascii=False,separators=(',',':'))
                     feedback+='若原图支持续接，continuation_of和target分别沿用紧邻上一项event_id和event.target；page_before与page_after都必须逐字等于上一项page_after，不能用新的编辑区间state_id替换页面身份。'
                     feedback+='continuation_of只能延续紧邻的最后一个aiInput，且必须同页面同字段、无提交或其他业务操作间隔；不能把跨页导航合并为输入。'
+                if reason=='state_reference' and hasattr(error,'model_feedback'):
+                    feedback+=json.dumps(error.model_feedback,ensure_ascii=False,separators=(',',':'))
                 if reason in {'state_shape','state_reference','state_kind'}:
                     feedback+='states每项必须且只能含state_id、first_frame、last_frame、kind、description；state_id和description为非空字符串，kind只能为page/input/wait/transition。first_frame和last_frame必须引用本次已提供的真实frame_id，first_frame不晚于last_frame，各项按first_frame时间排列。无新增状态时states可为[]；完整保留本包events和uncertainties，不能以删除状态代替修正元数据。'
                 continue
-            if expand(packet,raw.get('revisit',[]))!='not_attempted':continue
+            if expand(packet,raw.get('revisit',[])) in {'frames_added','no_new_frames'}:continue
             owned=set(packet['owned_frame_ids']);batch=[]
             for track,event in zip(history,proposed):
                 for number,fragment in enumerate(track['fragments'],1):
@@ -787,7 +845,7 @@ def observe_trajectory(document,root,cancelled,progress=None,record=None,revisit
                                'multiple_scenarios':multi},frames,duration,secrets,max_events=120)
     for e in checked['events']:e['uncertainties']=list(dict.fromkeys(e['uncertainties']))
     result={**checked,'media':{**copy.deepcopy(document['media']),'frames':frames},'trajectory_audit':redact({'version':'trajectory-v2','audit_input_mode':'claims_without_observer_narrative','overview_hypotheses':overview_hypotheses,'states':states,'tracks':tracks,'checks':checks,'fragment_checks':fragment_checks,
-             'packets':packet_outputs,'revisit_attempts':revisit_attempts,'calls':call_audit,'elapsed_seconds':round(time.monotonic()-started,3)})}
+             'packets':packet_outputs,**({'deferred_revisit_requests':deferred_revisit_requests} if business_timeline is not None else {}),'revisit_attempts':revisit_attempts,'calls':call_audit,'elapsed_seconds':round(time.monotonic()-started,3)})}
     result['trajectory_audit'].update(corrections_used=corrections,
         correction_policy='business_packet_two' if business_timeline is not None else 'legacy_global_two')
     if execution_contract is not None:

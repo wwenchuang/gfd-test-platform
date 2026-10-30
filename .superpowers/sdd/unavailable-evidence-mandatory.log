@@ -1,0 +1,10 @@
+COMMAND: python3 -m py_compile task_server/services/agent_service.py task_server/services/yaml_service.py task_server/services/yaml_executable_scorer.py task_server/services/ui_video_trajectory.py task_server/services/ui_video_runtime.py
+EXIT: 0
+COMMAND: python3 tests/backend_static_checks.py
+{'ok': True, 'file': '/Users/adouceshi/.codex/worktrees/video-stage-wire/midscene-task-platform/midscene_upload_compat.py', 'checks': 63}
+EXIT: 0
+COMMAND: python3 tests/ai_gateway_static_checks.py
+{'ok': True, 'dir': '/Users/adouceshi/.codex/worktrees/video-stage-wire/midscene-task-platform/ai-gateway', 'checks': 46}
+EXIT: 0
+COMMAND: git diff --check
+EXIT: 0

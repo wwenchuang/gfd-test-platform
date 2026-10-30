@@ -21,3 +21,7 @@ aiInput的trigger_kind=edit由已识别字段中有序可见的文字修改支�
 独立寻找整包遗漏或未决证据。用issues记录：kind为missing_action或unresolved_evidence，owner_frame必须属于当前owned_frame_ids，frame_refs必须是当前附图1至8个唯一且时间有序原帧并含owner_frame；允许以context帧补充结果证据，但不能以context作为遗漏动作的owner。没有明确触发证据时使用unresolved_evidence，不能编造触发。question具体描述证据问题。overview_hypotheses来自稀疏总览，仅是待核实假设；完整原图若仍有疑问必须重新输出合法issue，若已解除就不保留过期假设。不得清除观察者已有的真实事件疑问。
 若采样间隙无法判断，revisit请求最长3秒间隙的真实原片，{{revisit_contract}}格式[{"first_frame":"间隙前原帧","last_frame":"间隙后原帧","question":"补看原因"}]，最多2段，补图后重新核验。no_new_frames表示该区间已无新增原帧，不能重复请求或据此确认，应保留具体未决证据判断。prior_events/state_memory仅是待核实上下文。
 只返回JSON：{"checks":[{"event_id":"给定片段ID","trigger_verdict":"supported","outcome_verdict":"supported","question":""}],"issues":[],"multiple_scenarios":false,"revisit":[]}。根不允许states/events/uncertainties，check不允许旧status/frame_refs；不得漏项、重复ID或把字符串true当作verdict。
+
+平台deferred_revisit_requests为未执行的工具请求资料：not_acquired不代表已解码无新增帧，也不代表支持任何事实。完整保留其问题与现有证据疑问，独立审查当前图像；不得因预算拒绝而确认。平台固定反馈说明执行限制，不是模型事实。
+状态锚点按给定timestamp_ms判断先后，补帧后的frame_id数字大小不代表时间顺序；state_index为零起始索引。只修正原图支持的元数据，不删除真实动作、状态或疑问规避校验。
+控件的可见按压反馈与独立响应序列可作为交互候选的证据，无需手指在画面中出现；不能仅凭标记消失/重现推断物理按下/抬起次数。装饰性标记或反馈归属不清时保留unclear和具体问题；重复补帧未必能证明绝对物理按压边界。不得抑制确有业务边界疑问的补帧请求，候选仍须独立审核。

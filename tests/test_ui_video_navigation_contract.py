@@ -167,7 +167,7 @@ def test_business_global_calls_and_deadline_still_refuse(monkeypatch):
             seen.add(p['packet_id']);r['checks']=[{}]
     engine.mutate=mutate
     with pytest.raises(ValueError,match='video_vision_limit'):run_business(engine)
-    assert len(engine.calls)==24
+    assert len(engine.calls)==32
     engine=Engine(monkeypatch)
     ticks=iter([0,1201])
     monkeypatch.setattr(vt.time,'monotonic',lambda:next(ticks))
