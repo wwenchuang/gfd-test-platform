@@ -273,7 +273,13 @@ def _bind_candidate_evidence(result, candidates, required_indices=()):
     # A touch trace is evidence, not a tappable cross-platform control.
     if any(isinstance(e,dict) and e.get('action')=='aiTap' and
            _gesture_target(e.get('target','')) for e in events):
-        raise ValueError('video_action_invalid')
+        error=ValueError('video_action_invalid')
+        error.model_feedback=(
+            'aiTap的target只能包含实际可见的可点击控件，不得包含手势或屏幕边缘描述，即使放在括号中也不允许。'
+            '仅当操作前附图明确可见应用返回箭头时，才可用该箭头表达等价返回；'
+            '原片手势事实和等价替代推断只写入observation或uncertainties，不删除原始观察。'
+            '没有可见等价控件时保留具体待确认问题，不伪造可执行目标。')  # Fixed platform text only.
+        raise error
     indexed=[isinstance(event,dict) and 'candidate_index' in event for event in events]
     if not any(indexed):return result
     if not all(indexed):raise ValueError('video_model_timeline')
