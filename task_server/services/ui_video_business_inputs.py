@@ -38,7 +38,12 @@ def recover_business_inputs(result,document,root,cancelled,*,skill_runner=None):
         # Include the final input anchor plus subsequent pre-interaction pixels.
         # Never inspect another field's later input to fill this value.
         following=[f for f in frames if event['end_ms']<=f['timestamp_ms']<boundary]
-        if not following:continue
+        if not following:
+            # A shared action boundary can leave no following pixels. Only the
+            # input's own actual final anchor may authorize recovery here.
+            last_ref=next(iter(event['frame_refs'][-1:]),None)
+            if last_ref not in times or times[last_ref]!=event['end_ms'] or event['end_ms']>boundary:
+                continue
         refs=list(dict.fromkeys(event['frame_refs'][-1:]+[f['frame_id'] for f in following[-3:]]))
         key=f'candidate:{index}';allowed[key]=set(refs);image_ids.update(refs)
         checks.append({'target':key,'field':event['target'],'final_input_frame_ids':refs})
