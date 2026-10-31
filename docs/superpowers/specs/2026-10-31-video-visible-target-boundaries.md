@@ -1,0 +1,24 @@
+# Visible interaction regions and causal navigation boundaries
+
+Normal run30 reached READY but did not meet the fixed original-video content baseline: it omitted a later blank-region keyboard dismissal, treated a new business advance after returning from another object as residual feedback, and inferred an additional forward-button click from an asynchronous transition. All raw claims and questions remain retained. A human-reviewed no-old-task variant has actually passed the designated phone, which is execution evidence for that reviewed variant, not proof that original model recognition is correct.
+
+Current observer/auditor guidance repeatedly defines positive interaction evidence around a visible named control. A visually identifiable blank region can also be an interaction target when its own observed touch and local response establish the relation. Conversely, a visible forward button and a page transition do not by themselves establish that the button was clicked while a previous confirmation/submit is still producing asynchronous results. A residual-feedback hypothesis likewise needs comparison of the actual old and new target/page/overlay trajectory rather than automatic preference over a new business boundary.
+
+This is one narrow prompt-contract clarification, not an action detector or a new acceptance gate. Choose explicit target/response reasoning in both the observer and independent auditor. Increasing image/call budgets does not repair these reasoning exclusions. Hardcoding the known video's labels, frame IDs or action list would not be a general repair. Existing source30 and its reviewed draft remain immutable evidence; a fresh normal original-source generation is still required for overall acceptance.
+
+## Global constraints
+
+- Modify only the observer/auditor prompt guidance and focused prompt-contract tests; no runtime, Gateway, schema, provider/model, action whitelist, budget, source data, or Runner changes.
+- A visible, semantically locatable region may qualify as a target only with its own original trigger evidence and temporally/causally related local response; blank area alone, keyboard disappearance alone, unrelated grey marks and assumed intent remain insufficient.
+- Preserve unresolved physical modality/count/timing/target claims; do not automatically clear historical questions or turn unknown feedback into a click.
+- Unique ordered navigation may express an already evidenced navigation using an equivalent visible control, but must not manufacture a forward-button click solely from the next page while a preceding interaction can still account for that asynchronous response.
+- Compare page/object/control identity and actual feedback trajectory before calling new-page feedback residual. Preserve a genuinely supported new business boundary; investigate onset and before/after original frames instead of repeatedly sampling only an already visible marker's tail. No exact physical click count or press duration inference from overlay appearance.
+- All current ownership, temporal, positive-lock, candidate-preservation, independent-audit, original-pixel provenance, uncertainty and final review gates remain unchanged.
+- Prompts must be generic: no source-specific video labels, names, frame IDs, timestamps, expected action counts, test input values or manual-baseline answers.
+- No live/provider/device/deploy actions during implementation. Only ecbfd645 and9888E0094F2A are authorized for later phone acceptance; no final confirm-print operation.
+
+## Verification and promotion
+
+Use rendered actual prompt contracts under both existing audit domain versions to verify new generic guidance is delivered without changing any payload/frame roles/schema/locks or adding source answers. Existing prompt, ownership, action-preservation and runtime suites must remain green; mandatory main-chain compile/backend/diff checks still apply. Obtain independent task and whole-change reviews.
+
+Before promotion, run a frozen bounded real-Qwen diagnostic using complete original packet contexts from run30 for the three observed error classes and a negative control with keyboard collapse following ordinary submission and no new trigger. Requests must be derived from retained original contexts, not filled with the manual answers. Use the reviewed prompt snapshot as the only experimental variable, same normal schemas/binding/ownership/candidate/temporal gates, one observation and one independent audit per context, no acquisition or retries and no source/draft writes. Raw questions and failed controls remain evidence. A diagnostic is not a whole-source pass. Promote only after root independently inspects raw replies, original pixels, record hashes, ownership and cleanup, then deploy once and run the unchanged original through the normal UI pipeline.
