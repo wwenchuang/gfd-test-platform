@@ -336,7 +336,14 @@ def _validate_positive_trigger_locks(locks,history,packet):
     available=Counter(_trigger_lock_identity(fragment) for track in history for fragment in track['fragments']
                       if fragment['trigger_frame'] in owned)
     required=Counter(map(_trigger_lock_identity,locks))
-    if required-available:_fail('audit_positive_trigger_changed')
+    missing=required-available
+    if missing:
+        feedback=[]
+        for index,lock in enumerate(locks):
+            identity=_trigger_lock_identity(lock)
+            if identity in missing:
+                feedback.append({'lock_index':index,'missing_count':missing.pop(identity)})
+        _fail('audit_positive_trigger_changed',feedback)
 
 
 def _envelope(raw,version=None):
@@ -825,6 +832,10 @@ def observe_trajectory(document,root,cancelled,progress=None,record=None,revisit
                 if reason=='audit_positive_trigger_changed' and record:
                     record(f'{calls:02d}-positive-trigger-rejection',{'reason':reason,'packet_id':packet['packet_id']})
                 feedback='结构或证据未通过：'+reason+'。重看同一组原图，完整输出当前包；不改写上下文动作，不补造操作。'
+                if reason=='audit_positive_trigger_changed':
+                    feedback+='audit_feedback.positive_trigger_locks是平台保留约束，不是结果支持；按零起始lock_index定位原锁，missing_count为该精确身份缺少的次数。逐字保留action、target、value、trigger_frame、trigger_kind、continuation_of，包括标点、空格、空值及次数；不加形容词、别名或语义改写，不删除、合并、改移触发或改成automatic规避。重看同组原图，完整输出当前包，仍按原有门禁核验本动作自身响应与证据，保留全部实质疑问。'
+                    if hasattr(error,'model_feedback'):
+                        feedback+=json.dumps(error.model_feedback,ensure_ascii=False,separators=(',',':'))
                 if reason in {'interaction_as_state','automatic_interaction','input_contract'} and hasattr(error,'model_feedback'):
                     feedback+=json.dumps(error.model_feedback,ensure_ascii=False,separators=(',',':'))
                     feedback+='重新核对独立导航与自动响应。只有原图支持实际可见的等价控件时才能表达导航操作；不得猜测控件、删除独立导航或改变trigger_kind规避合同。完整保留真实疑问与输入。'
