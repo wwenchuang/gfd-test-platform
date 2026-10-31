@@ -41,7 +41,7 @@ def expected_provider_options(body):
         'enable_thinking':stage!='perception', 'response_format':{'type':'json_object'},
         'messages':[{'role':'system','content':SYSTEM_PROMPT},
                     {'role':'user','content':content if assets else body['prompt']}]}
-    if stage!='perception':options['thinking_budget']=1024
+    if stage!='perception':options['thinking_budget']=2048 if stage in {'grounding','audit'} else 1024
     if stage in {'semantic','grounding'} or (stage == 'audit' and 'outputSchema' in body):options['response_format']={'type':'json_schema','json_schema':{
         'name':'video_audit' if stage == 'audit' else 'video_semantic','strict':True,'schema':body['outputSchema']}}
     return options
@@ -96,7 +96,7 @@ def safe_attestation(value):
         if type(item) in (int, float) and item == 0.1:
             safe['temperature'] = item
         for key, allowed in (('max_tokens', {config[4] for config in STAGES.values()}),
-                             ('thinking_budget', {1024}), ('video_count', {1}), ('image_count', {0, *range(2, video_stage_image_limit(value.get('stage')) + 1)})):
+                             ('thinking_budget', {1024, 2048}), ('video_count', {1}), ('image_count', {0, *range(2, video_stage_image_limit(value.get('stage')) + 1)})):
             item = effective.get(key)
             if type(item) is int and item in allowed:
                 safe[key] = item

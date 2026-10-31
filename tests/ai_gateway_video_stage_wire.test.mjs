@@ -27,7 +27,7 @@ test('audit retains original images/json_object and only 12 fine images',()=>{
  const b=input('audit',20),wire=complete(b);assert.deepEqual(wire.response_format,{type:'json_object'});
  assert.equal(wire.messages[1].content.filter(p=>p.type==='image_url').length,20);
  assert.equal(wire.messages[1].content.filter(p=>p.min_pixels).length,12);
- assert.equal(wire.thinking_budget,1024);b.payload.perception_frame_ids.push('frame-012');
+ assert.equal(wire.thinking_budget,2048);b.payload.perception_frame_ids.push('frame-012');
  assert.throws(()=>complete(b),/video_/);
 });
 test('invalid stage/scope/schema/role/image combinations fail before provider dispatch',()=>{
@@ -159,7 +159,7 @@ test('empty-trajectory image audit scans all original images without fine select
  const b=input('audit');delete b.payload.perception_mode;delete b.payload.perception_frame_ids;b.payload.trajectory=[];
  const wire=complete(b);assert.equal(wire.messages[1].content.filter(p=>p.type==='image_url').length,8);
  assert.equal(wire.messages[1].content.filter(p=>p.min_pixels).length,0);
- assert.deepEqual(wire.response_format,{type:'json_object'});assert.equal(wire.thinking_budget,1024);
+ assert.deepEqual(wire.response_format,{type:'json_object'});assert.equal(wire.thinking_budget,2048);
  const run=orchestration();await run.request(b);assert.equal(run.calls.length,1);
 });
 
@@ -352,3 +352,44 @@ test('actual strict audit dispatch attests exact schema and no fallback/retry',a
  const failed=orchestration(true);await assert.rejects(failed.request(b),/video_stage_provider_failed/);assert.equal(failed.calls.length,1);
  b.outputSchema=null;const rejected=orchestration();await assert.rejects(rejected.request(b),/video_output_schema_invalid/);assert.equal(rejected.calls.length,0);
 });
+
+// Closed policy: callers may supply budget hints, but cannot alter final wire.
+const reasoningStages={
+ timeline:['ui_video_timeline','v1','whole-timeline','qwen3.8-max',10000,1024],
+ perception:['ui_video_perception','v1','whole-perception','qwen3.8-max',8192,undefined],
+ overview:['ui_video_trajectory','overview','whole-trajectory','qwen3.8-flash',10000,1024],
+ semantic:['ui_video_trajectory','observe','whole-trajectory','qwen3.8-flash',10000,1024],
+ grounding:['ui_video_trajectory','observe','whole-trajectory','qwen3.8-max',10000,2048],
+ audit:['ui_video_trajectory','audit','whole-trajectory','qwen3.8-max',10000,2048],
+ consolidate:['ui_video_steps','consolidate','whole-consolidate','qwen3.8-max',10000,1024],
+ outcome:['ui_video_observe','outcome','whole-observe','qwen3.8-max',4000,1024],
+ inputs:['ui_video_observe','inputs','whole-observe','qwen3.8-max',3000,1024],
+};
+for(const [stage,[skill,version,phase,model,tokens,budget]] of Object.entries(reasoningStages))
+ test(`closed ${stage} reasoning budget reaches actual orchestration and attestation`,async()=>{
+  for(const hint of [1,1024,2048,99999]) {
+   const b=input(stage==='semantic'?'semantic':'perception',2);
+   Object.assign(b,{videoStage:stage,skillName:skill,skillVersion:version,model,
+    thinking_budget:hint,thinkingBudget:hint,enable_thinking:false});
+   Object.assign(b.payload,{phase,reasoning_mode:'bounded',thinking_budget:hint,thinkingBudget:hint});
+   if(stage==='grounding')b.outputSchema=schema();
+   if(stage==='timeline') {
+    const raw=Buffer.alloc(32);raw.write('ftypisom',4);
+    b.payload={phase,thinking_budget:hint,video:{source_sha256:createHash('sha256').update(raw).digest('hex'),
+     source_bytes:32,duration_ms:75380,fps:4,max_pixels:655360,total_pixels:268435456}};
+    b.imageAssets=[{name:'source-video',mime:'video/mp4',base64:raw.toString('base64'),timestamp_ms:0}];
+    const rejected=orchestration();await assert.rejects(rejected.request(b),/video_native_asset_invalid/);
+    assert.equal(rejected.calls.length,0);delete b.payload.thinking_budget;
+   }
+   const run=orchestration(),r=await run.request(b);
+   assert.equal(run.calls.length,1);const wire=run.calls[0].options;
+   assert.equal(wire.thinking_budget,budget);assert.equal(wire.enable_thinking,stage!=='perception');
+   assert.equal(wire.max_tokens,tokens);assert.equal(wire.model,model);
+   assert.equal(r.fallbackUsed,false);assert.equal(r.videoPolicy.effective_options.thinking_budget,budget);
+   assert.equal(r.videoPolicy.version,'video-stage-policy-v1');assert.equal(r.videoPolicy.stage,stage);
+   // Hash the actual provider options independently of the Gateway hash helper.
+   const canonical=v=>Array.isArray(v)?v.map(canonical):v&&typeof v==='object'?
+    Object.fromEntries(Object.keys(v).sort().map(k=>[k,canonical(v[k])])):v;
+   assert.equal(r.videoPolicy.provider_options_sha256,createHash('sha256').update(JSON.stringify(canonical(wire))).digest('hex'));
+  }
+ });
