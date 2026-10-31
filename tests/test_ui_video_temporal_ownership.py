@@ -163,15 +163,16 @@ def test_planner_receives_exact_candidate_domain_without_private_ledger(monkeypa
     assert candidate['ordinary_outcome_domain']['upper_ms_inclusive']==300
 
 
-def test_empty_domain_and_wait_repairs_make_no_provider_call(monkeypatch,tmp_path):
+@pytest.mark.parametrize('action',['aiTap','aiWaitFor'])
+@pytest.mark.parametrize('boundary',['interaction','system'])
+def test_empty_outcome_domains_make_no_provider_call(monkeypatch,tmp_path,action,boundary):
     from task_server.services.ui_video_outcomes import repair_outcomes
     from test_ui_video_outcomes import fixture
     fs,candidates,plan=fixture(tmp_path)
-    candidates[0]['end_ms']=600
+    candidates[0]['action']=plan['events'][0]['action']=action
+    candidates[0]['end_ms']=600 if boundary=='interaction' else 700
+    if boundary=='system':candidates.pop(1)
     def forbidden(*a,**kw):pytest.fail('empty domain dispatch')
-    with pytest.raises(ValueError,match='video_expected_missing'):
-        repair_outcomes(plan,candidates,fs,800,tmp_path,[0],lambda:False,[],skill_runner=forbidden)
-    candidates[0]['end_ms']=200;plan['events'][0]['action']='aiWaitFor'
     with pytest.raises(ValueError,match='video_expected_missing'):
         repair_outcomes(plan,candidates,fs,800,tmp_path,[0],lambda:False,[],skill_runner=forbidden)
 
