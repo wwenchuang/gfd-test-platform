@@ -946,7 +946,7 @@ function completionOptionsForRoute(route, prompt, body, callOptions = {}) {
     if (videoStage === 'perception') {
       delete completionOptions.thinking_budget;
       for (const part of imageParts) if (part.type === 'image_url') part.min_pixels = 1658880;
-    } else completionOptions.thinking_budget = 1024;
+    } else completionOptions.thinking_budget = ['grounding','audit'].includes(videoStage) ? 2048 : 1024;
     completionOptions.response_format = (['semantic','grounding'].includes(videoStage) ||
       (videoStage === 'audit' && Object.hasOwn(body, 'outputSchema'))) ?
       {type: 'json_schema', json_schema: {name: videoStage === 'audit' ? 'video_audit' : 'video_semantic', strict: true, schema: validateVideoOutputSchema(body.outputSchema, body.videoStage)}} :
