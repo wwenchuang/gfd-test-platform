@@ -1,0 +1,16 @@
+# Video observation/audit reasoning capacity qualification
+
+The actual R6 and B receipts all exhausted the fixed1024-token reasoning budget, with37k–60k input tokens. Alibaba official deep-thinking docs state that reaching thinking_budget forces final output. This suggests capacity truncation, but does not prove causation. StageC pixel projection failed complete automatic semantics and must not be activated.
+
+## Decision and alternatives
+Test2048 only for videoStage grounding/audit. Keep1024 for other thinking stages and legacy bounded trajectory, and no thinking budget for perception. Larger4096 risks the unchanged120s deadline; another prompt/projection change would confound this test. User already authorized fixes and validation without routine permission.
+
+## Contract
+Gateway and independent Python expected-provider reconstruction must agree on the exact closed policy. Caller/payload cannot choose a budget. safe_attestation may retain historical1024 and current2048 integer metadata, while validation must reject the wrong stage value, floats, booleans and arbitrary numbers. Keep existing version unless compatibility requires a deliberate separately justified migration; receipt hashes distinguish policies. Preserve all models, routes, no-fallback, output tokens/schema, source ownership, locks, questions, request/image/call/time caps and Runner gates. No unrelated refactor or prompt changes.
+
+## Qualification
+Use exact four frozen R6 contexts05/15/19/24 with OLD256 prompts, all original images, actual initial validation-feedback identity, fresh normal observers and every resulting audit shard. No local-pixel projections, model answer seeds, manual corrections, crop/new frames or failed a773 prompts. Eight initial planned calls plus at most two distinct normal audit shards or genuine format corrections; global10,120s per call,1100s shared, retry0. If headroom cannot retain all future required work, stop with honest incomplete verdict. No claim truncation or artificial audit minimum.
+
+Prefer an owned temporary loopback Gateway and private runtime copies with ONLY the reviewed policy files changed, exact deployed94 code pins and existing deployed config hashes; never copy raw provider secrets into exported artifacts. It must use normal ModelJobs/RecordStore and independent proof validation, bind its listen address/port/process, check readiness without provider, reject collisions, and clean its entire owned process group on every exit. No service restart/deploy/live-code/config/DB/source/draft/media writes. If isolation is unsafe, report the precise issue rather than bypass policy checks. Root owns actual server execution, immutable download/evidence and original-pixel adjudication.
+
+Automatic qualification requires preserving the genuine second Next and both cancel/confirm actions, detecting independent keyboard hide without invented target, refusing unsupported extra Next, and complete honest audits. Protocol/schema success alone is insufficient. Only after qualification may reviewed changes integrate/deploy, followed by normal same-original generation and normal draft/SDK/device gates. Existing imported source30/draft7 and previous manual phone verdict remain untouched.
