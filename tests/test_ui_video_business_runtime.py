@@ -352,3 +352,63 @@ def test_business_bounded_allocation_private_links_each_physical_status_and_proo
     assert all(p['planning_pass']==1 and p['status_ref'] and p['proof_ref'] and p['receipt_ref'] for p in links)
     assert links[0]['proof_ref']!=links[1]['proof_ref']
     assert all(p['planning_gate_failure']=='video_reference_invalid' for p in links)
+
+
+def test_partial_runtime_routes_exact_schema_and_consumes_one_attempt_option(harness,monkeypatch):
+    from task_server.services import ui_video_trajectory as trajectory
+    from task_server.services.ui_video_stage_policy import validate_video_stage
+    from task_server.services.ui_video_model_jobs import encode_request
+    from task_server.services.ui_video_stage_receipts import canonical_sha as schema_sha256
+    h=harness; observed=[]
+    def engine(doc,root,cancelled,progress,**kw):
+        assert callable(kw['causal_recheck_preflight']) and callable(kw['causal_recheck_safe_review'])
+        progress('observing',0,1,[])
+        fs=h['original'][:4]
+        claim={'track':{'event_id':'selected','trigger_frame':fs[1]['frame_id'],
+                       'frame_refs':[f['frame_id'] for f in fs[1:3]],
+                       'outcome':{'frame_refs':[fs[2]['frame_id']]}}}
+        context={'track':{'event_id':'declared','trigger_frame':fs[-1]['frame_id'],
+                         'frame_refs':[fs[-1]['frame_id'],h['original'][-1]['frame_id']]}}
+        p=dict(phase='whole-trajectory',frames=fs,image_frames=fs,reasoning_mode='bounded',
+            packet_id='packet-001',trajectory=[claim],context_trajectory=[context],prior_events=[],
+            owned_frame_ids=[f['frame_id'] for f in fs],context_frame_ids=[],owned_time_range_ms=[0,1000],
+            causal_recheck={'version':'causal-question-recheck-v1','scope':'partial'})
+        kw['skill_runner']('ui_video_trajectory',p,version='audit',image_assets=[])
+        actual,options=h['calls'][-1]
+        observed.append((actual,options))
+        assert actual['context_trajectory']==[context] and actual['frames']==fs
+        assert options['video_stage']=='audit' and options['model_config']=={'providerId':'qwen_plus','model':'qwen3.8-max'}
+        assert 'allow_transport_retry' not in options
+        schema=options['output_schema'];props=schema['properties']
+        assert props['checks']['items']['properties']['event_id']['enum']==['selected']
+        assert props['issues']['items']['properties']['owner_frame']['enum']==p['owned_frame_ids']
+        assert props['issues']['items']['properties']['frame_refs']['items']['enum']==p['owned_frame_ids']
+        assert actual['reference_contract']['version']=='packet-audit-reference-v1'
+        assert 'future_issue_owner_frame_ids' not in actual['reference_contract']
+        assert schema==runtime._audit_schema(actual,forward_context_issues=False)
+        full={**actual,'owned_time_range_ms':[0,400],'context_frame_ids':[h['original'][-1]['frame_id']],
+              'frames':fs+[h['original'][-1]],'image_frames':fs+[h['original'][-1]]}
+        assert schema_sha256(schema)!=schema_sha256(runtime._audit_schema(full,forward_context_issues=True))
+        assets=[dict(name=f['frame_id'],timestamp_ms=f['timestamp_ms'],mime='image/jpeg',base64='b3JpZ2luYWw=') for f in fs]
+        assert validate_video_stage('ui_video_trajectory',actual,assets,'audit',schema,version='audit')=='audit'
+        assert encode_request('ui_video_trajectory',actual,dict(version='audit',video_stage='audit',image_assets=assets,output_schema=schema),120)
+        # The actual safe-review callback inspects durable terminal records and owner health.
+        owner=h['instances'][0]
+        owner._closed=False;owner._latched=False;owner.active_pids=[]
+        owner.cleanup_failures=[];owner.pending_receipts=[]
+        assert kw['causal_recheck_safe_review']()
+        for attr,value in [('_closed',True),('_latched',True),('active_pids',[123]),
+                           ('cleanup_failures',['fixture']),('pending_receipts',[{}])]:
+            previous=getattr(owner,attr);setattr(owner,attr,value)
+            assert not kw['causal_recheck_safe_review']()
+            setattr(owner,attr,previous)
+        for key in ('terminal','cleanup','proof_ref','receipt_ref'):
+            previous=owner.accounting[-1][key];owner.accounting[-1][key]=False
+            assert not kw['causal_recheck_safe_review']()
+            owner.accounting[-1][key]=previous
+        progress('planning',1,1,[])
+        return {'media':doc['media'],'events':[],'uncertainties':[],'multiple_scenarios':False,
+                'trajectory_audit':{'original':True}}
+    monkeypatch.setattr(trajectory,'observe_trajectory',engine)
+    h['run']()
+    assert len(observed)==1

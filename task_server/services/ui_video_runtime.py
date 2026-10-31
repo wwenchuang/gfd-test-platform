@@ -120,6 +120,16 @@ class RuntimeBudget:
             raise ValueError('video_vision_limit')
         self.reserved += 1
 
+    def preflight_causal_recheck(self, normal_reserve, remaining_packets, partial=1):
+        if (any(type(n) is not int or n<0 for n in
+                (normal_reserve,remaining_packets,partial)) or partial not in (0,1)):
+            raise ValueError('video_causal_capacity_invalid')
+        self.check()
+        needed=normal_reserve+2*remaining_packets+partial
+        end=min(self.deadline,self._engine_deadline or self.deadline)
+        return (self.frozen and self.limit-self.reserved>=needed+4 and
+                end-self.clock()>=120*needed+.5)
+
     def preflight_planning(self, count):
         """Non-consuming admission on the original source allowance and clock."""
         self.check()
@@ -354,6 +364,9 @@ def _run_runtime(document, workspace, source_path, check, publish, *, budget=Non
                 def runner(skill, payload, **kwargs):
                     boundary()
                     payload = copy.deepcopy(payload)
+                    partial=payload.get('causal_recheck',{}).get('version')=='causal-question-recheck-v1'
+                    if partial and (not business or kwargs.get('version')!='audit'):
+                        raise ValueError('video_causal_stage_invalid')
                     version = kwargs.get('version', 'v1')
                     stage = next((name for name, rule in STAGES.items() if (skill, version) == rule[:2]), None)
                     if stage is None:
@@ -373,15 +386,16 @@ def _run_runtime(document, workspace, source_path, check, publish, *, budget=Non
                         kwargs.update(image_assets=[], output_schema=_semantic_schema(payload))
                     elif stage == 'audit' and business:
                         from .ui_video_context_questions import audit_domains
-                        kwargs['output_schema'] = _audit_schema(payload,forward_context_issues=True)
+                        kwargs['output_schema'] = _audit_schema(payload,forward_context_issues=not partial)
                         # Multimodal providers may ignore json_schema; repeat trusted
                         # domains in prompt input while retaining local validation.
-                        payload['reference_contract'] = {
-                            'version': 'packet-audit-reference-v2',
-                            'check_event_ids': [c['track']['event_id'] for c in payload['trajectory']],
-                            'issue_owner_frame_ids': list(payload['owned_frame_ids']),
-                            'future_issue_owner_frame_ids': audit_domains(payload)[1],
-                            'image_frame_ids': [f['frame_id'] for f in payload['frames']]}
+                        payload['reference_contract']={
+                            'version':'packet-audit-reference-v1' if partial else 'packet-audit-reference-v2',
+                            'check_event_ids':[c['track']['event_id'] for c in payload['trajectory']],
+                            'issue_owner_frame_ids':list(payload['owned_frame_ids']),
+                            'image_frame_ids':[f['frame_id'] for f in payload['frames']]}
+                        if not partial:
+                            payload['reference_contract']['future_issue_owner_frame_ids']=audit_domains(payload)[1]
                     elif stage == 'audit' and not business:
                         projection = bank.project(payload)
                         # Sampler takes current roles; immutable producer roles in
@@ -398,6 +412,7 @@ def _run_runtime(document, workspace, source_path, check, publish, *, budget=Non
                         ('planning_pass','planning_group') if k in incoming_trace}
                         if business and stage=='consolidate' else {})
                     try:
+                        if partial: kwargs['allow_transport_retry']=False
                         return jobs.run(skill, payload, **kwargs, video_stage=stage)
                     finally:
                         if planning_provenance:
@@ -464,10 +479,21 @@ def _run_runtime(document, workspace, source_path, check, publish, *, budget=Non
                         produce(windows)
                     return extra
                 budget.start_engine(business=business)
+                def causal_recheck_safe_review():
+                    boundary()
+                    owner=jobs.current
+                    rows=jobs.accounting
+                    return (not jobs._closed and not owner._closed and not owner._latched and
+                            not owner.active_pids and not owner.cleanup_failures and
+                            not owner.pending_receipts and bool(rows) and
+                            rows[-1].get('terminal') is True and rows[-1].get('cleanup') is True and
+                            bool(rows[-1].get('proof_ref')) and bool(rows[-1].get('receipt_ref')))
                 observed = observe_trajectory(document, workspace, cancelled, progress,
                     revisit_bounded=revisit, skill_runner=runner, audit_batcher=partition_audit_claims,
                     execution_contract=VIDEO_EXPLICIT_KEYBOARD_V1,diagnostics=trajectory_diagnostics,
-                    **({'business_timeline':business_timeline,'engine_deadline':budget.engine_deadline(),'dense_input_tail_sampling':True,'forward_context_issues':True} if business else {}))
+                    **({'business_timeline':business_timeline,'engine_deadline':budget.engine_deadline(),'dense_input_tail_sampling':True,'forward_context_issues':True,
+                        'causal_recheck_preflight':budget.preflight_causal_recheck,
+                        'causal_recheck_safe_review':causal_recheck_safe_review} if business else {}))
                 budget.end_engine()
                 boundary()
                 media = copy.deepcopy(observed['media'])

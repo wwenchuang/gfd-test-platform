@@ -66,7 +66,9 @@ class BusinessJobs:
     def accounting(self):
         return [row for owner in self.owners for row in owner.accounting]
 
-    def run(self, skill, payload=None, **kwargs):
+    def run(self, skill, payload=None, *, allow_transport_retry=True, **kwargs):
+        if type(allow_transport_retry) is not bool:
+            raise ValueError('video_job_options_invalid')
         if self._closed or id(self.current) in self._retired:
             raise ModelJobError('video_job_latched')
         # Each attempt gets detached immutable request data and a fresh trace.
@@ -90,7 +92,7 @@ class BusinessJobs:
                 if self.check() is False:
                     raise ModelJobCancelled('video_job_cancelled')
                 reason = _retry_reason(error, owner, offset, skill, stage, self.records)
-                if attempt or len(self.retries) >= 2 or hooks or reason is None:
+                if not allow_transport_retry or attempt or len(self.retries) >= 2 or hooks or reason is None:
                     raise
                 end = min(self.budget.deadline, self.budget.engine_deadline() or self.budget.deadline)
                 if end - self.budget.clock() < 120.5 or self.budget.reserved >= self.budget.limit:

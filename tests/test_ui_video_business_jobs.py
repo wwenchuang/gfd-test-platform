@@ -306,3 +306,17 @@ def test_bounded_consolidate_groups_share_facade_replacement_budget_and_proof_li
         assert jobs.retries[0]['failed_refs']['proof_ref']==jobs.accounting[0]['proof_ref']
         assert jobs.retries[0]['replacement_refs']['proof_ref']==jobs.accounting[1]['proof_ref']
     finally:records.close()
+
+
+@pytest.mark.parametrize('failure',['503','deadline'])
+def test_partial_recheck_is_one_actual_attempt(tmp_path,failure):
+    records,budget,jobs,owners,calls=scripted(tmp_path,[failure,'ok'])
+    try:
+        with jobs:
+            with pytest.raises((jm.ModelJobError,jm.LocalModelJobDeadline)):
+                invoke(jobs,stage='audit',allow_transport_retry=False)
+        assert budget.reserved==1 and len(calls)==len(jobs.accounting)==len(owners)==1
+        assert jobs.retries==[] and owners[0]._closed
+        assert jobs.accounting[0]['terminal'] and jobs.accounting[0]['cleanup']
+        assert 'allow_transport_retry' not in calls[0][2]
+    finally:records.close()

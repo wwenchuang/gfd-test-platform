@@ -1,5 +1,6 @@
 """State memory and owned action packets; diagnostic observer, not execution authority."""
 import copy
+from . import ui_video_causal_recheck as causal
 import json
 import math
 from collections import Counter
@@ -461,7 +462,10 @@ def select_input_tail(frames,states,packets):
     return copy.deepcopy(candidates[min(candidates)]) if candidates else None
 
 
-def observe_trajectory(document,root,cancelled,progress=None,record=None,revisit=None,*,revisit_bounded=None,skill_runner=None,audit_batcher=None,execution_contract=None,diagnostics=None,business_timeline=None,engine_deadline=None,dense_input_tail_sampling=False,forward_context_issues=False):
+def observe_trajectory(document,root,cancelled,progress=None,record=None,revisit=None,*,revisit_bounded=None,skill_runner=None,audit_batcher=None,execution_contract=None,diagnostics=None,business_timeline=None,engine_deadline=None,dense_input_tail_sampling=False,forward_context_issues=False,causal_recheck_preflight=None,causal_recheck_safe_review=None):
+    for hook in (causal_recheck_preflight,causal_recheck_safe_review):
+        if hook is not None and (not callable(hook) or business_timeline is None):
+            raise ValueError('video_causal_callback_invalid')
     if type(forward_context_issues) is not bool or (forward_context_issues and not isinstance(business_timeline,dict)):
         raise ValueError('video_forward_context_invalid')
     validate_execution_contract(execution_contract)
@@ -489,6 +493,7 @@ def observe_trajectory(document,root,cancelled,progress=None,record=None,revisit
     forward_questions=[]
     frames=copy.deepcopy(document['media']['frames']);duration=document['media']['duration_ms']
     calls=0;corrections=0;correction_scope_start=0;revisits=0;started=time.monotonic();secrets=[];call_audit=[];revisit_attempts=[];repair_feedback=[]
+    normal_count=0;causal_recheck_count=0;causal_rechecks=[]
     if engine_deadline is None:
         engine_deadline=started+1200
     elif (type(engine_deadline) not in (int,float) or not math.isfinite(engine_deadline) or
@@ -531,27 +536,32 @@ def observe_trajectory(document,root,cancelled,progress=None,record=None,revisit
         elif isinstance(value,dict):value={k:redact(v) for k,v in value.items()}
         return value
     def ask_once(version,images,**context):
-        nonlocal calls
+        nonlocal calls,normal_count,causal_recheck_count
+        partial=context.get('causal_recheck',{}).get('version')=='causal-question-recheck-v1'
         if cancelled():raise ValueError('video_cancelled')
-        if calls>=call_limit or time.monotonic()>=engine_deadline:
-            diagnose('capacity_refusal',reason='trajectory_calls' if calls>=call_limit else 'trajectory_deadline')
+        expired=time.monotonic()>=engine_deadline
+        if (causal_recheck_count>=2 if partial else normal_count>=call_limit) or expired:
+            diagnose('capacity_refusal',reason='trajectory_deadline' if expired else
+                     'causal_recheck_quota' if partial else 'trajectory_calls')
             raise ValueError('video_vision_limit')
+        if partial:causal_recheck_count+=1
+        else:normal_count+=1
         calls+=1;trace={};tick=time.monotonic()
         exhausted=[copy.deepcopy(a) for a in revisit_attempts if a['status']=='no_new_frames' and a.get('origin')!='platform_input_tail' and a['packet_id']==context.get('packet_id')]
-        if exhausted:
+        if exhausted and not partial:
             context.update(exhausted_revisit_ranges=exhausted,revisit_feedback='这些区间已成功解码全部真实原帧但没有新增帧，不会重复解码；继续核对当前同组原图。证据不够时保留unclear和具体问题，或据实际原图更正观察，不得因无新增帧而确认。')
         deferred=[copy.deepcopy(a) for a in deferred_revisit_requests if a['packet_id']==context.get('packet_id')]
-        if deferred:
+        if deferred and not partial:
             context.update(deferred_revisit_requests=deferred,
                 deferred_revisit_feedback='补帧尚未执行，not_acquired不等于无新增帧或证据支持。保留完整问题，独立核对现有证据；不能因补帧请求被拒绝而判定证据充分；仍按原图核对，无法判定时使用unclear并保留问题。')
-        delivered=[q for q in forward_questions if q['target_packet_id']==context.get('packet_id')] if forward_context_issues else []
+        delivered=[] if partial else ([q for q in forward_questions if q['target_packet_id']==context.get('packet_id')] if forward_context_issues else [])
         if delivered and version in {'observe','audit'}:
             context['forward_context_questions']=copy.deepcopy(delivered)
         payload={'phase':'whole-trajectory','duration_ms':duration,'frames':images,'image_frames':images,**context,'reasoning_mode':'bounded'}
         if business_timeline is not None:
             if version in {'overview','observe'}:
                 payload['business_timeline'] = copy.deepcopy(business_timeline)
-            if version in {'observe','audit'}:
+            if version in {'observe','audit'} and not partial:
                 payload['acquisition_budget'] = {
                     'remaining_revisit_attempts': max(0, 4-revisits),
                     'remaining_new_frames': max(0, 64-sum(len(a['new_frames']) for a in revisit_attempts)),
@@ -559,7 +569,7 @@ def observe_trajectory(document,root,cancelled,progress=None,record=None,revisit
                     'max_requests_per_response': 2, 'max_frames_per_request': 20,
                     'max_request_span_ms': 3000}
         if execution_contract is not None:payload['execution_contract']=execution_contract
-        if version in {'observe','audit'}:payload['revisit_context_anchors']=bounded_revisit
+        if version in {'observe','audit'}:payload['revisit_context_anchors']=False if partial else bounded_revisit
         if record:record(f'{calls:02d}-{version}-request',redact(payload))
         last_diagnostic.clear()
         last_diagnostic.update(stage=version,packet_id=context.get('packet_id'),call=calls)
@@ -586,6 +596,7 @@ def observe_trajectory(document,root,cancelled,progress=None,record=None,revisit
             counts.update(cached_token_usage(usage))
             if counts:entry['usage']=counts
         if execution_contract is not None:entry['raw_response']=redact(copy.deepcopy(raw))
+        if version=='audit':entry['audit_scope']='causal_partial' if partial else 'packet_complete'
         if version=='audit' and audit_batcher is not None:
             entry.update(packet_id=context['packet_id'],
                          audit_target_event_ids=[p['track']['event_id'] for p in context['trajectory']],
@@ -786,6 +797,7 @@ def observe_trajectory(document,root,cancelled,progress=None,record=None,revisit
             if cancelled():raise ValueError('video_cancelled')
             expand(packet,[dense_plan['request']],origin='platform_input_tail')
         if progress:progress('observing',index,len(packets),events)
+        causal_attempted=False;causal_veto=set();causal_repair=False
         feedback='';audit_feedback=None;positive_trigger_locks=[];candidate_signatures=Counter()
         # Audit before proceeding: a requested revisit can re-observe this packet
         # without invalidating identities in any later packet.
@@ -803,6 +815,11 @@ def observe_trajectory(document,root,cancelled,progress=None,record=None,revisit
             try:
                 extra=validate_states(raw['states'],packet['frames'])
                 proposed,history=bind_packet_events(raw['events'],packet,frames,events,tracks)
+                current_fragments=[f for t in history for f in t['fragments']
+                                   if f['trigger_frame'] in packet['owned_frame_ids']]
+                if any(causal.identity(f) in causal_veto for f in current_fragments):
+                    # Same exact refuted claim cannot become supported by repetition.
+                    _fail('causal_refuted_claim_reappeared')
                 if execution_contract is not None:_validate_positive_trigger_locks(positive_trigger_locks,history,packet)
                 if business_timeline is not None:
                     from .ui_video_temporal_ownership import ordinary_export_conflicts, unsafe_current_correction_conflicts
@@ -872,6 +889,9 @@ def observe_trajectory(document,root,cancelled,progress=None,record=None,revisit
             audit_batch,audit_prior=audit_claim_context(batch,[{**t,'event':e} for t,e in list(zip(tracks,events))[-8:]],execution_contract=execution_contract)
             audit_batches=([audit_batch] if audit_batcher is None else
                            _validated_audit_batches(audit_batch,audit_batcher,packet))
+            if causal_repair and (normal_count+len(audit_batches)>call_limit or
+                    not causal_recheck_preflight(len(audit_batches),len(packets)-index-1,partial=0)):
+                _fail('causal_repair_capacity')
             audit_shards=[];bound_checks=[];expanded=False;repair=False
             for shard_index,shard in enumerate(audit_batches,1):
                 first_call=calls+1;validated_audit=[]
@@ -970,6 +990,99 @@ def observe_trajectory(document,root,cancelled,progress=None,record=None,revisit
                          'multiple_scenarios':any(shard['raw']['multiple_scenarios'] for shard in audit_shards),
                          'revisit':[copy.deepcopy(request) for shard in audit_shards for request in shard['raw']['revisit']]}
                 if record:record(packet['packet_id']+'-audit-combined',redact({'derived':True,'audit':audited,'audit_shards':audit_shards}))
+            if causal_recheck_preflight is not None and not causal_attempted:
+                proposal=causal.prepare(packet,audit_batch,audit_prior,audited)
+                if proposal is not None:
+                    causal_attempted=True
+                    questions.extend(i['question'] for i in audited['issues'])
+                    questions.extend(c['question'] for c in audited['checks'] if c['question'])
+                    questions.extend(r['question'] for r in audited['revisit'])
+                    note={'packet_id':packet['packet_id'],'classification':'unverified_causal_recheck',
+                          'instruction_authority':False,'status':proposal['status'],
+                          'issues':copy.deepcopy(proposal['issues'])}
+                    causal_rechecks.append(note)
+                    required_normal=1+len(audit_batches)
+                    admitted=(proposal['status']=='ready' and correction_available() and
+                        causal_recheck_count<2 and
+                        normal_count+required_normal+2*(len(packets)-index-1)<=call_limit and
+                        causal_recheck_preflight(required_normal,len(packets)-index-1))
+                    if not admitted:
+                        note.update(status='review',reason=proposal.get('reason','causal_capacity'))
+                        diagnose('capacity_refusal',reason=note['reason'])
+                    else:
+                        scoped={**packet,'frames':proposal['frames'],
+                                'owned_frame_ids':proposal['owned_frame_ids'],
+                                'context_frame_ids':proposal['context_frame_ids']}
+                        note['origin_audit_calls']=[n for shard in audit_shards for n in shard['calls']]
+                        note['image_frame_ids']=[f['frame_id'] for f in proposal['frames']]
+                        note['check_event_ids']=[c['track']['event_id'] for c in proposal['trajectory']]
+                        try:
+                            partial=ask_once('audit',proposal['frames'],
+                                packet_id=packet['packet_id'],
+                                owned_frame_ids=proposal['owned_frame_ids'],
+                                context_frame_ids=proposal['context_frame_ids'],
+                                owned_time_range_ms=[packet['owned_start_ms'],packet['owned_end_ms']],
+                                trajectory=proposal['trajectory'],context_trajectory=proposal['context_trajectory'],
+                                prior_events=[],causal_recheck={'version':'causal-question-recheck-v1',
+                                    'scope':'partial','instruction_authority':False,
+                                    'issues':copy.deepcopy(proposal['issues'])})
+                            bind_audit_checks(partial['checks'],[c['track'] for c in proposal['trajectory']],proposal['frames'])
+                            validate_audit_issues(partial['issues'],scoped)
+                            validate_revisit_requests(partial['revisit'],scoped,allow_context_anchors=False)
+                        except ValueError as error:
+                            from .ai_skill_service import SkillSchemaError
+                            format_reasons={'audit_shape','audit_missing_event','audit_verdict',
+                                'audit_question','audit_contradiction','audit_issue_shape',
+                                'audit_issue_kind','audit_issues'}
+                            expected=(isinstance(error,SkillSchemaError) or
+                                      getattr(error,'trajectory_reason',None) in format_reasons)
+                            if not (expected and causal_recheck_safe_review is not None and
+                                    causal_recheck_safe_review()):
+                                raise
+                            note.update(status='review',reason='causal_format_rejection',call=calls,
+                                rejection_kind='schema' if isinstance(error,SkillSchemaError) else error.trajectory_reason,
+                                origin_refs=copy.deepcopy({k:last_diagnostic[k] for k in
+                                    ('proof_ref','receipt_ref') if k in last_diagnostic}))
+                            diagnose('rejection',reason='causal_format_rejection')
+                            if record:record(packet['packet_id']+'-causal-recheck',redact(note))
+                            break  # Keep original complete audit plus unresolved questions.
+                        note.update(status='checked',call=calls,raw=redact(copy.deepcopy(partial)),
+                            origin_refs=copy.deepcopy({k:last_diagnostic[k] for k in
+                                ('proof_ref','receipt_ref') if k in last_diagnostic}))
+                        # Preserve all questions. The partial never invokes expand.
+                        questions.extend(i['question'] for i in partial['issues'])
+                        questions.extend(c['question'] for c in partial['checks'] if c['question'])
+                        questions.extend(r['question'] for r in partial['revisit'])
+                        combined=causal.combine(audited,partial)
+                        refuted={c['event_id'] for c in partial['checks'] if c['trigger_verdict']=='contradicted'}
+                        refuted_claims=[c for c in audit_batch if c['track']['event_id'] in refuted]
+                        veto={causal.identity(c['track']) for c in refuted_claims}
+                        if veto & {causal.identity(lock) for lock in positive_trigger_locks}:
+                            _fail('causal_prior_lock_conflict')
+                        must_repair=(any(c[f]=='contradicted' for c in partial['checks']
+                            for f in ('trigger_verdict','outcome_verdict')) or
+                            any(i['kind']=='missing_action' for i in partial['issues']))
+                        audited=combined
+                        bound_checks=bind_audit_checks(audited['checks'],[c['track'] for c in audit_batch],packet['frames'])
+                        if record:record(packet['packet_id']+'-causal-recheck',redact(note))
+                        if must_repair:
+                            causal_veto.update(veto);corrections+=1;causal_repair=True
+                            positive_trigger_locks=_merge_positive_trigger_locks(
+                                positive_trigger_locks,audit_batch,audited['checks'])
+                            candidate_signatures-=Counter((c['track']['action'],c['track']['trigger_frame'],c['track']['trigger_kind'])
+                                for c in refuted_claims if c['track']['action'] in INTERACTIONS and
+                                not c['track']['continuation_of'])
+                            audit_feedback={'classification':'unverified_audit_finding_data','instruction_authority':False,
+                                'packet_id':packet['packet_id'],'audit_call':calls,
+                                'checks':copy.deepcopy(audited['checks']),'audited_claims':copy.deepcopy(audit_batch),
+                                'positive_trigger_locks':copy.deepcopy(positive_trigger_locks),
+                                'issues':copy.deepcopy(audited['issues'])}
+                            repair_feedback.append(copy.deepcopy(audit_feedback))
+                            if record:record(f'{calls:02d}-causal-audit-repair-feedback',redact(audit_feedback))
+                            questions.extend(raw['uncertainties'])
+                            questions.extend(q for event in raw['events'] for q in event['uncertainties'])
+                            continue
+                    if record:record(packet['packet_id']+'-causal-recheck',redact(note))
             break
         events,tracks=proposed,history;states.extend(extra)
         packet_output={'packet':packet,'raw':redact(raw),'audit':redact(audited)}
@@ -1010,7 +1123,8 @@ def observe_trajectory(document,root,cancelled,progress=None,record=None,revisit
     for e in checked['events']:e['uncertainties']=list(dict.fromkeys(e['uncertainties']))
     result={**checked,'media':{**copy.deepcopy(document['media']),'frames':frames},'trajectory_audit':redact({'version':'trajectory-v2','audit_input_mode':'claims_without_observer_narrative','overview_hypotheses':overview_hypotheses,'states':states,'tracks':tracks,'checks':checks,'fragment_checks':fragment_checks,
              'packets':packet_outputs,**({'forward_context_questions':forward_questions} if forward_context_issues else {}),**({'deferred_revisit_requests':deferred_revisit_requests} if business_timeline is not None else {}),**({'dense_input_tail':dense_plan} if dense_input_tail_sampling else {}),'revisit_attempts':revisit_attempts,'calls':call_audit,'elapsed_seconds':round(time.monotonic()-started,3)})}
-    result['trajectory_audit'].update(corrections_used=corrections,
+    result['trajectory_audit'].update(normal_count=normal_count,causal_recheck_count=causal_recheck_count,
+        total_calls=calls,causal_rechecks=redact(causal_rechecks),corrections_used=corrections,
         correction_policy='business_packet_two' if business_timeline is not None else 'legacy_global_two')
     if business_timeline is not None:
         result['trajectory_audit']['ordinary_export_conflicts']=final_conflicts
