@@ -160,7 +160,7 @@ def test_partial_schema_rejection_requires_healthy_owner(monkeypatch,healthy):
     def runner(name,payload,**options):
         if 'causal_recheck' in payload:
             partial_calls.append(payload)
-            raise SkillSchemaError('$','schema rejection fixture')
+            raise SkillSchemaError('$.checks','schema rejection fixture')
         version=options['version']
         if version=='audit':
             return dict(checks=[dict(event_id=c['track']['event_id'],trigger_verdict='supported',
@@ -204,11 +204,11 @@ def test_unselected_visible_trigger_retains_unchanged_declaration_context():
     assert (packet,claims,audit)==original
 
 
-def _controller(monkeypatch, *, count=9, admit=True, partial_mode='unclear', correction='changed', partial_output=None, extra_questions=False, prior_lock=False, diagnostics=None):
+def _controller(monkeypatch, *, count=9, admit=True, partial_mode='unclear', correction='changed', partial_output=None, extra_questions=False, prior_lock=False, diagnostics=None, healthy=True, canonical=False):
     from task_server.services import ui_video_trajectory as vt, ui_video_windows
     from task_server.services.ui_video_execution_contract import VIDEO_EXPLICIT_KEYBOARD_V1
     monkeypatch.setattr(ui_video_windows,'load_assets',lambda *args:[])
-    fs=[{'frame_id':f'f{i}','timestamp_ms':i*100} for i in range(1,count+1)]
+    fs=[{'frame_id':f'frame-{i:03d}' if canonical else f'f{i}','timestamp_ms':i*100} for i in range(1,count+1)]
     seen=[]; repaired=set();normal_audits=0
     def runner(name,payload,**options):
         nonlocal normal_audits
@@ -258,7 +258,7 @@ def _controller(monkeypatch, *, count=9, admit=True, partial_mode='unclear', cor
     def run():
         return vt.observe_trajectory({'media':{'frames':fs,'duration_ms':(count+1)*100}},None,lambda:False,
             skill_runner=runner,execution_contract=VIDEO_EXPLICIT_KEYBOARD_V1,business_timeline={},
-            causal_recheck_preflight=lambda *a,**k:admit,causal_recheck_safe_review=lambda:True,diagnostics=diagnostics)
+            causal_recheck_preflight=lambda *a,**k:admit,causal_recheck_safe_review=lambda:healthy,diagnostics=diagnostics)
     return run,seen
 
 
@@ -365,3 +365,75 @@ def test_engine_deadline_is_not_misattributed_to_call_quota(monkeypatch,complete
     refusal=next(d for d in reversed(diagnostics) if d['kind']=='capacity_refusal')
     assert refusal['reason']=='trajectory_deadline'
     assert len(seen)==completed_calls
+
+
+@pytest.mark.parametrize('field,path',[
+    ('owner_frame','$.issues[0].owner_frame'),
+    ('frame_refs','$.issues[0].frame_refs[1]'),
+    ('event_id','$.checks[0].event_id'),
+    ('first_frame','$.revisit[0].first_frame'),
+    ('last_frame','$.revisit[0].last_frame'),
+    ('missing_owner','$.issues[0]'),
+    ('shape','$.checks'),
+    ('root_shape','$'),
+    ('collapsed_owner','$'),
+    ('verdict','$.checks[0].trigger_verdict'),
+])
+@pytest.mark.parametrize('healthy',[True,False])
+def test_real_stage_schema_conversion_keeps_reference_failures_fatal(monkeypatch,tmp_path,field,path,healthy):
+    import json
+    from task_server.services import ai_skill_service as ai
+    from task_server.services.ui_video_runtime import _audit_schema
+    from task_server.services.ui_video_model_jobs import _schema_path
+    failures=[]
+    def actual_skill(result,payload):
+        refs=payload['trajectory'][0]['track']['frame_refs']
+        issue=dict(kind='unresolved_evidence',owner_frame=refs[0],frame_refs=list(refs),question='unverified question')
+        if field in {'owner_frame','frame_refs','missing_owner'}:
+            result['issues']=[issue]
+            if field=='missing_owner':del issue['owner_frame']
+            elif field=='frame_refs':issue[field][-1]='not-provided'
+            else:issue[field]='not-provided'
+        elif field=='event_id':result['checks'][0][field]='not-provided'
+        elif field in {'first_frame','last_frame'}:
+            request=dict(first_frame=refs[0],last_frame=refs[-1],question='unexecuted request')
+            request[field]='not-provided';result['revisit']=[request]
+        elif field=='root_shape':del result['multiple_scenarios']
+        elif field=='shape':result['checks']='invalid array shape'
+        elif field=='collapsed_owner':
+            result['issues']=[copy.deepcopy(issue) for _ in range(31)]
+            result['issues'][-1]['owner_frame']='not-provided'
+        else:result['checks'][0]['trigger_verdict']='invalid-verdict'
+        # Mock only raw transport. Production admission, stage output validator,
+        # JSON parsing and VideoStageOutputError -> SkillSchemaError all execute.
+        monkeypatch.setattr(ai,'ai_gateway_skill_content',lambda *a,**k:json.dumps(result))
+        assets=[dict(name=f['frame_id'],timestamp_ms=f['timestamp_ms'],mime='image/jpeg',base64='YQ==')
+                for f in payload['frames']]
+        try:
+            if field=='collapsed_owner':
+                from test_ui_video_model_jobs import Gateway,manager
+                gateway=Gateway(json.dumps(result))
+                try:
+                    with manager(tmp_path,gateway) as owner:
+                        owner.run('ui_video_trajectory',payload,version='audit',video_stage='audit',
+                            image_assets=assets,output_schema=_audit_schema(payload),retry_count=0)
+                finally:gateway.close()
+            else:
+                ai.run_ai_skill('ui_video_trajectory',payload,version='audit',video_stage='audit',
+                    image_assets=assets,output_schema=_audit_schema(payload),retry_count=0)
+        except ai.SkillSchemaError as error:
+            failures.append(error)
+            assert error.schema_path==path
+            assert _schema_path(error.schema_path,'ui_video_trajectory')==path
+            assert 'not-provided' not in error.model_feedback and 'invalid-verdict' not in error.model_feedback
+            raise
+        pytest.fail('production schema did not reject malformed audit')
+    run,seen=_controller(monkeypatch,partial_output=actual_skill,healthy=healthy,canonical=True)
+    expected_review=healthy and field in {'shape','verdict'}
+    if expected_review:
+        result=run()
+        assert result['trajectory_audit']['causal_rechecks'][0]['reason']=='causal_format_rejection'
+        assert any(q.startswith('original question') for q in result['uncertainties'])
+    else:
+        with pytest.raises(ai.SkillSchemaError):run()
+    assert len(failures)==1 and len([1 for _,partial,_ in seen if partial])==1

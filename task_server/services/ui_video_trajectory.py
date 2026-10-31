@@ -3,6 +3,7 @@ import copy
 from . import ui_video_causal_recheck as causal
 import json
 import math
+import re
 from collections import Counter
 import time
 
@@ -1034,8 +1035,20 @@ def observe_trajectory(document,root,cancelled,progress=None,record=None,revisit
                             format_reasons={'audit_shape','audit_missing_event','audit_verdict',
                                 'audit_question','audit_contradiction','audit_issue_shape',
                                 'audit_issue_kind','audit_issues'}
-                            expected=(isinstance(error,SkillSchemaError) or
-                                      getattr(error,'trajectory_reason',None) in format_reasons)
+                            if isinstance(error,SkillSchemaError):
+                                # Enum/type failures on owners, refs and identities
+                                # reach us as schema errors before local binders.
+                                # Item-object paths are ambiguous (a required ref
+                                # may be missing), so only known nonreference
+                                # format paths can downgrade to healthy review.
+                                path=error.schema_path
+                                expected=(isinstance(path,str) and (path in {
+                                    '$.checks','$.issues','$.multiple_scenarios','$.revisit'} or
+                                    re.fullmatch(r'\$\.(?:checks\[[0-9]+\]\.(?:trigger_verdict|outcome_verdict|question)|'
+                                                 r'issues\[[0-9]+\]\.(?:kind|question)|revisit\[[0-9]+\]\.question)',path)
+                                    is not None))
+                            else:
+                                expected=getattr(error,'trajectory_reason',None) in format_reasons
                             if not (expected and causal_recheck_safe_review is not None and
                                     causal_recheck_safe_review()):
                                 raise
