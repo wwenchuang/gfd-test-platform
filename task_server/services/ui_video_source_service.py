@@ -292,7 +292,7 @@ def _micro_motion_anchors(times, changes):
     return set().union(*_micro_motion_groups(times, changes))
 
 
-def _select_micro_motion(groups, times, base, limit, cancelled=lambda:False):
+def _fill_micro_motion(groups, times, base, limit, cancelled=lambda:False):
     """Add complete micro-bursts across the timeline without displacing pages."""
     selected=set(base)
     candidates=[{times[j] for j in group} for group in groups]
@@ -312,6 +312,47 @@ def _select_micro_motion(groups, times, base, limit, cancelled=lambda:False):
         remaining={i for i in remaining if not candidates[i]<=selected}
         for i in remaining:distance[i]=min(distance[i],abs(centers[i]-centers[index]))
     return selected, sum(candidate<=selected for candidate in candidates)
+
+
+def _select_micro_motion(groups, times, base, limit, cancelled=lambda:False, changes=None):
+    """Protect raw changed-frame witnesses inside gaps in the original selection.
+
+    The one-second temporal target and 200ms endpoint guard reserve context
+    around a changed frame, without interpreting its pixels as a user action.
+    Reservations use the original selection only; filling cannot create more.
+    """
+    selected,count=_fill_micro_motion(groups,times,base,limit,cancelled)
+    if changes is None:return selected,count
+    from bisect import bisect_left, bisect_right
+    from math import isfinite
+    if len(times)!=len(changes):raise ValueError('video_frames_invalid')
+    for index,(timestamp,change) in enumerate(zip(times,changes)):
+        if cancelled():raise ValueError('video_cancelled')
+        if not isfinite(timestamp) or not isfinite(change) or (index and timestamp<=times[index-1]):
+            raise ValueError('video_frames_invalid')
+    protected=set(base)
+    anchors=sorted(selected)
+    for a,b in zip(anchors,anchors[1:]):
+        if cancelled():raise ValueError('video_cancelled')
+        if b-a<=1000:continue
+        witness=None
+        for index in range(bisect_left(times,a+200),bisect_right(times,b-200)):
+            if cancelled():raise ValueError('video_cancelled')
+            if changes[index]<.04:continue
+            if witness is None or (abs(2*times[index]-a-b),-changes[index],index)<(abs(2*times[witness]-a-b),-changes[witness],witness):
+                witness=index
+        if witness is not None:protected.update((a,times[witness],b))
+    if protected==set(base):return selected,count
+    if len(protected)>limit:raise ValueError('video_split_required')
+    result,count=_fill_micro_motion(groups,times,protected,limit,cancelled)
+    # Preserve the old short-marker priority and refuse if refilling displaced
+    # any previously selected faint before/onset/response triplet.
+    for group in groups:
+        if cancelled():raise ValueError('video_cancelled')
+        candidate={times[j] for j in group}
+        if len(candidate)<=3 and candidate<=selected:protected.update(candidate)
+    if not protected<=result:raise ValueError('video_split_required')
+    return result,count
 
 
 def decode_video(video, output, cancelled):
@@ -404,7 +445,7 @@ def decode_video(video, output, cancelled):
         middle=len(items)//2
         return "("+expression(items[:middle])+"+"+expression(items[middle:])+")"
     base_times={all_times[i] for i in indexes}
-    combined,sampled_groups=_select_micro_motion(micro_groups,micro_times,base_times,MAX_FRAMES-1,cancelled)
+    combined,sampled_groups=_select_micro_motion(micro_groups,micro_times,base_times,MAX_FRAMES-1,cancelled,changes=micro_changes)
     expected_times=sorted(combined)
     if combined-base_times:
         # Select by original timestamps: sensitive-pass indexes are not indexes

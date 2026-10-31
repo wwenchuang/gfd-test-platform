@@ -94,7 +94,10 @@ class VideoSourceTests(unittest.TestCase):
                 movie=self.fixture(directory/f'scroll-{duration}.mp4','-f','lavfi','-i',f'testsrc2=s=96x160:r=30:d={duration}','-c:v','libx264','-pix_fmt','yuv420p')
                 result=decode_video(movie,directory/f'scroll-{duration}',lambda:False)
                 times=[frame['timestamp_ms'] for frame in result['frames']]
-                self.assertLessEqual(len(times),60)
+                # With no micro-bursts, each original gap can add at most one
+                # raw witness: at most 60 original anchors + 59 witnesses.
+                self.assertEqual(result['micro_motion_groups_total'],0)
+                self.assertLessEqual(len(times),2*60-1)
                 self.assertEqual(times[0],0)
                 self.assertGreater(times[-1],duration*1000-100)
                 self.assertLessEqual(max(b-a for a,b in zip(times,times[1:])),3000)
