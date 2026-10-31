@@ -188,3 +188,83 @@ def test_persistent_selection_is_not_discarded_as_press_feedback(text):
 def test_transient_highlight_selection_is_not_persistent_state(text):
     from task_server.services.ui_video_analysis import _stable_visible_observation
     assert _stable_visible_observation(text)==''
+
+
+@pytest.mark.parametrize('target',[
+    '详情页左上角返回箭头（原片为右滑返回手势）',
+    '屏幕边缘返回手势区域',
+    '侧滑返回区域 private-model-text',
+])
+def test_gesture_tap_rejection_has_closed_safe_correction(target):
+    from task_server.services.ui_video_analysis import _bind_candidate_evidence
+    candidates,planned=sample();planned['events'][0]['target']=target
+    planned['events'][0]['observation']='untrusted observation private-secret'
+    before=copy.deepcopy((candidates,planned))
+    with pytest.raises(ValueError,match='^video_action_invalid$') as caught:
+        _bind_candidate_evidence(planned,candidates,[0])
+    feedback=caught.value.model_feedback
+    for rule in ('target只能包含实际可见的可点击控件','括号','observation','uncertainties','没有可见等价控件','不伪造'):
+        assert rule in feedback
+    other=copy.deepcopy(planned);other['events'][0]['target']='屏幕左侧边缘 arbitrary-secret'
+    with pytest.raises(ValueError) as second:_bind_candidate_evidence(other,candidates,[0])
+    assert second.value.model_feedback==feedback
+    assert all(text not in feedback for text in (target,'private-model-text','private-secret','arbitrary-secret','candidate_index'))
+    assert (candidates,planned)==before
+
+
+def test_supported_arrow_keeps_gesture_provenance_outside_target():
+    from task_server.services.ui_video_analysis import _bind_candidate_evidence,validate_analysis
+    candidates,planned=sample()
+    candidates[0].update(target='详情页左上角返回箭头',observation='操作前返回箭头可见；原片为右滑返回手势')
+    planned['events'][0].update(target=candidates[0]['target'],observation=candidates[0]['observation'])
+    before=copy.deepcopy((candidates,planned))
+    frames=[{'frame_id':ref,'timestamp_ms':stamp} for ref,stamp in zip(candidates[0]['frame_refs'],[3933,4467])]
+    checked=validate_analysis(_bind_candidate_evidence(planned,candidates,[0]),frames,5000)
+    assert checked['events'][0]['target']==planned['events'][0]['target']
+    assert checked['events'][0]['observation']==planned['events'][0]['observation']
+    for field in ('action','start_ms','end_ms','frame_refs','evidence_kind'):
+        assert checked['events'][0][field]==candidates[0][field]
+    assert (candidates,planned)==before
+
+
+@pytest.mark.parametrize('corrected',[True,False])
+def test_consolidate_runner_receives_gesture_correction_once(tmp_path,corrected):
+    from task_server.services import ui_video_analysis as analysis
+    candidates,planned=sample()
+    candidates[0].update(target='详情页左上角返回箭头',observation='操作前返回箭头可见；原片为右滑返回手势，返回我的页面')
+    planned['events'][0].update(target=candidates[0]['target'],observation=candidates[0]['observation'])
+    frames=[{'frame_id':ref,'timestamp_ms':stamp} for ref,stamp in zip(candidates[0]['frame_refs'],[3933,4467])]
+    (tmp_path/'frames').mkdir()
+    for f in frames:(tmp_path/'frames'/(f['frame_id']+'.jpg')).write_bytes(b'frame')
+    observed={'events':candidates,'uncertainties':[],'multiple_scenarios':False}
+    before=copy.deepcopy(observed);calls=[]
+    def runner(name,payload,**options):
+        calls.append(copy.deepcopy(payload))
+        assert name=='ui_video_steps' and options['version']=='consolidate'
+        assert options['retry_count']==0
+        if len(calls)==2:
+            assert 'target只能包含实际可见的可点击控件' in payload['recovery_feedback']
+            assert '括号' in payload['recovery_feedback']
+            assert payload['result_check_candidate_indexes']==[]
+        result=copy.deepcopy(planned)
+        if len(calls)==1 or not corrected:
+            result['events'][0]['target']+='（原片为右滑返回手势）'
+        return result
+    doc={'app_id':'com.example.app','goal':'','media':{'duration_ms':5000,'frames':frames}}
+    def run():return analysis.consolidate_observed_frames(doc,tmp_path,lambda:False,observed,copy.deepcopy(candidates),[],skill_runner=runner)
+    if corrected:
+        result=run()
+        assert result['events'][0]['target']==planned['events'][0]['target']
+        assert result['events'][0]['observation']==candidates[0]['observation']
+        assert result['raw_events']==candidates
+    else:
+        with pytest.raises(ValueError,match='^video_action_invalid$'):run()
+    assert len(calls)==2
+    assert calls[1]['candidate_events']==calls[0]['candidate_events']
+    assert observed==before
+
+
+def test_consolidate_prompt_separates_gesture_provenance_from_target():
+    prompt=(Path(__file__).resolve().parents[1]/'ai_skills/prompts/ui_video_steps.consolidate.md').read_text()
+    for rule in ('target只能包含实际可见的可点击控件','即使放在括号中','只写入observation或uncertainties','没有可见等价控件'):
+        assert rule in prompt
