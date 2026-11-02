@@ -7,6 +7,7 @@ from pathlib import Path
 
 MAX_NATIVE_BYTES = 12 * 1024 * 1024
 MAX_NATIVE_ENCODED = 10_000_000
+NATIVE_FILE_TRANSPORT = 'dashscope-temporary-original-v1'
 NATIVE_OPTIONS = {'fps': 4, 'max_pixels': 655360, 'total_pixels': 268435456}
 
 
@@ -17,7 +18,8 @@ def _validate_native_asset(payload, assets, *, transport=True):
             payload['phase'] != 'whole-timeline'):
         fail()
     meta = payload['video']
-    if (type(meta) is not dict or set(meta) != {'source_sha256', 'source_bytes', 'duration_ms', *NATIVE_OPTIONS} or
+    if (type(meta) is not dict or set(meta) not in ({'source_sha256', 'source_bytes', 'duration_ms', *NATIVE_OPTIONS},
+                {'source_sha256', 'source_bytes', 'duration_ms', 'transport', *NATIVE_OPTIONS}) or
             type(meta.get('source_sha256')) is not str or not re.fullmatch('[0-9a-f]{64}', meta['source_sha256']) or
             type(meta.get('source_bytes')) is not int or not 12 <= meta['source_bytes'] <= MAX_NATIVE_BYTES or
             type(meta.get('duration_ms')) is not int or not 0 < meta['duration_ms'] <= 600000 or
@@ -32,7 +34,11 @@ def _validate_native_asset(payload, assets, *, transport=True):
             ('dataUrl' in asset and asset['dataUrl'] != '') or
             type(asset.get('base64')) is not str or not 0 < len(asset['base64']) <= 16 * 1024 * 1024):
         fail()
-    if transport and len(asset['base64']) >= MAX_NATIVE_ENCODED:
+    mode = meta.get('transport')
+    if ('transport' in meta and mode != NATIVE_FILE_TRANSPORT) or (
+            mode == NATIVE_FILE_TRANSPORT and len(asset['base64']) < MAX_NATIVE_ENCODED):
+        fail()
+    if transport and len(asset['base64']) >= MAX_NATIVE_ENCODED and mode != NATIVE_FILE_TRANSPORT:
         fail()
     try:
         raw = base64.b64decode(asset['base64'], validate=True)
@@ -68,17 +74,12 @@ def load_native_video(source_path, duration_ms):
 
 
 def prepare_optional_native_video(source_path, duration_ms):
-    """Validate original bytes locally before skipping unsupported transport only."""
+    """Select the closed temporary-file capability for large validated originals."""
     metadata, assets = _load_native_video(source_path, duration_ms)
-    encoded_size = len(assets[0]['base64'])
-    unavailable = None
-    if encoded_size >= MAX_NATIVE_ENCODED:
-        unavailable = {'classification':'native_hypotheses_unavailable', 'instruction_authority':False,
-            'reason':'encoded_video_transport_limit', 'source_sha256':metadata['source_sha256'],
-            'source_bytes':metadata['source_bytes'], 'encoded_characters':encoded_size,
-            'encoded_character_limit_exclusive':MAX_NATIVE_ENCODED,
-            'feedback':'原始视频编码超过可选传输上限，未调用原生模型且没有可用假设。必须完整观察原始帧并独立审核，不得推断或补造动作。'}
-    return metadata, assets, unavailable
+    if len(assets[0]['base64']) >= MAX_NATIVE_ENCODED:
+        metadata['transport'] = NATIVE_FILE_TRANSPORT
+    validate_native_asset({'phase': 'whole-timeline', 'video': metadata}, assets)
+    return metadata, assets, None
 
 
 def validate_timeline_output(value, duration_ms):

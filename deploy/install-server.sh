@@ -398,7 +398,7 @@ AI_GATEWAY_DIR="${AI_GATEWAY_DIR:-/opt/ai-gateway}"
 if [ -d "${SRC_DIR}/ai-gateway" ]; then
   echo "同步 AI Gateway 到 ${AI_GATEWAY_DIR} ..."
   install -d -m 0755 "${AI_GATEWAY_DIR}"
-  for item in server.js gateway-auth.js package.json package-lock.json README.md prompts validators agent agent-assets; do
+  for item in server.js gateway-auth.js native-video-upload.js package.json package-lock.json README.md prompts validators agent agent-assets; do
     if [ -e "${SRC_DIR}/ai-gateway/${item}" ]; then
       rm -rf "${AI_GATEWAY_DIR:?}/${item}"
       cp -R "${SRC_DIR}/ai-gateway/${item}" "${AI_GATEWAY_DIR}/${item}"

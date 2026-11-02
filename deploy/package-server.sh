@@ -46,6 +46,7 @@ if [ -d "${SRC_DIR}/ai-gateway" ]; then
   cp "${SRC_DIR}/ai-gateway/.env.example" "${pkg_dir}/ai-gateway/"
   cp "${SRC_DIR}/ai-gateway/server.js" "${pkg_dir}/ai-gateway/"
   cp "${SRC_DIR}/ai-gateway/gateway-auth.js" "${pkg_dir}/ai-gateway/"
+  cp "${SRC_DIR}/ai-gateway/native-video-upload.js" "${pkg_dir}/ai-gateway/"
   cp "${SRC_DIR}/ai-gateway/README.md" "${pkg_dir}/ai-gateway/"
   mkdir -p "${pkg_dir}/ai-gateway/agent-assets"
   touch "${pkg_dir}/ai-gateway/agent-assets/.gitkeep"

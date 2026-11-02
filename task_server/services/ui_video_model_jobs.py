@@ -40,7 +40,7 @@ import time
 from .ui_video_records import safe_record
 from .ui_video_stage_policy import STAGES, video_stage_image_limit
 
-MAX_REQUEST = 16 * 1024 * 1024
+MAX_REQUEST = 20 * 1024 * 1024
 MAX_MESSAGE = 1024 * 1024
 POLL_SECONDS = .025
 CLEANUP_SECONDS = .5

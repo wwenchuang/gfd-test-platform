@@ -10,6 +10,7 @@ import {v4 as uuidv4} from 'uuid';
 import {cancelAgentRun, confirmAgentRun, getAgentRun, listAgentRuns, startAgentRun} from './agent/agent-orchestrator.js';
 import {validateMidsceneYaml} from './validators/midscene-yaml-validator.js';
 import {createGatewayAuth} from './gateway-auth.js';
+import {uploadNativeVideo} from './native-video-upload.js';
 
 dotenv.config();
 
@@ -724,7 +725,7 @@ function videoCanonicalSha(value) {
   return createHash('sha256').update(JSON.stringify(canonical(value)), 'utf8').digest('hex');
 }
 
-function videoPolicyAttestation(body, options) {
+function videoPolicyAttestation(body, options, nativeResource = null) {
   const {messages, ...effective} = options;
   effective.response_format = options.response_format.type;
   const images = Array.isArray(messages[1].content) ? messages[1].content.filter(p => p.type === 'image_url') : [];
@@ -732,10 +733,19 @@ function videoPolicyAttestation(body, options) {
   if (body.videoStage === 'timeline')
     effective.video_count = messages[1].content.filter(p => p.type === 'video_url').length;
   effective.fine_frame_ids = images.flatMap((part, i) => part.min_pixels === 1658880 ? [body.imageAssets[i].name] : []);
-  return {version:'video-stage-policy-v1',stage:body.videoStage,skill:body.skillName,skill_version:body.skillVersion,
+  const policy = {version:'video-stage-policy-v1',stage:body.videoStage,skill:body.skillName,skill_version:body.skillVersion,
     correlation:body.videoCorrelation,model:options.model,effective_options:effective,
     provider_options_sha256:videoCanonicalSha(options),
     output_schema_sha256:body.outputSchema ? videoCanonicalSha(validateVideoOutputSchema(body.outputSchema, body.videoStage)) : null};
+  if (nativeResource) {
+    policy.native_transport = Object.fromEntries([
+      'version','source_sha256','source_bytes','source_md5','model','correlation',
+      'resource_reference_sha256','uploaded_at_ms','documented_max_lifetime_seconds',
+      'private_acl','forbid_overwrite','resolve_header',
+    ].map(key => [key, nativeResource[key]]));
+    policy.native_transport.provider_headers_sha256 = videoCanonicalSha({'X-DashScope-OssResourceResolve':'enable'});
+  }
+  return policy;
 }
 
 function validateNativeVideo(payload, assets) {
@@ -744,7 +754,9 @@ function validateNativeVideo(payload, assets) {
     Object.keys(value).length === keys.length && keys.every(k => Object.hasOwn(value, k));
   if (!exact(payload, ['phase', 'video']) || payload.phase !== 'whole-timeline') fail();
   const meta = payload.video;
-  if (!exact(meta, ['source_sha256','source_bytes','duration_ms','fps','max_pixels','total_pixels']) ||
+  const fileTransport = meta?.transport === 'dashscope-temporary-original-v1';
+  if (!exact(meta, ['source_sha256','source_bytes','duration_ms','fps','max_pixels','total_pixels',
+      ...(fileTransport ? ['transport'] : [])]) ||
       typeof meta.source_sha256 !== 'string' || !/^[0-9a-f]{64}$/.test(meta.source_sha256) ||
       !Number.isSafeInteger(meta.source_bytes) || meta.source_bytes < 12 || meta.source_bytes > 12 * 1024 * 1024 ||
       !Number.isSafeInteger(meta.duration_ms) || meta.duration_ms <= 0 || meta.duration_ms > 600000 ||
@@ -755,7 +767,8 @@ function validateNativeVideo(payload, assets) {
       Object.keys(asset).some(k => !['name','mime','base64','timestamp_ms','dataUrl'].includes(k)) ||
       asset.name !== 'source-video' || asset.mime !== 'video/mp4' || asset.timestamp_ms !== 0 ||
       (Object.hasOwn(asset,'dataUrl') && asset.dataUrl !== '') ||
-      typeof asset.base64 !== 'string' || !asset.base64.length || asset.base64.length >= 10000000) fail();
+      typeof asset.base64 !== 'string' || !asset.base64.length || asset.base64.length > 16 * 1024 * 1024 ||
+      (fileTransport ? asset.base64.length < 10000000 : asset.base64.length >= 10000000)) fail();
   // Canonical round-trip is bounded and avoids V8 regexp stack overflow on original videos.
   const raw = Buffer.from(asset.base64, 'base64');
   if (raw.length !== meta.source_bytes || raw.toString('base64') !== asset.base64 ||
@@ -1094,6 +1107,7 @@ function completionAuditResponse(route = {}) {
     finishReason: String(route?.finishReason || ''),
     usage: completionUsageSummary(route?.usage || {}),
     ...(route.videoPolicy ? {videoPolicy:route.videoPolicy} : {}),
+    ...(route.nativeResource ? {nativeResource:route.nativeResource} : {}),
   };
 }
 
@@ -1203,10 +1217,21 @@ async function callAi(action, body, options = {}) {
       if (Array.isArray(options.messages) && options.messages.length) {
         completionOptions.messages = options.messages;
       }
-      const policy = videoStage ? videoPolicyAttestation(body, completionOptions) : null;
+      let nativeResource = null;
+      if (videoStage === 'timeline' && body.payload.video.transport === 'dashscope-temporary-original-v1') {
+        nativeResource = await uploadNativeVideo({
+          source:Buffer.from(body.imageAssets[0].base64, 'base64'),
+          sourceSha256:body.payload.video.source_sha256, sourceBytes:body.payload.video.source_bytes,
+          model:route.model, baseUrl:route.baseUrl, apiKey:process.env[route.apiKeyEnv],
+          correlation:body.videoCorrelation, deadlineMs:deadline, signal:options.signal,
+        });
+        completionOptions.messages[1].content[0].video_url.url = nativeResource.uri;
+      }
+      const policy = videoStage ? videoPolicyAttestation(body, completionOptions, nativeResource) : null;
       if (videoStage && (options.signal?.aborted || Date.now() >= deadline)) throw new Error('video_stage_deadline');
       const completion = await client.chat.completions.create(completionOptions,
-        ...(videoStage ? [{signal: options.signal, timeout: Math.min(routeTimeoutMs, deadline-Date.now()), maxRetries:0}] : []));
+        ...(videoStage ? [{signal: options.signal, timeout: Math.min(routeTimeoutMs, deadline-Date.now()), maxRetries:0,
+          ...(nativeResource ? {headers:{'X-DashScope-OssResourceResolve':'enable'}} : {})}] : []));
       if (videoStage && (options.signal?.aborted || Date.now() >= deadline)) throw new Error('video_stage_cancelled');
       if (videoStage && completion.model !== videoStageConfig(videoStage)[3]) throw new Error('video_stage_actual_model_invalid');
       const choice = completion.choices?.[0] || {};
@@ -1247,7 +1272,8 @@ async function callAi(action, body, options = {}) {
           fallbackReason: fallbackErrors[fallbackErrors.length - 1]?.error || '',
           finishReason,
           usage,
-          ...(videoStage ? {model:completion.model, videoPolicy:policy} : {}),
+          ...(videoStage ? {model:completion.model, videoPolicy:policy,
+            ...(nativeResource ? {nativeResource} : {})} : {}),
         },
         output,
       };

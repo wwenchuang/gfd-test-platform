@@ -46,7 +46,7 @@ from task_server.services.ui_video_stage_receipts import make_expected_attestati
 from test_ui_video_trajectory import frames, event
 
 
-@pytest.mark.parametrize('native_status,later_failure',[(429,False),(500,False),(503,True),('deadline',False),('oversize',False)])
+@pytest.mark.parametrize('native_status,later_failure',[(429,False),(500,False),(503,True),('deadline',False),('file',False)])
 def test_real_owned_native_failure_then_actual_independent_audit(tmp_path,monkeypatch,native_status,later_failure):
     calls=[];owners=[];published=[]
     (tmp_path/'frames').mkdir()
@@ -57,7 +57,7 @@ def test_real_owned_native_failure_then_actual_independent_audit(tmp_path,monkey
             if stage=='timeline' or (stage=='audit' and later_failure):
                 if native_status=='deadline':
                     time.sleep(4);return
-                status=native_status if stage=='timeline' else 503
+                status=(503 if native_status=='file' else native_status) if stage=='timeline' else 503
                 data={'error':'video_stage_provider_failed'}
             else:
                 status=200
@@ -83,8 +83,8 @@ def test_real_owned_native_failure_then_actual_independent_audit(tmp_path,monkey
     monkeypatch.setattr(windows,'load_assets',lambda fs,*a:[{'name':f['frame_id'],'timestamp_ms':f['timestamp_ms'],'mime':'image/jpeg','base64':'YQ=='} for f in fs])
     monkeypatch.setattr(analysis,'consolidate_observed_frames',lambda doc,root,cancelled,observed,*a,**kw:observed)
     monkeypatch.setattr(inputs,'recover_business_inputs',lambda result,*a,**kw:result)
-    path=tmp_path/'source.mp4';size=12249942 if native_status=='oversize' else 32
-    path.write_bytes(b'\0\0\0\x18ftypisom'+b'x'*(size-12));doc={'media':{'frames':frames(299 if native_status=='oversize' else 3),'duration_ms':75376 if native_status=='oversize' else 1000}}
+    path=tmp_path/'source.mp4';size=12249942 if native_status=='file' else 32
+    path.write_bytes(b'\0\0\0\x18ftypisom'+b'x'*(size-12));doc={'media':{'frames':frames(299 if native_status=='file' else 3),'duration_ms':75376 if native_status=='file' else 1000}}
     budget=runtime.RuntimeBudget(0)
     try:
         def run():return runtime.run_runtime(doc,tmp_path,path,lambda:None,lambda **kw:published.append(copy.deepcopy(kw)),budget=budget,mode=runtime.BUSINESS_MODE)
@@ -93,12 +93,11 @@ def test_real_owned_native_failure_then_actual_independent_audit(tmp_path,monkey
             result=published[-1]
         else:result=run()
         stages=[b['videoStage'] for b in calls]
-        assert stages==(['timeline','overview','grounding','audit'] if native_status!='oversize' else ['overview']+['grounding','audit']*10)+(['audit'] if later_failure else [])
+        assert stages==(['timeline','overview','grounding','audit'] if native_status!='file' else ['timeline','overview']+['grounding','audit']*10)+(['audit'] if later_failure else [])
         assert all(not o.active_pids and o._closed for o in owners)
-        if native_status!='oversize':
-            native=owners[1];assert native._latched
-            with pytest.raises(jm.ModelJobError,match='latched'):native._guard()
-            assert native.accounting[0]['cleanup'] and not native.accounting[0]['admitted']
+        native=owners[1];assert native._latched
+        with pytest.raises(jm.ModelJobError,match='latched'):native._guard()
+        assert native.accounting[0]['cleanup'] and not native.accounting[0]['admitted']
         marker=result['video_runtime_private']['business_timeline']
         assert marker['classification']=='native_hypotheses_unavailable' and 'timeline' not in marker
         assert all(b['payload']['business_timeline']==marker for b in calls if b['videoStage'] in ('overview','grounding'))
@@ -108,10 +107,13 @@ def test_real_owned_native_failure_then_actual_independent_audit(tmp_path,monkey
             rows=[records.read(ref) for ref in records.read(result['video_runtime_private']['accounting_ref'])['refs']]
             assert len(rows)==len(calls) and all(r['terminal'] and r['cleanup'] for r in rows)
             assert len({r['index'] for r in rows})==len(rows)
-        if native_status=='oversize':
+        if native_status=='file':
             assert result['media']['frames']==doc['media']['frames'] and result['media']['duration_ms']==75376
-            assert marker['source_bytes']==12249942 and marker['encoded_characters']==16333256
-            assert not {'proof_ref','receipt_ref'} & marker.keys()
+            assert calls[0]['payload']['video']['source_bytes']==12249942
+            assert calls[0]['payload']['video']['transport']=='dashscope-temporary-original-v1'
+            assert len(calls[0]['imageAssets'][0]['base64'])==16333256
+            assert marker['reason']=='temporary_provider_failure'
+            assert {'proof_ref','receipt_ref'} <= marker.keys()
     finally:server.shutdown();server.server_close();thread.join()
 
 

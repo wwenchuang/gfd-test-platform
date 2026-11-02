@@ -830,7 +830,7 @@ def ai_gateway_skill_content(
                     "gateway_request_sha256": hashlib.sha256(body).hexdigest()})
     if stage:
         if time.monotonic() >= deadline:raise TimeoutError("video_stage_deadline")
-        validate_attestation(data.get("videoPolicy"), request_body)
+        validate_attestation(data.get("videoPolicy"), request_body, native_resource=data.get("nativeResource"))
     if not data.get("success"):
         raise RuntimeError("video_stage_gateway_rejected" if stage else str(data.get("error") or "AI Gateway skill 调用失败"))
     if stage and (data.get("model") != STAGES[stage][3] or data.get("fallbackUsed") is not False or
