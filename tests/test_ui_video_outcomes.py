@@ -151,3 +151,100 @@ def test_early_optional_wait_outcome_gets_one_original_frame_repair(tmp_path):
     assert first['evidence_kind']=='inferred' and first['observation']==plan['events'][0]['observation']
     assert actual['raw_events']==candidates
     assert actual['raw_uncertainties']==['原始全局问题']
+
+
+@pytest.mark.parametrize('expected',[
+    '颜色确认弹窗关闭；若存在处理中任务则任务冲突弹窗可见',
+    '正在处理中，随后进入预览页面',
+    '任务冲突弹窗可见，搜索框推荐内容与当前页面相关',
+])
+def test_early_wait_and_independent_result_quality_share_one_repair(tmp_path,expected):
+    from task_server.services.ui_video_analysis import consolidate_observed_frames
+    frames,candidates,plan=fixture(tmp_path)
+    candidates[0].update(action='aiWaitFor',target='模型预览显示',end_ms=500,
+                         frame_refs=['frame-001','frame-005'])
+    for e in candidates:
+        e.update(value='',observation='原始页面状态',uncertainties=[],evidence_kind='inferred')
+    candidates[0]['uncertainties']=['等待证据需复核']
+    candidates[1]['uncertainties']=['原始任务状态需复核']
+    plan['events'][0].update(action='aiWaitFor',target='模型预览显示',
+        outcome={'observation':'模型预览已显示','frame_refs':['frame-004']})
+    plan['events'][1].update(
+        outcome={'observation':'任务冲突弹窗可见','frame_refs':['frame-006']},
+        reusable_expected=expected)
+    original=copy.deepcopy((frames,candidates,plan));calls=[];repaired=[]
+    observed={'events':candidates,'uncertainties':['原始全局问题'],'multiple_scenarios':False,
+              'trajectory_audit':{'checks':[]}}
+    visible={0:('frame-005','模型预览已显示'),1:('frame-006','任务冲突弹窗可见')}
+    def model(skill,payload,**kw):
+        calls.append((skill,kw['version']))
+        if kw['version']=='consolidate':return copy.deepcopy(plan)
+        assert skill=='ui_video_observe' and kw['version']=='outcome'
+        assert kw['retry_count']==0
+        events=[]
+        for check in payload['checks']:
+            index=int(check['target'].split(':')[1]);ref,text=visible[index]
+            assert ref in check['outcome_frame_ids']
+            repaired.append(index)
+            events.append({'action':'aiAssert','target':check['target'],'value':'',
+                           'frame_refs':[ref],'observation':text,'uncertainties':[]})
+        return {'events':events,'uncertainties':[],'multiple_scenarios':False}
+    actual=consolidate_observed_frames({'app_id':'synthetic.app','goal':'查看预览',
+        'media':{'frames':frames,'duration_ms':800}},tmp_path,lambda:False,observed,candidates,[],skill_runner=model)
+    assert calls==[('ui_video_steps','consolidate'),('ui_video_observe','outcome')]
+    assert repaired==[0,1]
+    assert (frames,candidates,plan)==original
+    for index,event in enumerate(actual['events']):
+        for key in ('action','target','value','observation'):
+            assert event[key]==plan['events'][index][key]
+        for key in ('start_ms','end_ms','frame_refs','evidence_kind'):
+            assert event[key]==candidates[index][key]
+        assert event['outcome']=={'observation':visible[index][1],'frame_refs':[visible[index][0]]}
+        assert event['reusable_expected']==visible[index][1]
+        assert event['uncertainties']==candidates[index]['uncertainties']
+    assert actual['raw_events']==candidates
+    assert actual['raw_uncertainties']==['原始全局问题']
+    assert actual['uncertainties']==['原始全局问题','等待证据需复核','原始任务状态需复核']
+    assert actual['trajectory_audit']==observed['trajectory_audit']
+
+
+@pytest.mark.parametrize('count',[8,9])
+def test_result_repair_union_keeps_eight_check_limit_without_truncation(tmp_path,count):
+    from task_server.services.ui_video_analysis import consolidate_observed_frames
+    frames=[{'frame_id':f'frame-{i:03d}','timestamp_ms':i*100} for i in range(1,count*3+1)]
+    (tmp_path/'frames').mkdir()
+    for frame in frames:(tmp_path/'frames'/(frame['frame_id']+'.jpg')).write_bytes(b'image')
+    candidates=[];events=[];visible={};calls=[]
+    for index in range(count):
+        start=index*300+100;end=start+100;ref=f'frame-{end//100:03d}'
+        action='aiWaitFor' if index==0 else 'aiTap'
+        candidates.append({'action':action,'target':'预览显示' if index==0 else '确认选项',
+            'value':'','observation':'原始操作','start_ms':start,'end_ms':end,
+            'frame_refs':[f'frame-{start//100:03d}',ref],'evidence_kind':'observed','uncertainties':[]})
+        events.append({'candidate_index':index,'action':action,'target':candidates[-1]['target'],
+            'value':'','observation':'原始操作','uncertainties':[],
+            'outcome':{'observation':'预览页面可见','frame_refs':['frame-001' if index==0 else ref]},
+            'reusable_expected':'预览页面可见' if index==0 else '若存在任务则弹窗可见'})
+        visible[f'candidate:{index}']=ref
+    plan={'events':events,'uncertainties':[],'multiple_scenarios':False}
+    before=copy.deepcopy((frames,candidates,plan))
+    def model(skill,payload,**kw):
+        calls.append(kw['version'])
+        if kw['version']=='consolidate':return copy.deepcopy(plan)
+        assert len(payload['checks'])==8
+        return {'events':[{'action':'aiAssert','target':check['target'],'value':'',
+            'frame_refs':[visible[check['target']]],'observation':'预览页面可见','uncertainties':[]}
+            for check in payload['checks']], 'uncertainties':[],'multiple_scenarios':False}
+    def consolidate():
+        return consolidate_observed_frames({'app_id':'synthetic.app','goal':'查看预览',
+            'media':{'frames':frames,'duration_ms':count*300}},tmp_path,lambda:False,
+            {'events':candidates,'uncertainties':[],'multiple_scenarios':False},candidates,[],skill_runner=model)
+    if count==9:
+        with pytest.raises(ValueError,match='^video_expected_missing$'):consolidate()
+        assert calls==['consolidate']
+    else:
+        actual=consolidate()
+        assert len(actual['events'])==8
+        assert calls==['consolidate','outcome']
+        assert all(event['reusable_expected']=='预览页面可见' for event in actual['events'])
+    assert (frames,candidates,plan)==before
