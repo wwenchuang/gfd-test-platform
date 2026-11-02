@@ -433,7 +433,7 @@ def analyze_whole_frames(document, root, cancelled, progress=None):
     return consolidate_observed_frames(document,root,cancelled,observed,first_pass,known_secrets,progress)
 
 
-def _result_review_candidate_indexes(proposal,snapshot,plan,candidates,reviewed_configuration_indexes,print_group):
+def _result_review_needs(proposal,snapshot,plan,candidates,reviewed_configuration_indexes,print_group):
     """Collect the same known result concerns before either repair entry path."""
     from .ui_video_result_quality import needs_result_review,configuration_review_indexes
     expected_by_step={step['step_id']:step.get('expected','') for step in proposal['steps']}
@@ -443,8 +443,11 @@ def _result_review_candidate_indexes(proposal,snapshot,plan,candidates,reviewed_
     configuration_indexes=configuration_review_indexes(plan,candidates,reviewed_configuration_indexes,bool(print_group))
     missing.update(event['draft_step_id'] for i,event in enumerate(snapshot['events'])
                    if plan['events'][i].get('candidate_index') in configuration_indexes)
-    return [plan['events'][i]['candidate_index'] for i,event in enumerate(snapshot['events'])
-            if event['draft_step_id'] in missing and 'candidate_index' in plan['events'][i]]
+    indexes=[plan['events'][i]['candidate_index'] for i,event in enumerate(snapshot['events'])
+             if event['draft_step_id'] in missing and 'candidate_index' in plan['events'][i]]
+    # Legacy plans have no candidate indexes, but their quality concerns must
+    # still reject the proposal and use the existing planning correction path.
+    return missing,indexes
 
 
 def consolidate_observed_frames(document, root, cancelled, observed, first_pass, known_secrets, progress=None, *, skill_runner=None, bounded_business_planning=False, planning_preflight=None):
@@ -579,8 +582,8 @@ def consolidate_observed_frames(document, root, cancelled, observed, first_pass,
                 checked['uncertainties']=list(dict.fromkeys(blockers+checked['uncertainties']))
             proposal,snapshot=draft_proposal({**document,**checked,'print_recovery':print_group,'source_id':document.get('source_id','uvs_'+'0'*32),
                                       'analysis_version':document.get('analysis_version',1)})
-            missing_indexes=_result_review_candidate_indexes(proposal,snapshot,plan,candidates,reviewed_configuration_indexes,print_group)
-            if missing_indexes:
+            missing,missing_indexes=_result_review_needs(proposal,snapshot,plan,candidates,reviewed_configuration_indexes,print_group)
+            if missing:
                 error=ValueError('video_expected_missing')
                 error.result_check_candidate_indexes=missing_indexes
                 raise error
@@ -620,7 +623,8 @@ def consolidate_observed_frames(document, root, cancelled, observed, first_pass,
                 if all(type(i) is int and i not in protected for i in indexes):
                     proposal,snapshot=draft_proposal({**document,**checked,'print_recovery':print_group,
                         'source_id':document.get('source_id','uvs_'+'0'*32),'analysis_version':document.get('analysis_version',1)})
-                    indexes.extend(_result_review_candidate_indexes(proposal,snapshot,plan,candidates,reviewed_configuration_indexes,print_group))
+                    _,review_indexes=_result_review_needs(proposal,snapshot,plan,candidates,reviewed_configuration_indexes,print_group)
+                    indexes.extend(review_indexes)
                     missing_indexes=sorted(set(indexes))
             if missing_indexes:
                 if outcome_review_used:raise

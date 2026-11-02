@@ -248,3 +248,49 @@ def test_result_repair_union_keeps_eight_check_limit_without_truncation(tmp_path
         assert calls==['consolidate','outcome']
         assert all(event['reusable_expected']=='预览页面可见' for event in actual['events'])
     assert (frames,candidates,plan)==before
+
+
+@pytest.mark.parametrize('concern',['conditional','sequential','incidental','missing'])
+@pytest.mark.parametrize('corrected_retry',[False,True])
+def test_legacy_unindexed_result_concern_keeps_quality_gate_and_planning_retry(tmp_path,concern,corrected_retry):
+    from task_server.services.ui_video_analysis import consolidate_observed_frames
+    frames,candidates,indexed=fixture(tmp_path)
+    for event in candidates:
+        event.update(value='',observation='原始页面状态',uncertainties=[],evidence_kind='observed')
+    plan=copy.deepcopy(indexed)
+    for event in plan['events']:
+        candidate=candidates[event.pop('candidate_index')]
+        event.update({key:copy.deepcopy(candidate[key]) for key in
+                      ('start_ms','end_ms','frame_refs','evidence_kind')})
+    plan['events'][0].update(outcome={'observation':'反馈页面可见','frame_refs':['frame-004']},
+        reusable_expected={'conditional':'若存在任务则任务弹窗可见',
+            'sequential':'正在处理中，随后进入预览页面',
+            'incidental':'反馈页面可见，搜索框推荐内容与当前页面相关',
+            'missing':'反馈页面可见'}[concern])
+    if concern=='missing':
+        plan['events'][0].pop('outcome');plan['events'][0].pop('reusable_expected')
+        plan['events'][0]['observation']='加载中'
+    plan['events'][1]['outcome']={'observation':'首页显示列表入口','frame_refs':['frame-006']}
+    before=copy.deepcopy((candidates,plan));calls=[]
+    def model(skill,payload,**kw):
+        calls.append((skill,kw['version']))
+        assert skill=='ui_video_steps' and kw['version']=='consolidate'
+        proposal=copy.deepcopy(plan)
+        if len(calls)==2:
+            assert payload['validation_feedback']
+            assert payload['result_check_candidate_indexes']==[]
+            if corrected_retry:
+                proposal['events'][0].update(outcome={'observation':'反馈页面可见','frame_refs':['frame-004']},
+                                             reusable_expected='反馈页面可见')
+        return proposal
+    def consolidate():
+        return consolidate_observed_frames({'app_id':'synthetic.app','goal':'查看反馈',
+            'media':{'frames':frames,'duration_ms':800}},tmp_path,lambda:False,
+            {'events':candidates,'uncertainties':[],'multiple_scenarios':False},candidates,[],skill_runner=model)
+    if corrected_retry:
+        actual=consolidate()
+        assert actual['events'][0]['reusable_expected']=='反馈页面可见'
+    else:
+        with pytest.raises(ValueError,match='^video_expected_missing$'):consolidate()
+    assert calls==[('ui_video_steps','consolidate')]*2
+    assert (candidates,plan)==before
