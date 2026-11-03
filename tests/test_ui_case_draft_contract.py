@@ -274,3 +274,85 @@ def test_explicit_click_wait_keeps_original_condition_without_duplicate_guard():
         {'action':'aiAssert','target':'首页核心功能可见','review_state':'confirmed'}]}
     flow=yaml.safe_load(build_draft_yaml(draft,APP)['yaml_content'])['tasks'][0]['flow']
     assert flow[1:3]==[{'aiWaitFor':'首页','timeout':12000},{'aiTap':'首页'}]
+
+
+def test_reviewed_long_wait_compiles_and_roundtrips_without_folding():
+    from task_server.services.ui_yaml_candidate import parse_candidate
+    target = '本次打印进度条已出现，暂停控件可见'
+    steps = [{'action':'aiTap','target':'确认打印','expected':target},
+             {'action':'aiWaitFor','target':target,'wait_timeout_ms':180000},
+             {'action':'aiAssert','target':target}]
+    draft = normalize_steps({'title':'打印进度','steps':steps}, APP)
+    built = build_draft_yaml(draft, APP)
+    assert {'aiWaitFor':target,'timeout':180000} in yaml.safe_load(built['yaml_content'])['tasks'][0]['flow']
+    parsed = parse_candidate(built['yaml_content'], APP, [])
+    assert next(s for s in parsed['steps'] if s['action']=='aiWaitFor')['wait_timeout_ms']==180000
+    assert yaml.safe_load(build_draft_yaml(parsed,APP)['yaml_content'])==yaml.safe_load(built['yaml_content'])
+
+
+@pytest.mark.parametrize('action,target,timeout', [
+    ('aiTap','模型生成完成',180000), ('aiWaitFor','模型生成完成',True),
+    ('aiWaitFor','模型生成完成',12000.0), ('aiWaitFor','模型生成完成',999),
+    ('aiWaitFor','模型生成完成',180001), ('aiWaitFor','生成模型按钮可见',180000),
+    ('aiWaitFor','页面显示生成模型入口',180000),
+])
+def test_reviewed_wait_rejects_invalid_or_ordinary_state(action,target,timeout):
+    with pytest.raises(ValueError):
+        normalize_steps({'steps':[{'action':action,'target':target,'wait_timeout_ms':timeout}]},APP)
+
+
+def test_normal_wait_default_and_model_timeout_authority():
+    from task_server.services.ui_case_draft_service import _model_proposal
+    ordinary = normalize_steps({'steps':[{'action':'aiWaitFor','target':'我的页面显示打印记录'}]},APP)
+    assert 'wait_timeout_ms' not in ordinary['steps'][0]
+    assert yaml.safe_load(build_draft_yaml(ordinary,APP)['yaml_content'])['tasks'][0]['flow'][-1]['timeout']==12000
+    proposal = {'title':'等待','preconditions':[],'questions':[], 'steps':[{
+        'action':'aiWaitFor','target':'模型生成完成','value':'','expected':'',
+        'review_state':'needs_review','source_ref':'text','wait_timeout_ms':180000}]}
+    with pytest.raises(ValueError):
+        _model_proposal(proposal,APP)
+
+
+@pytest.mark.parametrize('target', ['模型生成完成','本次模型处理已完成','切片完成','加热完成','上传成功','导入完成','取消打印已完成','本次打印进度条出现','本次打印进度条可见','上传进度已更新','取消打印已结束，反馈页已出现，可见取消原因、补充照片或描述和提交反馈，等待提示已消失'])
+def test_reviewed_long_wait_accepts_concrete_task_states(target):
+    d=normalize_steps({'steps':[{'action':'aiWaitFor','target':target,'wait_timeout_ms':180000}]},APP)
+    assert d['steps'][0]['wait_timeout_ms']==180000
+
+
+def test_explicit_nondefault_click_guard_wait_is_not_folded():
+    from task_server.services.ui_case_draft_contract import click_target_condition
+    from task_server.services.ui_yaml_candidate import parse_candidate
+    target='打印进度条'
+    d=normalize_steps({'steps':[{'action':'aiWaitFor','target':click_target_condition(target),'wait_timeout_ms':1000},
+                               {'action':'aiTap','target':target,'expected':'打印详情已显示'}]},APP)
+    built=build_draft_yaml(d,APP)['yaml_content']
+    parsed=parse_candidate(built,APP,[])
+    assert parsed['steps'][0]['wait_timeout_ms']==1000
+
+
+@pytest.mark.parametrize('timeout',[1000,12000,12001,180000])
+def test_reviewed_wait_integer_boundaries(timeout):
+    d=normalize_steps({'steps':[{'action':'aiWaitFor','target':'模型生成完成','wait_timeout_ms':timeout}]},APP)
+    assert yaml.safe_load(build_draft_yaml(d,APP)['yaml_content'])['tasks'][0]['flow'][-1]['timeout']==timeout
+
+
+@pytest.mark.parametrize('target,timeout', [('生成模型按钮可见',180000),('模型生成完成',True),('模型生成完成',180001),(1,180000)])
+def test_advanced_yaml_invalid_waits_raise_validation_errors(target,timeout):
+    from task_server.services.ui_yaml_candidate import parse_candidate
+    raw=yaml.safe_dump({'android':{},'tasks':[{'name':'等待','flow':[{'launch':APP},{'aiWaitFor':target,'timeout':timeout}]}]},allow_unicode=True)
+    with pytest.raises(ValueError):
+        parse_candidate(raw,APP,[])
+
+
+@pytest.mark.parametrize('target', ['打印进度入口可见','上传进度按钮可见','取消打印完成按钮可见','打印进度详情入口可见','上传进度查询按钮可见','打印进度页面可见'])
+def test_long_wait_rejects_task_state_named_controls(target):
+    with pytest.raises(ValueError):
+        normalize_steps({'steps':[{'action':'aiWaitFor','target':target,'wait_timeout_ms':180000}]},APP)
+
+
+@pytest.mark.parametrize('target', [
+    '打印机EP3-9888E0094F2A处于工作中，姓名牌打印进度条已出现，暂停打印和取消打印按钮可见',
+    '取消打印已完成，取消原因反馈页已出现，页面显示取消原因和提交反馈',
+])
+def test_long_wait_allows_actual_state_with_other_controls(target):
+    assert normalize_steps({'steps':[{'action':'aiWaitFor','target':target,'wait_timeout_ms':60000}]},APP)['steps'][0]['wait_timeout_ms']==60000

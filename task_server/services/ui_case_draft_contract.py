@@ -17,9 +17,31 @@ from . import ui_keyboard_dismiss as keyboard
 from . import ui_native_back as native_back
 
 ACTIONS = frozenset({'launch', 'aiTap', 'aiWaitFor', 'aiAssert', 'aiInput', 'aiScroll', 'selectRecord', 'submitPrint', 'cancelPrint', 'dismissKeyboard', 'navigateBack'})
-STEP_FIELDS = frozenset({'step_id', 'action', 'target', 'value', 'expected', 'review_state', 'source_ref', 'stage_end'})
+STEP_FIELDS = frozenset({'step_id', 'action', 'target', 'value', 'expected', 'review_state', 'source_ref', 'stage_end', 'wait_timeout_ms'})
 AMBIGUOUS_TARGETS = frozenset({'按钮', '这里', '那里', '它', '点击这里', '输入框', '列表', '页面', '正常', '功能正常', '可见', '显示', '成功', '通过', '显示正常', '操作成功'})
 SHORT_TIMEOUT_MS = 12000
+
+
+def validate_wait_timeout(action, target, timeout):
+    """Reviewer-owned official wait timeout; ordinary controls stay short."""
+    if action != 'aiWaitFor' or not isinstance(target, str) or type(timeout) is not int or not 1000 <= timeout <= 180000:
+        raise ValueError('wait_timeout_ms 仅支持 aiWaitFor 的1000至180000整数毫秒')
+    if timeout > SHORT_TIMEOUT_MS:
+        # Require a complete predicate at a clause boundary. A progress-page or
+        # completion-button name is not evidence of asynchronous task state.
+        clauses = re.split(r'[，,。；;！!\n]', target)
+        state_pattern = (
+            r'(?:上传|导入|模型生成|生成模型|模型处理|切片|加热|预热)(?:任务)?(?:已)?(?:完成|成功|结束)'
+            r'|(?:打印|上传|导入|模型生成|模型处理|切片|加热|预热)(?:任务)?进度条(?:已)?(?:出现|可见|显示)'
+            r'|(?:打印|上传|导入|模型生成|模型处理|切片|加热|预热)(?:任务)?进度(?:已)?(?:更新|增加|变化)'
+            r'|(?:打印|上传|导入|模型生成|模型处理|切片|加热|预热)(?:任务)?(?:正在进行|进行中|处理中)'
+            r'|(?:取消打印|打印取消)(?:已)?(?:完成|成功|结束)')
+        long_state = any(re.search(r'(?:' + state_pattern + r')\s*$', clause)
+                         and not re.search(r'按钮|入口|可点击的目标', clause)
+                         for clause in clauses)
+        if not long_state:
+            raise ValueError('超过12秒的等待必须指定长任务完成或进度状态，普通入口和控件仍使用短等待')
+    return timeout
 
 
 def _text(value, name, limit=2000):
@@ -86,6 +108,8 @@ def normalize_steps(payload, app_id):
         ids.add(step_id)
         target = _text(raw.get('target', ''), 'target')
         expected = _text(raw.get('expected', ''), 'expected')
+        if 'wait_timeout_ms' in raw:
+            validate_wait_timeout(action, target, raw['wait_timeout_ms'])
         review_state = raw.get('review_state', 'needs_review')
         if review_state not in ('needs_review', 'confirmed'):
             raise ValueError('review_state 仅支持 needs_review/confirmed')
@@ -142,6 +166,8 @@ def normalize_steps(payload, app_id):
         steps.append({'step_id': step_id, 'action': action, 'target': target,
                       'value': value, 'expected': expected, 'review_state': review_state,
                       'source_ref': source_ref})
+        if 'wait_timeout_ms' in raw:
+            steps[-1]['wait_timeout_ms'] = raw['wait_timeout_ms']
         if raw.get('stage_end'):
             steps[-1]['stage_end'] = True
     validate_references(steps)
@@ -210,7 +236,7 @@ def build_draft_yaml(draft, app_id, *, execution_contract=None):
         elif action == 'aiScroll':
             item.update(step['value'])
         elif action == 'aiWaitFor':
-            item['timeout'] = SHORT_TIMEOUT_MS
+            item['timeout'] = step.get('wait_timeout_ms', SHORT_TIMEOUT_MS)
         flow.append(item)
         step_ids.append(step['step_id'])
         roles.append('business')
