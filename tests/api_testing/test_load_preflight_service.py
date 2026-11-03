@@ -216,3 +216,20 @@ def test_preflight_numeric_id_is_canonical_string_for_placeholder_resolver():
     result=LoadPreflightService(runner,connectivity_probe=lambda *_:{'reachable':True}).run_once(_definition(),'env',_agents()[:1])
     assert result.passed
     assert runner.variables[-1]['main_id']=='42'
+
+
+def test_side_effect_preflight_ignores_case_request_timeout_override():
+    from task_server.api_testing.services.load_preflight_service import FunctionalLoadStepRunner
+    from task_server.api_testing.executor import ExecutorLimits
+    class Executor:
+        limits = ExecutorLimits()
+        seen = []
+        def _execute_http_step(self, request, *args, **kwargs):
+            self.seen.append(request)
+            return SimpleNamespace(status='PASSED', response={'status_code':200}, failure_category='', error='', secrets=(), extracted={}, assertions=[], raw_response=None)
+    executor = Executor()
+    step = _definition()['steps'][2]
+    step['request']['timeout_seconds'] = 60
+    FunctionalLoadStepRunner(executor).execute(step, 'env', {})
+    assert 'timeout_seconds' not in executor.seen[0]
+    assert step['request']['timeout_seconds'] == 60

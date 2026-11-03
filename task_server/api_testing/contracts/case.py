@@ -154,7 +154,7 @@ def _parse_request(value):
     value = _require_mapping(value, "request")
     _reject_unknown(
         value,
-        {"method", "path", "service", "path_params", "query", "headers", "cookies", "body"},
+        {"method", "path", "service", "path_params", "query", "headers", "cookies", "body", "timeout_seconds"},
         "request",
     )
     required = {"method", "path", "path_params", "query", "headers", "cookies", "body"}
@@ -164,7 +164,7 @@ def _parse_request(value):
     method = _text(value["method"], "request.method", maximum=16).upper()
     if method not in HTTP_METHODS:
         raise CasePayloadError("request.method is not supported")
-    return {
+    result = {
         "method": method,
         "path": _text(value["path"], "request.path", maximum=4000),
         "service": _text(value.get("service", "default"), "request.service", maximum=200),
@@ -174,6 +174,12 @@ def _parse_request(value):
         "cookies": _named_mapping(value["cookies"], "request.cookies"),
         "body": _json_value(value["body"], "request.body"),
     }
+    if "timeout_seconds" in value:
+        timeout = value["timeout_seconds"]
+        if type(timeout) is not int or not 1 <= timeout <= 60:
+            raise CasePayloadError("request.timeout_seconds must be an integer between 1 and 60")
+        result["timeout_seconds"] = timeout
+    return result
 
 
 def _parse_data_rows(value):

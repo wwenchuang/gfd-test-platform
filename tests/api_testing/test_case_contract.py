@@ -396,3 +396,14 @@ def test_inline_step_rejects_invalid_condition_variable(value):
     step['only_if_variable'] = value
     with pytest.raises(CasePayloadError, match='only_if_variable'):
         parse_case_payload(_payload({'setup_steps': [step]}))
+
+
+def test_request_timeout_is_optional_bounded_and_preserved():
+    payload = _payload({'pre': [], 'post': []})
+    assert 'timeout_seconds' not in parse_case_payload(payload)['request']
+    payload['request']['timeout_seconds'] = 60
+    assert parse_case_payload(payload)['request']['timeout_seconds'] == 60
+    for invalid in (0, 61, True, '60'):
+        payload['request']['timeout_seconds'] = invalid
+        with pytest.raises(CasePayloadError):
+            parse_case_payload(payload)

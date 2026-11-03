@@ -55,12 +55,14 @@ class FunctionalLoadStepRunner:
 
     def execute(self, step, environment_revision_id, variables):
         executor = self.http_executor
+        request = step["request"]
         if step.get('side_effect') != 'readonly':
             executor = copy.copy(executor)
             executor.limits = replace(executor.limits, max_redirects=0, timeout_seconds=min(10, executor.limits.timeout_seconds))
+            request = {key: value for key, value in request.items() if key != "timeout_seconds"}
         captures_owned_resource = step.get('side_effect') == 'creates_owned_resource'
         outcome = executor._execute_http_step(  # noqa: SLF001
-            step["request"],
+            request,
             step.get("assertions", ()),
             () if captures_owned_resource else step.get("extractions", ()),
             environment_revision_id,

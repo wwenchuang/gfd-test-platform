@@ -747,6 +747,12 @@ class HttpExecutor:
                 self._emit_phase(
                     callback, trace, "request", {"request": request_view}
                 )
+            request_options = {}
+            if "timeout_seconds" in rendered:
+                timeout = rendered["timeout_seconds"]
+                if type(timeout) is not int or not 1 <= timeout <= 60:
+                    raise ValueError("request timeout must be an integer between 1 and 60")
+                request_options["timeout_seconds"] = timeout
             response = self._request(
                 rendered["method"],
                 url,
@@ -754,6 +760,7 @@ class HttpExecutor:
                 body_bytes,
                 authorized_base=base_url,
                 allow_private_network=allow_private_network,
+                **request_options,
             )
             response_secrets = tuple(
                 dict.fromkeys(
@@ -1100,9 +1107,10 @@ class HttpExecutor:
         *,
         authorized_base=None,
         allow_private_network=False,
+        timeout_seconds=None,
     ):
         network_started = time.monotonic()
-        deadline = network_started + self.limits.timeout_seconds
+        deadline = network_started + (self.limits.timeout_seconds if timeout_seconds is None else timeout_seconds)
         url = initial_url
         headers = dict(headers)
         self._validate_request_headers(headers)

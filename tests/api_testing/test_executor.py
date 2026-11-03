@@ -1644,3 +1644,13 @@ def test_preview_conditional_target_skipped_and_later_target_runs(target_server)
     assert result['status'] == 'PASSED'
     assert result['target_reached'] is True
     assert [call[1] for call in target_server[1].workflow_calls] == ['/ok']
+
+
+def test_request_specific_timeout_allows_slow_response_without_retry(target_server):
+    case = _case('/slow')
+    case.request['timeout_seconds'] = 1
+    server = target_server[1]
+    before = server.request_count
+    result = _executor(target_server, case, limits=ExecutorLimits(timeout_seconds=0.05)).execute_case('case-version-1', 'environment-revision-1', {})
+    assert result.status == 'PASSED'
+    assert server.request_count == before + 1
