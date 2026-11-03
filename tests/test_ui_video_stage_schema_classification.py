@@ -14,6 +14,7 @@ from test_ui_video_trajectory import frames, event
 
 FIXTURE = Path(__file__).parent / 'fixtures' / 'ui_video_v14_trigger_owner.json'
 PATH = '$.events[2].trigger_frame'
+CURRENT_SCHEMA_SHA256 = '8a7b7f8004b317e6605d9c4599a1bf4745c587e45c05778d31bf0f2a6c396e0d'
 
 
 def replay():
@@ -33,7 +34,15 @@ def invoke(payload, assets, schema, **kwargs):
 def test_authentic_schema_hash_and_rejected_owner():
     fixture, payload, _, schema = replay()
     digest = hashlib.sha256(json.dumps(schema, sort_keys=True, ensure_ascii=False, separators=(',', ':')).encode()).hexdigest()
-    assert digest == fixture['provenance']['output_schema_sha256']
+    assert digest == CURRENT_SCHEMA_SHA256
+    # The captured receipt predates the two native navigation actions. Rebuild
+    # that historical projection without changing the captured provenance.
+    historical = copy.deepcopy(schema)
+    action = historical['properties']['events']['items']['properties']['action']
+    assert action['enum'][-2:] == ['dismissKeyboard', 'navigateBack']
+    action['enum'] = action['enum'][:-2]
+    historical_digest = hashlib.sha256(json.dumps(historical, sort_keys=True, ensure_ascii=False, separators=(',', ':')).encode()).hexdigest()
+    assert historical_digest == fixture['provenance']['output_schema_sha256']
     assert fixture['response']['events'][2]['trigger_frame'] in payload['context_frame_ids']
     with pytest.raises(ValueError, match=r'\$\.events\[2\]\.trigger_frame'):
         policy.validate_stage_output(fixture['response'], schema)
@@ -67,7 +76,7 @@ def test_real_child_persists_receipt_and_safe_indexed_path(tmp_path):
             receipt = owner.records.read(row['receipt_ref'])
             assert receipt['content'] == json.dumps(fixture['response'], ensure_ascii=False)
             assert receipt['gateway_request_sha256'] == proof['gateway_request_sha256']
-            assert receipt['videoPolicy']['output_schema_sha256'] == fixture['provenance']['output_schema_sha256']
+            assert receipt['videoPolicy']['output_schema_sha256'] == CURRENT_SCHEMA_SHA256
     finally:
         gateway.close()
 

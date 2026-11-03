@@ -100,6 +100,8 @@ def test_timeline_local_bounds():
 def test_global_ipc_limit_stays_before_dispatch():
     from task_server.services.ui_video_model_jobs import _encode, MAX_REQUEST, ModelJobError
     p,a=native(12*1024*1024)
+    assert len(_encode({'payload':p,'kwargs':{'image_assets':a}},MAX_REQUEST)) < MAX_REQUEST
+    p['padding'] = 'x' * MAX_REQUEST
     with pytest.raises(ModelJobError,match='video_job_message_limit'):
         _encode({'payload':p,'kwargs':{'image_assets':a}},MAX_REQUEST)
 
@@ -113,9 +115,15 @@ def test_native_modeljobs_owned_child_and_global_admission(tmp_path,size):
     try:
         with manager(tmp_path,gateway) as owner:
             if size==12*1024*1024:
-                with pytest.raises(ModelJobError,match='video_job_message_limit'):
+                # A large original now fits IPC, but requires native file transport.
+                from task_server.services.ui_video_native import validate_native_asset
+                with pytest.raises(ValueError,match='video_native_asset_invalid'):
+                    validate_native_asset(p,a)
+                with pytest.raises(ModelJobError,match='video_job_failed'):
                     owner.run('ui_video_timeline',p,image_assets=a,video_stage='timeline')
                 assert not gateway.calls and not owner.active_pids
+                assert owner.accounting[0]['terminal'] and owner.accounting[0]['cleanup']
+                assert not owner.accounting[0]['admitted']
             elif size==12249942:
                 with pytest.raises(ModelJobError,match='video_job_failed'):
                     owner.run('ui_video_timeline',p,image_assets=a,video_stage='timeline')

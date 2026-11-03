@@ -24,7 +24,7 @@ def session_class():
 
 
 class Gateway:
-    def __init__(self,failure):
+    def __init__(self,failure,fail_stage=None):
         self.calls=[];self.closed=threading.Event();outer=self
         class Handler(BaseHTTPRequestHandler):
             def log_message(self,*a):pass
@@ -34,12 +34,15 @@ class Gateway:
                     while not select.select([self.connection],[],[],.05)[0]:pass
                     if not self.connection.recv(1,socket.MSG_PEEK):outer.closed.set()
                     return
-                if len(outer.calls)==1 or failure=='twice' and len(outer.calls)==2:
+                stage_calls=sum(call.get('videoStage')==body.get('videoStage') for call in outer.calls)
+                failed=(len(outer.calls)==1 or failure=='twice' and len(outer.calls)==2) if fail_stage is None else (body.get('videoStage')==fail_stage and stage_calls==1)
+                if failed:
                     status=503;value={'error':'video_stage_provider_failed'}
                 else:
                     status=200
                     from test_ui_video_trajectory import event
-                    raw=({'checks':[{'event_id':c['track']['event_id'],'trigger_verdict':'supported','outcome_verdict':'supported','question':''} for c in body['payload'].get('trajectory',[])],'issues':[],'multiple_scenarios':False,'revisit':[]} if body['videoStage']=='audit' else
+                    raw=({'scenes':[{'kind':'navigation','start_ms':0,'end_ms':1000,'description':'初始页面可见'}],'questions':[]} if body['videoStage']=='timeline' else
+                         {'checks':[{'event_id':c['track']['event_id'],'trigger_verdict':'supported','outcome_verdict':'supported','question':''} for c in body['payload'].get('trajectory',[])],'issues':[],'multiple_scenarios':False,'revisit':[]} if body['videoStage']=='audit' else
                          {'states':[],'events':[event(['frame-001','frame-002'])] if body['videoStage']=='grounding' else [],'checks':[],'uncertainties':[],'multiple_scenarios':False,'revisit':[]})
                     value={'success':True,'content':json.dumps(raw),'providerId':'official','model':body['model'],'fallbackUsed':False,'finishReason':'stop','usage':{},'videoPolicy':make_expected_attestation(body)}
                 data=json.dumps(value).encode()
@@ -250,6 +253,7 @@ def test_schema_correction_can_continue_on_original_unlatched_owner(tmp_path):
 def test_real_runtime_replacement_trace_and_owner_manifest(tmp_path,monkeypatch):
     from task_server.services import ui_video_runtime as runtime, ui_video_windows as windows
     from task_server.services import ui_video_analysis as analysis, ui_video_business_inputs as inputs
+    from task_server.services import ui_video_native as native
     from test_ui_video_trajectory import frames
     gateway=Gateway('503');owners=[];published=[]
     class Owner(jm.ModelJobs):
@@ -257,6 +261,11 @@ def test_real_runtime_replacement_trace_and_owner_manifest(tmp_path,monkeypatch)
             assert all(o._closed and not o.active_pids for o in owners)
             super().__init__(*a,**kw,gateway_url=f'http://127.0.0.1:{gateway.server.server_port}');owners.append(self)
     monkeypatch.setattr(jm,'ModelJobs',Owner)
+    # Isolate the authoritative-owner retry test from the separate optional
+    # native owner, whose lifecycle is covered by test_ui_video_optional_native_transport.
+    monkeypatch.setattr(native,'prepare_optional_native_video',lambda *_: (None, [], {
+        'classification':'native_hypotheses_unavailable', 'instruction_authority':False,
+        'reason':'test_native_not_dispatched', 'feedback':'仅使用原帧核对。'}))
     monkeypatch.setattr(windows,'load_assets',lambda fs,*a:[{'name':f['frame_id'],'timestamp_ms':f['timestamp_ms'],'mime':'image/jpeg','base64':'YQ=='} for f in fs])
     monkeypatch.setattr(analysis,'consolidate_observed_frames',lambda doc,root,cancelled,observed,*a,**kw:observed)
     monkeypatch.setattr(inputs,'recover_business_inputs',lambda result,*a,**kw:result)
@@ -276,6 +285,38 @@ def test_real_runtime_replacement_trace_and_owner_manifest(tmp_path,monkeypatch)
             assert private['job_owners'][0]['status_refs']==status_refs[:1]
             assert private['job_owners'][1]['status_refs']==status_refs[1:]
         assert all(o._closed and not o.active_pids for o in owners)
+    finally:gateway.close()
+
+
+def test_native_success_then_authoritative_retry_preserves_all_owners(tmp_path,monkeypatch):
+    from task_server.services import ui_video_runtime as runtime, ui_video_windows as windows
+    from task_server.services import ui_video_analysis as analysis, ui_video_business_inputs as inputs
+    from test_ui_video_trajectory import frames
+    gateway=Gateway('503',fail_stage='overview');owners=[]
+    class Owner(jm.ModelJobs):
+        def __init__(self,*a,**kw):
+            assert all(not owner.active_pids for owner in owners)
+            if len(owners)>=2:
+                assert all(owner._closed for owner in owners)
+            super().__init__(*a,**kw,gateway_url=f'http://127.0.0.1:{gateway.server.server_port}')
+            owners.append(self)
+    monkeypatch.setattr(jm,'ModelJobs',Owner)
+    monkeypatch.setattr(windows,'load_assets',lambda fs,*a:[{'name':f['frame_id'],'timestamp_ms':f['timestamp_ms'],'mime':'image/jpeg','base64':'YQ=='} for f in fs])
+    monkeypatch.setattr(analysis,'consolidate_observed_frames',lambda doc,root,cancelled,observed,*a,**kw:observed)
+    monkeypatch.setattr(inputs,'recover_business_inputs',lambda result,*a,**kw:result)
+    (tmp_path/'frames').mkdir();source=tmp_path/'source.mp4';source.write_bytes(b'\0\0\0\x18ftypisom'+b'x'*20)
+    budget=RuntimeBudget(0,business=True)
+    try:
+        result=runtime.run_runtime({'media':{'frames':frames(3),'duration_ms':1000}},tmp_path,source,lambda:None,lambda **kw:None,budget=budget,mode=runtime.BUSINESS_MODE)
+        assert [b['videoStage'] for b in gateway.calls]==['timeline','overview','overview','grounding','audit']
+        private=result['video_runtime_private']
+        assert [entry['scope'] for entry in private['job_owners']]==['native','authoritative','authoritative']
+        assert len(private['transport_retries'])==1 and budget.reserved==5
+        assert all(owner._closed and not owner.active_pids for owner in owners)
+        with RecordStore.open_snapshot(tmp_path/'model-records',private['records']) as records:
+            refs=records.read(private['accounting_ref'])['refs'];rows=[records.read(ref) for ref in refs]
+            assert len(rows)==5 and [row['admitted'] for row in rows]==[True,False,True,True,True]
+            assert all(row['terminal'] and row['cleanup'] for row in rows)
     finally:gateway.close()
 
 

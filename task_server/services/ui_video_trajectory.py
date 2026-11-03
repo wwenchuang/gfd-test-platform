@@ -866,9 +866,16 @@ def observe_trajectory(document,root,cancelled,progress=None,record=None,revisit
                     _fail('causal_refuted_claim_reappeared')
                 if execution_contract is not None:
                     try:_validate_positive_trigger_locks(positive_trigger_locks,history,packet)
-                    except ValueError:
+                    except ValueError as lock_error:
                         if lock_snapshot is None:raise
-                        pending_refinement=_propose_trigger_refinement(positive_trigger_locks,lock_snapshot,history,packet)
+                        try:
+                            pending_refinement=_propose_trigger_refinement(positive_trigger_locks,lock_snapshot,history,packet)
+                        except ValueError as refinement_error:
+                            # Preserve the original indexed lock feedback when a
+                            # proposed refinement is itself invalid.
+                            if getattr(refinement_error,'trajectory_reason',None)=='audit_positive_trigger_changed':
+                                raise lock_error from refinement_error
+                            raise
                 if business_timeline is not None:
                     from .ui_video_temporal_ownership import ordinary_export_conflicts, unsafe_current_correction_conflicts
                     signatures=Counter((fragment['action'],fragment['trigger_frame'],fragment['trigger_kind'])

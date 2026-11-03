@@ -173,14 +173,18 @@ def test_global_frame_preflight_fair_allocation_and_exhaustion(monkeypatch):
     assert sum(len(x['new_frames']) for x in result['trajectory_audit']['revisit_attempts'])==64
 
 
-def test_more_than_thirty_full_questions_fail_existing_gate(monkeypatch):
+def test_more_than_thirty_business_questions_remain_visible_within_128_limit(monkeypatch):
     def mutate(s,p,r,c):
         if s=='observe':
             r['uncertainties']=[f'{p["packet_id"]} question {i}' for i in range(10)]
             if p['packet_id']=='packet-002':r['revisit']=[request()]
     monkeypatch.setattr(vt,'video_stage_image_limit',lambda *a:44)
-    engine=BusinessEngine(monkeypatch,mutate=mutate,revisit=lambda *a:pytest.fail('no decode'))
-    with pytest.raises(ValueError,match='video_model_invalid'):engine.run()
+    engine=BusinessEngine(monkeypatch,count=140,mutate=mutate,revisit=lambda *a:pytest.fail('no decode'))
+    result=engine.run()
+    packets={payload['packet_id'] for stage,payload,_ in engine.calls if stage=='observe'}
+    expected={f'{packet} question {i}' for packet in packets for i in range(10)}
+    assert 30 < len(expected) <= 128
+    assert expected <= set(result['uncertainties'])
 
 
 def test_real_skill_gateway_nested_parent_latest_state_feedback(monkeypatch):

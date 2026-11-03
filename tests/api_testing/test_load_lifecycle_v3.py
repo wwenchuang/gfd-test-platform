@@ -124,10 +124,11 @@ def test_real_k6_iteration_cleanup(tmp_path, mode):
     script=tmp_path/'scenario.js';script.write_text(compiled.script)
     dataset=tmp_path/'dataset.json';dataset.write_text('[]')
     try:
-        result=subprocess.run([k6,'run','--quiet','--no-summary','--out','json=-',str(script)],env={**os.environ,'BASE_URL':f'http://127.0.0.1:{server.server_port}','LOAD_DATASET_FILE':str(dataset)},capture_output=True,text=True,timeout=20)
+        result=subprocess.run([k6,'run','--quiet','--out','json=-',str(script)],env={**os.environ,'BASE_URL':f'http://127.0.0.1:{server.server_port}','LOAD_DATASET_FILE':str(dataset),'K6_NO_SUMMARY':'true','K6_SUMMARY_MODE':'disabled'},capture_output=True,text=True,timeout=20)
     finally:
         server.shutdown();server.server_close();thread.join(timeout=2)
     assert result.returncode==0,result.stderr
+    assert all(line.startswith('{') for line in result.stdout.splitlines() if line)
     points=[json.loads(line) for line in result.stdout.splitlines() if line.startswith('{')]
     workflow=[p['data']['value'] for p in points if p.get('type')=='Point' and p.get('metric')=='workflow_iteration_success']
     creates=[p for m,p in requests if m=='POST'];deletes=[p for m,p in requests if m=='DELETE']

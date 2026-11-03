@@ -266,5 +266,5 @@ def test_consolidate_runner_receives_gesture_correction_once(tmp_path,corrected)
 
 def test_consolidate_prompt_separates_gesture_provenance_from_target():
     prompt=(Path(__file__).resolve().parents[1]/'ai_skills/prompts/ui_video_steps.consolidate.md').read_text()
-    for rule in ('target只能包含实际可见的可点击控件','即使放在括号中','只写入observation或uncertainties','没有可见等价控件'):
+    for rule in ('target只能包含实际可见的可点击控件','即使放在括号中','保留于observation或uncertainties','不要求等价可见控件','不伪造箭头点击'):
         assert rule in prompt

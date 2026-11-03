@@ -60,7 +60,9 @@ def test_equivalent_navigation_cannot_manufacture_forward_click_from_prior_async
     text = prompt[-1]
     paragraph = next((p for p in text.split('\n\n') if '前进按钮' in p), '')
     assert paragraph, 'forward navigation causal limitation missing from actual prompt'
-    assert re.search(r'唯一.*有序.*已.*证据.*导航.*等价可见控件', paragraph)
+    assert 'navigateBack' in paragraph
+    assert re.search(r'aiTap.*原图支持.*实际控件点击', paragraph)
+    assert re.search(r'不能证明点击了等价可见控件|不将手势投射为等价箭头点击', paragraph)
     assert re.search(r'前一.*交互.*持续异步响应.*不能.*下一页面.*前进按钮.*点击', paragraph)
     assert re.search(r'触发.*归属.*疑问.*保留', paragraph)
 

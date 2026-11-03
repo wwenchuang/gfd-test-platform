@@ -848,10 +848,13 @@ def test_semantic_continuation_schema_exposes_only_eligible_last_input(prior, ex
              'owned_frame_ids':['frame-001'],'prior_events':prior}
     before=copy.deepcopy(payload)
     schema=runtime()._semantic_schema(payload)
+    assert schema['properties']['events']['items']['properties']['action']['enum'] == [
+        'aiTap', 'aiInput', 'aiScroll', 'aiAssert', 'aiWaitFor', 'dismissKeyboard', 'navigateBack'
+    ]
     continuation=schema['properties']['events']['items']['properties']['continuation_of']
     assert continuation.pop('enum')==expected
     # Literal baseline pins every other projected scaffold/enum/value/ref field.
-    assert hashlib.sha256(json.dumps(schema,sort_keys=True,separators=(',',':')).encode()).hexdigest()=='d3c9756dae96aed48617448e115952de7be3f3316189aaecd78dcbf58d2c628d'
+    assert hashlib.sha256(json.dumps(schema,sort_keys=True,separators=(',',':')).encode()).hexdigest()=='74d476e557f51555a52f2c3691e9c79bed70e79403c8a5108df1eac17f3b3948'
     assert payload==before
 
 

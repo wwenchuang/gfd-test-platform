@@ -298,13 +298,17 @@ export default function(){
 
 def test_runtime_reserves_stdout_for_json_metrics(tmp_path):
     observed = []
-    def popen(argv, **_kwargs):
+    environment = {}
+    def popen(argv, **kwargs):
         observed.extend(argv)
+        environment.update(kwargs['env'])
         return _Process()
     result = K6Runtime(tmp_path, popen=popen, poll_interval=0).run(_shard(), lambda: [], _Sink())
     assert result.state == "finished"
     assert "--quiet" in observed
-    assert "--no-summary" in observed
+    assert "--no-summary" not in observed
+    assert environment['K6_NO_SUMMARY'] == 'true'
+    assert environment['K6_SUMMARY_MODE'] == 'disabled'
 
 
 def test_corrupted_metric_json_fails_without_disclosing_metric_contents(tmp_path):

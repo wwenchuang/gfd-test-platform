@@ -14,7 +14,9 @@ def fixture():
 def test_fresh_exact_contract():
     expected={'aiTap':['touch','pressed_control','navigation','edit','uncertain'],
               'aiScroll':['touch','pressed_control','navigation','edit','uncertain'],
-              'aiInput':['edit'],'aiAssert':['automatic','uncertain'],'aiWaitFor':['automatic','uncertain']}
+              'aiInput':['edit'],'aiAssert':['automatic','uncertain'],'aiWaitFor':['automatic','uncertain'],
+              'dismissKeyboard':['touch','pressed_control','navigation','uncertain'],
+              'navigateBack':['navigation','uncertain']}
     contract=vt.action_contract()
     assert contract['allowed_trigger_kinds']==expected
     contract['allowed_trigger_kinds']['aiInput'].clear()

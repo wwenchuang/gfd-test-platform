@@ -135,7 +135,7 @@ def test_no_new_charged_but_not_semantic_question_or_exhausted_model_feedback(en
     assert not any('exhausted_revisit_ranges' in p for _,p in h['calls'])
 
 
-@pytest.mark.parametrize('remaining,acquire',[(270.5,True),(270.499,False)])
+@pytest.mark.parametrize('remaining,acquire',[(540.5,True),(540.499,False)])
 def test_deadline_reserve_equality_and_below(engine,monkeypatch,remaining,acquire):
     monkeypatch.setattr(vt.time,'monotonic',lambda:100.)
     h=engine;out=h['observe'](dense_input_tail_sampling=True,engine_deadline=100+remaining)

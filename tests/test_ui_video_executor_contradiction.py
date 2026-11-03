@@ -66,9 +66,11 @@ def test_supported_business_trigger_fixed_fields_cannot_change_during_outcome_re
         if stage=='audit' and payload['packet_id']=='packet-002':contradiction(raw)
     s=Session(monkeypatch,mutate)
     with pytest.raises(ValueError) as exc:s.run()
-    assert exc.value.trajectory_reason=='audit_positive_trigger_exhausted'
+    assert exc.value.trajectory_reason==('audit_positive_trigger_refinement_unconfirmed'
+                                        if change=='trigger_kind' else 'audit_positive_trigger_exhausted')
     second=[v for v,p in s.calls if p.get('packet_id')=='packet-002']
-    assert second==['observe','audit','observe','observe']
+    assert second==(['observe','audit','observe','audit'] if change=='trigger_kind'
+                   else ['observe','audit','observe','observe'])
     assert not any(n=='trajectory-final' for n,_ in s.records)
 
 

@@ -114,6 +114,10 @@ class K6Runtime:
         secret_values = tuple(value for value in environment.values() if value)
         process_env = {"PATH": os.environ.get("PATH", ""), **environment}
         process_env["LOAD_DATASET_FILE"] = str(dataset)
+        # k6 < 2 uses K6_NO_SUMMARY; k6 >= 2 uses K6_SUMMARY_MODE.
+        # Reserve stdout for JSON metrics on both without version probing.
+        process_env["K6_NO_SUMMARY"] = "true"
+        process_env["K6_SUMMARY_MODE"] = "disabled"
         aggregator = MetricAggregator()
         bucket_count = 0
         stopped = False
@@ -126,7 +130,7 @@ class K6Runtime:
         stderr_stream = stderr_path.open("w", encoding="utf-8")
         try:
             process = self.popen(
-                [self.k6_binary, "run", "--quiet", "--no-summary", "--out", "json=-", str(script)],
+                [self.k6_binary, "run", "--quiet", "--out", "json=-", str(script)],
                 stdout=subprocess.PIPE,
                 stderr=stderr_stream,
                 text=True,
