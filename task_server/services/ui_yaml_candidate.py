@@ -1,7 +1,7 @@
 """Deliberately narrow YAML-to-Chinese adapter. Never executes or calls a model."""
 import yaml
 import json
-from .ui_case_draft_contract import ACTIONS, SHORT_TIMEOUT_MS, normalize_steps, build_draft_yaml, click_target_condition
+from .ui_case_draft_contract import ACTIONS, SHORT_TIMEOUT_MS, normalize_steps, build_draft_yaml, click_target_condition, validate_wait_timeout
 from .ui_dynamic_object import PREFIX
 from . import ui_print_recovery as print_recovery
 
@@ -87,8 +87,8 @@ def parse_candidate(raw, app_id, preconditions):
         allowed = {action} | ({'timeout'} if action == 'aiWaitFor' else {'value'} if action in ('aiInput','submitPrint','cancelPrint') else {'direction', 'distance', 'scrollType'} if action == 'aiScroll' else set())
         if set(item) - allowed:
             raise ValueError(f'第 {index + 1} 个动作含不支持的选项：' + '、'.join(sorted(set(item) - allowed)))
-        if action == 'aiWaitFor' and (type(item.get('timeout')) is not int or item['timeout'] != SHORT_TIMEOUT_MS):
-            raise ValueError('等待步骤当前仅支持明确的 timeout: 12000；其他超时不能静默转换')
+        if action == 'aiWaitFor':
+            validate_wait_timeout(action, item[action], item.get('timeout'))
         for value in item.values():
             if isinstance(value, str) and value != value.strip():
                 raise ValueError('动作文字首尾空格不能无损转换，请核对后去除')
@@ -97,6 +97,8 @@ def parse_candidate(raw, app_id, preconditions):
         expected = target if action == 'aiAssert' else ''
         steps.append({'action':action, 'target':target, 'value': {k:v for k,v in item.items() if k != action} if action == 'aiScroll' else item.get('value', ''),
                       'expected':expected, 'source_ref':'manual_yaml', 'review_state':'needs_review'})
+        if action == 'aiWaitFor' and item['timeout'] != SHORT_TIMEOUT_MS:
+            steps[-1]['wait_timeout_ms'] = item['timeout']
         if index in boundaries:
             steps[-1]['stage_end'] = True
     # Fold only patterns which the compiler reconstructs byte-for-byte. Direct
@@ -113,10 +115,10 @@ def parse_candidate(raw, app_id, preconditions):
                 raise ValueError('禁止跨应用 launch，启动应用只能在首步声明一次')
             if following:
                 continue
-        if step['action'] == 'aiWaitFor' and following and following['action'] == 'aiTap' and click_target_condition(following['target']) == step['target']:
+        if step['action'] == 'aiWaitFor' and 'wait_timeout_ms' not in step and following and following['action'] == 'aiTap' and click_target_condition(following['target']) == step['target']:
             continue
         if (step['action'] in {'aiTap','aiInput','aiScroll','cancelPrint'} and following and check
-                and following['action']=='aiWaitFor' and check['action']=='aiAssert'
+                and following['action']=='aiWaitFor' and 'wait_timeout_ms' not in following and check['action']=='aiAssert'
                 and following['target']==check['target']):
             step['expected']=following['target']
             consumed.add(index+1)
