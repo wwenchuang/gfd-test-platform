@@ -236,3 +236,27 @@ test('changing target and adopting a draft clear obsolete validation blockers',a
 test('video review folds questions and hides competing creation controls with guarded task return',async t=>{const source={kind:'video',source_id:'src',analysis_version:2,events:[]};let returned;const f=fixture(t,p=>p==='/ui-case-drafts/d1'?{ok:true,draft:{...draft,source_snapshot:source,questions:['问题一','问题二']}}:undefined,{openVideoSource:v=>returned=v});await open(f);assert.equal(f.node.querySelector('[data-draft-authoring]').hidden,true);const questions=f.node.querySelector('[data-draft-questions-box]');assert.equal(questions.tagName,'DETAILS');assert.equal(questions.open,false);assert.equal(f.node.querySelectorAll('[data-draft-question]').length,2);f.node.querySelector('[data-review-questions]').click();assert.equal(questions.open,true);assert.equal(f.w.document.activeElement,f.node.querySelector('[data-draft-question]'));questions.open=false;f.node.querySelector('[data-draft-video-back]').click();assert.equal(returned.source_id,'src');returned=null;const title=f.node.querySelector('[data-draft-title]');title.value='未保存';title.dispatchEvent(new f.w.Event('input',{bubbles:true}));assert.equal(f.node.querySelector('[data-draft-video-back]').disabled,true);f.node.querySelector('[data-draft-video-back]').dispatchEvent(new f.w.Event('click'));assert.equal(returned,null);});
 test('nonvideo drafts retain authoring sidebar and question summary',async t=>{const f=fixture(t);await open(f);assert.equal(f.node.querySelector('[data-draft-authoring]').hidden,false);assert.equal(f.node.querySelector('[data-draft-video-back]').hidden,true);assert.match(f.node.querySelector('[data-draft-questions-box] summary').textContent,/1/);});
 test('unchanged identity timer preserves review summary controls and keyboard focus',async t=>{const f=fixture(t);await open(f);const button=f.node.querySelector('[data-review-questions]');button.focus();await new Promise(resolve=>setTimeout(resolve,1100));assert.equal(f.node.querySelector('[data-review-questions]'),button);assert.equal(f.w.document.activeElement,button);});
+
+test('reviewed long wait survives save, rejects invalid confirmation and is removed on action change',async t=>{
+ const d={...draft,questions:[],steps:[{action:'aiWaitFor',target:'本次打印进度条已出现，暂停控件可见',value:'',expected:'',review_state:'needs_review',source_ref:'text',wait_timeout_ms:180000}]};
+ const f=fixture(t,p=>p==='/ui-case-drafts/d1'?{ok:true,draft:d}:undefined);await open(f);
+ let input=f.node.querySelector('[data-wait-seconds]');assert.equal(input.value,'180');
+ input.value='181';input.dispatchEvent(new f.w.Event('input',{bubbles:true}));assert.equal(f.node.querySelector('[data-draft-confirm-all]').disabled,true);
+ input.value='150';input.dispatchEvent(new f.w.Event('input',{bubbles:true}));f.node.querySelector('[data-draft-save]').click();await wait();
+ assert.equal(f.calls.find(c=>c.path.endsWith('/update')).o.body.steps[0].wait_timeout_ms,150000);
+ const action=f.node.querySelector('[data-step-action]');action.value='aiAssert';action.dispatchEvent(new f.w.Event('change',{bubbles:true}));
+ f.node.querySelector('[data-draft-save]').click();await wait();assert.equal(Object.hasOwn(f.calls.filter(c=>c.path.endsWith('/update')).at(-1).o.body.steps[0],'wait_timeout_ms'),false);
+});
+
+test('long wait validates state controls and exact millisecond decimal seconds',async t=>{
+ const d={...draft,questions:[],steps:[{action:'aiWaitFor',target:'模型生成完成',value:'',expected:'',review_state:'needs_review',source_ref:'text'},{action:'aiAssert',target:'模型生成完成',value:'',expected:'模型生成完成',review_state:'needs_review',source_ref:'text'}]};
+ const f=fixture(t,p=>p==='/ui-case-drafts/d1'?{ok:true,draft:d}:undefined);await open(f);
+ const seconds=f.node.querySelector('[data-wait-seconds]'),target=f.node.querySelector('[data-step-field="target"]');
+ const input=(el,v)=>{el.value=v;el.dispatchEvent(new f.w.Event('input',{bubbles:true}));};
+ input(seconds,'1.001');assert.equal(f.node.querySelector('[data-draft-confirm-all]').disabled,false);
+ f.node.querySelector('[data-draft-save]').click();await wait();assert.equal(f.calls.find(c=>c.path.endsWith('/update')).o.body.steps[0].wait_timeout_ms,1001);
+ const sec=f.node.querySelector('[data-wait-seconds]'),tar=f.node.querySelector('[data-step-field="target"]');
+ input(sec,'1.0001');assert.equal(f.node.querySelector('[data-draft-confirm-all]').disabled,true);
+ input(sec,'180');for(const v of ['打印进度入口可见','上传进度按钮可见','取消打印完成按钮可见','打印进度详情入口可见','上传进度查询按钮可见','打印进度页面可见']){input(tar,v);assert.equal(f.node.querySelector('[data-draft-confirm-all]').disabled,true,v);}
+ for(const v of ['打印机EP3-9888E0094F2A处于工作中，姓名牌打印进度条已出现，暂停打印和取消打印按钮可见','取消打印已完成，取消原因反馈页已出现，页面显示取消原因和提交反馈']){input(tar,v);assert.equal(f.node.querySelector('[data-draft-confirm-all]').disabled,false,v);}
+});
