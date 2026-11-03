@@ -41,6 +41,8 @@ class _TargetHandler(BaseHTTPRequestHandler):
         type(self).workflow_calls.append(("GET", self.path, None))
         if self.path.startswith("/workflow/setup-fail"):
             self._send(200, {"code": 5001, "message": "no resource"})
+        elif self.path.startswith("/workflow/ownership-mismatch"):
+            self._send(200, {"code": 0, "data": {"resourceSn": "wrong-resource"}})
         elif self.path.startswith("/workflow/cleanup-source-fail"):
             self._send(
                 200,
@@ -1654,3 +1656,30 @@ def test_request_specific_timeout_allows_slow_response_without_retry(target_serv
     result = _executor(target_server, case, limits=ExecutorLimits(timeout_seconds=0.05)).execute_case('case-version-1', 'environment-revision-1', {})
     assert result.status == 'PASSED'
     assert server.request_count == before + 1
+
+
+def test_cleanup_ownership_failure_never_cancels_unverified_task(target_server):
+    _, handler = target_server
+    handler.workflow_calls = []
+    verify = _workflow_step(
+        '确认任务归属', 'GET', '/workflow/ownership-mismatch',
+        assertions=[_code_assertion(), {
+            'type': 'json_path', 'operator': 'equals', 'path': '$.data.resourceSn',
+            'expected': 'owned-resource', 'timeout_ms': 0, 'enabled': True,
+        }],
+        extractions=[_json_extraction('verifiedTaskSn', '$.data.resourceSn')],
+    )
+    cancel = _workflow_step(
+        '仅取消确认归属的任务', 'POST', '/workflow/cancel',
+        body={'taskSn': '{{verifiedTaskSn}}'},
+        assertions=[_code_assertion()], required_variables=['verifiedTaskSn'],
+    )
+    cancel['only_if_variable'] = 'verifiedTaskSn'
+    case = _case(processing=_workflow_processing(cleanup_steps=[verify, cancel]))
+
+    result = _executor(target_server, case).execute_case('v', 'env', {})
+
+    assert result.status == 'FAILED'
+    assert result.failure_category == 'cleanup'
+    assert [call[1] for call in handler.workflow_calls] == ['/ok', '/workflow/ownership-mismatch']
+    assert any(event.get('failure_category') == 'condition_not_met' for event in result.trace)
