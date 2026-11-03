@@ -653,7 +653,7 @@ def ai_gateway_skill_content(
     if request_proof_hook is not None and (not stage or not callable(request_proof_hook)):
         raise ValueError("video_stage_proof_invalid")
     if stage:
-        from .ui_video_stage_policy import POLICY_VERSION, STAGES
+        from .ui_video_stage_policy import POLICY_VERSION, STAGES, video_stage_timeout
         from .ui_video_stage_receipts import safe_attestation, validate_attestation, cached_token_usage
         if (type(timeout) not in (int, float) or not math.isfinite(timeout) or timeout <= 0 or
                 temperature != 0.1 or (max_tokens is not None and max_tokens != STAGES[stage][4]) or
@@ -661,7 +661,7 @@ def ai_gateway_skill_content(
                 model_config.get('model', STAGES[stage][3]) != STAGES[stage][3]):
             raise ValueError("video_stage_options_invalid")
         model_config = {**model_config, 'model': STAGES[stage][3]}
-        timeout = min(timeout, 120)
+        timeout = min(timeout, video_stage_timeout(stage))
         deadline = time.monotonic() + timeout
         deadline_ms = int((time.time()+timeout)*1000)
         prompt = prompt.strip()

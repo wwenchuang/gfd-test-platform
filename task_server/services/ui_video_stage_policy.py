@@ -286,3 +286,8 @@ def validate_stage_output(value, schema, path='$'):
         for index, child in enumerate(value):
             validate_stage_output(child, schema['items'], f'{path}[{index}]')
     return value
+
+
+def video_stage_timeout(stage=None):
+    """Closed per-call maximum; callers and outer deadlines may shorten it."""
+    return 180 if stage in ('grounding', 'audit') else 120

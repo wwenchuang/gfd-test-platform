@@ -2,7 +2,7 @@
 import copy
 
 from .ui_video_model_jobs import LocalModelJobDeadline, ModelJobCancelled, ModelJobError, ModelJobs
-from .ui_video_stage_policy import STAGES
+from .ui_video_stage_policy import STAGES, video_stage_timeout
 
 RETRY_STAGES = frozenset({'overview', 'grounding', 'audit', 'consolidate', 'outcome', 'inputs'})
 
@@ -95,7 +95,7 @@ class BusinessJobs:
                 if not allow_transport_retry or attempt or len(self.retries) >= 2 or hooks or reason is None:
                     raise
                 end = min(self.budget.deadline, self.budget.engine_deadline() or self.budget.deadline)
-                if end - self.budget.clock() < 120.5 or self.budget.reserved >= self.budget.limit:
+                if end - self.budget.clock() < video_stage_timeout(stage) + .5 or self.budget.reserved >= self.budget.limit:
                     raise
                 row = owner.accounting[offset]
                 retry = {'stage':stage, 'reason':reason, 'attempt':2,

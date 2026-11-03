@@ -38,7 +38,7 @@ import threading
 import time
 
 from .ui_video_records import safe_record
-from .ui_video_stage_policy import STAGES, video_stage_image_limit
+from .ui_video_stage_policy import STAGES, video_stage_image_limit, video_stage_timeout
 
 MAX_REQUEST = 20 * 1024 * 1024
 MAX_MESSAGE = 1024 * 1024
@@ -309,7 +309,7 @@ class ModelJobs:
         timeout = kwargs.get('timeout', 120)
         if type(timeout) not in (int, float) or not math.isfinite(timeout) or timeout <= 0:
             raise ValueError('video_job_options_invalid')
-        deadline = min(deadline, time.monotonic() + min(120, timeout))
+        deadline = min(deadline, time.monotonic() + min(video_stage_timeout(stage), timeout))
         kwargs.update(timeout=deadline - time.monotonic(), respect_global_timeout=False, retry_count=0, repair_invalid_json=False)
         wire = encode_request(skill, payload, kwargs, deadline)
         self._guard()

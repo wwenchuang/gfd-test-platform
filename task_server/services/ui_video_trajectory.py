@@ -621,7 +621,7 @@ def observe_trajectory(document,root,cancelled,progress=None,record=None,revisit
         raw=None
         try:
             raw=run_skill('ui_video_trajectory',payload,version=version,image_assets=load_assets(images,root,cancelled),
-                                runtime_trace=trace,timeout=120,respect_global_timeout=False,retry_count=0,max_tokens=10000,repair_invalid_json=False)
+                                runtime_trace=trace,timeout=180 if business_timeline is not None and version in {"observe", "audit"} else 120,respect_global_timeout=False,retry_count=0,max_tokens=10000,repair_invalid_json=False)
         finally:
             last_diagnostic.update(copy.deepcopy(trace.get('video_record_refs',{})))
             last_diagnostic['questions_ref']=question_refs(raw)
@@ -727,7 +727,7 @@ def observe_trajectory(document,root,cancelled,progress=None,record=None,revisit
             reason=('revisit_attempts' if 4-revisits<2 else
                     'new_frame_capacity' if 64-sum(len(a['new_frames']) for a in revisit_attempts)<40 else
                     'request_image_capacity' if packet_image_limit-len(packet['frames'])<20 else
-                    'engine_deadline' if engine_deadline-time.monotonic()<270.5 else None)
+                    'engine_deadline' if engine_deadline-time.monotonic()<540.5 else None)
             if reason:
                 dense_plan.update(status='not_acquired',reason=reason)
                 diagnose('acquisition_deferred',**dense_plan)

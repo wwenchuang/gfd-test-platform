@@ -569,7 +569,7 @@ function clientForRoute(route, timeoutMs = AI_CALL_TIMEOUT_MS) {
 
 function requestedCallTimeoutMs(body = {}) {
   if (Object.hasOwn(body, 'videoStage')) {
-    const remaining = Math.min(body.timeoutMs, body.videoDeadlineMs - Date.now(), 120000);
+    const remaining = Math.min(body.timeoutMs, body.videoDeadlineMs - Date.now(), ['grounding', 'audit'].includes(body.videoStage) ? 180000 : 120000);
     if (!Number.isFinite(remaining) || remaining <= 0) throw new Error('video_stage_deadline');
     return remaining;
   }

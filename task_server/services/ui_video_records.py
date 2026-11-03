@@ -17,7 +17,7 @@ import stat
 import threading
 import uuid
 
-from .ui_video_stage_policy import STAGES
+from .ui_video_stage_policy import STAGES, video_stage_timeout
 from .ui_video_stage_receipts import safe_attestation, cached_token_usage
 
 MAX_FILES = 64
@@ -88,7 +88,7 @@ def safe_record(kind, value):
                 value.get('skill') != STAGES[stage][0] or value.get('skill_version') != STAGES[stage][1] or
                 type(value.get('correlation')) is not str or not re.fullmatch('[0-9a-f]{32}', value['correlation']) or
                 not _digest(value.get('gateway_request_sha256')) or
-                type(value.get('timeout_ms')) is not int or not 1 <= value['timeout_ms'] <= 120000):
+                type(value.get('timeout_ms')) is not int or not 1 <= value['timeout_ms'] <= video_stage_timeout(stage) * 1000):
             raise RecordError('video_record_invalid')
         return {k: value[k] for k in ('stage', 'skill', 'skill_version', 'correlation', 'gateway_request_sha256', 'timeout_ms')}
     if kind != 'receipt' or type(value.get('content')) is not str or not _digest(value.get('gateway_request_sha256')):

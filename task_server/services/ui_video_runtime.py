@@ -128,7 +128,7 @@ class RuntimeBudget:
         needed=normal_reserve+2*remaining_packets+partial
         end=min(self.deadline,self._engine_deadline or self.deadline)
         return (self.frozen and self.limit-self.reserved>=needed+4 and
-                end-self.clock()>=120*needed+.5)
+                end-self.clock()>=180*needed+.5)
 
     def preflight_planning(self, count):
         """Non-consuming admission on the original source allowance and clock."""
