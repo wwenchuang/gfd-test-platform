@@ -155,7 +155,7 @@ def observe_windows(frames,duration,root,cancelled,progress=None,review_events=N
                  (old['action']=='aiTap' and old['start_ms']==event['start_ms'] and
                   len(set(old['frame_refs']) & set(event['frame_refs']))>=2 and
                   len(set(old['frame_refs']) | set(event['frame_refs']))<=8 and
-                  not any(other['action'] in {'aiTap','aiInput','aiScroll'} and
+                  not any(other['action'] in {'aiTap','aiInput','aiScroll','dismissKeyboard','navigateBack'} and
                           old['start_ms']<other['start_ms']<=max(old['end_ms'],event['end_ms'])
                           for other in events)))),None)
             if overlap:
@@ -197,9 +197,9 @@ def planning_frames(events,frames):
     # budget on repeated loading/failure observations. Last does not mean stable:
     # the model and evidence validator must still establish the visible outcome.
     for i,event in enumerate(events):
-        if event['action'] not in {'aiTap','aiInput','aiScroll'} or _system_boundary(event,duration):continue
+        if event['action'] not in {'aiTap','aiInput','aiScroll','dismissKeyboard','navigateBack'} or _system_boundary(event,duration):continue
         boundary=next((e['start_ms'] for e in events[i+1:]
-                       if e['action'] in {'aiTap','aiInput','aiScroll'} or _system_boundary(e,duration)),duration+1)
+                       if e['action'] in {'aiTap','aiInput','aiScroll','dismissKeyboard','navigateBack'} or _system_boundary(e,duration)),duration+1)
         result=[f for f in frames if event['end_ms']<=f['timestamp_ms']<boundary]
         if not result and boundary==event['end_ms']:
             # Consecutive interactions can share the after/before screenshot.

@@ -81,7 +81,9 @@
                   "aiInput",
                   "aiScroll",
                   "aiAssert",
-                  "aiWaitFor"
+                  "aiWaitFor",
+                  "dismissKeyboard",
+                  "navigateBack"
                 ]
               },
               "target": {
@@ -197,7 +199,53 @@
                   }
                 }
               }
-            }
+            },
+            "allOf": [
+              {
+                "if": {
+                  "properties": {
+                    "action": {
+                      "const": "dismissKeyboard"
+                    }
+                  },
+                  "required": [
+                    "action"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "target": {
+                      "const": "当前页面的软键盘"
+                    },
+                    "value": {
+                      "const": ""
+                    }
+                  }
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "action": {
+                      "const": "navigateBack"
+                    }
+                  },
+                  "required": [
+                    "action"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "target": {
+                      "const": "上一页面"
+                    },
+                    "value": {
+                      "const": ""
+                    }
+                  }
+                }
+              }
+            ]
           }
         },
         "checks": {

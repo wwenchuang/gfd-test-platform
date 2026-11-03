@@ -127,6 +127,10 @@ def validate_analysis(result, frames, duration, prior_secrets=(), *, max_events=
                 raise ValueError('video_reference_invalid')
         if not isinstance(event['uncertainties'],list) or len(event['uncertainties'])>10: raise ValueError('video_model_invalid')
         event['uncertainties']=[_text(q) for q in event['uncertainties']]
+        if event['action']=='navigateBack' and (event['target']!='上一页面' or event['value']!=''):
+            raise ValueError('video_action_invalid')
+        if event['action']=='dismissKeyboard' and (event['target']!='当前页面的软键盘' or event['value']!=''):
+            raise ValueError('video_action_invalid')
         if event['action']=='aiInput':
             _text(event['value'],4000)
             # Video transcription cannot establish whether text is a credential.
@@ -167,7 +171,7 @@ def _system_boundary(event,duration):
 
 def _required_interactions(events,duration):
     from .ui_video_terminal_cleanup import is_terminal_app_exit
-    return [index for index,event in enumerate(events) if event['action'] in {'aiTap','aiInput','aiScroll'}
+    return [index for index,event in enumerate(events) if event['action'] in {'aiTap','aiInput','aiScroll','dismissKeyboard','navigateBack'}
             and not _system_boundary(event,duration)
             and not is_terminal_app_exit(events,index,duration)]
 
@@ -225,9 +229,9 @@ def _consolidation_images(events,frames,limit):
     times={f['frame_id']:f['timestamp_ms'] for f in frames}
     for index,event in enumerate(events):
         if event['action']!='aiTap' or not re.search(r'删除|移除|清空|支付|付款|delete|remove|pay',event['target'],re.I):continue
-        confirmation=next((i for i in range(index+1,len(events)) if events[i]['action'] in {'aiTap','aiInput','aiScroll'}),None)
+        confirmation=next((i for i in range(index+1,len(events)) if events[i]['action'] in {'aiTap','aiInput','aiScroll','dismissKeyboard','navigateBack'}),None)
         if confirmation is None or not re.search(r'确认|确定|提交|confirm|submit',events[confirmation]['target'],re.I):continue
-        following=next((events[i]['start_ms'] for i in range(confirmation+1,len(events)) if events[i]['action'] in {'aiTap','aiInput','aiScroll'}),duration+1)
+        following=next((events[i]['start_ms'] for i in range(confirmation+1,len(events)) if events[i]['action'] in {'aiTap','aiInput','aiScroll','dismissKeyboard','navigateBack'}),duration+1)
         # A stable result can be a decoded frame with no local event. The
         # model must see it before deciding what happened; this selects evidence,
         # not a successful outcome. Never include the next interaction's frame.
@@ -344,10 +348,10 @@ def _validate_consolidated_evidence(checked,raw_events,candidates,frames,image_f
             covered<event['end_ms'] or not set(event['frame_refs'])<=supported_refs):
             raise ValueError('video_model_timeline')
         if 'outcome' in event:
-            next_start=min((raw['start_ms'] for i,raw in enumerate(candidates) if i not in omitted_indices and raw['action'] in {'aiTap','aiInput','aiScroll'}
+            next_start=min((raw['start_ms'] for i,raw in enumerate(candidates) if i not in omitted_indices and raw['action'] in {'aiTap','aiInput','aiScroll','dismissKeyboard','navigateBack'}
                             and raw['start_ms']>event['start_ms']),default=duration)
             next_output=next((item['start_ms'] for item in checked['events'][event_index+1:]
-                              if item['action'] in {'aiTap','aiInput','aiScroll'}),duration)
+                              if item['action'] in {'aiTap','aiInput','aiScroll','dismissKeyboard','navigateBack'}),duration)
             next_start=min(next_start,next_output)
             system_start=min((raw['start_ms'] for raw in candidates if raw['start_ms']>event['start_ms'] and _system_boundary(raw,duration)),default=duration+1)
             if (not set(event['outcome']['frame_refs'])<=all_refs or any(times[ref]>=system_start for ref in event['outcome']['frame_refs']) or
@@ -515,6 +519,9 @@ def consolidate_observed_frames(document, root, cancelled, observed, first_pass,
                     group=copy.deepcopy(payload)
                     group.update({k:copy.deepcopy(frozen[k]) for k in
                         ('image_frames','required_candidate_indexes','planning_scope')})
+                    if 'planning_outcome_feedback' in group:
+                        owned=set(group['planning_scope']['owned_candidate_indexes'])
+                        group['planning_outcome_feedback']=[row for row in group['planning_outcome_feedback'] if row['candidate_index'] in owned]
                     group_assets=[copy.deepcopy(asset_by_id[f['frame_id']]) for f in group['image_frames']]
                     options=dict(image_assets=group_assets,version='consolidate',timeout=120,
                         retry_count=0,max_tokens=10000,repair_invalid_json=False)
@@ -643,6 +650,7 @@ def consolidate_observed_frames(document, root, cancelled, observed, first_pass,
                 continue
             if attempt:raise
             payload={**payload,'multiple_scenarios':multi,'recovery_feedback':getattr(error,'model_feedback',''),
+                'planning_outcome_feedback':getattr(error,'planning_outcome_feedback',[]),
                 'result_check_candidate_indexes':getattr(error,'result_check_candidate_indexes',[]),'validation_feedback':
                 '上一结果未通过平台证据/复用校验。每事件必须有candidate_index/action/target/value/observation/uncertainties。'
                 '索引严格递增，除有效omitted_retries声明外保留全部required_candidate_indexes及原action，不输出事件顶层的时间或frame_refs/evidence_kind；outcome内部必须包含真实frame_refs。'
@@ -923,7 +931,7 @@ def draft_proposal(document):
         step_id=str(uuid.uuid4());event['draft_step_id']=step_id
         ref=f"video:{identifier}:{version}:{index}"
         event['expected_candidate']=_expected_candidate(event,document['goal'])
-        expected=event['expected_candidate']['text'] if event['action'] in {'aiTap','aiInput','aiScroll'} else ''
+        expected=event['expected_candidate']['text'] if event['action'] in {'aiTap','aiInput','aiScroll','dismissKeyboard','navigateBack'} else ''
         target=event['target']
         reusable=_stable_visible_observation(event.get('reusable_expected',''))
         if reusable and event['expected_candidate']['text']:

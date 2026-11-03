@@ -611,7 +611,7 @@ function videoSemanticContract() {
   return object({
     states: list(object({state_id: text(), first_frame: text(), last_frame: text(),
       kind: choice(['page', 'input', 'wait', 'transition']), description: text()})),
-    events: list(object({action: choice(['aiTap', 'aiInput', 'aiScroll', 'aiAssert', 'aiWaitFor']),
+    events: list(object({action: choice(['aiTap', 'aiInput', 'aiScroll', 'dismissKeyboard', 'navigateBack', 'aiAssert', 'aiWaitFor']),
       target: text(), value: {anyOf: [choice(['']), object({direction: choice(['up', 'down', 'left', 'right']),
         scrollType: choice(['singleAction'])})]}, frame_refs: refs(), observation: text(), uncertainties: refs(),
       trigger_frame: text(), trigger_kind: choice(['touch', 'pressed_control', 'navigation', 'edit', 'automatic', 'uncertain']),

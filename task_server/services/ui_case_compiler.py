@@ -11,6 +11,8 @@ from task_server.schemas import MIDSCENE_FLOW_ACTIONS
 from .yaml_static_validator import STEP_ATTR_KEYS, validate_midscene_action_parameters
 from .ui_dynamic_object import PREFIX, uses_dynamic_object
 from . import ui_print_recovery as print_recovery
+from . import ui_keyboard_dismiss as keyboard
+from . import ui_native_back as native_back
 
 
 PORTABLE_ACTIONS = ("launch", "aiTap", "aiWaitFor", "aiAssert", "aiScroll")
@@ -83,6 +85,16 @@ def compile_ui_case(case_version, target_resolution):
         has_print=print_recovery.validate_flow(data)
     except (ValueError,AttributeError,TypeError):return blocked('print_recovery_invalid')
     if has_print and capabilities.get('ui_print_recovery_v1') is not True:return blocked('print_recovery_unsupported')
+    try:
+        has_keyboard = keyboard.validate_flow(data)
+    except (ValueError, AttributeError, TypeError): return blocked('keyboard_dismiss_invalid')
+    if has_keyboard and (platform != 'android' or 'android' not in data or capabilities.get(keyboard.CAPABILITY) is not True):
+        return blocked('keyboard_dismiss_unsupported')
+    try:
+        has_back = native_back.validate_flow(data)
+    except (ValueError, AttributeError, TypeError): return blocked('native_back_invalid')
+    if has_back and (platform != 'android' or 'android' not in data or capabilities.get(native_back.CAPABILITY) is not True):
+        return blocked('native_back_unsupported')
     source_platform = "android" if "android" in data else "ios"
     same_android = source_platform == platform == "android" and capabilities.get("android_baseline") is True
     interface = data[source_platform] or {}
@@ -147,7 +159,7 @@ def compile_ui_case(case_version, target_resolution):
                      (action != 'aiWaitFor' or 'timeout' not in step or
                       isinstance(step['timeout'], int) and not isinstance(step['timeout'], bool) and step['timeout'] > 0))
             if action == "aiQuery":
-                valid = set(step) == {"aiQuery"} and isinstance(step[action], str) and step[action].startswith((PREFIX,print_recovery.PREFIX))
+                valid = set(step) == {"aiQuery"} and isinstance(step[action], str) and step[action].startswith((PREFIX,print_recovery.PREFIX,keyboard.PREFIX,native_back.PREFIX))
             if action == "aiScroll":
                 valid = _portable_scroll_valid(step)
             if action == "aiInput":

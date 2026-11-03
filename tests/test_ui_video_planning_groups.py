@@ -176,3 +176,33 @@ def test_selection_string_and_cross_group_reference_survive_merge():
     # the other request. It never approves the final authorization itself.
     assert merged['events'][0]['selection']=='仅本次创建的测试对象'
     assert merged['events'][cut]['target']=='{{本次对象}}详情入口'
+
+
+def test_unattached_candidate_outcomes_report_all_trusted_references_and_options():
+    full=payload(41,60);group=groups.partition(full)[1]
+    group['planning_scope']['owned_candidate_indexes']=list(range(13,41))
+    group['image_frames']=[{'frame_id':f'frame-{i}','timestamp_ms':i} for i in (130,131,159)]
+    group['frames']+= [{'frame_id':f'frame-{i}','timestamp_ms':i} for i in (128,156)]
+    for i,refs in ((16,['frame-130','frame-131']),(21,['frame-159'])):
+        group['candidate_events'][i]['ordinary_outcome_frame_ids']=refs
+        group['candidate_events'][i]['outcome']={'observation':'加载中','frame_refs':['frame-128']}
+    before=copy.deepcopy(group);result=reply(group)
+    for e in result['events']:
+        if e['candidate_index'] in (16,21):
+            e['outcome']={'observation':'untrusted prose','frame_refs':[f"frame-{128 if e['candidate_index']==16 else 156}"]}
+    with pytest.raises(groups.PlanningReplyError,match='video_planning_reply_outcome_images') as error:
+        groups.validate_reply(group,result)
+    assert error.value.planning_outcome_feedback==[
+        {'candidate_index':16,'rejected_frame_refs':['frame-128'],'ordinary_outcome_frame_ids':['frame-130','frame-131']},
+        {'candidate_index':21,'rejected_frame_refs':['frame-156'],'ordinary_outcome_frame_ids':['frame-159']}]
+    assert group==before
+
+
+def test_unattached_outcome_feedback_has_no_invented_id_or_empty_fallback_permission():
+    group=groups.partition(payload())[0];result=reply(group)
+    result['events'][0]['outcome']={'observation':'injected prose','frame_refs':['injected reference']}
+    with pytest.raises(groups.PlanningReplyError) as error:groups.validate_reply(group,result)
+    assert error.value.planning_outcome_feedback==[{'candidate_index':0,'rejected_frame_refs':[],
+                                                   'ordinary_outcome_frame_ids':[]}]
+    assert '省略outcome' in error.value.model_feedback and '提问' in error.value.model_feedback
+    assert 'injected' not in str(error.value.__dict__)

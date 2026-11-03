@@ -68,7 +68,7 @@ ANDROID_UI_ACTIONS = ["launch", "terminate", "sleep", "runAdbShell", "ai", "aiAc
                       "recordToReport"]
 RUNNER_CAPABILITIES.update(ui_execution_contract="ui-v1", ui_platforms=[RUNNER_PLATFORM],
                            ui_actions=["launch", "aiTap", "aiWaitFor", "aiAssert", "aiScroll", "aiQuery", "aiInput"] if RUNNER_PLATFORM == "ios" else ANDROID_UI_ACTIONS,
-                           android_baseline=RUNNER_PLATFORM == "android", ui_dynamic_object_v1=True, ui_print_recovery_v1=True)
+                           android_baseline=RUNNER_PLATFORM == "android", ui_dynamic_object_v1=True, ui_print_recovery_v1=True, ui_keyboard_dismiss_v1=False, ui_native_back_v1=False)
 
 
 
@@ -152,7 +152,7 @@ def prepare_ios_yaml(text, *, source_app, bundle_id, wda_port):
                 raise ValueError(f"第 {index} 步不是已验证的跨端导航动作")
             action = next(iter(actions))
             if action == 'aiQuery':
-                if set(step) != {'aiQuery'} or not isinstance(step[action], str) or not step[action].startswith(('平台运行时对象选择v1：','平台打印取消恢复v1：')):
+                if set(step) != {'aiQuery'} or not isinstance(step[action], str) or not step[action].startswith(('平台运行时对象选择v1：','平台打印取消恢复v1：','平台软键盘收起v1：','平台原生返回v1：')):
                     raise ValueError('iOS 仅支持受控的本次测试对象选取')
                 continue
             if action == 'aiInput':
@@ -1986,6 +1986,96 @@ def stop_midscene_process(proc):
 
 # Kept inline so updating the standalone Mac Runner remains a one-file install.
 # Read-only adapter for the public ScriptPlayer status exposed by Midscene 1.13.
+RUNNER_KEYBOARD_DISMISS_ADAPTER = r'''
+function installKeyboardDismiss(agent) {
+  const prefix='平台软键盘收起v1：', marker=prefix+'dismissKeyboard';
+  const query=agent.aiQuery.bind(agent);
+  let busy=false;
+  agent.aiQuery=async function(prompt, options) {
+    if(typeof prompt!=='string'||!prompt.startsWith(prefix))return query(prompt,options);
+    if(prompt!==marker || process.env.MIDSCENE_PLATFORM!=='android')throw Error('Unsupported keyboard dismiss operation');
+    const cancelled=()=>{if(options?.signal?.aborted||options?.abortSignal?.aborted)throw Error('Keyboard action cancelled');};
+    cancelled();
+    if(busy)throw Error('Keyboard operation already active');
+    busy=true;
+    try {
+    const checked=async(fn)=>{cancelled();const value=await fn();cancelled();return value;};
+    const device=agent.page;
+    if(!device || typeof device.hideKeyboard!=='function'||typeof device.getAdb!=='function')throw Error('Keyboard SDK unavailable');
+    const adb=await checked(()=>device.getAdb());
+    if(typeof adb.isSoftKeyboardPresent!=='function'||typeof adb.shell!=='function')throw Error('Keyboard ADB API unavailable');
+    const shown=async()=>{
+      const raw=await checked(()=>adb.isSoftKeyboardPresent());
+      const value=typeof raw==='boolean'?raw:raw?.isKeyboardShown;
+      if(typeof value!=='boolean')throw Error('Ambiguous keyboard status');
+      return value;
+    };
+    const foreground=async()=>{
+      const raw=await checked(()=>adb.shell('dumpsys activity activities'));
+      const matches=[...String(raw).matchAll(/(?:mResumedActivity:|topResumedActivity=).*?\s([\w.]+\/[\w.$]+)\s/g)].map(x=>x[1]);
+      const unique=[...new Set(matches)];
+      if(unique.length!==1)throw Error('Ambiguous foreground activity');
+      return unique[0];
+    };
+    const before=await foreground();
+    const expected=process.env.MIDSCENE_NATIVE_TARGET_PACKAGE;
+    if(!expected || before.split('/')[0]!==expected)throw Error('Keyboard target app unbound');
+    if(await shown()){
+      cancelled();
+      if(await foreground()!==before)throw Error('Foreground changed before keyboard dismissal');
+      if(await checked(()=>device.hideKeyboard())!==true)throw Error('Keyboard dismissal failed');
+    }
+    if(await shown() || await foreground()!==before)throw Error('Keyboard dismissal postcondition failed');
+    cancelled();
+    return {keyboard_hidden:true};
+    } finally {busy=false;}
+  };
+}
+function installNativeBack(agent) {
+  const prefix='平台原生返回v1：', marker=prefix+'navigateBack';
+  const query=agent.aiQuery.bind(agent);
+  let busy=false;
+  agent.aiQuery=async function(prompt, options) {
+    if(typeof prompt!=='string'||!prompt.startsWith(prefix))return query(prompt,options);
+    if(prompt!==marker || process.env.MIDSCENE_PLATFORM!=='android')throw Error('Unsupported native back operation');
+    const cancelled=()=>{if(options?.signal?.aborted||options?.abortSignal?.aborted)throw Error('Back action cancelled');};
+    cancelled();
+    if(busy)throw Error('Back operation already active');
+    busy=true;
+    try {
+    const checked=async(fn)=>{cancelled();const value=await fn();cancelled();return value;};
+    const device=agent.page;
+    if(!device || typeof device.back!=='function'||typeof device.getAdb!=='function')throw Error('Back SDK unavailable');
+    const adb=await checked(()=>device.getAdb());
+    if(typeof adb.isSoftKeyboardPresent!=='function'||typeof adb.shell!=='function')throw Error('Back ADB API unavailable');
+    const shown=async()=>{
+      const raw=await checked(()=>adb.isSoftKeyboardPresent());
+      const value=typeof raw==='boolean'?raw:raw?.isKeyboardShown;
+      if(typeof value!=='boolean')throw Error('Ambiguous back keyboard status');
+      return value;
+    };
+    const foreground=async()=>{
+      const raw=await checked(()=>adb.shell('dumpsys activity activities'));
+      const matches=[...String(raw).matchAll(/(?:mResumedActivity:|topResumedActivity=).*?\s([\w.]+\/[\w.$]+)\s/g)].map(x=>x[1]);
+      const unique=[...new Set(matches)];
+      if(unique.length!==1)throw Error('Ambiguous foreground activity');
+      return unique[0];
+    };
+    const before=await foreground();
+    const expected=process.env.MIDSCENE_NATIVE_TARGET_PACKAGE;
+    if(!expected || before.split('/')[0]!==expected)throw Error('Native back target app unbound');
+    if(await shown())throw Error('Native back requires hidden keyboard');
+    if(await foreground()!==before)throw Error('Foreground changed before native back');
+    await checked(()=>device.back());
+    if((await foreground()).split('/')[0]!==expected)throw Error('Native back left target app');
+    const keyboardShownAfter=await shown();
+    cancelled();
+    return {native_back_executed:true,keyboard_shown_after:keyboardShownAfter};
+    } finally {busy=false;}
+  };
+}
+'''
+
 RUNNER_PRINT_RECOVERY_ADAPTER = r'''
 function installPrintRecovery(agent, taskIndex, hooks={}) {
   const prefix='平台打印取消恢复v1：';
@@ -2124,6 +2214,8 @@ RUNNER_PROGRESS_OBSERVER = r'''
     const label = step => {
       const key = Object.keys(step || {}).find(k => k in actionNames) || Object.keys(step || {})[0] || '操作';
       const value = step?.[key];
+      if(key==='aiQuery'&&typeof value==='string'&&value.startsWith('平台原生返回v1：'))return '返回上一页面';
+      if(key==='aiQuery'&&typeof value==='string'&&value.startsWith('平台软键盘收起v1：','平台原生返回v1：'))return '收起软键盘';
       if(key==='aiQuery'&&typeof value==='string'&&value.startsWith('平台打印取消恢复v1：')){
         try{return JSON.parse(value.slice('平台打印取消恢复v1：'.length)).operation==='submit'?'确认打印并绑定本次任务':'取消本次打印并等待结束';}catch(_){return '打印恢复参数无效';}
       }
@@ -2135,6 +2227,8 @@ RUNNER_PROGRESS_OBSERVER = r'''
       const printRecords = {};
       this.setupAgent = async (...setupArgs) => {
         const result = await setup.apply(this, setupArgs);
+        installKeyboardDismiss(result.agent);
+        installNativeBack(result.agent);
         installDynamicObject(result.agent, () => this.currentTaskIndex);
         installPrintRecovery(result.agent, () => this.currentTaskIndex, {emit: record=>{
           printRecords[record.task_index]=record;
@@ -2195,12 +2289,14 @@ class RunnerStepProgress:
         return True
 
 
-def progress_observer_env(job_dir, device_id, dynamic_required=False):
+def progress_observer_env(job_dir, device_id, dynamic_required=False, target_package=""):
     env = midscene_env(device_id)
+    env["MIDSCENE_PLATFORM"] = RUNNER_PLATFORM
+    env["MIDSCENE_NATIVE_TARGET_PACKAGE"] = target_package
     env["MIDSCENE_DYNAMIC_OBJECT_REQUIRED"] = "1" if dynamic_required else "0"
     try:
         path = (job_dir / "runner-progress-observer.cjs").resolve()
-        path.write_text(RUNNER_PRINT_RECOVERY_ADAPTER + RUNNER_DYNAMIC_OBJECT_ADAPTER + RUNNER_PROGRESS_OBSERVER, encoding="utf-8")
+        path.write_text(RUNNER_KEYBOARD_DISMISS_ADAPTER + RUNNER_PRINT_RECOVERY_ADAPTER + RUNNER_DYNAMIC_OBJECT_ADAPTER + RUNNER_PROGRESS_OBSERVER, encoding="utf-8")
         # NODE_OPTIONS is scoped to this CLI subprocess, not the machine.
         option = '--require ' + json.dumps(str(path), ensure_ascii=False)
         env["NODE_OPTIONS"] = (env.get("NODE_OPTIONS", "") + " " + option).strip()
@@ -2262,10 +2358,27 @@ def validate_print_flow(data):
     return found
 
 
-def validate_dynamic_yaml(text):
+def validate_dynamic_yaml(text, target_package=""):
     """Reject unsupported runtime references before any app action."""
     import yaml
-    print_required=validate_print_flow(yaml.safe_load(text))
+    if any(prefix in text for prefix in ('平台原生返回v1：','平台软键盘收起v1：')) and not re.fullmatch(r'[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)+', target_package):
+        raise ValueError('原生动作缺少明确目标应用绑定')
+    data = yaml.safe_load(text)
+    keyboard_required = False
+    for task in data.get('tasks', []):
+        for step in task.get('flow', []):
+            prompt = step.get('aiQuery', '')
+            if isinstance(prompt, str) and prompt.startswith('平台原生返回v1：'):
+                if step != {'aiQuery':'平台原生返回v1：navigateBack'} or not RUNNER_CAPABILITIES.get('ui_native_back_v1'):
+                    raise ValueError('原生返回保留动作不可用')
+                keyboard_required = True
+            if isinstance(prompt, str) and prompt.startswith('平台软键盘收起v1：'):
+                if step != {'aiQuery': '平台软键盘收起v1：dismissKeyboard'}:
+                    raise ValueError('收起软键盘保留动作无效')
+                if RUNNER_PLATFORM != 'android' or RUNNER_CAPABILITIES.get('ui_keyboard_dismiss_v1') is not True:
+                    raise ValueError('原生收起软键盘能力不可用')
+                keyboard_required = True
+    print_required=validate_print_flow(data) or keyboard_required
     prefix = '平台运行时对象选择v1：'
     if prefix not in text and '{{本次对象}}' not in text and '{{保留对象}}' not in text:
         return print_required
@@ -2284,7 +2397,7 @@ def validate_dynamic_yaml(text):
     return True
 
 
-def execute_midscene(job_id, job_dir, yaml_path, task_names, device_id):
+def execute_midscene(job_id, job_dir, yaml_path, task_names, device_id, target_package=""):
     _APP_STOP_PROOF.clear()
     started = time.time()
     stdout_lines = []
@@ -2335,7 +2448,7 @@ def execute_midscene(job_id, job_dir, yaml_path, task_names, device_id):
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             start_new_session=RUNNER_PLATFORM == "ios" or job_id in _UI_DELIVERIES,
-            env=progress_observer_env(job_dir, device_id, validate_dynamic_yaml(yaml_path.read_text(encoding="utf-8")))
+            env=progress_observer_env(job_dir, device_id, validate_dynamic_yaml(yaml_path.read_text(encoding="utf-8"), target_package), target_package)
         )
         if job_id in _UI_DELIVERIES:
             proc._ui_process_group = True
@@ -2517,6 +2630,7 @@ def run_standard_job(job):
         yaml_content = original_yaml if RUNNER_PLATFORM == "ios" or job.get("ui_batch_id") else inject_external_page_escape(midscene_cli_yaml_text(original_yaml))
         yaml_path.write_text(yaml_content, encoding="utf-8")
         task_names = [job.get("target_task_name")] if job.get("target_task_name") else parse_yaml_task_names(yaml_content)
+        validate_dynamic_yaml(yaml_content, job.get("target_package", "") if job.get("ui_execution_contract") == "ui-v1" else "")
         app_package = parse_app_package(yaml_content)
 
         target_task = job.get("target_task_name") or ""
@@ -2542,7 +2656,7 @@ def run_standard_job(job):
             result = execute_midscene(job_id, attempt_dir, yaml_path, task_names, device_id)
         else:
             result = with_app_cleanup(
-                lambda: execute_midscene(job_id, attempt_dir, yaml_path, task_names, device_id),
+                lambda: execute_midscene(job_id, attempt_dir, yaml_path, task_names, device_id, job.get("target_package", "") if job.get("ui_execution_contract") == "ui-v1" else ""),
                 lambda: close_android_test_app(job_id, device_id, app_package),
                 attempt_dir / "teardown.json")
         write_text(attempt_dir / "stdout.log", result["stdout"])
@@ -2660,7 +2774,32 @@ def run_standard_job(job):
     return payload
 
 
+def probe_keyboard_dismiss_sdk():
+    """Inspect exports from the actual CLI installation without connecting a device."""
+    if RUNNER_PLATFORM != 'android':
+        return False
+    try:
+        cli = Path(resolve_command(MIDSCENE_BIN, 'Midscene')).resolve()
+        script = """const {createRequire}=require('node:module');
+const r=createRequire(process.argv[1]);
+const android=r('@midscene/android');
+const p=android.AndroidDevice?.prototype;
+if(typeof p?.hideKeyboard!=='function'||typeof p?.getAdb!=='function'||typeof p?.back!=='function')process.exit(1);
+const adb=r(r.resolve('appium-adb',{paths:[r.resolve('@midscene/android')]}));
+if(typeof adb.ADB!=='function')process.exit(1);
+const instance=new adb.ADB();
+if(typeof instance.isSoftKeyboardPresent!=='function'||typeof instance.shell!=='function')process.exit(1);
+"""
+        result = subprocess.run(['node', '-e', script, str(cli)], capture_output=True, timeout=20)
+        return result.returncode == 0
+    except (OSError, subprocess.SubprocessError, RuntimeError):
+        return False
+
+
 def print_startup():
+    RUNNER_CAPABILITIES['ui_keyboard_dismiss_v1'] = probe_keyboard_dismiss_sdk()
+    RUNNER_CAPABILITIES['ui_native_back_v1'] = RUNNER_CAPABILITIES['ui_keyboard_dismiss_v1']
+    print(f"Native keyboard dismissal SDK: {RUNNER_CAPABILITIES['ui_keyboard_dismiss_v1']}")
     print("MidScene macOS Runner started")
     print(f"Server: {SERVER}")
     print(f"Runner: {RUNNER_ID}")

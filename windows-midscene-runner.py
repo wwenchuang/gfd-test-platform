@@ -1823,6 +1823,10 @@ def stop_ui_process(proc):
 
 
 def execute_midscene(job_id, job_dir, yaml_path, task_names, device_id):
+    if "平台原生返回v1：" in yaml_path.read_text(encoding="utf-8"):
+        raise RuntimeError("此Windows执行器不支持原生返回")
+    if "平台软键盘收起v1：" in yaml_path.read_text(encoding="utf-8"):
+        raise RuntimeError("此Windows执行器不支持原生收起软键盘")
     if "平台打印取消恢复v1：" in yaml_path.read_text(encoding="utf-8"):
         raise RuntimeError("此Windows执行器不支持受控打印取消，请使用已更新的Mac安卓/iOS执行器")
     started = time.time()

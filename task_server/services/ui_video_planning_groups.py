@@ -59,6 +59,8 @@ def validate_reply(group,reply):
     if 'title' in reply and (not isinstance(reply['title'],str) or len(reply['title'])>80):fail('reply_title')
     owned=set(group['planning_scope']['owned_candidate_indexes']);seen=set();last=-1
     attached={f['frame_id']:f['timestamp_ms'] for f in group['image_frames']}
+    outcome_feedback=[]
+    known_ids={f['frame_id'] for f in group['frames']}
     for event in reply['events']:
         if not isinstance(event,dict) or set(event)-EVENT_KEYS or not {'candidate_index','action','target','value','observation','uncertainties'}<=set(event):fail('event_shape')
         index=event['candidate_index']
@@ -76,7 +78,18 @@ def validate_reply(group,reply):
             if (not isinstance(outcome,dict) or not isinstance(outcome.get('observation'),str) or set(outcome)!={'observation','frame_refs'} or not isinstance(refs,list) or
                     not refs or len(refs)>8 or any(type(r) is not str or r not in attached for r in refs) or
                     len(set(refs))!=len(refs) or [attached[r] for r in refs]!=sorted(attached[r] for r in refs)):
-                fail('reply_outcome_images')
+                # Only platform-known frame IDs enter correction feedback; never
+                # echo arbitrary model prose or invented references.
+                outcome_feedback.append({'candidate_index':index,
+                    'rejected_frame_refs':list(dict.fromkeys(r for r in refs if type(r) is str and r in known_ids and r not in attached)) if isinstance(refs,list) else [],
+                    'ordinary_outcome_frame_ids':[r for r in group['candidate_events'][index]['ordinary_outcome_frame_ids'] if r in attached]})
+    if outcome_feedback:
+        error=PlanningReplyError('video_planning_reply_outcome_images')
+        error.planning_outcome_feedback=outcome_feedback
+        error.model_feedback=('planning_outcome_feedback逐项列出未通过附图合同的候选、已知但未附图的被拒引用和本组实际附图中的普通结果候选。'
+            '仅核对当前image_frames中真实附图，ordinary_outcome_frame_ids只是可核对选项，不代表结果成功；禁止照抄原候选outcome或替换帧号后沿用未核对的描述。'
+            '仍须遵守原始时间边界和打印恢复合同；没有附图支持的稳定结果（普通结果列表为空时也一样）则省略outcome并提问，不得借用元数据或后续动作画面。')
+        raise error
     omitted=set()
     declarations=reply.get('omitted_retries',[])
     if not isinstance(declarations,list) or len(declarations)>20:fail('reply_omission')

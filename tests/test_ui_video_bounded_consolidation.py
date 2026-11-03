@@ -102,8 +102,8 @@ def test_second_group_invalid_wire_admission_means_zero_calls(split_consolidatio
     # The last candidate is always group1; a huge unverified context field is
     # repeated in both requests, and shared IPC admission rejects it atomically.
     calls=[]
-    split_consolidation[2]['events'][-1]['observation']='x'*(17*1024*1024)
-    from task_server.services.ui_video_model_jobs import ModelJobError
+    from task_server.services.ui_video_model_jobs import MAX_REQUEST,ModelJobError
+    split_consolidation[2]['events'][-1]['observation']='x'*(MAX_REQUEST+1)
     with pytest.raises(ModelJobError,match='video_job_message_limit'):
         invoke(split_consolidation,lambda *a,**k:calls.append(1))
     assert calls==[]
@@ -239,3 +239,26 @@ def test_cross_group_dynamic_selection_remains_under_real_global_gate(split_cons
         result=invoke(split_consolidation,runner)
         assert result['events'][0]['selection']=='仅本次创建的测试对象'
         assert result['events'][30]['target']=='{{本次对象}}详情入口'
+
+
+def test_outcome_correction_is_scoped_and_never_changes_candidate_evidence(split_consolidation):
+    calls=[];before=copy.deepcopy(split_consolidation[2])
+    def runner(skill,payload,**kwargs):
+        calls.append(copy.deepcopy(payload));result=answer(payload)
+        if len(calls)==2:
+            # A known metadata frame, absent from this group's attachments.
+            attached={f['frame_id'] for f in payload['image_frames']}
+            ref=next(f['frame_id'] for f in payload['frames'] if f['frame_id'] not in attached)
+            result['events'][0]['outcome']={'observation':'unverified','frame_refs':[ref]}
+        if len(calls)==3:assert not payload.get('planning_outcome_feedback')
+        if len(calls)==4:
+            feedback=payload['planning_outcome_feedback']
+            assert len(feedback)==1
+            assert feedback[0]['candidate_index']==payload['planning_scope']['owned_candidate_indexes'][0]
+            assert feedback[0]['rejected_frame_refs']==['frame-000']
+            assert '省略outcome' in payload['recovery_feedback']
+        return result
+    result=invoke(split_consolidation,runner)
+    assert len(calls)==4 and len(result['events'])==38
+    assert all(p['candidate_events']==calls[0]['candidate_events'] for p in calls)
+    assert split_consolidation[2]==before

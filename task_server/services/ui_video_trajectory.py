@@ -15,7 +15,7 @@ from .ui_video_execution_contract import validate_execution_contract, project_au
 ROOT_FIELDS={'states','events','checks','uncertainties','multiple_scenarios'}
 EVENT_FIELDS={'action','target','value','frame_refs','observation','uncertainties','trigger_frame',
               'trigger_kind','page_before','page_after','continuation_of','edit_boundary','outcome'}
-INTERACTIONS={'aiTap','aiInput','aiScroll'}
+INTERACTIONS={'aiTap','aiInput','aiScroll','dismissKeyboard','navigateBack'}
 
 
 def _fail(reason,model_feedback=None):
@@ -29,8 +29,10 @@ def action_contract():
     return {'version':'action-trigger-v1','allowed_trigger_kinds':{
         'aiTap':['touch','pressed_control','navigation','edit','uncertain'],
         'aiScroll':['touch','pressed_control','navigation','edit','uncertain'],
+        'navigateBack':['navigation','uncertain'],
+        'dismissKeyboard':['touch','pressed_control','navigation','uncertain'],
         'aiInput':['edit'],'aiAssert':['automatic','uncertain'],
-        'aiWaitFor':['automatic','uncertain']},'input_value':''}
+        'aiWaitFor':['automatic','uncertain']},'input_value':'','keyboard_target':'当前页面的软键盘','keyboard_value':'','back_target':'上一页面','back_value':''}
 
 
 def _continuation_feedback(index,raw,events,history,times,refs,after,checked):
@@ -204,6 +206,12 @@ def bind_packet_events(raw_events,packet,frames,previous,tracks):
         if action in INTERACTIONS and kind=='automatic':_fail('automatic_interaction',_action_conflicts(raw_events,packet,times))
         if action not in INTERACTIONS and kind in {'touch','pressed_control','navigation','edit'}:_fail('interaction_as_state',_action_conflicts(raw_events,packet,times))
         if action=='aiInput' and (kind!='edit' or raw['value']!=''):_fail('input_contract',_action_conflicts(raw_events,packet,times))
+        if action=='dismissKeyboard' and (raw['target']!='当前页面的软键盘' or raw['value']!='' or
+                kind not in {'touch','pressed_control','navigation','uncertain'} or raw['continuation_of']):
+            _fail('keyboard_contract')
+        if action=='navigateBack' and (raw['target']!='上一页面' or raw['value']!='' or
+                kind not in {'navigation','uncertain'} or raw['continuation_of']):
+            _fail('back_navigation_contract')
         if raw['edit_boundary'] not in {'none','submission','field_change','navigation'}:_fail('edit_boundary')
         outcome=raw['outcome']
         if not isinstance(outcome,dict) or set(outcome)!={'frame_refs','observation'}:_fail('outcome')
@@ -346,6 +354,40 @@ def _validate_positive_trigger_locks(locks,history,packet):
             if identity in missing:
                 feedback.append({'lock_index':index,'missing_count':missing.pop(identity)})
         _fail('audit_positive_trigger_changed',feedback)
+
+
+def _propose_trigger_refinement(locks,snapshot,history,packet):
+    """Return pending lock copies; never mutate accepted locks or history."""
+    owned=set(packet['owned_frame_ids'])
+    old=[f for t in snapshot for f in t['fragments']]
+    new=[f for t in history for f in t['fragments']]
+    if len(snapshot)!=len(history) or any(len(a['fragments'])!=len(b['fragments']) for a,b in zip(snapshot,history)):
+        _fail('audit_positive_trigger_changed')
+    modalities={'touch','pressed_control','navigation'}
+    changes={}
+    for before,after in zip(old,new):
+        if before['trigger_frame'] not in owned and before!=after:
+            _fail('audit_positive_trigger_changed')
+        if _trigger_lock_identity(before)==_trigger_lock_identity(after):continue
+        if (before['trigger_frame'] not in owned or after['trigger_frame'] not in owned or
+            before['trigger_kind'] not in modalities or after['trigger_kind'] not in modalities or
+            any(before[k]!=after[k] for k in _TRIGGER_LOCK_FIELDS if k!='trigger_kind')):
+            _fail('audit_positive_trigger_changed')
+        changes[_trigger_lock_identity(before)]=after['trigger_kind']
+    pending=copy.deepcopy(locks)
+    for lock in pending:
+        identity=_trigger_lock_identity(lock)
+        if identity in changes:lock['trigger_kind']=changes[identity]
+    _validate_positive_trigger_locks(pending,history,packet)
+    return pending
+
+
+def _refinement_audit_complete(claims,audit):
+    expected=Counter(c['track']['event_id'] for c in claims)
+    checks=audit['checks']
+    return (Counter(c['event_id'] for c in checks)==expected and
+            all(c['trigger_verdict']=='supported' and c['outcome_verdict']=='supported' for c in checks) and
+            not audit['issues'] and not audit['revisit'] and not audit['multiple_scenarios'])
 
 
 def _envelope(raw,version=None):
@@ -799,7 +841,7 @@ def observe_trajectory(document,root,cancelled,progress=None,record=None,revisit
             expand(packet,[dense_plan['request']],origin='platform_input_tail')
         if progress:progress('observing',index,len(packets),events)
         causal_attempted=False;causal_veto=set();causal_repair=False
-        feedback='';audit_feedback=None;positive_trigger_locks=[];candidate_signatures=Counter()
+        feedback='';audit_feedback=None;positive_trigger_locks=[];lock_snapshot=None;candidate_signatures=Counter()
         # Audit before proceeding: a requested revisit can re-observe this packet
         # without invalidating identities in any later packet.
         while True:
@@ -813,6 +855,7 @@ def observe_trajectory(document,root,cancelled,progress=None,record=None,revisit
                         'signatures':[{'action':a,'trigger_frame':f,'trigger_kind':k,'multiplicity':n}
                                       for (a,f,k),n in candidate_signatures.items()]}}
                        if candidate_signatures else {}))
+            pending_refinement=None
             try:
                 extra=validate_states(raw['states'],packet['frames'])
                 proposed,history=bind_packet_events(raw['events'],packet,frames,events,tracks)
@@ -821,15 +864,19 @@ def observe_trajectory(document,root,cancelled,progress=None,record=None,revisit
                 if any(causal.identity(f) in causal_veto for f in current_fragments):
                     # Same exact refuted claim cannot become supported by repetition.
                     _fail('causal_refuted_claim_reappeared')
-                if execution_contract is not None:_validate_positive_trigger_locks(positive_trigger_locks,history,packet)
+                if execution_contract is not None:
+                    try:_validate_positive_trigger_locks(positive_trigger_locks,history,packet)
+                    except ValueError:
+                        if lock_snapshot is None:raise
+                        pending_refinement=_propose_trigger_refinement(positive_trigger_locks,lock_snapshot,history,packet)
                 if business_timeline is not None:
                     from .ui_video_temporal_ownership import ordinary_export_conflicts, unsafe_current_correction_conflicts
                     signatures=Counter((fragment['action'],fragment['trigger_frame'],fragment['trigger_kind'])
                         for track in history for fragment in track['fragments']
                         if fragment['trigger_frame'] in packet['owned_frame_ids'] and
                            fragment['action'] in INTERACTIONS and not fragment['continuation_of'])
-                    if candidate_signatures-signatures:_fail('ordinary_candidate_preservation')
-                    if candidate_signatures:candidate_signatures |= signatures
+                    if pending_refinement is None and candidate_signatures-signatures:_fail('ordinary_candidate_preservation')
+                    if candidate_signatures and pending_refinement is None:candidate_signatures |= signatures
                     conflicts=ordinary_export_conflicts(proposed,history,frames,duration,packets)
                     required_conflicts=[c for c in conflicts if c['required']]
                     if required_conflicts:
@@ -959,7 +1006,9 @@ def observe_trajectory(document,root,cancelled,progress=None,record=None,revisit
                     validated_checks=[copy.deepcopy(check) for part in audit_shards for check in part['raw']['checks']]
                     audited_ids={check['event_id'] for check in validated_checks}
                     audited_claims=[copy.deepcopy(claim) for claim in audit_batch if claim['track']['event_id'] in audited_ids]
+                    if pending_refinement is not None:_fail('audit_positive_trigger_refinement_unconfirmed')
                     positive_trigger_locks=_merge_positive_trigger_locks(positive_trigger_locks,audited_claims,validated_checks)
+                    lock_snapshot=copy.deepcopy(history)
                     if business_timeline is not None:
                         refuted_ids={c['event_id'] for c in validated_checks if c['trigger_verdict']=='contradicted'}
                         # Only exact validated fragment refutations retire their own
@@ -1080,6 +1129,8 @@ def observe_trajectory(document,root,cancelled,progress=None,record=None,revisit
                         if record:record(packet['packet_id']+'-causal-recheck',redact(note))
                         if must_repair:
                             causal_veto.update(veto);corrections+=1;causal_repair=True
+                            if pending_refinement is not None:_fail('audit_positive_trigger_refinement_unconfirmed')
+                            lock_snapshot=copy.deepcopy(history)
                             positive_trigger_locks=_merge_positive_trigger_locks(
                                 positive_trigger_locks,audit_batch,audited['checks'])
                             candidate_signatures-=Counter((c['track']['action'],c['track']['trigger_frame'],c['track']['trigger_kind'])
@@ -1096,6 +1147,12 @@ def observe_trajectory(document,root,cancelled,progress=None,record=None,revisit
                             questions.extend(q for event in raw['events'] for q in event['uncertainties'])
                             continue
                     if record:record(packet['packet_id']+'-causal-recheck',redact(note))
+            if pending_refinement is not None:
+                if (not _refinement_audit_complete(audit_batch,audited) or raw['uncertainties'] or
+                        any(e['uncertainties'] for e in raw['events'])):
+                    _fail('audit_positive_trigger_refinement_unconfirmed')
+                positive_trigger_locks=pending_refinement
+                lock_snapshot=copy.deepcopy(history)
             break
         events,tracks=proposed,history;states.extend(extra)
         packet_output={'packet':packet,'raw':redact(raw),'audit':redact(audited)}

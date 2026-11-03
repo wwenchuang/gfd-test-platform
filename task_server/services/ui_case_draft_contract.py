@@ -13,8 +13,10 @@ import yaml
 from .yaml_static_validator import validate_midscene_action_parameters
 from .ui_dynamic_object import PREFIX, validate_references
 from . import ui_print_recovery as print_recovery
+from . import ui_keyboard_dismiss as keyboard
+from . import ui_native_back as native_back
 
-ACTIONS = frozenset({'launch', 'aiTap', 'aiWaitFor', 'aiAssert', 'aiInput', 'aiScroll', 'selectRecord', 'submitPrint', 'cancelPrint'})
+ACTIONS = frozenset({'launch', 'aiTap', 'aiWaitFor', 'aiAssert', 'aiInput', 'aiScroll', 'selectRecord', 'submitPrint', 'cancelPrint', 'dismissKeyboard', 'navigateBack'})
 STEP_FIELDS = frozenset({'step_id', 'action', 'target', 'value', 'expected', 'review_state', 'source_ref', 'stage_end'})
 AMBIGUOUS_TARGETS = frozenset({'按钮', '这里', '那里', '它', '点击这里', '输入框', '列表', '页面', '正常', '功能正常', '可见', '显示', '成功', '通过', '显示正常', '操作成功'})
 SHORT_TIMEOUT_MS = 12000
@@ -91,6 +93,10 @@ def normalize_steps(payload, app_id):
         if not isinstance(source_ref, str) or (source_ref not in {'text', 'manual_yaml'} and not re.fullmatch(r'(?:recording:[0-9a-f]{64}:[0-9a-f]{32}|video:uvs_[0-9a-f]{32}:[1-9][0-9]*:[0-9]+)', source_ref)):
             raise ValueError('source_ref 必须为文字或规范录制来源')
         value = copy.deepcopy(raw.get('value', ''))
+        if action == 'navigateBack':
+            native_back.encode(action, target, value)
+        if action == 'dismissKeyboard':
+            keyboard.encode(action, target, value)
         if action in ('submitPrint','cancelPrint'):
             value=print_recovery.policy(value)
             if action=='submitPrint':
@@ -194,7 +200,9 @@ def build_draft_yaml(draft, app_id, *, execution_contract=None):
                 flow.extend([{'aiWaitFor':step['expected'],'timeout':SHORT_TIMEOUT_MS},{'aiAssert':step['expected']}])
                 step_ids.extend([step['step_id'],step['step_id']]);roles.extend(['expected_wait','expected_assert'])
             continue
-        item = {'aiQuery': PREFIX + target} if action == 'selectRecord' else {action: target}
+        item = ({'aiQuery': native_back.encode(action,target,step['value'])} if action == 'navigateBack'
+                else {'aiQuery': keyboard.encode(action,target,step['value'])} if action == 'dismissKeyboard'
+                else {'aiQuery': PREFIX + target} if action == 'selectRecord' else {action: target})
         if action == 'aiInput':
             item['value'] = step['value']
             if execution_contract is not None and step['source_ref'].startswith('video:'):

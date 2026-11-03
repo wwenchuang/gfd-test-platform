@@ -1,0 +1,9 @@
+# Attached-image planning repair
+
+Goal: fix c01v2 finalplanning rejection without weakening evidence gates or rerunning original blindly. Base9965841a normalnativeoriginal transport is qualified separately. c01v2 failed video_planning_reply_outcome_images after10packets: group1 reply61/65 copies candidate16 frame128 and later21 frame156, not attached; actual groupordinary options130/131 and159. Group0 replies59/63 are valid.
+
+Change only the conflicting consolidation prompt and existing second-pass guidance. All result refs must be actual attached images. Preserve full global candidate text/refs/outcomes/questions and every current gate. Collect trusted candidateindex/rejectedknownIDs/attachedordinaryoptions; deliver only to owning request. Never auto-replace refs, assert image success from list membership, echo arbitrary modelinstructions, enlarge budgets or add retries. Empty options mean question/omit, not metadata fallback.
+
+Verification: meaningful RED/GREEN for exact16/21 cases, inventedIDs, emptyoptions, group-isolation and unchanged globalpayload/callcount; update stale oversizewire test to actualMAX_REQUEST+1 preserving zero dispatch. Scoped157 regression plus mandatorycompile/backend63/diff. Independent review, then at mostone diagnostic realQwenMax planningcall using reconstructedactualsource/attachedJPGs and closedproof/receipt. This reconstructedcontext is not the exact archived historical request and cannot be advertised as normal generation. Original c01v2 remains failed and immutable.
+
+Separate unresolvedsemantic defect: raw39 mislabels visibleblank-area circle279 then keyboardgone280 asautomatic. No change here claims to fix it. No commit/deploy/newwholeanalysis until bothchanges have necessary qualification; normal import/SDK/designateddevice still required for acceptance.

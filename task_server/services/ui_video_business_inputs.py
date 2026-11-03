@@ -34,7 +34,7 @@ def recover_business_inputs(result,document,root,cancelled,*,skill_runner=None):
         event['value']=''
         audit.append({'candidate_index':index,'status':'manual','frame_refs':[]})
         if not _business_field(event) or len(checks)>=8:continue
-        boundary=next((e['start_ms'] for e in events[index+1:] if e['action'] in {'aiTap','aiScroll','aiInput'}),document['media']['duration_ms']+1)
+        boundary=next((e['start_ms'] for e in events[index+1:] if e['action'] in {'aiTap','aiScroll','aiInput','dismissKeyboard','navigateBack'}),document['media']['duration_ms']+1)
         # Include the final input anchor plus subsequent pre-interaction pixels.
         # Never inspect another field's later input to fill this value.
         following=[f for f in frames if event['end_ms']<=f['timestamp_ms']<boundary]

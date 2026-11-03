@@ -17,7 +17,7 @@ def is_terminal_app_exit(events, index, duration):
     if not re.search(r'退出应用|应用退出|应用完全退出|触发应用退出', observation):
         return False
     following = events[index + 1:]
-    if any(e.get('action') in {'aiTap', 'aiInput', 'aiScroll'} for e in following):
+    if any(e.get('action') in {'aiTap', 'aiInput', 'aiScroll', 'dismissKeyboard','navigateBack'} for e in following):
         return False
     # Require an explicit desktop outcome in the action's own evidence. Later
     # assertions alone cannot establish that this particular action caused it.

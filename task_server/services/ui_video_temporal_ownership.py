@@ -1,5 +1,5 @@
 """Pure ordinary-result domains and diagnostics for validated canonical evidence."""
-INTERACTIONS = {'aiTap', 'aiInput', 'aiScroll'}
+INTERACTIONS = {'aiTap', 'aiInput', 'aiScroll', 'dismissKeyboard','navigateBack'}
 
 
 def ordinary_outcome_domain(events, index, duration):

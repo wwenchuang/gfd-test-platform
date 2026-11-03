@@ -2,7 +2,7 @@
 import copy
 import json
 
-INTERACTIONS={'aiTap','aiInput','aiScroll'}
+INTERACTIONS={'aiTap','aiInput','aiScroll','dismissKeyboard','navigateBack'}
 
 
 def identity(track):
