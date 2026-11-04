@@ -101,6 +101,18 @@ def test_nearby_frame_does_not_waive_qualified_target_difference():
     assert targets.conflict(events,[{'frame_id':'f1','target':'查看生成记录'}],frames)
 
 
+@pytest.mark.parametrize('left,right',[
+    ('第二条记录区域的删除图标','删除'),
+    ('删除','第二条记录区域的删除图标'),
+    ('模型管理区域的打印记录图标','打印记录'),
+    ('打印记录','模型管理区域的打印记录图标'),
+])
+def test_same_frame_bare_icon_without_unique_region_evidence_still_conflicts(left,right):
+    frames=[{'frame_id':'f1','timestamp_ms':100}]
+    events=[{'action':'aiTap','target':left,'frame_refs':['f1']}]
+    assert targets.conflict(events,[{'frame_id':'f1','target':right}],frames)
+
+
 def test_observe_window_keeps_qualified_target_without_spurious_retry(monkeypatch,tmp_path):
     from task_server.services import ui_video_windows as windows,ui_video_touch_detail as detail
     frames=[{'frame_id':'frame-001','timestamp_ms':100},{'frame_id':'frame-002','timestamp_ms':200}]

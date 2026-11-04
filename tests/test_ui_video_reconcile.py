@@ -418,6 +418,32 @@ def test_gap_without_duplicate_candidates_uses_observation_contract(monkeypatch,
     assert result['events'][0]['action']=='aiAssert'
 
 
+@pytest.mark.parametrize('action,invalid_target,expected_target',[
+    ('navigateBack','返回上一页','上一页面'),
+    ('dismissKeyboard','键盘','当前页面的软键盘'),
+])
+def test_repair_retry_explains_exact_native_action_contract(monkeypatch,tmp_path,action,invalid_target,expected_target):
+    from task_server.services import ai_skill_service as ai
+    fs=[{'frame_id':f'f{i}','timestamp_ms':i*100} for i in range(1,4)]
+    (tmp_path/'frames').mkdir()
+    for f in fs:(tmp_path/'frames'/(f['frame_id']+'.jpg')).write_bytes(b'image')
+    old={**event(1),'action':action,'target':expected_target,'value':'','frame_refs':['f1','f2','f3'],'end_ms':300}
+    calls=[]
+    def model(skill,payload,**kw):
+        calls.append(copy.deepcopy(payload))
+        target=invalid_target if len(calls)==1 else expected_target
+        if len(calls)==2:
+            assert action in payload['validation_feedback']
+            assert expected_target in payload['validation_feedback']
+            assert 'value' in payload['validation_feedback']
+        return {'events':[{'action':action,'target':target,'value':'','frame_refs':old['frame_refs'],
+                'observation':'原帧显示用户操作和结果','uncertainties':[]}],
+                'coverage_resolutions':[],'uncertainties':[],'multiple_scenarios':False}
+    monkeypatch.setattr(ai,'run_ai_skill',model)
+    result=vr._repair_window([old],{'events':[],'uncertainties':[],'multiple_scenarios':False},fs,1000,tmp_path,lambda:False,[],set(old['frame_refs']))
+    assert len(calls)==2 and result['events'][0]['target']==expected_target
+
+
 def test_observation_only_retry_does_not_reintroduce_merge_instructions(monkeypatch,tmp_path):
     from task_server.services import ai_skill_service as ai
     fs=[{'frame_id':f'f{i}','timestamp_ms':i*100} for i in range(1,4)]

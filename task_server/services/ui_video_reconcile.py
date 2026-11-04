@@ -504,7 +504,7 @@ def _repair_window(original,checked,frames,duration,root,cancelled,secrets,missi
             repaired=validate_analysis(_bind_whole_evidence(observation,window),window,duration,secrets)
         except ValueError as error:
             if attempt+1>=attempt_limit or str(error) not in {'video_action_invalid','video_model_invalid','video_reference_invalid'}:raise
-            payload['validation_feedback']+=' 上次结构校验未通过。events每项只含规定字段，frame_refs须1至8个本次原帧且按时间排列；滚动只用direction=up/down/left/right及scrollType=singleAction；不输出时间字段或未提供帧。'
+            payload['validation_feedback']+=' 上次结构校验未通过。events每项只含规定字段，frame_refs须1至8个本次原帧且按时间排列；滚动只用direction=up/down/left/right及scrollType=singleAction；不输出时间字段或未提供帧。navigateBack的target必须精确为上一页面、value必须为空字符串；dismissKeyboard的target必须精确为当前页面的软键盘、value必须为空字符串。仅在原帧证实相应动作时使用，不能为满足格式编造操作。'
             continue
         try:
             resolutions=validate_resolutions(claims,{'first_pass':original,'independent_review':before},repaired['events'],window)

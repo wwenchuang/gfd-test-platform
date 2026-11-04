@@ -2,7 +2,7 @@
 {{payload}}
 
 先逐张比较frames中的原画面，还原实际交互。context_frame_ids仅辅助看前后页面，不得作为事件/映射的证据。不补画面未出现的操作；静止、加载、转场属于状态。每次真实点击、滚动、返回单独保留；触点出现与消失及页面变化应结合判断，不重复计算同一次按压及其结果。
-输出本次frames内证据完整的events，每项仅含action、target、value、frame_refs、observation、uncertainties。action仅aiTap/aiScroll/aiInput/aiAssert/navigateBack/dismissKeyboard；原生返回仅在完整画面确认该手势及前后页面时使用；value通常为空，滚动为{"direction":"down","scrollType":"singleAction"}（按浏览方向：内容上移、露出下方内容=down；内容下移、露出上方内容=up，不按手指移动方向命名）；frame_refs每项1至8张本次原帧，按时间排序；不输出时间。输入值留空。不要补写片段间隔中的业务。
+输出本次frames内证据完整的events，每项仅含action、target、value、frame_refs、observation、uncertainties。action仅aiTap/aiScroll/aiInput/aiAssert/navigateBack/dismissKeyboard；原生返回仅在完整画面确认该手势及前后页面时使用；navigateBack的target必须精确为“上一页面”，dismissKeyboard的target必须精确为“当前页面的软键盘”，两者的value都必须为空字符串；滚动value为{"direction":"down","scrollType":"singleAction"}（按浏览方向：内容上移、露出下方内容=down；内容下移、露出上方内容=up，不按手指移动方向命名）；其他动作value为空字符串；frame_refs每项1至8张本次原帧，按时间排序；不输出时间。输入值留空。不要补写片段间隔中的业务。
 
 coverage_checks是有编号的旧识别假设，不一定正确。与真实操作一一对应时无需声明。只有同一来源的多个锚点实际上对应一次交互，才输出coverage_resolutions；它不是步骤、不下发手机。
 严格遵守coverage_resolution_contract。特别注意：

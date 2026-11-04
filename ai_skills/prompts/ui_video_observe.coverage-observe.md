@@ -7,7 +7,7 @@
 - 每次真实点击、输入和滚动独立保留。只有输入框文字实际改变才输出aiInput，聚焦、移动光标、切换键盘或收起键盘不能伪装成输入步骤。同一字段连续删除旧文字并输入新文字属于一次完整替换，切换输入法、拼音修正、候选词选择及中间暂时清空不拆成额外输入；frame_refs保留删改过程和最终文字的原帧。不得跨提交、换字段或其他独立业务操作合并输入，也不能遗漏旧证据。输入值留空交给后续原图值复核，不能编造测试数据。
 - 旧点击如果实际只是前序点击后的自动转场或加载，输出aiAssert，完整引用该旧锚点的原帧，并明确“未见新点击，实际为自动转场/加载”及可见依据。不要为了满足旧锚点造一个点击。真实导航不能改成静止观察。
 - 只引用frames的原帧；context_frame_ids帮助辨认前后页面，不可作为事件证据。不得重放相邻已保留操作的触点。每个事件frame_refs按时间排序，1至8张。
-- 输出events每项仅含action、target、value、frame_refs、observation、uncertainties；action仅aiTap/aiInput/aiScroll/aiAssert/navigateBack/dismissKeyboard；仅在原帧确认真实返回或键盘收起时使用后两者。滚动value使用direction与scrollType=singleAction；按浏览方向命名，内容上移、露出下方内容=down，内容下移、露出上方内容=up，不按手指移动方向命名，其余value通常为空。不输出时间字段。
+- 输出events每项仅含action、target、value、frame_refs、observation、uncertainties；action仅aiTap/aiInput/aiScroll/aiAssert/navigateBack/dismissKeyboard；仅在原帧确认真实返回或键盘收起时使用后两者。navigateBack的target必须精确为“上一页面”，dismissKeyboard的target必须精确为“当前页面的软键盘”，两者value均为空字符串。滚动value使用direction与scrollType=singleAction；按浏览方向命名，内容上移、露出下方内容=down，内容下移、露出上方内容=up，不按手指移动方向命名，其余value为空字符串。不输出时间字段。
 - 不确定时保留疑问，不为凑步骤推测未发生的操作。
 
 连续文字替换只输出一个完整aiInput，不按语言切换、前半段/后半段或帧引用数量拆成多项。从实际开始删改到最终文字可见，选取至多8张关键原帧证明整轮编辑；不需要逐个列出每个按键的采样帧。聚焦点击若独立存在仍保留，输入开始从实际删改算起；提交、换字段或其它真实业务操作仍是轮次边界。

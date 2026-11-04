@@ -14131,3 +14131,9 @@ git diff --check
 - 新增19条只读动态数据关联用例及1条创作会话创建清理用例；逐条三次调试通过，组合回归6c1afafc为20/20通过。会话按本轮唯一标识创建并仅按返回ID删除，核验已删除；依赖推荐接口的feedId，执行器意外终止时后置清理仍可能无法运行。设备类前置校验4F2A。
 - 原定时任务从325扩充至345项，每日08:00仍启用；数据空缺或接口实际不匹配应明确失败，不能伪装通过。完整任务1b1bf46f已触发，完成状态需实时核对；此前325项曾因Worker部署重启中断。
 - 后续新增会话对话用例：独立创建会话、发送建模描述、校验会话及需求版本，再删除并确认本次会话不可查询；单项三次通过，21项组合回归 ebce04d8 为21/21通过，原任务现346项。20项加入后的345项完整执行1b1bf46f为344通过、1异常；新增20项全部通过。原有删除生成记录用例误取最新记录并遭遇数据库连接状态异常，本轮创建任务1567574107792912384和对应记录2111076994已按归属清理并确认消失；该原有用例尚未修复。346项尚无整轮执行证据。
+
+## 2026-11-04 Original touch video follow-up
+
+- Release 5c2bfd8c was deployed and confirmed by live health. Fresh original-video run uvs_d4f26d4701e7444e9f488cbfecd8d11b failed after about 11m40s with video_action_invalid; no draft or device execution. Server traceback pinpoints validate_analysis line 131 in bounded coverage repair: Qwen returned navigateBack with an invalid target or value. Failure evidence is retained under .superpowers/sdd/video-all-platform-20261104/round6-ledger.json and touch-round6-source.json in the video-stage-wire worktree.
+- Coverage prompts and bounded retry feedback now give the exact native-return and keyboard-dismiss target/value contract, while retaining original-pixel and executable-action validation. This change is local pending tests, deployment and a fresh real-video run; it is not evidence of a successful case.
+- A separate 31s source showed potentially equivalent region/icon wording, but a same-frame bare label cannot prove region or record identity. Independent review rejected a proposed permissive matcher; it was withdrawn and strict negative tests retained. No claim that the 31s failure is solved.
