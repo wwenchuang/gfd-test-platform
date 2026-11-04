@@ -86,6 +86,38 @@ def test_trajectory_independent_blockers_survive_planner_omission(monkeypatch,co
     assert all(any(blocker in e['uncertainties'] for e in snapshot['events']) for blocker in blockers)
 
 
+def test_legacy_candidate_uncertainty_survives_planner_omission_and_blocks_trial(monkeypatch,consolidation):
+    from task_server.services import ui_video_analysis as va,ai_skill_service as ai
+    from task_server.services.ui_case_draft_contract import build_draft_yaml
+    document,root,observed=consolidation
+    blocker='触点目标仍需对照原画面核对'
+    observed['events'][0]['uncertainties']=[blocker]
+    def model(skill,payload,**kwargs):
+        return {'title':'填写信息','events':[{'candidate_index':i,'action':'aiInput','target':e['target'],
+                'value':'','observation':'输入框显示','uncertainties':[]} for i,e in enumerate(observed['events'])],
+                'uncertainties':[],'multiple_scenarios':False}
+    monkeypatch.setattr(ai,'run_ai_skill',model)
+    result=va.consolidate_observed_frames(document,root,lambda:False,observed,copy.deepcopy(observed['events']),[])
+    assert blocker in result['events'][0]['uncertainties']
+    proposal,_=va.draft_proposal({**document,**result,'source_id':'uvs_'+'0'*32,'analysis_version':1})
+    assert any(blocker in q for q in proposal['questions'])
+    assert not build_draft_yaml(proposal,document['app_id'])['ready']
+
+
+def test_unindexed_legacy_plan_keeps_manual_input_review(monkeypatch,consolidation):
+    from task_server.services import ui_video_analysis as va,ai_skill_service as ai
+    from task_server.services.ui_video_business_inputs import _MANUAL
+    document,root,observed=consolidation
+    observed['events'][0]['uncertainties']=[_MANUAL]
+    def model(skill,payload,**kwargs):
+        planned=copy.deepcopy(observed['events'])
+        for event in planned:event.update(value='example',uncertainties=[])
+        return {'title':'填写信息','events':planned,'uncertainties':[],'multiple_scenarios':False}
+    monkeypatch.setattr(ai,'run_ai_skill',model)
+    result=va.consolidate_observed_frames(document,root,lambda:False,observed,copy.deepcopy(observed['events']),[])
+    assert _MANUAL in result['uncertainties']
+
+
 def test_trajectory_manual_input_placeholder_can_be_resolved_after_consolidation(monkeypatch,consolidation):
     from task_server.services import ui_video_analysis as va,ai_skill_service as ai
     from task_server.services.ui_video_business_inputs import _MANUAL,recover_business_inputs

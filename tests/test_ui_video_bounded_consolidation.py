@@ -98,6 +98,21 @@ def test_split_real_consolidator_full_rows_and_raw_immutability(split_consolidat
     assert raw[0]['events'][0]['value']==''
 
 
+@pytest.mark.parametrize('count',[101,128,129])
+def test_candidate_review_blockers_use_business_question_capacity(split_consolidation,count):
+    from task_server.services.ui_video_analysis import draft_proposal
+    document,_,observed=split_consolidation
+    document['video_runtime_selection']={'mode':'video-business-first-v1'}
+    for i in range(count):observed['events'][i//4]['uncertainties'].append(f'待核对证据{i}')
+    if count>128:
+        with pytest.raises(ValueError,match='video_model_invalid'):invoke(split_consolidation,lambda s,p,**k:answer(p))
+        return
+    result=invoke(split_consolidation,lambda s,p,**k:answer(p))
+    assert all(f'待核对证据{i}' in result['uncertainties'] for i in range(count))
+    proposal,_=draft_proposal({**document,**result,'source_id':'uvs_'+'0'*32,'analysis_version':1})
+    assert len(proposal['questions'])<=100 and proposal['questions']
+
+
 def test_second_group_invalid_wire_admission_means_zero_calls(split_consolidation):
     # The last candidate is always group1; a huge unverified context field is
     # repeated in both requests, and shared IPC admission rejects it atomically.

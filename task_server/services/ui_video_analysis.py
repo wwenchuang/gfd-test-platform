@@ -571,22 +571,30 @@ def consolidate_observed_frames(document, root, cancelled, observed, first_pass,
             checked=_validate_consolidated_analysis(bound,frames,duration,known_secrets,
                 **({'max_questions':128} if bounded_business_planning else {}))
             _validate_consolidated_evidence(checked,candidates,candidates,frames,image_frames,duration,effective_required,{item['candidate_index'] for item in recovery})
+            # Source uncertainties are platform-owned review blockers on every
+            # analysis path, not just the optional trajectory path. The model
+            # cannot erase them by omitting them from its planning response.
+            from .ui_video_business_inputs import _MANUAL
+            blockers=list(observed['uncertainties'])
+            for event in candidates:
+                # The manual-input placeholder can be resolved by later input
+                # recovery; keep it event-local instead of making it permanent.
+                blockers.extend(q for q in event['uncertainties'] if q and q!=_MANUAL)
+            if any('candidate_index' not in item for item in plan['events']):
+                # Without an index, the later input-recovery pass cannot bind
+                # this placeholder to a specific source event safely.
+                if any(_MANUAL in event['uncertainties'] for event in candidates):blockers.append(_MANUAL)
             if trajectory_audit:
-                # Independent trajectory findings are immutable review blockers;
-                # a planner may neither resolve them nor erase their association.
-                from .ui_video_business_inputs import _MANUAL
-                blockers=list(observed['uncertainties'])
-                for event in candidates:
-                    # This event-local placeholder can be resolved by the later
-                    # safe input recovery pass; it is not independent evidence.
-                    blockers.extend(q for q in event['uncertainties'] if q and q!=_MANUAL)
                 for check in observed['trajectory_audit'].get('checks',[]):
                     if check.get('status')=='needs_review':
                         blockers.append('独立证据复核：'+(check.get('question') or '该操作的证据仍需人工核对'))
-                for event,item in zip(checked['events'],plan['events']):
-                    original=candidates[item['candidate_index']]['uncertainties']
-                    event['uncertainties']=list(dict.fromkeys(event['uncertainties']+[q for q in original if q]))
-                checked['uncertainties']=list(dict.fromkeys(blockers+checked['uncertainties']))
+            for event,item in zip(checked['events'],plan['events']):
+                if 'candidate_index' not in item:continue
+                original=candidates[item['candidate_index']]['uncertainties']
+                event['uncertainties']=list(dict.fromkeys(event['uncertainties']+[q for q in original if q]))
+                if len(event['uncertainties'])>10:raise ValueError('video_model_invalid')
+            checked['uncertainties']=list(dict.fromkeys(blockers+checked['uncertainties']))
+            if len(checked['uncertainties'])>(128 if bounded_business_planning else 100):raise ValueError('video_model_invalid')
             proposal,snapshot=draft_proposal({**document,**checked,'print_recovery':print_group,'source_id':document.get('source_id','uvs_'+'0'*32),
                                       'analysis_version':document.get('analysis_version',1)})
             missing,missing_indexes=_result_review_needs(proposal,snapshot,plan,candidates,reviewed_configuration_indexes,print_group)
@@ -594,8 +602,6 @@ def consolidate_observed_frames(document, root, cancelled, observed, first_pass,
                 error=ValueError('video_expected_missing')
                 error.result_check_candidate_indexes=missing_indexes
                 raise error
-            if not trajectory_audit:
-                checked['uncertainties']=list(dict.fromkeys(observed['uncertainties']+checked['uncertainties']))[:30]
             first_pass=validate_analysis({'events':first_pass,'uncertainties':[],'multiple_scenarios':False},frames,duration,known_secrets,max_events=120)['events']
             return {**checked,**trajectory_audit,'multiple_scenarios':multi,'first_pass_events':first_pass,'reconciliation_audit':observed.get('reconciliation_audit'),'response_review':observed.get('response_review',[]),'raw_events':candidates,'raw_uncertainties':observed['uncertainties'],'omitted_retries':recovery,'print_recovery':print_group}
         except ValueError as error:
