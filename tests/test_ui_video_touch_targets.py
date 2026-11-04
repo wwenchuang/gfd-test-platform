@@ -30,7 +30,8 @@ def test_detail_probe_requires_parent_reference_and_single_certain_tap(monkeypat
     monkeypatch.setattr(targets.ai,'run_ai_skill',call)
     assert targets.probe(frames,[detail],assets,1000,lambda:False)==[{'frame_id':'frame-002','target':'查看生成记录','observation':'记录页可见'}]
     response['events'][0]['uncertainties']=['触点不清楚']
-    assert targets.probe(frames,[detail],assets,1000,lambda:False)==[]
+    with pytest.raises(ValueError,match='video_model_invalid'):
+        targets.probe(frames,[detail],assets,1000,lambda:False)
     response['events'][0]['uncertainties']=[];response['events'][0]['frame_refs']=['frame-003']
     assert targets.probe(frames,[detail],assets,1000,lambda:False)==[]
 
@@ -224,3 +225,36 @@ def test_same_frame_accepts_exact_print_label_with_panel_location_only():
     assert targets.conflict(events,[{'frame_id':'frame-166','target':'打印设置面板顶部的确认打印按钮'}],frames)
     nearby=[{'frame_id':'frame-165','timestamp_ms':50},*frames]
     assert targets.conflict(events,[{'frame_id':'frame-165','target':'确认打印'}],nearby)
+
+
+@pytest.mark.parametrize('uncertainty_path',['event','root'])
+def test_probe_does_not_discard_uncertain_tap_target(monkeypatch,uncertainty_path):
+    frames=[{'frame_id':'f1','timestamp_ms':100},{'frame_id':'f2','timestamp_ms':200}]
+    detail={'frame_id':'detail','source_frame_id':'f1','timestamp_ms':100}
+    assets=[{'name':f['frame_id']} for f in frames+[detail]]
+    response={'events':[{'action':'aiTap','target':'删除','value':'','frame_refs':['f1','f2'],
+                         'observation':'点击记录中的删除','uncertainties':[]}],
+              'uncertainties':[],'multiple_scenarios':False}
+    (response['events'][0] if uncertainty_path=='event' else response)['uncertainties']=['无法确认是哪条记录']
+    monkeypatch.setattr(targets.ai,'run_ai_skill',lambda *a,**kw:response)
+    with pytest.raises(ValueError,match='video_model_invalid'):
+        targets.probe(frames,[detail],assets,1000,lambda:False)
+
+
+@pytest.mark.parametrize('qualified',['第二条记录的删除按钮','第二条打印记录的删除按钮','第二条生成记录的删除按钮'])
+def test_ambiguous_bare_probe_cannot_downgrade_a_qualified_target(monkeypatch,tmp_path,qualified):
+    from task_server.services import ui_video_windows as windows,ui_video_touch_detail as detail
+    frames=[{'frame_id':'frame-001','timestamp_ms':100},{'frame_id':'frame-002','timestamp_ms':200}]
+    monkeypatch.setattr(windows,'load_assets',lambda *a:[])
+    monkeypatch.setattr(detail,'append_details',lambda *a:[])
+    monkeypatch.setattr(targets,'probe',lambda *a:[{'frame_id':'frame-001','target':'删除'}])
+    calls=[]
+    def model(*args,**kwargs):
+        calls.append(1)
+        target=qualified if len(calls)==1 else '删除'
+        return {'events':[{'action':'aiTap','target':target,'value':'','frame_refs':['frame-001','frame-002'],
+                           'observation':'点击删除','uncertainties':[]}], 'uncertainties':[],'multiple_scenarios':False}
+    monkeypatch.setattr(targets.ai,'run_ai_skill',model)
+    with pytest.raises(ValueError,match='video_model_invalid'):
+        windows.observe_windows(frames,1000,tmp_path,lambda:False)
+    assert len(calls)==1

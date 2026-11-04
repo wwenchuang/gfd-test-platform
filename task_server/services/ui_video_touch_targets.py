@@ -39,6 +39,12 @@ def probe(frames, details, assets, duration, cancelled):
         if cancelled():
             raise ValueError('video_cancelled')
         checked = validate_analysis(_bind_whole_evidence(result, selected), selected, duration)
+        if any(e['action']=='aiTap' and parent['frame_id'] in e['frame_refs'] and
+               (e['uncertainties'] or checked['uncertainties'] or checked['multiple_scenarios'])
+               for e in checked['events']):
+            # A known click with an uncertain target must not disappear from
+            # the probe and leave the later full-window observation unguarded.
+            raise ValueError('video_model_invalid')
         if checked['uncertainties'] or checked['multiple_scenarios'] or len(checked['events']) != 1:
             continue
         event = checked['events'][0]
@@ -99,6 +105,7 @@ def _same_explicit_input_label(left, right):
             return True
     return False
 
+
 def conflict(events, hints, frames, diagnostic=None, evidence=None):
     times = {f['frame_id']:f['timestamp_ms'] for f in frames}
     for hint in hints:
@@ -113,6 +120,10 @@ def conflict(events, hints, frames, diagnostic=None, evidence=None):
             if diagnostic is not None:
                 diagnostic.update(frame_id=hint['frame_id'],binding='explicit' if explicit else 'nearby',comparison=comparison)
             if comparison=='mismatch':
+                record=re.fullmatch(r'.*第[一二三四五六七八九十0-9]+条[^的]{0,8}记录的(.+)',_unquote(left))
+                if (diagnostic is not None and explicit and record and
+                    _label(record[1]) and _label(record[1])==_label(right)):
+                    diagnostic['ambiguous_bare_probe']=True
                 if evidence is not None:
                     evidence.update(frame_id=hint['frame_id'],observed_target=left,probe_target=right)
                 return '触点附近的点击目标与同帧局部复核不一致：'+hint['frame_id']+' 应使用目标 '+hint['target']+'。局部交互证据：'+hint.get('observation','')[:500]+'。按该原帧触点核对，不用转场中经过触点的底部控件替代。'

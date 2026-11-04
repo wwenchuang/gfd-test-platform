@@ -125,7 +125,7 @@ def observe_windows(frames,duration,root,cancelled,progress=None,review_events=N
                     raise error
                 break
             except ValueError as error:
-                if cancelled() or attempt:raise
+                if cancelled() or attempt or getattr(error,'target_diagnostic',{}).get('ambiguous_bare_probe'):raise
                 if getattr(error,'reference_reason',None)=='outside_window':
                     # Re-observe original local pixels; never trim invalid model
                     # references or accept context-only events as evidence.
