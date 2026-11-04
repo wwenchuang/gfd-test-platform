@@ -1,3 +1,8 @@
+## 2026-11-04 API fixture coverage checkpoint
+
+- 用户提供花朵 STL 已上传至业务对象存储并校验哈希；导入与状态用例 5 次调试和 1 次基线回归通过，已加入启用的 347 条每日任务。详情见 docs/audits/2026-11-04-api-fixture-coverage.md。
+- 导入记录目前需要核对列表首项 SN；并发时会安全失败但可能遗留本次记录，下一步需支持按任务 SN 查找并验证并发清理。当前没有宣称 347 条全量运行通过。图片、OBJ/MTL、multipart 上传仍待素材与能力验证。
+
 ## 2026-10-29 Unified business-event prompts reviewed
 
 - Observer/audit now share business-intent/independent-boundary definitions. Same-field focus/clear/type/IME can be one aiInput with earliest visible edit evidence; genuine independent interactions/no-response retries/returns/confirmations remain. Mark reappearance alone proves no physical count. Final-state predicates use the last outcome frame, with full causal trace retained; material missing triggers still request source revisit.
