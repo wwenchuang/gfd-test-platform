@@ -17,7 +17,7 @@ from pathlib import Path
 
 MAX_BYTES = 200 * 1024 * 1024
 MAX_DURATION_MS = 600000
-MAX_FRAMES = 300
+MAX_FRAMES = 360
 MAX_EXTRACTED_FRAME_BYTES = 32 * 1024 * 1024
 _ADMISSION = threading.Lock()
 @contextmanager
@@ -386,15 +386,14 @@ def _select_micro_motion(groups, times, base, limit, cancelled=lambda:False, cha
                 witness=index
         if witness is not None:protected.update((a,times[witness],b))
     if protected==set(base):return selected,count
-    if len(protected)>limit:raise ValueError('video_split_required')
-    result,count=_fill_micro_motion(groups,times,protected,limit,cancelled)
-    # Preserve the old short-marker priority and refuse if refilling displaced
-    # any previously selected faint before/onset/response triplet.
+    # Reserve selected short markers before refilling, so an optional larger
+    # group cannot displace mandatory evidence even when all of it would fit.
     for group in groups:
         if cancelled():raise ValueError('video_cancelled')
         candidate={times[j] for j in group}
         if len(candidate)<=3 and candidate<=selected:protected.update(candidate)
-    if not protected<=result:raise ValueError('video_split_required')
+    if len(protected)>limit:raise ValueError('video_split_required')
+    result,count=_fill_micro_motion(groups,times,protected,limit,cancelled)
     return result,count
 
 

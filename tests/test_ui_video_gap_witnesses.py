@@ -73,6 +73,25 @@ def test_rerun_keeps_complete_groups_and_existing_faint_triplets():
     assert not (set(times[7:11])<=result)
 
 
+def test_refill_preserves_short_groups_when_all_mandatory_frames_fit():
+    times=[200,700,800,1200,1400,1500,2000,2300,2500,3100,3200,3900,4100,4200,4400]
+    groups=[{12,13},{11,13},{2,3},{1,7},{0,10,6},{8,4,13,14}]
+    changes=[.1,.1,.1,0,.1,.1,.1,.1,0,0,0,.1,0,.1,0]
+    result=select(groups,times,{200,4400},10,changes)
+    assert result=={200,800,1200,2000,2300,3200,3900,4100,4200,4400}
+
+
+def test_trajectory_packet_capacity_matches_decoder_limit():
+    from task_server.services.ui_video_trajectory import make_packets
+    assert video.MAX_FRAMES == 360
+    frames=[{'frame_id':f'frame-{i:03d}','timestamp_ms':i*100} for i in range(video.MAX_FRAMES)]
+    packets=make_packets(frames,[])
+    assert sum(len(packet['owned_frame_ids']) for packet in packets)==video.MAX_FRAMES
+    with pytest.raises(ValueError,match='video_model_invalid') as error:
+        make_packets(frames+[{'frame_id':'frame-extra','timestamp_ms':video.MAX_FRAMES*100}],[])
+    assert error.value.trajectory_reason=='frame_count'
+
+
 def test_cancellation_during_added_raw_scan():
     calls=0
     def cancelled():

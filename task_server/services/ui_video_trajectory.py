@@ -156,7 +156,8 @@ def validate_states(states,frames):
 
 
 def make_packets(frames,states):
-    if not isinstance(frames,list) or not 2<=len(frames)<=300:_fail('frame_count')
+    from .ui_video_source_service import MAX_FRAMES
+    if not isinstance(frames,list) or not 2<=len(frames)<=MAX_FRAMES:_fail('frame_count')
     if (any(not isinstance(f,dict) or not isinstance(f.get('frame_id'),str) or not f['frame_id'] or
             type(f.get('timestamp_ms'))is not int or f['timestamp_ms']<0 for f in frames) or
         len({f['frame_id'] for f in frames})!=len(frames) or
