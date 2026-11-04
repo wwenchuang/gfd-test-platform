@@ -347,3 +347,61 @@ def test_video_selection_step_can_be_confirmed_and_saved(env):
         saved=service.update_draft(A,record['draft_id'],body)
     assert saved['revision']==record['revision']+1
     assert saved['steps'][0]['action']=='selectRecord'
+
+
+def test_missing_empty_values_for_parameterless_model_steps_are_recovered():
+    result = proposal()
+    for step in result['steps']:
+        del step['value']
+    normalized = service._model_proposal(result, APP)
+    assert [step['value'] for step in normalized['steps']] == ['', '']
+    assert all(step['review_state'] == 'needs_review' and step['source_ref'] == 'text'
+               for step in normalized['steps'])
+
+
+def test_missing_input_value_is_not_invented():
+    result = proposal()
+    result['steps'][0].update(action='aiInput', target='搜索输入框')
+    del result['steps'][0]['value']
+    with pytest.raises(ValueError):
+        service._model_proposal(result, APP)
+
+
+def test_missing_value_recovery_does_not_allow_forged_provenance():
+    result = proposal()
+    del result['steps'][0]['value']
+    result['steps'][0]['review_state'] = 'confirmed'
+    with pytest.raises(ValueError):
+        service._model_proposal(result, APP)
+
+
+@pytest.mark.parametrize('bad_action', [[], {}])
+def test_missing_value_with_invalid_action_is_rejected_cleanly(bad_action):
+    result = proposal()
+    result['steps'][0]['action'] = bad_action
+    del result['steps'][0]['value']
+    with pytest.raises(ValueError):
+        service._model_proposal(result, APP)
+
+
+def test_missing_empty_value_recovery_does_not_mutate_model_response():
+    result = proposal()
+    del result['steps'][0]['value']
+    before = copy.deepcopy(result)
+    service._model_proposal(result, APP)
+    assert result == before
+
+
+def test_worker_generates_reviewable_draft_when_parameterless_values_are_missing(env, monkeypatch):
+    from task_server.services import ai_skill_service
+    result = proposal()
+    for step in result['steps']:
+        del step['value']
+    monkeypatch.setattr(ai_skill_service, 'run_ai_skill', lambda *args, **kwargs: copy.deepcopy(result))
+    draft = create(env)
+    assert draft['generation_status'] == 'ready'
+    assert len(draft['steps']) == 2
+    assert all(step['review_state'] == 'needs_review' for step in draft['steps'])
+    assert not draft['ready']
+    with actor_context(A):
+        assert not service.validate_draft(A, draft['draft_id'], {'revision': draft['revision'], 'target': TARGET})['ready']
