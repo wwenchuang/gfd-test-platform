@@ -214,3 +214,13 @@ def test_nearby_touch_does_not_equate_input_type_with_bare_label():
     frames=[{'frame_id':'f1','timestamp_ms':100},{'frame_id':'f2','timestamp_ms':200}]
     events=[{'action':'aiTap','target':'测试名称文本输入框','frame_refs':['f2']}]
     assert targets.conflict(events,[{'frame_id':'f1','target':'测试名称'}],frames)
+
+
+def test_same_frame_accepts_exact_print_label_with_panel_location_only():
+    frames=[{'frame_id':'frame-166','timestamp_ms':100}]
+    events=[{'action':'aiTap','target':'打印设置面板底部的确认打印按钮','frame_refs':['frame-166']}]
+    assert not targets.conflict(events,[{'frame_id':'frame-166','target':'确认打印'}],frames)
+    assert targets.conflict(events,[{'frame_id':'frame-166','target':'取消打印'}],frames)
+    assert targets.conflict(events,[{'frame_id':'frame-166','target':'打印设置面板顶部的确认打印按钮'}],frames)
+    nearby=[{'frame_id':'frame-165','timestamp_ms':50},*frames]
+    assert targets.conflict(events,[{'frame_id':'frame-165','target':'确认打印'}],nearby)
