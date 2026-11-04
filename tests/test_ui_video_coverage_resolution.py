@@ -365,6 +365,44 @@ def test_return_gesture_rejects_contradictions_and_ineligible_old_anchors(mutati
     with pytest.raises(ValueError):cr.validate([claim],{'first_pass':old},new,frames)
 
 
+def test_return_repeat_contradiction_is_reported_for_targeted_retry():
+    frames,old,new,claim=return_gesture_fixture()
+    claim['evidence']['interaction']='原片为一次返回手势，随后再次返回'
+    with pytest.raises(ValueError) as caught:
+        cr.validate([claim],{'first_pass':old},new,frames)
+    assert caught.value.coverage_reason=='return_repeat_contradiction'
+    assert cr.diagnose([claim],{'first_pass':old},new,frames)['result_evidence_to_recheck'][0]['reason']=='return_repeat_contradiction'
+
+
+def test_native_return_contradiction_retries_with_reason_and_original_frames(monkeypatch,tmp_path):
+    from task_server.services import ui_video_reconcile as vr,ui_video_windows as windows,ai_skill_service as ai
+    frames,old,new,claim=return_gesture_fixture()
+    for event in old+new:event.update(action='navigateBack',target='上一页面')
+    for event in old:event['evidence_kind']='inferred'
+    claim['evidence']['before_state']='模型详情页可见'
+    claim['source_anchor_ids']+=['independent_review:0','independent_review:1']
+    new[0]['observation']='一次连续返回手势，页面回到上一级'
+    monkeypatch.setattr(windows,'observe_windows',lambda *a,**kw:({'events':copy.deepcopy(old),'uncertainties':[],'multiple_scenarios':False},[]))
+    monkeypatch.setattr(windows,'context_frames',lambda *a,**kw:[])
+    monkeypatch.setattr(windows,'load_assets',lambda *a,**kw:[])
+    (tmp_path/'frames').mkdir()
+    for frame in frames:(tmp_path/'frames'/(frame['frame_id']+'.jpg')).write_bytes(b'image')
+    calls=[]
+    def model(skill,payload,**kw):
+        calls.append(copy.deepcopy(payload)); c=copy.deepcopy(claim)
+        if len(calls)==1:c['evidence']['interaction']='原片为一次返回手势，随后再次返回'
+        else:
+            assert 'return_repeat_contradiction' in str(payload['resolution_diagnostics'])
+            assert '确有第二次手势则保留独立操作' in payload['validation_feedback']
+            assert '原生navigateBack无需可见返回箭头' in payload['validation_feedback']
+            assert payload['frames']==calls[0]['frames']
+        return {'events':[{k:v for k,v in new[0].items() if k not in {'start_ms','end_ms','evidence_kind'}}],
+                'coverage_resolutions':[c],'uncertainties':[],'multiple_scenarios':False}
+    monkeypatch.setattr(ai,'run_ai_skill',model)
+    result=vr.reconcile(copy.deepcopy(old),frames,1000,tmp_path,lambda:False,[])
+    assert len(calls)==2 and [e['action'] for e in result['events']]==['navigateBack']
+
+
 def test_return_gesture_can_explain_old_two_click_misclassification():
     frames,old,new,claim=return_gesture_fixture()
     claim['evidence']['interaction']='原片为返回手势。旧识别将其误判为两次独立的点击操作，实际为同一次连续返回导航。'

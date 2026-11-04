@@ -536,9 +536,11 @@ def _repair_window(original,checked,frames,duration,root,cancelled,secrets,missi
             if repair_version=='coverage-observe':
                 payload['validation_feedback']+=' 上次声明无效。本窗coverage_resolutions必须为空，不提交合并声明；重新观察原帧保留真实操作，自动转场只作状态说明。'
                 continue
-            payload['validation_feedback']+=' 返回手势映射需逐项核对：before_state写明返回箭头可见（无可见控件则不能映射）；interaction只陈述实际单次手势，不将旧假设的多次点击混入实际动作；why_not_separate_actions明确是否存在第二次按下或导航。仅原帧支持时给出肯定描述，否则保留疑问。'
+            payload['validation_feedback']+=' 返回手势映射需逐项核对：aiTap映射的before_state须写明返回箭头可见；原生navigateBack无需可见返回箭头，但必须有原帧证明真实返回手势及前后页面。interaction只陈述实际手势，不将旧假设混入实际动作；why_not_separate_actions明确是否存在第二次按下或导航。仅原帧支持时给出肯定描述，否则保留疑问。'
             from .ui_video_coverage_resolution import diagnose
             payload['resolution_diagnostics']=diagnose(claims,{'first_pass':original,'independent_review':before},repaired['events'],window)
+            if any(item['reason']=='return_repeat_contradiction' for item in payload['resolution_diagnostics']['result_evidence_to_recheck']):
+                payload['validation_feedback']+=' 上次返回映射的肯定描述包含再次、重新或第二次等重复动作字样，与单次手势声明冲突。对照原帧逐项区分历史误判与实际操作：确有第二次手势则保留独立操作；只有一次时明确指出旧识别的错误，不要把旧识别写成实际再次操作；无法确认则保留疑问。'
             # Retain structural rejection facts, not the rejected model prose
             # that can prime the correction to repeat its false shared-frame claim.
             if any(item['reason']=='interaction_frame_not_shared' for item in payload['resolution_diagnostics']['result_evidence_to_recheck']):
@@ -558,6 +560,8 @@ def _repair_window(original,checked,frames,duration,root,cancelled,secrets,missi
             missing=getattr(error,'missing_frame_refs',None)
             if attempt+1>=attempt_limit or not missing or not missing<=window_ids:raise
             payload['unresolved_hypotheses']=[{'action':e['action'],'target':e['target'],'observation':e['observation'],'frame_refs':e['frame_refs']} for e in original+before if set(e['frame_refs'])<=missing]
+            if any(e['action']=='aiScroll' and set(e['frame_refs'])&missing for e in original+before):
+                payload['validation_feedback']+=' 旧滚动仍未解释：仅当原帧确证是自动回弹或布局变化且没有独立用户滚动时，完整引用旧帧并在observation明确写“未见独立用户滚动”，再说明可见的自动变化依据；不得根据模板猜测，真实滚动须保留，无法确认则保留疑问。'
             if repair_version=='coverage-observe':
                 payload['validation_feedback']+=' 上次仍未解释这些原帧：'+','.join(sorted(missing))+'。coverage_resolutions必须为空；根据原画面保留真实操作，若旧点击实际为自动转场则完整引用旧帧并说明未见新点击，不复制旧假设凑步骤。'
                 continue

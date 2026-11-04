@@ -108,6 +108,31 @@ def test_single_window_still_reviews_automatic_motion(monkeypatch,tmp_path):
     assert calls==[{'f1','f2'}]
 
 
+def test_automatic_motion_retry_requests_explicit_negative_when_supported(monkeypatch,tmp_path):
+    from task_server.services import ui_video_reconcile as reconcile,ai_skill_service as ai
+    frames=[{'frame_id':'f1','timestamp_ms':100},{'frame_id':'f2','timestamp_ms':200}]
+    (tmp_path/'frames').mkdir()
+    for frame in frames:(tmp_path/'frames'/(frame['frame_id']+'.jpg')).write_bytes(b'image')
+    old={'action':'aiScroll','target':'列表','value':{'direction':'down','scrollType':'singleAction'},
+         'frame_refs':['f1','f2'],'start_ms':100,'end_ms':200,'evidence_kind':'inferred',
+         'observation':'内容上移','uncertainties':[]}
+    calls=[]
+    def model(skill,payload,**kw):
+        calls.append(payload.copy())
+        if len(calls)==1:observation='自动回弹，并非用户主动发起的独立滚动操作。'
+        else:
+            assert '未见独立用户滚动' in payload['validation_feedback']
+            assert '仅当原帧确证' in payload['validation_feedback']
+            observation='刷新完成提示收起导致自动回弹，未见独立用户滚动。'
+        return {'events':[{'action':'aiAssert','target':'列表','value':'','frame_refs':['f1','f2'],
+                'observation':observation,'uncertainties':[]}], 'coverage_resolutions':[],
+                'uncertainties':[],'multiple_scenarios':False}
+    monkeypatch.setattr(ai,'run_ai_skill',model)
+    result=reconcile._repair_window([old],{'events':[old],'uncertainties':[],'multiple_scenarios':False},
+        frames,1000,tmp_path,lambda:False,[],{'f1','f2'})
+    assert len(calls)==2 and result['events'][0]['action']=='aiAssert'
+
+
 def test_negative_movement_without_conflict_is_not_positive():
     from task_server.services.ui_video_automatic_motion import has_positive_drag
     assert not has_positive_drag('用户没有拖动列表；刷新头部自动收起。')

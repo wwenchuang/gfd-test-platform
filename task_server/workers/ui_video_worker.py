@@ -101,7 +101,7 @@ def _log_failure(identifier,stage,error,code):
             'return_target_not_supported','return_anchors_not_overlapping',
             'return_touch_not_in_anchor','return_control_not_visible',
             'return_single_gesture_not_explicit','return_gesture_not_explicit',
-            'return_second_press_not_excluded',
+            'return_second_press_not_excluded','return_repeat_contradiction',
         }:
             detail['coverage_reason']=reason
     # No exc_info, arbitrary error str, source lines, payload, prompt, identity,

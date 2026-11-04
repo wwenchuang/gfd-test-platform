@@ -254,7 +254,7 @@ def validate(claims,sources,reviewed,frames):
                 r'(?:（(?:(?!再次|重新|第二次|两次|多次|[。；，,但\n]).){0,100}）)?'
                 r'(?=[，,]实际为同一次(?:连续)?(?:返回)?手势)', '', affirmative)
             affirmative=_without_negated_repeat(affirmative)
-            if re.search(r'再次|重新|第[二三四五六七八九十百0-9]+次|[两二三四五六七八九十百2-9]次|多次|又[^。；，,]{0,12}(?:点击|按下|返回|导航)',affirmative):_fail()
+            if re.search(r'再次|重新|第[二三四五六七八九十百0-9]+次|[两二三四五六七八九十百2-9]次|多次|又[^。；，,]{0,12}(?:点击|按下|返回|导航)',affirmative):_fail('return_repeat_contradiction')
         low=min(e['start_ms'] for e in anchors);high=max(e['end_ms'] for e in anchors)
         for source_name,source in sources.items():
             for pos,old in enumerate(source):
