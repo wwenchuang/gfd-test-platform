@@ -14126,3 +14126,8 @@ git diff --check
 ## 2026-11-04 native return evidence reconciliation
 - Original touch source uvs_bf818590e6564b9b914957b07d3f9824 produced overlapping native returns (9733–9933ms and 9833–10133ms); they were not admitted to reconciliation and produced an empty result window. The fix requests bounded original-frame review, includes native returns in coverage/ownership, and allows a single native return only with a checked mapping, all anchors and actual touch, no intervening interactions, and explicit exclusion of another gesture. Non-overlapping native returns remain distinct, unclear cases fail closed. Native return outcome repair still uses only frames inside the original result domain; existing Android capability and iOS exclusion are unchanged.
 - Local tests 554 passed, backend static 63 and py_compile passed; independent review found and prompted fixes for crossing and same-start unmapped interactions, then found no further blocker. These are offline tests; target original generation and real-device execution remain outstanding. Server checks and deployment pending.
+
+## 2026-11-04 Apifox 前后置流程补充
+- 新增19条只读动态数据关联用例及1条创作会话创建清理用例；逐条三次调试通过，组合回归6c1afafc为20/20通过。会话按本轮唯一标识创建并仅按返回ID删除，核验已删除；依赖推荐接口的feedId，执行器意外终止时后置清理仍可能无法运行。设备类前置校验4F2A。
+- 原定时任务从325扩充至345项，每日08:00仍启用；数据空缺或接口实际不匹配应明确失败，不能伪装通过。完整任务1b1bf46f已触发，完成状态需实时核对；此前325项曾因Worker部署重启中断。
+- 后续新增会话对话用例：独立创建会话、发送建模描述、校验会话及需求版本，再删除并确认本次会话不可查询；单项三次通过，21项组合回归 ebce04d8 为21/21通过，原任务现346项。20项加入后的345项完整执行1b1bf46f为344通过、1异常；新增20项全部通过。原有删除生成记录用例误取最新记录并遭遇数据库连接状态异常，本轮创建任务1567574107792912384和对应记录2111076994已按归属清理并确认消失；该原有用例尚未修复。346项尚无整轮执行证据。
