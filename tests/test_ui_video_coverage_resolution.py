@@ -261,6 +261,76 @@ def test_continuous_return_accepts_actual_touch_inside_overlapping_anchor_interv
     assert result[0]['source_anchors']['first_pass:0']['frame_refs']==['f1','f3']
 
 
+def test_native_return_requires_confirmed_single_gesture_without_invented_arrow():
+    frames,old,new,claim=return_gesture_fixture()
+    for event in old+new:event.update(action='navigateBack',target='上一页面')
+    for event in old:event['evidence_kind']='inferred'
+    claim['evidence']['before_state']='模型详情页可见'
+    assert cr.validate([claim],{'first_pass':old},new,frames)[0]['resolution']=='same_return_gesture'
+    claim['evidence']['why_not_separate_actions']='先返回一次，随后再次返回'
+    with pytest.raises(ValueError):cr.validate([claim],{'first_pass':old},new,frames)
+
+
+@pytest.mark.parametrize('mutation',['changed_target','mixed_action','no_shared_frame','uncertain','missing_frame','intervening_return'])
+def test_native_return_merge_rejects_missing_or_conflicting_evidence(mutation):
+    frames,old,new,claim=return_gesture_fixture()
+    for event in old+new:event.update(action='navigateBack',target='上一页面')
+    claim['evidence']['before_state']='模型详情页可见'
+    if mutation=='changed_target':old[1]['target']='其他页面'
+    if mutation=='mixed_action':old[0]['action']='aiTap'
+    if mutation=='no_shared_frame':old[0]['frame_refs']=['f1']
+    if mutation=='uncertain':new[0]['uncertainties']=['是否两次返回不清楚']
+    if mutation=='missing_frame':claim['evidence']['examined_frame_refs'].remove('f3')
+    if mutation=='intervening_return':old.append({**old[1],'frame_refs':['f3'],'start_ms':300,'end_ms':300})
+    with pytest.raises(ValueError):cr.validate([claim],{'first_pass':old},new,frames)
+
+
+@pytest.mark.parametrize('source',['first_pass','independent_review'])
+def test_native_return_merge_rejects_intervening_interaction_extending_past_returns(source):
+    frames,old,new,claim=return_gesture_fixture()
+    frames.append({'frame_id':'f5','timestamp_ms':500})
+    for event in old+new:event.update(action='navigateBack',target='上一页面')
+    claim['evidence']['before_state']='模型详情页可见'
+    other={'action':'aiTap','target':'另一控件','frame_refs':['f2','f5'],'start_ms':200,'end_ms':500}
+    sources={'first_pass':old,'independent_review':[]};sources[source].append(other)
+    with pytest.raises(ValueError):cr.validate([claim],sources,new,frames)
+
+
+@pytest.mark.parametrize('source',['first_pass','independent_review'])
+def test_native_return_merge_rejects_unmapped_interaction_at_first_frame(source):
+    frames,old,new,claim=return_gesture_fixture()
+    for event in old+new:event.update(action='navigateBack',target='上一页面')
+    claim['evidence']['before_state']='模型详情页可见'
+    other={'action':'aiTap','target':'另一控件','frame_refs':['f1','f3'],'start_ms':100,'end_ms':300}
+    sources={'first_pass':old,'independent_review':[]};sources[source].append(other)
+    with pytest.raises(ValueError):cr.validate([claim],sources,new,frames)
+
+
+def test_native_return_reconcile_uses_frame_review_and_preserves_coverage(monkeypatch,tmp_path):
+    from task_server.services import ui_video_reconcile as vr,ui_video_windows as windows,ai_skill_service as ai
+    frames,old,new,claim=return_gesture_fixture()
+    for event in old+new:event.update(action='navigateBack',target='上一页面')
+    for event in old:event['evidence_kind']='inferred'
+    claim['evidence']['before_state']='模型详情页可见'
+    claim['source_anchor_ids']+=['independent_review:0','independent_review:1']
+    new[0]['observation']='一次连续返回手势，页面回到上一级'
+    monkeypatch.setattr(windows,'observe_windows',lambda *a,**kw:({'events':copy.deepcopy(old),'uncertainties':[],'multiple_scenarios':False},[]))
+    monkeypatch.setattr(windows,'context_frames',lambda *a,**kw:[])
+    monkeypatch.setattr(windows,'load_assets',lambda *a,**kw:[])
+    (tmp_path/'frames').mkdir()
+    for frame in frames:(tmp_path/'frames'/(frame['frame_id']+'.jpg')).write_bytes(b'image')
+    calls=[]
+    def model(skill,payload,**kw):
+        calls.append(payload)
+        return {'events':[{k:v for k,v in new[0].items() if k not in {'start_ms','end_ms','evidence_kind'}}],
+                'coverage_resolutions':[claim],'uncertainties':[],'multiple_scenarios':False}
+    monkeypatch.setattr(ai,'run_ai_skill',model)
+    result=vr.reconcile(copy.deepcopy(old),frames,1000,tmp_path,lambda:False,[])
+    assert len(calls)==1 and calls[0]['eligible_resolution_groups']
+    assert [e['action'] for e in result['events']]==['navigateBack']
+    assert result['reconciliation_audit']['coverage_resolutions'][0]['resolution']=='same_return_gesture'
+
+
 @pytest.mark.parametrize('mutation',['generic','different_target','input','outside_interval','no_overlap','no_arrow','second_gesture','uncertain','missing_frame','intervening'])
 def test_return_gesture_does_not_relax_other_interaction_guards(mutation):
     frames,old,new,claim=return_gesture_fixture()

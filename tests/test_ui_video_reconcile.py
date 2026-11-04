@@ -594,6 +594,16 @@ def test_return_overlap_with_explicit_touch_displacement_requires_review():
     assert vr._overlapping_gesture_refs([first,second])=={'f1','f2','f3','f4'}
 
 
+def test_overlapping_native_returns_require_visual_review_and_cannot_disappear():
+    first={**event(1,'navigateBack'),'target':'上一页面','frame_refs':['f1','f2','f3'],'end_ms':300,'observation':'原片为返回手势，页面退回上一级'}
+    second={**event(2,'navigateBack'),'target':'上一页面','frame_refs':['f2','f3','f4'],'end_ms':400,'observation':'连续返回手势，页面横移'}
+    assert vr._overlapping_gesture_refs([first,second])=={'f1','f2','f3','f4'}
+    with pytest.raises(ValueError,match='video_required_action_missing'):
+        vr.check_coverage([first,second],[first])
+    with pytest.raises(ValueError,match='video_required_action_missing'):
+        vr.check_coverage([first],[{**first,'action':'aiAssert'}])
+
+
 def test_two_return_displacement_descriptions_require_pixel_review():
     old=[{**event(1),'target':'左上角返回箭头','frame_refs':['f1','f2','f3'],'end_ms':300,'observation':'触点持续横向位移，返回上一级'},
          {**event(2),'target':'左上角返回箭头','frame_refs':['f2','f3','f4'],'end_ms':400,'observation':'触点及向左位移轨迹，页面退回'}]

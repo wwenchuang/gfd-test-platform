@@ -79,8 +79,8 @@ def _signature(event):
 def boundary_safe(event,boundary,resolutions,frames):
     """Only validated mappings may share a prior state, never a prior touch."""
     overlap=set(event['frame_refs'])&set(boundary)
-    if event['action'] not in {'aiTap','aiInput','aiScroll'} or not overlap:return True
-    if event['action']!='aiTap':return False
+    if event['action'] not in {'aiTap','aiInput','aiScroll','navigateBack','dismissKeyboard'} or not overlap:return True
+    if event['action'] not in {'aiTap','navigateBack'}:return False
     matches=[r for r in resolutions if _signature(r['reviewed_event'])==_signature(event)]
     if len(matches)!=1:return False
     ev=matches[0]['evidence'];times={f['frame_id']:f['timestamp_ms'] for f in frames}
@@ -181,10 +181,11 @@ def validate(claims,sources,reviewed,frames):
         if any(not isinstance(r,str) or r not in refs for r in (before,touch,after)):_fail()
         if not times[before]<=times[touch]<times[after] or before==after:_fail()
         new=reviewed[index]
-        if new['action'] not in {'aiTap','aiScroll'} or new.get('uncertainties') or not {before,touch,after}<=set(new['frame_refs']):_fail()
+        if new['action'] not in {'aiTap','aiScroll','navigateBack'} or new.get('uncertainties') or not {before,touch,after}<=set(new['frame_refs']):_fail()
         if touch in targets and targets[touch]!=new['target']:_fail()
         gesture=claim['resolution']=='same_return_gesture'
         drag=claim['resolution']=='same_scroll_gesture'
+        if new['action']=='navigateBack' and not gesture:_fail()
         anchors=[]
         for aid in ids:
             parts=aid.split(':')
@@ -192,9 +193,9 @@ def validate(claims,sources,reviewed,frames):
             pos=int(parts[1]);source=sources[parts[0]]
             if pos>=len(source):_fail()
             old=source[pos]
-            if old['action'] not in {'aiTap','aiScroll'} or not set(old['frame_refs'])<=set(refs):_fail()
+            if old['action'] not in ({'aiTap','navigateBack'} if gesture else {'aiTap','aiScroll'}) or not set(old['frame_refs'])<=set(refs):_fail()
             if gesture:
-                if (old['action']!='aiTap' or new['action']!='aiTap' or old['target']!=new['target'] or
+                if (old['action']!=new['action'] or old['target']!=new['target'] or
                     old.get('value','')!='' or new.get('value','')!='' or
                     times[touch]>old['end_ms']):_fail()
             elif touch not in old['frame_refs']:_fail('interaction_frame_not_shared')
@@ -217,13 +218,14 @@ def validate(claims,sources,reviewed,frames):
             old_notes='。'.join(a.get('observation','') for a in anchors)
             old_affirmative=re.sub(r'(?:未见|未观察到|没有|无)[^。；，,但]*', '', old_notes)
             if (not has_return_gesture_evidence(old_notes) or re.search(r'(?:再次|第二次|两次|多次)[^。；，,]{0,30}(?:点击|返回|导航|按下)',old_affirmative)):_fail()
-            if new['target'] not in {'左上角返回箭头','左上角返回按钮','返回箭头','返回按钮'}:
+            if new['action']=='aiTap' and new['target'] not in {'左上角返回箭头','左上角返回按钮','返回箭头','返回按钮'}:
                 _fail('return_target_not_supported')
+            if new['action']=='navigateBack' and new['target']!='上一页面':_fail('return_target_not_supported')
             if not set.intersection(*(set(a['frame_refs']) for a in anchors)):
                 _fail('return_anchors_not_overlapping')
             if not any(touch in a['frame_refs'] for a in anchors):
                 _fail('return_touch_not_in_anchor')
-            if not has_visible_return_control(ev['before_state']):
+            if new['action']=='aiTap' and not has_visible_return_control(ev['before_state']):
                 _fail('return_control_not_visible')
             if not re.search(r'同一次|单次|(?<!第)一次(?:连续|完整)的?返回手势',ev['interaction']+'。'+ev['why_not_separate_actions']):
                 _fail('return_single_gesture_not_explicit')
@@ -256,8 +258,8 @@ def validate(claims,sources,reviewed,frames):
         low=min(e['start_ms'] for e in anchors);high=max(e['end_ms'] for e in anchors)
         for source_name,source in sources.items():
             for pos,old in enumerate(source):
-                if (f'{source_name}:{pos}' not in ids and old['action'] in {'aiTap','aiInput','aiScroll'} and
-                    low<old['start_ms']<high and old['end_ms']<=high):_fail()
+                if (f'{source_name}:{pos}' not in ids and old['action'] in {'aiTap','aiInput','aiScroll','navigateBack','dismissKeyboard'} and
+                    low<=old['start_ms']<high):_fail()
         used.update(ids);destinations.add(index);targets[touch]=new['target']
         normalized='same_interaction_with_action_correction' if any(old['action']!=new['action'] for old in anchors) else 'same_interaction'
         result.append({**copy.deepcopy(claim),'resolution':'same_return_gesture' if gesture else 'same_scroll_gesture' if drag else normalized,'reviewed_event':copy.deepcopy(new),
@@ -323,4 +325,12 @@ def eligible_groups(sources,frame_ids):
         if not any(sum(aid.startswith(name+':') for aid,_ in anchors)>=2 and
                    any(aid.startswith(name+':') and action=='aiTap' for aid,action in anchors) for name in sources):continue
         result.append({'common_frame':ref,'anchor_ids':[aid for aid,_ in anchors]})
+    native={}
+    for name,events in sources.items():
+        for index,event in enumerate(events):
+            if event['action']!='navigateBack' or not set(event['frame_refs'])<=frame_ids:continue
+            for ref in event['frame_refs']:native.setdefault(ref,[]).append(f'{name}:{index}')
+    for ref,anchors in native.items():
+        if any(sum(a.startswith(name+':') for a in anchors)>=2 for name in sources):
+            result.append({'common_frame':ref,'anchor_ids':anchors})
     return result

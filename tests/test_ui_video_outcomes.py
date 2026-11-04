@@ -39,6 +39,31 @@ def test_focus_changes_only_missing_outcome_and_keeps_original_plan(monkeypatch,
     assert actual['events'][0]['reusable_expected']=='提交反馈按钮已禁用，原因选项仍保持选中'
 
 
+def test_native_return_outcome_uses_only_frames_before_next_action(tmp_path):
+    from task_server.services.ui_video_outcomes import repair_outcomes
+    frames,candidates,plan=fixture(tmp_path)
+    candidates[0].update(action='navigateBack',target='上一页面')
+    plan['events'][0].update(action='navigateBack',target='上一页面')
+    def model(skill,payload,**kw):
+        assert payload['checks'][0]['outcome_frame_ids']==[f'frame-{i:03d}' for i in range(2,6)]
+        return {'events':[{'action':'aiAssert','target':'candidate:0','value':'','frame_refs':['frame-004'],
+                           'observation':'返回首页，列表可见','uncertainties':[]}], 'uncertainties':[],'multiple_scenarios':False}
+    repaired,_=repair_outcomes(plan,candidates,frames,800,tmp_path,[0],lambda:False,[],skill_runner=model)
+    assert repaired['events'][0]['action']=='navigateBack'
+    assert repaired['events'][0]['outcome']['frame_refs']==['frame-004']
+
+
+def test_overlapping_native_return_has_no_result_domain_and_never_calls_model(tmp_path):
+    from task_server.services.ui_video_outcomes import repair_outcomes
+    frames,candidates,plan=fixture(tmp_path)
+    candidates[0].update(action='navigateBack',target='上一页面',end_ms=500)
+    candidates[1].update(action='navigateBack',target='上一页面',start_ms=400)
+    plan['events'][0].update(action='navigateBack',target='上一页面')
+    def forbidden(*args,**kwargs):pytest.fail('no legal result frames')
+    with pytest.raises(ValueError,match='video_expected_missing'):
+        repair_outcomes(plan,candidates,frames,800,tmp_path,[0],lambda:False,[],skill_runner=forbidden)
+
+
 @pytest.mark.parametrize('action',['aiTap','aiWaitFor'])
 @pytest.mark.parametrize('change',['action','value','unknown','duplicate','early','unknown_frame','future','system','empty','toast','uncertain','questions','malformed'])
 def test_focus_rejects_invalid_result_without_retry(monkeypatch,tmp_path,change,action):

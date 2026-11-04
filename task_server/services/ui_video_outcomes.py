@@ -15,7 +15,7 @@ def repair_outcomes(plan,candidates,frames,duration,root,indexes,cancelled,secre
         event=planned[index];candidate=candidates[index]
         # Runtime-object outcomes retain their dedicated selection/reuse review.
         reason=('selection' if event.get('selection') else 'template' if '{{' in event['target'] else
-                'unsupported' if event['action'] not in {'aiTap','aiScroll','aiWaitFor'} else '')
+                'unsupported' if event['action'] not in {'aiTap','aiScroll','aiWaitFor','navigateBack'} else '')
         if reason:
             error=ValueError('video_expected_missing')
             error.outcome_failure_evidence={'candidate_index':index,'reason':reason}

@@ -2,11 +2,11 @@
 {{payload}}
 
 先逐张比较frames中的原画面，还原实际交互。context_frame_ids仅辅助看前后页面，不得作为事件/映射的证据。不补画面未出现的操作；静止、加载、转场属于状态。每次真实点击、滚动、返回单独保留；触点出现与消失及页面变化应结合判断，不重复计算同一次按压及其结果。
-输出本次frames内证据完整的events，每项仅含action、target、value、frame_refs、observation、uncertainties。action仅aiTap/aiScroll/aiInput/aiAssert；value通常为空，滚动为{"direction":"down","scrollType":"singleAction"}（按浏览方向：内容上移、露出下方内容=down；内容下移、露出上方内容=up，不按手指移动方向命名）；frame_refs每项1至8张本次原帧，按时间排序；不输出时间。输入值留空。不要补写片段间隔中的业务。
+输出本次frames内证据完整的events，每项仅含action、target、value、frame_refs、observation、uncertainties。action仅aiTap/aiScroll/aiInput/aiAssert/navigateBack/dismissKeyboard；原生返回仅在完整画面确认该手势及前后页面时使用；value通常为空，滚动为{"direction":"down","scrollType":"singleAction"}（按浏览方向：内容上移、露出下方内容=down；内容下移、露出上方内容=up，不按手指移动方向命名）；frame_refs每项1至8张本次原帧，按时间排序；不输出时间。输入值留空。不要补写片段间隔中的业务。
 
 coverage_checks是有编号的旧识别假设，不一定正确。与真实操作一一对应时无需声明。只有同一来源的多个锚点实际上对应一次交互，才输出coverage_resolutions；它不是步骤、不下发手机。
 严格遵守coverage_resolution_contract。特别注意：
-- 结果允许aiTap；同一次连续滚动也可声明same_interaction，但所有旧锚点均须aiScroll、方向和参数完全一致，且共同帧证明连续同一次手势。须明确是同一次/单次手势，并说明未见第二次独立按下、重新触点或再次滑动；仅画面连续不足以证明。反向或再次滑动保持独立。
+- 结果允许aiTap；已核实的原生返回可在same_return_gesture中用navigateBack；同一次连续滚动也可声明same_interaction，但所有旧锚点均须aiScroll、方向和参数完全一致，且共同帧证明连续同一次手势。须明确是同一次/单次手势，并说明未见第二次独立按下、重新触点或再次滑动；仅画面连续不足以证明。反向或再次滑动保持独立。
 - source_anchor_ids使用已给定的完整anchor_id，不改编号；同组列入所有覆盖该次点击的重复/误型锚点。
 - examined_frame_refs必须是这些旧锚点原帧的完整并集，1张也不能漏，最多8张；不是仅复制结果事件的帧。
 - interaction_frame是实际按压/返回动作所在帧，普通same_interaction必须同时属于所有锚点和结果事件；不能挑转场中间帧来满足交集。连续返回手势例外仅按下文same_return_gesture合同。
@@ -28,9 +28,9 @@ eligible_resolution_groups仅表示哪些旧锚点在结构上共享原帧，不
 
 若same_result_claim_anchor_ids列出多条声明指向同一个结果事件，不能仅删除其中一条来通过结构校验：重新核对这些全部锚点；确属同一交互且满足共同触点时，将它们完整合成一条声明。否则分别保留真实操作或报告疑问。
 
-返回手势沿用正常观察规则：标题/返回栏随整个页面横移并进入上一级是导航，不是同页内容滚动。若操作前原帧可见应用返回箭头，events用aiTap该可见箭头作为跨端等价操作，observation及映射interaction如实注明原片为连续返回手势、箭头可见及前后页面；不得虚构手指点过箭头。跨窗重复记录同一次手势时，核对完整前/中/后原帧后只映射一次；真实再次按下或第二次导航仍独立保留。若没有可见等价返回控件，报告不确定，不编造控件。
+返回手势沿用正常观察规则：标题/返回栏随整个页面横移并进入上一级是导航，不是同页内容滚动。若旧锚点是navigateBack，重复映射时保持navigateBack；否则若操作前原帧可见应用返回箭头，events用aiTap该可见箭头作为跨端等价操作，observation及映射interaction如实注明原片为连续返回手势、箭头可见及前后页面；不得虚构手指点过箭头。跨窗重复记录同一次手势时，核对完整前/中/后原帧后只映射一次；真实再次按下或第二次导航仍独立保留。若没有可见等价返回控件，原帧能确认一次返回手势时输出navigateBack，target使用上一页面；不能确认时报告不确定，不编造控件。
 
-连续返回手势跨窗被重复识别时，若共同帧只是动画、实际手势帧只在一组引用中，不要伪造共同触点。可用same_return_gesture，严格按合同检查所有旧时间区间覆盖实际手势时刻、原帧并集证实同一次导航且前页返回箭头可见。结果仍为点击可见返回箭头的跨端等价动作；观察如实写原片手势。gesture_hypotheses只是待核对线索，不能取代原帧。普通按钮点击仍要求共同实际触点。
+连续返回手势跨窗被重复识别时，若共同帧只是动画、实际手势帧只在一组引用中，不要伪造共同触点。可用same_return_gesture，严格按合同核对完整原帧、时间和共享中间帧；如果后窗仅包含同一手势的后半段，使用合同允许的共享中间帧例外，不伪造触点。仅将手势映射为aiTap时要求前页返回箭头可见；原生navigateBack无需虚构箭头。若旧锚点为aiTap则结果仍为点击可见返回箭头的跨端等价动作；若旧锚点为navigateBack则结果保持navigateBack，不编造箭头。观察如实写原片手势。gesture_hypotheses只是待核对线索，不能取代原帧。普通按钮点击仍要求共同实际触点。
 
 相邻点击与滚动共享交互帧时，核对是否同一次连续拖动。空心触点从控件旁持续移动并带动内容，不等于先点击按钮；静态圆形图标也不等于加载动画。只有原帧证明未见独立点击且未见松开后重新按下，才能按合同声明same_scroll_gesture；完整保留旧帧，结果aiScroll除有content_motion_direction原图证据纠正的方向外，其它参数与旧滚动一致。真实先点击再拖动保留两项，真实点击无响应也不能删除。
 

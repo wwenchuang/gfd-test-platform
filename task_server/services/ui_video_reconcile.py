@@ -60,11 +60,13 @@ def check_coverage(original,reviewed,duration=None,resolutions=None,source=None)
     from .ui_video_analysis import _system_boundary
     from .ui_video_business_inputs import _MANUAL
     from .ui_video_coverage_resolution import positions
+    from .ui_video_terminal_cleanup import is_terminal_app_exit
     mapped=positions(resolutions,source,reviewed) if resolutions else {}
     required=[];claimed=set()
     drag_refs=_tap_scroll_refs(original)
     for index,event in enumerate(original):
-        if event['action'] not in ('aiTap','aiInput','aiScroll') or (duration is not None and _system_boundary(event,duration)):continue
+        if event['action'] not in ('aiTap','aiInput','aiScroll','navigateBack','dismissKeyboard') or (duration is not None and _system_boundary(event,duration)):continue
+        if duration is not None and is_terminal_app_exit(original,index,duration):continue
         if index in mapped:
             position=mapped[index]
             if position in claimed:continue
@@ -123,7 +125,7 @@ def check_coverage(original,reviewed,duration=None,resolutions=None,source=None)
         for position,new in enumerate(reviewed):
             if '_resolved_position' in old and position!=old['_resolved_position']:continue
             if position in seen or not set(old['frame_refs']) & set(new['frame_refs']):continue
-            if old['action']=='aiInput' and new['action']!='aiInput':continue
+            if old['action'] in {'aiInput','navigateBack','dismissKeyboard'} and new['action']!=old['action']:continue
             if old['action']=='aiScroll' and new['action']!='aiScroll':
                 from .ui_video_automatic_motion import has_positive_drag
                 if has_positive_drag(new['observation']):continue
@@ -164,7 +166,7 @@ def check_coverage(original,reviewed,duration=None,resolutions=None,source=None)
 
 def _tap_scroll_refs(events):
     """A shared tap/drag boundary requests pixels; it never removes a tap."""
-    interactions=[e for e in events if e['action'] in {'aiTap','aiInput','aiScroll'}]
+    interactions=[e for e in events if e['action'] in {'aiTap','aiInput','aiScroll','navigateBack','dismissKeyboard'}]
     refs=set()
     for first,second in zip(interactions,interactions[1:]):
         if (first['action']=='aiTap' and second['action']=='aiScroll' and
@@ -180,7 +182,7 @@ def _overlapping_input_refs(events):
     Shared pre-input context can make the tap's outcome interval empty. Only
     request pixels here; neither action nor its time range is edited by code.
     """
-    interactions=[e for e in events if e['action'] in {'aiTap','aiInput','aiScroll'}]
+    interactions=[e for e in events if e['action'] in {'aiTap','aiInput','aiScroll','navigateBack','dismissKeyboard'}]
     refs=set()
     for first,second in zip(interactions,interactions[1:]):
         if (first['action']=='aiTap' and second['action']=='aiInput' and
@@ -195,12 +197,12 @@ def _overlapping_input_refs(events):
 def _overlapping_gesture_refs(events):
     """Flag ambiguous window overlaps for pixel review, never merge by wording."""
     refs=set()
-    interactions=[e for e in events if e['action'] in {'aiTap','aiInput','aiScroll'}]
+    interactions=[e for e in events if e['action'] in {'aiTap','aiInput','aiScroll','navigateBack','dismissKeyboard'}]
     for first,second in zip(interactions,interactions[1:]):
-        if (first['action']==second['action']=='aiTap' and first['target']==second['target'] and
+        if (first['action']==second['action'] and first['action'] in {'aiTap','navigateBack'} and first['target']==second['target'] and
             first['start_ms']<=second['start_ms']<first['end_ms'] and
             set(first['frame_refs'])&set(second['frame_refs']) and
-            '返回' in first['target'] and
+            (first['action']=='navigateBack' or '返回' in first['target']) and
             all(has_return_gesture_evidence(e['observation']) for e in (first,second))):
             refs.update(first['frame_refs']);refs.update(second['frame_refs'])
     return refs
@@ -214,7 +216,7 @@ def _overlapping_tap_refs(events):
     gates still decide whether these are one touch or two real operations.
     """
     refs=set()
-    interactions=[e for e in events if e['action'] in {'aiTap','aiInput','aiScroll'}]
+    interactions=[e for e in events if e['action'] in {'aiTap','aiInput','aiScroll','navigateBack','dismissKeyboard'}]
     for first,second in zip(interactions,interactions[1:]):
         if (first['action']==second['action']=='aiTap' and first['target']==second['target'] and
             first.get('value','')==second.get('value','') and
@@ -264,7 +266,7 @@ def _gap_frames(frames,events,missing_refs):
         expanded=set(selected)
         for event in events:
             indexes=[positions[r] for r in event['frame_refs']]
-            if event.get('action') in {'aiTap','aiInput','aiScroll'} and selected.intersection(indexes):
+            if event.get('action') in {'aiTap','aiInput','aiScroll','navigateBack','dismissKeyboard'} and selected.intersection(indexes):
                 expanded.update(range(min(indexes),max(indexes)+1))
         if len(expanded)>40:raise ValueError('video_required_action_missing')
         if expanded==selected:break
@@ -280,7 +282,7 @@ def _repair_coverage(original,checked,frames,duration,root,cancelled,secrets,mis
     # with a tap. Preserve that observation outside the replacement instead
     # of pulling its entire static interval into the interaction repair.
     affected=[e for e in original+checked['events']
-              if e['action'] in {'aiTap','aiInput','aiScroll'} and set(e['frame_refs'])&missing_refs]
+              if e['action'] in {'aiTap','aiInput','aiScroll','navigateBack','dismissKeyboard'} and set(e['frame_refs'])&missing_refs]
     positions={f['frame_id']:i for i,f in enumerate(frames)}
     selected={positions[r] for r in missing_refs}
     for source in (original,checked['events']):
@@ -310,7 +312,7 @@ def _repair_coverage(original,checked,frames,duration,root,cancelled,secrets,mis
                 max(other['start_ms'],event['start_ms'])<min(other['end_ms'],event['end_ms']) and
                 all(positions[r] in selected for r in other['frame_refs'])
                 for other in counterpart)
-            if event['action'] in {'aiTap','aiInput','aiScroll'} and selected.intersection(indexes) and (related or scroll_overlap):
+            if event['action'] in {'aiTap','aiInput','aiScroll','navigateBack','dismissKeyboard'} and selected.intersection(indexes) and (related or scroll_overlap):
                 expanded.update(range(min(indexes),max(indexes)+1))
         if len(expanded)>160:raise ValueError('video_required_action_missing')
         if expanded==selected:break
@@ -331,7 +333,7 @@ def _repair_coverage(original,checked,frames,duration,root,cancelled,secrets,mis
         while start-1 in selected:start-=1
         if last-start+1>=40 or len(selected)>=160:continue
         stamp=frames[following]['timestamp_ms']
-        if any(e['action'] in {'aiTap','aiInput','aiScroll'} and
+        if any(e['action'] in {'aiTap','aiInput','aiScroll','navigateBack','dismissKeyboard'} and
                not set(e['frame_refs'])<=selected_ids and
                e['start_ms']<=stamp and e['end_ms']>=frames[last]['timestamp_ms']
                for e in original+checked['events']):continue
@@ -346,7 +348,7 @@ def _repair_coverage(original,checked,frames,duration,root,cancelled,secrets,mis
     all_ids={f['frame_id'] for f in window}
     replaced={i for i,e in enumerate(checked['events']) if set(e['frame_refs'])<=all_ids}
     preserved=[e for i,e in enumerate(checked['events']) if i not in replaced]
-    boundary={r for e in preserved if e['action'] in {'aiTap','aiInput','aiScroll'} for r in e['frame_refs']}
+    boundary={r for e in preserved if e['action'] in {'aiTap','aiInput','aiScroll','navigateBack','dismissKeyboard'} for r in e['frame_refs']}
     all_ids={f['frame_id'] for f in window}
     calls_remaining=4
     for group_index,group in enumerate(groups):
@@ -416,7 +418,7 @@ def _repair_window(original,checked,frames,duration,root,cancelled,secrets,missi
              'context_frame_ids':refs,'candidate_events':[{'frame_refs':[r for r in e['frame_refs'] if r in window_ids]}
                 for e in original if set(e['frame_refs'])<=window_ids],
              'coverage_checks':{name:[{'anchor_id':f'{name}:{i}','action':e['action'],'frame_refs':[r for r in e['frame_refs'] if r in window_ids]} for i,e in enumerate(source)
-                if e['action'] in ('aiTap','aiInput','aiScroll') and set(e['frame_refs'])<=window_ids and set(e['frame_refs'])&missing_refs]
+                if e['action'] in ('aiTap','aiInput','aiScroll','navigateBack','dismissKeyboard') and set(e['frame_refs'])<=window_ids and set(e['frame_refs'])&missing_refs]
                 for name,source in [('first_pass',original),('independent_review',checked['events'])]},
              'validation_feedback':'coverage_checks分首轮与独立复核两组，每组内部每个交互锚点都需要独立解释；同一解释可同时对应两组中的同一次操作，不要因此重复生成；同来源多个锚点若由一次真实交互重复识别而来，按coverage_resolutions合并并完整列出重复锚点。首轮可能把等待当重复点击，若本段只有自动变化，用aiAssert及完整原帧说明静止事实；不要为一次真实交互额外造aiAssert凑数量。完整性复核发现本段遗漏或合并操作。逐帧区分每一次返回、同页滚动和自动转场；每一次导航独立记录，不将两次返回合成一次。锚点只指示证据位置，不代表预定动作。'}
     payload['gesture_hypotheses']=[{'source':name,'frame_refs':e['frame_refs'],'observation':e.get('observation','')}
@@ -432,7 +434,8 @@ def _repair_window(original,checked,frames,duration,root,cancelled,secrets,missi
             'evidence':{'before_frame':'原帧','interaction_frame':'实际交互原帧；普通映射须所有锚点共同包含，same_return_gesture例外见规则','after_frame':'结果原帧','examined_frame_refs':['包含各旧锚点全部原帧，最多8张'],
                 'before_state':'操作前页面','interaction':'明确操作及旧动作误判原因','after_state':'操作后页面','why_not_separate_actions':'为何仅同一次操作而非独立重试或多次导航'}},
         'rules':'仅为同一来源内部重复或误判导致的多个旧锚点提交映射；不同来源各一条的正常对应不用声明。结果允许aiTap；连续同方向同参数滚动可用same_interaction，所有旧滚动value必须与结果完全相同，禁止反向/再次手势合并；2至8个锚点映射一个真实事件，共同交互帧必须属于每个锚点和结果事件，结果事件含前/交互/后帧；不能跨其他独立操作、不能合并输入、不能声明不确定。scroll改tap须明确未见独立滚动及实际点击。多个来源中对应同次交互的锚点一并列入。events每项1至8帧，自动加载选代表帧，不罗列所有帧。无映射需求时coverage_resolutions为空数组。'}
-    payload['coverage_resolution_contract']['rules']+=' 唯一例外same_return_gesture：仅相同可见返回箭头目标的aiTap重复假设，完整原帧证实同一次连续返回手势；实际interaction_frame须属于至少一条旧锚点及结果，且不晚于任何旧锚点结束。后窗只含同次手势后半段时不伪造新的触点：所有锚点时间须与所引原帧一致，并在实际触点之后、结果之前共享至少一张中间原帧，该帧也须保留在结果事件中。不得用共享动画帧冒充实际手势帧。before_state明确返回箭头/按钮可见，interaction明确同一次返回手势，why_not_separate_actions明确未见第二次按下/手势/导航。无独立操作夹入，各旧帧完整审查，不合并不同目标、再次返回或输入。'
+    payload['coverage_resolution_contract']['rules']+=' 唯一例外same_return_gesture：适用于相同可见返回箭头目标的aiTap重复假设或相同原生navigateBack重复假设，完整原帧证实同一次连续返回手势；实际interaction_frame须属于至少一条旧锚点及结果，且不晚于任何旧锚点结束。后窗只含同次手势后半段时不伪造新的触点：所有锚点时间须与所引原帧一致，并在实际触点之后、结果之前共享至少一张中间原帧，该帧也须保留在结果事件中。不得用共享动画帧冒充实际手势帧。aiTap映射的before_state明确返回箭头/按钮可见；原生navigateBack不需要虚构箭头。interaction明确同一次返回手势，why_not_separate_actions明确未见第二次按下/手势/导航。无独立操作夹入，各旧帧完整审查，不合并不同目标、再次返回或输入。'
+    payload['coverage_resolution_contract']['rules']+=' 对原生navigateBack的重复锚点，若完整原帧证实同一次连续返回手势，可以输出同目标的navigateBack并使用same_return_gesture；无需虚构可见返回箭头，仍需审查全部旧帧、确认真实触点和后态且排除第二次返回。不得混合点击和原生返回，证据不足保留疑问。'
     payload['coverage_resolution_contract']['rules']+=' interaction_frame不必是首次按下帧：原图若证明共同帧仍显示同一次持续触点，可选该共同按压帧，并使用更晚的已提供原帧核对after_state。页面转场本身不证明触点存在；共同帧没有真实触点时不得用它凑映射，证据不足保留疑问。'
     payload['validation_feedback']+=' 相邻旧点击和滚动也可能实际是两次滚动，不能强行合并。旧点击若为第一段连续拖动，可一对一改为aiScroll，不提交映射，但结果必须引用该旧点击的全部原帧，observation明确未见独立点击、触点连续移动、内容随之位移；保留之后新的独立滚动。真实点击无响应仍须保留。只有多个旧锚点确属一次手势才使用same_scroll_gesture；普通一对一改型coverage_resolutions为空。'
     payload['coverage_resolution_contract']['rules']+=' same_scroll_gesture仅用于相邻点击和滚动原来属于一次连续拖动：完整引用两个锚点全部原帧，共同交互帧真实存在，interaction明确触点持续移动且内容随之位移；why_not_separate_actions明确未见独立点击、未见松开后重新按下。结果只为aiScroll，除由content_motion_direction原图证据纠正的方向外，既有滚动参数必须保持一致；所有旧原帧须在examined_frame_refs中完整审查，结果frame_refs只保留本次交互的前/中/后证据，不强塞下一操作的起始上下文。若确实先点击再滚动，保留两项，不提交映射；真实无响应点击也必须保留。空心圆跨控件移动是触点，不因起点在按钮旁就当点击或加载图标。证据不清保留疑问。'
