@@ -18,6 +18,7 @@ from pathlib import Path
 MAX_BYTES = 200 * 1024 * 1024
 MAX_DURATION_MS = 600000
 MAX_FRAMES = 300
+MAX_EXTRACTED_FRAME_BYTES = 32 * 1024 * 1024
 _ADMISSION = threading.Lock()
 @contextmanager
 def _admit():
@@ -80,6 +81,7 @@ class VideoStore:
             any(not isinstance(i,str) or not _ID.fullmatch(i) for i in identifiers) or
             len(set(identifiers))!=len(identifiers)):
             raise ValueError('video_delete_invalid')
+        remove_media=[]
         with self.db() as db:
             db.execute('BEGIN IMMEDIATE')
             docs=[]
@@ -90,8 +92,17 @@ class VideoStore:
                 if doc['status'] not in TERMINAL:raise ValueError('video_delete_active')
                 docs.append(doc)
             for doc in docs:
-                doc.update(history_removed=True, retained=True)
-                self._save(db,doc)
+                # A cancelled worker may still be draining a model/decode call.
+                # Keep its files until a separate lifecycle can confirm exit.
+                if doc.get('draft_id') or doc.get('retained') or doc['status']=='cancelled':
+                    doc.update(history_removed=True, retained=True)
+                    self._save(db,doc)
+                else:
+                    db.execute('DELETE FROM sources WHERE id=?',(doc['source_id'],))
+                    remove_media.append(doc['source_id'])
+        # Missing/undeletable orphan files remain eligible for existing cleanup.
+        for identifier in remove_media:
+            shutil.rmtree(self.root/identifier,ignore_errors=True)
 
     def upload(self, profile, app, filename, stream, length, *, max_bytes=MAX_BYTES, actor=None, goal=''):
         if type(length) is not int or not 1 <= length <= max_bytes: raise ValueError('video_size')
@@ -140,7 +151,8 @@ class VideoStore:
             source_limit=100
         if not 1<=source_limit<=1000:source_limit=100
         # Reserve the newly admitted decoder as well as existing active work.
-        if active>=4 or (new_source and len(docs)>=source_limit) or self._disk_bytes()+additional_bytes+128*1024**2*(active+1)>2*1024**3:
+        visible=sum(not d.get('history_removed') for d in docs)
+        if active>=4 or (new_source and visible>=source_limit) or self._disk_bytes()+additional_bytes+128*1024**2*(active+1)>2*1024**3:
             raise ValueError('video_capacity')
 
     def retry(self, identifier, owner, app):
@@ -380,6 +392,11 @@ def _select_micro_motion(groups, times, base, limit, cancelled=lambda:False, cha
     return result,count
 
 
+def _check_extracted_frame_bytes(files):
+    if sum(path.stat().st_size for path in files)>MAX_EXTRACTED_FRAME_BYTES:
+        raise ValueError('video_frames_invalid')
+
+
 def decode_video(video, output, cancelled):
     if cancelled(): raise ValueError('video_cancelled')
     probe, _ = _process([_tool('ffprobe'), '-v', 'error', '-protocol_whitelist', 'file,pipe', '-f', 'mov', '-show_format', '-show_streams', '-of', 'json', str(video)], cancelled, 20)
@@ -489,7 +506,7 @@ def decode_video(video, output, cancelled):
     times = [_timestamp_ms(t) for t in re.findall(rb'\bn:\s*\d+.*?pts_time:([\d.e+\-]+)', log)]
     files = sorted(output.glob('frame-*.jpg'))
     if not files or len(times) != len(files) or times!=expected_times: raise ValueError('video_frames_invalid')
-    if sum(path.stat().st_size for path in files)>16*1024**2:raise ValueError('video_frames_invalid')
+    _check_extracted_frame_bytes(files)
     # Always decode a last-frame anchor to expose missing endings rather than
     # representing an earlier frame as the end of the recording.
     tail = output/'frame-end.jpg'
@@ -498,6 +515,7 @@ def decode_video(video, output, cancelled):
         files.append(tail);times.append(duration-80)
     elif tail.exists():tail.unlink()
     if len(files)>MAX_FRAMES: raise ValueError('video_split_required')
+    _check_extracted_frame_bytes(files)
     from PIL import Image, ImageChops, ImageStat
     signatures = []
     black = True
@@ -564,7 +582,8 @@ def import_video_draft(actor, identifier, app):
     proposal,snapshot=draft_proposal(document)
     from .ui_video_execution_contract import compiler_options
     compiled=build_draft_yaml(proposal,app,**compiler_options(snapshot,app,proposal['steps']))
-    store.transition(identifier,{'ready'},'ready',retained=True)
+    if not store.transition(identifier,{'ready'},'ready',retained=True):
+        raise ValueError('video_not_ready')
     draft=_store().create(profile,app,'来源：上传录屏，观察与推断未经手机验证。',recording_snapshot=snapshot,
                            recording_content={**proposal,'yaml_content':compiled['yaml_content'],'ready':False})
     # create is deterministic; concurrent imports return existing edited content.

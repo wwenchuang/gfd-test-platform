@@ -277,9 +277,9 @@ function mountUiVideoSource(node,{current,openDraft,initialSource=null}){
   }
   async function removeVideos(ids){
     if(!valid()||busy||!ids.length||!hasPermission('ui.edit'))return;
-    if(!window.confirm(`确定删除 ${ids.length} 条视频生成记录？将从列表中移除，保留原视频、已生成草稿及关联证据；不会释放存储空间。生成中的任务不能删除。`))return;
+    if(!window.confirm(`确定删除 ${ids.length} 条视频生成记录？没有关联草稿、也没有保留证据的记录及原视频将被删除；关联草稿、保留证据或已取消的记录从列表移除，保留原视频及草稿。生成中的任务不能删除。`))return;
     busy=true;q('[data-video-app]').disabled=true;listSequence++;renderList();
-    try{const data=await request('/ui-video-sources/history-remove',{method:'POST',body:{app_id:app,source_ids:ids}});if(!data)return;ids.forEach(id=>selectedVideos.delete(id));if(ids.includes(source?.source_id))source=null;rows=rows.filter(row=>!ids.includes(row.source_id));renderList();notice(`已删除 ${data.removed} 条记录；原视频和草稿已保留。`);await list();}
+    try{const data=await request('/ui-video-sources/history-remove',{method:'POST',body:{app_id:app,source_ids:ids}});if(!data)return;ids.forEach(id=>selectedVideos.delete(id));if(ids.includes(source?.source_id))source=null;rows=rows.filter(row=>!ids.includes(row.source_id));renderList();notice(`已删除 ${data.removed} 条记录；关联草稿及其证据已保留。`);await list();}
     catch(e){notice('删除未完成：'+e.message);}
     finally{busy=false;if(valid()){q('[data-video-app]').disabled=false;renderList();}}
   }

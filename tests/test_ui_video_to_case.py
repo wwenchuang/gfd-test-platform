@@ -68,6 +68,25 @@ def test_video_import_is_private_idempotent_and_preserves_edits(env,tmp_path,mon
     assert len(store.list(A['user_id'],APP))==1
 
 
+def test_import_does_not_create_draft_if_source_deleted_before_retention(env,tmp_path,monkeypatch):
+    from task_server.services import ui_video_source_service as video, ui_case_draft_service as drafts
+    store=video.VideoStore(tmp_path/'videos');monkeypatch.setattr(video,'service_store',lambda:store)
+    doc=store.upload(A,APP,'clip.mp4',io.BytesIO(b'mp4'),3,actor=A)
+    frame=[{'frame_id':'frame-001','timestamp_ms':0},{'frame_id':'frame-end','timestamp_ms':1900}]
+    event={'action':'aiTap','target':'首页我的入口','value':'','start_ms':0,'end_ms':1900,'frame_refs':['frame-001','frame-end'],'observation':'个人页面出现','evidence_kind':'inferred','uncertainties':[]}
+    store.transition(doc['source_id'],{'queued'},'ready',media={'duration_ms':2000,'frames':frame},events=[event],uncertainties=[])
+    original=store.transition
+    def delete_before_retention(identifier,allowed,status,**fields):
+        if fields.get('retained'):
+            store.remove_history([identifier],A['user_id'],APP)
+        return original(identifier,allowed,status,**fields)
+    monkeypatch.setattr(store,'transition',delete_before_retention)
+    with actor_context(A),pytest.raises((KeyError,ValueError)):
+        video.import_video_draft(A,doc['source_id'],APP)
+    with actor_context(A):
+        assert drafts.list_drafts(A,APP)['items']==[]
+
+
 def test_visual_batches_keep_entire_timeline_and_overlap(monkeypatch,tmp_path):
     from task_server.services import ai_skill_service as ai
     from task_server.services.ui_video_analysis import analyze_frames

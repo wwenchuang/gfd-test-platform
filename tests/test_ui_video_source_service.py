@@ -268,3 +268,44 @@ def test_remove_video_history_is_atomic_owned_and_preserves_evidence(tmp_path):
     assert store.list('alice', 'app.a') == []
     assert store.get(a['source_id'], 'alice', 'app.a')['draft_id'] == 'existing-draft'
     assert (tmp_path / a['source_id'] / 'source.mp4').read_bytes() == b'a'
+    with pytest.raises(KeyError):
+        store.get(b['source_id'], 'alice', 'app.a')
+    assert not (tmp_path / b['source_id']).exists()
+
+
+def test_remove_cancelled_history_keeps_files_while_worker_drains(tmp_path):
+    from task_server.services.ui_video_source_service import VideoStore
+    store=VideoStore(tmp_path)
+    doc=store.upload({'user_id':'alice'}, 'app.a', 'c.mp4', io.BytesIO(b'c'), 1)
+    store.transition(doc['source_id'], {'queued'}, 'decoding')
+    store.cancel(doc['source_id'])
+    store.remove_history([doc['source_id']], 'alice', 'app.a')
+    assert store.list('alice','app.a') == []
+    assert store.get(doc['source_id'],'alice','app.a')['retained'] is True
+    assert (tmp_path/doc['source_id']/'source.mp4').read_bytes()==b'c'
+
+
+def test_removed_cancelled_history_does_not_consume_visible_source_limit(tmp_path,monkeypatch):
+    from task_server.services.ui_video_source_service import VideoStore
+    monkeypatch.setenv('TASK_UI_VIDEO_MAX_SOURCES','1')
+    store=VideoStore(tmp_path)
+    doc=store.upload({'user_id':'alice'},'app.a','old.mp4',io.BytesIO(b'1'),1)
+    store.cancel(doc['source_id'])
+    store.remove_history([doc['source_id']],'alice','app.a')
+    new=store.upload({'user_id':'alice'},'app.a','new.mp4',io.BytesIO(b'2'),1)
+    assert new['source_id'] != doc['source_id']
+    assert (tmp_path/doc['source_id']/'source.mp4').read_bytes()==b'1'
+
+
+def test_extracted_frame_budget_accepts_dense_video_but_remains_bounded(tmp_path):
+    from task_server.services.ui_video_source_service import _check_extracted_frame_bytes
+    files=[]
+    for name,size in [('one.jpg',9*1024**2),('two.jpg',9*1024**2)]:
+        path=tmp_path/name
+        with path.open('wb') as output:output.truncate(size)
+        files.append(path)
+    _check_extracted_frame_bytes(files)
+    with (tmp_path/'three.jpg').open('wb') as output:output.truncate(15*1024**2)
+    import pytest
+    with pytest.raises(ValueError,match='video_frames_invalid'):
+        _check_extracted_frame_bytes(files+[tmp_path/'three.jpg'])
