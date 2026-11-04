@@ -454,6 +454,18 @@ def _result_review_needs(proposal,snapshot,plan,candidates,reviewed_configuratio
     return missing,indexes
 
 
+def _exit_prompt_review(events):
+    """An exit reminder needs review of its trigger and distinct return timing."""
+    pattern=r'(?:再(?:试|按|点)|再次).{0,16}(?:退出|离开|关闭应用)'
+    for event in events:
+        outcome=event.get('outcome',{})
+        values=(event.get('target',''),event.get('observation',''),
+                outcome.get('observation','') if isinstance(outcome,dict) else '')
+        if any(isinstance(value,str) and re.search(pattern,value) for value in values):
+            return ['录屏出现再次退出提示，请核对是否遗漏触发提示的返回操作及其时机。']
+    return []
+
+
 def consolidate_observed_frames(document, root, cancelled, observed, first_pass, known_secrets, progress=None, *, skill_runner=None, bounded_business_planning=False, planning_preflight=None):
     """Compile observed evidence through the shared planning and draft gates."""
     from . import ai_skill_service as ai
@@ -575,7 +587,7 @@ def consolidate_observed_frames(document, root, cancelled, observed, first_pass,
             # analysis path, not just the optional trajectory path. The model
             # cannot erase them by omitting them from its planning response.
             from .ui_video_business_inputs import _MANUAL
-            blockers=list(observed['uncertainties'])
+            blockers=list(observed['uncertainties'])+_exit_prompt_review(candidates+first_pass)
             for event in candidates:
                 # The manual-input placeholder can be resolved by later input
                 # recovery; keep it event-local instead of making it permanent.

@@ -73,6 +73,36 @@ def test_controlled_runner_retains_existing_consolidation_timeout(consolidation)
     assert len(result['events'])==2
 
 
+def test_unexplained_exit_prompt_survives_planner_omission(monkeypatch,consolidation):
+    from task_server.services import ui_video_analysis as va,ai_skill_service as ai
+    document,root,observed=consolidation
+    observed['events'].append({'action':'aiAssert','target':'首页退出提示','value':'','frame_refs':['frame-008'],
+        'start_ms':800,'end_ms':800,'evidence_kind':'inferred',
+        'observation':'页面显示“再试一次退出智小白3DAPP”的提示','uncertainties':[]})
+    def model(skill,payload,**kwargs):
+        return {'title':'填写信息','events':[{'candidate_index':i,'action':'aiInput','target':e['target'],
+                'value':'','observation':'输入框显示','uncertainties':[]} for i,e in enumerate(observed['events'][:2])],
+                'uncertainties':[],'multiple_scenarios':False}
+    monkeypatch.setattr(ai,'run_ai_skill',model)
+    result=va.consolidate_observed_frames(document,root,lambda:False,observed,copy.deepcopy(observed['events']),[])
+    assert any('遗漏触发提示的返回操作' in q for q in result['uncertainties'])
+
+
+def test_first_pass_exit_prompt_is_not_lost_during_reconciliation(monkeypatch,consolidation):
+    from task_server.services import ui_video_analysis as va,ai_skill_service as ai
+    document,root,observed=consolidation
+    first_pass=copy.deepcopy(observed['events'])+[{'action':'aiAssert','target':'首页退出提示','value':'','frame_refs':['frame-008'],
+        'start_ms':800,'end_ms':800,'evidence_kind':'inferred',
+        'observation':'页面显示“再试一次退出智小白3DAPP”的提示','uncertainties':[]}]
+    def model(skill,payload,**kwargs):
+        return {'title':'填写信息','events':[{'candidate_index':i,'action':'aiInput','target':e['target'],
+                'value':'','observation':'输入框显示','uncertainties':[]} for i,e in enumerate(observed['events'])],
+                'uncertainties':[],'multiple_scenarios':False}
+    monkeypatch.setattr(ai,'run_ai_skill',model)
+    result=va.consolidate_observed_frames(document,root,lambda:False,observed,first_pass,[])
+    assert any('遗漏触发提示的返回操作' in q for q in result['uncertainties'])
+
+
 @pytest.mark.parametrize('top_count',[0,30])
 def test_trajectory_independent_blockers_survive_planner_omission(monkeypatch,consolidation,top_count):
     from task_server.services import ui_video_analysis as va,ai_skill_service as ai
