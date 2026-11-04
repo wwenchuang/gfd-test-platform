@@ -8,6 +8,8 @@
 
 aiTap.target 应明确控件及其所在页面/区域；aiInput.target 是输入框描述，value 为输入文本。aiWaitFor.target 是具体可观察状态；aiAssert.target 是可观察的检查条件。最终步骤必须为明确的 aiAssert，但来源未给出预期时不得虚构，改在 questions 请求补充。aiScroll.target 为滚动区域，value 为参数对象，只支持 direction=down/up/right/left、正数 distance、scrollType=singleAction/scrollToBottom/scrollToTop/scrollToRight/scrollToLeft。非 singleAction 不能带 direction 或 distance。其他动作 value 为空字符串。不要生成 timeout 等额外参数，短等待由平台编译器添加。
 
+aiScroll 的 direction 表示浏览方向，不是手指的移动方向：内容向上移动、查看下方内容时 direction=down；内容向下移动、查看上方内容时 direction=up。来源未明确滚动距离时不要填写 distance，不得编造默认值。若滚动方向不能从描述确定，value 留空对象并在 questions 中请求确认，不猜测。
+
 字段必须能直接编译执行：
 - aiTap、aiInput、aiScroll、dismissKeyboard、navigateBack 的 expected 必须填写来源明确给出的操作结果，可以使用紧随操作描述的检查句；不要把已给出的结果遗漏后再提问。
 - aiWaitFor.target 和 aiAssert.target 必须为完整的“检查对象 + 状态”，例如“我的页面显示打印记录入口”，不能只写“打印记录入口”或“可见”。这两类步骤的 expected 留空；检查内容已经完整放在 target 中，不拆成名词和谓语。

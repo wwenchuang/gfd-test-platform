@@ -436,6 +436,15 @@ def test_native_scroll_object_rejects_integer_too_large_for_finite_distance():
         service._model_proposal(result, APP)
 
 
+def test_normalizer_prompt_describes_scroll_direction_and_does_not_invent_distance():
+    from task_server.services.ai_skill_service import render_ai_skill_prompt
+    rendered = render_ai_skill_prompt('ui_step_normalizer', {'app_id': APP, 'source_text': '向上滑动查看下方内容', 'baseline_examples': []})
+    assert '内容向上移动、查看下方内容时 direction=down' in rendered
+    assert '内容向下移动、查看上方内容时 direction=up' in rendered
+    assert '来源未明确滚动距离时不要填写 distance' in rendered
+    assert '若滚动方向不能从描述确定，value 留空对象并在 questions 中请求确认' in rendered
+
+
 def test_worker_generates_reviewable_draft_when_parameterless_values_are_missing(env, monkeypatch):
     from task_server.services import ai_skill_service
     result = proposal()
