@@ -112,8 +112,9 @@ def test_wait_runtime_objects_and_unsupported_actions_refuse_dispatch(tmp_path,g
     if guard=='selection':plan['events'][0]['selection']={'kind':'runtime-object'}
     if guard=='unsupported':plan['events'][0]['action']='aiInput'
     def forbidden(*a,**kw):pytest.fail('protected outcome dispatch')
-    with pytest.raises(ValueError,match='video_expected_missing'):
+    with pytest.raises(ValueError,match='video_expected_missing') as caught:
         repair_outcomes(plan,candidates,frames,800,tmp_path,[0],lambda:False,[],skill_runner=forbidden)
+    assert caught.value.outcome_failure_evidence=={'candidate_index':0,'reason':guard}
 
 
 def test_early_optional_wait_outcome_gets_one_original_frame_repair(tmp_path):

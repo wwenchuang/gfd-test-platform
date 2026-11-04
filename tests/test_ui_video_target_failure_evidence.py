@@ -41,3 +41,19 @@ def test_worker_private_evidence_is_content_whitelist_and_not_logged(caplog):
     assert worker._private_target_failure(error,'video_model_invalid',doc)==error.target_failure_evidence
     worker._log_failure('uvs_'+'a'*32,'analysis',error,'video_model_invalid')
     assert 'PRIVATE-' not in caplog.text
+
+
+@pytest.mark.parametrize('reason',['template','selection','unsupported'])
+def test_worker_keeps_only_bounded_outcome_gate_classification(reason):
+    error=ValueError('video_expected_missing')
+    error.outcome_failure_evidence={'candidate_index':7,'reason':reason}
+    assert worker._private_target_failure(error,'video_expected_missing',{})==error.outcome_failure_evidence
+    error.outcome_failure_evidence['sensitive']='not allowed'
+    assert worker._private_target_failure(error,'video_expected_missing',{})=={}
+
+
+@pytest.mark.parametrize('index,reason',[(-1,'selection'),(120,'selection'),(True,'selection'),(0,[]),(0,'other')])
+def test_worker_rejects_invalid_outcome_gate_classification(index,reason):
+    error=ValueError('video_expected_missing')
+    error.outcome_failure_evidence={'candidate_index':index,'reason':reason}
+    assert worker._private_target_failure(error,'video_expected_missing',{})=={}

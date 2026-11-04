@@ -14,8 +14,12 @@ def repair_outcomes(plan,candidates,frames,duration,root,indexes,cancelled,secre
     for index in indexes:
         event=planned[index];candidate=candidates[index]
         # Runtime-object outcomes retain their dedicated selection/reuse review.
-        if event.get('selection') or '{{' in event['target'] or event['action'] not in {'aiTap','aiScroll','aiWaitFor'}:
-            raise ValueError('video_expected_missing')
+        reason=('selection' if event.get('selection') else 'template' if '{{' in event['target'] else
+                'unsupported' if event['action'] not in {'aiTap','aiScroll','aiWaitFor'} else '')
+        if reason:
+            error=ValueError('video_expected_missing')
+            error.outcome_failure_evidence={'candidate_index':index,'reason':reason}
+            raise error
         boundary=next((e['start_ms'] for e in candidates[index+1:] if e['action'] in {'aiTap','aiScroll','aiInput','dismissKeyboard','navigateBack'}),duration)
         system_start=min((e['start_ms'] for e in candidates[index+1:] if _system_boundary(e,duration)),default=duration+1)
         results=[f for f in frames if candidate['end_ms']<=f['timestamp_ms']<=boundary and f['timestamp_ms']<system_start]

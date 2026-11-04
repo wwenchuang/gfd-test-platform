@@ -30,6 +30,13 @@ def _failure_code(error):
 
 def _private_target_failure(error,code,document):
     """Bounded evidence saved under the existing owner/app source permissions."""
+    if code=='video_expected_missing':
+        evidence=getattr(error,'outcome_failure_evidence',None)
+        if (type(evidence) is dict and set(evidence)=={'candidate_index','reason'} and
+            type(evidence['candidate_index']) is int and 0<=evidence['candidate_index']<120 and
+            type(evidence['reason']) is str and evidence['reason'] in {'selection','template','unsupported'}):
+            return dict(evidence)
+        return {}
     pair=getattr(error,'target_failure_evidence',None)
     if code!='video_model_invalid' or type(pair) is not dict or set(pair)!={'frame_id','observed_target','probe_target'}:return {}
     if type(pair['frame_id']) is not str or pair['frame_id'] not in {f.get('frame_id') for f in document.get('media',{}).get('frames',[])}:return {}
@@ -285,6 +292,7 @@ def _analyze_runtime_source(store,identifier):
                 store.transition(identifier,{'queued','decoding','analyzing'},
                     'cancelled' if code=='video_cancelled' else 'failed',expected_version=version,
                     expected_owner=owner,expected_app=app,error_code=code,
+                    failure_diagnostic=_private_target_failure(error,code,document),
                     error='账号或应用权限已变化，分析停止' if code=='video_access_changed' else
                     '分析未能返回可靠步骤，请重试或缩短片段；原视频保留')
             except (KeyError,ValueError):

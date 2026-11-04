@@ -367,6 +367,26 @@ def test_tail_failure_retains_augmented_media_and_current_frame_directory(worker
     assert (resolve_frame_directory(store.root,latest)/'frame-004.jpg').read_bytes()==b'original'
 
 
+@pytest.mark.parametrize('drift',[None,'version','owner','cancel'])
+def test_runtime_outcome_failure_evidence_respects_current_binding(worker_env,monkeypatch,drift):
+    worker,store,doc,_=worker_env;identifier=doc['source_id']
+    def run(document,root,path,check,publish,**kw):
+        fields={'version':{'analysis_version':2},'owner':{'owner_user_id':'foreign'},'cancel':{}}
+        if drift:
+            store.transition(identifier,{'analyzing'},'cancelled' if drift=='cancel' else 'analyzing',**fields[drift])
+        error=ValueError('video_expected_missing')
+        error.outcome_failure_evidence={'candidate_index':7,'reason':'selection'}
+        raise error
+    monkeypatch.setattr(runtime(),'run_runtime',run)
+    worker.analyze_video_source(store,identifier)
+    with store.db() as db:latest=json.loads(db.execute('SELECT document FROM sources WHERE id=?',(identifier,)).fetchone()[0])
+    if drift is None:
+        assert latest['status']=='failed'
+        assert latest['failure_diagnostic']=={'candidate_index':7,'reason':'selection'}
+    else:
+        assert not latest.get('failure_diagnostic')
+
+
 def test_failed_progress_cas_stops_before_more_work(worker_env,monkeypatch):
     worker,store,doc,_=worker_env;m=runtime();actual=store.transition;continued=[]
     def transition(*args,**kw):
