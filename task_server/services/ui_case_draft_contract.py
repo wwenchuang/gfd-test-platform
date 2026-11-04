@@ -133,8 +133,13 @@ def normalize_steps(payload, app_id):
             if not isinstance(value, dict) or set(value) - {'direction', 'distance', 'scrollType'}:
                 raise ValueError('aiScroll value 参数不支持')
             distance = value.get('distance')
-            if isinstance(distance, (int, float)) and not math.isfinite(distance):
-                raise ValueError('aiScroll distance 必须为有限正数')
+            if isinstance(distance, (int, float)):
+                try:
+                    finite = math.isfinite(distance)
+                except OverflowError:
+                    finite = False
+                if not finite:
+                    raise ValueError('aiScroll distance 必须为有限正数')
             issues = validate_midscene_action_parameters(action, {'aiScroll': target, **value})
             if issues:
                 raise ValueError('; '.join(issues))

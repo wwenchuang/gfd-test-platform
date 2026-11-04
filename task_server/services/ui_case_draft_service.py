@@ -1,5 +1,6 @@
 """Private human-reviewed drafts; model generation never dispatches a Runner job."""
 import copy
+import json
 import re
 import threading
 
@@ -147,6 +148,26 @@ def _model_proposal(result, app_id):
             step['value'] = ''
         if not isinstance(step, dict) or set(step) != fields or step['review_state'] != 'needs_review' or step['source_ref'] != 'text':
             raise ValueError('draft_model_provenance_invalid')
+        # Qwen may encode the scroll object as a JSON string. Decode only this
+        # unambiguous representation; the normal contract still validates every
+        # parameter and the resulting step remains pending human review.
+        if step['action'] == 'aiScroll' and isinstance(step['value'], str) and step['value']:
+            def unique_object(pairs):
+                out = {}
+                for key, value in pairs:
+                    if key in out:
+                        raise ValueError('draft_scroll_duplicate_key')
+                    out[key] = value
+                return out
+            def reject_constant(_):
+                raise ValueError('draft_scroll_nonfinite')
+            if len(step['value']) > 4000:
+                raise ValueError('draft_scroll_value_too_long')
+            try:
+                step['value'] = json.loads(step['value'], object_pairs_hook=unique_object,
+                                           parse_constant=reject_constant)
+            except (ValueError, RecursionError) as error:
+                raise ValueError('draft_scroll_value_invalid') from error
     return normalize_steps(result, app_id)
 
 
