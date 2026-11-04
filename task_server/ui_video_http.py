@@ -13,6 +13,8 @@ def _error(handler,error):
     messages={'video_size':'视频必须为1字节至200MB；请压缩或分段上传','video_capacity':'视频队列或私有存储已满，请稍后重试或联系管理员归档',
               'video_format':'请选择 MP4/MOV 文件','video_not_ready':'视频尚未形成可靠候选步骤，请先核对状态',
               'video_retry_state':'当前状态不能重试；已有草稿请继续编辑，勿覆盖修改',
+              'video_delete_active':'生成中的任务不能删除，请等待完成或先取消',
+              'video_delete_invalid':'请选择 1 至 30 条有效记录',
               'video_access_denied':'当前账号无权访问该应用或视频','video_not_found':'未找到当前应用下属于你的录屏',
               'video_truncated_upload':'上传中断，请重新选择文件上传'}
     handler._json({'ok':False,'code':code,'error':messages.get(code,'视频请求未完成，请检查文件与状态后重试')},status)
@@ -54,6 +56,19 @@ def register_routes(route_get,route_post_prefix_before_body,route_get_regex,rout
         try:
             app=qs.get('app_id','');profile=require_ui_actor(None,permission='ui.view',app_id=app);_application(app)
             handler._json({'ok':True,'sources':[public_source(d) for d in service_store().list(profile['user_id'],app)]})
+        except Exception as error:_error(handler,error)
+
+    @route_post_regex(r'^/api/ui-video-sources/history-remove$')
+    def remove_history(handler,qs,match):
+        from .services.ui_video_source_service import service_store
+        from .services.ui_execution_contract import require_ui_actor
+        from .services.ui_case_draft_service import _application
+        try:
+            body=handler._body()
+            if not isinstance(body,dict) or set(body)!={'app_id','source_ids'}:raise ValueError('video_delete_invalid')
+            app=body['app_id'];profile=require_ui_actor(None,permission='ui.edit',app_id=app);_application(app)
+            service_store().remove_history(body['source_ids'],profile['user_id'],app)
+            handler._json({'ok':True,'removed':len(body['source_ids'])})
         except Exception as error:_error(handler,error)
 
     @route_get_regex(r'^/api/ui-video-sources/(uvs_[0-9a-f]{32})(?:/(video|frames/[^/]+))?$')

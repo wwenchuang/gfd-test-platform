@@ -47,3 +47,13 @@
   #app.ui-simple-active:has(.ui-video-source,.ui-draft-video-review) .workflow-nav>:not([data-workflow]){display:none}
   #app.ui-simple-active:has(.ui-video-source,.ui-draft-video-review) .workflow-nav>[data-workflow]{min-width:0;min-height:38px;padding:7px 5px}
 }
+
+/* Video history: keep selection, status and actions easy to scan. */
+.ui-video-selection{display:flex;align-items:center;gap:14px;flex-wrap:wrap;padding:12px 14px;border:1px solid #344b54;border-radius:8px;background:#1c3037;color:#b9cbd1;font-size:13px}
+.ui-video-selection label,.ui-video-select-label{display:flex;align-items:center;gap:7px;margin:0;cursor:pointer}
+.ui-video-selection input,.ui-video-select-label input{width:16px;height:16px;accent-color:#83ebcb}
+.ui-video-selection [data-video-delete-selected]{margin-left:auto}
+.ui-video-task-row{grid-template-columns:24px minmax(0,1fr) 100px 155px auto auto;padding:16px 12px;border-radius:8px}
+.ui-video-task-row:hover{background:#1c3037}
+.ui-video-task-row [data-video-delete]{color:#e6b1ae}
+@media(max-width:640px){.ui-video-task-row{grid-template-columns:24px minmax(0,1fr) auto;gap:8px}.ui-video-task-row>div{grid-column:2/-1;grid-row:1}.ui-video-task-row>span{grid-column:2;grid-row:2}.ui-video-task-row time{grid-column:2;grid-row:3}.ui-video-task-row>[data-video-open]{grid-column:3;grid-row:2}.ui-video-task-row>[data-video-delete]{grid-column:3;grid-row:3}.ui-video-selection [data-video-delete-selected]{margin-left:0}}

@@ -319,7 +319,7 @@ class MainAccess:
     def _draft_permission(method, path):
         if method in {'GET', 'HEAD'} and re.fullmatch(r'/api/ui-video-sources(?:/uvs_[0-9a-f]{32}(?:/(?:video|frames/[^/]+))?)?', path):
             return 'ui.view'
-        if method == 'POST' and (path == '/api/ui-video-sources/upload' or re.fullmatch(r'/api/ui-video-sources/uvs_[0-9a-f]{32}/(?:cancel|retry|import)', path)):
+        if method == 'POST' and (path in {'/api/ui-video-sources/upload','/api/ui-video-sources/history-remove'} or re.fullmatch(r'/api/ui-video-sources/uvs_[0-9a-f]{32}/(?:cancel|retry|import)', path)):
             return 'ui.edit'
         if method in {'GET', 'HEAD'} and re.fullmatch(r'/api/ui-case-drafts(?:/[^/]+)?', path):
             return 'ui.view'

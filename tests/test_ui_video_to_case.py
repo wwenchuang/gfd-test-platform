@@ -90,6 +90,7 @@ def test_video_permissions_do_not_require_global_configuration():
     for method,path in [('POST','/api/ui-video-sources/upload'),('GET','/api/ui-video-sources'),('GET',f'/api/ui-video-sources/{identifier}/video'),('GET',f'/api/ui-video-sources/{identifier}/frames/frame-001'),('POST',f'/api/ui-video-sources/{identifier}/import')]:access.check(method,path)
     viewer=MainAccess({'permissions':['ui.view'],'scope':{'ui_apps':[APP]}},[])
     with pytest.raises(AccessDenied):viewer.check('POST','/api/ui-video-sources/upload')
+    with pytest.raises(AccessDenied):viewer.check('POST','/api/ui-video-sources/history-remove')
 
 
 def test_model_input_value_never_survives_in_observations_or_questions():
@@ -162,6 +163,18 @@ def test_real_http_stream_upload_private_media_and_oversize_close(operation_serv
         status,_,payload=call('POST',prefix+'/'+verb,json.dumps({'app_id':APP}),{'Authorization':'Bearer '+second_token,'Content-Type':'application/json'})
         assert status==404,payload
     assert private.get(source['source_id'],source_owner,APP)==before
+    removal=json.dumps({'app_id':APP,'source_ids':[source['source_id']]})
+    headers={'Content-Type':'application/json'}
+    status,_,_=call('POST','/api/ui-video-sources/history-remove',removal,{**headers,'Authorization':'Bearer '+second_token})
+    assert status==404
+    status,_,payload=call('POST','/api/ui-video-sources/history-remove',removal,headers)
+    assert status==400 and json.loads(payload)['code']=='video_delete_active'
+    private.transition(source['source_id'],{'queued'},'ready',draft_id='existing-draft')
+    status,_,payload=call('POST','/api/ui-video-sources/history-remove',removal,headers)
+    assert status==200 and json.loads(payload)['removed']==1
+    status,_,payload=call('GET','/api/ui-video-sources?app_id='+APP)
+    assert status==200 and json.loads(payload)['sources']==[]
+    assert call('GET',prefix+'/video?app_id='+APP)[2]==b'fixture-not-decoded'
     # Header-only rejection must close the connection without reading 200MB.
     c=http.client.HTTPConnection('127.0.0.1',server.server_port,timeout=5)
     c.putrequest('POST','/api/ui-video-sources/upload?app_id='+APP+'&filename=x.mp4');c.putheader('Authorization','Bearer '+token);c.putheader('Content-Length',str(200*1024**2+1));c.putheader('Content-Type','application/octet-stream');c.endheaders()

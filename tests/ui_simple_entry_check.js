@@ -591,3 +591,11 @@ test('video native understanding describes whole video without frame group count
  assert.match(f.q('[data-video-detail]').textContent,/正在通读完整视频，梳理业务流程/);
  assert.doesNotMatch(f.q('[data-video-detail]').textContent,/0 \/ 1 组|38 组|预计|%/);
 });
+
+test('video history deletes only selected terminal records and preserves linked content',async t=>{
+ const f=await videoFixture(t);const a={source_id:'uvs_'+ 'a'.repeat(32),filename:'a.mp4',status:'ready',draft_id:'draft'},b={source_id:'uvs_'+ 'b'.repeat(32),filename:'b.mp4',status:'analyzing'};
+ let sources=[a,b],confirmation='';f.w.confirm=message=>{confirmation=message;return true;};
+ f.respond((path,options)=>{if(path.endsWith('/history-remove')){sources=sources.filter(s=>!options.body.source_ids.includes(s.source_id));return {ok:true,removed:options.body.source_ids.length};}if(path.startsWith('/ui-video-sources?'))return {ok:true,sources};});
+ f.app('a');await wait();const checks=f.w.document.querySelectorAll('[data-video-select]');assert.equal(checks.length,2);assert.equal(checks[1].disabled,true);checks[0].click();f.q('[data-video-delete-selected]').click();await wait();await wait();
+ assert.match(confirmation,/保留.*草稿/);assert.equal(f.calls.filter(c=>c.path.endsWith('/history-remove')).length,1);assert.equal(f.q('[data-video-list]').textContent.includes('a.mp4'),false);assert.equal(f.q('[data-video-list]').textContent.includes('b.mp4'),true);
+});

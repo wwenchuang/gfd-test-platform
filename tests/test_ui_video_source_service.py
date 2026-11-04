@@ -247,3 +247,24 @@ def test_soft_navigation_keeps_directional_midframe_not_only_endpoints():
     selected={times[i] for i in _transition_anchors(times,changes)}
     assert 250 in selected and 750 in selected
     assert 450 in selected
+
+
+def test_remove_video_history_is_atomic_owned_and_preserves_evidence(tmp_path):
+    from task_server.services.ui_video_source_service import VideoStore
+    import pytest
+    store = VideoStore(tmp_path)
+    a = store.upload({'user_id':'alice'}, 'app.a', 'a.mp4', io.BytesIO(b'a'), 1)
+    b = store.upload({'user_id':'alice'}, 'app.a', 'b.mp4', io.BytesIO(b'b'), 1)
+    store.transition(a['source_id'], {'queued'}, 'ready', draft_id='existing-draft', retained=True)
+    with pytest.raises(ValueError, match='video_delete_active'):
+        store.remove_history([a['source_id'], b['source_id']], 'alice', 'app.a')
+    assert len(store.list('alice', 'app.a')) == 2
+    store.transition(b['source_id'], {'queued'}, 'failed')
+    with pytest.raises(KeyError):
+        store.remove_history([a['source_id']], 'bob', 'app.a')
+    with pytest.raises(KeyError):
+        store.remove_history([a['source_id']], 'alice', 'app.b')
+    store.remove_history([a['source_id'], b['source_id']], 'alice', 'app.a')
+    assert store.list('alice', 'app.a') == []
+    assert store.get(a['source_id'], 'alice', 'app.a')['draft_id'] == 'existing-draft'
+    assert (tmp_path / a['source_id'] / 'source.mp4').read_bytes() == b'a'

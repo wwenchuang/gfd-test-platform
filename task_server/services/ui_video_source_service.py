@@ -68,7 +68,30 @@ class VideoStore:
 
     def list(self, owner, app):
         with self.db() as db:
-            return [json.loads(r[0]) for r in db.execute('SELECT document FROM sources WHERE owner=? AND app=? ORDER BY updated DESC LIMIT 30', (owner, app))]
+            result=[]
+            for row in db.execute('SELECT document FROM sources WHERE owner=? AND app=? ORDER BY updated DESC', (owner, app)):
+                doc=json.loads(row[0])
+                if not doc.get('history_removed'):result.append(doc)
+                if len(result)==30:break
+            return result
+
+    def remove_history(self, identifiers, owner, app):
+        if (not isinstance(identifiers,list) or not 1<=len(identifiers)<=30 or
+            any(not isinstance(i,str) or not _ID.fullmatch(i) for i in identifiers) or
+            len(set(identifiers))!=len(identifiers)):
+            raise ValueError('video_delete_invalid')
+        with self.db() as db:
+            db.execute('BEGIN IMMEDIATE')
+            docs=[]
+            for identifier in identifiers:
+                row=db.execute('SELECT document FROM sources WHERE id=? AND owner=? AND app=?',(identifier,owner,app)).fetchone()
+                if not row:raise KeyError(identifier)
+                doc=json.loads(row[0])
+                if doc['status'] not in TERMINAL:raise ValueError('video_delete_active')
+                docs.append(doc)
+            for doc in docs:
+                doc.update(history_removed=True, retained=True)
+                self._save(db,doc)
 
     def upload(self, profile, app, filename, stream, length, *, max_bytes=MAX_BYTES, actor=None, goal=''):
         if type(length) is not int or not 1 <= length <= max_bytes: raise ValueError('video_size')
@@ -167,6 +190,8 @@ class VideoStore:
 
     def cleanup(self):
         with self.db() as db:
+            # Serialize evidence removal with retention/import and history changes.
+            db.execute('BEGIN IMMEDIATE')
             for row in db.execute('SELECT document FROM sources').fetchall():
                 doc = json.loads(row[0])
                 if not doc.get('draft_id') and not doc.get('retained') and doc['status'] in TERMINAL and doc['updated_at'] < time.time()-7*86400:
