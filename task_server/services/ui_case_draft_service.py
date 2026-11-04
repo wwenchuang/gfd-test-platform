@@ -134,11 +134,17 @@ def _model_proposal(result, app_id):
     # The gateway's minimal schema validator does not enforce enum/additionalProperties.
     if not isinstance(result, dict) or set(result) != {'title', 'preconditions', 'steps', 'questions'}:
         raise ValueError('draft_model_structure_invalid')
+    # These actions never take a value. Some model responses omit the required
+    # empty string; do not infer values for inputs, scrolls, or record selection.
+    result = copy.deepcopy(result)
     raw_steps = result['steps']
     fields = {'action', 'target', 'value', 'expected', 'review_state', 'source_ref'}
     if not isinstance(raw_steps, list) or not 1 <= len(raw_steps) <= 50:
         raise ValueError('draft_model_steps_invalid')
     for step in raw_steps:
+        if (isinstance(step, dict) and 'value' not in step and
+                step.get('action') in ('launch', 'aiTap', 'aiWaitFor', 'aiAssert')):
+            step['value'] = ''
         if not isinstance(step, dict) or set(step) != fields or step['review_state'] != 'needs_review' or step['source_ref'] != 'text':
             raise ValueError('draft_model_provenance_invalid')
     return normalize_steps(result, app_id)
