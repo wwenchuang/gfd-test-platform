@@ -43,6 +43,17 @@ def test_worker_private_evidence_is_content_whitelist_and_not_logged(caplog):
     assert 'PRIVATE-' not in caplog.text
 
 
+def test_worker_keeps_only_known_bounded_missing_frame_refs():
+    error=ValueError('video_required_action_missing')
+    error.missing_frame_refs={'frame-001','frame-002'}
+    doc={'media':{'frames':[{'frame_id':'frame-001'},{'frame_id':'frame-002'}]}}
+    assert worker._private_target_failure(error,'video_required_action_missing',doc)=={'missing_frame_refs':['frame-001','frame-002']}
+    error.missing_frame_refs.add('frame-999')
+    assert worker._private_target_failure(error,'video_required_action_missing',doc)=={}
+    error.missing_frame_refs={'private-payload'}
+    assert worker._private_target_failure(error,'video_required_action_missing',doc)=={}
+
+
 @pytest.mark.parametrize('reason',['template','selection','unsupported'])
 def test_worker_keeps_only_bounded_outcome_gate_classification(reason):
     error=ValueError('video_expected_missing')

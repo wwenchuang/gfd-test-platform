@@ -30,6 +30,13 @@ def _failure_code(error):
 
 def _private_target_failure(error,code,document):
     """Bounded evidence saved under the existing owner/app source permissions."""
+    if code=='video_required_action_missing':
+        refs=getattr(error,'missing_frame_refs',None)
+        known={f.get('frame_id') for f in document.get('media',{}).get('frames',[])}
+        if (type(refs) is set and 1<=len(refs)<=32 and
+            all(type(ref) is str and re.fullmatch(r'frame-[0-9]{3,6}',ref) and ref in known for ref in refs)):
+            return {'missing_frame_refs':sorted(refs)}
+        return {}
     if code=='video_expected_missing':
         evidence=getattr(error,'outcome_failure_evidence',None)
         if (type(evidence) is dict and set(evidence)=={'candidate_index','reason'} and
@@ -288,11 +295,11 @@ def _analyze_runtime_source(store,identifier):
             try:
                 # Terminal status only may settle after revoked access. It never
                 # adds AI content, and cannot overwrite cancelled/new/foreign work.
-                current({'queued','decoding','analyzing'})
+                latest=current({'queued','decoding','analyzing'})
                 store.transition(identifier,{'queued','decoding','analyzing'},
                     'cancelled' if code=='video_cancelled' else 'failed',expected_version=version,
                     expected_owner=owner,expected_app=app,error_code=code,
-                    failure_diagnostic=_private_target_failure(error,code,document),
+                    failure_diagnostic=_private_target_failure(error,code,latest),
                     error='账号或应用权限已变化，分析停止' if code=='video_access_changed' else
                     '分析未能返回可靠步骤，请重试或缩短片段；原视频保留')
             except (KeyError,ValueError):

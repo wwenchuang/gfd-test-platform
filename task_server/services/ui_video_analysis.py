@@ -508,7 +508,7 @@ def consolidate_observed_frames(document, root, cancelled, observed, first_pass,
             local_error=None
             if planning_groups is None:
                 planned=run_skill('ui_video_steps',payload,image_assets=assets,version='consolidate',
-                    timeout=120,retry_count=0,max_tokens=10000,repair_invalid_json=False)
+                    timeout=210 if skill_runner is None else 120,retry_count=0,max_tokens=10000,repair_invalid_json=False)
             else:
                 from .ui_video_planning_groups import PlanningReplyError, validate_reply, merge
                 from .ui_video_stage_policy import validate_video_stage, STAGES

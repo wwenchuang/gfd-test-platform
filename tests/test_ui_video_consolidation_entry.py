@@ -30,6 +30,7 @@ def test_shared_consolidation_keeps_required_actions_and_optional_audit(monkeypa
     def model(skill,payload,**kwargs):
         calls.append(payload)
         assert skill=='ui_video_steps' and kwargs['version']=='consolidate'
+        assert kwargs['timeout']==210 and kwargs['retry_count']==0
         assert payload['required_candidate_indexes']==[0,1]
         assert payload['baseline_examples']==document['baseline_examples']
         return {'title':'填写信息','events':[{'candidate_index':i,'action':'aiInput','target':e['target'],
@@ -58,6 +59,18 @@ def test_shared_consolidation_rejects_missing_required_interaction(monkeypatch,c
     with pytest.raises(ValueError,match='video_required_action_missing'):
         va.consolidate_observed_frames(document,root,lambda:False,observed,copy.deepcopy(observed['events']),[])
     assert len(calls)==2 and calls[1]['validation_feedback']
+
+
+def test_controlled_runner_retains_existing_consolidation_timeout(consolidation):
+    from task_server.services import ui_video_analysis as va
+    document,root,observed=consolidation
+    def runner(skill,payload,**kwargs):
+        assert kwargs['timeout']==120 and kwargs['retry_count']==0
+        return {'title':'填写信息','events':[{'candidate_index':i,'action':'aiInput','target':e['target'],
+                'value':'','observation':'输入框显示','uncertainties':[]} for i,e in enumerate(observed['events'])],
+                'uncertainties':[],'multiple_scenarios':False}
+    result=va.consolidate_observed_frames(document,root,lambda:False,observed,copy.deepcopy(observed['events']),[],skill_runner=runner)
+    assert len(result['events'])==2
 
 
 @pytest.mark.parametrize('top_count',[0,30])

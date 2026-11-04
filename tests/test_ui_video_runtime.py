@@ -303,6 +303,28 @@ def test_worker_enrolls_only_selected_source_and_publishes_version_workspace(tmp
     assert store.get(identifier,'u',APP)['status']=='review_needed' and len(baselines)==1
 
 
+def test_worker_failure_diagnostics_use_current_published_frames(tmp_path,monkeypatch):
+    m=runtime();from task_server.workers import ui_video_worker as worker
+    from task_server.services import ui_case_draft_service as drafts
+    store=source.VideoStore(tmp_path/'videos');profile={'kind':'user','user_id':'u','username':'u','display_name':'U'}
+    doc=store.upload(profile,APP,'a.mp4',io.BytesIO(b'a'),1,actor=profile);identifier=doc['source_id']
+    monkeypatch.setenv('UI_VIDEO_RUNTIME_QA_SOURCE_ID',identifier)
+    monkeypatch.setattr(worker,'require_ui_actor',lambda *a,**k:profile)
+    monkeypatch.setattr(drafts,'_application',lambda *a:None)
+    monkeypatch.setattr(drafts,'_top3_examples',lambda *a:[])
+    monkeypatch.setattr(worker,'decode_video',lambda *a:{'frames':frames(4),'duration_ms':500,'black':False,'static':False})
+    def run(document,workspace,path,check,publish,**kw):
+        extra={'frame_id':'frame-010','timestamp_ms':450}
+        publish(media={**document['media'],'frames':document['media']['frames']+[extra]})
+        error=ValueError('video_required_action_missing');error.missing_frame_refs={'frame-010'}
+        raise error
+    monkeypatch.setattr(m,'run_runtime',run,raising=False)
+    worker.analyze_video_source(store,identifier)
+    latest=store.get(identifier,'u',APP)
+    assert latest['status']=='failed'
+    assert latest['failure_diagnostic']=={'missing_frame_refs':['frame-010']}
+
+
 @pytest.fixture
 def worker_env(tmp_path,monkeypatch):
     from task_server.workers import ui_video_worker as worker
