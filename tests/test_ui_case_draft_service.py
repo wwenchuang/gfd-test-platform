@@ -392,6 +392,50 @@ def test_missing_empty_value_recovery_does_not_mutate_model_response():
     assert result == before
 
 
+def test_model_scroll_json_string_is_decoded_without_inventing_parameters():
+    result = proposal()
+    result['steps'][0].update(action='aiScroll', target='设备列表',
+        value='{"direction":"up","distance":300,"scrollType":"singleAction"}',
+        expected='设备列表显示设备')
+    before = copy.deepcopy(result)
+    normalized = service._model_proposal(result, APP)
+    assert normalized['steps'][0]['value'] == {'direction': 'up', 'distance': 300, 'scrollType': 'singleAction'}
+    assert normalized['steps'][0]['review_state'] == 'needs_review'
+    assert result == before
+
+
+@pytest.mark.parametrize('value', [
+    '{"direction":"up","direction":"down"}', '{"distance":NaN}',
+    '{"direction":"up","command":"touch"}', '[{"direction":"up"}]',
+    'up', '{"distance":-1}', '{"distance":' + '9' * 400 + '}',
+    '{"distance":1e999}',
+])
+def test_model_scroll_json_string_rejects_invalid_or_ambiguous_values(value):
+    result = proposal()
+    result['steps'][0].update(action='aiScroll', target='设备列表', value=value,
+                              expected='设备列表显示设备')
+    with pytest.raises(ValueError):
+        service._model_proposal(result, APP)
+
+
+def test_scroll_string_decoding_does_not_apply_to_input_or_forged_provenance():
+    result = proposal()
+    value = '{"direction":"up"}'
+    result['steps'][0].update(action='aiInput', target='输入框', value=value, expected='输入框显示内容')
+    assert service._model_proposal(result, APP)['steps'][0]['value'] == value
+    result['steps'][0].update(action='aiScroll', review_state='confirmed')
+    with pytest.raises(ValueError):
+        service._model_proposal(result, APP)
+
+
+def test_native_scroll_object_rejects_integer_too_large_for_finite_distance():
+    result = proposal()
+    result['steps'][0].update(action='aiScroll', target='设备列表',
+                              value={'distance': 10 ** 400}, expected='设备列表显示设备')
+    with pytest.raises(ValueError):
+        service._model_proposal(result, APP)
+
+
 def test_worker_generates_reviewable_draft_when_parameterless_values_are_missing(env, monkeypatch):
     from task_server.services import ai_skill_service
     result = proposal()
