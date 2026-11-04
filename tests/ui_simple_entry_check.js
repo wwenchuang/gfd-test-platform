@@ -301,7 +301,7 @@ test('saved video history uses readable escaped names and distinguishes repeated
  assert.equal(list.querySelector('img'),null);
 });
 test('video source picker lists durable own tasks and ignores late previous-app lists',async t=>{
- const f=await videoFixture(t);let resolve;f.respond(path=>path==='/ui-video-sources?app_id=a'?new Promise(r=>resolve=r):undefined);
+ const f=await videoFixture(t);let resolve;f.respond(path=>path==='/ui-video-sources?app_id=a&view=library'?new Promise(r=>resolve=r):undefined);
  f.app('a');await wait();f.app('b');await wait();resolve({ok:true,sources:[{source_id:'old',filename:'旧应用素材',status:'ready'}]});await wait();
  assert.doesNotMatch(f.q('[data-video-list]').textContent,/旧应用素材/);
  assert.equal(f.calls.filter(c=>c.path.includes('/ui-executions/devices')).length,0);
@@ -548,7 +548,7 @@ test('video list filters, loads more and keeps exclusive views with truthful dra
  f.q('[data-video-back]').click();assert.equal(f.q('[data-video-history]').hidden,false);f.q('[data-video-new]').click();assert.equal(f.q('[data-video-upload-view]').hidden,false);assert.equal(f.q('[data-video-history]').hidden,true);
 });
 test('returning to list keeps active task and never navigates when ready arrives',async t=>{
- const f=await videoFixture(t);let source={source_id:'active',filename:'clip.mp4',status:'analyzing',analysis_version:1,updated_at:1};f.respond(p=>p.startsWith('/ui-video-sources?')?{ok:true,sources:[source]}:p.includes('/active?')?{ok:true,source}:undefined);f.app('a');await wait();f.q('[data-video-open]').click();await wait();f.q('[data-video-back]').click();source={...source,status:'ready',updated_at:2};f.q('[data-video-status]').click();await wait();assert.equal(f.q('[data-video-history]').hidden,false);assert.equal(f.q('[data-video-detail-view]').hidden,true);assert.equal(f.calls.some(c=>c.path.endsWith('/import')),false);assert.match(f.q('[data-video-list-summary]').textContent,/待核对 1/);assert.match(f.q('[data-video-list-summary]').textContent,/最近.*30/);
+ const f=await videoFixture(t);let source={source_id:'active',filename:'clip.mp4',status:'analyzing',analysis_version:1,updated_at:1};f.respond(p=>p.startsWith('/ui-video-sources?')?{ok:true,sources:[source]}:p.includes('/active?')?{ok:true,source}:undefined);f.app('a');await wait();f.q('[data-video-open]').click();await wait();f.q('[data-video-back]').click();source={...source,status:'ready',updated_at:2};f.q('[data-video-status]').click();await wait();assert.equal(f.q('[data-video-history]').hidden,false);assert.equal(f.q('[data-video-detail-view]').hidden,true);assert.equal(f.calls.some(c=>c.path.endsWith('/import')),false);assert.match(f.q('[data-video-list-summary]').textContent,/待核对 1/);assert.match(f.q('[data-video-list-summary]').textContent,/1 个视频/);
 });
 test('upload view resets journey and hidden task refresh cannot overwrite upload feedback',async t=>{
  const f=await videoFixture(t);let source={source_id:'hidden',filename:'old.mp4',status:'analyzing',analysis_version:1,updated_at:1};f.respond(p=>p.startsWith('/ui-video-sources?')?{ok:true,sources:[source]}:p.includes('/hidden?')?{ok:true,source}:undefined);f.app('a');await wait();f.q('[data-video-open]').click();await wait();f.q('[data-video-back]').click();f.q('[data-video-new]').click();assert.equal(f.q('[data-video-app]').closest('.ui-video-source').dataset.videoPhase,'upload');f.q('[data-video-notice]').textContent='正在选择新原片';source={...source,status:'failed',error:'旧任务失败',updated_at:2};f.q('[data-video-status]').click();await wait();assert.equal(f.q('[data-video-notice]').textContent,'正在选择新原片');assert.equal(f.q('[data-video-app]').closest('.ui-video-source').dataset.videoPhase,'upload');f.q('[data-video-upload-back]').click();assert.match(f.q('[data-video-list]').textContent,/分析失败/);f.q('[data-video-open]').click();await wait();assert.match(f.q('[data-video-notice]').textContent,/旧任务失败/);
@@ -598,4 +598,23 @@ test('video history deletes only selected terminal records and preserves linked 
  f.respond((path,options)=>{if(path.endsWith('/history-remove')){sources=sources.filter(s=>!options.body.source_ids.includes(s.source_id));return {ok:true,removed:options.body.source_ids.length};}if(path.startsWith('/ui-video-sources?'))return {ok:true,sources};});
  f.app('a');await wait();const checks=f.w.document.querySelectorAll('[data-video-select]');assert.equal(checks.length,2);assert.equal(checks[1].disabled,true);checks[0].click();f.q('[data-video-delete-selected]').click();await wait();await wait();
  assert.match(confirmation,/保留.*草稿/);assert.equal(f.calls.filter(c=>c.path.endsWith('/history-remove')).length,1);assert.equal(f.q('[data-video-list]').textContent.includes('a.mp4'),false);assert.equal(f.q('[data-video-list]').textContent.includes('b.mp4'),true);
+});
+
+test('video library renames the display name without changing the source file',async t=>{
+ const f=await videoFixture(t);let source={source_id:'uvs_'+ 'a'.repeat(32),filename:'original.mp4',status:'failed',updated_at:1};
+ f.w.prompt=()=> '新的名称';
+ f.respond((path,options)=>{if(path.endsWith('/rename')){source={...source,display_name:options.body.name,updated_at:2};return {ok:true,source};}if(path.startsWith('/ui-video-sources?'))return {ok:true,sources:[source]};});
+ f.app('a');await wait();f.q('[data-video-rename]').click();await wait();await wait();
+ assert.match(f.q('[data-video-list]').textContent,/新的名称/);assert.match(f.q('[data-video-list]').textContent,/original.mp4/);
+ assert.ok(f.calls.some(c=>c.path.endsWith('/rename')&&c.options.body.name==='新的名称'));
+});
+
+test('video library opens the selected private original in a visible player',async t=>{
+ const f=await videoFixture(t),source={source_id:'uvs_'+ 'a'.repeat(32),filename:'clip.mp4',status:'failed',analysis_version:1};let path;
+ f.respond(p=>p.startsWith('/ui-video-sources?')?{ok:true,sources:[source]}:p.includes(source.source_id)?{ok:true,source}:undefined);
+ f.w.URL.createObjectURL=()=> 'blob:video';f.w.URL.revokeObjectURL=()=>{};
+ f.w.nativeFetch=async p=>{path=p;return {ok:true,blob:async()=>({})};};
+ f.app('a');await wait();f.q('[data-video-play]').click();await wait();await wait();
+ assert.match(path,/\/video\?app_id=a/);assert.equal(f.q('video').hidden,false);assert.equal(f.q('video').getAttribute('src'),'blob:video');
+ assert.equal(f.q('[data-video-technical]').contains(f.q('video')),false);
 });

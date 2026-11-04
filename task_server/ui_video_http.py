@@ -15,6 +15,7 @@ def _error(handler,error):
               'video_retry_state':'当前状态不能重试；已有草稿请继续编辑，勿覆盖修改',
               'video_delete_active':'生成中的任务不能删除，请等待完成或先取消',
               'video_delete_invalid':'请选择 1 至 30 条有效记录',
+              'video_name_invalid':'名称请输入 1 至 100 个字符，不能包含换行或控制字符',
               'video_access_denied':'当前账号无权访问该应用或视频','video_not_found':'未找到当前应用下属于你的录屏',
               'video_truncated_upload':'上传中断，请重新选择文件上传'}
     handler._json({'ok':False,'code':code,'error':messages.get(code,'视频请求未完成，请检查文件与状态后重试')},status)
@@ -55,7 +56,22 @@ def register_routes(route_get,route_post_prefix_before_body,route_get_regex,rout
         from .services.ui_case_draft_service import _application
         try:
             app=qs.get('app_id','');profile=require_ui_actor(None,permission='ui.view',app_id=app);_application(app)
-            handler._json({'ok':True,'sources':[public_source(d) for d in service_store().list(profile['user_id'],app)]})
+            library=qs.get('view')=='library'
+            docs=service_store().list(profile['user_id'],app,limit=1000 if library else 30)
+            fields={'source_id','app_id','filename','display_name','title','status','draft_id','analysis_version','created_at','updated_at','size'}
+            handler._json({'ok':True,'sources':[{k:v for k,v in public_source(d).items() if k in fields} if library else public_source(d) for d in docs]})
+        except Exception as error:_error(handler,error)
+
+    @route_post_regex(r'^/api/ui-video-sources/(uvs_[0-9a-f]{32})/rename$')
+    def rename(handler,qs,match):
+        from .services.ui_video_source_service import owned_source,public_source
+        try:
+            body=handler._body()
+            if not isinstance(body,dict) or set(body)!={'app_id','name'}:raise ValueError('video_name_invalid')
+            identifier=match.group(1)
+            store,profile,_=owned_source(None,identifier,body['app_id'],'ui.edit')
+            doc=store.rename(identifier,profile['user_id'],body['app_id'],body['name'])
+            _mark(handler,identifier);handler._json({'ok':True,'source':public_source(doc)})
         except Exception as error:_error(handler,error)
 
     @route_post_regex(r'^/api/ui-video-sources/history-remove$')
@@ -78,7 +94,7 @@ def register_routes(route_get,route_post_prefix_before_body,route_get_regex,rout
             identifier,asset=match.groups();store,_,doc=owned_source(None,identifier,qs.get('app_id',''))
             _mark(handler,identifier)
             if not asset:return handler._json({'ok':True,'source':public_source(doc)})
-            if asset=='video':path=store.root/identifier/'source.mp4';mime='video/mp4'
+            if asset=='video':path=store.root/identifier/'source.mp4';mime='video/quicktime' if doc['filename'].lower().endswith('.mov') else 'video/mp4'
             else:
                 frame_id=asset.split('/')[1]
                 if frame_id not in {f['frame_id'] for f in doc.get('media',{}).get('frames',[])}:raise KeyError(frame_id)

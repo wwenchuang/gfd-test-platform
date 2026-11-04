@@ -2,6 +2,7 @@
 import io
 import tempfile
 import unittest
+import pytest
 from pathlib import Path
 from unittest.mock import patch
 
@@ -283,6 +284,34 @@ def test_remove_cancelled_history_keeps_files_while_worker_drains(tmp_path):
     assert store.list('alice','app.a') == []
     assert store.get(doc['source_id'],'alice','app.a')['retained'] is True
     assert (tmp_path/doc['source_id']/'source.mp4').read_bytes()==b'c'
+
+
+def test_video_library_rename_is_owned_atomic_and_survives_worker_updates(tmp_path):
+    from task_server.services.ui_video_source_service import VideoStore
+    store=VideoStore(tmp_path)
+    doc=store.upload({'user_id':'alice'},'app.a','original.mp4',io.BytesIO(b'1'),1)
+    identifier=doc['source_id']
+    with pytest.raises(KeyError):store.rename(identifier,'bob','app.a','其他')
+    with pytest.raises(ValueError):store.rename(identifier,'alice','app.a','   ')
+    store.rename(identifier,'alice','app.a','  姓名牌演示  ')
+    store.transition(identifier,{'queued'},'analyzing',title='模型生成标题')
+    result=store.get(identifier,'alice','app.a')
+    assert result['display_name']=='姓名牌演示' and result['filename']=='original.mp4'
+    assert (tmp_path/identifier/'source.mp4').read_bytes()==b'1'
+
+
+def test_library_lists_older_videos_and_does_not_expire_them(tmp_path):
+    from task_server.services.ui_video_source_service import VideoStore
+    import json,time,uuid
+    store=VideoStore(tmp_path)
+    with store.db() as db:
+        for i in range(35):
+            identifier='uvs_'+uuid.uuid4().hex
+            doc={'source_id':identifier,'owner_user_id':'alice','app_id':'app.a','status':'failed',
+                 'updated_at':time.time()-8*86400,'filename':f'{i}.mp4'}
+            db.execute('INSERT INTO sources VALUES(?,?,?,?,?)',(identifier,'alice','app.a',doc['updated_at'],json.dumps(doc)))
+    store.cleanup()
+    assert len(store.list('alice','app.a',limit=1000))==35
 
 
 def test_removed_cancelled_history_does_not_consume_visible_source_limit(tmp_path,monkeypatch):

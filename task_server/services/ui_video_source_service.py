@@ -67,14 +67,27 @@ class VideoStore:
         if not row: raise KeyError(identifier)
         return json.loads(row[0])
 
-    def list(self, owner, app):
+    def list(self, owner, app, *, limit=30):
         with self.db() as db:
             result=[]
             for row in db.execute('SELECT document FROM sources WHERE owner=? AND app=? ORDER BY updated DESC', (owner, app)):
                 doc=json.loads(row[0])
                 if not doc.get('history_removed'):result.append(doc)
-                if len(result)==30:break
+                if len(result)==limit:break
             return result
+
+    def rename(self, identifier, owner, app, name):
+        if not isinstance(name,str) or not 1<=len(name.strip())<=100 or any(ord(c)<32 or ord(c)==127 for c in name):
+            raise ValueError('video_name_invalid')
+        with self.db() as db:
+            db.execute('BEGIN IMMEDIATE')
+            row=db.execute('SELECT document FROM sources WHERE id=? AND owner=? AND app=?',(identifier,owner,app)).fetchone()
+            if not row:raise KeyError(identifier)
+            doc=json.loads(row[0])
+            if doc.get('history_removed'):raise KeyError(identifier)
+            doc['display_name']=name.strip()
+            self._save(db,doc)
+            return doc
 
     def remove_history(self, identifiers, owner, app):
         if (not isinstance(identifiers,list) or not 1<=len(identifiers)<=30 or
@@ -201,14 +214,7 @@ class VideoStore:
                     self._save(db, doc)
 
     def cleanup(self):
-        with self.db() as db:
-            # Serialize evidence removal with retention/import and history changes.
-            db.execute('BEGIN IMMEDIATE')
-            for row in db.execute('SELECT document FROM sources').fetchall():
-                doc = json.loads(row[0])
-                if not doc.get('draft_id') and not doc.get('retained') and doc['status'] in TERMINAL and doc['updated_at'] < time.time()-7*86400:
-                    shutil.rmtree(self.root/doc['source_id'], ignore_errors=True)
-                    db.execute('DELETE FROM sources WHERE id=?', (doc['source_id'],))
+        # Library entries remain available until explicitly removed by owner.
         # Crash during streaming leaves no row; clean only old orphan directories.
         with self.db() as db: known = {row[0] for row in db.execute('SELECT id FROM sources')}
         for path in self.root.glob('uvs_*'):

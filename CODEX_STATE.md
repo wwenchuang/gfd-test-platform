@@ -14111,3 +14111,8 @@ git diff --check
 ## 2026-11-04 定时接口五轮连续复验
 - 按用户要求通过平台串行完整执行家用每日 297 项任务五轮：720f4596、0d0b2e55、fde92487、158c8f78、8cf9eae5，均为 297/297 通过，共 1485 次用例执行，重新切片用例每轮通过。平台每轮均记录飞书通知已发送；任务保持启用，下一次为 2026-11-05 08:00（北京时间）。
 - 本次是同一环境和相近时间的连续实跑，不能证明未来记录、设备、温度或外部服务变化后仍一定通过；此前已记录的最新已完成记录选数局限仍存在。
+
+## 2026-11-04 private video library
+
+- Reuse the existing owner/app-scoped video history as a library. Add independently stored display names, a prominent original player, compact library listing (up to the configured 1000 visible source ceiling), existing single/batch deletion, and retain source rows until explicit deletion. Linked drafts and cancelled/retained sources preserve evidence when removed from the list. The existing global disk/admission limits still apply; previously cleaned sources cannot be recovered by this change. Original playback loads the full media file before playback.
+- Local checks: video service/HTTP/workspace 161 passed; UI 87 passed; backend static 63 and frontend static 84 passed. Live deployment and browser acceptance remain pending.

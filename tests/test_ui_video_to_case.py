@@ -165,6 +165,15 @@ def test_real_http_stream_upload_private_media_and_oversize_close(operation_serv
     identities.update_user('admin','video-second',{'scope':{'ui_apps':[APP],'api_projects':[],'api_environments':[]}})
     second_token=auth.create_session_token('video-second')
     private=VideoStore(tmp_path/'video-http')
+    rename_body=json.dumps({'app_id':APP,'name':'我的演示视频'})
+    rename_headers={'Content-Type':'application/json'}
+    rename_path=f"/api/ui-video-sources/{source['source_id']}/rename"
+    assert call('POST',rename_path,rename_body,{**rename_headers,'Authorization':'Bearer '+second_token})[0]==404
+    status,_,payload=call('POST',rename_path,rename_body,rename_headers)
+    assert status==200 and json.loads(payload)['source']['display_name']=='我的演示视频'
+    status,_,payload=call('GET','/api/ui-video-sources?app_id='+APP+'&view=library')
+    listed=json.loads(payload)['sources'];assert status==200 and listed[0]['display_name']=='我的演示视频'
+    assert 'raw_events' not in listed[0] and 'media' not in listed[0]
     frames=private.root/source['source_id']/'frames';frames.mkdir()
     from PIL import Image
     Image.new('RGB',(20,20),'blue').save(frames/'frame-001.jpg')
