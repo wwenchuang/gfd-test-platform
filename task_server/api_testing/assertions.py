@@ -10,6 +10,9 @@ from jsonschema import Draft202012Validator, SchemaError
 _PATH_TOKEN = re.compile(
     r"(?:\.([A-Za-z_][A-Za-z0-9_-]*))|(?:\[(0|[1-9][0-9]{0,5})\])"
 )
+_PATH_UNIQUE_SELECTOR = re.compile(
+    r'\[\?\(@\.([A-Za-z_][A-Za-z0-9_-]*)=="([A-Za-z0-9_-]{1,128})"\)\]'
+)
 _MAX_PATH_LENGTH = 1000
 _MAX_PATH_DEPTH = 64
 _MISSING = object()
@@ -44,6 +47,13 @@ def json_path_get(document, path, *, missing=_NO_DEFAULT):
     position = 1
     tokens = []
     while position < len(path):
+        selector = _PATH_UNIQUE_SELECTOR.match(path, position)
+        if selector is not None:
+            tokens.append((selector.group(1), selector.group(2)))
+            if len(tokens) > _MAX_PATH_DEPTH:
+                raise JsonPathError("JSON 路径层级过深")
+            position = selector.end()
+            continue
         match = _PATH_TOKEN.match(path, position)
         if match is None:
             raise JsonPathError("JSON 路径使用了不支持的语法")
@@ -53,7 +63,21 @@ def json_path_get(document, path, *, missing=_NO_DEFAULT):
         position = match.end()
     value = document
     for token in tokens:
-        if isinstance(token, str):
+        if isinstance(token, tuple):
+            if not isinstance(value, list):
+                if missing is _NO_DEFAULT:
+                    raise JsonPathError("JSON 路径未找到对应字段")
+                return missing
+            key, expected = token
+            matches = [item for item in value if isinstance(item, dict) and item.get(key) == expected]
+            if len(matches) > 1:
+                raise JsonPathError("JSON 路径匹配多条记录，无法确定归属")
+            if not matches:
+                if missing is _NO_DEFAULT:
+                    raise JsonPathError("JSON 路径未找到对应字段")
+                return missing
+            value = matches[0]
+        elif isinstance(token, str):
             if not isinstance(value, dict) or token not in value:
                 if missing is _NO_DEFAULT:
                     raise JsonPathError("JSON 路径未找到对应字段")

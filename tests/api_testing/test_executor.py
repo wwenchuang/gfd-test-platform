@@ -39,7 +39,13 @@ class _TargetHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         type(self).request_count += 1
         type(self).workflow_calls.append(("GET", self.path, None))
-        if self.path.startswith("/workflow/setup-fail"):
+        if self.path.startswith("/workflow/ambiguous-list"):
+            self._send(200, {"code": 0, "records": [{"sn": "resource-1", "id": "12"}, {"sn": "resource-1", "id": "34"}]})
+        elif self.path.startswith("/workflow/missing-list"):
+            self._send(200, {"code": 0, "records": [{"sn": "other", "id": "12"}]})
+        elif self.path.startswith("/workflow/owned-list"):
+            self._send(200, {"code": 0, "records": [{"sn": "other", "id": "12"}, {"sn": "resource-1", "id": "34"}]})
+        elif self.path.startswith("/workflow/setup-fail"):
             self._send(200, {"code": 5001, "message": "no resource"})
         elif self.path.startswith("/workflow/ownership-mismatch"):
             self._send(200, {"code": 0, "data": {"resourceSn": "wrong-resource"}})
@@ -1683,3 +1689,29 @@ def test_cleanup_ownership_failure_never_cancels_unverified_task(target_server):
     assert result.failure_category == 'cleanup'
     assert [call[1] for call in handler.workflow_calls] == ['/ok', '/workflow/ownership-mismatch']
     assert any(event.get('failure_category') == 'condition_not_met' for event in result.trace)
+
+
+def test_owned_record_selector_drives_cleanup_when_other_record_is_first(target_server):
+    _, handler = target_server
+    handler.workflow_calls = []
+    create = _workflow_step('本轮任务', 'GET', '/workflow/setup', assertions=[_code_assertion()], extractions=[_json_extraction('task', '$.data.resourceSn')])
+    select = _workflow_step('查找本轮记录', 'GET', '/workflow/owned-list', assertions=[_code_assertion()], extractions=[_json_extraction('record', '$.records[?(@.sn=="{{task}}")].id')], required_variables=['task'])
+    cleanup = _workflow_step('清理本轮记录', 'POST', '/workflow/cancel', body={'taskSn': '{{record}}'}, assertions=[_code_assertion()], required_variables=['record'])
+    cleanup['only_if_variable'] = 'record'
+    case = _case(processing=_workflow_processing(setup_steps=[create, select], cleanup_steps=[cleanup]))
+    result = _executor(target_server, case).execute_case('v', 'env', {})
+    assert result.status == 'PASSED'
+    assert ('POST', '/workflow/cancel', {'taskSn': '34'}) in handler.workflow_calls
+
+
+@pytest.mark.parametrize('path', ['/workflow/ambiguous-list', '/workflow/missing-list'])
+def test_owned_record_selector_does_not_cleanup_when_not_unique(target_server, path):
+    _, handler = target_server
+    handler.workflow_calls = []
+    create = _workflow_step('本轮任务', 'GET', '/workflow/setup', assertions=[_code_assertion()], extractions=[_json_extraction('task', '$.data.resourceSn')])
+    select = _workflow_step('查找本轮记录', 'GET', path, assertions=[_code_assertion()], extractions=[_json_extraction('record', '$.records[?(@.sn=="{{task}}")].id')], required_variables=['task'])
+    cleanup = _workflow_step('清理本轮记录', 'POST', '/workflow/cancel', body={'taskSn': '{{record}}'}, assertions=[_code_assertion()], required_variables=['record'])
+    cleanup['only_if_variable'] = 'record'
+    result = _executor(target_server, _case(processing=_workflow_processing(setup_steps=[create, select], cleanup_steps=[cleanup]))).execute_case('v', 'env', {})
+    assert result.status != 'PASSED'
+    assert all(call[1] != '/workflow/cancel' for call in handler.workflow_calls)

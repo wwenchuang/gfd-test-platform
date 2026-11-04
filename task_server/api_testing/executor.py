@@ -681,6 +681,10 @@ class HttpExecutor:
                 self._render_assertion_expected(assertion, runtime)
                 for assertion in assertion_views
             )
+            extraction_views = tuple(
+                self._render_extraction_path(extraction, runtime)
+                for extraction in extraction_views
+            )
             secrets = tuple(runtime.secrets.values())
             rendered = {key: runtime.render(value) for key, value in request.items()}
             path = self._render_path(
@@ -972,11 +976,22 @@ class HttpExecutor:
             type=assertion.type,
             operator=assertion.operator,
             expected=runtime.render(assertion.expected),
-            path=getattr(assertion, "path", None),
+            path=runtime.render(getattr(assertion, "path", None)),
             name=getattr(assertion, "name", None),
             timeout_ms=getattr(assertion, "timeout_ms", 0),
             enabled=getattr(assertion, "enabled", True),
             sequence=getattr(assertion, "sequence", 0),
+        )
+
+    @staticmethod
+    def _render_extraction_path(extraction, runtime):
+        return SimpleNamespace(
+            type=extraction.type,
+            target=extraction.target,
+            path=runtime.render(getattr(extraction, "path", None)),
+            name=getattr(extraction, "name", None),
+            required=getattr(extraction, "required", True),
+            default=getattr(extraction, "default", None),
         )
 
     @staticmethod
