@@ -1,0 +1,9 @@
+{
+  "name": "week1-isolated-smoke",
+  "version": "1.0.0",
+  "private": true,
+  "description": "First-week anonymous UI and read-only API smoke",
+  "dependencies": {
+    "playwright": "1.55.1"
+  }
+}
