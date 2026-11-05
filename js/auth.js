@@ -9,6 +9,7 @@ function acceptAuthSession(data) {
   currentAccessProfile = Object.hasOwn(data, 'profile') ? (data.profile || {}) : null;
   if (typeof resetOperationHistory === 'function') resetOperationHistory();
   if (typeof resetUiSimpleWorkflow === 'function') resetUiSimpleWorkflow();
+  if (typeof refreshTaskWorkbenchAfterSession === 'function') void refreshTaskWorkbenchAfterSession();
   const label = document.getElementById('account-name');
   if (label) label.textContent = currentAccessProfile?.display_name || sessionStorage.getItem('user') || '个人账号';
 }

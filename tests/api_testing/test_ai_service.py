@@ -1985,3 +1985,32 @@ def test_failure_analyzer_returns_model_evidence_without_sending_bearer_secret()
     assert result["analysis"]["summary"] == "收藏接口业务码与预期不一致"
     assert result["analysis"]["model_evidence"]["actual_provider_id"] == "qwen_plus"
     assert secret not in json.dumps(gateway.calls, ensure_ascii=False)
+
+
+def test_provider_timeout_code_persists_and_is_exposed_without_provider_details(session_factory, ai_context):
+    from task_server.api_testing.services.ai_service import AiGatewayError
+
+    endpoint = ai_context['endpoints']['favoriteList']
+    gateway = FakeGateway(AiGatewayError('AI provider timed out', 'gateway_timeout'))
+    service = _service(session_factory, gateway)
+    job = service.submit([endpoint.id], ai_context['environment'].revision_id, 'admin')
+    result = service.process(job.id)
+    assert result.state == 'failed_gateway'
+    assert result.batches[0].error_code == 'gateway_timeout'
+    with session_factory() as session:
+        stored = session.scalar(select(ApiAiJobBatch).where(ApiAiJobBatch.job_id == job.id))
+        assert stored.error == {'code': 'gateway_timeout', 'message': 'AI provider timed out'}
+
+
+def test_enqueue_failure_is_persisted_and_cannot_start_model_call(session_factory, ai_context):
+    endpoint = ai_context['endpoints']['favoriteList']
+    gateway = FakeGateway()
+    service = _service(session_factory, gateway)
+    job = service.submit([endpoint.id], ai_context['environment'].revision_id, 'admin')
+    failed = service.mark_enqueue_failure(job.id, 'admin')
+    assert failed.batches[0].error_code == 'enqueue_failed'
+    assert service.process(job.id).batches[0].error_code == 'enqueue_failed'
+    assert gateway.calls == []
+    with session_factory() as session:
+        stored = session.scalar(select(ApiAiJobBatch).where(ApiAiJobBatch.job_id == job.id))
+        assert stored.error == {'code': 'enqueue_failed'}

@@ -1036,3 +1036,33 @@ test('authentication refresh removes visible administrator evidence immediately'
  const {w}=fixture(t);w.canAccessWorkflow=()=>true;w.activeWorkflow='ai_practice';w.showAiPractice();assert.ok(w.document.querySelector('[data-ui-week-one]'));assert.ok(w.document.querySelector('[data-ui-week-two]'));
  w.currentAccessProfile={user_id:'u1',scope:{ui_apps:['app']}};w.hasPermission=p=>p==='ui.view';w.resetUiSimpleWorkflow();assert.equal(w.document.querySelector('[data-ui-week-one]'),null);assert.equal(w.document.querySelector('[data-ui-week-two]'),null);
 });
+
+test('refreshing the same identity restores working UI and API workspace links',async t=>{
+ const {w,calls}=fixture(t);const auth=fs.readFileSync('js/auth.js','utf8');w.eval(auth.slice(auth.indexOf('function acceptAuthSession('),auth.indexOf('function requireUiEditPermission(')));w.eval(auth.slice(auth.indexOf('const WORKFLOW_PERMISSIONS'),auth.indexOf('function applyAccessNavigation')));
+ const profile={user_id:'u1',status:'active',permissions:['ui.view','api.view'],scope:{ui_apps:['app']}};w.currentAccessProfile=profile;await w.initUiSimpleAvailability({navigate:false});w.activeWorkflow='ai_practice';w.showAiPractice();
+ const original=w.document.querySelector('[data-practice-workbench]');w.acceptAuthSession({profile});await wait();await wait();const page=w.document.querySelector('[data-practice-workbench]');assert.ok(page);assert.notEqual(page,original);assert.equal(page.querySelector('[data-practice-workflow="ui_start"]').disabled,false);assert.equal(page.querySelector('[data-practice-workflow="ui_reports"]').disabled,false);assert.equal(page.querySelector('[data-practice-api]').dispatchEvent(new w.MouseEvent('click',{bubbles:true,cancelable:true})),true);page.querySelector('[data-practice-workflow="ui_start"]').click();assert.ok(calls.includes('ui_start'));
+});
+
+test('identity refresh removes privileged evidence and restores only remaining permitted actions',async t=>{
+ const {w}=fixture(t);const auth=fs.readFileSync('js/auth.js','utf8');w.eval(auth.slice(auth.indexOf('function acceptAuthSession('),auth.indexOf('function requireUiEditPermission(')));w.eval(auth.slice(auth.indexOf('const WORKFLOW_PERMISSIONS'),auth.indexOf('function applyAccessNavigation')));
+ w.currentAccessProfile={user_id:'u1',status:'active',permissions:['platform.configure','api.view','ui.view'],scope:{ui_apps:'*'}};await w.initUiSimpleAvailability({navigate:false});w.activeWorkflow='ai_practice';w.showAiPractice();const oldPage=w.document.querySelector('[data-practice-workbench]');assert.ok(oldPage.querySelector('[data-ui-week-two]'));
+ w.acceptAuthSession({profile:{user_id:'u1',status:'active',permissions:['api.view'],scope:{ui_apps:['app']}}});assert.equal(w.document.querySelector('[data-ui-week-one]'),null);assert.equal(w.document.querySelector('[data-ui-week-two]'),null);await wait();await wait();const page=w.document.querySelector('[data-practice-workbench]');assert.ok(page.querySelector('[data-practice-api]'));assert.equal(page.querySelector('[data-practice-workflow="ui_start"]').disabled,true);assert.equal(page.querySelector('[data-ui-week-one]'),null);assert.equal(page.querySelector('[data-ui-week-two]'),null);
+});
+
+test('out of order identity refresh cannot restore an older workspace or private evidence',async t=>{
+ const {w}=fixture(t);const auth=fs.readFileSync('js/auth.js','utf8');w.eval(auth.slice(auth.indexOf('function acceptAuthSession('),auth.indexOf('function requireUiEditPermission(')));w.eval(auth.slice(auth.indexOf('const WORKFLOW_PERMISSIONS'),auth.indexOf('function applyAccessNavigation')));
+ const admin={user_id:'admin',status:'active',permissions:['ui.view','api.view','platform.configure'],scope:{ui_apps:'*'}};w.currentAccessProfile=admin;await w.initUiSimpleAvailability({navigate:false});w.activeWorkflow='ai_practice';w.showAiPractice();let resolve;w.apiRequest=()=>new Promise(r=>{resolve=r;});w.acceptAuthSession({profile:admin});
+ w.acceptAuthSession({profile:{user_id:'other',status:'active',permissions:['api.view'],scope:{ui_apps:['one']}}});await wait();await wait();resolve({ok:true,enabled:true});await wait();await wait();const page=w.document.querySelector('[data-practice-workbench]');assert.ok(page.querySelector('[data-practice-api]'));assert.equal(page.querySelector('[data-practice-workflow="ui_start"]').disabled,true);assert.equal(page.querySelector('[data-ui-week-one]'),null);assert.equal(page.querySelector('[data-ui-week-two]'),null);
+});
+
+test('workspace availability refresh preserves advanced tools disclosure',async t=>{
+ const {w}=fixture(t);w.activeWorkflow='ai_practice';const advanced=w.document.querySelector('[data-ui-advanced]');advanced.open=false;
+ await w.initUiSimpleAvailability({navigate:false});assert.equal(advanced.open,false);
+ advanced.open=true;await w.initUiSimpleAvailability({navigate:false});assert.equal(advanced.open,true);
+ advanced.open=false;w.apiRequest=async()=>({ok:true,enabled:false});await w.initUiSimpleAvailability({navigate:false});assert.equal(advanced.open,false);
+});
+
+test('availability refresh still opens advanced tools for advanced workflows',async t=>{
+ const {w}=fixture(t);w.activeWorkflow='config';const advanced=w.document.querySelector('[data-ui-advanced]');advanced.open=false;
+ await w.initUiSimpleAvailability({navigate:false});assert.equal(advanced.open,true);
+});

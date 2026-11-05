@@ -1173,7 +1173,11 @@ async function callAi(action, body, options = {}) {
   for (let index = 0; index < routes.length; index += 1) {
     const route = routes[index];
     const remainingMs = deadline - Date.now();
-    if (remainingMs <= 0) throw new Error(`AI call timeout after ${totalTimeoutMs}ms`);
+    if (remainingMs <= 0) {
+      const timeout = new Error(`AI call timeout after ${totalTimeoutMs}ms`);
+      timeout.code = 'provider_timeout';
+      throw timeout;
+    }
     const remainingFallbacks = routes.length - index - 1;
     const perFallbackReserveMs = Math.min(
       AI_CALL_FALLBACK_RESERVE_MS,
@@ -1288,7 +1292,9 @@ async function callAi(action, body, options = {}) {
         error: errorText,
       });
       if (!isFallbackEligibleAiError(errorText) || index === routes.length - 1) {
-        throw new Error(errorText);
+        const failure = new Error(errorText);
+        if (action === 'api_case_generation' && error instanceof OpenAI.APIConnectionTimeoutError) failure.code = 'provider_timeout';
+        throw failure;
       }
     } finally {
       await appendAiLog({
@@ -1794,11 +1800,18 @@ app.post('/ai/api-case-generation', asyncRoute(async (req, res) => {
     model: model || '',
     timeoutMs: req.body?.timeoutMs || req.body?.timeout_ms,
   };
-  const {output, route} = await callAi('api_case_generation', body, {
-    promptOverride: '',
-    messages,
-    temperature,
-  });
+  let output, route;
+  try {
+    ({output, route} = await callAi('api_case_generation', body, {
+      promptOverride: '',
+      messages,
+      temperature,
+    }));
+  } catch (error) {
+    return res.status(500).json({success: false,
+      error_code: error?.code === 'provider_timeout' ? 'provider_timeout' : 'gateway_error',
+      error: 'AI provider request failed'});
+  }
   res.json({
     success: true,
     content: output,

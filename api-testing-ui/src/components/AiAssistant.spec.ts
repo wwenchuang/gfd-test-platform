@@ -21,6 +21,24 @@ const generatedCases = [
 ] as CaseVersion[]
 
 describe('AiAssistant', () => {
+  it('explains queue submission failure without blaming the model', () => {
+    const wrapper = mount(AiAssistant, { props: { selectedCount: 1, job: {
+      ...job, state: 'failed_gateway', batches: [{ ...job.batches[0], state: 'failed_gateway', generated_draft_ids: [], error_code: 'enqueue_failed' }],
+    } } })
+    expect(wrapper.text()).toContain('任务提交失败')
+    expect(wrapper.text()).toContain('未发起模型调用')
+    expect(wrapper.text()).not.toContain('模型调用失败')
+    expect(wrapper.text()).not.toContain('模型失败')
+  })
+
+  it('explains timeout without showing provider details', () => {
+    const wrapper = mount(AiAssistant, { props: { selectedCount: 1, job: {
+      ...job, state: 'failed_gateway', batches: [{ ...job.batches[0], state: 'failed_gateway', generated_draft_ids: [], error_code: 'gateway_timeout' }],
+    } } })
+    expect(wrapper.text()).toContain('模型服务或连接等待超时')
+    expect(wrapper.text()).toContain('没有生成新草稿')
+  })
+
   it('uses the assertion contract instead of a saved misleading AI operator diagnosis', () => {
     const wrapper = mount(AiAssistant, { props: { selectedCount: 1, job: {
       ...job,

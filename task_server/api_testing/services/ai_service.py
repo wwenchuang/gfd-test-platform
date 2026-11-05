@@ -9,6 +9,7 @@ import json
 import os
 from pathlib import Path
 import re
+import socket
 from types import MappingProxyType
 from typing import Any, List, Mapping, Optional, Tuple
 import urllib.error
@@ -83,7 +84,9 @@ class AiJobInputError(ValueError):
 
 
 class AiGatewayError(RuntimeError):
-    pass
+    def __init__(self, message, code="gateway_error"):
+        super().__init__(message)
+        self.code = code if code in {"gateway_error", "gateway_timeout"} else "gateway_error"
 
 
 class AiCandidateValidationError(ValueError):
@@ -105,6 +108,7 @@ class AiBatchView:
     fallback_reason: str
     generated_draft_ids: List[str]
     validation_errors: Tuple[Mapping[str, Any], ...]
+    error_code: str
 
     def __post_init__(self):
         object.__setattr__(self, "endpoint_ids", tuple(self.endpoint_ids))
@@ -146,7 +150,8 @@ class AiJobView:
 class AiGatewayClient:
     """Small default client for the dedicated API case-generation contract."""
 
-    def __init__(self, base_url=None):
+    def __init__(self, base_url=None, *, receipt_grace_seconds=0):
+        self.receipt_grace_seconds = receipt_grace_seconds
         self.base_url = str(
             base_url or os.getenv("AI_GATEWAY_URL", "http://127.0.0.1:8090")
         ).rstrip("/")
@@ -166,7 +171,7 @@ class AiGatewayClient:
             method="POST",
         )
         try:
-            with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+            with urllib.request.urlopen(request, timeout=timeout_seconds + self.receipt_grace_seconds) as response:
                 parsed = json.loads(
                     read_response_bytes(
                         response,
@@ -175,9 +180,22 @@ class AiGatewayClient:
                     ).decode("utf-8")
                 )
         except urllib.error.HTTPError as exc:
+            # Only a small, whitelisted code may cross the gateway boundary.
+            # Never surface provider messages or unbounded response bodies.
+            try:
+                raw = exc.read(4097)
+                body = json.loads(raw) if len(raw) <= 4096 else {}
+            except (ValueError, OSError):
+                body = {}
+            if exc.code == 500 and isinstance(body, dict) and body.get("error_code") == "provider_timeout":
+                raise AiGatewayError("AI provider timed out", "gateway_timeout") from None
             raise AiGatewayError(f"AI Gateway HTTP {exc.code}") from None
-        except (urllib.error.URLError, TimeoutError) as exc:
-            raise AiGatewayError("AI Gateway request failed") from exc
+        except urllib.error.URLError as exc:
+            if isinstance(exc.reason, (TimeoutError, socket.timeout)):
+                raise AiGatewayError("AI Gateway request timed out", "gateway_timeout") from None
+            raise AiGatewayError("AI Gateway request failed") from None
+        except (TimeoutError, socket.timeout):
+            raise AiGatewayError("AI Gateway request timed out", "gateway_timeout") from None
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
             raise AiGatewayError("AI Gateway returned invalid JSON") from exc
         if not isinstance(parsed, dict) or parsed.get("success") is not True:
@@ -277,7 +295,7 @@ class AiCaseService:
         if not isinstance(batch_size, int) or isinstance(batch_size, bool) or not 1 <= batch_size <= MAX_ENDPOINTS:
             raise ValueError("AI batch size must be between 1 and 60")
         self.session_factory = session_factory
-        self.gateway_client = gateway_client or AiGatewayClient()
+        self.gateway_client = gateway_client or AiGatewayClient(receipt_grace_seconds=5)
         self.batch_size = batch_size
         self.gateway_timeout_seconds = gateway_timeout_seconds
         root = Path(__file__).resolve().parents[3]
@@ -616,7 +634,7 @@ class AiCaseService:
             self._finish_failed_batch(
                 batch_id,
                 "failed_gateway",
-                "gateway_error",
+                getattr(exc, "code", "gateway_error"),
                 self._safe_error(exc),
                 actor_id,
             )
@@ -1677,6 +1695,9 @@ class AiCaseService:
             fallback_reason=str(evidence.get("fallback_reason", "")),
             generated_draft_ids=list(result.get("draft_version_ids", [])),
             validation_errors=tuple(result.get("validation_errors", [])),
+            error_code=(batch.error["code"] if batch.state == "failed_gateway" and isinstance(batch.error, dict)
+                        and batch.error.get("code") in {"gateway_timeout", "enqueue_failed"}
+                        else "gateway_error" if batch.state == "failed_gateway" else ""),
         )
 
     @classmethod

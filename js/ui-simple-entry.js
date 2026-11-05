@@ -47,7 +47,7 @@ async function initUiSimpleAvailability({navigate=true}={}){
     uiSimpleEnabled=data?.ok===true&&data.enabled===true;
     uiSimpleEvidenceAvailable=data?.ok===true&&(data.evidence_available===true||uiSimpleEnabled);
     const advanced=document.querySelector('[data-ui-advanced]');
-    if(advanced){advanced.classList.toggle('ui-advanced-enabled',uiSimpleEnabled);advanced.open=!uiSimpleEnabled||!isUiSimpleWorkflow(activeWorkflow)&&activeWorkflow!=='dashboard';}
+    if(advanced){advanced.classList.toggle('ui-advanced-enabled',uiSimpleEnabled);if(activeWorkflow!=='ai_practice')advanced.open=!uiSimpleEnabled||!isUiSimpleWorkflow(activeWorkflow)&&activeWorkflow!=='dashboard';}
     applyAccessNavigation();
     // Never take the user away from a page they opened while the feature check was in flight.
     if(navigate&&uiSimpleEnabled&&activeWorkflow===initialWorkflow&&!currentFile){
@@ -130,6 +130,16 @@ function showUiSimpleWorkflow(){
   return true;
 }
 function canUseTaskWorkbench(){return hasPermission('ui.view')||hasPermission('api.view')||hasPermission('platform.configure');}
+async function refreshTaskWorkbenchAfterSession(){
+  const page=document.querySelector('[data-practice-workbench]'),identity=uiSimpleIdentity();
+  if(!page||activeWorkflow!=='ai_practice')return;
+  page.replaceChildren();page.textContent='正在更新账号权限和可用入口…';
+  const pending=initUiSimpleAvailability({navigate:false}),epoch=uiSimpleEpoch;
+  await pending;
+  if(!page.isConnected||activeWorkflow!=='ai_practice'||identity!==uiSimpleIdentity()||epoch!==uiSimpleEpoch)return;
+  applyAccessNavigation();
+  if(!showAiPractice())page.textContent='当前账号没有测试工作台访问权限，请联系管理员。';
+}
 function showAiPractice(){
   if(activeWorkflow!=='ai_practice'||!uiSimpleIdentity()||!canUseTaskWorkbench())return false;
   leaveUiSimpleWorkflow();

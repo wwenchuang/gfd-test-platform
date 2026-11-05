@@ -513,6 +513,7 @@ export interface AiJobBatch {
   fallback_reason: string
   generated_draft_ids: string[]
   validation_errors: Array<Record<string, unknown>>
+  error_code?: string
 }
 
 export interface AiJob {
