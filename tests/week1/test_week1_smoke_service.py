@@ -200,3 +200,37 @@ def test_process_timeout_reaps_with_bounded_wait_even_when_group_is_gone(monkeyp
         smoke._run_process('api', 'positive', tmp_path)
     assert child.calls == [45, 2, ('wait', 1)]
     assert child.stdout.closed and child.stderr.closed
+
+
+def test_ui_fontconfig_is_trusted_optional_and_environment_is_minimal(monkeypatch, tmp_path):
+    node = tmp_path / 'node'
+    node.write_text('#!/bin/sh\n')
+    node.chmod(0o700)
+    modules = tmp_path / 'modules'
+    browsers = tmp_path / 'browsers'
+    modules.mkdir()
+    browsers.mkdir()
+    font = tmp_path / 'fonts.conf'
+    font.write_text('<fontconfig/>')
+    for name, value in [('TASK_WEEK1_NODE',node), ('TASK_WEEK1_NODE_PATH',modules),
+                        ('TASK_WEEK1_BROWSERS_PATH',browsers), ('TASK_WEEK1_FONTCONFIG_FILE',font),
+                        ('DASHSCOPE_API_KEY','secret-should-not-pass'), ('W01_UI_URL','https://evil.test')]:
+        monkeypatch.setenv(name, str(value))
+    captured = []
+    class Child:
+        returncode = 0
+        def communicate(self, timeout): return '{}', ''
+    def spawn(argv, **kwargs):
+        captured.append((argv, kwargs['env']))
+        return Child()
+    monkeypatch.setattr(smoke.subprocess, 'Popen', spawn)
+    smoke._run_process('ui', 'positive', tmp_path / 'out')
+    env = captured[-1][1]
+    assert env['FONTCONFIG_FILE'] == str(font)
+    assert 'DASHSCOPE_API_KEY' not in env and 'W01_UI_URL' not in env
+    monkeypatch.delenv('TASK_WEEK1_FONTCONFIG_FILE')
+    smoke._run_process('ui', 'positive', tmp_path / 'out')
+    assert 'FONTCONFIG_FILE' not in captured[-1][1]
+    monkeypatch.setenv('TASK_WEEK1_FONTCONFIG_FILE', 'relative.conf')
+    with pytest.raises(ValueError):
+        smoke._run_process('ui', 'positive', tmp_path / 'out')

@@ -18,6 +18,8 @@ Environment=TASK_WEEK1_BROWSERS_PATH=/opt/midscene-week1-runtime-20261105/browse
 Environment=TASK_WEEK1_LIBRARY_PATH=/opt/midscene-week1-runtime-20261105/libs
 ```
 
+如服务器需要使用隔离的中文字体，可选增加 `Environment=TASK_WEEK1_FONTCONFIG_FILE=/服务端受信目录/fonts.conf`，将示例替换为服务账号可读取的绝对文件路径；不配置时保持系统默认。此文件和其指向的字体须由管理员准备，网页不能指定路径。
+
 修改 systemd 配置后需要 `systemctl daemon-reload` 和安全窗口重启 `midscene-task`；重启会中断该服务正在处理的请求和任务。发布前检查平台重任务、API worker、Runner 及并行发布状态，保留正在进行的工作。缺少依赖或无权限应显示阻塞；不能把浏览器没有运行算作 UI 通过。不要把 Key、认证头或模型配置写入此运行时目录。
 
 ## 验收边界

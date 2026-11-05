@@ -95,6 +95,11 @@ def _run_process(kind, mode, out):
         library = os.environ.get('TASK_WEEK1_LIBRARY_PATH', '')
         if library:
             env['LD_LIBRARY_PATH'] = _configured_path('TASK_WEEK1_LIBRARY_PATH')
+        fontconfig = os.environ.get('TASK_WEEK1_FONTCONFIG_FILE', '')
+        if fontconfig:
+            if not os.path.isabs(fontconfig) or not Path(fontconfig).is_file() or not os.access(fontconfig, os.R_OK):
+                raise ValueError('dependency_unavailable')
+            env['FONTCONFIG_FILE'] = fontconfig
         argv = [node, str(_SCRIPTS / 'ui_smoke.js'),
                 'positive' if mode == 'positive' else 'intentional-failure']
     child = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
