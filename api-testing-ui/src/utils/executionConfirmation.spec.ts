@@ -5,6 +5,14 @@ import { describe, expect, it, vi } from 'vitest'
 import { confirmApiExecution, isProductionLikeEnvironment } from './executionConfirmation'
 
 describe('execution confirmation', () => {
+  it('explains version and task changes even outside production', () => {
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false)
+    confirmApiExecution({
+      action: '调试用例', environmentName: '测试环境',
+      effect: '将保存用例新版本并更新当前任务范围。',
+    })
+    expect(confirm).toHaveBeenCalledWith(expect.stringContaining('将保存用例新版本并更新当前任务范围。'))
+  })
   it('recognizes Chinese and English production environment names without matching product names', () => {
     expect(isProductionLikeEnvironment('生产环境（新）-腾讯云')).toBe(true)
     expect(isProductionLikeEnvironment('prod-us-east')).toBe(true)

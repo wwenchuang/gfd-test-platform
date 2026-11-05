@@ -1514,6 +1514,10 @@ async function retryAgentRunById(runId) {
 
 function renderAgentPageAfterRunUpdate() {
   renderAgentCenter();
+  if (typeof isUiSimpleWorkflow === 'function' && isUiSimpleWorkflow(activeWorkflow)) {
+    if (typeof updateNavigationBadges === 'function') updateNavigationBadges();
+    return;
+  }
   if (activeWorkflow === 'agent_history') {
     renderAgentHistoryPage();
     return;
@@ -2533,13 +2537,21 @@ function refreshActiveWorkflow() {
 }
 
 async function activateWorkflow(sectionKey) {
+  const navigationId = activateWorkflow.navigationId = (activateWorkflow.navigationId || 0) + 1;
   const targetWorkflow = normalizeWorkflowKey(sectionKey);
   if (!canAccessWorkflow(targetWorkflow)) {
     showToast(targetWorkflow === 'generate' ? uiAiAccessReason() : ['dashboard', 'agent', 'agent_confirm'].includes(targetWorkflow) ? agentAccessReason() : `缺少 ${WORKFLOW_PERMISSIONS[targetWorkflow]} 权限，请联系管理员。`, 'error');
     return;
   }
   const section = WORKFLOW_SECTIONS[targetWorkflow] || WORKFLOW_SECTIONS.dashboard;
+  if (typeof confirmUiCaseDraftLeave === 'function' && !confirmUiCaseDraftLeave()) return;
+  const sourceWorkflow = activeWorkflow;
+  const sourceIdentity = typeof uiSimpleIdentity === 'function' ? uiSimpleIdentity() : null;
+  const sourcePage = document.querySelector('#editor-area .ui-simple-page');
   if (!(await saveEditorBeforeNavigation(`已进入「${section.title}」流程页`))) return;
+  if (activateWorkflow.navigationId !== navigationId || activeWorkflow !== sourceWorkflow
+      || (typeof uiSimpleIdentity === 'function' && uiSimpleIdentity() !== sourceIdentity)
+      || (sourcePage && !sourcePage.isConnected)) return;
   if (typeof captureAgentFormDraft === 'function') captureAgentFormDraft();
   const keepFileContext = Boolean(currentFile && hasOpenEditor()
     && ['yaml_edit', 'execute', 'baseline', 'repair'].includes(targetWorkflow));

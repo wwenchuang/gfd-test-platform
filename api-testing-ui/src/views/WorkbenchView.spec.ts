@@ -483,6 +483,8 @@ describe('WorkbenchView debug workflow', () => {
     expect(prepare).not.toHaveBeenCalled()
     expect(debug).not.toHaveBeenCalled()
     expect(confirm).toHaveBeenCalledWith(expect.stringMatching(/生产环境.*我的收藏列表.*真实发送/))
+    expect(confirm).toHaveBeenLastCalledWith(expect.stringContaining('创建并保存新用例'))
+    expect(confirm).toHaveBeenLastCalledWith(expect.stringContaining('更新当前任务范围'))
 
     confirm.mockReturnValue(true)
     await wrapper.get('[data-testid="editor-debug"]').trigger('click')
@@ -528,7 +530,9 @@ describe('WorkbenchView debug workflow', () => {
     const cases = useCasesStore()
     vi.spyOn(cases, 'loadSavedCases').mockResolvedValue()
     vi.spyOn(cases, 'restoreLatestAiJob').mockResolvedValue()
-    vi.spyOn(cases, 'loadVersion').mockResolvedValue()
+    vi.spyOn(cases, 'loadVersion').mockImplementation(async () => {
+      cases.registerVersion({ ...savedCase('version-edited', 'case-edited', '新手必学', {}), endpoint_id: editedEndpoint.id })
+    })
     vi.spyOn(cases, 'saveForDebug').mockResolvedValue({ id: 'version-edited-next', endpoint_id: editedEndpoint.id } as CaseVersion)
     const debug = vi.spyOn(cases, 'debug').mockResolvedValue()
 
@@ -545,7 +549,7 @@ describe('WorkbenchView debug workflow', () => {
       return restoredTask
     })
     const saveSelection = vi.spyOn(tasks, 'saveSelection')
-    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    const standaloneConfirm = vi.spyOn(window, 'confirm').mockReturnValue(true)
 
     const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/', name: 'workbench', component: WorkbenchView }] })
     await router.push(`/?endpointId=${editedEndpoint.id}&caseVersionId=version-edited&projectId=project-1&sourceRevisionId=source-1&environmentRevisionId=environment-1`)
@@ -558,7 +562,7 @@ describe('WorkbenchView debug workflow', () => {
           TaskStatusStrip: true,
           EndpointDetail: true,
           CaseEditor: {
-            name: 'CaseEditor', props: ['operationError'], emits: ['debug'],
+            name: 'CaseEditor', props: ['operationError', 'editingVersion'], emits: ['debug'],
             template: '<button data-testid="editor-debug" @click="$emit(\'debug\')">保存并调试</button>',
           },
           AiAssistant: true,
@@ -570,9 +574,12 @@ describe('WorkbenchView debug workflow', () => {
     await flushPromises()
 
     expect(wrapper.get('[data-testid="standalone-case-edit-note"]').text()).toContain('不会更改当前任务的接口范围')
+    expect(wrapper.getComponent({ name: 'CaseEditor' }).props('editingVersion')).toMatchObject({ name: '新手必学', version: 1 })
     await wrapper.get('[data-testid="editor-debug"]').trigger('click')
     await flushPromises()
 
+    expect(standaloneConfirm).toHaveBeenCalledWith(expect.stringContaining('保存用例新版本'))
+    expect(standaloneConfirm).toHaveBeenCalledWith(expect.stringContaining('不会更改当前任务范围'))
     expect(saveSelection).not.toHaveBeenCalled()
     expect(tasks.task?.selected_endpoint_ids).toEqual([savedEndpoint.id])
     expect(debug).toHaveBeenCalledWith(expect.objectContaining({

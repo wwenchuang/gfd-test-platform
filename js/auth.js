@@ -237,6 +237,7 @@ async function doLogin() {
 }
 
 async function doLogout() {
+  if (typeof confirmUiCaseDraftLeave === 'function' && !confirmUiCaseDraftLeave()) return;
   try {
     await apiRequest('/auth/logout', {method: 'POST', body: {}});
   } catch(e) {}

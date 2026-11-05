@@ -395,9 +395,24 @@ async function runCaseVersion(version: CaseVersion): Promise<void> {
     localError.value = '请先选择接口项目、接口版本和执行环境'
     return
   }
-  if (!confirmApiExecution({ action: '执行用例', environmentName: environmentName.value, targetName: version.name, caseCount: 1 })) return
-  editCaseVersion(version)
   const endpointId = version.current_endpoint_id || version.endpoint_id
+  if (!assets.endpoints.some(endpoint => endpoint.id === endpointId)) {
+    localError.value = '该用例对应的接口不在当前接口版本中'
+    return
+  }
+  const targetDraft = cases.drafts[endpointId]
+  const currentVersion = Boolean(targetDraft && version.id === cases.activeVersionByEndpoint[endpointId])
+  const sourceEffect = currentVersion
+    ? '将使用当前编辑内容（包含未保存修改）。'
+    : targetDraft ? '将读取所选已保存版本，并替换该接口的未保存编辑。' : '将读取所选已保存版本。'
+  if (!confirmApiExecution({
+    action: '调试用例',
+    environmentName: environmentName.value,
+    targetName: currentVersion ? targetDraft.name || version.name : version.name,
+    caseCount: 1,
+    effect: `${sourceEffect}将保存用例新版本并更新当前任务范围；不会自动替换已采纳的基线。`,
+  })) return
+  editCaseVersion(version)
   if (!selectedIds.value.includes(endpointId)) selectedIds.value = [...selectedIds.value, endpointId]
   let prepared
   try {
@@ -435,6 +450,9 @@ async function submitDebug(): Promise<void> {
     environmentName: environmentName.value,
     targetName: activeDraft.value?.name || activeEndpoint.value.summary || activeEndpoint.value.path,
     caseCount: 1,
+    effect: activeVersionId.value
+      ? '将保存用例新版本并更新当前任务范围；不会自动替换已采纳的基线。'
+      : '将创建并保存新用例，并更新当前任务范围；不会自动采纳基线。',
   })) return
   localError.value = ''
   let version
@@ -643,6 +661,7 @@ function defaultTaskName(): string {
           <CaseEditor
             v-if="activeDraft"
             :model-value="activeDraft"
+            :editing-version="cases.versions[activeVersionId] || null"
             :dependency-options="dependencyOptions"
             :endpoint-options="assets.endpoints"
             :environment-variable-names="context.environmentVariableNames"

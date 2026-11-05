@@ -5,12 +5,17 @@ let uiSimpleEpoch=0;
 let uiCaseCreationEpoch=0;
 let uiCaseDraftHandle=null;
 let uiSimpleStartSelection=null;
+let uiStartCreationIntent=null;
 const uiSimplePictures=new Map();
 const uiSimplePictureRequests=new Set();
 const uiSimpleDownloads=new Set();
 function isUiSimpleWorkflow(key){return ['ui_start','ui_library','ui_reports'].includes(key);}
 function isUiSimpleAvailable(key){return key==='ui_reports'?uiSimpleEvidenceAvailable:uiSimpleEnabled;}
 function uiSimpleIdentity(){return String(currentAccessProfile?.user_id||'');}
+function confirmUiCaseDraftLeave(){
+  if(!uiCaseDraftHandle?.hasUnsavedChanges?.())return true;
+  return window.confirm('当前用例有未保存的修改，离开后这些修改可能丢失。确认离开吗？');
+}
 function leaveUiSimpleWorkflow({discardReportIntent=false}={}){
   uiCaseCreationEpoch++;uiCaseDraftHandle?.dispose();uiCaseDraftHandle=null;
   if(discardReportIntent)clearUiSimpleReportIntent();
@@ -25,6 +30,7 @@ function leaveUiSimpleWorkflow({discardReportIntent=false}={}){
 }
 function resetUiSimpleWorkflow(){
   uiSimpleStartSelection=null;
+  uiStartCreationIntent=null;
   uiSimpleEpoch++;uiSimpleEnabled=false;uiSimpleEvidenceAvailable=false;
   window.UiSimpleFlow?.reset();leaveUiSimpleWorkflow();
 }
@@ -90,6 +96,10 @@ function preferUiSimpleReport(){
 }
 function showUiSimpleWorkflow(){
   if(!isUiSimpleAvailable(activeWorkflow)||!isUiSimpleWorkflow(activeWorkflow)||!hasPermission('ui.view'))return false;
+  const intent=uiStartCreationIntent;
+  const openCreation=activeWorkflow==='ui_library'&&intent?.page.isConnected&&intent.identity===uiSimpleIdentity()
+    &&intent.epoch===uiSimpleEpoch&&uiSimpleEnabled&&hasPermission('ui.edit');
+  if(openCreation)uiStartCreationIntent=null;
   leaveUiSimpleWorkflow();
   document.getElementById('app')?.classList.add('ui-simple-active');
   const area=document.getElementById('editor-area');area.classList.remove('editor-open');area.replaceChildren();
@@ -109,9 +119,58 @@ function showUiSimpleWorkflow(){
     download:downloadUiBatchFile,copy:async text=>{if(!await copyText(text))throw new Error('复制未完成，请重试');}
   });
   if(activeWorkflow==='ui_library')attachUiCaseCreation(page);
+  if(activeWorkflow==='ui_start'){attachUiStartCreation(page);attachUiFirstWeekGuide(page);}
+  if(openCreation)page.querySelector('[data-ui-create-case]')?.click();
   // Keep the exact internal link through loading, errors, refresh and reauthentication.
   // Only an explicit close, selecting another test, or workflow departure abandons it.
   return true;
+}
+function attachUiFirstWeekGuide(page){
+  const identity=uiSimpleIdentity(),epoch=uiSimpleEpoch;
+  const current=()=>page.isConnected&&activeWorkflow==='ui_start'&&identity===uiSimpleIdentity()&&epoch===uiSimpleEpoch;
+  const canOpen=key=>typeof canAccessWorkflow==='function'&&canAccessWorkflow(key);
+  const guide=document.createElement('details');guide.dataset.uiWeekOne='';guide.className='ui-case-source-picker';
+  guide.innerHTML='<summary>第一次使用？查看第 1 周入门步骤</summary><ol><li>先做快速体检，检查服务、执行环境和模型配置。 <button type="button" data-week-workflow="system_config">打开环境体检</button></li><li>检查模型策略。策略测试可能返回模拟结果；独立的文本探针和固定图视觉验证尚未接入网页。 <button type="button" data-week-workflow="config">打开模型配置</button></li><li>选择只读业务接口，执行并核对业务断言。 <span data-week-api-slot></span></li><li>回到此页创建或选择用例，选择设备后执行；在“我的测试”查看实际结果。 <button type="button" data-week-workflow="ui_reports">查看我的测试</button></li><li>保存执行证据，并记录人工准备、执行、核验和清理耗时。网页暂不提供周验收和耗时记录，请另行留档。</li></ol>';
+  for(const button of guide.querySelectorAll('[data-week-workflow]')){
+    const target=button.dataset.weekWorkflow;button.disabled=!canOpen(target);
+    if(button.disabled){button.title='当前账号无权使用，请联系管理员';button.insertAdjacentText('afterend','（需要相应权限）');}
+    button.onclick=()=>{if(current()&&canOpen(target))activateWorkflow(target);};
+  }
+  const slot=guide.querySelector('[data-week-api-slot]');
+  if(hasPermission('api.view')){
+    for(const [key,label,path] of [['weekApi','打开 API 测试','/api-test/'],['weekApiRuns','查看接口执行记录','/api-test/#/runs']]){
+      const link=document.createElement('a');link.dataset[key]='';link.href=path;link.textContent=label;
+      link.onclick=event=>{if(!current()||!hasPermission('api.view'))event.preventDefault();};slot.append(link,document.createTextNode(' '));
+    }
+  }else slot.textContent='（API 测试需要相应权限）';
+  const heading=page.querySelector('.ui-simple-heading');
+  if(heading)heading.after(guide);else page.prepend(guide);
+}
+// Use the existing library creation flow so drafts and navigation guards stay shared.
+function attachUiStartCreation(page){
+  const identity=uiSimpleIdentity(),epoch=uiSimpleEpoch;
+  const toolbar=document.createElement('div');toolbar.className='ui-case-creation-toolbar';
+  toolbar.style.flexWrap='wrap';
+  const help=document.createElement('span');help.dataset.uiStartCreateHelp='';help.textContent='没有现成用例？可从需求材料、文字、视频或操作录制创建。';
+  help.style.flex='1 1 260px';
+  const create=document.createElement('button');create.type='button';create.className='btn-sm';create.dataset.uiStartCreate='';create.textContent='创建用例';
+  create.disabled=!hasPermission('ui.edit')||!window.UiCaseDraft;
+  if(!hasPermission('ui.edit')){create.title='创建用例需要用例编辑权限';help.textContent='需要创建用例？请联系管理员开通用例编辑权限。';}
+  else if(!window.UiCaseDraft){create.title='创建用例功能暂不可用，请刷新后重试';help.textContent='创建用例功能暂不可用，请刷新页面后重试。';}
+  create.onclick=async()=>{
+    if(!page.isConnected||activeWorkflow!=='ui_start'||identity!==uiSimpleIdentity()||epoch!==uiSimpleEpoch||!uiSimpleEnabled||!hasPermission('ui.edit')||!window.UiCaseDraft)return;
+    create.disabled=true;
+    const intent={page,identity,epoch};uiStartCreationIntent=intent;
+    try{
+      await activateWorkflow('ui_library');
+    }catch(error){
+      if(page.isConnected&&identity===uiSimpleIdentity()&&epoch===uiSimpleEpoch)showToast(error?.message||'无法打开创建用例，请重试','error');
+    }finally{
+      if(uiStartCreationIntent===intent)uiStartCreationIntent=null;
+      if(page.isConnected)create.disabled=!hasPermission('ui.edit')||!window.UiCaseDraft;
+    }
+  };
+  toolbar.append(help,create);page.prepend(toolbar);
 }
 // Creation is a child of the library; existing recording/material workflows remain available.
 function attachUiCaseCreation(page){
@@ -131,7 +190,7 @@ function attachUiCaseCreation(page){
     if(!current()||!canEdit()||!window.UiCaseDraft)return;
     window.UiSimpleFlow?.leave();page.replaceChildren();
     const back=document.createElement('button');back.type='button';back.className='btn-sm';back.dataset.uiCaseBack='';back.textContent='返回用例库';
-    back.onclick=()=>{if(current())showUiSimpleWorkflow();};
+    back.onclick=()=>{if(current()&&confirmUiCaseDraftLeave())showUiSimpleWorkflow();};
     const heading=document.createElement('div');heading.className='ui-case-creation-toolbar';heading.append(back);page.append(heading);
     const host=document.createElement('section');host.className='ui-case-source-picker';page.append(host);
     host.innerHTML='<h2>从哪里开始创建用例</h2><p>选择你手上已有的内容，生成后先核对步骤，再试跑。</p><div class="ui-case-source-options"><button type="button" data-ui-case-source="text"><strong>大白话描述</strong><span>写下要做的操作和要检查的结果。</span></button><button type="button" data-ui-case-source="recording"><strong>操作录制</strong><span>连接手机，在平台远控中操作并记录步骤。</span></button><button type="button" data-ui-case-source="materials"><strong>需求材料</strong><span>进入现有需求生成流程，使用需求文档或截图。</span></button><button type="button" data-ui-case-source="video"><strong>上传录屏文件</strong><span>上传 MP4/MOV，按视频时间核对中文步骤。</span></button></div>';
