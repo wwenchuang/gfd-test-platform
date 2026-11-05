@@ -87,13 +87,22 @@ def _tap_return_conflict(ids,sources,new,evidence,times):
     if {a['action'] for a in anchors}!={'aiTap','navigateBack'}:_fail()
     tap=next(a for a in anchors if a['action']=='aiTap')
     back=next(a for a in anchors if a['action']=='navigateBack')
-    if (new['action']!='navigateBack' or new['target']!='上一页面' or new.get('value','')!='' or
+    if (new['action'] not in {'aiTap','navigateBack'} or
+        (new['action']=='navigateBack' and new['target']!='上一页面') or new.get('value','')!='' or
         back['target']!='上一页面' or not tap.get('target') or
         tap['frame_refs']!=back['frame_refs'] or len(tap['frame_refs'])<3 or
         not set(tap['frame_refs'])<=set(new['frame_refs']) or
         not set(tap['frame_refs'])<=set(evidence['examined_frame_refs']) or
         tap['start_ms']!=back['start_ms'] or tap['end_ms']!=back['end_ms'] or
         new['start_ms']>tap['start_ms'] or new['end_ms']<tap['end_ms']):_fail('tap_return_evidence_incomplete')
+    # A candidate click does not settle the conflict. It may only be carried
+    # forward with both original hypotheses and a mandatory human review gate.
+    if new['action']=='aiTap':
+        for name,source in sources.items():
+            for pos,old in enumerate(source):
+                if (f'{name}:{pos}' not in ids and old['action'] in {'aiTap','aiInput','aiScroll','navigateBack','dismissKeyboard'}
+                    and tap['start_ms']<=old['start_ms']<tap['end_ms']):_fail('tap_return_intervening_action')
+        return anchors
     note=evidence['interaction']+'。'+evidence['why_not_separate_actions']+'。'+new.get('observation','')
     negative=r'(?:未见|没有|未观察到)点击'+re.escape(tap['target'])
     if (re.search(r'(?:并非|不是|不|没有)(?:未见|没有|未观察到)',note) or
@@ -203,6 +212,7 @@ def validate(claims,sources,reviewed,frames):
         ids=claim['source_anchor_ids'];index=claim['reviewed_event_index'];ev=claim['evidence']
         if (not isinstance(ids,list) or not 2<=len(ids)<=8 or any(not isinstance(i,str) for i in ids) or
             len(set(ids))!=len(ids) or set(ids)&used or type(index) is not int or not 0<=index<len(reviewed) or index in destinations):_fail()
+        if not isinstance(reviewed[index],dict):_fail()
         conflict=claim['resolution']=='tap_return_conflict'
         if not conflict and not any(sum(aid.startswith(name+':') for aid in ids)>=2 for name in sources):_fail()
         if claim['resolution'] not in {'same_interaction','same_interaction_with_action_correction','same_return_gesture','same_scroll_gesture','tap_return_conflict'}:_fail()
@@ -213,18 +223,21 @@ def validate(claims,sources,reviewed,frames):
         if (not isinstance(refs,list) or not 2<=len(refs)<=8 or any(not isinstance(r,str) or r not in times for r in refs) or
             len(set(refs))!=len(refs) or refs!=sorted(refs,key=times.get)):_fail()
         for key in ('before_state','interaction','after_state','why_not_separate_actions'):
-            if not isinstance(ev[key],str) or not 3<=len(ev[key].strip())<=800 or re.search(r'可能|不确定|无法确认|疑似',ev[key]):_fail()
+            if (not isinstance(ev[key],str) or not 3<=len(ev[key].strip())<=800 or
+                (not (conflict and reviewed[index].get('action')=='aiTap') and re.search(r'可能|不确定|无法确认|疑似',ev[key]))):_fail()
         before,touch,after=(ev[k] for k in ('before_frame','interaction_frame','after_frame'))
         if any(not isinstance(r,str) or r not in refs for r in (before,touch,after)):_fail()
         if not times[before]<=times[touch]<times[after] or before==after:_fail()
         new=reviewed[index]
-        if new['action'] not in {'aiTap','aiScroll','navigateBack'} or new.get('uncertainties') or not {before,touch,after}<=set(new['frame_refs']):_fail()
+        if (new['action'] not in {'aiTap','aiScroll','navigateBack'} or
+            (new.get('uncertainties') and not (conflict and new['action']=='aiTap')) or
+            not {before,touch,after}<=set(new['frame_refs'])):_fail()
         if touch in targets and targets[touch]!=new['target']:_fail()
         if conflict:
             anchors=_tap_return_conflict(ids,sources,new,ev,times)
             if any(touch not in a['frame_refs'] for a in anchors):_fail('interaction_frame_not_shared')
             used.update(ids);destinations.add(index);targets[touch]=new['target']
-            result.append({**copy.deepcopy(claim),'reviewed_event':copy.deepcopy(new),
+            result.append({**copy.deepcopy(claim),'review_required':True,'reviewed_event':copy.deepcopy(new),
                            'source_anchors':{aid:copy.deepcopy(sources[aid.split(':')[0]][int(aid.split(':')[1])]) for aid in ids}})
             continue
         gesture=claim['resolution']=='same_return_gesture'

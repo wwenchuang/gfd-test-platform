@@ -40,6 +40,36 @@ def test_cross_source_conflict_is_reobserved_and_blocked_for_human_review(monkey
     assert any('核对' in q and '点击' in q and '返回' in q for q in result['uncertainties'])
 
 
+def test_unresolved_tap_return_hypotheses_reach_review_without_becoming_verified(monkeypatch,tmp_path):
+    from task_server.services import ui_video_reconcile as vr,ui_video_windows as windows,ai_skill_service as ai
+    frames,back,tap,claim=tap_return_conflict_fixture()
+    candidate={**copy.deepcopy(tap),'target':'确认按钮','observation':'画面变化','uncertainties':['触点位置不确定']}
+    claim['evidence']['interaction']='可能是点击或返回，无法确认触点'
+    monkeypatch.setattr(windows,'observe_windows',lambda *a,**kw:({'events':[copy.deepcopy(tap)],'uncertainties':[],'multiple_scenarios':False},[]))
+    monkeypatch.setattr(windows,'load_assets',lambda *a,**kw:[])
+    monkeypatch.setattr(ai,'run_ai_skill',lambda *a,**kw:{'events':[{k:v for k,v in candidate.items() if k not in {'start_ms','end_ms','evidence_kind'}}],
+        'coverage_resolutions':[copy.deepcopy(claim)],'uncertainties':[],'multiple_scenarios':False})
+    result=vr.reconcile([copy.deepcopy(back)],frames,1000,tmp_path,lambda:False,[])
+    assert result['events'][0]['action']=='aiTap'
+    assert any('点击与返回' in q and '核对' in q for q in result['uncertainties'])
+    resolved=result['reconciliation_audit']['coverage_resolutions'][0]
+    assert resolved['review_required'] is True
+    assert {e['action'] for e in resolved['source_anchors'].values()}=={'aiTap','navigateBack'}
+
+
+@pytest.mark.parametrize('mutation',['missing_frame','intervening','different_frames','different_time','missing_candidate_frame'])
+def test_unresolved_tap_candidate_never_waives_structural_evidence(mutation):
+    frames,back,tap,claim=tap_return_conflict_fixture()
+    candidate=copy.deepcopy(tap)
+    sources={'first_pass':[back],'independent_review':[tap]}
+    if mutation=='missing_frame': claim['evidence']['examined_frame_refs']=['f1','f2']
+    if mutation=='intervening': sources['first_pass'].append({**tap,'frame_refs':['f2'],'start_ms':200,'end_ms':200})
+    if mutation=='different_frames': tap['frame_refs']=['f2','f3','f4'];tap['end_ms']=400
+    if mutation=='different_time': tap['start_ms']=200
+    if mutation=='missing_candidate_frame': candidate['frame_refs']=['f1','f2'];candidate['end_ms']=200
+    with pytest.raises(ValueError):cr.validate([claim],sources,[candidate],frames)
+
+
 @pytest.mark.parametrize('mutation',['missing_frame','not_same_source_frame','same_source','no_explicit_negative','wrong_target','intervening','second_click','uncertain','double_negative','result_click'])
 def test_cross_source_tap_return_conflict_rejects_unsafe_evidence(mutation):
     frames,back,tap,claim=tap_return_conflict_fixture()
