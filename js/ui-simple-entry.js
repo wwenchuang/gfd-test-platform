@@ -130,12 +130,13 @@ function attachUiFirstWeekGuide(page){
   const current=()=>page.isConnected&&activeWorkflow==='ui_start'&&identity===uiSimpleIdentity()&&epoch===uiSimpleEpoch;
   const canOpen=key=>typeof canAccessWorkflow==='function'&&canAccessWorkflow(key);
   const guide=document.createElement('details');guide.dataset.uiWeekOne='';guide.className='ui-case-source-picker';
-  guide.innerHTML='<summary>第一次使用？查看第 1 周入门步骤</summary><ol><li>先做快速体检，检查服务、执行环境和模型配置。 <button type="button" data-week-workflow="system_config">打开环境体检</button></li><li>检查模型策略。策略测试可能返回模拟结果；独立的文本探针和固定图视觉验证尚未接入网页。 <button type="button" data-week-workflow="config">打开模型配置</button></li><li>选择只读业务接口，执行并核对业务断言。 <span data-week-api-slot></span></li><li>回到此页创建或选择用例，选择设备后执行；在“我的测试”查看实际结果。 <button type="button" data-week-workflow="ui_reports">查看我的测试</button></li><li>保存执行证据，并记录人工准备、执行、核验和清理耗时。网页暂不提供周验收和耗时记录，请另行留档。</li></ol>';
+  guide.innerHTML='<summary>第一次使用？查看第 1 周入门步骤</summary><ol><li>先做快速体检，检查服务、执行环境和模型配置。 <button type="button" data-week-workflow="system_config">打开环境体检</button></li><li>检查模型配置，再运行真实文本和固定图视觉探针。 <button type="button" data-week-workflow="config">打开模型配置</button><span data-week-probe-slot></span></li><li>选择只读业务接口，执行并核对业务断言。 <span data-week-api-slot></span></li><li>回到此页创建或选择用例，选择设备后执行；在“我的测试”查看实际结果。 <button type="button" data-week-workflow="ui_reports">查看我的测试</button></li><li>保存执行证据，并记录人工准备、执行、核验和清理耗时。网页暂不提供周验收和耗时记录，请另行留档。</li></ol>';
   for(const button of guide.querySelectorAll('[data-week-workflow]')){
     const target=button.dataset.weekWorkflow;button.disabled=!canOpen(target);
     if(button.disabled){button.title='当前账号无权使用，请联系管理员';button.insertAdjacentText('afterend','（需要相应权限）');}
     button.onclick=()=>{if(current()&&canOpen(target))activateWorkflow(target);};
   }
+  attachUiWeekOneProbe(guide.querySelector('[data-week-probe-slot]'),current);
   const slot=guide.querySelector('[data-week-api-slot]');
   if(hasPermission('api.view')){
     for(const [key,label,path] of [['weekApi','打开 API 测试','/api-test/'],['weekApiRuns','查看接口执行记录','/api-test/#/runs']]){
@@ -145,6 +146,72 @@ function attachUiFirstWeekGuide(page){
   }else slot.textContent='（API 测试需要相应权限）';
   const heading=page.querySelector('.ui-simple-heading');
   if(heading)heading.after(guide);else page.prepend(guide);
+}
+
+// A bounded probe uses only server-controlled inputs; a successful vision response
+// remains pending until a person checks the answer against the fixed fixture.
+function attachUiWeekOneProbe(slot,current){
+  const panel=document.createElement('details');panel.dataset.weekProbe='';panel.className='ui-week-probe';
+  const summary=document.createElement('summary');summary.textContent='千问真实调用与历史证据';panel.append(summary);slot.append(panel);
+  const canProbe=()=>hasPermission('platform.configure')&&(currentAccessProfile?.is_superuser===true||currentAccessProfile?.scope?.ui_apps==='*');
+  if(!canProbe()){
+    const message=document.createElement('p');message.textContent='运行和查看模型探针需要平台配置权限及完整 UI 应用数据范围，请联系管理员。';panel.append(message);return;
+  }
+  panel.insertAdjacentHTML('beforeend','<p>使用 Task Server 服务器环境配置直连千问，不经过模型配置页面的网关策略；配置有问题请联系管理员检查服务器设置。真实调用可能产生模型消耗，每次点击执行一次，请先确认账号额度。</p><p>视觉测试使用固定图：左侧红色矩形，右侧蓝色圆。收到回答后请人工核对，调用成功不等于识别正确。</p><div class="ui-week-probe-actions"><button type="button" data-probe-run="text">运行文本探针</button><button type="button" data-probe-run="vision">运行视觉探针</button><button type="button" data-probe-refresh>刷新历史记录</button></div><p data-probe-notice role="status" aria-live="polite"></p><div data-probe-history></div>');
+  const notice=panel.querySelector('[data-probe-notice]'),history=panel.querySelector('[data-probe-history]');
+  const img=document.createElement('img');img.dataset.probeFixture='';img.hidden=true;img.alt='视觉测试固定图片：左红色矩形，右蓝色圆';
+  const imageNote=document.createElement('p');imageNote.textContent='固定图片加载中；如未显示，请依据文字说明核对。';
+  panel.querySelector('.ui-week-probe-actions').before(img,imageNote);
+  let busy=false,loaded=false,serial=0;
+  const valid=()=>current()&&canProbe();
+  const loadFixture=async()=>{
+    const key='week-one-fixture|'+uiSimpleIdentity();
+    if(uiSimplePictures.has(key)){img.src=uiSimplePictures.get(key);img.hidden=false;imageNote.hidden=true;return;}
+    const controller=new AbortController();uiSimplePictureRequests.add(controller);
+    try{
+      const response=await nativeFetch('/api/platform/week1-probes/fixture',{headers:authHeaders(),signal:controller.signal});
+      if(!response.ok||!(response.headers.get('content-type')||'').toLowerCase().startsWith('image/png'))throw new Error('image unavailable');
+      const blob=await response.blob();if(!valid()||blob.size>1024*1024)return;
+      const src=URL.createObjectURL(blob);uiSimplePictures.set(key,src);img.src=src;img.hidden=false;imageNote.hidden=true;
+    }catch(_){if(valid())imageNote.textContent='固定图片暂时无法显示，请按文字说明核对模型回答。';}
+    finally{uiSimplePictureRequests.delete(controller);}
+  };
+  const setBusy=value=>{busy=value;panel.querySelectorAll('button').forEach(button=>{button.disabled=value;});};
+  const fail=error=>{notice.textContent=error?.status===403?'当前账号没有平台配置权限，请联系管理员。':error?.status===401?'登录已失效，请重新登录后查看记录。':error?.status===429?'已有探针正在执行或刚执行完，请稍等后刷新历史记录。':'操作未完成，请检查服务与模型配置后重试；不要连续重复点击。';};
+  const errorHelp=code=>({missing_key:'未配置千问 Key，请联系管理员在服务器配置。',unsupported_endpoint:'接口地址不匹配，请检查千问地域和地址配置。',invalid_model:'模型名称无效，请检查配置。',model_http_401:'千问认证失败，请检查 Key 和所属地域。',model_http_403:'千问拒绝访问，请检查模型权限和账户状态。',model_http_429:'千问限流或额度不足，请检查账户额度后稍等重试。',model_request_failed:'网络错误或请求超时，请检查服务器网络与服务状态。',invalid_response:'模型响应格式无法识别，请检查模型及接口配置。',response_too_large:'模型响应超出限制，请检查模型配置。',configuration_or_response_error:'模型配置或响应不正确，请检查配置。'})[code]||'请检查模型配置、账号权限及服务状态。';
+  const render=items=>{
+    history.replaceChildren();
+    if(!Array.isArray(items)||!items.length){history.textContent='暂无探针记录。';return;}
+    for(const item of items){
+      const row=document.createElement('section');row.className='ui-week-probe-row';
+      const title=document.createElement('strong');title.textContent=(item.mode==='vision'?'视觉':'文本')+' · '+(item.status==='success'?'调用成功':'调用失败');row.append(title);
+      const meta=document.createElement('p');meta.textContent='时间：'+String(item.created_at||'未记录')+'；请求模型：'+String(item.model||'未记录')+'；调用链：'+(item.source==='platform_direct'?'平台服务直连':'未记录');row.append(meta);
+      if(Number.isFinite(item.elapsed_ms)){const elapsed=document.createElement('p');elapsed.textContent='耗时：'+item.elapsed_ms+' ms';row.append(elapsed);}
+      if(item.answer){const answer=document.createElement('p');answer.textContent='模型回答：'+String(item.answer);row.append(answer);}
+      if(item.mode==='text'&&item.status==='success'){const check=document.createElement('p');check.textContent='文本结果：'+(item.text_check==='passed'?'与 CONNECTED 匹配':item.text_check==='failed'?'与 CONNECTED 不匹配':'未记录核对结果')+'。';row.append(check);}
+      if(item.error_code){const error=document.createElement('p');error.textContent=errorHelp(item.error_code)+' 结果代码：'+String(item.error_code);row.append(error);}
+      if(item.usage){const usage=document.createElement('p');usage.textContent='用量：'+JSON.stringify(item.usage);row.append(usage);}
+      if(item.mode==='vision'&&item.status==='success'){
+        const review=document.createElement('p');const state=item.manual_check;review.textContent='人工核对：'+(state==='passed'?'人工核对通过':state==='failed'?'人工核对不通过':'待人工核对')+'。对照：左侧红色矩形，右侧蓝色圆。';row.append(review);
+        if(item.confirmed_at){const confirmed=document.createElement('p');confirmed.textContent='核对时间：'+String(item.confirmed_at);row.append(confirmed);}
+        for(const [correct,label] of [[true,state==='pending'?'识别正确':'重新核对：识别正确'],[false,state==='pending'?'识别不正确':'重新核对：识别不正确']]){
+          const button=document.createElement('button');button.type='button';button.dataset.probeReview=String(correct);button.textContent=label;
+          button.onclick=async()=>{if(!valid()||busy)return;setBusy(true);notice.textContent='正在保存人工核对结果…';try{await apiRequest('/platform/week1-probes/confirm',{method:'POST',body:{id:item.id,correct}});if(!valid())return;await load();}catch(error){if(valid())fail(error);}finally{if(valid())setBusy(false);}};row.append(button);
+        }
+      }
+      history.append(row);
+    }
+  };
+  const load=async()=>{
+    const request=++serial;const data=await apiRequest('/platform/week1-probes',{timeoutMs:10000});
+    if(!valid()||request!==serial)return;render(data?.results);loaded=true;notice.textContent='显示已保存的最近探针记录。';
+  };
+  panel.addEventListener('toggle',async()=>{if(!panel.open||loaded||busy||!valid())return;void loadFixture();setBusy(true);notice.textContent='正在读取历史记录…';try{await load();}catch(error){if(valid())fail(error);}finally{if(valid())setBusy(false);}});
+  panel.querySelector('[data-probe-refresh]').onclick=async()=>{if(!valid()||busy)return;setBusy(true);notice.textContent='正在读取历史记录…';try{await load();}catch(error){if(valid())fail(error);}finally{if(valid())setBusy(false);}};
+  for(const button of panel.querySelectorAll('[data-probe-run]'))button.onclick=async()=>{
+    if(!valid()||busy)return;const mode=button.dataset.probeRun;if(!['text','vision'].includes(mode))return;setBusy(true);notice.textContent='正在真实调用，请等待结果；请勿重复操作。';
+    try{await apiRequest('/platform/week1-probes',{method:'POST',body:{mode},timeoutMs:120000});if(!valid())return;await load();}catch(error){if(valid())fail(error);}finally{if(valid())setBusy(false);}
+  };
 }
 // Use the existing library creation flow so drafts and navigation guards stay shared.
 function attachUiStartCreation(page){

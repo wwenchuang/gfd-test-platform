@@ -2819,6 +2819,74 @@ def _get_platform_status(handler, qs):
     handler._json(status)
 
 
+def _week1_probe_owner(handler):
+    from task_server.services.operation_attribution import current_actor
+    actor = current_actor()
+    if actor.get("kind") != "user" or not actor.get("user_id"):
+        handler._json({"ok": False, "error": "请使用个人账号登录"}, 403)
+        return None
+    return actor["user_id"]
+
+
+@route_get("/api/platform/week1-probes")
+def _get_week1_probes(handler, qs):
+    from task_server.services import week1_probe
+    owner = _week1_probe_owner(handler)
+    if owner:
+        handler._json({"ok": True, "results": week1_probe.list_results(owner)})
+
+
+@route_get("/api/platform/week1-probes/fixture")
+def _get_week1_probe_fixture(handler, qs):
+    from task_server.services import week1_probe
+    if not _week1_probe_owner(handler):
+        return
+    payload = week1_probe.FIXTURE.read_bytes()
+    handler.send_response(200)
+    handler._cors()
+    handler.send_header("Content-Type", "image/png")
+    handler.send_header("Cache-Control", "no-store")
+    handler.send_header("Content-Length", str(len(payload)))
+    handler.end_headers()
+    handler.wfile.write(payload)
+
+
+@route_post("/api/platform/week1-probes")
+def _post_week1_probe(handler, qs):
+    from task_server.services import week1_probe
+    owner = _week1_probe_owner(handler)
+    if not owner:
+        return
+    body = handler._body()
+    if not isinstance(body, dict) or set(body) != {"mode"} or body["mode"] not in ("text", "vision"):
+        handler._json({"ok": False, "error": "请选择文本或视觉验证"}, 400)
+        return
+    try:
+        result = week1_probe.run_probe(owner, body["mode"])
+    except week1_probe.ProbeBusy:
+        handler._json({"ok": False, "error": "验证正在执行或刚刚完成，请稍后再试", "code": "probe_busy"}, 429)
+        return
+    handler._json({"ok": True, "result": result})
+
+
+@route_post("/api/platform/week1-probes/confirm")
+def _post_week1_probe_confirm(handler, qs):
+    from task_server.services import week1_probe
+    owner = _week1_probe_owner(handler)
+    if not owner:
+        return
+    body = handler._body()
+    if not isinstance(body, dict) or set(body) != {"id", "correct"}:
+        handler._json({"ok": False, "error": "核对内容无效"}, 400)
+        return
+    try:
+        result = week1_probe.confirm(owner, body["id"], body["correct"])
+    except ValueError:
+        handler._json({"ok": False, "error": "该记录不存在或无法核对"}, 400)
+        return
+    handler._json({"ok": True, "result": result})
+
+
 # ── Tasks 路由 ──────────────────────────────────────────────────────
 
 @route_get("/api/tasks")
