@@ -143,6 +143,8 @@ def test_manual_scroll_negation_does_not_hide_a_later_real_drag():
     assert not has_positive_drag('图片自动加载，而非用户手动滚动。未见独立用户滚动。')
     assert has_positive_drag('图片自动加载，而非用户手动滚动；随后用户手动滚动列表。')
     assert has_positive_drag('并非没有用户手动滚动，而是用户手动滚动。')
+    assert not has_positive_drag('全程未见用户触点或滚动操作，图片自动加载。')
+    assert has_positive_drag('全程未见用户触点或滚动操作，随后用户滚动列表。')
 
 
 def test_new_scroll_over_same_automatic_frames_requests_review_only():

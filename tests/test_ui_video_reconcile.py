@@ -95,6 +95,8 @@ def test_unnecessary_one_to_one_scroll_correction_can_be_checked_independently()
            'resolution':'same_interaction_with_action_correction','reviewed_event_index':0,'evidence':{}}
     kept,removed=vr._separate_redundant_assert_claims([claim],sources,[observed])
     assert kept==[] and removed==[claim]
+    observed['observation']='全程未见用户触点或滚动操作，图片自动加载。'
+    assert vr._separate_redundant_assert_claims([claim],sources,[observed])==([], [claim])
     for bad in ({**observed,'observation':'用户手动滚动'}, {**observed,'frame_refs':['f1']}):
         assert vr._separate_redundant_assert_claims([claim],sources,[bad])==([claim],[])
 

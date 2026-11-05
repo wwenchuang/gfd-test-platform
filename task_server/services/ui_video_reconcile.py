@@ -145,7 +145,7 @@ def check_coverage(original,reviewed,duration=None,resolutions=None,source=None)
                 # An explicit, full-evidence correction can explain a false
                 # scroll caused by asynchronous layout; a generic wait cannot.
                 if not (new['action'] in {'aiAssert','aiTap'} and set(old['frame_refs'])<=set(new['frame_refs'])
-                    and re.search(r'(?:未观察到|未见|未发生|没有观察到|没有发生|没有|并非|而非|不是|(?<=[，。；])非)(?:任何|实际的|实际|用户|手指|触点|页面|内容|新的|独立的|独立|发起的|发起了|本次|进行|发生){0,4}(?:滚动|滑动|拖动)',new['observation'])
+                    and re.search(r'(?:未观察到|未见|未发生|没有观察到|没有发生|没有|并非|而非|不是|(?<=[，。；])非)(?:任何|实际的|实际|用户|手指|触点或|触点|页面|内容|新的|独立的|独立|发起的|发起了|本次|进行|发生){0,4}(?:滚动|滑动|拖动)',new['observation'])
                     and re.search(r'自动|加载|布局|轮播' if new['action']=='aiAssert' else r'实际点击|触点.*按钮',new['observation'])):continue
             if old['action']=='aiTap' and new['action']!='aiTap':
                 from .ui_video_delayed_response import has_positive_tap
