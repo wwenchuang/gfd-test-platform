@@ -2,6 +2,7 @@ import pytest
 
 from task_server.api_testing.contracts.case import CasePayloadError, _parse_processing
 from task_server.api_testing.response_time_warning import evaluate_response_time_warning
+from task_server.api_testing.repositories.execution_repository import ExecutionRepository
 
 
 def test_warning_uses_main_response_and_does_not_change_case_status():
@@ -23,3 +24,11 @@ def test_processing_accepts_only_positive_integer_warning_threshold():
     for invalid in (0, -1, True, "100", 1.5, 86400001):
         with pytest.raises(CasePayloadError):
             _parse_processing({"response_time_warning_ms": invalid})
+
+
+def test_warning_projection_ignores_absent_and_legacy_values():
+    class Session:
+        def execute(self, statement):
+            assert "response_time_warning" in str(statement.compile().params.values())
+            return [('a', {'status': 'slow', 'duration_ms': 30, 'threshold_ms': 20}), ('b', None), ('c', 'legacy')]
+    assert list(ExecutionRepository(Session()).get_response_time_warnings('execution').keys()) == ['a']
