@@ -1054,3 +1054,15 @@ test('out of order identity refresh cannot restore an older workspace or private
  const admin={user_id:'admin',status:'active',permissions:['ui.view','api.view','platform.configure'],scope:{ui_apps:'*'}};w.currentAccessProfile=admin;await w.initUiSimpleAvailability({navigate:false});w.activeWorkflow='ai_practice';w.showAiPractice();let resolve;w.apiRequest=()=>new Promise(r=>{resolve=r;});w.acceptAuthSession({profile:admin});
  w.acceptAuthSession({profile:{user_id:'other',status:'active',permissions:['api.view'],scope:{ui_apps:['one']}}});await wait();await wait();resolve({ok:true,enabled:true});await wait();await wait();const page=w.document.querySelector('[data-practice-workbench]');assert.ok(page.querySelector('[data-practice-api]'));assert.equal(page.querySelector('[data-practice-workflow="ui_start"]').disabled,true);assert.equal(page.querySelector('[data-ui-week-one]'),null);assert.equal(page.querySelector('[data-ui-week-two]'),null);
 });
+
+test('workspace availability refresh preserves advanced tools disclosure',async t=>{
+ const {w}=fixture(t);w.activeWorkflow='ai_practice';const advanced=w.document.querySelector('[data-ui-advanced]');advanced.open=false;
+ await w.initUiSimpleAvailability({navigate:false});assert.equal(advanced.open,false);
+ advanced.open=true;await w.initUiSimpleAvailability({navigate:false});assert.equal(advanced.open,true);
+ advanced.open=false;w.apiRequest=async()=>({ok:true,enabled:false});await w.initUiSimpleAvailability({navigate:false});assert.equal(advanced.open,false);
+});
+
+test('availability refresh still opens advanced tools for advanced workflows',async t=>{
+ const {w}=fixture(t);w.activeWorkflow='config';const advanced=w.document.querySelector('[data-ui-advanced]');advanced.open=false;
+ await w.initUiSimpleAvailability({navigate:false});assert.equal(advanced.open,true);
+});
