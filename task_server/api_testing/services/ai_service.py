@@ -150,7 +150,8 @@ class AiJobView:
 class AiGatewayClient:
     """Small default client for the dedicated API case-generation contract."""
 
-    def __init__(self, base_url=None):
+    def __init__(self, base_url=None, *, receipt_grace_seconds=0):
+        self.receipt_grace_seconds = receipt_grace_seconds
         self.base_url = str(
             base_url or os.getenv("AI_GATEWAY_URL", "http://127.0.0.1:8090")
         ).rstrip("/")
@@ -170,7 +171,7 @@ class AiGatewayClient:
             method="POST",
         )
         try:
-            with urllib.request.urlopen(request, timeout=timeout_seconds + 5) as response:
+            with urllib.request.urlopen(request, timeout=timeout_seconds + self.receipt_grace_seconds) as response:
                 parsed = json.loads(
                     read_response_bytes(
                         response,
@@ -294,7 +295,7 @@ class AiCaseService:
         if not isinstance(batch_size, int) or isinstance(batch_size, bool) or not 1 <= batch_size <= MAX_ENDPOINTS:
             raise ValueError("AI batch size must be between 1 and 60")
         self.session_factory = session_factory
-        self.gateway_client = gateway_client or AiGatewayClient()
+        self.gateway_client = gateway_client or AiGatewayClient(receipt_grace_seconds=5)
         self.batch_size = batch_size
         self.gateway_timeout_seconds = gateway_timeout_seconds
         root = Path(__file__).resolve().parents[3]
@@ -1694,7 +1695,8 @@ class AiCaseService:
             fallback_reason=str(evidence.get("fallback_reason", "")),
             generated_draft_ids=list(result.get("draft_version_ids", [])),
             validation_errors=tuple(result.get("validation_errors", [])),
-            error_code=("gateway_timeout" if isinstance(batch.error, dict) and batch.error.get("code") == "gateway_timeout"
+            error_code=(batch.error["code"] if batch.state == "failed_gateway" and isinstance(batch.error, dict)
+                        and batch.error.get("code") in {"gateway_timeout", "enqueue_failed"}
                         else "gateway_error" if batch.state == "failed_gateway" else ""),
         )
 

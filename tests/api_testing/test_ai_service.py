@@ -2000,3 +2000,17 @@ def test_provider_timeout_code_persists_and_is_exposed_without_provider_details(
     with session_factory() as session:
         stored = session.scalar(select(ApiAiJobBatch).where(ApiAiJobBatch.job_id == job.id))
         assert stored.error == {'code': 'gateway_timeout', 'message': 'AI provider timed out'}
+
+
+def test_enqueue_failure_is_persisted_and_cannot_start_model_call(session_factory, ai_context):
+    endpoint = ai_context['endpoints']['favoriteList']
+    gateway = FakeGateway()
+    service = _service(session_factory, gateway)
+    job = service.submit([endpoint.id], ai_context['environment'].revision_id, 'admin')
+    failed = service.mark_enqueue_failure(job.id, 'admin')
+    assert failed.batches[0].error_code == 'enqueue_failed'
+    assert service.process(job.id).batches[0].error_code == 'enqueue_failed'
+    assert gateway.calls == []
+    with session_factory() as session:
+        stored = session.scalar(select(ApiAiJobBatch).where(ApiAiJobBatch.job_id == job.id))
+        assert stored.error == {'code': 'enqueue_failed'}
